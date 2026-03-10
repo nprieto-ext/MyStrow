@@ -7455,7 +7455,7 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Diagnostic Node DMX")
-        dlg.setFixedSize(430, 250)
+        dlg.setFixedSize(460, 260)
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dlg.setStyleSheet(
             "QDialog { background: #1a1a1a; }"
@@ -7488,6 +7488,7 @@ class MainWindow(QMainWindow):
             detail = QLabel("Vérification en cours...")
             detail.setFont(QFont("Segoe UI", 9))
             detail.setStyleSheet("color: #555555;")
+            detail.setWordWrap(True)
             col.addWidget(detail)
             row.addLayout(col, 1)
             root.addLayout(row)
@@ -7526,7 +7527,7 @@ class MainWindow(QMainWindow):
 
         # --- Vérification 1 : carte réseau ---
         adapters = _get_ethernet_adapters()
-        ok_adapters = [(n, ip) for n, ip in adapters if ip.startswith("2.")]
+        ok_adapters = [(n, ip) for n, ip in adapters if ip.startswith("2.0.0.")]
 
         if ok_adapters:
             name, ip = ok_adapters[0]
@@ -7536,10 +7537,11 @@ class MainWindow(QMainWindow):
             detail_net.setStyleSheet("color: #4CAF50;")
             net_ok = True
         elif adapters:
-            names = "  /  ".join(n for n, _ in adapters[:2])
+            name, ip = adapters[0]
+            ip_display = ip if ip else "non configurée"
             icon_net.setText("⚠")
             icon_net.setStyleSheet("color: #ff9800;")
-            detail_net.setText(f"{names}  —  IP non configurée en 2.x.x.x")
+            detail_net.setText(f"{name}  —  IP : {ip_display}  (attendu : 2.0.0.x)")
             detail_net.setStyleSheet("color: #ff9800;")
             net_ok = False
         else:
@@ -7551,22 +7553,45 @@ class MainWindow(QMainWindow):
 
         QApplication.processEvents()
 
-        # --- Vérification 2 : node ArtPoll ---
+        # --- Vérification 2 : node ArtPoll (broadcast + IP cible) ---
         node_ok = False
+        found_ip = None
+        # Adresses à sonder : broadcast Art-Net d'abord, puis IP cible fixe
+        _ARTNET_PORT = 6454
+        _probe_ips = ["2.255.255.255", "255.255.255.255", TARGET_IP]
         try:
             s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            s.setsockopt(_socket.SOL_SOCKET, _socket.SO_BROADCAST, 1)
             s.settimeout(1.5)
-            s.sendto(_artpoll_packet(), (TARGET_IP, TARGET_PORT))
-            data, _ = s.recvfrom(256)
+            s.bind(("", _ARTNET_PORT))
+            for _ip in _probe_ips:
+                try:
+                    s.sendto(_artpoll_packet(), (_ip, _ARTNET_PORT))
+                except Exception:
+                    pass
+            # Écouter toutes les réponses pendant la fenêtre de timeout
+            import time as _time
+            _deadline = _time.time() + 1.5
+            while _time.time() < _deadline:
+                try:
+                    s.settimeout(max(0.05, _deadline - _time.time()))
+                    data, (sender_ip, _) = s.recvfrom(512)
+                    if data[:8] == b'Art-Net\x00':
+                        node_ok = True
+                        found_ip = sender_ip
+                        break
+                except _socket.timeout:
+                    break
+                except Exception:
+                    break
             s.close()
-            node_ok = data[:8] == b'Art-Net\x00'
         except Exception:
             node_ok = False
 
         if node_ok:
             icon_node.setText("✓")
             icon_node.setStyleSheet("color: #4CAF50;")
-            detail_node.setText(f"Répond sur {TARGET_IP}  —  Art-Net opérationnel")
+            detail_node.setText(f"Répond sur {found_ip}  —  Art-Net opérationnel")
             detail_node.setStyleSheet("color: #4CAF50;")
             if not self.dmx.connected:
                 self.dmx.connect()
@@ -7574,9 +7599,12 @@ class MainWindow(QMainWindow):
             icon_node.setText("✗")
             icon_node.setStyleSheet("color: #f44336;")
             if net_ok:
-                detail_node.setText(f"Pas de réponse sur {TARGET_IP}  —  vérifiez que le boîtier est allumé")
+                detail_node.setText(
+                    f"Aucun boîtier Art-Net détecté sur le réseau 2.x.x.x\n"
+                    f"Vérifiez que le boîtier est allumé et le câble RJ45 branché"
+                )
             else:
-                detail_node.setText(f"Impossible de contacter {TARGET_IP}  —  configurez d'abord la carte réseau")
+                detail_node.setText("Configurez d'abord la carte réseau (2.0.0.1 / 255.0.0.0)")
             detail_node.setStyleSheet("color: #f44336;")
 
         if not net_ok or not node_ok:
@@ -7704,7 +7732,7 @@ class MainWindow(QMainWindow):
 
             self.cart_player.setSource(QUrl.fromLocalFile(filepath))
             self.cart_player.play()
-            QMessageBox.information(self, "AUDIO", "Son de test 440Hz envoye !")
+            QMessageBox.information(self, "AUDIO", "Son de test envoyé !")
         except Exception as e:
             QMessageBox.warning(self, "AUDIO", f"Erreur generation son: {e}")
 
@@ -7750,9 +7778,10 @@ class MainWindow(QMainWindow):
 
     def show_test_logo(self):
         """Affiche le logo de test pendant 3 secondes (preview + externe si active)"""
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Mystrow_blanc.png")
+        from core import resource_path
+        logo_path = resource_path("logo.png")
         if not os.path.exists(logo_path):
-            QMessageBox.warning(self, "VIDEO", "Fichier Mystrow_blanc.png introuvable.")
+            QMessageBox.warning(self, "VIDEO", "Fichier logo.png introuvable.")
             return
 
         # Afficher dans le preview local (toujours)

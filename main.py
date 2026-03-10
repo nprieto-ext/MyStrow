@@ -49,7 +49,7 @@ import platform
 
 # Imports légers uniquement — tout ce qui est lourd est différé après le splash
 from core import APP_NAME, VERSION, MIDI_AVAILABLE, resource_path
-from updater import SplashScreen, UpdateChecker
+from updater import SplashScreen, UpdateChecker, AkaiSplashEffect
 
 # ------------------------------------------------------------------
 # DIALOGUE ERREUR INTEGRITE
@@ -232,6 +232,9 @@ def main():
     t_dmx     = threading.Thread(target=_bg_dmx,     daemon=True)
     t_license.start(); t_akai.start(); t_dmx.start()
 
+    # Effet visuel AKAI — démarré dès que la connexion est confirmée
+    akai_effect = AkaiSplashEffect()
+
     # Attendre les threads sans bloquer Qt — on process les events pendant l'attente
     deadline = time.time() + 8
     akai_shown = dmx_shown = False
@@ -242,6 +245,8 @@ def main():
             splash.set_hw_status("akai", "Connecte" if _akai_box[0] else "Non detecte", _akai_box[0])
             app.processEvents()
             akai_shown = True
+            if _akai_box[0]:
+                akai_effect.start()
 
         if not dmx_shown and not t_dmx.is_alive():
             splash.set_hw_status("node", _dmx_box[1], _dmx_box[0])
@@ -275,6 +280,9 @@ def main():
     lic_text, lic_ok = _license_labels.get(license_result.state, ("Inconnue", False))
     splash.set_hw_status("license", lic_text, lic_ok)
     app.processEvents()
+
+    # Arrêter l'effet AKAI avant de créer MainWindow (libère le port MIDI)
+    akai_effect.stop()
 
     # Initialiser la fenetre principale avec le resultat de licence
     splash.set_status("Initialisation...")

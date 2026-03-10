@@ -4,6 +4,7 @@ Systeme de mise a jour et ecran de chargement pour MyStrow
 - UpdateChecker : verification async des mises a jour
 - UpdateBar : barre de notification de mise a jour
 - download_update : telechargement + verification SHA256 + batch updater
+- AkaiSplashEffect : animation LED sur l'AKAI APC mini pendant le splash
 """
 import os
 import sys
@@ -748,6 +749,117 @@ class AboutDialog(QDialog):
         sig_url  = self._sig_url
         self.accept()
         QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url, sig_url))
+
+
+# ============================================================
+# AKAI SPLASH EFFECT
+# ============================================================
+class AkaiSplashEffect:
+    """
+    Animation LED sur les pads de l'AKAI APC mini pendant le splash screen.
+
+    Effet : vague diagonale qui balaie la grille 8x8 du coin haut-gauche
+    au coin bas-droit, en changeant de palette de couleurs à chaque sweep.
+    Palettes : cyan/bleu/violet, vert/cyan/bleu, jaune/orange/rouge, magenta/violet/bleu.
+    """
+
+    # Palettes AKAI velocity : [avant, milieu, queue]
+    _PALETTES = [
+        [37, 45, 53],   # Cyan -> Bleu -> Violet
+        [25, 37, 45],   # Vert -> Cyan -> Bleu
+        [13,  9,  3],   # Jaune -> Orange -> Rouge
+        [49, 53, 45],   # Magenta -> Violet -> Bleu
+    ]
+    _WAVE_WIDTH   = 3   # Nombre de diagonales allumées simultanément
+    _TOTAL_DIAG   = 14  # max r+c sur grille 8×8 (7+7)
+    _PAUSE_FRAMES = 6   # Frames d'obscurité entre deux sweeps
+
+    def __init__(self):
+        self.midi_out    = None
+        self._timer      = QTimer()
+        self._timer.timeout.connect(self._tick)
+        self._frame      = 0
+        self._palette_idx = 0
+        self._connect()
+
+    # ------------------------------------------------------------------
+    def _connect(self):
+        """Ouvre le port MIDI AKAI sans bloquer le thread Qt."""
+        _rt = None
+        try:
+            import rtmidi as _r; _rt = _r
+        except ImportError:
+            try:
+                import rtmidi2 as _r; _rt = _r
+            except ImportError:
+                return
+        try:
+            out = _rt.MidiOut()
+            for idx, name in enumerate(out.get_ports()):
+                if 'APC' in name.upper() or 'MINI' in name.upper():
+                    out.open_port(idx)
+                    self.midi_out = out
+                    return
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def _tick(self):
+        if not self.midi_out:
+            return
+
+        CYCLE = self._TOTAL_DIAG + self._WAVE_WIDTH + self._PAUSE_FRAMES
+        wave_pos = self._frame % CYCLE
+        palette  = self._PALETTES[self._palette_idx % len(self._PALETTES)]
+
+        for row in range(8):
+            for col in range(8):
+                note = (7 - row) * 8 + col   # Mapping physique AKAI
+                d    = row + col              # Indice diagonal (0-14)
+                rel  = wave_pos - d           # Position relative au front de vague
+
+                if 0 <= rel < self._WAVE_WIDTH:
+                    vel     = palette[min(rel, len(palette) - 1)]
+                    channel = 0x96 if rel == 0 else 0x90  # Avant = pleine luminosite
+                else:
+                    vel, channel = 0, 0x90   # Eteint
+
+                try:
+                    self.midi_out.send_message([channel, note, vel])
+                except Exception:
+                    return  # Port perdu, on abandonne silencieusement
+
+        self._frame += 1
+
+        # Changer de palette à chaque début de cycle
+        if wave_pos == CYCLE - 1:
+            self._palette_idx += 1
+
+    # ------------------------------------------------------------------
+    def start(self):
+        """Démarre l'animation si l'AKAI est disponible."""
+        if self.midi_out:
+            self._frame = 0
+            self._timer.start(90)   # ~11 fps
+
+    def stop(self):
+        """Arrête l'animation, éteint tous les pads et libère le port."""
+        self._timer.stop()
+        if self.midi_out:
+            try:
+                for note in range(64):
+                    self.midi_out.send_message([0x90, note, 0])
+            except Exception:
+                pass
+            try:
+                self.midi_out.close_port()
+            except Exception:
+                pass
+            self.midi_out = None
+
+    @property
+    def active(self):
+        return self.midi_out is not None
 
 
 def _create_updater_batch(new_exe, current_exe, new_sig="", current_sig=""):

@@ -1433,41 +1433,6 @@ class AdminPanel(QMainWindow):
 
         h_lay.addStretch()
 
-        # Outils admin (Release / Backup) — toujours actifs, côté gauche du groupe droit
-        self.btn_release = QPushButton("⚙  Release…")
-        self.btn_release.setStyleSheet(_BTN_ORANGE)
-        self.btn_release.setFixedHeight(32)
-        self.btn_release.setEnabled(_RELEASE_OK)
-        self.btn_release.setToolTip("" if _RELEASE_OK else "release.py introuvable")
-        self.btn_release.clicked.connect(self._on_release)
-        h_lay.addWidget(self.btn_release)
-
-        self.btn_gdtf_upload = QPushButton("📥  Importer fixtures")
-        self.btn_gdtf_upload.setStyleSheet(_BTN_SECONDARY)
-        self.btn_gdtf_upload.setFixedHeight(32)
-        self.btn_gdtf_upload.setToolTip("Importer des fichiers .gdtf / .xml / .mystrow vers Firestore (profils complets)")
-        self.btn_gdtf_upload.clicked.connect(self._on_gdtf_upload)
-        h_lay.addWidget(self.btn_gdtf_upload)
-
-        self.btn_gdtf_enrich = QPushButton("🌐  Sync OFL")
-        self.btn_gdtf_enrich.setStyleSheet(_BTN_SECONDARY)
-        self.btn_gdtf_enrich.setFixedHeight(32)
-        self.btn_gdtf_enrich.setToolTip("Télécharger Open Fixture Library (GitHub) et peupler les profils de canaux dans Firestore")
-        self.btn_gdtf_enrich.clicked.connect(self._on_gdtf_enrich)
-        h_lay.addWidget(self.btn_gdtf_enrich)
-
-        self.btn_backup = QPushButton("💾  Backup")
-        self.btn_backup.setStyleSheet(_BTN_SECONDARY)
-        self.btn_backup.setFixedHeight(32)
-        self.btn_backup.setToolTip("Sauvegarde le projet en .zip (Bureau + Google Drive)")
-        self.btn_backup.clicked.connect(self._on_backup)
-        h_lay.addWidget(self.btn_backup)
-
-        h_lay.addSpacing(16)
-        _sep_h = QFrame(); _sep_h.setFrameShape(QFrame.VLine)
-        _sep_h.setStyleSheet("QFrame { color: #333; max-height: 24px; }")
-        h_lay.addWidget(_sep_h)
-        h_lay.addSpacing(16)
 
         self.status_lbl = QLabel(self._admin_email)
         self.status_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; background: transparent;")
@@ -1524,6 +1489,18 @@ class AdminPanel(QMainWindow):
         self._btn_nav_fix.setStyleSheet(_nav_idle)
         self._btn_nav_fix.clicked.connect(lambda: self._switch_view(1))
         nav_lay.addWidget(self._btn_nav_fix)
+
+        self._btn_nav_packs = QPushButton("Packs")
+        self._btn_nav_packs.setFixedHeight(38)
+        self._btn_nav_packs.setStyleSheet(_nav_idle)
+        self._btn_nav_packs.clicked.connect(lambda: self._switch_view(2))
+        nav_lay.addWidget(self._btn_nav_packs)
+
+        self._btn_nav_release = QPushButton("Release")
+        self._btn_nav_release.setFixedHeight(38)
+        self._btn_nav_release.setStyleSheet(_nav_idle)
+        self._btn_nav_release.clicked.connect(lambda: self._switch_view(3))
+        nav_lay.addWidget(self._btn_nav_release)
 
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
@@ -1683,6 +1660,12 @@ class AdminPanel(QMainWindow):
         # ── Page 1 : Fixtures ─────────────────────────────────────────────────
         self._build_fixtures_panel()
 
+        # ── Page 2 : Packs ────────────────────────────────────────────────────
+        self._build_packs_panel()
+
+        # ── Page 3 : Release ──────────────────────────────────────────────────
+        self._build_release_panel()
+
     # ------------------------------------------------------------------
 
     def _switch_view(self, idx: int):
@@ -1695,6 +1678,8 @@ class AdminPanel(QMainWindow):
                    f"QPushButton:hover {{ color: {TEXT}; }}")
         self._btn_nav_lic.setStyleSheet(_active if idx == 0 else _idle)
         self._btn_nav_fix.setStyleSheet(_active if idx == 1 else _idle)
+        self._btn_nav_packs.setStyleSheet(_active if idx == 2 else _idle)
+        self._btn_nav_release.setStyleSheet(_active if idx == 3 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 1 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -1741,8 +1726,15 @@ class AdminPanel(QMainWindow):
         btn_fix_refresh.clicked.connect(self._load_fixtures)
         ft_lay.addWidget(btn_fix_refresh)
 
+        btn_fix_editor = QPushButton("✏️  Éditeur de fixtures")
+        btn_fix_editor.setStyleSheet(_BTN_PRIMARY)
+        btn_fix_editor.setFixedHeight(30)
+        btn_fix_editor.setToolTip("Ouvrir l'éditeur de fixtures MyStrow")
+        btn_fix_editor.clicked.connect(self._open_fixture_editor)
+        ft_lay.addWidget(btn_fix_editor)
+
         btn_fix_import = QPushButton("📥  Importer…")
-        btn_fix_import.setStyleSheet(_BTN_PRIMARY)
+        btn_fix_import.setStyleSheet(_BTN_SECONDARY)
         btn_fix_import.setFixedHeight(30)
         btn_fix_import.setToolTip("Importer des fichiers .xml / .mystrow vers Firestore")
         btn_fix_import.clicked.connect(self._on_gdtf_upload)
@@ -1808,6 +1800,227 @@ class AdminPanel(QMainWindow):
         self._fixtures_loaded = False
         self._all_fixtures: list = []
         self._filtered_fixtures: list = []
+
+    def _open_fixture_editor(self):
+        """Ouvre l'éditeur de fixtures MyStrow en fenêtre autonome."""
+        from fixture_editor import FixtureEditorDialog
+        dlg = FixtureEditorDialog(self)
+        dlg.show()
+
+    def _build_packs_panel(self):
+        """Page 2 : Éditeur de packs de fixtures."""
+        from admin_pack_editor import AdminPackEditorWidget
+        self._pack_editor = AdminPackEditorWidget(self._id_token)
+        self._content_stack.addWidget(self._pack_editor)
+
+    def _build_release_panel(self):
+        """Page 3 : Release pipeline + Backup, intégrés directement dans l'onglet."""
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 28, 32, 24)
+        lay.setSpacing(14)
+
+        # ── Titre ────────────────────────────────────────────────────────────
+        title = QLabel("Release MyStrow")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        title.setStyleSheet(f"color: {ACCENT};")
+        lay.addWidget(title)
+
+        # ── Version ──────────────────────────────────────────────────────────
+        v_row = QHBoxLayout()
+        v_row.setSpacing(16)
+        if _RELEASE_OK:
+            current = get_current_version() or "?"
+            bumped  = bump_version(current) if current != "?" else ""
+        else:
+            current, bumped = "—", ""
+
+        v_row.addWidget(QLabel(
+            f"Version actuelle :  <b>{current}</b>", textFormat=Qt.RichText
+        ))
+        v_row.addSpacing(8)
+        v_row.addWidget(QLabel("Nouvelle version :"))
+        self._rel_version_edit = QLineEdit(bumped)
+        self._rel_version_edit.setFixedWidth(120)
+        self._rel_version_edit.setFixedHeight(34)
+        self._rel_version_edit.setEnabled(_RELEASE_OK)
+        v_row.addWidget(self._rel_version_edit)
+        v_row.addStretch()
+        lay.addLayout(v_row)
+
+        # ── Action + bouton Lancer ────────────────────────────────────────────
+        a_row = QHBoxLayout()
+        a_row.setSpacing(10)
+        a_row.addWidget(QLabel("Action :"))
+        self._rel_action_combo = QComboBox()
+        self._rel_action_combo.addItem("Push GitHub", "github")
+        self._rel_action_combo.addItem("Installer local (Bureau)", "local")
+        self._rel_action_combo.addItem("Les deux", "both")
+        self._rel_action_combo.setMinimumWidth(280)
+        self._rel_action_combo.setFixedHeight(34)
+        self._rel_action_combo.setEnabled(_RELEASE_OK)
+        self._rel_action_combo.currentIndexChanged.connect(self._on_rel_action_changed)
+        a_row.addWidget(self._rel_action_combo)
+
+        self._btn_rel_start = QPushButton("▶  Lancer la release")
+        self._btn_rel_start.setFixedHeight(34)
+        self._btn_rel_start.setEnabled(_RELEASE_OK)
+        self._btn_rel_start.setStyleSheet(_BTN_PRIMARY)
+        self._btn_rel_start.clicked.connect(self._on_rel_start)
+        a_row.addWidget(self._btn_rel_start)
+
+        if _RELEASE_OK:
+            btn_gh = QPushButton("GitHub Actions →")
+            btn_gh.setFixedHeight(34)
+            btn_gh.setStyleSheet(_BTN_SECONDARY)
+            btn_gh.clicked.connect(
+                lambda: webbrowser.open(f"https://github.com/{GITHUB_REPO}/actions")
+            )
+            a_row.addWidget(btn_gh)
+
+        a_row.addStretch()
+        lay.addLayout(a_row)
+
+        self._rel_mac_note = QLabel(
+            "ℹ️  Mode 'local' : build Windows uniquement — le Mac est géré par GitHub CI."
+        )
+        self._rel_mac_note.setStyleSheet(f"color: #555; font-size: 10px;")
+        self._rel_mac_note.setVisible(False)
+        lay.addWidget(self._rel_mac_note)
+
+        # ── Barre de progression ──────────────────────────────────────────────
+        prog_row = QHBoxLayout()
+        prog_row.setSpacing(8)
+        self._rel_progress = QProgressBar()
+        self._rel_progress.setRange(0, 100)
+        self._rel_progress.setValue(0)
+        self._rel_progress.setFixedHeight(10)
+        self._rel_progress.setTextVisible(False)
+        self._rel_progress.setStyleSheet(f"""
+            QProgressBar {{
+                background: #222; border: none; border-radius: 5px;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 {ACCENT}, stop:1 #0088aa);
+                border-radius: 5px;
+            }}
+        """)
+        self._rel_pct_lbl = QLabel("0 %")
+        self._rel_pct_lbl.setFixedWidth(36)
+        self._rel_pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._rel_pct_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:10px;")
+        prog_row.addWidget(self._rel_progress)
+        prog_row.addWidget(self._rel_pct_lbl)
+        lay.addLayout(prog_row)
+
+        self._rel_step_lbl = QLabel("")
+        self._rel_step_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:10px;")
+        lay.addWidget(self._rel_step_lbl)
+
+        # ── Console log ───────────────────────────────────────────────────────
+        self._rel_log = QTextEdit()
+        self._rel_log.setReadOnly(True)
+        self._rel_log.setFont(QFont("Consolas", 9))
+        self._rel_log.setStyleSheet(
+            f"QTextEdit {{ background:#0d0d0d; color:#cccccc;"
+            f" border:1px solid #2a2a2a; border-radius:5px; }}"
+        )
+        lay.addWidget(self._rel_log, 1)
+
+        # ── Séparateur + Backup ───────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("QFrame { color: #2a2a2a; }")
+        lay.addWidget(sep)
+
+        bk_row = QHBoxLayout()
+        bk_row.setSpacing(12)
+        bk_lbl = QLabel("Backup projet :")
+        bk_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        bk_row.addWidget(bk_lbl)
+
+        btn_bk = QPushButton("💾  Sauvegarder en .zip")
+        btn_bk.setFixedHeight(32)
+        btn_bk.setStyleSheet(_BTN_SECONDARY)
+        btn_bk.setEnabled(_RELEASE_OK)
+        btn_bk.setToolTip("Sauvegarde le projet en .zip sur le Bureau (+ Google Drive si détecté)")
+        btn_bk.clicked.connect(self._on_backup)
+        bk_row.addWidget(btn_bk)
+        bk_row.addStretch()
+        lay.addLayout(bk_row)
+
+        self._content_stack.addWidget(page)
+
+        # Workers
+        self._rel_thread = None
+        self._rel_worker = None
+
+    # ── Handlers Release panel ─────────────────────────────────────────────
+
+    def _on_rel_action_changed(self, index):
+        action = self._rel_action_combo.itemData(index)
+        self._rel_mac_note.setVisible(action == "local")
+
+    def _on_rel_start(self):
+        version = self._rel_version_edit.text().strip()
+        if not version:
+            QMessageBox.warning(self, "Version manquante", "Saisissez un numéro de version.")
+            return
+        action = self._rel_action_combo.currentData()
+        self._btn_rel_start.setEnabled(False)
+        self._btn_rel_start.setText("En cours…")
+        self._rel_log.clear()
+        self._rel_progress.setValue(0)
+        self._rel_pct_lbl.setText("0 %")
+        self._rel_step_lbl.setText("")
+        self._rel_step_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:10px;")
+
+        self._rel_thread = QThread(self)
+        self._rel_worker = ReleaseWorker(version, action)
+        self._rel_worker.moveToThread(self._rel_thread)
+        self._rel_thread.started.connect(self._rel_worker.run)
+        self._rel_worker.log.connect(self._rel_append_log)
+        self._rel_worker.progress.connect(self._rel_on_progress)
+        self._rel_worker.step.connect(self._rel_step_lbl.setText)
+        self._rel_worker.finished.connect(self._rel_on_finished)
+        self._rel_worker.finished.connect(self._rel_thread.quit)
+        self._rel_thread.finished.connect(self._rel_thread.deleteLater)
+        self._rel_thread.start()
+
+    def _rel_on_progress(self, pct: int):
+        self._rel_progress.setValue(pct)
+        self._rel_pct_lbl.setText(f"{pct} %")
+
+    def _rel_append_log(self, text: str):
+        self._rel_log.append(text)
+        self._rel_log.verticalScrollBar().setValue(
+            self._rel_log.verticalScrollBar().maximum()
+        )
+
+    def _rel_on_finished(self, success: bool, msg: str):
+        self._btn_rel_start.setEnabled(True)
+        self._btn_rel_start.setText("▶  Lancer la release")
+        if success:
+            self._rel_on_progress(100)
+            self._rel_step_lbl.setText("Terminé ✓")
+            self._rel_step_lbl.setStyleSheet("color:#4CAF50; font-size:10px;")
+            self._rel_append_log(f"\n{msg}")
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
+        else:
+            self._rel_step_lbl.setText("Erreur")
+            self._rel_step_lbl.setStyleSheet(f"color:{RED}; font-size:10px;")
+            self._rel_append_log(f"\nERREUR : {msg}")
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONHAND)
+            except Exception:
+                pass
+            QMessageBox.critical(self, "Erreur release", msg)
 
     # ------------------------------------------------------------------
 

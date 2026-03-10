@@ -349,6 +349,181 @@ def remove_machine(uid: str, id_token: str, machine_id: str) -> bool:
 
 
 # ---------------------------------------------------------------
+# Token service account (admin — bypass les règles Firestore)
+# ---------------------------------------------------------------
+
+def get_admin_token(sa_path: str) -> str:
+    """
+    Génère un access token Google OAuth2 depuis le service_account.json.
+    Ce token a un accès complet à Firestore et bypass les security rules.
+    Lève une Exception si le fichier est absent ou invalide.
+    """
+    import os
+    if not os.path.exists(sa_path):
+        raise Exception(f"service_account.json introuvable : {sa_path}")
+    try:
+        from firebase_admin import credentials as fa_cred
+        cred = fa_cred.Certificate(sa_path)
+        tok  = cred.get_access_token()
+        return tok.access_token
+    except Exception as e:
+        raise Exception(f"Impossible d'obtenir le token admin : {e}")
+
+
+# ---------------------------------------------------------------
+# Firestore : packs de fixtures distants
+# ---------------------------------------------------------------
+
+def _post_json_opt_auth(url: str, payload: dict, id_token: str = None) -> object:
+    """POST JSON avec ou sans Bearer token. Retourne la réponse décodée."""
+    data = json.dumps(payload).encode()
+    headers = {"Content-Type": "application/json"}
+    if id_token:
+        headers["Authorization"] = f"Bearer {id_token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Erreur Firestore : {_firebase_error(e)}")
+
+
+def write_fixture_pack(pack_id: str, pack_data: dict, id_token: str) -> dict:
+    """
+    Crée ou met à jour un pack de fixtures dans /fixture_packs/{pack_id}.
+    Lit la version courante, l'incrémente, puis écrit le document complet.
+    Retourne le document Firestore mis à jour (dict Python).
+    """
+    url = f"{_FS_BASE}/fixture_packs/{pack_id}"
+
+    # Récupérer la version courante (404 → premier envoi → version 0)
+    current_version = 0
+    try:
+        existing_doc = _get_json(url, id_token)
+        current_version = _from_firestore(
+            existing_doc.get("fields", {}).get("version", {"integerValue": "0"})
+        ) or 0
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise Exception(f"Erreur lecture version existante : {_firebase_error(e)}")
+
+    # Incrémenter la version et mettre à jour les timestamps
+    import time as _time
+    pack_data = dict(pack_data)
+    pack_data["version"]    = int(current_version) + 1
+    pack_data["updated_at"] = int(_time.time())
+    pack_data["fixture_count"] = len(pack_data.get("fixtures", []))
+
+    payload = {"fields": _dict_to_fields(pack_data)}
+    try:
+        result = _patch_json(url, payload, id_token)
+        return _doc_to_dict(result)
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            raise Exception(
+                "Accès refusé (403) — ajoutez la règle Firestore pour fixture_packs :\n\n"
+                "  match /fixture_packs/{packId} {\n"
+                "    allow read: if true;\n"
+                "    allow write: if request.auth != null;\n"
+                "  }"
+            )
+        raise Exception(f"Erreur publication pack : {_firebase_error(e)}")
+
+
+def delete_fixture_pack(pack_id: str, id_token: str) -> bool:
+    """Supprime le document /fixture_packs/{pack_id} dans Firestore."""
+    url = f"{_FS_BASE}/fixture_packs/{pack_id}"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {id_token}"},
+        method="DELETE",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT):
+            return True
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Erreur suppression pack : {_firebase_error(e)}")
+
+
+def fetch_fixture_packs_index(id_token: str = None) -> list:
+    """
+    Liste tous les packs de fixtures disponibles sur Firestore (métadonnées uniquement,
+    sans le champ 'fixtures' pour rester léger).
+
+    Retourne une liste de dicts :
+        [{"id", "name", "description", "version", "fixture_count", "updated_at", "tags"}, ...]
+
+    Fonctionne sans authentification si les règles Firestore autorisent la lecture publique.
+    """
+    url = f"{_FS_BASE}:runQuery"
+    query = {
+        "from":    [{"collectionId": "fixture_packs"}],
+        "orderBy": [{"field": {"fieldPath": "updated_at"}, "direction": "DESCENDING"}],
+        "select":  {
+            "fields": [
+                {"fieldPath": "name"},
+                {"fieldPath": "description"},
+                {"fieldPath": "version"},
+                {"fieldPath": "fixture_count"},
+                {"fieldPath": "updated_at"},
+                {"fieldPath": "tags"},
+            ]
+        },
+    }
+    try:
+        resp_list = _post_json_opt_auth(url, {"structuredQuery": query}, id_token)
+    except Exception as e:
+        msg = str(e)
+        if "403" in msg or "PERMISSION_DENIED" in msg:
+            raise Exception(
+                "Accès refusé (403) — ajoutez la règle Firestore pour fixture_packs :\n\n"
+                "  match /fixture_packs/{packId} {\n"
+                "    allow read: if true;\n"
+                "    allow write: if request.auth != null;\n"
+                "  }"
+            )
+        raise Exception(f"Erreur lecture packs : {e}")
+
+    packs = []
+    for entry in resp_list:
+        doc = entry.get("document")
+        if not doc:
+            continue
+        d = _doc_to_dict(doc)
+        if not d.get("name"):
+            continue
+        # Extraire l'ID depuis le chemin Firestore
+        d["id"] = doc.get("name", "").split("/")[-1]
+        packs.append(d)
+    return packs
+
+
+def fetch_fixture_pack(pack_id: str, id_token: str = None) -> dict:
+    """
+    Télécharge le document complet d'un pack (incluant le tableau 'fixtures').
+
+    Retourne : {"id", "name", "version", "fixture_count", "fixtures": [...]}
+    Lève une Exception en cas d'erreur.
+    """
+    url = f"{_FS_BASE}/fixture_packs/{pack_id}"
+    headers = {}
+    if id_token:
+        headers["Authorization"] = f"Bearer {id_token}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            doc = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise Exception(f"Pack '{pack_id}' introuvable.")
+        raise Exception(f"Erreur téléchargement pack : {_firebase_error(e)}")
+
+    d = _doc_to_dict(doc)
+    d["id"] = pack_id
+    return d
+
+
+# ---------------------------------------------------------------
 # Firestore : bibliothèque de fixtures OFL
 # ---------------------------------------------------------------
 

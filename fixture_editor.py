@@ -18,6 +18,10 @@ from PySide6.QtCore import Qt, Signal, QTimer, QThread, QObject, QRect, QSize
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QAction, QKeySequence, QPalette
 
 from builtin_fixtures import BUILTIN_FIXTURES
+from fixture_packs import (
+    FixturePackBanner, FixturePackDownloadDialog,
+    FixturePackCheckWorker, load_packs_state, should_check_now,
+)
 
 _BUNDLE_ROLE = Qt.UserRole + 3   # data role for OFL bundle fixtures in QListWidget
 _BUNDLE_CACHE: list | None = None  # module-level lazy cache
@@ -339,13 +343,15 @@ class FixtureEditorDialog(QDialog):
         super().__init__(parent, Qt.Window)
         self.setWindowTitle("Editeur de fixture — MyStrow")
         self.setMinimumSize(960, 580)
-        self.resize(1120, 700)
-        self._fixtures   = []   # custom fixtures (user-saved)
-        self._current_idx = -1  # index in _all_fixtures()
-        self._is_builtin  = False
-        self._channel_rows = []
-        self._undo_stack   = []
+        self.showMaximized()
+        self._fixtures        = []   # custom fixtures (user-saved)
+        self._current_idx     = -1   # index in _all_fixtures()
+        self._is_builtin      = False
+        self._channel_rows    = []
+        self._undo_stack      = []
         self._btn_add_to_patch = None
+        self._pack_check_thread  = None
+        self._pack_check_worker  = None
 
         self._load_fixtures()
         self._build_ui()
@@ -353,6 +359,9 @@ class FixtureEditorDialog(QDialog):
         self._rebuild_list()
         if self._all_fixtures():
             self._select_fixture(0)
+
+        # Vérification des packs distants en arrière-plan (throttlée à 1h)
+        QTimer.singleShot(800, self._check_fixture_packs)
 
     # ── Data helpers ─────────────────────────────────────────────────────────
 
@@ -390,6 +399,57 @@ class FixtureEditorDialog(QDialog):
         self._save_fixtures()
         self._rebuild_list()
 
+    # ── Packs de fixtures distants ────────────────────────────────────────────
+
+    def _check_fixture_packs(self):
+        """Lance la vérification des packs Firestore en arrière-plan (throttlée)."""
+        state = load_packs_state()
+        if not should_check_now(state):
+            return
+
+        id_token = None
+        try:
+            from license_manager import get_current_id_token
+            id_token = get_current_id_token()
+        except Exception:
+            pass
+
+        self._pack_check_worker = FixturePackCheckWorker(id_token)
+        self._pack_check_thread = QThread()
+        self._pack_check_worker.moveToThread(self._pack_check_thread)
+        self._pack_check_thread.started.connect(self._pack_check_worker.run)
+        self._pack_check_worker.found.connect(self._on_packs_found)
+        self._pack_check_worker.found.connect(self._pack_check_thread.quit)
+        self._pack_check_worker.no_update.connect(self._pack_check_thread.quit)
+        self._pack_check_worker.error.connect(self._pack_check_thread.quit)
+        self._pack_check_thread.start()
+
+    def _on_packs_found(self, packs: list):
+        """Affiche la bannière quand des packs sont disponibles."""
+        if packs:
+            self._pack_banner.set_packs(packs)
+
+    def _open_pack_download(self, packs: list):
+        """Ouvre le dialogue de téléchargement des packs."""
+        id_token = None
+        try:
+            from license_manager import get_current_id_token
+            id_token = get_current_id_token()
+        except Exception:
+            pass
+
+        dlg = FixturePackDownloadDialog(packs, id_token, parent=self)
+        dlg.download_complete.connect(self._on_packs_downloaded)
+        self._pack_banner.hide()
+        dlg.exec()
+
+    def _on_packs_downloaded(self, total_new: int):
+        """Recharge les fixtures après un téléchargement réussi."""
+        if total_new > 0:
+            self._load_fixtures()
+            self._rebuild_mfr_list()
+            self._rebuild_list()
+
     # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -401,6 +461,11 @@ class FixtureEditorDialog(QDialog):
         menubar = QMenuBar()
         self._create_menu_bar(menubar)
         outer.addWidget(menubar)
+
+        # ── Bannière packs distants (cachée par défaut) ───────────────────────
+        self._pack_banner = FixturePackBanner(self)
+        self._pack_banner.download_clicked.connect(self._open_pack_download)
+        outer.addWidget(self._pack_banner)
 
         # ── Barre de recherche + bouton Nouvelle fixture ─────────────────────
         top_bar = QWidget()
