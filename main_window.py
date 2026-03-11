@@ -7448,7 +7448,7 @@ class MainWindow(QMainWindow):
     def open_node_connection(self):
         """Ouvre l'assistant de connexion et configuration du Node DMX."""
         from node_connection import NodeConnectionDialog
-        dlg = NodeConnectionDialog(self)
+        dlg = NodeConnectionDialog(self, target_ip=self.dmx.target_ip)
         dlg.exec()
 
     def test_node_connection(self):

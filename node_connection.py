@@ -203,17 +203,56 @@ def _artpoll_broadcast(timeout: float = 1.0) -> bool:
         return False
 
 
+def _artpoll_unicast(target_ip: str, timeout: float = 1.0) -> bool:
+    """
+    Envoie un ArtPoll directement en unicast vers target_ip (port 6454).
+    Pour les vieux boitiers qui ne repondent pas au broadcast.
+    """
+    import socket as _sock
+    try:
+        s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+        s.settimeout(timeout)
+        s.sendto(_artpoll_packet(), (target_ip, 6454))
+        deadline = __import__('time').time() + timeout
+        while __import__('time').time() < deadline:
+            try:
+                s.settimeout(max(0.05, deadline - __import__('time').time()))
+                data, _ = s.recvfrom(512)
+                if data[:8] == b'Art-Net\x00':
+                    s.close()
+                    return True
+            except Exception:
+                break
+        s.close()
+    except Exception:
+        pass
+    return False
+
+
 class QuickDetector(QThread):
-    """Vérifie qu'une carte 2.x.x.x est active ET qu'un boîtier Art-Net répond en broadcast."""
+    """Vérifie qu'un boîtier Art-Net répond — broadcast d'abord, puis unicast vers target_ip."""
     finished = Signal(bool)
+
+    def __init__(self, target_ip: str = TARGET_IP, parent=None):
+        super().__init__(parent)
+        self._target_ip = target_ip
 
     def run(self):
         try:
             adapters = _get_ethernet_adapters()
-            if not any(ip.startswith("2.") for _, ip in adapters):
+            if not adapters:
                 self.finished.emit(False)
                 return
-            self.finished.emit(_artpoll_broadcast(timeout=0.8))
+            # 1. Broadcast Art-Net (nouveaux boitiers)
+            if _artpoll_broadcast(timeout=0.8):
+                self.finished.emit(True)
+                return
+            # 2. Unicast vers l'IP configuree (vieux boitiers qui ne repondent pas au broadcast)
+            if self._target_ip and self._target_ip != TARGET_IP:
+                if _artpoll_unicast(self._target_ip, timeout=0.8):
+                    self.finished.emit(True)
+                    return
+            self.finished.emit(False)
         except Exception:
             self.finished.emit(False)
 
@@ -246,8 +285,12 @@ class NetworkSetup(QThread):
 
 
 class NodeSearcher(QThread):
-    """Après stabilisation réseau, sonde le boîtier Art-Net en broadcast."""
+    """Après stabilisation réseau, sonde le boîtier Art-Net (broadcast + unicast)."""
     finished = Signal(bool)
+
+    def __init__(self, target_ip: str = TARGET_IP, parent=None):
+        super().__init__(parent)
+        self._target_ip = target_ip
 
     def run(self):
         time.sleep(0.5)
@@ -256,7 +299,13 @@ class NodeSearcher(QThread):
             if not any(ip.startswith("2.") for _, ip in adapters):
                 self.finished.emit(False)
                 return
-            self.finished.emit(_artpoll_broadcast(timeout=2.0))
+            if _artpoll_broadcast(timeout=2.0):
+                self.finished.emit(True)
+                return
+            if self._target_ip:
+                self.finished.emit(_artpoll_unicast(self._target_ip, timeout=1.5))
+                return
+            self.finished.emit(False)
         except Exception:
             self.finished.emit(False)
 
@@ -337,8 +386,9 @@ P_SUCCESS    = 7   # success
 class NodeConnectionDialog(QDialog):
     """Assistant de connexion et configuration du Node DMX."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, target_ip: str = TARGET_IP):
         super().__init__(parent)
+        self._configured_ip = target_ip
         self.setWindowTitle("Connexion – Node DMX")
         self.setFixedSize(500, 560)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -859,7 +909,7 @@ class NodeConnectionDialog(QDialog):
     def _start_quick_detection(self):
         self._go_to(P_DETECTING)
         self._spin_timer.start(180)
-        self._q_detect = QuickDetector()
+        self._q_detect = QuickDetector(target_ip=self._configured_ip)
         self._q_detect.finished.connect(self._on_quick_done)
         self._q_detect.start()
 
@@ -1010,8 +1060,8 @@ class NodeConnectionDialog(QDialog):
         self._start_node_search()
 
     def _start_node_search(self):
-        self._set_working("Recherche du boîtier DMX...", f"Envoi ArtPoll sur {TARGET_IP}...")
-        self._node_srch = NodeSearcher()
+        self._set_working("Recherche du boîtier DMX...", f"Envoi ArtPoll sur {self._configured_ip}...")
+        self._node_srch = NodeSearcher(target_ip=self._configured_ip)
         self._node_srch.finished.connect(self._on_search_done)
         self._node_srch.start()
 
