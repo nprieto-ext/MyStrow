@@ -110,7 +110,6 @@ jobs:
             main.py
 
       - name: Import certificat de signature
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
@@ -123,7 +122,6 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k mystrow-ci temp.keychain
 
       - name: Signer .app
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
         env:
           NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
@@ -134,7 +132,6 @@ jobs:
             dist/MyStrow.app
 
       - name: Notariser
-        if: ${{ secrets.NOTARIZATION_APPLE_ID != '' }}
         env:
           NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
           NOTARIZATION_APPLE_PASSWORD: ${{ secrets.NOTARIZATION_APPLE_PASSWORD }}
@@ -162,7 +159,6 @@ jobs:
             "dist/"
 
       - name: Signer le DMG
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
         env:
           NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
