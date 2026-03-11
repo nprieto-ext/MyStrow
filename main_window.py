@@ -785,6 +785,8 @@ class MainWindow(QMainWindow):
         self.node_menu = conn_menu.addMenu("🌐 Sortie Node")
         self.node_menu.addAction("🔍 Tester la connexion", self.test_node_connection)
         self.node_menu.addAction("⚙️ Paramétrer la sortie", self.open_node_connection)
+        self.node_menu.addSeparator()
+        self.node_menu.addAction("🤖 Assistant BRAD", self.open_brad_diagnostic)
 
         audio_menu = conn_menu.addMenu("🔊 Sortie Audio")
         audio_menu.addAction("🔉 Envoi un son de test", self.play_test_sound)
@@ -1035,10 +1037,14 @@ class MainWindow(QMainWindow):
         # Watermark sur le preview video integre
         self._setup_video_watermark()
 
-        # Serveur HTTP pour le plugin StreamDeck
-        from streamdeck_api import StreamDeckAPIServer
-        self._streamdeck_server = StreamDeckAPIServer(self)
-        self._streamdeck_server.start()
+        # Serveur HTTP pour le plugin StreamDeck (optionnel — ne bloque pas le démarrage)
+        try:
+            from streamdeck_api import StreamDeckAPIServer
+            self._streamdeck_server = StreamDeckAPIServer(self)
+            self._streamdeck_server.start()
+        except Exception as _e:
+            print(f"[StreamDeck API] Non disponible : {_e}")
+            self._streamdeck_server = None
 
     def showEvent(self, event):
         """Au premier affichage, fixer les tailles du splitter droit (ratio 16:9 video)"""
@@ -7449,6 +7455,12 @@ class MainWindow(QMainWindow):
         """Ouvre l'assistant de connexion et configuration du Node DMX."""
         from node_connection import NodeConnectionDialog
         dlg = NodeConnectionDialog(self, target_ip=self.dmx.target_ip)
+        dlg.exec()
+
+    def open_brad_diagnostic(self):
+        """Ouvre l'assistant BRAD — diagnostic complet DMX/réseau."""
+        from brad_diagnostic import BradDiagnosticDialog
+        dlg = BradDiagnosticDialog(self)
         dlg.exec()
 
     def test_node_connection(self):

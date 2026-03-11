@@ -117,6 +117,11 @@ def build_local_installer(version):
         f"--hidden-import=rtmidi "
         f"--hidden-import=rtmidi._rtmidi "
         f"--collect-all rtmidi "
+        f"--hidden-import=node_connection "
+        f"--hidden-import=brad_diagnostic "
+        f"--hidden-import=streamdeck_api "
+        f"--hidden-import=artnet_dmx "
+        f"--hidden-import=firebase_config "
         f"--noupx "
         f"--noconfirm main.py\n"
     )
