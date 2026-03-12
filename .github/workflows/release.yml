@@ -116,10 +116,12 @@ jobs:
         run: |
           echo "$MACOS_CERTIFICATE" | tr -d '\n' | base64 --decode > certificate.p12
           security create-keychain -p mystrow-ci temp.keychain
-          security default-keychain -s temp.keychain
+          security set-keychain-settings -lut 21600 temp.keychain
           security unlock-keychain -p mystrow-ci temp.keychain
-          security import certificate.p12 -k temp.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k mystrow-ci temp.keychain
+          security import certificate.p12 -k temp.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychains -d user -s temp.keychain $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s temp.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k mystrow-ci temp.keychain
 
       - name: Signer .app
         env:
