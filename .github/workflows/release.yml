@@ -190,11 +190,10 @@ jobs:
 
       - name: Signer le DMG
         if: steps.check-secrets.outputs.has_cert == 'true'
-        env:
-          NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
-          codesign --sign "Developer ID Application: Nicolas PRIETO ($NOTARIZATION_TEAM_ID)" \
-            MyStrow_Installer.dmg
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
+          echo "Identité trouvée : $IDENTITY"
+          codesign --sign "$IDENTITY" MyStrow_Installer.dmg
 
       - name: Upload Mac DMG
         id: upload-dmg
