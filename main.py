@@ -64,6 +64,16 @@ from core import APP_NAME, VERSION, MIDI_AVAILABLE, resource_path
 from updater import SplashScreen, UpdateChecker, AkaiSplashEffect
 
 # ------------------------------------------------------------------
+# IMPORTS NIVEAU MODULE — requis pour PyInstaller (analyse statique)
+# PyInstaller ne détecte pas les imports à l'intérieur des fonctions.
+# Ces imports au niveau module garantissent leur inclusion dans le bundle.
+# ------------------------------------------------------------------
+import main_window as _mw        # noqa: F401
+import license_manager as _lmgr  # noqa: F401
+import license_ui as _lui        # noqa: F401
+del _mw, _lmgr, _lui
+
+# ------------------------------------------------------------------
 # DIALOGUE ERREUR INTEGRITE
 # ------------------------------------------------------------------
 def _show_integrity_error():

@@ -1480,7 +1480,8 @@ def _do_upload_fixture_async(fixture_data: dict, id_token: str, refresh_token: s
         except Exception:
             pass
         # Token expiré → on rafraîchit et on réessaie une fois
-        if e.code == 403 and refresh_token:
+        token_expired = e.code == 403 and "expir" in body.lower()
+        if token_expired and refresh_token:
             try:
                 new_auth = _refresh(refresh_token)
                 id_token = new_auth["id_token"]
