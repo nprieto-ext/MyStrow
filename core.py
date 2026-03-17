@@ -24,14 +24,18 @@ from PySide6.QtGui import (
     QPen, QPolygon, QCursor, QPalette, QLinearGradient
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QVideoWidget
+try:
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+except ImportError:
+    # Fallback si le backend multimedia n'est pas disponible (ex: Mac sans dylibs)
+    QVideoWidget = None
 
 # === FILTRE FICHIERS MEDIA ===
 MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.aiff *.mp4 *.mov *.avi *.mkv *.wmv *.flv *.webm *.m4v *.mpg *.mpeg *.png *.jpg *.jpeg *.gif *.bmp *.svg *.webp *.tiff)"
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.0.30"
+VERSION = "3.0.33"
 
 # === FIREBASE (cles dans firebase_config.py, non versionne) ===
 try:
@@ -185,6 +189,11 @@ def create_icon(icon_type, color="#ffffff"):
         painter.drawRoundedRect(44, 18, 4, 28, 2, 2)
         points = [QPoint(16, 18), QPoint(16, 46), QPoint(42, 32)]
         painter.drawPolygon(QPolygon(points))
+    elif icon_type == "tap":
+        # Cercle plein centré — représente un tap/impulsion
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(16, 16, 32, 32)
 
     painter.end()
     return QIcon(pixmap)

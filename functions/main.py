@@ -312,7 +312,7 @@ _EMAIL_BASE = """\
 </div></body></html>"""
 
 
-def _send_email(to: str, subject: str, content: str) -> None:
+def _send_email(to: str, subject: str, content: str, raise_on_error: bool = False) -> None:
     if not SMTP_HOST:
         print(f"[Email] SMTP non configuré — ignoré ({to})")
         return
@@ -330,6 +330,8 @@ def _send_email(to: str, subject: str, content: str) -> None:
         print(f"[Email] Envoyé → {to} ({subject})")
     except Exception as e:
         print(f"[Email] Erreur envoi → {to} : {e}")
+        if raise_on_error:
+            raise
 
 
 def _email_welcome(email: str, password: str, expiry_ts: float, plan_type: str) -> None:
@@ -427,6 +429,12 @@ def _on_checkout_completed(session: dict) -> None:
                  stripe_customer_id=customer_id,
                  stripe_subscription_id=sub_id or "")
 
+    # Stocke le mot de passe pour la récupération future
+    if is_new:
+        _get_db().collection("licenses").document(uid).set(
+            {"password": temp_pwd}, merge=True
+        )
+
     # Email
     if is_new:
         _email_welcome(email, temp_pwd, expiry_ts, plan_type)
@@ -508,6 +516,197 @@ def _on_payment_failed(invoice: dict) -> None:
     if email:
         _email_payment_failed(email)
     print(f"[invoice.payment_failed] {email}")
+
+
+# ===========================================================================
+# CLOUD FUNCTION: create_portal_session (Stripe Customer Portal)
+# ===========================================================================
+
+@https_fn.on_request(max_instances=5)
+def create_portal_session(req: https_fn.Request) -> https_fn.Response:
+    """
+    Endpoint HTTPS : POST /create_portal_session
+    Body: {"id_token": "<Firebase ID token>"}
+    Retourne: {"ok": true, "url": "<Stripe Portal URL>"}
+    """
+    if req.method != "POST":
+        return https_fn.Response("Method not allowed", status=405)
+
+    try:
+        body     = json.loads(req.get_data() or b"{}")
+        id_token = (body.get("id_token") or "").strip()
+    except Exception:
+        return https_fn.Response("JSON invalide", status=400)
+
+    if not id_token:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "id_token manquant"}),
+            status=400, headers={"Content-Type": "application/json"},
+        )
+
+    try:
+        _get_db()
+
+        # Vérifie le token Firebase et récupère l'UID
+        decoded = auth.verify_id_token(id_token)
+        uid     = decoded["uid"]
+
+        # Récupère le stripe_customer_id depuis Firestore
+        doc = _get_db().collection("licenses").document(uid).get()
+        if not doc.exists:
+            return https_fn.Response(
+                json.dumps({"ok": False, "error": "Licence introuvable"}),
+                status=200, headers={"Content-Type": "application/json"},
+            )
+
+        customer_id = (doc.to_dict() or {}).get("stripe_customer_id", "")
+        if not customer_id:
+            return https_fn.Response(
+                json.dumps({"ok": False, "error": "Aucun abonnement Stripe associé à ce compte"}),
+                status=200, headers={"Content-Type": "application/json"},
+            )
+
+        # Crée une session Stripe Customer Portal
+        import base64 as _b64
+        token  = _b64.b64encode(f"{STRIPE_SECRET_KEY}:".encode()).decode()
+        params = urllib.parse.urlencode({
+            "customer":   customer_id,
+            "return_url": "https://mystrow.fr",
+        }).encode()
+        portal_req = urllib.request.Request(
+            "https://api.stripe.com/v1/billing_portal/sessions",
+            data=params,
+            headers={"Authorization": f"Basic {token}",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(portal_req, timeout=10) as resp:
+            session = json.loads(resp.read().decode())
+
+        print(f"[create_portal_session] Session créée pour uid={uid}")
+        return https_fn.Response(
+            json.dumps({"ok": True, "url": session["url"]}),
+            status=200, headers={"Content-Type": "application/json"},
+        )
+
+    except Exception as e:
+        print(f"[create_portal_session] Erreur : {e}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": str(e)}),
+            status=500, headers={"Content-Type": "application/json"},
+        )
+
+
+# ===========================================================================
+# CLOUD FUNCTION: send_reset_email (reset mot de passe custom)
+# ===========================================================================
+
+@https_fn.on_request(max_instances=5)
+def send_reset_email(req: https_fn.Request) -> https_fn.Response:
+    """
+    Endpoint HTTPS : POST /send_reset_email
+    Body: {"email": "user@example.com"}
+    Génère un lien Firebase password reset et envoie un email stylisé.
+    """
+    if req.method != "POST":
+        return https_fn.Response("Method not allowed", status=405)
+
+    try:
+        body  = json.loads(req.get_data() or b"{}")
+        email = (body.get("email") or "").strip().lower()
+    except Exception:
+        return https_fn.Response("JSON invalide", status=400)
+
+    if not email or "@" not in email:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Email invalide"}),
+            status=400, headers={"Content-Type": "application/json"},
+        )
+
+    try:
+        db = _get_db()
+
+        # Vérifie que l'utilisateur existe
+        try:
+            user = auth.get_user_by_email(email)
+        except auth.UserNotFoundError:
+            return https_fn.Response(
+                json.dumps({"ok": True}),
+                status=200, headers={"Content-Type": "application/json"},
+            )
+
+        uid = user.uid
+        lic_ref = db.collection("licenses").document(uid)
+        lic_doc = lic_ref.get()
+        lic_data = lic_doc.to_dict() if lic_doc.exists else {}
+
+        # ── Rate limiting : 3 emails max par heure ────────────────────────
+        now = time.time()
+        resets = [t for t in lic_data.get("reset_timestamps", []) if now - t < 3600]
+        if len(resets) >= 3:
+            return https_fn.Response(
+                json.dumps({
+                    "ok": False,
+                    "error": (
+                        "Limite atteinte (3 envois/heure).\n"
+                        "Si vous avez toujours un problème, contactez le support : nicolas@mystrow.fr"
+                    ),
+                }),
+                status=200, headers={"Content-Type": "application/json"},
+            )
+
+        # ── Récupère le mot de passe stocké, ou en génère un nouveau ─────
+        pwd_to_send = lic_data.get("password")
+        if not pwd_to_send:
+            pwd_to_send = _generate_password(12)
+            auth.update_user(uid, password=pwd_to_send)
+            lic_ref.set({"password": pwd_to_send}, merge=True)
+
+        # ── Envoi email ───────────────────────────────────────────────────
+        _send_email(
+            email,
+            "MyStrow — Vos identifiants de connexion",
+            f"""
+<h2 style="color:#fff;margin-top:0;">Vos identifiants MyStrow</h2>
+<p>Voici vos identifiants pour accéder à votre licence MyStrow :</p>
+<div class="box">
+  <div style="margin-bottom:10px;">
+    ✉️ &nbsp;<b>Email :</b> <span style="color:#aaa;">{email}</span>
+  </div>
+  <div>
+    🔑 &nbsp;<b>Mot de passe :</b><br>
+    <span style="display:inline-block;margin-top:8px;padding:10px 20px;background:#0d0d0d;
+      border:1px solid rgba(0,212,255,0.35);border-radius:8px;
+      font-family:Consolas,monospace;font-size:20px;letter-spacing:5px;color:#00d4ff;
+      box-shadow:0 0 12px rgba(0,212,255,0.15);">{pwd_to_send}</span>
+  </div>
+</div>
+<p style="margin-top:16px;">
+  Ouvrez <b>MyStrow</b>, cliquez sur <b>Se connecter</b> et entrez ces identifiants.
+</p>
+<p style="color:#555;font-size:11px;border-top:1px solid #2a2a2a;padding-top:12px;margin-top:12px;">
+  Si vous n'avez pas fait cette demande, contactez-nous : nicolas@mystrow.fr
+</p>
+""",
+            raise_on_error=True,
+        )
+
+        # Enregistre l'horodatage du reset
+        resets.append(now)
+        lic_ref.set({"reset_timestamps": resets}, merge=True)
+
+        print(f"[send_reset_email] Email envoyé → {email}")
+        return https_fn.Response(
+            json.dumps({"ok": True}),
+            status=200, headers={"Content-Type": "application/json"},
+        )
+
+    except Exception as e:
+        print(f"[send_reset_email] Erreur : {e}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": str(e)}),
+            status=500, headers={"Content-Type": "application/json"},
+        )
 
 
 # ===========================================================================

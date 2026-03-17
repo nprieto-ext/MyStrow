@@ -436,6 +436,38 @@ class LoginDialog(QDialog):
         self.btn_login.clicked.connect(self._on_login)
         lay.addWidget(self.btn_login)
 
+        self.btn_forgot = QPushButton("Mot de passe oublié ?")
+        self.btn_forgot.setFlat(True)
+        self.btn_forgot.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; border: none; background: transparent;")
+        self.btn_forgot.setCursor(Qt.PointingHandCursor)
+        self.btn_forgot.clicked.connect(self._on_forgot)
+        lay.addWidget(self.btn_forgot, alignment=Qt.AlignCenter)
+
+    def _on_forgot(self):
+        email = self.email_edit.text().strip()
+        if not email:
+            self.err_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+            self.err_label.setText("Entrez votre email ci-dessus puis cliquez à nouveau.")
+            return
+        self.btn_forgot.setEnabled(False)
+        self.err_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        self.err_label.setText("Envoi en cours…")
+        _run_async(
+            self, fc.send_password_reset, email,
+            on_success=lambda _: self._on_reset_sent(email),
+            on_error=self._on_reset_err,
+        )
+
+    def _on_reset_sent(self, email: str):
+        self.btn_forgot.setEnabled(True)
+        self.err_label.setStyleSheet(f"color: #4CAF50; font-size: 11px;")
+        self.err_label.setText(f"Email de réinitialisation envoyé à {email}")
+
+    def _on_reset_err(self, msg: str):
+        self.btn_forgot.setEnabled(True)
+        self.err_label.setStyleSheet(f"color: {RED}; font-size: 11px;")
+        self.err_label.setText(msg)
+
     def _on_login(self):
         email = self.email_edit.text().strip()
         pwd   = self.pwd_edit.text()
@@ -459,6 +491,7 @@ class LoginDialog(QDialog):
         self.accept()
 
     def _on_err(self, msg):
+        self.err_label.setStyleSheet(f"color: {RED}; font-size: 11px;")
         self.err_label.setText(msg)
         self.btn_login.setEnabled(True)
         self.btn_login.setText("Se connecter")

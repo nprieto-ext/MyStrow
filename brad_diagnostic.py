@@ -143,7 +143,7 @@ class _DiagWorker(QThread):
             if adapters:
                 for name, ip in adapters:
                     ok = ip.startswith("2.")
-                    add("Réseau", "ok" if ok else "warn",
+                    add("Réseau", "ok" if ok else "info",
                         f"{name[:35]:<35} IP={ip}")
             else:
                 # Montrer quand même tous les adaptateurs trouvés pour diagnostic
@@ -364,7 +364,7 @@ class BradDiagnosticDialog(QDialog):
     def __init__(self, window):
         super().__init__(window)
         self._window = window
-        self.setWindowTitle("Assistant BRAD — Diagnostic DMX")
+        self.setWindowTitle("Assistant de diagnostic Node — Diagnostic DMX")
         self.setMinimumSize(680, 580)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
@@ -391,7 +391,7 @@ class BradDiagnosticDialog(QDialog):
         root.setSpacing(14)
 
         # ── Titre ──
-        title = QLabel("Assistant BRAD")
+        title = QLabel("Assistant de diagnostic Node")
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
         sub = QLabel("Diagnostic automatique de la sortie DMX Art-Net")

@@ -94,6 +94,7 @@ class EffectButton(QPushButton):
     trigger_mode_changed   = Signal(int, str, int)  # (btn_index, mode, duration_ms)
     press_signal           = Signal(int)          # (btn_index)  — press physique
     released_signal        = Signal(int)          # (btn_index)  — release physique
+    open_editor_requested  = Signal(int)          # (btn_index)  — ouvre l'éditeur d'effets
 
     def __init__(self, index):
         super().__init__()
@@ -329,6 +330,10 @@ class EffectButton(QPushButton):
         dur_wa.setDefaultWidget(dur_widget)
         trig_menu.addAction(dur_wa)
 
+        menu.addSeparator()
+        act_editor = menu.addAction("🎨  Éditeur d'effets")
+        act_editor.triggered.connect(lambda: self.open_editor_requested.emit(self.index))
+
         menu.exec(self.mapToGlobal(pos))
 
     def _set_trigger_mode(self, mode: str):
@@ -520,39 +525,67 @@ class CartoucheButton(QPushButton):
         self._update_style()
 
     def _update_style(self):
-        if self.state == self.PLAYING:
-            bg = self.base_color.name()
-            border = "2px solid #ffffff"
-            text_color = "black"
-        else:
-            r = int(self.base_color.red() * 0.3)
-            g = int(self.base_color.green() * 0.3)
-            b = int(self.base_color.blue() * 0.3)
-            bg = QColor(r, g, b).name()
-            border = "1px solid #2a2a2a"
-            text_color = "white"
+        r = self.base_color.red()
+        g = self.base_color.green()
+        b = self.base_color.blue()
+        hex_col = self.base_color.name()
 
         if self.media_title:
             label = f"{self.media_icon} {self.media_title}" if self.media_icon else self.media_title
         else:
             label = f"Cartouche {self.index + 1}"
-        vol_str = f"  {self.volume}%" if self.volume < 100 else ""
+        vol_str = f"   {self.volume}%" if self.volume < 100 else ""
         self.setText(label + vol_str)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background: {bg};
-                border: {border};
-                border-radius: 4px;
-                color: {text_color};
-                font-weight: bold;
-                font-size: 11px;
-                padding: 4px 8px;
-                text-align: left;
-            }}
-            QPushButton:hover {{
-                border: 1px solid #888;
-            }}
-        """)
+
+        if self.state == self.PLAYING:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 rgba({r},{g},{b},220),
+                        stop:1 rgba({r//2},{g//2},{b//2},255));
+                    border-left: 3px solid #ffffff;
+                    border-top: 1px solid rgba({r},{g},{b},120);
+                    border-right: 1px solid rgba({r//2},{g//2},{b//2},180);
+                    border-bottom: 1px solid rgba({r},{g},{b},80);
+                    border-radius: 4px;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 11px;
+                    padding: 4px 8px 4px 10px;
+                    text-align: left;
+                }}
+                QPushButton:hover {{
+                    border-left: 3px solid white;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 rgba({min(r+30,255)},{min(g+30,255)},{min(b+30,255)},230),
+                        stop:1 rgba({r//2},{g//2},{b//2},255));
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 rgba({r},{g},{b},70),
+                        stop:0.45 rgba({r},{g},{b},25),
+                        stop:1 rgba(20,20,20,255));
+                    border-left: 3px solid {hex_col};
+                    border-top: 1px solid rgba({r},{g},{b},55);
+                    border-right: 1px solid #1e1e1e;
+                    border-bottom: 1px solid rgba({r},{g},{b},40);
+                    border-radius: 4px;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 11px;
+                    padding: 4px 8px 4px 10px;
+                    text-align: left;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 rgba({r},{g},{b},100),
+                        stop:1 rgba(30,30,30,255));
+                    border-left: 3px solid white;
+                }}
+            """)
 
     def set_idle(self):
         self.state = self.IDLE

@@ -153,7 +153,13 @@ class SplashScreen(QWidget):
         value.setStyleSheet("color: #888888;")
         row.addWidget(value)
 
-        return {"layout": row, "indicator": indicator, "value": value}
+        return {"layout": row, "indicator": indicator, "value": value, "label": label}
+
+    def set_hw_label(self, target, text):
+        """Met à jour l'étiquette gauche d'une ligne de statut hardware."""
+        row = getattr(self, f"status_{target}", None)
+        if row and "label" in row:
+            row["label"].setText(text)
 
     def set_hw_status(self, target, text, ok):
         """Met a jour un statut hardware (akai, node, license).

@@ -24,7 +24,10 @@ from PySide6.QtGui import (
     QPalette, QPolygon
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
-from PySide6.QtMultimediaWidgets import QVideoWidget
+try:
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+except ImportError:
+    QVideoWidget = None
 
 from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
@@ -35,13 +38,65 @@ from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode,
 from audio_ai import AudioColorAI
 from midi_handler import MIDIHandler
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
-from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy
+from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy, _find_free_canvas_pos
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
 from updater import UpdateBar, UpdateChecker, download_update, AboutDialog
 from license_manager import LicenseState, LicenseResult, verify_license
 from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog
+
+
+class HVUMeter(QWidget):
+    """VU mètre horizontal avec peak hold."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._level = 0.0
+        self._peak  = 0.0
+        self._peak_hold = 0
+        self.setFixedHeight(10)
+        self.setMinimumWidth(60)
+
+    def set_level(self, level: float):
+        self._level = max(0.0, min(1.0, level))
+        if self._level >= self._peak:
+            self._peak = self._level
+            self._peak_hold = 35
+        else:
+            if self._peak_hold > 0:
+                self._peak_hold -= 1
+            else:
+                self._peak = max(0.0, self._peak - 0.025)
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QLinearGradient
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        r = 3
+        # Background
+        p.setBrush(QBrush(QColor("#1a1a1a")))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(0, 0, w, h, r, r)
+        # Barre de niveau
+        if self._level > 0.001:
+            fill_w = int(w * self._level)
+            grad = QLinearGradient(0, 0, w, 0)
+            grad.setColorAt(0.0,  QColor("#00c853"))
+            grad.setColorAt(0.55, QColor("#ffd600"))
+            grad.setColorAt(0.80, QColor("#ff6d00"))
+            grad.setColorAt(1.0,  QColor("#d50000"))
+            p.setBrush(QBrush(grad))
+            p.drawRoundedRect(0, 0, fill_w, h, r, r)
+        # Peak hold
+        if self._peak > 0.01:
+            px = int(w * self._peak) - 1
+            color = QColor("#ff1744") if self._peak > 0.85 else QColor("#ffffff")
+            p.setPen(QPen(color, 2))
+            p.drawLine(px, 1, px, h - 1)
+        p.end()
 
 
 # Mapping lettre AKAI -> nom interne du groupe projecteur
@@ -392,9 +447,15 @@ class VideoOutputWindow(QWidget):
         layout.addWidget(self.stack)
 
         # Page 0 : Video
-        self.video_widget = QVideoWidget()
-        self.video_widget.setStyleSheet("background: black;")
-        self.stack.addWidget(self.video_widget)
+        if QVideoWidget is not None:
+            self.video_widget = QVideoWidget()
+            self.video_widget.setStyleSheet("background: black;")
+            self.stack.addWidget(self.video_widget)
+        else:
+            self.video_widget = None
+            _placeholder = QWidget()
+            _placeholder.setStyleSheet("background: black;")
+            self.stack.addWidget(_placeholder)
 
         # Page 1 : Ecran noir
         self.black_label = QLabel()
@@ -520,6 +581,7 @@ class MainWindow(QMainWindow):
         self.effect_state = 0
         self.effect_saved_colors = {}
         self._button_effect_configs = self._load_effect_assignments()  # {btn_idx: config_dict from editor}
+        self._effect_library_configs = self._load_effect_library()    # {effect_name: config_dict}
         self.active_effect_config = {}     # config en cours d'exécution
         self.blink_timer = None
         self.pause_mode = False
@@ -544,6 +606,7 @@ class MainWindow(QMainWindow):
 
         self.dmx_send_timer = QTimer()
         self.dmx_send_timer.timeout.connect(self.send_dmx_update)
+        self.dmx_send_timer.timeout.connect(self._update_vu_meter)
         self.dmx_send_timer.start(40)  # 25 FPS
 
         # MIDI Handler
@@ -629,6 +692,7 @@ class MainWindow(QMainWindow):
         # Initialisation au demarrage
         QTimer.singleShot(100, self.activate_default_white_pads)
         QTimer.singleShot(200, self.turn_off_all_effects)
+        QTimer.singleShot(300, self._init_default_fx_speed)
         QTimer.singleShot(1000, self.test_dmx_on_startup)
 
     def _prevent_sleep(self):
@@ -707,8 +771,6 @@ class MainWindow(QMainWindow):
         ("Contre 4", "PAR LED", "contre"),
         ("Contre 5", "PAR LED", "contre"),
         ("Contre 6", "PAR LED", "contre"),
-        ("Public",   "PAR LED", "public"),
-        ("Fumee",    "Machine a fumee", "fumee"),
     ]
 
     # Canaux par type (pour adressage compact)
@@ -726,8 +788,6 @@ class MainWindow(QMainWindow):
             p.start_address = addr
             addr += self._FIXTURE_CH.get(ftype, 5)
             self.projectors.append(p)
-        # Attribut special fumee
-        self.projectors[-1].fan_speed = 0
 
     def get_track_to_indices(self):
         """Retourne le mapping nom_affichage_groupe -> [indices projecteurs]"""
@@ -760,6 +820,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("🏠 Charger les mémoires par défaut", self.load_default_presets)
         file_menu.addAction("⚡ Charger les effets par défaut",   self.load_default_effects)
+        file_menu.addAction("🗑️ Effacer toutes les mémoires",     self.clear_all_memories)
         file_menu.addSeparator()
         file_menu.addAction("❌ Quitter", self.close)
 
@@ -781,11 +842,14 @@ class MainWindow(QMainWindow):
         akai_menu = conn_menu.addMenu("🎹 Entrée Akai")
         akai_menu.addAction("🔍 Tester la connexion", self.test_akai_connection)
         akai_menu.addAction("🔄 Reinitialiser AKAI", self.reset_akai)
+        akai_menu.addSeparator()
+        akai_menu.addAction("🛠️ Diagnostique MIDI", self.show_midi_diagnostic)
 
         self.node_menu = conn_menu.addMenu("🌐 Sortie Node")
         self.node_menu.addAction("⚙️ Paramétrer la sortie", self.open_node_connection)
         self.node_menu.addSeparator()
         self.node_menu.addAction("🤖 Assistant BRAD", self.open_brad_diagnostic)
+        self._refresh_dmx_menu_title()
 
         audio_menu = conn_menu.addMenu("🔊 Sortie Audio")
         audio_menu.addAction("🔉 Envoi un son de test", self.play_test_sound)
@@ -802,6 +866,9 @@ class MainWindow(QMainWindow):
         about_menu.addAction("ℹ️ A propos / Mises à jour", self.show_about)
         about_menu.addSeparator()
         about_menu.addAction("🔑 Licence", self._open_activation_dialog)
+        about_menu.addSeparator()
+        about_menu.addAction("✉️  Nous contacter", self._show_contact_dialog)
+        about_menu.addAction("💡  Soumettre une idée", self._show_idea_dialog)
 
         bar.addAction("🔄 Restart", self.restart_application)
 
@@ -811,25 +878,20 @@ class MainWindow(QMainWindow):
         vv = QVBoxLayout(self.video_frame)
         vv.setContentsMargins(10, 10, 10, 10)
 
-        # Titre + bouton toggle sortie video
+        # Bouton toggle sortie video
         title_layout = QHBoxLayout()
-        title = QLabel("Video")
-        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        title_layout.addWidget(title)
         title_layout.addStretch()
 
         self.video_output_btn = QPushButton("OFF")
         self.video_output_btn.setCheckable(True)
-        self.video_output_btn.setFixedSize(50, 24)
-        self.video_output_btn.setStyleSheet("""
-            QPushButton {
-                background: #8b0000; color: white; border: none;
-                border-radius: 12px; font-weight: bold; font-size: 10px;
-            }
-            QPushButton:checked {
-                background: #228b22;
-            }
-        """)
+        self.video_output_btn.setFixedSize(44, 26)
+        self.video_output_btn.setToolTip("Activer / désactiver la sortie vidéo")
+        self.video_output_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
+            "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+            "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #ff4444; } "
+            "QPushButton:pressed { background: #333; }"
+        )
         self.video_output_btn.clicked.connect(self.toggle_video_output)
         title_layout.addWidget(self.video_output_btn)
 
@@ -843,9 +905,13 @@ class MainWindow(QMainWindow):
         self.video_stack.setStyleSheet("background: #000; border: 1px solid #2a2a2a; border-radius: 6px;")
 
         # Page 0 : QVideoWidget
-        self.video_widget = QVideoWidget()
-        self.video_widget.setStyleSheet("background: #000;")
-        self.player.setVideoOutput(self.video_widget)
+        if QVideoWidget is not None:
+            self.video_widget = QVideoWidget()
+            self.video_widget.setStyleSheet("background: #000;")
+            self.player.setVideoOutput(self.video_widget)
+        else:
+            self.video_widget = QWidget()
+            self.video_widget.setStyleSheet("background: #000;")
         self.video_stack.addWidget(self.video_widget)
 
         # Page 1 : QLabel pour afficher les images
@@ -891,9 +957,18 @@ class MainWindow(QMainWindow):
 
     def toggle_video_output(self):
         """Active/desactive la sortie video externe"""
+        _SS_ON  = ("QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
+                   "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+                   "QPushButton:hover { background: #2a2a2a; color: #00ff88; border-color: #00ff88; } "
+                   "QPushButton:pressed { background: #333; }")
+        _SS_OFF = ("QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
+                   "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+                   "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #ff4444; } "
+                   "QPushButton:pressed { background: #333; }")
         if self.video_output_btn.isChecked():
             # ON - creer/montrer la fenetre
             self.video_output_btn.setText("ON")
+            self.video_output_btn.setStyleSheet(_SS_ON)
             if not self.video_output_window:
                 self.video_output_window = VideoOutputWindow()
                 # Appliquer watermark si licence non active
@@ -911,15 +986,16 @@ class MainWindow(QMainWindow):
                 self.video_output_window.show()
 
             # Forwarder les frames video vers la fenetre externe via le sink
-            sink = self.video_widget.videoSink()
+            sink = self.video_widget.videoSink() if QVideoWidget is not None else None
             if sink:
                 sink.videoFrameChanged.connect(self._forward_video_frame)
             self._update_video_output_state()
         else:
             # OFF - cacher la fenetre
             self.video_output_btn.setText("OFF")
+            self.video_output_btn.setStyleSheet(_SS_OFF)
             # Deconnecter le forward de frames
-            sink = self.video_widget.videoSink()
+            sink = self.video_widget.videoSink() if QVideoWidget is not None else None
             if sink:
                 try:
                     sink.videoFrameChanged.disconnect(self._forward_video_frame)
@@ -988,13 +1064,30 @@ class MainWindow(QMainWindow):
 
         self.color_picker_block = ColorPickerBlock(self.plan_de_feu)
 
+        # VU mètre sous le color picker
+        self._vu_meter = HVUMeter()
+        self._vu_meter.setFixedHeight(16)
+
+        cp_and_vu = QWidget()
+        cp_and_vu.setAttribute(Qt.WA_StyledBackground, True)
+        cp_and_vu.setStyleSheet("background: transparent;")
+        cp_vu_layout = QVBoxLayout(cp_and_vu)
+        cp_vu_layout.setContentsMargins(0, 0, 0, 0)
+        cp_vu_layout.setSpacing(4)
+        cp_vu_layout.addWidget(self.color_picker_block)
+
+        vu_row = QHBoxLayout()
+        vu_row.setContentsMargins(12, 0, 12, 6)
+        vu_row.addWidget(self._vu_meter)
+        cp_vu_layout.addLayout(vu_row)
+
         right = QSplitter(Qt.Vertical)
         right.setHandleWidth(2)
         right.setMinimumWidth(240)
         right.addWidget(plan_scroll)
-        right.addWidget(self.color_picker_block)
+        right.addWidget(cp_and_vu)
         right.addWidget(self.video_frame)
-        right.setStretchFactor(0, 2)
+        right.setStretchFactor(0, 1)
         right.setStretchFactor(1, 0)
         right.setStretchFactor(2, 3)
         right.setCollapsible(0, False)
@@ -1005,6 +1098,8 @@ class MainWindow(QMainWindow):
         self._right_splitter = right
         self._right_splitter_initialized = False
         right.splitterMoved.connect(self._enforce_video_ratio)
+
+        self.akai.setMinimumWidth(370)
 
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(2)
@@ -1120,9 +1215,6 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 10)
 
         title_row = QHBoxLayout()
-        title = QLabel("AKAI APC mini")
-        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        title_row.addWidget(title)
         title_row.addStretch()
         rec_btn = QPushButton("🔴")
         rec_btn.setFixedSize(26, 26)
@@ -1135,6 +1227,19 @@ class MainWindow(QMainWindow):
         rec_btn.clicked.connect(self._toggle_mem_rec_mode)
         self._rec_mem_btn = rec_btn
         title_row.addWidget(rec_btn)
+        title_row.addSpacing(2)
+
+        clr_btn = QPushButton("CLEAR")
+        clr_btn.setFixedSize(46, 26)
+        clr_btn.setToolTip("Remettre à zéro : faders à 0 + pads blancs")
+        clr_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #888; border: 1px solid #3a3a3a; "
+            "border-radius: 4px; font-size: 9px; font-weight: bold; } "
+            "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #555; } "
+            "QPushButton:pressed { background: #333; }"
+        )
+        clr_btn.clicked.connect(self._clear_akai_state)
+        title_row.addWidget(clr_btn)
         title_row.addSpacing(4)
 
         edit_layout_btn = QPushButton("⚙")
@@ -1151,12 +1256,14 @@ class MainWindow(QMainWindow):
         layout.addSpacing(4)
 
         # ── Zone unifiée pads + faders dans un widget de largeur fixe ──────────
-        # PAD_W=28, PAD_GAP=4 → 8 colonnes = 8×28 + 7×4 = 252px
+        # PAD_W=28, PAD_GAP_H=7, PAD_GAP_V=4 → 8 colonnes = 8×28 + 7×7 = 273px
         # FX_GAP=6 → séparateur avant colonne effet
         _PAD_W = 28
-        _PAD_GAP = 4
+        _PAD_GAP_H = 7   # espace horizontal entre colonnes
+        _PAD_GAP_V = 4   # espace vertical entre rangées
+        _PAD_GAP = _PAD_GAP_V  # compatibilité
         _FX_GAP = 6
-        _PADS_W = 8 * _PAD_W + 7 * _PAD_GAP   # 252 px
+        _PADS_W = 8 * _PAD_W + 7 * _PAD_GAP_H   # 273 px
 
         # Widget enveloppe qui force la même largeur pour les deux rangées
         akai_zone = QWidget()
@@ -1174,7 +1281,8 @@ class MainWindow(QMainWindow):
         self._pads_container = QWidget()
         self._pads_container.setFixedWidth(_PADS_W)   # empêche tout étirement
         self._pads_grid = QGridLayout(self._pads_container)
-        self._pads_grid.setSpacing(_PAD_GAP)
+        self._pads_grid.setHorizontalSpacing(_PAD_GAP_H)
+        self._pads_grid.setVerticalSpacing(_PAD_GAP_V)
         self._pads_grid.setContentsMargins(0, 0, 0, 0)
         pads_and_effects.addWidget(self._pads_container, 0, Qt.AlignLeft)
 
@@ -1185,6 +1293,7 @@ class MainWindow(QMainWindow):
             effect_btn = EffectButton(r)
             effect_btn.clicked.connect(lambda _, idx=r: self.toggle_effect(idx))
             effect_btn.effect_config_selected.connect(self._on_effect_assigned)
+            effect_btn.open_editor_requested.connect(lambda idx: self._open_effect_editor_for_btn(idx))
             self.effect_buttons.append(effect_btn)
             effects_col.addWidget(effect_btn)
         pads_and_effects.addLayout(effects_col)
@@ -1225,7 +1334,7 @@ class MainWindow(QMainWindow):
 
             fader_container.addWidget(col_widget)
             if i < 7:
-                fader_container.addSpacing(_PAD_GAP)
+                fader_container.addSpacing(_PAD_GAP_H)
 
         # Colonne effet (alignée avec effects_col ci-dessus)
         fader_container.addSpacing(_FX_GAP)
@@ -1233,14 +1342,24 @@ class MainWindow(QMainWindow):
         effect_col.setSpacing(2)
         effect_col.setContentsMargins(0, 0, 0, 0)
 
-        tap_btn = QPushButton("TAP")
-        tap_btn.setFixedSize(28, 16)
+        tap_btn = QToolButton()
+        tap_btn.setFixedSize(16, 16)
         tap_btn.setToolTip("Tap Tempo — tapez plusieurs fois en rythme pour régler la vitesse FX")
-        tap_btn.setStyleSheet(
-            "QPushButton { background: #1e1e1e; color: #888; border: 1px solid #3a3a3a; "
-            "border-radius: 3px; font-size: 8px; font-weight: bold; } "
-            "QPushButton:pressed { background: #333; color: #fff; border-color: #aaa; }"
-        )
+        tap_btn.setStyleSheet("""
+            QToolButton {
+                background: #4a4a4a;
+                border: 2px solid #6a6a6a;
+                border-radius: 8px;
+            }
+            QToolButton:hover {
+                background: #5a5a5a;
+                border: 2px solid #aaa;
+            }
+            QToolButton:pressed {
+                background: #333;
+                border: 2px solid #fff;
+            }
+        """)
         tap_btn.clicked.connect(self._tap_tempo)
         self._tap_btn = tap_btn
         effect_col.addWidget(tap_btn, alignment=Qt.AlignCenter)
@@ -1269,10 +1388,6 @@ class MainWindow(QMainWindow):
 
         # Cartoucheur
         layout.addSpacing(20)
-        cart_label = QLabel("Cartoucheur")
-        cart_label.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        layout.addWidget(cart_label)
-        layout.addSpacing(6)
 
         self.cartouches = []
         for i in range(4):
@@ -1283,18 +1398,16 @@ class MainWindow(QMainWindow):
             layout.addWidget(cart)
             self.cartouches.append(cart)
 
-        layout.addSpacing(8)
-        self._bpm_label = QLabel("— BPM")
-        self._bpm_label.setAlignment(Qt.AlignCenter)
-        self._bpm_label.setStyleSheet(
-            "QLabel { color: #444; font-size: 11px; font-weight: bold; "
-            "background: transparent; }"
-        )
-        layout.addWidget(self._bpm_label)
+        layout.addSpacing(20)
+
+        # Banniere de licence sous les cartouches
+        self._license_banner = LicenseBanner()
+        self._license_banner.dismissed.connect(self._on_license_banner_dismissed)
+        self._license_banner.activate_clicked.connect(self._on_banner_clicked)
+        self._apply_license_banner()
+        layout.addWidget(self._license_banner)
 
         layout.addStretch()
-
-        # Banniere de licence supprimee
 
         return frame
 
@@ -1545,6 +1658,43 @@ class MainWindow(QMainWindow):
         except:
             pass
 
+    def _update_vu_meter(self):
+        """Mise à jour du VU mètre à 25 FPS."""
+        if not hasattr(self, '_vu_meter'):
+            return
+        try:
+            import math, random
+            main_playing  = self.player.playbackState()      == QMediaPlayer.PlayingState
+            cart_playing  = self.cart_player.playbackState() == QMediaPlayer.PlayingState
+
+            if not main_playing and not cart_playing:
+                self._vu_meter.set_level(0.0)
+                return
+
+            # Source : player principal prioritaire, sinon cartouche
+            if main_playing:
+                position = self.player.position()
+                analyzed = self.audio_ai.analyzed and self.player.duration() > 0
+            else:
+                position = self.cart_player.position()
+                analyzed = False  # pas d'analyse IA sur les cartouches
+
+            if analyzed:
+                level = self.audio_ai.get_energy_at(position)
+            else:
+                t = position / 1000.0
+                level = (
+                    0.30
+                    + 0.20 * math.sin(t * 2.3)
+                    + 0.12 * math.sin(t * 5.7 + 1.1)
+                    + 0.08 * math.sin(t * 11.3 + 2.4)
+                    + random.uniform(-0.04, 0.04)
+                )
+                level = max(0.05, min(0.95, level))
+            self._vu_meter.set_level(level)
+        except Exception:
+            pass
+
     def on_media_status_changed(self, status):
         """Passe automatiquement au suivant ou gere les pauses"""
         if status == QMediaPlayer.EndOfMedia:
@@ -1642,6 +1792,19 @@ class MainWindow(QMainWindow):
             return
         slot = self._fader_map[col_idx]
         if slot["type"] != "group":
+            return
+
+        # Mode REC actif : impossible d'enregistrer sur un pad groupe (A/B/C/D/E/F)
+        if self._mem_rec_mode:
+            self._mem_rec_mode = False
+            if self._rec_mem_btn:
+                self._rec_mem_btn.setStyleSheet(
+                    "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #3a3a3a; "
+                    "border-radius: 4px; font-size: 13px; } "
+                    "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
+                )
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
+            self._show_error_toast("✖ Impossible d'enregistrer sur un Groupe — Sélectionnez une mémoire")
             return
         target_groups = self._slot_groups(slot)
 
@@ -1742,26 +1905,80 @@ class MainWindow(QMainWindow):
         toast.raise_()
         QTimer.singleShot(2200, toast.deleteLater)
 
+    def _show_error_toast(self, text):
+        """Affiche un message d'erreur ephemere en bas a gauche de la fenetre."""
+        toast = QLabel(text, self)
+        toast.setStyleSheet(
+            "QLabel { background: #2a0a0a; color: #ff4444; border: 1px solid #cc3333; "
+            "border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: bold; }"
+        )
+        toast.setWindowFlags(Qt.SubWindow)
+        toast.adjustSize()
+        toast.move(12, self.height() - toast.height() - 16)
+        toast.show()
+        toast.raise_()
+        QTimer.singleShot(2500, toast.deleteLater)
+
     def _show_bpm_toast(self, bpm: int):
         """Affiche le BPM calculé via tap tempo dans un popup éphémère."""
-        # Supprimer un éventuel toast BPM précédent encore affiché
         existing = getattr(self, '_bpm_toast_widget', None)
         if existing:
             try:
                 existing.deleteLater()
             except Exception:
                 pass
-        toast = QLabel(f"🎵  {bpm} BPM", self)
-        toast.setStyleSheet(
-            "QLabel { background: #1a1a2e; color: #00d4ff; "
-            "border: 1px solid #00d4ff; border-radius: 8px; "
-            "padding: 8px 20px; font-size: 16px; font-weight: bold; }"
-        )
-        toast.setWindowFlags(Qt.SubWindow)
+
+        # Widget style LicenseBanner (gradient + séparateur + icône)
+        toast = QWidget(self)
+        toast.setAttribute(Qt.WA_StyledBackground, True)
+        toast.setFixedHeight(38)
+        toast.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #0d3344, stop:1 #1a1a1a
+                );
+                border: 1px solid #00d4ff;
+                border-radius: 5px;
+            }
+        """)
+
+        row = QHBoxLayout(toast)
+        row.setContentsMargins(10, 0, 16, 0)
+        row.setSpacing(8)
+
+        icon_lbl = QLabel("🎵")
+        icon_lbl.setFixedWidth(18)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setFont(QFont("Segoe UI", 11))
+        icon_lbl.setStyleSheet("background: transparent; border: none;")
+        row.addWidget(icon_lbl)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        sep.setFixedHeight(20)
+        sep.setStyleSheet("background: #00d4ff; border: none;")
+        row.addWidget(sep)
+
+        text_lbl = QLabel(f"{bpm} BPM")
+        text_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        text_lbl.setStyleSheet("color: #ffffff; background: transparent; border: none;")
+        text_lbl.setAlignment(Qt.AlignCenter)
+        row.addWidget(text_lbl)
+
         toast.adjustSize()
-        # Centré horizontalement, proche du bas
-        x = (self.width() - toast.width()) // 2
-        y = self.height() - toast.height() - 24
+        toast.setFixedWidth(max(toast.width(), 130))
+
+        # Positionné sous les cartouches
+        if self.cartouches:
+            last_cart = self.cartouches[-1]
+            ref = last_cart.mapTo(self, last_cart.rect().bottomLeft())
+            x = ref.x()
+            y = ref.y() + 6
+        else:
+            x = (self.width() - toast.width()) // 2
+            y = self.height() - toast.height() - 24
         toast.move(x, y)
         toast.show()
         toast.raise_()
@@ -1805,12 +2022,21 @@ class MainWindow(QMainWindow):
             self._clear_memory_from_projectors(mem_col, prev_row)
             self._style_memory_pad(mem_col, prev_row, active=False)
             self._update_memory_pad_led(mem_col, prev_row, active=False)
+            # Couper l'effet du pad précédent s'il est actif
+            prev_mem = self.memories[mem_col][prev_row]
+            prev_eff_name = (prev_mem.get("effect") or {}).get("name") if prev_mem else None
+            if prev_eff_name and getattr(self, 'active_effect', None) == prev_eff_name:
+                self.stop_effect()
+                self.active_effect = None
+                self.active_effect_config = {}
 
         # Activer le nouveau pad
         self.active_memory_pads[col_akai] = row
         self._style_memory_pad(mem_col, row, active=True)
         self._update_memory_pad_led(mem_col, row, active=True)
-        self._apply_memory_to_projectors(mem_col, row)
+        fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
+        if fader_val > 0:
+            self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
 
         self._save_akai_config_auto()
         # Envoi DMX immediat sans attendre le prochain tick
@@ -1829,7 +2055,7 @@ class MainWindow(QMainWindow):
                 p.level = 0
                 p.color = QColor("black")
 
-    def _apply_memory_to_projectors(self, mem_col, row, fader_value=None):
+    def _apply_memory_to_projectors(self, mem_col, row, fader_value=None, trigger_effect=True):
         """Applique directement une memoire sur les projecteurs.
         Seuls les projecteurs avec level > 0 dans le snapshot sont modifies,
         ce qui preserves les faders couleur (0-3) independants.
@@ -1856,6 +2082,16 @@ class MainWindow(QMainWindow):
                 int(base_color.green() * level / 100.0),
                 int(base_color.blue()  * level / 100.0)
             )
+
+        # Déclencher l'effet associé à cette mémoire (si configuré et pas déjà actif)
+        if trigger_effect:
+            eff_cfg = mem.get("effect")
+            if eff_cfg and eff_cfg.get("layers"):
+                eff_name = eff_cfg.get("name", "")
+                if getattr(self, 'active_effect', None) != eff_name:
+                    self.active_effect = eff_name
+                    self.active_effect_config = eff_cfg
+                    self.start_effect(eff_name)
 
     def _style_memory_pad(self, mem_col, row, active):
         """Style visuel d'un pad memoire"""
@@ -1890,6 +2126,25 @@ class MainWindow(QMainWindow):
                     border-radius: 4px;
                 }}
             """)
+        pad.setToolTip(self._build_memory_tooltip(mem_col, row))
+
+    def _build_memory_tooltip(self, mem_col, row):
+        """Construit le tooltip HTML d'un pad mémoire."""
+        label = f"MEM {mem_col + 1}.{row + 1}"
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return f"<b>{label}</b><br><small style='color:#888'>Vide</small>"
+        lines = [f"<b>{label}</b>"]
+        group_info = {}
+        for i, ps in enumerate(mem.get("projectors", [])):
+            if ps.get("level", 0) > 0 and i < len(self.projectors):
+                g = self.projectors[i].group
+                gname = self.GROUP_DISPLAY.get(g, g.capitalize())
+                color_hex = ps.get("base_color", "#ffffff")
+                lvl = ps.get("level", 0)
+                if gname not in group_info:
+                    group_info[gname] = (color_hex, lvl)
+        return f"<b>{label}</b>"
 
     def _get_memory_pad_color(self, mem_col, row):
         """Retourne la couleur custom ou dominante du snapshot"""
@@ -2010,12 +2265,37 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.setStyleSheet(menu_style)
 
+        # Header : nom de la mémoire
+        label = f"MEM {mem_col + 1}.{row + 1}"
+        from PySide6.QtWidgets import QWidgetAction, QLabel
+        header_label = QLabel(f"  {label}  ")
+        header_label.setStyleSheet("""
+            QLabel {
+                color: #aaa;
+                font-size: 10px;
+                font-weight: bold;
+                letter-spacing: 1px;
+                padding: 4px 12px 4px 12px;
+                border-bottom: 1px solid #333;
+                background: transparent;
+            }
+        """)
+        header_wa = QWidgetAction(menu)
+        header_wa.setDefaultWidget(header_label)
+        menu.addAction(header_wa)
+        menu.addSeparator()
+
+        def _record_and_feedback():
+            self._record_memory(mem_col, row)
+            self._show_mem_toast("✔ Séquence enregistrée")
+            self._blink_memory_pad(mem_col, row)
+
         if self.memories[mem_col][row] is None:
             save_action = menu.addAction("Sauvegarder")
-            save_action.triggered.connect(lambda: self._record_memory(mem_col, row))
+            save_action.triggered.connect(_record_and_feedback)
         else:
             replace_action = menu.addAction("Remplacer")
-            replace_action.triggered.connect(lambda: self._record_memory(mem_col, row))
+            replace_action.triggered.connect(_record_and_feedback)
             clear_action = menu.addAction("Effacer")
             clear_action.triggered.connect(lambda: self._clear_memory(mem_col, row))
             menu.addSeparator()
@@ -2043,7 +2323,142 @@ class MainWindow(QMainWindow):
                 action = color_menu.addAction(QIcon(px), name)
                 action.triggered.connect(lambda _, c=col: self._set_memory_custom_color(mem_col, row, c))
 
+            # Sous-menu effet (liste plate + recherche, même style que boutons AKAI)
+            mem = self.memories[mem_col][row]
+            cur_effect_name = (mem.get("effect") or {}).get("name") if mem else None
+
+            _all_effects = []
+            try:
+                from effect_editor import BUILTIN_EFFECTS
+                _all_effects = list(BUILTIN_EFFECTS)
+                lib = getattr(self, '_effect_library_configs', {})
+                _existing = {e["name"] for e in _all_effects}
+                for lib_cfg in lib.values():
+                    if isinstance(lib_cfg, dict) and lib_cfg.get("name") not in _existing:
+                        _all_effects.append(lib_cfg)
+            except Exception:
+                pass
+
+            eff_submenu_style = """
+                QMenu {
+                    background: #1a1a1a;
+                    border: 1px solid #3a3a3a;
+                    padding: 4px;
+                    font-size: 12px;
+                }
+                QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
+                QMenu::item:selected { background: #2a3a3a; color: #fff; }
+                QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
+                QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
+            """
+            eff_label = f"✨  {cur_effect_name}" if cur_effect_name else "➕  Ajouter un effet"
+            effect_menu = menu.addMenu(eff_label)
+            effect_menu.setStyleSheet(eff_submenu_style)
+
+            # Barre de recherche
+            from PySide6.QtWidgets import QLineEdit, QWidgetAction
+            search_container = QWidget()
+            search_container.setStyleSheet("background: transparent;")
+            search_layout = QHBoxLayout(search_container)
+            search_layout.setContentsMargins(6, 4, 6, 4)
+            search_input = QLineEdit()
+            search_input.setPlaceholderText("  Rechercher un effet…")
+            search_input.setClearButtonEnabled(True)
+            search_input.setStyleSheet("""
+                QLineEdit {
+                    background: #111; color: #e0e0e0;
+                    border: 1px solid #444; border-radius: 4px;
+                    padding: 4px 8px; font-size: 12px;
+                }
+                QLineEdit:focus { border-color: #00d4ff; }
+            """)
+            def _search_key(event, _si=search_input):
+                from PySide6.QtCore import Qt as _Qt
+                if event.key() in (_Qt.Key_Up, _Qt.Key_Down, _Qt.Key_Return, _Qt.Key_Enter):
+                    event.accept(); return
+                QLineEdit.keyPressEvent(_si, event)
+            search_input.keyPressEvent = _search_key
+            search_layout.addWidget(search_input)
+            search_wa = QWidgetAction(effect_menu)
+            search_wa.setDefaultWidget(search_container)
+            effect_menu.addAction(search_wa)
+            effect_menu.addSeparator()
+
+            no_eff_act = effect_menu.addAction("⭕  Aucun")
+            no_eff_act.setCheckable(True)
+            no_eff_act.setChecked(not cur_effect_name)
+            no_eff_act.triggered.connect(lambda: self._set_memory_effect(mem_col, row, None))
+            sep_top = effect_menu.addSeparator()
+
+            _CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
+            cat_groups = []
+            for cat in _CATS:
+                cat_effs = [e for e in _all_effects if e.get("category") == cat]
+                if not cat_effs:
+                    continue
+                hdr = effect_menu.addAction(f"  {cat.upper()}")
+                hdr.setEnabled(False)
+                eff_actions = []
+                for eff in cat_effs:
+                    eff_name = eff.get("name", "")
+                    act = effect_menu.addAction(f"  {eff_name}")
+                    act.setCheckable(True)
+                    act.setChecked(cur_effect_name == eff_name)
+                    act.triggered.connect(
+                        lambda checked=False, e=dict(eff), mc=mem_col, r=row:
+                            self._set_memory_effect(mc, r, e)
+                    )
+                    eff_actions.append((act, eff_name))
+                cat_groups.append((hdr, eff_actions))
+
+            # Filtrage dynamique
+            def _apply_filter(text, _none=no_eff_act, _sep=sep_top, _cg=cat_groups):
+                q = text.strip().lower()
+                _none.setVisible(not q)
+                _sep.setVisible(not q)
+                for hdr_act, eff_acts in _cg:
+                    any_vis = False
+                    for act, name in eff_acts:
+                        vis = not q or q in name.lower()
+                        act.setVisible(vis)
+                        if vis: any_vis = True
+                    hdr_act.setVisible(any_vis)
+
+            search_input.textChanged.connect(_apply_filter)
+            QTimer.singleShot(0, search_input.setFocus)
+
         menu.exec(btn.mapToGlobal(pos))
+
+    def _set_memory_effect(self, mem_col, row, eff_dict_or_none):
+        """Associe (ou retire) un effet à une mémoire."""
+        mem = self.memories[mem_col][row]
+        if mem is None:
+            return
+        if eff_dict_or_none is None:
+            mem.pop("effect", None)
+        else:
+            name = eff_dict_or_none.get("name", "")
+            # Chercher config complète (layers, play_mode, duration) dans les sources sauvegardées
+            full_cfg = {}
+            for cfg in getattr(self, '_button_effect_configs', {}).values():
+                if isinstance(cfg, dict) and cfg.get("name") == name:
+                    full_cfg = cfg
+                    break
+            if not full_cfg:
+                full_cfg = getattr(self, '_effect_library_configs', {}).get(name, {})
+            if full_cfg:
+                mem["effect"] = dict(full_cfg)
+            else:
+                from effect_editor import EffectLayer
+                layers = EffectLayer.layers_from_builtin(eff_dict_or_none)
+                mem["effect"] = {
+                    "name": name,
+                    "type": eff_dict_or_none.get("type", ""),
+                    "layers": [l.to_dict() for l in layers],
+                    "play_mode": "loop",
+                    "duration": 0,
+                }
+        self._save_akai_config_auto()
 
     def _clear_memory(self, mem_col, row):
         """Efface une memoire individuelle"""
@@ -2071,9 +2486,23 @@ class MainWindow(QMainWindow):
                 self.active_memory_pads[index] = 0
                 self._style_memory_pad(mem_col, 0, active=True)
                 active_row = 0
-            # Appliquer avec value directement (evite le lag MIDI de fader.value)
             if active_row is not None and self.memories[mem_col][active_row]:
-                self._apply_memory_to_projectors(mem_col, active_row, fader_value=value)
+                if value == 0:
+                    # Fader à zéro : zeroing projecteurs + couper l'effet si c'est le sien
+                    self._apply_memory_to_projectors(mem_col, active_row, fader_value=0, trigger_effect=False)
+                    mem_eff_name = (self.memories[mem_col][active_row].get("effect") or {}).get("name")
+                    if mem_eff_name and getattr(self, 'active_effect', None) == mem_eff_name:
+                        self.stop_effect()
+                        self.active_effect = None
+                        self.active_effect_config = {}
+                else:
+                    mem_eff_name = (self.memories[mem_col][active_row].get("effect") or {}).get("name")
+                    if mem_eff_name and getattr(self, 'active_effect', None) == mem_eff_name:
+                        # Effet actif : ne pas écraser ses couleurs à chaque tick de fader
+                        pass
+                    else:
+                        # Appliquer avec value directement (evite le lag MIDI de fader.value)
+                        self._apply_memory_to_projectors(mem_col, active_row, fader_value=value)
             self.send_dmx_update()
             return
 
@@ -2184,7 +2613,7 @@ class MainWindow(QMainWindow):
         self.effect_saved_colors = {}
 
         for p in self.projectors:
-            self.effect_saved_colors[id(p)] = (p.base_color, p.color)
+            self.effect_saved_colors[id(p)] = (p.base_color, p.color, p.level)
 
         if not hasattr(self, 'effect_timer'):
             self.effect_timer = QTimer()
@@ -2230,6 +2659,19 @@ class MainWindow(QMainWindow):
             self.effect_brightness = 0
             self.effect_direction = 1
 
+    def _stop_once_effect(self):
+        """Arrête un effet lancé en mode 'une fois' et désactive le bouton correspondant."""
+        self.stop_effect()
+        # Désactiver le bouton AKAI actif
+        for i, btn in enumerate(self.effect_buttons):
+            if btn.active:
+                btn.active = False
+                btn.update_style()
+                if MIDI_AVAILABLE and self.midi_handler.midi_out and i < 8:
+                    self.midi_handler.set_pad_led(i, 8, 0)
+        self.active_effect = None
+        self.active_effect_config = {}
+
     def stop_effect(self):
         """Arrete l'effet en cours"""
         if hasattr(self, 'effect_timer'):
@@ -2240,9 +2682,10 @@ class MainWindow(QMainWindow):
 
         for p in self.projectors:
             if id(p) in self.effect_saved_colors:
-                base_color, color = self.effect_saved_colors[id(p)]
+                base_color, color, level = self.effect_saved_colors[id(p)]
                 p.base_color = base_color
                 p.color = color
+                p.level = level
 
     def _bascule(self):
         """Effet Bascule : echange les couleurs entre les deux groupes ou alterne un/deux."""
@@ -2505,10 +2948,43 @@ class MainWindow(QMainWindow):
     def open_effect_editor(self):
         """Ouvre l'editeur d'effets (menu Edition)"""
         from effect_editor import EffectEditorDialog
-        dlg = EffectEditorDialog(clips=[], main_window=self, parent=self)
+        # Préférer le nom complet dans active_effect_config (ex: "Flash Simple")
+        # plutôt que active_effect qui peut être un type legacy (ex: "Flash")
+        cfg = getattr(self, 'active_effect_config', {}) or {}
+        active_name = cfg.get('name') or getattr(self, 'active_effect', None)
+        dlg = EffectEditorDialog(clips=[], main_window=self, parent=self, initial_effect=active_name)
+        dlg.exec()
+
+    def _open_effect_editor_for_btn(self, btn_idx: int):
+        """Ouvre l'éditeur d'effets pré-sélectionné sur l'effet du bouton btn_idx."""
+        from effect_editor import EffectEditorDialog
+        cfg = self._button_effect_configs.get(btn_idx, {})
+        initial_name = cfg.get('name')
+        if not initial_name and btn_idx < len(self.effect_buttons):
+            initial_name = self.effect_buttons[btn_idx].current_effect
+        dlg = EffectEditorDialog(clips=[], main_window=self, parent=self, initial_effect=initial_name)
         dlg.exec()
 
     _EFFECT_ASSIGNMENTS_FILE = Path.home() / ".mystrow_effect_assignments.json"
+    _EFFECT_LIBRARY_FILE     = Path.home() / ".mystrow_effect_library.json"
+
+    def _load_effect_library(self) -> dict:
+        """Charge les configs d'effets non assignés (édités mais pas sur un bouton)."""
+        try:
+            if self._EFFECT_LIBRARY_FILE.exists():
+                return json.loads(self._EFFECT_LIBRARY_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return {}
+
+    def _save_effect_library(self):
+        """Sauvegarde les configs d'effets non assignés."""
+        try:
+            self._EFFECT_LIBRARY_FILE.write_text(
+                json.dumps(self._effect_library_configs, indent=2, ensure_ascii=False),
+                encoding="utf-8")
+        except Exception:
+            pass
 
     def _load_effect_assignments(self) -> dict:
         """Charge les assignations bouton→effet depuis le disque."""
@@ -2553,6 +3029,16 @@ class MainWindow(QMainWindow):
             return
 
         t = _time.monotonic() - getattr(self, 'effect_t0', 0)
+
+        # Mode "une fois" : stoppe l'effet après la durée configurée
+        play_mode = cfg.get("play_mode", "loop")
+        if play_mode == "once":
+            duration = cfg.get("duration", 0)
+            if duration <= 0:
+                duration = 2.0  # durée par défaut d'un cycle : 2 secondes
+            if t >= duration:
+                QTimer.singleShot(0, self._stop_once_effect)
+                return
         projectors = [p for p in self.projectors if p.group != "fumee"]
         n = len(projectors)
         if n == 0:
@@ -2604,7 +3090,11 @@ class MainWindow(QMainWindow):
                 else:
                     x = (freq * t + i / max(n, 1) * sp + phase) % 1.0
 
-                raw = _wave(forme, x)
+                if forme == "Audio":
+                    import random as _rand
+                    raw = _rand.random()
+                else:
+                    raw = _wave(forme, x)
                 if fade > 0:
                     sin_val = (_math.sin(2 * _math.pi * x) + 1) / 2
                     raw = raw * (1 - fade) + sin_val * fade
@@ -2632,9 +3122,13 @@ class MainWindow(QMainWindow):
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
 
             level = min(1.0, dim) if has_dim else 1.0
-            bv    = level * (proj.level / 100.0) if proj.level > 0 else level
+            # L'effet contrôle la luminosité indépendamment du fader :
+            # on force proj.level=100 et on encode toute la brillance dans proj.color
+            bv = level
 
             has_color_val = r > 0 or g > 0 or b > 0
+            if has_dim or has_color_val or has_rgb_layer:
+                proj.level = 100  # ouvre le dimmer DMX pour laisser passer l'effet
             if has_color_val:
                 cr = min(255, int(r * 255))
                 cg = min(255, int(g * 255))
@@ -2852,17 +3346,8 @@ class MainWindow(QMainWindow):
         if 8 in self.faders:
             self.faders[8].set_value(speed)
 
-        # Mettre à jour le label BPM sous les cartouches
-        bpm_int = int(bpm)
-        if hasattr(self, '_bpm_label'):
-            self._bpm_label.setText(f"{bpm_int} BPM")
-            self._bpm_label.setStyleSheet(
-                "QLabel { color: #00d4ff; font-size: 11px; font-weight: bold; "
-                "background: transparent; }"
-            )
-
         # Afficher le BPM détecté via un toast éphémère
-        self._show_bpm_toast(bpm_int)
+        self._show_bpm_toast(int(bpm))
 
     def set_master_level(self, index, value):
         """Définit le niveau master général (0-100) et recompute les couleurs de sortie."""
@@ -2907,6 +3392,50 @@ class MainWindow(QMainWindow):
                             mem_col = slot["mem_col"]
                             is_active = self.active_memory_pads.get(col) == row
                             self._update_memory_pad_led(mem_col, row, active=is_active)
+
+    def _clear_akai_state(self):
+        """Remet l'AKAI à zéro : faders 0-7 à 0 + pads blancs activés."""
+        # Faders à 0
+        for idx in range(8):
+            if idx in self.faders:
+                self.faders[idx].value = 0
+                self.faders[idx].update()
+            self.set_proj_level(idx, 0)
+
+        # MIDI faders à 0
+        if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
+            for idx in range(8):
+                self.midi_handler.midi_out.send_message([0xB0, idx, 0])
+
+        # Désactiver les pads actifs sur les colonnes groupe
+        for col, pad in list(self.active_pads.items()):
+            slot = self._fader_map[col] if col < len(self._fader_map) else None
+            if slot and slot["type"] == "group":
+                old_color = pad.property("base_color")
+                dim_color = QColor(int(old_color.red() * 0.5), int(old_color.green() * 0.5), int(old_color.blue() * 0.5))
+                pad.setStyleSheet(f"QPushButton {{ background: {dim_color.name()}; border: 1px solid #2a2a2a; border-radius: 4px; }}")
+        self.active_pads.clear()
+
+        # Activer les pads blancs (row 0)
+        self.activate_default_white_pads()
+
+        # Couper l'effet en cours s'il y en a un
+        if getattr(self, 'active_effect', None) or getattr(self, 'active_effect_config', {}):
+            self.stop_effect()
+            self.active_effect = None
+            self.active_effect_config = {}
+            for btn in self.effect_buttons:
+                if btn.active:
+                    btn.active = False
+                    btn.update_style()
+
+        self._show_mem_toast("✔ AKAI remis à zéro")
+
+    def _init_default_fx_speed(self):
+        """Initialise le fader FX à 80% au démarrage."""
+        self.effect_speed = 80
+        if 8 in self.faders:
+            self.faders[8].set_value(80)
 
     def turn_off_all_effects(self):
         """Eteint tous les effets au demarrage"""
@@ -3383,8 +3912,6 @@ class MainWindow(QMainWindow):
             self.current_show_path = path
             self.add_recent_file(path)
             self.setWindowTitle(f"{APP_NAME} - {os.path.basename(path)}")
-            # Clear total apres sauvegarde
-            self.full_blackout()
             self.plan_de_feu.refresh()
             return True
         except Exception as e:
@@ -3539,33 +4066,33 @@ class MainWindow(QMainWindow):
                             self.cartouches[i].media_icon = ""
                     self.cartouches[i].set_idle()
 
-            # Restaurer les memoires (retrocompat ancien format 1D -> 2D, 3 cols -> 4+ cols)
-            self.memories = [[None]*8 for _ in range(8)]
-            self.memory_custom_colors = [[None]*8 for _ in range(8)]
-            self.active_memory_pads = {}
+            # Restaurer les memoires depuis le .tui uniquement si pas de fichier config AKAI
+            # (le fichier config AKAI est la source de vérité depuis qu'il existe)
+            if not os.path.exists(self._AKAI_CONFIG_PATH):
+                self.memories = [[None]*8 for _ in range(8)]
+                self.memory_custom_colors = [[None]*8 for _ in range(8)]
+                self.active_memory_pads = {}
 
-            if mem_data:
-                if isinstance(mem_data, list) and len(mem_data) >= 1:
-                    if isinstance(mem_data[0], list):
-                        # Nouveau format 2D
-                        for mc in range(min(8, len(mem_data))):
-                            for mr in range(min(8, len(mem_data[mc]))):
-                                self.memories[mc][mr] = mem_data[mc][mr]
-                    else:
-                        # Ancien format 1D: chaque memoire migree vers row 0
-                        for mc in range(min(8, len(mem_data))):
-                            if mem_data[mc]:
-                                self.memories[mc][0] = mem_data[mc]
+                if mem_data:
+                    if isinstance(mem_data, list) and len(mem_data) >= 1:
+                        if isinstance(mem_data[0], list):
+                            for mc in range(min(8, len(mem_data))):
+                                for mr in range(min(8, len(mem_data[mc]))):
+                                    self.memories[mc][mr] = mem_data[mc][mr]
+                        else:
+                            for mc in range(min(8, len(mem_data))):
+                                if mem_data[mc]:
+                                    self.memories[mc][0] = mem_data[mc]
 
-            if custom_colors_data and isinstance(custom_colors_data, list):
-                for mc in range(min(8, len(custom_colors_data))):
-                    for mr in range(min(8, len(custom_colors_data[mc]))):
-                        c = custom_colors_data[mc][mr]
-                        self.memory_custom_colors[mc][mr] = QColor(c) if c else None
+                if custom_colors_data and isinstance(custom_colors_data, list):
+                    for mc in range(min(8, len(custom_colors_data))):
+                        for mr in range(min(8, len(custom_colors_data[mc]))):
+                            c = custom_colors_data[mc][mr]
+                            self.memory_custom_colors[mc][mr] = QColor(c) if c else None
 
-            if active_pads_data and isinstance(active_pads_data, dict):
-                for k, v in active_pads_data.items():
-                    self.active_memory_pads[int(k)] = v
+                if active_pads_data and isinstance(active_pads_data, dict):
+                    for k, v in active_pads_data.items():
+                        self.active_memory_pads[int(k)] = v
 
             # Mettre a jour l'affichage des pads memoire
             for fi, mc in self._bank_memory_slots():
@@ -3763,7 +4290,10 @@ class MainWindow(QMainWindow):
                 with open(self._AKAI_CONFIG_PATH, 'r') as f:
                     config = json.load(f)
                 self._apply_akai_config(config)
-                self._migrate_missing_pad_colors()
+                # Migrer uniquement si le fichier n'a pas de section memories explicite
+                # (vieux fichier de config sans memories) — évite d'écraser un effacement volontaire
+                if "memories" not in config:
+                    self._migrate_missing_pad_colors()
             # Reconstruire les pads/faders avec le layout restauré
             if hasattr(self, '_pads_container'):
                 self._rebuild_akai_pads()
@@ -3937,6 +4467,37 @@ class MainWindow(QMainWindow):
             "Chaque ligne = une couleur :\n"
             "Blanc / Rouge / Orange / Jaune / Vert / Cyan / Bleu / Magenta"
         )
+
+    def clear_all_memories(self):
+        """Efface toutes les mémoires des 8 colonnes MEM."""
+        reply = QMessageBox.question(
+            self,
+            "Effacer toutes les mémoires",
+            "Effacer toutes les mémoires ?\n\n"
+            "Les 8 colonnes MEM seront complètement vidées.\n"
+            "Cette action est irréversible.",
+            QMessageBox.Yes | QMessageBox.Cancel
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        for mc in range(8):
+            for mr in range(8):
+                self.memories[mc][mr] = None
+                self.memory_custom_colors[mc][mr] = None
+
+        self.active_memory_pads.clear()
+        self._rebuild_akai_pads()
+
+        # Éteindre les LEDs physiques de tous les pads mémoire sur l'AKAI
+        if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
+            for fi, mc in self._bank_memory_slots():
+                for mr in range(8):
+                    note = (7 - mr) * 8 + fi
+                    self.midi_handler.midi_out.send_message([0x90, note, 0])
+
+        self._save_akai_config_auto()
+        self._show_mem_toast("🗑️ Mémoires effacées")
 
     def load_default_effects(self):
         """Charge les effets par défaut sur les boutons E1-E9."""
@@ -4165,6 +4726,128 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Non applicable",
                 "Cette fonction est disponible pour les images et les pauses.")
 
+    def _show_contact_dialog(self):
+        self._show_mail_dialog(
+            title="Nous contacter",
+            icon="✉️",
+            intro=(
+                "Vous souhaitez nous contacter ?\n\n"
+                "Pour votre licence, un souci technique,\n"
+                "une remarque ou toute autre question —\n"
+                "écrivez-nous directement par email :"
+            ),
+            email="nicolas@mystrow.fr",
+            subject="Contact MyStrow",
+            body="Bonjour,\n\n",
+            btn_label="Nous écrire",
+        )
+
+    def _show_idea_dialog(self):
+        self._show_mail_dialog(
+            title="Soumettre une idée",
+            icon="💡",
+            intro=(
+                "Une idée pour améliorer MyStrow ?\n\n"
+                "Nouvelle fonctionnalité, amélioration\n"
+                "d'une interface, retour d'expérience —\n"
+                "vos idées nous intéressent :"
+            ),
+            email="nicolas@mystrow.fr",
+            subject="Idée MyStrow",
+            body="Bonjour,\n\nJ'aurais une idée à soumettre :\n\n",
+            btn_label="Envoyer mon idée",
+        )
+
+    def _show_mail_dialog(self, title, icon, intro, email, subject, body, btn_label):
+        import urllib.parse, webbrowser
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setFixedWidth(380)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setStyleSheet("""
+            QDialog { background: #111; color: #e0e0e0; }
+            QLabel  { background: transparent; }
+        """)
+
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(30, 28, 30, 24)
+        root.setSpacing(0)
+
+        # Icône + titre
+        lbl_icon = QLabel(icon)
+        lbl_icon.setAlignment(Qt.AlignCenter)
+        lbl_icon.setStyleSheet("font-size: 38px; padding-bottom: 10px;")
+        root.addWidget(lbl_icon)
+
+        lbl_title = QLabel(title)
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #fff; padding-bottom: 16px;")
+        root.addWidget(lbl_title)
+
+        # Séparateur
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #222; max-height: 1px; margin-bottom: 18px;")
+        root.addWidget(sep)
+
+        # Texte d'intro
+        lbl_intro = QLabel(intro)
+        lbl_intro.setAlignment(Qt.AlignCenter)
+        lbl_intro.setWordWrap(True)
+        lbl_intro.setStyleSheet("color: #aaa; font-size: 12px; line-height: 1.5; padding-bottom: 18px;")
+        root.addWidget(lbl_intro)
+
+        # Adresse email
+        lbl_email = QLabel(email)
+        lbl_email.setAlignment(Qt.AlignCenter)
+        lbl_email.setStyleSheet(
+            "color: #00d4ff; font-size: 14px; font-weight: bold;"
+            " padding: 10px 16px; background: #0a1820;"
+            " border: 1px solid #00d4ff33; border-radius: 8px; margin-bottom: 22px;"
+        )
+        root.addWidget(lbl_email)
+
+        # Boutons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        btn_write = QPushButton(btn_label)
+        btn_write.setFixedHeight(38)
+        btn_write.setCursor(Qt.PointingHandCursor)
+        btn_write.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #0099bb, stop:1 #00d4ff);
+                color: #000; font-weight: bold; font-size: 12px;
+                border: none; border-radius: 8px; padding: 0 20px;
+            }
+            QPushButton:hover { background: #00d4ff; }
+        """)
+        def _open_mail():
+            params = urllib.parse.urlencode({"subject": subject, "body": body})
+            webbrowser.open(f"mailto:{email}?{params}")
+        btn_write.clicked.connect(_open_mail)
+
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(38)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background: #1a1a1a; color: #666; font-size: 12px;
+                border: 1px solid #2a2a2a; border-radius: 8px; padding: 0 20px;
+            }
+            QPushButton:hover { background: #222; color: #aaa; border-color: #444; }
+        """)
+        btn_close.clicked.connect(dlg.accept)
+
+        btn_row.addWidget(btn_write)
+        btn_row.addWidget(btn_close)
+        root.addLayout(btn_row)
+
+        dlg.exec()
+
     def show_about(self):
         """Ouvre le dialogue A propos / mises à jour"""
         AboutDialog(self).exec()
@@ -4221,6 +4904,59 @@ class MainWindow(QMainWindow):
             x = (self.video_stack.width() - scaled.width()) // 2
             y = (self.video_stack.height() - scaled.height()) // 2
             self._video_watermark.setGeometry(x, y, scaled.width(), scaled.height())
+
+    def _apply_license_banner(self):
+        """Affiche ou cache la banniere selon l'etat et la dismissal."""
+        import json, os, time
+        state = self._license.state
+        days  = self._license.days_remaining
+        expired = state in (LicenseState.TRIAL_EXPIRED, LicenseState.LICENSE_EXPIRED,
+                            LicenseState.INVALID, LicenseState.NOT_ACTIVATED)
+
+        # Licence active sans alerte → cacher
+        if state == LicenseState.LICENSE_ACTIVE and not self._license.show_warning:
+            self._license_banner.hide()
+            return
+
+        # Essai : toujours afficher a chaque demarrage
+        is_trial = state == LicenseState.TRIAL_ACTIVE
+
+        # Verifier si l'utilisateur a deja ferme la banniere (licence payante uniquement)
+        if not expired and not is_trial:
+            dismiss_file = os.path.join(os.path.expanduser("~"), ".mystrow_banner_dismiss.json")
+            try:
+                with open(dismiss_file) as f:
+                    data = json.load(f)
+                dismissed_until = data.get("until", 0)
+                # Respecter le dismiss sauf si on est a J-3 ou moins
+                if time.time() < dismissed_until and days > 3:
+                    self._license_banner.hide()
+                    return
+            except Exception:
+                pass
+
+        self._license_banner.apply_license(self._license, dismissible=not expired)
+        self._license_banner.show()
+
+    def _on_license_banner_dismissed(self):
+        """Sauvegarde le dismiss et cache la banniere."""
+        import json, os, time
+        dismiss_file = os.path.join(os.path.expanduser("~"), ".mystrow_banner_dismiss.json")
+        # Re-afficher dans 30 jours (sera court-circuite par J-3 de toute facon)
+        until = time.time() + 30 * 86400
+        try:
+            with open(dismiss_file, "w") as f:
+                json.dump({"until": until}, f)
+        except Exception:
+            pass
+        self._license_banner.hide()
+
+    def _on_banner_clicked(self):
+        """Gere le clic sur le bouton de la banniere licence."""
+        start_purchase = self._license.action_label in ("Renouveler",)
+        dlg = ActivationDialog(self, license_result=self._license, start_purchase=start_purchase)
+        dlg.activation_success.connect(self._on_activation_success)
+        dlg.exec()
 
     def _open_activation_dialog(self):
         """Ouvre le dialogue d'activation de licence"""
@@ -4557,7 +5293,7 @@ class MainWindow(QMainWindow):
         # Video: rediriger vers le video_widget
         ext = os.path.splitext(cart.media_path)[1].lower()
         video_exts = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm'}
-        if ext in video_exts:
+        if ext in video_exts and QVideoWidget is not None:
             self.cart_player.setVideoOutput(self.video_widget)
         else:
             self.cart_player.setVideoOutput(None)
@@ -4574,7 +5310,7 @@ class MainWindow(QMainWindow):
         self.cartouches[index].set_stopped()
         self.cart_playing_index = -1
         # Restaurer le video output du player principal
-        self.player.setVideoOutput(self.video_widget)
+        self.player.setVideoOutput(self.video_widget if QVideoWidget is not None else None)
 
     def _stop_all_cartouches(self):
         """Arrete toutes les cartouches et restaure l'etat"""
@@ -4583,7 +5319,7 @@ class MainWindow(QMainWindow):
             self.cart_playing_index = -1
         for cart in self.cartouches:
             cart.set_idle()
-        self.player.setVideoOutput(self.video_widget)
+        self.player.setVideoOutput(self.video_widget if QVideoWidget is not None else None)
 
     def on_cart_media_status(self, status):
         """Gere la fin de lecture d'une cartouche"""
@@ -4716,7 +5452,7 @@ class MainWindow(QMainWindow):
         if self.cart_playing_index == index:
             self.cart_player.stop()
             self.cart_playing_index = -1
-            self.player.setVideoOutput(self.video_widget)
+            self.player.setVideoOutput(self.video_widget if QVideoWidget is not None else None)
         cart = self.cartouches[index]
         cart.media_path = None
         cart.media_title = None
@@ -4811,7 +5547,7 @@ class MainWindow(QMainWindow):
             channels = [proj.start_address + c for c in range(nb_ch)]
             self.dmx.set_projector_patch(proj_key, channels, profile=profile)
 
-    def show_dmx_patch_config(self):
+    def show_dmx_patch_config(self, select_idx=None):
         """Interface de configuration DMX — master-detail + Plan de feu"""
         from plan_de_feu import FixtureCanvas, NewPlanWizard
 
@@ -5182,6 +5918,16 @@ class MainWindow(QMainWindow):
         dth.addWidget(lbl_det_name)
         dth.addWidget(lbl_det_group)
         dth.addStretch()
+        btn_det_locate = QPushButton("🎯  Localiser")
+        btn_det_locate.setFixedHeight(30)
+        btn_det_locate.setToolTip("Sélectionner cette fixture dans le Plan de feu")
+        btn_det_locate.setStyleSheet(
+            "QPushButton { background:#0a1020; color:#4488cc; border:1px solid #1a3050;"
+            " border-radius:6px; padding:4px 14px; font-size:11px; }"
+            "QPushButton:hover { background:#0f1a30; color:#66aaee; border-color:#2a5080; }"
+        )
+        dth.addWidget(btn_det_locate)
+
         btn_det_del = QPushButton("🗑  Supprimer")
         btn_det_del.setFixedHeight(30)
         btn_det_del.setStyleSheet(
@@ -6000,6 +6746,28 @@ class MainWindow(QMainWindow):
 
         btn_det_del.clicked.connect(_del_selected)
 
+        def _locate_selected():
+            """Bascule sur l'onglet Plan de feu et sélectionne la fixture courante."""
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors):
+                return
+            proj = self.projectors[idx]
+            # Calculer le local_idx dans son groupe
+            g_cnt = {}
+            local_idx = 0
+            for i, p in enumerate(self.projectors):
+                li = g_cnt.get(p.group, 0)
+                g_cnt[p.group] = li + 1
+                if i == idx:
+                    local_idx = li
+                    break
+            proxy.selected_lamps.clear()
+            proxy.selected_lamps.add((proj.group, local_idx))
+            canvas.update()
+            tabs.setCurrentIndex(1)
+
+        btn_det_locate.clicked.connect(_locate_selected)
+
         def _del_checked():
             if not _checked: return
             n = len(_checked)
@@ -6060,8 +6828,9 @@ class MainWindow(QMainWindow):
                 # Espacer uniformément en X : marges 5% de chaque côté
                 canvas_positions = [((n + 1) / (qty + 1), candidate_y) for n in range(qty)]
             else:
-                # Placer à l'emplacement exact du clic droit
-                canvas_positions = [(norm_x, norm_y)]
+                # Placer près du clic droit, en évitant les superpositions
+                fx, fy = _find_free_canvas_pos(self.projectors, norm_x, norm_y)
+                canvas_positions = [(fx, fy)]
 
             _preset_profile = preset.get('profile')
             if not (isinstance(_preset_profile, list) and _preset_profile):
@@ -6130,7 +6899,6 @@ class MainWindow(QMainWindow):
                 p.start_address = addr
                 addr += len(profile)
                 self.projectors.append(p)
-            self.projectors[-1].fan_speed = 0
             self._rebuild_dmx_patch()
             _rebuild_fd()
             _sel[0] = None
@@ -6621,10 +7389,13 @@ class MainWindow(QMainWindow):
         close_btn.clicked.connect(dialog.close)
 
         _build_cards()
-        if fixture_data:
+        if select_idx is not None and 0 <= select_idx < len(fixture_data):
+            _select_card(select_idx)
+        elif fixture_data:
             _select_card(0)
 
-        dialog.showMaximized()
+        from PySide6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(0, dialog.showMaximized)
         dialog.exec()
         canvas_timer.stop()
 
@@ -7469,6 +8240,139 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur reinitialisation AKAI: {e}")
 
+    def show_midi_diagnostic(self):
+        """Affiche tous les ports MIDI disponibles pour diagnostiquer la detection AKAI."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget as _QW
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Diagnostique MIDI")
+        dlg.setFixedSize(520, 420)
+        dlg.setStyleSheet("QDialog, QWidget { background: #1a1a1a; color: #e0e0e0; }"
+                          "QLabel { background: transparent; }")
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("Ports MIDI detectes par le systeme")
+        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #00d4ff;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #333; border-radius: 4px; }")
+        content = _QW()
+        content_layout = QVBoxLayout(content)
+        content_layout.setSpacing(6)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+
+        def _add_section(titre, ports, is_akai_fn):
+            lbl = QLabel(f"<b>{titre}</b>")
+            lbl.setStyleSheet("color: #aaa; font-size: 11px;")
+            content_layout.addWidget(lbl)
+            if not ports:
+                row = QLabel("   (aucun port detecte)")
+                row.setStyleSheet("color: #555; font-size: 11px;")
+                content_layout.addWidget(row)
+            for i, name in enumerate(ports):
+                is_akai = is_akai_fn(name)
+                icon = "🎹" if is_akai else "•"
+                color = "#4CAF50" if is_akai else "#888"
+                row = QLabel(f"   {icon}  [{i}]  {name}")
+                row.setStyleSheet(f"color: {color}; font-size: 11px;"
+                                  f"{'font-weight:bold;' if is_akai else ''}")
+                content_layout.addWidget(row)
+
+        def _is_akai(name):
+            return 'APC' in name.upper() or 'AKAI' in name.upper()
+
+        if not MIDI_AVAILABLE:
+            lbl = QLabel("Module MIDI non installe.\n\nInstallez avec: pip install rtmidi2")
+            lbl.setStyleSheet("color: #f44336; font-size: 12px;")
+            content_layout.addWidget(lbl)
+        else:
+            try:
+                _rt = None
+                try:
+                    import rtmidi as _rt
+                    lib_name = "python-rtmidi"
+                except ImportError:
+                    import rtmidi2 as _rt
+                    lib_name = "rtmidi2"
+
+                lbl_lib = QLabel(f"Librairie : {lib_name}")
+                lbl_lib.setStyleSheet("color: #666; font-size: 10px;")
+                content_layout.addWidget(lbl_lib)
+                content_layout.addSpacing(4)
+
+                mi = _rt.MidiIn()
+                in_ports = mi.get_ports()
+                try:
+                    mi.close_port()
+                except Exception:
+                    pass
+
+                mo = _rt.MidiOut()
+                out_ports = mo.get_ports()
+                try:
+                    mo.close_port()
+                except Exception:
+                    pass
+
+                _add_section("Ports MIDI ENTREE (IN):", in_ports, _is_akai)
+                content_layout.addSpacing(6)
+                _add_section("Ports MIDI SORTIE (OUT):", out_ports, _is_akai)
+
+                # Statut connexion actuelle
+                content_layout.addSpacing(8)
+                akai_connected = (self.midi_handler.midi_in is not None and
+                                  self.midi_handler.midi_out is not None)
+                status_color = "#4CAF50" if akai_connected else "#f44336"
+                status_txt = "Connecte" if akai_connected else "Non connecte"
+                lbl_st = QLabel(f"Statut AKAI actuel : {status_txt}")
+                lbl_st.setStyleSheet(f"color: {status_color}; font-size: 11px; font-weight: bold;")
+                content_layout.addWidget(lbl_st)
+
+                if not any(_is_akai(p) for p in in_ports + out_ports):
+                    hint = QLabel(
+                        "\nAucun port AKAI/APC detecte.\n"
+                        "• Verifiez le cable USB\n"
+                        "• Essayez un autre port USB\n"
+                        "• Sur Windows : Gestionnaire de peripheriques > Controleurs audio, video et jeu\n"
+                        "• Sur Mac : Applications > Utilitaires > Configuration MIDI Audio"
+                    )
+                    hint.setStyleSheet("color: #ff9800; font-size: 11px;")
+                    hint.setWordWrap(True)
+                    content_layout.addWidget(hint)
+
+            except Exception as e:
+                lbl = QLabel(f"Erreur lors de l'enumeration MIDI:\n{e}")
+                lbl.setStyleSheet("color: #f44336; font-size: 11px;")
+                lbl.setWordWrap(True)
+                content_layout.addWidget(lbl)
+
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
+        btn_row = QHBoxLayout()
+        btn_reconnect = QPushButton("Reconnexion")
+        btn_reconnect.setFixedHeight(34)
+        btn_reconnect.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;border-radius:5px;font-size:12px;}"
+                                    "QPushButton:hover{background:#3a7a3a;}")
+        btn_reconnect.clicked.connect(lambda: (dlg.accept(), self.test_akai_connection()))
+        btn_row.addWidget(btn_reconnect)
+
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(34)
+        btn_close.setStyleSheet("QPushButton{background:#2a2a2a;color:#aaa;border:1px solid #3a3a3a;border-radius:5px;font-size:12px;}"
+                                "QPushButton:hover{background:#333;color:#ddd;}")
+        btn_close.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_close)
+
+        layout.addLayout(btn_row)
+        dlg.exec()
+
     def _sync_faders_to_projectors(self):
         """Synchronise les faders UI avec les niveaux actuels des projecteurs"""
         for col_idx, slot in enumerate(self._fader_map):
@@ -7482,10 +8386,24 @@ class MainWindow(QMainWindow):
                     break
 
     def open_node_connection(self):
-        """Ouvre l'assistant de connexion et configuration du Node DMX."""
-        from node_connection import NodeConnectionDialog
-        dlg = NodeConnectionDialog(self, target_ip=self.dmx.target_ip)
+        """Ouvre le dialogue de paramétrage de la sortie DMX (Node ou USB)."""
+        from node_connection import DmxOutputDialog
+        dlg = DmxOutputDialog(self)
         dlg.exec()
+        self._refresh_dmx_menu_title()
+
+    def _refresh_dmx_menu_title(self):
+        """Met à jour le titre du menu Sortie selon le transport actif."""
+        if not hasattr(self, 'node_menu'):
+            return
+        try:
+            from artnet_dmx import TRANSPORT_ENTTEC
+            if self.dmx.transport == TRANSPORT_ENTTEC:
+                self.node_menu.setTitle("🔌 Sortie DMX USB")
+            else:
+                self.node_menu.setTitle("🌐 Sortie Node")
+        except Exception:
+            pass
 
     def open_brad_diagnostic(self):
         """Ouvre l'assistant BRAD — diagnostic complet DMX/réseau."""

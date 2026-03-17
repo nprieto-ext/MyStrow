@@ -34,6 +34,18 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
+# Sur Mac (app bundle PyInstaller), rediriger stderr vers un log lisible
+if sys.platform == "darwin" and getattr(sys, 'frozen', False):
+    try:
+        from pathlib import Path
+        _log_dir = Path.home() / "Library" / "Logs" / "MyStrow"
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        _log_file = open(_log_dir / "crash.log", "w", encoding="utf-8")
+        sys.stderr = _log_file
+        print(f"[MyStrow] Log demarre", file=_log_file, flush=True)
+    except Exception:
+        pass
+
 # ------------------------------------------------------------------
 # IMPORTS APPLICATION
 # ------------------------------------------------------------------
@@ -173,6 +185,16 @@ def main():
     _akai_box    = [False]
     _dmx_box     = [False, "Non configuré"]  # [ok, label]
 
+    # Déterminer le type de sortie DMX depuis la config pour le splash
+    _dmx_node_label = "Sortie Node"
+    try:
+        import json as _j, os as _o
+        _cfg = _j.load(open(_o.path.expanduser("~/.mystrow_dmx.json")))
+        _dmx_node_label = "Sortie DMX USB" if _cfg.get("transport") == "enttec" else "Sortie Node"
+    except Exception:
+        pass
+    splash.set_hw_label("node", _dmx_node_label)
+
     def _bg_license():
         _license_box[0] = verify_license()
 
@@ -188,13 +210,20 @@ def main():
                 return
         try:
             _mi = _rt.MidiIn()
-            for name in _mi.get_ports():
-                if 'APC' in name.upper() or 'MINI' in name.upper():
+            ports = _mi.get_ports()
+            print(f"[MIDI] Ports disponibles: {ports}")
+            for name in ports:
+                if 'APC' in name.upper() or 'AKAI' in name.upper():
                     _akai_box[0] = True
                     break
+            # Fermeture explicite avant que MIDIHandler n'ouvre le port
+            try:
+                _mi.close_port()
+            except Exception:
+                pass
             del _mi
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[MIDI] Erreur probe AKAI: {e}")
 
     def _bg_dmx():
         try:
@@ -221,9 +250,22 @@ def main():
                 else:
                     _dmx_box[1] = f"{product_name or 'USB DMX'}  —  Non configuré"
             else:
-                ip = cfg.get("target_ip", "")
-                _dmx_box[0] = None  # orange = configuré non vérifié
-                _dmx_box[1] = f"{product_name or 'Art-Net'}  —  {ip}"
+                ip   = cfg.get("target_ip", "")
+                name = product_name or "Electroconcept"
+                if ip:
+                    try:
+                        import socket as _sock
+                        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                        s.settimeout(0.8)
+                        r = s.connect_ex((ip, 80))
+                        s.close()
+                        # r==0 : connexion OK  /  10061 (Windows) ou 111 (Linux) : refusée = hôte en ligne
+                        _dmx_box[0] = True if r in (0, 111, 10061) else False
+                    except Exception:
+                        _dmx_box[0] = None  # orange = inconnu
+                else:
+                    _dmx_box[0] = False
+                _dmx_box[1] = name if ip else f"{name}  —  Non configuré"
         except Exception:
             pass
 

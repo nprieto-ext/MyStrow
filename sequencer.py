@@ -59,9 +59,6 @@ class Sequencer(QFrame):
 
         # Header avec boutons
         header = QHBoxLayout()
-        title = QLabel("Sequenceur")
-        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        header.addWidget(title)
         header.addStretch()
 
         btn_style = """
@@ -354,6 +351,7 @@ class Sequencer(QFrame):
             }
         """)
         combo.setObjectName("dmx_combo")
+        combo.wheelEvent = lambda event: event.ignore()
         combo.currentTextChanged.connect(
             lambda text, r=row: self.on_dmx_changed(r, text)
         )
@@ -1011,6 +1009,12 @@ class Sequencer(QFrame):
             try:
                 self.update_playing_indicator(row)
 
+                # Arreter le timer timeline du media precedent
+                if self.timeline_playback_timer and self.timeline_playback_timer.isActive():
+                    self.timeline_playback_timer.stop()
+                if hasattr(self, 'timeline_playback_row'):
+                    del self.timeline_playback_row
+
                 # Arreter les cartouches
                 if hasattr(self.player_ui, '_stop_all_cartouches'):
                     self.player_ui._stop_all_cartouches()
@@ -1385,14 +1389,28 @@ class Sequencer(QFrame):
 
                 if start <= current_time <= end:
                     intensity = self.calculate_clip_intensity(clip_data, current_time)
+                    progress = (current_time - start) / max(1, clip_data['duration'])
 
-                    active_clips[track_name] = {
+                    entry = {
                         'color': QColor(clip_data['color']),
                         'color2': QColor(clip_data['color2']) if clip_data.get('color2') else None,
                         'intensity': intensity,
                         'effect': clip_data.get('effect', None),
                         'effect_speed': clip_data.get('effect_speed', 50),
                     }
+                    # Mouvement Pan/Tilt
+                    if clip_data.get('move_effect') or 'pan_start' in clip_data:
+                        entry['move_effect']    = clip_data.get('move_effect')
+                        entry['move_speed']     = clip_data.get('move_speed', 0.5)
+                        entry['move_amplitude'] = clip_data.get('move_amplitude', 60)
+                        entry['pan_start']      = clip_data.get('pan_start', 128)
+                        entry['tilt_start']     = clip_data.get('tilt_start', 128)
+                        entry['pan_end']        = clip_data.get('pan_end', 128)
+                        entry['tilt_end']       = clip_data.get('tilt_end', 128)
+                        entry['move_progress']  = progress
+                        entry['move_elapsed']   = (current_time - start) / 1000.0
+
+                    active_clips[track_name] = entry
                     break
 
         self.apply_timeline_to_dmx(active_clips)
@@ -1512,6 +1530,69 @@ class Sequencer(QFrame):
                     int(color.green() * intensity / 100),
                     int(color.blue() * intensity / 100)
                 )
+
+        # --- Appliquer Pan/Tilt pour les Lyres ---
+        lyres_clip = active_clips.get('Lyres')
+        if lyres_clip and 'pan_start' in lyres_clip:
+            # Recuperer les indices du groupe "lyres" / "Lyres"
+            lyres_indices = track_to_indices.get('Lyres', [])
+            if not lyres_indices and hasattr(main_win, 'projectors'):
+                lyres_indices = [
+                    i for i, p in enumerate(main_win.projectors)
+                    if getattr(p, 'group', '').lower() == 'lyres'
+                ]
+
+            move_effect  = lyres_clip.get('move_effect')
+            move_speed   = lyres_clip.get('move_speed', 0.5)
+            move_amp     = lyres_clip.get('move_amplitude', 60)
+            progress     = lyres_clip.get('move_progress', 0.0)
+            elapsed      = lyres_clip.get('move_elapsed', 0.0)
+
+            pan_start    = lyres_clip.get('pan_start', 128)
+            tilt_start   = lyres_clip.get('tilt_start', 128)
+            pan_end      = lyres_clip.get('pan_end', 128)
+            tilt_end     = lyres_clip.get('tilt_end', 128)
+
+            if move_effect:
+                # Effets automatiques — math periodique
+                t = elapsed * move_speed * 2 * math.pi
+                amp = move_amp  # amplitude en valeur DMX (0-127)
+                if move_effect == 'Cercle':
+                    pan_val  = 128 + int(amp * math.cos(t))
+                    tilt_val = 128 + int(amp * math.sin(t))
+                elif move_effect == 'Figure 8':
+                    pan_val  = 128 + int(amp * math.sin(t))
+                    tilt_val = 128 + int(amp * math.sin(2 * t) / 2)
+                elif move_effect == 'Balayage H':
+                    pan_val  = 128 + int(amp * math.sin(t))
+                    tilt_val = 128
+                elif move_effect == 'Balayage V':
+                    pan_val  = 128
+                    tilt_val = 128 + int(amp * math.sin(t))
+                elif move_effect == 'Aléatoire':
+                    # Interpolation smooth via sin combines — deterministique sur elapsed
+                    pan_val  = 128 + int(amp * 0.6 * math.sin(t * 1.0) +
+                                         amp * 0.4 * math.sin(t * 1.7 + 1.3))
+                    tilt_val = 128 + int(amp * 0.6 * math.cos(t * 0.8 + 0.7) +
+                                         amp * 0.4 * math.cos(t * 2.1 + 2.5))
+                else:
+                    pan_val  = 128
+                    tilt_val = 128
+            else:
+                # Trajectoire lineaire entre start et end
+                p = max(0.0, min(1.0, progress))
+                pan_val  = int(pan_start  + (pan_end  - pan_start)  * p)
+                tilt_val = int(tilt_start + (tilt_end - tilt_start) * p)
+
+            pan_val  = max(0, min(255, pan_val))
+            tilt_val = max(0, min(255, tilt_val))
+
+            for idx in lyres_indices:
+                if idx < len(self.player_ui.projectors):
+                    proj = self.player_ui.projectors[idx]
+                    if getattr(proj, 'fixture_type', '') == 'Moving Head':
+                        proj.pan  = pan_val
+                        proj.tilt = tilt_val
 
         if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
             self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)

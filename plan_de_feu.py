@@ -2,6 +2,9 @@
 Plan de Feu - Visualisation des projecteurs (canvas 2D libre)
 """
 import math
+import json
+import os
+import time as _time
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
     QLabel, QMenu, QWidgetAction, QPushButton, QSlider,
@@ -12,8 +15,476 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QSize, Signal, QRectF
 from PySide6.QtGui import (
     QColor, QFont, QImage, QPainter, QPen, QBrush, QPainterPath, QPolygon,
-    QLinearGradient, QRadialGradient,
+    QLinearGradient, QRadialGradient, QCursor,
 )
+
+
+import math as _math_eff
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EFFETS AUTOMATIQUES MOVING HEAD
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _EffectState:
+    """État d'un effet automatique Pan/Tilt sur une fixture."""
+
+    DT = 0.1  # secondes (timer 100 ms)
+
+    def __init__(self, effect, speed, amplitude, center_pan, center_tilt):
+        self.effect       = effect        # "cercle","figure8","balayage_h","balayage_v","aleatoire"
+        self.speed        = speed         # Hz (0.1 – 3.0)
+        self.amplitude    = amplitude     # 0-120
+        self.center_pan   = center_pan
+        self.center_tilt  = center_tilt
+        self.phase        = 0.0           # radians
+        # Pour l'effet aléatoire
+        self._r_pan   = float(center_pan)
+        self._r_tilt  = float(center_tilt)
+        self._r_tpan  = float(center_pan)
+        self._r_ttilt = float(center_tilt)
+        self._r_steps = 1
+        self._r_step  = 0
+
+    def tick(self):
+        """Avance la phase et retourne (pan, tilt) clampé 0-255."""
+        import random
+        self.phase += 2 * _math_eff.pi * self.speed * self.DT
+        a = self.amplitude
+
+        if self.effect == "cercle":
+            pan  = self.center_pan  + a * _math_eff.sin(self.phase)
+            tilt = self.center_tilt + a * _math_eff.cos(self.phase)
+
+        elif self.effect == "figure8":
+            pan  = self.center_pan  + a * _math_eff.sin(self.phase)
+            tilt = self.center_tilt + (a / 2) * _math_eff.sin(2 * self.phase)
+
+        elif self.effect == "balayage_h":
+            pan  = self.center_pan  + a * _math_eff.sin(self.phase)
+            tilt = self.center_tilt
+
+        elif self.effect == "balayage_v":
+            pan  = self.center_pan
+            tilt = self.center_tilt + a * _math_eff.sin(self.phase)
+
+        elif self.effect == "aleatoire":
+            if self._r_step >= self._r_steps:
+                self._r_tpan   = self.center_pan  + random.uniform(-a, a)
+                self._r_ttilt  = self.center_tilt + random.uniform(-a, a)
+                self._r_steps  = max(1, int(random.uniform(0.3, 1.5) / (self.speed * self.DT)))
+                self._r_step   = 0
+            t = self._r_step / self._r_steps
+            self._r_pan  += (self._r_tpan  - self._r_pan)  * 0.15
+            self._r_tilt += (self._r_ttilt - self._r_tilt) * 0.15
+            self._r_step += 1
+            pan, tilt = self._r_pan, self._r_tilt
+
+        else:
+            pan, tilt = self.center_pan, self.center_tilt
+
+        return int(max(0, min(255, pan))), int(max(0, min(255, tilt)))
+
+
+_PRESETS_FILE = os.path.expanduser("~/.mystrow_moving_presets.json")
+
+_DEFAULT_PRESETS = [
+    {"name": "Centre",  "pan": 128, "tilt": 128},
+    {"name": "Face",    "pan": 128, "tilt": 180},
+    {"name": "Sol",     "pan": 128, "tilt": 230},
+    {"name": "Plafond", "pan": 128, "tilt": 30},
+    {"name": "Gauche",  "pan": 60,  "tilt": 128},
+    {"name": "Droite",  "pan": 195, "tilt": 128},
+]
+
+
+def _load_presets():
+    try:
+        with open(_PRESETS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return [dict(p) for p in _DEFAULT_PRESETS]
+
+
+def _save_presets(presets):
+    try:
+        with open(_PRESETS_FILE, "w", encoding="utf-8") as f:
+            json.dump(presets, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+class PresetBar(QWidget):
+    """Rangée de boutons presets Pan/Tilt — clic = appliquer, clic droit = mémoriser."""
+
+    preset_selected = Signal(int, int)   # pan, tilt
+
+    _BTN_STYLE = """
+        QPushButton {{
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 rgba({r},{g},{b},70), stop:1 rgba(20,20,20,255));
+            border-left: 3px solid {hex};
+            border-top: none; border-right: none; border-bottom: none;
+            border-radius: 3px;
+            color: #cccccc;
+            font-size: 10px;
+            padding: 3px 6px;
+            min-width: 52px;
+        }}
+        QPushButton:hover {{ color: white; border-left-color: #00d4ff; }}
+    """
+
+    def __init__(self, get_current_pan_tilt, parent=None):
+        """get_current_pan_tilt : callable → (pan, tilt) actuel du pad."""
+        super().__init__(parent)
+        self._get_current = get_current_pan_tilt
+        self._presets = _load_presets()
+        self._buttons = []
+        self._build()
+
+    _COLS = 2  # nombre de colonnes dans la grille
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        # En-tête : label + bouton "+"
+        header = QHBoxLayout()
+        header.setSpacing(4)
+        lbl = QLabel("Presets")
+        lbl.setStyleSheet("color: #555; font-size: 9px;")
+        header.addWidget(lbl)
+        header.addStretch()
+        add_btn = QPushButton("+")
+        add_btn.setFixedSize(22, 22)
+        add_btn.setToolTip("Sauvegarder la position actuelle comme nouveau preset")
+        add_btn.setStyleSheet("""
+            QPushButton { background: #1a3a1a; color: #4CAF50; border: 1px solid #2a5a2a;
+                          border-radius: 3px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background: #2a5a2a; color: white; }
+        """)
+        add_btn.clicked.connect(self._add_preset)
+        header.addWidget(add_btn)
+        layout.addLayout(header)
+
+        # Conteneur grille
+        self._btn_container_w = QWidget()
+        self._btn_grid = QGridLayout(self._btn_container_w)
+        self._btn_grid.setSpacing(4)
+        self._btn_grid.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._btn_container_w)
+
+        self._rebuild_buttons()
+
+    def _rebuild_buttons(self):
+        # Vider la grille
+        while self._btn_grid.count():
+            item = self._btn_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._buttons.clear()
+
+        colors = ["#00d4ff", "#ff9800", "#4CAF50", "#e91e63", "#9c27b0", "#ff5722"]
+        for i, preset in enumerate(self._presets):
+            c = QColor(colors[i % len(colors)])
+            r, g, b = c.red(), c.green(), c.blue()
+            btn = QPushButton(preset["name"])
+            btn.setFixedHeight(22)
+            btn.setStyleSheet(self._BTN_STYLE.format(r=r, g=g, b=b, hex=c.name()))
+            btn.setToolTip(f"Pan: {preset['pan']}  Tilt: {preset['tilt']}\n"
+                           f"Clic droit → mémoriser la position actuelle")
+            btn.clicked.connect(lambda _, p=preset: self.preset_selected.emit(p["pan"], p["tilt"]))
+            btn.setContextMenuPolicy(Qt.CustomContextMenu)
+            btn.customContextMenuRequested.connect(lambda _, idx=i: self._ctx_preset(idx))
+            row, col = divmod(i, self._COLS)
+            self._btn_grid.addWidget(btn, row, col)
+            self._buttons.append(btn)
+
+    def _ctx_preset(self, idx):
+        pan, tilt = self._get_current()
+        m = QMenu(self)
+        m.setStyleSheet("""
+            QMenu { background: #1e1e1e; color: #ccc; border: 1px solid #333; }
+            QMenu::item:selected { background: #2a2a2a; }
+        """)
+        m.addAction(f"📌  Mémoriser ici  (Pan:{pan} Tilt:{tilt})",
+                    lambda: self._memorize(idx, pan, tilt))
+        m.addSeparator()
+        m.addAction("✏  Renommer...", lambda: self._rename(idx))
+        if len(self._presets) > 1:
+            m.addAction("🗑  Supprimer", lambda: self._delete(idx))
+        m.exec(QCursor.pos())
+
+    def _memorize(self, idx, pan, tilt):
+        self._presets[idx]["pan"]  = pan
+        self._presets[idx]["tilt"] = tilt
+        _save_presets(self._presets)
+        self._rebuild_buttons()
+
+    def _rename(self, idx):
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Renommer", "Nouveau nom :",
+                                        text=self._presets[idx]["name"])
+        if ok and name.strip():
+            self._presets[idx]["name"] = name.strip()
+            _save_presets(self._presets)
+            self._rebuild_buttons()
+
+    def _add_preset(self):
+        from PySide6.QtWidgets import QInputDialog
+        pan, tilt = self._get_current()
+        name, ok = QInputDialog.getText(self, "Nouveau preset",
+                                        "Nom du preset :", text=f"Pos {len(self._presets)+1}")
+        if ok and name.strip():
+            self._presets.append({"name": name.strip(), "pan": pan, "tilt": tilt})
+            _save_presets(self._presets)
+            self._rebuild_buttons()
+
+
+class PanTiltPad(QWidget):
+    """Pad XY interactif pour contrôler Pan/Tilt d'une Moving Head."""
+
+    changed = Signal(int, int)  # pan, tilt (0-255)
+
+    _PAD_W = 200
+    _PAD_H = 160
+    _MARGIN = 10
+
+    def __init__(self, pan=128, tilt=128, parent=None):
+        super().__init__(parent)
+        self._pan  = max(0, min(255, pan))
+        self._tilt = max(0, min(255, tilt))
+        self._dragging = False
+
+        total_w = self._PAD_W + self._MARGIN * 2
+        total_h = self._PAD_H + self._MARGIN * 2 + 28  # +28 pour les labels + bouton
+        self.setFixedSize(total_w, total_h)
+        self.setMouseTracking(True)
+
+    # ── Coordonnées ─────────────────────────────────────────────────────
+    def _val_to_px(self):
+        """Retourne (px, py) en pixels absolus dans le widget."""
+        m = self._MARGIN
+        px = m + int(self._pan  / 255.0 * self._PAD_W)
+        py = m + int(self._tilt / 255.0 * self._PAD_H)
+        return px, py
+
+    def _px_to_val(self, x, y):
+        m = self._MARGIN
+        pan  = int(max(0, min(255, (x - m) / self._PAD_W * 255)))
+        tilt = int(max(0, min(255, (y - m) / self._PAD_H * 255)))
+        return pan, tilt
+
+    # ── Souris ──────────────────────────────────────────────────────────
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._update_from_mouse(event.position())
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._update_from_mouse(event.position())
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+
+    def mouseDoubleClickEvent(self, event):
+        """Double-clic = centre (128, 128)"""
+        self._pan, self._tilt = 128, 128
+        self.changed.emit(self._pan, self._tilt)
+        self.update()
+
+    def _update_from_mouse(self, pos):
+        pan, tilt = self._px_to_val(pos.x(), pos.y())
+        if pan != self._pan or tilt != self._tilt:
+            self._pan, self._tilt = pan, tilt
+            self.changed.emit(self._pan, self._tilt)
+            self.update()
+
+    def set_values(self, pan, tilt):
+        self._pan  = max(0, min(255, pan))
+        self._tilt = max(0, min(255, tilt))
+        self.update()
+
+    # ── Dessin ──────────────────────────────────────────────────────────
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        m = self._MARGIN
+
+        # Fond du pad
+        pad_rect = QRect(m, m, self._PAD_W, self._PAD_H)
+        painter.fillRect(pad_rect, QColor("#1a1a2e"))
+
+        # Grille
+        painter.setPen(QPen(QColor("#2a2a4a"), 1))
+        step_x = self._PAD_W // 4
+        step_y = self._PAD_H // 4
+        for i in range(1, 4):
+            painter.drawLine(m + i * step_x, m, m + i * step_x, m + self._PAD_H)
+            painter.drawLine(m, m + i * step_y, m + self._PAD_W, m + i * step_y)
+
+        # Axes centraux
+        painter.setPen(QPen(QColor("#3a3a6a"), 1, Qt.DashLine))
+        cx = m + self._PAD_W // 2
+        cy = m + self._PAD_H // 2
+        painter.drawLine(cx, m, cx, m + self._PAD_H)
+        painter.drawLine(m, cy, m + self._PAD_W, cy)
+
+        # Bordure
+        painter.setPen(QPen(QColor("#00d4ff"), 1))
+        painter.drawRect(pad_rect)
+
+        # Curseur (croix + cercle)
+        px, py = self._val_to_px()
+        painter.setPen(QPen(QColor("#00d4ff"), 1))
+        painter.drawLine(px - 8, py, px + 8, py)
+        painter.drawLine(px, py - 8, px, py + 8)
+        painter.setPen(QPen(QColor("#00d4ff"), 2))
+        painter.setBrush(QColor(0, 212, 255, 60))
+        painter.drawEllipse(QRect(px - 7, py - 7, 14, 14))
+
+        # Labels Pan / Tilt
+        painter.setPen(QColor("#888888"))
+        painter.setFont(QFont("Segoe UI", 8))
+        label_y = m + self._PAD_H + 6
+        painter.drawText(QRect(m, label_y, self._PAD_W // 2, 18),
+                         Qt.AlignLeft | Qt.AlignVCenter,
+                         f"Pan: {self._pan}")
+        painter.drawText(QRect(m + self._PAD_W // 2, label_y, self._PAD_W // 2, 18),
+                         Qt.AlignRight | Qt.AlignVCenter,
+                         f"Tilt: {self._tilt}")
+
+        # Hint double-clic
+        painter.setPen(QColor("#444"))
+        painter.setFont(QFont("Segoe UI", 7))
+        painter.drawText(QRect(m, label_y + 14, self._PAD_W, 12),
+                         Qt.AlignCenter, "double-clic = centre")
+
+        painter.end()
+
+
+class EffectPanel(QWidget):
+    """Panneau d'effets automatiques Pan/Tilt pour Moving Head."""
+
+    effect_started = Signal(str, float, int)   # effect, speed, amplitude
+    effect_stopped = Signal()
+
+    _EFFECTS = [
+        ("⭕", "cercle",     "Cercle"),
+        ("∞",  "figure8",   "Figure 8"),
+        ("↔",  "balayage_h","Balayage H"),
+        ("↕",  "balayage_v","Balayage V"),
+        ("✦",  "aleatoire", "Aléatoire"),
+    ]
+
+    _BTN_ON  = "QPushButton { background:#005577; color:#00d4ff; border:1px solid #00d4ff; border-radius:4px; font-size:14px; font-weight:bold; min-width:32px; min-height:28px; }"
+    _BTN_OFF = "QPushButton { background:#222; color:#666; border:1px solid #333; border-radius:4px; font-size:14px; min-width:32px; min-height:28px; } QPushButton:hover{color:#ccc;border-color:#555;}"
+
+    def __init__(self, active_effect=None, active_speed=0.5, active_amplitude=60, parent=None):
+        super().__init__(parent)
+        self._current = active_effect
+        self._build(active_speed, active_amplitude)
+
+    def _build(self, speed, amplitude):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 6, 8, 6)
+        root.setSpacing(6)
+
+        # Titre
+        title = QLabel("Effets auto")
+        title.setStyleSheet("color:#888; font-size:9px; font-weight:bold;")
+        root.addWidget(title)
+
+        # Boutons effets
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+        self._eff_btns = {}
+        for icon, key, tooltip in self._EFFECTS:
+            btn = QPushButton(icon)
+            btn.setToolTip(tooltip)
+            btn.setStyleSheet(self._BTN_ON if key == self._current else self._BTN_OFF)
+            btn.clicked.connect(lambda _, k=key: self._on_effect(k))
+            btn_row.addWidget(btn)
+            self._eff_btns[key] = btn
+
+        stop_btn = QPushButton("■")
+        stop_btn.setToolTip("Arrêter l'effet")
+        stop_btn.setStyleSheet("QPushButton{background:#3a1a1a;color:#f44;border:1px solid #622;border-radius:4px;font-size:14px;min-width:32px;min-height:28px;} QPushButton:hover{background:#4a2a2a;}")
+        stop_btn.clicked.connect(self._on_stop)
+        btn_row.addWidget(stop_btn)
+        root.addLayout(btn_row)
+
+        # Vitesse
+        spd_row = QHBoxLayout()
+        spd_row.setSpacing(6)
+        spd_lbl = QLabel("Vitesse")
+        spd_lbl.setStyleSheet("color:#888; font-size:9px;")
+        spd_lbl.setFixedWidth(44)
+        spd_row.addWidget(spd_lbl)
+        self._spd_slider = QSlider(Qt.Horizontal)
+        self._spd_slider.setRange(1, 30)  # 0.1–3.0 Hz ×10
+        self._spd_slider.setValue(int(speed * 10))
+        self._spd_slider.setFixedWidth(120)
+        self._spd_slider.setStyleSheet("""
+            QSlider::groove:horizontal{background:#333;height:6px;border-radius:3px;}
+            QSlider::handle:horizontal{background:#00d4ff;width:14px;height:14px;margin:-4px 0;border-radius:7px;}
+            QSlider::sub-page:horizontal{background:#005577;border-radius:3px;}
+        """)
+        self._spd_val = QLabel(f"{speed:.1f} Hz")
+        self._spd_val.setStyleSheet("color:#ccc; font-size:9px; min-width:36px;")
+        self._spd_slider.valueChanged.connect(
+            lambda v: (self._spd_val.setText(f"{v/10:.1f} Hz"), self._emit_if_active()))
+        spd_row.addWidget(self._spd_slider)
+        spd_row.addWidget(self._spd_val)
+        root.addLayout(spd_row)
+
+        # Amplitude
+        amp_row = QHBoxLayout()
+        amp_row.setSpacing(6)
+        amp_lbl = QLabel("Amplitude")
+        amp_lbl.setStyleSheet("color:#888; font-size:9px;")
+        amp_lbl.setFixedWidth(44)
+        amp_row.addWidget(amp_lbl)
+        self._amp_slider = QSlider(Qt.Horizontal)
+        self._amp_slider.setRange(5, 120)
+        self._amp_slider.setValue(amplitude)
+        self._amp_slider.setFixedWidth(120)
+        self._amp_slider.setStyleSheet(self._spd_slider.styleSheet())
+        self._amp_val = QLabel(f"{amplitude}")
+        self._amp_val.setStyleSheet("color:#ccc; font-size:9px; min-width:36px;")
+        self._amp_slider.valueChanged.connect(
+            lambda v: (self._amp_val.setText(str(v)), self._emit_if_active()))
+        amp_row.addWidget(self._amp_slider)
+        amp_row.addWidget(self._amp_val)
+        root.addLayout(amp_row)
+
+    def _on_effect(self, key):
+        self._current = key
+        for k, b in self._eff_btns.items():
+            b.setStyleSheet(self._BTN_ON if k == key else self._BTN_OFF)
+        self._emit_if_active()
+
+    def _on_stop(self):
+        self._current = None
+        for b in self._eff_btns.values():
+            b.setStyleSheet(self._BTN_OFF)
+        self.effect_stopped.emit()
+
+    def _emit_if_active(self):
+        if self._current:
+            self.effect_started.emit(
+                self._current,
+                self._spd_slider.value() / 10.0,
+                self._amp_slider.value()
+            )
+
+    def get_speed(self):
+        return self._spd_slider.value() / 10.0
+
+    def get_amplitude(self):
+        return self._amp_slider.value()
 
 
 class ColorPickerWidget(QWidget):
@@ -109,11 +580,6 @@ class ColorPickerBlock(QFrame):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(4)
 
-        title = QLabel("Color Picker")
-        title.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        title.setStyleSheet("color: #ccc;")
-        layout.addWidget(title)
-
         self.picker = ColorPickerWidget(0, 100)
         self.picker.setFixedHeight(100)
         self.picker.setMinimumWidth(100)
@@ -169,21 +635,24 @@ FIXTURE_LIBRARY = {
         {"name": "PAR LED 3CH (RGB)", "fixture_type": "PAR LED", "group": "face", "profile": "RGB"},
         {"name": "PAR LED RGBW 4CH", "fixture_type": "PAR LED", "group": "face", "profile": "RGBW"},
         {"name": "PAR LED RGBW+Dim 5CH", "fixture_type": "PAR LED", "group": "face", "profile": "RGBWD"},
-        {"name": "PAR contre 5CH (Contre)", "fixture_type": "PAR LED", "group": "contre", "profile": "RGBDS"},
+        {"name": "PAR contre 5CH", "fixture_type": "PAR LED", "group": "contre", "profile": "RGBDS"},
     ],
     "Moving Head": [
-        {"name": "Moving Head 8CH", "fixture_type": "Moving Head", "group": "lyre", "profile": "MOVING_8CH"},
-        {"name": "Moving Head RGB 9CH", "fixture_type": "Moving Head", "group": "lyre", "profile": "MOVING_RGB"},
-        {"name": "Moving Head RGBW 9CH", "fixture_type": "Moving Head", "group": "lyre", "profile": "MOVING_RGBW"},
+        {"name": "Moving Head 8CH", "fixture_type": "Moving Head", "group": "face", "profile": "MOVING_8CH"},
+        {"name": "Moving Head RGB 9CH", "fixture_type": "Moving Head", "group": "face", "profile": "MOVING_RGB"},
+        {"name": "Moving Head RGBW 9CH", "fixture_type": "Moving Head", "group": "face", "profile": "MOVING_RGBW"},
     ],
     "Barre LED": [
-        {"name": "Barre LED RGB 5CH", "fixture_type": "Barre LED", "group": "barre", "profile": "LED_BAR_RGB"},
+        {"name": "Barre LED RGB 5CH", "fixture_type": "Barre LED", "group": "face", "profile": "LED_BAR_RGB"},
     ],
     "Stroboscope": [
-        {"name": "Stroboscope 2CH", "fixture_type": "Stroboscope", "group": "strobe", "profile": "STROBE_2CH"},
+        {"name": "Stroboscope 2CH", "fixture_type": "Stroboscope", "group": "face", "profile": "STROBE_2CH"},
     ],
     "Machine a fumee": [
-        {"name": "Machine a fumee 2CH", "fixture_type": "Machine a fumee", "group": "fumee", "profile": "2CH_FUMEE"},
+        {"name": "Machine a fumee 2CH", "fixture_type": "Machine a fumee", "group": "face", "profile": "2CH_FUMEE"},
+    ],
+    "Gradateur": [
+        {"name": "Gradateur 1CH", "fixture_type": "Gradateur", "group": "face", "profile": "DIM"},
     ],
 }
 
@@ -203,6 +672,29 @@ _DEFAULT_POSITIONS = {
     "groupe_e": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.62),
     "groupe_f": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.46),
 }
+
+class _PersistentMenu(QMenu):
+    """QMenu qui ne se ferme pas quand on clique sur un QWidgetAction (ex: boutons couleur)."""
+
+    def mouseReleaseEvent(self, event):
+        action = self.actionAt(event.pos())
+        if isinstance(action, QWidgetAction):
+            # Laisser le widget traiter l'event mais garder le menu ouvert
+            w = action.defaultWidget()
+            if w:
+                w.event(event)
+            return
+        super().mouseReleaseEvent(event)
+
+    def mousePressEvent(self, event):
+        action = self.actionAt(event.pos())
+        if isinstance(action, QWidgetAction):
+            w = action.defaultWidget()
+            if w:
+                w.event(event)
+            return
+        super().mousePressEvent(event)
+
 
 _MENU_STYLE = """
 QMenu {
@@ -244,6 +736,46 @@ _GROUP_COLORS = {
     "groupe_e": "#cc44ff",
     "groupe_f": "#ffcc22",
 }
+
+# ── Helpers de positionnement ─────────────────────────────────────────────────
+
+def _find_free_canvas_pos(projectors, pref_x, pref_y, min_dist=0.07):
+    """Retourne une position (x, y) normalisée libre autour de (pref_x, pref_y).
+
+    Fait une recherche en cercles concentriques jusqu'à trouver un emplacement
+    qui ne chevauche pas les fixtures existantes.
+    """
+    import math as _m
+    occupied = [
+        (p.canvas_x, p.canvas_y)
+        for p in projectors
+        if p.canvas_x is not None and p.canvas_y is not None
+    ]
+
+    def _clear(x, y):
+        return all((x - ox) ** 2 + (y - oy) ** 2 >= min_dist ** 2
+                   for ox, oy in occupied)
+
+    pref_x = max(0.05, min(0.95, pref_x))
+    pref_y = max(0.05, min(0.95, pref_y))
+
+    if not occupied or _clear(pref_x, pref_y):
+        return pref_x, pref_y
+
+    for r in range(1, 20):
+        n_angles = max(8, r * 8)
+        candidates = []
+        for k in range(n_angles):
+            angle = 2 * _m.pi * k / n_angles
+            nx = max(0.05, min(0.95, pref_x + r * min_dist * _m.cos(angle)))
+            ny = max(0.05, min(0.95, pref_y + r * min_dist * _m.sin(angle)))
+            if _clear(nx, ny):
+                candidates.append((nx, ny))
+        if candidates:
+            return min(candidates, key=lambda p: (p[0] - pref_x) ** 2 + (p[1] - pref_y) ** 2)
+
+    return pref_x, pref_y  # Dernier recours
+
 
 # ── FixtureCanvas ─────────────────────────────────────────────────────────────
 
@@ -336,6 +868,12 @@ class FixtureCanvas(QWidget):
             return QColor("#1a1a1a")
         if proj.muted or proj.level == 0:
             return QColor("#1a1a1a")
+        # Strobe visuel : clignotement selon strobe_speed
+        strobe_spd = getattr(proj, 'strobe_speed', 0)
+        if strobe_spd > 0:
+            freq = 1.0 + (strobe_spd / 100.0) * 14.0  # 1 Hz → 15 Hz
+            if int(_time.time() * freq * 2) % 2 == 1:
+                return QColor("#1a1a1a")  # phase éteinte
         return QColor(proj.color)
 
     def _draw_fixture(self, painter, cx, cy, proj, is_selected, is_hover):
@@ -374,19 +912,37 @@ class FixtureCanvas(QWidget):
         painter.setBrush(QBrush(fill_color))
 
         if ftype == "Moving Head":
-            # Cone de faisceau (dessine avant le losange)
+            pan_val  = getattr(proj, 'pan',  128)
+            tilt_val = getattr(proj, 'tilt', 128)
+            # Pan → rotation du faisceau (-135° … +135°)
+            pan_angle  = (pan_val - 128) / 128.0 * 135.0
+            # Tilt → longueur du faisceau (0=court, 255=long)
+            tilt_ratio = tilt_val / 255.0
+            beam_len   = int(r * 2 + tilt_ratio * r * 7)
+            beam_hw    = int(r * 0.6 + tilt_ratio * r * 2.5)
+
+            # Cone de faisceau orienté
             if is_lit:
                 beam_col = QColor(fill_color)
-                beam_col.setAlpha(20)
-                painter.setBrush(QBrush(beam_col))
+                beam_col.setAlpha(22)
+                painter.save()
+                painter.translate(cx, cy)
+                painter.rotate(pan_angle)
                 painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(beam_col))
                 cone = QPolygon([
-                    QPoint(cx - r // 2, cy + r),
-                    QPoint(cx + r // 2, cy + r),
-                    QPoint(cx + r * 3,  cy + r * 5),
-                    QPoint(cx - r * 3,  cy + r * 5),
+                    QPoint(-r // 2, r),
+                    QPoint( r // 2, r),
+                    QPoint( beam_hw, beam_len),
+                    QPoint(-beam_hw, beam_len),
                 ])
                 painter.drawPolygon(cone)
+                # Impact au sol (petit ellipse en bout de faisceau)
+                impact_col = QColor(fill_color)
+                impact_col.setAlpha(55)
+                painter.setBrush(QBrush(impact_col))
+                painter.drawEllipse(QPoint(0, beam_len), beam_hw, max(3, beam_hw // 3))
+                painter.restore()
             painter.setPen(pen)
             painter.setBrush(QBrush(fill_color))
             painter.drawPolygon(QPolygon([
@@ -986,6 +1542,33 @@ class FixtureCanvas(QWidget):
         elif event.key() == Qt.Key_Delete:
             if hasattr(self.pdf, '_delete_selected_fixtures'):
                 self.pdf._delete_selected_fixtures()
+        elif event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            if not self._editable or not self.pdf.selected_lamps:
+                super().keyPressEvent(event)
+                return
+            step_px = 10 if (event.modifiers() & Qt.ShiftModifier) else 1
+            cw = max(self.width(),  1)
+            ch = max(self.height(), 1)
+            dx = dy = 0.0
+            if event.key() == Qt.Key_Left:  dx = -step_px / cw
+            if event.key() == Qt.Key_Right: dx =  step_px / cw
+            if event.key() == Qt.Key_Up:    dy = -step_px / ch
+            if event.key() == Qt.Key_Down:  dy =  step_px / ch
+            x_min, x_max = 0.03, 0.97
+            y_min, y_max = 0.04, 0.96
+            # Convertir selected_lamps en indices globaux
+            g_cnt = {}
+            for i, p in enumerate(self.pdf.projectors):
+                li = g_cnt.get(p.group, 0)
+                g_cnt[p.group] = li + 1
+                if (p.group, li) in self.pdf.selected_lamps:
+                    if p.canvas_x is None:
+                        p.canvas_x, p.canvas_y = 0.5, 0.5
+                    p.canvas_x = max(x_min, min(x_max, p.canvas_x + dx))
+                    p.canvas_y = max(y_min, min(y_max, p.canvas_y + dy))
+            self.update()
+            if self.pdf.main_window and hasattr(self.pdf.main_window, 'save_dmx_patch_config'):
+                self.pdf.main_window.save_dmx_patch_config()
         else:
             super().keyPressEvent(event)
 
@@ -1003,6 +1586,7 @@ class PlanDeFeu(QFrame):
         self.selected_lamps = set()   # set of (group, local_idx)
         self._htp_overrides = None    # dict {id(proj): (level, QColor)} ou None
         self._canvas_editable = False  # Vue principale : lecture seule (edition dans Patch DMX)
+        self._effects = {}            # id(proj) -> _EffectState
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -1013,24 +1597,43 @@ class PlanDeFeu(QFrame):
             toolbar = QHBoxLayout()
             toolbar.setContentsMargins(0, 0, 0, 0)
 
-            title = QLabel("Lumieres")
-            title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            toolbar.addWidget(title)
             toolbar.addStretch()
+
+            _BTN_SS = (
+                "QPushButton {{ background: #1e1e1e; color: {fg}; border: 1px solid {bd}; "
+                "border-radius: 4px; font-size: 9px; font-weight: bold; }} "
+                "QPushButton:hover {{ background: #2a2a2a; color: {fgh}; border-color: {bdh}; }} "
+                "QPushButton:pressed {{ background: #333; }}"
+            )
+
+            selec_btn = QPushButton("SELEC")
+            selec_btn.setFixedSize(46, 26)
+            selec_btn.setToolTip("Sélectionner des projecteurs")
+            selec_btn.setStyleSheet(
+                _BTN_SS.format(fg="#aaa", bd="#3a3a3a", fgh="#fff", bdh="#0077bb")
+            )
+            selec_btn.clicked.connect(self._show_select_menu)
+            toolbar.addWidget(selec_btn)
+            toolbar.addSpacing(2)
+
+            clr_btn = QPushButton("CLEAR")
+            clr_btn.setFixedSize(46, 26)
+            clr_btn.setToolTip("Éteindre tous les projecteurs (plan de feu)")
+            clr_btn.setStyleSheet(
+                _BTN_SS.format(fg="#888", bd="#3a3a3a", fgh="#fff", bdh="#555")
+            )
+            clr_btn.clicked.connect(self._clear_plan_de_feu)
+            toolbar.addWidget(clr_btn)
+            toolbar.addSpacing(2)
 
             self.dmx_toggle_btn = QPushButton("ON")
             self.dmx_toggle_btn.setCheckable(True)
             self.dmx_toggle_btn.setChecked(True)
-            self.dmx_toggle_btn.setFixedSize(50, 24)
-            self.dmx_toggle_btn.setStyleSheet("""
-                QPushButton {
-                    background: #228b22; color: white; border: none;
-                    border-radius: 12px; font-weight: bold; font-size: 10px;
-                }
-                QPushButton:!checked {
-                    background: #8b0000;
-                }
-            """)
+            self.dmx_toggle_btn.setFixedSize(44, 26)
+            self.dmx_toggle_btn.setToolTip("Activer / désactiver la sortie DMX")
+            self.dmx_toggle_btn.setStyleSheet(
+                _BTN_SS.format(fg="#00cc66", bd="#00cc66", fgh="#00ff88", bdh="#00ff88")
+            )
             self.dmx_toggle_btn.clicked.connect(self._toggle_dmx_output)
             toolbar.addWidget(self.dmx_toggle_btn)
 
@@ -1047,10 +1650,20 @@ class PlanDeFeu(QFrame):
 
         self._dirty = True  # Redessiner seulement si les données ont changé
 
-        # Timer de refresh (100 ms ~ 10 fps) — suffisant visuellement, -40% CPU vs 60ms
+        # Timer de refresh — 50 ms quand strobe actif, 100 ms sinon
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(100)
+        self.timer.timeout.connect(self._timer_tick)
+        self.timer.start(50)
+
+    def _timer_tick(self):
+        has_strobe = any(getattr(p, 'strobe_speed', 0) > 0 for p in self.projectors)
+        # Adapter la fréquence dynamiquement
+        interval = 40 if has_strobe else 100
+        if self.timer.interval() != interval:
+            self.timer.setInterval(interval)
+        self._dirty = True  # Toujours redessiner pour refléter l'état live des projecteurs
+        self.refresh()
+        self._tick_effects()
 
     # ── API externe (identique a l'ancienne version) ────────────────
 
@@ -1075,6 +1688,40 @@ class PlanDeFeu(QFrame):
         """Signale qu'un repaint est nécessaire au prochain tick."""
         self._dirty = True
 
+    def _tick_effects(self):
+        """Applique les effets automatiques Pan/Tilt à 10 fps."""
+        if not self._effects:
+            return
+        dead = []
+        for proj_id, state in self._effects.items():
+            # Retrouver le projecteur
+            proj = next((p for p in self.projectors if id(p) == proj_id), None)
+            if proj is None:
+                dead.append(proj_id)
+                continue
+            pan, tilt = state.tick()
+            proj.pan  = pan
+            proj.tilt = tilt
+        for proj_id in dead:
+            del self._effects[proj_id]
+        if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
+            self.main_window.dmx.update_from_projectors(self.projectors)
+        self.canvas.update()
+
+    def start_effect(self, projectors, effect, speed, amplitude):
+        """Démarre un effet sur une liste de projecteurs."""
+        for proj in projectors:
+            self._effects[id(proj)] = _EffectState(
+                effect, speed, amplitude,
+                center_pan=getattr(proj, 'pan', 128),
+                center_tilt=getattr(proj, 'tilt', 128)
+            )
+
+    def stop_effect(self, projectors):
+        """Stoppe l'effet sur une liste de projecteurs."""
+        for proj in projectors:
+            self._effects.pop(id(proj), None)
+
     def set_htp_overrides(self, overrides):
         if overrides != self._htp_overrides:
             self._htp_overrides = overrides
@@ -1083,6 +1730,12 @@ class PlanDeFeu(QFrame):
     def set_dmx_blocked(self):
         self.dmx_toggle_btn.setChecked(False)
         self.dmx_toggle_btn.setText("OFF")
+        self.dmx_toggle_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
+            "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+            "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #ff4444; } "
+            "QPushButton:pressed { background: #333; }"
+        )
 
     def is_dmx_enabled(self):
         return self.dmx_toggle_btn.isChecked()
@@ -1105,7 +1758,22 @@ class PlanDeFeu(QFrame):
                     msg = "Logiciel non active.\nActivez une licence pour utiliser la sortie Art-Net."
                 _QMB.warning(self.main_window, "Sortie Art-Net", msg)
                 return
-        self.dmx_toggle_btn.setText("ON" if self.dmx_toggle_btn.isChecked() else "OFF")
+        on = self.dmx_toggle_btn.isChecked()
+        self.dmx_toggle_btn.setText("ON" if on else "OFF")
+        if on:
+            self.dmx_toggle_btn.setStyleSheet(
+                "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
+                "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+                "QPushButton:hover { background: #2a2a2a; color: #00ff88; border-color: #00ff88; } "
+                "QPushButton:pressed { background: #333; }"
+            )
+        else:
+            self.dmx_toggle_btn.setStyleSheet(
+                "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
+                "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+                "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #ff4444; } "
+                "QPushButton:pressed { background: #333; }"
+            )
 
     # ── Selection helpers ────────────────────────────────────────────
 
@@ -1127,6 +1795,12 @@ class PlanDeFeu(QFrame):
         self.selected_lamps.clear()
         self.refresh()
 
+    def _clear_plan_de_feu(self):
+        """Éteint tous les projecteurs depuis le plan de feu et envoie le DMX."""
+        self._clear_all_projectors()
+        if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
+            self.main_window.dmx.update_from_projectors(self.projectors)
+
     def _select_group(self, selection):
         self.selected_lamps.clear()
         if selection == "pairs_lat_contre":
@@ -1143,10 +1817,125 @@ class PlanDeFeu(QFrame):
             for group, idx, _ in self.lamps:
                 if group in ("contre", "lat"):
                     self.selected_lamps.add((group, idx))
-        elif selection in ("face", "douche1", "douche2", "douche3", "lyre", "barre", "strobe", "fumee", "public"):
+        else:
             for group, idx, _ in self.lamps:
                 if group == selection:
                     self.selected_lamps.add((group, idx))
+        self.refresh()
+
+    # Mapping groupe interne → lettre affichée
+    _GROUP_LABEL = {
+        "face":    "Groupe A",
+        "lat":     "Groupe B",
+        "contre":  "Groupe C",
+        "douche1": "Groupe D",
+        "douche2": "Groupe E",
+        "douche3": "Groupe F",
+        "public":  "Groupe G",
+        "lyre":    "Groupe H",
+        "barre":   "Groupe I",
+        "strobe":  "Groupe J",
+        "fumee":   "Groupe K",
+    }
+
+    def _show_select_menu(self):
+        """Affiche le menu de sélection des projecteurs."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: #1e1e1e; color: #ccc; border: 1px solid #3a3a3a; } "
+            "QMenu::item { padding: 6px 20px; } "
+            "QMenu::item:selected { background: #0077bb; color: #fff; } "
+            "QMenu::separator { background: #3a3a3a; height: 1px; margin: 3px 8px; }"
+        )
+
+        menu.addAction("✔  Tout sélectionner",   self._select_all)
+        menu.addAction("✖  Tout désélectionner", self._deselect_all)
+        menu.addSeparator()
+
+        # Groupes présents dans les projecteurs, dans l'ordre du mapping
+        present_groups = {p.group for p in self.projectors}
+        for internal, label in self._GROUP_LABEL.items():
+            if internal in present_groups:
+                menu.addAction(label, lambda g=internal: self._select_group(g))
+
+        # Groupes non répertoriés dans le mapping
+        unlisted = present_groups - set(self._GROUP_LABEL)
+        for g in sorted(unlisted):
+            menu.addAction(g.capitalize(), lambda grp=g: self._select_group(grp))
+
+        menu.addSeparator()
+        menu.addAction("➕  Ajouter un groupe...", self._open_add_group_dialog)
+
+        # Trouver le bouton SELEC pour positionner le menu
+        sender = self.sender()
+        if sender:
+            menu.exec(sender.mapToGlobal(sender.rect().bottomLeft()))
+        else:
+            menu.exec(self.mapToGlobal(self.rect().topRight()))
+
+    def _open_add_group_dialog(self):
+        """Ouvre un dialog simple pour créer un nouveau groupe."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Ajouter un groupe")
+        dlg.setFixedSize(320, 130)
+        dlg.setStyleSheet("QDialog { background: #1a1a1a; color: #ddd; }")
+
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        lbl = QLabel("Nom du groupe :")
+        lbl.setStyleSheet("font-size: 12px; color: #aaa;")
+        vl.addWidget(lbl)
+
+        inp = QLineEdit()
+        inp.setPlaceholderText("ex: Backlight, FOH, Cyclo...")
+        inp.setStyleSheet(
+            "QLineEdit { background: #111; color: #fff; border: 1px solid #444; "
+            "border-radius: 4px; padding: 5px 8px; font-size: 13px; }"
+            "QLineEdit:focus { border-color: #0077bb; }"
+        )
+        vl.addWidget(inp)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_cancel = QPushButton("Annuler")
+        btn_ok = QPushButton("Créer")
+        for b, fg, bg in [(btn_cancel, "#888", "#1e1e1e"), (btn_ok, "#fff", "#007a45")]:
+            b.setFixedHeight(28)
+            b.setStyleSheet(
+                f"QPushButton {{ background: {bg}; color: {fg}; border: 1px solid #3a3a3a; "
+                f"border-radius: 4px; font-size: 12px; font-weight: bold; }} "
+                f"QPushButton:hover {{ background: {'#2a2a2a' if bg == '#1e1e1e' else '#009950'}; }}"
+            )
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_ok.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_ok)
+        vl.addLayout(btn_row)
+
+        inp.setFocus()
+        inp.returnPressed.connect(dlg.accept)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        group_name = inp.text().strip()
+        if not group_name:
+            return
+
+        # Créer une fixture PAR LED dans ce nouveau groupe
+        from projector import Projector
+        p = Projector(group_name, name=f"{group_name} 1", fixture_type="PAR LED")
+        # Adresse DMX suivante disponible
+        used = max((proj.start_address for proj in self.projectors), default=0)
+        p.start_address = used + 5
+        self.projectors.append(p)
+
+        if self.main_window and hasattr(self.main_window, '_rebuild_dmx_patch'):
+            self.main_window._rebuild_dmx_patch()
         self.refresh()
 
     # ── Couleur / dimmer ─────────────────────────────────────────────
@@ -1219,6 +2008,38 @@ class PlanDeFeu(QFrame):
 
     # ── Menus contextuels ────────────────────────────────────────────
 
+    def _pos_outside(self, menu):
+        """Retourne une position globale qui place le menu en dehors du plan de feu.
+        Priorité : droite → gauche → bas → haut du widget."""
+        from PySide6.QtGui import QGuiApplication
+        screen_rect = QGuiApplication.primaryScreen().availableGeometry()
+        menu_sz     = menu.sizeHint()
+        widget_tl   = self.mapToGlobal(QPoint(0, 0))
+        widget_rect = QRect(widget_tl, self.size())
+
+        # Essai à droite
+        x = widget_rect.right() + 4
+        y = widget_tl.y() + 20
+        if x + menu_sz.width() <= screen_rect.right():
+            return QPoint(x, max(screen_rect.top(), min(y, screen_rect.bottom() - menu_sz.height())))
+
+        # Essai à gauche
+        x = widget_rect.left() - menu_sz.width() - 4
+        if x >= screen_rect.left():
+            return QPoint(x, max(screen_rect.top(), min(y, screen_rect.bottom() - menu_sz.height())))
+
+        # Essai en bas
+        x = widget_tl.x() + 20
+        y = widget_rect.bottom() + 4
+        if y + menu_sz.height() <= screen_rect.bottom():
+            return QPoint(max(screen_rect.left(), min(x, screen_rect.right() - menu_sz.width())), y)
+
+        # Fallback : en haut
+        return QPoint(
+            max(screen_rect.left(), min(x, screen_rect.right() - menu_sz.width())),
+            max(screen_rect.top(), widget_rect.top() - menu_sz.height() - 4)
+        )
+
     def _show_fixture_context_menu(self, global_pos, fixture_idx):
         proj = self.projectors[fixture_idx]
         group, local_idx = self.canvas._local_idx(fixture_idx)
@@ -1226,100 +2047,212 @@ class PlanDeFeu(QFrame):
         if not targets:
             return
 
-        menu = QMenu(self)
+        menu = _PersistentMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
 
-        # Titre
-        if len(targets) == 1:
-            p, g, i = targets[0]
-            info_text = f"{p.name or (g.capitalize() + ' ' + str(i+1))}  (CH {p.start_address})"
-        else:
-            info_text = f"{len(targets)} fixtures selectionnees"
-
-        info_lbl = QLabel(info_text)
-        info_lbl.setStyleSheet("color: #00d4ff; font-weight: bold; font-size: 12px; padding: 4px 8px;")
-        info_lbl.setAlignment(Qt.AlignCenter)
-        info_wa = QWidgetAction(menu)
-        info_wa.setDefaultWidget(info_lbl)
-        menu.addAction(info_wa)
-        menu.addSeparator()
-
-        # Grille de couleurs 2 lignes x 4 cols
-        colors_w = QWidget()
-        colors_g = QGridLayout(colors_w)
-        colors_g.setContentsMargins(8, 4, 8, 4)
-        colors_g.setSpacing(5)
-        for ci, (label, color) in enumerate(PRESET_COLORS):
-            row, col = divmod(ci, 4)
-            btn = QPushButton()
-            btn.setFixedSize(28, 28)
-            border_c = "#555" if color.lightness() < 50 else color.darker(130).name()
-            btn.setStyleSheet(f"""
-                QPushButton {{ background: {color.name()}; border: 2px solid {border_c};
-                               border-radius: 14px; }}
-                QPushButton:hover {{ border: 2px solid #00d4ff; }}
-            """)
-            btn.setToolTip(label)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(
-                lambda checked, c=color, t=targets, m=menu: self._apply_color_to_targets(t, c, m)
-            )
-            colors_g.addWidget(btn, row, col)
-        colors_wa = QWidgetAction(menu)
-        colors_wa.setDefaultWidget(colors_w)
-        menu.addAction(colors_wa)
-
-        # Color picker inline
-        picker_w = ColorPickerWidget(230, 100)
-        picker_w.colorSelected.connect(
-            lambda c, t=targets: self._apply_color_to_targets(t, c)
-        )
-        picker_wa = QWidgetAction(menu)
-        picker_wa.setDefaultWidget(picker_w)
-        menu.addAction(picker_wa)
-        menu.addSeparator()
-
-        # Dimmer
-        dim_w = QWidget()
-        dim_h = QHBoxLayout(dim_w)
-        dim_h.setContentsMargins(8, 4, 8, 4)
-        dim_h.setSpacing(8)
-        dim_lbl = QLabel("Dim")
-        dim_lbl.setStyleSheet("color: #888; font-size: 11px; font-weight: bold;")
-        dim_h.addWidget(dim_lbl)
-        slider = QSlider(Qt.Horizontal)
-        slider.setRange(0, 100)
-        slider.setValue(targets[0][0].level)
-        slider.setFixedWidth(150)
-        slider.setStyleSheet("""
-            QSlider::groove:horizontal { background: #333; height: 8px; border-radius: 4px; }
-            QSlider::handle:horizontal { background: #00d4ff; width: 16px; height: 16px;
-                                          margin: -4px 0; border-radius: 8px; }
+        _SS  = "color:#888; font-size:11px; font-weight:bold; border:none; background:transparent;"
+        _SLI = """
+            QSlider::groove:horizontal { background:#333; height:6px; border-radius:3px; }
+            QSlider::handle:horizontal { background:#00d4ff; width:14px; height:14px;
+                                         margin:-4px 0; border-radius:7px; }
             QSlider::sub-page:horizontal {
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #005577,stop:1 #00d4ff);
-                border-radius: 4px;
-            }
-        """)
-        dim_val = QLabel(f"{targets[0][0].level}%")
-        dim_val.setStyleSheet("color: #ddd; font-size: 12px; font-weight: bold; min-width: 35px;")
-        dim_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        slider.valueChanged.connect(lambda v, t=targets: self._set_dimmer_for_targets(t, v))
-        slider.valueChanged.connect(lambda v: dim_val.setText(f"{v}%"))
-        dim_h.addWidget(slider)
-        dim_h.addWidget(dim_val)
-        dim_wa = QWidgetAction(menu)
-        dim_wa.setDefaultWidget(dim_w)
-        menu.addAction(dim_wa)
+                border-radius:3px; }
+        """
+
+        def _flush(t=targets):
+            if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
+                self.main_window.dmx.update_from_projectors(self.projectors)
+            self.canvas.update()
+
+        def _wa(widget):
+            wa = QWidgetAction(menu)
+            wa.setDefaultWidget(widget)
+            menu.addAction(wa)
+
+        # ── Titre ────────────────────────────────────────────────────────
+        if len(targets) == 1:
+            p0, g0, i0 = targets[0]
+            info_text = f"{p0.name or (g0.capitalize() + ' ' + str(i0+1))}  (CH {p0.start_address})"
+        else:
+            info_text = f"{len(targets)} fixtures sélectionnées"
+        lbl = QLabel(info_text)
+        lbl.setStyleSheet("color:#00d4ff; font-weight:bold; font-size:12px; padding:4px 8px;")
+        lbl.setAlignment(Qt.AlignCenter)
+        _wa(lbl)
         menu.addSeparator()
-        menu.addAction("✏  Remplacer la fixture...", lambda: self._edit_fixture(fixture_idx))
-        menu.exec(global_pos)
+
+        # ── Dimmer (EN PREMIER) ──────────────────────────────────────────
+        dim_w = QWidget(); dim_h = QHBoxLayout(dim_w)
+        dim_h.setContentsMargins(10, 5, 10, 5); dim_h.setSpacing(8)
+        dim_lbl = QLabel("Dim"); dim_lbl.setStyleSheet(_SS)
+        dim_sli = QSlider(Qt.Horizontal)
+        dim_sli.setRange(0, 100); dim_sli.setValue(targets[0][0].level)
+        dim_sli.setFixedWidth(150); dim_sli.setStyleSheet(_SLI)
+        dim_val = QLabel(f"{targets[0][0].level}%")
+        dim_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; min-width:34px;")
+        dim_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        dim_sli.valueChanged.connect(lambda v, t=targets: self._set_dimmer_for_targets(t, v))
+        dim_sli.valueChanged.connect(lambda v: dim_val.setText(f"{v}%"))
+        for w in (dim_lbl, dim_sli, dim_val): dim_h.addWidget(w)
+        _wa(dim_w)
+
+        # ── Strobe (tout sauf Machine à fumée) ───────────────────────────
+        if proj.fixture_type != "Machine a fumee":
+            menu.addSeparator()
+            strobe_w = QWidget(); strobe_h = QHBoxLayout(strobe_w)
+            strobe_h.setContentsMargins(10, 5, 10, 5); strobe_h.setSpacing(8)
+
+            strobe_lbl = QLabel("Strobe"); strobe_lbl.setStyleSheet(_SS)
+            current_spd = getattr(targets[0][0], 'strobe_speed', 0)
+
+            strobe_sli = QSlider(Qt.Horizontal)
+            strobe_sli.setRange(0, 100)
+            strobe_sli.setValue(current_spd)
+            strobe_sli.setFixedWidth(150)
+            strobe_sli.setStyleSheet(_SLI)
+
+            strobe_val = QLabel(f"{current_spd}%" if current_spd > 0 else "Off")
+            strobe_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; min-width:34px;")
+            strobe_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            def _on_strobe_speed(v, t=targets):
+                for p, g, i in t:
+                    p.strobe_speed = v
+                strobe_val.setText(f"{v}%" if v > 0 else "Off")
+                _flush()
+
+            strobe_sli.valueChanged.connect(_on_strobe_speed)
+
+            for w in (strobe_lbl, strobe_sli, strobe_val):
+                strobe_h.addWidget(w)
+            _wa(strobe_w)
+
+        # ── Moving Head : PanTilt + Presets côte à côte + Gobo ───────────
+        if proj.fixture_type == "Moving Head":
+            menu.addSeparator()
+
+            # Conteneur horizontal : pad à gauche, presets à droite
+            mh_w = QWidget(); mh_h = QHBoxLayout(mh_w)
+            mh_h.setContentsMargins(6, 4, 6, 4); mh_h.setSpacing(6)
+
+            pt_pad = PanTiltPad(
+                pan=getattr(targets[0][0], 'pan', 128),
+                tilt=getattr(targets[0][0], 'tilt', 128)
+            )
+            def _on_pantilt(pan, tilt, t=targets):
+                for p, g, i in t:
+                    p.pan = pan; p.tilt = tilt
+                _flush()
+            pt_pad.changed.connect(_on_pantilt)
+            mh_h.addWidget(pt_pad)
+
+            preset_bar = PresetBar(get_current_pan_tilt=lambda: (pt_pad._pan, pt_pad._tilt))
+            def _on_preset(pan, tilt, pad=pt_pad, t=targets):
+                pad.set_values(pan, tilt)
+                for p, g, i in t:
+                    p.pan = pan; p.tilt = tilt
+                _flush()
+            preset_bar.preset_selected.connect(_on_preset)
+            mh_h.addWidget(preset_bar)
+            _wa(mh_w)
+
+            # Gobo (si le profil contient Gobo1)
+            proj_profile = getattr(targets[0][0], 'dmx_profile', None)
+            if isinstance(proj_profile, list) and 'Gobo1' in proj_profile:
+                gobo_w = QWidget(); gobo_h = QHBoxLayout(gobo_w)
+                gobo_h.setContentsMargins(8, 4, 8, 6); gobo_h.setSpacing(4)
+                gobo_h.addWidget(QLabel("Gobo :"))
+                gobo_w.findChildren(QLabel)[0].setStyleSheet(_SS)
+
+                _GOBO_SLOTS = [
+                    (0,  "○", "Open"),  (8,  "✦", "Gobo 1"), (16, "◈", "Gobo 2"),
+                    (24, "⊕", "Gobo 3"), (32, "⊗", "Gobo 4"), (40, "❋", "Gobo 5"),
+                    (48, "⌘", "Gobo 6"), (56, "✿", "Gobo 7"),
+                ]
+                current_gobo = getattr(targets[0][0], 'gobo', 0)
+
+                _SS_GOBO_ON  = ("QPushButton{background:#00d4ff;color:#000;border:none;"
+                                "border-radius:4px;font-size:13px;font-weight:bold;}")
+                _SS_GOBO_OFF = ("QPushButton{background:#1e1e1e;color:#aaa;border:1px solid #333;"
+                                "border-radius:4px;font-size:13px;}"
+                                "QPushButton:hover{background:#2a2a2a;color:#fff;border-color:#555;}")
+
+                def _set_gobo(val, t=targets, gw=gobo_w):
+                    for p, g, i in t:
+                        p.gobo = val
+                    _flush()
+                    for b in gw.findChildren(QPushButton):
+                        bv = b.property("gobo_val")
+                        if bv is not None:
+                            b.setStyleSheet(_SS_GOBO_ON if bv == val else _SS_GOBO_OFF)
+
+                for dmx_val, icon, tip in _GOBO_SLOTS:
+                    btn = QPushButton(icon)
+                    btn.setFixedSize(30, 30); btn.setToolTip(tip)
+                    btn.setProperty("gobo_val", dmx_val)
+                    btn.setStyleSheet(_SS_GOBO_ON if dmx_val == current_gobo else _SS_GOBO_OFF)
+                    btn.clicked.connect(lambda checked, v=dmx_val: _set_gobo(v))
+                    gobo_h.addWidget(btn)
+                gobo_h.addStretch()
+                _wa(gobo_w)
+
+        # ── Couleurs ─────────────────────────────────────────────────────
+        NO_COLOR_TYPES = {"Machine a fumee", "Gradateur"}
+        if proj.fixture_type not in NO_COLOR_TYPES:
+            menu.addSeparator()
+            colors_w = QWidget(); colors_g = QGridLayout(colors_w)
+            colors_g.setContentsMargins(8, 4, 8, 4); colors_g.setSpacing(5)
+            for ci, (label, color) in enumerate(PRESET_COLORS):
+                row, col = divmod(ci, 4)
+                btn = QPushButton(); btn.setFixedSize(28, 28)
+                bc = "#555" if color.lightness() < 50 else color.darker(130).name()
+                btn.setStyleSheet(
+                    f"QPushButton{{background:{color.name()};border:2px solid {bc};"
+                    f"border-radius:14px;}}QPushButton:hover{{border:2px solid #00d4ff;}}"
+                )
+                btn.setToolTip(label); btn.setCursor(Qt.PointingHandCursor)
+                def _on_color_btn(checked, c=color, t=targets):
+                    self._apply_color_to_targets(t, c)
+                    v = t[0][0].level
+                    dim_sli.setValue(v)
+                    dim_val.setText(f"{v}%")
+                btn.clicked.connect(_on_color_btn)
+                colors_g.addWidget(btn, row, col)
+            _wa(colors_w)
+
+            picker_w = ColorPickerWidget(230, 100)
+            def _on_color_picker(c, t=targets):
+                self._apply_color_to_targets(t, c)
+                v = t[0][0].level
+                dim_sli.setValue(v)
+                dim_val.setText(f"{v}%")
+            picker_w.colorSelected.connect(_on_color_picker)
+            _wa(picker_w)
+
+        # ── Bas de menu ──────────────────────────────────────────────────
+        menu.addSeparator()
+        patch_w = QWidget()
+        patch_w.setCursor(Qt.PointingHandCursor)
+        patch_l = QHBoxLayout(patch_w)
+        patch_l.setContentsMargins(0, 6, 0, 6)
+        patch_lbl = QLabel("Editer Patch")
+        patch_lbl.setAlignment(Qt.AlignCenter)
+        patch_lbl.setStyleSheet("color:#888; font-size:11px; border:none; background:transparent;")
+        patch_l.addWidget(patch_lbl)
+        patch_wa = QWidgetAction(menu)
+        patch_wa.setDefaultWidget(patch_w)
+        patch_wa.triggered.connect(lambda: self._edit_fixture(fixture_idx))
+        patch_w.mouseReleaseEvent = lambda e: (self._edit_fixture(fixture_idx), menu.close())
+        menu.addAction(patch_wa)
+        menu.exec(self._pos_outside(menu))
 
     def _show_canvas_context_menu(self, global_pos, local_pos=None):
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
 
         act_add = menu.addAction("+ Ajouter fixture")
-        act_add.triggered.connect(self._open_add_fixture_dialog)
+        act_add.triggered.connect(lambda: self._open_add_fixture_dialog(local_pos))
         menu.addSeparator()
 
         act_sel_all = menu.addAction("Tout selectionner")
@@ -1348,7 +2281,7 @@ class PlanDeFeu(QFrame):
                 act = sel_menu.addAction(label)
                 act.triggered.connect(lambda checked, grp=g: self._select_group(grp))
 
-        menu.exec(global_pos)
+        menu.exec(self._pos_outside(menu))
 
     # ── Ajout / edition / suppression ────────────────────────────────
 
@@ -1379,7 +2312,7 @@ class PlanDeFeu(QFrame):
             self.main_window._rebuild_dmx_patch()
         self.refresh()
 
-    def _open_add_fixture_dialog(self):
+    def _open_add_fixture_dialog(self, local_pos=None):
         from projector import Projector
         dlg = AddFixtureDialog(self.projectors, self)
         if dlg.exec() == QDialog.Accepted:
@@ -1387,8 +2320,14 @@ class PlanDeFeu(QFrame):
             if data:
                 p = Projector(data['group'], name=data['name'], fixture_type=data['fixture_type'])
                 p.start_address = data['start_address']
-                p.canvas_x = 0.5
-                p.canvas_y = 0.5
+                if local_pos is not None:
+                    cw = max(self.canvas.width(), 1)
+                    ch = max(self.canvas.height(), 1)
+                    px = max(0.05, min(0.95, local_pos.x() / cw))
+                    py = max(0.06, min(0.94, local_pos.y() / ch))
+                else:
+                    px, py = 0.5, 0.5
+                p.canvas_x, p.canvas_y = _find_free_canvas_pos(self.projectors, px, py)
                 profile = data.get('profile')
                 if isinstance(profile, list) and profile:
                     p.dmx_profile = profile
@@ -1400,6 +2339,10 @@ class PlanDeFeu(QFrame):
     def _edit_fixture(self, fixture_idx):
         if fixture_idx >= len(self.projectors):
             return
+        if self.main_window and hasattr(self.main_window, 'show_dmx_patch_config'):
+            self.main_window.show_dmx_patch_config(select_idx=fixture_idx)
+            return
+        # Fallback sans main_window
         proj = self.projectors[fixture_idx]
         dlg = EditFixtureDialog(proj, self.projectors, self)
         if dlg.exec() == QDialog.Accepted:
@@ -1518,7 +2461,7 @@ class _FixtureFormWidget(QWidget):
         layout.addRow("Nom :", self.name_edit)
 
         self.type_combo = QComboBox()
-        for t in ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee"]:
+        for t in ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee", "Gradateur"]:
             self.type_combo.addItem(t)
         if preset:
             idx = self.type_combo.findText(preset.get('fixture_type', 'PAR LED'))
@@ -1532,15 +2475,24 @@ class _FixtureFormWidget(QWidget):
         layout.addRow("Adresse DMX :", self.addr_spin)
 
         self.group_combo = QComboBox()
-        groups = ["face", "contre", "douche1", "douche2", "douche3", "lat",
-                  "groupe_e", "groupe_f",
-                  "lyre", "barre", "strobe", "fumee", "public"]
-        for g in groups:
-            self.group_combo.addItem(g)
-        if preset:
-            idx = self.group_combo.findText(preset.get('group', 'face'))
-            if idx >= 0:
-                self.group_combo.setCurrentIndex(idx)
+        _GROUPS = [
+            ("face",    "A"),
+            ("lat",     "B"),
+            ("contre",  "C"),
+            ("douche1", "D"),
+            ("douche2", "E"),
+            ("douche3", "F"),
+        ]
+        for key, label in _GROUPS:
+            self.group_combo.addItem(label, key)
+        # Sélection initiale — tout groupe inconnu (lyre, fumee…) → A
+        default_group = preset.get('group', 'face') if preset else 'face'
+        sel = 0
+        for i in range(self.group_combo.count()):
+            if self.group_combo.itemData(i) == default_group:
+                sel = i
+                break
+        self.group_combo.setCurrentIndex(sel)
         layout.addRow("Groupe :", self.group_combo)
 
         self.profile_combo = QComboBox()
@@ -1556,7 +2508,7 @@ class _FixtureFormWidget(QWidget):
     def _next_address(self):
         if not self._projectors:
             return 1
-        _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2}
+        _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2, "Gradateur": 1}
         return max(p.start_address + _CH.get(getattr(p, 'fixture_type', 'PAR LED'), 5)
                    for p in self._projectors)
 
@@ -1570,6 +2522,7 @@ class _FixtureFormWidget(QWidget):
             "Barre LED":      ["LED_BAR_RGB", "RGB", "RGBD", "RGBDS"],
             "Stroboscope":    ["STROBE_2CH"],
             "Machine a fumee": ["2CH_FUMEE"],
+            "Gradateur":      ["DIM"],
         }
         allowed = TYPE_PROFILES.get(fixture_type, list(DMX_PROFILES.keys()))
         for key in allowed:
@@ -1593,7 +2546,7 @@ class _FixtureFormWidget(QWidget):
             'name': self.name_edit.text().strip(),
             'fixture_type': self.type_combo.currentText(),
             'start_address': self.addr_spin.value(),
-            'group': self.group_combo.currentText(),
+            'group': self.group_combo.currentData() or self.group_combo.currentText(),
             'profile': profile,
         }
 
@@ -1680,7 +2633,7 @@ class AddFixtureDialog(QDialog):
             if item:
                 self._result_data = item.data(Qt.UserRole)
                 # Calculer adresse DMX compacte
-                _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2}
+                _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2, "Gradateur": 1}
                 if self._projectors:
                     next_addr = max(
                         p.start_address + _CH.get(getattr(p, 'fixture_type', 'PAR LED'), 5)

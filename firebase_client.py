@@ -222,20 +222,49 @@ def refresh_id_token(refresh_token: str) -> dict:
         raise Exception(f"Erreur renouvellement token : {msg}")
 
 
+def get_stripe_portal_url(id_token: str) -> str:
+    """
+    Crée une session Stripe Customer Portal et retourne l'URL.
+    Lève une Exception en cas d'erreur.
+    """
+    url  = "https://us-central1-mystrow-907be.cloudfunctions.net/create_portal_session"
+    data = json.dumps({"id_token": id_token}).encode()
+    req  = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            if not result.get("ok"):
+                raise Exception(result.get("error", "Erreur inconnue"))
+            return result["url"]
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        raise Exception(f"Erreur portail : {body}")
+
+
 def send_password_reset(email: str) -> bool:
     """
-    Envoie un email de reinitialisation de mot de passe via Firebase.
-    Firebase gere l'envoi — aucune config SMTP requise.
+    Envoie un email de réinitialisation stylisé via la Cloud Function MyStrow.
     """
-    url = f"{_AUTH_BASE}/accounts:sendOobCode?key={FIREBASE_API_KEY}"
+    url  = "https://send-reset-email-2gdol7vjca-uc.a.run.app"
+    data = json.dumps({"email": email}).encode()
+    req  = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     try:
-        _post_json(url, {
-            "requestType": "PASSWORD_RESET",
-            "email": email,
-        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            if not result.get("ok"):
+                raise Exception(result.get("error", "Erreur inconnue"))
         return True
     except urllib.error.HTTPError as e:
-        raise Exception(f"Erreur envoi email : {_firebase_error(e)}")
+        body = e.read().decode()
+        raise Exception(f"Erreur envoi email : {body}")
 
 
 # ---------------------------------------------------------------

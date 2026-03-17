@@ -12,9 +12,12 @@ Version complete avec toutes les fonctionnalites:
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QMenu, QComboBox, QDialog, QMessageBox, QInputDialog, QSlider, QApplication
+    QMenu, QComboBox, QDialog, QMessageBox, QInputDialog, QSlider, QApplication,
+    QGridLayout, QCheckBox, QTabWidget, QSpinBox, QFrame, QSizePolicy, QToolTip,
+    QLineEdit, QWidgetAction
 )
-from PySide6.QtCore import Qt, QPoint, QSize, QRect, QMimeData
+from PySide6.QtCore import Qt, QPoint, QSize, QRect, QMimeData, QTimer
+
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPolygon, QCursor,
     QPixmap, QIcon, QLinearGradient, QDrag, QPainterPath
@@ -58,137 +61,209 @@ class LightClip:
         # Nouveau système : couches d'effets structurées (list[dict])
         self.effect_layers    = []
         self.effect_play_mode = "loop"   # "loop" | "once"
+        self.effect_duration  = 0        # secondes (0 = pas de minuteur)
+        self.effect_name      = ""       # nom du preset sélectionné dans l'éditeur
 
         # Fades
         self.fade_in_duration = 0
         self.fade_out_duration = 0
 
+        # Mouvement Pan/Tilt (Moving Head uniquement)
+        self.pan_start    = 128   # 0-255
+        self.tilt_start   = 128
+        self.pan_end      = 128
+        self.tilt_end     = 128
+        self.move_effect  = None  # None | "cercle" | "figure8" | "balayage_h" | "balayage_v" | "aleatoire"
+        self.move_speed   = 0.5   # Hz
+        self.move_amplitude = 60
+
         # Position stockee pour interactions souris
         self.x_pos = 0
         self.width_val = 0
 
+        # Clip de séquence (mémoire AKAI)
+        self.memory_ref = None    # (mem_col, row) ou None
+        self.memory_label = ""    # ex: "A1", "B3"
+
+
+class _ColorSwatch(QPushButton):
+    """Bouton couleur avec rendu premium — gradient + shine."""
+
+    S = 46   # taille en px
+
+    def __init__(self, color1, color2=None, label="", parent=None):
+        super().__init__(parent)
+        self.c1 = color1
+        self.c2 = color2   # None = couleur simple, sinon bicolore
+        self.setFixedSize(self.S, self.S)
+        self.setToolTip(label)
+        self.setCursor(QCursor(Qt.OpenHandCursor))
+        self._hovered = False
+        self.setStyleSheet("QPushButton { border: none; background: transparent; padding: 0px; }")
+
+    def enterEvent(self, e):
+        self._hovered = True;  self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False; self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        S = self.S
+        r = 9    # rayon coins
+
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, S, S, r, r)
+        p.setClipPath(path)
+
+        # Fond (couleur ou bicolore)
+        if self.c2:
+            p.fillRect(0, 0, S // 2, S, self.c1)
+            p.fillRect(S // 2, 0, S - S // 2, S, self.c2)
+            # Ligne séparatrice subtile
+            p.setPen(QPen(QColor(0, 0, 0, 80), 1))
+            p.drawLine(S // 2, 0, S // 2, S)
+        else:
+            p.fillRect(0, 0, S, S, self.c1)
+
+        # Dégradé brillance (haut → bas)
+        grad = QLinearGradient(0.0, 0.0, 0.0, float(S))
+        grad.setColorAt(0.0,  QColor(255, 255, 255, 70))
+        grad.setColorAt(0.45, QColor(255, 255, 255, 0))
+        grad.setColorAt(1.0,  QColor(0,   0,   0,  55))
+        p.fillRect(0, 0, S, S, QBrush(grad))
+
+        # Shine coin haut-gauche
+        shine = QLinearGradient(0.0, 0.0, float(S) * 0.65, float(S) * 0.45)
+        shine.setColorAt(0.0, QColor(255, 255, 255, 80))
+        shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillRect(0, 0, int(S * 0.7), int(S * 0.5), QBrush(shine))
+
+        # Bord intérieur
+        p.setClipRect(self.rect())
+        if self._hovered:
+            p.setPen(QPen(QColor(255, 255, 255, 220), 2))
+        else:
+            p.setPen(QPen(QColor(0, 0, 0, 90), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(1, 1, S - 2, S - 2, r - 1, r - 1)
+
+        # Glow hover (halo extérieur)
+        if self._hovered:
+            glow_c = QColor(self.c1)
+            glow_c.setAlpha(120)
+            p.setPen(QPen(glow_c, 3))
+            p.drawRoundedRect(0, 0, S, S, r, r)
+
+        p.end()
+
 
 class ColorPalette(QWidget):
-    """Palette de couleurs draggable avec VRAIES couleurs + BICOLORES"""
+    """Palette de couleurs draggable avec couleurs simples + bicolores."""
 
     def __init__(self, parent_editor):
         super().__init__()
         self.parent_editor = parent_editor
-        self.setFixedHeight(70)
-        self.setStyleSheet("background: #1a1a1a; border-top: 2px solid #3a3a3a;")
+        self.setFixedHeight(76)
+        self.setStyleSheet(
+            "background: #111111; border-top: 1px solid #252525;"
+        )
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(8)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(0)
 
-        # Couleurs disponibles
+        def _section_lbl(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                "color: #444; font-size: 8px; font-weight: bold; "
+                "letter-spacing: 1px; background: transparent;"
+            )
+            lbl.setFixedWidth(54)
+            return lbl
+
+        # ── Couleurs simples ────────────────────────────────────────────
+        root.addWidget(_section_lbl("COULEURS"))
+        root.addSpacing(4)
+
         self.colors = [
-            ("Rouge", QColor(255, 0, 0)),
-            ("Vert", QColor(0, 200, 0)),
-            ("Bleu", QColor(0, 0, 255)),
-            ("Jaune", QColor(255, 255, 0)),
-            ("Magenta", QColor(255, 0, 255)),
-            ("Cyan", QColor(0, 255, 255)),
-            ("Blanc", QColor(255, 255, 255)),
-            ("Orange", QColor(255, 128, 0)),
-            ("Violet", QColor(128, 0, 255)),
+            ("Rouge",   QColor(255,  45,  45)),
+            ("Vert",    QColor( 30, 210,  60)),
+            ("Bleu",    QColor( 50, 110, 255)),
+            ("Jaune",   QColor(255, 230,   0)),
+            ("Magenta", QColor(255,  20, 210)),
+            ("Cyan",    QColor(  0, 220, 255)),
+            ("Blanc",   QColor(255, 255, 255)),
+            ("Orange",  QColor(255, 140,  20)),
+            ("Violet",  QColor(160,  30, 255)),
         ]
 
-        # Couleurs simples
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(5)
         for name, color in self.colors:
-            btn = QPushButton("")
-            btn.setFixedSize(50, 50)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {color.name()};
-                    border: 3px solid #3a3a3a;
-                    border-radius: 8px;
-                }}
-                QPushButton:hover {{
-                    border: 3px solid white;
-                }}
-            """)
-            btn.setProperty("color", color)
-            btn.setProperty("color_name", name)
+            btn = _ColorSwatch(color, label=name)
             btn.mousePressEvent = lambda e, c=color: self.start_drag(e, c)
-            layout.addWidget(btn)
+            btn_layout.addWidget(btn)
+        root.addLayout(btn_layout)
 
-        layout.addSpacing(20)
+        # ── Séparateur ────────────────────────────────────────────────
+        root.addSpacing(14)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        sep.setStyleSheet("background: #252525; border: none;")
+        root.addWidget(sep)
+        root.addSpacing(14)
 
-        # === DOUBLES COULEURS ===
+        # ── Bicolores ──────────────────────────────────────────────────
+        root.addWidget(_section_lbl("BICOLORES"))
+        root.addSpacing(4)
+
         self.bicolors = [
-            ("R+V", QColor(255, 0, 0), QColor(0, 200, 0)),
-            ("R+O", QColor(255, 0, 0), QColor(255, 128, 0)),
-            ("R+Rose", QColor(255, 0, 0), QColor(255, 105, 180)),
-            ("B+C", QColor(0, 0, 255), QColor(0, 255, 255)),
-            ("V+J", QColor(0, 200, 0), QColor(255, 255, 0)),
-            ("B+V", QColor(0, 0, 255), QColor(128, 0, 255)),
-            ("O+J", QColor(255, 128, 0), QColor(255, 255, 0)),
-            ("C+V", QColor(0, 255, 255), QColor(128, 0, 255)),
+            ("Rouge + Vert",    QColor(255,  45,  45), QColor( 30, 210,  60)),
+            ("Rouge + Orange",  QColor(255,  45,  45), QColor(255, 140,  20)),
+            ("Rouge + Rose",    QColor(255,  45,  45), QColor(255, 105, 180)),
+            ("Bleu + Cyan",     QColor( 50, 110, 255), QColor(  0, 220, 255)),
+            ("Vert + Jaune",    QColor( 30, 210,  60), QColor(255, 230,   0)),
+            ("Bleu + Violet",   QColor( 50, 110, 255), QColor(160,  30, 255)),
+            ("Orange + Jaune",  QColor(255, 140,  20), QColor(255, 230,   0)),
+            ("Cyan + Violet",   QColor(  0, 220, 255), QColor(160,  30, 255)),
         ]
 
+        bi_layout = QHBoxLayout()
+        bi_layout.setContentsMargins(0, 0, 0, 0)
+        bi_layout.setSpacing(5)
         for name, col1, col2 in self.bicolors:
-            btn = QPushButton("")
-            btn.setFixedSize(50, 50)
-
-            pixmap = QPixmap(50, 50)
-            pixmap.fill(Qt.transparent)
-            painter_btn = QPainter(pixmap)
-            painter_btn.setRenderHint(QPainter.Antialiasing)
-
-            path = QPainterPath()
-            path.addRoundedRect(0, 0, 50, 50, 8, 8)
-            painter_btn.setClipPath(path)
-
-            painter_btn.fillRect(0, 0, 25, 50, col1)
-            painter_btn.fillRect(25, 0, 25, 50, col2)
-            painter_btn.end()
-
-            btn.setIcon(QIcon(pixmap))
-            btn.setIconSize(QSize(50, 50))
-            btn.setStyleSheet("""
-                QPushButton {
-                    border: 3px solid #3a3a3a;
-                    border-radius: 8px;
-                }
-                QPushButton:hover {
-                    border: 3px solid white;
-                }
-            """)
-            btn.setProperty("color1", col1)
-            btn.setProperty("color2", col2)
+            btn = _ColorSwatch(col1, col2, label=name)
             btn.mousePressEvent = lambda e, c1=col1, c2=col2: self.start_bicolor_drag(e, c1, c2)
-            layout.addWidget(btn)
+            bi_layout.addWidget(btn)
+        root.addLayout(bi_layout)
 
-        layout.addStretch()
+        root.addStretch()
 
     def start_drag(self, event, color):
-        """Demarre un drag&drop de couleur"""
         drag = QDrag(self)
-        mime_data = QMimeData()
-        mime_data.setText(color.name())
-        drag.setMimeData(mime_data)
-
-        pixmap = QPixmap(50, 50)
-        pixmap.fill(color)
-        drag.setPixmap(pixmap)
-
+        mime = QMimeData()
+        mime.setText(color.name())
+        drag.setMimeData(mime)
+        pix = QPixmap(46, 46)
+        pix.fill(color)
+        drag.setPixmap(pix)
         drag.exec(Qt.CopyAction)
 
     def start_bicolor_drag(self, event, color1, color2):
-        """Demarre un drag&drop de bicolore"""
         drag = QDrag(self)
-        mime_data = QMimeData()
-        mime_data.setText(f"{color1.name()}#{color2.name()}")
-        drag.setMimeData(mime_data)
-
-        pixmap = QPixmap(50, 50)
-        painter = QPainter(pixmap)
-        painter.fillRect(0, 0, 25, 50, color1)
-        painter.fillRect(25, 0, 25, 50, color2)
-        painter.end()
-        drag.setPixmap(pixmap)
-
+        mime = QMimeData()
+        mime.setText(f"{color1.name()}#{color2.name()}")
+        drag.setMimeData(mime)
+        pix = QPixmap(46, 46)
+        p = QPainter(pix)
+        p.fillRect(0, 0, 23, 46, color1)
+        p.fillRect(23, 0, 23, 46, color2)
+        p.end()
+        drag.setPixmap(pix)
         drag.exec(Qt.CopyAction)
 
 
@@ -203,6 +278,7 @@ class LightTrack(QWidget):
         self.track_color = QColor(color)
         self.clips = []
         self.pixels_per_ms = 0.05
+        self.is_sequence_track = False   # piste dédiée aux clips de séquence AKAI
 
         self._collapsed = False
         self._normal_min_height = 100 if name == "Audio" else 60
@@ -254,6 +330,10 @@ class LightTrack(QWidget):
         self.resize_edge = None
         self.selected_clips = []
         self.saved_positions = {}
+
+        # Magnétisme
+        self._snap_active = False
+        self._snap_x = 0  # position pixel de la ligne de snap
 
         # Position du clic droit pour "Couper ici"
         self.last_context_click_x = 0
@@ -826,6 +906,42 @@ print(json.dumps(waveform))
                 all_clips.extend(track.selected_clips)
         return all_clips
 
+    def _apply_snap(self, time_ms, exclude_clip=None):
+        """Retourne time_ms snappé au point le plus proche (playhead + bords clips).
+        Active self._snap_active et self._snap_x si le magnétisme s'applique."""
+        SNAP_PX = 10  # seuil en pixels
+        threshold_ms = SNAP_PX / max(self.pixels_per_ms, 1e-6)
+
+        snap_points = []
+
+        # Playhead
+        if hasattr(self.parent_editor, 'playback_position'):
+            snap_points.append(self.parent_editor.playback_position)
+
+        # Bords de tous les clips sur toutes les pistes
+        for track in self.parent_editor.tracks:
+            for clip in track.clips:
+                if clip is exclude_clip:
+                    continue
+                snap_points.append(clip.start_time)
+                snap_points.append(clip.start_time + clip.duration)
+
+        best = None
+        best_dist = threshold_ms
+        for pt in snap_points:
+            d = abs(time_ms - pt)
+            if d < best_dist:
+                best_dist = d
+                best = pt
+
+        if best is not None:
+            self._snap_active = True
+            self._snap_x = 145 + int(best * self.pixels_per_ms)
+            return best
+        else:
+            self._snap_active = False
+            return time_ms
+
     def mouseMoveEvent(self, event):
         """Gere drag et resize + ANTI-COLLISION + DRAG MULTI-CLIPS"""
         x = event.position().x()
@@ -843,6 +959,7 @@ print(json.dumps(waveform))
             # Calculer le delta de deplacement
             new_x = max(145, x - self.drag_offset)
             new_start = (new_x - 145) / self.pixels_per_ms
+            new_start = self._apply_snap(new_start, exclude_clip=self.dragging_clip)
             delta = new_start - self.drag_start_positions.get(self.dragging_clip, self.dragging_clip.start_time)
 
             # Deplacer TOUS les clips selectionnes sur TOUTES les pistes
@@ -905,6 +1022,7 @@ print(json.dumps(waveform))
                 self.resizing_clip.fade_out_duration = min(new_fade, max_fade_out)
             elif self.resize_edge == 'left':
                 new_start_ms = max(0, (x - 145) / self.pixels_per_ms)
+                new_start_ms = self._apply_snap(new_start_ms, exclude_clip=self.resizing_clip)
                 old_end_ms = self.resizing_clip.start_time + self.resizing_clip.duration
 
                 for clip in self.clips:
@@ -919,18 +1037,19 @@ print(json.dumps(waveform))
                     self.resizing_clip.start_time = new_start_ms
                     self.resizing_clip.duration = old_end_ms - new_start_ms
             else:  # right
-                new_duration_sec = (x - clip_x) / self.pixels_per_ms / 1000
-                new_end = self.resizing_clip.start_time + new_duration_sec
+                new_end_ms = self.resizing_clip.start_time + (x - clip_x) / self.pixels_per_ms
+                new_end_ms = self._apply_snap(new_end_ms, exclude_clip=self.resizing_clip)
+                new_duration_ms = new_end_ms - self.resizing_clip.start_time
 
                 for clip in self.clips:
                     if clip == self.resizing_clip:
                         continue
                     if clip.start_time > self.resizing_clip.start_time:
-                        if new_end > clip.start_time:
-                            new_duration_sec = clip.start_time - self.resizing_clip.start_time
+                        if new_end_ms > clip.start_time:
+                            new_duration_ms = clip.start_time - self.resizing_clip.start_time
                             break
 
-                self.resizing_clip.duration = max(500, new_duration_sec * 1000)
+                self.resizing_clip.duration = max(500, new_duration_ms)
 
             self.update()
 
@@ -942,8 +1061,32 @@ print(json.dumps(waveform))
                     self.setCursor(Qt.SizeHorCursor)
                 else:
                     self.setCursor(Qt.OpenHandCursor)
+
+                # Tooltip pour les clips de séquence
+                if getattr(clip, 'memory_ref', None) and self.is_sequence_track:
+                    mem_ref = clip.memory_ref
+                    label = getattr(clip, 'memory_label', f"MEM {mem_ref[0]+1}.{mem_ref[1]+1}")
+                    tip = f"<b>{label}</b>"
+                    # Chercher l'effet associé dans la mémoire
+                    mw = getattr(self.parent_editor, 'main_window', None)
+                    if mw:
+                        memories = getattr(mw, 'memories', None)
+                        if memories:
+                            mc, rw = mem_ref
+                            mem = memories[mc][rw] if mc < len(memories) and rw < len(memories[mc]) else None
+                            if mem:
+                                eff = mem.get("effect")
+                                if eff and eff.get("layers"):
+                                    eff_name = eff.get("name") or "Effet personnalisé"
+                                    tip += f"<br><small>⚡ {eff_name}</small>"
+                                else:
+                                    tip += "<br><small>Pas d'effet</small>"
+                    QToolTip.showText(event.globalPosition().toPoint(), tip, self)
+                else:
+                    QToolTip.hideText()
             else:
                 self.setCursor(Qt.ArrowCursor)
+                QToolTip.hideText()
 
         super().mouseMoveEvent(event)
 
@@ -953,6 +1096,8 @@ print(json.dumps(waveform))
         self.drag_start_positions = {}
         self.resizing_clip = None
         self.resize_edge = None
+        self._snap_active = False
+        self.update()
 
         if not (hasattr(self.parent_editor, 'cut_mode') and self.parent_editor.cut_mode):
             self.setCursor(Qt.ArrowCursor)
@@ -1024,7 +1169,7 @@ print(json.dumps(waveform))
             ("Bleu/Blanc", QColor(0, 0, 255), QColor(255, 255, 255)),
         ]
 
-        fill_gap_menu = menu.addMenu("🔧 Combler vide")
+        fill_gap_menu = menu.addMenu("🎨 Créer un bloc")
 
         for name, col in colors:
             action = fill_gap_menu.addAction(f"■ {name}")
@@ -1170,24 +1315,114 @@ print(json.dumps(waveform))
 
         # === EFFETS ===
         menu.addSeparator()
-        effects_menu = menu.addMenu("✨ Effets")
-        no_effect = effects_menu.addAction("⭕ Aucun")
-        no_effect.triggered.connect(lambda: self.set_clip_effect(clip, None))
-        effects_menu.addSeparator()
-        effect_emojis = {
-            "Strobe": "⚡", "Flash": "💥", "Pulse": "💜",
-            "Wave": "🌊", "Random": "🎲", "Rainbow": "🌈",
-            "Sparkle": "✨", "Fire": "🔥",
-        }
-        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random", "Rainbow", "Sparkle", "Fire"]:
-            emoji = effect_emojis.get(eff, "⚡")
-            action = effects_menu.addAction(f"{emoji} {eff}")
-            action.triggered.connect(lambda checked=False, e=eff, cl=clip: self.set_clip_effect(cl, e))
 
+        # Charger tous les effets disponibles
+        _all_effects = []
+        try:
+            from effect_editor import BUILTIN_EFFECTS
+            _all_effects = list(BUILTIN_EFFECTS)
+            from pathlib import Path as _Path
+            import json as _json
+            _cust_file = _Path.home() / ".mystrow_effects.json"
+            if _cust_file.exists():
+                _cust = _json.loads(_cust_file.read_text(encoding="utf-8"))
+                if isinstance(_cust, list):
+                    _existing = {e["name"] for e in _all_effects}
+                    for e in _cust:
+                        if e.get("name") not in _existing:
+                            _all_effects.append(e)
+        except Exception:
+            pass
+
+        _CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
+
+        _eff_ss = """
+            QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:4px; font-size:12px; }
+            QMenu::item { padding:6px 16px; border-radius:3px; color:#e0e0e0; }
+            QMenu::item:selected { background:#2a3a3a; color:#fff; }
+            QMenu::item:disabled { color:#555; font-size:10px; letter-spacing:1px; }
+            QMenu::separator { background:#333; height:1px; margin:3px 8px; }
+        """
+        cur_eff = getattr(clip, 'effect_name', '') or ''
+        eff_label = f"✨  {cur_eff}" if cur_eff else "✨  Effets"
+        effects_menu = menu.addMenu(eff_label)
+        effects_menu.setStyleSheet(_eff_ss)
+
+        # Barre de recherche
+        _sc = QWidget(); _sc.setStyleSheet("background:transparent;")
+        _sl = QHBoxLayout(_sc); _sl.setContentsMargins(6, 4, 6, 4)
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("  Rechercher un effet…")
+        search_input.setClearButtonEnabled(True)
+        search_input.setStyleSheet(
+            "QLineEdit{background:#111;color:#e0e0e0;border:1px solid #444;"
+            "border-radius:4px;padding:4px 8px;font-size:12px;}"
+            "QLineEdit:focus{border-color:#00d4ff;}"
+        )
+        def _sk(ev, _si=search_input):
+            if ev.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter):
+                ev.accept(); return
+            QLineEdit.keyPressEvent(_si, ev)
+        search_input.keyPressEvent = _sk
+        _sl.addWidget(search_input)
+        _swa = QWidgetAction(effects_menu); _swa.setDefaultWidget(_sc)
+        effects_menu.addAction(_swa)
         effects_menu.addSeparator()
-        speed_lbl = f"Lent" if clip.effect_speed < 33 else ("Rapide" if clip.effect_speed > 66 else "Moyen")
-        speed_action = effects_menu.addAction(f"🎚 Vitesse : {clip.effect_speed}% ({speed_lbl})...")
-        speed_action.triggered.connect(lambda: self.edit_clip_effect_speed(clip))
+
+        no_effect_act = effects_menu.addAction("⭕  Aucun")
+        no_effect_act.setCheckable(True)
+        no_effect_act.setChecked(not cur_eff)
+        no_effect_act.triggered.connect(lambda: self._clear_clip_effect(clip))
+        sep_top = effects_menu.addSeparator()
+
+        cat_groups = []
+        for cat in _CATS:
+            cat_effs = [e for e in _all_effects if e.get("category") == cat]
+            if not cat_effs:
+                continue
+            hdr = effects_menu.addAction(f"  {cat.upper()}")
+            hdr.setEnabled(False)
+            eff_acts = []
+            for eff in cat_effs:
+                name = eff.get("name", "")
+                act = effects_menu.addAction(f"  {name}")
+                act.setCheckable(True)
+                act.setChecked(cur_eff == name)
+                act.triggered.connect(
+                    lambda checked=False, e=dict(eff), cl=clip:
+                        self._apply_builtin_effect_to_clip(cl, e)
+                )
+                eff_acts.append((act, name))
+            cat_groups.append((hdr, eff_acts))
+
+        def _apply_filter(text, _n=no_effect_act, _s=sep_top, _cg=cat_groups):
+            q = text.strip().lower()
+            _n.setVisible(not q); _s.setVisible(not q)
+            for hdr_a, acts in _cg:
+                vis = False
+                for a, nm in acts:
+                    v = not q or q in nm.lower(); a.setVisible(v); vis = vis or v
+                hdr_a.setVisible(vis)
+
+        search_input.textChanged.connect(_apply_filter)
+        QTimer.singleShot(0, search_input.setFocus)
+
+        # Éditeur complet
+        effects_menu.addSeparator()
+        editor_act = effects_menu.addAction("🎛️  Éditeur d'effets...")
+        editor_act.triggered.connect(lambda: self._open_effect_editor_for_clip(clip))
+
+        # === MOUVEMENT (piste Lyres) ===
+        if self.name == "Lyres":
+            menu.addSeparator()
+            move_label = "🎯 Mouvement..."
+            if clip.move_effect:
+                eff_icons = {"cercle":"⭕","figure8":"∞","balayage_h":"↔","balayage_v":"↕","aleatoire":"✦"}
+                move_label = f"🎯 Mouvement : {eff_icons.get(clip.move_effect, clip.move_effect)}..."
+            elif clip.pan_start != clip.pan_end or clip.tilt_start != clip.tilt_end:
+                move_label = "🎯 Mouvement : trajectoire..."
+            move_act = menu.addAction(move_label)
+            move_act.triggered.connect(lambda: self.edit_clip_movement(clip))
 
         # === FADES ===
         menu.addSeparator()
@@ -1297,6 +1532,70 @@ print(json.dumps(waveform))
     def set_clip_effect(self, clip, effect):
         clip.effect = effect
         self.update()
+
+    def _clear_clip_effect(self, clip):
+        """Supprime l'effet du clip (legacy + nouveau système)."""
+        clip.effect      = None
+        clip.effect_name  = ""
+        clip.effect_layers = []
+        self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+
+    def _apply_builtin_effect_to_clip(self, clip, eff_dict: dict):
+        """Applique un effet builtin/custom au clip depuis le menu contextuel.
+        Charge les layers depuis la config sauvegardée (bouton/bibliothèque) ou depuis le builtin."""
+        from effect_editor import EffectLayer
+        name = eff_dict.get("name", "")
+        clip.effect_name = name
+        clip.effect = None  # désactiver l'ancien système
+
+        # Chercher les layers sauvegardés (config bouton ou bibliothèque)
+        mw = getattr(self.parent_editor, 'main_window', None)
+        saved_cfg = {}
+        if mw:
+            for cfg in getattr(mw, '_button_effect_configs', {}).values():
+                if isinstance(cfg, dict) and cfg.get("name") == name:
+                    saved_cfg = cfg
+                    break
+            if not saved_cfg:
+                saved_cfg = getattr(mw, '_effect_library_configs', {}).get(name, {})
+
+        if saved_cfg.get("layers"):
+            clip.effect_layers    = list(saved_cfg["layers"])
+            clip.effect_play_mode = saved_cfg.get("play_mode", "loop")
+            clip.effect_duration  = saved_cfg.get("duration", 0)
+        else:
+            # Fallback : layers par défaut du builtin
+            layers = EffectLayer.layers_from_builtin(eff_dict)
+            clip.effect_layers    = [l.to_dict() for l in layers]
+            clip.effect_play_mode = "loop"
+            clip.effect_duration  = 0
+
+        self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+
+    def _open_effect_editor_for_clip(self, clip):
+        """Ouvre l'éditeur d'effets complet avec ce clip comme cible."""
+        try:
+            from effect_editor import EffectEditorDialog
+            mw = getattr(self.parent_editor, 'main_window', None)
+            dlg = EffectEditorDialog(clips=[clip], main_window=mw, parent=self)
+            if dlg.exec():
+                self.update()
+                if hasattr(self.parent_editor, 'save_state'):
+                    self.parent_editor.save_state()
+        except Exception as _e:
+            pass
+
+    def edit_clip_movement(self, clip):
+        """Ouvre le dialog d'édition mouvement Pan/Tilt pour un clip Lyres."""
+        dlg = MovementEditorDialog(clip, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
 
     def edit_clip_effect_speed(self, clip):
         """Dialog pour regler la vitesse de l'effet (0=lent, 100=rapide)"""
@@ -1451,11 +1750,40 @@ print(json.dumps(waveform))
         self.update()
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
+        is_seq = event.mimeData().hasFormat('application/x-sequence')
+        if self.is_sequence_track:
+            if is_seq:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+        else:
+            if not is_seq and event.mimeData().hasText():
+                event.acceptProposedAction()
+            else:
+                event.ignore()
 
     def dropEvent(self, event):
-        """Drop d'une couleur sur la piste"""
+        """Drop d'une couleur ou d'une séquence sur la piste"""
+        # ── Drop séquence AKAI ──────────────────────────────────────────
+        if self.is_sequence_track and event.mimeData().hasFormat('application/x-sequence'):
+            raw = bytes(event.mimeData().data('application/x-sequence')).decode()
+            parts = raw.split(',', 3)
+            if len(parts) == 4:
+                mem_col, row = int(parts[0]), int(parts[1])
+                label, color_hex = parts[2], parts[3]
+                drop_x = event.position().x() - 145
+                start_time = max(0, drop_x / self.pixels_per_ms)
+                start_time = self.find_free_position(start_time, 5000)
+                clip = self.add_clip_direct(start_time, 5000, QColor(color_hex), 100)
+                clip.memory_ref = (mem_col, row)
+                clip.memory_label = label
+                self.update()
+                if hasattr(self.parent_editor, 'save_state'):
+                    self.parent_editor.save_state()
+            event.acceptProposedAction()
+            return
+
+        # ── Drop couleur (pistes normales) ──────────────────────────────
         color_data = event.mimeData().text()
 
         drop_x = event.position().x() - 145
@@ -1713,37 +2041,158 @@ print(json.dumps(waveform))
 
             clip_rect = QRect(x, y, max(20, width), height)
 
-            if clip.color2:
+            if getattr(clip, 'memory_ref', None):
+                # ── Clip de séquence AKAI ──────────────────────────────
+                accent = clip.color   # couleur dominante de la mémoire
                 path = QPainterPath()
-                path.addRoundedRect(clip_rect.x(), clip_rect.y(), clip_rect.width(), clip_rect.height(), 4, 4)
+                path.addRoundedRect(clip_rect.x(), clip_rect.y(), clip_rect.width(), clip_rect.height(), 5, 5)
                 painter.setClipPath(path)
 
-                mid = clip_rect.left() + clip_rect.width() // 2
-                painter.fillRect(QRect(clip_rect.left(), clip_rect.top(), clip_rect.width() // 2, clip_rect.height()), clip.color)
-                painter.fillRect(QRect(mid, clip_rect.top(), clip_rect.width() - clip_rect.width() // 2, clip_rect.height()), clip.color2)
+                # Fond sombre avec léger dégradé de la couleur accent
+                grad = QLinearGradient(float(clip_rect.left()), 0, float(clip_rect.right()), 0)
+                a = QColor(accent); a.setAlpha(80)
+                b = QColor(accent); b.setAlpha(20)
+                grad.setColorAt(0.0, a)
+                grad.setColorAt(1.0, b)
+                painter.fillRect(clip_rect, QColor("#111111"))
+                painter.fillRect(clip_rect, QBrush(grad))
+
+                # Barre colorée à gauche (identifiant visuel)
+                painter.fillRect(QRect(clip_rect.left(), clip_rect.top(), 5, clip_rect.height()), accent)
 
                 painter.setClipRect(self.rect())
                 painter.setBrush(Qt.NoBrush)
-                painter.setPen(QPen(QColor("#2a2a2a"), 2))
-                painter.drawRoundedRect(clip_rect, 4, 4)
-            else:
-                painter.fillRect(clip_rect, clip.color)
-                painter.setBrush(Qt.NoBrush)
-                painter.setPen(QPen(QColor("#2a2a2a"), 2))
-                painter.drawRoundedRect(clip_rect, 4, 4)
+                painter.setPen(QPen(accent.darker(150), 1))
+                painter.drawRoundedRect(clip_rect, 5, 5)
 
-            if width > 40:
+                if width > 30:
+                    font = painter.font()
+                    font.setBold(True)
+                    font.setPixelSize(13)
+                    painter.setFont(font)
+                    painter.setPen(QColor(255, 255, 255, 220))
+                    lbl = getattr(clip, 'memory_label', '') or '⚡'
+                    painter.drawText(clip_rect.adjusted(8, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft, f"⚡ {lbl}")
+            elif clip.color2:
+                # ── Bicolore premium ──────────────────────────────────
+                r = 5
+                path = QPainterPath()
+                path.addRoundedRect(float(clip_rect.x()), float(clip_rect.y()),
+                                    float(clip_rect.width()), float(clip_rect.height()), r, r)
+                painter.setClipPath(path)
+
+                mid = clip_rect.left() + clip_rect.width() // 2
+                # Moitié gauche
+                left_r = QRect(clip_rect.left(), clip_rect.top(), clip_rect.width() // 2, clip_rect.height())
+                painter.fillRect(left_r, clip.color)
+                # Moitié droite
+                right_r = QRect(mid, clip_rect.top(), clip_rect.width() - clip_rect.width() // 2, clip_rect.height())
+                painter.fillRect(right_r, clip.color2)
+                # Ligne séparatrice
+                painter.setPen(QPen(QColor(0, 0, 0, 60), 1))
+                painter.drawLine(mid, clip_rect.top(), mid, clip_rect.bottom())
+
+                # Gradient brillance commun (haut → bas)
+                grad = QLinearGradient(0.0, float(clip_rect.top()), 0.0, float(clip_rect.bottom()))
+                grad.setColorAt(0.0,  QColor(255, 255, 255, 65))
+                grad.setColorAt(0.45, QColor(255, 255, 255, 0))
+                grad.setColorAt(1.0,  QColor(0,   0,   0,  50))
+                painter.fillRect(clip_rect, QBrush(grad))
+
+                # Shine coin haut-gauche
+                shine_w = min(clip_rect.width() // 2, int(clip_rect.width() * 0.55))
+                shine_h = int(clip_rect.height() * 0.5)
+                shine = QLinearGradient(float(clip_rect.left()), float(clip_rect.top()),
+                                        float(clip_rect.left() + shine_w), float(clip_rect.top() + shine_h))
+                shine.setColorAt(0.0, QColor(255, 255, 255, 75))
+                shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+                painter.fillRect(QRect(clip_rect.left(), clip_rect.top(), shine_w, shine_h), QBrush(shine))
+
+                painter.setClipRect(self.rect())
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(0, 0, 0, 80), 1))
+                painter.drawRoundedRect(clip_rect, r, r)
+            else:
+                # ── Couleur simple premium ────────────────────────────
+                r = 5
+                path = QPainterPath()
+                path.addRoundedRect(float(clip_rect.x()), float(clip_rect.y()),
+                                    float(clip_rect.width()), float(clip_rect.height()), r, r)
+                painter.setClipPath(path)
+
+                # Fond couleur
+                painter.fillRect(clip_rect, clip.color)
+
+                # Gradient brillance (haut → bas)
+                grad = QLinearGradient(0.0, float(clip_rect.top()), 0.0, float(clip_rect.bottom()))
+                grad.setColorAt(0.0,  QColor(255, 255, 255, 65))
+                grad.setColorAt(0.45, QColor(255, 255, 255, 0))
+                grad.setColorAt(1.0,  QColor(0,   0,   0,  50))
+                painter.fillRect(clip_rect, QBrush(grad))
+
+                # Shine coin haut-gauche
+                shine_w = int(clip_rect.width() * 0.55)
+                shine_h = int(clip_rect.height() * 0.5)
+                shine = QLinearGradient(float(clip_rect.left()), float(clip_rect.top()),
+                                        float(clip_rect.left() + shine_w), float(clip_rect.top() + shine_h))
+                shine.setColorAt(0.0, QColor(255, 255, 255, 75))
+                shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+                painter.fillRect(QRect(clip_rect.left(), clip_rect.top(), shine_w, shine_h), QBrush(shine))
+
+                painter.setClipRect(self.rect())
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(0, 0, 0, 80), 1))
+                painter.drawRoundedRect(clip_rect, r, r)
+
+            if not getattr(clip, 'memory_ref', None) and width > 40:
                 luminance = (clip.color.red() * 0.299 + clip.color.green() * 0.587 + clip.color.blue() * 0.114)
-                painter.setPen(QColor(0, 0, 0) if luminance > 128 else QColor(255, 255, 255))
+                txt_color = QColor(0, 0, 0, 200) if luminance > 140 else QColor(255, 255, 255, 220)
+                painter.setPen(txt_color)
 
                 font = painter.font()
                 font.setBold(True)
-                font.setPixelSize(14)
+                font.setPixelSize(13)
                 painter.setFont(font)
                 text = f"{clip.intensity}%"
                 if clip.effect:
                     text += f" • {clip.effect}"
                 painter.drawText(clip_rect, Qt.AlignCenter, text)
+
+            # Indicateur mouvement Pan/Tilt (piste Lyres)
+            has_move = (clip.move_effect or
+                        clip.pan_start != clip.pan_end or
+                        clip.tilt_start != clip.tilt_end)
+            if has_move and width > 20:
+                painter.save()
+                painter.setClipRect(clip_rect.adjusted(2, 2, -2, -2))
+                if clip.move_effect:
+                    # Icône de l'effet
+                    icons = {"cercle":"⭕","figure8":"∞","balayage_h":"↔",
+                             "balayage_v":"↕","aleatoire":"✦"}
+                    icon_txt = icons.get(clip.move_effect, "↺")
+                    f2 = painter.font(); f2.setPixelSize(11); painter.setFont(f2)
+                    painter.setPen(QColor(255, 220, 100, 200))
+                    painter.drawText(clip_rect.adjusted(3, 0, -3, -2),
+                                     Qt.AlignBottom | Qt.AlignLeft, icon_txt)
+                else:
+                    # Flèche de trajectoire
+                    sx = clip_rect.left()  + 4
+                    ex = clip_rect.right() - 4
+                    h  = clip_rect.height()
+                    sy = clip_rect.top() + int((clip.tilt_start / 255.0) * h)
+                    ey = clip_rect.top() + int((clip.tilt_end   / 255.0) * h)
+                    sy = max(clip_rect.top() + 3, min(clip_rect.bottom() - 3, sy))
+                    ey = max(clip_rect.top() + 3, min(clip_rect.bottom() - 3, ey))
+                    painter.setPen(QPen(QColor(255, 220, 100, 180), 2))
+                    painter.drawLine(sx, sy, ex, ey)
+                    # Tête de flèche
+                    import math as _m
+                    ang = _m.atan2(ey - sy, ex - sx)
+                    for da in (0.4, -0.4):
+                        ax = int(ex - 7 * _m.cos(ang + da))
+                        ay = int(ey - 7 * _m.sin(ang + da))
+                        painter.drawLine(ex, ey, ax, ay)
+                painter.restore()
 
             # Fades - couleur adaptee selon luminance du clip
             fade_in_px = int(clip.fade_in_duration * self.pixels_per_ms) if clip.fade_in_duration > 0 else 0
@@ -1794,6 +2243,12 @@ print(json.dumps(waveform))
                 painter.setPen(QPen(QColor("#ff0000"), 3))
                 painter.drawLine(cursor_x, 0, cursor_x, self.height())
 
+        # Ligne de magnétisme
+        if self._snap_active and 145 <= self._snap_x < self.width():
+            pen = QPen(QColor("#ffdd00"), 1, Qt.DashLine)
+            painter.setPen(pen)
+            painter.drawLine(self._snap_x, 0, self._snap_x, self.height())
+
         painter.end()
 
     def get_clips_data(self):
@@ -1813,3 +2268,214 @@ print(json.dumps(waveform))
             }
             for clip in self.clips
         ]
+
+
+# Ce contenu sera appendé à light_timeline.py
+
+class MovementEditorDialog(QDialog):
+    """Éditeur de mouvement Pan/Tilt pour un clip de la piste Lyres."""
+
+    _DIALOG_STYLE = """
+        QDialog, QWidget { background: #1a1a1a; color: #cccccc; }
+        QLabel { color: #cccccc; border: none; background: transparent; }
+        QTabWidget::pane { border: 1px solid #333; background: #111; }
+        QTabBar::tab { background: #222; color: #888; padding: 6px 14px;
+                       border: 1px solid #333; border-bottom: none; border-radius: 4px 4px 0 0; }
+        QTabBar::tab:selected { background: #1a1a1a; color: #00d4ff; }
+        QPushButton { background: #2a2a2a; color: #ccc; border: 1px solid #444;
+                      border-radius: 4px; padding: 6px 16px; }
+        QPushButton:hover { background: #333; color: white; }
+        QPushButton:checked { background: #005577; color: #00d4ff; border-color: #00d4ff; }
+        QSlider::groove:horizontal { background: #333; height: 6px; border-radius: 3px; }
+        QSlider::handle:horizontal { background: #00d4ff; width: 14px; height: 14px;
+                                      margin: -4px 0; border-radius: 7px; }
+        QSlider::sub-page:horizontal { background: #005577; border-radius: 3px; }
+        QSpinBox { background: #222; color: #ccc; border: 1px solid #444;
+                   border-radius: 4px; padding: 3px; min-width: 55px; }
+    """
+
+    _EFFECTS = [
+        ("⭕", "cercle",     "Cercle"),
+        ("∞",  "figure8",   "Figure 8"),
+        ("↔",  "balayage_h","Balayage H"),
+        ("↕",  "balayage_v","Balayage V"),
+        ("✦",  "aleatoire", "Aléatoire"),
+    ]
+
+    def __init__(self, clip, parent=None):
+        super().__init__(parent)
+        self.clip = clip
+        self.setWindowTitle("Mouvement Pan/Tilt — Lyres")
+        self.setFixedSize(480, 400)
+        self.setStyleSheet(self._DIALOG_STYLE)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(10)
+
+        tabs = QTabWidget()
+        root.addWidget(tabs)
+
+        # ── Onglet Trajectoire ──────────────────────────────────────────
+        traj_tab = QWidget()
+        traj_tab.setAttribute(Qt.WA_StyledBackground, True)
+        tl = QVBoxLayout(traj_tab)
+        tl.setContentsMargins(12, 12, 12, 12)
+        tl.setSpacing(10)
+
+        grid = QGridLayout()
+        grid.setSpacing(10)
+
+        def _pad(pan, tilt):
+            """Mini PanTiltPad 160×130."""
+            from plan_de_feu import PanTiltPad
+            return PanTiltPad(pan=pan, tilt=tilt)
+
+        # Départ
+        grid.addWidget(QLabel("Position de départ"), 0, 0, Qt.AlignCenter)
+        self._pad_start = _pad(self.clip.pan_start, self.clip.tilt_start)
+        grid.addWidget(self._pad_start, 1, 0, Qt.AlignCenter)
+
+        arrow = QLabel("→")
+        arrow.setStyleSheet("color:#00d4ff; font-size:24px;")
+        arrow.setAlignment(Qt.AlignCenter)
+        grid.addWidget(arrow, 1, 1)
+
+        # Arrivée
+        grid.addWidget(QLabel("Position d'arrivée"), 0, 2, Qt.AlignCenter)
+        self._pad_end = _pad(self.clip.pan_end, self.clip.tilt_end)
+        grid.addWidget(self._pad_end, 1, 2, Qt.AlignCenter)
+
+        tl.addLayout(grid)
+
+        # Bouton "Même position"
+        same_btn = QPushButton("= Même position (pas de mouvement)")
+        same_btn.clicked.connect(self._same_position)
+        tl.addWidget(same_btn)
+
+        tabs.addTab(traj_tab, "↗ Trajectoire")
+
+        # ── Onglet Effet auto ────────────────────────────────────────────
+        eff_tab = QWidget()
+        eff_tab.setAttribute(Qt.WA_StyledBackground, True)
+        el = QVBoxLayout(eff_tab)
+        el.setContentsMargins(12, 12, 12, 12)
+        el.setSpacing(12)
+
+        # Boutons effets
+        eff_row = QHBoxLayout()
+        eff_row.setSpacing(6)
+        self._eff_btns = {}
+        none_btn = QPushButton("⭕ Aucun")
+        none_btn.setCheckable(True)
+        none_btn.setChecked(self.clip.move_effect is None)
+        none_btn.clicked.connect(lambda: self._select_effect(None))
+        eff_row.addWidget(none_btn)
+        self._eff_btns[None] = none_btn
+
+        for icon, key, label in self._EFFECTS:
+            btn = QPushButton(f"{icon} {label}")
+            btn.setCheckable(True)
+            btn.setChecked(self.clip.move_effect == key)
+            btn.clicked.connect(lambda _, k=key: self._select_effect(k))
+            eff_row.addWidget(btn)
+            self._eff_btns[key] = btn
+        el.addLayout(eff_row)
+
+        # Vitesse
+        spd_row = QHBoxLayout()
+        spd_lbl = QLabel("Vitesse")
+        spd_lbl.setFixedWidth(55)
+        self._spd_slider = QSlider(Qt.Horizontal)
+        self._spd_slider.setRange(1, 30)
+        self._spd_slider.setValue(int(self.clip.move_speed * 10))
+        self._spd_val = QLabel(f"{self.clip.move_speed:.1f} Hz")
+        self._spd_val.setFixedWidth(44)
+        self._spd_slider.valueChanged.connect(
+            lambda v: self._spd_val.setText(f"{v/10:.1f} Hz"))
+        spd_row.addWidget(spd_lbl)
+        spd_row.addWidget(self._spd_slider)
+        spd_row.addWidget(self._spd_val)
+        el.addLayout(spd_row)
+
+        # Amplitude
+        amp_row = QHBoxLayout()
+        amp_lbl = QLabel("Amplitude")
+        amp_lbl.setFixedWidth(55)
+        self._amp_slider = QSlider(Qt.Horizontal)
+        self._amp_slider.setRange(5, 120)
+        self._amp_slider.setValue(self.clip.move_amplitude)
+        self._amp_val = QLabel(str(self.clip.move_amplitude))
+        self._amp_val.setFixedWidth(44)
+        self._amp_slider.valueChanged.connect(
+            lambda v: self._amp_val.setText(str(v)))
+        amp_row.addWidget(amp_lbl)
+        amp_row.addWidget(self._amp_slider)
+        amp_row.addWidget(self._amp_val)
+        el.addLayout(amp_row)
+
+        # Centre de l'effet
+        ctr_row = QHBoxLayout()
+        ctr_row.setSpacing(16)
+        ctr_row.addWidget(QLabel("Centre Pan:"))
+        self._ctr_pan = QSpinBox()
+        self._ctr_pan.setRange(0, 255)
+        self._ctr_pan.setValue(self.clip.pan_start)
+        ctr_row.addWidget(self._ctr_pan)
+        ctr_row.addWidget(QLabel("Centre Tilt:"))
+        self._ctr_tilt = QSpinBox()
+        self._ctr_tilt.setRange(0, 255)
+        self._ctr_tilt.setValue(self.clip.tilt_start)
+        ctr_row.addWidget(self._ctr_tilt)
+        ctr_row.addStretch()
+        el.addLayout(ctr_row)
+        el.addStretch()
+
+        tabs.addTab(eff_tab, "✦ Effet auto")
+
+        # Sélectionner l'onglet actif
+        tabs.setCurrentIndex(1 if self.clip.move_effect else 0)
+
+        # ── Boutons OK/Annuler ──────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel = QPushButton("Annuler")
+        cancel.clicked.connect(self.reject)
+        ok = QPushButton("✓ Appliquer")
+        ok.setStyleSheet("QPushButton{background:#005577;color:#00d4ff;border:1px solid #00d4ff;border-radius:4px;padding:6px 20px;font-weight:bold;} QPushButton:hover{background:#006688;}")
+        ok.clicked.connect(self._apply)
+        btn_row.addWidget(cancel)
+        btn_row.addWidget(ok)
+        root.addLayout(btn_row)
+
+    def _select_effect(self, key):
+        for k, b in self._eff_btns.items():
+            b.setChecked(k == key)
+
+    def _same_position(self):
+        pan = self._pad_start._pan
+        tilt = self._pad_start._tilt
+        self._pad_end.set_values(pan, tilt)
+
+    def _current_effect(self):
+        for k, b in self._eff_btns.items():
+            if b.isChecked():
+                return k
+        return None
+
+    def _apply(self):
+        self.clip.pan_start    = self._pad_start._pan
+        self.clip.tilt_start   = self._pad_start._tilt
+        self.clip.pan_end      = self._pad_end._pan
+        self.clip.tilt_end     = self._pad_end._tilt
+        self.clip.move_effect  = self._current_effect()
+        self.clip.move_speed   = self._spd_slider.value() / 10.0
+        self.clip.move_amplitude = self._amp_slider.value()
+        # Centre de l'effet = pad_start quand effet auto
+        if self.clip.move_effect:
+            self.clip.pan_start  = self._ctr_pan.value()
+            self.clip.tilt_start = self._ctr_tilt.value()
+        self.accept()

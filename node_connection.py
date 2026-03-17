@@ -12,7 +12,7 @@ import platform
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QApplication,
-    QWidget, QStackedWidget, QScrollArea,
+    QWidget, QStackedWidget, QScrollArea, QLineEdit, QComboBox,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QCursor
@@ -1062,3 +1062,403 @@ class NodeSetupWizard(QDialog):
         for t in self._threads:
             if t.isRunning(): t.quit(); t.wait(300)
         super().closeEvent(event)
+
+
+# ============================================================
+# DIALOG UNIFIÉ — Paramétrer la sortie DMX
+# ============================================================
+
+from PySide6.QtCore import Signal as _Signal
+
+try:
+    from artnet_dmx import TRANSPORT_ARTNET, TRANSPORT_ENTTEC
+except ImportError:
+    TRANSPORT_ARTNET = "artnet"
+    TRANSPORT_ENTTEC = "enttec"
+
+_SS_DIALOG = """
+    QDialog  { background: #131313; }
+    QLabel   { color: #e0e0e0; background: transparent; }
+    QLineEdit {
+        background: #1e1e1e; color: #e0e0e0;
+        border: 1px solid #333; border-radius: 6px;
+        padding: 6px 10px; font-size: 12px;
+    }
+    QLineEdit:focus { border-color: #00d4ff; }
+    QComboBox {
+        background: #1e1e1e; color: #e0e0e0;
+        border: 1px solid #333; border-radius: 6px;
+        padding: 6px 10px; font-size: 12px;
+    }
+    QComboBox::drop-down { border: none; width: 20px; }
+    QComboBox QAbstractItemView {
+        background: #1e1e1e; color: #e0e0e0;
+        selection-background-color: #00d4ff;
+        selection-color: #000;
+    }
+"""
+
+_BTN_TOGGLE_ON = (
+    "QPushButton { background: #00d4ff; color: #000; font-weight: 700; "
+    "border: none; border-radius: 8px; font-size: 12px; padding: 0 20px; }"
+)
+_BTN_TOGGLE_OFF = (
+    "QPushButton { background: #1e1e1e; color: #555; border: 1px solid #2a2a2a; "
+    "border-radius: 8px; font-size: 12px; padding: 0 20px; } "
+    "QPushButton:hover { background: #252525; color: #999; border-color: #333; }"
+)
+_BTN_APPLY = (
+    "QPushButton { background: #00d4ff; color: #000; font-weight: 700; "
+    "border: none; border-radius: 6px; padding: 0 20px; } "
+    "QPushButton:hover { background: #22ddff; } "
+    "QPushButton:disabled { background: #1a3a3a; color: #2a6a6a; }"
+)
+_BTN_CANCEL = (
+    "QPushButton { background: #1e1e1e; color: #888; border: 1px solid #2a2a2a; "
+    "border-radius: 6px; padding: 0 16px; } "
+    "QPushButton:hover { background: #252525; color: #ccc; }"
+)
+_BTN_DIAG = (
+    "QPushButton { background: #1a1a1a; color: #00d4ff; border: 1px solid #00d4ff44; "
+    "border-radius: 6px; padding: 0 16px; font-size: 11px; } "
+    "QPushButton:hover { background: #1a2a2a; border-color: #00d4ff99; }"
+)
+_BTN_TEST = (
+    "QPushButton { background: #1a1a1a; color: #aaa; border: 1px solid #333; "
+    "border-radius: 6px; padding: 0 14px; font-size: 10px; } "
+    "QPushButton:hover { color: #fff; border-color: #555; }"
+)
+
+
+class DmxOutputDialog(QDialog):
+    """Dialogue unifié pour basculer entre Sortie Node (Art-Net) et Sortie DMX USB (ENTTEC)."""
+
+    transport_changed = _Signal(str)   # "artnet" | "enttec"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._main_win = parent
+        self.setWindowTitle("Paramétrer la sortie DMX")
+        self.setFixedSize(520, 490)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet(_SS_DIALOG)
+
+        dmx = getattr(parent, 'dmx', None)
+        self._dmx = dmx
+        self._transport = dmx.transport if dmx else TRANSPORT_ARTNET
+
+        self._build_ui()
+        self._refresh_ports()
+        self._set_transport(self._transport, save=False)
+
+    # ── Construction UI ────────────────────────────────────────────────
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 24, 28, 20)
+        root.setSpacing(16)
+
+        # Titre
+        title = QLabel("Paramétrer la sortie DMX")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        title.setStyleSheet("color: #f0f0f0;")
+        root.addWidget(title)
+
+        # Toggle Node / USB
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(8)
+
+        self._btn_node = QPushButton("🌐  Sortie Node")
+        self._btn_node.setFixedHeight(40)
+        self._btn_node.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_node.clicked.connect(lambda: self._set_transport(TRANSPORT_ARTNET))
+        toggle_row.addWidget(self._btn_node)
+
+        self._btn_usb = QPushButton("🔌  Sortie DMX USB")
+        self._btn_usb.setFixedHeight(40)
+        self._btn_usb.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_usb.clicked.connect(lambda: self._set_transport(TRANSPORT_ENTTEC))
+        toggle_row.addWidget(self._btn_usb)
+        root.addLayout(toggle_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("QFrame { border: none; border-top: 1px solid #222; }")
+        root.addWidget(sep)
+
+        # Pages
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._page_node())
+        self._stack.addWidget(self._page_usb())
+        root.addWidget(self._stack, 1)
+
+        # Boutons bas
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self._status_lbl = QLabel("")
+        self._status_lbl.setStyleSheet("color: #555; font-size: 10px;")
+        btn_row.addWidget(self._status_lbl, 1)
+
+        btn_cancel = QPushButton("Fermer")
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.setStyleSheet(_BTN_CANCEL)
+        btn_cancel.clicked.connect(self.accept)
+        btn_row.addWidget(btn_cancel)
+
+        self._btn_apply = QPushButton("✓  Appliquer")
+        self._btn_apply.setFixedHeight(36)
+        self._btn_apply.setStyleSheet(_BTN_APPLY)
+        self._btn_apply.clicked.connect(self._apply)
+        btn_row.addWidget(self._btn_apply)
+        root.addLayout(btn_row)
+
+    def _page_node(self):
+        """Page Art-Net : IP, Port, Univers + bouton Diagnostic."""
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+
+        info = QLabel("Boîtier réseau Art-Net (ElectroConcept, MA Lighting, etc.)")
+        info.setStyleSheet("color: #555; font-size: 10px;")
+        lay.addWidget(info)
+
+        card = QFrame()
+        card.setStyleSheet(
+            "QFrame { background: #1a1a1a; border: 1px solid #252525; border-radius: 10px; }"
+        )
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(18, 14, 18, 14)
+        card_lay.setSpacing(12)
+
+        dmx = self._dmx
+
+        # IP
+        row = QHBoxLayout()
+        lbl = QLabel("Adresse IP du boîtier")
+        lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        row.addWidget(lbl)
+        row.addStretch()
+        self._ip_edit = QLineEdit(dmx.target_ip if dmx else "2.0.0.15")
+        self._ip_edit.setFixedWidth(150)
+        self._ip_edit.setPlaceholderText("2.0.0.15")
+        row.addWidget(self._ip_edit)
+        card_lay.addLayout(row)
+
+        _h = QFrame(); _h.setFrameShape(QFrame.HLine)
+        _h.setStyleSheet("QFrame { border: none; border-top: 1px solid #252525; }")
+        card_lay.addWidget(_h)
+
+        # Port
+        row2 = QHBoxLayout()
+        lbl2 = QLabel("Port Art-Net")
+        lbl2.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        row2.addWidget(lbl2)
+        row2.addStretch()
+        self._port_edit = QLineEdit(str(dmx.target_port) if dmx else "6454")
+        self._port_edit.setFixedWidth(80)
+        row2.addWidget(self._port_edit)
+        card_lay.addLayout(row2)
+
+        _h2 = QFrame(); _h2.setFrameShape(QFrame.HLine)
+        _h2.setStyleSheet("QFrame { border: none; border-top: 1px solid #252525; }")
+        card_lay.addWidget(_h2)
+
+        # Univers
+        row3 = QHBoxLayout()
+        lbl3 = QLabel("Univers Art-Net")
+        lbl3.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        row3.addWidget(lbl3)
+        row3.addStretch()
+        self._uni_edit = QLineEdit(str(dmx.universe) if dmx else "0")
+        self._uni_edit.setFixedWidth(80)
+        row3.addWidget(self._uni_edit)
+        card_lay.addLayout(row3)
+
+        lay.addWidget(card)
+
+        diag_btn = QPushButton("🔍  Diagnostic réseau")
+        diag_btn.setFixedHeight(36)
+        diag_btn.setStyleSheet(_BTN_DIAG)
+        diag_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        diag_btn.clicked.connect(self._open_diag)
+        lay.addWidget(diag_btn)
+
+        lay.addStretch()
+        return w
+
+    def _page_usb(self):
+        """Page ENTTEC : sélection du port COM."""
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+
+        info = QLabel("ENTTEC Open DMX USB — connexion via port série (250 000 bauds)")
+        info.setStyleSheet("color: #555; font-size: 10px;")
+        lay.addWidget(info)
+
+        card = QFrame()
+        card.setStyleSheet(
+            "QFrame { background: #1a1a1a; border: 1px solid #252525; border-radius: 10px; }"
+        )
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(18, 14, 18, 14)
+        card_lay.setSpacing(12)
+
+        # Port COM
+        port_row = QHBoxLayout()
+        port_lbl = QLabel("Port COM")
+        port_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        port_row.addWidget(port_lbl)
+        port_row.addStretch()
+
+        self._port_combo = QComboBox()
+        self._port_combo.setFixedWidth(200)
+        port_row.addWidget(self._port_combo)
+
+        refresh_btn = QPushButton("↺")
+        refresh_btn.setFixedSize(32, 32)
+        refresh_btn.setStyleSheet(
+            "QPushButton { background: #222; color: #888; border: 1px solid #333; border-radius: 6px; } "
+            "QPushButton:hover { color: #ccc; }"
+        )
+        refresh_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        refresh_btn.clicked.connect(self._refresh_ports)
+        port_row.addWidget(refresh_btn)
+        card_lay.addLayout(port_row)
+
+        _h = QFrame(); _h.setFrameShape(QFrame.HLine)
+        _h.setStyleSheet("QFrame { border: none; border-top: 1px solid #252525; }")
+        card_lay.addWidget(_h)
+
+        # Status + test
+        status_row = QHBoxLayout()
+        self._usb_indicator = QLabel("●")
+        self._usb_indicator.setFont(QFont("Segoe UI", 12))
+        self._usb_indicator.setStyleSheet("color: #444;")
+        self._usb_indicator.setFixedWidth(18)
+        status_row.addWidget(self._usb_indicator)
+
+        self._usb_status_lbl = QLabel("Sélectionnez un port")
+        self._usb_status_lbl.setStyleSheet("color: #666; font-size: 10px;")
+        status_row.addWidget(self._usb_status_lbl, 1)
+
+        test_btn = QPushButton("🔌  Tester")
+        test_btn.setFixedHeight(30)
+        test_btn.setStyleSheet(_BTN_TEST)
+        test_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        test_btn.clicked.connect(self._test_usb)
+        status_row.addWidget(test_btn)
+        card_lay.addLayout(status_row)
+
+        lay.addWidget(card)
+
+        note = QLabel("Nécessite pyserial  —  pip install pyserial")
+        note.setStyleSheet("color: #333; font-size: 9px; font-style: italic;")
+        lay.addWidget(note)
+
+        lay.addStretch()
+        return w
+
+    # ── Actions ────────────────────────────────────────────────────────
+
+    def _set_transport(self, transport, save=True):
+        self._transport = transport
+        is_node = (transport == TRANSPORT_ARTNET)
+        self._btn_node.setStyleSheet(_BTN_TOGGLE_ON if is_node else _BTN_TOGGLE_OFF)
+        self._btn_usb.setStyleSheet(_BTN_TOGGLE_OFF if is_node else _BTN_TOGGLE_ON)
+        self._stack.setCurrentIndex(0 if is_node else 1)
+        self._status_lbl.setText("")
+
+    def _refresh_ports(self):
+        """Actualise la liste des ports COM disponibles."""
+        self._port_combo.clear()
+        try:
+            import serial.tools.list_ports as _lp
+            ports = list(_lp.comports())
+            current_com = self._dmx.com_port if self._dmx else None
+            for p in sorted(ports, key=lambda x: x.device):
+                desc = p.description if p.description and p.description != "n/a" else ""
+                label = f"{p.device}  —  {desc}" if desc else p.device
+                self._port_combo.addItem(label, p.device)
+                if p.device == current_com:
+                    self._port_combo.setCurrentIndex(self._port_combo.count() - 1)
+            if not ports:
+                self._port_combo.addItem("Aucun port détecté", None)
+        except ImportError:
+            self._port_combo.addItem("pyserial non installé  —  pip install pyserial", None)
+
+    def _test_usb(self):
+        """Teste si le port COM sélectionné est accessible."""
+        com = self._port_combo.currentData()
+        if not com:
+            self._usb_indicator.setStyleSheet("color: #f87171;")
+            self._usb_status_lbl.setText("Aucun port sélectionné")
+            return
+        self._usb_status_lbl.setText("Test en cours…")
+        self._usb_indicator.setStyleSheet("color: #888;")
+        try:
+            import serial as _s
+            p = _s.Serial(com, 250000, stopbits=_s.STOPBITS_TWO, timeout=0.5)
+            p.close()
+            self._usb_indicator.setStyleSheet("color: #4ade80;")
+            self._usb_status_lbl.setText(f"Port {com} accessible ✓")
+        except ImportError:
+            self._usb_indicator.setStyleSheet("color: #f87171;")
+            self._usb_status_lbl.setText("pyserial non installé — pip install pyserial")
+        except Exception as e:
+            self._usb_indicator.setStyleSheet("color: #f87171;")
+            self._usb_status_lbl.setText(f"Erreur : {e}")
+
+    def _open_diag(self):
+        """Ouvre le dialogue de diagnostic réseau Node."""
+        dlg = NodeConnectionDialog(self._main_win)
+        dlg.exec()
+
+    def _apply(self):
+        """Sauvegarde le transport actif et reconnecte."""
+        if not self._dmx:
+            self.accept()
+            return
+
+        if self._transport == TRANSPORT_ARTNET:
+            ip   = self._ip_edit.text().strip() or "2.0.0.15"
+            try:
+                port = int(self._port_edit.text().strip())
+            except ValueError:
+                port = 6454
+            try:
+                uni = int(self._uni_edit.text().strip())
+            except ValueError:
+                uni = 0
+            self._dmx.connect(
+                transport=TRANSPORT_ARTNET,
+                target_ip=ip,
+                target_port=port,
+                universe=uni,
+                product_id="artnet",
+                product_name="Art-Net (réseau)",
+            )
+            self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
+            self._status_lbl.setText(f"Sortie Node appliquée — {ip}:{port}")
+        else:
+            com = self._port_combo.currentData()
+            if not com:
+                self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
+                self._status_lbl.setText("Sélectionnez un port COM")
+                return
+            self._dmx.connect(
+                transport=TRANSPORT_ENTTEC,
+                com_port=com,
+                product_id="enttec",
+                product_name="ENTTEC Open DMX USB",
+            )
+            self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
+            self._status_lbl.setText(f"Sortie USB appliquée — {com}")
+
+        self.transport_changed.emit(self._transport)
+        self.accept()

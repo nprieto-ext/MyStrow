@@ -62,8 +62,11 @@ class MIDIHandler(QObject):
         try:
             probe = rtmidi.MidiIn()
             ports = probe.get_ports()
-            found = any('APC' in p.upper() or 'MINI' in p.upper() for p in ports)
-            probe.delete() if hasattr(probe, 'delete') else None
+            found = any('APC' in p.upper() or 'AKAI' in p.upper() for p in ports)
+            try:
+                probe.close_port()
+            except Exception:
+                pass
         except Exception:
             return
 
@@ -108,13 +111,16 @@ class MIDIHandler(QObject):
             akai_in_idx = None
             akai_out_idx = None
 
+            print(f"[MIDI] Ports IN: {in_ports}")
+            print(f"[MIDI] Ports OUT: {out_ports}")
+
             for idx, name in enumerate(in_ports):
-                if 'APC' in name.upper() or 'MINI' in name.upper():
+                if 'APC' in name.upper() or 'AKAI' in name.upper():
                     akai_in_idx = idx
                     break
 
             for idx, name in enumerate(out_ports):
-                if 'APC' in name.upper() or 'MINI' in name.upper():
+                if 'APC' in name.upper() or 'AKAI' in name.upper():
                     akai_out_idx = idx
                     break
 

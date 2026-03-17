@@ -12,5 +12,8 @@
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <!-- USB MIDI (CoreMIDI / AKAI APC mini) -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
 </dict>
 </plist>

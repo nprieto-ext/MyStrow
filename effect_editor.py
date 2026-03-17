@@ -1198,7 +1198,7 @@ class WaveformCanvas(QWidget):
         attr   = layer.attribute
 
         if attr == "RGB":
-            col = QColor(getattr(layer, 'color1', '#ffaa44'))
+            col = QColor(getattr(layer, 'color1', '#ffffff'))
         elif attr == "Permut":
             col = QColor(getattr(layer, 'color1', '#ff44ff'))
         else:
@@ -1531,7 +1531,7 @@ class LayerCard(QFrame):
 
     def _refresh_color_btns(self):
         attr = self.layer.attribute
-        has_c1 = attr in ("R", "V", "B", "RGB", "Permut")
+        has_c1 = attr in ("RGB", "Permut")
         has_c2 = attr == "Permut"
         self._col1_btn.setVisible(has_c1)
         self._col2_btn.setVisible(has_c2)
@@ -2297,7 +2297,7 @@ class EffectEditorDialog(QDialog):
       [Bibliothèque effets] | [Barre presets + Éditeur couches] | [Plan de Feu live]
     """
 
-    def __init__(self, clips, main_window, parent=None):
+    def __init__(self, clips, main_window, parent=None, initial_effect=None):
         super().__init__(parent)
         self._clips       = clips or []
         self._main_window = main_window
@@ -2316,9 +2316,25 @@ class EffectEditorDialog(QDialog):
             for pr in getattr(main_window, 'projectors', [])
         }) or ["PAR LED"]
 
-        self._play_mode      = getattr(self._clips[0], 'effect_play_mode', 'loop') if self._clips else 'loop'
-        self._preview_t0     = 0.0
-        self._selected_card  = None
+        self._play_mode       = getattr(self._clips[0], 'effect_play_mode', 'loop') if self._clips else 'loop'
+        self._effect_duration = getattr(self._clips[0], 'effect_duration', 0) if self._clips else 0
+        self._preview_t0      = 0.0
+        # Pré-sélectionner : 1) initial_effect passé en param, 2) effet du clip, 3) premier builtin
+        saved_name = getattr(self._clips[0], 'effect_name', '') if self._clips else ''
+        raw_name = initial_effect or saved_name or (BUILTIN_EFFECTS[0]['name'] if BUILTIN_EFFECTS else None)
+        # Si raw_name est un type legacy ("Flash", "Strobe"...) sans correspondance exacte,
+        # trouver le premier effet builtin dont le type correspond
+        _all_builtin_names = {e.get("name") for e in BUILTIN_EFFECTS}
+        if raw_name and raw_name not in _all_builtin_names:
+            _fallback = next((e.get("name") for e in BUILTIN_EFFECTS if e.get("type") == raw_name), None)
+            raw_name = _fallback or raw_name
+        self._selected_card = raw_name
+        # Restaurer play_mode et duration depuis la config sauvegardée (si pas de clips)
+        if not self._clips and self._selected_card:
+            _saved_cfg = self._get_saved_cfg_for(self._selected_card)
+            if _saved_cfg:
+                self._play_mode       = _saved_cfg.get("play_mode", self._play_mode)
+                self._effect_duration = _saved_cfg.get("duration",   self._effect_duration)
         self._custom_effects = _load_custom_effects()
 
         self.setWindowTitle("Editeur d'effets")
@@ -2511,6 +2527,20 @@ class EffectEditorDialog(QDialog):
         top_row.addWidget(emoji_lbl, 1)
 
         if deletable:
+            ren_btn = QPushButton("✎")
+            ren_btn.setFixedSize(14, 14)
+            ren_btn.setCursor(Qt.PointingHandCursor)
+            ren_btn.setToolTip("Renommer")
+            ren_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent; color: #2a3a2a;
+                    border: none; font-size: 10px;
+                }
+                QPushButton:hover { color: #44cc44; }
+            """)
+            ren_btn.clicked.connect(lambda _=False, e=eff: self._rename_custom_effect(e))
+            top_row.addWidget(ren_btn)
+
             del_btn = QPushButton("×")
             del_btn.setFixedSize(14, 14)
             del_btn.setCursor(Qt.PointingHandCursor)
@@ -2629,6 +2659,40 @@ class EffectEditorDialog(QDialog):
             self._selected_card = None
         self._rebuild_library()
 
+    def _rename_custom_effect(self, eff: dict):
+        from PySide6.QtWidgets import QInputDialog
+        old_name = eff.get("name", "")
+        existing = {e.get("name", "") for e in self._custom_effects}
+        new_name, ok = QInputDialog.getText(
+            self, "Renommer l'effet", "Nouveau nom :", text=old_name
+        )
+        if not ok or not new_name.strip() or new_name.strip() == old_name:
+            return
+        new_name = new_name.strip()
+        if new_name in existing:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Nom déjà utilisé", f'Un effet "{new_name}" existe déjà.')
+            return
+        # Mettre à jour le dict de l'effet
+        eff["name"] = new_name
+        _save_custom_effects(self._custom_effects)
+        # Mettre à jour les configs sauvegardées (boutons AKAI + librairie)
+        if self._main_window:
+            for cfg in getattr(self._main_window, '_button_effect_configs', {}).values():
+                if isinstance(cfg, dict) and cfg.get("name") == old_name:
+                    cfg["name"] = new_name
+            if hasattr(self._main_window, '_save_effect_assignments'):
+                self._main_window._save_effect_assignments()
+            lib = getattr(self._main_window, '_effect_library_configs', {})
+            if old_name in lib:
+                lib[new_name] = lib.pop(old_name)
+                lib[new_name]["name"] = new_name
+            if hasattr(self._main_window, '_save_effect_library'):
+                self._main_window._save_effect_library()
+        if self._selected_card == old_name:
+            self._selected_card = new_name
+        self._rebuild_library()
+
     # ── Barre de presets ──────────────────────────────────────────────────────
 
     def _mk_presets_bar(self):
@@ -2680,12 +2744,28 @@ class EffectEditorDialog(QDialog):
         for _i, _btn in self._assign_btns.items():
             _btn.clicked.connect(lambda _=False, idx=_i: self._on_assign(idx))
 
-        # Restore existing layers if the clip already had an effect
+        # Charger les layers : existants si le clip en a, sinon preset sélectionné par défaut
         if self._layers:
             self._simple_panel._layers = self._layers
             self._simple_panel._set_enabled(True)
             self._simple_panel._refresh()
+        elif self._selected_card:
+            default_eff = next(
+                (e for e in BUILTIN_EFFECTS + self._custom_effects if e.get('name') == self._selected_card),
+                None
+            )
+            if default_eff:
+                # Charger les layers sauvegardés en priorité (config bouton AKAI), sinon builtin
+                saved_layers = self._get_saved_layers_for(self._selected_card)
+                if saved_layers:
+                    self._layers.extend(saved_layers)
+                else:
+                    self._layers.extend(EffectLayer.layers_from_builtin(default_eff))
+                self._simple_panel._layers = self._layers
+                self._simple_panel._set_enabled(True)
+                self._simple_panel._refresh()
 
+        self._timer_spin.setValue(self._effect_duration)
         self._refresh_mode_btns()
         return self._simple_panel
 
@@ -2756,14 +2836,31 @@ class EffectEditorDialog(QDialog):
         )
         layers_data = [l.to_dict() for l in self._layers]
         saved = False
+        cur_duration = self._timer_spin.value() if hasattr(self, '_timer_spin') else self._effect_duration
         for btn_idx, cfg in cfg_map.items():
             if isinstance(cfg, dict) and cfg.get("name") == cur_name:
-                cfg["layers"] = layers_data
+                cfg["layers"]    = layers_data
+                cfg["play_mode"] = self._play_mode
+                cfg["duration"]  = cur_duration
                 if eff_dict:
                     cfg["type"] = eff_dict.get("type", cfg.get("type", ""))
                 saved = True
-        if saved and hasattr(self._main_window, '_save_effect_assignments'):
-            self._main_window._save_effect_assignments()
+        if saved:
+            if hasattr(self._main_window, '_save_effect_assignments'):
+                self._main_window._save_effect_assignments()
+        else:
+            # Effet non assigné à un bouton → sauvegarder dans la bibliothèque d'effets
+            lib = getattr(self._main_window, '_effect_library_configs', None)
+            if lib is not None:
+                lib[cur_name] = {
+                    "name":      cur_name,
+                    "type":      eff_dict.get("type", "") if eff_dict else "",
+                    "layers":    layers_data,
+                    "play_mode": self._play_mode,
+                    "duration":  cur_duration,
+                }
+                if hasattr(self._main_window, '_save_effect_library'):
+                    self._main_window._save_effect_library()
 
     def _on_assign(self, btn_idx: int):
         if not self._main_window or not self._selected_card:
@@ -2775,9 +2872,11 @@ class EffectEditorDialog(QDialog):
             None
         )
         cfg = {
-            "name":   cur_name,
-            "type":   eff_dict.get("type", "") if eff_dict else "",
-            "layers": [l.to_dict() for l in self._layers],
+            "name":      cur_name,
+            "type":      eff_dict.get("type", "") if eff_dict else "",
+            "layers":    [l.to_dict() for l in self._layers],
+            "play_mode": self._play_mode,
+            "duration":  self._timer_spin.value() if hasattr(self, '_timer_spin') else self._effect_duration,
         }
         if hasattr(self._main_window, '_on_effect_assigned'):
             self._main_window._on_effect_assigned(btn_idx, cfg)
@@ -2852,17 +2951,40 @@ class EffectEditorDialog(QDialog):
                     return [EffectLayer.from_dict(d) for d in layers_data]
         return []
 
+    def _get_saved_cfg_for(self, name: str) -> dict:
+        """Retourne le dict de config complet sauvegardé pour cet effet (play_mode, duration, layers).
+        Cherche d'abord dans les boutons assignés, puis dans la bibliothèque d'effets."""
+        if not self._main_window or not name:
+            return {}
+        cfg_map = getattr(self._main_window, '_button_effect_configs', {})
+        for cfg in cfg_map.values():
+            if isinstance(cfg, dict) and cfg.get("name") == name:
+                return cfg
+        # Fallback : config sauvegardée dans la bibliothèque (effet édité mais non assigné)
+        lib = getattr(self._main_window, '_effect_library_configs', {})
+        if name in lib:
+            return lib[name]
+        return {}
+
     def _apply_preset(self, eff: dict):
         """Remplace les couches par le preset et met à jour le panneau central."""
         self._selected_card = eff.get("name", "")
         self._layers.clear()
         # Si cet effet est déjà assigné à un bouton avec des layers personnalisés,
         # charger ces layers plutôt que les valeurs builtin par défaut
-        saved_layers = self._get_saved_layers_for(self._selected_card)
+        saved_cfg = self._get_saved_cfg_for(self._selected_card)
+        saved_layers = [EffectLayer.from_dict(d) for d in saved_cfg.get("layers", [])] if saved_cfg else []
         if saved_layers:
             self._layers.extend(saved_layers)
         else:
             self._layers.extend(EffectLayer.layers_from_builtin(eff))
+        # Restaurer play_mode et duration depuis la config sauvegardée
+        if saved_cfg:
+            self._play_mode       = saved_cfg.get("play_mode", self._play_mode)
+            self._effect_duration = saved_cfg.get("duration",   self._effect_duration)
+            if hasattr(self, '_timer_spin'):
+                self._timer_spin.setValue(self._effect_duration)
+            self._refresh_mode_btns()
         self._simple_panel.set_effect(eff, self._layers)
         self._rebuild_library()
         self._refresh_assign_btns()
@@ -2935,9 +3057,14 @@ class EffectEditorDialog(QDialog):
 
     def _compute_preview(self, t: float) -> dict:
         """Calcule {id(proj): (level, QColor)} depuis self._layers."""
-        projectors = getattr(self._main_window, 'projectors', [])
+        # Fix F : exclure la fumée (identique à l'exécution live)
+        projectors = [p for p in getattr(self._main_window, 'projectors', [])
+                      if getattr(p, 'group', '') != 'fumee']
         if not projectors or not self._layers:
             return {}
+
+        # Fix A : appliquer le fader FX pour que la vitesse preview = vitesse live
+        fader_mult = max(0.05, getattr(self._main_window, 'effect_speed', 80) / 100.0)
 
         n      = len(projectors)
         result = {}
@@ -2953,11 +3080,13 @@ class EffectEditorDialog(QDialog):
             }
             for layer in self._layers:
                 preset = layer.target_preset
+                groups = list(getattr(layer, 'target_groups', []))
                 if preset == "Pair"   and i % 2 != 0: continue
                 if preset == "Impair" and i % 2 != 1: continue
                 if preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
+                if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
 
-                freq      = 0.3 + layer.speed / 100.0 * 3.5
+                freq      = (0.3 + layer.speed / 100.0 * 3.5) * fader_mult
                 spread    = layer.spread / 100.0
                 phase     = layer.phase  / 100.0
                 direction = getattr(layer, 'direction', 1)
@@ -3038,6 +3167,12 @@ class EffectEditorDialog(QDialog):
         _on  = "background:#00d4ff;color:#000;border-color:#00d4ff;"
         _off = "background:#1a1a1a;color:#666;border-color:#2a2a2a;"
         _s   = "QPushButton{{{inner}border-radius:4px;font-size:10px;font-weight:bold;padding:0 8px;}}"
+        self._btn_loop.blockSignals(True)
+        self._btn_once.blockSignals(True)
+        self._btn_loop.setChecked(self._play_mode == "loop")
+        self._btn_once.setChecked(self._play_mode == "once")
+        self._btn_loop.blockSignals(False)
+        self._btn_once.blockSignals(False)
         self._btn_loop.setStyleSheet(_s.format(inner=_on if self._play_mode == "loop" else _off))
         self._btn_once.setStyleSheet(_s.format(inner=_on if self._play_mode == "once" else _off))
 
@@ -3048,4 +3183,6 @@ class EffectEditorDialog(QDialog):
         for clip in self._clips:
             clip.effect_layers    = data
             clip.effect_play_mode = self._play_mode
+            clip.effect_duration  = self._timer_spin.value()
+            clip.effect_name      = self._selected_card or ""
         self.accept()

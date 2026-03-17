@@ -3,10 +3,12 @@ Interface utilisateur pour le systeme de licence MyStrow (Firebase)
 Widgets Qt : banniere, dialogue login/register, avertissement
 """
 
+import webbrowser
+
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QDialog, QLineEdit, QProgressBar, QApplication, QStackedWidget,
-    QCheckBox
+    QCheckBox, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QCursor
@@ -16,6 +18,17 @@ from license_manager import (
     login_account, verify_license,
     deactivate_machine, get_license_info,
 )
+
+
+# ============================================================
+# LIENS STRIPE
+# ============================================================
+
+STRIPE_LINKS = {
+    "monthly":  "https://buy.stripe.com/00w3cneNnbVudJm8AQ08g00",
+    "lifetime": "https://buy.stripe.com/7sY6ozgVve3CfRu9EU08g01",
+    "annual":   "https://buy.stripe.com/8x24gr5cN3oYfRu8AQ08g02",
+}
 
 
 # ============================================================
@@ -34,6 +47,119 @@ _DIALOG_STYLE = """
     QCheckBox { color: #aaa; font-size: 10px; }
     QCheckBox::indicator { width: 14px; height: 14px; }
 """
+
+_DIALOG_STYLE = """
+    QDialog   { background: #111111; color: #e0e0e0; }
+    QWidget   { background: #111111; color: #e0e0e0; }
+    QLabel    { background: transparent; color: #e0e0e0; }
+    QLineEdit {
+        background: #1e1e1e; color: #ffffff; border: 1px solid #333;
+        border-radius: 6px; padding: 8px 12px; font-size: 13px;
+    }
+    QLineEdit:focus { border-color: #00d4ff; }
+"""
+
+
+class ForgotPasswordDialog(QDialog):
+    """Popup de réinitialisation de mot de passe."""
+
+    def __init__(self, prefill_email: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mot de passe oublié")
+        self.setFixedSize(400, 280)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(_DIALOG_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 28, 32, 24)
+        layout.setSpacing(14)
+
+        # Icône + titre
+        title = QLabel("🔑  Mot de passe oublié ?")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        title.setStyleSheet("color: #00d4ff;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "Entrez votre adresse email d'achat.\n"
+            "Un email vous sera envoyé uniquement si un compte existe à cette adresse.\n\n"
+            "Pour tout problème : nicolas@mystrow.fr"
+        )
+        desc.setFont(QFont("Segoe UI", 9))
+        desc.setStyleSheet("color: #666;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        # Champ email
+        self._email = QLineEdit(prefill_email)
+        self._email.setPlaceholderText("votre@email.com")
+        self._email.setFixedHeight(42)
+        layout.addWidget(self._email)
+
+        # Statut
+        self._status = QLabel()
+        self._status.setFont(QFont("Segoe UI", 10))
+        self._status.setWordWrap(True)
+        self._status.setAlignment(Qt.AlignCenter)
+        self._status.setFixedHeight(32)
+        layout.addWidget(self._status)
+
+        # Boutons
+        btn_row = QHBoxLayout()
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setFixedHeight(38)
+        btn_cancel.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_cancel.setStyleSheet("""
+            QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #333;
+                border-radius:6px; font-size:12px; }
+            QPushButton:hover { background:#2a2a2a; color:#fff; }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        self._btn_send = QPushButton("📧  Envoyer le mot de passe")
+        self._btn_send.setFixedHeight(38)
+        self._btn_send.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_send.setStyleSheet("""
+            QPushButton { background:#00d4ff; color:#000; border:none;
+                border-radius:6px; font-size:12px; font-weight:bold; }
+            QPushButton:hover { background:#33e0ff; }
+            QPushButton:disabled { background:#555; color:#888; }
+        """)
+        self._btn_send.clicked.connect(self._send)
+
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(self._btn_send)
+        layout.addLayout(btn_row)
+
+        self._email.returnPressed.connect(self._send)
+
+    def _send(self):
+        email = self._email.text().strip()
+        if not email or "@" not in email:
+            self._status.setStyleSheet("color: #e67e22;")
+            self._status.setText("⚠  Adresse email invalide.")
+            return
+
+        self._btn_send.setEnabled(False)
+        self._btn_send.setText("Envoi en cours…")
+        self._status.setStyleSheet("color: #888;")
+        self._status.setText("Connexion au serveur…")
+        QApplication.processEvents()
+
+        try:
+            import firebase_client as fc
+            fc.send_password_reset(email)
+            self._status.setStyleSheet("color: #27ae60;")
+            self._status.setText(f"✅  Email envoyé à {email}")
+            self._btn_send.setText("✔  Envoyé !")
+            QTimer.singleShot(2500, self.accept)
+        except Exception as e:
+            self._status.setStyleSheet("color: #e74c3c;")
+            self._status.setText(f"❌  {e}")
+            self._btn_send.setEnabled(True)
+            self._btn_send.setText("📧  Envoyer")
+
 
 _BTN_PRIMARY = """
     QPushButton {
@@ -69,95 +195,151 @@ _BTN_GREEN = """
 
 class LicenseBanner(QWidget):
     """
-    Banniere horizontale affichant l'etat du compte/licence.
-    Couleurs : vert=actif, orange=avertissement, rouge=bloque.
+    Banniere licence sous les cartouches — design soigné avec icône et dégradé.
     """
 
     activate_clicked = Signal()
+    dismissed        = Signal()
 
-    COLORS = {
-        "green": "#2d7a3a",
-        "orange": "#c47f17",
-        "red": "#a83232",
+    # (bg_color, border_color, icon)
+    THEMES = {
+        "green":  ("#1a5c35", "#27ae60", "#27ae60", "✓"),
+        "orange": ("#6b3a10", "#e67e22", "#e67e22", "⏳"),
+        "red":    ("#6b1414", "#e74c3c", "#e74c3c", "⚠"),
     }
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(36)
+        self.setFixedHeight(38)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.hide()
+
+        self._theme = "green"
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 0, 15, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(10, 0, 8, 0)
+        layout.setSpacing(8)
 
+        # Icône
+        self._icon_lbl = QLabel()
+        self._icon_lbl.setFixedWidth(18)
+        self._icon_lbl.setAlignment(Qt.AlignCenter)
+        self._icon_lbl.setStyleSheet("background: transparent; border: none;")
+        self._icon_lbl.setFont(QFont("Segoe UI", 11))
+        layout.addWidget(self._icon_lbl)
+
+        # Séparateur vertical
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        sep.setFixedHeight(20)
+        self._sep = sep
+        layout.addWidget(sep)
+
+        # Texte principal
         self.label = QLabel()
-        self.label.setFont(QFont("Segoe UI", 10))
-        self.label.setStyleSheet("color: white;")
+        self.label.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.label.setStyleSheet("color: #fff; background: transparent; border: none;")
+        self.label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.label, 1)
 
+        # Bouton action
         self.action_btn = QPushButton()
-        self.action_btn.setFixedHeight(26)
+        self.action_btn.setFixedHeight(24)
         self.action_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.action_btn.setStyleSheet("""
-            QPushButton {
-                color: white; background: rgba(255,255,255,0.2);
-                border: 1px solid rgba(255,255,255,0.5);
-                border-radius: 4px; padding: 3px 14px;
-                font-size: 10px; font-weight: bold;
-            }
-            QPushButton:hover { background: rgba(255,255,255,0.3); }
-        """)
-        self.action_btn.clicked.connect(self.activate_clicked)
         self.action_btn.hide()
         layout.addWidget(self.action_btn)
 
-    def apply_license(self, result: LicenseResult):
-        """Applique l'etat de licence a la banniere."""
+        # Bouton fermer
+        self._close_btn = QPushButton("✕")
+        self._close_btn.setFixedSize(22, 22)
+        self._close_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._close_btn.setStyleSheet("""
+            QPushButton {
+                color: rgba(255,255,255,0.45); background: transparent;
+                border: none; font-size: 11px; font-weight: bold;
+            }
+            QPushButton:hover { color: white; }
+        """)
+        self._close_btn.clicked.connect(self.dismissed)
+        self._close_btn.hide()
+        layout.addWidget(self._close_btn)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.activate_clicked.emit()
+
+    def _refresh_style(self):
+        bg, border, accent, _ = self.THEMES[self._theme]
+        self.setStyleSheet(f"""
+            LicenseBanner {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {bg}, stop:1 #1a1a1a
+                );
+                border: 1px solid {border};
+                border-radius: 5px;
+            }}
+        """)
+        self._sep.setStyleSheet(f"background: {accent}; border: none;")
+        self.action_btn.setStyleSheet(f"""
+            QPushButton {{
+                color: #000; background: {accent};
+                border: none; border-radius: 3px;
+                padding: 2px 12px; font-size: 9px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background: white; }}
+        """)
+
+    def apply_license(self, result: LicenseResult, dismissible: bool = True):
         state = result.state
 
-        if state == LicenseState.LICENSE_ACTIVE and not result.show_warning:
-            self.hide()
-            return
-
         if state == LicenseState.TRIAL_ACTIVE and not result.show_warning:
-            color = self.COLORS["green"]
+            self._theme = "green"
         elif state in (LicenseState.TRIAL_ACTIVE, LicenseState.LICENSE_ACTIVE):
-            color = self.COLORS["orange"]
+            self._theme = "orange"
         else:
-            color = self.COLORS["red"]
+            self._theme = "red"
 
-        self.setStyleSheet(f"background: {color};")
+        self._refresh_style()
+
+        _, _, _, icon = self.THEMES[self._theme]
+        self._icon_lbl.setText(icon)
         self.label.setText(result.message)
 
         if result.action_label:
             self.action_btn.setText(result.action_label)
+            self.action_btn.clicked.disconnect() if self.action_btn.receivers(self.action_btn.clicked) > 0 else None
+            self.action_btn.clicked.connect(self.activate_clicked)
             self.action_btn.show()
         else:
             self.action_btn.hide()
 
-        self.show()
+        self._close_btn.setVisible(dismissible)
 
 
 # ============================================================
-# DIALOGUE LOGIN (essai expire → connexion compte)
+# DIALOGUE LOGIN / COMPTE / ACHAT
 # ============================================================
 
 class ActivationDialog(QDialog):
     """
-    Dialogue de connexion au compte MyStrow (Firebase).
-    Pas d'auto-inscription : l'essai est automatique, le compte est cree par le dev.
+    Dialogue de connexion / gestion compte / achat MyStrow.
 
     Pages :
       0 — Formulaire login (email + mdp)
-      1 — Succes
-      2 — Compte connecte (si deja logue)
+      1 — Succes connexion
+      2 — Compte connecte
+      3 — Acheter une licence (3 plans Stripe)
     """
 
     activation_success = Signal()
 
-    def __init__(self, parent=None, license_result=None):
+    def __init__(self, parent=None, license_result=None, start_purchase=False):
         super().__init__(parent)
         self.setWindowTitle("MyStrow — Connexion")
-        self.setFixedSize(400, 320)
+        self.setFixedSize(420, 380)
         self.setStyleSheet(_DIALOG_STYLE)
         self.setWindowFlags(
             self.windowFlags()
@@ -175,12 +357,21 @@ class ActivationDialog(QDialog):
         self._stack.addWidget(self._build_page_login())    # 0
         self._stack.addWidget(self._build_page_success())  # 1
         self._stack.addWidget(self._build_page_account())  # 2
+        self._stack.addWidget(self._build_page_purchase()) # 3
 
+        # Page compte uniquement si un vrai compte Firebase est connecté (email présent)
+        _info = get_license_info()
         already_logged = (
             license_result is not None
-            and license_result.state not in (LicenseState.NOT_ACTIVATED, LicenseState.INVALID)
+            and license_result.state not in (LicenseState.NOT_ACTIVATED, LicenseState.INVALID,
+                                             LicenseState.TRIAL_ACTIVE, LicenseState.TRIAL_EXPIRED)
+            and bool(_info.get("email"))
         )
-        if already_logged:
+
+        if start_purchase:
+            self._stack.setCurrentIndex(3)
+            self.setWindowTitle("MyStrow — Choisir un plan")
+        elif already_logged:
             self._refresh_account_page(license_result)
             self._stack.setCurrentIndex(2)
             self.setWindowTitle("MyStrow — Mon compte")
@@ -251,14 +442,38 @@ class ActivationDialog(QDialog):
 
         layout.addStretch()
 
-        contact = QLabel(
-            'Pas encore de compte ? '
-            '<a href="https://mystrow.fr/contact" style="color:#00d4ff;">Contactez-nous</a>'
-        )
-        contact.setOpenExternalLinks(True)
-        contact.setAlignment(Qt.AlignCenter)
-        contact.setFont(QFont("Segoe UI", 9))
-        layout.addWidget(contact)
+        btn_forgot = QPushButton("🔑  Mot de passe oublié ?  Recevoir à nouveau par mail")
+        btn_forgot.setFixedHeight(32)
+        btn_forgot.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_forgot.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: rgba(0, 212, 255, 0.5);
+                border: 1px solid rgba(0, 212, 255, 0.15);
+                border-radius: 6px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: rgba(0, 212, 255, 0.08);
+                color: #00d4ff;
+                border-color: rgba(0, 212, 255, 0.45);
+            }
+        """)
+        btn_forgot.clicked.connect(self._do_forgot_password)
+        layout.addWidget(btn_forgot)
+
+        btn_buy = QPushButton("Pas encore de compte ?  Acheter une licence →")
+        btn_buy.setFixedHeight(30)
+        btn_buy.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_buy.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #00d4ff;
+                border: none; font-size: 10px;
+            }
+            QPushButton:hover { color: #33e0ff; text-decoration: underline; }
+        """)
+        btn_buy.clicked.connect(lambda: self._go_to_purchase())
+        layout.addWidget(btn_buy, alignment=Qt.AlignCenter)
 
         btn_row = QHBoxLayout()
 
@@ -303,21 +518,21 @@ class ActivationDialog(QDialog):
     def _build_page_account(self):
         page, layout = self._page_frame("Mon compte")
 
-        self._acct_email = QLabel()
-        self._acct_email.setFont(QFont("Segoe UI", 11))
-        self._acct_email.setStyleSheet("color: #00d4ff;")
-        self._acct_email.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self._acct_email)
-
         self._acct_plan = QLabel()
         self._acct_plan.setFont(QFont("Segoe UI", 11))
         self._acct_plan.setAlignment(Qt.AlignCenter)
         self._acct_plan.setWordWrap(True)
         layout.addWidget(self._acct_plan)
 
+        self._acct_machine_label = QLabel("Compte activé sur :")
+        self._acct_machine_label.setFont(QFont("Segoe UI", 9))
+        self._acct_machine_label.setStyleSheet("color: #666;")
+        self._acct_machine_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._acct_machine_label)
+
         self._acct_machine = QLabel()
-        self._acct_machine.setFont(QFont("Segoe UI", 10))
-        self._acct_machine.setStyleSheet("color: #888;")
+        self._acct_machine.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        self._acct_machine.setStyleSheet("color: #aaa;")
         self._acct_machine.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._acct_machine)
 
@@ -328,6 +543,30 @@ class ActivationDialog(QDialog):
         self._acct_logout_status.setFont(QFont("Segoe UI", 10))
         self._acct_logout_status.setWordWrap(True)
         layout.addWidget(self._acct_logout_status)
+
+        self._btn_renew = QPushButton("Renouveler / Changer de plan")
+        self._btn_renew.setFixedHeight(34)
+        self._btn_renew.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_renew.setStyleSheet(_BTN_GREEN)
+        self._btn_renew.clicked.connect(self._go_to_purchase)
+        self._btn_renew.hide()
+        layout.addWidget(self._btn_renew)
+
+        self._btn_portal = QPushButton("⚙  Gérer mon abonnement →")
+        self._btn_portal.setFixedHeight(34)
+        self._btn_portal.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_portal.setStyleSheet("""
+            QPushButton {
+                background: #1a1a2e; color: #00d4ff;
+                border: 1px solid #00d4ff44; border-radius: 6px;
+                font-size: 11px; font-weight: bold;
+            }
+            QPushButton:hover { background: #0d0d1f; border-color: #00d4ff99; }
+            QPushButton:disabled { color: #444; border-color: #333; }
+        """)
+        self._btn_portal.clicked.connect(self._do_open_portal)
+        self._btn_portal.hide()
+        layout.addWidget(self._btn_portal)
 
         btn_row = QHBoxLayout()
 
@@ -354,48 +593,240 @@ class ActivationDialog(QDialog):
         layout.addLayout(btn_row)
         return page
 
+    def _build_page_purchase(self):
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(22, 16, 22, 14)
+        root.setSpacing(8)
+
+        # ── Titre ────────────────────────────────────────────────────────
+        title = QLabel("MyStrow — Choisir un plan")
+        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setStyleSheet("color: #00d4ff; background: transparent;")
+        title.setAlignment(Qt.AlignCenter)
+        root.addWidget(title)
+
+        sub = QLabel("Contrôle lumière professionnel · Toutes fonctionnalités incluses")
+        sub.setFont(QFont("Segoe UI", 9))
+        sub.setStyleSheet("color: #555; background: transparent;")
+        sub.setAlignment(Qt.AlignCenter)
+        root.addWidget(sub)
+
+        root.addSpacing(6)
+
+        # ── Card helper ──────────────────────────────────────────────────
+        def _plan_card(icon, plan_title, price, billing, features, link_key, accent="#00d4ff", badge=""):
+            card = QFrame()
+            card.setAttribute(Qt.WA_StyledBackground, True)
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                        stop:0 #1e1e1e, stop:1 #171717);
+                    border: 1px solid #2a2a2a;
+                    border-left: 3px solid {accent};
+                    border-radius: 8px;
+                }}
+                QFrame:hover {{
+                    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                        stop:0 #252525, stop:1 #1c1c1c);
+                    border-color: #3a3a3a;
+                    border-left-color: {accent};
+                }}
+            """)
+            card.setCursor(QCursor(Qt.PointingHandCursor))
+
+            cl = QHBoxLayout(card)
+            cl.setContentsMargins(14, 10, 12, 10)
+            cl.setSpacing(10)
+
+            # Icône
+            icon_lbl = QLabel(icon)
+            icon_lbl.setFont(QFont("Segoe UI", 20))
+            icon_lbl.setStyleSheet("background:transparent;border:none;")
+            icon_lbl.setFixedWidth(32)
+            icon_lbl.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+            cl.addWidget(icon_lbl)
+
+            # Infos centre
+            info = QVBoxLayout()
+            info.setSpacing(3)
+
+            title_row = QHBoxLayout()
+            title_row.setSpacing(6)
+            t = QLabel(plan_title)
+            t.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            t.setStyleSheet("color:#fff;background:transparent;border:none;")
+            title_row.addWidget(t)
+            if badge:
+                b = QLabel(badge)
+                b.setFont(QFont("Segoe UI", 7, QFont.Bold))
+                b.setStyleSheet(f"""
+                    color:#000; background:{accent}; border:none;
+                    border-radius:3px; padding:1px 5px;
+                """)
+                b.setFixedHeight(14)
+                title_row.addWidget(b)
+            title_row.addStretch()
+            info.addLayout(title_row)
+
+            for feat in features:
+                f = QLabel(f"✓  {feat}")
+                f.setFont(QFont("Segoe UI", 8))
+                f.setStyleSheet("color:#666;background:transparent;border:none;")
+                f.setWordWrap(True)
+                info.addWidget(f)
+
+            cl.addLayout(info, 1)
+
+            # Prix + bouton
+            right = QVBoxLayout()
+            right.setSpacing(2)
+            right.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            p = QLabel(price)
+            p.setFont(QFont("Segoe UI", 13, QFont.Bold))
+            p.setStyleSheet(f"color:{accent};background:transparent;border:none;")
+            p.setAlignment(Qt.AlignRight)
+            right.addWidget(p)
+
+            bl = QLabel(billing)
+            bl.setFont(QFont("Segoe UI", 7))
+            bl.setStyleSheet("color:#555;background:transparent;border:none;")
+            bl.setAlignment(Qt.AlignRight)
+            right.addWidget(bl)
+
+            right.addSpacing(4)
+
+            btn = QPushButton("Choisir →")
+            btn.setFixedHeight(26)
+            btn.setCursor(QCursor(Qt.PointingHandCursor))
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background:{accent};color:#000;border:none;
+                    border-radius:5px;font-size:10px;font-weight:bold;
+                    padding:0 10px;
+                }}
+                QPushButton:hover {{ background:#fff; }}
+            """)
+            btn.clicked.connect(lambda checked=False, k=link_key: webbrowser.open(STRIPE_LINKS[k]))
+            right.addWidget(btn)
+
+            cl.addLayout(right)
+            card.mousePressEvent = lambda e, k=link_key: webbrowser.open(STRIPE_LINKS[k])
+            return card
+
+        root.addWidget(_plan_card(
+            "📅", "Mensuel", "21,69 €", "TTC / mois",
+            ["Toutes les fonctionnalités", "Mises à jour incluses",
+             "Sans engagement · résiliable à tout moment"],
+            "monthly", accent="#4a9eff",
+        ))
+        root.addWidget(_plan_card(
+            "📆", "Annuel", "216,99 €", "TTC / an  (18,08 € / mois)",
+            ["Toutes les fonctionnalités", "Mises à jour incluses",
+             "Économisez l'équivalent de 2 mois"],
+            "annual", accent="#00d4ff", badge="−17%",
+        ))
+        root.addWidget(_plan_card(
+            "♾️", "Lifetime", "378,67 €", "TTC · paiement unique",
+            ["Toutes les fonctionnalités", "Mises à jour incluses 1 an",
+             "Accès à vie · aucun abonnement"],
+            "lifetime", accent="#a78bfa",
+        ))
+
+        root.addSpacing(4)
+
+        # ── Stripe badge ──────────────────────────────────────────────────
+        stripe_row = QHBoxLayout()
+        stripe_row.setAlignment(Qt.AlignCenter)
+        stripe_lbl = QLabel("🔒  Achat sécurisé via Stripe · Identifiants envoyés par email après paiement")
+        stripe_lbl.setFont(QFont("Segoe UI", 8))
+        stripe_lbl.setStyleSheet("color: #3a3a3a; background: transparent;")
+        stripe_lbl.setAlignment(Qt.AlignCenter)
+        root.addWidget(stripe_lbl)
+
+        # ── Boutons bas ───────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_back = QPushButton("← Déjà un compte ?")
+        btn_back.setFixedHeight(28)
+        btn_back.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_back.setStyleSheet(_BTN_SECONDARY)
+        btn_back.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        btn_row.addWidget(btn_back)
+
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(28)
+        btn_close.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_close.setStyleSheet(_BTN_SECONDARY)
+        btn_close.clicked.connect(self.reject)
+        btn_row.addWidget(btn_close)
+
+        root.addLayout(btn_row)
+        return page
+
+    # ----------------------------------------------------------
+    # Navigation
+    # ----------------------------------------------------------
+
+    def _go_to_purchase(self):
+        self._stack.setCurrentIndex(3)
+        self.setWindowTitle("MyStrow — Choisir un plan")
+        self.setFixedSize(460, 480)
+
+    # ----------------------------------------------------------
+    # Logique compte
+    # ----------------------------------------------------------
+
     def _refresh_account_page(self, license_result: LicenseResult):
-        """Remplit la page compte avec les infos actuelles."""
         info = get_license_info()
         email = info.get("email", "—")
-        plan = info.get("plan", "trial")
-
-        self._acct_email.setText(email)
 
         if license_result.state == LicenseState.LICENSE_ACTIVE:
             plan_text = "Licence active"
             if license_result.days_remaining:
                 plan_text += f"  ({license_result.days_remaining} jours restants)"
             self._acct_plan.setStyleSheet("color: #4CAF50;")
+            self._btn_renew.hide()
+            self._btn_portal.show()
         elif license_result.state == LicenseState.TRIAL_ACTIVE:
-            plan_text = f"Periode d'essai  ({license_result.days_remaining} jours restants)"
+            plan_text = f"Période d'essai  ({license_result.days_remaining} jours restants)"
             self._acct_plan.setStyleSheet("color: #c47f17;")
+            self._btn_renew.show()
+            self._btn_portal.hide()
         elif license_result.state == LicenseState.TRIAL_EXPIRED:
-            plan_text = "Essai expire"
+            plan_text = "Essai expiré"
             self._acct_plan.setStyleSheet("color: #ff5555;")
+            self._btn_renew.show()
         elif license_result.state == LicenseState.LICENSE_EXPIRED:
-            plan_text = "Licence expiree"
+            plan_text = "Licence expirée"
             self._acct_plan.setStyleSheet("color: #ff5555;")
+            self._btn_renew.show()
         else:
-            plan_text = license_result.message or "Etat inconnu"
+            plan_text = license_result.message or "État inconnu"
             self._acct_plan.setStyleSheet("color: #aaa;")
+            self._btn_renew.hide()
 
         self._acct_plan.setText(plan_text)
-        self._acct_machine.setText("Cette machine est activee")
+        self._acct_machine.setText(email)
         self._acct_logout_status.clear()
 
+    def _do_open_portal(self):
+        """Ouvre le Stripe Customer Portal pour gérer l'abonnement."""
+        webbrowser.open("https://billing.stripe.com/p/login/00w3cneNnbVudJm8AQ08g00")
+        self._acct_logout_status.setStyleSheet("color: #4CAF50;")
+        self._acct_logout_status.setText("Portail ouvert dans votre navigateur.")
+
     def _do_logout(self):
-        """Deconnecte cette machine."""
         self._btn_logout.setEnabled(False)
         self._acct_logout_status.setStyleSheet("color: #aaa;")
-        self._acct_logout_status.setText("Deconnexion en cours...")
+        self._acct_logout_status.setText("Déconnexion en cours...")
         QApplication.processEvents()
 
         success, message = deactivate_machine()
 
         if success:
             self._acct_logout_status.setStyleSheet("color: #4CAF50;")
-            self._acct_logout_status.setText("Deconnecte. Redemarrez l'application.")
+            self._acct_logout_status.setText("Déconnecté. Redémarrez l'application.")
             self._btn_logout.hide()
         else:
             self._acct_logout_status.setStyleSheet("color: #ff5555;")
@@ -405,6 +836,11 @@ class ActivationDialog(QDialog):
     # ----------------------------------------------------------
     # Logique login
     # ----------------------------------------------------------
+
+    def _do_forgot_password(self):
+        prefill = self._email_edit.text().strip()
+        dlg = ForgotPasswordDialog(prefill_email=prefill, parent=self)
+        dlg.exec()
 
     def _do_login(self):
         email = self._email_edit.text().strip()

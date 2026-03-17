@@ -446,9 +446,13 @@ class ArtNetDMX:
                 elif ch_type == "Dim":
                     self.set_channel(ch, dimmer)
                 elif ch_type == "Strobe":
-                    strobe_value = 0
-                    if hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
+                    spd = getattr(proj, 'strobe_speed', 0)
+                    if spd > 0:
+                        strobe_value = int(16 + (spd / 100.0) * (250 - 16))
+                    elif hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
                         strobe_value = int(16 + (effect_speed / 100.0) * (250 - 16)) if effect_speed > 0 else 100
+                    else:
+                        strobe_value = 0
                     self.set_channel(ch, strobe_value)
                 elif ch_type == "Pan":
                     self.set_channel(ch, getattr(proj, 'pan', 128))
