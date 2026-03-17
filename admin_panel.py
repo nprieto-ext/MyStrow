@@ -1452,6 +1452,188 @@ class GdtfUploadDialog(QDialog):
         self._append_log(f"❌ Erreur : {msg}", RED)
 
 
+def _do_upload_fixture_async(fixture_data: dict, id_token: str):
+    """Upload d'une fixture vers Firestore via gdtf_upload (appelé dans un QThread)."""
+    payload = json.dumps({"fixtures": [fixture_data]}).encode("utf-8")
+    req = urllib.request.Request(
+        _GDTF_UPLOAD_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Sync-Secret": _GDTF_SYNC_SECRET,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            r = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = json.loads(e.read().decode()).get("error", "")
+        except Exception:
+            pass
+        raise Exception(f"HTTP {e.code} — {body or e.reason}")
+    if not r.get("ok"):
+        raise Exception(r.get("error", "Upload échoué"))
+
+
+# ---------------------------------------------------------------
+# FixtureEditDialog — formulaire ajout / édition d'une fixture
+# ---------------------------------------------------------------
+
+class _FixtureEditDialog(QDialog):
+    """Formulaire simple pour créer ou modifier une fixture."""
+
+    def __init__(self, parent=None, fixture: dict = None):
+        super().__init__(parent)
+        self._fixture = fixture or {}
+        self._is_new  = not bool(fixture)
+        self.setWindowTitle("Nouvelle fixture" if self._is_new else "Modifier la fixture")
+        self.setMinimumWidth(560)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self._build_ui()
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 16)
+        lay.setSpacing(12)
+
+        title = QLabel("Nouvelle fixture" if self._is_new else "Modifier la fixture")
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        title.setStyleSheet(f"color: {ACCENT};")
+        lay.addWidget(title)
+
+        form_grid = QHBoxLayout()
+        col1 = QVBoxLayout(); col1.setSpacing(6)
+        col2 = QVBoxLayout(); col2.setSpacing(6)
+
+        def _field(label, key, placeholder=""):
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+            edit = QLineEdit(str(self._fixture.get(key, "")))
+            edit.setPlaceholderText(placeholder)
+            edit.setFixedHeight(32)
+            return lbl, edit
+
+        lbl_name, self._e_name = _field("Nom *", "name", "ex : Par 64 LED RGB")
+        lbl_mfr,  self._e_mfr  = _field("Fabricant *", "manufacturer", "ex : Eurolite")
+        lbl_type, self._e_type = _field("Type", "fixture_type", "ex : LED")
+        lbl_src,  self._e_src  = _field("Source", "source", "ex : OFL")
+
+        lbl_uuid, self._e_uuid = _field("UUID", "uuid", "(généré automatiquement si vide)")
+        if self._is_new:
+            import uuid as _uuid
+            self._e_uuid.setText(str(_uuid.uuid4()))
+
+        col1.addWidget(lbl_name); col1.addWidget(self._e_name)
+        col1.addWidget(lbl_mfr);  col1.addWidget(self._e_mfr)
+        col2.addWidget(lbl_type); col2.addWidget(self._e_type)
+        col2.addWidget(lbl_src);  col2.addWidget(self._e_src)
+        form_grid.addLayout(col1, 1); form_grid.addSpacing(12); form_grid.addLayout(col2, 1)
+        lay.addLayout(form_grid)
+
+        lay.addWidget(lbl_uuid); lay.addWidget(self._e_uuid)
+
+        # ── Modes ─────────────────────────────────────────────────────────────
+        modes_lbl = QLabel("Modes DMX")
+        modes_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; margin-top: 6px;")
+        lay.addWidget(modes_lbl)
+
+        self._modes_table = QTableWidget()
+        self._modes_table.setColumnCount(2)
+        self._modes_table.setHorizontalHeaderLabels(["Nom du mode", "Nb canaux"])
+        self._modes_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._modes_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self._modes_table.setColumnWidth(1, 90)
+        self._modes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._modes_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._modes_table.verticalHeader().setVisible(False)
+        self._modes_table.setMinimumHeight(120)
+        self._modes_table.setMaximumHeight(200)
+        for mode in self._fixture.get("modes", []):
+            self._add_mode_row(mode.get("name", ""), mode.get("channelCount", 0))
+        lay.addWidget(self._modes_table)
+
+        modes_btn_row = QHBoxLayout()
+        btn_add_mode = QPushButton("+ Mode")
+        btn_add_mode.setFixedHeight(26)
+        btn_add_mode.setStyleSheet(_BTN_SECONDARY)
+        btn_add_mode.clicked.connect(lambda: self._add_mode_row("Mode 1", 1))
+        btn_del_mode = QPushButton("– Retirer")
+        btn_del_mode.setFixedHeight(26)
+        btn_del_mode.setStyleSheet(_BTN_SECONDARY)
+        btn_del_mode.clicked.connect(self._del_mode_row)
+        modes_btn_row.addWidget(btn_add_mode)
+        modes_btn_row.addWidget(btn_del_mode)
+        modes_btn_row.addStretch()
+        lay.addLayout(modes_btn_row)
+
+        # ── Boutons ────────────────────────────────────────────────────────────
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("border: none; border-top: 1px solid #2a2a2a; margin-top: 4px;")
+        lay.addWidget(sep)
+
+        btn_row = QHBoxLayout()
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setFixedHeight(34)
+        btn_cancel.setStyleSheet(_BTN_SECONDARY)
+        btn_cancel.clicked.connect(self.reject)
+
+        self._btn_save = QPushButton("Enregistrer")
+        self._btn_save.setFixedHeight(34)
+        self._btn_save.setStyleSheet(_BTN_PRIMARY)
+        self._btn_save.clicked.connect(self._on_save)
+
+        btn_row.addStretch()
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(self._btn_save)
+        lay.addLayout(btn_row)
+
+    def _add_mode_row(self, name="", ch=1):
+        row = self._modes_table.rowCount()
+        self._modes_table.insertRow(row)
+        self._modes_table.setItem(row, 0, QTableWidgetItem(str(name)))
+        self._modes_table.setItem(row, 1, QTableWidgetItem(str(ch)))
+
+    def _del_mode_row(self):
+        row = self._modes_table.currentRow()
+        if row >= 0:
+            self._modes_table.removeRow(row)
+
+    def _on_save(self):
+        name = self._e_name.text().strip()
+        mfr  = self._e_mfr.text().strip()
+        if not name or not mfr:
+            QMessageBox.warning(self, "Champs requis", "Le nom et le fabricant sont obligatoires.")
+            return
+
+        modes = []
+        for r in range(self._modes_table.rowCount()):
+            mode_name = (self._modes_table.item(r, 0) or QTableWidgetItem("")).text().strip()
+            try:
+                ch = int((self._modes_table.item(r, 1) or QTableWidgetItem("1")).text())
+            except ValueError:
+                ch = 1
+            if mode_name:
+                modes.append({"name": mode_name, "channelCount": ch, "profile": []})
+
+        self._result = {
+            "name":         name,
+            "manufacturer": mfr,
+            "fixture_type": self._e_type.text().strip(),
+            "source":       self._e_src.text().strip(),
+            "uuid":         self._e_uuid.text().strip(),
+            "modes":        modes,
+        }
+        self.accept()
+
+    def get_result(self) -> dict | None:
+        return getattr(self, "_result", None)
+
+
 # ---------------------------------------------------------------
 # AdminPanel — fenêtre principale
 # ---------------------------------------------------------------
@@ -1771,12 +1953,11 @@ class AdminPanel(QMainWindow):
         btn_fix_refresh.clicked.connect(self._load_fixtures)
         ft_lay.addWidget(btn_fix_refresh)
 
-        btn_fix_editor = QPushButton("✏️  Éditeur de fixtures")
-        btn_fix_editor.setStyleSheet(_BTN_PRIMARY)
-        btn_fix_editor.setFixedHeight(30)
-        btn_fix_editor.setToolTip("Ouvrir l'éditeur de fixtures MyStrow")
-        btn_fix_editor.clicked.connect(self._open_fixture_editor)
-        ft_lay.addWidget(btn_fix_editor)
+        btn_add_fix = QPushButton("➕  Ajouter")
+        btn_add_fix.setStyleSheet(_BTN_PRIMARY)
+        btn_add_fix.setFixedHeight(30)
+        btn_add_fix.clicked.connect(self._on_add_fixture)
+        ft_lay.addWidget(btn_add_fix)
 
         btn_fix_import = QPushButton("📥  Importer…")
         btn_fix_import.setStyleSheet(_BTN_SECONDARY)
@@ -1814,6 +1995,9 @@ class AdminPanel(QMainWindow):
         self._fix_table.verticalHeader().setVisible(False)
         self._fix_table.setShowGrid(False)
         self._fix_table.selectionModel().selectionChanged.connect(self._on_fix_selection_changed)
+        self._fix_table.cellDoubleClicked.connect(self._on_fixture_double_clicked)
+        self._fix_table.horizontalHeader().sectionClicked.connect(self._on_sort_column)
+        self._fix_table.horizontalHeader().setSectionsClickable(True)
         fix_lay.addWidget(self._fix_table)
 
         # Barre d'actions fixtures
@@ -1825,6 +2009,13 @@ class AdminPanel(QMainWindow):
         fa_lay.setSpacing(8)
 
         fa_lay.addStretch()
+
+        self._btn_edit_fix = QPushButton("✏️  Éditer")
+        self._btn_edit_fix.setStyleSheet(_BTN_SECONDARY)
+        self._btn_edit_fix.setFixedHeight(32)
+        self._btn_edit_fix.setEnabled(False)
+        self._btn_edit_fix.clicked.connect(self._on_edit_fixture)
+        fa_lay.addWidget(self._btn_edit_fix)
 
         self._btn_del_fix = QPushButton("🗑  Supprimer")
         self._btn_del_fix.setStyleSheet(f"""
@@ -1845,6 +2036,8 @@ class AdminPanel(QMainWindow):
         self._fixtures_loaded = False
         self._all_fixtures: list = []
         self._filtered_fixtures: list = []
+        self._fix_sort_col = 0
+        self._fix_sort_asc = True
 
     def _open_fixture_editor(self):
         """Ouvre l'éditeur de fixtures MyStrow en fenêtre autonome."""
@@ -2365,9 +2558,11 @@ class AdminPanel(QMainWindow):
         )
 
     def _on_fixtures_loaded(self, fixtures: list):
-        fixtures.sort(key=lambda f: (f.get("manufacturer", ""), f.get("name", "")))
+        fixtures.sort(key=lambda f: f.get("name", "").lower())
         self._all_fixtures = fixtures
         self._fixtures_loaded = True
+        self._fix_sort_col = 0
+        self._fix_sort_asc = True
         self._fix_search.clear()
         self._populate_fixtures(fixtures)
         self._fix_loading.hide()
@@ -2418,7 +2613,63 @@ class AdminPanel(QMainWindow):
         self._btn_del_fix.setEnabled(False)
 
     def _on_fix_selection_changed(self):
-        self._btn_del_fix.setEnabled(self._fix_table.currentRow() >= 0)
+        has_sel = self._fix_table.currentRow() >= 0
+        self._btn_del_fix.setEnabled(has_sel)
+        self._btn_edit_fix.setEnabled(has_sel)
+
+    def _on_sort_column(self, col: int):
+        if self._fix_sort_col == col:
+            self._fix_sort_asc = not self._fix_sort_asc
+        else:
+            self._fix_sort_col = col
+            self._fix_sort_asc = True
+        _keys = ["name", "manufacturer", "fixture_type", None, "source", "uuid"]
+
+        def _sort_key(fx):
+            if col == 3:  # nb modes
+                return len(fx.get("modes", []) or [])
+            k = _keys[col] if col < len(_keys) else None
+            return (fx.get(k, "") or "").lower() if k else ""
+
+        self._all_fixtures.sort(key=_sort_key, reverse=not self._fix_sort_asc)
+        self._on_fix_search(self._fix_search.text())
+
+    def _on_fixture_double_clicked(self, row: int, col: int):
+        self._on_edit_fixture()
+
+    def _on_edit_fixture(self):
+        row = self._fix_table.currentRow()
+        if row < 0 or row >= len(self._filtered_fixtures):
+            return
+        fx = self._filtered_fixtures[row]
+        dlg = _FixtureEditDialog(self, fixture=dict(fx))
+        if dlg.exec() == QDialog.Accepted:
+            result = dlg.get_result()
+            if result:
+                self._upload_fixture(result)
+
+    def _on_add_fixture(self):
+        dlg = _FixtureEditDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            result = dlg.get_result()
+            if result:
+                self._upload_fixture(result)
+
+    def _upload_fixture(self, fixture_data: dict):
+        self._pending_fixture_name = fixture_data.get("name", "")
+        _run_async(
+            self, _do_upload_fixture_async, fixture_data, self._id_token,
+            on_success=self._on_fixture_saved,
+            on_error=self._on_fixture_save_error,
+        )
+
+    def _on_fixture_saved(self, _):
+        self._load_fixtures()
+        QMessageBox.information(self, "Fixture enregistrée",
+                                f"« {self._pending_fixture_name} » a été sauvegardée.")
+
+    def _on_fixture_save_error(self, msg: str):
+        QMessageBox.critical(self, "Erreur sauvegarde", msg)
 
     def _on_delete_fixture(self):
         row = self._fix_table.currentRow()

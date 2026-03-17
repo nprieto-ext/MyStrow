@@ -732,7 +732,7 @@ def _make_fixture_uuid(name: str, manufacturer: str) -> str:
 # CLOUD FUNCTION: gdtf_upload (admin — import profils complets)
 # ===========================================================================
 
-@https_fn.on_request(max_instances=5, timeout_sec=300, secrets=["GDTF_SYNC_SECRET"])
+@https_fn.on_request(max_instances=5, timeout_sec=300)
 def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
     """
     Endpoint HTTPS : POST /gdtf_upload
@@ -741,13 +741,12 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
     Protege par X-Sync-Secret.
     Body: {"fixtures": [{name, manufacturer, fixture_type, source, uuid, modes: [{name, channelCount, profile: [...]}]}]}
     """
-    # Lire le secret au moment de l'appel (pas au chargement du module — Gen 2)
-    _server_secret = os.environ.get("GDTF_SYNC_SECRET", "")
+    _server_secret = GDTF_SYNC_SECRET
     secret = req.headers.get("X-Sync-Secret", "")
     if not _server_secret:
         print("[gdtf_upload] ERREUR : variable GDTF_SYNC_SECRET non configuree dans Firebase")
         return https_fn.Response(
-            json.dumps({"ok": False, "error": "GDTF_SYNC_SECRET non configuree sur le serveur — firebase functions:secrets:set GDTF_SYNC_SECRET"}),
+            json.dumps({"ok": False, "error": "GDTF_SYNC_SECRET non configuree sur le serveur — verifiez functions/.env"}),
             status=403,
             headers={"Content-Type": "application/json"},
         )
