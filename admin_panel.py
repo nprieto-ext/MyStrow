@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QComboBox, QAbstractItemView, QFrame, QMessageBox, QTextEdit,
     QProgressBar, QFileDialog, QSizePolicy, QStackedWidget,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
 from PySide6.QtGui import QFont, QColor
 
 import firebase_client as fc
@@ -1668,6 +1668,21 @@ class AdminPanel(QMainWindow):
         self.setMinimumSize(900, 580)
         self._build_ui()
         self._load_clients()
+
+        # Rafraîchissement automatique du token toutes les 50 min (expire à 60 min)
+        self._token_timer = QTimer(self)
+        self._token_timer.timeout.connect(self._auto_refresh_token)
+        self._token_timer.start(50 * 60 * 1000)
+
+    def _auto_refresh_token(self):
+        if not self._refresh_token:
+            return
+        def _do():
+            from firebase_client import refresh_id_token
+            return refresh_id_token(self._refresh_token)
+        _run_async(self, _do,
+                   on_success=lambda r: setattr(self, '_id_token', r['id_token']),
+                   on_error=lambda e: print(f"[Admin] Refresh token silencieux échoué : {e}"))
 
     def _build_ui(self):
         central = QWidget()

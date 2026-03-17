@@ -741,6 +741,9 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
     Protege par Firebase ID token (Authorization: Bearer <token>).
     Body: {"fixtures": [{name, manufacturer, fixture_type, source, uuid, modes: [{name, channelCount, profile: [...]}]}]}
     """
+    # Initialiser Firebase Admin avant toute vérification de token
+    _get_db()
+
     auth_header = req.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return https_fn.Response(
