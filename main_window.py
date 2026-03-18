@@ -1147,19 +1147,16 @@ class MainWindow(QMainWindow):
         main_split.setCollapsible(2, False)
         self._main_split = main_split
 
-        # Barre de mise a jour (cachee par defaut)
+        # Barre de mise a jour — placee sous les cartoucheurs dans le panneau AKAI
         self.update_bar = UpdateBar()
         self.update_bar.hide()
         self.update_bar.later_clicked.connect(self._on_update_later)
         self.update_bar.update_clicked.connect(self._on_update_now)
+        # Inserer avant le stretch (avant le dernier item du layout AKAI)
+        stretch_idx = self._akai_layout.count() - 1
+        self._akai_layout.insertWidget(stretch_idx, self.update_bar)
 
-        central = QWidget()
-        central_layout = QVBoxLayout(central)
-        central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.setSpacing(0)
-        central_layout.addWidget(self.update_bar)
-        central_layout.addWidget(main_split, 1)
-        self.setCentralWidget(central)
+        self.setCentralWidget(main_split)
 
         # Watermark sur le preview video integre
         self._setup_video_watermark()
@@ -1440,6 +1437,9 @@ class MainWindow(QMainWindow):
         self._apply_license_banner()
         layout.addWidget(self._license_banner)
 
+        # Emplacement reserve pour la barre de mise a jour (ajoutee apres init)
+        self._akai_layout = layout
+
         layout.addStretch()
 
         return frame
@@ -1584,41 +1584,75 @@ class MainWindow(QMainWindow):
 
         # Boutons transport
         btns = QHBoxLayout()
+        btns.setSpacing(10)
 
-        btn_style = """
+        side_style = """
             QToolButton {
-                background: #4a4a4a;
-                border: 2px solid #6a6a6a;
-                border-radius: 8px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3a3a3a, stop:1 #222222);
+                border: 1px solid #555555;
+                border-radius: 22px;
+                padding: 10px;
+            }
+            QToolButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #444444, stop:1 #2a2a2a);
+                border: 1px solid #00d4ff;
+            }
+            QToolButton:pressed {
+                background: #1a1a1a;
+                border: 1px solid #00aacc;
+            }
+        """
+
+        play_style = """
+            QToolButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #006680, stop:1 #003344);
+                border: 2px solid #00d4ff;
+                border-radius: 32px;
                 padding: 14px;
             }
             QToolButton:hover {
-                background: #5a5a5a;
-                border: 2px solid #00d4ff;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #008aaa, stop:1 #004455);
+                border: 2px solid #33eeff;
+            }
+            QToolButton:pressed {
+                background: #002233;
+                border: 2px solid #0099bb;
             }
         """
 
         prev = QToolButton()
-        prev.setIcon(create_icon("prev", "#ffffff"))
-        prev.setIconSize(QSize(40, 40))
-        prev.setStyleSheet(btn_style)
+        prev.setIcon(create_icon("prev", "#cccccc"))
+        prev.setIconSize(QSize(28, 28))
+        prev.setFixedSize(52, 52)
+        prev.setStyleSheet(side_style)
+        prev.setToolTip("Média précédent")
         prev.clicked.connect(lambda: self.seq.play_row(self.seq.current_row - 1))
 
         self.play_btn = QToolButton()
         self.play_btn.setIcon(create_icon("play", "#ffffff"))
-        self.play_btn.setIconSize(QSize(48, 48))
-        self.play_btn.setStyleSheet(btn_style + "QToolButton { padding: 16px; }")
+        self.play_btn.setIconSize(QSize(36, 36))
+        self.play_btn.setFixedSize(72, 72)
+        self.play_btn.setStyleSheet(play_style)
+        self.play_btn.setToolTip("Play / Pause")
         self.play_btn.clicked.connect(self.toggle_play)
 
         nxt = QToolButton()
-        nxt.setIcon(create_icon("next", "#ffffff"))
-        nxt.setIconSize(QSize(40, 40))
-        nxt.setStyleSheet(btn_style)
+        nxt.setIcon(create_icon("next", "#cccccc"))
+        nxt.setIconSize(QSize(28, 28))
+        nxt.setFixedSize(52, 52)
+        nxt.setStyleSheet(side_style)
+        nxt.setToolTip("Média suivant")
         nxt.clicked.connect(lambda: self.seq.play_row(self.seq.current_row + 1))
 
         btns.addStretch()
         btns.addWidget(prev)
+        btns.addSpacing(4)
         btns.addWidget(self.play_btn)
+        btns.addSpacing(4)
         btns.addWidget(nxt)
         btns.addStretch()
         layout.addLayout(btns)
@@ -1735,8 +1769,18 @@ class MainWindow(QMainWindow):
     def on_media_status_changed(self, status):
         """Passe automatiquement au suivant ou gere les pauses"""
         if status == QMediaPlayer.EndOfMedia:
+            # Verifier que c'est bien le media courant qui est termine
+            # (evite qu'un EndOfMedia retarde d'un ancien media avance au mauvais rang)
+            source_row = getattr(self, '_media_source_row', self.seq.current_row)
+            if source_row != self.seq.current_row:
+                # EndOfMedia d'un ancien media: ignorer
+                return
+
             if hasattr(self.seq, 'timeline_playback_timer') and self.seq.timeline_playback_timer and self.seq.timeline_playback_timer.isActive():
                 self.seq.timeline_playback_timer.stop()
+            if hasattr(self.seq, 'timeline_playback_row'):
+                del self.seq.timeline_playback_row
+            self.seq.timeline_tracks_data = {}
 
             if self.seq.recording:
                 self.stop_recording()
@@ -1785,6 +1829,7 @@ class MainWindow(QMainWindow):
         for p in self.projectors:
             p.level = 0
             p.color = QColor("black")
+            p.base_color = QColor("black")
 
     def full_blackout(self):
         """Blackout complet"""
@@ -1800,6 +1845,7 @@ class MainWindow(QMainWindow):
         for p in self.projectors:
             p.level = 0
             p.color = QColor("black")
+            p.base_color = QColor("black")
 
         for col, pad in self.active_pads.items():
             if pad:
@@ -3760,6 +3806,18 @@ class MainWindow(QMainWindow):
 
     def clear_sequence(self):
         """Vide le sequenceur"""
+        # Couper le son si un media est en cours
+        try:
+            self.player.stop()
+            self.cart_player.stop()
+            self.pause_mode = False
+            if hasattr(self.seq, 'tempo_timer') and self.seq.tempo_timer and self.seq.tempo_timer.isActive():
+                self.seq.tempo_timer.stop()
+            if hasattr(self.seq, 'timeline_playback_timer') and self.seq.timeline_playback_timer and self.seq.timeline_playback_timer.isActive():
+                self.seq.timeline_playback_timer.stop()
+        except Exception:
+            pass
+
         if self.seq.table.rowCount() == 0:
             QMessageBox.information(self, "Programme vide", "La sequence est deja vide.")
             return

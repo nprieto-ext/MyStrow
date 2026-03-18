@@ -122,11 +122,6 @@ class SequencePalette(QWidget):
         main_layout.setContentsMargins(8, 6, 8, 6)
         main_layout.setSpacing(6)
 
-        lbl = QLabel("SÉQUENCES")
-        lbl.setStyleSheet("color: #444; font-size: 8px; font-weight: bold; letter-spacing: 1px; background: transparent;")
-        lbl.setFixedWidth(74)
-        main_layout.addWidget(lbl)
-
         scroll = QScrollArea()
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -779,7 +774,6 @@ class LightTimelineEditor(QDialog):
         speed_action = effect_menu.addAction("🎚 Vitesse de l'effet (sélection)...")
         speed_action.triggered.connect(self.edit_effect_speed_selection)
 
-        effect_menu.addSeparator()
         fx_editor_action = effect_menu.addAction("✦ Editeur d'effets...")
         fx_editor_action.triggered.connect(self.open_effect_editor)
 
@@ -1507,10 +1501,6 @@ class LightTimelineEditor(QDialog):
         # Auto-export .lrec à côté du fichier média
         self._autosave_lrec(all_clips)
 
-        QMessageBox.information(self, "Sauvegarde",
-            f"Séquence sauvegardée avec succès !\n\n"
-            f"📋  Piste : {self.media_name}")
-
         self.close_editor()
 
     # ── Import / Export ──────────────────────────────────────────────────
@@ -1681,16 +1671,16 @@ class LightTimelineEditor(QDialog):
         """)
 
         colors = [
-            ("Rouge energique", "#ff0000"),
-            ("Vert apaisant", "#00ff00"),
-            ("Bleu froid", "#0000ff"),
-            ("Jaune chaleureux", "#c8c800"),
-            ("Violet mystique", "#ff00ff"),
-            ("Orange dynamique", "#ff8800"),
-            ("Blanc pur", "#ffffff"),
-            ("Arc-en-ciel (mix)", "rainbow"),
-            ("Bicolore Rouge+Bleu", "rb"),
-            ("Bicolore Vert+Jaune", "gy"),
+            ("Rouge",       "#ff0000"),
+            ("Vert",        "#00ff00"),
+            ("Bleu",        "#0000ff"),
+            ("Jaune",       "#c8c800"),
+            ("Magenta",     "#ff00ff"),
+            ("Cyan",        "#00ffff"),
+            ("Orange",      "#ff8800"),
+            ("Violet",      "#8800ff"),
+            ("Blanc pur",   "#ffffff"),
+            ("Arc-en-ciel", "rainbow"),
         ]
 
         for name, _ in colors:
@@ -1705,6 +1695,8 @@ class LightTimelineEditor(QDialog):
 
         tracks_checks = {}
         for track in self.tracks:
+            if getattr(track, 'is_sequence_track', False):
+                continue
             clip_count = len(track.clips)
             checkbox = QCheckBox(f"{track.name} {'(' + str(clip_count) + ' clips)' if clip_count > 0 else ''}")
             checkbox.setChecked(True)
@@ -1799,89 +1791,154 @@ class LightTimelineEditor(QDialog):
         dialog.exec()
 
     def perform_ai_generation(self, color_code, selected_tracks, progress, status_label, dialog):
-        """Genere les clips avec progression"""
-        # Effacer clips sur pistes selectionnees
+        """Genere les clips avec progression et rythme dynamique"""
         for track in selected_tracks:
             track.clips.clear()
 
         progress.setValue(10)
-        status_label.setText("Analyse du rythme...")
+        status_label.setText("Detection des beats...")
         QApplication.processEvents()
 
-        # Parametres selon couleur
+        # ── Palette complete (toutes les couleurs vivides) ───────────────
+        FULL_PALETTE = [
+            QColor("#ff0000"), QColor("#ff4400"), QColor("#ff8800"),
+            QColor("#ffcc00"), QColor("#c8ff00"), QColor("#00ff44"),
+            QColor("#00ffcc"), QColor("#00ccff"), QColor("#0066ff"),
+            QColor("#4400ff"), QColor("#aa00ff"), QColor("#ff00cc"),
+            QColor("#ff0066"), QColor("#ffffff"), QColor("#ffcc44"),
+        ]
+
+        # Palette selon la couleur choisie
         if color_code == "rainbow":
-            main_colors = [QColor("#ff0000"), QColor("#00ff00"), QColor("#0000ff"),
-                          QColor("#c8c800"), QColor("#ff00ff"), QColor("#00ffff")]
-            secondary_colors = [QColor("#ff8800"), QColor("#00ff88"), QColor("#8800ff")]
-        elif color_code == "rb":
-            main_colors = [QColor("#ff0000"), QColor("#0000ff")]
-            secondary_colors = [QColor("#ff00ff"), QColor("#ff8800")]
-        elif color_code == "gy":
-            main_colors = [QColor("#00ff00"), QColor("#c8c800")]
-            secondary_colors = [QColor("#88ff00"), QColor("#ffff88")]
+            palette = FULL_PALETTE[:]
         else:
-            main_colors = [QColor(color_code)]
             base = QColor(color_code)
-            secondary_colors = [
-                QColor(min(255, base.red() + 30), base.green(), base.blue()),
-                QColor(base.red(), min(255, base.green() + 30), base.blue()),
-            ]
+            # Couleur choisie + ses voisines complementaires dans FULL_PALETTE
+            palette = [base]
+            # Ajouter couleurs complementaires (hue +30, +60, +150, +180, +210)
+            h = base.hsvHue() if base.hsvHue() >= 0 else 0
+            for offset in [30, 60, 120, 150, 180, 210, 300, 330]:
+                palette.append(QColor.fromHsv((h + offset) % 360, 255, 255))
 
-        progress.setValue(30)
-        status_label.setText("Creation des variations...")
+        # S'assurer que la palette a assez de couleurs pour alterner entre les pistes
+        while len(palette) < max(len(selected_tracks), 4):
+            palette = palette * 2
+
+        progress.setValue(20)
+        status_label.setText("Analyse de la waveform...")
         QApplication.processEvents()
 
-        beat_duration = 500
         duration_ms = self.media_duration
-        current_time = 0
+        BASE_BEAT = 500  # 500 ms = 1 beat a 120 BPM
+
+        # ── Detection des beats depuis la waveform ───────────────────────
+        waveform = getattr(self.track_waveform, 'waveform_data', None)
+        beat_positions = []  # liste de (time_ms, energy 0-1)
+
+        if waveform and len(waveform) > 30:
+            n = len(waveform)
+            max_e = max(waveform) or 1.0
+            ms_per_pt = duration_ms / n
+
+            # Lisser la waveform
+            smooth = []
+            w = max(1, n // 120)
+            for i in range(n):
+                chunk = waveform[max(0, i - w): i + w + 1]
+                smooth.append(sum(chunk) / len(chunk))
+
+            # Trouver les onsets (montees d'energie significatives)
+            threshold = (sum(smooth) / n) * 0.6
+            min_gap_pts = int(250 / ms_per_pt)  # 250 ms min entre 2 beats
+            last_beat = -min_gap_pts
+
+            for i in range(1, n - 1):
+                flux = max(0.0, smooth[i] - smooth[i - 1])
+                if flux > 0.0 and smooth[i] > threshold and (i - last_beat) >= min_gap_pts:
+                    # Energie locale = moyenne autour du pic
+                    e_chunk = smooth[max(0, i - w): i + w + 1]
+                    e_local = (sum(e_chunk) / len(e_chunk)) / max_e
+                    beat_positions.append((int(i * ms_per_pt), e_local))
+                    last_beat = i
+
+        # Fallback : beats reguliers si waveform insuffisante
+        if len(beat_positions) < 4:
+            t = 0
+            while t < duration_ms:
+                p = t / max(1, duration_ms)
+                e = 0.9 if p < 0.08 else (0.85 if 0.45 < p < 0.72 else 0.55)
+                beat_positions.append((t, e))
+                t += BASE_BEAT
+
+        # Ajouter la fin
+        if not beat_positions or beat_positions[-1][0] < duration_ms - 100:
+            beat_positions.append((duration_ms, 0.0))
+
+        progress.setValue(35)
+        status_label.setText("Generation des clips...")
+        QApplication.processEvents()
+
+        # ── Generation des clips ─────────────────────────────────────────
+        n_tracks = len(selected_tracks)
+        # Offset de couleur par piste : reparties uniformement dans la palette
+        step = max(1, len(palette) // max(n_tracks, 1))
+        track_offsets = [i * step for i in range(n_tracks)]
+
         clip_count = 0
+        first_clip = {track: True for track in selected_tracks}
 
-        has_face = self.track_face in selected_tracks
-        has_douche1 = self.track_douche1 in selected_tracks
-        has_douche2 = self.track_douche2 in selected_tracks
-        has_douche3 = self.track_douche3 in selected_tracks
-        has_contre = self.track_contre in selected_tracks
+        for beat_idx, (t_start, e) in enumerate(beat_positions[:-1]):
+            t_end = beat_positions[beat_idx + 1][0]
+            clip_duration = t_end - t_start
 
-        while current_time < duration_ms:
-            beats = random.choice([2, 4, 8])
-            clip_duration = beat_duration * beats
+            if clip_duration < 100:
+                continue
 
-            if has_face:
-                self.track_face.add_clip(current_time, clip_duration, QColor("#ffffff"), random.randint(85, 100))
+            # Grouper plusieurs beats si energie faible (swing naturel)
+            if e < 0.40 and beat_idx + 2 < len(beat_positions):
+                # Doubler la duree sur les zones calmes
+                t_end2 = beat_positions[beat_idx + 2][0]
+                if t_end2 - t_start <= 3000:
+                    clip_duration = t_end2 - t_start
+
+            if t_start + clip_duration > duration_ms:
+                clip_duration = duration_ms - t_start
+            if clip_duration < 100:
+                continue
+
+            for ti, track in enumerate(selected_tracks):
+                # Couleur de ce beat pour cette piste :
+                # chaque piste tourne dans la palette avec son propre offset
+                color_idx = (beat_idx + track_offsets[ti]) % len(palette)
+                color = palette[color_idx]
+                intensity = min(100, int(72 + e * 26) + random.randint(-4, 4))
+
+                clip = track.add_clip(t_start, clip_duration, color, intensity)
+
+                # Bicolore : couleur suivante dans la palette (50-65%)
+                bicolor_prob = 0.65 if e > 0.60 else 0.45
+                if random.random() < bicolor_prob:
+                    color2_idx = (color_idx + len(palette) // 2) % len(palette)
+                    clip.color2 = palette[color2_idx]
+
+                # Fade In uniquement sur le tout premier clip
+                if first_clip[track]:
+                    fade_ms = min(int(clip_duration * 0.5), 1500)
+                    if fade_ms >= 150:
+                        clip.fade_in_duration = fade_ms
+                    first_clip[track] = False
+
                 clip_count += 1
 
-            selected_douches = []
-            if has_douche1:
-                selected_douches.append(self.track_douche1)
-            if has_douche2:
-                selected_douches.append(self.track_douche2)
-            if has_douche3:
-                selected_douches.append(self.track_douche3)
-
-            for douche in selected_douches:
-                color = random.choice(main_colors)
-                if random.random() < 0.2 and secondary_colors:
-                    clip = douche.add_clip(current_time, clip_duration, color, random.randint(75, 95))
-                    clip.color2 = random.choice(secondary_colors)
-                else:
-                    douche.add_clip(current_time, clip_duration, color, random.randint(75, 95))
-                clip_count += 1
-
-            if has_contre:
-                contre_color = random.choice(main_colors) if random.random() < 0.6 else random.choice(secondary_colors)
-                self.track_contre.add_clip(current_time, clip_duration, contre_color, random.randint(70, 90))
-                clip_count += 1
-
-            current_time += clip_duration
-
-            progress.setValue(30 + int((current_time / duration_ms) * 60))
-            QApplication.processEvents()
+            progress.setValue(35 + int((t_start / duration_ms) * 60))
+            if beat_idx % 10 == 0:
+                QApplication.processEvents()
 
         progress.setValue(100)
         status_label.setText(f"{clip_count} clips crees !")
         QApplication.processEvents()
 
-        QTimer.singleShot(1000, dialog.accept)
+        QTimer.singleShot(800, dialog.accept)
 
     def wheelEvent(self, event):
         """Scroll souris = Zoom/Dezoom centre sur la barre rouge"""
@@ -2202,10 +2259,11 @@ class LightTimelineEditor(QDialog):
         self.toggle_cut_mode()
 
     def apply_effect_to_selection(self, effect):
-        """Applique un effet aux clips selectionnes"""
+        """Applique un effet aux clips selectionnes (pistes A-F uniquement)"""
         selected = []
         for track in self.tracks:
-            selected.extend(track.selected_clips)
+            if not getattr(track, 'is_sequence_track', False):
+                selected.extend(track.selected_clips)
 
         if not selected:
             QMessageBox.warning(self, "Aucune selection",
@@ -2402,11 +2460,12 @@ class LightTimelineEditor(QDialog):
         super().mouseReleaseEvent(event)
 
     def edit_effect_speed_selection(self):
-        """Ouvre un dialog pour regler la vitesse des effets sur les clips selectionnes"""
+        """Ouvre un dialog pour regler la vitesse des effets sur les clips selectionnes (pistes A-F uniquement)"""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton
         selected = []
         for track in self.tracks:
-            selected.extend(track.selected_clips)
+            if not getattr(track, 'is_sequence_track', False):
+                selected.extend(track.selected_clips)
 
         if not selected:
             QMessageBox.warning(self, "Aucune selection",
@@ -2477,10 +2536,11 @@ class LightTimelineEditor(QDialog):
             self.save_state()
 
     def open_effect_editor(self):
-        """Ouvre l'editeur d'effets par couches sur les clips selectionnes"""
+        """Ouvre l'editeur d'effets par couches sur les clips selectionnes (pistes A-F uniquement)"""
         selected = []
         for track in self.tracks:
-            selected.extend(track.selected_clips)
+            if not getattr(track, 'is_sequence_track', False):
+                selected.extend(track.selected_clips)
 
         if not selected:
             QMessageBox.warning(self, "Aucune selection",
@@ -2551,4 +2611,10 @@ class LightTimelineEditor(QDialog):
 
         self.playback_timer.stop()
         self.preview_player.stop()
+        # Deconnecter tous les signaux du player principal pour eviter
+        # que le timer de preview continue de s'activer apres fermeture
+        try:
+            self.main_window.player.playbackStateChanged.disconnect(self._on_main_player_state_changed)
+        except Exception:
+            pass
         self.reject()

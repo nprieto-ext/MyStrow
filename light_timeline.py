@@ -160,88 +160,132 @@ class _ColorSwatch(QPushButton):
 
 
 class ColorPalette(QWidget):
-    """Palette de couleurs draggable avec couleurs simples + bicolores."""
+    """Palette de couleurs draggable — flow layout auto-wrap selon la largeur fenetre."""
+
+    _SPACING = 5
+    _MARGIN  = 6
 
     def __init__(self, parent_editor):
         super().__init__()
         self.parent_editor = parent_editor
-        self.setFixedHeight(76)
-        self.setStyleSheet(
-            "background: #111111; border-top: 1px solid #252525;"
-        )
+        self.setStyleSheet("background: #111111; border-top: 1px solid #252525;")
 
-        root = QHBoxLayout(self)
-        root.setContentsMargins(10, 8, 10, 8)
-        root.setSpacing(0)
-
-        def _section_lbl(text):
-            lbl = QLabel(text)
-            lbl.setStyleSheet(
-                "color: #444; font-size: 8px; font-weight: bold; "
-                "letter-spacing: 1px; background: transparent;"
-            )
-            lbl.setFixedWidth(54)
-            return lbl
-
-        # ── Couleurs simples ────────────────────────────────────────────
-        root.addWidget(_section_lbl("COULEURS"))
-        root.addSpacing(4)
-
+        # ── Couleurs simples ─────────────────────────────────────────
         self.colors = [
-            ("Rouge",   QColor(255,  45,  45)),
-            ("Vert",    QColor( 30, 210,  60)),
-            ("Bleu",    QColor( 50, 110, 255)),
-            ("Jaune",   QColor(255, 230,   0)),
-            ("Magenta", QColor(255,  20, 210)),
-            ("Cyan",    QColor(  0, 220, 255)),
-            ("Blanc",   QColor(255, 255, 255)),
-            ("Orange",  QColor(255, 140,  20)),
-            ("Violet",  QColor(160,  30, 255)),
+            ("Rouge",         QColor(255,  45,  45)),
+            ("Rouge vif",     QColor(255,   0,   0)),
+            ("Orange",        QColor(255, 140,  20)),
+            ("Jaune",         QColor(255, 230,   0)),
+            ("Lime",          QColor(140, 255,   0)),
+            ("Vert",          QColor( 30, 210,  60)),
+            ("Turquoise",     QColor(  0, 200, 140)),
+            ("Cyan",          QColor(  0, 220, 255)),
+            ("Bleu ciel",     QColor( 80, 170, 255)),
+            ("Bleu",          QColor( 50, 110, 255)),
+            ("Bleu marine",   QColor( 20,  50, 200)),
+            ("Violet",        QColor(160,  30, 255)),
+            ("Indigo",        QColor( 90,   0, 200)),
+            ("Magenta",       QColor(255,  20, 210)),
+            ("Rose",          QColor(255,  80, 160)),
+            ("Blanc",         QColor(255, 255, 255)),
+            ("Blanc chaud",   QColor(255, 220, 160)),
+            ("Ambre",         QColor(255, 180,  30)),
         ]
 
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(5)
+        # ── Bicolores ────────────────────────────────────────────────
+        self.bicolors = [
+            ("Rouge + Bleu",      QColor(255,  45,  45), QColor( 50, 110, 255)),
+            ("Rouge + Cyan",      QColor(255,  45,  45), QColor(  0, 220, 255)),
+            ("Rouge + Violet",    QColor(255,  45,  45), QColor(160,  30, 255)),
+            ("Rouge + Orange",    QColor(255,  45,  45), QColor(255, 140,  20)),
+            ("Rouge + Rose",      QColor(255,  45,  45), QColor(255,  80, 160)),
+            ("Rouge + Blanc",     QColor(255,  45,  45), QColor(255, 255, 255)),
+            ("Orange + Bleu",     QColor(255, 140,  20), QColor( 50, 110, 255)),
+            ("Orange + Violet",   QColor(255, 140,  20), QColor(160,  30, 255)),
+            ("Jaune + Violet",    QColor(255, 230,   0), QColor(160,  30, 255)),
+            ("Jaune + Bleu",      QColor(255, 230,   0), QColor( 50, 110, 255)),
+            ("Vert + Rouge",      QColor( 30, 210,  60), QColor(255,  45,  45)),
+            ("Vert + Jaune",      QColor( 30, 210,  60), QColor(255, 230,   0)),
+            ("Vert + Violet",     QColor( 30, 210,  60), QColor(160,  30, 255)),
+            ("Vert + Orange",     QColor( 30, 210,  60), QColor(255, 140,  20)),
+            ("Cyan + Magenta",    QColor(  0, 220, 255), QColor(255,  20, 210)),
+            ("Cyan + Rouge",      QColor(  0, 220, 255), QColor(255,  45,  45)),
+            ("Cyan + Violet",     QColor(  0, 220, 255), QColor(160,  30, 255)),
+            ("Bleu + Violet",     QColor( 50, 110, 255), QColor(160,  30, 255)),
+            ("Bleu + Cyan",       QColor( 50, 110, 255), QColor(  0, 220, 255)),
+            ("Bleu + Rose",       QColor( 50, 110, 255), QColor(255,  80, 160)),
+            ("Violet + Rose",     QColor(160,  30, 255), QColor(255,  80, 160)),
+            ("Magenta + Jaune",   QColor(255,  20, 210), QColor(255, 230,   0)),
+            ("Magenta + Cyan",    QColor(255,  20, 210), QColor(  0, 220, 255)),
+            ("Rose + Blanc",      QColor(255,  80, 160), QColor(255, 255, 255)),
+            ("Blanc + Bleu",      QColor(255, 255, 255), QColor( 50, 110, 255)),
+            ("Blanc chaud + Bleu",QColor(255, 220, 160), QColor( 50, 110, 255)),
+        ]
+
+        # ── Creer toutes les swatches comme enfants directs ──────────
+        self._swatches = []      # swatches simples
+        self._bi_swatches = []   # swatches bicolores
+        # index de la 1ere swatch bicolore dans la liste complete
+        self._bicolor_start = len(self.colors)
+
         for name, color in self.colors:
             btn = _ColorSwatch(color, label=name)
+            btn.setParent(self)
             btn.mousePressEvent = lambda e, c=color: self.start_drag(e, c)
-            btn_layout.addWidget(btn)
-        root.addLayout(btn_layout)
+            self._swatches.append(btn)
 
-        # ── Séparateur ────────────────────────────────────────────────
-        root.addSpacing(14)
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFixedWidth(1)
-        sep.setStyleSheet("background: #252525; border: none;")
-        root.addWidget(sep)
-        root.addSpacing(14)
-
-        # ── Bicolores ──────────────────────────────────────────────────
-        root.addWidget(_section_lbl("BICOLORES"))
-        root.addSpacing(4)
-
-        self.bicolors = [
-            ("Rouge + Vert",    QColor(255,  45,  45), QColor( 30, 210,  60)),
-            ("Rouge + Orange",  QColor(255,  45,  45), QColor(255, 140,  20)),
-            ("Rouge + Rose",    QColor(255,  45,  45), QColor(255, 105, 180)),
-            ("Bleu + Cyan",     QColor( 50, 110, 255), QColor(  0, 220, 255)),
-            ("Vert + Jaune",    QColor( 30, 210,  60), QColor(255, 230,   0)),
-            ("Bleu + Violet",   QColor( 50, 110, 255), QColor(160,  30, 255)),
-            ("Orange + Jaune",  QColor(255, 140,  20), QColor(255, 230,   0)),
-            ("Cyan + Violet",   QColor(  0, 220, 255), QColor(160,  30, 255)),
-        ]
-
-        bi_layout = QHBoxLayout()
-        bi_layout.setContentsMargins(0, 0, 0, 0)
-        bi_layout.setSpacing(5)
         for name, col1, col2 in self.bicolors:
             btn = _ColorSwatch(col1, col2, label=name)
+            btn.setParent(self)
             btn.mousePressEvent = lambda e, c1=col1, c2=col2: self.start_bicolor_drag(e, c1, c2)
-            bi_layout.addWidget(btn)
-        root.addLayout(bi_layout)
+            self._bi_swatches.append(btn)
 
-        root.addStretch()
+        self._all_swatches = self._swatches + self._bi_swatches
+        self._update_height(1)  # hauteur initiale = 1 ligne
+
+    # ── Layout flow ──────────────────────────────────────────────────
+
+    def _update_height(self, n_rows):
+        S    = _ColorSwatch.S
+        step = S + self._SPACING
+        h    = self._MARGIN * 2 + n_rows * step - self._SPACING
+        self.setMinimumHeight(h)
+        self.setMaximumHeight(h)
+        self.updateGeometry()  # notifie le parent layout du changement de taille
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._relayout()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._relayout()
+
+    def _relayout(self):
+        S      = _ColorSwatch.S
+        step   = S + self._SPACING
+        m      = self._MARGIN
+        avail  = max(step, self.width() - 2 * m)
+        cols   = max(1, avail // step)
+
+        col = row = 0
+        for i, btn in enumerate(self._all_swatches):
+            # Petit gap visuel entre simples et bicolores quand ils sont sur la meme ligne
+            if i == self._bicolor_start and col > 0:
+                col += 1  # un espace vide de separation
+                if col >= cols:
+                    col = 0; row += 1
+
+            x = m + col * step
+            y = m + row * step
+            btn.move(x, y)
+            btn.show()
+            col += 1
+            if col >= cols:
+                col = 0; row += 1
+
+        n_rows = row + (1 if col > 0 else 0)
+        self._update_height(max(1, n_rows))
 
     def start_drag(self, event, color):
         drag = QDrag(self)

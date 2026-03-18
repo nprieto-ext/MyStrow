@@ -516,6 +516,10 @@ class Sequencer(QFrame):
     def delete_selected(self):
         row = self.table.currentRow()
         if row >= 0:
+            if row == self.current_row:
+                QMessageBox.warning(self, "Suppression impossible",
+                    "Impossible de supprimer un média en cours de lecture.")
+                return
             self.table.removeRow(row)
             self._reindex_ia_colors(row)
             self.is_dirty = True
@@ -613,9 +617,13 @@ class Sequencer(QFrame):
             elif action == rec_action:
                 self.open_light_editor_for_row(row)
             elif action == delete_action:
-                self.table.removeRow(row)
-                self._reindex_ia_colors(row)
-                self.is_dirty = True
+                if row == self.current_row:
+                    QMessageBox.warning(self, "Suppression impossible",
+                        "Impossible de supprimer un média en cours de lecture.")
+                else:
+                    self.table.removeRow(row)
+                    self._reindex_ia_colors(row)
+                    self.is_dirty = True
 
         # Menu pour les medias
         else:
@@ -877,6 +885,15 @@ class Sequencer(QFrame):
         combo = self._get_dmx_combo(row)
         if not combo:
             return
+
+        # Si on quitte Play Lumiere, stopper le timer de timeline si c'est la ligne active
+        if text != "Play Lumiere":
+            if (getattr(self, 'timeline_playback_row', None) == row and
+                    self.timeline_playback_timer and self.timeline_playback_timer.isActive()):
+                self.timeline_playback_timer.stop()
+                if hasattr(self, 'timeline_playback_row'):
+                    del self.timeline_playback_row
+                self.timeline_tracks_data = {}
 
         if text == "IA Lumiere":
             self._apply_ia_style(combo)
@@ -1152,6 +1169,7 @@ class Sequencer(QFrame):
                             for p in self.player_ui.projectors:
                                 p.level = 0
                                 p.color = QColor("black")
+                                p.base_color = QColor("black")
                         elif dmx_mode in ["Programme", "Play Lumiere"] and row in self.sequences:
                             self.play_sequence(row)
                         return
@@ -1161,6 +1179,10 @@ class Sequencer(QFrame):
                         self.player_ui.hide_image()
 
                     self.player_ui.audio.setVolume(vol / 100)
+                    # Arreter proprement l'ancien media avant de changer de source
+                    # (evite les signaux Qt parasites EndOfMedia lors du changement)
+                    self.player_ui.player.stop()
+                    self.player_ui._media_source_row = row
                     self.player_ui.player.setSource(QUrl.fromLocalFile(path))
                     self.player_ui.player.play()
 
@@ -1173,6 +1195,7 @@ class Sequencer(QFrame):
                         for p in self.player_ui.projectors:
                             p.level = 0
                             p.color = QColor("black")
+                            p.base_color = QColor("black")
                         self.player_ui.recording_waveform.hide()
                     elif dmx_mode in ["Programme", "Play Lumiere"]:
                         self.play_sequence(row)
@@ -1223,6 +1246,7 @@ class Sequencer(QFrame):
             self.timeline_playback_timer.stop()
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row
+        self.timeline_tracks_data = {}
 
         next_row = tempo_row + 1
         if next_row < self.table.rowCount():
@@ -1351,7 +1375,8 @@ class Sequencer(QFrame):
 
         self.timeline_playback_row = row
         self.timeline_tracks_data = tracks_clips
-        self.timeline_last_update = 0
+        self.timeline_last_update = -100  # Garantit que le 1er tick fire immediatement
+        self._timeline_tick = 0  # Repart de zero pour les effets
 
         if not self.timeline_playback_timer:
             self.timeline_playback_timer = QTimer()
@@ -1364,13 +1389,30 @@ class Sequencer(QFrame):
         if not hasattr(self, 'timeline_playback_row'):
             return
 
+        # Garde supplementaire: verifier que la timeline correspond bien au media en cours
+        if self.timeline_playback_row != getattr(self, 'current_row', -1):
+            self.timeline_playback_timer.stop()
+            del self.timeline_playback_row
+            self.timeline_tracks_data = {}
+            return
+
+        # Garde supplementaire: verifier que le mode DMX courant est toujours "Play Lumiere"
+        current_dmx_mode = self.get_dmx_mode(getattr(self, 'current_row', -1))
+        if current_dmx_mode != "Play Lumiere":
+            self.timeline_playback_timer.stop()
+            if hasattr(self, 'timeline_playback_row'):
+                del self.timeline_playback_row
+            self.timeline_tracks_data = {}
+            return
+
         # Source du temps: tempo_elapsed pour TEMPO, player.position pour media
         if self.tempo_running:
             current_time = self.tempo_elapsed
         else:
             current_time = self.player_ui.player.position()
 
-        if abs(current_time - self.timeline_last_update) < 30:
+        # Debounce: ignorer uniquement si la position n'a pas change du tout
+        if current_time == self.timeline_last_update:
             return
 
         self.timeline_last_update = current_time
@@ -1472,6 +1514,7 @@ class Sequencer(QFrame):
         for proj in self.player_ui.projectors:
             proj.level = 0
             proj.base_color = QColor("black")
+            proj.color = QColor("black")
 
         for track_name, clip_info in active_clips.items():
             indices = track_to_indices.get(track_name, [])
@@ -1813,6 +1856,11 @@ class Sequencer(QFrame):
 
     def delete_media_row(self, row):
         """Supprime une ligne du sequenceur"""
+        if row == self.current_row:
+            QMessageBox.warning(self, "Suppression impossible",
+                "Impossible de supprimer un média en cours de lecture.")
+            return
+
         item = self.table.item(row, 1)
         media_name = item.text() if item else f"Ligne {row + 1}"
 

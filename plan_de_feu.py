@@ -1587,6 +1587,7 @@ class PlanDeFeu(QFrame):
         self._htp_overrides = None    # dict {id(proj): (level, QColor)} ou None
         self._canvas_editable = False  # Vue principale : lecture seule (edition dans Patch DMX)
         self._effects = {}            # id(proj) -> _EffectState
+        self._custom_groups = {}      # nom → frozenset of (group, local_idx)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -1864,8 +1865,16 @@ class PlanDeFeu(QFrame):
         for g in sorted(unlisted):
             menu.addAction(g.capitalize(), lambda grp=g: self._select_group(grp))
 
+        # Groupes de sélection rapide personnalisés
+        if self._custom_groups:
+            menu.addSeparator()
+            for gname, members in self._custom_groups.items():
+                sub = menu.addMenu(f"★  {gname}  ({len(members)})")
+                sub.addAction("Sélectionner", lambda m=members: self._select_custom_group(m))
+                sub.addAction("Supprimer ce groupe", lambda n=gname: self._delete_custom_group(n))
+
         menu.addSeparator()
-        menu.addAction("➕  Ajouter un groupe...", self._open_add_group_dialog)
+        menu.addAction("➕  Ajouter un groupe depuis la sélection...", self._open_add_group_dialog)
 
         # Trouver le bouton SELEC pour positionner le menu
         sender = self.sender()
@@ -1875,18 +1884,26 @@ class PlanDeFeu(QFrame):
             menu.exec(self.mapToGlobal(self.rect().topRight()))
 
     def _open_add_group_dialog(self):
-        """Ouvre un dialog simple pour créer un nouveau groupe."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+        """Sauvegarde la sélection courante comme groupe de sélection rapide."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
+
+        if not self.selected_lamps:
+            QMessageBox.information(self, "Aucune sélection",
+                "Sélectionnez d'abord des projecteurs sur le plan de feu\n"
+                "avant de créer un groupe de sélection rapide.")
+            return
+
         dlg = QDialog(self)
-        dlg.setWindowTitle("Ajouter un groupe")
-        dlg.setFixedSize(320, 130)
+        dlg.setWindowTitle("Nouveau groupe de sélection")
+        dlg.setFixedSize(340, 145)
         dlg.setStyleSheet("QDialog { background: #1a1a1a; color: #ddd; }")
 
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(20, 16, 20, 16)
         vl.setSpacing(12)
 
-        lbl = QLabel("Nom du groupe :")
+        count = len(self.selected_lamps)
+        lbl = QLabel(f"Nom du groupe  ({count} projecteur{'s' if count > 1 else ''} sélectionné{'s' if count > 1 else ''}) :")
         lbl.setStyleSheet("font-size: 12px; color: #aaa;")
         vl.addWidget(lbl)
 
@@ -1926,17 +1943,18 @@ class PlanDeFeu(QFrame):
         if not group_name:
             return
 
-        # Créer une fixture PAR LED dans ce nouveau groupe
-        from projector import Projector
-        p = Projector(group_name, name=f"{group_name} 1", fixture_type="PAR LED")
-        # Adresse DMX suivante disponible
-        used = max((proj.start_address for proj in self.projectors), default=0)
-        p.start_address = used + 5
-        self.projectors.append(p)
+        # Sauvegarder la selection courante comme groupe rapide
+        self._custom_groups[group_name] = frozenset(self.selected_lamps)
 
-        if self.main_window and hasattr(self.main_window, '_rebuild_dmx_patch'):
-            self.main_window._rebuild_dmx_patch()
+    def _select_custom_group(self, members):
+        """Restaure la sélection d'un groupe personnalisé."""
+        self.selected_lamps.clear()
+        self.selected_lamps.update(members)
         self.refresh()
+
+    def _delete_custom_group(self, name):
+        """Supprime un groupe de sélection rapide personnalisé."""
+        self._custom_groups.pop(name, None)
 
     # ── Couleur / dimmer ─────────────────────────────────────────────
 

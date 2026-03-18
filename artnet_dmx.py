@@ -397,20 +397,23 @@ class ArtNetDMX:
                         self.set_channel(ch, 0)
                 continue
 
-            r = proj.color.red()   if hasattr(proj, 'color') else 0
-            g = proj.color.green() if hasattr(proj, 'color') else 0
-            b = proj.color.blue()  if hasattr(proj, 'color') else 0
-
             level  = proj.level if hasattr(proj, 'level') else 0
             dimmer = int((level / 100.0) * 255)
 
             dim_idx    = self._channel_index(profile, "Dim")
             has_dimmer = dim_idx >= 0 and dim_idx < len(channels)
-            if not has_dimmer:
-                factor = level / 100.0
-                r = int(r * factor)
-                g = int(g * factor)
-                b = int(b * factor)
+
+            if has_dimmer:
+                # Canal Dim gere la luminosite : RGB = couleur pure (base_color)
+                bc = getattr(proj, 'base_color', None) or getattr(proj, 'color', None)
+                r = bc.red()   if bc else 0
+                g = bc.green() if bc else 0
+                b = bc.blue()  if bc else 0
+            else:
+                # Pas de canal Dim : proj.color a deja level applique, ne pas rediviser
+                r = proj.color.red()   if hasattr(proj, 'color') else 0
+                g = proj.color.green() if hasattr(proj, 'color') else 0
+                b = proj.color.blue()  if hasattr(proj, 'color') else 0
 
             strobe_idx = self._channel_index(profile, "Strobe")
             has_strobe = strobe_idx >= 0 and strobe_idx < len(channels)
