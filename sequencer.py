@@ -11,7 +11,29 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QFont, QBrush, QCursor
-from PySide6.QtMultimedia import QMediaPlayer
+try:
+    from PySide6.QtMultimedia import QMediaPlayer
+except ImportError:
+    class QMediaPlayer:  # type: ignore
+        PlayingState = 1; StoppedState = 0; PausedState = 2; EndOfMedia = 7
+        def __init__(self): pass
+        def setAudioOutput(self, *a): pass
+        def setSource(self, *a): pass
+        def play(self): pass
+        def pause(self): pass
+        def stop(self): pass
+        def position(self): return 0
+        def duration(self): return 0
+        def setPosition(self, *a): pass
+        def setPlaybackRate(self, *a): pass
+        def playbackState(self): return QMediaPlayer.StoppedState
+        def mediaStatus(self): return 0
+        def source(self): return None
+        playbackStateChanged = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        mediaStatusChanged   = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        positionChanged      = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        durationChanged      = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        errorOccurred        = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
 
 from core import fmt_time, media_icon, MIDI_AVAILABLE, rgb_to_akai_velocity, MEDIA_EXTENSIONS_FILTER
 

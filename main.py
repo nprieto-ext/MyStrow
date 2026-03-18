@@ -179,14 +179,23 @@ def main():
         except Exception:
             pass
         # Afficher une boite d'erreur visible
-        from PySide6.QtWidgets import QMessageBox as _QMB, QTextEdit as _QTE, QDialog as _QDlg, QVBoxLayout as _QVL, QPushButton as _QPB
+        from PySide6.QtWidgets import QMessageBox as _QMB, QTextEdit as _QTE, QDialog as _QDlg, QVBoxLayout as _QVL, QPushButton as _QPB, QLabel as _QLbl
+        import platform as _plt
+        _header = (
+            f"MyStrow {VERSION}  |  Python {sys.version.split()[0]}"
+            f"  |  {_plt.system()} {_plt.release()} ({_plt.machine()})\n"
+            f"{'─' * 60}\n\n"
+        )
         _dlg = _QDlg()
-        _dlg.setWindowTitle("MyStrow — Erreur au démarrage")
-        _dlg.setMinimumSize(600, 400)
+        _dlg.setWindowTitle(f"MyStrow {VERSION} — Erreur au démarrage")
+        _dlg.setMinimumSize(680, 420)
         _vl = _QVL(_dlg)
+        _lbl = _QLbl(f"<b>MyStrow {VERSION}</b> — Impossible de charger l'application")
+        _lbl.setStyleSheet("color:#f44;font-size:13px;padding:4px 0;")
+        _vl.addWidget(_lbl)
         _te = _QTE()
         _te.setReadOnly(True)
-        _te.setPlainText(_err_msg)
+        _te.setPlainText(_header + _err_msg)
         _te.setStyleSheet("background:#111;color:#f44;font-family:monospace;font-size:11px;")
         _vl.addWidget(_te)
         _pb = _QPB("Fermer")
