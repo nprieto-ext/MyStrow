@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.0.46"
+VERSION = "3.0.47"
 
 # === FIREBASE (cles dans firebase_config.py, non versionne) ===
 try:
