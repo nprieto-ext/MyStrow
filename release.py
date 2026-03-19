@@ -122,6 +122,8 @@ def build_local_installer(version):
         f"--hidden-import=streamdeck_api "
         f"--hidden-import=artnet_dmx "
         f"--hidden-import=firebase_config "
+        f"--collect-all serial "
+        f"--hidden-import=serial.tools.list_ports "
         f"--noupx "
         f"--noconfirm main.py\n"
     )
