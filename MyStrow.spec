@@ -20,7 +20,8 @@ if is_mac:
     if os.path.exists('mystrow.icns'):
         datas.append(('mystrow.icns', '.'))
 else:
-    datas.append(('mystrow.ico', '.'))
+    if os.path.exists('mystrow.ico'):
+        datas.append(('mystrow.ico', '.'))
 
 binaries = []
 hiddenimports = [
@@ -55,17 +56,17 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# ── EXE en mode --onedir (exclude_binaries=True) ──────────────────────────────
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='MyStrow',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=not is_mac,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -74,13 +75,26 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file='entitlements.plist' if is_mac else None,
-    icon=['mystrow.icns'] if (is_mac and os.path.exists('mystrow.icns')) else ['mystrow.ico'],
+    icon=['mystrow.icns'] if (is_mac and os.path.exists('mystrow.icns')) else (
+        ['mystrow.ico'] if os.path.exists('mystrow.ico') else []
+    ),
 )
 
-# --- macOS : créer le bundle .app ---
+# ── COLLECT regroupe l'exe + bibliothèques + données ──────────────────────────
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='MyStrow',
+)
+
+# ── macOS : bundle .app autour du dossier COLLECT ─────────────────────────────
 if is_mac:
     app = BUNDLE(
-        exe,
+        coll,
         name='MyStrow.app',
         icon='mystrow.icns' if os.path.exists('mystrow.icns') else None,
         bundle_identifier='fr.mystrow.app',

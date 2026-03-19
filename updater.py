@@ -27,8 +27,10 @@ from PySide6.QtGui import QFont, QScreen, QPixmap, QDesktopServices
 from core import VERSION, resource_path
 
 # === CONSTANTES ===
-_UPDATE_API_URL = "https://api.github.com/repos/nprieto-ext/MAESTRO/releases/latest"
-REMINDER_FILE   = Path.home() / ".maestro_update_reminder.json"
+_GITHUB_REPO       = "nprieto-ext/MAESTRO"
+_UPDATE_API_URL    = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
+_RELEASES_LATEST   = f"https://github.com/{_GITHUB_REPO}/releases/latest"
+REMINDER_FILE      = Path.home() / ".maestro_update_reminder.json"
 
 
 def _version_tuple(v):
@@ -217,71 +219,74 @@ class UpdateChecker(QThread):
         except Exception:
             return ssl._create_unverified_context()
 
+    def _get_latest_version_redirect(self):
+        """Récupère la dernière version via la redirection GitHub releases/latest.
+        Pas de rate limiting — aucun token requis."""
+        req = urllib.request.Request(
+            _RELEASES_LATEST,
+            headers={"User-Agent": "MyStrow-Updater"}
+        )
+        ctx = self._ssl_context()
+        with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+            final_url = resp.geturl()   # URL finale après redirection
+        # final_url = ".../releases/tag/v3.0.49"
+        if "/tag/" not in final_url:
+            return None
+        tag = final_url.split("/tag/")[-1].strip()
+        return tag.lstrip("v") if tag else None
+
+    def _build_urls(self, remote_version):
+        """Construit les URLs de téléchargement depuis le numéro de version."""
+        base = f"https://github.com/{_GITHUB_REPO}/releases/download/v{remote_version}"
+        return {
+            "setup":  f"{base}/MyStrow_Setup.exe",
+            "sha256": f"{base}/sha256.txt",
+            "sig":    f"{base}/MyStrow.exe.sig",
+        }
+
     def run(self):
         if self._reminder_active() and not self.force:
             self.check_finished.emit(False, "")
             return
         try:
-            req = urllib.request.Request(
-                _UPDATE_API_URL,
-                headers={"Accept": "application/vnd.github.v3+json",
-                         "User-Agent": "MyStrow-Updater"}
-            )
-            with urllib.request.urlopen(req, timeout=8,
-                                        context=self._ssl_context()) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            # ── 1. Obtenir la version via redirection (sans rate limit) ──
+            remote_version = self._get_latest_version_redirect()
 
-            tag = data.get("tag_name", "")
-            remote_version = tag.lstrip("v")
+            # ── 2. Fallback API si la redirection échoue ─────────────────
+            if not remote_version:
+                req = urllib.request.Request(
+                    _UPDATE_API_URL,
+                    headers={"Accept": "application/vnd.github.v3+json",
+                             "User-Agent": "MyStrow-Updater"}
+                )
+                with urllib.request.urlopen(req, timeout=8,
+                                            context=self._ssl_context()) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                remote_version = data.get("tag_name", "").lstrip("v")
 
             if not remote_version:
-                self.check_error.emit("Aucune mise à jour trouvée sur le serveur.")
+                self.check_error.emit("Aucune version trouvée sur le serveur.")
                 return
 
             if not version_gt(remote_version, VERSION):
                 self.check_finished.emit(False, remote_version)
                 return
 
-            setup_url = ""   # installeur Inno Setup (préféré)
-            raw_url   = ""   # exe brut (fallback)
-            hash_url  = ""
-            sig_url   = ""
-            assets = data.get("assets", [])
-            for asset in assets:
-                name    = asset.get("name", "")
-                name_lc = name.lower()
-                url     = asset.get("browser_download_url", "")
-                if name_lc.endswith(".exe") and "mystrow" in name_lc:
-                    if "setup" in name_lc:
-                        setup_url = url          # installeur → toujours préféré
-                    else:
-                        raw_url = url            # exe brut → fallback seulement
-                elif name_lc == "sha256.txt":
-                    hash_url = url
-                elif name_lc == "mystrow.exe.sig":
-                    sig_url = url
-
-            # Toujours utiliser l'installeur s'il est disponible :
-            # il déploie à la fois MyStrow.exe ET MyStrow.exe.sig,
-            # ce qui garantit la cohérence du check d'intégrité au redémarrage.
-            exe_url = setup_url or raw_url
-
-            if not exe_url:
-                # Asset non trouvé dans la liste → fallback URL construite depuis le tag
-                exe_url = (
-                    f"https://github.com/nprieto-ext/MAESTRO/releases/download"
-                    f"/v{remote_version}/MyStrow_Setup.exe"
-                )
-                if not assets:
-                    self.check_error.emit(
-                        f"v{remote_version} détectée mais le fichier d'installation est introuvable."
-                    )
-                    return
-
-            self.update_available.emit(remote_version, exe_url, hash_url, sig_url)
+            # ── 3. Construire les URLs (pas d'appel API supplémentaire) ──
+            urls = self._build_urls(remote_version)
+            self.update_available.emit(
+                remote_version, urls["setup"], urls["sha256"], urls["sig"]
+            )
             self.check_finished.emit(True, remote_version)
+
         except urllib.error.HTTPError as e:
-            self.check_error.emit(f"HTTP {e.code} — {e.reason}")
+            if e.code == 403:
+                self.check_error.emit(
+                    "Limite GitHub atteinte (403).\n"
+                    "Réessayez dans quelques minutes."
+                )
+            else:
+                self.check_error.emit(f"HTTP {e.code} — {e.reason}")
         except urllib.error.URLError as e:
             reason = str(e.reason)
             if "AppData" in reason or "cacert" in reason.lower() or "SSL" in reason.upper():
