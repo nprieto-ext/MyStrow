@@ -936,6 +936,16 @@ class FixtureEditorDialog(QDialog):
         self._btn_save.clicked.connect(self._save_current)
         btn_row.addWidget(self._btn_save)
 
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(36)
+        btn_close.setStyleSheet(
+            "QPushButton{background:#1e1e1e;color:#888;border:1px solid #2a2a2a;"
+            "border-radius:6px;font-size:13px;padding:0 16px;}"
+            "QPushButton:hover{background:#252525;color:#ccc;}"
+        )
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+
         rv.addLayout(btn_row)
         splitter.addWidget(right)
         splitter.setSizes([155, 210, 700])
@@ -1121,7 +1131,12 @@ class FixtureEditorDialog(QDialog):
 
         self._list_widget.blockSignals(False)
         if self._current_idx >= 0:
-            self._select_list_item(self._current_idx)
+            # Ne pas forcer le fabricant si l'utilisateur a cliqué sur un autre fabricant
+            all_fx = self._all_fixtures()
+            cur_mfr = (all_fx[self._current_idx].get("manufacturer") or "Générique"
+                       if 0 <= self._current_idx < len(all_fx) else None)
+            if mfr_filter is None or mfr_filter == cur_mfr:
+                self._select_list_item(self._current_idx)
 
     def _on_list_selection(self, row):
         item = self._list_widget.item(row)
@@ -1348,6 +1363,7 @@ class FixtureEditorDialog(QDialog):
             QMessageBox.warning(self, "Canaux requis", "Ajoutez au moins un canal DMX.")
             return
         self._push_undo()
+        is_new = self._current_idx < 0
         all_fx = self._all_fixtures()
         if (self._current_idx >= 0 and self._current_idx < len(all_fx)
                 and not all_fx[self._current_idx].get("builtin")):
@@ -1366,6 +1382,9 @@ class FixtureEditorDialog(QDialog):
             self._fixtures.append(data)
             self._current_idx = len(BUILTIN_FIXTURES) + len(self._fixtures) - 1
         self._save_fixtures()
+        if is_new:
+            self.accept()
+            return
         self._rebuild_list()
         self._select_fixture(self._current_idx)
         self._btn_delete.setEnabled(True)

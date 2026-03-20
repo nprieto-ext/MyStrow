@@ -584,6 +584,17 @@ class ActivationDialog(QDialog):
         machines_row.addStretch()
         layout.addLayout(machines_row)
 
+        # Liste des noms de machines activées
+        self._acct_machines_detail = QLabel("")
+        self._acct_machines_detail.setAlignment(Qt.AlignCenter)
+        self._acct_machines_detail.setFont(QFont("Segoe UI", 9))
+        self._acct_machines_detail.setStyleSheet(
+            "color: #666; background: transparent; border: none;"
+        )
+        self._acct_machines_detail.setWordWrap(True)
+        layout.addSpacing(2)
+        layout.addWidget(self._acct_machines_detail)
+
         layout.addStretch()
 
         self._acct_logout_status = QLabel()
@@ -890,6 +901,14 @@ class ActivationDialog(QDialog):
         )
         pc_word = "PC" if maxm <= 2 else "appareils"
         self._acct_machines_lbl.setText(f"{used} / {maxm} {pc_word} activé{'s' if used > 1 else ''}")
+
+        # Noms des machines activées
+        mlist = getattr(license_result, "machines_list", [])
+        if mlist:
+            names = [m.get("label") or m.get("id", "?")[:20] for m in mlist]
+            self._acct_machines_detail.setText("  ·  ".join(names))
+        else:
+            self._acct_machines_detail.setText("")
 
     def _do_open_portal(self):
         """Ouvre le Stripe Customer Portal pour gérer l'abonnement."""

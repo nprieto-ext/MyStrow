@@ -9127,6 +9127,30 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(btn_close)
 
         layout.addLayout(btn_row)
+
+        # ── Bouton redémarrage ────────────────────────────────────────────
+        def _restart_app():
+            import subprocess as _sp
+            _sp.Popen([sys.executable] + sys.argv)
+            QApplication.quit()
+
+        restart_hint = QLabel("Si l'AKAI n'est toujours pas détecté, un redémarrage résout souvent le problème.")
+        restart_hint.setWordWrap(True)
+        restart_hint.setAlignment(Qt.AlignCenter)
+        restart_hint.setStyleSheet("color: #888; font-size: 10px; background: transparent;")
+        layout.addWidget(restart_hint)
+
+        btn_restart = QPushButton("⟳  Redémarrer MyStrow")
+        btn_restart.setFixedHeight(38)
+        btn_restart.setCursor(Qt.PointingHandCursor)
+        btn_restart.setStyleSheet(
+            "QPushButton{background:#7a4a00;color:white;border:none;border-radius:5px;"
+            "font-size:13px;font-weight:bold;}"
+            "QPushButton:hover{background:#a86200;}"
+        )
+        btn_restart.clicked.connect(_restart_app)
+        layout.addWidget(btn_restart)
+
         dlg.exec()
 
     def _sync_faders_to_projectors(self):

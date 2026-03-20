@@ -72,13 +72,13 @@ class LicenseResult:
         'state', 'dmx_allowed', 'watermark_required',
         'show_warning', 'days_remaining', 'message',
         'action_label', 'license_type', 'updates_until_utc',
-        'machines_used', 'machines_max',
+        'machines_used', 'machines_max', 'machines_list',
     )
 
     def __init__(self, state, dmx_allowed=False, watermark_required=True,
                  show_warning=False, days_remaining=0, message="",
                  action_label="", license_type="", updates_until_utc=0.0,
-                 machines_used=0, machines_max=2):
+                 machines_used=0, machines_max=2, machines_list=None):
         self.state = state
         self.dmx_allowed = dmx_allowed
         self.watermark_required = watermark_required
@@ -92,6 +92,7 @@ class LicenseResult:
         self.updates_until_utc = updates_until_utc
         self.machines_used = machines_used  # nombre de PC actuellement activés
         self.machines_max  = machines_max   # max autorisé par la licence
+        self.machines_list = machines_list or []  # [{"id":..., "label":...}, ...]
 
     def __repr__(self):
         return f"LicenseResult(state={self.state.value}, dmx={self.dmx_allowed}, days={self.days_remaining}, machines={self.machines_used}/{self.machines_max})"
@@ -636,6 +637,7 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
             updates_until_utc=doc.get("updates_until_utc", 0.0),
             machines_used=machines_used,
             machines_max=machines_max,
+            machines_list=[m for m in machines_list if isinstance(m, dict)],
         )
 
     except Exception as e:
@@ -649,7 +651,8 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
 
 
 def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0,
-                  machines_used: int = 0, machines_max: int = 2) -> LicenseResult:
+                  machines_used: int = 0, machines_max: int = 2,
+                  machines_list: list = None) -> LicenseResult:
     """Construit un LicenseResult depuis les donnees Firestore."""
     now = datetime.now(timezone.utc).timestamp()
     days_remaining = max(0, int((expiry_utc - now) / 86400))
@@ -666,6 +669,7 @@ def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0,
             license_type=r.license_type,
             updates_until_utc=updates_until_utc,
             machines_used=machines_used, machines_max=machines_max,
+            machines_list=machines_list or [],
         )
     else:  # trial
         if now >= expiry_utc:
@@ -679,6 +683,7 @@ def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0,
             license_type=r.license_type,
             updates_until_utc=updates_until_utc,
             machines_used=machines_used, machines_max=machines_max,
+            machines_list=machines_list or [],
         )
 
 
@@ -776,6 +781,7 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
             updates_until_utc=doc.get("updates_until_utc", 0.0),
             machines_used=machines_used,
             machines_max=machines_max,
+            machines_list=[m for m in machines_list if isinstance(m, dict)],
         )
         print(f"[LOGIN] _pending_login_result={_pending_login_result}")
 

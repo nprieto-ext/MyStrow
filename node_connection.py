@@ -1615,18 +1615,33 @@ class DmxOutputDialog(QDialog):
                 self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
                 self._status_lbl.setText("Sélectionnez un port COM")
                 return
-            ok = self._dmx.connect(
-                transport=TRANSPORT_ENTTEC,
-                com_port=com,
-                product_id="enttec",
-                product_name="ENTTEC Open DMX USB",
+
+            # Si le port est déjà ouvert sur ce COM, ne pas reconnecter
+            _ser = getattr(self._dmx, '_serial', None)
+            already_open = (
+                _ser and _ser.is_open
+                and getattr(self._dmx, 'com_port', None) == com
+                and getattr(self._dmx, 'transport', None) == TRANSPORT_ENTTEC
             )
-            if not ok:
-                self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
-                self._status_lbl.setText(
-                    f"Port {com} inaccessible — fermez Chataigne ou toute autre app DMX"
+            if already_open:
+                self._dmx.transport    = TRANSPORT_ENTTEC
+                self._dmx.com_port     = com
+                self._dmx.product_id   = "enttec"
+                self._dmx.product_name = "ENTTEC Open DMX USB"
+                self._dmx._save_config()
+            else:
+                ok = self._dmx.connect(
+                    transport=TRANSPORT_ENTTEC,
+                    com_port=com,
+                    product_id="enttec",
+                    product_name="ENTTEC Open DMX USB",
                 )
-                return
+                if not ok:
+                    self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
+                    self._status_lbl.setText(
+                        f"Port {com} inaccessible — fermez Chataigne ou toute autre app DMX"
+                    )
+                    return
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(f"Sortie USB appliquée — {com}")
 

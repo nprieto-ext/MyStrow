@@ -120,18 +120,125 @@ def _detect_fixture_type(profile: list) -> str:
 # Parseur GrandMA (MA2 / MA3)
 # ---------------------------------------------------------------------------
 
+def _try_generic_xml(root) -> dict | None:
+    """
+    Tentative de parsing générique pour formats inconnus (Capture, ETC, etc.).
+    Cherche n'importe quel nœud contenant des éléments Channel/channel.
+    """
+    name = (root.get("name") or root.get("Name") or root.get("fixture")
+            or root.get("Fixture") or "")
+    manufacturer = (root.get("manufacturer") or root.get("Manufacturer")
+                    or root.get("mfr") or "")
+
+    # Chercher récursivement le nom/mfr si pas trouvé à la racine
+    if not name:
+        for el in root.iter():
+            v = el.get("name") or el.get("Name") or el.text
+            if v and v.strip() and el.tag.lower() in ("name", "fixture", "fixturename"):
+                name = v.strip()
+                break
+    if not manufacturer:
+        for el in root.iter():
+            v = el.get("manufacturer") or el.get("Manufacturer") or el.text
+            if v and v.strip() and el.tag.lower() in ("manufacturer", "make", "brand"):
+                manufacturer = v.strip()
+                break
+
+    # Chercher les modes / channels
+    all_channels = []
+    mode_elements = []
+    for el in root.iter():
+        tag = el.tag.lower()
+        if tag in ("mode", "modedef", "channelset"):
+            mode_elements.append(el)
+        elif tag in ("channel", "channeldef", "attribute") and not mode_elements:
+            all_channels.append(el)
+
+    modes = []
+    if mode_elements:
+        for mode_el in mode_elements:
+            mode_name = (mode_el.get("name") or mode_el.get("Name")
+                         or f"Mode {len(modes)+1}")
+            profile = []
+            for ch in mode_el.iter():
+                tag = ch.tag.lower()
+                if tag in ("channel", "channeldef", "attribute", "channeltype"):
+                    ch_name = (ch.get("name") or ch.get("Name")
+                               or ch.get("attribute") or ch.get("Attribute") or "")
+                    mapped = _MA_MAP.get(ch_name) or _MA_MAP.get(ch_name.title())
+                    if mapped is None:
+                        for k, v in _MA_MAP.items():
+                            if k.lower() == ch_name.lower():
+                                mapped = v
+                                break
+                    profile.append(mapped or "Mode")
+            if profile:
+                modes.append({"name": mode_name,
+                               "channelCount": len(profile), "profile": profile})
+    elif all_channels:
+        profile = []
+        for ch in all_channels:
+            ch_name = (ch.get("name") or ch.get("Name")
+                       or ch.get("attribute") or ch.get("Attribute") or "")
+            mapped = _MA_MAP.get(ch_name)
+            if mapped is None:
+                for k, v in _MA_MAP.items():
+                    if k.lower() == ch_name.lower():
+                        mapped = v
+                        break
+            profile.append(mapped or "Mode")
+        if profile:
+            modes.append({"name": "Mode 1", "channelCount": len(profile),
+                          "profile": profile})
+
+    if not modes:
+        return None
+
+    first_profile = modes[0]["profile"]
+    ftype = _detect_fixture_type(first_profile)
+    return {
+        "name":         name or "Fixture importée",
+        "manufacturer": manufacturer,
+        "fixture_type": ftype,
+        "source":       "generic",
+        "uuid":         "",
+        "modes":        modes,
+    }
+
+
+def _strip_namespaces(data: bytes) -> bytes:
+    """Supprime les déclarations de namespace XML pour simplifier le parsing."""
+    import re
+    text = data.decode("utf-8", errors="replace")
+    # Supprimer xmlns="..." et xmlns:prefix="..."
+    text = re.sub(r'\s+xmlns(?::\w+)?="[^"]*"', '', text)
+    # Supprimer les préfixes d'attributs (ex: xsi:schemaLocation -> schemaLocation)
+    text = re.sub(r'(\s)\w+:(\w+)=', r'\1\2=', text)
+    # Supprimer les préfixes de tag (ex: ma:Fixture -> Fixture)
+    text = re.sub(r'<(/?)(\w+):(\w)', r'<\1\3', text)
+    return text.encode("utf-8")
+
+
 def parse_ma_xml(data: bytes) -> dict:
     """
-    Parse un fichier XML GrandMA2 ou GrandMA3 depuis des bytes.
+    Parse un fichier XML GrandMA2/3 ou format générique depuis des bytes.
     Retourne le dict fixture standardise.
     """
     try:
-        root = ET.fromstring(data)
-    except ET.ParseError as e:
-        raise ValueError(f"XML invalide : {e}")
+        root = ET.fromstring(_strip_namespaces(data))
+    except ET.ParseError:
+        # Fallback : essayer sans strip namespaces
+        try:
+            root = ET.fromstring(data)
+        except ET.ParseError as e:
+            raise ValueError(f"XML invalide : {e}")
 
     fixture_el = _find_fixture_element(root)
     if fixture_el is None:
+        # Tentative de parsing générique avant d'abandonner
+        result = _try_generic_xml(root)
+        if result:
+            return result
         raise ValueError("Structure XML non reconnue (MA2/MA3 attendu)")
 
     name         = (fixture_el.get("name") or fixture_el.get("Name")
@@ -172,12 +279,20 @@ def _detect_ma_version(root) -> str:
 
 
 def _find_fixture_element(root):
-    for tag in ("Fixture", "FixtureType", "fixture", "fixturetype"):
+    # Tags reconnus : MA2/MA3 + formats alternatifs (Capture, ETC, Chamsys...)
+    known_tags = {
+        "fixture", "fixturetype", "gdtf", "capturefixture",
+        "fixturedefinition", "fixturetype", "device",
+    }
+    if root.tag.lower() in known_tags:
+        return root
+    for tag in ("Fixture", "FixtureType", "fixture", "fixturetype",
+                "GDTFFixture", "CaptureFixture", "FixtureDefinition",
+                "Device", "device"):
         el = root.find(tag)
         if el is not None:
             return el
-    if root.tag.lower() in ("fixture", "fixturetype"):
-        return root
+    # Recherche récursive
     for child in root:
         found = _find_fixture_element(child)
         if found is not None:
