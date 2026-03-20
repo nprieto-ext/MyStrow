@@ -565,8 +565,8 @@ def fetch_gdtf_fixtures(
 ) -> dict:
     """
     Requête la collection gdtf_fixtures (fixtures OFL).
-    Filtre optionnel par fixture_type.
-    Pagination via cursor_manufacturer + cursor_name (valeurs du dernier doc).
+    Filtre optionnel par fixture_type (filtrage local pour éviter les index composites).
+    Pagination via cursor_manufacturer (valeur du dernier doc sur manufacturer).
 
     Retourne :
         {
@@ -576,36 +576,22 @@ def fetch_gdtf_fixtures(
     """
     url = f"{_FS_BASE}:runQuery"
 
-    filters = []
-    if fixture_type:
-        filters.append({
-            "fieldFilter": {
-                "field": {"fieldPath": "fixture_type"},
-                "op": "EQUAL",
-                "value": {"stringValue": fixture_type},
-            }
-        })
-
+    # orderBy sur un seul champ = index auto-créé par Firestore, pas besoin d'index composite.
+    # Le filtre fixture_type est appliqué localement après réception.
     query: dict = {
         "from": [{"collectionId": "gdtf_fixtures"}],
         "orderBy": [
             {"field": {"fieldPath": "manufacturer"}, "direction": "ASCENDING"},
-            {"field": {"fieldPath": "name"}, "direction": "ASCENDING"},
         ],
         "limit": page_size,
     }
 
-    if len(filters) == 1:
-        query["where"] = filters[0]
-    elif len(filters) > 1:
-        query["where"] = {"compositeFilter": {"op": "AND", "filters": filters}}
-
-    if cursor_manufacturer is not None and cursor_name is not None:
-        query["startAfter"] = {
-            "values": [
-                {"stringValue": cursor_manufacturer},
-                {"stringValue": cursor_name},
-            ]
+    # Curseur : startAt avec before=false = "startAfter" en sémantique SDK.
+    # (L'API REST Firestore n'a pas de champ "startAfter", seulement "startAt".)
+    if cursor_manufacturer is not None:
+        query["startAt"] = {
+            "values": [{"stringValue": cursor_manufacturer}],
+            "before": False,
         }
 
     try:
@@ -621,7 +607,13 @@ def fetch_gdtf_fixtures(
         d = _doc_to_dict(doc)
         if not d.get("name"):
             continue
+        # Filtre fixture_type côté client (évite index composite Firestore)
+        if fixture_type and d.get("fixture_type") != fixture_type:
+            continue
         fixtures.append(d)
+
+    # Tri local par (manufacturer, name)
+    fixtures.sort(key=lambda x: (x.get("manufacturer", "").lower(), x.get("name", "").lower()))
 
     next_cursor = None
     if len(fixtures) == page_size:

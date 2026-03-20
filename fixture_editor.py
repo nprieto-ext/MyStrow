@@ -1622,7 +1622,6 @@ class _OflFetchWorker(QObject):
             kw = {}
             if self._cursor:
                 kw["cursor_manufacturer"] = self._cursor["manufacturer"]
-                kw["cursor_name"]         = self._cursor["name"]
             result = fc.fetch_gdtf_fixtures(
                 self._id_token,
                 fixture_type=self._fixture_type,
