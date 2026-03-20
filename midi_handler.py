@@ -1,6 +1,7 @@
 """
 Gestionnaire MIDI pour l'AKAI APC mini
 """
+import threading
 from PySide6.QtCore import QObject, Signal, QTimer
 
 from core import MIDI_AVAILABLE
@@ -31,6 +32,8 @@ class MIDIHandler(QObject):
         self.connection_check_timer = None
         self.owner_window = None  # Reference a la MainWindow
         self.debug_mode = False
+        self._midi_queue = []
+        self._midi_lock = threading.Lock()
 
         if MIDI_AVAILABLE and rtmidi:
             self.connect_akai()
@@ -126,6 +129,11 @@ class MIDIHandler(QObject):
 
             if akai_in_idx is not None:
                 self.midi_in.open_port(akai_in_idx)
+                # Vider la queue avant d'enregistrer le callback
+                with self._midi_lock:
+                    self._midi_queue.clear()
+                self.midi_in.set_callback(self._midi_callback)
+                self.midi_in.ignore_types(sysex=True, timing=True, active_sense=True)
                 print(f"✅ AKAI connecté (input): {in_ports[akai_in_idx]}")
             else:
                 print("⚠️  AKAI non détecté (input)")
@@ -151,32 +159,34 @@ class MIDIHandler(QObject):
             self.midi_in = None
             self.midi_out = None
 
+    def _midi_callback(self, event, data=None):
+        """Callback appelé par rtmidi dès réception d'un message MIDI (thread rtmidi)."""
+        msg, _deltatime = event
+        with self._midi_lock:
+            self._midi_queue.append(list(msg))
+
     def poll_midi(self):
-        """Lit tous les messages MIDI en attente, avec coalescing des faders"""
+        """Vide la queue de messages MIDI (thread Qt, toutes les 10ms), avec coalescing des faders."""
         if not self.midi_in:
             return
 
         try:
-            # Collecter tous les messages disponibles
-            fader_latest = {}  # {fader_idx: value} — garde seulement la derniere valeur
+            with self._midi_lock:
+                messages = list(self._midi_queue)
+                self._midi_queue.clear()
+
+            fader_latest = {}
             other_messages = []
 
-            while True:
-                message = self.midi_in.get_message()
-                if not message:
-                    break
-                msg = message[0]
+            for msg in messages:
                 if len(msg) >= 3 and msg[0] == 0xB0 and 48 <= msg[1] <= 56:
-                    # Fader CC: coalescence (seule la derniere valeur compte)
                     fader_latest[msg[1] - 48] = msg[2]
                 else:
                     other_messages.append(msg)
 
-            # Emettre les evenements faders coalescés
             for fader_idx, value in fader_latest.items():
                 self.fader_changed.emit(fader_idx, value)
 
-            # Traiter les autres messages dans l'ordre
             for msg in other_messages:
                 self.handle_midi_message(msg)
 

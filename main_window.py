@@ -5400,7 +5400,12 @@ class MainWindow(QMainWindow):
 
     def _on_activation_success(self):
         """Appele apres une activation reussie - re-verifie et applique"""
-        new_result = verify_license()
+        from license_manager import pop_login_result
+        new_result = pop_login_result()
+        if new_result is None:
+            # Fallback : re-vérification Firebase si le résultat de login n'est pas disponible
+            new_result = verify_license()
+        print(f"[ACTIVATION] résultat licence: {new_result}")
         self._license = new_result
 
         # Rafraîchir la bannière
@@ -8122,6 +8127,7 @@ class MainWindow(QMainWindow):
                 _sorted2["Générique"] = FIXTURE_LIBRARY.pop("Générique")
             for _k in sorted(FIXTURE_LIBRARY):
                 _sorted2[_k] = FIXTURE_LIBRARY[_k]
+            FIXTURE_LIBRARY.clear()
             FIXTURE_LIBRARY.update(_sorted2)
             cat_list.clear()
             for cat in FIXTURE_LIBRARY.keys():
@@ -8266,6 +8272,7 @@ class MainWindow(QMainWindow):
                 _s["Générique"] = FIXTURE_LIBRARY.pop("Générique")
             for _k in sorted(FIXTURE_LIBRARY):
                 _s[_k] = FIXTURE_LIBRARY[_k]
+            FIXTURE_LIBRARY.clear()
             FIXTURE_LIBRARY.update(_s)
             cat_list.clear()
             for cat in FIXTURE_LIBRARY.keys():
@@ -8879,14 +8886,16 @@ class MainWindow(QMainWindow):
             _dlg.exec()
         else:
             # Échec — dialog intermédiaire avec bouton "Ouvrir le diagnostic"
+            import sys as _sys
+            import subprocess as _sub
             _dlg = QDialog(self)
             _dlg.setWindowTitle("AKAI APC mini")
-            _dlg.setFixedSize(340, 160)
+            _dlg.setFixedSize(360, 190)
             _dlg.setStyleSheet("QDialog,QWidget{background:#1a1a1a;color:#e0e0e0;}"
                                "QLabel{background:transparent;}")
             _lay = QVBoxLayout(_dlg)
             _lay.setContentsMargins(24, 20, 24, 20)
-            _lay.setSpacing(12)
+            _lay.setSpacing(10)
             _ico = QLabel("⚠️")
             _ico.setAlignment(Qt.AlignCenter)
             _ico.setStyleSheet("font-size:28px;")
@@ -8895,6 +8904,16 @@ class MainWindow(QMainWindow):
             _msg.setAlignment(Qt.AlignCenter)
             _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#f44336;")
             _lay.addWidget(_msg)
+            # Bouton Audio MIDI Setup (Mac uniquement)
+            if _sys.platform == "darwin":
+                _btn_midi_setup = QPushButton("🎹  Ouvrir Audio MIDI Setup")
+                _btn_midi_setup.setFixedHeight(34)
+                _btn_midi_setup.setStyleSheet(
+                    "QPushButton{background:#3a2a5a;color:white;border:none;border-radius:5px;font-size:12px;font-weight:bold;}"
+                    "QPushButton:hover{background:#4a3a7a;}")
+                _btn_midi_setup.setToolTip("Vérifier que l'APC mini est bien visible dans Audio MIDI Setup")
+                _btn_midi_setup.clicked.connect(lambda: _sub.Popen(["open", "-a", "Audio MIDI Setup"]))
+                _lay.addWidget(_btn_midi_setup)
             _btn_row = QHBoxLayout()
             _btn_diag = QPushButton("Ouvrir le diagnostic")
             _btn_diag.setFixedHeight(32)

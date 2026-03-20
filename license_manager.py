@@ -681,11 +681,26 @@ def _offline_fallback(account: dict) -> LicenseResult:
 # ACTIONS COMPTE (login, register, logout)
 # ============================================================
 
+# Résultat construit lors du dernier login réussi — utilisé par _on_activation_success
+_pending_login_result: "LicenseResult | None" = None
+
+
+def pop_login_result() -> "LicenseResult | None":
+    """Retourne et efface le résultat du dernier login réussi."""
+    global _pending_login_result
+    r = _pending_login_result
+    _pending_login_result = None
+    return r
+
+
 def login_account(email: str, password: str) -> tuple[bool, str]:
     """
     Connecte un compte Firebase et enregistre le token localement.
     Retourne (success: bool, message: str).
     """
+    global _pending_login_result
+    _pending_login_result = None
+
     try:
         machine_id = get_machine_id()
     except Exception as e:
@@ -694,15 +709,21 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
     try:
         import firebase_client as fc
 
+        print(f"[LOGIN] sign_in {email} ...")
         auth = fc.sign_in(email.strip(), password)
         uid = auth["uid"]
         id_token = auth["id_token"]
         refresh_token = auth["refresh_token"]
+        print(f"[LOGIN] sign_in OK — uid={uid}")
 
         # Verifier que le document de licence existe
         doc = fc.get_license_doc(uid, id_token)
         if doc is None:
             return False, "Aucun compte licence associe a cet email."
+
+        plan       = doc.get("plan", "trial")
+        expiry_utc = doc.get("expiry_utc", 0.0)
+        print(f"[LOGIN] plan={plan}  expiry_utc={expiry_utc}  doc={doc}")
 
         # Ajouter la machine
         fc.add_machine(uid, id_token, machine_id, label=platform.node()[:32])
@@ -714,16 +735,27 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
             "uid": uid,
             "email": auth.get("email", email),
             "last_verified_utc": now,
-            "cached_plan": doc.get("plan", "trial"),
-            "cached_expiry_utc": doc.get("expiry_utc", now),
+            "cached_plan": plan,
+            "cached_expiry_utc": expiry_utc,
         }
-        _save_account(machine_id, account_data)
+        saved = _save_account(machine_id, account_data)
+        print(f"[LOGIN] _save_account → {saved}  (CRYPTO_AVAILABLE={CRYPTO_AVAILABLE})")
+        print(f"[LOGIN] ACCOUNT_FILE={ACCOUNT_FILE}")
+        print(f"[LOGIN] fichier existe={os.path.exists(ACCOUNT_FILE)}")
+        print(f"[LOGIN] fichier plain existe={os.path.exists(_ACCOUNT_FILE_PLAIN)}")
 
-        plan = doc.get("plan", "trial")
+        # Construire et stocker le LicenseResult directement depuis Firestore
+        _pending_login_result = _build_result(
+            plan, expiry_utc,
+            updates_until_utc=doc.get("updates_until_utc", 0.0),
+        )
+        print(f"[LOGIN] _pending_login_result={_pending_login_result}")
+
         plan_label = "licence" if plan == "license" else "essai"
         return True, f"Connecte — {auth.get('email', email)} ({plan_label})"
 
     except Exception as e:
+        print(f"[LOGIN] ERREUR: {e}")
         return False, str(e)
 
 

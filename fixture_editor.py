@@ -1167,8 +1167,13 @@ class FixtureEditorDialog(QDialog):
         self._builtin_badge.setVisible(False)
         self._btn_delete.setEnabled(True)
         self._btn_save.setEnabled(True)
+        self._btn_save.setVisible(True)
         self._name_edit.setText(data["name"])
         self._header_lbl.setText(data["name"])
+        # Activer l'édition (le signal currentRowChanged est bloqué dans _select_list_item)
+        self._set_read_only_mode(False)
+        self._name_edit.setFocus()
+        self._name_edit.selectAll()
 
     def _delete_fixture(self):
         if self._is_builtin:
