@@ -541,7 +541,7 @@ class ActivationDialog(QDialog):
         self._acct_plan.setWordWrap(True)
         layout.addWidget(self._acct_plan)
 
-        self._acct_machine_label = QLabel("Compte activé sur :")
+        self._acct_machine_label = QLabel("Compte :")
         self._acct_machine_label.setFont(QFont("Segoe UI", 9))
         self._acct_machine_label.setStyleSheet("color: #666;")
         self._acct_machine_label.setAlignment(Qt.AlignCenter)
@@ -552,6 +552,37 @@ class ActivationDialog(QDialog):
         self._acct_machine.setStyleSheet("color: #aaa;")
         self._acct_machine.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._acct_machine)
+
+        # ── Compteur PC activés ───────────────────────────────────────────
+        layout.addSpacing(6)
+        machines_row = QHBoxLayout()
+        machines_row.setSpacing(10)
+
+        self._acct_machines_bar = QWidget()
+        self._acct_machines_bar.setFixedSize(120, 20)
+        bar_lay = QHBoxLayout(self._acct_machines_bar)
+        bar_lay.setContentsMargins(0, 0, 0, 0)
+        bar_lay.setSpacing(4)
+        self._machine_dots = []
+        for _ in range(2):  # max_machines par défaut 2, on redimensionne dans refresh
+            dot = QLabel("●")
+            dot.setFixedSize(18, 18)
+            dot.setAlignment(Qt.AlignCenter)
+            dot.setFont(QFont("Segoe UI", 12))
+            dot.setStyleSheet("color: #333; background: transparent; border: none;")
+            bar_lay.addWidget(dot)
+            self._machine_dots.append(dot)
+        bar_lay.addStretch()
+
+        self._acct_machines_lbl = QLabel("— / — PC")
+        self._acct_machines_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        self._acct_machines_lbl.setStyleSheet("color: #aaa; background: transparent; border: none;")
+
+        machines_row.addStretch()
+        machines_row.addWidget(self._acct_machines_bar)
+        machines_row.addWidget(self._acct_machines_lbl)
+        machines_row.addStretch()
+        layout.addLayout(machines_row)
 
         layout.addStretch()
 
@@ -826,6 +857,39 @@ class ActivationDialog(QDialog):
         self._acct_plan.setText(plan_text)
         self._acct_machine.setText(email)
         self._acct_logout_status.clear()
+
+        # ── Mise à jour compteur PC ───────────────────────────────────────
+        used = getattr(license_result, "machines_used", 0)
+        maxm = getattr(license_result, "machines_max", 2)
+        # Redimensionner les dots si max_machines a changé
+        bar_lay = self._acct_machines_bar.layout()
+        while len(self._machine_dots) < maxm:
+            dot = QLabel("●")
+            dot.setFixedSize(18, 18)
+            dot.setAlignment(Qt.AlignCenter)
+            from PySide6.QtGui import QFont as _QFont
+            dot.setFont(_QFont("Segoe UI", 12))
+            dot.setStyleSheet("color: #333; background: transparent; border: none;")
+            bar_lay.insertWidget(bar_lay.count() - 1, dot)
+            self._machine_dots.append(dot)
+        while len(self._machine_dots) > maxm:
+            dot = self._machine_dots.pop()
+            bar_lay.removeWidget(dot)
+            dot.deleteLater()
+        # Colorier les dots
+        full_color  = "#4CAF50" if used < maxm else "#f44336"
+        empty_color = "#333"
+        for i, dot in enumerate(self._machine_dots):
+            dot.setStyleSheet(
+                f"color: {full_color if i < used else empty_color};"
+                " background: transparent; border: none;"
+            )
+        lbl_color = "#4CAF50" if used < maxm else "#f44336"
+        self._acct_machines_lbl.setStyleSheet(
+            f"color: {lbl_color}; background: transparent; border: none; font-weight: bold;"
+        )
+        pc_word = "PC" if maxm <= 2 else "appareils"
+        self._acct_machines_lbl.setText(f"{used} / {maxm} {pc_word} activé{'s' if used > 1 else ''}")
 
     def _do_open_portal(self):
         """Ouvre le Stripe Customer Portal pour gérer l'abonnement."""

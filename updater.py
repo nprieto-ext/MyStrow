@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QProgressBar, QDialog, QMessageBox, QApplication
+    QPushButton, QProgressBar, QDialog, QMessageBox, QApplication, QFrame
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
 from PySide6.QtGui import QFont, QScreen, QPixmap, QDesktopServices
@@ -337,75 +337,98 @@ class UpdateChecker(QThread):
 # UPDATE BAR
 # ============================================================
 class UpdateBar(QWidget):
-    """Barre de notification verte pour les mises a jour"""
+    """Barre de notification mise a jour — meme style que LicenseBanner."""
 
-    later_clicked = Signal()
+    later_clicked  = Signal()
     update_clicked = Signal()
+
+    _BG     = "#0b3d4a"
+    _BORDER = "#00bcd4"
+    _ACCENT = "#00bcd4"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.version = ""
-        self.exe_url = ""
+        self.version  = ""
+        self.exe_url  = ""
         self.hash_url = ""
-        self.sig_url = ""
+        self.sig_url  = ""
 
-        self.setFixedHeight(40)
-        self.setStyleSheet("background: #2d7a3a;")
+        self.setFixedHeight(38)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            UpdateBar {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {self._BG}, stop:1 #1a1a1a
+                );
+                border: 1px solid {self._BORDER};
+                border-radius: 5px;
+            }}
+        """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 0, 15, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(10, 0, 8, 0)
+        layout.setSpacing(8)
 
+        # Icone
+        icon_lbl = QLabel("↑")
+        icon_lbl.setFixedWidth(18)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet("background: transparent; border: none;")
+        icon_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        icon_lbl.setStyleSheet(f"color: {self._ACCENT}; background: transparent; border: none;")
+        layout.addWidget(icon_lbl)
+
+        # Separateur vertical
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        sep.setFixedHeight(20)
+        sep.setStyleSheet(f"background: {self._ACCENT}; border: none;")
+        layout.addWidget(sep)
+
+        # Texte
         self.label = QLabel()
-        self.label.setFont(QFont("Segoe UI", 10))
-        self.label.setStyleSheet("color: white;")
+        self.label.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.label.setStyleSheet("color: #fff; background: transparent; border: none;")
+        self.label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.label, 1)
 
-        btn_later = QPushButton("Plus tard")
-        btn_later.setFixedHeight(28)
-        btn_later.setCursor(Qt.PointingHandCursor)
-        btn_later.setStyleSheet("""
-            QPushButton {
-                color: white;
-                background: transparent;
-                border: 1px solid rgba(255,255,255,0.5);
-                border-radius: 4px;
-                padding: 4px 14px;
-                font-size: 10px;
-            }
-            QPushButton:hover {
-                background: rgba(255,255,255,0.15);
-            }
-        """)
-        btn_later.clicked.connect(self.later_clicked)
-        layout.addWidget(btn_later)
-
-        btn_update = QPushButton("Mettre a jour")
-        btn_update.setFixedHeight(28)
+        # Bouton Mettre a jour
+        btn_update = QPushButton("Mettre à jour →")
+        btn_update.setFixedHeight(24)
         btn_update.setCursor(Qt.PointingHandCursor)
-        btn_update.setStyleSheet("""
-            QPushButton {
-                color: white;
-                background: #4CAF50;
-                border: none;
-                border-radius: 4px;
-                padding: 4px 14px;
-                font-weight: bold;
-                font-size: 10px;
-            }
-            QPushButton:hover {
-                background: #66BB6A;
-            }
+        btn_update.setStyleSheet(f"""
+            QPushButton {{
+                color: #000; background: {self._ACCENT};
+                border: none; border-radius: 3px;
+                padding: 2px 12px; font-size: 9px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background: white; }}
         """)
         btn_update.clicked.connect(self.update_clicked)
         layout.addWidget(btn_update)
 
+        # Bouton Plus tard (croix)
+        btn_later = QPushButton("✕")
+        btn_later.setFixedSize(22, 22)
+        btn_later.setCursor(Qt.PointingHandCursor)
+        btn_later.setStyleSheet("""
+            QPushButton {
+                color: rgba(255,255,255,0.45); background: transparent;
+                border: none; font-size: 11px; font-weight: bold;
+            }
+            QPushButton:hover { color: white; }
+        """)
+        btn_later.clicked.connect(self.later_clicked)
+        layout.addWidget(btn_later)
+
     def set_info(self, version, exe_url, hash_url, sig_url=""):
-        self.version = version
-        self.exe_url = exe_url
+        self.version  = version
+        self.exe_url  = exe_url
         self.hash_url = hash_url
-        self.sig_url = sig_url
-        self.label.setText(f"Nouvelle version disponible (v{version})")
+        self.sig_url  = sig_url
+        self.label.setText(f"Nouvelle version disponible  v{version}")
 
 
 # ============================================================

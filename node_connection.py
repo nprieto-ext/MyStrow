@@ -1043,7 +1043,7 @@ class NodeSetupWizard(QDialog):
             lbl.setWordWrap(True); lbl.setAlignment(Qt.AlignCenter)
             self._adapters_layout.insertWidget(0, lbl)
         else:
-            # Trouver la carte recommandée : déjà ok > connectée > premier
+            # Auto-sélection : déjà ok > câble branché > premier
             recommended = next((name for name, ip, d, c in adapters if ip.startswith("2.0.0.")), None)
             if not recommended:
                 recommended = next((name for name, ip, d, c in adapters if c and ip), None)
@@ -1052,14 +1052,16 @@ class NodeSetupWizard(QDialog):
 
             for i, (name, ip, desc, connected) in enumerate(adapters):
                 already_ok = ip.startswith("2.0.0.")
-                is_recommended = (name == recommended)
-                ip_display = ip if ip else "Pas d'adresse IP"
-                state = "✓  IP Art-Net déjà configurée" if already_ok else (
-                    f"IP actuelle : {ip_display}" if ip else "Câble débranché ou IP non configurée"
-                )
-                badge = "  ★ Recommandée" if is_recommended and not already_ok else ""
+                if already_ok:
+                    state = "✓  IP Art-Net déjà configurée"
+                elif connected and ip:
+                    state = f"🔌 Câble branché  —  IP : {ip}"
+                elif connected:
+                    state = "🔌 Câble branché  —  IP non configurée"
+                else:
+                    state = "⚠  Câble débranché"
                 desc_line = f"\n  {desc}" if desc and desc.lower() != name.lower() else ""
-                txt = f"  {name}{badge}{desc_line}\n  {state}"
+                txt = f"  {name}{desc_line}\n  {state}"
                 style = _BTN_ADAPTER_OK if already_ok else _BTN_ADAPTER
                 btn = QPushButton(txt)
                 btn.setStyleSheet(style)

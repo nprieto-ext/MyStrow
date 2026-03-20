@@ -7852,7 +7852,13 @@ class MainWindow(QMainWindow):
             if _fx_file.exists():
                 _data = _json.loads(_fx_file.read_text(encoding="utf-8"))
                 if isinstance(_data, list):
-                    _user_fixtures = [f for f in _data if isinstance(f, dict) and not f.get("builtin")]
+                    for _f in _data:
+                        if not isinstance(_f, dict) or _f.get("builtin"):
+                            continue
+                        # Normaliser les fixtures admin panel (modes sans profile racine)
+                        if not _f.get("profile") and _f.get("modes"):
+                            _f["profile"] = _f["modes"][0].get("profile", [])
+                        _user_fixtures.append(_f)
         except Exception:
             pass
 
@@ -8217,6 +8223,12 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(3000, refresh_lbl.hide)
                 btn_refresh.setEnabled(True)
                 return
+
+            # Normaliser les fixtures multi-modes (admin panel) : profile au niveau racine
+            for fx in results:
+                if not fx.get("profile") and fx.get("modes"):
+                    first = fx["modes"][0]
+                    fx["profile"] = first.get("profile", [])
 
             # Fusion dans ALL_FIXTURES
             existing_names = {f["name"] for f in ALL_FIXTURES}

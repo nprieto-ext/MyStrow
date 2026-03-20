@@ -72,11 +72,13 @@ class LicenseResult:
         'state', 'dmx_allowed', 'watermark_required',
         'show_warning', 'days_remaining', 'message',
         'action_label', 'license_type', 'updates_until_utc',
+        'machines_used', 'machines_max',
     )
 
     def __init__(self, state, dmx_allowed=False, watermark_required=True,
                  show_warning=False, days_remaining=0, message="",
-                 action_label="", license_type="", updates_until_utc=0.0):
+                 action_label="", license_type="", updates_until_utc=0.0,
+                 machines_used=0, machines_max=2):
         self.state = state
         self.dmx_allowed = dmx_allowed
         self.watermark_required = watermark_required
@@ -88,9 +90,11 @@ class LicenseResult:
         # 0.0 = pas de limite (abonnements mensuel/annuel, manuel, trial)
         # > 0  = timestamp jusqu'auquel les mises à jour sont incluses (lifetime)
         self.updates_until_utc = updates_until_utc
+        self.machines_used = machines_used  # nombre de PC actuellement activés
+        self.machines_max  = machines_max   # max autorisé par la licence
 
     def __repr__(self):
-        return f"LicenseResult(state={self.state.value}, dmx={self.dmx_allowed}, days={self.days_remaining})"
+        return f"LicenseResult(state={self.state.value}, dmx={self.dmx_allowed}, days={self.days_remaining}, machines={self.machines_used}/{self.machines_max})"
 
 
 # ============================================================
@@ -620,10 +624,18 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
         account["cached_expiry_utc"] = doc.get("expiry_utc", now)
         _save_account(machine_id, account)
 
+        # Recharger le doc après add_machine pour avoir le compte exact
+        doc2 = fc.get_license_doc(uid, id_token) or doc
+        machines_list = doc2.get("machines", [])
+        machines_used = len([m for m in machines_list if isinstance(m, dict)])
+        machines_max  = int(doc2.get("max_machines", 2))
+
         return _build_result(
             doc.get("plan", "trial"),
             doc.get("expiry_utc", now),
             updates_until_utc=doc.get("updates_until_utc", 0.0),
+            machines_used=machines_used,
+            machines_max=machines_max,
         )
 
     except Exception as e:
@@ -636,7 +648,8 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
         return _offline_fallback(account)
 
 
-def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0) -> LicenseResult:
+def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0,
+                  machines_used: int = 0, machines_max: int = 2) -> LicenseResult:
     """Construit un LicenseResult depuis les donnees Firestore."""
     now = datetime.now(timezone.utc).timestamp()
     days_remaining = max(0, int((expiry_utc - now) / 86400))
@@ -652,11 +665,21 @@ def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0) 
             message=r.message, action_label=r.action_label,
             license_type=r.license_type,
             updates_until_utc=updates_until_utc,
+            machines_used=machines_used, machines_max=machines_max,
         )
     else:  # trial
         if now >= expiry_utc:
             return _result_trial_expired()
-        return _result_trial_active(max(1, days_remaining))
+        r = _result_trial_active(max(1, days_remaining))
+        return LicenseResult(
+            state=r.state, dmx_allowed=r.dmx_allowed,
+            watermark_required=r.watermark_required,
+            show_warning=r.show_warning, days_remaining=r.days_remaining,
+            message=r.message, action_label=r.action_label,
+            license_type=r.license_type,
+            updates_until_utc=updates_until_utc,
+            machines_used=machines_used, machines_max=machines_max,
+        )
 
 
 def _offline_fallback(account: dict) -> LicenseResult:
@@ -745,9 +768,14 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
         print(f"[LOGIN] fichier plain existe={os.path.exists(_ACCOUNT_FILE_PLAIN)}")
 
         # Construire et stocker le LicenseResult directement depuis Firestore
+        machines_list = doc.get("machines", [])
+        machines_used = len([m for m in machines_list if isinstance(m, dict)])
+        machines_max  = int(doc.get("max_machines", 2))
         _pending_login_result = _build_result(
             plan, expiry_utc,
             updates_until_utc=doc.get("updates_until_utc", 0.0),
+            machines_used=machines_used,
+            machines_max=machines_max,
         )
         print(f"[LOGIN] _pending_login_result={_pending_login_result}")
 

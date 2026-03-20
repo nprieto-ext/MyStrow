@@ -382,8 +382,14 @@ class FixtureEditorDialog(QDialog):
             if FIXTURE_FILE.exists():
                 data = json.loads(FIXTURE_FILE.read_text(encoding="utf-8"))
                 if isinstance(data, list):
-                    self._fixtures = [f for f in data
-                                      if isinstance(f, dict) and not f.get("builtin")]
+                    self._fixtures = []
+                    for f in data:
+                        if not isinstance(f, dict) or f.get("builtin"):
+                            continue
+                        # Normaliser les fixtures admin panel (modes sans profile racine)
+                        if not f.get("profile") and f.get("modes"):
+                            f["profile"] = f["modes"][0].get("profile", [])
+                        self._fixtures.append(f)
         except Exception:
             self._fixtures = []
 
@@ -452,6 +458,8 @@ class FixtureEditorDialog(QDialog):
                         raise ValueError("Format invalide (liste de fixtures attendue).")
                     to_add = [f for f in to_add if isinstance(f, dict)]
                 for fx in to_add:
+                    if not fx.get("profile") and fx.get("modes"):
+                        fx["profile"] = fx["modes"][0].get("profile", [])
                     if not fx.get("name") or not fx.get("profile"):
                         continue
                     fx.pop("builtin", None)
@@ -541,6 +549,11 @@ class FixtureEditorDialog(QDialog):
             self._btn_refresh.setText("↻  Actualiser")
             QMessageBox.information(self, "Actualiser", "Aucune fixture trouvée dans Firestore.")
             return
+
+        # Normaliser les fixtures multi-modes (admin panel) : profile au niveau racine
+        for fx in results:
+            if not fx.get("profile") and fx.get("modes"):
+                fx["profile"] = fx["modes"][0].get("profile", [])
 
         # Fusion dans self._fixtures + sauvegarde cache
         existing_names = {f["name"] for f in self._fixtures}

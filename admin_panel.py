@@ -2240,16 +2240,10 @@ class AdminPanel(QMainWindow):
         self._btn_nav_fix.clicked.connect(lambda: self._switch_view(1))
         nav_lay.addWidget(self._btn_nav_fix)
 
-        self._btn_nav_packs = QPushButton("Packs")
-        self._btn_nav_packs.setFixedHeight(38)
-        self._btn_nav_packs.setStyleSheet(_nav_idle)
-        self._btn_nav_packs.clicked.connect(lambda: self._switch_view(2))
-        nav_lay.addWidget(self._btn_nav_packs)
-
         self._btn_nav_release = QPushButton("Release")
         self._btn_nav_release.setFixedHeight(38)
         self._btn_nav_release.setStyleSheet(_nav_idle)
-        self._btn_nav_release.clicked.connect(lambda: self._switch_view(3))
+        self._btn_nav_release.clicked.connect(lambda: self._switch_view(2))
         nav_lay.addWidget(self._btn_nav_release)
 
         nav_lay.addStretch()
@@ -2410,10 +2404,7 @@ class AdminPanel(QMainWindow):
         # ── Page 1 : Fixtures ─────────────────────────────────────────────────
         self._build_fixtures_panel()
 
-        # ── Page 2 : Packs ────────────────────────────────────────────────────
-        self._build_packs_panel()
-
-        # ── Page 3 : Release ──────────────────────────────────────────────────
+        # ── Page 2 : Release ──────────────────────────────────────────────────
         self._build_release_panel()
 
     # ------------------------------------------------------------------
@@ -2428,8 +2419,7 @@ class AdminPanel(QMainWindow):
                    f"QPushButton:hover {{ color: {TEXT}; }}")
         self._btn_nav_lic.setStyleSheet(_active if idx == 0 else _idle)
         self._btn_nav_fix.setStyleSheet(_active if idx == 1 else _idle)
-        self._btn_nav_packs.setStyleSheet(_active if idx == 2 else _idle)
-        self._btn_nav_release.setStyleSheet(_active if idx == 3 else _idle)
+        self._btn_nav_release.setStyleSheet(_active if idx == 2 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 1 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -2569,14 +2559,8 @@ class AdminPanel(QMainWindow):
         dlg = FixtureEditorDialog(self)
         dlg.show()
 
-    def _build_packs_panel(self):
-        """Page 2 : Éditeur de packs de fixtures."""
-        from admin_pack_editor import AdminPackEditorWidget
-        self._pack_editor = AdminPackEditorWidget(self._id_token)
-        self._content_stack.addWidget(self._pack_editor)
-
     def _build_release_panel(self):
-        """Page 3 : Release pipeline + Backup, intégrés directement dans l'onglet."""
+        """Page 2 : Release pipeline + Backup, intégrés directement dans l'onglet."""
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(32, 28, 32, 24)
