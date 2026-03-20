@@ -7053,7 +7053,7 @@ class MainWindow(QMainWindow):
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
                         others.append(fd2['name'] or fd2['group'])
-                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {", ".join(others)}")
+                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {', '.join(others)}")
                 lbl_conflict_det.setVisible(True)
             else:
                 lbl_conflict_det.setVisible(False)
@@ -7120,7 +7120,7 @@ class MainWindow(QMainWindow):
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
                         others.append(fd2['name'] or fd2['group'])
-                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {", ".join(others)}")
+                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {', '.join(others)}")
                 lbl_conflict_det.setVisible(True)
             else:
                 lbl_conflict_det.setVisible(False)
