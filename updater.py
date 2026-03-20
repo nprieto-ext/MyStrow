@@ -26,6 +26,20 @@ from PySide6.QtGui import QFont, QScreen, QPixmap, QDesktopServices
 
 from core import VERSION, resource_path
 
+# === SSL ===
+def _make_ssl_context():
+    """Contexte SSL compatible Mac/Windows/PyInstaller.
+    Priorité : certifi (bundlé) → contexte système → non vérifié (dernier recours)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
+
 # === CONSTANTES ===
 _GITHUB_REPO       = "nprieto-ext/MAESTRO"
 _UPDATE_API_URL    = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
@@ -209,15 +223,7 @@ class UpdateChecker(QThread):
 
     @staticmethod
     def _ssl_context():
-        """Contexte SSL compatible PyInstaller/Windows.
-        En mode compilé (PyInstaller), le bundle certifi n'est pas disponible,
-        donc on désactive la vérification pour éviter les erreurs de chemin AppData."""
-        if getattr(sys, 'frozen', False):
-            return ssl._create_unverified_context()
-        try:
-            return ssl.create_default_context()
-        except Exception:
-            return ssl._create_unverified_context()
+        return _make_ssl_context()
 
     def _get_latest_version_redirect(self):
         """Récupère la dernière version via la redirection GitHub releases/latest.
@@ -485,21 +491,31 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     new_file = update_dir / filename
 
     # --- Telechargement ---
-    def reporthook(block_num, block_size, total_size):
-        if total_size > 0:
-            pct = min(int(block_num * block_size * 100 / total_size), 100)
-            progress.setValue(pct)
-            size_mb = total_size / (1024 * 1024)
-            dl_mb = min(block_num * block_size, total_size) / (1024 * 1024)
-            status_label.setText(f"{dl_mb:.1f} Mo / {size_mb:.1f} Mo")
-        else:
-            status_label.setText("Telechargement en cours...")
-        QApplication.processEvents()
-
     try:
-        status_label.setText(f"Connexion au serveur...")
+        status_label.setText("Connexion au serveur...")
         QApplication.processEvents()
-        urllib.request.urlretrieve(exe_url, str(new_file), reporthook)
+        req = urllib.request.Request(exe_url, headers={"User-Agent": "MyStrow-Updater"})
+        ctx = _make_ssl_context()
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+            total_size = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            block_size = 65536
+            with open(str(new_file), "wb") as f:
+                while True:
+                    chunk = resp.read(block_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        pct = min(int(downloaded * 100 / total_size), 100)
+                        progress.setValue(pct)
+                        dl_mb = downloaded / (1024 * 1024)
+                        size_mb = total_size / (1024 * 1024)
+                        status_label.setText(f"{dl_mb:.1f} Mo / {size_mb:.1f} Mo")
+                    else:
+                        status_label.setText("Téléchargement en cours...")
+                    QApplication.processEvents()
     except Exception as e:
         dlg.close()
         QMessageBox.critical(parent, "Erreur de telechargement",
@@ -515,7 +531,8 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     if hash_url and not is_installer:
         expected_hash = ""
         try:
-            with urllib.request.urlopen(hash_url, timeout=10) as resp:
+            with urllib.request.urlopen(hash_url, timeout=10,
+                                        context=_make_ssl_context()) as resp:
                 content = resp.read().decode("utf-8").strip()
                 expected_hash = content.split()[0].lower()
         except Exception:

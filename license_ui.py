@@ -443,6 +443,20 @@ class ActivationDialog(QDialog):
         self._login_status.setWordWrap(True)
         layout.addWidget(self._login_status)
 
+        self._btn_send_pwd = QPushButton("📧  Recevoir mon mot de passe par email")
+        self._btn_send_pwd.setFixedHeight(32)
+        self._btn_send_pwd.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_send_pwd.setStyleSheet("""
+            QPushButton {
+                background: #3a1a00; color: #ff9800;
+                border: 1px solid #ff980055; border-radius: 6px; font-size: 11px;
+            }
+            QPushButton:hover { background: #4a2500; color: #ffb74d; border-color: #ff9800; }
+        """)
+        self._btn_send_pwd.clicked.connect(self._do_forgot_password)
+        self._btn_send_pwd.hide()
+        layout.addWidget(self._btn_send_pwd)
+
         layout.addStretch()
 
         btn_forgot = QPushButton("🔑  Mot de passe oublié ?  Recevoir à nouveau par mail")
@@ -870,6 +884,7 @@ class ActivationDialog(QDialog):
         self._btn_login.setEnabled(True)
 
         if success:
+            self._btn_send_pwd.hide()
             self._success_label.setText(f"Bienvenue !\n{message}")
             self._stack.setCurrentIndex(1)
             self.activation_success.emit()
@@ -877,6 +892,10 @@ class ActivationDialog(QDialog):
         else:
             self._login_status.setStyleSheet("color: #ff5555;")
             self._login_status.setText(message)
+            # Afficher le bouton de réception par mail si mauvais mot de passe
+            wrong_creds = any(w in message.lower() for w in
+                              ("incorrect", "mot de passe", "invalid", "password"))
+            self._btn_send_pwd.setVisible(wrong_creds)
 
 
 # ============================================================

@@ -2195,6 +2195,15 @@ class AdminPanel(QMainWindow):
 
         h_lay.addSpacing(10)
 
+        btn_restart = QPushButton("↺  Redémarrer")
+        btn_restart.setStyleSheet(_BTN_SECONDARY)
+        btn_restart.setFixedHeight(32)
+        btn_restart.setToolTip("Relancer MyStrow pour prendre en compte les dernières modifications")
+        btn_restart.clicked.connect(self._on_restart)
+        h_lay.addWidget(btn_restart)
+
+        h_lay.addSpacing(6)
+
         btn_logout = QPushButton("Déconnexion")
         btn_logout.setStyleSheet(_BTN_RED)
         btn_logout.setFixedHeight(32)
@@ -3223,7 +3232,10 @@ class AdminPanel(QMainWindow):
     # ── General ────────────────────────────────────────────────────────────────
 
     def _on_restart(self):
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        import subprocess
+        from PySide6.QtWidgets import QApplication
+        subprocess.Popen([sys.executable] + sys.argv)
+        QApplication.quit()
 
     def _on_logout(self):
         _clear_admin_cache()

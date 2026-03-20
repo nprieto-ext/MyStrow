@@ -5403,7 +5403,8 @@ class MainWindow(QMainWindow):
         new_result = verify_license()
         self._license = new_result
 
-        # Banniere supprimee
+        # Rafraîchir la bannière
+        self._apply_license_banner()
 
         # Activer/desactiver DMX
         if self._license.dmx_allowed:

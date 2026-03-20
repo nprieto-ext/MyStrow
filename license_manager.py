@@ -306,38 +306,54 @@ def _derive_fernet_key(machine_id: str) -> bytes:
     return base64.urlsafe_b64encode(raw)
 
 
+_ACCOUNT_FILE_PLAIN = ACCOUNT_FILE + ".json"  # fallback non-chiffré
+
+
 def _load_account(machine_id: str) -> dict | None:
     """Charge et dechiffre le fichier de compte local."""
-    if not CRYPTO_AVAILABLE:
+    if not os.path.exists(ACCOUNT_FILE) and not os.path.exists(_ACCOUNT_FILE_PLAIN):
         return None
-    if not os.path.exists(ACCOUNT_FILE):
-        return None
-    try:
-        key = _derive_fernet_key(machine_id)
-        f = Fernet(key)
-        with open(ACCOUNT_FILE, "rb") as fp:
-            encrypted = fp.read()
-        decrypted = f.decrypt(encrypted)
-        return json.loads(decrypted.decode())
-    except Exception as e:
-        print(f"Erreur lecture compte local: {e}")
-        return None
+    if CRYPTO_AVAILABLE and os.path.exists(ACCOUNT_FILE):
+        try:
+            key = _derive_fernet_key(machine_id)
+            f = Fernet(key)
+            with open(ACCOUNT_FILE, "rb") as fp:
+                encrypted = fp.read()
+            decrypted = f.decrypt(encrypted)
+            return json.loads(decrypted.decode())
+        except Exception as e:
+            print(f"Erreur lecture compte chiffré: {e}")
+    # Fallback : fichier JSON non-chiffré (quand cryptography absent)
+    if os.path.exists(_ACCOUNT_FILE_PLAIN):
+        try:
+            with open(_ACCOUNT_FILE_PLAIN, "r", encoding="utf-8") as fp:
+                return json.load(fp)
+        except Exception as e:
+            print(f"Erreur lecture compte fallback: {e}")
+    return None
 
 
 def _save_account(machine_id: str, data: dict) -> bool:
     """Chiffre et sauvegarde le fichier de compte local."""
-    if not CRYPTO_AVAILABLE:
-        return False
+    if CRYPTO_AVAILABLE:
+        try:
+            key = _derive_fernet_key(machine_id)
+            f = Fernet(key)
+            raw = json.dumps(data).encode()
+            encrypted = f.encrypt(raw)
+            with open(ACCOUNT_FILE, "wb") as fp:
+                fp.write(encrypted)
+            return True
+        except Exception as e:
+            print(f"Erreur sauvegarde compte chiffré: {e}")
+    # Fallback : JSON non-chiffré si cryptography non disponible
     try:
-        key = _derive_fernet_key(machine_id)
-        f = Fernet(key)
-        raw = json.dumps(data).encode()
-        encrypted = f.encrypt(raw)
-        with open(ACCOUNT_FILE, "wb") as fp:
-            fp.write(encrypted)
+        with open(_ACCOUNT_FILE_PLAIN, "w", encoding="utf-8") as fp:
+            json.dump(data, fp)
+        print("⚠ Compte sauvegardé sans chiffrement (cryptography non disponible)")
         return True
     except Exception as e:
-        print(f"Erreur sauvegarde compte local: {e}")
+        print(f"Erreur sauvegarde compte fallback: {e}")
         return False
 
 
@@ -346,6 +362,8 @@ def _delete_account():
     try:
         if os.path.exists(ACCOUNT_FILE):
             os.remove(ACCOUNT_FILE)
+        if os.path.exists(_ACCOUNT_FILE_PLAIN):
+            os.remove(_ACCOUNT_FILE_PLAIN)
         return True
     except Exception as e:
         print(f"Erreur suppression compte: {e}")
