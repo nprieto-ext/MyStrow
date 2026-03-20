@@ -9220,6 +9220,8 @@ class MainWindow(QMainWindow):
 
         root.addStretch()
 
+        import sys as _sys
+        import subprocess as _sub
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_config = QPushButton("Ouvrir l'assistant de connexion")
@@ -9232,6 +9234,30 @@ class MainWindow(QMainWindow):
         btn_config.hide()
         btn_config.clicked.connect(lambda: (dlg.accept(), self.open_node_connection()))
         btn_row.addWidget(btn_config)
+        # Bouton connexions réseau selon la plateforme
+        if _sys.platform == "darwin":
+            btn_net = QPushButton("🌐  Préférences Réseau")
+            btn_net.setFixedHeight(30)
+            btn_net.setStyleSheet(
+                "QPushButton { background: #2a2a3a; color: #aaaacc; border: 1px solid #44448888;"
+                " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
+                "QPushButton:hover { background: #333355; color: #ccccee; }"
+            )
+            btn_net.setToolTip("Ouvrir les Préférences Réseau macOS pour configurer l'IP")
+            btn_net.clicked.connect(lambda: _sub.Popen(
+                ["open", "x-apple.systempreferences:com.apple.preference.network"]))
+        else:
+            btn_net = QPushButton("🌐  Connexions réseau")
+            btn_net.setFixedHeight(30)
+            btn_net.setStyleSheet(
+                "QPushButton { background: #2a2a3a; color: #aaaacc; border: 1px solid #44448888;"
+                " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
+                "QPushButton:hover { background: #333355; color: #ccccee; }"
+            )
+            btn_net.setToolTip("Ouvrir les connexions réseau Windows")
+            from node_connection import _open_network_connections
+            btn_net.clicked.connect(_open_network_connections)
+        btn_row.addWidget(btn_net)
         btn_close = QPushButton("Fermer")
         btn_close.setFixedHeight(30)
         btn_close.setStyleSheet(
@@ -9248,7 +9274,7 @@ class MainWindow(QMainWindow):
 
         # --- Vérification 1 : carte réseau ---
         adapters = _get_ethernet_adapters()
-        ok_adapters = [(n, ip) for n, ip in adapters if ip.startswith("2.0.0.")]
+        ok_adapters = [(n, ip) for n, ip, *_ in adapters if ip.startswith("2.0.0.")]
 
         if ok_adapters:
             name, ip = ok_adapters[0]
@@ -9258,7 +9284,7 @@ class MainWindow(QMainWindow):
             detail_net.setStyleSheet("color: #4CAF50;")
             net_ok = True
         elif adapters:
-            name, ip = adapters[0]
+            name, ip = adapters[0][0], adapters[0][1]
             ip_display = ip if ip else "non configurée"
             icon_net.setText("⚠")
             icon_net.setStyleSheet("color: #ff9800;")

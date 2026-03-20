@@ -70,7 +70,14 @@ def _get_all_local_ips() -> set:
 
 
 def _get_ethernet_adapters():
-    """Retourne [(nom, ip, description, connected)] pour les adaptateurs Ethernet physiques."""
+    """Retourne [(nom, ip, description, connected)] — Windows et Mac."""
+    if platform.system() == "Darwin":
+        return _get_ethernet_adapters_mac()
+    return _get_ethernet_adapters_windows()
+
+
+def _get_ethernet_adapters_windows():
+    """Détecte les adaptateurs réseau sur Windows via ipconfig /all."""
     try:
         r = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True,
                            encoding="cp1252", errors="replace",
@@ -124,12 +131,57 @@ def _get_ethernet_adapters():
     return adapters
 
 
+def _get_ethernet_adapters_mac():
+    """Détecte les interfaces réseau sur macOS via ifconfig."""
+    _SKIP_PREFIXES = ("lo", "utun", "awdl", "llw", "stf", "gif", "anpi",
+                      "bridge", "ap1", "XHC", "p2p")
+    try:
+        r = subprocess.run(["ifconfig", "-a"], capture_output=True, text=True, timeout=5)
+    except Exception:
+        return []
+
+    adapters = []
+    current_name = None
+    current_ip = ""
+    current_connected = False
+
+    for line in r.stdout.splitlines():
+        # Ligne d'en-tête d'interface : "en0: flags=..."
+        m = re.match(r'^(\w[\w.]*): ', line)
+        if m:
+            if current_name and not any(current_name.startswith(p) for p in _SKIP_PREFIXES):
+                adapters.append((current_name, current_ip, current_name, current_connected))
+            current_name = m.group(1)
+            current_ip = ""
+            current_connected = "UP" in line
+        elif current_name:
+            stripped = line.strip()
+            if stripped.startswith("inet ") and "inet6" not in stripped:
+                m2 = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", stripped)
+                if m2:
+                    ip = m2.group(1)
+                    if not ip.startswith("127."):
+                        current_ip = ip
+                        current_connected = True
+
+    if current_name and not any(current_name.startswith(p) for p in _SKIP_PREFIXES):
+        adapters.append((current_name, current_ip, current_name, current_connected))
+
+    return adapters
+
+
 def _ping(ip: str, timeout_ms: int = 1000) -> bool:
     try:
-        r = subprocess.run(
-            ["ping", "-n", "1", "-w", str(timeout_ms), ip],
-            capture_output=True, creationflags=CREATE_NO_WINDOW
-        )
+        if platform.system() == "Darwin":
+            r = subprocess.run(
+                ["ping", "-c", "1", "-W", str(max(1, timeout_ms // 1000)), ip],
+                capture_output=True
+            )
+        else:
+            r = subprocess.run(
+                ["ping", "-n", "1", "-w", str(timeout_ms), ip],
+                capture_output=True, creationflags=CREATE_NO_WINDOW
+            )
         return r.returncode == 0
     except Exception:
         return False
@@ -210,7 +262,11 @@ def _set_static_ip(adapter_name: str) -> bool:
 
 def _open_network_connections():
     try:
-        subprocess.Popen(["control", "ncpa.cpl"], creationflags=CREATE_NO_WINDOW)
+        if platform.system() == "Darwin":
+            # Ouvre les Préférences Réseau (fonctionne sur macOS Monterey, Ventura, Sonoma)
+            subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.network"])
+        else:
+            subprocess.Popen(["control", "ncpa.cpl"], creationflags=CREATE_NO_WINDOW)
     except Exception:
         pass
 

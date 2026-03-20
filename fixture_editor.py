@@ -396,6 +396,185 @@ class FixtureEditorDialog(QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Erreur", f"Sauvegarde impossible:\n{e}")
 
+    def _do_import(self):
+        """Importe des fixtures depuis un fichier (.mft, .json, .xml)."""
+        from fixture_parser import parse_file as _parse_file
+        from PySide6.QtWidgets import QInputDialog
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Importer des fixtures", str(Path.home()),
+            "Tous les formats supportés (*.mft *.json *.xml *.mystrow);;"
+            "Fixture MyStrow (*.mft *.json *.mystrow);;"
+            "GrandMA2/3 XML (*.xml)"
+        )
+        if not paths:
+            return
+        _GROUP = {"Moving Head": "lyre", "Barre LED": "barre",
+                  "Stroboscope": "strobe", "Machine a fumee": "fumee"}
+        existing_names = {f["name"] for f in self._fixtures}
+        imported = 0
+        errors = []
+        for path in paths:
+            ext = Path(path).suffix.lower()
+            try:
+                raw = Path(path).read_bytes()
+                if ext == ".xml":
+                    ofl_fx = _parse_file(path)
+                    modes = [m for m in (ofl_fx.get("modes") or [])
+                             if isinstance(m, dict) and m.get("profile")]
+                    if not modes:
+                        raise ValueError("Aucun canal DMX trouvé dans ce fichier XML.")
+                    ftype = ofl_fx.get("fixture_type", "PAR LED")
+                    candidates = [{
+                        "name": ofl_fx.get("name", Path(path).stem)
+                                + (f" — {m['name']}" if len(modes) > 1 else ""),
+                        "manufacturer": ofl_fx.get("manufacturer", ""),
+                        "fixture_type": ftype,
+                        "group": _GROUP.get(ftype, "face"),
+                        "profile": m["profile"],
+                        "source": ofl_fx.get("source", "ma"),
+                    } for m in modes]
+                    if len(candidates) > 1:
+                        mode_names = [c["name"] for c in candidates]
+                        choice, ok = QInputDialog.getItem(
+                            self, "Choisir un mode",
+                            f"{ofl_fx.get('name')} — {len(candidates)} modes.\nMode à importer :",
+                            mode_names, 0, False
+                        )
+                        if not ok:
+                            continue
+                        to_add = [candidates[mode_names.index(choice)]]
+                    else:
+                        to_add = candidates
+                else:
+                    parsed = json.loads(raw.decode("utf-8"))
+                    to_add = [parsed] if isinstance(parsed, dict) else parsed
+                    if not isinstance(to_add, list):
+                        raise ValueError("Format invalide (liste de fixtures attendue).")
+                    to_add = [f for f in to_add if isinstance(f, dict)]
+                for fx in to_add:
+                    if not fx.get("name") or not fx.get("profile"):
+                        continue
+                    fx.pop("builtin", None)
+                    name = fx["name"]
+                    if name in existing_names:
+                        c = 2
+                        while f"{name} ({c})" in existing_names:
+                            c += 1
+                        fx["name"] = f"{name} ({c})"
+                    self._fixtures.append(fx)
+                    existing_names.add(fx["name"])
+                    imported += 1
+            except Exception as e:
+                errors.append(f"• {Path(path).name} : {e}")
+        if imported == 0:
+            msg = "Aucune fixture importée."
+            if errors:
+                msg += "\n\n" + "\n".join(errors)
+            QMessageBox.warning(self, "Import échoué", msg)
+            return
+        self._save_fixtures()
+        self._rebuild_mfr_list()
+        self._rebuild_list()
+        msg = f"{imported} fixture{'s' if imported > 1 else ''} importée{'s' if imported > 1 else ''}."
+        if errors:
+            msg += f"\n\n{len(errors)} fichier(s) ignoré(s) :\n" + "\n".join(errors)
+            QMessageBox.warning(self, "Import partiel", msg)
+        else:
+            QMessageBox.information(self, "Import réussi", msg)
+
+    def _do_refresh(self):
+        """Recharge les fixtures depuis Firestore et met à jour le cache local."""
+        import urllib.request as _ur
+        import urllib.error as _ue
+        try:
+            from license_manager import get_current_id_token
+            from core import FIREBASE_PROJECT_ID as _proj_id
+            import firebase_client as _fc
+        except Exception as e:
+            QMessageBox.warning(self, "Actualiser", f"Impossible de contacter Firestore :\n{e}")
+            return
+
+        self._btn_refresh.setEnabled(False)
+        self._btn_refresh.setText("⏳  Chargement…")
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+
+        try:
+            token = get_current_id_token()
+            _fs_base = (
+                f"https://firestore.googleapis.com/v1/projects/{_proj_id}"
+                f"/databases/(default)/documents"
+            )
+            results = []
+            page_token = None
+            while True:
+                url = f"{_fs_base}/gdtf_fixtures?pageSize=300"
+                if page_token:
+                    url += f"&pageToken={page_token}"
+                headers = {}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                req = _ur.Request(url, headers=headers)
+                try:
+                    with _ur.urlopen(req, timeout=15) as resp:
+                        data = json.loads(resp.read().decode())
+                except _ue.HTTPError as _he:
+                    if _he.code in (401, 403):
+                        raise RuntimeError(
+                            f"Accès refusé ({_he.code}) — connectez-vous avec votre compte MyStrow."
+                        )
+                    raise RuntimeError(f"Erreur HTTP {_he.code}")
+                for doc in data.get("documents", []):
+                    fields = {k: _fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+                    results.append(fields)
+                page_token = data.get("nextPageToken")
+                if not page_token:
+                    break
+        except Exception as _e:
+            self._btn_refresh.setEnabled(True)
+            self._btn_refresh.setText("↻  Actualiser")
+            QMessageBox.warning(self, "Actualiser", f"Erreur Firestore :\n{_e}")
+            return
+
+        if not results:
+            self._btn_refresh.setEnabled(True)
+            self._btn_refresh.setText("↻  Actualiser")
+            QMessageBox.information(self, "Actualiser", "Aucune fixture trouvée dans Firestore.")
+            return
+
+        # Fusion dans self._fixtures + sauvegarde cache
+        existing_names = {f["name"] for f in self._fixtures}
+        added = updated = 0
+        for fx in results:
+            if not fx.get("name") or not fx.get("profile"):
+                continue
+            fx.pop("builtin", None)
+            fx.setdefault("source", "firestore")
+            if fx["name"] not in existing_names:
+                self._fixtures.append(fx)
+                existing_names.add(fx["name"])
+                added += 1
+            else:
+                for i, f in enumerate(self._fixtures):
+                    if f["name"] == fx["name"]:
+                        self._fixtures[i] = fx
+                        updated += 1
+                        break
+        self._save_fixtures()
+        self._rebuild_mfr_list()
+        self._rebuild_list()
+
+        self._btn_refresh.setEnabled(True)
+        self._btn_refresh.setText("↻  Actualiser")
+        parts = []
+        if added:
+            parts.append(f"{added} nouvelle{'s' if added != 1 else ''}")
+        if updated:
+            parts.append(f"{updated} mise{'s' if updated != 1 else ''} à jour")
+        detail = f" ({', '.join(parts)})" if parts else " (aucune nouveauté)"
+        QMessageBox.information(self, "Actualiser",
+            f"✅  {len(results)} fixture{'s' if len(results) != 1 else ''} Firestore{detail}")
+
     def _push_undo(self):
         self._undo_stack.append(copy.deepcopy(self._fixtures))
         if len(self._undo_stack) > 30:
@@ -504,6 +683,30 @@ class FixtureEditorDialog(QDialog):
         )
         btn_new.clicked.connect(self._new_fixture)
         tb_layout.addWidget(btn_new)
+
+        self._btn_import = QPushButton("📥  Importer")
+        self._btn_import.setFixedHeight(32)
+        self._btn_import.setStyleSheet(
+            "QPushButton{background:#1a2a1a;color:#88cc66;border:1px solid #88cc6644;"
+            "border-radius:6px;font-size:12px;font-weight:bold;padding:0 14px;}"
+            "QPushButton:hover{border-color:#88cc66;color:#aae688;}"
+        )
+        self._btn_import.setToolTip("Importer des fixtures depuis un fichier (.mft, .json, .xml)")
+        self._btn_import.clicked.connect(self._do_import)
+        tb_layout.addWidget(self._btn_import)
+
+        self._btn_refresh = QPushButton("↻  Actualiser")
+        self._btn_refresh.setFixedHeight(32)
+        self._btn_refresh.setStyleSheet(
+            "QPushButton{background:#1a2a3a;color:#44aaff;border:1px solid #44aaff44;"
+            "border-radius:6px;font-size:12px;font-weight:bold;padding:0 14px;}"
+            "QPushButton:hover{border-color:#44aaff;color:#66ccff;}"
+            "QPushButton:disabled{color:#555;border-color:#333;}"
+        )
+        self._btn_refresh.setToolTip("Recharger les fixtures depuis Firestore (compte MyStrow requis)")
+        self._btn_refresh.clicked.connect(self._do_refresh)
+        tb_layout.addWidget(self._btn_refresh)
+
         outer.addWidget(top_bar)
 
         splitter = QSplitter(Qt.Horizontal)

@@ -244,6 +244,12 @@ class UpdateChecker(QThread):
     def _build_urls(self, remote_version):
         """Construit les URLs de téléchargement depuis le numéro de version."""
         base = f"https://github.com/{_GITHUB_REPO}/releases/download/v{remote_version}"
+        if sys.platform == "darwin":
+            return {
+                "setup":  f"{base}/MyStrow_Installer.dmg",
+                "sha256": "",
+                "sig":    "",
+            }
         return {
             "setup":  f"{base}/MyStrow_Setup.exe",
             "sha256": f"{base}/sha256.txt",
@@ -485,9 +491,15 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     update_dir = Path(tempfile.gettempdir()) / "mystrow_update"
     update_dir.mkdir(exist_ok=True)
 
-    # Détecter si c'est un installeur ou un exe brut
-    is_installer = "setup" in exe_url.lower()
-    filename = "MyStrow_Setup.exe" if is_installer else "MyStrow.exe"
+    # Détecter le type de fichier
+    is_dmg       = exe_url.lower().endswith(".dmg")
+    is_installer = "setup" in exe_url.lower() and not is_dmg
+    if is_dmg:
+        filename = "MyStrow_Installer.dmg"
+    elif is_installer:
+        filename = "MyStrow_Setup.exe"
+    else:
+        filename = "MyStrow.exe"
     new_file = update_dir / filename
 
     # --- Telechargement ---
@@ -573,7 +585,17 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     QTimer.singleShot(800, dlg.close)
     QTimer.singleShot(800, QApplication.quit)
 
-    if is_installer:
+    is_dmg = exe_url.lower().endswith(".dmg")
+
+    if is_dmg:
+        # Mac DMG : script shell qui monte le DMG, remplace le .app, relance
+        current_app = _get_mac_app_path()
+        shell_path = _create_updater_shell(str(new_file), current_app)
+        QTimer.singleShot(400, lambda: subprocess.Popen(
+            ["bash", str(shell_path)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ))
+    elif is_installer:
         # Lancer l'installeur Inno Setup et quitter
         # L'installeur déploie MyStrow.exe ET MyStrow.exe.sig → intégrité garantie
         QTimer.singleShot(400, lambda: subprocess.Popen(
@@ -888,6 +910,44 @@ class AkaiSplashEffect:
     @property
     def active(self):
         return self.midi_out is not None
+
+
+def _get_mac_app_path() -> str:
+    """Retourne le chemin du .app courant sur macOS.
+    Dans un bundle PyInstaller : sys.executable = .../MyStrow.app/Contents/MacOS/MyStrow"""
+    if getattr(sys, "frozen", False):
+        # Remonter de Contents/MacOS/MyStrow → .app
+        p = Path(sys.executable)
+        for _ in range(3):
+            p = p.parent
+            if p.suffix == ".app":
+                return str(p)
+    # Fallback : chemin standard
+    return "/Applications/MyStrow.app"
+
+
+def _create_updater_shell(new_dmg: str, current_app: str) -> Path:
+    """Crée le script shell de mise à jour Mac (DMG → remplacement .app + relance)."""
+    script_path = Path(tempfile.gettempdir()) / "mystrow_update" / "update_mystrow.sh"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    content = f"""#!/bin/bash
+sleep 2
+MOUNT="/tmp/mystrow_dmg_mount_$$"
+hdiutil attach "{new_dmg}" -nobrowse -quiet -mountpoint "$MOUNT" 2>/dev/null
+APP=$(ls -d "$MOUNT"/*.app 2>/dev/null | head -1)
+if [ -n "$APP" ]; then
+    cp -rf "$APP" "{current_app}"
+    hdiutil detach "$MOUNT" -quiet 2>/dev/null
+    open "{current_app}"
+else
+    hdiutil detach "$MOUNT" -quiet 2>/dev/null
+    open "{new_dmg}"
+fi
+rm -f "$0"
+"""
+    script_path.write_text(content, encoding="utf-8")
+    script_path.chmod(0o755)
+    return script_path
 
 
 def _create_updater_batch(new_exe, current_exe, new_sig="", current_sig=""):
