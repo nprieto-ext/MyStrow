@@ -95,6 +95,20 @@ def _stripe_get(path: str) -> dict:
         return json.loads(resp.read().decode())
 
 
+def _stripe_post(path: str, params: dict) -> dict:
+    """POST vers l'API Stripe (x-www-form-urlencoded)."""
+    import base64
+    url = f"https://api.stripe.com/v1{path}"
+    token = base64.b64encode(f"{STRIPE_SECRET_KEY}:".encode()).decode()
+    data = urllib.parse.urlencode(params).encode()
+    req = urllib.request.Request(
+        url, data=data,
+        headers={"Authorization": f"Basic {token}", "Content-Type": "application/x-www-form-urlencoded"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode())
+
+
 def _verify_stripe_signature(payload: bytes, sig_header: str) -> bool:
     """Vérifie la signature HMAC-SHA256 du webhook Stripe."""
     try:
@@ -902,3 +916,129 @@ def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
         print(f"[Webhook] Événement ignoré : {event_type}")
 
     return https_fn.Response("OK", status=200)
+
+
+# ===========================================================================
+# COMPTE CLIENT — create_portal_session & revoke_machine_web
+# ===========================================================================
+
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin":  "https://mystrow.fr",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+}
+
+
+def _cors_preflight() -> https_fn.Response:
+    return https_fn.Response("", status=204, headers=_CORS_HEADERS)
+
+
+def _verify_token(req: https_fn.Request) -> str | None:
+    """Vérifie le Bearer token Firebase et retourne l'uid, ou None si invalide."""
+    ah = req.headers.get("Authorization", "")
+    if not ah.startswith("Bearer "):
+        return None
+    try:
+        decoded = auth.verify_id_token(ah[7:])
+        return decoded["uid"]
+    except Exception:
+        return None
+
+
+@https_fn.on_request()
+def create_portal_session(req: https_fn.Request) -> https_fn.Response:
+    """
+    Crée une session Stripe Customer Portal pour l'utilisateur connecté.
+    POST — Authorization: Bearer <firebase_id_token>
+    Retourne : {"url": "https://billing.stripe.com/..."}
+    """
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+
+    uid = _verify_token(req)
+    if not uid:
+        return https_fn.Response(
+            json.dumps({"error": "Non autorisé"}), status=401, headers=_CORS_HEADERS
+        )
+
+    db = _get_db()
+    doc = db.collection("licenses").document(uid).get()
+    if not doc.exists:
+        return https_fn.Response(
+            json.dumps({"error": "Licence introuvable"}), status=404, headers=_CORS_HEADERS
+        )
+
+    customer_id = doc.to_dict().get("stripe_customer_id", "")
+    if not customer_id:
+        return https_fn.Response(
+            json.dumps({"error": "Pas de compte Stripe associé"}), status=404, headers=_CORS_HEADERS
+        )
+
+    try:
+        session = _stripe_post("/billing_portal/sessions", {
+            "customer":   customer_id,
+            "return_url": "https://mystrow.fr/compte",
+        })
+        return https_fn.Response(
+            json.dumps({"url": session["url"]}),
+            status=200,
+            headers={**_CORS_HEADERS, "Content-Type": "application/json"},
+        )
+    except Exception as exc:
+        print(f"[Portal] Erreur Stripe : {exc}")
+        return https_fn.Response(
+            json.dumps({"error": "Erreur Stripe"}), status=500, headers=_CORS_HEADERS
+        )
+
+
+@https_fn.on_request()
+def revoke_machine_web(req: https_fn.Request) -> https_fn.Response:
+    """
+    Révoque une machine depuis l'espace client web.
+    POST — Authorization: Bearer <firebase_id_token>
+    Body JSON : {"machine_id": "..."}
+    """
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+
+    uid = _verify_token(req)
+    if not uid:
+        return https_fn.Response(
+            json.dumps({"error": "Non autorisé"}), status=401, headers=_CORS_HEADERS
+        )
+
+    try:
+        body = req.get_json(silent=True) or {}
+        machine_id = body.get("machine_id", "").strip()
+        if not machine_id:
+            return https_fn.Response(
+                json.dumps({"error": "machine_id manquant"}), status=400, headers=_CORS_HEADERS
+            )
+
+        db = _get_db()
+        ref = db.collection("licenses").document(uid)
+        doc = ref.get()
+        if not doc.exists:
+            return https_fn.Response(
+                json.dumps({"error": "Licence introuvable"}), status=404, headers=_CORS_HEADERS
+            )
+
+        machines = doc.to_dict().get("machines", [])
+        new_machines = [m for m in machines if m.get("id") != machine_id]
+
+        if len(new_machines) == len(machines):
+            return https_fn.Response(
+                json.dumps({"error": "Machine non trouvée"}), status=404, headers=_CORS_HEADERS
+            )
+
+        ref.update({"machines": new_machines})
+        return https_fn.Response(
+            json.dumps({"ok": True}),
+            status=200,
+            headers={**_CORS_HEADERS, "Content-Type": "application/json"},
+        )
+    except Exception as exc:
+        print(f"[RevokeWeb] Erreur : {exc}")
+        return https_fn.Response(
+            json.dumps({"error": str(exc)}), status=500, headers=_CORS_HEADERS
+        )

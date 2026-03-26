@@ -37,12 +37,14 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 APP_NAME = "MyStrow"
 VERSION = "3.0.63"
 
-# === FIREBASE (cles dans firebase_config.py, non versionne) ===
+# === FIREBASE (clé publique Web — identique à compte.html) ===
+FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
+FIREBASE_PROJECT_ID = "mystrow-907be"
 try:
+    # Surcharge locale optionnelle (dev only)
     from firebase_config import FIREBASE_API_KEY, FIREBASE_PROJECT_ID
 except ImportError:
-    FIREBASE_API_KEY    = ""
-    FIREBASE_PROJECT_ID = ""
+    pass
 
 # === MIDI SUPPORT ===
 # Détection via find_spec (sans importer le module — évite le scan MIDI au démarrage)
