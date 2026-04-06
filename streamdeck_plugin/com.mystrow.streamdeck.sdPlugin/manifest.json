@@ -1,0 +1,123 @@
+{
+  "Author": "MyStrow",
+  "CodePath": "index.html",
+  "Description": "Contrôlez MyStrow depuis votre Stream Deck : play/pause, médias, effets lumière, séquences.",
+  "Name": "MyStrow",
+  "Icon": "images/plugin",
+  "URL": "https://mystrow.fr",
+  "Version": "1.1.0",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "6.0" },
+  "OS": [
+    { "Platform": "windows", "MinimumVersion": "10" },
+    { "Platform": "mac",     "MinimumVersion": "10.15" }
+  ],
+  "Category": "MyStrow",
+  "CategoryIcon": "images/plugin",
+
+  "Actions": [
+    {
+      "Icon": "images/play",
+      "Name": "Play / Pause",
+      "UUID": "com.mystrow.streamdeck.play",
+      "Tooltip": "Lance ou met en pause le média en cours",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "images/play", "Name": "Pause", "Title": "" },
+        { "Image": "images/play", "Name": "Play",  "Title": "" }
+      ]
+    },
+    {
+      "Icon": "images/next",
+      "Name": "Média suivant",
+      "UUID": "com.mystrow.streamdeck.next",
+      "Tooltip": "Passe au média suivant dans le séquenceur",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "images/next", "Name": "Default", "Title": "" }
+      ]
+    },
+    {
+      "Icon": "images/prev",
+      "Name": "Média précédent",
+      "UUID": "com.mystrow.streamdeck.prev",
+      "Tooltip": "Revient au média précédent dans le séquenceur",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "images/prev", "Name": "Default", "Title": "" }
+      ]
+    },
+    {
+      "Icon": "images/effect",
+      "Name": "Effet lumière",
+      "UUID": "com.mystrow.streamdeck.effect",
+      "Tooltip": "Active / désactive un effet lumière (configurable)",
+      "PropertyInspectorPath": "property_inspector/effect.html",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "images/effect", "Name": "Off", "Title": "" },
+        { "Image": "images/effect", "Name": "On",  "Title": "" }
+      ]
+    },
+    {
+      "Icon": "images/level",
+      "Name": "Niveau fader",
+      "UUID": "com.mystrow.streamdeck.level",
+      "Tooltip": "Fixe ou ajuste le niveau d'un fader. Sur Stream Deck+, tournez l'encodeur.",
+      "PropertyInspectorPath": "property_inspector/level.html",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad", "Encoder"],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Ajuster le niveau",
+          "Push":   "Remettre à 100%"
+        }
+      },
+      "States": [
+        { "Image": "images/level", "Name": "Default", "Title": "" }
+      ]
+    },
+    {
+      "Icon": "images/mute",
+      "Name": "Mute fader",
+      "UUID": "com.mystrow.streamdeck.mute",
+      "Tooltip": "Active / désactive le mute d'un fader (configurable)",
+      "PropertyInspectorPath": "property_inspector/mute.html",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "images/mute", "Name": "Off", "Title": "" },
+        { "Image": "images/mute", "Name": "On",  "Title": "" }
+      ]
+    },
+    {
+      "Icon": "images/scene",
+      "Name": "Déclencher une scène",
+      "UUID": "com.mystrow.streamdeck.scene",
+      "Tooltip": "Rappelle une scène lumière mémorisée (configurable : colonne + rangée)",
+      "PropertyInspectorPath": "property_inspector/scene.html",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "images/scene", "Name": "Default", "Title": "" }
+      ]
+    },
+    {
+      "Icon": "images/seq",
+      "Name": "Lancer une séquence",
+      "UUID": "com.mystrow.streamdeck.seq",
+      "Tooltip": "Saute et lance une entrée du séquenceur par son nom",
+      "PropertyInspectorPath": "property_inspector/seq.html",
+      "SupportedInMultiActions": true,
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "images/seq", "Name": "Default", "Title": "" }
+      ]
+    }
+  ]
+}

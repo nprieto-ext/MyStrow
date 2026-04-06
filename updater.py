@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
 from PySide6.QtGui import QFont, QScreen, QPixmap, QDesktopServices
 
 from core import VERSION, resource_path
+from i18n import get_language, set_language, tr
 
 # === SSL ===
 def _make_ssl_context():
@@ -108,13 +109,13 @@ class SplashScreen(QWidget):
         layout.addSpacing(10)
 
         # --- Status hardware (AKAI, Node, Licence) ---
-        self.status_akai = self._create_status_row("AKAI APC mini", "Recherche...")
+        self.status_akai = self._create_status_row(tr("splash_akai_label"), tr("searching"))
         layout.addLayout(self.status_akai["layout"])
 
-        self.status_node = self._create_status_row("Sortie DMX", "Recherche...")
+        self.status_node = self._create_status_row(tr("splash_dmx_label"), tr("searching"))
         layout.addLayout(self.status_node["layout"])
 
-        self.status_license = self._create_status_row("Licence", "Verification...")
+        self.status_license = self._create_status_row(tr("splash_license_label"), tr("verifying"))
         layout.addLayout(self.status_license["layout"])
 
         layout.addSpacing(8)
@@ -137,7 +138,7 @@ class SplashScreen(QWidget):
         """)
         layout.addWidget(self.progress)
 
-        self.status_label = QLabel("Demarrage...")
+        self.status_label = QLabel(tr("starting_app"))
         self.status_label.setFont(QFont("Segoe UI", 9))
         self.status_label.setStyleSheet("color: #666666;")
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -277,7 +278,7 @@ class UpdateChecker(QThread):
                 remote_version = data.get("tag_name", "").lstrip("v")
 
             if not remote_version:
-                self.check_error.emit("Aucune version trouvée sur le serveur.")
+                self.check_error.emit(tr("err_no_version"))
                 return
 
             if not version_gt(remote_version, VERSION):
@@ -293,22 +294,19 @@ class UpdateChecker(QThread):
 
         except urllib.error.HTTPError as e:
             if e.code == 403:
-                self.check_error.emit(
-                    "Limite GitHub atteinte (403).\n"
-                    "Réessayez dans quelques minutes."
-                )
+                self.check_error.emit(tr("err_github_rate_limit"))
             else:
-                self.check_error.emit(f"HTTP {e.code} — {e.reason}")
+                self.check_error.emit(tr("err_http", code=e.code, reason=e.reason))
         except urllib.error.URLError as e:
             reason = str(e.reason)
             if "AppData" in reason or "cacert" in reason.lower() or "SSL" in reason.upper():
-                self.check_error.emit("Erreur SSL — impossible de vérifier les certificats.")
+                self.check_error.emit(tr("err_ssl"))
             else:
-                self.check_error.emit(f"Réseau inaccessible : {e.reason}")
+                self.check_error.emit(tr("err_network", reason=e.reason))
         except Exception as e:
             msg = str(e)
             if "AppData" in msg or "cacert" in msg.lower():
-                self.check_error.emit("Erreur SSL — impossible de vérifier les certificats.")
+                self.check_error.emit(tr("err_ssl"))
             else:
                 self.check_error.emit(msg)
 
@@ -395,7 +393,7 @@ class UpdateBar(QWidget):
         layout.addWidget(self.label, 1)
 
         # Bouton Mettre a jour
-        btn_update = QPushButton("Mettre à jour →")
+        btn_update = QPushButton(tr("btn_update_arrow"))
         btn_update.setFixedHeight(24)
         btn_update.setCursor(Qt.PointingHandCursor)
         btn_update.setStyleSheet(f"""
@@ -428,7 +426,7 @@ class UpdateBar(QWidget):
         self.exe_url  = exe_url
         self.hash_url = hash_url
         self.sig_url  = sig_url
-        self.label.setText(f"Nouvelle version disponible  v{version}")
+        self.label.setText(tr("update_bar_msg", ver=version))
 
 
 # ============================================================
@@ -438,7 +436,7 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     """Telecharge la mise a jour avec verification SHA256 et lance le batch updater"""
 
     dlg = QDialog(parent)
-    dlg.setWindowTitle(f"Mise a jour v{version}")
+    dlg.setWindowTitle(tr("update_dlg_title", ver=version))
     dlg.setFixedSize(460, 200)
     dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
     dlg.setStyleSheet("background: #1e1e1e; color: #cccccc;")
@@ -448,7 +446,7 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     layout.setSpacing(10)
 
     # --- Titre ---
-    title = QLabel(f"Mise a jour vers v{version}")
+    title = QLabel(tr("update_dlg_heading", ver=version))
     title.setFont(QFont("Segoe UI", 11, QFont.Bold))
     title.setStyleSheet("color: #00d4ff;")
     layout.addWidget(title)
@@ -464,9 +462,9 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
         lbl.setStyleSheet("color: #555555; padding: 4px 10px;")
         return lbl
 
-    step_dl   = _make_step("⬇  Telechargement")
-    step_check = _make_step("🔍  Verification")
-    step_inst  = _make_step("⚙  Installation")
+    step_dl   = _make_step(tr("step_download"))
+    step_check = _make_step(tr("step_verify"))
+    step_inst  = _make_step(tr("step_install"))
 
     for s in (step_dl, step_check, step_inst):
         steps_layout.addWidget(s, 1)
@@ -492,7 +490,7 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     layout.addWidget(progress)
 
     # --- Label de detail ---
-    status_label = QLabel("Preparation...")
+    status_label = QLabel(tr("preparing"))
     status_label.setFont(QFont("Segoe UI", 9))
     status_label.setStyleSheet("color: #888888;")
     status_label.setAlignment(Qt.AlignCenter)
@@ -527,7 +525,7 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
 
     # --- Telechargement ---
     try:
-        status_label.setText("Connexion au serveur...")
+        status_label.setText(tr("connecting_server"))
         QApplication.processEvents()
         req = urllib.request.Request(exe_url, headers={"User-Agent": "MyStrow-Updater"})
         ctx = _make_ssl_context()
@@ -547,20 +545,19 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
                         progress.setValue(pct)
                         dl_mb = downloaded / (1024 * 1024)
                         size_mb = total_size / (1024 * 1024)
-                        status_label.setText(f"{dl_mb:.1f} Mo / {size_mb:.1f} Mo")
+                        status_label.setText(tr("downloading_progress", dl_mb=dl_mb, size_mb=size_mb))
                     else:
-                        status_label.setText("Téléchargement en cours...")
+                        status_label.setText(tr("downloading"))
                     QApplication.processEvents()
     except Exception as e:
         dlg.close()
-        QMessageBox.critical(parent, "Erreur de telechargement",
-                             f"Impossible de telecharger la mise a jour.\n\n{e}")
+        QMessageBox.critical(parent, tr("err_download_title"), tr("err_download_msg", err=e))
         return
 
     # --- Verification SHA256 (seulement si sha256.txt dispo) ---
     _set_step(step_check)
     progress.setRange(0, 0)  # indetermine pendant la verif
-    status_label.setText("Verification de l'integrite...")
+    status_label.setText(tr("verifying_integrity"))
     QApplication.processEvents()
 
     if hash_url and not is_installer:
@@ -585,23 +582,21 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
                     new_file.unlink()
                 except Exception:
                     pass
-                QMessageBox.critical(parent, "Erreur de verification",
-                                     f"Le fichier telecharge est corrompu.\n\n"
-                                     f"Attendu:  {expected_hash[:16]}...\n"
-                                     f"Obtenu:   {actual_hash[:16]}...")
+                QMessageBox.critical(parent, tr("err_verify_title"),
+                                     tr("err_verify_msg",
+                                        expected=expected_hash[:16],
+                                        actual=actual_hash[:16]))
                 return
 
     # --- Installation ---
     _set_step(step_inst)
     progress.setRange(0, 0)
-    status_label.setText("Lancement de l'installeur...")
+    status_label.setText(tr("launching_installer"))
     QApplication.processEvents()
 
     if not getattr(sys, 'frozen', False):
         dlg.close()
-        QMessageBox.information(parent, "Mode developpement",
-                                f"Mise a jour telechargee dans:\n{new_file}\n\n"
-                                f"(Installation automatique desactivee en mode dev)")
+        QMessageBox.information(parent, tr("dev_mode_title"), tr("dev_mode_msg", path=new_file))
         return
 
     # Petite pause pour que l'utilisateur voit l'etape installation
@@ -652,8 +647,8 @@ class AboutDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("A propos de MyStrow")
-        self.setFixedSize(360, 320)
+        self.setWindowTitle(tr("about_title"))
+        self.setFixedSize(380, 380)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog, QWidget {
@@ -711,7 +706,7 @@ class AboutDialog(QDialog):
         box_lay.setContentsMargins(12, 8, 12, 8)
         box_lay.setSpacing(4)
 
-        self.status_lbl = QLabel("Vérification des mises à jour...")
+        self.status_lbl = QLabel(tr("checking_updates"))
         self.status_lbl.setFont(QFont("Segoe UI", 9))
         self.status_lbl.setStyleSheet("color: #555; background: transparent; border: none;")
         self.status_lbl.setAlignment(Qt.AlignCenter)
@@ -734,7 +729,7 @@ class AboutDialog(QDialog):
         lay.addSpacing(6)
 
         # Lien revérifier
-        self.btn_recheck = QPushButton("↻  Revérifier")
+        self.btn_recheck = QPushButton(tr("btn_recheck"))
         self.btn_recheck.setFixedHeight(24)
         self.btn_recheck.setEnabled(False)
         self.btn_recheck.setStyleSheet("""
@@ -746,8 +741,56 @@ class AboutDialog(QDialog):
         lay.addWidget(self.btn_recheck, alignment=Qt.AlignCenter)
         lay.addStretch()
 
-        # Fermer
-        btn_close = QPushButton("Fermer")
+        # Sélecteur de langue
+        lang_lay = QHBoxLayout()
+        lang_lay.setSpacing(0)
+        lang_lbl = QLabel("🌐")
+        lang_lbl.setStyleSheet("color:#444; font-size:13px; background:transparent;")
+        lang_lay.addWidget(lang_lbl)
+        lang_lay.addSpacing(6)
+
+        self._btn_fr = QPushButton("FR")
+        self._btn_en = QPushButton("EN")
+        for btn, code in ((self._btn_fr, "fr"), (self._btn_en, "en")):
+            btn.setFixedSize(36, 22)
+            btn.setCheckable(True)
+            btn.setChecked(get_language() == code)
+            btn.setStyleSheet("""
+                QPushButton { background:#222; color:#666; border:1px solid #333;
+                              border-radius:3px; font-size:10px; font-weight:bold; }
+                QPushButton:checked { background:#0078d4; color:#fff; border-color:#0078d4; }
+                QPushButton:hover:!checked { background:#2a2a2a; color:#aaa; }
+            """)
+            lang_lay.addWidget(btn)
+
+        self._lang_restart_lbl = QLabel(tr("lang_restart_required"))
+        self._lang_restart_lbl.setStyleSheet("color:#555; font-size:9px; background:transparent;")
+        self._lang_restart_lbl.hide()
+        lang_lay.addSpacing(8)
+        lang_lay.addWidget(self._lang_restart_lbl)
+        lang_lay.addStretch()
+
+        self._btn_fr.clicked.connect(lambda: self._set_lang("fr"))
+        self._btn_en.clicked.connect(lambda: self._set_lang("en"))
+
+        lay.addLayout(lang_lay)
+        lay.addSpacing(8)
+
+        # Boutons bas
+        btns_lay = QHBoxLayout()
+        btns_lay.setSpacing(8)
+
+        btn_idea = QPushButton(tr("btn_submit_idea"))
+        btn_idea.setFixedHeight(34)
+        btn_idea.setStyleSheet("""
+            QPushButton       { background: #1e1a00; color: #c9b800; border: 1px solid #3a3200;
+                                border-radius: 4px; font-size: 11px; }
+            QPushButton:hover { background: #2a2400; color: #e2ce16; }
+        """)
+        btn_idea.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://mystrow.fr/contact")))
+        btns_lay.addWidget(btn_idea)
+
+        btn_close = QPushButton(tr("btn_close"))
         btn_close.setFixedHeight(34)
         btn_close.setStyleSheet("""
             QPushButton       { background: #2a2a2a; color: #888; border: 1px solid #3a3a3a;
@@ -755,7 +798,18 @@ class AboutDialog(QDialog):
             QPushButton:hover { background: #333; color: #ccc; }
         """)
         btn_close.clicked.connect(self.accept)
-        lay.addWidget(btn_close)
+        btns_lay.addWidget(btn_close)
+
+        lay.addLayout(btns_lay)
+
+    # ------------------------------------------------------------------
+
+    def _set_lang(self, code: str):
+        set_language(code)
+        self._btn_fr.setChecked(code == "fr")
+        self._btn_en.setChecked(code == "en")
+        self._lang_restart_lbl.setText(tr("lang_restart_required"))
+        self._lang_restart_lbl.show()
 
     # ------------------------------------------------------------------
 
@@ -770,7 +824,7 @@ class AboutDialog(QDialog):
             "QWidget { background: #111; border: 1px solid #2a2a2a; border-radius: 6px; }"
         )
         self.status_lbl.setStyleSheet("color: #555; background: transparent; border: none;")
-        self.status_lbl.setText("Vérification des mises à jour...")
+        self.status_lbl.setText(tr("checking_updates"))
         self._checker = UpdateChecker(force=True)
         self._checker.update_available.connect(self._on_update_available)
         self._checker.check_finished.connect(self._on_check_finished)
@@ -786,8 +840,8 @@ class AboutDialog(QDialog):
             "QWidget { background: #111; border: 1px solid #005f6b; border-radius: 6px; }"
         )
         self.status_lbl.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
-        self.status_lbl.setText(f"Version {version} disponible")
-        self.btn_download.setText(f"Télécharger v{version}")
+        self.status_lbl.setText(tr("version_available", ver=version))
+        self.btn_download.setText(tr("btn_download_ver", ver=version))
         self.btn_download.show()
 
     def _on_check_finished(self, found, version):
@@ -797,14 +851,14 @@ class AboutDialog(QDialog):
                 "QWidget { background: #111; border: 1px solid #2a4a2a; border-radius: 6px; }"
             )
             self.status_lbl.setStyleSheet("color: #4CAF50; background: transparent; border: none;")
-            self.status_lbl.setText("✓  Vous êtes à jour !")
+            self.status_lbl.setText(tr("up_to_date"))
         elif not self._exe_url:
             # Ne devrait plus arriver (fallback URL dans UpdateChecker)
             self._update_box.setStyleSheet(
                 "QWidget { background: #111; border: 1px solid #5a4a15; border-radius: 6px; }"
             )
             self.status_lbl.setStyleSheet("color: #c47f17; background: transparent; border: none;")
-            self.status_lbl.setText(f"Version {version} disponible — fichier d'installation introuvable")
+            self.status_lbl.setText(tr("update_no_installer", ver=version))
 
     def _on_check_error(self, error: str):
         self.btn_recheck.setEnabled(True)

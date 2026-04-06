@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>MyStrow — Tablette</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#00d4ff">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MyStrow">
+  <link rel="apple-touch-icon" href="/icon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --pad-gap:    8px;
+      --bg:         #0d0d0d;
+      --pad-off:    #1a1a1a;
+      --pad-border: #252525;
+      --accent:     #00d4ff;
+      --fader-bg:   #1a1a1a;
+      --fader-fill: rgba(0, 212, 255, 0.18);
+      --fx-fill:    rgba(170,  80, 255, 0.22);
+      --thumb-col:  #4a4a4a;
+      --fx-thumb:   #aa44ff;
+    }
+
+    html, body { height: 100%; width: 100%; background: var(--bg); overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-tap-highlight-color: transparent; touch-action: none; }
+
+    #app { display: flex; flex-direction: column; height: 100%; padding: 6px; gap: 6px; }
+
+    #header { display: flex; align-items: center; flex-shrink: 0; height: 28px; gap: 6px; }
+    #logo { font-size: 11px; font-weight: 700; letter-spacing: 3px; color: #333; text-transform: uppercase; flex-shrink: 0; }
+    #logo span { color: var(--accent); }
+
+    #tabs { display: flex; gap: 4px; flex: 1; }
+    .tab-btn { flex: 1; height: 24px; border: 1px solid #2a2a2a; border-radius: 5px; background: #111; color: #444;
+      font-size: 10px; font-weight: 700; letter-spacing: 1px; cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s; }
+    .tab-btn.active { background: #0a1820; color: var(--accent); border-color: var(--accent); }
+
+    #conn-status { font-size: 9px; color: #333; letter-spacing: 1px; flex-shrink: 0; transition: color 0.3s; }
+    #conn-status.ok  { color: var(--accent); }
+    #conn-status.err { color: #ff4444; }
+
+    .page { display: none; flex: 1; min-height: 0; flex-direction: column; gap: 6px; }
+    .page.active { display: flex; }
+
+    /* AKAI */
+    #grid-area { display: flex; gap: 6px; flex: 1; min-height: 0; justify-content: flex-start; }
+    #grid-col { display: flex; flex-direction: column; height: 100%; flex-shrink: 0; gap: 6px; }
+    #grid { aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); gap: var(--pad-gap); height: calc(100% - 214px); width: auto; }
+    #akai-ctrl { flex-shrink: 0; height: 32px; display: flex; gap: 6px; align-items: center; }
+    .akai-btn { flex: 1; height: 32px; border-radius: 6px; border: 1px solid #252525; background: #111;
+      color: #555; font-size: 10px; font-weight: 700; letter-spacing: 1px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+      transition: background 0.1s, border-color 0.1s, color 0.1s; touch-action: manipulation; }
+    .akai-btn:active { filter: brightness(1.3); transform: scale(0.96); }
+    #btn-akai-clear { border-color: #2a1818; color: #774444; }
+    #btn-akai-clear:hover { background: #1a0a0a; border-color: #aa3333; color: #ee6666; }
+    #btn-akai-rec { border-color: #2a1818; color: #774444; }
+    #btn-akai-rec:hover { background: #1a0808; border-color: #cc3333; color: #ff5555; }
+    #btn-akai-rec.rec-active { background: #2a0505; border-color: #cc3333; color: #ff4444;
+      box-shadow: 0 0 8px #cc333366; animation: rec-pulse 1s ease-in-out infinite; }
+    @keyframes rec-pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+    #btn-akai-params { border-color: #1a2030; color: #445566; }
+    #btn-akai-params:hover { background: #0d1520; border-color: #336699; color: #66aadd; }
+    .pad { background: var(--pad-off); border: 1px solid var(--pad-border); border-radius: 5px; cursor: pointer;
+      transition: filter 80ms, transform 80ms, box-shadow 80ms; min-width: 0; min-height: 0; }
+    .pad.lit { border-color: transparent; }
+    .pad.press { transform: scale(0.88); filter: brightness(1.4); }
+    #effects { display: flex; flex-direction: column; gap: var(--pad-gap); width: 36px; flex-shrink: 0; }
+    .eff-btn { flex: 1; background: #0d1f0d; border: 1px solid #1a3a1a; border-radius: 5px; cursor: pointer; transition: background 100ms, box-shadow 100ms; }
+    .eff-btn.on { background: #0a5a00; border-color: #33cc00; box-shadow: 0 0 8px #33cc0066; }
+    .eff-btn.press { filter: brightness(1.5); }
+    .vdiv { width: 1px; background: #222; flex-shrink: 0; align-self: stretch; }
+    #faders-area { flex-shrink: 0; height: 170px; display: flex; gap: 4px; }
+    .fader-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+    .fader-col.fx-speed { border-left: 1px solid #252525; padding-left: 4px; }
+    .fader-label { font-size: 8px; color: #383838; letter-spacing: 1px; height: 11px; line-height: 11px; user-select: none; }
+    .fader-col.fx-speed .fader-label { color: #663388; }
+    .fader-track { flex: 1; position: relative; width: 100%; background: var(--fader-bg); border: 1px solid #222; border-radius: 8px; cursor: pointer; overflow: hidden; touch-action: none; }
+    .fader-col.fx-speed .fader-track { background: #0d0814; border-color: #1e1030; }
+    .fader-fill { position: absolute; bottom: 0; left: 0; right: 0; background: var(--fader-fill); border-radius: 0 0 7px 7px; pointer-events: none; transition: height 60ms linear; }
+    .fader-col.fx-speed .fader-fill { background: var(--fx-fill); }
+    .fader-thumb { position: absolute; left: 50%; transform: translateX(-50%); width: calc(100% + 6px); height: 18px; background: var(--thumb-col); border: 1px solid #666; border-radius: 5px; pointer-events: none; transition: top 60ms linear; box-shadow: 0 2px 4px #0008; }
+    .fader-col.fx-speed .fader-thumb { background: var(--fx-thumb); border-color: #cc88ff; }
+    .fader-track:active .fader-thumb, .fader-track.dragging .fader-thumb { transition: none; }
+    .fader-track:active .fader-fill,  .fader-track.dragging .fader-fill  { transition: none; }
+    .fader-val { font-size: 8px; color: #333; height: 11px; line-height: 11px; user-select: none; }
+    .fader-col.fx-speed .fader-val { color: #663388; }
+
+    /* MEDIA */
+    #media-page { gap: 8px; }
+    #transport { display: flex; align-items: center; gap: 8px; flex-shrink: 0; height: 52px; }
+    .tr-btn { flex-shrink: 0; width: 52px; height: 52px; border-radius: 10px; border: none; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: filter 0.1s, transform 0.08s; touch-action: manipulation; }
+    .tr-btn:active { filter: brightness(1.35); transform: scale(0.93); }
+    #btn-prev { background: #1a1a1a; color: #aaa; }
+    #btn-play { background: #003344; color: var(--accent); border: 2px solid var(--accent); font-size: 26px; }
+    #btn-play.playing { background: #001e2a; color: #ffaa00; border-color: #ffaa00; }
+    #btn-next { background: #1a1a1a; color: #aaa; }
+    #now-playing { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    #np-label { font-size: 9px; color: #333; letter-spacing: 1px; text-transform: uppercase; }
+    #np-title { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #np-title.idle { color: #333; }
+    #seq-list { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid #1e1e1e; border-radius: 8px; background: #0a0a0a; touch-action: pan-y; }
+    #seq-list::-webkit-scrollbar { width: 4px; }
+    #seq-list::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+    .seq-item { display: flex; align-items: center; padding: 7px 10px; gap: 8px; border-bottom: 1px solid #141414; cursor: pointer; transition: background 0.1s; touch-action: manipulation; }
+    .seq-item:last-child { border-bottom: none; }
+    .seq-item:active { background: #1a1a1a; }
+    .seq-item.current { background: #0a1820; border-left: 3px solid var(--accent); padding-left: 7px; }
+    .seq-item.current .seq-title { color: var(--accent); }
+    .seq-item.pause { opacity: 0.5; }
+    .seq-item.tempo { opacity: 0.5; }
+    .seq-num  { font-size: 9px; color: #2e2e2e; width: 18px; flex-shrink: 0; text-align: right; }
+    .seq-icon { font-size: 13px; flex-shrink: 0; }
+    .seq-title { font-size: 12px; color: #888; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #carts-area { flex-shrink: 0; display: flex; gap: 6px; height: 58px; }
+    .cart-btn { flex: 1; border-radius: 8px; border: 1px solid #222; background: #111; color: #555; font-size: 10px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 4px 2px; transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s; touch-action: manipulation; overflow: hidden; }
+    .cart-btn:active { transform: scale(0.94); filter: brightness(1.25); }
+    .cart-btn.playing { background: #0a2200; border-color: #44cc22; color: #44cc22; }
+    .cart-btn.stopped { background: #220a00; border-color: #ff4400; color: #ff7744; }
+    .cart-num  { font-size: 8px; color: inherit; opacity: 0.6; }
+    .cart-icon { font-size: 14px; }
+    .cart-title { font-size: 8px; color: inherit; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; text-align: center; padding: 0 2px; }
+
+    /* SCENE */
+    #scene-page { position: relative; }
+    #stage-canvas { flex: 1; min-height: 0; width: 100%; border-radius: 8px; background: #080808; border: 1px solid #1a1a1a; display: block; }
+    #scene-controls { flex-shrink: 0; display: flex; gap: 6px; align-items: center; height: 36px; }
+    .scene-btn { height: 30px; padding: 0 14px; border-radius: 6px; border: 1px solid #333; font-size: 10px; font-weight: 700; letter-spacing: 1px; cursor: pointer; touch-action: manipulation; }
+    #btn-scene-clear { background: #1a0505; color: #cc3333; border-color: #441111; }
+    #btn-scene-select { background: #050a1a; color: #3388cc; border-color: #112244; }
+
+    /* Proj panel (bottom sheet) */
+    #proj-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; }
+    #proj-panel { position: fixed; bottom: 0; left: 0; right: 0; background: #111; border-top: 1px solid #2a2a2a; border-radius: 12px 12px 0 0; padding: 16px; z-index: 101; transform: translateY(100%); transition: transform 0.22s ease; }
+    #proj-panel.open { transform: translateY(0); }
+    #proj-overlay.open { display: block; }
+    #proj-panel-name { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 2px; }
+    #proj-panel-group { font-size: 10px; color: #555; letter-spacing: 1px; margin-bottom: 14px; }
+    #proj-level-row, #proj-strobe-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    #proj-level-lbl, #proj-strobe-lbl { font-size: 9px; color: #555; width: 36px; flex-shrink: 0; letter-spacing: 1px; }
+    #proj-level-slider { flex: 1; accent-color: var(--accent); }
+    #proj-strobe-slider { flex: 1; accent-color: #ff8844; }
+    #proj-level-val { font-size: 11px; color: var(--accent); font-weight: 700; width: 28px; text-align: right; }
+    #proj-strobe-val { font-size: 11px; color: #ff8844; font-weight: 700; width: 28px; text-align: right; }
+    #proj-colors { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+    .proj-swatch { width: 32px; height: 32px; border-radius: 50%; border: 2px solid #333; cursor: pointer; flex-shrink: 0; transition: transform 0.1s, border-color 0.1s; }
+    .proj-swatch:active { transform: scale(0.88); }
+    .proj-swatch.active { border-color: #fff; box-shadow: 0 0 8px #fff8; }
+    #proj-panel-btns { display: flex; gap: 8px; }
+    #btn-proj-mute { flex: 1; height: 36px; border-radius: 8px; border: 1px solid #444; background: #1a1a1a; color: #888; font-size: 11px; font-weight: 700; cursor: pointer; }
+    #btn-proj-mute.muted { background: #1a0505; color: #ff5555; border-color: #441111; }
+    #btn-proj-close { height: 36px; padding: 0 18px; border-radius: 8px; border: 1px solid #2a2a2a; background: #0a0a0a; color: #555; font-size: 11px; cursor: pointer; }
+
+    /* Rotation */
+    #rotate-msg { display: none; position: fixed; inset: 0; background: #0d0d0d; color: #444; font-size: 14px; text-align: center; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 9999; letter-spacing: 1px; }
+    #rotate-msg .icon { font-size: 48px; }
+    @media (orientation: portrait) and (max-width: 900px) { #rotate-msg { display: flex; } }
+  </style>
+</head>
+<body>
+
+<div id="rotate-msg"><div class="icon">⟳</div><div>Tournez votre tablette en paysage</div></div>
+
+<div id="app">
+  <div id="header">
+    <div id="logo">MY<span>STROW</span></div>
+    <div id="tabs">
+      <button class="tab-btn active" data-tab="akai-page">AKAI</button>
+      <button class="tab-btn"       data-tab="media-page">MEDIA</button>
+      <button class="tab-btn"       data-tab="scene-page">SCÈNE</button>
+    </div>
+    <div id="conn-status">···</div>
+  </div>
+
+  <!-- AKAI -->
+  <div id="akai-page" class="page active">
+    <div id="grid-area">
+      <div id="grid-col">
+        <div id="grid"></div>
+        <div id="faders-area"></div>
+        <div id="akai-ctrl">
+          <button class="akai-btn" id="btn-akai-clear">✕ CLEAR</button>
+          <button class="akai-btn" id="btn-akai-rec">⏺ REC</button>
+          <button class="akai-btn" id="btn-akai-params">⚙ PARAMS</button>
+        </div>
+      </div>
+      <div class="vdiv"></div>
+      <div id="effects"></div>
+    </div>
+  </div>
+
+  <!-- MEDIA -->
+  <div id="media-page" class="page">
+    <div id="transport">
+      <button class="tr-btn" id="btn-prev">⏮</button>
+      <button class="tr-btn" id="btn-play">▶</button>
+      <button class="tr-btn" id="btn-next">⏭</button>
+      <div id="now-playing">
+        <div id="np-label">EN COURS</div>
+        <div id="np-title" class="idle">—</div>
+      </div>
+    </div>
+    <div id="seq-list"></div>
+    <div id="carts-area">
+      <button class="cart-btn" data-idx="0"><span class="cart-num">C1</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
+      <button class="cart-btn" data-idx="1"><span class="cart-num">C2</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
+      <button class="cart-btn" data-idx="2"><span class="cart-num">C3</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
+      <button class="cart-btn" data-idx="3"><span class="cart-num">C4</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
+    </div>
+  </div>
+
+  <!-- SCENE -->
+  <div id="scene-page" class="page">
+    <canvas id="stage-canvas"></canvas>
+    <div id="scene-controls">
+      <button class="scene-btn" id="btn-scene-clear">CLEAR</button>
+      <button class="scene-btn" id="btn-scene-select">SELECT ALL</button>
+    </div>
+  </div>
+</div>
+
+<!-- Proj panel -->
+<div id="proj-overlay"></div>
+<div id="proj-panel">
+  <div id="proj-panel-name">—</div>
+  <div id="proj-panel-group">—</div>
+  <div id="proj-colors"></div>
+  <div id="proj-level-row">
+    <span id="proj-level-lbl">DIM</span>
+    <input id="proj-level-slider" type="range" min="0" max="100" value="0">
+    <span id="proj-level-val">0</span>
+  </div>
+  <div id="proj-strobe-row">
+    <span id="proj-strobe-lbl">STROBE</span>
+    <input id="proj-strobe-slider" type="range" min="0" max="100" value="0">
+    <span id="proj-strobe-val">OFF</span>
+  </div>
+  <div id="proj-panel-btns">
+    <button id="btn-proj-mute">MUTE</button>
+    <button id="btn-proj-close">Fermer</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+const ROWS=8, COLS=8, N_FADERS=9, THUMB_H=18;
+const gridEl=document.getElementById('grid');
+const effectsEl=document.getElementById('effects');
+const fadersEl=document.getElementById('faders-area');
+const statusEl=document.getElementById('conn-status');
+const seqListEl=document.getElementById('seq-list');
+const npTitleEl=document.getElementById('np-title');
+const btnPlay=document.getElementById('btn-play');
+const cartBtns=[...document.querySelectorAll('.cart-btn')];
+const stageCanvas=document.getElementById('stage-canvas');
+const stageCtx=stageCanvas.getContext('2d');
+const legendEl=document.getElementById('scene-legend');
+const projOverlay=document.getElementById('proj-overlay');
+const projPanel=document.getElementById('proj-panel');
+
+const padEls={}, effEls={}, faderData=[], faderLbls=[];
+let _projectors=[], _seqItems=[], _selectedProjIdx=-1;
+const btnClear=document.getElementById('btn-akai-clear');
+const btnRec=document.getElementById('btn-akai-rec');
+const btnParams=document.getElementById('btn-akai-params');
+
+// Swatches couleurs (= PRESET_COLORS plan_de_feu.py)
+const SWATCH_COLORS=['#ffffff','#ff0000','#ff8800','#ffdd00','#00ff00','#00dddd','#0000ff','#ff00ff'];
+const projColorsEl=document.getElementById('proj-colors');
+SWATCH_COLORS.forEach(hex=>{
+  const s=document.createElement('div');
+  s.className='proj-swatch'; s.style.background=hex; s.dataset.color=hex;
+  s.addEventListener('click',()=>{
+    if(_selectedProjIdx<0) return;
+    projColorsEl.querySelectorAll('.proj-swatch').forEach(x=>x.classList.remove('active'));
+    s.classList.add('active');
+    if(_projectors[_selectedProjIdx]) _projectors[_selectedProjIdx].base_color=hex;
+    sendEvent({type:'proj_color',idx:_selectedProjIdx,color:hex});
+  });
+  projColorsEl.appendChild(s);
+});
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+    setTimeout(refreshFaders,30);
+    if(btn.dataset.tab==='scene-page') setTimeout(resizeCanvas,50);
+  });
+});
+
+// ── Grille 8×8 ───────────────────────────────────────────────────────────────
+for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+  const d=document.createElement('div');
+  d.className='pad'; d.dataset.r=r; d.dataset.c=c;
+  padEls[`${r}_${c}`]=d; gridEl.appendChild(d);
+}
+
+// ── Effets ───────────────────────────────────────────────────────────────────
+for(let r=0;r<ROWS;r++){
+  const d=document.createElement('div');
+  d.className='eff-btn'; d.dataset.r=r;
+  effEls[r]=d; effectsEl.appendChild(d);
+}
+
+// ── Faders ───────────────────────────────────────────────────────────────────
+for(let i=0;i<N_FADERS;i++){
+  const isMaster=(i===N_FADERS-1);
+  const col=document.createElement('div'); col.className='fader-col'+(isMaster?' fx-speed':'');
+  const lbl=document.createElement('div'); lbl.className='fader-label'; lbl.textContent=isMaster?'VIT':`G${i+1}`;
+  if(!isMaster) faderLbls[i]=lbl;
+  const track=document.createElement('div'); track.className='fader-track'; track.dataset.idx=i;
+  const fill=document.createElement('div'); fill.className='fader-fill';
+  const thumb=document.createElement('div'); thumb.className='fader-thumb';
+  track.appendChild(fill); track.appendChild(thumb);
+  const valLbl=document.createElement('div'); valLbl.className='fader-val'; valLbl.textContent='50';
+  col.appendChild(lbl); col.appendChild(track); col.appendChild(valLbl);
+  fadersEl.appendChild(col);
+  faderData[i]={track,fill,thumb,valLbl,value:50};
+}
+
+// ── Couleur pads ─────────────────────────────────────────────────────────────
+function applyPadColor(el,color,bright){
+  const off=(!color||color==='#000000'||color==='#000'||bright===0);
+  if(off){ el.style.background='var(--pad-off)'; el.style.borderColor='var(--pad-border)'; el.style.boxShadow='none'; el.classList.remove('lit'); }
+  else { const dim=(bright<60); el.style.background=dim?blendHex(color,'#111111',0.65):color; el.style.borderColor='transparent'; el.style.boxShadow=dim?'none':`0 0 7px ${color}66`; el.classList.add('lit'); }
+}
+function blendHex(c1,c2,t){
+  const p=s=>parseInt(s,16);
+  const r1=p(c1.slice(1,3)),g1=p(c1.slice(3,5)),b1=p(c1.slice(5,7));
+  const r2=p(c2.slice(1,3)),g2=p(c2.slice(3,5)),b2=p(c2.slice(5,7));
+  return `rgb(${Math.round(r1+(r2-r1)*t)},${Math.round(g1+(g2-g1)*t)},${Math.round(b1+(b2-b1)*t)})`;
+}
+
+// ── Fader UI ─────────────────────────────────────────────────────────────────
+function setFaderUI(idx,value){
+  const fd=faderData[idx]; if(!fd) return;
+  fd.value=value;
+  const range=Math.max(fd.track.clientHeight-THUMB_H,1);
+  fd.thumb.style.top=`${range-Math.round((value/100)*range)}px`;
+  fd.fill.style.height=`${value}%`;
+  fd.valLbl.textContent=value;
+}
+function refreshFaders(){ faderData.forEach(({value},i)=>setFaderUI(i,value)); }
+window.addEventListener('resize',()=>{ resizeCanvas(); refreshFaders(); });
+
+// ── sendEvent ─────────────────────────────────────────────────────────────────
+function sendEvent(data){ fetch('/api/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).catch(()=>{}); }
+
+// ── Events pads ──────────────────────────────────────────────────────────────
+function padPress(el){ el.classList.add('press'); sendEvent({type:'pad',row:+el.dataset.r,col:+el.dataset.c}); }
+function padRelease(el){ el.classList.remove('press'); }
+Object.values(padEls).forEach(el=>{
+  el.addEventListener('touchstart',e=>{e.preventDefault();padPress(el);},{passive:false});
+  el.addEventListener('touchend',e=>{e.preventDefault();padRelease(el);},{passive:false});
+  el.addEventListener('mousedown',()=>padPress(el));
+  el.addEventListener('mouseup',()=>padRelease(el));
+});
+
+// ── Events effets ────────────────────────────────────────────────────────────
+Object.values(effEls).forEach(el=>{
+  function press(){ el.classList.add('press'); sendEvent({type:'effect',row:+el.dataset.r}); }
+  function release(){ el.classList.remove('press'); }
+  el.addEventListener('touchstart',e=>{e.preventDefault();press();},{passive:false});
+  el.addEventListener('touchend',e=>{e.preventDefault();release();},{passive:false});
+  el.addEventListener('mousedown',press); el.addEventListener('mouseup',release);
+});
+
+// ── Fader drag ───────────────────────────────────────────────────────────────
+faderData.forEach(({track},idx)=>{
+  let startY=null,startVal=null;
+  function calcVal(y){ const range=Math.max(track.clientHeight-THUMB_H,1); return Math.min(100,Math.max(0,startVal+Math.round(((startY-y)/range)*100))); }
+  function onMove(y){ const val=calcVal(y); setFaderUI(idx,val); sendEvent({type:'fader',idx,value:val}); }
+  track.addEventListener('touchstart',e=>{
+    e.preventDefault(); track.classList.add('dragging'); startY=e.touches[0].clientY; startVal=faderData[idx].value;
+    function tm(ev){ev.preventDefault();onMove(ev.touches[0].clientY);}
+    function te(){track.classList.remove('dragging');document.removeEventListener('touchmove',tm);document.removeEventListener('touchend',te);}
+    document.addEventListener('touchmove',tm,{passive:false}); document.addEventListener('touchend',te,{passive:false});
+  },{passive:false});
+  track.addEventListener('mousedown',e=>{
+    track.classList.add('dragging'); startY=e.clientY; startVal=faderData[idx].value;
+    function mm(ev){onMove(ev.clientY);}
+    function mu(){track.classList.remove('dragging');document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);}
+    document.addEventListener('mousemove',mm); document.addEventListener('mouseup',mu);
+  });
+});
+
+// ── Transport ────────────────────────────────────────────────────────────────
+document.getElementById('btn-prev').addEventListener('click',()=>sendEvent({type:'transport',action:'prev'}));
+document.getElementById('btn-next').addEventListener('click',()=>sendEvent({type:'transport',action:'next'}));
+btnPlay.addEventListener('click',()=>sendEvent({type:'transport',action:'play_pause'}));
+
+// ── Cartouches ───────────────────────────────────────────────────────────────
+cartBtns.forEach(btn=>btn.addEventListener('click',()=>sendEvent({type:'cartouche',idx:+btn.dataset.idx})));
+
+// ── Séquenceur ───────────────────────────────────────────────────────────────
+function buildSeqList(items,currentRow){
+  _seqItems=items; seqListEl.innerHTML='';
+  items.forEach((item,i)=>{
+    const div=document.createElement('div');
+    div.className='seq-item'+(i===currentRow?' current':'')+(item.type==='pause'?' pause':'')+(item.type==='tempo'?' tempo':'');
+    div.dataset.row=i;
+    const icon=item.type==='pause'?'⏸':item.type==='tempo'?'⏱':'🎵';
+    div.innerHTML=`<span class="seq-num">${i+1}</span><span class="seq-icon">${icon}</span><span class="seq-title">${escHtml(item.title||'—')}</span>`;
+    div.addEventListener('click',()=>sendEvent({type:'seq_row',row:i}));
+    seqListEl.appendChild(div);
+  });
+  scrollToRow(currentRow);
+}
+function updateSeqRow(row,playing){
+  seqListEl.querySelectorAll('.seq-item').forEach((el,i)=>el.classList.toggle('current',i===row));
+  scrollToRow(row);
+  if(row>=0&&_seqItems[row]){ npTitleEl.textContent=_seqItems[row].title||'—'; npTitleEl.classList.remove('idle'); }
+  else { npTitleEl.textContent='—'; npTitleEl.classList.add('idle'); }
+  btnPlay.textContent=playing?'⏸':'▶'; btnPlay.classList.toggle('playing',playing);
+}
+function scrollToRow(row){ const el=seqListEl.querySelector(`.seq-item:nth-child(${row+1})`); if(el) el.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Cartouches UI ────────────────────────────────────────────────────────────
+function updateCart(idx,title,state){
+  const btn=cartBtns[idx]; if(!btn) return;
+  btn.classList.remove('playing','stopped');
+  if(state===1) btn.classList.add('playing');
+  if(state===2) btn.classList.add('stopped');
+  btn.querySelector('.cart-title').textContent=title||'—';
+}
+
+// ── Scène ─────────────────────────────────────────────────────────────────────
+const GROUP_COLORS={'face':'#ff8844','contre':'#4488ff','douche1':'#44cc88','douche2':'#ffcc44','douche3':'#ff4488','lat':'#aa55ff','lyre':'#ff44cc','barre':'#44aaff','strobe':'#ffee44','fumee':'#88aaaa'};
+
+function drawStage(projectors){
+  const W=stageCanvas.width, H=stageCanvas.height;
+  stageCtx.clearRect(0,0,W,H);
+  stageCtx.fillStyle='#0a0a0a'; stageCtx.fillRect(0,0,W,H);
+  if(!projectors.length){
+    stageCtx.fillStyle='#222'; stageCtx.font='12px sans-serif'; stageCtx.textAlign='center';
+    stageCtx.fillText('Aucun projecteur',W/2,H/2); return;
+  }
+  const R=Math.max(10,Math.min(W,H)*0.042);
+  projectors.forEach(p=>{
+    const px=(p.x??0.5)*W, py=(p.y??0.5)*H;
+    const color=p.color||'#000000';
+    const isLit=p.level>0&&!p.muted&&color!=='#000000';
+    const gcolor=GROUP_COLORS[p.group]||'#666';
+    if(isLit){
+      const grad=stageCtx.createRadialGradient(px,py,R*0.3,px,py,R*3);
+      grad.addColorStop(0,color+'99'); grad.addColorStop(1,color+'00');
+      stageCtx.fillStyle=grad; stageCtx.beginPath(); stageCtx.arc(px,py,R*3,0,Math.PI*2); stageCtx.fill();
+    }
+    stageCtx.beginPath(); stageCtx.arc(px,py,R,0,Math.PI*2);
+    stageCtx.fillStyle=isLit?color:'#111'; stageCtx.fill();
+    stageCtx.strokeStyle=isLit?'#fff':gcolor; stageCtx.lineWidth=isLit?2:1;
+    stageCtx.globalAlpha=isLit?1:0.45; stageCtx.stroke(); stageCtx.globalAlpha=1;
+    stageCtx.font=`bold ${Math.max(7,Math.round(R*0.52))}px sans-serif`;
+    stageCtx.textAlign='center'; stageCtx.fillStyle=isLit?'#fff':'#2a2a2a';
+    stageCtx.globalAlpha=isLit?0.9:0.6;
+    stageCtx.fillText(p.name||p.group,px,py+R+Math.round(R*0.75));
+    stageCtx.globalAlpha=1;
+  });
+}
+
+function buildLegend(projectors){ if(!legendEl) return;
+  const groups=[...new Set(projectors.map(p=>p.group))];
+  legendEl.innerHTML=groups.map(g=>`<span class="legend-item"><span class="legend-dot" style="background:${GROUP_COLORS[g]||'#666'}"></span>${g}</span>`).join('');
+}
+
+function resizeCanvas(){
+  const page=document.getElementById('scene-page');
+  const controls=document.getElementById('scene-controls');
+  stageCanvas.width=page.clientWidth||400;
+  stageCanvas.height=Math.max(80,page.clientHeight-(controls.offsetHeight||42)-10);
+  drawStage(_projectors);
+}
+
+function applyProjectors(data){
+  _projectors=data||[];
+  buildLegend(_projectors);
+  resizeCanvas();
+}
+function applyProjColors(data){
+  data.forEach((p,i)=>{ if(_projectors[i]){_projectors[i].color=p.color;_projectors[i].base_color=p.base_color||_projectors[i].base_color;_projectors[i].level=p.level;_projectors[i].muted=p.muted;_projectors[i].strobe=p.strobe??0;} });
+  drawStage(_projectors);
+}
+
+// ── Scène — CLEAR / SELECT ALL ───────────────────────────────────────────────
+document.getElementById('btn-scene-clear').addEventListener('click',()=>sendEvent({type:'scene_clear'}));
+document.getElementById('btn-scene-select').addEventListener('click',()=>sendEvent({type:'scene_select_all'}));
+
+// ── Scène — long press → panel projecteur ────────────────────────────────────
+function projAtPoint(cx,cy){
+  const W=stageCanvas.width, H=stageCanvas.height;
+  const R=Math.max(10,Math.min(W,H)*0.042)*1.8;
+  let best=-1, bestD=R*R;
+  _projectors.forEach((p,i)=>{
+    const dx=(p.x??0.5)*W-cx, dy=(p.y??0.5)*H-cy;
+    const d2=dx*dx+dy*dy;
+    if(d2<bestD){ bestD=d2; best=i; }
+  });
+  return best;
+}
+
+let _longPressTimer=null, _touchX=0, _touchY=0;
+
+function startLongPress(clientX, clientY){
+  const rect=stageCanvas.getBoundingClientRect();
+  _touchX=clientX-rect.left; _touchY=clientY-rect.top;
+  _longPressTimer=setTimeout(()=>{
+    const idx=projAtPoint(_touchX,_touchY);
+    if(idx>=0) openProjPanel(idx);
+  },500);
+}
+function cancelLongPress(){ if(_longPressTimer){clearTimeout(_longPressTimer);_longPressTimer=null;} }
+
+stageCanvas.addEventListener('touchstart',e=>{e.preventDefault();startLongPress(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+stageCanvas.addEventListener('touchend',e=>{e.preventDefault();cancelLongPress();},{passive:false});
+stageCanvas.addEventListener('touchmove',e=>{e.preventDefault();cancelLongPress();},{passive:false});
+stageCanvas.addEventListener('mousedown',e=>startLongPress(e.clientX,e.clientY));
+stageCanvas.addEventListener('mouseup',cancelLongPress);
+stageCanvas.addEventListener('mousemove',cancelLongPress);
+
+function openProjPanel(idx){
+  _selectedProjIdx=idx;
+  const p=_projectors[idx];
+  document.getElementById('proj-panel-name').textContent=p.name||p.group;
+  document.getElementById('proj-panel-group').textContent=(p.group||'').toUpperCase();
+  const slider=document.getElementById('proj-level-slider');
+  slider.value=p.level||0;
+  document.getElementById('proj-level-val').textContent=p.level||0;
+  const strobe=p.strobe||0;
+  document.getElementById('proj-strobe-slider').value=strobe;
+  document.getElementById('proj-strobe-val').textContent=strobe>0?strobe+'%':'OFF';
+  // Swatch active = couleur la plus proche de base_color
+  const bc=(p.base_color||'#ffffff').toLowerCase();
+  projColorsEl.querySelectorAll('.proj-swatch').forEach(s=>{
+    s.classList.toggle('active', s.dataset.color===bc);
+  });
+  const muteBtn=document.getElementById('btn-proj-mute');
+  muteBtn.textContent=p.muted?'UNMUTE':'MUTE';
+  muteBtn.classList.toggle('muted',!!p.muted);
+  projOverlay.classList.add('open'); projPanel.classList.add('open');
+}
+function closeProjPanel(){ projOverlay.classList.remove('open'); projPanel.classList.remove('open'); _selectedProjIdx=-1; }
+
+document.getElementById('proj-level-slider').addEventListener('input',e=>{
+  const val=+e.target.value;
+  document.getElementById('proj-level-val').textContent=val;
+  if(_selectedProjIdx>=0) sendEvent({type:'proj_level',idx:_selectedProjIdx,value:val});
+});
+document.getElementById('proj-strobe-slider').addEventListener('input',e=>{
+  const val=+e.target.value;
+  document.getElementById('proj-strobe-val').textContent=val>0?val+'%':'OFF';
+  if(_selectedProjIdx>=0){
+    if(_projectors[_selectedProjIdx]) _projectors[_selectedProjIdx].strobe=val;
+    sendEvent({type:'proj_strobe',idx:_selectedProjIdx,value:val});
+  }
+});
+document.getElementById('btn-proj-mute').addEventListener('click',()=>{
+  if(_selectedProjIdx<0) return;
+  const p=_projectors[_selectedProjIdx];
+  const newMuted=!p.muted;
+  sendEvent({type:'proj_mute',idx:_selectedProjIdx,muted:newMuted});
+  p.muted=newMuted;
+  const btn=document.getElementById('btn-proj-mute');
+  btn.textContent=newMuted?'UNMUTE':'MUTE'; btn.classList.toggle('muted',newMuted);
+});
+document.getElementById('btn-proj-close').addEventListener('click',closeProjPanel);
+projOverlay.addEventListener('click',closeProjPanel);
+
+// ── Boutons AKAI (CLEAR / REC / PARAMS) ──────────────────────────────────────
+btnClear.addEventListener('click',()=>sendEvent({type:'clear'}));
+btnRec.addEventListener('click',()=>sendEvent({type:'rec_toggle'}));
+btnParams.addEventListener('click',()=>sendEvent({type:'open_params'}));
+
+function applyRecState(active){
+  btnRec.classList.toggle('rec-active',active);
+  btnRec.textContent=active?'⏺ REC ●':'⏺ REC';
+}
+function applyLayout(labels){
+  labels.forEach((slot,i)=>{
+    if(faderLbls[i]) faderLbls[i].textContent=slot.label||`G${i+1}`;
+  });
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+let _es=null,_reconnectDelay=1000;
+function connectSSE(){
+  if(_es){_es.close();_es=null;}
+  statusEl.textContent='···'; statusEl.className='';
+  _es=new EventSource('/stream');
+  _es.onopen=()=>{ statusEl.textContent='✓'; statusEl.className='ok'; _reconnectDelay=1000; };
+  _es.onerror=()=>{ statusEl.textContent='⚠'; statusEl.className='err'; _es.close(); _es=null; setTimeout(connectSSE,_reconnectDelay); _reconnectDelay=Math.min(_reconnectDelay*2,10000); };
+  _es.onmessage=e=>{
+    let msg; try{msg=JSON.parse(e.data);}catch{return;}
+    const t=msg.type;
+    if(t==='state'){
+      const d=msg.data||{};
+      Object.entries(d.pads||{}).forEach(([k,v])=>{const el=padEls[k];if(el)applyPadColor(el,v.color,v.bright);});
+      Object.entries(d.faders||{}).forEach(([k,v])=>setFaderUI(+k,v));
+      Object.entries(d.effects||{}).forEach(([k,v])=>{const el=effEls[+k];if(el)el.classList.toggle('on',v);});
+      if(d.seq){buildSeqList(d.seq.items||[],d.seq.current_row??-1);updateSeqRow(d.seq.current_row??-1,d.seq.playing??false);}
+      if(d.carts) d.carts.forEach((c,i)=>updateCart(i,c.title,c.state));
+      if(d.projectors) applyProjectors(d.projectors);
+      if(d.layout&&d.layout.length) applyLayout(d.layout);
+      if(d.rec_active!==undefined) applyRecState(d.rec_active);
+      requestAnimationFrame(refreshFaders);
+    } else if(t==='pad'){const el=padEls[`${msg.row}_${msg.col}`];if(el)applyPadColor(el,msg.color,msg.bright);}
+    else if(t==='fader'){setFaderUI(msg.idx,msg.value);}
+    else if(t==='effect'){const el=effEls[msg.row];if(el)el.classList.toggle('on',msg.active);}
+    else if(t==='seq'){buildSeqList(msg.items||[],msg.current_row??-1);updateSeqRow(msg.current_row??-1,msg.playing??false);}
+    else if(t==='seq_row'){updateSeqRow(msg.current_row??-1,msg.playing??false);}
+    else if(t==='cart'){updateCart(msg.idx,msg.title,msg.state);}
+    else if(t==='projectors'){applyProjectors(msg.data);}
+    else if(t==='proj_colors'){applyProjColors(msg.data);}
+    else if(t==='layout'){applyLayout(msg.labels||[]);}
+    else if(t==='rec_state'){applyRecState(msg.active);}
+  };
+}
+connectSSE();
+requestAnimationFrame(()=>setTimeout(refreshFaders,80));
+
+// ── Service Worker (PWA) ──────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import math
 import json
 import os
 import time as _time
+from i18n import tr
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
     QLabel, QMenu, QWidgetAction, QPushButton, QSlider,
@@ -151,13 +152,13 @@ class PresetBar(QWidget):
         # En-tête : label + bouton "+"
         header = QHBoxLayout()
         header.setSpacing(4)
-        lbl = QLabel("Presets")
+        lbl = QLabel(tr("pdf_presets_label"))
         lbl.setStyleSheet("color: #555; font-size: 9px;")
         header.addWidget(lbl)
         header.addStretch()
         add_btn = QPushButton("+")
         add_btn.setFixedSize(22, 22)
-        add_btn.setToolTip("Sauvegarder la position actuelle comme nouveau preset")
+        add_btn.setToolTip(tr("pdf_tooltip_save_preset"))
         add_btn.setStyleSheet("""
             QPushButton { background: #1a3a1a; color: #4CAF50; border: 1px solid #2a5a2a;
                           border-radius: 3px; font-weight: bold; font-size: 13px; }
@@ -191,8 +192,7 @@ class PresetBar(QWidget):
             btn = QPushButton(preset["name"])
             btn.setFixedHeight(22)
             btn.setStyleSheet(self._BTN_STYLE.format(r=r, g=g, b=b, hex=c.name()))
-            btn.setToolTip(f"Pan: {preset['pan']}  Tilt: {preset['tilt']}\n"
-                           f"Clic droit → mémoriser la position actuelle")
+            btn.setToolTip(tr("pdf_tooltip_preset_btn", pan=preset['pan'], tilt=preset['tilt']))
             btn.clicked.connect(lambda _, p=preset: self.preset_selected.emit(p["pan"], p["tilt"]))
             btn.setContextMenuPolicy(Qt.CustomContextMenu)
             btn.customContextMenuRequested.connect(lambda _, idx=i: self._ctx_preset(idx))
@@ -207,12 +207,12 @@ class PresetBar(QWidget):
             QMenu { background: #1e1e1e; color: #ccc; border: 1px solid #333; }
             QMenu::item:selected { background: #2a2a2a; }
         """)
-        m.addAction(f"📌  Mémoriser ici  (Pan:{pan} Tilt:{tilt})",
+        m.addAction(tr("pdf_ctx_memorize", pan=pan, tilt=tilt),
                     lambda: self._memorize(idx, pan, tilt))
         m.addSeparator()
-        m.addAction("✏  Renommer...", lambda: self._rename(idx))
+        m.addAction(tr("pdf_ctx_rename"), lambda: self._rename(idx))
         if len(self._presets) > 1:
-            m.addAction("🗑  Supprimer", lambda: self._delete(idx))
+            m.addAction(tr("pdf_ctx_delete"), lambda: self._delete(idx))
         m.exec(QCursor.pos())
 
     def _memorize(self, idx, pan, tilt):
@@ -223,7 +223,7 @@ class PresetBar(QWidget):
 
     def _rename(self, idx):
         from PySide6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "Renommer", "Nouveau nom :",
+        name, ok = QInputDialog.getText(self, tr("pdf_rename_title"), tr("pdf_rename_prompt"),
                                         text=self._presets[idx]["name"])
         if ok and name.strip():
             self._presets[idx]["name"] = name.strip()
@@ -233,8 +233,8 @@ class PresetBar(QWidget):
     def _add_preset(self):
         from PySide6.QtWidgets import QInputDialog
         pan, tilt = self._get_current()
-        name, ok = QInputDialog.getText(self, "Nouveau preset",
-                                        "Nom du preset :", text=f"Pos {len(self._presets)+1}")
+        name, ok = QInputDialog.getText(self, tr("pdf_new_preset_title"),
+                                        tr("pdf_new_preset_prompt"), text=f"Pos {len(self._presets)+1}")
         if ok and name.strip():
             self._presets.append({"name": name.strip(), "pan": pan, "tilt": tilt})
             _save_presets(self._presets)
@@ -360,7 +360,7 @@ class PanTiltPad(QWidget):
         painter.setPen(QColor("#444"))
         painter.setFont(QFont("Segoe UI", 7))
         painter.drawText(QRect(m, label_y + 14, self._PAD_W, 12),
-                         Qt.AlignCenter, "double-clic = centre")
+                         Qt.AlignCenter, tr("pdf_hint_double_click"))
 
         painter.end()
 
@@ -393,7 +393,7 @@ class EffectPanel(QWidget):
         root.setSpacing(6)
 
         # Titre
-        title = QLabel("Effets auto")
+        title = QLabel(tr("pdf_auto_effects_title"))
         title.setStyleSheet("color:#888; font-size:9px; font-weight:bold;")
         root.addWidget(title)
 
@@ -410,7 +410,7 @@ class EffectPanel(QWidget):
             self._eff_btns[key] = btn
 
         stop_btn = QPushButton("■")
-        stop_btn.setToolTip("Arrêter l'effet")
+        stop_btn.setToolTip(tr("pdf_tooltip_stop_effect"))
         stop_btn.setStyleSheet("QPushButton{background:#3a1a1a;color:#f44;border:1px solid #622;border-radius:4px;font-size:14px;min-width:32px;min-height:28px;} QPushButton:hover{background:#4a2a2a;}")
         stop_btn.clicked.connect(self._on_stop)
         btn_row.addWidget(stop_btn)
@@ -419,7 +419,7 @@ class EffectPanel(QWidget):
         # Vitesse
         spd_row = QHBoxLayout()
         spd_row.setSpacing(6)
-        spd_lbl = QLabel("Vitesse")
+        spd_lbl = QLabel(tr("pdf_speed_label"))
         spd_lbl.setStyleSheet("color:#888; font-size:9px;")
         spd_lbl.setFixedWidth(44)
         spd_row.addWidget(spd_lbl)
@@ -443,7 +443,7 @@ class EffectPanel(QWidget):
         # Amplitude
         amp_row = QHBoxLayout()
         amp_row.setSpacing(6)
-        amp_lbl = QLabel("Amplitude")
+        amp_lbl = QLabel(tr("pdf_amplitude_label"))
         amp_lbl.setStyleSheet("color:#888; font-size:9px;")
         amp_lbl.setFixedWidth(44)
         amp_row.addWidget(amp_lbl)
@@ -567,62 +567,157 @@ PRESET_COLORS = [
 ]
 
 
+class _HSVSlider(QWidget):
+    """Slider horizontal avec fond dégradé et marqueur circulaire (style HSV)."""
+
+    valueChanged = Signal(float)   # 0.0 – 1.0
+    _R = 9                         # rayon du handle
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value: float = 0.0
+        self._stops: list = []
+        self.setFixedHeight(28)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_stops(self, stops: list):
+        self._stops = stops
+        self.update()
+
+    def set_value(self, v: float):
+        self._value = max(0.0, min(1.0, v))
+        self.update()
+
+    def value(self) -> float:
+        return self._value
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        bar_h = 10
+        bar_y = (h - bar_h) // 2
+
+        if self._stops:
+            grad = QLinearGradient(0, 0, w, 0)
+            for pos, color in self._stops:
+                grad.setColorAt(pos, color)
+            painter.setBrush(grad)
+        else:
+            painter.setBrush(QColor("#333"))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(0, bar_y, w, bar_h, 5, 5)
+
+        # Handle circulaire blanc
+        hx = int(self._value * w)
+        hy = h // 2
+        painter.setBrush(QColor("white"))
+        painter.setPen(QPen(QColor(60, 60, 60), 1.5))
+        painter.drawEllipse(QPoint(hx, hy), self._R, self._R)
+        painter.end()
+
+    def _pick(self, pos):
+        w = self.width()
+        v = max(0.0, min(1.0, pos.x() / w if w else 0.0))
+        if v != self._value:
+            self._value = v
+            self.valueChanged.emit(v)
+            self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._pick(event.pos())
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            self._pick(event.pos())
+
+
 class ColorPickerBlock(QFrame):
-    """Bloc color picker compact entre Plan de Feu et Video"""
+    """Color picker HSV avec sliders Teinte/Luminosité."""
 
     def __init__(self, plan_de_feu, parent=None):
         super().__init__(parent)
         self.plan_de_feu = plan_de_feu
+        self._h = 0.0
+        self._v = 1.0
 
         self.setStyleSheet("ColorPickerBlock { border: none; }")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(2)
 
-        self.picker = ColorPickerWidget(0, 100)
-        self.picker.setFixedHeight(100)
-        self.picker.setMinimumWidth(100)
-        self.picker.colorSelected.connect(self._on_color_picked)
-        layout.addWidget(self.picker)
+        # ── Hue ──────────────────────────────────────────────────────────
+        self._hue_val_lbl = self._add_row(layout, "Couleur", "0°")
+        self._hue_slider = _HSVSlider()
+        self._hue_slider.set_stops(
+            [(i / 6, QColor.fromHsvF(i / 6, 1.0, 1.0)) for i in range(7)]
+        )
+        self._hue_slider.valueChanged.connect(self._on_hue)
+        layout.addWidget(self._hue_slider)
 
-        self.msg_label = QLabel()
-        self.msg_label.setFont(QFont("Segoe UI", 9))
-        self.msg_label.setStyleSheet("color: #f44336;")
-        self.msg_label.setAlignment(Qt.AlignCenter)
-        self.msg_label.hide()
-        layout.addWidget(self.msg_label)
+        # ── Luminosité ───────────────────────────────────────────────────
+        self._bri_val_lbl = self._add_row(layout, "Luminosité", "100%")
+        self._bri_slider = _HSVSlider()
+        self._bri_slider.set_value(1.0)
+        self._bri_slider.valueChanged.connect(self._on_bri)
+        layout.addWidget(self._bri_slider)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        w = self.width() - 20
-        if w > 0 and w != self.picker.width():
-            self.picker.setFixedSize(w, 100)
-            self.picker._generate_gradient()
-            self.picker.update()
+        self._update_bri_stops()
 
-    def _on_color_picked(self, color):
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _add_row(layout, text: str, value: str) -> QLabel:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 4, 0, 0)
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: #aaa; font-size: 11px;")
+        val = QLabel(value)
+        val.setStyleSheet("color: #ddd; font-size: 11px;")
+        val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        row.addWidget(lbl)
+        row.addStretch()
+        row.addWidget(val)
+        layout.addLayout(row)
+        return val
+
+    def _current_qcolor(self) -> QColor:
+        return QColor.fromHsvF(self._h, 1.0, self._v)
+
+    def _update_bri_stops(self):
+        black = QColor(0, 0, 0)
+        full  = QColor.fromHsvF(self._h, 1.0, 1.0)
+        self._bri_slider.set_stops([(0.0, black), (1.0, full)])
+
+    # ── Slider callbacks ──────────────────────────────────────────────────────
+    def _on_hue(self, v: float):
+        self._h = v
+        self._hue_val_lbl.setText(f"{int(v * 359)}°")
+        self._update_bri_stops()
+        self._send_color(self._current_qcolor())
+
+    def _on_bri(self, v: float):
+        self._v = v
+        self._bri_val_lbl.setText(f"{int(v * 100)}%")
+        self._send_color(self._current_qcolor())
+
+    # ── DMX output ────────────────────────────────────────────────────────────
+    def _send_color(self, color: QColor):
         pdf = self.plan_de_feu
         if not pdf.selected_lamps:
-            self.msg_label.setText("Merci de selectionner vos projecteurs")
-            self.msg_label.show()
-            QTimer.singleShot(2000, self.msg_label.hide)
             return
-
         targets = []
         for g, i in pdf.selected_lamps:
             projs = [p for p in pdf.projectors if p.group == g]
             if i < len(projs):
                 targets.append((projs[i], g, i))
-
         for proj, g, i in targets:
             proj.base_color = color
             proj.level = 100
             proj.color = QColor(color.red(), color.green(), color.blue())
-
         if pdf.main_window and hasattr(pdf.main_window, 'dmx') and pdf.main_window.dmx:
             pdf.main_window.dmx.update_from_projectors(pdf.projectors)
-
         pdf.refresh()
 
 
@@ -1003,7 +1098,7 @@ class FixtureCanvas(QWidget):
         lines = [
             proj.name or proj.group,
             f"{ftype}  ·  {gd.get(proj.group, proj.group)}",
-            f"CH {proj.start_address}  ·  Niveau {proj.level}%" + ("  (mute)" if proj.muted else ""),
+            f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}  ·  Niveau {proj.level}%" + ("  (mute)" if proj.muted else ""),
         ]
         card_w, line_h = 178, 15
         card_h = len(lines) * line_h + 14
@@ -1081,8 +1176,8 @@ class FixtureCanvas(QWidget):
         # Labels de zone
         painter.setFont(QFont("Segoe UI", 7))
         painter.setPen(QColor("#242424"))
-        painter.drawText(QRect(sx, sy + 5,       sw, 14), Qt.AlignHCenter, "CONTRE / HAUT")
-        painter.drawText(QRect(sx, sy + sh - 18, sw, 14), Qt.AlignHCenter, "FACE / BAS")
+        painter.drawText(QRect(sx, sy + 5,       sw, 14), Qt.AlignHCenter, tr("pdf_canvas_contre_haut"))
+        painter.drawText(QRect(sx, sy + sh - 18, sw, 14), Qt.AlignHCenter, tr("pdf_canvas_face_bas"))
 
         # Bordure scene
         painter.setPen(QPen(QColor("#1c1c1c"), 1))
@@ -1112,8 +1207,8 @@ class FixtureCanvas(QWidget):
                 # Adresse DMX discrete
                 painter.setFont(font_ch)
                 painter.setPen(QColor("#333333"))
-                painter.drawText(QRect(cx - 22, cy + 28, 44, 12), Qt.AlignCenter,
-                                 f"CH {proj.start_address}")
+                painter.drawText(QRect(cx - 26, cy + 28, 52, 12), Qt.AlignCenter,
+                                 f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
 
         # ── Rubber band ───────────────────────────────────────────
         if self._rubber_rect and not self._rubber_rect.isNull():
@@ -1139,11 +1234,12 @@ class FixtureCanvas(QWidget):
 
         info_left = f"  {n_fix} fixture{'s' if n_fix != 1 else ''}"
         if n_sel:
-            info_left += f"  /  {n_sel} selectionnee{'s' if n_sel != 1 else ''}"
+            sel_word = tr("pdf_status_selected_pl") if n_sel > 1 else tr("pdf_status_selected")
+            info_left += f"  /  {n_sel} {sel_word}{'s' if n_sel != 1 else ''}"
         if self._editable:
-            info_right = "Glisser = deplacer   Shift+glisser = snap   Double-clic = editer   Ctrl+A = tout sel.   "
+            info_right = tr("pdf_status_hint_edit")
         else:
-            info_right = "Vue uniquement — edition dans Patch DMX > Plan de feu   "
+            info_right = tr("pdf_status_hint_view")
 
         painter.setFont(QFont("Segoe UI", 8))
         painter.setPen(QColor("#3a3a3a"))
@@ -1610,7 +1706,7 @@ class PlanDeFeu(QFrame):
 
             selec_btn = QPushButton("SELEC")
             selec_btn.setFixedSize(46, 26)
-            selec_btn.setToolTip("Sélectionner des projecteurs")
+            selec_btn.setToolTip(tr("pdf_tooltip_selec"))
             selec_btn.setStyleSheet(
                 _BTN_SS.format(fg="#aaa", bd="#3a3a3a", fgh="#fff", bdh="#0077bb")
             )
@@ -1620,7 +1716,7 @@ class PlanDeFeu(QFrame):
 
             clr_btn = QPushButton("CLEAR")
             clr_btn.setFixedSize(46, 26)
-            clr_btn.setToolTip("Éteindre tous les projecteurs (plan de feu)")
+            clr_btn.setToolTip(tr("pdf_tooltip_clear"))
             clr_btn.setStyleSheet(
                 _BTN_SS.format(fg="#888", bd="#3a3a3a", fgh="#fff", bdh="#555")
             )
@@ -1632,7 +1728,7 @@ class PlanDeFeu(QFrame):
             self.dmx_toggle_btn.setCheckable(True)
             self.dmx_toggle_btn.setChecked(True)
             self.dmx_toggle_btn.setFixedSize(44, 26)
-            self.dmx_toggle_btn.setToolTip("Activer / désactiver la sortie DMX")
+            self.dmx_toggle_btn.setToolTip(tr("pdf_tooltip_dmx_toggle"))
             self.dmx_toggle_btn.setStyleSheet(
                 _BTN_SS.format(fg="#00cc66", bd="#00cc66", fgh="#00ff88", bdh="#00ff88")
             )
@@ -1753,12 +1849,12 @@ class PlanDeFeu(QFrame):
                 state = self.main_window._license.state
                 from license_manager import LicenseState
                 if state == LicenseState.TRIAL_EXPIRED:
-                    msg = "Votre periode d'essai est terminee.\nActivez une licence pour utiliser la sortie Art-Net."
+                    msg = tr("pdf_dmx_trial_expired_msg")
                 elif state == LicenseState.LICENSE_EXPIRED:
-                    msg = "Votre licence a expire.\nRenouvelez votre licence pour utiliser la sortie Art-Net."
+                    msg = tr("pdf_dmx_lic_expired_msg")
                 else:
-                    msg = "Logiciel non active.\nActivez une licence pour utiliser la sortie Art-Net."
-                _QMB.warning(self.main_window, "Sortie Art-Net", msg)
+                    msg = tr("pdf_dmx_not_activated_msg")
+                _QMB.warning(self.main_window, tr("pdf_artnet_output_title"), msg)
                 return
         on = self.dmx_toggle_btn.isChecked()
         self.dmx_toggle_btn.setText("ON" if on else "OFF")
@@ -1851,8 +1947,8 @@ class PlanDeFeu(QFrame):
             "QMenu::separator { background: #3a3a3a; height: 1px; margin: 3px 8px; }"
         )
 
-        menu.addAction("✔  Tout sélectionner",   self._select_all)
-        menu.addAction("✖  Tout désélectionner", self._deselect_all)
+        menu.addAction(tr("pdf_select_all"),    self._select_all)
+        menu.addAction(tr("pdf_deselect_all"),  self._deselect_all)
         menu.addSeparator()
 
         # Groupes présents dans les projecteurs, dans l'ordre du mapping
@@ -1874,9 +1970,9 @@ class PlanDeFeu(QFrame):
                 act.triggered.connect(lambda checked, m=members: self._select_custom_group(m))
 
         menu.addSeparator()
-        menu.addAction("➕  Ajouter un groupe depuis la sélection...", self._open_add_group_dialog)
+        menu.addAction(tr("pdf_add_group_from_sel"), self._open_add_group_dialog)
         if self._custom_groups:
-            menu.addAction("⚙  Gérer les groupes...", self._open_group_manager)
+            menu.addAction(tr("pdf_manage_groups"), self._open_group_manager)
 
         # Trouver le bouton SELEC pour positionner le menu
         sender = self.sender()
@@ -1890,13 +1986,11 @@ class PlanDeFeu(QFrame):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
 
         if not self.selected_lamps:
-            QMessageBox.information(self, "Aucune sélection",
-                "Sélectionnez d'abord des projecteurs sur le plan de feu\n"
-                "avant de créer un groupe de sélection rapide.")
+            QMessageBox.information(self, tr("pdf_no_selection_title"), tr("pdf_no_selection_msg"))
             return
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Nouveau groupe de sélection")
+        dlg.setWindowTitle(tr("pdf_new_group_title"))
         dlg.setFixedSize(340, 145)
         dlg.setStyleSheet("QDialog { background: #1a1a1a; color: #ddd; }")
 
@@ -1905,7 +1999,9 @@ class PlanDeFeu(QFrame):
         vl.setSpacing(12)
 
         count = len(self.selected_lamps)
-        lbl = QLabel(f"Nom du groupe  ({count} projecteur{'s' if count > 1 else ''} sélectionné{'s' if count > 1 else ''}) :")
+        s = "s" if count > 1 else ""
+        sp = "s" if count > 1 else ""
+        lbl = QLabel(tr("pdf_new_group_lbl", count=count, s=s, sp=sp))
         lbl.setStyleSheet("font-size: 12px; color: #aaa;")
         vl.addWidget(lbl)
 
@@ -1920,8 +2016,8 @@ class PlanDeFeu(QFrame):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        btn_cancel = QPushButton("Annuler")
-        btn_ok = QPushButton("Créer")
+        btn_cancel = QPushButton(tr("pdf_btn_cancel"))
+        btn_ok = QPushButton(tr("pdf_btn_create"))
         for b, fg, bg in [(btn_cancel, "#888", "#1e1e1e"), (btn_ok, "#fff", "#007a45")]:
             b.setFixedHeight(28)
             b.setStyleSheet(
@@ -2005,7 +2101,7 @@ class PlanDeFeu(QFrame):
         from PySide6.QtCore import Qt
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Gérer les groupes")
+        dlg.setWindowTitle(tr("pdf_manage_groups_title"))
         dlg.setMinimumSize(380, 420)
         dlg.setStyleSheet(
             "QDialog { background: #1a1a1a; color: #ddd; }"
@@ -2027,11 +2123,11 @@ class PlanDeFeu(QFrame):
         vl.setContentsMargins(16, 14, 16, 14)
         vl.setSpacing(10)
 
-        title = QLabel("Groupes enregistrés")
+        title = QLabel(tr("pdf_groups_saved_title"))
         title.setStyleSheet("font-size: 13px; font-weight: bold; color: #fff;")
         vl.addWidget(title)
 
-        sub = QLabel("Glissez ou utilisez ▲▼ pour réordonner. Double-cliquez pour renommer.")
+        sub = QLabel(tr("pdf_groups_reorder_hint"))
         sub.setStyleSheet("font-size: 10px; color: #666;")
         sub.setWordWrap(True)
         vl.addWidget(sub)
@@ -2040,7 +2136,8 @@ class PlanDeFeu(QFrame):
         lw.setDragDropMode(QListWidget.InternalMove)
         lw.setSelectionMode(QListWidget.SingleSelection)
         for gname, members in self._custom_groups.items():
-            item = QListWidgetItem(f"★  {gname}  —  {len(members)} projecteur{'s' if len(members) > 1 else ''}")
+            s = "s" if len(members) > 1 else ""
+            item = QListWidgetItem(tr("pdf_group_item_text", name=gname, n=len(members), s=s))
             item.setData(Qt.UserRole, gname)
             item.setFlags(item.flags() | Qt.ItemIsEditable)
             lw.addItem(item)
@@ -2049,9 +2146,9 @@ class PlanDeFeu(QFrame):
         # ── Barre de renommage ─────────────────────────────────────────────────
         rename_row = QHBoxLayout()
         rename_edit = QLineEdit()
-        rename_edit.setPlaceholderText("Nouveau nom...")
+        rename_edit.setPlaceholderText(tr("pdf_rename_new_ph"))
         rename_edit.setFixedHeight(30)
-        btn_rename = QPushButton("Renommer")
+        btn_rename = QPushButton(tr("pdf_btn_rename"))
         btn_rename.setFixedHeight(30)
         btn_rename.setEnabled(False)
         rename_row.addWidget(rename_edit, 1)
@@ -2062,7 +2159,7 @@ class PlanDeFeu(QFrame):
         btn_row = QHBoxLayout()
         btn_up  = QPushButton("▲")
         btn_dn  = QPushButton("▼")
-        btn_del = QPushButton("🗑  Supprimer")
+        btn_del = QPushButton(tr("pdf_btn_delete_group"))
         btn_del.setStyleSheet(
             "QPushButton { background: #2a0000; color: #cc4444; border: 1px solid #3a1111;"
             " border-radius: 4px; font-size: 12px; padding: 4px 12px; }"
@@ -2084,7 +2181,7 @@ class PlanDeFeu(QFrame):
         vl.addWidget(sep)
 
         close_row = QHBoxLayout()
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("pdf_btn_close"))
         btn_close.setFixedHeight(32)
         btn_close.clicked.connect(dlg.accept)
         close_row.addStretch()
@@ -2133,7 +2230,8 @@ class PlanDeFeu(QFrame):
             if not new_name or new_name == old_name:
                 return
             if new_name in self._custom_groups:
-                QMessageBox.warning(dlg, "Nom existant", f"Un groupe « {new_name} » existe déjà.")
+                QMessageBox.warning(dlg, tr("pdf_existing_name_title"),
+                                    tr("pdf_existing_name_msg", name=new_name))
                 return
             members = self._custom_groups.pop(old_name)
             # Reconstruire le dict en conservant l'ordre
@@ -2148,7 +2246,8 @@ class PlanDeFeu(QFrame):
             self._save_custom_groups()
             item = lw.item(row)
             item.setData(Qt.UserRole, new_name)
-            item.setText(f"★  {new_name}  —  {len(members)} projecteur{'s' if len(members) > 1 else ''}")
+            s = "s" if len(members) > 1 else ""
+            item.setText(tr("pdf_group_item_text", name=new_name, n=len(members), s=s))
 
         def _do_delete():
             row = lw.currentRow()
@@ -2156,8 +2255,8 @@ class PlanDeFeu(QFrame):
                 return
             name = lw.item(row).data(Qt.UserRole)
             rep = QMessageBox.question(
-                dlg, "Supprimer le groupe",
-                f"Supprimer le groupe « {name} » ?",
+                dlg, tr("pdf_delete_group_title"),
+                tr("pdf_delete_group_msg", name=name),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if rep != QMessageBox.Yes:
@@ -2314,7 +2413,7 @@ class PlanDeFeu(QFrame):
             p0, g0, i0 = targets[0]
             info_text = f"{p0.name or (g0.capitalize() + ' ' + str(i0+1))}  (CH {p0.start_address})"
         else:
-            info_text = f"{len(targets)} fixtures sélectionnées"
+            info_text = tr("pdf_n_fixtures_selected", n=len(targets))
         lbl = QLabel(info_text)
         lbl.setStyleSheet("color:#00d4ff; font-weight:bold; font-size:12px; padding:4px 8px;")
         lbl.setAlignment(Qt.AlignCenter)
@@ -2324,7 +2423,7 @@ class PlanDeFeu(QFrame):
         # ── Dimmer (EN PREMIER) ──────────────────────────────────────────
         dim_w = QWidget(); dim_h = QHBoxLayout(dim_w)
         dim_h.setContentsMargins(10, 5, 10, 5); dim_h.setSpacing(8)
-        dim_lbl = QLabel("Dim"); dim_lbl.setStyleSheet(_SS)
+        dim_lbl = QLabel(tr("pdf_dim_label")); dim_lbl.setStyleSheet(_SS)
         dim_sli = QSlider(Qt.Horizontal)
         dim_sli.setRange(0, 100); dim_sli.setValue(targets[0][0].level)
         dim_sli.setFixedWidth(150); dim_sli.setStyleSheet(_SLI)
@@ -2342,7 +2441,7 @@ class PlanDeFeu(QFrame):
             strobe_w = QWidget(); strobe_h = QHBoxLayout(strobe_w)
             strobe_h.setContentsMargins(10, 5, 10, 5); strobe_h.setSpacing(8)
 
-            strobe_lbl = QLabel("Strobe"); strobe_lbl.setStyleSheet(_SS)
+            strobe_lbl = QLabel(tr("pdf_strobe_label")); strobe_lbl.setStyleSheet(_SS)
             current_spd = getattr(targets[0][0], 'strobe_speed', 0)
 
             strobe_sli = QSlider(Qt.Horizontal)
@@ -2351,14 +2450,14 @@ class PlanDeFeu(QFrame):
             strobe_sli.setFixedWidth(150)
             strobe_sli.setStyleSheet(_SLI)
 
-            strobe_val = QLabel(f"{current_spd}%" if current_spd > 0 else "Off")
+            strobe_val = QLabel(f"{current_spd}%" if current_spd > 0 else tr("pdf_strobe_off"))
             strobe_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; min-width:34px;")
             strobe_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
             def _on_strobe_speed(v, t=targets):
                 for p, g, i in t:
                     p.strobe_speed = v
-                strobe_val.setText(f"{v}%" if v > 0 else "Off")
+                strobe_val.setText(f"{v}%" if v > 0 else tr("pdf_strobe_off"))
                 _flush()
 
             strobe_sli.valueChanged.connect(_on_strobe_speed)
@@ -2547,6 +2646,7 @@ class PlanDeFeu(QFrame):
         self.selected_lamps.clear()
         for fd in fixtures:
             p = Projector(fd['group'], name=fd['name'], fixture_type=fd['fixture_type'])
+            p.universe = fd.get('universe', 0)
             p.start_address = fd['start_address']
             p.canvas_x = None  # Position par defaut (calculee par le canvas)
             p.canvas_y = None
@@ -2565,6 +2665,7 @@ class PlanDeFeu(QFrame):
             data = dlg.get_fixture_data()
             if data:
                 p = Projector(data['group'], name=data['name'], fixture_type=data['fixture_type'])
+                p.universe = data.get('universe', 0)
                 p.start_address = data['start_address']
                 if local_pos is not None:
                     cw = max(self.canvas.width(), 1)
@@ -2597,6 +2698,7 @@ class PlanDeFeu(QFrame):
                 proj.name = data['name']
                 proj.fixture_type = data['fixture_type']
                 proj.group = data['group']
+                proj.universe = data.get('universe', 0)
                 proj.start_address = data['start_address']
                 if data.get('profile'):
                     proj.dmx_profile = data['profile']
@@ -2715,9 +2817,16 @@ class _FixtureFormWidget(QWidget):
                 self.type_combo.setCurrentIndex(idx)
         layout.addRow("Type :", self.type_combo)
 
+        self.uni_combo = QComboBox()
+        for i, lbl in enumerate(["U1", "U2", "U3", "U4"]):
+            self.uni_combo.addItem(lbl, i)
+        auto_uni, auto_addr = self._next_patch()
+        self.uni_combo.setCurrentIndex(preset.get('universe', auto_uni) if preset else auto_uni)
+        layout.addRow("Univers :", self.uni_combo)
+
         self.addr_spin = QSpinBox()
         self.addr_spin.setRange(1, 512)
-        self.addr_spin.setValue(preset.get('start_address', self._next_address()) if preset else self._next_address())
+        self.addr_spin.setValue(preset.get('start_address', auto_addr) if preset else auto_addr)
         layout.addRow("Adresse DMX :", self.addr_spin)
 
         self.group_combo = QComboBox()
@@ -2751,12 +2860,25 @@ class _FixtureFormWidget(QWidget):
 
         self.type_combo.currentTextChanged.connect(self._on_type_changed)
 
-    def _next_address(self):
+    def _next_patch(self):
+        """Retourne (universe, addr) pour la prochaine fixture en autopatch intelligent."""
         if not self._projectors:
-            return 1
+            return 0, 1
         _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2, "Gradateur": 1}
-        return max(p.start_address + _CH.get(getattr(p, 'fixture_type', 'PAR LED'), 5)
-                   for p in self._projectors)
+        max_uni = max(getattr(p, 'universe', 0) for p in self._projectors)
+        projs_on_uni = [p for p in self._projectors if getattr(p, 'universe', 0) == max_uni]
+        next_addr = max(p.start_address + _CH.get(getattr(p, 'fixture_type', 'PAR LED'), 5)
+                        for p in projs_on_uni)
+        if next_addr > 512:
+            if max_uni < 3:
+                return max_uni + 1, 1
+            return max_uni, 512
+        return max_uni, next_addr
+
+    # Alias retro-compat (utilisé nulle part mais au cas où)
+    def _next_address(self):
+        _, addr = self._next_patch()
+        return addr
 
     def _populate_profiles(self, fixture_type):
         from artnet_dmx import DMX_PROFILES, profile_display_text
@@ -2791,6 +2913,7 @@ class _FixtureFormWidget(QWidget):
         return {
             'name': self.name_edit.text().strip(),
             'fixture_type': self.type_combo.currentText(),
+            'universe': self.uni_combo.currentData(),
             'start_address': self.addr_spin.value(),
             'group': self.group_combo.currentData() or self.group_combo.currentText(),
             'profile': profile,

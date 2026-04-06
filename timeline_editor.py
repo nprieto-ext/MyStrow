@@ -5,6 +5,7 @@ import os
 import json
 import hashlib
 import random
+from i18n import tr
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QComboBox, QProgressBar, QCheckBox,
@@ -113,7 +114,7 @@ class LightTimelineEditor(QDialog):
             self.media_path = ""
             self.media_name = f"Pause ({pause_seconds}s)"
 
-        self.setWindowTitle(f"🎬 Editeur - {self.media_name}")
+        self.setWindowTitle(tr("te_title", name=self.media_name))
 
         # Configuration palette tooltips
         palette = self.palette()
@@ -448,7 +449,7 @@ class LightTimelineEditor(QDialog):
         self._analysis_cancelled = False
 
         loading = QDialog(self)
-        loading.setWindowTitle("Chargement")
+        loading.setWindowTitle(tr("te_loading_title"))
         loading.setFixedSize(380, 170)
         loading.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         loading.setStyleSheet("""
@@ -460,7 +461,7 @@ class LightTimelineEditor(QDialog):
         lay = QVBoxLayout(loading)
         lay.setContentsMargins(20, 15, 20, 15)
         is_vid = hasattr(self, 'is_video_file') and self.is_video_file
-        status = QLabel("Extraction audio de la video... 0%" if is_vid else "Analyse audio en cours... 0%")
+        status = QLabel(tr("te_extract_pct", pct=0) if is_vid else tr("te_analyse_pct", pct=0))
         status.setAlignment(Qt.AlignCenter)
         status.setStyleSheet("font-size: 14px; font-weight: bold;")
         lay.addWidget(status)
@@ -469,7 +470,7 @@ class LightTimelineEditor(QDialog):
         bar.setValue(0)
         lay.addWidget(bar)
 
-        cancel_btn = QPushButton("Annuler l'analyse")
+        cancel_btn = QPushButton(tr("te_cancel_analysis"))
         cancel_btn.setStyleSheet("""
             QPushButton {
                 background: #5a2a2a; color: white; border: none;
@@ -487,7 +488,7 @@ class LightTimelineEditor(QDialog):
             if self._analysis_cancelled:
                 raise _AnalysisCancelled()
             bar.setValue(pct)
-            prefix = "Extraction audio" if is_vid else "Analyse audio"
+            prefix = tr("te_extract_prefix") if is_vid else tr("te_analyse_prefix")
             status.setText(f"{prefix}... {pct}%")
             QApplication.processEvents()
             if self._analysis_cancelled:
@@ -511,12 +512,12 @@ class LightTimelineEditor(QDialog):
                 if self.media_row in self.main_window.seq.sequences:
                     self.main_window.seq.sequences[self.media_row]['waveform'] = [round(x, 3) for x in waveform]
                 bar.setValue(100)
-                status.setText(f"{len(waveform)} points analyses")
+                status.setText(tr("te_points_analysed", n=len(waveform)))
                 QApplication.processEvents()
                 loading.close()
             else:
                 # Aucune methode n'a reussi — editeur reste ouvert et utilisable sans forme d'onde
-                status.setText("⚠  Analyse Audio Impossible")
+                status.setText(tr("te_audio_failed"))
                 status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
                 bar.setVisible(False)
                 cancel_btn.setVisible(False)
@@ -582,63 +583,63 @@ class LightTimelineEditor(QDialog):
         menubar.setStyleSheet(menu_style)
 
         # === FICHIER ===
-        file_menu = menubar.addMenu("Fichier")
+        file_menu = menubar.addMenu(tr("te_menu_file"))
 
-        export_action = file_menu.addAction("⬆  Exporter le REC lumière...")
+        export_action = file_menu.addAction(tr("te_menu_export_rec"))
         export_action.setShortcut("Ctrl+E")
         export_action.triggered.connect(self.export_sequence)
 
-        import_action = file_menu.addAction("⬇  Importer un REC lumière...")
+        import_action = file_menu.addAction(tr("te_menu_import_rec"))
         import_action.setShortcut("Ctrl+I")
         import_action.triggered.connect(self.import_sequence)
 
         file_menu.addSeparator()
 
-        save_action = file_menu.addAction("💾  Sauvegarder\tCtrl+S")
+        save_action = file_menu.addAction(tr("te_menu_save"))
         save_action.triggered.connect(self.save_sequence)
 
         # === EDITION ===
-        edit_menu = menubar.addMenu("Edition")
+        edit_menu = menubar.addMenu(tr("te_menu_edit"))
 
-        undo_action = edit_menu.addAction("Annuler\tCtrl+Z")
+        undo_action = edit_menu.addAction(tr("te_menu_undo"))
         undo_action.triggered.connect(self.undo)
 
-        redo_action = edit_menu.addAction("Retablir\tCtrl+Y")
+        redo_action = edit_menu.addAction(tr("te_menu_redo"))
         redo_action.triggered.connect(self.redo)
 
         edit_menu.addSeparator()
 
-        cut_action = edit_menu.addAction("Couper\tCtrl+X")
+        cut_action = edit_menu.addAction(tr("te_menu_cut"))
         cut_action.triggered.connect(self.cut_selected_clips)
 
-        copy_action = edit_menu.addAction("Copier\tCtrl+C")
+        copy_action = edit_menu.addAction(tr("te_menu_copy"))
         copy_action.triggered.connect(self.copy_selected_clips)
 
-        paste_action = edit_menu.addAction("Coller\tCtrl+V")
+        paste_action = edit_menu.addAction(tr("te_menu_paste"))
         paste_action.triggered.connect(self.paste_clips)
 
         edit_menu.addSeparator()
 
-        select_all_action = edit_menu.addAction("Selectionner tout\tCtrl+A")
+        select_all_action = edit_menu.addAction(tr("te_menu_select_all"))
         select_all_action.triggered.connect(self.select_all_clips)
 
-        delete_action = edit_menu.addAction("Supprimer\tSuppr")
+        delete_action = edit_menu.addAction(tr("te_menu_delete"))
         delete_action.triggered.connect(self.delete_selected_clips)
 
-        delete_all_action = edit_menu.addAction("Supprimer tout")
+        delete_all_action = edit_menu.addAction(tr("te_menu_delete_all"))
         delete_all_action.triggered.connect(self.clear_all_clips)
 
-        # === OUTILS ===
-        tools_menu = menubar.addMenu("Outils")
+        # === TOOLS ===
+        tools_menu = menubar.addMenu(tr("te_menu_tools"))
 
-        cut_tool_action = tools_menu.addAction("✂ Outil couper\tC")
+        cut_tool_action = tools_menu.addAction(tr("te_menu_cut_tool"))
         cut_tool_action.triggered.connect(self.toggle_cut_mode_from_menu)
 
-        ai_action = tools_menu.addAction("✨ Generation par IA")
+        ai_action = tools_menu.addAction(tr("te_menu_ai_gen"))
         ai_action.triggered.connect(self.generate_ai_sequence)
 
         # === EFFET ===
-        effect_menu = menubar.addMenu("Effet")
+        effect_menu = menubar.addMenu(tr("te_menu_effect"))
 
         fade_in_action = effect_menu.addAction("🎬 Fade In")
         fade_in_action.triggered.connect(self.apply_fade_in_to_selection)
@@ -646,12 +647,12 @@ class LightTimelineEditor(QDialog):
         fade_out_action = effect_menu.addAction("🎬 Fade Out")
         fade_out_action.triggered.connect(self.apply_fade_out_to_selection)
 
-        remove_fades_action = effect_menu.addAction("❌ Supprimer les fades")
+        remove_fades_action = effect_menu.addAction(tr("te_menu_remove_fades"))
         remove_fades_action.triggered.connect(self.remove_fades_from_selection)
 
         effect_menu.addSeparator()
 
-        no_effect_action = effect_menu.addAction("⭕ Aucun effet")
+        no_effect_action = effect_menu.addAction(tr("te_menu_no_effect"))
         no_effect_action.triggered.connect(lambda: self.apply_effect_to_selection(None))
 
         effect_emojis = {
@@ -665,16 +666,16 @@ class LightTimelineEditor(QDialog):
             action.triggered.connect(lambda checked=False, e=eff: self.apply_effect_to_selection(e))
 
         effect_menu.addSeparator()
-        speed_action = effect_menu.addAction("🎚 Vitesse de l'effet (sélection)...")
+        speed_action = effect_menu.addAction(tr("te_menu_effect_speed"))
         speed_action.triggered.connect(self.edit_effect_speed_selection)
 
-        fx_editor_action = effect_menu.addAction("✦ Editeur d'effets...")
+        fx_editor_action = effect_menu.addAction(tr("te_menu_fx_editor"))
         fx_editor_action.triggered.connect(self.open_effect_editor)
 
-        # === AFFICHAGE ===
-        view_menu = menubar.addMenu("Affichage")
+        # === VIEW ===
+        view_menu = menubar.addMenu(tr("te_menu_view"))
 
-        pdf_action = view_menu.addAction("🎭  Afficher plan de feu")
+        pdf_action = view_menu.addAction(tr("te_menu_show_plan"))
         pdf_action.setCheckable(True)
         pdf_action.setChecked(True)
         pdf_action.triggered.connect(self._toggle_pdf_window)
@@ -716,7 +717,7 @@ class LightTimelineEditor(QDialog):
 
         # Undo
         undo_btn = QPushButton("↶")
-        undo_btn.setToolTip("Annuler (Ctrl+Z)")
+        undo_btn.setToolTip(tr("te_tooltip_undo"))
         undo_btn.clicked.connect(self.undo)
         undo_btn.setFixedSize(45, 45)
         undo_btn.setStyleSheet(btn_style)
@@ -724,7 +725,7 @@ class LightTimelineEditor(QDialog):
 
         # Cut
         self.cut_btn = QPushButton("✂")
-        self.cut_btn.setToolTip("Outil Couper (C)")
+        self.cut_btn.setToolTip(tr("te_tooltip_cut_tool"))
         self.cut_btn.clicked.connect(self.toggle_cut_mode)
         self.cut_btn.setFixedSize(45, 45)
         self.cut_btn.setCheckable(True)
@@ -818,7 +819,7 @@ class LightTimelineEditor(QDialog):
         footer_layout.addStretch()
 
         # Sauvegarder
-        save_btn = QPushButton("💾 Sauvegarder")
+        save_btn = QPushButton(tr("te_btn_save"))
         save_btn.setStyleSheet("""
             QPushButton {
                 background: #2a5a2a;
@@ -834,7 +835,7 @@ class LightTimelineEditor(QDialog):
         footer_layout.addWidget(save_btn)
 
         # Fermer
-        close_btn = QPushButton("❌ Fermer")
+        close_btn = QPushButton(tr("te_btn_close"))
         close_btn.setStyleSheet("""
             QPushButton {
                 background: #4a2a2a;
@@ -1493,17 +1494,17 @@ class LightTimelineEditor(QDialog):
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 _json.dump(data, f, indent=2, ensure_ascii=False)
-            QMessageBox.information(self, "Export réussi",
-                f"{len(all_clips)} clips exportés vers :\n{path}")
+            QMessageBox.information(self, tr("te_export_ok_title"),
+                tr("te_export_ok_msg", n=len(all_clips), path=path))
         except Exception as e:
-            QMessageBox.critical(self, "Erreur export", str(e))
+            QMessageBox.critical(self, tr("te_export_err_title"), str(e))
 
     def import_sequence(self):
         """Importe un fichier .lrec dans l'éditeur (remplace les clips existants)"""
         import json as _json
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importer un REC lumière", "",
-            "REC Lumière (*.lrec);;JSON (*.json)"
+            self, tr("te_import_dlg_title"), "",
+            tr("te_import_filter")
         )
         if not path:
             return
@@ -1512,12 +1513,12 @@ class LightTimelineEditor(QDialog):
             with open(path, 'r', encoding='utf-8') as f:
                 data = _json.load(f)
         except Exception as e:
-            QMessageBox.critical(self, "Erreur import", f"Fichier invalide :\n{e}")
+            QMessageBox.critical(self, tr("te_import_err_title"), tr("te_import_err_msg", e=e))
             return
 
         clips_data = data.get('clips', [])
         if not clips_data:
-            QMessageBox.warning(self, "Import", "Aucun clip trouvé dans ce fichier.")
+            QMessageBox.warning(self, tr("te_import_ok_title"), tr("te_import_no_clips"))
             return
 
         # Avertissement si des clips dépassent la durée du média courant
@@ -1527,16 +1528,12 @@ class LightTimelineEditor(QDialog):
         if out_of_bounds:
             src_duration_s = data.get('duration', 0) / 1000
             cur_duration_s = self.media_duration / 1000
-            warning_msg = (
-                f"\n\n⚠  {len(out_of_bounds)} clip(s) dépassent la durée de ce média "
-                f"({cur_duration_s:.0f}s vs {src_duration_s:.0f}s sur le média d'origine). "
-                "Ils seront importés mais ne joueront pas entièrement."
-            )
+            warning_msg = tr("te_import_warn",
+                n=len(out_of_bounds), cur=cur_duration_s, src=src_duration_s)
 
         reply = QMessageBox.question(
-            self, "Importer le REC lumière",
-            f"Importer {len(clips_data)} clips depuis :\n{path}\n\n"
-            f"Les clips existants seront remplacés.{warning_msg}",
+            self, tr("te_import_confirm_title"),
+            tr("te_import_confirm_msg", n=len(clips_data), path=path, warn=warning_msg),
             QMessageBox.Yes | QMessageBox.No
         )
         if reply != QMessageBox.Yes:
@@ -1575,13 +1572,13 @@ class LightTimelineEditor(QDialog):
             track.update()
 
         self.save_state()
-        QMessageBox.information(self, "Import réussi",
-            f"{len(clips_data)} clips importés.")
+        QMessageBox.information(self, tr("te_import_ok_title"),
+            tr("te_import_ok_msg", n=len(clips_data)))
 
     def clear_all_clips(self):
         """Efface tous les clips"""
-        reply = QMessageBox.question(self, "Tout effacer",
-            "Voulez-vous vraiment effacer tous les clips ?",
+        reply = QMessageBox.question(self, tr("te_clear_title"),
+            tr("te_clear_msg"),
             QMessageBox.Yes | QMessageBox.No)
 
         if reply == QMessageBox.Yes:
@@ -1592,7 +1589,7 @@ class LightTimelineEditor(QDialog):
     def generate_ai_sequence(self):
         """Genere une sequence avec IA"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Generation IA")
+        dialog.setWindowTitle(tr("te_ai_title"))
         dialog.setFixedSize(550, 450)
         dialog.setStyleSheet("background: #1a1a1a;")
 
@@ -1600,7 +1597,7 @@ class LightTimelineEditor(QDialog):
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(15)
 
-        title = QLabel("Choisissez la dominante de couleur")
+        title = QLabel(tr("te_ai_color_label"))
         title.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
 
@@ -1617,16 +1614,16 @@ class LightTimelineEditor(QDialog):
         """)
 
         colors = [
-            ("Rouge",       "#ff0000"),
-            ("Vert",        "#00ff00"),
-            ("Bleu",        "#0000ff"),
-            ("Jaune",       "#c8c800"),
-            ("Magenta",     "#ff00ff"),
-            ("Cyan",        "#00ffff"),
-            ("Orange",      "#ff8800"),
-            ("Violet",      "#8800ff"),
-            ("Blanc pur",   "#ffffff"),
-            ("Arc-en-ciel", "rainbow"),
+            (tr("te_ai_color_red"),     "#ff0000"),
+            (tr("color_vert"),          "#00ff00"),
+            (tr("te_ai_color_blue"),    "#0000ff"),
+            (tr("color_jaune"),         "#c8c800"),
+            (tr("color_magenta"),       "#ff00ff"),
+            (tr("color_cyan"),          "#00ffff"),
+            (tr("color_orange"),        "#ff8800"),
+            (tr("te_ai_color_violet"),  "#8800ff"),
+            (tr("te_ai_color_white"),   "#ffffff"),
+            (tr("te_ai_color_rainbow"), "rainbow"),
         ]
 
         for name, _ in colors:
@@ -1635,7 +1632,7 @@ class LightTimelineEditor(QDialog):
         layout.addWidget(color_combo)
 
         # Checkboxes pistes
-        tracks_label = QLabel("Pistes a generer :")
+        tracks_label = QLabel(tr("te_ai_tracks_label"))
         tracks_label.setStyleSheet("color: white; font-size: 14px; font-weight: bold; margin-top: 10px;")
         layout.addWidget(tracks_label)
 
@@ -1683,7 +1680,7 @@ class LightTimelineEditor(QDialog):
         # Boutons
         btn_layout = QHBoxLayout()
 
-        cancel_btn = QPushButton("❌ Annuler")
+        cancel_btn = QPushButton(tr("te_ai_cancel"))
         cancel_btn.clicked.connect(dialog.reject)
         cancel_btn.setFixedHeight(40)
         cancel_btn.setStyleSheet("""
@@ -1699,7 +1696,7 @@ class LightTimelineEditor(QDialog):
         """)
         btn_layout.addWidget(cancel_btn)
 
-        generate_btn = QPushButton("✨ Generer")
+        generate_btn = QPushButton(tr("te_ai_generate"))
         generate_btn.setFixedHeight(40)
         generate_btn.setStyleSheet("""
             QPushButton {
@@ -1742,7 +1739,7 @@ class LightTimelineEditor(QDialog):
             track.clips.clear()
 
         progress.setValue(10)
-        status_label.setText("Detection des beats...")
+        status_label.setText(tr("te_ai_detecting_beats"))
         QApplication.processEvents()
 
         # ── Palette complete (toutes les couleurs vivides) ───────────────
@@ -1771,7 +1768,7 @@ class LightTimelineEditor(QDialog):
             palette = palette * 2
 
         progress.setValue(20)
-        status_label.setText("Analyse de la waveform...")
+        status_label.setText(tr("te_ai_analysing"))
         QApplication.processEvents()
 
         duration_ms = self.media_duration
@@ -1821,7 +1818,7 @@ class LightTimelineEditor(QDialog):
             beat_positions.append((duration_ms, 0.0))
 
         progress.setValue(35)
-        status_label.setText("Generation des clips...")
+        status_label.setText(tr("te_ai_generating"))
         QApplication.processEvents()
 
         # ── Generation des clips ─────────────────────────────────────────
@@ -1881,7 +1878,7 @@ class LightTimelineEditor(QDialog):
                 QApplication.processEvents()
 
         progress.setValue(100)
-        status_label.setText(f"{clip_count} clips crees !")
+        status_label.setText(tr("te_ai_clips_created", n=clip_count))
         QApplication.processEvents()
 
         QTimer.singleShot(800, dialog.accept)
@@ -1933,7 +1930,7 @@ class LightTimelineEditor(QDialog):
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(0)
 
-        pdf_title = QLabel("PLAN DE FEU")
+        pdf_title = QLabel(tr("te_plan_label"))
         pdf_title.setStyleSheet(_TITLE_SS)
         rv.addWidget(pdf_title)
 
@@ -2207,8 +2204,8 @@ class LightTimelineEditor(QDialog):
                 selected.extend(track.selected_clips)
 
         if not selected:
-            QMessageBox.warning(self, "Aucune selection",
-                "Selectionnez un ou plusieurs blocs d'abord.")
+            QMessageBox.warning(self, tr("te_no_selection_title"),
+                tr("te_no_selection_msg"))
             return
 
         for clip in selected:
@@ -2224,8 +2221,8 @@ class LightTimelineEditor(QDialog):
             selected.extend(track.selected_clips)
 
         if not selected:
-            QMessageBox.warning(self, "Aucune selection",
-                "Selectionnez un ou plusieurs blocs d'abord.")
+            QMessageBox.warning(self, tr("te_no_selection_title"),
+                tr("te_no_selection_msg"))
             return
 
         for clip in selected:
@@ -2241,8 +2238,8 @@ class LightTimelineEditor(QDialog):
             selected.extend(track.selected_clips)
 
         if not selected:
-            QMessageBox.warning(self, "Aucune selection",
-                "Selectionnez un ou plusieurs blocs d'abord.")
+            QMessageBox.warning(self, tr("te_no_selection_title"),
+                tr("te_no_selection_msg"))
             return
 
         for clip in selected:
@@ -2258,8 +2255,8 @@ class LightTimelineEditor(QDialog):
             selected.extend(track.selected_clips)
 
         if not selected:
-            QMessageBox.warning(self, "Aucune selection",
-                "Selectionnez un ou plusieurs blocs d'abord.")
+            QMessageBox.warning(self, tr("te_no_selection_title"),
+                tr("te_no_selection_msg"))
             return
 
         for clip in selected:
@@ -2409,14 +2406,14 @@ class LightTimelineEditor(QDialog):
                 selected.extend(track.selected_clips)
 
         if not selected:
-            QMessageBox.warning(self, "Aucune selection",
-                "Selectionnez un ou plusieurs blocs d'abord.")
+            QMessageBox.warning(self, tr("te_no_selection_title"),
+                tr("te_no_selection_msg"))
             return
 
         current_speed = selected[0].effect_speed if selected else 50
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Vitesse de l'effet")
+        dialog.setWindowTitle(tr("te_effect_speed_title"))
         dialog.setFixedSize(360, 210)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
@@ -2438,15 +2435,15 @@ class LightTimelineEditor(QDialog):
         layout.setContentsMargins(30, 25, 30, 20)
         layout.setSpacing(12)
 
-        value_label = QLabel(f"Vitesse : {current_speed}%")
+        value_label = QLabel(tr("te_speed_value", v=current_speed))
         value_label.setStyleSheet("color: white; font-size: 26px; font-weight: bold;")
         value_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(value_label)
 
         lbl_row = QHBoxLayout()
-        lbl_slow = QLabel("Lent")
+        lbl_slow = QLabel(tr("te_speed_slow"))
         lbl_slow.setStyleSheet("color: #888; font-size: 11px;")
-        lbl_fast = QLabel("Rapide")
+        lbl_fast = QLabel(tr("te_speed_fast"))
         lbl_fast.setStyleSheet("color: #888; font-size: 11px;")
         lbl_row.addWidget(lbl_slow)
         lbl_row.addStretch()
@@ -2456,11 +2453,11 @@ class LightTimelineEditor(QDialog):
         slider = QSlider(Qt.Horizontal)
         slider.setRange(0, 100)
         slider.setValue(current_speed)
-        slider.valueChanged.connect(lambda v: value_label.setText(f"Vitesse : {v}%"))
+        slider.valueChanged.connect(lambda v: value_label.setText(tr("te_speed_value", v=v)))
         layout.addWidget(slider)
 
         btn_layout = QHBoxLayout()
-        cancel = QPushButton("Annuler")
+        cancel = QPushButton(tr("btn_cancel"))
         cancel.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel)
         ok = QPushButton("OK")
@@ -2484,8 +2481,8 @@ class LightTimelineEditor(QDialog):
                 selected.extend(track.selected_clips)
 
         if not selected:
-            QMessageBox.warning(self, "Aucune selection",
-                "Selectionnez un ou plusieurs blocs d'abord.")
+            QMessageBox.warning(self, tr("te_no_selection_title"),
+                tr("te_no_selection_msg"))
             return
 
         dlg = EffectEditorDialog(selected, self.main_window, parent=self)
@@ -2524,14 +2521,11 @@ class LightTimelineEditor(QDialog):
             # Compter les clips pour donner du contexte
             total_clips = sum(len(t.clips) for t in self.tracks)
             msg = QMessageBox(self)
-            msg.setWindowTitle("Modifications non sauvegardées")
-            msg.setText(
-                f"Vous avez des modifications non sauvegardées "
-                f"({total_clips} clip(s)).\n\nVoulez-vous sauvegarder avant de fermer ?"
-            )
+            msg.setWindowTitle(tr("te_unsaved_title"))
+            msg.setText(tr("te_unsaved_msg", n=total_clips))
             msg.setIcon(QMessageBox.Warning)
-            btn_save    = msg.addButton("💾  Sauvegarder", QMessageBox.AcceptRole)
-            btn_discard = msg.addButton("Fermer sans sauvegarder", QMessageBox.DestructiveRole)
+            btn_save    = msg.addButton(tr("te_btn_save_icon"), QMessageBox.AcceptRole)
+            btn_discard = msg.addButton(tr("te_btn_close_no_save"), QMessageBox.DestructiveRole)
             msg.setStyleSheet("""
                 QMessageBox { background: #1a1a1a; color: #cccccc; }
                 QLabel { color: #cccccc; }

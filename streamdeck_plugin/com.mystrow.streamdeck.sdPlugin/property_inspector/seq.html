@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Séquence</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #c8c8c8; background: #2d2d2d; padding: 16px; margin: 0; }
+    label { display: block; margin-bottom: 6px; font-weight: bold; }
+    select { width: 100%; padding: 6px; background: #1e1e1e; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; }
+    .row { margin-bottom: 14px; }
+    .hint { font-size: 11px; color: #888; margin-top: 4px; }
+    .status { font-size: 11px; color: #888; margin-top: 8px; font-style: italic; }
+    .status.ok  { color: #00cc66; }
+    .status.err { color: #cc4444; }
+    button { width: 100%; padding: 7px; background: #1a3a2a; border: 1px solid #00cc6644; color: #00cc66;
+             border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 4px; }
+    button:hover { background: #204a32; }
+  </style>
+</head>
+<body>
+
+<div class="row">
+  <label>Séquence à lancer</label>
+  <select id="seq_row"></select>
+  <div class="hint">Sélectionnez une entrée du séquenceur MyStrow.</div>
+</div>
+<button id="btn_refresh">↺ Actualiser la liste</button>
+<div id="status" class="status">Connexion à MyStrow…</div>
+
+<script>
+var API = "http://127.0.0.1:8765/api";
+var websocket = null, uuid = null;
+var currentRow = 0;
+
+function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+    uuid = propertyInspectorUUID;
+    var parsed = JSON.parse(actionInfo);
+    var settings = parsed.payload.settings || {};
+    currentRow = parseInt(settings.seq_row, 10) || 0;
+
+    websocket = new WebSocket("ws://127.0.0.1:" + port);
+    websocket.onopen = function () {
+        websocket.send(JSON.stringify({ event: registerEvent, uuid: uuid }));
+    };
+
+    _loadSequences();
+}
+
+function _loadSequences() {
+    fetch(API + "/sequences", { signal: AbortSignal.timeout(2000) })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(data) {
+            var sel = document.getElementById("seq_row");
+            sel.innerHTML = "";
+            var seqs = (data && data.sequences) ? data.sequences : [];
+            if (seqs.length === 0) {
+                var opt = document.createElement("option");
+                opt.value = 0; opt.text = "(séquenceur vide)";
+                sel.appendChild(opt);
+                document.getElementById("status").textContent = "Séquenceur vide.";
+                document.getElementById("status").className = "status ok";
+            } else {
+                seqs.forEach(function(s) {
+                    var opt = document.createElement("option");
+                    opt.value = s.index;
+                    opt.text  = (s.index + 1) + ". " + (s.title || "(sans titre)");
+                    if (s.index === currentRow) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                document.getElementById("status").textContent = "MyStrow connecté — " + seqs.length + " entrée(s)";
+                document.getElementById("status").className = "status ok";
+            }
+        })
+        .catch(function() {
+            var sel = document.getElementById("seq_row");
+            sel.innerHTML = "<option value='0'>(MyStrow non lancé)</option>";
+            document.getElementById("status").textContent = "MyStrow non détecté — lancez le logiciel puis cliquez Actualiser.";
+            document.getElementById("status").className = "status err";
+        });
+}
+
+function _save() {
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+    websocket.send(JSON.stringify({
+        event:   "setSettings",
+        context: uuid,
+        payload: { seq_row: document.getElementById("seq_row").value }
+    }));
+}
+
+document.getElementById("seq_row").addEventListener("change", _save);
+document.getElementById("btn_refresh").addEventListener("click", _loadSequences);
+</script>
+</body>
+</html>

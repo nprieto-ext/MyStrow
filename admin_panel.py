@@ -108,6 +108,11 @@ def _delete_auth_user(uid: str) -> bool:
 
 ADMIN_CACHE = os.path.join(os.path.expanduser("~"), ".maestro_admin.json")
 
+SITE_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "MyStrow2", "SiteWeb"
+))
+SITE_REMOTE = "https://github.com/nprieto-ext/MyStrow_Site.git"
+
 _FS_BASE = (
     f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}"
     f"/databases/(default)/documents"
@@ -2365,6 +2370,18 @@ class AdminPanel(QMainWindow):
         self._btn_nav_blog.clicked.connect(lambda: self._switch_view(4))
         nav_lay.addWidget(self._btn_nav_blog)
 
+        self._btn_nav_site = QPushButton("Site Web")
+        self._btn_nav_site.setFixedHeight(38)
+        self._btn_nav_site.setStyleSheet(_nav_idle)
+        self._btn_nav_site.clicked.connect(lambda: self._switch_view(5))
+        nav_lay.addWidget(self._btn_nav_site)
+
+        self._btn_nav_analytics = QPushButton("Analytics")
+        self._btn_nav_analytics.setFixedHeight(38)
+        self._btn_nav_analytics.setStyleSheet(_nav_idle)
+        self._btn_nav_analytics.clicked.connect(lambda: self._switch_view(6))
+        nav_lay.addWidget(self._btn_nav_analytics)
+
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
 
@@ -2537,6 +2554,12 @@ class AdminPanel(QMainWindow):
         from blog_panel import BlogPanel
         self._blog_panel = BlogPanel()
         self._content_stack.addWidget(self._blog_panel)
+
+        # ── Page 5 : Site Web ─────────────────────────────────────────────────
+        self._build_site_panel()
+
+        # ── Page 6 : Analytics ────────────────────────────────────────────────
+        self._build_analytics_panel()
 
     # ------------------------------------------------------------------
 
@@ -3036,6 +3059,8 @@ class AdminPanel(QMainWindow):
         self._btn_nav_fix.setStyleSheet(_active if idx == 2 else _idle)
         self._btn_nav_release.setStyleSheet(_active if idx == 3 else _idle)
         self._btn_nav_blog.setStyleSheet(_active if idx == 4 else _idle)
+        self._btn_nav_site.setStyleSheet(_active if idx == 5 else _idle)
+        self._btn_nav_analytics.setStyleSheet(_active if idx == 6 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -3174,6 +3199,226 @@ class AdminPanel(QMainWindow):
         from fixture_editor import FixtureEditorDialog
         dlg = FixtureEditorDialog(self)
         dlg.show()
+
+    def _build_site_panel(self):
+        """Page 5 : Push du site web MyStrow_Site vers GitHub."""
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 28, 32, 24)
+        lay.setSpacing(14)
+
+        title = QLabel("Site Web — MyStrow_Site")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        title.setStyleSheet(f"color: {ACCENT};")
+        lay.addWidget(title)
+
+        path_lbl = QLabel(f"📁  {SITE_DIR}")
+        path_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        lay.addWidget(path_lbl)
+
+        repo_lbl = QLabel(f"🔗  {SITE_REMOTE}")
+        repo_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        lay.addWidget(repo_lbl)
+
+        # ── Ligne commit ──────────────────────────────────────────────────────
+        msg_row = QHBoxLayout()
+        msg_row.setSpacing(8)
+        msg_lbl = QLabel("Message :")
+        msg_lbl.setFixedWidth(72)
+        msg_row.addWidget(msg_lbl)
+
+        self._site_msg_edit = QLineEdit("Update site")
+        self._site_msg_edit.setFixedHeight(34)
+        self._site_msg_edit.setStyleSheet(
+            f"QLineEdit {{ background:#1e1e1e; color:#ccc; border:1px solid #333;"
+            f" border-radius:4px; padding:0 10px; font-size:12px; }}"
+            f"QLineEdit:focus {{ border-color:{ACCENT}; }}"
+        )
+        msg_row.addWidget(self._site_msg_edit, 1)
+        lay.addLayout(msg_row)
+
+        # ── Boutons ───────────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self._btn_site_status = QPushButton("📋  git status")
+        self._btn_site_status.setFixedHeight(34)
+        self._btn_site_status.setStyleSheet(_BTN_SECONDARY)
+        self._btn_site_status.clicked.connect(self._on_site_status)
+        btn_row.addWidget(self._btn_site_status)
+
+        self._btn_site_push = QPushButton("🚀  Commit & Push")
+        self._btn_site_push.setFixedHeight(34)
+        self._btn_site_push.setStyleSheet(_BTN_PRIMARY)
+        self._btn_site_push.clicked.connect(self._on_site_push)
+        btn_row.addWidget(self._btn_site_push)
+
+        btn_gh = QPushButton("GitHub →")
+        btn_gh.setFixedHeight(34)
+        btn_gh.setStyleSheet(_BTN_SECONDARY)
+        btn_gh.clicked.connect(lambda: webbrowser.open("https://github.com/nprieto-ext/MyStrow_Site"))
+        btn_row.addWidget(btn_gh)
+
+        btn_row.addStretch()
+        lay.addLayout(btn_row)
+
+        # ── Console log ───────────────────────────────────────────────────────
+        self._site_log = QTextEdit()
+        self._site_log.setReadOnly(True)
+        self._site_log.setFont(QFont("Consolas", 9))
+        self._site_log.setStyleSheet(
+            f"QTextEdit {{ background:#0d0d0d; color:#cccccc;"
+            f" border:1px solid #2a2a2a; border-radius:5px; }}"
+        )
+        lay.addWidget(self._site_log, 1)
+
+        self._content_stack.addWidget(page)
+        self._site_thread = None
+        self._site_worker = None
+
+    def _site_run(self, action: str):
+        msg = self._site_msg_edit.text().strip() or "Update site"
+        self._site_log.clear()
+        self._btn_site_status.setEnabled(False)
+        self._btn_site_push.setEnabled(False)
+
+        self._site_thread = QThread()
+        self._site_worker = SiteWorker(SITE_DIR, msg, action)
+        self._site_worker.moveToThread(self._site_thread)
+        self._site_thread.started.connect(self._site_worker.run)
+        self._site_worker.log.connect(lambda t: self._site_log.append(t))
+        self._site_worker.finished.connect(self._on_site_done)
+        self._site_worker.finished.connect(self._site_thread.quit)
+        self._site_thread.finished.connect(self._site_thread.deleteLater)
+        self._site_thread.start()
+
+    def _on_site_status(self):
+        self._site_run("status")
+
+    def _on_site_push(self):
+        self._site_run("push")
+
+    def _on_site_done(self, success: bool, msg: str):
+        self._btn_site_status.setEnabled(True)
+        self._btn_site_push.setEnabled(True)
+        if msg:
+            if success:
+                self._site_log.append(f"\n✅  {msg}")
+            else:
+                self._site_log.append(f"\n❌  {msg}")
+
+    def _build_analytics_panel(self):
+        """Page 6 : Liens rapides GA4 + Search Console."""
+        GA4_URL = "https://analytics.google.com/analytics/web/#/p"
+        GA4_MEASUREMENT_ID = "G-4G9MXM0ENS"
+        SEARCH_CONSOLE_URL = "https://search.google.com/search-console?resource_id=https%3A%2F%2Fmystrow.fr%2F"
+        GA4_PROPERTY_URL   = f"https://analytics.google.com"
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 28, 32, 24)
+        lay.setSpacing(20)
+
+        title = QLabel("Analytics — mystrow.fr")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        title.setStyleSheet(f"color: {ACCENT};")
+        lay.addWidget(title)
+
+        mid_lbl = QLabel(f"Measurement ID : <b>{GA4_MEASUREMENT_ID}</b>")
+        mid_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
+        mid_lbl.setTextFormat(Qt.RichText)
+        lay.addWidget(mid_lbl)
+
+        # ── Bloc GA4 ──────────────────────────────────────────────────────────
+        ga4_frame = QFrame()
+        ga4_frame.setStyleSheet(
+            f"QFrame {{ background: #212121; border: 1px solid #2e2e2e; border-radius: 8px; }}"
+        )
+        ga4_lay = QVBoxLayout(ga4_frame)
+        ga4_lay.setContentsMargins(20, 18, 20, 18)
+        ga4_lay.setSpacing(10)
+
+        ga4_title = QLabel("Google Analytics 4")
+        ga4_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        ga4_title.setStyleSheet(f"color: {TEXT};")
+        ga4_lay.addWidget(ga4_title)
+
+        ga4_desc = QLabel(
+            "Visiteurs, pages vues, sources de trafic, événements, conversions.\n"
+            "Données disponibles dès le lendemain (traitement ~24h)."
+        )
+        ga4_desc.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
+        ga4_desc.setWordWrap(True)
+        ga4_lay.addWidget(ga4_desc)
+
+        ga4_btn_row = QHBoxLayout()
+        ga4_btn_row.setSpacing(8)
+
+        btn_ga4_open = QPushButton("📊  Ouvrir Google Analytics")
+        btn_ga4_open.setFixedHeight(34)
+        btn_ga4_open.setStyleSheet(_BTN_PRIMARY)
+        btn_ga4_open.clicked.connect(lambda: webbrowser.open(GA4_PROPERTY_URL))
+        ga4_btn_row.addWidget(btn_ga4_open)
+
+        btn_ga4_rt = QPushButton("🔴  Temps réel")
+        btn_ga4_rt.setFixedHeight(34)
+        btn_ga4_rt.setStyleSheet(_BTN_SECONDARY)
+        btn_ga4_rt.clicked.connect(
+            lambda: webbrowser.open("https://analytics.google.com/analytics/web/#/realtime")
+        )
+        ga4_btn_row.addWidget(btn_ga4_rt)
+
+        ga4_btn_row.addStretch()
+        ga4_lay.addLayout(ga4_btn_row)
+        lay.addWidget(ga4_frame)
+
+        # ── Bloc Search Console ───────────────────────────────────────────────
+        sc_frame = QFrame()
+        sc_frame.setStyleSheet(
+            f"QFrame {{ background: #212121; border: 1px solid #2e2e2e; border-radius: 8px; }}"
+        )
+        sc_lay = QVBoxLayout(sc_frame)
+        sc_lay.setContentsMargins(20, 18, 20, 18)
+        sc_lay.setSpacing(10)
+
+        sc_title = QLabel("Google Search Console")
+        sc_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        sc_title.setStyleSheet(f"color: {TEXT};")
+        sc_lay.addWidget(sc_title)
+
+        sc_desc = QLabel(
+            "Mots-clés, positions, impressions, clics, pages indexées, erreurs d'exploration."
+        )
+        sc_desc.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
+        sc_desc.setWordWrap(True)
+        sc_lay.addWidget(sc_desc)
+
+        sc_btn_row = QHBoxLayout()
+        sc_btn_row.setSpacing(8)
+
+        btn_sc_open = QPushButton("🔍  Ouvrir Search Console")
+        btn_sc_open.setFixedHeight(34)
+        btn_sc_open.setStyleSheet(_BTN_PRIMARY)
+        btn_sc_open.clicked.connect(lambda: webbrowser.open(SEARCH_CONSOLE_URL))
+        sc_btn_row.addWidget(btn_sc_open)
+
+        btn_sc_perf = QPushButton("📈  Performances")
+        btn_sc_perf.setFixedHeight(34)
+        btn_sc_perf.setStyleSheet(_BTN_SECONDARY)
+        btn_sc_perf.clicked.connect(
+            lambda: webbrowser.open(
+                "https://search.google.com/search-console/performance/search-analytics"
+                "?resource_id=https%3A%2F%2Fmystrow.fr%2F"
+            )
+        )
+        sc_btn_row.addWidget(btn_sc_perf)
+
+        sc_btn_row.addStretch()
+        sc_lay.addLayout(sc_btn_row)
+        lay.addWidget(sc_frame)
+
+        lay.addStretch()
+        self._content_stack.addWidget(page)
 
     def _build_release_panel(self):
         """Page 2 : Release pipeline + Backup, intégrés directement dans l'onglet."""
@@ -3913,6 +4158,62 @@ class AdminPanel(QMainWindow):
             QMessageBox.information(self, "Backup terminé", msg)
         else:
             QMessageBox.critical(self, "Erreur backup", msg)
+
+
+# ---------------------------------------------------------------
+# Site Web Worker
+# ---------------------------------------------------------------
+
+class SiteWorker(QObject):
+    """Exécute les commandes git du site dans un QThread séparé."""
+    log      = Signal(str)
+    finished = Signal(bool, str)
+
+    def __init__(self, site_dir: str, message: str, action: str, parent=None):
+        super().__init__(parent)
+        self._dir     = site_dir
+        self._message = message
+        self._action  = action   # "status" | "push"
+
+    def _run(self, *args):
+        r = subprocess.run(
+            list(args), cwd=self._dir,
+            capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        out = (r.stdout or "").strip()
+        err = (r.stderr or "").strip()
+        if out:
+            self.log.emit(out)
+        if err:
+            self.log.emit(err)
+        return r.returncode
+
+    def run(self):
+        try:
+            if self._action == "status":
+                self.log.emit("── git status ──────────────────────")
+                self._run("git", "status")
+                self.log.emit("\n── Fichiers modifiés (diff --stat) ──")
+                self._run("git", "diff", "--stat")
+                self.finished.emit(True, "")
+            elif self._action == "push":
+                self.log.emit("── git add . ───────────────────────")
+                rc = self._run("git", "add", ".")
+                if rc != 0:
+                    self.finished.emit(False, "git add a échoué.")
+                    return
+                self.log.emit(f"\n── git commit : {self._message!r} ──")
+                rc = self._run("git", "commit", "-m", self._message)
+                if rc != 0:
+                    self.log.emit("(Rien à committer ou commit échoué)")
+                self.log.emit("\n── git push ────────────────────────")
+                rc = self._run("git", "push", "-u", "origin", "main")
+                if rc != 0:
+                    self.finished.emit(False, "git push a échoué. Voir le log.")
+                    return
+                self.finished.emit(True, "Site pushé avec succès !")
+        except Exception as e:
+            self.finished.emit(False, str(e))
 
 
 # ---------------------------------------------------------------

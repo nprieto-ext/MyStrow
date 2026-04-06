@@ -5,6 +5,7 @@ Widgets Qt : banniere, dialogue login/register, avertissement
 
 import webbrowser
 
+from i18n import tr
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QDialog, QLineEdit, QProgressBar, QApplication, QStackedWidget,
@@ -25,9 +26,9 @@ from license_manager import (
 # ============================================================
 
 STRIPE_LINKS = {
-    "monthly":  "https://buy.stripe.com/00w3cneNnbVudJm8AQ08g00",
+    "monthly":  "https://buy.stripe.com/5kQcMXeNn7FeaxabN208g03",
     "lifetime": "https://buy.stripe.com/7sY6ozgVve3CfRu9EU08g01",
-    "annual":   "https://buy.stripe.com/8x24gr5cN3oYfRu8AQ08g02",
+    "annual":   "https://buy.stripe.com/3cI3cngVvf7G34IcR608g04",
 }
 
 
@@ -65,7 +66,7 @@ class ForgotPasswordDialog(QDialog):
 
     def __init__(self, prefill_email: str = "", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Mot de passe oublié")
+        self.setWindowTitle(tr("forgot_pwd_title"))
         self.setFixedSize(400, 280)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -76,16 +77,12 @@ class ForgotPasswordDialog(QDialog):
         layout.setSpacing(14)
 
         # Icône + titre
-        title = QLabel("🔑  Mot de passe oublié ?")
+        title = QLabel(tr("forgot_pwd_title"))
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
         layout.addWidget(title)
 
-        desc = QLabel(
-            "Entrez votre adresse email d'achat.\n"
-            "Un email vous sera envoyé uniquement si un compte existe à cette adresse.\n\n"
-            "Pour tout problème : nicolas@mystrow.fr"
-        )
+        desc = QLabel(tr("forgot_pwd_desc"))
         desc.setFont(QFont("Segoe UI", 9))
         desc.setStyleSheet("color: #666;")
         desc.setWordWrap(True)
@@ -93,7 +90,7 @@ class ForgotPasswordDialog(QDialog):
 
         # Champ email
         self._email = QLineEdit(prefill_email)
-        self._email.setPlaceholderText("votre@email.com")
+        self._email.setPlaceholderText(tr("email_placeholder"))
         self._email.setFixedHeight(42)
         layout.addWidget(self._email)
 
@@ -107,7 +104,7 @@ class ForgotPasswordDialog(QDialog):
 
         # Boutons
         btn_row = QHBoxLayout()
-        btn_cancel = QPushButton("Annuler")
+        btn_cancel = QPushButton(tr("btn_cancel"))
         btn_cancel.setFixedHeight(38)
         btn_cancel.setCursor(QCursor(Qt.PointingHandCursor))
         btn_cancel.setStyleSheet("""
@@ -117,7 +114,7 @@ class ForgotPasswordDialog(QDialog):
         """)
         btn_cancel.clicked.connect(self.reject)
 
-        self._btn_send = QPushButton("📧  Envoyer le mot de passe")
+        self._btn_send = QPushButton(tr("btn_send_password"))
         self._btn_send.setFixedHeight(38)
         self._btn_send.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_send.setStyleSheet("""
@@ -138,27 +135,27 @@ class ForgotPasswordDialog(QDialog):
         email = self._email.text().strip()
         if not email or "@" not in email:
             self._status.setStyleSheet("color: #e67e22;")
-            self._status.setText("⚠  Adresse email invalide.")
+            self._status.setText(tr("err_invalid_email"))
             return
 
         self._btn_send.setEnabled(False)
-        self._btn_send.setText("Envoi en cours…")
+        self._btn_send.setText(tr("sending"))
         self._status.setStyleSheet("color: #888;")
-        self._status.setText("Connexion au serveur…")
+        self._status.setText(tr("connecting"))
         QApplication.processEvents()
 
         try:
             import firebase_client as fc
             fc.send_password_reset(email)
             self._status.setStyleSheet("color: #27ae60;")
-            self._status.setText(f"✅  Email envoyé à {email}")
-            self._btn_send.setText("✔  Envoyé !")
+            self._status.setText(tr("email_sent", email=email))
+            self._btn_send.setText(tr("btn_sent"))
             QTimer.singleShot(2500, self.accept)
         except Exception as e:
             self._status.setStyleSheet("color: #e74c3c;")
             self._status.setText(f"❌  {e}")
             self._btn_send.setEnabled(True)
-            self._btn_send.setText("📧  Envoyer")
+            self._btn_send.setText(tr("btn_send_short"))
 
 
 _BTN_PRIMARY = """
@@ -341,7 +338,7 @@ class ActivationDialog(QDialog):
 
     def __init__(self, parent=None, license_result=None, start_purchase=False):
         super().__init__(parent)
-        self.setWindowTitle("MyStrow — Connexion")
+        self.setWindowTitle(tr("dlg_login_title"))
         self.setFixedSize(420, 380)
         self.setStyleSheet(_DIALOG_STYLE)
         self.setWindowFlags(
@@ -373,11 +370,11 @@ class ActivationDialog(QDialog):
 
         if start_purchase:
             self._stack.setCurrentIndex(3)
-            self.setWindowTitle("MyStrow — Choisir un plan")
+            self.setWindowTitle(tr("dlg_choose_plan_title"))
         elif already_logged:
             self._refresh_account_page(license_result)
             self._stack.setCurrentIndex(2)
-            self.setWindowTitle("MyStrow — Mon compte")
+            self.setWindowTitle(tr("dlg_account_title"))
         else:
             self._stack.setCurrentIndex(0)
 
@@ -409,18 +406,18 @@ class ActivationDialog(QDialog):
 
     def _build_page_login(self):
         page, layout = self._page_frame(
-            "Connexion",
-            "Entrez vos identifiants pour activer MyStrow."
+            tr("page_login_heading"),
+            tr("page_login_subtitle")
         )
 
         self._email_edit = QLineEdit()
-        self._email_edit.setPlaceholderText("Email")
+        self._email_edit.setPlaceholderText(tr("placeholder_email"))
         self._email_edit.setFixedHeight(36)
         self._email_edit.returnPressed.connect(self._do_login)
         layout.addWidget(self._email_edit)
 
         self._pwd_edit = QLineEdit()
-        self._pwd_edit.setPlaceholderText("Mot de passe")
+        self._pwd_edit.setPlaceholderText(tr("placeholder_password"))
         self._pwd_edit.setEchoMode(QLineEdit.Password)
         self._pwd_edit.setFixedHeight(36)
         self._pwd_edit.returnPressed.connect(self._do_login)
@@ -443,7 +440,7 @@ class ActivationDialog(QDialog):
         self._login_status.setWordWrap(True)
         layout.addWidget(self._login_status)
 
-        self._btn_send_pwd = QPushButton("📧  Recevoir mon mot de passe par email")
+        self._btn_send_pwd = QPushButton(tr("btn_recv_password"))
         self._btn_send_pwd.setFixedHeight(32)
         self._btn_send_pwd.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_send_pwd.setStyleSheet("""
@@ -459,7 +456,7 @@ class ActivationDialog(QDialog):
 
         layout.addStretch()
 
-        btn_forgot = QPushButton("🔑  Mot de passe oublié ?  Recevoir à nouveau par mail")
+        btn_forgot = QPushButton(tr("btn_forgot_password"))
         btn_forgot.setFixedHeight(32)
         btn_forgot.setCursor(QCursor(Qt.PointingHandCursor))
         btn_forgot.setStyleSheet("""
@@ -479,7 +476,7 @@ class ActivationDialog(QDialog):
         btn_forgot.clicked.connect(self._do_forgot_password)
         layout.addWidget(btn_forgot)
 
-        btn_buy = QPushButton("Pas encore de compte ?  Acheter une licence →")
+        btn_buy = QPushButton(tr("btn_no_account"))
         btn_buy.setFixedHeight(30)
         btn_buy.setCursor(QCursor(Qt.PointingHandCursor))
         btn_buy.setStyleSheet("""
@@ -494,14 +491,14 @@ class ActivationDialog(QDialog):
 
         btn_row = QHBoxLayout()
 
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("btn_close"))
         btn_close.setFixedHeight(36)
         btn_close.setCursor(QCursor(Qt.PointingHandCursor))
         btn_close.setStyleSheet(_BTN_SECONDARY)
         btn_close.clicked.connect(self.reject)
         btn_row.addWidget(btn_close)
 
-        self._btn_login = QPushButton("Se connecter")
+        self._btn_login = QPushButton(tr("btn_login"))
         self._btn_login.setFixedHeight(36)
         self._btn_login.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_login.setStyleSheet(_BTN_PRIMARY)
@@ -513,7 +510,7 @@ class ActivationDialog(QDialog):
         return page
 
     def _build_page_success(self):
-        page, layout = self._page_frame("Connexion reussie")
+        page, layout = self._page_frame(tr("page_success_heading"))
 
         self._success_label = QLabel()
         self._success_label.setFont(QFont("Segoe UI", 11))
@@ -524,7 +521,7 @@ class ActivationDialog(QDialog):
 
         layout.addStretch()
 
-        btn_ok = QPushButton("Demarrer MyStrow")
+        btn_ok = QPushButton(tr("btn_start_mystrow"))
         btn_ok.setFixedHeight(36)
         btn_ok.setCursor(QCursor(Qt.PointingHandCursor))
         btn_ok.setStyleSheet(_BTN_PRIMARY)
@@ -533,7 +530,7 @@ class ActivationDialog(QDialog):
         return page
 
     def _build_page_account(self):
-        page, layout = self._page_frame("Mon compte")
+        page, layout = self._page_frame(tr("page_account_heading"))
 
         self._acct_plan = QLabel()
         self._acct_plan.setFont(QFont("Segoe UI", 11))
@@ -541,7 +538,7 @@ class ActivationDialog(QDialog):
         self._acct_plan.setWordWrap(True)
         layout.addWidget(self._acct_plan)
 
-        self._acct_machine_label = QLabel("Compte :")
+        self._acct_machine_label = QLabel(tr("acct_label"))
         self._acct_machine_label.setFont(QFont("Segoe UI", 9))
         self._acct_machine_label.setStyleSheet("color: #666;")
         self._acct_machine_label.setAlignment(Qt.AlignCenter)
@@ -603,7 +600,7 @@ class ActivationDialog(QDialog):
         self._acct_logout_status.setWordWrap(True)
         layout.addWidget(self._acct_logout_status)
 
-        self._btn_renew = QPushButton("Renouveler / Changer de plan")
+        self._btn_renew = QPushButton(tr("btn_renew_plan"))
         self._btn_renew.setFixedHeight(34)
         self._btn_renew.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_renew.setStyleSheet(_BTN_GREEN)
@@ -611,7 +608,7 @@ class ActivationDialog(QDialog):
         self._btn_renew.hide()
         layout.addWidget(self._btn_renew)
 
-        self._btn_portal = QPushButton("⚙  Gérer mon abonnement →")
+        self._btn_portal = QPushButton(tr("btn_manage_sub"))
         self._btn_portal.setFixedHeight(34)
         self._btn_portal.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_portal.setStyleSheet("""
@@ -629,13 +626,13 @@ class ActivationDialog(QDialog):
 
         btn_row = QHBoxLayout()
 
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("btn_close"))
         btn_close.setFixedHeight(32)
         btn_close.setStyleSheet(_BTN_SECONDARY)
         btn_close.clicked.connect(self.accept)
         btn_row.addWidget(btn_close)
 
-        btn_logout = QPushButton("Se deconnecter")
+        btn_logout = QPushButton(tr("btn_logout"))
         btn_logout.setFixedHeight(32)
         btn_logout.setStyleSheet("""
             QPushButton {
@@ -659,13 +656,13 @@ class ActivationDialog(QDialog):
         root.setSpacing(8)
 
         # ── Titre ────────────────────────────────────────────────────────
-        title = QLabel("MyStrow — Choisir un plan")
+        title = QLabel(tr("page_purchase_title"))
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title.setStyleSheet("color: #00d4ff; background: transparent;")
         title.setAlignment(Qt.AlignCenter)
         root.addWidget(title)
 
-        sub = QLabel("Contrôle lumière professionnel · Toutes fonctionnalités incluses")
+        sub = QLabel(tr("page_purchase_sub"))
         sub.setFont(QFont("Segoe UI", 9))
         sub.setStyleSheet("color: #555; background: transparent;")
         sub.setAlignment(Qt.AlignCenter)
@@ -756,7 +753,7 @@ class ActivationDialog(QDialog):
 
             right.addSpacing(4)
 
-            btn = QPushButton("Choisir →")
+            btn = QPushButton(tr("btn_choose"))
             btn.setFixedHeight(26)
             btn.setCursor(QCursor(Qt.PointingHandCursor))
             btn.setStyleSheet(f"""
@@ -775,21 +772,18 @@ class ActivationDialog(QDialog):
             return card
 
         root.addWidget(_plan_card(
-            "📅", "Mensuel", "21,69 €", "TTC / mois",
-            ["Toutes les fonctionnalités", "Mises à jour incluses",
-             "Sans engagement · résiliable à tout moment"],
+            "📅", tr("plan_monthly_name"), "21,69 €", tr("plan_monthly_billing"),
+            [tr("plan_monthly_f1"), tr("plan_monthly_f2"), tr("plan_monthly_f3")],
             "monthly", accent="#4a9eff",
         ))
         root.addWidget(_plan_card(
-            "📆", "Annuel", "216,99 €", "TTC / an  (18,08 € / mois)",
-            ["Toutes les fonctionnalités", "Mises à jour incluses",
-             "Économisez l'équivalent de 2 mois"],
+            "📆", tr("plan_annual_name"), "216,99 €", tr("plan_annual_billing"),
+            [tr("plan_monthly_f1"), tr("plan_monthly_f2"), tr("plan_annual_f3")],
             "annual", accent="#00d4ff", badge="−17%",
         ))
         root.addWidget(_plan_card(
-            "♾️", "Lifetime", "378,67 €", "TTC · paiement unique",
-            ["Toutes les fonctionnalités", "Mises à jour incluses 1 an",
-             "Accès à vie · aucun abonnement"],
+            "♾️", tr("plan_lifetime_name"), "378,67 €", tr("plan_lifetime_billing"),
+            [tr("plan_monthly_f1"), tr("plan_lifetime_f2"), tr("plan_lifetime_f3")],
             "lifetime", accent="#a78bfa",
         ))
 
@@ -798,7 +792,7 @@ class ActivationDialog(QDialog):
         # ── Stripe badge ──────────────────────────────────────────────────
         stripe_row = QHBoxLayout()
         stripe_row.setAlignment(Qt.AlignCenter)
-        stripe_lbl = QLabel("🔒  Achat sécurisé via Stripe · Identifiants envoyés par email après paiement")
+        stripe_lbl = QLabel(tr("stripe_secure"))
         stripe_lbl.setFont(QFont("Segoe UI", 8))
         stripe_lbl.setStyleSheet("color: #3a3a3a; background: transparent;")
         stripe_lbl.setAlignment(Qt.AlignCenter)
@@ -806,14 +800,14 @@ class ActivationDialog(QDialog):
 
         # ── Boutons bas ───────────────────────────────────────────────────
         btn_row = QHBoxLayout()
-        btn_back = QPushButton("← Déjà un compte ?")
+        btn_back = QPushButton(tr("btn_back_account"))
         btn_back.setFixedHeight(28)
         btn_back.setCursor(QCursor(Qt.PointingHandCursor))
         btn_back.setStyleSheet(_BTN_SECONDARY)
         btn_back.clicked.connect(lambda: self._stack.setCurrentIndex(0))
         btn_row.addWidget(btn_back)
 
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("btn_close"))
         btn_close.setFixedHeight(28)
         btn_close.setCursor(QCursor(Qt.PointingHandCursor))
         btn_close.setStyleSheet(_BTN_SECONDARY)
@@ -829,7 +823,7 @@ class ActivationDialog(QDialog):
 
     def _go_to_purchase(self):
         self._stack.setCurrentIndex(3)
-        self.setWindowTitle("MyStrow — Choisir un plan")
+        self.setWindowTitle(tr("dlg_choose_plan_title"))
         self.setFixedSize(460, 480)
 
     # ----------------------------------------------------------
@@ -841,27 +835,28 @@ class ActivationDialog(QDialog):
         email = info.get("email", "—")
 
         if license_result.state == LicenseState.LICENSE_ACTIVE:
-            plan_text = "Licence active"
             if license_result.days_remaining:
-                plan_text += f"  ({license_result.days_remaining} jours restants)"
+                plan_text = tr("plan_active_days", days=license_result.days_remaining)
+            else:
+                plan_text = tr("plan_active")
             self._acct_plan.setStyleSheet("color: #4CAF50;")
             self._btn_renew.hide()
             self._btn_portal.show()
         elif license_result.state == LicenseState.TRIAL_ACTIVE:
-            plan_text = f"Période d'essai  ({license_result.days_remaining} jours restants)"
+            plan_text = tr("plan_trial", days=license_result.days_remaining)
             self._acct_plan.setStyleSheet("color: #c47f17;")
             self._btn_renew.show()
             self._btn_portal.hide()
         elif license_result.state == LicenseState.TRIAL_EXPIRED:
-            plan_text = "Essai expiré"
+            plan_text = tr("plan_trial_expired")
             self._acct_plan.setStyleSheet("color: #ff5555;")
             self._btn_renew.show()
         elif license_result.state == LicenseState.LICENSE_EXPIRED:
-            plan_text = "Licence expirée"
+            plan_text = tr("plan_license_expired")
             self._acct_plan.setStyleSheet("color: #ff5555;")
             self._btn_renew.show()
         else:
-            plan_text = license_result.message or "État inconnu"
+            plan_text = license_result.message or tr("plan_unknown")
             self._acct_plan.setStyleSheet("color: #aaa;")
             self._btn_renew.hide()
 
@@ -899,8 +894,9 @@ class ActivationDialog(QDialog):
         self._acct_machines_lbl.setStyleSheet(
             f"color: {lbl_color}; background: transparent; border: none; font-weight: bold;"
         )
-        pc_word = "PC" if maxm <= 2 else "appareils"
-        self._acct_machines_lbl.setText(f"{used} / {maxm} {pc_word} activé{'s' if used > 1 else ''}")
+        pc_word = tr("pc_unit") if maxm <= 2 else tr("devices_unit")
+        plural = "s" if used > 1 else ""
+        self._acct_machines_lbl.setText(f"{used} / {maxm} {pc_word} {tr('pc_activated_label')}{plural}")
 
         # Noms des machines activées
         mlist = getattr(license_result, "machines_list", [])
@@ -914,19 +910,19 @@ class ActivationDialog(QDialog):
         """Ouvre le Stripe Customer Portal pour gérer l'abonnement."""
         webbrowser.open("https://billing.stripe.com/p/login/00w3cneNnbVudJm8AQ08g00")
         self._acct_logout_status.setStyleSheet("color: #4CAF50;")
-        self._acct_logout_status.setText("Portail ouvert dans votre navigateur.")
+        self._acct_logout_status.setText(tr("portal_opened"))
 
     def _do_logout(self):
         self._btn_logout.setEnabled(False)
         self._acct_logout_status.setStyleSheet("color: #aaa;")
-        self._acct_logout_status.setText("Déconnexion en cours...")
+        self._acct_logout_status.setText(tr("logging_out"))
         QApplication.processEvents()
 
         success, message = deactivate_machine()
 
         if success:
             self._acct_logout_status.setStyleSheet("color: #4CAF50;")
-            self._acct_logout_status.setText("Déconnecté. Redémarrez l'application.")
+            self._acct_logout_status.setText(tr("logged_out_restart"))
             self._btn_logout.hide()
         else:
             self._acct_logout_status.setStyleSheet("color: #ff5555;")
@@ -948,17 +944,17 @@ class ActivationDialog(QDialog):
 
         if not email or "@" not in email:
             self._login_status.setStyleSheet("color: #ff5555;")
-            self._login_status.setText("Adresse email invalide.")
+            self._login_status.setText(tr("err_login_email"))
             return
         if not pwd:
             self._login_status.setStyleSheet("color: #ff5555;")
-            self._login_status.setText("Entrez votre mot de passe.")
+            self._login_status.setText(tr("err_login_password"))
             return
 
         self._btn_login.setEnabled(False)
         self._login_progress.show()
         self._login_status.setStyleSheet("color: #aaa;")
-        self._login_status.setText("Connexion en cours...")
+        self._login_status.setText(tr("logging_in"))
         QApplication.processEvents()
 
         success, message = login_account(email, pwd)
@@ -968,7 +964,7 @@ class ActivationDialog(QDialog):
 
         if success:
             self._btn_send_pwd.hide()
-            self._success_label.setText(f"Bienvenue !\n{message}")
+            self._success_label.setText(tr("welcome_msg", message=message))
             self._stack.setCurrentIndex(1)
             self.activation_success.emit()
             QTimer.singleShot(2000, self.accept)
@@ -993,7 +989,7 @@ class LicenseWarningDialog(QDialog):
 
     def __init__(self, result: LicenseResult, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("MyStrow — Compte")
+        self.setWindowTitle(tr("dlg_account_ttl"))
         self.setFixedSize(380, 190)
         self.setWindowFlags(
             self.windowFlags()
@@ -1011,10 +1007,10 @@ class LicenseWarningDialog(QDialog):
         layout.setSpacing(12)
 
         if result.state == LicenseState.TRIAL_ACTIVE:
-            title_text = "Essai bientot termine"
+            title_text = tr("warn_trial_soon")
             color = "#c47f17"
         else:
-            title_text = "Licence bientot expiree"
+            title_text = tr("warn_lic_soon")
             color = "#c47f17"
 
         title = QLabel(title_text)
@@ -1033,14 +1029,14 @@ class LicenseWarningDialog(QDialog):
 
         btn_layout = QHBoxLayout()
 
-        btn_later = QPushButton("Continuer")
+        btn_later = QPushButton(tr("btn_continue"))
         btn_later.setFixedHeight(32)
         btn_later.setCursor(QCursor(Qt.PointingHandCursor))
         btn_later.setStyleSheet(_BTN_SECONDARY)
         btn_later.clicked.connect(self.accept)
         btn_layout.addWidget(btn_later)
 
-        btn_activate = QPushButton(result.action_label or "Mon compte")
+        btn_activate = QPushButton(result.action_label or tr("btn_my_account"))
         btn_activate.setFixedHeight(32)
         btn_activate.setCursor(QCursor(Qt.PointingHandCursor))
         btn_activate.setStyleSheet(_BTN_PRIMARY)
@@ -1060,7 +1056,7 @@ class LoginSuccessDialog(QDialog):
 
     def __init__(self, dmx_allowed: bool = False, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("MyStrow — Compte")
+        self.setWindowTitle(tr("dlg_account_ttl"))
         self.setFixedSize(340, 175 if dmx_allowed else 140)
         self.setWindowFlags(
             self.windowFlags()
@@ -1073,13 +1069,13 @@ class LoginSuccessDialog(QDialog):
         layout.setContentsMargins(25, 20, 25, 20)
         layout.setSpacing(10)
 
-        title = QLabel("Connecté !")
+        title = QLabel(tr("login_success_title"))
         title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         title.setStyleSheet("color: #4caf50;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        sub = QLabel("Votre session est active.")
+        sub = QLabel(tr("login_success_sub"))
         sub.setFont(QFont("Segoe UI", 10))
         sub.setAlignment(Qt.AlignCenter)
         layout.addWidget(sub)
@@ -1088,7 +1084,7 @@ class LoginSuccessDialog(QDialog):
 
         btn_row = QHBoxLayout()
 
-        btn_close = QPushButton("Continuer")
+        btn_close = QPushButton(tr("btn_continue"))
         btn_close.setFixedHeight(32)
         btn_close.setCursor(QCursor(Qt.PointingHandCursor))
         btn_close.setStyleSheet(_BTN_SECONDARY)
@@ -1096,7 +1092,7 @@ class LoginSuccessDialog(QDialog):
         btn_row.addWidget(btn_close)
 
         if dmx_allowed:
-            btn_dmx = QPushButton("Activer la sortie DMX")
+            btn_dmx = QPushButton(tr("btn_activate_dmx"))
             btn_dmx.setFixedHeight(32)
             btn_dmx.setCursor(QCursor(Qt.PointingHandCursor))
             btn_dmx.setStyleSheet(_BTN_PRIMARY)

@@ -30,6 +30,38 @@ import math
 import struct
 import time
 
+from i18n import tr
+
+# Map FR colour name → i18n key (used for both ColorPalette and PalettePanel)
+_COLOR_KEYS = {
+    "Rouge":          "color_rouge",
+    "Rouge vif":      "color_rouge_vif",
+    "Orange":         "color_orange",
+    "Jaune":          "color_jaune",
+    "Lime":           "color_lime",
+    "Vert":           "color_vert",
+    "Turquoise":      "color_turquoise",
+    "Cyan":           "color_cyan",
+    "Bleu ciel":      "color_bleu_ciel",
+    "Bleu":           "color_bleu",
+    "Bleu marine":    "color_bleu_marine",
+    "Violet":         "color_violet",
+    "Indigo":         "color_indigo",
+    "Magenta":        "color_magenta",
+    "Rose":           "color_rose",
+    "Blanc":          "color_blanc",
+    "Blanc chaud":    "color_blanc_chaud",
+    "Ambre":          "color_ambre",
+}
+
+def _cn(name_fr: str) -> str:
+    """Return *name_fr* translated to the current language."""
+    key = _COLOR_KEYS.get(name_fr)
+    return tr(key) if key else name_fr
+
+def _bicolor_name(a: str, b: str) -> str:
+    return f"{_cn(a)} + {_cn(b)}"
+
 try:
     import miniaudio
     HAS_MINIAUDIO = True
@@ -172,54 +204,54 @@ class ColorPalette(QWidget):
 
         # ── Couleurs simples ─────────────────────────────────────────
         self.colors = [
-            ("Rouge",         QColor(255,  45,  45)),
-            ("Rouge vif",     QColor(255,   0,   0)),
-            ("Orange",        QColor(255, 140,  20)),
-            ("Jaune",         QColor(255, 230,   0)),
-            ("Lime",          QColor(140, 255,   0)),
-            ("Vert",          QColor( 30, 210,  60)),
-            ("Turquoise",     QColor(  0, 200, 140)),
-            ("Cyan",          QColor(  0, 220, 255)),
-            ("Bleu ciel",     QColor( 80, 170, 255)),
-            ("Bleu",          QColor( 50, 110, 255)),
-            ("Bleu marine",   QColor( 20,  50, 200)),
-            ("Violet",        QColor(160,  30, 255)),
-            ("Indigo",        QColor( 90,   0, 200)),
-            ("Magenta",       QColor(255,  20, 210)),
-            ("Rose",          QColor(255,  80, 160)),
-            ("Blanc",         QColor(255, 255, 255)),
-            ("Blanc chaud",   QColor(255, 220, 160)),
-            ("Ambre",         QColor(255, 180,  30)),
+            (_cn("Rouge"),         QColor(255,  45,  45)),
+            (_cn("Rouge vif"),     QColor(255,   0,   0)),
+            (_cn("Orange"),        QColor(255, 140,  20)),
+            (_cn("Jaune"),         QColor(255, 230,   0)),
+            (_cn("Lime"),          QColor(140, 255,   0)),
+            (_cn("Vert"),          QColor( 30, 210,  60)),
+            (_cn("Turquoise"),     QColor(  0, 200, 140)),
+            (_cn("Cyan"),          QColor(  0, 220, 255)),
+            (_cn("Bleu ciel"),     QColor( 80, 170, 255)),
+            (_cn("Bleu"),          QColor( 50, 110, 255)),
+            (_cn("Bleu marine"),   QColor( 20,  50, 200)),
+            (_cn("Violet"),        QColor(160,  30, 255)),
+            (_cn("Indigo"),        QColor( 90,   0, 200)),
+            (_cn("Magenta"),       QColor(255,  20, 210)),
+            (_cn("Rose"),          QColor(255,  80, 160)),
+            (_cn("Blanc"),         QColor(255, 255, 255)),
+            (_cn("Blanc chaud"),   QColor(255, 220, 160)),
+            (_cn("Ambre"),         QColor(255, 180,  30)),
         ]
 
         # ── Bicolores ────────────────────────────────────────────────
         self.bicolors = [
-            ("Rouge + Bleu",      QColor(255,  45,  45), QColor( 50, 110, 255)),
-            ("Rouge + Cyan",      QColor(255,  45,  45), QColor(  0, 220, 255)),
-            ("Rouge + Violet",    QColor(255,  45,  45), QColor(160,  30, 255)),
-            ("Rouge + Orange",    QColor(255,  45,  45), QColor(255, 140,  20)),
-            ("Rouge + Rose",      QColor(255,  45,  45), QColor(255,  80, 160)),
-            ("Rouge + Blanc",     QColor(255,  45,  45), QColor(255, 255, 255)),
-            ("Orange + Bleu",     QColor(255, 140,  20), QColor( 50, 110, 255)),
-            ("Orange + Violet",   QColor(255, 140,  20), QColor(160,  30, 255)),
-            ("Jaune + Violet",    QColor(255, 230,   0), QColor(160,  30, 255)),
-            ("Jaune + Bleu",      QColor(255, 230,   0), QColor( 50, 110, 255)),
-            ("Vert + Rouge",      QColor( 30, 210,  60), QColor(255,  45,  45)),
-            ("Vert + Jaune",      QColor( 30, 210,  60), QColor(255, 230,   0)),
-            ("Vert + Violet",     QColor( 30, 210,  60), QColor(160,  30, 255)),
-            ("Vert + Orange",     QColor( 30, 210,  60), QColor(255, 140,  20)),
-            ("Cyan + Magenta",    QColor(  0, 220, 255), QColor(255,  20, 210)),
-            ("Cyan + Rouge",      QColor(  0, 220, 255), QColor(255,  45,  45)),
-            ("Cyan + Violet",     QColor(  0, 220, 255), QColor(160,  30, 255)),
-            ("Bleu + Violet",     QColor( 50, 110, 255), QColor(160,  30, 255)),
-            ("Bleu + Cyan",       QColor( 50, 110, 255), QColor(  0, 220, 255)),
-            ("Bleu + Rose",       QColor( 50, 110, 255), QColor(255,  80, 160)),
-            ("Violet + Rose",     QColor(160,  30, 255), QColor(255,  80, 160)),
-            ("Magenta + Jaune",   QColor(255,  20, 210), QColor(255, 230,   0)),
-            ("Magenta + Cyan",    QColor(255,  20, 210), QColor(  0, 220, 255)),
-            ("Rose + Blanc",      QColor(255,  80, 160), QColor(255, 255, 255)),
-            ("Blanc + Bleu",      QColor(255, 255, 255), QColor( 50, 110, 255)),
-            ("Blanc chaud + Bleu",QColor(255, 220, 160), QColor( 50, 110, 255)),
+            (_bicolor_name("Rouge","Bleu"),         QColor(255,  45,  45), QColor( 50, 110, 255)),
+            (_bicolor_name("Rouge","Cyan"),         QColor(255,  45,  45), QColor(  0, 220, 255)),
+            (_bicolor_name("Rouge","Violet"),       QColor(255,  45,  45), QColor(160,  30, 255)),
+            (_bicolor_name("Rouge","Orange"),       QColor(255,  45,  45), QColor(255, 140,  20)),
+            (_bicolor_name("Rouge","Rose"),         QColor(255,  45,  45), QColor(255,  80, 160)),
+            (_bicolor_name("Rouge","Blanc"),        QColor(255,  45,  45), QColor(255, 255, 255)),
+            (_bicolor_name("Orange","Bleu"),        QColor(255, 140,  20), QColor( 50, 110, 255)),
+            (_bicolor_name("Orange","Violet"),      QColor(255, 140,  20), QColor(160,  30, 255)),
+            (_bicolor_name("Jaune","Violet"),       QColor(255, 230,   0), QColor(160,  30, 255)),
+            (_bicolor_name("Jaune","Bleu"),         QColor(255, 230,   0), QColor( 50, 110, 255)),
+            (_bicolor_name("Vert","Rouge"),         QColor( 30, 210,  60), QColor(255,  45,  45)),
+            (_bicolor_name("Vert","Jaune"),         QColor( 30, 210,  60), QColor(255, 230,   0)),
+            (_bicolor_name("Vert","Violet"),        QColor( 30, 210,  60), QColor(160,  30, 255)),
+            (_bicolor_name("Vert","Orange"),        QColor( 30, 210,  60), QColor(255, 140,  20)),
+            (_bicolor_name("Cyan","Magenta"),       QColor(  0, 220, 255), QColor(255,  20, 210)),
+            (_bicolor_name("Cyan","Rouge"),         QColor(  0, 220, 255), QColor(255,  45,  45)),
+            (_bicolor_name("Cyan","Violet"),        QColor(  0, 220, 255), QColor(160,  30, 255)),
+            (_bicolor_name("Bleu","Violet"),        QColor( 50, 110, 255), QColor(160,  30, 255)),
+            (_bicolor_name("Bleu","Cyan"),          QColor( 50, 110, 255), QColor(  0, 220, 255)),
+            (_bicolor_name("Bleu","Rose"),          QColor( 50, 110, 255), QColor(255,  80, 160)),
+            (_bicolor_name("Violet","Rose"),        QColor(160,  30, 255), QColor(255,  80, 160)),
+            (_bicolor_name("Magenta","Jaune"),      QColor(255,  20, 210), QColor(255, 230,   0)),
+            (_bicolor_name("Magenta","Cyan"),       QColor(255,  20, 210), QColor(  0, 220, 255)),
+            (_bicolor_name("Rose","Blanc"),         QColor(255,  80, 160), QColor(255, 255, 255)),
+            (_bicolor_name("Blanc","Bleu"),         QColor(255, 255, 255), QColor( 50, 110, 255)),
+            (_bicolor_name("Blanc chaud","Bleu"),   QColor(255, 220, 160), QColor( 50, 110, 255)),
         ]
 
         # ── Creer toutes les swatches comme enfants directs ──────────
@@ -334,7 +366,7 @@ class MemoryDragButton(QPushButton):
             }}
             QPushButton:hover {{ border-color: #00d4ff; border-width: 2px; }}
         """)
-        self.setToolTip(f"Séquence {label}")
+        self.setToolTip(tr("lt_sequence_tooltip", label=label))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -443,53 +475,53 @@ class PalettePanel(QWidget):
     )
 
     COLORS = [
-        ("Rouge",          QColor(255,  45,  45)),
-        ("Rouge vif",      QColor(255,   0,   0)),
-        ("Orange",         QColor(255, 140,  20)),
-        ("Jaune",          QColor(255, 230,   0)),
-        ("Lime",           QColor(140, 255,   0)),
-        ("Vert",           QColor( 30, 210,  60)),
-        ("Turquoise",      QColor(  0, 200, 140)),
-        ("Cyan",           QColor(  0, 220, 255)),
-        ("Bleu ciel",      QColor( 80, 170, 255)),
-        ("Bleu",           QColor( 50, 110, 255)),
-        ("Bleu marine",    QColor( 20,  50, 200)),
-        ("Violet",         QColor(160,  30, 255)),
-        ("Indigo",         QColor( 90,   0, 200)),
-        ("Magenta",        QColor(255,  20, 210)),
-        ("Rose",           QColor(255,  80, 160)),
-        ("Blanc",          QColor(255, 255, 255)),
-        ("Blanc chaud",    QColor(255, 220, 160)),
-        ("Ambre",          QColor(255, 180,  30)),
+        (_cn("Rouge"),          QColor(255,  45,  45)),
+        (_cn("Rouge vif"),      QColor(255,   0,   0)),
+        (_cn("Orange"),         QColor(255, 140,  20)),
+        (_cn("Jaune"),          QColor(255, 230,   0)),
+        (_cn("Lime"),           QColor(140, 255,   0)),
+        (_cn("Vert"),           QColor( 30, 210,  60)),
+        (_cn("Turquoise"),      QColor(  0, 200, 140)),
+        (_cn("Cyan"),           QColor(  0, 220, 255)),
+        (_cn("Bleu ciel"),      QColor( 80, 170, 255)),
+        (_cn("Bleu"),           QColor( 50, 110, 255)),
+        (_cn("Bleu marine"),    QColor( 20,  50, 200)),
+        (_cn("Violet"),         QColor(160,  30, 255)),
+        (_cn("Indigo"),         QColor( 90,   0, 200)),
+        (_cn("Magenta"),        QColor(255,  20, 210)),
+        (_cn("Rose"),           QColor(255,  80, 160)),
+        (_cn("Blanc"),          QColor(255, 255, 255)),
+        (_cn("Blanc chaud"),    QColor(255, 220, 160)),
+        (_cn("Ambre"),          QColor(255, 180,  30)),
     ]
 
     BICOLORS = [
-        ("Rouge + Bleu",       QColor(255,  45,  45), QColor( 50, 110, 255)),
-        ("Rouge + Cyan",       QColor(255,  45,  45), QColor(  0, 220, 255)),
-        ("Rouge + Violet",     QColor(255,  45,  45), QColor(160,  30, 255)),
-        ("Rouge + Orange",     QColor(255,  45,  45), QColor(255, 140,  20)),
-        ("Rouge + Rose",       QColor(255,  45,  45), QColor(255,  80, 160)),
-        ("Rouge + Blanc",      QColor(255,  45,  45), QColor(255, 255, 255)),
-        ("Orange + Bleu",      QColor(255, 140,  20), QColor( 50, 110, 255)),
-        ("Orange + Violet",    QColor(255, 140,  20), QColor(160,  30, 255)),
-        ("Jaune + Violet",     QColor(255, 230,   0), QColor(160,  30, 255)),
-        ("Jaune + Bleu",       QColor(255, 230,   0), QColor( 50, 110, 255)),
-        ("Vert + Rouge",       QColor( 30, 210,  60), QColor(255,  45,  45)),
-        ("Vert + Jaune",       QColor( 30, 210,  60), QColor(255, 230,   0)),
-        ("Vert + Violet",      QColor( 30, 210,  60), QColor(160,  30, 255)),
-        ("Vert + Orange",      QColor( 30, 210,  60), QColor(255, 140,  20)),
-        ("Cyan + Magenta",     QColor(  0, 220, 255), QColor(255,  20, 210)),
-        ("Cyan + Rouge",       QColor(  0, 220, 255), QColor(255,  45,  45)),
-        ("Cyan + Violet",      QColor(  0, 220, 255), QColor(160,  30, 255)),
-        ("Bleu + Violet",      QColor( 50, 110, 255), QColor(160,  30, 255)),
-        ("Bleu + Cyan",        QColor( 50, 110, 255), QColor(  0, 220, 255)),
-        ("Bleu + Rose",        QColor( 50, 110, 255), QColor(255,  80, 160)),
-        ("Violet + Rose",      QColor(160,  30, 255), QColor(255,  80, 160)),
-        ("Magenta + Jaune",    QColor(255,  20, 210), QColor(255, 230,   0)),
-        ("Magenta + Cyan",     QColor(255,  20, 210), QColor(  0, 220, 255)),
-        ("Rose + Blanc",       QColor(255,  80, 160), QColor(255, 255, 255)),
-        ("Blanc + Bleu",       QColor(255, 255, 255), QColor( 50, 110, 255)),
-        ("Blanc chaud + Bleu", QColor(255, 220, 160), QColor( 50, 110, 255)),
+        (_bicolor_name("Rouge", "Bleu"),        QColor(255,  45,  45), QColor( 50, 110, 255)),
+        (_bicolor_name("Rouge", "Cyan"),        QColor(255,  45,  45), QColor(  0, 220, 255)),
+        (_bicolor_name("Rouge", "Violet"),      QColor(255,  45,  45), QColor(160,  30, 255)),
+        (_bicolor_name("Rouge", "Orange"),      QColor(255,  45,  45), QColor(255, 140,  20)),
+        (_bicolor_name("Rouge", "Rose"),        QColor(255,  45,  45), QColor(255,  80, 160)),
+        (_bicolor_name("Rouge", "Blanc"),       QColor(255,  45,  45), QColor(255, 255, 255)),
+        (_bicolor_name("Orange", "Bleu"),       QColor(255, 140,  20), QColor( 50, 110, 255)),
+        (_bicolor_name("Orange", "Violet"),     QColor(255, 140,  20), QColor(160,  30, 255)),
+        (_bicolor_name("Jaune", "Violet"),      QColor(255, 230,   0), QColor(160,  30, 255)),
+        (_bicolor_name("Jaune", "Bleu"),        QColor(255, 230,   0), QColor( 50, 110, 255)),
+        (_bicolor_name("Vert", "Rouge"),        QColor( 30, 210,  60), QColor(255,  45,  45)),
+        (_bicolor_name("Vert", "Jaune"),        QColor( 30, 210,  60), QColor(255, 230,   0)),
+        (_bicolor_name("Vert", "Violet"),       QColor( 30, 210,  60), QColor(160,  30, 255)),
+        (_bicolor_name("Vert", "Orange"),       QColor( 30, 210,  60), QColor(255, 140,  20)),
+        (_bicolor_name("Cyan", "Magenta"),      QColor(  0, 220, 255), QColor(255,  20, 210)),
+        (_bicolor_name("Cyan", "Rouge"),        QColor(  0, 220, 255), QColor(255,  45,  45)),
+        (_bicolor_name("Cyan", "Violet"),       QColor(  0, 220, 255), QColor(160,  30, 255)),
+        (_bicolor_name("Bleu", "Violet"),       QColor( 50, 110, 255), QColor(160,  30, 255)),
+        (_bicolor_name("Bleu", "Cyan"),         QColor( 50, 110, 255), QColor(  0, 220, 255)),
+        (_bicolor_name("Bleu", "Rose"),         QColor( 50, 110, 255), QColor(255,  80, 160)),
+        (_bicolor_name("Violet", "Rose"),       QColor(160,  30, 255), QColor(255,  80, 160)),
+        (_bicolor_name("Magenta", "Jaune"),     QColor(255,  20, 210), QColor(255, 230,   0)),
+        (_bicolor_name("Magenta", "Cyan"),      QColor(255,  20, 210), QColor(  0, 220, 255)),
+        (_bicolor_name("Rose", "Blanc"),        QColor(255,  80, 160), QColor(255, 255, 255)),
+        (_bicolor_name("Blanc", "Bleu"),        QColor(255, 255, 255), QColor( 50, 110, 255)),
+        (_bicolor_name("Blanc chaud", "Bleu"),  QColor(255, 220, 160), QColor( 50, 110, 255)),
     ]
 
     def __init__(self, parent_editor):
@@ -507,7 +539,7 @@ class PalettePanel(QWidget):
             sw = _ColorSwatch(c, label=name)
             sw.mousePressEvent = lambda e, col=c: self._drag_color(e, col)
             color_items.append(sw)
-        v.addWidget(self._make_row("COULEURS", color_items))
+        v.addWidget(self._make_row(tr("lt_palette_colors"), color_items))
         v.addWidget(self._sep())
 
         # ── Bicoleurs ─────────────────────────────────────────────────────
@@ -516,17 +548,17 @@ class PalettePanel(QWidget):
             sw = _ColorSwatch(c1, c2, label=name)
             sw.mousePressEvent = lambda e, a=c1, b=c2: self._drag_bicolor(e, a, b)
             bi_items.append(sw)
-        v.addWidget(self._make_row("BICOLEURS", bi_items))
+        v.addWidget(self._make_row(tr("lt_palette_bicolors"), bi_items))
         v.addWidget(self._sep())
 
         # ── Mémoires ─────────────────────────────────────────────────────
-        mem_row_widget, self._mem_inner = self._make_row_dynamic("MÉMOIRES")
+        mem_row_widget, self._mem_inner = self._make_row_dynamic(tr("lt_palette_memories"))
         v.addWidget(mem_row_widget)
         v.addWidget(self._sep())
 
         # ── Effets ───────────────────────────────────────────────────────
         eff_items = self._build_effect_chips()
-        v.addWidget(self._make_row("EFFETS", eff_items))
+        v.addWidget(self._make_row(tr("lt_palette_effects"), eff_items))
 
         self.refresh()
 
@@ -661,7 +693,7 @@ class PalettePanel(QWidget):
                     count += 1
 
         if count == 0:
-            empty = QLabel("Aucune mémoire")
+            empty = QLabel(tr("lt_no_memory"))
             empty.setStyleSheet("color: #444; font-size: 10px; font-style: italic; background: transparent;")
             inner.addWidget(empty)
 
@@ -1493,10 +1525,10 @@ print(json.dumps(waveform))
                             if mem:
                                 eff = mem.get("effect")
                                 if eff and eff.get("layers"):
-                                    eff_name = eff.get("name") or "Effet personnalisé"
+                                    eff_name = eff.get("name") or tr("lt_custom_effect")
                                     tip += f"<br><small>⚡ {eff_name}</small>"
                                 else:
-                                    tip += "<br><small>Pas d'effet</small>"
+                                    tip += f"<br><small>{tr('lt_no_effect')}</small>"
                     QToolTip.showText(event.globalPosition().toPoint(), tip, self)
                 else:
                     QToolTip.hideText()
@@ -1597,7 +1629,7 @@ print(json.dumps(waveform))
         sl = QHBoxLayout(search_w)
         sl.setContentsMargins(6, 4, 6, 4)
         search_input = QLineEdit()
-        search_input.setPlaceholderText("  Rechercher un effet…")
+        search_input.setPlaceholderText(tr("lt_search_effect_placeholder"))
         search_input.setClearButtonEnabled(True)
         search_input.setStyleSheet("""
             QLineEdit {
@@ -1616,7 +1648,7 @@ print(json.dumps(waveform))
         # ── Effets par catégorie ──────────────────────────────────────────
         categories = {}
         for eff in all_effects:
-            cat = eff.get("category", "Autres")
+            cat = eff.get("category", tr("lt_category_others"))
             categories.setdefault(cat, []).append(eff)
 
         actions_by_name = {}  # name -> QAction
@@ -1655,7 +1687,7 @@ print(json.dumps(waveform))
 
         # Changer l'effet → sous-menu picker identique à la page d'accueil
         cur_name = getattr(clip, 'effect_name', '') or ''
-        changer_label = f"🔀  Changer : {cur_name}" if cur_name else "🔀  Changer l'effet"
+        changer_label = tr("lt_menu_change_effect_named", name=cur_name) if cur_name else tr("lt_menu_change_effect")
         act_change = menu.addAction(changer_label)
         def _open_picker():
             def _select(eff):
@@ -1673,11 +1705,11 @@ print(json.dumps(waveform))
 
         # Couper ici (si le clic est à plus de 200ms des bords)
         if click_pos_in_clip is not None and 200 < click_pos_in_clip < clip.duration - 200:
-            act_cut = menu.addAction("✂️  Couper ici")
+            act_cut = menu.addAction(tr("lt_menu_cut_here"))
             act_cut.triggered.connect(lambda: self.cut_clip_at_position(clip, click_pos_in_clip))
             menu.addSeparator()
 
-        act_del = menu.addAction("🗑  Supprimer")
+        act_del = menu.addAction(tr("lt_menu_delete"))
         act_del.triggered.connect(lambda: self._delete_effect_clip(clip))
         menu.exec(global_pos)
 
@@ -1690,7 +1722,7 @@ print(json.dumps(waveform))
             QMenu::item { padding: 8px 30px; border-radius: 4px; }
             QMenu::item:selected { background: #00d4ff; color: black; }
         """)
-        act_del = menu.addAction("🗑  Supprimer")
+        act_del = menu.addAction(tr("lt_menu_delete"))
         act_del.triggered.connect(lambda: self._delete_clip(clip))
         menu.exec(global_pos)
 
@@ -1785,7 +1817,7 @@ print(json.dumps(waveform))
             ("Bleu/Blanc", QColor(0, 0, 255), QColor(255, 255, 255)),
         ]
 
-        fill_gap_menu = menu.addMenu("🎨 Créer un bloc")
+        fill_gap_menu = menu.addMenu(tr("lt_menu_create_block"))
 
         for name, col in colors:
             action = fill_gap_menu.addAction(f"■ {name}")
@@ -1880,16 +1912,16 @@ print(json.dumps(waveform))
         """)
 
         # === INTENSITE ===
-        intensity_menu = menu.addMenu("📊 Intensité")
+        intensity_menu = menu.addMenu(tr("lt_menu_intensity"))
         for val in [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
             action = intensity_menu.addAction(f"{val}%")
             action.triggered.connect(lambda checked=False, v=val, cl=clip: self.set_clip_intensity(cl, v))
         intensity_menu.addSeparator()
-        custom_action = intensity_menu.addAction("✏️ Personnalisé...")
+        custom_action = intensity_menu.addAction(tr("lt_menu_custom"))
         custom_action.triggered.connect(lambda: self.edit_clip_intensity(clip))
 
         # === COULEUR ===
-        color_menu = menu.addMenu("🎨 Couleur")
+        color_menu = menu.addMenu(tr("lt_menu_color"))
         colors = [
             ("Rouge", QColor(255, 0, 0)),
             ("Vert", QColor(0, 255, 0)),
@@ -1932,30 +1964,30 @@ print(json.dumps(waveform))
         # === MOUVEMENT (piste Lyres) ===
         if self.name == "Lyres":
             menu.addSeparator()
-            move_label = "🎯 Mouvement..."
+            move_label = tr("lt_menu_movement")
             if clip.move_effect:
                 eff_icons = {"cercle":"⭕","figure8":"∞","balayage_h":"↔","balayage_v":"↕","aleatoire":"✦"}
-                move_label = f"🎯 Mouvement : {eff_icons.get(clip.move_effect, clip.move_effect)}..."
+                move_label = tr("lt_menu_movement_named", icon=eff_icons.get(clip.move_effect, clip.move_effect))
             elif clip.pan_start != clip.pan_end or clip.tilt_start != clip.tilt_end:
-                move_label = "🎯 Mouvement : trajectoire..."
+                move_label = tr("lt_menu_movement_traj")
             move_act = menu.addAction(move_label)
             move_act.triggered.connect(lambda: self.edit_clip_movement(clip))
 
         # === FADES ===
         menu.addSeparator()
-        fade_in_action = menu.addAction("🎬 Fade In...")
+        fade_in_action = menu.addAction(tr("lt_menu_fade_in"))
         fade_in_action.triggered.connect(lambda: self.add_clip_fade_in(clip))
-        fade_out_action = menu.addAction("🎬 Fade Out...")
+        fade_out_action = menu.addAction(tr("lt_menu_fade_out"))
         fade_out_action.triggered.connect(lambda: self.add_clip_fade_out(clip))
 
         if clip.fade_in_duration > 0 or clip.fade_out_duration > 0:
-            clear_fades = menu.addAction("❌ Supprimer fades")
+            clear_fades = menu.addAction(tr("lt_menu_clear_fades"))
             clear_fades.triggered.connect(lambda: self.clear_clip_fades(clip))
 
         # === COPIER VERS ===
         menu.addSeparator()
         if hasattr(self.parent_editor, 'tracks'):
-            copy_menu = menu.addMenu("📋 Copier vers...")
+            copy_menu = menu.addMenu(tr("lt_menu_copy_to"))
             for track in self.parent_editor.tracks:
                 if track != self and not track.is_sequence_track and not track.is_effect_track:
                     action = copy_menu.addAction(track.name)
@@ -1964,14 +1996,14 @@ print(json.dumps(waveform))
         # === COUPER ICI ===
         menu.addSeparator()
         if click_pos_in_clip is not None and click_pos_in_clip > 200 and click_pos_in_clip < clip.duration - 200:
-            cut_here_action = menu.addAction("✂️ Couper ici")
+            cut_here_action = menu.addAction(tr("lt_menu_cut_here"))
             cut_here_action.triggered.connect(lambda: self.cut_clip_at_position(clip, click_pos_in_clip))
         else:
-            cut_action = menu.addAction("✂️ Couper en 2")
+            cut_action = menu.addAction(tr("lt_menu_cut_in_two"))
             cut_action.triggered.connect(lambda: self.cut_clip_in_two(clip))
 
         # === SUPPRIMER ===
-        delete_action = menu.addAction("🗑️ Supprimer")
+        delete_action = menu.addAction(tr("lt_menu_delete_clip"))
         delete_action.triggered.connect(lambda: self.delete_clip(clip))
 
         menu.exec(global_pos)
@@ -1985,7 +2017,7 @@ print(json.dumps(waveform))
     def edit_clip_intensity(self, clip):
         """Edite intensite avec dialog style"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("💡 Intensité")
+        dialog.setWindowTitle(tr("lt_dlg_intensity_title"))
         dialog.setFixedSize(350, 200)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
@@ -2016,7 +2048,7 @@ print(json.dumps(waveform))
         layout.addWidget(slider)
 
         btn_layout = QHBoxLayout()
-        cancel = QPushButton("❌ Annuler")
+        cancel = QPushButton(tr("btn_cancel_x"))
         cancel.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel)
         ok = QPushButton("✅ OK")
@@ -2117,7 +2149,7 @@ print(json.dumps(waveform))
     def edit_clip_effect_speed(self, clip):
         """Dialog pour regler la vitesse de l'effet (0=lent, 100=rapide)"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Vitesse de l'effet")
+        dialog.setWindowTitle(tr("lt_dlg_effect_speed_title"))
         dialog.setFixedSize(360, 210)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
@@ -2140,15 +2172,15 @@ print(json.dumps(waveform))
         layout.setContentsMargins(30, 25, 30, 20)
         layout.setSpacing(12)
 
-        value_label = QLabel(f"Vitesse : {clip.effect_speed}%")
+        value_label = QLabel(tr("lt_speed_value", v=clip.effect_speed))
         value_label.setStyleSheet("color: white; font-size: 26px; font-weight: bold;")
         value_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(value_label)
 
         lbl_row = QHBoxLayout()
-        lbl_slow = QLabel("Lent")
+        lbl_slow = QLabel(tr("lt_speed_slow"))
         lbl_slow.setStyleSheet("color: #888; font-size: 11px;")
-        lbl_fast = QLabel("Rapide")
+        lbl_fast = QLabel(tr("lt_speed_fast"))
         lbl_fast.setStyleSheet("color: #888; font-size: 11px;")
         lbl_row.addWidget(lbl_slow)
         lbl_row.addStretch()
@@ -2158,11 +2190,11 @@ print(json.dumps(waveform))
         slider = QSlider(Qt.Horizontal)
         slider.setRange(0, 100)
         slider.setValue(clip.effect_speed)
-        slider.valueChanged.connect(lambda v: value_label.setText(f"Vitesse : {v}%"))
+        slider.valueChanged.connect(lambda v: value_label.setText(tr("lt_speed_value", v=v)))
         layout.addWidget(slider)
 
         btn_layout = QHBoxLayout()
-        cancel = QPushButton("Annuler")
+        cancel = QPushButton(tr("btn_cancel"))
         cancel.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel)
         ok = QPushButton("OK")
@@ -2905,7 +2937,7 @@ class MovementEditorDialog(QDialog):
     def __init__(self, clip, parent=None):
         super().__init__(parent)
         self.clip = clip
-        self.setWindowTitle("Mouvement Pan/Tilt — Lyres")
+        self.setWindowTitle(tr("lt_dlg_movement_title"))
         self.setFixedSize(480, 400)
         self.setStyleSheet(self._DIALOG_STYLE)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -2935,7 +2967,7 @@ class MovementEditorDialog(QDialog):
             return PanTiltPad(pan=pan, tilt=tilt)
 
         # Départ
-        grid.addWidget(QLabel("Position de départ"), 0, 0, Qt.AlignCenter)
+        grid.addWidget(QLabel(tr("lt_move_start_pos")), 0, 0, Qt.AlignCenter)
         self._pad_start = _pad(self.clip.pan_start, self.clip.tilt_start)
         grid.addWidget(self._pad_start, 1, 0, Qt.AlignCenter)
 
@@ -2945,18 +2977,18 @@ class MovementEditorDialog(QDialog):
         grid.addWidget(arrow, 1, 1)
 
         # Arrivée
-        grid.addWidget(QLabel("Position d'arrivée"), 0, 2, Qt.AlignCenter)
+        grid.addWidget(QLabel(tr("lt_move_end_pos")), 0, 2, Qt.AlignCenter)
         self._pad_end = _pad(self.clip.pan_end, self.clip.tilt_end)
         grid.addWidget(self._pad_end, 1, 2, Qt.AlignCenter)
 
         tl.addLayout(grid)
 
         # Bouton "Même position"
-        same_btn = QPushButton("= Même position (pas de mouvement)")
+        same_btn = QPushButton(tr("lt_move_same_pos"))
         same_btn.clicked.connect(self._same_position)
         tl.addWidget(same_btn)
 
-        tabs.addTab(traj_tab, "↗ Trajectoire")
+        tabs.addTab(traj_tab, tr("lt_tab_trajectory"))
 
         # ── Onglet Effet auto ────────────────────────────────────────────
         eff_tab = QWidget()
@@ -2969,7 +3001,7 @@ class MovementEditorDialog(QDialog):
         eff_row = QHBoxLayout()
         eff_row.setSpacing(6)
         self._eff_btns = {}
-        none_btn = QPushButton("⭕ Aucun")
+        none_btn = QPushButton(tr("lt_move_none"))
         none_btn.setCheckable(True)
         none_btn.setChecked(self.clip.move_effect is None)
         none_btn.clicked.connect(lambda: self._select_effect(None))
@@ -2987,7 +3019,7 @@ class MovementEditorDialog(QDialog):
 
         # Vitesse
         spd_row = QHBoxLayout()
-        spd_lbl = QLabel("Vitesse")
+        spd_lbl = QLabel(tr("lt_move_speed"))
         spd_lbl.setFixedWidth(55)
         self._spd_slider = QSlider(Qt.Horizontal)
         self._spd_slider.setRange(1, 30)
@@ -3003,7 +3035,7 @@ class MovementEditorDialog(QDialog):
 
         # Amplitude
         amp_row = QHBoxLayout()
-        amp_lbl = QLabel("Amplitude")
+        amp_lbl = QLabel(tr("lt_move_amplitude"))
         amp_lbl.setFixedWidth(55)
         self._amp_slider = QSlider(Qt.Horizontal)
         self._amp_slider.setRange(5, 120)
@@ -3020,12 +3052,12 @@ class MovementEditorDialog(QDialog):
         # Centre de l'effet
         ctr_row = QHBoxLayout()
         ctr_row.setSpacing(16)
-        ctr_row.addWidget(QLabel("Centre Pan:"))
+        ctr_row.addWidget(QLabel(tr("lt_move_center_pan")))
         self._ctr_pan = QSpinBox()
         self._ctr_pan.setRange(0, 255)
         self._ctr_pan.setValue(self.clip.pan_start)
         ctr_row.addWidget(self._ctr_pan)
-        ctr_row.addWidget(QLabel("Centre Tilt:"))
+        ctr_row.addWidget(QLabel(tr("lt_move_center_tilt")))
         self._ctr_tilt = QSpinBox()
         self._ctr_tilt.setRange(0, 255)
         self._ctr_tilt.setValue(self.clip.tilt_start)
@@ -3034,7 +3066,7 @@ class MovementEditorDialog(QDialog):
         el.addLayout(ctr_row)
         el.addStretch()
 
-        tabs.addTab(eff_tab, "✦ Effet auto")
+        tabs.addTab(eff_tab, tr("lt_tab_auto_effect"))
 
         # Sélectionner l'onglet actif
         tabs.setCurrentIndex(1 if self.clip.move_effect else 0)
@@ -3042,9 +3074,9 @@ class MovementEditorDialog(QDialog):
         # ── Boutons OK/Annuler ──────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        cancel = QPushButton("Annuler")
+        cancel = QPushButton(tr("btn_cancel"))
         cancel.clicked.connect(self.reject)
-        ok = QPushButton("✓ Appliquer")
+        ok = QPushButton(tr("lt_btn_apply"))
         ok.setStyleSheet("QPushButton{background:#005577;color:#00d4ff;border:1px solid #00d4ff;border-radius:4px;padding:6px 20px;font-weight:bold;} QPushButton:hover{background:#006688;}")
         ok.clicked.connect(self._apply)
         btn_row.addWidget(cancel)

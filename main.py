@@ -62,6 +62,7 @@ import platform
 # Imports légers uniquement — tout ce qui est lourd est différé après le splash
 from core import APP_NAME, VERSION, MIDI_AVAILABLE, resource_path
 from updater import SplashScreen, UpdateChecker, AkaiSplashEffect
+from i18n import tr
 
 # Bloc jamais exécuté — uniquement pour que PyInstaller détecte ces modules
 # lors de l'analyse statique et les inclue dans le bundle Mac/Windows.
@@ -83,7 +84,7 @@ def _show_integrity_error():
     )
 
     dlg = QDialog()
-    dlg.setWindowTitle("MyStrow — Erreur d'intégrité")
+    dlg.setWindowTitle(tr("integrity_title"))
     dlg.setFixedWidth(460)
     dlg.setStyleSheet("background:#1a1a1a; color:#e0e0e0;")
 
@@ -96,11 +97,7 @@ def _show_integrity_error():
     icon_lbl.setStyleSheet("font-size:38px; background:transparent;")
     layout.addWidget(icon_lbl)
 
-    msg = QLabel(
-        "L'intégrité de l'application n'a pas pu être vérifiée.\n\n"
-        "Le fichier exécutable semble avoir été modifié.\n"
-        "Veuillez réinstaller l'application depuis le site officiel."
-    )
+    msg = QLabel(tr("integrity_msg"))
     msg.setWordWrap(True)
     msg.setAlignment(Qt.AlignCenter)
     msg.setStyleSheet("font-size:13px; background:transparent; line-height:1.5;")
@@ -108,7 +105,7 @@ def _show_integrity_error():
 
     layout.addSpacing(4)
 
-    btn_dl = QPushButton("⬇  Télécharger l'installeur")
+    btn_dl = QPushButton(tr("integrity_download"))
     btn_dl.setFixedHeight(40)
     btn_dl.setStyleSheet("""
         QPushButton {
@@ -122,7 +119,7 @@ def _show_integrity_error():
     btn_dl.clicked.connect(lambda: webbrowser.open(download_url))
     layout.addWidget(btn_dl)
 
-    btn_close = QPushButton("Fermer")
+    btn_close = QPushButton(tr("close"))
     btn_close.setFixedHeight(34)
     btn_close.setStyleSheet("""
         QPushButton {
@@ -143,8 +140,8 @@ def _show_integrity_error():
 # ------------------------------------------------------------------
 def main():
     """Point d'entree principal de Maestro"""
-    print(f"Demarrage de {APP_NAME} v{VERSION}")
-    print("Mode modulaire active")
+    print(tr("starting", app=APP_NAME, ver=VERSION))
+    print(tr("modular_mode"))
     print("-" * 40)
 
     app = QApplication(sys.argv)
@@ -162,7 +159,7 @@ def main():
     # ------------------------------------------------------------------
     # IMPORTS LOURDS — différés pour que le splash soit visible immédiatement
     # ------------------------------------------------------------------
-    splash.set_status("Chargement...")
+    splash.set_status(tr("loading"))
     app.processEvents()
 
     try:
@@ -198,10 +195,10 @@ def main():
             f"{_meipass_files}\n"
         )
         _dlg = _QDlg()
-        _dlg.setWindowTitle(f"MyStrow {VERSION} — Erreur au démarrage")
+        _dlg.setWindowTitle(tr("startup_error_title", ver=VERSION))
         _dlg.setMinimumSize(680, 420)
         _vl = _QVL(_dlg)
-        _lbl = _QLbl(f"<b>MyStrow {VERSION}</b> — Impossible de charger l'application")
+        _lbl = _QLbl(tr("startup_error_label", ver=VERSION))
         _lbl.setStyleSheet("color:#f44;font-size:13px;padding:4px 0;")
         _vl.addWidget(_lbl)
         _te = _QTE()
@@ -209,7 +206,7 @@ def main():
         _te.setPlainText(_header + _err_msg)
         _te.setStyleSheet("background:#111;color:#f44;font-family:monospace;font-size:11px;")
         _vl.addWidget(_te)
-        _pb = _QPB("Fermer")
+        _pb = _QPB(tr("close"))
         _pb.clicked.connect(_dlg.accept)
         _vl.addWidget(_pb)
         splash.close()
@@ -223,7 +220,7 @@ def main():
     # ------------------------------------------------------------------
     # VERIFICATION INTEGRITE (anti-patch, uniquement en mode frozen)
     # ------------------------------------------------------------------
-    splash.set_status("Verification de l'integrite...")
+    splash.set_status(tr("checking_integrity"))
     app.processEvents()
 
     if not check_exe_integrity():
@@ -234,19 +231,19 @@ def main():
     # ------------------------------------------------------------------
     # LICENCE + AKAI + DMX — tous en parallele
     # ------------------------------------------------------------------
-    splash.set_status("Initialisation...")
+    splash.set_status(tr("initializing"))
     app.processEvents()
 
     _license_box = [None]
     _akai_box    = [False]
-    _dmx_box     = [False, "Non configuré"]  # [ok, label]
+    _dmx_box     = [False, tr("not_configured")]  # [ok, label]
 
     # Déterminer le type de sortie DMX depuis la config pour le splash
-    _dmx_node_label = "Sortie Node"
+    _dmx_node_label = tr("node_output")
     try:
         import json as _j, os as _o
         _cfg = _j.load(open(_o.path.expanduser("~/.mystrow_dmx.json")))
-        _dmx_node_label = "Sortie DMX USB" if _cfg.get("transport") == "enttec" else "Sortie Node"
+        _dmx_node_label = tr("usb_dmx_output") if _cfg.get("transport") == "enttec" else tr("node_output")
     except Exception:
         pass
     splash.set_hw_label("node", _dmx_node_label)
@@ -302,9 +299,9 @@ def main():
                         _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {com}"
                     except Exception:
                         _dmx_box[0] = False
-                        _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {com} hors ligne"
+                        _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {com} {tr('offline')}"
                 else:
-                    _dmx_box[1] = f"{product_name or 'USB DMX'}  —  Non configuré"
+                    _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {tr('not_configured')}"
             else:
                 ip   = cfg.get("target_ip", "")
                 name = product_name or "Electroconcept"
@@ -321,7 +318,7 @@ def main():
                         _dmx_box[0] = None  # orange = inconnu
                 else:
                     _dmx_box[0] = False
-                _dmx_box[1] = name if ip else f"{name}  —  Non configuré"
+                _dmx_box[1] = name if ip else f"{name}  —  {tr('not_configured')}"
         except Exception:
             pass
 
@@ -340,7 +337,7 @@ def main():
         app.processEvents()
 
         if not akai_shown and not t_akai.is_alive():
-            splash.set_hw_status("akai", "Connecte" if _akai_box[0] else "Non detecte", _akai_box[0])
+            splash.set_hw_status("akai", tr("connected") if _akai_box[0] else tr("not_detected"), _akai_box[0])
             app.processEvents()
             akai_shown = True
             if _akai_box[0]:
@@ -358,7 +355,7 @@ def main():
 
     # Afficher les resultats manquants si timeout
     if not akai_shown:
-        splash.set_hw_status("akai", "Non detecte", False)
+        splash.set_hw_status("akai", tr("not_detected"), False)
     if not dmx_shown:
         splash.set_hw_status("node", _dmx_box[1], _dmx_box[0])
 
@@ -367,13 +364,13 @@ def main():
 
     # Afficher le statut licence sur le splash
     _license_labels = {
-        LicenseState.LICENSE_ACTIVE: ("Compte actif", True),
-        LicenseState.TRIAL_ACTIVE: (f"Essai - {license_result.days_remaining}j restants", True),
-        LicenseState.NOT_ACTIVATED: ("—", True),
-        LicenseState.TRIAL_EXPIRED: ("Essai expire", False),
-        LicenseState.LICENSE_EXPIRED: ("Licence expiree", False),
-        LicenseState.INVALID: ("Compte invalide", False),
-        LicenseState.FRAUD_CLOCK: ("Erreur horloge", False),
+        LicenseState.LICENSE_ACTIVE:  (tr("lic_active"), True),
+        LicenseState.TRIAL_ACTIVE:    (tr("lic_trial", days=license_result.days_remaining), True),
+        LicenseState.NOT_ACTIVATED:   (tr("lic_not_activated"), True),
+        LicenseState.TRIAL_EXPIRED:   (tr("lic_trial_expired"), False),
+        LicenseState.LICENSE_EXPIRED: (tr("lic_expired"), False),
+        LicenseState.INVALID:         (tr("lic_invalid"), False),
+        LicenseState.FRAUD_CLOCK:     (tr("lic_clock_error"), False),
     }
     lic_text, lic_ok = _license_labels.get(license_result.state, ("Inconnue", False))
     splash.set_hw_status("license", lic_text, lic_ok)
@@ -383,7 +380,7 @@ def main():
     akai_effect.stop()
 
     # Initialiser la fenetre principale avec le resultat de licence
-    splash.set_status("Initialisation...")
+    splash.set_status(tr("initializing"))
     app.processEvents()
     window = MainWindow(license_result=license_result)
 
@@ -395,7 +392,7 @@ def main():
     elapsed = time.time() - start_time
     remaining_ms = max(0, int((5.0 - elapsed) * 1000))
     if remaining_ms > 0:
-        splash.set_status("Pret !")
+        splash.set_status(tr("ready"))
         app.processEvents()
         loop = QEventLoop()
         QTimer.singleShot(remaining_ms, loop.quit)

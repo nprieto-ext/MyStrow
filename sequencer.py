@@ -36,6 +36,7 @@ except ImportError:
         errorOccurred        = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
 
 from core import fmt_time, media_icon, MIDI_AVAILABLE, rgb_to_akai_velocity, MEDIA_EXTENSIONS_FILTER
+from i18n import tr
 
 
 class Sequencer(QFrame):
@@ -81,6 +82,12 @@ class Sequencer(QFrame):
 
         # Header avec boutons
         header = QHBoxLayout()
+
+        self.autosave_lbl = QLabel()
+        self.autosave_lbl.setStyleSheet("color: #3a8a3a; font-size: 10px;")
+        self.autosave_lbl.hide()
+        header.addWidget(self.autosave_lbl)
+
         header.addStretch()
 
         btn_style = """
@@ -129,9 +136,9 @@ class Sequencer(QFrame):
 
         # Table
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["", "Titre", "Duree", "Vol %", "DMX"])
+        self.table.setHorizontalHeaderLabels(["", tr("seq_col_title"), tr("seq_col_duration"), tr("seq_col_vol"), "DMX"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_row_context_menu)
@@ -141,7 +148,11 @@ class Sequencer(QFrame):
         self.table.setColumnWidth(0, 50)
         self.table.setColumnWidth(2, 90)
         self.table.setColumnWidth(3, 70)
-        self.table.setColumnWidth(4, 155)
+        self.table.setColumnWidth(4, 110)
+        self.table.setAcceptDrops(True)
+        self.table.dragEnterEvent = self._on_drag_enter
+        self.table.dragMoveEvent  = self._on_drag_move
+        self.table.dropEvent      = self._on_drop
         self.table.setStyleSheet("""
             QTableWidget {
                 background: #0a0a0a;
@@ -198,9 +209,16 @@ class Sequencer(QFrame):
                 background: #2a4a5a;
             }
         """)
-        menu.addAction("📁 Ajouter un média", self.add_files_dialog)
-        menu.addAction("⏸ Ajouter une pause", self.add_pause)
+        menu.addAction(tr("seq_menu_add_media"), self.add_files_dialog)
+        menu.addAction(tr("seq_menu_add_pause"), self.add_pause)
         menu.exec(QCursor.pos())
+
+    @staticmethod
+    def _ci(text: str) -> "QTableWidgetItem":
+        """QTableWidgetItem centré."""
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(Qt.AlignCenter)
+        return item
 
     def add_pause(self):
         """Ajoute une pause dans la sequence"""
@@ -214,8 +232,8 @@ class Sequencer(QFrame):
         pause_item = QTableWidgetItem("PAUSE")
         pause_item.setData(Qt.UserRole, "PAUSE")
         self.table.setItem(r, 1, pause_item)
-        self.table.setItem(r, 2, QTableWidgetItem("--:--"))
-        self.table.setItem(r, 3, QTableWidgetItem("--"))
+        self.table.setItem(r, 2, self._ci("--:--"))
+        self.table.setItem(r, 3, self._ci("--"))
         self.table.setCellWidget(r, 4, self._create_dmx_cell_widget(r))
         self.table.selectRow(r)
         self.is_dirty = True
@@ -233,13 +251,13 @@ class Sequencer(QFrame):
             current_seconds = int(data.split(":")[1])
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Durée de la pause")
+        dialog.setWindowTitle(tr("seq_dlg_pause_title"))
         dialog.setMinimumWidth(350)
         dialog.setStyleSheet("background: #1a1a1a; color: white;")
 
         layout = QVBoxLayout(dialog)
 
-        value_label = QLabel(f"Durée: {current_seconds} secondes" if is_timed else "Indéfini (attente manuelle)")
+        value_label = QLabel(tr("seq_duration_seconds", n=current_seconds) if is_timed else tr("seq_indefinite"))
         value_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
         value_label.setAlignment(Qt.AlignCenter)
         value_label.setStyleSheet("color: #ffa500; padding: 10px;")
@@ -271,9 +289,9 @@ class Sequencer(QFrame):
             minutes = value // 60
             seconds = value % 60
             if minutes > 0:
-                value_label.setText(f"Durée: {minutes}m {seconds}s ({value}s)")
+                value_label.setText(tr("seq_duration_min_sec", m=minutes, s=seconds, total=value))
             else:
-                value_label.setText(f"Durée: {value} secondes")
+                value_label.setText(tr("seq_duration_seconds", n=value))
             result["indefini"] = False
 
         slider.valueChanged.connect(update_label)
@@ -281,7 +299,7 @@ class Sequencer(QFrame):
 
         btn_layout = QHBoxLayout()
 
-        indef_btn = QPushButton("♾ Indéfini")
+        indef_btn = QPushButton(tr("seq_btn_indefinite"))
         indef_btn.setStyleSheet("""
             QPushButton {
                 background: #2a2a3a;
@@ -296,7 +314,7 @@ class Sequencer(QFrame):
 
         def set_indefini():
             result["indefini"] = True
-            value_label.setText("Indéfini (attente manuelle)")
+            value_label.setText(tr("seq_indefinite"))
 
         indef_btn.clicked.connect(set_indefini)
         btn_layout.addWidget(indef_btn)
@@ -315,7 +333,7 @@ class Sequencer(QFrame):
         """)
         btn_layout.addWidget(ok_btn)
 
-        cancel_btn = QPushButton("❌ Annuler")
+        cancel_btn = QPushButton(tr("btn_cancel_x"))
         cancel_btn.clicked.connect(dialog.reject)
         cancel_btn.setStyleSheet("""
             QPushButton {
@@ -352,36 +370,62 @@ class Sequencer(QFrame):
             self.is_dirty = True
 
     def _create_dmx_cell_widget(self, row):
-        """Cree le widget composite pour la colonne DMX: combo + indicateur couleur"""
+        """Cree le widget composite pour la colonne DMX: bouton visible + combo caché"""
         container = QWidget()
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignCenter)
 
-        combo = QComboBox()
+        # Combo caché — toute la logique interne continue à l'utiliser
+        combo = QComboBox(container)
         combo.addItems(["Manuel", "IA Lumiere"])
         combo.setCurrentText("Manuel")
-        combo.setStyleSheet("""
-            QComboBox {
-                background: #1a1a1a;
-                border: 1px solid #2a2a2a;
-                border-radius: 3px;
-                padding: 8px 6px;
-                color: #ddd;
-                font-size: 12px;
-                font-weight: bold;
-            }
-        """)
         combo.setObjectName("dmx_combo")
+        combo.hide()
         combo.wheelEvent = lambda event: event.ignore()
         combo.currentTextChanged.connect(
             lambda text, r=row: self.on_dmx_changed(r, text)
         )
-        layout.addWidget(combo)
+
+        # Bouton visible
+        btn = QPushButton("Manuel", container)
+        btn.setObjectName("dmx_btn")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFocusPolicy(Qt.NoFocus)
+        self._style_dmx_btn(btn, "Manuel")
+
+        def _show_mode_menu(_, c=combo, b=btn, r=row):
+            menu = QMenu(b)
+            menu.setStyleSheet("""
+                QMenu { background:#1a1a1a; border:1px solid #2a2a2a; padding:4px; }
+                QMenu::item { padding:6px 18px; color:#ddd; border-radius:3px; }
+                QMenu::item:selected { background:#2a4a5a; }
+                QMenu::separator { height:1px; background:#2a2a2a; margin:3px 8px; }
+            """)
+            for i in range(c.count()):
+                txt = c.itemText(i)
+                act = menu.addAction(txt)
+                act.setCheckable(True)
+                act.setChecked(c.currentText() == txt)
+            menu.addSeparator()
+            rec_act = menu.addAction("✦ Rec Lumière")
+            rec_act.setData("__rec__")
+            chosen = menu.exec(b.mapToGlobal(b.rect().bottomLeft()))
+            if not chosen:
+                return
+            if chosen.data() == "__rec__":
+                QTimer.singleShot(0, lambda: self.open_light_editor_for_row(r))
+            else:
+                mode = chosen.text()
+                QTimer.singleShot(0, lambda m=mode: c.setCurrentText(m))
+
+        btn.clicked.connect(_show_mode_menu)
+        layout.addWidget(btn)
 
         color_btn = QPushButton()
-        color_btn.setFixedSize(18, 18)
-        color_btn.setStyleSheet("background: transparent; border: none; border-radius: 4px;")
+        color_btn.setFixedSize(14, 14)
+        color_btn.setStyleSheet("background: transparent; border: none; border-radius: 3px;")
         color_btn.setVisible(False)
         color_btn.setObjectName("ia_color_indicator")
         color_btn.setCursor(Qt.PointingHandCursor)
@@ -536,19 +580,19 @@ class Sequencer(QFrame):
             print(f"Erreur swap_rows: {e}")
 
     def delete_selected(self):
-        row = self.table.currentRow()
-        if row >= 0:
-            if row == self.current_row:
-                QMessageBox.warning(self, "Suppression impossible",
-                    "Impossible de supprimer un média en cours de lecture.")
-                return
+        rows = sorted({idx.row() for idx in self.table.selectedIndexes()}, reverse=True)
+        if not rows:
+            return
+        if self.current_row in rows:
+            QMessageBox.warning(self, tr("seq_delete_impossible_title"),
+                tr("seq_delete_impossible_msg"))
+            return
+        for row in rows:
             self.table.removeRow(row)
             self._reindex_ia_colors(row)
-            self.is_dirty = True
-            if self.current_row == row:
-                self.current_row = -1
-            elif self.current_row > row:
+            if self.current_row > row:
                 self.current_row -= 1
+        self.is_dirty = True
 
     def _reindex_ia_colors(self, deleted_row):
         """Reindexe ia_colors, ia_analysis et image_durations apres suppression d'une ligne"""
@@ -602,52 +646,84 @@ class Sequencer(QFrame):
         if not item:
             return
 
+        selected_rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
         row = item.row()
-        title_item = self.table.item(row, 1)
-        if not title_item:
-            return
 
-        data = title_item.data(Qt.UserRole)
+        _MENU_SS = """
+            QMenu {
+                background: #1a1a1a;
+                border: 1px solid #2a2a2a;
+                padding: 8px;
+            }
+            QMenu::item {
+                padding: 8px 20px;
+                border-radius: 4px;
+                color: #ddd;
+            }
+            QMenu::item:selected { background: #2a4a5a; }
+        """
 
-        # Menu unifie pour les PAUSE (indefinies et temporisees)
-        if data and (str(data) == "PAUSE" or str(data).startswith("PAUSE:")):
+        # ── Multi-sélection ────────────────────────────────────────────────
+        if len(selected_rows) > 1:
             menu = QMenu(self)
-            menu.setStyleSheet("""
-                QMenu {
-                    background: #1a1a1a;
-                    border: 1px solid #2a2a2a;
-                    padding: 8px;
-                }
-                QMenu::item {
-                    padding: 8px 20px;
-                    border-radius: 4px;
-                    color: #ddd;
-                }
-                QMenu::item:selected {
-                    background: #2a4a5a;
-                }
-            """)
-
-            edit_action = menu.addAction("\u23f1 Définir la durée")
-            rec_action = menu.addAction("\U0001f534 REC Lumière")
-            delete_action = menu.addAction("\U0001f5d1\ufe0f Supprimer")
+            menu.setStyleSheet(_MENU_SS)
+            menu.addAction(f"{len(selected_rows)} tracks sélectionnés").setEnabled(False)
+            menu.addSeparator()
+            ia_act  = menu.addAction("Basculer en IA Lumiere")
+            man_act = menu.addAction("Basculer en Manuel")
+            menu.addSeparator()
+            del_act = menu.addAction(f"Supprimer ({len(selected_rows)})")
 
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
 
+            if action == ia_act or action == man_act:
+                mode = "IA Lumiere" if action == ia_act else "Manuel"
+                for r in selected_rows:
+                    title_item = self.table.item(r, 1)
+                    if not title_item:
+                        continue
+                    d = str(title_item.data(Qt.UserRole) or "")
+                    if d.startswith("PAUSE:") or d == "PAUSE" or d.startswith("TEMPO:"):
+                        continue
+                    combo = self._get_dmx_combo(r)
+                    if combo and combo.currentText() != mode:
+                        combo.blockSignals(True)
+                        combo.setCurrentText(mode)
+                        combo.blockSignals(False)
+                        if mode == "IA Lumiere":
+                            self._apply_ia_style(combo)
+                        else:
+                            self._apply_default_style(combo)
+                self.is_dirty = True
+            elif action == del_act:
+                self.delete_selected()
+            return
+
+        # ── Sélection simple ───────────────────────────────────────────────
+        title_item = self.table.item(row, 1)
+        if not title_item:
+            return
+        data = title_item.data(Qt.UserRole)
+
+        if data and (str(data) == "PAUSE" or str(data).startswith("PAUSE:")):
+            menu = QMenu(self)
+            menu.setStyleSheet(_MENU_SS)
+            edit_action   = menu.addAction(tr("seq_menu_set_duration"))
+            rec_action    = menu.addAction(tr("seq_menu_rec_light"))
+            delete_action = menu.addAction(tr("seq_menu_delete"))
+            action = menu.exec(self.table.viewport().mapToGlobal(pos))
             if action == edit_action:
                 self.edit_pause_duration(row)
             elif action == rec_action:
                 self.open_light_editor_for_row(row)
             elif action == delete_action:
                 if row == self.current_row:
-                    QMessageBox.warning(self, "Suppression impossible",
-                        "Impossible de supprimer un média en cours de lecture.")
+                    QMessageBox.warning(self, tr("seq_delete_impossible_title"),
+                        tr("seq_delete_impossible_msg"))
                 else:
                     self.table.removeRow(row)
                     self._reindex_ia_colors(row)
                     self.is_dirty = True
-
-        # Menu pour les medias
         else:
             self.show_media_context_menu(pos)
 
@@ -668,13 +744,13 @@ class Sequencer(QFrame):
         has_duration = row in self.image_durations
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Durée d'affichage")
+        dialog.setWindowTitle(tr("seq_dlg_display_duration_title"))
         dialog.setMinimumWidth(350)
         dialog.setStyleSheet("background: #1a1a1a; color: white;")
 
         layout = QVBoxLayout(dialog)
 
-        value_label = QLabel(f"Durée: {current_seconds} secondes" if has_duration else "Indéfini (attente manuelle)")
+        value_label = QLabel(tr("seq_duration_seconds", n=current_seconds) if has_duration else tr("seq_indefinite"))
         value_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
         value_label.setAlignment(Qt.AlignCenter)
         value_label.setStyleSheet("color: #ffa500; padding: 10px;")
@@ -706,9 +782,9 @@ class Sequencer(QFrame):
             minutes = value // 60
             seconds = value % 60
             if minutes > 0:
-                value_label.setText(f"Durée: {minutes}m {seconds}s ({value}s)")
+                value_label.setText(tr("seq_duration_min_sec", m=minutes, s=seconds, total=value))
             else:
-                value_label.setText(f"Durée: {value} secondes")
+                value_label.setText(tr("seq_duration_seconds", n=value))
             result["indefini"] = False
 
         slider.valueChanged.connect(update_label)
@@ -716,7 +792,7 @@ class Sequencer(QFrame):
 
         btn_layout = QHBoxLayout()
 
-        indef_btn = QPushButton("♾ Indéfini")
+        indef_btn = QPushButton(tr("seq_btn_indefinite"))
         indef_btn.setStyleSheet("""
             QPushButton {
                 background: #2a2a3a;
@@ -731,7 +807,7 @@ class Sequencer(QFrame):
 
         def set_indefini():
             result["indefini"] = True
-            value_label.setText("Indéfini (attente manuelle)")
+            value_label.setText(tr("seq_indefinite"))
 
         indef_btn.clicked.connect(set_indefini)
         btn_layout.addWidget(indef_btn)
@@ -750,7 +826,7 @@ class Sequencer(QFrame):
         """)
         btn_layout.addWidget(ok_btn)
 
-        cancel_btn = QPushButton("❌ Annuler")
+        cancel_btn = QPushButton(tr("btn_cancel_x"))
         cancel_btn.clicked.connect(dialog.reject)
         cancel_btn.setStyleSheet("""
             QPushButton {
@@ -785,8 +861,33 @@ class Sequencer(QFrame):
 
             self.is_dirty = True
 
+    # ── Drag & drop fichiers ──────────────────────────────────────────────────
+    def _on_drag_enter(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile() and media_icon(url.toLocalFile()) != "file":
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def _on_drag_move(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _on_drop(self, event):
+        if event.mimeData().hasUrls():
+            files = [url.toLocalFile() for url in event.mimeData().urls()
+                     if url.isLocalFile()]
+            if files:
+                self.add_files(files)
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
     def add_files_dialog(self):
-        files = QFileDialog.getOpenFileNames(self, "Ajouter des medias", "", MEDIA_EXTENSIONS_FILTER)[0]
+        files = QFileDialog.getOpenFileNames(self, tr("seq_dlg_add_media_title"), "", MEDIA_EXTENSIONS_FILTER)[0]
         if files:
             self.add_files(files)
 
@@ -807,8 +908,8 @@ class Sequencer(QFrame):
                 it = QTableWidgetItem(Path(f).name)
                 it.setData(Qt.UserRole, f)
                 self.table.setItem(r, 1, it)
-                self.table.setItem(r, 2, QTableWidgetItem("--:--"))
-                self.table.setItem(r, 3, QTableWidgetItem("--" if icon == "image" else "100"))
+                self.table.setItem(r, 2, self._ci("--:--"))
+                self.table.setItem(r, 3, self._ci("--" if icon == "image" else "100"))
 
                 self.table.setCellWidget(r, 4, self._create_dmx_cell_widget(r))
 
@@ -845,47 +946,51 @@ class Sequencer(QFrame):
                 continue
         self.is_dirty = True
 
+    # ── Styles des boutons DMX ────────────────────────────────────────────────
+    _SS_BTN = {
+        "Manuel": (
+            "Manuel",
+            "QPushButton{background:#1c1c1c;border:1px solid #2e2e2e;border-radius:8px;"
+            "color:#555;font-size:11px;padding:3px 10px;}"
+            "QPushButton:hover{border-color:#3a3a3a;color:#888;}"),
+        "IA Lumiere": (
+            "IA",
+            "QPushButton{background:#0d1f3a;border:1px solid #2a5090;border-radius:8px;"
+            "color:#6aadff;font-size:11px;font-weight:bold;padding:3px 10px;}"
+            "QPushButton:hover{background:#152a4a;border-color:#4a80d0;}"),
+        "Play Lumiere": (
+            "▶ Seq",
+            "QPushButton{background:#2a0d0d;border:1px solid #7a2020;border-radius:8px;"
+            "color:#ff7070;font-size:11px;font-weight:bold;padding:3px 10px;}"
+            "QPushButton:hover{background:#3a1010;border-color:#aa3030;}"),
+        "Programme": (
+            "PRG",
+            "QPushButton{background:#0d2a0d;border:1px solid #207020;border-radius:8px;"
+            "color:#70dd70;font-size:11px;font-weight:bold;padding:3px 10px;}"
+            "QPushButton:hover{background:#103010;border-color:#30a030;}"),
+    }
+
+    def _style_dmx_btn(self, btn, mode: str):
+        label, ss = self._SS_BTN.get(mode, (mode, self._SS_BTN["Manuel"][1]))
+        btn.setText(label)
+        btn.setStyleSheet(ss)
+
+    def _refresh_dmx_btn(self, combo):
+        container = combo.parent()
+        if not container:
+            return
+        btn = container.findChild(QPushButton, "dmx_btn")
+        if btn:
+            self._style_dmx_btn(btn, combo.currentText())
+
     def _apply_ia_style(self, combo):
-        """Applique le style IA Lumiere au combo"""
-        combo.setStyleSheet("""
-            QComboBox {
-                background: #1a2a4a;
-                border: none;
-                border-radius: 3px;
-                padding: 8px 6px;
-                color: #aaccff;
-                font-size: 12px;
-                font-weight: bold;
-            }
-        """)
+        self._refresh_dmx_btn(combo)
 
     def _apply_default_style(self, combo):
-        """Applique le style par defaut au combo"""
-        combo.setStyleSheet("""
-            QComboBox {
-                background: #1a1a1a;
-                border: none;
-                border-radius: 3px;
-                padding: 8px 6px;
-                color: #ddd;
-                font-size: 12px;
-                font-weight: bold;
-            }
-        """)
+        self._refresh_dmx_btn(combo)
 
     def _apply_play_lumiere_style(self, combo):
-        """Applique le style Play Lumiere (rouge) au combo"""
-        combo.setStyleSheet("""
-            QComboBox {
-                background: #4a1a1a;
-                border: none;
-                border-radius: 3px;
-                padding: 8px 6px;
-                color: #ffaaaa;
-                font-size: 12px;
-                font-weight: bold;
-            }
-        """)
+        self._refresh_dmx_btn(combo)
 
     def _remove_play_lumiere(self, row):
         """Supprime la sequence lumiere et remet le combo DMX a Manuel"""
@@ -980,7 +1085,7 @@ class Sequencer(QFrame):
         """)
         lay = QVBoxLayout(loading)
         lay.setContentsMargins(15, 10, 15, 10)
-        label = QLabel("Analyse audio en cours...")
+        label = QLabel(tr("seq_analyzing_audio"))
         label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet("font-size: 13px; font-weight: bold;")
         lay.addWidget(label)
@@ -1143,10 +1248,8 @@ class Sequencer(QFrame):
                     # Verifier que le fichier existe
                     if path and not os.path.isfile(path):
                         QMessageBox.critical(
-                            self, "Fichier introuvable",
-                            f"Le media est introuvable :\n\n"
-                            f"{Path(path).name}\n\n"
-                            f"Le fichier a ete deplace, supprime ou renomme.")
+                            self, tr("seq_file_not_found_title"),
+                            tr("seq_file_not_found_msg", name=Path(path).name))
                         return
 
                     vol = int(vol_item.text()) if vol_item.text() not in ("--", "") else 100
@@ -1228,7 +1331,7 @@ class Sequencer(QFrame):
 
             except Exception as e:
                 print(f"Erreur lecture: {e}")
-                QMessageBox.critical(None, "Erreur", f"Impossible de lire: {e}")
+                QMessageBox.critical(None, tr("err_save_title"), tr("seq_err_play_msg", e=e))
 
     def update_tempo_timeline(self):
         """Met a jour la timeline pendant une Pause minutee"""
@@ -1282,15 +1385,9 @@ class Sequencer(QFrame):
 
     def get_dmx_mode(self, row):
         """Recupere le mode DMX d'une ligne"""
-        widget = self.table.cellWidget(row, 4)
-        if widget:
-            if isinstance(widget, QWidget) and not isinstance(widget, QComboBox):
-                for i in range(widget.layout().count() if widget.layout() else 0):
-                    item = widget.layout().itemAt(i)
-                    if item and isinstance(item.widget(), QComboBox):
-                        return item.widget().currentText()
-            elif isinstance(widget, QComboBox):
-                return widget.currentText()
+        combo = self._get_dmx_combo(row)
+        if combo:
+            return combo.currentText()
         return "Manuel"
 
     def toggle_recording(self, row, checked):
@@ -1898,21 +1995,21 @@ class Sequencer(QFrame):
 
         # Volume uniquement pour audio et video
         if media_type in ("audio", "video"):
-            volume_action = menu.addAction("🔊 Volume")
+            volume_action = menu.addAction(tr("seq_menu_volume"))
             volume_action.triggered.connect(lambda: self.edit_media_volume(row))
 
         # Definir la duree uniquement pour les images
         if media_type == "image":
-            duration_action = menu.addAction("\u23f1 Définir la durée")
+            duration_action = menu.addAction(tr("seq_menu_set_duration"))
             duration_action.triggered.connect(lambda: self.edit_image_duration(row))
 
         menu.addSeparator()
 
-        rec_action = menu.addAction("🔴 REC Lumière")
+        rec_action = menu.addAction(tr("seq_menu_rec_light"))
         rec_action.triggered.connect(lambda: self.open_light_editor_for_row(row))
 
         menu.addSeparator()
-        delete_action = menu.addAction("🗑️ Supprimer")
+        delete_action = menu.addAction(tr("seq_menu_delete"))
         delete_action.triggered.connect(lambda: self.delete_media_row(row))
 
         menu.exec(self.table.viewport().mapToGlobal(pos))
@@ -1926,7 +2023,7 @@ class Sequencer(QFrame):
         current_vol = int(vol_item.text())
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Volume")
+        dialog.setWindowTitle(tr("seq_menu_volume"))
         dialog.setFixedSize(350, 200)
         dialog.setStyleSheet("background: #1a1a1a;")
 
@@ -1961,7 +2058,7 @@ class Sequencer(QFrame):
 
         btn_layout = QHBoxLayout()
 
-        cancel = QPushButton("❌ Annuler")
+        cancel = QPushButton(tr("btn_cancel_x"))
         cancel.clicked.connect(dialog.reject)
         cancel.setStyleSheet("background: #3a3a3a; color: white; border: none; border-radius: 6px; padding: 10px 20px;")
         btn_layout.addWidget(cancel)
@@ -1991,8 +2088,8 @@ class Sequencer(QFrame):
     def delete_media_row(self, row):
         """Supprime une ligne du sequenceur"""
         if row == self.current_row:
-            QMessageBox.warning(self, "Suppression impossible",
-                "Impossible de supprimer un média en cours de lecture.")
+            QMessageBox.warning(self, tr("seq_delete_impossible_title"),
+                tr("seq_delete_impossible_msg"))
             return
 
         item = self.table.item(row, 1)
@@ -2000,8 +2097,8 @@ class Sequencer(QFrame):
 
         reply = QMessageBox.question(
             self,
-            "Supprimer media",
-            f"Supprimer '{media_name}' du sequenceur ?",
+            tr("seq_delete_media_title"),
+            tr("seq_delete_media_msg", name=media_name),
             QMessageBox.Yes | QMessageBox.No
         )
 

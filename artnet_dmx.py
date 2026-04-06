@@ -132,12 +132,13 @@ class ArtNetDMX:
 
         # --- Etat commun ---
         self.connected = False
-        self.dmx_data = [0] * 512
+        self.dmx_data = [[0] * 512 for _ in range(4)]  # 4 univers × 512 canaux
 
         # --- Patch projecteurs ---
         self.projector_channels = {}
         self.projector_profiles = {}
-        self.projector_modes = {}     # Retro-compat
+        self.projector_modes = {}       # Retro-compat
+        self.projector_universes = {}   # proj_key -> univers (0-3)
 
         self._load_config()
 
@@ -266,12 +267,12 @@ class ArtNetDMX:
             return False
 
     def _send_enttec(self):
-        """Protocole ENTTEC Open DMX USB : Break + MAB + 0x00 + 512 canaux"""
+        """Protocole ENTTEC Open DMX USB : Break + MAB + 0x00 + 512 canaux (univers 0 uniquement)"""
         if not self._serial or not self._serial.is_open:
             return False
         try:
             self._serial.send_break(duration=0.001)
-            self._serial.write(b'\x00' + bytes(self.dmx_data[:512]))
+            self._serial.write(b'\x00' + bytes(self.dmx_data[0][:512]))
             return True
         except Exception as e:
             print(f"Erreur envoi ENTTEC: {e}")
@@ -297,8 +298,11 @@ class ArtNetDMX:
             self.connected = False
             return False
 
-    def _build_artnet_packet(self, universe, seq):
-        """Construit un paquet ArtDMX pour l'univers donne"""
+    def _build_artnet_packet(self, universe, seq, data_universe=0):
+        """Construit un paquet ArtDMX pour l'univers donne.
+        universe     : numero Art-Net envoye dans le paquet
+        data_universe: indice dans self.dmx_data (0-3) dont les donnees sont utilisees
+        """
         sub_uni = universe & 0xFF
         net     = (universe >> 8) & 0x7F
         return (
@@ -309,20 +313,19 @@ class ArtNetDMX:
             + b'\x00'
             + bytes([sub_uni, net])
             + b'\x02\x00'
-            + bytes(self.dmx_data[:512])
+            + bytes(self.dmx_data[max(0, min(3, data_universe))][:512])
         )
 
     def _send_artnet(self):
-        """Protocole Art-Net ArtDMX (OpCode 0x5000)"""
+        """Protocole Art-Net ArtDMX (OpCode 0x5000) — envoie les 4 univers."""
         if not self._socket or not self.target_ip:
             return False
         try:
             self._artnet_seq = (self._artnet_seq + 1) % 256
-            packet1 = self._build_artnet_packet(self.universe, self._artnet_seq)
-            self._socket.sendto(packet1, (self.target_ip, self.target_port))
-            if self.mirror_output:
-                packet2 = self._build_artnet_packet(self.universe2, self._artnet_seq)
-                self._socket.sendto(packet2, (self.target_ip, self.target_port))
+            for uni_idx in range(4):
+                art_uni = self.universe + uni_idx  # univers Art-Net = base + offset
+                pkt = self._build_artnet_packet(art_uni, self._artnet_seq, data_universe=uni_idx)
+                self._socket.sendto(pkt, (self.target_ip, self.target_port))
             self._last_artnet_error = None
             return True
         except Exception as e:
@@ -356,22 +359,24 @@ class ArtNetDMX:
         else:
             return self._send_artnet()
 
-    def set_channel(self, channel, value):
+    def set_channel(self, channel, value, universe=0):
+        uni = max(0, min(3, int(universe)))
         if 1 <= channel <= 512:
-            self.dmx_data[channel - 1] = max(0, min(255, value))
+            self.dmx_data[uni][channel - 1] = max(0, min(255, value))
 
-    def get_channel(self, channel):
+    def get_channel(self, channel, universe=0):
+        uni = max(0, min(3, int(universe)))
         if 1 <= channel <= 512:
-            return self.dmx_data[channel - 1]
+            return self.dmx_data[uni][channel - 1]
         return 0
 
-    def set_rgb(self, start_channel, r, g, b):
-        self.set_channel(start_channel, r)
-        self.set_channel(start_channel + 1, g)
-        self.set_channel(start_channel + 2, b)
+    def set_rgb(self, start_channel, r, g, b, universe=0):
+        self.set_channel(start_channel,     r, universe)
+        self.set_channel(start_channel + 1, g, universe)
+        self.set_channel(start_channel + 2, b, universe)
 
     def blackout(self):
-        self.dmx_data = [0] * 512
+        self.dmx_data = [[0] * 512 for _ in range(4)]
 
     # ------------------------------------------------------------------
     # Patch projecteurs (inchange)
@@ -398,6 +403,7 @@ class ArtNetDMX:
 
             channels = self.projector_channels[proj_key]
             profile  = self._get_profile(proj_key)
+            universe = self.projector_universes.get(proj_key, 0)
 
             # Fumee
             if "Smoke" in profile:
@@ -406,17 +412,17 @@ class ArtNetDMX:
                 fan_idx   = self._channel_index(profile, "Fan")
                 if smoke_idx >= 0 and smoke_idx < len(channels):
                     smoke = int((proj.level / 100.0) * 255) if not is_muted else 0
-                    self.set_channel(channels[smoke_idx], smoke)
+                    self.set_channel(channels[smoke_idx], smoke, universe)
                 if fan_idx >= 0 and fan_idx < len(channels):
                     fan = getattr(proj, 'fan_speed', 0) if not is_muted else 0
-                    self.set_channel(channels[fan_idx], fan)
+                    self.set_channel(channels[fan_idx], fan, universe)
                 continue
 
             # Mute
             if hasattr(proj, 'muted') and proj.muted:
                 for ch in channels:
                     if ch > 0:
-                        self.set_channel(ch, 0)
+                        self.set_channel(ch, 0, universe)
                 continue
 
             level  = proj.level if hasattr(proj, 'level') else 0
@@ -426,11 +432,38 @@ class ArtNetDMX:
             has_dimmer = dim_idx >= 0 and dim_idx < len(channels)
 
             if has_dimmer:
-                # Canal Dim gere la luminosite : RGB = couleur pure (base_color)
                 bc = getattr(proj, 'base_color', None) or getattr(proj, 'color', None)
-                r = bc.red()   if bc else 0
-                g = bc.green() if bc else 0
-                b = bc.blue()  if bc else 0
+                ec = getattr(proj, 'color', None)
+                # Détecter si un effet a modifié proj.color par rapport à base_color*level
+                effect_active = False
+                if bc and ec and level > 0:
+                    exp_r = int(bc.red()   * level / 100)
+                    exp_g = int(bc.green() * level / 100)
+                    exp_b = int(bc.blue()  * level / 100)
+                    effect_active = (abs(ec.red()   - exp_r) > 4 or
+                                     abs(ec.green() - exp_g) > 4 or
+                                     abs(ec.blue()  - exp_b) > 4)
+                elif ec and level == 0 and (ec.red() or ec.green() or ec.blue()):
+                    # level=0 mais color non noire → effet actif (ex: strobe ON)
+                    effect_active = True
+
+                if effect_active and ec:
+                    # Effet actif : extraire couleur pure + luminosité depuis proj.color
+                    max_c = max(ec.red(), ec.green(), ec.blue())
+                    if max_c > 0:
+                        scale = 255.0 / max_c
+                        r = min(255, int(ec.red()   * scale))
+                        g = min(255, int(ec.green() * scale))
+                        b = min(255, int(ec.blue()  * scale))
+                        dimmer = max_c  # luminosité effective (0-255)
+                    else:
+                        r, g, b = 0, 0, 0
+                        dimmer = 0
+                else:
+                    # Mode normal : RGB = couleur pure (base_color), Dim = level
+                    r = bc.red()   if bc else 0
+                    g = bc.green() if bc else 0
+                    b = bc.blue()  if bc else 0
             else:
                 # Pas de canal Dim : proj.color a deja level applique, ne pas rediviser
                 r = proj.color.red()   if hasattr(proj, 'color') else 0
@@ -451,27 +484,27 @@ class ArtNetDMX:
                     continue
 
                 if ch_type == "R":
-                    self.set_channel(ch, r)
+                    self.set_channel(ch, r, universe)
                 elif ch_type == "G":
-                    self.set_channel(ch, g)
+                    self.set_channel(ch, g, universe)
                 elif ch_type == "B":
-                    self.set_channel(ch, b)
+                    self.set_channel(ch, b, universe)
                 elif ch_type == "W":
-                    self.set_channel(ch, min(r, g, b))
+                    self.set_channel(ch, min(r, g, b), universe)
                 elif ch_type == "Ambre":
                     ambre = int(min(r, g * 0.5) * 0.8) if r > 0 else 0
-                    self.set_channel(ch, ambre)
+                    self.set_channel(ch, ambre, universe)
                 elif ch_type == "Orange":
                     orange = int(min(r, g * 0.6) * 0.9) if r > 0 else 0
-                    self.set_channel(ch, orange)
+                    self.set_channel(ch, orange, universe)
                 elif ch_type == "UV":
-                    self.set_channel(ch, 0)
+                    self.set_channel(ch, 0, universe)
                 elif ch_type == "Zoom":
-                    self.set_channel(ch, getattr(proj, 'zoom', 0))
+                    self.set_channel(ch, getattr(proj, 'zoom', 0), universe)
                 elif ch_type == "Iris":
-                    self.set_channel(ch, getattr(proj, 'iris', 0))
+                    self.set_channel(ch, getattr(proj, 'iris', 0), universe)
                 elif ch_type == "Dim":
-                    self.set_channel(ch, dimmer)
+                    self.set_channel(ch, dimmer, universe)
                 elif ch_type == "Strobe":
                     spd = getattr(proj, 'strobe_speed', 0)
                     if spd > 0:
@@ -480,27 +513,28 @@ class ArtNetDMX:
                         strobe_value = int(16 + (effect_speed / 100.0) * (250 - 16)) if effect_speed > 0 else 100
                     else:
                         strobe_value = 0
-                    self.set_channel(ch, strobe_value)
+                    self.set_channel(ch, strobe_value, universe)
                 elif ch_type == "Pan":
-                    self.set_channel(ch, getattr(proj, 'pan', 128))
+                    self.set_channel(ch, getattr(proj, 'pan', 128), universe)
                 elif ch_type == "PanFine":
-                    self.set_channel(ch, (getattr(proj, 'pan', 128) * 256) % 256)
+                    self.set_channel(ch, (getattr(proj, 'pan', 128) * 256) % 256, universe)
                 elif ch_type == "Tilt":
-                    self.set_channel(ch, getattr(proj, 'tilt', 128))
+                    self.set_channel(ch, getattr(proj, 'tilt', 128), universe)
                 elif ch_type == "TiltFine":
-                    self.set_channel(ch, (getattr(proj, 'tilt', 128) * 256) % 256)
+                    self.set_channel(ch, (getattr(proj, 'tilt', 128) * 256) % 256, universe)
                 elif ch_type == "Gobo1":
-                    self.set_channel(ch, getattr(proj, 'gobo', 0))
+                    self.set_channel(ch, getattr(proj, 'gobo', 0), universe)
                 elif ch_type == "ColorWheel":
-                    self.set_channel(ch, getattr(proj, 'color_wheel', 0))
+                    self.set_channel(ch, getattr(proj, 'color_wheel', 0), universe)
                 elif ch_type == "Shutter":
                     shutter = getattr(proj, 'shutter', 255)
-                    self.set_channel(ch, shutter if not proj.muted else 0)
+                    self.set_channel(ch, shutter if not proj.muted else 0, universe)
                 elif ch_type in ("Gobo2", "Prism", "Focus", "Speed", "Mode"):
-                    self.set_channel(ch, 0)
+                    self.set_channel(ch, 0, universe)
 
-    def set_projector_patch(self, proj_key, channels, profile=None, mode=None):
+    def set_projector_patch(self, proj_key, channels, universe=0, profile=None, mode=None):
         self.projector_channels[proj_key] = channels
+        self.projector_universes[proj_key] = max(0, min(3, int(universe)))
         if profile is not None:
             self.projector_profiles[proj_key] = profile
             name = profile_name(profile)
@@ -513,3 +547,4 @@ class ArtNetDMX:
         self.projector_channels.clear()
         self.projector_modes.clear()
         self.projector_profiles.clear()
+        self.projector_universes.clear()

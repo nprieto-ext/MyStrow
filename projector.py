@@ -12,6 +12,7 @@ class Projector:
         self.name = name              # Nom affiche ("Face 1", "Lyre SL"...)
         self.fixture_type = fixture_type  # Categorie ("PAR LED", "Moving Head"...)
         self.start_address = 1        # Adresse DMX de depart (1-512)
+        self.universe = 0             # Univers Art-Net (0-3)
         self.level = 0
         self.base_color = QColor("white")
         self.color = QColor("black")

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Niveau fader</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #c8c8c8; background: #2d2d2d; padding: 16px; }
+    label { display: block; margin-bottom: 6px; font-weight: bold; }
+    select, input { width: 100%; padding: 6px; background: #1e1e1e; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; }
+    .row { margin-bottom: 14px; }
+    .hint { font-size: 11px; color: #888; margin-top: 4px; }
+    #level_display { font-size: 20px; font-weight: bold; text-align: center; color: #E2CE16; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<div class="row">
+  <label>Fader (0–8)</label>
+  <select id="fader_idx">
+    <option value="0">Fader 0 — Groupe 1</option>
+    <option value="1">Fader 1 — Groupe 2</option>
+    <option value="2">Fader 2 — Groupe 3</option>
+    <option value="3">Fader 3 — Groupe 4</option>
+    <option value="4">Fader 4 — Groupe 5</option>
+    <option value="5">Fader 5 — Groupe 6</option>
+    <option value="6">Fader 6</option>
+    <option value="7">Fader 7</option>
+    <option value="8">Fader 8 — Master</option>
+  </select>
+  <div class="hint">Fader 8 = master général.</div>
+</div>
+
+<div class="row">
+  <label>Valeur cible : <span id="level_display">100%</span></label>
+  <input type="range" id="level_val" min="0" max="100" value="100">
+  <div class="hint">Appuyer sur le bouton fixe le fader à cette valeur.</div>
+</div>
+
+<script>
+var websocket = null, uuid = null;
+
+document.getElementById("level_val").addEventListener("input", function () {
+    document.getElementById("level_display").textContent = this.value + "%";
+});
+
+function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+    uuid = propertyInspectorUUID;
+    var parsed = JSON.parse(actionInfo);
+    var settings = parsed.payload.settings || {};
+
+    if (settings.fader_idx !== undefined) document.getElementById("fader_idx").value = settings.fader_idx;
+    if (settings.level_val !== undefined) {
+        document.getElementById("level_val").value = settings.level_val;
+        document.getElementById("level_display").textContent = settings.level_val + "%";
+    }
+
+    websocket = new WebSocket("ws://127.0.0.1:" + port);
+    websocket.onopen = function () {
+        websocket.send(JSON.stringify({ event: registerEvent, uuid: uuid }));
+    };
+}
+
+function _save() {
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+    websocket.send(JSON.stringify({
+        event:   "setSettings",
+        context: uuid,
+        payload: {
+            fader_idx: document.getElementById("fader_idx").value,
+            level_val: document.getElementById("level_val").value,
+        }
+    }));
+}
+
+document.getElementById("fader_idx").addEventListener("change", _save);
+document.getElementById("level_val").addEventListener("change", _save);
+</script>
+</body>
+</html>

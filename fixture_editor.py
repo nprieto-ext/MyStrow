@@ -16,7 +16,28 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, QRectF, QMimeData, QPoint
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QDrag, QPixmap, QCursor
 
+import gzip
+
 from builtin_fixtures import BUILTIN_FIXTURES
+
+# Cache module du bundle OFL (chargé une seule fois à la demande)
+_OFL_BUNDLE: list | None = None
+
+def _load_ofl_bundle() -> list:
+    """Charge fixtures_bundle.json.gz (OFL) en cache module."""
+    global _OFL_BUNDLE
+    if _OFL_BUNDLE is not None:
+        return _OFL_BUNDLE
+    bundle_path = Path(__file__).parent / "fixtures_bundle.json.gz"
+    if not bundle_path.exists():
+        _OFL_BUNDLE = []
+        return _OFL_BUNDLE
+    try:
+        with gzip.open(bundle_path, "rb") as f:
+            _OFL_BUNDLE = json.loads(f.read().decode("utf-8"))
+    except Exception:
+        _OFL_BUNDLE = []
+    return _OFL_BUNDLE
 
 FIXTURE_FILE = Path.home() / ".mystrow_fixtures.json"
 
@@ -1021,7 +1042,13 @@ class FixtureEditorDialog(QDialog):
         btn_row.addWidget(btn_ok)
         vl.addLayout(btn_row)
 
-        all_fixtures = list(BUILTIN_FIXTURES)
+        # Builtins + bundle OFL (dédupliqués par nom+fabricant)
+        _seen = {(fx["name"], fx.get("manufacturer", "")) for fx in BUILTIN_FIXTURES}
+        ofl_extra = [
+            fx for fx in _load_ofl_bundle()
+            if (fx["name"], fx.get("manufacturer", "")) not in _seen
+        ]
+        all_fixtures = list(BUILTIN_FIXTURES) + ofl_extra
 
         def _fill(q=""):
             lst.clear()

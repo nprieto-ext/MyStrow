@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Effet lumière</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #c8c8c8; background: #2d2d2d; padding: 16px; margin: 0; }
+    label { display: block; margin-bottom: 6px; font-weight: bold; }
+    select { width: 100%; padding: 6px; background: #1e1e1e; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; }
+    .row { margin-bottom: 14px; }
+    .hint { font-size: 11px; color: #888; margin-top: 4px; }
+    .status { font-size: 11px; color: #888; margin-top: 8px; font-style: italic; }
+    .status.ok  { color: #00cc66; }
+    .status.err { color: #cc4444; }
+  </style>
+</head>
+<body>
+
+<div class="row">
+  <label>Effet lumière</label>
+  <select id="effect_idx"></select>
+  <div class="hint">Sélectionnez l'effet à déclencher.</div>
+</div>
+<div id="status" class="status">Connexion à MyStrow…</div>
+
+<script>
+var API = "http://127.0.0.1:8765/api";
+var websocket = null, uuid = null;
+var currentIdx = 0;
+
+function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+    uuid = propertyInspectorUUID;
+    var parsed = JSON.parse(actionInfo);
+    var settings = parsed.payload.settings || {};
+    currentIdx = parseInt(settings.effect_idx, 10) || 0;
+
+    websocket = new WebSocket("ws://127.0.0.1:" + port);
+    websocket.onopen = function () {
+        websocket.send(JSON.stringify({ event: registerEvent, uuid: uuid }));
+    };
+
+    _loadEffects();
+}
+
+function _loadEffects() {
+    fetch(API + "/state", { signal: AbortSignal.timeout(2000) })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(state) {
+            var sel = document.getElementById("effect_idx");
+            sel.innerHTML = "";
+            var effects = (state && state.active_effects) ? state.active_effects : [];
+
+            if (effects.length === 0) {
+                // Fallback : 8 boutons numérotés
+                for (var i = 0; i < 8; i++) {
+                    var opt = document.createElement("option");
+                    opt.value = i;
+                    opt.text  = "Bouton effet " + (i + 1);
+                    if (i === currentIdx) opt.selected = true;
+                    sel.appendChild(opt);
+                }
+                document.getElementById("status").textContent = "MyStrow connecté (aucun nom d'effet)";
+                document.getElementById("status").className = "status ok";
+            } else {
+                for (var j = 0; j < effects.length; j++) {
+                    var e = effects[j];
+                    var opt2 = document.createElement("option");
+                    opt2.value = e.index;
+                    opt2.text  = e.name ? e.name : ("Bouton effet " + (e.index + 1));
+                    if (e.index === currentIdx) opt2.selected = true;
+                    sel.appendChild(opt2);
+                }
+                document.getElementById("status").textContent = "MyStrow connecté — " + effects.length + " effet(s)";
+                document.getElementById("status").className = "status ok";
+            }
+        })
+        .catch(function() {
+            // MyStrow pas encore lancé — afficher liste numérotée
+            var sel = document.getElementById("effect_idx");
+            sel.innerHTML = "";
+            for (var i = 0; i < 8; i++) {
+                var opt = document.createElement("option");
+                opt.value = i;
+                opt.text  = "Bouton effet " + (i + 1);
+                if (i === currentIdx) opt.selected = true;
+                sel.appendChild(opt);
+            }
+            document.getElementById("status").textContent = "MyStrow non détecté — lancez le logiciel puis rouvrez ce panneau.";
+            document.getElementById("status").className = "status err";
+        });
+}
+
+function _save() {
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+    websocket.send(JSON.stringify({
+        event:   "setSettings",
+        context: uuid,
+        payload: { effect_idx: document.getElementById("effect_idx").value }
+    }));
+}
+
+document.getElementById("effect_idx").addEventListener("change", _save);
+</script>
+</body>
+</html>

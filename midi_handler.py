@@ -34,6 +34,9 @@ class MIDIHandler(QObject):
         self.debug_mode = False
         self._midi_queue = []
         self._midi_lock = threading.Lock()
+        # Callback optionnel pour observer les changements LED (ex: tablette)
+        # Signature : led_observer(row, col, color_velocity, brightness_percent)
+        self.led_observer = None
 
         if MIDI_AVAILABLE and rtmidi:
             self.connect_akai()
@@ -328,6 +331,13 @@ class MIDIHandler(QObject):
                 self.midi_out.send_message([midi_channel, note, color_velocity])
         except Exception as e:
             print(f"❌ Erreur set LED: {e}")
+
+        # Notifier l'observateur (tablette) indépendamment du MIDI
+        if self.led_observer:
+            try:
+                self.led_observer(row, col, color_velocity, brightness_percent)
+            except Exception:
+                pass
 
     def set_fader(self, fader_idx, value):
         """Met a jour l'etat d'un fader (pour le feedback visuel)"""

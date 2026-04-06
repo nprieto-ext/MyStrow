@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Scène lumière</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #c8c8c8; background: #2d2d2d; padding: 16px; }
+    label { display: block; margin-bottom: 6px; font-weight: bold; }
+    select { width: 100%; padding: 6px; background: #1e1e1e; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; margin-bottom: 14px; }
+    .hint { font-size: 11px; color: #888; margin-top: -10px; margin-bottom: 14px; }
+    .preview { width: 100%; height: 36px; border-radius: 6px; border: 1px solid #555; margin-bottom: 14px;
+               display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; }
+    .status { font-size: 11px; color: #aaa; text-align: center; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  </style>
+</head>
+<body>
+
+<label>Colonne mémoire (0–7)</label>
+<select id="mem_col">
+  <option value="0">Colonne 0</option>
+  <option value="1">Colonne 1</option>
+  <option value="2">Colonne 2</option>
+  <option value="3">Colonne 3</option>
+  <option value="4">Colonne 4</option>
+  <option value="5">Colonne 5</option>
+  <option value="6">Colonne 6</option>
+  <option value="7">Colonne 7</option>
+</select>
+
+<label>Rangée (0–7)</label>
+<select id="mem_row">
+  <option value="0">Rangée 0</option>
+  <option value="1">Rangée 1</option>
+  <option value="2">Rangée 2</option>
+  <option value="3">Rangée 3</option>
+  <option value="4">Rangée 4</option>
+  <option value="5">Rangée 5</option>
+  <option value="6">Rangée 6</option>
+  <option value="7">Rangée 7</option>
+</select>
+
+<div class="preview" id="preview" style="background:#1e1e1e; color:#666;">
+  Chargement...
+</div>
+<div class="status" id="status"></div>
+
+<script>
+var websocket = null, uuid = null;
+var _refreshTimer = null;
+
+function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+    uuid = propertyInspectorUUID;
+    var parsed = JSON.parse(actionInfo);
+    var settings = parsed.payload.settings || {};
+
+    if (settings.mem_col !== undefined) document.getElementById("mem_col").value = settings.mem_col;
+    if (settings.mem_row !== undefined) document.getElementById("mem_row").value = settings.mem_row;
+
+    websocket = new WebSocket("ws://127.0.0.1:" + port);
+    websocket.onopen = function () {
+        websocket.send(JSON.stringify({ event: registerEvent, uuid: uuid }));
+        _refreshPreview();
+        _refreshTimer = setInterval(_refreshPreview, 3000);
+    };
+}
+
+function _save() {
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+    websocket.send(JSON.stringify({
+        event: "setSettings",
+        context: uuid,
+        payload: {
+            mem_col: document.getElementById("mem_col").value,
+            mem_row: document.getElementById("mem_row").value,
+        }
+    }));
+    _refreshPreview();
+}
+
+function _refreshPreview() {
+    var mc  = parseInt(document.getElementById("mem_col").value, 10);
+    var row = parseInt(document.getElementById("mem_row").value, 10);
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", "http://127.0.0.1:8765/api/scenes", true);
+    xhr.timeout = 1200;
+    xhr.onload = function () {
+        if (xhr.status !== 200) { _setPreviewError(); return; }
+        try {
+            var data = JSON.parse(xhr.responseText);
+            var pad  = data.scenes[mc][row];
+            var prev = document.getElementById("preview");
+            var stat = document.getElementById("status");
+            if (!pad.stored) {
+                prev.style.background = "#1e1e1e";
+                prev.style.color = "#555";
+                prev.textContent = "Aucune scène enregistrée";
+                stat.textContent = "";
+            } else {
+                prev.style.background = pad.color;
+                prev.style.color = _contrastColor(pad.color);
+                prev.textContent = pad.active ? "● ACTIVE" : "Scène enregistrée";
+                stat.innerHTML = pad.active
+                    ? '<span class="dot" style="background:#22c55e"></span>En cours'
+                    : '<span class="dot" style="background:#555"></span>En attente';
+            }
+        } catch (e) { _setPreviewError(); }
+    };
+    xhr.onerror = xhr.ontimeout = _setPreviewError;
+    xhr.send();
+}
+
+function _setPreviewError() {
+    var prev = document.getElementById("preview");
+    prev.style.background = "#1e1e1e";
+    prev.style.color = "#cc3333";
+    prev.textContent = "MyStrow non connecté";
+    document.getElementById("status").textContent = "";
+}
+
+function _contrastColor(hex) {
+    var r = parseInt(hex.slice(1,3),16);
+    var g = parseInt(hex.slice(3,5),16);
+    var b = parseInt(hex.slice(5,7),16);
+    return (r*0.299 + g*0.587 + b*0.114) > 128 ? "#000" : "#fff";
+}
+
+document.getElementById("mem_col").addEventListener("change", _save);
+document.getElementById("mem_row").addEventListener("change", _save);
+</script>
+</body>
+</html>

@@ -35,14 +35,18 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.0.63"
+VERSION = "3.0.65"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
 FIREBASE_PROJECT_ID = "mystrow-907be"
 try:
-    # Surcharge locale optionnelle (dev only)
-    from firebase_config import FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+    # Surcharge locale optionnelle (dev only) — ignorée si la clé est vide
+    import firebase_config as _fc
+    if getattr(_fc, "FIREBASE_API_KEY", ""):
+        FIREBASE_API_KEY = _fc.FIREBASE_API_KEY
+    if getattr(_fc, "FIREBASE_PROJECT_ID", ""):
+        FIREBASE_PROJECT_ID = _fc.FIREBASE_PROJECT_ID
 except ImportError:
     pass
 

@@ -4,6 +4,7 @@ DualColorButton, EffectButton, FaderButton, ApcFader
 """
 import json
 from pathlib import Path
+from i18n import tr
 from PySide6.QtWidgets import (
     QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
     QDoubleSpinBox, QLineEdit,
@@ -59,19 +60,22 @@ class DualColorButton(QPushButton):
             painter.drawRoundedRect(1, 1, 26, 26, 4, 4)
 
 
-EFFECT_PRESETS = [
-    ("⭕ Aucun",           None,           "#2a2a2a"),
-    ("⚡ Strobe",          "Strobe",        "#ffffff"),
-    ("💥 Flash",           "Flash",         "#ffff00"),
-    ("💜 Pulse",           "Pulse",         "#ff00ff"),
-    ("🌊 Vague",           "Wave",          "#00ffff"),
-    ("☄️ Comète",          "Comete",        "#ff8800"),
-    ("🌈 Rainbow",         "Rainbow",       "#00ff00"),
-    ("🌠 Etoile Filante",  "Etoile Filante","#aaddff"),
-    ("🔥 Feu",             "Fire",          "#ff4400"),
-    ("⬜ Passage Blanc",   "Chase",         "#e0e0e0"),
-    ("↔️ Bascule",         "Bascule",       "#44ccff"),
-]
+def _effect_presets():
+    return [
+        (tr("uic_effect_none"),         None,           "#2a2a2a"),
+        ("⚡ Strobe",                   "Strobe",        "#ffffff"),
+        ("💥 Flash",                    "Flash",         "#ffff00"),
+        ("💜 Pulse",                    "Pulse",         "#ff00ff"),
+        (tr("uic_effect_wave"),         "Wave",          "#00ffff"),
+        (tr("uic_effect_comet"),        "Comete",        "#ff8800"),
+        ("🌈 Rainbow",                  "Rainbow",       "#00ff00"),
+        (tr("uic_effect_shooting_star"),"Etoile Filante","#aaddff"),
+        ("🔥 Feu",                      "Fire",          "#ff4400"),
+        (tr("uic_effect_white_chase"),  "Chase",         "#e0e0e0"),
+        (tr("uic_effect_bascule"),      "Bascule",       "#44ccff"),
+    ]
+
+EFFECT_PRESETS = _effect_presets()
 
 # Effet par defaut pour chaque bouton (index 0-8)
 DEFAULT_EFFECTS = [
@@ -116,7 +120,7 @@ class EffectButton(QPushButton):
     def _tooltip(self):
         """Genere le tooltip avec emoji + nom de l'effet"""
         if not self.current_effect:
-            return "Aucun effet"
+            return tr("uic_tooltip_no_effect")
         for label, name, _ in EFFECT_PRESETS:
             if name == self.current_effect:
                 return label
@@ -164,7 +168,7 @@ class EffectButton(QPushButton):
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(6, 4, 6, 4)
         search_input = QLineEdit()
-        search_input.setPlaceholderText("  Rechercher un effet…")
+        search_input.setPlaceholderText(tr("uic_search_effect_ph"))
         search_input.setClearButtonEnabled(True)
         search_input.setStyleSheet("""
             QLineEdit {
@@ -208,21 +212,36 @@ class EffectButton(QPushButton):
             return False
 
         # Option "Aucun"
-        act_none = menu.addAction("⭕  Aucun")
+        act_none = menu.addAction(tr("uic_menu_none"))
         act_none.setCheckable(True)
         act_none.setChecked(not cur)
         act_none.triggered.connect(lambda: self._select_editor_effect(None))
         sep_top = menu.addSeparator()
 
         # Grouper par catégorie et garder les références pour le filtrage
-        CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
+        # Clés internes (dans les données d'effets) → libellé traduit affiché
+        _CAT_KEYS = [
+            "Strobe / Flash", "Mouvement", "Ambiance", "Couleur",
+            "Spécial", "Personnalisés", "Mes Effets",
+        ]
+        _CAT_LABELS = {
+            "Strobe / Flash": tr("uic_cat_strobe_flash"),
+            "Mouvement":      tr("uic_cat_mouvement"),
+            "Ambiance":       tr("uic_cat_ambiance"),
+            "Couleur":        tr("uic_cat_couleur"),
+            "Spécial":        tr("uic_cat_special"),
+            "Personnalisés":  tr("uic_cat_perso"),
+            "Mes Effets":     tr("uic_cat_mes_effets"),
+        }
+        CATS = _CAT_KEYS
         # cat_groups : [(hdr_act, sep_act_before, [(eff_act, eff_name), ...])]
         cat_groups = []
         for cat in CATS:
             cat_effs = [e for e in all_effects if e.get("category") == cat]
             if not cat_effs:
                 continue
-            hdr = menu.addAction(f"  {cat.upper()}")
+            cat_display = _CAT_LABELS.get(cat, cat)
+            hdr = menu.addAction(f"  {cat_display.upper()}")
             hdr.setEnabled(False)
             eff_actions = []
             for eff in cat_effs:
@@ -269,7 +288,7 @@ class EffectButton(QPushButton):
 
         # ── Sous-menu Mode de déclenchement ──────────────────────────────────
         menu.addSeparator()
-        trig_menu = menu.addMenu("  ⏱  Mode de déclenchement")
+        trig_menu = menu.addMenu(tr("uic_trigger_mode_menu"))
         trig_menu.setStyleSheet("""
             QMenu {
                 background: #1a1a1a;
@@ -285,17 +304,17 @@ class EffectButton(QPushButton):
         def _trig_checked(mode):
             return self.trigger_mode == mode
 
-        act_tog = trig_menu.addAction("↕  Toggle (appui/relâche)")
+        act_tog = trig_menu.addAction(tr("uic_trigger_toggle"))
         act_tog.setCheckable(True)
         act_tog.setChecked(_trig_checked("toggle"))
         act_tog.triggered.connect(lambda: self._set_trigger_mode("toggle"))
 
-        act_fla = trig_menu.addAction("⚡  Flash (maintenir enfoncé)")
+        act_fla = trig_menu.addAction(tr("uic_trigger_flash"))
         act_fla.setCheckable(True)
         act_fla.setChecked(_trig_checked("flash"))
         act_fla.triggered.connect(lambda: self._set_trigger_mode("flash"))
 
-        act_tim = trig_menu.addAction("⏳  Timer (durée automatique)")
+        act_tim = trig_menu.addAction(tr("uic_trigger_timer"))
         act_tim.setCheckable(True)
         act_tim.setChecked(_trig_checked("timer"))
         act_tim.triggered.connect(lambda: self._set_trigger_mode("timer"))
@@ -306,7 +325,7 @@ class EffectButton(QPushButton):
         dur_layout = QHBoxLayout(dur_widget)
         dur_layout.setContentsMargins(16, 4, 16, 4)
         dur_layout.setSpacing(6)
-        dur_lbl = QLabel("Durée :")
+        dur_lbl = QLabel(tr("uic_duration_label"))
         dur_lbl.setStyleSheet("color: #aaa; font-size: 11px; background: transparent;")
         dur_spin = QDoubleSpinBox()
         dur_spin.setRange(0.1, 60.0)
@@ -331,7 +350,7 @@ class EffectButton(QPushButton):
         trig_menu.addAction(dur_wa)
 
         menu.addSeparator()
-        act_editor = menu.addAction("🎨  Éditeur d'effets")
+        act_editor = menu.addAction(tr("uic_effect_editor_menu"))
         act_editor.triggered.connect(lambda: self.open_editor_requested.emit(self.index))
 
         menu.exec(self.mapToGlobal(pos))
@@ -362,7 +381,7 @@ class EffectButton(QPushButton):
         else:
             self.current_effect = cfg_or_none.get("name", "")
             self.active = bool(self.current_effect)
-        self.setToolTip(self.current_effect or "Aucun effet")
+        self.setToolTip(self.current_effect or tr("uic_tooltip_no_effect"))
         self.update_style()
         cfg = dict(cfg_or_none) if cfg_or_none else {}
         self.effect_config_selected.emit(self.index, cfg)
@@ -533,7 +552,7 @@ class CartoucheButton(QPushButton):
         if self.media_title:
             label = f"{self.media_icon} {self.media_title}" if self.media_icon else self.media_title
         else:
-            label = f"Cartouche {self.index + 1}"
+            label = tr("uic_cartouche_label", n=self.index + 1)
         vol_str = f"   {self.volume}%" if self.volume < 100 else ""
         self.setText(label + vol_str)
 

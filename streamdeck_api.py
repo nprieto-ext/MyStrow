@@ -36,10 +36,12 @@ class _StreamDeckBridge(QObject):
     play_requested     = Signal()
     next_requested     = Signal()
     prev_requested     = Signal()
-    blackout_requested = Signal()
     level_requested    = Signal(int, int)   # (fader_idx, value 0-100)
+    level_rel_requested= Signal(int, int)   # (fader_idx, delta -100..+100)
     effect_requested   = Signal(int)        # effect_idx 0-7
     mute_requested     = Signal(int, bool)  # (fader_idx, active)
+    scene_requested    = Signal(int, int)   # (mem_col 0-7, row 0-7)
+    goto_seq_requested = Signal(int)        # row index
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +88,56 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
             parts = self._parts()
             if parts == ["api", "state"]:
                 self._handle_state()
+            elif parts == ["api", "scenes"]:
+                self._handle_scenes()
+            elif parts == ["api", "sequences"]:
+                self._handle_sequences()
             else:
                 self._send_error("Not found", 404)
+
+        def _handle_sequences(self):
+            w = window_ref[0]
+            if w is None:
+                self._send_json({"error": "not ready"}, 503)
+                return
+            try:
+                items = []
+                tbl = w.seq.table
+                for r in range(tbl.rowCount()):
+                    title_item = tbl.item(r, 1)
+                    type_item  = tbl.item(r, 0)
+                    items.append({
+                        "index": r,
+                        "title": title_item.text() if title_item else "",
+                        "type":  type_item.text()  if type_item  else "media",
+                    })
+                self._send_json({"sequences": items, "current_row": w.seq.current_row})
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, 500)
+
+        def _handle_scenes(self):
+            w = window_ref[0]
+            if w is None:
+                self._send_json({"error": "not ready"}, 503)
+                return
+            try:
+                scenes = []
+                for mc in range(8):
+                    col = []
+                    col_akai = w._mem_col_to_fader(mc)
+                    for r in range(8):
+                        mem = w.memories[mc][r]
+                        active = w.active_memory_pads.get(col_akai) == r
+                        color = w._get_memory_pad_color(mc, r)
+                        col.append({
+                            "stored": mem is not None,
+                            "active": active,
+                            "color":  color.name() if color else "#000000",
+                        })
+                    scenes.append(col)
+                self._send_json({"scenes": scenes})
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, 500)
 
         def _handle_state(self):
             w = window_ref[0]
@@ -135,6 +185,29 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     for p in w.projectors
                 ]
 
+                # Scènes mémoire (8×8)
+                scenes = []
+                for mc in range(8):
+                    col_akai = w._mem_col_to_fader(mc)
+                    col = []
+                    for r in range(8):
+                        mem   = w.memories[mc][r]
+                        act   = w.active_memory_pads.get(col_akai) == r
+                        color = w._get_memory_pad_color(mc, r)
+                        col.append({
+                            "stored": mem is not None,
+                            "active": act,
+                            "color":  color.name() if color else "#000000",
+                        })
+                    scenes.append(col)
+
+                # Entrées du séquenceur (pour l'action "Lancer une séquence")
+                tbl = w.seq.table
+                seq_items = []
+                for r in range(tbl.rowCount()):
+                    ti = tbl.item(r, 1)
+                    seq_items.append({"index": r, "title": ti.text() if ti else ""})
+
                 self._send_json({
                     "playing":       is_playing,
                     "pause_mode":    w.pause_mode,
@@ -143,6 +216,8 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     "fader_levels":  fader_levels,
                     "active_effects": active_effects,
                     "projectors":    projectors,
+                    "scenes":        scenes,
+                    "seq_items":     seq_items,
                 })
             except Exception as exc:
                 self._send_json({"error": str(exc)}, 500)
@@ -170,20 +245,22 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                 bridge.prev_requested.emit()
                 self._send_json({"ok": True})
 
-            elif action == "blackout":
-                bridge.blackout_requested.emit()
-                self._send_json({"ok": True})
-
             elif action == "level":
                 # POST /api/level/{fader_idx 0-8}/{value 0-100}
+                # POST /api/level/{fader_idx 0-8}/+N or -N  (relatif, encodeur rotatif)
                 try:
                     idx = int(parts[2])
-                    val = int(parts[3])
+                    raw = parts[3]
                     if not (0 <= idx <= 8):
                         raise ValueError("fader_idx hors plage 0-8")
-                    if not (0 <= val <= 100):
-                        raise ValueError("value hors plage 0-100")
-                    bridge.level_requested.emit(idx, val)
+                    if raw.startswith("+") or (raw.startswith("-") and raw != "-0"):
+                        delta = int(raw)
+                        bridge.level_rel_requested.emit(idx, delta)
+                    else:
+                        val = int(raw)
+                        if not (0 <= val <= 100):
+                            raise ValueError("value hors plage 0-100")
+                        bridge.level_requested.emit(idx, val)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
                     self._send_error(f"Usage: /api/level/{{0-8}}/{{0-100}} — {exc}")
@@ -210,6 +287,29 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
                     self._send_error(f"Usage: /api/mute/{{0-7}}/{{0|1}} — {exc}")
+
+            elif action == "scene":
+                # POST /api/scene/{mem_col 0-7}/{row 0-7}
+                try:
+                    mc  = int(parts[2])
+                    row = int(parts[3])
+                    if not (0 <= mc  <= 7):
+                        raise ValueError("mem_col hors plage 0-7")
+                    if not (0 <= row <= 7):
+                        raise ValueError("row hors plage 0-7")
+                    bridge.scene_requested.emit(mc, row)
+                    self._send_json({"ok": True})
+                except (IndexError, ValueError) as exc:
+                    self._send_error(f"Usage: /api/scene/{{0-7}}/{{0-7}} — {exc}")
+
+            elif action == "goto":
+                # POST /api/goto/{row}
+                try:
+                    row = int(parts[2])
+                    bridge.goto_seq_requested.emit(row)
+                    self._send_json({"ok": True})
+                except (IndexError, ValueError) as exc:
+                    self._send_error(f"Usage: /api/goto/{{row}} — {exc}")
 
             else:
                 self._send_error(f"Action inconnue : {action}", 404)
@@ -248,10 +348,21 @@ class StreamDeckAPIServer:
         b.play_requested.connect(window.toggle_play)
         b.next_requested.connect(window.next_media)
         b.prev_requested.connect(window.previous_media)
-        b.blackout_requested.connect(window.full_blackout)
         b.level_requested.connect(window.set_proj_level)
+        b.level_rel_requested.connect(self._on_level_rel)
         b.effect_requested.connect(window.toggle_effect)
         b.mute_requested.connect(window.toggle_mute)
+        b.scene_requested.connect(window.trigger_memory)
+        b.goto_seq_requested.connect(window.seq.play_row)
+
+    def _on_level_rel(self, idx, delta):
+        """Ajuste un fader de façon relative (pour l'encodeur rotatif)."""
+        w = self._window_ref[0]
+        if w is None or idx not in w.faders:
+            return
+        current = w.faders[idx].value()
+        new_val = max(0, min(100, current + delta))
+        w.set_proj_level(idx, new_val)
 
     # ── cycle de vie ────────────────────────────────────────────────────────
 
