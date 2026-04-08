@@ -836,6 +836,80 @@ def register_account(email: str, password: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+def subscribe_newsletter(email: str) -> tuple[bool, str]:
+    """
+    Abonne l'email à la newsletter Brevo et sauvegarde le consentement localement.
+    La langue de l'interface (fr/en) est automatiquement transmise à Brevo.
+    Retourne (success: bool, message: str).
+    """
+    try:
+        from i18n import get_language
+        lang = get_language()
+
+        import brevo_client as bc
+        bc.subscribe_contact(email, lang=lang)
+
+        # Cache local
+        machine_id = get_machine_id()
+        account = _load_account(machine_id)
+        if account:
+            account["newsletter_consent"] = True
+            account["lang"] = lang
+            _save_account(machine_id, account)
+
+        # Persistance Firestore
+        uid = (account or {}).get("uid")
+        id_token = _get_fresh_token()
+        if uid and id_token:
+            import firebase_client as fc
+            fc.update_newsletter_consent(uid, id_token, True, lang=lang)
+        return True, "Abonnement confirmé !"
+    except Exception as e:
+        return False, str(e)
+
+
+def unsubscribe_newsletter(email: str) -> tuple[bool, str]:
+    """
+    Désabonne l'email de la newsletter Brevo et met à jour le consentement localement.
+    Retourne (success: bool, message: str).
+    """
+    try:
+        import brevo_client as bc
+        bc.unsubscribe_contact(email)
+        # Cache local
+        machine_id = get_machine_id()
+        account = _load_account(machine_id)
+        if account:
+            account["newsletter_consent"] = False
+            _save_account(machine_id, account)
+        # Persistance Firestore
+        uid = (account or {}).get("uid")
+        id_token = _get_fresh_token()
+        if uid and id_token:
+            import firebase_client as fc
+            fc.update_newsletter_consent(uid, id_token, False)
+        return True, "Désabonné avec succès."
+    except Exception as e:
+        return False, str(e)
+
+
+def _get_fresh_token() -> str | None:
+    """Retourne un id_token valide depuis le cache local, ou None si indisponible."""
+    try:
+        machine_id = get_machine_id()
+        account = _load_account(machine_id)
+        if not account:
+            return None
+        refresh_token = account.get("refresh_token")
+        if not refresh_token:
+            return None
+        import firebase_client as fc
+        result = fc.refresh_id_token(refresh_token)
+        return result.get("id_token")
+    except Exception:
+        return None
+
+
 def deactivate_machine() -> tuple[bool, str]:
     """
     Deconnecte cette machine : retire machine_id de Firestore et supprime le compte local.
@@ -915,6 +989,7 @@ def get_license_info() -> dict:
                 "last_verified": datetime.fromtimestamp(
                     account.get("last_verified_utc", 0), tz=timezone.utc
                 ).strftime("%Y-%m-%d %H:%M UTC"),
+                "newsletter_consent": account.get("newsletter_consent", False),
             })
         else:
             info["status"] = "non_connecte"

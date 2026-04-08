@@ -18,6 +18,7 @@ from license_manager import (
     LicenseState, LicenseResult,
     login_account, verify_license,
     deactivate_machine, get_license_info,
+    subscribe_newsletter, unsubscribe_newsletter,
 )
 
 
@@ -592,6 +593,34 @@ class ActivationDialog(QDialog):
         layout.addSpacing(2)
         layout.addWidget(self._acct_machines_detail)
 
+        # ── Newsletter ────────────────────────────────────────────────────
+        layout.addSpacing(10)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background: #222; border: none; max-height: 1px;")
+        layout.addWidget(sep)
+        layout.addSpacing(6)
+
+        self._newsletter_checkbox = QCheckBox(tr("newsletter_subscribe"))
+        self._newsletter_checkbox.setFont(QFont("Segoe UI", 10))
+        self._newsletter_checkbox.setStyleSheet("""
+            QCheckBox { color: #888; background: transparent; }
+            QCheckBox::indicator {
+                width: 14px; height: 14px;
+                border: 1px solid #444; border-radius: 3px; background: #1e1e1e;
+            }
+            QCheckBox::indicator:checked {
+                background: #00d4ff; border-color: #00d4ff;
+            }
+        """)
+        self._newsletter_checkbox.stateChanged.connect(self._do_toggle_newsletter)
+        layout.addWidget(self._newsletter_checkbox)
+
+        self._newsletter_status = QLabel()
+        self._newsletter_status.setFont(QFont("Segoe UI", 9))
+        self._newsletter_status.setFixedHeight(18)
+        layout.addWidget(self._newsletter_status)
+
         layout.addStretch()
 
         self._acct_logout_status = QLabel()
@@ -834,6 +863,12 @@ class ActivationDialog(QDialog):
         info = get_license_info()
         email = info.get("email", "—")
 
+        # Newsletter : initialiser la checkbox sans déclencher le signal
+        self._newsletter_checkbox.blockSignals(True)
+        self._newsletter_checkbox.setChecked(info.get("newsletter_consent", False))
+        self._newsletter_checkbox.blockSignals(False)
+        self._newsletter_status.clear()
+
         if license_result.state == LicenseState.LICENSE_ACTIVE:
             if license_result.days_remaining:
                 plan_text = tr("plan_active_days", days=license_result.days_remaining)
@@ -905,6 +940,28 @@ class ActivationDialog(QDialog):
             self._acct_machines_detail.setText("  ·  ".join(names))
         else:
             self._acct_machines_detail.setText("")
+
+    def _do_toggle_newsletter(self, state):
+        """Abonne ou désabonne l'utilisateur à la newsletter Brevo."""
+        info  = get_license_info()
+        email = info.get("email", "")
+        if not email or "@" not in email:
+            return
+
+        self._newsletter_checkbox.setEnabled(False)
+        QApplication.processEvents()
+
+        if state == Qt.Checked:
+            success, msg = subscribe_newsletter(email)
+        else:
+            success, msg = unsubscribe_newsletter(email)
+
+        self._newsletter_checkbox.setEnabled(True)
+        self._newsletter_status.setStyleSheet(
+            "color: #4CAF50;" if success else "color: #ff5555;"
+        )
+        self._newsletter_status.setText(msg)
+        QTimer.singleShot(3000, self._newsletter_status.clear)
 
     def _do_open_portal(self):
         """Ouvre le Stripe Customer Portal pour gérer l'abonnement."""

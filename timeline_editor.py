@@ -9,7 +9,8 @@ from i18n import tr
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QComboBox, QProgressBar, QCheckBox,
-    QMessageBox, QApplication, QMenuBar, QMenu, QSizePolicy, QFrame
+    QMessageBox, QApplication, QMenuBar, QMenu, QSizePolicy, QFrame,
+    QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QPoint, QRect, QMimeData
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon, QPalette, QBrush, QCursor, QKeySequence, QShortcut, QDrag, QPixmap
@@ -312,10 +313,9 @@ class LightTimelineEditor(QDialog):
     def _create_tracks_from_fixtures(self, projectors, tracks_layout):
         """Genere les pistes de la timeline depuis la liste de fixtures"""
         GROUP_DISPLAY = getattr(self.main_window, 'GROUP_DISPLAY', {
-            "face": "Face", "douche1": "Douche 1", "douche2": "Douche 2",
-            "douche3": "Douche 3", "lat": "Lat", "contre": "Contres",
-            "public": "Public", "groupe_e": "Groupe E", "groupe_f": "Groupe F",
-            "fumee": "Fumee", "lyre": "Lyres",
+            "face":    "A", "lat":     "B", "contre":  "C",
+            "douche1": "D", "douche2": "E", "douche3": "F",
+            "public": "Public", "fumee": "Fumee", "lyre": "Lyres",
             "barre": "Barres", "strobe": "Strobos",
         })
         # Groupes sans piste lumiere
@@ -323,20 +323,19 @@ class LightTimelineEditor(QDialog):
 
         # Couleurs associees a chaque groupe (identiques au patch DMX)
         TRACK_COLORS = {
-            "Groupe A": "#ff8844",
-            "Groupe B": "#4488ff",
-            "Groupe C": "#44cc88",
-            "Groupe D": "#ff6655",
-            "Groupe E": "#cc44ff",
-            "Groupe F": "#ffcc22",
-            "Fumee":    "#88aaaa",
-            "Lyres":    "#ff44cc",
-            "Barres":   "#44aaff",
-            "Strobos":  "#ffee44",
+            "A":      "#ff8844",
+            "B":      "#4488ff",
+            "C":      "#44cc88",
+            "D":      "#ff6655",
+            "E":      "#cc44ff",
+            "F":      "#ffcc22",
+            "Fumee":  "#88aaaa",
+            "Lyres":  "#ff44cc",
+            "Barres": "#44aaff",
+            "Strobos":"#ffee44",
         }
-        # Ordre canonique des pistes dans la timeline
-        TRACK_ORDER = ["Groupe A", "Groupe B", "Groupe C", "Groupe D",
-                       "Groupe E", "Groupe F",
+        # Ordre canonique des pistes dans la timeline (A→F alphabetique, puis specials)
+        TRACK_ORDER = ["A", "B", "C", "D", "E", "F",
                        "Lyres", "Barres", "Strobos", "Fumee"]
 
         seen_groups = []
@@ -375,11 +374,11 @@ class LightTimelineEditor(QDialog):
             tracks_layout.addWidget(track)
 
         # Alias de compatibilite pour le code existant
-        self.track_face = self.track_map.get("Groupe A")
-        self.track_douche1 = self.track_map.get("Groupe D")
-        self.track_douche2 = self.track_map.get("Groupe E")
-        self.track_douche3 = self.track_map.get("Groupe F")
-        self.track_contre = self.track_map.get("Groupe C")
+        self.track_face = self.track_map.get("A")
+        self.track_douche1 = self.track_map.get("D")
+        self.track_douche2 = self.track_map.get("E")
+        self.track_douche3 = self.track_map.get("F")
+        self.track_contre = self.track_map.get("C")
 
     def _get_waveform_cache_path(self):
         """Retourne le chemin du fichier cache pour la forme d'onde"""

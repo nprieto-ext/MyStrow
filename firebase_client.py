@@ -363,6 +363,26 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
         raise Exception(f"Erreur mise à jour machines : {_firebase_error(e)}")
 
 
+def update_newsletter_consent(uid: str, id_token: str, consent: bool, lang: str = "") -> bool:
+    """
+    Met à jour newsletter_consent (et optionnellement lang) dans /licenses/{uid}.
+    lang : 'fr' ou 'en' — utilisé par la Cloud Function pour envoyer dans la bonne langue.
+    Retourne True si succès, lève une Exception sinon.
+    """
+    fields = {"newsletter_consent": _to_firestore(consent)}
+    mask   = "newsletter_consent"
+    if lang:
+        fields["lang"] = _to_firestore(lang)
+        mask += "&updateMask.fieldPaths=lang"
+
+    url = f"{_FS_BASE}/licenses/{uid}?updateMask.fieldPaths={mask}"
+    try:
+        _patch_json(url, {"fields": fields}, id_token)
+        return True
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Erreur mise à jour newsletter : {_firebase_error(e)}")
+
+
 def remove_machine(uid: str, id_token: str, machine_id: str) -> bool:
     """
     Retire machine_id de /licenses/{uid}/machines.

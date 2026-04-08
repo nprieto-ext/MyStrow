@@ -73,6 +73,8 @@ AXONAUT_BASE    = "https://app.axonaut.com/api/v2"
 
 GDTF_SYNC_SECRET = os.environ.get("GDTF_SYNC_SECRET", "")
 
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
+
 # Durée des plans en jours
 _PLAN_DAYS = {
     "monthly":  31,
@@ -962,4 +964,101 @@ def revoke_machine_web(req: https_fn.Request) -> https_fn.Response:
         print(f"[RevokeWeb] Erreur : {exc}")
         return https_fn.Response(
             json.dumps({"error": str(exc)}), status=500, headers=_CORS_HEADERS
+        )
+
+
+# ===========================================================================
+# CLOUD FUNCTION: subscribe_newsletter
+# ===========================================================================
+
+_NL_CORS = {
+    "Access-Control-Allow-Origin":  "https://mystrow.fr",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
+
+
+@https_fn.on_request(max_instances=5, secrets=["BREVO_API_KEY"])
+def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
+    """
+    Endpoint HTTPS : POST /subscribe_newsletter
+    Body: {"email": "user@example.com", "lang": "fr"}
+    Abonne le contact à la newsletter Brevo (liste 3).
+    Variable d'env : BREVO_API_KEY (firebase functions:secrets:set BREVO_API_KEY)
+    """
+    if req.method == "OPTIONS":
+        return https_fn.Response("", status=204, headers=_NL_CORS)
+
+    if req.method != "POST":
+        return https_fn.Response("Method not allowed", status=405, headers=_NL_CORS)
+
+    try:
+        body  = json.loads(req.get_data() or b"{}")
+        email = (body.get("email") or "").strip().lower()
+        lang  = (body.get("lang") or "fr").strip().lower()
+        if lang not in ("fr", "en"):
+            lang = "fr"
+    except Exception:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "JSON invalide"}),
+            status=400, headers={"Content-Type": "application/json", **_NL_CORS},
+        )
+
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Adresse email invalide."}),
+            status=400, headers={"Content-Type": "application/json", **_NL_CORS},
+        )
+
+    if not BREVO_API_KEY:
+        print("[subscribe_newsletter] BREVO_API_KEY non configurée")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Service indisponible."}),
+            status=503, headers={"Content-Type": "application/json", **_NL_CORS},
+        )
+
+    try:
+        import ssl as _ssl
+        payload = json.dumps({
+            "email":         email,
+            "updateEnabled": True,
+            "attributes":    {"LANGUAGE": lang},
+            "listIds":       [3],
+        }).encode()
+        req_brevo = urllib.request.Request(
+            "https://api.brevo.com/v3/contacts",
+            data=payload,
+            headers={
+                "accept":       "application/json",
+                "content-type": "application/json",
+                "api-key":      BREVO_API_KEY,
+            },
+            method="POST",
+        )
+        ctx = _ssl.create_default_context()
+        with urllib.request.urlopen(req_brevo, timeout=8, context=ctx):
+            pass
+
+        print(f"[subscribe_newsletter] {email} ({lang}) ajouté à Brevo")
+        return https_fn.Response(
+            json.dumps({"ok": True}),
+            status=200, headers={"Content-Type": "application/json", **_NL_CORS},
+        )
+
+    except urllib.error.HTTPError as e:
+        if e.code == 204:
+            return https_fn.Response(
+                json.dumps({"ok": True}),
+                status=200, headers={"Content-Type": "application/json", **_NL_CORS},
+            )
+        print(f"[subscribe_newsletter] Brevo error {e.code}: {e.read().decode()}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Erreur lors de l'abonnement."}),
+            status=502, headers={"Content-Type": "application/json", **_NL_CORS},
+        )
+    except Exception as exc:
+        print(f"[subscribe_newsletter] Exception: {exc}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Erreur serveur."}),
+            status=500, headers={"Content-Type": "application/json", **_NL_CORS},
         )

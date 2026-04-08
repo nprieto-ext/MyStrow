@@ -35,11 +35,18 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.0.66"
+VERSION = "3.0.67"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
 FIREBASE_PROJECT_ID = "mystrow-907be"
+
+# === BREVO (email marketing + transactionnel) ===
+# Récupérer la clé API dans Brevo > SMTP & API > API Keys
+BREVO_API_KEY      = ""                # À remplir
+BREVO_SENDER_EMAIL = "hello@mystrow.io"  # Domaine à vérifier dans Brevo
+BREVO_SENDER_NAME  = "MyStrow"
+BREVO_LIST_ID      = 3                  # ID de la liste newsletter (entier, 0 = sans liste)
 try:
     # Surcharge locale optionnelle (dev only) — ignorée si la clé est vide
     import firebase_config as _fc

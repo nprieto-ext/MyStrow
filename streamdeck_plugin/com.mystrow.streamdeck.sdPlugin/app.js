@@ -67,8 +67,9 @@ function _dispatch(msg) {
 
         case "willAppear":
             $SD.buttons[context] = {
-                action:   action,
-                settings: payload.settings || {},
+                action:     action,
+                settings:   payload.settings || {},
+                controller: payload.controller || "Keypad",  // "Encoder" sur Stream Deck+
             };
             if ($SD.lastState) _updateButton(context, action, payload.settings || {}, $SD.lastState);
             break;
@@ -162,6 +163,14 @@ function _onDialRotate(action, context, payload) {
         var delta = ticks * 5;  // 5% par cran
         var sign  = delta >= 0 ? "+" : "";
         _apiPost("/level/" + fader + "/" + sign + delta);
+
+        // Feedback LCD immédiat (optimiste, sans attendre le polling)
+        if ($SD.lastState && $SD.lastState.fader_levels) {
+            var cur = ($SD.lastState.fader_levels[fader] || 0) + delta;
+            cur = Math.max(0, Math.min(100, cur));
+            $SD.lastState.fader_levels[fader] = cur;
+            _setFeedback(context, cur);
+        }
     }
 }
 
@@ -171,6 +180,11 @@ function _onDialDown(action, context, payload) {
         var fader = parseInt(settings.fader_idx, 10);
         if (isNaN(fader)) fader = 0;
         _apiPost("/level/" + fader + "/100");  // reset à 100% en appuyant
+        // Feedback LCD immédiat
+        if ($SD.lastState && $SD.lastState.fader_levels) {
+            $SD.lastState.fader_levels[fader] = 100;
+        }
+        _setFeedback(context, 100);
     }
 }
 
@@ -239,8 +253,14 @@ function _updateButton(context, action, settings, state) {
             if (isNaN(fader)) fader = 0;
             if (isNaN(val))   val   = 100;
             var current = (state.fader_levels && state.fader_levels[fader] !== undefined)
-                ? state.fader_levels[fader] : "?";
-            _setTitle(context, "F" + fader + "\n" + val + "%\n[" + current + "]");
+                ? state.fader_levels[fader] : 0;
+            var btn = $SD.buttons[context];
+            if (btn && btn.controller === "Encoder") {
+                // Stream Deck+ : mise à jour LCD strip (barre + valeur)
+                _setFeedback(context, current);
+            } else {
+                _setTitle(context, "F" + fader + "\n" + val + "%\n[" + current + "]");
+            }
             break;
         }
 
@@ -303,6 +323,18 @@ function _showOk(context) {
 
 function _showAlert(context) {
     _send({ event: "showAlert", context: context });
+}
+
+function _setFeedback(context, levelPct) {
+    // Met à jour l'écran LCD du bouton rotatif Stream Deck+ (layout $B1)
+    _send({
+        event:   "setFeedback",
+        context: context,
+        payload: {
+            value:     levelPct + "%",
+            indicator: { value: levelPct, enabled: true },
+        },
+    });
 }
 
 // ── Helpers HTTP → MyStrow API ────────────────────────────────────────────────
