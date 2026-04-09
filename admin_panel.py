@@ -55,13 +55,15 @@ except Exception:
     _RELEASE_OK = False
 
 # Firebase Admin SDK (suppression compte Auth)
+_ADMIN_SDK_IMPORT_ERROR: str = ""
 try:
     import firebase_admin
     from firebase_admin import credentials as fa_credentials
     from firebase_admin import auth as fa_auth
     _ADMIN_SDK_AVAILABLE = True
-except ImportError:
+except Exception as _e:
     _ADMIN_SDK_AVAILABLE = False
+    _ADMIN_SDK_IMPORT_ERROR = str(_e)
 
 # En mode exe frozen, chercher service_account.json à côté de l'exe
 if getattr(sys, 'frozen', False):
@@ -72,12 +74,20 @@ SERVICE_ACCOUNT_PATH = os.path.join(_BASE_DIR, "service_account.json")
 _fa_app = None
 
 
+_fa_init_error: str = ""  # stocke l'erreur d'init pour affichage
+
+
 def _init_firebase_admin() -> bool:
     """Initialise le SDK Admin Firebase (une seule fois). Retourne True si OK."""
-    global _fa_app
+    global _fa_app, _fa_init_error
     if _fa_app is not None:
         return True
-    if not _ADMIN_SDK_AVAILABLE or not os.path.exists(SERVICE_ACCOUNT_PATH):
+    if not _ADMIN_SDK_AVAILABLE:
+        detail = f" ({_ADMIN_SDK_IMPORT_ERROR})" if _ADMIN_SDK_IMPORT_ERROR else ""
+        _fa_init_error = f"Impossible d'importer firebase_admin{detail}.\npip install firebase-admin"
+        return False
+    if not os.path.exists(SERVICE_ACCOUNT_PATH):
+        _fa_init_error = f"service_account.json introuvable : {SERVICE_ACCOUNT_PATH}"
         return False
     try:
         try:
@@ -85,21 +95,38 @@ def _init_firebase_admin() -> bool:
         except ValueError:
             cred   = fa_credentials.Certificate(SERVICE_ACCOUNT_PATH)
             _fa_app = firebase_admin.initialize_app(cred)
+        _fa_init_error = ""
         return True
     except Exception as e:
+        _fa_init_error = str(e)
         print(f"[Firebase Admin] ERREUR init : {e}")
         return False
 
 
-def _delete_auth_user(uid: str) -> bool:
-    """Supprime un compte Firebase Auth via le SDK Admin."""
+def _require_admin(action: str):
+    """Lève une exception lisible si le SDK Admin n'est pas dispo."""
     if not _init_firebase_admin():
         raise Exception(
-            f"SDK Admin non disponible.\n"
-            f"Chemin : {SERVICE_ACCOUNT_PATH}\n"
+            f"Impossible d'exécuter « {action} » :\n\n"
+            f"{_fa_init_error or 'Erreur inconnue'}\n\n"
+            f"Chemin service_account : {SERVICE_ACCOUNT_PATH}\n"
             f"Fichier présent : {os.path.exists(SERVICE_ACCOUNT_PATH)}"
         )
+
+
+def _delete_auth_user(uid: str) -> bool:
+    """Supprime un compte Firebase Auth via le SDK Admin."""
+    _require_admin("Suppression compte")
     fa_auth.delete_user(uid)
+    return True
+
+
+def _set_auth_password(uid: str, new_password: str) -> bool:
+    """Force un nouveau mot de passe via le SDK Admin Firebase."""
+    _require_admin("Forcer MDP")
+    if len(new_password) < 6:
+        raise Exception("Le mot de passe doit faire au moins 6 caractères.")
+    fa_auth.update_user(uid, password=new_password)
     return True
 
 # ---------------------------------------------------------------
@@ -2488,6 +2515,20 @@ class AdminPanel(QMainWindow):
         self.btn_renew.clicked.connect(self._on_renew)
         a_lay.addWidget(self.btn_renew)
 
+        self.btn_reset_pwd = QPushButton("Renvoyer MDP")
+        self.btn_reset_pwd.setStyleSheet(_BTN_SECONDARY)
+        self.btn_reset_pwd.setFixedHeight(36)
+        self.btn_reset_pwd.setEnabled(False)
+        self.btn_reset_pwd.clicked.connect(self._on_reset_pwd)
+        a_lay.addWidget(self.btn_reset_pwd)
+
+        self.btn_force_pwd = QPushButton("Forcer MDP")
+        self.btn_force_pwd.setStyleSheet(_BTN_SECONDARY)
+        self.btn_force_pwd.setFixedHeight(36)
+        self.btn_force_pwd.setEnabled(False)
+        self.btn_force_pwd.clicked.connect(self._on_force_pwd)
+        a_lay.addWidget(self.btn_force_pwd)
+
         self.btn_machines = QPushButton("Machines")
         self.btn_machines.setStyleSheet(_BTN_SECONDARY)
         self.btn_machines.setFixedHeight(36)
@@ -2657,9 +2698,9 @@ class AdminPanel(QMainWindow):
         kpi_row2.addWidget(card)
         card, self._stat_avg_mach   = _kpi("∅",  "Moy. machines/lic",    TEXT_DIM)
         kpi_row2.addWidget(card)
-        card, self._stat_stripe_pct = _kpi("$",  "Part Stripe",          "#635bff")
+        card, self._stat_paid       = _kpi("$",  "Licences payées",      "#635bff")
         kpi_row2.addWidget(card)
-        card, self._stat_lifetime_pct = _kpi("∞", "Part À vie",          "#f39c12")
+        card, self._stat_newsletter = _kpi("✉",  "Newsletter",           "#2ecc71")
         kpi_row2.addWidget(card)
         inner_lay.addLayout(kpi_row2)
 
@@ -2830,7 +2871,7 @@ class AdminPanel(QMainWindow):
 
         total = len(self._clients)
         active = expiring = expired = machines = 0
-        stripe_count = 0
+        stripe_count = newsletter_count = 0
         plan_counts: dict = {"lifetime": 0, "annual": 0, "monthly": 0,
                              "stripe": 0, "manuel": 0}
         daily_30: dict = defaultdict(int)   # date_str -> nb inscriptions (30j)
@@ -2860,6 +2901,8 @@ class AdminPanel(QMainWindow):
                 stripe_count += 1
             else:
                 plan_counts["manuel"] += 1
+            if c.get("newsletter_consent"):
+                newsletter_count += 1
             created = c.get("created_utc")
             if created:
                 try:
@@ -2903,12 +2946,8 @@ class AdminPanel(QMainWindow):
         avg_mach = f"{machines / total:.1f}" if total else "—"
         self._stat_avg_mach.setText(avg_mach)
 
-        stripe_pct = int(stripe_count / total * 100) if total else 0
-        self._stat_stripe_pct.setText(f"{stripe_pct}%")
-
-        lft = plan_counts.get("lifetime", 0)
-        lft_pct = int(lft / total * 100) if total else 0
-        self._stat_lifetime_pct.setText(f"{lft_pct}%")
+        self._stat_paid.setText(str(stripe_count))
+        self._stat_newsletter.setText(str(newsletter_count))
 
         # ── Barres plans ─────────────────────────────────────────────────────
         max_plan = max(plan_counts.values(), default=1) or 1
@@ -3660,6 +3699,8 @@ class AdminPanel(QMainWindow):
     def _on_selection_changed(self):
         has_sel = self.table.currentRow() >= 0
         self.btn_renew.setEnabled(has_sel)
+        self.btn_reset_pwd.setEnabled(has_sel)
+        self.btn_force_pwd.setEnabled(has_sel)
         self.btn_machines.setEnabled(has_sel)
         self.btn_delete.setEnabled(has_sel)
         # Boutons Stripe : seulement si le client a un stripe_customer_id
@@ -3863,6 +3904,100 @@ class AdminPanel(QMainWindow):
         dlg = RenewDialog(client, self._id_token, self)
         dlg.renewed.connect(self._load_clients)
         dlg.exec()
+
+    def _on_reset_pwd(self):
+        client = self._get_selected_client()
+        if client is None:
+            return
+        email = client.get("email", "")
+        if not email:
+            QMessageBox.warning(self, "Erreur", "Email introuvable pour ce client.")
+            return
+        confirm = QMessageBox.question(
+            self, "Renvoyer le mot de passe",
+            f"Envoyer un email de réinitialisation à :\n{email} ?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self.btn_reset_pwd.setEnabled(False)
+        self.btn_reset_pwd.setText("Envoi…")
+        import firebase_client as fc
+        _run_async(
+            self, fc.send_password_reset, email,
+            on_success=lambda _: self._on_reset_pwd_ok(email),
+            on_error=self._on_reset_pwd_err,
+        )
+
+    def _on_reset_pwd_ok(self, email: str):
+        self.btn_reset_pwd.setEnabled(True)
+        self.btn_reset_pwd.setText("Renvoyer MDP")
+        QMessageBox.information(self, "Email envoyé",
+                                f"Email de réinitialisation envoyé à :\n{email}")
+
+    def _on_reset_pwd_err(self, msg: str):
+        self.btn_reset_pwd.setEnabled(True)
+        self.btn_reset_pwd.setText("Renvoyer MDP")
+        QMessageBox.critical(self, "Erreur envoi", msg)
+
+    def _on_force_pwd(self):
+        client = self._get_selected_client()
+        if client is None:
+            return
+        uid   = client.get("_uid", "")
+        email = client.get("email", "")
+        if not uid:
+            QMessageBox.warning(self, "Erreur", "UID introuvable pour ce client.")
+            return
+
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QLabel, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Forcer le mot de passe — {email}")
+        dlg.setFixedWidth(360)
+        dlg.setStyleSheet("background:#1a1a1a; color:#cccccc;")
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+        lay.addWidget(QLabel(f"Nouveau mot de passe pour :\n{email}"))
+        inp = QLineEdit()
+        inp.setEchoMode(QLineEdit.Password)
+        inp.setPlaceholderText("6 caractères minimum")
+        inp.setFixedHeight(34)
+        inp.setStyleSheet("background:#2a2a2a; color:white; border:1px solid #444; border-radius:4px; padding:0 8px;")
+        lay.addWidget(inp)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("Appliquer")
+        btns.button(QDialogButtonBox.Cancel).setText("Annuler")
+        btns.setStyleSheet("QPushButton { background:#2a2a2a; color:#ccc; border:1px solid #444; border-radius:4px; padding:6px 16px; } QPushButton:hover { background:#333; color:white; }")
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        new_pwd = inp.text().strip()
+        if len(new_pwd) < 6:
+            QMessageBox.warning(self, "Mot de passe trop court", "6 caractères minimum.")
+            return
+
+        self.btn_force_pwd.setEnabled(False)
+        self.btn_force_pwd.setText("Envoi…")
+        _run_async(
+            self, _set_auth_password, uid, new_pwd,
+            on_success=lambda _: self._on_force_pwd_ok(email, new_pwd),
+            on_error=self._on_force_pwd_err,
+        )
+
+    def _on_force_pwd_ok(self, email: str, pwd: str):
+        self.btn_force_pwd.setEnabled(True)
+        self.btn_force_pwd.setText("Forcer MDP")
+        QMessageBox.information(self, "Mot de passe modifié",
+                                f"Nouveau mot de passe appliqué pour :\n{email}\n\n"
+                                f"Transmets-le au client de façon sécurisée.")
+
+    def _on_force_pwd_err(self, msg: str):
+        self.btn_force_pwd.setEnabled(True)
+        self.btn_force_pwd.setText("Forcer MDP")
+        QMessageBox.critical(self, "Erreur", msg)
 
     def _on_machines(self):
         client = self._get_selected_client()

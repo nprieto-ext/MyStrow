@@ -224,11 +224,14 @@ def build_admin_panel_exe():
         f"--hidden-import=google.auth.transport.requests "
         f"--hidden-import=google.oauth2 "
         f"--hidden-import=google.oauth2.service_account "
+        f"--hidden-import=google.cloud.firestore "
+        f"--hidden-import=google.cloud.storage "
         f"--hidden-import=smtp_config "
         f"--hidden-import=_socket "
         f"--hidden-import=socket "
         f"--collect-all firebase_admin "
         f"--collect-all google.auth "
+        f"--collect-all google.cloud "
         f"--noconfirm admin_panel.py\n"
     )
 
