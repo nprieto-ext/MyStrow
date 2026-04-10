@@ -346,6 +346,30 @@ class DmxSetupDialog(QDialog):
         row3.addWidget(self.lbl_connect, 1)
         lay.addLayout(row3)
 
+        lay.addSpacing(14)
+
+        # ── Diagnostic ───────────────────────────────────────────────────────
+        lay.addLayout(self._step_hdr("✦", "Diagnostic"))
+        lay.addSpacing(6)
+
+        row4 = QHBoxLayout()
+        row4.setContentsMargins(26, 0, 0, 0)
+        self.btn_diag = QPushButton("Envoyer 20 frames")
+        self.btn_diag.setFixedSize(130, 28)
+        self.btn_diag.setStyleSheet(
+            "QPushButton { background: #2a2020; color: #aaa; border: 1px solid #444;"
+            " border-radius: 4px; font-size: 10px; }"
+            "QPushButton:hover { background: #333; color: white; }"
+        )
+        self.btn_diag.clicked.connect(self._run_diag)
+        row4.addWidget(self.btn_diag)
+        self.lbl_diag = QLabel("Testez l'envoi réel après connexion")
+        self.lbl_diag.setFont(QFont("Segoe UI", 9))
+        self.lbl_diag.setWordWrap(True)
+        self.lbl_diag.setStyleSheet("color: #555;")
+        row4.addWidget(self.lbl_diag, 1)
+        lay.addLayout(row4)
+
         lay.addStretch()
 
         # Fermer
@@ -604,6 +628,75 @@ class DmxSetupDialog(QDialog):
             self._set_connect(f"✓  {prod['name']} connecté", ok=True)
         else:
             self._set_connect("✗  Échec de la connexion", error=True)
+
+    # ── Diagnostic ──────────────────────────────────────────────────────────
+
+    def _run_diag(self):
+        """Envoie 20 frames DMX directement sur le port sélectionné et compte les succès."""
+        prod = self._current_product()
+        if not prod:
+            self.lbl_diag.setText("Sélectionnez un produit")
+            self.lbl_diag.setStyleSheet("color: #f44336;")
+            return
+
+        if prod["transport"] != TRANSPORT_ENTTEC:
+            self.lbl_diag.setText("Diagnostic USB uniquement")
+            self.lbl_diag.setStyleSheet("color: #888;")
+            return
+
+        port = self.port_combo.currentData()
+        if not port:
+            self.lbl_diag.setText("Sélectionnez un port COM")
+            self.lbl_diag.setStyleSheet("color: #f44336;")
+            return
+
+        if not SERIAL_AVAILABLE:
+            self.lbl_diag.setText("pyserial non installé")
+            self.lbl_diag.setStyleSheet("color: #f44336;")
+            return
+
+        self.lbl_diag.setText("Envoi en cours…")
+        self.lbl_diag.setStyleSheet("color: #888;")
+        QApplication.processEvents()
+
+        import time as _time
+        import serial as _s
+
+        ok_count = 0
+        err_msg = ""
+        # Frame de test : tous canaux à 127 (50% — allume les lumières si patchées)
+        test_frame = b'\x00' + bytes([127] * 512)
+
+        try:
+            ser = _s.Serial(
+                port=port, baudrate=250000,
+                bytesize=_s.EIGHTBITS, parity=_s.PARITY_NONE,
+                stopbits=_s.STOPBITS_TWO, timeout=0.1,
+            )
+            for i in range(20):
+                try:
+                    ser.break_condition = True
+                    _time.sleep(0.000200)
+                    ser.break_condition = False
+                    ser.write(test_frame)
+                    ser.flush()
+                    ok_count += 1
+                except Exception as e:
+                    err_msg = str(e)
+                _time.sleep(0.04)  # ~25 fps
+            ser.close()
+        except Exception as e:
+            err_msg = str(e)
+
+        if ok_count == 20:
+            self.lbl_diag.setText(f"✓ 20/20 frames envoyées — DMX opérationnel")
+            self.lbl_diag.setStyleSheet("color: #4CAF50;")
+        elif ok_count > 0:
+            self.lbl_diag.setText(f"⚠ {ok_count}/20 frames OK — instable ({err_msg[:40]})")
+            self.lbl_diag.setStyleSheet("color: #ff9800;")
+        else:
+            self.lbl_diag.setText(f"✗ 0/20 frames — {err_msg[:60]}")
+            self.lbl_diag.setStyleSheet("color: #f44336;")
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
