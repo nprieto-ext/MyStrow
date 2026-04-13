@@ -222,8 +222,13 @@ class Sequencer(QFrame):
 
     def add_pause(self):
         """Ajoute une pause dans la sequence"""
-        current = self.table.currentRow()
-        r = current + 1 if current >= 0 else self.table.rowCount()
+        # Pendant le chargement, toujours ajouter à la fin pour respecter l'ordre du fichier.
+        # En mode interactif, insérer après la sélection courante.
+        if getattr(self, '_loading', False):
+            r = self.table.rowCount()
+        else:
+            current = self.table.currentRow()
+            r = current + 1 if current >= 0 else self.table.rowCount()
 
         self.table.insertRow(r)
         pause_icon = QTableWidgetItem("\u23f8\ufe0f")

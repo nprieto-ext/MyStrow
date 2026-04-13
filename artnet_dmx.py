@@ -548,7 +548,9 @@ class ArtNetDMX:
                 elif ch_type == "Shutter":
                     shutter = getattr(proj, 'shutter', 255)
                     ch_val = shutter if not proj.muted else 0
-                elif ch_type in ("Gobo2", "Prism", "Focus", "Speed", "Mode"):
+                elif ch_type == "Prism":
+                    ch_val = getattr(proj, 'prism', 0)
+                elif ch_type in ("Gobo2", "Focus", "Speed", "Mode"):
                     ch_val = 0
                 else:
                     ch_val = 0

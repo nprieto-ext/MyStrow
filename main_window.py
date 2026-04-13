@@ -7908,7 +7908,9 @@ class MainWindow(QMainWindow):
                     'universe':      getattr(proj, 'universe', 0),
                     'start_address': proj.start_address,
                     'profile':       list(self.dmx._get_profile(f"{proj.group}_{i}")),
-                    'channel_defaults': dict(getattr(proj, 'channel_defaults', {})),
+                    'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
+                    'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
+                    'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
                 })
 
         _rebuild_fd()
@@ -7924,7 +7926,9 @@ class MainWindow(QMainWindow):
                 profile = fd.get('profile') or list(DMX_PROFILES['RGBDS'])
                 if isinstance(profile, list) and profile:
                     proj.dmx_profile = list(profile)
-                proj.channel_defaults = dict(fd.get('channel_defaults', {}))
+                proj.channel_defaults  = dict(fd.get('channel_defaults', {}))
+                proj.color_wheel_slots = list(fd.get('color_wheel_slots', []))
+                proj.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
                 uni = fd.get('universe', 0)
                 proj.universe = uni
                 channels = [fd['start_address'] + c for c in range(len(profile))]
@@ -8842,6 +8846,9 @@ class MainWindow(QMainWindow):
                 p.canvas_x, p.canvas_y = canvas_positions[n]
                 if p.fixture_type == "Machine a fumee":
                     p.fan_speed = 0
+                # Copier les slots roue couleur/gobo depuis le preset OFL
+                p.color_wheel_slots = list(preset.get('color_wheel_slots', []))
+                p.gobo_wheel_slots  = list(preset.get('gobo_wheel_slots', []))
                 self.projectors.append(p)
             self._rebuild_dmx_patch()
             _rebuild_fd()
@@ -10024,7 +10031,9 @@ class MainWindow(QMainWindow):
                 'profile': self.dmx._get_profile(proj_key),
                 'pos_x': getattr(proj, 'canvas_x', None),
                 'pos_y': getattr(proj, 'canvas_y', None),
-                'channel_defaults': dict(getattr(proj, 'channel_defaults', {})),
+                'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
+                'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
+                'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
             })
         config = {
             'fixtures': fixtures_list,
@@ -10063,7 +10072,9 @@ class MainWindow(QMainWindow):
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
                         if isinstance(profile, list) and profile:
                             p.dmx_profile = list(profile)
-                        p.channel_defaults = dict(fd.get('channel_defaults', {}))
+                        p.channel_defaults  = dict(fd.get('channel_defaults', {}))
+                        p.color_wheel_slots = list(fd.get('color_wheel_slots', []))
+                        p.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
                         self.projectors.append(p)
                         proj_key = f"{p.group}_{i}"
                         nb_ch = len(profile)

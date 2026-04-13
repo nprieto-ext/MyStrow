@@ -2782,7 +2782,7 @@ class PlanDeFeu(QFrame):
                 strobe_h.addWidget(w)
             _wa(strobe_w)
 
-        # ── Moving Head : PanTilt + Presets côte à côte + Gobo ───────────
+        # ── Moving Head : PanTilt + Presets + Roue Couleur + Gobo + Prisme ──
         if proj.fixture_type == "Moving Head":
             menu.addSeparator()
 
@@ -2811,45 +2811,190 @@ class PlanDeFeu(QFrame):
             mh_h.addWidget(preset_bar)
             _wa(mh_w)
 
-            # Gobo (si le profil contient Gobo1)
             proj_profile = getattr(targets[0][0], 'dmx_profile', None)
-            if isinstance(proj_profile, list) and 'Gobo1' in proj_profile:
-                gobo_w = QWidget(); gobo_h = QHBoxLayout(gobo_w)
-                gobo_h.setContentsMargins(8, 4, 8, 6); gobo_h.setSpacing(4)
-                gobo_h.addWidget(QLabel("Gobo :"))
-                gobo_w.findChildren(QLabel)[0].setStyleSheet(_SS)
+            has_profile = isinstance(proj_profile, list)
 
-                _GOBO_SLOTS = [
-                    (0,  "○", "Open"),  (8,  "✦", "Gobo 1"), (16, "◈", "Gobo 2"),
-                    (24, "⊕", "Gobo 3"), (32, "⊗", "Gobo 4"), (40, "❋", "Gobo 5"),
-                    (48, "⌘", "Gobo 6"), (56, "✿", "Gobo 7"),
-                ]
-                current_gobo = getattr(targets[0][0], 'gobo', 0)
+            _SS_BTN_ON  = ("QPushButton{background:#00d4ff;color:#000;border:none;"
+                           "border-radius:4px;font-size:12px;font-weight:bold;padding:0 4px;}")
+            _SS_BTN_OFF = ("QPushButton{background:#1e1e1e;color:#aaa;border:1px solid #333;"
+                           "border-radius:4px;font-size:12px;padding:0 4px;}"
+                           "QPushButton:hover{background:#2a2a2a;color:#fff;border-color:#555;}")
 
-                _SS_GOBO_ON  = ("QPushButton{background:#00d4ff;color:#000;border:none;"
-                                "border-radius:4px;font-size:13px;font-weight:bold;}")
-                _SS_GOBO_OFF = ("QPushButton{background:#1e1e1e;color:#aaa;border:1px solid #333;"
-                                "border-radius:4px;font-size:13px;}"
-                                "QPushButton:hover{background:#2a2a2a;color:#fff;border-color:#555;}")
+            def _slider_row(label_text, cur_val, max_val, on_change):
+                """Crée une ligne label + slider + valeur numérique."""
+                row_w = QWidget(); row_h = QHBoxLayout(row_w)
+                row_h.setContentsMargins(10, 4, 10, 4); row_h.setSpacing(8)
+                lbl = QLabel(label_text); lbl.setStyleSheet(_SS)
+                sli = QSlider(Qt.Horizontal)
+                sli.setRange(0, max_val); sli.setValue(cur_val)
+                sli.setFixedWidth(140); sli.setStyleSheet(_SLI)
+                val_lbl = QLabel(str(cur_val))
+                val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:28px;")
+                val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                sli.valueChanged.connect(lambda v: val_lbl.setText(str(v)))
+                sli.valueChanged.connect(on_change)
+                for w in (lbl, sli, val_lbl): row_h.addWidget(w)
+                return row_w
 
-                def _set_gobo(val, t=targets, gw=gobo_w):
+            # ── Roue de couleur ─────────────────────────────────────────
+            if not has_profile or 'ColorWheel' in proj_profile:
+                menu.addSeparator()
+                cur_cw = getattr(targets[0][0], 'color_wheel', 0)
+
+                def _on_cw(v, t=targets):
                     for p, g, i in t:
-                        p.gobo = val
+                        p.color_wheel = v
                     _flush()
+
+                _wa(_slider_row("Roue couleur", cur_cw, 255, _on_cw))
+
+                # Préférences OFL si disponibles, sinon génériques
+                _ofl_cw = getattr(proj, 'color_wheel_slots', [])
+                if _ofl_cw:
+                    _CW_PRESETS = [
+                        (s['dmx'], s['color'], s['name']) for s in _ofl_cw
+                    ]
+                    _cw_source_lbl = None
+                else:
+                    _CW_PRESETS = [
+                        (0,   "#ffffff", "Open"),    (20,  "#ff3300", "Rouge"),
+                        (42,  "#ff8800", "Orange"),  (64,  "#ffff00", "Jaune"),
+                        (85,  "#00cc44", "Vert"),    (106, "#00ccff", "Cyan"),
+                        (128, "#0044ff", "Bleu"),    (149, "#cc00ff", "Magenta"),
+                        (170, "#ff99cc", "Rose"),    (192, "#ffee88", "CTO"),
+                    ]
+                    _cw_source_lbl = "⚠ Positions génériques — importez la fixture OFL pour les vraies valeurs"
+
+                cw_presets_w = QWidget(); cw_ph = QVBoxLayout(cw_presets_w)
+                cw_ph.setContentsMargins(10, 0, 10, 4); cw_ph.setSpacing(2)
+                cw_btns_row = QWidget(); cw_br = QHBoxLayout(cw_btns_row)
+                cw_br.setContentsMargins(0, 0, 0, 0); cw_br.setSpacing(3)
+
+                def _luminance(hex_c):
+                    """Retourne True si la couleur est claire (texte noir)."""
+                    c = hex_c.lstrip("#")
+                    if len(c) != 6:
+                        return True
+                    r, g, b = int(c[0:2],16), int(c[2:4],16), int(c[4:6],16)
+                    return (0.299*r + 0.587*g + 0.114*b) > 128
+
+                for dmx_v, hex_c, tip in _CW_PRESETS:
+                    cb = QPushButton()
+                    cb.setFixedSize(22, 22)
+                    cb.setToolTip(f"{tip}  (DMX {dmx_v})")
+                    tc = "#000" if _luminance(hex_c) else "#fff"
+                    active = abs(dmx_v - cur_cw) < 8
+                    border = "#00d4ff" if active else "#555"
+                    bw = "3px" if active else "2px"
+                    cb.setStyleSheet(
+                        f"QPushButton{{background:{hex_c};border:{bw} solid {border};"
+                        f"border-radius:11px;color:{tc};font-size:8px;}}"
+                        f"QPushButton:hover{{border-color:#00d4ff;}}"
+                    )
+                    cb.clicked.connect(lambda chk, v=dmx_v: _on_cw(v))
+                    cw_br.addWidget(cb)
+                cw_br.addStretch()
+                cw_ph.addWidget(cw_btns_row)
+                if _cw_source_lbl:
+                    warn_lbl = QLabel(_cw_source_lbl)
+                    warn_lbl.setStyleSheet("color:#888;font-size:9px;font-style:italic;")
+                    warn_lbl.setWordWrap(True)
+                    cw_ph.addWidget(warn_lbl)
+                _wa(cw_presets_w)
+
+            # ── Gobo ────────────────────────────────────────────────────
+            if not has_profile or 'Gobo1' in proj_profile:
+                menu.addSeparator()
+                cur_gobo = getattr(targets[0][0], 'gobo', 0)
+
+                def _on_gobo(v, t=targets):
+                    for p, g, i in t:
+                        p.gobo = v
+                    _flush()
+
+                _wa(_slider_row("Gobo", cur_gobo, 255, _on_gobo))
+
+                # Boutons presets gobo — OFL si disponible, sinon génériques
+                _ofl_gobo = getattr(proj, 'gobo_wheel_slots', [])
+                if _ofl_gobo:
+                    _GOBO_SLOTS = [
+                        (s['dmx'], s['name'][:6], s['name']) for s in _ofl_gobo
+                    ]
+                else:
+                    _GOBO_ICONS = ["○", "✦", "◈", "⊕", "⊗", "❋", "⌘", "✿"]
+                    _GOBO_SLOTS = [
+                        (i * 32, _GOBO_ICONS[i % len(_GOBO_ICONS)],
+                         "Open" if i == 0 else f"Gobo {i}")
+                        for i in range(8)
+                    ]
+                gobo_w = QWidget(); gobo_h = QHBoxLayout(gobo_w)
+                gobo_h.setContentsMargins(10, 0, 10, 6); gobo_h.setSpacing(3)
+
+                def _set_gobo_btn(val, t=targets, gw=gobo_w):
+                    _on_gobo(val, t)
                     for b in gw.findChildren(QPushButton):
                         bv = b.property("gobo_val")
                         if bv is not None:
-                            b.setStyleSheet(_SS_GOBO_ON if bv == val else _SS_GOBO_OFF)
+                            b.setStyleSheet(_SS_BTN_ON if bv == val else _SS_BTN_OFF)
 
                 for dmx_val, icon, tip in _GOBO_SLOTS:
                     btn = QPushButton(icon)
-                    btn.setFixedSize(30, 30); btn.setToolTip(tip)
+                    btn.setFixedSize(30, 28); btn.setToolTip(f"{tip}  (DMX {dmx_val})")
                     btn.setProperty("gobo_val", dmx_val)
-                    btn.setStyleSheet(_SS_GOBO_ON if dmx_val == current_gobo else _SS_GOBO_OFF)
-                    btn.clicked.connect(lambda checked, v=dmx_val: _set_gobo(v))
+                    btn.setStyleSheet(_SS_BTN_ON if abs(dmx_val - cur_gobo) < 16 else _SS_BTN_OFF)
+                    btn.clicked.connect(lambda chk, v=dmx_val: _set_gobo_btn(v))
                     gobo_h.addWidget(btn)
                 gobo_h.addStretch()
                 _wa(gobo_w)
+
+            # ── Prisme ──────────────────────────────────────────────────
+            if has_profile and 'Prism' in proj_profile:
+                menu.addSeparator()
+                cur_prism = getattr(targets[0][0], 'prism', 0)
+
+                # Slider rotation prisme (0 = off, 1-255 = vitesse/position)
+                def _on_prism(v, t=targets):
+                    for p, g, i in t:
+                        p.prism = v
+                    _flush()
+
+                prism_row_w = QWidget(); prism_row_h = QHBoxLayout(prism_row_w)
+                prism_row_h.setContentsMargins(10, 4, 10, 4); prism_row_h.setSpacing(8)
+                prism_lbl = QLabel("Prisme"); prism_lbl.setStyleSheet(_SS)
+
+                prism_off_btn = QPushButton("OFF")
+                prism_off_btn.setFixedSize(42, 26)
+                prism_on_btn  = QPushButton("ON")
+                prism_on_btn.setFixedSize(42, 26)
+
+                prism_sli = QSlider(Qt.Horizontal)
+                prism_sli.setRange(0, 255); prism_sli.setValue(cur_prism)
+                prism_sli.setFixedWidth(100); prism_sli.setStyleSheet(_SLI)
+
+                prism_val_lbl = QLabel(str(cur_prism))
+                prism_val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:28px;")
+                prism_val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                def _prism_update(v):
+                    prism_sli.setValue(v)
+                    prism_val_lbl.setText(str(v))
+                    _on_prism(v)
+                    is_on = v > 0
+                    prism_off_btn.setStyleSheet(_SS_BTN_ON if not is_on else _SS_BTN_OFF)
+                    prism_on_btn.setStyleSheet(_SS_BTN_ON if is_on else _SS_BTN_OFF)
+
+                prism_off_btn.clicked.connect(lambda: _prism_update(0))
+                prism_on_btn.clicked.connect(lambda: _prism_update(64))
+                prism_sli.valueChanged.connect(lambda v: (prism_val_lbl.setText(str(v)), _on_prism(v),
+                    prism_off_btn.setStyleSheet(_SS_BTN_ON if v == 0 else _SS_BTN_OFF),
+                    prism_on_btn.setStyleSheet(_SS_BTN_ON if v > 0 else _SS_BTN_OFF)))
+
+                prism_off_btn.setStyleSheet(_SS_BTN_ON if cur_prism == 0 else _SS_BTN_OFF)
+                prism_on_btn.setStyleSheet(_SS_BTN_ON if cur_prism > 0 else _SS_BTN_OFF)
+
+                for w in (prism_lbl, prism_off_btn, prism_on_btn, prism_sli, prism_val_lbl):
+                    prism_row_h.addWidget(w)
+                _wa(prism_row_w)
 
         # ── Couleurs ─────────────────────────────────────────────────────
         NO_COLOR_TYPES = {"Machine a fumee", "Gradateur"}

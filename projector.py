@@ -24,7 +24,10 @@ class Projector:
         self.zoom = 0                 # Zoom (0-255)
         self.shutter = 255            # Shutter/Iris (0-255)
         self.color_wheel = 0          # Color wheel (0-255)
+        self.prism = 0                # Prism (0=off, >0=actif)
         self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
+        self.color_wheel_slots = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
+        self.gobo_wheel_slots  = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

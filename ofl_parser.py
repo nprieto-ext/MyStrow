@@ -154,6 +154,121 @@ def _detect_fixture_type(profile: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Extraction des roues de couleur / gobos OFL
+# ---------------------------------------------------------------------------
+
+# Couleur de fallback pour les types de slot non-colorés
+_SLOT_TYPE_COLORS = {
+    "Open":   "#ffffff",
+    "Closed": "#000000",
+    "Gobo":   "#888888",
+    "Iris":   "#888888",
+    "Frost":  "#ccccff",
+    "Prism":  "#aaddff",
+    "Effect": "#ffcc44",
+}
+
+
+def _hex_blend(colors: list) -> str:
+    """Mélange plusieurs couleurs hex en une moyenne RGB."""
+    if not colors:
+        return "#888888"
+    rs, gs, bs = [], [], []
+    for c in colors:
+        c = c.lstrip("#")
+        if len(c) == 6:
+            rs.append(int(c[0:2], 16))
+            gs.append(int(c[2:4], 16))
+            bs.append(int(c[4:6], 16))
+    if not rs:
+        return "#888888"
+    r = sum(rs) // len(rs)
+    g = sum(gs) // len(gs)
+    b = sum(bs) // len(bs)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _extract_wheel_slots(obj: dict, available: dict) -> dict:
+    """
+    Extrait les slots de toutes les roues (couleur + gobo) d'une fixture OFL.
+
+    Retourne un dict:
+      {
+        "color_wheel_slots": [{"name": str, "color": "#rrggbb", "dmx": int}, ...],
+        "gobo_wheel_slots":  [{"name": str, "color": "#rrggbb", "dmx": int}, ...],
+      }
+
+    Chaque entrée utilise le milieu du dmxRange comme valeur DMX de référence.
+    Les transitions (rotation) sont ignorées.
+    """
+    wheels_raw = obj.get("wheels", {})
+
+    # Identifier les noms de canaux ColorWheel et Gobo dans availableChannels
+    color_wheel_channels = {}   # channel_name -> wheel_name
+    gobo_wheel_channels  = {}   # channel_name -> wheel_name
+
+    for ch_name, ch_data in available.items():
+        caps = ch_data.get("capabilities") or []
+        if isinstance(ch_data.get("capability"), dict):
+            caps = [ch_data["capability"]]
+        for cap in caps:
+            if cap.get("type") == "WheelSlot":
+                wheel_name = cap.get("wheel", "")
+                ch_lower = ch_name.lower()
+                if "color" in ch_lower or "colour" in ch_lower:
+                    color_wheel_channels[ch_name] = wheel_name
+                elif "gobo" in ch_lower:
+                    gobo_wheel_channels[ch_name] = wheel_name
+                break  # on a ce qu'on veut pour ce canal
+
+    def _build_slots(ch_map: dict) -> list:
+        """Construit la liste de slots à partir du mapping canal->roue."""
+        # Chercher le premier canal avec des capabilities WheelSlot
+        for ch_name, default_wheel in ch_map.items():
+            ch_data = available.get(ch_name, {})
+            caps = ch_data.get("capabilities") or []
+            if isinstance(ch_data.get("capability"), dict):
+                caps = [ch_data["capability"]]
+
+            slots_out = []
+            for cap in caps:
+                if cap.get("type") != "WheelSlot":
+                    continue
+                dmx_range = cap.get("dmxRange", [0, 255])
+                slot_num  = cap.get("slotNumber", 1)
+                wheel_name = cap.get("wheel", default_wheel)
+
+                # Ignorer les transitions (slot_num non entier)
+                if isinstance(slot_num, float) and slot_num != int(slot_num):
+                    continue
+                slot_idx = int(slot_num) - 1  # 0-based
+
+                wheel_obj = wheels_raw.get(wheel_name, {})
+                wslots = wheel_obj.get("slots", [])
+                if 0 <= slot_idx < len(wslots):
+                    wslot = wslots[slot_idx]
+                    stype  = wslot.get("type", "")
+                    sname  = wslot.get("name") or stype
+                    colors = wslot.get("colors", [])
+                    color  = _hex_blend(colors) if colors else _SLOT_TYPE_COLORS.get(stype, "#888888")
+                else:
+                    sname = f"Slot {slot_num}"
+                    color = "#888888"
+
+                dmx_center = (dmx_range[0] + dmx_range[1]) // 2
+                slots_out.append({"name": sname, "color": color, "dmx": dmx_center})
+
+            if slots_out:
+                return slots_out
+        return []
+
+    return {
+        "color_wheel_slots": _build_slots(color_wheel_channels),
+        "gobo_wheel_slots":  _build_slots(gobo_wheel_channels),
+    }
+
+
+# ---------------------------------------------------------------------------
 # API publique
 # ---------------------------------------------------------------------------
 
@@ -179,7 +294,9 @@ def parse_ofl_json(
           "fixture_type": str,
           "source": "ofl",
           "uuid": str,
-          "modes": [{"name": str, "channelCount": int, "profile": [str]}]
+          "modes": [{"name": str, "channelCount": int, "profile": [str]}],
+          "color_wheel_slots": [{"name": str, "color": "#rrggbb", "dmx": int}, ...],
+          "gobo_wheel_slots":  [{"name": str, "color": "#rrggbb", "dmx": int}, ...],
         }
     """
     try:
@@ -211,7 +328,9 @@ def parse_ofl_json(
     first_profile = modes[0]["profile"] if modes else []
     ftype = _detect_fixture_type(first_profile)
 
-    return {
+    wheel_slots = _extract_wheel_slots(obj, available)
+
+    result = {
         "name":         name,
         "manufacturer": manufacturer,
         "fixture_type": ftype,
@@ -219,3 +338,9 @@ def parse_ofl_json(
         "uuid":         f"ofl:{manufacturer_key}/{fixture_key}" if manufacturer_key else "",
         "modes":        modes,
     }
+    if wheel_slots["color_wheel_slots"]:
+        result["color_wheel_slots"] = wheel_slots["color_wheel_slots"]
+    if wheel_slots["gobo_wheel_slots"]:
+        result["gobo_wheel_slots"] = wheel_slots["gobo_wheel_slots"]
+
+    return result
