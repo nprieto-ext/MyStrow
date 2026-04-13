@@ -1495,6 +1495,14 @@ class Sequencer(QFrame):
             track_name = clip_data.get('track', 'Face')
             tracks_clips.setdefault(track_name, []).append(clip_data)
 
+        # Couper tout effet actif avant de démarrer la timeline (évite le strobe)
+        main_win = self.player_ui
+        if hasattr(main_win, 'effect_timer') and main_win.effect_timer.isActive():
+            main_win.effect_timer.stop()
+        if getattr(main_win, 'active_effect', None) is not None:
+            main_win.active_effect = None
+            main_win.active_effect_config = {}
+
         self.timeline_playback_row = row
         self.timeline_tracks_data = tracks_clips
         self.timeline_last_update = -100  # Garantit que le 1er tick fire immediatement
@@ -1641,12 +1649,24 @@ class Sequencer(QFrame):
             'play_mode': 'loop',
         }
 
-        # Démarrer l'effet
+        # Démarrer l'effet (initialiser l'état sans démarrer le effect_timer —
+        # la timeline appelle update_effect() elle-même à chaque tick)
         self._timeline_effect_name = eff_name
         main_win.active_effect        = eff_name
         main_win.active_effect_config = cfg
-        if hasattr(main_win, 'start_effect'):
-            main_win.start_effect(eff_name)
+        # Initialiser les compteurs d'état de l'effet
+        main_win.effect_state      = 0
+        main_win.effect_brightness = 0
+        main_win.effect_direction  = 1
+        main_win.effect_hue        = 0
+        main_win.effect_saved_colors = {}
+        for p in main_win.projectors:
+            main_win.effect_saved_colors[id(p)] = (
+                p.base_color, p.color, p.level,
+                getattr(p, 'pan', 128), getattr(p, 'tilt', 128)
+            )
+        import time as _time
+        main_win.effect_t0 = _time.monotonic()
 
     def _stop_timeline_effect(self):
         """Arrête l'effet lancé par la timeline (si c'est bien lui qui tourne)."""
@@ -1876,6 +1896,12 @@ class Sequencer(QFrame):
 
         # ── Appliquer la séquence mémoire par-dessus les groupes ────────────
         self._apply_seq_memory(active_clips.get('Séquence'), main_win)
+
+        # ── Appliquer l'effet de la piste Effet par-dessus tout ─────────────
+        # (le effect_timer n'est pas actif en mode timeline — on gère ici)
+        if getattr(main_win, 'active_effect', None) is not None:
+            if hasattr(main_win, 'update_effect'):
+                main_win.update_effect()
 
         if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
             self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)

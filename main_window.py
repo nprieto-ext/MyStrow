@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QToolButton, QMenu, QMenuBar, QFileDialog, QMessageBox, QDialog,
     QComboBox, QTableWidget, QTableWidgetItem, QWidgetAction, QSpinBox,
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
-    QHeaderView
+    QHeaderView, QCheckBox, QTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QPoint
 from PySide6.QtGui import (
@@ -203,6 +203,105 @@ AKAI_BANK_PRESETS = [
 
 
 # ---------------------------------------------------------------------------
+# Journal des actions AKAI (remplace les toasts)
+# ---------------------------------------------------------------------------
+
+class MessageLogWidget(QWidget):
+    """Boîte de journal sous les slots AKAI — accumule les messages d'action.
+    Vide à chaque fermeture de l'application."""
+
+    _LEVELS = {
+        "rec":     ("#00cc66", "●"),  # vert  : enregistrement mémoire
+        "mem":     ("#55aaff", "→"),  # bleu  : activation mémoire
+        "go":      ("#00bbdd", "▶"),  # cyan  : avance GO
+        "effect":  ("#aa77ff", "⚡"), # violet: effet allumé/éteint
+        "bpm":     ("#ffcc00", "♩"),  # jaune : TAP BPM
+        "success": ("#00cc66", "✔"),  # vert  : succès générique
+        "error":   ("#ff4444", "✖"),  # rouge : erreur
+        "info":    ("#555555", "·"),  # gris  : info
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._count = 0
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 4, 0, 0)
+        root.setSpacing(3)
+
+        # ── En-tête ────────────────────────────────────────────────────────
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(2, 0, 2, 0)
+
+        title = QLabel("Journal")
+        title.setStyleSheet(
+            "color:#555; font-size:9px; font-weight:bold; "
+            "background:transparent; border:none;"
+        )
+        hdr.addWidget(title)
+
+        self._count_lbl = QLabel("")
+        self._count_lbl.setStyleSheet(
+            "color:#3a3a3a; font-size:9px; background:transparent; border:none;"
+        )
+        hdr.addWidget(self._count_lbl)
+        hdr.addStretch()
+
+        clear_btn = QPushButton("✕ Vider")
+        clear_btn.setFixedHeight(13)
+        clear_btn.setStyleSheet(
+            "QPushButton { background:transparent; color:#3a3a3a; font-size:8px; "
+            "border:none; padding:0 4px; } "
+            "QPushButton:hover { color:#888; }"
+        )
+        clear_btn.clicked.connect(self.clear)
+        hdr.addWidget(clear_btn)
+        root.addLayout(hdr)
+
+        # ── Zone texte ──────────────────────────────────────────────────────
+        self._text = QTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setMinimumHeight(62)
+        self._text.setMaximumHeight(90)
+        self._text.setStyleSheet(
+            "QTextEdit { background:#0c0c0c; color:#555; "
+            "border:1px solid #1e1e1e; border-radius:4px; "
+            "font-size:10px; font-family:'Consolas','Courier New',monospace; "
+            "padding:3px 6px; } "
+            "QScrollBar:vertical { background:#111; width:5px; border:none; } "
+            "QScrollBar::handle:vertical { background:#2a2a2a; border-radius:2px; } "
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+        )
+        root.addWidget(self._text)
+
+    def append_message(self, text: str, level: str = "info"):
+        """Ajoute une ligne horodatée dans le journal."""
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S")
+        color, bullet = self._LEVELS.get(level, ("#555555", "·"))
+        # Texte en gris atténué pour les infos, couleur complète pour les autres
+        text_color = color if level != "info" else "#666"
+        html = (
+            f'<span style="color:#2e2e2e;">[{ts}]</span>'
+            f'&nbsp;<span style="color:{color};font-weight:bold;">{bullet}</span>'
+            f'&nbsp;<span style="color:{text_color};">{text}</span>'
+        )
+        self._text.append(html)
+        sb = self._text.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        self._count += 1
+        self._count_lbl.setText(f"({self._count})")
+
+    def clear(self):
+        """Vide le journal."""
+        self._text.clear()
+        self._count = 0
+        self._count_lbl.setText("")
+
+
+# ---------------------------------------------------------------------------
 # Editeur de layout AKAI APC mini
 # ---------------------------------------------------------------------------
 
@@ -226,7 +325,7 @@ class AkaiLayoutEditorDialog(QDialog):
     _FX_COLOR    = "#7722aa"
     _EMPTY_COLOR = "#2a2a2a"
 
-    def __init__(self, slots, last_fader_mode="FX", parent=None):
+    def __init__(self, slots, last_fader_mode="FX", superposition=False, go_mode=False, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("akai_cfg_title"))
         self.setMinimumSize(780, 580)
@@ -361,6 +460,54 @@ class AkaiLayoutEditorDialog(QDialog):
         leg_row.addStretch()
         root.addLayout(leg_row)
 
+        # ── Superposition d'effets ────────────────────────────────────────────
+        super_sep = QFrame(); super_sep.setFrameShape(QFrame.HLine)
+        super_sep.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
+        root.addWidget(super_sep)
+
+        super_row = QHBoxLayout()
+        super_row.setContentsMargins(0, 4, 0, 4)
+        self._superposition_check = QCheckBox(tr("fx_superposition_lbl"))
+        self._superposition_check.setChecked(superposition)
+        self._superposition_check.setToolTip(tr("fx_superposition_tip"))
+        self._superposition_check.setStyleSheet(
+            "QCheckBox { color: #ccc; font-size: 11px; spacing: 6px; } "
+            "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #555; "
+            "border-radius: 3px; background: #1e1e1e; } "
+            "QCheckBox::indicator:checked { background: #7722aa; border-color: #9944cc; } "
+            "QCheckBox:hover { color: #fff; }"
+        )
+        super_row.addWidget(self._superposition_check)
+        tip_lbl = QLabel(tr("fx_superposition_tip"))
+        tip_lbl.setWordWrap(True)
+        tip_lbl.setStyleSheet("color:#888; font-size:11px; padding-left:6px;")
+        super_row.addWidget(tip_lbl, 1)
+        root.addLayout(super_row)
+
+        # ── Mode GO ───────────────────────────────────────────────────────────
+        go_sep = QFrame(); go_sep.setFrameShape(QFrame.HLine)
+        go_sep.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
+        root.addWidget(go_sep)
+
+        go_row = QHBoxLayout()
+        go_row.setContentsMargins(0, 4, 0, 4)
+        self._go_mode_check = QCheckBox(tr("go_mode_lbl"))
+        self._go_mode_check.setChecked(go_mode)
+        self._go_mode_check.setToolTip(tr("go_mode_tip"))
+        self._go_mode_check.setStyleSheet(
+            "QCheckBox { color: #ccc; font-size: 11px; spacing: 6px; } "
+            "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #555; "
+            "border-radius: 3px; background: #1e1e1e; } "
+            "QCheckBox::indicator:checked { background: #007a45; border-color: #00cc66; } "
+            "QCheckBox:hover { color: #fff; }"
+        )
+        go_row.addWidget(self._go_mode_check)
+        go_tip_lbl = QLabel(tr("go_mode_tip"))
+        go_tip_lbl.setWordWrap(True)
+        go_tip_lbl.setStyleSheet("color:#888; font-size:11px; padding-left:6px;")
+        go_row.addWidget(go_tip_lbl, 1)
+        root.addLayout(go_row)
+
         # ── Boutons ────────────────────────────────────────────────────────────
         btn_sep = QFrame(); btn_sep.setFrameShape(QFrame.HLine)
         btn_sep.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
@@ -440,6 +587,12 @@ class AkaiLayoutEditorDialog(QDialog):
         return slot.get("group", slot.get("label", "A"))
 
     # ── Résultat ─────────────────────────────────────────────────────────────
+    def get_superposition(self):
+        return self._superposition_check.isChecked()
+
+    def get_go_mode(self):
+        return self._go_mode_check.isChecked()
+
     def get_slots(self):
         slots = []
         for combo in self._combos:
@@ -607,6 +760,11 @@ class MainWindow(QMainWindow):
         self.pads = {}
         self.effect_buttons = []
         self.active_effect = None
+        self.effect_superposition = False   # True = plusieurs effets simultanés
+        self._stacked_effects = []          # liste de dicts d'état par effet (mode superposition)
+        self.go_mode = False                # True = bouton TAP devient GO (avance mémoires)
+        self._go_col = -1                   # colonne mémoire courante en mode GO (-1 = pas démarré)
+        self._go_row = -1                   # rangée mémoire courante en mode GO
         self.effect_speed = 0
         self.effect_amplitude = 100   # amplitude globale effets (fader 9), 0-100
         self.effect_state = 0
@@ -1110,6 +1268,7 @@ class MainWindow(QMainWindow):
         plan_scroll.setWidget(self.plan_de_feu)
         plan_scroll.setStyleSheet("QScrollArea { border: none; }")
 
+
         self.color_picker_block = ColorPickerBlock(self.plan_de_feu)
 
         # VU mètre sous le color picker
@@ -1271,8 +1430,24 @@ class MainWindow(QMainWindow):
         layout.setAlignment(Qt.AlignTop)
         layout.setContentsMargins(10, 10, 10, 10)
 
+        _PARAM_BTN_SS = (
+            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #3a3a3a; "
+            "border-radius: 4px; font-size: 13px; } "
+            "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #0077bb; }"
+        )
+
         title_row = QHBoxLayout()
+
+        # ⚙ Paramètres AKAI — à gauche
+        edit_layout_btn = QPushButton("⚙")
+        edit_layout_btn.setFixedSize(26, 26)
+        edit_layout_btn.setToolTip(tr("tooltip_akai_layout"))
+        edit_layout_btn.setStyleSheet(_PARAM_BTN_SS)
+        edit_layout_btn.clicked.connect(self._open_akai_layout_editor)
+        title_row.addWidget(edit_layout_btn)
+
         title_row.addStretch()
+
         rec_btn = QPushButton("🔴")
         rec_btn.setFixedSize(26, 26)
         rec_btn.setToolTip(tr("tooltip_rec_mem"))
@@ -1297,18 +1472,7 @@ class MainWindow(QMainWindow):
         )
         clr_btn.clicked.connect(self._clear_akai_state)
         title_row.addWidget(clr_btn)
-        title_row.addSpacing(4)
 
-        edit_layout_btn = QPushButton("⚙")
-        edit_layout_btn.setFixedSize(26, 26)
-        edit_layout_btn.setToolTip(tr("tooltip_akai_layout"))
-        edit_layout_btn.setStyleSheet(
-            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #3a3a3a; "
-            "border-radius: 4px; font-size: 13px; } "
-            "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #0077bb; }"
-        )
-        edit_layout_btn.clicked.connect(self._open_akai_layout_editor)
-        title_row.addWidget(edit_layout_btn)
         layout.addLayout(title_row)
         layout.addSpacing(4)
 
@@ -1465,6 +1629,10 @@ class MainWindow(QMainWindow):
         self._apply_license_banner()
         layout.addWidget(self._license_banner)
 
+        # ── Journal des actions ───────────────────────────────────────────────
+        self._msg_log = MessageLogWidget()
+        layout.addWidget(self._msg_log)
+
         # Emplacement reserve pour la barre de mise a jour (ajoutee apres init)
         self._akai_layout = layout
 
@@ -1563,11 +1731,16 @@ class MainWindow(QMainWindow):
         dlg = AkaiLayoutEditorDialog(
             self._custom_bank_slots,
             last_fader_mode=getattr(self, '_last_fader_mode', 'FX'),
+            superposition=self.effect_superposition,
+            go_mode=self.go_mode,
             parent=self
         )
         if dlg.exec() != QDialog.Accepted:
             return
         self._custom_bank_slots = dlg.get_slots()
+        self.effect_superposition = dlg.get_superposition()
+        self.go_mode = dlg.get_go_mode()
+        self._update_tap_go_btn_style()
         self.active_pads.clear()
         self.active_memory_pads.clear()
         self._rebuild_akai_pads()
@@ -2049,99 +2222,23 @@ class MainWindow(QMainWindow):
                 pad.setToolTip(tip)
                 pad.setToolTipDuration(800 if self._mem_rec_mode else -1)
 
+    def _log_message(self, text: str, level: str = "info"):
+        """Envoie un message dans le journal AKAI."""
+        log = getattr(self, '_msg_log', None)
+        if log is not None:
+            log.append_message(text, level)
+
     def _show_mem_toast(self, text):
-        """Affiche un message ephemere en bas a gauche de la fenetre."""
-        toast = QLabel(text, self)
-        toast.setStyleSheet(
-            "QLabel { background: #222; color: #00cc66; border: 1px solid #00cc66; "
-            "border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: bold; }"
-        )
-        toast.setWindowFlags(Qt.SubWindow)
-        toast.adjustSize()
-        toast.move(12, self.height() - toast.height() - 16)
-        toast.show()
-        toast.raise_()
-        QTimer.singleShot(2200, toast.deleteLater)
+        """Log un message de succès dans le journal."""
+        self._log_message(text, "success")
 
     def _show_error_toast(self, text):
-        """Affiche un message d'erreur ephemere en bas a gauche de la fenetre."""
-        toast = QLabel(text, self)
-        toast.setStyleSheet(
-            "QLabel { background: #2a0a0a; color: #ff4444; border: 1px solid #cc3333; "
-            "border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: bold; }"
-        )
-        toast.setWindowFlags(Qt.SubWindow)
-        toast.adjustSize()
-        toast.move(12, self.height() - toast.height() - 16)
-        toast.show()
-        toast.raise_()
-        QTimer.singleShot(2500, toast.deleteLater)
+        """Log un message d'erreur dans le journal."""
+        self._log_message(text, "error")
 
     def _show_bpm_toast(self, bpm: int):
-        """Affiche le BPM calculé via tap tempo dans un popup éphémère."""
-        existing = getattr(self, '_bpm_toast_widget', None)
-        if existing:
-            try:
-                existing.deleteLater()
-            except Exception:
-                pass
-
-        # Widget style LicenseBanner (gradient + séparateur + icône)
-        toast = QWidget(self)
-        toast.setAttribute(Qt.WA_StyledBackground, True)
-        toast.setFixedHeight(38)
-        toast.setStyleSheet("""
-            QWidget {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #0d3344, stop:1 #1a1a1a
-                );
-                border: 1px solid #00d4ff;
-                border-radius: 5px;
-            }
-        """)
-
-        row = QHBoxLayout(toast)
-        row.setContentsMargins(10, 0, 16, 0)
-        row.setSpacing(8)
-
-        icon_lbl = QLabel("🎵")
-        icon_lbl.setFixedWidth(18)
-        icon_lbl.setAlignment(Qt.AlignCenter)
-        icon_lbl.setFont(QFont("Segoe UI", 11))
-        icon_lbl.setStyleSheet("background: transparent; border: none;")
-        row.addWidget(icon_lbl)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFixedWidth(1)
-        sep.setFixedHeight(20)
-        sep.setStyleSheet("background: #00d4ff; border: none;")
-        row.addWidget(sep)
-
-        text_lbl = QLabel(f"{bpm} BPM")
-        text_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        text_lbl.setStyleSheet("color: #ffffff; background: transparent; border: none;")
-        text_lbl.setAlignment(Qt.AlignCenter)
-        row.addWidget(text_lbl)
-
-        toast.adjustSize()
-        toast.setFixedWidth(max(toast.width(), 130))
-
-        # Positionné sous les cartouches
-        if self.cartouches:
-            last_cart = self.cartouches[-1]
-            ref = last_cart.mapTo(self, last_cart.rect().bottomLeft())
-            x = ref.x()
-            y = ref.y() + 6
-        else:
-            x = (self.width() - toast.width()) // 2
-            y = self.height() - toast.height() - 24
-        toast.move(x, y)
-        toast.show()
-        toast.raise_()
-        self._bpm_toast_widget = toast
-        QTimer.singleShot(2500, toast.deleteLater)
+        """Log le BPM détecté dans le journal."""
+        self._log_message(f"TAP tempo : {bpm} BPM", "bpm")
 
     def _activate_memory_pad(self, btn, mem_col, row):
         """Active un pad memoire - independant par colonne.
@@ -2160,7 +2257,7 @@ class MainWindow(QMainWindow):
                     "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
                 )
                 self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
-            self._show_mem_toast("✔ Séquence enregistrée")
+            self._log_message(f"Rec MEM {mem_col + 1}.{row + 1} OK", "rec")
             self._blink_memory_pad(mem_col, row)
             return
 
@@ -2195,6 +2292,12 @@ class MainWindow(QMainWindow):
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
         # Toujours appliquer (pan/tilt doivent s'appliquer même si fader à 0)
         self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
+        self._log_message(f"MEM {mem_col + 1}.{row + 1}", "mem")
+
+        # Réinitialiser la position GO sur le pad activé manuellement
+        if self.go_mode:
+            self._go_col = mem_col
+            self._go_row = row
 
         self._save_akai_config_auto()
         # Envoi DMX immediat sans attendre le prochain tick
@@ -2462,7 +2565,7 @@ class MainWindow(QMainWindow):
 
         def _record_and_feedback():
             self._record_memory(mem_col, row)
-            self._show_mem_toast("✔ Séquence enregistrée")
+            self._log_message(f"Rec MEM {mem_col + 1}.{row + 1} OK", "rec")
             self._blink_memory_pad(mem_col, row)
 
         if self.memories[mem_col][row] is None:
@@ -2657,6 +2760,66 @@ class MainWindow(QMainWindow):
             btn.update_style()
             return
 
+        # ── Mode superposition : plusieurs effets simultanés ─────────────────
+        if self.effect_superposition:
+            btn.active = not btn.active
+            if btn.active:
+                effect_name = btn.current_effect
+                if not effect_name:
+                    btn.active = False
+                    btn.update_style()
+                    return
+                import time as _time
+                eff_state = {
+                    'idx': effect_idx,
+                    'name': effect_name,
+                    'config': self._button_effect_configs.get(effect_idx, {}),
+                    'state': 0, 'hue': 0, 'brightness': 0, 'direction': 1,
+                    't0': _time.monotonic(),
+                }
+                if not self._stacked_effects:
+                    # Premier effet : sauvegarder les couleurs et démarrer le timer
+                    self.effect_saved_colors = {}
+                    for p in self.projectors:
+                        self.effect_saved_colors[id(p)] = (
+                            p.base_color, p.color, p.level,
+                            getattr(p, 'pan', 128), getattr(p, 'tilt', 128)
+                        )
+                    if not hasattr(self, 'effect_timer'):
+                        self.effect_timer = QTimer()
+                        self.effect_timer.timeout.connect(self.update_effect)
+                    self.effect_timer.start(40)
+                self._stacked_effects.append(eff_state)
+                self.active_effect = effect_name
+                self.active_effect_config = eff_state['config']
+                self._log_message(f"Effet ON : {effect_name}", "effect")
+            else:
+                # Retirer cet effet de la pile
+                old_name = next((e['name'] for e in self._stacked_effects if e['idx'] == effect_idx), btn.current_effect or "")
+                self._stacked_effects = [e for e in self._stacked_effects if e['idx'] != effect_idx]
+                self._log_message(f"Effet OFF : {old_name}", "effect")
+                if not self._stacked_effects:
+                    # Dernier effet : arrêter le timer et restaurer les couleurs
+                    if hasattr(self, 'effect_timer'):
+                        self.effect_timer.stop()
+                    for p in self.projectors:
+                        if id(p) in self.effect_saved_colors:
+                            saved = self.effect_saved_colors[id(p)]
+                            p.base_color, p.color, p.level = saved[0], saved[1], saved[2]
+                            if len(saved) > 3:
+                                p.pan = saved[3]; p.tilt = saved[4]
+                    self.active_effect = None
+                    self.active_effect_config = {}
+                else:
+                    self.active_effect = self._stacked_effects[-1]['name']
+                    self.active_effect_config = self._stacked_effects[-1]['config']
+            btn.update_style()
+            if MIDI_AVAILABLE and self.midi_handler.midi_out and effect_idx < 8:
+                velocity = 1 if btn.active else 0
+                self.midi_handler.set_pad_led(effect_idx, 8, velocity, brightness_percent=100)
+            return
+
+        # ── Mode exclusif (par défaut) : un seul effet à la fois ─────────────
         btn.active = not btn.active
         if btn.active:
             effect_name = btn.current_effect
@@ -2681,6 +2844,7 @@ class MainWindow(QMainWindow):
             self.active_effect = effect_name
             self.active_effect_config = self._button_effect_configs.get(effect_idx, {})
             self.start_effect(effect_name)
+            self._log_message(f"Effet ON : {effect_name}", "effect")
             for j, other_btn in enumerate(self.effect_buttons):
                 if j != effect_idx and other_btn.active:
                     other_btn.active = False
@@ -2689,6 +2853,7 @@ class MainWindow(QMainWindow):
                         self.midi_handler.set_pad_led(j, 8, 0)
         else:
             # Restaurer l'état précédent s'il existait
+            self._log_message(f"Effet OFF : {btn.current_effect}", "effect")
             prev = getattr(self, '_prev_effect_state', None)
             self._prev_effect_state = None
             self.stop_effect()
@@ -3148,6 +3313,13 @@ class MainWindow(QMainWindow):
 
     def update_effect(self):
         """Met a jour l'effet en cours"""
+        # ── Mode superposition : applique chaque effet empilé en séquence ──
+        if self.effect_superposition and self._stacked_effects:
+            for eff_data in self._stacked_effects:
+                self._apply_one_stacked_effect(eff_data)
+            self._apply_fx_amplitude()
+            return
+
         if self.active_effect is None:
             return
 
@@ -3161,6 +3333,11 @@ class MainWindow(QMainWindow):
             self._apply_fx_amplitude()
             return
 
+        self._run_named_effect()
+        self._apply_fx_amplitude()
+
+    def _run_named_effect(self):
+        """Applique un tick de l'effet nommé (lit/écrit les variables d'instance)."""
         # speed_factor : fader 0 = lent (1.0), fader 100 = rapide (0.05)
         speed_factor = max(0.05, 1.0 - (self.effect_speed / 100.0 * 0.95))
 
@@ -3356,9 +3533,54 @@ class MainWindow(QMainWindow):
                         int(base.green() * brightness),
                         int(base.blue() * brightness)
                     )
+        # (l'amplitude FX est appliquée par l'appelant)
 
-        # Appliquer l'amplitude du fader FX si actif
-        self._apply_fx_amplitude()
+    def _apply_one_stacked_effect(self, eff_data):
+        """Applique un tick d'un effet empilé (mode superposition).
+        Sauvegarde/restaure les variables d'instance autour de l'appel."""
+        # ── Sauvegarder l'état actuel ─────────────────────────────────────
+        saved_eff  = self.active_effect
+        saved_cfg  = self.active_effect_config
+        saved_st   = self.effect_state
+        saved_hue  = getattr(self, 'effect_hue', 0)
+        saved_bri  = getattr(self, 'effect_brightness', 0)
+        saved_dir  = getattr(self, 'effect_direction', 1)
+        saved_t0   = getattr(self, 'effect_t0', 0)
+
+        # ── Charger l'état de cet effet ──────────────────────────────────
+        self.active_effect        = eff_data['name']
+        self.active_effect_config = eff_data.get('config', {})
+        self.effect_state         = eff_data.get('state', 0)
+        self.effect_hue           = eff_data.get('hue', 0)
+        self.effect_brightness    = eff_data.get('brightness', 0)
+        self.effect_direction     = eff_data.get('direction', 1)
+        self.effect_t0            = eff_data.get('t0', 0)
+
+        # ── Exécuter un tick ─────────────────────────────────────────────
+        cfg = self.active_effect_config
+        if cfg:
+            if cfg.get("layers"):
+                self._update_effect_from_layers(cfg)
+            else:
+                self._update_effect_from_config(cfg)
+        else:
+            self._run_named_effect()
+
+        # ── Sauvegarder le nouvel état dans le dict ───────────────────────
+        eff_data['state']     = self.effect_state
+        eff_data['hue']       = self.effect_hue
+        eff_data['brightness']= self.effect_brightness
+        eff_data['direction'] = self.effect_direction
+        eff_data['t0']        = self.effect_t0
+
+        # ── Restaurer les variables d'instance ────────────────────────────
+        self.active_effect        = saved_eff
+        self.active_effect_config = saved_cfg
+        self.effect_state         = saved_st
+        self.effect_hue           = saved_hue
+        self.effect_brightness    = saved_bri
+        self.effect_direction     = saved_dir
+        self.effect_t0            = saved_t0
 
     # ------------------------------------------------------------------ #
     #  EDITEUR D'EFFETS                                                    #
@@ -3806,8 +4028,102 @@ class MainWindow(QMainWindow):
         """Definit la vitesse de l'effet (conservé pour compatibilité)"""
         self.effect_speed = value
 
+    def _update_tap_go_btn_style(self):
+        """Met à jour l'apparence du bouton TAP/GO selon le mode actif."""
+        btn = getattr(self, '_tap_btn', None)
+        if btn is None:
+            return
+        if self.go_mode:
+            btn.setText("▶")
+            btn.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            btn.setToolTip("GO — avance à la mémoire suivante")
+            btn.setStyleSheet("""
+                QToolButton {
+                    background: #006633;
+                    border: 2px solid #00aa55;
+                    border-radius: 8px;
+                    color: #00ff88;
+                    font-size: 8px;
+                    font-weight: bold;
+                }
+                QToolButton:hover {
+                    background: #008844;
+                    border: 2px solid #00ff88;
+                }
+                QToolButton:pressed {
+                    background: #004422;
+                    border: 2px solid #00ff88;
+                }
+            """)
+        else:
+            btn.setText("")
+            btn.setToolTip(tr("tooltip_tap_tempo"))
+            btn.setStyleSheet("""
+                QToolButton {
+                    background: #4a4a4a;
+                    border: 2px solid #6a6a6a;
+                    border-radius: 8px;
+                }
+                QToolButton:hover {
+                    background: #5a5a5a;
+                    border: 2px solid #aaa;
+                }
+                QToolButton:pressed {
+                    background: #333;
+                    border: 2px solid #fff;
+                }
+            """)
+
+    def _go_advance(self):
+        """Mode GO : avance à la prochaine mémoire enregistrée."""
+        # Calculer la position cible
+        if self._go_col == -1:
+            # Premier appui : commencer par MEM 1.1
+            next_col, next_row = 0, 0
+        else:
+            next_row = self._go_row + 1
+            next_col = self._go_col
+            if next_row > 7:
+                next_row = 0
+                next_col = self._go_col + 1
+            if next_col > 7:
+                # Fin de toutes les mémoires → retour au début
+                next_col, next_row = 0, 0
+
+        # Vérifier si la mémoire cible est enregistrée
+        if self.memories[next_col][next_row] is None:
+            msg = tr("go_empty_mem").format(col=next_col + 1, row=next_row + 1)
+            self._show_error_toast(msg)
+            return
+
+        # Activer la mémoire
+        self.trigger_memory(next_col, next_row)
+        self._go_col = next_col
+        self._go_row = next_row
+
+        # Feedback visuel sur le bouton
+        btn = getattr(self, '_tap_btn', None)
+        if btn:
+            btn.setStyleSheet("""
+                QToolButton {
+                    background: #00aa55;
+                    border: 2px solid #00ff88;
+                    border-radius: 8px;
+                    color: #fff;
+                    font-size: 8px;
+                    font-weight: bold;
+                }
+            """)
+            QTimer.singleShot(150, self._update_tap_go_btn_style)
+
+        self._show_mem_toast(f"▶  MEM {next_col + 1}.{next_row + 1}")
+
     def _tap_tempo(self):
         """Calcule le BPM à partir des taps et règle le fader vitesse FX."""
+        if self.go_mode:
+            self._go_advance()
+            return
+
         now = time.monotonic()
         # Supprimer les taps trop anciens (> 3 secondes sans tap = reset)
         self._tap_times = [t for t in self._tap_times if now - t < 3.0]
@@ -3924,7 +4240,7 @@ class MainWindow(QMainWindow):
                     btn.active = False
                     btn.update_style()
 
-        self._show_mem_toast("✔ AKAI remis à zéro")
+        self._log_message("CLEAR — AKAI remis à zéro", "info")
 
     def _init_default_fx_speed(self):
         """Initialise le fader FX à 80% au démarrage."""
@@ -3937,6 +4253,13 @@ class MainWindow(QMainWindow):
         for btn in self.effect_buttons:
             btn.active = False
             btn.update_style()
+
+        # Vider la pile de superposition et arrêter le timer
+        self._stacked_effects = []
+        if hasattr(self, 'effect_timer'):
+            self.effect_timer.stop()
+        self.active_effect = None
+        self.active_effect_config = {}
 
         if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
             for i in range(8):
@@ -4722,6 +5045,8 @@ class MainWindow(QMainWindow):
             "custom_bank_slots": [dict(s) for s in self._custom_bank_slots],
             "last_fader_mode": "FX",
             "fx_pads": self.fx_pads,
+            "effect_superposition": self.effect_superposition,
+            "go_mode": self.go_mode,
         }
 
     def _apply_akai_config(self, config):
@@ -4775,6 +5100,13 @@ class MainWindow(QMainWindow):
 
         # Fader 9 toujours en mode FX
         self._last_fader_mode = "FX"
+
+        # Superposition d'effets
+        self.effect_superposition = config.get("effect_superposition", False)
+
+        # Mode GO
+        self.go_mode = config.get("go_mode", False)
+        self._update_tap_go_btn_style()
 
         # active_memory_pads non restaure : toujours demarrer sans pad actif
         # (evite le pad du haut "toujours enclenche" au demarrage)
@@ -9943,7 +10275,7 @@ class MainWindow(QMainWindow):
             _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#4CAF50;")
             _lay.addWidget(_msg)
             _btn_row = QHBoxLayout()
-            _btn_reconnect = QPushButton("🔄  Redémarrer AKAI")
+            _btn_reconnect = QPushButton("🔄  Actualiser")
             _btn_reconnect.setFixedHeight(32)
             _btn_reconnect.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;"
                                          "border-radius:5px;font-size:12px;}"
@@ -10030,7 +10362,13 @@ class MainWindow(QMainWindow):
                 _btn_midi_setup.clicked.connect(lambda: _sub.Popen(["open", "-a", "Audio MIDI Setup"]))
                 _lay.addWidget(_btn_midi_setup)
             _btn_row = QHBoxLayout()
-            _btn_diag = QPushButton("Ouvrir le diagnostic")
+            _btn_refresh = QPushButton("🔄  Actualiser")
+            _btn_refresh.setFixedHeight(32)
+            _btn_refresh.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;border-radius:5px;font-size:12px;}"
+                                       "QPushButton:hover{background:#3a7a3a;}")
+            _btn_refresh.clicked.connect(lambda: (_dlg.accept(), self.test_akai_connection()))
+            _btn_row.addWidget(_btn_refresh)
+            _btn_diag = QPushButton("Diagnostic")
             _btn_diag.setFixedHeight(32)
             _btn_diag.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
                                     "QPushButton:hover{background:#1e4a7a;}")
@@ -10826,8 +11164,11 @@ class MainWindow(QMainWindow):
 
     def send_dmx_update(self):
         """Envoie les donnees DMX avec HTP memoires + pads AKAI + refresh plan de feu"""
-        # Appliquer l'effet en cours (pan/tilt/couleur) avant le rendu
-        if getattr(self, 'active_effect', None) is not None:
+        # Appliquer l'effet en cours — sauf si la timeline gère les projecteurs
+        # (en mode Play Lumière, apply_timeline_to_dmx appelle update_effect() lui-même)
+        _seq = getattr(self, 'seq', None)
+        _timeline_active = hasattr(_seq, 'timeline_playback_row') if _seq else False
+        if not _timeline_active and getattr(self, 'active_effect', None) is not None:
             self.update_effect()
 
         # Calculer les overrides HTP sans modifier les projecteurs

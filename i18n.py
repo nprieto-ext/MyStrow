@@ -205,6 +205,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "legend_groups":         {"en": "Projector groups",             "fr": "Groupes projecteurs"},
     "legend_mem_col":        {"en": "Memory column",                "fr": "Colonne mémoire"},
     "legend_fx_col":         {"en": "FX effects column",           "fr": "Colonne effets FX"},
+    "fx_superposition_lbl":  {"en": "Effect superposition",         "fr": "Superposition d'effets"},
+    "fx_superposition_tip":  {"en": "Allow multiple effects to run simultaneously (stacked). By default, effects are exclusive (one at a time).",
+                               "fr": "Permet d'activer plusieurs effets simultanément (superposés). Par défaut, les effets sont exclusifs (un seul à la fois)."},
+    "go_mode_lbl":           {"en": "GO mode (replaces TAP BPM)",   "fr": "Mode GO (remplace le TAP BPM)"},
+    "go_mode_tip":           {"en": "In GO mode, the TAP button advances to the next recorded memory (MEM 1.1 → 1.2 → … → 1.8 → 2.1 …). If the next memory is empty, it stays in place.",
+                               "fr": "En mode GO, le bouton TAP avance à la mémoire suivante enregistrée (MEM 1.1 → 1.2 → … → 1.8 → 2.1 …). Si la mémoire suivante est vide, on reste en place."},
+    "go_empty_mem":          {"en": "Nothing recorded in MEM {col}.{row}",
+                               "fr": "Rien d'enregistré en MEM {col}.{row}"},
 
     # ------------------------------------------------------------------ main_window / VideoOutputWindow
     "video_output_title":    {"en": "Video Output - Maestro",       "fr": "Sortie Video - Maestro"},
@@ -224,7 +232,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                               "fr": "Tap Tempo — tapez plusieurs fois en rythme pour régler la vitesse FX"},
 
     # ------------------------------------------------------------------ main_window / menus
-    "menu_file":             {"en": "📁 File",                      "fr": "📁 Fichier"},
+    "menu_file":             {"en": "File",                         "fr": "Fichier"},
     "menu_new_show":         {"en": "📄 New Show",                  "fr": "📄 Nouveau Show"},
     "menu_open_show":        {"en": "📂 Open Show...",              "fr": "📂 Ouvrir Show..."},
     "menu_save_show":        {"en": "💾 Save Show",                 "fr": "💾 Enregistrer Show"},
@@ -236,7 +244,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "menu_load_fx_default":  {"en": "⚡ Load default effects",      "fr": "⚡ Charger les effets par défaut"},
     "menu_clear_all_mem":    {"en": "🗑️ Clear all memories",        "fr": "🗑️ Effacer toutes les mémoires"},
     "menu_quit":             {"en": "❌ Quit",                       "fr": "❌ Quitter"},
-    "menu_edit":             {"en": "✏️ Edit",                      "fr": "✏️ Edition"},
+    "menu_edit":             {"en": "Edit",                         "fr": "Edition"},
     "menu_dmx_patch":        {"en": "🔌 DMX Patch",                 "fr": "🔌 Patch DMX"},
     "menu_dmx_tester":       {"en": "🔬 DMX Tester",                "fr": "🔬 DMX Tester"},
     "menu_rec_light":        {"en": "🔴 REC Light",                 "fr": "🔴 REC Lumière"},
@@ -245,7 +253,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "menu_set_duration":     {"en": "⏱ Set duration",              "fr": "⏱ Définir la durée"},
     "menu_ia_lumiere":       {"en": "💡 AI Light",                  "fr": "💡 IA Lumière"},
     "menu_shortcuts":        {"en": "⌨️ Shortcuts",                 "fr": "⌨️ Raccourcis"},
-    "menu_connection":       {"en": "🔗 Connection",                "fr": "🔗 Connexion"},
+    "menu_connection":       {"en": "Connection",                   "fr": "Connexion"},
     "menu_control":          {"en": "🎮 Control",                  "fr": "🎮 Contrôle"},
     "menu_akai_mini":        {"en": "🎹 AKAI APC Mini MK2",        "fr": "🎹 AKAI APC Mini MK2"},
     "menu_akai_input":       {"en": "🎹 Akai Input",               "fr": "🎹 Entrée Akai"},

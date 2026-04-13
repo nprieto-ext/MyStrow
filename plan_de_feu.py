@@ -1044,6 +1044,9 @@ class FixtureCanvas(QWidget):
         self._hover_index = None
         self._rubber_origin = None
         self._rubber_rect   = None
+        # Beam "en attente" : press sur faisceau sans drag → rubber band prioritaire
+        self._pending_beam  = None       # dict {beam_idx, pos, targets} ou None
+        self._pt_floater    = None       # floater Pan/Tilt (référence externe, peut être None)
 
     # ── Helpers de position ─────────────────────────────────────────
 
@@ -1435,14 +1438,12 @@ class FixtureCanvas(QWidget):
         idx = self._fixture_at(pos)
 
         if event.button() == Qt.LeftButton:
-            # Clic sur le faisceau d'une Moving Head → drag direct pan/tilt
+            # Clic sur le faisceau d'une Moving Head → drag pan/tilt (en attente de mouvement)
             beam_idx = self._beam_at(pos)
             if beam_idx is not None and idx is None:
                 proj = self.pdf.projectors[beam_idx]
                 group, local_idx = self._local_idx(beam_idx)
                 key = (group, local_idx)
-                # Cibles : fixtures sélectionnées (si la cliquée en fait partie)
-                # sinon uniquement la fixture cliquée
                 if key in self.pdf.selected_lamps and self.pdf.selected_lamps:
                     targets = []
                     for j, p in enumerate(self.pdf.projectors):
@@ -1451,16 +1452,23 @@ class FixtureCanvas(QWidget):
                             targets.append(p)
                 else:
                     targets = [proj]
-                self._beam_drag_idx     = beam_idx
-                self._beam_drag_start   = pos
-                self._beam_drag_pt0     = (getattr(proj, 'pan', 128), getattr(proj, 'tilt', 128))
-                self._beam_drag_targets = [(p, getattr(p, 'pan', 128), getattr(p, 'tilt', 128)) for p in targets]
-                # Si dimmer à 0%, passer à 100% pour voir le faisceau
-                for p in targets:
-                    if p.level == 0:
-                        p.level = 100
-                        p.color = QColor(p.base_color.red(), p.base_color.green(), p.base_color.blue())
-                self.setCursor(Qt.CrossCursor)
+                # Mémoriser le beam cliqué SANS commettre le drag :
+                # on attend de voir si l'utilisateur bouge vraiment (> 5 px).
+                # En attendant, on laisse le rubber-band démarrer normalement.
+                self._pending_beam = {
+                    'beam_idx': beam_idx,
+                    'pos':      pos,
+                    'proj':     proj,
+                    'targets':  targets,
+                }
+                # Démarrer aussi le rubber-band (sera annulé si le drag beam se confirme)
+                if not (event.modifiers() & Qt.ControlModifier):
+                    self.pdf.selected_lamps.clear()
+                if self._pt_floater is not None:
+                    self._pt_floater.hide_floater()
+                self._rubber_origin = pos
+                self._rubber_rect   = QRect(pos, QSize())
+                self.update()
                 return
 
             if idx is not None:
@@ -1750,6 +1758,26 @@ class FixtureCanvas(QWidget):
     def mouseMoveEvent(self, event):
         pos = event.pos()
 
+        # ── Beam en attente : commit si > 5 px de mouvement ──────
+        if self._pending_beam is not None and (event.buttons() & Qt.LeftButton):
+            if (pos - self._pending_beam['pos']).manhattanLength() > 5:
+                pb = self._pending_beam
+                self._pending_beam      = None
+                self._rubber_origin     = None
+                self._rubber_rect       = None
+                proj    = pb['proj']
+                targets = pb['targets']
+                self._beam_drag_idx     = pb['beam_idx']
+                self._beam_drag_start   = pb['pos']
+                self._beam_drag_pt0     = (getattr(proj, 'pan', 128), getattr(proj, 'tilt', 128))
+                self._beam_drag_targets = [(p, getattr(p, 'pan', 128), getattr(p, 'tilt', 128)) for p in targets]
+                for p in targets:
+                    if p.level == 0:
+                        p.level = 100
+                        p.color = QColor(p.base_color.red(), p.base_color.green(), p.base_color.blue())
+                self.setCursor(Qt.CrossCursor)
+                # tomber dans le handler beam ci-dessous au prochain move
+
         # ── Drag faisceau Pan/Tilt ────────────────────────────────
         if self._beam_drag_idx is not None and (event.buttons() & Qt.LeftButton):
             import math as _m
@@ -1861,6 +1889,9 @@ class FixtureCanvas(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # Annuler le beam en attente (l'utilisateur n'a pas draggé assez)
+            if self._pending_beam is not None:
+                self._pending_beam = None
             if self._beam_drag_idx is not None:
                 self._beam_drag_idx     = None
                 self._beam_drag_start   = None
@@ -1960,6 +1991,20 @@ class PlanDeFeu(QFrame):
         if show_toolbar:
             toolbar = QHBoxLayout()
             toolbar.setContentsMargins(0, 0, 0, 0)
+
+            _PARAM_SS = (
+                "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #3a3a3a; "
+                "border-radius: 4px; font-size: 13px; } "
+                "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #0077bb; }"
+            )
+            if main_window is not None and hasattr(main_window, 'show_dmx_patch_config'):
+                patch_btn = QPushButton("⚙")
+                patch_btn.setFixedSize(26, 26)
+                patch_btn.setToolTip("Patch DMX — configuration des adresses de canaux")
+                patch_btn.setStyleSheet(_PARAM_SS)
+                patch_btn.clicked.connect(main_window.show_dmx_patch_config)
+                toolbar.addWidget(patch_btn)
+                toolbar.addSpacing(4)
 
             toolbar.addStretch()
 
