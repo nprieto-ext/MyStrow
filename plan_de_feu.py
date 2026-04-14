@@ -2264,6 +2264,19 @@ class PlanDeFeu(QFrame):
             proj.level = 0
             proj.base_color = QColor(0, 0, 0)
             proj.color = QColor(0, 0, 0)
+            # Canaux spéciaux
+            proj.uv           = 0
+            proj.white_boost  = 0
+            proj.amber_boost  = 0
+            proj.orange_boost = 0
+            # Moving head
+            proj.pan          = 128
+            proj.tilt         = 128
+            proj.gobo         = 0
+            proj.zoom         = 0
+            proj.shutter      = 255
+            proj.color_wheel  = 0
+            proj.prism        = 0
         self.selected_lamps.clear()
         self.refresh()
 

@@ -4240,6 +4240,20 @@ class MainWindow(QMainWindow):
                     btn.active = False
                     btn.update_style()
 
+        # Remettre à zéro les canaux spéciaux et moving head
+        for p in self.projectors:
+            p.uv           = 0
+            p.white_boost  = 0
+            p.amber_boost  = 0
+            p.orange_boost = 0
+            p.pan          = 128
+            p.tilt         = 128
+            p.gobo         = 0
+            p.zoom         = 0
+            p.shutter      = 255
+            p.color_wheel  = 0
+            p.prism        = 0
+
         self._log_message("CLEAR — AKAI remis à zéro", "info")
 
     def _init_default_fx_speed(self):

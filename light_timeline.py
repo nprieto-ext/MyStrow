@@ -455,6 +455,470 @@ class _EffectChip(QWidget):
             drag.exec(Qt.CopyAction)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  LIBRARY PANEL  —  panneau bibliothèque latéral (nouveau layout éditeur)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _LibraryItem(QWidget):
+    """Ligne draggable de base dans la bibliothèque. Supporte la sélection multiple."""
+    H  = 28
+    SW = 14   # taille swatch
+
+    def __init__(self, name, panel=None, parent=None):
+        super().__init__(parent)
+        self._name     = name
+        self._panel    = panel
+        self._selected = False
+        self._hovered  = False
+        self.setFixedHeight(self.H)
+        self.setCursor(QCursor(Qt.OpenHandCursor))
+
+        if panel:
+            panel._register(self)
+
+        h = QHBoxLayout(self)
+        h.setContentsMargins(22, 0, 10, 0)
+        h.setSpacing(8)
+
+        self._sw = QWidget()
+        self._sw.setFixedSize(self.SW, self.SW)
+        self._sw.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._sw.paintEvent = self._swatch_paint
+        h.addWidget(self._sw)
+
+        lbl = QLabel(name)
+        lbl.setStyleSheet(
+            "color: #999; font-size: 11px; background: transparent; border: none;"
+        )
+        lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
+        h.addWidget(lbl, 1)
+
+    # ── Swatch (override) ────────────────────────────────────────────────────
+
+    def _swatch_paint(self, event):
+        pass
+
+    # ── Visuel ───────────────────────────────────────────────────────────────
+
+    def enterEvent(self, e):
+        self._hovered = True;  self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False; self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        if self._selected:
+            p.fillRect(self.rect(), QColor(0, 212, 255, 40))
+            p.setPen(QPen(QColor(0, 212, 255, 160), 1))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(0, 0, self.width() - 1, self.height() - 1)
+        elif self._hovered:
+            p.fillRect(self.rect(), QColor(255, 255, 255, 12))
+        p.end()
+
+    # ── Sélection + Drag ─────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start = event.position().toPoint()
+            if self._panel:
+                ctrl = bool(event.modifiers() & Qt.ControlModifier)
+                self._panel._toggle_selection(self, ctrl)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            # Multi-drag si plusieurs items sélectionnés et cet item en fait partie
+            if (self._panel
+                    and len(self._panel._selection) > 1
+                    and self in self._panel._selection):
+                self._panel._do_multi_drag(self)
+            else:
+                self._do_single_drag()
+        super().mouseMoveEvent(event)
+
+    def _do_single_drag(self):
+        pass  # override dans sous-classes
+
+
+class _LibraryColorItem(_LibraryItem):
+    def __init__(self, name, color, panel=None, parent=None):
+        self._color = color
+        super().__init__(name, panel, parent)
+
+    def _swatch_paint(self, event):
+        p = QPainter(self._sw)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, self.SW, self.SW, 3, 3)
+        p.fillPath(path, QBrush(self._color))
+        p.end()
+
+    def _do_single_drag(self):
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setText(self._color.name())
+        drag.setMimeData(mime)
+        pix = QPixmap(46, 46); pix.fill(self._color)
+        drag.setPixmap(pix); drag.setHotSpot(QPoint(23, 23))
+        drag.exec(Qt.CopyAction)
+
+
+class _LibraryBicolorItem(_LibraryItem):
+    def __init__(self, name, c1, c2, panel=None, parent=None):
+        self._c1 = c1
+        self._c2 = c2
+        super().__init__(name, panel, parent)
+
+    def _swatch_paint(self, event):
+        p = QPainter(self._sw)
+        S = self.SW
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, S, S, 3, 3)
+        p.setClipPath(path)
+        p.fillRect(0, 0, S // 2, S, self._c1)
+        p.fillRect(S // 2, 0, S - S // 2, S, self._c2)
+        p.end()
+
+    def _do_single_drag(self):
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setText(f"{self._c1.name()}#{self._c2.name()}")
+        drag.setMimeData(mime)
+        pix = QPixmap(46, 46)
+        p = QPainter(pix)
+        p.fillRect(0, 0, 23, 46, self._c1)
+        p.fillRect(23, 0, 23, 46, self._c2)
+        p.end()
+        drag.setPixmap(pix); drag.setHotSpot(QPoint(23, 23))
+        drag.exec(Qt.CopyAction)
+
+
+class _LibraryMemItem(_LibraryItem):
+    def __init__(self, label, color, mem_col, row, panel=None, parent=None):
+        self._mem_color = color
+        self._mem_col   = mem_col
+        self._mem_row   = row
+        super().__init__(label, panel, parent)
+
+    def _swatch_paint(self, event):
+        p = QPainter(self._sw)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, self.SW, self.SW, 3, 3)
+        p.fillPath(path, QBrush(self._mem_color))
+        p.end()
+
+    def _do_single_drag(self):
+        drag = QDrag(self)
+        mime = QMimeData()
+        data = f"{self._mem_col},{self._mem_row},{self._name},{self._mem_color.name()}"
+        mime.setData('application/x-sequence', data.encode())
+        drag.setMimeData(mime)
+        pix = QPixmap(50, 46); pix.fill(self._mem_color)
+        p = QPainter(pix)
+        lum = (self._mem_color.red()   * 0.299
+             + self._mem_color.green() * 0.587
+             + self._mem_color.blue()  * 0.114)
+        p.setPen(QColor("#000" if lum > 140 else "#fff"))
+        p.drawText(pix.rect(), Qt.AlignCenter, self._name)
+        p.end()
+        drag.setPixmap(pix); drag.setHotSpot(QPoint(25, 23))
+        drag.exec(Qt.CopyAction)
+
+
+class _LibraryEffectItem(_LibraryItem):
+    def __init__(self, eff_dict, panel=None, parent=None):
+        self._eff = eff_dict
+        emoji = eff_dict.get("emoji", "✨")
+        name  = eff_dict.get("name", "")
+        super().__init__(f"{emoji}  {name}", panel, parent)
+
+    def _swatch_paint(self, event):
+        p = QPainter(self._sw)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, self.SW, self.SW, 3, 3)
+        p.fillPath(path, QBrush(QColor("#22083a")))
+        p.end()
+
+    def _do_single_drag(self):
+        import json as _json
+        drag = QDrag(self)
+        mime = QMimeData()
+        data = {
+            "name":   self._eff.get("name",   ""),
+            "type":   self._eff.get("type",   ""),
+            "layers": self._eff.get("layers", []),
+        }
+        mime.setData('application/x-effect', _json.dumps(data).encode())
+        drag.setMimeData(mime)
+        pix = QPixmap(80, 46); pix.fill(QColor("#22083a"))
+        drag.setPixmap(pix); drag.setHotSpot(QPoint(40, 23))
+        drag.exec(Qt.CopyAction)
+
+
+class _LibrarySection(QWidget):
+    """Section repliable dans la bibliothèque (▼/▶ + liste d'items)."""
+
+    _HDR_SS = (
+        "QPushButton { background: #141414; color: #555; font-size: 8px; font-weight: bold; "
+        "letter-spacing: 1px; text-align: left; border: none; "
+        "border-bottom: 1px solid #1c1c1c; padding: 6px 10px; } "
+        "QPushButton:hover { color: #bbb; background: #1a1a1a; }"
+    )
+
+    def __init__(self, title, parent_layout):
+        super().__init__()
+        self.setStyleSheet("background: #0f0f0f;")
+        self._title_text = title
+        self._expanded   = True
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        self._hdr = QPushButton(f"▼  {title}")
+        self._hdr.setStyleSheet(self._HDR_SS)
+        self._hdr.clicked.connect(self._toggle)
+        v.addWidget(self._hdr)
+
+        self._body = QWidget()
+        self._body.setStyleSheet("background: transparent;")
+        self._bv = QVBoxLayout(self._body)
+        self._bv.setContentsMargins(0, 0, 0, 0)
+        self._bv.setSpacing(0)
+        v.addWidget(self._body)
+
+        parent_layout.addWidget(self)
+
+    def add_item(self, widget):
+        self._bv.addWidget(widget)
+
+    def clear_items(self):
+        """Vide la section et retourne les widgets retirés."""
+        removed = []
+        while self._bv.count():
+            item = self._bv.takeAt(0)
+            w = item.widget()
+            if w:
+                removed.append(w)
+                w.deleteLater()
+        return removed
+
+    def _toggle(self):
+        self._expanded = not self._expanded
+        self._body.setVisible(self._expanded)
+        arrow = "▼" if self._expanded else "▶"
+        self._hdr.setText(f"{arrow}  {self._title_text}")
+
+
+class LibraryPanel(QScrollArea):
+    """Panneau bibliothèque à droite : COULEUR / BICOULEUR / MÉMOIRE / EFFETS.
+    Supporte la sélection multiple (Ctrl+clic) et le drag multi-items."""
+
+    def __init__(self, parent_editor):
+        super().__init__()
+        self.parent_editor = parent_editor
+        self._selection: set  = set()   # items actuellement sélectionnés
+        self._all_items: list = []      # tous les _LibraryItem enregistrés
+
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setMinimumWidth(190)
+        self.setMaximumWidth(280)
+        self.setStyleSheet(
+            "QScrollArea { background: #0f0f0f; border: none; border-right: 1px solid #1c1c1c; }"
+            "QScrollBar:vertical { background: #0a0a0a; width: 6px; margin: 0; }"
+            "QScrollBar::handle:vertical { background: #252525; border-radius: 3px; min-height: 20px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+
+        content = QWidget()
+        content.setStyleSheet("background: #0f0f0f;")
+        v = QVBoxLayout(content)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        # Titre + compteur sélection
+        hdr_row = QWidget(); hdr_row.setStyleSheet("background: #0a0a0a;")
+        hdr_h = QHBoxLayout(hdr_row); hdr_h.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("  BIBLIOTHÈQUE")
+        title.setFixedHeight(24)
+        title.setStyleSheet(
+            "color: #383838; font-size: 8px; font-weight: bold; letter-spacing: 2px; "
+            "background: transparent; border-bottom: 1px solid #161616;"
+        )
+        hdr_h.addWidget(title, 1)
+        self._sel_lbl = QLabel("")
+        self._sel_lbl.setFixedHeight(24)
+        self._sel_lbl.setStyleSheet(
+            "color: #00d4ff; font-size: 9px; font-weight: bold; "
+            "background: transparent; border-bottom: 1px solid #161616; padding-right: 8px;"
+        )
+        self._sel_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        hdr_h.addWidget(self._sel_lbl)
+        v.addWidget(hdr_row)
+
+        self._sec_color = _LibrarySection("COULEUR", v)
+        self._sec_bi    = _LibrarySection("BICOULEUR", v)
+        self._sec_mem   = _LibrarySection("MÉMOIRE", v)
+        self._sec_eff   = _LibrarySection("EFFETS", v)
+
+        v.addStretch()
+        self.setWidget(content)
+
+        self._populate_static()
+        self.refresh()
+
+    # ── Gestion du registre d'items ───────────────────────────────────────────
+
+    def _register(self, item):
+        self._all_items.append(item)
+
+    def _deregister_list(self, items):
+        for w in items:
+            if w in self._all_items:
+                self._all_items.remove(w)
+            self._selection.discard(w)
+
+    # ── Sélection ─────────────────────────────────────────────────────────────
+
+    def _toggle_selection(self, item, ctrl: bool):
+        if ctrl:
+            # Ctrl+clic : ajouter/retirer de la sélection
+            if item in self._selection:
+                self._selection.discard(item)
+                item._selected = False
+                item.update()
+            else:
+                self._selection.add(item)
+                item._selected = True
+                item.update()
+        else:
+            # Clic simple : désélectionner tout, sélectionner cet item
+            for other in list(self._selection):
+                other._selected = False
+                other.update()
+            self._selection.clear()
+            self._selection.add(item)
+            item._selected = True
+            item.update()
+
+        # Mettre à jour le compteur dans le titre
+        n = len(self._selection)
+        self._sel_lbl.setText(f"{n} sélect." if n > 1 else "")
+
+    def _clear_selection(self):
+        for item in list(self._selection):
+            item._selected = False
+            item.update()
+        self._selection.clear()
+        self._sel_lbl.setText("")
+
+    # ── Drag multi-items ──────────────────────────────────────────────────────
+
+    def _do_multi_drag(self, source):
+        import json as _json
+
+        items_data = []
+        types_set  = set()
+
+        for item in self._selection:
+            if isinstance(item, _LibraryColorItem):
+                items_data.append({"type": "color",   "value": item._color.name()})
+                types_set.add("color")
+            elif isinstance(item, _LibraryBicolorItem):
+                items_data.append({"type": "bicolor",
+                                   "value": f"{item._c1.name()}#{item._c2.name()}"})
+                types_set.add("bicolor")
+            elif isinstance(item, _LibraryMemItem):
+                items_data.append({"type": "memory",
+                                   "value": f"{item._mem_col},{item._mem_row},"
+                                            f"{item._name},{item._mem_color.name()}"})
+                types_set.add("memory")
+            elif isinstance(item, _LibraryEffectItem):
+                items_data.append({"type": "effect",
+                                   "value": _json.dumps({
+                                       "name":   item._eff.get("name",   ""),
+                                       "type":   item._eff.get("type",   ""),
+                                       "layers": item._eff.get("layers", []),
+                                   })})
+                types_set.add("effect")
+
+        if not items_data:
+            return
+
+        drag = QDrag(source)
+        mime = QMimeData()
+        mime.setData('application/x-multi-library',       _json.dumps(items_data).encode())
+        mime.setData('application/x-multi-library-types', ",".join(types_set).encode())
+        drag.setMimeData(mime)
+
+        # Pixmap : badge avec nombre d'items
+        n   = len(items_data)
+        pix = QPixmap(64, 28)
+        pix.fill(QColor("#0d0d0d"))
+        p = QPainter(pix)
+        p.setPen(QPen(QColor("#00d4ff"), 1))
+        p.drawRect(0, 0, 63, 27)
+        p.setPen(QColor("#00d4ff"))
+        f = p.font(); f.setBold(True); f.setPixelSize(11); p.setFont(f)
+        p.drawText(pix.rect(), Qt.AlignCenter, f"× {n}")
+        p.end()
+        drag.setPixmap(pix)
+        drag.setHotSpot(QPoint(32, 14))
+        drag.exec(Qt.CopyAction)
+
+    # ── Remplissage ───────────────────────────────────────────────────────────
+
+    def _populate_static(self):
+        for name, c in PalettePanel.COLORS:
+            self._sec_color.add_item(_LibraryColorItem(name, c, panel=self))
+        for name, c1, c2 in PalettePanel.BICOLORS:
+            self._sec_bi.add_item(_LibraryBicolorItem(name, c1, c2, panel=self))
+        try:
+            from effect_editor import BUILTIN_EFFECTS
+            for eff in BUILTIN_EFFECTS:
+                self._sec_eff.add_item(_LibraryEffectItem(eff, panel=self))
+        except Exception:
+            pass
+
+    def refresh(self):
+        """Rafraîchit la section Mémoires."""
+        removed = self._sec_mem.clear_items()
+        self._deregister_list(removed)
+
+        mw       = getattr(self.parent_editor, 'main_window', None)
+        memories = getattr(mw, 'memories', None) if mw else None
+        count    = 0
+
+        if memories:
+            for mem_col, col_mems in enumerate(memories):
+                for row_idx, mem in enumerate(col_mems):
+                    if mem is None:
+                        continue
+                    color = PalettePanel._dominant_color(mem, mw, mem_col, row_idx)
+                    label = f"MEM {mem_col + 1}.{row_idx + 1}"
+                    self._sec_mem.add_item(
+                        _LibraryMemItem(label, color, mem_col, row_idx, panel=self)
+                    )
+                    count += 1
+
+        if count == 0:
+            empty = QLabel("  Aucune mémoire")
+            empty.setStyleSheet(
+                "color: #2a2a2a; font-size: 10px; font-style: italic; "
+                "background: transparent; padding: 5px 10px;"
+            )
+            self._sec_mem.add_item(empty)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PALETTE PANEL  (conservé pour compatibilité — non affiché dans le nouveau layout)
+# ══════════════════════════════════════════════════════════════════════════════
+
 class PalettePanel(QWidget):
     """Palette 4 lignes : Couleurs / Bicoleurs / Mémoires / Effets — scrollables horizontalement."""
 
@@ -782,6 +1246,9 @@ class LightTrack(QWidget):
         # Magnétisme
         self._snap_active = False
         self._snap_x = 0  # position pixel de la ligne de snap
+
+        # Surlignage drop zone (drag depuis bibliothèque)
+        self._drag_active = False
 
         # Position du clic droit pour "Couper ici"
         self.last_context_click_x = 0
@@ -1567,10 +2034,14 @@ print(json.dumps(waveform))
                 clip, clip_x, _ = result
                 click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
                 self.show_effect_clip_menu(clip, event.globalPos(), click_pos_in_clip)
+            else:
+                self.show_effect_empty_menu(event.pos(), event.globalPos())
         elif self.is_sequence_track:
             if result:
                 clip, clip_x, _ = result
                 self.show_sequence_clip_menu(clip, event.globalPos())
+            else:
+                self.show_sequence_empty_menu(event.pos(), event.globalPos())
         elif result:
             clip, clip_x, _ = result
             click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
@@ -1713,15 +2184,121 @@ print(json.dumps(waveform))
         act_del.triggered.connect(lambda: self._delete_effect_clip(clip))
         menu.exec(global_pos)
 
-    def show_sequence_clip_menu(self, clip, global_pos):
-        """Menu clic droit minimal sur un clip de séquence AKAI."""
+    # ── Menus piste Séquence ──────────────────────────────────────────────────
+
+    _SEQ_MENU_STYLE = """
+        QMenu {
+            background: #1a1a1a; border: 1px solid #3a3a3a;
+            padding: 4px; font-size: 12px;
+        }
+        QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
+        QMenu::item:selected { background: #003355; color: #fff; }
+        QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
+        QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
+    """
+
+    def _build_memory_picker_menu(self, on_select):
+        """Construit un QMenu de sélection de mémoire."""
+        from PySide6.QtWidgets import QWidgetAction, QLineEdit
+
+        mw       = getattr(self.parent_editor, 'main_window', None)
+        memories = getattr(mw, 'memories', None) if mw else None
+
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background: #2a2a2a; color: white; border: 2px solid #00d4ff;
-                    padding: 5px; font-size: 13px; }
-            QMenu::item { padding: 8px 30px; border-radius: 4px; }
-            QMenu::item:selected { background: #00d4ff; color: black; }
+        menu.setStyleSheet(self._SEQ_MENU_STYLE)
+
+        if not memories:
+            act = menu.addAction(tr("lt_no_memory"))
+            act.setEnabled(False)
+            return menu
+
+        # Barre de recherche
+        search_w = QWidget()
+        search_w.setStyleSheet("background: transparent;")
+        sl = QHBoxLayout(search_w)
+        sl.setContentsMargins(6, 4, 6, 4)
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Rechercher une mémoire…")
+        search_input.setClearButtonEnabled(True)
+        search_input.setStyleSheet("""
+            QLineEdit {
+                background: #111; color: #e0e0e0;
+                border: 1px solid #444; border-radius: 4px;
+                padding: 4px 8px; font-size: 12px;
+            }
+            QLineEdit:focus { border-color: #00d4ff; }
         """)
+        sl.addWidget(search_input)
+        wa = QWidgetAction(menu)
+        wa.setDefaultWidget(search_w)
+        menu.addAction(wa)
+        menu.addSeparator()
+
+        actions_by_label = {}
+        for mem_col, col_mems in enumerate(memories):
+            for row_idx, mem in enumerate(col_mems):
+                if mem is None:
+                    continue
+                color  = PalettePanel._dominant_color(mem, mw, mem_col, row_idx)
+                label  = f"MEM {mem_col + 1}.{row_idx + 1}"
+                # Icône couleur
+                pix = QPixmap(14, 14)
+                pix.fill(color)
+                act = menu.addAction(QIcon(pix), f"  {label}")
+                act.triggered.connect(
+                    lambda _, mc=mem_col, ri=row_idx, lbl=label, c=color:
+                        on_select(mc, ri, lbl, c)
+                )
+                actions_by_label[label.lower()] = act
+
+        def _filter(text):
+            txt = text.strip().lower()
+            for lbl_lower, act in actions_by_label.items():
+                act.setVisible(not txt or txt in lbl_lower)
+
+        search_input.textChanged.connect(_filter)
+        return menu
+
+    def show_sequence_empty_menu(self, local_pos, global_pos):
+        """Menu clic droit sur zone vide de la piste Séquence."""
+        def _select(mem_col, row_idx, label, color):
+            drop_x     = local_pos.x() - 145
+            start_time = max(0, drop_x / self.pixels_per_ms)
+            start_time = self.find_free_position(start_time, 5000)
+            clip = self.add_clip_direct(start_time, 5000, color, 100)
+            clip.memory_ref   = (mem_col, row_idx)
+            clip.memory_label = label
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+
+        menu = self._build_memory_picker_menu(_select)
+        menu.exec(global_pos)
+
+    def show_sequence_clip_menu(self, clip, global_pos):
+        """Menu clic droit sur un clip de séquence AKAI."""
+        menu = QMenu(self)
+        menu.setStyleSheet(self._SEQ_MENU_STYLE)
+
+        # ── Changer la mémoire ─────────────────────────────────────────
+        cur_label = getattr(clip, 'memory_label', '') or ''
+        changer_lbl = f"Changer ({cur_label})" if cur_label else "Changer de mémoire"
+        act_change = menu.addAction(changer_lbl)
+
+        def _open_mem_picker():
+            def _select(mem_col, row_idx, label, color):
+                clip.color        = color
+                clip.memory_ref   = (mem_col, row_idx)
+                clip.memory_label = label
+                self.update()
+                if hasattr(self.parent_editor, 'save_state'):
+                    self.parent_editor.save_state()
+            m = self._build_memory_picker_menu(_select)
+            m.exec(global_pos)
+
+        act_change.triggered.connect(_open_mem_picker)
+
+        menu.addSeparator()
         act_del = menu.addAction(tr("lt_menu_delete"))
         act_del.triggered.connect(lambda: self._delete_clip(clip))
         menu.exec(global_pos)
@@ -2299,27 +2876,104 @@ print(json.dumps(waveform))
         self.update()
 
     def dragEnterEvent(self, event):
-        is_seq = event.mimeData().hasFormat('application/x-sequence')
-        is_eff = event.mimeData().hasFormat('application/x-effect')
-        if self.is_effect_track:
-            if is_eff:
+        mime = event.mimeData()
+
+        # ── Multi-drag depuis la bibliothèque ─────────────────────────────
+        if mime.hasFormat('application/x-multi-library'):
+            types_raw = bytes(mime.data('application/x-multi-library-types')).decode() \
+                        if mime.hasFormat('application/x-multi-library-types') else ''
+            types = set(types_raw.split(',')) if types_raw else set()
+            if self.is_effect_track:
+                accepted = 'effect' in types
+            elif self.is_sequence_track:
+                accepted = 'memory' in types
+            else:
+                accepted = bool(types & {'color', 'bicolor'})
+            if accepted:
                 event.acceptProposedAction()
             else:
                 event.ignore()
+            self._drag_active = accepted
+            self.update()
             return
-        if self.is_sequence_track:
+
+        is_seq = mime.hasFormat('application/x-sequence')
+        is_eff = mime.hasFormat('application/x-effect')
+        accepted = False
+        if self.is_effect_track:
+            if is_eff:
+                event.acceptProposedAction(); accepted = True
+            else:
+                event.ignore()
+        elif self.is_sequence_track:
             if is_seq:
-                event.acceptProposedAction()
+                event.acceptProposedAction(); accepted = True
             else:
                 event.ignore()
         else:
-            if not is_seq and event.mimeData().hasText():
-                event.acceptProposedAction()
+            if not is_seq and mime.hasText():
+                event.acceptProposedAction(); accepted = True
             else:
                 event.ignore()
+        self._drag_active = accepted
+        self.update()
+
+    def dragLeaveEvent(self, event):
+        self._drag_active = False
+        self.update()
 
     def dropEvent(self, event):
         """Drop d'une couleur, séquence ou effet sur la piste"""
+        self._drag_active = False
+        self.update()
+
+        # ── Multi-drop depuis la bibliothèque ─────────────────────────────
+        if event.mimeData().hasFormat('application/x-multi-library'):
+            import json as _json
+            raw   = bytes(event.mimeData().data('application/x-multi-library')).decode()
+            items = _json.loads(raw)
+            drop_x       = event.position().x() - 145
+            current_time = max(0, drop_x / self.pixels_per_ms)
+
+            for itd in items:
+                typ = itd.get('type', '')
+                val = itd.get('value', '')
+
+                if typ in ('color', 'bicolor') and not self.is_sequence_track and not self.is_effect_track:
+                    start = self.find_free_position(current_time, 5000)
+                    if '#' in val:
+                        c1h, c2h = val.split('#', 1)
+                        clip = self.add_clip(start, 5000, QColor(c1h), 100)
+                        clip.color2 = QColor(c2h)
+                    else:
+                        clip = self.add_clip(start, 5000, QColor(val), 100)
+                    current_time = start + 5000
+
+                elif typ == 'memory' and self.is_sequence_track:
+                    parts = val.split(',', 3)
+                    if len(parts) == 4:
+                        mc, ri, label, chex = int(parts[0]), int(parts[1]), parts[2], parts[3]
+                        start = self.find_free_position(current_time, 5000)
+                        clip  = self.add_clip_direct(start, 5000, QColor(chex), 100)
+                        clip.memory_ref   = (mc, ri)
+                        clip.memory_label = label
+                        current_time = start + 5000
+
+                elif typ == 'effect' and self.is_effect_track:
+                    eff = _json.loads(val)
+                    start = self.find_free_position(current_time, 10_000)
+                    clip  = self.add_clip(start, 10_000, QColor("#1a0a2e"), 100)
+                    clip.effect_name   = eff.get('name', '')
+                    clip.effect_type   = eff.get('type', '')
+                    clip.effect_layers = eff.get('layers', [])
+                    current_time = start + 10_000
+
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+            event.acceptProposedAction()
+            return
+
         # ── Drop effet sur piste Effet ──────────────────────────────────
         if self.is_effect_track and event.mimeData().hasFormat('application/x-effect'):
             import json as _json
@@ -2880,6 +3534,13 @@ print(json.dumps(waveform))
             pen = QPen(QColor("#ffdd00"), 1, Qt.DashLine)
             painter.setPen(pen)
             painter.drawLine(self._snap_x, 0, self._snap_x, self.height())
+
+        # Surlignage drop zone (drag depuis bibliothèque)
+        if self._drag_active:
+            painter.fillRect(self.rect(), QColor(0, 220, 80, 28))
+            painter.setPen(QPen(QColor(0, 220, 80, 200), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
 
         painter.end()
 

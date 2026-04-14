@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QComboBox, QProgressBar, QCheckBox,
     QMessageBox, QApplication, QMenuBar, QMenu, QSizePolicy, QFrame,
-    QFileDialog
+    QFileDialog, QSplitter
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QPoint, QRect, QMimeData
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon, QPalette, QBrush, QCursor, QKeySequence, QShortcut, QDrag, QPixmap
@@ -45,7 +45,7 @@ try:
 except ImportError:
     QVideoWidget = None
 
-from light_timeline import LightTrack, LightClip, PalettePanel
+from light_timeline import LightTrack, LightClip, PalettePanel, LibraryPanel
 from core import media_icon
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
@@ -218,6 +218,40 @@ class LightTimelineEditor(QDialog):
         header = self._create_header()
         layout.addWidget(header)
 
+        # ── Layout principal : [Gauche: bibliothèque] | [Droite: plan de feu / timeline] ──
+        self._pdf_window = None
+        self._live_pdf = None
+        self._pdf_show_action = None
+
+        _splitter_ss = "QSplitter::handle { background: #1e1e1e; }"
+
+        # Splitter horizontal externe : gauche (biblio) / droite (plan de feu + timeline)
+        outer_splitter = QSplitter(Qt.Horizontal)
+        outer_splitter.setHandleWidth(4)
+        outer_splitter.setStyleSheet(_splitter_ss)
+
+        # ── Droite : Plan de Feu (haut) + Timeline (bas) ─────────────────
+        left_splitter = QSplitter(Qt.Vertical)
+        left_splitter.setHandleWidth(4)
+        left_splitter.setStyleSheet(_splitter_ss)
+
+        try:
+            pdf = PlanDeFeu(self.main_window.projectors, main_window=self.main_window, show_toolbar=False)
+            pdf.setStyleSheet("border: none; background: #0d0d0d;")
+            left_splitter.addWidget(pdf)
+            self._live_pdf = pdf
+            self._pdf_window = pdf
+        except Exception:
+            _ph = QWidget(); _ph.setStyleSheet("background: #0d0d0d;")
+            left_splitter.addWidget(_ph)
+
+        # ── Timeline complète ─────────────────────────────────────────────
+        timeline_widget = QWidget()
+        timeline_widget.setStyleSheet("background: #0a0a0a;")
+        tl = QVBoxLayout(timeline_widget)
+        tl.setSpacing(0)
+        tl.setContentsMargins(0, 0, 0, 0)
+
         # Ruler
         self.ruler = QWidget()
         self.ruler.setFixedHeight(35)
@@ -226,7 +260,7 @@ class LightTimelineEditor(QDialog):
         self.ruler.mousePressEvent = self.ruler_mouse_press
         self.ruler.mouseMoveEvent = self.ruler_mouse_move
         self.ruler.mouseReleaseEvent = self.ruler_mouse_release
-        layout.addWidget(self.ruler)
+        tl.addWidget(self.ruler)
 
         # Scroll area pour les pistes
         self.tracks_scroll = QScrollArea()
@@ -266,7 +300,25 @@ class LightTimelineEditor(QDialog):
         # Stocker le container pour l'overlay
         self.tracks_container = tracks_container
         self.tracks_scroll.setWidget(tracks_container)
-        layout.addWidget(self.tracks_scroll)
+        tl.addWidget(self.tracks_scroll, 1)
+
+        # Footer (transport + save/close) dans la zone timeline
+        footer = self._create_footer()
+        tl.addWidget(footer)
+
+        left_splitter.addWidget(timeline_widget)
+        left_splitter.setSizes([280, 520])
+        left_splitter.setStretchFactor(0, 0)
+        left_splitter.setStretchFactor(1, 1)
+
+        # ── Gauche : Bibliothèque pleine hauteur ─────────────────────────
+        self._library = LibraryPanel(self)
+        outer_splitter.addWidget(self._library)
+        outer_splitter.addWidget(left_splitter)
+        outer_splitter.setStretchFactor(0, 0)
+        outer_splitter.setStretchFactor(1, 1)
+
+        layout.addWidget(outer_splitter, 1)
 
         # Creer l'overlay pour le rubber band (rectangle de selection visible)
         self.rubber_band_overlay = RubberBandOverlay(self.tracks_scroll.viewport())
@@ -275,17 +327,6 @@ class LightTimelineEditor(QDialog):
 
         # Synchroniser ruler avec scroll horizontal
         self.tracks_scroll.horizontalScrollBar().valueChanged.connect(self.on_scroll_changed)
-
-        # ── Panneau bas : Couleurs + Séquences | Plan de Feu ─────────────
-        self._pdf_window = None
-        self._live_pdf = None
-        self._pdf_show_action = None
-        bottom = self._create_bottom_panel()
-        layout.addWidget(bottom)
-
-        # Footer
-        footer = self._create_footer()
-        layout.addWidget(footer)
 
         # Zoom par defaut
         self.current_zoom = 1.0
