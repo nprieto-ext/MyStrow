@@ -7,12 +7,12 @@ import hashlib
 import random
 from i18n import tr
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton,
     QScrollArea, QWidget, QComboBox, QProgressBar, QCheckBox,
     QMessageBox, QApplication, QMenuBar, QMenu, QSizePolicy, QFrame,
     QFileDialog, QSplitter
 )
-from PySide6.QtCore import Qt, QTimer, QUrl, QPoint, QRect, QMimeData
+from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QPoint, QRect, QMimeData
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon, QPalette, QBrush, QCursor, QKeySequence, QShortcut, QDrag, QPixmap
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -46,7 +46,7 @@ except ImportError:
     QVideoWidget = None
 
 from light_timeline import LightTrack, LightClip, PalettePanel, LibraryPanel
-from core import media_icon
+from core import media_icon, create_icon
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
 
@@ -678,49 +678,6 @@ class LightTimelineEditor(QDialog):
         ai_action = tools_menu.addAction(tr("te_menu_ai_gen"))
         ai_action.triggered.connect(self.generate_ai_sequence)
 
-        # === EFFET ===
-        effect_menu = menubar.addMenu(tr("te_menu_effect"))
-
-        fade_in_action = effect_menu.addAction("🎬 Fade In")
-        fade_in_action.triggered.connect(self.apply_fade_in_to_selection)
-
-        fade_out_action = effect_menu.addAction("🎬 Fade Out")
-        fade_out_action.triggered.connect(self.apply_fade_out_to_selection)
-
-        remove_fades_action = effect_menu.addAction(tr("te_menu_remove_fades"))
-        remove_fades_action.triggered.connect(self.remove_fades_from_selection)
-
-        effect_menu.addSeparator()
-
-        no_effect_action = effect_menu.addAction(tr("te_menu_no_effect"))
-        no_effect_action.triggered.connect(lambda: self.apply_effect_to_selection(None))
-
-        effect_emojis = {
-            "Strobe": "⚡", "Flash": "💥", "Pulse": "💜",
-            "Wave": "🌊", "Random": "🎲", "Rainbow": "🌈",
-            "Sparkle": "✨", "Fire": "🔥",
-        }
-        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random", "Sparkle", "Rainbow", "Fire"]:
-            emoji = effect_emojis.get(eff, "⚡")
-            action = effect_menu.addAction(f"{emoji} {eff}")
-            action.triggered.connect(lambda checked=False, e=eff: self.apply_effect_to_selection(e))
-
-        effect_menu.addSeparator()
-        speed_action = effect_menu.addAction(tr("te_menu_effect_speed"))
-        speed_action.triggered.connect(self.edit_effect_speed_selection)
-
-        fx_editor_action = effect_menu.addAction(tr("te_menu_fx_editor"))
-        fx_editor_action.triggered.connect(self.open_effect_editor)
-
-        # === VIEW ===
-        view_menu = menubar.addMenu(tr("te_menu_view"))
-
-        pdf_action = view_menu.addAction(tr("te_menu_show_plan"))
-        pdf_action.setCheckable(True)
-        pdf_action.setChecked(True)
-        pdf_action.triggered.connect(self._toggle_pdf_window)
-        self._pdf_show_action = pdf_action
-
         return menubar
 
     def _create_header(self):
@@ -793,10 +750,12 @@ class LightTimelineEditor(QDialog):
         zoom_out_btn.setFixedSize(40, 40)
         zoom_out_btn.setFocusPolicy(Qt.NoFocus)
         zoom_out_btn.setStyleSheet(zoom_btn_style)
+        zoom_out_btn.setToolTip("Zoom arrière  (ou  Shift + Molette ↓)")
         header_layout.addWidget(zoom_out_btn)
 
         self.zoom_label = QLabel("100%")
         self.zoom_label.setStyleSheet("color: white; padding: 0 15px; font-size: 13px;")
+        self.zoom_label.setToolTip("Niveau de zoom  —  Shift + Molette pour zoomer")
         header_layout.addWidget(self.zoom_label)
 
         zoom_in_btn = QPushButton("➕")
@@ -804,6 +763,7 @@ class LightTimelineEditor(QDialog):
         zoom_in_btn.setFixedSize(40, 40)
         zoom_in_btn.setFocusPolicy(Qt.NoFocus)
         zoom_in_btn.setStyleSheet(zoom_btn_style)
+        zoom_in_btn.setToolTip("Zoom avant  (ou  Shift + Molette ↑)")
         header_layout.addWidget(zoom_in_btn)
 
         return header
@@ -811,52 +771,81 @@ class LightTimelineEditor(QDialog):
     def _create_footer(self):
         """Cree le footer avec controles audio et boutons"""
         footer = QWidget()
-        footer.setStyleSheet("background: #1a1a1a; border-top: 2px solid #3a3a3a;")
+        footer.setStyleSheet("background: #1a1a1a; border-top: 2px solid #2a2a2a;")
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(15, 10, 15, 10)
         footer_layout.setSpacing(10)
 
-        transport_btn_style = """
-            QPushButton {
-                background: #4a4a4a;
-                border: 2px solid #6a6a6a;
-                border-radius: 8px;
-                padding: 14px 18px;
-                color: white;
-                font-size: 14px;
-                font-weight: bold;
+        side_style = """
+            QToolButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3a3a3a, stop:1 #222222);
+                border: 1px solid #555555;
+                border-radius: 22px;
+                padding: 10px;
             }
-            QPushButton:hover {
-                background: #5a5a5a;
-                border: 2px solid #00d4ff;
+            QToolButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #444444, stop:1 #2a2a2a);
+                border: 1px solid #00d4ff;
             }
-            QPushButton:pressed { background: #3a3a3a; }
+            QToolButton:pressed { background: #1a1a1a; border: 1px solid #00aacc; }
         """
 
-        # -10s
-        back_btn = QPushButton("⏪")
-        back_btn.setFixedSize(60, 60)
-        back_btn.clicked.connect(lambda: self.seek_relative(-10000))
-        back_btn.setStyleSheet(transport_btn_style)
-        footer_layout.addWidget(back_btn)
+        play_style = """
+            QToolButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #006680, stop:1 #003344);
+                border: 2px solid #00d4ff;
+                border-radius: 32px;
+                padding: 14px;
+            }
+            QToolButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #008aaa, stop:1 #004455);
+                border: 2px solid #33eeff;
+            }
+            QToolButton:pressed { background: #002233; border: 2px solid #0099bb; }
+        """
 
-        # Play/Pause
-        self.play_pause_btn = QPushButton("▶")
-        self.play_pause_btn.setFixedSize(70, 70)
+        # Aller au début
+        start_btn = QToolButton()
+        start_btn.setIcon(create_icon("to_start", "#cccccc"))
+        start_btn.setIconSize(QSize(28, 28))
+        start_btn.setFixedSize(52, 52)
+        start_btn.setStyleSheet(side_style)
+        start_btn.setToolTip("Aller au début")
+        start_btn.clicked.connect(self._go_to_start)
+
+        # Play / Pause
+        self.play_pause_btn = QToolButton()
+        self.play_pause_btn.setIcon(create_icon("play", "#ffffff"))
+        self.play_pause_btn.setIconSize(QSize(36, 36))
+        self.play_pause_btn.setFixedSize(72, 72)
+        self.play_pause_btn.setStyleSheet(play_style)
+        self.play_pause_btn.setToolTip("Play / Pause  (Espace)")
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
-        self.play_pause_btn.setStyleSheet(transport_btn_style + """
-            QPushButton { padding: 18px; font-size: 24px; }
-        """)
-        footer_layout.addWidget(self.play_pause_btn)
 
-        # +10s
-        fwd_btn = QPushButton("⏩")
-        fwd_btn.setFixedSize(60, 60)
-        fwd_btn.clicked.connect(lambda: self.seek_relative(10000))
-        fwd_btn.setStyleSheet(transport_btn_style)
-        footer_layout.addWidget(fwd_btn)
+        # Aller à la fin
+        end_btn = QToolButton()
+        end_btn.setIcon(create_icon("to_end", "#cccccc"))
+        end_btn.setIconSize(QSize(28, 28))
+        end_btn.setFixedSize(52, 52)
+        end_btn.setStyleSheet(side_style)
+        end_btn.setToolTip("Aller à la fin")
+        end_btn.clicked.connect(self._go_to_end)
 
-        footer_layout.addStretch()
+        # Transport centré
+        transport_layout = QHBoxLayout()
+        transport_layout.setSpacing(8)
+        transport_layout.addStretch()
+        transport_layout.addWidget(start_btn)
+        transport_layout.addSpacing(4)
+        transport_layout.addWidget(self.play_pause_btn)
+        transport_layout.addSpacing(4)
+        transport_layout.addWidget(end_btn)
+        transport_layout.addStretch()
+        footer_layout.addLayout(transport_layout, 1)
 
         # Sauvegarder
         save_btn = QPushButton(tr("te_btn_save"))
@@ -974,7 +963,7 @@ class LightTimelineEditor(QDialog):
             # Arreter les deux
             self.preview_player.pause()
             self.main_window.player.pause()
-            self.play_pause_btn.setText("▶")
+            self.play_pause_btn.setIcon(create_icon("play", "#ffffff"))
             self.playback_timer.stop()
             # Arrêter les effets actifs (séquence et effet track)
             if self._seq_clip_active is not None or self._eff_clip_active is not None:
@@ -990,7 +979,7 @@ class LightTimelineEditor(QDialog):
             if pos > 0:
                 self.preview_player.setPosition(pos)
             self.preview_player.play()
-            self.play_pause_btn.setText("⏸")
+            self.play_pause_btn.setIcon(create_icon("pause", "#ffffff"))
             self.playback_timer.start(40)
 
     def seek_relative(self, delta_ms):
@@ -998,6 +987,22 @@ class LightTimelineEditor(QDialog):
         current = self.preview_player.position()
         new_pos = max(0, min(current + delta_ms, self.media_duration))
         self.preview_player.setPosition(int(new_pos))
+
+    def _go_to_start(self):
+        """Aller au début de la timeline"""
+        self.preview_player.setPosition(0)
+        self.playback_position = 0
+        self.ruler.update()
+        for track in self.tracks:
+            track.update()
+
+    def _go_to_end(self):
+        """Aller à la fin de la timeline"""
+        self.preview_player.setPosition(int(self.media_duration))
+        self.playback_position = self.media_duration
+        self.ruler.update()
+        for track in self.tracks:
+            track.update()
 
     def zoom_in(self):
         """Zoom avant centre sur le curseur rouge"""
@@ -1929,12 +1934,20 @@ class LightTimelineEditor(QDialog):
         QTimer.singleShot(800, dialog.accept)
 
     def wheelEvent(self, event):
-        """Scroll souris = Zoom/Dezoom centre sur la barre rouge"""
-        if event.angleDelta().y() > 0:
-            self.zoom_in()
+        """Shift+Scroll = Zoom | Scroll = défilement horizontal de la timeline"""
+        if event.modifiers() & Qt.ShiftModifier:
+            # Zoom centré sur la barre rouge
+            if event.angleDelta().y() > 0:
+                self.zoom_in()
+            else:
+                self.zoom_out()
+            event.accept()
         else:
-            self.zoom_out()
-        event.accept()
+            # Scroll horizontal dans la timeline
+            sb = self.tracks_scroll.horizontalScrollBar()
+            delta = -event.angleDelta().y()
+            sb.setValue(sb.value() + delta)
+            event.accept()
 
     def _create_bottom_panel(self):
         """Panneau bas : [Couleurs + Séquences] | [Plan de Feu]"""

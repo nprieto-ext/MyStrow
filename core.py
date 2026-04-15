@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.0.82"
+VERSION = "3.0.83"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -213,6 +213,20 @@ def create_icon(icon_type, color="#ffffff"):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(color))
         painter.drawEllipse(16, 16, 32, 32)
+    elif icon_type == "to_start":
+        # |◀  aller au début
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawRoundedRect(14, 16, 5, 32, 2, 2)
+        points = [QPoint(48, 16), QPoint(48, 48), QPoint(21, 32)]
+        painter.drawPolygon(QPolygon(points))
+    elif icon_type == "to_end":
+        # ▶|  aller à la fin
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(color))
+        points = [QPoint(16, 16), QPoint(16, 48), QPoint(43, 32)]
+        painter.drawPolygon(QPolygon(points))
+        painter.drawRoundedRect(45, 16, 5, 32, 2, 2)
 
     painter.end()
     return QIcon(pixmap)

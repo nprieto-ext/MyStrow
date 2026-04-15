@@ -19,7 +19,12 @@ from PySide6.QtWidgets import (
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
     QHeaderView, QCheckBox, QTextEdit
 )
-from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QPoint
+from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QPoint, QDateTime, QEvent
+import datetime as _dt
+try:
+    import psutil as _psutil
+except ImportError:
+    _psutil = None
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
     QPalette, QPolygon
@@ -80,58 +85,6 @@ from timeline_editor import LightTimelineEditor
 from updater import UpdateBar, UpdateChecker, download_update, AboutDialog
 from license_manager import LicenseState, LicenseResult, verify_license
 from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog, LoginSuccessDialog
-
-
-class HVUMeter(QWidget):
-    """VU mètre horizontal avec peak hold."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._level = 0.0
-        self._peak  = 0.0
-        self._peak_hold = 0
-        self.setFixedHeight(10)
-        self.setMinimumWidth(60)
-
-    def set_level(self, level: float):
-        self._level = max(0.0, min(1.0, level))
-        if self._level >= self._peak:
-            self._peak = self._level
-            self._peak_hold = 35
-        else:
-            if self._peak_hold > 0:
-                self._peak_hold -= 1
-            else:
-                self._peak = max(0.0, self._peak - 0.025)
-        self.update()
-
-    def paintEvent(self, event):
-        from PySide6.QtGui import QLinearGradient
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        r = 3
-        # Background
-        p.setBrush(QBrush(QColor("#1a1a1a")))
-        p.setPen(Qt.NoPen)
-        p.drawRoundedRect(0, 0, w, h, r, r)
-        # Barre de niveau
-        if self._level > 0.001:
-            fill_w = int(w * self._level)
-            grad = QLinearGradient(0, 0, w, 0)
-            grad.setColorAt(0.0,  QColor("#00c853"))
-            grad.setColorAt(0.55, QColor("#ffd600"))
-            grad.setColorAt(0.80, QColor("#ff6d00"))
-            grad.setColorAt(1.0,  QColor("#d50000"))
-            p.setBrush(QBrush(grad))
-            p.drawRoundedRect(0, 0, fill_w, h, r, r)
-        # Peak hold
-        if self._peak > 0.01:
-            px = int(w * self._peak) - 1
-            color = QColor("#ff1744") if self._peak > 0.85 else QColor("#ffffff")
-            p.setPen(QPen(color, 2))
-            p.drawLine(px, 1, px, h - 1)
-        p.end()
 
 
 # Mapping lettre AKAI -> nom interne du groupe projecteur
@@ -263,8 +216,7 @@ class MessageLogWidget(QWidget):
         # ── Zone texte ──────────────────────────────────────────────────────
         self._text = QTextEdit()
         self._text.setReadOnly(True)
-        self._text.setMinimumHeight(62)
-        self._text.setMaximumHeight(90)
+        self._text.setMinimumHeight(60)
         self._text.setStyleSheet(
             "QTextEdit { background:#0c0c0c; color:#555; "
             "border:1px solid #1e1e1e; border-radius:4px; "
@@ -313,6 +265,160 @@ _AKAI_SLOT_OPTIONS = (
 )
 
 
+class AkaiDiagnosticDialog(QDialog):
+    """Fenêtre de diagnostic AKAI : statut ports, activité MIDI en direct."""
+
+    def __init__(self, midi_handler, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Diagnostic AKAI APC Mini MK2")
+        self.setFixedSize(420, 320)
+        self.setModal(True)
+        self._midi = midi_handler
+        self._activity_count = 0
+
+        self.setStyleSheet("""
+            QDialog  { background: #111; color: #ddd; }
+            QLabel   { background: transparent; border: none; color: #ddd; }
+            QFrame   { border: none; }
+            QPushButton {
+                background: #1e1e1e; color: #ccc;
+                border: 1px solid #333; border-radius: 6px;
+                font-size: 10px; padding: 6px 14px;
+            }
+            QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #555; }
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 22, 24, 20)
+        root.setSpacing(14)
+
+        # ── Titre ──────────────────────────────────────────────────────────
+        title = QLabel("🎹  AKAI APC Mini MK2")
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        title.setStyleSheet("color:#fff;")
+        root.addWidget(title)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background:#222; max-height:1px;")
+        root.addWidget(sep)
+
+        # ── Statut ports ───────────────────────────────────────────────────
+        def _port_row(label, ok):
+            row = QHBoxLayout()
+            dot = QLabel("●")
+            dot.setStyleSheet(f"color:{'#4CAF50' if ok else '#f44336'}; font-size:11px;")
+            row.addWidget(dot)
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f"color:{'#ccc' if ok else '#888'}; font-size:10px;")
+            row.addWidget(lbl)
+            row.addStretch()
+            status = QLabel("Connecté" if ok else "Non détecté")
+            status.setStyleSheet(f"color:{'#4CAF50' if ok else '#f44336'}; font-size:10px; font-weight:bold;")
+            row.addWidget(status)
+            return row
+
+        try:
+            in_ok  = bool(midi_handler.midi_in  and midi_handler.midi_in.is_port_open())
+            out_ok = bool(midi_handler.midi_out and midi_handler.midi_out.is_port_open())
+        except Exception:
+            in_ok = out_ok = False
+
+        root.addLayout(_port_row("Entrée MIDI  (APC mini → logiciel)", in_ok))
+        root.addLayout(_port_row("Sortie MIDI  (logiciel → LEDs APC)", out_ok))
+
+        # ── Ports disponibles ──────────────────────────────────────────────
+        try:
+            import rtmidi2 as _rm
+            ports = _rm.get_in_ports()
+        except Exception:
+            try:
+                import rtmidi as _rm2
+                _tmp = _rm2.MidiIn()
+                ports = [_tmp.get_port_name(i) for i in range(_tmp.get_port_count())]
+            except Exception:
+                ports = []
+
+        ports_lbl = QLabel("Ports MIDI détectés : " + (", ".join(ports) if ports else "aucun"))
+        ports_lbl.setStyleSheet("color:#555; font-size:9px;")
+        ports_lbl.setWordWrap(True)
+        root.addWidget(ports_lbl)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet("background:#222; max-height:1px;")
+        root.addWidget(sep2)
+
+        # ── Activité MIDI en direct ────────────────────────────────────────
+        act_row = QHBoxLayout()
+        act_lbl = QLabel("Activité MIDI :")
+        act_lbl.setStyleSheet("color:#777; font-size:10px;")
+        act_row.addWidget(act_lbl)
+        self._act_dot = QLabel("●")
+        self._act_dot.setStyleSheet("color:#333; font-size:14px;")
+        act_row.addWidget(self._act_dot)
+        self._act_info = QLabel("En attente…")
+        self._act_info.setStyleSheet("color:#555; font-size:9px;")
+        act_row.addWidget(self._act_info)
+        act_row.addStretch()
+        root.addLayout(act_row)
+
+        # Timer pour faire clignoter le dot (on_midi_pad/fader notifie via signal)
+        self._blink_timer = QTimer(self)
+        self._blink_timer.timeout.connect(self._dim_activity)
+        self._blink_timer.start(300)
+
+        # On écoute les signaux MIDI du handler
+        midi_handler.pad_pressed.connect(self._on_midi_activity)
+        midi_handler.fader_changed.connect(self._on_midi_activity)
+
+        root.addStretch()
+
+        # ── Boutons ────────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        reconnect_btn = QPushButton("🔄  Reconnecter")
+        reconnect_btn.setStyleSheet(
+            "QPushButton { background:#0a3a5a; color:white; border:none; "
+            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 16px; } "
+            "QPushButton:hover { background:#0d4e7a; }"
+        )
+        reconnect_btn.clicked.connect(self._do_reconnect)
+        btn_row.addWidget(reconnect_btn)
+        btn_row.addSpacing(8)
+
+        close_btn = QPushButton("Fermer")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+
+        root.addLayout(btn_row)
+
+    def _on_midi_activity(self, *args):
+        self._act_dot.setStyleSheet("color:#FFE000; font-size:14px;")
+        self._act_info.setStyleSheet("color:#ccc; font-size:9px;")
+        self._act_info.setText("Signal reçu")
+        self._activity_count = 6  # durée du flash
+
+    def _dim_activity(self):
+        if self._activity_count > 0:
+            self._activity_count -= 1
+            if self._activity_count == 0:
+                self._act_dot.setStyleSheet("color:#333; font-size:14px;")
+                self._act_info.setText("En attente…")
+                self._act_info.setStyleSheet("color:#555; font-size:9px;")
+
+    def _do_reconnect(self):
+        self._midi.connect_akai()
+        self.accept()
+
+    def closeEvent(self, e):
+        try:
+            self._midi.pad_pressed.disconnect(self._on_midi_activity)
+            self._midi.fader_changed.disconnect(self._on_midi_activity)
+        except Exception:
+            pass
+        super().closeEvent(e)
+
+
 class AkaiLayoutEditorDialog(QDialog):
     """Fenetre d'edition des 8 colonnes AKAI — représentation visuelle du contrôleur."""
 
@@ -328,206 +434,153 @@ class AkaiLayoutEditorDialog(QDialog):
     def __init__(self, slots, last_fader_mode="FX", superposition=False, go_mode=False, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("akai_cfg_title"))
-        self.setMinimumSize(780, 580)
-        self.resize(820, 620)
+        self.setFixedSize(700, 340)
         self.setModal(True)
-        self.setStyleSheet(
-            "QDialog { background: #161616; color: #ddd; } "
-            "QLabel  { background: transparent; border: none; } "
-            "QComboBox { background: #1e1e1e; color: #ddd; border: 1px solid #3a3a3a; "
-            "border-radius: 4px; padding: 2px 4px; font-size: 10px; } "
-            "QComboBox::drop-down { border: none; width: 16px; } "
-            "QComboBox QAbstractItemView { background: #1e1e1e; color: #ddd; "
-            "selection-background-color: #0077bb; font-size: 10px; }"
-        )
+        self.setStyleSheet("""
+            QDialog  { background: #111; color: #ddd; }
+            QLabel   { background: transparent; border: none; color: #ddd; }
+            QComboBox {
+                background: #1a1a1a; color: #ddd;
+                border: 1px solid #2a2a2a; border-radius: 5px;
+                padding: 3px 6px; font-size: 9px; font-family: 'Segoe UI';
+            }
+            QComboBox::drop-down { border: none; width: 14px; }
+            QComboBox QAbstractItemView {
+                background: #1a1a1a; color: #ddd;
+                selection-background-color: #0077bb;
+            }
+            QCheckBox { color: #bbb; font-size: 10px; spacing: 8px; }
+            QCheckBox::indicator {
+                width: 15px; height: 15px; border: 1px solid #444;
+                border-radius: 4px; background: #1a1a1a;
+            }
+            QCheckBox::indicator:checked { background: #0077bb; border-color: #0099dd; }
+            QCheckBox:hover { color: #fff; }
+        """)
 
         self._combos = []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 16, 24, 14)
-        root.setSpacing(14)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(16)
 
         # ── Header ─────────────────────────────────────────────────────────────
         hdr = QHBoxLayout()
-        title = QLabel(tr("akai_cfg_title"))
-        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        title = QLabel("🎹  " + tr("akai_cfg_title"))
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         title.setStyleSheet("color:#fff;")
         hdr.addWidget(title)
         hdr.addStretch()
         preset_btn = QPushButton(tr("btn_preset"))
-        preset_btn.setFixedSize(80, 26)
+        preset_btn.setFixedSize(80, 28)
         preset_btn.setStyleSheet(
-            "QPushButton { background: #252525; color: #aaa; border: 1px solid #3a3a3a; "
-            "border-radius: 4px; font-size: 10px; } "
-            "QPushButton:hover { background: #333; color: #fff; }"
+            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #333; "
+            "border-radius: 6px; font-size: 10px; } "
+            "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #555; }"
         )
         preset_btn.clicked.connect(self._load_preset)
         hdr.addWidget(preset_btn)
         root.addLayout(hdr)
 
-        sep_h = QFrame(); sep_h.setFrameShape(QFrame.HLine)
-        sep_h.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
-        root.addWidget(sep_h)
-
-        # ── Ligne des faders (identique à la page principale) ─────────────────
-        faders_row = QHBoxLayout()
-        faders_row.setSpacing(0)
-        faders_row.setContentsMargins(0, 0, 0, 0)
-        faders_row.addStretch()
-
-        _FADER_GAP = 12   # espace entre les 8 premières colonnes
+        # ── Grille des 8 faders ───────────────────────────────────────────────
+        # Carte conteneur
+        card = QFrame()
+        card.setStyleSheet("QFrame { background: #1a1a1a; border: 1px solid #252525; border-radius: 8px; }")
+        card_lay = QHBoxLayout(card)
+        card_lay.setContentsMargins(16, 14, 16, 14)
+        card_lay.setSpacing(10)
 
         for col in range(8):
             slot = slots[col] if col < len(slots) else {"type": "group", "group": "A"}
             current_val = self._slot_to_option(slot)
-            color = self._col_color(current_val)
 
             col_w = QWidget()
+            col_w.setStyleSheet("background: transparent; border: none;")
             col_l = QVBoxLayout(col_w)
             col_l.setContentsMargins(0, 0, 0, 0)
-            col_l.setSpacing(6)
+            col_l.setSpacing(5)
             col_l.setAlignment(Qt.AlignHCenter)
 
-            # Fader visuel non-interactif (même widget qu'en page principale)
-            fader = ApcFader(col, lambda *_: None, vertical=False)
-            fader.set_value(65)
-            fader.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            col_l.addWidget(fader, alignment=Qt.AlignHCenter)
+            # Numéro du fader
+            num_lbl = QLabel(str(col + 1))
+            num_lbl.setAlignment(Qt.AlignCenter)
+            num_lbl.setStyleSheet("color:#555; font-size:9px; font-weight:bold;")
+            col_l.addWidget(num_lbl)
 
             # Combo d'assignation
             combo = QComboBox()
             combo.addItems(_AKAI_SLOT_OPTIONS)
             combo.setCurrentText(current_val)
-            combo.setFixedWidth(72)
+            combo.setFixedWidth(68)
             combo.currentTextChanged.connect(lambda txt, c=col: self._on_col_changed(c, txt))
             self._combos.append(combo)
-            col_l.addWidget(combo, alignment=Qt.AlignHCenter)
+            col_l.addWidget(combo)
 
-            faders_row.addWidget(col_w)
-            if col < 7:
-                faders_row.addSpacing(_FADER_GAP)
-
+            card_lay.addWidget(col_w)
             self._on_col_changed(col, current_val)
 
-        # ── Fader 9 — Vitesse FX ─────────────────────────────────────────────
-        sep9 = QFrame(); sep9.setFrameShape(QFrame.VLine)
-        sep9.setStyleSheet("background:#333; max-width:1px; border:none;")
-        faders_row.addSpacing(16)
-        faders_row.addWidget(sep9)
-        faders_row.addSpacing(16)
+        # Séparateur + fader 9
+        sep9 = QFrame()
+        sep9.setFrameShape(QFrame.VLine)
+        sep9.setStyleSheet("background:#2a2a2a; border:none; max-width:1px;")
+        card_lay.addWidget(sep9)
 
-        f9_col = QWidget()
-        f9_l = QVBoxLayout(f9_col)
+        f9_w = QWidget()
+        f9_w.setStyleSheet("background: transparent; border: none;")
+        f9_l = QVBoxLayout(f9_w)
         f9_l.setContentsMargins(0, 0, 0, 0)
-        f9_l.setSpacing(6)
+        f9_l.setSpacing(5)
         f9_l.setAlignment(Qt.AlignHCenter)
-
-        fader9 = ApcFader(8, lambda *_: None, vertical=False)
-        fader9.set_value(65)
-        fader9.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        fader9.setStyleSheet("opacity: 0.7;")
-        f9_l.addWidget(fader9, alignment=Qt.AlignHCenter)
-
+        num9 = QLabel("9")
+        num9.setAlignment(Qt.AlignCenter)
+        num9.setStyleSheet("color:#0088cc; font-size:9px; font-weight:bold;")
+        f9_l.addWidget(num9)
         lbl9 = QLabel(tr("akai_amp_fx_label"))
         lbl9.setAlignment(Qt.AlignCenter)
-        lbl9.setFixedWidth(80)
-        lbl9.setStyleSheet(
-            "color:#0088cc; font-size:9px; font-weight:bold; background:transparent; border:none;"
-        )
-        f9_l.addWidget(lbl9, alignment=Qt.AlignHCenter)
+        lbl9.setWordWrap(True)
+        lbl9.setFixedWidth(68)
+        lbl9.setStyleSheet("color:#0088cc; font-size:8px;")
+        f9_l.addWidget(lbl9)
+        card_lay.addWidget(f9_w)
 
-        faders_row.addWidget(f9_col)
-        faders_row.addStretch()
+        root.addWidget(card)
 
-        root.addLayout(faders_row)
+        # ── Options ───────────────────────────────────────────────────────────
+        opts_row = QHBoxLayout()
+        opts_row.setSpacing(24)
 
-        # ── Légende ───────────────────────────────────────────────────────────
-        leg_row = QHBoxLayout()
-        leg_row.setSpacing(16)
-        _LEGEND = [
-            ("A–F",      self._GROUP_COLORS["A"], tr("legend_groups")),
-            ("MEM 1–8",  self._MEM_COLOR,         tr("legend_mem_col")),
-            ("FX 1–4",   self._FX_COLOR,          tr("legend_fx_col")),
-        ]
-        for ltxt, lcolor, ldesc in _LEGEND:
-            sw = QFrame()
-            sw.setFixedSize(14, 10)
-            sw.setStyleSheet(f"QFrame {{ background:{lcolor}; border-radius:2px; }}")
-            leg_row.addWidget(sw)
-            ll = QLabel(f"<b>{ltxt}</b> — {ldesc}")
-            ll.setStyleSheet("font-size:9px; color:#666;")
-            leg_row.addWidget(ll)
-        leg_row.addStretch()
-        root.addLayout(leg_row)
-
-        # ── Superposition d'effets ────────────────────────────────────────────
-        super_sep = QFrame(); super_sep.setFrameShape(QFrame.HLine)
-        super_sep.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
-        root.addWidget(super_sep)
-
-        super_row = QHBoxLayout()
-        super_row.setContentsMargins(0, 4, 0, 4)
         self._superposition_check = QCheckBox(tr("fx_superposition_lbl"))
         self._superposition_check.setChecked(superposition)
         self._superposition_check.setToolTip(tr("fx_superposition_tip"))
-        self._superposition_check.setStyleSheet(
-            "QCheckBox { color: #ccc; font-size: 11px; spacing: 6px; } "
-            "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #555; "
-            "border-radius: 3px; background: #1e1e1e; } "
-            "QCheckBox::indicator:checked { background: #7722aa; border-color: #9944cc; } "
-            "QCheckBox:hover { color: #fff; }"
-        )
-        super_row.addWidget(self._superposition_check)
-        tip_lbl = QLabel(tr("fx_superposition_tip"))
-        tip_lbl.setWordWrap(True)
-        tip_lbl.setStyleSheet("color:#888; font-size:11px; padding-left:6px;")
-        super_row.addWidget(tip_lbl, 1)
-        root.addLayout(super_row)
+        opts_row.addWidget(self._superposition_check)
 
-        # ── Mode GO ───────────────────────────────────────────────────────────
-        go_sep = QFrame(); go_sep.setFrameShape(QFrame.HLine)
-        go_sep.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
-        root.addWidget(go_sep)
-
-        go_row = QHBoxLayout()
-        go_row.setContentsMargins(0, 4, 0, 4)
         self._go_mode_check = QCheckBox(tr("go_mode_lbl"))
         self._go_mode_check.setChecked(go_mode)
         self._go_mode_check.setToolTip(tr("go_mode_tip"))
-        self._go_mode_check.setStyleSheet(
-            "QCheckBox { color: #ccc; font-size: 11px; spacing: 6px; } "
-            "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #555; "
-            "border-radius: 3px; background: #1e1e1e; } "
-            "QCheckBox::indicator:checked { background: #007a45; border-color: #00cc66; } "
-            "QCheckBox:hover { color: #fff; }"
-        )
-        go_row.addWidget(self._go_mode_check)
-        go_tip_lbl = QLabel(tr("go_mode_tip"))
-        go_tip_lbl.setWordWrap(True)
-        go_tip_lbl.setStyleSheet("color:#888; font-size:11px; padding-left:6px;")
-        go_row.addWidget(go_tip_lbl, 1)
-        root.addLayout(go_row)
+        opts_row.addWidget(self._go_mode_check)
+
+        opts_row.addStretch()
+        root.addLayout(opts_row)
+
+        root.addStretch()
 
         # ── Boutons ────────────────────────────────────────────────────────────
-        btn_sep = QFrame(); btn_sep.setFrameShape(QFrame.HLine)
-        btn_sep.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
-        root.addWidget(btn_sep)
-
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         cancel_btn = QPushButton(tr("btn_annuler"))
-        cancel_btn.setFixedSize(90, 30)
+        cancel_btn.setFixedSize(90, 32)
         cancel_btn.setStyleSheet(
-            "QPushButton { background: #252525; color: #ccc; border: 1px solid #3a3a3a; "
-            "border-radius: 4px; font-size: 11px; } QPushButton:hover { background: #333; }"
+            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #333; "
+            "border-radius: 6px; font-size: 10px; } "
+            "QPushButton:hover { background: #2a2a2a; color: #fff; }"
         )
         cancel_btn.clicked.connect(self.reject)
         ok_btn = QPushButton(tr("btn_apply"))
-        ok_btn.setFixedSize(110, 30)
+        ok_btn.setFixedSize(110, 32)
         ok_btn.setStyleSheet(
-            "QPushButton { background: #007a45; color: white; border: none; "
-            "border-radius: 4px; font-size: 11px; font-weight: bold; } "
-            "QPushButton:hover { background: #009950; }"
+            "QPushButton { background: #0077bb; color: white; border: none; "
+            "border-radius: 6px; font-size: 10px; font-weight: bold; } "
+            "QPushButton:hover { background: #0099dd; }"
         )
         ok_btn.clicked.connect(self.accept)
         btn_row.addWidget(cancel_btn)
@@ -721,6 +774,149 @@ class VideoOutputWindow(QWidget):
         event.ignore()
 
 
+def _mk_sep(style):
+    lbl = QLabel("|")
+    lbl.setStyleSheet(style)
+    return lbl
+
+
+class _MasterMeter(QWidget):
+    """Affichage du niveau audio sous forme de blocs avec peak-hold."""
+    _SEG = 20
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._level = 0.0     # 0.0-1.0
+        self._peak  = 0.0     # peak-hold
+        self._peak_hold = 0   # compteur de frames restantes
+        self.setFixedSize(self._SEG * 5 + (self._SEG - 1) * 2, 8)
+
+    def set_level(self, v: float):
+        """v : float 0.0-1.0"""
+        v = max(0.0, min(1.0, v))
+        self._level = v
+        if v >= self._peak:
+            self._peak = v
+            self._peak_hold = 30          # ~1.2 s à 25 FPS
+        else:
+            if self._peak_hold > 0:
+                self._peak_hold -= 1
+            else:
+                self._peak = max(0.0, self._peak - 0.03)
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, False)
+        lit  = round(self._level * self._SEG)
+        peak = round(self._peak  * self._SEG)
+        seg_w, h, gap = 5, 8, 2
+        for i in range(self._SEG):
+            x = i * (seg_w + gap)
+            if i < lit:
+                if i < self._SEG * 0.70:
+                    c = QColor(45, 185, 70)
+                elif i < self._SEG * 0.88:
+                    c = QColor(210, 140, 15)
+                else:
+                    c = QColor(210, 45, 35)
+            elif i == peak and peak > 0:
+                # Segment peak-hold en blanc
+                c = QColor(220, 220, 220)
+            else:
+                c = QColor(35, 35, 35)
+            p.fillRect(x, 0, seg_w, h, c)
+
+
+class _StatusCornerWidget(QWidget):
+    """Widget coin de la menubar : audio meter · CPU · Horloge."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(36)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 0, 12, 0)
+        lay.setSpacing(6)
+        lay.setAlignment(Qt.AlignVCenter)
+
+        _lbl = "color:#777; font-size:9px; font-weight:bold;"
+        _sep = "color:#333; font-size:9px; font-weight:bold;"
+        _val = "color:#ccc; font-size:9px; font-weight:bold;"
+
+        # ── MASTER ───────────────────────────────────────────
+        lbl_m = QLabel("MASTER")
+        lbl_m.setStyleSheet(_lbl)
+        lay.addWidget(lbl_m, alignment=Qt.AlignVCenter)
+
+        self._meter = _MasterMeter()
+        lay.addWidget(self._meter, alignment=Qt.AlignVCenter)
+
+        # Rond indicateur (joue = vert, muet = gris)
+        self._dot = QLabel("●")
+        self._dot.setStyleSheet("color:#333; font-size:8pt;")
+        lay.addWidget(self._dot, alignment=Qt.AlignVCenter)
+
+        # ── Séparateur ───────────────────────────────────────
+        lay.addWidget(_mk_sep(_sep), alignment=Qt.AlignVCenter)
+
+        # ── CPU ──────────────────────────────────────────────
+        lbl_cpu = QLabel("CPU")
+        lbl_cpu.setStyleSheet(_lbl)
+        lay.addWidget(lbl_cpu, alignment=Qt.AlignVCenter)
+
+        self._cpu_val = QLabel("--")
+        self._cpu_val.setStyleSheet(_val)
+        self._cpu_val.setFixedWidth(34)
+        lay.addWidget(self._cpu_val, alignment=Qt.AlignVCenter)
+
+        # ── Séparateur ───────────────────────────────────────
+        lay.addWidget(_mk_sep(_sep), alignment=Qt.AlignVCenter)
+
+        # ── Horloge ──────────────────────────────────────────
+        self._clock = QLabel("--:--:--")
+        self._clock.setStyleSheet(_val)
+        self._clock.setFixedWidth(54)
+        lay.addWidget(self._clock, alignment=Qt.AlignVCenter)
+
+        # Timer horloge
+        self._tick_clock = QTimer(self)
+        self._tick_clock.timeout.connect(self._update_clock)
+        self._tick_clock.start(1000)
+        self._update_clock()
+
+        # Timer CPU (toutes les 1.5 s)
+        if _psutil is not None:
+            _psutil.cpu_percent(interval=None)
+            self._tick_cpu = QTimer(self)
+            self._tick_cpu.timeout.connect(self._update_cpu)
+            self._tick_cpu.start(1500)
+            QTimer.singleShot(800, self._update_cpu)
+
+    def set_audio(self, level: float, playing: bool):
+        """level : 0.0-1.0. Appelé à 25 FPS."""
+        self._meter.set_level(level)
+        self._dot.setStyleSheet(
+            "color:#2a9a45; font-size:8pt;" if playing
+            else "color:#333; font-size:8pt;"
+        )
+
+    def _update_clock(self):
+        self._clock.setText(_dt.datetime.now().strftime("%H:%M:%S"))
+
+    def _update_cpu(self):
+        if _psutil is None:
+            return
+        pct = _psutil.cpu_percent(interval=None)
+        self._cpu_val.setText(f"{pct:.0f}%")
+        if pct > 80:
+            col = "#cc4444"
+        elif pct > 50:
+            col = "#d4a020"
+        else:
+            col = "#ccc"
+        self._cpu_val.setStyleSheet(f"color:{col}; font-size:9px; font-weight:bold;")
+
+
 class MainWindow(QMainWindow):
     """Fenetre principale de l'application"""
 
@@ -798,7 +994,7 @@ class MainWindow(QMainWindow):
 
         self.dmx_send_timer = QTimer()
         self.dmx_send_timer.timeout.connect(self.send_dmx_update)
-        self.dmx_send_timer.timeout.connect(self._update_vu_meter)
+        self.dmx_send_timer.timeout.connect(self._update_status_corner)
         self.dmx_send_timer.start(40)  # 25 FPS
 
         # Timer pour drainer les events venant de la tablette (50 ms)
@@ -817,6 +1013,11 @@ class MainWindow(QMainWindow):
             'face': 50, 'lat': 100, 'contre': 100,
             'douche1': 100, 'douche2': 100, 'douche3': 100,
             'public': 80, 'groupe_e': 100, 'groupe_f': 100,
+        }
+        # Paramètres avancés IA Lumiere
+        self.ia_params = {
+            'nervosity':   50,            # 0-100 : réactivité générale
+            'drop_effect': 'flash_blanc', # type d'effet sur les drops
         }
         self.load_ia_lumiere_config()
 
@@ -892,6 +1093,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(200, self.turn_off_all_effects)
         QTimer.singleShot(300, self._init_default_fx_speed)
         QTimer.singleShot(1000, self.test_dmx_on_startup)
+        QTimer.singleShot(1500, self._log_startup_status)
 
     def _prevent_sleep(self):
         """Empeche Windows de se mettre en veille tant que l'application tourne"""
@@ -1031,13 +1233,17 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(tr("menu_effect_editor"), self.open_effect_editor)
         edit_menu.addSeparator()
         edit_menu.addAction(tr("menu_ia_lumiere"), self.show_ia_lumiere_config)
-        edit_menu.addSeparator()
-        edit_menu.addAction(tr("menu_shortcuts"), self.show_shortcuts_dialog)
 
         conn_menu = bar.addMenu(tr("menu_connection"))
 
         ctrl_menu = conn_menu.addMenu(tr("menu_control"))
-        ctrl_menu.addAction(tr("menu_akai_mini"), self.test_akai_connection)
+
+        akai_menu = ctrl_menu.addMenu(tr("menu_akai_mini"))
+        akai_menu.addAction("🔍  Diagnostic", self._open_akai_diagnostic)
+        akai_menu.addAction("🔄  Reconnecter", self.test_akai_connection)
+        akai_menu.addSeparator()
+        akai_menu.addAction("⚙️  Paramètres", self._open_akai_layout_editor)
+
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
         ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
 
@@ -1058,6 +1264,9 @@ class MainWindow(QMainWindow):
         self.video_screen_menu.aboutToShow.connect(self._populate_screen_menu)
         self.video_target_screen = 1  # Ecran cible par defaut (second ecran)
 
+        conn_menu.addSeparator()
+        conn_menu.addAction("⌨️  Raccourci Clavier", self.show_shortcuts_dialog)
+
         about_menu = bar.addMenu(tr("menu_about"))
         about_menu.addAction(tr("menu_about_updates"), self.show_about)
         about_menu.addSeparator()
@@ -1077,6 +1286,31 @@ class MainWindow(QMainWindow):
         act_en.triggered.connect(lambda: self._change_language("en"))
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_restart"), self.restart_application)
+
+        # ── Corner widget : Master meter / CPU / Horloge ──────────────────────
+        self._status_corner = _StatusCornerWidget()
+        bar.setCornerWidget(self._status_corner, Qt.TopRightCorner)
+
+        # ── Logo MYSTROW centré dans la menubar ───────────────────────────────
+        self._menubar_logo = QLabel(
+            '<span style="color:#ffffff; font-family:\'Bebas Neue\'; font-size:17px; letter-spacing:1px;">MY</span>'
+            '<span style="color:#FFE000; font-family:\'Bebas Neue\'; font-size:17px; letter-spacing:1px;">STROW</span>',
+            bar
+        )
+        self._menubar_logo.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._menubar_logo.adjustSize()
+        self._menubar_logo.show()
+        bar.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self.menuBar() and event.type() == QEvent.Resize:
+            lbl = getattr(self, '_menubar_logo', None)
+            if lbl:
+                lbl.adjustSize()
+                x = (obj.width() - lbl.width()) // 2
+                y = (obj.height() - lbl.height()) // 2
+                lbl.move(x, y)
+        return super().eventFilter(obj, event)
 
     def _create_video_frame(self):
         """Cree le frame video avec overlay image"""
@@ -1182,6 +1416,7 @@ class MainWindow(QMainWindow):
             # ON - creer/montrer la fenetre
             self.video_output_btn.setText("ON")
             self.video_output_btn.setStyleSheet(_SS_ON)
+            self._log_message("Sortie vidéo activée", "success")
             if not self.video_output_window:
                 self.video_output_window = VideoOutputWindow()
                 # Appliquer watermark si licence non active
@@ -1216,6 +1451,7 @@ class MainWindow(QMainWindow):
                     pass
             if self.video_output_window:
                 self.video_output_window.hide()
+            self._log_message("Sortie vidéo désactivée", "info")
 
     def _forward_video_frame(self, frame):
         """Forward une frame video vers la fenetre de sortie externe"""
@@ -1278,34 +1514,11 @@ class MainWindow(QMainWindow):
 
         self.color_picker_block = ColorPickerBlock(self.plan_de_feu)
 
-        # VU mètre sous le color picker
-        self._vu_meter = HVUMeter()
-        self._vu_meter.setFixedHeight(16)
-
-        cp_and_vu = QWidget()
-        cp_and_vu.setAttribute(Qt.WA_StyledBackground, True)
-        cp_and_vu.setStyleSheet("background: transparent;")
-        cp_vu_layout = QVBoxLayout(cp_and_vu)
-        cp_vu_layout.setContentsMargins(0, 0, 0, 0)
-        cp_vu_layout.setSpacing(4)
-        cp_vu_layout.addWidget(self.color_picker_block)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background: #2a2a2a; border: none;")
-        cp_vu_layout.addWidget(sep)
-
-        vu_row = QHBoxLayout()
-        vu_row.setContentsMargins(12, 4, 12, 6)
-        vu_row.addWidget(self._vu_meter)
-        cp_vu_layout.addLayout(vu_row)
-
         right = QSplitter(Qt.Vertical)
         right.setHandleWidth(2)
         right.setMinimumWidth(240)
         right.addWidget(plan_scroll)
-        right.addWidget(cp_and_vu)
+        right.addWidget(self.color_picker_block)
         right.addWidget(self.video_frame)
         right.setStretchFactor(0, 1)
         right.setStretchFactor(1, 0)
@@ -1319,7 +1532,7 @@ class MainWindow(QMainWindow):
         self._right_splitter_initialized = False
         right.splitterMoved.connect(self._enforce_video_ratio)
 
-        self.akai.setMinimumWidth(370)
+        self.akai.setMinimumWidth(320)
 
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(2)
@@ -1432,7 +1645,7 @@ class MainWindow(QMainWindow):
     def create_akai_panel(self):
         """Cree le panneau AKAI avec 8 colonnes + colonne effets"""
         frame = QFrame()
-        frame.setFixedWidth(370)
+        frame.setMinimumWidth(320)
         layout = QVBoxLayout(frame)
         layout.setAlignment(Qt.AlignTop)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -1480,9 +1693,6 @@ class MainWindow(QMainWindow):
         clr_btn.clicked.connect(self._clear_akai_state)
         title_row.addWidget(clr_btn)
 
-        layout.addLayout(title_row)
-        layout.addSpacing(4)
-
         # ── Zone unifiée pads + faders dans un widget de largeur fixe ──────────
         # PAD_W=28, PAD_GAP_H=7, PAD_GAP_V=4 → 8 colonnes = 8×28 + 7×7 = 273px
         # FX_GAP=6 → séparateur avant colonne effet
@@ -1498,8 +1708,11 @@ class MainWindow(QMainWindow):
         akai_zone.setContentsMargins(0, 0, 0, 0)
         akai_zone_layout = QVBoxLayout(akai_zone)
         akai_zone_layout.setContentsMargins(0, 0, 0, 0)
-        akai_zone_layout.setSpacing(20)
+        akai_zone_layout.setSpacing(12)
         layout.addWidget(akai_zone, 0, Qt.AlignHCenter)
+
+        # Titre centré dans la zone AKAI
+        akai_zone_layout.addLayout(title_row)
 
         # ── Rangée 1 : pads 8×8 + boutons effet ─────────────────────────────
         pads_and_effects = QHBoxLayout()
@@ -1615,30 +1828,47 @@ class MainWindow(QMainWindow):
 
         akai_zone_layout.addLayout(fader_container)
 
-        # Cartoucheur
-        layout.addSpacing(32)
+        # ── Séparateur ────────────────────────────────────────────────────────
+        sep_cart = QFrame()
+        sep_cart.setFrameShape(QFrame.HLine)
+        sep_cart.setFixedHeight(1)
+        sep_cart.setStyleSheet("background:#222; border:none;")
+        akai_zone_layout.addSpacing(6)
+        akai_zone_layout.addWidget(sep_cart)
+        akai_zone_layout.addSpacing(6)
 
+        # ── Cartoucheurs 2×2 ─────────────────────────────────────────────────
         self.cartouches = []
+        cart_grid = QGridLayout()
+        cart_grid.setSpacing(6)
+        cart_grid.setContentsMargins(0, 0, 0, 0)
         for i in range(4):
             cart = CartoucheButton(i, self.on_cartouche_clicked)
             cart.customContextMenuRequested.connect(
                 lambda pos, idx=i: self.load_cartouche_media(idx)
             )
-            layout.addWidget(cart)
+            cart_grid.addWidget(cart, i // 2, i % 2)
             self.cartouches.append(cart)
+        akai_zone_layout.addLayout(cart_grid)
 
-        layout.addSpacing(20)
-
-        # Banniere de licence sous les cartouches
+        # ── Banniere de licence ───────────────────────────────────────────────
         self._license_banner = LicenseBanner()
         self._license_banner.dismissed.connect(self._on_license_banner_dismissed)
         self._license_banner.activate_clicked.connect(self._on_banner_clicked)
         self._apply_license_banner()
-        layout.addWidget(self._license_banner)
+        akai_zone_layout.addWidget(self._license_banner)
 
         # ── Journal des actions ───────────────────────────────────────────────
         self._msg_log = MessageLogWidget()
-        layout.addWidget(self._msg_log)
+        self._msg_log.setStyleSheet("""
+            MessageLogWidget {
+                background: #0d0d0d;
+                border: 1px solid #1e1e1e;
+                border-radius: 6px;
+            }
+        """)
+        akai_zone_layout.addSpacing(4)
+        akai_zone_layout.addWidget(self._msg_log, 1)  # stretch=1 → prend toute la hauteur restante
 
         # Emplacement reserve pour la barre de mise a jour (ajoutee apres init)
         self._akai_layout = layout
@@ -1732,6 +1962,11 @@ class MainWindow(QMainWindow):
                     color = new_btn.property("base_color")
                     new_btn.setStyleSheet(f"QPushButton {{ background: {color.name()}; border: 2px solid {color.lighter(130).name()}; border-radius: 4px; }}")
                     self.active_pads[col_idx] = new_btn
+
+    def _open_akai_diagnostic(self):
+        """Ouvre la fenêtre de diagnostic AKAI."""
+        dlg = AkaiDiagnosticDialog(self.midi_handler, self)
+        dlg.exec()
 
     def _open_akai_layout_editor(self):
         """Ouvre l'éditeur de layout AKAI APC mini."""
@@ -1968,43 +2203,6 @@ class MainWindow(QMainWindow):
         except:
             pass
 
-    def _update_vu_meter(self):
-        """Mise à jour du VU mètre à 25 FPS."""
-        if not hasattr(self, '_vu_meter'):
-            return
-        try:
-            import math, random
-            main_playing  = self.player.playbackState()      == QMediaPlayer.PlayingState
-            cart_playing  = self.cart_player.playbackState() == QMediaPlayer.PlayingState
-
-            if not main_playing and not cart_playing:
-                self._vu_meter.set_level(0.0)
-                return
-
-            # Source : player principal prioritaire, sinon cartouche
-            if main_playing:
-                position = self.player.position()
-                analyzed = self.audio_ai.analyzed and self.player.duration() > 0
-            else:
-                position = self.cart_player.position()
-                analyzed = False  # pas d'analyse IA sur les cartouches
-
-            if analyzed:
-                level = self.audio_ai.get_energy_at(position)
-            else:
-                t = position / 1000.0
-                level = (
-                    0.30
-                    + 0.20 * math.sin(t * 2.3)
-                    + 0.12 * math.sin(t * 5.7 + 1.1)
-                    + 0.08 * math.sin(t * 11.3 + 2.4)
-                    + random.uniform(-0.04, 0.04)
-                )
-                level = max(0.05, min(0.95, level))
-            self._vu_meter.set_level(level)
-        except Exception:
-            pass
-
     def on_media_status_changed(self, status):
         """Passe automatiquement au suivant ou gere les pauses"""
         if status == QMediaPlayer.EndOfMedia:
@@ -2031,6 +2229,10 @@ class MainWindow(QMainWindow):
             # IA Lumière : fade-out puis transition
             if current_mode == "IA Lumiere":
                 self.audio_ai.reset()
+                # Réinitialiser l'état interne des lyres + sections + effets aléatoires
+                for attr in ('_ia_lyre_e', '_ia_lyre_phase', '_ia_lyre_last_pos',
+                             '_ia_sec', '_ia_rnd_fx'):
+                    self.__dict__.pop(attr, None)
 
                 def _after_ia_fade():
                     if next_row < self.seq.table.rowCount():
@@ -4186,6 +4388,44 @@ class MainWindow(QMainWindow):
                 p.color = QColor("black")
         self.send_dmx_update()
 
+    def _update_status_corner(self):
+        """Rafraîchit le corner widget audio meter à chaque tick DMX (40 ms)."""
+        if not hasattr(self, '_status_corner'):
+            return
+        try:
+            import math, random as _rnd
+            main_playing = self.player.playbackState()      == QMediaPlayer.PlayingState
+            cart_playing = self.cart_player.playbackState() == QMediaPlayer.PlayingState
+            playing = main_playing or cart_playing
+
+            if not playing or getattr(self, 'blackout_active', False):
+                self._status_corner.set_audio(0.0, False)
+                return
+
+            if main_playing:
+                position = self.player.position()
+                analyzed = self.audio_ai.analyzed and self.player.duration() > 0
+            else:
+                position = self.cart_player.position()
+                analyzed = False
+
+            if analyzed:
+                level = float(self.audio_ai.get_energy_at(position))
+            else:
+                # Simulation punchy : basses + mids + transitoires aléatoires
+                t = position / 1000.0
+                bass  = 0.45 * abs(math.sin(t * 1.9))
+                mid   = 0.25 * abs(math.sin(t * 4.7 + 0.8))
+                hi    = 0.15 * abs(math.sin(t * 13.1 + 2.3))
+                noise = _rnd.uniform(0.0, 0.15)
+                level = min(0.97, bass + mid + hi + noise)
+
+            # Pondéré par le fader master DMX
+            level *= self.master_level / 100.0
+            self._status_corner.set_audio(level, playing)
+        except Exception:
+            pass
+
     def activate_default_white_pads(self):
         """Active les pads blancs au demarrage pour les colonnes groupe - un par colonne"""
         for col, slot in enumerate(self._fader_map):
@@ -4386,35 +4626,38 @@ class MainWindow(QMainWindow):
 
             state = self.audio_ai.get_state_at(position, duration, max_dimmers=self.ia_max_dimmers)
 
-            contre_alt = state.get('contre_alt')
-            lat_alt = state.get('lat_alt')
-            contre_effect = state.get('contre_effect')
-            lat_effect = state.get('lat_effect')
+            section     = state.get('section', 'verse')
+            energy      = state.get('energy', 0.5)
+            global_fade = state.get('global_fade', 1.0)
 
-            # Compteurs par groupe pour alterner les couleurs
+            contre_alt    = state.get('contre_alt')
+            lat_alt       = state.get('lat_alt')
+            contre_effect = state.get('contre_effect')
+            lat_effect    = state.get('lat_effect')
+
+            # Paramètres nervosité (0.0 → 1.0)
+            nerv = max(0.0, min(1.0, self.ia_params.get('nervosity', 50) / 100.0))
+
+            # ── 1. Appliquer l'état de base (couleurs + levels depuis l'IA) ──
             contre_idx = 0
-            lat_idx = 0
+            lat_idx    = 0
 
             for p in self.projectors:
                 if p.group not in state:
                     continue
                 color, level = state[p.group]
 
-                # Effets creatifs sur contres
                 if p.group == 'contre':
-                    # Couleur alternee bicolore (1 sur 2)
                     if contre_alt and contre_idx % 2 == 1:
                         color = contre_alt
                     contre_idx += 1
-
-                # Effets creatifs sur lateraux
                 elif p.group == 'lat':
-                    # Couleur alternee bicolore (1 sur 2)
                     if lat_alt and lat_idx % 2 == 1:
                         color = lat_alt
-                    # Strobe: alterner on/off
                     if lat_effect == "strobe":
-                        strobe_on = (int(position / 80) % 2) == 0
+                        # Nervosité → strobe plus rapide
+                        strobe_ms = int(80 - nerv * 45)   # 80ms calm → 35ms nerveux
+                        strobe_on = (int(position / strobe_ms) % 2) == 0
                         if not strobe_on:
                             level = 0
                     lat_idx += 1
@@ -4424,12 +4667,429 @@ class MainWindow(QMainWindow):
                 if level > 0:
                     brightness = level / 100.0
                     p.color = QColor(
-                        int(color.red() * brightness),
+                        int(color.red()   * brightness),
                         int(color.green() * brightness),
-                        int(color.blue() * brightness)
+                        int(color.blue()  * brightness)
                     )
                 else:
                     p.color = QColor("black")
+
+            # ── 2. Overrides par section ──────────────────────────────────────
+
+            def _set_proj(p, color, level):
+                """Applique couleur+level à un projecteur (évite le code dupliqué)."""
+                p.level = max(0, min(100, level))
+                p.base_color = color
+                if p.level > 0:
+                    f = p.level / 100.0
+                    p.color = QColor(int(color.red()*f), int(color.green()*f), int(color.blue()*f))
+                else:
+                    p.color = QColor("black")
+
+            # Initialiser l'état de section persistant
+            if not hasattr(self, '_ia_sec'):
+                self._ia_sec = {'last': None, 'drop_start': -1, 'build_p': 0.0}
+            ss = self._ia_sec
+
+            # ── DROP : effet choisi par l'utilisateur ────────────────────────
+            if section == 'drop':
+                DROP_MS = 1200.0
+                if ss['last'] != 'drop':
+                    ss['drop_start'] = position
+                drop_p = min(1.0, (position - ss['drop_start']) / DROP_MS)
+                drop_fx = self.ia_params.get('drop_effect', 'flash_blanc')
+
+                # Fréquences de strobe adaptées à la nervosité
+                strobe_ms_fast   = int(38 - nerv * 13)   # 38ms calm → 25ms nerveux
+                strobe_ms_medium = int(55 - nerv * 20)   # 55ms → 35ms
+                strobe_ms_slow   = int(75 - nerv * 25)   # 75ms → 50ms
+
+                white = QColor(255, 255, 255)
+                pal   = self.audio_ai.palette if self.audio_ai.palette else [white]
+
+                # ── Flash Blanc ──────────────────────────────────────────────
+                if drop_fx == 'flash_blanc':
+                    if drop_p < 0.30:
+                        punch = 1.0 - drop_p / 0.30
+                        for p in self.projectors:
+                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                            boost = int(100 * punch * global_fade)
+                            if boost > p.level:
+                                _set_proj(p, white, boost)
+                    strobe_on = (int(position / strobe_ms_fast) % 2) == 0
+                    for p in self.projectors:
+                        if p.group in ('lat', 'contre') and not strobe_on:
+                            p.level = 0; p.color = QColor("black")
+
+                # ── Color Explosion ──────────────────────────────────────────
+                elif drop_fx == 'color_explosion':
+                    strobe_on = (int(position / strobe_ms_fast) % 2) == 0
+                    for i, p in enumerate(self.projectors):
+                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        if strobe_on:
+                            col = pal[i % len(pal)]
+                            _set_proj(p, col, int(100 * global_fade))
+                        else:
+                            p.level = 0; p.color = QColor("black")
+
+                # ── Blackout Punch ───────────────────────────────────────────
+                elif drop_fx == 'blackout_punch':
+                    if drop_p < 0.12:
+                        # Coupure noire
+                        for p in self.projectors:
+                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                            p.level = 0; p.color = QColor("black")
+                    else:
+                        # Bang blanc puis décroissance
+                        punch = max(0.0, 1.0 - (drop_p - 0.12) / 0.35)
+                        for p in self.projectors:
+                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                            _set_proj(p, white, int(100 * punch * global_fade))
+                        # Strobe sur tout après le bang initial
+                        if drop_p > 0.20:
+                            strobe_on = (int(position / strobe_ms_medium) % 2) == 0
+                            if not strobe_on:
+                                for p in self.projectors:
+                                    if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                                        p.level = 0; p.color = QColor("black")
+
+                # ── Stroboscope Total ────────────────────────────────────────
+                elif drop_fx == 'stroboscope':
+                    strobe_ms = int(45 - nerv * 20)   # 45ms → 25ms
+                    strobe_on = (int(position / strobe_ms) % 2) == 0
+                    for p in self.projectors:
+                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        if strobe_on:
+                            _set_proj(p, white, int(100 * global_fade))
+                        else:
+                            p.level = 0; p.color = QColor("black")
+
+                # ── Laser Scan ───────────────────────────────────────────────
+                elif drop_fx == 'laser_scan':
+                    # Projecteurs fixes : punch blanc initial + strobe léger sur lat
+                    if drop_p < 0.20:
+                        punch = 1.0 - drop_p / 0.20
+                        for p in self.projectors:
+                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                            if getattr(p, 'fixture_type', '') != "Moving Head":
+                                _set_proj(p, white, int(100 * punch * global_fade))
+                    strobe_on = (int(position / strobe_ms_slow) % 2) == 0
+                    for p in self.projectors:
+                        if p.group == 'lat' and not strobe_on:
+                            p.level = 0; p.color = QColor("black")
+                    # Les lyres tourneront en turbo (géré dans le bloc lyres)
+
+                ss['last'] = 'drop'
+
+            # ── BUILD : montée en puissance + pulse + réchauffement ───────────
+            elif section == 'build':
+                # Progression vers le prochain drop (0=loin, 1=au drop)
+                next_drop = next((d for d in self.audio_ai.drops if d > position), None)
+                BUILD_MS = 3500.0
+                build_p = max(0.0, min(1.0, 1.0 - (next_drop - position) / BUILD_MS)) \
+                          if next_drop else 0.0
+                ss['build_p'] = build_p
+
+                # Pulse qui s'accélère sur les contres
+                pulse_hz  = 2.5 + build_p * 10.0
+                pulse_mod = math.sin(position / 1000.0 * pulse_hz * 2.0 * math.pi) * 0.5 + 0.5
+
+                for p in self.projectors:
+                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                        continue
+                    if p.group == 'contre':
+                        # Couleur qui se réchauffe vers le rouge/blanc
+                        r = min(255, int(p.base_color.red() + build_p * (255 - p.base_color.red()) * 0.7))
+                        g = int(p.base_color.green() * (1.0 - build_p * 0.5))
+                        b = int(p.base_color.blue()  * (1.0 - build_p * 0.6))
+                        warm = QColor(r, g, b)
+                        lvl  = min(100, int(p.level * (1.0 + build_p * 0.35) * (0.35 + 0.65 * pulse_mod)))
+                        _set_proj(p, warm, lvl)
+                    elif p.group == 'face':
+                        # Face : monte progressivement
+                        lvl = min(100, int(p.level * (1.0 + build_p * 0.2)))
+                        _set_proj(p, p.base_color, lvl)
+
+                ss['last'] = 'build'
+
+            # ── HIGH : énergie soutenue, tout amplifié ────────────────────────
+            elif section == 'high':
+                for p in self.projectors:
+                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                        continue
+                    lvl = min(100, int(p.level * 1.15))
+                    _set_proj(p, p.base_color, lvl)
+                ss['last'] = 'high'
+
+            # ── QUIET : intro/outro/pont, tout réduit ─────────────────────────
+            elif section == 'quiet':
+                for p in self.projectors:
+                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                        continue
+                    cap = int(45 * global_fade)
+                    if p.group in ('contre', 'lat'):
+                        cap = int(20 * global_fade)
+                    lvl = min(p.level, cap)
+                    _set_proj(p, p.base_color, lvl)
+                ss['last'] = 'quiet'
+
+            else:  # verse
+                ss['last'] = 'verse'
+
+            # ── 2b. Effets aléatoires : chases, rainbow, wave… ───────────────
+            # Se déclenchent entre les sections (pas pendant un drop)
+            if not hasattr(self, '_ia_rnd_fx'):
+                self._ia_rnd_fx = {
+                    'active':     None,
+                    'start_beat': -1,
+                    'duration':   0,
+                    'last_beat':  -1,
+                    'trigger_at': 10,    # premier effet après 10 beats
+                    'color_idx':  0,
+                }
+            rfx = self._ia_rnd_fx
+
+            beat_count = getattr(self.audio_ai, '_beat_group_count', 0)
+            beat_idx   = getattr(self.audio_ai, '_last_beat_idx', -1)
+
+            # Progression dans le beat courant (0.0 → 1.0) pour les transitions smooth
+            beat_prog = 0.0
+            if 0 <= beat_idx < len(self.audio_ai.beats) - 1:
+                t0 = self.audio_ai.beats[beat_idx]
+                t1 = self.audio_ai.beats[beat_idx + 1]
+                beat_prog = max(0.0, min(1.0, (position - t0) / max(1, t1 - t0)))
+
+            # Suspendre l'effet pendant un drop
+            if section == 'drop' and rfx['active']:
+                rfx['active'] = None
+
+            # Déclenchement d'un nouvel effet (nouveau beat + hors drop/quiet)
+            new_beat = (beat_count != rfx['last_beat'])
+            if (rfx['active'] is None
+                    and new_beat
+                    and section not in ('drop', 'quiet')
+                    and beat_count >= rfx['trigger_at']):
+                import random as _rnd
+                # Effets disponibles selon la section
+                pool = ['chase_fwd', 'chase_bwd', 'rainbow', 'spotlight', 'wave', 'color_snap']
+                if section == 'high':
+                    pool += ['chase_fwd', 'rainbow', 'wave']   # plus fréquents
+                rfx['active']     = _rnd.choice(pool)
+                rfx['start_beat'] = beat_count
+                rfx['duration']   = _rnd.randint(4, 8)
+                rfx['color_idx']  = getattr(self.audio_ai, '_contre_color_idx', 0)
+                # Prochain déclenchement : nervosité réduit l'intervalle
+                lo = max(4, int(14 - nerv * 8))
+                hi = max(6, int(20 - nerv * 10))
+                rfx['trigger_at'] = beat_count + rfx['duration'] + _rnd.randint(lo, hi)
+
+            rfx['last_beat'] = beat_count
+
+            # Fin de l'effet
+            if rfx['active'] and beat_count >= rfx['start_beat'] + rfx['duration']:
+                rfx['active'] = None
+
+            # Application de l'effet actif (ne pas toucher aux machines à fumée)
+            if rfx['active'] and section != 'drop':
+                pal_fx   = self.audio_ai.palette if self.audio_ai.palette else [QColor("#ffffff")]
+                GRP_ORD  = ['face', 'lat', 'contre', 'douche1', 'douche2', 'douche3']
+                n_grps   = len(GRP_ORD)
+                beats_el = max(0, beat_count - rfx['start_beat'])
+                fx_name  = rfx['active']
+                t_s      = position / 1000.0
+
+                # Regrouper les projecteurs par groupe (hors fumée)
+                by_grp = {}
+                for p in self.projectors:
+                    if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                        by_grp.setdefault(p.group, []).append(p)
+
+                # ── Chase avant / arrière ──────────────────────────────────
+                if fx_name in ('chase_fwd', 'chase_bwd'):
+                    order = GRP_ORD if fx_name == 'chase_fwd' else list(reversed(GRP_ORD))
+                    active_gi = beats_el % n_grps
+                    # Transition smooth : active_gi → next_gi avec beat_prog
+                    next_gi   = (active_gi + 1) % n_grps
+                    for gi, grp in enumerate(order):
+                        if grp not in by_grp:
+                            continue
+                        chase_col = pal_fx[(rfx['color_idx'] + beats_el) % len(pal_fx)]
+                        if gi == active_gi:
+                            # Descend avec beat_prog
+                            lvl = int((100 - beat_prog * 65) * global_fade)
+                        elif gi == next_gi:
+                            # Monte avec beat_prog (anticipation)
+                            lvl = int(beat_prog * 100 * global_fade)
+                        else:
+                            lvl = int(15 * global_fade)
+                        for p in by_grp[grp]:
+                            _set_proj(p, chase_col, lvl)
+
+                # ── Rainbow wash ───────────────────────────────────────────
+                elif fx_name == 'rainbow':
+                    spd = 40.0 + nerv * 40.0   # 40°/s → 80°/s
+                    for gi, grp in enumerate(GRP_ORD):
+                        if grp not in by_grp:
+                            continue
+                        hue = int((t_s * spd + gi * (360.0 / n_grps)) % 360)
+                        col = QColor.fromHsv(hue, 240, 255)
+                        lvl = int((65 + energy * 30) * global_fade)
+                        for p in by_grp[grp]:
+                            _set_proj(p, col, lvl)
+
+                # ── Spotlight ──────────────────────────────────────────────
+                elif fx_name == 'spotlight':
+                    spot_grp = GRP_ORD[beats_el % n_grps]
+                    # Transition : le spot entrant monte, le sortant descend
+                    prev_grp = GRP_ORD[(beats_el - 1) % n_grps]
+                    spot_col = pal_fx[(rfx['color_idx'] + beats_el) % len(pal_fx)]
+                    for grp, projs in by_grp.items():
+                        if grp == spot_grp:
+                            lvl = int((beat_prog * 100) * global_fade)
+                        elif grp == prev_grp:
+                            lvl = int(((1.0 - beat_prog) * 100) * global_fade)
+                        else:
+                            lvl = int(12 * global_fade)
+                        for p in projs:
+                            _set_proj(p, spot_col if grp in (spot_grp, prev_grp) else p.base_color, lvl)
+
+                # ── Wave de luminosité ─────────────────────────────────────
+                elif fx_name == 'wave':
+                    wave_spd = 1.2 + nerv * 1.8   # 1.2 → 3 Hz
+                    for gi, grp in enumerate(GRP_ORD):
+                        if grp not in by_grp:
+                            continue
+                        phase = gi / n_grps * 2.0 * math.pi
+                        val   = math.sin(t_s * wave_spd * 2.0 * math.pi + phase)
+                        lvl   = int((45 + val * 50) * global_fade)
+                        col   = pal_fx[(rfx['color_idx'] + gi) % len(pal_fx)]
+                        for p in by_grp[grp]:
+                            _set_proj(p, col, max(0, lvl))
+
+                # ── Color Snap (snap de couleur au beat) ───────────────────
+                elif fx_name == 'color_snap':
+                    snap_col = pal_fx[(rfx['color_idx'] + beats_el) % len(pal_fx)]
+                    # Fondu rapide entre l'ancienne couleur et la nouvelle
+                    mix = min(1.0, beat_prog * 3.0)   # atteint 1.0 en 1/3 de beat
+                    for grp, projs in by_grp.items():
+                        for p in projs:
+                            r = int(p.base_color.red()   * (1-mix) + snap_col.red()   * mix)
+                            g_c = int(p.base_color.green() * (1-mix) + snap_col.green() * mix)
+                            b_c = int(p.base_color.blue()  * (1-mix) + snap_col.blue()  * mix)
+                            blended = QColor(r, g_c, b_c)
+                            lvl = int((70 + energy * 30) * global_fade)
+                            _set_proj(p, blended, lvl)
+
+            # ── 3. Mouvement + couleur lyres (Moving Head) ───────────────────
+            moving_heads = [p for p in self.projectors
+                            if getattr(p, 'fixture_type', '') == "Moving Head"]
+            if moving_heads:
+                energy_raw = energy
+
+                # Lissage EWMA
+                if not hasattr(self, '_ia_lyre_e'):
+                    self._ia_lyre_e        = energy_raw
+                    self._ia_lyre_phase    = 0.0
+                    self._ia_lyre_last_pos = position
+                alpha = 0.07
+                self._ia_lyre_e = alpha * energy_raw + (1.0 - alpha) * self._ia_lyre_e
+                e = self._ia_lyre_e
+
+                # Phase accumulée (fluide)
+                dt = max(0.0, (position - self._ia_lyre_last_pos) / 1000.0)
+                self._ia_lyre_last_pos = position
+
+                # Vitesse adaptée à la section
+                if section == 'drop':
+                    drop_fx_now = self.ia_params.get('drop_effect', 'flash_blanc')
+                    spd_mult = 5.0 if drop_fx_now == 'laser_scan' else (3.0 + nerv * 2.0)
+                elif section == 'build':
+                    spd_mult = 1.0 + ss.get('build_p', 0.0) * 2.0   # 1x → 3x
+                elif section == 'high':
+                    spd_mult = 1.6
+                elif section == 'quiet':
+                    spd_mult = 0.4
+                else:
+                    spd_mult = 1.0
+
+                # Nervosité augmente la vitesse de base des lyres
+                base_speed = (0.12 + nerv * 0.20) + e * (0.15 + nerv * 0.20)
+                # calm(nerv=0): 0.12–0.27 Hz  |  nerveux(nerv=1): 0.32–0.67 Hz
+                self._ia_lyre_phase += dt * base_speed * spd_mult * 2.0 * math.pi
+                ph = self._ia_lyre_phase
+
+                # Amplitude adaptée à la section
+                if section == 'drop':
+                    amp = 90.0
+                elif section == 'quiet':
+                    amp = 20.0 + e * 20.0
+                else:
+                    amp = 28.0 + e * 62.0
+
+                # Couleur lyre = palette IA (suit les contres)
+                pal     = self.audio_ai.palette if self.audio_ai.palette else [QColor("#ffffff")]
+                c_idx   = getattr(self.audio_ai, '_contre_color_idx', 0)
+                lyre_color = pal[c_idx % len(pal)]
+
+                # En drop : lyres en blanc
+                if section == 'drop':
+                    drop_p_now = min(1.0, (position - ss.get('drop_start', position)) / 1200.0)
+                    if drop_p_now < 0.35:
+                        lyre_color = QColor(255, 255, 255)
+
+                lyre_level = int(60 + e * 40)
+                if section == 'drop':
+                    lyre_level = 100
+                elif section == 'quiet':
+                    lyre_level = int(30 + e * 20)
+
+                for i, p in enumerate(moving_heads):
+                    phi = i * (2.0 * math.pi / max(len(moving_heads), 1))
+
+                    # Strobe shutter sur lyres pendant le drop
+                    if section == 'drop':
+                        strobe_on = (int(position / 55) % 2) == 0
+                        p.shutter = 255 if strobe_on else 0
+                    else:
+                        p.shutter = 255
+
+                    # Figure 8 lissajous
+                    pan_val  = 128 + int(amp * math.sin(ph + phi))
+                    tilt_val = 128 + int(amp / 2.0 * math.sin(2.0 * (ph + phi)))
+                    p.pan  = max(0, min(255, pan_val))
+                    p.tilt = max(0, min(255, tilt_val))
+
+                    # Couleur (seulement si groupe absent de state)
+                    if p.group not in state:
+                        p.level = max(0, min(100, lyre_level))
+                        p.base_color = lyre_color
+                        brightness = p.level / 100.0
+                        p.color = QColor(
+                            int(lyre_color.red()   * brightness),
+                            int(lyre_color.green() * brightness),
+                            int(lyre_color.blue()  * brightness),
+                        )
+                        # ColorWheel (MOVING_8CH)
+                        profile = getattr(p, 'dmx_profile', [])
+                        if 'ColorWheel' in profile and 'R' not in profile:
+                            slots = getattr(p, 'color_wheel_slots', [])
+                            if slots:
+                                def _dist(s):
+                                    sc = QColor(s.get('color', '#ffffff'))
+                                    dr = sc.red()   - lyre_color.red()
+                                    dg = sc.green() - lyre_color.green()
+                                    db = sc.blue()  - lyre_color.blue()
+                                    return dr*dr + dg*dg + db*db
+                                p.color_wheel = min(slots, key=_dist).get('dmx', 0)
+                            else:
+                                h = lyre_color.hsvHue()
+                                if h < 0:                  p.color_wheel = 0
+                                elif h < 30 or h >= 330:   p.color_wheel = 21
+                                elif h < 75:               p.color_wheel = 85
+                                elif h < 150:              p.color_wheel = 42
+                                elif h < 195:              p.color_wheel = 106
+                                elif h < 270:              p.color_wheel = 64
+                                else:                      p.color_wheel = 128
 
             if hasattr(self, 'plan_de_feu'):
                 self.plan_de_feu.update()
@@ -6450,12 +7110,21 @@ class MainWindow(QMainWindow):
             root.addWidget(btn_install)
 
         # ── Note de fonctionnement ────────────────────────────────────────────
-        info = QLabel(
-            "Il vous faudra le logiciel StreamDeck installé.\n\n"
-            "Installez le plugin, réouvrez StreamDeck,\n"
-            "puis recherchez MyStrow dans la liste\n"
-            "de la colonne de droite."
-        )
+        if is_installed:
+            info_text = (
+                "Le plugin est installé.\n\n"
+                "Ouvrez le logiciel Elgato Stream Deck\n"
+                "et recherchez MyStrow dans la liste\n"
+                "de la colonne de droite."
+            )
+        else:
+            info_text = (
+                "Il vous faudra le logiciel StreamDeck installé.\n\n"
+                "Installez le plugin, réouvrez StreamDeck,\n"
+                "puis recherchez MyStrow dans la liste\n"
+                "de la colonne de droite."
+            )
+        info = QLabel(info_text)
         info.setAlignment(Qt.AlignCenter)
         info.setWordWrap(True)
         info.setStyleSheet(
@@ -7095,11 +7764,15 @@ class MainWindow(QMainWindow):
         ext = Path(path).suffix.lower()
         if ext in CartoucheButton.VIDEO_EXTS:
             cart.media_icon = "\U0001f3ac"
+            kind = "vidéo"
         elif ext in CartoucheButton.AUDIO_EXTS:
             cart.media_icon = "\U0001f3b5"
+            kind = "audio"
         else:
             cart.media_icon = ""
+            kind = "média"
         cart.set_idle()
+        self._log_message(f"Cartouche {index + 1} — {kind} : {cart.media_title}", "info")
 
     def _clear_cartouche(self, index):
         """Vide une cartouche"""
@@ -7112,6 +7785,7 @@ class MainWindow(QMainWindow):
         cart.media_title = None
         cart.media_icon = ""
         cart.set_idle()
+        self._log_message(f"Cartouche {index + 1} vidée", "info")
 
     # ==================== FIN CARTOUCHEUR ====================
 
@@ -10124,10 +10798,10 @@ class MainWindow(QMainWindow):
         return False
 
     def show_ia_lumiere_config(self):
-        """Configuration des niveaux max IA Lumiere par groupe"""
+        """Configuration avancée IA Lumiere : niveaux, nervosité, effet drop"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Parametres IA Lumiere")
-        dialog.setFixedSize(520, 420)
+        dialog.setWindowTitle("Paramètres IA Lumière")
+        dialog.setFixedSize(560, 640)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
             QLabel { color: white; border: none; }
@@ -10139,57 +10813,113 @@ class MainWindow(QMainWindow):
                 margin: -5px 0; border-radius: 9px;
             }
             QSlider::sub-page:horizontal { background: #00d4ff; border-radius: 4px; }
+            QComboBox {
+                background: #2a2a2a; color: white; border: 1px solid #444;
+                border-radius: 6px; padding: 6px 12px; font-size: 12px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background: #2a2a2a; color: white;
+                selection-background-color: #005599; }
+            QFrame[frameShape="4"], QFrame[frameShape="5"] { color: #333; }
         """)
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(25, 20, 25, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(0)
 
-        title = QLabel("Niveaux maximum par groupe (IA Lumiere)")
-        title.setStyleSheet("font-size: 15px; font-weight: bold;")
+        def _section_title(text, color="#00d4ff"):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f"font-size: 13px; font-weight: bold; color:{color};"
+                              f"padding: 10px 0 4px 0;")
+            return lbl
+
+        def _sep():
+            f = QFrame(); f.setFrameShape(QFrame.HLine)
+            f.setStyleSheet("color:#333; margin: 4px 0;")
+            return f
+
+        def _slider_row(label_text, key, store, lo=0, hi=100, suffix="%"):
+            row = QHBoxLayout(); row.setSpacing(10)
+            lbl = QLabel(label_text); lbl.setMinimumWidth(160)
+            lbl.setStyleSheet("font-size:12px;")
+            row.addWidget(lbl)
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(lo, hi); sl.setValue(store.get(key, (lo+hi)//2))
+            row.addWidget(sl)
+            val_lbl = QLabel(f"{sl.value()}{suffix}")
+            val_lbl.setMinimumWidth(42)
+            val_lbl.setStyleSheet("font-size:12px; font-weight:bold; color:#00d4ff;")
+            sl.valueChanged.connect(lambda v, l=val_lbl: l.setText(f"{v}{suffix}"))
+            row.addWidget(val_lbl)
+            return row, sl
+
+        # ── Titre ────────────────────────────────────────────────────────────
+        title = QLabel("IA Lumière — Paramètres avancés")
+        title.setStyleSheet("font-size:15px; font-weight:bold; padding-bottom:8px;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
+        layout.addWidget(_sep())
 
-        info = QLabel("Ces limites plafonnent le dimmer de chaque groupe\nlorsque le mode IA Lumiere est actif.")
-        info.setAlignment(Qt.AlignCenter)
-        info.setStyleSheet("color: #888; font-size: 12px; padding: 5px;")
-        layout.addWidget(info)
+        # ── Nervosité ─────────────────────────────────────────────────────────
+        layout.addWidget(_section_title("⚡  Nervosité"))
+        nerv_row, nerv_sl = _slider_row(
+            "Nervosité générale", 'nervosity', self.ia_params, 0, 100, "%"
+        )
+        nerv_info = QLabel("Contrôle la réactivité : vitesse des strobes, lyres, fréquence des effets.")
+        nerv_info.setStyleSheet("color:#666; font-size:11px; padding-left:4px;")
+        nerv_info.setWordWrap(True)
+        layout.addLayout(nerv_row)
+        layout.addWidget(nerv_info)
+        layout.addSpacing(6)
+        layout.addWidget(_sep())
+
+        # ── Effet DROP ────────────────────────────────────────────────────────
+        layout.addWidget(_section_title("💥  Effet DROP"))
+
+        DROP_EFFECTS = {
+            'flash_blanc':       "Flash Blanc      — punch blanc immédiat + strobe lat/contre",
+            'color_explosion':   "Color Explosion  — chaque groupe explose dans une couleur, strobe total",
+            'blackout_punch':    "Blackout Punch   — 150ms noir total → BANG blanc + strobe",
+            'stroboscope':       "Stroboscope      — strobe blanc intégral sur tous les projecteurs",
+            'laser_scan':        "Laser Scan       — lyres en turbo, projecteurs flash + strobe lat",
+        }
+        drop_combo = QComboBox()
+        drop_combo.setFixedHeight(34)
+        for key, label in DROP_EFFECTS.items():
+            drop_combo.addItem(label, key)
+        current_drop = self.ia_params.get('drop_effect', 'flash_blanc')
+        for i in range(drop_combo.count()):
+            if drop_combo.itemData(i) == current_drop:
+                drop_combo.setCurrentIndex(i)
+                break
+        layout.addWidget(drop_combo)
+        layout.addSpacing(6)
+        layout.addWidget(_sep())
+
+        # ── Niveaux max par groupe ────────────────────────────────────────────
+        layout.addWidget(_section_title("🎚  Niveaux maximum par groupe"))
+        dim_info = QLabel("Plafonnent le dimmer de chaque groupe en mode IA Lumière.")
+        dim_info.setStyleSheet("color:#666; font-size:11px; padding-left:4px;")
+        layout.addWidget(dim_info)
+        layout.addSpacing(4)
 
         sliders = {}
         groups = [
-            ("Face", "face"),
-            ("Lateraux & Contres", "lat"),
-            ("Douche 1", "douche1"),
-            ("Douche 2", "douche2"),
-            ("Douche 3", "douche3"),
+            ("Face",              "face"),
+            ("Latéraux & Contres","lat"),
+            ("Douche 1",          "douche1"),
+            ("Douche 2",          "douche2"),
+            ("Douche 3",          "douche3"),
         ]
-
         for label_text, key in groups:
-            row_layout = QHBoxLayout()
-            row_layout.setSpacing(12)
+            row, sl = _slider_row(label_text, key, self.ia_max_dimmers)
+            sliders[key] = sl
+            layout.addLayout(row)
 
-            label = QLabel(label_text)
-            label.setMinimumWidth(150)
-            label.setStyleSheet("font-size: 13px;")
-            row_layout.addWidget(label)
+        layout.addStretch(1)
+        layout.addWidget(_sep())
 
-            slider = QSlider(Qt.Horizontal)
-            slider.setRange(0, 100)
-            current_val = self.ia_max_dimmers.get(key, 100)
-            slider.setValue(current_val)
-            row_layout.addWidget(slider)
-
-            value_label = QLabel(f"{current_val}%")
-            value_label.setMinimumWidth(45)
-            value_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #00d4ff;")
-            slider.valueChanged.connect(lambda v, lbl=value_label: lbl.setText(f"{v}%"))
-            row_layout.addWidget(value_label)
-
-            sliders[key] = slider
-            layout.addLayout(row_layout)
-
-        layout.addSpacing(10)
-
+        # ── Boutons ───────────────────────────────────────────────────────────
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
 
@@ -10199,7 +10929,9 @@ class MainWindow(QMainWindow):
                 border-radius: 6px; padding: 10px 25px; font-weight: bold; font-size: 13px; }
             QPushButton:hover { background: #3a7a3a; }
         """)
-        apply_btn.clicked.connect(lambda: self._apply_ia_config(dialog, sliders))
+        apply_btn.clicked.connect(
+            lambda: self._apply_ia_config(dialog, sliders, nerv_sl, drop_combo)
+        )
         btn_layout.addWidget(apply_btn)
 
         cancel_btn = QPushButton("❌ Annuler")
@@ -10214,12 +10946,15 @@ class MainWindow(QMainWindow):
         layout.addLayout(btn_layout)
         dialog.exec()
 
-    def _apply_ia_config(self, dialog, sliders):
+    def _apply_ia_config(self, dialog, sliders, nerv_sl=None, drop_combo=None):
         """Applique la config IA Lumiere"""
         for key, slider in sliders.items():
             self.ia_max_dimmers[key] = slider.value()
-        # Lat et Contre partagent le meme slider
         self.ia_max_dimmers['contre'] = self.ia_max_dimmers['lat']
+        if nerv_sl is not None:
+            self.ia_params['nervosity'] = nerv_sl.value()
+        if drop_combo is not None:
+            self.ia_params['drop_effect'] = drop_combo.currentData()
         self.save_ia_lumiere_config()
         dialog.accept()
 
@@ -10227,8 +10962,12 @@ class MainWindow(QMainWindow):
         """Sauvegarde la configuration IA Lumiere"""
         try:
             config_path = Path.home() / '.maestro_ia_lumiere.json'
+            data = {
+                'max_dimmers': self.ia_max_dimmers,
+                'params':      self.ia_params,
+            }
             with open(config_path, 'w') as f:
-                json.dump(self.ia_max_dimmers, f, indent=2)
+                json.dump(data, f, indent=2)
         except Exception as e:
             print(f"Erreur sauvegarde IA config: {e}")
 
@@ -10238,8 +10977,13 @@ class MainWindow(QMainWindow):
             config_path = Path.home() / '.maestro_ia_lumiere.json'
             if config_path.exists():
                 with open(config_path, 'r') as f:
-                    saved = json.load(f)
-                self.ia_max_dimmers.update(saved)
+                    data = json.load(f)
+                # Compatibilité ancien format (dict plat)
+                if 'max_dimmers' in data:
+                    self.ia_max_dimmers.update(data['max_dimmers'])
+                    self.ia_params.update(data.get('params', {}))
+                else:
+                    self.ia_max_dimmers.update(data)
         except Exception as e:
             print(f"Erreur chargement IA config: {e}")
 
@@ -10258,6 +11002,19 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'plan_de_feu') and not self.plan_de_feu.is_dmx_enabled():
                 self.plan_de_feu.set_dmx_unblocked()
             self.update_connection_indicators()
+
+    def _log_startup_status(self):
+        """Rapport d'état initial des sorties au démarrage."""
+        # Sortie DMX
+        dmx_on = self._license.dmx_allowed and getattr(self.dmx, 'connected', False)
+        if dmx_on:
+            self._log_message("Sortie DMX : activée (Art-Net 2.0.0.15:6454)", "success")
+        else:
+            self._log_message("Sortie DMX : désactivée", "info")
+
+        # Sortie vidéo (toujours off au démarrage)
+        self._log_message("Sortie vidéo : désactivée", "info")
+
 
     def update_connection_indicators(self):
         """Met a jour les indicateurs de connexion"""

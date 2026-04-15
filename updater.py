@@ -14,6 +14,7 @@ import tempfile
 import subprocess
 import ssl
 import urllib.request
+import random
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -21,8 +22,11 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QProgressBar, QDialog, QMessageBox, QApplication, QFrame
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
-from PySide6.QtGui import QFont, QScreen, QPixmap, QDesktopServices
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRect
+from PySide6.QtGui import (
+    QFont, QScreen, QPixmap, QDesktopServices,
+    QColor, QPainter
+)
 
 from core import VERSION, resource_path
 from i18n import get_language, set_language, tr
@@ -62,6 +66,94 @@ def version_gt(remote, local):
 
 
 # ============================================================
+# GLITCH LOGO
+# ============================================================
+class GlitchLogoLabel(QWidget):
+    """Logo avec effet glitch : décalage de tranches + aberration chromatique."""
+
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent)
+        self._px            = pixmap
+        self._glitching     = False
+        self._slices        = []   # list of (y, h, dx)
+        self._rgb_shift     = 0
+        self._burst_frames  = 0
+
+        # Taille fixe : un peu plus large que le pixmap pour absorber les décalages
+        self.setFixedSize(pixmap.width() + 60, pixmap.height() + 6)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+        # Timer rapide pendant un burst (40 ms ≈ 25 fps)
+        self._frame_timer = QTimer(self)
+        self._frame_timer.timeout.connect(self._next_frame)
+
+        # Timer pour déclencher les bursts aléatoirement
+        self._burst_timer = QTimer(self)
+        self._burst_timer.timeout.connect(self._start_burst)
+
+        # Burst initial dès l'affichage
+        QTimer.singleShot(80, self._start_burst)
+
+    def _start_burst(self):
+        self._glitching    = True
+        self._burst_frames = random.randint(6, 12)
+        self._frame_timer.start(45)
+        # Prochain burst dans 3–9 s
+        self._burst_timer.start(random.randint(3000, 9000))
+
+    def _next_frame(self):
+        if self._burst_frames <= 0:
+            self._glitching = False
+            self._slices    = []
+            self._frame_timer.stop()
+            self.update()
+            return
+        self._burst_frames -= 1
+
+        h   = self._px.height()
+        w   = self._px.width()
+        n   = random.randint(2, 5)
+        slices = []
+        for _ in range(n):
+            sy  = random.randint(0, max(1, h - 8))
+            sh  = random.randint(3, min(22, h - sy))
+            dx  = random.choice([-1, 1]) * random.randint(6, 28)
+            slices.append((sy, sh, dx))
+        self._slices    = slices
+        self._rgb_shift = random.randint(2, 5)
+        self.update()
+
+    def paintEvent(self, event):
+        p   = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        ox  = (self.width()  - self._px.width())  // 2
+        oy  = (self.height() - self._px.height()) // 2
+
+        if not self._glitching or not self._slices:
+            p.drawPixmap(ox, oy, self._px)
+            p.end()
+            return
+
+        # Aberration chromatique : deux copies décalées, semi-transparentes
+        s = self._rgb_shift
+        p.setOpacity(0.28)
+        p.drawPixmap(ox - s, oy, self._px)   # ghost gauche
+        p.drawPixmap(ox + s, oy, self._px)   # ghost droite
+        p.setOpacity(1.0)
+
+        # Image de base
+        p.drawPixmap(ox, oy, self._px)
+
+        # Tranches décalées (clippées à leur bande)
+        for (sy, sh, dx) in self._slices:
+            clip = QRect(0, oy + sy, self.width(), sh)
+            p.setClipRect(clip)
+            p.drawPixmap(ox + dx, oy, self._px)
+        p.setClipping(False)
+        p.end()
+
+
+# ============================================================
 # SPLASH SCREEN
 # ============================================================
 class SplashScreen(QWidget):
@@ -83,26 +175,32 @@ class SplashScreen(QWidget):
         layout.setContentsMargins(30, 20, 30, 16)
         layout.setSpacing(8)
 
-        # --- Logo ---
-        self.logo_label = QLabel()
-        self.logo_label.setAlignment(Qt.AlignCenter)
+        # --- Logo avec effet glitch ---
         logo_path = resource_path("logo.png")
         if os.path.exists(logo_path):
-            px = QPixmap(logo_path)
-            px = px.scaledToHeight(80, Qt.SmoothTransformation)
-            self.logo_label.setPixmap(px)
-        layout.addWidget(self.logo_label)
+            px = QPixmap(logo_path).scaledToHeight(80, Qt.SmoothTransformation)
+            self.logo_label = GlitchLogoLabel(px, self)
+            logo_row = QHBoxLayout()
+            logo_row.addStretch()
+            logo_row.addWidget(self.logo_label)
+            logo_row.addStretch()
+            layout.addLayout(logo_row)
+        else:
+            self.logo_label = QLabel()
+            layout.addWidget(self.logo_label)
 
-        # --- Titre + version ---
-        title = QLabel("MyStrow")
-        title.setFont(QFont("Segoe UI", 22, QFont.Bold))
-        title.setStyleSheet("color: #00d4ff;")
+        # --- Titre bicolore MY / STROW (Bebas Neue) ---
+        title = QLabel(
+            '<span style="color:#ffffff; font-family:\'Bebas Neue\'; font-size:36px; letter-spacing:2px;">MY</span>'
+            '<span style="color:#FFE000; font-family:\'Bebas Neue\'; font-size:36px; letter-spacing:2px;">STROW</span>'
+        )
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
+        # --- Version sous le titre ---
         ver = QLabel(f"v{VERSION}")
         ver.setFont(QFont("Segoe UI", 10))
-        ver.setStyleSheet("color: #888888;")
+        ver.setStyleSheet("color: #666666;")
         ver.setAlignment(Qt.AlignCenter)
         layout.addWidget(ver)
 

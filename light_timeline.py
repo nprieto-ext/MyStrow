@@ -29,6 +29,7 @@ import random
 import math
 import struct
 import time
+from pathlib import Path
 
 from i18n import tr
 
@@ -761,10 +762,11 @@ class LibraryPanel(QScrollArea):
         hdr_h.addWidget(self._sel_lbl)
         v.addWidget(hdr_row)
 
-        self._sec_color = _LibrarySection("COULEUR", v)
-        self._sec_bi    = _LibrarySection("BICOULEUR", v)
-        self._sec_mem   = _LibrarySection("MÉMOIRE", v)
-        self._sec_eff   = _LibrarySection("EFFETS", v)
+        self._sec_color      = _LibrarySection("COULEUR", v)
+        self._sec_bi         = _LibrarySection("BICOULEUR", v)
+        self._sec_mem        = _LibrarySection("MÉMOIRE", v)
+        self._sec_eff        = _LibrarySection("EFFETS", v)
+        self._sec_custom_eff = _LibrarySection("MES EFFETS", v)
 
         v.addStretch()
         self.setWidget(content)
@@ -884,9 +886,37 @@ class LibraryPanel(QScrollArea):
                 self._sec_eff.add_item(_LibraryEffectItem(eff, panel=self))
         except Exception:
             pass
+        self._refresh_custom_effects()
+
+    def _refresh_custom_effects(self):
+        """Recharge les effets personnalisés dans la section MES EFFETS."""
+        import json as _json
+        removed = self._sec_custom_eff.clear_items()
+        self._deregister_list(removed)
+
+        custom_path = Path.home() / ".mystrow_custom_effects.json"
+        custom_effects = []
+        if custom_path.exists():
+            try:
+                with open(custom_path, "r", encoding="utf-8") as f:
+                    custom_effects = _json.load(f)
+            except Exception:
+                custom_effects = []
+
+        if custom_effects:
+            for eff in custom_effects:
+                item = _LibraryEffectItem(eff, panel=self)
+                self._sec_custom_eff.add_item(item)
+        else:
+            empty = QLabel("  Aucun effet personnalisé")
+            empty.setStyleSheet(
+                "color: #2a2a2a; font-size: 10px; font-style: italic; "
+                "background: transparent; padding: 5px 10px;"
+            )
+            self._sec_custom_eff.add_item(empty)
 
     def refresh(self):
-        """Rafraîchit la section Mémoires."""
+        """Rafraîchit la section Mémoires et les effets personnalisés."""
         removed = self._sec_mem.clear_items()
         self._deregister_list(removed)
 
@@ -913,6 +943,8 @@ class LibraryPanel(QScrollArea):
                 "background: transparent; padding: 5px 10px;"
             )
             self._sec_mem.add_item(empty)
+
+        self._refresh_custom_effects()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

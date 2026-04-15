@@ -225,7 +225,7 @@ def refresh_id_token(refresh_token: str) -> dict:
     except urllib.error.HTTPError as e:
         msg = _firebase_error(e)
         if "TOKEN_EXPIRED" in msg or "INVALID_REFRESH_TOKEN" in msg:
-            raise Exception("Session expirée. Reconnectez-vous.")
+            raise Exception("Session expirée")
         raise Exception(f"Erreur renouvellement token : {msg}")
 
 

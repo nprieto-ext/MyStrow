@@ -28,6 +28,10 @@ class AudioColorAI:
         self.analyzed = False
         self.window_ms = 50
 
+        # Sections detectees
+        self.drops = []    # [time_ms] — instants de drop detectes
+        self.sections = [] # [(start_ms, 'quiet'|'verse'|'build'|'high'|'drop')]
+
         # Etat courant pour les changements de couleur
         self._contre_color_idx = 0
         self._lat_color_idx = 0
@@ -62,6 +66,7 @@ class AudioColorAI:
         self.energy_map = data["energy_map"]
         self.beats = data["beats"]
         self.analyzed = True
+        self._detect_sections()
 
     def _generate_palette(self):
         """Genere 8 variations de couleur autour de la dominante"""
@@ -120,10 +125,12 @@ class AudioColorAI:
                 if max_e > 0:
                     self.energy_map = [e / max_e for e in self.energy_map]
 
-        # Detecter les beats
+        # Detecter les beats puis les sections
         self._detect_beats()
+        self._detect_sections()
         self.analyzed = True
-        print(f"IA Lumiere: {len(self.energy_map)} fenetres, {len(self.beats)} beats")
+        print(f"IA Lumiere: {len(self.energy_map)} fenetres, {len(self.beats)} beats, "
+              f"{len(self.drops)} drops")
 
     def _read_audio(self, filepath):
         """Lit un fichier audio, retourne des samples normalises mono 22050Hz"""
@@ -281,6 +288,89 @@ print(json.dumps(energy))
             if self.energy_map[i] > threshold:
                 self.beats.append(i * self.window_ms)
                 last_beat_idx = i
+
+    def _detect_sections(self):
+        """Detecte les drops, refrains, montees et couplets dans l'energy_map.
+
+        Algorithme :
+         - Moyenne courte  (0.5s)  vs moyenne longue (4s) => detecte les sauts
+         - Drop     : saut d'energie > 0.35 ET energie courante > 0.60
+         - High     : energie soutenue > 0.55 pendant > 3s (apres un drop)
+         - Build    : energie montante sur 2-4s avant un drop
+         - Quiet    : energie < 0.25
+         - Verse    : le reste
+        """
+        self.drops = []
+        self.sections = []
+
+        n = len(self.energy_map)
+        if n < 40:
+            return
+
+        w = self.window_ms
+        long_w  = max(1, 4000  // w)   # 4 secondes
+        short_w = max(1, 500   // w)   # 500 ms
+        min_drop_gap = max(1, 3000 // w)   # 3s min entre deux drops
+
+        # Calcul des moyennes glissantes longues
+        long_avg = []
+        for i in range(n):
+            s = max(0, i - long_w)
+            long_avg.append(sum(self.energy_map[s:i + 1]) / (i - s + 1))
+
+        # Detection des drops
+        last_drop_idx = -min_drop_gap
+        for i in range(short_w, n):
+            short = sum(self.energy_map[max(0, i - short_w):i + 1]) / short_w
+            curr  = self.energy_map[i]
+            jump  = short - long_avg[i]
+            if curr > 0.60 and jump > 0.30 and (i - last_drop_idx) >= min_drop_gap:
+                self.drops.append(i * w)
+                last_drop_idx = i
+
+        # Construction des sections (parcours chronologique)
+        DROP_WINDOW_MS  = 1200   # duree du "moment drop" en ms
+        BUILD_BEFORE_MS = 3500   # fenetre build-up avant un drop
+        HIGH_THRESH     = 0.55   # seuil energie haute soutenue
+        QUIET_THRESH    = 0.22   # seuil silence
+
+        total_ms = n * w
+        t = 0
+        while t < total_ms:
+            # Est-on dans la fenetre d'un drop ?
+            in_drop = any(d <= t < d + DROP_WINDOW_MS for d in self.drops)
+            if in_drop:
+                self.sections.append((t, 'drop'))
+                t += DROP_WINDOW_MS
+                continue
+
+            # Est-on dans un build-up avant un drop ?
+            in_build = any(d - BUILD_BEFORE_MS <= t < d for d in self.drops)
+            if in_build:
+                self.sections.append((t, 'build'))
+                t += 500
+                continue
+
+            # Sinon : qualifier par l'energie locale
+            idx = min(n - 1, t // w)
+            e   = long_avg[idx]
+            if e > HIGH_THRESH:
+                self.sections.append((t, 'high'))
+            elif e < QUIET_THRESH:
+                self.sections.append((t, 'quiet'))
+            else:
+                self.sections.append((t, 'verse'))
+            t += 500
+
+    def get_section_at(self, time_ms):
+        """Retourne la section courante : 'drop'|'build'|'high'|'verse'|'quiet'."""
+        sec = 'verse'
+        for start, label in self.sections:
+            if start <= time_ms:
+                sec = label
+            else:
+                break
+        return sec
 
     def get_energy_at(self, time_ms):
         """Retourne l'energie a un instant donne (0.0-1.0)"""
@@ -481,6 +571,9 @@ print(json.dumps(energy))
             'face_alt': face_alt,
             'contre_effect': self._effect_contre_type if contre_max > 0 else None,
             'lat_effect': self._effect_lat_type if lat_max > 0 else None,
+            'section': self.get_section_at(time_ms),
+            'energy': energy,
+            'global_fade': global_fade,
         }
 
     def reset(self):

@@ -2298,6 +2298,8 @@ class PlanDeFeu(QFrame):
         self._clear_all_projectors()
         if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
             self.main_window.dmx.update_from_projectors(self.projectors)
+        if self.main_window and hasattr(self.main_window, '_log_message'):
+            self.main_window._log_message("Plan de feu — CLEAR tous projecteurs", "info")
 
     def _select_group(self, selection):
         self.selected_lamps.clear()

@@ -116,7 +116,7 @@ def _result_invalid(reason=""):
         state=LicenseState.INVALID,
         dmx_allowed=False,
         watermark_required=True,
-        message=f"Compte invalide{': ' + reason if reason else ''}"
+        message=reason if reason else "Compte invalide"
     )
 
 def _result_trial_active(days):

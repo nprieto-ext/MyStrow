@@ -1215,6 +1215,7 @@ class Sequencer(QFrame):
 
                 # PAUSE indefinie
                 if data == "PAUSE":
+                    self.player_ui.player.stop()
                     self.player_ui.dmx_blackout()
                     # Cacher l'image si affichee
                     if hasattr(self.player_ui, 'hide_image'):
@@ -1222,6 +1223,7 @@ class Sequencer(QFrame):
 
                     self.current_row = row
                     self.table.selectRow(row)
+                    self.player_ui.update_play_icon(QMediaPlayer.StoppedState)
 
                     # Jouer la sequence lumiere si disponible
                     dmx_mode = self.get_dmx_mode(row)
