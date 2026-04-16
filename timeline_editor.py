@@ -172,6 +172,7 @@ class LightTimelineEditor(QDialog):
             self.playback_position = main_window.player.position()
         else:
             self.playback_position = 0
+        self._prev_playback_position = self.playback_position
 
         self._seq_clip_active = None   # clip de séquence actuellement actif (pour effets)
         self._eff_clip_active = None   # clip d'effet (piste Effet) actuellement actif
@@ -1213,10 +1214,23 @@ class LightTimelineEditor(QDialog):
             pos_sec = int(self.playback_position / 1000)
             self.position_label.setText(f"⏱ {pos_sec // 60}:{pos_sec % 60:02d} / {self.total_time_str}")
 
+            # Mise à jour dirty-rect : uniquement la bande du curseur (ancien + nouveau)
+            ppm = self.tracks[0].pixels_per_ms if self.tracks else 0
+            if ppm > 0 and self.playback_position != self._prev_playback_position:
+                old_x = 145 + int(self._prev_playback_position * ppm)
+                new_x = 145 + int(self.playback_position * ppm)
+                for track in self.tracks:
+                    h = track.height()
+                    track.update(QRect(old_x - 2, 0, 5, h))
+                    track.update(QRect(new_x - 2, 0, 5, h))
+                self.track_waveform.update(QRect(old_x - 2, 0, 5, self.track_waveform.height()))
+                self.track_waveform.update(QRect(new_x - 2, 0, 5, self.track_waveform.height()))
+            else:
+                for track in self.tracks:
+                    track.update()
+                self.track_waveform.update()
             self.ruler.update()
-            for track in self.tracks:
-                track.update()
-            self.track_waveform.update()
+            self._prev_playback_position = self.playback_position
 
             # Appliquer les clips actifs aux projecteurs pour le plan de feu live
             self._apply_preview_to_projectors(self.playback_position)

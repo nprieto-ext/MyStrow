@@ -77,6 +77,20 @@ except ImportError:
     HAS_QAUDIO_DECODER = False
 
 
+# Cache pour BUILTIN_EFFECTS — évite l'import répété dans le paintEvent
+_builtin_effects_cache = None
+
+def _get_builtin_effects():
+    global _builtin_effects_cache
+    if _builtin_effects_cache is None:
+        try:
+            from effect_editor import BUILTIN_EFFECTS
+            _builtin_effects_cache = BUILTIN_EFFECTS
+        except Exception:
+            _builtin_effects_cache = []
+    return _builtin_effects_cache
+
+
 class LightClip:
     """Un clip de lumiere sur la timeline avec effets et bicolore"""
 
@@ -3299,18 +3313,28 @@ print(json.dumps(waveform))
                     painter.drawRect(x, y_center - h, bar_w, h * 2)
                 painter.setRenderHint(QPainter.Antialiasing, True)
 
-        # Grille temporelle
-        painter.setPen(QPen(QColor("#2a2a2a"), 1, Qt.SolidLine))
-        for sec in range(0, int(self.total_duration / 1000) + 1):
-            x = 145 + int(sec * 1000 * self.pixels_per_ms)
-            if x < self.width():
-                painter.drawLine(x, 0, x, self.height())
+        # Grille temporelle - seulement les lignes visibles
+        if self.pixels_per_ms > 0:
+            visible_left  = event.rect().left()
+            visible_right = event.rect().right()
+            sec_start = max(0, int((visible_left  - 145) / (1000 * self.pixels_per_ms)))
+            sec_end   =        int((visible_right - 145) / (1000 * self.pixels_per_ms)) + 2
+            painter.setPen(QPen(QColor("#2a2a2a"), 1, Qt.SolidLine))
+            for sec in range(sec_start, sec_end):
+                x = 145 + int(sec * 1000 * self.pixels_per_ms)
+                if 145 <= x <= self.width():
+                    painter.drawLine(x, 0, x, self.height())
 
         # === DESSINER LES CLIPS ===
         painter.setRenderHint(QPainter.Antialiasing)
+        _ev_left  = event.rect().left()
+        _ev_right = event.rect().right()
         for clip in self.clips:
             x = 145 + int(clip.start_time * self.pixels_per_ms)
             width = int(clip.duration * self.pixels_per_ms)
+            # Ignorer les clips entièrement hors de la zone visible
+            if x + max(20, width) < _ev_left or x > _ev_right:
+                continue
             y = 10
             height = 40
 
@@ -3339,12 +3363,11 @@ print(json.dumps(waveform))
                 painter.drawRoundedRect(clip_rect, 5, 5)
 
                 if width > 30:
-                    # Retrouver l'emoji depuis BUILTIN_EFFECTS
+                    # Retrouver l'emoji depuis BUILTIN_EFFECTS (cache module-level)
                     eff_name = getattr(clip, 'effect_name', '') or ''
                     eff_emoji = '✨'
                     try:
-                        from effect_editor import BUILTIN_EFFECTS
-                        for _e in BUILTIN_EFFECTS:
+                        for _e in _get_builtin_effects():
                             if _e.get('name') == eff_name:
                                 eff_emoji = _e.get('emoji', '✨')
                                 break
@@ -3504,11 +3527,10 @@ print(json.dumps(waveform))
                     painter.setPen(QPen(QColor(255, 220, 100, 180), 2))
                     painter.drawLine(sx, sy, ex, ey)
                     # Tête de flèche
-                    import math as _m
-                    ang = _m.atan2(ey - sy, ex - sx)
+                    ang = math.atan2(ey - sy, ex - sx)
                     for da in (0.4, -0.4):
-                        ax = int(ex - 7 * _m.cos(ang + da))
-                        ay = int(ey - 7 * _m.sin(ang + da))
+                        ax = int(ex - 7 * math.cos(ang + da))
+                        ay = int(ey - 7 * math.sin(ang + da))
                         painter.drawLine(ex, ey, ax, ay)
                 painter.restore()
 

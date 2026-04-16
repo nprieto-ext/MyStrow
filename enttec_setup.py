@@ -7,8 +7,8 @@ import socket as _sock
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QLineEdit, QListWidget, QListWidgetItem,
-    QStackedWidget, QApplication, QWidget, QFrame, QTextEdit,
+    QComboBox, QListWidget, QListWidgetItem,
+    QApplication, QWidget, QFrame, QTextEdit,
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt
@@ -20,14 +20,13 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
-from artnet_dmx import TRANSPORT_ENTTEC, TRANSPORT_ARTNET
+from artnet_dmx import TRANSPORT_ENTTEC
 
 # ---------------------------------------------------------------------------
 # Catalogue de produits compatibles
 # ---------------------------------------------------------------------------
 
 PRODUCTS = [
-    # ── USB / Série ────────────────────────────────────────────────────────
     {
         "id":        "enttec_open",
         "name":      "ENTTEC Open DMX USB",
@@ -56,55 +55,6 @@ PRODUCTS = [
         "info":      "Tout adaptateur USB-série DMX (FTDI ou clone)",
         "step1":     "Branchez votre interface USB-DMX sur un port USB.",
     },
-    # ── Réseau Art-Net ─────────────────────────────────────────────────────
-    {
-        "id":        "electroconcept",
-        "name":      "ElectroConcept Node",
-        "transport": TRANSPORT_ARTNET,
-        "info":      "IP par défaut : 2.0.0.15",
-        "step1":     "Reliez le boîtier ElectroConcept à votre ordinateur\nvia un câble Ethernet (direct ou switch).",
-        "defaults":  {"target_ip": "2.0.0.15", "target_port": 6454, "universe": 0},
-    },
-    {
-        "id":        "chauvet_an2",
-        "name":      "Chauvet DMX-AN2",
-        "transport": TRANSPORT_ARTNET,
-        "info":      "Convertisseur Art-Net 2 univers — IP par défaut : 2.0.0.1",
-        "step1":     "Reliez le Chauvet DMX-AN2 à votre ordinateur\nvia un câble Ethernet (direct ou switch).",
-        "defaults":  {"target_ip": "2.0.0.1", "target_port": 6454, "universe": 0},
-    },
-    {
-        "id":        "enttec_ode",
-        "name":      "ENTTEC ODE MkII",
-        "transport": TRANSPORT_ARTNET,
-        "info":      "Open DMX Ethernet — IP par défaut : 192.168.1.78",
-        "step1":     "Reliez l'ENTTEC ODE à votre réseau Ethernet.",
-        "defaults":  {"target_ip": "192.168.1.78", "target_port": 6454, "universe": 0},
-    },
-    {
-        "id":        "chamsys",
-        "name":      "Chamsys Ethernet Node",
-        "transport": TRANSPORT_ARTNET,
-        "info":      "IP par défaut : 2.0.0.1",
-        "step1":     "Reliez le node Chamsys à votre réseau Ethernet.",
-        "defaults":  {"target_ip": "2.0.0.1", "target_port": 6454, "universe": 0},
-    },
-    {
-        "id":        "luminex",
-        "name":      "Luminex GigaCore / Araneo",
-        "transport": TRANSPORT_ARTNET,
-        "info":      "IP par défaut : 2.0.0.1",
-        "step1":     "Reliez le boîtier Luminex à votre réseau Ethernet.",
-        "defaults":  {"target_ip": "2.0.0.1", "target_port": 6454, "universe": 0},
-    },
-    {
-        "id":        "generic_artnet",
-        "name":      "Node Art-Net générique",
-        "transport": TRANSPORT_ARTNET,
-        "info":      "Tout node Art-Net standard (port 6454)",
-        "step1":     "Reliez votre node Art-Net à votre réseau Ethernet.",
-        "defaults":  {"target_ip": "2.0.0.1", "target_port": 6454, "universe": 0},
-    },
 ]
 
 _BY_ID = {p["id"]: p for p in PRODUCTS}
@@ -118,11 +68,6 @@ def product_by_id(pid):
 # Styles partagés
 # ---------------------------------------------------------------------------
 
-_FIELD = (
-    "QLineEdit { background: #242424; color: white; border: 1px solid #2e2e2e;"
-    " border-radius: 4px; padding: 0 8px; font-size: 11px; min-height: 26px; }"
-    "QLineEdit:focus { border: 1px solid #00d4ff; }"
-)
 _COMBO = (
     "QComboBox { background: #242424; color: white; border: 1px solid #2e2e2e;"
     " border-radius: 4px; padding: 0 8px; font-size: 11px; min-height: 26px; }"
@@ -289,11 +234,7 @@ class DmxSetupDialog(QDialog):
         self.lbl_step1.setStyleSheet("color: #666; margin-left: 26px; margin-bottom: 6px;")
         lay.addWidget(self.lbl_step1)
 
-        # Zone de config USB ou Art-Net
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self._make_usb_panel())     # 0
-        self.stack.addWidget(self._make_artnet_panel())  # 1
-        lay.addWidget(self.stack)
+        lay.addWidget(self._make_usb_panel())
 
         lay.addSpacing(12)
 
@@ -316,10 +257,7 @@ class DmxSetupDialog(QDialog):
         self.btn_diag.clicked.connect(self._run_diag)
         btn_row.addWidget(self.btn_diag)
 
-        self._diag_hint = QLabel("USB uniquement — teste port, break et envoi")
-        self._diag_hint.setFont(QFont("Segoe UI", 8))
-        self._diag_hint.setStyleSheet("color: #444; margin-left: 8px;")
-        btn_row.addWidget(self._diag_hint, 1)
+        btn_row.addStretch(1)
         lay.addLayout(btn_row)
 
         lay.addSpacing(6)
@@ -438,34 +376,6 @@ class DmxSetupDialog(QDialog):
         lay.addWidget(self.lbl_port_hint)
         return w
 
-    def _make_artnet_panel(self):
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(26, 0, 0, 0)
-        lay.setSpacing(5)
-
-        def _row(label_text, attr, default, width=None):
-            r = QHBoxLayout()
-            lbl = QLabel(label_text)
-            lbl.setFont(QFont("Segoe UI", 10))
-            lbl.setFixedWidth(80)
-            r.addWidget(lbl)
-            edit = QLineEdit(str(default))
-            edit.setStyleSheet(_FIELD)
-            if width:
-                edit.setFixedWidth(width)
-                r.addWidget(edit)
-                r.addStretch()
-            else:
-                r.addWidget(edit, 1)
-            lay.addLayout(r)
-            setattr(self, attr, edit)
-
-        _row("Adresse IP :", "ip_edit",   "2.0.0.1")
-        _row("Port :",       "port_edit",  6454,    width=72)
-        _row("Univers :",    "univ_edit",  0,       width=56)
-        return w
-
     # ── Événements ──────────────────────────────────────────────────────────
 
     def _on_product_changed(self, current, _prev):
@@ -483,20 +393,6 @@ class DmxSetupDialog(QDialog):
         self.lbl_step1.setText(prod.get("step1", ""))
         self.lbl_connect.setText("")
         self._log.clear()
-
-        is_usb = (prod["transport"] == TRANSPORT_ENTTEC)
-        if is_usb:
-            self.stack.setCurrentIndex(0)
-            self.btn_diag.setEnabled(True)
-            self._diag_hint.setText("Teste port, break signal et envoi DMX")
-        else:
-            self.stack.setCurrentIndex(1)
-            self.btn_diag.setEnabled(False)
-            self._diag_hint.setText("Diagnostic disponible pour les interfaces USB uniquement")
-            d = prod.get("defaults", {})
-            self.ip_edit.setText(str(d.get("target_ip",   self._dmx.target_ip)))
-            self.port_edit.setText(str(d.get("target_port", self._dmx.target_port)))
-            self.univ_edit.setText(str(d.get("universe",    self._dmx.universe)))
 
     def _current_product(self):
         item = self.product_list.currentItem()
@@ -817,21 +713,11 @@ class DmxSetupDialog(QDialog):
             product_name=prod["name"],
         )
 
-        if prod["transport"] == TRANSPORT_ENTTEC:
-            port = self.port_combo.currentData()
-            if not port:
-                self._set_connect("Sélectionnez un port COM valide", error=True)
-                return
-            kwargs["com_port"] = port
-        else:
-            ip = self.ip_edit.text().strip()
-            try:
-                port = int(self.port_edit.text().strip())
-                uni  = int(self.univ_edit.text().strip())
-            except ValueError:
-                self._set_connect("Port ou univers invalide", error=True)
-                return
-            kwargs.update(target_ip=ip, target_port=port, universe=uni)
+        port = self.port_combo.currentData()
+        if not port:
+            self._set_connect("Sélectionnez un port COM valide", error=True)
+            return
+        kwargs["com_port"] = port
 
         if self._dmx.connect(**kwargs):
             self._set_connect(f"✓  {prod['name']} connecté", ok=True)
