@@ -131,16 +131,12 @@ class EffectButton(QPushButton):
         # Charger tous les effets : builtin + custom
         all_effects = []
         try:
-            from effect_editor import BUILTIN_EFFECTS
+            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
             all_effects = list(BUILTIN_EFFECTS)
-            effects_file = Path.home() / ".mystrow_effects.json"
-            if effects_file.exists():
-                custom = json.loads(effects_file.read_text(encoding="utf-8"))
-                if isinstance(custom, list):
-                    existing_names = {e["name"] for e in all_effects}
-                    for e in custom:
-                        if e.get("name") not in existing_names:
-                            all_effects.append(e)
+            existing_names = {e["name"] for e in all_effects}
+            for e in _load_custom_effects():
+                if e.get("name") not in existing_names:
+                    all_effects.append(e)
         except Exception:
             pass
 

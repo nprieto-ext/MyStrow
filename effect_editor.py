@@ -290,6 +290,19 @@ FIXTURE_ATTRS = {
 
 FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
 
+# Formes de trajectoire pour les lyres (Pan/Tilt couplés mathématiquement)
+# Chaque forme : {"pan": (forme, phase 0-100, speed_mult), "tilt": (forme, phase, speed_mult)}
+# phase 25 = décalage de 90°, speed_mult 2.0 = vitesse double
+PAN_TILT_SHAPES = {
+    "cercle":    {"label": "○  Cercle",     "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",    25, 1.0)},
+    "huit":      {"label": "8  Huit",       "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",     0, 2.0)},
+    "infini":    {"label": "∞  Infini",     "pan": ("Sinus",    0,  2.0), "tilt": ("Sinus",     0, 1.0)},
+    "balancier": {"label": "↔  Balancier",  "pan": ("Sinus",    0,  1.0), "tilt": ("Fixe",      0, 1.0)},
+    "carre":     {"label": "□  Carré",      "pan": ("Triangle", 0,  1.0), "tilt": ("Triangle", 25, 1.0)},
+    "libre":     {"label": "~  Libre",      "pan": (None,       0,  1.0), "tilt": (None,        0, 1.0)},
+}
+_PT_SHAPE_ORDER = ["cercle", "huit", "infini", "balancier", "carre", "libre"]
+
 # Migration des anciens noms (fichiers .tui sauvegardés avant la refonte)
 _FORME_COMPAT = {
     "Chase": "Flash", "Phase 1": "Montée", "Phase 2": "Descente",
@@ -389,6 +402,7 @@ class EffectLayer:
         self.direction = 1     # sens : 1=avant, -1=arrière, 0=bounce
         self.color1 = "#ff0000"
         self.color2 = "#0000ff"
+        self.mouvement_shape = "libre"  # forme de trajectoire Pan/Tilt
 
     def to_dict(self):
         return {
@@ -404,6 +418,7 @@ class EffectLayer:
             "direction": self.direction,
             "color1": self.color1,
             "color2": self.color2,
+            "mouvement_shape": self.mouvement_shape,
         }
 
     @classmethod
@@ -424,6 +439,7 @@ class EffectLayer:
         layer.direction = d.get("direction", 1)
         layer.color1 = d.get("color1", "#ff0000")
         layer.color2 = d.get("color2", "#0000ff")
+        layer.mouvement_shape = d.get("mouvement_shape", "libre")
         return layer
 
     @classmethod
@@ -1168,6 +1184,7 @@ class WaveformCanvas(QWidget):
         "R": "#ff4444",      "V": "#44dd44",    "B": "#4488ff",
         "RGB": "#ffaa44",    "Permut": "#ff44ff",
         "Pan": "#ffaa00",    "Tilt": "#ff8800",  "Gobo": "#aa44ff",
+        "Pan/Tilt": "#ff9900",
     }
 
     def __init__(self, layer, parent=None):
@@ -1227,6 +1244,100 @@ class WaveformCanvas(QWidget):
         p.end()
 
 
+# ─── Trajectoire Lissajous Pan/Tilt ──────────────────────────────────────────
+
+class TrajectoryCanvas(QWidget):
+    """Aperçu Lissajous 34×34 px pour la couche Pan/Tilt — mis à jour via set_time()."""
+
+    _COLOR = QColor(255, 153, 0)          # orange Pan/Tilt
+
+    def __init__(self, layer, parent=None):
+        super().__init__(parent)
+        self._layer = layer
+        self._t     = 0.0
+        self.setFixedSize(34, 34)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def set_time(self, t: float):
+        self._t = t
+        self.update()
+
+    # ── tracé ─────────────────────────────────────────────────────────────────
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        mg = 4
+
+        # Fond
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(8, 8, 8))
+        p.drawRoundedRect(0, 0, w, h, 3, 3)
+
+        layer = self._layer
+        sid   = getattr(layer, 'mouvement_shape', 'libre')
+        sdef  = PAN_TILT_SHAPES.get(sid, PAN_TILT_SHAPES['libre'])
+        pan_forme,  pan_ph,  pan_mult  = sdef.get('pan',  (None, 0, 1.0))
+        tilt_forme, tilt_ph, tilt_mult = sdef.get('tilt', (None, 0, 1.0))
+
+        inner_w = w - 2 * mg
+        inner_h = h - 2 * mg
+
+        # ── Mode "Libre" : croix centrale ────────────────────────────────────
+        if sid == 'libre' or pan_forme is None or tilt_forme is None:
+            cx, cy = w // 2, h // 2
+            p.setPen(QPen(QColor("#2a2a2a"), 1))
+            p.drawLine(mg, cy, w - mg, cy)
+            p.drawLine(cx, mg, cx, h - mg)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#444444"))
+            p.drawEllipse(cx - 2, cy - 2, 4, 4)
+            p.end()
+            return
+
+        # ── Calcul de la trajectoire (N points) ───────────────────────────────
+        N   = 160
+        pts = []
+        for i in range(N + 1):
+            t_n  = i / N                               # 0..1 période normalisée
+            pv   = _layer_wave(pan_forme,  (t_n * pan_mult  + pan_ph  / 100.0) % 1.0)
+            tv   = _layer_wave(tilt_forme, (t_n * tilt_mult + tilt_ph / 100.0) % 1.0)
+            sx   = mg + pv * inner_w
+            sy   = mg + (1.0 - tv) * inner_h          # axe Y inversé (haut = tilt max)
+            pts.append(QPoint(int(sx), int(sy)))
+
+        # Tracé fantôme (trajectoire complète, semi-transparent)
+        trail_col = QColor(255, 153, 0, 55)
+        p.setPen(QPen(trail_col, 1.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        for i in range(len(pts) - 1):
+            p.drawLine(pts[i], pts[i + 1])
+
+        # Axes de référence (très discrets)
+        p.setPen(QPen(QColor(40, 40, 40, 120), 1, Qt.DotLine))
+        cx, cy = w // 2, h // 2
+        p.drawLine(mg, cy, w - mg, cy)
+        p.drawLine(cx, mg, cx, h - mg)
+
+        # ── Point animé ───────────────────────────────────────────────────────
+        freq   = max(0.01, layer.speed / 100.0) * 2.0
+        t_anim = self._t * freq
+        pv  = _layer_wave(pan_forme,  (t_anim * pan_mult  + pan_ph  / 100.0) % 1.0)
+        tv  = _layer_wave(tilt_forme, (t_anim * tilt_mult + tilt_ph / 100.0) % 1.0)
+        ax  = int(mg + pv * inner_w)
+        ay  = int(mg + (1.0 - tv) * inner_h)
+
+        # Halo
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 153, 0, 60))
+        p.drawEllipse(ax - 4, ay - 4, 8, 8)
+        # Point vif
+        p.setBrush(QColor(255, 220, 80))
+        p.drawEllipse(ax - 2, ay - 2, 4, 4)
+
+        p.end()
+
+
 # ─── Aperçu Pan/Tilt (pad XY animé) ──────────────────────────────────────────
 
 def _wave_at(t, speed, size, phase, direction, forme):
@@ -1260,6 +1371,7 @@ class PanTiltLivePad(QWidget):
     """
 
     changed = Signal()
+    deleted = Signal()   # demande de suppression des couches Pan/Tilt
 
     _W = 220
     _H = 170
@@ -1283,6 +1395,7 @@ class PanTiltLivePad(QWidget):
         self._pan_l  = pan_layer   # EffectLayer ou None
         self._tilt_l = tilt_layer  # EffectLayer ou None
         self._t = 0.0
+        self._base_speed = 50      # vitesse "slider" avant multiplicateurs
         # Centre de la trajectoire (0..255), draggable
         self._cx = 128
         self._cy = 128
@@ -1293,6 +1406,44 @@ class PanTiltLivePad(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
+
+        # ── Header : label PAN/TILT + sélecteur forme + bouton suppression ────
+        shape_row = QHBoxLayout()
+        shape_row.setContentsMargins(self._M, 0, self._M, 0)
+        shape_row.setSpacing(6)
+        shape_lbl = QLabel("PAN / TILT")
+        shape_lbl.setStyleSheet(
+            "color:#555; font-size:8px; font-weight:bold; letter-spacing:1px;"
+        )
+        shape_row.addWidget(shape_lbl)
+        self._shape_cb = QComboBox()
+        for sid in _PT_SHAPE_ORDER:
+            self._shape_cb.addItem(PAN_TILT_SHAPES[sid]["label"], sid)
+        self._shape_cb.setStyleSheet("""
+            QComboBox {
+                background: #1a1a1a; color: #ccc; border: 1px solid #333;
+                border-radius: 3px; padding: 2px 6px; font-size: 11px;
+            }
+            QComboBox::drop-down { border: none; width: 18px; }
+            QComboBox QAbstractItemView {
+                background: #1a1a1a; color: #ccc; border: 1px solid #444;
+                selection-background-color: #2a3a3a;
+            }
+        """)
+        shape_row.addWidget(self._shape_cb, 1)
+        del_btn = QPushButton("✕")
+        del_btn.setFixedSize(18, 18)
+        del_btn.setToolTip("Supprimer les couches Pan/Tilt")
+        del_btn.setStyleSheet("""
+            QPushButton {
+                color: #555; background: transparent; border: none;
+                font-size: 10px; font-weight: bold;
+            }
+            QPushButton:hover { color: #e05555; }
+        """)
+        del_btn.clicked.connect(self.deleted.emit)
+        shape_row.addWidget(del_btn)
+        outer.addLayout(shape_row)
 
         # Canvas du pad
         self._canvas = _PanTiltCanvas(self)
@@ -1314,6 +1465,7 @@ class PanTiltLivePad(QWidget):
 
         self._sl_speed.valueChanged.connect(self._on_speed)
         self._sl_amp.valueChanged.connect(self._on_amp)
+        self._shape_cb.currentIndexChanged.connect(self._on_shape_changed)
 
     def _mk_slider(self, label, val):
         lay = QVBoxLayout()
@@ -1342,25 +1494,74 @@ class PanTiltLivePad(QWidget):
             self._sl_amp_lay = lay
         return sl, vlbl
 
+    def _get_shape_def(self):
+        """Retourne la définition de la forme courante."""
+        sid = self._shape_cb.currentData() if hasattr(self, '_shape_cb') else "libre"
+        return PAN_TILT_SHAPES.get(sid or "libre", PAN_TILT_SHAPES["libre"])
+
+    def _apply_shape_to_layers(self, shape_def, base_speed=None):
+        """Applique les formes/phases/vitesses de la shape_def aux couches Pan/Tilt."""
+        spd = base_speed if base_speed is not None else self._base_speed
+        pan_forme, pan_phase, pan_mult  = shape_def["pan"]
+        tilt_forme, tilt_phase, tilt_mult = shape_def["tilt"]
+        sid = self._shape_cb.currentData() if hasattr(self, '_shape_cb') else "libre"
+        if self._pan_l:
+            if pan_forme is not None:
+                self._pan_l.forme = pan_forme
+            self._pan_l.phase = pan_phase
+            self._pan_l.speed = max(1, int(spd * pan_mult))
+            self._pan_l.mouvement_shape = sid
+        if self._tilt_l:
+            if tilt_forme is not None:
+                self._tilt_l.forme = tilt_forme
+            self._tilt_l.phase = tilt_phase
+            self._tilt_l.speed = max(1, int(spd * tilt_mult))
+            self._tilt_l.mouvement_shape = sid
+
     def _sync_from_layers(self):
-        """Lit les valeurs des couches et met à jour les sliders."""
+        """Lit les valeurs des couches et met à jour les sliders + shape ComboBox."""
         l = self._pan_l or self._tilt_l
         if not l:
             return
+        # Déduire la vitesse de base depuis la couche Pan (en inversant son multiplicateur)
+        if hasattr(self, '_shape_cb'):
+            sid = getattr(l, 'mouvement_shape', 'libre')
+            if sid not in PAN_TILT_SHAPES:
+                sid = 'libre'
+            idx = _PT_SHAPE_ORDER.index(sid) if sid in _PT_SHAPE_ORDER else len(_PT_SHAPE_ORDER) - 1
+            self._shape_cb.blockSignals(True)
+            self._shape_cb.setCurrentIndex(idx)
+            self._shape_cb.blockSignals(False)
+            pan_mult = PAN_TILT_SHAPES[sid]["pan"][2]
+            self._base_speed = max(1, int(l.speed / pan_mult)) if pan_mult > 0 else l.speed
+        else:
+            self._base_speed = l.speed
         self._sl_speed.blockSignals(True)
         self._sl_amp.blockSignals(True)
-        self._sl_speed.setValue(max(1, l.speed))
+        self._sl_speed.setValue(max(1, self._base_speed))
         self._sl_amp.setValue(max(1, l.size))
-        self._lbl_speed.setText(str(l.speed))
+        self._lbl_speed.setText(str(self._base_speed))
         self._lbl_amp.setText(str(l.size))
         self._sl_speed.blockSignals(False)
         self._sl_amp.blockSignals(False)
 
+    def _on_shape_changed(self, _idx):
+        """L'utilisateur a choisi une nouvelle forme de trajectoire."""
+        shape_def = self._get_shape_def()
+        self._apply_shape_to_layers(shape_def)
+        self.changed.emit()
+        self._canvas.update()
+
     def _on_speed(self, v):
+        self._base_speed = v
         self._lbl_speed.setText(str(v))
-        for l in (self._pan_l, self._tilt_l):
-            if l:
-                l.speed = v
+        shape_def = self._get_shape_def()
+        pan_mult  = shape_def["pan"][2]
+        tilt_mult = shape_def["tilt"][2]
+        if self._pan_l:
+            self._pan_l.speed = max(1, int(v * pan_mult))
+        if self._tilt_l:
+            self._tilt_l.speed = max(1, int(v * tilt_mult))
         self.changed.emit()
         self._canvas.update()
 
@@ -1535,7 +1736,7 @@ class LayerCard(QFrame):
     deleted = Signal(object)
     changed = Signal()
 
-    _ATTRS  = ["Dimmer", "R", "V", "B", "RGB", "Strobe", "Pan", "Tilt", "Gobo", "Permut"]
+    _ATTRS  = ["Dimmer", "R", "V", "B", "RGB", "Strobe", "Pan/Tilt", "Gobo", "Permut"]
     _FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
     _CIBLES = ["Tous", "A", "B", "C", "D", "E", "F", "G"]
     _ATTR_COLORS = WaveformCanvas._ATTR_COLORS
@@ -1593,8 +1794,30 @@ class LayerCard(QFrame):
         self._forme_cb.currentTextChanged.connect(self._on_forme)
         row1.addWidget(self._forme_cb)
 
+        # Sélecteur trajectoire Pan/Tilt (visible uniquement si attr == "Pan/Tilt")
+        self._shape_cb = QComboBox()
+        for sid in _PT_SHAPE_ORDER:
+            self._shape_cb.addItem(PAN_TILT_SHAPES[sid]["label"], sid)
+        cur_shape = getattr(self.layer, 'mouvement_shape', 'libre')
+        idx = _PT_SHAPE_ORDER.index(cur_shape) if cur_shape in _PT_SHAPE_ORDER else len(_PT_SHAPE_ORDER) - 1
+        self._shape_cb.setCurrentIndex(idx)
+        self._shape_cb.setFixedSize(120, 22)
+        self._shape_cb.setStyleSheet(_COMBO_STYLE_COMPACT)
+        self._shape_cb.currentIndexChanged.connect(self._on_shape_changed)
+        row1.addWidget(self._shape_cb)
+
         self._wave = WaveformCanvas(self.layer)
         row1.addWidget(self._wave)
+
+        self._pt_canvas = TrajectoryCanvas(self.layer)
+        row1.addWidget(self._pt_canvas)
+
+        # Visibilité initiale selon l'attribut
+        is_pt = self.layer.attribute == "Pan/Tilt"
+        self._forme_cb.setVisible(not is_pt)
+        self._shape_cb.setVisible(is_pt)
+        self._wave.setVisible(not is_pt)
+        self._pt_canvas.setVisible(is_pt)
 
         row1.addStretch()
 
@@ -1745,11 +1968,25 @@ class LayerCard(QFrame):
 
     def set_time(self, t: float):
         self._wave.set_time(t)
+        self._pt_canvas.set_time(t)
 
     def _on_attr(self, v: str):
         self.layer.attribute = v
         self._apply_frame_style()
         self._refresh_color_btns()
+        is_pt = (v == "Pan/Tilt")
+        self._forme_cb.setVisible(not is_pt)
+        self._shape_cb.setVisible(is_pt)
+        self._wave.setVisible(not is_pt)
+        self._pt_canvas.setVisible(is_pt)
+        if is_pt:
+            self._on_shape_changed(self._shape_cb.currentIndex())
+        self.changed.emit()
+
+    def _on_shape_changed(self, _idx: int):
+        sid = self._shape_cb.currentData() or "libre"
+        self.layer.mouvement_shape = sid
+        self._pt_canvas.update()
         self.changed.emit()
 
     def _on_forme(self, v: str):
@@ -1832,7 +2069,7 @@ class LayerCard(QFrame):
     def _refresh_color_btns(self):
         attr = self.layer.attribute
         has_c1 = attr in ("RGB", "Permut")
-        has_c2 = attr == "Permut"
+        has_c2 = attr in ("Permut",)
         self._col1_btn.setVisible(has_c1)
         self._col2_btn.setVisible(has_c2)
         if has_c1:
@@ -2422,23 +2659,23 @@ class SimpleEffectPanel(QWidget):
             if item and item.widget():
                 item.widget().deleteLater()
 
+        # Vieux format : couches "Pan" et "Tilt" séparées → pad XY (rétrocompat)
         pan_l  = next((l for l in self._layers if l.attribute == "Pan"),  None)
         tilt_l = next((l for l in self._layers if l.attribute == "Tilt"), None)
 
-        # Couches non-pan/tilt → LayerCard normaux
         for layer in self._layers:
             if layer.attribute in ("Pan", "Tilt"):
-                continue
+                continue   # traités ensemble ci-dessous si présents
             card = LayerCard(layer)
             card.deleted.connect(lambda _w, l=layer: self._on_delete_layer(l))
             card.changed.connect(self.changed)
             self._layers_vl.addWidget(card)
             self._layer_cards.append(card)
 
-        # Couches Pan + Tilt → un seul pad XY interactif
         if pan_l is not None or tilt_l is not None:
             pad = PanTiltLivePad(pan_l, tilt_l)
             pad.changed.connect(self.changed)
+            pad.deleted.connect(self._on_delete_pt_layers)
             self._layers_vl.addWidget(pad)
             self._pt_pad_widget = pad
 
@@ -2454,6 +2691,12 @@ class SimpleEffectPanel(QWidget):
     def _on_delete_layer(self, layer: EffectLayer):
         if layer in self._layers:
             self._layers.remove(layer)
+        self._rebuild_layer_widgets()
+        self.changed.emit()
+
+    def _on_delete_pt_layers(self):
+        """Supprime toutes les couches Pan et Tilt."""
+        self._layers = [l for l in self._layers if l.attribute not in ("Pan", "Tilt")]
         self._rebuild_layer_widgets()
         self.changed.emit()
 

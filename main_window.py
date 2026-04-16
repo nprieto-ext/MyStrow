@@ -4040,6 +4040,38 @@ class MainWindow(QMainWindow):
                         center = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 128)
                         amplitude = (size / 100.0) * 128
                         proj.tilt = int(max(0, min(255, center + (scaled - 0.5) * 2 * amplitude)))
+
+                elif attr == "Pan/Tilt":
+                    # Forme de trajectoire couplée Pan+Tilt
+                    try:
+                        from effect_editor import PAN_TILT_SHAPES
+                    except ImportError:
+                        PAN_TILT_SHAPES = {}
+                    shape_id  = ld.get("mouvement_shape", "libre")
+                    shape_def = PAN_TILT_SHAPES.get(shape_id, PAN_TILT_SHAPES.get("libre", {}))
+                    pan_cfg   = shape_def.get("pan",  ("Sinus",    0, 1.0))
+                    tilt_cfg  = shape_def.get("tilt", ("Sinus",   25, 1.0))
+                    pan_forme,  pan_phase_pct,  pan_mult  = pan_cfg
+                    tilt_forme, tilt_phase_pct, tilt_mult = tilt_cfg
+                    amplitude = (size / 100.0) * 128
+                    saved = self.effect_saved_colors.get(id(proj))
+
+                    # Pan
+                    if pan_forme and pan_forme != "Fixe":
+                        pan_freq = (0.3 + speed * pan_mult / 100.0 * 3.5) * fader_mult
+                        pan_x = (pan_freq * t + i / max(n, 1) * sp + phase + pan_phase_pct / 100.0) % 1.0
+                        pan_raw = _wave(pan_forme, pan_x)
+                        c_pan = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 128)
+                        proj.pan = int(max(0, min(255, c_pan + (pan_raw - 0.5) * 2 * amplitude)))
+
+                    # Tilt
+                    if tilt_forme and tilt_forme != "Fixe":
+                        tilt_freq = (0.3 + speed * tilt_mult / 100.0 * 3.5) * fader_mult
+                        tilt_x = (tilt_freq * t + i / max(n, 1) * sp + phase + tilt_phase_pct / 100.0) % 1.0
+                        tilt_raw = _wave(tilt_forme, tilt_x)
+                        c_tilt = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 128)
+                        proj.tilt = int(max(0, min(255, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
+
                 elif attr == "Zoom":
                     proj.zoom = int(max(0, min(255, scaled * 255)))
                 elif attr == "Gobo":
@@ -5217,6 +5249,20 @@ class MainWindow(QMainWindow):
                         base_color = pad.property("base_color")
                         velocity = rgb_to_akai_velocity(base_color)
                         self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
+                elif slot["type"] == "fx":
+                    # Pads FX — toggle l'effet mappé sur ce pad
+                    fx_col = slot.get("fx_col", 0)
+                    self._toggle_fx_pad(fx_col, row)
+                    # Feedback LED sur le vrai AKAI
+                    if MIDI_AVAILABLE and self.midi_handler.midi_out:
+                        is_active = self.active_fx_pads.get((fx_col, row))
+                        cfg = self.fx_pads[fx_col][row] if fx_col < 4 else None
+                        if is_active and cfg:
+                            self.midi_handler.set_pad_led(row, col, 21, brightness_percent=100)  # vert vif
+                        elif cfg:
+                            self.midi_handler.set_pad_led(row, col, 21, brightness_percent=20)   # vert sombre
+                        else:
+                            self.midi_handler.set_pad_led(row, col, 0, brightness_percent=0)
                 else:
                     # Memory pads individuels
                     mem_col = slot["mem_col"]

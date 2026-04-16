@@ -91,15 +91,15 @@ class GlitchLogoLabel(QWidget):
         self._burst_timer = QTimer(self)
         self._burst_timer.timeout.connect(self._start_burst)
 
-        # Burst initial dès l'affichage
-        QTimer.singleShot(80, self._start_burst)
+        # Burst initial : après que le splash soit bien affiché
+        QTimer.singleShot(900, self._start_burst)
 
     def _start_burst(self):
         self._glitching    = True
-        self._burst_frames = random.randint(6, 12)
+        self._burst_frames = random.randint(3, 6)
         self._frame_timer.start(45)
-        # Prochain burst dans 3–9 s
-        self._burst_timer.start(random.randint(3000, 9000))
+        # Prochain burst dans 4–10 s
+        self._burst_timer.start(random.randint(4000, 10000))
 
     def _next_frame(self):
         if self._burst_frames <= 0:
@@ -112,15 +112,15 @@ class GlitchLogoLabel(QWidget):
 
         h   = self._px.height()
         w   = self._px.width()
-        n   = random.randint(2, 5)
+        n   = random.randint(1, 3)
         slices = []
         for _ in range(n):
             sy  = random.randint(0, max(1, h - 8))
-            sh  = random.randint(3, min(22, h - sy))
-            dx  = random.choice([-1, 1]) * random.randint(6, 28)
+            sh  = random.randint(2, min(12, h - sy))
+            dx  = random.choice([-1, 1]) * random.randint(3, 12)
             slices.append((sy, sh, dx))
         self._slices    = slices
-        self._rgb_shift = random.randint(2, 5)
+        self._rgb_shift = random.randint(1, 3)
         self.update()
 
     def paintEvent(self, event):
@@ -136,7 +136,7 @@ class GlitchLogoLabel(QWidget):
 
         # Aberration chromatique : deux copies décalées, semi-transparentes
         s = self._rgb_shift
-        p.setOpacity(0.28)
+        p.setOpacity(0.13)
         p.drawPixmap(ox - s, oy, self._px)   # ghost gauche
         p.drawPixmap(ox + s, oy, self._px)   # ghost droite
         p.setOpacity(1.0)

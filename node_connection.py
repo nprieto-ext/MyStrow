@@ -1540,11 +1540,11 @@ class DmxOutputDialog(QDialog):
         self._usb_status_lbl.setStyleSheet("color: #666; font-size: 10px;")
         status_row.addWidget(self._usb_status_lbl, 1)
 
-        test_btn = QPushButton("🔌  Tester")
+        test_btn = QPushButton("🔬  Diagnostic")
         test_btn.setFixedHeight(30)
         test_btn.setStyleSheet(_BTN_TEST)
         test_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        test_btn.clicked.connect(self._test_usb)
+        test_btn.clicked.connect(self._open_usb_diagnostic)
         status_row.addWidget(test_btn)
         card_lay.addLayout(status_row)
 
@@ -1581,43 +1581,18 @@ class DmxOutputDialog(QDialog):
         except ImportError:
             self._port_combo.addItem("Module série non disponible", None)
 
-    def _test_usb(self):
-        """Teste si le port COM sélectionné est accessible."""
+    def _open_usb_diagnostic(self):
+        """Ouvre le diagnostic complet DMX USB (enttec_setup.py)."""
+        from enttec_setup import DmxSetupDialog
+        dlg = DmxSetupDialog(self._dmx, parent=self._main_win or self)
+        # Présélectionner le port COM actuellement choisi dans ce dialogue
         com = self._port_combo.currentData()
-        if not com:
-            self._usb_indicator.setStyleSheet("color: #f87171;")
-            self._usb_status_lbl.setText("Aucun port sélectionné")
-            return
-        self._usb_status_lbl.setText("Test en cours…")
-        self._usb_indicator.setStyleSheet("color: #888;")
-
-        # Si le module DMX a déjà ce port ouvert, pas besoin de rouvrir
-        dmx_serial = getattr(self._dmx, '_serial', None)
-        if (dmx_serial and dmx_serial.is_open
-                and getattr(self._dmx, 'com_port', None) == com):
-            self._usb_indicator.setStyleSheet("color: #4ade80;")
-            self._usb_status_lbl.setText(f"Port {com} accessible ✓")
-            return
-
-        try:
-            import serial as _s
-            p = _s.Serial(com, 250000, stopbits=_s.STOPBITS_TWO, timeout=0.5)
-            p.close()
-            self._usb_indicator.setStyleSheet("color: #4ade80;")
-            self._usb_status_lbl.setText(f"Port {com} accessible ✓")
-        except ImportError:
-            self._usb_indicator.setStyleSheet("color: #f87171;")
-            self._usb_status_lbl.setText("Module série non disponible — relancez l'application")
-        except Exception as e:
-            self._usb_indicator.setStyleSheet("color: #f87171;")
-            err = str(e)
-            if "13" in err or "permission" in err.lower() or "access" in err.lower():
-                self._usb_status_lbl.setText(
-                    f"Port {com} occupé par une autre application\n"
-                    "(Chataigne, ENTTEC Software…) — fermez-la d'abord"
-                )
-            else:
-                self._usb_status_lbl.setText(f"Erreur : {e}")
+        if com and hasattr(dlg, 'port_combo'):
+            for i in range(dlg.port_combo.count()):
+                if dlg.port_combo.itemData(i) == com:
+                    dlg.port_combo.setCurrentIndex(i)
+                    break
+        dlg.exec()
 
     def _apply(self):
         """Sauvegarde le transport actif et reconnecte."""
