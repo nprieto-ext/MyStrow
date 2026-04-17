@@ -1280,14 +1280,98 @@ class FixtureCanvas(QWidget):
                         painter.drawEllipse(QPoint(0, beam_len), iw // 3, ih // 3)
 
                 painter.restore()
+            # ── Lyre / Moving Head ───────────────────────────────────────────────
+            lr          = int(r * 1.4)
+            yoke_top_hw = int(lr * 0.88)
+            yoke_bot_hw = int(lr * 0.54)
+            bar_t       = max(3, int(lr * 0.26))
+            arm_t_top   = max(3, int(lr * 0.26))
+            arm_t_bot   = max(2, int(lr * 0.20))
+            arm_bot_y   = cy + int(lr * 0.08)
+            head_r      = int(lr * 0.46)
+            head_cy     = arm_bot_y
+            pivot_r     = max(2, int(lr * 0.17))
+            lens_ring_r = int(lr * 0.30)
+            lens_dot_r  = max(1, int(lr * 0.15))
+
+            # Barre de fixation (accroche truss)
+            bar_g = QLinearGradient(cx, cy - lr, cx, cy - lr + bar_t)
+            bar_g.setColorAt(0.0, gc.lighter(162))
+            bar_g.setColorAt(1.0, gc.darker(132))
+            painter.setBrush(QBrush(bar_g))
             painter.setPen(pen)
-            painter.setBrush(QBrush(fill_color))
-            painter.drawPolygon(QPolygon([
-                QPoint(cx,     cy - r),
-                QPoint(cx + r, cy),
-                QPoint(cx,     cy + r),
-                QPoint(cx - r, cy),
-            ]))
+            painter.drawRoundedRect(cx - yoke_top_hw, cy - lr,
+                                    yoke_top_hw * 2, bar_t,
+                                    bar_t // 2, bar_t // 2)
+
+            # Bras gauche (trapèze) avec gradient latéral métallique
+            arm_left = QPolygon([
+                QPoint(cx - yoke_top_hw,             cy - lr + bar_t),
+                QPoint(cx - yoke_top_hw + arm_t_top, cy - lr + bar_t),
+                QPoint(cx - yoke_bot_hw + arm_t_bot, arm_bot_y),
+                QPoint(cx - yoke_bot_hw,             arm_bot_y),
+            ])
+            arm_lg = QLinearGradient(cx - yoke_top_hw, 0,
+                                     cx - yoke_top_hw + arm_t_top * 2, 0)
+            arm_lg.setColorAt(0.0, gc.darker(138))
+            arm_lg.setColorAt(0.4, gc.lighter(128))
+            arm_lg.setColorAt(1.0, gc.darker(122))
+            painter.setBrush(QBrush(arm_lg))
+            painter.drawPolygon(arm_left)
+
+            # Bras droit (trapèze) avec gradient latéral métallique
+            arm_right = QPolygon([
+                QPoint(cx + yoke_top_hw - arm_t_top, cy - lr + bar_t),
+                QPoint(cx + yoke_top_hw,             cy - lr + bar_t),
+                QPoint(cx + yoke_bot_hw,             arm_bot_y),
+                QPoint(cx + yoke_bot_hw - arm_t_bot, arm_bot_y),
+            ])
+            arm_rg = QLinearGradient(cx + yoke_top_hw - arm_t_top * 2, 0,
+                                     cx + yoke_top_hw, 0)
+            arm_rg.setColorAt(0.0, gc.darker(122))
+            arm_rg.setColorAt(0.6, gc.lighter(128))
+            arm_rg.setColorAt(1.0, gc.darker(138))
+            painter.setBrush(QBrush(arm_rg))
+            painter.drawPolygon(arm_right)
+
+            # Points pivot (vis de rotation)
+            painter.setPen(QPen(gc.darker(160), 1))
+            painter.setBrush(QBrush(gc.lighter(195)))
+            painter.drawEllipse(QPoint(cx - yoke_bot_hw + arm_t_bot // 2, head_cy),
+                                pivot_r, pivot_r)
+            painter.drawEllipse(QPoint(cx + yoke_bot_hw - arm_t_bot // 2, head_cy),
+                                pivot_r, pivot_r)
+
+            # Tête (cercle — la tête de la lyre)
+            head_grad = QRadialGradient(
+                float(cx - head_r * 0.28), float(head_cy - head_r * 0.28),
+                float(head_r * 1.5))
+            head_grad.setColorAt(0.0, fill_color.lighter(165))
+            head_grad.setColorAt(0.55, fill_color)
+            head_grad.setColorAt(1.0, fill_color.darker(155))
+            painter.setPen(pen)
+            painter.setBrush(QBrush(head_grad))
+            painter.drawEllipse(QPoint(cx, head_cy), head_r, head_r)
+
+            # Anneau réflecteur
+            painter.setPen(QPen(fill_color.darker(180), max(1, int(lr * 0.09))))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(QPoint(cx, head_cy), lens_ring_r, lens_ring_r)
+
+            # Lentille sombre
+            lens_g = QRadialGradient(float(cx), float(head_cy), float(lens_dot_r * 2.5))
+            lens_g.setColorAt(0.0, fill_color.darker(100))
+            lens_g.setColorAt(1.0, fill_color.darker(200))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(lens_g))
+            painter.drawEllipse(QPoint(cx, head_cy), lens_dot_r, lens_dot_r)
+
+            # Point brillant (reflet lentille)
+            painter.setBrush(QBrush(QColor(255, 255, 255, 210)))
+            hl_r = max(1, int(lens_dot_r * 0.45))
+            painter.drawEllipse(
+                QPoint(cx - int(lens_dot_r * 0.35), head_cy - int(lens_dot_r * 0.35)),
+                hl_r, hl_r)
 
         elif ftype == "Barre LED":
             painter.drawRoundedRect(QRect(cx - barre_hw, cy - barre_hh, barre_hw * 2, barre_hh * 2), 3, 3)

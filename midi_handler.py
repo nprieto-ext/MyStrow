@@ -56,30 +56,47 @@ class MIDIHandler(QObject):
         if not rtmidi:
             return
 
-        # Si déjà connecté et ports ouverts, rien à faire
-        if self.midi_in and self.midi_out:
-            try:
-                if self.midi_in.is_port_open() and self.midi_out.is_port_open():
-                    return
-            except Exception:
-                pass
-
-        # Vérifier silencieusement si un AKAI est disponible
+        # Vérifier si l'AKAI est encore dans la liste système des ports
         try:
             probe = rtmidi.MidiIn()
             ports = probe.get_ports()
-            found = any('APC' in p.upper() or 'AKAI' in p.upper() for p in ports)
             try:
                 probe.close_port()
             except Exception:
                 pass
+            akai_present = any('APC' in p.upper() or 'AKAI' in p.upper() for p in ports)
         except Exception:
             return
 
-        if not found:
-            return  # Pas encore branché, pas de spam
+        if not akai_present:
+            # Device débranché physiquement → reset les handles pour permettre future reconnexion
+            if self.midi_in or self.midi_out:
+                try:
+                    if self.midi_in:
+                        self.midi_in.close_port()
+                except Exception:
+                    pass
+                try:
+                    if self.midi_out:
+                        self.midi_out.close_port()
+                except Exception:
+                    pass
+                self.midi_in = None
+                self.midi_out = None
+            return
 
-        # AKAI détecté → reconnexion silencieuse
+        # AKAI présent dans la liste — vérifier si déjà bien connecté
+        if self.midi_in and self.midi_out:
+            try:
+                if self.midi_in.is_port_open() and self.midi_out.is_port_open():
+                    return  # Tout va bien
+            except Exception:
+                pass
+            # Handles obsolètes (rebranché) → reset avant reconnexion
+            self.midi_in = None
+            self.midi_out = None
+
+        # Reconnexion silencieuse
         self.connect_akai()
         if self.midi_in and self.midi_out and self.owner_window:
             from PySide6.QtCore import QTimer

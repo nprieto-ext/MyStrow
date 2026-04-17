@@ -54,16 +54,14 @@ try:
 except Exception:
     _RELEASE_OK = False
 
-# Firebase Admin SDK (suppression compte Auth)
-_ADMIN_SDK_IMPORT_ERROR: str = ""
+# Firebase Admin SDK (optionnel — suppression compte Auth uniquement)
 try:
     import firebase_admin
     from firebase_admin import credentials as fa_credentials
     from firebase_admin import auth as fa_auth
     _ADMIN_SDK_AVAILABLE = True
-except Exception as _e:
+except Exception:
     _ADMIN_SDK_AVAILABLE = False
-    _ADMIN_SDK_IMPORT_ERROR = str(_e)
 
 # En mode exe frozen, chercher service_account.json à côté de l'exe
 if getattr(sys, 'frozen', False):
@@ -72,9 +70,60 @@ else:
     _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_PATH = os.path.join(_BASE_DIR, "service_account.json")
 _fa_app = None
+_fa_init_error: str = ""
+
+_SA_TOKEN_CACHE: dict = {}  # {"token": str, "exp": float}
 
 
-_fa_init_error: str = ""  # stocke l'erreur d'init pour affichage
+def _get_service_account_token() -> str:
+    """Retourne un OAuth2 Bearer token depuis service_account.json (avec cache 55 min)."""
+    import base64
+    now = time.time()
+    if _SA_TOKEN_CACHE.get("token") and now < _SA_TOKEN_CACHE.get("exp", 0):
+        return _SA_TOKEN_CACHE["token"]
+
+    if not os.path.exists(SERVICE_ACCOUNT_PATH):
+        raise Exception(f"service_account.json introuvable : {SERVICE_ACCOUNT_PATH}")
+
+    with open(SERVICE_ACCOUNT_PATH, encoding="utf-8") as f:
+        sa = json.load(f)
+
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+    except ImportError:
+        raise Exception("Le module 'cryptography' est requis. Lancez : pip install cryptography")
+
+    iat = int(now)
+    exp = iat + 3600
+    header  = base64.urlsafe_b64encode(json.dumps({"alg": "RS256", "typ": "JWT"}).encode()).rstrip(b"=")
+    payload = base64.urlsafe_b64encode(json.dumps({
+        "iss":   sa["client_email"],
+        "scope": "https://www.googleapis.com/auth/identitytoolkit",
+        "aud":   "https://oauth2.googleapis.com/token",
+        "iat":   iat,
+        "exp":   exp,
+    }).encode()).rstrip(b"=")
+
+    signing_input = header + b"." + payload
+    private_key = serialization.load_pem_private_key(sa["private_key"].encode(), password=None)
+    signature = private_key.sign(signing_input, asym_padding.PKCS1v15(), hashes.SHA256())
+    sig_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=")
+    jwt_token = (signing_input + b"." + sig_b64).decode()
+
+    import urllib.parse
+    data = urllib.parse.urlencode({
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion":  jwt_token,
+    }).encode()
+    req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        result = json.loads(resp.read())
+
+    token = result["access_token"]
+    _SA_TOKEN_CACHE["token"] = token
+    _SA_TOKEN_CACHE["exp"]   = now + 3300  # expire 5 min avant
+    return token
 
 
 def _init_firebase_admin() -> bool:
@@ -83,8 +132,7 @@ def _init_firebase_admin() -> bool:
     if _fa_app is not None:
         return True
     if not _ADMIN_SDK_AVAILABLE:
-        detail = f" ({_ADMIN_SDK_IMPORT_ERROR})" if _ADMIN_SDK_IMPORT_ERROR else ""
-        _fa_init_error = f"Impossible d'importer firebase_admin{detail}.\npip install firebase-admin"
+        _fa_init_error = "firebase_admin non installé (pip install firebase-admin)"
         return False
     if not os.path.exists(SERVICE_ACCOUNT_PATH):
         _fa_init_error = f"service_account.json introuvable : {SERVICE_ACCOUNT_PATH}"
@@ -99,34 +147,47 @@ def _init_firebase_admin() -> bool:
         return True
     except Exception as e:
         _fa_init_error = str(e)
-        print(f"[Firebase Admin] ERREUR init : {e}")
         return False
 
 
-def _require_admin(action: str):
-    """Lève une exception lisible si le SDK Admin n'est pas dispo."""
-    if not _init_firebase_admin():
-        raise Exception(
-            f"Impossible d'exécuter « {action} » :\n\n"
-            f"{_fa_init_error or 'Erreur inconnue'}\n\n"
-            f"Chemin service_account : {SERVICE_ACCOUNT_PATH}\n"
-            f"Fichier présent : {os.path.exists(SERVICE_ACCOUNT_PATH)}"
-        )
-
-
 def _delete_auth_user(uid: str) -> bool:
-    """Supprime un compte Firebase Auth via le SDK Admin."""
-    _require_admin("Suppression compte")
-    fa_auth.delete_user(uid)
+    """Supprime un compte Firebase Auth (SDK Admin si dispo, sinon REST)."""
+    if _init_firebase_admin():
+        fa_auth.delete_user(uid)
+        return True
+    # Fallback REST
+    import urllib.error
+    token = _get_service_account_token()
+    url   = f"https://identitytoolkit.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/accounts:delete"
+    body  = json.dumps({"localId": uid}).encode()
+    req   = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type",  "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            pass
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Erreur Firebase : {e.read().decode()}")
     return True
 
 
 def _set_auth_password(uid: str, new_password: str) -> bool:
-    """Force un nouveau mot de passe via le SDK Admin Firebase."""
-    _require_admin("Forcer MDP")
+    """Force un nouveau mot de passe via l'API REST Firebase (sans SDK Admin)."""
     if len(new_password) < 6:
         raise Exception("Le mot de passe doit faire au moins 6 caractères.")
-    fa_auth.update_user(uid, password=new_password)
+    import urllib.error
+    token = _get_service_account_token()
+    url   = (f"https://identitytoolkit.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}"
+             f"/accounts:update")
+    body  = json.dumps({"localId": uid, "password": new_password}).encode()
+    req   = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type",  "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            pass
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Erreur Firebase : {e.read().decode()}")
     return True
 
 # ---------------------------------------------------------------
@@ -391,7 +452,7 @@ class _Worker(QObject):
 
 def _run_async(parent, fn, *args, on_success=None, on_error=None, **kwargs):
     """Lance fn(*args) dans un QThread séparé pour ne pas bloquer l'UI."""
-    thread = QThread()  # Pas de parent Qt — évite le warning cross-thread
+    thread = QThread()
     worker = _Worker(fn, args, kwargs)
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
@@ -401,6 +462,9 @@ def _run_async(parent, fn, *args, on_success=None, on_error=None, **kwargs):
         worker.error.connect(on_error)
     worker.success.connect(thread.quit)
     worker.error.connect(thread.quit)
+    # deleteLater garantit la destruction dans le bon thread (évite le warning cross-thread)
+    thread.finished.connect(worker.deleteLater)
+    thread.finished.connect(thread.deleteLater)
     if not hasattr(parent, "_async_threads"):
         parent._async_threads = []
     parent._async_threads.append((thread, worker))

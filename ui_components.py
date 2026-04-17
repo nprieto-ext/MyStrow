@@ -7,7 +7,7 @@ from pathlib import Path
 from i18n import tr
 from PySide6.QtWidgets import (
     QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
-    QDoubleSpinBox, QLineEdit,
+    QDoubleSpinBox, QLineEdit, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon
@@ -535,6 +535,7 @@ class CartoucheButton(QPushButton):
         self.media_icon = ""
         self.volume = 100  # Volume 0-100, defaut 100%
         self.setFixedHeight(36)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self._update_style()

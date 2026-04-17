@@ -671,6 +671,31 @@ class LightTimelineEditor(QDialog):
         delete_all_action.triggered.connect(self.clear_all_clips)
 
         # === TOOLS ===
+        effect_menu = menubar.addMenu(tr("te_menu_effect"))
+        fade_in_action = effect_menu.addAction("🎬 Fade In")
+        fade_in_action.triggered.connect(self.apply_fade_in_to_selection)
+        fade_out_action = effect_menu.addAction("🎬 Fade Out")
+        fade_out_action.triggered.connect(self.apply_fade_out_to_selection)
+        remove_fades_action = effect_menu.addAction(tr("te_menu_remove_fades"))
+        remove_fades_action.triggered.connect(self.remove_fades_from_selection)
+        effect_menu.addSeparator()
+        no_effect_action = effect_menu.addAction(tr("te_menu_no_effect"))
+        no_effect_action.triggered.connect(lambda: self.apply_effect_to_selection(None))
+        effect_emojis = {
+            "Strobe": "⚡", "Flash": "💥", "Pulse": "💜",
+            "Wave": "🌊", "Random": "🎲", "Rainbow": "🌈",
+            "Sparkle": "✨", "Fire": "🔥",
+        }
+        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random", "Sparkle", "Rainbow", "Fire"]:
+            emoji = effect_emojis.get(eff, "⚡")
+            action = effect_menu.addAction(f"{emoji} {eff}")
+            action.triggered.connect(lambda checked=False, e=eff: self.apply_effect_to_selection(e))
+        effect_menu.addSeparator()
+        speed_action = effect_menu.addAction(tr("te_menu_effect_speed"))
+        speed_action.triggered.connect(self.edit_effect_speed_selection)
+        fx_editor_action = effect_menu.addAction(tr("te_menu_fx_editor"))
+        fx_editor_action.triggered.connect(self.open_effect_editor)
+
         tools_menu = menubar.addMenu(tr("te_menu_tools"))
 
         cut_tool_action = tools_menu.addAction(tr("te_menu_cut_tool"))
@@ -1305,8 +1330,8 @@ class LightTimelineEditor(QDialog):
                     eff_type   = getattr(new_eff_clip, 'effect_type', '')
                     if not eff_layers:
                         try:
-                            from effect_editor import BUILTIN_EFFECTS
-                            for _e in BUILTIN_EFFECTS:
+                            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+                            for _e in BUILTIN_EFFECTS + _load_custom_effects():
                                 if _e.get('name') == eff_name:
                                     eff_layers = [dict(l) for l in _e.get('layers', [])]
                                     eff_type   = _e.get('type', '')
@@ -2280,8 +2305,26 @@ class LightTimelineEditor(QDialog):
                 tr("te_no_selection_msg"))
             return
 
+        # Résoudre les layers depuis builtin puis custom
+        eff_layers = []
+        eff_type = ''
+        if effect:
+            try:
+                from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+                all_effects = BUILTIN_EFFECTS + _load_custom_effects()
+                for _e in all_effects:
+                    if _e.get('name') == effect:
+                        eff_layers = [dict(l) for l in _e.get('layers', [])]
+                        eff_type   = _e.get('type', '')
+                        break
+            except Exception:
+                pass
+
         for clip in selected:
-            clip.effect = effect
+            clip.effect        = effect
+            clip.effect_name   = effect or ''
+            clip.effect_layers = eff_layers
+            clip.effect_type   = eff_type
         for track in self.tracks:
             track.update()
         self.save_state()

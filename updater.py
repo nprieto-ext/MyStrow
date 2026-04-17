@@ -189,13 +189,23 @@ class SplashScreen(QWidget):
             self.logo_label = QLabel()
             layout.addWidget(self.logo_label)
 
-        # --- Titre bicolore MY / STROW (Bebas Neue) ---
-        title = QLabel(
-            '<span style="color:#ffffff; font-family:\'Bebas Neue\'; font-size:36px; letter-spacing:2px;">MY</span>'
-            '<span style="color:#FFE000; font-family:\'Bebas Neue\'; font-size:36px; letter-spacing:2px;">STROW</span>'
-        )
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
+        # --- Titre bicolore MY / STROW ---
+        title_row = QHBoxLayout()
+        title_row.setSpacing(0)
+        title_row.setContentsMargins(0, 0, 0, 0)
+        _title_font = QFont("Bebas Neue", 36)
+        _title_font.setLetterSpacing(QFont.AbsoluteSpacing, 2)
+        lbl_my = QLabel("MY")
+        lbl_my.setFont(_title_font)
+        lbl_my.setStyleSheet("color:#ffffff; background:transparent;")
+        lbl_strow = QLabel("STROW")
+        lbl_strow.setFont(_title_font)
+        lbl_strow.setStyleSheet("color:#FFE000; background:transparent;")
+        title_row.addStretch()
+        title_row.addWidget(lbl_my)
+        title_row.addWidget(lbl_strow)
+        title_row.addStretch()
+        layout.addLayout(title_row)
 
         # --- Version sous le titre ---
         ver = QLabel(f"v{VERSION}")

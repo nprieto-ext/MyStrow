@@ -19,6 +19,8 @@ Endpoints:
   POST /api/memory/{id}              → declencher memoire par id "1.1"…"8.8"
   POST /api/goto/{row}               → aller a la ligne du sequenceur
   POST /api/cartouche/{idx}          → declencher cartouche 0-3
+  POST /api/go                       → GO+ : avance à la mémoire suivante (mode GO)
+  POST /api/goback                   → GO- : recule à la mémoire précédente (mode GO)
 """
 
 import json
@@ -50,6 +52,8 @@ class _StreamDeckBridge(QObject):
     scene_requested      = Signal(int, int)   # (mem_col 0-7, row 0-7)
     goto_seq_requested   = Signal(int)        # row index
     cartouche_requested  = Signal(int)        # cartouche idx 0-3
+    go_advance_requested = Signal()           # GO+ : mémoire suivante
+    go_back_requested    = Signal()           # GO- : mémoire précédente
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +480,16 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                 except (IndexError, ValueError) as exc:
                     self._send_error(f"Usage: /api/cartouche/{{0-3}} — {exc}")
 
+            elif action == "go":
+                # POST /api/go → GO+ mémoire suivante
+                bridge.go_advance_requested.emit()
+                self._send_json({"ok": True})
+
+            elif action == "goback":
+                # POST /api/goback → GO- mémoire précédente
+                bridge.go_back_requested.emit()
+                self._send_json({"ok": True})
+
             else:
                 self._send_error(f"Action inconnue : {action}", 404)
 
@@ -521,6 +535,8 @@ class StreamDeckAPIServer:
         b.scene_requested.connect(window.trigger_memory)
         b.goto_seq_requested.connect(window.seq.play_row)
         b.cartouche_requested.connect(window.on_cartouche_clicked)
+        b.go_advance_requested.connect(window._go_advance)
+        b.go_back_requested.connect(window._go_back)
 
     def _on_play(self):
         """Play/pause depuis StreamDeck.
