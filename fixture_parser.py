@@ -24,42 +24,45 @@ MYSTROW_VERSION = "1"
 # Mapping GrandMA Channel/@name -> type de canal MyStrow (MA2)
 # ---------------------------------------------------------------------------
 _MA_MAP = {
-    "Dimmer":      "Dim",
-    "Dim":         "Dim",
-    "Intensity":   "Dim",
-    "Shutter":     "Strobe",
-    "Strobe":      "Strobe",
-    "Red":         "R",
-    "Green":       "G",
-    "Blue":        "B",
-    "White":       "W",
-    "Warm White":  "W",
-    "Cold White":  "W",
-    "Amber":       "Ambre",
-    "Ambre":       "Ambre",
-    "UV":          "UV",
-    "Pan":         "Pan",
-    "Pan fine":    "PanFine",
-    "Pan Fine":    "PanFine",
-    "Tilt":        "Tilt",
-    "Tilt fine":   "TiltFine",
-    "Tilt Fine":   "TiltFine",
-    "Zoom":        "Zoom",
-    "Focus":       "Focus",
-    "Iris":        "Iris",
-    "Gobo 1":      "Gobo1",
-    "Gobo1":       "Gobo1",
-    "Gobo 2":      "Gobo2",
-    "Gobo2":       "Gobo2",
-    "Prism":       "Prism",
-    "Color Wheel": "ColorWheel",
-    "Color":       "ColorWheel",
-    "CTO":         "ColorWheel",
-    "Speed":       "Speed",
-    "Mode":        "Mode",
-    "Control":     "Mode",
-    "Function":    "Mode",
-    "Macro":       "Mode",
+    "Dimmer":          "Dim",
+    "Dim":             "Dim",
+    "Intensity":       "Dim",
+    "Shutter":         "Strobe",
+    "Strobe":          "Strobe",
+    "Red":             "R",
+    "Green":           "G",
+    "Blue":            "B",
+    "White":           "W",
+    "Warm White":      "W",
+    "Cold White":      "W",
+    "Amber":           "Ambre",
+    "Ambre":           "Ambre",
+    "UV":              "UV",
+    "Pan":             "Pan",
+    "Pan fine":        "PanFine",
+    "Pan Fine":        "PanFine",
+    "Tilt":            "Tilt",
+    "Tilt fine":       "TiltFine",
+    "Tilt Fine":       "TiltFine",
+    "Zoom":            "Zoom",
+    "Focus":           "Focus",
+    "Iris":            "Iris",
+    "Gobo 1":          "Gobo1",
+    "Gobo1":           "Gobo1",
+    "Gobo 1 Rotation": "Gobo1Rot",
+    "Gobo Rotation":   "Gobo1Rot",
+    "Gobo 2":          "Gobo2",
+    "Gobo2":           "Gobo2",
+    "Prism":           "Prism",
+    "Prism Rotation":  "PrismRot",
+    "Color Wheel":     "ColorWheel",
+    "Color":           "ColorWheel",
+    "CTO":             "ColorWheel",
+    "Speed":           "Speed",
+    "Mode":            "Mode",
+    "Control":         "Mode",
+    "Function":        "Mode",
+    "Macro":           "Mode",
 }
 
 
@@ -68,45 +71,64 @@ _MA_MAP = {
 # ---------------------------------------------------------------------------
 _MA3_ATTR_MAP = {
     # RGB
-    "COLORRGB1":     "R",
-    "COLORRGB2":     "G",
-    "COLORRGB3":     "B",
+    "COLORRGB1":          "R",
+    "COLORRGB2":          "G",
+    "COLORRGB3":          "B",
     # RGBW
-    "COLORRGB4":     "W",
+    "COLORRGB4":          "W",
     # Dimmer
-    "DIM":           "Dim",
-    "DIMMER":        "Dim",
-    "INTENSITY":     "Dim",
+    "DIM":                "Dim",
+    "DIMMER":             "Dim",
+    "INTENSITY":          "Dim",
     # Strobe / Shutter
-    "STROBE_RATIO":  "Strobe",
-    "STROBE":        "Strobe",
-    "SHUTTER":       "Strobe",
+    "STROBE_RATIO":       "Strobe",
+    "STROBE":             "Strobe",
+    "SHUTTER":            "Strobe",
     # Amber / UV
-    "COLORRGB5":     "Ambre",
-    "COLORRGB6":     "UV",
-    "COLORAMBER":    "Ambre",
-    "COLORUV":       "UV",
+    "COLORRGB5":          "Ambre",
+    "COLORRGB6":          "UV",
+    "COLORAMBER":         "Ambre",
+    "COLORUV":            "UV",
     # Pan / Tilt
-    "PAN":           "Pan",
-    "PANROTATE":     "Pan",
-    "TILT":          "Tilt",
-    "TILTROTATE":    "Tilt",
-    # Gobo / Prism
-    "GOBO1":         "Gobo1",
-    "GOBO2":         "Gobo2",
-    "PRISM":         "Prism",
+    "PAN":                "Pan",
+    "PANROTATE":          "Pan",
+    "TILT":               "Tilt",
+    "TILTROTATE":         "Tilt",
+    # Gobo
+    "GOBO1":              "Gobo1",
+    "GOBO1_POS":          "Gobo1Rot",
+    "GOBO1INDEXROTATE":   "Gobo1Rot",
+    "GOBO2":              "Gobo2",
+    # Prism / Effect wheel
+    "PRISM":              "Prism",
+    "PRISMROTATION":      "PrismRot",
+    "EFFECTWHEEL":        "Prism",
+    "EFFECTINDEXROTATE":  "PrismRot",
     # Zoom / Focus / Iris
-    "ZOOM":          "Zoom",
-    "FOCUS":         "Focus",
-    "IRIS":          "Iris",
-    # Color wheel / misc
-    "COLORWHEEL":    "ColorWheel",
-    "CTOMIXER":      "ColorWheel",
-    "SPEED":         "Speed",
-    "CONTROL":       "Mode",
-    "FUNCTION":      "Mode",
-    "MACRO":         "Mode",
+    "ZOOM":               "Zoom",
+    "FOCUS":              "Focus",
+    "IRIS":               "Iris",
+    # Color wheel
+    "COLOR1":             "ColorWheel",
+    "COLOR2":             "ColorWheel",
+    "COLORWHEEL":         "ColorWheel",
+    "CTOMIXER":           "ColorWheel",
+    # Speed / control
+    "POSITIONMSPEED":     "Speed",
+    "SPEED":              "Speed",
+    "CONTROL":            "Mode",
+    "FUNCTION":           "Mode",
+    "MACRO":              "Mode",
 }
+
+# Fine channels associés à leur canal coarse
+_FINE_MAP = {
+    "Pan":  "PanFine",
+    "Tilt": "TiltFine",
+}
+
+# Types de canaux valides pour les fine channels
+_VALID_FINE_TYPES = {"PanFine", "TiltFine"}
 
 
 def _detect_fixture_type(profile: list) -> str:
@@ -130,7 +152,6 @@ def _try_generic_xml(root) -> dict | None:
     manufacturer = (root.get("manufacturer") or root.get("Manufacturer")
                     or root.get("mfr") or "")
 
-    # Chercher récursivement le nom/mfr si pas trouvé à la racine
     if not name:
         for el in root.iter():
             v = el.get("name") or el.get("Name") or el.text
@@ -144,7 +165,6 @@ def _try_generic_xml(root) -> dict | None:
                 manufacturer = v.strip()
                 break
 
-    # Chercher les modes / channels
     all_channels = []
     mode_elements = []
     for el in root.iter():
@@ -197,12 +217,15 @@ def _try_generic_xml(root) -> dict | None:
     first_profile = modes[0]["profile"]
     ftype = _detect_fixture_type(first_profile)
     return {
-        "name":         name or "Fixture importée",
-        "manufacturer": manufacturer,
-        "fixture_type": ftype,
-        "source":       "generic",
-        "uuid":         "",
-        "modes":        modes,
+        "name":              name or "Fixture importée",
+        "manufacturer":      manufacturer,
+        "fixture_type":      ftype,
+        "source":            "generic",
+        "uuid":              "",
+        "modes":             modes,
+        "color_wheel_slots": [],
+        "gobo_wheel_slots":  [],
+        "channel_defaults":  {},
     }
 
 
@@ -210,11 +233,8 @@ def _strip_namespaces(data: bytes) -> bytes:
     """Supprime les déclarations de namespace XML pour simplifier le parsing."""
     import re
     text = data.decode("utf-8", errors="replace")
-    # Supprimer xmlns="..." et xmlns:prefix="..."
     text = re.sub(r'\s+xmlns(?::\w+)?="[^"]*"', '', text)
-    # Supprimer les préfixes d'attributs (ex: xsi:schemaLocation -> schemaLocation)
     text = re.sub(r'(\s)\w+:(\w+)=', r'\1\2=', text)
-    # Supprimer les préfixes de tag (ex: ma:Fixture -> Fixture)
     text = re.sub(r'<(/?)(\w+):(\w)', r'<\1\3', text)
     return text.encode("utf-8")
 
@@ -227,7 +247,6 @@ def parse_ma_xml(data: bytes) -> dict:
     try:
         root = ET.fromstring(_strip_namespaces(data))
     except ET.ParseError:
-        # Fallback : essayer sans strip namespaces
         try:
             root = ET.fromstring(data)
         except ET.ParseError as e:
@@ -235,15 +254,13 @@ def parse_ma_xml(data: bytes) -> dict:
 
     fixture_el = _find_fixture_element(root)
     if fixture_el is None:
-        # Tentative de parsing générique avant d'abandonner
         result = _try_generic_xml(root)
         if result:
             return result
         raise ValueError("Structure XML non reconnue (MA2/MA3 attendu)")
 
-    name         = (fixture_el.get("name") or fixture_el.get("Name")
-                    or fixture_el.get("fixture") or "")
-    # MA3 stores manufacturer as child text element, MA2 stores it as attribute
+    name = (fixture_el.get("name") or fixture_el.get("Name")
+            or fixture_el.get("fixture") or "")
     _mfr_el = fixture_el.find("manufacturer")
     if _mfr_el is None:
         _mfr_el = fixture_el.find("Manufacturer")
@@ -251,22 +268,28 @@ def parse_ma_xml(data: bytes) -> dict:
         (_mfr_el.text.strip() if _mfr_el is not None and _mfr_el.text else "")
         or fixture_el.get("manufacturer") or fixture_el.get("Manufacturer") or ""
     )
-    source       = _detect_ma_version(root)
+    source = _detect_ma_version(root)
 
-    modes = _parse_ma_modes(fixture_el)
+    modes, channel_defaults = _parse_ma_modes(fixture_el)
     if not modes:
         modes = [{"name": "Mode 1", "channelCount": 0, "profile": []}]
 
     first_profile = modes[0]["profile"] if modes else []
     ftype = _detect_fixture_type(first_profile)
 
+    # Extraction des roues couleur et gobo
+    wheels = _extract_ma3_wheels(fixture_el)
+
     return {
-        "name":         name,
-        "manufacturer": manufacturer,
-        "fixture_type": ftype,
-        "source":       source,
-        "uuid":         "",
-        "modes":        modes,
+        "name":              name,
+        "manufacturer":      manufacturer,
+        "fixture_type":      ftype,
+        "source":            source,
+        "uuid":              "",
+        "modes":             modes,
+        "color_wheel_slots": wheels["color_wheel_slots"],
+        "gobo_wheel_slots":  wheels["gobo_wheel_slots"],
+        "channel_defaults":  channel_defaults,
     }
 
 
@@ -279,7 +302,6 @@ def _detect_ma_version(root) -> str:
 
 
 def _find_fixture_element(root):
-    # Tags reconnus : MA2/MA3 + formats alternatifs (Capture, ETC, Chamsys...)
     known_tags = {
         "fixture", "fixturetype", "gdtf", "capturefixture",
         "fixturedefinition", "fixturetype", "device",
@@ -292,7 +314,6 @@ def _find_fixture_element(root):
         el = root.find(tag)
         if el is not None:
             return el
-    # Recherche récursive
     for child in root:
         found = _find_fixture_element(child)
         if found is not None:
@@ -300,21 +321,23 @@ def _find_fixture_element(root):
     return None
 
 
-def _parse_ma_modes(fixture_el) -> list:
+def _parse_ma_modes(fixture_el) -> tuple:
+    """Retourne (modes_list, channel_defaults_dict)."""
     modes = []
+    channel_defaults = {}
 
-    # --- MA3 path : <ChannelType attribute="..." coarse="..."> anywhere inside ---
+    # --- MA3 path : <ChannelType attribute="..." coarse="..."> ---
     channel_types = fixture_el.findall(".//ChannelType")
     if channel_types:
         mode_name = (fixture_el.get("mode") or fixture_el.get("Mode") or "Mode 1")
-        profile = _parse_ma3_channels(channel_types)
+        profile, channel_defaults = _parse_ma3_channels(channel_types)
         if profile:
             modes.append({
                 "name":         mode_name,
                 "channelCount": len(profile),
                 "profile":      profile,
             })
-        return modes
+        return modes, channel_defaults
 
     # --- MA2 path : <Modes><Mode><Channel ...> ---
     _found_modes = fixture_el.find("Modes")
@@ -326,7 +349,7 @@ def _parse_ma_modes(fixture_el) -> list:
     for mode_el in mode_elements:
         mode_name = (mode_el.get("name") or mode_el.get("Name")
                      or f"Mode {len(modes)+1}")
-        profile   = _parse_ma_channels(mode_el)
+        profile = _parse_ma_channels(mode_el)
         modes.append({
             "name":         mode_name,
             "channelCount": len(profile),
@@ -341,31 +364,67 @@ def _parse_ma_modes(fixture_el) -> list:
                 "channelCount": len(profile),
                 "profile":      profile,
             })
-    return modes
+    return modes, channel_defaults
 
 
-def _parse_ma3_channels(channel_type_elements) -> list:
-    """Parse MA3 <ChannelType attribute='...' coarse='...'> elements into profile list."""
-    items = []
+def _parse_ma3_channels(channel_type_elements) -> tuple:
+    """
+    Parse MA3 <ChannelType attribute='...' coarse='...'> elements.
+    Retourne (profile_list, channel_defaults_dict).
+    Gère les canaux fine (PanFine/TiltFine) et les valeurs par défaut.
+    """
+    items = []       # [(ch_index, ch_type)]
+    defaults = {}    # {ch_type: dmx_8bit}
+
     for ct in channel_type_elements:
-        attr  = (ct.get("attribute") or ct.get("Attribute") or "").upper().strip()
+        attr   = (ct.get("attribute") or ct.get("Attribute") or "").upper().strip()
         coarse = ct.get("coarse") or ct.get("Coarse") or "0"
+        fine   = ct.get("fine")   or ct.get("Fine")
+        default_str = ct.get("default") or ct.get("Default")
+
         try:
             ch_index = int(coarse)
         except ValueError:
             ch_index = 0
+
+        # Résolution du type de canal
         mapped = _MA3_ATTR_MAP.get(attr)
         if mapped is None:
-            # Fallback: try prefix match (e.g. "COLORRGB1" already in map, else "Mode")
             for key, val in _MA3_ATTR_MAP.items():
                 if attr.startswith(key):
                     mapped = val
                     break
-        items.append((ch_index, mapped if mapped else "Mode"))
+        ch_type = mapped if mapped else "Mode"
 
-    # Sort by DMX coarse address (1-based)
+        items.append((ch_index, ch_type))
+
+        # Canal fine (PanFine / TiltFine)
+        if fine is not None:
+            fine_type = _FINE_MAP.get(ch_type)
+            if fine_type:
+                try:
+                    fine_idx = int(fine)
+                    items.append((fine_idx, fine_type))
+                except ValueError:
+                    pass
+
+        # Valeur par défaut du canal
+        if default_str is not None:
+            try:
+                default_val = float(default_str)
+                # Channels avec fine = 16-bit (0-65535) → coarse 8-bit = val/256
+                # Channels sans fine = 8-bit (0-255) → utiliser directement
+                if fine is not None:
+                    dmx_8bit = min(255, max(0, int(round(default_val / 256))))
+                else:
+                    dmx_8bit = min(255, max(0, int(round(default_val))))
+                if dmx_8bit > 0:
+                    defaults[ch_type] = dmx_8bit
+            except ValueError:
+                pass
+
     items.sort(key=lambda x: x[0])
-    return [ch for _, ch in items]
+    return [ch for _, ch in items], defaults
 
 
 def _parse_ma_channels(parent_el) -> list:
@@ -381,6 +440,87 @@ def _parse_ma_channels(parent_el) -> list:
                     break
         profile.append(mapped if mapped else "Mode")
     return profile
+
+
+# ---------------------------------------------------------------------------
+# Extraction des roues couleur / gobo depuis <Wheels>
+# ---------------------------------------------------------------------------
+
+def _extract_ma3_wheels(fixture_el) -> dict:
+    """
+    Extrait color_wheel_slots et gobo_wheel_slots depuis le bloc <Wheels>.
+    Associe les DMX réels depuis les ChannelSets des ChannelFunctions correspondants.
+    """
+    result = {"color_wheel_slots": [], "gobo_wheel_slots": []}
+
+    wheels_el = fixture_el.find("Wheels")
+    if wheels_el is None:
+        return result
+
+    # Construction du mapping slot_index → from_dmx pour chaque attribut
+    # en lisant les ChannelFunctions des ChannelTypes
+    slot_dmx = {}  # {attr_upper: {slot_index: from_dmx}}
+    for ct in fixture_el.findall(".//ChannelType"):
+        attr = (ct.get("attribute") or "").upper()
+        if not attr:
+            continue
+        slot_dmx.setdefault(attr, {})
+        for cf in ct.findall("ChannelFunction"):
+            sub = (cf.get("subattribute") or "").upper()
+            # Ignorer les fonctions de rotation/spin — ne prendre que la sélection statique
+            if any(k in sub for k in ("SPIN", "ROT", "INDEX")):
+                continue
+            for cs in cf.findall("ChannelSet"):
+                si = cs.get("slot_index")
+                fd = cs.get("from_dmx")
+                if si is not None and fd is not None:
+                    try:
+                        slot_dmx[attr][int(si)] = int(fd)
+                    except ValueError:
+                        pass
+
+    for wheel_el in wheels_el.findall("Wheel"):
+        sub  = (wheel_el.get("subattribute") or "").upper()
+        attr = (wheel_el.get("attribute") or sub).upper()
+
+        is_color = "COLOR" in attr
+        is_gobo  = "GOBO" in attr
+
+        if not is_color and not is_gobo:
+            continue
+
+        dmx_map = slot_dmx.get(attr, {})
+        slots = []
+
+        for slot_el in wheel_el.findall("Slot"):
+            raw_idx = slot_el.get("index", str(len(slots)))
+            try:
+                slot_i = int(raw_idx)
+            except ValueError:
+                slot_i = len(slots)
+
+            name = slot_el.get("media_name") or f"Slot {slot_i}"
+
+            # DMX : depuis le mapping ChannelSet, sinon fallback slot_i * 32
+            dmx_val = dmx_map.get(slot_i, slot_i * 32)
+
+            if is_color:
+                # Attributs r/g/b — absent = 255 (canal plein)
+                r = int(slot_el.get("r", 255))
+                g = int(slot_el.get("g", 255))
+                b = int(slot_el.get("b", 255))
+                hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                slots.append({"name": name, "color": hex_color, "dmx": dmx_val})
+            else:
+                slots.append({"name": name, "color": "#888888", "dmx": dmx_val})
+
+        if slots:
+            if is_color:
+                result["color_wheel_slots"] = slots
+            else:
+                result["gobo_wheel_slots"] = slots
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +545,6 @@ def parse_mystrow(data: bytes) -> dict:
     if not name:
         raise ValueError("Champ 'name' manquant dans le fichier .mystrow")
 
-    # Normaliser les modes si necessaire (channelCount auto-calcule)
     normalized = []
     for m in modes:
         if not isinstance(m, dict):
@@ -421,12 +560,15 @@ def parse_mystrow(data: bytes) -> dict:
     ftype = obj.get("fixture_type") or _detect_fixture_type(first_profile)
 
     return {
-        "name":         name,
-        "manufacturer": obj.get("manufacturer", ""),
-        "fixture_type": ftype,
-        "source":       obj.get("source", "custom"),
-        "uuid":         obj.get("uuid", ""),
-        "modes":        normalized,
+        "name":              name,
+        "manufacturer":      obj.get("manufacturer", ""),
+        "fixture_type":      ftype,
+        "source":            obj.get("source", "custom"),
+        "uuid":              obj.get("uuid", ""),
+        "modes":             normalized,
+        "color_wheel_slots": obj.get("color_wheel_slots", []),
+        "gobo_wheel_slots":  obj.get("gobo_wheel_slots", []),
+        "channel_defaults":  obj.get("channel_defaults", {}),
     }
 
 
@@ -439,14 +581,17 @@ def export_mystrow(fixture: dict, path: str) -> None:
     Exporte un dict fixture au format .mystrow (JSON).
     """
     data = {
-        "format":       MYSTROW_FORMAT,
-        "version":      MYSTROW_VERSION,
-        "name":         fixture.get("name", ""),
-        "manufacturer": fixture.get("manufacturer", ""),
-        "fixture_type": fixture.get("fixture_type", "PAR LED"),
-        "source":       fixture.get("source", "custom"),
-        "uuid":         fixture.get("uuid", ""),
-        "modes":        fixture.get("modes", []),
+        "format":            MYSTROW_FORMAT,
+        "version":           MYSTROW_VERSION,
+        "name":              fixture.get("name", ""),
+        "manufacturer":      fixture.get("manufacturer", ""),
+        "fixture_type":      fixture.get("fixture_type", "PAR LED"),
+        "source":            fixture.get("source", "custom"),
+        "uuid":              fixture.get("uuid", ""),
+        "modes":             fixture.get("modes", []),
+        "color_wheel_slots": fixture.get("color_wheel_slots", []),
+        "gobo_wheel_slots":  fixture.get("gobo_wheel_slots", []),
+        "channel_defaults":  fixture.get("channel_defaults", {}),
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -471,7 +616,6 @@ def parse_file(path: str) -> dict:
     elif ext == ".xml":
         return parse_ma_xml(data)
     else:
-        # Essayer JSON d'abord (mystrow sans extension)
         try:
             return parse_mystrow(data)
         except ValueError:

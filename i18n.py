@@ -982,6 +982,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "color_blanc":           {"en": "White",       "fr": "Blanc"},
     "color_blanc_chaud":     {"en": "Warm white",  "fr": "Blanc chaud"},
     "color_ambre":           {"en": "Amber",       "fr": "Ambre"},
+    "color_black_light":     {"en": "Black Light", "fr": "Black Light"},
 
     # ------------------------------------------------------------------ update checker errors
     "err_no_version":        {"en": "No version found on the server.",

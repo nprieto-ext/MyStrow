@@ -48,8 +48,8 @@ DMX_PROFILES = {
 CHANNEL_TYPES = [
     "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Iris",
     "Smoke", "Fan",
-    "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo2",
-    "Prism", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
+    "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo1Rot", "Gobo2",
+    "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
 ]
 
 # Noms courts pour l'affichage dans les combos
@@ -59,7 +59,8 @@ CHANNEL_DISPLAY = {
     "Ambre": "Ambre", "Orange": "Orange", "Zoom": "Zoom", "Iris": "Iris",
     "Smoke": "Smoke", "Fan": "Fan",
     "Pan": "Pan", "PanFine": "PanF", "Tilt": "Tilt", "TiltFine": "TiltF",
-    "Gobo1": "Gobo1", "Gobo2": "Gobo2", "Prism": "Prism", "Focus": "Focus",
+    "Gobo1": "Gobo1", "Gobo1Rot": "GoboR", "Gobo2": "Gobo2",
+    "Prism": "Prism", "PrismRot": "PrsmR", "Focus": "Focus",
     "ColorWheel": "CWheel", "Shutter": "Shut", "Speed": "Speed", "Mode": "Mode",
 }
 
@@ -545,6 +546,8 @@ class ArtNetDMX:
                     ch_val = (getattr(proj, 'tilt', 128) * 256) % 256
                 elif ch_type == "Gobo1":
                     ch_val = getattr(proj, 'gobo', 0)
+                elif ch_type == "Gobo1Rot":
+                    ch_val = getattr(proj, 'gobo_rotation', 0)
                 elif ch_type == "ColorWheel":
                     ch_val = getattr(proj, 'color_wheel', 0)
                 elif ch_type == "Shutter":
@@ -552,6 +555,8 @@ class ArtNetDMX:
                     ch_val = shutter if not proj.muted else 0
                 elif ch_type == "Prism":
                     ch_val = getattr(proj, 'prism', 0)
+                elif ch_type == "PrismRot":
+                    ch_val = getattr(proj, 'prism_rotation', 0)
                 elif ch_type in ("Gobo2", "Focus", "Speed", "Mode"):
                     ch_val = 0
                 else:

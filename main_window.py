@@ -3561,12 +3561,12 @@ class MainWindow(QMainWindow):
             self._blink_memory_pad(mem_col, row)
 
         if self.memories[mem_col][row] is None:
-            save_action = menu.addAction("Sauvegarder")
+            save_action = menu.addAction("💾  Sauvegarder")
             save_action.triggered.connect(_record_and_feedback)
         else:
-            replace_action = menu.addAction("Remplacer")
+            replace_action = menu.addAction("🔄  Remplacer")
             replace_action.triggered.connect(_record_and_feedback)
-            clear_action = menu.addAction("Effacer")
+            clear_action = menu.addAction("🗑  Effacer")
             clear_action.triggered.connect(lambda: self._clear_memory(mem_col, row))
 
             mem_tmp = self.memories[mem_col][row]
@@ -3579,7 +3579,7 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
 
             # Sous-menu couleur du pad
-            color_menu = menu.addMenu("Couleur du pad")
+            color_menu = menu.addMenu("🎨  Couleur du pad")
             color_menu.setStyleSheet(menu_style)
 
             auto_action = color_menu.addAction("Auto (dominante)")
@@ -3605,7 +3605,7 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             mem_data = self.memories[mem_col][row]
             current_effect = (mem_data or {}).get("effect", {}).get("name") if mem_data else None
-            eff_label = f"⚡ Effet : {current_effect}" if current_effect else "⚡ Ajouter un effet"
+            eff_label = f"⚡  Effet : {current_effect}" if current_effect else "⚡  Ajouter un effet"
             effect_menu = menu.addMenu(eff_label)
             effect_menu.setStyleSheet(menu_style)
 
@@ -3787,7 +3787,6 @@ class MainWindow(QMainWindow):
             self._muted_faders.discard(index)
 
         if slot["type"] == "memory":
-            # Forcer un recalcul DMX : HTP skipera ou réappliquera cette mémoire
             self.send_dmx_update()
             return
 
@@ -13144,6 +13143,29 @@ class MainWindow(QMainWindow):
         if not _timeline_active and getattr(self, 'active_effect', None) is not None:
             self.update_effect()
 
+        # Zéroter temporairement les projecteurs des mémoires mutées (enforcement du mute)
+        muted_saved = {}
+        for fi, mem_col in self._bank_memory_slots():
+            if fi not in self._muted_faders:
+                continue
+            active_row = self.active_memory_pads.get(fi)
+            if active_row is None:
+                continue
+            mem = self.memories[mem_col][active_row]
+            if not mem:
+                continue
+            self._mem_ensure_cues(mem)
+            cue_idx = self._mem_cue_idx.get((mem_col, active_row), 0)
+            cues = mem.get("cues", [])
+            cue = cues[min(cue_idx, len(cues) - 1)] if cues else {}
+            for i, ps in enumerate(cue.get("projectors", [])):
+                if i < len(self.projectors) and ps.get("level", 0) > 0 and i not in muted_saved:
+                    p = self.projectors[i]
+                    muted_saved[i] = (p.level, QColor(p.color), QColor(p.base_color))
+                    p.level = 0
+                    p.color = QColor("black")
+                    p.base_color = QColor("black")
+
         # Calculer les overrides HTP sans modifier les projecteurs
         overrides = self._compute_htp_overrides()
 
@@ -13172,6 +13194,13 @@ class MainWindow(QMainWindow):
             if overrides:
                 for i, proj in enumerate(self.projectors):
                     proj.level, proj.color, proj.base_color = saved_htp[i]
+
+        # Restaurer les projecteurs des mémoires mutées
+        for i, (level, color, base) in muted_saved.items():
+            p = self.projectors[i]
+            p.level = level
+            p.color = color
+            p.base_color = base
 
         # Rafraichir le plan de feu a chaque tick (25fps)
         self.plan_de_feu.mark_dirty()

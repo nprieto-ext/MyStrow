@@ -53,6 +53,7 @@ _COLOR_KEYS = {
     "Blanc":          "color_blanc",
     "Blanc chaud":    "color_blanc_chaud",
     "Ambre":          "color_ambre",
+    "Black Light":    "color_black_light",
 }
 
 def _cn(name_fr: str) -> str:
@@ -238,6 +239,7 @@ class ColorPalette(QWidget):
             (_cn("Blanc"),         QColor(255, 255, 255)),
             (_cn("Blanc chaud"),   QColor(255, 220, 160)),
             (_cn("Ambre"),         QColor(255, 180,  30)),
+            (_cn("Black Light"),   QColor(100,   0, 255)),
         ]
 
         # ── Bicolores ────────────────────────────────────────────────
@@ -1004,6 +1006,7 @@ class PalettePanel(QWidget):
         (_cn("Blanc"),          QColor(255, 255, 255)),
         (_cn("Blanc chaud"),    QColor(255, 220, 160)),
         (_cn("Ambre"),          QColor(255, 180,  30)),
+        (_cn("Black Light"),    QColor(100,   0, 255)),
     ]
 
     BICOLORS = [
@@ -2446,6 +2449,7 @@ print(json.dumps(waveform))
             ("Cyan", QColor(0, 255, 255)),
             ("Blanc", QColor(255, 255, 255)),
             ("Orange", QColor(255, 128, 0)),
+            ("Black Light", QColor(100, 0, 255)),
         ]
 
         bicolors = [
@@ -2569,6 +2573,7 @@ print(json.dumps(waveform))
             ("Magenta", QColor(255, 0, 255)),
             ("Cyan", QColor(0, 255, 255)),
             ("Blanc", QColor(255, 255, 255)),
+            ("Black Light", QColor(100, 0, 255)),
         ]
         for name, col in colors:
             pixmap = QPixmap(16, 16)
@@ -2787,40 +2792,52 @@ print(json.dumps(waveform))
 
     def _edit_effect_target_groups(self, clip):
         """Dialogue cases à cocher A-F pour cibler des groupes spécifiques."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QLabel
-        _LETTERS = [("A", "face"), ("B", "lat"), ("C", "contre"),
-                    ("D", "douche1"), ("E", "douche2"), ("F", "douche3")]
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
+                                       QCheckBox, QPushButton, QLabel, QFrame)
+        from PySide6.QtCore import Qt
+        _LETTERS = [("A", "Face"), ("B", "Lat"), ("C", "Contre"),
+                    ("D", "Douche 1"), ("E", "Douche 2"), ("F", "Douche 3")]
         cur = list(getattr(clip, 'effect_target_groups', []))
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Groupes ciblés")
-        dlg.setFixedSize(280, 220)
+        dlg.setFixedSize(380, 220)
         dlg.setStyleSheet("""
             QDialog { background:#1a1a1a; }
-            QLabel  { color:#888; font-size:11px; }
             QCheckBox {
-                color:#e0e0e0; font-size:18px; font-weight:bold;
-                spacing:6px; padding:6px;
+                color:#e0e0e0; font-size:20px; font-weight:bold;
+                spacing:6px;
             }
             QCheckBox::indicator { width:22px; height:22px; border-radius:4px; }
             QCheckBox::indicator:unchecked { background:#2a2a2a; border:1px solid #555; }
             QCheckBox::indicator:checked   { background:#00d4ff; border:1px solid #00d4ff; }
         """)
         vl = QVBoxLayout(dlg)
-        vl.setContentsMargins(20, 16, 20, 16)
-        vl.setSpacing(8)
+        vl.setContentsMargins(20, 14, 20, 14)
+        vl.setSpacing(10)
 
         lbl = QLabel("Sélectionne les groupes (vide = Tous)")
         lbl.setStyleSheet("color:#888; font-size:11px;")
         vl.addWidget(lbl)
 
         checks = {}
-        grid = QHBoxLayout()
-        for letter, _ in _LETTERS:
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(6)
+        for i, (letter, group_name) in enumerate(_LETTERS):
+            col = i % 3
+            row_base = (i // 3) * 2
+
             cb = QCheckBox(letter)
             cb.setChecked(letter in cur)
             checks[letter] = cb
-            grid.addWidget(cb)
+            grid.addWidget(cb, row_base, col, alignment=Qt.AlignHCenter)
+
+            name_lbl = QLabel(group_name)
+            name_lbl.setAlignment(Qt.AlignHCenter)
+            name_lbl.setStyleSheet("color:#aaa; font-size:10px; font-weight:normal;")
+            grid.addWidget(name_lbl, row_base + 1, col, alignment=Qt.AlignHCenter)
+
         vl.addLayout(grid)
         vl.addStretch()
 

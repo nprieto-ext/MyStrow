@@ -339,10 +339,6 @@ class DmxTesterDialog(QDialog):
         fl.addWidget(self.btn_off)
         fl.addStretch()
 
-        btn_restore = self._btn("↩  Restaurer le show", "#1a1a1a", "#555")
-        btn_restore.clicked.connect(self._restore)
-        fl.addWidget(btn_restore)
-
         btn_close = self._btn("Fermer", "#1a2a3a", "#00d4ff")
         btn_close.clicked.connect(self.close)
         fl.addWidget(btn_close)
@@ -508,6 +504,7 @@ class DmxTesterDialog(QDialog):
             return
         for ch in sel:
             self._dmx.dmx_data[self._uni][ch] = val
+        self._dmx.send_dmx()
         self.lbl_val.setText(str(val))
         n = len(sel)
         txt = f"Canal {sel[0]+1}" if n == 1 else f"{n} canaux"
@@ -518,6 +515,7 @@ class DmxTesterDialog(QDialog):
     def _send_val(self, val):
         for ch in range(512):
             self._dmx.dmx_data[self._uni][ch] = val
+        self._dmx.send_dmx()
         color = "#4CAF50" if val == 255 else "#f44336"
         label = "Full ON" if val == 255 else "Full OFF"
         self.lbl_status.setText(f"{label} — tous les 512 canaux à {val}")
@@ -528,6 +526,7 @@ class DmxTesterDialog(QDialog):
         for u in range(4):
             for i, v in enumerate(self._snapshot[u]):
                 self._dmx.dmx_data[u][i] = v
+        self._dmx.send_dmx()
         self.lbl_status.setText("Show restauré ✓")
         self.lbl_status.setStyleSheet("color:#4CAF50;")
         self._refresh_grid()
@@ -571,6 +570,7 @@ class DmxTesterDialog(QDialog):
         self.grid.set_selection(chs)
         for ch in chs:
             self._dmx.dmx_data[self._uni][ch] = 255
+        self._dmx.send_dmx()
         self._on_selection_changed(chs)
         self._set_slider(255)
         self._refresh_grid()
@@ -584,6 +584,7 @@ class DmxTesterDialog(QDialog):
         """Coupe le groupe courant (à 0) puis envoie le suivant à 100%."""
         for ch in self._group_channels():
             self._dmx.dmx_data[self._uni][ch] = 0
+        self._dmx.send_dmx()
         self._next_group()
         self._send_group()
 

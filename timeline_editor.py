@@ -679,18 +679,6 @@ class LightTimelineEditor(QDialog):
         remove_fades_action = effect_menu.addAction(tr("te_menu_remove_fades"))
         remove_fades_action.triggered.connect(self.remove_fades_from_selection)
         effect_menu.addSeparator()
-        no_effect_action = effect_menu.addAction(tr("te_menu_no_effect"))
-        no_effect_action.triggered.connect(lambda: self.apply_effect_to_selection(None))
-        effect_emojis = {
-            "Strobe": "⚡", "Flash": "💥", "Pulse": "💜",
-            "Wave": "🌊", "Random": "🎲", "Rainbow": "🌈",
-            "Sparkle": "✨", "Fire": "🔥",
-        }
-        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random", "Sparkle", "Rainbow", "Fire"]:
-            emoji = effect_emojis.get(eff, "⚡")
-            action = effect_menu.addAction(f"{emoji} {eff}")
-            action.triggered.connect(lambda checked=False, e=eff: self.apply_effect_to_selection(e))
-        effect_menu.addSeparator()
         speed_action = effect_menu.addAction(tr("te_menu_effect_speed"))
         speed_action.triggered.connect(self.edit_effect_speed_selection)
         fx_editor_action = effect_menu.addAction(tr("te_menu_fx_editor"))
@@ -1338,7 +1326,11 @@ class LightTimelineEditor(QDialog):
                                     break
                         except Exception:
                             pass
-                    cfg = {'name': eff_name, 'type': eff_type, 'layers': eff_layers, 'play_mode': 'loop'}
+                    cfg = {
+                        'name': eff_name, 'type': eff_type, 'layers': eff_layers, 'play_mode': 'loop',
+                        'target_groups': getattr(new_eff_clip, 'effect_target_groups', []),
+                        'speed_override': getattr(new_eff_clip, 'effect_speed', 50),
+                    }
                     self.main_window.active_effect        = eff_name
                     self.main_window.active_effect_config = cfg
                     if hasattr(self.main_window, 'start_effect'):
@@ -1872,6 +1864,7 @@ class LightTimelineEditor(QDialog):
 
     def perform_ai_generation(self, color_code, selected_tracks, progress, status_label, dialog):
         """Genere les clips avec progression et rythme dynamique"""
+        self.save_state()  # snapshot avant génération → permet le undo
         for track in selected_tracks:
             track.clips.clear()
 
@@ -2018,6 +2011,7 @@ class LightTimelineEditor(QDialog):
         status_label.setText(tr("te_ai_clips_created", n=clip_count))
         QApplication.processEvents()
 
+        self.save_state()  # snapshot après génération → undo ramène ici
         QTimer.singleShot(800, dialog.accept)
 
     def wheelEvent(self, event):

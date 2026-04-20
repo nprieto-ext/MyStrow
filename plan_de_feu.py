@@ -2391,10 +2391,12 @@ class PlanDeFeu(QFrame):
             proj.pan          = 128
             proj.tilt         = 128
             proj.gobo         = 0
+            proj.gobo_rotation = 0
             proj.zoom         = 0
             proj.shutter      = 255
             proj.color_wheel  = 0
             proj.prism        = 0
+            proj.prism_rotation = 0
         self.selected_lamps.clear()
         self.refresh()
 
@@ -3319,6 +3321,17 @@ class PlanDeFeu(QFrame):
 
                 _wa(gobo_w)
 
+            # ── Rotation Gobo ────────────────────────────────────────────
+            if has_profile and 'Gobo1Rot' in proj_profile:
+                cur_gobo_rot = getattr(targets[0][0], 'gobo_rotation', 0)
+
+                def _on_gobo_rot(v, t=targets):
+                    for p, g, i in t:
+                        p.gobo_rotation = v
+                    _flush()
+
+                _wa(_slider_row("Rotation Gobo", cur_gobo_rot, 255, _on_gobo_rot))
+
             # ── Prisme ──────────────────────────────────────────────────
             if has_profile and 'Prism' in proj_profile:
                 menu.addSeparator()
@@ -3367,6 +3380,17 @@ class PlanDeFeu(QFrame):
                 for w in (prism_lbl, prism_off_btn, prism_on_btn, prism_sli, prism_val_lbl):
                     prism_row_h.addWidget(w)
                 _wa(prism_row_w)
+
+            # ── Rotation Prisme ──────────────────────────────────────────
+            if has_profile and 'PrismRot' in proj_profile:
+                cur_prism_rot = getattr(targets[0][0], 'prism_rotation', 0)
+
+                def _on_prism_rot(v, t=targets):
+                    for p, g, i in t:
+                        p.prism_rotation = v
+                    _flush()
+
+                _wa(_slider_row("Rotation Prisme", cur_prism_rot, 255, _on_prism_rot))
 
         # ── Couleurs ─────────────────────────────────────────────────────
         # Masquer pour : fumée/gradateurs, et Moving Head à roue de couleur

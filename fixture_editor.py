@@ -70,13 +70,13 @@ FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine 
 
 GROUP_OPTIONS = [
     "face", "douche1", "douche2", "douche3", "lat", "contre",
-    "lyre", "barre", "strobe", "fumee",
+    "fumee",
 ]
 
 ALL_CHANNEL_TYPES = [
     "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom",
     "Smoke", "Fan", "Pan", "PanFine", "Tilt", "TiltFine",
-    "Gobo1", "Gobo2", "Prism", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
+    "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
 ]
 
 CHANNEL_COLORS = {
@@ -85,7 +85,8 @@ CHANNEL_COLORS = {
     "Ambre": "#ee6600", "Orange": "#ff4400", "Zoom": "#00ccaa",
     "Smoke": "#555555", "Fan": "#336699", "Pan": "#ff55aa",
     "PanFine": "#cc4488", "Tilt": "#00ddff", "TiltFine": "#00aacc",
-    "Gobo1": "#aa8800", "Gobo2": "#886600", "Prism": "#dd00dd",
+    "Gobo1": "#aa8800", "Gobo1Rot": "#cc9900", "Gobo2": "#886600",
+    "Prism": "#dd00dd", "PrismRot": "#bb00bb",
     "Focus": "#00aa88", "ColorWheel": "#ff8800", "Shutter": "#ff2266",
     "Speed": "#66ff66", "Mode": "#88aaff",
 }
@@ -114,7 +115,7 @@ _PRESETS_BY_TYPE = {
         ("Wash 10ch", ["Pan", "Tilt", "R", "G", "B", "W", "Ambre", "Dim", "Shutter", "Speed"]),
         ("Spot 5ch",  ["Shutter", "Dim", "ColorWheel", "Gobo1", "Speed"]),
         ("Spot 8ch",  ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1", "Speed", "Mode"]),
-        ("Spot 12ch", ["Pan", "PanFine", "Tilt", "TiltFine", "Speed", "ColorWheel", "Gobo1", "Prism", "Shutter", "Dim", "Focus", "Mode"]),
+        ("Spot 12ch", ["Pan", "PanFine", "Tilt", "TiltFine", "Speed", "ColorWheel", "Gobo1", "Gobo1Rot", "Prism", "PrismRot", "Shutter", "Dim"]),
         ("Beam 7ch",  ["Pan", "Tilt", "ColorWheel", "Gobo1", "Shutter", "Dim", "Speed"]),
     ],
     "Barre LED": [
@@ -989,7 +990,11 @@ class FixtureEditorDialog(QDialog):
         self._btn_delete.setEnabled(True)
         self._my_list.blockSignals(True)
         self._my_list.setCurrentRow(idx)
+        item = self._my_list.item(idx)
+        if item:
+            self._my_list.scrollToItem(item)
         self._my_list.blockSignals(False)
+        self._name_edit.setFocus()
 
     def _new_fixture(self):
         self._current_idx = -1
@@ -1286,8 +1291,7 @@ class FixtureEditorDialog(QDialog):
             return
 
         _GROUP = {
-            "Moving Head": "lyre", "Barre LED": "barre",
-            "Stroboscope": "strobe", "Machine a fumee": "fumee",
+            "Machine a fumee": "fumee",
         }
         existing = {f["name"] for f in self._fixtures}
         imported, errors = 0, []
@@ -1308,6 +1312,9 @@ class FixtureEditorDialog(QDialog):
                         "fixture_type": ftype,
                         "group": _GROUP.get(ftype, "face"),
                         "profile": m["profile"],
+                        "color_wheel_slots": ofl_fx.get("color_wheel_slots", []),
+                        "gobo_wheel_slots":  ofl_fx.get("gobo_wheel_slots", []),
+                        "channel_defaults":  ofl_fx.get("channel_defaults", {}),
                         "source": "user",
                     } for m in modes]
                     if len(candidates) > 1:

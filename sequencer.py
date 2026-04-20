@@ -1725,7 +1725,9 @@ class Sequencer(QFrame):
         timeline_name = getattr(self, '_timeline_effect_name', None)
         if timeline_name is None:
             return
-        self._timeline_effect_name = None
+        self._timeline_effect_name  = None
+        self._timeline_effect_group = None
+        self._timeline_effect_speed = None
         # N'arrêter que si c'est encore l'effet de la timeline qui tourne
         if getattr(main_win, 'active_effect', None) == timeline_name:
             main_win.active_effect        = None
