@@ -109,7 +109,8 @@ class LightClip:
         self.effect_layers    = []
         self.effect_play_mode = "loop"   # "loop" | "once"
         self.effect_duration  = 0        # secondes (0 = pas de minuteur)
-        self.effect_name      = ""       # nom du preset sélectionné dans l'éditeur
+        self.effect_name        = ""       # nom du preset sélectionné dans l'éditeur
+        self.effect_target_groups = []  # [] = Tous, sinon liste de lettres ex: ["A","C","F"]
 
         # Fades
         self.fade_in_duration = 0
@@ -2222,6 +2223,19 @@ print(json.dumps(waveform))
 
         menu.addSeparator()
 
+        # Groupe cible
+        cur_groups = getattr(clip, 'effect_target_groups', [])
+        grp_label_str = ", ".join(cur_groups) if cur_groups else "Tous"
+        act_grp = menu.addAction(f"🎯  Groupes : {grp_label_str}")
+        act_grp.triggered.connect(lambda: self._edit_effect_target_groups(clip))
+
+        # Vitesse
+        cur_speed = getattr(clip, 'effect_speed', 50)
+        act_speed = menu.addAction(f"⚡  Vitesse : {cur_speed}")
+        act_speed.triggered.connect(lambda: self.edit_clip_effect_speed(clip))
+
+        menu.addSeparator()
+
         # Couper ici (si le clic est à plus de 200ms des bords)
         if click_pos_in_clip is not None and 200 < click_pos_in_clip < clip.duration - 200:
             act_cut = menu.addAction(tr("lt_menu_cut_here"))
@@ -2771,6 +2785,64 @@ print(json.dumps(waveform))
             if hasattr(self.parent_editor, 'save_state'):
                 self.parent_editor.save_state()
 
+    def _edit_effect_target_groups(self, clip):
+        """Dialogue cases à cocher A-F pour cibler des groupes spécifiques."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QLabel
+        _LETTERS = [("A", "face"), ("B", "lat"), ("C", "contre"),
+                    ("D", "douche1"), ("E", "douche2"), ("F", "douche3")]
+        cur = list(getattr(clip, 'effect_target_groups', []))
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Groupes ciblés")
+        dlg.setFixedSize(280, 220)
+        dlg.setStyleSheet("""
+            QDialog { background:#1a1a1a; }
+            QLabel  { color:#888; font-size:11px; }
+            QCheckBox {
+                color:#e0e0e0; font-size:18px; font-weight:bold;
+                spacing:6px; padding:6px;
+            }
+            QCheckBox::indicator { width:22px; height:22px; border-radius:4px; }
+            QCheckBox::indicator:unchecked { background:#2a2a2a; border:1px solid #555; }
+            QCheckBox::indicator:checked   { background:#00d4ff; border:1px solid #00d4ff; }
+        """)
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(8)
+
+        lbl = QLabel("Sélectionne les groupes (vide = Tous)")
+        lbl.setStyleSheet("color:#888; font-size:11px;")
+        vl.addWidget(lbl)
+
+        checks = {}
+        grid = QHBoxLayout()
+        for letter, _ in _LETTERS:
+            cb = QCheckBox(letter)
+            cb.setChecked(letter in cur)
+            checks[letter] = cb
+            grid.addWidget(cb)
+        vl.addLayout(grid)
+        vl.addStretch()
+
+        btns = QHBoxLayout()
+        btn_all = QPushButton("Tous")
+        btn_all.setStyleSheet("background:#2a2a2a;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:6px 12px;")
+        btn_all.clicked.connect(lambda: [cb.setChecked(False) for cb in checks.values()])
+        btns.addWidget(btn_all)
+        btn_ok = QPushButton("OK")
+        btn_ok.setStyleSheet("background:#00d4ff;color:#000;font-weight:bold;border-radius:4px;padding:6px 12px;")
+        btn_ok.clicked.connect(dlg.accept)
+        btns.addWidget(btn_ok)
+        vl.addLayout(btns)
+
+        if dlg.exec() == QDialog.Accepted:
+            clip.effect_target_groups = [l for l, _ in _LETTERS if checks[l].isChecked()]
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+            if hasattr(self.parent_editor, '_save_sequence_no_close'):
+                self.parent_editor._save_sequence_no_close()
+
     def edit_clip_effect_speed(self, clip):
         """Dialog pour regler la vitesse de l'effet (0=lent, 100=rapide)"""
         dialog = QDialog(self)
@@ -2833,6 +2905,8 @@ print(json.dumps(waveform))
             self.update()
             if hasattr(self.parent_editor, 'save_state'):
                 self.parent_editor.save_state()
+            if hasattr(self.parent_editor, '_save_sequence_no_close'):
+                self.parent_editor._save_sequence_no_close()
 
     def delete_clip(self, clip):
         """Supprime le(s) clip(s)"""
@@ -3379,10 +3453,14 @@ print(json.dumps(waveform))
                     font.setBold(True)
                     font.setPixelSize(13)
                     painter.setFont(font)
+                    tgt = getattr(clip, 'effect_target_groups', [])
+                    grp_str = (" [" + ",".join(tgt) + "]") if tgt else ""
+                    spd = getattr(clip, 'effect_speed', 50)
+                    spd_str = f"  {spd}%" if spd != 50 else ""
                     painter.setPen(QColor(230, 200, 255, 230))
                     painter.drawText(clip_rect.adjusted(10, 0, -4, 0),
                                      Qt.AlignVCenter | Qt.AlignLeft,
-                                     f"{eff_emoji}  {eff_name}" if eff_name else "✨  Effet")
+                                     f"{eff_emoji}  {eff_name}{grp_str}{spd_str}" if eff_name else "✨  Effet")
 
             elif getattr(clip, 'memory_ref', None):
                 # ── Clip de séquence AKAI ──────────────────────────────

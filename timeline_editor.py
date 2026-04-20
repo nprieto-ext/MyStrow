@@ -1440,8 +1440,9 @@ class LightTimelineEditor(QDialog):
                     clip.effect_layers    = clip_data.get('effect_layers', [])
                     clip.effect_play_mode = clip_data.get('effect_play_mode', 'loop')
                     clip.effect_duration  = clip_data.get('effect_duration', 0)
-                    clip.effect_name      = clip_data.get('effect_name', '')
-                    clip.effect_type      = clip_data.get('effect_type', '')
+                    clip.effect_name         = clip_data.get('effect_name', '')
+                    clip.effect_type         = clip_data.get('effect_type', '')
+                    clip.effect_target_groups = clip_data.get('effect_target_groups', [])
                     if clip_data.get('color2'):
                         clip.color2 = QColor(clip_data['color2'])
                     clip.pan_start      = clip_data.get('pan_start', 128)
@@ -1469,6 +1470,51 @@ class LightTimelineEditor(QDialog):
         # Sauvegarder l'etat initial pour undo
         self.save_state()
 
+    def _save_sequence_no_close(self):
+        """Sauvegarde seq.sequences sans fermer l'éditeur (modif inline d'un clip)."""
+        all_clips = []
+        for track in self.tracks:
+            for clip in track.clips:
+                clip_data = {
+                    'track': track.name,
+                    'start': clip.start_time,
+                    'duration': clip.duration,
+                    'color': clip.color.name(),
+                    'intensity': clip.intensity,
+                    'fade_in': getattr(clip, 'fade_in_duration', 0),
+                    'fade_out': getattr(clip, 'fade_out_duration', 0),
+                    'effect': getattr(clip, 'effect', None),
+                    'effect_speed': getattr(clip, 'effect_speed', 50),
+                    'effect_layers': getattr(clip, 'effect_layers', []),
+                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
+                    'effect_duration': getattr(clip, 'effect_duration', 0),
+                    'effect_name': getattr(clip, 'effect_name', ''),
+                    'effect_type': getattr(clip, 'effect_type', ''),
+                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
+                }
+                if hasattr(clip, 'color2') and clip.color2:
+                    clip_data['color2'] = clip.color2.name()
+                if getattr(clip, 'memory_ref', None):
+                    clip_data['memory_ref'] = list(clip.memory_ref)
+                    clip_data['memory_label'] = getattr(clip, 'memory_label', '')
+                if (getattr(clip, 'move_effect', None) or
+                        getattr(clip, 'pan_start', 128) != 128 or getattr(clip, 'pan_end', 128) != 128 or
+                        getattr(clip, 'tilt_start', 128) != 128 or getattr(clip, 'tilt_end', 128) != 128):
+                    clip_data.update({
+                        'pan_start': getattr(clip, 'pan_start', 128), 'tilt_start': getattr(clip, 'tilt_start', 128),
+                        'pan_end': getattr(clip, 'pan_end', 128), 'tilt_end': getattr(clip, 'tilt_end', 128),
+                        'move_effect': getattr(clip, 'move_effect', None),
+                        'move_speed': getattr(clip, 'move_speed', 0.5),
+                        'move_amplitude': getattr(clip, 'move_amplitude', 60),
+                    })
+                all_clips.append(clip_data)
+        self.main_window.seq.sequences[self.media_row] = {
+            'clips': all_clips,
+            'duration': self.media_duration,
+            'waveform': [round(x, 3) for x in self.track_waveform.waveform_data] if self.track_waveform.waveform_data else None
+        }
+        self.main_window.seq.is_dirty = True
+
     def save_sequence(self):
         """Sauvegarde la sequence au format .tui avec effets et bicolore"""
         all_clips = []
@@ -1487,8 +1533,9 @@ class LightTimelineEditor(QDialog):
                     'effect_layers': getattr(clip, 'effect_layers', []),
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':      getattr(clip, 'effect_name', ''),
-                    'effect_type':      getattr(clip, 'effect_type', ''),
+                    'effect_name':         getattr(clip, 'effect_name', ''),
+                    'effect_type':         getattr(clip, 'effect_type', ''),
+                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
                 }
 
                 if hasattr(clip, 'color2') and clip.color2:
@@ -1566,8 +1613,9 @@ class LightTimelineEditor(QDialog):
                     'effect_layers': getattr(clip, 'effect_layers', []),
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':      getattr(clip, 'effect_name', ''),
-                    'effect_type':      getattr(clip, 'effect_type', ''),
+                    'effect_name':         getattr(clip, 'effect_name', ''),
+                    'effect_type':         getattr(clip, 'effect_type', ''),
+                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
                 }
                 if hasattr(clip, 'color2') and clip.color2:
                     clip_data['color2'] = clip.color2.name()
@@ -2151,8 +2199,9 @@ class LightTimelineEditor(QDialog):
                     'effect_layers': getattr(clip, 'effect_layers', []),
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':      getattr(clip, 'effect_name', ''),
-                    'effect_type':      getattr(clip, 'effect_type', ''),
+                    'effect_name':         getattr(clip, 'effect_name', ''),
+                    'effect_type':         getattr(clip, 'effect_type', ''),
+                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
                 })
         # Stocker les offsets relatifs au premier clip
         if min_start is not None:
@@ -2193,8 +2242,9 @@ class LightTimelineEditor(QDialog):
             clip.effect_layers    = item.get('effect_layers', [])
             clip.effect_play_mode = item.get('effect_play_mode', 'loop')
             clip.effect_duration  = item.get('effect_duration', 0)
-            clip.effect_name      = item.get('effect_name', '')
-            clip.effect_type      = item.get('effect_type', '')
+            clip.effect_name         = item.get('effect_name', '')
+            clip.effect_type         = item.get('effect_type', '')
+            clip.effect_target_groups = item.get('effect_target_groups', [])
             track.selected_clips.append(clip)
             count += 1
 
@@ -2222,8 +2272,9 @@ class LightTimelineEditor(QDialog):
                     'effect_layers': getattr(clip, 'effect_layers', []),
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':      getattr(clip, 'effect_name', ''),
-                    'effect_type':      getattr(clip, 'effect_type', ''),
+                    'effect_name':         getattr(clip, 'effect_name', ''),
+                    'effect_type':         getattr(clip, 'effect_type', ''),
+                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
                 }
                 state.append(clip_data)
 

@@ -667,6 +667,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "seq_file_not_found_title":  {"en": "File not found",               "fr": "Fichier introuvable"},
     "seq_file_not_found_msg":    {"en": "The media cannot be found:\n\n{name}\n\nThe file was moved, deleted or renamed.",
                                   "fr": "Le media est introuvable :\n\n{name}\n\nLe fichier a ete deplace, supprime ou renomme."},
+    "seq_locate_file":           {"en": "Locate file...",                 "fr": "Localiser le fichier..."},
     "seq_err_play_msg":          {"en": "Cannot play: {e}",             "fr": "Impossible de lire: {e}"},
     "seq_delete_media_title":    {"en": "Delete media",                 "fr": "Supprimer media"},
     "seq_delete_media_msg":      {"en": "Delete '{name}' from the sequencer?",

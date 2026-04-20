@@ -646,6 +646,7 @@ class ColorPickerBlock(QFrame):
         super().__init__(parent)
         self.plan_de_feu = plan_de_feu
         self._h = 0.0
+        self._s = 1.0
         self._v = 1.0
 
         self.setStyleSheet("ColorPickerBlock { border: none; }")
@@ -663,6 +664,13 @@ class ColorPickerBlock(QFrame):
         self._hue_slider.valueChanged.connect(self._on_hue)
         layout.addWidget(self._hue_slider)
 
+        # ── Saturation ───────────────────────────────────────────────────
+        self._sat_val_lbl = self._add_row(layout, "Saturation", "100%")
+        self._sat_slider = _HSVSlider()
+        self._sat_slider.set_value(1.0)
+        self._sat_slider.valueChanged.connect(self._on_sat)
+        layout.addWidget(self._sat_slider)
+
         # ── Luminosité ───────────────────────────────────────────────────
         self._bri_val_lbl = self._add_row(layout, "Luminosité", "100%")
         self._bri_slider = _HSVSlider()
@@ -670,6 +678,7 @@ class ColorPickerBlock(QFrame):
         self._bri_slider.valueChanged.connect(self._on_bri)
         layout.addWidget(self._bri_slider)
 
+        self._update_sat_stops()
         self._update_bri_stops()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -689,17 +698,29 @@ class ColorPickerBlock(QFrame):
         return val
 
     def _current_qcolor(self) -> QColor:
-        return QColor.fromHsvF(self._h, 1.0, self._v)
+        return QColor.fromHsvF(self._h, self._s, self._v)
+
+    def _update_sat_stops(self):
+        white = QColor(255, 255, 255)
+        full  = QColor.fromHsvF(self._h, 1.0, 1.0)
+        self._sat_slider.set_stops([(0.0, white), (1.0, full)])
 
     def _update_bri_stops(self):
         black = QColor(0, 0, 0)
-        full  = QColor.fromHsvF(self._h, 1.0, 1.0)
+        full  = QColor.fromHsvF(self._h, self._s, 1.0)
         self._bri_slider.set_stops([(0.0, black), (1.0, full)])
 
     # ── Slider callbacks ──────────────────────────────────────────────────────
     def _on_hue(self, v: float):
         self._h = v
         self._hue_val_lbl.setText(f"{int(v * 359)}°")
+        self._update_sat_stops()
+        self._update_bri_stops()
+        self._send_color(self._current_qcolor())
+
+    def _on_sat(self, v: float):
+        self._s = v
+        self._sat_val_lbl.setText(f"{int(v * 100)}%")
         self._update_bri_stops()
         self._send_color(self._current_qcolor())
 
@@ -3379,6 +3400,31 @@ class PlanDeFeu(QFrame):
                 colors_g.addWidget(btn, row, col)
             _wa(colors_w)
 
+
+        # ── Clear sélectif ───────────────────────────────────────────────
+        menu.addSeparator()
+        n_sel = len(targets)
+        clear_label = f"🔲  Clear ({n_sel})" if n_sel > 1 else "🔲  Clear"
+        def _clear_targets(t=targets):
+            black = QColor(0, 0, 0)
+            for p, g, i in t:
+                p.level        = 0
+                p.base_color   = black
+                p.color        = black
+                p.uv           = 0
+                p.white_boost  = 0
+                p.amber_boost  = 0
+                p.orange_boost = 0
+                p.strobe_speed = 0
+                p.pan          = 128
+                p.tilt         = 128
+                p.gobo         = 0
+                p.zoom         = 0
+                p.shutter      = 255
+                p.color_wheel  = 0
+                p.prism        = 0
+            _flush()
+        menu.addAction(clear_label, _clear_targets)
 
         # ── Bas de menu ──────────────────────────────────────────────────
         menu.addSeparator()

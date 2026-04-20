@@ -171,6 +171,7 @@ class MessageLogWidget(QWidget):
         "bpm":     ("#ffcc00", "♩"),  # jaune : TAP BPM
         "success": ("#00cc66", "✔"),  # vert  : succès générique
         "error":   ("#ff4444", "✖"),  # rouge : erreur
+        "warn":    ("#ff9900", "⚠"),  # orange: avertissement
         "info":    ("#555555", "·"),  # gris  : info
     }
 
@@ -1207,6 +1208,7 @@ class MainWindow(QMainWindow):
         self._ia_fadeout_total = 30   # 30 × 50 ms = 1.5 s
         self._ia_fadeout_callback = None
         self.fader_buttons = []
+        self._muted_faders: set = set()
         self.faders = {}
         self.pads = {}
         self.effect_buttons = []
@@ -1231,6 +1233,30 @@ class MainWindow(QMainWindow):
         self.memories = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.memory_custom_colors = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.active_memory_pads = {}  # {fader_idx: row} pad actif par colonne memoire
+        self._mem_cue_idx = {}        # {(col, row): int} index cue courant par pad
+
+        # — Fade entre cues (interpolation DMX 40 fps)
+        self._fade_timer = QTimer(self)
+        self._fade_timer.setInterval(25)
+        self._fade_timer.timeout.connect(self._fade_tick)
+        self._fade_from: list = []
+        self._fade_to:   list = []
+        self._fade_start  = 0.0
+        self._fade_dur    = 0.0
+
+        # — Durée auto-avance
+        self._dur_timer = QTimer(self)
+        self._dur_timer.setSingleShot(True)
+        self._dur_timer.timeout.connect(self._on_duration_elapsed)
+        self._dur_mem_col = -1
+        self._dur_row     = -1
+        self._dur_start   = 0.0
+        self._dur_secs    = 0.0
+
+        # — Mise à jour barre de progression (10 fps)
+        self._dur_progress_timer = QTimer(self)
+        self._dur_progress_timer.setInterval(100)
+        self._dur_progress_timer.timeout.connect(self._update_cue_progress)
         self.fx_pads = [[None]*8 for _ in range(_FX_COL_MAX)]
         self.active_fx_pads = {}       # {(fx_col, row): True}
         self.fx_amplitudes = [100] * _FX_COL_MAX
@@ -1752,9 +1778,11 @@ class MainWindow(QMainWindow):
 
     def _create_main_layout(self):
         """Cree le layout principal"""
+        # — Colonne centrale : séquenceur + transport
         mid = QWidget()
         mv = QVBoxLayout(mid)
         mv.setContentsMargins(0, 0, 0, 0)
+        mv.setSpacing(0)
         mv.addWidget(self.seq)
         mv.addWidget(self.transport)
 
@@ -1887,6 +1915,13 @@ class MainWindow(QMainWindow):
         result = [i for i, slot in enumerate(self._fader_map)
                   if slot.get("type") == "memory" and slot.get("mem_col") == mem_col]
         return result if result else [4 + min(mem_col, 3)]
+
+    def _fader_to_mem_col(self, fader_idx):
+        """Retourne le mem_col contrôlé par ce fader, ou None."""
+        slot = self._fader_map[fader_idx] if fader_idx < len(self._fader_map) else {}
+        if slot.get("type") == "memory":
+            return slot.get("mem_col")
+        return None
 
     def _bank_memory_slots(self):
         """Returns list of (fader_idx, mem_col) for all memory slots in current bank."""
@@ -2102,6 +2137,21 @@ class MainWindow(QMainWindow):
         akai_zone_layout.addWidget(sep_cart)
         akai_zone_layout.addSpacing(6)
 
+        # ── Banniere de licence ───────────────────────────────────────────────
+        self._license_banner = LicenseBanner()
+        self._license_banner.dismissed.connect(self._on_license_banner_dismissed)
+        self._license_banner.activate_clicked.connect(self._on_banner_clicked)
+        self._apply_license_banner()
+        akai_zone_layout.addWidget(self._license_banner)
+
+        # ── Cue panel standalone (popup flottant) ────────────────────────────
+        from cue_list import CueListPanel
+        self._cue_panel = CueListPanel()
+        self._cue_panel.cues_changed.connect(self._on_cue_panel_changed)
+        self._cue_panel.cue_activated.connect(self._on_cue_activated)
+        self._cue_panel.effect_pick_requested.connect(self._on_cue_effect_pick)
+        self._cue_float = None
+
         # ── Cartoucheurs 2×2 ─────────────────────────────────────────────────
         self.cartouches = []
         cart_grid = QGridLayout()
@@ -2118,13 +2168,6 @@ class MainWindow(QMainWindow):
             self.cartouches.append(cart)
         akai_zone_layout.addLayout(cart_grid)
 
-        # ── Banniere de licence ───────────────────────────────────────────────
-        self._license_banner = LicenseBanner()
-        self._license_banner.dismissed.connect(self._on_license_banner_dismissed)
-        self._license_banner.activate_clicked.connect(self._on_banner_clicked)
-        self._apply_license_banner()
-        akai_zone_layout.addWidget(self._license_banner)
-
         # ── Journal des actions ───────────────────────────────────────────────
         self._msg_log = MessageLogWidget()
         self._msg_log.setStyleSheet("""
@@ -2135,7 +2178,7 @@ class MainWindow(QMainWindow):
             }
         """)
         akai_zone_layout.addSpacing(4)
-        akai_zone_layout.addWidget(self._msg_log, 1)  # stretch=1 → prend toute la hauteur restante
+        akai_zone_layout.addWidget(self._msg_log, 1)
 
         # Emplacement reserve pour la barre de mise a jour (ajoutee apres init)
         self._akai_layout = layout
@@ -2775,8 +2818,23 @@ class MainWindow(QMainWindow):
         if col_akai is None:
             col_akai = self._mem_col_to_fader(mem_col)
 
-        # Clic sur le pad deja actif → rien
+        # Clic sur le pad déjà actif → avancer au cue suivant si multi-cue
         if self.active_memory_pads.get(col_akai) == row:
+            mem = self.memories[mem_col][row]
+            if mem:
+                self._mem_ensure_cues(mem)
+                if len(mem.get("cues", [])) > 1:
+                    self._mem_advance_cue(mem_col, row)
+                    fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
+                    self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
+                    cue_idx = self._mem_cue_idx.get((mem_col, row), 0)
+                    n_cues = len(mem["cues"])
+                    cue_lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx + 1}")
+                    self._log_message(f"MEM {mem_col+1}.{row+1} → {cue_lbl} ({cue_idx+1}/{n_cues})", "mem")
+                    self._style_memory_pad(mem_col, row, active=True)
+                    # Rafraîchir le panel Cues si ouvert sur ce pad
+                    if hasattr(self, '_cue_panel') and self._cue_panel.mem_col == mem_col and self._cue_panel.row == row:
+                        self._cue_panel.highlight_cue(cue_idx)
             return
 
         # Activation impossible si aucune memoire stockee
@@ -2789,22 +2847,40 @@ class MainWindow(QMainWindow):
             self._clear_memory_from_projectors(mem_col, prev_row)
             self._style_memory_pad(mem_col, prev_row, active=False)
             self._update_memory_pad_led(mem_col, prev_row, active=False)
-            # Couper l'effet du pad précédent s'il est actif
+            self._mem_cue_idx.pop((mem_col, prev_row), None)  # reset cue index
             prev_mem = self.memories[mem_col][prev_row]
-            prev_eff_name = (prev_mem.get("effect") or {}).get("name") if prev_mem else None
-            if prev_eff_name and getattr(self, 'active_effect', None) == prev_eff_name:
-                self.stop_effect()
+            if prev_mem:
+                self._mem_ensure_cues(prev_mem)
+                prev_eff_name = (prev_mem["cues"][0].get("effect") or {}).get("name") if prev_mem.get("cues") else None
+            else:
+                prev_eff_name = None
+            if prev_eff_name:
+                if hasattr(self, 'effect_timer'):
+                    self.effect_timer.stop()
                 self.active_effect = None
                 self.active_effect_config = {}
+                self.effect_saved_colors = {}
 
-        # Activer le nouveau pad
+        # Activer le nouveau pad (cue 0 par défaut)
+        self._mem_cue_idx[(mem_col, row)] = 0
         self.active_memory_pads[col_akai] = row
         self._style_memory_pad(mem_col, row, active=True)
         self._update_memory_pad_led(mem_col, row, active=True)
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
-        # Toujours appliquer (pan/tilt doivent s'appliquer même si fader à 0)
         self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
-        self._log_message(f"MEM {mem_col + 1}.{row + 1}", "mem")
+
+        mem = self.memories[mem_col][row]
+        self._mem_ensure_cues(mem)
+        n_cues = len(mem.get("cues", []))
+        if n_cues > 1:
+            self._log_message(f"MEM {mem_col+1}.{row+1}  [1/{n_cues}]", "mem")
+        else:
+            self._log_message(f"MEM {mem_col + 1}.{row + 1}", "mem")
+        if fader_val == 0:
+            self._log_message(f"MEM {mem_col + 1} — fader à 0, rien n'est envoyé", "warn")
+
+        # Démarrer le timer de durée si le cue actif en a une
+        self._start_cue_duration(mem_col, row)
 
         # Réinitialiser la position GO sur le pad activé manuellement
         if self.go_mode:
@@ -2823,39 +2899,387 @@ class MainWindow(QMainWindow):
             return
         self._activate_memory_pad(None, mem_col, row)
 
-    def _clear_memory_from_projectors(self, mem_col, row):
-        """Remet a zero les projecteurs actifs (level > 0) d'une memoire."""
+    # ── Helpers cues ─────────────────────────────────────────────────────────
+
+    def _mem_ensure_cues(self, mem: dict):
+        """Migre l'ancien format {projectors, effect} vers {cues:[...], loop:True}."""
+        if mem is None or "cues" in mem:
+            return
+        cue0 = {
+            "label": "Cue 1",
+            "projectors": mem.pop("projectors", []),
+            "effect": mem.pop("effect", {}),
+            "duration": 0,
+        }
+        mem["cues"] = [cue0]
+        mem.setdefault("loop", True)
+
+    def _mem_active_cue(self, mem_col: int, row: int) -> dict:
+        """Retourne le cue actuellement actif pour ce pad (dict vide si aucun)."""
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return {}
+        self._mem_ensure_cues(mem)
+        cues = mem["cues"]
+        idx = self._mem_cue_idx.get((mem_col, row), 0)
+        if not cues:
+            return {}
+        return cues[max(0, min(idx, len(cues) - 1))]
+
+    def _mem_advance_cue(self, mem_col: int, row: int) -> bool:
+        """Avance au cue suivant. Retourne False si on reste au même (boucle désactivée + fin)."""
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return False
+        self._mem_ensure_cues(mem)
+        cues = mem["cues"]
+        if len(cues) <= 1:
+            return False
+        idx = self._mem_cue_idx.get((mem_col, row), 0)
+        next_idx = idx + 1
+        if next_idx >= len(cues):
+            if mem.get("loop", True):
+                next_idx = 0
+            else:
+                return False
+        self._mem_cue_idx[(mem_col, row)] = next_idx
+        return True
+
+    def _mem_go_back_cue(self, mem_col: int, row: int) -> bool:
+        """Recule au cue précédent. Retourne False si impossible."""
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return False
+        self._mem_ensure_cues(mem)
+        cues = mem["cues"]
+        if len(cues) <= 1:
+            return False
+        idx = self._mem_cue_idx.get((mem_col, row), 0)
+        prev_idx = idx - 1
+        if prev_idx < 0:
+            if mem.get("loop", True):
+                prev_idx = len(cues) - 1
+            else:
+                return False
+        self._mem_cue_idx[(mem_col, row)] = prev_idx
+        return True
+
+    def _open_cue_editor(self, mem_col: int, row: int):
+        """Ouvre le panel Cues dans un panneau flottant positionné près du pad."""
         mem = self.memories[mem_col][row]
         if not mem:
             return
-        for i, proj_state in enumerate(mem["projectors"]):
+        self._mem_ensure_cues(mem)
+
+        # Créer le wrapper flottant une seule fois
+        if self._cue_float is None:
+            w = QWidget(self, Qt.Tool | Qt.FramelessWindowHint)
+            w.setAttribute(Qt.WA_TranslucentBackground)
+            w.setFixedSize(650, 580)
+            outer = QVBoxLayout(w)
+            outer.setContentsMargins(0, 0, 0, 0)
+
+            container = QWidget(w)
+            container.setObjectName("cue_float")
+            container.setStyleSheet("""
+                QWidget#cue_float {
+                    background: #0f0f0f;
+                    border: 1px solid #2a2a2a;
+                    border-radius: 10px;
+                }
+            """)
+            inner = QVBoxLayout(container)
+            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setSpacing(0)
+
+            # Barre titre avec bouton fermeture
+            title_bar = QWidget()
+            title_bar.setStyleSheet("background: #141414; border-radius: 10px 10px 0 0;")
+            title_bar.setFixedHeight(32)
+            tb_lay = QHBoxLayout(title_bar)
+            tb_lay.setContentsMargins(12, 0, 8, 0)
+            tb_lay.setSpacing(0)
+            self._cue_float_lbl = QLabel("Cues")
+            self._cue_float_lbl.setStyleSheet("color:#00d4ff; font-size:11px; font-weight:bold; background:transparent;")
+            tb_lay.addWidget(self._cue_float_lbl)
+            tb_lay.addStretch()
+            close_btn = QPushButton("✕")
+            close_btn.setFixedSize(20, 20)
+            close_btn.setStyleSheet("""
+                QPushButton { background:#2a2a2a; border:none; border-radius:4px;
+                              color:#888; font-size:10px; font-weight:bold; }
+                QPushButton:hover { background:#3a3a3a; color:#fff; }
+            """)
+            close_btn.clicked.connect(w.hide)
+            tb_lay.addWidget(close_btn)
+            inner.addWidget(title_bar)
+            inner.addWidget(self._cue_panel)
+            outer.addWidget(container)
+            self._cue_float = w
+
+        self._cue_panel.load(mem_col, row, mem)
+        self._cue_panel.highlight_cue(self._mem_cue_idx.get((mem_col, row), 0))
+        self._cue_float_lbl.setText(f"Cues — MEM {mem_col+1}.{row+1}")
+
+        # Positionner près du pad
+        anchor = None
+        for col_akai in self._mem_col_to_faders(mem_col):
+            pad = self.pads.get((row, col_akai))
+            if pad:
+                anchor = pad.mapToGlobal(pad.rect().topRight())
+                break
+        if anchor is None:
+            anchor = self.mapToGlobal(self.rect().center())
+
+        sg = self.screen().availableGeometry()
+        fw, fh = self._cue_float.width(), self._cue_float.height()
+        x = anchor.x() + 12
+        y = anchor.y()
+        if x + fw > sg.right():
+            x = anchor.x() - fw - 12
+        if y + fh > sg.bottom():
+            y = sg.bottom() - fh - 8
+
+        self._cue_float.move(x, y)
+        self._cue_float.show()
+        self._cue_float.raise_()
+
+    def _on_cue_panel_changed(self):
+        """Appelé quand le panel Cues modifie la mémoire."""
+        mc, r = self._cue_panel.mem_col, self._cue_panel.row
+        if mc >= 0:
+            active = self.active_memory_pads.get(self._mem_col_to_fader(mc)) == r
+            self._style_memory_pad(mc, r, active)
+        self._save_akai_config_auto()
+
+    def _on_cue_activated(self, cue_idx: int):
+        """Clic/flèche sur le panel Cues → applique ce cue avec fade."""
+        mc, r = self._cue_panel.mem_col, self._cue_panel.row
+        if mc < 0 or self.memories[mc][r] is None:
+            return
+        self._mem_cue_idx[(mc, r)] = cue_idx
+        col_akai = self._mem_col_to_fader(mc)
+        fader_val = self.faders[col_akai].value if col_akai in self.faders else 100
+        self._apply_cue_with_fade(mc, r, fader_val)
+        mem = self.memories[mc][r]
+        cue_lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
+        n = len(mem["cues"])
+        self._log_message(f"MEM {mc+1}.{r+1} → {cue_lbl} ({cue_idx+1}/{n})", "mem")
+        self._style_memory_pad(mc, r, active=True)
+        self._cue_panel.highlight_cue(cue_idx)
+        self._start_cue_duration(mc, r)
+
+    # ── Fade entre cues ───────────────────────────────────────────────────────
+
+    def _on_cue_effect_pick(self, cue_row: int):
+        """Ouvre un menu pour assigner/retirer un effet sur un cue."""
+        mc, r = self._cue_panel.mem_col, self._cue_panel.row
+        if mc < 0 or self.memories[mc][r] is None:
+            return
+        mem = self.memories[mc][r]
+        self._mem_ensure_cues(mem)
+        if not (0 <= cue_row < len(mem["cues"])):
+            return
+        cue = mem["cues"][cue_row]
+        current_eff = (cue.get("effect") or {}).get("name", "")
+
+        all_effects = []
+        try:
+            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+            all_effects = list(BUILTIN_EFFECTS) + _load_custom_effects()
+        except Exception:
+            pass
+
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background:#1a1a1a; border:1px solid #333; border-radius:6px; color:#e0e0e0; }
+            QMenu::item { padding:6px 20px; font-size:12px; }
+            QMenu::item:selected { background:#1e3a4a; color:#00d4ff; }
+            QMenu::item:disabled { color:#444; }
+            QMenu::separator { height:1px; background:#2a2a2a; margin:4px 0; }
+        """)
+
+        def _set(eff_or_none):
+            cue["effect"] = eff_or_none or {}
+            name = (eff_or_none or {}).get("name", "")
+            self._cue_panel.set_cue_effect(cue_row, name)
+            self._save_akai_config_auto()
+
+        act_none = menu.addAction("⭕  Aucun effet")
+        act_none.setCheckable(True)
+        act_none.setChecked(not current_eff)
+        act_none.triggered.connect(lambda: _set(None))
+        menu.addSeparator()
+
+        CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Permut", "Spécial", "Lyre", "Personnalisés", "Mes Effets"]
+        for cat in CATS:
+            cat_effs = [e for e in all_effects if e.get("category") == cat]
+            if not cat_effs:
+                continue
+            hdr = menu.addAction(f"  {cat.upper()}")
+            hdr.setEnabled(False)
+            for eff in cat_effs:
+                name_eff = eff.get("name", "")
+                emoji = eff.get("emoji", "⚡")
+                act = menu.addAction(f"  {emoji} {name_eff}")
+                act.setCheckable(True)
+                act.setChecked(name_eff == current_eff)
+                act.triggered.connect(lambda checked=False, e=dict(eff): _set(e))
+
+        # Positionner sur la cellule Effet
+        table = self._cue_panel._table
+        item  = table.item(cue_row, 4)
+        if item:
+            rect = table.visualItemRect(item)
+            pos  = table.viewport().mapToGlobal(rect.bottomLeft())
+        else:
+            pos = self._cue_panel.mapToGlobal(self._cue_panel.rect().center())
+        menu.exec(pos)
+
+    def _apply_cue_with_fade(self, mem_col: int, row: int, fader_val: int):
+        """Applique le cue actif avec fondu si fade > 0."""
+        cue = self._mem_active_cue(mem_col, row)
+        fade_secs = float(cue.get("fade", 0))
+        if fade_secs <= 0:
+            self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
+            return
+        # Snapshot de l'état courant
+        self._fade_from = [(p.level, QColor(p.base_color)) for p in self.projectors]
+        # Calcul de l'état cible
+        brightness = fader_val / 100.0
+        to_state = []
+        for ps in cue.get("projectors", []):
+            if ps["level"] <= 0:
+                to_state.append((0, QColor("black")))
+            else:
+                to_state.append((int(ps["level"] * brightness), QColor(ps["base_color"])))
+        while len(to_state) < len(self.projectors):
+            to_state.append((0, QColor("black")))
+        self._fade_to    = to_state
+        self._fade_start = time.time()
+        self._fade_dur   = fade_secs
+        self._fade_timer.start()
+        # Déclencher/arrêter l'effet du cue
+        eff_cfg = cue.get("effect") or {}
+        new_eff = eff_cfg.get("name", "") if eff_cfg.get("layers") else ""
+        cur_eff = getattr(self, "active_effect", None) or ""
+        if new_eff != cur_eff:
+            if cur_eff:
+                self.stop_effect()
+                self.active_effect = None
+                self.active_effect_config = {}
+            if new_eff:
+                self.active_effect = new_eff
+                self.active_effect_config = eff_cfg
+                self.start_effect(new_eff)
+
+    def _fade_tick(self):
+        elapsed = time.time() - self._fade_start
+        ratio = min(1.0, elapsed / max(0.01, self._fade_dur))
+        for i, p in enumerate(self.projectors):
+            if i >= len(self._fade_to):
+                break
+            fl, fc = (self._fade_from[i] if i < len(self._fade_from)
+                      else (0, QColor("black")))
+            tl, tc = self._fade_to[i]
+            level = int(fl + (tl - fl) * ratio)
+            rv = int(fc.red()   + (tc.red()   - fc.red())   * ratio)
+            gv = int(fc.green() + (tc.green() - fc.green()) * ratio)
+            bv = int(fc.blue()  + (tc.blue()  - fc.blue())  * ratio)
+            p.level = level
+            p.color = QColor(max(0,min(255,rv)), max(0,min(255,gv)), max(0,min(255,bv)))
+            if ratio >= 1.0:
+                p.base_color = tc
+        if ratio >= 1.0:
+            self._fade_timer.stop()
+
+    # ── Durée auto-avance ─────────────────────────────────────────────────────
+
+    def _start_cue_duration(self, mem_col: int, row: int):
+        """Démarre le timer de durée pour le cue actif (si duration > 0)."""
+        self._dur_timer.stop()
+        self._dur_progress_timer.stop()
+        if hasattr(self, "_cue_panel"):
+            self._cue_panel.set_progress(-1)
+        cue = self._mem_active_cue(mem_col, row)
+        dur = float(cue.get("duration", 0))
+        if dur <= 0:
+            return
+        self._dur_mem_col = mem_col
+        self._dur_row     = row
+        self._dur_start   = time.time()
+        self._dur_secs    = dur
+        self._dur_timer.start(int(dur * 1000))
+        self._dur_progress_timer.start()
+
+    def _update_cue_progress(self):
+        if self._dur_secs <= 0:
+            return
+        ratio = min(1.0, (time.time() - self._dur_start) / self._dur_secs)
+        if hasattr(self, "_cue_panel"):
+            self._cue_panel.set_progress(ratio)
+
+    def _on_duration_elapsed(self):
+        self._dur_progress_timer.stop()
+        mc, r = self._dur_mem_col, self._dur_row
+        if mc < 0 or self.memories[mc][r] is None:
+            return
+        mem = self.memories[mc][r]
+        self._mem_ensure_cues(mem)
+        if not self._mem_advance_cue(mc, r):
+            if hasattr(self, "_cue_panel"):
+                self._cue_panel.set_progress(-1)
+            return
+        cue_idx = self._mem_cue_idx.get((mc, r), 0)
+        col_akai = self._mem_col_to_fader(mc)
+        fader_val = self.faders[col_akai].value if col_akai in self.faders else 100
+        self._apply_cue_with_fade(mc, r, fader_val)
+        n = len(mem["cues"])
+        lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
+        self._log_message(f"MEM {mc+1}.{r+1} → {lbl} ({cue_idx+1}/{n})", "mem")
+        self._style_memory_pad(mc, r, active=True)
+        if hasattr(self, "_cue_panel") and self._cue_panel.mem_col == mc and self._cue_panel.row == r:
+            self._cue_panel.highlight_cue(cue_idx)
+        self._start_cue_duration(mc, r)
+
+    def _clear_memory_from_projectors(self, mem_col, row):
+        """Remet à zéro les projecteurs actifs du cue courant de cette mémoire."""
+        cue = self._mem_active_cue(mem_col, row)
+        for i, proj_state in enumerate(cue.get("projectors", [])):
             if i >= len(self.projectors):
                 break
             if proj_state["level"] > 0:
                 p = self.projectors[i]
                 p.level = 0
+                p.base_color = QColor("black")
                 p.color = QColor("black")
 
     def _apply_memory_to_projectors(self, mem_col, row, fader_value=None, trigger_effect=True):
-        """Applique directement une memoire sur les projecteurs.
-        Seuls les projecteurs avec level > 0 dans le snapshot sont modifies,
-        ce qui preserves les faders couleur (0-3) independants.
-        L'ecriture directe de p.level permet aux effets de detecter ces projecteurs."""
+        """Applique le cue courant de la mémoire sur les projecteurs."""
         mem = self.memories[mem_col][row]
         if not mem:
             return
+        col_akai = self._mem_col_to_fader(mem_col)
+        if col_akai in self._muted_faders:
+            return
+        self._mem_ensure_cues(mem)
         if fader_value is None:
             col_akai = self._mem_col_to_fader(mem_col)
             fader_value = self.faders[col_akai].value if col_akai in self.faders else 100
         brightness = fader_value / 100.0
-        for i, proj_state in enumerate(mem["projectors"]):
+
+        cue = self._mem_active_cue(mem_col, row)
+        for i, proj_state in enumerate(cue.get("projectors", [])):
             if i >= len(self.projectors):
                 break
             p = self.projectors[i]
-            # Pan/Tilt toujours appliqués (même si projecteur éteint)
             if "pan"  in proj_state: p.pan  = proj_state["pan"]
             if "tilt" in proj_state: p.tilt = proj_state["tilt"]
             if proj_state["level"] <= 0:
+                p.level = 0
+                p.base_color = QColor("black")
+                p.color = QColor("black")
                 continue
             level = int(proj_state["level"] * brightness)
             base_color = QColor(proj_state["base_color"])
@@ -2867,15 +3291,20 @@ class MainWindow(QMainWindow):
                 int(base_color.blue()  * level / 100.0)
             )
 
-        # Déclencher l'effet associé à cette mémoire (si configuré et pas déjà actif)
+        # Déclencher/arrêter l'effet du cue courant
         if trigger_effect:
-            eff_cfg = mem.get("effect")
-            if eff_cfg and eff_cfg.get("layers"):
-                eff_name = eff_cfg.get("name", "")
-                if getattr(self, 'active_effect', None) != eff_name:
-                    self.active_effect = eff_name
+            eff_cfg = cue.get("effect") or {}
+            new_eff = eff_cfg.get("name", "") if (eff_cfg.get("layers") and fader_value > 0) else ""
+            cur_eff = getattr(self, "active_effect", None) or ""
+            if new_eff != cur_eff:
+                if cur_eff:
+                    self.stop_effect()
+                    self.active_effect = None
+                    self.active_effect_config = {}
+                if new_eff:
+                    self.active_effect = new_eff
                     self.active_effect_config = eff_cfg
-                    self.start_effect(eff_name)
+                    self.start_effect(new_eff)
 
     def _style_memory_pad(self, mem_col, row, active):
         """Style visuel d'un pad mémoire — met à jour toutes les colonnes mappées sur ce MEM."""
@@ -2889,6 +3318,20 @@ class MainWindow(QMainWindow):
             return
 
         color = self._get_memory_pad_color(mem_col, row)
+        mem_d = self.memories[mem_col][row] or {}
+        # Cues : afficher n/N si multi-cue et actif
+        self._mem_ensure_cues(mem_d) if mem_d else None
+        n_cues = len(mem_d.get("cues", [])) if mem_d else 0
+        cue_idx = self._mem_cue_idx.get((mem_col, row), 0)
+        cur_cue = mem_d["cues"][min(cue_idx, n_cues-1)] if n_cues > 0 else {}
+        has_effect = bool(cur_cue.get("effect") or mem_d.get("effect") if mem_d else False)
+
+        if n_cues > 1:
+            pad.setText(f"{cue_idx+1}/{n_cues}")
+        elif has_effect:
+            pad.setText("⚡")
+        else:
+            pad.setText("")
         if color == QColor("black") or self.memories[mem_col][row] is None:
             pad.setProperty("base_color", QColor("black"))
             pad.setStyleSheet("""
@@ -2896,6 +3339,8 @@ class MainWindow(QMainWindow):
                     background: #1a1a1a;
                     border: 1px solid #1a1a1a;
                     border-radius: 4px;
+                    color: rgba(255,255,255,0.5);
+                    font-size: 8px;
                 }
             """)
         elif active:
@@ -2905,6 +3350,8 @@ class MainWindow(QMainWindow):
                     background: {color.name()};
                     border: 2px solid {color.lighter(130).name()};
                     border-radius: 4px;
+                    color: rgba(255,255,255,0.8);
+                    font-size: 8px;
                 }}
             """)
         else:
@@ -2915,6 +3362,8 @@ class MainWindow(QMainWindow):
                     background: {dim_color.name()};
                     border: 1px solid #2a2a2a;
                     border-radius: 4px;
+                    color: rgba(255,255,255,0.6);
+                    font-size: 8px;
                 }}
             """)
         pad.setToolTip(self._build_memory_tooltip(mem_col, row))
@@ -2946,8 +3395,11 @@ class MainWindow(QMainWindow):
         mem = self.memories[mem_col][row]
         if not mem:
             return QColor("black")
+        self._mem_ensure_cues(mem)
+        projectors = (mem["cues"][0].get("projectors", []) if mem.get("cues") else
+                      mem.get("projectors", []))
         color_counts = {}
-        for ms in mem["projectors"]:
+        for ms in projectors:
             if ms["level"] > 0:
                 c = ms["base_color"]
                 color_counts[c] = color_counts.get(c, 0) + 1
@@ -3016,34 +3468,58 @@ class MainWindow(QMainWindow):
         # Sauvegarde auto immediate
         self._save_akai_config_auto()
 
-    def _record_memory(self, mem_col, row):
-        """Capture l'etat visuel complet (projecteurs + HTP memoires) dans une memoire"""
-        overrides = self._compute_htp_overrides()
+    def _build_snapshot(self) -> dict:
+        """Construit un cue snapshot depuis l'état courant des projecteurs."""
         snapshot = []
         for p in self.projectors:
-            if overrides and id(p) in overrides:
-                level, color, base = overrides[id(p)]
-                snapshot.append({
-                    "group": p.group,
-                    "base_color": base.name(),
-                    "level": level,
-                    "pan":  getattr(p, 'pan',  128),
-                    "tilt": getattr(p, 'tilt', 128),
-                })
+            snapshot.append({
+                "group": p.group,
+                "base_color": p.base_color.name() if p.level > 0 else "#000000",
+                "level": p.level,
+                "pan":  getattr(p, 'pan',  128),
+                "tilt": getattr(p, 'tilt', 128),
+            })
+        return {"projectors": snapshot, "effect": {}, "duration": 0}
+
+    def _record_memory(self, mem_col, row):
+        """Capture l'état courant. Si la mémoire existe, propose Remplacer / Ajouter cue."""
+        cue = self._build_snapshot()
+        mem = self.memories[mem_col][row]
+
+        if mem is not None:
+            self._mem_ensure_cues(mem)
+            n = len(mem["cues"])
+            from PySide6.QtWidgets import QMessageBox
+            msg = QMessageBox(self)
+            msg.setWindowTitle(f"MEM {mem_col + 1}.{row + 1}")
+            msg.setText(f"Cette mémoire contient déjà {n} cue{'s' if n > 1 else ''}.")
+            msg.setStyleSheet("background:#1e1e1e; color:white;")
+            btn_replace = msg.addButton("Remplacer le cue actuel", QMessageBox.AcceptRole)
+            btn_add     = msg.addButton(f"Ajouter cue {n + 1}", QMessageBox.ActionRole)
+            msg.addButton("Annuler", QMessageBox.RejectRole)
+            msg.exec()
+            clicked = msg.clickedButton()
+            if clicked == btn_replace:
+                idx = self._mem_cue_idx.get((mem_col, row), 0)
+                idx = max(0, min(idx, n - 1))
+                cue["label"] = mem["cues"][idx].get("label", f"Cue {idx + 1}")
+                mem["cues"][idx] = cue
+            elif clicked == btn_add:
+                cue["label"] = f"Cue {n + 1}"
+                mem["cues"].append(cue)
+                if hasattr(self, '_cue_panel') and self._cue_panel.mem_col == mem_col \
+                        and self._cue_panel.row == row:
+                    self._cue_panel._refresh()
             else:
-                snapshot.append({
-                    "group": p.group,
-                    "base_color": p.base_color.name(),
-                    "level": p.level,
-                    "pan":  getattr(p, 'pan',  128),
-                    "tilt": getattr(p, 'tilt', 128),
-                })
-        self.memories[mem_col][row] = {"projectors": snapshot}
+                return
+        else:
+            cue["label"] = "Cue 1"
+            self.memories[mem_col][row] = {"cues": [cue], "loop": True}
+
         col_akai = self._mem_col_to_fader(mem_col)
         is_active = self.active_memory_pads.get(col_akai) == row
         self._style_memory_pad(mem_col, row, active=is_active)
         self._update_memory_pad_led(mem_col, row, active=is_active)
-        # Sauvegarde auto immediate
         self._save_akai_config_auto()
 
     def _show_memory_context_menu(self, pos, mem_col, row, btn):
@@ -3092,6 +3568,14 @@ class MainWindow(QMainWindow):
             replace_action.triggered.connect(_record_and_feedback)
             clear_action = menu.addAction("Effacer")
             clear_action.triggered.connect(lambda: self._clear_memory(mem_col, row))
+
+            mem_tmp = self.memories[mem_col][row]
+            self._mem_ensure_cues(mem_tmp)
+            n_cues = len(mem_tmp.get("cues", []))
+            cues_lbl = f"📋  Cues  ({n_cues})" if n_cues > 1 else "📋  Cues"
+            cues_action = menu.addAction(cues_lbl)
+            cues_action.triggered.connect(lambda: self._open_cue_editor(mem_col, row))
+
             menu.addSeparator()
 
             # Sous-menu couleur du pad
@@ -3116,6 +3600,46 @@ class MainWindow(QMainWindow):
                 px.fill(col)
                 action = color_menu.addAction(QIcon(px), name)
                 action.triggered.connect(lambda _, c=col: self._set_memory_custom_color(mem_col, row, c))
+
+            # Sous-menu effet
+            menu.addSeparator()
+            mem_data = self.memories[mem_col][row]
+            current_effect = (mem_data or {}).get("effect", {}).get("name") if mem_data else None
+            eff_label = f"⚡ Effet : {current_effect}" if current_effect else "⚡ Ajouter un effet"
+            effect_menu = menu.addMenu(eff_label)
+            effect_menu.setStyleSheet(menu_style)
+
+            all_effects = []
+            try:
+                from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+                all_effects = list(BUILTIN_EFFECTS) + _load_custom_effects()
+            except Exception:
+                pass
+
+            def _apply_effect(eff_or_none, mc=mem_col, r=row):
+                self._set_memory_effect(mc, r, eff_or_none)
+                col_akai = self._mem_col_to_fader(mc)
+                self._style_memory_pad(mc, r, self.active_memory_pads.get(col_akai) == r)
+
+            act_none = effect_menu.addAction("⭕  Aucun")
+            act_none.setCheckable(True)
+            act_none.setChecked(not current_effect)
+            act_none.triggered.connect(lambda: _apply_effect(None))
+            effect_menu.addSeparator()
+
+            CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
+            for cat in CATS:
+                cat_effs = [e for e in all_effects if e.get("category") == cat]
+                if not cat_effs:
+                    continue
+                hdr = effect_menu.addAction(f"  {cat.upper()}")
+                hdr.setEnabled(False)
+                for eff in cat_effs:
+                    name_eff = eff.get("name", "")
+                    act = effect_menu.addAction(f"  {name_eff}")
+                    act.setCheckable(True)
+                    act.setChecked(name_eff == current_effect)
+                    act.triggered.connect(lambda checked=False, e=dict(eff): _apply_effect(e))
 
         menu.exec(btn.mapToGlobal(pos))
 
@@ -3197,6 +3721,8 @@ class MainWindow(QMainWindow):
             return
 
         if slot["type"] == "fx":
+            if index in self._muted_faders:
+                return
             fx_col = slot.get("fx_col", 0)
             if 0 <= fx_col < _FX_COL_MAX:
                 prev_amp = self.fx_amplitudes[fx_col]
@@ -3207,6 +3733,9 @@ class MainWindow(QMainWindow):
                     for p in self.projectors:
                         p.color = QColor("black")
                     self.send_dmx_update()
+            return
+
+        if index in self._muted_faders:
             return
 
         groups = self._slot_groups(slot)
@@ -3252,25 +3781,37 @@ class MainWindow(QMainWindow):
             return
         slot = self._fader_map[index]
 
+        if active:
+            self._muted_faders.add(index)
+        else:
+            self._muted_faders.discard(index)
+
         if slot["type"] == "memory":
-            mem_col = slot["mem_col"]
-            active_row = self.active_memory_pads.get(index)
-            if active_row is None or not self.memories[mem_col][active_row]:
-                return
-            mem = self.memories[mem_col][active_row]
-            for i, proj_state in enumerate(mem["projectors"]):
-                if i >= len(self.projectors):
-                    break
-                if proj_state["level"] > 0:
-                    self.projectors[i].muted = active
+            # Forcer un recalcul DMX : HTP skipera ou réappliquera cette mémoire
+            self.send_dmx_update()
             return
 
-        groups = self._slot_groups(slot)
-        if not groups:
+        if slot["type"] == "fx":
+            self.send_dmx_update()
             return
+
+        # Groupe : zéroter les projecteurs du groupe immédiatement
+        groups = self._slot_groups(slot)
         for p in self.projectors:
             if p.group in groups:
-                p.muted = active
+                if active:
+                    p.level = 0
+                    p.color = QColor("black")
+                else:
+                    # Restaurer depuis la valeur du fader
+                    fader_val = self.faders[index].value if index in self.faders else 0
+                    brightness = fader_val / 100.0
+                    p.level = fader_val
+                    p.color = QColor(
+                        int(p.base_color.red() * brightness),
+                        int(p.base_color.green() * brightness),
+                        int(p.base_color.blue() * brightness))
+        self.send_dmx_update()
 
     def toggle_effect(self, effect_idx):
         """Active/desactive un effet"""
@@ -4269,7 +4810,12 @@ class MainWindow(QMainWindow):
             if t >= duration:
                 QTimer.singleShot(0, self._stop_once_effect)
                 return
-        projectors = [p for p in self.projectors if p.group != "fumee"]
+        _LETTER_TO_GROUP = {"A": "face", "B": "lat", "C": "contre",
+                            "D": "douche1", "E": "douche2", "F": "douche3"}
+        target_letters = cfg.get("target_groups", [])
+        allowed_groups = {_LETTER_TO_GROUP[l] for l in target_letters if l in _LETTER_TO_GROUP}
+        projectors = [p for p in self.projectors
+                      if p.group != "fumee" and (not allowed_groups or p.group in allowed_groups)]
         n = len(projectors)
         if n == 0:
             return
@@ -4317,7 +4863,8 @@ class MainWindow(QMainWindow):
                 forme     = ld.get("forme", "Sinus")
                 attr      = ld.get("attribute", "Dimmer")
 
-                fader_mult = max(0.05, self.effect_speed / 100.0)
+                effective_speed = cfg.get("speed_override", self.effect_speed)
+                fader_mult = max(0.05, effective_speed / 100.0)
                 freq = (0.3 + speed / 100.0 * 3.5) * fader_mult
                 sp   = spread / 100.0
                 if direction == 0:
@@ -4647,7 +5194,23 @@ class MainWindow(QMainWindow):
             """)
 
     def _go_advance(self):
-        """Mode GO : avance à la prochaine mémoire enregistrée."""
+        """Mode GO : avance au cue suivant si multi-cue, sinon à la prochaine mémoire."""
+        # Si un pad actif multi-cue → avancer son cue
+        for col_akai, row in self.active_memory_pads.items():
+            mem_col = self._fader_to_mem_col(col_akai)
+            mem = self.memories[mem_col][row] if mem_col is not None else None
+            if mem:
+                self._mem_ensure_cues(mem)
+                if len(mem.get("cues", [])) > 1:
+                    self._mem_advance_cue(mem_col, row)
+                    fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
+                    self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
+                    cue_idx = self._mem_cue_idx.get((mem_col, row), 0)
+                    n = len(mem["cues"])
+                    lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
+                    self._log_message(f"▶  {lbl}  ({cue_idx+1}/{n})", "mem")
+                    self._style_memory_pad(mem_col, row, active=True)
+                    return
         if self._go_col == -1:
             next_col, next_row = 0, 0
         else:
@@ -4685,7 +5248,22 @@ class MainWindow(QMainWindow):
         self._show_mem_toast(f"▶  MEM {next_col + 1}.{next_row + 1}")
 
     def _go_back(self):
-        """Mode GO : recule à la mémoire précédente."""
+        """Mode GO : recule au cue précédent si multi-cue, sinon à la mémoire précédente."""
+        for col_akai, row in self.active_memory_pads.items():
+            mem_col = self._fader_to_mem_col(col_akai)
+            mem = self.memories[mem_col][row] if mem_col is not None else None
+            if mem:
+                self._mem_ensure_cues(mem)
+                if len(mem.get("cues", [])) > 1:
+                    self._mem_go_back_cue(mem_col, row)
+                    fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
+                    self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
+                    cue_idx = self._mem_cue_idx.get((mem_col, row), 0)
+                    n = len(mem["cues"])
+                    lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
+                    self._log_message(f"◀  {lbl}  ({cue_idx+1}/{n})", "mem")
+                    self._style_memory_pad(mem_col, row, active=True)
+                    return
         if self._go_col == -1:
             # Pas encore démarré → aller à la dernière mémoire disponible
             next_col, next_row = 7, 7
@@ -4908,6 +5486,26 @@ class MainWindow(QMainWindow):
             p.shutter      = 255
             p.color_wheel  = 0
             p.prism        = 0
+
+        # Remettre tous les mutes à zéro + éteindre LEDs physiques
+        for idx in list(self._muted_faders):
+            if 0 <= idx < len(self.fader_buttons):
+                self.fader_buttons[idx].active = False
+                self.fader_buttons[idx].update_style()
+            if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
+                self.midi_handler.midi_out.send_message([0x90, 100 + idx, 0])
+        self._muted_faders.clear()
+
+        # Remettre tous les cues actifs au premier cue
+        for (mc, r) in list(self._mem_cue_idx.keys()):
+            self._mem_cue_idx[(mc, r)] = 0
+        self._dur_timer.stop()
+        self._dur_progress_timer.stop()
+        if hasattr(self, "_cue_panel"):
+            self._cue_panel.set_progress(-1)
+            mc, r = self._cue_panel.mem_col, self._cue_panel.row
+            if mc >= 0:
+                self._cue_panel.highlight_cue(0)
 
         self._log_message("CLEAR — AKAI remis à zéro", "info")
 
@@ -11751,6 +12349,13 @@ class MainWindow(QMainWindow):
         try:
             self.midi_handler.connect_akai()
             if self.midi_handler.midi_in and self.midi_handler.midi_out:
+                # Éteindre les LEDs mute sur l'AKAI physique
+                for idx in range(8):
+                    self.midi_handler.midi_out.send_message([0x90, 100 + idx, 0])
+                self._muted_faders.clear()
+                for btn in self.fader_buttons:
+                    btn.active = False
+                    btn.update_style()
                 QTimer.singleShot(200, self.activate_default_white_pads)
                 QTimer.singleShot(300, self.turn_off_all_effects)
                 # Synchroniser les faders UI avec les niveaux actuels des projecteurs
@@ -12454,10 +13059,17 @@ class MainWindow(QMainWindow):
 
         for fi, mem_col in self._bank_memory_slots():
             col_akai = fi
+            if col_akai in self._muted_faders:
+                continue
             fv = self.faders[col_akai].value if col_akai in self.faders else 0
             active_row = self.active_memory_pads.get(col_akai)
             if fv > 0 and active_row is not None and self.memories[mem_col][active_row]:
-                mem_projs = self.memories[mem_col][active_row]["projectors"]
+                mem = self.memories[mem_col][active_row]
+                self._mem_ensure_cues(mem)
+                cue_idx = self._mem_cue_idx.get((mem_col, active_row), 0)
+                cues = mem.get("cues", [])
+                cue = cues[min(cue_idx, len(cues)-1)] if cues else {}
+                mem_projs = cue.get("projectors", [])
                 for i, proj in enumerate(self.projectors):
                     if i < len(mem_projs):
                         ms = mem_projs[i]
@@ -12494,6 +13106,8 @@ class MainWindow(QMainWindow):
         saved = []
         for col_idx, btn in self.active_pads.items():
             if btn is None:
+                continue
+            if col_idx in self._muted_faders:
                 continue
             color = btn.property("base_color")
             if color is None:

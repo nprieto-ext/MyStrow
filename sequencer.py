@@ -577,6 +577,18 @@ class Sequencer(QFrame):
             elif r2 in self.image_durations:
                 del self.image_durations[r2]
 
+            # Swap sequences (rec lumière)
+            seq1 = self.sequences.get(r1)
+            seq2 = self.sequences.get(r2)
+            if seq2 is not None:
+                self.sequences[r1] = seq2
+            elif r1 in self.sequences:
+                del self.sequences[r1]
+            if seq1 is not None:
+                self.sequences[r2] = seq1
+            elif r2 in self.sequences:
+                del self.sequences[r2]
+
             if self.current_row == r1:
                 self.current_row = r2
             elif self.current_row == r2:
@@ -1257,10 +1269,30 @@ class Sequencer(QFrame):
 
                     # Verifier que le fichier existe
                     if path and not os.path.isfile(path):
-                        QMessageBox.critical(
-                            self, tr("seq_file_not_found_title"),
-                            tr("seq_file_not_found_msg", name=Path(path).name))
-                        return
+                        msg = QMessageBox(self)
+                        msg.setIcon(QMessageBox.Critical)
+                        msg.setWindowTitle(tr("seq_file_not_found_title"))
+                        msg.setText(tr("seq_file_not_found_msg", name=Path(path).name))
+                        btn_ok = msg.addButton(QMessageBox.Ok)
+                        btn_locate = msg.addButton(tr("seq_locate_file"), QMessageBox.ActionRole)
+                        msg.exec()
+                        if msg.clickedButton() == btn_locate:
+                            start_dir = str(Path(path).parent) if Path(path).parent.exists() else str(Path.home())
+                            new_path, _ = QFileDialog.getOpenFileName(self, tr("seq_locate_file"), start_dir, MEDIA_EXTENSIONS_FILTER)
+                            if new_path:
+                                item.setData(Qt.UserRole, new_path)
+                                item.setText(Path(new_path).name)
+                                icon_item = self.table.item(row, 0)
+                                if icon_item:
+                                    new_icon = media_icon(new_path)
+                                    icon_text = {"audio": "\U0001f3b5", "video": "\U0001f3ac", "image": "\U0001f5bc"}.get(new_icon, "?")
+                                    icon_item.setText(icon_text)
+                                    icon_item.setData(Qt.UserRole, icon_text)
+                                path = new_path
+                            else:
+                                return
+                        else:
+                            return
 
                     vol = int(vol_item.text()) if vol_item.text() not in ("--", "") else 100
 
@@ -1583,10 +1615,11 @@ class Sequencer(QFrame):
                         'color2': QColor(clip_data['color2']) if clip_data.get('color2') else None,
                         'intensity': intensity,
                         'effect': clip_data.get('effect', None),
-                        'effect_speed': clip_data.get('effect_speed', 50),
-                        'effect_name':   clip_data.get('effect_name', ''),
-                        'effect_type':   clip_data.get('effect_type', ''),
-                        'effect_layers': clip_data.get('effect_layers', []),
+                        'effect_speed':         clip_data.get('effect_speed', 50),
+                        'effect_name':          clip_data.get('effect_name', ''),
+                        'effect_type':          clip_data.get('effect_type', ''),
+                        'effect_layers':        clip_data.get('effect_layers', []),
+                        'effect_target_groups': clip_data.get('effect_target_groups', []),
                         'memory_ref':    clip_data.get('memory_ref'),
                         'seq_intensity': intensity,
                     }
@@ -1633,8 +1666,10 @@ class Sequencer(QFrame):
             self._stop_timeline_effect()
             return
 
-        # Déjà le bon effet en cours → ne pas redémarrer
-        if getattr(self, '_timeline_effect_name', None) == eff_name:
+        # Déjà le bon effet en cours avec mêmes paramètres → ne pas redémarrer
+        same_group = getattr(self, '_timeline_effect_group', None) == tuple(effet_clip.get('effect_target_groups', []))
+        same_speed = getattr(self, '_timeline_effect_speed', None) == effet_clip.get('effect_speed', 50)
+        if getattr(self, '_timeline_effect_name', None) == eff_name and same_group and same_speed:
             return
 
         # Charger la config de l'effet (layers depuis BUILTIN_EFFECTS ou custom)
@@ -1652,16 +1687,22 @@ class Sequencer(QFrame):
             except Exception:
                 pass
 
+        target_groups  = effet_clip.get('effect_target_groups', [])
+        speed_override = effet_clip.get('effect_speed', 50)
         cfg = {
-            'name':      eff_name,
-            'type':      eff_type,
-            'layers':    eff_layers,
-            'play_mode': 'loop',
+            'name':            eff_name,
+            'type':            eff_type,
+            'layers':          eff_layers,
+            'play_mode':       'loop',
+            'target_groups':   target_groups,
+            'speed_override':  speed_override,
         }
 
         # Démarrer l'effet (initialiser l'état sans démarrer le effect_timer —
         # la timeline appelle update_effect() elle-même à chaque tick)
-        self._timeline_effect_name = eff_name
+        self._timeline_effect_name  = eff_name
+        self._timeline_effect_group = tuple(effet_clip.get('effect_target_groups', []))
+        self._timeline_effect_speed = effet_clip.get('effect_speed', 50)
         main_win.active_effect        = eff_name
         main_win.active_effect_config = cfg
         # Initialiser les compteurs d'état de l'effet
