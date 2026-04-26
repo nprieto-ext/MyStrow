@@ -63,6 +63,7 @@ _BASE_HTML = """<!DOCTYPE html>
           color:#000000; font-weight:bold; text-decoration:none; border-radius:4px; font-size:14px; }}
   .footer {{ background:#111111; padding:14px 32px; color:#555555; font-size:11px;
              border-top:1px solid #2a2a2a; }}
+  .footer a {{ color:#00d4ff; text-decoration:none; }}
 </style>
 </head>
 <body>
@@ -70,7 +71,11 @@ _BASE_HTML = """<!DOCTYPE html>
   <div class="header"><h1>MyStrow</h1></div>
   <div class="body">{content}</div>
   <div class="footer">MyStrow · Logiciel de contrôle lumière professionnel<br>
-  Cet email est envoyé automatiquement, merci de ne pas y répondre.</div>
+  Cet email est envoyé automatiquement, merci de ne pas y répondre.<br><br>
+  Suivez-nous :&nbsp;
+  <a href="https://www.instagram.com/niko_mystrow_dmx/" target="_blank">Instagram</a>
+  &nbsp;·&nbsp;
+  <a href="https://www.tiktok.com/@niko_mystrow" target="_blank">TikTok</a></div>
 </div>
 </body></html>"""
 

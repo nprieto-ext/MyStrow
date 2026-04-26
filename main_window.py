@@ -79,6 +79,7 @@ from audio_ai import AudioColorAI
 from midi_handler import MIDIHandler
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
 from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy, _find_free_canvas_pos
+from plan_3d import Plan3DWindow
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
@@ -270,12 +271,13 @@ _AKAI_SLOT_OPTIONS = (
 
 
 class AkaiDiagnosticDialog(QDialog):
-    """Fenêtre de diagnostic AKAI : statut ports, activité MIDI en direct."""
+    """Fenêtre de diagnostic contrôleur MIDI : statut ports, activité en direct."""
 
     def __init__(self, midi_handler, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Diagnostic AKAI APC Mini MK2")
-        self.setFixedSize(420, 320)
+        ctrl_name = getattr(midi_handler, 'controller_name', '') or "Contrôleur MIDI"
+        self.setWindowTitle(f"Diagnostic — {ctrl_name}")
+        self.setFixedSize(440, 360)
         self.setModal(True)
         self._midi = midi_handler
         self._activity_count = 0
@@ -297,10 +299,15 @@ class AkaiDiagnosticDialog(QDialog):
         root.setSpacing(14)
 
         # ── Titre ──────────────────────────────────────────────────────────
-        title = QLabel("🎹  AKAI APC Mini MK2")
+        title = QLabel(f"🎹  {ctrl_name}")
         title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         title.setStyleSheet("color:#fff;")
         root.addWidget(title)
+
+        # Sous-titre : contrôleurs supportés
+        supported_lbl = QLabel("Supportés : AKAI APC Mini · Launchpad Mini MK1/MK2 · AKAI MIDImix")
+        supported_lbl.setStyleSheet("color:#555; font-size:9px;")
+        root.addWidget(supported_lbl)
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("background:#222; max-height:1px;")
@@ -327,8 +334,8 @@ class AkaiDiagnosticDialog(QDialog):
         except Exception:
             in_ok = out_ok = False
 
-        root.addLayout(_port_row("Entrée MIDI  (APC mini → logiciel)", in_ok))
-        root.addLayout(_port_row("Sortie MIDI  (logiciel → LEDs APC)", out_ok))
+        root.addLayout(_port_row("Entrée MIDI  (contrôleur → logiciel)", in_ok))
+        root.addLayout(_port_row("Sortie MIDI  (logiciel → LEDs contrôleur)", out_ok))
 
         # ── Ports disponibles ──────────────────────────────────────────────
         try:
@@ -1555,6 +1562,8 @@ class MainWindow(QMainWindow):
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_contact"), self._show_contact_dialog)
         about_menu.addAction(tr("menu_submit_idea"), self._show_idea_dialog)
+        if get_language() == "fr":
+            about_menu.addAction("📺 Tutoriels", self._show_tutorials_dialog)
         about_menu.addSeparator()
         lang_menu = about_menu.addMenu(tr("menu_language"))
         act_fr = lang_menu.addAction(tr("menu_lang_fr"))
@@ -1792,6 +1801,7 @@ class MainWindow(QMainWindow):
         if not self._license.dmx_allowed:
             self.plan_de_feu.set_dmx_blocked()
         plan_scroll.setWidget(self.plan_de_feu)
+        self._plan3d = Plan3DWindow(self)
         plan_scroll.setStyleSheet("QScrollArea { border: none; }")
 
 
@@ -3274,8 +3284,10 @@ class MainWindow(QMainWindow):
             if i >= len(self.projectors):
                 break
             p = self.projectors[i]
-            if "pan"  in proj_state: p.pan  = proj_state["pan"]
-            if "tilt" in proj_state: p.tilt = proj_state["tilt"]
+            if "pan"  in proj_state:
+                v = proj_state["pan"];  p.pan  = v * 256 if v <= 255 else v
+            if "tilt" in proj_state:
+                v = proj_state["tilt"]; p.tilt = v * 256 if v <= 255 else v
             if proj_state["level"] <= 0:
                 p.level = 0
                 p.base_color = QColor("black")
@@ -3476,8 +3488,8 @@ class MainWindow(QMainWindow):
                 "group": p.group,
                 "base_color": p.base_color.name() if p.level > 0 else "#000000",
                 "level": p.level,
-                "pan":  getattr(p, 'pan',  128),
-                "tilt": getattr(p, 'tilt', 128),
+                "pan":  getattr(p, 'pan',  32768),
+                "tilt": getattr(p, 'tilt', 32768),
             })
         return {"projectors": snapshot, "effect": {}, "duration": 0}
 
@@ -3846,7 +3858,7 @@ class MainWindow(QMainWindow):
                     for p in self.projectors:
                         self.effect_saved_colors[id(p)] = (
                             p.base_color, p.color, p.level,
-                            getattr(p, 'pan', 128), getattr(p, 'tilt', 128)
+                            getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)
                         )
                     if not hasattr(self, 'effect_timer'):
                         self.effect_timer = QTimer()
@@ -4242,7 +4254,7 @@ class MainWindow(QMainWindow):
 
         for p in self.projectors:
             self.effect_saved_colors[id(p)] = (p.base_color, p.color, p.level,
-                                               getattr(p, 'pan', 128), getattr(p, 'tilt', 128))
+                                               getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768))
 
         if not hasattr(self, 'effect_timer'):
             self.effect_timer = QTimer()
@@ -4907,13 +4919,13 @@ class MainWindow(QMainWindow):
                 elif attr in ("Pan", "Tilt"):
                     saved = self.effect_saved_colors.get(id(proj))
                     if attr == "Pan":
-                        center = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 128)
-                        amplitude = (size / 100.0) * 128
-                        proj.pan = int(max(0, min(255, center + (scaled - 0.5) * 2 * amplitude)))
+                        center = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 32768)
+                        amplitude = (size / 100.0) * 32768
+                        proj.pan = int(max(0, min(65535, center + (scaled - 0.5) * 2 * amplitude)))
                     else:
-                        center = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 128)
-                        amplitude = (size / 100.0) * 128
-                        proj.tilt = int(max(0, min(255, center + (scaled - 0.5) * 2 * amplitude)))
+                        center = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 32768)
+                        amplitude = (size / 100.0) * 32768
+                        proj.tilt = int(max(0, min(65535, center + (scaled - 0.5) * 2 * amplitude)))
 
                 elif attr == "Pan/Tilt":
                     # Forme de trajectoire couplée Pan+Tilt
@@ -4935,16 +4947,16 @@ class MainWindow(QMainWindow):
                         pan_freq = (0.3 + speed * pan_mult / 100.0 * 3.5) * fader_mult
                         pan_x = (pan_freq * t + i / max(n, 1) * sp + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
-                        c_pan = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 128)
-                        proj.pan = int(max(0, min(255, c_pan + (pan_raw - 0.5) * 2 * amplitude)))
+                        c_pan = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 32768)
+                        proj.pan = int(max(0, min(65535, c_pan + (pan_raw - 0.5) * 2 * amplitude)))
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
                         tilt_freq = (0.3 + speed * tilt_mult / 100.0 * 3.5) * fader_mult
                         tilt_x = (tilt_freq * t + i / max(n, 1) * sp + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
-                        c_tilt = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 128)
-                        proj.tilt = int(max(0, min(255, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
+                        c_tilt = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 32768)
+                        proj.tilt = int(max(0, min(65535, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
 
                 elif attr == "Zoom":
                     proj.zoom = int(max(0, min(255, scaled * 255)))
@@ -5478,8 +5490,8 @@ class MainWindow(QMainWindow):
             p.white_boost  = 0
             p.amber_boost  = 0
             p.orange_boost = 0
-            p.pan          = 128
-            p.tilt         = 128
+            p.pan          = 32768
+            p.tilt         = 32768
             p.gobo         = 0
             p.zoom         = 0
             p.shutter      = 255
@@ -6064,10 +6076,10 @@ class MainWindow(QMainWindow):
                         p.shutter = 255
 
                     # Figure 8 lissajous
-                    pan_val  = 128 + int(amp * math.sin(ph + phi))
-                    tilt_val = 128 + int(amp / 2.0 * math.sin(2.0 * (ph + phi)))
-                    p.pan  = max(0, min(255, pan_val))
-                    p.tilt = max(0, min(255, tilt_val))
+                    pan_val  = 32768 + int(amp * 256 * math.sin(ph + phi))
+                    tilt_val = 32768 + int(amp * 128 * math.sin(2.0 * (ph + phi)))
+                    p.pan  = max(0, min(65535, pan_val))
+                    p.tilt = max(0, min(65535, tilt_val))
 
                     # Couleur (seulement si groupe absent de state)
                     if p.group not in state:
@@ -8173,6 +8185,10 @@ class MainWindow(QMainWindow):
         """Ouvre le dialogue A propos / mises à jour"""
         AboutDialog(self).exec()
 
+    def _show_tutorials_dialog(self):
+        from tutorials_dialog import TutorialsDialog
+        TutorialsDialog(self).exec()
+
     def _change_language(self, lang: str):
         set_language(lang)
         label = "Français" if lang == "fr" else "English"
@@ -8897,6 +8913,19 @@ class MainWindow(QMainWindow):
                                          universe=getattr(proj, 'universe', 0),
                                          profile=profile)
 
+    def toggle_3d_window(self):
+        """Affiche ou cache la fenêtre 3D du plan de feu."""
+        if self._plan3d.isVisible():
+            self._plan3d.hide()
+            if hasattr(self.plan_de_feu, 'btn_3d'):
+                self.plan_de_feu.btn_3d.setChecked(False)
+        else:
+            self._plan3d.init_scene(self.projectors)
+            self._plan3d.show()
+            self._plan3d.raise_()
+            if hasattr(self.plan_de_feu, 'btn_3d'):
+                self.plan_de_feu.btn_3d.setChecked(True)
+
     def show_dmx_patch_config(self, select_idx=None):
         """Interface de configuration DMX — master-detail + Plan de feu"""
         from plan_de_feu import FixtureCanvas, NewPlanWizard
@@ -9493,6 +9522,60 @@ class MainWindow(QMainWindow):
         lbl_conflict_det.setStyleSheet("color:#ff6644; font-size:11px; padding:2px 0; border:none;")
         lbl_conflict_det.setVisible(False)
         fv.addWidget(lbl_conflict_det)
+        fv.addWidget(_hdiv())
+
+        fv.addWidget(_sec("Visualisation 3D"))
+        height_row = QHBoxLayout()
+        height_row.setSpacing(8)
+        lbl_height = QLabel("Hauteur de suspension")
+        lbl_height.setStyleSheet("color:#888; font-size:11px; border:none; background:transparent;")
+        from PySide6.QtWidgets import QDoubleSpinBox as _DSB
+        height_sb = _DSB()
+        height_sb.setRange(0.0, 20.0)
+        height_sb.setSingleStep(0.5)
+        height_sb.setValue(7.0)
+        height_sb.setSuffix(" m")
+        height_sb.setFixedWidth(90)
+        height_sb.setFixedHeight(32)
+        height_sb.setStyleSheet(
+            "QDoubleSpinBox { background:#171717; color:#00d4ff; border:1px solid #242424;"
+            " border-radius:7px; padding:4px 8px; font-size:13px; font-weight:bold; }"
+            "QDoubleSpinBox:focus { border-color:#00d4ff44; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width:0; }"
+        )
+        lbl_height_hint = QLabel("(hauteur en scène pour la 3D)")
+        lbl_height_hint.setStyleSheet("color:#444; font-size:10px; border:none; background:transparent;")
+        height_row.addWidget(lbl_height)
+        height_row.addWidget(height_sb)
+        height_row.addWidget(lbl_height_hint)
+        height_row.addStretch()
+        fv.addLayout(height_row)
+
+        rot_row = QHBoxLayout()
+        rot_row.setSpacing(8)
+        lbl_rot = QLabel("Rotation corps")
+        lbl_rot.setStyleSheet("color:#888; font-size:11px; border:none; background:transparent;")
+        from PySide6.QtWidgets import QSpinBox as _SB2
+        body_rot_sb = _SB2()
+        body_rot_sb.setRange(0, 359)
+        body_rot_sb.setSuffix("°")
+        body_rot_sb.setWrapping(True)
+        body_rot_sb.setValue(0)
+        body_rot_sb.setFixedWidth(90)
+        body_rot_sb.setFixedHeight(32)
+        body_rot_sb.setStyleSheet(
+            "QSpinBox { background:#171717; color:#00d4ff; border:1px solid #242424;"
+            " border-radius:7px; padding:4px 8px; font-size:13px; font-weight:bold; }"
+            "QSpinBox:focus { border-color:#00d4ff44; }"
+            "QSpinBox::up-button, QSpinBox::down-button { width:0; }"
+        )
+        lbl_rot_hint = QLabel("(orientation sur la truss)")
+        lbl_rot_hint.setStyleSheet("color:#444; font-size:10px; border:none; background:transparent;")
+        rot_row.addWidget(lbl_rot)
+        rot_row.addWidget(body_rot_sb)
+        rot_row.addWidget(lbl_rot_hint)
+        rot_row.addStretch()
+        fv.addLayout(rot_row)
         fv.addWidget(_hdiv())
 
         fv.addWidget(_sec("Profil DMX"))
@@ -10173,6 +10256,14 @@ class MainWindow(QMainWindow):
             addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);           addr_sb.blockSignals(False)
             _update_addr_range()
             _update_chips(fd['profile'])
+            proj_fh = getattr(self.projectors[idx], 'fixture_height', None)
+            height_sb.blockSignals(True)
+            height_sb.setValue(proj_fh if proj_fh is not None else 7.0)
+            height_sb.blockSignals(False)
+            proj_br = getattr(self.projectors[idx], 'body_rotation', 0.0)
+            body_rot_sb.blockSignals(True)
+            body_rot_sb.setValue(int(proj_br))
+            body_rot_sb.blockSignals(False)
             if idx in conflicts:
                 others = []
                 for j, fd2 in enumerate(fixture_data):
@@ -10200,10 +10291,12 @@ class MainWindow(QMainWindow):
             fd['universe']      = uni_cb.currentData()
             fd['start_address'] = addr_sb.value()
             proj.name           = fd['name']
-            proj.fixture_type   = fd['fixture_type']
-            proj.group          = fd['group']
-            proj.universe       = fd['universe']
-            proj.start_address  = fd['start_address']
+            proj.fixture_type    = fd['fixture_type']
+            proj.group           = fd['group']
+            proj.universe        = fd['universe']
+            proj.start_address   = fd['start_address']
+            proj.fixture_height  = height_sb.value()
+            proj.body_rotation   = float(body_rot_sb.value())
             if fd.get('profile'):
                 proj.dmx_profile = fd['profile']
             _apply_fd_to_dmx()
@@ -11890,6 +11983,10 @@ class MainWindow(QMainWindow):
                 'profile': self.dmx._get_profile(proj_key),
                 'pos_x': getattr(proj, 'canvas_x', None),
                 'pos_y': getattr(proj, 'canvas_y', None),
+                'pos_3d_x': getattr(proj, 'pos_3d_x', None),
+                'pos_3d_z': getattr(proj, 'pos_3d_z', None),
+                'fixture_height':  getattr(proj, 'fixture_height', None),
+                'body_rotation':   getattr(proj, 'body_rotation', 0.0),
                 'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                 'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
@@ -11904,6 +12001,8 @@ class MainWindow(QMainWindow):
                 json.dump(config, f, indent=2)
         except Exception as e:
             print(f"Erreur sauvegarde patch: {e}")
+        if hasattr(self, '_plan3d') and self._plan3d.isVisible():
+            self._plan3d.refresh(self.projectors)
 
     def load_dmx_patch_config(self):
         """Charge la configuration du patch DMX"""
@@ -11926,6 +12025,14 @@ class MainWindow(QMainWindow):
                         p.start_address = fd.get('start_address', (i * 10) + 1)
                         p.canvas_x = fd.get('pos_x', None)
                         p.canvas_y = fd.get('pos_y', None)
+                        p3x = fd.get('pos_3d_x')
+                        p3z = fd.get('pos_3d_z')
+                        if p3x is not None: p.pos_3d_x = float(p3x)
+                        if p3z is not None: p.pos_3d_z = float(p3z)
+                        fh = fd.get('fixture_height')
+                        if fh is not None:
+                            p.fixture_height = float(fh)
+                        p.body_rotation = float(fd.get('body_rotation', 0.0))
                         if fd.get('fixture_type') == "Machine a fumee":
                             p.fan_speed = 0
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
@@ -13194,6 +13301,9 @@ class MainWindow(QMainWindow):
             if overrides:
                 for i, proj in enumerate(self.projectors):
                     proj.level, proj.color, proj.base_color = saved_htp[i]
+        elif self.dmx.connected and getattr(self.dmx, 'transport', '') == 'enttec':
+            # ENTTEC : envoyer des frames nulles pour garder le lien actif (évite le timeout)
+            self.dmx.send_dmx()
 
         # Restaurer les projecteurs des mémoires mutées
         for i, (level, color, base) in muted_saved.items():
@@ -13205,6 +13315,10 @@ class MainWindow(QMainWindow):
         # Rafraichir le plan de feu a chaque tick (25fps)
         self.plan_de_feu.mark_dirty()
         self.plan_de_feu.refresh()
+
+        # Rafraichir la fenêtre 3D si visible
+        if hasattr(self, '_plan3d') and self._plan3d.isVisible():
+            self._plan3d.refresh(self.projectors)
 
     def stop_recording(self):
         """Arrete l'enregistrement"""

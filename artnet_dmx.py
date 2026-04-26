@@ -537,13 +537,13 @@ class ArtNetDMX:
                     else:
                         ch_val = 0
                 elif ch_type == "Pan":
-                    ch_val = getattr(proj, 'pan', 128)
+                    ch_val = getattr(proj, 'pan', 32768) >> 8
                 elif ch_type == "PanFine":
-                    ch_val = (getattr(proj, 'pan', 128) * 256) % 256
+                    ch_val = getattr(proj, 'pan', 32768) & 0xFF
                 elif ch_type == "Tilt":
-                    ch_val = getattr(proj, 'tilt', 128)
+                    ch_val = getattr(proj, 'tilt', 32768) >> 8
                 elif ch_type == "TiltFine":
-                    ch_val = (getattr(proj, 'tilt', 128) * 256) % 256
+                    ch_val = getattr(proj, 'tilt', 32768) & 0xFF
                 elif ch_type == "Gobo1":
                     ch_val = getattr(proj, 'gobo', 0)
                 elif ch_type == "Gobo1Rot":

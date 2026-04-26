@@ -686,7 +686,7 @@ class ActivationDialog(QDialog):
     def _build_page_purchase(self):
         page = QWidget()
         root = QVBoxLayout(page)
-        root.setContentsMargins(22, 16, 22, 14)
+        root.setContentsMargins(18, 14, 18, 12)
         root.setSpacing(8)
 
         # ── Titre ────────────────────────────────────────────────────────
@@ -704,128 +704,220 @@ class ActivationDialog(QDialog):
 
         root.addSpacing(6)
 
-        # ── Card helper ──────────────────────────────────────────────────
-        def _plan_card(icon, plan_title, price, billing, features, link_key, accent="#00d4ff", badge=""):
+        # ── Rangée 3 cartes côte à côte ───────────────────────────────────
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(10)
+
+        # ── Helper carte simple (Gratuit & Lifetime) ──────────────────────
+        def _plan_card(icon, plan_title, price, billing, features, link_key, accent, badge=""):
             card = QFrame()
             card.setAttribute(Qt.WA_StyledBackground, True)
             card.setStyleSheet(f"""
                 QFrame {{
-                    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                        stop:0 #1e1e1e, stop:1 #171717);
-                    border: 1px solid #2a2a2a;
-                    border-left: 3px solid {accent};
-                    border-radius: 8px;
+                    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                        stop:0 #1c1c1c, stop:1 #161616);
+                    border: 1px solid {accent}44;
+                    border-top: 3px solid {accent};
+                    border-radius: 10px;
                 }}
                 QFrame:hover {{
-                    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                        stop:0 #252525, stop:1 #1c1c1c);
-                    border-color: #3a3a3a;
-                    border-left-color: {accent};
+                    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                        stop:0 #232323, stop:1 #1b1b1b);
+                    border-color: {accent}77;
+                    border-top-color: {accent};
                 }}
             """)
-            card.setCursor(QCursor(Qt.PointingHandCursor))
 
-            cl = QHBoxLayout(card)
-            cl.setContentsMargins(14, 10, 12, 10)
-            cl.setSpacing(10)
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 14, 14, 14)
+            cl.setSpacing(6)
 
-            # Icône
+            h_row = QHBoxLayout(); h_row.setSpacing(6)
             icon_lbl = QLabel(icon)
-            icon_lbl.setFont(QFont("Segoe UI", 20))
+            icon_lbl.setFont(QFont("Segoe UI", 18))
             icon_lbl.setStyleSheet("background:transparent;border:none;")
-            icon_lbl.setFixedWidth(32)
-            icon_lbl.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-            cl.addWidget(icon_lbl)
-
-            # Infos centre
-            info = QVBoxLayout()
-            info.setSpacing(3)
-
-            title_row = QHBoxLayout()
-            title_row.setSpacing(6)
-            t = QLabel(plan_title)
-            t.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            t.setStyleSheet("color:#fff;background:transparent;border:none;")
-            title_row.addWidget(t)
+            icon_lbl.setFixedWidth(28)
+            h_row.addWidget(icon_lbl)
+            name_lbl = QLabel(plan_title)
+            name_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
+            name_lbl.setStyleSheet("color:#fff;background:transparent;border:none;")
+            h_row.addWidget(name_lbl)
+            h_row.addStretch()
             if badge:
                 b = QLabel(badge)
-                b.setFont(QFont("Segoe UI", 7, QFont.Bold))
-                b.setStyleSheet(f"""
-                    color:#000; background:{accent}; border:none;
-                    border-radius:3px; padding:1px 5px;
-                """)
-                b.setFixedHeight(14)
-                title_row.addWidget(b)
-            title_row.addStretch()
-            info.addLayout(title_row)
+                b.setFont(QFont("Segoe UI", 6, QFont.Bold))
+                b.setStyleSheet(f"color:#000;background:{accent};border:none;border-radius:3px;padding:2px 5px;")
+                h_row.addWidget(b)
+            cl.addLayout(h_row)
 
+            p_lbl = QLabel(price)
+            p_lbl.setFont(QFont("Segoe UI", 22, QFont.Bold))
+            p_lbl.setStyleSheet(f"color:{accent};background:transparent;border:none;")
+            cl.addWidget(p_lbl)
+
+            bl_lbl = QLabel(billing)
+            bl_lbl.setFont(QFont("Segoe UI", 8))
+            bl_lbl.setStyleSheet("color:#555;background:transparent;border:none;")
+            cl.addWidget(bl_lbl)
+
+            cl.addSpacing(4)
             for feat in features:
                 f = QLabel(f"✓  {feat}")
                 f.setFont(QFont("Segoe UI", 8))
                 f.setStyleSheet("color:#666;background:transparent;border:none;")
                 f.setWordWrap(True)
-                info.addWidget(f)
+                cl.addWidget(f)
 
-            cl.addLayout(info, 1)
+            cl.addStretch()
 
-            # Prix + bouton
-            right = QVBoxLayout()
-            right.setSpacing(2)
-            right.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-            p = QLabel(price)
-            p.setFont(QFont("Segoe UI", 13, QFont.Bold))
-            p.setStyleSheet(f"color:{accent};background:transparent;border:none;")
-            p.setAlignment(Qt.AlignRight)
-            right.addWidget(p)
-
-            bl = QLabel(billing)
-            bl.setFont(QFont("Segoe UI", 7))
-            bl.setStyleSheet("color:#555;background:transparent;border:none;")
-            bl.setAlignment(Qt.AlignRight)
-            right.addWidget(bl)
-
-            right.addSpacing(4)
-
-            btn = QPushButton(tr("btn_choose"))
-            btn.setFixedHeight(26)
+            btn_lbl = tr("btn_choose") if link_key else "Commencer →"
+            btn = QPushButton(btn_lbl)
+            btn.setFixedHeight(28)
             btn.setCursor(QCursor(Qt.PointingHandCursor))
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background:{accent};color:#000;border:none;
-                    border-radius:5px;font-size:10px;font-weight:bold;
-                    padding:0 10px;
+                    border-radius:5px;font-size:10px;font-weight:bold;padding:0 10px;
                 }}
                 QPushButton:hover {{ background:#fff; }}
             """)
-            btn.clicked.connect(lambda checked=False, k=link_key: webbrowser.open(STRIPE_LINKS[k]))
-            right.addWidget(btn)
-
-            cl.addLayout(right)
-            card.mousePressEvent = lambda e, k=link_key: webbrowser.open(STRIPE_LINKS[k])
+            if link_key:
+                btn.clicked.connect(lambda checked=False, k=link_key: webbrowser.open(STRIPE_LINKS[k]))
+                card.mousePressEvent = lambda e, k=link_key: webbrowser.open(STRIPE_LINKS[k])
+            else:
+                btn.clicked.connect(self.reject)
+            cl.addWidget(btn)
             return card
 
-        root.addWidget(_plan_card(
-            "📅", tr("plan_monthly_name"), "21,69 €", tr("plan_monthly_billing"),
-            [tr("plan_monthly_f1"), tr("plan_monthly_f2"), tr("plan_monthly_f3")],
-            "monthly", accent="#4a9eff",
-        ))
-        root.addWidget(_plan_card(
-            "📆", tr("plan_annual_name"), "216,99 €", tr("plan_annual_billing"),
-            [tr("plan_monthly_f1"), tr("plan_monthly_f2"), tr("plan_annual_f3")],
-            "annual", accent="#00d4ff", badge="−17%",
-        ))
-        root.addWidget(_plan_card(
-            "♾️", tr("plan_lifetime_name"), "378,67 €", tr("plan_lifetime_billing"),
-            [tr("plan_monthly_f1"), tr("plan_lifetime_f2"), tr("plan_lifetime_f3")],
-            "lifetime", accent="#a78bfa",
-        ))
+        # ── Carte Pro — toggle Mensuel / Annuel ───────────────────────────
+        def _pro_card_widget():
+            ACCENT = "#4a9eff"
+            _annual = [False]
 
+            card = QFrame()
+            card.setAttribute(Qt.WA_StyledBackground, True)
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+                        stop:0 #192038, stop:1 #111826);
+                    border: 1.5px solid {ACCENT};
+                    border-top: 3px solid {ACCENT};
+                    border-radius: 10px;
+                }}
+            """)
+
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 14, 14, 14)
+            cl.setSpacing(6)
+
+            # En-tête
+            h_row = QHBoxLayout(); h_row.setSpacing(6)
+            icon_lbl = QLabel("⚡")
+            icon_lbl.setFont(QFont("Segoe UI", 18))
+            icon_lbl.setStyleSheet("background:transparent;border:none;")
+            icon_lbl.setFixedWidth(28)
+            h_row.addWidget(icon_lbl)
+            name_lbl = QLabel("Pro")
+            name_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
+            name_lbl.setStyleSheet("color:#fff;background:transparent;border:none;")
+            h_row.addWidget(name_lbl)
+            h_row.addStretch()
+            pop_lbl = QLabel("POPULAIRE")
+            pop_lbl.setFont(QFont("Segoe UI", 6, QFont.Bold))
+            pop_lbl.setStyleSheet(f"color:#000;background:{ACCENT};border:none;border-radius:3px;padding:2px 5px;")
+            h_row.addWidget(pop_lbl)
+            cl.addLayout(h_row)
+
+            # Toggle Mensuel / Annuel
+            tog_row = QHBoxLayout(); tog_row.setSpacing(0); tog_row.addStretch()
+            btn_m = QPushButton("Mensuel")
+            btn_a = QPushButton("Annuel")
+            for _b in (btn_m, btn_a):
+                _b.setFixedHeight(20)
+                _b.setCursor(QCursor(Qt.PointingHandCursor))
+            _S_ON  = lambda r: f"QPushButton{{background:{ACCENT};color:#000;border:1px solid {ACCENT};border-radius:{r};font-size:8px;font-weight:bold;padding:2px 9px;}}"
+            _S_OFF = lambda r: f"QPushButton{{background:#1a1a2a;color:#666;border:1px solid #333;border-radius:{r};font-size:8px;font-weight:bold;padding:2px 9px;}}"
+            btn_m.setStyleSheet(_S_ON("4px 0 0 4px"))
+            btn_a.setStyleSheet(_S_OFF("0 4px 4px 0"))
+            tog_row.addWidget(btn_m); tog_row.addWidget(btn_a)
+
+            saving_badge = QLabel(" −50% ")
+            saving_badge.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            saving_badge.setStyleSheet("color:#000;background:#22c55e;border:none;border-radius:3px;padding:1px 4px;margin-left:5px;")
+            saving_badge.hide()
+            tog_row.addWidget(saving_badge); tog_row.addStretch()
+            cl.addLayout(tog_row)
+
+            # Prix dynamique
+            price_lbl = QLabel("19,99 €")
+            price_lbl.setFont(QFont("Segoe UI", 22, QFont.Bold))
+            price_lbl.setStyleSheet(f"color:{ACCENT};background:transparent;border:none;")
+            cl.addWidget(price_lbl)
+
+            billing_lbl = QLabel("TTC / mois")
+            billing_lbl.setFont(QFont("Segoe UI", 8))
+            billing_lbl.setStyleSheet("color:#555;background:transparent;border:none;")
+            cl.addWidget(billing_lbl)
+
+            cl.addSpacing(4)
+            for feat in [tr("plan_monthly_f1"), tr("plan_monthly_f2"), tr("plan_monthly_f3")]:
+                f = QLabel(f"✓  {feat}")
+                f.setFont(QFont("Segoe UI", 8))
+                f.setStyleSheet("color:#666;background:transparent;border:none;")
+                f.setWordWrap(True)
+                cl.addWidget(f)
+
+            cl.addStretch()
+
+            cta = QPushButton(tr("btn_choose"))
+            cta.setFixedHeight(28)
+            cta.setCursor(QCursor(Qt.PointingHandCursor))
+            cta.setStyleSheet(f"""
+                QPushButton {{
+                    background:{ACCENT};color:#000;border:none;
+                    border-radius:5px;font-size:10px;font-weight:bold;padding:0 10px;
+                }}
+                QPushButton:hover {{ background:#fff; }}
+            """)
+            cta.clicked.connect(lambda: webbrowser.open(
+                STRIPE_LINKS["annual"] if _annual[0] else STRIPE_LINKS["monthly"]))
+            cl.addWidget(cta)
+
+            def _toggle(annual):
+                _annual[0] = annual
+                if annual:
+                    price_lbl.setText("9,99 €")
+                    billing_lbl.setText("TTC / mois · facturé 119,88 €/an")
+                    saving_badge.show()
+                    btn_m.setStyleSheet(_S_OFF("4px 0 0 4px"))
+                    btn_a.setStyleSheet(_S_ON("0 4px 4px 0"))
+                else:
+                    price_lbl.setText("19,99 €")
+                    billing_lbl.setText("TTC / mois")
+                    saving_badge.hide()
+                    btn_m.setStyleSheet(_S_ON("4px 0 0 4px"))
+                    btn_a.setStyleSheet(_S_OFF("0 4px 4px 0"))
+
+            btn_m.clicked.connect(lambda: _toggle(False))
+            btn_a.clicked.connect(lambda: _toggle(True))
+            return card
+
+        # ── Assembler les 3 cartes ────────────────────────────────────────
+        cards_row.addWidget(_plan_card(
+            "🎨", "Gratuit", "0 €", "Essai 14 jours",
+            ["Accès complet 14 jours", "Sans carte bancaire", "Toutes les fonctions"],
+            link_key=None, accent="#6b7280",
+        ))
+        cards_row.addWidget(_pro_card_widget())
+        cards_row.addWidget(_plan_card(
+            "♾️", tr("plan_lifetime_name"), "239,99 €", tr("plan_lifetime_billing"),
+            [tr("plan_monthly_f1"), tr("plan_lifetime_f2"), tr("plan_lifetime_f3")],
+            "lifetime", accent="#a78bfa", badge="MEILLEUR PRIX",
+        ))
+        root.addLayout(cards_row)
         root.addSpacing(4)
 
         # ── Stripe badge ──────────────────────────────────────────────────
-        stripe_row = QHBoxLayout()
-        stripe_row.setAlignment(Qt.AlignCenter)
         stripe_lbl = QLabel(tr("stripe_secure"))
         stripe_lbl.setFont(QFont("Segoe UI", 8))
         stripe_lbl.setStyleSheet("color: #3a3a3a; background: transparent;")
@@ -858,7 +950,7 @@ class ActivationDialog(QDialog):
     def _go_to_purchase(self):
         self._stack.setCurrentIndex(3)
         self.setWindowTitle(tr("dlg_choose_plan_title"))
-        self.setFixedSize(460, 480)
+        self.setFixedSize(820, 420)
 
     # ----------------------------------------------------------
     # Logique compte

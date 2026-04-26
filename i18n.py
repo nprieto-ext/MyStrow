@@ -255,7 +255,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "menu_shortcuts":        {"en": "⌨️ Shortcuts",                 "fr": "⌨️ Raccourcis"},
     "menu_connection":       {"en": "Connection",                   "fr": "Connexion"},
     "menu_control":          {"en": "🎮 Control",                  "fr": "🎮 Contrôle"},
-    "menu_akai_mini":        {"en": "🎹 AKAI APC Mini MK2",        "fr": "🎹 AKAI APC Mini MK2"},
+    "menu_akai_mini":        {"en": "🎹 Contrôleur MIDI",           "fr": "🎹 Contrôleur MIDI"},
     "menu_akai_input":       {"en": "🎹 Akai Input",               "fr": "🎹 Entrée Akai"},
     "menu_test_connection":  {"en": "🔍 Test connection",           "fr": "🔍 Tester la connexion"},
     "menu_reset_akai":       {"en": "🔄 Reset AKAI",                "fr": "🔄 Reinitialiser AKAI"},

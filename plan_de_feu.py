@@ -47,7 +47,7 @@ class _EffectState:
         self._r_step  = 0
 
     def tick(self):
-        """Avance la phase et retourne (pan, tilt) clampé 0-255."""
+        """Avance la phase et retourne (pan, tilt) clampé 0-65535."""
         import random
         self.phase += 2 * _math_eff.pi * self.speed * self.DT
         a = self.amplitude
@@ -83,18 +83,18 @@ class _EffectState:
         else:
             pan, tilt = self.center_pan, self.center_tilt
 
-        return int(max(0, min(255, pan))), int(max(0, min(255, tilt)))
+        return int(max(0, min(65535, pan))), int(max(0, min(65535, tilt)))
 
 
 _PRESETS_FILE = os.path.expanduser("~/.mystrow_moving_presets.json")
 
 _DEFAULT_PRESETS = [
-    {"name": "Centre",  "pan": 128, "tilt": 128},
-    {"name": "Face",    "pan": 128, "tilt": 180},
-    {"name": "Sol",     "pan": 128, "tilt": 230},
-    {"name": "Plafond", "pan": 128, "tilt": 30},
-    {"name": "Gauche",  "pan": 60,  "tilt": 128},
-    {"name": "Droite",  "pan": 195, "tilt": 128},
+    {"name": "Centre",  "pan": 32768, "tilt": 32768},
+    {"name": "Face",    "pan": 32768, "tilt": 46080},
+    {"name": "Sol",     "pan": 32768, "tilt": 58880},
+    {"name": "Plafond", "pan": 32768, "tilt":  7680},
+    {"name": "Gauche",  "pan": 15360, "tilt": 32768},
+    {"name": "Droite",  "pan": 49920, "tilt": 32768},
 ]
 
 
@@ -250,16 +250,16 @@ class PresetBar(QWidget):
 class PanTiltPad(QWidget):
     """Pad XY interactif pour contrôler Pan/Tilt d'une Moving Head."""
 
-    changed = Signal(int, int)  # pan, tilt (0-255)
+    changed = Signal(int, int)  # pan, tilt (0-65535)
 
     _PAD_W = 200
     _PAD_H = 160
     _MARGIN = 10
 
-    def __init__(self, pan=128, tilt=128, parent=None):
+    def __init__(self, pan=32768, tilt=32768, parent=None):
         super().__init__(parent)
-        self._pan  = max(0, min(255, pan))
-        self._tilt = max(0, min(255, tilt))
+        self._pan  = max(0, min(65535, pan))
+        self._tilt = max(0, min(65535, tilt))
         self._dragging = False
 
         total_w = self._PAD_W + self._MARGIN * 2
@@ -271,14 +271,14 @@ class PanTiltPad(QWidget):
     def _val_to_px(self):
         """Retourne (px, py) en pixels absolus dans le widget."""
         m = self._MARGIN
-        px = m + int(self._pan  / 255.0 * self._PAD_W)
-        py = m + int(self._tilt / 255.0 * self._PAD_H)
+        px = m + int(self._pan  / 65535.0 * self._PAD_W)
+        py = m + int(self._tilt / 65535.0 * self._PAD_H)
         return px, py
 
     def _px_to_val(self, x, y):
         m = self._MARGIN
-        pan  = int(max(0, min(255, (x - m) / self._PAD_W * 255)))
-        tilt = int(max(0, min(255, (y - m) / self._PAD_H * 255)))
+        pan  = int(max(0, min(65535, (x - m) / self._PAD_W * 65535)))
+        tilt = int(max(0, min(65535, (y - m) / self._PAD_H * 65535)))
         return pan, tilt
 
     # ── Souris ──────────────────────────────────────────────────────────
@@ -296,8 +296,8 @@ class PanTiltPad(QWidget):
             self._dragging = False
 
     def mouseDoubleClickEvent(self, event):
-        """Double-clic = centre (128, 128)"""
-        self._pan, self._tilt = 128, 128
+        """Double-clic = centre (32768, 32768)"""
+        self._pan, self._tilt = 32768, 32768
         self.changed.emit(self._pan, self._tilt)
         self.update()
 
@@ -309,8 +309,8 @@ class PanTiltPad(QWidget):
             self.update()
 
     def set_values(self, pan, tilt):
-        self._pan  = max(0, min(255, pan))
-        self._tilt = max(0, min(255, tilt))
+        self._pan  = max(0, min(65535, pan))
+        self._tilt = max(0, min(65535, tilt))
         self.update()
 
     # ── Dessin ──────────────────────────────────────────────────────────
@@ -780,17 +780,18 @@ FIXTURE_LIBRARY = {
 
 # Positions par defaut sur le canvas (coordonnees normalisees 0-1)
 _DEFAULT_POSITIONS = {
-    "face":     lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.78),
-    "contre":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.10),
-    "douche1":  lambda li, n: (0.24 + li * 0.08, 0.50),
-    "douche2":  lambda li, n: (0.46 + li * 0.08, 0.50),
-    "douche3":  lambda li, n: (0.68 + li * 0.08, 0.50),
-    "lat":      lambda li, n: (0.07 if li == 0 else 0.93, 0.40),
+    # canvas_y → z = (cy - 0.5) * 10 m  (0=arrière-scène, 1=avant-scène)
+    "face":     lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.80),  # z=+3.0 m
+    "contre":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.10),  # z=-4.0 m
+    "douche1":  lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.67),  # z=+1.7 m
+    "douche2":  lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.50),  # z=  0  m
+    "douche3":  lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.33),  # z=-1.7 m
+    "lat":      lambda li, n: (0.07 if li == 0 else 0.93, 0.50),          # z=  0  m
     "public":   lambda li, n: (0.50, 0.90),
     "fumee":    lambda li, n: (0.10, 0.90),
-    "lyre":     lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.25),
-    "barre":    lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.35),
-    "strobe":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.45),
+    "lyre":     lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.25),  # z=-2.5 m
+    "barre":    lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.35),  # z=-1.5 m
+    "strobe":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.45),  # z=-0.5 m
     "groupe_e": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.62),
     "groupe_f": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.46),
 }
@@ -1003,10 +1004,10 @@ class _PanTiltFloater(QFrame):
         projs = self.get_group_projs(idx)
         self._targets = projs
         if projs:
-            pan  = getattr(projs[0], 'pan',  128)
-            tilt = getattr(projs[0], 'tilt', 128)
+            pan  = getattr(projs[0], 'pan',  32768)
+            tilt = getattr(projs[0], 'tilt', 32768)
         else:
-            pan, tilt = 128, 128
+            pan, tilt = 32768, 32768
 
         self._pad.set_values(pan, tilt)
         self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
@@ -1132,6 +1133,10 @@ class FixtureCanvas(QWidget):
             elif ftype == "Machine a fumee":
                 if abs(px - cx) <= 13 and abs(py - cy) <= 7:
                     return i
+            elif ftype == "Stroboscope":
+                _sr = 9 if self.compact else 13
+                if abs(px - cx) <= int(_sr * 1.18) and abs(py - cy) <= int(_sr * 0.62):
+                    return i
             else:
                 if (px - cx) ** 2 + (py - cy) ** 2 <= 13 * 13:
                     return i
@@ -1148,10 +1153,10 @@ class FixtureCanvas(QWidget):
             if getattr(proj, 'fixture_type', '') != 'Moving Head':
                 continue
             cx, cy = self._get_canvas_pos(i)
-            pan_val    = getattr(proj, 'pan',  128)
-            tilt_val   = getattr(proj, 'tilt', 128)
-            pan_angle  = (pan_val - 128) / 128.0 * 135.0
-            tilt_ratio = tilt_val / 255.0
+            pan_val    = getattr(proj, 'pan',  32768)
+            tilt_val   = getattr(proj, 'tilt', 32768)
+            pan_angle  = (pan_val - 32768) / 32768.0 * 135.0
+            tilt_ratio = tilt_val / 65535.0
             beam_len   = int(r * 2 + tilt_ratio * r * 7)
             beam_hw    = int(r * 0.6 + tilt_ratio * r * 2.5)
 
@@ -1229,12 +1234,12 @@ class FixtureCanvas(QWidget):
         painter.setBrush(QBrush(fill_color))
 
         if ftype == "Moving Head":
-            pan_val  = getattr(proj, 'pan',  128)
-            tilt_val = getattr(proj, 'tilt', 128)
+            pan_val  = getattr(proj, 'pan',  32768)
+            tilt_val = getattr(proj, 'tilt', 32768)
             # Pan → rotation du faisceau (-135° … +135°)
-            pan_angle  = (pan_val - 128) / 128.0 * 135.0
-            # Tilt → longueur du faisceau (0=court, 255=long)
-            tilt_ratio = tilt_val / 255.0
+            pan_angle  = (pan_val - 32768) / 32768.0 * 135.0
+            # Tilt → longueur du faisceau (0=court, 65535=long)
+            tilt_ratio = tilt_val / 65535.0
             beam_len   = int(r * 2 + tilt_ratio * r * 7)
             beam_hw    = int(r * 0.6 + tilt_ratio * r * 2.5)
 
@@ -1407,15 +1412,59 @@ class FixtureCanvas(QWidget):
                     painter.drawLine(sx, cy - barre_hh + 1, sx, cy + barre_hh - 1)
 
         elif ftype == "Stroboscope":
-            inner_r = r // 2
-            pts = [
-                QPoint(
-                    int(cx + (r if k % 2 == 0 else inner_r) * math.cos(math.pi / 2 + k * math.pi / 6)),
-                    int(cy - (r if k % 2 == 0 else inner_r) * math.sin(math.pi / 2 + k * math.pi / 6))
-                )
-                for k in range(12)
-            ]
-            painter.drawPolygon(QPolygon(pts))
+            sw = int(r * 1.18)   # demi-largeur boîtier
+            sh = int(r * 0.62)   # demi-hauteur boîtier
+            m  = 2               # marge intérieure
+
+            # ── Boîtier extérieur (métal sombre) ───────────────────
+            painter.setPen(pen)
+            painter.setBrush(QBrush(QColor(38, 38, 48)))
+            painter.drawRoundedRect(QRect(cx - sw, cy - sh, sw * 2, sh * 2), 3, 3)
+
+            # ── Panneau de flash intérieur ──────────────────────────
+            inner_rect = QRect(cx - sw + m, cy - sh + m, sw * 2 - m * 2, sh * 2 - m * 2)
+            if is_lit:
+                fc2 = fill_color
+                ref_g = QRadialGradient(float(cx), float(cy), float(sw))
+                ref_g.setColorAt(0.0, QColor(fc2.red(), fc2.green(), fc2.blue(), 230))
+                ref_g.setColorAt(0.7, QColor(fc2.red(), fc2.green(), fc2.blue(), 120))
+                ref_g.setColorAt(1.0, QColor(fc2.red(), fc2.green(), fc2.blue(),  30))
+                painter.setBrush(QBrush(ref_g))
+            else:
+                painter.setBrush(QBrush(QColor(26, 26, 34)))
+            painter.setPen(QPen(QColor(55, 55, 68), 1))
+            painter.drawRoundedRect(inner_rect, 2, 2)
+
+            # ── Cellules flash (grille LED) ─────────────────────────
+            cols = 3 if self.compact else 4
+            rows = 2
+            iw   = sw * 2 - m * 2 - 2
+            ih   = sh * 2 - m * 2 - 2
+            cw   = iw // cols
+            ch_  = ih // rows
+            cell_r = max(1, min(cw, ch_) // 2 - 1)
+            for row in range(rows):
+                for col in range(cols):
+                    ccx = cx - sw + m + 1 + col * cw + cw // 2
+                    ccy = cy - sh + m + 1 + row * ch_ + ch_ // 2
+                    if is_lit:
+                        cell_c = QColor(
+                            min(255, fill_color.red()   + 110),
+                            min(255, fill_color.green() + 110),
+                            min(255, fill_color.blue()  + 110), 230)
+                    else:
+                        cell_c = QColor(48, 48, 60)
+                    painter.setBrush(QBrush(cell_c))
+                    painter.setPen(QPen(QColor(20, 20, 28), 1))
+                    painter.drawEllipse(QPoint(ccx, ccy), cell_r, cell_r)
+
+            # ── Vis de fixation (coins) ─────────────────────────────
+            if not self.compact:
+                painter.setBrush(QBrush(QColor(60, 60, 75)))
+                painter.setPen(QPen(QColor(30, 30, 40), 1))
+                for vx, vy in [(cx - sw + 3, cy - sh + 3), (cx + sw - 3, cy - sh + 3),
+                               (cx - sw + 3, cy + sh - 3), (cx + sw - 3, cy + sh - 3)]:
+                    painter.drawEllipse(QPoint(vx, vy), 2, 2)
 
         elif ftype == "Machine a fumee":
             painter.drawEllipse(QRect(cx - fumee_hw, cy - fumee_hh, fumee_hw * 2, fumee_hh * 2))
@@ -1681,10 +1730,15 @@ class FixtureCanvas(QWidget):
                 self.pdf._show_canvas_context_menu(event.globalPos(), event.pos())
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton and self._editable:
+        if event.button() == Qt.LeftButton:
             idx = self._fixture_at(event.pos())
             if idx is not None:
-                self.pdf._edit_fixture(idx)
+                group, local_idx = self._local_idx(idx)
+                key = (group, local_idx)
+                if key not in self.pdf.selected_lamps:
+                    self.pdf.selected_lamps = {key}
+                    self.update()
+                self.pdf._show_fixture_context_menu(event.globalPos(), idx)
 
     def _resolve_overlaps(self, canvas_w, canvas_h, dragged_set):
         """Pousse les fixtures non-draguées qui chevauchent une fixture draguée."""
@@ -1734,6 +1788,9 @@ class FixtureCanvas(QWidget):
         elif ftype == "Machine a fumee":
             hw = int(r * 0.92)
             hh = max(3, int(r * 0.46))
+        elif ftype == "Stroboscope":
+            hw = int(r * 1.18)
+            hh = max(3, int(r * 0.62))
         else:
             hw = hh = r
         return cx, cy, hw, hh
@@ -1934,8 +1991,8 @@ class FixtureCanvas(QWidget):
                 targets = pb['targets']
                 self._beam_drag_idx     = pb['beam_idx']
                 self._beam_drag_start   = pb['pos']
-                self._beam_drag_pt0     = (getattr(proj, 'pan', 128), getattr(proj, 'tilt', 128))
-                self._beam_drag_targets = [(p, getattr(p, 'pan', 128), getattr(p, 'tilt', 128)) for p in targets]
+                self._beam_drag_pt0     = (getattr(proj, 'pan', 32768), getattr(proj, 'tilt', 32768))
+                self._beam_drag_targets = [(p, getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)) for p in targets]
                 for p in targets:
                     if p.level == 0:
                         p.level = 100
@@ -1957,8 +2014,8 @@ class FixtureCanvas(QWidget):
                 dist = _m.sqrt(dx * dx + dy * dy)
                 angle = _m.degrees(_m.atan2(dx, dy))  # axe de référence = bas
                 pan_angle = max(-135.0, min(135.0, angle))
-                p.pan  = int(128 + pan_angle / 135.0 * 128)
-                p.tilt = int(max(0, min(255, dist / beam_len_max * 255)))
+                p.pan  = int(max(0, min(65535, 32768 + pan_angle / 135.0 * 32768)))
+                p.tilt = int(max(0, min(65535, dist / beam_len_max * 65535)))
             else:
                 # Plusieurs fixtures : décalage relatif commun (pan/tilt delta)
                 cx, cy = self._get_canvas_pos(self._beam_drag_idx)
@@ -1967,21 +2024,21 @@ class FixtureCanvas(QWidget):
                 ref_dy = self._beam_drag_start.y() - cy
                 ref_dist = max(1.0, _m.sqrt(ref_dx**2 + ref_dy**2))
                 ref_angle = _m.degrees(_m.atan2(ref_dx, ref_dy))
-                ref_pan   = int(128 + max(-135.0, min(135.0, ref_angle)) / 135.0 * 128)
-                ref_tilt  = int(max(0, min(255, ref_dist / beam_len_max * 255)))
+                ref_pan   = int(max(0, min(65535, 32768 + max(-135.0, min(135.0, ref_angle)) / 135.0 * 32768)))
+                ref_tilt  = int(max(0, min(65535, ref_dist / beam_len_max * 65535)))
 
                 now_dx = pos.x() - cx
                 now_dy = pos.y() - cy
                 now_dist  = max(1.0, _m.sqrt(now_dx**2 + now_dy**2))
                 now_angle = _m.degrees(_m.atan2(now_dx, now_dy))
-                now_pan   = int(128 + max(-135.0, min(135.0, now_angle)) / 135.0 * 128)
-                now_tilt  = int(max(0, min(255, now_dist / beam_len_max * 255)))
+                now_pan   = int(max(0, min(65535, 32768 + max(-135.0, min(135.0, now_angle)) / 135.0 * 32768)))
+                now_tilt  = int(max(0, min(65535, now_dist / beam_len_max * 65535)))
 
                 dpan  = now_pan  - ref_pan
                 dtilt = now_tilt - ref_tilt
                 for p, pan0, tilt0 in self._beam_drag_targets:
-                    p.pan  = int(max(0, min(255, pan0 + dpan)))
-                    p.tilt = int(max(0, min(255, tilt0 + dtilt)))
+                    p.pan  = int(max(0, min(65535, pan0 + dpan)))
+                    p.tilt = int(max(0, min(65535, tilt0 + dtilt)))
 
             if hasattr(self.pdf, '_flush_dmx'):
                 self.pdf._flush_dmx()
@@ -2210,12 +2267,25 @@ class PlanDeFeu(QFrame):
             )
             self.dmx_toggle_btn.clicked.connect(self._toggle_dmx_output)
             toolbar.addWidget(self.dmx_toggle_btn)
+            toolbar.addSpacing(2)
+
+            self.btn_3d = QPushButton("3D")
+            self.btn_3d.setCheckable(True)
+            self.btn_3d.setFixedSize(36, 26)
+            self.btn_3d.setToolTip("Afficher le plan de feu en 3D")
+            self.btn_3d.setStyleSheet(
+                _BTN_SS.format(fg="#aaa", bd="#3a3a3a", fgh="#fff", bdh="#0077bb")
+            )
+            self.btn_3d.clicked.connect(self._toggle_3d_window)
+            toolbar.addWidget(self.btn_3d)
 
             root.addLayout(toolbar)
         else:
-            # Stub pour éviter les AttributeError dans set_dmx_blocked
+            # Stubs pour éviter les AttributeError
             self.dmx_toggle_btn = QPushButton()
             self.dmx_toggle_btn.setVisible(False)
+            self.btn_3d = QPushButton()
+            self.btn_3d.setVisible(False)
 
         # ── Canvas ─────────────────────────────────────────────────
         self.canvas = FixtureCanvas(self)
@@ -2287,8 +2357,8 @@ class PlanDeFeu(QFrame):
         for proj in projectors:
             self._effects[id(proj)] = _EffectState(
                 effect, speed, amplitude,
-                center_pan=getattr(proj, 'pan', 128),
-                center_tilt=getattr(proj, 'tilt', 128)
+                center_pan=getattr(proj, 'pan', 32768),
+                center_tilt=getattr(proj, 'tilt', 32768)
             )
 
     def stop_effect(self, projectors):
@@ -2329,6 +2399,9 @@ class PlanDeFeu(QFrame):
         """Envoie immédiatement l'état des projecteurs en DMX."""
         if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
             self.main_window.dmx.update_from_projectors(self.projectors)
+        mw = self.main_window
+        if mw and hasattr(mw, '_plan3d') and mw._plan3d.isVisible():
+            mw._plan3d.refresh(self.projectors)
 
     # ── DMX toggle ──────────────────────────────────────────────────
 
@@ -2365,6 +2438,10 @@ class PlanDeFeu(QFrame):
                 "QPushButton:pressed { background: #333; }"
             )
 
+    def _toggle_3d_window(self):
+        if self.main_window and hasattr(self.main_window, 'toggle_3d_window'):
+            self.main_window.toggle_3d_window()
+
     # ── Selection helpers ────────────────────────────────────────────
 
     def _deselect_all(self):
@@ -2388,8 +2465,8 @@ class PlanDeFeu(QFrame):
             proj.amber_boost  = 0
             proj.orange_boost = 0
             # Moving head
-            proj.pan          = 128
-            proj.tilt         = 128
+            proj.pan          = 32768
+            proj.tilt         = 32768
             proj.gobo         = 0
             proj.gobo_rotation = 0
             proj.zoom         = 0
@@ -3068,8 +3145,8 @@ class PlanDeFeu(QFrame):
             mh_h.setContentsMargins(6, 4, 6, 4); mh_h.setSpacing(6)
 
             pt_pad = PanTiltPad(
-                pan=getattr(targets[0][0], 'pan', 128),
-                tilt=getattr(targets[0][0], 'tilt', 128)
+                pan=getattr(targets[0][0], 'pan', 32768),
+                tilt=getattr(targets[0][0], 'tilt', 32768)
             )
             def _on_pantilt(pan, tilt, t=targets):
                 for p, g, i in t:
@@ -3440,8 +3517,8 @@ class PlanDeFeu(QFrame):
                 p.amber_boost  = 0
                 p.orange_boost = 0
                 p.strobe_speed = 0
-                p.pan          = 128
-                p.tilt         = 128
+                p.pan          = 32768
+                p.tilt         = 32768
                 p.gobo         = 0
                 p.zoom         = 0
                 p.shutter      = 255

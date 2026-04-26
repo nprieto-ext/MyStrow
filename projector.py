@@ -18,8 +18,12 @@ class Projector:
         self.color = QColor("black")
         self.dmx_mode = "Manuel"
         self.muted = False
-        self.pan = 128                # Pan (0-255, centre=128)
-        self.tilt = 128               # Tilt (0-255, centre=128)
+        self.pan = 32768              # Pan  16-bit (0-65535, centre=32768)
+        self.tilt = 32768             # Tilt 16-bit (0-65535, centre=32768)
+        self.fixture_height = None    # Hauteur de suspension (m), None = auto (7m truss)
+        self.pos_3d_x = None          # Position 3D indépendante X (m), None = dérivé du plan 2D
+        self.pos_3d_z = None          # Position 3D indépendante Z (m), None = dérivé du plan 2D
+        self.body_rotation = 0.0     # Rotation du corps sur la truss (degrés, 0-360)
         self.gobo = 0                 # Gobo wheel (0-255)
         self.zoom = 0                 # Zoom (0-255)
         self.shutter = 255            # Shutter/Iris (0-255)

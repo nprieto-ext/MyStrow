@@ -257,6 +257,17 @@ class DmxSetupDialog(QDialog):
         self.btn_diag.clicked.connect(self._run_diag)
         btn_row.addWidget(self.btn_diag)
 
+        self.btn_test100 = QPushButton("💡  Test 100%")
+        self.btn_test100.setFixedSize(110, 28)
+        self.btn_test100.setStyleSheet(
+            "QPushButton { background: #2a1e00; color: #ffaa00; border: 1px solid #ffaa00;"
+            " border-radius: 4px; font-size: 10px; font-weight: bold; }"
+            "QPushButton:hover { background: #3a2a00; }"
+            "QPushButton:disabled { color: #444; border-color: #333; background: #1a1a1a; }"
+        )
+        self.btn_test100.clicked.connect(self._run_test100)
+        btn_row.addWidget(self.btn_test100)
+
         btn_row.addStretch(1)
         lay.addLayout(btn_row)
 
@@ -429,6 +440,104 @@ class DmxSetupDialog(QDialog):
                 if self.port_combo.itemData(i) == self._dmx.com_port:
                     self.port_combo.setCurrentIndex(i)
                     break
+
+    # ── TEST 100% ───────────────────────────────────────────────────────────
+
+    def _run_test100(self):
+        """Envoie 3 secondes de DMX full (tous canaux = 255) via l'Enttec connecté."""
+        from PySide6.QtCore import QTimer as _QTimer
+        import time as _time
+
+        self.btn_test100.setEnabled(False)
+        self.btn_diag.setEnabled(False)
+        self._log.clear()
+
+        ok   = "#4CAF50"; warn = "#ff9800"; err = "#f44336"; cyan = "#00d4ff"
+        self._log_line("═══ TEST DMX — TOUS CANAUX À 100% (255) ═══", cyan)
+
+        # ── Trouver / ouvrir le port ─────────────────────────────────────────
+        ser = None
+        opened_here = False
+        dmx_serial = getattr(self._dmx, '_serial', None)
+        port = self.port_combo.currentData()
+
+        if dmx_serial and dmx_serial.is_open:
+            ser = dmx_serial
+            self._log_line(f"  ✓  Utilisation de la connexion MyStrow ({self._dmx.com_port})", ok)
+        elif port:
+            self._log_line(f"  →  Ouverture de {port} pour le test…", "#cccccc")
+            QApplication.processEvents()
+            try:
+                ser = serial.Serial(
+                    port=port, baudrate=250000,
+                    bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_TWO, timeout=0.1,
+                )
+                opened_here = True
+                self._log_line(f"  ✓  Port ouvert", ok)
+            except Exception as e:
+                self._log_line(f"  ✗  Impossible d'ouvrir le port : {e}", err)
+                self.btn_test100.setEnabled(True)
+                self.btn_diag.setEnabled(True)
+                return
+        else:
+            self._log_line("  ✗  Aucun port disponible — connectez d'abord le boîtier", err)
+            self.btn_test100.setEnabled(True)
+            self.btn_diag.setEnabled(True)
+            return
+
+        # ── Frame full-on ────────────────────────────────────────────────────
+        full_frame = b'\x00' + bytes([255] * 512)
+        DURATION_S = 3
+        INTERVAL_MS = 40   # 25 fps
+        total_frames = int(DURATION_S * 1000 / INTERVAL_MS)
+        sent = [0]
+        errors = [0]
+
+        self._log_line("")
+        self._log_line(f"  Envoi de {total_frames} frames ({DURATION_S} s) — "
+                       f"tous les canaux = 255…", "#cccccc")
+        self._log_line("  Si vos appareils ne réagissent pas, vérifiez :", warn)
+        self._log_line("   • Câble DMX branché sur le boîtier (sortie XLR)", "#888888")
+        self._log_line("   • Adresse DMX des projecteurs (CH1 = 001)", "#888888")
+        self._log_line("   • Mode DMX des projecteurs (pas en 'no signal')", "#888888")
+
+        def _send_frame():
+            if sent[0] >= total_frames:
+                _timer.stop()
+                _finish()
+                return
+            try:
+                ser.send_break(duration=0.000176)
+                ser.write(full_frame)
+                ser.flush()
+                sent[0] += 1
+            except Exception as ex:
+                errors[0] += 1
+                if errors[0] > 5:
+                    _timer.stop()
+                    self._log_line(f"  ✗  Erreurs répétées — test arrêté : {ex}", err)
+                    _cleanup()
+
+        def _finish():
+            self._log_line("")
+            if errors[0] == 0:
+                self._log_line(f"  ✓  {sent[0]}/{total_frames} frames envoyées sans erreur", ok)
+                self._log_line("  Si aucun appareil ne réagit → problème de câblage DMX", warn)
+            else:
+                self._log_line(f"  ⚠  {sent[0]} frames OK, {errors[0]} erreurs", warn)
+            _cleanup()
+
+        def _cleanup():
+            if opened_here:
+                try: ser.close()
+                except Exception: pass
+            self.btn_test100.setEnabled(True)
+            self.btn_diag.setEnabled(True)
+
+        _timer = _QTimer(self)
+        _timer.timeout.connect(_send_frame)
+        _timer.start(INTERVAL_MS)
 
     # ── DIAGNOSTIC ──────────────────────────────────────────────────────────
 
@@ -663,15 +772,40 @@ class DmxSetupDialog(QDialog):
         timer_ok = False
         try:
             win = self._parent_win
-            if win and hasattr(win, 'dmx_timer'):
-                timer_ok = win.dmx_timer.isActive()
-            elif win and hasattr(win, '_dmx_timer'):
-                timer_ok = win._dmx_timer.isActive()
+            for attr in ('dmx_send_timer', 'dmx_timer', '_dmx_timer'):
+                if win and hasattr(win, attr):
+                    timer_ok = getattr(win, attr).isActive()
+                    break
         except Exception:
             pass
         timer_color = ok if timer_ok else warn
         timer_str = "ACTIF (25 fps)" if timer_ok else "inactif ou inconnu"
         self._log_line(f"  Timer DMX : {timer_str}", timer_color)
+
+        # Sortie DMX activée dans le plan de feu ?
+        try:
+            win = self._parent_win
+            pf = getattr(win, 'plan_de_feu', None)
+            if pf and hasattr(pf, 'is_dmx_enabled'):
+                dmx_on = pf.is_dmx_enabled()
+                if dmx_on:
+                    self._log_line("  ✓  Sortie DMX activée (bouton vert dans le plan de feu)", ok)
+                else:
+                    self._log_line("  ⚠  Sortie DMX DÉSACTIVÉE dans le plan de feu", warn)
+                    self._log_line("      → Cliquez le bouton DMX (icône prise) pour l'activer", warn)
+        except Exception:
+            pass
+
+        # Patch projecteurs
+        try:
+            n_patched = len(dmx.projector_channels)
+            if n_patched == 0:
+                self._log_line("  ⚠  Aucun projecteur patché — le patch DMX n'est pas configuré", warn)
+                self._log_line("      → Ouvrez Paramètres › Patch DMX pour assigner les adresses", warn)
+            else:
+                self._log_line(f"  ✓  {n_patched} projecteur(s) patché(s)", ok)
+        except Exception:
+            pass
 
         # Données DMX actuelles (univers 0, canaux 1-10)
         try:
@@ -682,7 +816,11 @@ class DmxSetupDialog(QDialog):
                 self._log_line(f"    {vals}", "#888888")
                 non_zero = sum(1 for v in uni0[:512] if v > 0)
                 if non_zero == 0:
-                    self._log_line("  ⚠  Tous les canaux sont à 0 — aucune lumière active", warn)
+                    self._log_line("  ⚠  Tous les canaux sont à 0", warn)
+                    self._log_line("      Causes possibles :", warn)
+                    self._log_line("      • Sortie DMX désactivée (voir ci-dessus)", dim)
+                    self._log_line("      • Aucun projecteur patché (voir ci-dessus)", dim)
+                    self._log_line("      • Tous les projecteurs sont à niveau 0", dim)
                 else:
                     self._log_line(f"  ✓  {non_zero} canaux non-nuls dans l'univers 0", ok)
         except Exception as e:
