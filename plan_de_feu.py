@@ -308,9 +308,11 @@ class PanTiltPad(QWidget):
             self.changed.emit(self._pan, self._tilt)
             self.update()
 
-    def set_values(self, pan, tilt):
+    def set_values(self, pan, tilt, emit=False):
         self._pan  = max(0, min(65535, pan))
         self._tilt = max(0, min(65535, tilt))
+        if emit:
+            self.changed.emit(self._pan, self._tilt)
         self.update()
 
     # ── Dessin ──────────────────────────────────────────────────────────
@@ -986,14 +988,14 @@ class _PanTiltFloater(QFrame):
         lay.addLayout(preset_row)
 
         # Bouton centre
-        btn_center = QPushButton("⊕  Centre (128 / 128)")
+        btn_center = QPushButton("⊕  Centre")
         btn_center.setFixedHeight(22)
         btn_center.setStyleSheet(
             "QPushButton{background:#1a1a1a;color:#555;border:1px solid #222;"
             "border-radius:4px;font-size:9px;}"
             "QPushButton:hover{color:#00d4ff;border-color:#00d4ff44;}"
         )
-        btn_center.clicked.connect(lambda: self._apply_preset({"pan": 128, "tilt": 128}))
+        btn_center.clicked.connect(lambda: self._apply_preset({"pan": 32768, "tilt": 32768}))
         lay.addWidget(btn_center)
 
         self.adjustSize()
@@ -1045,12 +1047,10 @@ class _PanTiltFloater(QFrame):
             pdf._flush_dmx()
 
     def _apply_preset(self, pr):
-        self._pad.set_values(pr["pan"], pr["tilt"])
+        self._pad.set_values(pr["pan"], pr["tilt"], emit=True)
 
     def hide_floater(self):
         self._targets = []
-        self._pt_fixture = None if not self._canvas else None
-        self._canvas._pt_fixture = None
         self.hide()
         self.closed.emit()
 
@@ -1087,7 +1087,7 @@ class FixtureCanvas(QWidget):
         self._rubber_rect   = None
         # Beam "en attente" : press sur faisceau sans drag → rubber band prioritaire
         self._pending_beam  = None       # dict {beam_idx, pos, targets} ou None
-        self._pt_floater    = None       # floater Pan/Tilt (référence externe, peut être None)
+        self._pt_floater    = _PanTiltFloater(self)
 
     # ── Helpers de position ─────────────────────────────────────────
 
@@ -1738,7 +1738,11 @@ class FixtureCanvas(QWidget):
                 if key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.update()
-                self.pdf._show_fixture_context_menu(event.globalPos(), idx)
+                proj = self.pdf.projectors[idx]
+                if getattr(proj, 'fixture_type', '') == 'Moving Head':
+                    self._pt_floater.show_for(idx, event.pos())
+                else:
+                    self.pdf._show_fixture_context_menu(event.globalPos(), idx)
 
     def _resolve_overlaps(self, canvas_w, canvas_h, dragged_set):
         """Pousse les fixtures non-draguées qui chevauchent une fixture draguée."""
