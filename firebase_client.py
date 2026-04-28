@@ -57,15 +57,25 @@ def _post_json(url, payload: dict, id_token: str = None) -> dict:
     if id_token:
         headers["Authorization"] = f"Bearer {id_token}"
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet.")
 
 
 def _get_json(url, id_token: str) -> dict:
     """GET JSON avec Bearer token."""
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet.")
 
 
 def _patch_json(url, payload: dict, id_token: str) -> dict:
@@ -79,8 +89,13 @@ def _patch_json(url, payload: dict, id_token: str) -> dict:
         },
         method="PATCH"
     )
-    with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet.")
 
 
 def _firebase_error(e: urllib.error.HTTPError) -> str:
@@ -250,6 +265,8 @@ def get_stripe_portal_url(id_token: str) -> str:
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         raise Exception(f"Erreur portail : {body}")
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet.")
 
 
 def send_password_reset(email: str) -> bool:
@@ -442,6 +459,8 @@ def _post_json_opt_auth(url: str, payload: dict, id_token: str = None) -> object
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur Firestore : {_firebase_error(e)}")
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet.")
 
 
 def write_fixture_pack(pack_id: str, pack_data: dict, id_token: str) -> dict:
@@ -499,6 +518,8 @@ def delete_fixture_pack(pack_id: str, id_token: str) -> bool:
             return True
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur suppression pack : {_firebase_error(e)}")
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet.")
 
 
 def fetch_fixture_packs_index(id_token: str = None) -> list:
@@ -573,6 +594,8 @@ def fetch_fixture_pack(pack_id: str, id_token: str = None) -> dict:
         if e.code == 404:
             raise Exception(f"Pack '{pack_id}' introuvable.")
         raise Exception(f"Erreur téléchargement pack : {_firebase_error(e)}")
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet.")
 
     d = _doc_to_dict(doc)
     d["id"] = pack_id
@@ -668,8 +691,13 @@ def fetch_all_gdtf_fixtures(id_token: str) -> list:
             url, headers={"Authorization": f"Bearer {id_token}"}
         )
         ctx = _SSL_CTX
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            data = json.loads(resp.read().decode())
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, OSError):
+            raise Exception("Pas de connexion internet.")
         docs = data.get("documents", [])
         for doc in docs:
             d = _doc_to_dict(doc)

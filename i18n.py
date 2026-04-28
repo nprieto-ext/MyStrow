@@ -991,8 +991,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                               "fr": "Limite GitHub atteinte (403).\nRéessayez dans quelques minutes."},
     "err_ssl":               {"en": "SSL error — unable to verify certificates.",
                               "fr": "Erreur SSL — impossible de vérifier les certificats."},
-    "err_network":           {"en": "Network unreachable: {reason}",
-                              "fr": "Réseau inaccessible : {reason}"},
+    "err_network":           {"en": "No internet connection.",
+                              "fr": "Pas de connexion internet."},
     "err_http":              {"en": "HTTP {code} — {reason}",       "fr": "HTTP {code} — {reason}"},
 }
 

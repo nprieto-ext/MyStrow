@@ -14,7 +14,8 @@ import math
 import time as _time
 from PySide6.QtWidgets import (QMainWindow, QWidget, QMenu, QWidgetAction,
                                 QSlider, QLabel, QHBoxLayout, QVBoxLayout,
-                                QFrame, QPushButton, QDoubleSpinBox)
+                                QFrame, QPushButton, QDoubleSpinBox,
+                                QCheckBox, QToolBar)
 from PySide6.QtCore    import Qt, QPoint, QPointF, QRectF, QTimer, Signal
 from PySide6.QtGui     import (QPainter, QPen, QBrush, QColor, QPolygonF,
                                 QFont, QLinearGradient, QRadialGradient,
@@ -330,9 +331,17 @@ class _Canvas3D(QWidget):
         self._projectors     = []
         self._sel            = set()   # set of int indices (stables entre refreshes)
         self._move_callback  = None    # callable(selected_indices)
+        self._trusses = [
+            {'label': 'Truss avant',   'enabled': True, 'height': TRUSS_Y, 'z': -3.8, 'x_l': -9.0, 'x_r': 9.0},
+            {'label': 'Truss arrière', 'enabled': True, 'height': TRUSS_Y, 'z':  4.0, 'x_l': -9.0, 'x_r': 9.0},
+        ]
         # Gobo animation timer
         self._rot_timer = QTimer(self)
         self._rot_timer.timeout.connect(self.update)
+
+    def set_trusses(self, trusses):
+        self._trusses = trusses
+        self.update()
 
     def set_projectors(self, data):
         self._projectors = data
@@ -566,38 +575,39 @@ class _Canvas3D(QWidget):
                     painter.drawPolygon(QPolygonF(_legf))
 
         # ── Truss ─────────────────────────────────────────────────────────
-        def _draw_truss_bar(xa, za, xb, zb, thick=2.5, thin=0.8, n=6):
+        def _draw_truss_bar(xa, za, xb, zb, hy, thick=2.5, thin=0.8, n=6):
             DY = 0.38
             CT, CB, CD = "#9090b8", "#5858a0", "#353558"
-            p_tl=pt(xa,TRUSS_Y,za); p_tr=pt(xb,TRUSS_Y,zb)
-            p_bl=pt(xa,TRUSS_Y-DY,za); p_br=pt(xb,TRUSS_Y-DY,zb)
-            # Ombre portée des tubes principaux
+            p_tl=pt(xa,hy,za); p_tr=pt(xb,hy,zb)
+            p_bl=pt(xa,hy-DY,za); p_br=pt(xb,hy-DY,zb)
             line(p_tl,p_tr,"#0e0e1c",thick+3.5); line(p_bl,p_br,"#0e0e1c",thin+2.0)
-            # Diagonales entretoise
             for k in range(n):
                 t0,t1 = k/n, (k+1)/n
-                def lp(t, top):
-                    lxa=xa+(xb-xa)*t; lza=za+(zb-za)*t
-                    return pt(lxa, TRUSS_Y+(0 if top else -DY), lza)
+                def lp(t, top, _xa=xa, _za=za, _xb=xb, _zb=zb, _hy=hy):
+                    lxa=_xa+(_xb-_xa)*t; lza=_za+(_zb-_za)*t
+                    return pt(lxa, _hy+(0 if top else -DY), lza)
                 line(lp(t0,True),lp(t1,False),CD,thin)
                 line(lp(t1,True),lp(t0,False),CD,thin)
-            # Montants verticaux + tubes principaux
             line(p_tl,p_bl,CT,thin*1.5); line(p_tr,p_br,CT,thin*1.5)
             line(p_tl,p_tr,CT,thick);    line(p_bl,p_br,CB,thin+0.5)
-            # Reflet aluminium sur le tube supérieur
             line(p_tl,p_tr,"#c8d0ec",max(0.5,thick*0.22))
         cc = "#6868a8"
-        for sx in (-9.0, 9.0):
-            line(pt(sx,0,-3.8),pt(sx,TRUSS_Y,-3.8),"#0e0e1c",5)
-            line(pt(sx,0,-3.8),pt(sx,TRUSS_Y,-3.8),cc,2.2)
-            line(pt(sx,0,-3.8),pt(sx,TRUSS_Y,-3.8),"#aab0d0",0.8)
-            line(pt(sx,0, 4.0),pt(sx,TRUSS_Y, 4.0),"#0e0e1c",4)
-            line(pt(sx,0, 4.0),pt(sx,TRUSS_Y, 4.0),cc,1.8)
-            line(pt(sx,0, 4.0),pt(sx,TRUSS_Y, 4.0),"#aab0d0",0.7)
-        _draw_truss_bar(-9,-3.8, 9,-3.8, thick=2.5)
-        _draw_truss_bar(-9, 4.0, 9, 4.0, thick=2.0)
-        line(pt(-9,TRUSS_Y,-3.8),pt(-9,TRUSS_Y,4.0),cc,1.2)
-        line(pt( 9,TRUSS_Y,-3.8),pt( 9,TRUSS_Y,4.0),cc,1.2)
+        enabled_trusses = [t for t in self._trusses if t.get('enabled', True)]
+        for tr in enabled_trusses:
+            hy = tr.get('height', TRUSS_Y)
+            tz = tr.get('z', -3.8)
+            xl, xr = tr.get('x_l', -9.0), tr.get('x_r', 9.0)
+            for sx in (xl, xr):
+                line(pt(sx,0,tz),pt(sx,hy,tz),"#0e0e1c",5)
+                line(pt(sx,0,tz),pt(sx,hy,tz),cc,2.2)
+                line(pt(sx,0,tz),pt(sx,hy,tz),"#aab0d0",0.8)
+            _draw_truss_bar(xl, tz, xr, tz, hy)
+        for i in range(len(enabled_trusses) - 1):
+            ta, tb2 = enabled_trusses[i], enabled_trusses[i+1]
+            line(pt(ta.get('x_l',-9.),ta['height'],ta['z']),
+                 pt(tb2.get('x_l',-9.),tb2['height'],tb2['z']),cc,1.2)
+            line(pt(ta.get('x_r', 9.),ta['height'],ta['z']),
+                 pt(tb2.get('x_r', 9.),tb2['height'],tb2['z']),cc,1.2)
 
         # ── Precompute ────────────────────────────────────────────────────
         prjs = self._projectors
@@ -1066,25 +1076,177 @@ class _MovePanel(QWidget):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Panneau configuration truss
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _TrussPanel(QWidget):
+    changed = Signal()
+
+    _SPIN_STYLE = """
+        QDoubleSpinBox {
+            background: #1e1e36; color: #ccccff;
+            border: 1px solid #444466; border-radius: 4px;
+            padding: 2px 4px; font-size: 12px; min-width: 72px;
+        }
+        QDoubleSpinBox:focus { border-color: #7777cc; }
+        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+            width: 18px; background: #252545;
+            border-left: 1px solid #444466;
+        }
+        QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
+            background: #353565;
+        }
+    """
+
+    def __init__(self, trusses, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            QWidget#trussPanel {
+                background: rgba(18,18,32,235);
+                border: 1px solid #444466;
+                border-radius: 8px;
+            }
+            QPushButton {
+                background: #252540; color: #9999cc;
+                border: 1px solid #333355; border-radius: 4px;
+                font-size: 11px; padding: 4px 10px;
+            }
+            QPushButton:hover   { background: #303060; color: #ffffff; }
+            QPushButton:pressed { background: #1a1a36; }
+            QLabel              { color: #8888bb; font-size: 11px; }
+            QLabel#title        { color: #00d4ff; font-size: 12px; font-weight: bold; }
+            QCheckBox           { color: #9999cc; font-size: 11px; spacing: 6px; }
+            QCheckBox::indicator {
+                width: 14px; height: 14px;
+                border: 1px solid #444466; border-radius: 3px; background: #1e1e36;
+            }
+            QCheckBox::indicator:checked { background: #0077bb; border-color: #0099dd; }
+        """ + self._SPIN_STYLE)
+        self.setObjectName("trussPanel")
+        self._trusses = trusses
+        self._updating = False
+        self._widgets = []
+        self._build()
+
+    def _build(self):
+        title = QLabel("Configuration Truss")
+        title.setObjectName("title")
+        title.setAlignment(Qt.AlignCenter)
+
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(12, 10, 12, 10)
+        vlay.setSpacing(6)
+        vlay.addWidget(title)
+
+        for i, tr in enumerate(self._trusses):
+            sep = QFrame()
+            sep.setFrameShape(QFrame.HLine)
+            sep.setStyleSheet("color:#333355;")
+            vlay.addWidget(sep)
+
+            chk = QCheckBox(tr['label'])
+            chk.setChecked(tr.get('enabled', True))
+
+            s_h = QDoubleSpinBox()
+            s_h.setRange(1.0, 14.0); s_h.setSingleStep(0.5)
+            s_h.setDecimals(1);      s_h.setSuffix(" m")
+            s_h.setValue(tr.get('height', TRUSS_Y))
+
+            s_z = QDoubleSpinBox()
+            s_z.setRange(-8.0, 12.0); s_z.setSingleStep(0.5)
+            s_z.setDecimals(1);       s_z.setSuffix(" m")
+            s_z.setValue(tr.get('z', 0.0))
+
+            def _row(lbl_text, widget):
+                hl = QHBoxLayout(); hl.setSpacing(6)
+                lbl = QLabel(lbl_text); lbl.setFixedWidth(72)
+                hl.addWidget(lbl); hl.addWidget(widget)
+                return hl
+
+            sub = QVBoxLayout(); sub.setSpacing(4)
+            sub.addWidget(chk)
+            sub.addLayout(_row("Hauteur :", s_h))
+            sub.addLayout(_row("Position Z :", s_z))
+            vlay.addLayout(sub)
+
+            def _on_change(_, _i=i, _chk=chk, _sh=s_h, _sz=s_z):
+                if self._updating: return
+                self._trusses[_i]['enabled'] = _chk.isChecked()
+                self._trusses[_i]['height']  = _sh.value()
+                self._trusses[_i]['z']       = _sz.value()
+                self.changed.emit()
+
+            chk.toggled.connect(_on_change)
+            s_h.valueChanged.connect(_on_change)
+            s_z.valueChanged.connect(_on_change)
+            self._widgets.append({'chk': chk, 'h': s_h, 'z': s_z})
+
+        self.adjustSize()
+
+    def get_trusses(self):
+        return self._trusses
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Fenêtre flottante
 # ─────────────────────────────────────────────────────────────────────────────
 
 class Plan3DWindow(QMainWindow):
     """Fenêtre flottante 3D du plan de feu (rendu Python/Qt pur)."""
 
+    _TB_BTN = """
+        QPushButton {
+            background: #1e1e36; color: #9999cc;
+            border: 1px solid #333355; border-radius: 4px;
+            font-size: 11px; padding: 3px 10px; min-width: 52px;
+        }
+        QPushButton:hover   { background: #2a2a50; color: #ffffff; }
+        QPushButton:checked { background: #004466; color: #00d4ff;
+                              border-color: #0077bb; }
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
         self.setWindowTitle("Plan de feu 3D")
         self.resize(900, 580)
-        self.setStyleSheet("background:#0d0d14;")
+        self.setStyleSheet("background:#0d0d14; QToolBar { background:#12121e; border:none; spacing:4px; padding:3px 8px; }")
         self._canvas = _Canvas3D()
         self._canvas._move_callback = self._on_selection_changed
         self.setCentralWidget(self._canvas)
+
         self._move_panel = _MovePanel(self)
         self._move_panel.move_requested.connect(self._move_selected)
         self._move_panel.deselect_all.connect(self._deselect_all)
         self._move_panel.hide()
 
+        self._truss_panel = _TrussPanel(self._canvas._trusses, self)
+        self._truss_panel.changed.connect(self._on_truss_changed)
+        self._truss_panel.hide()
+
+        tb = QToolBar(self)
+        tb.setMovable(False)
+        self.addToolBar(tb)
+
+        self._btn_truss = QPushButton("Truss")
+        self._btn_truss.setCheckable(True)
+        self._btn_truss.setStyleSheet(self._TB_BTN)
+        self._btn_truss.clicked.connect(self._toggle_truss_panel)
+        tb.addWidget(self._btn_truss)
+
+    # ── Truss panel ──────────────────────────────────────────────────────────
+
+    def _toggle_truss_panel(self, checked):
+        if checked:
+            self._truss_panel.adjustSize()
+            pw = self._truss_panel
+            pw.move(self.width() - pw.width() - 16, 52)
+            pw.show(); pw.raise_()
+        else:
+            self._truss_panel.hide()
+
+    def _on_truss_changed(self):
+        self._canvas.set_trusses(self._truss_panel.get_trusses())
 
     # ── Selection / movement ─────────────────────────────────────────────────
 
@@ -1125,6 +1287,9 @@ class Plan3DWindow(QMainWindow):
         super().resizeEvent(e)
         if not self._move_panel.isHidden():
             self._reposition_panel()
+        if not self._truss_panel.isHidden():
+            pw = self._truss_panel
+            pw.move(self.width() - pw.width() - 16, 52)
 
     def _deselect_all(self):
         self._canvas._sel.clear()
