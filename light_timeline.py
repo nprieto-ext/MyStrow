@@ -133,6 +133,7 @@ class LightClip:
         # Clip de séquence (mémoire AKAI)
         self.memory_ref = None    # (mem_col, row) ou None
         self.memory_label = ""    # ex: "A1", "B3"
+        self.cue_index = None     # None = cue courant, int = cue fixé (expansion multi-cue)
 
 
 class _ColorSwatch(QPushButton):
@@ -3151,14 +3152,54 @@ print(json.dumps(waveform))
             raw = bytes(event.mimeData().data('application/x-sequence')).decode()
             parts = raw.split(',', 3)
             if len(parts) == 4:
-                mem_col, row = int(parts[0]), int(parts[1])
+                mem_col, row_idx = int(parts[0]), int(parts[1])
                 label, color_hex = parts[2], parts[3]
                 drop_x = event.position().x() - 145
                 start_time = max(0, drop_x / self.pixels_per_ms)
-                start_time = self.find_free_position(start_time, 5000)
-                clip = self.add_clip_direct(start_time, 5000, QColor(color_hex), 100)
-                clip.memory_ref = (mem_col, row)
-                clip.memory_label = label
+
+                # Récupérer les cues depuis la mémoire
+                mw = getattr(self.parent_editor, 'main_window', None)
+                memories = getattr(mw, 'memories', None) if mw else None
+                cues = []
+                if memories and mem_col < len(memories) and row_idx < len(memories[mem_col]):
+                    mem = memories[mem_col][row_idx]
+                    if mem:
+                        if mw and hasattr(mw, '_mem_ensure_cues'):
+                            mw._mem_ensure_cues(mem)
+                        cues = mem.get("cues", [])
+
+                if len(cues) <= 1:
+                    # Cue unique → un seul clip
+                    start_time = self.find_free_position(start_time, 5000)
+                    clip = self.add_clip_direct(start_time, 5000, QColor(color_hex), 100)
+                    clip.memory_ref   = (mem_col, row_idx)
+                    clip.memory_label = label
+                else:
+                    # Multi-cue → expansion en N clips consécutifs
+                    cue_dur = 5000
+                    total   = cue_dur * len(cues)
+                    start_time = self.find_free_position(start_time, total)
+                    t = start_time
+                    for i, cue in enumerate(cues):
+                        # Couleur dominante du cue
+                        proj_states = cue.get("projectors", [])
+                        cue_color = QColor(color_hex)
+                        if proj_states:
+                            levels = [ps.get("level", 0) for ps in proj_states]
+                            max_lv = max(levels) if levels else 0
+                            if max_lv > 0:
+                                best = proj_states[levels.index(max_lv)]
+                                bc = QColor(best.get("base_color", color_hex))
+                                lv = best.get("level", 100) / 100.0
+                                cue_color = QColor(
+                                    int(bc.red() * lv), int(bc.green() * lv), int(bc.blue() * lv)
+                                )
+                        c = self.add_clip_direct(t, cue_dur, cue_color, 100)
+                        c.memory_ref   = (mem_col, row_idx)
+                        c.cue_index    = i
+                        c.memory_label = f"{label}  ›  {cue.get('label', f'Cue {i+1}')}"
+                        t += cue_dur
+
                 self.update()
                 if hasattr(self.parent_editor, 'save_state'):
                     self.parent_editor.save_state()
@@ -3510,7 +3551,9 @@ print(json.dumps(waveform))
                     painter.setFont(font)
                     painter.setPen(QColor(255, 255, 255, 220))
                     lbl = getattr(clip, 'memory_label', '') or '⚡'
-                    painter.drawText(clip_rect.adjusted(8, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft, f"⚡ {lbl}")
+                    cue_i = getattr(clip, 'cue_index', None)
+                    prefix = f"[{cue_i + 1}] " if cue_i is not None else ""
+                    painter.drawText(clip_rect.adjusted(8, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft, f"⚡ {prefix}{lbl}")
             elif clip.color2:
                 # ── Bicolore premium ──────────────────────────────────
                 r = 5

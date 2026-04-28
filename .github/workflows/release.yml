@@ -98,7 +98,7 @@ jobs:
   # BUILD MAC (.app + DMG signé + notarisé)
   # ─────────────────────────────────────────────
   build-mac:
-    runs-on: macos-latest
+    runs-on: macos-13
     continue-on-error: true  # Ne bloque pas la release Windows si le build Mac échoue
     outputs:
       dmg_uploaded: ${{ steps.upload-dmg.outputs.dmg_uploaded }}

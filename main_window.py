@@ -27,7 +27,7 @@ except ImportError:
     _psutil = None
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
-    QPalette, QPolygon, QAction
+    QPalette, QPolygon, QAction, QDesktopServices
 )
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
@@ -1564,6 +1564,11 @@ class MainWindow(QMainWindow):
         about_menu.addAction(tr("menu_submit_idea"), self._show_idea_dialog)
         if get_language() == "fr":
             about_menu.addAction("📺 Tutoriels", self._show_tutorials_dialog)
+        about_menu.addSeparator()
+        social_menu = about_menu.addMenu("🌐  Suivez-nous sur les réseaux")
+        social_menu.addAction("📸  Instagram", lambda: QDesktopServices.openUrl(QUrl("https://www.instagram.com/niko_mystrow_dmx/")))
+        social_menu.addAction("▶️  TikTok",    lambda: QDesktopServices.openUrl(QUrl("https://www.tiktok.com/@niko_mystrow")))
+        social_menu.addAction("▶️  YouTube",   lambda: QDesktopServices.openUrl(QUrl("https://www.youtube.com/@MyStrow-x7t")))
         about_menu.addSeparator()
         lang_menu = about_menu.addMenu(tr("menu_language"))
         act_fr = lang_menu.addAction(tr("menu_lang_fr"))
@@ -3259,11 +3264,15 @@ class MainWindow(QMainWindow):
         for i, proj_state in enumerate(cue.get("projectors", [])):
             if i >= len(self.projectors):
                 break
-            if proj_state["level"] > 0:
+            if proj_state["level"] > 0 or any(proj_state.get(k, 0) > 0 for k in ("uv", "amber_boost", "white_boost", "orange_boost")):
                 p = self.projectors[i]
                 p.level = 0
                 p.base_color = QColor("black")
                 p.color = QColor("black")
+                p.uv           = 0
+                p.amber_boost  = 0
+                p.white_boost  = 0
+                p.orange_boost = 0
 
     def _apply_memory_to_projectors(self, mem_col, row, fader_value=None, trigger_effect=True):
         """Applique le cue courant de la mémoire sur les projecteurs."""
@@ -3288,6 +3297,11 @@ class MainWindow(QMainWindow):
                 v = proj_state["pan"];  p.pan  = v * 256 if v <= 255 else v
             if "tilt" in proj_state:
                 v = proj_state["tilt"]; p.tilt = v * 256 if v <= 255 else v
+            # Canaux spéciaux toujours restaurés (même si level == 0)
+            p.uv           = int(proj_state.get("uv",           0) * brightness)
+            p.amber_boost  = int(proj_state.get("amber_boost",  0) * brightness)
+            p.white_boost  = int(proj_state.get("white_boost",  0) * brightness)
+            p.orange_boost = int(proj_state.get("orange_boost", 0) * brightness)
             if proj_state["level"] <= 0:
                 p.level = 0
                 p.base_color = QColor("black")
@@ -3485,11 +3499,15 @@ class MainWindow(QMainWindow):
         snapshot = []
         for p in self.projectors:
             snapshot.append({
-                "group": p.group,
-                "base_color": p.base_color.name() if p.level > 0 else "#000000",
-                "level": p.level,
-                "pan":  getattr(p, 'pan',  32768),
-                "tilt": getattr(p, 'tilt', 32768),
+                "group":        p.group,
+                "base_color":   p.base_color.name() if p.level > 0 else "#000000",
+                "level":        p.level,
+                "pan":          getattr(p, 'pan',          32768),
+                "tilt":         getattr(p, 'tilt',         32768),
+                "uv":           getattr(p, 'uv',           0),
+                "amber_boost":  getattr(p, 'amber_boost',  0),
+                "white_boost":  getattr(p, 'white_boost',  0),
+                "orange_boost": getattr(p, 'orange_boost', 0),
             })
         return {"projectors": snapshot, "effect": {}, "duration": 0}
 
@@ -11234,6 +11252,32 @@ class MainWindow(QMainWindow):
 
         ALL_FIXTURES = list(BUILTIN_FIXTURES) + _user_fixtures + _custom_fixtures
 
+        # Intégration QLC+ (1710 fixtures, une entrée par mode)
+        try:
+            from plan_de_feu import _load_qlc_fixtures as _load_qlc
+            _qlc_seen = {(f.get("name", ""), f.get("manufacturer", "")) for f in ALL_FIXTURES}
+            for _qfx in _load_qlc():
+                _mfr   = _qfx.get("manufacturer", "")
+                _model = _qfx.get("model", "")
+                _ftype = _qfx.get("fixture_type", "PAR LED")
+                _modes = _qfx.get("modes", [])
+                for _m in _modes:
+                    _entry_name = _model if len(_modes) == 1 else f"{_model} — {_m['name']}"
+                    _key = (_entry_name, _mfr)
+                    if _key in _qlc_seen:
+                        continue
+                    _qlc_seen.add(_key)
+                    ALL_FIXTURES.append({
+                        "name":         _entry_name,
+                        "manufacturer": _mfr,
+                        "fixture_type": _ftype,
+                        "group":        "face",
+                        "profile":      list(_m["channels"]),
+                        "source":       "qlcplus",
+                    })
+        except Exception:
+            pass
+
         FIXTURE_LIBRARY = {}
         for _fx in ALL_FIXTURES:
             _cat = _fx.get("manufacturer", "Générique")
@@ -11244,6 +11288,7 @@ class MainWindow(QMainWindow):
         for _k in sorted(FIXTURE_LIBRARY):
             _sorted[_k] = FIXTURE_LIBRARY[_k]
         FIXTURE_LIBRARY = _sorted
+        _TOTAL_FIXTURES = len(ALL_FIXTURES)
 
         # ── Dialog ────────────────────────────────────────────────────────────
         _SS = """
@@ -11323,6 +11368,14 @@ class MainWindow(QMainWindow):
         search_row.addWidget(btn_refresh)
         tab1_layout.addLayout(search_row)
 
+        xml_hint = QLabel("💡  Vous pouvez importer n'importe quelle fixture au format <b>XML</b> (GrandMA, QLC+…) via le bouton Importer.")
+        xml_hint.setWordWrap(True)
+        xml_hint.setStyleSheet(
+            "color:#888; font-size:11px; background:#161f16; border:1px solid #2a3a2a;"
+            " border-radius:5px; padding:5px 10px;"
+        )
+        tab1_layout.addWidget(xml_hint)
+
         # ── Splitter fabricant / fixture ──────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
 
@@ -11398,7 +11451,7 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.UserRole, preset)
                 preset_list.addItem(item)
             n = preset_list.count()
-            count_lbl.setText(f"{n} fixture{'s' if n > 1 else ''}")
+            count_lbl.setText(f"{n} fixture{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
 
         def on_cat_changed():
             if search_edit.text().strip():
@@ -11435,7 +11488,7 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.UserRole, preset)
                 preset_list.addItem(item)
             n = preset_list.count()
-            count_lbl.setText(f"{n} résultat{'s' if n > 1 else ''}")
+            count_lbl.setText(f"{n} résultat{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
             if n > 0:
                 preset_list.setCurrentRow(0)
 
@@ -11661,7 +11714,7 @@ class MainWindow(QMainWindow):
                     pass
                 _rebuild_library_ui(merged)
                 n = len(remote_fixtures)
-                count_lbl.setText(f"Firestore — {n} fixture{'s' if n > 1 else ''} chargée{'s' if n > 1 else ''}")
+                count_lbl.setText(f"Firestore — {n} fixture{'s' if n > 1 else ''} chargée{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
                 btn_refresh.setEnabled(True)
                 btn_refresh.setText("🔄  Actualiser")
 

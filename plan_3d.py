@@ -575,32 +575,90 @@ class _Canvas3D(QWidget):
                     painter.drawPolygon(QPolygonF(_legf))
 
         # ── Truss ─────────────────────────────────────────────────────────
-        def _draw_truss_bar(xa, za, xb, zb, hy, thick=2.5, thin=0.8, n=6):
-            DY = 0.38
-            CT, CB, CD = "#9090b8", "#5858a0", "#353558"
-            p_tl=pt(xa,hy,za); p_tr=pt(xb,hy,zb)
-            p_bl=pt(xa,hy-DY,za); p_br=pt(xb,hy-DY,zb)
-            line(p_tl,p_tr,"#0e0e1c",thick+3.5); line(p_bl,p_br,"#0e0e1c",thin+2.0)
+        def _draw_truss_bar(xa, za, xb, zb, hy, thick=2.5, thin=0.8, n=7):
+            DY = 0.32   # hauteur section truss
+            HD = 0.18   # demi-profondeur boîte (avant/arrière)
+
+            # Direction du truss + perpendiculaire (profondeur)
+            _tl = math.sqrt((xb-xa)**2 + (zb-za)**2)
+            if _tl > 0.01:
+                _pdx = -(zb-za) / _tl * HD
+                _pdz =  (xb-xa) / _tl * HD
+            else:
+                _pdx, _pdz = 0.0, HD
+
+            # 8 coins : front (f) / back (b), top (T) / bot (B), left (L) / right (R)
+            def _c(x, y, z): return pt(x, y, z)
+            TFL=_c(xa-_pdx,hy,   za-_pdz); TFR=_c(xb-_pdx,hy,   zb-_pdz)
+            TBL=_c(xa+_pdx,hy,   za+_pdz); TBR=_c(xb+_pdx,hy,   zb+_pdz)
+            BFL=_c(xa-_pdx,hy-DY,za-_pdz); BFR=_c(xb-_pdx,hy-DY,zb-_pdz)
+            BBL=_c(xa+_pdx,hy-DY,za+_pdz); BBR=_c(xb+_pdx,hy-DY,zb+_pdz)
+
+            # Face du dessus (top plate) — aluminium brossé
+            if all([TFL,TFR,TBR,TBL]):
+                _gt = QLinearGradient(TFL, TBL)
+                _gt.setColorAt(0.0, QColor(110,110,150))
+                _gt.setColorAt(0.5, QColor(85,85,125))
+                _gt.setColorAt(1.0, QColor(55,55,95))
+                painter.setBrush(QBrush(_gt)); painter.setPen(Qt.NoPen)
+                painter.drawPolygon(QPolygonF([TFL,TFR,TBR,TBL]))
+
+            # Face avant — avec entretoisement en X
+            if all([TFL,TFR,BFL,BFR]):
+                _gf = QLinearGradient(TFL, TFR)
+                _gf.setColorAt(0.0, QColor(60,60,98)); _gf.setColorAt(0.5, QColor(82,82,128))
+                _gf.setColorAt(1.0, QColor(60,60,98))
+                painter.setBrush(QBrush(_gf)); painter.setPen(Qt.NoPen)
+                painter.drawPolygon(QPolygonF([TFL,TFR,BFR,BFL]))
+
+            CD = "#28283c"
             for k in range(n):
-                t0,t1 = k/n, (k+1)/n
-                def lp(t, top, _xa=xa, _za=za, _xb=xb, _zb=zb, _hy=hy):
-                    lxa=_xa+(_xb-_xa)*t; lza=_za+(_zb-_za)*t
-                    return pt(lxa, _hy+(0 if top else -DY), lza)
-                line(lp(t0,True),lp(t1,False),CD,thin)
-                line(lp(t1,True),lp(t0,False),CD,thin)
-            line(p_tl,p_bl,CT,thin*1.5); line(p_tr,p_br,CT,thin*1.5)
-            line(p_tl,p_tr,CT,thick);    line(p_bl,p_br,CB,thin+0.5)
-            line(p_tl,p_tr,"#c8d0ec",max(0.5,thick*0.22))
+                t0, t1 = k/n, (k+1)/n
+                def _lf(t, top, _xa=xa,_za=za,_xb=xb,_zb=zb,_hy=hy,_pdx=_pdx,_pdz=_pdz):
+                    lx=_xa+(_xb-_xa)*t; lz=_za+(_zb-_za)*t
+                    return pt(lx-_pdx, _hy+(0 if top else -DY), lz-_pdz)
+                line(_lf(t0,True),_lf(t1,False),CD,thin)
+                line(_lf(t1,True),_lf(t0,False),CD,thin)
+
+            # Rails 4 cordons principaux
+            CT, CB, CS = "#b0b8d8", "#6870a8", "#808098"
+            for (a,b) in [(TFL,TBL),(TFR,TBR),(BFL,BBL),(BFR,BBR)]:  # liaisons avant-arrière
+                line(a,b,CS,thin)
+            line(TFL,TFR,CT,thick);  line(TBL,TBR,CS,thin)     # cordons haut
+            line(BFL,BFR,CB,thin+0.5); line(BBL,BBR,CS,thin*0.6)  # cordons bas
+            line(TFL,BFL,CT,thin*1.5); line(TFR,BFR,CT,thin*1.5)  # montants avant
+            line(TBL,BBL,CS,thin);     line(TBR,BBR,CS,thin)       # montants arrière
+            # Reflet sur le cordon supérieur avant
+            line(TFL,TFR,"#d8e0f4",max(0.5,thick*0.20))
+
+        def _draw_support_leg(sx, hy, tz, cc):
+            """Poteau de support section carrée."""
+            LW = 0.06  # demi-largeur du poteau
+            p_ft = pt(sx-LW, hy, tz-LW); p_fb = pt(sx-LW, 0, tz-LW)
+            p_bt = pt(sx+LW, hy, tz+LW); p_bb = pt(sx+LW, 0, tz+LW)
+            # Face avant du poteau
+            if all([p_ft, p_fb, p_bb, p_bt]):
+                _gp = QLinearGradient(p_ft, p_bt)
+                _gp.setColorAt(0.0, QColor(72,72,108))
+                _gp.setColorAt(0.5, QColor(55,55,88))
+                _gp.setColorAt(1.0, QColor(35,35,62))
+                painter.setBrush(QBrush(_gp)); painter.setPen(Qt.NoPen)
+                painter.drawPolygon(QPolygonF([p_ft, p_bt, p_bb, p_fb]))
+            line(p_ft, p_fb, "#c0c8e0", 0.8)
+            line(p_bt, p_bb, "#505070", 0.6)
+            # Semelle sol
+            _sf_l = pt(sx-LW*2.5, 0, tz-LW*2.5); _sf_r = pt(sx+LW*2.5, 0, tz+LW*2.5)
+            if _sf_l and _sf_r:
+                painter.setPen(QPen(QColor(40,40,65), 1.8)); painter.drawLine(_sf_l, _sf_r)
+
         cc = "#6868a8"
         enabled_trusses = [t for t in self._trusses if t.get('enabled', True)]
         for tr in enabled_trusses:
             hy = tr.get('height', TRUSS_Y)
             tz = tr.get('z', -3.8)
             xl, xr = tr.get('x_l', -9.0), tr.get('x_r', 9.0)
-            for sx in (xl, xr):
-                line(pt(sx,0,tz),pt(sx,hy,tz),"#0e0e1c",5)
-                line(pt(sx,0,tz),pt(sx,hy,tz),cc,2.2)
-                line(pt(sx,0,tz),pt(sx,hy,tz),"#aab0d0",0.8)
+            _draw_support_leg(xl, hy, tz, cc)
+            _draw_support_leg(xr, hy, tz, cc)
             _draw_truss_bar(xl, tz, xr, tz, hy)
         for i in range(len(enabled_trusses) - 1):
             ta, tb2 = enabled_trusses[i], enabled_trusses[i+1]
@@ -655,6 +713,16 @@ class _Canvas3D(QWidget):
                 painter.setBrush(QBrush(rg)); painter.setPen(Qt.NoPen)
                 painter.drawPolygon(QPolygonF(pool_pts))
 
+        def _beam_perp(p, fx, fz, sx2, sz):
+            """Vecteur perpendiculaire au faisceau dans le plan XZ (pour étaler la base du cone)."""
+            if p.get('fixture_type', '') == 'Moving Head':
+                bdx = fx - sx2
+                bdz = fz - sz
+                dist_f = math.sqrt(bdx * bdx + bdz * bdz)
+                if dist_f > 0.05:
+                    return -bdz / dist_f, bdx / dist_f
+            return 1.0, 0.0  # PAR LED : étalement horizontal par défaut
+
         # ── Pass B — halo volumétrique ─────────────────────────────────────
         for p in sorted_prjs:
             lvl = max(0.0, min(1.0, p['level']/100.0))
@@ -664,7 +732,10 @@ class _Canvas3D(QWidget):
             tip = pt(sx2, sy, sz)
             if not tip: continue
             sh = (0.12+1.6*lvl)*2.2
-            bc = pt(fx,0.02,fz); bl = pt(fx-sh,0.02,fz); br = pt(fx+sh,0.02,fz)
+            px, pz = _beam_perp(p, fx, fz, sx2, sz)
+            bc = pt(fx, 0.02, fz)
+            bl = pt(fx - sh*px, 0.02, fz - sh*pz)
+            br = pt(fx + sh*px, 0.02, fz + sh*pz)
             if bl and br and bc:
                 gh = QLinearGradient(tip, bc)
                 gh.setColorAt(0.0, QColor(r,g,b,int(40*lvl))); gh.setColorAt(1.0, QColor(r,g,b,0))
@@ -679,9 +750,10 @@ class _Canvas3D(QWidget):
             sy, sx2, sz, (fx,fz) = _src(p)
             tip  = pt(sx2, sy, sz)
             sp   = 0.12 + 1.6*lvl
+            px, pz = _beam_perp(p, fx, fz, sx2, sz)
             bc   = pt(fx, 0.02, fz)
-            bl   = pt(fx-sp, 0.02, fz)
-            br_  = pt(fx+sp, 0.02, fz)
+            bl   = pt(fx - sp*px, 0.02, fz - sp*pz)
+            br_  = pt(fx + sp*px, 0.02, fz + sp*pz)
             if not (tip and bl and br_ and bc): continue
             grad = QLinearGradient(tip, bc)
             grad.setColorAt(0.0, QColor(r,g,b,int(220*lvl)))
@@ -865,16 +937,34 @@ class _Canvas3D(QWidget):
                         dot_r, dot_r)
 
             else:
-                # PAR / wash — boîtier cylindrique avec joug (yoke)
+                # PAR / wash — boîtier avec épaisseur (face avant + face sup + face côté)
                 HW = 0.20; HTOP = hang_y - 0.01; HBOT = hang_y - 0.46; LY = hang_y - 0.52
                 _br  = math.radians(p.get('body_rotation', 0.0))
                 _ydx = math.cos(_br) * HW
                 _ydz = math.sin(_br) * HW
-                btl = pt(x - _ydx,       HTOP, z - _ydz)
-                btr = pt(x + _ydx,       HTOP, z + _ydz)
+                # Vecteur de profondeur (perpendiculaire au corps, vers l'avant)
+                _DD = 0.20
+                _pnx = -math.sin(_br) * _DD
+                _pnz =  math.cos(_br) * _DD
+                # Points face avant
+                btl = pt(x - _ydx,        HTOP, z - _ydz)
+                btr = pt(x + _ydx,        HTOP, z + _ydz)
                 bbl = pt(x - _ydx * 0.82, HBOT, z - _ydz * 0.82)
                 bbr = pt(x + _ydx * 0.82, HBOT, z + _ydz * 0.82)
                 if not (btl and btr and bbl and bbr): continue
+                # Points face arrière (profondeur)
+                btl_b = pt(x - _ydx        + _pnx, HTOP, z - _ydz        + _pnz)
+                btr_b = pt(x + _ydx        + _pnx, HTOP, z + _ydz        + _pnz)
+                # Face supérieure (top) — visible depuis l'angle caméra par défaut
+                if btl_b and btr_b:
+                    _gtop = QLinearGradient(btl, btl_b)
+                    _gtop.setColorAt(0.0, QColor(62, 62, 92))
+                    _gtop.setColorAt(1.0, QColor(30, 30, 52))
+                    painter.setBrush(QBrush(_gtop)); painter.setPen(Qt.NoPen)
+                    painter.drawPolygon(QPolygonF([btl, btr, btr_b, btl_b]))
+                    # Bord supérieur arrière (ligne de séparation)
+                    painter.setPen(QPen(QColor(22, 22, 38), 0.8))
+                    painter.drawLine(btl_b, btr_b)
                 bw_px = max(8.0, abs(btr.x()-btl.x()))
                 # Corps métallique — dégradé cylindrique
                 _gb = QLinearGradient(btl, btr)
@@ -960,7 +1050,7 @@ class _Canvas3D(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _MovePanel(QWidget):
-    move_requested = Signal(float, float, float)   # Δx, Δheight, Δz
+    move_requested = Signal(float, float, float, float)   # Δx, Δheight, Δz, Δrotation
     deselect_all   = Signal()
 
     _SPIN_STYLE = """
@@ -1005,21 +1095,24 @@ class _MovePanel(QWidget):
         self._title.setAlignment(Qt.AlignCenter)
 
         self._updating = False
-        self._ref = {'x': 0.0, 'h': TRUSS_Y, 'z': 0.0}
+        self._ref = {'x': 0.0, 'h': TRUSS_Y, 'z': 0.0, 'rot': 0.0}
 
-        def spin(lo, hi, suffix):
+        def spin(lo, hi, suffix, step=0.25, dec=2):
             s = QDoubleSpinBox()
-            s.setRange(lo, hi); s.setSingleStep(0.25)
-            s.setDecimals(2);   s.setSuffix(suffix)
+            s.setRange(lo, hi); s.setSingleStep(step)
+            s.setDecimals(dec); s.setSuffix(suffix)
             return s
 
-        self._spin_x = spin(-9.0,  9.0, " m")
-        self._spin_z = spin(-5.0,  5.0, " m")
-        self._spin_h = spin( 1.0, 12.0, " m")
+        self._spin_x   = spin(-9.0,  9.0,   " m")
+        self._spin_z   = spin(-5.0,  5.0,   " m")
+        self._spin_h   = spin( 1.0, 12.0,   " m")
+        self._spin_rot = spin( 0.0, 360.0,  " °", step=5.0, dec=0)
+        self._spin_rot.setWrapping(True)
 
         self._spin_x.valueChanged.connect(self._on_x)
         self._spin_z.valueChanged.connect(self._on_z)
         self._spin_h.valueChanged.connect(self._on_h)
+        self._spin_rot.valueChanged.connect(self._on_rot)
 
         def row(label, widget):
             hl = QHBoxLayout(); hl.setSpacing(8)
@@ -1031,6 +1124,8 @@ class _MovePanel(QWidget):
         sep1.setStyleSheet("color:#333355;")
         sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
         sep2.setStyleSheet("color:#333355;")
+        sep3 = QFrame(); sep3.setFrameShape(QFrame.HLine)
+        sep3.setStyleSheet("color:#333355;")
 
         desel = QPushButton("✕  Désélectionner")
         desel.clicked.connect(self.deselect_all)
@@ -1040,34 +1135,45 @@ class _MovePanel(QWidget):
         vlay.setSpacing(6)
         vlay.addWidget(self._title)
         vlay.addWidget(sep1)
-        vlay.addLayout(row("X (scène) :", self._spin_x))
-        vlay.addLayout(row("Profondeur :", self._spin_z))
-        vlay.addLayout(row("Hauteur :",   self._spin_h))
+        vlay.addLayout(row("X  (gauche/droite) :", self._spin_x))
+        vlay.addLayout(row("Y  (hauteur) :",       self._spin_h))
+        vlay.addLayout(row("Z  (profondeur) :",    self._spin_z))
         vlay.addWidget(sep2)
+        vlay.addLayout(row("Rotation :",           self._spin_rot))
+        vlay.addWidget(sep3)
         vlay.addWidget(desel)
         self.adjustSize()
 
     def _on_x(self, v):
         if self._updating: return
-        self.move_requested.emit(v - self._ref['x'], 0.0, 0.0)
+        self.move_requested.emit(v - self._ref['x'], 0.0, 0.0, 0.0)
         self._ref['x'] = v
 
     def _on_z(self, v):
         if self._updating: return
-        self.move_requested.emit(0.0, 0.0, v - self._ref['z'])
+        self.move_requested.emit(0.0, 0.0, v - self._ref['z'], 0.0)
         self._ref['z'] = v
 
     def _on_h(self, v):
         if self._updating: return
-        self.move_requested.emit(0.0, v - self._ref['h'], 0.0)
+        self.move_requested.emit(0.0, v - self._ref['h'], 0.0, 0.0)
         self._ref['h'] = v
 
-    def set_position(self, x_world, height, z_world):
+    def _on_rot(self, v):
+        if self._updating: return
+        delta = v - self._ref['rot']
+        if delta > 180:  delta -= 360
+        if delta < -180: delta += 360
+        self.move_requested.emit(0.0, 0.0, 0.0, delta)
+        self._ref['rot'] = v
+
+    def set_position(self, x_world, height, z_world, rotation=0.0):
         self._updating = True
-        self._spin_x.setValue(round(x_world, 2))
-        self._spin_z.setValue(round(z_world, 2))
-        self._spin_h.setValue(round(height,  2))
-        self._ref = {'x': x_world, 'h': height, 'z': z_world}
+        self._spin_x.setValue(round(x_world,  2))
+        self._spin_z.setValue(round(z_world,  2))
+        self._spin_h.setValue(round(height,   2))
+        self._spin_rot.setValue(round(rotation % 360, 0))
+        self._ref = {'x': x_world, 'h': height, 'z': z_world, 'rot': rotation % 360}
         self._updating = False
 
     def set_count(self, n):
@@ -1275,8 +1381,9 @@ class Plan3DWindow(QMainWindow):
         if p3z is None:
             cx, cy = self._norm_pos(projs, i)
             p3z = (cy - 0.5) * 10.0
-        fh = getattr(p, 'fixture_height', TRUSS_Y) or TRUSS_Y
-        self._move_panel.set_position(p3x, fh, p3z)
+        fh  = getattr(p, 'fixture_height', None) or TRUSS_Y
+        rot = getattr(p, 'body_rotation',  None) or 0.0
+        self._move_panel.set_position(p3x, fh, p3z, rot)
 
     def _reposition_panel(self):
         self._move_panel.adjustSize()
@@ -1296,7 +1403,7 @@ class Plan3DWindow(QMainWindow):
         self._canvas.update()
         self._move_panel.hide()
 
-    def _move_selected(self, dx, dheight, dz):
+    def _move_selected(self, dx, dheight, dz, drot=0.0):
         mw = self.parent()
         if not mw:
             return
@@ -1317,12 +1424,23 @@ class Plan3DWindow(QMainWindow):
             if dz != 0.0:
                 p.pos_3d_z = max(-5.0, min(5.0, p.pos_3d_z + dz))
             if dheight != 0.0:
-                fh = getattr(p, 'fixture_height', TRUSS_Y) + dheight
+                fh = (getattr(p, 'fixture_height', None) or TRUSS_Y) + dheight
                 p.fixture_height = max(1.0, min(12.0, fh))
+            if drot != 0.0:
+                cur = getattr(p, 'body_rotation', 0.0) or 0.0
+                p.body_rotation = (cur + drot) % 360
+            # Synchronise canvas_x/canvas_y → plan de feu 2D
+            if dx != 0.0 or dz != 0.0:
+                p.canvas_x = (p.pos_3d_x + 9.0) / 18.0
+                p.canvas_y = (p.pos_3d_z + 5.0) / 10.0
         if hasattr(mw, 'dmx') and mw.dmx:
             mw.dmx.update_from_projectors(projs)
         self.refresh(projs)
         self._update_panel_values(self._canvas._selected_indices())
+        # Rafraîchit le plan de feu 2D
+        pdf = getattr(mw, 'plan_de_feu', None)
+        if pdf and hasattr(pdf, '_canvas'):
+            pdf._canvas.update()
         if hasattr(mw, 'save_dmx_patch_config'):
             mw.save_dmx_patch_config()
 

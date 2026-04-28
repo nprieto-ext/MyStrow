@@ -780,6 +780,22 @@ FIXTURE_LIBRARY = {
     ],
 }
 
+_qlc_fixtures_cache = None
+
+def _load_qlc_fixtures():
+    global _qlc_fixtures_cache
+    if _qlc_fixtures_cache is None:
+        import sys as _sys
+        base = getattr(_sys, "_MEIPASS", os.path.dirname(__file__))
+        path = os.path.join(base, "fixtures_qlcplus.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                _qlc_fixtures_cache = json.load(f)
+        except Exception:
+            _qlc_fixtures_cache = []
+    return _qlc_fixtures_cache
+
+
 # Positions par defaut sur le canvas (coordonnees normalisees 0-1)
 _DEFAULT_POSITIONS = {
     # canvas_y → z = (cy - 0.5) * 10 m  (0=arrière-scène, 1=avant-scène)
@@ -3964,7 +3980,6 @@ class AddFixtureDialog(QDialog):
             item = self.preset_list.currentItem()
             if item:
                 self._result_data = item.data(Qt.UserRole)
-                # Calculer adresse DMX compacte
                 _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2, "Gradateur": 1}
                 if self._projectors:
                     next_addr = max(

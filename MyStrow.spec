@@ -1,11 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
+import re
 from PyInstaller.utils.hooks import collect_all
+
+def _get_version():
+    try:
+        txt = open('core.py', encoding='utf-8').read()
+        m = re.search(r'VERSION\s*=\s*"(.*?)"', txt)
+        return m.group(1) if m else '0.0.0'
+    except Exception:
+        return '0.0.0'
 
 datas = [('logo.png', '.'), ('mystrow.ico', '.')]
 if os.path.exists('fixtures_bundle_custom.json.gz'):
     datas += [('fixtures_bundle_custom.json.gz', '.')]
+if os.path.exists('fixtures_qlcplus.json'):
+    datas += [('fixtures_qlcplus.json', '.')]
 binaries = []
 hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio']
 tmp_ret = collect_all('rtmidi')
@@ -59,6 +70,6 @@ if IS_MAC:
         bundle_identifier='com.mystrow.app',
         info_plist={
             'NSHighResolutionCapable': True,
-            'CFBundleShortVersionString': '3.0.65',
+            'CFBundleShortVersionString': _get_version(),
         },
     )

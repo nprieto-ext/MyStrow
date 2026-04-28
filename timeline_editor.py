@@ -1261,6 +1261,7 @@ class LightTimelineEditor(QDialog):
             p.level = 0
             p.base_color = QColor("black")
             p.color = QColor("black")
+            p.strobe_speed = 0
 
         # ── Détecter le clip de séquence actif ───────────────────────────────
         seq_track = self.track_map.get("Séquence")
@@ -1287,8 +1288,17 @@ class LightTimelineEditor(QDialog):
                         mem_col, row = mem_ref
                         mem = memories[mem_col][row] if mem_col < len(memories) and row < len(memories[mem_col]) else None
                         if mem:
-                            eff_cfg = mem.get("effect")
-                            if eff_cfg and eff_cfg.get("layers") and hasattr(self.main_window, 'start_effect'):
+                            # Forcer le cue fixé si expansion multi-cue
+                            cue_idx = getattr(new_seq_clip, 'cue_index', None)
+                            if cue_idx is not None:
+                                self.main_window._mem_cue_idx[mem_ref] = cue_idx
+                                self.main_window._apply_memory_to_projectors(mem_col, row)
+                            # Déclencher l'effet du cue courant
+                            if hasattr(self.main_window, '_mem_ensure_cues'):
+                                self.main_window._mem_ensure_cues(mem)
+                            cue = self.main_window._mem_active_cue(mem_col, row) if cue_idx is not None else mem.get("cues", [{}])[0]
+                            eff_cfg = cue.get("effect") or {}
+                            if eff_cfg.get("layers") and hasattr(self.main_window, 'start_effect'):
                                 self.main_window.active_effect = eff_cfg.get("name", "")
                                 self.main_window.active_effect_config = eff_cfg
                                 self.main_window.start_effect(eff_cfg.get("name", ""))
@@ -1447,6 +1457,8 @@ class LightTimelineEditor(QDialog):
                     if clip_data.get('memory_ref'):
                         clip.memory_ref   = tuple(clip_data['memory_ref'])
                         clip.memory_label = clip_data.get('memory_label', '')
+                        if 'cue_index' in clip_data:
+                            clip.cue_index = clip_data['cue_index']
 
             # Charger la forme d'onde depuis les donnees de sequence
             waveform = seq.get('waveform')
@@ -1489,6 +1501,8 @@ class LightTimelineEditor(QDialog):
                 if getattr(clip, 'memory_ref', None):
                     clip_data['memory_ref'] = list(clip.memory_ref)
                     clip_data['memory_label'] = getattr(clip, 'memory_label', '')
+                    if getattr(clip, 'cue_index', None) is not None:
+                        clip_data['cue_index'] = clip.cue_index
                 if (getattr(clip, 'move_effect', None) or
                         getattr(clip, 'pan_start', 128) != 128 or getattr(clip, 'pan_end', 128) != 128 or
                         getattr(clip, 'tilt_start', 128) != 128 or getattr(clip, 'tilt_end', 128) != 128):
@@ -1536,6 +1550,8 @@ class LightTimelineEditor(QDialog):
                 if getattr(clip, 'memory_ref', None):
                     clip_data['memory_ref'] = list(clip.memory_ref)
                     clip_data['memory_label'] = getattr(clip, 'memory_label', '')
+                    if getattr(clip, 'cue_index', None) is not None:
+                        clip_data['cue_index'] = clip.cue_index
                 # Mouvement Pan/Tilt
                 if (getattr(clip, 'move_effect', None) or
                         getattr(clip, 'pan_start', 128) != 128 or

@@ -169,6 +169,7 @@ def build_local_installer(version):
         f"--icon=mystrow.ico "
         f"--add-data \"logo.png;.\" "
         f"--add-data \"mystrow.ico;.\" "
+        f"--add-data \"fixtures_qlcplus.json;.\" "
         f"{_custom_bundle_flag}"
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "
