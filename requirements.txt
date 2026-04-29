@@ -3,3 +3,6 @@ cryptography
 python-rtmidi
 miniaudio
 pyserial
+flask
+qrcode
+waitress

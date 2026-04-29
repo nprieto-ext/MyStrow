@@ -31,7 +31,11 @@ def _try_import() -> bool:
         return False
 
 def _auto_install() -> bool:
-    import subprocess, sys
+    import sys
+    if getattr(sys, 'frozen', False):
+        # App PyInstaller : pip non disponible, Flask doit être bundlé dans le .spec
+        return _try_import()
+    import subprocess
     try:
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "--quiet",
