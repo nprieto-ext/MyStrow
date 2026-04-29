@@ -790,6 +790,15 @@ class FixtureEditorDialog(QDialog):
         )
         self._btn_save.clicked.connect(self._save_current)
         hdr.addWidget(self._btn_save)
+        btn_close = QPushButton("✕  Fermer")
+        btn_close.setFixedHeight(30)
+        btn_close.setStyleSheet(
+            "QPushButton{background:transparent;color:#666;border:1px solid #333;"
+            "border-radius:5px;font-size:11px;padding:0 12px;}"
+            "QPushButton:hover{color:#fff;border-color:#555;}"
+        )
+        btn_close.clicked.connect(self.accept)
+        hdr.addWidget(btn_close)
         rv.addLayout(hdr)
         rv.addSpacing(28)
 
@@ -896,15 +905,6 @@ class FixtureEditorDialog(QDialog):
         rv.addWidget(self._sep())
         rv.addSpacing(20)
 
-        # Boutons
-        act = QHBoxLayout()
-        act.setSpacing(10)
-        act.addStretch()
-        btn_close = QPushButton("Fermer")
-        btn_close.setFixedHeight(40)
-        btn_close.clicked.connect(self.accept)
-        act.addWidget(btn_close)
-        rv.addLayout(act)
         rv.addStretch()
 
     def _lbl(self, text):
