@@ -95,12 +95,12 @@ jobs:
           path: artifacts/
 
   # ─────────────────────────────────────────────
-  # BUILD MAC — Apple Silicon (M1/M2/M3/M4)
-  # Runner macos-latest = toujours disponible
+  # BUILD MAC — binaire universel (Intel + Apple Silicon)
+  # target_arch=universal2 dans MyStrow.spec
   # ─────────────────────────────────────────────
-  build-mac-arm:
+  build-mac:
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     continue-on-error: true
     outputs:
       dmg_uploaded: ${{ steps.upload-dmg.outputs.dmg_uploaded }}
@@ -118,19 +118,19 @@ jobs:
 
       - name: Convert logo.png → mystrow.icns
         run: |
-          mkdir -p mystrow.iconset
           python3 - <<'EOF'
           from PIL import Image
+          import os
           sizes = [16,32,64,128,256,512]
           img = Image.open("logo.png").convert("RGBA")
-          import os; os.makedirs("mystrow.iconset", exist_ok=True)
+          os.makedirs("mystrow.iconset", exist_ok=True)
           for s in sizes:
               img.resize((s,s), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}.png")
               img.resize((s*2,s*2), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}@2x.png")
           EOF
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
-      - name: Build .app
+      - name: Build .app universel (Intel + Apple Silicon)
         run: pyinstaller --noconfirm MyStrow.spec
 
       - name: Check signing secrets availability
@@ -139,16 +139,8 @@ jobs:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
         run: |
-          if [ -n "$MACOS_CERTIFICATE" ]; then
-            echo "has_cert=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_cert=false" >> $GITHUB_OUTPUT
-          fi
-          if [ -n "$NOTARIZATION_APPLE_ID" ]; then
-            echo "has_notarization=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_notarization=false" >> $GITHUB_OUTPUT
-          fi
+          [ -n "$MACOS_CERTIFICATE" ]    && echo "has_cert=true"         >> $GITHUB_OUTPUT || echo "has_cert=false"         >> $GITHUB_OUTPUT
+          [ -n "$NOTARIZATION_APPLE_ID" ] && echo "has_notarization=true" >> $GITHUB_OUTPUT || echo "has_notarization=false" >> $GITHUB_OUTPUT
 
       - name: Import certificat de signature
         if: steps.check-secrets.outputs.has_cert == 'true'
@@ -167,8 +159,6 @@ jobs:
 
       - name: Signer .app
         if: steps.check-secrets.outputs.has_cert == 'true'
-        env:
-          NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
           codesign --deep --force --verify --verbose \
@@ -202,158 +192,30 @@ jobs:
             --icon-size 100 \
             --icon "MyStrow.app" 150 190 \
             --app-drop-link 450 190 \
-            "MyStrow_arm64.dmg" \
+            "MyStrow_Installer.dmg" \
             "dist/"
 
       - name: Signer le DMG
         if: steps.check-secrets.outputs.has_cert == 'true'
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          codesign --sign "$IDENTITY" MyStrow_arm64.dmg
+          codesign --sign "$IDENTITY" MyStrow_Installer.dmg
 
-      - name: Upload Mac ARM DMG
+      - name: Upload Mac DMG
         id: upload-dmg
         run: echo "dmg_uploaded=true" >> $GITHUB_OUTPUT
 
-      - name: Upload Mac ARM DMG artifact
+      - name: Upload Mac DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mac-dmg-arm
-          path: MyStrow_arm64.dmg
-
-  # ─────────────────────────────────────────────
-  # BUILD MAC — Intel (MacBook 2015–2020)
-  # Runner macos-13 = peut être lent/indispo
-  # continue-on-error : ne bloque jamais la release
-  # ─────────────────────────────────────────────
-  build-mac-intel:
-    runs-on: macos-13
-    timeout-minutes: 45
-    continue-on-error: true
-    outputs:
-      dmg_uploaded: ${{ steps.upload-dmg.outputs.dmg_uploaded }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller pillow
-
-      - name: Convert logo.png → mystrow.icns
-        run: |
-          mkdir -p mystrow.iconset
-          python3 - <<'EOF'
-          from PIL import Image
-          sizes = [16,32,64,128,256,512]
-          img = Image.open("logo.png").convert("RGBA")
-          import os; os.makedirs("mystrow.iconset", exist_ok=True)
-          for s in sizes:
-              img.resize((s,s), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}.png")
-              img.resize((s*2,s*2), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}@2x.png")
-          EOF
-          iconutil -c icns mystrow.iconset -o mystrow.icns
-
-      - name: Build .app
-        run: pyinstaller --noconfirm MyStrow.spec
-
-      - name: Check signing secrets availability
-        id: check-secrets
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
-        run: |
-          if [ -n "$MACOS_CERTIFICATE" ]; then
-            echo "has_cert=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_cert=false" >> $GITHUB_OUTPUT
-          fi
-          if [ -n "$NOTARIZATION_APPLE_ID" ]; then
-            echo "has_notarization=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_notarization=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Import certificat de signature
-        if: steps.check-secrets.outputs.has_cert == 'true'
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-        run: |
-          echo "$MACOS_CERTIFICATE" | tr -d '\r\n' | base64 -D > certificate.p12
-          security create-keychain -p mystrow-ci temp.keychain
-          security set-keychain-settings -lut 21600 temp.keychain
-          security unlock-keychain -p mystrow-ci temp.keychain
-          security import certificate.p12 -k temp.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign -T /usr/bin/security
-          security list-keychains -d user -s temp.keychain $(security list-keychains -d user | tr -d '"')
-          security default-keychain -s temp.keychain
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k mystrow-ci temp.keychain
-
-      - name: Signer .app
-        if: steps.check-secrets.outputs.has_cert == 'true'
-        env:
-          NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
-        run: |
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          codesign --deep --force --verify --verbose \
-            --sign "$IDENTITY" \
-            --options runtime \
-            --entitlements entitlements.plist \
-            dist/MyStrow.app
-
-      - name: Notariser
-        if: steps.check-secrets.outputs.has_notarization == 'true'
-        env:
-          NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
-          NOTARIZATION_APPLE_PASSWORD: ${{ secrets.NOTARIZATION_APPLE_PASSWORD }}
-          NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
-        run: |
-          ditto -c -k --keepParent dist/MyStrow.app MyStrow_notarize.zip
-          xcrun notarytool submit MyStrow_notarize.zip \
-            --apple-id "$NOTARIZATION_APPLE_ID" \
-            --password "$NOTARIZATION_APPLE_PASSWORD" \
-            --team-id "$NOTARIZATION_TEAM_ID" \
-            --wait
-          xcrun stapler staple dist/MyStrow.app
-
-      - name: Créer DMG
-        run: |
-          brew install create-dmg
-          create-dmg \
-            --volname "MyStrow" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --icon "MyStrow.app" 150 190 \
-            --app-drop-link 450 190 \
-            "MyStrow_intel.dmg" \
-            "dist/"
-
-      - name: Signer le DMG
-        if: steps.check-secrets.outputs.has_cert == 'true'
-        run: |
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          codesign --sign "$IDENTITY" MyStrow_intel.dmg
-
-      - name: Upload Mac Intel DMG
-        id: upload-dmg
-        run: echo "dmg_uploaded=true" >> $GITHUB_OUTPUT
-
-      - name: Upload Mac Intel DMG artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mac-dmg-intel
-          path: MyStrow_intel.dmg
+          name: mac-dmg
+          path: MyStrow_Installer.dmg
 
   # ─────────────────────────────────────────────
   # CREATE GITHUB RELEASE
   # ─────────────────────────────────────────────
   release:
-    needs: [build-windows, build-mac-arm, build-mac-intel]
+    needs: [build-windows, build-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -364,18 +226,11 @@ jobs:
           name: windows-installer
           path: windows-installer/
 
-      - name: Download Mac ARM DMG (optionnel)
-        if: needs.build-mac-arm.outputs.dmg_uploaded == 'true'
+      - name: Download Mac DMG (optionnel)
+        if: needs.build-mac.outputs.dmg_uploaded == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: mac-dmg-arm
-          path: mac-dmg/
-
-      - name: Download Mac Intel DMG (optionnel)
-        if: needs.build-mac-intel.outputs.dmg_uploaded == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: mac-dmg-intel
+          name: mac-dmg
           path: mac-dmg/
 
       - name: Create GitHub Release
@@ -388,16 +243,14 @@ jobs:
 
             **Téléchargements :**
             - 🪟 Windows : `MyStrow_Setup.exe`
-            - 🍎 Mac Apple Silicon (M1/M2/M3/M4) : `MyStrow_arm64.dmg`
-            - 🍎 Mac Intel (MacBook 2015–2020) : `MyStrow_intel.dmg` *(si disponible)*
+            - 🍎 Mac (Intel + Apple Silicon) : `MyStrow_Installer.dmg`
           fail_on_unmatched_files: false
           files: |
             windows-installer/MyStrow_Setup.exe
             windows-installer/MyStrow.exe
             windows-installer/MyStrow.exe.sig
             windows-installer/sha256.txt
-            mac-dmg/MyStrow_arm64.dmg
-            mac-dmg/MyStrow_intel.dmg
+            mac-dmg/MyStrow_Installer.dmg
 
       - name: Supprimer les anciennes releases (garder 1)
         env:
