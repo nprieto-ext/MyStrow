@@ -98,7 +98,8 @@ jobs:
   # BUILD MAC (.app + DMG signé + notarisé)
   # ─────────────────────────────────────────────
   build-mac:
-    runs-on: macos-13
+    runs-on: macos-latest     # Apple Silicon (M-series) — macos-13 Intel déprécié/plus dispo
+    timeout-minutes: 25       # Si aucun runner disponible sous 25 min → fail rapide
     continue-on-error: true  # Ne bloque pas la release Windows si le build Mac échoue
     outputs:
       dmg_uploaded: ${{ steps.upload-dmg.outputs.dmg_uploaded }}
