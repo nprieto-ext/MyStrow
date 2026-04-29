@@ -121,6 +121,8 @@ class ArtNetDMX:
         # --- ENTTEC Open DMX USB ---
         self.com_port = None
         self._serial = None
+        self._enttec_stop = False
+        self._enttec_thread = None
 
         # --- Art-Net reseau ---
         self.target_ip = "2.0.0.15"
@@ -220,6 +222,7 @@ class ArtNetDMX:
 
     def disconnect(self):
         """Ferme toutes les connexions ouvertes"""
+        self._enttec_stop = True
         if self._serial and self._serial.is_open:
             self._serial.close()
         self._serial = None
@@ -256,6 +259,7 @@ class ArtNetDMX:
             )
             self.connected = True
             print(f"ENTTEC Open DMX USB connecte sur {self.com_port}")
+            self._start_enttec_thread()
             return True
         except Exception as e:
             err = str(e)
@@ -267,19 +271,32 @@ class ArtNetDMX:
             self.connected = False
             return False
 
-    def _send_enttec(self):
-        """Protocole ENTTEC Open DMX USB : Break + MAB + 0x00 + 512 canaux (univers 0 uniquement)"""
-        # Limiter à ~30 fps max : évite les envois dos-à-dos qui bloquent le event loop Qt
-        # et privent les fixtures de l'inter-packet gap nécessaire pour détecter le break.
-        # Le timer 40 ms reprend la main ; les appels immédiats depuis set_proj_level sont ignorés.
-        now = time.monotonic()
-        if now - getattr(self, '_last_enttec_send', 0) < 0.030:
-            return True
-        self._last_enttec_send = now
+    def _start_enttec_thread(self):
+        import threading
+        self._enttec_stop = False
+        t = threading.Thread(target=self._enttec_loop, daemon=True, name="EnttecDMX")
+        t.start()
+        self._enttec_thread = t
 
-        if not self._serial or not self._serial.is_open:
-            # Tentative de reconnexion automatique
-            if self.com_port:
+    def _enttec_loop(self):
+        """Thread dédié ENTTEC : envoie les frames à ~25 fps sans bloquer le thread Qt."""
+        while not self._enttec_stop:
+            t0 = time.monotonic()
+            ser = self._serial
+            if ser and ser.is_open:
+                try:
+                    ser.send_break(duration=0.001)
+                    ser.write(b'\x00' + bytes(self.dmx_data[0][:512]))
+                    ser.flush()
+                except Exception as e:
+                    print(f"ENTTEC thread: {e}")
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+                    self._serial = None
+            elif self.com_port and not self._enttec_stop:
+                # Reconnexion automatique
                 try:
                     self._serial = serial.Serial(
                         port=self.com_port,
@@ -289,25 +306,23 @@ class ArtNetDMX:
                         stopbits=serial.STOPBITS_TWO,
                         timeout=0.1,
                     )
-                    print(f"ENTTEC: reconnexion automatique sur {self.com_port}")
+                    print(f"ENTTEC: reconnexion sur {self.com_port}")
                 except Exception:
-                    return False
+                    time.sleep(1.0)
+                    continue
             else:
-                return False
-        try:
-            self._serial.send_break(duration=0.001)   # 1 ms — fiable sur Windows (min spec 88 µs)
-            self._serial.write(b'\x00' + bytes(self.dmx_data[0][:512]))
-            self._serial.flush()
-            return True
-        except Exception as e:
-            print(f"Erreur envoi ENTTEC: {e}")
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-            self._serial = None
-            # Ne pas mettre connected=False : le prochain tick tentera une reconnexion
-            return False
+                time.sleep(0.040)
+                continue
+
+            # Pause pour atteindre 25 fps (40 ms par cycle)
+            elapsed = time.monotonic() - t0
+            remaining = 0.040 - elapsed
+            if remaining > 0.001:
+                time.sleep(remaining)
+
+    def _send_enttec(self):
+        """Maintenu pour compatibilité — le thread dédié gère l'envoi réel."""
+        return True
 
     # ------------------------------------------------------------------
     # Transport Art-Net (boitier reseau ElectroConcept, MA, etc.)
