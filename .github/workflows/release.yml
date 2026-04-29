@@ -107,31 +107,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
+      - name: Setup Python x86_64 (Python.org universal2 via arch)
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller pillow
+          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+          if ! arch -x86_64 $PY --version &>/dev/null 2>&1; then
+            echo "Python.org universal2 absent — téléchargement..."
+            curl -fsSL -o python.pkg https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
+            sudo installer -pkg python.pkg -target /
+          fi
+          arch -x86_64 $PY --version
 
-      - name: Convert logo.png → mystrow.icns
+      - name: Install dependencies (x86_64)
         run: |
-          python3 - <<'EOF'
-          from PIL import Image
-          import os
-          sizes = [16,32,64,128,256,512]
-          img = Image.open("logo.png").convert("RGBA")
-          os.makedirs("mystrow.iconset", exist_ok=True)
-          for s in sizes:
-              img.resize((s,s), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}.png")
-              img.resize((s*2,s*2), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}@2x.png")
-          EOF
+          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+          arch -x86_64 $PY -m pip install --upgrade pip --quiet
+          arch -x86_64 $PY -m pip install -r requirements.txt --quiet
+          arch -x86_64 $PY -m pip install pyinstaller --quiet
+
+      - name: Convert logo.png → mystrow.icns (sips — sans pillow)
+        run: |
+          mkdir -p mystrow.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size logo.png --out "mystrow.iconset/icon_${size}x${size}.png" --silent
+            sips -z $((size*2)) $((size*2)) logo.png --out "mystrow.iconset/icon_${size}x${size}@2x.png" --silent
+          done
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
-      - name: Build .app (x86_64 — Intel natif + Rosetta 2 sur M-series)
-        run: pyinstaller --noconfirm MyStrow.spec
+      - name: Build .app (x86_64 — Intel natif + Rosetta sur M-series)
+        run: |
+          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+          arch -x86_64 $PY -m PyInstaller --noconfirm MyStrow.spec
 
       - name: Check signing secrets availability
         id: check-secrets
