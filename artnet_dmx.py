@@ -269,6 +269,14 @@ class ArtNetDMX:
 
     def _send_enttec(self):
         """Protocole ENTTEC Open DMX USB : Break + MAB + 0x00 + 512 canaux (univers 0 uniquement)"""
+        # Limiter à ~30 fps max : évite les envois dos-à-dos qui bloquent le event loop Qt
+        # et privent les fixtures de l'inter-packet gap nécessaire pour détecter le break.
+        # Le timer 40 ms reprend la main ; les appels immédiats depuis set_proj_level sont ignorés.
+        now = time.monotonic()
+        if now - getattr(self, '_last_enttec_send', 0) < 0.030:
+            return True
+        self._last_enttec_send = now
+
         if not self._serial or not self._serial.is_open:
             # Tentative de reconnexion automatique
             if self.com_port:
@@ -287,7 +295,7 @@ class ArtNetDMX:
             else:
                 return False
         try:
-            self._serial.send_break(duration=0.000176)   # 176 µs — spec DMX minimum
+            self._serial.send_break(duration=0.001)   # 1 ms — fiable sur Windows (min spec 88 µs)
             self._serial.write(b'\x00' + bytes(self.dmx_data[0][:512]))
             self._serial.flush()
             return True

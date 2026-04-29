@@ -955,6 +955,19 @@ class _Canvas3D(QWidget):
                 # Points face arrière (profondeur)
                 btl_b = pt(x - _ydx        + _pnx, HTOP, z - _ydz        + _pnz)
                 btr_b = pt(x + _ydx        + _pnx, HTOP, z + _ydz        + _pnz)
+                # Garantir une profondeur minimale visible en espace-écran.
+                # Sans ce correctif, depuis la vue du dessus la face top projette à
+                # ~3px (20cm à 22m de caméra) alors que la lentille a min 4.5px de rayon.
+                bw_px = max(8.0, abs(btr.x()-btl.x()))
+                if btl and btl_b and btr_b:
+                    _ddx = btl_b.x() - btl.x()
+                    _ddy = btl_b.y() - btl.y()
+                    _dpx = math.sqrt(_ddx*_ddx + _ddy*_ddy)
+                    _min_dp = bw_px * 0.50
+                    if 0.5 < _dpx < _min_dp:
+                        _sf = _min_dp / _dpx
+                        btl_b = QPointF(btl.x() + _ddx*_sf, btl.y() + _ddy*_sf)
+                        btr_b = QPointF(btr.x() + _ddx*_sf, btr.y() + _ddy*_sf)
                 # Face supérieure (top) — visible depuis l'angle caméra par défaut
                 if btl_b and btr_b:
                     _gtop = QLinearGradient(btl, btl_b)
@@ -965,7 +978,6 @@ class _Canvas3D(QWidget):
                     # Bord supérieur arrière (ligne de séparation)
                     painter.setPen(QPen(QColor(22, 22, 38), 0.8))
                     painter.drawLine(btl_b, btr_b)
-                bw_px = max(8.0, abs(btr.x()-btl.x()))
                 # Corps métallique — dégradé cylindrique
                 _gb = QLinearGradient(btl, btr)
                 _gc3 = QColor(52,52,82)
