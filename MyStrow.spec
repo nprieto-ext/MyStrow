@@ -40,31 +40,38 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name='MyStrow',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=[icon_file],
-)
-
 if IS_MAC:
-    app = BUNDLE(
+    # ── macOS : --onedir + BUNDLE ────────────────────────────────────────────
+    # --onefile extrait dans $TMPDIR au lancement : les dylibs ne sont pas
+    # re-signés à l'extraction → Library Validation échoue sur macOS 12+.
+    # --onedir embarque tout dans le .app bundle, codesigné en entier via --deep.
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        name='MyStrow',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,          # UPX brise les headers Mach-O → invalide la signature
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=[icon_file],
+    )
+    coll = COLLECT(
         exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        name='MyStrow',
+    )
+    app = BUNDLE(
+        coll,
         name='MyStrow.app',
         icon=icon_file,
         bundle_identifier='com.mystrow.app',
@@ -72,4 +79,28 @@ if IS_MAC:
             'NSHighResolutionCapable': True,
             'CFBundleShortVersionString': _get_version(),
         },
+    )
+
+else:
+    # ── Windows / Linux : --onefile ──────────────────────────────────────────
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name='MyStrow',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=[icon_file],
     )
