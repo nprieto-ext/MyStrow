@@ -68,6 +68,21 @@ def _transform(mat, x, y, z):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Lighting helpers — Lambertian model
+# ─────────────────────────────────────────────────────────────────────────────
+
+_KL = (0.461, 0.769, 0.307)   # key light direction (normalised from 0.6, 1.0, 0.4)
+
+def _shade(r, g, b, nx, ny, nz, amb):
+    d = max(0.0, nx*_KL[0] + ny*_KL[1] + nz*_KL[2])
+    f = amb + (1.0 - amb) * d
+    return (min(255, int(r*f)), min(255, int(g*f)), min(255, int(b*f)))
+
+def _can_see(nx, ny, nz, px, py, pz, ex, ey, ez):
+    return nx*(ex-px) + ny*(ey-py) + nz*(ez-pz) > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Gobo patterns
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -335,6 +350,7 @@ class _Canvas3D(QWidget):
             {'label': 'Truss avant',   'enabled': True, 'height': TRUSS_Y, 'z': -3.8, 'x_l': -9.0, 'x_r': 9.0},
             {'label': 'Truss arrière', 'enabled': True, 'height': TRUSS_Y, 'z':  4.0, 'x_l': -9.0, 'x_r': 9.0},
         ]
+        self._ambient = 0.18
         # Gobo animation timer
         self._rot_timer = QTimer(self)
         self._rot_timer.timeout.connect(self.update)
@@ -886,55 +902,78 @@ class _Canvas3D(QWidget):
                                         Qt.SolidLine, Qt.RoundCap))
                     painter.drawLine(pivot_pt, hp)
 
-                # ── Head ──────────────────────────────────────────────────────
-                if hp:
-                    head_r = max(6.0, scale_px * 0.14)
-
-                    if is_sel:
-                        painter.setBrush(Qt.NoBrush)
-                        painter.setPen(QPen(QColor(0, 212, 255, 220), 2.5))
-                        painter.drawEllipse(hp, head_r * 1.60, head_r * 1.60)
-
-                    fill_col = QColor(r, g, b) if lvl > 0.04 else gc
-                    rg_head  = QRadialGradient(
-                        QPointF(hp.x() - head_r * 0.30, hp.y() - head_r * 0.30),
-                        head_r * 1.45)
-                    rg_head.setColorAt(0.0, fill_col.lighter(172))
-                    rg_head.setColorAt(0.5, fill_col)
-                    rg_head.setColorAt(1.0, fill_col.darker(162))
-                    painter.setBrush(QBrush(rg_head))
-                    painter.setPen(QPen(gc.darker(180), 1.0))
-                    painter.drawEllipse(hp, head_r, head_r)
-
-                    # Reflector ring
+                # ── Head — boîte 3D Lambertian ────────────────────────────────
+                # Repère local: right (axe joug) × forward (faisceau) → up
+                _rx, _ry, _rz = cp, 0.0, sp2
+                _fx_h, _fy_h, _fz_h = bd[0], bd[1], bd[2]
+                _ux_h = _ry*_fz_h - _rz*_fy_h
+                _uy_h = _rz*_fx_h - _rx*_fz_h
+                _uz_h = _rx*_fy_h - _ry*_fx_h
+                _ul = math.sqrt(_ux_h**2 + _uy_h**2 + _uz_h**2) or 1e-9
+                _ux_h /= _ul; _uy_h /= _ul; _uz_h /= _ul
+                _HW, _HH, _HD = 0.14, 0.10, 0.12   # demi-tailles (m)
+                def _hv(dr, du, df, _hx=hx, _hy=hy, _hz=hz):
+                    return (_hx + _rx*dr*_HW + _ux_h*du*_HH + _fx_h*df*_HD,
+                            _hy + _ry*dr*_HW + _uy_h*du*_HH + _fy_h*df*_HD,
+                            _hz + _rz*dr*_HW + _uz_h*du*_HH + _fz_h*df*_HD)
+                _amb = getattr(self, '_ambient', 0.18)
+                _gc_r, _gc_g, _gc_b = gc.red(), gc.green(), gc.blue()
+                _box_faces = [
+                    ([_hv(-1,-1,+1),_hv(-1,+1,+1),_hv(+1,+1,+1),_hv(+1,-1,+1)],
+                     (_fx_h,  _fy_h,  _fz_h)),
+                    ([_hv(+1,-1,-1),_hv(+1,+1,-1),_hv(-1,+1,-1),_hv(-1,-1,-1)],
+                     (-_fx_h, -_fy_h, -_fz_h)),
+                    ([_hv(-1,-1,-1),_hv(-1,+1,-1),_hv(-1,+1,+1),_hv(-1,-1,+1)],
+                     (-_rx,   -_ry,   -_rz)),
+                    ([_hv(+1,-1,+1),_hv(+1,+1,+1),_hv(+1,+1,-1),_hv(+1,-1,-1)],
+                     (_rx,    _ry,    _rz)),
+                    ([_hv(-1,+1,+1),_hv(-1,+1,-1),_hv(+1,+1,-1),_hv(+1,+1,+1)],
+                     (_ux_h,  _uy_h,  _uz_h)),
+                    ([_hv(-1,-1,-1),_hv(-1,-1,+1),_hv(+1,-1,+1),_hv(+1,-1,-1)],
+                     (-_ux_h, -_uy_h, -_uz_h)),
+                ]
+                def _bfd(fi):
+                    v = fi[0]
+                    cx=(v[0][0]+v[1][0]+v[2][0]+v[3][0])/4
+                    cy=(v[0][1]+v[1][1]+v[2][1]+v[3][1])/4
+                    cz=(v[0][2]+v[1][2]+v[2][2]+v[3][2])/4
+                    return (cx-_ex)**2+(cy-_ey)**2+(cz-_ez)**2
+                _box_faces.sort(key=_bfd, reverse=True)
+                for _fv, _fn in _box_faces:
+                    _cx=(_fv[0][0]+_fv[1][0]+_fv[2][0]+_fv[3][0])/4
+                    _cy=(_fv[0][1]+_fv[1][1]+_fv[2][1]+_fv[3][1])/4
+                    _cz=(_fv[0][2]+_fv[1][2]+_fv[2][2]+_fv[3][2])/4
+                    if not _can_see(_fn[0],_fn[1],_fn[2],_cx,_cy,_cz,_ex,_ey,_ez):
+                        continue
+                    _pts = [pt(*v) for v in _fv]
+                    if not all(_pts): continue
+                    _sr,_sg,_sb = _shade(_gc_r,_gc_g,_gc_b,_fn[0],_fn[1],_fn[2],_amb)
+                    painter.setBrush(QBrush(QColor(_sr,_sg,_sb)))
+                    painter.setPen(QPen(QColor(max(0,_sr-20),max(0,_sg-20),max(0,_sb-16)),0.7))
+                    painter.drawPolygon(QPolygonF(_pts))
+                if is_sel and hp:
+                    _sr2 = max(8.0, scale_px * 0.22)
                     painter.setBrush(Qt.NoBrush)
-                    painter.setPen(QPen(gc.lighter(148), 1.0))
-                    painter.drawEllipse(hp, head_r * 0.70, head_r * 0.70)
-
-                    # Lens
-                    lens_r = head_r * 0.46
+                    painter.setPen(QPen(QColor(0, 212, 255, 220), 2.5))
+                    painter.drawEllipse(hp, _sr2, _sr2)
+                # Lentille sur la face avant
+                if hp:
+                    _lr = max(3.5, scale_px * 0.09)
                     if lvl > 0.04:
-                        rg_l = QRadialGradient(
-                            QPointF(hp.x() - lens_r * 0.35, hp.y() - lens_r * 0.35),
-                            lens_r * 1.6)
-                        rg_l.setColorAt(0.0, QColor(min(255,r+160), min(255,g+160), min(255,b+160), 255))
-                        rg_l.setColorAt(0.4, QColor(r, g, b, 240))
-                        rg_l.setColorAt(1.0, QColor(max(0,r-60), max(0,g-60), max(0,b-60), 180))
+                        _rgl = QRadialGradient(QPointF(hp.x()-_lr*0.28, hp.y()-_lr*0.28), _lr*1.5)
+                        _rgl.setColorAt(0.0, QColor(min(255,r+160),min(255,g+160),min(255,b+160),255))
+                        _rgl.setColorAt(0.4, QColor(r,g,b,240))
+                        _rgl.setColorAt(1.0, QColor(max(0,r-60),max(0,g-60),max(0,b-60),180))
                     else:
-                        rg_l = QRadialGradient(hp, lens_r * 1.2)
-                        rg_l.setColorAt(0.0, QColor(40, 40, 65, 255))
-                        rg_l.setColorAt(1.0, QColor(20, 20, 35, 255))
-                    painter.setBrush(QBrush(rg_l))
-                    painter.setPen(Qt.NoPen)
-                    painter.drawEllipse(hp, lens_r, lens_r)
-
-                    # Highlight dot
-                    dot_r = max(1.0, head_r * 0.14)
-                    painter.setBrush(QBrush(QColor(255, 255, 255, 190)))
-                    painter.setPen(Qt.NoPen)
-                    painter.drawEllipse(
-                        QPointF(hp.x() - lens_r * 0.28, hp.y() - lens_r * 0.28),
-                        dot_r, dot_r)
+                        _rgl = QRadialGradient(hp, _lr*1.1)
+                        _rgl.setColorAt(0.0, QColor(40,40,65,255))
+                        _rgl.setColorAt(1.0, QColor(20,20,35,255))
+                    painter.setBrush(QBrush(_rgl)); painter.setPen(Qt.NoPen)
+                    painter.drawEllipse(hp, _lr, _lr)
+                    if lvl > 0.04:
+                        _hl = max(1.0, _lr*0.22)
+                        painter.setBrush(QBrush(QColor(255,255,255,205)))
+                        painter.drawEllipse(QPointF(hp.x()-_lr*0.28,hp.y()-_lr*0.28),_hl,_hl*0.72)
 
             else:
                 # PAR / wash — boîtier avec épaisseur (face avant + face sup + face côté)
@@ -1351,6 +1390,30 @@ class Plan3DWindow(QMainWindow):
         self._btn_truss.setStyleSheet(self._TB_BTN)
         self._btn_truss.clicked.connect(self._toggle_truss_panel)
         tb.addWidget(self._btn_truss)
+
+        tb.addSeparator()
+        _lbl_amb = QLabel("  Lumière :")
+        _lbl_amb.setStyleSheet("color:#7777aa; font-size:11px;")
+        tb.addWidget(_lbl_amb)
+        self._amb_slider = QSlider(Qt.Horizontal)
+        self._amb_slider.setRange(5, 80)
+        self._amb_slider.setValue(18)
+        self._amb_slider.setFixedWidth(110)
+        self._amb_slider.setToolTip("Ambiance (5 = nuit noire  |  80 = plein jour)")
+        self._amb_slider.setStyleSheet(
+            "QSlider::groove:horizontal { height:4px; background:#333355; border-radius:2px; }"
+            "QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0;"
+            " background:#5566bb; border-radius:6px; }"
+            "QSlider::sub-page:horizontal { background:#4455aa; border-radius:2px; }"
+        )
+        self._amb_slider.valueChanged.connect(self._on_ambient_changed)
+        tb.addWidget(self._amb_slider)
+
+    # ── Ambient slider ───────────────────────────────────────────────────────
+
+    def _on_ambient_changed(self, value):
+        self._canvas._ambient = value / 100.0
+        self._canvas.update()
 
     # ── Truss panel ──────────────────────────────────────────────────────────
 
