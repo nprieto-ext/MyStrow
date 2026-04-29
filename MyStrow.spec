@@ -68,7 +68,7 @@ if IS_MAC:
         a.datas,
         strip=False,
         upx=False,
-        name='MyStrow',
+        name='MyStrow_pkg',  # nom différent de l'EXE → évite le conflit dist/MyStrow fichier vs dossier (bug PyInstaller 6.x)
     )
     app = BUNDLE(
         coll,
