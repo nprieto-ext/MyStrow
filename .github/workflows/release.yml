@@ -110,6 +110,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          architecture: "x64"   # Python x86_64 via Rosetta → binaire Intel + Rosetta sur M-series
 
       - name: Install dependencies
         run: |
@@ -130,7 +131,7 @@ jobs:
           EOF
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
-      - name: Build .app universel (Intel + Apple Silicon)
+      - name: Build .app (x86_64 — Intel natif + Rosetta sur M-series)
         run: pyinstaller --noconfirm MyStrow.spec
 
       - name: Check signing secrets availability
