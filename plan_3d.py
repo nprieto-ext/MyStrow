@@ -902,8 +902,8 @@ class _Canvas3D(QWidget):
                                         Qt.SolidLine, Qt.RoundCap))
                     painter.drawLine(pivot_pt, hp)
 
-                # ── Head — boîte 3D Lambertian ────────────────────────────────
-                # Repère local: right (axe joug) × forward (faisceau) → up
+                # ── Head — cylindre 3D Lambertian (10 faces) ─────────────────
+                # Repère local: right (axe joug), forward (faisceau), up = right×forward
                 _rx, _ry, _rz = cp, 0.0, sp2
                 _fx_h, _fy_h, _fz_h = bd[0], bd[1], bd[2]
                 _ux_h = _ry*_fz_h - _rz*_fy_h
@@ -911,69 +911,97 @@ class _Canvas3D(QWidget):
                 _uz_h = _rx*_fy_h - _ry*_fx_h
                 _ul = math.sqrt(_ux_h**2 + _uy_h**2 + _uz_h**2) or 1e-9
                 _ux_h /= _ul; _uy_h /= _ul; _uz_h /= _ul
-                _HW, _HH, _HD = 0.14, 0.10, 0.12   # demi-tailles (m)
-                def _hv(dr, du, df, _hx=hx, _hy=hy, _hz=hz):
-                    return (_hx + _rx*dr*_HW + _ux_h*du*_HH + _fx_h*df*_HD,
-                            _hy + _ry*dr*_HW + _uy_h*du*_HH + _fy_h*df*_HD,
-                            _hz + _rz*dr*_HW + _uz_h*du*_HH + _fz_h*df*_HD)
-                _amb = getattr(self, '_ambient', 0.18)
+                _N_SEG = 10          # segments du barrel
+                _HR    = 0.13        # rayon (m)
+                _HDA   = 0.10        # demi-profondeur côté lentille
+                _HDB   = 0.13        # demi-profondeur côté moteur
+                _amb   = getattr(self, '_ambient', 0.18)
                 _gc_r, _gc_g, _gc_b = gc.red(), gc.green(), gc.blue()
-                _box_faces = [
-                    ([_hv(-1,-1,+1),_hv(-1,+1,+1),_hv(+1,+1,+1),_hv(+1,-1,+1)],
-                     (_fx_h,  _fy_h,  _fz_h)),
-                    ([_hv(+1,-1,-1),_hv(+1,+1,-1),_hv(-1,+1,-1),_hv(-1,-1,-1)],
-                     (-_fx_h, -_fy_h, -_fz_h)),
-                    ([_hv(-1,-1,-1),_hv(-1,+1,-1),_hv(-1,+1,+1),_hv(-1,-1,+1)],
-                     (-_rx,   -_ry,   -_rz)),
-                    ([_hv(+1,-1,+1),_hv(+1,+1,+1),_hv(+1,+1,-1),_hv(+1,-1,-1)],
-                     (_rx,    _ry,    _rz)),
-                    ([_hv(-1,+1,+1),_hv(-1,+1,-1),_hv(+1,+1,-1),_hv(+1,+1,+1)],
-                     (_ux_h,  _uy_h,  _uz_h)),
-                    ([_hv(-1,-1,-1),_hv(-1,-1,+1),_hv(+1,-1,+1),_hv(+1,-1,-1)],
-                     (-_ux_h, -_uy_h, -_uz_h)),
-                ]
-                def _bfd(fi):
-                    v = fi[0]
-                    cx=(v[0][0]+v[1][0]+v[2][0]+v[3][0])/4
-                    cy=(v[0][1]+v[1][1]+v[2][1]+v[3][1])/4
-                    cz=(v[0][2]+v[1][2]+v[2][2]+v[3][2])/4
-                    return (cx-_ex)**2+(cy-_ey)**2+(cz-_ez)**2
-                _box_faces.sort(key=_bfd, reverse=True)
-                for _fv, _fn in _box_faces:
-                    _cx=(_fv[0][0]+_fv[1][0]+_fv[2][0]+_fv[3][0])/4
-                    _cy=(_fv[0][1]+_fv[1][1]+_fv[2][1]+_fv[3][1])/4
-                    _cz=(_fv[0][2]+_fv[1][2]+_fv[2][2]+_fv[3][2])/4
-                    if not _can_see(_fn[0],_fn[1],_fn[2],_cx,_cy,_cz,_ex,_ey,_ez):
+                # Génère les deux anneaux avant / arrière
+                _front_ring, _back_ring = [], []
+                for _i in range(_N_SEG):
+                    _a = 2*math.pi * _i / _N_SEG
+                    _ca, _sa = math.cos(_a), math.sin(_a)
+                    _rdx = _rx*_ca*_HR + _ux_h*_sa*_HR
+                    _rdy = _ry*_ca*_HR + _uy_h*_sa*_HR
+                    _rdz = _rz*_ca*_HR + _uz_h*_sa*_HR
+                    _front_ring.append((hx+_fx_h*_HDA+_rdx, hy+_fy_h*_HDA+_rdy, hz+_fz_h*_HDA+_rdz))
+                    _back_ring.append( (hx-_fx_h*_HDB+_rdx, hy-_fy_h*_HDB+_rdy, hz-_fz_h*_HDB+_rdz))
+                # Faces latérales (10 quads) + face arrière
+                _cyl_faces = []
+                for _i in range(_N_SEG):
+                    _j  = (_i+1) % _N_SEG
+                    _am = 2*math.pi*(_i+0.5)/_N_SEG
+                    _nx = _rx*math.cos(_am) + _ux_h*math.sin(_am)
+                    _ny = _ry*math.cos(_am) + _uy_h*math.sin(_am)
+                    _nz = _rz*math.cos(_am) + _uz_h*math.sin(_am)
+                    _cyl_faces.append(
+                        ([_front_ring[_i], _front_ring[_j], _back_ring[_j], _back_ring[_i]],
+                         (_nx, _ny, _nz)))
+                _cyl_faces.append((_back_ring[::-1], (-_fx_h, -_fy_h, -_fz_h)))
+                # Tri peintre (far-to-near)
+                def _cfd(fi):
+                    v = fi[0]; n = len(v)
+                    return ((sum(x[0] for x in v)/n - _ex)**2 +
+                            (sum(x[1] for x in v)/n - _ey)**2 +
+                            (sum(x[2] for x in v)/n - _ez)**2)
+                _cyl_faces.sort(key=_cfd, reverse=True)
+                for _fv, _fn in _cyl_faces:
+                    _n = len(_fv)
+                    _fcx = sum(x[0] for x in _fv)/_n
+                    _fcy = sum(x[1] for x in _fv)/_n
+                    _fcz = sum(x[2] for x in _fv)/_n
+                    if not _can_see(_fn[0],_fn[1],_fn[2], _fcx,_fcy,_fcz, _ex,_ey,_ez):
                         continue
                     _pts = [pt(*v) for v in _fv]
                     if not all(_pts): continue
-                    _sr,_sg,_sb = _shade(_gc_r,_gc_g,_gc_b,_fn[0],_fn[1],_fn[2],_amb)
+                    _sr,_sg,_sb = _shade(_gc_r,_gc_g,_gc_b, _fn[0],_fn[1],_fn[2], _amb)
                     painter.setBrush(QBrush(QColor(_sr,_sg,_sb)))
-                    painter.setPen(QPen(QColor(max(0,_sr-20),max(0,_sg-20),max(0,_sb-16)),0.7))
+                    painter.setPen(QPen(QColor(max(0,_sr-18),max(0,_sg-18),max(0,_sb-14)), 0.6))
                     painter.drawPolygon(QPolygonF(_pts))
+                # Anneau de sélection
                 if is_sel and hp:
-                    _sr2 = max(8.0, scale_px * 0.22)
                     painter.setBrush(Qt.NoBrush)
                     painter.setPen(QPen(QColor(0, 212, 255, 220), 2.5))
-                    painter.drawEllipse(hp, _sr2, _sr2)
-                # Lentille sur la face avant
-                if hp:
-                    _lr = max(3.5, scale_px * 0.09)
-                    if lvl > 0.04:
-                        _rgl = QRadialGradient(QPointF(hp.x()-_lr*0.28, hp.y()-_lr*0.28), _lr*1.5)
-                        _rgl.setColorAt(0.0, QColor(min(255,r+160),min(255,g+160),min(255,b+160),255))
-                        _rgl.setColorAt(0.4, QColor(r,g,b,240))
-                        _rgl.setColorAt(1.0, QColor(max(0,r-60),max(0,g-60),max(0,b-60),180))
-                    else:
-                        _rgl = QRadialGradient(hp, _lr*1.1)
-                        _rgl.setColorAt(0.0, QColor(40,40,65,255))
-                        _rgl.setColorAt(1.0, QColor(20,20,35,255))
-                    painter.setBrush(QBrush(_rgl)); painter.setPen(Qt.NoPen)
-                    painter.drawEllipse(hp, _lr, _lr)
-                    if lvl > 0.04:
-                        _hl = max(1.0, _lr*0.22)
-                        painter.setBrush(QBrush(QColor(255,255,255,205)))
-                        painter.drawEllipse(QPointF(hp.x()-_lr*0.28,hp.y()-_lr*0.28),_hl,_hl*0.72)
+                    painter.drawEllipse(hp, max(10.0, scale_px*0.24), max(10.0, scale_px*0.24))
+                # Face avant — lentille (dessinée par-dessus le barrel)
+                _lens_visible = _can_see(_fx_h,_fy_h,_fz_h,
+                                         hx+_fx_h*_HDA, hy+_fy_h*_HDA, hz+_fz_h*_HDA,
+                                         _ex,_ey,_ez)
+                if _lens_visible:
+                    _fps = [pt(*v) for v in _front_ring]
+                    if all(_fps) and hp:
+                        _lr = max(5.0, scale_px*0.11)
+                        # Couronne réflecteur (polygone = vraie projection du cercle)
+                        _sr2,_sg2,_sb2 = _shade(_gc_r,_gc_g,_gc_b, _fx_h,_fy_h,_fz_h, _amb)
+                        painter.setBrush(QBrush(QColor(_sr2,_sg2,_sb2)))
+                        painter.setPen(QPen(QColor(max(0,_sr2-25),max(0,_sg2-25),max(0,_sb2-20)), 0.7))
+                        painter.drawPolygon(QPolygonF(_fps))
+                        # Lentille centrale (gradient radial)
+                        if lvl > 0.04:
+                            _rgl = QRadialGradient(QPointF(hp.x()-_lr*0.25, hp.y()-_lr*0.25), _lr*1.6)
+                            _rgl.setColorAt(0.0,  QColor(min(255,r+175),min(255,g+175),min(255,b+175),255))
+                            _rgl.setColorAt(0.35, QColor(min(255,r+80), min(255,g+80), min(255,b+80), 245))
+                            _rgl.setColorAt(0.7,  QColor(r,g,b,220))
+                            _rgl.setColorAt(1.0,  QColor(max(0,r-40),max(0,g-40),max(0,b-40),180))
+                        else:
+                            _rgl = QRadialGradient(hp, _lr*1.1)
+                            _rgl.setColorAt(0.0, QColor(45,45,72,255))
+                            _rgl.setColorAt(0.6, QColor(28,28,48,255))
+                            _rgl.setColorAt(1.0, QColor(12,12,22,255))
+                        painter.setBrush(QBrush(_rgl)); painter.setPen(Qt.NoPen)
+                        painter.drawEllipse(hp, _lr, _lr)
+                        # Anneau réflecteur intérieur
+                        painter.setBrush(Qt.NoBrush)
+                        painter.setPen(QPen(QColor(_sr2,_sg2,_sb2,170), 0.8))
+                        painter.drawEllipse(hp, _lr*1.10, _lr*1.10)
+                        # Reflet spéculaire
+                        if lvl > 0.04:
+                            _hl = max(1.2, _lr*0.20)
+                            painter.setBrush(QBrush(QColor(255,255,255,210)))
+                            painter.setPen(Qt.NoPen)
+                            painter.drawEllipse(
+                                QPointF(hp.x()-_lr*0.30, hp.y()-_lr*0.28), _hl, _hl*0.70)
 
             else:
                 # PAR / wash — boîtier avec épaisseur (face avant + face sup + face côté)
