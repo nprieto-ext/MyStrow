@@ -7761,16 +7761,24 @@ class MainWindow(QMainWindow):
             else:
                 if not _ts.is_available():
                     from PySide6.QtWidgets import QProgressDialog
+                    import threading as _thr
                     prog = QProgressDialog(tr("tablet_installing"), None, 0, 0, dlg)
                     prog.setWindowTitle(tr("tablet_title"))
                     prog.setWindowModality(Qt.WindowModal)
                     prog.setMinimumDuration(0)
                     prog.setValue(0)
                     prog.show()
-                    QApplication.processEvents()
-                    ok = _ts._auto_install()
+                    _result = [None]
+                    _t = _thr.Thread(
+                        target=lambda: _result.__setitem__(0, _ts._auto_install()),
+                        daemon=True,
+                    )
+                    _t.start()
+                    while _t.is_alive():
+                        QApplication.processEvents()
+                        _t.join(timeout=0.05)
                     prog.close()
-                    if not ok:
+                    if not _result[0]:
                         QMessageBox.warning(dlg, tr("tablet_title"), tr("tablet_error_pkg"))
                         return
                 try:
