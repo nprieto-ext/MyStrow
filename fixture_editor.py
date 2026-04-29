@@ -780,6 +780,16 @@ class FixtureEditorDialog(QDialog):
         )
         self._btn_delete.clicked.connect(self._delete_fixture)
         hdr.addWidget(self._btn_delete)
+        self._btn_save = QPushButton("💾  Enregistrer")
+        self._btn_save.setFixedHeight(30)
+        self._btn_save.setStyleSheet(
+            "QPushButton{background:#00d4ff;color:#000;border:none;"
+            "border-radius:5px;font-size:11px;font-weight:bold;padding:0 14px;}"
+            "QPushButton:hover{background:#33ddff;}"
+            "QPushButton:disabled{background:#181818;color:#333;border:1px solid #222;}"
+        )
+        self._btn_save.clicked.connect(self._save_current)
+        hdr.addWidget(self._btn_save)
         rv.addLayout(hdr)
         rv.addSpacing(28)
 
@@ -890,16 +900,6 @@ class FixtureEditorDialog(QDialog):
         act = QHBoxLayout()
         act.setSpacing(10)
         act.addStretch()
-        self._btn_save = QPushButton("💾  Enregistrer")
-        self._btn_save.setFixedHeight(40)
-        self._btn_save.setStyleSheet(
-            "QPushButton{background:#00d4ff;color:#000;border:none;"
-            "border-radius:8px;font-size:13px;font-weight:bold;padding:0 28px;}"
-            "QPushButton:hover{background:#33ddff;}"
-            "QPushButton:disabled{background:#181818;color:#333;border:1px solid #222;}"
-        )
-        self._btn_save.clicked.connect(self._save_current)
-        act.addWidget(self._btn_save)
         btn_close = QPushButton("Fermer")
         btn_close.setFixedHeight(40)
         btn_close.clicked.connect(self.accept)
