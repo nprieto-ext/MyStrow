@@ -99,8 +99,8 @@ jobs:
   # target_arch=universal2 dans MyStrow.spec
   # ─────────────────────────────────────────────
   build-mac:
-    runs-on: macos-latest
-    timeout-minutes: 40
+    runs-on: macos-13        # runner Intel x86_64 — binaire natif Intel + Rosetta sur M-series
+    timeout-minutes: 60
     continue-on-error: true
     outputs:
       dmg_uploaded: ${{ steps.upload-dmg.outputs.dmg_uploaded }}
@@ -110,7 +110,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          architecture: "x64"   # Python x86_64 via Rosetta → binaire Intel + Rosetta sur M-series
 
       - name: Install dependencies
         run: |
@@ -131,7 +130,7 @@ jobs:
           EOF
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
-      - name: Build .app (x86_64 — Intel natif + Rosetta sur M-series)
+      - name: Build .app (x86_64 — Intel natif + Rosetta 2 sur M-series)
         run: pyinstaller --noconfirm MyStrow.spec
 
       - name: Check signing secrets availability
