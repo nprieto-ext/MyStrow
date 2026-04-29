@@ -63,7 +63,7 @@ if IS_MAC:
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
-        target_arch=None,
+        target_arch='x86_64',  # Intel natif + Rosetta sur M-series (runner arm64 avec Python x64)
         codesign_identity=None,
         entitlements_file=None,
         icon=[icon_file],

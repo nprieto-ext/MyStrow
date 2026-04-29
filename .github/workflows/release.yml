@@ -99,8 +99,8 @@ jobs:
   # target_arch=universal2 dans MyStrow.spec
   # ─────────────────────────────────────────────
   build-mac:
-    runs-on: macos-13        # runner Intel x86_64 — binaire natif Intel + Rosetta sur M-series
-    timeout-minutes: 60
+    runs-on: macos-latest    # runner arm64 — PyInstaller forcé x86_64 via target_arch + Python x64
+    timeout-minutes: 30
     continue-on-error: true
     outputs:
       dmg_uploaded: ${{ steps.upload-dmg.outputs.dmg_uploaded }}
