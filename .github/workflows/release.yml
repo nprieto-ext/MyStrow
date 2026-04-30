@@ -95,11 +95,11 @@ jobs:
           path: artifacts/
 
   # ─────────────────────────────────────────────
-  # BUILD MAC — binaire x86_64 (Intel natif + Rosetta sur M-series)
-  # Runner Intel (macos-13) : pas besoin de arch -x86_64 / Rosetta
+  # BUILD MAC — binaire arm64 (M-series natif + Rosetta sur Intel)
+  # Runner Apple M1 (macos-14) : disponibilité immédiate, plus de wait
   # ─────────────────────────────────────────────
   build-mac:
-    runs-on: macos-13    # runner Intel x86_64 — build natif sans Rosetta
+    runs-on: macos-14    # runner Apple M1 arm64 — runners disponibles, Rosetta pour Intel
     timeout-minutes: 60
     continue-on-error: true
     outputs:

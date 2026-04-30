@@ -536,12 +536,21 @@ class ArtNetDMX:
                 elif ch_type == "B":
                     ch_val = b
                 elif ch_type == "W":
-                    ch_val = min(255, min(r, g, b) + getattr(proj, 'white_boost', 0))
+                    # Fixture RGBW : extraire la composante blanche (min des canaux)
+                    # Fixture bi-couleur sans RGB : utiliser la luminance standard
+                    _has_rgb = ("R" in profile and "G" in profile and "B" in profile)
+                    if _has_rgb:
+                        ch_val = min(255, min(r, g, b) + getattr(proj, 'white_boost', 0))
+                    else:
+                        ch_val = min(255, int(r * 0.30 + g * 0.59 + b * 0.11)
+                                     + getattr(proj, 'white_boost', 0))
                 elif ch_type == "Ambre":
-                    ch_val = min(255, (int(min(r, g * 0.5) * 0.8) if r > 0 else 0)
+                    # Ambre = composante chaude : rouge dominant, vert partiel, pas de bleu
+                    ch_val = min(255, int(max(0, r * 0.75 + g * 0.25 - b * 0.5))
                                  + getattr(proj, 'amber_boost', 0))
                 elif ch_type == "Orange":
-                    ch_val = min(255, (int(min(r, g * 0.6) * 0.9) if r > 0 else 0)
+                    # Orange = entre rouge et ambre : rouge fort, vert modéré, peu de bleu
+                    ch_val = min(255, int(max(0, r * 0.80 + g * 0.35 - b * 0.4))
                                  + getattr(proj, 'orange_boost', 0))
                 elif ch_type == "UV":
                     ch_val = getattr(proj, 'uv', 0)

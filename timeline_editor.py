@@ -1364,19 +1364,20 @@ class LightTimelineEditor(QDialog):
                     elif fade_out > 0 and remaining < fade_out:
                         intensity = int(intensity * remaining / fade_out)
 
-                    color = clip.color
+                    c1 = clip.color
+                    c2 = getattr(clip, 'color2', None)
                     brightness = intensity / 100.0
-                    display_color = QColor(
-                        int(color.red()   * brightness),
-                        int(color.green() * brightness),
-                        int(color.blue()  * brightness),
-                    )
-                    for idx in track_to_indices.get(track.name, []):
+                    for pos, idx in enumerate(track_to_indices.get(track.name, [])):
                         if idx < len(projectors):
                             p = projectors[idx]
+                            color = c1 if (c2 is None or pos % 2 == 0) else c2
                             p.level = intensity
                             p.base_color = color
-                            p.color = display_color
+                            p.color = QColor(
+                                int(color.red()   * brightness),
+                                int(color.green() * brightness),
+                                int(color.blue()  * brightness),
+                            )
                     break
 
         # ── 2) Appliquer la séquence par-dessus les groupes (priorité haute) ──
