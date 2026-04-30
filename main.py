@@ -56,6 +56,11 @@ if sys.platform == "darwin" and getattr(sys, 'frozen', False):
         print(f"[MyStrow] _MEIPASS : {getattr(sys, '_MEIPASS', 'N/A')}", flush=True)
         print(f"[MyStrow] argv[0]  : {sys.argv[0]}", flush=True)
         print(f"", flush=True)
+        # Variables Qt nécessaires sur macOS 26 Tahoe pour le rendu Cocoa
+        os.environ.setdefault("QT_MAC_WANTS_LAYER", "1")
+        os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+        # Debug plugins Qt → capturé dans le log si libqcocoa.dylib manque
+        os.environ.setdefault("QT_DEBUG_PLUGINS", "1")
     except Exception:
         pass
 
