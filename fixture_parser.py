@@ -71,6 +71,24 @@ _MA_MAP = {
 
 
 # ---------------------------------------------------------------------------
+# Mappings QLC+ -> MyStrow
+# ---------------------------------------------------------------------------
+_QLC_COLOUR_MAP = {
+    "Red": "R", "Green": "G", "Blue": "B",
+    "White": "W", "Warm White": "W", "Cold White": "W", "Neutral White": "W",
+    "Amber": "Ambre", "UV": "UV", "UV Violet": "UV", "Indigo": "UV",
+    "Orange": "Orange", "Yellow": "Orange",
+    "Lime": "G", "Cyan": "G", "Magenta": "R", "Pink": "R",
+}
+_QLC_GROUP_MAP = {
+    "Pan": "Pan", "Tilt": "Tilt",
+    "Speed": "Speed", "Shutter": "Strobe",
+    "Gobo": "Gobo1", "Colour": "ColorWheel",
+    "Prism": "Prism", "Beam": "Zoom", "Iris": "Iris", "Focus": "Focus",
+    "Effect": "Mode", "Maintenance": "Mode", "Nothing": "Mode",
+}
+
+# ---------------------------------------------------------------------------
 # Mapping GrandMA3 ChannelType/@attribute -> type de canal MyStrow (MA3)
 # ---------------------------------------------------------------------------
 _MA3_ATTR_MAP = {
@@ -605,6 +623,111 @@ def export_mystrow(fixture: dict, path: str) -> None:
 # API publique
 # ---------------------------------------------------------------------------
 
+def parse_qlcplus_xml(data: bytes) -> dict:
+    """
+    Parse un fichier XML QLC+ (FixtureDefinition) depuis des bytes.
+    Format : <FixtureDefinition xmlns="http://www.qlcplus.org/...">
+    """
+    try:
+        root = ET.fromstring(_strip_namespaces(data))
+    except ET.ParseError as e:
+        raise ValueError(f"XML QLC+ invalide : {e}")
+
+    # Nom du fabricant et modèle
+    mfr_el  = root.find("Manufacturer")
+    model_el = root.find("Model")
+    type_el  = root.find("Type")
+    manufacturer = (mfr_el.text.strip()  if mfr_el  is not None and mfr_el.text  else "")
+    model        = (model_el.text.strip() if model_el is not None and model_el.text else "")
+    qlc_type     = (type_el.text.strip()  if type_el  is not None and type_el.text  else "")
+
+    # Mapping type QLC+ -> fixture_type MyStrow
+    _TYPE_MAP = {
+        "Moving Head":    "Lyre",
+        "Scanner":        "Lyre",
+        "Dimmer":         "Dimmer",
+        "Smoke":          "Machine a fumee",
+        "Hazer":          "Machine a fumee",
+        "Strobe":         "Strobe",
+        "LED Bar (Beams)": "Barre LED",
+        "LED Bar (Pixels)": "Barre LED",
+        "Fan":            "Ventilateur",
+    }
+    fixture_type = _TYPE_MAP.get(qlc_type, "PAR LED")
+
+    # Construire la table canal_name -> type_mystrow
+    channel_table = {}
+    for ch_el in root.findall("Channel"):
+        ch_name = ch_el.get("Name") or ""
+        group_el  = ch_el.find("Group")
+        colour_el = ch_el.find("Colour")
+        group  = (group_el.text.strip()  if group_el  is not None and group_el.text  else "")
+        colour = (colour_el.text.strip() if colour_el is not None and colour_el.text else "")
+
+        if group == "Intensity":
+            ch_type = _QLC_COLOUR_MAP.get(colour, "Dim")
+        elif group in _QLC_GROUP_MAP:
+            ch_type = _QLC_GROUP_MAP[group]
+            # Pan Fine / Tilt Fine via attribut Byte="1"
+            byte_attr = group_el.get("Byte", "0") if group_el is not None else "0"
+            if byte_attr == "1":
+                ch_type = "PanFine" if group == "Pan" else ("TiltFine" if group == "Tilt" else ch_type)
+        else:
+            ch_type = "Mode"
+        channel_table[ch_name] = ch_type
+
+    # Parser les modes
+    modes = []
+    for mode_el in root.findall("Mode"):
+        mode_name = mode_el.get("Name") or f"Mode {len(modes)+1}"
+        # Trier les canaux par numéro
+        ch_entries = []
+        for ch_ref in mode_el.findall("Channel"):
+            try:
+                num = int(ch_ref.get("Number", "0"))
+            except ValueError:
+                num = len(ch_entries)
+            ch_name = ch_ref.text or ""
+            ch_type = channel_table.get(ch_name, "Mode")
+            ch_entries.append((num, ch_type))
+        ch_entries.sort(key=lambda x: x[0])
+        profile = [ct for _, ct in ch_entries]
+        if profile:
+            modes.append({"name": mode_name, "channelCount": len(profile), "profile": profile})
+
+    if not modes and channel_table:
+        # Pas de mode déclaré : utiliser tous les canaux dans l'ordre de déclaration
+        profile = list(channel_table.values())
+        modes = [{"name": "Mode 1", "channelCount": len(profile), "profile": profile}]
+
+    if not modes:
+        raise ValueError("Aucun canal DMX trouvé dans le fichier QLC+.")
+
+    first_profile = modes[0]["profile"]
+    ftype = _detect_fixture_type(first_profile) if fixture_type == "PAR LED" else fixture_type
+
+    return {
+        "name":              model,
+        "manufacturer":      manufacturer,
+        "fixture_type":      ftype,
+        "source":            "qlcplus",
+        "uuid":              "",
+        "modes":             modes,
+        "color_wheel_slots": [],
+        "gobo_wheel_slots":  [],
+        "channel_defaults":  {},
+    }
+
+
+def _is_qlcplus_xml(data: bytes) -> bool:
+    """Détecte si les bytes correspondent à un fichier QLC+ (FixtureDefinition)."""
+    try:
+        header = data[:512].decode("utf-8", errors="ignore")
+        return "qlcplus.org" in header or "FixtureDefinition" in header
+    except Exception:
+        return False
+
+
 def _decompress_xmlp(data: bytes) -> bytes:
     """Décompresse un fichier .xmlp (ZIP, zlib ou gzip contenant du XML)."""
     # Signature ZIP (PK)
@@ -653,9 +776,13 @@ def parse_file(path: str) -> dict:
     elif ext in (".xml", ".xmlp"):
         if ext == ".xmlp":
             data = _decompress_xmlp(data)
+        if _is_qlcplus_xml(data):
+            return parse_qlcplus_xml(data)
         return parse_ma_xml(data)
     else:
         try:
             return parse_mystrow(data)
         except ValueError:
+            if _is_qlcplus_xml(data):
+                return parse_qlcplus_xml(data)
             return parse_ma_xml(data)
