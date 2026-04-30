@@ -96,10 +96,10 @@ jobs:
 
   # ─────────────────────────────────────────────
   # BUILD MAC — binaire arm64 (M-series natif + Rosetta sur Intel)
-  # Runner Apple M1 (macos-14) : disponibilité immédiate, plus de wait
+  # Runner macos-15 (Sequoia) : SDK plus récent → meilleure compat macOS 26 Tahoe
   # ─────────────────────────────────────────────
   build-mac:
-    runs-on: macos-14    # runner Apple M1 arm64 — runners disponibles, Rosetta pour Intel
+    runs-on: macos-15    # SDK macOS 15 — bootloader PyInstaller plus compatible Tahoe
     timeout-minutes: 60
     continue-on-error: true
     outputs:
@@ -113,12 +113,16 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           pip install --upgrade pip --quiet
           pip install -r requirements.txt --quiet
-          # --upgrade --no-cache-dir force le téléchargement du bootloader PyInstaller
-          # compilé récemment — critique pour la compatibilité macOS 26 Tahoe
-          pip install pyinstaller --upgrade --no-cache-dir --quiet
+          # --no-binary pyinstaller compile le bootloader C nativement sur le runner
+          # (macOS 15 SDK) au lieu d'utiliser le binaire pré-compilé du wheel —
+          # le binaire pré-compilé ne connaît pas macOS 26 Tahoe et cherche Python
+          # dans $TMPDIR au lieu du bundle .app
+          pip install pyinstaller --no-binary pyinstaller --upgrade --no-cache-dir --quiet
 
       - name: Convert logo.png → mystrow.icns (sips — sans pillow)
         run: |
@@ -156,11 +160,20 @@ jobs:
           security default-keychain -s temp.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k mystrow-ci temp.keychain
 
-      - name: Signer .app
+      - name: Signer .app (inside-out — sans --deep)
         if: steps.check-secrets.outputs.has_cert == 'true'
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          codesign --deep --force --verify --verbose \
+          # Signer de l'intérieur vers l'extérieur — codesign --deep re-signe les
+          # fichiers dans le désordre et peut corrompre le bundle PyInstaller 6.x
+          # en altérant les références @rpath que le bootloader utilise au lancement
+          find dist/MyStrow.app/Contents -name "*.dylib" -o -name "*.so" | while read f; do
+            codesign --sign "$IDENTITY" --force "$f" 2>/dev/null || true
+          done
+          find dist/MyStrow.app/Contents -name "Python" ! -name "*.py" | while read f; do
+            codesign --sign "$IDENTITY" --force "$f" 2>/dev/null || true
+          done
+          codesign --force --verify --verbose \
             --sign "$IDENTITY" \
             --options runtime \
             --entitlements entitlements.plist \
