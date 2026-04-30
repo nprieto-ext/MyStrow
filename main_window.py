@@ -11505,9 +11505,9 @@ class MainWindow(QMainWindow):
             from PySide6.QtWidgets import QInputDialog
             paths, _ = QFileDialog.getOpenFileNames(
                 dialog, "Importer des fixtures", str(Path.home()),
-                "Tous les formats supportés (*.mft *.json *.xml *.mystrow);;"
+                "Tous les formats supportés (*.mft *.json *.xml *.xmlp *.mystrow);;"
                 "Fixture MyStrow (*.mft *.json *.mystrow);;"
-                "GrandMA2/3 XML (*.xml)"
+                "XML / XML compressé (*.xml *.xmlp)"
             )
             if not paths:
                 return
