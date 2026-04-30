@@ -27,6 +27,8 @@ Structure des modules:
 import sys
 import os
 import time
+import faulthandler
+import traceback
 
 # Fix encodage console Windows (cp1252 ne supporte pas les emojis)
 if hasattr(sys.stdout, 'reconfigure'):
@@ -34,15 +36,46 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-# Sur Mac (app bundle PyInstaller), rediriger stderr vers un log lisible
+# Sur Mac (app bundle PyInstaller) : log complet avant tout import Qt
+# faulthandler capture aussi les segfaults (crash Qt natif, dylib manquante…)
+_MAC_LOG_FILE = None
 if sys.platform == "darwin" and getattr(sys, 'frozen', False):
     try:
-        from pathlib import Path
-        _log_dir = Path.home() / "Library" / "Logs" / "MyStrow"
-        _log_dir.mkdir(parents=True, exist_ok=True)
-        _log_file = open(_log_dir / "crash.log", "w", encoding="utf-8")
-        sys.stderr = _log_file
-        print(f"[MyStrow] Log demarre", file=_log_file, flush=True)
+        import platform as _plt
+        _log_dir = os.path.join(os.path.expanduser("~"), "Library", "Logs", "MyStrow")
+        os.makedirs(_log_dir, exist_ok=True)
+        _log_path = os.path.join(_log_dir, "crash.log")
+        _MAC_LOG_FILE = open(_log_path, "w", encoding="utf-8", buffering=1)
+        sys.stdout = _MAC_LOG_FILE
+        sys.stderr = _MAC_LOG_FILE
+        faulthandler.enable(file=_MAC_LOG_FILE, all_threads=True)
+        print(f"[MyStrow] === STARTUP LOG ===", flush=True)
+        print(f"[MyStrow] Python   : {sys.version}", flush=True)
+        print(f"[MyStrow] macOS    : {_plt.mac_ver()[0]}", flush=True)
+        print(f"[MyStrow] Machine  : {_plt.machine()}", flush=True)
+        print(f"[MyStrow] _MEIPASS : {getattr(sys, '_MEIPASS', 'N/A')}", flush=True)
+        print(f"[MyStrow] argv[0]  : {sys.argv[0]}", flush=True)
+        print(f"", flush=True)
+    except Exception:
+        pass
+
+
+def _mac_fatal(title: str, msg: str):
+    """Affiche une alerte macOS native sans Qt (osascript) et écrit dans le log."""
+    if _MAC_LOG_FILE:
+        try:
+            print(f"[FATAL] {title}: {msg}", file=_MAC_LOG_FILE, flush=True)
+            traceback.print_exc(file=_MAC_LOG_FILE)
+        except Exception:
+            pass
+    try:
+        import subprocess
+        safe = msg.replace('"', "'").replace('\\', '/')[:400]
+        subprocess.run(
+            ['osascript', '-e',
+             f'display alert "{title}" message "{safe}\\n\\nLog : ~/Library/Logs/MyStrow/crash.log" as critical'],
+            timeout=15
+        )
     except Exception:
         pass
 
@@ -422,4 +455,9 @@ def main():
 # ENTRY POINT
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as _e:
+        _msg = traceback.format_exc()
+        _mac_fatal("MyStrow — Erreur fatale au démarrage", str(_e))
+        sys.exit(1)
