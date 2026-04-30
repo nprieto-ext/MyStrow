@@ -783,11 +783,7 @@ def parse_file(path: str) -> dict:
         if ext == ".xmlp":
             decompressed = _decompress_xmlp(data)
             if decompressed is data:
-                raise ValueError(
-                    "Format .xmlp non reconnu — le fichier est peut-être\n"
-                    "chiffré (GrandMA3 propriétaire) ou corrompu.\n"
-                    f"Signature : {data[:8].hex()}"
-                )
+                raise ValueError("LOCKED_XMLP")
             data = decompressed
         if _is_qlcplus_xml(data):
             return parse_qlcplus_xml(data)

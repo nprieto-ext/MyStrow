@@ -1468,12 +1468,18 @@ class GdtfUploadDialog(QDialog):
             except Exception as e:
                 row = self.table.rowCount()
                 self.table.insertRow(row)
-                self.table.setItem(row, 0, QTableWidgetItem("❌"))
-                self.table.item(row, 0).setForeground(QColor(RED))
+                locked = "LOCKED_XMLP" in str(e)
+                icon = "🔒" if locked else "❌"
+                msg  = ("Fichier protégé — format propriétaire chiffré (GrandMA3). "
+                        "Utilisez le fichier .xml non chiffré à la place."
+                        if locked else str(e))
+                self.table.setItem(row, 0, QTableWidgetItem(icon))
+                self.table.item(row, 0).setForeground(QColor("#e67e22" if locked else RED))
                 self.table.setItem(row, 1, QTableWidgetItem(fname))
                 self.table.setItem(row, 2, QTableWidgetItem(""))
-                self.table.setItem(row, 3, QTableWidgetItem(str(e)))
-                self._append_log(f"❌ {fname}  :  {e}", RED)
+                self.table.setItem(row, 3, QTableWidgetItem(msg))
+                self._append_log(f"{icon} {fname}  :  {msg}",
+                                 "#e67e22" if locked else RED)
 
         total = len(self._parsed)
         self.lbl_count.setText(

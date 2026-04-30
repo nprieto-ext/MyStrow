@@ -11527,7 +11527,7 @@ class MainWindow(QMainWindow):
                 ext = Path(path).suffix.lower()
                 try:
                     raw = Path(path).read_bytes()
-                    if ext == ".xml":
+                    if ext in (".xml", ".xmlp"):
                         ofl_fx = _parse_file(path)
                         modes = [m for m in (ofl_fx.get("modes") or [])
                                  if isinstance(m, dict) and m.get("profile")]
@@ -11575,7 +11575,10 @@ class MainWindow(QMainWindow):
                         existing_names.add(fx["name"])
                         imported += 1
                 except Exception as e:
-                    errors.append(f"• {Path(path).name} : {e}")
+                    if "LOCKED_XMLP" in str(e):
+                        errors.append(f"• {Path(path).name} : 🔒 Fichier protégé — format propriétaire chiffré (GrandMA3). Utilisez le fichier .xml non chiffré.")
+                    else:
+                        errors.append(f"• {Path(path).name} : {e}")
             if imported == 0:
                 msg = "Aucune fixture importée."
                 if errors:
