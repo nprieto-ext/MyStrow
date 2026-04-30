@@ -1367,6 +1367,17 @@ class LightTimelineEditor(QDialog):
                     c1 = clip.color
                     c2 = getattr(clip, 'color2', None)
                     brightness = intensity / 100.0
+                    # Interpolation pan/tilt (lyres)
+                    pan_s  = getattr(clip, 'pan_start',  128)
+                    pan_e  = getattr(clip, 'pan_end',    128)
+                    tilt_s = getattr(clip, 'tilt_start', 128)
+                    tilt_e = getattr(clip, 'tilt_end',   128)
+                    _has_move = (pan_s != 128 or pan_e != 128 or
+                                 tilt_s != 128 or tilt_e != 128)
+                    if _has_move:
+                        t = min(1.0, elapsed / max(1, clip.duration))
+                        _pan_val  = int((pan_s  + (pan_e  - pan_s)  * t) * 256)
+                        _tilt_val = int((tilt_s + (tilt_e - tilt_s) * t) * 256)
                     for pos, idx in enumerate(track_to_indices.get(track.name, [])):
                         if idx < len(projectors):
                             p = projectors[idx]
@@ -1378,6 +1389,9 @@ class LightTimelineEditor(QDialog):
                                 int(color.green() * brightness),
                                 int(color.blue()  * brightness),
                             )
+                            if _has_move:
+                                p.pan  = _pan_val
+                                p.tilt = _tilt_val
                     break
 
         # ── 2) Appliquer la séquence par-dessus les groupes (priorité haute) ──
@@ -1389,8 +1403,16 @@ class LightTimelineEditor(QDialog):
                 if memories and mem_col < len(memories) and row < len(memories[mem_col]):
                     mem = memories[mem_col][row]
                     if mem:
+                        # Lire depuis les cues (format actuel) ou le niveau supérieur (ancienne migration)
+                        cues = mem.get("cues", [])
+                        if cues:
+                            cue_idx = getattr(new_seq_clip, 'cue_index', None) or 0
+                            cue = cues[min(cue_idx, len(cues) - 1)]
+                            projectors_state = cue.get("projectors", [])
+                        else:
+                            projectors_state = mem.get("projectors", [])
                         brightness = new_seq_clip.intensity / 100.0
-                        for i, ps in enumerate(mem.get("projectors", [])):
+                        for i, ps in enumerate(projectors_state):
                             if i >= len(projectors):
                                 continue
                             p = projectors[i]

@@ -1773,8 +1773,17 @@ class Sequencer(QFrame):
         if mem_col < len(memories) and row_idx < len(memories[mem_col]):
             mem = memories[mem_col][row_idx]
             if mem:
+                # Lire les projecteurs depuis les cues (format actuel) ou le niveau
+                # supérieur (ancien format migré) pour compatibilité ascendante.
+                cues = mem.get("cues", [])
+                if cues:
+                    cue_idx = seq_clip_info.get('cue_index', 0) or 0
+                    cue = cues[min(cue_idx, len(cues) - 1)]
+                    projectors_state = cue.get("projectors", [])
+                else:
+                    projectors_state = mem.get("projectors", [])
                 brightness = seq_clip_info.get('seq_intensity', 100) / 100.0
-                for i, ps in enumerate(mem.get("projectors", [])):
+                for i, ps in enumerate(projectors_state):
                     if i >= len(main_win.projectors):
                         continue
                     proj = main_win.projectors[i]
