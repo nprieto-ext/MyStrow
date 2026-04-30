@@ -9248,6 +9248,19 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_w)
         lv.addWidget(scroll, 1)
 
+        lbl_guide = QLabel(
+            '<a href="https://mystrow.fr/importer-fixture-dmx-mystrow"'
+            ' style="color:#333;text-decoration:none;font-size:10px;">'
+            'Fixture introuvable ? → Consulter le guide</a>'
+        )
+        lbl_guide.setStyleSheet(
+            "background:#060606; padding:0 14px; border-top:1px solid #101010;"
+        )
+        lbl_guide.setOpenExternalLinks(True)
+        lbl_guide.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lbl_guide.setFixedHeight(20)
+        lv.addWidget(lbl_guide)
+
         bstrip = QWidget()
         bstrip.setFixedHeight(40)
         bstrip.setStyleSheet("background:#060606; border-top:1px solid #141414;")
