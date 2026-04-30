@@ -63,7 +63,7 @@ if IS_MAC:
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
-        target_arch=None,  # natif x86_64 sur runner macos-13 Intel, Rosetta sur M-series
+        target_arch='universal2',  # fat binary Intel + Apple Silicon
         codesign_identity=None,
         entitlements_file=None,
         icon=[icon_file],

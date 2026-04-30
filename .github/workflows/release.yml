@@ -112,7 +112,9 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install dependencies (universal2)
+        env:
+          ARCHFLAGS: "-arch arm64 -arch x86_64"
         run: |
           pip install --upgrade pip --quiet
           pip install -r requirements.txt --quiet
@@ -127,7 +129,7 @@ jobs:
           done
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
-      - name: Build .app (x86_64 natif — Intel + Rosetta sur M-series)
+      - name: Build .app (universal2 — Intel + Apple Silicon natif)
         run: python -m PyInstaller --noconfirm MyStrow.spec
 
       - name: Check signing secrets availability
