@@ -716,13 +716,13 @@ class FixtureEditorDialog(QDialog):
         self._my_list.currentRowChanged.connect(self._on_list_selection)
         lv.addWidget(self._my_list, 1)
 
-        # Boutons Nouveau + Copier
+        # Boutons Nouveau + Copier + Importer
         foot = QWidget()
-        foot.setFixedHeight(96)
+        foot.setFixedHeight(134)
         foot.setStyleSheet("background:#0d0d0d;border-top:1px solid #1a1a1a;")
         fl = QVBoxLayout(foot)
         fl.setContentsMargins(10, 8, 10, 8)
-        fl.setSpacing(6)
+        fl.setSpacing(5)
         btn_new = QPushButton("+ Nouveau projecteur")
         btn_new.setFixedHeight(34)
         btn_new.setStyleSheet(
@@ -733,7 +733,7 @@ class FixtureEditorDialog(QDialog):
         btn_new.clicked.connect(self._new_fixture)
         fl.addWidget(btn_new)
         btn_copy_lib = QPushButton("📋  Copier depuis bibliothèque")
-        btn_copy_lib.setFixedHeight(30)
+        btn_copy_lib.setFixedHeight(28)
         btn_copy_lib.setStyleSheet(
             "QPushButton{background:#1a1a2a;color:#8899cc;border:1px solid #2a2a44;"
             "border-radius:6px;font-size:11px;}"
@@ -741,6 +741,16 @@ class FixtureEditorDialog(QDialog):
         )
         btn_copy_lib.clicked.connect(self._copy_from_library)
         fl.addWidget(btn_copy_lib)
+        btn_import = QPushButton("📥  Importer fichier XML")
+        btn_import.setFixedHeight(28)
+        btn_import.setToolTip("Compatible QLC+, GrandMA2/3 — formats .xml, .mft, .json")
+        btn_import.setStyleSheet(
+            "QPushButton{background:#1a2a1a;color:#88cc88;border:1px solid #2a442a;"
+            "border-radius:6px;font-size:11px;}"
+            "QPushButton:hover{background:#223322;color:#aaeaaa;border-color:#44aa44;}"
+        )
+        btn_import.clicked.connect(self._do_import)
+        fl.addWidget(btn_import)
         lv.addWidget(foot)
         splitter.addWidget(left)
 

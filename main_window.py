@@ -9084,7 +9084,7 @@ class MainWindow(QMainWindow):
         _menu_row.setSpacing(0)
         _menu_row.addWidget(menubar, 0)
 
-        btn_fixture_editor = QPushButton("🛠  Editeur de fixture")
+        btn_fixture_editor = QPushButton("🛠  Créer votre fixture")
         btn_fixture_editor.setAutoDefault(False)
         btn_fixture_editor.setFixedHeight(28)
         btn_fixture_editor.setStyleSheet(
