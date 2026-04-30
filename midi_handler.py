@@ -20,6 +20,14 @@ if MIDI_AVAILABLE:
 # ─── Contrôleurs supportés (ordre de priorité) ───────────────────────────────
 SUPPORTED_CONTROLLERS = [
     {
+        'id': 'apc40_mk2',
+        'name': 'AKAI APC40 MkII',
+        # MkII avant MK1 — 'MKII' est plus spécifique que 'APC40' seul
+        'keywords': ['APC40 MKII', 'APC40 MK2', 'APC 40 MKII', 'APC 40 MK2'],
+        'has_faders': True,
+        'has_pads': True,
+    },
+    {
         'id': 'apc40',
         'name': 'AKAI APC40',
         # 'APC40' doit passer avant 'APC' pour éviter que l'APC Mini ne match en fallback
@@ -331,7 +339,7 @@ class MIDIHandler(QObject):
             if status == 0xB0 and 48 <= data1 <= 56:
                 return data1 - 48
 
-        elif self.controller_type == 'apc40':
+        elif self.controller_type in ('apc40', 'apc40_mk2'):
             # CC messages encodés sur canal 0-7 (0xB0-0xB7)
             if (status & 0xF0) == 0xB0:
                 channel = status & 0x0F
@@ -353,7 +361,7 @@ class MIDIHandler(QObject):
             ct = self.controller_type
             if ct == 'apc_mini':
                 self._handle_apc_mini(message)
-            elif ct == 'apc40':
+            elif ct in ('apc40', 'apc40_mk2'):
                 self._handle_apc40(message)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
                 self._handle_launchpad_mini(message)
@@ -573,7 +581,7 @@ class MIDIHandler(QObject):
                 for note in range(64):
                     self.midi_out.send_message([0x90, note, 0])
 
-            elif ct == 'apc40':
+            elif ct in ('apc40', 'apc40_mk2'):
                 # Éteindre les 5 lignes × 8 pistes de clips + 5 scènes
                 for track in range(8):
                     for row in range(5):
@@ -603,7 +611,7 @@ class MIDIHandler(QObject):
             ct = self.controller_type
             if ct == 'apc_mini':
                 self._set_led_apc(row, col, color_velocity, brightness_percent)
-            elif ct == 'apc40':
+            elif ct in ('apc40', 'apc40_mk2'):
                 self._set_led_apc40(row, col, color_velocity)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
                 self._set_led_lp_mini(row, col, color_velocity)
@@ -639,10 +647,17 @@ class MIDIHandler(QObject):
         self.midi_out.send_message([0x90, note, lp_vel])
 
     def _set_led_apc40(self, row, col, color_velocity):
-        """LED AKAI APC40 — palette vert/jaune/rouge (velocity 0-6)."""
+        """LED AKAI APC40 / APC40 MkII.
+
+        MK1 : palette 3 couleurs (velocity 0-6 : off/vert/rouge/jaune).
+        MK2 : palette 128 couleurs — même indexation que l'APC Mini, velocity passée directement.
+        """
         if not self.midi_out:
             return
-        vel = _to_apc40_vel(color_velocity)
+        if self.controller_type == 'apc40_mk2':
+            vel = color_velocity  # palette 128 couleurs compatible APC Mini
+        else:
+            vel = _to_apc40_vel(color_velocity)
         if col < 8:
             # Clip slot : channel = track, note = base + row
             if row > 4:
