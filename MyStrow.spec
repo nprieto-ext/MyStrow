@@ -82,8 +82,24 @@ if IS_MAC:
         icon=icon_file,
         bundle_identifier='com.mystrow.app',
         info_plist={
-            'NSHighResolutionCapable': True,
-            'CFBundleShortVersionString': _get_version(),
+            # Identité du bundle
+            'CFBundleName':                         'MyStrow',
+            'CFBundleDisplayName':                  'MyStrow',
+            'CFBundleExecutable':                   'MyStrow',
+            'CFBundlePackageType':                  'APPL',
+            'CFBundleInfoDictionaryVersion':        '6.0',
+            'CFBundleShortVersionString':           _get_version(),
+            'CFBundleVersion':                      _get_version(),
+            # macOS minimum — évite le rejet silencieux sur Big Sur
+            'LSMinimumSystemVersion':               '11.0',
+            # Classe principale Qt — requis par macOS 26 Tahoe
+            'NSPrincipalClass':                     'NSApplication',
+            # Rendu & affichage
+            'NSHighResolutionCapable':              True,
+            'NSSupportsAutomaticGraphicsSwitching': True,
+            'NSRequiresAquaSystemAppearance':       False,
+            # Sécurité / état restaurable (macOS 12+)
+            'NSApplicationSupportsSecureRestorableState': True,
         },
     )
 

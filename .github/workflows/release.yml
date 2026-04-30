@@ -116,7 +116,9 @@ jobs:
         run: |
           pip install --upgrade pip --quiet
           pip install -r requirements.txt --quiet
-          pip install pyinstaller --quiet
+          # --upgrade --no-cache-dir force le téléchargement du bootloader PyInstaller
+          # compilé récemment — critique pour la compatibilité macOS 26 Tahoe
+          pip install pyinstaller --upgrade --no-cache-dir --quiet
 
       - name: Convert logo.png → mystrow.icns (sips — sans pillow)
         run: |
