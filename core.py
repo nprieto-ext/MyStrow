@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.3"
+VERSION = "3.1.4"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"

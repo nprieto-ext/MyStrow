@@ -95,34 +95,27 @@ jobs:
           path: artifacts/
 
   # ─────────────────────────────────────────────
-  # BUILD MAC — binaire universel (Intel + Apple Silicon)
-  # target_arch=universal2 dans MyStrow.spec
+  # BUILD MAC — binaire x86_64 (Intel natif + Rosetta sur M-series)
+  # Runner Intel (macos-13) : pas besoin de arch -x86_64 / Rosetta
   # ─────────────────────────────────────────────
   build-mac:
-    runs-on: macos-latest    # runner arm64 — PyInstaller forcé x86_64 via target_arch + Python x64
-    timeout-minutes: 30
+    runs-on: macos-13    # runner Intel x86_64 — build natif sans Rosetta
+    timeout-minutes: 60
     continue-on-error: true
     outputs:
       dmg_uploaded: ${{ steps.upload-dmg.outputs.dmg_uploaded }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python x86_64 (Python.org universal2 via arch)
-        run: |
-          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
-          if ! arch -x86_64 $PY --version &>/dev/null 2>&1; then
-            echo "Python.org universal2 absent — téléchargement..."
-            curl -fsSL -o python.pkg https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
-            sudo installer -pkg python.pkg -target /
-          fi
-          arch -x86_64 $PY --version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Install dependencies (x86_64)
+      - name: Install dependencies
         run: |
-          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
-          arch -x86_64 $PY -m pip install --upgrade pip --quiet
-          arch -x86_64 $PY -m pip install -r requirements.txt --quiet
-          arch -x86_64 $PY -m pip install pyinstaller --quiet
+          pip install --upgrade pip --quiet
+          pip install -r requirements.txt --quiet
+          pip install pyinstaller --quiet
 
       - name: Convert logo.png → mystrow.icns (sips — sans pillow)
         run: |
@@ -133,10 +126,8 @@ jobs:
           done
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
-      - name: Build .app (x86_64 — Intel natif + Rosetta sur M-series)
-        run: |
-          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
-          arch -x86_64 $PY -m PyInstaller --noconfirm MyStrow.spec
+      - name: Build .app (x86_64 natif — Intel + Rosetta sur M-series)
+        run: python -m PyInstaller --noconfirm MyStrow.spec
 
       - name: Check signing secrets availability
         id: check-secrets
@@ -238,17 +229,27 @@ jobs:
           name: mac-dmg
           path: mac-dmg/
 
+      - name: Build release notes
+        id: notes
+        env:
+          DMG_AVAILABLE: ${{ needs.build-mac.outputs.dmg_uploaded }}
+        run: |
+          {
+            echo 'body<<NOTES_EOF'
+            echo "Release ${{ github.ref_name }}"
+            echo ""
+            echo "**Téléchargements :**"
+            echo "- 🪟 Windows : \`MyStrow_Setup.exe\`"
+            [ "$DMG_AVAILABLE" = "true" ] && echo "- 🍎 Mac (Intel + Apple Silicon) : \`MyStrow_Installer.dmg\`"
+            echo 'NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: "MyStrow ${{ github.ref_name }}"
-          body: |
-            Release ${{ github.ref_name }}
-
-            **Téléchargements :**
-            - 🪟 Windows : `MyStrow_Setup.exe`
-            - 🍎 Mac (Intel + Apple Silicon) : `MyStrow_Installer.dmg`
+          body: ${{ steps.notes.outputs.body }}
           fail_on_unmatched_files: false
           files: |
             windows-installer/MyStrow_Setup.exe

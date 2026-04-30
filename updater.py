@@ -365,6 +365,21 @@ class UpdateChecker(QThread):
             "sig":    f"{base}/MyStrow.exe.sig",
         }
 
+    def _dmg_available(self, url):
+        """Vérifie via une requête HEAD que le DMG existe dans la release.
+        Évite de présenter une mise à jour Mac quand le build CI a échoué."""
+        try:
+            req = urllib.request.Request(
+                url, method="HEAD",
+                headers={"User-Agent": "MyStrow-Updater", "Range": "bytes=0-0"}
+            )
+            with urllib.request.urlopen(req, timeout=8, context=self._ssl_context()):
+                return True
+        except urllib.error.HTTPError as e:
+            return e.code not in (404, 410)
+        except Exception:
+            return True  # Erreur réseau : ne pas bloquer la vérification
+
     def run(self):
         if self._reminder_active() and not self.force:
             self.check_finished.emit(False, "")
@@ -395,6 +410,13 @@ class UpdateChecker(QThread):
 
             # ── 3. Construire les URLs (pas d'appel API supplémentaire) ──
             urls = self._build_urls(remote_version)
+
+            # ── 4. Sur macOS, vérifier que le DMG existe vraiment ────────
+            if sys.platform == "darwin" and urls["setup"]:
+                if not self._dmg_available(urls["setup"]):
+                    self.check_finished.emit(False, remote_version)
+                    return
+
             self.update_available.emit(
                 remote_version, urls["setup"], urls["sha256"], urls["sig"]
             )

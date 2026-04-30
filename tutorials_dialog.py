@@ -2,9 +2,22 @@
 TutorialsDialog — playlist YouTube MyStrow chargée en live via flux RSS.
 Pas d'API key requise. Vignettes chargées de façon asynchrone.
 """
+import ssl
 import webbrowser
 import urllib.request
 import xml.etree.ElementTree as ET
+
+
+def _ssl_ctx():
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
 
 from PySide6.QtCore import Qt, QThread, Signal, QByteArray
 from PySide6.QtGui import QPixmap, QCursor
@@ -32,7 +45,7 @@ class _RSSFetcher(QThread):
     def run(self):
         try:
             req = urllib.request.Request(RSS_URL, headers={"User-Agent": "MyStrow/3.0"})
-            with urllib.request.urlopen(req, timeout=8) as r:
+            with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx()) as r:
                 data = r.read()
             root = ET.fromstring(data)
             videos = []
@@ -63,7 +76,7 @@ class _ThumbFetcher(QThread):
     def run(self):
         try:
             req = urllib.request.Request(self._url, headers={"User-Agent": "MyStrow/3.0"})
-            with urllib.request.urlopen(req, timeout=6) as r:
+            with urllib.request.urlopen(req, timeout=6, context=_ssl_ctx()) as r:
                 self.done.emit(self._id, QByteArray(r.read()))
         except Exception:
             self.done.emit(self._id, QByteArray())

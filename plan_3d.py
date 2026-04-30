@@ -863,20 +863,30 @@ class _Canvas3D(QWidget):
                     painter.setPen(QPen(gc.darker(175), 0.8))
                     painter.drawPolygon(QPolygonF([bar_tl, bar_tr, bar_br, bar_bl]))
 
-                # ── Yoke arms — shadow then colour pass ───────────────────────
-                arm_w  = max(3.5, scale_px * 0.10)
+                # ── Yoke arms — shadow + corps + reflet tubulaire ─────────────
+                arm_w  = max(4.5, scale_px * 0.12)
                 for at, ab in [(arm_l_top, arm_l_bot), (arm_r_top, arm_r_bot)]:
                     if at and ab:
-                        painter.setPen(QPen(gc.darker(220), arm_w + 2.0,
+                        painter.setPen(QPen(gc.darker(225), arm_w + 2.5,
                                             Qt.SolidLine, Qt.RoundCap))
                         painter.drawLine(at, ab)
                 for at, ab in [(arm_l_top, arm_l_bot), (arm_r_top, arm_r_bot)]:
                     if at and ab:
                         g_arm = QLinearGradient(at, ab)
-                        g_arm.setColorAt(0.0, gc.darker(130))
-                        g_arm.setColorAt(0.5, gc.lighter(135))
-                        g_arm.setColorAt(1.0, gc.darker(115))
+                        g_arm.setColorAt(0.0,  gc.darker(142))
+                        g_arm.setColorAt(0.45, gc.lighter(140))
+                        g_arm.setColorAt(1.0,  gc.darker(118))
                         painter.setPen(QPen(QBrush(g_arm), arm_w,
+                                            Qt.SolidLine, Qt.RoundCap))
+                        painter.drawLine(at, ab)
+                for at, ab in [(arm_l_top, arm_l_bot), (arm_r_top, arm_r_bot)]:
+                    if at and ab:
+                        _hg = QLinearGradient(at, ab)
+                        _hg.setColorAt(0.0,  QColor(255, 255, 255,  0))
+                        _hg.setColorAt(0.25, QColor(255, 255, 255, 72))
+                        _hg.setColorAt(0.65, QColor(255, 255, 255, 52))
+                        _hg.setColorAt(1.0,  QColor(255, 255, 255,  0))
+                        painter.setPen(QPen(QBrush(_hg), arm_w * 0.26,
                                             Qt.SolidLine, Qt.RoundCap))
                         painter.drawLine(at, ab)
 
@@ -902,8 +912,7 @@ class _Canvas3D(QWidget):
                                         Qt.SolidLine, Qt.RoundCap))
                     painter.drawLine(pivot_pt, hp)
 
-                # ── Head — cylindre 3D Lambertian (10 faces) ─────────────────
-                # Repère local: right (axe joug), forward (faisceau), up = right×forward
+                # ── Head — cylindre 3D Lambertian (16 faces) ─────────────────
                 _rx, _ry, _rz = cp, 0.0, sp2
                 _fx_h, _fy_h, _fz_h = bd[0], bd[1], bd[2]
                 _ux_h = _ry*_fz_h - _rz*_fy_h
@@ -911,13 +920,12 @@ class _Canvas3D(QWidget):
                 _uz_h = _rx*_fy_h - _ry*_fx_h
                 _ul = math.sqrt(_ux_h**2 + _uy_h**2 + _uz_h**2) or 1e-9
                 _ux_h /= _ul; _uy_h /= _ul; _uz_h /= _ul
-                _N_SEG = 10          # segments du barrel
-                _HR    = 0.13        # rayon (m)
-                _HDA   = 0.10        # demi-profondeur côté lentille
-                _HDB   = 0.13        # demi-profondeur côté moteur
+                _N_SEG = 16          # segments du barrel — lisse
+                _HR    = 0.155       # rayon barrel (m)
+                _HDA   = 0.09        # demi-profondeur côté lentille
+                _HDB   = 0.155       # demi-profondeur côté moteur
                 _amb   = getattr(self, '_ambient', 0.18)
                 _gc_r, _gc_g, _gc_b = gc.red(), gc.green(), gc.blue()
-                # Génère les deux anneaux avant / arrière
                 _front_ring, _back_ring = [], []
                 for _i in range(_N_SEG):
                     _a = 2*math.pi * _i / _N_SEG
@@ -927,7 +935,6 @@ class _Canvas3D(QWidget):
                     _rdz = _rz*_ca*_HR + _uz_h*_sa*_HR
                     _front_ring.append((hx+_fx_h*_HDA+_rdx, hy+_fy_h*_HDA+_rdy, hz+_fz_h*_HDA+_rdz))
                     _back_ring.append( (hx-_fx_h*_HDB+_rdx, hy-_fy_h*_HDB+_rdy, hz-_fz_h*_HDB+_rdz))
-                # Faces latérales (10 quads) + face arrière
                 _cyl_faces = []
                 for _i in range(_N_SEG):
                     _j  = (_i+1) % _N_SEG
@@ -939,7 +946,6 @@ class _Canvas3D(QWidget):
                         ([_front_ring[_i], _front_ring[_j], _back_ring[_j], _back_ring[_i]],
                          (_nx, _ny, _nz)))
                 _cyl_faces.append((_back_ring[::-1], (-_fx_h, -_fy_h, -_fz_h)))
-                # Tri peintre (far-to-near)
                 def _cfd(fi):
                     v = fi[0]; n = len(v)
                     return ((sum(x[0] for x in v)/n - _ex)**2 +
@@ -957,51 +963,74 @@ class _Canvas3D(QWidget):
                     if not all(_pts): continue
                     _sr,_sg,_sb = _shade(_gc_r,_gc_g,_gc_b, _fn[0],_fn[1],_fn[2], _amb)
                     painter.setBrush(QBrush(QColor(_sr,_sg,_sb)))
-                    painter.setPen(QPen(QColor(max(0,_sr-18),max(0,_sg-18),max(0,_sb-14)), 0.6))
+                    painter.setPen(QPen(QColor(max(0,_sr-18),max(0,_sg-18),max(0,_sb-14)), 0.5))
                     painter.drawPolygon(QPolygonF(_pts))
+                # Gorge médiane — logement gobos/couleurs
+                _mid_pts3d = []
+                for _i in range(_N_SEG):
+                    _a2 = 2*math.pi*_i/_N_SEG
+                    _r2 = _HR * 0.972
+                    _rdx2 = _rx*math.cos(_a2)*_r2 + _ux_h*math.sin(_a2)*_r2
+                    _rdy2 = _ry*math.cos(_a2)*_r2 + _uy_h*math.sin(_a2)*_r2
+                    _rdz2 = _rz*math.cos(_a2)*_r2 + _uz_h*math.sin(_a2)*_r2
+                    _mp = pt(hx+_rdx2, hy+_rdy2, hz+_rdz2)
+                    if _mp: _mid_pts3d.append(_mp)
+                if len(_mid_pts3d) == _N_SEG:
+                    painter.setBrush(Qt.NoBrush)
+                    painter.setPen(QPen(QColor(14, 14, 22, 200), max(1.4, scale_px * 0.032)))
+                    painter.drawPolygon(QPolygonF(_mid_pts3d))
                 # Anneau de sélection
                 if is_sel and hp:
                     painter.setBrush(Qt.NoBrush)
                     painter.setPen(QPen(QColor(0, 212, 255, 220), 2.5))
-                    painter.drawEllipse(hp, max(10.0, scale_px*0.24), max(10.0, scale_px*0.24))
-                # Face avant — lentille (dessinée par-dessus le barrel)
+                    painter.drawEllipse(hp, max(10.0, scale_px*0.27), max(10.0, scale_px*0.27))
+                # Face avant — lentille + bezel (dessinée par-dessus le barrel)
                 _lens_visible = _can_see(_fx_h,_fy_h,_fz_h,
                                          hx+_fx_h*_HDA, hy+_fy_h*_HDA, hz+_fz_h*_HDA,
                                          _ex,_ey,_ez)
                 if _lens_visible:
                     _fps = [pt(*v) for v in _front_ring]
-                    if all(_fps) and hp:
-                        _lr = max(5.0, scale_px*0.11)
-                        # Couronne réflecteur (polygone = vraie projection du cercle)
+                    _lc_pt = pt(hx+_fx_h*_HDA, hy+_fy_h*_HDA, hz+_fz_h*_HDA) or hp
+                    if all(_fps) and _lc_pt:
+                        _lr = max(6.0, scale_px * 0.115)
                         _sr2,_sg2,_sb2 = _shade(_gc_r,_gc_g,_gc_b, _fx_h,_fy_h,_fz_h, _amb)
+                        # Couronne réflecteur
                         painter.setBrush(QBrush(QColor(_sr2,_sg2,_sb2)))
                         painter.setPen(QPen(QColor(max(0,_sr2-25),max(0,_sg2-25),max(0,_sb2-20)), 0.7))
                         painter.drawPolygon(QPolygonF(_fps))
-                        # Lentille centrale (gradient radial)
-                        if lvl > 0.04:
-                            _rgl = QRadialGradient(QPointF(hp.x()-_lr*0.25, hp.y()-_lr*0.25), _lr*1.6)
-                            _rgl.setColorAt(0.0,  QColor(min(255,r+175),min(255,g+175),min(255,b+175),255))
-                            _rgl.setColorAt(0.35, QColor(min(255,r+80), min(255,g+80), min(255,b+80), 245))
-                            _rgl.setColorAt(0.7,  QColor(r,g,b,220))
-                            _rgl.setColorAt(1.0,  QColor(max(0,r-40),max(0,g-40),max(0,b-40),180))
-                        else:
-                            _rgl = QRadialGradient(hp, _lr*1.1)
-                            _rgl.setColorAt(0.0, QColor(45,45,72,255))
-                            _rgl.setColorAt(0.6, QColor(28,28,48,255))
-                            _rgl.setColorAt(1.0, QColor(12,12,22,255))
-                        painter.setBrush(QBrush(_rgl)); painter.setPen(Qt.NoPen)
-                        painter.drawEllipse(hp, _lr, _lr)
-                        # Anneau réflecteur intérieur
+                        # Bezel — anneau de séparation optique
                         painter.setBrush(Qt.NoBrush)
-                        painter.setPen(QPen(QColor(_sr2,_sg2,_sb2,170), 0.8))
-                        painter.drawEllipse(hp, _lr*1.10, _lr*1.10)
+                        painter.setPen(QPen(QColor(12, 12, 20), max(2.2, scale_px * 0.058)))
+                        painter.drawPolygon(QPolygonF(_fps))
+                        # Lentille centrale
+                        if lvl > 0.04:
+                            _rgl = QRadialGradient(
+                                QPointF(_lc_pt.x()-_lr*0.26, _lc_pt.y()-_lr*0.26), _lr*1.7)
+                            _rgl.setColorAt(0.0,  QColor(min(255,r+180),min(255,g+180),min(255,b+180),255))
+                            _rgl.setColorAt(0.30, QColor(min(255,r+85), min(255,g+85), min(255,b+85),248))
+                            _rgl.setColorAt(0.68, QColor(r,g,b,222))
+                            _rgl.setColorAt(1.0,  QColor(max(0,r-45),max(0,g-45),max(0,b-45),185))
+                        else:
+                            _rgl = QRadialGradient(_lc_pt, _lr*1.1)
+                            _rgl.setColorAt(0.0, QColor(40,40,68,255))
+                            _rgl.setColorAt(0.6, QColor(24,24,42,255))
+                            _rgl.setColorAt(1.0, QColor(10,10,20,255))
+                        painter.setBrush(QBrush(_rgl)); painter.setPen(Qt.NoPen)
+                        painter.drawEllipse(_lc_pt, _lr, _lr)
+                        # Anneaux réflecteur intérieur / extérieur
+                        painter.setBrush(Qt.NoBrush)
+                        painter.setPen(QPen(QColor(_sr2,_sg2,_sb2,165), 0.9))
+                        painter.drawEllipse(_lc_pt, _lr*1.14, _lr*1.14)
+                        painter.setPen(QPen(QColor(_sr2//2,_sg2//2,_sb2//2,110), 0.7))
+                        painter.drawEllipse(_lc_pt, _lr*1.36, _lr*1.36)
                         # Reflet spéculaire
                         if lvl > 0.04:
-                            _hl = max(1.2, _lr*0.20)
-                            painter.setBrush(QBrush(QColor(255,255,255,210)))
+                            _hl = max(1.4, _lr*0.22)
+                            painter.setBrush(QBrush(QColor(255,255,255,215)))
                             painter.setPen(Qt.NoPen)
                             painter.drawEllipse(
-                                QPointF(hp.x()-_lr*0.30, hp.y()-_lr*0.28), _hl, _hl*0.70)
+                                QPointF(_lc_pt.x()-_lr*0.30, _lc_pt.y()-_lr*0.28),
+                                _hl, _hl * 0.70)
 
             else:
                 # PAR / wash — boîtier avec épaisseur (face avant + face sup + face côté)
