@@ -1413,12 +1413,12 @@ class GdtfUploadDialog(QDialog):
         self.btn_upload.setEnabled(False)
         self.log.clear()
 
-    _FIXTURE_EXTS = {".mystrow", ".xml"}
+    _FIXTURE_EXTS = {".mystrow", ".xml", ".xmlp"}
 
     def _on_pick_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Choisir des fichiers fixture", "",
-            "Fixtures (*.xml *.mystrow);;Tous les fichiers (*)"
+            "Fixtures (*.xml *.xmlp *.mystrow);;Tous les fichiers (*)"
         )
         if paths:
             self._process_paths(paths)
@@ -1433,7 +1433,7 @@ class GdtfUploadDialog(QDialog):
                 if os.path.splitext(fname)[1].lower() in self._FIXTURE_EXTS:
                     paths.append(os.path.join(root, fname))
         if not paths:
-            self._append_log(f"⚠ Aucun fichier .xml / .mystrow trouvé dans {folder}", "#e67e22")
+            self._append_log(f"⚠ Aucun fichier .xml / .xmlp / .mystrow trouvé dans {folder}", "#e67e22")
             return
         self._append_log(f"📁 {len(paths)} fichier(s) trouvé(s) dans {folder}")
         self._process_paths(paths)
