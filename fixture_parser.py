@@ -729,7 +729,7 @@ def _is_qlcplus_xml(data: bytes) -> bool:
 
 
 def _decompress_xmlp(data: bytes) -> bytes:
-    """Décompresse un fichier .xmlp (ZIP, zlib ou gzip contenant du XML)."""
+    """Décompresse un fichier .xmlp (ZIP, zlib, Qt qCompress ou gzip contenant du XML)."""
     # Signature ZIP (PK)
     if data[:2] == b'PK':
         try:
@@ -746,6 +746,12 @@ def _decompress_xmlp(data: bytes) -> bytes:
             return zlib.decompress(data)
         except zlib.error:
             pass
+    # Qt qCompress : 4 octets taille big-endian + flux zlib (utilisé par QLC+)
+    if len(data) > 4 and data[4:5] == b'\x78':
+        try:
+            return zlib.decompress(data[4:])
+        except zlib.error:
+            pass
     # gzip (header 0x1F 0x8B)
     if data[:2] == b'\x1f\x8b':
         try:
@@ -757,7 +763,7 @@ def _decompress_xmlp(data: bytes) -> bytes:
         return zlib.decompress(data, -15)
     except zlib.error:
         pass
-    # Déjà du XML brut
+    # Déjà du XML brut (ou format inconnu)
     return data
 
 
@@ -775,7 +781,14 @@ def parse_file(path: str) -> dict:
         return parse_mystrow(data)
     elif ext in (".xml", ".xmlp"):
         if ext == ".xmlp":
-            data = _decompress_xmlp(data)
+            decompressed = _decompress_xmlp(data)
+            if decompressed is data:
+                raise ValueError(
+                    "Format .xmlp non reconnu — le fichier est peut-être\n"
+                    "chiffré (GrandMA3 propriétaire) ou corrompu.\n"
+                    f"Signature : {data[:8].hex()}"
+                )
+            data = decompressed
         if _is_qlcplus_xml(data):
             return parse_qlcplus_xml(data)
         return parse_ma_xml(data)
