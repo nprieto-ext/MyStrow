@@ -164,15 +164,20 @@ jobs:
         if: steps.check-secrets.outputs.has_cert == 'true'
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          # Signer de l'intérieur vers l'extérieur — codesign --deep re-signe les
-          # fichiers dans le désordre et peut corrompre le bundle PyInstaller 6.x
-          # en altérant les références @rpath que le bootloader utilise au lancement
-          find dist/MyStrow.app/Contents -name "*.dylib" -o -name "*.so" | while read f; do
-            codesign --sign "$IDENTITY" --force "$f" 2>/dev/null || true
+          # Inside-out : signer tous les Mach-O avant le bundle
+          # --deep signe dans le désordre et peut casser les @rpath PyInstaller 6.x
+          # On utilise `file` pour détecter tous les Mach-O (pas juste .dylib/.so)
+          find dist/MyStrow.app -type f | while read f; do
+            FTYPE=$(file "$f" 2>/dev/null)
+            if echo "$FTYPE" | grep -qE "Mach-O.*executable"; then
+              # Exécutables : hardened runtime requis
+              codesign --sign "$IDENTITY" --force --options runtime "$f" 2>/dev/null || true
+            elif echo "$FTYPE" | grep -qE "Mach-O"; then
+              # Dylibs / bundles .so : signature simple
+              codesign --sign "$IDENTITY" --force "$f" 2>/dev/null || true
+            fi
           done
-          find dist/MyStrow.app/Contents -name "Python" ! -name "*.py" | while read f; do
-            codesign --sign "$IDENTITY" --force "$f" 2>/dev/null || true
-          done
+          # Signer le bundle en dernier (sans --deep — déjà fait ci-dessus)
           codesign --force --verify --verbose \
             --sign "$IDENTITY" \
             --options runtime \
@@ -187,12 +192,24 @@ jobs:
           NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
           ditto -c -k --keepParent dist/MyStrow.app MyStrow_notarize.zip
-          xcrun notarytool submit MyStrow_notarize.zip \
+          NOTARY_JSON=$(xcrun notarytool submit MyStrow_notarize.zip \
             --apple-id "$NOTARIZATION_APPLE_ID" \
             --password "$NOTARIZATION_APPLE_PASSWORD" \
             --team-id "$NOTARIZATION_TEAM_ID" \
-            --wait
-          xcrun stapler staple dist/MyStrow.app
+            --wait --output-format json)
+          echo "$NOTARY_JSON"
+          SUBMISSION_ID=$(echo "$NOTARY_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          STATUS=$(echo "$NOTARY_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+          if [ "$STATUS" = "Accepted" ]; then
+            xcrun stapler staple dist/MyStrow.app
+          else
+            echo "=== NOTARIZATION REJECTED — LOG DÉTAILLÉ ==="
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$NOTARIZATION_APPLE_ID" \
+              --password "$NOTARIZATION_APPLE_PASSWORD" \
+              --team-id "$NOTARIZATION_TEAM_ID"
+            exit 1
+          fi
 
       - name: Créer DMG
         run: |
