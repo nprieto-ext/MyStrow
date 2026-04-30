@@ -12,9 +12,13 @@ Usage :
     export_mystrow(fixture, "fixture.mystrow")
 """
 
+import gzip
+import io
 import json
 import os
 import xml.etree.ElementTree as ET
+import zipfile
+import zlib
 
 # Format marker pour les fichiers .mystrow
 MYSTROW_FORMAT = "mystrow-fixture"
@@ -601,6 +605,39 @@ def export_mystrow(fixture: dict, path: str) -> None:
 # API publique
 # ---------------------------------------------------------------------------
 
+def _decompress_xmlp(data: bytes) -> bytes:
+    """Décompresse un fichier .xmlp (ZIP, zlib ou gzip contenant du XML)."""
+    # Signature ZIP (PK)
+    if data[:2] == b'PK':
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                names = zf.namelist()
+                xml_names = [n for n in names if n.lower().endswith(('.xml', '.qxf', '.qxl'))]
+                target = xml_names[0] if xml_names else names[0]
+                return zf.read(target)
+        except Exception:
+            pass
+    # zlib standard (header 0x78 0x9C / 0x78 0xDA / 0x78 0x01)
+    if data[:1] == b'\x78':
+        try:
+            return zlib.decompress(data)
+        except zlib.error:
+            pass
+    # gzip (header 0x1F 0x8B)
+    if data[:2] == b'\x1f\x8b':
+        try:
+            return gzip.decompress(data)
+        except Exception:
+            pass
+    # deflate raw (sans header)
+    try:
+        return zlib.decompress(data, -15)
+    except zlib.error:
+        pass
+    # Déjà du XML brut
+    return data
+
+
 def parse_file(path: str) -> dict:
     """
     Parse automatiquement un fichier fixture selon son extension.
@@ -613,7 +650,9 @@ def parse_file(path: str) -> dict:
 
     if ext == ".mystrow":
         return parse_mystrow(data)
-    elif ext == ".xml":
+    elif ext in (".xml", ".xmlp"):
+        if ext == ".xmlp":
+            data = _decompress_xmlp(data)
         return parse_ma_xml(data)
     else:
         try:

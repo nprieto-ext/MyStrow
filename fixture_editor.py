@@ -743,7 +743,7 @@ class FixtureEditorDialog(QDialog):
         fl.addWidget(btn_copy_lib)
         btn_import = QPushButton("📥  Importer fichier XML")
         btn_import.setFixedHeight(28)
-        btn_import.setToolTip("Compatible QLC+, GrandMA2/3 — formats .xml, .mft, .json")
+        btn_import.setToolTip("Compatible QLC+, GrandMA2/3 — formats .xml, .xmlp, .mft, .json")
         btn_import.setStyleSheet(
             "QPushButton{background:#1a2a1a;color:#88cc88;border:1px solid #2a442a;"
             "border-radius:6px;font-size:11px;}"
@@ -1293,9 +1293,9 @@ class FixtureEditorDialog(QDialog):
 
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Importer des fixtures", str(Path.home()),
-            "Tous les formats (*.mft *.json *.xml *.mystrow);;"
+            "Tous les formats (*.mft *.json *.xml *.xmlp *.mystrow);;"
             "Fixture MyStrow (*.mft *.json *.mystrow);;"
-            "GrandMA2/3 XML (*.xml)"
+            "XML / XML compressé (*.xml *.xmlp)"
         )
         if not paths:
             return
@@ -1309,7 +1309,7 @@ class FixtureEditorDialog(QDialog):
         for path in paths:
             ext = Path(path).suffix.lower()
             try:
-                if ext == ".xml":
+                if ext in (".xml", ".xmlp"):
                     ofl_fx = _parse_file(path)
                     modes = [m for m in (ofl_fx.get("modes") or []) if m.get("profile")]
                     if not modes:
