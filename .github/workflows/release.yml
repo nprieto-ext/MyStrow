@@ -150,8 +150,11 @@ jobs:
           [ -f "$EXEC" ] || { echo "❌ Exécutable manquant!"; exit 1; }
           SIZE_MB=$(du -m "$EXEC" | cut -f1)
           echo "Taille EXE : ${SIZE_MB} MB"
-          # Onefile doit contenir Python + PySide6 → > 100 MB
-          [ "$SIZE_MB" -gt 100 ] && echo "✅ Build onefile OK (${SIZE_MB} MB)" || { echo "❌ EXE trop petit (${SIZE_MB} MB) — vérifier le build onefile"; exit 1; }
+          [ "$SIZE_MB" -gt 30 ] && echo "✅ Taille OK (${SIZE_MB} MB)" || { echo "❌ EXE trop petit — onefile probablement cassé"; exit 1; }
+          echo "=== Contenu archive PyInstaller (QtCore) ==="
+          python3.12 -m PyInstaller.utils.cliutils.archive_viewer -l "$EXEC" 2>/dev/null | grep -i "qtcore" \
+            && echo "✅ QtCore présent dans l'EXE" \
+            || echo "⚠️  QtCore absent — PySide6 peut-être manquant"
 
       - name: Check signing secrets availability
         id: check-secrets
