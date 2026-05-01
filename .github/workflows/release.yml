@@ -107,22 +107,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
+      # Python.org fournit un vrai Python.framework (/Library/Frameworks/Python.framework/)
+      # contrairement à actions/setup-python qui installe un Python standalone sans framework.
+      # PyInstaller requiert Python.framework pour construire un .app bundle correct sur macOS :
+      # sans framework, le bootloader ne trouve pas _internal/ à côté de l'exécutable et
+      # retombe en mode onefile → cherche dans $TMPDIR/_MEI... → crash sur macOS 26 Tahoe.
+      - name: Install Python.org Python 3.12 (framework build)
+        run: |
+          PY_VER="3.12.7"
+          curl -fsSL "https://www.python.org/ftp/python/${PY_VER}/python-${PY_VER}-macos11.pkg" -o /tmp/python_fw.pkg
+          sudo installer -pkg /tmp/python_fw.pkg -target /
+          echo "/Library/Frameworks/Python.framework/Versions/3.12/bin" >> $GITHUB_PATH
+          /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 --version
 
       - name: Install dependencies
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
-          pip install --upgrade pip --quiet
-          pip install -r requirements.txt --quiet
+          python3.12 -m pip install --upgrade pip --quiet
+          python3.12 -m pip install -r requirements.txt --quiet
           # --no-binary pyinstaller compile le bootloader C nativement sur le runner
-          # (macOS 15 SDK) au lieu d'utiliser le binaire pré-compilé du wheel —
-          # le binaire pré-compilé ne connaît pas macOS 26 Tahoe et cherche Python
-          # dans $TMPDIR au lieu du bundle .app
-          pip install pyinstaller --no-binary pyinstaller --upgrade --no-cache-dir --quiet
+          # (macOS 15 SDK) pour maximiser la compatibilité macOS 26 Tahoe
+          python3.12 -m pip install pyinstaller --no-binary pyinstaller --upgrade --no-cache-dir --quiet
 
       - name: Convert logo.png → mystrow.icns (sips — sans pillow)
         run: |
@@ -134,7 +140,25 @@ jobs:
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
       - name: Build .app (arm64 — Apple Silicon natif)
-        run: python -m PyInstaller --noconfirm MyStrow.spec
+        run: python3.12 -m PyInstaller --noconfirm MyStrow.spec
+
+      - name: Verify bundle structure
+        run: |
+          echo "=== Contents/MacOS/ ==="
+          ls -la "dist/MyStrow.app/Contents/MacOS/"
+          echo ""
+          if [ -d "dist/MyStrow.app/Contents/MacOS/_internal" ]; then
+            echo "✅ _internal/ found adjacent to executable"
+            echo "=== Python lib in _internal/ ==="
+            find "dist/MyStrow.app/Contents/MacOS/_internal" -maxdepth 1 \( -name "Python" -o -name "libpython*" \) | head -5
+          else
+            echo "❌ _internal/ NOT found — bundle broken!"
+            echo "=== Full bundle _internal search ==="
+            find "dist/MyStrow.app" -type d -name "_internal"
+            echo "=== Full bundle Python lib search ==="
+            find "dist/MyStrow.app" \( -name "Python" -o -name "libpython*" \) | head -10
+            exit 1
+          fi
 
       - name: Check signing secrets availability
         id: check-secrets
