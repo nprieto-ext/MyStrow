@@ -144,19 +144,34 @@ jobs:
 
       - name: Verify bundle structure
         run: |
+          echo "=== Contents/ ==="
+          ls -la "dist/MyStrow.app/Contents/"
           echo "=== Contents/MacOS/ ==="
           ls -la "dist/MyStrow.app/Contents/MacOS/"
+          echo "=== Contents/Frameworks/ (top-level) ==="
+          ls "dist/MyStrow.app/Contents/Frameworks/" 2>/dev/null | head -30 || echo "(vide)"
+          echo "=== Contents/Resources/ (top-level) ==="
+          ls "dist/MyStrow.app/Contents/Resources/" 2>/dev/null | head -30 || echo "(vide)"
           echo ""
+          BUNDLE_OK=0
+          # Mode standalone Python : _internal/ adjacent à l'exécutable
           if [ -d "dist/MyStrow.app/Contents/MacOS/_internal" ]; then
-            echo "✅ _internal/ found adjacent to executable"
-            echo "=== Python lib in _internal/ ==="
-            find "dist/MyStrow.app/Contents/MacOS/_internal" -maxdepth 1 \( -name "Python" -o -name "libpython*" \) | head -5
+            echo "✅ Mode standalone : _internal/ trouvé"
+            BUNDLE_OK=1
+          fi
+          # Mode Python.framework (Python.org) : framework dans Contents/Frameworks/
+          if [ -f "dist/MyStrow.app/Contents/Frameworks/Python.framework/Versions/3.12/Python" ]; then
+            echo "✅ Mode framework : Python.framework/Versions/3.12/Python trouvé"
+            BUNDLE_OK=1
+          fi
+          [ "$BUNDLE_OK" = "1" ] || { echo "❌ Bundle cassé : ni _internal/ ni Python.framework"; exit 1; }
+          echo ""
+          echo "=== Qt/PySide6 check ==="
+          QT=$(find "dist/MyStrow.app" -name "QtCore*" 2>/dev/null | head -3)
+          if [ -n "$QT" ]; then
+            echo "✅ Qt trouvé : $QT"
           else
-            echo "❌ _internal/ NOT found — bundle broken!"
-            echo "=== Full bundle _internal search ==="
-            find "dist/MyStrow.app" -type d -name "_internal"
-            echo "=== Full bundle Python lib search ==="
-            find "dist/MyStrow.app" \( -name "Python" -o -name "libpython*" \) | head -10
+            echo "⚠️  QtCore non trouvé — PySide6 absent du bundle!"
             exit 1
           fi
 
