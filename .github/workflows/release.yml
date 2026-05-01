@@ -142,38 +142,16 @@ jobs:
       - name: Build .app (arm64 — Apple Silicon natif)
         run: python3.12 -m PyInstaller --noconfirm MyStrow.spec
 
-      - name: Verify bundle structure
+      - name: Verify bundle structure (onefile)
         run: |
-          echo "=== Contents/ ==="
-          ls -la "dist/MyStrow.app/Contents/"
+          EXEC="dist/MyStrow.app/Contents/MacOS/MyStrow"
           echo "=== Contents/MacOS/ ==="
-          ls -la "dist/MyStrow.app/Contents/MacOS/"
-          echo "=== Contents/Frameworks/ (top-level) ==="
-          ls "dist/MyStrow.app/Contents/Frameworks/" 2>/dev/null | head -30 || echo "(vide)"
-          echo "=== Contents/Resources/ (top-level) ==="
-          ls "dist/MyStrow.app/Contents/Resources/" 2>/dev/null | head -30 || echo "(vide)"
-          echo ""
-          BUNDLE_OK=0
-          # Mode standalone Python : _internal/ adjacent à l'exécutable
-          if [ -d "dist/MyStrow.app/Contents/MacOS/_internal" ]; then
-            echo "✅ Mode standalone : _internal/ trouvé"
-            BUNDLE_OK=1
-          fi
-          # Mode Python.framework (Python.org) : framework dans Contents/Frameworks/
-          if [ -f "dist/MyStrow.app/Contents/Frameworks/Python.framework/Versions/3.12/Python" ]; then
-            echo "✅ Mode framework : Python.framework/Versions/3.12/Python trouvé"
-            BUNDLE_OK=1
-          fi
-          [ "$BUNDLE_OK" = "1" ] || { echo "❌ Bundle cassé : ni _internal/ ni Python.framework"; exit 1; }
-          echo ""
-          echo "=== Qt/PySide6 check ==="
-          QT=$(find "dist/MyStrow.app" -name "QtCore*" 2>/dev/null | head -3)
-          if [ -n "$QT" ]; then
-            echo "✅ Qt trouvé : $QT"
-          else
-            echo "⚠️  QtCore non trouvé — PySide6 absent du bundle!"
-            exit 1
-          fi
+          ls -lh "dist/MyStrow.app/Contents/MacOS/"
+          [ -f "$EXEC" ] || { echo "❌ Exécutable manquant!"; exit 1; }
+          SIZE_MB=$(du -m "$EXEC" | cut -f1)
+          echo "Taille EXE : ${SIZE_MB} MB"
+          # Onefile doit contenir Python + PySide6 → > 100 MB
+          [ "$SIZE_MB" -gt 100 ] && echo "✅ Build onefile OK (${SIZE_MB} MB)" || { echo "❌ EXE trop petit (${SIZE_MB} MB) — vérifier le build onefile"; exit 1; }
 
       - name: Check signing secrets availability
         id: check-secrets
@@ -199,24 +177,15 @@ jobs:
           security default-keychain -s temp.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k mystrow-ci temp.keychain
 
-      - name: Signer .app (inside-out — sans --deep)
+      - name: Signer .app (onefile — signature unique)
         if: steps.check-secrets.outputs.has_cert == 'true'
         run: |
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
-          # Inside-out : signer tous les Mach-O avant le bundle
-          # --deep signe dans le désordre et peut casser les @rpath PyInstaller 6.x
-          # On utilise `file` pour détecter tous les Mach-O (pas juste .dylib/.so)
-          find dist/MyStrow.app -type f | while read f; do
-            FTYPE=$(file "$f" 2>/dev/null)
-            if echo "$FTYPE" | grep -qE "Mach-O.*executable"; then
-              # Exécutables : hardened runtime requis
-              codesign --sign "$IDENTITY" --force --options runtime "$f" 2>/dev/null || true
-            elif echo "$FTYPE" | grep -qE "Mach-O"; then
-              # Dylibs / bundles .so : signature simple
-              codesign --sign "$IDENTITY" --force "$f" 2>/dev/null || true
-            fi
-          done
-          # Signer le bundle en dernier (sans --deep — déjà fait ci-dessus)
+          # Onefile : un seul Mach-O (l'EXE qui contient tout) → signature directe
+          # Pas besoin d'inside-out : aucune dylib loose dans le bundle
+          codesign --sign "$IDENTITY" --force --options runtime \
+            --entitlements entitlements.plist \
+            dist/MyStrow.app/Contents/MacOS/MyStrow
           codesign --force --verify --verbose \
             --sign "$IDENTITY" \
             --options runtime \

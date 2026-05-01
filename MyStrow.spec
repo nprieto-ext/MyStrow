@@ -47,19 +47,23 @@ a = Analysis(
 pyz = PYZ(a.pure)
 
 if IS_MAC:
-    # ── macOS : --onedir + BUNDLE ────────────────────────────────────────────
-    # --onefile extrait dans $TMPDIR au lancement : les dylibs ne sont pas
-    # re-signés à l'extraction → Library Validation échoue sur macOS 12+.
-    # --onedir embarque tout dans le .app bundle, codesigné en entier via --deep.
+    # ── macOS : --onefile + BUNDLE ───────────────────────────────────────────
+    # Sur macOS 26 Tahoe, le bootloader PyInstaller (onedir) ne trouve jamais
+    # _internal/ à côté de l'exécutable et tombe en fallback $TMPDIR/_MEI.../Python.
+    # En onefile le PKG est embarqué dans l'EXE → extraction dans $TMPDIR réussit.
+    # cs.disable-library-validation (entitlements.plist) autorise le chargement
+    # des dylibs non-signés extraits dans $TMPDIR.
     exe = EXE(
         pyz,
         a.scripts,
+        a.binaries,         # tout embarqué → onefile
+        a.datas,
         [],
         name='MyStrow',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=False,          # UPX brise les headers Mach-O → invalide la signature
+        upx=False,          # UPX brise les headers Mach-O
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
@@ -68,16 +72,8 @@ if IS_MAC:
         entitlements_file=None,
         icon=[icon_file],
     )
-    coll = COLLECT(
-        exe,
-        a.binaries,
-        a.datas,
-        strip=False,
-        upx=False,
-        name='MyStrow_pkg',  # nom différent de l'EXE → évite le conflit dist/MyStrow fichier vs dossier (bug PyInstaller 6.x)
-    )
     app = BUNDLE(
-        coll,
+        exe,                # onefile : BUNDLE directement sur l'EXE, sans COLLECT
         name='MyStrow.app',
         icon=icon_file,
         bundle_identifier='com.mystrow.app',
