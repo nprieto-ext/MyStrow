@@ -6,6 +6,7 @@ import threading
 from PySide6.QtCore import QObject, Signal, QTimer
 
 from core import MIDI_AVAILABLE
+from controller_profile import find_profile_for_port, build_reverse_maps
 
 rtmidi = None
 if MIDI_AVAILABLE:
@@ -167,8 +168,16 @@ class MIDIHandler(QObject):
         # Signature : led_observer(row, col, color_velocity, brightness_percent)
         self.led_observer = None
 
-        self.controller_type = None   # 'apc_mini' | 'launchpad_mini_mk1/mk2' | 'midimix'
+        self.controller_type = None   # 'apc_mini' | 'launchpad_mini_mk1/mk2' | 'midimix' | 'custom'
         self.controller_name = ""
+        self._raw_capture    = None   # callable(msg) — mode capture brute pour le wizard
+        self._custom_profile = None
+        self._rev_pad    = {}
+        self._rev_mute   = {}
+        self._rev_effect = {}
+        self._rev_fader  = {}
+        self._rev_led    = {}
+        self._custom_vel_remap = {}
 
         if MIDI_AVAILABLE and rtmidi:
             self.connect_controller()
@@ -203,6 +212,49 @@ class MIDIHandler(QObject):
 
             print(f"[MIDI] Ports IN:  {in_ports}")
             print(f"[MIDI] Ports OUT: {out_ports}")
+
+            # Profils custom en priorité (définis par l'utilisateur)
+            custom_profile = None
+            custom_in_name = None
+            for port_name in in_ports:
+                profile = find_profile_for_port(port_name)
+                if profile:
+                    custom_profile = profile
+                    custom_in_name = port_name
+                    break
+
+            if custom_profile:
+                self.controller_type = 'custom'
+                self.controller_name = custom_profile.get('name', 'Custom')
+                self._load_custom_profile_data(custom_profile)
+                in_idx = in_ports.index(custom_in_name)
+                self.midi_in.open_port(in_idx)
+                with self._midi_lock:
+                    self._midi_queue.clear()
+                self.midi_in.set_callback(self._midi_callback)
+                self.midi_in.ignore_types(sysex=True, timing=True, active_sense=True)
+                print(f"✅ {self.controller_name} connecté (profil custom): {custom_in_name}")
+                out_name = None
+                for p in out_ports:
+                    up = p.upper()
+                    for kw in custom_profile.get('keywords', []):
+                        if kw.upper() in up:
+                            out_name = p
+                            break
+                    if out_name:
+                        break
+                if out_name:
+                    self.midi_out.open_port(out_ports.index(out_name))
+                    print(f"✅ {self.controller_name} output: {out_name}")
+                    self.initialize_leds()
+                else:
+                    self.midi_out = None
+                if self.midi_in:
+                    if not hasattr(self, 'midi_timer') or not self.midi_timer.isActive():
+                        self.midi_timer = QTimer()
+                        self.midi_timer.timeout.connect(self.poll_midi)
+                        self.midi_timer.start(10)
+                return
 
             ctrl, in_name = _detect_controller(in_ports)
             if ctrl is None:
@@ -301,6 +353,35 @@ class MIDIHandler(QObject):
         with self._midi_lock:
             self._midi_queue.append(list(msg))
 
+    def set_raw_capture(self, callback):
+        """Route tous les messages MIDI bruts vers callback(msg) — pour le wizard de mapping."""
+        self._raw_capture = callback
+
+    def clear_raw_capture(self):
+        self._raw_capture = None
+
+    def load_custom_profile(self, profile_data: dict):
+        """Charge un profil custom après enregistrement depuis le wizard."""
+        self._load_custom_profile_data(profile_data)
+        self.controller_type = 'custom'
+        self.controller_name = profile_data.get('name', 'Custom')
+
+    def _load_custom_profile_data(self, profile_data: dict):
+        self._custom_profile = profile_data
+        maps = build_reverse_maps(profile_data)
+        self._rev_pad          = maps["rev_pad"]
+        self._rev_mute         = maps["rev_mute"]
+        self._rev_effect       = maps["rev_effect"]
+        self._rev_fader        = maps["rev_fader"]
+        self._rev_led          = maps["rev_led"]
+        self._custom_vel_remap = maps.get("vel_remap", {})
+
+    def _custom_vel(self, akai_vel: int) -> int:
+        """Remap une velocité AKAI standard vers la velocité du contrôleur custom."""
+        if akai_vel == 0:
+            return 0
+        return self._custom_vel_remap.get(akai_vel, akai_vel)
+
     def poll_midi(self):
         """Vide la queue MIDI (thread Qt, 10 ms) avec coalescing des faders."""
         if not self.midi_in:
@@ -309,6 +390,15 @@ class MIDIHandler(QObject):
             with self._midi_lock:
                 messages = list(self._midi_queue)
                 self._midi_queue.clear()
+
+            # Mode capture brute (wizard de mapping)
+            if self._raw_capture:
+                for msg in messages:
+                    try:
+                        self._raw_capture(msg)
+                    except Exception:
+                        pass
+                return
 
             fader_latest  = {}
             other_messages = []
@@ -352,6 +442,13 @@ class MIDIHandler(QObject):
             if status == 0xB0 and data1 in _MIDIMIX_FADER_CC:
                 return _MIDIMIX_FADER_CC[data1]
 
+        elif self.controller_type == 'custom':
+            if (status & 0xF0) == 0xB0:
+                channel = status & 0x0F
+                k = (channel, data1)
+                if k in self._rev_fader:
+                    return self._rev_fader[k]
+
         return None
 
     def handle_midi_message(self, message):
@@ -367,6 +464,8 @@ class MIDIHandler(QObject):
                 self._handle_launchpad_mini(message)
             elif ct == 'midimix':
                 self._handle_midimix(message)
+            elif ct == 'custom':
+                self._handle_custom(message)
         except Exception as e:
             print(f"❌ Erreur traitement MIDI: {e}")
 
@@ -568,6 +667,32 @@ class MIDIHandler(QObject):
                 if self.owner_window:
                     self.owner_window._tap_tempo()
 
+    def _handle_custom(self, message):
+        """Dispatch pour contrôleurs chargés depuis un profil JSON custom."""
+        if len(message) < 2:
+            return
+        status = message[0]
+        data1  = message[1]
+        data2  = message[2] if len(message) > 2 else 0
+        channel     = status & 0x0F
+        status_type = status & 0xF0
+
+        if status_type == 0x90 and data2 > 0:
+            k = (channel, data1)
+            if k in self._rev_pad:
+                row, col = self._rev_pad[k]
+                self.pad_pressed.emit(row, col)
+            elif k in self._rev_mute:
+                if self.owner_window:
+                    self.owner_window.toggle_fader_mute_from_midi(self._rev_mute[k])
+            elif k in self._rev_effect:
+                self.pad_pressed.emit(self._rev_effect[k], 8)
+
+        elif status_type == 0x80 or (status_type == 0x90 and data2 == 0):
+            k = (channel, data1)
+            if k in self._rev_effect:
+                self.pad_released.emit(self._rev_effect[k], 8)
+
     # ─── LEDs ────────────────────────────────────────────────────────────────
 
     def initialize_leds(self):
@@ -598,6 +723,10 @@ class MIDIHandler(QObject):
                 for note in _MIDIMIX_REC_NOTE:
                     self.midi_out.send_message([0x90, note, 0])
 
+            elif ct == 'custom':
+                for (row, col), entry in self._rev_led.items():
+                    self.midi_out.send_message([0x90 | entry['channel'], entry['note'], 0])
+
         except Exception as e:
             print(f"❌ Erreur init LEDs: {e}")
 
@@ -615,6 +744,8 @@ class MIDIHandler(QObject):
                 self._set_led_apc40(row, col, color_velocity)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
                 self._set_led_lp_mini(row, col, color_velocity)
+            elif ct == 'custom':
+                self._set_led_custom(row, col, color_velocity)
             # MIDImix : pas de matrice de pads LEDs
         except Exception as e:
             print(f"❌ Erreur set LED: {e}")
@@ -670,6 +801,16 @@ class MIDIHandler(QObject):
             self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, vel])
 
     # ─── Divers ──────────────────────────────────────────────────────────────
+
+    def _set_led_custom(self, row, col, color_velocity):
+        """LED pour contrôleur custom — Note On sur le note mappé."""
+        if not self.midi_out:
+            return
+        entry = self._rev_led.get((row, col))
+        if not entry:
+            return
+        vel = self._custom_vel(color_velocity)
+        self.midi_out.send_message([0x90 | entry['channel'], entry['note'], vel])
 
     def set_fader(self, fader_idx, value):
         """Placeholder — faders physiques non motorisés."""

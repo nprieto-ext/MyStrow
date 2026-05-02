@@ -77,6 +77,7 @@ from projector import Projector
 from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode, profile_name, profile_display_text
 from audio_ai import AudioColorAI
 from midi_handler import MIDIHandler
+from controller_mapping_wizard import MidiMappingWizard
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
 from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy, _find_free_canvas_pos
 from plan_3d import Plan3DWindow
@@ -1534,6 +1535,8 @@ class MainWindow(QMainWindow):
 
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
         ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
+        ctrl_menu.addSeparator()
+        ctrl_menu.addAction("🎹  Ajouter mon contrôleur MIDI...", self._open_midi_mapping_wizard)
 
         conn_menu.addSeparator()
 
@@ -2319,6 +2322,18 @@ class MainWindow(QMainWindow):
         picker.move(pos.x(), pos.y() - 360)
         picker.show()
         picker.adjustSize()
+
+    def _open_midi_mapping_wizard(self):
+        """Ouvre l'assistant de mapping pour configurer un nouveau contrôleur MIDI."""
+        wizard = MidiMappingWizard(self.midi_handler, self)
+        wizard.profile_saved.connect(self._on_custom_profile_saved)
+        wizard.exec()
+
+    def _on_custom_profile_saved(self, profile_path: str):
+        """Appelé quand le wizard enregistre un profil — reconnecte le contrôleur."""
+        if self.midi_handler:
+            self.midi_handler.connect_controller()
+            QTimer.singleShot(300, self.activate_default_white_pads)
 
     def _open_akai_diagnostic(self):
         """Ouvre la fenêtre de diagnostic AKAI."""

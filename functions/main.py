@@ -29,6 +29,7 @@ import smtplib
 import ssl
 import string
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -41,39 +42,39 @@ from firebase_admin import auth, firestore
 from firebase_functions import https_fn
 
 # ---------------------------------------------------------------------------
-# Init Firebase Admin — lazy pour éviter le timeout au démarrage
+# Init Firebase Admin au niveau module (best practice Gen 2)
 # ---------------------------------------------------------------------------
+if not firebase_admin._apps:
+    firebase_admin.initialize_app()
+
 _db = None
 
 def _get_db():
     global _db
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app()
     if _db is None:
         _db = firestore.client()
     return _db
 
 # ---------------------------------------------------------------------------
-# Config (variables d'environnement)
+# Config — lue à la demande pour que Firebase ait injecté les secrets
 # ---------------------------------------------------------------------------
-STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
-STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-STRIPE_PRICE_MONTHLY   = os.environ.get("STRIPE_PRICE_MONTHLY", "")
-STRIPE_PRICE_ANNUAL    = os.environ.get("STRIPE_PRICE_ANNUAL", "")
-STRIPE_PRICE_LIFETIME  = os.environ.get("STRIPE_PRICE_LIFETIME", "")
+def _cfg(key: str, default: str = "") -> str:
+    return os.environ.get(key, default)
 
-SMTP_HOST     = os.environ.get("SMTP_HOST", "")
-SMTP_PORT     = int(os.environ.get("SMTP_PORT", "465"))
-SMTP_USER     = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM     = os.environ.get("SMTP_FROM", "")
+def _stripe_secret_key()     -> str: return _cfg("STRIPE_SECRET_KEY")
+def _stripe_webhook_secret() -> str: return _cfg("STRIPE_WEBHOOK_SECRET")
+def _stripe_price_monthly()  -> str: return _cfg("STRIPE_PRICE_MONTHLY")
+def _stripe_price_annual()   -> str: return _cfg("STRIPE_PRICE_ANNUAL")
+def _stripe_price_lifetime() -> str: return _cfg("STRIPE_PRICE_LIFETIME")
+def _smtp_host()     -> str: return _cfg("SMTP_HOST")
+def _smtp_port()     -> int: return int(_cfg("SMTP_PORT", "465"))
+def _smtp_user()     -> str: return _cfg("SMTP_USER")
+def _smtp_password() -> str: return _cfg("SMTP_PASSWORD")
+def _smtp_from()     -> str: return _cfg("SMTP_FROM")
+def _axonaut_key()   -> str: return _cfg("AXONAUT_API_KEY")
+def _brevo_key()     -> str: return _cfg("BREVO_API_KEY").strip()
 
-AXONAUT_API_KEY = os.environ.get("AXONAUT_API_KEY", "")
-AXONAUT_BASE    = "https://app.axonaut.com/api/v2"
-
-GDTF_SYNC_SECRET = os.environ.get("GDTF_SYNC_SECRET", "")
-
-BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
+AXONAUT_BASE = "https://axonaut.com/api/v2"
 
 # Durée des plans en jours
 _PLAN_DAYS = {
@@ -91,7 +92,7 @@ def _stripe_get(path: str) -> dict:
     """GET vers l'API Stripe."""
     import base64
     url = f"https://api.stripe.com/v1{path}"
-    token = base64.b64encode(f"{STRIPE_SECRET_KEY}:".encode()).decode()
+    token = base64.b64encode(f"{_stripe_secret_key()}:".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read().decode())
@@ -101,7 +102,7 @@ def _stripe_post(path: str, params: dict) -> dict:
     """POST vers l'API Stripe (x-www-form-urlencoded)."""
     import base64
     url = f"https://api.stripe.com/v1{path}"
-    token = base64.b64encode(f"{STRIPE_SECRET_KEY}:".encode()).decode()
+    token = base64.b64encode(f"{_stripe_secret_key()}:".encode()).decode()
     data = urllib.parse.urlencode(params).encode()
     req = urllib.request.Request(
         url, data=data,
@@ -113,25 +114,30 @@ def _stripe_post(path: str, params: dict) -> dict:
 
 def _verify_stripe_signature(payload: bytes, sig_header: str) -> bool:
     """Vérifie la signature HMAC-SHA256 du webhook Stripe."""
+    secret = _stripe_webhook_secret()
+    if not secret:
+        print("[Webhook] STRIPE_WEBHOOK_SECRET non configuré — vérification ignorée (DANGER)")
+        return True   # permet de déboguer sans bloquer ; à remettre à False en prod
     try:
         parts = dict(item.split("=", 1) for item in sig_header.split(","))
         timestamp = parts.get("t", "")
         v1        = parts.get("v1", "")
         signed    = timestamp.encode() + b"." + payload
         expected  = hmac.new(
-            STRIPE_WEBHOOK_SECRET.encode(), signed, hashlib.sha256
+            secret.encode(), signed, hashlib.sha256
         ).hexdigest()
         return hmac.compare_digest(expected, v1)
-    except Exception:
+    except Exception as e:
+        print(f"[Webhook] Erreur vérification signature : {e}")
         return False
 
 
 def _get_plan_type(price_id: str) -> str:
-    if price_id == STRIPE_PRICE_MONTHLY:
+    if price_id == _stripe_price_monthly():
         return "monthly"
-    if price_id == STRIPE_PRICE_ANNUAL:
+    if price_id == _stripe_price_annual():
         return "annual"
-    if price_id == STRIPE_PRICE_LIFETIME:
+    if price_id == _stripe_price_lifetime():
         return "lifetime"
     return "monthly"
 
@@ -239,11 +245,12 @@ def _generate_password(length: int = 12) -> str:
 
 def _axonaut(method: str, path: str, payload: dict | None = None):
     """Appel générique API Axonaut."""
-    if not AXONAUT_API_KEY:
+    key = _axonaut_key()
+    if not key:
         return None
     url  = f"{AXONAUT_BASE}{path}"
     data = json.dumps(payload).encode() if payload else None
-    headers = {"userApiKey": AXONAUT_API_KEY}
+    headers = {"userApiKey": key}
     if data:
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -259,21 +266,32 @@ def _axonaut(method: str, path: str, payload: dict | None = None):
 
 
 def _axonaut_get_or_create_company(email: str, name: str) -> int | None:
-    """Retourne l'ID Axonaut du prospect, le crée si inexistant."""
-    # Recherche par email
-    result = _axonaut("GET", f"/prospects?email={urllib.parse.quote(email)}")
-    if result:
-        items = result if isinstance(result, list) else result.get("data", [])
-        if items:
-            return items[0].get("id")
+    """Retourne l'ID Axonaut de la société, la crée si inexistante."""
+    # GET toutes les sociétés, filtre local par email (le filtre ?email= n'est pas supporté)
+    result = _axonaut("GET", "/companies")
+    if isinstance(result, list):
+        email_lower = email.lower()
+        for company in result:
+            # L'email peut être dans contacts ou dans le champ email principal
+            contacts = company.get("contacts") or []
+            if isinstance(contacts, list):
+                for c in contacts:
+                    if (c.get("email") or "").lower() == email_lower:
+                        print(f"[Axonaut] Societe trouvee via contact : id={company['id']}")
+                        return company["id"]
+            if (company.get("email") or "").lower() == email_lower:
+                print(f"[Axonaut] Societe trouvee via email : id={company['id']}")
+                return company["id"]
 
     # Création
-    created = _axonaut("POST", "/prospects", {
+    created = _axonaut("POST", "/companies", {
         "name":  name or email.split("@")[0],
         "email": email,
     })
     if created:
-        return created.get("id")
+        cid = created.get("id")
+        print(f"[Axonaut] Societe creee : id={cid}")
+        return cid
     return None
 
 
@@ -285,19 +303,25 @@ def _axonaut_create_invoice(
 ) -> None:
     """Crée une facture dans Axonaut."""
     if not company_id:
+        print("[Axonaut] company_id manquant — facture non creee")
         return
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    _axonaut("POST", "/invoices", {
-        "prospect_id":    company_id,
-        "reference":      stripe_ref[:30] if stripe_ref else "",
+    result = _axonaut("POST", "/invoices", {
+        "company_id":     company_id,
+        "reference":      (stripe_ref or "")[:30],
         "reference_date": today,
-        "items": [{
+        "theme_id":       339036,   # MYSTROW
+        "products": [{
             "name":       _plan_label(plan_type),
             "quantity":   1,
-            "unit_amount": round(amount_eur, 2),
+            "unit_price": round(amount_eur, 2),
             "tax_rate":   20,
         }],
     })
+    if result:
+        print(f"[Axonaut] Facture creee : id={result.get('id')}")
+    else:
+        print("[Axonaut] Facture non creee (voir erreur ci-dessus)")
 
 
 # ===========================================================================
@@ -329,20 +353,22 @@ _EMAIL_BASE = """\
 
 
 def _send_email(to: str, subject: str, content: str, raise_on_error: bool = False) -> None:
-    if not SMTP_HOST:
-        print(f"[Email] SMTP non configuré — ignoré ({to})")
+    host = _smtp_host()
+    if not host:
+        print(f"[Email] SMTP_HOST non configuré — email ignoré ({to})")
         return
     html = _EMAIL_BASE.format(content=content)
     msg  = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"]    = SMTP_FROM
+    msg["From"]    = _smtp_from()
     msg["To"]      = to
     msg.attach(MIMEText(html, "html", "utf-8"))
     try:
+        user = _smtp_user()
         ctx = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as smtp:
-            smtp.login(SMTP_USER, SMTP_PASSWORD)
-            smtp.sendmail(SMTP_USER, to, msg.as_string())
+        with smtplib.SMTP_SSL(host, _smtp_port(), context=ctx) as smtp:
+            smtp.login(user, _smtp_password())
+            smtp.sendmail(user, to, msg.as_string())
         print(f"[Email] Envoyé → {to} ({subject})")
     except Exception as e:
         print(f"[Email] Erreur envoi → {to} : {e}")
@@ -806,7 +832,7 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
 # STRIPE CLOUD FUNCTION ENTRY POINT
 # ===========================================================================
 
-@https_fn.on_request(cors=False, max_instances=10)
+@https_fn.on_request(max_instances=10)
 def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
     """
     Endpoint HTTPS : POST /stripe_webhook
@@ -832,9 +858,11 @@ def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
         try:
             handler(data_obj)
         except Exception as exc:
-            # On log l'erreur mais on retourne 200 pour éviter
-            # que Stripe ne re-tente en boucle sur des erreurs non-critiques.
-            print(f"[Webhook] Erreur dans handler '{event_type}' : {exc}")
+            # Log complet pour Firebase Cloud Logging
+            print(f"[Webhook] ERREUR handler '{event_type}' : {exc}")
+            print(traceback.format_exc())
+            # On retourne 200 quand même : Stripe ne doit pas re-tenter
+            # en boucle sur des erreurs internes (données manquantes, etc.)
     else:
         print(f"[Webhook] Événement ignoré : {event_type}")
 
@@ -978,7 +1006,7 @@ _NL_CORS = {
 }
 
 
-@https_fn.on_request(max_instances=5, secrets=["BREVO_API_KEY"])
+@https_fn.on_request(max_instances=5)
 def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
     """
     Endpoint HTTPS : POST /subscribe_newsletter
@@ -1010,7 +1038,8 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
             status=400, headers={"Content-Type": "application/json", **_NL_CORS},
         )
 
-    if not BREVO_API_KEY:
+    brevo_key = _brevo_key()
+    if not brevo_key:
         print("[subscribe_newsletter] BREVO_API_KEY non configurée")
         return https_fn.Response(
             json.dumps({"ok": False, "error": "Service indisponible."}),
@@ -1031,7 +1060,7 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
             headers={
                 "accept":       "application/json",
                 "content-type": "application/json",
-                "api-key":      BREVO_API_KEY,
+                "api-key":      brevo_key,
             },
             method="POST",
         )

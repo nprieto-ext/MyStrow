@@ -1,48 +1,52 @@
 """
-DMX Tester — grille visuelle 512 canaux avec sélection multiple.
+DMX Tester — 512 faders verticaux avec sélection multiple.
 """
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QWidget, QFrame, QSpinBox,
+    QSlider, QWidget, QFrame, QSpinBox, QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
-from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush
+from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QLinearGradient
 
 
-COLS = 32
-ROWS = 16
-CELL = 18
-GAP  = 1
+# ── Dimensions des faders ─────────────────────────────────────────────────────
+FADER_W  = 18   # largeur de chaque fader (px)
+FADER_H  = 72   # hauteur de la zone de fader
+LABEL_H  = 12   # hauteur du numéro de canal en-dessous
+GAP      = 2    # espace entre faders
+COLS     = 32
+ROWS     = 16
+SLOT_W   = FADER_W + GAP    # 20
+SLOT_H   = FADER_H + LABEL_H + GAP + 2   # 88
 
 
-# ── Grille ───────────────────────────────────────────────────────────────────
+# ── Widget faders ─────────────────────────────────────────────────────────────
 
-class DmxGrid(QWidget):
+class DmxFaderView(QWidget):
     """
-    Grille 32×16 canaux DMX.
-    - Clic simple       → sélectionner un canal
-    - Ctrl + clic       → ajouter / retirer de la sélection
-    - Shift + clic      → sélectionner la plage entre le dernier et celui-ci
-    - Glisser la souris → dessiner un rectangle de sélection
+    Affiche 512 canaux DMX comme des faders verticaux.
+    - Clic            → sélectionner + régler la valeur
+    - Glisser         → modifier la valeur en live
+    - Ctrl + clic     → ajouter / retirer de la sélection
+    - Shift + clic    → sélectionner la plage
     """
 
     selection_changed = Signal(list)   # liste d'indices 0-based sélectionnés
+    value_changed     = Signal(int, int)  # (channel, value) — drag direct sur fader
 
     def __init__(self):
         super().__init__()
         self._values    = [0] * 512
         self._selected  = set()
         self._hovered   = -1
-        self._last      = 0          # dernier canal cliqué (pour Shift)
-        self._dragging  = False
-        self._drag_a    = -1         # coin A du rectangle (channel index)
-        self._drag_b    = -1         # coin B du rectangle (channel index)
-        self._drag_preview = set()   # sélection préview pendant le drag
+        self._last      = 0
 
-        step = CELL + GAP
-        self.setFixedSize(COLS * step - GAP, ROWS * step - GAP)
+        self._drag_mode = None   # 'value' | None
+        self._drag_ch   = -1
+
+        self.setFixedSize(COLS * SLOT_W - GAP, ROWS * SLOT_H - GAP)
         self.setMouseTracking(True)
-        self.setCursor(Qt.CrossCursor)
+        self.setCursor(Qt.SizeVerCursor)
         self.setFocusPolicy(Qt.StrongFocus)
 
     # ── Données ──────────────────────────────────────────────────────────────
@@ -63,138 +67,125 @@ class DmxGrid(QWidget):
     def selected(self):
         return sorted(self._selected)
 
-    # ── Helpers géométrie ────────────────────────────────────────────────────
+    # ── Géométrie ────────────────────────────────────────────────────────────
 
-    def _ch_at(self, pos):
-        step = CELL + GAP
-        col = pos.x() // step
-        row = pos.y() // step
+    def _pos_to_ch_val(self, pos):
+        """Retourne (channel_index, value|None) depuis une position souris."""
+        col = pos.x() // SLOT_W
+        row = pos.y() // SLOT_H
         if 0 <= col < COLS and 0 <= row < ROWS:
-            return row * COLS + col
-        return -1
-
-    def _rect_channels(self, a, b):
-        """Tous les canaux dans le rectangle formé par les canaux a et b."""
-        ca, ra = a % COLS, a // COLS
-        cb, rb = b % COLS, b // COLS
-        c0, c1 = min(ca, cb), max(ca, cb)
-        r0, r1 = min(ra, rb), max(ra, rb)
-        return {r * COLS + c for r in range(r0, r1 + 1) for c in range(c0, c1 + 1)}
-
-    def _cell_rect(self, ch):
-        step = CELL + GAP
-        col, row = ch % COLS, ch // COLS
-        return QRect(col * step, row * step, CELL, CELL)
+            ch = row * COLS + col
+            y_in_slot = pos.y() - row * SLOT_H
+            if 0 <= y_in_slot < FADER_H:
+                val = max(0, min(255, int((1.0 - y_in_slot / FADER_H) * 255)))
+                return ch, val
+            return ch, None   # clic dans la zone étiquette
+        return -1, None
 
     # ── Rendu ────────────────────────────────────────────────────────────────
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-
-        active_sel = self._drag_preview if self._dragging else self._selected
+        p.setRenderHint(QPainter.Antialiasing, False)
 
         for i in range(512):
+            col = i % COLS
+            row = i // COLS
+            x   = col * SLOT_W
+            y   = row * SLOT_H
             val = self._values[i]
-            r   = self._cell_rect(i)
+            sel = i in self._selected
+            hov = i == self._hovered
 
-            # Fond selon valeur DMX
-            if val == 0:
-                bg = QColor("#161616")
-            else:
-                t  = val / 255.0
-                bg = QColor(0, int(40 + t * 172), int(60 + t * 195))
+            # ── Fond du fader ──────────────────────────────
+            bg = QColor("#1e1e1e") if hov and not sel else QColor("#141414")
+            p.fillRect(x, y, FADER_W, FADER_H, bg)
 
-            # Hover discret
-            if i == self._hovered and i not in active_sel:
-                bg = bg.lighter(160)
+            # ── Rainure centrale ───────────────────────────
+            groove_x = x + (FADER_W - 4) // 2
+            p.fillRect(groove_x, y + 2, 4, FADER_H - 4, QColor("#222222"))
 
-            p.setPen(Qt.NoPen)
-            p.setBrush(bg)
-            p.drawRoundedRect(r, 3, 3)
+            # ── Remplissage (de bas en haut) ───────────────
+            t      = val / 255.0
+            fill_h = max(2, int(t * (FADER_H - 4)))
+            fill_y = y + FADER_H - 2 - fill_h
 
-            # Sélection : contour blanc + fond translucide cyan
-            if i in active_sel:
-                p.setBrush(QColor(0, 212, 255, 50))
-                p.setPen(Qt.NoPen)
-                p.drawRoundedRect(r, 3, 3)
-                pen = QPen(QColor("#ffffff"))
+            if val > 0:
+                grad = QLinearGradient(0, fill_y, 0, fill_y + fill_h)
+                grad.setColorAt(0.0, QColor(0, int(180 + t * 75), int(200 + t * 55)))
+                grad.setColorAt(1.0, QColor(0, int(40  + t * 80), int(80  + t * 80)))
+                p.fillRect(groove_x, fill_y, 4, fill_h, QBrush(grad))
+
+            # Curseur toujours visible — cyan si val > 0, gris sombre si val = 0
+            handle_col = QColor(0, 220, 255, 220) if val > 0 else QColor(60, 60, 60, 200)
+            p.fillRect(x + 2, fill_y, FADER_W - 4, 2, handle_col)
+
+            # ── Sélection ──────────────────────────────────
+            if sel:
+                p.fillRect(x, y, FADER_W, FADER_H, QColor(0, 212, 255, 25))
+                pen = QPen(QColor("#00d4ff"))
                 pen.setWidth(2)
                 p.setPen(pen)
                 p.setBrush(Qt.NoBrush)
-                p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 2, 2)
+                p.drawRect(x + 1, y + 1, FADER_W - 2, FADER_H - 2)
 
-            # Numéro canal
-            alpha = 80 if val == 0 and i not in active_sel else 140
+            # ── Numéro de canal ────────────────────────────
+            alpha = 130 if (val > 0 or sel) else 50
             p.setPen(QColor(255, 255, 255, alpha))
             p.setFont(QFont("Segoe UI", 5))
-            p.drawText(r, Qt.AlignCenter, str(i + 1))
-
-        # Rubber band overlay
-        if self._dragging and self._drag_a >= 0 and self._drag_b >= 0:
-            ra = self._cell_rect(self._drag_a)
-            rb = self._cell_rect(self._drag_b)
-            band = ra.united(rb).adjusted(-1, -1, CELL // 2, CELL // 2)
-            p.setPen(QPen(QColor("#00d4ff"), 1, Qt.DashLine))
-            p.setBrush(QColor(0, 212, 255, 15))
-            p.drawRect(band)
+            p.drawText(
+                QRect(x, y + FADER_H + 2, FADER_W, LABEL_H),
+                Qt.AlignCenter, str(i + 1),
+            )
 
     # ── Souris ───────────────────────────────────────────────────────────────
 
     def mousePressEvent(self, e):
-        ch = self._ch_at(e.position().toPoint())
+        ch, val = self._pos_to_ch_val(e.position().toPoint())
         if ch < 0:
             return
-
         mods = e.modifiers()
 
         if mods & Qt.ControlModifier:
-            # Ctrl : toggle
             if ch in self._selected:
                 self._selected.discard(ch)
             else:
                 self._selected.add(ch)
-            self._last = ch
+            self._drag_mode = None
 
         elif mods & Qt.ShiftModifier:
-            # Shift : plage linéaire depuis _last
             a, b = min(self._last, ch), max(self._last, ch)
             self._selected |= set(range(a, b + 1))
+            self._drag_mode = None
 
         else:
-            # Démarrer un drag ou simple clic
-            self._dragging  = True
-            self._drag_a    = ch
-            self._drag_b    = ch
-            self._drag_preview = {ch}
-            self._last      = ch
+            self._selected  = {ch}
+            self._drag_mode = 'value'
+            self._drag_ch   = ch
+            if val is not None:
+                self._values[ch] = val
+                self.value_changed.emit(ch, val)
 
+        self._last = ch
         self.update()
         self.selection_changed.emit(self.selected())
 
     def mouseMoveEvent(self, e):
-        ch = self._ch_at(e.position().toPoint())
+        ch, val = self._pos_to_ch_val(e.position().toPoint())
+
         if ch != self._hovered:
             self._hovered = ch
             self.update()
 
-        if self._dragging and ch >= 0 and ch != self._drag_b:
-            self._drag_b       = ch
-            self._drag_preview = self._rect_channels(self._drag_a, self._drag_b)
-            self.update()
+        if (e.buttons() & Qt.LeftButton) and self._drag_mode == 'value':
+            if ch == self._drag_ch and val is not None:
+                self._values[ch] = val
+                self.value_changed.emit(ch, val)
+                self.update()
+                self.selection_changed.emit(self.selected())
 
-    def mouseReleaseEvent(self, e):
-        if self._dragging:
-            mods = e.modifiers()
-            if mods & Qt.ControlModifier:
-                self._selected |= self._drag_preview
-            else:
-                self._selected = set(self._drag_preview)
-            self._last     = self._drag_b if self._drag_b >= 0 else self._drag_a
-            self._dragging  = False
-            self._drag_preview = set()
-            self.update()
-            self.selection_changed.emit(self.selected())
+    def mouseReleaseEvent(self, _):
+        self._drag_mode = None
 
     def leaveEvent(self, _):
         self._hovered = -1
@@ -216,10 +207,9 @@ class DmxTesterDialog(QDialog):
     def __init__(self, dmx, parent=None):
         super().__init__(parent)
         self._dmx      = dmx
-        self._uni      = 0   # univers actif (0-3)
+        self._uni      = 0
         self._snapshot = [list(dmx.dmx_data[u][:512]) for u in range(4)]
         self._group    = 0
-        # Ardoise vierge sur tous les univers
         for u in range(4):
             for i in range(512):
                 dmx.dmx_data[u][i] = 0
@@ -227,9 +217,9 @@ class DmxTesterDialog(QDialog):
         self.setWindowTitle("DMX Tester")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
-            QDialog  { background: #111111; }
-            QLabel   { color: #cccccc; background: transparent; border: none; }
-            QSpinBox {
+            QDialog   { background: #111111; }
+            QLabel    { color: #cccccc; background: transparent; border: none; }
+            QSpinBox  {
                 background: #1c1c1c; color: #e0e0e0;
                 border: 1px solid #2a2a2a; border-radius: 4px;
                 padding: 2px 6px; font-size: 11px; min-height: 24px;
@@ -238,6 +228,15 @@ class DmxTesterDialog(QDialog):
             QSpinBox::up-button, QSpinBox::down-button {
                 background: #242424; border: none; width: 14px;
             }
+            QScrollArea { border: none; background: #111111; }
+            QScrollBar:vertical {
+                background: #0e0e0e; width: 8px; border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #2a2a2a; border-radius: 4px; min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover { background: #3a3a3a; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
         self._build_ui()
         self._refresh_grid()
@@ -249,7 +248,7 @@ class DmxTesterDialog(QDialog):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Header
+        # ── Header ────────────────────────────────────────
         hdr = QWidget()
         hdr.setFixedHeight(46)
         hdr.setStyleSheet("background:#0a0a0a; border-bottom:1px solid #1e1e1e;")
@@ -260,28 +259,38 @@ class DmxTesterDialog(QDialog):
         t.setStyleSheet("color:#00d4ff;")
         hl.addWidget(t)
         hl.addStretch()
-        self.lbl_status = QLabel("Glissez pour sélectionner  ·  Ctrl = ajouter  ·  Shift = plage")
+        self.lbl_status = QLabel("Clic + glisser pour régler  ·  Ctrl = multi-sélection  ·  Shift = plage")
         self.lbl_status.setFont(QFont("Segoe UI", 9))
         self.lbl_status.setStyleSheet("color:#333;")
         hl.addWidget(self.lbl_status)
         root.addWidget(hdr)
 
-        # Corps : grille + panneau droit
+        # ── Corps : faders (scroll) + panneau droit ────────
         body = QWidget()
         body.setStyleSheet("background:#111111;")
         bl = QHBoxLayout(body)
         bl.setContentsMargins(16, 14, 16, 14)
         bl.setSpacing(16)
 
-        self.grid = DmxGrid()
+        # ScrollArea contenant les faders
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(False)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setFixedWidth(COLS * SLOT_W - GAP + 10)  # +10 pour la scrollbar
+
+        self.grid = DmxFaderView()
         self.grid.selection_changed.connect(self._on_selection_changed)
-        bl.addWidget(self.grid)
+        self.grid.value_changed.connect(self._on_fader_drag)
+        scroll.setWidget(self.grid)
+        scroll.setFixedHeight(480)
+        bl.addWidget(scroll)
         self.grid.setFocus()
 
         bl.addWidget(self._build_right_panel())
         root.addWidget(body)
 
-        # Panneau canal sélectionné
+        # ── Barre canal sélectionné ────────────────────────
         ctrl = QWidget()
         ctrl.setStyleSheet("background:#0e0e0e; border-top:1px solid #1e1e1e;")
         cl = QHBoxLayout(ctrl)
@@ -293,7 +302,7 @@ class DmxTesterDialog(QDialog):
         self.lbl_sel_info.setStyleSheet("color:#555; min-width:220px;")
         cl.addWidget(self.lbl_sel_info)
 
-        cl.addWidget(self._small_lbl("Valeur"))
+        cl.addWidget(self._small_lbl("Valeur fine"))
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 255)
         self.slider.setValue(255)
@@ -312,7 +321,7 @@ class DmxTesterDialog(QDialog):
         cl.addWidget(self.slider, 1)
 
         self.lbl_val = QLabel("—")
-        self.lbl_val.setFixedWidth(30)
+        self.lbl_val.setFixedWidth(36)
         self.lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_val.setFont(QFont("Segoe UI", 12, QFont.Bold))
         self.lbl_val.setStyleSheet("color:#00d4ff;")
@@ -321,7 +330,7 @@ class DmxTesterDialog(QDialog):
         self.slider.valueChanged.connect(self._apply_slider)
         root.addWidget(ctrl)
 
-        # Footer
+        # ── Footer ────────────────────────────────────────
         foot = QWidget()
         foot.setFixedHeight(50)
         foot.setStyleSheet("background:#0a0a0a; border-top:1px solid #1e1e1e;")
@@ -331,8 +340,8 @@ class DmxTesterDialog(QDialog):
 
         self.btn_on  = self._btn("●  Full ON",  "#1a2a1a", "#4CAF50")
         self.btn_off = self._btn("○  Full OFF", "#2a1a1a", "#f44336")
-        self.btn_on.setToolTip("Si des canaux sont sélectionnés : applique à la sélection. Sinon : tous les 512.")
-        self.btn_off.setToolTip("Si des canaux sont sélectionnés : applique à la sélection. Sinon : tous les 512.")
+        self.btn_on.setToolTip("Sélection → applique à la sélection. Sans sélection → tous les 512.")
+        self.btn_off.setToolTip("Sélection → applique à la sélection. Sans sélection → tous les 512.")
         self.btn_on.clicked.connect(lambda: self._send_val(255))
         self.btn_off.clicked.connect(lambda: self._send_val(0))
         fl.addWidget(self.btn_on)
@@ -344,9 +353,6 @@ class DmxTesterDialog(QDialog):
         fl.addWidget(btn_close)
         root.addWidget(foot)
 
-        self.adjustSize()
-        self.setFixedSize(self.sizeHint())
-
     def _build_right_panel(self):
         w = QWidget()
         w.setFixedWidth(220)
@@ -357,7 +363,6 @@ class DmxTesterDialog(QDialog):
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(12)
 
-        # Titre
         t = QLabel("ASSISTANT")
         t.setFont(QFont("Segoe UI", 8, QFont.Bold))
         t.setStyleSheet("color:#00d4ff; letter-spacing:2px; border:none; background:transparent;")
@@ -367,7 +372,6 @@ class DmxTesterDialog(QDialog):
         sep.setStyleSheet("border:1px solid #1e1e1e;")
         lay.addWidget(sep)
 
-        # Taille groupe
         lbl_sz = QLabel("Canaux par groupe")
         lbl_sz.setFont(QFont("Segoe UI", 9))
         lbl_sz.setStyleSheet("color:#555; border:none; background:transparent;")
@@ -387,9 +391,7 @@ class DmxTesterDialog(QDialog):
         self.spin_group.valueChanged.connect(lambda: setattr(self, '_group', 0) or self._update_assistant())
         lay.addWidget(self.spin_group)
 
-        # Navigation
-        nav = QHBoxLayout()
-        nav.setSpacing(6)
+        nav = QHBoxLayout(); nav.setSpacing(6)
         self.btn_prev_grp = QPushButton("◀")
         self.btn_prev_grp.setFixedSize(30, 30)
         self.btn_prev_grp.setStyleSheet(self._nav_btn_style())
@@ -442,7 +444,6 @@ class DmxTesterDialog(QDialog):
         btn_cut_next.clicked.connect(self._cut_and_send_next)
         lay.addWidget(btn_cut_next)
 
-        # Sélecteur d'univers
         sep_uni = QFrame(); sep_uni.setFrameShape(QFrame.HLine)
         sep_uni.setStyleSheet("border:1px solid #1e1e1e;")
         lay.addWidget(sep_uni)
@@ -452,8 +453,7 @@ class DmxTesterDialog(QDialog):
         lbl_uni.setStyleSheet("color:#555; border:none; background:transparent;")
         lay.addWidget(lbl_uni)
 
-        uni_row = QHBoxLayout()
-        uni_row.setSpacing(6)
+        uni_row = QHBoxLayout(); uni_row.setSpacing(6)
         self._uni_btns = []
         for u in range(4):
             b = QPushButton(str(u + 1))
@@ -467,13 +467,22 @@ class DmxTesterDialog(QDialog):
         lay.addLayout(uni_row)
 
         lay.addStretch()
-
-        # Légende raccourcis
-
         self._update_assistant()
         return w
 
     # ── Logique ──────────────────────────────────────────────────────────────
+
+    def _on_fader_drag(self, ch, val):
+        """Appelé en temps réel quand l'utilisateur glisse un fader."""
+        self._dmx.dmx_data[self._uni][ch] = val
+        self._dmx.send_dmx()
+        n = len(self.grid.selected())
+        txt = f"Canal {ch+1}" if n <= 1 else f"{n} canaux"
+        self.lbl_sel_info.setText(f"{txt}  —  {val} / 255")
+        self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:220px;")
+        self._set_slider(val)
+        self.slider.setEnabled(True)
+        self.lbl_val.setText(str(val))
 
     def _on_selection_changed(self, sel):
         n = len(sel)
@@ -504,21 +513,24 @@ class DmxTesterDialog(QDialog):
             return
         for ch in sel:
             self._dmx.dmx_data[self._uni][ch] = val
+            self.grid.set_channel(ch, val)
         self._dmx.send_dmx()
         self.lbl_val.setText(str(val))
-        n = len(sel)
+        n   = len(sel)
         txt = f"Canal {sel[0]+1}" if n == 1 else f"{n} canaux"
         self.lbl_sel_info.setText(f"{txt}  —  {val} / 255")
         self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:220px;")
-        self._refresh_grid()
 
     def _send_val(self, val):
-        for ch in range(512):
+        sel = self.grid.selected()
+        targets = sel if sel else list(range(512))
+        for ch in targets:
             self._dmx.dmx_data[self._uni][ch] = val
         self._dmx.send_dmx()
         color = "#4CAF50" if val == 255 else "#f44336"
         label = "Full ON" if val == 255 else "Full OFF"
-        self.lbl_status.setText(f"{label} — tous les 512 canaux à {val}")
+        n = len(targets)
+        self.lbl_status.setText(f"{label} — {n} canal(s) à {val}")
         self.lbl_status.setStyleSheet(f"color:{color};")
         self._refresh_grid()
 
@@ -539,31 +551,37 @@ class DmxTesterDialog(QDialog):
         end   = min(start + size - 1, 511)
         self.lbl_group_range.setText(f"{start+1} → {end+1}")
         self.btn_prev_grp.setEnabled(self._group > 0)
-        max_grp = (511) // size
-        self.btn_next_grp.setEnabled(self._group < max_grp)
+        self.btn_next_grp.setEnabled(self._group < 511 // size)
 
     def _prev_group(self):
         self._group = max(0, self._group - 1)
         self._update_assistant()
-        self._select_group()
+        self._select_and_scroll_group()
 
     def _next_group(self):
         size    = self.spin_group.value()
-        max_grp = 511 // size
-        self._group = min(max_grp, self._group + 1)
+        self._group = min(511 // size, self._group + 1)
         self._update_assistant()
-        self._select_group()
+        self._select_and_scroll_group()
 
     def _group_channels(self):
         size  = self.spin_group.value()
         start = self._group * size
-        end   = min(start + size, 512)
-        return list(range(start, end))
+        return list(range(start, min(start + size, 512)))
 
-    def _select_group(self):
+    def _select_and_scroll_group(self):
         chs = self._group_channels()
         self.grid.set_selection(chs)
         self._on_selection_changed(chs)
+        # Scroller pour que le groupe soit visible
+        if chs:
+            first_ch = chs[0]
+            row = first_ch // COLS
+            y   = row * SLOT_H
+            # Trouver le QScrollArea parent
+            parent = self.grid.parent()
+            if hasattr(parent, 'verticalScrollBar'):
+                parent.verticalScrollBar().setValue(max(0, y - 20))
 
     def _send_group(self):
         chs = self._group_channels()
@@ -576,12 +594,10 @@ class DmxTesterDialog(QDialog):
         self._refresh_grid()
 
     def _send_group_and_advance(self):
-        """Envoie le groupe courant à 100% puis passe au suivant."""
         self._send_group()
         self._next_group()
 
     def _cut_and_send_next(self):
-        """Coupe le groupe courant (à 0) puis envoie le suivant à 100%."""
         for ch in self._group_channels():
             self._dmx.dmx_data[self._uni][ch] = 0
         self._dmx.send_dmx()
