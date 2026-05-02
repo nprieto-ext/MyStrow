@@ -3,7 +3,8 @@
     "allow": [
       "Bash(*)",
       "WebFetch(*)",
-      "WebSearch"
+      "WebSearch",
+      "PowerShell(python --version)"
     ]
   }
 }

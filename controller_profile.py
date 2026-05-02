@@ -1,14 +1,21 @@
 """
 Gestion des profils de contrôleurs MIDI personnalisés.
-Format JSON — chargés depuis le dossier controllers/ à côté de ce fichier.
+Format JSON — stockés dans %APPDATA%/MyStrow/controllers/ (Windows) ou ~/.mystrow/controllers/.
 """
 import json
+import os
 from pathlib import Path
 
 
 def get_profiles_dir() -> Path:
-    d = Path(__file__).parent / "controllers"
-    d.mkdir(exist_ok=True)
+    # Utilise AppData/Roaming sur Windows, ~/.mystrow ailleurs
+    # Évite d'écrire dans le dossier d'installation (Program Files = accès refusé)
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        d = Path(appdata) / "MyStrow" / "controllers"
+    else:
+        d = Path.home() / ".mystrow" / "controllers"
+    d.mkdir(parents=True, exist_ok=True)
     return d
 
 

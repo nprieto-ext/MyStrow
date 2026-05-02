@@ -216,12 +216,16 @@ class MIDIHandler(QObject):
             # Profils custom en priorité (définis par l'utilisateur)
             custom_profile = None
             custom_in_name = None
-            for port_name in in_ports:
-                profile = find_profile_for_port(port_name)
-                if profile:
-                    custom_profile = profile
-                    custom_in_name = port_name
-                    break
+            try:
+                for port_name in in_ports:
+                    profile = find_profile_for_port(port_name)
+                    if profile:
+                        custom_profile = profile
+                        custom_in_name = port_name
+                        break
+            except Exception as e:
+                print(f"⚠️  Lecture profils custom ignorée: {e}")
+                custom_profile = None
 
             if custom_profile:
                 self.controller_type = 'custom'
