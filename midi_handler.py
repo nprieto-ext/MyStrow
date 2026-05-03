@@ -317,6 +317,12 @@ class MIDIHandler(QObject):
             except Exception: pass
             ctrl, _ = _detect_controller(ports)
             device_present = (ctrl is not None)
+            # Vérifier aussi les profils custom (contrôleurs non hardcodés)
+            if not device_present:
+                for _p in ports:
+                    if find_profile_for_port(_p):
+                        device_present = True
+                        break
         except Exception:
             return
 
@@ -334,10 +340,12 @@ class MIDIHandler(QObject):
             return
 
         # Device présent — déjà connecté ?
-        if self.midi_in and self.midi_out:
+        # midi_out peut être None si le contrôleur n'a pas de port output (ex: Sushi Z1)
+        if self.midi_in:
             try:
-                if self.midi_in.is_port_open() and self.midi_out.is_port_open():
-                    return
+                if self.midi_in.is_port_open():
+                    if self.midi_out is None or self.midi_out.is_port_open():
+                        return
             except Exception:
                 pass
             self.midi_in  = None

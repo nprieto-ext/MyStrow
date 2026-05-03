@@ -684,7 +684,7 @@ class _Canvas3D(QWidget):
                  pt(tb2.get('x_r', 9.),tb2['height'],tb2['z']),cc,1.2)
 
         # ── Precompute ────────────────────────────────────────────────────
-        prjs = self._projectors
+        prjs = list(self._projectors)  # snapshot — safe if set_projectors() fires mid-paint
         # Tri back-to-front par distance caméra (algorithme du peintre correct
         # quelle que soit l'orientation de la caméra).
         _ex, _ey, _ez = self._camera_pos()
@@ -1438,6 +1438,13 @@ class Plan3DWindow(QMainWindow):
         self._truss_panel.changed.connect(self._on_truss_changed)
         self._truss_panel.hide()
 
+        # Debounce : coalesce les refresh() rapides (MIDI) en ≤ 60 fps
+        self._pending_projectors = None
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(16)
+        self._refresh_timer.timeout.connect(self._do_refresh)
+
         tb = QToolBar(self)
         tb.setMovable(False)
         self.addToolBar(tb)
@@ -1746,7 +1753,15 @@ class Plan3DWindow(QMainWindow):
         self._canvas.set_projectors(self._to_data(projectors))
 
     def refresh(self, projectors):
-        self._canvas.set_projectors(self._to_data(projectors))
+        # Stocke les données les plus récentes et laisse le timer coalescer
+        self._pending_projectors = projectors
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+
+    def _do_refresh(self):
+        if self._pending_projectors is not None:
+            self._canvas.set_projectors(self._to_data(self._pending_projectors))
+            self._pending_projectors = None
 
     def closeEvent(self, event):
         event.ignore()

@@ -3191,7 +3191,8 @@ class MainWindow(QMainWindow):
         self._fade_dur   = fade_secs
         self._fade_timer.start()
         # Déclencher/arrêter l'effet du cue
-        eff_cfg = cue.get("effect") or {}
+        mem_raw = self.memories[mem_col][row] or {}
+        eff_cfg = cue.get("effect") or mem_raw.get("effect") or {}
         new_eff = eff_cfg.get("name", "") if eff_cfg.get("layers") else ""
         cur_eff = getattr(self, "active_effect", None) or ""
         if new_eff != cur_eff:
@@ -3333,8 +3334,10 @@ class MainWindow(QMainWindow):
             )
 
         # Déclencher/arrêter l'effet du cue courant
+        # Fallback : si le cue n'a pas d'effet propre, lire l'effet posé sur la mémoire globale
         if trigger_effect:
-            eff_cfg = cue.get("effect") or {}
+            mem_raw = self.memories[mem_col][row] or {}
+            eff_cfg = cue.get("effect") or mem_raw.get("effect") or {}
             new_eff = eff_cfg.get("name", "") if (eff_cfg.get("layers") and fader_value > 0) else ""
             cur_eff = getattr(self, "active_effect", None) or ""
             if new_eff != cur_eff:
@@ -12799,8 +12802,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'node_menu'):
             return
         try:
-            from artnet_dmx import TRANSPORT_ENTTEC
-            if self.dmx.transport == TRANSPORT_ENTTEC:
+            from artnet_dmx import TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO
+            if self.dmx.transport in (TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO):
                 self.node_menu.setTitle("🔌 Sortie DMX USB")
             else:
                 self.node_menu.setTitle("🌐 Sortie DMX")
@@ -13393,7 +13396,7 @@ class MainWindow(QMainWindow):
             if overrides:
                 for i, proj in enumerate(self.projectors):
                     proj.level, proj.color, proj.base_color = saved_htp[i]
-        elif self.dmx.connected and getattr(self.dmx, 'transport', '') == 'enttec':
+        elif self.dmx.connected and getattr(self.dmx, 'transport', '') in ('enttec', 'enttec_pro'):
             # ENTTEC : envoyer des frames nulles pour garder le lien actif (évite le timeout)
             self.dmx.send_dmx()
 

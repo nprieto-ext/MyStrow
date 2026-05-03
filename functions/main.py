@@ -1091,3 +1091,55 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
             json.dumps({"ok": False, "error": "Erreur serveur."}),
             status=500, headers={"Content-Type": "application/json", **_NL_CORS},
         )
+
+
+# ===========================================================================
+# DOWNLOAD REDIRECT — compteur de téléchargements
+# ===========================================================================
+
+_DOWNLOAD_URLS = {
+    "win": "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Setup.exe",
+    "mac": "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Installer.dmg",
+}
+
+_DL_CORS = {"Access-Control-Allow-Origin": "*"}
+
+
+@https_fn.on_request(max_instances=10)
+def download_redirect(req: https_fn.Request) -> https_fn.Response:
+    """Redirige vers le téléchargement GitHub et logue date/heure/lieu dans Firestore."""
+    platform = req.args.get("p", "win")
+    redirect_url = _DOWNLOAD_URLS.get(platform, _DOWNLOAD_URLS["win"])
+
+    # IP réelle (derrière proxy/CDN)
+    ip = (req.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+    if not ip:
+        ip = getattr(req, "remote_addr", None) or "unknown"
+
+    # Géolocalisation via ip-api.com (gratuit, sans clé)
+    geo: dict = {}
+    try:
+        geo_url = f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,city,regionName&lang=fr"
+        geo_req = urllib.request.Request(geo_url, headers={"User-Agent": "MyStrow/1.0"})
+        with urllib.request.urlopen(geo_req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            if data.get("status") == "success":
+                geo = data
+    except Exception as e:
+        print(f"[download_redirect] géoloc échouée pour {ip}: {e}")
+
+    # Log dans Firestore
+    try:
+        _get_db().collection("downloads").add({
+            "ts":          datetime.now(timezone.utc),
+            "platform":    platform,
+            "ip":          ip,
+            "country":     geo.get("country", "?"),
+            "countryCode": geo.get("countryCode", "?"),
+            "city":        geo.get("city", "?"),
+            "region":      geo.get("regionName", "?"),
+        })
+    except Exception as e:
+        print(f"[download_redirect] Firestore write error: {e}")
+
+    return https_fn.Response("", status=302, headers={"Location": redirect_url, **_DL_CORS})

@@ -389,6 +389,32 @@ def _delete_fixture_doc(doc_id: str, id_token: str) -> bool:
     return _delete_firestore_doc(f"gdtf_fixtures/{doc_id}", id_token)
 
 
+def _query_downloads(id_token: str, limit: int = 300) -> list:
+    """Récupère les derniers téléchargements depuis Firestore (collection 'downloads')."""
+    url = f"{_FS_BASE.split('/documents')[0]}/documents:runQuery"
+    body = json.dumps({
+        "structuredQuery": {
+            "from": [{"collectionId": "downloads"}],
+            "orderBy": [{"field": {"fieldPath": "ts"}, "direction": "DESCENDING"}],
+            "limit": limit,
+        }
+    }).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        results = json.loads(resp.read().decode())
+    rows = []
+    for r in results:
+        doc = r.get("document")
+        if not doc:
+            continue
+        fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+        rows.append(fields)
+    return rows
+
+
 def _fetch_license_doc(uid: str, id_token: str) -> dict:
     url = f"{_FS_BASE}/licenses/{uid}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
@@ -2359,6 +2385,7 @@ class AdminPanel(QMainWindow):
         self._build_ui()
         self._load_clients()
         self._load_github_downloads()
+        self._load_firestore_downloads()
 
         # Rafraîchissement automatique du token toutes les 50 min (expire à 60 min)
         self._token_timer = QTimer(self)
@@ -3147,6 +3174,56 @@ class AdminPanel(QMainWindow):
         _run_async(self, _fetch, on_success=_on_releases,
                    on_error=lambda _: self._stat_downloads.setText("—"))
 
+    def _load_firestore_downloads(self):
+        """Récupère les derniers téléchargements depuis Firestore et peuple le tableau."""
+        self._dl_stats_lbl.setText("…")
+
+        def _fetch():
+            return _query_downloads(self._id_token, limit=300)
+
+        def _on_data(rows: list):
+            total = len(rows)
+            wins  = sum(1 for r in rows if r.get("platform") == "win")
+            macs  = sum(1 for r in rows if r.get("platform") == "mac")
+            self._dl_stats_lbl.setText(
+                f"Total : {total}  |  Win : {wins}  |  Mac : {macs}"
+            )
+            self._dl_table.setRowCount(0)
+            for r in rows:
+                ts = r.get("ts")
+                if isinstance(ts, datetime):
+                    date_str = ts.strftime("%Y-%m-%d")
+                    time_str = ts.strftime("%H:%M:%S")
+                elif isinstance(ts, str):
+                    try:
+                        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        date_str = dt.strftime("%Y-%m-%d")
+                        time_str = dt.strftime("%H:%M:%S")
+                    except Exception:
+                        date_str = ts[:10]
+                        time_str = ts[11:19] if len(ts) > 18 else ""
+                else:
+                    date_str = ""
+                    time_str = ""
+
+                platform = r.get("platform", "?")
+                platform_label = "Windows" if platform == "win" else ("macOS" if platform == "mac" else platform)
+                country = r.get("country", "?")
+                city    = r.get("city", "?")
+
+                row_idx = self._dl_table.rowCount()
+                self._dl_table.insertRow(row_idx)
+                self._dl_table.setItem(row_idx, 0, QTableWidgetItem(date_str))
+                self._dl_table.setItem(row_idx, 1, QTableWidgetItem(time_str))
+                plat_item = QTableWidgetItem(platform_label)
+                plat_item.setForeground(QColor(ACCENT))
+                self._dl_table.setItem(row_idx, 2, plat_item)
+                self._dl_table.setItem(row_idx, 3, QTableWidgetItem(country))
+                self._dl_table.setItem(row_idx, 4, QTableWidgetItem(city))
+
+        _run_async(self, _fetch, on_success=_on_data,
+                   on_error=lambda _: self._dl_stats_lbl.setText("Erreur chargement"))
+
     def _populate_releases_table(self, releases: list):
         rows = []
         for rel in releases:
@@ -3554,6 +3631,61 @@ class AdminPanel(QMainWindow):
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet(f"color: {ACCENT};")
         lay.addWidget(title)
+
+        # ── Téléchargements site ─────────────────────────────────────────────
+        dl_card = QFrame()
+        dl_card.setStyleSheet(
+            f"QFrame {{ background:#0e0e0e; border:1px solid #2a2a2a; border-radius:8px; }}"
+        )
+        dl_card_lay = QVBoxLayout(dl_card)
+        dl_card_lay.setContentsMargins(16, 12, 16, 12)
+        dl_card_lay.setSpacing(8)
+
+        dl_header = QHBoxLayout()
+        dl_title = QLabel("Téléchargements site")
+        dl_title.setStyleSheet(f"color:{TEXT}; font-size:12px; font-weight:bold; background:transparent;")
+        dl_header.addWidget(dl_title)
+        dl_header.addStretch()
+
+        self._dl_stats_lbl = QLabel("…")
+        self._dl_stats_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+        dl_header.addWidget(self._dl_stats_lbl)
+        dl_header.addSpacing(10)
+
+        btn_dl_refresh = QPushButton("↻")
+        btn_dl_refresh.setFixedSize(26, 26)
+        btn_dl_refresh.setStyleSheet(
+            f"QPushButton {{ background:#1e1e1e; color:{TEXT_DIM}; border:1px solid #333;"
+            f" border-radius:4px; font-size:14px; }}"
+            f"QPushButton:hover {{ color:{ACCENT}; border-color:{ACCENT}; }}"
+        )
+        btn_dl_refresh.setToolTip("Rafraîchir")
+        btn_dl_refresh.clicked.connect(self._load_firestore_downloads)
+        dl_header.addWidget(btn_dl_refresh)
+        dl_card_lay.addLayout(dl_header)
+
+        self._dl_table = QTableWidget(0, 5)
+        self._dl_table.setHorizontalHeaderLabels(["Date", "Heure", "Plateforme", "Pays", "Ville"])
+        self._dl_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self._dl_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._dl_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._dl_table.setAlternatingRowColors(True)
+        self._dl_table.verticalHeader().setVisible(False)
+        self._dl_table.setFixedHeight(180)
+        self._dl_table.setStyleSheet(
+            f"QTableWidget {{ background:#0a0a0a; color:{TEXT}; gridline-color:#1e1e1e;"
+            f" border:none; font-size:11px; }}"
+            f"QHeaderView::section {{ background:#111; color:{TEXT_DIM}; border:none;"
+            f" padding:4px 8px; font-size:10px; font-weight:bold; }}"
+            f"QTableWidget::item {{ padding:3px 8px; }}"
+            f"QTableWidget::item:selected {{ background:#1a3040; }}"
+        )
+        dl_card_lay.addWidget(self._dl_table)
+        lay.addWidget(dl_card)
 
         # ── Version ──────────────────────────────────────────────────────────
         v_row = QHBoxLayout()

@@ -100,8 +100,9 @@ def profile_name(profile):
 # ------------------------------------------------------------------
 # Constantes de transport
 # ------------------------------------------------------------------
-TRANSPORT_ENTTEC = "enttec"   # ENTTEC Open DMX USB (serie)
-TRANSPORT_ARTNET = "artnet"   # Boitier reseau Art-Net (ElectroConcept...)
+TRANSPORT_ENTTEC     = "enttec"      # ENTTEC Open DMX USB (serie, break + data brut)
+TRANSPORT_ENTTEC_PRO = "enttec_pro"  # ENTTEC DMX USB Pro (paquet 7E/E7, Sushi Z1, etc.)
+TRANSPORT_ARTNET     = "artnet"      # Boitier reseau Art-Net (ElectroConcept...)
 
 
 class ArtNetDMX:
@@ -123,6 +124,11 @@ class ArtNetDMX:
         self._serial = None
         self._enttec_stop = False
         self._enttec_thread = None
+
+        # --- ENTTEC DMX USB Pro ---
+        self._pro_serial = None
+        self._pro_stop = False
+        self._pro_thread = None
 
         # --- Art-Net reseau ---
         self.target_ip = "2.0.0.15"
@@ -217,6 +223,8 @@ class ArtNetDMX:
 
         if self.transport == TRANSPORT_ENTTEC:
             return self._connect_enttec()
+        elif self.transport == TRANSPORT_ENTTEC_PRO:
+            return self._connect_enttec_pro()
         else:
             return self._connect_artnet()
 
@@ -226,6 +234,10 @@ class ArtNetDMX:
         if self._serial and self._serial.is_open:
             self._serial.close()
         self._serial = None
+        self._pro_stop = True
+        if self._pro_serial and self._pro_serial.is_open:
+            self._pro_serial.close()
+        self._pro_serial = None
         if self._socket:
             self._socket.close()
         self._socket = None
@@ -325,6 +337,105 @@ class ArtNetDMX:
         return True
 
     # ------------------------------------------------------------------
+    # Transport ENTTEC DMX USB Pro  (protocole paquet 0x7E / 0xE7)
+    # Compatible : ENTTEC Pro, Sushi Z1, DMXKing, Eurolite USB-DMX512 PRO…
+    # Spec publique : https://www.enttec.com/products/controls/dmx-usb/
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_pro_packet(dmx_universe):
+        """Construit le paquet ENTTEC Pro : SOM + label 6 + size + start_code + data + EOM."""
+        data = bytes(dmx_universe[:512])
+        size = len(data) + 1          # start code (0x00) + données
+        return (
+            bytes([0x7E, 6, size & 0xFF, (size >> 8) & 0xFF, 0x00])
+            + data
+            + bytes([0xE7])
+        )
+
+    def _connect_enttec_pro(self):
+        if not SERIAL_AVAILABLE:
+            print("pyserial non disponible — pip install pyserial")
+            self.connected = False
+            return False
+        if not self.com_port:
+            print("Aucun port COM configuré pour l'ENTTEC Pro")
+            self.connected = False
+            return False
+        try:
+            if self._pro_serial and self._pro_serial.is_open:
+                self._pro_serial.close()
+            # Baud rate indifférent sur USB-CDC ; 57600 = valeur de référence ENTTEC
+            self._pro_serial = serial.Serial(
+                port=self.com_port,
+                baudrate=57600,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=0.1,
+            )
+            self.connected = True
+            print(f"ENTTEC Pro connecté sur {self.com_port}")
+            self._start_pro_thread()
+            return True
+        except Exception as e:
+            err = str(e)
+            if "13" in err or "permission" in err.lower() or "access" in err.lower():
+                print(f"ENTTEC Pro ({self.com_port}): port déjà utilisé par une autre application")
+            else:
+                print(f"Erreur connexion ENTTEC Pro ({self.com_port}): {e}")
+            self._pro_serial = None
+            self.connected = False
+            return False
+
+    def _start_pro_thread(self):
+        import threading
+        self._pro_stop = False
+        t = threading.Thread(target=self._pro_loop, daemon=True, name="EnttecProDMX")
+        t.start()
+        self._pro_thread = t
+
+    def _pro_loop(self):
+        """Thread ENTTEC Pro : envoie des paquets 7E/E7 à ~25 fps."""
+        while not self._pro_stop:
+            t0 = time.monotonic()
+            ser = self._pro_serial
+            if ser and ser.is_open:
+                try:
+                    pkt = self._build_pro_packet(self.dmx_data[0])
+                    ser.write(pkt)
+                    ser.flush()
+                except Exception as e:
+                    print(f"ENTTEC Pro thread: {e}")
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+                    self._pro_serial = None
+            elif self.com_port and not self._pro_stop:
+                try:
+                    self._pro_serial = serial.Serial(
+                        port=self.com_port, baudrate=57600,
+                        bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                        stopbits=serial.STOPBITS_ONE, timeout=0.1,
+                    )
+                    print(f"ENTTEC Pro: reconnexion sur {self.com_port}")
+                except Exception:
+                    time.sleep(1.0)
+                    continue
+            else:
+                time.sleep(0.040)
+                continue
+            elapsed = time.monotonic() - t0
+            remaining = 0.040 - elapsed
+            if remaining > 0.001:
+                time.sleep(remaining)
+
+    def _send_enttec_pro(self):
+        """Maintenu pour compatibilité — le thread dédié gère l'envoi réel."""
+        return True
+
+    # ------------------------------------------------------------------
     # Transport Art-Net (boitier reseau ElectroConcept, MA, etc.)
     # ------------------------------------------------------------------
 
@@ -401,6 +512,8 @@ class ArtNetDMX:
             return False
         if self.transport == TRANSPORT_ENTTEC:
             return self._send_enttec()
+        elif self.transport == TRANSPORT_ENTTEC_PRO:
+            return self._send_enttec_pro()
         else:
             return self._send_artnet()
 

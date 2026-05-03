@@ -1208,10 +1208,11 @@ class NodeSetupWizard(QDialog):
 from PySide6.QtCore import Signal as _Signal
 
 try:
-    from artnet_dmx import TRANSPORT_ARTNET, TRANSPORT_ENTTEC
+    from artnet_dmx import TRANSPORT_ARTNET, TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO
 except ImportError:
-    TRANSPORT_ARTNET = "artnet"
-    TRANSPORT_ENTTEC = "enttec"
+    TRANSPORT_ARTNET    = "artnet"
+    TRANSPORT_ENTTEC    = "enttec"
+    TRANSPORT_ENTTEC_PRO = "enttec_pro"
 
 _SS_DIALOG = """
     QDialog  { background: #131313; }
@@ -1483,16 +1484,39 @@ class DmxOutputDialog(QDialog):
             dlg.exec()
 
     def _page_usb(self):
-        """Page ENTTEC : sélection du port COM."""
+        """Page ENTTEC : sélection du protocole + port COM."""
         w = QWidget()
         w.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
 
-        info = QLabel("ENTTEC Open DMX USB — connexion via port série (250 000 bauds)")
-        info.setStyleSheet("color: #555; font-size: 10px;")
-        lay.addWidget(info)
+        # Sélecteur protocole
+        proto_row = QHBoxLayout()
+        proto_lbl = QLabel("Protocole")
+        proto_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        proto_row.addWidget(proto_lbl)
+        proto_row.addStretch()
+        self._proto_combo = QComboBox()
+        self._proto_combo.addItem("ENTTEC Open DMX USB  (break série)",  TRANSPORT_ENTTEC)
+        self._proto_combo.addItem("ENTTEC DMX USB Pro  (Sushi Z1, DMXKing…)", TRANSPORT_ENTTEC_PRO)
+        cur_transport = self._dmx.transport if self._dmx else TRANSPORT_ENTTEC
+        self._proto_combo.setCurrentIndex(1 if cur_transport == TRANSPORT_ENTTEC_PRO else 0)
+        self._proto_combo.setFixedWidth(310)
+        self._proto_combo.setFont(QFont("Segoe UI", 9))
+        self._proto_combo.setStyleSheet(
+            "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
+            " border-radius:4px; padding:3px 8px; }"
+            "QComboBox::drop-down { border: none; }"
+            "QComboBox QAbstractItemView { background:#2a2a2a; color:white; }")
+        self._proto_combo.currentIndexChanged.connect(self._on_proto_changed)
+        proto_row.addWidget(self._proto_combo)
+        lay.addLayout(proto_row)
+
+        self._proto_info = QLabel("")
+        self._proto_info.setStyleSheet("color: #555; font-size: 10px;")
+        lay.addWidget(self._proto_info)
+        self._update_proto_info()
 
         card = QFrame()
         card.setStyleSheet(
@@ -1555,12 +1579,28 @@ class DmxOutputDialog(QDialog):
 
     # ── Actions ────────────────────────────────────────────────────────
 
+    def _on_proto_changed(self, _idx):
+        self._update_proto_info()
+
+    def _update_proto_info(self):
+        if not hasattr(self, '_proto_info'):
+            return
+        proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
+        if proto == TRANSPORT_ENTTEC_PRO:
+            self._proto_info.setText("Paquet 0x7E/0xE7 — compatible Sushi Z1, DMXKing eDMX1, Eurolite USB-DMX512 PRO…")
+        else:
+            self._proto_info.setText("Break série 250 000 bauds — ENTTEC Open USB DMX (original ou clone FTDI)")
+
     def _set_transport(self, transport, save=True):
         self._transport = transport
         is_node = (transport == TRANSPORT_ARTNET)
         self._btn_node.setStyleSheet(_BTN_TOGGLE_ON if is_node else _BTN_TOGGLE_OFF)
         self._btn_usb.setStyleSheet(_BTN_TOGGLE_OFF if is_node else _BTN_TOGGLE_ON)
         self._stack.setCurrentIndex(0 if is_node else 1)
+        # Synchroniser le combo protocole si on bascule en mode USB
+        if not is_node and hasattr(self, '_proto_combo'):
+            idx = 1 if transport == TRANSPORT_ENTTEC_PRO else 0
+            self._proto_combo.setCurrentIndex(idx)
         self._status_lbl.setText("")
 
     def _refresh_ports(self):
@@ -1624,25 +1664,28 @@ class DmxOutputDialog(QDialog):
                 self._status_lbl.setText("Sélectionnez un port COM")
                 return
 
-            # Si le port est déjà ouvert sur ce COM, ne pas reconnecter
-            _ser = getattr(self._dmx, '_serial', None)
+            proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
+            is_pro = (proto == TRANSPORT_ENTTEC_PRO)
+
+            # Si le port est déjà ouvert sur ce COM avec le même protocole, ne pas reconnecter
+            _ser = getattr(self._dmx, '_pro_serial' if is_pro else '_serial', None)
             already_open = (
                 _ser and _ser.is_open
                 and getattr(self._dmx, 'com_port', None) == com
-                and getattr(self._dmx, 'transport', None) == TRANSPORT_ENTTEC
+                and getattr(self._dmx, 'transport', None) == proto
             )
             if already_open:
-                self._dmx.transport    = TRANSPORT_ENTTEC
+                self._dmx.transport    = proto
                 self._dmx.com_port     = com
-                self._dmx.product_id   = "enttec"
-                self._dmx.product_name = "ENTTEC Open DMX USB"
+                self._dmx.product_id   = "enttec_pro" if is_pro else "enttec"
+                self._dmx.product_name = "ENTTEC DMX USB Pro" if is_pro else "ENTTEC Open DMX USB"
                 self._dmx._save_config()
             else:
                 ok = self._dmx.connect(
-                    transport=TRANSPORT_ENTTEC,
+                    transport=proto,
                     com_port=com,
-                    product_id="enttec",
-                    product_name="ENTTEC Open DMX USB",
+                    product_id="enttec_pro" if is_pro else "enttec",
+                    product_name="ENTTEC DMX USB Pro" if is_pro else "ENTTEC Open DMX USB",
                 )
                 if not ok:
                     self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
@@ -1650,8 +1693,9 @@ class DmxOutputDialog(QDialog):
                         f"Port {com} inaccessible — fermez Chataigne ou toute autre app DMX"
                     )
                     return
+            proto_label = "Pro" if is_pro else "Open"
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
-            self._status_lbl.setText(f"Sortie USB appliquée — {com}")
+            self._status_lbl.setText(f"Sortie USB {proto_label} appliquée — {com}")
 
         self.transport_changed.emit(self._transport)
         self.accept()
