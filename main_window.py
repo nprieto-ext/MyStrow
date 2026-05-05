@@ -84,7 +84,7 @@ from plan_3d import Plan3DWindow
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
-from updater import UpdateBar, UpdateChecker, download_update, AboutDialog
+from updater import UpdateBar, UpdateChecker, download_update, AboutDialog, GearDialog
 from license_manager import LicenseState, LicenseResult, verify_license
 from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog, LoginSuccessDialog
 
@@ -1284,7 +1284,7 @@ class MainWindow(QMainWindow):
         self.dmx_send_timer = QTimer()
         self.dmx_send_timer.timeout.connect(self.send_dmx_update)
         self.dmx_send_timer.timeout.connect(self._update_status_corner)
-        self.dmx_send_timer.start(40)  # 25 FPS
+        self.dmx_send_timer.start(25)  # 40 FPS — meilleure compatibilité modules sans fil
 
         # Timer pour drainer les events venant de la tablette (50 ms)
         self._tablet_event_timer = QTimer()
@@ -1560,6 +1560,7 @@ class MainWindow(QMainWindow):
 
         about_menu = bar.addMenu(tr("menu_about"))
         about_menu.addAction(tr("menu_about_updates"), self.show_about)
+        about_menu.addAction("🎹  Matériel recommandé", self.show_gear)
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_license"), self._open_activation_dialog)
         about_menu.addSeparator()
@@ -2726,9 +2727,34 @@ class MainWindow(QMainWindow):
                         int(color.green() * brightness),
                         int(color.blue() * brightness)
                     )
+                    self._update_color_wheel(p, color)
 
         # Envoi DMX immediat sans attendre le prochain tick
         self.send_dmx_update()
+
+    def _update_color_wheel(self, p, color: QColor) -> None:
+        """Met à jour p.color_wheel pour les lyres avec roue de couleurs."""
+        profile = getattr(p, 'dmx_profile', [])
+        if 'ColorWheel' not in profile or 'R' in profile:
+            return
+        slots = getattr(p, 'color_wheel_slots', [])
+        if slots:
+            def _dist(s):
+                sc = QColor(s.get('color', '#ffffff'))
+                dr = sc.red()   - color.red()
+                dg = sc.green() - color.green()
+                db = sc.blue()  - color.blue()
+                return dr*dr + dg*dg + db*db
+            p.color_wheel = min(slots, key=_dist).get('dmx', 0)
+        else:
+            h = color.hsvHue()
+            if h < 0:                p.color_wheel = 0
+            elif h < 30 or h >= 330: p.color_wheel = 21
+            elif h < 75:             p.color_wheel = 85
+            elif h < 150:            p.color_wheel = 42
+            elif h < 195:            p.color_wheel = 106
+            elif h < 270:            p.color_wheel = 64
+            else:                    p.color_wheel = 128
 
     def activate_pad_dual(self, btn, col_idx):
         """Active un pad bicolore"""
@@ -3332,6 +3358,7 @@ class MainWindow(QMainWindow):
                 int(base_color.green() * level / 100.0),
                 int(base_color.blue()  * level / 100.0)
             )
+            self._update_color_wheel(p, base_color)
 
         # Déclencher/arrêter l'effet du cue courant
         # Fallback : si le cue n'a pas d'effet propre, lire l'effet posé sur la mémoire globale
@@ -8228,6 +8255,10 @@ class MainWindow(QMainWindow):
     def show_about(self):
         """Ouvre le dialogue A propos / mises à jour"""
         AboutDialog(self).exec()
+
+    def show_gear(self):
+        """Ouvre la fenêtre Matériel recommandé"""
+        GearDialog(self).exec()
 
     def _show_tutorials_dialog(self):
         from tutorials_dialog import TutorialsDialog

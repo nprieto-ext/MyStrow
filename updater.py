@@ -38,7 +38,7 @@ def _make_ssl_context():
     try:
         import certifi
         return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
+    except Exception:
         pass
     try:
         return ssl.create_default_context()
@@ -778,7 +778,7 @@ class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("about_title"))
-        self.setFixedSize(380, 370)
+        self.setFixedSize(460, 380)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog, QWidget {
@@ -869,7 +869,7 @@ class AboutDialog(QDialog):
         """)
         self.btn_recheck.clicked.connect(self._start_check)
         lay.addWidget(self.btn_recheck, alignment=Qt.AlignCenter)
-        lay.addStretch()
+        lay.addSpacing(18)
 
         # Boutons bas
         btns_lay = QHBoxLayout()
@@ -952,6 +952,153 @@ class AboutDialog(QDialog):
         sig_url  = self._sig_url
         self.accept()
         QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url, sig_url))
+
+
+# ============================================================
+# GEAR DIALOG — Matériel recommandé
+# ============================================================
+_GEAR = [
+    (
+        "🎹",
+        "AKAI APC mini mk2",
+        "Le contrôleur natif MyStrow.\nGrille 8×8 LED, 9 faders, plug & play.",
+        "https://amzn.to/3PhCmBO",
+        "#E2CE16", "#141100",
+    ),
+    (
+        "📡",
+        "Node ArtNet DMX",
+        "Interface réseau RJ45 → DMX512.\nIdéal clubs et installations fixes.",
+        "https://amzn.to/4tQKRCM",
+        "#00d4ff", "#001418",
+    ),
+    (
+        "🔌",
+        "Interface USB/DMX",
+        "Branchement direct USB → DMX512.\nParfait pour débuter ou en itinérant.",
+        "https://amzn.to/4n7cDbH",
+        "#a064ff", "#0e0018",
+    ),
+]
+
+
+class GearDialog(QDialog):
+    """Fenêtre dédiée au matériel recommandé avec liens affiliés Amazon."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Matériel recommandé")
+        self.setFixedSize(520, 460)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog, QWidget { background: #141414; color: #cccccc;
+                               font-family: 'Segoe UI', sans-serif; }
+            QLabel  { border: none; background: transparent; }
+        """)
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 24, 28, 20)
+        lay.setSpacing(0)
+
+        # Titre
+        title = QLabel("Matériel recommandé")
+        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setStyleSheet("color: #E2CE16;")
+        title.setAlignment(Qt.AlignCenter)
+        lay.addWidget(title)
+
+        sub = QLabel("2 produits suffisent pour piloter une scène entière avec MyStrow.")
+        sub.setFont(QFont("Segoe UI", 9))
+        sub.setStyleSheet("color: #555;")
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+        lay.addSpacing(22)
+
+        # Cards produits
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(12)
+
+        for emoji, name, desc, url, color, bg in _GEAR:
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background: {bg}; border: 1px solid {color}55;"
+                f" border-radius: 10px; }}"
+            )
+            card_lay = QVBoxLayout(card)
+            card_lay.setContentsMargins(14, 16, 14, 14)
+            card_lay.setSpacing(6)
+
+            em = QLabel(emoji)
+            em.setFont(QFont("Segoe UI", 28))
+            em.setAlignment(Qt.AlignCenter)
+            em.setStyleSheet("background: transparent; border: none;")
+            card_lay.addWidget(em)
+
+            nm = QLabel(name)
+            nm.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            nm.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+            nm.setAlignment(Qt.AlignCenter)
+            nm.setWordWrap(True)
+            card_lay.addWidget(nm)
+
+            ds = QLabel(desc)
+            ds.setFont(QFont("Segoe UI", 8))
+            ds.setStyleSheet("color: #666; background: transparent; border: none;")
+            ds.setAlignment(Qt.AlignCenter)
+            ds.setWordWrap(True)
+            card_lay.addWidget(ds)
+
+            card_lay.addStretch()
+
+            btn = QPushButton("Voir sur Amazon ↗")
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {color}; color: #000; border: none;"
+                f" border-radius: 5px; font-size: 10px; font-weight: bold; }}"
+                f"QPushButton:hover {{ background: white; }}"
+            )
+            btn.clicked.connect(lambda _, u=url: __import__('webbrowser').open(u))
+            card_lay.addWidget(btn)
+
+            cards_row.addWidget(card)
+
+        lay.addLayout(cards_row)
+        lay.addSpacing(14)
+
+        # Note interface DMX
+        note = QLabel("💡  Node ArtNet et Interface USB/DMX sont deux alternatives — une seule suffit.")
+        note.setFont(QFont("Segoe UI", 8))
+        note.setStyleSheet("color: #444;")
+        note.setAlignment(Qt.AlignCenter)
+        note.setWordWrap(True)
+        lay.addWidget(note)
+
+        lay.addSpacing(6)
+
+        # Disclaimer affilié
+        aff = QLabel("* Liens affiliés Amazon — si vous achetez via ces liens, nous percevons une petite commission sans aucun surcoût pour vous.")
+        aff.setFont(QFont("Segoe UI", 7))
+        aff.setStyleSheet("color: #333;")
+        aff.setAlignment(Qt.AlignCenter)
+        aff.setWordWrap(True)
+        lay.addWidget(aff)
+
+        lay.addStretch()
+
+        # Bouton fermer
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(32)
+        btn_close.setStyleSheet("""
+            QPushButton       { background: #222; color: #888; border: 1px solid #333;
+                                border-radius: 4px; font-size: 11px; }
+            QPushButton:hover { background: #2a2a2a; color: #ccc; }
+        """)
+        btn_close.clicked.connect(self.accept)
+        lay.addWidget(btn_close)
 
 
 # ============================================================

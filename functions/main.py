@@ -265,14 +265,12 @@ def _axonaut(method: str, path: str, payload: dict | None = None):
         return None
 
 
-def _axonaut_get_or_create_company(email: str, name: str) -> int | None:
+def _axonaut_get_or_create_company(email: str, name: str, address: dict | None = None) -> int | None:
     """Retourne l'ID Axonaut de la société, la crée si inexistante."""
-    # GET toutes les sociétés, filtre local par email (le filtre ?email= n'est pas supporté)
     result = _axonaut("GET", "/companies")
     if isinstance(result, list):
         email_lower = email.lower()
         for company in result:
-            # L'email peut être dans contacts ou dans le champ email principal
             contacts = company.get("contacts") or []
             if isinstance(contacts, list):
                 for c in contacts:
@@ -284,10 +282,21 @@ def _axonaut_get_or_create_company(email: str, name: str) -> int | None:
                 return company["id"]
 
     # Création
-    created = _axonaut("POST", "/companies", {
+    payload: dict = {
         "name":  name or email.split("@")[0],
         "email": email,
-    })
+    }
+    if address:
+        if address.get("line1"):
+            payload["address"] = address["line1"]
+        if address.get("postal_code"):
+            payload["zip"] = address["postal_code"]
+        if address.get("city"):
+            payload["city"] = address["city"]
+        if address.get("country"):
+            payload["country"] = address["country"]
+
+    created = _axonaut("POST", "/companies", payload)
     if created:
         cid = created.get("id")
         print(f"[Axonaut] Societe creee : id={cid}")
@@ -312,10 +321,10 @@ def _axonaut_create_invoice(
         "reference_date": today,
         "theme_id":       339036,   # MYSTROW
         "products": [{
-            "name":       _plan_label(plan_type),
-            "quantity":   1,
-            "unit_price": round(amount_eur, 2),
-            "tax_rate":   20,
+            "name":          _plan_label(plan_type),
+            "quantity":      1,
+            "unit_price_ht": round(amount_eur, 2),
+            "tax_rate":      20,
         }],
     })
     if result:
@@ -446,11 +455,13 @@ l'interruption de votre licence.</p>
 
 def _on_checkout_completed(session: dict) -> None:
     """Premier paiement — crée le compte et active la licence."""
-    email       = (session.get("customer_details") or {}).get("email") or session.get("customer_email", "")
+    cust_details = session.get("customer_details") or {}
+    email       = cust_details.get("email") or session.get("customer_email", "")
     customer_id = session.get("customer", "")
     sub_id      = session.get("subscription", "")
     amount_eur  = session.get("amount_total", 0) / 100.0
-    cust_name   = (session.get("customer_details") or {}).get("name") or ""
+    cust_name   = cust_details.get("name") or ""
+    cust_address = cust_details.get("address") or {}
 
     # Détermine le plan depuis l'abonnement Stripe
     plan_type = "lifetime"
@@ -484,7 +495,7 @@ def _on_checkout_completed(session: dict) -> None:
         _email_renewal(email, expiry_ts)
 
     # Axonaut
-    company_id = _axonaut_get_or_create_company(email, cust_name)
+    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address)
     _axonaut_create_invoice(company_id, plan_type, amount_eur,
                             stripe_ref=session.get("payment_intent", ""))
 
