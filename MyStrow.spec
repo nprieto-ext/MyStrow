@@ -67,7 +67,7 @@ if IS_MAC:
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
-        target_arch='universal2',  # Intel + Apple Silicon (binaire universel)
+        target_arch=None,           # natif du runner (arm64 sur macos-15, x86_64 sur macos-13)
         codesign_identity=None,
         entitlements_file=None,
         icon=[icon_file],
