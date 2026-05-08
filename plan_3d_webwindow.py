@@ -541,3 +541,7 @@ class Plan3DWebWindow(QMainWindow):
 
     def closeEvent(self, event):
         event.ignore()
+        self.hide()
+        mw = self.parent()
+        if mw and hasattr(mw, 'plan_de_feu') and hasattr(mw.plan_de_feu, 'btn_3d'):
+            mw.plan_de_feu.btn_3d.setChecked(False)
