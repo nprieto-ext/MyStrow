@@ -61,7 +61,7 @@ jobs:
           Remove-Item _fetch_fixtures.py
 
       - name: Build EXE
-        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=serial --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py --name MyStrow
+        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=serial --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py --name MyStrow
 
       - name: Generate SHA256 and .sig
         shell: pwsh
