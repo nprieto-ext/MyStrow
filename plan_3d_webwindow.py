@@ -15,7 +15,7 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 
 TRUSS_Y   = 7.0
-_HTML     = Path(__file__).parent / 'plan_3d_web.html'
+_HTML     = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'plan_3d_web.html'
 
 _SCENE_PRESETS = {
     'live': {

@@ -12,7 +12,7 @@ def _get_version():
     except Exception:
         return '0.0.0'
 
-datas = [('logo.png', '.'), ('mystrow.ico', '.')]
+datas = [('logo.png', '.'), ('mystrow.ico', '.'), ('plan_3d_web.html', '.')]
 if os.path.exists('fixtures_bundle_custom.json.gz'):
     datas += [('fixtures_bundle_custom.json.gz', '.')]
 if os.path.exists('fixtures_qlcplus.json'):

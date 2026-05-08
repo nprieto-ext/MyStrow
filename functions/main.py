@@ -1109,8 +1109,9 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
 # ===========================================================================
 
 _DOWNLOAD_URLS = {
-    "win": "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Setup.exe",
-    "mac": "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Installer.dmg",
+    "win":       "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Setup.exe",
+    "mac":       "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_arm64.dmg",
+    "mac_intel": "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_intel.dmg",
 }
 
 _DL_CORS = {"Access-Control-Allow-Origin": "*"}
