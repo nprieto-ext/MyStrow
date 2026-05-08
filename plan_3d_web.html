@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Plan de feu 3D</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#05050f; overflow:hidden; user-select:none; }
+canvas { display:block; }
+
+/* ── Panneau latéral droit ───────────────────────────────────────────── */
+#panel {
+  position:fixed; top:0; right:0; bottom:0;
+  width:130px;
+  background: rgba(8,8,20,0.92);
+  border-left: 1px solid #1a1a3a;
+  display:flex; flex-direction:column; gap:0;
+  z-index:10;
+  backdrop-filter: blur(8px);
+}
+.section {
+  padding:8px 8px 6px;
+  border-bottom: 1px solid #151528;
+}
+.section-title {
+  color:#33335a; font-size:8px; font-weight:600;
+  letter-spacing:1.5px; text-transform:uppercase;
+  font-family:'Segoe UI',sans-serif;
+  margin-bottom:6px;
+}
+.btn {
+  display:block; width:100%; margin-bottom:4px;
+  background: rgba(18,18,40,0.9);
+  border: 1px solid #222244;
+  color:#666688;
+  padding:5px 0;
+  border-radius:4px;
+  cursor:pointer;
+  font-size:10px; letter-spacing:0.5px;
+  font-family:'Segoe UI',sans-serif;
+  text-align:center;
+  transition: all 0.12s;
+}
+.btn:hover { background:rgba(30,30,70,0.95); color:#aaaace; border-color:#333366; }
+.btn.on  {
+  background:rgba(0,55,100,0.85);
+  color:#00d4ff; border-color:#005588;
+  box-shadow: 0 0 6px rgba(0,180,255,0.18);
+}
+.slider-row { margin-bottom:5px; }
+.slider-row label {
+  display:block; color:#333355; font-size:8px;
+  font-family:'Segoe UI',sans-serif; margin-bottom:2px;
+  letter-spacing:0.5px;
+}
+.slider-row input[type=range] {
+  width:100%; height:3px; accent-color:#0077bb; cursor:pointer;
+}
+.spacer { flex:1; }
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+#footer {
+  position:fixed; bottom:5px; left:8px;
+  color:#1e1e3a; font-size:9px;
+  font-family:'Segoe UI',sans-serif; letter-spacing:0.3px;
+  pointer-events:none;
+}
+#loading {
+  position:fixed; top:50%; left:45%; transform:translate(-50%,-50%);
+  color:#333355; font-family:'Segoe UI',sans-serif; font-size:12px;
+  letter-spacing:1px;
+}
+</style>
+</head>
+<body>
+
+<div id="loading">Chargement Three.js…</div>
+
+<div id="panel">
+  <div class="section">
+    <div class="section-title">Caméra</div>
+    <button class="btn on"  id="b-iso"   onclick="setCam('iso')">ISO</button>
+    <button class="btn"     id="b-front" onclick="setCam('front')">FACE</button>
+    <button class="btn"     id="b-top"   onclick="setCam('top')">DESSUS</button>
+    <button class="btn"     id="b-side"  onclick="setCam('side')">CÔTÉ</button>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Affichage</div>
+    <button class="btn on"  id="b-bloom"    onclick="toggleFlag('bloom')">BLOOM</button>
+    <button class="btn on"  id="b-fixtures" onclick="toggleFlag('fixtures')">FIXTURES</button>
+    <button class="btn on"  id="b-trusses"  onclick="toggleFlag('trusses')">TRUSS</button>
+    <button class="btn on"  id="b-floor"    onclick="toggleFlag('floor')">SOL</button>
+    <button class="btn on"  id="b-grid"     onclick="toggleFlag('grid')">GRILLE</button>
+    <button class="btn on"  id="b-fog"      onclick="toggleFlag('fog')">BRUME</button>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Réglages</div>
+    <div class="slider-row">
+      <label>Bloom</label>
+      <input type="range" id="sl-bloom" min="0" max="40" value="18"
+             oninput="if(window.bloomPass) window.bloomPass.strength=this.value/10">
+    </div>
+    <div class="slider-row">
+      <label>Rayon bloom</label>
+      <input type="range" id="sl-bradius" min="0" max="10" value="4"
+             oninput="if(window.bloomPass) window.bloomPass.radius=this.value/10">
+    </div>
+    <div class="slider-row">
+      <label>Ambiance</label>
+      <input type="range" id="sl-amb" min="0" max="200" value="5"
+             oninput="if(window.ambLight) window.ambLight.intensity=this.value/100">
+    </div>
+    <div class="slider-row">
+      <label>Faisceaux</label>
+      <input type="range" id="sl-beam" min="5" max="30" value="14"
+             oninput="window.beamScale=this.value/10">
+    </div>
+    <div class="slider-row">
+      <label>Exposition</label>
+      <input type="range" id="sl-exp" min="5" max="30" value="12"
+             oninput="if(window.renderer) window.renderer.toneMappingExposure=this.value/10">
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+  <div class="section" style="border-top:1px solid #151528; border-bottom:none;">
+    <div class="section-title" style="margin-bottom:0; line-height:1.6;">
+      Three.js WebGL<br>
+      <span style="color:#222240;">MyStrow 3D</span>
+    </div>
+  </div>
+</div>
+
+<div id="footer">drag: orbite · scroll: zoom · double-clic: reset</div>
+
+<!-- Three.js via CDN avec import maps (Chromium / QWebEngineView) -->
+<script type="importmap">
+{
+  "imports": {
+    "three":          "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }    from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+
+document.getElementById('loading').remove();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Renderer
+// ─────────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth - 130, window.innerHeight);
+renderer.toneMapping       = THREE.ReinhardToneMapping;
+renderer.toneMappingExposure = 1.2;
+renderer.outputColorSpace  = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+window.renderer = renderer;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene + Camera
+// ─────────────────────────────────────────────────────────────────────────────
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x05050f);
+const fog = new THREE.FogExp2(0x05050f, 0.022);
+scene.fog = fog;
+
+const W = () => window.innerWidth - 130;
+const H = () => window.innerHeight;
+const camera = new THREE.PerspectiveCamera(52, W()/H(), 0.2, 300);
+camera.position.set(14, 11, 20);
+camera.lookAt(0, 3, 0);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Controls
+// ─────────────────────────────────────────────────────────────────────────────
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 3, 0);
+controls.enableDamping  = true;
+controls.dampingFactor  = 0.055;
+controls.minDistance    = 3;
+controls.maxDistance    = 70;
+controls.maxPolarAngle  = Math.PI * 0.89;
+controls.update();
+
+renderer.domElement.addEventListener('dblclick', () => {
+  camera.position.set(14, 11, 20);
+  controls.target.set(0, 3, 0);
+  controls.update();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Post-processing — Bloom
+// ─────────────────────────────────────────────────────────────────────────────
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+window.bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(W(), H()),
+  1.8,   // strength
+  0.4,   // radius
+  0.10   // threshold — très bas pour capter même les lumières faibles
+);
+composer.addPass(window.bloomPass);
+composer.addPass(new OutputPass());
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lumières de scène
+// ─────────────────────────────────────────────────────────────────────────────
+window.ambLight = new THREE.AmbientLight(0xffffff, 0.05);
+scene.add(window.ambLight);
+
+const hemi = new THREE.HemisphereLight(0x080820, 0x000000, 0.06);
+scene.add(hemi);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Géométrie de scène
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Sol — parquet sombre
+const floorMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(18, 10),
+  new THREE.MeshStandardMaterial({ color:0x16090404, roughness:0.92, metalness:0.05 })
+);
+floorMesh.rotation.x = -Math.PI / 2;
+floorMesh.receiveShadow = false;
+scene.add(floorMesh);
+
+// Grille de scène
+const gridHelper = new THREE.GridHelper(18, 18, 0x0e0a06, 0x0b0806);
+gridHelper.position.y = 0.005;
+scene.add(gridHelper);
+
+// Cyclorama (fond de scène)
+const cycMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 11),
+  new THREE.MeshStandardMaterial({ color:0x060412, roughness:1.0, side:THREE.FrontSide })
+);
+cycMesh.position.set(0, 5.5, -5.6);
+scene.add(cycMesh);
+
+// Jambes de scène (pendrilles noires côtés)
+const legMat = new THREE.MeshStandardMaterial({ color:0x030208, roughness:1.0, side:THREE.DoubleSide });
+for (const [sx, rY] of [[-9, Math.PI/2], [9, -Math.PI/2]]) {
+  for (const cz of [-3, 1]) {
+    const leg = new THREE.Mesh(new THREE.PlaneGeometry(4, 7), legMat);
+    leg.rotation.y = rY;
+    leg.position.set(sx, 3.5, cz);
+    scene.add(leg);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Truss
+// ─────────────────────────────────────────────────────────────────────────────
+const _trussGrp = new THREE.Group();
+scene.add(_trussGrp);
+
+const _barMat = new THREE.MeshStandardMaterial({ color:0x8898b8, roughness:0.30, metalness:0.88 });
+const _diagMat = new THREE.MeshStandardMaterial({ color:0x607090, roughness:0.45, metalness:0.75 });
+const _legMat2 = new THREE.MeshStandardMaterial({ color:0x708298, roughness:0.38, metalness:0.82 });
+
+function buildTrusses(defs) {
+  _trussGrp.clear();
+  for (const td of defs) {
+    if (!td.enabled) continue;
+    const hy = td.height ?? 7.0, tz = td.z ?? 0;
+    const xl = td.x_l ?? -9, xr = td.x_r ?? 9, len = xr - xl;
+
+    // Barre principale
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(len, 0.26, 0.34), _barMat);
+    bar.position.set((xl+xr)/2, hy, tz);
+    _trussGrp.add(bar);
+
+    // Rails supérieur/inférieur (cordons lumineux)
+    for (const [dy, col] of [[0.14, 0xc0cce8], [-0.14, 0x708098]]) {
+      const rail = new THREE.Mesh(
+        new THREE.BoxGeometry(len, 0.04, 0.04),
+        new THREE.MeshStandardMaterial({ color:col, roughness:0.25, metalness:0.9, emissive:col, emissiveIntensity:0.08 })
+      );
+      rail.position.set((xl+xr)/2, hy+dy, tz);
+      _trussGrp.add(rail);
+    }
+
+    // Entretoisement en croix (simplifié)
+    const steps = Math.round(len);
+    const dAngle = Math.atan2(0.28, len / Math.max(steps, 1));
+    for (let i = 0; i < steps; i++) {
+      const x0 = xl + i * (len/steps), x1 = xl + (i+1) * (len/steps);
+      const diagLen = Math.sqrt((x1-x0)**2 + 0.28**2);
+      for (const sign of [1, -1]) {
+        const d = new THREE.Mesh(new THREE.BoxGeometry(diagLen, 0.03, 0.03), _diagMat);
+        d.position.set((x0+x1)/2, hy + sign*0.07, tz);
+        d.rotation.z = sign * dAngle;
+        _trussGrp.add(d);
+      }
+    }
+
+    // Pieds de support
+    for (const lx of [xl, xr]) {
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.10, hy, 0.10), _legMat2);
+      foot.position.set(lx, hy/2, tz);
+      _trussGrp.add(foot);
+      // Semelle au sol
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.04, 0.30),
+        new THREE.MeshStandardMaterial({ color:0x404860, roughness:0.5, metalness:0.6 }));
+      base.position.set(lx, 0.02, tz);
+      _trussGrp.add(base);
+    }
+  }
+}
+
+buildTrusses([
+  { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9, x_r:9 },
+  { label:'Truss arrière', enabled:true, height:7.0, z:4.0,  x_l:-9, x_r:9 },
+]);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shaders — faisceau conique volumétrique
+// ─────────────────────────────────────────────────────────────────────────────
+const BEAM_VERT = `
+  varying float vT;
+  void main() {
+    vT = uv.y;   // 0 = base (sol), 1 = tip (fixture)
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const BEAM_FRAG = `
+  uniform vec3  uColor;
+  uniform float uAlpha;
+  varying float vT;
+  void main() {
+    // Dégradé quadratique : plus lumineux près de la source (tip)
+    float fade = vT * vT * (3.0 - 2.0*vT);  // smoothstep
+    gl_FragColor = vec4(uColor, uAlpha * fade);
+  }
+`;
+
+function makeBeamMat(alpha) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(1,1,1) },
+      uAlpha: { value: alpha },
+    },
+    vertexShader:   BEAM_VERT,
+    fragmentShader: BEAM_FRAG,
+    transparent:    true,
+    depthWrite:     false,
+    blending:       THREE.AdditiveBlending,
+    side:           THREE.DoubleSide,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shader — tache au sol
+// ─────────────────────────────────────────────────────────────────────────────
+const POOL_VERT = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const POOL_FRAG = `
+  uniform vec3  uColor;
+  uniform float uAlpha;
+  varying vec2  vUv;
+  void main() {
+    float d = length(vUv - vec2(0.5));
+    if (d > 0.5) discard;
+    float soft  = 1.0 - smoothstep(0.12, 0.50, d);
+    float hot   = 1.0 - smoothstep(0.0,  0.14, d);
+    float alpha = uAlpha * (soft + hot * 0.8);
+    gl_FragColor = vec4(uColor + hot*0.25, clamp(alpha, 0.0, 1.0));
+  }
+`;
+
+function makePoolMat() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(1,1,1) },
+      uAlpha: { value: 0.5 },
+    },
+    vertexShader:   POOL_VERT,
+    fragmentShader: POOL_FRAG,
+    transparent:    true,
+    depthWrite:     false,
+    blending:       THREE.AdditiveBlending,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Géométries template (unit — scalées à la volée)
+// ─────────────────────────────────────────────────────────────────────────────
+const GEO_UNIT_CONE_24 = new THREE.CylinderGeometry(0, 1, 1, 24, 1, true);
+const GEO_UNIT_CONE_16 = new THREE.CylinderGeometry(0, 1, 1, 16, 1, true);
+const GEO_UNIT_CONE_10 = new THREE.CylinderGeometry(0, 1, 1, 10, 1, true);
+const GEO_UNIT_CIRCLE  = new THREE.CircleGeometry(1, 36);
+const GEO_BODY_PAR     = new THREE.CylinderGeometry(0.16, 0.20, 0.44, 16);
+const GEO_BODY_MH      = new THREE.CylinderGeometry(0.14, 0.17, 0.38, 16);
+const GEO_LENS_PAR     = new THREE.CircleGeometry(0.13, 20);
+const GEO_LENS_MH      = new THREE.CircleGeometry(0.10, 20);
+const GEO_BAR_MH       = new THREE.BoxGeometry(0.80, 0.10, 0.14);  // mounting bar lyre
+
+const MAT_BODY = new THREE.MeshStandardMaterial({ color:0x3a3a5a, roughness:0.28, metalness:0.72 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pool de fixtures
+// ─────────────────────────────────────────────────────────────────────────────
+const _fixtureGrp = new THREE.Group();
+const _beamGrp    = new THREE.Group();
+const _poolGrp    = new THREE.Group();
+const _lightGrp   = new THREE.Group();
+scene.add(_fixtureGrp, _beamGrp, _poolGrp, _lightGrp);
+
+// Couleurs groupe (même mapping que QPainter)
+const GROUP_COLOR = {
+  face:'#ff8844', contre:'#4488ff', douche1:'#44cc88',
+  douche2:'#ffcc44', douche3:'#ff4488', lat:'#aa55ff',
+  lyre:'#ee44bb', barre:'#44aaff',
+};
+
+let _objs = [];   // un objet par projecteur
+window.beamScale = 1.4;
+
+function _getObj(i) {
+  if (i < _objs.length) return _objs[i];
+
+  // Outer haze cone
+  const cHaze = new THREE.Mesh(GEO_UNIT_CONE_10, makeBeamMat(0.04));
+  cHaze.renderOrder = 0; _beamGrp.add(cHaze);
+
+  // Mid glow cone
+  const cGlow = new THREE.Mesh(GEO_UNIT_CONE_16, makeBeamMat(0.10));
+  cGlow.renderOrder = 1; _beamGrp.add(cGlow);
+
+  // Main beam cone
+  const cMain = new THREE.Mesh(GEO_UNIT_CONE_24, makeBeamMat(0.28));
+  cMain.renderOrder = 2; _beamGrp.add(cMain);
+
+  // Core (cœur très fin et brillant)
+  const cCore = new THREE.Mesh(GEO_UNIT_CONE_10, makeBeamMat(0.65));
+  cCore.renderOrder = 3; _beamGrp.add(cCore);
+
+  // Tache au sol
+  const pool = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
+  pool.rotation.x = -Math.PI/2;
+  pool.renderOrder = 0; _poolGrp.add(pool);
+
+  // Halo au sol (large et très doux)
+  const halo = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
+  halo.rotation.x = -Math.PI/2;
+  halo.renderOrder = 0; _poolGrp.add(halo);
+
+  // Corps de fixture
+  const isMH = false;  // mis à jour à chaque refresh
+  const body = new THREE.Mesh(GEO_BODY_PAR, MAT_BODY.clone());
+  _fixtureGrp.add(body);
+
+  // Lentille
+  const lensMat = new THREE.MeshStandardMaterial({
+    color:0x080816, emissive:new THREE.Color(0,0,0),
+    emissiveIntensity:0, roughness:0.04, metalness:0.1,
+  });
+  const lens = new THREE.Mesh(GEO_LENS_PAR, lensMat);
+  _fixtureGrp.add(lens);
+
+  // Collier de fixation
+  const clamp = new THREE.Mesh(
+    new THREE.TorusGeometry(0.12, 0.025, 6, 14),
+    new THREE.MeshStandardMaterial({ color:0x505078, roughness:0.4, metalness:0.7 })
+  );
+  _fixtureGrp.add(clamp);
+
+  // Point light au sol (éclaire le sol et les silhouettes)
+  const ptLight = new THREE.PointLight(0xffffff, 0, 14, 1.8);
+  _lightGrp.add(ptLight);
+
+  const obj = { cHaze, cGlow, cMain, cCore, pool, halo, body, lens, clamp, ptLight };
+  _objs.push(obj);
+  return obj;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Calcul direction faisceau (miroir exact du code Python)
+// ─────────────────────────────────────────────────────────────────────────────
+function beamFloor(p) {
+  const hy  = p.fixture_height ?? 7.0;
+  const isMH = p.fixture_type === 'Moving Head';
+  if (isMH) {
+    const panA  = (p.pan  - 32768) / 32768.0 * Math.PI;
+    const theta = (p.tilt - 32768) / 32768.0 * Math.PI * 0.75;
+    const bx = Math.sin(panA) * Math.sin(theta);
+    const by = -Math.cos(theta);
+    const bz = Math.cos(panA) * Math.sin(theta);
+    const lensY = hy - 0.72;
+    const t = Math.abs(by) > 0.05 ? Math.min(lensY / (-by), 10.0) : 10.0;
+    return {
+      fx: Math.max(-11, Math.min(11, p.x + bx*t)),
+      fz: Math.max(-8,  Math.min(13, p.z + bz*t)),
+      lensY, bx, by, bz, isMH,
+    };
+  } else {
+    const lensY = hy - 0.25;
+    const fx = Math.max(-11, Math.min(11, p.x + (p.pan  - 32768)/32768.0 * 4.0));
+    const fz = Math.max(-8,  Math.min(13, p.z + (p.tilt - 32768)/32768.0 * 3.0));
+    return { fx, fz, lensY, bx:fx-p.x, by:-lensY, bz:fz-p.z, isMH };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Positionner / orienter un cône unit entre deux points
+// ─────────────────────────────────────────────────────────────────────────────
+const _vUp  = new THREE.Vector3(0, 1, 0);
+const _vDir = new THREE.Vector3();
+const _qTmp = new THREE.Quaternion();
+
+function orientCone(mesh, tipX, tipY, tipZ, baseX, baseY, baseZ, rScale) {
+  const dx = baseX - tipX, dy = baseY - tipY, dz = baseZ - tipZ;
+  const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if (len < 0.05) { mesh.visible = false; return; }
+  // direction de la base vers le tip (= haut local du cylindre)
+  _vDir.set(-dx/len, -dy/len, -dz/len);
+  _qTmp.setFromUnitVectors(_vUp, _vDir);
+  mesh.position.set((tipX+baseX)/2, (tipY+baseY)/2, (tipZ+baseZ)/2);
+  mesh.quaternion.copy(_qTmp);
+  mesh.scale.set(rScale, len, rScale);
+  mesh.visible = true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// updateScene — appelé depuis Python via runJavaScript
+// ─────────────────────────────────────────────────────────────────────────────
+window.updateScene = function(projectors) {
+  const bs = window.beamScale;
+
+  for (let i = 0; i < projectors.length; i++) {
+    const p   = projectors[i];
+    const obj = _getObj(i);
+    const lvl = Math.max(0, Math.min(1, p.level / 100.0));
+    const r = p.r/255, g = p.g/255, b = p.b/255;
+    const col = new THREE.Color(r, g, b);
+    const hy  = p.fixture_height ?? 7.0;
+    const bf  = beamFloor(p);
+    const { fx, fz, lensY, isMH } = bf;
+
+    // ── Corps de fixture ─────────────────────────────────────────────
+    const gcHex = GROUP_COLOR[p.group] ?? '#5577aa';
+    obj.body.material.color.set(gcHex);
+    obj.body.material.roughness  = 0.30;
+    obj.body.material.metalness  = 0.72;
+    obj.body.position.set(p.x, hy - (isMH ? 0.35 : 0.27), p.z);
+    obj.body.visible = _flags.fixtures;
+
+    // Lentille : pointe vers le sol (direction faisceau)
+    obj.lens.position.set(p.x, lensY, p.z);
+    if (isMH) {
+      obj.lens.lookAt(p.x + bf.bx, lensY + bf.by, p.z + bf.bz);
+    } else {
+      obj.lens.rotation.x = -Math.PI / 2;
+    }
+    if (lvl > 0) {
+      const bright = col.clone().multiplyScalar(1.0 + lvl * 1.5);
+      obj.lens.material.emissive.copy(bright);
+      obj.lens.material.emissiveIntensity = 0.8 + lvl * 3.5;
+    } else {
+      obj.lens.material.emissive.set(0, 0, 0);
+      obj.lens.material.emissiveIntensity = 0;
+    }
+    obj.lens.visible = _flags.fixtures;
+
+    // Collier
+    obj.clamp.position.set(p.x, hy + 0.06, p.z);
+    obj.clamp.visible = _flags.fixtures;
+
+    // ── Faisceaux ────────────────────────────────────────────────────
+    if (lvl > 0.03) {
+      const base_r = (0.22 + 2.0 * lvl) * bs;
+      const fx2 = fx, fz2 = fz;
+
+      // Haze extérieur (très large, très transparent)
+      orientCone(obj.cHaze, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 3.0);
+      obj.cHaze.material.uniforms.uColor.value.copy(col);
+      obj.cHaze.material.uniforms.uAlpha.value = 0.04 * lvl;
+
+      // Glow intermédiaire
+      orientCone(obj.cGlow, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 1.8);
+      obj.cGlow.material.uniforms.uColor.value.copy(col);
+      obj.cGlow.material.uniforms.uAlpha.value = 0.11 * lvl;
+
+      // Faisceau principal
+      orientCone(obj.cMain, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 1.0);
+      obj.cMain.material.uniforms.uColor.value.copy(col);
+      obj.cMain.material.uniforms.uAlpha.value = 0.32 * lvl;
+
+      // Cœur brillant (très fin)
+      orientCone(obj.cCore, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 0.28);
+      obj.cCore.material.uniforms.uColor.value.copy(col);
+      obj.cCore.material.uniforms.uAlpha.value = 0.80 * lvl;
+
+      // Tache principale au sol
+      const poolR = (0.35 + 2.2*lvl) * bs;
+      obj.pool.position.set(fx2, 0.02, fz2);
+      obj.pool.scale.setScalar(poolR);
+      obj.pool.material.uniforms.uColor.value.copy(col);
+      obj.pool.material.uniforms.uAlpha.value = 0.70 * lvl;
+      obj.pool.visible = true;
+
+      // Halo diffus au sol (plus large)
+      obj.halo.position.set(fx2, 0.015, fz2);
+      obj.halo.scale.setScalar(poolR * 2.8);
+      obj.halo.material.uniforms.uColor.value.copy(col);
+      obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl;
+      obj.halo.visible = true;
+
+      // Point light (éclairage physique de la scène)
+      obj.ptLight.color.copy(col);
+      obj.ptLight.intensity = lvl * 4.5;
+      obj.ptLight.position.set(fx2, 0.4, fz2);
+      obj.ptLight.visible = true;
+
+    } else {
+      obj.cHaze.visible = obj.cGlow.visible =
+      obj.cMain.visible = obj.cCore.visible = false;
+      obj.pool.visible  = obj.halo.visible  = false;
+      obj.ptLight.visible = false;
+    }
+  }
+
+  // Masquer les slots inutilisés
+  for (let i = projectors.length; i < _objs.length; i++) {
+    const o = _objs[i];
+    o.cHaze.visible = o.cGlow.visible = o.cMain.visible = o.cCore.visible =
+    o.pool.visible  = o.halo.visible  = o.body.visible  =
+    o.lens.visible  = o.clamp.visible = o.ptLight.visible = false;
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Configuration truss depuis Python
+// ─────────────────────────────────────────────────────────────────────────────
+window.setTrusses = function(defs) {
+  buildTrusses(defs);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Presets caméra
+// ─────────────────────────────────────────────────────────────────────────────
+const CAM_PRESETS = {
+  iso:   { pos:[14,11,20], tgt:[0,3,0] },
+  front: { pos:[0,5,24],   tgt:[0,4,0] },
+  top:   { pos:[0,30,0.1], tgt:[0,0,0] },
+  side:  { pos:[24,7,0],   tgt:[0,4,0] },
+};
+const CAM_BTNS = { iso:'b-iso', front:'b-front', top:'b-top', side:'b-side' };
+
+window.setCam = function(name) {
+  const p = CAM_PRESETS[name]; if (!p) return;
+  camera.position.set(...p.pos);
+  controls.target.set(...p.tgt);
+  controls.update();
+  Object.keys(CAM_BTNS).forEach(k =>
+    document.getElementById(CAM_BTNS[k]).classList.toggle('on', k===name));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flags d'affichage
+// ─────────────────────────────────────────────────────────────────────────────
+const _flags = { bloom:true, fixtures:true, trusses:true, floor:true, grid:true, fog:true };
+
+window.toggleFlag = function(what) {
+  _flags[what] = !_flags[what];
+  document.getElementById('b-'+what).classList.toggle('on', _flags[what]);
+
+  if (what === 'bloom')    { /* handled in animate */ }
+  if (what === 'fixtures') { _fixtureGrp.visible = _flags.fixtures; }
+  if (what === 'trusses')  { _trussGrp.visible   = _flags.trusses;  }
+  if (what === 'floor')    { floorMesh.visible    = _flags.floor;    }
+  if (what === 'grid')     { gridHelper.visible   = _flags.grid;     }
+  if (what === 'fog')      { scene.fog = _flags.fog ? fog : null;    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resize
+// ─────────────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = W() / H();
+  camera.updateProjectionMatrix();
+  renderer.setSize(W(), H());
+  composer.setSize(W(), H());
+  bloomPass.resolution.set(W(), H());
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boucle de rendu
+// ─────────────────────────────────────────────────────────────────────────────
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  if (_flags.bloom) {
+    composer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
+})();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Props de scène
+// ─────────────────────────────────────────────────────────────────────────────
+const _propsGrp = new THREE.Group();
+scene.add(_propsGrp);
+
+const _SILO_MAT = new THREE.MeshStandardMaterial({ color:0x0d0d1a, roughness:0.95, metalness:0.0 });
+
+function _makePersonSilhouette(x, z, hScale = 1.0) {
+  const g = new THREE.Group();
+  const h = 1.75 * hScale;
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.20, h * 0.55, 4, 8), _SILO_MAT);
+  body.position.set(0, h * 0.55, 0);
+  g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17 * hScale, 10, 7), _SILO_MAT);
+  head.position.set(0, h * 1.02, 0);
+  g.add(head);
+  g.position.set(x, 0, z);
+  return g;
+}
+
+function _makeDJBooth(x, z) {
+  const g = new THREE.Group();
+  const matBody = new THREE.MeshStandardMaterial({ color:0x1a1a2e, roughness:0.6, metalness:0.3 });
+  const matTop  = new THREE.MeshStandardMaterial({ color:0x2a2a3e, roughness:0.3, metalness:0.6 });
+  const matCDJ  = new THREE.MeshStandardMaterial({ color:0x0a0a14, roughness:0.2, metalness:0.85 });
+  const facade  = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.85, 0.55), matBody);
+  facade.position.set(0, 0.42, 0); g.add(facade);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.06, 0.55), matTop);
+  top.position.set(0, 0.88, 0); g.add(top);
+  for (const dx of [-0.60, 0.60]) {
+    const cdj = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.05, 20), matCDJ);
+    cdj.position.set(dx, 0.93, 0); g.add(cdj);
+    const platter = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.14, 0.14, 0.01, 20),
+      new THREE.MeshStandardMaterial({ color:0x222233, emissive:0x001133, emissiveIntensity:0.5, roughness:0.1 })
+    );
+    platter.position.set(dx, 0.96, 0); g.add(platter);
+  }
+  const mixer = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, 0.45), matCDJ);
+  mixer.position.set(0, 0.94, 0); g.add(mixer);
+  for (const [dx, col] of [[-0.15, 0x00ff88], [0, 0xff2200], [0.15, 0x0088ff]]) {
+    const led = new THREE.Mesh(
+      new THREE.BoxGeometry(0.06, 0.01, 0.02),
+      new THREE.MeshStandardMaterial({ emissive:col, emissiveIntensity:1.5, color:col })
+    );
+    led.position.set(dx, 0.985, -0.05); g.add(led);
+  }
+  g.position.set(x, 0, z);
+  return g;
+}
+
+function _makeBackline() {
+  const g = new THREE.Group();
+  const matAmp = new THREE.MeshStandardMaterial({ color:0x111111, roughness:0.9, metalness:0.1 });
+  for (const [x, w, h] of [[-5.0, 0.8, 1.30], [-5.8, 0.8, 0.70], [5.0, 0.8, 1.30], [5.8, 0.8, 0.70]]) {
+    const amp = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.5), matAmp);
+    amp.position.set(x, h / 2, 2.5); g.add(amp);
+  }
+  return g;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Presets de scène
+// ─────────────────────────────────────────────────────────────────────────────
+const SCENE_PRESETS = {
+  live: {
+    trusses: [
+      { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9.0, x_r:9.0 },
+      { label:'Truss arrière', enabled:true, height:7.0, z: 4.0, x_l:-9.0, x_r:9.0 },
+    ],
+    buildProps() {
+      for (const [x, z] of [[-2.5, 0], [0, -0.5], [2.5, 0]])
+        _propsGrp.add(_makePersonSilhouette(x, z));
+    }
+  },
+  dj: {
+    trusses: [
+      { label:'Truss avant', enabled:true, height:6.0, z:-3.5, x_l:-7.0, x_r:7.0 },
+      { label:'Overhead',    enabled:true, height:5.0, z: 0.0, x_l:-4.0, x_r:4.0 },
+    ],
+    buildProps() {
+      _propsGrp.add(_makeDJBooth(0, -1.2));
+      _propsGrp.add(_makePersonSilhouette(0, -0.2));
+    }
+  },
+  concert: {
+    trusses: [
+      { label:'Truss avant',   enabled:true, height:8.0, z:-4.5, x_l:-10.0, x_r:10.0 },
+      { label:'Truss milieu',  enabled:true, height:7.5, z: 0.0, x_l: -9.0, x_r: 9.0 },
+      { label:'Truss arrière', enabled:true, height:7.0, z: 5.0, x_l: -9.0, x_r: 9.0 },
+    ],
+    buildProps() {
+      for (const [x, z] of [[-3.5, 0], [-1.5, -0.5], [0, 0.5], [1.5, -0.5], [3.5, 0]])
+        _propsGrp.add(_makePersonSilhouette(x, z));
+      _propsGrp.add(_makeBackline());
+    }
+  },
+  club: {
+    trusses: [
+      { label:'Rig central', enabled:true, height:4.5, z: 0.0, x_l:-5.0, x_r:5.0 },
+      { label:'Truss avant', enabled:true, height:4.0, z:-3.0, x_l:-7.0, x_r:7.0 },
+    ],
+    buildProps() {
+      _propsGrp.add(_makeDJBooth(0, -1.5));
+      _propsGrp.add(_makePersonSilhouette(0, -0.5));
+    }
+  },
+};
+
+window.setScenePreset = function(name) {
+  const preset = SCENE_PRESETS[name];
+  if (!preset) return;
+  _propsGrp.clear();
+  buildTrusses(preset.trusses);
+  preset.buildProps();
+  window.currentTrusses = JSON.parse(JSON.stringify(preset.trusses));
+};
+
+// ── Activer preset live par défaut ──
+window.setScenePreset('live');
+
+</script>
+</body>
+</html>

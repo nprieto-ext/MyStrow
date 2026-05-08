@@ -1105,6 +1105,28 @@ class FixtureCanvas(QWidget):
         self._pending_beam  = None       # dict {beam_idx, pos, targets} ou None
         self._pt_floater    = _PanTiltFloater(self)
 
+        self._locate_key    = None   # (group, local_idx) en cours de localisation
+        self._locate_anim_t = 0.0
+        self._locate_timer  = None
+
+    # ── Localisation (cercle pulsé) ─────────────────────────────────
+    def start_locate(self, group, local_idx):
+        """Démarre l'animation de localisation autour d'une fixture (2,5 s)."""
+        self._locate_key    = (group, local_idx)
+        self._locate_anim_t = 0.0
+        if self._locate_timer is None:
+            self._locate_timer = QTimer(self)
+            self._locate_timer.timeout.connect(self._locate_tick)
+        self._locate_timer.start(33)   # ~30 fps
+
+    def _locate_tick(self):
+        self._locate_anim_t += 33 / 2500.0   # 2,5 secondes totales
+        if self._locate_anim_t >= 1.0:
+            self._locate_timer.stop()
+            self._locate_key    = None
+            self._locate_anim_t = 0.0
+        self.update()
+
     # ── Helpers de position ─────────────────────────────────────────
 
     def _get_canvas_pos(self, i):
@@ -1259,29 +1281,63 @@ class FixtureCanvas(QWidget):
             beam_len   = int(r * 2 + tilt_ratio * r * 7)
             beam_hw    = int(r * 0.6 + tilt_ratio * r * 2.5)
 
-            # Cone de faisceau orienté
+            # Cone de faisceau orienté — gradient lumineux à la source
             if is_lit:
                 gobo_val = getattr(proj, 'gobo', 0)
                 gobo_idx = int(gobo_val // 32) if gobo_val > 0 else 0  # 0=open, 1-7=gobos
 
-                beam_col = QColor(fill_color)
-                beam_col.setAlpha(14 if gobo_idx > 0 else 22)
                 painter.save()
                 painter.translate(cx, cy)
                 painter.rotate(pan_angle)
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(beam_col))
-                cone = QPolygon([
+
+                fr, fg, fb = fill_color.red(), fill_color.green(), fill_color.blue()
+
+                # Halo extérieur (large et très doux)
+                haze_alpha = 55 if gobo_idx > 0 else 100
+                haze_grad = QLinearGradient(0, float(r), 0, float(beam_len))
+                haze_grad.setColorAt(0.0, QColor(fr, fg, fb, haze_alpha))
+                haze_grad.setColorAt(1.0, QColor(fr, fg, fb, 0))
+                painter.setBrush(QBrush(haze_grad))
+                painter.drawPolygon(QPolygon([
+                    QPoint(-beam_hw,          r),
+                    QPoint( beam_hw,          r),
+                    QPoint( int(beam_hw * 2.2), beam_len),
+                    QPoint(-int(beam_hw * 2.2), beam_len),
+                ]))
+
+                # Cône principal
+                alpha_src = 90 if gobo_idx > 0 else 195
+                beam_grad = QLinearGradient(0, float(r), 0, float(beam_len))
+                beam_grad.setColorAt(0.0, QColor(fr, fg, fb, alpha_src))
+                beam_grad.setColorAt(0.65, QColor(fr, fg, fb, alpha_src // 5))
+                beam_grad.setColorAt(1.0, QColor(fr, fg, fb, 0))
+                painter.setBrush(QBrush(beam_grad))
+                painter.drawPolygon(QPolygon([
                     QPoint(-r // 2, r),
                     QPoint( r // 2, r),
                     QPoint( beam_hw, beam_len),
                     QPoint(-beam_hw, beam_len),
-                ])
-                painter.drawPolygon(cone)
+                ]))
+
+                # Cœur brillant (fin, très lumineux près de la source)
+                cr, cg, cb = min(255, fr + 90), min(255, fg + 90), min(255, fb + 90)
+                core_hw   = max(1, r // 6)
+                core_stop = int(beam_len * 0.65)
+                core_grad = QLinearGradient(0, float(r), 0, float(core_stop))
+                core_grad.setColorAt(0.0, QColor(cr, cg, cb, 240))
+                core_grad.setColorAt(1.0, QColor(cr, cg, cb, 0))
+                painter.setBrush(QBrush(core_grad))
+                painter.drawPolygon(QPolygon([
+                    QPoint(-core_hw, r),
+                    QPoint( core_hw, r),
+                    QPoint( core_hw, core_stop),
+                    QPoint(-core_hw, core_stop),
+                ]))
 
                 # Impact au sol
                 impact_col = QColor(fill_color)
-                impact_col.setAlpha(55)
+                impact_col.setAlpha(95)
                 iw = beam_hw; ih = max(3, beam_hw // 3)
                 painter.setBrush(QBrush(impact_col))
                 painter.drawEllipse(QPoint(0, beam_len), iw, ih)
@@ -1621,6 +1677,23 @@ class FixtureCanvas(QWidget):
                 painter.setPen(QColor("#333333"))
                 painter.drawText(QRect(cx - 26, cy + 28, 52, 12), Qt.AlignCenter,
                                  f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
+
+        # ── Locate pulse (anneaux sonar) ─────────────────────────
+        if self._locate_key:
+            for i in range(len(self.pdf.projectors)):
+                g, li = self._local_idx(i)
+                if (g, li) == self._locate_key:
+                    cx, cy = self._get_canvas_pos(i)
+                    t = self._locate_anim_t
+                    for phase in (0.0, 0.33, 0.66):
+                        ring_t = (t + phase) % 1.0
+                        r = 12.0 + 40.0 * ring_t
+                        alpha = int(230 * (1.0 - ring_t))
+                        w = max(0.5, 2.5 * (1.0 - ring_t))
+                        painter.setPen(QPen(QColor(0, 212, 255, alpha), w))
+                        painter.setBrush(Qt.NoBrush)
+                        painter.drawEllipse(QPointF(cx, cy), r, r)
+                    break
 
         # ── Rubber band ───────────────────────────────────────────
         if self._rubber_rect and not self._rubber_rect.isNull():
@@ -3522,6 +3595,74 @@ class PlanDeFeu(QFrame):
             _wa(colors_w)
 
 
+        # ── Canaux avancés (Reset, Mode, Speed, Focus…) ──────────────────
+        _HANDLED_IN_MENU = {
+            "R", "G", "B", "W", "Ambre", "Orange", "UV",
+            "Dim", "Dim2", "Strobe",
+            "Pan", "PanFine", "Tilt", "TiltFine",
+            "Gobo1", "Gobo1Rot", "ColorWheel", "Shutter", "Prism", "PrismRot",
+        }
+        _seen_adv = set()
+        _adv_channels = [
+            ch for ch in (_proj_profile or [])
+            if ch not in _HANDLED_IN_MENU and ch not in _seen_adv and not _seen_adv.add(ch)
+        ]
+        if _adv_channels:
+            menu.addSeparator()
+            _adv_sec = QLabel("CANAUX AVANCÉS")
+            _adv_sec.setStyleSheet(
+                "color:#ff8844;font-size:9px;font-weight:bold;"
+                "padding:2px 10px;border:none;background:transparent;"
+            )
+            _wa(_adv_sec)
+
+            _SLI_ADV = (
+                "QSlider::groove:horizontal{background:#333;height:6px;border-radius:3px;}"
+                "QSlider::handle:horizontal{background:#ff8844;width:14px;height:14px;"
+                "margin:-4px 0;border-radius:7px;}"
+                "QSlider::sub-page:horizontal{background:#ff884455;border-radius:3px;}"
+            )
+            _cur_extras = getattr(targets[0][0], 'channel_extras', {})
+
+            def _make_adv_cb(ctype, val_lbl):
+                def _cb(v, t=targets):
+                    for p, _g, _i in t:
+                        if not hasattr(p, 'channel_extras'):
+                            p.channel_extras = {}
+                        if v == 0:
+                            p.channel_extras.pop(ctype, None)
+                        else:
+                            p.channel_extras[ctype] = v
+                    val_lbl.setText(str(v))
+                    _flush()
+                return _cb
+
+            for _ch_type in _adv_channels:
+                _cur_raw = _cur_extras.get(_ch_type, 0)
+                _adv_w = QWidget(); _adv_h = QHBoxLayout(_adv_w)
+                _adv_h.setContentsMargins(10, 4, 10, 4); _adv_h.setSpacing(8)
+
+                _adv_lbl = QLabel(_ch_type)
+                _adv_lbl.setStyleSheet(
+                    "color:#ff8844;font-size:11px;font-weight:bold;"
+                    "border:none;background:transparent;"
+                )
+                _adv_lbl.setFixedWidth(72)
+
+                _adv_sli = QSlider(Qt.Horizontal)
+                _adv_sli.setRange(0, 255); _adv_sli.setValue(_cur_raw)
+                _adv_sli.setFixedWidth(130); _adv_sli.setStyleSheet(_SLI_ADV)
+
+                _adv_val = QLabel(str(_cur_raw))
+                _adv_val.setStyleSheet(
+                    "color:#ddd;font-size:12px;font-weight:bold;min-width:30px;"
+                )
+                _adv_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                _adv_sli.valueChanged.connect(_make_adv_cb(_ch_type, _adv_val))
+                for _w in (_adv_lbl, _adv_sli, _adv_val): _adv_h.addWidget(_w)
+                _wa(_adv_w)
+
         # ── Clear sélectif ───────────────────────────────────────────────
         menu.addSeparator()
         n_sel = len(targets)
@@ -3544,6 +3685,7 @@ class PlanDeFeu(QFrame):
                 p.shutter      = 255
                 p.color_wheel  = 0
                 p.prism        = 0
+                p.channel_extras = {}
             _flush()
         menu.addAction(clear_label, _clear_targets)
 

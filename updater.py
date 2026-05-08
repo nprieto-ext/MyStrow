@@ -20,7 +20,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QProgressBar, QDialog, QMessageBox, QApplication, QFrame
+    QPushButton, QProgressBar, QDialog, QMessageBox, QApplication, QFrame,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRect
 from PySide6.QtGui import (
@@ -966,19 +967,44 @@ _GEAR = [
         "#E2CE16", "#141100",
     ),
     (
-        "📡",
-        "Node ArtNet DMX",
+        "🔌",
+        "Node ArtNet / DMX",
         "Interface réseau RJ45 → DMX512.\nIdéal clubs et installations fixes.",
         "https://amzn.to/4tQKRCM",
-        "#00d4ff", "#001418",
+        "#00d4ff", "#1a1a1a",
     ),
     (
         "🔌",
-        "Interface USB/DMX",
+        "Interface USB / DMX",
         "Branchement direct USB → DMX512.\nParfait pour débuter ou en itinérant.",
         "https://amzn.to/4n7cDbH",
-        "#a064ff", "#0e0018",
+        "#a064ff", "#1a1a1a",
     ),
+]
+
+_GEAR_ARTNET_COMPAT = [
+    ("ENTTEC ODE Mk2",           "~200€",  "Node ArtNet 1 univers, référence"),
+    ("ENTTEC EtherGate",         "~150€",  "Node compact, ArtNet/sACN"),
+    ("DMXking eDMX1 PRO",        "~130€",  "Compact, ArtNet/sACN — recommandé"),
+    ("DMXking eDMX2 PRO",        "~200€",  "2 univers ArtNet/sACN"),
+    ("Luminex Ethernet-DMX",     "~300€+", "Pro, multi-univers"),
+    ("Node générique (Alibaba)", "20–60€", "Fonctionne, qualité variable"),
+    ("ESP32 DIY + lib ArtNet",   "~10€",   "Solution DIY, très répandue"),
+]
+
+_GEAR_USB_COMPAT = [
+    ("ENTTEC DMX USB PRO",      "Référence absolue, drivers stables"),
+    ("DMXking ultraDMX Micro",  "Compact, plug-and-play"),
+    ("Eurolite USB-DMX512 PRO", "Bon rapport qualité/prix"),
+    ("ENTTEC Open DMX USB",     "Nécessite lib spéciale (pyenttec)"),
+]
+
+_GEAR_CONTROLLERS_COMPAT = [
+    ("AKAI APC Mini MK1 & MK2",     "Support original, inchangé"),
+    ("Novation Launchpad Mini MK1", "2012"),
+    ("Novation Launchpad Mini MK2", "2014"),
+    ("AKAI APC40",                  ""),
+    ("AKAI MIDImix",                ""),
 ]
 
 
@@ -988,7 +1014,7 @@ class GearDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Matériel recommandé")
-        self.setFixedSize(520, 460)
+        self.setFixedSize(900, 700)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog, QWidget { background: #141414; color: #cccccc;
@@ -999,10 +1025,10 @@ class GearDialog(QDialog):
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(28, 24, 28, 20)
+        lay.setContentsMargins(24, 20, 24, 16)
         lay.setSpacing(0)
 
-        # Titre
+        # ── Titre ─────────────────────────────────────────────────────────────
         title = QLabel("Matériel recommandé")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title.setStyleSheet("color: #E2CE16;")
@@ -1015,38 +1041,85 @@ class GearDialog(QDialog):
         sub.setAlignment(Qt.AlignCenter)
         sub.setWordWrap(True)
         lay.addWidget(sub)
-        lay.addSpacing(22)
+        lay.addSpacing(14)
 
-        # Cards produits
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(12)
+        # ── Card AKAI (horizontale, pleine largeur) ────────────────────────────
+        akai_emoji, akai_name, akai_desc, akai_url, akai_color, akai_bg = _GEAR[0]
+        akai_card = QFrame()
+        akai_card.setStyleSheet(
+            f"QFrame {{ background: {akai_bg}; border: 1px solid {akai_color}55; border-radius: 10px; }}"
+        )
+        akai_h = QHBoxLayout(akai_card)
+        akai_h.setContentsMargins(16, 12, 16, 12)
+        akai_h.setSpacing(14)
 
-        for emoji, name, desc, url, color, bg in _GEAR:
+        em_akai = QLabel(akai_emoji)
+        em_akai.setFont(QFont("Segoe UI", 26))
+        em_akai.setStyleSheet("background: transparent; border: none;")
+        akai_h.addWidget(em_akai)
+
+        txt_col = QVBoxLayout()
+        txt_col.setSpacing(2)
+        nm_akai = QLabel(akai_name)
+        nm_akai.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        nm_akai.setStyleSheet(f"color: {akai_color}; background: transparent; border: none;")
+        txt_col.addWidget(nm_akai)
+        ds_akai = QLabel(akai_desc.replace("\n", " — "))
+        ds_akai.setFont(QFont("Segoe UI", 8))
+        ds_akai.setStyleSheet("color: #666; background: transparent; border: none;")
+        ds_akai.setWordWrap(True)
+        txt_col.addWidget(ds_akai)
+        akai_h.addLayout(txt_col, stretch=1)
+
+        btn_akai = QPushButton("Voir sur Amazon ↗")
+        btn_akai.setFixedSize(130, 28)
+        btn_akai.setCursor(Qt.PointingHandCursor)
+        btn_akai.setStyleSheet(
+            f"QPushButton {{ background: {akai_color}; color: #000; border: none;"
+            f" border-radius: 5px; font-size: 10px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background: white; }}"
+        )
+        btn_akai.clicked.connect(lambda: __import__('webbrowser').open(akai_url))
+        akai_h.addWidget(btn_akai)
+        lay.addWidget(akai_card)
+        lay.addSpacing(12)
+
+        # ── Ligne DMX : Node ArtNet | OU | Interface USB/DMX ─────────────────
+        dmx_lbl = QLabel("Pour la sortie DMX — choisir une option :")
+        dmx_lbl.setFont(QFont("Segoe UI", 8))
+        dmx_lbl.setStyleSheet("color: #444;")
+        dmx_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(dmx_lbl)
+        lay.addSpacing(6)
+
+        dmx_row = QHBoxLayout()
+        dmx_row.setSpacing(8)
+
+        for idx, (emoji, name, desc, url, color, bg) in enumerate(_GEAR[1:]):
             card = QFrame()
             card.setStyleSheet(
-                f"QFrame {{ background: {bg}; border: 1px solid {color}55;"
-                f" border-radius: 10px; }}"
+                "QFrame { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; }"
             )
             card_lay = QVBoxLayout(card)
-            card_lay.setContentsMargins(14, 16, 14, 14)
-            card_lay.setSpacing(6)
+            card_lay.setContentsMargins(12, 12, 12, 12)
+            card_lay.setSpacing(4)
 
             em = QLabel(emoji)
-            em.setFont(QFont("Segoe UI", 28))
+            em.setFont(QFont("Segoe UI", 22))
             em.setAlignment(Qt.AlignCenter)
             em.setStyleSheet("background: transparent; border: none;")
             card_lay.addWidget(em)
 
             nm = QLabel(name)
-            nm.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            nm.setFont(QFont("Segoe UI", 9, QFont.Bold))
             nm.setStyleSheet(f"color: {color}; background: transparent; border: none;")
             nm.setAlignment(Qt.AlignCenter)
             nm.setWordWrap(True)
             card_lay.addWidget(nm)
 
             ds = QLabel(desc)
-            ds.setFont(QFont("Segoe UI", 8))
-            ds.setStyleSheet("color: #666; background: transparent; border: none;")
+            ds.setFont(QFont("Segoe UI", 7))
+            ds.setStyleSheet("color: #555; background: transparent; border: none;")
             ds.setAlignment(Qt.AlignCenter)
             ds.setWordWrap(True)
             card_lay.addWidget(ds)
@@ -1054,44 +1127,131 @@ class GearDialog(QDialog):
             card_lay.addStretch()
 
             btn = QPushButton("Voir sur Amazon ↗")
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(24)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
-                f"QPushButton {{ background: {color}; color: #000; border: none;"
-                f" border-radius: 5px; font-size: 10px; font-weight: bold; }}"
-                f"QPushButton:hover {{ background: white; }}"
+                "QPushButton { background: #E2CE16; color: #000; border: none;"
+                " border-radius: 4px; font-size: 9px; font-weight: bold; }"
+                "QPushButton:hover { background: white; }"
             )
             btn.clicked.connect(lambda _, u=url: __import__('webbrowser').open(u))
             card_lay.addWidget(btn)
+            dmx_row.addWidget(card)
 
-            cards_row.addWidget(card)
+            if idx == 0:
+                ou = QLabel("OU")
+                ou.setFont(QFont("Segoe UI", 9, QFont.Bold))
+                ou.setStyleSheet("color: #444; background: transparent; border: none;")
+                ou.setAlignment(Qt.AlignCenter)
+                ou.setFixedWidth(30)
+                dmx_row.addWidget(ou)
 
-        lay.addLayout(cards_row)
+        lay.addLayout(dmx_row)
         lay.addSpacing(14)
 
-        # Note interface DMX
-        note = QLabel("💡  Node ArtNet et Interface USB/DMX sont deux alternatives — une seule suffit.")
-        note.setFont(QFont("Segoe UI", 8))
-        note.setStyleSheet("color: #444;")
-        note.setAlignment(Qt.AlignCenter)
-        note.setWordWrap(True)
-        lay.addWidget(note)
+        # ── Séparateur ────────────────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("border: none; border-top: 1px solid #222;")
+        lay.addWidget(sep)
+        lay.addSpacing(8)
 
+        compat_lbl = QLabel("Autres modèles compatibles")
+        compat_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        compat_lbl.setStyleSheet("color: #444;")
+        compat_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(compat_lbl)
         lay.addSpacing(6)
 
-        # Disclaimer affilié
+        # ── Liste modèles (scrollable, 2 colonnes) ────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+            "QScrollBar:vertical { background: #111; width: 5px; border: none; }"
+            "QScrollBar::handle:vertical { background: #2a2a2a; border-radius: 2px; }"
+        )
+
+        scroll_widget = QWidget()
+        scroll_widget.setStyleSheet("background: transparent;")
+        scroll_lay = QHBoxLayout(scroll_widget)
+        scroll_lay.setContentsMargins(0, 0, 4, 0)
+        scroll_lay.setSpacing(12)
+
+        for section_title, items, color, show_price in [
+            ("🎹  Contrôleurs compatibles", _GEAR_CONTROLLERS_COMPAT, "#E2CE16", False),
+            ("🔌  Nodes ArtNet / DMX",      _GEAR_ARTNET_COMPAT,      "#00d4ff", True),
+            ("🔌  Interfaces USB / DMX",    _GEAR_USB_COMPAT,         "#a064ff", False),
+        ]:
+            section_col = QVBoxLayout()
+            section_col.setSpacing(3)
+            sec_lbl = QLabel(section_title)
+            sec_lbl.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            sec_lbl.setStyleSheet(f"color: {color};")
+            section_col.addWidget(sec_lbl)
+
+            for item in items:
+                name, price, note = (item[0], item[1], "") if show_price else (item[0], "", item[1])
+                row_w = QFrame()
+                row_w.setStyleSheet("QFrame { background: #1a1a1a; border-radius: 4px; border: none; }")
+                row_h = QHBoxLayout(row_w)
+                row_h.setContentsMargins(8, 3, 8, 3)
+                row_h.setSpacing(6)
+                nm_lbl = QLabel(name)
+                nm_lbl.setFont(QFont("Segoe UI", 8))
+                nm_lbl.setStyleSheet("color: #999; background: transparent;")
+                row_h.addWidget(nm_lbl, stretch=1)
+                if show_price:
+                    price_lbl = QLabel(price)
+                    price_lbl.setFont(QFont("Segoe UI", 8, QFont.Bold))
+                    price_lbl.setStyleSheet(f"color: {color}99; background: transparent;")
+                    price_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    row_h.addWidget(price_lbl)
+                section_col.addWidget(row_w)
+
+            if not show_price and items is _GEAR_CONTROLLERS_COMPAT:
+                soon_lbl = QLabel("⏳  D'autres contrôleurs arrivent prochainement")
+                soon_lbl.setFont(QFont("Segoe UI", 7))
+                soon_lbl.setStyleSheet("color: #444; padding-top: 4px;")
+                soon_lbl.setWordWrap(True)
+                section_col.addWidget(soon_lbl)
+
+            section_col.addStretch()
+            col_container = QWidget()
+            col_container.setStyleSheet("background: transparent;")
+            col_container.setLayout(section_col)
+            scroll_lay.addWidget(col_container)
+
+        scroll.setWidget(scroll_widget)
+        scroll.setFixedHeight(150)
+        lay.addWidget(scroll)
+        lay.addSpacing(8)
+
+        # ── Note technique ────────────────────────────────────────────────────
+        note_tech = QLabel(
+            "💡  MyStrow envoie en ArtNet UDP vers 2.0.0.15:6454 — "
+            "un Node ArtNet est recommandé en production (aucun driver, faible latence)."
+        )
+        note_tech.setFont(QFont("Segoe UI", 7))
+        note_tech.setStyleSheet("color: #333;")
+        note_tech.setAlignment(Qt.AlignCenter)
+        note_tech.setWordWrap(True)
+        lay.addWidget(note_tech)
+        lay.addSpacing(4)
+
+        # ── Disclaimer affilié ────────────────────────────────────────────────
         aff = QLabel("* Liens affiliés Amazon — si vous achetez via ces liens, nous percevons une petite commission sans aucun surcoût pour vous.")
         aff.setFont(QFont("Segoe UI", 7))
-        aff.setStyleSheet("color: #333;")
+        aff.setStyleSheet("color: #2a2a2a;")
         aff.setAlignment(Qt.AlignCenter)
         aff.setWordWrap(True)
         lay.addWidget(aff)
+        lay.addSpacing(8)
 
-        lay.addStretch()
-
-        # Bouton fermer
+        # ── Bouton fermer ─────────────────────────────────────────────────────
         btn_close = QPushButton("Fermer")
-        btn_close.setFixedHeight(32)
+        btn_close.setFixedHeight(30)
         btn_close.setStyleSheet("""
             QPushButton       { background: #222; color: #888; border: 1px solid #333;
                                 border-radius: 4px; font-size: 11px; }

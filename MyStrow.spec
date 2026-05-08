@@ -67,7 +67,7 @@ if IS_MAC:
         console=False,
         disable_windowed_traceback=False,
         argv_emulation=False,
-        target_arch='arm64',  # Apple Silicon natif (Rosetta 2 pour Intel)
+        target_arch='universal2',  # Intel + Apple Silicon (binaire universel)
         codesign_identity=None,
         entitlements_file=None,
         icon=[icon_file],

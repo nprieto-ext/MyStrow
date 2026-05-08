@@ -2368,6 +2368,178 @@ class _SparklineWidget(QWidget):
 
 
 # ---------------------------------------------------------------
+# Widgets graphiques — Téléchargements
+# ---------------------------------------------------------------
+
+class _DlDonutWidget(QWidget):
+    """Donut chart Win vs Mac avec légende."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._wins = 0
+        self._macs = 0
+        self._other = 0
+        self.setMinimumSize(200, 200)
+
+    def set_data(self, wins: int, macs: int, total: int):
+        self._wins  = wins
+        self._macs  = macs
+        self._other = max(0, total - wins - macs)
+        self.update()
+
+    def paintEvent(self, _):
+        from PySide6.QtGui import QPainter, QPen, QColor as QC, QFont as QF
+        from PySide6.QtCore import QRectF
+        import math
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        W, H = self.width(), self.height()
+        p.fillRect(0, 0, W, H, QC(BG_PANEL))
+
+        total = self._wins + self._macs + self._other
+        if total == 0:
+            p.setPen(QC(TEXT_DIM))
+            p.drawText(self.rect(), Qt.AlignCenter, "Aucune donnée")
+            p.end(); return
+
+        cx, cy = W // 2, H // 2 - 10
+        r_out = min(cx, cy) - 20
+        r_in  = int(r_out * 0.58)
+
+        segments = [
+            (self._wins,  "#3498db", "Windows"),
+            (self._macs,  "#95a5a6", "macOS"),
+        ]
+        if self._other > 0:
+            segments.append((self._other, "#555", "Autre"))
+
+        arc_rect = QRectF(cx - r_out, cy - r_out, r_out * 2, r_out * 2)
+        start_angle = 90 * 16   # 12h en Qt (sens horaire négatif)
+        gap = 2 * 16            # petit gap entre segments
+
+        for count, color, _ in segments:
+            span = int(-round((count / total) * 360 * 16))
+            if span == 0: continue
+            p.setPen(Qt.NoPen)
+            p.setBrush(QC(color))
+            p.drawPie(arc_rect, start_angle, span + gap)
+            start_angle += span
+
+        # Trou central
+        p.setBrush(QC(BG_PANEL))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(cx - r_in, cy - r_in, r_in * 2, r_in * 2)
+
+        # Texte central
+        p.setPen(QC(TEXT))
+        f = QF("Segoe UI", 16, QF.Bold)
+        p.setFont(f)
+        p.drawText(cx - r_in, cy - 14, r_in * 2, 20, Qt.AlignCenter, str(total))
+        f2 = QF("Segoe UI", 8)
+        p.setFont(f2)
+        p.setPen(QC(TEXT_DIM))
+        p.drawText(cx - r_in, cy + 4, r_in * 2, 14, Qt.AlignCenter, "total")
+
+        # Légende
+        legend_y = cy + r_out + 10
+        lx = 20
+        for count, color, label in segments:
+            pct = int(round(count / total * 100))
+            p.setBrush(QC(color))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(lx, legend_y, 10, 10, 2, 2)
+            p.setPen(QC(TEXT_DIM))
+            f3 = QF("Segoe UI", 9)
+            p.setFont(f3)
+            p.drawText(lx + 14, legend_y - 1, 110, 12,
+                       Qt.AlignLeft | Qt.AlignVCenter, f"{label}  {count} ({pct}%)")
+            lx += 140
+
+        p.end()
+
+
+class _DlDailyBarsWidget(QWidget):
+    """Histogramme vertical — téléchargements site par jour."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data: list = []   # [(date_str, count), ...] trié asc
+        self.setMinimumHeight(180)
+
+    def set_data(self, data: list):
+        self._data = data
+        self.update()
+
+    def paintEvent(self, _):
+        from PySide6.QtGui import QPainter, QColor as QC, QFont as QF, QLinearGradient
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        W, H = self.width(), self.height()
+        p.fillRect(0, 0, W, H, QC(BG_PANEL))
+
+        if not self._data:
+            p.setPen(QC(TEXT_DIM))
+            p.drawText(self.rect(), Qt.AlignCenter, "Aucune donnée")
+            p.end(); return
+
+        pad_l, pad_r, pad_t, pad_b = 32, 12, 16, 28
+        n    = len(self._data)
+        vmax = max(c for _, c in self._data) or 1
+        draw_w = W - pad_l - pad_r
+        draw_h = H - pad_t - pad_b
+
+        bar_gap  = max(1, int(draw_w / n * 0.18))
+        bar_w    = max(2, draw_w // n - bar_gap)
+
+        # Grilles horizontales
+        for frac in [0.25, 0.5, 0.75, 1.0]:
+            y = int(pad_t + draw_h - frac * draw_h)
+            p.setPen(QC("#1e1e1e"))
+            p.drawLine(pad_l, y, W - pad_r, y)
+            p.setPen(QC(TEXT_DIM))
+            f = QF("Segoe UI", 7)
+            p.setFont(f)
+            p.drawText(0, y - 7, pad_l - 3, 14, Qt.AlignRight | Qt.AlignVCenter,
+                       str(int(vmax * frac)))
+
+        # Barres
+        for i, (date_str, count) in enumerate(self._data):
+            bh = max(2, int(count / vmax * draw_h))
+            bx = pad_l + i * (bar_w + bar_gap)
+            by = pad_t + draw_h - bh
+
+            grad = QLinearGradient(0, by, 0, by + bh)
+            grad.setColorAt(0.0, QC(ACCENT))
+            c_bot = QC(ACCENT); c_bot.setAlpha(120)
+            grad.setColorAt(1.0, c_bot)
+            p.setBrush(grad)
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(bx, by, bar_w, bh, 2, 2)
+
+            # Valeur au-dessus si place
+            if count > 0 and bar_w >= 14:
+                p.setPen(QC(TEXT_DIM))
+                f2 = QF("Segoe UI", 7)
+                p.setFont(f2)
+                p.drawText(bx, by - 13, bar_w, 12, Qt.AlignHCenter, str(count))
+
+        # Labels dates X (début, milieu, fin)
+        p.setPen(QC(TEXT_DIM))
+        fdate = QF("Segoe UI", 8)
+        p.setFont(fdate)
+        indices = sorted({0, n // 4, n // 2, 3 * n // 4, n - 1})
+        for i in indices:
+            if i >= n: continue
+            date_str = self._data[i][0]
+            lbl = date_str[5:]  # MM-DD
+            bx  = pad_l + i * (bar_w + bar_gap)
+            p.drawText(bx - 14, H - pad_b + 4, bar_w + 28, pad_b - 2,
+                       Qt.AlignHCenter | Qt.AlignTop, lbl)
+
+        p.end()
+
+
+# ---------------------------------------------------------------
 # AdminPanel — fenêtre principale
 # ---------------------------------------------------------------
 
@@ -2488,22 +2660,16 @@ class AdminPanel(QMainWindow):
         self._btn_nav_release.clicked.connect(lambda: self._switch_view(3))
         nav_lay.addWidget(self._btn_nav_release)
 
-        self._btn_nav_blog = QPushButton("Blog IA")
-        self._btn_nav_blog.setFixedHeight(38)
-        self._btn_nav_blog.setStyleSheet(_nav_idle)
-        self._btn_nav_blog.clicked.connect(lambda: self._switch_view(4))
-        nav_lay.addWidget(self._btn_nav_blog)
-
-        self._btn_nav_site = QPushButton("Site Web")
-        self._btn_nav_site.setFixedHeight(38)
-        self._btn_nav_site.setStyleSheet(_nav_idle)
-        self._btn_nav_site.clicked.connect(lambda: self._switch_view(5))
-        nav_lay.addWidget(self._btn_nav_site)
+        self._btn_nav_dl = QPushButton("Téléchargements")
+        self._btn_nav_dl.setFixedHeight(38)
+        self._btn_nav_dl.setStyleSheet(_nav_idle)
+        self._btn_nav_dl.clicked.connect(lambda: self._switch_view(4))
+        nav_lay.addWidget(self._btn_nav_dl)
 
         self._btn_nav_analytics = QPushButton("Analytics")
         self._btn_nav_analytics.setFixedHeight(38)
         self._btn_nav_analytics.setStyleSheet(_nav_idle)
-        self._btn_nav_analytics.clicked.connect(lambda: self._switch_view(6))
+        self._btn_nav_analytics.clicked.connect(lambda: self._switch_view(5))
         nav_lay.addWidget(self._btn_nav_analytics)
 
         nav_lay.addStretch()
@@ -2688,15 +2854,10 @@ class AdminPanel(QMainWindow):
         # ── Page 3 : Release ──────────────────────────────────────────────────
         self._build_release_panel()
 
-        # ── Page 4 : Blog IA ──────────────────────────────────────────────────
-        from blog_panel import BlogPanel
-        self._blog_panel = BlogPanel()
-        self._content_stack.addWidget(self._blog_panel)
+        # ── Page 4 : Téléchargements ──────────────────────────────────────────
+        self._build_downloads_panel()
 
-        # ── Page 5 : Site Web ─────────────────────────────────────────────────
-        self._build_site_panel()
-
-        # ── Page 6 : Analytics ────────────────────────────────────────────────
+        # ── Page 5 : Analytics ────────────────────────────────────────────────
         self._build_analytics_panel()
 
     # ------------------------------------------------------------------
@@ -2884,36 +3045,7 @@ class AdminPanel(QMainWindow):
 
         inner_lay.addLayout(mid)
 
-        # ── Ligne 3 : Releases GitHub ─────────────────────────────────────────
-        rel_card = QFrame()
-        rel_card.setStyleSheet(
-            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
-        rel_lay = QVBoxLayout(rel_card)
-        rel_lay.setContentsMargins(16, 14, 16, 14)
-        rel_lay.setSpacing(8)
-
-        t3 = QLabel("Téléchargements par version GitHub")
-        t3.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        t3.setStyleSheet(f"color:{TEXT}; background:transparent;")
-        rel_lay.addWidget(t3)
-
-        self._releases_table = QTableWidget()
-        self._releases_table.setColumnCount(4)
-        self._releases_table.setHorizontalHeaderLabels(["Version", "Date", "Fichier", "Téléchargements"])
-        self._releases_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self._releases_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self._releases_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self._releases_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self._releases_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._releases_table.setSelectionMode(QAbstractItemView.NoSelection)
-        self._releases_table.verticalHeader().setVisible(False)
-        self._releases_table.setShowGrid(False)
-        self._releases_table.setAlternatingRowColors(True)
-        self._releases_table.setFixedHeight(200)
-        rel_lay.addWidget(self._releases_table)
-        inner_lay.addWidget(rel_card)
-
-        # ── Ligne 4 : Sparkline 90j + Clients récents ─────────────────────────
+        # ── Ligne 3 : Sparkline 90j + Clients récents ─────────────────────────
         row4 = QHBoxLayout()
         row4.setSpacing(16)
 
@@ -3159,6 +3291,7 @@ class AdminPanel(QMainWindow):
             )
             n_str = f"{total:,}".replace(",", "\u202f")
             self._stat_downloads.setText(n_str)
+            self._dl_kpi_total.setText(n_str)
 
             # Releases publiées ce mois-ci
             now = datetime.now(timezone.utc)
@@ -3170,7 +3303,13 @@ class AdminPanel(QMainWindow):
             self._stat_releases_month.setText(str(count_this_month))
 
             self._populate_releases_table(releases)
-
+            # Barres par version (somme par tag)
+            from collections import defaultdict
+            by_tag: dict = defaultdict(int)
+            for rel in releases:
+                tag = rel.get("tag_name", "?")
+                for asset in rel.get("assets", []):
+                    by_tag[tag] += asset.get("download_count", 0)
         _run_async(self, _fetch, on_success=_on_releases,
                    on_error=lambda _: self._stat_downloads.setText("—"))
 
@@ -3188,6 +3327,10 @@ class AdminPanel(QMainWindow):
             self._dl_stats_lbl.setText(
                 f"Total : {total}  |  Win : {wins}  |  Mac : {macs}"
             )
+            self._dl_kpi_fs.setText(str(total))
+            self._dl_kpi_win.setText(str(wins))
+            self._dl_kpi_mac.setText(str(macs))
+            self._dl_donut.set_data(wins, macs, total)
             self._dl_table.setRowCount(0)
             for r in rows:
                 ts = r.get("ts")
@@ -3221,8 +3364,25 @@ class AdminPanel(QMainWindow):
                 self._dl_table.setItem(row_idx, 3, QTableWidgetItem(country))
                 self._dl_table.setItem(row_idx, 4, QTableWidgetItem(city))
 
-        _run_async(self, _fetch, on_success=_on_data,
-                   on_error=lambda _: self._dl_stats_lbl.setText("Erreur chargement"))
+            # Histogramme par jour
+            from collections import defaultdict as _dd
+            daily: dict = _dd(int)
+            for r in rows:
+                ts = r.get("ts")
+                if isinstance(ts, datetime):
+                    d = ts.strftime("%Y-%m-%d")
+                elif isinstance(ts, str):
+                    d = ts[:10]
+                else:
+                    continue
+                daily[d] += 1
+            self._dl_daily_bars.set_data(sorted(daily.items()))
+
+        def _on_error(msg: str):
+            self._dl_stats_lbl.setText(f"Erreur : {msg[:120]}")
+            print(f"[downloads] ERREUR Firestore : {msg}")
+
+        _run_async(self, _fetch, on_success=_on_data, on_error=_on_error)
 
     def _populate_releases_table(self, releases: list):
         rows = []
@@ -3257,9 +3417,8 @@ class AdminPanel(QMainWindow):
         self._btn_nav_lic.setStyleSheet(_active if idx == 1 else _idle)
         self._btn_nav_fix.setStyleSheet(_active if idx == 2 else _idle)
         self._btn_nav_release.setStyleSheet(_active if idx == 3 else _idle)
-        self._btn_nav_blog.setStyleSheet(_active if idx == 4 else _idle)
-        self._btn_nav_site.setStyleSheet(_active if idx == 5 else _idle)
-        self._btn_nav_analytics.setStyleSheet(_active if idx == 6 else _idle)
+        self._btn_nav_dl.setStyleSheet(_active if idx == 4 else _idle)
+        self._btn_nav_analytics.setStyleSheet(_active if idx == 5 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -3506,8 +3665,177 @@ class AdminPanel(QMainWindow):
             else:
                 self._site_log.append(f"\n❌  {msg}")
 
+    def _build_downloads_panel(self):
+        """Page 4 : Stats de téléchargements (GitHub releases + Firestore site)."""
+        page = QWidget()
+        page.setStyleSheet(f"background: {BG_MAIN};")
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── En-tête ───────────────────────────────────────────────────────────
+        hdr = QFrame()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet(f"background:{BG_PANEL}; border-bottom:1px solid #1e1e1e;")
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(20, 0, 20, 0)
+        lbl_title = QLabel("Téléchargements")
+        lbl_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lbl_title.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        hdr_lay.addWidget(lbl_title)
+        hdr_lay.addStretch()
+        btn_ref = QPushButton("↺  Actualiser")
+        btn_ref.setFixedHeight(28)
+        btn_ref.setStyleSheet(_BTN_SECONDARY)
+        btn_ref.clicked.connect(lambda: (self._load_github_downloads(), self._load_firestore_downloads()))
+        hdr_lay.addWidget(btn_ref)
+        root.addWidget(hdr)
+
+        # ── Zone scrollable ───────────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border:none; }")
+        inner = QWidget()
+        inner.setStyleSheet(f"background:{BG_MAIN};")
+        inner_lay = QVBoxLayout(inner)
+        inner_lay.setContentsMargins(24, 20, 24, 24)
+        inner_lay.setSpacing(20)
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 1)
+
+        # ── KPI row ───────────────────────────────────────────────────────────
+        def _kpi_dl(icon, label, color=ACCENT):
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+            card.setFixedHeight(82)
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(16, 8, 16, 8)
+            cl.setSpacing(2)
+            top = QHBoxLayout()
+            top.setSpacing(6)
+            li = QLabel(icon)
+            li.setStyleSheet(f"color:{color}; font-size:14px; background:transparent;")
+            top.addWidget(li)
+            lv = QLabel("—")
+            lv.setFont(QFont("Segoe UI", 20, QFont.Bold))
+            lv.setStyleSheet(f"color:{color}; background:transparent;")
+            top.addWidget(lv, 1)
+            cl.addLayout(top)
+            ln = QLabel(label)
+            ln.setStyleSheet(f"color:{TEXT_DIM}; font-size:10px; background:transparent;")
+            cl.addWidget(ln)
+            return card, lv
+
+        kpi_row = QHBoxLayout()
+        kpi_row.setSpacing(12)
+        card, self._dl_kpi_total = _kpi_dl("↓", "Total GitHub", ACCENT)
+        kpi_row.addWidget(card)
+        card, self._dl_kpi_fs    = _kpi_dl("⬇", "Total site", "#2ecc71")
+        kpi_row.addWidget(card)
+        card, self._dl_kpi_win   = _kpi_dl("▣", "Windows (site)", "#3498db")
+        kpi_row.addWidget(card)
+        card, self._dl_kpi_mac   = _kpi_dl("◍", "macOS (site)", "#95a5a6")
+        kpi_row.addWidget(card)
+        inner_lay.addLayout(kpi_row)
+
+        # ── Ligne graphique : Donut + Barres versions ─────────────────────────
+        charts_row = QHBoxLayout()
+        charts_row.setSpacing(16)
+
+        # Donut Win/Mac
+        donut_card = QFrame()
+        donut_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        donut_card.setFixedWidth(280)
+        donut_lay = QVBoxLayout(donut_card)
+        donut_lay.setContentsMargins(14, 14, 14, 14)
+        donut_lay.setSpacing(6)
+        t_donut = QLabel("Répartition plateforme")
+        t_donut.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t_donut.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        donut_lay.addWidget(t_donut)
+        self._dl_donut = _DlDonutWidget()
+        self._dl_donut.setFixedHeight(230)
+        donut_lay.addWidget(self._dl_donut)
+        charts_row.addWidget(donut_card)
+
+        # Barres horizontales par version GitHub
+        bars_card = QFrame()
+        bars_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        bars_lay = QVBoxLayout(bars_card)
+        bars_lay.setContentsMargins(14, 14, 14, 14)
+        bars_lay.setSpacing(6)
+        t_bars = QLabel("GitHub — téléchargements par version")
+        t_bars.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t_bars.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        bars_lay.addWidget(t_bars)
+        bars_scroll = QScrollArea()
+        bars_scroll.setWidgetResizable(True)
+        bars_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        bars_scroll.setStyleSheet("QScrollArea { border:none; background:transparent; }"
+                                  "QScrollBar:vertical { width:4px; background:#111; border-radius:2px; }"
+                                  "QScrollBar::handle:vertical { background:#333; border-radius:2px; }")
+        self._dl_daily_bars = _DlDailyBarsWidget()
+        bars_scroll.setWidget(self._dl_daily_bars)
+        bars_lay.addWidget(bars_scroll, 1)
+        charts_row.addWidget(bars_card, 1)
+
+        inner_lay.addLayout(charts_row)
+
+        # ── Tableau Firestore détail ───────────────────────────────────────────
+        fs_card = QFrame()
+        fs_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        fs_lay = QVBoxLayout(fs_card)
+        fs_lay.setContentsMargins(16, 14, 16, 14)
+        fs_lay.setSpacing(8)
+
+        fs_header = QHBoxLayout()
+        t2 = QLabel("Détail des téléchargements site")
+        t2.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t2.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        fs_header.addWidget(t2)
+        fs_header.addStretch()
+        self._dl_stats_lbl = QLabel("…")
+        self._dl_stats_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+        fs_header.addWidget(self._dl_stats_lbl)
+        fs_lay.addLayout(fs_header)
+
+        _tbl_style = (
+            f"QTableWidget {{ background:#0a0a0a; color:{TEXT}; gridline-color:#1e1e1e;"
+            f" border:none; font-size:11px; }}"
+            f"QHeaderView::section {{ background:#111; color:{TEXT_DIM}; border:none;"
+            f" padding:4px 8px; font-size:10px; font-weight:bold; }}"
+            f"QTableWidget::item {{ padding:3px 8px; }}"
+            f"QTableWidget::item:selected {{ background:#1a3040; }}"
+        )
+        self._dl_table = QTableWidget(0, 5)
+        self._dl_table.setHorizontalHeaderLabels(["Date", "Heure", "Plateforme", "Pays", "Ville"])
+        self._dl_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._dl_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self._dl_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._dl_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._dl_table.setAlternatingRowColors(True)
+        self._dl_table.verticalHeader().setVisible(False)
+        self._dl_table.setMinimumHeight(240)
+        self._dl_table.setStyleSheet(_tbl_style)
+        fs_lay.addWidget(self._dl_table)
+        inner_lay.addWidget(fs_card)
+        inner_lay.addStretch()
+
+        # ── releases_table (non affichée — alimentée par _populate_releases_table) ──
+        self._releases_table = QTableWidget()
+        self._releases_table.setColumnCount(4)
+
+        self._content_stack.addWidget(page)
+
     def _build_analytics_panel(self):
-        """Page 6 : Liens rapides GA4 + Search Console."""
+        """Page 5 : Liens rapides GA4 + Search Console."""
         GA4_URL = "https://analytics.google.com/analytics/web/#/p"
         GA4_MEASUREMENT_ID = "G-4G9MXM0ENS"
         SEARCH_CONSOLE_URL = "https://search.google.com/search-console?resource_id=https%3A%2F%2Fmystrow.fr%2F"
@@ -3631,61 +3959,6 @@ class AdminPanel(QMainWindow):
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet(f"color: {ACCENT};")
         lay.addWidget(title)
-
-        # ── Téléchargements site ─────────────────────────────────────────────
-        dl_card = QFrame()
-        dl_card.setStyleSheet(
-            f"QFrame {{ background:#0e0e0e; border:1px solid #2a2a2a; border-radius:8px; }}"
-        )
-        dl_card_lay = QVBoxLayout(dl_card)
-        dl_card_lay.setContentsMargins(16, 12, 16, 12)
-        dl_card_lay.setSpacing(8)
-
-        dl_header = QHBoxLayout()
-        dl_title = QLabel("Téléchargements site")
-        dl_title.setStyleSheet(f"color:{TEXT}; font-size:12px; font-weight:bold; background:transparent;")
-        dl_header.addWidget(dl_title)
-        dl_header.addStretch()
-
-        self._dl_stats_lbl = QLabel("…")
-        self._dl_stats_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
-        dl_header.addWidget(self._dl_stats_lbl)
-        dl_header.addSpacing(10)
-
-        btn_dl_refresh = QPushButton("↻")
-        btn_dl_refresh.setFixedSize(26, 26)
-        btn_dl_refresh.setStyleSheet(
-            f"QPushButton {{ background:#1e1e1e; color:{TEXT_DIM}; border:1px solid #333;"
-            f" border-radius:4px; font-size:14px; }}"
-            f"QPushButton:hover {{ color:{ACCENT}; border-color:{ACCENT}; }}"
-        )
-        btn_dl_refresh.setToolTip("Rafraîchir")
-        btn_dl_refresh.clicked.connect(self._load_firestore_downloads)
-        dl_header.addWidget(btn_dl_refresh)
-        dl_card_lay.addLayout(dl_header)
-
-        self._dl_table = QTableWidget(0, 5)
-        self._dl_table.setHorizontalHeaderLabels(["Date", "Heure", "Plateforme", "Pays", "Ville"])
-        self._dl_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self._dl_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self._dl_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self._dl_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self._dl_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
-        self._dl_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._dl_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._dl_table.setAlternatingRowColors(True)
-        self._dl_table.verticalHeader().setVisible(False)
-        self._dl_table.setFixedHeight(180)
-        self._dl_table.setStyleSheet(
-            f"QTableWidget {{ background:#0a0a0a; color:{TEXT}; gridline-color:#1e1e1e;"
-            f" border:none; font-size:11px; }}"
-            f"QHeaderView::section {{ background:#111; color:{TEXT_DIM}; border:none;"
-            f" padding:4px 8px; font-size:10px; font-weight:bold; }}"
-            f"QTableWidget::item {{ padding:3px 8px; }}"
-            f"QTableWidget::item:selected {{ background:#1a3040; }}"
-        )
-        dl_card_lay.addWidget(self._dl_table)
-        lay.addWidget(dl_card)
 
         # ── Version ──────────────────────────────────────────────────────────
         v_row = QHBoxLayout()

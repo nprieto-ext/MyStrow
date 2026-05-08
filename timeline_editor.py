@@ -198,6 +198,10 @@ class LightTimelineEditor(QDialog):
         # Mode cut
         self.cut_mode = False
 
+        # Mode paint
+        self.paint_mode = False
+        self.paint_brush = None
+
         # Selection multi-pistes (rubber band)
         self.rubber_band_active = False
         self.rubber_band_start = None
@@ -745,6 +749,17 @@ class LightTimelineEditor(QDialog):
         """)
         header_layout.addWidget(self.cut_btn)
 
+        # Paint
+        self.paint_btn = QPushButton("🖌")
+        self.paint_btn.setToolTip("Mode peinture — sélectionnez une couleur puis cliquez sur la timeline (P)")
+        self.paint_btn.clicked.connect(self.toggle_paint_mode)
+        self.paint_btn.setFixedSize(45, 45)
+        self.paint_btn.setCheckable(True)
+        self.paint_btn.setStyleSheet(btn_style + """
+            QPushButton:checked { background: #ff9500; color: black; }
+        """)
+        header_layout.addWidget(self.paint_btn)
+
         header_layout.addSpacing(20)
 
         # Zoom
@@ -780,7 +795,30 @@ class LightTimelineEditor(QDialog):
         zoom_in_btn.setToolTip("Zoom avant  (ou  Shift + Molette ↑)")
         header_layout.addWidget(zoom_in_btn)
 
+        header_layout.addSpacing(16)
+
+        # Bouton bascule 2D / 3D
+        is_3d_open = hasattr(self.main_window, '_plan3d') and self.main_window._plan3d.isVisible()
+        self._btn_vue_3d = QPushButton("3D")
+        self._btn_vue_3d.setToolTip("Basculer vue 3D / 2D")
+        self._btn_vue_3d.setFixedSize(45, 45)
+        self._btn_vue_3d.setCheckable(True)
+        self._btn_vue_3d.setChecked(is_3d_open)
+        self._btn_vue_3d.setStyleSheet(btn_style + """
+            QPushButton:checked {
+                background: #00d4ff; color: #000000; font-weight: bold;
+            }
+        """)
+        self._btn_vue_3d.clicked.connect(self._toggle_vue_3d)
+        header_layout.addWidget(self._btn_vue_3d)
+
         return header
+
+    def _toggle_vue_3d(self):
+        if hasattr(self.main_window, 'toggle_3d_window'):
+            self.main_window.toggle_3d_window()
+        is_visible = hasattr(self.main_window, '_plan3d') and self.main_window._plan3d.isVisible()
+        self._btn_vue_3d.setChecked(is_visible)
 
     def _create_footer(self):
         """Cree le footer avec controles audio et boutons"""
@@ -2175,11 +2213,20 @@ class LightTimelineEditor(QDialog):
             self.toggle_cut_mode()
             event.accept()
             return
+        elif event.key() == Qt.Key_P:
+            # Touche P = Mode PAINT
+            self.paint_btn.setChecked(not self.paint_btn.isChecked())
+            self.toggle_paint_mode()
+            event.accept()
+            return
         elif event.key() == Qt.Key_Escape:
-            # Echap = Desactiver mode cut et deselectionner
+            # Echap = Desactiver mode cut/paint et deselectionner
             if self.cut_mode:
                 self.cut_btn.setChecked(False)
                 self.toggle_cut_mode()
+            if self.paint_mode:
+                self.paint_btn.setChecked(False)
+                self.toggle_paint_mode()
             self.clear_all_selections()
             event.accept()
             return
@@ -2482,6 +2529,32 @@ class LightTimelineEditor(QDialog):
             for track in self.tracks:
                 track.setCursor(Qt.ArrowCursor)
             self.track_waveform.setCursor(Qt.ArrowCursor)
+
+    def toggle_paint_mode(self):
+        """Active/desactive le mode PAINT (pinceau sur la timeline)"""
+        self.paint_mode = not self.paint_mode
+
+        if self.paint_mode:
+            self.setCursor(Qt.CrossCursor)
+            for track in self.tracks:
+                track.setCursor(Qt.CrossCursor)
+            self.track_waveform.setCursor(Qt.CrossCursor)
+            # Desactiver cut si actif
+            if self.cut_mode:
+                self.cut_btn.setChecked(False)
+                self.cut_mode = False
+                for track in self.tracks:
+                    track.setCursor(Qt.CrossCursor)
+        else:
+            self.paint_brush = None
+            self.setCursor(Qt.ArrowCursor)
+            for track in self.tracks:
+                track.setCursor(Qt.ArrowCursor)
+            self.track_waveform.setCursor(Qt.ArrowCursor)
+            for item in self._library._safe_items():
+                item._is_paint_active = False
+                try: item.update()
+                except RuntimeError: pass
 
     def clear_all_selections(self):
         """Deselectionne tous les clips sur toutes les pistes"""

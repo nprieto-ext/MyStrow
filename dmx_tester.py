@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QWidget, QFrame, QSpinBox, QScrollArea,
 )
-from PySide6.QtCore import Qt, Signal, QRect, QPoint
+from PySide6.QtCore import Qt, Signal, QRect, QPoint, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QLinearGradient
 
 
@@ -130,8 +130,7 @@ class DmxFaderView(QWidget):
                 p.drawRect(x + 1, y + 1, FADER_W - 2, FADER_H - 2)
 
             # ── Numéro de canal ────────────────────────────
-            alpha = 130 if (val > 0 or sel) else 50
-            p.setPen(QColor(255, 255, 255, alpha))
+            p.setPen(QColor(255, 255, 255, 220))
             p.setFont(QFont("Segoe UI", 5))
             p.drawText(
                 QRect(x, y + FADER_H + 2, FADER_W, LABEL_H),
@@ -213,6 +212,12 @@ class DmxTesterDialog(QDialog):
         for u in range(4):
             for i in range(512):
                 dmx.dmx_data[u][i] = 0
+        dmx.send_dmx()  # envoie immédiatement l'état zéro
+
+        # Timer 25 Hz : envoie DMX régulièrement sans surcharger le réseau
+        self._tx_timer = QTimer(self)
+        self._tx_timer.timeout.connect(self._dmx.send_dmx)
+        self._tx_timer.start(40)
 
         self.setWindowTitle("DMX Tester")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -475,7 +480,7 @@ class DmxTesterDialog(QDialog):
     def _on_fader_drag(self, ch, val):
         """Appelé en temps réel quand l'utilisateur glisse un fader."""
         self._dmx.dmx_data[self._uni][ch] = val
-        self._dmx.send_dmx()
+        # Pas de send_dmx() ici — le timer 25 Hz gère l'envoi sans surcharger
         n = len(self.grid.selected())
         txt = f"Canal {ch+1}" if n <= 1 else f"{n} canaux"
         self.lbl_sel_info.setText(f"{txt}  —  {val} / 255")

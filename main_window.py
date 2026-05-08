@@ -80,7 +80,7 @@ from midi_handler import MIDIHandler
 from controller_mapping_wizard import MidiMappingWizard
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
 from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy, _find_free_canvas_pos
-from plan_3d import Plan3DWindow
+from plan_3d_webwindow import Plan3DWebWindow as Plan3DWindow
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
@@ -4913,6 +4913,7 @@ class MainWindow(QMainWindow):
 
         for i, proj in enumerate(projectors):
             _base_level = proj.level   # niveau posé par les clips, avant l'effet
+            _base_color = proj.color   # couleur posée par les clips, avant l'effet
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0
             has_dim = False; has_rgb_layer = False
             _explicitly_targeted = False  # ciblage explicite par groupe/pair/impair
@@ -4938,8 +4939,8 @@ class MainWindow(QMainWindow):
                 attr      = ld.get("attribute", "Dimmer")
 
                 effective_speed = cfg.get("speed_override", self.effect_speed)
-                fader_mult = max(0.05, effective_speed / 100.0)
-                freq = (0.3 + speed / 100.0 * 3.5) * fader_mult
+                fader_mult = max(0.01, effective_speed / 100.0)
+                freq = (0.05 + speed / 100.0 * 7.0) * fader_mult
                 sp   = spread / 100.0
                 if direction == 0:
                     t_osc = abs(2 * ((freq * t) % 1.0) - 1)
@@ -5007,7 +5008,7 @@ class MainWindow(QMainWindow):
 
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
-                        pan_freq = (0.3 + speed * pan_mult / 100.0 * 3.5) * fader_mult
+                        pan_freq = (0.05 + speed * pan_mult / 100.0 * 7.0) * fader_mult
                         pan_x = (pan_freq * t + i / max(n, 1) * sp + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 32768)
@@ -5015,7 +5016,7 @@ class MainWindow(QMainWindow):
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
-                        tilt_freq = (0.3 + speed * tilt_mult / 100.0 * 3.5) * fader_mult
+                        tilt_freq = (0.05 + speed * tilt_mult / 100.0 * 7.0) * fader_mult
                         tilt_x = (tilt_freq * t + i / max(n, 1) * sp + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 32768)
@@ -5037,7 +5038,7 @@ class MainWindow(QMainWindow):
             bv = level
 
             has_color_val = r > 0 or g > 0 or b > 0
-            if has_dim or has_color_val or has_rgb_layer:
+            if has_color_val or has_rgb_layer:
                 proj.level = 100  # ouvre le dimmer DMX pour laisser passer l'effet
             if has_color_val:
                 cr = min(255, int(r * 255))
@@ -5047,8 +5048,13 @@ class MainWindow(QMainWindow):
             elif has_rgb_layer:
                 proj.color = QColor(0, 0, 0)
             elif has_dim:
-                # Pas de couche couleur : flash blanc (identique au preview de l'éditeur)
-                proj.color = QColor(int(255 * bv), int(255 * bv), int(255 * bv))
+                # Dimmer seul : oscille le canal Dim directement, module la couleur existante
+                proj.level = int(bv * 100)
+                proj.color = QColor(
+                    int(_base_color.red()   * bv),
+                    int(_base_color.green() * bv),
+                    int(_base_color.blue()  * bv),
+                )
 
     def _update_effect_from_config(self, cfg: dict):
         """Exécute l'algorithme paramétré depuis une config éditeur."""
@@ -10500,6 +10506,7 @@ class MainWindow(QMainWindow):
             proxy.selected_lamps.add((proj.group, local_idx))
             canvas.update()
             tabs.setCurrentIndex(1)
+            canvas.start_locate(proj.group, local_idx)
 
         btn_det_locate.clicked.connect(_locate_selected)
 
@@ -11075,10 +11082,11 @@ class MainWindow(QMainWindow):
         def _open_fixture_editor():
             from fixture_editor import FixtureEditorDialog
             editor = FixtureEditorDialog(dialog)
-
             editor.fixture_added.connect(lambda _: None)
             editor.showMaximized()
             editor.exec()
+            if editor.last_saved:
+                self._pending_fixture_select = editor.last_saved
 
         act_new.triggered.connect(_open_wizard)
         act_save.triggered.connect(_do_save)
@@ -11500,6 +11508,18 @@ class MainWindow(QMainWindow):
         tab2_layout.addWidget(my_list, 1)
 
         tab_widget.addTab(tab2, "Mes projecteurs")
+
+        # ── Auto-sélection après retour de l'éditeur ──────────────────────────
+        _pending = getattr(self, '_pending_fixture_select', None)
+        if _pending:
+            _pending_name = _pending.get("name", "") if isinstance(_pending, dict) else str(_pending)
+            for _i in range(my_list.count()):
+                _item = my_list.item(_i)
+                if _item and _pending_name in _item.text():
+                    my_list.setCurrentItem(_item)
+                    tab_widget.setCurrentIndex(1)
+                    break
+            self._pending_fixture_select = None
 
         layout.addWidget(tab_widget, 1)
 

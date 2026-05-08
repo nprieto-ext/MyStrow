@@ -67,6 +67,9 @@ _MA_MAP = {
     "Control":         "Mode",
     "Function":        "Mode",
     "Macro":           "Mode",
+    "Reset":           "Reset",
+    "Fixture Reset":   "Reset",
+    "Lamp Reset":      "Reset",
 }
 
 
@@ -85,7 +88,7 @@ _QLC_GROUP_MAP = {
     "Speed": "Speed", "Shutter": "Strobe",
     "Gobo": "Gobo1", "Colour": "ColorWheel",
     "Prism": "Prism", "Beam": "Zoom", "Iris": "Iris", "Focus": "Focus",
-    "Effect": "Mode", "Maintenance": "Mode", "Nothing": "Mode",
+    "Effect": "Mode", "Maintenance": "Reset", "Nothing": "Mode",
 }
 
 # ---------------------------------------------------------------------------
@@ -141,6 +144,9 @@ _MA3_ATTR_MAP = {
     "CONTROL":            "Mode",
     "FUNCTION":           "Mode",
     "MACRO":              "Mode",
+    "RESET":              "Reset",
+    "FIXTURERESET":       "Reset",
+    "LAMPRESET":          "Reset",
 }
 
 # Fine channels associés à leur canal coarse

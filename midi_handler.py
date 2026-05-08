@@ -719,6 +719,17 @@ class MIDIHandler(QObject):
                     self.midi_out.send_message([0x90, note, 0])
 
             elif ct in ('apc40', 'apc40_mk2'):
+                # SysEx d'init obligatoire pour activer le mode LED Ableton
+                # MK1 : product ID 0x27 — MkII : product ID 0x29
+                product_id = 0x29 if ct == 'apc40_mk2' else 0x27
+                self.midi_out.send_message([
+                    0xF0, 0x47, 0x7F, product_id,
+                    0x60, 0x00, 0x04,
+                    0x41, 0x00, 0x00, 0x00,
+                    0xF7
+                ])
+                import time as _t; _t.sleep(0.05)
+
                 # Éteindre les 5 lignes × 8 pistes de clips + 5 scènes
                 for track in range(8):
                     for row in range(5):

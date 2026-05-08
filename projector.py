@@ -32,6 +32,7 @@ class Projector:
         self.gobo_rotation = 0        # Rotation gobo (0-255)
         self.prism_rotation = 0       # Rotation prisme (0-255)
         self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
+        self.channel_extras   = {}    # {ch_type: 0-255} contrôle brut prioritaire (Reset, Mode…)
         # Canaux spéciaux — contrôle manuel indépendant
         self.uv           = 0   # UV (0-255, direct)
         self.white_boost  = 0   # Blanc extra au-dessus du RGB-dérivé (0-255)

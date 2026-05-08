@@ -74,21 +74,22 @@ GROUP_OPTIONS = [
 ]
 
 ALL_CHANNEL_TYPES = [
-    "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom",
+    "R", "G", "B", "W", "Dim", "Dim2", "Strobe", "UV", "Ambre", "Orange", "Zoom",
     "Smoke", "Fan", "Pan", "PanFine", "Tilt", "TiltFine",
     "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
+    "Reset",
 ]
 
 CHANNEL_COLORS = {
     "R": "#cc2200", "G": "#00aa00", "B": "#0055ff", "W": "#bbbbbb",
-    "Dim": "#888800", "Strobe": "#ffaa00", "UV": "#8800cc",
+    "Dim": "#888800", "Dim2": "#aaaa00", "Strobe": "#ffaa00", "UV": "#8800cc",
     "Ambre": "#ee6600", "Orange": "#ff4400", "Zoom": "#00ccaa",
     "Smoke": "#555555", "Fan": "#336699", "Pan": "#ff55aa",
     "PanFine": "#cc4488", "Tilt": "#00ddff", "TiltFine": "#00aacc",
     "Gobo1": "#aa8800", "Gobo1Rot": "#cc9900", "Gobo2": "#886600",
     "Prism": "#dd00dd", "PrismRot": "#bb00bb",
     "Focus": "#00aa88", "ColorWheel": "#ff8800", "Shutter": "#ff2266",
-    "Speed": "#66ff66", "Mode": "#88aaff",
+    "Speed": "#66ff66", "Mode": "#88aaff", "Reset": "#ff3333",
 }
 
 # Profils rapides proposés à l'utilisateur
@@ -629,6 +630,7 @@ class FixtureEditorDialog(QDialog):
         self._fixtures    = []
         self._current_idx = -1
         self._btn_add_to_patch = None   # compatibilité externe
+        self.last_saved   = None        # dernière fixture enregistrée
 
         self._load_fixtures()
         self._build_ui()
@@ -790,6 +792,7 @@ class FixtureEditorDialog(QDialog):
         )
         self._btn_delete.clicked.connect(self._delete_fixture)
         hdr.addWidget(self._btn_delete)
+        hdr.addSpacing(10)
         self._btn_save = QPushButton("💾  Enregistrer")
         self._btn_save.setFixedHeight(30)
         self._btn_save.setStyleSheet(
@@ -800,6 +803,7 @@ class FixtureEditorDialog(QDialog):
         )
         self._btn_save.clicked.connect(self._save_current)
         hdr.addWidget(self._btn_save)
+        hdr.addSpacing(10)
         btn_close = QPushButton("✕  Fermer")
         btn_close.setFixedHeight(30)
         btn_close.setStyleSheet(
@@ -1238,6 +1242,7 @@ class FixtureEditorDialog(QDialog):
         self._btn_delete.setEnabled(True)
         self._editor_title.setText(data["name"])
 
+        self.last_saved = data
         if is_new:
             self.fixture_added.emit(data)
 

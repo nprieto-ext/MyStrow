@@ -708,27 +708,6 @@ class _Canvas3D(QWidget):
             fz = max(-8.0, min(13.0, z+(p.get('tilt',32768)-32768)/32768.0*3.0))
             return hy-0.25, x, z, (fx, fz)
 
-        # ── Pass A — floor pools ───────────────────────────────────────────
-        for p in sorted_prjs:
-            lvl = max(0.0, min(1.0, p['level']/100.0))
-            if lvl < 0.03: continue
-            r,g,b = p['r'],p['g'],p['b']
-            _,_,_, (fx,fz) = _src(p)
-            pool_r = 0.5 + 2.2*lvl
-            pool_pts = [pp for pp in
-                        (pt(fx+pool_r*math.cos(math.radians(a)), 0.01,
-                            fz+pool_r*math.sin(math.radians(a)))
-                         for a in range(0,360,24)) if pp]
-            cp = pt(fx, 0.01, fz)
-            if cp and len(pool_pts) >= 3:
-                rs = max((math.hypot(p2.x()-cp.x(), p2.y()-cp.y()) for p2 in pool_pts), default=10)
-                rg = QRadialGradient(cp, max(rs,4))
-                rg.setColorAt(0.0, QColor(r,g,b,int(170*lvl)))
-                rg.setColorAt(0.5, QColor(r,g,b,int(70*lvl)))
-                rg.setColorAt(1.0, QColor(r,g,b,0))
-                painter.setBrush(QBrush(rg)); painter.setPen(Qt.NoPen)
-                painter.drawPolygon(QPolygonF(pool_pts))
-
         def _beam_perp(p, fx, fz, sx2, sz):
             """Vecteur perpendiculaire au faisceau dans le plan XZ (pour étaler la base du cone)."""
             if p.get('fixture_type', '') == 'Moving Head':
@@ -739,7 +718,58 @@ class _Canvas3D(QWidget):
                     return -bdz / dist_f, bdx / dist_f
             return 1.0, 0.0  # PAR LED : étalement horizontal par défaut
 
-        # ── Pass B — halo volumétrique ─────────────────────────────────────
+        # ── Pass A — taches au sol (blending additif) ─────────────────────
+        painter.setCompositionMode(QPainter.CompositionMode_Plus)
+        for p in sorted_prjs:
+            lvl = max(0.0, min(1.0, p['level']/100.0))
+            if lvl < 0.03: continue
+            r,g,b = p['r'],p['g'],p['b']
+            _,_,_, (fx,fz) = _src(p)
+            # Tache étendue — halo de diffusion au sol
+            pool_r2 = 1.2 + 4.0*lvl
+            pool_pts2 = [pp for pp in
+                         (pt(fx+pool_r2*math.cos(math.radians(a)), 0.01,
+                             fz+pool_r2*math.sin(math.radians(a)))
+                          for a in range(0,360,20)) if pp]
+            cp = pt(fx, 0.01, fz)
+            if cp and len(pool_pts2) >= 3:
+                rs2 = max((math.hypot(p2.x()-cp.x(), p2.y()-cp.y())
+                           for p2 in pool_pts2), default=12)
+                rg2 = QRadialGradient(cp, max(rs2, 5))
+                rg2.setColorAt(0.00, QColor(r,g,b, int(35*lvl)))
+                rg2.setColorAt(0.55, QColor(r,g,b, int(15*lvl)))
+                rg2.setColorAt(1.00, QColor(r,g,b, 0))
+                painter.setBrush(QBrush(rg2)); painter.setPen(Qt.NoPen)
+                painter.drawPolygon(QPolygonF(pool_pts2))
+            # Tache principale — centre chaud
+            pool_r = 0.35 + 1.9*lvl
+            pool_pts = [pp for pp in
+                        (pt(fx+pool_r*math.cos(math.radians(a)), 0.01,
+                            fz+pool_r*math.sin(math.radians(a)))
+                         for a in range(0,360,15)) if pp]
+            if cp and len(pool_pts) >= 3:
+                rs = max((math.hypot(p2.x()-cp.x(), p2.y()-cp.y())
+                          for p2 in pool_pts), default=6)
+                rg = QRadialGradient(cp, max(rs, 3))
+                rg.setColorAt(0.00, QColor(min(255,r+70),min(255,g+70),min(255,b+70), int(210*lvl)))
+                rg.setColorAt(0.20, QColor(min(255,r+20),min(255,g+20),min(255,b+20), int(175*lvl)))
+                rg.setColorAt(0.60, QColor(r,g,b, int(75*lvl)))
+                rg.setColorAt(1.00, QColor(r,g,b, 0))
+                painter.setBrush(QBrush(rg)); painter.setPen(Qt.NoPen)
+                painter.drawPolygon(QPolygonF(pool_pts))
+
+        # ── Pass B+C — faisceaux volumétriques multi-couches (additif) ────
+        # 5 couches du plus large/transparent au plus étroit/lumineux :
+        # brume externe → glow → faisceau principal → inner glow → cœur
+        _BEAM_LAYERS = [
+            # (scale,  alpha_tip, alpha_mid, alpha_base)
+            (4.0,  6,  2,  0),   # brume atmosphérique
+            (2.6, 14,  5,  0),   # halo extérieur
+            (1.6, 35, 12,  1),   # glow intermédiaire
+            (0.9, 80, 28,  4),   # faisceau principal
+            (0.38,130, 50, 10),  # cœur lumineux
+        ]
+        now = _time.time()
         for p in sorted_prjs:
             lvl = max(0.0, min(1.0, p['level']/100.0))
             if lvl < 0.03: continue
@@ -747,51 +777,53 @@ class _Canvas3D(QWidget):
             sy, sx2, sz, (fx,fz) = _src(p)
             tip = pt(sx2, sy, sz)
             if not tip: continue
-            sh = (0.12+1.6*lvl)*2.2
-            px, pz = _beam_perp(p, fx, fz, sx2, sz)
             bc = pt(fx, 0.02, fz)
-            bl = pt(fx - sh*px, 0.02, fz - sh*pz)
-            br = pt(fx + sh*px, 0.02, fz + sh*pz)
-            if bl and br and bc:
-                gh = QLinearGradient(tip, bc)
-                gh.setColorAt(0.0, QColor(r,g,b,int(40*lvl))); gh.setColorAt(1.0, QColor(r,g,b,0))
-                painter.setBrush(QBrush(gh)); painter.setPen(Qt.NoPen)
-                painter.drawPolygon(QPolygonF([tip,bl,br]))
-
-        # ── Pass C — faisceau principal + gobo ────────────────────────────
-        now = _time.time()
-        for p in sorted_prjs:
-            lvl = max(0.0, min(1.0, p['level']/100.0))
-            r,g,b = p['r'],p['g'],p['b']
-            sy, sx2, sz, (fx,fz) = _src(p)
-            tip  = pt(sx2, sy, sz)
-            sp   = 0.12 + 1.6*lvl
+            if not bc: continue
             px, pz = _beam_perp(p, fx, fz, sx2, sz)
-            bc   = pt(fx, 0.02, fz)
-            bl   = pt(fx - sp*px, 0.02, fz - sp*pz)
-            br_  = pt(fx + sp*px, 0.02, fz + sp*pz)
-            if not (tip and bl and br_ and bc): continue
-            grad = QLinearGradient(tip, bc)
-            grad.setColorAt(0.0, QColor(r,g,b,int(220*lvl)))
-            grad.setColorAt(0.6, QColor(r,g,b,int(80*lvl)))
-            grad.setColorAt(1.0, QColor(r,g,b,int(15*lvl)))
-            painter.setBrush(QBrush(grad)); painter.setPen(Qt.NoPen)
-            painter.drawPolygon(QPolygonF([tip,bl,br_]))
+            base_sp = 0.12 + 1.6*lvl
+
+            for scale, at, am, ab in _BEAM_LAYERS:
+                sp2 = base_sp * scale
+                bl2 = pt(fx - sp2*px, 0.02, fz - sp2*pz)
+                br2 = pt(fx + sp2*px, 0.02, fz + sp2*pz)
+                if not (bl2 and br2): continue
+                grad = QLinearGradient(tip, bc)
+                grad.setColorAt(0.00, QColor(r,g,b, int(at*lvl)))
+                grad.setColorAt(0.55, QColor(r,g,b, int(am*lvl)))
+                grad.setColorAt(1.00, QColor(r,g,b, int(ab*lvl)))
+                painter.setBrush(QBrush(grad)); painter.setPen(Qt.NoPen)
+                painter.drawPolygon(QPolygonF([tip, bl2, br2]))
+
+            # Arêtes lumineuses du cône
             if lvl > 0.04:
-                ea = min(255,int(180*lvl))
-                painter.setPen(QPen(QColor(r,g,b,ea),1.0))
-                painter.drawLine(tip,bl); painter.drawLine(tip,br_)
-            slot_idx = p.get('gobo_slot_idx',0)
+                sp_edge = base_sp * 0.9
+                bl_e = pt(fx - sp_edge*px, 0.02, fz - sp_edge*pz)
+                br_e = pt(fx + sp_edge*px, 0.02, fz + sp_edge*pz)
+                if bl_e and br_e:
+                    ea = int(min(255, 90*lvl))
+                    painter.setPen(QPen(QColor(r,g,b,ea), 1.2))
+                    painter.drawLine(tip, bl_e); painter.drawLine(tip, br_e)
+
+            # Gobo
+            slot_idx = p.get('gobo_slot_idx', 0)
             if slot_idx > 0 and lvl > 0.04:
-                gdmx = p.get('gobo_rotation',0)
-                spd  = (gdmx-128)/128.0*120.0 if gdmx else 0.0
-                _draw_gobo_on_beam(painter, tip, bl, br_, slot_idx, (now*spd)%360.0, lvl)
-            # Rayon central lumineux — cœur du faisceau
-            if lvl > 0.06 and tip and bc:
-                _ca = int(min(255, 195*lvl))
-                painter.setPen(QPen(QColor(min(255,r+85),min(255,g+85),min(255,b+85),_ca),
-                                    max(0.6, lvl*1.8), Qt.SolidLine, Qt.RoundCap))
+                sp_g = base_sp * 0.9
+                bl_g = pt(fx - sp_g*px, 0.02, fz - sp_g*pz)
+                br_g = pt(fx + sp_g*px, 0.02, fz + sp_g*pz)
+                if bl_g and br_g:
+                    gdmx = p.get('gobo_rotation', 0)
+                    spd  = (gdmx-128)/128.0*120.0 if gdmx else 0.0
+                    _draw_gobo_on_beam(painter, tip, bl_g, br_g, slot_idx, (now*spd)%360.0, lvl)
+
+            # Rayon central — cœur très lumineux
+            if lvl > 0.05 and bc:
+                _ca = int(min(255, 180*lvl))
+                painter.setPen(QPen(
+                    QColor(min(255,r+100),min(255,g+100),min(255,b+100), _ca),
+                    max(0.8, lvl*2.5), Qt.SolidLine, Qt.RoundCap))
                 painter.drawLine(tip, bc)
+
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
 
         # ── Pass D — corps de fixture ──────────────────────────────────────
         for p in sorted_prjs:

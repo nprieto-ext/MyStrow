@@ -489,6 +489,7 @@ class _LibraryItem(QWidget):
         self._panel    = panel
         self._selected = False
         self._hovered  = False
+        self._is_paint_active = False
         self.setFixedHeight(self.H)
         self.setCursor(QCursor(Qt.OpenHandCursor))
 
@@ -517,6 +518,9 @@ class _LibraryItem(QWidget):
     def _swatch_paint(self, event):
         pass
 
+    def _get_paint_brush(self):
+        return None  # override in subclasses
+
     # ── Visuel ───────────────────────────────────────────────────────────────
 
     def enterEvent(self, e):
@@ -527,7 +531,12 @@ class _LibraryItem(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
-        if self._selected:
+        if self._is_paint_active:
+            p.fillRect(self.rect(), QColor(255, 149, 0, 50))
+            p.setPen(QPen(QColor(255, 149, 0, 220), 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(1, 1, self.width() - 2, self.height() - 2)
+        elif self._selected:
             p.fillRect(self.rect(), QColor(0, 212, 255, 40))
             p.setPen(QPen(QColor(0, 212, 255, 160), 1))
             p.setBrush(Qt.NoBrush)
@@ -540,11 +549,81 @@ class _LibraryItem(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            ed = self._panel.parent_editor if self._panel else None
+            if ed and getattr(ed, 'paint_mode', False):
+                brush = self._get_paint_brush()
+                if brush:
+                    ed.paint_brush = brush
+                    for it in self._panel._safe_items():
+                        it._is_paint_active = (it is self)
+                        try: it.update()
+                        except RuntimeError: pass
+                event.accept()
+                return
             self._drag_start = event.position().toPoint()
             if self._panel:
                 ctrl = bool(event.modifiers() & Qt.ControlModifier)
                 self._panel._toggle_selection(self, ctrl)
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        brush = self._get_paint_brush()
+        if brush is None:
+            return
+        ed = self._panel.parent_editor if self._panel else None
+        if ed is None:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: #1a1a1a; color: #ddd; border: 1px solid #333; border-radius: 6px; }"
+            "QMenu::item { padding: 7px 20px; font-size: 12px; }"
+            "QMenu::item:selected { background: #2a2a2a; color: white; }"
+        )
+        if self._is_paint_active:
+            act = menu.addAction("🔓  Débloquer cette couleur")
+        else:
+            act = menu.addAction("🔒  Bloquer cette couleur")
+
+        chosen = menu.exec(event.globalPos())
+        if chosen != act:
+            return
+
+        if self._is_paint_active:
+            # Désactiver
+            ed.paint_mode = False
+            ed.paint_brush = None
+            if hasattr(ed, 'paint_btn'):
+                ed.paint_btn.setChecked(False)
+            ed.setCursor(Qt.ArrowCursor)
+            for track in ed.tracks:
+                track.setCursor(Qt.ArrowCursor)
+            if hasattr(ed, 'track_waveform'):
+                ed.track_waveform.setCursor(Qt.ArrowCursor)
+            for it in self._panel._safe_items():
+                it._is_paint_active = False
+                try: it.update()
+                except RuntimeError: pass
+        else:
+            # Activer
+            ed.paint_brush = brush
+            ed.paint_mode = True
+            if hasattr(ed, 'paint_btn'):
+                ed.paint_btn.setChecked(True)
+            # Couper le mode cut si actif
+            if getattr(ed, 'cut_mode', False):
+                ed.cut_mode = False
+                if hasattr(ed, 'cut_btn'):
+                    ed.cut_btn.setChecked(False)
+            ed.setCursor(Qt.CrossCursor)
+            for track in ed.tracks:
+                track.setCursor(Qt.CrossCursor)
+            if hasattr(ed, 'track_waveform'):
+                ed.track_waveform.setCursor(Qt.CrossCursor)
+            for it in self._panel._safe_items():
+                it._is_paint_active = (it is self)
+                try: it.update()
+                except RuntimeError: pass
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
@@ -565,6 +644,9 @@ class _LibraryColorItem(_LibraryItem):
     def __init__(self, name, color, panel=None, parent=None):
         self._color = color
         super().__init__(name, panel, parent)
+
+    def _get_paint_brush(self):
+        return {"type": "color", "color": self._color}
 
     def _swatch_paint(self, event):
         p = QPainter(self._sw)
@@ -589,6 +671,9 @@ class _LibraryBicolorItem(_LibraryItem):
         self._c1 = c1
         self._c2 = c2
         super().__init__(name, panel, parent)
+
+    def _get_paint_brush(self):
+        return {"type": "bicolor", "c1": self._c1, "c2": self._c2}
 
     def _swatch_paint(self, event):
         p = QPainter(self._sw)
@@ -620,6 +705,9 @@ class _LibraryMemItem(_LibraryItem):
         self._mem_col   = mem_col
         self._mem_row   = row
         super().__init__(label, panel, parent)
+
+    def _get_paint_brush(self):
+        return {"type": "mem", "color": self._mem_color, "col": self._mem_col, "row": self._mem_row, "label": self._name}
 
     def _swatch_paint(self, event):
         p = QPainter(self._sw)
@@ -653,6 +741,9 @@ class _LibraryEffectItem(_LibraryItem):
         emoji = eff_dict.get("emoji", "✨")
         name  = eff_dict.get("name", "")
         super().__init__(f"{emoji}  {name}", panel, parent)
+
+    def _get_paint_brush(self):
+        return {"type": "effect", "eff": self._eff}
 
     def _swatch_paint(self, event):
         p = QPainter(self._sw)
@@ -792,6 +883,12 @@ class LibraryPanel(QScrollArea):
         self._populate_static()
         self.refresh()
 
+    def wheelEvent(self, event):
+        """Scroll vertical de la bibliothèque — ne remonte jamais à la timeline."""
+        sb = self.verticalScrollBar()
+        sb.setValue(sb.value() - event.angleDelta().y() // 2)
+        event.accept()
+
     # ── Gestion du registre d'items ───────────────────────────────────────────
 
     def _register(self, item):
@@ -805,28 +902,41 @@ class LibraryPanel(QScrollArea):
 
     # ── Sélection ─────────────────────────────────────────────────────────────
 
+    def _safe_items(self):
+        """Retourne _all_items en filtrant les objets C++ déjà supprimés."""
+        live = []
+        for it in self._all_items:
+            try:
+                it.isVisible()
+                live.append(it)
+            except RuntimeError:
+                pass
+        self._all_items = live
+        return live
+
     def _toggle_selection(self, item, ctrl: bool):
         if ctrl:
-            # Ctrl+clic : ajouter/retirer de la sélection
             if item in self._selection:
                 self._selection.discard(item)
                 item._selected = False
-                item.update()
+                try: item.update()
+                except RuntimeError: pass
             else:
                 self._selection.add(item)
                 item._selected = True
-                item.update()
+                try: item.update()
+                except RuntimeError: pass
         else:
-            # Clic simple : désélectionner tout, sélectionner cet item
             for other in list(self._selection):
                 other._selected = False
-                other.update()
+                try: other.update()
+                except RuntimeError: pass
             self._selection.clear()
             self._selection.add(item)
             item._selected = True
-            item.update()
+            try: item.update()
+            except RuntimeError: pass
 
-        # Mettre à jour le compteur dans le titre
         n = len(self._selection)
         self._sel_lbl.setText(f"{n} sélect." if n > 1 else "")
 
@@ -1303,6 +1413,10 @@ class LightTrack(QWidget):
         # Surlignage drop zone (drag depuis bibliothèque)
         self._drag_active = False
 
+        # Cross-track drag
+        self._cross_target_active = False
+        self._cross_track_target = None
+
         # Position du clic droit pour "Couper ici"
         self.last_context_click_x = 0
 
@@ -1770,6 +1884,16 @@ print(json.dumps(waveform))
         x = event.position().x()
         y = event.position().y()
 
+        # === MODE PAINT ACTIF ===
+        if hasattr(self.parent_editor, 'paint_mode') and self.parent_editor.paint_mode:
+            brush = getattr(self.parent_editor, 'paint_brush', None)
+            if brush and not self.get_clip_at_pos(x, y):
+                click_time = max(0, (x - 145) / self.pixels_per_ms)
+                self._paint_brush_at(click_time, brush)
+                if hasattr(self.parent_editor, 'save_state'):
+                    self.parent_editor.save_state()
+            return
+
         # === MODE CUT ACTIVE ===
         if hasattr(self.parent_editor, 'cut_mode') and self.parent_editor.cut_mode:
             result = self.get_clip_at_pos(x, y)
@@ -1930,51 +2054,50 @@ print(json.dumps(waveform))
             new_start = self._apply_snap(new_start, exclude_clip=self.dragging_clip)
             delta = new_start - self.drag_start_positions.get(self.dragging_clip, self.dragging_clip.start_time)
 
-            # Deplacer TOUS les clips selectionnes sur TOUTES les pistes
-            # Clamper le delta pour eviter de sauter par-dessus des clips
+            # Déplacer librement — la résolution des chevauchements se fait au relâché
             clamped_delta = delta
 
+            # Clamp uniquement pour ne pas aller sous 0
             for track in self.parent_editor.tracks:
                 for sel_clip in track.selected_clips:
                     if sel_clip not in self.drag_start_positions:
                         continue
-
                     original_start = self.drag_start_positions[sel_clip]
-
-                    # Limiter pour ne pas aller sous 0
                     if original_start + clamped_delta < 0:
                         clamped_delta = -original_start
 
-                    # Verifier collision avec les autres clips de cette piste
-                    for other_clip in track.clips:
-                        if other_clip in track.selected_clips:
-                            continue
-                        other_end = other_clip.start_time + other_clip.duration
-
-                        sel_clip_end_orig = original_start + sel_clip.duration
-
-                        if clamped_delta > 0:
-                            # Drag vers la droite: bloquer avant le prochain clip
-                            # Le clip bloqueur doit etre devant nous (son debut >= notre fin originale - marge)
-                            if other_clip.start_time >= sel_clip_end_orig - 1:
-                                max_delta = other_clip.start_time - sel_clip_end_orig
-                                if max_delta < clamped_delta:
-                                    clamped_delta = max(0, max_delta)
-                        else:
-                            # Drag vers la gauche: bloquer apres le clip precedent
-                            # Le clip bloqueur doit etre derriere nous (sa fin <= notre debut original + marge)
-                            if other_end <= original_start + 1:
-                                max_delta = -(original_start - other_end)
-                                if max_delta > clamped_delta:
-                                    clamped_delta = min(0, max_delta)
-
-            # Appliquer le deplacement avec le delta clampe
             if abs(clamped_delta) > 0.1:
                 for track in self.parent_editor.tracks:
                     for sel_clip in track.selected_clips:
                         if sel_clip in self.drag_start_positions:
                             sel_clip.start_time = max(0, self.drag_start_positions[sel_clip] + clamped_delta)
                     track.update()
+
+            # Curseur visuel : main fermée ou copie (Alt)
+            if event.modifiers() & Qt.AltModifier:
+                self.setCursor(Qt.DragCopyCursor)
+            else:
+                self.setCursor(Qt.ClosedHandCursor)
+
+            # Détection cross-track : trouver la piste sous le curseur
+            if not self.is_sequence_track and not self.is_effect_track:
+                global_pos = event.globalPosition().toPoint()
+                new_target = None
+                for track in self.parent_editor.tracks:
+                    if track is self or track.is_sequence_track or track.is_effect_track:
+                        continue
+                    local_y = track.mapFromGlobal(global_pos).y()
+                    if 0 <= local_y <= track.height():
+                        new_target = track
+                        break
+                if new_target is not self._cross_track_target:
+                    if self._cross_track_target:
+                        self._cross_track_target._cross_target_active = False
+                        self._cross_track_target.update()
+                    self._cross_track_target = new_target
+                    if new_target:
+                        new_target._cross_target_active = True
+                        new_target.update()
 
         elif self.resizing_clip:
             clip_x = 145 + int(self.resizing_clip.start_time * self.pixels_per_ms)
@@ -2059,7 +2182,89 @@ print(json.dumps(waveform))
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """Fin drag/resize"""
+        """Fin drag/resize — résout les chevauchements éventuels."""
+        if self.dragging_clip:
+            target    = self._cross_track_target
+            clip      = self.dragging_clip
+            copy_mode = bool(event.modifiers() & Qt.AltModifier)
+
+            # Réinitialiser l'indicateur visuel cross-track
+            if target:
+                target._cross_target_active = False
+                target.update()
+            self._cross_track_target = None
+
+            if target and not self.is_sequence_track and not self.is_effect_track:
+                # ── Cross-track ───────────────────────────────────────────
+                global_pos = event.globalPosition().toPoint()
+                target_local_x = target.mapFromGlobal(global_pos).x() - self.drag_offset
+                primary_target_time = max(0, (target_local_x - 145) / self.pixels_per_ms)
+                primary_orig = self.drag_start_positions.get(clip, clip.start_time)
+                delta = primary_target_time - primary_orig
+
+                # Collecter tous les clips sélectionnés
+                to_act = []
+                for track in self.parent_editor.tracks:
+                    if track.is_sequence_track or track.is_effect_track:
+                        continue
+                    for sel_clip in list(track.selected_clips):
+                        if sel_clip in self.drag_start_positions:
+                            to_act.append((track, sel_clip))
+                if not any(c is clip for _, c in to_act):
+                    to_act.append((self, clip))
+
+                if copy_mode:
+                    # COPIE cross-track : cloner vers la cible, restaurer originaux
+                    for src_track, mv_clip in to_act:
+                        orig      = self.drag_start_positions.get(mv_clip, mv_clip.start_time)
+                        new_start = max(0, orig + delta)
+                        mv_clip.start_time = orig   # restaurer l'original
+                        src_track.update()
+                        new_clip = self._clone_clip(mv_clip, target)
+                        free_start = target.find_free_position(new_start, new_clip.duration)
+                        new_clip.start_time = free_start
+                        target.clips.append(new_clip)
+                        target.selected_clips.append(new_clip)
+                else:
+                    # DÉPLACE cross-track
+                    for src_track, mv_clip in to_act:
+                        orig      = self.drag_start_positions.get(mv_clip, mv_clip.start_time)
+                        new_start = max(0, orig + delta)
+                        if mv_clip in src_track.clips:
+                            src_track.clips.remove(mv_clip)
+                        if mv_clip in src_track.selected_clips:
+                            src_track.selected_clips.remove(mv_clip)
+                        src_track.update()
+                        mv_clip.parent_track = target
+                        free_start = target.find_free_position(new_start, mv_clip.duration)
+                        mv_clip.start_time = free_start
+                        target.clips.append(mv_clip)
+                        target.selected_clips.append(mv_clip)
+
+                target.update()
+                self.update()
+
+            else:
+                # ── Même piste ────────────────────────────────────────────
+                if copy_mode:
+                    # COPIE : cloner à la position draggée, restaurer originaux
+                    for track in self.parent_editor.tracks:
+                        dragged = [c for c in track.selected_clips if c in self.drag_start_positions]
+                        for c in dragged:
+                            dragged_pos = c.start_time        # position après le drag
+                            c.start_time = self.drag_start_positions[c]  # restaurer original
+                            new_clip = self._clone_clip(c, track)
+                            new_clip.start_time = dragged_pos
+                            track.clips.append(new_clip)
+                            self._resolve_overlap(track, new_clip)
+                        track.update()
+                else:
+                    # DÉPLACE normal — résoudre les chevauchements
+                    for track in self.parent_editor.tracks:
+                        dragged = [c for c in track.selected_clips if c in self.drag_start_positions]
+                        for c in dragged:
+                            self._resolve_overlap(track, c)
+
         self.dragging_clip = None
         self.drag_start_positions = {}
         self.resizing_clip = None
@@ -2071,6 +2276,40 @@ print(json.dumps(waveform))
             self.setCursor(Qt.ArrowCursor)
 
         super().mouseReleaseEvent(event)
+
+    def _resolve_overlap(self, track, clip):
+        """Après un drag libre, place le clip dans le gap le plus proche si chevauchement."""
+        others = [c for c in track.clips if c is not clip]
+
+        def overlaps(start_ms):
+            end_ms = start_ms + clip.duration
+            return any(
+                start_ms < o.start_time + o.duration and end_ms > o.start_time
+                for o in others
+            )
+
+        if not overlaps(clip.start_time):
+            return  # Position valide, rien à faire
+
+        # Candidats : début de timeline + juste après / juste avant chaque clip
+        candidates = [0.0]
+        for o in others:
+            candidates.append(o.start_time + o.duration)
+            before = o.start_time - clip.duration
+            if before >= 0:
+                candidates.append(before)
+
+        best_pos, best_dist = None, float('inf')
+        for pos in candidates:
+            if not overlaps(pos):
+                dist = abs(pos - clip.start_time)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_pos = pos
+
+        if best_pos is not None:
+            clip.start_time = best_pos
+        track.update()
 
     def contextMenuEvent(self, event):
         """Menu contextuel sur clip OU zone vide"""
@@ -2473,6 +2712,9 @@ print(json.dumps(waveform))
             action = fill_gap_menu.addAction(f"■■ {name}")
             action.triggered.connect(lambda checked=False, c1=col1, c2=col2, p=local_pos: self.fill_gap_bicolor_at_pos(c1, c2, p))
 
+        act_del_gap = menu.addAction("⇤  Supprimer le vide")
+        act_del_gap.triggered.connect(lambda checked=False, p=local_pos: self.delete_gap_at_pos(p))
+
         menu.exec(global_pos)
 
     def fill_gap_at_pos(self, color, pos):
@@ -2528,6 +2770,42 @@ print(json.dumps(waveform))
             self.update()
             if hasattr(self.parent_editor, 'save_state'):
                 self.parent_editor.save_state()
+
+    def delete_gap_at_pos(self, pos):
+        """Supprime le vide à la position cliquée et rapproche tous les blocs à droite."""
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+
+        click_time = max(0, (pos.x() - 145) / self.pixels_per_ms)
+        sorted_clips = sorted(self.clips, key=lambda c: c.start_time)
+
+        gap_start = 0
+        gap_end = None
+
+        for clip in sorted_clips:
+            clip_end = clip.start_time + clip.duration
+            if clip_end <= click_time:
+                gap_start = clip_end
+            elif clip.start_time > click_time:
+                gap_end = clip.start_time
+                break
+
+        # Pas de clip à droite = rien à faire
+        if gap_end is None:
+            return
+
+        gap_duration = gap_end - gap_start
+        if gap_duration < 1:
+            return
+
+        # Décaler tous les clips dont le début est >= gap_end vers la gauche
+        for clip in self.clips:
+            if clip.start_time >= gap_end:
+                clip.start_time = max(0, clip.start_time - gap_duration)
+
+        self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
 
     def show_clip_menu(self, clip, global_pos, click_pos_in_clip=None):
         """Affiche le menu contextuel d'un clip"""
@@ -3251,6 +3529,39 @@ print(json.dumps(waveform))
         self.update()
         return clip
 
+    def _clone_clip(self, clip, dest_track):
+        """Crée une copie profonde d'un clip pour le Alt+drag."""
+        new_clip = LightClip(clip.start_time, clip.duration, QColor(clip.color), clip.intensity, dest_track)
+        new_clip.color2 = QColor(clip.color2) if clip.color2 else None
+        new_clip.fade_in_duration  = clip.fade_in_duration
+        new_clip.fade_out_duration = clip.fade_out_duration
+        new_clip.effect            = clip.effect
+        new_clip.effect_speed      = clip.effect_speed
+        new_clip.effect_layers     = list(clip.effect_layers)
+        new_clip.effect_play_mode  = clip.effect_play_mode
+        new_clip.effect_duration   = clip.effect_duration
+        new_clip.effect_name       = clip.effect_name
+        new_clip.effect_target_groups = list(clip.effect_target_groups)
+        for attr in ('memory_ref', 'cue_index', 'memory_label'):
+            if hasattr(clip, attr):
+                setattr(new_clip, attr, getattr(clip, attr))
+        return new_clip
+
+    def _paint_brush_at(self, start_time, brush):
+        """Place un clip à start_time selon le pinceau paint_brush actif."""
+        dur = 1000  # 1 seconde
+        btype = brush.get("type", "color")
+        if btype == "color":
+            self.add_clip(start_time, dur, brush["color"], 100)
+        elif btype == "bicolor":
+            clip = self.add_clip(start_time, dur, brush["c1"], 100)
+            clip.color2 = brush["c2"]
+            self.update()
+        elif btype == "mem":
+            self.add_clip(start_time, dur, brush["color"], 100)
+        elif btype == "effect":
+            self.add_clip(start_time, dur, QColor("#22083a"), 100)
+
     def update_clips(self):
         """Met a jour la position/taille de tous les clips"""
         for clip in self.clips:
@@ -3733,6 +4044,13 @@ print(json.dumps(waveform))
         if self._drag_active:
             painter.fillRect(self.rect(), QColor(0, 220, 80, 28))
             painter.setPen(QPen(QColor(0, 220, 80, 200), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
+
+        # Surlignage cible cross-track drag
+        if self._cross_target_active:
+            painter.fillRect(self.rect(), QColor(255, 165, 0, 22))
+            painter.setPen(QPen(QColor(255, 165, 0, 210), 2))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
 

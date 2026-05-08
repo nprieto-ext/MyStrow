@@ -297,11 +297,12 @@ PAN_TILT_SHAPES = {
     "cercle":    {"label": "○  Cercle",     "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",    25, 1.0)},
     "huit":      {"label": "8  Huit",       "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",     0, 2.0)},
     "infini":    {"label": "∞  Infini",     "pan": ("Sinus",    0,  2.0), "tilt": ("Sinus",     0, 1.0)},
-    "balancier": {"label": "↔  Balancier",  "pan": ("Sinus",    0,  1.0), "tilt": ("Fixe",      0, 1.0)},
+    "balancier": {"label": "↔  Balancier",  "pan": ("Sinus",    0,  1.0), "tilt": (None,        0, 1.0)},
+    "pendule":   {"label": "↕  Pendule",    "pan": (None,       0,  1.0), "tilt": ("Sinus",     0, 1.0)},
     "carre":     {"label": "□  Carré",      "pan": ("Triangle", 0,  1.0), "tilt": ("Triangle", 25, 1.0)},
     "libre":     {"label": "~  Libre",      "pan": (None,       0,  1.0), "tilt": (None,        0, 1.0)},
 }
-_PT_SHAPE_ORDER = ["cercle", "huit", "infini", "balancier", "carre", "libre"]
+_PT_SHAPE_ORDER = ["cercle", "huit", "infini", "balancier", "pendule", "carre", "libre"]
 
 # Migration des anciens noms (fichiers .tui sauvegardés avant la refonte)
 _FORME_COMPAT = {
@@ -1210,7 +1211,7 @@ class WaveformCanvas(QWidget):
 
         layer  = self._layer
         N      = w - 2 * mg
-        freq   = 0.3 + layer.speed / 100.0 * 3.5
+        freq   = 0.05 + layer.speed / 100.0 * 7.0
         fade_f = getattr(layer, 'fade', 0) / 100.0
         attr   = layer.attribute
 
@@ -1283,8 +1284,8 @@ class TrajectoryCanvas(QWidget):
         inner_w = w - 2 * mg
         inner_h = h - 2 * mg
 
-        # ── Mode "Libre" : croix centrale ────────────────────────────────────
-        if sid == 'libre' or pan_forme is None or tilt_forme is None:
+        # ── Mode "Libre" (les deux axes None) : croix centrale ───────────────
+        if sid == 'libre' or (pan_forme is None and tilt_forme is None):
             cx, cy = w // 2, h // 2
             p.setPen(QPen(QColor("#2a2a2a"), 1))
             p.drawLine(mg, cy, w - mg, cy)
@@ -1295,15 +1296,17 @@ class TrajectoryCanvas(QWidget):
             p.end()
             return
 
+        # Axe unique None → fixé au centre (0.5)
+        def _pv(t_n): return _layer_wave(pan_forme,  (t_n * pan_mult  + pan_ph  / 100.0) % 1.0) if pan_forme  else 0.5
+        def _tv(t_n): return _layer_wave(tilt_forme, (t_n * tilt_mult + tilt_ph / 100.0) % 1.0) if tilt_forme else 0.5
+
         # ── Calcul de la trajectoire (N points) ───────────────────────────────
         N   = 160
         pts = []
         for i in range(N + 1):
             t_n  = i / N                               # 0..1 période normalisée
-            pv   = _layer_wave(pan_forme,  (t_n * pan_mult  + pan_ph  / 100.0) % 1.0)
-            tv   = _layer_wave(tilt_forme, (t_n * tilt_mult + tilt_ph / 100.0) % 1.0)
-            sx   = mg + pv * inner_w
-            sy   = mg + (1.0 - tv) * inner_h          # axe Y inversé (haut = tilt max)
+            sx   = mg + _pv(t_n) * inner_w
+            sy   = mg + (1.0 - _tv(t_n)) * inner_h    # axe Y inversé (haut = tilt max)
             pts.append(QPoint(int(sx), int(sy)))
 
         # Tracé fantôme (trajectoire complète, semi-transparent)
@@ -1322,10 +1325,8 @@ class TrajectoryCanvas(QWidget):
         # ── Point animé ───────────────────────────────────────────────────────
         freq   = max(0.01, layer.speed / 100.0) * 2.0
         t_anim = self._t * freq
-        pv  = _layer_wave(pan_forme,  (t_anim * pan_mult  + pan_ph  / 100.0) % 1.0)
-        tv  = _layer_wave(tilt_forme, (t_anim * tilt_mult + tilt_ph / 100.0) % 1.0)
-        ax  = int(mg + pv * inner_w)
-        ay  = int(mg + (1.0 - tv) * inner_h)
+        ax  = int(mg + _pv(t_anim) * inner_w)
+        ay  = int(mg + (1.0 - _tv(t_anim)) * inner_h)
 
         # Halo
         p.setPen(Qt.NoPen)
@@ -2094,10 +2095,11 @@ class SimpleEffectPanel(QWidget):
     """
     Panneau central bi-colonnes :
       Gauche  — LayerCards (couches) + CIBLE + SENS/OPTIONS/GOBO contextuels
-      Droite  — 4 Potards globaux + TAP TEMPO + APERÇU
+      Droite  — 4 Potards globaux + APERÇU
     """
 
-    changed = Signal()
+    changed          = Signal()
+    rename_requested = Signal(object)  # émet l'effet courant (dict)
 
     def __init__(self, main_window=None, parent=None):
         super().__init__(parent)
@@ -2106,7 +2108,6 @@ class SimpleEffectPanel(QWidget):
         self._direction    = 1
         self._main_window  = main_window
         self._layer_cards: list = []
-        self._tap_times:   list = []
 
         self.setStyleSheet("background: #0d0d0d;")
 
@@ -2139,8 +2140,25 @@ class SimpleEffectPanel(QWidget):
         )
         tc.addWidget(self._eff_title)
         tc.addWidget(self._eff_cat)
+
+        self._rename_btn = QPushButton("✏")
+        self._rename_btn.setFixedSize(28, 28)
+        self._rename_btn.setCursor(Qt.PointingHandCursor)
+        self._rename_btn.setToolTip("Renommer cet effet")
+        self._rename_btn.setVisible(False)
+        self._rename_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #333;
+                border: 1px solid #252525; border-radius: 5px;
+                font-size: 13px;
+            }
+            QPushButton:hover { color: #ffaa00; border-color: #554400; background: #1a1400; }
+        """)
+        self._rename_btn.clicked.connect(lambda: self.rename_requested.emit(self._effect))
+
         hl.addWidget(self._eff_emoji)
         hl.addLayout(tc, 1)
+        hl.addWidget(self._rename_btn)
         outer.addWidget(hdr)
 
         # ── Corps bi-colonnes ──────────────────────────────────────────────────
@@ -2221,8 +2239,6 @@ class SimpleEffectPanel(QWidget):
         self._rl.setContentsMargins(14, 16, 20, 12)
         self._rl.setSpacing(0)
         self._build_knobs()
-        self._rl.addSpacing(14)
-        self._build_tap_tempo()
         self._rl.addSpacing(14)
         self._build_preview_strip()
         self._rl.addSpacing(14)
@@ -2379,54 +2395,6 @@ class SimpleEffectPanel(QWidget):
         self._knob_spread.valueChanged.connect(self._on_spread)
 
         self._rl.addWidget(knob_w, 0, Qt.AlignCenter)
-
-    def _build_tap_tempo(self):
-        self._rl.addWidget(self._mk_sep("TEMPO"))
-        self._rl.addSpacing(8)
-
-        row = QHBoxLayout()
-        row.setSpacing(6)
-
-        self._tap_btn = QPushButton("TAP")
-        self._tap_btn.setFixedSize(48, 32)
-        self._tap_btn.setCursor(Qt.PointingHandCursor)
-        self._tap_btn.setStyleSheet("""
-            QPushButton {
-                background: #0f0f0f; color: #555;
-                border: 1px solid #1c1c1c; border-radius: 6px;
-                font-size: 11px; font-weight: bold;
-            }
-            QPushButton:hover  { background: #181818; color: #00d4ff; border-color: #004455; }
-            QPushButton:pressed { background: #001a2a; color: #00d4ff; border-color: #00d4ff; }
-        """)
-        self._tap_btn.setToolTip("Tapper le rythme pour régler la vitesse")
-        self._tap_btn.clicked.connect(self._on_tap)
-        row.addWidget(self._tap_btn)
-
-        self._bpm_lbl = QLabel("-- BPM")
-        self._bpm_lbl.setFixedWidth(64)
-        self._bpm_lbl.setStyleSheet(
-            "color: #333; font-size: 11px; font-weight: bold; background: transparent;"
-        )
-        row.addWidget(self._bpm_lbl)
-        row.addStretch()
-
-        self._sync_btn = QPushButton("♩ SYNC")
-        self._sync_btn.setFixedHeight(28)
-        self._sync_btn.setCursor(Qt.PointingHandCursor)
-        self._sync_btn.setStyleSheet("""
-            QPushButton {
-                background: #0a0a12; color: #252545;
-                border: 1px solid #14141e; border-radius: 5px;
-                font-size: 9px; font-weight: bold; padding: 0 8px;
-            }
-            QPushButton:hover { background: #0d1020; color: #5555cc; border-color: #222244; }
-        """)
-        self._sync_btn.setToolTip("Synchroniser avec le BPM du séquenceur")
-        self._sync_btn.clicked.connect(self._on_sync_bpm)
-        row.addWidget(self._sync_btn)
-
-        self._rl.addLayout(row)
 
     def _build_preview_strip(self):
         self._rl.addWidget(self._mk_sep("APERÇU"))
@@ -2587,6 +2555,7 @@ class SimpleEffectPanel(QWidget):
         self._eff_cat.setStyleSheet(
             "color: #3a3a3a; font-size: 8px; letter-spacing: 2px; background: transparent;"
         )
+        self._rename_btn.setVisible(cat == "Mes Effets")
 
         self._set_enabled(bool(layers))
         self._refresh()
@@ -2608,13 +2577,6 @@ class SimpleEffectPanel(QWidget):
             knob.blockSignals(True)
             knob.set_value(val)
             knob.blockSignals(False)
-
-        if hasattr(self, '_bpm_lbl'):
-            bpm = (0.3 + l.speed / 100.0 * 3.5) * 60.0
-            self._bpm_lbl.setText(f"{int(bpm)} BPM")
-            self._bpm_lbl.setStyleSheet(
-                "color: #444; font-size: 11px; font-weight: bold; background: transparent;"
-            )
 
         self._refresh_sens()
 
@@ -2659,25 +2621,30 @@ class SimpleEffectPanel(QWidget):
             if item and item.widget():
                 item.widget().deleteLater()
 
-        # Vieux format : couches "Pan" et "Tilt" séparées → pad XY (rétrocompat)
+        # Rétrocompat : couches "Pan" et "Tilt" séparées → "Pan/Tilt" combiné
         pan_l  = next((l for l in self._layers if l.attribute == "Pan"),  None)
         tilt_l = next((l for l in self._layers if l.attribute == "Tilt"), None)
+        if pan_l is not None or tilt_l is not None:
+            if pan_l and tilt_l:
+                # Déduire la shape selon le décalage de phase
+                phase_diff = abs(tilt_l.phase - pan_l.phase)
+                shape = "cercle" if 15 <= phase_diff <= 35 else "huit"
+                pan_l.attribute       = "Pan/Tilt"
+                pan_l.mouvement_shape = shape
+                self._layers = [l for l in self._layers if l is not tilt_l]
+            elif pan_l:
+                pan_l.attribute       = "Pan/Tilt"
+                pan_l.mouvement_shape = "balancier"
+            else:
+                tilt_l.attribute       = "Pan/Tilt"
+                tilt_l.mouvement_shape = "pendule"
 
         for layer in self._layers:
-            if layer.attribute in ("Pan", "Tilt"):
-                continue   # traités ensemble ci-dessous si présents
             card = LayerCard(layer)
             card.deleted.connect(lambda _w, l=layer: self._on_delete_layer(l))
             card.changed.connect(self.changed)
             self._layers_vl.addWidget(card)
             self._layer_cards.append(card)
-
-        if pan_l is not None or tilt_l is not None:
-            pad = PanTiltLivePad(pan_l, tilt_l)
-            pad.changed.connect(self.changed)
-            pad.deleted.connect(self._on_delete_pt_layers)
-            self._layers_vl.addWidget(pad)
-            self._pt_pad_widget = pad
 
     def _on_add_layer(self):
         new_layer           = EffectLayer()
@@ -2718,12 +2685,6 @@ class SimpleEffectPanel(QWidget):
     def _on_speed(self, val: int):
         for layer in self._layers:
             layer.speed = val
-        if hasattr(self, '_bpm_lbl'):
-            bpm = (0.3 + val / 100.0 * 3.5) * 60.0
-            self._bpm_lbl.setText(f"{int(bpm)} BPM")
-            self._bpm_lbl.setStyleSheet(
-                "color: #444; font-size: 11px; font-weight: bold; background: transparent;"
-            )
         self.changed.emit()
 
     def _on_amp(self, val: int):
@@ -2776,49 +2737,6 @@ class SimpleEffectPanel(QWidget):
                 l.speed = val
         self.changed.emit()
 
-    def _on_tap(self):
-        now = _time.monotonic()
-        if self._tap_times and (now - self._tap_times[-1]) > 2.5:
-            self._tap_times = []
-        self._tap_times.append(now)
-        if len(self._tap_times) > 8:
-            self._tap_times = self._tap_times[-8:]
-        if len(self._tap_times) >= 2:
-            intervals = [self._tap_times[i+1] - self._tap_times[i]
-                         for i in range(len(self._tap_times) - 1)]
-            bpm = 60.0 / (sum(intervals) / len(intervals))
-            self._set_bpm(bpm)
-        else:
-            self._bpm_lbl.setText("...")
-            self._bpm_lbl.setStyleSheet(
-                "color: #00d4ff; font-size: 11px; font-weight: bold; background: transparent;"
-            )
-
-    def _set_bpm(self, bpm: float):
-        bpm   = max(20.0, min(300.0, bpm))
-        freq  = bpm / 60.0
-        speed = int((freq - 0.3) / 3.5 * 100)
-        speed = max(0, min(100, speed))
-        self._bpm_lbl.setText(f"{int(bpm)} BPM")
-        self._bpm_lbl.setStyleSheet(
-            "color: #00d4ff; font-size: 11px; font-weight: bold; background: transparent;"
-        )
-        self._knob_speed.set_value(speed)
-
-    def _on_sync_bpm(self):
-        mw  = self._main_window
-        bpm = None
-        if mw:
-            bpm = getattr(mw, 'bpm', None) or getattr(mw, '_bpm', None)
-            if bpm is None:
-                for attr in ('sequencer', '_sequencer', 'seq'):
-                    seq = getattr(mw, attr, None)
-                    if seq:
-                        bpm = getattr(seq, 'bpm', None) or getattr(seq, '_bpm', None)
-                        if bpm:
-                            break
-        if bpm:
-            self._set_bpm(float(bpm))
 
 
 # ─── Dialog principal ──────────────────────────────────────────────────────────
@@ -3291,6 +3209,7 @@ class EffectEditorDialog(QDialog):
     def _mk_simple_panel(self) -> QWidget:
         self._simple_panel = SimpleEffectPanel(main_window=self._main_window)
         self._simple_panel.changed.connect(self._ensure_preview_running)
+        self._simple_panel.rename_requested.connect(self._rename_custom_effect)
 
         # Aliases vers les widgets créés dans SimpleEffectPanel._build_assigner_section
         self._btn_loop    = self._simple_panel._btn_loop
@@ -3604,15 +3523,12 @@ class EffectEditorDialog(QDialog):
             overrides = self._compute_preview(t)
             if plan is not None:
                 plan.set_htp_overrides(overrides)
-            # Alimenter la mini strip
-            projectors = getattr(self._main_window, 'projectors', [])
-            if projectors and overrides:
-                levels = []
-                colors = []
-                for proj in projectors[:16]:
-                    lv, col = overrides.get(id(proj), (0.0, QColor(255, 255, 255)))
-                    levels.append(lv)
-                    colors.append(col)
+            # Alimenter la mini strip (même filtre anti-fumée que _compute_preview)
+            all_proj = getattr(self._main_window, 'projectors', [])
+            strip_proj = [p for p in all_proj if getattr(p, 'group', '') != 'fumee'][:16]
+            if strip_proj and overrides:
+                levels = [overrides[id(p)][0] if id(p) in overrides else 0.0 for p in strip_proj]
+                colors = [overrides[id(p)][1] if id(p) in overrides else QColor(0, 0, 0) for p in strip_proj]
                 self._simple_panel.set_preview_levels(levels, colors)
             self._simple_panel.tick(t)
         except Exception:
@@ -3646,7 +3562,7 @@ class EffectEditorDialog(QDialog):
             return {}
 
         # Fix A : appliquer le fader FX pour que la vitesse preview = vitesse live
-        fader_mult = max(0.05, getattr(self._main_window, 'effect_speed', 80) / 100.0)
+        fader_mult = max(0.01, getattr(self._main_window, 'effect_speed', 80) / 100.0)
 
         n      = len(projectors)
         result = {}
@@ -3668,7 +3584,7 @@ class EffectEditorDialog(QDialog):
                 if preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
                 if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
 
-                freq      = (0.3 + layer.speed / 100.0 * 3.5) * fader_mult
+                freq      = (0.05 + layer.speed / 100.0 * 7.0) * fader_mult
                 spread    = layer.spread / 100.0
                 phase     = layer.phase  / 100.0
                 direction = getattr(layer, 'direction', 1)
@@ -3732,8 +3648,13 @@ class EffectEditorDialog(QDialog):
                 color = QColor(0, 0, 0)
                 if not has_dim:
                     level = 0.0
+            elif has_dim:
+                # Dimmer seul : oscille la couleur existante du projecteur
+                # level est déjà appliqué par _get_fill_color, on passe la couleur brute
+                color = QColor(proj.color)
             else:
-                color = QColor(255, 255, 255)
+                # Aucune couche ne cible ce projecteur → ne pas forcer de couleur
+                continue
 
             result[id(proj)] = (level, color)
 

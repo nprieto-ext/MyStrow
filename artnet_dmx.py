@@ -635,11 +635,17 @@ class ArtNetDMX:
                     r, g, b = 0, 0, 0
 
             _ch_defaults = getattr(proj, 'channel_defaults', {})
+            _ch_extras   = getattr(proj, 'channel_extras',   {})
             for idx, ch_type in enumerate(profile):
                 if idx >= len(channels):
                     break
                 ch = channels[idx]
                 if ch <= 0:
+                    continue
+
+                # Contrôle brut prioritaire (curseurs avancés du menu contextuel)
+                if ch_type in _ch_extras:
+                    self.set_channel(ch, _ch_extras[ch_type], universe)
                     continue
 
                 if ch_type == "R":
@@ -671,8 +677,10 @@ class ArtNetDMX:
                     ch_val = getattr(proj, 'zoom', 0)
                 elif ch_type == "Iris":
                     ch_val = getattr(proj, 'iris', 0)
-                elif ch_type == "Dim":
+                elif ch_type in ("Dim", "Dim2"):
                     ch_val = dimmer
+                elif ch_type == "Reset":
+                    ch_val = 0  # repos : ne pas déclencher le reset
                 elif ch_type == "Strobe":
                     spd = getattr(proj, 'strobe_speed', 0)
                     if spd > 0:
