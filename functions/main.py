@@ -41,17 +41,18 @@ import firebase_admin
 from firebase_admin import auth, firestore
 from firebase_functions import https_fn
 
-# ---------------------------------------------------------------------------
-# Init Firebase Admin au niveau module (best practice Gen 2)
-# ---------------------------------------------------------------------------
-if not firebase_admin._apps:
-    firebase_admin.initialize_app()
-
 _db = None
+
+
+def _ensure_init():
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app()
+
 
 def _get_db():
     global _db
     if _db is None:
+        _ensure_init()
         _db = firestore.client()
     return _db
 
@@ -167,6 +168,7 @@ def _get_or_create_user(email: str, password: str) -> tuple[str, bool]:
     Retourne (uid, is_new).
     Crée l'utilisateur Firebase Auth si inexistant.
     """
+    _ensure_init()
     try:
         user = auth.get_user_by_email(email)
         return user.uid, False
@@ -897,6 +899,7 @@ def _cors_preflight() -> https_fn.Response:
 
 def _verify_token(req: https_fn.Request) -> str | None:
     """Vérifie le Bearer token Firebase et retourne l'uid, ou None si invalide."""
+    _ensure_init()
     ah = req.headers.get("Authorization", "")
     if not ah.startswith("Bearer "):
         return None
