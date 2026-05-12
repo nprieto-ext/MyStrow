@@ -686,6 +686,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "uic_cat_mouvement":         {"en": "Movement",                     "fr": "Mouvement"},
     "uic_cat_ambiance":          {"en": "Atmosphere",                   "fr": "Ambiance"},
     "uic_cat_couleur":           {"en": "Colour",                       "fr": "Couleur"},
+    "uic_cat_permut":            {"en": "Permut",                       "fr": "Permut"},
+    "uic_cat_lyre":              {"en": "Lyre",                         "fr": "Lyre"},
     "uic_cat_special":           {"en": "Special",                      "fr": "Spécial"},
     "uic_cat_perso":             {"en": "Custom",                       "fr": "Personnalisés"},
     "uic_cat_mes_effets":        {"en": "My Effects",                   "fr": "Mes Effets"},

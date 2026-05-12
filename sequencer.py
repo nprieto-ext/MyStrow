@@ -1495,17 +1495,28 @@ class Sequencer(QFrame):
                     break
 
         for i, btn in enumerate(main_window.effect_buttons):
-            keyframe["active_effects"].append(btn.active)
+            if btn.active and btn.current_effect:
+                cfg = main_window._button_effect_configs.get(i, {})
+                keyframe["active_effects"].append({
+                    "active": True,
+                    "name": btn.current_effect,
+                    "config": cfg,
+                })
+            else:
+                keyframe["active_effects"].append({"active": False})
 
         self.sequences[self.recording_row]["keyframes"].append(keyframe)
 
         pad_color = None
         if keyframe["active_pad"]:
             pad_color = QColor(keyframe["active_pad"]["color"])
+        active_effs = [e for e in keyframe["active_effects"] if isinstance(e, dict) and e.get("active")]
+        effect_name = active_effs[0].get("name", "") if active_effs else ""
         main_window.recording_waveform.add_keyframe(
             self.recording_start_time,
             keyframe["faders"],
-            pad_color
+            pad_color,
+            effect_name,
         )
 
         self.recording_start_time += 500
@@ -2048,10 +2059,24 @@ class Sequencer(QFrame):
                     velocity = rgb_to_akai_velocity(pad.property("base_color"))
                     main_window.midi_handler.set_pad_led(pad_info["row"], pad_info["col"], velocity, 100)
 
-        for i, active in enumerate(keyframe["active_effects"]):
-            if i < len(main_window.effect_buttons):
-                if active != main_window.effect_buttons[i].active:
-                    main_window.toggle_effect(i)
+        for i, eff_entry in enumerate(keyframe["active_effects"]):
+            if i >= len(main_window.effect_buttons):
+                continue
+            btn = main_window.effect_buttons[i]
+            # Rétrocompat : ancien format bool, nouveau format dict
+            if isinstance(eff_entry, bool):
+                active = eff_entry
+            else:
+                active = eff_entry.get("active", False)
+                if active:
+                    name = eff_entry.get("name", "")
+                    cfg  = eff_entry.get("config", {})
+                    if name:
+                        btn.current_effect = name
+                        btn.setToolTip(name)
+                        main_window._button_effect_configs[i] = cfg
+            if active != btn.active:
+                main_window.toggle_effect(i)
 
     def show_media_context_menu(self, pos):
         """Menu contextuel sur media"""

@@ -31,24 +31,41 @@ _FS_BASE = (
     f"/databases/(default)/documents"
 )
 
-_TIMEOUT = 5  # secondes (réduit de 10 à 5)
+_TIMEOUT = 8  # secondes
 
 
-def has_internet(timeout: float = 1.5) -> bool:
-    """Test rapide de connectivité avant d'essayer Firebase (DNS Google)."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(timeout)  # timeout local uniquement, pas global
-        s.connect(("8.8.8.8", 53))
-        s.close()
-        return True
-    except Exception:
-        return False
+def has_internet(timeout: float = 3.0) -> bool:
+    """Test rapide de connectivité HTTPS vers les serveurs Firebase (port 443)."""
+    hosts = [
+        ("identitytoolkit.googleapis.com", 443),
+        ("firestore.googleapis.com", 443),
+        ("8.8.8.8", 53),  # fallback DNS si les domaines ne résolvent pas
+    ]
+    for host, port in hosts:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect((host, port))
+            s.close()
+            return True
+        except Exception:
+            continue
+    return False
 
 
 # ---------------------------------------------------------------
 # Helpers internes
 # ---------------------------------------------------------------
+
+def _net_error_msg(e: Exception) -> str:
+    """Traduit une URLError/OSError en message lisible."""
+    msg = str(e).lower()
+    if "ssl" in msg or "certificate" in msg or "handshake" in msg:
+        return "Erreur de sécurité SSL. Vérifiez que votre antivirus ne bloque pas MyStrow."
+    if "timed out" in msg or "timeout" in msg:
+        return "Délai de connexion dépassé. Vérifiez votre connexion internet."
+    return "Pas de connexion internet. Vérifiez votre réseau et réessayez."
+
 
 def _post_json(url, payload: dict, id_token: str = None) -> dict:
     """POST JSON vers une URL, retourne le dict réponse ou lève une exception."""
@@ -62,8 +79,8 @@ def _post_json(url, payload: dict, id_token: str = None) -> dict:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError:
         raise
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
 
 def _get_json(url, id_token: str) -> dict:
@@ -74,8 +91,8 @@ def _get_json(url, id_token: str) -> dict:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError:
         raise
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
 
 def _patch_json(url, payload: dict, id_token: str) -> dict:
@@ -94,8 +111,8 @@ def _patch_json(url, payload: dict, id_token: str) -> dict:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError:
         raise
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
 
 def _firebase_error(e: urllib.error.HTTPError) -> str:
@@ -266,7 +283,7 @@ def get_stripe_portal_url(id_token: str) -> str:
         body = e.read().decode()
         raise Exception(f"Erreur portail : {body}")
     except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet.")
+        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
 
 
 def send_password_reset(email: str) -> bool:
@@ -460,7 +477,7 @@ def _post_json_opt_auth(url: str, payload: dict, id_token: str = None) -> object
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur Firestore : {_firebase_error(e)}")
     except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet.")
+        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
 
 
 def write_fixture_pack(pack_id: str, pack_data: dict, id_token: str) -> dict:
@@ -519,7 +536,7 @@ def delete_fixture_pack(pack_id: str, id_token: str) -> bool:
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur suppression pack : {_firebase_error(e)}")
     except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet.")
+        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
 
 
 def fetch_fixture_packs_index(id_token: str = None) -> list:
@@ -595,7 +612,7 @@ def fetch_fixture_pack(pack_id: str, id_token: str = None) -> dict:
             raise Exception(f"Pack '{pack_id}' introuvable.")
         raise Exception(f"Erreur téléchargement pack : {_firebase_error(e)}")
     except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet.")
+        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
 
     d = _doc_to_dict(doc)
     d["id"] = pack_id
@@ -697,7 +714,7 @@ def fetch_all_gdtf_fixtures(id_token: str) -> list:
         except urllib.error.HTTPError:
             raise
         except (urllib.error.URLError, OSError):
-            raise Exception("Pas de connexion internet.")
+            raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
         docs = data.get("documents", [])
         for doc in docs:
             d = _doc_to_dict(doc)

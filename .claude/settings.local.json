@@ -4,7 +4,9 @@
       "Bash(*)",
       "WebFetch(*)",
       "WebSearch",
-      "PowerShell(python --version)"
+      "PowerShell(python --version)",
+      "PowerShell(Copy-Item *)",
+      "PowerShell(Get-Content *)"
     ]
   }
 }

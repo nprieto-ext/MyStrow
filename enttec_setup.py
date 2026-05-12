@@ -685,22 +685,39 @@ class DmxSetupDialog(QDialog):
 
         # ── 5. Test signal Break ─────────────────────────────────────────────
         self._log_line("")
-        self._log_line("[ 5 ] Signal Break DMX (176 µs)", cyan)
+        self._log_line("[ 5 ] Signal Break DMX", cyan)
+        _break_ok = False
+        _break_method_used = "—"
         if port_already_open:
             self._log_line("  –   Port occupé par MyStrow — test ignoré", dim)
+            _break_ok = True  # supposé OK si le thread tourne
         elif ser:
+            # Méthode 1 : break_condition (FTDI VCP standard)
             try:
                 ser.break_condition = True
                 _time.sleep(0.000176)
                 ser.break_condition = False
-                self._log_line("  ✓  Break signal OK", ok)
-            except AttributeError:
+                self._log_line("  ✓  break_condition OK (méthode standard)", ok)
+                _break_ok = True
+                _break_method_used = "break_condition"
+            except (AttributeError, OSError) as e:
+                self._log_line(f"  ⚠  break_condition échoué : {e}", warn)
+                self._log_line("      → Tentative de la méthode baud-rate…", dim)
+                # Méthode 2 : baud-rate trick (CH340, FTDI clones, drivers Windows 11)
                 try:
-                    ser.send_break(duration=0.000176)
-                    self._log_line("  ✓  Break signal OK (send_break)", ok)
-                except Exception as e:
-                    self._log_line(f"  ✗  Break signal échoué : {e}", err)
-                    self._log_line("      → Pilote FTDI peut être manquant ou incorrect", warn)
+                    ser.baudrate = 100000
+                    ser.write(b'\x00')
+                    ser.flush()
+                    _time.sleep(0.001)
+                    ser.baudrate = 250000
+                    self._log_line("  ✓  Baud-rate trick OK (méthode compatible)", ok)
+                    self._log_line("      (MyStrow basculera automatiquement sur cette méthode)", dim)
+                    _break_ok = True
+                    _break_method_used = "baud-rate trick"
+                except Exception as e2:
+                    self._log_line(f"  ✗  Les deux méthodes ont échoué : {e2}", err)
+                    self._log_line("      → Pilote FTDI manquant ou interface non compatible", warn)
+                    self._log_line("      → Téléchargez le pilote VCP FTDI : ftdichip.com", warn)
             except Exception as e:
                 self._log_line(f"  ✗  Break signal échoué : {e}", err)
 
@@ -710,7 +727,7 @@ class DmxSetupDialog(QDialog):
         if port_already_open:
             self._log_line("  –   Port occupé par MyStrow — test ignoré", dim)
             self._log_line("      MyStrow gère l'envoi en direct (voir étape 7)", dim)
-        elif ser:
+        elif ser and _break_ok:
             test_data = bytearray(512)
             test_data[0] = 255   # CH1
             test_data[1] = 255   # CH2
@@ -721,20 +738,19 @@ class DmxSetupDialog(QDialog):
             last_err = ""
             for i in range(10):
                 try:
-                    ser.break_condition = True
-                    _time.sleep(0.000176)
-                    ser.break_condition = False
+                    if _break_method_used == "baud-rate trick":
+                        ser.baudrate = 100000
+                        ser.write(b'\x00')
+                        ser.flush()
+                        _time.sleep(0.001)
+                        ser.baudrate = 250000
+                    else:
+                        ser.break_condition = True
+                        _time.sleep(0.000176)
+                        ser.break_condition = False
                     ser.write(frame)
                     ser.flush()
                     ok_count += 1
-                except AttributeError:
-                    try:
-                        ser.send_break(duration=0.000176)
-                        ser.write(frame)
-                        ser.flush()
-                        ok_count += 1
-                    except Exception as e:
-                        last_err = str(e)
                 except Exception as e:
                     last_err = str(e)
                 _time.sleep(0.04)
@@ -750,11 +766,14 @@ class DmxSetupDialog(QDialog):
                 self._log_line(f"  ✗  0/10 frames — envoi impossible", err)
                 if last_err:
                     self._log_line(f"      Erreur : {last_err[:70]}", err)
+        elif ser and not _break_ok:
+            self._log_line("  –   Test ignoré — signal break non fonctionnel", dim)
 
-            try:
+        try:
+            if ser and not port_already_open:
                 ser.close()
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         # ── 7. État live MyStrow ─────────────────────────────────────────────
         self._log_line("")

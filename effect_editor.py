@@ -22,10 +22,13 @@ from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradien
 
 # ─── Raccourci couche ──────────────────────────────────────────────────────────
 
-def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0, direction=1, color1="#ff0000", color2="#0000ff"):
-    return {"attribute": attr, "forme": forme, "target_preset": target,
-            "speed": speed, "size": size, "spread": spread, "phase": phase,
-            "fade": fade, "direction": direction, "color1": color1, "color2": color2}
+def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0, direction=1, color1="#ff0000", color2="#0000ff", shape="cercle"):
+    d = {"attribute": attr, "forme": forme, "target_preset": target,
+         "speed": speed, "size": size, "spread": spread, "phase": phase,
+         "fade": fade, "direction": direction, "color1": color1, "color2": color2}
+    if attr == "Pan/Tilt":
+        d["mouvement_shape"] = shape
+    return d
 
 
 # ─── Effets prédéfinis ─────────────────────────────────────────────────────────
@@ -258,35 +261,105 @@ BUILTIN_EFFECTS = [
     {"name": "Permut Rapide",          "emoji": "⚡", "category": "Permut", "type": "Permut",
      "layers": [_L("Permut", "Flash", speed=70, color1="#ff0000", color2="#0000ff")]},
 
-    # ── Lyre ──────────────────────────────────────────────────────────────────
-    {"name": "Lyre Sweep",      "emoji": "🌀", "category": "Lyre", "type": "Pan",
-     "layers": [_L("Pan",  "Sinus", speed=25, size=80)]},
+    # ── Lyre : mouvement + dimmer synchro ─────────────────────────────────────
+    {"name": "Lyre Cercle",        "emoji": "⭕", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=22, size=65, shape="cercle"),
+                _L("Dimmer",   "Sinus", speed=22, size=100)]},          # pulse 1×/tour
 
-    {"name": "Lyre Circle",     "emoji": "🔵", "category": "Lyre", "type": "Pan",
-     "layers": [_L("Pan",  "Sinus", speed=25, size=70),
-                _L("Tilt", "Sinus", speed=25, size=70, phase=25)]},
+    {"name": "Lyre Figure 8",      "emoji": "∞",  "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=20, size=70, shape="huit"),
+                _L("Dimmer",   "Sinus", speed=20, size=100)]},
 
-    {"name": "Lyre Gobo Spin",  "emoji": "🎯", "category": "Lyre", "type": "Gobo",
-     "layers": [_L("Gobo", "Flash", speed=40, spread=30)]},
+    {"name": "Lyre Infini",        "emoji": "🌀", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=18, size=75, shape="infini"),
+                _L("Dimmer",   "Sinus", speed=18, size=100)]},
 
-    {"name": "Lyre Spot Bounce","emoji": "🎪", "category": "Lyre", "type": "Tilt",
-     "layers": [_L("Tilt", "Sinus", speed=18, size=60, direction=0)]},
+    {"name": "Lyre Balancier",     "emoji": "↔",  "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=20, size=80, shape="balancier"),
+                _L("Dimmer",   "Sinus", speed=20, size=100, phase=50)]}, # plein au centre
+
+    {"name": "Lyre Pendule",       "emoji": "↕",  "category": "Lyre", "type": "Tilt",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=18, size=70, shape="pendule"),
+                _L("Dimmer",   "Sinus", speed=18, size=100, phase=50)]}, # plein en bas
+
+    {"name": "Lyre Carré",         "emoji": "□",  "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Triangle", speed=25, size=65, shape="carre"),
+                _L("Dimmer",   "Fixe",     size=100)]},                  # toujours allumé
+
+    {"name": "Lyre Sweep",         "emoji": "→",  "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan",    "Sinus", speed=25, size=80),
+                _L("Dimmer", "Fixe",  size=100)]},
+
+    {"name": "Lyre Rush",          "emoji": "⚡", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=70, size=55, shape="cercle"),
+                _L("Dimmer",   "Flash", speed=70, size=100)]},           # strobe sur le cercle rapide
+
+    # ── Lyre : déphasage entre fixtures ───────────────────────────────────────
+    {"name": "Lyre Vague",         "emoji": "≈",  "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan",    "Sinus", speed=20, size=70, spread=100),
+                _L("Dimmer", "Sinus", speed=20, size=100, spread=100)]}, # vague pan + lumière
+
+    {"name": "Lyre Canon",         "emoji": "💥", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan",    "Sinus",  speed=30, size=65, spread=100),
+                _L("Dimmer", "Montée", speed=30, size=100, spread=100)]},# chaque lyre tire dans la foulée
+
+    {"name": "Lyre Spiral",        "emoji": "🔄", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=22, size=60, spread=70, shape="cercle"),
+                _L("Dimmer",   "Sinus", speed=22, size=100, spread=70)]},# cercles décalés + lumière
+
+    {"name": "Lyre Pendule Décalé","emoji": "↕",  "category": "Lyre", "type": "Tilt",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=16, size=65, spread=80, shape="pendule"),
+                _L("Dimmer",   "Sinus", speed=16, size=100, spread=80, phase=50)]},
+
+    # ── Lyre : haché / stroboscopique ─────────────────────────────────────────
+    {"name": "Lyre Cercle Haché",  "emoji": "✦",  "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=20, size=62, shape="cercle"),
+                _L("Dimmer",   "Flash", speed=40, size=100)]},           # flash 2× par tour
+
+    {"name": "Lyre Pendule Haché", "emoji": "✂",  "category": "Lyre", "type": "Tilt",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=18, size=65, shape="pendule"),
+                _L("Dimmer",   "Flash", speed=36, size=100)]},           # flash synco balancier
+
+    {"name": "Lyre Pendule Lent",  "emoji": "↕",  "category": "Lyre", "type": "Tilt",
+     "layers": [_L("Tilt",   "Sinus", speed=10, size=60, direction=0),
+                _L("Dimmer", "Sinus", speed=10, size=100, phase=50)]},
+
+    # ── Lyre : avec couleur ────────────────────────────────────────────────────
+    {"name": "Lyre Cercle + Couleur", "emoji": "🎨", "category": "Lyre", "type": "Pan",
+     "no_color": True,
+     "layers": [_L("Pan/Tilt", "Sinus", speed=22, size=65, shape="cercle"),
+                _L("Dimmer",   "Sinus", speed=22, size=100),
+                _L("RGB",      "Sinus", speed=15, size=100, color1="#00aaff")]},
+
+    # ── Lyre : gobo ───────────────────────────────────────────────────────────
+    {"name": "Lyre Gobo Spin",     "emoji": "🎯", "category": "Lyre", "type": "Gobo",
+     "layers": [_L("Gobo",   "Flash", speed=40, spread=30),
+                _L("Dimmer", "Fixe",  size=100)]},
+
+    {"name": "Lyre Gobo + Cercle", "emoji": "🎪", "category": "Lyre", "type": "Gobo",
+     "layers": [_L("Pan/Tilt", "Sinus", speed=18, size=55, shape="cercle"),
+                _L("Dimmer",   "Sinus", speed=18, size=100),
+                _L("Gobo",     "Flash", speed=35, spread=40)]},
 ]
 
 
 # ─── Constantes ───────────────────────────────────────────────────────────────
 
-ATTR_ORDER = ["Dimmer", "R", "V", "B", "Pan", "Tilt", "Zoom", "Gobo", "Strobe"]
+ATTR_ORDER = ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
 
 FIXTURE_ATTRS = {
     "Trad":        ["Dimmer"],
-    "PAR LED":     ["Dimmer", "R", "V", "B", "Strobe"],
-    "Barre LED":   ["Dimmer", "R", "V", "B"],
-    "Moving Head": ["Dimmer", "R", "V", "B", "Pan", "Tilt", "Zoom", "Gobo", "Strobe"],
-    "Lyre":        ["Dimmer", "R", "V", "B", "Pan", "Tilt", "Zoom", "Gobo", "Strobe"],
+    "PAR LED":     ["Dimmer", "R", "V", "B", "W", "Ambre", "Strobe"],
+    "Barre LED":   ["Dimmer", "R", "V", "B", "W", "Ambre"],
+    "Moving Head": ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"],
+    "Lyre":        ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"],
     "Strobe":      ["Dimmer", "Strobe"],
-    "Generic":     ["Dimmer"],
+    "Generic":     ["Dimmer", "R", "V", "B", "W", "Ambre"],
 }
+
+# Liste complète toujours disponible dans le dropdown (indépendante du type de fixture)
+ATTR_ALL = ["Dimmer", "R", "V", "B", "W", "Ambre", "RGB", "Permut",
+            "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
 
 FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
 
@@ -398,7 +471,7 @@ class EffectLayer:
         self.speed     = 50    # vitesse du cycle 0-100
         self.size      = 100   # amplitude 0-100
         self.spread    = 0     # décalage de phase entre fixtures 0-100
-        self.phase     = 0     # décalage global de phase (interne, non exposé en UI)
+        self.phase     = 0     # décalage global de phase 0-100 (0=no shift, 50=½ cycle, 100=full cycle)
         self.fade      = 0     # adoucissement de la forme 0=dur 100=doux
         self.direction = 1     # sens : 1=avant, -1=arrière, 0=bounce
         self.color1 = "#ff0000"
@@ -509,6 +582,9 @@ class RotaryKnob(QWidget):
 
     def mouseReleaseEvent(self, _e):
         self._drag_y = None
+
+    def mouseDoubleClickEvent(self, _e):
+        self.set_value(100)
 
     def wheelEvent(self, e):
         self.set_value(self._value + (1 if e.angleDelta().y() > 0 else -1))
@@ -824,13 +900,8 @@ class EffectLayerRow(QFrame):
         return sep
 
     def _fill_attrs(self):
-        all_attrs: set = set()
-        for ft in self._fixture_types:
-            all_attrs.update(FIXTURE_ATTRS.get(ft, ["Dimmer"]))
-        ordered = [a for a in ATTR_ORDER if a in all_attrs]
-        extras  = sorted(all_attrs - set(ATTR_ORDER))
         self.attr_combo.clear()
-        for a in ordered + extras:
+        for a in ATTR_ALL:
             self.attr_combo.addItem(a)
         idx = self.attr_combo.findText(self.layer.attribute)
         self.attr_combo.setCurrentIndex(idx if idx >= 0 else 0)
@@ -844,7 +915,8 @@ class _CompactLayerRow(QFrame):
     deleted = Signal(object)
     changed = Signal()
 
-    _ATTRS   = ["Dimmer", "R", "V", "B", "RGB", "Strobe", "Pan", "Tilt", "Gobo", "Permut"]
+    _ATTRS   = ["Dimmer", "R", "V", "B", "W", "Ambre", "UV", "RGB", "Permut",
+                "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
     _FORMES  = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe"]
     _CIBLES  = ["Tous", "A", "B", "C", "D", "E", "F", "G"]
     _SENS    = [(1, "→"), (-1, "←"), (0, "↔")]
@@ -1737,7 +1809,8 @@ class LayerCard(QFrame):
     deleted = Signal(object)
     changed = Signal()
 
-    _ATTRS  = ["Dimmer", "R", "V", "B", "RGB", "Strobe", "Pan/Tilt", "Gobo", "Permut"]
+    _ATTRS  = ["Dimmer", "R", "V", "B", "W", "Ambre", "UV", "RGB", "Permut",
+               "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
     _FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
     _CIBLES = ["Tous", "A", "B", "C", "D", "E", "F", "G"]
     _ATTR_COLORS = WaveformCanvas._ATTR_COLORS
@@ -1869,15 +1942,17 @@ class LayerCard(QFrame):
 
         outer.addLayout(row1)
 
-        # ── Row 2 : 2 sliders VITESSE / AMPLITUDE ────────────────────────────
+        # ── Row 2 : 3 sliders VITESSE / AMPLITUDE / DÉPHASAGE ───────────────
         row2 = QHBoxLayout()
         row2.setSpacing(10)
 
         self._sl_speed, self._vl_speed = self._mk_slider("VIT", self.layer.speed)
         self._sl_amp,   self._vl_amp   = self._mk_slider("AMP", self.layer.size)
+        self._sl_phase, self._vl_phase = self._mk_slider("DÉP", self.layer.phase)
 
         self._sl_speed.valueChanged.connect(lambda v: (setattr(self.layer, 'speed', v), self._vl_speed.setText(str(v)), self.changed.emit()))
         self._sl_amp.valueChanged.connect(  lambda v: (setattr(self.layer, 'size',  v), self._vl_amp.setText(str(v)),   self.changed.emit()))
+        self._sl_phase.valueChanged.connect(lambda v: (setattr(self.layer, 'phase', v), self._vl_phase.setText(str(v)), self.changed.emit()))
 
         for container in self._slider_containers:
             row2.addWidget(container, 1)
@@ -2175,25 +2250,8 @@ class SimpleEffectPanel(QWidget):
         self._ll.setContentsMargins(14, 14, 10, 12)
         self._ll.setSpacing(0)
 
-        # En-tête COUCHES + bouton +
-        layer_hdr = QHBoxLayout()
-        layer_hdr.setSpacing(6)
-        layer_hdr.addWidget(self._mk_sep("COUCHES"), 1)
-        add_btn = QPushButton("＋")
-        add_btn.setFixedSize(22, 16)
-        add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.setStyleSheet("""
-            QPushButton {
-                background: #0a1a0a; color: #285028;
-                border: 1px solid #1a3a1a; border-radius: 3px;
-                font-size: 10px; font-weight: bold; padding: 0;
-            }
-            QPushButton:hover { color: #55aa55; border-color: #2a5a2a; background: #0d220d; }
-        """)
-        add_btn.setToolTip("Ajouter une couche")
-        add_btn.clicked.connect(self._on_add_layer)
-        layer_hdr.addWidget(add_btn)
-        self._ll.addLayout(layer_hdr)
+        # En-tête COUCHES
+        self._ll.addWidget(self._mk_sep("COUCHES"))
         self._ll.addSpacing(6)
 
         # Conteneur des LayerCard
@@ -2203,6 +2261,26 @@ class SimpleEffectPanel(QWidget):
         self._layers_vl.setContentsMargins(0, 0, 0, 0)
         self._layers_vl.setSpacing(5)
         self._ll.addWidget(self._layers_container)
+
+        self._ll.addSpacing(4)
+
+        # Bouton + sous les couches
+        add_btn = QPushButton("＋  Ajouter une couche")
+        add_btn.setFixedHeight(22)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a3a1a; color: #55cc55;
+                border: 1px solid #3a6a3a; border-radius: 3px;
+                font-size: 11px; font-weight: bold; padding: 0 6px;
+                text-align: left;
+            }
+            QPushButton:hover { color: #88ff88; border-color: #55aa55; background: #1f4a1f; }
+            QPushButton:pressed { background: #0d2a0d; color: #44aa44; }
+        """)
+        add_btn.setToolTip("Ajouter une couche")
+        add_btn.clicked.connect(self._on_add_layer)
+        self._ll.addWidget(add_btn)
 
         self._ll.addSpacing(12)
 
@@ -2258,7 +2336,7 @@ class SimpleEffectPanel(QWidget):
 
         bl.addWidget(lw_scroll, 3)
         bl.addWidget(vs)
-        bl.addWidget(rw_scroll, 2)
+        bl.addWidget(rw_scroll, 1)
         outer.addWidget(body, 1)
 
         self._set_enabled(False)
@@ -2303,7 +2381,7 @@ class SimpleEffectPanel(QWidget):
 
     _CTX_TYPES_SENS  = {"Chase", "Wave"}
     _CTX_TYPES_FONDU = {"Chase"}
-    _CTX_TYPES_GOBO  = {"Gobo", "Pan", "Tilt"}
+    _CTX_TYPES_GOBO  = {"Gobo"}
 
     def _build_context(self):
         """Section contextuelle : options spécifiques par type d'effet."""
@@ -2431,36 +2509,12 @@ class SimpleEffectPanel(QWidget):
         self._rl.addLayout(assign_row)
         self._rl.addSpacing(10)
 
-        self._rl.addWidget(self._mk_sep("LECTURE"))
-        self._rl.addSpacing(6)
-
-        _play_style = """
-            QPushButton {
-                background: #101010; color: #444;
-                border: 1px solid #1e1e1e; border-radius: 5px;
-                font-size: 10px; font-weight: bold; padding: 0 8px;
-            }
-            QPushButton:checked { background: #002233; color: #00d4ff; border-color: #004455; }
-            QPushButton:hover:!checked { background: #181818; color: #777; }
-        """
-        play_row = QHBoxLayout()
-        play_row.setSpacing(4)
-        self._btn_loop = QPushButton("↺  Boucle")
+        # Boutons lecture conservés comme objets orphelins (référencés par EffectEditorDialog)
+        self._btn_loop = QPushButton()
         self._btn_loop.setCheckable(True)
-        self._btn_loop.setFixedHeight(26)
-        self._btn_loop.setCursor(Qt.PointingHandCursor)
-        self._btn_loop.setStyleSheet(_play_style)
-        play_row.addWidget(self._btn_loop)
-
-        self._btn_once = QPushButton("▶  Une fois")
+        self._btn_loop.setChecked(True)
+        self._btn_once = QPushButton()
         self._btn_once.setCheckable(True)
-        self._btn_once.setFixedHeight(26)
-        self._btn_once.setCursor(Qt.PointingHandCursor)
-        self._btn_once.setStyleSheet(_play_style)
-        play_row.addWidget(self._btn_once)
-        play_row.addStretch()
-        self._rl.addLayout(play_row)
-        self._rl.addSpacing(8)
 
         timer_row = QHBoxLayout()
         timer_row.setSpacing(6)
@@ -2621,24 +2675,6 @@ class SimpleEffectPanel(QWidget):
             if item and item.widget():
                 item.widget().deleteLater()
 
-        # Rétrocompat : couches "Pan" et "Tilt" séparées → "Pan/Tilt" combiné
-        pan_l  = next((l for l in self._layers if l.attribute == "Pan"),  None)
-        tilt_l = next((l for l in self._layers if l.attribute == "Tilt"), None)
-        if pan_l is not None or tilt_l is not None:
-            if pan_l and tilt_l:
-                # Déduire la shape selon le décalage de phase
-                phase_diff = abs(tilt_l.phase - pan_l.phase)
-                shape = "cercle" if 15 <= phase_diff <= 35 else "huit"
-                pan_l.attribute       = "Pan/Tilt"
-                pan_l.mouvement_shape = shape
-                self._layers = [l for l in self._layers if l is not tilt_l]
-            elif pan_l:
-                pan_l.attribute       = "Pan/Tilt"
-                pan_l.mouvement_shape = "balancier"
-            else:
-                tilt_l.attribute       = "Pan/Tilt"
-                tilt_l.mouvement_shape = "pendule"
-
         for layer in self._layers:
             card = LayerCard(layer)
             card.deleted.connect(lambda _w, l=layer: self._on_delete_layer(l))
@@ -2769,6 +2805,58 @@ def _save_custom_effects(effects: list):
         pass
 
 
+def _ask_name(parent, title: str, label: str, default: str = "") -> tuple[str, bool]:
+    """Dialog de saisie de nom stylisé (remplace QInputDialog.getText)."""
+    from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                   QLabel, QLineEdit, QPushButton)
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setModal(True)
+    dlg.setMinimumWidth(340)
+    dlg.setStyleSheet("""
+        QDialog   { background: #1a1a1a; }
+        QLabel    { color: #cccccc; font-size: 13px; padding-bottom: 4px; }
+        QLineEdit {
+            background: #2a2a2a; color: #ffffff;
+            border: 1px solid #444; border-radius: 4px;
+            padding: 6px 10px; font-size: 13px;
+        }
+        QLineEdit:focus { border-color: #00d4ff; }
+        QPushButton {
+            background: #2a2a2a; color: #cccccc;
+            border: 1px solid #444; border-radius: 4px;
+            padding: 6px 18px; font-size: 12px; min-width: 70px;
+        }
+        QPushButton:hover  { background: #333; color: #fff; }
+        QPushButton#ok_btn { background: #003a4a; color: #00d4ff;
+                             border-color: #00d4ff; }
+        QPushButton#ok_btn:hover { background: #004d63; }
+    """)
+    lay = QVBoxLayout(dlg)
+    lay.setContentsMargins(20, 18, 20, 16)
+    lay.setSpacing(10)
+    lay.addWidget(QLabel(label))
+    edit = QLineEdit(default)
+    edit.selectAll()
+    lay.addWidget(edit)
+    btn_row = QHBoxLayout()
+    btn_row.setSpacing(8)
+    btn_row.addStretch()
+    cancel = QPushButton("Annuler")
+    ok     = QPushButton("OK")
+    ok.setObjectName("ok_btn")
+    ok.setDefault(True)
+    btn_row.addWidget(cancel)
+    btn_row.addWidget(ok)
+    lay.addLayout(btn_row)
+    result = [("", False)]
+    ok.clicked.connect(lambda: (result.__setitem__(0, (edit.text(), True)),  dlg.accept()))
+    cancel.clicked.connect(dlg.reject)
+    edit.returnPressed.connect(ok.click)
+    dlg.exec()
+    return result[0]
+
+
 class EffectEditorDialog(QDialog):
     """
     Editeur d'effets — 3 colonnes :
@@ -2794,7 +2882,7 @@ class EffectEditorDialog(QDialog):
             for pr in getattr(main_window, 'projectors', [])
         }) or ["PAR LED"]
 
-        self._play_mode       = getattr(self._clips[0], 'effect_play_mode', 'loop') if self._clips else 'loop'
+        self._play_mode       = 'loop'
         self._effect_duration = getattr(self._clips[0], 'effect_duration', 0) if self._clips else 0
         self._preview_t0      = 0.0
         # Pré-sélectionner : 1) initial_effect passé en param, 2) effet du clip, 3) premier builtin
@@ -3071,7 +3159,6 @@ class EffectEditorDialog(QDialog):
 
     def _save_current_as_custom(self):
         """Sauvegarde l'effet actuellement chargé dans Mes Effets."""
-        from PySide6.QtWidgets import QInputDialog
         existing_names = {e.get("name", "") for e in self._custom_effects}
 
         if not self._layers:
@@ -3080,9 +3167,7 @@ class EffectEditorDialog(QDialog):
             i = 2
             while base in existing_names:
                 base = f"Mon Effet {i}"; i += 1
-            name, ok = QInputDialog.getText(
-                self, "Nouvel effet", "Nom de l'effet :", text=base
-            )
+            name, ok = _ask_name(self, "Nouvel effet", "Nom de l'effet :", base)
             if not ok or not name.strip():
                 return
             name = name.strip()
@@ -3107,8 +3192,8 @@ class EffectEditorDialog(QDialog):
         candidate = base
         while candidate in existing_names:
             candidate = f"{base} {i}"; i += 1
-        name, ok = QInputDialog.getText(
-            self, "Sauvegarder l'effet", "Nom de l'effet :", text=candidate
+        name, ok = _ask_name(
+            self, "Sauvegarder l'effet", "Nom de l'effet :", candidate
         )
         if not ok or not name.strip():
             return
@@ -3138,12 +3223,9 @@ class EffectEditorDialog(QDialog):
         self._rebuild_library()
 
     def _rename_custom_effect(self, eff: dict):
-        from PySide6.QtWidgets import QInputDialog
         old_name = eff.get("name", "")
         existing = {e.get("name", "") for e in self._custom_effects}
-        new_name, ok = QInputDialog.getText(
-            self, "Renommer l'effet", "Nouveau nom :", text=old_name
-        )
+        new_name, ok = _ask_name(self, "Renommer l'effet", "Nouveau nom :", old_name)
         if not ok or not new_name.strip() or new_name.strip() == old_name:
             return
         new_name = new_name.strip()
@@ -3234,15 +3316,7 @@ class EffectEditorDialog(QDialog):
                 None
             )
             if default_eff:
-                # Charger les layers sauvegardés en priorité (config bouton AKAI), sinon builtin
-                saved_layers = self._get_saved_layers_for(self._selected_card)
-                if saved_layers:
-                    self._layers.extend(saved_layers)
-                else:
-                    self._layers.extend(EffectLayer.layers_from_builtin(default_eff))
-                self._simple_panel._layers = self._layers
-                self._simple_panel._set_enabled(True)
-                self._simple_panel._refresh()
+                self._apply_preset(default_eff)
 
         self._timer_spin.setValue(self._effect_duration)
         self._refresh_mode_btns()
@@ -3571,6 +3645,9 @@ class EffectEditorDialog(QDialog):
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0
             has_dim = False
             has_rgb_layer = False
+            has_movement = False
+            pan_v  = 32768
+            tilt_v = 32768
 
             _LETTER_TO_GROUP = {
                 "A": "face", "B": "lat", "C": "contre",
@@ -3633,7 +3710,34 @@ class EffectEditorDialog(QDialog):
                     r += (c1.redF()   * raw + c2.redF()   * r2) * amp
                     g += (c1.greenF() * raw + c2.greenF() * r2) * amp
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
-                # Pan / Tilt / Gobo ignorés pour la prévisualisation couleur
+                elif attr == "Pan":
+                    amp = (layer.size / 100.0) * 8192
+                    pan_v = int(max(0, min(65535, 32768 + (raw - 0.5) * 2 * amp)))
+                    has_movement = True
+                elif attr == "Tilt":
+                    amp = (layer.size / 100.0) * 8192
+                    tilt_v = int(max(0, min(65535, 32768 + (raw - 0.5) * 2 * amp)))
+                    has_movement = True
+                elif attr == "Pan/Tilt":
+                    sid      = getattr(layer, 'mouvement_shape', 'cercle')
+                    sdef     = PAN_TILT_SHAPES.get(sid, PAN_TILT_SHAPES.get('cercle', {}))
+                    pan_cfg  = sdef.get('pan',  ('Sinus',  0, 1.0))
+                    tilt_cfg = sdef.get('tilt', ('Sinus', 25, 1.0))
+                    pt_amp   = (layer.size / 100.0) * 8192
+                    p_forme, p_ph, p_mult = pan_cfg
+                    if p_forme and p_forme != "Fixe":
+                        p_freq = (0.05 + layer.speed * p_mult / 100.0 * 7.0) * fader_mult
+                        p_x    = (p_freq * t + i / max(n, 1) * spread + phase + p_ph / 100.0) % 1.0
+                        p_raw  = self._wave(p_forme, p_x)
+                        pan_v  = int(max(0, min(65535, 32768 + (p_raw - 0.5) * 2 * pt_amp)))
+                    t_forme, t_ph, t_mult = tilt_cfg
+                    if t_forme and t_forme != "Fixe":
+                        t_freq = (0.05 + layer.speed * t_mult / 100.0 * 7.0) * fader_mult
+                        t_x    = (t_freq * t + i / max(n, 1) * spread + phase + t_ph / 100.0) % 1.0
+                        t_raw  = self._wave(t_forme, t_x)
+                        tilt_v = int(max(0, min(65535, 32768 + (t_raw - 0.5) * 2 * pt_amp)))
+                    has_movement = True
+                # Gobo ignoré pour la prévisualisation
 
             level = min(1.0, dim) if has_dim else 1.0
             has_color = r > 0 or g > 0 or b > 0
@@ -3652,11 +3756,15 @@ class EffectEditorDialog(QDialog):
                 # Dimmer seul : oscille la couleur existante du projecteur
                 # level est déjà appliqué par _get_fill_color, on passe la couleur brute
                 color = QColor(proj.color)
+            elif has_movement:
+                # Pan/Tilt seul (Lyre) : faisceau visible avec couleur blanche pleine
+                color = QColor("#ffffff")
+                level = 1.0
             else:
                 # Aucune couche ne cible ce projecteur → ne pas forcer de couleur
                 continue
 
-            result[id(proj)] = (level, color)
+            result[id(proj)] = (level, color, pan_v, tilt_v)
 
         return result
 

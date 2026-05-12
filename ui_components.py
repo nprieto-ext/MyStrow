@@ -218,13 +218,15 @@ class EffectButton(QPushButton):
         # Clés internes (dans les données d'effets) → libellé traduit affiché
         _CAT_KEYS = [
             "Strobe / Flash", "Mouvement", "Ambiance", "Couleur",
-            "Spécial", "Personnalisés", "Mes Effets",
+            "Permut", "Lyre", "Spécial", "Personnalisés", "Mes Effets",
         ]
         _CAT_LABELS = {
             "Strobe / Flash": tr("uic_cat_strobe_flash"),
             "Mouvement":      tr("uic_cat_mouvement"),
             "Ambiance":       tr("uic_cat_ambiance"),
             "Couleur":        tr("uic_cat_couleur"),
+            "Permut":         tr("uic_cat_permut"),
+            "Lyre":           tr("uic_cat_lyre"),
             "Spécial":        tr("uic_cat_special"),
             "Personnalisés":  tr("uic_cat_perso"),
             "Mes Effets":     tr("uic_cat_mes_effets"),

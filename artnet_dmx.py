@@ -291,15 +291,53 @@ class ArtNetDMX:
         self._enttec_thread = t
 
     def _enttec_loop(self):
-        """Thread dédié ENTTEC : envoie les frames à ~25 fps sans bloquer le thread Qt."""
+        """Thread dédié ENTTEC : envoie les frames à ~25 fps sans bloquer le thread Qt.
+
+        Méthode de break :
+          1. break_condition (SetCommBreak/ClearCommBreak) — standard FTDI/pyserial
+          2. Baud-rate trick (100 kbaud → 0x00 → 250 kbaud) — fallback universel,
+             fonctionne même si SetCommBreak n'est pas supporté (CH340, FTDI clones,
+             certains drivers Windows 11).
+        """
+        _use_baud_trick = False   # bascule sur True si break_condition lève une exception
         while not self._enttec_stop:
             t0 = time.monotonic()
             ser = self._serial
             if ser and ser.is_open:
                 try:
-                    ser.send_break(duration=0.001)
-                    ser.write(b'\x00' + bytes(self.dmx_data[0][:512]))
-                    ser.flush()
+                    frame = b'\x00' + bytes(self.dmx_data[0][:512])
+                    if not _use_baud_trick:
+                        # Méthode 1 : break_condition (FTDI VCP standard)
+                        ser.break_condition = True
+                        time.sleep(0.000176)   # ≥ 88 µs requis par DMX512
+                        ser.break_condition = False
+                        # MAB implicite : latence USB + OS entre ClearCommBreak et WriteFile
+                        ser.write(frame)
+                        ser.flush()
+                    else:
+                        # Méthode 2 : baud-rate trick — break généré par un 0x00 @ 100 kbaud
+                        # (10 bits × 10 µs = 100 µs de LOW = break valide)
+                        ser.baudrate = 100000
+                        ser.write(b'\x00')
+                        ser.flush()
+                        time.sleep(0.001)      # garantit la fin de transmission du byte @ 100k
+                        ser.baudrate = 250000  # MAB = latence du changement de baud (~1 ms USB)
+                        ser.write(frame)
+                        ser.flush()
+                    self.connected = True
+                except (AttributeError, OSError) as e:
+                    if not _use_baud_trick:
+                        # break_condition non supporté → bascule silencieuse
+                        print(f"ENTTEC: break_condition échoué ({e}), basculement sur baud-rate trick")
+                        _use_baud_trick = True
+                    else:
+                        print(f"ENTTEC thread: {e}")
+                        try:
+                            ser.close()
+                        except Exception:
+                            pass
+                        self._serial = None
+                        self.connected = False
                 except Exception as e:
                     print(f"ENTTEC thread: {e}")
                     try:
@@ -307,6 +345,7 @@ class ArtNetDMX:
                     except Exception:
                         pass
                     self._serial = None
+                    self.connected = False
             elif self.com_port and not self._enttec_stop:
                 # Reconnexion automatique
                 try:
@@ -318,6 +357,7 @@ class ArtNetDMX:
                         stopbits=serial.STOPBITS_TWO,
                         timeout=0.1,
                     )
+                    self.connected = True
                     print(f"ENTTEC: reconnexion sur {self.com_port}")
                 except Exception:
                     time.sleep(1.0)

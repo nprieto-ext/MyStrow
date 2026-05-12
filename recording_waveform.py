@@ -31,11 +31,18 @@ class RecordingWaveform(QWidget):
         })
         self.update()
 
-    def add_keyframe(self, time_ms, faders, pad_color):
+    def add_keyframe(self, time_ms, faders, pad_color, effect_name=""):
         """Convertit un keyframe en bloc"""
         if not pad_color:
             pad_color = QColor("#666666")
-        self.add_block(time_ms, time_ms + 500, pad_color, faders[0] if faders else 0)
+        self.blocks.append({
+            'start':  time_ms,
+            'end':    time_ms + 500,
+            'color':  pad_color,
+            'level':  faders[0] if faders else 0,
+            'effect': effect_name,
+        })
+        self.update()
 
     def set_position(self, position_ms, duration_ms):
         """Met a jour la position actuelle"""
@@ -154,6 +161,10 @@ class RecordingWaveform(QWidget):
 
         # Blocs
         painter.setPen(Qt.NoPen)
+        font = painter.font()
+        font.setPixelSize(9)
+        font.setBold(False)
+        painter.setFont(font)
         for block in self.blocks:
             start_x = int((block['start'] / self.duration) * w)
             end_x = int((block['end'] / self.duration) * w)
@@ -169,6 +180,17 @@ class RecordingWaveform(QWidget):
             painter.setPen(QPen(color.lighter(150), 1))
             painter.drawRect(start_x, 0, block_width, h)
             painter.setPen(Qt.NoPen)
+
+            # Bande orange + nom d'effet
+            eff = block.get('effect', '')
+            if eff:
+                painter.setBrush(QColor(255, 140, 0, 200))
+                painter.drawRect(start_x, 0, block_width, 6)
+                if block_width > 24:
+                    painter.setPen(QColor("#ffffff"))
+                    painter.drawText(start_x + 2, 6, block_width - 4, h - 6,
+                                     Qt.AlignLeft | Qt.AlignVCenter, eff)
+                    painter.setPen(Qt.NoPen)
 
         # Curseur
         if self.current_position > 0:

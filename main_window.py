@@ -1235,6 +1235,10 @@ class MainWindow(QMainWindow):
         self.active_effect_config = {}     # config en cours d'exécution
         self.blink_timer = None
         self.pause_mode = False
+        self._pan_tilt_transitions = {}   # {id(proj): dict} animations pan/tilt
+        self._pan_tilt_anim_timer = QTimer()
+        self._pan_tilt_anim_timer.setInterval(25)   # ~40 fps
+        self._pan_tilt_anim_timer.timeout.connect(self._tick_pan_tilt_anim)
 
         # Layout AKAI personnalisable (8 slots, éditables via AkaiLayoutEditorDialog)
         self._custom_bank_slots = [dict(s) for s in AKAI_BANK_PRESETS[0]["slots"]]
@@ -3306,7 +3310,7 @@ class MainWindow(QMainWindow):
         for i, proj_state in enumerate(cue.get("projectors", [])):
             if i >= len(self.projectors):
                 break
-            if proj_state["level"] > 0 or any(proj_state.get(k, 0) > 0 for k in ("uv", "amber_boost", "white_boost", "orange_boost")):
+            if proj_state["level"] > 0 or any(proj_state.get(k, 0) > 0 for k in ("uv", "amber_boost", "white_boost", "orange_boost", "gobo", "zoom")):
                 p = self.projectors[i]
                 p.level = 0
                 p.base_color = QColor("black")
@@ -3315,6 +3319,8 @@ class MainWindow(QMainWindow):
                 p.amber_boost  = 0
                 p.white_boost  = 0
                 p.orange_boost = 0
+                p.gobo         = 0
+                p.zoom         = 0
 
     def _apply_memory_to_projectors(self, mem_col, row, fader_value=None, trigger_effect=True):
         """Applique le cue courant de la mémoire sur les projecteurs."""
@@ -3335,15 +3341,23 @@ class MainWindow(QMainWindow):
             if i >= len(self.projectors):
                 break
             p = self.projectors[i]
-            if "pan"  in proj_state:
-                v = proj_state["pan"];  p.pan  = v * 256 if v <= 255 else v
-            if "tilt" in proj_state:
-                v = proj_state["tilt"]; p.tilt = v * 256 if v <= 255 else v
+            if "pan" in proj_state or "tilt" in proj_state:
+                new_pan  = proj_state.get("pan",  getattr(p, 'pan',  32768))
+                new_tilt = proj_state.get("tilt", getattr(p, 'tilt', 32768))
+                new_pan  = new_pan  * 256 if new_pan  <= 255 else new_pan
+                new_tilt = new_tilt * 256 if new_tilt <= 255 else new_tilt
+                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
+                    self._start_pan_tilt_transition(p, new_pan, new_tilt, 500)
+                else:
+                    p.pan  = new_pan
+                    p.tilt = new_tilt
             # Canaux spéciaux toujours restaurés (même si level == 0)
             p.uv           = int(proj_state.get("uv",           0) * brightness)
             p.amber_boost  = int(proj_state.get("amber_boost",  0) * brightness)
             p.white_boost  = int(proj_state.get("white_boost",  0) * brightness)
             p.orange_boost = int(proj_state.get("orange_boost", 0) * brightness)
+            p.gobo         = int(proj_state.get("gobo",         0))
+            p.zoom         = int(proj_state.get("zoom",         0))
             if proj_state["level"] <= 0:
                 p.level = 0
                 p.base_color = QColor("black")
@@ -3553,6 +3567,8 @@ class MainWindow(QMainWindow):
                 "amber_boost":  getattr(p, 'amber_boost',  0),
                 "white_boost":  getattr(p, 'white_boost',  0),
                 "orange_boost": getattr(p, 'orange_boost', 0),
+                "gobo":         getattr(p, 'gobo',         0),
+                "zoom":         getattr(p, 'zoom',         0),
             })
         return {"projectors": snapshot, "effect": {}, "duration": 0}
 
@@ -3946,6 +3962,10 @@ class MainWindow(QMainWindow):
                             p.base_color, p.color, p.level = saved[0], saved[1], saved[2]
                             if len(saved) > 3:
                                 p.pan = saved[3]; p.tilt = saved[4]
+                    # Ramener les Moving Heads au centre (transition fluide)
+                    for p in self.projectors:
+                        if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
+                            self._start_pan_tilt_transition(p, 32768, 32768, 500)
                     self.active_effect = None
                     self.active_effect_config = {}
                 else:
@@ -4317,7 +4337,9 @@ class MainWindow(QMainWindow):
 
         for p in self.projectors:
             self.effect_saved_colors[id(p)] = (p.base_color, p.color, p.level,
-                                               getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768))
+                                               getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768),
+                                               getattr(p, 'white_boost', 0), getattr(p, 'amber_boost', 0),
+                                               getattr(p, 'uv', 0))
 
         if not hasattr(self, 'effect_timer'):
             self.effect_timer = QTimer()
@@ -4376,6 +4398,53 @@ class MainWindow(QMainWindow):
         self.active_effect = None
         self.active_effect_config = {}
 
+    def _start_pan_tilt_transition(self, proj, new_pan: int, new_tilt: int, duration_ms: int = 500):
+        """Lance une animation fluide pan/tilt vers (new_pan, new_tilt)."""
+        import time as _t
+        cur_pan  = getattr(proj, 'pan',  32768)
+        cur_tilt = getattr(proj, 'tilt', 32768)
+        # Si on est déjà au milieu d'une transition, repartir depuis la position actuelle
+        if id(proj) in self._pan_tilt_transitions:
+            tr = self._pan_tilt_transitions[id(proj)]
+            cur_pan  = getattr(proj, 'pan',  tr['p1'])
+            cur_tilt = getattr(proj, 'tilt', tr['t1'])
+        if cur_pan == new_pan and cur_tilt == new_tilt:
+            self._pan_tilt_transitions.pop(id(proj), None)
+            return
+        self._pan_tilt_transitions[id(proj)] = {
+            'proj':     proj,
+            'p0':       cur_pan,  't0': cur_tilt,
+            'p1':       new_pan,  't1': new_tilt,
+            'start':    _t.monotonic(),
+            'duration': duration_ms / 1000.0,
+        }
+        if not self._pan_tilt_anim_timer.isActive():
+            self._pan_tilt_anim_timer.start()
+
+    def _tick_pan_tilt_anim(self):
+        """Avance toutes les animations pan/tilt actives (~40 fps)."""
+        import time as _t
+        now  = _t.monotonic()
+        done = []
+        for pid, tr in self._pan_tilt_transitions.items():
+            alpha = min(1.0, (now - tr['start']) / tr['duration'])
+            # smoothstep : décélération naturelle comme une vraie lyre
+            a = alpha * alpha * (3.0 - 2.0 * alpha)
+            proj = tr['proj']
+            proj.pan  = int(tr['p0'] + (tr['p1'] - tr['p0']) * a)
+            proj.tilt = int(tr['t0'] + (tr['t1'] - tr['t0']) * a)
+            if alpha >= 1.0:
+                done.append(pid)
+        for pid in done:
+            del self._pan_tilt_transitions[pid]
+        if not self._pan_tilt_transitions:
+            self._pan_tilt_anim_timer.stop()
+        # Rafraîchir 2D et 3D
+        if hasattr(self, 'plan_de_feu'):
+            self.plan_de_feu.update()
+        if hasattr(self, '_plan3d') and self._plan3d.isVisible():
+            self._plan3d.refresh(self.projectors)
+
     def stop_effect(self):
         """Arrete l'effet en cours"""
         if hasattr(self, 'effect_timer'):
@@ -4391,6 +4460,21 @@ class MainWindow(QMainWindow):
                 if len(saved) > 3:
                     p.pan  = saved[3]
                     p.tilt = saved[4]
+                if len(saved) > 5:
+                    p.white_boost = saved[5]
+                    p.amber_boost = saved[6]
+                if len(saved) > 7:
+                    p.uv = saved[7]
+
+        # Ramener les Moving Heads au centre quand plus aucun effet n'est actif (transition fluide)
+        any_active = any(
+            getattr(btn, 'active', False)
+            for btn in getattr(self, 'effect_buttons', [])
+        )
+        if not any_active:
+            for p in self.projectors:
+                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
+                    self._start_pan_tilt_transition(p, 32768, 32768, 500)
 
     def _bascule(self):
         """Effet Bascule : echange les couleurs entre les deux groupes ou alterne un/deux."""
@@ -4882,6 +4966,7 @@ class MainWindow(QMainWindow):
             if duration <= 0:
                 duration = 2.0  # durée par défaut d'un cycle : 2 secondes
             if t >= duration:
+                self.effect_timer.stop()  # stopper immédiatement pour éviter les appels multiples
                 QTimer.singleShot(0, self._stop_once_effect)
                 return
         _LETTER_TO_GROUP = {"A": "face", "B": "lat", "C": "contre",
@@ -4914,8 +4999,8 @@ class MainWindow(QMainWindow):
         for i, proj in enumerate(projectors):
             _base_level = proj.level   # niveau posé par les clips, avant l'effet
             _base_color = proj.color   # couleur posée par les clips, avant l'effet
-            dim = 0.0; r = 0.0; g = 0.0; b = 0.0
-            has_dim = False; has_rgb_layer = False
+            dim = 0.0; r = 0.0; g = 0.0; b = 0.0; w = 0.0; ambre = 0.0; uv = 0.0
+            has_dim = False; has_rgb_layer = False; has_w = False; has_ambre = False; has_uv = False
             _explicitly_targeted = False  # ciblage explicite par groupe/pair/impair
 
             for ld in layers_dicts:
@@ -4965,6 +5050,9 @@ class MainWindow(QMainWindow):
                 elif attr == "R": r += scaled; has_rgb_layer = True
                 elif attr == "V": g += scaled; has_rgb_layer = True
                 elif attr == "B": b += scaled; has_rgb_layer = True
+                elif attr == "W":     w     += scaled; has_w     = True
+                elif attr == "Ambre": ambre += scaled; has_ambre = True
+                elif attr == "UV":    uv    += scaled; has_uv    = True
                 elif attr == "RGB":
                     has_rgb_layer = True
                     c1 = QColor(ld.get("color1", "#ffffff"))
@@ -4982,14 +5070,13 @@ class MainWindow(QMainWindow):
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr in ("Pan", "Tilt"):
                     saved = self.effect_saved_colors.get(id(proj))
+                    amplitude = (size / 100.0) * 8192
                     if attr == "Pan":
-                        center = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 32768)
-                        amplitude = (size / 100.0) * 32768
-                        proj.pan = int(max(0, min(65535, center + (scaled - 0.5) * 2 * amplitude)))
+                        center = saved[3] if saved and len(saved) > 3 else 32768
+                        proj.pan = int(max(0, min(65535, center + (raw - 0.5) * 2 * amplitude)))
                     else:
-                        center = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 32768)
-                        amplitude = (size / 100.0) * 32768
-                        proj.tilt = int(max(0, min(65535, center + (scaled - 0.5) * 2 * amplitude)))
+                        center = saved[4] if saved and len(saved) > 4 else 32768
+                        proj.tilt = int(max(0, min(65535, center + (raw - 0.5) * 2 * amplitude)))
 
                 elif attr == "Pan/Tilt":
                     # Forme de trajectoire couplée Pan+Tilt
@@ -4997,13 +5084,13 @@ class MainWindow(QMainWindow):
                         from effect_editor import PAN_TILT_SHAPES
                     except ImportError:
                         PAN_TILT_SHAPES = {}
-                    shape_id  = ld.get("mouvement_shape", "libre")
-                    shape_def = PAN_TILT_SHAPES.get(shape_id, PAN_TILT_SHAPES.get("libre", {}))
+                    shape_id  = ld.get("mouvement_shape", "cercle")
+                    shape_def = PAN_TILT_SHAPES.get(shape_id, PAN_TILT_SHAPES.get("cercle", {}))
                     pan_cfg   = shape_def.get("pan",  ("Sinus",    0, 1.0))
                     tilt_cfg  = shape_def.get("tilt", ("Sinus",   25, 1.0))
                     pan_forme,  pan_phase_pct,  pan_mult  = pan_cfg
                     tilt_forme, tilt_phase_pct, tilt_mult = tilt_cfg
-                    amplitude = (size / 100.0) * 128
+                    amplitude = (size / 100.0) * 8192
                     saved = self.effect_saved_colors.get(id(proj))
 
                     # Pan
@@ -5011,7 +5098,7 @@ class MainWindow(QMainWindow):
                         pan_freq = (0.05 + speed * pan_mult / 100.0 * 7.0) * fader_mult
                         pan_x = (pan_freq * t + i / max(n, 1) * sp + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
-                        c_pan = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 32768)
+                        c_pan = saved[3] if saved and len(saved) > 3 else 32768
                         proj.pan = int(max(0, min(65535, c_pan + (pan_raw - 0.5) * 2 * amplitude)))
 
                     # Tilt
@@ -5019,7 +5106,7 @@ class MainWindow(QMainWindow):
                         tilt_freq = (0.05 + speed * tilt_mult / 100.0 * 7.0) * fader_mult
                         tilt_x = (tilt_freq * t + i / max(n, 1) * sp + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
-                        c_tilt = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 32768)
+                        c_tilt = saved[4] if saved and len(saved) > 4 else 32768
                         proj.tilt = int(max(0, min(65535, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
 
                 elif attr == "Zoom":
@@ -5055,6 +5142,12 @@ class MainWindow(QMainWindow):
                     int(_base_color.green() * bv),
                     int(_base_color.blue()  * bv),
                 )
+            if has_w:
+                proj.white_boost = int(min(255, w * 255))
+            if has_ambre:
+                proj.amber_boost = int(min(255, ambre * 255))
+            if has_uv:
+                proj.uv = int(min(255, uv * 255))
 
     def _update_effect_from_config(self, cfg: dict):
         """Exécute l'algorithme paramétré depuis une config éditeur."""
@@ -9618,59 +9711,6 @@ class MainWindow(QMainWindow):
         fv.addWidget(lbl_conflict_det)
         fv.addWidget(_hdiv())
 
-        fv.addWidget(_sec("Visualisation 3D"))
-        height_row = QHBoxLayout()
-        height_row.setSpacing(8)
-        lbl_height = QLabel("Hauteur de suspension")
-        lbl_height.setStyleSheet("color:#888; font-size:11px; border:none; background:transparent;")
-        from PySide6.QtWidgets import QDoubleSpinBox as _DSB
-        height_sb = _DSB()
-        height_sb.setRange(0.0, 20.0)
-        height_sb.setSingleStep(0.5)
-        height_sb.setValue(7.0)
-        height_sb.setSuffix(" m")
-        height_sb.setFixedWidth(90)
-        height_sb.setFixedHeight(32)
-        height_sb.setStyleSheet(
-            "QDoubleSpinBox { background:#171717; color:#00d4ff; border:1px solid #242424;"
-            " border-radius:7px; padding:4px 8px; font-size:13px; font-weight:bold; }"
-            "QDoubleSpinBox:focus { border-color:#00d4ff44; }"
-            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width:0; }"
-        )
-        lbl_height_hint = QLabel("(hauteur en scène pour la 3D)")
-        lbl_height_hint.setStyleSheet("color:#444; font-size:10px; border:none; background:transparent;")
-        height_row.addWidget(lbl_height)
-        height_row.addWidget(height_sb)
-        height_row.addWidget(lbl_height_hint)
-        height_row.addStretch()
-        fv.addLayout(height_row)
-
-        rot_row = QHBoxLayout()
-        rot_row.setSpacing(8)
-        lbl_rot = QLabel("Rotation corps")
-        lbl_rot.setStyleSheet("color:#888; font-size:11px; border:none; background:transparent;")
-        from PySide6.QtWidgets import QSpinBox as _SB2
-        body_rot_sb = _SB2()
-        body_rot_sb.setRange(0, 359)
-        body_rot_sb.setSuffix("°")
-        body_rot_sb.setWrapping(True)
-        body_rot_sb.setValue(0)
-        body_rot_sb.setFixedWidth(90)
-        body_rot_sb.setFixedHeight(32)
-        body_rot_sb.setStyleSheet(
-            "QSpinBox { background:#171717; color:#00d4ff; border:1px solid #242424;"
-            " border-radius:7px; padding:4px 8px; font-size:13px; font-weight:bold; }"
-            "QSpinBox:focus { border-color:#00d4ff44; }"
-            "QSpinBox::up-button, QSpinBox::down-button { width:0; }"
-        )
-        lbl_rot_hint = QLabel("(orientation sur la truss)")
-        lbl_rot_hint.setStyleSheet("color:#444; font-size:10px; border:none; background:transparent;")
-        rot_row.addWidget(lbl_rot)
-        rot_row.addWidget(body_rot_sb)
-        rot_row.addWidget(lbl_rot_hint)
-        rot_row.addStretch()
-        fv.addLayout(rot_row)
-        fv.addWidget(_hdiv())
 
         fv.addWidget(_sec("Profil DMX"))
 
@@ -10350,14 +10390,7 @@ class MainWindow(QMainWindow):
             addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);           addr_sb.blockSignals(False)
             _update_addr_range()
             _update_chips(fd['profile'])
-            proj_fh = getattr(self.projectors[idx], 'fixture_height', None)
-            height_sb.blockSignals(True)
-            height_sb.setValue(proj_fh if proj_fh is not None else 7.0)
-            height_sb.blockSignals(False)
-            proj_br = getattr(self.projectors[idx], 'body_rotation', 0.0)
-            body_rot_sb.blockSignals(True)
-            body_rot_sb.setValue(int(proj_br))
-            body_rot_sb.blockSignals(False)
+
             if idx in conflicts:
                 others = []
                 for j, fd2 in enumerate(fixture_data):
@@ -10389,8 +10422,7 @@ class MainWindow(QMainWindow):
             proj.group           = fd['group']
             proj.universe        = fd['universe']
             proj.start_address   = fd['start_address']
-            proj.fixture_height  = height_sb.value()
-            proj.body_rotation   = float(body_rot_sb.value())
+
             if fd.get('profile'):
                 proj.dmx_profile = fd['profile']
             _apply_fd_to_dmx()

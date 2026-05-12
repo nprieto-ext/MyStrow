@@ -8,55 +8,6 @@
 body { background:#05050f; overflow:hidden; user-select:none; }
 canvas { display:block; }
 
-/* ── Panneau latéral droit ───────────────────────────────────────────── */
-#panel {
-  position:fixed; top:0; right:0; bottom:0;
-  width:130px;
-  background: rgba(8,8,20,0.92);
-  border-left: 1px solid #1a1a3a;
-  display:flex; flex-direction:column; gap:0;
-  z-index:10;
-  backdrop-filter: blur(8px);
-}
-.section {
-  padding:8px 8px 6px;
-  border-bottom: 1px solid #151528;
-}
-.section-title {
-  color:#33335a; font-size:8px; font-weight:600;
-  letter-spacing:1.5px; text-transform:uppercase;
-  font-family:'Segoe UI',sans-serif;
-  margin-bottom:6px;
-}
-.btn {
-  display:block; width:100%; margin-bottom:4px;
-  background: rgba(18,18,40,0.9);
-  border: 1px solid #222244;
-  color:#666688;
-  padding:5px 0;
-  border-radius:4px;
-  cursor:pointer;
-  font-size:10px; letter-spacing:0.5px;
-  font-family:'Segoe UI',sans-serif;
-  text-align:center;
-  transition: all 0.12s;
-}
-.btn:hover { background:rgba(30,30,70,0.95); color:#aaaace; border-color:#333366; }
-.btn.on  {
-  background:rgba(0,55,100,0.85);
-  color:#00d4ff; border-color:#005588;
-  box-shadow: 0 0 6px rgba(0,180,255,0.18);
-}
-.slider-row { margin-bottom:5px; }
-.slider-row label {
-  display:block; color:#333355; font-size:8px;
-  font-family:'Segoe UI',sans-serif; margin-bottom:2px;
-  letter-spacing:0.5px;
-}
-.slider-row input[type=range] {
-  width:100%; height:3px; accent-color:#0077bb; cursor:pointer;
-}
-.spacer { flex:1; }
 
 /* ── Footer ──────────────────────────────────────────────────────────── */
 #footer {
@@ -76,62 +27,6 @@ canvas { display:block; }
 
 <div id="loading">Chargement Three.js…</div>
 
-<div id="panel">
-  <div class="section">
-    <div class="section-title">Caméra</div>
-    <button class="btn on"  id="b-iso"   onclick="setCam('iso')">ISO</button>
-    <button class="btn"     id="b-front" onclick="setCam('front')">FACE</button>
-    <button class="btn"     id="b-top"   onclick="setCam('top')">DESSUS</button>
-    <button class="btn"     id="b-side"  onclick="setCam('side')">CÔTÉ</button>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Affichage</div>
-    <button class="btn on"  id="b-bloom"    onclick="toggleFlag('bloom')">BLOOM</button>
-    <button class="btn on"  id="b-fixtures" onclick="toggleFlag('fixtures')">FIXTURES</button>
-    <button class="btn on"  id="b-trusses"  onclick="toggleFlag('trusses')">TRUSS</button>
-    <button class="btn on"  id="b-floor"    onclick="toggleFlag('floor')">SOL</button>
-    <button class="btn on"  id="b-grid"     onclick="toggleFlag('grid')">GRILLE</button>
-    <button class="btn on"  id="b-fog"      onclick="toggleFlag('fog')">BRUME</button>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Réglages</div>
-    <div class="slider-row">
-      <label>Bloom</label>
-      <input type="range" id="sl-bloom" min="0" max="40" value="18"
-             oninput="if(window.bloomPass) window.bloomPass.strength=this.value/10">
-    </div>
-    <div class="slider-row">
-      <label>Rayon bloom</label>
-      <input type="range" id="sl-bradius" min="0" max="10" value="4"
-             oninput="if(window.bloomPass) window.bloomPass.radius=this.value/10">
-    </div>
-    <div class="slider-row">
-      <label>Ambiance</label>
-      <input type="range" id="sl-amb" min="0" max="200" value="5"
-             oninput="if(window.ambLight) window.ambLight.intensity=this.value/100">
-    </div>
-    <div class="slider-row">
-      <label>Faisceaux</label>
-      <input type="range" id="sl-beam" min="5" max="30" value="14"
-             oninput="window.beamScale=this.value/10">
-    </div>
-    <div class="slider-row">
-      <label>Exposition</label>
-      <input type="range" id="sl-exp" min="5" max="30" value="12"
-             oninput="if(window.renderer) window.renderer.toneMappingExposure=this.value/10">
-    </div>
-  </div>
-
-  <div class="spacer"></div>
-  <div class="section" style="border-top:1px solid #151528; border-bottom:none;">
-    <div class="section-title" style="margin-bottom:0; line-height:1.6;">
-      Three.js WebGL<br>
-      <span style="color:#222240;">MyStrow 3D</span>
-    </div>
-  </div>
-</div>
 
 <div id="footer">drag: orbite · scroll: zoom · double-clic: reset</div>
 
@@ -145,6 +40,8 @@ canvas { display:block; }
 }
 </script>
 
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls }    from 'three/addons/controls/OrbitControls.js';
@@ -152,15 +49,22 @@ import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+import { GLTFLoader }       from 'three/addons/loaders/GLTFLoader.js';
 
 document.getElementById('loading').remove();
+
+// ── Sélection projector (raycasting + QWebChannel) ───────────────────────────
+let _selectedProjo = -1;
+const _raycaster   = new THREE.Raycaster();
+const _mouse2D     = new THREE.Vector2();
+let   _ptrDownPos  = null;   // pour distinguer clic vs drag
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Renderer
 // ─────────────────────────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth - 130, window.innerHeight);
+renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping       = THREE.ReinhardToneMapping;
 renderer.toneMappingExposure = 1.2;
 renderer.outputColorSpace  = THREE.SRGBColorSpace;
@@ -175,7 +79,7 @@ scene.background = new THREE.Color(0x05050f);
 const fog = new THREE.FogExp2(0x05050f, 0.022);
 scene.fog = fog;
 
-const W = () => window.innerWidth - 130;
+const W = () => window.innerWidth;
 const H = () => window.innerHeight;
 const camera = new THREE.PerspectiveCamera(52, W()/H(), 0.2, 300);
 camera.position.set(14, 11, 20);
@@ -206,9 +110,9 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 window.bloomPass = new UnrealBloomPass(
   new THREE.Vector2(W(), H()),
-  1.8,   // strength
-  0.4,   // radius
-  0.10   // threshold — très bas pour capter même les lumières faibles
+  0.65,  // strength — bloom activé par défaut pour l'ambiance
+  0.42,  // radius
+  0.08   // threshold — très bas pour capter même les lumières faibles
 );
 composer.addPass(window.bloomPass);
 composer.addPass(new OutputPass());
@@ -216,11 +120,16 @@ composer.addPass(new OutputPass());
 // ─────────────────────────────────────────────────────────────────────────────
 // Lumières de scène
 // ─────────────────────────────────────────────────────────────────────────────
-window.ambLight = new THREE.AmbientLight(0xffffff, 0.05);
+window.ambLight = new THREE.AmbientLight(0xffffff, 2.0);
 scene.add(window.ambLight);
 
-const hemi = new THREE.HemisphereLight(0x080820, 0x000000, 0.06);
+const hemi = new THREE.HemisphereLight(0x8090c0, 0x000000, 0.18);
 scene.add(hemi);
+
+// Lumière de remplissage douce (toujours présente — visibilité de scène)
+const _fillLight = new THREE.DirectionalLight(0xb0c0e0, 0.35);
+_fillLight.position.set(0, 10, 4);
+scene.add(_fillLight);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Géométrie de scène
@@ -229,7 +138,7 @@ scene.add(hemi);
 // Sol — parquet sombre
 const floorMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(18, 10),
-  new THREE.MeshStandardMaterial({ color:0x16090404, roughness:0.92, metalness:0.05 })
+  new THREE.MeshStandardMaterial({ color:0x0c0907, roughness:0.92, metalness:0.05 })
 );
 floorMesh.rotation.x = -Math.PI / 2;
 floorMesh.receiveShadow = false;
@@ -285,7 +194,7 @@ function buildTrusses(defs) {
     for (const [dy, col] of [[0.14, 0xc0cce8], [-0.14, 0x708098]]) {
       const rail = new THREE.Mesh(
         new THREE.BoxGeometry(len, 0.04, 0.04),
-        new THREE.MeshStandardMaterial({ color:col, roughness:0.25, metalness:0.9, emissive:col, emissiveIntensity:0.08 })
+        new THREE.MeshStandardMaterial({ color:col, roughness:0.35, metalness:0.85 })
       );
       rail.position.set((xl+xr)/2, hy+dy, tz);
       _trussGrp.add(rail);
@@ -371,24 +280,35 @@ const POOL_VERT = `
   }
 `;
 const POOL_FRAG = `
-  uniform vec3  uColor;
-  uniform float uAlpha;
-  varying vec2  vUv;
+  uniform vec3      uColor;
+  uniform float     uAlpha;
+  uniform sampler2D uGoboTex;
+  uniform float     uGoboBlend;
+  uniform float     uGoboRot;
+  varying vec2      vUv;
   void main() {
     float d = length(vUv - vec2(0.5));
     if (d > 0.5) discard;
     float soft  = 1.0 - smoothstep(0.12, 0.50, d);
     float hot   = 1.0 - smoothstep(0.0,  0.14, d);
     float alpha = uAlpha * (soft + hot * 0.8);
-    gl_FragColor = vec4(uColor + hot*0.25, clamp(alpha, 0.0, 1.0));
+    // Masque gobo avec rotation
+    float c = cos(uGoboRot), s = sin(uGoboRot);
+    vec2 uv0 = vUv - 0.5;
+    vec2 uvR = vec2(c*uv0.x - s*uv0.y, s*uv0.x + c*uv0.y) + 0.5;
+    float goboMask = mix(1.0, texture2D(uGoboTex, clamp(uvR, 0.001, 0.999)).r, uGoboBlend);
+    gl_FragColor = vec4(uColor + hot*0.25, clamp(alpha * goboMask, 0.0, 1.0));
   }
 `;
 
 function makePoolMat() {
   return new THREE.ShaderMaterial({
     uniforms: {
-      uColor: { value: new THREE.Color(1,1,1) },
-      uAlpha: { value: 0.5 },
+      uColor:     { value: new THREE.Color(1,1,1) },
+      uAlpha:     { value: 0.5 },
+      uGoboTex:   { value: _goboTextures[0] },
+      uGoboBlend: { value: 0.0 },
+      uGoboRot:   { value: 0.0 },
     },
     vertexShader:   POOL_VERT,
     fragmentShader: POOL_FRAG,
@@ -397,6 +317,77 @@ function makePoolMat() {
     blending:       THREE.AdditiveBlending,
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Textures gobo (8 slots, dessinées en canvas)
+// ─────────────────────────────────────────────────────────────────────────────
+function _createGoboTexture(slot) {
+  const size = 256, cx = 128, cy = 128, r = 124;
+  const cv  = document.createElement('canvas');
+  cv.width  = cv.height = size;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#fff';
+  switch(slot) {
+    case 0: // Open — disque plein
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+      break;
+    case 1: // Anneau
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(cx, cy, r*0.52, 0, Math.PI*2); ctx.fill();
+      break;
+    case 2: // Étoile 4 branches
+      ctx.save(); ctx.translate(cx, cy);
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i/8)*Math.PI*2 - Math.PI/4;
+        const rad = (i%2===0) ? r : r*0.32;
+        i===0 ? ctx.moveTo(Math.cos(a)*rad, Math.sin(a)*rad)
+              : ctx.lineTo(Math.cos(a)*rad, Math.sin(a)*rad);
+      }
+      ctx.closePath(); ctx.fill(); ctx.restore();
+      break;
+    case 3: // 3 cercles
+      { const dr=r*0.28, of=r*0.52;
+        for(let i=0;i<3;i++){const a=(i/3)*Math.PI*2-Math.PI/2;
+          ctx.beginPath();ctx.arc(cx+Math.cos(a)*of,cy+Math.sin(a)*of,dr,0,Math.PI*2);ctx.fill();}}
+      break;
+    case 4: // 3 palmes (hélice)
+      ctx.save(); ctx.translate(cx,cy);
+      for(let i=0;i<3;i++){ctx.save();ctx.rotate((i/3)*Math.PI*2);
+        ctx.beginPath();ctx.ellipse(0,-r*0.45,r*0.28,r*0.40,0,0,Math.PI*2);
+        ctx.fill();ctx.restore();}
+      ctx.restore();
+      break;
+    case 5: // Breakup (découpes angulaires)
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#000';
+      [0.05,0.22,0.40,0.58,0.75,0.90].forEach(s=>{
+        ctx.beginPath();ctx.moveTo(cx,cy);
+        ctx.arc(cx,cy,r,s*Math.PI*2,(s+0.06)*Math.PI*2);
+        ctx.closePath();ctx.fill();});
+      break;
+    case 6: // 6 secteurs rayonnants
+      ctx.save(); ctx.translate(cx,cy);
+      for(let i=0;i<6;i++){ctx.save();ctx.rotate((i/6)*Math.PI*2);
+        ctx.fillRect(-r*0.075,-r,r*0.15,r);ctx.restore();}
+      ctx.restore();
+      break;
+    case 7: // Bull's-eye (anneau + point central)
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#000';
+      ctx.beginPath(); ctx.arc(cx,cy,r*0.68,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(cx,cy,r*0.30,0,Math.PI*2); ctx.fill();
+      break;
+  }
+  ctx.globalCompositeOperation='destination-in';
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+  ctx.globalCompositeOperation='source-over';
+  return new THREE.CanvasTexture(cv);
+}
+const _goboTextures = Array.from({length:8}, (_,i) => _createGoboTexture(i));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Géométries template (unit — scalées à la volée)
@@ -430,7 +421,7 @@ const GROUP_COLOR = {
 };
 
 let _objs = [];   // un objet par projecteur
-window.beamScale = 1.4;
+window.beamScale = 1.7;
 
 function _getObj(i) {
   if (i < _objs.length) return _objs[i];
@@ -461,34 +452,277 @@ function _getObj(i) {
   halo.rotation.x = -Math.PI/2;
   halo.renderOrder = 0; _poolGrp.add(halo);
 
-  // Corps de fixture
-  const isMH = false;  // mis à jour à chaque refresh
-  const body = new THREE.Mesh(GEO_BODY_PAR, MAT_BODY.clone());
-  _fixtureGrp.add(body);
+  // ── PAR LED — modèle compact réaliste ────────────────────────────────
+  const parGrp = new THREE.Group();
 
-  // Lentille
-  const lensMat = new THREE.MeshStandardMaterial({
-    color:0x080816, emissive:new THREE.Color(0,0,0),
-    emissiveIntensity:0, roughness:0.04, metalness:0.1,
-  });
-  const lens = new THREE.Mesh(GEO_LENS_PAR, lensMat);
-  _fixtureGrp.add(lens);
+  const _parBodyMat = new THREE.MeshStandardMaterial({ color:0x1c1c28, roughness:0.50, metalness:0.62 });
+  const _parChrMat2 = new THREE.MeshStandardMaterial({ color:0x404858, roughness:0.38, metalness:0.78 });
+  const _parYokeMat = new THREE.MeshStandardMaterial({ color:0x222234, roughness:0.42, metalness:0.78 });
 
-  // Collier de fixation
-  const clamp = new THREE.Mesh(
-    new THREE.TorusGeometry(0.12, 0.025, 6, 14),
-    new THREE.MeshStandardMaterial({ color:0x505078, roughness:0.4, metalness:0.7 })
+  // Collier omega de fixation truss
+  const parOme = new THREE.Mesh(
+    new THREE.TorusGeometry(0.090, 0.026, 8, 18, Math.PI),
+    _parChrMat2.clone()
   );
-  _fixtureGrp.add(clamp);
+  parOme.rotation.z = Math.PI;
+  parOme.position.set(0, 0.062, 0);
+  parGrp.add(parOme);
+
+  // Barre de yoke supérieure
+  const parYokeBar = new THREE.Mesh(
+    new THREE.BoxGeometry(0.56, 0.068, 0.098),
+    _parYokeMat.clone()
+  );
+  parYokeBar.userData.projoIndex = i;
+  parGrp.add(parYokeBar);
+
+  // Bras du yoke ×2
+  for (const sx of [-0.238, 0.238]) {
+    const parArm = new THREE.Mesh(
+      new THREE.BoxGeometry(0.058, 0.38, 0.082),
+      _parYokeMat.clone()
+    );
+    parArm.position.set(sx, -0.19, 0);
+    parArm.userData.projoIndex = i;
+    parGrp.add(parArm);
+    // Arrondi en bas de bras
+    const parElbow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.040, 8, 7),
+      _parYokeMat.clone()
+    );
+    parElbow.position.set(sx, -0.38, 0);
+    parGrp.add(parElbow);
+  }
+
+  // Corps cylindrique principal (noir mat)
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.160, 0.166, 0.24, 22),
+    _parBodyMat.clone()
+  );
+  body.userData.projoIndex = i;
+  body.position.set(0, -0.175, 0);
+  parGrp.add(body);
+
+  // Bande de couleur de groupe (accent sur le corps)
+  const groupRingMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, roughness: 0.28, metalness: 0.55,
+    emissive: new THREE.Color(0.2, 0.2, 0.2), emissiveIntensity: 0.5,
+  });
+  const groupRing = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.168, 0.168, 0.018, 22),
+    groupRingMat
+  );
+  groupRing.position.set(0, -0.094, 0);
+  parGrp.add(groupRing);
+
+  // Bague chrome avant (autour de la lentille)
+  const parFrontRing = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.182, 0.182, 0.030, 28),
+    _parChrMat2.clone()
+  );
+  parFrontRing.position.set(0, -0.317, 0);
+  parGrp.add(parFrontRing);
+
+  // Goupilles de pivot ×2 (reliant bras au corps)
+  for (const sx of [-0.200, 0.200]) {
+    const pPin = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.030, 0.030, 0.095, 10),
+      _parChrMat2.clone()
+    );
+    pPin.rotation.z = Math.PI / 2;
+    pPin.position.set(sx, -0.175, 0);
+    parGrp.add(pPin);
+  }
+
+  // Lentille émissive (face -Y = bas)
+  const lensMat = new THREE.MeshStandardMaterial({
+    color:0x060614, emissive:new THREE.Color(0,0,0),
+    emissiveIntensity:0, roughness:0.02, metalness:0.12,
+  });
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.158, 32), lensMat);
+  lens.position.set(0, -0.333, 0);
+  lens.rotation.x = -Math.PI / 2;
+  lens.userData.projoIndex = i;
+  parGrp.add(lens);
+
+  parGrp.visible = false;
+  _fixtureGrp.add(parGrp);
+
+  // clamp kept as alias for backward compat (now inside parGrp)
+  const clamp = parOme;
+
+  // ── Moving Head (Lyre) — modèle doré réaliste ────────────────────────
+  const mhGrp = new THREE.Group();
+
+  const _mhGoldMat = new THREE.MeshStandardMaterial({ color:0xc09030, roughness:0.28, metalness:0.82 });
+  const _mhChrMat  = new THREE.MeshStandardMaterial({ color:0x7080a0, roughness:0.38, metalness:0.80 });
+  const _mhDarkMat2= new THREE.MeshStandardMaterial({ color:0x141420, roughness:0.55, metalness:0.50 });
+
+  // Barre de montage supérieure (top du yoke)
+  const mhBar = new THREE.Mesh(
+    new THREE.BoxGeometry(0.64, 0.088, 0.17),
+    _mhGoldMat.clone()
+  );
+  mhBar.userData.projoIndex = i;
+  mhGrp.add(mhBar);
+
+  // Colliers omega ×2 (mordent sur le truss par le dessus)
+  for (const sx of [-0.185, 0.185]) {
+    const ome = new THREE.Mesh(
+      new THREE.TorusGeometry(0.096, 0.027, 8, 18, Math.PI),
+      _mhChrMat.clone()
+    );
+    ome.rotation.z = Math.PI;         // demi-tore ouvert vers le haut
+    ome.position.set(sx, 0.065, 0);
+    mhGrp.add(ome);
+    // Vis de serrage de l'omega
+    const bolt = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.019, 0.019, 0.050, 8),
+      _mhChrMat.clone()
+    );
+    bolt.position.set(sx, 0.180, 0);
+    mhGrp.add(bolt);
+  }
+
+  // Bras du yoke ×2 (gauche & droite) — longueur divisée par 2
+  for (const sx of [-0.252, 0.252]) {
+    const arm = new THREE.Mesh(
+      new THREE.BoxGeometry(0.076, 0.28, 0.112),
+      _mhGoldMat.clone()
+    );
+    arm.position.set(sx, -0.18, 0);
+    arm.userData.projoIndex = i;
+    mhGrp.add(arm);
+    // Arrondi en bout de bras
+    const elbow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.053, 10, 8),
+      _mhGoldMat.clone()
+    );
+    elbow.position.set(sx, -0.323, 0);
+    mhGrp.add(elbow);
+  }
+
+  // ── Groupe tête (tilt — rotation X) ──────────────────────────────────
+  const mhHGrp = new THREE.Group();
+  mhHGrp.position.set(0, -0.35, 0);
+
+  // Corps principal — frustum légèrement évasé vers l'arrière (haut = +Y)
+  const mhHead = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.158, 0.212, 0.43, 26),
+    _mhGoldMat.clone()
+  );
+  mhHead.userData.projoIndex = i;
+  mhHGrp.add(mhHead);
+
+  // Bandeau sombre entre corps et bague lentille
+  const mhBand = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.170, 0.170, 0.034, 26),
+    _mhDarkMat2.clone()
+  );
+  mhBand.position.set(0, -0.196, 0);
+  mhHGrp.add(mhBand);
+
+  // Bague chrome autour de la lentille
+  const mhRing = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.192, 0.192, 0.040, 30),
+    _mhChrMat.clone()
+  );
+  mhRing.position.set(0, -0.232, 0);
+  mhHGrp.add(mhRing);
+
+  // Lentille émissive (face -Y = bas par défaut)
+  const mhLensMat = new THREE.MeshStandardMaterial({
+    color:0x060618, emissive:new THREE.Color(0,0,0),
+    emissiveIntensity:0, roughness:0.02, metalness:0.12,
+  });
+  const mhLens = new THREE.Mesh(new THREE.CircleGeometry(0.175, 32), mhLensMat);
+  mhLens.position.set(0, -0.248, 0);
+  mhLens.rotation.x = -Math.PI / 2;
+  mhLens.userData.projoIndex = i;
+  mhHGrp.add(mhLens);
+
+  // Goupilles de pivot tilt ×2 (reliant tête aux bras du yoke)
+  for (const sx of [-0.266, 0.266]) {
+    const pin = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.040, 0.040, 0.118, 12),
+      new THREE.MeshStandardMaterial({ color:0x9098a4, roughness:0.16, metalness:0.97 })
+    );
+    pin.rotation.z = Math.PI / 2;
+    pin.position.set(sx, 0.055, 0);
+    mhHGrp.add(pin);
+  }
+
+  mhGrp.add(mhHGrp);
+  mhGrp.visible = false;
+  _fixtureGrp.add(mhGrp);
 
   // Point light au sol (éclaire le sol et les silhouettes)
   const ptLight = new THREE.PointLight(0xffffff, 0, 14, 1.8);
   _lightGrp.add(ptLight);
 
-  const obj = { cHaze, cGlow, cMain, cCore, pool, halo, body, lens, clamp, ptLight };
+  const obj = { cHaze, cGlow, cMain, cCore, pool, halo, ptLight,
+                body, lens, groupRing, parGrp,
+                mhGrp, mhHGrp, mhHead, mhLens };
   _objs.push(obj);
   return obj;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sélection par clic — raycasting sur les fixtures
+// ─────────────────────────────────────────────────────────────────────────────
+window.highlightProjo = function(idx) {
+  // Efface ancien surlignage
+  if (_selectedProjo >= 0 && _selectedProjo < _objs.length) {
+    const prev = _objs[_selectedProjo];
+    prev.body.material.emissive.setHex(0x000000);
+    prev.body.material.emissiveIntensity = 0;
+    prev.mhHead.material.emissive.setHex(0x000000);
+    prev.mhHead.material.emissiveIntensity = 0;
+    if (prev.groupRing) {
+      prev.groupRing.material.emissiveIntensity = 0.5;   // retour à l'accent normal
+    }
+  }
+  _selectedProjo = idx;
+  if (idx >= 0 && idx < _objs.length) {
+    const cur = _objs[idx];
+    cur.body.material.emissive.setHex(0x0055aa);
+    cur.body.material.emissiveIntensity = 1.2;
+    cur.mhHead.material.emissive.setHex(0x0055aa);
+    cur.mhHead.material.emissiveIntensity = 1.2;
+    if (cur.groupRing) {
+      cur.groupRing.material.emissive.setHex(0x0088ff);
+      cur.groupRing.material.emissiveIntensity = 2.5;   // clignotant bleu visible
+    }
+  }
+};
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  _ptrDownPos = { x: e.clientX, y: e.clientY };
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!_ptrDownPos) return;
+  const dx = e.clientX - _ptrDownPos.x;
+  const dy = e.clientY - _ptrDownPos.y;
+  _ptrDownPos = null;
+  if (Math.sqrt(dx*dx + dy*dy) > 6) return;   // c'était un drag, pas un clic
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  _mouse2D.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+  _mouse2D.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+  _raycaster.setFromCamera(_mouse2D, camera);
+
+  const hits = _raycaster.intersectObjects(_fixtureGrp.children, true);
+  let idx = -1;
+  for (const h of hits) {
+    if (h.object.userData.projoIndex !== undefined) {
+      idx = h.object.userData.projoIndex;
+      break;
+    }
+  }
+  window.highlightProjo(idx);
+  if (window._bridge) window._bridge.projoSelected(idx);
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Calcul direction faisceau (miroir exact du code Python)
@@ -499,21 +733,40 @@ function beamFloor(p) {
   if (isMH) {
     const panA  = (p.pan  - 32768) / 32768.0 * Math.PI;
     const theta = (p.tilt - 32768) / 32768.0 * Math.PI * 0.75;
-    const bx = Math.sin(panA) * Math.sin(theta);
-    const by = -Math.cos(theta);
-    const bz = Math.cos(panA) * Math.sin(theta);
-    const lensY = hy - 0.72;
-    const t = Math.abs(by) > 0.05 ? Math.min(lensY / (-by), 10.0) : 10.0;
+    const rx    = (p.rot3d_x || 0) * Math.PI / 180;
+    // Tilt effectif après rotation globale X : teff = theta - rx
+    const teff  = theta - rx;
+    const bx = Math.sin(panA) * Math.sin(teff);
+    const by = -Math.cos(teff);
+    const bz = Math.cos(panA) * Math.sin(teff);
+    // Hauteur de la lentille : compense la rotation globale
+    const lensY = hy - 0.60 * Math.cos(rx);
+    const goingUp = by > 0.05;
+    let t;
+    if      (by < -0.05)  t = Math.min(lensY / (-by), 10.0);
+    else if (goingUp)     t = Math.min((15.0 - lensY) / by, 15.0);
+    else                  t = 10.0;
     return {
       fx: Math.max(-11, Math.min(11, p.x + bx*t)),
       fz: Math.max(-8,  Math.min(13, p.z + bz*t)),
-      lensY, bx, by, bz, isMH,
+      lensY, bx, by, bz, isMH, goingUp,
     };
   } else {
-    const lensY = hy - 0.25;
-    const fx = Math.max(-11, Math.min(11, p.x + (p.pan  - 32768)/32768.0 * 4.0));
-    const fz = Math.max(-8,  Math.min(13, p.z + (p.tilt - 32768)/32768.0 * 3.0));
-    return { fx, fz, lensY, bx:fx-p.x, by:-lensY, bz:fz-p.z, isMH };
+    const lensY = hy - 0.333;
+    const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;  // pan — pivot horizontal
+    const rx    = (p.rot3d_x ?? 0) * Math.PI / 180;  // tilt — inclinaison depuis nadir
+    const bx    = Math.sin(ry) * Math.sin(rx);
+    const by    = -Math.cos(rx);
+    const bz    = Math.cos(ry) * Math.sin(rx);
+    const goingUp = by > 0.05;
+    const t = by < -0.05 ? Math.min(lensY / (-by), 12.0)
+            : goingUp    ? Math.min((15.0 - lensY) / by, 15.0)
+            :               12.0;
+    return {
+      fx: Math.max(-11, Math.min(11, p.x + bx * t)),
+      fz: Math.max(-8,  Math.min(13, p.z + bz * t)),
+      lensY, bx, by, bz, isMH: false, goingUp,
+    };
   }
 }
 
@@ -551,81 +804,124 @@ window.updateScene = function(projectors) {
     const col = new THREE.Color(r, g, b);
     const hy  = p.fixture_height ?? 7.0;
     const bf  = beamFloor(p);
-    const { fx, fz, lensY, isMH } = bf;
+    const { fx, fz, lensY, isMH, goingUp } = bf;
 
     // ── Corps de fixture ─────────────────────────────────────────────
-    const gcHex = GROUP_COLOR[p.group] ?? '#5577aa';
-    obj.body.material.color.set(gcHex);
-    obj.body.material.roughness  = 0.30;
-    obj.body.material.metalness  = 0.72;
-    obj.body.position.set(p.x, hy - (isMH ? 0.35 : 0.27), p.z);
-    obj.body.visible = _flags.fixtures;
-
-    // Lentille : pointe vers le sol (direction faisceau)
-    obj.lens.position.set(p.x, lensY, p.z);
     if (isMH) {
-      obj.lens.lookAt(p.x + bf.bx, lensY + bf.by, p.z + bf.bz);
-    } else {
-      obj.lens.rotation.x = -Math.PI / 2;
-    }
-    if (lvl > 0) {
-      const bright = col.clone().multiplyScalar(1.0 + lvl * 1.5);
-      obj.lens.material.emissive.copy(bright);
-      obj.lens.material.emissiveIntensity = 0.8 + lvl * 3.5;
-    } else {
-      obj.lens.material.emissive.set(0, 0, 0);
-      obj.lens.material.emissiveIntensity = 0;
-    }
-    obj.lens.visible = _flags.fixtures;
+      // Cache le groupe PAR
+      obj.parGrp.visible = false;
 
-    // Collier
-    obj.clamp.position.set(p.x, hy + 0.06, p.z);
-    obj.clamp.visible = _flags.fixtures;
+      // Positionne + oriente le Moving Head
+      const panA  = (p.pan  - 32768) / 32768.0 * Math.PI;
+      const theta = (p.tilt - 32768) / 32768.0 * Math.PI * 0.75;
+      const rx    = (p.rot3d_x || 0) * Math.PI / 180;
+      obj.mhGrp.position.set(p.x, hy, p.z);
+      obj.mhGrp.rotation.x  = rx;
+      obj.mhGrp.rotation.y  = panA;
+      obj.mhGrp.rotation.z  = (p.rot3d_z || 0) * Math.PI / 180;
+      obj.mhHGrp.rotation.x = -theta;
+      obj.mhGrp.visible = _flags.fixtures;
+
+      // Lentille MH émissive
+      if (lvl > 0) {
+        const bright = col.clone().multiplyScalar(1.0 + lvl * 1.5);
+        obj.mhLens.material.emissive.copy(bright);
+        obj.mhLens.material.emissiveIntensity = 0.8 + lvl * 3.5;
+      } else {
+        obj.mhLens.material.emissive.set(0, 0, 0);
+        obj.mhLens.material.emissiveIntensity = 0;
+      }
+    } else {
+      // Cache le groupe MH
+      obj.mhGrp.visible = false;
+
+      // ── Groupe PAR LED ───────────────────────────────────────────
+      obj.parGrp.position.set(p.x, hy, p.z);
+      obj.parGrp.rotation.x = (p.rot3d_x ?? 0) * Math.PI / 180;
+      obj.parGrp.rotation.y = (p.rot3d_y ?? 0) * Math.PI / 180;
+      obj.parGrp.visible = _flags.fixtures;
+
+      // Bande de couleur de groupe (accent toujours visible)
+      const gcHex = GROUP_COLOR[p.group] ?? '#5577aa';
+      if (i !== _selectedProjo) {   // ne pas écraser le surlignage de sélection
+        obj.groupRing.material.color.set(gcHex);
+        obj.groupRing.material.emissive.set(gcHex);
+        obj.groupRing.material.emissiveIntensity = 0.6;
+      }
+
+      // Lentille émissive
+      if (lvl > 0) {
+        const bright = col.clone().multiplyScalar(1.0 + lvl * 1.5);
+        obj.lens.material.emissive.copy(bright);
+        obj.lens.material.emissiveIntensity = 0.8 + lvl * 3.5;
+      } else {
+        obj.lens.material.emissive.set(0, 0, 0);
+        obj.lens.material.emissiveIntensity = 0;
+      }
+    }
 
     // ── Faisceaux ────────────────────────────────────────────────────
     if (lvl > 0.03) {
       const base_r = (0.22 + 2.0 * lvl) * bs;
       const fx2 = fx, fz2 = fz;
 
+      const baseY = goingUp ? 14.5 : 0.03;
+
       // Haze extérieur (très large, très transparent)
-      orientCone(obj.cHaze, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 3.0);
+      orientCone(obj.cHaze, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 3.0);
       obj.cHaze.material.uniforms.uColor.value.copy(col);
       obj.cHaze.material.uniforms.uAlpha.value = 0.04 * lvl;
 
       // Glow intermédiaire
-      orientCone(obj.cGlow, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 1.8);
+      orientCone(obj.cGlow, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 1.8);
       obj.cGlow.material.uniforms.uColor.value.copy(col);
       obj.cGlow.material.uniforms.uAlpha.value = 0.11 * lvl;
 
       // Faisceau principal
-      orientCone(obj.cMain, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 1.0);
+      orientCone(obj.cMain, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 1.0);
       obj.cMain.material.uniforms.uColor.value.copy(col);
       obj.cMain.material.uniforms.uAlpha.value = 0.32 * lvl;
 
       // Cœur brillant (très fin)
-      orientCone(obj.cCore, p.x, lensY, p.z, fx2, 0.03, fz2, base_r * 0.28);
+      orientCone(obj.cCore, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 0.28);
       obj.cCore.material.uniforms.uColor.value.copy(col);
       obj.cCore.material.uniforms.uAlpha.value = 0.80 * lvl;
 
-      // Tache principale au sol
-      const poolR = (0.35 + 2.2*lvl) * bs;
-      obj.pool.position.set(fx2, 0.02, fz2);
-      obj.pool.scale.setScalar(poolR);
-      obj.pool.material.uniforms.uColor.value.copy(col);
-      obj.pool.material.uniforms.uAlpha.value = 0.70 * lvl;
-      obj.pool.visible = true;
+      if (!goingUp) {
+        // Tache principale au sol (avec gobo)
+        const goboSlot  = Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8));
+        const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
+        const goboRot   = ((p.gobo_rotation || 0) / 255.0) * Math.PI * 2;
+        const poolR = (0.35 + 2.2*lvl) * bs;
+        obj.pool.position.set(fx2, 0.02, fz2);
+        obj.pool.scale.setScalar(poolR);
+        obj.pool.material.uniforms.uColor.value.copy(col);
+        obj.pool.material.uniforms.uAlpha.value = 0.70 * lvl;
+        obj.pool.material.uniforms.uGoboTex.value   = _goboTextures[goboSlot];
+        obj.pool.material.uniforms.uGoboBlend.value = goboBlend;
+        obj.pool.material.uniforms.uGoboRot.value   = goboRot;
+        obj.pool.visible = true;
 
-      // Halo diffus au sol (plus large)
-      obj.halo.position.set(fx2, 0.015, fz2);
-      obj.halo.scale.setScalar(poolR * 2.8);
-      obj.halo.material.uniforms.uColor.value.copy(col);
-      obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl;
-      obj.halo.visible = true;
+        // Halo diffus au sol (plus large)
+        obj.halo.position.set(fx2, 0.015, fz2);
+        obj.halo.scale.setScalar(poolR * 2.8);
+        obj.halo.material.uniforms.uColor.value.copy(col);
+        obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl;
+        obj.halo.visible = true;
 
-      // Point light (éclairage physique de la scène)
-      obj.ptLight.color.copy(col);
-      obj.ptLight.intensity = lvl * 4.5;
-      obj.ptLight.position.set(fx2, 0.4, fz2);
+        // Point light au sol
+        obj.ptLight.color.copy(col);
+        obj.ptLight.intensity = lvl * 4.5;
+        obj.ptLight.position.set(fx2, 0.4, fz2);
+      } else {
+        // Faisceau montant — pas de tache au sol
+        obj.pool.visible = false;
+        obj.halo.visible = false;
+        // Point light dans le faisceau montant
+        obj.ptLight.color.copy(col);
+        obj.ptLight.intensity = lvl * 3.0;
+        obj.ptLight.position.set(fx2, Math.min(lensY + 4.0, 13.0), fz2);
+      }
       obj.ptLight.visible = true;
 
     } else {
@@ -640,8 +936,9 @@ window.updateScene = function(projectors) {
   for (let i = projectors.length; i < _objs.length; i++) {
     const o = _objs[i];
     o.cHaze.visible = o.cGlow.visible = o.cMain.visible = o.cCore.visible =
-    o.pool.visible  = o.halo.visible  = o.body.visible  =
-    o.lens.visible  = o.clamp.visible = o.ptLight.visible = false;
+    o.pool.visible  = o.halo.visible  = o.ptLight.visible = false;
+    o.parGrp.visible = false;
+    o.mhGrp.visible  = false;
   }
 };
 
@@ -668,18 +965,21 @@ window.setCam = function(name) {
   camera.position.set(...p.pos);
   controls.target.set(...p.tgt);
   controls.update();
-  Object.keys(CAM_BTNS).forEach(k =>
-    document.getElementById(CAM_BTNS[k]).classList.toggle('on', k===name));
+  Object.keys(CAM_BTNS).forEach(k => {
+    const el = document.getElementById(CAM_BTNS[k]);
+    if (el) el.classList.toggle('on', k===name);
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flags d'affichage
 // ─────────────────────────────────────────────────────────────────────────────
-const _flags = { bloom:true, fixtures:true, trusses:true, floor:true, grid:true, fog:true };
+const _flags = { bloom:true,  fixtures:true, trusses:true, floor:true, grid:true, fog:true };
 
 window.toggleFlag = function(what) {
   _flags[what] = !_flags[what];
-  document.getElementById('b-'+what).classList.toggle('on', _flags[what]);
+  const _el = document.getElementById('b-'+what);
+  if (_el) _el.classList.toggle('on', _flags[what]);
 
   if (what === 'bloom')    { /* handled in animate */ }
   if (what === 'fixtures') { _fixtureGrp.visible = _flags.fixtures; }
@@ -823,6 +1123,41 @@ const SCENE_PRESETS = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Import de scène GLTF/GLB depuis Python (base64)
+// ─────────────────────────────────────────────────────────────────────────────
+const _gltfLoader    = new GLTFLoader();
+const _importedGrp   = new THREE.Group();
+scene.add(_importedGrp);
+
+window.loadGLTF = function(b64, isGLB) {
+  // Décode base64 → ArrayBuffer
+  const bin    = atob(b64);
+  const bytes  = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const buffer = bytes.buffer;
+
+  _gltfLoader.parse(buffer, '', (gltf) => {
+    _importedGrp.clear();
+    // Centre + normalise la scène importée
+    const box    = new THREE.Box3().setFromObject(gltf.scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale  = maxDim > 0.01 ? 12.0 / maxDim : 1.0;
+    gltf.scene.position.sub(center.multiplyScalar(scale));
+    gltf.scene.scale.setScalar(scale);
+    _importedGrp.add(gltf.scene);
+  }, (err) => console.error('GLTF import error:', err));
+};
+
+window.clearImportedScene = function() { _importedGrp.clear(); };
+
+window.setBloom = function(strength) {
+  if (window.bloomPass) window.bloomPass.strength = strength;
+  _flags.bloom = strength > 0;
+};
+
 window.setScenePreset = function(name) {
   const preset = SCENE_PRESETS[name];
   if (!preset) return;
@@ -834,6 +1169,15 @@ window.setScenePreset = function(name) {
 
 // ── Activer preset live par défaut ──
 window.setScenePreset('live');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QWebChannel — communication JS → Python
+// ─────────────────────────────────────────────────────────────────────────────
+if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined') {
+  new QWebChannel(qt.webChannelTransport, function(channel) {
+    window._bridge = channel.objects.bridge;
+  });
+}
 
 </script>
 </body>

@@ -1241,7 +1241,9 @@ class FixtureCanvas(QWidget):
         ftype      = getattr(proj, 'fixture_type', 'PAR LED')
         fill_color = self._get_fill_color(proj)
         r          = 9 if self.compact else 13
-        is_lit     = not proj.muted and proj.level > 0
+        _htp       = self.pdf._htp_overrides
+        _htp_e     = _htp.get(id(proj)) if _htp else None
+        is_lit     = not proj.muted and (proj.level > 0 or (_htp_e is not None and _htp_e[0] > 0))
         gc         = QColor(_GROUP_COLORS.get(proj.group, "#555555"))
 
         # Dimensions dérivées de r pour barre et fumee
@@ -1272,8 +1274,8 @@ class FixtureCanvas(QWidget):
         painter.setBrush(QBrush(fill_color))
 
         if ftype == "Moving Head":
-            pan_val  = getattr(proj, 'pan',  32768)
-            tilt_val = getattr(proj, 'tilt', 32768)
+            pan_val  = _htp_e[2] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'pan',  32768)
+            tilt_val = _htp_e[3] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'tilt', 32768)
             # Pan → rotation du faisceau (-135° … +135°)
             pan_angle  = (pan_val - 32768) / 32768.0 * 135.0
             # Tilt → longueur du faisceau (0=court, 65535=long)

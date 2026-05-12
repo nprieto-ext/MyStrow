@@ -21,7 +21,7 @@ binaries = []
 hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio']
 tmp_ret = collect_all('rtmidi')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-for _pkg in ('flask', 'flask_socketio', 'qrcode', 'waitress', 'werkzeug', 'jinja2', 'click', 'itsdangerous', 'markupsafe'):
+for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'werkzeug', 'jinja2', 'click', 'itsdangerous', 'markupsafe'):
     try:
         _r = collect_all(_pkg)
         datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
