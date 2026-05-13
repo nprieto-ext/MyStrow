@@ -30,6 +30,19 @@ import time
 import faulthandler
 import traceback
 
+# Fix SSL certificates sur macOS + PyInstaller :
+# certifi est bundlé dans _MEIPASS mais ssl ne le trouve pas automatiquement.
+# Forcer SSL_CERT_FILE avant tout import réseau.
+if sys.platform == "darwin":
+    try:
+        import certifi as _certifi
+        _ca = _certifi.where()
+        if _ca and os.path.exists(_ca):
+            os.environ.setdefault("SSL_CERT_FILE", _ca)
+            os.environ.setdefault("REQUESTS_CA_BUNDLE", _ca)
+    except Exception:
+        pass
+
 # Fix encodage console Windows (cp1252 ne supporte pas les emojis)
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
