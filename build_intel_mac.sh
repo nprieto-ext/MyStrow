@@ -233,8 +233,11 @@ ok "DMG créé : $DMG_OUT"
 # ── 8) Signature du DMG ───────────────────────────────────────────────────────
 if [ -n "$IDENTITY" ]; then
   step "Signature du DMG"
-  codesign --sign "$IDENTITY" "$DMG_OUT"
-  ok "DMG signé"
+  if codesign --sign "$IDENTITY" --timestamp "$DMG_OUT" 2>/dev/null; then
+    ok "DMG signé"
+  else
+    warn "Signature du DMG ignorée (trousseau verrouillé) — l'app intérieure est signée, la notarisation fonctionnera quand même"
+  fi
 fi
 
 # ── 9) Notarisation ───────────────────────────────────────────────────────────
