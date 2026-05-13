@@ -165,18 +165,34 @@ ok "App générée : $APP_PATH  ($(du -sh "$APP_PATH" | cut -f1))"
 # ── 6) Signature codesign ─────────────────────────────────────────────────────
 if [ -n "$IDENTITY" ]; then
   step "Signature de l'app"
-  ENTITLEMENTS=""
-  [ -f "$SCRIPT_DIR/entitlements.plist" ] && ENTITLEMENTS="--entitlements $SCRIPT_DIR/entitlements.plist"
 
-  # Signer l'exécutable interne en premier
-  codesign --sign "$IDENTITY" --force --options runtime \
-    $ENTITLEMENTS \
-    "$APP_PATH/Contents/MacOS/$APP_NAME"
+  # Entitlements PyInstaller : nécessaires pour le chargement dynamique de code
+  ENTS="$SCRIPT_DIR/entitlements.plist"
+  if [ ! -f "$ENTS" ]; then
+    cat > "$ENTS" <<'EOPLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+EOPLIST
+    ok "entitlements.plist généré"
+  fi
+
+  # Signer tous les binaires et frameworks internes individuellement
+  find "$APP_PATH/Contents" -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) | while read f; do
+    codesign --sign "$IDENTITY" --force --options runtime --timestamp \
+      --entitlements "$ENTS" "$f" 2>/dev/null || true
+  done
 
   # Signer le bundle complet
-  codesign --sign "$IDENTITY" --force --deep --verify --options runtime \
-    $ENTITLEMENTS \
-    "$APP_PATH"
+  codesign --sign "$IDENTITY" --force --options runtime --timestamp \
+    --entitlements "$ENTS" "$APP_PATH"
 
   codesign --verify --verbose "$APP_PATH" 2>&1 | sed 's/^/    /'
   ok "App signée"
