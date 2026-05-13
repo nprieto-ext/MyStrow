@@ -70,7 +70,7 @@ FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine 
 
 GROUP_OPTIONS = [
     "face", "douche1", "douche2", "douche3", "lat", "contre",
-    "fumee",
+    "groupe_g", "groupe_h", "fumee",
 ]
 
 ALL_CHANNEL_TYPES = [

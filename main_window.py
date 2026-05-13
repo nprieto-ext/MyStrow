@@ -97,6 +97,8 @@ AKAI_GROUP_MAP = {
     "D": "douche1",
     "E": "douche2",
     "F": "douche3",
+    "G": "groupe_g",
+    "H": "groupe_h",
 }
 # Reverse map pour migration des anciens fichiers
 _AKAI_GROUP_REVERSE = {v: k for k, v in AKAI_GROUP_MAP.items()}
@@ -265,7 +267,7 @@ class MessageLogWidget(QWidget):
 _MEM_COL_MAX = 99
 _FX_COL_MAX  = 8
 _AKAI_SLOT_OPTIONS = (
-    ["A", "B", "C", "D", "E", "F"]
+    ["A", "B", "C", "D", "E", "F", "G", "H"]
     + [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
     + [f"FX {i}"  for i in range(1, _FX_COL_MAX + 1)]
 )
@@ -538,7 +540,7 @@ class _SlotPickerPopup(QFrame):
                 f"QPushButton:hover {{ background:{QColor(color).lighter(150).name()}; color:#fff; }}")
 
     def _build_grid(self, current):
-        groups = ["A", "B", "C", "D", "E", "F"]
+        groups = ["A", "B", "C", "D", "E", "F", "G", "H"]
         fx     = [f"FX {i}" for i in range(1, _FX_COL_MAX + 1)]
         mems   = [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
 
@@ -1305,7 +1307,7 @@ class MainWindow(QMainWindow):
         self.ia_max_dimmers = {
             'face': 50, 'lat': 100, 'contre': 100,
             'douche1': 100, 'douche2': 100, 'douche3': 100,
-            'public': 80, 'groupe_e': 100, 'groupe_f': 100,
+            'public': 80, 'groupe_g': 100, 'groupe_h': 100,
         }
         # Paramètres avancés IA Lumiere
         self.ia_params = {
@@ -1436,17 +1438,19 @@ class MainWindow(QMainWindow):
 
     # Mapping nom de groupe -> nom d'affichage dans la timeline
     GROUP_DISPLAY = {
-        "face":    "A",
-        "lat":     "B",
-        "contre":  "C",
-        "douche1": "D",
-        "douche2": "E",
-        "douche3": "F",
-        "public":  "Public",
-        "fumee":   "Fumee",
-        "lyre":    "Lyres",
-        "barre":   "Barres",
-        "strobe":  "Strobos",
+        "face":     "A",
+        "lat":      "B",
+        "contre":   "C",
+        "douche1":  "D",
+        "douche2":  "E",
+        "douche3":  "F",
+        "groupe_g": "G",
+        "groupe_h": "H",
+        "public":   "Public",
+        "fumee":    "Fumee",
+        "lyre":     "Lyres",
+        "barre":    "Barres",
+        "strobe":   "Strobos",
     }
 
     # Fixtures par defaut (nom, type, groupe interne)
@@ -2053,6 +2057,7 @@ class MainWindow(QMainWindow):
             effect_btn = EffectButton(r)
             effect_btn.clicked.connect(lambda _, idx=r: self.toggle_effect(idx))
             effect_btn.effect_config_selected.connect(self._on_effect_assigned)
+            effect_btn.layer_overrides_changed.connect(self._on_effect_layer_overrides_changed)
             effect_btn.open_editor_requested.connect(lambda idx: self._open_effect_editor_for_btn(idx))
             self.effect_buttons.append(effect_btn)
             effects_col.addWidget(effect_btn)
@@ -4324,6 +4329,68 @@ class MainWindow(QMainWindow):
         dur_wa.setDefaultWidget(dur_widget)
         trig_menu.addAction(dur_wa)
 
+        # ── Groupes + Vitesse ─────────────────────────────────────────────────
+        menu.addSeparator()
+        _lyr0 = (current_cfg or {}).get("layers", [])
+        _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else ["A","B","C","D","E","F","G","H"]
+        _init_speed  = int(_lyr0[0].get("speed", 50)) if _lyr0 else 50
+        _sel_groups  = list(_init_groups)
+
+        # Slider créé en premier pour que _toggle_grp_pad puisse y accéder
+        _spd_slider = QSlider(Qt.Horizontal)
+        _spd_slider.setRange(0, 100)
+        _spd_slider.setValue(_init_speed)
+        _spd_slider.setFixedWidth(90)
+        _spd_slider.setStyleSheet(
+            "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
+            "QSlider::handle:horizontal{background:#00aaff;width:12px;height:12px;margin:-4px 0;border-radius:6px;}"
+        )
+
+        _GRP_ON  = "QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;border-radius:3px;font-size:10px;font-weight:bold;}"
+        _GRP_OFF = "QPushButton{background:#333;color:#888;border:1px solid #444;border-radius:3px;font-size:10px;}"
+        _grp_btn_map = {}
+
+        def _save_pad_layers():
+            pad = self.fx_pads[fx_col][row]
+            if pad and "layers" in pad:
+                for _l in pad["layers"]:
+                    _l["target_groups"] = list(_sel_groups)
+                    _l["speed"] = _spd_slider.value()
+                self._save_akai_config_auto()
+
+        def _toggle_grp_pad(g_id):
+            if g_id in _sel_groups:
+                _sel_groups.remove(g_id)
+            else:
+                _sel_groups.append(g_id)
+            _grp_btn_map[g_id].setStyleSheet(_GRP_ON if g_id in _sel_groups else _GRP_OFF)
+            _save_pad_layers()
+
+        grp_widget = QWidget(); grp_widget.setStyleSheet("background: transparent;")
+        grp_vlay = QVBoxLayout(grp_widget)
+        grp_vlay.setContentsMargins(12, 4, 12, 2); grp_vlay.setSpacing(3)
+        grp_hdr = QLabel("Groupes :"); grp_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        grp_vlay.addWidget(grp_hdr)
+        btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
+        for _gid, _glbl in [("A","Face"),("B","Lat"),("C","Ctr"),("D","D.1"),("E","D.2"),("F","D.3"),("G","Grp G"),("H","Grp H")]:
+            _gb = QPushButton(_glbl); _gb.setFixedSize(34, 22)
+            _gb.setStyleSheet(_GRP_ON if _gid in _sel_groups else _GRP_OFF)
+            _gb.clicked.connect(lambda _, g=_gid: _toggle_grp_pad(g))
+            _grp_btn_map[_gid] = _gb; btns_h.addWidget(_gb)
+        grp_vlay.addLayout(btns_h)
+        grp_wa = QWidgetAction(menu); grp_wa.setDefaultWidget(grp_widget); menu.addAction(grp_wa)
+
+        spd_widget = QWidget(); spd_widget.setStyleSheet("background: transparent;")
+        spd_hlay = QHBoxLayout(spd_widget)
+        spd_hlay.setContentsMargins(12, 2, 12, 4); spd_hlay.setSpacing(6)
+        spd_hdr = QLabel("Vitesse :"); spd_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
+        spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
+        _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
+        _spd_slider.valueChanged.connect(lambda _v: _save_pad_layers())
+        spd_hlay.addWidget(spd_hdr); spd_hlay.addWidget(_spd_slider); spd_hlay.addWidget(spd_val_lbl)
+        spd_wa = QWidgetAction(menu); spd_wa.setDefaultWidget(spd_widget); menu.addAction(spd_wa)
+
         menu.addSeparator()
         act_editor = menu.addAction("🎨  Éditeur d'effets")
         act_editor.triggered.connect(lambda: self._open_effect_editor_for_fx_pad(fx_col, row))
@@ -4948,6 +5015,26 @@ class MainWindow(QMainWindow):
             self.active_effect = cfg.get("name", self.active_effect)
             self.start_effect(self.active_effect)
 
+    def _on_effect_layer_overrides_changed(self, btn_idx: int, groups: list, speed: int):
+        """Applique les overrides groupes/vitesse sur les couches de l'effet du bouton."""
+        cfg = self._button_effect_configs.get(btn_idx)
+        if not cfg:
+            return
+        layers = cfg.get("layers")
+        if layers:
+            for lyr in layers:
+                lyr["target_groups"] = groups
+                lyr["speed"] = speed
+        else:
+            cfg["layers"] = [{"target_groups": groups, "speed": speed}]
+        if btn_idx < len(self.effect_buttons):
+            self.effect_buttons[btn_idx]._target_groups = groups
+            self.effect_buttons[btn_idx]._speed = speed
+        self._save_effect_assignments()
+        if btn_idx < len(self.effect_buttons) and self.effect_buttons[btn_idx].active:
+            self.active_effect_config = cfg
+            self.start_effect(cfg.get("name", self.active_effect))
+
     def _update_effect_from_layers(self, cfg: dict):
         """Exécute un effet défini par ses couches (format nouvel éditeur)."""
         import math as _math
@@ -4970,7 +5057,8 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, self._stop_once_effect)
                 return
         _LETTER_TO_GROUP = {"A": "face", "B": "lat", "C": "contre",
-                            "D": "douche1", "E": "douche2", "F": "douche3"}
+                            "D": "douche1", "E": "douche2", "F": "douche3",
+                            "G": "groupe_g", "H": "groupe_h"}
         target_letters = cfg.get("target_groups", [])
         allowed_groups = {_LETTER_TO_GROUP[l] for l in target_letters if l in _LETTER_TO_GROUP}
         projectors = [p for p in self.projectors
@@ -4982,6 +5070,7 @@ class MainWindow(QMainWindow):
         _LETTER_TO_GROUP = {
             "A": "face", "B": "lat", "C": "contre",
             "D": "douche1", "E": "douche2", "F": "douche3",
+            "G": "groupe_g", "H": "groupe_h",
         }
 
         def _wave(forme, x):
@@ -9150,10 +9239,12 @@ class MainWindow(QMainWindow):
             "douche1": "#44cc88", "douche2": "#ffcc44", "douche3": "#ff4488",
             "lat": "#aa55ff", "lyre": "#ff44cc", "barre": "#44aaff",
             "strobe": "#ffee44", "fumee": "#88aaaa", "public": "#ff6655",
+            "groupe_g": "#22ddcc", "groupe_h": "#ff7722",
         }
         GROUP_LETTERS = {
             "face": "A", "lat": "B", "contre": "C",
             "douche1": "D", "douche2": "E", "douche3": "F",
+            "groupe_g": "G", "groupe_h": "H",
             "public": "Public",
             "fumee": "Fumée", "lyre": "Lyres", "barre": "Barres", "strobe": "Strobos",
         }
@@ -9564,12 +9655,14 @@ class MainWindow(QMainWindow):
         fv.addSpacing(6)
 
         GROUP_BLOCKS = [
-            ("face",    "A", "Face",    "#ff8844"),
-            ("lat",     "B", "LAT",     "#aa55ff"),
-            ("contre",  "C", "Contre",  "#4488ff"),
-            ("douche1", "D", "Dch 1",   "#44cc88"),
-            ("douche2", "E", "Dch 2",   "#ffcc44"),
-            ("douche3", "F", "Dch 3",   "#ff4488"),
+            ("face",     "A", "Face",   "#ff8844"),
+            ("lat",      "B", "LAT",    "#aa55ff"),
+            ("contre",   "C", "Contre", "#4488ff"),
+            ("douche1",  "D", "Dch 1",  "#44cc88"),
+            ("douche2",  "E", "Dch 2",  "#ffcc44"),
+            ("douche3",  "F", "Dch 3",  "#ff4488"),
+            ("groupe_g", "G", "Grp G",  "#22ddcc"),
+            ("groupe_h", "H", "Grp H",  "#ff7722"),
         ]
 
         TYPE_PROFILES = {
@@ -10009,6 +10102,14 @@ class MainWindow(QMainWindow):
                 )
                 wl.addWidget(val_lbl)
 
+                dmx_cur = int(round(pct_cur / 100.0 * 255))
+                dmx_lbl = _QL(f"{dmx_cur} / 255")
+                dmx_lbl.setAlignment(Qt.AlignCenter)
+                dmx_lbl.setStyleSheet(
+                    "color:#666666; font-size:11px; background:transparent; border:none;"
+                )
+                wl.addWidget(dmx_lbl)
+
                 sli = QSlider(Qt.Horizontal)
                 sli.setRange(0, 100)
                 sli.setValue(pct_cur)
@@ -10040,6 +10141,7 @@ class MainWindow(QMainWindow):
 
                 def _on_slide(v):
                     val_lbl.setText(f"{v}%")
+                    dmx_lbl.setText(f"{int(round(v / 100.0 * 255))} / 255")
                     _set_default(ch_type, v, snap_idx)
                     ch_defs[ch_type] = int(round(v / 100.0 * 255))
                     pct_txt = f"{v}%" if v > 0 else ""

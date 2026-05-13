@@ -4,6 +4,7 @@ Remplace Plan3DWindow avec une API identique : init_scene(), refresh().
 """
 import base64
 import json
+import time as _time
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -293,6 +294,7 @@ class ProjectorTableDialog(QDialog):
         'face': '#ff8844', 'contre': '#4488ff', 'douche1': '#44cc88',
         'douche2': '#ffcc44', 'douche3': '#ff4488', 'lat': '#aa55ff',
         'lyre': '#ee44bb', 'barre': '#44aaff',
+        'groupe_g': '#22ddcc', 'groupe_h': '#ff7722',
     }
     _TBL = (
         "QTableWidget{background:#080818;color:#aaaacc;border:1px solid #1a1a38;"
@@ -600,6 +602,9 @@ class Plan3DWebWindow(QMainWindow):
         self._push_timer.setSingleShot(True)
         self._push_timer.setInterval(40)
         self._push_timer.timeout.connect(self._do_push)
+        self._strobe_timer = QTimer(self)
+        self._strobe_timer.setInterval(40)
+        self._strobe_timer.timeout.connect(self._do_strobe_push)
 
         self._build_toolbar()
 
@@ -792,6 +797,7 @@ class Plan3DWebWindow(QMainWindow):
                 p.rot3d_x = 0.0;  p.rot3d_z = 0.0
         self._populate_mini(projs)
         self.refresh(projs)
+        self._save_patch()
 
     def _mini_spin_changed(self, row, col, value):
         projs = self._last_projectors
@@ -830,6 +836,7 @@ class Plan3DWebWindow(QMainWindow):
                 if r < len(projs):
                     self._sync_canvas_pos(projs[r])
         self.refresh(projs)
+        self._save_patch()
 
     def _populate_mini(self, projectors):
         self._mini_tbl.setRowCount(len(projectors))
@@ -1150,6 +1157,7 @@ class Plan3DWebWindow(QMainWindow):
                 sp.setValue(float(getattr(pp, attr, dflt) or dflt))
                 sp.blockSignals(False)
         self.refresh(projs)
+        self._save_patch()
 
     # ── Undo (Ctrl+Z) ────────────────────────────────────────────────────────
 
@@ -1195,6 +1203,7 @@ class Plan3DWebWindow(QMainWindow):
                 sp.setValue(float(getattr(pp, attr, dflt) or dflt))
                 sp.blockSignals(False)
         self.refresh(projs)
+        self._save_patch()
 
     def keyPressEvent(self, event):
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Z:
@@ -1203,6 +1212,11 @@ class Plan3DWebWindow(QMainWindow):
             super().keyPressEvent(event)
 
     # ── Sync 3D position → 2D canvas ─────────────────────────────────────────
+
+    def _save_patch(self):
+        mw = self.parent()
+        if hasattr(mw, 'save_dmx_patch_config'):
+            mw.save_dmx_patch_config()
 
     def _sync_canvas_pos(self, p):
         """Met à jour canvas_x/canvas_y depuis pos_3d et redessine le plan 2D."""
@@ -1448,11 +1462,21 @@ class Plan3DWebWindow(QMainWindow):
 
     def _to_data(self, projectors):
         out = []
+        now = _time.time()
         for i, p in enumerate(projectors):
             col  = getattr(p, 'color', None)
             r = col.red()   if col else 0
             g = col.green() if col else 0
             b = col.blue()  if col else 0
+            # Strobe : bascule r/g/b à 0 sur la phase off
+            spd = getattr(p, 'strobe_speed', 0)
+            if spd > 0:
+                freq = 1.0 + (spd / 100.0) * 19.0
+                if int(now * freq * 2) % 2 == 0:
+                    r = g = b = 0
+            elif getattr(p, 'dmx_mode', '') == 'Strobe':
+                if int(now * 10) % 2 == 0:
+                    r = g = b = 0
             cx, cy = self._norm_pos(projectors, i)
             fh  = getattr(p, 'fixture_height', None)
             p3x = getattr(p, 'pos_3d_x', None)
@@ -1488,11 +1512,28 @@ class Plan3DWebWindow(QMainWindow):
         self._js(f'if(window.updateScene) window.updateScene({data})')
         self._pending = None
 
+    def _do_strobe_push(self):
+        if not self._ready or not self._last_projectors:
+            return
+        data = json.dumps(self._to_data(self._last_projectors))
+        self._js(f'if(window.updateScene) window.updateScene({data})')
+
+    def _update_strobe_timer(self, projectors):
+        has_strobe = any(
+            getattr(p, 'strobe_speed', 0) > 0 or getattr(p, 'dmx_mode', '') == 'Strobe'
+            for p in projectors
+        )
+        if has_strobe and not self._strobe_timer.isActive():
+            self._strobe_timer.start()
+        elif not has_strobe and self._strobe_timer.isActive():
+            self._strobe_timer.stop()
+
     # ── API publique (identique à Plan3DWindow) ───────────────────────────────
 
     def init_scene(self, projectors):
         self._last_projectors = projectors
         self._pending = projectors
+        self._update_strobe_timer(projectors)
         if hasattr(self, '_mini_tbl'):
             self._populate_mini(projectors)
         if self._ready:
@@ -1501,6 +1542,7 @@ class Plan3DWebWindow(QMainWindow):
     def refresh(self, projectors):
         self._last_projectors = projectors
         self._pending = projectors
+        self._update_strobe_timer(projectors)
         if not self._push_timer.isActive():
             self._push_timer.start()
 

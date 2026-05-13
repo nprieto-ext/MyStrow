@@ -354,6 +354,9 @@ class _Canvas3D(QWidget):
         # Gobo animation timer
         self._rot_timer = QTimer(self)
         self._rot_timer.timeout.connect(self.update)
+        # Strobe animation timer
+        self._strobe_timer = QTimer(self)
+        self._strobe_timer.timeout.connect(self.update)
 
     def set_trusses(self, trusses):
         self._trusses = trusses
@@ -367,6 +370,12 @@ class _Canvas3D(QWidget):
             self._rot_timer.start(40)
         elif not has_rot and self._rot_timer.isActive():
             self._rot_timer.stop()
+        has_strobe = any(p.get('strobe_speed', 0) > 0 or p.get('dmx_mode', '') == 'Strobe'
+                         for p in data)
+        if has_strobe and not self._strobe_timer.isActive():
+            self._strobe_timer.start(40)
+        elif not has_strobe and self._strobe_timer.isActive():
+            self._strobe_timer.stop()
         self.update()
 
     # ── Camera helpers ────────────────────────────────────────────────────────
@@ -697,6 +706,19 @@ class _Canvas3D(QWidget):
         sel_set  = self._sel
         proj_idx = {id(p): i for i, p in enumerate(prjs)}
 
+        _now = _time.time()
+        def _strobe_rgb(p):
+            r, g, b = p['r'], p['g'], p['b']
+            spd = p.get('strobe_speed', 0)
+            if spd > 0:
+                freq = 1.0 + (spd / 100.0) * 19.0
+                if int(_now * freq * 2) % 2 == 0:
+                    return 0, 0, 0
+            elif p.get('dmx_mode', '') == 'Strobe':
+                if int(_now * 10) % 2 == 0:
+                    return 0, 0, 0
+            return r, g, b
+
         def _src(p):
             """(src_y, src_x, src_z, (floor_x, floor_z))"""
             if p.get('fixture_type','') == 'Moving Head':
@@ -723,7 +745,7 @@ class _Canvas3D(QWidget):
         for p in sorted_prjs:
             lvl = max(0.0, min(1.0, p['level']/100.0))
             if lvl < 0.03: continue
-            r,g,b = p['r'],p['g'],p['b']
+            r,g,b = _strobe_rgb(p)
             _,_,_, (fx,fz) = _src(p)
             # Tache étendue — halo de diffusion au sol
             pool_r2 = 1.2 + 4.0*lvl
@@ -773,7 +795,7 @@ class _Canvas3D(QWidget):
         for p in sorted_prjs:
             lvl = max(0.0, min(1.0, p['level']/100.0))
             if lvl < 0.03: continue
-            r,g,b = p['r'],p['g'],p['b']
+            r,g,b = _strobe_rgb(p)
             sy, sx2, sz, (fx,fz) = _src(p)
             tip = pt(sx2, sy, sz)
             if not tip: continue
@@ -829,7 +851,7 @@ class _Canvas3D(QWidget):
         for p in sorted_prjs:
             x, z = p['x'], p['z']
             lvl  = max(0.0, min(1.0, p['level']/100.0))
-            r,g,b = p['r'],p['g'],p['b']
+            r,g,b = _strobe_rgb(p)
             is_mh  = p.get('fixture_type','') == 'Moving Head'
             hang_y = p.get('fixture_height', TRUSS_Y)
             is_sel = proj_idx.get(id(p), -1) in sel_set
@@ -841,7 +863,8 @@ class _Canvas3D(QWidget):
 
                 _GC = {'face':'#ff8844','contre':'#4488ff','douche1':'#44cc88',
                        'douche2':'#ffcc44','douche3':'#ff4488','lat':'#aa55ff',
-                       'lyre':'#ee44bb','barre':'#44aaff'}
+                       'lyre':'#ee44bb','barre':'#44aaff',
+                       'groupe_g':'#22ddcc','groupe_h':'#ff7722'}
                 gc = QColor(_GC.get(p.get('group',''), '#5577aa'))
 
                 pan_a  = (p.get('pan',  32768) - 32768) / 32768.0 * math.pi
@@ -1774,6 +1797,8 @@ class Plan3DWindow(QMainWindow):
                 'body_rotation':  getattr(p,'body_rotation',0.0),
                 'gobo_slot_idx':  self._gobo_slot_idx(p),
                 'gobo_rotation':  getattr(p,'gobo_rotation',0),
+                'strobe_speed':   getattr(p,'strobe_speed',0),
+                'dmx_mode':       getattr(p,'dmx_mode',''),
                 'name':           getattr(p,'name',''),
                 'group':          getattr(p,'group',''),
             })

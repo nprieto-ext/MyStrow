@@ -7,7 +7,7 @@ from pathlib import Path
 from i18n import tr
 from PySide6.QtWidgets import (
     QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
-    QDoubleSpinBox, QLineEdit, QSizePolicy,
+    QVBoxLayout, QDoubleSpinBox, QLineEdit, QSizePolicy, QSlider,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon
@@ -94,11 +94,12 @@ def get_effect_emoji(effect_name):
 class EffectButton(QPushButton):
     """Bouton d'effet carre rouge avec menu d'effets"""
 
-    effect_config_selected = Signal(int, dict)   # (btn_index, config_dict)
-    trigger_mode_changed   = Signal(int, str, int)  # (btn_index, mode, duration_ms)
-    press_signal           = Signal(int)          # (btn_index)  — press physique
-    released_signal        = Signal(int)          # (btn_index)  — release physique
-    open_editor_requested  = Signal(int)          # (btn_index)  — ouvre l'éditeur d'effets
+    effect_config_selected  = Signal(int, dict)      # (btn_index, config_dict)
+    trigger_mode_changed    = Signal(int, str, int)  # (btn_index, mode, duration_ms)
+    layer_overrides_changed = Signal(int, list, int) # (btn_index, target_groups, speed)
+    press_signal            = Signal(int)            # (btn_index)  — press physique
+    released_signal         = Signal(int)            # (btn_index)  — release physique
+    open_editor_requested   = Signal(int)            # (btn_index)  — ouvre l'éditeur d'effets
 
     def __init__(self, index):
         super().__init__()
@@ -107,6 +108,8 @@ class EffectButton(QPushButton):
         self.active = False
         self.trigger_mode = "toggle"      # "toggle" | "flash" | "timer"
         self.trigger_duration = 2000      # ms, pour mode Timer
+        self._target_groups = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        self._speed = 50
         # Effet par defaut selon la position
         if index < len(DEFAULT_EFFECTS):
             self.current_effect = DEFAULT_EFFECTS[index]
@@ -346,6 +349,65 @@ class EffectButton(QPushButton):
         dur_wa = QWidgetAction(trig_menu)
         dur_wa.setDefaultWidget(dur_widget)
         trig_menu.addAction(dur_wa)
+
+        # ── Groupes + Vitesse ─────────────────────────────────────────────────
+        menu.addSeparator()
+        _mw = self.window()
+        if _mw and hasattr(_mw, '_button_effect_configs'):
+            _lyr0 = _mw._button_effect_configs.get(self.index, {}).get("layers", [])
+            _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else list(self._target_groups)
+            _init_speed  = int(_lyr0[0].get("speed", self._speed)) if _lyr0 else self._speed
+        else:
+            _init_groups = list(self._target_groups)
+            _init_speed  = self._speed
+        _sel_groups = list(_init_groups)
+
+        # Slider créé en premier pour que _toggle_group puisse y accéder
+        _spd_slider = QSlider(Qt.Horizontal)
+        _spd_slider.setRange(0, 100)
+        _spd_slider.setValue(_init_speed)
+        _spd_slider.setFixedWidth(90)
+        _spd_slider.setStyleSheet(
+            "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
+            "QSlider::handle:horizontal{background:#00aaff;width:12px;height:12px;margin:-4px 0;border-radius:6px;}"
+        )
+
+        _GRP_ON  = "QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;border-radius:3px;font-size:10px;font-weight:bold;}"
+        _GRP_OFF = "QPushButton{background:#333;color:#888;border:1px solid #444;border-radius:3px;font-size:10px;}"
+        _grp_btn_map = {}
+
+        def _toggle_grp(g_id):
+            if g_id in _sel_groups:
+                _sel_groups.remove(g_id)
+            else:
+                _sel_groups.append(g_id)
+            _grp_btn_map[g_id].setStyleSheet(_GRP_ON if g_id in _sel_groups else _GRP_OFF)
+            self.layer_overrides_changed.emit(self.index, list(_sel_groups), _spd_slider.value())
+
+        grp_widget = QWidget(); grp_widget.setStyleSheet("background: transparent;")
+        grp_vlay = QVBoxLayout(grp_widget)
+        grp_vlay.setContentsMargins(12, 4, 12, 2); grp_vlay.setSpacing(3)
+        grp_hdr = QLabel("Groupes :"); grp_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        grp_vlay.addWidget(grp_hdr)
+        btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
+        for _gid, _glbl in [("A","Face"),("B","Lat"),("C","Ctr"),("D","D.1"),("E","D.2"),("F","D.3"),("G","Grp G"),("H","Grp H")]:
+            _gb = QPushButton(_glbl); _gb.setFixedSize(34, 22)
+            _gb.setStyleSheet(_GRP_ON if _gid in _sel_groups else _GRP_OFF)
+            _gb.clicked.connect(lambda _, g=_gid: _toggle_grp(g))
+            _grp_btn_map[_gid] = _gb; btns_h.addWidget(_gb)
+        grp_vlay.addLayout(btns_h)
+        grp_wa = QWidgetAction(menu); grp_wa.setDefaultWidget(grp_widget); menu.addAction(grp_wa)
+
+        spd_widget = QWidget(); spd_widget.setStyleSheet("background: transparent;")
+        spd_hlay = QHBoxLayout(spd_widget)
+        spd_hlay.setContentsMargins(12, 2, 12, 4); spd_hlay.setSpacing(6)
+        spd_hdr = QLabel("Vitesse :"); spd_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
+        spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
+        _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
+        _spd_slider.valueChanged.connect(lambda v: self.layer_overrides_changed.emit(self.index, list(_sel_groups), v))
+        spd_hlay.addWidget(spd_hdr); spd_hlay.addWidget(_spd_slider); spd_hlay.addWidget(spd_val_lbl)
+        spd_wa = QWidgetAction(menu); spd_wa.setDefaultWidget(spd_widget); menu.addAction(spd_wa)
 
         menu.addSeparator()
         act_editor = menu.addAction(tr("uic_effect_editor_menu"))

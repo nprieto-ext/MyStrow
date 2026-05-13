@@ -2124,7 +2124,7 @@ print(json.dumps(waveform))
                         if new_start_ms < clip_end_ms:
                             new_start_ms = clip_end_ms
 
-                if new_start_ms < old_end_ms - 500:
+                if new_start_ms < old_end_ms - 100:
                     self.resizing_clip.start_time = new_start_ms
                     self.resizing_clip.duration = old_end_ms - new_start_ms
             else:  # right
@@ -2140,7 +2140,7 @@ print(json.dumps(waveform))
                             new_duration_ms = clip.start_time - self.resizing_clip.start_time
                             break
 
-                self.resizing_clip.duration = max(500, new_duration_ms)
+                self.resizing_clip.duration = max(100, new_duration_ms)
 
             self.update()
 
@@ -3075,7 +3075,8 @@ print(json.dumps(waveform))
                                        QCheckBox, QPushButton, QLabel, QFrame)
         from PySide6.QtCore import Qt
         _LETTERS = [("A", "Face"), ("B", "Lat"), ("C", "Contre"),
-                    ("D", "Douche 1"), ("E", "Douche 2"), ("F", "Douche 3")]
+                    ("D", "Douche 1"), ("E", "Douche 2"), ("F", "Douche 3"),
+                    ("G", "Groupe G"), ("H", "Groupe H")]
         cur = list(getattr(clip, 'effect_target_groups', []))
 
         dlg = QDialog(self)

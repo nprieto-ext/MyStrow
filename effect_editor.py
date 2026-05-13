@@ -1992,7 +1992,7 @@ class LayerCard(QFrame):
         sep.setStyleSheet("QFrame{background:#222;border:none;}")
         row3.addWidget(sep)
 
-        for label in ["A", "B", "C", "D", "E", "F"]:
+        for label in ["A", "B", "C", "D", "E", "F", "G", "H"]:
             btn = QPushButton(label)
             btn.setFixedSize(22, 20)
             btn.setCheckable(True)
@@ -3652,6 +3652,7 @@ class EffectEditorDialog(QDialog):
             _LETTER_TO_GROUP = {
                 "A": "face", "B": "lat", "C": "contre",
                 "D": "douche1", "E": "douche2", "F": "douche3",
+                "G": "groupe_g", "H": "groupe_h",
             }
             for layer in self._layers:
                 preset = layer.target_preset

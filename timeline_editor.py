@@ -359,8 +359,9 @@ class LightTimelineEditor(QDialog):
     def _create_tracks_from_fixtures(self, projectors, tracks_layout):
         """Genere les pistes de la timeline depuis la liste de fixtures"""
         GROUP_DISPLAY = getattr(self.main_window, 'GROUP_DISPLAY', {
-            "face":    "A", "lat":     "B", "contre":  "C",
-            "douche1": "D", "douche2": "E", "douche3": "F",
+            "face":     "A", "lat":     "B", "contre":  "C",
+            "douche1":  "D", "douche2": "E", "douche3": "F",
+            "groupe_g": "G", "groupe_h": "H",
             "public": "Public", "fumee": "Fumee", "lyre": "Lyres",
             "barre": "Barres", "strobe": "Strobos",
         })

@@ -810,8 +810,8 @@ _DEFAULT_POSITIONS = {
     "lyre":     lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.25),  # z=-2.5 m
     "barre":    lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.35),  # z=-1.5 m
     "strobe":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.45),  # z=-0.5 m
-    "groupe_e": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.62),
-    "groupe_f": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.46),
+    "groupe_g": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.62),
+    "groupe_h": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.46),
 }
 
 class _PersistentMenu(QMenu):
@@ -887,8 +887,8 @@ _GROUP_COLORS = {
     "strobe":   "#ffee44",
     "fumee":    "#88aaaa",
     "public":   "#ff6655",
-    "groupe_e": "#cc44ff",
-    "groupe_f": "#ffcc22",
+    "groupe_g": "#22ddcc",
+    "groupe_h": "#ff7722",
 }
 
 # ── Helpers de positionnement ─────────────────────────────────────────────────
@@ -2604,17 +2604,19 @@ class PlanDeFeu(QFrame):
 
     # Mapping groupe interne → lettre affichée
     _GROUP_LABEL = {
-        "face":    "Groupe A",
-        "lat":     "Groupe B",
-        "contre":  "Groupe C",
-        "douche1": "Groupe D",
-        "douche2": "Groupe E",
-        "douche3": "Groupe F",
-        "public":  "Groupe G",
-        "lyre":    "Groupe H",
-        "barre":   "Groupe I",
-        "strobe":  "Groupe J",
-        "fumee":   "Groupe K",
+        "face":     "Groupe A",
+        "lat":      "Groupe B",
+        "contre":   "Groupe C",
+        "douche1":  "Groupe D",
+        "douche2":  "Groupe E",
+        "douche3":  "Groupe F",
+        "groupe_g": "Groupe G",
+        "groupe_h": "Groupe H",
+        "public":   "Public",
+        "lyre":     "Lyres",
+        "barre":    "Barres",
+        "strobe":   "Strobos",
+        "fumee":    "Fumée",
     }
 
     def _show_select_menu(self):
@@ -3954,12 +3956,14 @@ class _FixtureFormWidget(QWidget):
 
         self.group_combo = QComboBox()
         _GROUPS = [
-            ("face",    "A"),
-            ("lat",     "B"),
-            ("contre",  "C"),
-            ("douche1", "D"),
-            ("douche2", "E"),
-            ("douche3", "F"),
+            ("face",     "A"),
+            ("lat",      "B"),
+            ("contre",   "C"),
+            ("douche1",  "D"),
+            ("douche2",  "E"),
+            ("douche3",  "F"),
+            ("groupe_g", "G"),
+            ("groupe_h", "H"),
         ]
         for key, label in _GROUPS:
             self.group_combo.addItem(label, key)
@@ -4778,7 +4782,7 @@ class _PatchCanvasProxy:
         menu.addSeparator()
 
         grp_menu = menu.addMenu("⬡  Assigner groupe")
-        for _letter in ["A", "B", "C", "D", "E", "F"]:
+        for _letter in ["A", "B", "C", "D", "E", "F", "G", "H"]:
             grp_menu.addAction(_letter).triggered.connect(
                 lambda checked, l=_letter: self._assign_group_to_selected(l)
             )
@@ -4819,7 +4823,7 @@ class _PatchCanvasProxy:
         if self.selected_lamps:
             menu.addSeparator()
             grp_menu = menu.addMenu("⬡  Assigner groupe")
-            for _letter in ["A", "B", "C", "D", "E", "F"]:
+            for _letter in ["A", "B", "C", "D", "E", "F", "G", "H"]:
                 grp_menu.addAction(_letter).triggered.connect(
                     lambda checked, l=_letter: self._assign_group_to_selected(l)
                 )
@@ -4840,7 +4844,8 @@ class _PatchCanvasProxy:
 
     def _assign_group_to_selected(self, letter):
         _MAP = {"A": "face", "B": "lat", "C": "contre",
-                "D": "douche1", "E": "douche2", "F": "douche3"}
+                "D": "douche1", "E": "douche2", "F": "douche3",
+                "G": "groupe_g", "H": "groupe_h"}
         new_group = _MAP.get(letter, letter)
         g_cnt = {}
         to_update = []
