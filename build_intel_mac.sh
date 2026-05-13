@@ -162,6 +162,13 @@ APP_PATH="$DIST_DIR/$APP_NAME.app"
 [ -d "$APP_PATH" ] || die "$APP_NAME.app non trouvé après PyInstaller."
 ok "App générée : $APP_PATH  ($(du -sh "$APP_PATH" | cut -f1))"
 
+# Supprimer le binaire brut dist/MyStrow (onefile EXE hors bundle)
+# create-dmg emballe tout dist/ — ce fichier non-signé ferait échouer la notarisation
+if [ -f "$DIST_DIR/$APP_NAME" ]; then
+  rm -f "$DIST_DIR/$APP_NAME"
+  ok "Binaire brut dist/$APP_NAME supprimé (hors bundle)"
+fi
+
 # ── 6) Signature codesign ─────────────────────────────────────────────────────
 if [ -n "$IDENTITY" ]; then
   step "Signature de l'app"
