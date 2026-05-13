@@ -80,6 +80,8 @@ if [ -z "$REMOTE" ]; then
 elif [ "$LOCAL" = "$REMOTE" ]; then
   ok "Déjà à jour : $(git log -1 --pretty='%h — %s')"
 else
+  # Stash les modifications locales pour permettre le pull propre
+  git stash push --include-untracked -m "pre-build-stash" >/dev/null 2>&1 || true
   git pull origin main 2>&1 | sed 's/^/    /'
   ok "Mis à jour → $(git log -1 --pretty='%h — %s')"
 fi
