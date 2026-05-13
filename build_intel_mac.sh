@@ -76,14 +76,41 @@ print(m.group(1) if m else '?')
 " 2>/dev/null || echo "?")
 echo "Version MyStrow : $VERSION"
 
-# ── 2) Dépendances Python ─────────────────────────────────────────────────────
+# ── 2) Certificats SSL macOS ──────────────────────────────────────────────────
+step "Certificats SSL"
+# Sur macOS, Python (python.org) nécessite l'exécution de Install Certificates.command
+# pour que pip et urllib puissent valider les certificats HTTPS.
+CERT_CMD=$(find /Applications/Python* -name "Install Certificates.command" 2>/dev/null | sort -V | tail -1)
+if [ -n "$CERT_CMD" ]; then
+  echo "Exécution de : $CERT_CMD"
+  bash "$CERT_CMD" 2>&1 | sed 's/^/    /' || true
+  ok "Certificats installés"
+else
+  warn "Install Certificates.command introuvable (Python Homebrew ou déjà configuré)"
+fi
+
+# Installer certifi en premier avec --trusted-host pour amorcer si les certs manquent encore
+python3 -m pip install certifi --quiet \
+  --trusted-host pypi.org \
+  --trusted-host files.pythonhosted.org \
+  --trusted-host pypi.python.org 2>/dev/null || true
+
+# Forcer le CA bundle certifi pour tous les appels SSL de ce script
+SSL_CERT_FILE=$(python3 -m certifi 2>/dev/null || true)
+if [ -n "$SSL_CERT_FILE" ]; then
+  export SSL_CERT_FILE
+  export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
+  ok "CA bundle : $SSL_CERT_FILE"
+fi
+
+# ── 3) Dépendances Python ─────────────────────────────────────────────────────
 step "Installation / mise à jour des dépendances"
 python3 -m pip install --upgrade pip --quiet
 python3 -m pip install -r "$SCRIPT_DIR/requirements.txt" --quiet
 python3 -m pip install pyinstaller --upgrade --quiet
 ok "Dépendances prêtes"
 
-# ── 3) Icône ──────────────────────────────────────────────────────────────────
+# ── 4) Icône ──────────────────────────────────────────────────────────────────
 step "Préparation de l'icône"
 ICON_ARG=""
 
@@ -117,7 +144,7 @@ else
   warn "Aucune icône trouvée (mystrow.icns / mystrow.ico) — build sans icône"
 fi
 
-# ── 4) PyInstaller ────────────────────────────────────────────────────────────
+# ── 5) PyInstaller ────────────────────────────────────────────────────────────
 step "PyInstaller — génération de l'app"
 cd "$SCRIPT_DIR"
 rm -rf "$DIST_DIR" "$SCRIPT_DIR/build"
@@ -163,7 +190,7 @@ APP_PATH="$DIST_DIR/$APP_NAME.app"
 ok "App générée : $APP_PATH"
 echo "   Taille : $(du -sh "$APP_PATH" | cut -f1)"
 
-# ── 5) Création du DMG ────────────────────────────────────────────────────────
+# ── 6) Création du DMG ────────────────────────────────────────────────────────
 step "Création du DMG"
 
 # Dossier de staging : .app + raccourci Applications
@@ -183,7 +210,7 @@ hdiutil create \
   -format UDZO \
   "$DMG_OUT"
 
-# ── 6) Résumé ─────────────────────────────────────────────────────────────────
+# ── 7) Résumé ─────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BLD}${GRN}╔══════════════════════════════════════════════════╗${NC}"
 echo -e "${BLD}${GRN}║  ✅  MyStrow_intel.dmg généré avec succès !      ║${NC}"
