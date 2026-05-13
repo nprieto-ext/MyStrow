@@ -267,34 +267,61 @@ def get_machine_id() -> str:
     components = []
 
     if platform.system() == "Windows":
-        # Source primaire : MachineGuid (registre, instantane, 100% stable)
-        machine_guid = ""
         try:
             import winreg
+            # MachineGuid — généré à l'installation de Windows, stable
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                                  r"SOFTWARE\Microsoft\Cryptography")
             machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
             winreg.CloseKey(key)
+            components.append(f"GUID:{machine_guid}")
+        except Exception:
+            machine_guid = ""
+
+        try:
+            import winreg
+            # ProductId — lié à la licence Windows, résiste au renommage utilisateur/PC
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                 r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+            product_id, _ = winreg.QueryValueEx(key, "ProductId")
+            winreg.CloseKey(key)
+            components.append(f"PID:{product_id}")
         except Exception:
             pass
 
-        if machine_guid:
-            components.append(f"GUID:{machine_guid}")
-        else:
-            # Fallback wmic si le registre est inaccessible
+        if not machine_guid:
+            # Fallback matériel si le registre est inaccessible
             cpu = _run_wmic(["wmic", "cpu", "get", "ProcessorId"])
             components.append(f"CPU:{cpu}")
             bios = _run_wmic(["wmic", "bios", "get", "SerialNumber"])
             components.append(f"BIOS:{bios}")
-
-        # USERNAME Windows — toujours disponible, pas de subprocess
-        components.append(f"USER:{os.environ.get('USERNAME', os.environ.get('USER', ''))}")
     else:
-        try:
-            with open("/etc/machine-id", "r") as f:
-                components.append(f"MID:{f.read().strip()}")
-        except Exception:
-            components.append(f"HOST:{platform.node()}")
+        # macOS : Hardware UUID via ioreg (lié à la carte mère, stable)
+        hw_uuid = ""
+        if platform.system() == "Darwin":
+            try:
+                import subprocess as _sp
+                out = _sp.check_output(
+                    ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                    stderr=_sp.DEVNULL, timeout=3
+                ).decode(errors="ignore")
+                for line in out.split("\n"):
+                    if "IOPlatformUUID" in line:
+                        parts = line.split('"')
+                        if len(parts) >= 2:
+                            hw_uuid = parts[-2]
+                        break
+            except Exception:
+                pass
+        if hw_uuid:
+            components.append(f"HW_UUID:{hw_uuid}")
+        else:
+            # Linux : /etc/machine-id, sinon hostname en dernier recours
+            try:
+                with open("/etc/machine-id", "r") as f:
+                    components.append(f"MID:{f.read().strip()}")
+            except Exception:
+                components.append(f"HOST:{platform.node()}")
 
     raw = "|".join(components)
     _cached_machine_id = hashlib.sha256(raw.encode()).hexdigest()

@@ -472,6 +472,11 @@ def _on_checkout_completed(session: dict) -> None:
             sub       = _stripe_get(f"/subscriptions/{sub_id}")
             price_id  = sub["items"]["data"][0]["price"]["id"]
             plan_type = _get_plan_type(price_id)
+            # Pour les abonnements, amount_total est parfois 0 sur la session ;
+            # le vrai montant encaissé est sur la première facture.
+            if amount_eur == 0 and sub.get("latest_invoice"):
+                inv = _stripe_get(f"/invoices/{sub['latest_invoice']}")
+                amount_eur = (inv.get("amount_paid") or inv.get("amount_due") or 0) / 100.0
         except Exception as e:
             print(f"[Handler] Impossible de lire le plan Stripe : {e}")
 

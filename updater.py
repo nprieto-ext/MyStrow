@@ -496,25 +496,8 @@ class UpdateBar(QWidget):
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 8, 0)
-        layout.setSpacing(8)
-
-        # Icone
-        icon_lbl = QLabel("↑")
-        icon_lbl.setFixedWidth(18)
-        icon_lbl.setAlignment(Qt.AlignCenter)
-        icon_lbl.setStyleSheet("background: transparent; border: none;")
-        icon_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        icon_lbl.setStyleSheet(f"color: {self._ACCENT}; background: transparent; border: none;")
-        layout.addWidget(icon_lbl)
-
-        # Separateur vertical
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFixedWidth(1)
-        sep.setFixedHeight(20)
-        sep.setStyleSheet(f"background: {self._ACCENT}; border: none;")
-        layout.addWidget(sep)
+        layout.setContentsMargins(8, 0, 6, 0)
+        layout.setSpacing(6)
 
         # Texte
         self.label = QLabel()
@@ -531,7 +514,7 @@ class UpdateBar(QWidget):
             QPushButton {{
                 color: #000; background: {self._ACCENT};
                 border: none; border-radius: 3px;
-                padding: 2px 12px; font-size: 9px; font-weight: bold;
+                padding: 2px 10px; font-size: 9px; font-weight: bold;
             }}
             QPushButton:hover {{ background: white; }}
         """)

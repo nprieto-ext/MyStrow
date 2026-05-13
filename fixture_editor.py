@@ -625,7 +625,7 @@ class FixtureEditorDialog(QDialog):
         super().__init__(parent, Qt.Window)
         self.setWindowTitle("Mes projecteurs — MyStrow")
         self.setMinimumSize(860, 520)
-        self.showMaximized()
+        self.setWindowState(Qt.WindowMaximized)
 
         self._fixtures    = []
         self._current_idx = -1

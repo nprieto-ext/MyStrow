@@ -44,6 +44,13 @@ SUPPORTED_CONTROLLERS = [
         'has_pads': True,
     },
     {
+        'id': 'launchpad_mk2',
+        'name': 'Novation Launchpad MK2',
+        'keywords': ['LAUNCHPAD MK2', 'LAUNCHPAD MK 2'],
+        'has_faders': False,
+        'has_pads': True,
+    },
+    {
         'id': 'launchpad_mini_mk2',
         'name': 'Novation Launchpad Mini MK2',
         'keywords': ['LAUNCHPAD MINI MK2'],
@@ -472,6 +479,8 @@ class MIDIHandler(QObject):
                 self._handle_apc_mini(message)
             elif ct in ('apc40', 'apc40_mk2'):
                 self._handle_apc40(message)
+            elif ct == 'launchpad_mk2':
+                self._handle_launchpad_mk2(message)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
                 self._handle_launchpad_mini(message)
             elif ct == 'midimix':
@@ -642,6 +651,45 @@ class MIDIHandler(QObject):
         elif (status == 0x80 or (status == 0x90 and data2 == 0)) and ms_col == 8:
             self.pad_released.emit(ms_row, ms_col)
 
+    def _handle_launchpad_mk2(self, message):
+        """Messages Novation Launchpad MK2 (non-mini).
+
+        Layout note : note = lp_row1 * 10 + lp_col1
+          lp_row1 ∈ 1-8  (1=bas, 8=haut)
+          lp_col1 ∈ 1-8  (grille), 9=boutons droite
+        Top row automap: CC 104-111 → mute faders 0-7
+        """
+        status = message[0]
+        data1  = message[1]
+        data2  = message[2] if len(message) > 2 else 0
+
+        if self.debug_mode:
+            print(f"🔍 LP MK2: status={hex(status)} d1={data1} d2={data2}")
+
+        # Top row CC 104-111 → mute
+        if status == 0xB0 and 104 <= data1 <= 111:
+            if data2 > 0 and self.owner_window:
+                self.owner_window.toggle_fader_mute_from_midi(data1 - 104)
+            return
+
+        if status not in (0x90, 0x80):
+            return
+
+        note        = data1
+        lp_row1     = note // 10   # 1=bas, 8=haut
+        lp_col1     = note % 10    # 1-8 grille, 9=side
+
+        if lp_row1 < 1 or lp_row1 > 8 or lp_col1 < 1 or lp_col1 > 9:
+            return
+
+        ms_row = 8 - lp_row1       # 0=haut, 7=bas
+        ms_col = lp_col1 - 1       # 0-7 grille, 8=side
+
+        if status == 0x90 and data2 > 0:
+            self.pad_pressed.emit(ms_row, ms_col)
+        elif (status == 0x80 or (status == 0x90 and data2 == 0)) and ms_col == 8:
+            self.pad_released.emit(ms_row, ms_col)
+
     def _handle_midimix(self, message):
         """Messages AKAI MIDImix.
 
@@ -737,6 +785,10 @@ class MIDIHandler(QObject):
                 for row in range(5):
                     self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
 
+            elif ct == 'launchpad_mk2':
+                # Reset — éteint toutes les LEDs
+                self.midi_out.send_message([0xB0, 0x00, 0x00])
+
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
                 # Reset via CC 0 value 0 (mode normal, all LEDs off)
                 self.midi_out.send_message([0xB0, 0x00, 0x00])
@@ -765,6 +817,8 @@ class MIDIHandler(QObject):
                 self._set_led_apc(row, col, color_velocity, brightness_percent)
             elif ct in ('apc40', 'apc40_mk2'):
                 self._set_led_apc40(row, col, color_velocity)
+            elif ct == 'launchpad_mk2':
+                self._set_led_lp_mk2(row, col, color_velocity)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
                 self._set_led_lp_mini(row, col, color_velocity)
             elif ct == 'custom':
@@ -799,6 +853,15 @@ class MIDIHandler(QObject):
         # Calcul note LP Mini : (7-ms_row)*16 + ms_col
         note = (7 - row) * 16 + col
         self.midi_out.send_message([0x90, note, lp_vel])
+
+    def _set_led_lp_mk2(self, row, col, color_velocity):
+        """LED Launchpad MK2 — note = lp_row1*10 + lp_col1, velocity = index couleur 0-127."""
+        if not self.midi_out:
+            return
+        lp_row1 = 8 - row           # ms_row 0(haut)→8, ms_row 7(bas)→1
+        lp_col1 = (9 if col == 8 else col + 1)
+        note = lp_row1 * 10 + lp_col1
+        self.midi_out.send_message([0x90, note, color_velocity])
 
     def _set_led_apc40(self, row, col, color_velocity):
         """LED AKAI APC40 / APC40 MkII.

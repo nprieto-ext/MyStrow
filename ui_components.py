@@ -8,6 +8,7 @@ from i18n import tr
 from PySide6.QtWidgets import (
     QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
     QVBoxLayout, QDoubleSpinBox, QLineEdit, QSizePolicy, QSlider,
+    QGraphicsDropShadowEffect,
 )
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon
@@ -131,7 +132,6 @@ class EffectButton(QPushButton):
 
     def show_effects_menu(self, pos):
         """Affiche le menu des effets (chargés depuis l'éditeur d'effets)"""
-        # Charger tous les effets : builtin + custom
         all_effects = []
         try:
             from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
@@ -148,22 +148,138 @@ class EffectButton(QPushButton):
             QMenu {
                 background: #1a1a1a;
                 border: 1px solid #3a3a3a;
-                padding: 4px;
-                font-size: 12px;
+                padding: 2px;
+                font-size: 11px;
             }
             QMenu::item {
-                padding: 6px 16px;
+                padding: 4px 10px;
                 border-radius: 3px;
                 color: #e0e0e0;
             }
             QMenu::item:selected { background: #2a3a3a; color: #fff; }
-            QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
-            QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
+            QMenu::item:disabled { color: #555; font-size: 9px; letter-spacing: 1px; }
+            QMenu::separator { background: #333; height: 1px; margin: 2px 6px; }
         """)
 
-        # ── Barre de recherche ────────────────────────────────────────────────
-        search_container = QWidget()
-        search_container.setStyleSheet("background: transparent;")
+        # ── Section 1 : GROUPES + VITESSE ────────────────────────────────────
+        _mw = self.window()
+        if _mw and hasattr(_mw, '_button_effect_configs'):
+            _lyr0 = _mw._button_effect_configs.get(self.index, {}).get("layers", [])
+            _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else list(self._target_groups)
+            _init_speed  = int(_lyr0[0].get("speed", self._speed)) if _lyr0 else self._speed
+        else:
+            _init_groups = list(self._target_groups)
+            _init_speed  = self._speed
+        _sel_groups = list(_init_groups)
+
+        _spd_slider = QSlider(Qt.Horizontal)
+        _spd_slider.setRange(0, 100)
+        _spd_slider.setValue(_init_speed)
+        _spd_slider.setFixedWidth(100)
+        _spd_slider.setStyleSheet(
+            "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
+            "QSlider::handle:horizontal{background:#00aaff;width:12px;height:12px;margin:-4px 0;border-radius:6px;}"
+        )
+
+        _GRP_ON  = "QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;border-radius:3px;font-size:10px;font-weight:bold;}"
+        _GRP_OFF = "QPushButton{background:#2a2a2a;color:#777;border:1px solid #3a3a3a;border-radius:3px;font-size:10px;}"
+        _grp_btn_map = {}
+
+        def _toggle_grp(g_id):
+            if g_id in _sel_groups:
+                _sel_groups.remove(g_id)
+            else:
+                _sel_groups.append(g_id)
+            _grp_btn_map[g_id].setStyleSheet(_GRP_ON if g_id in _sel_groups else _GRP_OFF)
+            self.layer_overrides_changed.emit(self.index, list(_sel_groups), _spd_slider.value())
+
+        grp_outer = QWidget(); grp_outer.setStyleSheet("background: transparent;")
+        grp_vlay = QVBoxLayout(grp_outer)
+        grp_vlay.setContentsMargins(10, 6, 10, 2); grp_vlay.setSpacing(4)
+
+        grp_hdr = QLabel("  GROUPES"); grp_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        grp_vlay.addWidget(grp_hdr)
+
+        btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
+        for _gid, _glbl in [("A","A"),("B","B"),("C","C"),("D","D"),("E","E"),("F","F"),("G","G"),("H","H")]:
+            _gb = QPushButton(_glbl); _gb.setFixedSize(36, 22)
+            _gb.setStyleSheet(_GRP_ON if _gid in _sel_groups else _GRP_OFF)
+            _gb.clicked.connect(lambda _, g=_gid: _toggle_grp(g))
+            _grp_btn_map[_gid] = _gb; btns_h.addWidget(_gb)
+        grp_vlay.addLayout(btns_h)
+
+        spd_row = QHBoxLayout(); spd_row.setSpacing(6); spd_row.setContentsMargins(0, 2, 0, 0)
+        spd_lbl = QLabel("Vitesse :"); spd_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
+        spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
+        _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
+        _spd_slider.valueChanged.connect(lambda v: self.layer_overrides_changed.emit(self.index, list(_sel_groups), v))
+        spd_row.addWidget(spd_lbl); spd_row.addWidget(_spd_slider); spd_row.addWidget(spd_val_lbl); spd_row.addStretch()
+        grp_vlay.addLayout(spd_row)
+
+        grp_wa = QWidgetAction(menu); grp_wa.setDefaultWidget(grp_outer); menu.addAction(grp_wa)
+        menu.addSeparator()
+
+        # ── Section 2 : MODE DE DÉCLENCHEMENT (inline) ───────────────────────
+        trig_outer = QWidget(); trig_outer.setStyleSheet("background: transparent;")
+        trig_vlay = QVBoxLayout(trig_outer)
+        trig_vlay.setContentsMargins(10, 4, 10, 6); trig_vlay.setSpacing(4)
+
+        trig_hdr = QLabel("  DÉCLENCHEMENT"); trig_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        trig_vlay.addWidget(trig_hdr)
+
+        _TRIG_ON  = ("QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;"
+                     "border-radius:3px;font-size:10px;font-weight:bold;padding:2px 6px;}")
+        _TRIG_OFF = ("QPushButton{background:#2a2a2a;color:#777;border:1px solid #3a3a3a;"
+                     "border-radius:3px;font-size:10px;padding:2px 6px;}")
+
+        trig_btns_row = QHBoxLayout(); trig_btns_row.setSpacing(4); trig_btns_row.setContentsMargins(0,0,0,0)
+        _trig_btn_map = {}
+        _mode_labels = [("toggle", "Toggle"), ("flash", "Flash"), ("timer", "Timer")]
+        for _mode, _mlbl in _mode_labels:
+            _tb = QPushButton(_mlbl)
+            _tb.setStyleSheet(_TRIG_ON if self.trigger_mode == _mode else _TRIG_OFF)
+            _trig_btn_map[_mode] = _tb
+            trig_btns_row.addWidget(_tb)
+        trig_btns_row.addStretch()
+        trig_vlay.addLayout(trig_btns_row)
+
+        # Ligne durée (toujours visible, active en mode timer)
+        dur_row = QHBoxLayout(); dur_row.setSpacing(6); dur_row.setContentsMargins(0, 2, 0, 0)
+        dur_lbl = QLabel(tr("uic_duration_label"))
+        dur_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        dur_spin = QDoubleSpinBox()
+        dur_spin.setRange(0.1, 60.0)
+        dur_spin.setSingleStep(0.5)
+        dur_spin.setValue(self.trigger_duration / 1000.0)
+        dur_spin.setSuffix(" s")
+        dur_spin.setFixedWidth(80)
+        dur_spin.setEnabled(self.trigger_mode == "timer")
+        dur_spin.setStyleSheet(
+            "QDoubleSpinBox { background: #222; color: #fff; border: 1px solid #444;"
+            " border-radius: 3px; padding: 2px 4px; font-size: 11px; }"
+            "QDoubleSpinBox:disabled { color: #555; border-color: #333; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button"
+            " { width: 16px; background: #333; border: none; }"
+        )
+        dur_spin.valueChanged.connect(lambda v: self._set_trigger_duration(int(v * 1000)))
+        dur_row.addWidget(dur_lbl); dur_row.addWidget(dur_spin); dur_row.addStretch()
+        trig_vlay.addLayout(dur_row)
+
+        def _set_trig_mode(mode):
+            self._set_trigger_mode(mode)
+            for m, b in _trig_btn_map.items():
+                b.setStyleSheet(_TRIG_ON if m == mode else _TRIG_OFF)
+            dur_spin.setEnabled(mode == "timer")
+
+        for _mode, _tb in _trig_btn_map.items():
+            _tb.clicked.connect(lambda _, m=_mode: _set_trig_mode(m))
+
+        trig_wa = QWidgetAction(menu); trig_wa.setDefaultWidget(trig_outer); menu.addAction(trig_wa)
+        menu.addSeparator()
+
+        # ── Section 3 : EFFETS ────────────────────────────────────────────────
+        search_container = QWidget(); search_container.setStyleSheet("background: transparent;")
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(6, 4, 6, 4)
         search_input = QLineEdit()
@@ -180,7 +296,6 @@ class EffectButton(QPushButton):
             }
             QLineEdit:focus { border-color: #00d4ff; }
         """)
-        # Empêcher les touches directionnelles de fermer le menu
         def _search_key(event):
             if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter):
                 event.accept()
@@ -193,8 +308,6 @@ class EffectButton(QPushButton):
         menu.addAction(search_wa)
         menu.addSeparator()
 
-        # Si current_effect est un nom de type legacy ("Strobe", "Chase"...) sans match
-        # exact dans la liste, on fait un fallback par type pour trouver le premier match
         cur = self.current_effect
         name_is_full_match = cur and any(e.get("name") == cur for e in all_effects)
 
@@ -202,23 +315,25 @@ class EffectButton(QPushButton):
             name = eff.get("name", "")
             if name == cur:
                 return True
-            # Fallback : current_effect est un type legacy ("Strobe", "Flash"...)
             if not name_is_full_match and cur and eff.get("type") == cur:
-                first_of_type = next(
-                    (e for e in all_effects if e.get("type") == cur), None
-                )
+                first_of_type = next((e for e in all_effects if e.get("type") == cur), None)
                 return first_of_type is not None and first_of_type.get("name") == name
             return False
 
-        # Option "Aucun"
-        act_none = menu.addAction(tr("uic_menu_none"))
+        # Style pour l'effet actuellement sélectionné
+        _SEL_SS = (
+            "QMenu::indicator { width: 0px; height: 0px; image: none; }"
+            "QMenu::item:checked { background: #004400; color: #44ff44;"
+            " font-weight: bold; border-left: 3px solid #44ff44; }"
+            "QMenu::item:checked:selected { background: #005500; color: #55ff55; }"
+        )
+
+        act_none = menu.addAction("  — Aucun —")
         act_none.setCheckable(True)
         act_none.setChecked(not cur)
         act_none.triggered.connect(lambda: self._select_editor_effect(None))
         sep_top = menu.addSeparator()
 
-        # Grouper par catégorie et garder les références pour le filtrage
-        # Clés internes (dans les données d'effets) → libellé traduit affiché
         _CAT_KEYS = [
             "Strobe / Flash", "Mouvement", "Ambiance", "Couleur",
             "Permut", "Lyre", "Spécial", "Personnalisés", "Mes Effets",
@@ -234,49 +349,52 @@ class EffectButton(QPushButton):
             "Personnalisés":  tr("uic_cat_perso"),
             "Mes Effets":     tr("uic_cat_mes_effets"),
         }
-        CATS = _CAT_KEYS
-        # cat_groups : [(hdr_act, sep_act_before, [(eff_act, eff_name), ...])]
         cat_groups = []
-        for cat in CATS:
+        for cat in _CAT_KEYS:
             cat_effs = [e for e in all_effects if e.get("category") == cat]
             if not cat_effs:
                 continue
-            cat_display = _CAT_LABELS.get(cat, cat)
-            hdr = menu.addAction(f"  {cat_display.upper()}")
+            hdr = menu.addAction(f"  {_CAT_LABELS.get(cat, cat).upper()}")
             hdr.setEnabled(False)
             eff_actions = []
             for eff in cat_effs:
                 name = eff.get("name", "")
-                act = menu.addAction(f"  {name}")
+                selected = _is_checked(eff)
+                label = f"  {name}"
+                act = menu.addAction(label)
                 act.setCheckable(True)
-                act.setChecked(_is_checked(eff))
+                act.setChecked(selected)
+                if selected:
+                    act.setProperty("class", "selected_effect")
                 act.triggered.connect(lambda checked=False, e=dict(eff): self._select_editor_effect(e))
-                eff_actions.append((act, name))
+                eff_actions.append((act, name, selected))
             cat_groups.append((hdr, eff_actions))
 
-        # Effets sans catégorie connue
-        other = [e for e in all_effects if e.get("category", "") not in CATS]
+        other = [e for e in all_effects if e.get("category", "") not in _CAT_KEYS]
         if other:
             sep_other = menu.addSeparator()
             other_actions = []
             for eff in other:
                 name = eff.get("name", "")
-                act = menu.addAction(f"  {name}")
+                selected = _is_checked(eff)
+                label = f"  {name}"
+                act = menu.addAction(label)
                 act.setCheckable(True)
-                act.setChecked(_is_checked(eff))
+                act.setChecked(selected)
                 act.triggered.connect(lambda checked=False, e=dict(eff): self._select_editor_effect(e))
-                other_actions.append((act, name))
+                other_actions.append((act, name, selected))
             cat_groups.append((sep_other, other_actions))
 
-        # ── Filtrage dynamique ────────────────────────────────────────────────
+        # Patch le stylesheet du menu pour les items cochés
+        menu.setStyleSheet(menu.styleSheet() + _SEL_SS)
+
         def _apply_filter(text):
             q = text.strip().lower()
-            # "Aucun" visible seulement sans filtre
             act_none.setVisible(not q)
             sep_top.setVisible(not q)
             for hdr_act, eff_acts in cat_groups:
                 any_visible = False
-                for act, name in eff_acts:
+                for act, name, *_ in eff_acts:
                     visible = not q or q in name.lower()
                     act.setVisible(visible)
                     if visible:
@@ -284,130 +402,7 @@ class EffectButton(QPushButton):
                 hdr_act.setVisible(any_visible)
 
         search_input.textChanged.connect(_apply_filter)
-        # Focus automatique sur la barre de recherche à l'ouverture
         QTimer.singleShot(0, search_input.setFocus)
-
-        # ── Sous-menu Mode de déclenchement ──────────────────────────────────
-        menu.addSeparator()
-        trig_menu = menu.addMenu(tr("uic_trigger_mode_menu"))
-        trig_menu.setStyleSheet("""
-            QMenu {
-                background: #1a1a1a;
-                border: 1px solid #3a3a3a;
-                padding: 4px;
-                font-size: 12px;
-            }
-            QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
-            QMenu::item:selected { background: #2a3a3a; color: #fff; }
-            QMenu::item:checked { color: #00d4ff; }
-        """)
-
-        def _trig_checked(mode):
-            return self.trigger_mode == mode
-
-        act_tog = trig_menu.addAction(tr("uic_trigger_toggle"))
-        act_tog.setCheckable(True)
-        act_tog.setChecked(_trig_checked("toggle"))
-        act_tog.triggered.connect(lambda: self._set_trigger_mode("toggle"))
-
-        act_fla = trig_menu.addAction(tr("uic_trigger_flash"))
-        act_fla.setCheckable(True)
-        act_fla.setChecked(_trig_checked("flash"))
-        act_fla.triggered.connect(lambda: self._set_trigger_mode("flash"))
-
-        act_tim = trig_menu.addAction(tr("uic_trigger_timer"))
-        act_tim.setCheckable(True)
-        act_tim.setChecked(_trig_checked("timer"))
-        act_tim.triggered.connect(lambda: self._set_trigger_mode("timer"))
-
-        # Durée du timer (QWidgetAction avec spinbox)
-        trig_menu.addSeparator()
-        dur_widget = QWidget()
-        dur_layout = QHBoxLayout(dur_widget)
-        dur_layout.setContentsMargins(16, 4, 16, 4)
-        dur_layout.setSpacing(6)
-        dur_lbl = QLabel(tr("uic_duration_label"))
-        dur_lbl.setStyleSheet("color: #aaa; font-size: 11px; background: transparent;")
-        dur_spin = QDoubleSpinBox()
-        dur_spin.setRange(0.1, 60.0)
-        dur_spin.setSingleStep(0.5)
-        dur_spin.setValue(self.trigger_duration / 1000.0)
-        dur_spin.setSuffix(" s")
-        dur_spin.setFixedWidth(80)
-        dur_spin.setStyleSheet(
-            "QDoubleSpinBox { background: #222; color: #fff; border: 1px solid #444;"
-            " border-radius: 3px; padding: 2px 4px; font-size: 11px; }"
-            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button"
-            " { width: 16px; background: #333; border: none; }"
-        )
-        dur_spin.valueChanged.connect(
-            lambda v: self._set_trigger_duration(int(v * 1000))
-        )
-        dur_layout.addWidget(dur_lbl)
-        dur_layout.addWidget(dur_spin)
-        dur_layout.addStretch()
-        dur_wa = QWidgetAction(trig_menu)
-        dur_wa.setDefaultWidget(dur_widget)
-        trig_menu.addAction(dur_wa)
-
-        # ── Groupes + Vitesse ─────────────────────────────────────────────────
-        menu.addSeparator()
-        _mw = self.window()
-        if _mw and hasattr(_mw, '_button_effect_configs'):
-            _lyr0 = _mw._button_effect_configs.get(self.index, {}).get("layers", [])
-            _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else list(self._target_groups)
-            _init_speed  = int(_lyr0[0].get("speed", self._speed)) if _lyr0 else self._speed
-        else:
-            _init_groups = list(self._target_groups)
-            _init_speed  = self._speed
-        _sel_groups = list(_init_groups)
-
-        # Slider créé en premier pour que _toggle_group puisse y accéder
-        _spd_slider = QSlider(Qt.Horizontal)
-        _spd_slider.setRange(0, 100)
-        _spd_slider.setValue(_init_speed)
-        _spd_slider.setFixedWidth(90)
-        _spd_slider.setStyleSheet(
-            "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
-            "QSlider::handle:horizontal{background:#00aaff;width:12px;height:12px;margin:-4px 0;border-radius:6px;}"
-        )
-
-        _GRP_ON  = "QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;border-radius:3px;font-size:10px;font-weight:bold;}"
-        _GRP_OFF = "QPushButton{background:#333;color:#888;border:1px solid #444;border-radius:3px;font-size:10px;}"
-        _grp_btn_map = {}
-
-        def _toggle_grp(g_id):
-            if g_id in _sel_groups:
-                _sel_groups.remove(g_id)
-            else:
-                _sel_groups.append(g_id)
-            _grp_btn_map[g_id].setStyleSheet(_GRP_ON if g_id in _sel_groups else _GRP_OFF)
-            self.layer_overrides_changed.emit(self.index, list(_sel_groups), _spd_slider.value())
-
-        grp_widget = QWidget(); grp_widget.setStyleSheet("background: transparent;")
-        grp_vlay = QVBoxLayout(grp_widget)
-        grp_vlay.setContentsMargins(12, 4, 12, 2); grp_vlay.setSpacing(3)
-        grp_hdr = QLabel("Groupes :"); grp_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
-        grp_vlay.addWidget(grp_hdr)
-        btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
-        for _gid, _glbl in [("A","Face"),("B","Lat"),("C","Ctr"),("D","D.1"),("E","D.2"),("F","D.3"),("G","Grp G"),("H","Grp H")]:
-            _gb = QPushButton(_glbl); _gb.setFixedSize(34, 22)
-            _gb.setStyleSheet(_GRP_ON if _gid in _sel_groups else _GRP_OFF)
-            _gb.clicked.connect(lambda _, g=_gid: _toggle_grp(g))
-            _grp_btn_map[_gid] = _gb; btns_h.addWidget(_gb)
-        grp_vlay.addLayout(btns_h)
-        grp_wa = QWidgetAction(menu); grp_wa.setDefaultWidget(grp_widget); menu.addAction(grp_wa)
-
-        spd_widget = QWidget(); spd_widget.setStyleSheet("background: transparent;")
-        spd_hlay = QHBoxLayout(spd_widget)
-        spd_hlay.setContentsMargins(12, 2, 12, 4); spd_hlay.setSpacing(6)
-        spd_hdr = QLabel("Vitesse :"); spd_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
-        spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
-        spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
-        _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
-        _spd_slider.valueChanged.connect(lambda v: self.layer_overrides_changed.emit(self.index, list(_sel_groups), v))
-        spd_hlay.addWidget(spd_hdr); spd_hlay.addWidget(_spd_slider); spd_hlay.addWidget(spd_val_lbl)
-        spd_wa = QWidgetAction(menu); spd_wa.setDefaultWidget(spd_widget); menu.addAction(spd_wa)
 
         menu.addSeparator()
         act_editor = menu.addAction(tr("uic_effect_editor_menu"))
@@ -461,22 +456,29 @@ class EffectButton(QPushButton):
         if self.active:
             self.setStyleSheet("""
                 QPushButton {
-                    background: #33ff33;
+                    background: #44ff44;
                     border: 2px solid #ffffff;
                     border-radius: 3px;
                 }
             """)
+            glow = QGraphicsDropShadowEffect(self)
+            glow.setColor(QColor(0, 255, 80, 220))
+            glow.setBlurRadius(14)
+            glow.setOffset(0, 0)
+            self.setGraphicsEffect(glow)
         else:
             self.setStyleSheet("""
                 QPushButton {
-                    background: #116611;
-                    border: 1px solid #114411;
+                    background: #0d2a0d;
+                    border: 1px solid #1a3a1a;
                     border-radius: 3px;
                 }
                 QPushButton:hover {
-                    background: #118811;
+                    background: #154015;
+                    border-color: #226622;
                 }
             """)
+            self.setGraphicsEffect(None)
 
 
 class FaderButton(QPushButton):

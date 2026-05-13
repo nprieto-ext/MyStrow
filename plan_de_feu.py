@@ -759,7 +759,7 @@ FIXTURE_LIBRARY = {
         {"name": "PAR LED 3CH (RGB)", "fixture_type": "PAR LED", "group": "face", "profile": "RGB"},
         {"name": "PAR LED RGBW 4CH", "fixture_type": "PAR LED", "group": "face", "profile": "RGBW"},
         {"name": "PAR LED RGBW+Dim 5CH", "fixture_type": "PAR LED", "group": "face", "profile": "RGBWD"},
-        {"name": "PAR contre 5CH", "fixture_type": "PAR LED", "group": "contre", "profile": "RGBDS"},
+        {"name": "PAR contre 5CH", "fixture_type": "PAR LED", "group": "face", "profile": "RGBDS"},
     ],
     "Moving Head": [
         {"name": "Moving Head 8CH", "fixture_type": "Moving Head", "group": "face", "profile": "MOVING_8CH"},
@@ -3967,8 +3967,8 @@ class _FixtureFormWidget(QWidget):
         ]
         for key, label in _GROUPS:
             self.group_combo.addItem(label, key)
-        # Sélection initiale — tout groupe inconnu (lyre, fumee…) → A
-        default_group = preset.get('group', 'face') if preset else 'face'
+        # Toujours groupe A par défaut pour tout nouveau projecteur
+        default_group = 'face'
         sel = 0
         for i in range(self.group_combo.count()):
             if self.group_combo.itemData(i) == default_group:
@@ -4339,25 +4339,25 @@ class NewPlanWizard(QDialog):
             color="#ffaa33", default=4, max=20,
         ),
         dict(
-            group="contre", label="Groupe B — Contre-jour",
+            group="face",   label="Groupe A — Contre-jour",
             subtitle="Combien de contre-jour ?\n(lumières arrière, hautes, sur les perches)",
             ftype="PAR LED", profile="RGBDS", prefix="Contre",
             color="#4488ff", default=6, max=20,
         ),
         dict(
-            group="lat",    label="Groupe C — Latéraux",
+            group="face",   label="Groupe A — Latéraux",
             subtitle="Combien de projecteurs latéraux ?\n(éclairage de côté, jardin et cour)",
             ftype="PAR LED", profile="RGBDS", prefix="Lat",
             color="#88aaff", default=2, max=10,
         ),
         dict(
-            group="douche1", label="Groupe D — Douches",
+            group="face",   label="Groupe A — Douches",
             subtitle="Combien de projecteurs en douche ?\n(éclairage vertical depuis le plafond)",
             ftype="PAR LED", profile="RGBDS", prefix="Douche",
             color="#44ee88", default=3, max=20,
         ),
         dict(
-            group="lyre",   label="Groupe E — Lyres",
+            group="face",   label="Groupe A — Lyres",
             subtitle="Combien de lyres / moving heads ?\n(laisser à 0 si aucun)",
             ftype="Moving Head", profile="MOVING_8CH", prefix="Lyre",
             color="#ee44ff", default=0, max=10,

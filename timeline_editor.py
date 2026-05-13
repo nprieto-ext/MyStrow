@@ -333,8 +333,16 @@ class LightTimelineEditor(QDialog):
         # Synchroniser ruler avec scroll horizontal
         self.tracks_scroll.horizontalScrollBar().valueChanged.connect(self.on_scroll_changed)
 
+        # Intercepter les wheel events sur le viewport pour forcer scroll horizontal
+        self.tracks_scroll.viewport().installEventFilter(self)
+        self.tracks_scroll.installEventFilter(self)
+
         # Zoom par defaut
         self.current_zoom = 1.0
+
+        # Focus clavier par défaut dès l'ouverture
+        self.setFocusPolicy(Qt.StrongFocus)
+        QTimer.singleShot(0, self.setFocus)
 
         # Player audio pour preview
         self.setup_audio_player()
@@ -750,16 +758,10 @@ class LightTimelineEditor(QDialog):
         """)
         header_layout.addWidget(self.cut_btn)
 
-        # Paint
-        self.paint_btn = QPushButton("🖌")
-        self.paint_btn.setToolTip("Mode peinture — sélectionnez une couleur puis cliquez sur la timeline (P)")
-        self.paint_btn.clicked.connect(self.toggle_paint_mode)
-        self.paint_btn.setFixedSize(45, 45)
+        self.paint_btn = QPushButton()  # conservé pour compatibilité interne, non affiché
         self.paint_btn.setCheckable(True)
-        self.paint_btn.setStyleSheet(btn_style + """
-            QPushButton:checked { background: #ff9500; color: black; }
-        """)
-        header_layout.addWidget(self.paint_btn)
+        self.paint_btn.setVisible(False)
+        self.paint_btn.clicked.connect(self.toggle_paint_mode)
 
         header_layout.addSpacing(20)
 
@@ -2092,21 +2094,36 @@ class LightTimelineEditor(QDialog):
         self.save_state()  # snapshot après génération → undo ramène ici
         QTimer.singleShot(800, dialog.accept)
 
-    def wheelEvent(self, event):
-        """Shift+Scroll = Zoom | Scroll = défilement horizontal de la timeline"""
+    def eventFilter(self, obj, event):
+        """Intercepte wheel et touches flèches sur le QScrollArea."""
+        from PySide6.QtCore import QEvent
+        if obj in (self.tracks_scroll, self.tracks_scroll.viewport()):
+            if event.type() == QEvent.Wheel:
+                self._handle_wheel(event)
+                return True
+            if event.type() == QEvent.KeyPress:
+                self.keyPressEvent(event)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _handle_wheel(self, event):
+        """Logique partagée scroll : Shift=zoom, Ctrl=vertical, sinon horizontal."""
         if event.modifiers() & Qt.ShiftModifier:
-            # Zoom centré sur la barre rouge
             if event.angleDelta().y() > 0:
                 self.zoom_in()
             else:
                 self.zoom_out()
-            event.accept()
+        elif event.modifiers() & Qt.ControlModifier:
+            sb = self.tracks_scroll.verticalScrollBar()
+            sb.setValue(sb.value() - event.angleDelta().y())
         else:
-            # Scroll horizontal dans la timeline
             sb = self.tracks_scroll.horizontalScrollBar()
-            delta = -event.angleDelta().y()
-            sb.setValue(sb.value() + delta)
-            event.accept()
+            sb.setValue(sb.value() - event.angleDelta().y())
+
+    def wheelEvent(self, event):
+        """Shift+Scroll = Zoom | Ctrl+Scroll = vertical | Scroll = horizontal"""
+        self._handle_wheel(event)
+        event.accept()
 
     def _create_bottom_panel(self):
         """Panneau bas : [Couleurs + Séquences] | [Plan de Feu]"""
@@ -2229,6 +2246,26 @@ class LightTimelineEditor(QDialog):
                 self.paint_btn.setChecked(False)
                 self.toggle_paint_mode()
             self.clear_all_selections()
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Left:
+            sb = self.tracks_scroll.horizontalScrollBar()
+            sb.setValue(sb.value() - 120)
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Right:
+            sb = self.tracks_scroll.horizontalScrollBar()
+            sb.setValue(sb.value() + 120)
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Up:
+            sb = self.tracks_scroll.verticalScrollBar()
+            sb.setValue(sb.value() - 80)
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Down:
+            sb = self.tracks_scroll.verticalScrollBar()
+            sb.setValue(sb.value() + 80)
             event.accept()
             return
         else:

@@ -2055,7 +2055,9 @@ class MainWindow(QMainWindow):
         effects_col.setContentsMargins(0, 0, 0, 0)
         for r in range(8):
             effect_btn = EffectButton(r)
-            effect_btn.clicked.connect(lambda _, idx=r: self.toggle_effect(idx))
+            effect_btn.press_signal.connect(self._on_effect_press)
+            effect_btn.released_signal.connect(self._on_effect_release)
+            effect_btn.trigger_mode_changed.connect(self._on_effect_trigger_mode_changed)
             effect_btn.effect_config_selected.connect(self._on_effect_assigned)
             effect_btn.layer_overrides_changed.connect(self._on_effect_layer_overrides_changed)
             effect_btn.open_editor_requested.connect(lambda idx: self._open_effect_editor_for_btn(idx))
@@ -4144,11 +4146,9 @@ class MainWindow(QMainWindow):
 
     def _show_fx_context_menu(self, pos, fx_col, row, btn):
         """Menu clic droit sur un pad FX — identique aux petits carrés verts."""
-        from PySide6.QtWidgets import (QMenu, QWidgetAction, QLineEdit,
-                                        QDoubleSpinBox, QHBoxLayout, QLabel)
-        from pathlib import Path as _Path
+        from PySide6.QtWidgets import (QMenu, QWidgetAction, QLineEdit, QSlider,
+                                        QDoubleSpinBox, QHBoxLayout, QVBoxLayout, QLabel)
 
-        # Charger tous les effets : builtin + custom
         all_effects = []
         try:
             from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
@@ -4162,22 +4162,158 @@ class MainWindow(QMainWindow):
         trigger_duration = (current_cfg or {}).get("trigger_duration", 2000)
 
         menu = QMenu(btn)
-        menu.setStyleSheet("""
+        _MENU_BASE_SS = """
             QMenu {
                 background: #1a1a1a;
                 border: 1px solid #3a3a3a;
-                padding: 4px;
-                font-size: 12px;
+                padding: 2px;
+                font-size: 11px;
             }
-            QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
+            QMenu::item { padding: 4px 10px; border-radius: 3px; color: #e0e0e0; }
             QMenu::item:selected { background: #2a3a3a; color: #fff; }
-            QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
-            QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
-        """)
+            QMenu::item:disabled { color: #555; font-size: 9px; letter-spacing: 1px; }
+            QMenu::separator { background: #333; height: 1px; margin: 2px 6px; }
+        """
+        menu.setStyleSheet(_MENU_BASE_SS)
 
-        # ── Barre de recherche ────────────────────────────────────────────────
-        search_container = QWidget()
-        search_container.setStyleSheet("background: transparent;")
+        def _select(cfg_or_none):
+            if cfg_or_none is None:
+                self.fx_pads[fx_col][row] = None
+                self.active_fx_pads.pop((fx_col, row), None)
+                if cur and self.active_effect == cur:
+                    self.active_effect = None
+                    self.active_effect_config = {}
+                    self.stop_effect()
+                    for _b in self.effect_buttons:
+                        if _b.active and _b.current_effect == cur:
+                            _b.active = False
+                            _b.update_style()
+            else:
+                entry = dict(cfg_or_none)
+                entry["trigger_mode"] = trigger_mode
+                entry["trigger_duration"] = trigger_duration
+                self.fx_pads[fx_col][row] = entry
+            self._style_fx_pad(fx_col, row)
+            self._save_akai_config_auto()
+
+        # ── Section 1 : GROUPES + VITESSE ────────────────────────────────────
+        _lyr0 = (current_cfg or {}).get("layers", [])
+        _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else ["A","B","C","D","E","F","G","H"]
+        _init_speed  = int(_lyr0[0].get("speed", 50)) if _lyr0 else 50
+        _sel_groups  = list(_init_groups)
+
+        _spd_slider = QSlider(Qt.Horizontal)
+        _spd_slider.setRange(0, 100)
+        _spd_slider.setValue(_init_speed)
+        _spd_slider.setFixedWidth(100)
+        _spd_slider.setStyleSheet(
+            "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
+            "QSlider::handle:horizontal{background:#00aaff;width:12px;height:12px;margin:-4px 0;border-radius:6px;}"
+        )
+
+        _GRP_ON  = "QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;border-radius:3px;font-size:10px;font-weight:bold;}"
+        _GRP_OFF = "QPushButton{background:#2a2a2a;color:#777;border:1px solid #3a3a3a;border-radius:3px;font-size:10px;}"
+        _grp_btn_map = {}
+
+        def _save_pad_layers():
+            pad = self.fx_pads[fx_col][row]
+            if pad and "layers" in pad:
+                for _l in pad["layers"]:
+                    _l["target_groups"] = list(_sel_groups)
+                    _l["speed"] = _spd_slider.value()
+                self._save_akai_config_auto()
+
+        def _toggle_grp_pad(g_id):
+            if g_id in _sel_groups:
+                _sel_groups.remove(g_id)
+            else:
+                _sel_groups.append(g_id)
+            _grp_btn_map[g_id].setStyleSheet(_GRP_ON if g_id in _sel_groups else _GRP_OFF)
+            _save_pad_layers()
+
+        grp_outer = QWidget(); grp_outer.setStyleSheet("background: transparent;")
+        grp_vlay = QVBoxLayout(grp_outer)
+        grp_vlay.setContentsMargins(10, 6, 10, 2); grp_vlay.setSpacing(4)
+        grp_hdr = QLabel("  GROUPES"); grp_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        grp_vlay.addWidget(grp_hdr)
+        btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
+        for _gid in ["A","B","C","D","E","F","G","H"]:
+            _gb = QPushButton(_gid); _gb.setFixedSize(36, 22)
+            _gb.setStyleSheet(_GRP_ON if _gid in _sel_groups else _GRP_OFF)
+            _gb.clicked.connect(lambda _, g=_gid: _toggle_grp_pad(g))
+            _grp_btn_map[_gid] = _gb; btns_h.addWidget(_gb)
+        grp_vlay.addLayout(btns_h)
+        spd_row = QHBoxLayout(); spd_row.setSpacing(6); spd_row.setContentsMargins(0, 2, 0, 0)
+        spd_lbl = QLabel("Vitesse :"); spd_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
+        spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
+        _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
+        _spd_slider.valueChanged.connect(lambda _v: _save_pad_layers())
+        spd_row.addWidget(spd_lbl); spd_row.addWidget(_spd_slider); spd_row.addWidget(spd_val_lbl); spd_row.addStretch()
+        grp_vlay.addLayout(spd_row)
+        grp_wa = QWidgetAction(menu); grp_wa.setDefaultWidget(grp_outer); menu.addAction(grp_wa)
+        menu.addSeparator()
+
+        # ── Section 2 : MODE DE DÉCLENCHEMENT (inline) ───────────────────────
+        trig_outer = QWidget(); trig_outer.setStyleSheet("background: transparent;")
+        trig_vlay = QVBoxLayout(trig_outer)
+        trig_vlay.setContentsMargins(10, 4, 10, 6); trig_vlay.setSpacing(4)
+        trig_hdr_lbl = QLabel("  DÉCLENCHEMENT"); trig_hdr_lbl.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        trig_vlay.addWidget(trig_hdr_lbl)
+
+        _TRIG_ON  = ("QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;"
+                     "border-radius:3px;font-size:10px;font-weight:bold;padding:2px 6px;}")
+        _TRIG_OFF = ("QPushButton{background:#2a2a2a;color:#777;border:1px solid #3a3a3a;"
+                     "border-radius:3px;font-size:10px;padding:2px 6px;}")
+        trig_btns_row = QHBoxLayout(); trig_btns_row.setSpacing(4); trig_btns_row.setContentsMargins(0,0,0,0)
+        _trig_btn_map = {}
+        for _mode, _mlbl in [("toggle","Toggle"),("flash","Flash"),("timer","Timer")]:
+            _tb = QPushButton(_mlbl)
+            _tb.setStyleSheet(_TRIG_ON if trigger_mode == _mode else _TRIG_OFF)
+            _trig_btn_map[_mode] = _tb
+            trig_btns_row.addWidget(_tb)
+        trig_btns_row.addStretch()
+        trig_vlay.addLayout(trig_btns_row)
+
+        dur_row = QHBoxLayout(); dur_row.setSpacing(6); dur_row.setContentsMargins(0,2,0,0)
+        dur_lbl = QLabel("Durée :"); dur_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        dur_spin = QDoubleSpinBox()
+        dur_spin.setRange(0.1, 60.0); dur_spin.setSingleStep(0.5)
+        dur_spin.setValue(trigger_duration / 1000.0); dur_spin.setSuffix(" s")
+        dur_spin.setFixedWidth(80)
+        dur_spin.setEnabled(trigger_mode == "timer")
+        dur_spin.setStyleSheet(
+            "QDoubleSpinBox { background:#222; color:#fff; border:1px solid #444;"
+            " border-radius:3px; padding:2px 4px; font-size:11px; }"
+            "QDoubleSpinBox:disabled { color:#555; border-color:#333; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width:16px; background:#333; border:none; }"
+        )
+        def _set_dur(v):
+            nonlocal trigger_duration
+            trigger_duration = int(v * 1000)
+            if self.fx_pads[fx_col][row]:
+                self.fx_pads[fx_col][row]["trigger_duration"] = trigger_duration
+        dur_spin.valueChanged.connect(_set_dur)
+        dur_row.addWidget(dur_lbl); dur_row.addWidget(dur_spin); dur_row.addStretch()
+        trig_vlay.addLayout(dur_row)
+
+        def _set_trig_fx(mode):
+            nonlocal trigger_mode
+            trigger_mode = mode
+            if self.fx_pads[fx_col][row]:
+                self.fx_pads[fx_col][row]["trigger_mode"] = mode
+            for m, b in _trig_btn_map.items():
+                b.setStyleSheet(_TRIG_ON if m == mode else _TRIG_OFF)
+            dur_spin.setEnabled(mode == "timer")
+
+        for _mode, _tb in _trig_btn_map.items():
+            _tb.clicked.connect(lambda _, m=_mode: _set_trig_fx(m))
+
+        trig_wa = QWidgetAction(menu); trig_wa.setDefaultWidget(trig_outer); menu.addAction(trig_wa)
+        menu.addSeparator()
+
+        # ── Section 3 : EFFETS ────────────────────────────────────────────────
+        search_container = QWidget(); search_container.setStyleSheet("background: transparent;")
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(6, 4, 6, 4)
         search_input = QLineEdit()
@@ -4197,9 +4333,7 @@ class MainWindow(QMainWindow):
             QLineEdit.keyPressEvent(search_input, event)
         search_input.keyPressEvent = _search_key
         search_layout.addWidget(search_input)
-        search_wa = QWidgetAction(menu)
-        search_wa.setDefaultWidget(search_container)
-        menu.addAction(search_wa)
+        search_wa = QWidgetAction(menu); search_wa.setDefaultWidget(search_container); menu.addAction(search_wa)
         menu.addSeparator()
 
         name_is_full_match = cur and any(e.get("name") == cur for e in all_effects)
@@ -4211,36 +4345,24 @@ class MainWindow(QMainWindow):
                 return first is not None and first.get("name") == name
             return False
 
-        def _select(cfg_or_none):
-            if cfg_or_none is None:
-                self.fx_pads[fx_col][row] = None
-                self.active_fx_pads.pop((fx_col, row), None)
-                # Stopper l'effet si c'est lui qui tourne actuellement
-                if cur and self.active_effect == cur:
-                    self.active_effect = None
-                    self.active_effect_config = {}
-                    self.stop_effect()
-                    for btn in self.effect_buttons:
-                        if btn.active and btn.current_effect == cur:
-                            btn.active = False
-                            btn.update_style()
-            else:
-                entry = dict(cfg_or_none)
-                entry["trigger_mode"] = trigger_mode
-                entry["trigger_duration"] = trigger_duration
-                self.fx_pads[fx_col][row] = entry
-            self._style_fx_pad(fx_col, row)
-            self._save_akai_config_auto()
+        _SEL_SS = (
+            "QMenu::indicator { width: 0px; height: 0px; image: none; }"
+            "QMenu::item:checked { background: #004400; color: #44ff44;"
+            " font-weight: bold; border-left: 3px solid #44ff44; }"
+            "QMenu::item:checked:selected { background: #005500; color: #55ff55; }"
+        )
+        menu.setStyleSheet(_MENU_BASE_SS + _SEL_SS)
 
-        act_none = menu.addAction("⭕  Aucun")
+        act_none = menu.addAction("  — Aucun —")
         act_none.setCheckable(True)
         act_none.setChecked(not cur)
         act_none.triggered.connect(lambda: _select(None))
         sep_top = menu.addSeparator()
 
-        CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
+        _CAT_KEYS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur",
+                     "Permut", "Lyre", "Spécial", "Personnalisés", "Mes Effets"]
         cat_groups = []
-        for cat in CATS:
+        for cat in _CAT_KEYS:
             cat_effs = [e for e in all_effects if e.get("category") == cat]
             if not cat_effs: continue
             hdr = menu.addAction(f"  {cat.upper()}")
@@ -4248,24 +4370,28 @@ class MainWindow(QMainWindow):
             eff_actions = []
             for eff in cat_effs:
                 name = eff.get("name", "")
-                act = menu.addAction(f"  {name}")
+                selected = _is_checked(eff)
+                label = f"  {name}"
+                act = menu.addAction(label)
                 act.setCheckable(True)
-                act.setChecked(_is_checked(eff))
+                act.setChecked(selected)
                 act.triggered.connect(lambda checked=False, e=dict(eff): _select(e))
-                eff_actions.append((act, name))
+                eff_actions.append((act, name, selected))
             cat_groups.append((hdr, eff_actions))
 
-        other = [e for e in all_effects if e.get("category", "") not in CATS]
+        other = [e for e in all_effects if e.get("category", "") not in _CAT_KEYS]
         if other:
             sep_other = menu.addSeparator()
             other_actions = []
             for eff in other:
                 name = eff.get("name", "")
-                act = menu.addAction(f"  {name}")
+                selected = _is_checked(eff)
+                label = f"  {name}"
+                act = menu.addAction(label)
                 act.setCheckable(True)
-                act.setChecked(_is_checked(eff))
+                act.setChecked(selected)
                 act.triggered.connect(lambda checked=False, e=dict(eff): _select(e))
-                other_actions.append((act, name))
+                other_actions.append((act, name, selected))
             cat_groups.append((sep_other, other_actions))
 
         def _apply_filter(text):
@@ -4274,7 +4400,7 @@ class MainWindow(QMainWindow):
             sep_top.setVisible(not q)
             for hdr_act, eff_acts in cat_groups:
                 any_vis = False
-                for act, name in eff_acts:
+                for act, name, *_ in eff_acts:
                     v = not q or q in name.lower()
                     act.setVisible(v)
                     if v: any_vis = True
@@ -4282,117 +4408,8 @@ class MainWindow(QMainWindow):
         search_input.textChanged.connect(_apply_filter)
         QTimer.singleShot(0, search_input.setFocus)
 
-        # ── Mode de déclenchement ─────────────────────────────────────────────
         menu.addSeparator()
-        trig_menu = menu.addMenu("  ⏱  Mode de déclenchement")
-        trig_menu.setStyleSheet(menu.styleSheet())
-
-        def _set_trig(mode):
-            nonlocal trigger_mode
-            trigger_mode = mode
-            if self.fx_pads[fx_col][row]:
-                self.fx_pads[fx_col][row]["trigger_mode"] = mode
-
-        act_tog = trig_menu.addAction("↕  Toggle (appui/relâche)")
-        act_tog.setCheckable(True); act_tog.setChecked(trigger_mode == "toggle")
-        act_tog.triggered.connect(lambda: _set_trig("toggle"))
-        act_fla = trig_menu.addAction("⚡  Flash (maintenir enfoncé)")
-        act_fla.setCheckable(True); act_fla.setChecked(trigger_mode == "flash")
-        act_fla.triggered.connect(lambda: _set_trig("flash"))
-        act_tim = trig_menu.addAction("⏳  Timer (durée automatique)")
-        act_tim.setCheckable(True); act_tim.setChecked(trigger_mode == "timer")
-        act_tim.triggered.connect(lambda: _set_trig("timer"))
-
-        trig_menu.addSeparator()
-        dur_widget = QWidget()
-        dur_layout = QHBoxLayout(dur_widget)
-        dur_layout.setContentsMargins(16, 4, 16, 4); dur_layout.setSpacing(6)
-        dur_lbl = QLabel("Durée :")
-        dur_lbl.setStyleSheet("color:#aaa; font-size:11px; background:transparent;")
-        dur_spin = QDoubleSpinBox()
-        dur_spin.setRange(0.1, 60.0); dur_spin.setSingleStep(0.5)
-        dur_spin.setValue(trigger_duration / 1000.0); dur_spin.setSuffix(" s")
-        dur_spin.setFixedWidth(80)
-        dur_spin.setStyleSheet(
-            "QDoubleSpinBox { background:#222; color:#fff; border:1px solid #444;"
-            " border-radius:3px; padding:2px 4px; font-size:11px; }"
-            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width:16px; background:#333; border:none; }"
-        )
-        def _set_dur(v):
-            nonlocal trigger_duration
-            trigger_duration = int(v * 1000)
-            if self.fx_pads[fx_col][row]:
-                self.fx_pads[fx_col][row]["trigger_duration"] = trigger_duration
-        dur_spin.valueChanged.connect(_set_dur)
-        dur_layout.addWidget(dur_lbl); dur_layout.addWidget(dur_spin); dur_layout.addStretch()
-        dur_wa = QWidgetAction(trig_menu)
-        dur_wa.setDefaultWidget(dur_widget)
-        trig_menu.addAction(dur_wa)
-
-        # ── Groupes + Vitesse ─────────────────────────────────────────────────
-        menu.addSeparator()
-        _lyr0 = (current_cfg or {}).get("layers", [])
-        _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else ["A","B","C","D","E","F","G","H"]
-        _init_speed  = int(_lyr0[0].get("speed", 50)) if _lyr0 else 50
-        _sel_groups  = list(_init_groups)
-
-        # Slider créé en premier pour que _toggle_grp_pad puisse y accéder
-        _spd_slider = QSlider(Qt.Horizontal)
-        _spd_slider.setRange(0, 100)
-        _spd_slider.setValue(_init_speed)
-        _spd_slider.setFixedWidth(90)
-        _spd_slider.setStyleSheet(
-            "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
-            "QSlider::handle:horizontal{background:#00aaff;width:12px;height:12px;margin:-4px 0;border-radius:6px;}"
-        )
-
-        _GRP_ON  = "QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;border-radius:3px;font-size:10px;font-weight:bold;}"
-        _GRP_OFF = "QPushButton{background:#333;color:#888;border:1px solid #444;border-radius:3px;font-size:10px;}"
-        _grp_btn_map = {}
-
-        def _save_pad_layers():
-            pad = self.fx_pads[fx_col][row]
-            if pad and "layers" in pad:
-                for _l in pad["layers"]:
-                    _l["target_groups"] = list(_sel_groups)
-                    _l["speed"] = _spd_slider.value()
-                self._save_akai_config_auto()
-
-        def _toggle_grp_pad(g_id):
-            if g_id in _sel_groups:
-                _sel_groups.remove(g_id)
-            else:
-                _sel_groups.append(g_id)
-            _grp_btn_map[g_id].setStyleSheet(_GRP_ON if g_id in _sel_groups else _GRP_OFF)
-            _save_pad_layers()
-
-        grp_widget = QWidget(); grp_widget.setStyleSheet("background: transparent;")
-        grp_vlay = QVBoxLayout(grp_widget)
-        grp_vlay.setContentsMargins(12, 4, 12, 2); grp_vlay.setSpacing(3)
-        grp_hdr = QLabel("Groupes :"); grp_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
-        grp_vlay.addWidget(grp_hdr)
-        btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
-        for _gid, _glbl in [("A","Face"),("B","Lat"),("C","Ctr"),("D","D.1"),("E","D.2"),("F","D.3"),("G","Grp G"),("H","Grp H")]:
-            _gb = QPushButton(_glbl); _gb.setFixedSize(34, 22)
-            _gb.setStyleSheet(_GRP_ON if _gid in _sel_groups else _GRP_OFF)
-            _gb.clicked.connect(lambda _, g=_gid: _toggle_grp_pad(g))
-            _grp_btn_map[_gid] = _gb; btns_h.addWidget(_gb)
-        grp_vlay.addLayout(btns_h)
-        grp_wa = QWidgetAction(menu); grp_wa.setDefaultWidget(grp_widget); menu.addAction(grp_wa)
-
-        spd_widget = QWidget(); spd_widget.setStyleSheet("background: transparent;")
-        spd_hlay = QHBoxLayout(spd_widget)
-        spd_hlay.setContentsMargins(12, 2, 12, 4); spd_hlay.setSpacing(6)
-        spd_hdr = QLabel("Vitesse :"); spd_hdr.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
-        spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
-        spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
-        _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
-        _spd_slider.valueChanged.connect(lambda _v: _save_pad_layers())
-        spd_hlay.addWidget(spd_hdr); spd_hlay.addWidget(_spd_slider); spd_hlay.addWidget(spd_val_lbl)
-        spd_wa = QWidgetAction(menu); spd_wa.setDefaultWidget(spd_widget); menu.addAction(spd_wa)
-
-        menu.addSeparator()
-        act_editor = menu.addAction("🎨  Éditeur d'effets")
+        act_editor = menu.addAction("  Éditeur d'effets")
         act_editor.triggered.connect(lambda: self._open_effect_editor_for_fx_pad(fx_col, row))
 
         menu.exec(btn.mapToGlobal(pos))
@@ -5034,6 +5051,37 @@ class MainWindow(QMainWindow):
         if btn_idx < len(self.effect_buttons) and self.effect_buttons[btn_idx].active:
             self.active_effect_config = cfg
             self.start_effect(cfg.get("name", self.active_effect))
+
+    def _on_effect_trigger_mode_changed(self, btn_idx: int, mode: str, duration_ms: int):
+        if btn_idx < len(self.effect_buttons):
+            btn = self.effect_buttons[btn_idx]
+            btn.trigger_mode = mode
+            btn.trigger_duration = duration_ms
+        self._save_effect_assignments()
+
+    def _on_effect_press(self, btn_idx: int):
+        if btn_idx >= len(self.effect_buttons):
+            return
+        btn = self.effect_buttons[btn_idx]
+        mode = btn.trigger_mode
+        if mode == "toggle":
+            self.toggle_effect(btn_idx)
+        else:
+            if not btn.active:
+                self.toggle_effect(btn_idx)
+                if mode == "timer":
+                    QTimer.singleShot(btn.trigger_duration, lambda: self._ensure_effect_off(btn_idx))
+
+    def _on_effect_release(self, btn_idx: int):
+        if btn_idx >= len(self.effect_buttons):
+            return
+        btn = self.effect_buttons[btn_idx]
+        if btn.trigger_mode == "flash" and btn.active:
+            self.toggle_effect(btn_idx)
+
+    def _ensure_effect_off(self, btn_idx: int):
+        if btn_idx < len(self.effect_buttons) and self.effect_buttons[btn_idx].active:
+            self.toggle_effect(btn_idx)
 
     def _update_effect_from_layers(self, cfg: dict):
         """Exécute un effet défini par ses couches (format nouvel éditeur)."""
@@ -5717,15 +5765,25 @@ class MainWindow(QMainWindow):
         # Activer les pads blancs (row 0)
         self.activate_default_white_pads()
 
-        # Couper l'effet en cours s'il y en a un
-        if getattr(self, 'active_effect', None) or getattr(self, 'active_effect_config', {}):
-            self.stop_effect()
-            self.active_effect = None
-            self.active_effect_config = {}
-            for btn in self.effect_buttons:
-                if btn.active:
-                    btn.active = False
-                    btn.update_style()
+        # Couper tous les effets (y compris empilés)
+        if hasattr(self, 'effect_timer'):
+            self.effect_timer.stop()
+        self._stacked_effects = []
+        self.active_effect = None
+        self.active_effect_config = {}
+        self.effect_saved_colors = {}
+        for btn in self.effect_buttons:
+            if btn.active:
+                btn.active = False
+                btn.update_style()
+
+        # Éteindre complètement tous les projecteurs
+        for p in self.projectors:
+            if p.group != "fumee":
+                p.level      = 0
+                p.color      = QColor(0, 0, 0)
+                p.base_color = QColor(0, 0, 0)
+                p.shutter    = 255
 
         # Désactiver tous les pads FX actifs + mettre à jour visuel et LEDs physiques
         self.active_fx_pads.clear()
@@ -11217,7 +11275,7 @@ class MainWindow(QMainWindow):
             from fixture_editor import FixtureEditorDialog
             editor = FixtureEditorDialog(dialog)
             editor.fixture_added.connect(lambda _: None)
-            editor.showMaximized()
+            editor.setWindowState(Qt.WindowMaximized)
             editor.exec()
             if editor.last_saved:
                 self._pending_fixture_select = editor.last_saved
@@ -11412,8 +11470,7 @@ class MainWindow(QMainWindow):
         elif fixture_data:
             _select_card(0)
 
-        from PySide6.QtCore import QTimer as _QTimer
-        _QTimer.singleShot(0, dialog.showMaximized)
+        dialog.setWindowState(Qt.WindowMaximized)
         dialog.exec()
         canvas_timer.stop()
 
@@ -11727,8 +11784,8 @@ class MainWindow(QMainWindow):
             )
             if not paths:
                 return
-            _GROUP = {"Moving Head": "lyre", "Barre LED": "barre",
-                      "Stroboscope": "strobe", "Machine a fumee": "fumee"}
+            _GROUP = {"Moving Head": "face", "Barre LED": "face",
+                      "Stroboscope": "face", "Machine a fumee": "fumee"}
             _fx_file = Path.home() / ".mystrow_fixtures.json"
             try:
                 existing_user = _json.loads(_fx_file.read_text(encoding="utf-8")) if _fx_file.exists() else []

@@ -62,8 +62,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "splash_license_label":  {"en": "License",                      "fr": "Licence"},
 
     # ------------------------------------------------------------------ update bar
-    "btn_update_arrow":      {"en": "Update →",                     "fr": "Mettre à jour →"},
-    "update_bar_msg":        {"en": "New version available  v{ver}", "fr": "Nouvelle version disponible  v{ver}"},
+    "btn_update_arrow":      {"en": "Install →",                    "fr": "Installer →"},
+    "update_bar_msg":        {"en": "New version  v{ver}",           "fr": "Mise à jour  v{ver}"},
 
     # ------------------------------------------------------------------ download dialog
     "update_dlg_title":      {"en": "Update v{ver}",                "fr": "Mise à jour v{ver}"},
