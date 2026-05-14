@@ -2602,7 +2602,8 @@ class PlanDeFeu(QFrame):
             g_cnt[proj.group] = li + 1
             if proj.group in selected_groups and getattr(proj, 'fixture_type', '') == 'Moving Head':
                 self.selected_lamps.add((proj.group, li))
-                proj.set_color(QColor("white"), brightness=100)
+                if proj.level == 0:
+                    proj.set_color(QColor("white"), brightness=100)
 
         self.canvas.set_target_mode(True)
         self.canvas.update()
