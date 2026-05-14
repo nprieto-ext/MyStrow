@@ -12905,6 +12905,8 @@ class MainWindow(QMainWindow):
             print(f"Erreur sauvegarde patch: {e}")
         if hasattr(self, '_plan3d') and self._plan3d.isVisible():
             self._plan3d.refresh(self.projectors)
+        if hasattr(self, 'plan_de_feu'):
+            self.plan_de_feu.refresh_target_btn()
 
     def load_dmx_patch_config(self):
         """Charge la configuration du patch DMX"""
@@ -12954,6 +12956,8 @@ class MainWindow(QMainWindow):
                                                      universe=p.universe,
                                                      profile=profile)
                     self._saved_custom_profiles = config.get('custom_profiles', {})
+                    if hasattr(self, 'plan_de_feu'):
+                        self.plan_de_feu.refresh_target_btn()
                     return True
 
                 # Retro-compat : ancien format (channels/modes/profiles)

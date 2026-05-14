@@ -2416,9 +2416,7 @@ class PlanDeFeu(QFrame):
                 "les lyres sélectionnées vers ce point"
             )
             self.btn_target.setStyleSheet(_TARGET_SS)
-            self.btn_target.toggled.connect(
-                lambda v: self.canvas.set_target_mode(v)
-            )
+            self.btn_target.toggled.connect(self._on_target_toggled)
             toolbar.addWidget(self.btn_target)
             toolbar.addSpacing(4)
 
@@ -2494,6 +2492,119 @@ class PlanDeFeu(QFrame):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._timer_tick)
         self.timer.start(50)
+
+        self.refresh_target_btn()
+
+    def refresh_target_btn(self):
+        """Affiche/cache le bouton 🎯 selon la présence de Moving Heads dans le patch."""
+        has_mh = any(getattr(p, 'fixture_type', '') == 'Moving Head' for p in self.projectors)
+        self.btn_target.setVisible(has_mh)
+        if not has_mh and self.btn_target.isChecked():
+            self.btn_target.blockSignals(True)
+            self.btn_target.setChecked(False)
+            self.btn_target.blockSignals(False)
+            self.canvas.set_target_mode(False)
+
+    _GROUP_LABELS = {
+        "face": "Face", "lat": "LAT", "contre": "Contre",
+        "douche1": "Douche 1", "douche2": "Douche 2", "douche3": "Douche 3",
+        "groupe_g": "Groupe G", "groupe_h": "Groupe H",
+    }
+
+    def _on_target_toggled(self, active):
+        if not active:
+            self.canvas.set_target_mode(False)
+            return
+
+        mh_groups = {}
+        for proj in self.projectors:
+            if getattr(proj, 'fixture_type', '') == 'Moving Head':
+                mh_groups.setdefault(proj.group, []).append(proj)
+
+        if not mh_groups:
+            self.btn_target.blockSignals(True)
+            self.btn_target.setChecked(False)
+            self.btn_target.blockSignals(False)
+            return
+
+        if len(mh_groups) == 1:
+            self._activate_target_for_groups(mh_groups, list(mh_groups.keys()))
+        else:
+            self._show_target_group_menu(mh_groups)
+
+    def _show_target_group_menu(self, mh_groups):
+        from PySide6.QtWidgets import QCheckBox as _QCB
+        dlg = QDialog(self, Qt.Popup | Qt.FramelessWindowHint)
+        dlg.setStyleSheet("""
+            QDialog { background:#0e0e0e; border:1px solid #2a2a2a; border-radius:8px; }
+            QCheckBox { color:#ccc; font-size:12px; background:transparent;
+                        padding:2px 0; }
+            QCheckBox::indicator { width:15px; height:15px; border:1px solid #444;
+                                   border-radius:3px; background:#1a1a1a; }
+            QCheckBox::indicator:checked { background:#00aa44; border-color:#00cc55; }
+            QCheckBox:hover { color:#fff; }
+        """)
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(14, 12, 14, 12)
+        vl.setSpacing(8)
+
+        lbl = QLabel("GROUPES À CIBLER")
+        lbl.setStyleSheet(
+            "color:#333; font-size:9px; font-weight:bold; letter-spacing:2px;"
+            " background:transparent;"
+        )
+        vl.addWidget(lbl)
+
+        checks = {}
+        for group, projs in mh_groups.items():
+            name = self._GROUP_LABELS.get(group, group.capitalize())
+            n = len(projs)
+            cb = _QCB(f"{name}  —  {n} lyre{'s' if n > 1 else ''}")
+            cb.setChecked(True)
+            vl.addWidget(cb)
+            checks[group] = cb
+
+        btn_ok = QPushButton("🎯  Activer le ciblage")
+        btn_ok.setFixedHeight(34)
+        btn_ok.setStyleSheet(
+            "QPushButton { background:#0a2a14; color:#00ff66; border:1px solid #00aa44;"
+            " border-radius:6px; font-size:12px; }"
+            "QPushButton:hover { background:#0d3a1c; border-color:#00ff66; }"
+        )
+        btn_ok.clicked.connect(dlg.accept)
+        vl.addWidget(btn_ok)
+
+        dlg.adjustSize()
+        dlg.move(self.btn_target.mapToGlobal(
+            self.btn_target.rect().bottomLeft() + QPoint(-4, 4)
+        ))
+        if dlg.exec() != QDialog.Accepted:
+            self.btn_target.blockSignals(True)
+            self.btn_target.setChecked(False)
+            self.btn_target.blockSignals(False)
+            return
+
+        selected = [g for g, cb in checks.items() if cb.isChecked()]
+        if not selected:
+            self.btn_target.blockSignals(True)
+            self.btn_target.setChecked(False)
+            self.btn_target.blockSignals(False)
+            return
+
+        self._activate_target_for_groups(mh_groups, selected)
+
+    def _activate_target_for_groups(self, mh_groups, selected_groups):
+        self.selected_lamps.clear()
+        g_cnt = {}
+        for i, proj in enumerate(self.projectors):
+            li = g_cnt.get(proj.group, 0)
+            g_cnt[proj.group] = li + 1
+            if proj.group in selected_groups and getattr(proj, 'fixture_type', '') == 'Moving Head':
+                self.selected_lamps.add((proj.group, li))
+                proj.set_color(QColor("white"), brightness=100)
+
+        self.canvas.set_target_mode(True)
+        self.canvas.update()
 
     def _timer_tick(self):
         has_strobe = any(getattr(p, 'strobe_speed', 0) > 0 for p in self.projectors)
