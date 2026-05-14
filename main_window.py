@@ -1200,17 +1200,59 @@ class MissingMediaDialog(QDialog):
         self.setMinimumHeight(320)
         self.missing = list(missing)
         self.remapped = {}  # {idx_in_missing: new_path}
+        self.setStyleSheet("""
+            QDialog { background: #111; color: #ddd; }
+            QLabel  { background: transparent; border: none; color: #bbb; font-size: 11px; }
+            QTableWidget {
+                background: #1a1a1a; color: #ccc;
+                border: 1px solid #2a2a2a; gridline-color: #222;
+                border-radius: 6px; font-size: 11px;
+            }
+            QTableWidget::item { padding: 4px 8px; border: none; }
+            QTableWidget::item:alternate { background: #161616; }
+            QHeaderView::section {
+                background: #1e1e1e; color: #666;
+                border: none; border-bottom: 1px solid #2a2a2a;
+                font-size: 10px; font-weight: bold;
+                padding: 5px 8px; letter-spacing: 0.5px;
+            }
+            QScrollBar:vertical {
+                background: #1a1a1a; width: 8px; border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #333; border-radius: 4px; min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QPushButton {
+                background: #1e1e1e; color: #ccc;
+                border: 1px solid #333; border-radius: 6px;
+                font-size: 11px; padding: 5px 16px;
+            }
+            QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #555; }
+            QPushButton:disabled { background: #161616; color: #383838; border-color: #222; }
+            QPushButton#locate_btn {
+                background: #1a2a1a; color: #E2CE16;
+                border: 1px solid #2a3a1a;
+            }
+            QPushButton#locate_btn:hover {
+                background: #223322; border-color: #E2CE16; color: #fff;
+            }
+            QPushButton#locate_btn:disabled {
+                background: #161616; color: #383838; border-color: #222;
+            }
+        """)
         self._setup_ui()
 
     def _setup_ui(self):
         lay = QVBoxLayout(self)
-        lay.setSpacing(12)
-        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(14)
+        lay.setContentsMargins(20, 18, 20, 18)
 
         n = len(self.missing)
         plural = "s" if n > 1 else ""
         info = QLabel(
-            f"<b>{n} fichier{plural} introuvable{plural}</b> dans la playlist.<br>"
+            f"<b style='color:#fff'>{n} fichier{plural} introuvable{plural}</b> "
+            f"dans la playlist.<br>"
             "Utilisez <i>Localiser…</i> pour retrouver chaque fichier. "
             "Si plusieurs fichiers étaient dans le même dossier renommé, "
             "ils seront reliés automatiquement."
@@ -1228,10 +1270,12 @@ class MissingMediaDialog(QDialog):
         self.tbl.setSelectionMode(QTableWidget.NoSelection)
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setAlternatingRowColors(True)
+        self.tbl.setShowGrid(False)
 
         for i, (row, name, orig_path) in enumerate(self.missing):
             line_item = QTableWidgetItem(str(row + 1))
             line_item.setTextAlignment(Qt.AlignCenter)
+            line_item.setForeground(QColor("#555"))
             self.tbl.setItem(i, 0, line_item)
 
             name_item = QTableWidgetItem(name)
@@ -1243,16 +1287,25 @@ class MissingMediaDialog(QDialog):
             self.tbl.setItem(i, 2, status)
 
             btn = QPushButton("Localiser…")
+            btn.setObjectName("locate_btn")
             btn.setFixedHeight(26)
             btn.clicked.connect(lambda checked, idx=i: self._locate(idx))
             self.tbl.setCellWidget(i, 3, btn)
 
         lay.addWidget(self.tbl)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok)
-        btns.button(QDialogButtonBox.Ok).setText("Fermer")
-        btns.accepted.connect(self.accept)
-        lay.addWidget(btns)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background: #222; max-height: 1px;")
+        lay.addWidget(sep)
+
+        close_btn = QPushButton("Fermer")
+        close_btn.setFixedSize(110, 32)
+        close_btn.clicked.connect(self.accept)
+        row_btns = QHBoxLayout()
+        row_btns.addStretch()
+        row_btns.addWidget(close_btn)
+        lay.addLayout(row_btns)
 
     def _locate(self, idx):
         _, name, orig_path = self.missing[idx]
