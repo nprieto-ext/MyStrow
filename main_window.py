@@ -1581,6 +1581,7 @@ class MainWindow(QMainWindow):
         social_menu.addAction("📸  Instagram", lambda: QDesktopServices.openUrl(QUrl("https://www.instagram.com/niko_mystrow_dmx/")))
         social_menu.addAction("▶️  TikTok",    lambda: QDesktopServices.openUrl(QUrl("https://www.tiktok.com/@niko_mystrow")))
         social_menu.addAction("▶️  YouTube",   lambda: QDesktopServices.openUrl(QUrl("https://www.youtube.com/@MyStrow-x7t")))
+        social_menu.addAction("💬  Discord",   lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/HhJF335K")))
         about_menu.addSeparator()
         lang_menu = about_menu.addMenu(tr("menu_language"))
         act_fr = lang_menu.addAction(tr("menu_lang_fr"))
