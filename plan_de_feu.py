@@ -1139,17 +1139,17 @@ class FixtureCanvas(QWidget):
         self.update()
 
     def _apply_target(self, pos):
-        """Oriente les lyres sélectionnées vers le point pos (pixels canvas)."""
+        """Oriente les lyres sélectionnées vers le point pos (pixels canvas).
+
+        Travaille en pixels — même repère que le rendu visuel du faisceau.
+        Pan  : atan2 depuis la lyre vers la cible dans le plan 2D.
+        Tilt : la pointe du faisceau visuel doit atteindre la cible (beam_len ≈ dist).
+        """
         if not self.pdf.selected_lamps:
             return
-        W, H = max(self.width(), 1), max(self.height(), 1)
-        tx_n = pos.x() / W   # normalisé 0-1
-        ty_n = pos.y() / H
 
-        STAGE_W = 10.0   # largeur de scène estimée (m)
-        STAGE_D = 10.0   # profondeur de scène estimée (m)
-        tx_m = (tx_n - 0.5) * STAGE_W
-        ty_m = (ty_n - 0.5) * STAGE_D
+        tx, ty = float(pos.x()), float(pos.y())
+        r = 9 if self.compact else 13   # rayon icône (idem _draw_fixture)
 
         for i, proj in enumerate(self.pdf.projectors):
             if getattr(proj, 'fixture_type', '') != 'Moving Head':
@@ -1158,23 +1158,24 @@ class FixtureCanvas(QWidget):
             if (group, li) not in self.pdf.selected_lamps:
                 continue
 
-            lx_n, ly_n = self._get_norm_pos(i)
-            lx_m = (lx_n - 0.5) * STAGE_W
-            ly_m = (ly_n - 0.5) * STAGE_D
-            height = getattr(proj, 'fixture_height', None) or 5.0
+            lx, ly = self._get_canvas_pos(i)
+            dx = tx - lx
+            dy = ty - ly   # positif = vers l'avant-scène (bas du canvas)
 
-            dx = tx_m - lx_m    # est positif si cible à droite
-            dz = ty_m - ly_m    # positif si cible vers l'avant-scène
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 1:
+                continue
 
-            # Pan : angle par rapport au forward (vers avant-scène = +z canvas)
-            pan_deg = math.degrees(math.atan2(dx, dz))
-            pan_val = 32768 + int(pan_deg / 135.0 * 32768)
-            proj.pan = max(0, min(65535, pan_val))
+            # ── Pan ────────────────────────────────────────────────────
+            # 0° = "en avant" (vers le bas canvas) — même repère que le rendu
+            pan_angle = math.degrees(math.atan2(dx, dy))
+            pan_val   = 32768 + int(pan_angle / 135.0 * 32768)
+            proj.pan  = max(0, min(65535, pan_val))
 
-            # Tilt : 0 = droit vers le bas, 65535 = horizontal
-            horiz = math.sqrt(dx * dx + dz * dz)
-            tilt_ratio = (math.pi / 2 - math.atan2(height, horiz)) / (math.pi / 2)
-            proj.tilt = max(0, min(65535, int(tilt_ratio * 65535)))
+            # ── Tilt ───────────────────────────────────────────────────
+            # beam_len = r*2 + tilt_ratio * r*7  →  tilt_ratio = (dist - r*2) / (r*7)
+            tilt_ratio = (dist - r * 2) / max(1, r * 7)
+            proj.tilt  = max(0, min(65535, int(tilt_ratio * 65535)))
 
         self.update()
 
