@@ -676,6 +676,21 @@ class ArtNetDMX:
 
             _ch_defaults = getattr(proj, 'channel_defaults', {})
             _ch_extras   = getattr(proj, 'channel_extras',   {})
+
+            # Pan/Tilt effectifs : swap puis inversion, puis limites
+            _raw_pan  = getattr(proj, 'pan',  32768)
+            _raw_tilt = getattr(proj, 'tilt', 32768)
+            if getattr(proj, 'pan_tilt_swap', False):
+                _raw_pan, _raw_tilt = _raw_tilt, _raw_pan
+            if getattr(proj, 'pan_invert',  False):
+                _raw_pan  = 65535 - _raw_pan
+            if getattr(proj, 'tilt_invert', False):
+                _raw_tilt = 65535 - _raw_tilt
+            _eff_pan  = max(getattr(proj, 'pan_min',  0),
+                            min(getattr(proj, 'pan_max',  65535), _raw_pan))
+            _eff_tilt = max(getattr(proj, 'tilt_min', 0),
+                            min(getattr(proj, 'tilt_max', 65535), _raw_tilt))
+
             for idx, ch_type in enumerate(profile):
                 if idx >= len(channels):
                     break
@@ -730,25 +745,13 @@ class ArtNetDMX:
                     else:
                         ch_val = 0
                 elif ch_type == "Pan":
-                    _p = max(getattr(proj, 'pan_min', 0),
-                             min(getattr(proj, 'pan_max', 65535),
-                                 getattr(proj, 'pan', 32768)))
-                    ch_val = _p >> 8
+                    ch_val = _eff_pan >> 8
                 elif ch_type == "PanFine":
-                    _p = max(getattr(proj, 'pan_min', 0),
-                             min(getattr(proj, 'pan_max', 65535),
-                                 getattr(proj, 'pan', 32768)))
-                    ch_val = _p & 0xFF
+                    ch_val = _eff_pan & 0xFF
                 elif ch_type == "Tilt":
-                    _t = max(getattr(proj, 'tilt_min', 0),
-                             min(getattr(proj, 'tilt_max', 65535),
-                                 getattr(proj, 'tilt', 32768)))
-                    ch_val = _t >> 8
+                    ch_val = _eff_tilt >> 8
                 elif ch_type == "TiltFine":
-                    _t = max(getattr(proj, 'tilt_min', 0),
-                             min(getattr(proj, 'tilt_max', 65535),
-                                 getattr(proj, 'tilt', 32768)))
-                    ch_val = _t & 0xFF
+                    ch_val = _eff_tilt & 0xFF
                 elif ch_type == "Gobo1":
                     ch_val = getattr(proj, 'gobo', 0)
                 elif ch_type == "Gobo1Rot":

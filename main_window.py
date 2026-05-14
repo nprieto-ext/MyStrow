@@ -10700,6 +10700,56 @@ class MainWindow(QMainWindow):
                 sli.valueChanged.connect(_on_slide)
                 wl.addWidget(sli, 0, Qt.AlignHCenter)
 
+                # ── Toggles Pan/Tilt inversion (canaux Pan/Tilt uniquement) ──
+                _PT_CHANNELS = {"Pan", "PanFine", "Tilt", "TiltFine"}
+                if ch_type in _PT_CHANNELS and snap_idx is not None and snap_idx < len(self.projectors):
+                    proj_pt = self.projectors[snap_idx]
+                    _SEP = QFrame(); _SEP.setFrameShape(QFrame.HLine)
+                    _SEP.setStyleSheet("QFrame{color:#1e1e1e;margin:4px 0;}")
+                    wl.addWidget(_SEP)
+
+                    _TOG_SS = (
+                        "QPushButton{background:#1a1a1a;color:#555;border:1px solid #252525;"
+                        "border-radius:5px;padding:4px 10px;font-size:10px;}"
+                        "QPushButton:checked{background:#0d2030;color:#00d4ff;"
+                        "border-color:#00d4ff55;}"
+                        "QPushButton:hover{border-color:#333;color:#aaa;}"
+                    )
+
+                    tog_row = QHBoxLayout()
+                    tog_row.setSpacing(6)
+
+                    if ch_type in ("Pan", "PanFine"):
+                        btn_inv_pan = QPushButton("↔  Pan inversé")
+                        btn_inv_pan.setCheckable(True)
+                        btn_inv_pan.setChecked(getattr(proj_pt, 'pan_invert', False))
+                        btn_inv_pan.setStyleSheet(_TOG_SS)
+                        btn_inv_pan.toggled.connect(
+                            lambda v, p=proj_pt: setattr(p, 'pan_invert', v) or _mark_dirty()
+                        )
+                        tog_row.addWidget(btn_inv_pan)
+
+                    if ch_type in ("Tilt", "TiltFine"):
+                        btn_inv_tilt = QPushButton("↕  Tilt inversé")
+                        btn_inv_tilt.setCheckable(True)
+                        btn_inv_tilt.setChecked(getattr(proj_pt, 'tilt_invert', False))
+                        btn_inv_tilt.setStyleSheet(_TOG_SS)
+                        btn_inv_tilt.toggled.connect(
+                            lambda v, p=proj_pt: setattr(p, 'tilt_invert', v) or _mark_dirty()
+                        )
+                        tog_row.addWidget(btn_inv_tilt)
+
+                    btn_swap = QPushButton("⇄  Swap Pan/Tilt")
+                    btn_swap.setCheckable(True)
+                    btn_swap.setChecked(getattr(proj_pt, 'pan_tilt_swap', False))
+                    btn_swap.setStyleSheet(_TOG_SS)
+                    btn_swap.toggled.connect(
+                        lambda v, p=proj_pt: setattr(p, 'pan_tilt_swap', v) or _mark_dirty()
+                    )
+                    tog_row.addWidget(btn_swap)
+
+                    wl.addLayout(tog_row)
+
                 wa.setDefaultWidget(w)
                 m.addAction(wa)
                 m.exec(chip_lbl.mapToGlobal(chip_lbl.rect().bottomLeft()))
@@ -12839,6 +12889,9 @@ class MainWindow(QMainWindow):
                 'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                 'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
+                'pan_invert':    getattr(proj, 'pan_invert',    False),
+                'tilt_invert':   getattr(proj, 'tilt_invert',   False),
+                'pan_tilt_swap': getattr(proj, 'pan_tilt_swap', False),
             })
         config = {
             'fixtures': fixtures_list,
@@ -12890,6 +12943,9 @@ class MainWindow(QMainWindow):
                         p.channel_defaults  = dict(fd.get('channel_defaults', {}))
                         p.color_wheel_slots = list(fd.get('color_wheel_slots', []))
                         p.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
+                        p.pan_invert    = bool(fd.get('pan_invert',    False))
+                        p.tilt_invert   = bool(fd.get('tilt_invert',   False))
+                        p.pan_tilt_swap = bool(fd.get('pan_tilt_swap', False))
                         self.projectors.append(p)
                         proj_key = f"{p.group}_{i}"
                         nb_ch = len(profile)

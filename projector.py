@@ -45,6 +45,9 @@ class Projector:
         self.pan_max  = 65535
         self.tilt_min = 0
         self.tilt_max = 65535
+        self.pan_invert    = False  # Inverser le sens du pan (65535 - valeur)
+        self.tilt_invert   = False  # Inverser le sens du tilt (65535 - valeur)
+        self.pan_tilt_swap = False  # Permuter pan ↔ tilt
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""
