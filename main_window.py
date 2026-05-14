@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QToolButton, QMenu, QMenuBar, QFileDialog, QMessageBox, QDialog,
     QComboBox, QTableWidget, QTableWidgetItem, QWidgetAction, QSpinBox,
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
-    QHeaderView, QCheckBox, QTextEdit, QToolTip
+    QHeaderView, QCheckBox, QTextEdit, QToolTip, QDialogButtonBox
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QPoint, QDateTime, QEvent, Signal
 import datetime as _dt
@@ -1181,6 +1181,134 @@ class _StatusCornerWidget(QWidget):
         else:
             col = "#ccc"
         self._cpu_val.setStyleSheet(f"color:{col}; font-size:9px; font-weight:bold;")
+
+
+class MissingMediaDialog(QDialog):
+    """Dialog de relocalisation des fichiers médias manquants d'un show.
+
+    Affiche un tableau de tous les fichiers introuvables avec, pour chacun,
+    un bouton 'Localiser…'. Quand un fichier est retrouvé, vérifie si les
+    autres fichiers manquants viennent du même dossier et les relie
+    automatiquement si le fichier existe dans le nouveau dossier.
+    """
+
+    def __init__(self, missing, parent=None):
+        # missing = [(row, filename, original_path), ...]
+        super().__init__(parent)
+        self.setWindowTitle("Fichiers introuvables")
+        self.setMinimumWidth(780)
+        self.setMinimumHeight(320)
+        self.missing = list(missing)
+        self.remapped = {}  # {idx_in_missing: new_path}
+        self._setup_ui()
+
+    def _setup_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setSpacing(12)
+        lay.setContentsMargins(16, 16, 16, 16)
+
+        n = len(self.missing)
+        plural = "s" if n > 1 else ""
+        info = QLabel(
+            f"<b>{n} fichier{plural} introuvable{plural}</b> dans la playlist.<br>"
+            "Utilisez <i>Localiser…</i> pour retrouver chaque fichier. "
+            "Si plusieurs fichiers étaient dans le même dossier renommé, "
+            "ils seront reliés automatiquement."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        self.tbl = QTableWidget(n, 4)
+        self.tbl.setHorizontalHeaderLabels(["Ligne", "Fichier", "Statut", ""])
+        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tbl.setColumnWidth(0, 55)
+        self.tbl.setColumnWidth(3, 115)
+        self.tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl.setSelectionMode(QTableWidget.NoSelection)
+        self.tbl.verticalHeader().setVisible(False)
+        self.tbl.setAlternatingRowColors(True)
+
+        for i, (row, name, orig_path) in enumerate(self.missing):
+            line_item = QTableWidgetItem(str(row + 1))
+            line_item.setTextAlignment(Qt.AlignCenter)
+            self.tbl.setItem(i, 0, line_item)
+
+            name_item = QTableWidgetItem(name)
+            name_item.setToolTip(orig_path)
+            self.tbl.setItem(i, 1, name_item)
+
+            status = QTableWidgetItem("⚠️  Introuvable")
+            status.setForeground(QColor("#ff5555"))
+            self.tbl.setItem(i, 2, status)
+
+            btn = QPushButton("Localiser…")
+            btn.setFixedHeight(26)
+            btn.clicked.connect(lambda checked, idx=i: self._locate(idx))
+            self.tbl.setCellWidget(i, 3, btn)
+
+        lay.addWidget(self.tbl)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok)
+        btns.button(QDialogButtonBox.Ok).setText("Fermer")
+        btns.accepted.connect(self.accept)
+        lay.addWidget(btns)
+
+    def _locate(self, idx):
+        _, name, orig_path = self.missing[idx]
+        start_dir = os.path.dirname(orig_path)
+        if not os.path.isdir(start_dir):
+            start_dir = os.path.expanduser("~")
+
+        new_path, _ = QFileDialog.getOpenFileName(
+            self, f"Localiser : {name}", start_dir,
+            "Médias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma "
+            "*.mp4 *.mov *.avi *.mkv *.wmv *.m4v "
+            "*.png *.jpg *.jpeg *.gif *.bmp *.webp);;Tous (*.*)"
+        )
+        if not new_path:
+            return
+
+        self._mark_found(idx, new_path)
+
+        # Liaison automatique : même dossier source → vérifier dans le nouveau dossier
+        old_dir = os.path.normcase(os.path.dirname(orig_path))
+        new_dir = os.path.dirname(new_path)
+        auto_count = 0
+        for j, (_, other_name, other_orig) in enumerate(self.missing):
+            if j == idx or j in self.remapped:
+                continue
+            if os.path.normcase(os.path.dirname(other_orig)) == old_dir:
+                candidate = os.path.join(new_dir, other_name)
+                if os.path.isfile(candidate):
+                    self._mark_auto(j, candidate)
+                    auto_count += 1
+
+        if auto_count:
+            QMessageBox.information(
+                self, "Liaison automatique",
+                f"{auto_count} fichier{'s' if auto_count > 1 else ''} "
+                f"lié{'s' if auto_count > 1 else ''} automatiquement\n"
+                f"(même dossier source détecté)."
+            )
+
+    def _mark_found(self, idx, new_path):
+        self.remapped[idx] = new_path
+        st = self.tbl.item(idx, 2)
+        st.setText("✓  Localisé")
+        st.setForeground(QColor("#44dd88"))
+        btn = self.tbl.cellWidget(idx, 3)
+        if btn:
+            btn.setEnabled(False)
+
+    def _mark_auto(self, idx, new_path):
+        self.remapped[idx] = new_path
+        st = self.tbl.item(idx, 2)
+        st.setText("🔗  Lié auto")
+        st.setForeground(QColor("#44aaff"))
+        btn = self.tbl.cellWidget(idx, 3)
+        if btn:
+            btn.setEnabled(False)
 
 
 class MainWindow(QMainWindow):
@@ -7013,7 +7141,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, tr("err_save_title"), tr("err_load_msg", e=e))
 
     def _check_missing_media(self):
-        """Verifie que tous les fichiers medias du show existent"""
+        """Verifie que tous les fichiers medias du show existent.
+        Ouvre un dialog de relocalisation si des fichiers sont introuvables."""
         missing = []
         for row in range(self.seq.table.rowCount()):
             title_item = self.seq.table.item(row, 1)
@@ -7024,23 +7153,43 @@ class MainWindow(QMainWindow):
                 continue
             if not os.path.isfile(path):
                 missing.append((row, Path(path).name, path))
-                # Emoji erreur dans la colonne icone
                 icon_item = self.seq.table.item(row, 0)
                 if icon_item:
                     icon_item.setText("\u26a0\ufe0f")
                     icon_item.setData(Qt.UserRole, "\u26a0\ufe0f")
-                # Marquer visuellement la ligne en rouge
                 for col in range(self.seq.table.columnCount()):
                     item = self.seq.table.item(row, col)
                     if item:
                         item.setForeground(QColor("#ff4444"))
 
-        if missing:
-            details = "\n".join(
-                tr("missing_file_line", row=r + 1, name=name) for r, name, _ in missing
-            )
-            QMessageBox.warning(self, tr("missing_files_title"),
-                tr("missing_files_msg", n=len(missing), details=details))
+        if not missing:
+            return
+
+        dlg = MissingMediaDialog(missing, self)
+        dlg.exec()
+
+        if not dlg.remapped:
+            return
+
+        _ICON_MAP = {"audio": "\U0001f3b5", "video": "\U0001f3ac", "image": "\U0001f5bc"}
+        default_fg = self.seq.table.palette().color(QPalette.Text)
+        for idx, new_path in dlg.remapped.items():
+            orig_row, _, _ = missing[idx]
+            title_item = self.seq.table.item(orig_row, 1)
+            if not title_item:
+                continue
+            title_item.setData(Qt.UserRole, new_path)
+            title_item.setText(Path(new_path).name)
+            icon_item = self.seq.table.item(orig_row, 0)
+            if icon_item:
+                icon_text = _ICON_MAP.get(media_icon(new_path), "?")
+                icon_item.setText(icon_text)
+                icon_item.setData(Qt.UserRole, icon_text)
+            for col in range(self.seq.table.columnCount()):
+                item = self.seq.table.item(orig_row, col)
+                if item:
+                    item.setForeground(default_fg)
+        self.seq.is_dirty = True
 
     # ==================== CONFIG AKAI (sauvegarde/chargement memoires) ====================
 
