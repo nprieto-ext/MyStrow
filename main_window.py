@@ -2772,6 +2772,14 @@ class MainWindow(QMainWindow):
     def on_media_status_changed(self, status):
         """Passe automatiquement au suivant ou gere les pauses"""
         if status == QMediaPlayer.EndOfMedia:
+            # Guard : le backend WMF (Windows) peut émettre EndOfMedia sur un
+            # silence long avant la vraie fin du fichier. On vérifie que la
+            # position est bien proche de la durée réelle avant d'agir.
+            pos = self.player.position()
+            dur = self.player.duration()
+            if dur > 0 and pos < dur - 2000:
+                return  # Faux EndOfMedia sur un silence — ignorer
+
             # Verifier que c'est bien le media courant qui est termine
             # (evite qu'un EndOfMedia retarde d'un ancien media avance au mauvais rang)
             source_row = getattr(self, '_media_source_row', self.seq.current_row)
