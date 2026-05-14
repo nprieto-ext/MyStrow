@@ -1109,6 +1109,9 @@ class FixtureCanvas(QWidget):
         self._locate_anim_t = 0.0
         self._locate_timer  = None
 
+        self._target_mode       = False   # Mode ciblage pan/tilt actif
+        self._target_cursor_pos = None   # QPoint sous le curseur (pour dessin croix)
+
     # ── Localisation (cercle pulsé) ─────────────────────────────────
     def start_locate(self, group, local_idx):
         """Démarre l'animation de localisation autour d'une fixture (2,5 s)."""
@@ -1125,6 +1128,54 @@ class FixtureCanvas(QWidget):
             self._locate_timer.stop()
             self._locate_key    = None
             self._locate_anim_t = 0.0
+        self.update()
+
+    # ── Mode ciblage pan/tilt ───────────────────────────────────────
+
+    def set_target_mode(self, active: bool):
+        self._target_mode = active
+        self._target_cursor_pos = None
+        self.setCursor(Qt.CrossCursor if active else Qt.ArrowCursor)
+        self.update()
+
+    def _apply_target(self, pos):
+        """Oriente les lyres sélectionnées vers le point pos (pixels canvas)."""
+        if not self.pdf.selected_lamps:
+            return
+        W, H = max(self.width(), 1), max(self.height(), 1)
+        tx_n = pos.x() / W   # normalisé 0-1
+        ty_n = pos.y() / H
+
+        STAGE_W = 10.0   # largeur de scène estimée (m)
+        STAGE_D = 10.0   # profondeur de scène estimée (m)
+        tx_m = (tx_n - 0.5) * STAGE_W
+        ty_m = (ty_n - 0.5) * STAGE_D
+
+        for i, proj in enumerate(self.pdf.projectors):
+            if getattr(proj, 'fixture_type', '') != 'Moving Head':
+                continue
+            group, li = self._local_idx(i)
+            if (group, li) not in self.pdf.selected_lamps:
+                continue
+
+            lx_n, ly_n = self._get_norm_pos(i)
+            lx_m = (lx_n - 0.5) * STAGE_W
+            ly_m = (ly_n - 0.5) * STAGE_D
+            height = getattr(proj, 'fixture_height', None) or 5.0
+
+            dx = tx_m - lx_m    # est positif si cible à droite
+            dz = ty_m - ly_m    # positif si cible vers l'avant-scène
+
+            # Pan : angle par rapport au forward (vers avant-scène = +z canvas)
+            pan_deg = math.degrees(math.atan2(dx, dz))
+            pan_val = 32768 + int(pan_deg / 135.0 * 32768)
+            proj.pan = max(0, min(65535, pan_val))
+
+            # Tilt : 0 = droit vers le bas, 65535 = horizontal
+            horiz = math.sqrt(dx * dx + dz * dz)
+            tilt_ratio = (math.pi / 2 - math.atan2(height, horiz)) / (math.pi / 2)
+            proj.tilt = max(0, min(65535, int(tilt_ratio * 65535)))
+
         self.update()
 
     # ── Helpers de position ─────────────────────────────────────────
@@ -1740,6 +1791,12 @@ class FixtureCanvas(QWidget):
 
     def mousePressEvent(self, event):
         pos = event.pos()
+
+        # ── Mode ciblage ─────────────────────────────────────────────
+        if self._target_mode and event.button() == Qt.LeftButton:
+            self._apply_target(pos)
+            return
+
         idx = self._fixture_at(pos)
 
         if event.button() == Qt.LeftButton:
@@ -2072,8 +2129,29 @@ class FixtureCanvas(QWidget):
                 painter.setPen(QColor(0, 212, 255, 255))
                 painter.drawText(QRect(lx, ly, lw, lh), Qt.AlignCenter, label)
 
+        # ── Croix de visée (mode ciblage) ────────────────────────────
+        if self._target_mode and self._target_cursor_pos is not None:
+            tx, ty = self._target_cursor_pos.x(), self._target_cursor_pos.y()
+            R = 14
+            painter.setPen(QPen(QColor("#00ff66"), 1, Qt.SolidLine))
+            painter.drawLine(tx - R, ty, tx + R, ty)
+            painter.drawLine(tx, ty - R, tx, ty + R)
+            painter.setPen(QPen(QColor("#00ff66"), 1.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(QPoint(tx, ty), R // 2, R // 2)
+
     def mouseMoveEvent(self, event):
         pos = event.pos()
+
+        # ── Mode ciblage ─────────────────────────────────────────────
+        if self._target_mode:
+            self._target_cursor_pos = pos
+            self.setCursor(Qt.CrossCursor)
+            if event.buttons() & Qt.LeftButton:
+                self._apply_target(pos)
+            else:
+                self.update()
+            return
 
         # ── Beam en attente : commit si > 5 px de mouvement ──────
         if self._pending_beam is not None and (event.buttons() & Qt.LeftButton):
@@ -2321,7 +2399,28 @@ class PlanDeFeu(QFrame):
                 patch_btn.setStyleSheet(_PARAM_SS)
                 patch_btn.clicked.connect(main_window.show_dmx_patch_config)
                 toolbar.addWidget(patch_btn)
-                toolbar.addSpacing(4)
+                toolbar.addSpacing(2)
+
+            _TARGET_SS = (
+                "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #3a3a3a;"
+                " border-radius:4px; font-size:13px; }"
+                "QPushButton:hover { background:#2a2a2a; color:#fff; border-color:#00aa44; }"
+                "QPushButton:checked { background:#0a2a14; color:#00ff66;"
+                " border:1px solid #00aa44; }"
+            )
+            self.btn_target = QPushButton("🎯")
+            self.btn_target.setCheckable(True)
+            self.btn_target.setFixedSize(26, 26)
+            self.btn_target.setToolTip(
+                "Mode ciblage — cliquez sur la scène pour orienter\n"
+                "les lyres sélectionnées vers ce point"
+            )
+            self.btn_target.setStyleSheet(_TARGET_SS)
+            self.btn_target.toggled.connect(
+                lambda v: self.canvas.set_target_mode(v)
+            )
+            toolbar.addWidget(self.btn_target)
+            toolbar.addSpacing(4)
 
             toolbar.addStretch()
 
@@ -2381,6 +2480,8 @@ class PlanDeFeu(QFrame):
             self.dmx_toggle_btn.setVisible(False)
             self.btn_3d = QPushButton()
             self.btn_3d.setVisible(False)
+            self.btn_target = QPushButton()
+            self.btn_target.setVisible(False)
 
         # ── Canvas ─────────────────────────────────────────────────
         self.canvas = FixtureCanvas(self)
