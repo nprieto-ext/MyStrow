@@ -10282,18 +10282,18 @@ class MainWindow(QMainWindow):
         )
         _PT_APL_SS = (
             "QPushButton { background:#0d1520; color:#4488bb; border:1px solid #1a2d40;"
-            " border-radius:6px; padding:4px 8px; font-size:10px; text-align:left; }"
+            " border-radius:6px; padding:4px 8px; font-size:10px; }"
             "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
         )
         btn_pt_reset       = QPushButton("↺  Reset")
-        btn_pt_apply_model = QPushButton("Appliquer à toutes les\n…")
-        btn_pt_apply_all   = QPushButton("Appliquer à toutes\nles lyres")
+        btn_pt_apply_model = QPushButton("…")
+        btn_pt_apply_all   = QPushButton("Toutes\nles lyres")
         btn_pt_reset.setStyleSheet(_PT_RST_SS)
         btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
         btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
-        btn_pt_reset.setFixedSize(120, 28)
-        btn_pt_apply_model.setFixedSize(120, 44)
-        btn_pt_apply_all.setFixedSize(120, 44)
+        btn_pt_reset.setFixedSize(100, 28)
+        btn_pt_apply_model.setFixedSize(100, 44)
+        btn_pt_apply_all.setFixedSize(100, 44)
 
         pt_side_col = QVBoxLayout()
         pt_side_col.setSpacing(6)
@@ -10306,6 +10306,7 @@ class MainWindow(QMainWindow):
         pt_main_row.setSpacing(10)
         pt_main_row.addWidget(pt_widget)
         pt_main_row.addLayout(pt_side_col)
+        pt_main_row.addStretch()
         pt_vl.addLayout(pt_main_row)
 
         pt_hint = QLabel("Glissez le point jaune pour tester le mouvement en temps réel.")
@@ -11064,7 +11065,7 @@ class MainWindow(QMainWindow):
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
                 _ref = fd.get('name') or fd.get('group', '')
-                btn_pt_apply_model.setText(f"Appliquer à toutes les\n« {_ref} »")
+                btn_pt_apply_model.setText(f"« {_ref} »")
 
         def _commit():
             idx = _sel[0]
@@ -11159,7 +11160,7 @@ class MainWindow(QMainWindow):
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
                 _ref = fixture_data[idx].get('name') or fixture_data[idx].get('group', '')
-                btn_pt_apply_model.setText(f"Appliquer à toutes les\n« {_ref} »")
+                btn_pt_apply_model.setText(f"« {_ref} »")
 
         det_type_cb.currentIndexChanged.connect(lambda _: _on_type_changed())
 
