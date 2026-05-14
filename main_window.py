@@ -1183,6 +1183,167 @@ class _StatusCornerWidget(QWidget):
         self._cpu_val.setStyleSheet(f"color:{col}; font-size:9px; font-weight:bold;")
 
 
+class PanTiltLimitWidget(QWidget):
+    """Carré interactif de définition des limites pan/tilt d'une lyre.
+
+    Pan = axe X, Tilt = axe Y. Quatre poignées glissables (une par côté)
+    délimitent la zone de mouvement autorisée. Un point jaune indique la
+    position actuelle de la lyre. Émet limits_changed à chaque modification.
+    Valeurs : 0–255 (coarse DMX).
+    """
+    limits_changed = Signal(int, int, int, int)   # pan_min, pan_max, tilt_min, tilt_max
+
+    _MARGIN   = 20
+    _HANDLE_R = 7
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(230, 230)
+        self.setCursor(Qt.CrossCursor)
+        self._pan_min  = 0
+        self._pan_max  = 255
+        self._tilt_min = 0
+        self._tilt_max = 255
+        self._cur_pan  = 127
+        self._cur_tilt = 127
+        self._dragging = None   # 'pan_min' | 'pan_max' | 'tilt_min' | 'tilt_max'
+
+    # ── Public API ───────────────────────────────────────────────────────────
+    def set_limits(self, pan_min, pan_max, tilt_min, tilt_max):
+        self._pan_min  = max(0, min(255, pan_min))
+        self._pan_max  = max(0, min(255, pan_max))
+        self._tilt_min = max(0, min(255, tilt_min))
+        self._tilt_max = max(0, min(255, tilt_max))
+        self.update()
+
+    def set_position(self, pan_coarse, tilt_coarse):
+        self._cur_pan  = max(0, min(255, pan_coarse))
+        self._cur_tilt = max(0, min(255, tilt_coarse))
+        self.update()
+
+    def get_limits(self):
+        return self._pan_min, self._pan_max, self._tilt_min, self._tilt_max
+
+    # ── Helpers géométrie ────────────────────────────────────────────────────
+    def _sq(self):
+        m = self._MARGIN
+        return m, m, self.width() - 2*m, self.height() - 2*m
+
+    def _to_px(self, v, size):
+        return v / 255.0 * size
+
+    def _to_val(self, px, size):
+        return max(0, min(255, int(round(px / size * 255))))
+
+    def _handles(self):
+        ox, oy, w, h = self._sq()
+        mid_x = ox + w // 2
+        mid_y = oy + h // 2
+        return {
+            'pan_min':  (ox + self._to_px(self._pan_min,  w), mid_y),
+            'pan_max':  (ox + self._to_px(self._pan_max,  w), mid_y),
+            'tilt_min': (mid_x, oy + self._to_px(self._tilt_min, h)),
+            'tilt_max': (mid_x, oy + self._to_px(self._tilt_max, h)),
+        }
+
+    # ── Dessin ───────────────────────────────────────────────────────────────
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        ox, oy, w, h = self._sq()
+
+        # Fond global
+        p.fillRect(self.rect(), QColor("#0a0a0a"))
+
+        # Grille discrète
+        p.setPen(QPen(QColor("#181818"), 1))
+        for i in range(0, w + 1, w // 4):
+            p.drawLine(ox + i, oy, ox + i, oy + h)
+        for i in range(0, h + 1, h // 4):
+            p.drawLine(ox, oy + i, ox + w, oy + i)
+
+        # Contour carré
+        p.setPen(QPen(QColor("#2a2a2a"), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(ox, oy, w, h)
+
+        # Zone hors-limites (overlay sombre sur tout le carré)
+        p.fillRect(ox, oy, w, h, QColor(0, 0, 0, 130))
+
+        # Zone autorisée (rectangle clair)
+        ax = int(ox + self._to_px(self._pan_min,  w))
+        ay = int(oy + self._to_px(self._tilt_min, h))
+        aw = max(2, int(self._to_px(self._pan_max  - self._pan_min,  w)))
+        ah = max(2, int(self._to_px(self._tilt_max - self._tilt_min, h)))
+        p.fillRect(ax, ay, aw, ah, QColor("#0e0e0e"))
+        p.setPen(QPen(QColor("#00d4ff"), 1))
+        p.setBrush(QColor(0, 212, 255, 18))
+        p.drawRect(ax, ay, aw, ah)
+
+        # Croix centrale (centre de la zone autorisée)
+        cx_zone = ax + aw // 2
+        cy_zone = ay + ah // 2
+        p.setPen(QPen(QColor("#1a3a3a"), 1))
+        p.drawLine(cx_zone, ay, cx_zone, ay + ah)
+        p.drawLine(ax, cy_zone, ax + aw, cy_zone)
+
+        # Position actuelle de la lyre (point jaune)
+        dot_x = int(ox + self._to_px(self._cur_pan,  w))
+        dot_y = int(oy + self._to_px(self._cur_tilt, h))
+        p.setPen(QPen(QColor("#b09000"), 1))
+        p.setBrush(QColor("#E2CE16"))
+        p.drawEllipse(QPoint(dot_x, dot_y), 4, 4)
+
+        # Poignées
+        for name, (hx, hy) in self._handles().items():
+            active = (name == self._dragging)
+            p.setPen(QPen(QColor("#00d4ff"), 1.5 if active else 1))
+            p.setBrush(QColor("#00aacc") if active else QColor("#0a2535"))
+            p.drawEllipse(QPoint(int(hx), int(hy)), self._HANDLE_R, self._HANDLE_R)
+
+        # Labels axes
+        p.setPen(QPen(QColor("#333333"), 1))
+        fnt = QFont("Segoe UI", 7)
+        p.setFont(fnt)
+        p.drawText(ox + 2, oy - 5, "TILT ↑")
+        p.drawText(ox + w - 30, oy + h + 13, "PAN →")
+
+    # ── Interaction ──────────────────────────────────────────────────────────
+    def _hit(self, pos):
+        r2 = (self._HANDLE_R + 5) ** 2
+        for name, (hx, hy) in self._handles().items():
+            dx, dy = pos.x() - hx, pos.y() - hy
+            if dx*dx + dy*dy <= r2:
+                return name
+        return None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._dragging = self._hit(e.position())
+            if self._dragging:
+                self.setCursor(Qt.SizeAllCursor)
+
+    def mouseMoveEvent(self, e):
+        if not self._dragging:
+            self.setCursor(Qt.SizeAllCursor if self._hit(e.position()) else Qt.CrossCursor)
+            return
+        ox, oy, w, h = self._sq()
+        vp = self._to_val(e.position().x() - ox, w)
+        vt = self._to_val(e.position().y() - oy, h)
+        GAP = 5
+        if   self._dragging == 'pan_min':  self._pan_min  = min(vp, self._pan_max  - GAP)
+        elif self._dragging == 'pan_max':  self._pan_max  = max(vp, self._pan_min  + GAP)
+        elif self._dragging == 'tilt_min': self._tilt_min = min(vt, self._tilt_max - GAP)
+        elif self._dragging == 'tilt_max': self._tilt_max = max(vt, self._tilt_min + GAP)
+        self.update()
+        self.limits_changed.emit(self._pan_min, self._pan_max, self._tilt_min, self._tilt_max)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._dragging = None
+            self.setCursor(Qt.CrossCursor)
+
+
 class MissingMediaDialog(QDialog):
     """Dialog de relocalisation des fichiers médias manquants d'un show.
 
@@ -10085,6 +10246,122 @@ class MainWindow(QMainWindow):
         chips_vl.setSpacing(4)
         fv.addWidget(chips_w)
 
+        # ── Section Limites Pan/Tilt (Moving Head uniquement) ──────────
+        pt_section = QWidget()
+        pt_section.setStyleSheet("background:transparent;")
+        pt_vl = QVBoxLayout(pt_section)
+        pt_vl.setContentsMargins(0, 0, 0, 0)
+        pt_vl.setSpacing(8)
+        pt_vl.addWidget(_hdiv())
+        pt_vl.addWidget(_sec("Limites de mouvement"))
+        pt_vl.addSpacing(4)
+
+        pt_widget = PanTiltLimitWidget()
+
+        # Ligne : widget centré + boutons calibration
+        pt_top_row = QHBoxLayout()
+        pt_top_row.setSpacing(12)
+        pt_top_row.addWidget(pt_widget)
+
+        pt_btn_col = QVBoxLayout()
+        pt_btn_col.setSpacing(6)
+        _PT_BTN_SS = (
+            "QPushButton { background:#141414; color:#888; border:1px solid #222;"
+            " border-radius:6px; padding:4px 10px; font-size:11px; }"
+            "QPushButton:hover { color:#00d4ff; border-color:#00d4ff55; background:#0d1a1f; }"
+        )
+        btn_pt_set_pan_min  = QPushButton("◀  Pan min ici")
+        btn_pt_set_pan_max  = QPushButton("Pan max ici  ▶")
+        btn_pt_set_tilt_min = QPushButton("▲  Tilt min ici")
+        btn_pt_set_tilt_max = QPushButton("Tilt max ici  ▼")
+        btn_pt_reset        = QPushButton("↺  Reset")
+        _PT_RST_SS = (
+            "QPushButton { background:#141414; color:#553333; border:1px solid #221515;"
+            " border-radius:6px; padding:4px 10px; font-size:11px; }"
+            "QPushButton:hover { color:#ff6644; border-color:#ff444455; background:#1a0d0d; }"
+        )
+        for b in [btn_pt_set_pan_min, btn_pt_set_pan_max,
+                  btn_pt_set_tilt_min, btn_pt_set_tilt_max]:
+            b.setStyleSheet(_PT_BTN_SS)
+            b.setFixedHeight(28)
+            pt_btn_col.addWidget(b)
+        btn_pt_reset.setStyleSheet(_PT_RST_SS)
+        btn_pt_reset.setFixedHeight(28)
+        pt_btn_col.addWidget(btn_pt_reset)
+        pt_btn_col.addStretch()
+
+        pt_top_row.addLayout(pt_btn_col)
+        pt_vl.addLayout(pt_top_row)
+
+        pt_hint = QLabel(
+            "Faites bouger votre lyre jusqu'à la position souhaitée,\n"
+            "puis cliquez sur le bouton correspondant."
+        )
+        pt_hint.setStyleSheet(
+            "color:#333; font-size:10px; border:none; background:transparent;"
+        )
+        pt_vl.addWidget(pt_hint)
+
+        fv.addWidget(pt_section)
+        pt_section.setVisible(False)
+
+        def _on_pt_limits_changed(pm, px, tm, tx):
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors): return
+            proj = self.projectors[idx]
+            proj.pan_min  = pm * 256
+            proj.pan_max  = (px * 256) + 255 if px < 255 else 65535
+            proj.tilt_min = tm * 256
+            proj.tilt_max = (tx * 256) + 255 if tx < 255 else 65535
+
+        pt_widget.limits_changed.connect(_on_pt_limits_changed)
+
+        def _pt_set_pan_min():
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors): return
+            proj = self.projectors[idx]
+            pm, px, tm, tx = pt_widget.get_limits()
+            new_pm = proj.pan >> 8
+            pt_widget.set_limits(new_pm, px, tm, tx)
+
+        def _pt_set_pan_max():
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors): return
+            proj = self.projectors[idx]
+            pm, px, tm, tx = pt_widget.get_limits()
+            new_px = proj.pan >> 8
+            pt_widget.set_limits(pm, new_px, tm, tx)
+
+        def _pt_set_tilt_min():
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors): return
+            proj = self.projectors[idx]
+            pm, px, tm, tx = pt_widget.get_limits()
+            new_tm = proj.tilt >> 8
+            pt_widget.set_limits(pm, px, new_tm, tx)
+
+        def _pt_set_tilt_max():
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors): return
+            proj = self.projectors[idx]
+            pm, px, tm, tx = pt_widget.get_limits()
+            new_tx = proj.tilt >> 8
+            pt_widget.set_limits(pm, px, tm, new_tx)
+
+        def _pt_reset():
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors): return
+            proj = self.projectors[idx]
+            proj.pan_min = 0; proj.pan_max = 65535
+            proj.tilt_min = 0; proj.tilt_max = 65535
+            pt_widget.set_limits(0, 255, 0, 255)
+
+        btn_pt_set_pan_min.clicked.connect(_pt_set_pan_min)
+        btn_pt_set_pan_max.clicked.connect(_pt_set_pan_max)
+        btn_pt_set_tilt_min.clicked.connect(_pt_set_tilt_min)
+        btn_pt_set_tilt_max.clicked.connect(_pt_set_tilt_max)
+        btn_pt_reset.clicked.connect(_pt_reset)
+
         fv.addStretch()
 
         dv_outer = QVBoxLayout(detail_w)
@@ -10777,6 +11054,18 @@ class MainWindow(QMainWindow):
                 lbl_conflict_det.setVisible(False)
             if idx < len(_cards) and _cards[idx] is not None:
                 scroll.ensureWidgetVisible(_cards[idx])
+
+            # Pan/tilt limits section — visible only for Moving Head
+            is_mh = fd.get('fixture_type', '') == 'Moving Head'
+            pt_section.setVisible(is_mh)
+            if is_mh:
+                proj = self.projectors[idx]
+                pt_widget.set_limits(
+                    proj.pan_min >> 8, proj.pan_max >> 8,
+                    proj.tilt_min >> 8, proj.tilt_max >> 8
+                )
+                pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
+
         def _commit():
             idx = _sel[0]
             if idx is None or idx >= len(fixture_data): return
@@ -10860,6 +11149,15 @@ class MainWindow(QMainWindow):
                 return
             _update_chips(fixture_data[idx].get('profile', []))
             _commit()
+            is_mh = det_type_cb.currentText() == 'Moving Head'
+            pt_section.setVisible(is_mh)
+            if is_mh and idx is not None and idx < len(self.projectors):
+                proj = self.projectors[idx]
+                pt_widget.set_limits(
+                    proj.pan_min >> 8, proj.pan_max >> 8,
+                    proj.tilt_min >> 8, proj.tilt_max >> 8
+                )
+                pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
 
         det_type_cb.currentIndexChanged.connect(lambda _: _on_type_changed())
 

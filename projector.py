@@ -40,6 +40,11 @@ class Projector:
         self.orange_boost = 0   # Orange extra (0-255)
         self.color_wheel_slots = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
         self.gobo_wheel_slots  = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
+        # Limites de mouvement pan/tilt (16-bit, 0–65535 ; 0/65535 = aucune limite)
+        self.pan_min  = 0
+        self.pan_max  = 65535
+        self.tilt_min = 0
+        self.tilt_max = 65535
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""
