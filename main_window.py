@@ -2199,7 +2199,9 @@ class MainWindow(QMainWindow):
         # Forcer ratio 16:9 sur la video
         self._right_splitter = right
         self._right_splitter_initialized = False
-        right.splitterMoved.connect(self._enforce_video_ratio)
+        right.splitterMoved.connect(
+            lambda pos, idx: self._enforce_video_ratio() if idx == 2 else None
+        )
 
         self.akai.setMinimumWidth(320)
 

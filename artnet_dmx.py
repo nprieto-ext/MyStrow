@@ -4,6 +4,7 @@ Gestion de l'envoi DMX :
   - Boitier reseau Art-Net (ElectroConcept, MA Lighting, etc.)
 """
 import os
+import sys
 import json
 import socket
 import struct
@@ -299,7 +300,10 @@ class ArtNetDMX:
              fonctionne même si SetCommBreak n'est pas supporté (CH340, FTDI clones,
              certains drivers Windows 11).
         """
-        _use_baud_trick = False   # bascule sur True si break_condition lève une exception
+        # Sur macOS, break_condition FTDI VCP peut réussir sans lever d'exception mais
+        # ne génère pas de break électrique valide → les fixtures ignorent tous les frames.
+        # Le baud-rate trick est plus fiable sur macOS (et reste valide sur Windows/Linux).
+        _use_baud_trick = (sys.platform == 'darwin')
         while not self._enttec_stop:
             t0 = time.monotonic()
             ser = self._serial

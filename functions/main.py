@@ -143,6 +143,25 @@ def _get_plan_type(price_id: str) -> str:
     return "monthly"
 
 
+def _get_plan_price_ht(plan_type: str) -> float:
+    """Montant HT depuis le price Stripe configuré — fallback quand amount_eur=0."""
+    _map = {
+        "monthly":  _stripe_price_monthly,
+        "annual":   _stripe_price_annual,
+        "lifetime": _stripe_price_lifetime,
+    }
+    fn = _map.get(plan_type)
+    if not fn:
+        return 0.0
+    try:
+        price = _stripe_get(f"/prices/{fn()}")
+        cents = price.get("unit_amount") or 0
+        return round(cents / 100.0, 2)
+    except Exception as e:
+        print(f"[_get_plan_price_ht] {e}")
+        return 0.0
+
+
 def _plan_label(plan_type: str) -> str:
     return {
         "monthly":  "Licence MyStrow — Mensuel",
@@ -311,11 +330,15 @@ def _axonaut_create_invoice(
     plan_type: str,
     amount_eur: float,
     stripe_ref: str,
+    uid: str = "",
 ) -> None:
-    """Crée une facture dans Axonaut."""
+    """Crée une facture dans Axonaut et stocke le lien dans Firestore."""
     if not company_id:
         print("[Axonaut] company_id manquant — facture non creee")
         return
+    if not amount_eur:
+        amount_eur = _get_plan_price_ht(plan_type)
+        print(f"[Axonaut] amount_eur=0 → fallback Stripe price : {amount_eur} €")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     result = _axonaut("POST", "/invoices", {
         "company_id":     company_id,
@@ -329,10 +352,30 @@ def _axonaut_create_invoice(
             "tax_rate":      20,
         }],
     })
-    if result:
-        print(f"[Axonaut] Facture creee : id={result.get('id')}")
-    else:
+    if not result:
         print("[Axonaut] Facture non creee (voir erreur ci-dessus)")
+        return
+
+    invoice_id = result.get("id")
+    invoice_url = (result.get("pdf_url")
+                   or result.get("public_link")
+                   or result.get("link")
+                   or f"https://axonaut.com/invoice/{invoice_id}")
+    print(f"[Axonaut] Facture creee : id={invoice_id}")
+
+    if uid:
+        try:
+            _get_db().collection("licenses").document(uid) \
+                .collection("invoices").add({
+                    "date":        today,
+                    "amount_eur":  round(amount_eur, 2),
+                    "plan":        plan_type,
+                    "invoice_url": invoice_url,
+                    "axonaut_id":  invoice_id,
+                })
+            print(f"[Firebase] Facture stockée pour uid={uid}")
+        except Exception as e:
+            print(f"[Firebase] Erreur stockage facture : {e}")
 
 
 # ===========================================================================
@@ -504,7 +547,8 @@ def _on_checkout_completed(session: dict) -> None:
     # Axonaut
     company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address)
     _axonaut_create_invoice(company_id, plan_type, amount_eur,
-                            stripe_ref=session.get("payment_intent", ""))
+                            stripe_ref=session.get("payment_intent", ""),
+                            uid=uid)
 
     print(f"[checkout.completed] {email} — {plan_type} — expire {_fmt_date(expiry_ts)}")
 
@@ -543,7 +587,7 @@ def _on_invoice_paid(invoice: dict) -> None:
     _email_renewal(email, expiry_ts)
 
     company_id = _axonaut_get_or_create_company(email, cust_name)
-    _axonaut_create_invoice(company_id, plan_type, amount_eur, stripe_ref=stripe_ref)
+    _axonaut_create_invoice(company_id, plan_type, amount_eur, stripe_ref=stripe_ref, uid=uid)
 
     print(f"[invoice.paid] {email} — expire {_fmt_date(expiry_ts)}")
 

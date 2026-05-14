@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent
 from PySide6.QtGui import QColor, QBrush
 
 TRUSS_Y   = 7.0
@@ -86,6 +86,45 @@ _STYLE_ROW_BTN = (
 )
 
 
+class _WheelSpinBox(QDoubleSpinBox):
+    """SpinBox avec molette + glisser horizontal (scrub) sur le champ texte."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._scrub   = False
+        self._scrub_x = 0
+        self._scrub_v = 0.0
+        le = self.lineEdit()
+        le.setCursor(Qt.SizeHorCursor)
+        le.installEventFilter(self)   # intercepte les events avant la QLineEdit
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        self.setValue(self.value() + (self.singleStep() if delta > 0 else -self.singleStep()))
+        event.accept()
+
+    def eventFilter(self, obj, event):
+        if obj is not self.lineEdit():
+            return super().eventFilter(obj, event)
+        t = event.type()
+        if t == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            self._scrub   = True
+            self._scrub_x = event.globalPos().x()
+            self._scrub_v = self.value()
+            obj.grabMouse()   # redirige tous les move/release vers la lineEdit
+            return True
+        if t == QEvent.MouseMove and self._scrub:
+            dx    = event.globalPos().x() - self._scrub_x
+            new_v = self._scrub_v + dx * self.singleStep() / 3.0
+            self.setValue(max(self.minimum(), min(self.maximum(), new_v)))
+            return True
+        if t == QEvent.MouseButtonRelease and self._scrub and event.button() == Qt.LeftButton:
+            self._scrub = False
+            obj.releaseMouse()
+            return True
+        return False
+
+
 class _TrussRow(QFrame):
     """Ligne d'un truss dans l'éditeur."""
     changed = Signal()
@@ -127,7 +166,7 @@ class _TrussRow(QFrame):
             lbl = QLabel(label)
             lbl.setFixedWidth(self._LABEL_W)
             lbl.setStyleSheet("color:#444466; font-size:9px;")
-            sp = QDoubleSpinBox()
+            sp = _WheelSpinBox()
             sp.setRange(lo, hi); sp.setSingleStep(step)
             sp.setDecimals(1); sp.setValue(val)
             sp.setFixedWidth(70); sp.setStyleSheet(_STYLE_SPIN)
@@ -459,7 +498,7 @@ class ProjectorTableDialog(QDialog):
                 col = ci + 2
                 sp  = self._tbl.cellWidget(row, col)
                 if sp is None:
-                    sp = QDoubleSpinBox()
+                    sp = _WheelSpinBox()
                     sp.setRange(lo, hi)
                     sp.setSingleStep(step)
                     sp.setDecimals(dec)
@@ -764,26 +803,6 @@ class Plan3DWebWindow(QMainWindow):
         self._jog_pad = self._build_jog_pad()
         lay.addWidget(self._jog_pad)
 
-        # Barre de boutons bas
-        bot = QWidget()
-        bot.setStyleSheet("background:#060616;border-top:1px solid #0e0e28;")
-        bot_lay = QHBoxLayout(bot)
-        bot_lay.setContentsMargins(4, 3, 4, 3)
-        bot_lay.setSpacing(3)
-        _BOT_BTN = (
-            "QPushButton{background:#0c0c22;color:#444466;border:1px solid #1a1a38;"
-            "border-radius:3px;font-size:8px;padding:2px 4px;}"
-            "QPushButton:hover{background:#1a1a38;color:#aaaacc;}"
-        )
-        for label, slot in [
-            ("Réinit", self._mini_reset),
-            ("Table…", self._open_placement),
-        ]:
-            b = QPushButton(label)
-            b.setStyleSheet(_BOT_BTN)
-            b.clicked.connect(slot)
-            bot_lay.addWidget(b)
-        lay.addWidget(bot)
         return w
 
     def _mini_reset(self):
@@ -869,7 +888,7 @@ class Plan3DWebWindow(QMainWindow):
                 col = ci + 1
                 sp  = self._mini_tbl.cellWidget(row, col)
                 if sp is None:
-                    sp = QDoubleSpinBox()
+                    sp = _WheelSpinBox()
                     sp.setRange(lo, hi); sp.setSingleStep(step); sp.setDecimals(dec)
                     sp.setButtonSymbols(QDoubleSpinBox.UpDownArrows)
                     sp.setStyleSheet(self._MINI_SP); sp.setFrame(False)
@@ -959,7 +978,7 @@ class Plan3DWebWindow(QMainWindow):
             btn_m.clicked.connect(lambda _, x=dx, z=dz, h=dh: self._jog_move(x, z, h))
             row_lay.addWidget(btn_m)
 
-            sp = QDoubleSpinBox()
+            sp = _WheelSpinBox()
             sp.setRange(lo, hi)
             sp.setDecimals(2)
             sp.setSingleStep(0.1)
@@ -997,7 +1016,7 @@ class Plan3DWebWindow(QMainWindow):
         btn_rx_m.clicked.connect(lambda: self._jog_rx(-1))
         rx_row.addWidget(btn_rx_m)
 
-        sp_rx = QDoubleSpinBox()
+        sp_rx = _WheelSpinBox()
         sp_rx.setRange(-180.0, 180.0)
         sp_rx.setDecimals(1)
         sp_rx.setSingleStep(1.0)
@@ -1025,6 +1044,40 @@ class Plan3DWebWindow(QMainWindow):
         btn_flip.clicked.connect(self._jog_flip)
         lay.addWidget(btn_flip)
 
+        # Lignes RY et RZ
+        for attr, lbl_txt in [('body_rotation', 'RY'), ('rot3d_z', 'RZ')]:
+            r_row = QHBoxLayout()
+            r_row.setSpacing(3)
+            lbl_r = QLabel(lbl_txt)
+            lbl_r.setStyleSheet(_AXIS_LBL)
+            lbl_r.setFixedWidth(14)
+            r_row.addWidget(lbl_r)
+
+            btn_m = QPushButton("↺")
+            btn_m.setFixedSize(26, 24)
+            btn_m.setStyleSheet(self._JOG_BTN)
+            btn_m.clicked.connect(lambda _, a=attr: self._jog_rot(a, -1))
+            r_row.addWidget(btn_m)
+
+            sp_r = _WheelSpinBox()
+            sp_r.setRange(-180.0, 180.0)
+            sp_r.setDecimals(1)
+            sp_r.setSingleStep(1.0)
+            sp_r.setStyleSheet(_AXIS_SP)
+            sp_r.setButtonSymbols(QDoubleSpinBox.UpDownArrows)
+            sp_r.setFrame(False)
+            sp_r.valueChanged.connect(lambda v, a=attr: self._jog_spin_changed(a, v))
+            r_row.addWidget(sp_r)
+            self._jog_spins[attr] = sp_r
+
+            btn_p = QPushButton("↻")
+            btn_p.setFixedSize(26, 24)
+            btn_p.setStyleSheet(self._JOG_BTN)
+            btn_p.clicked.connect(lambda _, a=attr: self._jog_rot(a, 1))
+            r_row.addWidget(btn_p)
+
+            lay.addLayout(r_row)
+
         return frame
 
     def _jog_set_step(self, step: float):
@@ -1033,25 +1086,28 @@ class Plan3DWebWindow(QMainWindow):
             b.setChecked(s == step)
 
     def _jog_rx(self, direction: int):
-        """Incrémente/décrémente rot3d_x pour tous les projecteurs sélectionnés."""
+        self._jog_rot('rot3d_x', direction)
+
+    def _jog_rot(self, attr: str, direction: int):
+        """Incrémente/décrémente un attribut de rotation pour tous les projecteurs sélectionnés."""
         projs = self._last_projectors
         rows = self._selected_rows or ({self._highlighted_row} if self._highlighted_row >= 0 else set())
         rows = {r for r in rows if 0 <= r < len(projs)}
         if not rows or not projs:
             return
-        step = max(1.0, self._jog_step * 10)  # 0.5m→5°, 1.0→10°, 2.0→20°
-        undo_steps = [{'idx': r, 'attrs': {'rot3d_x': float(getattr(projs[r], 'rot3d_x', 0.0) or 0.0)}}
+        step = max(1.0, self._jog_step * 10)
+        undo_steps = [{'idx': r, 'attrs': {attr: float(getattr(projs[r], attr, 0.0) or 0.0)}}
                       for r in rows]
         self._push_undo(undo_steps)
         for r in rows:
             p = projs[r]
-            cur = float(getattr(p, 'rot3d_x', 0.0) or 0.0)
-            p.rot3d_x = round(max(-180.0, min(180.0, cur + direction * step)), 1)
-        sp = self._jog_spins.get('rot3d_x')
+            cur = float(getattr(p, attr, 0.0) or 0.0)
+            setattr(p, attr, round(max(-180.0, min(180.0, cur + direction * step)), 1))
+        sp = self._jog_spins.get(attr)
         primary = self._highlighted_row
         if sp and 0 <= primary < len(projs):
             sp.blockSignals(True)
-            sp.setValue(float(getattr(projs[primary], 'rot3d_x', 0.0) or 0.0))
+            sp.setValue(float(getattr(projs[primary], attr, 0.0) or 0.0))
             sp.blockSignals(False)
         self.refresh(projs)
 
@@ -1150,7 +1206,8 @@ class Plan3DWebWindow(QMainWindow):
         primary = self._highlighted_row
         if primary >= 0 and primary < len(projs):
             pp = projs[primary]
-            _def = {'pos_3d_x': 0.0, 'pos_3d_z': 0.0, 'fixture_height': 7.0, 'rot3d_x': 0.0}
+            _def = {'pos_3d_x': 0.0, 'pos_3d_z': 0.0, 'fixture_height': 7.0,
+                    'rot3d_x': 0.0, 'body_rotation': 0.0, 'rot3d_z': 0.0}
             for attr, sp in self._jog_spins.items():
                 sp.blockSignals(True)
                 dflt = _def.get(attr, 0.0)
@@ -1283,7 +1340,8 @@ class Plan3DWebWindow(QMainWindow):
         name = getattr(p, 'name', '') or getattr(p, 'group', '') or f'#{idx + 1}'
         n    = len(self._selected_rows)
         self._jog_name.setText(f"{name}  (+{n-1})" if n > 1 else name)
-        _defaults = {'pos_3d_x': 0.0, 'pos_3d_z': 0.0, 'fixture_height': 7.0, 'rot3d_x': 0.0}
+        _defaults = {'pos_3d_x': 0.0, 'pos_3d_z': 0.0, 'fixture_height': 7.0,
+                     'rot3d_x': 0.0, 'body_rotation': 0.0, 'rot3d_z': 0.0}
         for attr, sp in self._jog_spins.items():
             sp.blockSignals(True)
             dflt = _defaults.get(attr, 0.0)

@@ -1166,17 +1166,35 @@ class FixtureCanvas(QWidget):
             if dist < 1:
                 continue
 
+            # Allumer la lyre si elle est éteinte (au premier clic)
+            if proj.level == 0:
+                proj.set_color(QColor("white"), brightness=100)
+
             # ── Pan ────────────────────────────────────────────────────
             # 0° = "en avant" (vers le bas canvas) — même repère que le rendu
-            pan_angle = math.degrees(math.atan2(dx, dy))
+            pan_angle = math.degrees(math.atan2(-dx, dy))
             pan_val   = 32768 + int(pan_angle / 135.0 * 32768)
-            proj.pan  = max(0, min(65535, pan_val))
+            pan_val   = max(0, min(65535, pan_val))
 
             # ── Tilt ───────────────────────────────────────────────────
-            # beam_len = r*2 + tilt_ratio * r*7  →  tilt_ratio = (dist - r*2) / (r*7)
-            tilt_ratio = (dist - r * 2) / max(1, r * 7)
-            proj.tilt  = max(0, min(65535, int(tilt_ratio * 65535)))
+            # 32768 = neutre (droit vers le bas), valeurs > 32768 = incliné vers l'avant
+            # Le 3D interprète tilt centré sur 32768 — ne pas envoyer 0/65535 (= vers le haut)
+            tilt_ratio = max(0.0, (dist - r * 2) / max(1, r * 7))
+            tilt_val   = 32768 + int(tilt_ratio * 16384)   # 32768 → 49152 (~67° max)
+            tilt_val   = max(0, min(65535, tilt_val))
 
+            # Appliquer le swap si actif : artnet_dmx va re-swapper, donc on
+            # pre-swap ici pour que les bons axes arrivent sur les bons canaux.
+            # Pan_invert / tilt_invert sont gérés par artnet_dmx directement —
+            # il ne faut PAS les appliquer ici (ce serait une double inversion).
+            if getattr(proj, 'pan_tilt_swap', False):
+                pan_val, tilt_val = tilt_val, pan_val
+
+            proj.pan  = pan_val
+            proj.tilt = tilt_val
+
+        if hasattr(self.pdf, '_flush_dmx'):
+            self.pdf._flush_dmx()
         self.update()
 
     # ── Helpers de position ─────────────────────────────────────────
@@ -2506,15 +2524,25 @@ class PlanDeFeu(QFrame):
             self.btn_target.blockSignals(False)
             self.canvas.set_target_mode(False)
 
-    _GROUP_LABELS = {
-        "face": "Face", "lat": "LAT", "contre": "Contre",
-        "douche1": "Douche 1", "douche2": "Douche 2", "douche3": "Douche 3",
-        "groupe_g": "Groupe G", "groupe_h": "Groupe H",
+    _GROUP_LETTERS = {
+        "face":     "A",
+        "lat":      "B",
+        "contre":   "C",
+        "douche1":  "D",
+        "douche2":  "E",
+        "douche3":  "F",
+        "groupe_g": "G",
+        "groupe_h": "H",
     }
+
+    def _log(self, text, level="info"):
+        if self.main_window and hasattr(self.main_window, '_log_message'):
+            self.main_window._log_message(text, level)
 
     def _on_target_toggled(self, active):
         if not active:
             self.canvas.set_target_mode(False)
+            self._log("Ciblage désactivé", "info")
             return
 
         mh_groups = {}
@@ -2534,65 +2562,64 @@ class PlanDeFeu(QFrame):
             self._show_target_group_menu(mh_groups)
 
     def _show_target_group_menu(self, mh_groups):
-        from PySide6.QtWidgets import QCheckBox as _QCB
         dlg = QDialog(self, Qt.Popup | Qt.FramelessWindowHint)
-        dlg.setStyleSheet("""
-            QDialog { background:#0e0e0e; border:1px solid #2a2a2a; border-radius:8px; }
-            QCheckBox { color:#ccc; font-size:12px; background:transparent;
-                        padding:2px 0; }
-            QCheckBox::indicator { width:15px; height:15px; border:1px solid #444;
-                                   border-radius:3px; background:#1a1a1a; }
-            QCheckBox::indicator:checked { background:#00aa44; border-color:#00cc55; }
-            QCheckBox:hover { color:#fff; }
-        """)
+        dlg.setStyleSheet(
+            "QDialog { background:#111; border:1px solid #2a2a2a; border-radius:8px; }"
+        )
         vl = QVBoxLayout(dlg)
-        vl.setContentsMargins(14, 12, 14, 12)
-        vl.setSpacing(8)
+        vl.setContentsMargins(10, 8, 10, 8)
+        vl.setSpacing(6)
 
         lbl = QLabel("GROUPES À CIBLER")
         lbl.setStyleSheet(
-            "color:#333; font-size:9px; font-weight:bold; letter-spacing:2px;"
-            " background:transparent;"
+            "color:#555; font-size:9px; font-weight:bold; letter-spacing:2px; background:transparent;"
         )
         vl.addWidget(lbl)
 
-        checks = {}
-        for group, projs in mh_groups.items():
-            name = self._GROUP_LABELS.get(group, group.capitalize())
-            n = len(projs)
-            cb = _QCB(f"{name}  —  {n} lyre{'s' if n > 1 else ''}")
-            cb.setChecked(True)
-            vl.addWidget(cb)
-            checks[group] = cb
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(3)
 
-        btn_ok = QPushButton("🎯  Activer le ciblage")
-        btn_ok.setFixedHeight(34)
-        btn_ok.setStyleSheet(
-            "QPushButton { background:#0a2a14; color:#00ff66; border:1px solid #00aa44;"
-            " border-radius:6px; font-size:12px; }"
-            "QPushButton:hover { background:#0d3a1c; border-color:#00ff66; }"
-        )
-        btn_ok.clicked.connect(dlg.accept)
-        vl.addWidget(btn_ok)
+        btns = {}
+
+        _GRP_ON  = ("QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;"
+                    "border-radius:3px;font-size:10px;font-weight:bold;}")
+        _GRP_OFF = ("QPushButton{background:#2a2a2a;color:#777;border:1px solid #3a3a3a;"
+                    "border-radius:3px;font-size:10px;}")
+
+        def _update_target():
+            selected = [g for g, b in btns.items() if b.isChecked()]
+            if not selected:
+                self.canvas.set_target_mode(False)
+                self.btn_target.blockSignals(True)
+                self.btn_target.setChecked(False)
+                self.btn_target.blockSignals(False)
+                dlg.close()
+            else:
+                self._activate_target_for_groups(mh_groups, selected)
+
+        for group in mh_groups:
+            letter = self._GROUP_LETTERS.get(group, group[0].upper())
+            btn = QPushButton(letter)
+            btn.setFixedSize(36, 22)
+            btn.setCheckable(True)
+            btn.setChecked(True)
+            btn.setStyleSheet(_GRP_ON)
+            btn.toggled.connect(lambda checked, b=btn:
+                b.setStyleSheet(_GRP_ON if checked else _GRP_OFF))
+            btn.toggled.connect(lambda _: _update_target())
+            btn_row.addWidget(btn)
+            btns[group] = btn
+
+        vl.addLayout(btn_row)
 
         dlg.adjustSize()
         dlg.move(self.btn_target.mapToGlobal(
             self.btn_target.rect().bottomLeft() + QPoint(-4, 4)
         ))
-        if dlg.exec() != QDialog.Accepted:
-            self.btn_target.blockSignals(True)
-            self.btn_target.setChecked(False)
-            self.btn_target.blockSignals(False)
-            return
 
-        selected = [g for g, cb in checks.items() if cb.isChecked()]
-        if not selected:
-            self.btn_target.blockSignals(True)
-            self.btn_target.setChecked(False)
-            self.btn_target.blockSignals(False)
-            return
-
-        self._activate_target_for_groups(mh_groups, selected)
+        # Activer le mode ciblage avec tous les groupes (sans allumer les lumières)
+        self._activate_target_for_groups(mh_groups, mh_groups)
+        dlg.show()
 
     def _activate_target_for_groups(self, mh_groups, selected_groups):
         self.selected_lamps.clear()
@@ -2602,8 +2629,9 @@ class PlanDeFeu(QFrame):
             g_cnt[proj.group] = li + 1
             if proj.group in selected_groups and getattr(proj, 'fixture_type', '') == 'Moving Head':
                 self.selected_lamps.add((proj.group, li))
-                if proj.level == 0:
-                    proj.set_color(QColor("white"), brightness=100)
+
+        letters = [self._GROUP_LETTERS.get(g, g[0].upper()) for g in selected_groups]
+        self._log(f"Ciblage activé — groupe{'s' if len(letters) > 1 else ''} {', '.join(letters)}", "info")
 
         self.canvas.set_target_mode(True)
         self.canvas.update()
