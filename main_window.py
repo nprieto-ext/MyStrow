@@ -10273,39 +10273,45 @@ class MainWindow(QMainWindow):
         pt_vl.addSpacing(4)
 
         pt_widget = PanTiltLimitWidget()
-        pt_vl.addWidget(pt_widget)
+
+        _PT_RST_SS = (
+            "QPushButton { background:#141414; color:#553333; border:1px solid #221515;"
+            " border-radius:6px; padding:4px 8px; font-size:10px; }"
+            "QPushButton:hover { color:#ff6644; border-color:#ff444455; background:#1a0d0d; }"
+        )
+        _PT_APL_SS = (
+            "QPushButton { background:#0d1520; color:#4488bb; border:1px solid #1a2d40;"
+            " border-radius:6px; padding:4px 8px; font-size:10px; text-align:left; }"
+            "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
+        )
+        btn_pt_reset       = QPushButton("↺  Reset")
+        btn_pt_apply_model = QPushButton("Appliquer à toutes les\n…")
+        btn_pt_apply_all   = QPushButton("Appliquer à toutes\nles lyres")
+        btn_pt_reset.setStyleSheet(_PT_RST_SS)
+        btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
+        btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
+        btn_pt_reset.setFixedHeight(28)
+        btn_pt_apply_model.setFixedHeight(44)
+        btn_pt_apply_all.setFixedHeight(44)
+
+        pt_side_col = QVBoxLayout()
+        pt_side_col.setSpacing(6)
+        pt_side_col.addWidget(btn_pt_reset)
+        pt_side_col.addWidget(btn_pt_apply_model)
+        pt_side_col.addWidget(btn_pt_apply_all)
+        pt_side_col.addStretch()
+
+        pt_main_row = QHBoxLayout()
+        pt_main_row.setSpacing(10)
+        pt_main_row.addWidget(pt_widget)
+        pt_main_row.addLayout(pt_side_col)
+        pt_vl.addLayout(pt_main_row)
 
         pt_hint = QLabel("Glissez le point jaune pour tester le mouvement en temps réel.")
         pt_hint.setStyleSheet(
             "color:#333; font-size:10px; border:none; background:transparent;"
         )
         pt_vl.addWidget(pt_hint)
-
-        _PT_RST_SS = (
-            "QPushButton { background:#141414; color:#553333; border:1px solid #221515;"
-            " border-radius:6px; padding:4px 10px; font-size:11px; }"
-            "QPushButton:hover { color:#ff6644; border-color:#ff444455; background:#1a0d0d; }"
-        )
-        _PT_APL_SS = (
-            "QPushButton { background:#0d1520; color:#4488bb; border:1px solid #1a2d40;"
-            " border-radius:6px; padding:4px 10px; font-size:11px; }"
-            "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
-        )
-        btn_pt_reset       = QPushButton("↺  Reset")
-        btn_pt_apply_model = QPushButton("→  Même modèle")
-        btn_pt_apply_all   = QPushButton("→  Toutes les lyres")
-        btn_pt_reset.setStyleSheet(_PT_RST_SS)
-        btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
-        btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
-        for b in [btn_pt_reset, btn_pt_apply_model, btn_pt_apply_all]:
-            b.setFixedHeight(28)
-        pt_btn_row = QHBoxLayout()
-        pt_btn_row.setSpacing(6)
-        pt_btn_row.addWidget(btn_pt_reset)
-        pt_btn_row.addStretch()
-        pt_btn_row.addWidget(btn_pt_apply_model)
-        pt_btn_row.addWidget(btn_pt_apply_all)
-        pt_vl.addLayout(pt_btn_row)
 
         fv.addWidget(pt_section)
         pt_section.setVisible(False)
@@ -11056,6 +11062,8 @@ class MainWindow(QMainWindow):
                     proj.tilt_min >> 8, proj.tilt_max >> 8
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
+                _ref = fd.get('name') or fd.get('group', '')
+                btn_pt_apply_model.setText(f"Appliquer à toutes les\n« {_ref} »")
 
         def _commit():
             idx = _sel[0]
@@ -11149,6 +11157,8 @@ class MainWindow(QMainWindow):
                     proj.tilt_min >> 8, proj.tilt_max >> 8
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
+                _ref = fixture_data[idx].get('name') or fixture_data[idx].get('group', '')
+                btn_pt_apply_model.setText(f"Appliquer à toutes les\n« {_ref} »")
 
         det_type_cb.currentIndexChanged.connect(lambda _: _on_type_changed())
 
