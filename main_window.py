@@ -9643,6 +9643,7 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Patch DMX")
         dialog.setWindowFlags(Qt.Window | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
+        dialog.showMaximized()
 
         _SS = """
             QDialog { background:#0f0f0f; color:#e0e0e0; }
