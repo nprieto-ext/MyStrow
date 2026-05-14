@@ -1200,7 +1200,7 @@ class PanTiltLimitWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(230, 230)
+        self.setFixedSize(290, 190)
         self.setCursor(Qt.CrossCursor)
         self._pan_min  = 0
         self._pan_max  = 255
@@ -10291,9 +10291,9 @@ class MainWindow(QMainWindow):
         btn_pt_reset.setStyleSheet(_PT_RST_SS)
         btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
         btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
-        btn_pt_reset.setFixedHeight(28)
-        btn_pt_apply_model.setFixedHeight(44)
-        btn_pt_apply_all.setFixedHeight(44)
+        btn_pt_reset.setFixedSize(120, 28)
+        btn_pt_apply_model.setFixedSize(120, 44)
+        btn_pt_apply_all.setFixedSize(120, 44)
 
         pt_side_col = QVBoxLayout()
         pt_side_col.setSpacing(6)
