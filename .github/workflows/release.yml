@@ -63,8 +63,20 @@ jobs:
       - name: Build EXE
         run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=serial --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py --name MyStrow
 
+      - name: Check SSL.com signing secrets
+        id: check-esigner
+        env:
+          SSLCOM_USERNAME: ${{ secrets.SSLCOM_USERNAME }}
+        shell: pwsh
+        run: |
+          if ($env:SSLCOM_USERNAME) {
+            "has_esigner=true" | Out-File -Append -Encoding ascii $env:GITHUB_OUTPUT
+          } else {
+            "has_esigner=false" | Out-File -Append -Encoding ascii $env:GITHUB_OUTPUT
+          }
+
       - name: Sign EXE (SSL.com eSigner)
-        if: ${{ secrets.SSLCOM_USERNAME != '' }}
+        if: steps.check-esigner.outputs.has_esigner == 'true'
         uses: ssl-com/esigner-codesign@v3
         with:
           command: sign
@@ -90,7 +102,7 @@ jobs:
         shell: pwsh
 
       - name: Sign Installer (SSL.com eSigner)
-        if: ${{ secrets.SSLCOM_USERNAME != '' }}
+        if: steps.check-esigner.outputs.has_esigner == 'true'
         uses: ssl-com/esigner-codesign@v3
         with:
           command: sign
