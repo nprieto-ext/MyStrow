@@ -695,6 +695,12 @@ class ArtNetDMX:
             _eff_tilt = max(getattr(proj, 'tilt_min', 0),
                             min(getattr(proj, 'tilt_max', 65535), _raw_tilt))
 
+            # Pour les fixtures RGBW : extraire W = min(R,G,B) et le soustraire
+            # des canaux RGB pour éviter la contamination blanche (double envoi)
+            _has_rgb   = "R" in profile and "G" in profile and "B" in profile
+            _has_white = "W" in profile
+            _w_extract = min(r, g, b) if (_has_rgb and _has_white) else 0
+
             for idx, ch_type in enumerate(profile):
                 if idx >= len(channels):
                     break
@@ -708,17 +714,16 @@ class ArtNetDMX:
                     continue
 
                 if ch_type == "R":
-                    ch_val = r
+                    ch_val = max(0, r - _w_extract)
                 elif ch_type == "G":
-                    ch_val = g
+                    ch_val = max(0, g - _w_extract)
                 elif ch_type == "B":
-                    ch_val = b
+                    ch_val = max(0, b - _w_extract)
                 elif ch_type == "W":
-                    # Fixture RGBW : extraire la composante blanche (min des canaux)
-                    # Fixture bi-couleur sans RGB : utiliser la luminance standard
-                    _has_rgb = ("R" in profile and "G" in profile and "B" in profile)
+                    # Fixture RGBW : W = composante commune extraite + boost manuel
+                    # Fixture sans RGB : luminance standard
                     if _has_rgb:
-                        ch_val = min(255, min(r, g, b) + getattr(proj, 'white_boost', 0))
+                        ch_val = min(255, _w_extract + getattr(proj, 'white_boost', 0))
                     else:
                         ch_val = min(255, int(r * 0.30 + g * 0.59 + b * 0.11)
                                      + getattr(proj, 'white_boost', 0))
@@ -738,6 +743,12 @@ class ArtNetDMX:
                     ch_val = getattr(proj, 'iris', 0)
                 elif ch_type in ("Dim", "Dim2"):
                     ch_val = dimmer
+                    # Strobe artificiel pour gradateurs 1 canal (pas de canal Strobe hardware)
+                    _spd = getattr(proj, 'strobe_speed', 0)
+                    if _spd > 0 and not has_strobe and getattr(proj, 'fixture_type', '') == 'Gradateur':
+                        _freq = 0.5 + (_spd / 100.0) * 14.5  # 0.5 Hz → 15 Hz
+                        if int(time.time() * _freq * 2) % 2 == 1:
+                            ch_val = 0
                 elif ch_type == "Reset":
                     ch_val = 0  # repos : ne pas déclencher le reset
                 elif ch_type == "Strobe":

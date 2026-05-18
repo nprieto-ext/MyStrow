@@ -135,6 +135,73 @@ def _fetch_custom_fixtures_bundle():
             pass
 
 
+# ------------------------------------------------------------------
+# SIGNATURE DE CODE (Windows Code Signing)
+# ------------------------------------------------------------------
+
+# Nom du certificat tel qu'il apparaît dans le store Windows.
+# Laisser None pour que signtool auto-sélectionne (/a).
+CODESIGN_CERT_NAME = None  # ex: "Nicolas Prieto" ou "MyStrow SAS"
+
+# URL du serveur de timestamp (RFC 3161)
+CODESIGN_TIMESTAMP_URL = "http://time.certum.pl"  # Certum TSA
+
+
+def _find_signtool():
+    """Cherche signtool.exe dans les emplacements Windows SDK classiques."""
+    import glob
+    candidates = [
+        r"C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe",
+        r"C:\Program Files\Windows Kits\10\bin\*\x64\signtool.exe",
+        r"C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe",
+        r"C:\Program Files\Windows Kits\10\bin\x64\signtool.exe",
+        "signtool",  # si dans le PATH
+    ]
+    for pattern in candidates:
+        if "*" in pattern:
+            matches = sorted(glob.glob(pattern), reverse=True)  # version la plus récente en premier
+            if matches:
+                return matches[0]
+        elif Path(pattern).exists() or pattern == "signtool":
+            return pattern
+    return None
+
+
+def sign_exe(path: Path, description: str = "MyStrow"):
+    """Signe un exécutable avec le certificat OV présent dans le store Windows.
+
+    Nécessite : token USB branché + drivers installés + signtool.exe (Windows SDK).
+    Non bloquant si signtool introuvable (avertissement seulement).
+    """
+    signtool = _find_signtool()
+    if not signtool:
+        print(f"⚠️  signtool.exe introuvable — {path.name} non signé. Installe Windows SDK.")
+        return False
+
+    cmd_parts = [
+        f'"{signtool}"', "sign",
+        "/fd", "sha256",
+        "/tr", CODESIGN_TIMESTAMP_URL,
+        "/td", "sha256",
+        "/d", f'"{description}"',
+    ]
+    if CODESIGN_CERT_NAME:
+        cmd_parts += ["/n", f'"{CODESIGN_CERT_NAME}"']
+    else:
+        cmd_parts += ["/a"]  # auto-sélection du certificat
+    cmd_parts.append(f'"{path}"')
+
+    cmd = " ".join(cmd_parts)
+    print(f"\n--- Signature : {path.name} ---")
+    print(f">>> {cmd}")
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode != 0:
+        print(f"⚠️  Signature échouée pour {path.name} (token branché ?)")
+        return False
+    print(f"✅ {path.name} signé avec succès")
+    return True
+
+
 def build_local_installer(version):
     print("\n========== BUILD INSTALLEUR LOCAL ==========")
     dist_exe = BASE_DIR / "dist" / "MyStrow" / "MyStrow.exe"
@@ -204,6 +271,9 @@ def build_local_installer(version):
         print("ERREUR: MyStrow.exe non trouve apres PyInstaller.")
         sys.exit(1)
 
+    # Signer MyStrow.exe avant de l'embarquer dans l'installeur
+    sign_exe(dist_exe)
+
     # Generer le fichier .sig (requis par check_exe_integrity)
     generate_sig_file(dist_exe)
 
@@ -244,6 +314,9 @@ def build_local_installer(version):
     if not installer_out.exists():
         print("ERREUR: MyStrow_Setup.exe non trouve apres Inno Setup.")
         sys.exit(1)
+
+    # Signer l'installeur lui-même
+    sign_exe(installer_out, description="MyStrow Setup")
 
     # 4) Copie de l'installeur sur le Bureau
     dest = DESKTOP / f"MyStrow_Setup_{version}.exe"

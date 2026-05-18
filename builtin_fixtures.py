@@ -5,7 +5,7 @@ Organisées par fabricant pour un accès rapide sans requête réseau.
 Format de chaque entrée :
     name          : str   — nom affiché
     manufacturer  : str   — marque / fabricant
-    fixture_type  : str   — "PAR LED" | "Moving Head" | "Barre LED" | "Stroboscope" | "Machine a fumee"
+    fixture_type  : str   — "PAR LED" | "Moving Head" | "Barre LED" | "Stroboscope" | "Machine a fumee" | "Gradateur"
     group         : str   — groupe DMX par défaut
     profile       : list  — séquence de types de canaux MyStrow
     builtin       : True  — flag indiquant un template intégré (non supprimable)
@@ -30,15 +30,15 @@ BUILTIN_FIXTURES = [
     {"name": "PAR LED · R, G, B, Blanc, Ambre (5ch)","manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre"],                               "builtin": _B},
     {"name": "PAR LED · R, G, B, Blanc, Ambre, UV (6ch)", "manufacturer": "Générique", "fixture_type": "PAR LED",   "group": "face",   "profile": ["R","G","B","W","Ambre","UV"],                          "builtin": _B},
     # ── Gradateurs / Traditionnels (incandescence, halogène) ─────────────────
-    {"name": "Gradateur 1 canal",                    "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "PAR 64 Incandescent",                  "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "PAR 56 Incandescent",                  "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "PAR 36 Incandescent",                  "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "Fresnel Incandescent",                 "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "PC Incandescent",                      "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "Profil / Leko Incandescent",           "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "Cyclorama Incandescent",               "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "contre", "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "Strip / Rampe Incandescent",           "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "Gradateur 1 canal",                    "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "PAR 64 Incandescent",                  "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "PAR 56 Incandescent",                  "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "PAR 36 Incandescent",                  "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "Fresnel Incandescent",                 "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "PC Incandescent",                      "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "Profil / Leko Incandescent",           "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "Cyclorama Incandescent",               "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "contre", "profile": ["Dim"],                                                 "builtin": _B},
+    {"name": "Strip / Rampe Incandescent",           "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
     # ── Lyres / Têtes mobiles ─────────────────────────────────────────────────
     {"name": "Lyre Spot · Basique (5ch)",            "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Shutter","Dim","ColorWheel","Gobo1","Speed"],           "builtin": _B},
     {"name": "Lyre Spot · Pan/Tilt (8ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Shutter","Dim","ColorWheel","Gobo1","Speed","Mode"], "builtin": _B},

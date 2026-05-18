@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QPixmap, QIcon, QLinearGradient, QDrag, QPainterPath, QFont, QFontMetrics
 )
 
+import sys
 import wave
 import array
 import random
@@ -125,6 +126,9 @@ class LightClip:
         self.move_effect  = None  # None | "cercle" | "figure8" | "balayage_h" | "balayage_v" | "aleatoire"
         self.move_speed   = 0.5   # Hz
         self.move_amplitude = 60
+
+        # Stroboscope (0 = désactivé, 1-100 = vitesse)
+        self.strobe_speed = 0
 
         # Position stockee pour interactions souris
         self.x_pos = 0
@@ -1599,9 +1603,13 @@ print(json.dumps(waveform))
 
         def run_proc():
             try:
+                _kwargs = {}
+                if sys.platform == "win32":
+                    _kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
                 proc = subprocess.Popen(
                     [py312, "-c", script],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    **_kwargs
                 )
                 proc_ref[0] = proc
                 # communicate() gere correctement le buffering
@@ -1666,7 +1674,10 @@ print(json.dumps(waveform))
                 '-acodec', 'pcm_s16le', '-y', temp_wav
             ]
 
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            _ff_kwargs = {}
+            if sys.platform == "win32":
+                _ff_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **_ff_kwargs)
             start_t = time.time()
             while proc.poll() is None:
                 if cancel_check and cancel_check():
@@ -2265,12 +2276,20 @@ print(json.dumps(waveform))
                         for c in dragged:
                             self._resolve_overlap(track, c)
 
+        was_resizing = self.resizing_clip is not None
+
         self.dragging_clip = None
         self.drag_start_positions = {}
         self.resizing_clip = None
         self.resize_edge = None
         self._snap_active = False
         self.update()
+
+        if was_resizing:
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+            if hasattr(self.parent_editor, '_save_sequence_no_close'):
+                self.parent_editor._save_sequence_no_close()
 
         if not (hasattr(self.parent_editor, 'cut_mode') and self.parent_editor.cut_mode):
             self.setCursor(Qt.ArrowCursor)
@@ -2344,6 +2363,26 @@ print(json.dumps(waveform))
         super().contextMenuEvent(event)
 
     # ── Menus piste Effet ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _auto_target_groups(layers):
+        """Extrait les lettres-groupe cibles des couches d'un effet.
+        Retourne [] (= Tous) dès qu'une couche cible 'Tous', 'Pair' ou 'Impair'.
+        """
+        letters = set()
+        for ld in (layers or []):
+            if isinstance(ld, dict):
+                preset = ld.get("target_preset", "Tous")
+                grps   = ld.get("target_groups", [])
+            else:
+                preset = getattr(ld, 'target_preset', 'Tous')
+                grps   = getattr(ld, 'target_groups', [])
+            if preset in ("Tous", "Pair", "Impair", ""):
+                return []
+            if preset:
+                letters.add(preset)
+            letters.update(grps)
+        return sorted(letters)
 
     @staticmethod
     def _load_all_effects():
@@ -2448,15 +2487,35 @@ print(json.dumps(waveform))
         menu = QMenu(self)
         menu.setStyleSheet(self._EFFECT_MENU_STYLE)
 
+        # Éditeur d'effet (ouvre la config complète du clip dans l'éditeur)
+        act_editor = menu.addAction("✏️  Éditeur d'effet")
+        def _open_editor():
+            mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
+            if mw is None:
+                return
+            try:
+                from effect_editor import EffectEditorDialog
+                dlg = EffectEditorDialog(clips=[clip], main_window=mw, parent=self,
+                                         initial_effect=getattr(clip, 'effect_name', None))
+                dlg.exec()
+            except Exception as _e:
+                print(f"Erreur ouverture éditeur effet: {_e}")
+                return
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+        act_editor.triggered.connect(_open_editor)
+
         # Changer l'effet → sous-menu picker identique à la page d'accueil
         cur_name = getattr(clip, 'effect_name', '') or ''
         changer_label = tr("lt_menu_change_effect_named", name=cur_name) if cur_name else tr("lt_menu_change_effect")
         act_change = menu.addAction(changer_label)
         def _open_picker():
             def _select(eff):
-                clip.effect_name   = eff.get("name", "")
-                clip.effect_layers = eff.get("layers", [])
-                clip.effect_type   = eff.get("type", "")
+                clip.effect_name          = eff.get("name", "")
+                clip.effect_layers        = eff.get("layers", [])
+                clip.effect_type          = eff.get("type", "")
+                clip.effect_target_groups = LightTrack._auto_target_groups(clip.effect_layers)
                 self.update()
                 if hasattr(self.parent_editor, 'save_state'):
                     self.parent_editor.save_state()
@@ -2637,9 +2696,10 @@ print(json.dumps(waveform))
         if gap_duration > 100:
             clip_duration = min(gap_duration, 10_000)  # 10 secondes max par défaut
             clip = self.add_clip(gap_start, clip_duration, QColor("#1a0a2e"), 100)
-            clip.effect_name   = eff.get("name", "")
-            clip.effect_layers = eff.get("layers", [])
-            clip.effect_type   = eff.get("type", "")
+            clip.effect_name          = eff.get("name", "")
+            clip.effect_layers        = eff.get("layers", [])
+            clip.effect_type          = eff.get("type", "")
+            clip.effect_target_groups = LightTrack._auto_target_groups(clip.effect_layers)
             self.update()
             if hasattr(self.parent_editor, 'save_state'):
                 self.parent_editor.save_state()
@@ -3284,15 +3344,27 @@ print(json.dumps(waveform))
     def add_clip_fade_in(self, clip):
         clip.fade_in_duration = 1000
         self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+        if hasattr(self.parent_editor, '_save_sequence_no_close'):
+            self.parent_editor._save_sequence_no_close()
 
     def add_clip_fade_out(self, clip):
         clip.fade_out_duration = 1000
         self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+        if hasattr(self.parent_editor, '_save_sequence_no_close'):
+            self.parent_editor._save_sequence_no_close()
 
     def clear_clip_fades(self, clip):
         clip.fade_in_duration = 0
         clip.fade_out_duration = 0
         self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+        if hasattr(self.parent_editor, '_save_sequence_no_close'):
+            self.parent_editor._save_sequence_no_close()
 
     def dragEnterEvent(self, event):
         mime = event.mimeData()

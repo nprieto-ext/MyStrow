@@ -90,7 +90,8 @@ class LightTimelineEditor(QDialog):
     """Editeur de sequence lumiere - Theme coherent"""
 
     def __init__(self, main_window, media_row):
-        super().__init__(main_window)
+        super().__init__(main_window,
+            Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint)
         self.main_window = main_window
         self.media_row = media_row
 
@@ -164,8 +165,6 @@ class LightTimelineEditor(QDialog):
             }
         """)
 
-        # Plein ecran avec boutons maximiser/minimiser
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
 
         # Curseur de lecture
         if main_window.player.playbackState() == QMediaPlayer.PlayingState:
@@ -175,7 +174,7 @@ class LightTimelineEditor(QDialog):
         self._prev_playback_position = self.playback_position
 
         self._seq_clip_active = None   # clip de séquence actuellement actif (pour effets)
-        self._eff_clip_active = None   # clip d'effet (piste Effet) actuellement actif
+        self._eff_clips_active = {}    # {track_name: clip} — clips d'effet actifs par piste
 
         self.playback_timer = QTimer()
         self.playback_timer.timeout.connect(self.update_playhead)
@@ -240,15 +239,34 @@ class LightTimelineEditor(QDialog):
         left_splitter.setHandleWidth(4)
         left_splitter.setStyleSheet(_splitter_ss)
 
+        # ── Haut : Plan de Feu + aperçu vidéo côte à côte ────────────────
+        top_splitter = QSplitter(Qt.Horizontal)
+        top_splitter.setHandleWidth(4)
+        top_splitter.setStyleSheet(_splitter_ss)
+        self._top_splitter = top_splitter
+
         try:
             pdf = PlanDeFeu(self.main_window.projectors, main_window=self.main_window, show_toolbar=False)
             pdf.setStyleSheet("border: none; background: #0d0d0d;")
-            left_splitter.addWidget(pdf)
+            top_splitter.addWidget(pdf)
             self._live_pdf = pdf
             self._pdf_window = pdf
         except Exception:
             _ph = QWidget(); _ph.setStyleSheet("background: #0d0d0d;")
-            left_splitter.addWidget(_ph)
+            top_splitter.addWidget(_ph)
+
+        # Conteneur aperçu vidéo (affiché seulement si media vidéo)
+        self._video_preview_container = QWidget()
+        self._video_preview_container.setStyleSheet("background: #000;")
+        self._video_preview_container.setMinimumWidth(120)
+        self._video_preview_container.hide()
+        _vpc_layout = QVBoxLayout(self._video_preview_container)
+        _vpc_layout.setContentsMargins(0, 0, 0, 0)
+        top_splitter.addWidget(self._video_preview_container)
+        top_splitter.setStretchFactor(0, 1)
+        top_splitter.setStretchFactor(1, 0)
+
+        left_splitter.addWidget(top_splitter)
 
         # ── Timeline complète ─────────────────────────────────────────────
         timeline_widget = QWidget()
@@ -344,8 +362,11 @@ class LightTimelineEditor(QDialog):
         self.setFocusPolicy(Qt.StrongFocus)
         QTimer.singleShot(0, self.setFocus)
 
-        # Player audio pour preview
-        self.setup_audio_player()
+        self.preview_player = None
+        self.preview_audio = None
+        self.is_video_file = False
+        self.preview_video_widget = None
+        QTimer.singleShot(0, self.setup_audio_player)
 
         # Raccourci Espace global (capturé au niveau fenetre, independant du focus)
         QShortcut(QKeySequence(Qt.Key_Space), self, self.toggle_play_pause)
@@ -361,8 +382,7 @@ class LightTimelineEditor(QDialog):
         if self.media_path and os.path.exists(self.media_path) and not is_image and not self.is_tempo:
             QTimer.singleShot(50, self._load_waveform_async)
 
-        # Maximiser la fenetre apres construction complete
-        self.showMaximized()
+        # La maximisation est faite par l'appelant via showMaximized() avant exec()
 
     def _create_tracks_from_fixtures(self, projectors, tracks_layout):
         """Genere les pistes de la timeline depuis la liste de fixtures"""
@@ -404,6 +424,7 @@ class LightTimelineEditor(QDialog):
 
         self.tracks = []
         self.track_map = {}
+        self._tracks_layout = tracks_layout
 
         # ── Piste Effet (tout en haut — priorité absolue sur les groupes) ─
         eff_track = LightTrack("Effet", self.media_duration, self, "#cc44ff")
@@ -411,7 +432,31 @@ class LightTimelineEditor(QDialog):
         eff_track.setMinimumHeight(50)
         self.tracks.append(eff_track)
         self.track_map["Effet"] = eff_track
+        self._effect_tracks = [eff_track]
         tracks_layout.addWidget(eff_track)
+
+        # ── Bouton + Piste Effet (max 4) ──────────────────────────────────
+        self._add_eff_btn_row = QWidget()
+        self._add_eff_btn_row.setFixedHeight(24)
+        self._add_eff_btn_row.setStyleSheet("background: #0a0a0a;")
+        _aer_lay = QHBoxLayout(self._add_eff_btn_row)
+        _aer_lay.setContentsMargins(11, 2, 11, 2)
+        _aer_lay.setSpacing(0)
+        self._add_eff_btn = QPushButton("＋ Piste Effet")
+        self._add_eff_btn.setFixedHeight(20)
+        self._add_eff_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a1a1a; color: #cc44ff;
+                border: 1px dashed #553355; border-radius: 4px;
+                font-size: 10px; font-weight: bold; padding: 0 8px;
+            }
+            QPushButton:hover { background: #2a1a2a; border-color: #cc44ff; }
+            QPushButton:disabled { color: #444; border-color: #333; }
+        """)
+        self._add_eff_btn.clicked.connect(self._add_effect_track)
+        _aer_lay.addWidget(self._add_eff_btn)
+        _aer_lay.addStretch()
+        tracks_layout.addWidget(self._add_eff_btn_row)
 
         # ── Piste Séquence (avant les groupes) ────────────────────────────
         seq_track = LightTrack("Séquence", self.media_duration, self, "#aa77ff")
@@ -434,6 +479,67 @@ class LightTimelineEditor(QDialog):
         self.track_douche2 = self.track_map.get("E")
         self.track_douche3 = self.track_map.get("F")
         self.track_contre = self.track_map.get("C")
+
+    _MAX_EFFECT_TRACKS = 4
+
+    def _add_effect_track(self):
+        """Ajoute une piste Effet supplémentaire (max _MAX_EFFECT_TRACKS)."""
+        if len(self._effect_tracks) >= self._MAX_EFFECT_TRACKS:
+            return
+        existing_names = {t.name for t in self._effect_tracks}
+        n = 2
+        while f"Effet {n}" in existing_names:
+            n += 1
+        self._add_effect_track_named(f"Effet {n}")
+
+    def _add_effect_track_named(self, name):
+        """Crée une piste Effet avec le nom donné et l'insère dans le layout."""
+        if len(self._effect_tracks) >= self._MAX_EFFECT_TRACKS:
+            return
+        new_track = LightTrack(name, self.media_duration, self, "#cc44ff")
+        new_track.is_effect_track = True
+        new_track.setMinimumHeight(50)
+        # Insérer dans le layout juste avant le bouton +
+        idx = self._tracks_layout.indexOf(self._add_eff_btn_row)
+        self._tracks_layout.insertWidget(idx, new_track)
+        # Insérer dans self.tracks juste après le dernier effet track
+        last_idx = self.tracks.index(self._effect_tracks[-1])
+        self.tracks.insert(last_idx + 1, new_track)
+        self.track_map[name] = new_track
+        self._effect_tracks.append(new_track)
+        # Bouton × de suppression
+        rm_btn = QPushButton("×", new_track)
+        rm_btn.setFixedSize(14, 14)
+        rm_btn.move(139, 3)
+        rm_btn.setStyleSheet("""
+            QPushButton {
+                background: #3a1a1a; color: #ff6666;
+                border: none; border-radius: 3px;
+                font-size: 9px; font-weight: bold; padding: 0;
+            }
+            QPushButton:hover { background: #cc3333; color: white; }
+        """)
+        rm_btn.clicked.connect(lambda checked=False, t=new_track: self._remove_effect_track(t))
+        rm_btn.show()
+        if len(self._effect_tracks) >= self._MAX_EFFECT_TRACKS:
+            self._add_eff_btn.setEnabled(False)
+        if self.track_waveform.waveform_data:
+            new_track.waveform_data = self.track_waveform.waveform_data
+        new_track.update()
+
+    def _remove_effect_track(self, track):
+        """Supprime une piste Effet supplémentaire (la première ne peut pas être supprimée)."""
+        if track not in self._effect_tracks or self._effect_tracks.index(track) == 0:
+            return
+        if track.name in self._eff_clips_active:
+            del self._eff_clips_active[track.name]
+        self._effect_tracks.remove(track)
+        self.track_map.pop(track.name, None)
+        if track in self.tracks:
+            self.tracks.remove(track)
+        self._tracks_layout.removeWidget(track)
+        track.deleteLater()
+        self._add_eff_btn.setEnabled(True)
 
     def _get_waveform_cache_path(self):
         """Retourne le chemin du fichier cache pour la forme d'onde"""
@@ -502,9 +608,21 @@ class LightTimelineEditor(QDialog):
         # 3. Generation avec barre de progression
         self._analysis_cancelled = False
 
+        # Bloquer Sauvegarder et Fermer pendant l'extraction
+        if hasattr(self, 'save_btn'):
+            self.save_btn.setEnabled(False)
+        if hasattr(self, 'close_btn'):
+            self.close_btn.setEnabled(False)
+
+        def _unlock_buttons():
+            if hasattr(self, 'save_btn'):
+                self.save_btn.setEnabled(True)
+            if hasattr(self, 'close_btn'):
+                self.close_btn.setEnabled(True)
+
         loading = QDialog(self)
         loading.setWindowTitle(tr("te_loading_title"))
-        loading.setFixedSize(380, 170)
+        loading.setFixedSize(380, 195)
         loading.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         loading.setStyleSheet("""
             QDialog { background: #1a1a1a; border: 2px solid #00d4ff; border-radius: 10px; }
@@ -514,6 +632,7 @@ class LightTimelineEditor(QDialog):
         """)
         lay = QVBoxLayout(loading)
         lay.setContentsMargins(20, 15, 20, 15)
+        lay.setSpacing(8)
         is_vid = hasattr(self, 'is_video_file') and self.is_video_file
         status = QLabel(tr("te_extract_pct", pct=0) if is_vid else tr("te_analyse_pct", pct=0))
         status.setAlignment(Qt.AlignCenter)
@@ -523,6 +642,19 @@ class LightTimelineEditor(QDialog):
         bar.setRange(0, 100)
         bar.setValue(0)
         lay.addWidget(bar)
+
+        # Compteur de secondes écoulées
+        elapsed_label = QLabel("⏱  0 s")
+        elapsed_label.setAlignment(Qt.AlignCenter)
+        elapsed_label.setStyleSheet("font-size: 11px; color: #888;")
+        lay.addWidget(elapsed_label)
+        _elapsed = [0]
+        elapsed_timer = QTimer(loading)
+        def _tick():
+            _elapsed[0] += 1
+            elapsed_label.setText(f"⏱  {_elapsed[0]} s")
+        elapsed_timer.timeout.connect(_tick)
+        elapsed_timer.start(1000)
 
         cancel_btn = QPushButton(tr("te_cancel_analysis"))
         cancel_btn.setStyleSheet("""
@@ -553,16 +685,15 @@ class LightTimelineEditor(QDialog):
                 self.media_path, max_samples=5000, progress_callback=on_progress,
                 cancel_check=lambda: self._analysis_cancelled
             )
+            elapsed_timer.stop()
             if self._analysis_cancelled:
-                # Annule: fermer dialog sans fermer l'editeur
                 loading.close()
+                _unlock_buttons()
                 print("Analyse annulee - editeur reste ouvert sans forme d'onde")
                 return
             if waveform:
                 self._apply_waveform(waveform)
-                # Sauvegarder dans le cache fichier
                 self._save_waveform_cache(waveform)
-                # Stocker dans les donnees de sequence (en memoire)
                 if self.media_row in self.main_window.seq.sequences:
                     self.main_window.seq.sequences[self.media_row]['waveform'] = [round(x, 3) for x in waveform]
                 bar.setValue(100)
@@ -570,24 +701,29 @@ class LightTimelineEditor(QDialog):
                 QApplication.processEvents()
                 loading.close()
             else:
-                # Aucune methode n'a reussi — editeur reste ouvert et utilisable sans forme d'onde
                 status.setText(tr("te_audio_failed"))
                 status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
                 bar.setVisible(False)
                 cancel_btn.setVisible(False)
+                elapsed_label.setVisible(False)
                 QApplication.processEvents()
                 QTimer.singleShot(1800, loading.close)
         except _AnalysisCancelled:
+            elapsed_timer.stop()
             print("Analyse annulee par l'utilisateur")
             loading.close()
         except Exception as e:
+            elapsed_timer.stop()
             status.setText("⚠  Analyse Audio Impossible")
             status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
             bar.setVisible(False)
             cancel_btn.setVisible(False)
+            elapsed_label.setVisible(False)
             print(f"Erreur forme d'onde: {e}")
             QApplication.processEvents()
             QTimer.singleShot(1800, loading.close)
+
+        _unlock_buttons()
 
         # Forcer le rafraichissement
         self.track_waveform.update()
@@ -758,7 +894,7 @@ class LightTimelineEditor(QDialog):
         """)
         header_layout.addWidget(self.cut_btn)
 
-        self.paint_btn = QPushButton()  # conservé pour compatibilité interne, non affiché
+        self.paint_btn = QPushButton(header)  # parent obligatoire — sans parent = fenetre fantome top-level
         self.paint_btn.setCheckable(True)
         self.paint_btn.setVisible(False)
         self.paint_btn.clicked.connect(self.toggle_paint_mode)
@@ -903,8 +1039,8 @@ class LightTimelineEditor(QDialog):
         footer_layout.addLayout(transport_layout, 1)
 
         # Sauvegarder
-        save_btn = QPushButton(tr("te_btn_save"))
-        save_btn.setStyleSheet("""
+        self.save_btn = QPushButton(tr("te_btn_save"))
+        self.save_btn.setStyleSheet("""
             QPushButton {
                 background: #2a5a2a;
                 color: white;
@@ -914,13 +1050,14 @@ class LightTimelineEditor(QDialog):
                 font-size: 14px;
             }
             QPushButton:hover { background: #3a6a3a; }
+            QPushButton:disabled { background: #1a3a1a; color: #555; }
         """)
-        save_btn.clicked.connect(self.save_sequence)
-        footer_layout.addWidget(save_btn)
+        self.save_btn.clicked.connect(self.save_sequence)
+        footer_layout.addWidget(self.save_btn)
 
         # Fermer
-        close_btn = QPushButton(tr("te_btn_close"))
-        close_btn.setStyleSheet("""
+        self.close_btn = QPushButton(tr("te_btn_close"))
+        self.close_btn.setStyleSheet("""
             QPushButton {
                 background: #4a2a2a;
                 color: white;
@@ -929,14 +1066,17 @@ class LightTimelineEditor(QDialog):
                 font-size: 14px;
             }
             QPushButton:hover { background: #5a3a3a; }
+            QPushButton:disabled { background: #2a1a1a; color: #555; }
         """)
-        close_btn.clicked.connect(self.close_editor)
-        footer_layout.addWidget(close_btn)
+        self.close_btn.clicked.connect(self.close_editor)
+        footer_layout.addWidget(self.close_btn)
 
         return footer
 
     def get_media_duration(self):
         """Recupere la duree reelle du media (audio et video)"""
+        import subprocess as _sp, sys as _sys
+
         # TEMPO/PAUSE: utiliser la duree definie
         if hasattr(self, 'media_duration_override') and self.media_duration_override > 0:
             return self.media_duration_override
@@ -948,69 +1088,61 @@ class LightTimelineEditor(QDialog):
                 return image_dur * 1000
             return 30000  # 30s par defaut
 
-        is_video = self.media_path and media_icon(self.media_path) == "video"
+        if not self.media_path or not os.path.exists(self.media_path):
+            return 180000
 
-        # QMediaPlayer avec outputs audio/video pour charger correctement le media
+        # 1. Essai miniaudio (audio: MP3, WAV, FLAC, OGG) — pas d'event loop, pas de fenetre WMF
         try:
-            import time
+            import miniaudio
+            info = miniaudio.get_file_info(self.media_path)
+            if info.duration > 0:
+                return int(info.duration * 1000)
+        except Exception:
+            pass
 
-            temp_player = QMediaPlayer()
-            temp_audio = QAudioOutput()
-            temp_player.setAudioOutput(temp_audio)
-
-            # Pour les fichiers video, ajouter un output video
-            # Sans ca, Qt ne parse pas correctement le conteneur video
-            if is_video and QVideoWidget is not None:
-                temp_video = QVideoWidget()
-                temp_video.setFixedSize(1, 1)
-                temp_video.hide()
-                temp_player.setVideoOutput(temp_video)
-
-            duration_ms = [0]
-
-            def on_duration_changed(dur):
-                if dur > 0:
-                    duration_ms[0] = dur
-
-            temp_player.durationChanged.connect(on_duration_changed)
-            temp_player.setSource(QUrl.fromLocalFile(self.media_path))
-
-            timeout = 10 if is_video else 5
-            start = time.time()
-            while duration_ms[0] == 0 and (time.time() - start) < timeout:
-                QApplication.processEvents()
-                time.sleep(0.05)
-
-            if duration_ms[0] > 0:
-                return duration_ms[0]
-        except Exception as e:
-            print(f"Erreur duree : {e}")
+        # 2. Essai ffprobe (video ou echec miniaudio) — subprocess sans fenetre
+        try:
+            _kwargs = {}
+            if _sys.platform == "win32":
+                _kwargs["creationflags"] = _sp.CREATE_NO_WINDOW
+            result = _sp.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", self.media_path],
+                capture_output=True, text=True, timeout=10, **_kwargs
+            )
+            dur = float(result.stdout.strip())
+            if dur > 0:
+                return int(dur * 1000)
+        except Exception:
+            pass
 
         return 180000  # 3 minutes par defaut
 
     def setup_audio_player(self):
         """Configure le player audio/video pour preview (pas pour images/pauses)"""
-        self.preview_player = QMediaPlayer()
-        self.preview_audio = QAudioOutput()
+        self.preview_player = QMediaPlayer(self)
+        self.preview_audio = QAudioOutput(self)
         self.preview_player.setAudioOutput(self.preview_audio)
 
         is_image = self.media_path and media_icon(self.media_path) == "image"
 
-        # Pour les fichiers video, ajouter un output video pour que QMediaPlayer
-        # puisse traiter correctement le fichier (lecture audio + tracking position)
         self.is_video_file = self.media_path and media_icon(self.media_path) == "video"
         if self.is_video_file and QVideoWidget is not None:
-            self.preview_video_widget = QVideoWidget(self)
-            self.preview_video_widget.setFixedSize(1, 1)
-            self.preview_video_widget.hide()
+            self.preview_video_widget = QVideoWidget()
+            self.preview_video_widget.setStyleSheet("background: #000;")
+            self._video_preview_container.layout().addWidget(self.preview_video_widget)
+            self._video_preview_container.show()
+            self._top_splitter.setSizes([self._top_splitter.width() * 2 // 3,
+                                         self._top_splitter.width() // 3])
             self.preview_player.setVideoOutput(self.preview_video_widget)
 
-        # Ne pas charger les images ni les pauses dans le player
         if self.media_path and not is_image and not self.is_tempo:
             self.preview_player.setSource(QUrl.fromLocalFile(self.media_path))
 
     def toggle_play_pause(self):
         """Toggle play/pause avec timer - synchro preview et player principal"""
+        if self.preview_player is None:
+            return
         main_playing = self.main_window.player.playbackState() == QMediaPlayer.PlayingState
         preview_playing = self.preview_player.playbackState() == QMediaPlayer.PlayingState
 
@@ -1021,13 +1153,13 @@ class LightTimelineEditor(QDialog):
             self.play_pause_btn.setIcon(create_icon("play", "#ffffff"))
             self.playback_timer.stop()
             # Arrêter les effets actifs (séquence et effet track)
-            if self._seq_clip_active is not None or self._eff_clip_active is not None:
+            if self._seq_clip_active is not None or self._eff_clips_active:
                 self.main_window.active_effect        = None
                 self.main_window.active_effect_config = {}
                 if hasattr(self.main_window, 'stop_effect'):
                     self.main_window.stop_effect()
-                self._seq_clip_active = None
-                self._eff_clip_active = None
+                self._seq_clip_active  = None
+                self._eff_clips_active = {}
         else:
             # Lancer le preview a la position actuelle du curseur
             pos = int(self.playback_position)
@@ -1039,12 +1171,16 @@ class LightTimelineEditor(QDialog):
 
     def seek_relative(self, delta_ms):
         """Seek relatif (+/- 10s)"""
+        if self.preview_player is None:
+            return
         current = self.preview_player.position()
         new_pos = max(0, min(current + delta_ms, self.media_duration))
         self.preview_player.setPosition(int(new_pos))
 
     def _go_to_start(self):
         """Aller au début de la timeline"""
+        if self.preview_player is None:
+            return
         self.preview_player.setPosition(0)
         self.playback_position = 0
         self.ruler.update()
@@ -1053,6 +1189,8 @@ class LightTimelineEditor(QDialog):
 
     def _go_to_end(self):
         """Aller à la fin de la timeline"""
+        if self.preview_player is None:
+            return
         self.preview_player.setPosition(int(self.media_duration))
         self.playback_position = self.media_duration
         self.ruler.update()
@@ -1146,7 +1284,8 @@ class LightTimelineEditor(QDialog):
         time_ms = max(0, min(time_ms, self.media_duration))
 
         self.playback_position = time_ms
-        self.preview_player.setPosition(int(time_ms))
+        if self.preview_player is not None:
+            self.preview_player.setPosition(int(time_ms))
 
         # Mettre a jour le compteur
         pos_sec = int(time_ms / 1000)
@@ -1245,15 +1384,16 @@ class LightTimelineEditor(QDialog):
             if not self.playback_timer.isActive():
                 self.playback_timer.start(40)
         else:
-            # Arrêter seulement si le preview interne ne joue pas non plus
-            if self.preview_player.playbackState() != QMediaPlayer.PlayingState:
+            preview_playing = (self.preview_player is not None and
+                               self.preview_player.playbackState() == QMediaPlayer.PlayingState)
+            if not preview_playing:
                 self.playback_timer.stop()
 
     def update_playhead(self):
         """Met a jour la position du curseur pendant lecture (preview ou player principal)"""
         playing = False
 
-        if self.preview_player.playbackState() == QMediaPlayer.PlayingState:
+        if self.preview_player is not None and self.preview_player.playbackState() == QMediaPlayer.PlayingState:
             self.playback_position = self.preview_player.position()
             playing = True
         elif self.main_window.player.playbackState() == QMediaPlayer.PlayingState:
@@ -1344,30 +1484,31 @@ class LightTimelineEditor(QDialog):
                                 self.main_window.active_effect_config = eff_cfg
                                 self.main_window.start_effect(eff_cfg.get("name", ""))
 
-        # ── Détecter le clip d'effet actif ───────────────────────────────────
-        eff_track = self.track_map.get("Effet")
-        new_eff_clip = None
-        if eff_track:
-            for clip in eff_track.clips:
+        # ── Détecter les clips d'effet actifs (toutes les pistes Effet) ─────
+        new_eff_clips = {}
+        for et in getattr(self, '_effect_tracks', []):
+            for clip in et.clips:
                 if clip.start_time <= current_time <= clip.start_time + clip.duration:
-                    new_eff_clip = clip
+                    new_eff_clips[et.name] = clip
                     break
 
-        if new_eff_clip is not self._eff_clip_active:
-            if self._eff_clip_active is not None:
-                prev_name = getattr(self._eff_clip_active, 'effect_name', '')
-                if getattr(self.main_window, 'active_effect', None) == prev_name:
-                    self.main_window.active_effect        = None
-                    self.main_window.active_effect_config = {}
-                    if hasattr(self.main_window, 'stop_effect'):
-                        self.main_window.stop_effect()
-            self._eff_clip_active = new_eff_clip
-            if new_eff_clip:
-                eff_name = getattr(new_eff_clip, 'effect_name', '')
-                if eff_name:
-                    eff_layers = list(getattr(new_eff_clip, 'effect_layers', []))
-                    eff_type   = getattr(new_eff_clip, 'effect_type', '')
-                    if not eff_layers:
+        if new_eff_clips != self._eff_clips_active:
+            self._eff_clips_active = new_eff_clips
+            if not new_eff_clips:
+                self.main_window.active_effect        = None
+                self.main_window.active_effect_config = {}
+                if hasattr(self.main_window, 'stop_effect'):
+                    self.main_window.stop_effect()
+            else:
+                # Fusionner les couches de tous les clips actifs
+                merged_layers = []
+                merged_names  = []
+                merged_type   = ''
+                for clip in new_eff_clips.values():
+                    eff_name   = getattr(clip, 'effect_name', '')
+                    eff_layers = list(getattr(clip, 'effect_layers', []))
+                    eff_type   = getattr(clip, 'effect_type', '')
+                    if not eff_layers and eff_name:
                         try:
                             from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
                             for _e in BUILTIN_EFFECTS + _load_custom_effects():
@@ -1377,15 +1518,21 @@ class LightTimelineEditor(QDialog):
                                     break
                         except Exception:
                             pass
-                    cfg = {
-                        'name': eff_name, 'type': eff_type, 'layers': eff_layers, 'play_mode': 'loop',
-                        'target_groups': getattr(new_eff_clip, 'effect_target_groups', []),
-                        'speed_override': getattr(new_eff_clip, 'effect_speed', 50),
-                    }
-                    self.main_window.active_effect        = eff_name
-                    self.main_window.active_effect_config = cfg
-                    if hasattr(self.main_window, 'start_effect'):
-                        self.main_window.start_effect(eff_name)
+                    merged_layers.extend(eff_layers)
+                    if eff_name:
+                        merged_names.append(eff_name)
+                    if not merged_type:
+                        merged_type = eff_type
+                combined_name = " + ".join(merged_names) if merged_names else ''
+                cfg = {
+                    'name': combined_name, 'type': merged_type,
+                    'layers': merged_layers, 'play_mode': 'loop',
+                    'target_groups': [], 'speed_override': 50,
+                }
+                self.main_window.active_effect        = combined_name
+                self.main_window.active_effect_config = cfg
+                if hasattr(self.main_window, 'start_effect') and merged_layers:
+                    self.main_window.start_effect(combined_name)
 
         # ── 1) Appliquer les clips de couleur par groupe (priorité basse) ─────
         for track in self.tracks:
@@ -1419,6 +1566,7 @@ class LightTimelineEditor(QDialog):
                         t = min(1.0, elapsed / max(1, clip.duration))
                         _pan_val  = int((pan_s  + (pan_e  - pan_s)  * t) * 256)
                         _tilt_val = int((tilt_s + (tilt_e - tilt_s) * t) * 256)
+                    _clip_strobe = getattr(clip, 'strobe_speed', 0)
                     for pos, idx in enumerate(track_to_indices.get(track.name, [])):
                         if idx < len(projectors):
                             p = projectors[idx]
@@ -1430,6 +1578,7 @@ class LightTimelineEditor(QDialog):
                                 int(color.green() * brightness),
                                 int(color.blue()  * brightness),
                             )
+                            p.strobe_speed = _clip_strobe
                             if _has_move:
                                 p.pan  = _pan_val
                                 p.tilt = _tilt_val
@@ -1460,6 +1609,7 @@ class LightTimelineEditor(QDialog):
                             # Pan/Tilt toujours appliqués (même si projecteur éteint)
                             if "pan"  in ps: p.pan  = ps["pan"]
                             if "tilt" in ps: p.tilt = ps["tilt"]
+                            p.strobe_speed = int(ps.get("strobe_speed", 0))
                             if ps.get("level", 0) > 0:
                                 lvl = int(ps["level"] * brightness)
                                 base = QColor(ps["base_color"])
@@ -1485,6 +1635,12 @@ class LightTimelineEditor(QDialog):
         if self.media_row in self.main_window.seq.sequences:
             seq = self.main_window.seq.sequences[self.media_row]
             clips_data = seq.get('clips', [])
+
+            # Créer les pistes Effet supplémentaires présentes dans la sauvegarde
+            for clip_data in clips_data:
+                tname = clip_data.get('track', '')
+                if tname.startswith('Effet') and tname != 'Effet' and tname not in self.track_map:
+                    self._add_effect_track_named(tname)
 
             for clip_data in clips_data:
                 track_name = clip_data.get('track')
@@ -1518,6 +1674,7 @@ class LightTimelineEditor(QDialog):
                     clip.move_effect    = clip_data.get('move_effect', None)
                     clip.move_speed     = clip_data.get('move_speed', 0.5)
                     clip.move_amplitude = clip_data.get('move_amplitude', 60)
+                    clip.strobe_speed   = clip_data.get('strobe_speed', 0)
                     if clip_data.get('memory_ref'):
                         clip.memory_ref   = tuple(clip_data['memory_ref'])
                         clip.memory_label = clip_data.get('memory_label', '')
@@ -1559,6 +1716,7 @@ class LightTimelineEditor(QDialog):
                     'effect_name': getattr(clip, 'effect_name', ''),
                     'effect_type': getattr(clip, 'effect_type', ''),
                     'effect_target_groups': getattr(clip, 'effect_target_groups', []),
+                    'strobe_speed': getattr(clip, 'strobe_speed', 0),
                 }
                 if hasattr(clip, 'color2') and clip.color2:
                     clip_data['color2'] = clip.color2.name()
@@ -1606,6 +1764,7 @@ class LightTimelineEditor(QDialog):
                     'effect_name':         getattr(clip, 'effect_name', ''),
                     'effect_type':         getattr(clip, 'effect_type', ''),
                     'effect_target_groups': getattr(clip, 'effect_target_groups', []),
+                    'strobe_speed': getattr(clip, 'strobe_speed', 0),
                 }
 
                 if hasattr(clip, 'color2') and clip.color2:
@@ -2855,7 +3014,8 @@ class LightTimelineEditor(QDialog):
                 return  # fenêtre fermée sans choix → on annule
 
         self.playback_timer.stop()
-        self.preview_player.stop()
+        if self.preview_player is not None:
+            self.preview_player.stop()
         # Deconnecter tous les signaux du player principal pour eviter
         # que le timer de preview continue de s'activer apres fermeture
         try:

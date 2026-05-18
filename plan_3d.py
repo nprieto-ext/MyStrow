@@ -163,7 +163,7 @@ def _mh_geometry(p):
     hang_y = p.get('fixture_height', 7.0)
     pan    = p.get('pan',  32768)
     tilt   = p.get('tilt', 32768)
-    pan_angle = (pan  - 32768) / 32768.0 * math.pi
+    pan_angle = -(pan - 32768) / 32768.0 * math.pi
     theta     = (tilt - 32768) / 32768.0 * math.pi * 0.75
     # Beam direction: tilt forward then pan around Y
     # (0,-1,0) → tilt → (0,-cos θ, sin θ) → rotate Y by pan_angle
@@ -346,6 +346,7 @@ class _Canvas3D(QWidget):
         self._projectors     = []
         self._sel            = set()   # set of int indices (stables entre refreshes)
         self._move_callback  = None    # callable(selected_indices)
+        self._floor_callback = None    # callable(floor_x, floor_z, sel_indices)
         self._trusses = [
             {'label': 'Truss avant',   'enabled': True, 'height': TRUSS_Y, 'z': -3.8, 'x_l': -9.0, 'x_r': 9.0},
             {'label': 'Truss arrière', 'enabled': True, 'height': TRUSS_Y, 'z':  4.0, 'x_l': -9.0, 'x_r': 9.0},
@@ -481,7 +482,14 @@ class _Canvas3D(QWidget):
                     else:
                         self._sel = set() if self._sel == {fix_i} else {fix_i}
                 else:
-                    if not ctrl:
+                    # Clic sur le sol : viser si une lyre est sélectionnée
+                    if self._sel and self._floor_callback:
+                        floor = self._screen_to_floor(sx, sy)
+                        if floor:
+                            self._floor_callback(floor[0], floor[1], list(self._sel))
+                        elif not ctrl:
+                            self._sel.clear()
+                    elif not ctrl:
                         self._sel.clear()
                 self.update()
                 if self._move_callback:
@@ -868,7 +876,7 @@ class _Canvas3D(QWidget):
                 gc = QColor(_GC.get(p.get('group',''), '#5577aa'))
 
                 pan_a  = (p.get('pan',  32768) - 32768) / 32768.0 * math.pi
-                cp, sp2 = math.cos(pan_a), math.sin(pan_a)
+                cp, sp2 = math.cos(pan_a), -math.sin(pan_a)
 
                 BAR_W  = 0.40   # mounting bar half-width (m)
                 BAR_H  = 0.11   # bar height (m)
@@ -1481,7 +1489,8 @@ class Plan3DWindow(QMainWindow):
         self.resize(900, 580)
         self.setStyleSheet("background:#0d0d14; QToolBar { background:#12121e; border:none; spacing:4px; padding:3px 8px; }")
         self._canvas = _Canvas3D()
-        self._canvas._move_callback = self._on_selection_changed
+        self._canvas._move_callback  = self._on_selection_changed
+        self._canvas._floor_callback = self._on_floor_click
         self.setCentralWidget(self._canvas)
 
         self._move_panel = _MovePanel(self)
@@ -1736,7 +1745,7 @@ class Plan3DWindow(QMainWindow):
         # Invert: beam=(sin(pan)*sin(θ), -cos(θ), cos(pan)*sin(θ))
         theta     = math.acos(max(-1.0, min(1.0, -dy)))
         sin_theta = math.sin(theta)
-        pan_angle = math.atan2(dx, dz) if abs(sin_theta) > 1e-6 else 0.0
+        pan_angle = math.atan2(-dx, dz) if abs(sin_theta) > 1e-6 else 0.0
 
         # Clamp to physical range
         theta     = max(0.0, min(math.pi * 0.75, theta))
@@ -1749,8 +1758,18 @@ class Plan3DWindow(QMainWindow):
         if hasattr(mw, 'dmx') and mw.dmx:
             mw.dmx.update_from_projectors(mw.projectors)
 
-        # Refresh 3D
+        # Refresh 3D + 2D
         self.refresh(mw.projectors)
+        if hasattr(mw, 'plan_de_feu') and mw.plan_de_feu:
+            mw.plan_de_feu.update()
+
+    def _on_floor_click(self, floor_x, floor_z, sel_indices):
+        """Appelé quand l'utilisateur clique sur le sol avec une lyre sélectionnée."""
+        mw = self.parent()
+        if not mw:
+            return
+        for idx in sel_indices:
+            self._aim_at_floor(idx, floor_x, floor_z)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

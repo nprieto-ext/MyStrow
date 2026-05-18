@@ -1,0 +1,197 @@
+
+[09:36:44] _hide_orphan_console
+  hwnd=0x005c0df2  visible=True
+  ProcessList n=4  pids=[40288, 29112, 49264, 42728]
+
+=== startup_800ms @ 09:36:51.118 ===
+PID=40288  console_hwnd=0x00000000
+console_hwnd=0  (ConPTY ou pas de console visible)
+Fenetres visibles (Get-Process):
+  Id              : 2352
+  Name            : ApplicationFrameHost
+  MainWindowTitle : Calculatrice
+  Id              : 41432
+  Name            : CalculatorApp
+  MainWindowTitle : Calculatrice
+  Id              : 22096
+  Name            : chrome
+  MainWindowTitle : Compter les t‚l‚chargements du jour - Google Gemini - Google Chrome
+  Id              : 19956
+  Name            : mintty
+  MainWindowTitle : ? Respond to GitHub Actions cross-compilation argument
+  Id              : 24364
+  Name            : msedgewebview2
+  MainWindowTitle : (5) WhatsApp
+  Id              : 48448
+  Name            : mspaint
+  MainWindowTitle : python.png - Paint
+  Id              : 18404
+  Name            : Notepad
+  MainWindowTitle : *Je veux que tu m'aides … imaginer, - Bloc-notes
+  Id              : 6240
+  Name            : olk
+  MainWindowTitle : Courrier - Nicolas PRIETO (Ext) - Outlook
+  Id              : 40288
+  Name            : python
+  MainWindowTitle : MyStrow
+  Id              : 18192
+  Name            : Taskmgr
+  MainWindowTitle : Gestionnaire des tƒches
+  Id              : 36008
+  Name            : WindowsTerminal
+  MainWindowTitle : C:\Windows\System32\cmd.exe - py  main.py
+
+[09:36:52] _hide_orphan_console
+  hwnd=0x00000000  visible=False
+
+=== startup_2000ms @ 09:36:52.911 ===
+PID=40288  console_hwnd=0x00000000
+console_hwnd=0  (ConPTY ou pas de console visible)
+Fenetres visibles (Get-Process):
+  Id              : 2352
+  Name            : ApplicationFrameHost
+  MainWindowTitle : Calculatrice
+  Id              : 41432
+  Name            : CalculatorApp
+  MainWindowTitle : Calculatrice
+  Id              : 22096
+  Name            : chrome
+  MainWindowTitle : Compter les t‚l‚chargements du jour - Google Gemini - Google Chrome
+  Id              : 19956
+  Name            : mintty
+  MainWindowTitle : ? Respond to GitHub Actions cross-compilation argument
+  Id              : 24364
+  Name            : msedgewebview2
+  MainWindowTitle : (5) WhatsApp
+  Id              : 48448
+  Name            : mspaint
+  MainWindowTitle : python.png - Paint
+  Id              : 18404
+  Name            : Notepad
+  MainWindowTitle : *Je veux que tu m'aides … imaginer, - Bloc-notes
+  Id              : 6240
+  Name            : olk
+  MainWindowTitle : Courrier - Nicolas PRIETO (Ext) - Outlook
+  Id              : 40288
+  Name            : python
+  MainWindowTitle : MyStrow
+  Id              : 18192
+  Name            : Taskmgr
+  MainWindowTitle : Gestionnaire des tƒches
+  Id              : 36008
+  Name            : WindowsTerminal
+  MainWindowTitle : C:\Windows\System32\cmd.exe - py  main.py
+
+=== open_rec_lumiere_avant_create @ 09:37:01.230 ===
+PID=40288  console_hwnd=0x00000000
+console_hwnd=0  (ConPTY ou pas de console visible)
+Fenetres visibles (Get-Process):
+  Id              : 2352
+  Name            : ApplicationFrameHost
+  MainWindowTitle : Calculatrice
+  Id              : 41432
+  Name            : CalculatorApp
+  MainWindowTitle : Calculatrice
+  Id              : 22096
+  Name            : chrome
+  MainWindowTitle : Compter les t‚l‚chargements du jour - Google Gemini - Google Chrome
+  Id              : 19956
+  Name            : mintty
+  MainWindowTitle : ? Respond to GitHub Actions cross-compilation argument
+  Id              : 24364
+  Name            : msedgewebview2
+  MainWindowTitle : (5) WhatsApp
+  Id              : 48448
+  Name            : mspaint
+  MainWindowTitle : python.png - Paint
+  Id              : 18404
+  Name            : Notepad
+  MainWindowTitle : *Je veux que tu m'aides … imaginer, - Bloc-notes
+  Id              : 6240
+  Name            : olk
+  MainWindowTitle : Courrier - Nicolas PRIETO (Ext) - Outlook
+  Id              : 40288
+  Name            : python
+  MainWindowTitle : MyStrow *
+  Id              : 18192
+  Name            : Taskmgr
+  MainWindowTitle : Gestionnaire des tƒches
+  Id              : 36008
+  Name            : WindowsTerminal
+  MainWindowTitle : C:\Windows\System32\cmd.exe - py  main.py
+
+=== open_rec_lumiere_apres_create @ 09:37:02.287 ===
+PID=40288  console_hwnd=0x00000000
+console_hwnd=0  (ConPTY ou pas de console visible)
+Fenetres visibles (Get-Process):
+  Id              : 2352
+  Name            : ApplicationFrameHost
+  MainWindowTitle : Calculatrice
+  Id              : 41432
+  Name            : CalculatorApp
+  MainWindowTitle : Calculatrice
+  Id              : 22096
+  Name            : chrome
+  MainWindowTitle : Compter les t‚l‚chargements du jour - Google Gemini - Google Chrome
+  Id              : 19956
+  Name            : mintty
+  MainWindowTitle : ? Respond to GitHub Actions cross-compilation argument
+  Id              : 24364
+  Name            : msedgewebview2
+  MainWindowTitle : (5) WhatsApp
+  Id              : 48448
+  Name            : mspaint
+  MainWindowTitle : python.png - Paint
+  Id              : 18404
+  Name            : Notepad
+  MainWindowTitle : *Je veux que tu m'aides … imaginer, - Bloc-notes
+  Id              : 6240
+  Name            : olk
+  MainWindowTitle : Courrier - Nicolas PRIETO (Ext) - Outlook
+  Id              : 40288
+  Name            : python
+  MainWindowTitle : python
+  Id              : 18192
+  Name            : Taskmgr
+  MainWindowTitle : Gestionnaire des tƒches
+  Id              : 36008
+  Name            : WindowsTerminal
+  MainWindowTitle : C:\Windows\System32\cmd.exe - py  main.py
+
+=== open_rec_lumiere_300ms_apres @ 09:37:03.446 ===
+PID=40288  console_hwnd=0x00000000
+console_hwnd=0  (ConPTY ou pas de console visible)
+Fenetres visibles (Get-Process):
+  Id              : 2352
+  Name            : ApplicationFrameHost
+  MainWindowTitle : Calculatrice
+  Id              : 41432
+  Name            : CalculatorApp
+  MainWindowTitle : Calculatrice
+  Id              : 22096
+  Name            : chrome
+  MainWindowTitle : Compter les t‚l‚chargements du jour - Google Gemini - Google Chrome
+  Id              : 19956
+  Name            : mintty
+  MainWindowTitle : ? Respond to GitHub Actions cross-compilation argument
+  Id              : 24364
+  Name            : msedgewebview2
+  MainWindowTitle : (5) WhatsApp
+  Id              : 48448
+  Name            : mspaint
+  MainWindowTitle : python.png - Paint
+  Id              : 18404
+  Name            : Notepad
+  MainWindowTitle : *Je veux que tu m'aides … imaginer, - Bloc-notes
+  Id              : 6240
+  Name            : olk
+  MainWindowTitle : Courrier - Nicolas PRIETO (Ext) - Outlook
+  Id              : 40288
+  Name            : python
+  MainWindowTitle : MyStrow *
+  Id              : 18192
+  Name            : Taskmgr
+  MainWindowTitle : Gestionnaire des tƒches
+  Id              : 36008
+  Name            : WindowsTerminal
+  MainWindowTitle : C:\Windows\System32\cmd.exe - py  main.py

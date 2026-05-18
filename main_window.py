@@ -1717,7 +1717,7 @@ class MainWindow(QMainWindow):
         # Timer IA
         self.ai_timer = QTimer(self)
         self.ai_timer.timeout.connect(self.update_audio_ai)
-        self.ai_timer.start(100)
+        self.ai_timer.start(40)
 
         self.player.mediaStatusChanged.connect(self.on_media_status_changed)
 
@@ -2984,7 +2984,8 @@ class MainWindow(QMainWindow):
                 self.audio_ai.reset()
                 # Réinitialiser l'état interne des lyres + sections + effets aléatoires
                 for attr in ('_ia_lyre_e', '_ia_lyre_phase', '_ia_lyre_last_pos',
-                             '_ia_sec', '_ia_rnd_fx'):
+                             '_ia_lyre_color_smooth', '_ia_sec', '_ia_rnd_fx',
+                             '_ia_lyre_chop_until', '_ia_lyre_beat_idx'):
                     self.__dict__.pop(attr, None)
 
                 def _after_ia_fade():
@@ -3686,7 +3687,7 @@ class MainWindow(QMainWindow):
         for i, proj_state in enumerate(cue.get("projectors", [])):
             if i >= len(self.projectors):
                 break
-            if proj_state["level"] > 0 or any(proj_state.get(k, 0) > 0 for k in ("uv", "amber_boost", "white_boost", "orange_boost", "gobo", "zoom")):
+            if proj_state["level"] > 0 or any(proj_state.get(k, 0) > 0 for k in ("uv", "amber_boost", "white_boost", "orange_boost", "gobo", "zoom", "strobe_speed")):
                 p = self.projectors[i]
                 p.level = 0
                 p.base_color = QColor("black")
@@ -3697,6 +3698,7 @@ class MainWindow(QMainWindow):
                 p.orange_boost = 0
                 p.gobo         = 0
                 p.zoom         = 0
+                p.strobe_speed = 0
 
     def _apply_memory_to_projectors(self, mem_col, row, fader_value=None, trigger_effect=True):
         """Applique le cue courant de la mémoire sur les projecteurs."""
@@ -3732,8 +3734,10 @@ class MainWindow(QMainWindow):
             p.amber_boost  = int(proj_state.get("amber_boost",  0) * brightness)
             p.white_boost  = int(proj_state.get("white_boost",  0) * brightness)
             p.orange_boost = int(proj_state.get("orange_boost", 0) * brightness)
-            p.gobo         = int(proj_state.get("gobo",         0))
-            p.zoom         = int(proj_state.get("zoom",         0))
+            p.gobo          = int(proj_state.get("gobo",         0))
+            p.gobo_rotation = int(proj_state.get("gobo_rotation", 0))
+            p.zoom          = int(proj_state.get("zoom",         0))
+            p.strobe_speed  = int(proj_state.get("strobe_speed", 0))
             if proj_state["level"] <= 0:
                 p.level = 0
                 p.base_color = QColor("black")
@@ -3944,7 +3948,9 @@ class MainWindow(QMainWindow):
                 "white_boost":  getattr(p, 'white_boost',  0),
                 "orange_boost": getattr(p, 'orange_boost', 0),
                 "gobo":         getattr(p, 'gobo',         0),
+                "gobo_rotation": getattr(p, 'gobo_rotation', 0),
                 "zoom":         getattr(p, 'zoom',         0),
+                "strobe_speed": getattr(p, 'strobe_speed', 0),
             })
         return {"projectors": snapshot, "effect": {}, "duration": 0}
 
@@ -5484,6 +5490,10 @@ class MainWindow(QMainWindow):
         if n == 0:
             return
 
+        _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') == 'Moving Head']
+        _mh_idx   = {id(p): j for j, p in enumerate(_mh_projs)}
+        _mh_n     = max(len(_mh_projs), 1)
+
         _LETTER_TO_GROUP = {
             "A": "face", "B": "lat", "C": "contre",
             "D": "douche1", "E": "douche2", "F": "douche3",
@@ -5549,7 +5559,9 @@ class MainWindow(QMainWindow):
                 if fade > 0:
                     sin_val = (_math.sin(2 * _math.pi * x) + 1) / 2
                     raw = raw * (1 - fade) + sin_val * fade
-                scaled = raw * size / 100.0
+                min_v = ld.get("min_val", 0) / 100.0
+                max_v = ld.get("max_val", 100) / 100.0
+                scaled = (min_v + raw * (max_v - min_v)) * size / 100.0
 
                 if attr in ("Dimmer", "Strobe"):
                     dim += scaled; has_dim = True
@@ -5599,10 +5611,13 @@ class MainWindow(QMainWindow):
                     amplitude = (size / 100.0) * 8192
                     saved = self.effect_saved_colors.get(id(proj))
 
+                    # Utiliser l'index relatif parmi les lyres pour le spread
+                    _mh_i = _mh_idx.get(id(proj), i)
+
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
                         pan_freq = (0.05 + speed * pan_mult / 100.0 * 7.0) * fader_mult
-                        pan_x = (pan_freq * t + i / max(n, 1) * sp + phase + pan_phase_pct / 100.0) % 1.0
+                        pan_x = (pan_freq * t + _mh_i / _mh_n * sp + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = saved[3] if saved and len(saved) > 3 else 32768
                         proj.pan = int(max(0, min(65535, c_pan + (pan_raw - 0.5) * 2 * amplitude)))
@@ -5610,7 +5625,7 @@ class MainWindow(QMainWindow):
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
                         tilt_freq = (0.05 + speed * tilt_mult / 100.0 * 7.0) * fader_mult
-                        tilt_x = (tilt_freq * t + i / max(n, 1) * sp + phase + tilt_phase_pct / 100.0) % 1.0
+                        tilt_x = (tilt_freq * t + _mh_i / _mh_n * sp + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = saved[4] if saved and len(saved) > 4 else 32768
                         proj.tilt = int(max(0, min(65535, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
@@ -5623,6 +5638,11 @@ class MainWindow(QMainWindow):
 
             # En mode rec lumière, ignorer les projos éteints sauf ciblage explicite
             if _timeline_mode and _base_level == 0 and not _explicitly_targeted:
+                continue
+
+            # Aucune couche lumière n'a produit de signal → laisser niveau/couleur inchangés
+            # (les layers Pan/Tilt ont déjà agi directement pendant la boucle)
+            if _timeline_mode and not has_dim and not has_rgb_layer and not _explicitly_targeted:
                 continue
 
             level = min(1.0, dim) if has_dim else 1.0
@@ -6680,86 +6700,80 @@ class MainWindow(QMainWindow):
                             lvl = int((70 + energy * 30) * global_fade)
                             _set_proj(p, blended, lvl)
 
-            # ── 3. Mouvement + couleur lyres (Moving Head) ───────────────────
+            # ── 3. Mouvement + couleur + chop dimmer lyres (Moving Head) ────────
             moving_heads = [p for p in self.projectors
                             if getattr(p, 'fixture_type', '') == "Moving Head"]
             if moving_heads:
                 energy_raw = energy
 
-                # Lissage EWMA
+                # Lissage EWMA énergie
                 if not hasattr(self, '_ia_lyre_e'):
-                    self._ia_lyre_e        = energy_raw
-                    self._ia_lyre_phase    = 0.0
-                    self._ia_lyre_last_pos = position
-                alpha = 0.07
-                self._ia_lyre_e = alpha * energy_raw + (1.0 - alpha) * self._ia_lyre_e
+                    self._ia_lyre_e          = energy_raw
+                    self._ia_lyre_phase      = 0.0
+                    self._ia_lyre_last_pos   = position
+                    self._ia_lyre_chop_until = 0
+                    self._ia_lyre_beat_idx   = -1
+                self._ia_lyre_e = 0.07 * energy_raw + 0.93 * self._ia_lyre_e
                 e = self._ia_lyre_e
 
-                # Phase accumulée (fluide)
-                dt = max(0.0, (position - self._ia_lyre_last_pos) / 1000.0)
+                # Phase accumulée à vitesse CONSTANTE (indépendante du rythme)
+                dt = max(0.0, min(0.10, (position - self._ia_lyre_last_pos) / 1000.0))
                 self._ia_lyre_last_pos = position
-
-                # Vitesse adaptée à la section
-                if section == 'drop':
-                    drop_fx_now = self.ia_params.get('drop_effect', 'flash_blanc')
-                    spd_mult = 5.0 if drop_fx_now == 'laser_scan' else (3.0 + nerv * 2.0)
-                elif section == 'build':
-                    spd_mult = 1.0 + ss.get('build_p', 0.0) * 2.0   # 1x → 3x
-                elif section == 'high':
-                    spd_mult = 1.6
-                elif section == 'quiet':
-                    spd_mult = 0.4
-                else:
-                    spd_mult = 1.0
-
-                # Nervosité augmente la vitesse de base des lyres
-                base_speed = (0.12 + nerv * 0.20) + e * (0.15 + nerv * 0.20)
-                # calm(nerv=0): 0.12–0.27 Hz  |  nerveux(nerv=1): 0.32–0.67 Hz
-                self._ia_lyre_phase += dt * base_speed * spd_mult * 2.0 * math.pi
+                self._ia_lyre_phase += dt * 0.30 * 2.0 * math.pi  # ~0.30 tour/s, fixe
                 ph = self._ia_lyre_phase
 
-                # Amplitude adaptée à la section
-                if section == 'drop':
-                    amp = 90.0
-                elif section == 'quiet':
-                    amp = 20.0 + e * 20.0
-                else:
-                    amp = 28.0 + e * 62.0
+                # Amplitude constante (ne varie pas selon l'énergie ni la section)
+                amp = 38.0
 
-                # Couleur lyre = palette IA (suit les contres)
-                pal     = self.audio_ai.palette if self.audio_ai.palette else [QColor("#ffffff")]
-                c_idx   = getattr(self.audio_ai, '_contre_color_idx', 0)
-                lyre_color = pal[c_idx % len(pal)]
-
-                # En drop : lyres en blanc
+                # Couleur cible
+                pal   = self.audio_ai.palette if self.audio_ai.palette else [QColor("#ffffff")]
+                c_idx = getattr(self.audio_ai, '_contre_color_idx', 0)
                 if section == 'drop':
                     drop_p_now = min(1.0, (position - ss.get('drop_start', position)) / 1200.0)
-                    if drop_p_now < 0.35:
-                        lyre_color = QColor(255, 255, 255)
+                    lyre_color_tgt = QColor(255, 255, 255) if drop_p_now < 0.35 \
+                                     else pal[int(position / 80) % len(pal)]
+                else:
+                    lyre_color_tgt = pal[c_idx % len(pal)]
 
-                lyre_level = int(60 + e * 40)
-                if section == 'drop':
-                    lyre_level = 100
+                # Interpolation couleur (évite les snaps brutaux au changement de beat)
+                if not hasattr(self, '_ia_lyre_color_smooth'):
+                    self._ia_lyre_color_smooth = lyre_color_tgt
+                _ac = 0.55 if section == 'drop' else 0.18
+                _cc = self._ia_lyre_color_smooth
+                self._ia_lyre_color_smooth = QColor(
+                    int(_cc.red()   + _ac * (lyre_color_tgt.red()   - _cc.red())),
+                    int(_cc.green() + _ac * (lyre_color_tgt.green() - _cc.green())),
+                    int(_cc.blue()  + _ac * (lyre_color_tgt.blue()  - _cc.blue())),
+                )
+                lyre_color = self._ia_lyre_color_smooth
+
+                # Chop dimmer sur chaque beat (55 ms de noir)
+                cur_beat_idx = getattr(self.audio_ai, '_last_beat_idx', -1)
+                if cur_beat_idx >= 0 and cur_beat_idx != self._ia_lyre_beat_idx:
+                    self._ia_lyre_beat_idx = cur_beat_idx
+                    if e > 0.25:
+                        self._ia_lyre_chop_until = position + 55
+
+                if position < self._ia_lyre_chop_until:
+                    lyre_level = 0
                 elif section == 'quiet':
                     lyre_level = int(30 + e * 20)
+                elif section == 'drop':
+                    lyre_level = int(60 + e * 40)
+                else:
+                    lyre_level = int(50 + e * 50)
 
                 for i, p in enumerate(moving_heads):
                     phi = i * (2.0 * math.pi / max(len(moving_heads), 1))
 
-                    # Strobe shutter sur lyres pendant le drop
-                    if section == 'drop':
-                        strobe_on = (int(position / 55) % 2) == 0
-                        p.shutter = 255 if strobe_on else 0
-                    else:
-                        p.shutter = 255
+                    # Mouvement cercle — vitesse et amplitude fixes, indépendantes de la musique
+                    pan_val  = 32768 + int(amp * 256 * math.cos(ph + phi))
+                    tilt_val = 32768 + int(amp * 200 * math.sin(ph + phi))
 
-                    # Figure 8 lissajous
-                    pan_val  = 32768 + int(amp * 256 * math.sin(ph + phi))
-                    tilt_val = 32768 + int(amp * 128 * math.sin(2.0 * (ph + phi)))
                     p.pan  = max(0, min(65535, pan_val))
                     p.tilt = max(0, min(65535, tilt_val))
 
-                    # Couleur (seulement si groupe absent de state)
+                    # Couleur : appliquée seulement si l'IA principale ne gère pas ce groupe
                     if p.group not in state:
                         p.level = max(0, min(100, lyre_level))
                         p.base_color = lyre_color
@@ -6769,27 +6783,8 @@ class MainWindow(QMainWindow):
                             int(lyre_color.green() * brightness),
                             int(lyre_color.blue()  * brightness),
                         )
-                        # ColorWheel (MOVING_8CH)
-                        profile = getattr(p, 'dmx_profile', [])
-                        if 'ColorWheel' in profile and 'R' not in profile:
-                            slots = getattr(p, 'color_wheel_slots', [])
-                            if slots:
-                                def _dist(s):
-                                    sc = QColor(s.get('color', '#ffffff'))
-                                    dr = sc.red()   - lyre_color.red()
-                                    dg = sc.green() - lyre_color.green()
-                                    db = sc.blue()  - lyre_color.blue()
-                                    return dr*dr + dg*dg + db*db
-                                p.color_wheel = min(slots, key=_dist).get('dmx', 0)
-                            else:
-                                h = lyre_color.hsvHue()
-                                if h < 0:                  p.color_wheel = 0
-                                elif h < 30 or h >= 330:   p.color_wheel = 21
-                                elif h < 75:               p.color_wheel = 85
-                                elif h < 150:              p.color_wheel = 42
-                                elif h < 195:              p.color_wheel = 106
-                                elif h < 270:              p.color_wheel = 64
-                                else:                      p.color_wheel = 128
+                    # ColorWheel : toujours mis à jour, quelle que soit la source de la couleur
+                    self._update_color_wheel(p, getattr(p, 'base_color', None) or lyre_color)
 
             if hasattr(self, 'plan_de_feu'):
                 self.plan_de_feu.update()
@@ -7926,6 +7921,18 @@ class MainWindow(QMainWindow):
                 return
 
         editor = LightTimelineEditor(self, current_row)
+        editor.showMaximized()
+        if sys.platform == 'win32':
+            try:
+                import ctypes as _ct
+                _u32 = _ct.windll.user32
+                _hwnd = int(editor.winId())
+                _GWL_EXSTYLE = -20
+                _cur = _u32.GetWindowLongW(_hwnd, _GWL_EXSTYLE)
+                _u32.SetWindowLongW(_hwnd, _GWL_EXSTYLE,
+                                    (_cur | 0x80) & ~0x40000)  # +TOOLWINDOW -APPWINDOW
+            except Exception:
+                pass
         editor.exec()
 
     def _edit_current_volume(self):
@@ -10284,18 +10291,18 @@ class MainWindow(QMainWindow):
         )
         _PT_APL_SS = (
             "QPushButton { background:#0d1520; color:#4488bb; border:1px solid #1a2d40;"
-            " border-radius:6px; padding:4px 8px; font-size:10px; }"
+            " border-radius:6px; padding:6px 10px; font-size:11px; }"
             "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
         )
         btn_pt_reset       = QPushButton("↺  Reset")
-        btn_pt_apply_model = QPushButton("…")
-        btn_pt_apply_all   = QPushButton("Toutes\nles lyres")
+        btn_pt_apply_model = QPushButton("Appliquer\nà toutes les\nlyres [ref]")
+        btn_pt_apply_all   = QPushButton("Appliquer\nà toutes\nles lyres")
         btn_pt_reset.setStyleSheet(_PT_RST_SS)
         btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
         btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
-        btn_pt_reset.setFixedSize(100, 28)
-        btn_pt_apply_model.setFixedSize(100, 44)
-        btn_pt_apply_all.setFixedSize(100, 44)
+        btn_pt_reset.setFixedSize(130, 30)
+        btn_pt_apply_model.setMinimumWidth(130)
+        btn_pt_apply_all.setMinimumWidth(130)
 
         pt_side_col = QVBoxLayout()
         pt_side_col.setSpacing(6)
@@ -10721,7 +10728,7 @@ class MainWindow(QMainWindow):
                     tog_row = QHBoxLayout()
                     tog_row.setSpacing(6)
 
-                    if ch_type in ("Pan", "PanFine"):
+                    if ch_type == "Pan":
                         btn_inv_pan = QPushButton("↔  Pan inversé")
                         btn_inv_pan.setCheckable(True)
                         btn_inv_pan.setChecked(getattr(proj_pt, 'pan_invert', False))
@@ -10731,7 +10738,7 @@ class MainWindow(QMainWindow):
                         )
                         tog_row.addWidget(btn_inv_pan)
 
-                    if ch_type in ("Tilt", "TiltFine"):
+                    if ch_type == "Tilt":
                         btn_inv_tilt = QPushButton("↕  Tilt inversé")
                         btn_inv_tilt.setCheckable(True)
                         btn_inv_tilt.setChecked(getattr(proj_pt, 'tilt_invert', False))

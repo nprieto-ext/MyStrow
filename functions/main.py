@@ -340,16 +340,17 @@ def _axonaut_create_invoice(
         amount_eur = _get_plan_price_ht(plan_type)
         print(f"[Axonaut] amount_eur=0 → fallback Stripe price : {amount_eur} €")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    print(f"[Axonaut] Création facture — plan={plan_type} amount_eur={amount_eur} company_id={company_id}")
     result = _axonaut("POST", "/invoices", {
         "company_id":     company_id,
         "reference":      (stripe_ref or "")[:30],
         "reference_date": today,
         "theme_id":       339036,   # MYSTROW
         "products": [{
-            "name":          _plan_label(plan_type),
-            "quantity":      1,
-            "unit_price_ht": round(amount_eur, 2),
-            "tax_rate":      20,
+            "name":     _plan_label(plan_type),
+            "quantity": 1,
+            "price":    round(amount_eur, 2),
+            "tax_rate": 20,
         }],
     })
     if not result:
@@ -504,7 +505,7 @@ def _on_checkout_completed(session: dict) -> None:
     email       = cust_details.get("email") or session.get("customer_email", "")
     customer_id = session.get("customer", "")
     sub_id      = session.get("subscription", "")
-    amount_eur  = session.get("amount_total", 0) / 100.0
+    amount_eur  = session.get("amount_subtotal", 0) / 100.0
     cust_name   = cust_details.get("name") or ""
     cust_address = cust_details.get("address") or {}
 

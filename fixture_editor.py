@@ -13,12 +13,16 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QSizePolicy, QSplitter, QMenu,
     QStyledItemDelegate, QGridLayout,
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QSize, QRectF, QMimeData, QPoint
+from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QRectF, QMimeData, QPoint
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QDrag, QPixmap, QCursor
 
 import gzip
 
 from builtin_fixtures import BUILTIN_FIXTURES
+from fixture_packs import (
+    FixturePackBanner, FixturePackDownloadDialog,
+    FixturePackCheckWorker, load_packs_state, should_check_now,
+)
 
 # Cache module du bundle OFL (chargé une seule fois à la demande)
 _OFL_BUNDLE: list | None = None
@@ -66,7 +70,7 @@ def _load_ofl_bundle() -> list:
 
 FIXTURE_FILE = Path.home() / ".mystrow_fixtures.json"
 
-FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee"]
+FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee", "Gradateur"]
 
 GROUP_OPTIONS = [
     "face", "douche1", "douche2", "douche3", "lat", "contre",
@@ -136,6 +140,10 @@ _PRESETS_BY_TYPE = {
         ("Fumée 1ch", ["Smoke"]),
         ("Fumée 2ch", ["Smoke", "Fan"]),
         ("Hazer 2ch", ["Smoke", "Fan"]),
+    ],
+    "Gradateur": [
+        ("Dim 1ch",       ["Dim"]),
+        ("Dim+Strobe 2ch",["Dim", "Strobe"]),
     ],
 }
 
@@ -631,6 +639,8 @@ class FixtureEditorDialog(QDialog):
         self._current_idx = -1
         self._btn_add_to_patch = None   # compatibilité externe
         self.last_saved   = None        # dernière fixture enregistrée
+        self._pack_check_thread = None
+        self._pack_check_worker = None
 
         self._load_fixtures()
         self._build_ui()
@@ -641,6 +651,8 @@ class FixtureEditorDialog(QDialog):
             self._select_fixture(0)
         else:
             self._show_empty_state()
+
+        QTimer.singleShot(800, self._check_fixture_packs)
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -671,17 +683,73 @@ class FixtureEditorDialog(QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Erreur", f"Sauvegarde impossible :\n{e}")
 
+    # ── Packs de fixtures distants ────────────────────────────────────────────
+
+    def _check_fixture_packs(self):
+        """Lance la vérification des packs Firestore en arrière-plan (throttlée à 1h)."""
+        state = load_packs_state()
+        if not should_check_now(state):
+            return
+
+        id_token = None
+        try:
+            from license_manager import get_current_id_token
+            id_token = get_current_id_token()
+        except Exception:
+            pass
+
+        self._pack_check_worker = FixturePackCheckWorker(id_token)
+        self._pack_check_thread = QThread()
+        self._pack_check_worker.moveToThread(self._pack_check_thread)
+        self._pack_check_thread.started.connect(self._pack_check_worker.run)
+        self._pack_check_worker.found.connect(self._on_packs_found)
+        self._pack_check_worker.found.connect(self._pack_check_thread.quit)
+        self._pack_check_worker.no_update.connect(self._pack_check_thread.quit)
+        self._pack_check_worker.error.connect(self._pack_check_thread.quit)
+        self._pack_check_thread.start()
+
+    def _on_packs_found(self, packs: list):
+        if packs:
+            self._pack_banner.set_packs(packs)
+
+    def _open_pack_download(self, packs: list):
+        id_token = None
+        try:
+            from license_manager import get_current_id_token
+            id_token = get_current_id_token()
+        except Exception:
+            pass
+        dlg = FixturePackDownloadDialog(packs, id_token, parent=self)
+        dlg.download_complete.connect(self._on_packs_downloaded)
+        self._pack_banner.hide()
+        dlg.exec()
+
+    def _on_packs_downloaded(self, total_new: int):
+        if total_new > 0:
+            self._load_fixtures()
+            self._rebuild_list()
+
     # ── UI ────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         self.setStyleSheet(self._STYLE)
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        self._pack_banner = FixturePackBanner(self)
+        self._pack_banner.download_clicked.connect(self._open_pack_download)
+        root.addWidget(self._pack_banner)
+
+        inner = QWidget()
+        inner_layout = QHBoxLayout(inner)
+        inner_layout.setContentsMargins(0, 0, 0, 0)
+        inner_layout.setSpacing(0)
+        root.addWidget(inner, 1)
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(1)
-        root.addWidget(splitter)
+        inner_layout.addWidget(splitter)
 
         # ── Colonne gauche ────────────────────────────────────────────────────
         left = QWidget()

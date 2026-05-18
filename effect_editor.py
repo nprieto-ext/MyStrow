@@ -474,6 +474,8 @@ class EffectLayer:
         self.phase     = 0     # décalage global de phase 0-100 (0=no shift, 50=½ cycle, 100=full cycle)
         self.fade      = 0     # adoucissement de la forme 0=dur 100=doux
         self.direction = 1     # sens : 1=avant, -1=arrière, 0=bounce
+        self.min_val   = 0     # plancher de sortie 0-100
+        self.max_val   = 100   # plafond de sortie 0-100
         self.color1 = "#ff0000"
         self.color2 = "#0000ff"
         self.mouvement_shape = "libre"  # forme de trajectoire Pan/Tilt
@@ -490,6 +492,8 @@ class EffectLayer:
             "phase":     self.phase,
             "fade":      self.fade,
             "direction": self.direction,
+            "min_val":   self.min_val,
+            "max_val":   self.max_val,
             "color1": self.color1,
             "color2": self.color2,
             "mouvement_shape": self.mouvement_shape,
@@ -511,6 +515,8 @@ class EffectLayer:
         layer.phase     = d.get("phase",  0)
         layer.fade      = d.get("fade",   0)
         layer.direction = d.get("direction", 1)
+        layer.min_val   = d.get("min_val", 0)
+        layer.max_val   = d.get("max_val", 100)
         layer.color1 = d.get("color1", "#ff0000")
         layer.color2 = d.get("color2", "#0000ff")
         layer.mouvement_shape = d.get("mouvement_shape", "libre")
@@ -531,6 +537,8 @@ class EffectLayer:
             layer.phase     = ld.get("phase",  0)
             layer.fade      = ld.get("fade",   0)
             layer.direction = ld.get("direction", 1)
+            layer.min_val   = ld.get("min_val", 0)
+            layer.max_val   = ld.get("max_val", 100)
             layer.color1 = ld.get("color1", "#ff0000")
             layer.color2 = ld.get("color2", "#0000ff")
             result.append(layer)
@@ -790,7 +798,7 @@ class EffectLayerRow(QFrame):
         self.layer          = layer
         self._fixture_types = fixture_types or ["PAR LED"]
 
-        self.setFixedHeight(104)
+        self.setFixedHeight(132)
         self.setObjectName("EffectLayerRow")
         self.setStyleSheet("""
             QFrame#EffectLayerRow {
@@ -1306,7 +1314,10 @@ class WaveformCanvas(QWidget):
             if fade_f > 0:
                 sin_v = (math.sin(2 * math.pi * x) + 1) / 2
                 raw   = raw * (1 - fade_f) + sin_v * fade_f
-            y = mg + int((1.0 - raw) * (h - 2 * mg))
+            min_v = getattr(layer, 'min_val', 0) / 100.0
+            max_v = getattr(layer, 'max_val', 100) / 100.0
+            scaled = min_v + raw * (max_v - min_v)
+            y = mg + int((1.0 - scaled) * (h - 2 * mg))
             pts.append(QPoint(mg + xi, y))
 
         if pts:
@@ -1942,22 +1953,42 @@ class LayerCard(QFrame):
 
         outer.addLayout(row1)
 
-        # ── Row 2 : 3 sliders VITESSE / AMPLITUDE / DÉPHASAGE ───────────────
+        # ── Row 2 : 2 sliders VITESSE / AMPLITUDE ───────────────────────────
         row2 = QHBoxLayout()
         row2.setSpacing(10)
 
         self._sl_speed, self._vl_speed = self._mk_slider("VIT", self.layer.speed)
+        self._speed_container = self._slider_containers[-1]
         self._sl_amp,   self._vl_amp   = self._mk_slider("AMP", self.layer.size)
-        self._sl_phase, self._vl_phase = self._mk_slider("DÉP", self.layer.phase)
 
         self._sl_speed.valueChanged.connect(lambda v: (setattr(self.layer, 'speed', v), self._vl_speed.setText(str(v)), self.changed.emit()))
         self._sl_amp.valueChanged.connect(  lambda v: (setattr(self.layer, 'size',  v), self._vl_amp.setText(str(v)),   self.changed.emit()))
-        self._sl_phase.valueChanged.connect(lambda v: (setattr(self.layer, 'phase', v), self._vl_phase.setText(str(v)), self.changed.emit()))
 
         for container in self._slider_containers:
             row2.addWidget(container, 1)
 
         outer.addLayout(row2)
+
+        if self.layer.forme == "Fixe":
+            self._speed_container.setEnabled(False)
+
+        # ── Row 2b : MIN / MAX / DÉC (spread) ────────────────────────────────
+        row2b = QHBoxLayout()
+        row2b.setSpacing(10)
+        self._slider_containers = []
+
+        self._sl_min,    self._vl_min    = self._mk_slider("MIN", getattr(self.layer, 'min_val', 0))
+        self._sl_max,    self._vl_max    = self._mk_slider("MAX", getattr(self.layer, 'max_val', 100))
+        self._sl_spread, self._vl_spread = self._mk_slider("DÉC", self.layer.spread)
+
+        self._sl_min.valueChanged.connect(   lambda v: (setattr(self.layer, 'min_val', v), self._vl_min.setText(str(v)),    self.changed.emit()))
+        self._sl_max.valueChanged.connect(   lambda v: (setattr(self.layer, 'max_val', v), self._vl_max.setText(str(v)),    self.changed.emit()))
+        self._sl_spread.valueChanged.connect(lambda v: (setattr(self.layer, 'spread',  v), self._vl_spread.setText(str(v)), self.changed.emit()))
+
+        for container in self._slider_containers:
+            row2b.addWidget(container, 1)
+
+        outer.addLayout(row2b)
 
         # ── Row 3 : Cible (pills multi-select) ────────────────────────────────
         row3 = QHBoxLayout()
@@ -2067,6 +2098,7 @@ class LayerCard(QFrame):
 
     def _on_forme(self, v: str):
         self.layer.forme = v
+        self._speed_container.setEnabled(v != "Fixe")
         self.changed.emit()
 
     def _on_cible_pill(self, val: str, preset: bool):
@@ -3213,6 +3245,7 @@ class EffectEditorDialog(QDialog):
         _save_custom_effects(self._custom_effects)
         self._selected_card = name
         self._rebuild_library()
+        self._apply_preset(custom)
 
     def _delete_custom_effect(self, eff: dict):
         name = eff.get("name", "")
@@ -3686,7 +3719,9 @@ class EffectEditorDialog(QDialog):
                     sin_val = (math.sin(2 * math.pi * x) + 1) / 2
                     raw = raw * (1.0 - fade_f) + sin_val * fade_f
 
-                scaled = raw * layer.size / 100.0
+                min_v = getattr(layer, 'min_val', 0) / 100.0
+                max_v = getattr(layer, 'max_val', 100) / 100.0
+                scaled = (min_v + raw * (max_v - min_v)) * layer.size / 100.0
 
                 attr = layer.attribute
                 if attr in ("Dimmer", "Strobe"):

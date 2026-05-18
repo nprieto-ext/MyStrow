@@ -11,9 +11,9 @@ from PySide6.QtWidgets import (
     QLabel, QMenu, QWidgetAction, QPushButton, QSlider,
     QDialog, QTabWidget, QListWidget, QListWidgetItem, QSplitter,
     QFormLayout, QLineEdit, QComboBox, QSpinBox, QDialogButtonBox,
-    QMessageBox, QSizePolicy, QApplication, QStackedWidget
+    QMessageBox, QSizePolicy, QApplication, QStackedWidget, QScrollArea
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QSize, Signal, QRectF
+from PySide6.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QSize, Signal, QRectF, QObject, QEvent
 from PySide6.QtGui import (
     QColor, QFont, QImage, QPainter, QPen, QBrush, QPainterPath, QPolygon,
     QLinearGradient, QRadialGradient, QCursor, QMouseEvent,
@@ -115,130 +115,243 @@ def _save_presets(presets):
 
 
 class PresetBar(QWidget):
-    """Rangée de boutons presets Pan/Tilt — clic = appliquer, clic droit = mémoriser."""
+    """Colonne presets Pan/Tilt — scrollable, style sombre."""
 
-    preset_selected = Signal(int, int)   # pan, tilt
+    preset_selected = Signal(object)   # preset dict
 
-    _BTN_STYLE = """
-        QPushButton {{
-            background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 rgba({r},{g},{b},70), stop:1 rgba(20,20,20,255));
-            border-left: 3px solid {hex};
-            border-top: none; border-right: none; border-bottom: none;
-            border-radius: 3px;
-            color: #cccccc;
-            font-size: 10px;
-            padding: 3px 6px;
-            min-width: 52px;
-        }}
-        QPushButton:hover {{ color: white; border-left-color: #00d4ff; }}
-    """
+    _BTN_H   = 26
+    _WIDTH   = 152
+    _MAX_VIS = 7   # presets visibles avant scroll
 
-    def __init__(self, get_current_pan_tilt, parent=None):
-        """get_current_pan_tilt : callable → (pan, tilt) actuel du pad."""
+    _BTN_STYLE = (
+        "QPushButton{"
+        "background:#181818;border:none;border-left:3px solid #00d4ff;"
+        "color:#c0c0c0;font-size:11px;padding:2px 8px;text-align:left;}"
+        "QPushButton:hover{background:#222;color:#fff;}"
+        "QPushButton:pressed{background:#0d1f2a;color:#00d4ff;}"
+    )
+
+    def __init__(self, get_current_pan_tilt, get_targets=None, parent=None):
         super().__init__(parent)
         self._get_current = get_current_pan_tilt
+        self._get_targets = get_targets   # () -> [(proj, group, local_idx)] ou None
         self._presets = _load_presets()
-        self._buttons = []
+        self.setFixedWidth(self._WIDTH)
         self._build()
 
-    _COLS = 2  # nombre de colonnes dans la grille
-
     def _build(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 4, 0, 4)
+        root.setSpacing(3)
 
-        # En-tête : label + bouton "+"
-        header = QHBoxLayout()
-        header.setSpacing(4)
+        # ── En-tête ──────────────────────────────────────────────────────
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(8, 0, 6, 0)
         lbl = QLabel(tr("pdf_presets_label"))
-        lbl.setStyleSheet("color: #555; font-size: 9px;")
-        header.addWidget(lbl)
-        header.addStretch()
+        lbl.setStyleSheet(
+            "color:#555;font-size:8px;font-weight:bold;letter-spacing:1px;"
+        )
+        hdr.addWidget(lbl)
+        hdr.addStretch()
         add_btn = QPushButton("+")
-        add_btn.setFixedSize(22, 22)
+        add_btn.setFixedSize(20, 20)
         add_btn.setToolTip(tr("pdf_tooltip_save_preset"))
-        add_btn.setStyleSheet("""
-            QPushButton { background: #1a3a1a; color: #4CAF50; border: 1px solid #2a5a2a;
-                          border-radius: 3px; font-weight: bold; font-size: 13px; }
-            QPushButton:hover { background: #2a5a2a; color: white; }
-        """)
+        add_btn.setStyleSheet(
+            "QPushButton{background:#0d2a0d;color:#4CAF50;border:1px solid #2a5a2a;"
+            "border-radius:4px;font-weight:bold;font-size:13px;}"
+            "QPushButton:hover{background:#1a4a1a;color:#fff;}"
+        )
         add_btn.clicked.connect(self._add_preset)
-        header.addWidget(add_btn)
-        layout.addLayout(header)
+        hdr.addWidget(add_btn)
+        root.addLayout(hdr)
 
-        # Conteneur grille
-        self._btn_container_w = QWidget()
-        self._btn_grid = QGridLayout(self._btn_container_w)
-        self._btn_grid.setSpacing(4)
-        self._btn_grid.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._btn_container_w)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color:#2a2a2a;margin:0 4px;")
+        root.addWidget(sep)
+
+        # ── Zone scrollable ──────────────────────────────────────────────
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setStyleSheet(
+            "QScrollArea{border:none;background:transparent;}"
+            "QScrollBar:vertical{background:#141414;width:5px;margin:0;}"
+            "QScrollBar::handle:vertical{background:#333;border-radius:2px;min-height:16px;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+        )
+        self._scroll.setMaximumHeight(self._MAX_VIS * (self._BTN_H + 1))
+
+        self._inner = QWidget()
+        self._inner.setStyleSheet("background:transparent;")
+        self._inner_lay = QVBoxLayout(self._inner)
+        self._inner_lay.setContentsMargins(0, 0, 0, 0)
+        self._inner_lay.setSpacing(1)
+        self._scroll.setWidget(self._inner)
+        root.addWidget(self._scroll)
 
         self._rebuild_buttons()
 
     def _rebuild_buttons(self):
-        # Vider la grille
-        while self._btn_grid.count():
-            item = self._btn_grid.takeAt(0)
+        while self._inner_lay.count():
+            item = self._inner_lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        self._buttons.clear()
+        self._btns = []
 
-        colors = ["#00d4ff", "#ff9800", "#4CAF50", "#e91e63", "#9c27b0", "#ff5722"]
         for i, preset in enumerate(self._presets):
-            c = QColor(colors[i % len(colors)])
-            r, g, b = c.red(), c.green(), c.blue()
             btn = QPushButton(preset["name"])
-            btn.setFixedHeight(22)
-            btn.setStyleSheet(self._BTN_STYLE.format(r=r, g=g, b=b, hex=c.name()))
-            btn.setToolTip(tr("pdf_tooltip_preset_btn", pan=preset['pan'], tilt=preset['tilt']))
-            btn.clicked.connect(lambda _, p=preset: self.preset_selected.emit(p["pan"], p["tilt"]))
+            btn.setFixedHeight(self._BTN_H)
+            btn.setStyleSheet(self._BTN_STYLE)
+            n_per = len(preset.get("per_proj", {}))
+            tip = tr("pdf_tooltip_preset_btn", pan=preset['pan'], tilt=preset['tilt'])
+            if n_per:
+                tip += f"  ·  {n_per} fixture(s) individuelles"
+            btn.setToolTip(tip)
+            btn.clicked.connect(
+                lambda _, p=preset: self.preset_selected.emit(p)
+            )
             btn.setContextMenuPolicy(Qt.CustomContextMenu)
-            btn.customContextMenuRequested.connect(lambda _, idx=i: self._ctx_preset(idx))
-            row, col = divmod(i, self._COLS)
-            self._btn_grid.addWidget(btn, row, col)
-            self._buttons.append(btn)
+            btn.customContextMenuRequested.connect(
+                lambda _, idx=i: self._ctx_preset(idx)
+            )
+            self._inner_lay.addWidget(btn)
+            self._btns.append(btn)
+
+        self._inner_lay.addStretch()
 
     def _ctx_preset(self, idx):
         pan, tilt = self._get_current()
+        targets = self._get_targets() if self._get_targets else []
         m = QMenu(self)
-        m.setStyleSheet("""
-            QMenu { background: #1e1e1e; color: #ccc; border: 1px solid #333; }
-            QMenu::item:selected { background: #2a2a2a; }
-        """)
-        m.addAction(tr("pdf_ctx_memorize", pan=pan, tilt=tilt),
-                    lambda: self._memorize(idx, pan, tilt))
+        m.setStyleSheet(
+            "QMenu{background:#1a1a1a;color:#ccc;border:1px solid #2a2a2a;"
+            "border-radius:4px;padding:2px;}"
+            "QMenu::item{padding:6px 16px;font-size:11px;}"
+            "QMenu::item:selected{background:#252525;color:#fff;}"
+            "QMenu::separator{height:1px;background:#2a2a2a;margin:2px 0;}"
+        )
+        if targets:
+            n = len(targets)
+            memo_label = tr("pdf_ctx_memorize_sel", n=n)
+        else:
+            memo_label = tr("pdf_ctx_memorize", pan=pan, tilt=tilt)
+        m.addAction(memo_label, lambda: self._memorize(idx))
         m.addSeparator()
-        m.addAction(tr("pdf_ctx_rename"), lambda: self._rename(idx))
+        m.addAction(tr("pdf_ctx_rename"), lambda: self._start_inline_rename(idx))
         if len(self._presets) > 1:
             m.addAction(tr("pdf_ctx_delete"), lambda: self._delete(idx))
         m.exec(QCursor.pos())
 
-    def _memorize(self, idx, pan, tilt):
-        self._presets[idx]["pan"]  = pan
-        self._presets[idx]["tilt"] = tilt
+    def _memorize(self, idx):
+        preset = self._presets[idx]
+        targets = self._get_targets() if self._get_targets else []
+        if targets:
+            # Stocker la position actuelle de chaque fixture cible individuellement
+            per_proj = preset.setdefault("per_proj", {})
+            for proj, _g, _i in targets:
+                per_proj[str(proj.start_address)] = {"pan": proj.pan, "tilt": proj.tilt}
+            # Pan/tilt global = position de la première cible (fallback pour nouvelles fixtures)
+            p0 = targets[0][0]
+            preset["pan"]  = p0.pan
+            preset["tilt"] = p0.tilt
+        else:
+            pan, tilt = self._get_current()
+            preset["pan"]  = pan
+            preset["tilt"] = tilt
         _save_presets(self._presets)
         self._rebuild_buttons()
 
-    def _rename(self, idx):
-        from PySide6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, tr("pdf_rename_title"), tr("pdf_rename_prompt"),
-                                        text=self._presets[idx]["name"])
-        if ok and name.strip():
-            self._presets[idx]["name"] = name.strip()
+    def _start_inline_rename(self, idx):
+        """Remplace le bouton par un QLineEdit in-place, sans ouvrir de dialog."""
+        if idx >= len(getattr(self, '_btns', [])):
+            return
+        btn = self._btns[idx]
+
+        edit = QLineEdit(self._presets[idx]["name"])
+        edit.setFixedHeight(self._BTN_H)
+        edit.setStyleSheet(
+            "QLineEdit{background:#0d1f2a;border:none;border-left:3px solid #00d4ff;"
+            "color:#00d4ff;font-size:11px;padding:2px 8px;selection-background-color:#1a3a4a;}"
+        )
+        edit.selectAll()
+
+        pos = self._inner_lay.indexOf(btn)
+        self._inner_lay.removeWidget(btn)
+        btn.hide()
+        self._inner_lay.insertWidget(pos, edit)
+        edit.setFocus()
+
+        _done = [False]
+        _busy = [False]
+
+        # QMenu intercepts all keyboard events via its own event loop.
+        # Installing a filter on QApplication AFTER the menu is shown means
+        # our filter runs first (LIFO), so we can redirect keys to the QLineEdit.
+        class _KeyFwd(QObject):
+            def eventFilter(_, obj, event):  # noqa: N805
+                if _busy[0]:
+                    return False
+                if event.type() == QEvent.Type.KeyPress:
+                    if event.key() == Qt.Key.Key_Escape:
+                        _restore()
+                        return True
+                    _busy[0] = True
+                    QApplication.sendEvent(edit, event)
+                    _busy[0] = False
+                    return True
+                return False
+
+        fwd = _KeyFwd(self)
+        QApplication.instance().installEventFilter(fwd)
+
+        def _cleanup():
+            QApplication.instance().removeEventFilter(fwd)
+            self._inner_lay.removeWidget(edit)
+            edit.deleteLater()
+            self._inner_lay.insertWidget(pos, btn)
+            btn.show()
+
+        def _commit():
+            if _done[0]:
+                return
+            _done[0] = True
+            name = edit.text().strip() or self._presets[idx]["name"]
+            self._presets[idx]["name"] = name
             _save_presets(self._presets)
-            self._rebuild_buttons()
+            btn.setText(name)
+            _cleanup()
+
+        def _restore():
+            if _done[0]:
+                return
+            _done[0] = True
+            _cleanup()
+
+        edit.returnPressed.connect(_commit)
 
     def _add_preset(self):
-        from PySide6.QtWidgets import QInputDialog
-        pan, tilt = self._get_current()
-        name, ok = QInputDialog.getText(self, tr("pdf_new_preset_title"),
-                                        tr("pdf_new_preset_prompt"), text=f"Pos {len(self._presets)+1}")
-        if ok and name.strip():
-            self._presets.append({"name": name.strip(), "pan": pan, "tilt": tilt})
-            _save_presets(self._presets)
-            self._rebuild_buttons()
+        """Enregistre la position courante sans ouvrir de dialog (auto-nom)."""
+        name = f"Pos {len(self._presets) + 1}"
+        targets = self._get_targets() if self._get_targets else []
+        if targets:
+            per_proj = {str(p.start_address): {"pan": p.pan, "tilt": p.tilt}
+                        for p, _g, _i in targets}
+            p0 = targets[0][0]
+            self._presets.append({"name": name, "pan": p0.pan, "tilt": p0.tilt,
+                                   "per_proj": per_proj})
+        else:
+            pan, tilt = self._get_current()
+            self._presets.append({"name": name, "pan": pan, "tilt": tilt})
+        _save_presets(self._presets)
+        self._rebuild_buttons()
+        # Scroll vers le bas pour montrer le nouveau preset
+        QTimer.singleShot(
+            30, lambda: self._scroll.verticalScrollBar().setValue(
+                self._scroll.verticalScrollBar().maximum()
+            )
+        )
 
     def _delete(self, idx):
         if 0 <= idx < len(self._presets):
@@ -263,7 +376,7 @@ class PanTiltPad(QWidget):
         self._dragging = False
 
         total_w = self._PAD_W + self._MARGIN * 2
-        total_h = self._PAD_H + self._MARGIN * 2 + 28  # +28 pour les labels + bouton
+        total_h = self._PAD_H + self._MARGIN * 2 + 40  # +40 : labels + hints double-clic + scroll
         self.setFixedSize(total_w, total_h)
         self.setMouseTracking(True)
 
@@ -300,6 +413,21 @@ class PanTiltPad(QWidget):
         self._pan, self._tilt = 32768, 32768
         self.changed.emit(self._pan, self._tilt)
         self.update()
+
+    def wheelEvent(self, event):
+        """Scroll → Tilt  |  Ctrl+Scroll → Pan  (512 DMX par cran)"""
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        step = 512 * (1 if delta > 0 else -1)
+        if event.modifiers() & Qt.ControlModifier:
+            self._pan = max(0, min(65535, self._pan - step))
+        else:
+            self._tilt = max(0, min(65535, self._tilt - step))
+        self.changed.emit(self._pan, self._tilt)
+        self.update()
+        event.accept()
 
     def _update_from_mouse(self, pos):
         pan, tilt = self._px_to_val(pos.x(), pos.y())
@@ -364,11 +492,13 @@ class PanTiltPad(QWidget):
                          Qt.AlignRight | Qt.AlignVCenter,
                          f"Tilt: {self._tilt}")
 
-        # Hint double-clic
+        # Hints double-clic + scroll
         painter.setPen(QColor("#444"))
         painter.setFont(QFont("Segoe UI", 7))
         painter.drawText(QRect(m, label_y + 14, self._PAD_W, 12),
                          Qt.AlignCenter, tr("pdf_hint_double_click"))
+        painter.drawText(QRect(m, label_y + 26, self._PAD_W, 12),
+                         Qt.AlignCenter, tr("pdf_hint_scroll"))
 
         painter.end()
 
@@ -801,9 +931,9 @@ _DEFAULT_POSITIONS = {
     # canvas_y → z = (cy - 0.5) * 10 m  (0=arrière-scène, 1=avant-scène)
     "face":     lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.80),  # z=+3.0 m
     "contre":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.10),  # z=-4.0 m
-    "douche1":  lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.67),  # z=+1.7 m
-    "douche2":  lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.50),  # z=  0  m
-    "douche3":  lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.33),  # z=-1.7 m
+    "douche1":  lambda li, n: (0.20 + li * 0.20 / max(n - 1, 1), 0.50),  # gauche  z=0
+    "douche2":  lambda li, n: (0.40 + li * 0.20 / max(n - 1, 1), 0.50),  # centre  z=0
+    "douche3":  lambda li, n: (0.60 + li * 0.20 / max(n - 1, 1), 0.50),  # droite  z=0
     "lat":      lambda li, n: (0.07 if li == 0 else 0.93, 0.50),          # z=  0  m
     "public":   lambda li, n: (0.50, 0.90),
     "fumee":    lambda li, n: (0.10, 0.90),
@@ -893,7 +1023,7 @@ _GROUP_COLORS = {
 
 # ── Helpers de positionnement ─────────────────────────────────────────────────
 
-def _find_free_canvas_pos(projectors, pref_x, pref_y, min_dist=0.07):
+def _find_free_canvas_pos(projectors, pref_x, pref_y, min_dist=0.13):
     """Retourne une position (x, y) normalisée libre autour de (pref_x, pref_y).
 
     Fait une recherche en cercles concentriques jusqu'à trouver un emplacement
@@ -1179,9 +1309,9 @@ class FixtureCanvas(QWidget):
             # ── Tilt ───────────────────────────────────────────────────
             # 32768 = neutre (droit vers le bas), valeurs > 32768 = incliné vers l'avant
             # Le 3D interprète tilt centré sur 32768 — ne pas envoyer 0/65535 (= vers le haut)
-            tilt_ratio = max(0.0, (dist - r * 2) / max(1, r * 7))
+            tilt_ratio = max(0.0, min(1.0, (dist - r * 2) / max(1, r * 7)))
             tilt_val   = 32768 + int(tilt_ratio * 16384)   # 32768 → 49152 (~67° max)
-            tilt_val   = max(0, min(65535, tilt_val))
+            tilt_val   = max(32768, min(49152, tilt_val))
 
             # Appliquer le swap si actif : artnet_dmx va re-swapper, donc on
             # pre-swap ici pour que les bons axes arrivent sur les bons canaux.
@@ -1304,6 +1434,10 @@ class FixtureCanvas(QWidget):
             freq = 1.0 + (strobe_spd / 100.0) * 14.0  # 1 Hz → 15 Hz
             if int(_time.time() * freq * 2) % 2 == 1:
                 return QColor("#1a1a1a")  # phase éteinte
+        # Gradateur incandescent : couleur ambre chaude proportionnelle au niveau
+        if getattr(proj, 'fixture_type', '') == 'Gradateur':
+            br = proj.level / 100.0
+            return QColor(255, int(220 * br), int(100 * br))
         return QColor(proj.color)
 
     def _draw_fixture(self, painter, cx, cy, proj, is_selected, is_hover):
@@ -1620,6 +1754,18 @@ class FixtureCanvas(QWidget):
                 for ox, oy, sr in [(-7, -10, 5), (0, -12, 6), (7, -10, 5), (-4, -16, 4), (4, -16, 4)]:
                     painter.drawEllipse(QPoint(cx + ox, cy + oy), sr, sr)
 
+        elif ftype == "Gradateur":
+            painter.drawEllipse(QPoint(cx, cy), r, r)
+            # Lettre "T" (TRAD) au centre pour distinguer d'un PAR LED
+            if not self.compact:
+                t_font = painter.font()
+                t_font.setPixelSize(max(7, r - 3))
+                t_font.setBold(True)
+                painter.setFont(t_font)
+                painter.setPen(QPen(QColor(30, 20, 0, 200), 1))
+                painter.drawText(QRect(cx - r, cy - r, r * 2, r * 2),
+                                 Qt.AlignCenter, "T")
+
         else:  # PAR LED (defaut)
             painter.drawEllipse(QPoint(cx, cy), r, r)
 
@@ -1820,7 +1966,8 @@ class FixtureCanvas(QWidget):
 
         if event.button() == Qt.LeftButton:
             # Clic sur le faisceau d'une Moving Head → drag pan/tilt (en attente de mouvement)
-            beam_idx = self._beam_at(pos)
+            # Désactivé en mode édition (Patch DMX) : on veut seulement déplacer les fixtures.
+            beam_idx = self._beam_at(pos) if not self._editable else None
             if beam_idx is not None and idx is None:
                 proj = self.pdf.projectors[beam_idx]
                 group, local_idx = self._local_idx(beam_idx)
@@ -1906,7 +2053,7 @@ class FixtureCanvas(QWidget):
                     self.pdf.selected_lamps = {key}
                     self.update()
                 proj = self.pdf.projectors[idx]
-                if getattr(proj, 'fixture_type', '') == 'Moving Head':
+                if getattr(proj, 'fixture_type', '') == 'Moving Head' and not self._editable:
                     self._pt_floater.show_for(idx, event.pos())
                 else:
                     self.pdf._show_fixture_context_menu(event.globalPos(), idx)
@@ -2492,12 +2639,12 @@ class PlanDeFeu(QFrame):
 
             root.addLayout(toolbar)
         else:
-            # Stubs pour éviter les AttributeError
-            self.dmx_toggle_btn = QPushButton()
+            # Stubs pour éviter les AttributeError (sans parent = pas de fenêtre top-level)
+            self.dmx_toggle_btn = QPushButton(self)
             self.dmx_toggle_btn.setVisible(False)
-            self.btn_3d = QPushButton()
+            self.btn_3d = QPushButton(self)
             self.btn_3d.setVisible(False)
-            self.btn_target = QPushButton()
+            self.btn_target = QPushButton(self)
             self.btn_target.setVisible(False)
 
         # ── Canvas ─────────────────────────────────────────────────
@@ -2515,8 +2662,9 @@ class PlanDeFeu(QFrame):
         self.refresh_target_btn()
 
     def refresh_target_btn(self):
-        """Affiche/cache le bouton 🎯 selon la présence de Moving Heads dans le patch."""
-        has_mh = any(getattr(p, 'fixture_type', '') == 'Moving Head' for p in self.projectors)
+        """Affiche/cache le bouton 🎯 selon la présence de Moving Heads/Lyres dans le patch."""
+        has_mh = any(getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')
+                     for p in self.projectors)
         self.btn_target.setVisible(has_mh)
         if not has_mh and self.btn_target.isChecked():
             self.btn_target.blockSignals(True)
@@ -3247,6 +3395,14 @@ class PlanDeFeu(QFrame):
             )
         else:
             proj.color = QColor(0, 0, 0)
+        # Si un effet est actif, mettre à jour le niveau de base dans l'état sauvegardé.
+        # Cela déplace le centre d'oscillation ET garantit que le bon niveau est restauré
+        # à la fin de l'effet.
+        mw = self.main_window
+        esc = getattr(mw, 'effect_saved_colors', {}) if mw else {}
+        if id(proj) in esc:
+            sv = esc[id(proj)]
+            esc[id(proj)] = (sv[0], proj.color, level) + sv[3:]
         if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
             self.main_window.dmx.update_from_projectors(self.projectors)
         self.refresh()
@@ -3337,6 +3493,8 @@ class PlanDeFeu(QFrame):
         if len(targets) == 1:
             p0, g0, i0 = targets[0]
             info_text = f"{p0.name or (g0.capitalize() + ' ' + str(i0+1))}  (CH {p0.start_address})"
+            if getattr(p0, 'fixture_type', '') == 'Gradateur':
+                info_text += "  ·  TRAD"
         else:
             info_text = tr("pdf_n_fixtures_selected", n=len(targets))
         lbl = QLabel(info_text)
@@ -3346,13 +3504,19 @@ class PlanDeFeu(QFrame):
         menu.addSeparator()
 
         # ── Dimmer (EN PREMIER) ──────────────────────────────────────────
+        # Si un effet est actif, afficher le niveau de base sauvegardé (pas la valeur
+        # oscillée qui change 25x/s), comme on le fait pour le PanTiltPad.
+        _dim_esc = getattr(self.main_window, 'effect_saved_colors', {}) if self.main_window else {}
+        _dim_sv  = _dim_esc.get(id(targets[0][0]))
+        _dim_init = _dim_sv[2] if (_dim_sv and len(_dim_sv) > 2) else targets[0][0].level
+
         dim_w = QWidget(); dim_h = QHBoxLayout(dim_w)
         dim_h.setContentsMargins(10, 5, 10, 5); dim_h.setSpacing(8)
         dim_lbl = QLabel(tr("pdf_dim_label")); dim_lbl.setStyleSheet(_SS)
         dim_sli = QSlider(Qt.Horizontal)
-        dim_sli.setRange(0, 100); dim_sli.setValue(targets[0][0].level)
+        dim_sli.setRange(0, 100); dim_sli.setValue(_dim_init)
         dim_sli.setFixedWidth(150); dim_sli.setStyleSheet(_SLI)
-        dim_val = QLabel(f"{targets[0][0].level}%")
+        dim_val = QLabel(f"{_dim_init}%")
         dim_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; min-width:34px;")
         dim_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         dim_sli.valueChanged.connect(lambda v, t=targets: self._set_dimmer_for_targets(t, v))
@@ -3483,22 +3647,69 @@ class PlanDeFeu(QFrame):
             mh_w = QWidget(); mh_h = QHBoxLayout(mh_w)
             mh_h.setContentsMargins(6, 4, 6, 4); mh_h.setSpacing(6)
 
-            pt_pad = PanTiltPad(
-                pan=getattr(targets[0][0], 'pan', 32768),
-                tilt=getattr(targets[0][0], 'tilt', 32768)
-            )
-            def _on_pantilt(pan, tilt, t=targets):
+            # Si un effet est actif, initialiser le pad sur le CENTRE enregistré
+            # (pas sur p.pan qui oscille), et stocker les centres initiaux par fixture.
+            _mw = self.main_window
+            _esc = getattr(_mw, 'effect_saved_colors', {}) if _mw else {}
+            p0 = targets[0][0]
+            _sv0 = _esc.get(id(p0))
+            if _sv0 and len(_sv0) > 4:
+                _pad_init_pan, _pad_init_tilt = _sv0[3], _sv0[4]
+            else:
+                _pad_init_pan  = getattr(p0, 'pan',  32768)
+                _pad_init_tilt = getattr(p0, 'tilt', 32768)
+
+            # Centre initial de chaque target pour le calcul du delta
+            _init_centers = {}
+            for _p, _g, _i in targets:
+                _sv = _esc.get(id(_p))
+                if _sv and len(_sv) > 4:
+                    _init_centers[id(_p)] = (_sv[3], _sv[4])
+                else:
+                    _init_centers[id(_p)] = (getattr(_p, 'pan', 32768), getattr(_p, 'tilt', 32768))
+
+            pt_pad = PanTiltPad(pan=_pad_init_pan, tilt=_pad_init_tilt)
+
+            def _on_pantilt(pan, tilt, t=targets,
+                            init_pan=_pad_init_pan, init_tilt=_pad_init_tilt,
+                            init_c=_init_centers):
+                d_pan  = pan  - init_pan
+                d_tilt = tilt - init_tilt
+                esc = getattr(_mw, 'effect_saved_colors', {}) if _mw else {}
                 for p, g, i in t:
-                    p.pan = pan; p.tilt = tilt
+                    if id(p) in esc:
+                        # Effet actif : déplacer le centre d'oscillation par delta
+                        sv = esc[id(p)]
+                        ic = init_c.get(id(p), (32768, 32768))
+                        esc[id(p)] = (sv[0], sv[1], sv[2],
+                                      max(0, min(65535, ic[0] + d_pan)),
+                                      max(0, min(65535, ic[1] + d_tilt)))
+                    else:
+                        p.pan  = pan
+                        p.tilt = tilt
                 _flush()
             pt_pad.changed.connect(_on_pantilt)
             mh_h.addWidget(pt_pad)
 
-            preset_bar = PresetBar(get_current_pan_tilt=lambda: (pt_pad._pan, pt_pad._tilt))
-            def _on_preset(pan, tilt, pad=pt_pad, t=targets):
-                pad.set_values(pan, tilt)
+            preset_bar = PresetBar(
+                get_current_pan_tilt=lambda: (pt_pad._pan, pt_pad._tilt),
+                get_targets=lambda: targets,
+            )
+            def _on_preset(preset, pad=pt_pad, t=targets):
+                per_proj = preset.get("per_proj", {})
+                pan_g, tilt_g = preset["pan"], preset["tilt"]
+                pad.set_values(pan_g, tilt_g)
+                esc = getattr(_mw, 'effect_saved_colors', {}) if _mw else {}
                 for p, g, i in t:
-                    p.pan = pan; p.tilt = tilt
+                    key = str(p.start_address)
+                    new_pan  = per_proj[key]["pan"]  if key in per_proj else pan_g
+                    new_tilt = per_proj[key]["tilt"] if key in per_proj else tilt_g
+                    if id(p) in esc:
+                        sv = esc[id(p)]
+                        esc[id(p)] = (sv[0], sv[1], sv[2], new_pan, new_tilt)
+                    else:
+                        p.pan  = new_pan
+                        p.tilt = new_tilt
                 _flush()
             preset_bar.preset_selected.connect(_on_preset)
             mh_h.addWidget(preset_bar)

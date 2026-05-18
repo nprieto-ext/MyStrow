@@ -63,6 +63,18 @@ jobs:
       - name: Build EXE
         run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=serial --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py --name MyStrow
 
+      - name: Sign EXE (SSL.com eSigner)
+        if: ${{ secrets.SSLCOM_USERNAME != '' }}
+        uses: ssl-com/esigner-codesign@v3
+        with:
+          command: sign
+          username: ${{ secrets.SSLCOM_USERNAME }}
+          password: ${{ secrets.SSLCOM_PASSWORD }}
+          credential_id: ${{ secrets.SSLCOM_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.SSLCOM_TOTP_SECRET }}
+          file_path: dist\MyStrow\MyStrow.exe
+          output_path: dist\MyStrow\
+
       - name: Generate SHA256 and .sig
         shell: pwsh
         run: |
@@ -76,6 +88,18 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\maestro.iss
         shell: pwsh
+
+      - name: Sign Installer (SSL.com eSigner)
+        if: ${{ secrets.SSLCOM_USERNAME != '' }}
+        uses: ssl-com/esigner-codesign@v3
+        with:
+          command: sign
+          username: ${{ secrets.SSLCOM_USERNAME }}
+          password: ${{ secrets.SSLCOM_PASSWORD }}
+          credential_id: ${{ secrets.SSLCOM_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.SSLCOM_TOTP_SECRET }}
+          file_path: installer\installer_output\MyStrow_Setup.exe
+          output_path: installer\installer_output\
 
       - name: Collect artifacts (dossier plat)
         shell: pwsh

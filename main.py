@@ -189,13 +189,62 @@ def _show_integrity_error():
 # ------------------------------------------------------------------
 # MAIN
 # ------------------------------------------------------------------
+def _free_console():
+    """Detache completement Python de sa console et redirige stdout/stderr vers un log.
+    Garantit la disparition de la fenetre console (conhost.exe)."""
+    try:
+        import ctypes
+        log_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "MyStrow", "Logs")
+        os.makedirs(log_dir, exist_ok=True)
+        _log = open(os.path.join(log_dir, "console.log"), "a", encoding="utf-8", errors="replace", buffering=1)
+        sys.stdout = _log
+        sys.stderr = _log
+        try:
+            os.dup2(_log.fileno(), 1)
+            os.dup2(_log.fileno(), 2)
+        except Exception:
+            pass
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        pass
+
+
+def _hide_orphan_console():
+    """Masque la fenetre console Python (conhost.exe).
+    1. ShowWindow(SW_HIDE) + WS_EX_TOOLWINDOW pour cacher la fenetre
+       (fonctionne meme si plusieurs process sont attaches a la console).
+    2. FreeConsole() pour detacher Python et rediriger stdout/stderr vers log."""
+    if sys.platform != "win32" or getattr(sys, 'frozen', False):
+        return
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        u32 = ctypes.windll.user32
+        hwnd = k32.GetConsoleWindow()
+        if not hwnd or not u32.IsWindowVisible(hwnd):
+            return
+        # Retirer de la barre des taches + cacher visuellement
+        GWL_EXSTYLE      = -20
+        WS_EX_TOOLWINDOW = 0x80
+        WS_EX_APPWINDOW  = 0x40000
+        cur = u32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        u32.SetWindowLongW(hwnd, GWL_EXSTYLE, (cur | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
+        u32.ShowWindow(hwnd, 0)  # SW_HIDE
+        # Detacher Python de la console + rediriger stdout/stderr vers log
+        _free_console()
+    except Exception:
+        pass
+
+
 def main():
     """Point d'entree principal de Maestro"""
+    _hide_orphan_console()
     print(tr("starting", app=APP_NAME, ver=VERSION))
     print(tr("modular_mode"))
     print("-" * 40)
 
     app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
     icon_path = resource_path("mystrow.ico")
     if os.path.exists(icon_path):
@@ -456,6 +505,8 @@ def main():
     # Afficher le dialogue d'avertissement licence si necessaire
     # (apres que la fenetre soit visible)
     QTimer.singleShot(500, window.show_license_warning_if_needed)
+    # Deuxieme tentative de masquage console (cas ou le lanceur n'avait pas quitte)
+    QTimer.singleShot(1000, _hide_orphan_console)
 
     # Ré-ouvrir le wizard Node à la page IP si on a été relancé en admin
     _node_config_ip = None

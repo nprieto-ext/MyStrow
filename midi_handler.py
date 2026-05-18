@@ -1,6 +1,6 @@
 """
 Gestionnaire MIDI multi-contrôleur
-Supporte: AKAI APC40, AKAI APC Mini, Novation Launchpad Mini MK1/MK2, AKAI MIDImix
+Supporte: AKAI APC40, AKAI APC20, AKAI APC Mini, Novation Launchpad Mini MK1/MK2, AKAI MIDImix
 """
 import threading
 from PySide6.QtCore import QObject, Signal, QTimer
@@ -33,6 +33,14 @@ SUPPORTED_CONTROLLERS = [
         'name': 'AKAI APC40',
         # 'APC40' doit passer avant 'APC' pour éviter que l'APC Mini ne match en fallback
         'keywords': ['APC40', 'APC 40'],
+        'has_faders': True,
+        'has_pads': True,
+    },
+    {
+        'id': 'apc20',
+        'name': 'AKAI APC20',
+        # APC20 avant APC Mini : 'APC' matcherait 'APC20' sinon
+        'keywords': ['APC20', 'APC 20'],
         'has_faders': True,
         'has_pads': True,
     },
@@ -86,6 +94,9 @@ _APC40_MASTER_VOL_CC    = 14
 _APC40_ACTIVATOR_NOTE   = 50
 # Tap Tempo : Note 99 (bouton dédié), channel 0
 _APC40_TAP_TEMPO_NOTE   = 99
+
+# ─── APC20: même layout que APC40 MK1, tap tempo sur note 98 (Shift) ────────
+_APC20_TAP_TEMPO_NOTE = 98
 
 # ─── MIDImix: CCs faders et notes boutons ────────────────────────────────────
 # Fader index 0-7 = ch1-8, index 8 = master
@@ -155,7 +166,7 @@ def _find_out_port(ctrl: dict, out_ports: list):
 
 
 class MIDIHandler(QObject):
-    """Gestionnaire MIDI multi-contrôleur (APC40, APC Mini, Launchpad Mini, MIDImix)."""
+    """Gestionnaire MIDI multi-contrôleur (APC40, APC20, APC Mini, Launchpad Mini, MIDImix)."""
 
     fader_changed = Signal(int, int)  # (fader_index 0-8, value 0-127)
     pad_pressed   = Signal(int, int)  # (row 0-7, col 0-8)
@@ -448,7 +459,7 @@ class MIDIHandler(QObject):
             if status == 0xB0 and 48 <= data1 <= 56:
                 return data1 - 48
 
-        elif self.controller_type in ('apc40', 'apc40_mk2'):
+        elif self.controller_type in ('apc40', 'apc40_mk2', 'apc20'):
             # CC messages encodés sur canal 0-7 (0xB0-0xB7)
             if (status & 0xF0) == 0xB0:
                 channel = status & 0x0F
@@ -479,6 +490,8 @@ class MIDIHandler(QObject):
                 self._handle_apc_mini(message)
             elif ct in ('apc40', 'apc40_mk2'):
                 self._handle_apc40(message)
+            elif ct == 'apc20':
+                self._handle_apc20(message)
             elif ct == 'launchpad_mk2':
                 self._handle_launchpad_mk2(message)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
@@ -610,6 +623,60 @@ class MIDIHandler(QObject):
 
         elif self.debug_mode:
             print(f"   ⚠️  ch={channel} note={note} non mappé (APC40)")
+
+    def _handle_apc20(self, message):
+        """Messages AKAI APC20.
+
+        Même layout que l'APC40 MK1 : clips ch=track note=53+row, scenes ch=0 note=82+row,
+        faders CC7/CC14 (déjà traités dans _fader_index).
+        Tap Tempo : note 98 (bouton Shift), ch=0.
+        """
+        status = message[0]
+        data1  = message[1]
+        data2  = message[2] if len(message) > 2 else 0
+
+        status_type = status & 0xF0
+        channel     = status & 0x0F
+
+        if self.debug_mode:
+            print(f"🔍 APC20: type={hex(status_type)} ch={channel} note={data1} vel={data2}")
+
+        if status_type == 0xB0:
+            return
+
+        if status_type == 0x80 or (status_type == 0x90 and data2 == 0):
+            if channel == 0 and _APC40_SCENE_BASE_NOTE <= data1 <= _APC40_SCENE_BASE_NOTE + 4:
+                self.pad_released.emit(data1 - _APC40_SCENE_BASE_NOTE, 8)
+            return
+
+        if status_type != 0x90 or data2 == 0:
+            return
+
+        note = data1
+
+        if _APC40_CLIP_BASE_NOTE <= note <= _APC40_CLIP_BASE_NOTE + 4 and 0 <= channel <= 7:
+            self.pad_pressed.emit(note - _APC40_CLIP_BASE_NOTE, channel)
+
+        elif channel == 0 and _APC40_SCENE_BASE_NOTE <= note <= _APC40_SCENE_BASE_NOTE + 4:
+            self.pad_pressed.emit(note - _APC40_SCENE_BASE_NOTE, 8)
+
+        elif note == _APC40_ACTIVATOR_NOTE and 0 <= channel <= 7:
+            if self.owner_window:
+                self.owner_window.toggle_fader_mute_from_midi(channel)
+
+        elif channel == 0 and note == _APC20_TAP_TEMPO_NOTE:
+            if self.owner_window:
+                self.owner_window._tap_tempo()
+            if self.midi_out:
+                try:
+                    self.midi_out.send_message([0x90, _APC20_TAP_TEMPO_NOTE, 2])
+                    QTimer.singleShot(150, lambda: self.midi_out.send_message(
+                        [0x90, _APC20_TAP_TEMPO_NOTE, 0]) if self.midi_out else None)
+                except Exception:
+                    pass
+
+        elif self.debug_mode:
+            print(f"   ⚠️  ch={channel} note={note} non mappé (APC20)")
 
     def _handle_launchpad_mini(self, message):
         """Messages Novation Launchpad Mini MK1/MK2.
@@ -785,6 +852,14 @@ class MIDIHandler(QObject):
                 for row in range(5):
                     self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
 
+            elif ct == 'apc20':
+                # L'APC20 répond directement aux Note On sans SysEx
+                for track in range(8):
+                    for row in range(5):
+                        self.midi_out.send_message([0x90 | track, _APC40_CLIP_BASE_NOTE + row, 0])
+                for row in range(5):
+                    self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
+
             elif ct == 'launchpad_mk2':
                 # Reset — éteint toutes les LEDs
                 self.midi_out.send_message([0xB0, 0x00, 0x00])
@@ -817,6 +892,8 @@ class MIDIHandler(QObject):
                 self._set_led_apc(row, col, color_velocity, brightness_percent)
             elif ct in ('apc40', 'apc40_mk2'):
                 self._set_led_apc40(row, col, color_velocity)
+            elif ct == 'apc20':
+                self._set_led_apc20(row, col, color_velocity)
             elif ct == 'launchpad_mk2':
                 self._set_led_lp_mk2(row, col, color_velocity)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
@@ -884,6 +961,18 @@ class MIDIHandler(QObject):
             # Scene launch (colonne droite)
             if row > 4:
                 return
+            self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, vel])
+
+    def _set_led_apc20(self, row, col, color_velocity):
+        """LED AKAI APC20 — palette 3 couleurs identique à l'APC40 MK1."""
+        if not self.midi_out:
+            return
+        if row > 4:
+            return  # APC20 : 5 lignes max (rows 0-4)
+        vel = _to_apc40_vel(color_velocity)
+        if col < 8:
+            self.midi_out.send_message([0x90 | col, _APC40_CLIP_BASE_NOTE + row, vel])
+        elif col == 8:
             self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, vel])
 
     # ─── Divers ──────────────────────────────────────────────────────────────
