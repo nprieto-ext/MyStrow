@@ -527,13 +527,17 @@ class _PaletteBlock(QWidget):
     """Bloc coloré représentant un type de canal. Clic ou drag pour ajouter."""
     clicked_channel = Signal(str)
 
-    _W, _H = 68, 52
+    _W, _H = 68, 36
 
     def __init__(self, ch_type, parent=None):
         super().__init__(parent)
         self._ch = ch_type
         col = CHANNEL_COLORS.get(ch_type, "#444")
         self._col = QColor(col)
+        # Couleur du texte : blanc si fond sombre, noir si fond clair
+        br = col[1:3]; bg = col[3:5]; bb = col[5:7]
+        lum = int(br, 16) * 0.299 + int(bg, 16) * 0.587 + int(bb, 16) * 0.114
+        self._text_col = QColor("#ffffff") if lum < 145 else QColor("#111111")
         self.setFixedSize(self._W, self._H)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(f"Cliquer ou glisser pour ajouter « {ch_type} »")
@@ -544,21 +548,14 @@ class _PaletteBlock(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         r = self.rect().adjusted(2, 2, -2, -2)
         c = self._col
-        # Fond
-        painter.setPen(QPen(c.darker(160), 1))
-        painter.setBrush(c.darker(280))
-        painter.drawRoundedRect(QRectF(r), 7, 7)
-        # Nom centré
-        painter.setPen(c.lighter(200))
-        painter.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        # Fond plein coloré (style chips du patch)
+        painter.setPen(QPen(c.darker(140), 1))
+        painter.setBrush(c)
+        painter.drawRoundedRect(QRectF(r), 6, 6)
+        # Nom centré, texte contrasté
+        painter.setPen(self._text_col)
+        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
         painter.drawText(r, Qt.AlignCenter, self._ch)
-        # Petite icône drag en bas
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#555"))
-        bx = r.center().x() - 5
-        by = r.bottom() - 7
-        for dx in (0, 5, 10):
-            painter.drawEllipse(bx + dx, by, 2, 2)
         painter.end()
 
     def mousePressEvent(self, event):
@@ -577,16 +574,16 @@ class _PaletteBlock(QWidget):
         mime = QMimeData()
         mime.setText(self._ch)
         drag.setMimeData(mime)
-        # Pixmap de prévisualisation
+        # Pixmap de prévisualisation identique au bloc
         pix = QPixmap(self._W, self._H)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(self._col, 1.5))
-        p.setBrush(self._col.darker(220))
-        p.drawRoundedRect(QRectF(2, 2, self._W - 4, self._H - 4), 7, 7)
-        p.setPen(self._col.lighter(200))
-        p.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        p.setPen(QPen(self._col.darker(140), 1))
+        p.setBrush(self._col)
+        p.drawRoundedRect(QRectF(2, 2, self._W - 4, self._H - 4), 6, 6)
+        p.setPen(self._text_col)
+        p.setFont(QFont("Segoe UI", 10, QFont.Bold))
         p.drawText(pix.rect(), Qt.AlignCenter, self._ch)
         p.end()
         drag.setPixmap(pix)
@@ -973,8 +970,8 @@ class FixtureEditorDialog(QDialog):
         palette_wrap.setStyleSheet("QWidget{background:transparent;}")
         pg = QGridLayout(palette_wrap)
         pg.setContentsMargins(0, 0, 0, 0)
-        pg.setSpacing(6)
-        cols = 8
+        pg.setSpacing(5)
+        cols = 10
         for idx, ct in enumerate(ALL_CHANNEL_TYPES):
             ri, ci = divmod(idx, cols)
             block = _PaletteBlock(ct)

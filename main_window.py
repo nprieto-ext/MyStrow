@@ -78,7 +78,7 @@ from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode,
 from audio_ai import AudioColorAI
 from midi_handler import MIDIHandler
 from controller_mapping_wizard import MidiMappingWizard
-from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
+from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton, PositionPadButton
 from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy, _find_free_canvas_pos
 from plan_3d_webwindow import Plan3DWebWindow as Plan3DWindow
 from recording_waveform import RecordingWaveform
@@ -266,10 +266,12 @@ class MessageLogWidget(QWidget):
 # Options disponibles dans le dropdown par colonne
 _MEM_COL_MAX = 99
 _FX_COL_MAX  = 8
+_POS_COL_MAX = 5   # 5 colonnes POS × 8 pads = 40 positions max
 _AKAI_SLOT_OPTIONS = (
     ["A", "B", "C", "D", "E", "F", "G", "H"]
     + [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
     + [f"FX {i}"  for i in range(1, _FX_COL_MAX + 1)]
+    + [f"POS {i}" for i in range(1, _POS_COL_MAX + 1)]
 )
 
 
@@ -439,6 +441,7 @@ class _FaderPreview(QWidget):
         "group":  QColor("#e0e0e0"),
         "memory": QColor("#00aaff"),
         "fx":     QColor("#44dd44"),
+        "pos":    QColor("#2255ee"),
     }
     _PAD_H  = 5
     _PAD_GAP = 2
@@ -543,6 +546,7 @@ class _SlotPickerPopup(QFrame):
         groups = ["A", "B", "C", "D", "E", "F", "G", "H"]
         fx     = [f"FX {i}" for i in range(1, _FX_COL_MAX + 1)]
         mems   = [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
+        pos    = [f"POS {i}" for i in range(1, _POS_COL_MAX + 1)]
 
         # Groupes
         self._add_section("Groupes", groups, self._GROUP_COLOR, current)
@@ -550,6 +554,8 @@ class _SlotPickerPopup(QFrame):
         self._add_section("FX", fx, self._FX_COLOR, current)
         # MEM — grille 10 colonnes
         self._add_section("Mémoires", mems, self._MEM_COLOR, current, cols=10)
+        # POS — colonnes position lyre
+        self._add_section(tr("pos_slot_section"), pos, "#2255ee", current)
 
         self._inner_lay.addStretch()
 
@@ -798,6 +804,8 @@ class AkaiLayoutEditorDialog(QDialog):
             return self._MEM_COLOR
         if option.startswith("FX "):
             return self._FX_COLOR
+        if option.startswith("POS "):
+            return "#2255ee"
         return self._EMPTY_COLOR
 
     def _on_col_changed(self, col, option):
@@ -903,6 +911,8 @@ class AkaiLayoutEditorDialog(QDialog):
             return f"MEM {slot.get('mem_col', 0) + 1}"
         if slot.get("type") == "fx":
             return f"FX {slot.get('fx_col', 0) + 1}"
+        if slot.get("type") == "pos":
+            return f"POS {slot.get('pos_col', 0) + 1}"
         return slot.get("group", slot.get("label", "A"))
 
     # ── Résultat ─────────────────────────────────────────────────────────────
@@ -922,6 +932,9 @@ class AkaiLayoutEditorDialog(QDialog):
             elif val.startswith("FX "):
                 fx_col = int(val.split()[1]) - 1
                 slots.append({"type": "fx", "fx_col": fx_col, "label": val})
+            elif val.startswith("POS "):
+                pos_col = int(val.split()[1]) - 1
+                slots.append({"type": "pos", "pos_col": pos_col, "label": val})
             else:
                 slots.append({"type": "group", "group": val, "label": val})
         return slots
@@ -1607,6 +1620,11 @@ class MainWindow(QMainWindow):
         self.active_memory_pads = {}  # {fader_idx: row} pad actif par colonne memoire
         self._mem_cue_idx = {}        # {(col, row): int} index cue courant par pad
 
+        # Positions lyre (pan/tilt presets)
+        self.position_presets = []                                          # [{"name": str, "projectors": [{group, pan, tilt}]}]
+        self.position_pads = [[None]*8 for _ in range(_POS_COL_MAX)]       # position_pads[pos_col][row] = preset_idx ou None
+        self.active_position_pads = {}                                      # {pos_col: row}
+
         # — Fade entre cues (interpolation DMX 40 fps)
         self._fade_timer = QTimer(self)
         self._fade_timer.setInterval(25)
@@ -1660,6 +1678,7 @@ class MainWindow(QMainWindow):
         self.midi_handler.owner_window = self
         self.midi_handler.fader_changed.connect(self.on_midi_fader)
         self.midi_handler.pad_pressed.connect(self.on_midi_pad)
+        self.midi_handler.pad_released.connect(self.on_midi_pad_released)
 
         # Dimmers max IA Lumiere par groupe
         self.ia_max_dimmers = {
@@ -2315,6 +2334,10 @@ class MainWindow(QMainWindow):
         """Returns list of (fader_idx, mem_col) for all memory slots in current bank."""
         return [(i, s["mem_col"]) for i, s in enumerate(self._fader_map) if s["type"] == "memory"]
 
+    def _bank_pos_slots(self):
+        """Returns list of (fader_idx, pos_col) for all position slots in current bank."""
+        return [(i, s["pos_col"]) for i, s in enumerate(self._fader_map) if s["type"] == "pos"]
+
     @staticmethod
     def _slot_groups(slot):
         """Retourne la liste des noms internes de groupes pour un slot de type 'group'.
@@ -2502,6 +2525,10 @@ class MainWindow(QMainWindow):
             if _cfg.get("name"):
                 _btn.current_effect = _cfg["name"]
                 _btn.setToolTip(_cfg["name"])
+            if _cfg.get("trigger_mode"):
+                _btn.trigger_mode = _cfg["trigger_mode"]
+            if _cfg.get("trigger_duration"):
+                _btn.trigger_duration = _cfg["trigger_duration"]
 
         effect_fader = ApcFader(8, self._fader8_dispatch, vertical=False)
         effect_fader.set_value(100)
@@ -2578,12 +2605,56 @@ class MainWindow(QMainWindow):
 
         return frame
 
+    _BASE_PAD_COLORS = [
+        QColor("white"), QColor("#ff0000"), QColor("#ff8800"), QColor("#ffdd00"),
+        QColor("#00ff00"), QColor("#00dddd"), QColor("#0000ff"), QColor("#ff00ff")
+    ]
+
+    def _group_pad_colors(self, group_projs):
+        """Retourne (colors[8], cw_dmx_vals[8]) pour les pads AKAI du groupe.
+
+        Les couleurs visuelles sont TOUJOURS les 8 couleurs standard.
+        cw_dmx_vals contient les valeurs DMX pré-calculées vers le slot de roue
+        le plus proche pour chaque couleur (None si pas de roue de couleurs).
+        """
+        defaults = self._BASE_PAD_COLORS
+        # Chercher une fixture avec roue de couleurs (sans canal RGB direct)
+        cw_proj = next(
+            (p for p in group_projs
+             if getattr(p, 'color_wheel_slots', [])
+             and 'R' not in getattr(p, 'dmx_profile', [])),
+            None
+        )
+        if cw_proj:
+            slots = cw_proj.color_wheel_slots
+            cw_vals = [self._nearest_cw_dmx(c, slots) for c in defaults]
+            return list(defaults), cw_vals  # couleurs visuelles inchangées
+        return list(defaults), [None] * 8
+
+    @staticmethod
+    def _nearest_cw_dmx(target_color: QColor, slots: list) -> int:
+        """Retourne la valeur DMX du slot de roue dont la couleur est la plus proche."""
+        best_dmx, best_dist = 0, float('inf')
+        tr, tg, tb = target_color.red(), target_color.green(), target_color.blue()
+        for slot in slots:
+            c = QColor(slot.get("color", "#ffffff"))
+            dist = (c.red()-tr)**2 + (c.green()-tg)**2 + (c.blue()-tb)**2
+            if dist < best_dist:
+                best_dist = dist
+                best_dmx = int(slot.get("dmx", 0))
+        return best_dmx
+
     def _rebuild_akai_pads(self):
         """Rebuilds the 8x8 pad grid based on current bank preset."""
-        base_colors = [
-            QColor("white"), QColor("#ff0000"), QColor("#ff8800"), QColor("#ffdd00"),
-            QColor("#00ff00"), QColor("#00dddd"), QColor("#0000ff"), QColor("#ff00ff")
-        ]
+        # Cache des couleurs par lettre de groupe (calculé une fois par rebuild)
+        _group_colors_cache = {}
+
+        def _get_group_colors(slot_letter):
+            if slot_letter not in _group_colors_cache:
+                internal = AKAI_GROUP_MAP.get(slot_letter, slot_letter)
+                group_projs = [p for p in self.projectors if p.group == internal]
+                _group_colors_cache[slot_letter] = self._group_pad_colors(group_projs)
+            return _group_colors_cache[slot_letter]
 
         # Clear existing pads
         self.pads.clear()
@@ -2596,7 +2667,10 @@ class MainWindow(QMainWindow):
             for c in range(8):
                 slot = self._fader_map[c]
                 if slot["type"] == "group":
-                    col = base_colors[r]
+                    col_letter = slot.get("group", "A")
+                    pad_colors, cw_dmx_vals = _get_group_colors(col_letter)
+                    col = pad_colors[r]
+                    cw_dmx = cw_dmx_vals[r]
                     b = QPushButton()
                     b.setFixedSize(28, 28)
                     dim_color = QColor(int(col.red() * 0.5), int(col.green() * 0.5), int(col.blue() * 0.5))
@@ -2604,6 +2678,7 @@ class MainWindow(QMainWindow):
                     b.setProperty("base_color", col)
                     b.setProperty("color2", None)
                     b.setProperty("dim_color", dim_color)
+                    b.setProperty("cw_dmx_val", cw_dmx)  # None si RGB, int si roue de couleurs
                     b.clicked.connect(lambda _, btn=b, fc=c: self.activate_pad(btn, fc))
                 elif slot["type"] == "fx":
                     fx_col = slot.get("fx_col", 0)
@@ -2627,6 +2702,20 @@ class MainWindow(QMainWindow):
                     b.customContextMenuRequested.connect(
                         lambda pos, fc=fx_col, fr=r, btn=b: self._show_fx_context_menu(pos, fc, fr, btn)
                     )
+                elif slot["type"] == "pos":
+                    pos_col = slot.get("pos_col", 0)
+                    b = QPushButton()
+                    b.setFixedSize(28, 28)
+                    b.setStyleSheet("QPushButton { background: #0a0a22; border: 1px solid #1a1a44; border-radius: 4px; }")
+                    b.setProperty("base_color", QColor("#2255ee"))
+                    b.setProperty("color2", None)
+                    b.setProperty("pos_col", pos_col)
+                    b.setProperty("pos_row", r)
+                    b.clicked.connect(lambda _, pc=pos_col, pr=r, ca=c: self._activate_position_akai_pad(None, pc, pr, col_akai=ca))
+                    b.setContextMenuPolicy(Qt.CustomContextMenu)
+                    b.customContextMenuRequested.connect(
+                        lambda p, pc=pos_col, pr=r, btn=b: self._show_pos_context_menu(p, pc, pr, btn)
+                    )
                 else:  # memory
                     mem_col = slot["mem_col"]
                     b = QPushButton()
@@ -2649,6 +2738,11 @@ class MainWindow(QMainWindow):
         for fi, mc in self._bank_memory_slots():
             for mr in range(8):
                 self._style_memory_pad(mc, mr, active=self.active_memory_pads.get(fi) == mr)
+
+        # Refresh position pad styles
+        for fi, pc in self._bank_pos_slots():
+            for pr in range(8):
+                self._style_position_akai_pad(pc, pr)
 
         # Refresh active color pads
         for col_idx, btn in list(self.active_pads.items()):
@@ -2677,6 +2771,9 @@ class MainWindow(QMainWindow):
             elif value.startswith("FX "):
                 fx_col = int(value.split()[1]) - 1
                 self._custom_bank_slots[fader_idx] = {"type": "fx", "fx_col": fx_col, "label": value}
+            elif value.startswith("POS "):
+                pos_col = int(value.split()[1]) - 1
+                self._custom_bank_slots[fader_idx] = {"type": "pos", "pos_col": pos_col, "label": value}
             else:
                 self._custom_bank_slots[fader_idx] = {"type": "group", "group": value, "label": value}
             # Mettre à jour l'étiquette
@@ -3108,7 +3205,11 @@ class MainWindow(QMainWindow):
                         int(color.green() * brightness),
                         int(color.blue() * brightness)
                     )
-                    self._update_color_wheel(p, color)
+                    cw_dmx = btn.property("cw_dmx_val")
+                    if cw_dmx is not None:
+                        p.color_wheel = int(cw_dmx)
+                    else:
+                        self._update_color_wheel(p, color)
 
         # Envoi DMX immediat sans attendre le prochain tick
         self.send_dmx_update()
@@ -3203,7 +3304,8 @@ class MainWindow(QMainWindow):
             pass
 
     def _update_non_mem_pad_tooltips(self):
-        """En mode REC, affiche 🚫 sur les pads groupe et FX (non enregistrables)."""
+        """En mode REC, affiche 🚫 sur les pads groupe et FX (non enregistrables en mémoire).
+        Les pads POS restent cliquables en REC (pour enregistrer une position)."""
         tip = "🚫" if self._mem_rec_mode else ""
         for (row, col), pad in self.pads.items():
             if col >= len(self._fader_map):
@@ -4304,6 +4406,7 @@ class MainWindow(QMainWindow):
                 if not effect_name:
                     btn.active = False
                     btn.update_style()
+                    self._log_message(f"Bouton {effect_idx + 1} — aucun effet assigné (clic droit pour configurer)", "warn")
                     return
                 import time as _time
                 eff_state = {
@@ -4366,6 +4469,7 @@ class MainWindow(QMainWindow):
             if not effect_name:
                 btn.active = False
                 btn.update_style()
+                self._log_message(f"Bouton {effect_idx + 1} — aucun effet assigné (clic droit pour configurer)", "warn")
                 return
 
             # Sauvegarder l'état précédent — uniquement si l'effet vient d'un FX pad,
@@ -4385,6 +4489,7 @@ class MainWindow(QMainWindow):
             self.active_effect_config = self._button_effect_configs.get(effect_idx, {})
             self.start_effect(effect_name)
             self._log_message(f"Effet ON : {effect_name}", "effect")
+            self._warn_effect_no_targets(self.active_effect_config)
             for j, other_btn in enumerate(self.effect_buttons):
                 if j != effect_idx and other_btn.active:
                     other_btn.active = False
@@ -4448,6 +4553,203 @@ class MainWindow(QMainWindow):
                 else:
                     pad.setStyleSheet("QPushButton { background: #0a1a0a; border: 1px solid #1a2a1a; border-radius: 4px; }")
                     pad.setToolTip("")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # POSITION LYRE PADS (intégrés comme colonnes AKAI, type "pos")
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _style_position_akai_pad(self, pos_col, row):
+        """Rafraîchit le style de tous les pads AKAI mappés sur ce slot POS."""
+        preset_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
+        is_active = self.active_position_pads.get(pos_col) == row
+        preset = (self.position_presets[preset_idx]
+                  if preset_idx is not None and preset_idx < len(self.position_presets)
+                  else None)
+        for col_idx, slot in enumerate(self._fader_map):
+            if slot.get("type") == "pos" and slot.get("pos_col") == pos_col:
+                pad = self.pads.get((row, col_idx))
+                if pad is None:
+                    continue
+                if is_active and preset:
+                    pad.setStyleSheet("QPushButton { background: #2255ee; border: 2px solid #88aaff; border-radius: 4px; }")
+                elif preset:
+                    pad.setStyleSheet("QPushButton { background: #0d2266; border: 1px solid #1a3399; border-radius: 4px; }")
+                else:
+                    pad.setStyleSheet("QPushButton { background: #0a0a22; border: 1px solid #1a1a44; border-radius: 4px; }")
+                tip = preset["name"] if preset else ""
+                pad.setToolTip(tip)
+
+    def _update_pos_pad_led(self, pos_col, row):
+        """Met à jour la LED MIDI physique d'un pad POS."""
+        if not (MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out):
+            return
+        preset_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
+        is_active = self.active_position_pads.get(pos_col) == row
+        for col_idx, slot in enumerate(self._fader_map):
+            if slot.get("type") == "pos" and slot.get("pos_col") == pos_col:
+                if is_active and preset_idx is not None:
+                    self.midi_handler.set_pad_led(row, col_idx, 45, brightness_percent=100)  # bleu vif
+                elif preset_idx is not None:
+                    self.midi_handler.set_pad_led(row, col_idx, 45, brightness_percent=25)   # bleu sombre
+                else:
+                    self.midi_handler.set_pad_led(row, col_idx, 0, brightness_percent=0)
+
+    def _activate_position_akai_pad(self, btn, pos_col, row, col_akai=None):
+        """Clic sur un pad POS : REC → enregistre, sinon → rappelle la position."""
+        if self._mem_rec_mode:
+            self._record_position_akai(pos_col, row)
+            self._mem_rec_mode = False
+            if self._rec_mem_btn:
+                self._rec_mem_btn.setStyleSheet(
+                    "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #3a3a3a; "
+                    "border-radius: 4px; font-size: 13px; } "
+                    "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
+                )
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
+            self._update_non_mem_pad_tooltips()
+            return
+        self._recall_position_akai(pos_col, row)
+
+    def _recall_position_akai(self, pos_col, row):
+        """Rappelle la position lyre associée à position_pads[pos_col][row]."""
+        preset_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
+        if preset_idx is None or preset_idx >= len(self.position_presets):
+            self._log_message(f"POS {pos_col + 1}-{row + 1} vide — clic droit pour configurer", "warn")
+            return
+
+        preset = self.position_presets[preset_idx]
+        lyre_by_name  = {p.name:  p for p in self.projectors
+                         if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
+        lyre_by_group = {}
+        for p in self.projectors:
+            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
+                lyre_by_group.setdefault(p.group, []).append(p)
+        applied = 0
+        for proj_state in preset.get("projectors", []):
+            p = lyre_by_name.get(proj_state.get("name"))
+            if p is None:
+                # fallback group : prend la première lyre du groupe
+                candidates = lyre_by_group.get(proj_state.get("group"), [])
+                p = candidates[0] if candidates else None
+            if p:
+                self._start_pan_tilt_transition(
+                    p, proj_state.get("pan", 32768), proj_state.get("tilt", 32768), 500)
+                applied += 1
+
+        if applied == 0:
+            self._log_message(f"POS {pos_col + 1}-{row + 1} — aucune lyre correspondante", "warn")
+            return
+
+        self.active_position_pads[pos_col] = row
+        for pr in range(8):
+            self._style_position_akai_pad(pos_col, pr)
+            self._update_pos_pad_led(pos_col, pr)
+        self._log_message(f"Position « {preset['name']} »", "go")
+
+    def _record_position_akai(self, pos_col, row):
+        """Capture le pan/tilt de toutes les lyres et sauvegarde sur ce pad."""
+        from PySide6.QtWidgets import QInputDialog
+        lyres = [p for p in self.projectors
+                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+        if not lyres:
+            self._log_message("Aucune lyre patchée — impossible d'enregistrer une position", "warn")
+            return
+
+        cur_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
+        default_name = (
+            self.position_presets[cur_idx]["name"]
+            if cur_idx is not None and cur_idx < len(self.position_presets)
+            else f"Pos {pos_col + 1}-{row + 1}"
+        )
+        name, ok = QInputDialog.getText(self, tr("pos_rec_dlg_title"), tr("pos_rec_dlg_label"), text=default_name)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+
+        snap = [{"group": p.group, "name": p.name,
+                 "pan":  getattr(p, 'pan',  32768),
+                 "tilt": getattr(p, 'tilt', 32768)} for p in lyres]
+        preset = {"name": name, "projectors": snap}
+
+        if cur_idx is not None and cur_idx < len(self.position_presets):
+            self.position_presets[cur_idx] = preset
+        else:
+            self.position_presets.append(preset)
+            if pos_col < _POS_COL_MAX:
+                self.position_pads[pos_col][row] = len(self.position_presets) - 1
+
+        self._style_position_akai_pad(pos_col, row)
+        self._save_akai_config_auto()
+        self._log_message(f"Position « {name} » enregistrée", "success")
+
+    def _show_pos_context_menu(self, pos, pos_col, row, btn):
+        """Menu clic droit sur un pad POS — assigner, REC, renommer, effacer."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(btn)
+        menu.setStyleSheet(
+            "QMenu { background: #1a1a1a; border: 1px solid #3a3a3a; padding: 2px; font-size: 11px; }"
+            "QMenu::item { padding: 4px 12px; border-radius: 3px; color: #e0e0e0; }"
+            "QMenu::item:selected { background: #1a2a4a; color: #fff; }"
+            "QMenu::item:disabled { color: #555; font-size: 9px; letter-spacing: 1px; }"
+            "QMenu::separator { background: #333; height: 1px; margin: 2px 6px; }"
+        )
+
+        cur_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
+
+        if self.position_presets:
+            hdr = menu.addAction(tr("pos_ctx_assign_hdr"))
+            hdr.setEnabled(False)
+            for i, preset in enumerate(self.position_presets):
+                act = menu.addAction(("✓ " if cur_idx == i else "    ") + preset["name"])
+                act.triggered.connect(lambda _, pi=i: self._assign_position_akai(pos_col, row, pi))
+            menu.addSeparator()
+
+        rec_act = menu.addAction(tr("pos_ctx_rec"))
+        rec_act.triggered.connect(lambda: self._record_position_akai(pos_col, row))
+
+        if cur_idx is not None and cur_idx < len(self.position_presets):
+            menu.addSeparator()
+            pname = self.position_presets[cur_idx]["name"]
+            rename_act = menu.addAction(tr("pos_ctx_rename", name=pname))
+            rename_act.triggered.connect(lambda: self._rename_position_akai(pos_col, row))
+            clear_act = menu.addAction(tr("pos_ctx_clear"))
+            clear_act.triggered.connect(lambda: self._clear_position_akai(pos_col, row))
+
+        menu.exec(btn.mapToGlobal(pos))
+
+    def _assign_position_akai(self, pos_col, row, preset_idx):
+        """Assigne un preset existant à position_pads[pos_col][row]."""
+        if pos_col < _POS_COL_MAX:
+            self.position_pads[pos_col][row] = preset_idx
+        self._style_position_akai_pad(pos_col, row)
+        self._save_akai_config_auto()
+
+    def _rename_position_akai(self, pos_col, row):
+        """Renomme le preset assigné à ce pad."""
+        from PySide6.QtWidgets import QInputDialog
+        cur_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
+        if cur_idx is None or cur_idx >= len(self.position_presets):
+            return
+        old_name = self.position_presets[cur_idx]["name"]
+        name, ok = QInputDialog.getText(self, tr("pos_rename_dlg_title"), tr("pos_rename_dlg_label"), text=old_name)
+        if ok and name.strip():
+            self.position_presets[cur_idx]["name"] = name.strip()
+            # Rafraîchir tous les pads qui partagent ce preset
+            for pc in range(_POS_COL_MAX):
+                for pr in range(8):
+                    if self.position_pads[pc][pr] == cur_idx:
+                        self._style_position_akai_pad(pc, pr)
+            self._save_akai_config_auto()
+
+    def _clear_position_akai(self, pos_col, row):
+        """Retire l'assignation du pad (le preset reste dans la bibliothèque)."""
+        if pos_col < _POS_COL_MAX:
+            self.position_pads[pos_col][row] = None
+        if self.active_position_pads.get(pos_col) == row:
+            self.active_position_pads.pop(pos_col, None)
+        self._style_position_akai_pad(pos_col, row)
+        self._update_pos_pad_led(pos_col, row)
+        self._save_akai_config_auto()
 
     def _update_fx_pad_led(self, fx_col, row):
         """Envoie la LED MIDI physique pour un pad FX sur toutes les colonnes mappées."""
@@ -5457,6 +5759,58 @@ class MainWindow(QMainWindow):
     def _ensure_effect_off(self, btn_idx: int):
         if btn_idx < len(self.effect_buttons) and self.effect_buttons[btn_idx].active:
             self.toggle_effect(btn_idx)
+
+    def _warn_effect_no_targets(self, cfg: dict):
+        """Log un avertissement si l'effet ne peut rien produire visuellement."""
+        _LETTER_TO_GROUP = {
+            "A": "face", "B": "lat", "C": "contre",
+            "D": "douche1", "E": "douche2", "F": "douche3",
+            "G": "groupe_g", "H": "groupe_h",
+        }
+        active_projs = [p for p in self.projectors if p.group != "fumee"]
+        if not active_projs:
+            self._log_message("Aucun projecteur patché — l'effet ne produira rien", "warn")
+            return
+
+        # Collecte tous les groupes ciblés dans les layers (ou au niveau config)
+        layers = cfg.get("layers", [])
+        if layers:
+            target_letters = set()
+            for ld in layers:
+                target_letters.update(ld.get("target_groups", []))
+        else:
+            target_letters = set(cfg.get("target_groups", []))
+
+        allowed = {_LETTER_TO_GROUP[l] for l in target_letters if l in _LETTER_TO_GROUP}
+        matched = [p for p in active_projs if not allowed or p.group in allowed]
+
+        if not matched:
+            labels = {"A": "Face", "B": "Lat", "C": "Contre",
+                      "D": "Douche 1", "E": "Douche 2", "F": "Douche 3",
+                      "G": "G", "H": "H"}
+            groups_str = ", ".join(labels.get(l, l) for l in sorted(target_letters))
+            self._log_message(
+                f"Effet sans effet — aucun projecteur dans : {groups_str} (vérifiez votre patch)",
+                "warn"
+            )
+            return
+
+        # Vérifie si l'effet n'a que des couches Dim/Strobe (pas de couleur propre)
+        # → dans ce cas il module la couleur existante des projecteurs
+        # → si tous les projecteurs ciblés sont noirs, rien ne sera visible
+        if layers:
+            attrs = {ld.get("attribute", "Dimmer") for ld in layers}
+            dim_only = attrs.issubset({"Dimmer", "Strobe"})
+            if dim_only:
+                all_black = all(
+                    p.color.red() == 0 and p.color.green() == 0 and p.color.blue() == 0
+                    for p in matched
+                )
+                if all_black:
+                    self._log_message(
+                        "Effet Dim/Strobe — aucune couleur sur les projecteurs ciblés, envoyez une couleur d'abord",
+                        "warn"
+                    )
 
     def _update_effect_from_layers(self, cfg: dict):
         """Exécute un effet défini par ses couches (format nouvel éditeur)."""
@@ -6887,7 +7241,7 @@ class MainWindow(QMainWindow):
     def on_midi_pad(self, row, col):
         """Reception d'un appui de pad MIDI"""
         if col == 8:
-            self.toggle_effect(row)
+            self._on_effect_press(row)
             if MIDI_AVAILABLE and self.midi_handler.midi_out:
                 velocity = 1 if self.effect_buttons[row].active else 0
                 self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
@@ -6916,6 +7270,10 @@ class MainWindow(QMainWindow):
                     # Pads FX — toggle l'effet mappé sur ce pad
                     fx_col = slot.get("fx_col", 0)
                     self._toggle_fx_pad(fx_col, row)  # met à jour visuel + LEDs physiques
+                elif slot["type"] == "pos":
+                    # Pads POS — rappelle la position lyre
+                    pos_col = slot.get("pos_col", 0)
+                    self._activate_position_akai_pad(pad, pos_col, row, col_akai=col)
                 else:
                     # Memory pads individuels
                     mem_col = slot["mem_col"]
@@ -6925,6 +7283,14 @@ class MainWindow(QMainWindow):
                         for r in range(8):
                             is_active = self.active_memory_pads.get(col) == r
                             self._update_memory_pad_led(mem_col, r, active=is_active)
+
+    def on_midi_pad_released(self, row, col):
+        """Reception d'un relachement de pad MIDI"""
+        if col == 8:
+            self._on_effect_release(row)
+            if MIDI_AVAILABLE and self.midi_handler.midi_out:
+                velocity = 1 if self.effect_buttons[row].active else 0
+                self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
 
     def new_show(self):
         """Cree un nouveau show"""
@@ -7451,6 +7817,8 @@ class MainWindow(QMainWindow):
             "fx_pads": self.fx_pads,
             "effect_superposition": self.effect_superposition,
             "go_mode": self.go_mode,
+            "position_presets": self.position_presets,
+            "position_pads": self.position_pads,
         }
 
     def _apply_akai_config(self, config):
@@ -7521,7 +7889,26 @@ class MainWindow(QMainWindow):
                 is_active = self.active_memory_pads.get(fi) == mr
                 self._style_memory_pad(mc, mr, active=is_active)
 
-        # Les pads FX seront rafraîchis lors du prochain _rebuild_akai_pads()
+        # Restaurer les positions lyre
+        pos_presets = config.get("position_presets")
+        if isinstance(pos_presets, list):
+            self.position_presets = pos_presets
+        pos_pads_data = config.get("position_pads")
+        self.position_pads = [[None]*8 for _ in range(_POS_COL_MAX)]
+        if isinstance(pos_pads_data, list):
+            for pc in range(min(_POS_COL_MAX, len(pos_pads_data))):
+                if isinstance(pos_pads_data[pc], list):
+                    for pr in range(min(8, len(pos_pads_data[pc]))):
+                        self.position_pads[pc][pr] = pos_pads_data[pc][pr]
+        else:
+            # Migration : ancien format 1D position_pad_assignments → col 0
+            old_assignments = config.get("position_pad_assignments")
+            if isinstance(old_assignments, list):
+                for pr in range(min(8, len(old_assignments))):
+                    self.position_pads[0][pr] = old_assignments[pr]
+        self.active_position_pads = {}
+
+        # Les pads FX et POS seront rafraîchis lors du prochain _rebuild_akai_pads()
 
     def _save_akai_config_auto(self):
         """Sauvegarde automatique de la config AKAI a la fermeture"""
@@ -12349,9 +12736,9 @@ class MainWindow(QMainWindow):
             from PySide6.QtWidgets import QInputDialog
             paths, _ = QFileDialog.getOpenFileNames(
                 dialog, "Importer des fixtures", str(Path.home()),
-                "Tous les formats supportés (*.mft *.json *.xml *.xmlp *.mystrow);;"
+                "Tous les formats supportés (*.mft *.json *.xml *.mystrow);;"
                 "Fixture MyStrow (*.mft *.json *.mystrow);;"
-                "XML / XML compressé (*.xml *.xmlp)"
+                "XML GrandMA (*.xml)"
             )
             if not paths:
                 return
@@ -12371,7 +12758,7 @@ class MainWindow(QMainWindow):
                 ext = Path(path).suffix.lower()
                 try:
                     raw = Path(path).read_bytes()
-                    if ext in (".xml", ".xmlp"):
+                    if ext == ".xml":
                         ofl_fx = _parse_file(path)
                         modes = [m for m in (ofl_fx.get("modes") or [])
                                  if isinstance(m, dict) and m.get("profile")]
@@ -12419,10 +12806,7 @@ class MainWindow(QMainWindow):
                         existing_names.add(fx["name"])
                         imported += 1
                 except Exception as e:
-                    if "LOCKED_XMLP" in str(e):
-                        errors.append(f"• {Path(path).name} : 🔒 Fichier protégé — format propriétaire chiffré (GrandMA3). Utilisez le fichier .xml non chiffré.")
-                    else:
-                        errors.append(f"• {Path(path).name} : {e}")
+                    errors.append(f"• {Path(path).name} : {e}")
             if imported == 0:
                 msg = "Aucune fixture importée."
                 if errors:
@@ -12876,6 +13260,9 @@ class MainWindow(QMainWindow):
                                          universe=getattr(proj, 'universe', 0),
                                          profile=profile)
         self.save_dmx_patch_config()
+        # Reconstruire les pads AKAI pour refléter les nouvelles fixtures
+        if hasattr(self, 'pads'):
+            self._rebuild_akai_pads()
 
     def save_dmx_patch_config(self):
         """Sauvegarde la configuration du patch DMX (nouveau format avec fixtures)"""

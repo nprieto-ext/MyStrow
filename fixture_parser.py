@@ -758,10 +758,23 @@ def _decompress_xmlp(data: bytes) -> bytes:
             return zlib.decompress(data[4:])
         except zlib.error:
             pass
-    # gzip (header 0x1F 0x8B)
+    # gzip au début (header 0x1F 0x8B)
     if data[:2] == b'\x1f\x8b':
         try:
             return gzip.decompress(data)
+        except Exception:
+            pass
+    # gzip avec header propriétaire devant (MA3 / MA2) — cherche le magic n'importe où
+    idx = data.find(b'\x1f\x8b')
+    if idx > 0:
+        try:
+            decompressed = gzip.decompress(data[idx:])
+            # Supprime le préfixe "MA DATA?" éventuel après décompression
+            if decompressed.startswith(b'MA DATA?'):
+                decompressed = decompressed[8:]
+            if decompressed.startswith(b'\xef\xbb\xbf'):
+                decompressed = decompressed[3:]
+            return decompressed
         except Exception:
             pass
     # deflate raw (sans header)
@@ -790,6 +803,12 @@ def parse_file(path: str) -> dict:
             decompressed = _decompress_xmlp(data)
             if decompressed is data:
                 raise ValueError("LOCKED_XMLP")
+            # Supprime le préfixe "MA DATA?" présent après décompression des XMLP GrandMA2
+            if decompressed.startswith(b'MA DATA?'):
+                decompressed = decompressed[8:]
+            # Supprime le BOM UTF-8 éventuel
+            if decompressed.startswith(b'\xef\xbb\xbf'):
+                decompressed = decompressed[3:]
             data = decompressed
         if _is_qlcplus_xml(data):
             return parse_qlcplus_xml(data)

@@ -12,6 +12,7 @@ Usage :
     export_mystrow(fixture, "fixture.mystrow")
 """
 
+import gzip
 import json
 import os
 import xml.etree.ElementTree as ET
@@ -175,6 +176,35 @@ def _parse_ma_channels(parent_el) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Parseur XMLP (GrandMA2 — XML gzippé avec header "MA DATA?")
+# ---------------------------------------------------------------------------
+
+def parse_xmlp(data: bytes) -> dict:
+    """
+    Parse un fichier .xmlp GrandMA2.
+    Format : header optionnel + données gzip + XML avec préfixe "MA DATA?".
+    """
+    # Localise le magic gzip \x1f\x8b dans le fichier
+    idx = data.find(b'\x1f\x8b')
+    if idx == -1:
+        # Certains XMLP GrandMA3 sont chiffrés (pas de magic gzip)
+        raise ValueError("LOCKED_XMLP")
+    try:
+        xml_data = gzip.decompress(data[idx:])
+    except Exception as e:
+        raise ValueError(f"Décompression XMLP échouée : {e}")
+
+    # Supprime le préfixe "MA DATA?" s'il est présent après décompression
+    if xml_data.startswith(b'MA DATA?'):
+        xml_data = xml_data[8:]
+    # Supprime le BOM UTF-8 éventuel
+    if xml_data.startswith(b'\xef\xbb\xbf'):
+        xml_data = xml_data[3:]
+
+    return parse_ma_xml(xml_data)
+
+
+# ---------------------------------------------------------------------------
 # Parseur .mystrow
 # ---------------------------------------------------------------------------
 
@@ -257,6 +287,8 @@ def parse_file(path: str) -> dict:
 
     if ext == ".mystrow":
         return parse_mystrow(data)
+    elif ext == ".xmlp":
+        return parse_xmlp(data)
     elif ext == ".xml":
         return parse_ma_xml(data)
     else:

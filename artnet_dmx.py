@@ -322,10 +322,13 @@ class ArtNetDMX:
                         # Méthode 2 : baud-rate trick — break généré par un 0x00 @ 100 kbaud
                         # (10 bits × 10 µs = 100 µs de LOW = break valide)
                         ser.baudrate = 100000
+                        ser.reset_output_buffer()
                         ser.write(b'\x00')
                         ser.flush()
-                        time.sleep(0.001)      # garantit la fin de transmission du byte @ 100k
-                        ser.baudrate = 250000  # MAB = latence du changement de baud (~1 ms USB)
+                        time.sleep(0.0015)     # 1.5 ms — marge pour latence USB macOS
+                        ser.reset_output_buffer()
+                        ser.baudrate = 250000
+                        time.sleep(0.0001)     # MAB explicite ≥ 8 µs requis DMX512
                         ser.write(frame)
                         ser.flush()
                     self.connected = True

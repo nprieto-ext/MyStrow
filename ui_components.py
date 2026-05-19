@@ -481,6 +481,39 @@ class EffectButton(QPushButton):
             self.setGraphicsEffect(None)
 
 
+class PositionPadButton(QPushButton):
+    """Pad de position lyre — bleu, grille 4×5 (20 pads)"""
+
+    def __init__(self, pad_idx, parent=None):
+        super().__init__(parent)
+        self.pad_idx = pad_idx
+        self.preset_name = None
+        self.is_active = False
+        self.setFixedSize(24, 24)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.update_style()
+
+    def update_style(self):
+        n = self.pad_idx + 1
+        if self.is_active:
+            bg, border, color = "#2255ee", "#6699ff", "#ffffff"
+        elif self.preset_name:
+            bg, border, color = "#0d2a5c", "#1a4aa0", "#88aaff"
+        else:
+            bg, border, color = "#0a0f1e", "#1a2040", "#334466"
+        label = (self.preset_name[:4] if self.preset_name else f"P{n}")
+        self.setText(label)
+        self.setStyleSheet(
+            f"QPushButton {{ background: {bg}; border: 1px solid {border}; "
+            f"border-radius: 3px; color: {color}; font-size: 7px; font-weight: bold; "
+            f"padding: 0px; }}"
+            f"QPushButton:pressed {{ background: #3377ff; border-color: #88bbff; }}"
+        )
+        tip = self.preset_name if self.preset_name else tr("pos_pad_empty_tip", n=n)
+        self.setToolTip(tip)
+
+
 class FaderButton(QPushButton):
     """Bouton mute au-dessus du fader"""
 

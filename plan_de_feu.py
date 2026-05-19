@@ -945,39 +945,59 @@ _DEFAULT_POSITIONS = {
 }
 
 class _PersistentMenu(QMenu):
-    """QMenu qui ne se ferme pas quand on clique sur un QWidgetAction (ex: boutons couleur)."""
+    """QMenu qui ne se ferme pas quand on clique sur un QWidgetAction.
 
-    def _forward_to_widget(self, event):
-        """Retransmet l'event souris au widget de la QWidgetAction avec coordonnees locales."""
-        action = self.actionAt(event.pos())
-        if isinstance(action, QWidgetAction):
-            w = action.defaultWidget()
-            if w:
-                # Traduire les coordonnees menu → widget local
-                local_pos = QPointF(w.mapFrom(self, event.pos()))
-                new_event = QMouseEvent(
-                    event.type(),
-                    local_pos,
-                    event.globalPosition(),
-                    event.button(),
-                    event.buttons(),
-                    event.modifiers(),
-                )
-                w.event(new_event)
-            return True
-        return False
+    Qt6 traite les events souris dans QMenu::event() (via QMenuPrivate) avant
+    d'appeler mouseReleaseEvent(), donc il faut surcharger event() — pas les
+    handlers individuels — pour intercepter les clics sur les zones QWidgetAction.
+    """
 
-    def mouseReleaseEvent(self, event):
-        if not self._forward_to_widget(event):
-            super().mouseReleaseEvent(event)
+    def event(self, e):
+        t = e.type()
+        if t in (QEvent.Type.MouseButtonPress,
+                 QEvent.Type.MouseButtonRelease,
+                 QEvent.Type.MouseMove):
+            # Récupérer l'action sous le curseur en coordonnées menu
+            try:
+                pos_pt = e.pos()
+                if hasattr(pos_pt, 'toPoint'):
+                    pos_pt = pos_pt.toPoint()
+                action = self.actionAt(pos_pt)
+            except (AttributeError, TypeError):
+                return super().event(e)
+            if isinstance(action, QWidgetAction):
+                self._dispatch_to_widget(e, action)
+                return True   # Consommé → menu reste ouvert
+        return super().event(e)
 
-    def mousePressEvent(self, event):
-        if not self._forward_to_widget(event):
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if not self._forward_to_widget(event):
-            super().mouseMoveEvent(event)
+    def _dispatch_to_widget(self, event, action):
+        """Achemine l'événement vers le bon widget enfant de la QWidgetAction."""
+        w = action.defaultWidget()
+        if not w:
+            return
+        # widgetAt(global) est la méthode la plus fiable : ne dépend d'aucun
+        # mapping de coordonnées et ignore le mouse-grab du menu.
+        try:
+            gpos = event.globalPosition().toPoint()
+        except AttributeError:
+            return
+        target = QApplication.widgetAt(gpos)
+        # Fallback si widgetAt ne trouve rien (widget caché / hors écran)
+        if target is None or target is self:
+            local = w.mapFromGlobal(gpos)
+            target = w.childAt(local) or w
+        if target is None:
+            return
+        if isinstance(target, QPushButton):
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                target.click()
+        else:
+            local_f = QPointF(target.mapFromGlobal(gpos))
+            synthetic = QMouseEvent(
+                event.type(), local_f, event.globalPosition(),
+                event.button(), event.buttons(), event.modifiers(),
+            )
+            QApplication.sendEvent(target, synthetic)
 
 
 _MENU_STYLE = """
@@ -2540,7 +2560,8 @@ class PlanDeFeu(QFrame):
         self.selected_lamps = set()   # set of (group, local_idx)
         self._htp_overrides = None    # dict {id(proj): (level, QColor)} ou None
         self._canvas_editable = False  # Vue principale : lecture seule (edition dans Patch DMX)
-        self._effects = {}            # id(proj) -> _EffectState
+        self._effects = {}            # id(proj) -> _EffectState  (pan/tilt)
+        self._led_effects = {}        # id(proj) -> {"type","phase","speed","saved_level","saved_color"}
         self._custom_groups = {}      # nom → frozenset of (group, local_idx)
         self._load_custom_groups()
 
@@ -2818,12 +2839,13 @@ class PlanDeFeu(QFrame):
         self._dirty = True
 
     def _tick_effects(self):
-        """Applique les effets automatiques Pan/Tilt à 10 fps."""
-        if not self._effects:
+        """Applique les effets automatiques Pan/Tilt + LED à 10 fps."""
+        if not self._effects and not self._led_effects:
             return
+
+        # Effets Pan/Tilt (Moving Head)
         dead = []
         for proj_id, state in self._effects.items():
-            # Retrouver le projecteur
             proj = next((p for p in self.projectors if id(p) == proj_id), None)
             if proj is None:
                 dead.append(proj_id)
@@ -2833,12 +2855,44 @@ class PlanDeFeu(QFrame):
             proj.tilt = tilt
         for proj_id in dead:
             del self._effects[proj_id]
+
+        # Effets LED (breath / flash / color_pulse)
+        dead_led = []
+        for proj_id, eff in self._led_effects.items():
+            proj = next((p for p in self.projectors if id(p) == proj_id), None)
+            if proj is None:
+                dead_led.append(proj_id)
+                continue
+            eff["phase"] += 2 * _math_eff.pi * eff["speed"] * _EffectState.DT
+            if eff["type"] == "color_pulse":
+                factor = (_math_eff.sin(eff["phase"]) + 1) / 2
+                lvl = max(5, int(eff["saved_level"] * (0.1 + 0.9 * factor)))
+                bc = eff["pulse_color"]
+                proj.base_color = bc
+            elif eff["type"] == "breath":
+                factor = (_math_eff.sin(eff["phase"]) + 1) / 2
+                lvl = max(5, int(eff["saved_level"] * (0.15 + 0.85 * factor)))
+                bc = eff["saved_color"]
+            else:  # "flash"
+                factor = max(0.0, _math_eff.sin(eff["phase"]))
+                lvl = int(eff["saved_level"] * factor)
+                bc = eff["saved_color"]
+            proj.level = lvl
+            br = lvl / 100.0
+            proj.color = QColor(
+                int(bc.red()   * br),
+                int(bc.green() * br),
+                int(bc.blue()  * br),
+            )
+        for proj_id in dead_led:
+            del self._led_effects[proj_id]
+
         if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
             self.main_window.dmx.update_from_projectors(self.projectors)
         self.canvas.update()
 
     def start_effect(self, projectors, effect, speed, amplitude):
-        """Démarre un effet sur une liste de projecteurs."""
+        """Démarre un effet Pan/Tilt sur une liste de projecteurs."""
         for proj in projectors:
             self._effects[id(proj)] = _EffectState(
                 effect, speed, amplitude,
@@ -2847,9 +2901,37 @@ class PlanDeFeu(QFrame):
             )
 
     def stop_effect(self, projectors):
-        """Stoppe l'effet sur une liste de projecteurs."""
+        """Stoppe l'effet Pan/Tilt sur une liste de projecteurs."""
         for proj in projectors:
             self._effects.pop(id(proj), None)
+
+    def start_led_effect(self, projectors, effect_type, speed, color=None):
+        """Démarre un effet LED (breath/flash/color_pulse) sur une liste de projecteurs."""
+        for proj in projectors:
+            base_col = getattr(proj, 'base_color', None) or getattr(proj, 'color', QColor(255, 255, 255))
+            saved_lvl = max(10, proj.level) if proj.level > 0 else 80
+            self._led_effects[id(proj)] = {
+                "type":        effect_type,
+                "phase":       0.0,
+                "speed":       speed,
+                "saved_level": saved_lvl,
+                "saved_color": QColor(base_col),
+                "pulse_color": QColor(color) if color is not None else QColor(base_col),
+            }
+
+    def stop_led_effect(self, projectors):
+        """Stoppe l'effet LED et restaure le niveau."""
+        for proj in projectors:
+            eff = self._led_effects.pop(id(proj), None)
+            if eff:
+                proj.level = eff["saved_level"]
+                br = proj.level / 100.0
+                bc = eff["saved_color"]
+                proj.color = QColor(
+                    int(bc.red()   * br),
+                    int(bc.green() * br),
+                    int(bc.blue()  * br),
+                )
 
     def set_htp_overrides(self, overrides):
         if overrides != self._htp_overrides:
@@ -2940,6 +3022,8 @@ class PlanDeFeu(QFrame):
         self.refresh()
 
     def _clear_all_projectors(self):
+        self._effects.clear()
+        self._led_effects.clear()
         for proj in self.projectors:
             proj.level = 0
             proj.base_color = QColor(0, 0, 0)
@@ -3489,7 +3573,31 @@ class PlanDeFeu(QFrame):
             wa.setDefaultWidget(widget)
             menu.addAction(wa)
 
-        # ── Titre ────────────────────────────────────────────────────────
+        def _clear_targets(t=targets):
+            black = QColor(0, 0, 0)
+            projs_to_clear = [p for p, g, i in t]
+            self.stop_effect(projs_to_clear)
+            self.stop_led_effect(projs_to_clear)
+            for p, g, i in t:
+                p.level          = 0
+                p.base_color     = black
+                p.color          = black
+                p.uv             = 0
+                p.white_boost    = 0
+                p.amber_boost    = 0
+                p.orange_boost   = 0
+                p.strobe_speed   = 0
+                p.pan            = 32768
+                p.tilt           = 32768
+                p.gobo           = 0
+                p.zoom           = 0
+                p.shutter        = 255
+                p.color_wheel    = 0
+                p.prism          = 0
+                p.channel_extras = {}
+            _flush()
+
+        # ── Titre + Clear en haut à droite ──────────────────────────────
         if len(targets) == 1:
             p0, g0, i0 = targets[0]
             info_text = f"{p0.name or (g0.capitalize() + ' ' + str(i0+1))}  (CH {p0.start_address})"
@@ -3497,10 +3605,30 @@ class PlanDeFeu(QFrame):
                 info_text += "  ·  TRAD"
         else:
             info_text = tr("pdf_n_fixtures_selected", n=len(targets))
+
+        n_sel = len(targets)
+        title_w = QWidget(); title_h = QHBoxLayout(title_w)
+        title_h.setContentsMargins(6, 2, 6, 2); title_h.setSpacing(4)
         lbl = QLabel(info_text)
         lbl.setStyleSheet("color:#00d4ff; font-weight:bold; font-size:12px; padding:4px 8px;")
-        lbl.setAlignment(Qt.AlignCenter)
-        _wa(lbl)
+        title_h.addWidget(lbl, 1)
+        clear_top_btn = QPushButton("⬛  Clear" + (f"  ({n_sel})" if n_sel > 1 else ""))
+        clear_top_btn.setStyleSheet(
+            "QPushButton{background:#1a1a1a;color:#666;border:1px solid #333;border-radius:4px;"
+            "font-size:11px;padding:2px 8px;min-height:24px;}"
+            "QPushButton:hover{background:#2a1a1a;color:#f44;border-color:#622;}"
+        )
+        clear_top_btn.clicked.connect(lambda: (_clear_targets(), menu.close()))
+        title_h.addWidget(clear_top_btn)
+        close_menu_btn = QPushButton("✕")
+        close_menu_btn.setStyleSheet(
+            "QPushButton{background:transparent;color:#444;border:none;font-size:13px;"
+            "min-width:22px;min-height:24px;padding:0;}"
+            "QPushButton:hover{color:#aaa;}"
+        )
+        close_menu_btn.clicked.connect(menu.close)
+        title_h.addWidget(close_menu_btn)
+        _wa(title_w)
         menu.addSeparator()
 
         # ── Dimmer (EN PREMIER) ──────────────────────────────────────────
@@ -3714,6 +3842,20 @@ class PlanDeFeu(QFrame):
             preset_bar.preset_selected.connect(_on_preset)
             mh_h.addWidget(preset_bar)
             _wa(mh_w)
+
+            # Timer qui rafraîchit le pad en live pendant un effet (50 ms)
+            _pad_live = QTimer(menu)
+            def _refresh_pad(pad=pt_pad, t=targets):
+                eff = self._effects.get(id(t[0][0]))
+                if eff:
+                    pad.blockSignals(True)
+                    pad.set_values(t[0][0].pan, t[0][0].tilt)
+                    pad.blockSignals(False)
+                    pad.update()
+            _pad_live.timeout.connect(_refresh_pad)
+            _pad_live.setInterval(50)
+            _pad_live.start()
+            menu.aboutToHide.connect(_pad_live.stop)
 
             proj_profile = getattr(targets[0][0], 'dmx_profile', None)
             has_profile = isinstance(proj_profile, list)
@@ -4120,47 +4262,159 @@ class PlanDeFeu(QFrame):
                 for _w in (_adv_lbl, _adv_sli, _adv_val): _adv_h.addWidget(_w)
                 _wa(_adv_w)
 
-        # ── Clear sélectif ───────────────────────────────────────────────
-        menu.addSeparator()
-        n_sel = len(targets)
-        clear_label = f"🔲  Clear ({n_sel})" if n_sel > 1 else "🔲  Clear"
-        def _clear_targets(t=targets):
-            black = QColor(0, 0, 0)
-            for p, g, i in t:
-                p.level        = 0
-                p.base_color   = black
-                p.color        = black
-                p.uv           = 0
-                p.white_boost  = 0
-                p.amber_boost  = 0
-                p.orange_boost = 0
-                p.strobe_speed = 0
-                p.pan          = 32768
-                p.tilt         = 32768
-                p.gobo         = 0
-                p.zoom         = 0
-                p.shutter      = 255
-                p.color_wheel  = 0
-                p.prism        = 0
-                p.channel_extras = {}
-            _flush()
-        menu.addAction(clear_label, _clear_targets)
-
         # ── Bas de menu ──────────────────────────────────────────────────
         menu.addSeparator()
-        patch_w = QWidget()
-        patch_w.setCursor(Qt.PointingHandCursor)
-        patch_l = QHBoxLayout(patch_w)
-        patch_l.setContentsMargins(0, 6, 0, 6)
-        patch_lbl = QLabel("Editer Patch")
-        patch_lbl.setAlignment(Qt.AlignCenter)
-        patch_lbl.setStyleSheet("color:#888; font-size:11px; border:none; background:transparent;")
-        patch_l.addWidget(patch_lbl)
-        patch_wa = QWidgetAction(menu)
-        patch_wa.setDefaultWidget(patch_w)
-        patch_wa.triggered.connect(lambda: self._edit_fixture(fixture_idx))
-        patch_w.mouseReleaseEvent = lambda e: (self._edit_fixture(fixture_idx), menu.close())
-        menu.addAction(patch_wa)
+
+        # ── Effets rapides (tout en bas) ─────────────────────────────────
+        _is_mh    = proj.fixture_type == "Moving Head"
+        _is_smoke = proj.fixture_type == "Machine a fumee"
+        if not _is_smoke:
+            menu.addSeparator()
+            eff_sec = QLabel(tr("pdf_qe_section"))
+            eff_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                  "padding:2px 10px;border:none;background:transparent;")
+            _wa(eff_sec)
+
+            qe_w = QWidget(); qe_h = QHBoxLayout(qe_w)
+            qe_h.setContentsMargins(8, 2, 8, 6); qe_h.setSpacing(5)
+
+            _QE_ON  = ("QPushButton{background:#005577;color:#00d4ff;border:1px solid #00d4ff;"
+                       "border-radius:4px;font-size:17px;min-width:42px;min-height:32px;font-weight:bold;}")
+            _QE_OFF = ("QPushButton{background:#1e1e1e;color:#444;border:1px solid #282828;"
+                       "border-radius:4px;font-size:17px;min-width:42px;min-height:32px;}"
+                       "QPushButton:hover{color:#aaa;border-color:#555;}")
+            _QE_STP = ("QPushButton{background:#2a1010;color:#f44;border:1px solid #622;"
+                       "border-radius:4px;font-size:12px;min-width:32px;min-height:32px;}"
+                       "QPushButton:hover{background:#3a1a1a;}")
+
+            _qe_btns = {}
+
+            if _is_mh:
+                # ── Moving Head : cercle, figure8, pan, tilt ──────────────
+                _active_qe = None
+                _ae = self._effects.get(id(targets[0][0]))
+                if _ae:
+                    _active_qe = _ae.effect
+
+                def _qe_start_mh(key):
+                    projs = [p for p, _g, _i in targets]
+                    # Retour à la position initiale si un effet était déjà en cours
+                    for p in projs:
+                        state = self._effects.get(id(p))
+                        if state:
+                            p.pan  = state.center_pan
+                            p.tilt = state.center_tilt
+                    turned_on = False
+                    for p in projs:
+                        if p.level < 5:
+                            p.level = 100
+                            p.shutter = 255
+                            bc = getattr(p, 'base_color', None)
+                            if not bc or bc.lightness() < 10:
+                                p.base_color = QColor(255, 255, 255)
+                                p.color = QColor(255, 255, 255)
+                            turned_on = True
+                    self.start_effect(projs, key, 0.5, 10000)
+                    if turned_on:
+                        dim_sli.setValue(100)  # Met à jour le slider + envoie DMX via son signal
+                    _flush()
+                    for _k, _b in _qe_btns.items():
+                        _b.setStyleSheet(_QE_ON if _k == key else _QE_OFF)
+
+                def _qe_stop_mh():
+                    projs = [p for p, _g, _i in targets]
+                    for p in projs:
+                        state = self._effects.get(id(p))
+                        if state:
+                            p.pan  = state.center_pan
+                            p.tilt = state.center_tilt
+                    self.stop_effect(projs)
+                    _flush()
+                    for _b in _qe_btns.values():
+                        _b.setStyleSheet(_QE_OFF)
+
+                for _icon, _key, _tip in [("⭕","cercle",     tr("pdf_qe_cercle")),
+                                           ("∞", "figure8",   tr("pdf_qe_figure8")),
+                                           ("↔", "balayage_h",tr("pdf_qe_pan")),
+                                           ("↕", "balayage_v",tr("pdf_qe_tilt"))]:
+                    _qb = QPushButton(_icon); _qb.setToolTip(_tip)
+                    _qb.setStyleSheet(_QE_ON if _key == _active_qe else _QE_OFF)
+                    _qb.clicked.connect(lambda chk=False, k=_key: _qe_start_mh(k))
+                    _qe_btns[_key] = _qb; qe_h.addWidget(_qb)
+
+                _stop_btn = QPushButton("■"); _stop_btn.setToolTip(tr("pdf_qe_stop"))
+                _stop_btn.setStyleSheet(_QE_STP)
+                _stop_btn.clicked.connect(_qe_stop_mh)
+                qe_h.addWidget(_stop_btn)
+
+            else:
+                # ── LED : 4 boutons couleur (pulse) + strobe + stop ───────
+                _LED_COLORS = [
+                    ("rouge",  QColor(255, 30,  0),   "#ff1e00"),
+                    ("vert",   QColor(0,   255, 60),  "#00ff3c"),
+                    ("bleu",   QColor(0,   80,  255), "#0050ff"),
+                    ("blanc",  QColor(255, 255, 255), "#ffffff"),
+                ]
+                _active_qe = None
+                _lae = self._led_effects.get(id(targets[0][0]))
+                if _lae:
+                    _active_qe = _lae.get("color_key")
+                elif getattr(targets[0][0], 'strobe_speed', 0) > 0:
+                    _active_qe = "strobe"
+
+                def _qe_start_led(key, color):
+                    projs = [p for p, _g, _i in targets]
+                    if key == "strobe":
+                        for p in projs:
+                            p.strobe_speed = 55
+                        _flush()
+                    else:
+                        self.start_led_effect(projs, "color_pulse", 0.8, color=color)
+                        for eff in [self._led_effects.get(id(p)) for p in projs]:
+                            if eff:
+                                eff["color_key"] = key
+                    for _k, _b in _qe_btns.items():
+                        _b.setStyleSheet(_QE_ON if _k == key else _QE_OFF)
+
+                def _qe_stop_led():
+                    projs = [p for p, _g, _i in targets]
+                    self.stop_led_effect(projs)
+                    for p in projs:
+                        p.strobe_speed = 0
+                    _flush()
+                    for _b in _qe_btns.values():
+                        _b.setStyleSheet(_QE_OFF)
+
+                for _ckey, _col, _hex in _LED_COLORS:
+                    _qb = QPushButton()
+                    _qb.setFixedSize(38, 32)
+                    _qb.setToolTip(f"Pulse {_ckey}")
+                    _active = (_active_qe == _ckey)
+                    _border = "#00d4ff" if _active else "#333"
+                    _bw     = "2px"     if _active else "1px"
+                    _tc     = "#000" if _col.lightness() > 140 else "#fff"
+                    _qb.setStyleSheet(
+                        f"QPushButton{{background:{_hex};border:{_bw} solid {_border};"
+                        f"border-radius:6px;color:{_tc};font-size:10px;font-weight:bold;}}"
+                        f"QPushButton:hover{{border:2px solid #00d4ff;}}"
+                    )
+                    _qb.clicked.connect(lambda chk=False, k=_ckey, c=_col: _qe_start_led(k, c))
+                    _qe_btns[_ckey] = _qb; qe_h.addWidget(_qb)
+
+                qe_h.addSpacing(4)
+                _strobe_btn = QPushButton("⭐"); _strobe_btn.setToolTip("Strobe")
+                _strobe_btn.setStyleSheet(_QE_ON if _active_qe == "strobe" else _QE_OFF)
+                _strobe_btn.clicked.connect(lambda: _qe_start_led("strobe", None))
+                _qe_btns["strobe"] = _strobe_btn; qe_h.addWidget(_strobe_btn)
+
+                _stop_btn = QPushButton("■"); _stop_btn.setToolTip(tr("pdf_qe_stop"))
+                _stop_btn.setStyleSheet(_QE_STP)
+                _stop_btn.clicked.connect(_qe_stop_led)
+                qe_h.addWidget(_stop_btn)
+
+            qe_h.addStretch()
+            _wa(qe_w)
+
         menu.exec(self._pos_outside(menu))
 
     def _show_canvas_context_menu(self, global_pos, local_pos=None):

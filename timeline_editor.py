@@ -173,8 +173,9 @@ class LightTimelineEditor(QDialog):
             self.playback_position = 0
         self._prev_playback_position = self.playback_position
 
-        self._seq_clip_active = None   # clip de séquence actuellement actif (pour effets)
-        self._eff_clips_active = {}    # {track_name: clip} — clips d'effet actifs par piste
+        self._seq_clip_active  = None   # clip de séquence actuellement actif (pour effets)
+        self._eff_clips_active = {}     # {track_name: clip} — clips d'effet actifs par piste
+        self._pos_clip_active  = None   # clip de position lyre actuellement actif
 
         self.playback_timer = QTimer()
         self.playback_timer.timeout.connect(self.update_playhead)
@@ -465,6 +466,16 @@ class LightTimelineEditor(QDialog):
         self.tracks.append(seq_track)
         self.track_map["Séquence"] = seq_track
         tracks_layout.addWidget(seq_track)
+
+        # ── Piste Position Lyre (si au moins une lyre dans le patch) ──────────
+        has_lyres = any(getattr(p, 'fixture_type', '') == 'Moving Head' for p in projectors)
+        if has_lyres:
+            pos_track = LightTrack("Position", self.media_duration, self, "#2255ee")
+            pos_track.is_position_track = True
+            pos_track.setMinimumHeight(50)
+            self.tracks.append(pos_track)
+            self.track_map["Position"] = pos_track
+            tracks_layout.addWidget(pos_track)
 
         for gname in seen_groups:
             color = TRACK_COLORS.get(gname, "#4488ff")
@@ -1534,9 +1545,41 @@ class LightTimelineEditor(QDialog):
                 if hasattr(self.main_window, 'start_effect') and merged_layers:
                     self.main_window.start_effect(combined_name)
 
+        # ── Détecter le clip de position actif ───────────────────────────────
+        pos_track = self.track_map.get("Position")
+        new_pos_clip = None
+        if pos_track:
+            for clip in pos_track.clips:
+                if clip.start_time <= current_time <= clip.start_time + clip.duration:
+                    new_pos_clip = clip
+                    break
+        if new_pos_clip is not self._pos_clip_active:
+            self._pos_clip_active = new_pos_clip
+            if new_pos_clip is not None:
+                idx = getattr(new_pos_clip, 'position_preset_idx', None)
+                presets = getattr(self.main_window, 'position_presets', [])
+                if idx is not None and idx < len(presets):
+                    preset = presets[idx]
+                    lyre_by_name  = {p.name: p for p in self.main_window.projectors
+                                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
+                    lyre_by_group = {}
+                    for p in self.main_window.projectors:
+                        if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
+                            lyre_by_group.setdefault(p.group, []).append(p)
+                    for proj_state in preset.get("projectors", []):
+                        p = lyre_by_name.get(proj_state.get("name"))
+                        if p is None:
+                            candidates = lyre_by_group.get(proj_state.get("group"), [])
+                            p = candidates[0] if candidates else None
+                        if p and hasattr(self.main_window, '_start_pan_tilt_transition'):
+                            self.main_window._start_pan_tilt_transition(
+                                p, proj_state.get("pan", 32768), proj_state.get("tilt", 32768), 500)
+
         # ── 1) Appliquer les clips de couleur par groupe (priorité basse) ─────
         for track in self.tracks:
-            if getattr(track, 'is_sequence_track', False) or getattr(track, 'is_effect_track', False):
+            if (getattr(track, 'is_sequence_track', False) or
+                    getattr(track, 'is_effect_track', False) or
+                    getattr(track, 'is_position_track', False)):
                 continue
             for clip in track.clips:
                 start = clip.start_time
@@ -1680,6 +1723,9 @@ class LightTimelineEditor(QDialog):
                         clip.memory_label = clip_data.get('memory_label', '')
                         if 'cue_index' in clip_data:
                             clip.cue_index = clip_data['cue_index']
+                    if clip_data.get('position_preset_idx') is not None:
+                        clip.position_preset_idx  = clip_data['position_preset_idx']
+                        clip.position_preset_name = clip_data.get('position_preset_name', '')
 
             # Charger la forme d'onde depuis les donnees de sequence
             waveform = seq.get('waveform')
@@ -1725,6 +1771,9 @@ class LightTimelineEditor(QDialog):
                     clip_data['memory_label'] = getattr(clip, 'memory_label', '')
                     if getattr(clip, 'cue_index', None) is not None:
                         clip_data['cue_index'] = clip.cue_index
+                if getattr(clip, 'position_preset_idx', None) is not None:
+                    clip_data['position_preset_idx']  = clip.position_preset_idx
+                    clip_data['position_preset_name'] = getattr(clip, 'position_preset_name', '')
                 if (getattr(clip, 'move_effect', None) or
                         getattr(clip, 'pan_start', 128) != 128 or getattr(clip, 'pan_end', 128) != 128 or
                         getattr(clip, 'tilt_start', 128) != 128 or getattr(clip, 'tilt_end', 128) != 128):
@@ -1775,6 +1824,10 @@ class LightTimelineEditor(QDialog):
                     clip_data['memory_label'] = getattr(clip, 'memory_label', '')
                     if getattr(clip, 'cue_index', None) is not None:
                         clip_data['cue_index'] = clip.cue_index
+                # Clip de position lyre
+                if getattr(clip, 'position_preset_idx', None) is not None:
+                    clip_data['position_preset_idx']  = clip.position_preset_idx
+                    clip_data['position_preset_name'] = getattr(clip, 'position_preset_name', '')
                 # Mouvement Pan/Tilt
                 if (getattr(clip, 'move_effect', None) or
                         getattr(clip, 'pan_start', 128) != 128 or
@@ -2006,7 +2059,7 @@ class LightTimelineEditor(QDialog):
 
         tracks_checks = {}
         for track in self.tracks:
-            if getattr(track, 'is_sequence_track', False):
+            if getattr(track, 'is_sequence_track', False) or getattr(track, 'is_position_track', False):
                 continue
             clip_count = len(track.clips)
             checkbox = QCheckBox(f"{track.name} {'(' + str(clip_count) + ' clips)' if clip_count > 0 else ''}")
@@ -2625,7 +2678,7 @@ class LightTimelineEditor(QDialog):
         """Applique un effet aux clips selectionnes (pistes A-F uniquement)"""
         selected = []
         for track in self.tracks:
-            if not getattr(track, 'is_sequence_track', False):
+            if not getattr(track, 'is_sequence_track', False) and not getattr(track, 'is_position_track', False):
                 selected.extend(track.selected_clips)
 
         if not selected:
@@ -2871,7 +2924,7 @@ class LightTimelineEditor(QDialog):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton
         selected = []
         for track in self.tracks:
-            if not getattr(track, 'is_sequence_track', False):
+            if not getattr(track, 'is_sequence_track', False) and not getattr(track, 'is_position_track', False):
                 selected.extend(track.selected_clips)
 
         if not selected:
@@ -2946,7 +2999,7 @@ class LightTimelineEditor(QDialog):
         """Ouvre l'editeur d'effets par couches sur les clips selectionnes (pistes A-F uniquement)"""
         selected = []
         for track in self.tracks:
-            if not getattr(track, 'is_sequence_track', False):
+            if not getattr(track, 'is_sequence_track', False) and not getattr(track, 'is_position_track', False):
                 selected.extend(track.selected_clips)
 
         if not selected:

@@ -36,56 +36,75 @@ def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0
 BUILTIN_EFFECTS = [
     # ── Strobe / Flash ────────────────────────────────────────────────────────
     {"name": "Strobe Classique",  "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
-     "layers": [_L("Strobe", "Flash", speed=55)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", speed=55, color1="#ffffff")]},
 
     {"name": "Strobe Lent",       "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
-     "layers": [_L("Strobe", "Flash", speed=15)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", speed=15, color1="#ffffff")]},
 
     {"name": "Strobe Rapide",     "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
-     "layers": [_L("Strobe", "Flash", speed=90)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", speed=90, color1="#ffffff")]},
 
     {"name": "Strobe Alternance", "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
-     "layers": [_L("Strobe", "Flash", target="Pair",   speed=60, phase=0),
-                _L("Strobe", "Flash", target="Impair", speed=60, phase=50)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", target="Pair",   speed=60, phase=0,  color1="#ffffff"),
+                _L("RGB", "Flash", target="Impair", speed=60, phase=50, color1="#ffffff")]},
 
     {"name": "Flash Couleur",     "emoji": "◉", "category": "Strobe / Flash", "type": "Flash",
-     "layers": [_L("Dimmer", "Montée", speed=50)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Montée", speed=50, color1="#ff6600")]},
 
     {"name": "Flash Blanc",       "emoji": "◉", "category": "Strobe / Flash", "type": "Flash",
-     "layers": [_L("Dimmer", "Montée", speed=55)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Montée", speed=55, color1="#ffffff")]},
 
     # ── Mouvement ─────────────────────────────────────────────────────────────
     {"name": "Chase Blanc",       "emoji": "→", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("Dimmer", "Flash", speed=50, spread=100)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", speed=50, spread=100, color1="#ffffff")]},
 
     {"name": "Chase Rapide",      "emoji": "→", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("Dimmer", "Flash", speed=96, spread=100)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", speed=96, spread=100, color1="#ffffff")]},
 
     {"name": "Chase Retour",      "emoji": "←", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("Dimmer", "Descente", speed=50, spread=100)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=50, spread=100, color1="#ffffff")]},
 
     {"name": "Chase Doux",        "emoji": "→", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("Dimmer", "Triangle", speed=40, spread=100, fade=35)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Triangle", speed=40, spread=100, fade=35, color1="#ffffff")]},
+
+    {"name": "Passage Blanc",     "emoji": "🌊", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Triangle", speed=22, spread=100, color1="#ffffff")]},
 
     {"name": "Comète",            "emoji": "☄", "category": "Mouvement", "type": "Comete",
-     "layers": [_L("Dimmer", "Descente", speed=65, size=100, spread=100)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=65, size=100, spread=100, color1="#ffffff")]},
 
     {"name": "Comète Colorée",    "emoji": "☄", "category": "Mouvement", "type": "Comete",
-     "layers": [_L("Dimmer",  "Descente", speed=65, size=100, spread=100),
-                _L("RGB",     "Fixe",     size=100, color1="#00aaff")]},
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=65, size=100, spread=100, color1="#00aaff")]},
 
     # ── Ambiance ──────────────────────────────────────────────────────────────
     {"name": "Pulse Doux",        "emoji": "∿", "category": "Ambiance", "type": "Pulse",
-     "layers": [_L("Dimmer", "Sinus", speed=15)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Sinus", speed=15, color1="#ffffff")]},
 
     {"name": "Pulse Rapide",      "emoji": "∿", "category": "Ambiance", "type": "Pulse",
-     "layers": [_L("Dimmer", "Sinus", speed=92)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Sinus", speed=92, color1="#ffffff")]},
 
     {"name": "Pulse Décalé",      "emoji": "∿", "category": "Ambiance", "type": "Pulse",
-     "layers": [_L("Dimmer", "Sinus", speed=40, spread=50)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Sinus", speed=40, spread=50, color1="#ffffff")]},
 
     {"name": "Vague",             "emoji": "≈", "category": "Ambiance", "type": "Wave",
-     "layers": [_L("Dimmer", "Sinus", speed=40, spread=100)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Sinus", speed=40, spread=100, color1="#ffffff")]},
 
     # ── Couleur ───────────────────────────────────────────────────────────────
     {"name": "Rainbow",           "emoji": "◈", "category": "Couleur", "type": "Rainbow",
@@ -105,8 +124,9 @@ BUILTIN_EFFECTS = [
 
     # ── Spécial ───────────────────────────────────────────────────────────────
     {"name": "Bascule",           "emoji": "⇄", "category": "Spécial", "type": "Bascule",
-     "layers": [_L("Dimmer", "Flash", target="Pair",   speed=20, phase=0),
-                _L("Dimmer", "Flash", target="Impair", speed=20, phase=50)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", target="Pair",   speed=20, phase=0,  color1="#ff3300"),
+                _L("RGB", "Flash", target="Impair", speed=20, phase=50, color1="#0033ff")]},
 
     # ── Nouveaux : Strobe / Flash ─────────────────────────────────────────────
     {"name": "Strobe Couleur",    "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
@@ -121,25 +141,31 @@ BUILTIN_EFFECTS = [
 
     # ── Nouveaux : Mouvement ──────────────────────────────────────────────────
     {"name": "Ping Pong",         "emoji": "⇔", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("Dimmer", "Triangle", speed=38, spread=100, direction=0)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Triangle", speed=38, spread=100, direction=0, color1="#ffffff")]},
 
     {"name": "Escalier",          "emoji": "↗", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("Dimmer", "Montée",   speed=55, spread=100, direction=1)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Montée", speed=55, spread=100, direction=1, color1="#ffffff")]},
 
     {"name": "Scan",              "emoji": "↕", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("Pan",    "Triangle", speed=22, size=75),
-                _L("Dimmer", "Fixe",     size=90)]},
+     "no_color": True,
+     "layers": [_L("Pan", "Triangle", speed=22, size=75),
+                _L("RGB", "Fixe",     size=90, color1="#ffffff")]},
 
     # ── Nouveaux : Ambiance ───────────────────────────────────────────────────
     {"name": "Respiration",       "emoji": "∿", "category": "Ambiance", "type": "Pulse",
-     "layers": [_L("Dimmer", "Sinus", speed=10)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Sinus", speed=10, color1="#ffffff")]},
 
     {"name": "Bougie",            "emoji": "✦", "category": "Ambiance", "type": "Pulse",
-     "layers": [_L("Dimmer", "Audio", speed=35, size=65),
-                _L("RGB",    "Fixe",  size=80, color1="#ff6600")]},
+     "no_color": True,
+     "layers": [_L("RGB", "Audio", speed=35, size=65, color1="#ff6600"),
+                _L("RGB", "Fixe",  size=80,  color1="#ff6600")]},
 
     {"name": "Scintillement",     "emoji": "✧", "category": "Ambiance", "type": "Pulse",
-     "layers": [_L("Dimmer", "Audio", speed=88, size=100, spread=100)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Audio", speed=88, size=100, spread=100, color1="#ffffff")]},
 
     # ── Nouveaux : Couleur ────────────────────────────────────────────────────
     {"name": "Police",            "emoji": "◈", "category": "Couleur", "type": "Bascule",
@@ -194,8 +220,9 @@ BUILTIN_EFFECTS = [
 
     # ── Nouveaux : Spécial ────────────────────────────────────────────────────
     {"name": "Explosion",         "emoji": "💥", "category": "Spécial", "type": "Flash",
-     "layers": [_L("Dimmer", "Descente", speed=18, size=100),
-                _L("Strobe",  "Flash",   speed=92, size=80)]},
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=18, size=100, color1="#ffffff"),
+                _L("RGB", "Flash",    speed=92, size=80,  color1="#ffffff")]},
 
     {"name": "Matrix",            "emoji": "⬛", "category": "Spécial", "type": "Pulse",
      "layers": [_L("V",      "Audio",   speed=70, size=100, spread=100),
@@ -212,7 +239,7 @@ BUILTIN_EFFECTS = [
      "layers": [_L("RGB", "Flash", speed=55, color1="#ff0000")]},
 
     {"name": "Strobe Mémoire",   "emoji": "🔦", "category": "Strobe / Flash", "type": "Strobe",
-     "layers": [_L("Strobe", "Flash", speed=55)]},
+     "layers": [_L("Strobe", "Flash", speed=55)]},  # intentionnel : utilise la couleur en place
 
     # ── Chase Couleurs ────────────────────────────────────────────────────────
     {"name": "Chase Rouge",  "emoji": "🔴", "category": "Mouvement", "type": "Chase",

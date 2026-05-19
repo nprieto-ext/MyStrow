@@ -747,7 +747,7 @@ class RenewDialog(QDialog):
     def __init__(self, client: dict, id_token: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Renouveler la licence")
-        self.setFixedSize(420, 280)
+        self.setFixedSize(420, 320)
         self._client   = client
         self._id_token = id_token
         self._build_ui()
@@ -757,7 +757,7 @@ class RenewDialog(QDialog):
         lay.setContentsMargins(28, 28, 28, 28)
         lay.setSpacing(14)
 
-        title = QLabel("Renouveler la licence")
+        title = QLabel("Renouveler / modifier la licence")
         title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         lay.addWidget(title)
 
@@ -781,57 +781,107 @@ class RenewDialog(QDialog):
         for months, label in [(1, "1 mois"), (3, "3 mois"), (6, "6 mois"), (12, "12 mois")]:
             self.months_combo.addItem(label, months)
         self.months_combo.setCurrentIndex(2)
-        self.months_combo.currentIndexChanged.connect(self._update_summary)
+        self.months_combo.currentIndexChanged.connect(self._on_combo_changed)
         dur_lay.addWidget(self.months_combo)
         dur_lay.addStretch()
         lay.addLayout(dur_lay)
 
+        date_lay = QHBoxLayout()
+        date_lay.addWidget(QLabel("Ou date exacte :"))
+        self.date_edit = QLineEdit()
+        self.date_edit.setPlaceholderText("JJ/MM/AAAA")
+        self.date_edit.setMaximumWidth(130)
+        self.date_edit.textChanged.connect(self._on_date_changed)
+        date_lay.addWidget(self.date_edit)
+        date_lay.addStretch()
+        lay.addLayout(date_lay)
+
         self.summary_lbl = QLabel("")
         self.summary_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         lay.addWidget(self.summary_lbl)
-        self._update_summary()
 
         self.err_label = QLabel("")
         self.err_label.setStyleSheet(f"color: {RED}; font-size: 11px;")
         self.err_label.setMinimumHeight(16)
         lay.addWidget(self.err_label)
 
+        self._update_summary()
+
         btns = QHBoxLayout()
         btn_cancel = QPushButton("Annuler")
         btn_cancel.setStyleSheet(_BTN_SECONDARY)
         btn_cancel.clicked.connect(self.reject)
-        self.btn_ok = QPushButton("Renouveler")
+        self.btn_ok = QPushButton("Enregistrer")
         self.btn_ok.setStyleSheet(_BTN_GREEN)
         self.btn_ok.clicked.connect(self._on_renew)
         btns.addWidget(btn_cancel)
         btns.addWidget(self.btn_ok)
         lay.addLayout(btns)
 
+    def _parse_date_field(self) -> float | None:
+        """Retourne un timestamp UTC si la date saisie est valide, sinon None."""
+        txt = self.date_edit.text().strip()
+        if not txt:
+            return None
+        try:
+            dt = datetime.strptime(txt, "%d/%m/%Y").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+            return dt.timestamp()
+        except ValueError:
+            return None
+
+    def _on_combo_changed(self):
+        self.date_edit.blockSignals(True)
+        self.date_edit.clear()
+        self.date_edit.blockSignals(False)
+        self._update_summary()
+
+    def _on_date_changed(self):
+        self._update_summary()
+
     def _update_summary(self):
-        months      = self.months_combo.currentData()
-        current_exp = self._client.get("expiry_utc", 0)
-        now         = datetime.now(timezone.utc).timestamp()
-        base        = max(current_exp, now)
-        new_expiry  = _expiry_from_months(months, base)
-        self.summary_lbl.setText(f"Nouvelle expiration : {_fmt_date(new_expiry)}")
+        exact = self._parse_date_field()
+        if exact is not None:
+            self.summary_lbl.setText(f"Nouvelle expiration : {_fmt_date(exact)}")
+            self.err_label.setText("")
+        elif self.date_edit.text().strip():
+            self.summary_lbl.setText("")
+            self.err_label.setText("Format attendu : JJ/MM/AAAA")
+        else:
+            months      = self.months_combo.currentData()
+            current_exp = self._client.get("expiry_utc", 0)
+            now         = datetime.now(timezone.utc).timestamp()
+            base        = max(current_exp, now)
+            new_expiry  = _expiry_from_months(months, base)
+            self.summary_lbl.setText(f"Nouvelle expiration : {_fmt_date(new_expiry)}")
+            self.err_label.setText("")
 
     def _on_renew(self):
+        if self.date_edit.text().strip() and self._parse_date_field() is None:
+            self.err_label.setText("Format attendu : JJ/MM/AAAA")
+            return
         months = self.months_combo.currentData()
+        exact  = self._parse_date_field()
         self.btn_ok.setEnabled(False)
-        self.btn_ok.setText("Renouvellement…")
+        self.btn_ok.setText("Enregistrement…")
         self.err_label.setText("")
         _run_async(
-            self, self._do_renew, months,
+            self, self._do_renew, (months, exact),
             on_success=self._on_ok,
             on_error=self._on_err,
         )
 
-    def _do_renew(self, months: int) -> float:
-        uid         = self._client["_uid"]
-        current_exp = self._client.get("expiry_utc", 0)
-        now         = datetime.now(timezone.utc).timestamp()
-        base        = max(current_exp, now)
-        expiry      = _expiry_from_months(months, base)
+    def _do_renew(self, args: tuple) -> float:
+        months, exact = args
+        uid           = self._client["_uid"]
+        if exact is not None:
+            expiry = exact
+        else:
+            current_exp = self._client.get("expiry_utc", 0)
+            now         = datetime.now(timezone.utc).timestamp()
+            base        = max(current_exp, now)
+            expiry      = _expiry_from_months(months, base)
         fields = {
             "plan":       fc._to_firestore("license"),
             "expiry_utc": fc._to_firestore(expiry),
@@ -849,15 +899,15 @@ class RenewDialog(QDialog):
         except Exception:
             pass
         QMessageBox.information(
-            self, "Renouvellement effectué",
-            f"Licence renouvelée jusqu'au {_fmt_date(expiry)}."
+            self, "Licence mise à jour",
+            f"Expiration enregistrée : {_fmt_date(expiry)}."
         )
         self.accept()
 
     def _on_err(self, msg: str):
         self.err_label.setText(msg)
         self.btn_ok.setEnabled(True)
-        self.btn_ok.setText("Renouveler")
+        self.btn_ok.setText("Enregistrer")
 
 
 # ---------------------------------------------------------------
@@ -1439,12 +1489,12 @@ class GdtfUploadDialog(QDialog):
         self.btn_upload.setEnabled(False)
         self.log.clear()
 
-    _FIXTURE_EXTS = {".mystrow", ".xml", ".xmlp"}
+    _FIXTURE_EXTS = {".mystrow", ".xml"}
 
     def _on_pick_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Choisir des fichiers fixture", "",
-            "Fixtures (*.xml *.xmlp *.mystrow);;Tous les fichiers (*)"
+            "Fixtures (*.xml *.mystrow);;Tous les fichiers (*)"
         )
         if paths:
             self._process_paths(paths)
@@ -1459,7 +1509,7 @@ class GdtfUploadDialog(QDialog):
                 if os.path.splitext(fname)[1].lower() in self._FIXTURE_EXTS:
                     paths.append(os.path.join(root, fname))
         if not paths:
-            self._append_log(f"⚠ Aucun fichier .xml / .xmlp / .mystrow trouvé dans {folder}", "#e67e22")
+            self._append_log(f"⚠ Aucun fichier .xml / .mystrow trouvé dans {folder}", "#e67e22")
             return
         self._append_log(f"📁 {len(paths)} fichier(s) trouvé(s) dans {folder}")
         self._process_paths(paths)
@@ -1494,11 +1544,8 @@ class GdtfUploadDialog(QDialog):
             except Exception as e:
                 row = self.table.rowCount()
                 self.table.insertRow(row)
-                locked = "LOCKED_XMLP" in str(e)
-                icon = "🔒" if locked else "❌"
-                msg  = ("Fichier protégé — format propriétaire chiffré (GrandMA3). "
-                        "Utilisez le fichier .xml non chiffré à la place."
-                        if locked else str(e))
+                icon = "❌"
+                msg  = str(e)
                 self.table.setItem(row, 0, QTableWidgetItem(icon))
                 self.table.item(row, 0).setForeground(QColor("#e67e22" if locked else RED))
                 self.table.setItem(row, 1, QTableWidgetItem(fname))
@@ -2747,6 +2794,7 @@ class AdminPanel(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         lic_lay.addWidget(self.table)
 
         # ── Barre d'actions client ────────────────────────────────────────────
@@ -4384,6 +4432,16 @@ class AdminPanel(QMainWindow):
         dlg = CreateClientDialog(self._id_token, self)
         dlg.client_created.connect(self._load_clients)
         dlg.exec()
+
+    def _on_cell_double_clicked(self, row: int, col: int):
+        COL_EXPIRY = 4
+        client = self._filtered_clients[row] if 0 <= row < len(self._filtered_clients) else None
+        if client is None:
+            return
+        if col == COL_EXPIRY:
+            dlg = RenewDialog(client, self._id_token, self)
+            dlg.renewed.connect(self._load_clients)
+            dlg.exec()
 
     def _on_renew(self):
         client = self._get_selected_client()

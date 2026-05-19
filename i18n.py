@@ -635,8 +635,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "delete_canvas_q":       {"en": "Delete {n} selected fixture{s} ?",
                               "fr": "Supprimer {n} fixture{s} sélectionnée{s} ?"},
     "ph_search_replace":     {"en": "🔍  Search…",                 "fr": "🔍  Rechercher…"},
-    "fixture_import_filter": {"en": "All supported formats (*.mft *.json *.xml *.xmlp *.mystrow);;Fixture MyStrow (*.mft *.json *.mystrow);;XML / compressed XML (*.xml *.xmlp)",
-                              "fr": "Tous les formats supportés (*.mft *.json *.xml *.xmlp *.mystrow);;Fixture MyStrow (*.mft *.json *.mystrow);;XML / XML compressé (*.xml *.xmlp)"},
+    "fixture_import_filter": {"en": "All supported formats (*.mft *.json *.xml *.mystrow);;Fixture MyStrow (*.mft *.json *.mystrow);;XML GrandMA (*.xml)",
+                              "fr": "Tous les formats supportés (*.mft *.json *.xml *.mystrow);;Fixture MyStrow (*.mft *.json *.mystrow);;XML GrandMA (*.xml)"},
     "import_none_title":     {"en": "Import failed",               "fr": "Import échoué"},
     "import_none_msg":       {"en": "No fixture imported.",         "fr": "Aucune fixture importée."},
     "import_partial_title":  {"en": "Partial import",              "fr": "Import partiel"},
@@ -999,6 +999,32 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "err_network":           {"en": "No internet connection.",
                               "fr": "Pas de connexion internet."},
     "err_http":              {"en": "HTTP {code} — {reason}",       "fr": "HTTP {code} — {reason}"},
+
+    # ------------------------------------------------------------------ position lyre / main_window
+    "pos_slot_section":      {"en": "Lyre Positions",                    "fr": "Positions Lyre"},
+    "pos_rec_dlg_title":     {"en": "Position name",                     "fr": "Nom de la position"},
+    "pos_rec_dlg_label":     {"en": "Name:",                             "fr": "Nom :"},
+    "pos_ctx_assign_hdr":    {"en": "ASSIGN A PRESET",                   "fr": "ASSIGNER UN PRESET"},
+    "pos_ctx_rec":           {"en": "🔴  Record current position",       "fr": "🔴  Enregistrer la position actuelle"},
+    "pos_ctx_rename":        {"en": "Rename « {name} »",                 "fr": "Renommer « {name} »"},
+    "pos_ctx_clear":         {"en": "Clear this pad",                    "fr": "Effacer ce pad"},
+    "pos_rename_dlg_title":  {"en": "Rename",                            "fr": "Renommer"},
+    "pos_rename_dlg_label":  {"en": "New name:",                         "fr": "Nouveau nom :"},
+    "pos_pad_empty_tip":     {"en": "POS {n} — empty",                   "fr": "POS {n} — vide"},
+
+    # ------------------------------------------------------------------ position lyre / light_timeline
+    "lt_sec_positions":      {"en": "LYRE POSITIONS",                    "fr": "POSITIONS LYRE"},
+    "lt_pos_empty":          {"en": "  No recorded positions",           "fr": "  Aucune position enregistrée"},
+    "lt_pos_ctx_header":     {"en": "Position: {name}",                  "fr": "Position : {name}"},
+    "lt_pos_ctx_change":     {"en": "Change position…",                  "fr": "Changer de position…"},
+
+    # ------------------------------------------------------------------ quick effects / plan_de_feu
+    "pdf_qe_section":        {"en": "QUICK EFFECTS",                     "fr": "EFFETS RAPIDES"},
+    "pdf_qe_stop":           {"en": "Stop effect",                       "fr": "Stopper l'effet"},
+    "pdf_qe_cercle":         {"en": "Circle",                            "fr": "Cercle"},
+    "pdf_qe_figure8":        {"en": "Figure 8",                          "fr": "Figure 8"},
+    "pdf_qe_pan":            {"en": "Pan Sweep",                         "fr": "Balayage Pan"},
+    "pdf_qe_tilt":           {"en": "Tilt Sweep",                        "fr": "Balayage Tilt"},
 }
 
 

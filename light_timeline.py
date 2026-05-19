@@ -139,6 +139,10 @@ class LightClip:
         self.memory_label = ""    # ex: "A1", "B3"
         self.cue_index = None     # None = cue courant, int = cue fixé (expansion multi-cue)
 
+        # Clip de position lyre
+        self.position_preset_idx  = None  # index dans main_window.position_presets
+        self.position_preset_name = ""    # nom pour affichage
+
 
 class _ColorSwatch(QPushButton):
     """Bouton couleur avec rendu premium — gradient + shine."""
@@ -828,6 +832,45 @@ class _LibrarySection(QWidget):
         self._hdr.setText(f"{arrow}  {self._title_text}")
 
 
+class _LibraryPositionItem(_LibraryItem):
+    """Item draggable représentant un preset de position lyre."""
+
+    def __init__(self, preset_idx, name, panel=None, parent=None):
+        self._preset_idx = preset_idx
+        super().__init__(f"↕  {name}", panel, parent)
+
+    def _get_paint_brush(self):
+        return None  # pas de peinture couleur
+
+    def _swatch_paint(self, event):
+        p = QPainter(self._sw)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, self.SW, self.SW, 3, 3)
+        p.fillPath(path, QBrush(QColor("#0d2a5c")))
+        p.setPen(QColor("#5588ff"))
+        p.setFont(p.font())
+        p.drawText(QRect(0, 0, self.SW, self.SW), Qt.AlignCenter, "↕")
+        p.end()
+
+    def _do_single_drag(self):
+        import json as _json
+        drag = QDrag(self)
+        mime = QMimeData()
+        data = {"idx": self._preset_idx, "name": self._name.replace("↕  ", "")}
+        mime.setData('application/x-position', _json.dumps(data).encode())
+        drag.setMimeData(mime)
+        pix = QPixmap(80, 46)
+        pix.fill(QColor("#0d2a5c"))
+        p = QPainter(pix)
+        p.setPen(QColor("#88aaff"))
+        f = p.font(); f.setBold(True); f.setPixelSize(11); p.setFont(f)
+        p.drawText(pix.rect(), Qt.AlignCenter, data["name"])
+        p.end()
+        drag.setPixmap(pix); drag.setHotSpot(QPoint(40, 23))
+        drag.exec(Qt.CopyAction)
+
+
 class LibraryPanel(QScrollArea):
     """Panneau bibliothèque à droite : COULEUR / BICOULEUR / MÉMOIRE / EFFETS.
     Supporte la sélection multiple (Ctrl+clic) et le drag multi-items."""
@@ -878,6 +921,7 @@ class LibraryPanel(QScrollArea):
         self._sec_color      = _LibrarySection("COULEUR", v)
         self._sec_bi         = _LibrarySection("BICOULEUR", v)
         self._sec_mem        = _LibrarySection("MÉMOIRE", v)
+        self._sec_pos        = _LibrarySection(tr("lt_sec_positions"), v)
         self._sec_eff        = _LibrarySection("EFFETS", v)
         self._sec_custom_eff = _LibrarySection("MES EFFETS", v)
 
@@ -980,6 +1024,13 @@ class LibraryPanel(QScrollArea):
                                        "layers": item._eff.get("layers", []),
                                    })})
                 types_set.add("effect")
+            elif isinstance(item, _LibraryPositionItem):
+                items_data.append({"type": "position",
+                                   "value": _json.dumps({
+                                       "idx":  item._preset_idx,
+                                       "name": item._name.replace("↕  ", ""),
+                                   })})
+                types_set.add("position")
 
         if not items_data:
             return
@@ -1075,6 +1126,24 @@ class LibraryPanel(QScrollArea):
                 "background: transparent; padding: 5px 10px;"
             )
             self._sec_mem.add_item(empty)
+
+        # ── Section Positions lyre ─────────────────────────────────────────────
+        removed_pos = self._sec_pos.clear_items()
+        self._deregister_list(removed_pos)
+
+        pos_presets = getattr(mw, 'position_presets', []) if mw else []
+        if pos_presets:
+            for pi, preset in enumerate(pos_presets):
+                item = _LibraryPositionItem(pi, preset.get("name", f"POS {pi+1}"), panel=self)
+                self._register(item)
+                self._sec_pos.add_item(item)
+        else:
+            empty_pos = QLabel(tr("lt_pos_empty"))
+            empty_pos.setStyleSheet(
+                "color: #2a2a2a; font-size: 10px; font-style: italic; "
+                "background: transparent; padding: 5px 10px;"
+            )
+            self._sec_pos.add_item(empty_pos)
 
         self._refresh_custom_effects()
 
@@ -1354,8 +1423,9 @@ class LightTrack(QWidget):
         self.track_color = QColor(color)
         self.clips = []
         self.pixels_per_ms = 0.05
-        self.is_sequence_track = False   # piste dédiée aux clips de séquence AKAI
-        self.is_effect_track   = False   # piste dédiée aux effets lumière
+        self.is_sequence_track  = False   # piste dédiée aux clips de séquence AKAI
+        self.is_effect_track    = False   # piste dédiée aux effets lumière
+        self.is_position_track  = False   # piste dédiée aux positions lyre
 
         self._collapsed = False
         self._normal_min_height = 100 if name == "Audio" else 60
@@ -2091,11 +2161,11 @@ print(json.dumps(waveform))
                 self.setCursor(Qt.ClosedHandCursor)
 
             # Détection cross-track : trouver la piste sous le curseur
-            if not self.is_sequence_track and not self.is_effect_track:
+            if not self.is_sequence_track and not self.is_effect_track and not self.is_position_track:
                 global_pos = event.globalPosition().toPoint()
                 new_target = None
                 for track in self.parent_editor.tracks:
-                    if track is self or track.is_sequence_track or track.is_effect_track:
+                    if track is self or track.is_sequence_track or track.is_effect_track or track.is_position_track:
                         continue
                     local_y = track.mapFromGlobal(global_pos).y()
                     if 0 <= local_y <= track.height():
@@ -2205,7 +2275,7 @@ print(json.dumps(waveform))
                 target.update()
             self._cross_track_target = None
 
-            if target and not self.is_sequence_track and not self.is_effect_track:
+            if target and not self.is_sequence_track and not self.is_effect_track and not self.is_position_track:
                 # ── Cross-track ───────────────────────────────────────────
                 global_pos = event.globalPosition().toPoint()
                 target_local_x = target.mapFromGlobal(global_pos).x() - self.drag_offset
@@ -2216,7 +2286,7 @@ print(json.dumps(waveform))
                 # Collecter tous les clips sélectionnés
                 to_act = []
                 for track in self.parent_editor.tracks:
-                    if track.is_sequence_track or track.is_effect_track:
+                    if track.is_sequence_track or track.is_effect_track or track.is_position_track:
                         continue
                     for sel_clip in list(track.selected_clips):
                         if sel_clip in self.drag_start_positions:
@@ -2353,6 +2423,11 @@ print(json.dumps(waveform))
                 self.show_sequence_clip_menu(clip, event.globalPos())
             else:
                 self.show_sequence_empty_menu(event.pos(), event.globalPos())
+        elif self.is_position_track:
+            if result:
+                clip, clip_x, _ = result
+                self.show_position_clip_menu(clip, event.globalPos())
+            # zone vide → pas de menu
         elif result:
             clip, clip_x, _ = result
             click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
@@ -2663,6 +2738,51 @@ print(json.dumps(waveform))
         act_change.triggered.connect(_open_mem_picker)
 
         menu.addSeparator()
+        act_del = menu.addAction(tr("lt_menu_delete"))
+        act_del.triggered.connect(lambda: self._delete_clip(clip))
+        menu.exec(global_pos)
+
+    def show_position_clip_menu(self, clip, global_pos):
+        """Menu clic droit sur un clip de position lyre."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:2px; font-size:11px; }"
+            "QMenu::item { padding:4px 12px; border-radius:3px; color:#e0e0e0; }"
+            "QMenu::item:selected { background:#1a2a4a; color:#fff; }"
+            "QMenu::item:disabled { color:#555; font-size:9px; letter-spacing:1px; }"
+            "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
+        )
+
+        cur_name = getattr(clip, 'position_preset_name', '') or '—'
+        hdr = menu.addAction(tr("lt_pos_ctx_header", name=cur_name))
+        hdr.setEnabled(False)
+        menu.addSeparator()
+
+        # Liste des presets disponibles
+        presets = []
+        try:
+            ed = self.parent_editor
+            if ed and hasattr(ed, 'main_window'):
+                presets = getattr(ed.main_window, 'position_presets', [])
+        except Exception:
+            pass
+
+        if presets:
+            chg = menu.addAction(tr("lt_pos_ctx_change"))
+            sub = QMenu(menu)
+            sub.setStyleSheet(menu.styleSheet())
+            for i, preset in enumerate(presets):
+                a = sub.addAction(("✓ " if getattr(clip, 'position_preset_idx', None) == i else "    ") + preset["name"])
+                def _assign(_, idx=i, p=preset):
+                    clip.position_preset_idx  = idx
+                    clip.position_preset_name = p["name"]
+                    self.update()
+                    if hasattr(self.parent_editor, 'save_state'):
+                        self.parent_editor.save_state()
+                a.triggered.connect(_assign)
+            chg.setMenu(sub)
+            menu.addSeparator()
+
         act_del = menu.addAction(tr("lt_menu_delete"))
         act_del.triggered.connect(lambda: self._delete_clip(clip))
         menu.exec(global_pos)
@@ -3378,6 +3498,8 @@ print(json.dumps(waveform))
                 accepted = 'effect' in types
             elif self.is_sequence_track:
                 accepted = 'memory' in types
+            elif self.is_position_track:
+                accepted = 'position' in types
             else:
                 accepted = bool(types & {'color', 'bicolor'})
             if accepted:
@@ -3390,6 +3512,7 @@ print(json.dumps(waveform))
 
         is_seq = mime.hasFormat('application/x-sequence')
         is_eff = mime.hasFormat('application/x-effect')
+        is_pos = mime.hasFormat('application/x-position')
         accepted = False
         if self.is_effect_track:
             if is_eff:
@@ -3401,8 +3524,13 @@ print(json.dumps(waveform))
                 event.acceptProposedAction(); accepted = True
             else:
                 event.ignore()
+        elif self.is_position_track:
+            if is_pos:
+                event.acceptProposedAction(); accepted = True
+            else:
+                event.ignore()
         else:
-            if not is_seq and mime.hasText():
+            if not is_seq and not is_pos and mime.hasText():
                 event.acceptProposedAction(); accepted = True
             else:
                 event.ignore()
@@ -3459,6 +3587,34 @@ print(json.dumps(waveform))
                     clip.effect_layers = eff.get('layers', [])
                     current_time = start + 10_000
 
+                elif typ == 'position' and self.is_position_track:
+                    pos = _json.loads(val)
+                    start = self.find_free_position(current_time, 5_000)
+                    clip  = self.add_clip_direct(start, 5_000, QColor("#0d2a5c"), 0)
+                    clip.position_preset_idx  = pos.get('idx')
+                    clip.position_preset_name = pos.get('name', '')
+                    current_time = start + 5_000
+
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+            event.acceptProposedAction()
+            return
+
+        # ── Drop position sur piste Position ───────────────────────────
+        if self.is_position_track and event.mimeData().hasFormat('application/x-position'):
+            import json as _json
+            raw = bytes(event.mimeData().data('application/x-position')).decode()
+            try:
+                data = _json.loads(raw)
+            except Exception:
+                data = {}
+            drop_x     = event.position().x() - 145
+            click_time = max(0, drop_x / self.pixels_per_ms)
+            start_time = self.find_free_position(click_time, 5_000)
+            clip = self.add_clip_direct(start_time, 5_000, QColor("#0d2a5c"), 0)
+            clip.position_preset_idx  = data.get('idx')
+            clip.position_preset_name = data.get('name', '')
             self.update()
             if hasattr(self.parent_editor, 'save_state'):
                 self.parent_editor.save_state()
@@ -3858,7 +4014,34 @@ print(json.dumps(waveform))
 
             clip_rect = QRect(x, y, max(20, width), height)
 
-            if getattr(self, 'is_effect_track', False):
+            if getattr(clip, 'position_preset_idx', None) is not None or getattr(self, 'is_position_track', False):
+                # ── Clip de position lyre ──────────────────────────────
+                ACCENT = QColor("#2255ee")
+                path = QPainterPath()
+                path.addRoundedRect(clip_rect.x(), clip_rect.y(), clip_rect.width(), clip_rect.height(), 5, 5)
+                painter.setClipPath(path)
+                painter.fillRect(clip_rect, QColor("#070f22"))
+                grad = QLinearGradient(float(clip_rect.left()), 0, float(clip_rect.right()), 0)
+                grad.setColorAt(0.0, QColor(30, 80, 220, 80))
+                grad.setColorAt(1.0, QColor(30, 80, 220, 15))
+                painter.fillRect(clip_rect, QBrush(grad))
+                painter.fillRect(QRect(clip_rect.left(), clip_rect.top(), 5, clip_rect.height()), ACCENT)
+                painter.setClipRect(self.rect())
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(40, 100, 200, 160), 1))
+                painter.drawRoundedRect(clip_rect, 5, 5)
+                if width > 30:
+                    font = painter.font()
+                    font.setBold(True)
+                    font.setPixelSize(13)
+                    painter.setFont(font)
+                    painter.setPen(QColor(160, 200, 255, 230))
+                    pos_name = getattr(clip, 'position_preset_name', '') or 'Position'
+                    painter.drawText(clip_rect.adjusted(10, 0, -4, 0),
+                                     Qt.AlignVCenter | Qt.AlignLeft,
+                                     f"↕  {pos_name}")
+
+            elif getattr(self, 'is_effect_track', False):
                 # ── Clip d'effet (piste Effet) ─────────────────────────
                 ACCENT = QColor("#cc44ff")
                 path = QPainterPath()
@@ -4009,7 +4192,9 @@ print(json.dumps(waveform))
                 painter.setPen(QPen(QColor(0, 0, 0, 80), 1))
                 painter.drawRoundedRect(clip_rect, r, r)
 
-            if not getattr(self, 'is_effect_track', False) and not getattr(clip, 'memory_ref', None) and width > 40:
+            if (not getattr(self, 'is_effect_track', False) and
+                    not getattr(self, 'is_position_track', False) and
+                    not getattr(clip, 'memory_ref', None) and width > 40):
                 luminance = (clip.color.red() * 0.299 + clip.color.green() * 0.587 + clip.color.blue() * 0.114)
                 txt_color = QColor(0, 0, 0, 200) if luminance > 140 else QColor(255, 255, 255, 220)
                 painter.setPen(txt_color)
