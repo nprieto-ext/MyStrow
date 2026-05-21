@@ -101,7 +101,24 @@ _DEFAULT_PRESETS = [
 def _load_presets():
     try:
         with open(_PRESETS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        if not isinstance(data, list) or not data:
+            return [dict(p) for p in _DEFAULT_PRESETS]
+        # Migration 8-bit → 16-bit : si toutes les valeurs pan/tilt sont ≤ 255
+        # c'est un fichier de l'ancienne version (0-255) ; on reporte sur 0-65535.
+        all_8bit = all(
+            p.get("pan", 32768) <= 255 and p.get("tilt", 32768) <= 255
+            for p in data
+        )
+        if all_8bit:
+            for p in data:
+                p["pan"]  = int(p.get("pan",  128) * 257)
+                p["tilt"] = int(p.get("tilt", 128) * 257)
+                for v in p.get("per_proj", {}).values():
+                    v["pan"]  = int(v.get("pan",  128) * 257)
+                    v["tilt"] = int(v.get("tilt", 128) * 257)
+            _save_presets(data)   # réécrire le fichier migré
+        return data
     except Exception:
         return [dict(p) for p in _DEFAULT_PRESETS]
 
@@ -131,10 +148,11 @@ class PresetBar(QWidget):
         "QPushButton:pressed{background:#0d1f2a;color:#00d4ff;}"
     )
 
-    def __init__(self, get_current_pan_tilt, get_targets=None, parent=None):
+    def __init__(self, get_current_pan_tilt, get_targets=None, get_all_lyres=None, parent=None):
         super().__init__(parent)
-        self._get_current = get_current_pan_tilt
-        self._get_targets = get_targets   # () -> [(proj, group, local_idx)] ou None
+        self._get_current   = get_current_pan_tilt
+        self._get_targets   = get_targets    # () -> [(proj, group, local_idx)] sélectionnés
+        self._get_all_lyres = get_all_lyres  # () -> [(proj, group, local_idx)] toutes les lyres
         self._presets = _load_presets()
         self.setFixedWidth(self._WIDTH)
         self._build()
@@ -163,6 +181,17 @@ class PresetBar(QWidget):
         )
         add_btn.clicked.connect(self._add_preset)
         hdr.addWidget(add_btn)
+
+        rst_btn = QPushButton("↺")
+        rst_btn.setFixedSize(20, 20)
+        rst_btn.setToolTip("Réinitialiser aux presets par défaut (Centre, Face, Sol…)")
+        rst_btn.setStyleSheet(
+            "QPushButton{background:#1a1a2a;color:#555;border:1px solid #2a2a3a;"
+            "border-radius:4px;font-size:11px;}"
+            "QPushButton:hover{background:#222244;color:#aaa;}"
+        )
+        rst_btn.clicked.connect(self._reset_to_defaults)
+        hdr.addWidget(rst_btn)
         root.addLayout(hdr)
 
         sep = QFrame()
@@ -222,38 +251,48 @@ class PresetBar(QWidget):
         self._inner_lay.addStretch()
 
     def _ctx_preset(self, idx):
-        pan, tilt = self._get_current()
-        targets = self._get_targets() if self._get_targets else []
-        m = QMenu(self)
-        m.setStyleSheet(
-            "QMenu{background:#1a1a1a;color:#ccc;border:1px solid #2a2a2a;"
-            "border-radius:4px;padding:2px;}"
-            "QMenu::item{padding:6px 16px;font-size:11px;}"
-            "QMenu::item:selected{background:#252525;color:#fff;}"
-            "QMenu::separator{height:1px;background:#2a2a2a;margin:2px 0;}"
-        )
-        if targets:
-            n = len(targets)
-            memo_label = tr("pdf_ctx_memorize_sel", n=n)
-        else:
-            memo_label = tr("pdf_ctx_memorize", pan=pan, tilt=tilt)
-        m.addAction(memo_label, lambda: self._memorize(idx))
-        m.addSeparator()
-        m.addAction(tr("pdf_ctx_rename"), lambda: self._start_inline_rename(idx))
-        if len(self._presets) > 1:
-            m.addAction(tr("pdf_ctx_delete"), lambda: self._delete(idx))
-        m.exec(QCursor.pos())
+        # Guard : évite qu'un MouseButtonRelease résiduel (dispatché par _PersistentMenu
+        # après la fermeture du sous-menu) ne rouvre le contexte une 2ème fois.
+        if getattr(self, '_ctx_preset_active', False):
+            return
+        self._ctx_preset_active = True
+        try:
+            pan, tilt = self._get_current()
+            targets = self._get_targets() if self._get_targets else []
+            m = QMenu(self)
+            m.setStyleSheet(
+                "QMenu{background:#1a1a1a;color:#ccc;border:1px solid #2a2a2a;"
+                "border-radius:4px;padding:2px;}"
+                "QMenu::item{padding:6px 16px;font-size:11px;}"
+                "QMenu::item:selected{background:#252525;color:#fff;}"
+                "QMenu::separator{height:1px;background:#2a2a2a;margin:2px 0;}"
+            )
+            if targets:
+                n = len(targets)
+                memo_label = tr("pdf_ctx_memorize_sel", n=n)
+            else:
+                memo_label = tr("pdf_ctx_memorize", pan=pan, tilt=tilt)
+            m.addAction(memo_label, lambda: self._memorize(idx))
+            m.addSeparator()
+            m.addAction(tr("pdf_ctx_rename"), lambda: self._start_inline_rename(idx))
+            if len(self._presets) > 1:
+                m.addAction(tr("pdf_ctx_delete"), lambda: self._delete(idx))
+            m.exec(QCursor.pos())
+        finally:
+            self._ctx_preset_active = False
 
     def _memorize(self, idx):
         preset = self._presets[idx]
-        targets = self._get_targets() if self._get_targets else []
-        if targets:
-            # Stocker la position actuelle de chaque fixture cible individuellement
+        targets  = self._get_targets()   if self._get_targets   else []
+        all_lyres = self._get_all_lyres() if self._get_all_lyres else targets
+        if all_lyres:
+            # Stocker la position actuelle de TOUTES les lyres individuellement
             per_proj = preset.setdefault("per_proj", {})
-            for proj, _g, _i in targets:
+            per_proj.clear()
+            for proj, _g, _i in all_lyres:
                 per_proj[str(proj.start_address)] = {"pan": proj.pan, "tilt": proj.tilt}
-            # Pan/tilt global = position de la première cible (fallback pour nouvelles fixtures)
-            p0 = targets[0][0]
+            # Pan/tilt global = position de la première lyre sélectionnée (fallback)
+            p0 = (targets or all_lyres)[0][0]
             preset["pan"]  = p0.pan
             preset["tilt"] = p0.tilt
         else:
@@ -334,11 +373,12 @@ class PresetBar(QWidget):
     def _add_preset(self):
         """Enregistre la position courante sans ouvrir de dialog (auto-nom)."""
         name = f"Pos {len(self._presets) + 1}"
-        targets = self._get_targets() if self._get_targets else []
-        if targets:
+        targets   = self._get_targets()   if self._get_targets   else []
+        all_lyres = self._get_all_lyres() if self._get_all_lyres else targets
+        if all_lyres:
             per_proj = {str(p.start_address): {"pan": p.pan, "tilt": p.tilt}
-                        for p, _g, _i in targets}
-            p0 = targets[0][0]
+                        for p, _g, _i in all_lyres}
+            p0 = (targets or all_lyres)[0][0]
             self._presets.append({"name": name, "pan": p0.pan, "tilt": p0.tilt,
                                    "per_proj": per_proj})
         else:
@@ -356,6 +396,18 @@ class PresetBar(QWidget):
     def _delete(self, idx):
         if 0 <= idx < len(self._presets):
             self._presets.pop(idx)
+            _save_presets(self._presets)
+            self._rebuild_buttons()
+
+    def _reset_to_defaults(self):
+        from PySide6.QtWidgets import QMessageBox
+        if QMessageBox.question(
+            self, "Réinitialiser les presets",
+            "Remettre les presets par défaut (Centre, Face, Sol, Plafond, Gauche, Droite) ?\n"
+            "Les presets personnalisés seront supprimés.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        ) == QMessageBox.Yes:
+            self._presets = [dict(p) for p in _DEFAULT_PRESETS]
             _save_presets(self._presets)
             self._rebuild_buttons()
 
@@ -780,6 +832,7 @@ class ColorPickerBlock(QFrame):
         self._h = 0.0
         self._s = 1.0
         self._v = 1.0
+        self._cw_locked = False
 
         self.setStyleSheet("ColorPickerBlock { border: none; }")
 
@@ -860,6 +913,47 @@ class ColorPickerBlock(QFrame):
         self._v = v
         self._bri_val_lbl.setText(f"{int(v * 100)}%")
         self._send_color(self._current_qcolor())
+
+    # ── Color Wheel detection ────────────────────────────────────────────────
+    @staticmethod
+    def _is_cw_only(proj) -> bool:
+        if getattr(proj, 'fixture_type', '') != 'Moving Head':
+            return False
+        profile = getattr(proj, 'dmx_profile', None) or []
+        if not profile:
+            return False
+        has_rgb = 'R' in profile and 'G' in profile and 'B' in profile
+        has_cw  = 'ColorWheel' in profile
+        return has_cw and not has_rgb
+
+    def update_selection_state(self):
+        pdf = self.plan_de_feu
+        is_cw = False
+        if getattr(pdf, 'selected_lamps', None):
+            for g, i in pdf.selected_lamps:
+                projs = [p for p in pdf.projectors if p.group == g]
+                if i < len(projs) and self._is_cw_only(projs[i]):
+                    is_cw = True
+                    break
+        self._cw_locked = is_cw
+        for w in (self._hue_slider, self._sat_slider, self._bri_slider):
+            w.setEnabled(not is_cw)
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        if is_cw:
+            eff = QGraphicsOpacityEffect(self)
+            eff.setOpacity(0.35)
+            self.setGraphicsEffect(eff)
+        else:
+            self.setGraphicsEffect(None)
+
+    def mousePressEvent(self, event):
+        if self._cw_locked:
+            pdf = self.plan_de_feu
+            mw = getattr(pdf, 'main_window', None)
+            if mw and hasattr(mw, '_log_message'):
+                mw._log_message(
+                    "Roue de couleur — clic droit sur la lyre pour changer la teinte", "warn")
+        super().mousePressEvent(event)
 
     # ── DMX output ────────────────────────────────────────────────────────────
     def _send_color(self, color: QColor):
@@ -990,7 +1084,13 @@ class _PersistentMenu(QMenu):
             return
         if isinstance(target, QPushButton):
             if event.type() == QEvent.Type.MouseButtonRelease:
-                target.click()
+                if event.button() == Qt.MouseButton.LeftButton:
+                    target.click()
+                elif event.button() == Qt.MouseButton.RightButton:
+                    if target.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu:
+                        target.customContextMenuRequested.emit(
+                            target.mapFromGlobal(gpos)
+                        )
         else:
             local_f = QPointF(target.mapFromGlobal(gpos))
             synthetic = QMouseEvent(
@@ -1169,7 +1269,12 @@ class _PanTiltFloater(QFrame):
 
     def show_for(self, idx, canvas_pos):
         """Affiche le floater près de la fixture idx."""
-        projs = self.get_group_projs(idx)
+        lyre_sel = self._ordered_lyre_targets()
+        if len(lyre_sel) >= 2:
+            projs = lyre_sel
+        else:
+            projs = self.get_group_projs(idx)
+
         self._targets = projs
         if projs:
             pan  = getattr(projs[0], 'pan',  32768)
@@ -1181,6 +1286,7 @@ class _PanTiltFloater(QFrame):
         self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
 
         # Positionner à côté de la fixture sans sortir du canvas
+        self.adjustSize()
         fw, fh = self.sizeHint().width(), self.sizeHint().height()
         cw, ch = self._canvas.width(), self._canvas.height()
         x = canvas_pos.x() + 20
@@ -1188,7 +1294,6 @@ class _PanTiltFloater(QFrame):
         x = max(4, min(x, cw - fw - 4))
         y = max(4, min(y, ch - fh - 4))
         self.move(x, y)
-        self.adjustSize()
         self.raise_()
         self.show()
 
@@ -1201,13 +1306,40 @@ class _PanTiltFloater(QFrame):
             if p.group == group and getattr(p, 'fixture_type', '') == 'Moving Head'
         ] or [proj]
 
+    def _ordered_lyre_targets(self):
+        """Retourne les Moving Head sélectionnées dans l'ordre de sélection."""
+        pdf = self._canvas.pdf
+        ordered = getattr(pdf, 'selected_lamps_ordered', [])
+        # Construire le mapping (group, local_idx) → projector
+        g_cnt = {}
+        proj_map = {}
+        for p in pdf.projectors:
+            g = p.group; li = g_cnt.get(g, 0); g_cnt[g] = li + 1
+            proj_map[(g, li)] = p
+        result = []
+        seen = set()
+        for key in ordered:
+            if key in pdf.selected_lamps and key not in seen:
+                p = proj_map.get(key)
+                if p and getattr(p, 'fixture_type', '') == 'Moving Head':
+                    result.append(p)
+                    seen.add(key)
+        return result
+
     def _on_changed(self, pan, tilt):
-        for p in self._targets:
-            p.pan  = pan
-            p.tilt = tilt
+        sym = getattr(self._canvas.pdf, 'sym_mode', False)
+        if sym and len(self._targets) >= 2:
+            n = len(self._targets)
+            half = n // 2
+            for i, p in enumerate(self._targets):
+                p.pan  = (65535 - pan) if i >= half else pan
+                p.tilt = tilt
+        else:
+            for p in self._targets:
+                p.pan  = pan
+                p.tilt = tilt
         self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
         self._canvas.update()
-        # Flush DMX
         pdf = self._canvas.pdf
         if hasattr(pdf, '_flush_dmx'):
             pdf._flush_dmx()
@@ -1500,12 +1632,17 @@ class FixtureCanvas(QWidget):
         if ftype == "Moving Head":
             pan_val  = _htp_e[2] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'pan',  32768)
             tilt_val = _htp_e[3] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'tilt', 32768)
-            # Pan → rotation du faisceau (-135° … +135°)
-            pan_angle  = (pan_val - 32768) / 32768.0 * 135.0
-            # Tilt → longueur du faisceau (0=court, 65535=long)
-            tilt_ratio = tilt_val / 65535.0
-            beam_len   = int(r * 2 + tilt_ratio * r * 7)
-            beam_hw    = int(r * 0.6 + tilt_ratio * r * 2.5)
+            # Modèle linéaire indépendant : Pan → X, Tilt → profondeur scène
+            # → cercle (sin+cos 90°) = cercle, huit = 8, carré = □, etc.
+            _pan_rad  = (pan_val  - 32768) / 32768.0 * math.pi
+            _tilt_rad = (tilt_val - 32768) / 32768.0 * math.pi * 0.75
+            _fdx = math.sin(_pan_rad)
+            _fdy = math.sin(_tilt_rad)
+            _defl = math.sqrt(_fdx * _fdx + _fdy * _fdy)  # 0..√2
+            # Angle du cône depuis l'axe "profondeur" (= pan=0, tilt=max)
+            pan_angle  = math.degrees(math.atan2(_fdx, _fdy)) if _defl > 0.001 else 0.0
+            beam_len   = int(r * 2 + _defl / math.sqrt(2) * r * 6)
+            beam_hw    = int(r * 0.5 + _defl / math.sqrt(2) * r * 2.0)
 
             # Cone de faisceau orienté — gradient lumineux à la source
             if is_lit:
@@ -2009,9 +2146,8 @@ class FixtureCanvas(QWidget):
                     'proj':     proj,
                     'targets':  targets,
                 }
-                # Démarrer aussi le rubber-band (sera annulé si le drag beam se confirme)
-                if not (event.modifiers() & Qt.ControlModifier):
-                    self.pdf.selected_lamps.clear()
+                # Ne pas effacer la sélection : l'utilisateur clique sur un faisceau
+                # pour le déplacer — la sélection multi-lyres doit rester intacte.
                 if self._pt_floater is not None:
                     self._pt_floater.hide_floater()
                 self._rubber_origin = pos
@@ -2025,10 +2161,14 @@ class FixtureCanvas(QWidget):
                 if event.modifiers() & Qt.ControlModifier:
                     if key in self.pdf.selected_lamps:
                         self.pdf.selected_lamps.discard(key)
+                        try: self.pdf.selected_lamps_ordered.remove(key)
+                        except ValueError: pass
                     else:
                         self.pdf.selected_lamps.add(key)
+                        self.pdf.selected_lamps_ordered.append(key)
                 elif key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
+                    self.pdf.selected_lamps_ordered = [key]
                 # Drag uniquement en mode edition
                 if self._editable:
                     cx, cy = self._get_canvas_pos(idx)
@@ -2042,15 +2182,18 @@ class FixtureCanvas(QWidget):
                             self._drag_starts[j] = self._get_norm_pos(j)
                         g_cnt[p.group] = li + 1
                 self.update()
+                self._notify_cpb()
             else:
                 if not (event.modifiers() & Qt.ControlModifier):
                     self.pdf.selected_lamps.clear()
+                    self.pdf.selected_lamps_ordered.clear()
                 # Cacher le floater si on clique dans le vide
                 if self._pt_floater is not None:
                     self._pt_floater.hide_floater()
                 self._rubber_origin = pos
                 self._rubber_rect   = QRect(pos, QSize())
                 self.update()
+                self._notify_cpb()
 
         elif event.button() == Qt.RightButton:
             if idx is not None:
@@ -2059,6 +2202,7 @@ class FixtureCanvas(QWidget):
                 if key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.update()
+                    self._notify_cpb()
                 self.pdf._show_fixture_context_menu(event.globalPos(), idx)
             else:
                 self.pdf._show_canvas_context_menu(event.globalPos(), event.pos())
@@ -2072,6 +2216,7 @@ class FixtureCanvas(QWidget):
                 if key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.update()
+                    self._notify_cpb()
                 proj = self.pdf.projectors[idx]
                 if getattr(proj, 'fixture_type', '') == 'Moving Head' and not self._editable:
                     self._pt_floater.show_for(idx, event.pos())
@@ -2395,8 +2540,12 @@ class FixtureCanvas(QWidget):
 
                 dpan  = now_pan  - ref_pan
                 dtilt = now_tilt - ref_tilt
-                for p, pan0, tilt0 in self._beam_drag_targets:
-                    p.pan  = int(max(0, min(65535, pan0 + dpan)))
+                sym = getattr(self.pdf, 'sym_mode', False)
+                n = len(self._beam_drag_targets)
+                half = n // 2
+                for i, (p, pan0, tilt0) in enumerate(self._beam_drag_targets):
+                    effective_dpan = -dpan if (sym and i >= half) else dpan
+                    p.pan  = int(max(0, min(65535, pan0 + effective_dpan)))
                     p.tilt = int(max(0, min(65535, tilt0 + dtilt)))
 
             if hasattr(self.pdf, '_flush_dmx'):
@@ -2492,10 +2641,20 @@ class FixtureCanvas(QWidget):
                     cx, cy = self._get_canvas_pos(i)
                     if self._rubber_rect.contains(QPoint(cx, cy)):
                         group, local_idx = self._local_idx(i)
-                        self.pdf.selected_lamps.add((group, local_idx))
+                        key = (group, local_idx)
+                        self.pdf.selected_lamps.add(key)
+                        if key not in self.pdf.selected_lamps_ordered:
+                            self.pdf.selected_lamps_ordered.append(key)
                 self._rubber_rect   = None
                 self._rubber_origin = None
                 self.update()
+                self._notify_cpb()
+
+    def _notify_cpb(self):
+        mw = getattr(self.pdf, 'main_window', None)
+        cpb = getattr(mw, 'color_picker_block', None) if mw else None
+        if cpb and hasattr(cpb, 'update_selection_state'):
+            cpb.update_selection_state()
 
     def leaveEvent(self, event):
         if self._hover_index is not None:
@@ -2510,12 +2669,11 @@ class FixtureCanvas(QWidget):
                 group, local_idx = self._local_idx(i)
                 self.pdf.selected_lamps.add((group, local_idx))
             self.update()
+            self._notify_cpb()
         elif event.key() == Qt.Key_Escape:
             self.pdf.selected_lamps.clear()
             self.update()
-        elif event.key() == Qt.Key_Delete:
-            if hasattr(self.pdf, '_delete_selected_fixtures'):
-                self.pdf._delete_selected_fixtures()
+            self._notify_cpb()
         elif event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
             if not self._editable or not self.pdf.selected_lamps:
                 super().keyPressEvent(event)
@@ -2557,7 +2715,9 @@ class PlanDeFeu(QFrame):
         self.setFocusPolicy(Qt.ClickFocus)
         self.projectors = projectors
         self.main_window = main_window
-        self.selected_lamps = set()   # set of (group, local_idx)
+        self.selected_lamps = set()           # set of (group, local_idx)
+        self.selected_lamps_ordered = []      # même contenu, en ordre de sélection
+        self.sym_mode = False                 # symétrie Pan active
         self._htp_overrides = None    # dict {id(proj): (level, QColor)} ou None
         self._canvas_editable = False  # Vue principale : lecture seule (edition dans Patch DMX)
         self._effects = {}            # id(proj) -> _EffectState  (pan/tilt)
@@ -2616,6 +2776,29 @@ class PlanDeFeu(QFrame):
                 "QPushButton:pressed {{ background: #333; }}"
             )
 
+            _SYM_OFF = _BTN_SS.format(fg="#555", bd="#2a2a2a", fgh="#888", bdh="#444")
+            _SYM_ON  = (
+                "QPushButton { background:#0d1f0d; color:#00cc66; border:1px solid #00cc66;"
+                " border-radius:4px; font-size:9px; font-weight:bold; }"
+                "QPushButton:hover { color:#00ff88; border-color:#00ff88; }"
+                "QPushButton:checked { background:#0d1f0d; color:#00cc66; border:1px solid #00cc66; }"
+            )
+            self.btn_sym = QPushButton("⇄ SYM")
+            self.btn_sym.setCheckable(True)
+            self.btn_sym.setFixedSize(46, 26)
+            self.btn_sym.setToolTip(
+                "Symétrie Pan — 1ère moitié = Pan normal, 2ème moitié = Pan inversé\n"
+                "Visible quand 2+ lyres sélectionnées"
+            )
+            self.btn_sym.setStyleSheet(_SYM_OFF)
+            self.btn_sym.setVisible(False)
+            def _on_sym_toggled(checked):
+                self.sym_mode = checked
+                self.btn_sym.setStyleSheet(_SYM_ON if checked else _SYM_OFF)
+            self.btn_sym.toggled.connect(_on_sym_toggled)
+            toolbar.addWidget(self.btn_sym)
+            toolbar.addSpacing(2)
+
             selec_btn = QPushButton("SELEC")
             selec_btn.setFixedSize(46, 26)
             selec_btn.setToolTip(tr("pdf_tooltip_selec"))
@@ -2667,6 +2850,8 @@ class PlanDeFeu(QFrame):
             self.btn_3d.setVisible(False)
             self.btn_target = QPushButton(self)
             self.btn_target.setVisible(False)
+            self.btn_sym = QPushButton(self)
+            self.btn_sym.setVisible(False)
 
         # ── Canvas ─────────────────────────────────────────────────
         self.canvas = FixtureCanvas(self)
@@ -2807,13 +2992,49 @@ class PlanDeFeu(QFrame):
 
     def _timer_tick(self):
         has_strobe = any(getattr(p, 'strobe_speed', 0) > 0 for p in self.projectors)
-        # Adapter la fréquence dynamiquement
         interval = 40 if has_strobe else 100
         if self.timer.interval() != interval:
             self.timer.setInterval(interval)
-        self._dirty = True  # Toujours redessiner pour refléter l'état live des projecteurs
+        self._dirty = True
         self.refresh()
         self._tick_effects()
+        self._refresh_sym_btn()
+
+    def _refresh_sym_btn(self):
+        """Affiche/cache btn_sym selon le nombre de lyres sélectionnées."""
+        n_lyres = sum(
+            1 for (g, li) in self.selected_lamps
+            if any(
+                getattr(p, 'fixture_type', '') == 'Moving Head'
+                for j, p in enumerate(self.projectors)
+                if self._local_idx_for(j) == (g, li)
+            )
+        )
+        show = n_lyres >= 2
+        was_visible = self.btn_sym.isVisible()
+        if was_visible != show:
+            self.btn_sym.setVisible(show)
+        # Réinitialiser SYM quand on passe sous 2 lyres, ou quand le bouton réapparaît
+        if not show and self.sym_mode:
+            self.sym_mode = False
+            self.btn_sym.blockSignals(True)
+            self.btn_sym.setChecked(False)
+            self.btn_sym.blockSignals(False)
+        elif show and not was_visible:
+            # Le bouton vient d'apparaître : SYM désactivé par défaut
+            self.sym_mode = False
+            self.btn_sym.blockSignals(True)
+            self.btn_sym.setChecked(False)
+            self.btn_sym.blockSignals(False)
+
+    def _local_idx_for(self, global_idx):
+        """Retourne (group, local_idx) pour un index global."""
+        g_cnt = {}
+        for i, p in enumerate(self.projectors):
+            g = p.group; li = g_cnt.get(g, 0); g_cnt[g] = li + 1
+            if i == global_idx:
+                return (g, li)
+        return None
 
     # ── API externe (identique a l'ancienne version) ────────────────
 
@@ -2873,6 +3094,25 @@ class PlanDeFeu(QFrame):
                 factor = (_math_eff.sin(eff["phase"]) + 1) / 2
                 lvl = max(5, int(eff["saved_level"] * (0.15 + 0.85 * factor)))
                 bc = eff["saved_color"]
+            elif eff["type"] == "rainbow":
+                hue = int(eff["phase"] * 57.296) % 360
+                bc = QColor.fromHsv(hue, 255, 255)
+                lvl = eff["saved_level"]
+                proj.base_color = bc
+            elif eff["type"] == "strobe":
+                if _math_eff.sin(eff["phase"]) >= 0:
+                    lvl = eff["saved_level"]
+                    bc = QColor(255, 255, 255)
+                else:
+                    lvl = 0
+                    bc = QColor(0, 0, 0)
+                proj.base_color = bc
+            elif eff["type"] == "rouge_blanc":
+                factor = (_math_eff.sin(eff["phase"]) + 1) / 2
+                gb = int(factor * 255)
+                bc = QColor(255, gb, gb)
+                lvl = eff["saved_level"]
+                proj.base_color = bc
             else:  # "flash"
                 factor = max(0.0, _math_eff.sin(eff["phase"]))
                 lvl = int(eff["saved_level"] * factor)
@@ -3043,6 +3283,7 @@ class PlanDeFeu(QFrame):
             proj.color_wheel  = 0
             proj.prism        = 0
             proj.prism_rotation = 0
+            proj.effects      = 0
         self.selected_lamps.clear()
         self.refresh()
 
@@ -3436,8 +3677,13 @@ class PlanDeFeu(QFrame):
     # ── Couleur / dimmer ─────────────────────────────────────────────
 
     def _get_target_projectors(self, group, idx):
+        ordered = getattr(self, 'selected_lamps_ordered', [])
+        # Compléter avec les lampes sélectionnées absentes de la liste ordonnée
+        ordered_set = set(ordered)
+        full = [k for k in ordered if k in self.selected_lamps] + \
+               [k for k in self.selected_lamps if k not in ordered_set]
         targets = []
-        for g, i in self.selected_lamps:
+        for g, i in full:
             projs = [p for p in self.projectors if p.group == g]
             if i < len(projs):
                 targets.append((projs[i], g, i))
@@ -3515,9 +3761,10 @@ class PlanDeFeu(QFrame):
         """Retourne une position globale qui place le menu en dehors du plan de feu.
         Priorité : droite → gauche → bas → haut du widget."""
         from PySide6.QtGui import QGuiApplication
-        screen_rect = QGuiApplication.primaryScreen().availableGeometry()
-        menu_sz     = menu.sizeHint()
         widget_tl   = self.mapToGlobal(QPoint(0, 0))
+        screen      = QGuiApplication.screenAt(widget_tl) or QGuiApplication.primaryScreen()
+        screen_rect = screen.availableGeometry()
+        menu_sz     = menu.sizeHint()
         widget_rect = QRect(widget_tl, self.size())
 
         # Essai à droite
@@ -3594,6 +3841,7 @@ class PlanDeFeu(QFrame):
                 p.shutter        = 255
                 p.color_wheel    = 0
                 p.prism          = 0
+                p.effects        = 0
                 p.channel_extras = {}
             _flush()
 
@@ -3685,12 +3933,18 @@ class PlanDeFeu(QFrame):
 
         # ── Canaux spéciaux : UV / Blanc / Ambre / Orange ────────────────────
         _proj_profile = getattr(proj, 'dmx_profile', None) or []
+        # Lyre RGB : a des canaux R, G, B dans son profil (mélange couleur, pas roue)
+        _has_rgb_mh = (
+            proj.fixture_type == "Moving Head" and
+            'R' in _proj_profile and 'G' in _proj_profile and 'B' in _proj_profile
+        )
 
         _EXTRA_CHANNELS = [
-            ("UV",     "UV",           "#8844ff", "uv",           0,   255),
-            ("W",      "Blanc",        "#ffffff", "white_boost",  0,   255),
-            ("Ambre",  "Ambre",        "#ff9900", "amber_boost",  0,   255),
-            ("Orange", "Orange",       "#ff6600", "orange_boost", 0,   255),
+            ("UV",      "UV",           "#8844ff", "uv",           0,   255),
+            ("W",       "Blanc",        "#ffffff", "white_boost",  0,   255),
+            ("Ambre",   "Ambre",        "#ff9900", "amber_boost",  0,   255),
+            ("Orange",  "Orange",       "#ff6600", "orange_boost", 0,   255),
+            ("Effects", "Effects",      "#cc44ff", "effects",      0,   255),
         ]
 
         _extra_shown = False
@@ -3804,16 +4058,19 @@ class PlanDeFeu(QFrame):
                 d_pan  = pan  - init_pan
                 d_tilt = tilt - init_tilt
                 esc = getattr(_mw, 'effect_saved_colors', {}) if _mw else {}
-                for p, g, i in t:
+                sym  = getattr(self, 'sym_mode', False)
+                n    = len(t)
+                half = n // 2
+                for idx_t, (p, g, i) in enumerate(t):
+                    mirror = sym and n >= 2 and idx_t >= half
                     if id(p) in esc:
-                        # Effet actif : déplacer le centre d'oscillation par delta
                         sv = esc[id(p)]
                         ic = init_c.get(id(p), (32768, 32768))
                         esc[id(p)] = (sv[0], sv[1], sv[2],
-                                      max(0, min(65535, ic[0] + d_pan)),
+                                      max(0, min(65535, ic[0] + (-d_pan if mirror else d_pan))),
                                       max(0, min(65535, ic[1] + d_tilt)))
                     else:
-                        p.pan  = pan
+                        p.pan  = (65535 - pan) if mirror else pan
                         p.tilt = tilt
                 _flush()
             pt_pad.changed.connect(_on_pantilt)
@@ -3822,6 +4079,10 @@ class PlanDeFeu(QFrame):
             preset_bar = PresetBar(
                 get_current_pan_tilt=lambda: (pt_pad._pan, pt_pad._tilt),
                 get_targets=lambda: targets,
+                get_all_lyres=lambda: [
+                    (p, p.group, 0) for p in self.projectors
+                    if getattr(p, 'fixture_type', '') == 'Moving Head'
+                ],
             )
             def _on_preset(preset, pad=pt_pad, t=targets):
                 per_proj = preset.get("per_proj", {})
@@ -3882,8 +4143,8 @@ class PlanDeFeu(QFrame):
                 for w in (lbl, sli, val_lbl): row_h.addWidget(w)
                 return row_w
 
-            # ── Roue de couleur ─────────────────────────────────────────
-            if not has_profile or 'ColorWheel' in proj_profile:
+            # ── Roue de couleur (uniquement si pas de canaux RGB) ───────
+            if (not has_profile or 'ColorWheel' in proj_profile) and not _has_rgb_mh:
                 menu.addSeparator()
                 cur_cw = getattr(targets[0][0], 'color_wheel', 0)
 
@@ -4013,8 +4274,27 @@ class PlanDeFeu(QFrame):
                     mw = self.main_window if hasattr(self, 'main_window') else None
                     dlg = ColorWheelEditorDialog(_p, all_proj, mw, self)
                     if dlg.exec():
-                        # Rafraîchir l'affichage du plan de feu
                         self.refresh() if hasattr(self, 'refresh') else None
+
+                def _open_cw_calib(chk=False, _p=proj):
+                    from color_wheel_editor import ColorWheelCalibWizard
+                    menu.close()
+                    all_proj = self.projectors if hasattr(self, 'projectors') else []
+                    mw = self.main_window if hasattr(self, 'main_window') else None
+                    dlg = ColorWheelCalibWizard(_p, all_proj, mw, self)
+                    if dlg.exec():
+                        self.refresh() if hasattr(self, 'refresh') else None
+
+                _calib_cw_btn = QPushButton("⚡  Calibrer")
+                _calib_cw_btn.setFixedHeight(22)
+                _calib_cw_btn.setToolTip("Calibrer la roue de couleur pas-à-pas")
+                _calib_cw_btn.setStyleSheet(
+                    "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
+                    "border-radius:4px;font-size:11px;padding:0 6px;}"
+                    "QPushButton:hover{border-color:#00cc66;color:#00cc66;background:#1a2a1a;}"
+                )
+                _calib_cw_btn.clicked.connect(_open_cw_calib)
+                cw_tr.addWidget(_calib_cw_btn)
 
                 _edit_cw_btn.clicked.connect(_open_cw_editor)
                 cw_tr.addWidget(_edit_cw_btn)
@@ -4162,10 +4442,10 @@ class PlanDeFeu(QFrame):
                 _wa(_slider_row("Rotation Prisme", cur_prism_rot, 255, _on_prism_rot))
 
         # ── Couleurs ─────────────────────────────────────────────────────
-        # Masquer pour : fumée/gradateurs, et Moving Head à roue de couleur
-        # (la section ColorWheel ci-dessus est déjà le sélecteur de couleur)
+        # Masquer pour : fumée/gradateurs, et Moving Head à roue de couleur SANS RGB
+        # (lyre RGB → sélecteur couleur LED ; lyre roue → section ColorWheel ci-dessus)
         _has_cw_in_profile = 'ColorWheel' in (_proj_profile or [])
-        _is_cw_mh = (proj.fixture_type == "Moving Head" and _has_cw_in_profile)
+        _is_cw_mh = (proj.fixture_type == "Moving Head" and _has_cw_in_profile and not _has_rgb_mh)
         NO_COLOR_TYPES = {"Machine a fumee", "Gradateur"}
         if proj.fixture_type not in NO_COLOR_TYPES and not _is_cw_mh:
             menu.addSeparator()
@@ -4348,64 +4628,49 @@ class PlanDeFeu(QFrame):
                 qe_h.addWidget(_stop_btn)
 
             else:
-                # ── LED : 4 boutons couleur (pulse) + strobe + stop ───────
-                _LED_COLORS = [
-                    ("rouge",  QColor(255, 30,  0),   "#ff1e00"),
-                    ("vert",   QColor(0,   255, 60),  "#00ff3c"),
-                    ("bleu",   QColor(0,   80,  255), "#0050ff"),
-                    ("blanc",  QColor(255, 255, 255), "#ffffff"),
-                ]
+                # ── LED : Rainbow / Strobe / Rouge→Blanc + stop ──────────
                 _active_qe = None
                 _lae = self._led_effects.get(id(targets[0][0]))
                 if _lae:
-                    _active_qe = _lae.get("color_key")
-                elif getattr(targets[0][0], 'strobe_speed', 0) > 0:
-                    _active_qe = "strobe"
+                    _active_qe = _lae.get("effect_key")
 
-                def _qe_start_led(key, color):
+                _LED_FX_SPEEDS = {"rainbow": 0.3, "strobe": 5.0, "rouge_blanc": 0.5}
+
+                def _qe_start_led(key):
                     projs = [p for p, _g, _i in targets]
-                    if key == "strobe":
-                        for p in projs:
-                            p.strobe_speed = 55
-                        _flush()
-                    else:
-                        self.start_led_effect(projs, "color_pulse", 0.8, color=color)
-                        for eff in [self._led_effects.get(id(p)) for p in projs]:
-                            if eff:
-                                eff["color_key"] = key
+                    turned_on = False
+                    for p in projs:
+                        if p.level < 5:
+                            p.level = 80
+                            turned_on = True
+                    self.start_led_effect(projs, key, _LED_FX_SPEEDS.get(key, 0.5))
+                    for _eff in [self._led_effects.get(id(p)) for p in projs]:
+                        if _eff:
+                            _eff["effect_key"] = key
+                    if turned_on:
+                        dim_sli.setValue(80)
+                    _flush()
                     for _k, _b in _qe_btns.items():
                         _b.setStyleSheet(_QE_ON if _k == key else _QE_OFF)
 
                 def _qe_stop_led():
                     projs = [p for p, _g, _i in targets]
                     self.stop_led_effect(projs)
-                    for p in projs:
-                        p.strobe_speed = 0
                     _flush()
                     for _b in _qe_btns.values():
                         _b.setStyleSheet(_QE_OFF)
 
-                for _ckey, _col, _hex in _LED_COLORS:
-                    _qb = QPushButton()
-                    _qb.setFixedSize(38, 32)
-                    _qb.setToolTip(f"Pulse {_ckey}")
-                    _active = (_active_qe == _ckey)
-                    _border = "#00d4ff" if _active else "#333"
-                    _bw     = "2px"     if _active else "1px"
-                    _tc     = "#000" if _col.lightness() > 140 else "#fff"
-                    _qb.setStyleSheet(
-                        f"QPushButton{{background:{_hex};border:{_bw} solid {_border};"
-                        f"border-radius:6px;color:{_tc};font-size:10px;font-weight:bold;}}"
-                        f"QPushButton:hover{{border:2px solid #00d4ff;}}"
-                    )
-                    _qb.clicked.connect(lambda chk=False, k=_ckey, c=_col: _qe_start_led(k, c))
-                    _qe_btns[_ckey] = _qb; qe_h.addWidget(_qb)
-
-                qe_h.addSpacing(4)
-                _strobe_btn = QPushButton("⭐"); _strobe_btn.setToolTip("Strobe")
-                _strobe_btn.setStyleSheet(_QE_ON if _active_qe == "strobe" else _QE_OFF)
-                _strobe_btn.clicked.connect(lambda: _qe_start_led("strobe", None))
-                _qe_btns["strobe"] = _strobe_btn; qe_h.addWidget(_strobe_btn)
+                for _icon, _key, _tip in [
+                    ("🌈", "rainbow",    "Rainbow — arc-en-ciel"),
+                    ("⚡", "strobe",     "Strobe"),
+                    ("🔴", "rouge_blanc","Rouge → Blanc"),
+                ]:
+                    _qb = QPushButton(_icon)
+                    _qb.setToolTip(_tip)
+                    _qb.setStyleSheet(_QE_ON if _key == _active_qe else _QE_OFF)
+                    _qb.clicked.connect(lambda chk=False, k=_key: _qe_start_led(k))
+                    _qe_btns[_key] = _qb
+                    qe_h.addWidget(_qb)
 
                 _stop_btn = QPushButton("■"); _stop_btn.setToolTip(tr("pdf_qe_stop"))
                 _stop_btn.setStyleSheet(_QE_STP)
@@ -4603,8 +4868,6 @@ class PlanDeFeu(QFrame):
                 self._deselect_all()
         elif event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
             self._select_all()
-        elif event.key() == Qt.Key_Delete:
-            self._delete_selected_fixtures()
         elif event.key() == Qt.Key_1:
             self._select_group("pairs_lat_contre")
         elif event.key() == Qt.Key_2:
@@ -5463,6 +5726,7 @@ class _PatchCanvasProxy:
         self.projectors = projectors
         self.main_window = main_window
         self.selected_lamps = set()
+        self.selected_lamps_ordered = []
         self._htp_overrides = None
         self.canvas_widget = None           # Référence au FixtureCanvas (pour calcul de position)
         # Callbacks injectés par le dialog

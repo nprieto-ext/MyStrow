@@ -1,14 +1,36 @@
 {
   "permissions": {
+    "additionalDirectories": [
+      "C:\\Users\\nikop\\Desktop\\mystrow_site"
+    ],
     "allow": [
       "Bash(*)",
+      "Edit(C:\\Users\\nikop\\Desktop\\mystrow_site\\**)",
+      "Edit(C:/Users/nikop/Desktop/mystrow_site/**)",
+      "Write(C:\\Users\\nikop\\Desktop\\mystrow_site\\**)",
+      "Write(C:/Users/nikop/Desktop/mystrow_site/**)",
       "WebFetch(*)",
       "WebSearch",
       "PowerShell(python --version)",
       "PowerShell(Copy-Item *)",
       "PowerShell(Get-Content *)",
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\nikop\\\\Desktop\\\\\" | Where-Object { $_.Name -match \"strow|site|web|mystrow\" })",
-      "PowerShell(git *)"
+      "PowerShell(git *)",
+      "mcp__flutterflow__list_projects",
+      "mcp__flutterflow__sync_project",
+      "mcp__flutterflow__list_pages",
+      "mcp__flutterflow__get_app_settings",
+      "mcp__flutterflow__get_project_setup",
+      "mcp__flutterflow__get_page_summary",
+      "mcp__flutterflow__get_data_models",
+      "mcp__flutterflow__get_integrations",
+      "mcp__flutterflow__get_yaml_docs",
+      "mcp__flutterflow__validate_yaml",
+      "mcp__flutterflow__update_project_yaml",
+      "mcp__flutterflow__get_page_by_name",
+      "mcp__flutterflow__get_project_yaml",
+      "PowerShell(head *)",
+      "Skill(update-config)"
     ]
   }
 }

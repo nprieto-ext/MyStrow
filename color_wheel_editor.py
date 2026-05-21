@@ -780,3 +780,317 @@ class GoboWheelEditorDialog(QDialog):
 
     def get_slots(self) -> list:
         return self._collect_slots()
+
+
+# ── Wizard de calibration pas-à-pas ──────────────────────────────────────────
+
+_CALIB_STEPS = [
+    ("Open",    "#ffffff", "Blanc / Open"),
+    ("Rouge",   "#ff2200", "Rouge"),
+    ("Orange",  "#ff8800", "Orange"),
+    ("Jaune",   "#ffff00", "Jaune"),
+    ("Vert",    "#00cc44", "Vert"),
+    ("Cyan",    "#00ccff", "Cyan"),
+    ("Bleu",    "#0044ff", "Bleu"),
+    ("Magenta", "#cc00ff", "Magenta"),
+]
+
+_DEFAULT_CALIB_DMX = [0, 20, 42, 64, 85, 106, 128, 149]
+
+_BTN_NEXT = (
+    "QPushButton { background: #00d4ff; color: #000; border: none; "
+    "border-radius: 5px; font-size: 13px; font-weight: bold; padding: 6px 18px; } "
+    "QPushButton:hover { background: #33e0ff; }"
+)
+_BTN_PREV = (
+    "QPushButton { background: #1e1e1e; color: #888; border: 1px solid #333; "
+    "border-radius: 5px; font-size: 12px; padding: 6px 14px; } "
+    "QPushButton:hover { background: #2a2a2a; color: #bbb; } "
+    "QPushButton:disabled { color: #333; border-color: #222; }"
+)
+_BTN_INCR = (
+    "QPushButton { background: #252525; color: #bbb; border: 1px solid #333; "
+    "border-radius: 4px; font-size: 11px; font-weight: bold; } "
+    "QPushButton:hover { background: #333; color: #fff; border-color: #00d4ff; }"
+)
+
+
+class ColorWheelCalibWizard(QDialog):
+    """
+    Wizard pas-à-pas pour calibrer les positions DMX d'une roue de couleur.
+
+    Étape -1 : intro — met Shutter+Dim à fond, roue à 0.
+    Étapes 0-7 : pour chaque couleur, l'utilisateur règle le curseur jusqu'à
+                 voir la bonne couleur sur la lyre, puis clique Suivant.
+    À la fin, les slots sont sauvegardés et appliqués aux fixtures similaires.
+    """
+
+    def __init__(self, proj, all_projectors: list, main_window=None, parent=None):
+        super().__init__(parent)
+        self._proj           = proj
+        self._all_projectors = all_projectors
+        self._mw             = main_window
+        self._step           = -1
+
+        # Sauvegarder l'état original pour restauration si annulation
+        self._orig_shutter = getattr(proj, 'shutter', 255)
+        self._orig_level   = getattr(proj, 'level', 100)
+        self._orig_cw      = getattr(proj, 'color_wheel', 0)
+
+        # Initialiser les valeurs depuis les slots existants ou les défauts
+        existing = getattr(proj, 'color_wheel_slots', [])
+        self._values: list[int] = []
+        for i, (name, color, label) in enumerate(_CALIB_STEPS):
+            match = next(
+                (s for s in existing if s.get('name', '').lower() == name.lower()), None
+            )
+            self._values.append(match['dmx'] if match else _DEFAULT_CALIB_DMX[i])
+
+        self.setWindowTitle("Calibration — Roue de couleur")
+        self.setFixedSize(460, 380)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(_DLG_SS)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 22, 28, 18)
+        root.setSpacing(14)
+
+        # ── Titre ────────────────────────────────────────────────────────────
+        self._title_lbl = QLabel("Calibration — Roue de couleur")
+        self._title_lbl.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        self._title_lbl.setStyleSheet("color:#00d4ff;")
+        self._title_lbl.setAlignment(Qt.AlignCenter)
+        root.addWidget(self._title_lbl)
+
+        # ── Indicateur de progression ─────────────────────────────────────────
+        self._progress_lbl = QLabel("")
+        self._progress_lbl.setStyleSheet("color:#555;font-size:11px;")
+        self._progress_lbl.setAlignment(Qt.AlignCenter)
+        root.addWidget(self._progress_lbl)
+
+        # ── Cercle couleur ────────────────────────────────────────────────────
+        self._circle = QFrame()
+        self._circle.setFixedSize(76, 76)
+        self._circle.setAttribute(Qt.WA_StyledBackground, True)
+        _circ_wrap = QWidget()
+        _circ_wrap.setAttribute(Qt.WA_StyledBackground, True)
+        _cw_lay = QHBoxLayout(_circ_wrap)
+        _cw_lay.setContentsMargins(0, 0, 0, 0)
+        _cw_lay.addStretch()
+        _cw_lay.addWidget(self._circle)
+        _cw_lay.addStretch()
+        self._circle_wrap = _circ_wrap
+        root.addWidget(_circ_wrap)
+
+        # ── Instructions ──────────────────────────────────────────────────────
+        self._instr_lbl = QLabel("")
+        self._instr_lbl.setStyleSheet("color:#bbb;font-size:12px;")
+        self._instr_lbl.setAlignment(Qt.AlignCenter)
+        self._instr_lbl.setWordWrap(True)
+        root.addWidget(self._instr_lbl)
+
+        # ── Zone curseur ──────────────────────────────────────────────────────
+        self._slider_w = QWidget()
+        self._slider_w.setAttribute(Qt.WA_StyledBackground, True)
+        sli_lay = QHBoxLayout(self._slider_w)
+        sli_lay.setContentsMargins(0, 0, 0, 0)
+        sli_lay.setSpacing(6)
+
+        self._sli = QSlider(Qt.Horizontal)
+        self._sli.setRange(0, 255)
+        self._sli.setStyleSheet(
+            "QSlider::groove:horizontal{background:#2a2a2a;height:6px;border-radius:3px;}"
+            "QSlider::handle:horizontal{background:#00d4ff;width:16px;height:16px;"
+            "border-radius:8px;margin:-5px 0;}"
+            "QSlider::sub-page:horizontal{background:#00d4ff55;border-radius:3px;}"
+        )
+        self._val_lbl = QLabel("0")
+        self._val_lbl.setStyleSheet(
+            "color:#00d4ff;font-size:14px;font-weight:bold;min-width:36px;"
+        )
+        self._val_lbl.setAlignment(Qt.AlignCenter)
+
+        for lbl, delta in [("−5", -5), ("−", -1), ("+", 1), ("+5", 5)]:
+            _b = QPushButton(lbl)
+            _b.setFixedSize(34, 28)
+            _b.setStyleSheet(_BTN_INCR)
+            _d = delta
+            _b.clicked.connect(lambda _chk=False, d=_d: self._sli.setValue(
+                max(0, min(255, self._sli.value() + d))
+            ))
+            if delta < 0:
+                sli_lay.addWidget(_b)
+            else:
+                if delta == 1:
+                    sli_lay.addWidget(self._sli, 1)
+                sli_lay.addWidget(_b)
+
+        sli_lay.addWidget(self._val_lbl)
+
+        self._sli.valueChanged.connect(self._on_slider)
+        root.addWidget(self._slider_w)
+
+        # ── Séparateur ────────────────────────────────────────────────────────
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background:#2a2a2a;max-height:1px;border:none;")
+        root.addWidget(sep)
+
+        # ── Navigation ────────────────────────────────────────────────────────
+        nav = QHBoxLayout()
+        nav.setSpacing(8)
+
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setStyleSheet(_BTN_CANCEL)
+        btn_cancel.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_cancel.clicked.connect(self._on_cancel)
+
+        self._btn_prev = QPushButton("◀  Précédent")
+        self._btn_prev.setStyleSheet(_BTN_PREV)
+        self._btn_prev.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_prev.clicked.connect(self._go_prev)
+
+        self._btn_next = QPushButton("Démarrer  ▶")
+        self._btn_next.setStyleSheet(_BTN_NEXT)
+        self._btn_next.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_next.clicked.connect(self._go_next)
+
+        nav.addWidget(btn_cancel)
+        nav.addStretch()
+        nav.addWidget(self._btn_prev)
+        nav.addWidget(self._btn_next)
+        root.addLayout(nav)
+
+        self._show_step(-1)
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _send_dmx(self):
+        if self._mw and hasattr(self._mw, 'dmx') and self._mw.dmx:
+            projs = getattr(self._mw, 'projectors', None) or self._all_projectors
+            self._mw.dmx.update_from_projectors(projs)
+
+    def _on_slider(self, v: int):
+        self._val_lbl.setText(str(v))
+        if self._step >= 0:
+            self._values[self._step] = v
+            self._proj.color_wheel = v
+            self._send_dmx()
+
+    # ── Affichage par étape ───────────────────────────────────────────────────
+
+    def _show_step(self, step: int):
+        self._step = step
+
+        if step == -1:
+            self._title_lbl.setText("Calibration — Roue de couleur")
+            self._title_lbl.setStyleSheet("color:#00d4ff;")
+            self._progress_lbl.setText(
+                f"{len(_CALIB_STEPS)} couleurs à configurer"
+            )
+            self._circle_wrap.setVisible(False)
+            self._instr_lbl.setText(
+                "Cet assistant configure les positions DMX\n"
+                "de votre roue de couleur en temps réel.\n\n"
+                "Assurez-vous que la lyre est alimentée et connectée.\n"
+                "Le Shutter et le Dimmer seront mis à fond automatiquement."
+            )
+            self._slider_w.setVisible(False)
+            self._btn_prev.setVisible(False)
+            self._btn_next.setText("Démarrer  ▶")
+
+        else:
+            name, color, label = _CALIB_STEPS[step]
+
+            self._progress_lbl.setText(f"Couleur {step + 1} / {len(_CALIB_STEPS)}")
+
+            self._circle.setStyleSheet(
+                f"background:{color};border-radius:38px;border:3px solid #555;"
+            )
+            self._circle_wrap.setVisible(True)
+
+            self._title_lbl.setText(label)
+            # Use the color directly; if it's dark against our dark background,
+            # fall back to a lighter tint by reducing darkness threshold.
+            lum = sum(int(color.lstrip('#')[i*2:i*2+2], 16) * w
+                      for i, w in enumerate((0.299, 0.587, 0.114)))
+            display_color = color if lum > 60 else "#aaaaaa"
+            self._title_lbl.setStyleSheet(f"color:{display_color};")
+
+            self._instr_lbl.setText(
+                "Bougez le curseur jusqu'à ce que votre lyre\n"
+                "affiche cette couleur, puis cliquez sur Suivant."
+            )
+
+            self._slider_w.setVisible(True)
+            # Block signal to avoid sending DMX prematurely
+            self._sli.blockSignals(True)
+            self._sli.setValue(self._values[step])
+            self._val_lbl.setText(str(self._values[step]))
+            self._sli.blockSignals(False)
+
+            # Send current value live
+            self._proj.color_wheel = self._values[step]
+            self._send_dmx()
+
+            self._btn_prev.setVisible(True)
+            self._btn_prev.setEnabled(step > 0)
+
+            if step == len(_CALIB_STEPS) - 1:
+                self._btn_next.setText("✓  Terminer")
+            else:
+                self._btn_next.setText("Suivant  ▶")
+
+    # ── Navigation ────────────────────────────────────────────────────────────
+
+    def _go_next(self):
+        if self._step == -1:
+            # Démarrer : mettre shutter et dim à fond
+            self._proj.shutter = 255
+            self._proj.level   = 100
+            self._proj.color_wheel = self._values[0]
+            self._send_dmx()
+            self._show_step(0)
+        elif self._step < len(_CALIB_STEPS) - 1:
+            self._show_step(self._step + 1)
+        else:
+            self._save()
+
+    def _go_prev(self):
+        if self._step > 0:
+            self._show_step(self._step - 1)
+
+    # ── Sauvegarde ────────────────────────────────────────────────────────────
+
+    def _save(self):
+        slots = [
+            {"name": name, "color": color, "dmx": self._values[i]}
+            for i, (name, color, _label) in enumerate(_CALIB_STEPS)
+        ]
+
+        # Appliquer à toutes les fixtures de même nom (même modèle de lyre)
+        base = (self._proj.name or self._proj.group).rsplit(" ", 1)[0]
+        targets = [
+            p for p in self._all_projectors
+            if (p.name or "").rsplit(" ", 1)[0] == base
+            and getattr(p, 'fixture_type', '') == "Moving Head"
+        ]
+        if not targets:
+            targets = [self._proj]
+
+        for p in targets:
+            p.color_wheel_slots = [dict(s) for s in slots]
+            p._needs_cw_calib = False
+
+        if self._mw and hasattr(self._mw, 'save_dmx_patch_config'):
+            self._mw.save_dmx_patch_config()
+
+        self.accept()
+
+    def _on_cancel(self):
+        # Restaurer l'état original de la lyre
+        self._proj.shutter     = self._orig_shutter
+        self._proj.level       = self._orig_level
+        self._proj.color_wheel = self._orig_cw
+        self._send_dmx()
+        self.reject()

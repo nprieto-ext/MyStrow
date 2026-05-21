@@ -40,12 +40,12 @@ BUILTIN_FIXTURES = [
     {"name": "Cyclorama Incandescent",               "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "contre", "profile": ["Dim"],                                                 "builtin": _B},
     {"name": "Strip / Rampe Incandescent",           "manufacturer": "Générique", "fixture_type": "Gradateur",       "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
     # ── Lyres / Têtes mobiles ─────────────────────────────────────────────────
-    {"name": "Lyre Spot · Basique (5ch)",            "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Shutter","Dim","ColorWheel","Gobo1","Speed"],           "builtin": _B},
-    {"name": "Lyre Spot · Pan/Tilt (8ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Shutter","Dim","ColorWheel","Gobo1","Speed","Mode"], "builtin": _B},
-    {"name": "Lyre Wash · R, G, B (8ch)",            "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","Dim","Shutter","Speed"],       "builtin": _B},
-    {"name": "Lyre Wash · R, G, B, Blanc (9ch)",     "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","W","Dim","Shutter","Speed"],   "builtin": _B},
-    {"name": "Lyre Beam · Pan/Tilt (7ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","ColorWheel","Gobo1","Shutter","Dim","Speed"], "builtin": _B},
-    {"name": "Lyre Spot · Complet (12ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Focus","Mode"], "builtin": _B},
+    {"name": "Lyre Spot · Basique (7ch)",            "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Shutter","Dim","ColorWheel","Gobo1","Speed"], "builtin": _B},
+    {"name": "Lyre Spot · Pan/Tilt (8ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Shutter","Dim","ColorWheel","Gobo1","Speed","Mode"], "builtin": _B},
+    {"name": "Lyre Wash · R, G, B (8ch)",            "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","R","G","B","Dim","Shutter","Speed"],       "builtin": _B},
+    {"name": "Lyre Wash · R, G, B, Blanc (9ch)",     "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","R","G","B","W","Dim","Shutter","Speed"],   "builtin": _B},
+    {"name": "Lyre Beam · Pan/Tilt (7ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","ColorWheel","Gobo1","Shutter","Dim","Speed"], "builtin": _B},
+    {"name": "Lyre Spot · Complet (12ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Focus","Mode"], "builtin": _B},
     # ── Barres LED ────────────────────────────────────────────────────────────
     {"name": "Barre LED · R, G, B (3ch)",            "manufacturer": "Générique", "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "Barre LED · R, G, B, Dim, Strobe (5ch)","manufacturer": "Générique", "fixture_type": "Barre LED",      "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
@@ -66,13 +66,13 @@ BUILTIN_FIXTURES = [
     {"name": "Mega HEX PAR 12ch",           "manufacturer": "ADJ",       "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","Ambre","W","UV","Strobe","ColorWheel","Speed","Mode","Mode"], "builtin": _B},
     {"name": "12P HEX IP 7ch",              "manufacturer": "ADJ",       "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Ambre","W","UV","Dim"],                     "builtin": _B},
     {"name": "Ultra HEX PAR 3 7ch",         "manufacturer": "ADJ",       "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Ambre","W","UV","Dim"],                     "builtin": _B},
-    {"name": "Inno Pocket Roll 6ch",        "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","ColorWheel","Gobo1","Speed","Strobe"],     "builtin": _B},
-    {"name": "Vizi Beam 5RX 12ch",          "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Focus","Mode"], "builtin": _B},
-    {"name": "Focus Spot 4Z 9ch",           "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","Gobo1","Shutter","Dim","Zoom"], "builtin": _B},
-    {"name": "Vizi Wash Z19 7ch",           "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","W","Dim"],                     "builtin": _B},
-    {"name": "Vizi Wash Z37 9ch",           "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim"], "builtin": _B},
-    {"name": "Inno Pocket Beam 4ch",        "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","ColorWheel"],                      "builtin": _B},
-    {"name": "Nucleus Pro 8ch",             "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","W","Shutter","Speed"],         "builtin": _B},
+    {"name": "Inno Pocket Roll 6ch",        "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","ColorWheel","Gobo1","Speed","Strobe"],     "builtin": _B},
+    {"name": "Vizi Beam 5RX 12ch",          "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Focus","Mode"], "builtin": _B},
+    {"name": "Focus Spot 4Z 9ch",           "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","Gobo1","Shutter","Dim","Zoom"], "builtin": _B},
+    {"name": "Vizi Wash Z19 7ch",           "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","R","G","B","W","Dim"],                     "builtin": _B},
+    {"name": "Vizi Wash Z37 9ch",           "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim"], "builtin": _B},
+    {"name": "Inno Pocket Beam 4ch",        "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel"],                      "builtin": _B},
+    {"name": "Nucleus Pro 8ch",             "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","R","G","B","W","Shutter","Speed"],         "builtin": _B},
     {"name": "Jolt 300 2ch",                "manufacturer": "ADJ",       "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
     {"name": "Dotz Bar 20 5ch",             "manufacturer": "ADJ",       "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
     {"name": "Fog Fury Jett 2ch",           "manufacturer": "ADJ",       "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
@@ -89,9 +89,9 @@ BUILTIN_FIXTURES = [
     {"name": "FLAT PAR TRI 5ch",            "manufacturer": "Cameo",     "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
     {"name": "THUNDERWASH 600 RGBW 4ch",    "manufacturer": "Cameo",     "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
     {"name": "THUNDERWASH 600 RGBW 7ch",    "manufacturer": "Cameo",     "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","W","Strobe","Mode"],                  "builtin": _B},
-    {"name": "HYDRASPOT 300 10ch",          "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Shutter","Dim","Zoom"], "builtin": _B},
-    {"name": "HYDRABEAM 4000 RGBW 9ch",     "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
-    {"name": "HYDRABEAM 400 RGBW 9ch",      "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
+    {"name": "HYDRASPOT 300 10ch",          "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Shutter","Dim","Zoom"], "builtin": _B},
+    {"name": "HYDRABEAM 4000 RGBW 9ch",     "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
+    {"name": "HYDRABEAM 400 RGBW 9ch",      "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
     {"name": "PIXBAR 600 PRO 8ch",          "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe"],            "builtin": _B},
     {"name": "PIXBAR 650 CPRO 8ch",         "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe"],            "builtin": _B},
     {"name": "HYDRABAR 10 IP 9ch",          "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe","Mode"],     "builtin": _B},
@@ -106,10 +106,10 @@ BUILTIN_FIXTURES = [
     {"name": "SlimPAR 64 RGBAW 6ch",        "manufacturer": "Chauvet DJ","fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","Ambre","W"],                         "builtin": _B},
     {"name": "Colorado 2 Solo 5ch",         "manufacturer": "Chauvet DJ","fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","W"],                                 "builtin": _B},
     {"name": "Colorado 2 Solo 9ch",         "manufacturer": "Chauvet DJ","fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","W","Strobe","ColorWheel","Zoom","Mode"], "builtin": _B},
-    {"name": "Intimidator Spot 360 8ch",    "manufacturer": "Chauvet DJ","fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim","Mode"], "builtin": _B},
-    {"name": "Intimidator Wash 360 9ch",    "manufacturer": "Chauvet DJ","fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","R","G","B","W","Shutter","Dim"],   "builtin": _B},
-    {"name": "Intimidator Beam 140SR 9ch",  "manufacturer": "Chauvet DJ","fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","Gobo1","ColorWheel","Shutter","Dim"], "builtin": _B},
-    {"name": "Intimidator Hybrid 140SR 17ch","manufacturer": "Chauvet DJ","fixture_type": "Moving Head",    "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","W","Mode"], "builtin": _B},
+    {"name": "Intimidator Spot 360 8ch",    "manufacturer": "Chauvet DJ","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim","Mode"], "builtin": _B},
+    {"name": "Intimidator Wash 360 9ch",    "manufacturer": "Chauvet DJ","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","R","G","B","W","Shutter","Dim"],   "builtin": _B},
+    {"name": "Intimidator Beam 140SR 9ch",  "manufacturer": "Chauvet DJ","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","Gobo1","ColorWheel","Shutter","Dim"], "builtin": _B},
+    {"name": "Intimidator Hybrid 140SR 17ch","manufacturer": "Chauvet DJ","fixture_type": "Moving Head",    "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","W","Mode"], "builtin": _B},
     {"name": "Swarm 5 FX 4ch",              "manufacturer": "Chauvet DJ","fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Strobe"],                                   "builtin": _B},
     {"name": "Hurricane 1000 2ch",          "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
     {"name": "Amhaze II 2ch",               "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
@@ -120,9 +120,9 @@ BUILTIN_FIXTURES = [
     {"name": "Ovation E-190WW 3ch",         "manufacturer": "Chauvet Professional","fixture_type": "PAR LED","group": "face",  "profile": ["Dim","Strobe","Mode"],                                 "builtin": _B},
     {"name": "Ovation P-56FC 3ch",          "manufacturer": "Chauvet Professional","fixture_type": "PAR LED","group": "face",  "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "Ovation P-56FC 6ch",          "manufacturer": "Chauvet Professional","fixture_type": "PAR LED","group": "face",  "profile": ["Dim","R","G","B","W","Ambre"],                         "builtin": _B},
-    {"name": "Rogue R2 Spot 16ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "lyre", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","Mode"], "builtin": _B},
-    {"name": "Rogue R2 Wash 14ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "lyre", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim","Shutter","Zoom","Mode","Mode"], "builtin": _B},
-    {"name": "Rogue R3 Beam 16ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "lyre", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Focus","Shutter","Dim","R","G","B","W","Mode"], "builtin": _B},
+    {"name": "Rogue R2 Spot 16ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "face", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","Mode"], "builtin": _B},
+    {"name": "Rogue R2 Wash 14ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "face", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim","Shutter","Zoom","Mode","Mode"], "builtin": _B},
+    {"name": "Rogue R3 Beam 16ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "face", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Focus","Shutter","Dim","R","G","B","W","Mode"], "builtin": _B},
     {"name": "Nexus 4x4 3ch",               "manufacturer": "Chauvet Professional","fixture_type": "Barre LED","group": "barre", "profile": ["R","G","B"],                                        "builtin": _B},
     {"name": "Nexus 4x4 7ch",               "manufacturer": "Chauvet Professional","fixture_type": "Barre LED","group": "barre", "profile": ["Dim","R","G","B","W","Strobe","Mode"],              "builtin": _B},
     {"name": "Strike 4 4ch",                "manufacturer": "Chauvet Professional","fixture_type": "Stroboscope","group": "strobe","profile": ["Shutter","Dim","Mode","Strobe"],                  "builtin": _B},
@@ -138,17 +138,17 @@ BUILTIN_FIXTURES = [
     {"name": "LED T-36 RGB 3ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "LED T-36 RGB 6ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","Strobe","Mode"],                     "builtin": _B},
     {"name": "LED T-36 QCL 6ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Strobe"],                        "builtin": _B},
-    {"name": "TMH-X12 Moving Wash 10ch",    "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim"], "builtin": _B},
-    {"name": "TMH-300 Spot 9ch",            "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Shutter","Dim"], "builtin": _B},
-    {"name": "TMH-H90 Hybrid 16ch",         "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","Mode"], "builtin": _B},
+    {"name": "TMH-X12 Moving Wash 10ch",    "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim"], "builtin": _B},
+    {"name": "TMH-300 Spot 9ch",            "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Shutter","Dim"], "builtin": _B},
+    {"name": "TMH-H90 Hybrid 16ch",         "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","Mode"], "builtin": _B},
     {"name": "NSF-250 Smoke 2ch",           "manufacturer": "Eurolite",  "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
     {"name": "LED Strobe 2ch",              "manufacturer": "Eurolite",  "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # GLP (German Light Products)
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "impression X4 14ch",          "manufacturer": "GLP",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode","Mode"], "builtin": _B},
-    {"name": "impression X4 S 14ch",        "manufacturer": "GLP",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode","Mode"], "builtin": _B},
+    {"name": "impression X4 14ch",          "manufacturer": "GLP",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode","Mode"], "builtin": _B},
+    {"name": "impression X4 S 14ch",        "manufacturer": "GLP",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode","Mode"], "builtin": _B},
     {"name": "impression FR10 Bar 8ch",     "manufacturer": "GLP",       "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","W","Dim","Strobe","Mode","Mode"],           "builtin": _B},
     {"name": "JDC1 16ch",                   "manufacturer": "GLP",       "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Dim","Strobe","R","G","B","W","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
     {"name": "X4 atom 5ch",                 "manufacturer": "GLP",       "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Dim"],                                 "builtin": _B},
@@ -156,40 +156,40 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # Clay Paky / Arri
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "Sharpy 16ch",                 "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Focus","Shutter","Dim","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
-    {"name": "Alpha Spot HPE 300 16ch",     "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"],        "builtin": _B},
-    {"name": "Axcor Spot 300 16ch",         "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"],        "builtin": _B},
-    {"name": "Axcor Wash 600 16ch",         "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Speed","Mode","Mode"],                      "builtin": _B},
+    {"name": "Sharpy 16ch",                 "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Focus","Shutter","Dim","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
+    {"name": "Alpha Spot HPE 300 16ch",     "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"],        "builtin": _B},
+    {"name": "Axcor Spot 300 16ch",         "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"],        "builtin": _B},
+    {"name": "Axcor Wash 600 16ch",         "manufacturer": "Clay Paky", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Speed","Mode","Mode"],                      "builtin": _B},
     {"name": "Aleda K20 HX 6ch",            "manufacturer": "Clay Paky", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","W","Ambre"],                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Martin Professional
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "MAC Aura 16ch",               "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","Dim","R","G","B","W","UV","Shutter","Speed","Zoom","Focus","Mode"], "builtin": _B},
-    {"name": "MAC Quantum Wash 14ch",       "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode"],            "builtin": _B},
-    {"name": "MAC Encore Performance 26ch", "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","UV","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
-    {"name": "MAC101 7ch",                  "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","Dim","Strobe"],                "builtin": _B},
+    {"name": "MAC Aura 16ch",               "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","Dim","R","G","B","W","UV","Shutter","Speed","Zoom","Focus","Mode"], "builtin": _B},
+    {"name": "MAC Quantum Wash 14ch",       "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode"],            "builtin": _B},
+    {"name": "MAC Encore Performance 26ch", "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","UV","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
+    {"name": "MAC101 7ch",                  "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","R","G","B","Dim","Strobe"],                "builtin": _B},
     {"name": "RUSH PAR 2 CT 3ch",           "manufacturer": "Martin",    "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "RUSH PAR 2 CT 5ch",           "manufacturer": "Martin",    "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","Strobe"],                            "builtin": _B},
-    {"name": "RUSH MH 3 Beam 8ch",          "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Gobo1","Mode"],      "builtin": _B},
+    {"name": "RUSH MH 3 Beam 8ch",          "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Gobo1","Mode"],      "builtin": _B},
     {"name": "Atomic 3000 LED 3ch",         "manufacturer": "Martin",    "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim","Mode"],                                "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Robe
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "Robin 100 LEDBeam 6ch",       "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","Dim"],                        "builtin": _B},
-    {"name": "Robin 100 LEDBeam 14ch",      "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","R","G","B","W","Dim","Shutter","Speed","Zoom","Mode"], "builtin": _B},
-    {"name": "Robin 600E Spot 16ch",        "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Speed","Mode","Mode","Mode","Mode"], "builtin": _B},
-    {"name": "Pointe 16ch",                 "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Shutter","Dim","Focus","Zoom","R","G","B","Mode"], "builtin": _B},  # noqa
-    {"name": "T1 Profile 26ch",             "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","UV","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
-    {"name": "MegaPointe 20ch",             "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","UV","Mode","Mode"], "builtin": _B},
+    {"name": "Robin 100 LEDBeam 6ch",       "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","R","G","B","Dim"],                        "builtin": _B},
+    {"name": "Robin 100 LEDBeam 14ch",      "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","R","G","B","W","Dim","Shutter","Speed","Zoom","Mode"], "builtin": _B},
+    {"name": "Robin 600E Spot 16ch",        "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Speed","Mode","Mode","Mode","Mode"], "builtin": _B},
+    {"name": "Pointe 16ch",                 "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Shutter","Dim","Focus","Zoom","R","G","B","Mode"], "builtin": _B},  # noqa
+    {"name": "T1 Profile 26ch",             "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","UV","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
+    {"name": "MegaPointe 20ch",             "manufacturer": "Robe",      "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","UV","Mode","Mode"], "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Elation Professional
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "Fuze Wash Z 350 19ch",        "manufacturer": "Elation",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
-    {"name": "Fuze Spot 16ch",              "manufacturer": "Elation",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"],        "builtin": _B},
-    {"name": "Rayzor 760 18ch",             "manufacturer": "Elation",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Mode","Mode","Mode","Mode"],        "builtin": _B},
+    {"name": "Fuze Wash Z 350 19ch",        "manufacturer": "Elation",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
+    {"name": "Fuze Spot 16ch",              "manufacturer": "Elation",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"],        "builtin": _B},
+    {"name": "Rayzor 760 18ch",             "manufacturer": "Elation",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Mode","Mode","Mode","Mode"],        "builtin": _B},
     {"name": "SixPar 200 7ch",              "manufacturer": "Elation",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
     {"name": "SixPar 300 7ch",              "manufacturer": "Elation",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
     {"name": "Cuepix Panel WW3 8ch",        "manufacturer": "Elation",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Strobe","Mode","Mode"],           "builtin": _B},
@@ -203,9 +203,9 @@ BUILTIN_FIXTURES = [
     {"name": "Compact PAR QCL 4ch",         "manufacturer": "Showtec",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
     {"name": "Compact PAR QCL 7ch",         "manufacturer": "Showtec",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","W","Strobe","Mode"],                  "builtin": _B},
     {"name": "Compact PAR 7 HEX IP 7ch",    "manufacturer": "Showtec",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
-    {"name": "Phantom 25 Spot 11ch",        "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Mode"], "builtin": _B},
-    {"name": "Phantom 65 Wash 9ch",         "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
-    {"name": "Phantom 120 Spot 16ch",       "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"], "builtin": _B},
+    {"name": "Phantom 25 Spot 11ch",        "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Mode"], "builtin": _B},
+    {"name": "Phantom 65 Wash 9ch",         "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
+    {"name": "Phantom 120 Spot 16ch",       "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"], "builtin": _B},
     {"name": "LED Bar 4 RGB 3ch",           "manufacturer": "Showtec",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "LED Bar 8 RGB 3ch",           "manufacturer": "Showtec",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "LED Strobe SQ 2ch",           "manufacturer": "Showtec",   "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
@@ -219,16 +219,16 @@ BUILTIN_FIXTURES = [
     {"name": "LED Par 64 RGBW 4ch",         "manufacturer": "Stairville","fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
     {"name": "LED Par 64 RGBW 5ch",         "manufacturer": "Stairville","fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Dim"],                                 "builtin": _B},
     {"name": "LED Par 64 HEX 6ch",          "manufacturer": "Stairville","fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV"],                          "builtin": _B},
-    {"name": "MH-x25 Beam 7ch",             "manufacturer": "Stairville","fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Mode"], "builtin": _B},
-    {"name": "MH-x200 Beam 8ch",            "manufacturer": "Stairville","fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim","Mode"], "builtin": _B},
+    {"name": "MH-x25 Beam 7ch",             "manufacturer": "Stairville","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Mode"], "builtin": _B},
+    {"name": "MH-x200 Beam 8ch",            "manufacturer": "Stairville","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim","Mode"], "builtin": _B},
     {"name": "Strobe SMD PRO 2ch",          "manufacturer": "Stairville","fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
     {"name": "Smoke Fog 1500 2ch",          "manufacturer": "Stairville","fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Varytec (Thomann)
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "Hero Spot Wash 100 RGBWa 15ch","manufacturer": "Varytec",  "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","Dim","Shutter","Zoom","Mode","Mode"], "builtin": _B},
-    {"name": "Hero Wash 100 9ch",           "manufacturer": "Varytec",  "fixture_type": "Moving Head",      "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim"], "builtin": _B},
+    {"name": "Hero Spot Wash 100 RGBWa 15ch","manufacturer": "Varytec",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","Dim","Shutter","Zoom","Mode","Mode"], "builtin": _B},
+    {"name": "Hero Wash 100 9ch",           "manufacturer": "Varytec",  "fixture_type": "Moving Head",      "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim"], "builtin": _B},
     {"name": "LED PAR 64 RGBW 5ch",         "manufacturer": "Varytec",  "fixture_type": "PAR LED",          "group": "face",   "profile": ["R","G","B","W","Dim"],                                 "builtin": _B},
     {"name": "LED PAR 64 HEX 7ch",          "manufacturer": "Varytec",  "fixture_type": "PAR LED",          "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
     {"name": "Giga Bar 2 RGBW 6ch",         "manufacturer": "Varytec",  "fixture_type": "Barre LED",        "group": "barre",  "profile": ["R","G","B","W","Dim","Strobe"],                        "builtin": _B},
@@ -237,8 +237,8 @@ BUILTIN_FIXTURES = [
     # Contest (marque française)
     # ──────────────────────────────────────────────────────────────────────────
     {"name": "iColor-Par 6ch",              "manufacturer": "Contest",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Dim","Strobe"],                        "builtin": _B},
-    {"name": "iMoveP 7ch",                  "manufacturer": "Contest",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Mode"], "builtin": _B},
-    {"name": "iMoveW 9ch",                  "manufacturer": "Contest",   "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","R","G","B","W","Dim","Shutter"],   "builtin": _B},
+    {"name": "iMoveP 7ch",                  "manufacturer": "Contest",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Mode"], "builtin": _B},
+    {"name": "iMoveW 9ch",                  "manufacturer": "Contest",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","R","G","B","W","Dim","Shutter"],   "builtin": _B},
     {"name": "iPixel-Bar4 5ch",             "manufacturer": "Contest",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -247,14 +247,14 @@ BUILTIN_FIXTURES = [
     {"name": "Arcled 715CW 5ch",            "manufacturer": "Prolights", "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Dim"],                                 "builtin": _B},
     {"name": "Arcled 715CW 8ch",            "manufacturer": "Prolights", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe"],            "builtin": _B},
     {"name": "Studiocob FC 4ch",            "manufacturer": "Prolights", "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
-    {"name": "EclStudio 12ch",              "manufacturer": "Prolights", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim","Shutter","Zoom"], "builtin": _B},
-    {"name": "EclSpot Profile 13ch",        "manufacturer": "Prolights", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Focus","Shutter","Dim","Zoom","Mode"], "builtin": _B},
+    {"name": "EclStudio 12ch",              "manufacturer": "Prolights", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim","Shutter","Zoom"], "builtin": _B},
+    {"name": "EclSpot Profile 13ch",        "manufacturer": "Prolights", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Focus","Shutter","Dim","Zoom","Mode"], "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Briteq
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "BT-DYNAX 18ch",               "manufacturer": "Briteq",    "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","Mode"], "builtin": _B},
-    {"name": "BT-MOVING HEAD BEAM 7ch",     "manufacturer": "Briteq",    "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim"], "builtin": _B},
+    {"name": "BT-DYNAX 18ch",               "manufacturer": "Briteq",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","Mode"], "builtin": _B},
+    {"name": "BT-MOVING HEAD BEAM 7ch",     "manufacturer": "Briteq",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim"], "builtin": _B},
     {"name": "BT-PIXEL PAR 7ch",            "manufacturer": "Briteq",    "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
     {"name": "BT-LED BAR6 5ch",             "manufacturer": "Briteq",    "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
 
@@ -275,13 +275,13 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # JB-Lighting
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "P12 Wash 16ch",               "manufacturer": "JB-Lighting","fixture_type": "Moving Head",    "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Mode","Mode"], "builtin": _B},
-    {"name": "Sparx10 16ch",                "manufacturer": "JB-Lighting","fixture_type": "Moving Head",    "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"], "builtin": _B},
+    {"name": "P12 Wash 16ch",               "manufacturer": "JB-Lighting","fixture_type": "Moving Head",    "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Mode","Mode"], "builtin": _B},
+    {"name": "Sparx10 16ch",                "manufacturer": "JB-Lighting","fixture_type": "Moving Head",    "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"], "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # SGM
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "G-7 Spot 16ch",               "manufacturer": "SGM",       "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"], "builtin": _B},
+    {"name": "G-7 Spot 16ch",               "manufacturer": "SGM",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"], "builtin": _B},
     {"name": "P-5 5ch",                     "manufacturer": "SGM",       "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Dim"],                                 "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -310,7 +310,7 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     {"name": "Bullet Wash 12 7ch",          "manufacturer": "Sagitter",  "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
     {"name": "DigitalPar 3 3ch",            "manufacturer": "Sagitter",  "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
-    {"name": "Moov 14 5ch",                 "manufacturer": "Sagitter",  "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Speed","Shutter","Dim"],                   "builtin": _B},
+    {"name": "Moov 14 5ch",                 "manufacturer": "Sagitter",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","Shutter","Dim"],                   "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # LeMaitre

@@ -191,22 +191,21 @@ class SplashScreen(QWidget):
             layout.addWidget(self.logo_label)
 
         # --- Titre bicolore MY / STROW ---
-        title_row = QHBoxLayout()
-        title_row.setSpacing(0)
-        title_row.setContentsMargins(0, 0, 0, 0)
-        _title_font = QFont("Bebas Neue", 36)
+        # Police avec stack de fallback : Bebas Neue (si installée) → Impact → Arial Black
+        # Impact est présente sur Windows/macOS/Linux et visuellement très proche.
+        _title_font = QFont()
+        _title_font.setFamilies(["Bebas Neue", "Impact", "Arial Black", "Arial"])
+        _title_font.setPointSize(36)
         _title_font.setLetterSpacing(QFont.AbsoluteSpacing, 2)
-        lbl_my = QLabel("MY")
-        lbl_my.setFont(_title_font)
-        lbl_my.setStyleSheet("color:#ffffff; background:transparent;")
-        lbl_strow = QLabel("STROW")
-        lbl_strow.setFont(_title_font)
-        lbl_strow.setStyleSheet("color:#FFE000; background:transparent;")
-        title_row.addStretch()
-        title_row.addWidget(lbl_my)
-        title_row.addWidget(lbl_strow)
-        title_row.addStretch()
-        layout.addLayout(title_row)
+        # Un seul QLabel HTML évite les problèmes de centrage quand les métriques
+        # de police diffèrent selon la plateforme (deux labels côte à côte pouvaient
+        # sembler décalés si le font fallback avait des dimensions différentes).
+        lbl_title = QLabel('<span style="color:#ffffff;">MY</span>'
+                           '<span style="color:#FFE000;">STROW</span>')
+        lbl_title.setFont(_title_font)
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet("background: transparent;")
+        layout.addWidget(lbl_title)
 
         # --- Version sous le titre ---
         ver = QLabel(f"v{VERSION}")

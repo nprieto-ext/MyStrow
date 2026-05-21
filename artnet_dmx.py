@@ -9,6 +9,7 @@ import json
 import socket
 import struct
 import time
+import threading
 
 try:
     import serial
@@ -50,7 +51,7 @@ CHANNEL_TYPES = [
     "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Iris",
     "Smoke", "Fan",
     "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo1Rot", "Gobo2",
-    "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
+    "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode", "Effects",
 ]
 
 # Noms courts pour l'affichage dans les combos
@@ -63,6 +64,7 @@ CHANNEL_DISPLAY = {
     "Gobo1": "Gobo1", "Gobo1Rot": "GoboR", "Gobo2": "Gobo2",
     "Prism": "Prism", "PrismRot": "PrsmR", "Focus": "Focus",
     "ColorWheel": "CWheel", "Shutter": "Shut", "Speed": "Speed", "Mode": "Mode",
+    "Effects": "FX",
 }
 
 
@@ -119,6 +121,11 @@ class ArtNetDMX:
         # --- Produit selectionne ---
         self.product_id   = "artnet"
         self.product_name = "Art-Net (réseau)"
+
+        # Verrou partagé : protège dmx_data contre les race conditions
+        # entre le thread Qt (écriture via update_from_projectors) et les
+        # threads ENTTEC (lecture snapshot avant envoi série).
+        self._dmx_lock = threading.Lock()
 
         # --- ENTTEC Open DMX USB ---
         self.com_port = None
@@ -309,7 +316,8 @@ class ArtNetDMX:
             ser = self._serial
             if ser and ser.is_open:
                 try:
-                    frame = b'\x00' + bytes(self.dmx_data[0][:512])
+                    with self._dmx_lock:
+                        frame = b'\x00' + bytes(self.dmx_data[0][:512])
                     if not _use_baud_trick:
                         # Méthode 1 : break_condition (FTDI VCP standard)
                         ser.break_condition = True
@@ -449,7 +457,8 @@ class ArtNetDMX:
             ser = self._pro_serial
             if ser and ser.is_open:
                 try:
-                    pkt = self._build_pro_packet(self.dmx_data[0])
+                    with self._dmx_lock:
+                        pkt = self._build_pro_packet(self.dmx_data[0])
                     ser.write(pkt)
                     ser.flush()
                 except Exception as e:
@@ -601,6 +610,11 @@ class ArtNetDMX:
 
     def update_from_projectors(self, projectors, effect_speed=0):
         """Met a jour les canaux DMX depuis la liste des projecteurs"""
+        with self._dmx_lock:
+            self._update_from_projectors_locked(projectors, effect_speed)
+
+    def _update_from_projectors_locked(self, projectors, effect_speed=0):
+        """Mise à jour interne — doit être appelée sous _dmx_lock."""
         for i, proj in enumerate(projectors):
             proj_key = f"{proj.group}_{i}"
             if proj_key not in self.projector_channels:
@@ -783,6 +797,8 @@ class ArtNetDMX:
                     ch_val = getattr(proj, 'prism', 0)
                 elif ch_type == "PrismRot":
                     ch_val = getattr(proj, 'prism_rotation', 0)
+                elif ch_type == "Effects":
+                    ch_val = getattr(proj, 'effects', 0)
                 elif ch_type in ("Gobo2", "Focus", "Speed", "Mode"):
                     ch_val = 0
                 else:

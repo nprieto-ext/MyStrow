@@ -2427,7 +2427,9 @@ print(json.dumps(waveform))
             if result:
                 clip, clip_x, _ = result
                 self.show_position_clip_menu(clip, event.globalPos())
-            # zone vide → pas de menu
+            else:
+                click_time = max(0, (event.pos().x() - 145) / self.pixels_per_ms)
+                self.show_position_empty_menu(event.pos(), event.globalPos(), click_time)
         elif result:
             clip, clip_x, _ = result
             click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
@@ -2767,24 +2769,112 @@ print(json.dumps(waveform))
         except Exception:
             pass
 
+        def _do_assign_preset(idx, p_name):
+            clip.position_preset_idx  = idx
+            clip.position_preset_name = p_name
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+
         if presets:
             chg = menu.addAction(tr("lt_pos_ctx_change"))
             sub = QMenu(menu)
             sub.setStyleSheet(menu.styleSheet())
             for i, preset in enumerate(presets):
                 a = sub.addAction(("✓ " if getattr(clip, 'position_preset_idx', None) == i else "    ") + preset["name"])
-                def _assign(_, idx=i, p=preset):
-                    clip.position_preset_idx  = idx
-                    clip.position_preset_name = p["name"]
-                    self.update()
-                    if hasattr(self.parent_editor, 'save_state'):
-                        self.parent_editor.save_state()
-                a.triggered.connect(_assign)
+                a.triggered.connect(lambda _, idx=i, p=preset: _do_assign_preset(idx, p["name"]))
             chg.setMenu(sub)
-            menu.addSeparator()
 
+        # ── Presets Plan de Feu ───────────────────────────────────────────────
+        mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
+        pdf_presets = mw._load_pdf_presets() if mw and hasattr(mw, '_load_pdf_presets') else []
+        if pdf_presets:
+            pdf_sub_act = menu.addAction("Plan de Feu ▸")
+            pdf_sub = QMenu(menu)
+            pdf_sub.setStyleSheet(menu.styleSheet())
+            for pp in pdf_presets:
+                def _assign_pdf(_, pdf=pp):
+                    akai = mw._pdf_preset_to_akai(pdf)
+                    # Chercher ou créer dans position_presets
+                    target_idx = None
+                    for ei, ep in enumerate(getattr(mw, 'position_presets', [])):
+                        if ep["name"] == akai["name"]:
+                            target_idx = ei
+                            break
+                    if target_idx is None:
+                        mw.position_presets.append(akai)
+                        target_idx = len(mw.position_presets) - 1
+                        mw._save_akai_config_auto()
+                    _do_assign_preset(target_idx, akai["name"])
+                cur_ok = getattr(clip, 'position_preset_name', '') == pp["name"]
+                a2 = pdf_sub.addAction(("✓ " if cur_ok else "    ") + pp["name"])
+                a2.triggered.connect(_assign_pdf)
+            pdf_sub_act.setMenu(pdf_sub)
+
+        menu.addSeparator()
         act_del = menu.addAction(tr("lt_menu_delete"))
         act_del.triggered.connect(lambda: self._delete_clip(clip))
+        menu.exec(global_pos)
+
+    def show_position_empty_menu(self, local_pos, global_pos, click_time_ms):
+        """Menu clic droit sur zone vide de la piste Position — créer un clip depuis un preset."""
+        menu = QMenu(self)
+        _style = (
+            "QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:2px; font-size:11px; }"
+            "QMenu::item { padding:4px 12px; border-radius:3px; color:#e0e0e0; }"
+            "QMenu::item:selected { background:#1a2a4a; color:#fff; }"
+            "QMenu::item:disabled { color:#555; font-size:9px; letter-spacing:1px; }"
+            "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
+        )
+        menu.setStyleSheet(_style)
+        hdr = menu.addAction("Ajouter une position")
+        hdr.setEnabled(False)
+        menu.addSeparator()
+
+        mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
+        _DEFAULT_DUR = 5000  # 5 s par défaut
+
+        def _add_clip_with_preset(idx, name):
+            clip = self.add_clip(click_time_ms, _DEFAULT_DUR, QColor("#2255ee"), 100)
+            clip.position_preset_idx  = idx
+            clip.position_preset_name = name
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+
+        # Presets AKAI existants
+        akai_presets = getattr(mw, 'position_presets', []) if mw else []
+        if akai_presets:
+            for i, preset in enumerate(akai_presets):
+                a = menu.addAction("    " + preset["name"])
+                a.triggered.connect(lambda _, idx=i, n=preset["name"]: _add_clip_with_preset(idx, n))
+            menu.addSeparator()
+
+        # Presets Plan de Feu
+        pdf_presets = mw._load_pdf_presets() if mw and hasattr(mw, '_load_pdf_presets') else []
+        if pdf_presets:
+            pdf_hdr = menu.addAction("▸ Plan de Feu")
+            pdf_hdr.setEnabled(False)
+            for pp in pdf_presets:
+                def _add_from_pdf(_, pdf=pp):
+                    akai = mw._pdf_preset_to_akai(pdf)
+                    target_idx = None
+                    for ei, ep in enumerate(getattr(mw, 'position_presets', [])):
+                        if ep["name"] == akai["name"]:
+                            target_idx = ei
+                            break
+                    if target_idx is None:
+                        mw.position_presets.append(akai)
+                        target_idx = len(mw.position_presets) - 1
+                        mw._save_akai_config_auto()
+                    _add_clip_with_preset(target_idx, akai["name"])
+                a2 = menu.addAction("    " + pp["name"])
+                a2.triggered.connect(_add_from_pdf)
+
+        if not akai_presets and not pdf_presets:
+            no_act = menu.addAction("Aucun preset — enregistrez d'abord depuis les pads POS ou le plan de feu")
+            no_act.setEnabled(False)
+
         menu.exec(global_pos)
 
     def _delete_clip(self, clip):

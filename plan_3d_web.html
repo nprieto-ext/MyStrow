@@ -157,16 +157,6 @@ const cycMesh = new THREE.Mesh(
 cycMesh.position.set(0, 5.5, -5.6);
 scene.add(cycMesh);
 
-// Jambes de scène (pendrilles noires côtés)
-const legMat = new THREE.MeshStandardMaterial({ color:0x030208, roughness:1.0, side:THREE.DoubleSide });
-for (const [sx, rY] of [[-9, Math.PI/2], [9, -Math.PI/2]]) {
-  for (const cz of [-3, 1]) {
-    const leg = new THREE.Mesh(new THREE.PlaneGeometry(4, 7), legMat);
-    leg.rotation.y = rY;
-    leg.position.set(sx, 3.5, cz);
-    scene.add(leg);
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Truss
@@ -734,22 +724,32 @@ function beamFloor(p) {
     const panA  = (p.pan  - 32768) / 32768.0 * Math.PI;
     const theta = (p.tilt - 32768) / 32768.0 * Math.PI * 0.75;
     const rx    = (p.rot3d_x || 0) * Math.PI / 180;
-    // Tilt effectif après rotation globale X : teff = theta - rx
-    const teff  = theta - rx;
-    const bx = Math.sin(panA) * Math.sin(teff);
-    const by = -Math.cos(teff);
-    const bz = Math.cos(panA) * Math.sin(teff);
-    // Hauteur de la lentille : compense la rotation globale
-    const lensY = hy - 0.60 * Math.cos(rx);
+    // Modèle linéaire indépendant (standard consoles DMX) :
+    // Pan → déflexion X, Tilt → déflexion Z, axes indépendants.
+    // Cercle (sin+cos 90°) = cercle sur scène, Huit = 8, Infini = ∞, Carré = □.
+    const _bx0 = Math.sin(panA);
+    const _bz0 = Math.sin(theta);
+    const _nm  = Math.sqrt(_bx0 * _bx0 + 1.0 + _bz0 * _bz0);
+    const _bxn = _bx0 / _nm, _byn = -1.0 / _nm, _bzn = _bz0 / _nm;
+    // Rotation de corps (rx)
+    const bx = _bxn;
+    const by = _byn * Math.cos(rx) - _bzn * Math.sin(rx);
+    const bz = _byn * Math.sin(rx) + _bzn * Math.cos(rx);
+    // Position réelle de la lentille (même ordre : Ry d'abord, puis Rx)
+    const ly_l  = -0.35 - 0.248 * Math.cos(theta);
+    const lz_l  =          0.248 * Math.sin(theta);
+    const lensX = p.x + lz_l * Math.sin(panA);
+    const lensY = hy  + ly_l * Math.cos(rx) - lz_l * Math.cos(panA) * Math.sin(rx);
+    const lensZ = p.z + ly_l * Math.sin(rx) + lz_l * Math.cos(panA) * Math.cos(rx);
     const goingUp = by > 0.05;
     let t;
     if      (by < -0.05)  t = Math.min(lensY / (-by), 10.0);
     else if (goingUp)     t = Math.min((15.0 - lensY) / by, 15.0);
     else                  t = 10.0;
     return {
-      fx: Math.max(-11, Math.min(11, p.x + bx*t)),
-      fz: Math.max(-8,  Math.min(13, p.z + bz*t)),
-      lensY, bx, by, bz, isMH, goingUp,
+      fx: Math.max(-11, Math.min(11, lensX + bx*t)),
+      fz: Math.max(-8,  Math.min(13, lensZ + bz*t)),
+      lensX, lensY, lensZ, bx, by, bz, isMH, goingUp,
     };
   } else {
     const lensY = hy - 0.333;
@@ -765,7 +765,7 @@ function beamFloor(p) {
     return {
       fx: Math.max(-11, Math.min(11, p.x + bx * t)),
       fz: Math.max(-8,  Math.min(13, p.z + bz * t)),
-      lensY, bx, by, bz, isMH: false, goingUp,
+      lensX: p.x, lensY, lensZ: p.z, bx, by, bz, isMH: false, goingUp,
     };
   }
 }
@@ -793,6 +793,10 @@ function orientCone(mesh, tipX, tipY, tipZ, baseX, baseY, baseZ, rScale) {
 // ─────────────────────────────────────────────────────────────────────────────
 // updateScene — appelé depuis Python via runJavaScript
 // ─────────────────────────────────────────────────────────────────────────────
+// Buffers pré-alloués — évite ~600 allocations Color/s qui déclenchent le GC
+const _colBuf = new THREE.Color();
+const _briBuf = new THREE.Color();
+
 window.updateScene = function(projectors) {
   const bs = window.beamScale;
 
@@ -801,10 +805,10 @@ window.updateScene = function(projectors) {
     const obj = _getObj(i);
     const lvl = Math.max(0, Math.min(1, p.level / 100.0));
     const r = p.r/255, g = p.g/255, b = p.b/255;
-    const col = new THREE.Color(r, g, b);
+    _colBuf.setRGB(r, g, b);
     const hy  = p.fixture_height ?? 7.0;
     const bf  = beamFloor(p);
-    const { fx, fz, lensY, isMH, goingUp } = bf;
+    const { fx, fz, lensX, lensY, lensZ, isMH, goingUp } = bf;
 
     // ── Corps de fixture ─────────────────────────────────────────────
     if (isMH) {
@@ -824,8 +828,8 @@ window.updateScene = function(projectors) {
 
       // Lentille MH émissive
       if (lvl > 0) {
-        const bright = col.clone().multiplyScalar(1.0 + lvl * 1.5);
-        obj.mhLens.material.emissive.copy(bright);
+        _briBuf.copy(_colBuf).multiplyScalar(1.0 + lvl * 1.5);
+        obj.mhLens.material.emissive.copy(_briBuf);
         obj.mhLens.material.emissiveIntensity = 0.8 + lvl * 3.5;
       } else {
         obj.mhLens.material.emissive.set(0, 0, 0);
@@ -851,8 +855,8 @@ window.updateScene = function(projectors) {
 
       // Lentille émissive
       if (lvl > 0) {
-        const bright = col.clone().multiplyScalar(1.0 + lvl * 1.5);
-        obj.lens.material.emissive.copy(bright);
+        _briBuf.copy(_colBuf).multiplyScalar(1.0 + lvl * 1.5);
+        obj.lens.material.emissive.copy(_briBuf);
         obj.lens.material.emissiveIntensity = 0.8 + lvl * 3.5;
       } else {
         obj.lens.material.emissive.set(0, 0, 0);
@@ -868,23 +872,23 @@ window.updateScene = function(projectors) {
       const baseY = goingUp ? 14.5 : 0.03;
 
       // Haze extérieur (très large, très transparent)
-      orientCone(obj.cHaze, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 3.0);
-      obj.cHaze.material.uniforms.uColor.value.copy(col);
+      orientCone(obj.cHaze, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 3.0);
+      obj.cHaze.material.uniforms.uColor.value.copy(_colBuf);
       obj.cHaze.material.uniforms.uAlpha.value = 0.04 * lvl;
 
       // Glow intermédiaire
-      orientCone(obj.cGlow, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 1.8);
-      obj.cGlow.material.uniforms.uColor.value.copy(col);
+      orientCone(obj.cGlow, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 1.8);
+      obj.cGlow.material.uniforms.uColor.value.copy(_colBuf);
       obj.cGlow.material.uniforms.uAlpha.value = 0.11 * lvl;
 
       // Faisceau principal
-      orientCone(obj.cMain, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 1.0);
-      obj.cMain.material.uniforms.uColor.value.copy(col);
+      orientCone(obj.cMain, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 1.0);
+      obj.cMain.material.uniforms.uColor.value.copy(_colBuf);
       obj.cMain.material.uniforms.uAlpha.value = 0.32 * lvl;
 
       // Cœur brillant (très fin)
-      orientCone(obj.cCore, p.x, lensY, p.z, fx2, baseY, fz2, base_r * 0.28);
-      obj.cCore.material.uniforms.uColor.value.copy(col);
+      orientCone(obj.cCore, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 0.28);
+      obj.cCore.material.uniforms.uColor.value.copy(_colBuf);
       obj.cCore.material.uniforms.uAlpha.value = 0.80 * lvl;
 
       if (!goingUp) {
@@ -895,7 +899,7 @@ window.updateScene = function(projectors) {
         const poolR = (0.35 + 2.2*lvl) * bs;
         obj.pool.position.set(fx2, 0.02, fz2);
         obj.pool.scale.setScalar(poolR);
-        obj.pool.material.uniforms.uColor.value.copy(col);
+        obj.pool.material.uniforms.uColor.value.copy(_colBuf);
         obj.pool.material.uniforms.uAlpha.value = 0.70 * lvl;
         obj.pool.material.uniforms.uGoboTex.value   = _goboTextures[goboSlot];
         obj.pool.material.uniforms.uGoboBlend.value = goboBlend;
@@ -905,12 +909,12 @@ window.updateScene = function(projectors) {
         // Halo diffus au sol (plus large)
         obj.halo.position.set(fx2, 0.015, fz2);
         obj.halo.scale.setScalar(poolR * 2.8);
-        obj.halo.material.uniforms.uColor.value.copy(col);
+        obj.halo.material.uniforms.uColor.value.copy(_colBuf);
         obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl;
         obj.halo.visible = true;
 
         // Point light au sol
-        obj.ptLight.color.copy(col);
+        obj.ptLight.color.copy(_colBuf);
         obj.ptLight.intensity = lvl * 4.5;
         obj.ptLight.position.set(fx2, 0.4, fz2);
       } else {
@@ -918,7 +922,7 @@ window.updateScene = function(projectors) {
         obj.pool.visible = false;
         obj.halo.visible = false;
         // Point light dans le faisceau montant
-        obj.ptLight.color.copy(col);
+        obj.ptLight.color.copy(_colBuf);
         obj.ptLight.intensity = lvl * 3.0;
         obj.ptLight.position.set(fx2, Math.min(lensY + 4.0, 13.0), fz2);
       }
@@ -1075,6 +1079,145 @@ function _makeBackline() {
   return g;
 }
 
+// Colonnes de haut-parleurs (sono mobile, festival…)
+function _makeSpeakerColumn(x, z, nSats=4) {
+  const g   = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color:0x0a0a0a, roughness:0.95, metalness:0.06 });
+  for (let i = 0; i < 2; i++) {
+    const sub = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.54, 0.50), mat);
+    sub.position.set(0, 0.27 + i * 0.54, 0);
+    g.add(sub);
+  }
+  for (let i = 0; i < nSats; i++) {
+    const sat = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.20, 0.26), mat);
+    sat.position.set(0, 1.08 + 0.10 + i * 0.21, 0);
+    g.add(sat);
+  }
+  g.position.set(x, 0, z);
+  return g;
+}
+
+// Sono mobile — inspiré du GLB sonomobile_scene.glb
+// Remorque 6×4m marron, 4 pieds de truss, 2 colonnes speaker suspendues, 6 satellites, 4 roues
+function _makeSonomobile(x, z) {
+  const g = new THREE.Group();
+  const mat = (c, r, m) => new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m });
+  const add = (geo, col, r, m, px, py, pz) => {
+    const mesh = new THREE.Mesh(geo, mat(col, r, m));
+    mesh.position.set(px, py, pz);
+    g.add(mesh);
+    return mesh;
+  };
+
+  // Plateau remorque (GLB: 6×4×0.2m, marron RGB 120,70,30)
+  add(new THREE.BoxGeometry(6.0, 0.20, 4.0), 0x7a4618, 0.75, 0.08,  0, 0.10, 0);
+  // Rails latéraux châssis
+  for (const sx of [-3.0, 3.0])
+    add(new THREE.BoxGeometry(0.08, 0.28, 4.0), 0xb4b4b4, 0.30, 0.80, sx, 0.24, 0);
+  // Flèche de remorque (côté -Z = derrière)
+  add(new THREE.BoxGeometry(0.10, 0.10, 1.2), 0xb4b4b4, 0.35, 0.75, 0, 0.25, -2.6);
+
+  // Console DJ
+  add(new THREE.BoxGeometry(2.2, 1.0, 1.0), 0x1a1a28, 0.55, 0.35,  0, 0.70, -0.3);
+  add(new THREE.BoxGeometry(2.2, 0.05, 1.0), 0x2a2a3e, 0.25, 0.65, 0, 1.225,-0.3);
+  for (const bx of [-0.55, 0.55])
+    add(new THREE.CylinderGeometry(0.18,0.18,0.04,18), 0x0a0a14, 0.15, 0.85, bx, 1.27, -0.3);
+  add(new THREE.BoxGeometry(0.55, 0.06, 0.42), 0x0a0a14, 0.15, 0.85, 0, 1.255, -0.3);
+
+  // Barres latérales de truss (gauche/droite — les barres avant/arrière viennent de buildTrusses)
+  const trussY = 3.40;
+  for (const bx of [-2.5, 2.5])
+    add(new THREE.BoxGeometry(0.09, 0.09, 3.0), 0xc8c8c8, 0.25, 0.85, bx, trussY, 0);
+
+  // Speaker stacks suspendus (GLB: ±3.2m X, face +Z = vers piste)
+  for (const sx of [-3.2, 3.2]) {
+    const spkH = 1.50, spkY = trussY - 0.18 - spkH/2;
+    add(new THREE.BoxGeometry(0.60, spkH, 0.55), 0x090909, 0.95, 0.06, sx, spkY, 1.5);
+    add(new THREE.BoxGeometry(0.56, spkH-0.06, 0.02), 0x0e0e0e, 1.0, 0.0, sx, spkY, 1.785);
+    add(new THREE.BoxGeometry(0.04, 0.30, 0.04), 0xb4b4b4, 0.28, 0.82, sx, trussY-0.10, 1.5);
+  }
+
+  // 6 satellites sur la barre avant (GLB: X=±2,±1.2,±0.4, face +Z)
+  for (const sx of [-2.0,-1.2,-0.4,0.4,1.2,2.0]) {
+    add(new THREE.BoxGeometry(0.22, 0.22, 0.24), 0x5a5a5a, 0.60, 0.40, sx, trussY-0.14, 1.5);
+    add(new THREE.BoxGeometry(0.02, 0.12, 0.02), 0xb4b4b4, 0.30, 0.80, sx, trussY-0.06, 1.5);
+  }
+
+  // Roues (4 roues, 2 essieux)
+  for (const wz of [-1.5, 1.5]) {
+    for (const wx of [-2.3, 2.3]) {
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.30,0.30,0.22,16),
+        mat(0x1a1a1a,0.90,0.10));
+      tire.rotation.z = Math.PI/2;
+      tire.position.set(wx, 0.28, wz);
+      g.add(tire);
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,0.24,12),
+        mat(0x6a6a7a,0.40,0.70));
+      rim.rotation.z = Math.PI/2;
+      rim.position.set(wx, 0.28, wz);
+      g.add(rim);
+    }
+  }
+
+  g.position.set(x, 0, z);
+  return g;
+}
+
+// Totem — tour autoportante truss + colonne de haut-parleurs + lyre au sommet
+function _makeTotem(x, z, height=4.5, nSpk=5) {
+  const g   = new THREE.Group();
+  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
+
+  // Lestage (béton/acier)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.65,0.46,0.65), mat(0x232323,0.85,0.18));
+  base.position.set(0,0.23,0); g.add(base);
+  const bride = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.05,0.42), mat(0x606070,0.40,0.70));
+  bride.position.set(0,0.48,0); g.add(bride);
+
+  // 2 tubes verticaux
+  const colH   = height - 0.46;
+  const tubeY  = 0.48 + colH/2;
+  for (const tx of [-0.09, 0.09]) {
+    const tb = new THREE.Mesh(new THREE.CylinderGeometry(0.026,0.026,colH,10), mat(0xb0b8c8,0.28,0.85));
+    tb.position.set(tx, tubeY, 0); g.add(tb);
+  }
+  // Barres horizontales de truss
+  const nBars = Math.ceil(colH / 0.42);
+  const bStep = colH / nBars;
+  for (let i=0; i<=nBars; i++) {
+    const hb = new THREE.Mesh(new THREE.BoxGeometry(0.18,0.024,0.024), mat(0x8898a8,0.35,0.75));
+    hb.position.set(0, 0.48+i*bStep, 0); g.add(hb);
+  }
+
+  // Colonne de haut-parleurs (face +Z = vers la piste)
+  const spkStart = 0.48 + colH*0.10;
+  const totalSpkH = colH * 0.78;
+  const unitH     = totalSpkH / nSpk;
+  for (let i=0; i<nSpk; i++) {
+    const sy  = spkStart + i*unitH + unitH/2;
+    const spk = new THREE.Mesh(new THREE.BoxGeometry(0.28, unitH*0.91, 0.22), mat(0x080808,0.95,0.05));
+    spk.position.set(0, sy, 0.14); g.add(spk);
+    if (i < nSpk-1) {
+      const sep = new THREE.Mesh(new THREE.BoxGeometry(0.28,0.008,0.22), mat(0x181818,0.95,0.05));
+      sep.position.set(0, spkStart+(i+1)*unitH, 0.14); g.add(sep);
+    }
+  }
+
+  // Lyre dorée au sommet
+  const topY = 0.48 + colH;
+  const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.32,0.06,0.10), mat(0xc09030,0.28,0.82));
+  yoke.position.set(0, topY+0.08, 0); g.add(yoke);
+  for (const yx of [-0.11,0.11]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.22,0.08), mat(0xc09030,0.28,0.82));
+    arm.position.set(yx, topY-0.07, 0); g.add(arm);
+  }
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.072,0.092,0.17,12), mat(0xc09030,0.28,0.82));
+  head.position.set(0, topY-0.18, 0); g.add(head);
+
+  g.position.set(x, 0, z);
+  return g;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Presets de scène
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1119,6 +1262,71 @@ const SCENE_PRESETS = {
     buildProps() {
       _propsGrp.add(_makeDJBooth(0, -1.5));
       _propsGrp.add(_makePersonSilhouette(0, -0.5));
+    }
+  },
+  festival: {
+    trusses: [
+      { label:'Face',    enabled:true, height:9.0, z:-4.5, x_l:-11.0, x_r:11.0 },
+      { label:'Mid',     enabled:true, height:8.5, z: 0.5, x_l:-10.0, x_r:10.0 },
+      { label:'Arrière', enabled:true, height:8.0, z: 5.5, x_l:-10.0, x_r:10.0 },
+      { label:'Overhead',enabled:true, height:9.5, z:-1.0, x_l: -3.5, x_r: 3.5 },
+    ],
+    buildProps() {
+      for (const [x,z] of [
+        [-4.5,2.0],[-3.0,0.8],[-1.5,1.5],[ 0.0,0.5],[ 1.5,1.5],[3.0,0.8],[4.5,2.0],
+        [-3.5,3.5],[-1.5,3.0],[ 1.0,3.0],[3.5,3.5],
+      ]) _propsGrp.add(_makePersonSilhouette(x,z));
+      _propsGrp.add(_makeBackline());
+      _propsGrp.add(_makeSpeakerColumn(-7.2,-0.5,5));
+      _propsGrp.add(_makeSpeakerColumn( 7.2,-0.5,5));
+    }
+  },
+  arena: {
+    trusses: [
+      { label:'Avant',   enabled:true, height:10.0, z:-5.0, x_l:-11.0, x_r:11.0 },
+      { label:'Milieu',  enabled:true, height: 9.5, z: 0.5, x_l:-10.0, x_r:10.0 },
+      { label:'Arrière', enabled:true, height: 9.0, z: 6.0, x_l:-10.0, x_r:10.0 },
+    ],
+    buildProps() {
+      _propsGrp.add(_makeBackline());
+      for (const [x,z] of [
+        [-5.0,0.5],[-3.5,0.0],[-2.0,0.5],[ 0.0,0.0],[ 1.5,0.5],[3.0,0.0],[4.5,0.5],
+        [-4.0,2.0],[-2.0,1.5],[ 0.0,2.0],[ 2.0,1.5],[4.0,2.0],
+      ]) _propsGrp.add(_makePersonSilhouette(x,z));
+      _propsGrp.add(_makeSpeakerColumn(-8.5, 0.0, 6));
+      _propsGrp.add(_makeSpeakerColumn( 8.5, 0.0, 6));
+    }
+  },
+  sono: {
+    // Remorque centrée en z=-2 ; piste de danse devant (z > 0)
+    // Barres avant/arrière du truss à z=-0.5 et z=-3.5 (= ±1.5m depuis le centre véhicule)
+    trusses: [
+      { label:'Truss face',    enabled:true, height:3.4, z:-0.5, x_l:-2.5, x_r:2.5 },
+      { label:'Truss arrière', enabled:true, height:3.4, z:-3.5, x_l:-2.5, x_r:2.5 },
+    ],
+    buildProps() {
+      _propsGrp.add(_makeSonomobile(0, -2));
+      for (const [x,z] of [[-2.0,1.8],[-1.0,1.2],[0.0,2.2],[1.0,1.2],[2.0,1.8]])
+        _propsGrp.add(_makePersonSilhouette(x,z,0.95));
+    }
+  },
+  totem: {
+    trusses: [
+      { label:'Rig central', enabled:true, height:5.5, z:-1.0, x_l:-2.5, x_r:2.5 },
+    ],
+    buildProps() {
+      // 6 totems en U autour de la piste de danse
+      for (const [tx,tz,h] of [
+        [-4.5,-2.2,4.5], [ 4.5,-2.2,4.5],   // arrière
+        [-5.2, 0.2,5.0], [ 5.2, 0.2,5.0],   // milieu (plus hauts)
+        [-4.5, 2.8,4.5], [ 4.5, 2.8,4.5],   // avant
+      ]) _propsGrp.add(_makeTotem(tx, tz, h, 5));
+      _propsGrp.add(_makeDJBooth(0, -1.5));
+      for (const [x,z] of [
+        [-2.5,0.2],[-1.5,0.9],[-0.5,-0.2],
+        [ 0.5, 0.6],[ 1.5,0.0],[ 2.5,0.8],
+        [-2.0,-1.0],[0.0,-0.8],[2.0,-1.0],
+      ]) _propsGrp.add(_makePersonSilhouette(x,z,0.95));
     }
   },
 };

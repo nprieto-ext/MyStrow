@@ -230,7 +230,10 @@ class Sequencer(QFrame):
             current = self.table.currentRow()
             r = current + 1 if current >= 0 else self.table.rowCount()
 
+        original_count = self.table.rowCount()
         self.table.insertRow(r)
+        if r < original_count:
+            self._reindex_sequences_insert(r)
         pause_icon = QTableWidgetItem("\u23f8\ufe0f")
         pause_icon.setData(Qt.UserRole, "\u23f8\ufe0f")
         self.table.setItem(r, 0, pause_icon)
@@ -642,6 +645,27 @@ class Sequencer(QFrame):
             elif old_row > deleted_row:
                 new_durations[old_row - 1] = dur
         self.image_durations = new_durations
+
+        # Réindexer les rec lumière (sequences) — même logique
+        if deleted_row in self.sequences:
+            del self.sequences[deleted_row]
+        new_seqs = {}
+        for old_row, seq in self.sequences.items():
+            if old_row < deleted_row:
+                new_seqs[old_row] = seq
+            elif old_row > deleted_row:
+                new_seqs[old_row - 1] = seq
+        self.sequences = new_seqs
+
+    def _reindex_sequences_insert(self, inserted_row):
+        """Décale les sequences d'un cran vers le bas après insertion d'une ligne au milieu."""
+        new_seqs = {}
+        for old_row, seq in self.sequences.items():
+            if old_row < inserted_row:
+                new_seqs[old_row] = seq
+            else:
+                new_seqs[old_row + 1] = seq
+        self.sequences = new_seqs
 
     def clear_sequence(self):
         self.table.setRowCount(0)

@@ -53,6 +53,36 @@ _SCENE_PRESETS = {
             {'label': 'Truss avant', 'enabled': True, 'height': 4.0, 'z': -3.0, 'x_l': -7.0, 'x_r': 7.0},
         ],
     },
+    'festival': {
+        'label': 'Festival',
+        'trusses': [
+            {'label': 'Face',    'enabled': True, 'height': 9.0, 'z': -4.5, 'x_l': -11.0, 'x_r': 11.0},
+            {'label': 'Mid',     'enabled': True, 'height': 8.5, 'z':  0.5, 'x_l': -10.0, 'x_r': 10.0},
+            {'label': 'Arrière', 'enabled': True, 'height': 8.0, 'z':  5.5, 'x_l': -10.0, 'x_r': 10.0},
+            {'label': 'Overhead','enabled': True, 'height': 9.5, 'z': -1.0, 'x_l':  -3.5, 'x_r':  3.5},
+        ],
+    },
+    'arena': {
+        'label': 'Grande scène',
+        'trusses': [
+            {'label': 'Avant',   'enabled': True, 'height': 10.0, 'z': -5.0, 'x_l': -11.0, 'x_r': 11.0},
+            {'label': 'Milieu',  'enabled': True, 'height':  9.5, 'z':  0.5, 'x_l': -10.0, 'x_r': 10.0},
+            {'label': 'Arrière', 'enabled': True, 'height':  9.0, 'z':  6.0, 'x_l': -10.0, 'x_r': 10.0},
+        ],
+    },
+    'sono': {
+        'label': 'Sono Mobile',
+        'trusses': [
+            {'label': 'Truss face',    'enabled': True, 'height': 3.4, 'z': -0.5, 'x_l': -2.5, 'x_r': 2.5},
+            {'label': 'Truss arrière', 'enabled': True, 'height': 3.4, 'z': -3.5, 'x_l': -2.5, 'x_r': 2.5},
+        ],
+    },
+    'totem': {
+        'label': 'Totems',
+        'trusses': [
+            {'label': 'Rig central', 'enabled': True, 'height': 5.5, 'z': -1.0, 'x_l': -2.5, 'x_r': 2.5},
+        ],
+    },
 }
 
 _DARK  = "background:#0c0c20; color:#7777aa;"
@@ -606,19 +636,21 @@ class Plan3DWebWindow(QMainWindow):
         self._view.page().setWebChannel(self._channel)
 
         self._view.load(QUrl.fromLocalFile(str(_HTML)))
+        self._view.installEventFilter(self)
 
         # Layout : QSplitter (vue 3D | panneau onglets redimensionnable)
         self._right_panel = self._build_right_panel()
-        _splitter = QSplitter(Qt.Horizontal)
-        _splitter.setStyleSheet(
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.setStyleSheet(
             "QSplitter::handle{background:#0e0e28;width:4px;}"
             "QSplitter::handle:hover{background:#003d66;}"
         )
-        _splitter.addWidget(self._view)
-        _splitter.addWidget(self._right_panel)
-        _splitter.setSizes([850, 240])
-        _splitter.setChildrenCollapsible(False)
-        self.setCentralWidget(_splitter)
+        self._splitter.addWidget(self._view)
+        self._splitter.addWidget(self._right_panel)
+        self._splitter.setSizes([850, 240])
+        self._splitter.setChildrenCollapsible(False)
+        self._right_panel_sizes = [850, 240]
+        self.setCentralWidget(self._splitter)
 
         self._projectors      = []
         self._last_projectors = []
@@ -633,6 +665,20 @@ class Plan3DWebWindow(QMainWindow):
             {'label': 'Truss avant',   'enabled': True, 'height': TRUSS_Y, 'z': -3.8, 'x_l': -9.0, 'x_r': 9.0},
             {'label': 'Truss arrière', 'enabled': True, 'height': TRUSS_Y, 'z':  4.0, 'x_l': -9.0, 'x_r': 9.0},
         ]
+        self._scene_preset_code = 'live'
+
+        # Charger la scène sauvegardée depuis le patch, avant que la page HTML charge
+        try:
+            _cfg_path = Path.home() / '.maestro_dmx_patch.json'
+            if _cfg_path.exists():
+                _cfg = json.loads(_cfg_path.read_text(encoding='utf-8'))
+                _s3d = _cfg.get('scene_3d', {})
+                if _s3d.get('preset') in _SCENE_PRESETS:
+                    self._scene_preset_code = _s3d['preset']
+                if _s3d.get('trusses'):
+                    self._trusses = _s3d['trusses']
+        except Exception:
+            pass
 
         self._view.loadFinished.connect(self._on_load_finished)
 
@@ -678,7 +724,32 @@ class Plan3DWebWindow(QMainWindow):
         tb.addWidget(sl_amb)
         self._sl_amb = sl_amb
 
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(spacer)
 
+        self._btn_toggle_panel = QPushButton("Panneau ▶")
+        self._btn_toggle_panel.setCheckable(True)
+        self._btn_toggle_panel.setChecked(False)
+        self._btn_toggle_panel.setToolTip("Masquer / afficher le panneau de droite")
+        self._btn_toggle_panel.setStyleSheet(self._TB_BTN)
+        self._btn_toggle_panel.clicked.connect(self._toggle_right_panel)
+        tb.addWidget(self._btn_toggle_panel)
+
+
+
+    def _toggle_right_panel(self):
+        visible = self._right_panel.isVisible()
+        if visible:
+            self._right_panel_sizes = self._splitter.sizes()
+            self._right_panel.setVisible(False)
+            self._btn_toggle_panel.setText("Panneau ◀")
+            self._btn_toggle_panel.setChecked(True)
+        else:
+            self._right_panel.setVisible(True)
+            self._splitter.setSizes(self._right_panel_sizes)
+            self._btn_toggle_panel.setText("Panneau ▶")
+            self._btn_toggle_panel.setChecked(False)
 
     # ── Panneau latéral droit (onglets) ─────────────────────────────────────
 
@@ -1110,6 +1181,7 @@ class Plan3DWebWindow(QMainWindow):
             sp.setValue(float(getattr(projs[primary], attr, 0.0) or 0.0))
             sp.blockSignals(False)
         self.refresh(projs)
+        self._save_patch()
 
     def _jog_flip(self):
         """Bascule rot3d_x entre 0° et 180° (retourne le projecteur)."""
@@ -1132,6 +1204,7 @@ class Plan3DWebWindow(QMainWindow):
             sp.setValue(float(getattr(projs[primary], 'rot3d_x', 0.0) or 0.0))
             sp.blockSignals(False)
         self.refresh(projs)
+        self._save_patch()
 
     def _jog_spin_changed(self, attr: str, value: float):
         """Saisie directe dans un spinbox du jog pad → modifie le projecteur primaire."""
@@ -1155,6 +1228,7 @@ class Plan3DWebWindow(QMainWindow):
         if attr in ('pos_3d_x', 'pos_3d_z'):
             self._sync_canvas_pos(p)
         self.refresh(projs)
+        self._save_patch()
 
     def _jog_move(self, dx: int, dz: int, dh: int):
         projs = self._last_projectors
@@ -1261,6 +1335,15 @@ class Plan3DWebWindow(QMainWindow):
                 sp.blockSignals(False)
         self.refresh(projs)
         self._save_patch()
+
+    def eventFilter(self, obj, event):
+        if (obj is self._view and
+                event.type() == QEvent.KeyPress and
+                event.modifiers() == Qt.ControlModifier and
+                event.key() == Qt.Key_Z):
+            self._undo()
+            return True
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Z:
@@ -1379,7 +1462,11 @@ class Plan3DWebWindow(QMainWindow):
         lay.setSpacing(4)
 
         self._scene_btns = {}
-        for code, label in [('live','Live'), ('dj','DJ'), ('concert','Concert'), ('club','Club')]:
+        for code, label in [
+            ('live','Live'), ('dj','DJ'), ('concert','Concert'), ('club','Club'),
+            ('festival','Festival'), ('arena','Grande scène'),
+            ('sono','Sono Mobile'), ('totem','Totems'),
+        ]:
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(code == 'live')
@@ -1446,6 +1533,7 @@ class Plan3DWebWindow(QMainWindow):
         preset = _SCENE_PRESETS.get(code)
         if not preset:
             return
+        self._scene_preset_code = code
         self._trusses = [t.copy() for t in preset['trusses']]
         self._js(f"window.setScenePreset('{code}')")
         for k, btn in getattr(self, '_scene_btns', {}).items():
@@ -1453,6 +1541,7 @@ class Plan3DWebWindow(QMainWindow):
         self._btn_trusses.setChecked(False)
         if self._truss_editor and self._truss_editor.isVisible():
             self._truss_editor.close()
+        self._save_patch()
 
     def _open_truss_editor(self):
         if self._truss_editor and self._truss_editor.isVisible():
@@ -1494,6 +1583,9 @@ class Plan3DWebWindow(QMainWindow):
     def _on_load_finished(self, ok: bool):
         self._ready = ok
         if ok:
+            # Restaurer le preset de scène (décors 3D + trusses du preset)
+            self._js(f"window.setScenePreset('{self._scene_preset_code}')")
+            # Puis appliquer les trusses réellement configurés (peuvent différer du preset)
             self._js(f'window.setTrusses({json.dumps(self._trusses)})')
             amb = getattr(self, '_sl_amb', None)
             if amb:

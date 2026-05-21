@@ -81,7 +81,7 @@ ALL_CHANNEL_TYPES = [
     "R", "G", "B", "W", "Dim", "Dim2", "Strobe", "UV", "Ambre", "Orange", "Zoom",
     "Smoke", "Fan", "Pan", "PanFine", "Tilt", "TiltFine",
     "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
-    "Reset",
+    "Effects", "Reset",
 ]
 
 CHANNEL_COLORS = {
@@ -93,7 +93,7 @@ CHANNEL_COLORS = {
     "Gobo1": "#aa8800", "Gobo1Rot": "#cc9900", "Gobo2": "#886600",
     "Prism": "#dd00dd", "PrismRot": "#bb00bb",
     "Focus": "#00aa88", "ColorWheel": "#ff8800", "Shutter": "#ff2266",
-    "Speed": "#66ff66", "Mode": "#88aaff", "Reset": "#ff3333",
+    "Speed": "#66ff66", "Mode": "#88aaff", "Effects": "#cc44ff", "Reset": "#ff3333",
 }
 
 # Profils rapides proposés à l'utilisateur
@@ -287,8 +287,8 @@ class ChannelRowWidget(QWidget):
 # _ProfileBlockDelegate — blocs carrés colorés pour la ligne de profil
 # ──────────────────────────────────────────────────────────────────────────────
 
-_BLOCK_W = 72
-_BLOCK_H = 72
+_BLOCK_W = 68
+_BLOCK_H = 44
 
 # Rôles de données pour les items du profil
 _ROLE_CH  = Qt.UserRole        # str  : nom du canal ("R", "Mode"…)
@@ -309,25 +309,33 @@ class _ProfileBlockDelegate(QStyledItemDelegate):
         col = QColor(CHANNEL_COLORS.get(ch, "#444"))
         sel = bool(option.state & QStyle.State_Selected)
 
+        # Calcul luminosité pour contraste texte
+        r_int = col.red(); g_int = col.green(); b_int = col.blue()
+        lum = r_int * 0.299 + g_int * 0.587 + b_int * 0.114
+        text_col = QColor("#ffffff") if lum < 145 else QColor("#111111")
+
         painter.save()
-        r = option.rect.adjusted(4, 4, -4, -4)
+        r = option.rect.adjusted(3, 3, -3, -3)
 
-        # Fond coloré
-        painter.setPen(QPen(col if sel else col.darker(160), 1.5))
-        painter.setBrush(col.darker(240) if not sel else col.darker(180))
-        painter.drawRoundedRect(QRectF(r), 8, 8)
+        # Fond plein coloré (chip style)
+        border_col = col.lighter(130) if sel else col.darker(140)
+        painter.setPen(QPen(border_col, 1.5 if sel else 1))
+        painter.setBrush(col.lighter(120) if sel else col)
+        painter.drawRoundedRect(QRectF(r), 6, 6)
 
-        # Numéro (petit, en haut à gauche)
-        painter.setPen(QColor("#777") if not sel else QColor("#aaa"))
-        painter.setFont(QFont("Segoe UI", 8))
-        painter.drawText(r.adjusted(6, 4, 0, 0), Qt.AlignTop | Qt.AlignLeft, f"{num:02d}")
+        # Numéro (petit, semi-transparent, en haut à gauche)
+        num_col = QColor(text_col)
+        num_col.setAlphaF(0.45)
+        painter.setPen(num_col)
+        painter.setFont(QFont("Segoe UI", 7))
+        painter.drawText(r.adjusted(5, 3, 0, 0), Qt.AlignTop | Qt.AlignLeft, f"{num:02d}")
 
-        # Nom du canal (centré, grand)
-        painter.setPen(col.lighter(200) if not sel else col.lighter(240))
-        painter.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        # Nom du canal (centré, bold, texte contrasté)
+        painter.setPen(text_col)
+        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
         painter.drawText(r, Qt.AlignCenter, ch)
 
-        # Badge valeur fixe — fond blanc, texte noir, en haut à droite
+        # Badge valeur fixe — fond semi-transparent, texte contrasté
         if val is not None:
             badge_txt = str(val)
             painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
@@ -335,19 +343,12 @@ class _ProfileBlockDelegate(QStyledItemDelegate):
             tw = fm.horizontalAdvance(badge_txt) + 6
             th = fm.height() + 2
             badge_r = QRect(r.right() - tw - 3, r.top() + 3, tw, th)
-            painter.setBrush(QColor("#ffffff"))
+            badge_bg = QColor("#000000"); badge_bg.setAlphaF(0.35)
+            painter.setBrush(badge_bg)
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(QRectF(badge_r), 3, 3)
-            painter.setPen(QColor("#000000"))
+            painter.setPen(QColor("#ffffff"))
             painter.drawText(badge_r, Qt.AlignCenter, badge_txt)
-
-        # Petites poignées drag en bas
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#444") if not sel else QColor("#666"))
-        bx = r.center().x() - 7
-        by = r.bottom() - 8
-        for dx in (0, 6, 12):
-            painter.drawEllipse(bx + dx, by, 3, 3)
 
         painter.restore()
 

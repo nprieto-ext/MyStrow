@@ -491,7 +491,7 @@ class LightTimelineEditor(QDialog):
         self.track_douche3 = self.track_map.get("F")
         self.track_contre = self.track_map.get("C")
 
-    _MAX_EFFECT_TRACKS = 4
+    _MAX_EFFECT_TRACKS = 8
 
     def _add_effect_track(self):
         """Ajoute une piste Effet supplémentaire (max _MAX_EFFECT_TRACKS)."""
@@ -1454,6 +1454,7 @@ class LightTimelineEditor(QDialog):
             p.base_color = QColor("black")
             p.color = QColor("black")
             p.strobe_speed = 0
+            p.color_wheel = 0
 
         # ── Détecter le clip de séquence actif ───────────────────────────────
         seq_track = self.track_map.get("Séquence")
@@ -1560,14 +1561,19 @@ class LightTimelineEditor(QDialog):
                 presets = getattr(self.main_window, 'position_presets', [])
                 if idx is not None and idx < len(presets):
                     preset = presets[idx]
-                    lyre_by_name  = {p.name: p for p in self.main_window.projectors
-                                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
-                    lyre_by_group = {}
-                    for p in self.main_window.projectors:
-                        if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                            lyre_by_group.setdefault(p.group, []).append(p)
-                    for proj_state in preset.get("projectors", []):
-                        p = lyre_by_name.get(proj_state.get("name"))
+                    lyres_cur = [p for p in self.main_window.projectors
+                                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                    lyre_by_name: dict = {}
+                    for p in lyres_cur:
+                        if p.name and p.name not in lyre_by_name:
+                            lyre_by_name[p.name] = p
+                    lyre_by_group: dict = {}
+                    for p in lyres_cur:
+                        lyre_by_group.setdefault(p.group, []).append(p)
+                    for i, proj_state in enumerate(preset.get("projectors", [])):
+                        p = lyres_cur[i] if i < len(lyres_cur) else None
+                        if p is None:
+                            p = lyre_by_name.get(proj_state.get("name"))
                         if p is None:
                             candidates = lyre_by_group.get(proj_state.get("group"), [])
                             p = candidates[0] if candidates else None
@@ -1625,6 +1631,8 @@ class LightTimelineEditor(QDialog):
                             if _has_move:
                                 p.pan  = _pan_val
                                 p.tilt = _tilt_val
+                            if hasattr(self.main_window, '_update_color_wheel'):
+                                self.main_window._update_color_wheel(p, color)
                     break
 
         # ── 2) Appliquer la séquence par-dessus les groupes (priorité haute) ──
@@ -1663,6 +1671,8 @@ class LightTimelineEditor(QDialog):
                                     int(base.green() * lvl / 100.0),
                                     int(base.blue()  * lvl / 100.0),
                                 )
+                                if hasattr(self.main_window, '_update_color_wheel'):
+                                    self.main_window._update_color_wheel(p, base)
 
         # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
         if getattr(self.main_window, 'active_effect', None) and hasattr(self.main_window, 'update_effect'):

@@ -135,11 +135,10 @@ class EffectButton(QPushButton):
         all_effects = []
         try:
             from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
-            all_effects = list(BUILTIN_EFFECTS)
-            existing_names = {e["name"] for e in all_effects}
-            for e in _load_custom_effects():
-                if e.get("name") not in existing_names:
-                    all_effects.append(e)
+            custom = _load_custom_effects()
+            custom_names = {e.get("name", "") for e in custom}
+            # Builtins (sauf ceux remplacés par un custom de même nom) + custom
+            all_effects = [e for e in BUILTIN_EFFECTS if e.get("name", "") not in custom_names] + custom
         except Exception:
             pass
 

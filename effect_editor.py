@@ -3111,9 +3111,62 @@ class EffectEditorDialog(QDialog):
         for cat in _EFFECT_CATEGORIES:
             _insert_category(cat, [e for e in BUILTIN_EFFECTS if e.get("category") == cat])
 
-        # Effets custom
+        # Effets custom — header toujours visible avec bouton import
+        mes_hdr_w = QWidget()
+        mes_hdr_w.setStyleSheet("background: transparent;")
+        mes_hdr_w.setFixedHeight(20)
+        mes_hdr_h = QHBoxLayout(mes_hdr_w)
+        mes_hdr_h.setContentsMargins(2, 0, 2, 0)
+        mes_hdr_h.setSpacing(4)
+        mes_hdr_lbl = QLabel("MES EFFETS")
+        mes_hdr_lbl.setStyleSheet(
+            "color: #2a2a2a; font-size: 8px; font-weight: bold; "
+            "letter-spacing: 1.5px; background: transparent;"
+        )
+        mes_hdr_h.addWidget(mes_hdr_lbl, 1)
+        imp_btn = QPushButton("+")
+        imp_btn.setFixedSize(16, 16)
+        imp_btn.setToolTip("Importer un effet (.mystrow_effect)")
+        imp_btn.setCursor(Qt.PointingHandCursor)
+        imp_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a1a1a; color: #446644;
+                border: 1px solid #2a2a2a; border-radius: 3px;
+                font-size: 12px; font-weight: bold; padding: 0;
+            }
+            QPushButton:hover { background: #1e2e1e; color: #44cc44; border-color: #336633; }
+        """)
+        imp_btn.clicked.connect(self._import_custom_effect)
+        mes_hdr_h.addWidget(imp_btn)
+        self._list_vl.insertWidget(self._list_vl.count() - 1, mes_hdr_w)
+
         if self._custom_effects:
-            _insert_category("Mes Effets", self._custom_effects, deletable=True)
+            for idx in range(0, len(self._custom_effects), 2):
+                pair = self._custom_effects[idx:idx + 2]
+                row_w = QWidget()
+                row_w.setStyleSheet("background: transparent;")
+                row_h = QHBoxLayout(row_w)
+                row_h.setContentsMargins(0, 0, 0, 0)
+                row_h.setSpacing(6)
+                for eff in pair:
+                    row_h.addWidget(self._mk_card(eff, card_w, deletable=True))
+                if len(pair) == 1:
+                    row_h.addStretch()
+                row_w.setFixedHeight(58)
+                self._list_vl.insertWidget(self._list_vl.count() - 1, row_w)
+        else:
+            empty_lbl = QLabel("Aucun effet — importez ou créez-en un")
+            empty_lbl.setAlignment(Qt.AlignCenter)
+            empty_lbl.setStyleSheet(
+                "color: #222; font-size: 9px; font-style: italic; background: transparent;"
+            )
+            empty_lbl.setFixedHeight(28)
+            self._list_vl.insertWidget(self._list_vl.count() - 1, empty_lbl)
+
+        spc_me = QWidget()
+        spc_me.setFixedHeight(6)
+        spc_me.setStyleSheet("background: transparent;")
+        self._list_vl.insertWidget(self._list_vl.count() - 1, spc_me)
 
     def _mk_card(self, eff: dict, width: int = 116, deletable: bool = False) -> QWidget:
         name = eff.get("name", "")
@@ -3158,7 +3211,7 @@ class EffectEditorDialog(QDialog):
             ren_btn.setToolTip("Renommer")
             ren_btn.setStyleSheet("""
                 QPushButton {
-                    background: transparent; color: #2a3a2a;
+                    background: transparent; color: #446644;
                     border: none; font-size: 10px;
                 }
                 QPushButton:hover { color: #44cc44; }
@@ -3171,7 +3224,7 @@ class EffectEditorDialog(QDialog):
             del_btn.setCursor(Qt.PointingHandCursor)
             del_btn.setStyleSheet("""
                 QPushButton {
-                    background: transparent; color: #3a1010;
+                    background: transparent; color: #884444;
                     border: none; font-size: 10px; font-weight: bold;
                 }
                 QPushButton:hover { color: #ff5555; }
@@ -3206,7 +3259,17 @@ class EffectEditorDialog(QDialog):
             badge_row.addWidget(badge)
             vl.addLayout(badge_row)
 
-        card.mousePressEvent = lambda _e, e=eff: self._apply_preset(e)
+        def _card_mouse_press(_e, e=eff):
+            if _e.button() == Qt.RightButton:
+                _e.accept()
+            else:
+                self._apply_preset(e)
+
+        card.mousePressEvent = _card_mouse_press
+        card.setContextMenuPolicy(Qt.CustomContextMenu)
+        card.customContextMenuRequested.connect(
+            lambda pos, e=eff, d=deletable: self._show_card_context_menu(card, pos, e, d)
+        )
         return card
 
     def _get_assigned_btn_label(self, name: str) -> str:
@@ -3246,10 +3309,12 @@ class EffectEditorDialog(QDialog):
             return
 
         # Effet chargé : proposer de le sauvegarder sous un nom
+        # Exclure aussi les noms builtins pour éviter les conflits de déduplication
+        all_existing = existing_names | {e.get("name", "") for e in BUILTIN_EFFECTS}
         base = self._selected_card or "Mon Effet"
         i = 2
         candidate = base
-        while candidate in existing_names:
+        while candidate in all_existing:
             candidate = f"{base} {i}"; i += 1
         name, ok = _ask_name(
             self, "Sauvegarder l'effet", "Nom de l'effet :", candidate
@@ -3274,6 +3339,61 @@ class EffectEditorDialog(QDialog):
         self._rebuild_library()
         self._apply_preset(custom)
 
+    def _show_card_context_menu(self, card, pos, eff: dict, deletable: bool):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #1a1a2e; color: #ccc;
+                border: 1px solid #333; border-radius: 4px;
+            }
+            QMenu::item { padding: 5px 18px; }
+            QMenu::item:selected { background: #2a2a4e; color: #fff; }
+            QMenu::separator { height: 1px; background: #333; margin: 2px 0; }
+        """)
+        act_dup = menu.addAction("Dupliquer")
+        act_exp = menu.addAction("Exporter…")
+        if deletable:
+            menu.addSeparator()
+            act_del = menu.addAction("Supprimer")
+        else:
+            act_del = None
+        chosen = menu.exec(card.mapToGlobal(pos))
+        if chosen == act_dup:
+            self._duplicate_custom_effect(eff)
+        elif chosen == act_exp:
+            self._export_custom_effect(eff)
+        elif act_del and chosen == act_del:
+            self._delete_custom_effect(eff)
+
+    def _duplicate_custom_effect(self, eff: dict):
+        existing_names = {e.get("name", "") for e in self._custom_effects} | \
+                         {e.get("name", "") for e in BUILTIN_EFFECTS}
+        base = f"Copie de {eff.get('name', 'Effet')}"
+        candidate = base
+        i = 2
+        while candidate in existing_names:
+            candidate = f"{base} {i}"; i += 1
+        # Charger les couches depuis l'effet source
+        src_layers = []
+        if eff in self._custom_effects or any(e is eff for e in self._custom_effects):
+            src_layers = list(eff.get("layers", []))
+        else:
+            # Builtin: construire les couches par défaut
+            src_layers = [l.to_dict() for l in EffectLayer.layers_from_builtin(eff)]
+        copy_eff = {
+            "name":     candidate,
+            "emoji":    eff.get("emoji", "✨"),
+            "category": "Mes Effets",
+            "type":     eff.get("type", "Custom"),
+            "layers":   src_layers,
+        }
+        self._custom_effects.append(copy_eff)
+        _save_custom_effects(self._custom_effects)
+        self._selected_card = candidate
+        self._rebuild_library()
+        self._apply_preset(copy_eff)
+
     def _delete_custom_effect(self, eff: dict):
         name = eff.get("name", "")
         self._custom_effects = [e for e in self._custom_effects if e.get("name") != name]
@@ -3281,6 +3401,74 @@ class EffectEditorDialog(QDialog):
         if self._selected_card == name:
             self._selected_card = None
         self._rebuild_library()
+
+    def _export_custom_effect(self, eff: dict):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        import json as _j
+        is_custom = any(e is eff for e in self._custom_effects)
+        if is_custom:
+            layers = list(eff.get("layers", []))
+        else:
+            layers = [l.to_dict() for l in EffectLayer.layers_from_builtin(eff)]
+        export_data = {
+            "name":    eff.get("name", "Effet"),
+            "emoji":   eff.get("emoji", "✨"),
+            "category": "Mes Effets",
+            "type":    eff.get("type", "Custom"),
+            "layers":  layers,
+        }
+        safe = eff.get("name", "effet").replace("/", "_").replace("\\", "_")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exporter l'effet",
+            str(_pathlib.Path.home() / f"{safe}.mystrow_effect"),
+            "Effet MyStrow (*.mystrow_effect);;JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            _pathlib.Path(path).write_text(
+                _j.dumps(export_data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Erreur export", str(exc))
+
+    def _import_custom_effect(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        import json as _j
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importer un effet",
+            str(_pathlib.Path.home()),
+            "Effet MyStrow (*.mystrow_effect);;JSON (*.json);;Tous (*.*)"
+        )
+        if not path:
+            return
+        try:
+            data = _j.loads(_pathlib.Path(path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            QMessageBox.warning(self, "Erreur import", f"Fichier invalide :\n{exc}")
+            return
+        if not isinstance(data, dict) or "layers" not in data:
+            QMessageBox.warning(self, "Erreur import", "Ce fichier ne contient pas un effet valide.")
+            return
+        existing_names = {e.get("name", "") for e in self._custom_effects} | \
+                         {e.get("name", "") for e in BUILTIN_EFFECTS}
+        base = data.get("name", "Effet importé")
+        candidate = base
+        i = 2
+        while candidate in existing_names:
+            candidate = f"{base} ({i})"; i += 1
+        new_eff = {
+            "name":     candidate,
+            "emoji":    data.get("emoji", "✨"),
+            "category": "Mes Effets",
+            "type":     data.get("type", "Custom"),
+            "layers":   data.get("layers", []),
+        }
+        self._custom_effects.append(new_eff)
+        _save_custom_effects(self._custom_effects)
+        self._selected_card = candidate
+        self._rebuild_library()
+        self._apply_preset(new_eff)
 
     def _rename_custom_effect(self, eff: dict):
         old_name = eff.get("name", "")
@@ -3351,6 +3539,7 @@ class EffectEditorDialog(QDialog):
     def _mk_simple_panel(self) -> QWidget:
         self._simple_panel = SimpleEffectPanel(main_window=self._main_window)
         self._simple_panel.changed.connect(self._ensure_preview_running)
+        self._simple_panel.changed.connect(self._push_layers_to_live)
         self._simple_panel.rename_requested.connect(self._rename_custom_effect)
 
         # Aliases vers les widgets créés dans SimpleEffectPanel._build_assigner_section
@@ -3488,6 +3677,13 @@ class EffectEditorDialog(QDialog):
                 }
                 if hasattr(self._main_window, '_save_effect_library'):
                     self._main_window._save_effect_library()  # also calls _refresh_active_effect_config
+            # Aussi persister les couches éditées dans le fichier custom_effects
+            # pour que les menus contextuels voient la version à jour
+            for e in self._custom_effects:
+                if e.get("name") == cur_name:
+                    e["layers"] = layers_data
+                    _save_custom_effects(self._custom_effects)
+                    break
 
     def _on_assign(self, btn_idx: int):
         if not self._main_window or not self._selected_card:
@@ -3605,14 +3801,22 @@ class EffectEditorDialog(QDialog):
         """Remplace les couches par le preset et met à jour le panneau central."""
         self._selected_card = eff.get("name", "")
         self._layers.clear()
-        # Si cet effet est déjà assigné à un bouton avec des layers personnalisés,
-        # charger ces layers plutôt que les valeurs builtin par défaut
+        # Priorité 1 : couches vivantes de l'effet actif en live (édition en temps réel)
+        mw = self._main_window
+        live_cfg = getattr(mw, 'active_effect_config', {}) if mw else {}
+        live_layers = []
+        if isinstance(live_cfg, dict) and live_cfg.get('name') == self._selected_card:
+            live_layers = [EffectLayer.from_dict(d) for d in live_cfg.get('layers', [])]
         saved_cfg = self._get_saved_cfg_for(self._selected_card)
-        saved_layers = [EffectLayer.from_dict(d) for d in saved_cfg.get("layers", [])] if saved_cfg else []
-        if saved_layers:
-            self._layers.extend(saved_layers)
+        if live_layers:
+            self._layers.extend(live_layers)
         else:
-            self._layers.extend(EffectLayer.layers_from_builtin(eff))
+            # Priorité 2 : couches sauvegardées sur un bouton/bibliothèque
+            saved_layers = [EffectLayer.from_dict(d) for d in saved_cfg.get("layers", [])] if saved_cfg else []
+            if saved_layers:
+                self._layers.extend(saved_layers)
+            else:
+                self._layers.extend(EffectLayer.layers_from_builtin(eff))
         # Restaurer play_mode et duration depuis la config sauvegardée
         if saved_cfg:
             self._play_mode       = saved_cfg.get("play_mode", self._play_mode)
@@ -3647,12 +3851,27 @@ class EffectEditorDialog(QDialog):
             except Exception:
                 pass
 
+    def _push_layers_to_live(self):
+        """Pousse les couches éditées dans active_effect_config si l'effet est actif en live."""
+        mw = self._main_window
+        if not mw or not self._selected_card:
+            return
+        cfg = getattr(mw, 'active_effect_config', {})
+        if isinstance(cfg, dict) and cfg.get('name') == self._selected_card:
+            cfg['layers'] = [l.to_dict() for l in self._layers]
+
     def _preview_tick(self):
         plan = getattr(self, '_plan_widget', None)
         if not self._layers:
             self._stop_preview()
             return
-        t = _time.monotonic() - self._preview_t0
+        # Si l'effet est actif en live, synchroniser le temps pour que le décalage
+        # affiché dans la 3D corresponde exactement à ce qui tourne sur le DMX
+        mw = self._main_window
+        if mw and getattr(mw, 'active_effect', None) == self._selected_card:
+            t = _time.monotonic() - getattr(mw, 'effect_t0', self._preview_t0)
+        else:
+            t = _time.monotonic() - self._preview_t0
         try:
             overrides = self._compute_preview(t)
             if plan is not None:

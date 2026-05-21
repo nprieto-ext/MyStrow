@@ -2230,8 +2230,8 @@ class MainWindow(QMainWindow):
         main_split.addWidget(mid)
         main_split.addWidget(right)
         main_split.setStretchFactor(0, 0)  # AKAI = taille fixe
-        main_split.setStretchFactor(1, 5)  # Sequenceur = priorite
-        main_split.setStretchFactor(2, 2)
+        main_split.setStretchFactor(1, 4)  # Sequenceur = priorite
+        main_split.setStretchFactor(2, 3)
         main_split.setCollapsible(0, False)
         main_split.setCollapsible(1, False)
         main_split.setCollapsible(2, False)
@@ -4618,17 +4618,25 @@ class MainWindow(QMainWindow):
             return
 
         preset = self.position_presets[preset_idx]
-        lyre_by_name  = {p.name:  p for p in self.projectors
-                         if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
-        lyre_by_group = {}
-        for p in self.projectors:
-            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                lyre_by_group.setdefault(p.group, []).append(p)
+        lyres_cur = [p for p in self.projectors
+                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+        # Fallbacks nom et groupe pour les configs qui ont changé
+        lyre_by_name: dict = {}
+        for p in lyres_cur:
+            if p.name and p.name not in lyre_by_name:
+                lyre_by_name[p.name] = p
+        lyre_by_group: dict = {}
+        for p in lyres_cur:
+            lyre_by_group.setdefault(p.group, []).append(p)
         applied = 0
-        for proj_state in preset.get("projectors", []):
-            p = lyre_by_name.get(proj_state.get("name"))
+        for i, proj_state in enumerate(preset.get("projectors", [])):
+            # 1. Match par index (même config que lors de l'enregistrement)
+            p = lyres_cur[i] if i < len(lyres_cur) else None
+            # 2. Fallback : nom unique non vide
             if p is None:
-                # fallback group : prend la première lyre du groupe
+                p = lyre_by_name.get(proj_state.get("name"))
+            # 3. Fallback : première lyre disponible du groupe
+            if p is None:
                 candidates = lyre_by_group.get(proj_state.get("group"), [])
                 p = candidates[0] if candidates else None
             if p:
@@ -4715,7 +4723,59 @@ class MainWindow(QMainWindow):
             clear_act = menu.addAction(tr("pos_ctx_clear"))
             clear_act.triggered.connect(lambda: self._clear_position_akai(pos_col, row))
 
+        # ── Presets Plan de Feu ──────────────────────────────────────────
+        pdf_presets = self._load_pdf_presets()
+        if pdf_presets:
+            menu.addSeparator()
+            pdf_hdr = menu.addAction("▸ Plan de Feu")
+            pdf_hdr.setEnabled(False)
+            for pp in pdf_presets:
+                act = menu.addAction("    " + pp["name"])
+                act.triggered.connect(
+                    lambda _, p=pp, pc=pos_col, pr=row: self._import_pdf_preset_to_pad(pc, pr, p)
+                )
+
         menu.exec(btn.mapToGlobal(pos))
+
+    def _load_pdf_presets(self):
+        """Charge les presets Pan/Tilt du fichier Plan de Feu."""
+        try:
+            from plan_de_feu import _load_presets as _pdf_load
+            return _pdf_load()
+        except Exception:
+            return []
+
+    def _pdf_preset_to_akai(self, pdf_preset):
+        """Convertit un preset Plan de Feu → format AKAI position (multi-lyre)."""
+        lyres = [p for p in self.projectors
+                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+        per_proj = pdf_preset.get("per_proj", {})
+        snap = []
+        for p in lyres:
+            if p.name in per_proj:
+                pan_v  = per_proj[p.name].get("pan",  pdf_preset.get("pan",  32768))
+                tilt_v = per_proj[p.name].get("tilt", pdf_preset.get("tilt", 32768))
+            else:
+                pan_v  = pdf_preset.get("pan",  32768)
+                tilt_v = pdf_preset.get("tilt", 32768)
+            snap.append({"group": getattr(p, 'group', ''), "name": p.name,
+                         "pan": pan_v, "tilt": tilt_v})
+        return {"name": pdf_preset["name"], "projectors": snap}
+
+    def _import_pdf_preset_to_pad(self, pos_col, row, pdf_preset):
+        """Importe un preset Plan de Feu comme preset AKAI et l'assigne au pad."""
+        akai = self._pdf_preset_to_akai(pdf_preset)
+        # Réutiliser si même nom existe déjà
+        for i, existing in enumerate(self.position_presets):
+            if existing["name"] == akai["name"]:
+                self._assign_position_akai(pos_col, row, i)
+                self._save_akai_config_auto()
+                return
+        self.position_presets.append(akai)
+        idx = len(self.position_presets) - 1
+        self._assign_position_akai(pos_col, row, idx)
+        self._save_akai_config_auto()
+        self._log_message(f"Preset « {akai['name']} » importé depuis Plan de Feu", "success")
 
     def _assign_position_akai(self, pos_col, row, preset_idx):
         """Assigne un preset existant à position_pads[pos_col][row]."""
@@ -6012,15 +6072,20 @@ class MainWindow(QMainWindow):
                 cg = min(255, int(g * 255))
                 cb = min(255, int(b * 255))
                 proj.color = QColor(int(cr * bv), int(cg * bv), int(cb * bv))
+                self._update_color_wheel(proj, proj.color)
             elif has_rgb_layer:
                 proj.color = QColor(0, 0, 0)
+                self._update_color_wheel(proj, proj.color)
             elif has_dim:
-                # Dimmer seul : oscille le canal Dim directement, module la couleur existante
+                # Dimmer seul : oscille le canal Dim directement
+                # Utiliser base_color (couleur stable) et non proj.color (déjà modifié
+                # par le frame précédent) pour éviter la boucle de feedback vers le noir.
                 proj.level = int(bv * 100)
+                _stable = getattr(proj, 'base_color', None) or _base_color
                 proj.color = QColor(
-                    int(_base_color.red()   * bv),
-                    int(_base_color.green() * bv),
-                    int(_base_color.blue()  * bv),
+                    int(_stable.red()   * bv),
+                    int(_stable.green() * bv),
+                    int(_stable.blue()  * bv),
                 )
             if has_w:
                 proj.white_boost = int(min(255, w * 255))
@@ -6191,6 +6256,11 @@ class MainWindow(QMainWindow):
         elif etype == "Bascule":
             self._bascule()
             self.active_effect_config = {}  # one-shot
+            return
+
+        # Répercuter les couleurs calculées sur la roue de couleur des lyres sans RGB
+        for p in base_all:
+            self._update_color_wheel(p, p.color)
 
     def _fader8_dispatch(self, index, value):
         """Fader 9 : contrôle de la vitesse des effets."""
@@ -7819,6 +7889,11 @@ class MainWindow(QMainWindow):
             "go_mode": self.go_mode,
             "position_presets": self.position_presets,
             "position_pads": self.position_pads,
+            "lyre_positions": {
+                p.name: {"pan": p.pan, "tilt": p.tilt}
+                for p in self.projectors
+                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')
+            },
         }
 
     def _apply_akai_config(self, config):
@@ -7907,6 +7982,17 @@ class MainWindow(QMainWindow):
                 for pr in range(min(8, len(old_assignments))):
                     self.position_pads[0][pr] = old_assignments[pr]
         self.active_position_pads = {}
+
+        # Restaurer le pan/tilt courant de chaque lyre (position physique dernière session)
+        lyre_positions = config.get("lyre_positions", {})
+        if lyre_positions and hasattr(self, 'projectors'):
+            lyre_by_name = {p.name: p for p in self.projectors
+                            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
+            for name, pt in lyre_positions.items():
+                p = lyre_by_name.get(name)
+                if p:
+                    p.pan  = int(pt.get("pan",  32768))
+                    p.tilt = int(pt.get("tilt", 32768))
 
         # Les pads FX et POS seront rafraîchis lors du prochain _rebuild_akai_pads()
 
@@ -10026,6 +10112,10 @@ class MainWindow(QMainWindow):
                 self.plan_de_feu.btn_3d.setChecked(False)
         else:
             self._plan3d.init_scene(self.projectors)
+            # Synchroniser les boutons de scène avec le preset chargé
+            code = getattr(self._plan3d, '_scene_preset_code', 'live')
+            for k, btn in getattr(self._plan3d, '_scene_btns', {}).items():
+                btn.setChecked(k == code)
             self._plan3d.show()
             self._plan3d.raise_()
             if hasattr(self.plan_de_feu, 'btn_3d'):
@@ -10039,7 +10129,6 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Patch DMX")
         dialog.setWindowFlags(Qt.Window | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
-        dialog.setWindowState(Qt.WindowMaximized)
 
         _SS = """
             QDialog { background:#0f0f0f; color:#e0e0e0; }
@@ -10453,12 +10542,49 @@ class MainWindow(QMainWindow):
 
         btn_det_del = QPushButton("🗑  Supprimer")
         btn_det_del.setFixedHeight(30)
+        btn_det_del.setAutoDefault(False)
         btn_det_del.setStyleSheet(
             "QPushButton { background:#1e0a0a; color:#cc4444; border:1px solid #3a1a1a;"
             " border-radius:6px; padding:4px 14px; font-size:11px; }"
             "QPushButton:hover { background:#2a0e0e; color:#ee6666; border-color:#662222; }"
         )
         dth.addWidget(btn_det_del)
+
+        # ── Confirmation inline (remplace les boutons header) ─────────────
+        _confirm_strip = QWidget()
+        _confirm_strip.setStyleSheet("background:transparent;")
+        _csl = QHBoxLayout(_confirm_strip)
+        _csl.setContentsMargins(0, 0, 0, 0)
+        _csl.setSpacing(6)
+        _confirm_lbl = QLabel()
+        _confirm_lbl.setStyleSheet(
+            "color:#ff7755; font-size:11px; border:none; background:transparent;"
+        )
+        _btn_cnl = QPushButton("Annuler")
+        _btn_cok = QPushButton("Supprimer")
+        for _b in (_btn_cnl, _btn_cok):
+            _b.setFixedHeight(28)
+            _b.setAutoDefault(False)
+        _btn_cnl.setStyleSheet(
+            "QPushButton{background:#1a1a1a;color:#888;border:1px solid #333;"
+            "border-radius:5px;padding:3px 12px;font-size:11px;}"
+            "QPushButton:hover{background:#222;color:#ccc;}"
+        )
+        _btn_cok.setStyleSheet(
+            "QPushButton{background:#550000;color:#ff4444;border:1px solid #770000;"
+            "border-radius:5px;padding:3px 12px;font-size:11px;font-weight:bold;}"
+            "QPushButton:hover{background:#770000;color:#ff6666;}"
+        )
+        _csl.addWidget(_confirm_lbl)
+        _csl.addStretch()
+        _csl.addWidget(_btn_cnl)
+        _csl.addWidget(_btn_cok)
+        dth.addWidget(_confirm_strip)
+        _confirm_strip.setVisible(False)
+        _confirm_idx = [None]
+        _confirm_timer = QTimer(dialog)
+        _confirm_timer.setSingleShot(True)
+        _confirm_timer.setInterval(5000)
 
         form_scroll = QScrollArea()
         form_scroll.setWidgetResizable(True)
@@ -10678,18 +10804,18 @@ class MainWindow(QMainWindow):
         )
         _PT_APL_SS = (
             "QPushButton { background:#0d1520; color:#4488bb; border:1px solid #1a2d40;"
-            " border-radius:6px; padding:6px 10px; font-size:11px; }"
+            " border-radius:6px; padding:5px 8px; font-size:10px; }"
             "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
         )
         btn_pt_reset       = QPushButton("↺  Reset")
-        btn_pt_apply_model = QPushButton("Appliquer\nà toutes les\nlyres [ref]")
-        btn_pt_apply_all   = QPushButton("Appliquer\nà toutes\nles lyres")
+        btn_pt_apply_model = QPushButton("Appliquer à toutes\nles lyres  [ref]")
+        btn_pt_apply_all   = QPushButton("Appliquer à toutes\nles lyres")
         btn_pt_reset.setStyleSheet(_PT_RST_SS)
         btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
         btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
         btn_pt_reset.setFixedSize(130, 30)
-        btn_pt_apply_model.setMinimumWidth(130)
-        btn_pt_apply_all.setMinimumWidth(130)
+        btn_pt_apply_model.setFixedSize(140, 44)
+        btn_pt_apply_all.setFixedSize(140, 44)
 
         pt_side_col = QVBoxLayout()
         pt_side_col.setSpacing(6)
@@ -11146,6 +11272,78 @@ class MainWindow(QMainWindow):
 
                     wl.addLayout(tog_row)
 
+                # ── Calibration ColorWheel / Gobo ────────────────────────────
+                _WHEEL_CH = {"ColorWheel", "Gobo1", "Gobo2"}
+                if ch_type in _WHEEL_CH and snap_idx is not None and snap_idx < len(self.projectors):
+                    proj_w = self.projectors[snap_idx]
+                    _SEP2 = QFrame(); _SEP2.setFrameShape(QFrame.HLine)
+                    _SEP2.setStyleSheet("QFrame{color:#1e1e1e;margin:4px 0;}")
+                    wl.addWidget(_SEP2)
+
+                    _is_cw = ch_type == "ColorWheel"
+                    _calib_lbl = "🎨  Calibrer la roue de couleurs" if _is_cw else "🎯  Calibrer la roue de gobos"
+                    calib_btn = QPushButton(_calib_lbl)
+                    calib_btn.setFixedHeight(28)
+                    calib_btn.setStyleSheet(
+                        "QPushButton{background:#1a1a1a;color:#00d4ff;"
+                        "border:1px solid #00d4ff44;border-radius:5px;"
+                        "font-size:10px;padding:0 10px;}"
+                        "QPushButton:hover{background:#0d2030;border-color:#00d4ff;}"
+                    )
+
+                    def _open_calib(checked=False, _p=proj_w, _is=_is_cw, _si=snap_idx):
+                        m.close()
+                        if _is:
+                            from color_wheel_editor import ColorWheelCalibWizard
+                            dlg = ColorWheelCalibWizard(_p, self.projectors, self, self)
+                        else:
+                            from color_wheel_editor import GoboWheelEditorDialog
+                            dlg = GoboWheelEditorDialog(_p, self.projectors, main_window=self, parent=self)
+                        if not dlg.exec():
+                            return
+                        _mark_dirty()
+                        # ── Proposer d'appliquer à d'autres lyres ─────────────
+                        slots_attr = 'color_wheel_slots' if _is else 'gobo_wheel_slots'
+                        new_slots  = list(getattr(_p, slots_attr, []))
+                        if not new_slots:
+                            return
+                        ch_needed = 'ColorWheel' if _is else None
+                        def _has_wheel(proj):
+                            prf = getattr(proj, 'dmx_profile', [])
+                            return ch_needed in prf if ch_needed else any(g in prf for g in ('Gobo1', 'Gobo2'))
+                        src_type   = getattr(_p, 'fixture_type', '')
+                        other_all  = [p for i, p in enumerate(self.projectors)
+                                      if i != _si and _has_wheel(p)]
+                        same_type  = [p for p in other_all
+                                      if getattr(p, 'fixture_type', '') == src_type]
+                        if not other_all:
+                            return
+                        _BTN_THIS  = "Cette lyre seulement"
+                        _BTN_TYPE  = f"Toutes les lyres « {src_type} »" if same_type else None
+                        _BTN_ALL   = f"Toutes les lyres ({len(other_all) + 1})"
+                        msg = QMessageBox(self)
+                        msg.setWindowTitle("Appliquer la calibration")
+                        msg.setText("Appliquer cette calibration à d'autres lyres ?")
+                        msg.addButton(_BTN_THIS, QMessageBox.AcceptRole)
+                        if _BTN_TYPE:
+                            msg.addButton(_BTN_TYPE, QMessageBox.ActionRole)
+                        msg.addButton(_BTN_ALL, QMessageBox.ActionRole)
+                        msg.exec()
+                        clicked = msg.clickedButton()
+                        if clicked and clicked.text() == _BTN_ALL:
+                            targets = other_all
+                        elif clicked and _BTN_TYPE and clicked.text() == _BTN_TYPE:
+                            targets = same_type
+                        else:
+                            targets = []
+                        for tp in targets:
+                            setattr(tp, slots_attr, list(new_slots))
+                        if targets:
+                            _mark_dirty()
+
+                    calib_btn.clicked.connect(_open_calib)
+                    wl.addWidget(calib_btn, 0, Qt.AlignHCenter)
+
                 wa.setDefaultWidget(w)
                 m.addAction(wa)
                 m.exec(chip_lbl.mapToGlobal(chip_lbl.rect().bottomLeft()))
@@ -11312,6 +11510,7 @@ class MainWindow(QMainWindow):
             card = QFrame()
             card.setFixedHeight(60)
             card.setCursor(Qt.PointingHandCursor)
+            card.setFocusPolicy(Qt.ClickFocus)
 
             def _upd(selected, conflict):
                 _gc = card._gc
@@ -11340,8 +11539,9 @@ class MainWindow(QMainWindow):
             chk.setChecked(idx in _checked)
             chk.setStyleSheet(
                 "QCheckBox { border:none; background:transparent; }"
-                "QCheckBox::indicator { width:14px; height:14px; border:1px solid #2a2a2a;"
-                " border-radius:3px; background:#111; }"
+                "QCheckBox::indicator { width:15px; height:15px; border:1px solid #444;"
+                " border-radius:3px; background:#1a1a1a; }"
+                "QCheckBox::indicator:hover { border-color:#666; background:#222; }"
                 "QCheckBox::indicator:checked { background:#00d4ff; border-color:#00d4ff; }"
             )
             card._chk = chk
@@ -11401,6 +11601,18 @@ class MainWindow(QMainWindow):
             chk.stateChanged.connect(_on_check)
 
             def _on_card_click(e, i=idx):
+                if e.button() == Qt.RightButton:
+                    _select_card(i)
+                    m = QMenu(dialog)
+                    m.setStyleSheet(
+                        "QMenu{background:#1e1e1e;color:#ccc;border:1px solid #2a2a2a;font-size:12px;}"
+                        "QMenu::item{padding:7px 20px;border-radius:3px;}"
+                        "QMenu::item:selected{background:#cc333318;color:#ee6666;}"
+                    )
+                    act_del = m.addAction("🗑  Supprimer")
+                    if m.exec(e.globalPos()) == act_del:
+                        _del_selected()
+                    return
                 if e.button() != Qt.LeftButton:
                     return
                 mods = e.modifiers()
@@ -11417,6 +11629,15 @@ class MainWindow(QMainWindow):
                             _cards[j]._chk.setChecked(True)
                 else:
                     _select_card(i)
+                    card.setFocus()
+
+            def _card_key(event):
+                if event.key() == Qt.Key_Delete:
+                    _del_selected()
+                else:
+                    QFrame.keyPressEvent(card, event)
+            card.keyPressEvent = _card_key
+
             card.mousePressEvent = _on_card_click
             return card
         def _build_cards(filter_text=""):
@@ -11615,14 +11836,10 @@ class MainWindow(QMainWindow):
         btn_am.clicked.connect(lambda: addr_sb.setValue(max(1, addr_sb.value() - 1)))
         btn_ap.clicked.connect(lambda: addr_sb.setValue(min(512, addr_sb.value() + 1)))
 
-        def _del_selected():
-            idx = _sel[0]
-            if idx is None or idx >= len(fixture_data): return
-            fname = fixture_data[idx]['name']
-            if QMessageBox.question(
-                dialog, "Supprimer", f"Supprimer « {fname} » ?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            ) != QMessageBox.Yes: return
+        def _do_delete_at(idx):
+            """Supprime la fixture à l'index idx — appelé après confirmation."""
+            if idx is None or idx >= len(fixture_data):
+                return
             _push_history()
             fixture_data.pop(idx)
             if 0 <= idx < len(self.projectors):
@@ -11635,7 +11852,44 @@ class MainWindow(QMainWindow):
             det_stack.setCurrentIndex(0)
             _mark_dirty()
 
+        def _confirm_hide():
+            """Cache la bande de confirmation et réaffiche les boutons normaux."""
+            _confirm_timer.stop()
+            _confirm_strip.setVisible(False)
+            btn_det_locate.setVisible(True)
+            btn_det_replace.setVisible(True)
+            btn_det_del.setVisible(True)
+            _confirm_idx[0] = None
+
+        def _confirm_ok():
+            idx = _confirm_idx[0]
+            _confirm_hide()
+            _do_delete_at(idx)
+
+        _btn_cnl.clicked.connect(_confirm_hide)
+        _btn_cok.clicked.connect(_confirm_ok)
+        _confirm_timer.timeout.connect(_confirm_hide)
+
+        def _del_selected():
+            idx = _sel[0]
+            if idx is None or idx >= len(fixture_data):
+                return
+            fname = fixture_data[idx]['name']
+            _confirm_idx[0] = idx
+            _confirm_lbl.setText(f"Supprimer  « {fname[:30]} » ?")
+            btn_det_locate.setVisible(False)
+            btn_det_replace.setVisible(False)
+            btn_det_del.setVisible(False)
+            _confirm_strip.setVisible(True)
+            _confirm_timer.start()
+
         btn_det_del.clicked.connect(_del_selected)
+
+        # Raccourci Delete toujours actif dans l'onglet Fixtures
+        from PySide6.QtGui import QShortcut, QKeySequence
+        _shortcut_del = QShortcut(QKeySequence(Qt.Key_Delete), tab_fx)
+        _shortcut_del.setContext(Qt.WidgetWithChildrenShortcut)
+        _shortcut_del.activated.connect(_del_selected)
 
         def _locate_selected():
             """Bascule sur l'onglet Plan de feu et sélectionne la fixture courante."""
@@ -11816,14 +12070,9 @@ class MainWindow(QMainWindow):
 
         def _del_checked():
             if not _checked: return
-            n = len(_checked)
-            names = [fixture_data[i]['name'] for i in sorted(_checked) if i < len(fixture_data)]
-            msg = f"Supprimer {n} fixture{'s' if n > 1 else ''} ?\n" + "\n".join(f"  • {nm}" for nm in names[:8])
-            if QMessageBox.question(dialog, "Supprimer", msg,
-                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-                return
+            idxs = sorted(_checked, reverse=True)
             _push_history()
-            for i in sorted(_checked, reverse=True):
+            for i in idxs:
                 if i < len(fixture_data): fixture_data.pop(i)
                 if i < len(self.projectors): self.projectors.pop(i)
             _checked.clear()
@@ -11831,6 +12080,7 @@ class MainWindow(QMainWindow):
             btn_del_multi.setVisible(False)
             btn_rename_multi.setVisible(False)
             btn_group_multi.setVisible(False)
+            btn_desel_multi.setVisible(False)
             self._rebuild_dmx_patch()
             _rebuild_fd()
             _build_cards(filter_bar.text())
@@ -11907,6 +12157,8 @@ class MainWindow(QMainWindow):
                 # Copier les slots roue couleur/gobo depuis le preset OFL
                 p.color_wheel_slots = list(preset.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(preset.get('gobo_wheel_slots', []))
+                if p.fixture_type == "Moving Head":
+                    p._needs_cw_calib = True
                 self.projectors.append(p)
             self._rebuild_dmx_patch()
             _rebuild_fd()
@@ -12100,6 +12352,7 @@ class MainWindow(QMainWindow):
             btn_del_multi.setVisible(False)
             btn_rename_multi.setVisible(False)
             btn_group_multi.setVisible(False)
+            btn_desel_multi.setVisible(False)
             self._rebuild_dmx_patch()
             _rebuild_fd()
             _build_cards(filter_bar.text())
@@ -12138,6 +12391,7 @@ class MainWindow(QMainWindow):
             btn_del_multi.setVisible(False)
             btn_rename_multi.setVisible(False)
             btn_group_multi.setVisible(False)
+            btn_desel_multi.setVisible(False)
             self._rebuild_dmx_patch()
             _rebuild_fd()
             _build_cards(filter_bar.text())
@@ -12255,7 +12509,7 @@ class MainWindow(QMainWindow):
                 if card is not None and hasattr(card, '_chk'):
                     card._chk.setChecked(False)
         btn_desel_multi.clicked.connect(_deselect_all)
-        btn_add.clicked.connect(_add_fixture)
+        btn_add.clicked.connect(lambda: _add_fixture())
         btn_save.clicked.connect(_do_save)
         filter_bar.textChanged.connect(lambda txt: _build_cards(txt))
 
@@ -12422,15 +12676,90 @@ class MainWindow(QMainWindow):
         close_btn.clicked.disconnect()
         close_btn.clicked.connect(dialog.close)
 
+        # ── Sync sélection entre onglets Fixtures ↔ Plan de feu ──────────────
+        def _proj_idx_to_gl(idx):
+            g_cnt = {}
+            for i, p in enumerate(self.projectors):
+                li = g_cnt.get(p.group, 0)
+                g_cnt[p.group] = li + 1
+                if i == idx:
+                    return p.group, li
+            return None, None
+
+        def _gl_to_proj_idx(group, local_idx):
+            li = 0
+            for i, p in enumerate(self.projectors):
+                if p.group == group:
+                    if li == local_idx:
+                        return i
+                    li += 1
+            return None
+
+        def _sync_fixtures_to_canvas():
+            proxy.selected_lamps.clear()
+            idxs = sorted(_checked) if _checked else ([] if _sel[0] is None else [_sel[0]])
+            for idx in idxs:
+                if idx < len(self.projectors):
+                    grp, li = _proj_idx_to_gl(idx)
+                    if grp is not None:
+                        proxy.selected_lamps.add((grp, li))
+            canvas.update()
+
+        def _sync_canvas_to_fixtures():
+            if not proxy.selected_lamps:
+                return
+            found = []
+            for grp, li in proxy.selected_lamps:
+                idx = _gl_to_proj_idx(grp, li)
+                if idx is not None:
+                    found.append(idx)
+            if not found:
+                return
+            found.sort()
+            _checked.clear()
+            _select_card(found[0])
+            for idx in found:
+                if idx < len(_cards) and _cards[idx] is not None:
+                    _cards[idx]._chk.setChecked(True)
+
+        def _on_tab_changed(new_idx):
+            if new_idx == 1:
+                _sync_fixtures_to_canvas()
+            elif new_idx == 0:
+                _sync_canvas_to_fixtures()
+
+        tabs.currentChanged.connect(_on_tab_changed)
+
         _build_cards()
         if select_idx is not None and 0 <= select_idx < len(fixture_data):
             _select_card(select_idx)
         elif fixture_data:
             _select_card(0)
 
-        dialog.setWindowState(Qt.WindowMaximized)
+        _avail = self.screen().availableGeometry()
+        dialog.setGeometry(_avail)
+        dialog.setWindowState(dialog.windowState() | Qt.WindowMaximized)
         dialog.exec()
         canvas_timer.stop()
+
+        # Proposer la calibration pour les nouvelles lyres avec roue de couleur
+        _new_mh = [p for p in self.projectors if getattr(p, '_needs_cw_calib', False)]
+        for p in self.projectors:
+            p._needs_cw_calib = False  # reset flag
+        if _new_mh:
+            from PySide6.QtWidgets import QMessageBox
+            resp = QMessageBox.question(
+                self,
+                "Roue de couleur",
+                f"Vous avez ajouté {len(_new_mh)} lyre(s) avec une roue de couleur.\n"
+                "Voulez-vous calibrer les positions DMX maintenant ?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if resp == QMessageBox.Yes:
+                from color_wheel_editor import ColorWheelCalibWizard
+                dlg = ColorWheelCalibWizard(_new_mh[0], self.projectors, self, self)
+                dlg.exec()
 
     def _show_fixture_library_dialog(self):
         """Dialog bibliotheque de fixtures. Retourne (preset, qty, custom_name) ou None."""
@@ -12595,8 +12924,13 @@ class MainWindow(QMainWindow):
         search_row.addWidget(btn_refresh)
         tab1_layout.addLayout(search_row)
 
-        xml_hint = QLabel("💡  Vous pouvez importer n'importe quelle fixture au format <b>XML</b> (GrandMA, QLC+…) via le bouton Importer.")
+        xml_hint = QLabel(
+            '💡  Vous pouvez importer n\'importe quelle fixture au format <b>XML</b> (GrandMA, QLC+…) via le bouton Importer.  '
+            '<a href="https://mystrow.fr/importer-fixture-dmx-mystrow" '
+            'style="color:#44cc88; text-decoration:underline;">Consulter le guide →</a>'
+        )
         xml_hint.setWordWrap(True)
+        xml_hint.setOpenExternalLinks(True)
         xml_hint.setStyleSheet(
             "color:#888; font-size:11px; background:#161f16; border:1px solid #2a3a2a;"
             " border-radius:5px; padding:5px 10px;"
@@ -12657,6 +12991,69 @@ class MainWindow(QMainWindow):
         tab2_layout.addWidget(my_list, 1)
 
         tab_widget.addTab(tab2, "Mes projecteurs")
+
+        # ── Suppression depuis "Mes projecteurs" ──────────────────────────────
+        def _delete_my_fixture(row):
+            item = my_list.item(row)
+            if not item or not item.data(Qt.UserRole):
+                return
+            fx = item.data(Qt.UserRole)
+            name = fx.get("name", "cette fixture")
+            if QMessageBox.question(
+                dialog, "Supprimer",
+                f"Supprimer « {name} » de vos fixtures ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            ) != QMessageBox.Yes:
+                return
+            _fx_file2 = Path.home() / ".mystrow_fixtures.json"
+            try:
+                existing2 = _json.loads(_fx_file2.read_text(encoding="utf-8")) if _fx_file2.exists() else []
+                if not isinstance(existing2, list):
+                    existing2 = []
+                existing2 = [
+                    f for f in existing2
+                    if not (isinstance(f, dict)
+                            and f.get("name") == name
+                            and f.get("source", "user") not in ("firestore", "ofl"))
+                ]
+                _fx_file2.write_text(_json.dumps(existing2, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as _e:
+                QMessageBox.warning(dialog, "Erreur", f"Impossible de supprimer : {_e}")
+                return
+            my_list.takeItem(row)
+            if my_list.count() == 0:
+                _ei = QListWidgetItem("Aucun projecteur enregistré — créez-en un dans l'éditeur de fixtures.")
+                _ei.setFlags(_ei.flags() & ~Qt.ItemIsEnabled)
+                my_list.addItem(_ei)
+
+        my_list.setContextMenuPolicy(Qt.CustomContextMenu)
+
+        def _my_list_ctx(pos):
+            item = my_list.itemAt(pos)
+            if not item or not item.data(Qt.UserRole):
+                return
+            row = my_list.row(item)
+            m = QMenu(dialog)
+            m.setStyleSheet(
+                "QMenu{background:#1e1e1e;color:#ccc;border:1px solid #2a2a2a;font-size:12px;}"
+                "QMenu::item{padding:7px 20px;border-radius:3px;}"
+                "QMenu::item:selected{background:#cc333318;color:#ee6666;}"
+            )
+            act_del = m.addAction("🗑  Supprimer")
+            if m.exec(my_list.mapToGlobal(pos)) == act_del:
+                _delete_my_fixture(row)
+
+        my_list.customContextMenuRequested.connect(_my_list_ctx)
+
+        def _my_list_key(event):
+            if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                row = my_list.currentRow()
+                if row >= 0 and my_list.currentItem() and my_list.currentItem().data(Qt.UserRole):
+                    _delete_my_fixture(row)
+            else:
+                QListWidget.keyPressEvent(my_list, event)
+
+        my_list.keyPressEvent = _my_list_key
 
         # ── Auto-sélection après retour de l'éditeur ──────────────────────────
         _pending = getattr(self, '_pending_fixture_select', None)
@@ -12886,23 +13283,22 @@ class MainWindow(QMainWindow):
             elif cat_list.count():
                 cat_list.setCurrentRow(0)
 
-        def _do_refresh():
+        def _do_refresh(silent: bool = False):
             from PySide6.QtCore import QObject as _QObject, Signal as _Signal, QThread as _QThread
 
-            from license_manager import _get_fresh_token
-
-            id_token = _get_fresh_token()
-            if not id_token:
-                QMessageBox.warning(
-                    dialog, "Non connecté",
-                    "Impossible de récupérer les fixtures Firestore.\n"
-                    "Veuillez vous connecter à votre compte MyStrow."
-                )
-                return
+            # Essayer d'obtenir un token si l'utilisateur est connecté, mais
+            # procéder sans token si les règles Firestore autorisent la lecture publique.
+            id_token = None
+            try:
+                from license_manager import _get_fresh_token
+                id_token = _get_fresh_token()
+            except Exception:
+                pass
 
             btn_refresh.setEnabled(False)
             btn_refresh.setText("⏳  Chargement...")
-            count_lbl.setText("Connexion à Firestore...")
+            if not silent:
+                count_lbl.setText("Connexion à Firestore...")
 
             class _FetchWorker(_QObject):
                 done  = _Signal(list)
@@ -12951,9 +13347,22 @@ class MainWindow(QMainWindow):
                     _fx_file2.write_text(_json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
                 except Exception:
                     pass
+                # Sauvegarder le timestamp de dernier refresh dans l'état des packs
+                try:
+                    import time as _time
+                    from fixture_packs import load_packs_state, save_packs_state
+                    _st = load_packs_state()
+                    _st["gdtf_last_check"] = int(_time.time())
+                    save_packs_state(_st)
+                except Exception:
+                    pass
                 _rebuild_library_ui(merged)
                 n = len(remote_fixtures)
-                count_lbl.setText(f"Firestore — {n} fixture{'s' if n > 1 else ''} chargée{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
+                if not silent:
+                    count_lbl.setText(
+                        f"Firestore — {n} fixture{'s' if n > 1 else ''} chargée{'s' if n > 1 else ''}"
+                        f"  —  {_TOTAL_FIXTURES} au total"
+                    )
                 btn_refresh.setEnabled(True)
                 btn_refresh.setText("🔄  Actualiser")
 
@@ -12961,17 +13370,18 @@ class MainWindow(QMainWindow):
                 thread.quit()
                 dialog._refresh_thread = None
                 dialog._refresh_worker = None
-                count_lbl.setText("Erreur Firestore")
-                QMessageBox.warning(dialog, "Erreur Firestore", f"Impossible de charger les fixtures :\n{msg}")
                 btn_refresh.setEnabled(True)
                 btn_refresh.setText("🔄  Actualiser")
+                if not silent:
+                    count_lbl.setText("Erreur Firestore")
+                    QMessageBox.warning(dialog, "Erreur Firestore", f"Impossible de charger les fixtures :\n{msg}")
 
             worker.done.connect(_on_done)
             worker.error.connect(_on_error)
             thread.start()
 
         btn_import.clicked.connect(_do_import)
-        btn_refresh.clicked.connect(_do_refresh)
+        btn_refresh.clicked.connect(lambda: _do_refresh(silent=False))
         cat_list.currentItemChanged.connect(on_cat_changed)
         search_edit.textChanged.connect(on_search)
 
@@ -13211,6 +13621,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(dialog, "Aucune fixture", "La liste de fixtures est vide.")
             return
 
+        # Mémoriser les positions pan/tilt actuelles avant de recréer les projecteurs
+        _saved_pt = {
+            p.name: (p.pan, p.tilt)
+            for p in self.projectors
+            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')
+        }
+
         # Reconstruire self.projectors depuis fixture_data
         self.projectors = []
         for fd in fixture_data:
@@ -13218,6 +13635,9 @@ class MainWindow(QMainWindow):
             p.start_address = fd['start_address']
             if fd['fixture_type'] == "Machine a fumee":
                 p.fan_speed = 0
+            # Restaurer la position si la lyre existait déjà (même nom)
+            if p.fixture_type in ('Moving Head', 'Lyre') and p.name in _saved_pt:
+                p.pan, p.tilt = _saved_pt[p.name]
             self.projectors.append(p)
 
         # Mettre a jour le patch DMX
@@ -13282,6 +13702,8 @@ class MainWindow(QMainWindow):
                 'pos_3d_z': getattr(proj, 'pos_3d_z', None),
                 'fixture_height':  getattr(proj, 'fixture_height', None),
                 'body_rotation':   getattr(proj, 'body_rotation', 0.0),
+                'rot3d_x':         getattr(proj, 'rot3d_x',       0.0),
+                'rot3d_z':         getattr(proj, 'rot3d_z',       0.0),
                 'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                 'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
@@ -13289,9 +13711,14 @@ class MainWindow(QMainWindow):
                 'tilt_invert':   getattr(proj, 'tilt_invert',   False),
                 'pan_tilt_swap': getattr(proj, 'pan_tilt_swap', False),
             })
+        scene_3d = {}
+        if hasattr(self, '_plan3d'):
+            scene_3d['preset'] = getattr(self._plan3d, '_scene_preset_code', 'live')
+            scene_3d['trusses'] = list(getattr(self._plan3d, '_trusses', []))
         config = {
             'fixtures': fixtures_list,
             'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
+            'scene_3d': scene_3d,
         }
         try:
             config_path = Path.home() / '.maestro_dmx_patch.json'
@@ -13333,6 +13760,8 @@ class MainWindow(QMainWindow):
                         if fh is not None:
                             p.fixture_height = float(fh)
                         p.body_rotation = float(fd.get('body_rotation', 0.0))
+                        p.rot3d_x       = float(fd.get('rot3d_x',       0.0))
+                        p.rot3d_z       = float(fd.get('rot3d_z',       0.0))
                         if fd.get('fixture_type') == "Machine a fumee":
                             p.fan_speed = 0
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))

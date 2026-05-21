@@ -31,6 +31,7 @@ class Projector:
         self.prism = 0                # Prism (0=off, >0=actif)
         self.gobo_rotation = 0        # Rotation gobo (0-255)
         self.prism_rotation = 0       # Rotation prisme (0-255)
+        self.effects          = 0   # Effects/Macro channel (0-255) — programme interne fixture
         self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
         self.channel_extras   = {}    # {ch_type: 0-255} contrôle brut prioritaire (Reset, Mode…)
         # Canaux spéciaux — contrôle manuel indépendant

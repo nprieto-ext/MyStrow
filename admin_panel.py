@@ -1631,6 +1631,137 @@ class GdtfUploadDialog(QDialog):
         self._append_log(f"❌ Erreur : {msg}", RED)
 
 
+def _publish_pack_async(pack_id: str, pack_data: dict, id_token: str) -> None:
+    """Publie un pack de fixtures dans Firestore/fixture_packs (appelé dans un QThread)."""
+    import firebase_client as fc
+    fc.write_fixture_pack(pack_id, pack_data, id_token)
+
+
+def _gdtf_to_pack_fixtures(gdtf_fixtures: list) -> list:
+    """Convertit des fixtures gdtf_fixtures en entrées pack utilisateur."""
+    out = []
+    for fx in gdtf_fixtures:
+        modes = fx.get("modes") or []
+        base = {
+            "name":         fx.get("name", ""),
+            "manufacturer": fx.get("manufacturer", "Générique"),
+            "fixture_type": fx.get("fixture_type", "PAR LED"),
+            "group":        fx.get("group", "face"),
+        }
+        if len(modes) == 1:
+            base["profile"] = modes[0].get("profile", [])
+            base["modes"]   = modes
+            out.append(base)
+        elif len(modes) > 1:
+            for m in modes:
+                entry = dict(base)
+                entry["name"]    = f"{base['name']} — {m['name']}"
+                entry["profile"] = m.get("profile", [])
+                entry["modes"]   = [m]
+                out.append(entry)
+        else:
+            # Pas de modes → essai du champ profile direct
+            profile = fx.get("profile", [])
+            base["profile"] = profile
+            if profile:
+                out.append(base)
+    return out
+
+
+class PublishPackDialog(QDialog):
+    """Dialog pour nommer et publier les fixtures comme pack utilisateur."""
+
+    def __init__(self, fixture_count: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Publier comme pack fixtures")
+        self.setMinimumWidth(480)
+        self.setModal(True)
+        self._result: dict | None = None
+        self._build_ui(fixture_count)
+
+    def _build_ui(self, fixture_count: int):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(14)
+
+        title = QLabel("Publier les fixtures comme pack utilisateur")
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        title.setStyleSheet(f"color:{ACCENT};")
+        lay.addWidget(title)
+
+        info = QLabel(
+            f"{fixture_count} fixture(s) seront publiées dans <b>fixture_packs</b> "
+            f"sur Firestore et téléchargeables par tous les utilisateurs MyStrow "
+            f"(sans connexion requise)."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        lay.addWidget(info)
+
+        def _row(label, widget):
+            r = QHBoxLayout()
+            lbl = QLabel(label)
+            lbl.setFixedWidth(110)
+            lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
+            r.addWidget(lbl)
+            r.addWidget(widget, 1)
+            lay.addLayout(r)
+
+        self._name_edit = QLineEdit("MyStrow Library")
+        self._name_edit.setFixedHeight(32)
+        _row("Nom du pack :", self._name_edit)
+
+        self._id_edit = QLineEdit("mystrow_library")
+        self._id_edit.setFixedHeight(32)
+        self._id_edit.setToolTip(
+            "Identifiant Firestore unique (slug). "
+            "Republier avec le même ID incrémente la version."
+        )
+        _row("ID du pack :", self._id_edit)
+
+        self._desc_edit = QLineEdit("Bibliothèque de fixtures MyStrow")
+        self._desc_edit.setFixedHeight(32)
+        _row("Description :", self._desc_edit)
+
+        rule_info = QLabel(
+            "⚠  Assurez-vous que les règles Firestore autorisent la lecture publique :\n"
+            "  match /fixture_packs/{id} { allow read: if true; allow write: if request.auth != null; }"
+        )
+        rule_info.setWordWrap(True)
+        rule_info.setStyleSheet(
+            "color:#e67e22; font-size:10px; font-family:Consolas; "
+            "background:#1a1200; border:1px solid #443300; border-radius:4px; padding:6px;"
+        )
+        lay.addWidget(rule_info)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setFixedHeight(32)
+        btn_cancel.setStyleSheet(_BTN_SECONDARY)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+        btn_ok = QPushButton("📦  Publier")
+        btn_ok.setFixedHeight(32)
+        btn_ok.setStyleSheet(_BTN_PRIMARY)
+        btn_ok.clicked.connect(self._on_ok)
+        btn_row.addWidget(btn_ok)
+        lay.addLayout(btn_row)
+
+    def _on_ok(self):
+        name    = self._name_edit.text().strip()
+        pack_id = self._id_edit.text().strip()
+        desc    = self._desc_edit.text().strip()
+        if not name or not pack_id:
+            QMessageBox.warning(self, "Champs manquants", "Nom et ID du pack sont requis.")
+            return
+        self._result = {"name": name, "id": pack_id, "description": desc}
+        self.accept()
+
+    def get_result(self) -> dict | None:
+        return self._result
+
+
 def _do_upload_fixture_async(fixture_data: dict, id_token: str, refresh_token: str = "") -> str:
     """Upload d'une fixture vers Firestore via gdtf_upload (appelé dans un QThread).
     Retourne le id_token (potentiellement rafraîchi)."""
@@ -3527,6 +3658,13 @@ class AdminPanel(QMainWindow):
         btn_fix_refresh.clicked.connect(self._load_fixtures)
         ft_lay.addWidget(btn_fix_refresh)
 
+        btn_publish_pack = QPushButton("📦  Publier…")
+        btn_publish_pack.setStyleSheet(_BTN_PRIMARY)
+        btn_publish_pack.setFixedHeight(30)
+        btn_publish_pack.setToolTip("Publier toutes les fixtures comme pack téléchargeable par les utilisateurs")
+        btn_publish_pack.clicked.connect(self._on_publish_as_pack)
+        ft_lay.addWidget(btn_publish_pack)
+
         fix_lay.addWidget(fix_toolbar)
 
         # Indicateur de chargement fixtures
@@ -4755,6 +4893,39 @@ class AdminPanel(QMainWindow):
     def _on_fixture_delete_error(self, msg: str):
         self._btn_del_fix.setEnabled(True)
         QMessageBox.critical(self, "Erreur suppression", msg)
+
+    def _on_publish_as_pack(self):
+        if not self._all_fixtures:
+            QMessageBox.warning(self, "Aucune fixture",
+                                "Chargez d'abord les fixtures depuis Firestore (onglet Fixtures).")
+            return
+        pack_fixtures = _gdtf_to_pack_fixtures(self._all_fixtures)
+        if not pack_fixtures:
+            QMessageBox.warning(self, "Aucune fixture convertible",
+                                "Impossible de convertir les fixtures : vérifiez qu'elles ont des modes/canaux définis.")
+            return
+        dlg = PublishPackDialog(len(pack_fixtures), self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        meta = dlg.get_result()
+        if not meta:
+            return
+        pack_id = meta["id"]
+        pack_data = {
+            "name":        meta["name"],
+            "description": meta["description"],
+            "fixtures":    pack_fixtures,
+        }
+        _run_async(
+            self, _publish_pack_async, pack_id, pack_data, self._id_token,
+            on_success=lambda _: QMessageBox.information(
+                self, "Pack publié",
+                f"Pack « {meta['name']} » publié avec succès ({len(pack_fixtures)} fixtures).\n"
+                f"Les utilisateurs MyStrow verront la mise à jour dès leur prochaine ouverture "
+                f"de l'éditeur de fixtures."
+            ),
+            on_error=lambda msg: QMessageBox.critical(self, "Erreur publication", msg),
+        )
 
     # ── General ────────────────────────────────────────────────────────────────
 

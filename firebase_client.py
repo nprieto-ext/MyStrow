@@ -693,10 +693,12 @@ def fetch_gdtf_fixtures(
     return {"fixtures": fixtures, "next_cursor": next_cursor}
 
 
-def fetch_all_gdtf_fixtures(id_token: str) -> list:
+def fetch_all_gdtf_fixtures(id_token: str = None) -> list:
     """
     Charge TOUTES les fixtures de la collection gdtf_fixtures (pagination auto).
     Retourne une liste de dicts fixture standardisés.
+    Fonctionne sans authentification si les règles Firestore autorisent la lecture publique :
+        match /gdtf_fixtures/{id} { allow read: if true; }
     """
     results = []
     page_token = None
@@ -704,9 +706,10 @@ def fetch_all_gdtf_fixtures(id_token: str) -> list:
         url = f"{_FS_BASE}/gdtf_fixtures?pageSize=300"
         if page_token:
             url += f"&pageToken={page_token}"
-        req = urllib.request.Request(
-            url, headers={"Authorization": f"Bearer {id_token}"}
-        )
+        headers = {}
+        if id_token:
+            headers["Authorization"] = f"Bearer {id_token}"
+        req = urllib.request.Request(url, headers=headers)
         ctx = _SSL_CTX
         try:
             with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
