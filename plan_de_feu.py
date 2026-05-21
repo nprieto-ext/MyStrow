@@ -928,32 +928,32 @@ class ColorPickerBlock(QFrame):
 
     def update_selection_state(self):
         pdf = self.plan_de_feu
-        is_cw = False
+        has_rgb = False
+        has_cw_only = False
         if getattr(pdf, 'selected_lamps', None):
             for g, i in pdf.selected_lamps:
                 projs = [p for p in pdf.projectors if p.group == g]
-                if i < len(projs) and self._is_cw_only(projs[i]):
-                    is_cw = True
-                    break
+                if i < len(projs):
+                    if self._is_cw_only(projs[i]):
+                        has_cw_only = True
+                    else:
+                        has_rgb = True
+        # Grisé seulement si 100% Color Wheel (aucun RGB dans la sélection)
+        is_cw = has_cw_only and not has_rgb
         self._cw_locked = is_cw
-        for w in (self._hue_slider, self._sat_slider, self._bri_slider):
-            w.setEnabled(not is_cw)
         from PySide6.QtWidgets import QGraphicsOpacityEffect
-        if is_cw:
-            eff = QGraphicsOpacityEffect(self)
-            eff.setOpacity(0.35)
-            self.setGraphicsEffect(eff)
-        else:
-            self.setGraphicsEffect(None)
-
-    def mousePressEvent(self, event):
-        if self._cw_locked:
-            pdf = self.plan_de_feu
-            mw = getattr(pdf, 'main_window', None)
-            if mw and hasattr(mw, '_log_message'):
-                mw._log_message(
-                    "Roue de couleur — clic droit sur la lyre pour changer la teinte", "warn")
-        super().mousePressEvent(event)
+        # Hue + Sat : désactivés pour Color Wheel only
+        for w in (self._hue_slider, self._sat_slider):
+            w.setEnabled(not is_cw)
+            if is_cw:
+                eff = QGraphicsOpacityEffect(w)
+                eff.setOpacity(0.35)
+                w.setGraphicsEffect(eff)
+            else:
+                w.setGraphicsEffect(None)
+        # Luminosité : toujours actif
+        self._bri_slider.setEnabled(True)
+        self._bri_slider.setGraphicsEffect(None)
 
     # ── DMX output ────────────────────────────────────────────────────────────
     def _send_color(self, color: QColor):
@@ -966,6 +966,13 @@ class ColorPickerBlock(QFrame):
             if i < len(projs):
                 targets.append((projs[i], g, i))
         for proj, g, i in targets:
+            if self._is_cw_only(proj):
+                # Color Wheel : luminosité uniquement, pas de changement de couleur
+                proj.level = max(0, min(100, int(self._v * 100)))
+                br = proj.level / 100.0
+                bc = proj.base_color if proj.base_color else QColor(255, 255, 255)
+                proj.color = QColor(int(bc.red() * br), int(bc.green() * br), int(bc.blue() * br))
+                continue
             proj.base_color = color
             proj.level = 100
             proj.color = QColor(color.red(), color.green(), color.blue())
@@ -4548,7 +4555,12 @@ class PlanDeFeu(QFrame):
         # ── Effets rapides (tout en bas) ─────────────────────────────────
         _is_mh    = proj.fixture_type == "Moving Head"
         _is_smoke = proj.fixture_type == "Machine a fumee"
-        if not _is_smoke:
+        # Types de tous les projecteurs sélectionnés
+        _all_types = {p.fixture_type for p, _g, _i in targets}
+        _has_mh    = "Moving Head" in _all_types
+        _has_led   = bool(_all_types - {"Moving Head", "Machine a fumee"})
+        _mixed     = _has_mh and _has_led  # sélection hétérogène → pas d'effets rapides
+        if not _is_smoke and not _mixed:
             menu.addSeparator()
             eff_sec = QLabel(tr("pdf_qe_section"))
             eff_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
