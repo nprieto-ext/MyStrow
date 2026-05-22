@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
-    QMenu, QComboBox, QFileDialog, QMessageBox, QDialog, QSlider
+    QMenu, QComboBox, QFileDialog, QMessageBox, QDialog, QSlider, QSpinBox
 )
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QFont, QBrush, QCursor
@@ -247,7 +247,7 @@ class Sequencer(QFrame):
         self.is_dirty = True
 
     def edit_pause_duration(self, row):
-        """Edite la duree d'une pause avec un slider"""
+        """Edite la duree d'une pause avec slider + spinboxes min/sec."""
         title_item = self.table.item(row, 1)
         if not title_item:
             return
@@ -260,62 +260,133 @@ class Sequencer(QFrame):
 
         dialog = QDialog(self)
         dialog.setWindowTitle(tr("seq_dlg_pause_title"))
-        dialog.setMinimumWidth(350)
+        dialog.setMinimumWidth(520)
         dialog.setStyleSheet("background: #1a1a1a; color: white;")
 
         layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 16)
 
-        value_label = QLabel(tr("seq_duration_seconds", n=current_seconds) if is_timed else tr("seq_indefinite"))
-        value_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        # ── Label résumé ──────────────────────────────────────────────────
+        def _fmt_duration(secs):
+            h = secs // 3600
+            m = (secs % 3600) // 60
+            s = secs % 60
+            if h > 0:
+                return tr("seq_duration_h_m_s", h=h, m=m, s=s, total=secs)
+            elif m > 0:
+                return tr("seq_duration_min_sec", m=m, s=s, total=secs)
+            return tr("seq_duration_seconds", n=secs)
+
+        value_label = QLabel(_fmt_duration(current_seconds) if is_timed else tr("seq_indefinite"))
+        value_label.setFont(QFont("Segoe UI", 13, QFont.Bold))
         value_label.setAlignment(Qt.AlignCenter)
-        value_label.setStyleSheet("color: #ffa500; padding: 10px;")
+        value_label.setStyleSheet("color: #ffa500; padding: 6px;")
         layout.addWidget(value_label)
 
+        # ── Spinboxes min / sec ───────────────────────────────────────────
+        spin_style = """
+            QSpinBox {
+                background: #252525; color: white;
+                border: 1px solid #3a3a3a; border-radius: 4px;
+                padding: 4px 8px; font-size: 15px; font-weight: bold;
+                min-width: 64px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 20px; background: #333; border: none;
+            }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #444; }
+        """
+        spin_row = QHBoxLayout()
+        spin_row.setSpacing(8)
+        spin_row.addStretch()
+
+        spin_min = QSpinBox()
+        spin_min.setRange(0, 60)
+        spin_min.setSuffix(" m")
+        spin_min.setStyleSheet(spin_style)
+        spin_min.setValue(current_seconds // 60)
+
+        spin_sec = QSpinBox()
+        spin_sec.setRange(0, 59)
+        spin_sec.setSuffix(" s")
+        spin_sec.setStyleSheet(spin_style)
+        spin_sec.setValue(current_seconds % 60)
+
+        spin_row.addWidget(spin_min)
+        spin_row.addWidget(spin_sec)
+        spin_row.addStretch()
+        layout.addLayout(spin_row)
+
+        # ── Slider ────────────────────────────────────────────────────────
         slider = QSlider(Qt.Horizontal)
         slider.setMinimum(10)
-        slider.setMaximum(600)
-        slider.setValue(current_seconds)
+        slider.setMaximum(3600)
+        slider.setValue(max(10, current_seconds))
         slider.setStyleSheet("""
             QSlider::groove:horizontal {
-                border: 1px solid #3a3a3a;
-                height: 8px;
-                background: #1a1a1a;
-                border-radius: 4px;
+                border: 1px solid #3a3a3a; height: 8px;
+                background: #252525; border-radius: 4px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #ffa500; border-radius: 4px;
             }
             QSlider::handle:horizontal {
-                background: #ffa500;
-                border: 2px solid #ffcc00;
-                width: 18px;
-                margin: -5px 0;
-                border-radius: 9px;
+                background: #ffa500; border: 2px solid #ffcc00;
+                width: 18px; margin: -5px 0; border-radius: 9px;
             }
         """)
-
-        result = {"indefini": False}
-
-        def update_label(value):
-            minutes = value // 60
-            seconds = value % 60
-            if minutes > 0:
-                value_label.setText(tr("seq_duration_min_sec", m=minutes, s=seconds, total=value))
-            else:
-                value_label.setText(tr("seq_duration_seconds", n=value))
-            result["indefini"] = False
-
-        slider.valueChanged.connect(update_label)
         layout.addWidget(slider)
 
+        # ── Marqueurs 0 / 30m / 1h ────────────────────────────────────────
+        marks_row = QHBoxLayout()
+        marks_row.setContentsMargins(0, 0, 0, 0)
+        for txt in ("0", "15m", "30m", "45m", "1h"):
+            lbl = QLabel(txt)
+            lbl.setStyleSheet("color:#555;font-size:9px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            marks_row.addWidget(lbl)
+        layout.addLayout(marks_row)
+
+        result = {"indefini": False}
+        _syncing = [False]
+
+        def _total():
+            return spin_min.value() * 60 + spin_sec.value()
+
+        def _from_slider(value):
+            if _syncing[0]:
+                return
+            _syncing[0] = True
+            spin_min.setValue(value // 60)
+            spin_sec.setValue(value % 60)
+            value_label.setText(_fmt_duration(value))
+            result["indefini"] = False
+            _syncing[0] = False
+
+        def _from_spins():
+            if _syncing[0]:
+                return
+            _syncing[0] = True
+            total = max(10, min(3600, _total()))
+            slider.setValue(total)
+            value_label.setText(_fmt_duration(total))
+            result["indefini"] = False
+            _syncing[0] = False
+
+        slider.valueChanged.connect(_from_slider)
+        spin_min.valueChanged.connect(_from_spins)
+        spin_sec.valueChanged.connect(_from_spins)
+
+        # ── Boutons ───────────────────────────────────────────────────────
         btn_layout = QHBoxLayout()
 
         indef_btn = QPushButton(tr("seq_btn_indefinite"))
         indef_btn.setStyleSheet("""
             QPushButton {
-                background: #2a2a3a;
-                color: #aaaaff;
-                border: 1px solid #4a4a6a;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
+                background: #2a2a3a; color: #aaaaff;
+                border: 1px solid #4a4a6a; padding: 8px 16px;
+                border-radius: 4px; font-weight: bold;
             }
             QPushButton:hover { background: #3a3a4a; }
         """)
@@ -331,12 +402,8 @@ class Sequencer(QFrame):
         ok_btn.clicked.connect(dialog.accept)
         ok_btn.setStyleSheet("""
             QPushButton {
-                background: #2a4a5a;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 4px;
-                font-weight: bold;
+                background: #2a4a5a; color: white; border: none;
+                padding: 8px 20px; border-radius: 4px; font-weight: bold;
             }
         """)
         btn_layout.addWidget(ok_btn)
@@ -345,11 +412,8 @@ class Sequencer(QFrame):
         cancel_btn.clicked.connect(dialog.reject)
         cancel_btn.setStyleSheet("""
             QPushButton {
-                background: #3a3a3a;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 4px;
+                background: #3a3a3a; color: white; border: none;
+                padding: 8px 20px; border-radius: 4px;
             }
         """)
         btn_layout.addWidget(cancel_btn)
@@ -368,12 +432,21 @@ class Sequencer(QFrame):
             else:
                 value = slider.value()
                 title_item.setData(Qt.UserRole, f"PAUSE:{value}")
-                minutes = value // 60
+                hours = value // 3600
+                minutes = (value % 3600) // 60
                 seconds = value % 60
-                title_item.setText(f"Pause ({minutes}m {seconds}s)" if minutes > 0 else f"Pause ({value}s)")
+                if hours > 0:
+                    title_item.setText(f"Pause ({hours}h {minutes:02d}m {seconds:02d}s)" if seconds else f"Pause ({hours}h {minutes:02d}m)")
+                elif minutes > 0:
+                    title_item.setText(f"Pause ({minutes}m {seconds}s)")
+                else:
+                    title_item.setText(f"Pause ({value}s)")
                 dur_item = self.table.item(row, 2)
                 if dur_item:
-                    dur_item.setText(f"{minutes:02d}:{seconds:02d}")
+                    if hours > 0:
+                        dur_item.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+                    else:
+                        dur_item.setText(f"{minutes:02d}:{seconds:02d}")
 
             self.is_dirty = True
 
@@ -1669,6 +1742,9 @@ class Sequencer(QFrame):
                         entry['tilt_end']       = clip_data.get('tilt_end', 128)
                         entry['move_progress']  = progress
                         entry['move_elapsed']   = (current_time - start) / 1000.0
+                    # Preset de position lyre (plan de feu)
+                    if clip_data.get('position_preset_idx') is not None:
+                        entry['position_preset_idx'] = clip_data['position_preset_idx']
 
                     active_clips[track_name] = entry
                     break
@@ -1930,66 +2006,107 @@ class Sequencer(QFrame):
                 )
 
         # --- Appliquer Pan/Tilt pour les Lyres ---
-        lyres_clip = active_clips.get('Lyres')
-        if lyres_clip and 'pan_start' in lyres_clip:
+        # La piste position s'appelle "Position" dans la timeline; fallback sur "Lyres" pour anciens .tui
+        lyres_clip = active_clips.get('Position') or active_clips.get('Lyres')
+        if lyres_clip:
             # Recuperer les indices du groupe "lyres" / "Lyres"
             lyres_indices = track_to_indices.get('Lyres', [])
             if not lyres_indices and hasattr(main_win, 'projectors'):
                 lyres_indices = [
                     i for i, p in enumerate(main_win.projectors)
-                    if getattr(p, 'group', '').lower() == 'lyres'
+                    if getattr(p, 'fixture_type', '') == 'Moving Head'
                 ]
 
-            move_effect  = lyres_clip.get('move_effect')
-            move_speed   = lyres_clip.get('move_speed', 0.5)
-            move_amp     = lyres_clip.get('move_amplitude', 60)
-            progress     = lyres_clip.get('move_progress', 0.0)
-            elapsed      = lyres_clip.get('move_elapsed', 0.0)
+            # --- Cas 1 : preset de position nommé (par lyre, 16-bit, avec transition animée) ---
+            if lyres_clip.get('position_preset_idx') is not None:
+                import time as _time
+                preset_idx = lyres_clip['position_preset_idx']
+                presets = getattr(main_win, 'position_presets', [])
+                if preset_idx < len(presets):
+                    preset   = presets[preset_idx]
+                    lyres_cur = [main_win.projectors[i] for i in lyres_indices
+                                 if i < len(main_win.projectors)]
+                    lyre_by_name = {p.name: p for p in lyres_cur if p.name}
 
-            pan_start    = lyres_clip.get('pan_start', 128)
-            tilt_start   = lyres_clip.get('tilt_start', 128)
-            pan_end      = lyres_clip.get('pan_end', 128)
-            tilt_end     = lyres_clip.get('tilt_end', 128)
+                    _ANIM_DUR = 1.5  # secondes
 
-            if move_effect:
-                # Effets automatiques — math periodique
-                t = elapsed * move_speed * 2 * math.pi
-                amp = move_amp  # amplitude en valeur DMX (0-127)
-                if move_effect == 'Cercle':
-                    pan_val  = 128 + int(amp * math.cos(t))
-                    tilt_val = 128 + int(amp * math.sin(t))
-                elif move_effect == 'Figure 8':
-                    pan_val  = 128 + int(amp * math.sin(t))
-                    tilt_val = 128 + int(amp * math.sin(2 * t) / 2)
-                elif move_effect == 'Balayage H':
-                    pan_val  = 128 + int(amp * math.sin(t))
-                    tilt_val = 128
-                elif move_effect == 'Balayage V':
-                    pan_val  = 128
-                    tilt_val = 128 + int(amp * math.sin(t))
-                elif move_effect == 'Aléatoire':
-                    # Interpolation smooth via sin combines — deterministique sur elapsed
-                    pan_val  = 128 + int(amp * 0.6 * math.sin(t * 1.0) +
-                                         amp * 0.4 * math.sin(t * 1.7 + 1.3))
-                    tilt_val = 128 + int(amp * 0.6 * math.cos(t * 0.8 + 0.7) +
-                                         amp * 0.4 * math.cos(t * 2.1 + 2.5))
+                    # Nouveau preset → capturer positions courantes comme point de départ
+                    if getattr(self, '_pos_anim_target_idx', None) != preset_idx:
+                        self._pos_anim_target_idx = preset_idx
+                        self._pos_anim_start_t    = _time.monotonic()
+                        self._pos_anim_start_vals = {
+                            id(p): (getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768))
+                            for p in lyres_cur
+                        }
+
+                    elapsed = _time.monotonic() - getattr(self, '_pos_anim_start_t', 0.0)
+                    raw = min(1.0, elapsed / _ANIM_DUR)
+                    frac = raw * raw * (3.0 - 2.0 * raw)  # smoothstep
+
+                    for k, ps in enumerate(preset.get("projectors", [])):
+                        p = lyres_cur[k] if k < len(lyres_cur) else lyre_by_name.get(ps.get("name"))
+                        if p is None:
+                            continue
+                        s_pan, s_tilt = getattr(self, '_pos_anim_start_vals', {}).get(
+                            id(p), (getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)))
+                        t_pan  = int(ps.get("pan",  32768))
+                        t_tilt = int(ps.get("tilt", 32768))
+                        p.pan  = int(s_pan  + (t_pan  - s_pan)  * frac)
+                        p.tilt = int(s_tilt + (t_tilt - s_tilt) * frac)
+            # --- Cas 2 : trajectoire ou effet automatique (16-bit) ---
+            elif lyres_clip.get('move_effect') or 'pan_start' in lyres_clip:
+                self._pos_anim_target_idx = None  # pas de preset actif
+                move_effect  = lyres_clip.get('move_effect')
+                move_speed   = lyres_clip.get('move_speed', 0.5)
+                move_amp     = lyres_clip.get('move_amplitude', 60)
+                progress     = lyres_clip.get('move_progress', 0.0)
+                elapsed      = lyres_clip.get('move_elapsed', 0.0)
+
+                pan_start    = lyres_clip.get('pan_start', 128)
+                tilt_start   = lyres_clip.get('tilt_start', 128)
+                pan_end      = lyres_clip.get('pan_end', 128)
+                tilt_end     = lyres_clip.get('tilt_end', 128)
+
+                if move_effect:
+                    # Effets auto — centre 0-255 (spinbox dialog), amplitude 5-120, converti en 16-bit
+                    t        = elapsed * move_speed * 2 * math.pi
+                    ctr_pan  = pan_start  * 257   # 0-255 → 0-65535
+                    ctr_tilt = tilt_start * 257
+                    amp_16   = move_amp   * 256   # 5-120 → 1280-30720
+                    if move_effect == 'cercle':
+                        pan_val  = ctr_pan  + int(amp_16 * math.cos(t))
+                        tilt_val = ctr_tilt + int(amp_16 * math.sin(t))
+                    elif move_effect == 'figure8':
+                        pan_val  = ctr_pan  + int(amp_16 * math.sin(t))
+                        tilt_val = ctr_tilt + int(amp_16 * math.sin(2 * t) / 2)
+                    elif move_effect == 'balayage_h':
+                        pan_val  = ctr_pan  + int(amp_16 * math.sin(t))
+                        tilt_val = ctr_tilt
+                    elif move_effect == 'balayage_v':
+                        pan_val  = ctr_pan
+                        tilt_val = ctr_tilt + int(amp_16 * math.sin(t))
+                    elif move_effect == 'aleatoire':
+                        pan_val  = ctr_pan  + int(amp_16 * 0.6 * math.sin(t * 1.0) +
+                                                  amp_16 * 0.4 * math.sin(t * 1.7 + 1.3))
+                        tilt_val = ctr_tilt + int(amp_16 * 0.6 * math.cos(t * 0.8 + 0.7) +
+                                                  amp_16 * 0.4 * math.cos(t * 2.1 + 2.5))
+                    else:
+                        pan_val  = ctr_pan
+                        tilt_val = ctr_tilt
                 else:
-                    pan_val  = 128
-                    tilt_val = 128
-            else:
-                # Trajectoire lineaire entre start et end
-                p = max(0.0, min(1.0, progress))
-                pan_val  = int(pan_start  + (pan_end  - pan_start)  * p)
-                tilt_val = int(tilt_start + (tilt_end - tilt_start) * p)
+                    # Trajectoire linéaire — valeurs 16-bit (PanTiltPad, 0-65535)
+                    p = max(0.0, min(1.0, progress))
+                    pan_val  = int(pan_start  + (pan_end  - pan_start)  * p)
+                    tilt_val = int(tilt_start + (tilt_end - tilt_start) * p)
 
-            pan_val  = max(0, min(255, pan_val))
-            tilt_val = max(0, min(255, tilt_val))
+                pan_val  = max(0, min(65535, pan_val))
+                tilt_val = max(0, min(65535, tilt_val))
 
-            for idx in lyres_indices:
-                if idx < len(self.player_ui.projectors):
-                    proj = self.player_ui.projectors[idx]
-                    proj.pan  = pan_val
-                    proj.tilt = tilt_val
+                for idx in lyres_indices:
+                    if idx < len(self.player_ui.projectors):
+                        proj = self.player_ui.projectors[idx]
+                        proj.pan  = pan_val
+                        proj.tilt = tilt_val
 
         # ── Appliquer la séquence mémoire par-dessus les groupes ────────────
         self._apply_seq_memory(active_clips.get('Séquence'), main_win)

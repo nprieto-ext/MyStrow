@@ -22,12 +22,14 @@ from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradien
 
 # ─── Raccourci couche ──────────────────────────────────────────────────────────
 
-def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0, direction=1, color1="#ff0000", color2="#0000ff", shape="cercle"):
+def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0, direction=1, color1="#ff0000", color2="#0000ff", shape="cercle", sym_pan=False):
     d = {"attribute": attr, "forme": forme, "target_preset": target,
          "speed": speed, "size": size, "spread": spread, "phase": phase,
          "fade": fade, "direction": direction, "color1": color1, "color2": color2}
     if attr == "Pan/Tilt":
         d["mouvement_shape"] = shape
+    if sym_pan:
+        d["sym_pan"] = True
     return d
 
 
@@ -63,31 +65,31 @@ BUILTIN_EFFECTS = [
     # ── Mouvement ─────────────────────────────────────────────────────────────
     {"name": "Chase Blanc",       "emoji": "→", "category": "Mouvement", "type": "Chase",
      "no_color": True,
-     "layers": [_L("RGB", "Flash", speed=50, spread=100, color1="#ffffff")]},
+     "layers": [_L("RGB", "Flash", speed=50, spread=180, color1="#ffffff")]},
 
     {"name": "Chase Rapide",      "emoji": "→", "category": "Mouvement", "type": "Chase",
      "no_color": True,
-     "layers": [_L("RGB", "Flash", speed=96, spread=100, color1="#ffffff")]},
+     "layers": [_L("RGB", "Flash", speed=96, spread=180, color1="#ffffff")]},
 
     {"name": "Chase Retour",      "emoji": "←", "category": "Mouvement", "type": "Chase",
      "no_color": True,
-     "layers": [_L("RGB", "Descente", speed=50, spread=100, color1="#ffffff")]},
+     "layers": [_L("RGB", "Descente", speed=50, spread=180, color1="#ffffff")]},
 
     {"name": "Chase Doux",        "emoji": "→", "category": "Mouvement", "type": "Chase",
      "no_color": True,
-     "layers": [_L("RGB", "Triangle", speed=40, spread=100, fade=35, color1="#ffffff")]},
+     "layers": [_L("RGB", "Triangle", speed=40, spread=180, fade=35, color1="#ffffff")]},
 
     {"name": "Passage Blanc",     "emoji": "🌊", "category": "Mouvement", "type": "Chase",
      "no_color": True,
-     "layers": [_L("RGB", "Triangle", speed=22, spread=100, color1="#ffffff")]},
+     "layers": [_L("RGB", "Triangle", speed=22, spread=180, color1="#ffffff")]},
 
     {"name": "Comète",            "emoji": "☄", "category": "Mouvement", "type": "Comete",
      "no_color": True,
-     "layers": [_L("RGB", "Descente", speed=65, size=100, spread=100, color1="#ffffff")]},
+     "layers": [_L("RGB", "Descente", speed=65, size=100, spread=180, color1="#ffffff")]},
 
     {"name": "Comète Colorée",    "emoji": "☄", "category": "Mouvement", "type": "Comete",
      "no_color": True,
-     "layers": [_L("RGB", "Descente", speed=65, size=100, spread=100, color1="#00aaff")]},
+     "layers": [_L("RGB", "Descente", speed=65, size=100, spread=180, color1="#00aaff")]},
 
     # ── Ambiance ──────────────────────────────────────────────────────────────
     {"name": "Pulse Doux",        "emoji": "∿", "category": "Ambiance", "type": "Pulse",
@@ -100,22 +102,22 @@ BUILTIN_EFFECTS = [
 
     {"name": "Pulse Décalé",      "emoji": "∿", "category": "Ambiance", "type": "Pulse",
      "no_color": True,
-     "layers": [_L("RGB", "Sinus", speed=40, spread=50, color1="#ffffff")]},
+     "layers": [_L("RGB", "Sinus", speed=40, spread=90, color1="#ffffff")]},
 
     {"name": "Vague",             "emoji": "≈", "category": "Ambiance", "type": "Wave",
      "no_color": True,
-     "layers": [_L("RGB", "Sinus", speed=40, spread=100, color1="#ffffff")]},
+     "layers": [_L("RGB", "Sinus", speed=40, spread=180, color1="#ffffff")]},
 
     # ── Couleur ───────────────────────────────────────────────────────────────
     {"name": "Rainbow",           "emoji": "◈", "category": "Couleur", "type": "Rainbow",
-     "layers": [_L("R", "Sinus", speed=45, spread=100, phase=0),
-                _L("V", "Sinus", speed=45, spread=100, phase=33),
-                _L("B", "Sinus", speed=45, spread=100, phase=66)]},
+     "layers": [_L("R", "Sinus", speed=45, spread=180, phase=0),
+                _L("V", "Sinus", speed=45, spread=180, phase=33),
+                _L("B", "Sinus", speed=45, spread=180, phase=66)]},
 
     {"name": "Rainbow Rapide",    "emoji": "◈", "category": "Couleur", "type": "Rainbow",
-     "layers": [_L("R", "Sinus", speed=85, spread=100, phase=0),
-                _L("V", "Sinus", speed=85, spread=100, phase=33),
-                _L("B", "Sinus", speed=85, spread=100, phase=66)]},
+     "layers": [_L("R", "Sinus", speed=85, spread=180, phase=0),
+                _L("V", "Sinus", speed=85, spread=180, phase=33),
+                _L("B", "Sinus", speed=85, spread=180, phase=66)]},
 
     {"name": "Feu",               "emoji": "▲", "category": "Couleur", "type": "Fire",
      "no_color": True,
@@ -142,11 +144,11 @@ BUILTIN_EFFECTS = [
     # ── Nouveaux : Mouvement ──────────────────────────────────────────────────
     {"name": "Ping Pong",         "emoji": "⇔", "category": "Mouvement", "type": "Chase",
      "no_color": True,
-     "layers": [_L("RGB", "Triangle", speed=38, spread=100, direction=0, color1="#ffffff")]},
+     "layers": [_L("RGB", "Triangle", speed=38, spread=180, direction=0, color1="#ffffff")]},
 
     {"name": "Escalier",          "emoji": "↗", "category": "Mouvement", "type": "Chase",
      "no_color": True,
-     "layers": [_L("RGB", "Montée", speed=55, spread=100, direction=1, color1="#ffffff")]},
+     "layers": [_L("RGB", "Montée", speed=55, spread=180, direction=1, color1="#ffffff")]},
 
     {"name": "Scan",              "emoji": "↕", "category": "Mouvement", "type": "Chase",
      "no_color": True,
@@ -165,7 +167,7 @@ BUILTIN_EFFECTS = [
 
     {"name": "Scintillement",     "emoji": "✧", "category": "Ambiance", "type": "Pulse",
      "no_color": True,
-     "layers": [_L("RGB", "Audio", speed=88, size=100, spread=100, color1="#ffffff")]},
+     "layers": [_L("RGB", "Audio", speed=88, size=100, spread=180, color1="#ffffff")]},
 
     # ── Nouveaux : Couleur ────────────────────────────────────────────────────
     {"name": "Police",            "emoji": "◈", "category": "Couleur", "type": "Bascule",
@@ -174,9 +176,9 @@ BUILTIN_EFFECTS = [
                 _L("B", "Flash", speed=48, phase=50)]},
 
     {"name": "RGB Chase",         "emoji": "◈", "category": "Couleur", "type": "Chase",
-     "layers": [_L("R", "Flash", speed=50, spread=100, phase=0),
-                _L("V", "Flash", speed=50, spread=100, phase=33),
-                _L("B", "Flash", speed=50, spread=100, phase=66)]},
+     "layers": [_L("R", "Flash", speed=50, spread=180, phase=0),
+                _L("V", "Flash", speed=50, spread=180, phase=33),
+                _L("B", "Flash", speed=50, spread=180, phase=66)]},
 
     {"name": "Disco",             "emoji": "🪩", "category": "Couleur", "type": "Fire",
      "no_color": True,
@@ -189,19 +191,19 @@ BUILTIN_EFFECTS = [
      "layers": [_L("RGB", "Sinus", speed=25, size=100, color1="#8800ff")]},
 
     {"name": "Rose Flash",        "emoji": "🌸", "category": "Couleur", "type": "Strobe",
-     "layers": [_L("RGB", "Flash", speed=40, spread=40, color1="#ff0080")]},
+     "layers": [_L("RGB", "Flash", speed=40, spread=75, color1="#ff0080")]},
 
     {"name": "Amber Pulse",       "emoji": "🟡", "category": "Couleur", "type": "Pulse",
      "layers": [_L("RGB", "Sinus", speed=20, size=100, color1="#ffaa00")]},
 
     {"name": "Cyan Vague",        "emoji": "🌊", "category": "Couleur", "type": "Wave",
-     "layers": [_L("RGB", "Sinus", speed=30, size=90, spread=60, color1="#00ffee")]},
+     "layers": [_L("RGB", "Sinus", speed=30, size=90, spread=110, color1="#00ffee")]},
 
     {"name": "Orange Chase",      "emoji": "🔶", "category": "Couleur", "type": "Chase",
-     "layers": [_L("RGB", "Flash", speed=38, spread=50, color1="#ff5500")]},
+     "layers": [_L("RGB", "Flash", speed=38, spread=90, color1="#ff5500")]},
 
     {"name": "Magenta Chase",     "emoji": "💗", "category": "Couleur", "type": "Chase",
-     "layers": [_L("RGB", "Flash", speed=38, spread=50, color1="#ff00cc")]},
+     "layers": [_L("RGB", "Flash", speed=38, spread=90, color1="#ff00cc")]},
 
     {"name": "Blanc Strobe",      "emoji": "⬜", "category": "Couleur", "type": "Strobe",
      "layers": [_L("RGB", "Flash", speed=55, size=100, color1="#ffffff")]},
@@ -214,9 +216,9 @@ BUILTIN_EFFECTS = [
 
     {"name": "Spectre",           "emoji": "🌈", "category": "Couleur", "type": "Rainbow",
      "no_color": True,
-     "layers": [_L("R", "Sinus", speed=20, spread=100, phase=0),
-                _L("V", "Sinus", speed=20, spread=100, phase=33),
-                _L("B", "Sinus", speed=20, spread=100, phase=66)]},
+     "layers": [_L("R", "Sinus", speed=20, spread=180, phase=0),
+                _L("V", "Sinus", speed=20, spread=180, phase=33),
+                _L("B", "Sinus", speed=20, spread=180, phase=66)]},
 
     # ── Nouveaux : Spécial ────────────────────────────────────────────────────
     {"name": "Explosion",         "emoji": "💥", "category": "Spécial", "type": "Flash",
@@ -225,8 +227,8 @@ BUILTIN_EFFECTS = [
                 _L("RGB", "Flash",    speed=92, size=80,  color1="#ffffff")]},
 
     {"name": "Matrix",            "emoji": "⬛", "category": "Spécial", "type": "Pulse",
-     "layers": [_L("V",      "Audio",   speed=70, size=100, spread=100),
-                _L("Dimmer", "Audio",   speed=70, size=80,  spread=100)]},
+     "layers": [_L("V",      "Audio",   speed=70, size=100, spread=180),
+                _L("Dimmer", "Audio",   speed=70, size=80,  spread=180)]},
 
     # ── Strobe Couleurs ───────────────────────────────────────────────────────
     {"name": "Strobe Bleu",      "emoji": "💙", "category": "Strobe / Flash", "type": "Strobe",
@@ -243,13 +245,13 @@ BUILTIN_EFFECTS = [
 
     # ── Chase Couleurs ────────────────────────────────────────────────────────
     {"name": "Chase Rouge",  "emoji": "🔴", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("RGB", "Flash", speed=45, spread=80, color1="#ff0000")]},
+     "layers": [_L("RGB", "Flash", speed=45, spread=145, color1="#ff0000")]},
 
     {"name": "Chase Vert",   "emoji": "🟢", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("RGB", "Flash", speed=45, spread=80, color1="#00dd00")]},
+     "layers": [_L("RGB", "Flash", speed=45, spread=145, color1="#00dd00")]},
 
     {"name": "Chase Bleu",   "emoji": "🔵", "category": "Mouvement", "type": "Chase",
-     "layers": [_L("RGB", "Flash", speed=45, spread=80, color1="#0033ff")]},
+     "layers": [_L("RGB", "Flash", speed=45, spread=145, color1="#0033ff")]},
 
     # ── Permut ────────────────────────────────────────────────────────────────
     {"name": "Permut Rouge & Rose",    "emoji": "🌹", "category": "Permut", "type": "Permut",
@@ -323,20 +325,20 @@ BUILTIN_EFFECTS = [
 
     # ── Lyre : déphasage entre fixtures ───────────────────────────────────────
     {"name": "Lyre Vague",         "emoji": "≈",  "category": "Lyre", "type": "Pan",
-     "layers": [_L("Pan",    "Sinus", speed=20, size=70, spread=100),
-                _L("Dimmer", "Sinus", speed=20, size=100, spread=100)]}, # vague pan + lumière
+     "layers": [_L("Pan",    "Sinus", speed=20, size=70, spread=180),
+                _L("Dimmer", "Sinus", speed=20, size=100, spread=180)]}, # vague pan + lumière
 
     {"name": "Lyre Canon",         "emoji": "💥", "category": "Lyre", "type": "Pan",
-     "layers": [_L("Pan",    "Sinus",  speed=30, size=65, spread=100),
-                _L("Dimmer", "Montée", speed=30, size=100, spread=100)]},# chaque lyre tire dans la foulée
+     "layers": [_L("Pan",    "Sinus",  speed=30, size=65, spread=180),
+                _L("Dimmer", "Montée", speed=30, size=100, spread=180)]},# chaque lyre tire dans la foulée
 
     {"name": "Lyre Spiral",        "emoji": "🔄", "category": "Lyre", "type": "Pan",
-     "layers": [_L("Pan/Tilt", "Sinus", speed=22, size=60, spread=70, shape="cercle"),
-                _L("Dimmer",   "Sinus", speed=22, size=100, spread=70)]},# cercles décalés + lumière
+     "layers": [_L("Pan/Tilt", "Sinus", speed=22, size=60, spread=125, shape="cercle"),
+                _L("Dimmer",   "Sinus", speed=22, size=100, spread=125)]},# cercles décalés + lumière
 
     {"name": "Lyre Pendule Décalé","emoji": "↕",  "category": "Lyre", "type": "Tilt",
-     "layers": [_L("Pan/Tilt", "Sinus", speed=16, size=65, spread=80, shape="pendule"),
-                _L("Dimmer",   "Sinus", speed=16, size=100, spread=80, phase=50)]},
+     "layers": [_L("Pan/Tilt", "Sinus", speed=16, size=65, spread=145, shape="pendule"),
+                _L("Dimmer",   "Sinus", speed=16, size=100, spread=145, phase=50)]},
 
     # ── Lyre : haché / stroboscopique ─────────────────────────────────────────
     {"name": "Lyre Cercle Haché",  "emoji": "✦",  "category": "Lyre", "type": "Pan",
@@ -360,33 +362,52 @@ BUILTIN_EFFECTS = [
 
     # ── Lyre : gobo ───────────────────────────────────────────────────────────
     {"name": "Lyre Gobo Spin",     "emoji": "🎯", "category": "Lyre", "type": "Gobo",
-     "layers": [_L("Gobo",   "Flash", speed=40, spread=30),
+     "layers": [_L("Gobo",   "Flash", speed=40, spread=15),
                 _L("Dimmer", "Fixe",  size=100)]},
 
     {"name": "Lyre Gobo + Cercle", "emoji": "🎪", "category": "Lyre", "type": "Gobo",
      "layers": [_L("Pan/Tilt", "Sinus", speed=18, size=55, shape="cercle"),
                 _L("Dimmer",   "Sinus", speed=18, size=100),
-                _L("Gobo",     "Flash", speed=35, spread=40)]},
+                _L("Gobo",     "Flash", speed=35, spread=75)]},
+
+    # ── Lyre : symétrie ───────────────────────────────────────────────────────
+    {"name": "Lyre Papillon",        "emoji": "🦋", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus",    speed=22, size=65, shape="cercle",    sym_pan=True),
+                _L("Dimmer",   "Sinus",    speed=22, size=100)]},                # cercles en miroir
+
+    {"name": "Lyre Éventail",        "emoji": "↔",  "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan/Tilt", "Sinus",    speed=18, size=70, shape="balancier", sym_pan=True),
+                _L("Dimmer",   "Sinus",    speed=18, size=100, phase=50)]},      # balanciers miroir
+
+    # ── Lyre : roue de couleurs ───────────────────────────────────────────────
+    {"name": "Lyre Roue Couleurs",   "emoji": "🎨", "category": "Lyre", "type": "ColorWheel",
+     "layers": [_L("ColorWheel", "Montée", speed=20, size=100),
+                _L("Dimmer",     "Fixe",   size=100)]},
+
+    {"name": "Lyre CW + Cercle",     "emoji": "🌈", "category": "Lyre", "type": "ColorWheel",
+     "layers": [_L("Pan/Tilt",   "Sinus",  speed=18, size=55, shape="cercle"),
+                _L("ColorWheel", "Montée", speed=12, size=100),
+                _L("Dimmer",     "Sinus",  speed=18, size=100)]},
 ]
 
 
 # ─── Constantes ───────────────────────────────────────────────────────────────
 
-ATTR_ORDER = ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
+ATTR_ORDER = ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "ColorWheel", "Strobe"]
 
 FIXTURE_ATTRS = {
     "Trad":        ["Dimmer"],
     "PAR LED":     ["Dimmer", "R", "V", "B", "W", "Ambre", "Strobe"],
     "Barre LED":   ["Dimmer", "R", "V", "B", "W", "Ambre"],
-    "Moving Head": ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"],
-    "Lyre":        ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"],
+    "Moving Head": ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "ColorWheel", "Strobe"],
+    "Lyre":        ["Dimmer", "R", "V", "B", "W", "Ambre", "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "ColorWheel", "Strobe"],
     "Strobe":      ["Dimmer", "Strobe"],
     "Generic":     ["Dimmer", "R", "V", "B", "W", "Ambre"],
 }
 
 # Liste complète toujours disponible dans le dropdown (indépendante du type de fixture)
 ATTR_ALL = ["Dimmer", "R", "V", "B", "W", "Ambre", "RGB", "Permut",
-            "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
+            "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "ColorWheel", "Strobe"]
 
 FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
 
@@ -506,6 +527,7 @@ class EffectLayer:
         self.color1 = "#ff0000"
         self.color2 = "#0000ff"
         self.mouvement_shape = "libre"  # forme de trajectoire Pan/Tilt
+        self.sym_pan = False            # miroir pan sur la 2e moitié des fixtures
 
     def to_dict(self):
         return {
@@ -524,6 +546,7 @@ class EffectLayer:
             "color1": self.color1,
             "color2": self.color2,
             "mouvement_shape": self.mouvement_shape,
+            "sym_pan": self.sym_pan,
         }
 
     @classmethod
@@ -547,6 +570,7 @@ class EffectLayer:
         layer.color1 = d.get("color1", "#ff0000")
         layer.color2 = d.get("color2", "#0000ff")
         layer.mouvement_shape = d.get("mouvement_shape", "libre")
+        layer.sym_pan = d.get("sym_pan", False)
         return layer
 
     @classmethod
@@ -575,18 +599,19 @@ class EffectLayer:
 # ─── Potard rotatif ───────────────────────────────────────────────────────────
 
 class RotaryKnob(QWidget):
-    """Potard rotatif (0–100). Glisser verticalement ou molette."""
+    """Potard rotatif. Glisser verticalement ou molette. Range configurable via max_val."""
 
     valueChanged = Signal(int)
     _S  = 54
     _LH = 16
 
-    def __init__(self, label="", default=50, size=None, parent=None):
+    def __init__(self, label="", default=50, size=None, parent=None, max_val=100):
         super().__init__(parent)
         if size is not None:
             self._S  = size
             self._LH = max(14, size // 4)
-        self._value  = max(0, min(100, default))
+        self._max    = max_val
+        self._value  = max(0, min(self._max, default))
         self._label  = label
         self._drag_y = None
         self._drag_v = None
@@ -599,7 +624,7 @@ class RotaryKnob(QWidget):
         return self._value
 
     def set_value(self, v):
-        v = max(0, min(100, int(v)))
+        v = max(0, min(self._max, int(v)))
         if v != self._value:
             self._value = v
             self.setToolTip(f"{self._label}: {v}")
@@ -613,16 +638,19 @@ class RotaryKnob(QWidget):
 
     def mouseMoveEvent(self, e):
         if self._drag_y is not None:
-            self.set_value(self._drag_v + int(self._drag_y - e.globalPosition().y()))
+            # Sensibilité adaptée : 1px = max/100 unités (cohérent quelle que soit la plage)
+            delta = int((self._drag_y - e.globalPosition().y()) * self._max / 100)
+            self.set_value(self._drag_v + delta)
 
     def mouseReleaseEvent(self, _e):
         self._drag_y = None
 
     def mouseDoubleClickEvent(self, _e):
-        self.set_value(100)
+        self.set_value(self._max)
 
     def wheelEvent(self, e):
-        self.set_value(self._value + (1 if e.angleDelta().y() > 0 else -1))
+        step = max(1, self._max // 100)
+        self.set_value(self._value + (step if e.angleDelta().y() > 0 else -step))
 
     def paintEvent(self, _event):
         p = QPainter(self)
@@ -641,18 +669,20 @@ class RotaryKnob(QWidget):
 
         if self._value > 0:
             p.setPen(QPen(QColor("#00d4ff"), 5, Qt.SolidLine, Qt.RoundCap))
-            p.drawArc(rect, 225 * 16, int(-270 * 16 * self._value / 100))
+            p.drawArc(rect, 225 * 16, int(-270 * 16 * self._value / self._max))
 
-        ang = math.radians(225.0 - 270.0 * self._value / 100.0)
+        ang = math.radians(225.0 - 270.0 * self._value / self._max)
         dr  = r - 1
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(QColor("#00d4ff")))
         p.drawEllipse(QPoint(int(cx + dr * math.cos(ang)),
                              int(cy - dr * math.sin(ang))), 4, 4)
 
+        # Affichage valeur + suffixe "°" si max=360
+        val_str = f"{self._value}°" if self._max == 360 else str(self._value)
         p.setPen(QPen(QColor("#ffffff")))
-        p.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        p.drawText(QRect(0, cy - 9, S, 18), Qt.AlignCenter, str(self._value))
+        p.setFont(QFont("Segoe UI", 8 if self._max == 360 else 9, QFont.Bold))
+        p.drawText(QRect(0, cy - 9, S, 18), Qt.AlignCenter, val_str)
 
         p.setPen(QPen(QColor("#666")))
         p.setFont(QFont("Segoe UI", 7))
@@ -893,7 +923,7 @@ class EffectLayerRow(QFrame):
         k_row.setSpacing(8)
         self.k_speed  = RotaryKnob("Vitesse",  layer.speed)
         self.k_size   = RotaryKnob("Taille",   layer.size)
-        self.k_spread = RotaryKnob("Décalage", layer.spread)
+        self.k_spread = RotaryKnob("Décalage", layer.spread, max_val=360)
         self.k_phase  = RotaryKnob("Phase",    layer.phase)
         self.k_speed.valueChanged.connect( lambda v: (setattr(layer, 'speed',  v), self.changed.emit()))
         self.k_size.valueChanged.connect(  lambda v: (setattr(layer, 'size',   v), self.changed.emit()))
@@ -1542,6 +1572,23 @@ class PanTiltLivePad(QWidget):
             }
         """)
         shape_row.addWidget(self._shape_cb, 1)
+
+        self._sym_btn = QPushButton("SYM")
+        self._sym_btn.setFixedSize(34, 18)
+        self._sym_btn.setCheckable(True)
+        self._sym_btn.setToolTip("Symétrie Pan : la 2e moitié des lyres se déplace en miroir")
+        self._sym_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a1a1a; color: #555; border: 1px solid #333;
+                border-radius: 3px; font-size: 8px; font-weight: bold; padding: 0;
+            }
+            QPushButton:checked {
+                background: #002233; color: #00d4ff; border-color: #00d4ff66;
+            }
+        """)
+        self._sym_btn.clicked.connect(self._on_sym_toggled)
+        shape_row.addWidget(self._sym_btn)
+
         del_btn = QPushButton("✕")
         del_btn.setFixedSize(18, 18)
         del_btn.setToolTip("Supprimer les couches Pan/Tilt")
@@ -1616,18 +1663,21 @@ class PanTiltLivePad(QWidget):
         pan_forme, pan_phase, pan_mult  = shape_def["pan"]
         tilt_forme, tilt_phase, tilt_mult = shape_def["tilt"]
         sid = self._shape_cb.currentData() if hasattr(self, '_shape_cb') else "libre"
+        sym = self._sym_btn.isChecked() if hasattr(self, '_sym_btn') else False
         if self._pan_l:
             if pan_forme is not None:
                 self._pan_l.forme = pan_forme
             self._pan_l.phase = pan_phase
             self._pan_l.speed = max(1, int(spd * pan_mult))
             self._pan_l.mouvement_shape = sid
+            self._pan_l.sym_pan = sym
         if self._tilt_l:
             if tilt_forme is not None:
                 self._tilt_l.forme = tilt_forme
             self._tilt_l.phase = tilt_phase
             self._tilt_l.speed = max(1, int(spd * tilt_mult))
             self._tilt_l.mouvement_shape = sid
+            self._tilt_l.sym_pan = sym
 
     def _sync_from_layers(self):
         """Lit les valeurs des couches et met à jour les sliders + shape ComboBox."""
@@ -1647,6 +1697,10 @@ class PanTiltLivePad(QWidget):
             self._base_speed = max(1, int(l.speed / pan_mult)) if pan_mult > 0 else l.speed
         else:
             self._base_speed = l.speed
+        if hasattr(self, '_sym_btn'):
+            self._sym_btn.blockSignals(True)
+            self._sym_btn.setChecked(getattr(l, 'sym_pan', False))
+            self._sym_btn.blockSignals(False)
         self._sl_speed.blockSignals(True)
         self._sl_amp.blockSignals(True)
         self._sl_speed.setValue(max(1, self._base_speed))
@@ -1655,6 +1709,14 @@ class PanTiltLivePad(QWidget):
         self._lbl_amp.setText(str(l.size))
         self._sl_speed.blockSignals(False)
         self._sl_amp.blockSignals(False)
+
+    def _on_sym_toggled(self, checked):
+        """L'utilisateur a activé/désactivé la symétrie Pan."""
+        if self._pan_l:
+            self._pan_l.sym_pan = checked
+        if self._tilt_l:
+            self._tilt_l.sym_pan = checked
+        self.changed.emit()
 
     def _on_shape_changed(self, _idx):
         """L'utilisateur a choisi une nouvelle forme de trajectoire."""
@@ -2438,9 +2500,10 @@ class SimpleEffectPanel(QWidget):
         sv.addLayout(sens_row)
         self._ll.addWidget(self._sens_section)
 
-    _CTX_TYPES_SENS  = {"Chase", "Wave"}
-    _CTX_TYPES_FONDU = {"Chase"}
-    _CTX_TYPES_GOBO  = {"Gobo"}
+    _CTX_TYPES_SENS       = {"Chase", "Wave"}
+    _CTX_TYPES_FONDU      = {"Chase"}
+    _CTX_TYPES_GOBO       = {"Gobo"}
+    _CTX_TYPES_COLORWHEEL = {"ColorWheel"}
 
     def _build_context(self):
         """Section contextuelle : options spécifiques par type d'effet."""
@@ -2507,6 +2570,38 @@ class SimpleEffectPanel(QWidget):
         gobo_knob_row.addStretch()
         gv.addLayout(gobo_knob_row)
         self._ll.addWidget(self._gobo_section)
+
+        # ── Section ROUE DE COULEURS (Lyre) ───────────────────────────────────
+        self._cw_section = QWidget()
+        self._cw_section.setStyleSheet("background: transparent;")
+        self._cw_section.setVisible(False)
+        cwv = QVBoxLayout(self._cw_section)
+        cwv.setContentsMargins(0, 0, 0, 0)
+        cwv.setSpacing(6)
+        cwv.addWidget(self._mk_sep("ROUE COULEURS"))
+
+        cw_row = QHBoxLayout()
+        cw_row.setSpacing(8)
+        self._cw_toggle = QPushButton("🎨  Activer Roue Couleurs")
+        self._cw_toggle.setCheckable(True)
+        self._cw_toggle.setFixedHeight(26)
+        self._cw_toggle.setCursor(Qt.PointingHandCursor)
+        self._cw_toggle.setStyleSheet(_pill)
+        self._cw_toggle.setToolTip("Ajouter un cycle de roue de couleurs à cet effet")
+        self._cw_toggle.clicked.connect(self._on_cw_toggle)
+        cw_row.addWidget(self._cw_toggle)
+        cw_row.addStretch()
+        cwv.addLayout(cw_row)
+
+        cw_knob_row = QHBoxLayout()
+        cw_knob_row.setSpacing(8)
+        self._knob_cw = RotaryKnob("CW VIT.", default=20, size=52)
+        self._knob_cw.setEnabled(False)
+        self._knob_cw.valueChanged.connect(self._on_cw_speed)
+        cw_knob_row.addWidget(self._knob_cw)
+        cw_knob_row.addStretch()
+        cwv.addLayout(cw_knob_row)
+        self._ll.addWidget(self._cw_section)
 
     def _build_knobs(self):
         self._rl.addWidget(self._mk_sep("AJUSTER TOUT"))
@@ -2704,9 +2799,11 @@ class SimpleEffectPanel(QWidget):
         show_sens  = eff_type in self._CTX_TYPES_SENS
         show_fondu = eff_type in self._CTX_TYPES_FONDU
         show_gobo  = eff_type in self._CTX_TYPES_GOBO
+        show_cw    = eff_type in self._CTX_TYPES_COLORWHEEL
         self._sens_section.setVisible(show_sens)
         self._ctx_section.setVisible(show_fondu)
         self._gobo_section.setVisible(show_gobo)
+        self._cw_section.setVisible(show_cw)
         if show_fondu and self._layers:
             self._fondu_btn.blockSignals(True)
             self._fondu_btn.setChecked(self._layers[0].forme == "Sinus")
@@ -2723,6 +2820,18 @@ class SimpleEffectPanel(QWidget):
                     self._knob_gobo.blockSignals(True)
                     self._knob_gobo.set_value(gobo_layer.speed)
                     self._knob_gobo.blockSignals(False)
+        if show_cw:
+            has_cw = any(l.attribute == "ColorWheel" for l in self._layers)
+            self._cw_toggle.blockSignals(True)
+            self._cw_toggle.setChecked(has_cw)
+            self._cw_toggle.blockSignals(False)
+            self._knob_cw.setEnabled(has_cw)
+            if has_cw:
+                cw_layer = next((l for l in self._layers if l.attribute == "ColorWheel"), None)
+                if cw_layer:
+                    self._knob_cw.blockSignals(True)
+                    self._knob_cw.set_value(cw_layer.speed)
+                    self._knob_cw.blockSignals(False)
 
     # ── Gestion des couches ────────────────────────────────────────────────────
 
@@ -2832,6 +2941,27 @@ class SimpleEffectPanel(QWidget):
                 l.speed = val
         self.changed.emit()
 
+    def _on_cw_toggle(self, checked: bool):
+        self._knob_cw.setEnabled(checked)
+        if checked:
+            if not any(l.attribute == "ColorWheel" for l in self._layers):
+                layer           = EffectLayer()
+                layer.attribute = "ColorWheel"
+                layer.forme     = "Montée"
+                layer.speed     = self._knob_cw.value
+                layer.size      = 100
+                layer.spread    = 0
+                self._layers.append(layer)
+        else:
+            self._layers[:] = [l for l in self._layers if l.attribute != "ColorWheel"]
+        self._rebuild_layer_widgets()
+        self.changed.emit()
+
+    def _on_cw_speed(self, val: int):
+        for l in self._layers:
+            if l.attribute == "ColorWheel":
+                l.speed = val
+        self.changed.emit()
 
 
 # ─── Dialog principal ──────────────────────────────────────────────────────────
@@ -3994,7 +4124,9 @@ class EffectEditorDialog(QDialog):
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr == "Pan":
                     amp = (layer.size / 100.0) * 8192
-                    pan_v = int(max(0, min(65535, 32768 + (raw - 0.5) * 2 * amp)))
+                    sym_pan  = getattr(layer, 'sym_pan', False)
+                    pan_sign = -1 if (sym_pan and i * 2 >= n) else 1
+                    pan_v = int(max(0, min(65535, 32768 + pan_sign * (raw - 0.5) * 2 * amp)))
                     has_movement = True
                 elif attr == "Tilt":
                     amp = (layer.size / 100.0) * 8192
@@ -4006,12 +4138,14 @@ class EffectEditorDialog(QDialog):
                     pan_cfg  = sdef.get('pan',  ('Sinus',  0, 1.0))
                     tilt_cfg = sdef.get('tilt', ('Sinus', 25, 1.0))
                     pt_amp   = (layer.size / 100.0) * 8192
+                    sym_pan  = getattr(layer, 'sym_pan', False)
+                    pan_sign = -1 if (sym_pan and i * 2 >= n) else 1
                     p_forme, p_ph, p_mult = pan_cfg
                     if p_forme and p_forme != "Fixe":
                         p_freq = (0.05 + layer.speed * p_mult / 100.0 * 7.0) * fader_mult
                         p_x    = (p_freq * t + i / max(n, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
-                        pan_v  = int(max(0, min(65535, 32768 + (p_raw - 0.5) * 2 * pt_amp)))
+                        pan_v  = int(max(0, min(65535, 32768 + pan_sign * (p_raw - 0.5) * 2 * pt_amp)))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
                         t_freq = (0.05 + layer.speed * t_mult / 100.0 * 7.0) * fader_mult

@@ -149,6 +149,667 @@ class _NoScroll(QComboBox):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# "Fausse IA" : mapping texte libre → ALL_CHANNEL_TYPES
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Mots à ignorer dans le texte libre (articles, mots-outils, en-têtes)
+_STOP_WORDS = {
+    "le", "la", "les", "un", "une", "des", "du", "de", "et", "ou", "est",
+    "the", "a", "an", "and", "or", "is", "of", "for", "to", "in", "at",
+    "canal", "canaux", "ch", "channel", "channels", "fonction", "function",
+    "label", "name", "type", "value", "no", "num", "number", "numero",
+    "dmx", "address", "adresse", "addr",
+}
+
+# Table principale : clé normalisée → type MyStrow, niveau de confiance ("exact"/"approx")
+_ALIAS_TABLE: list[tuple[str, str, str]] = [
+    # ── Couleurs ─────────────────────────────────────────────────────────────
+    ("rouge",          "R",          "approx"),
+    ("red",            "R",          "exact"),
+    ("r",              "R",          "exact"),
+    ("vert",           "G",          "approx"),
+    ("green",          "G",          "exact"),
+    ("g",              "G",          "exact"),
+    ("bleu",           "B",          "approx"),
+    ("blue",           "B",          "exact"),
+    ("b",              "B",          "exact"),
+    ("blanc",          "W",          "approx"),
+    ("white",          "W",          "exact"),
+    ("w",              "W",          "exact"),
+    ("uv",             "UV",         "exact"),
+    ("ultraviolet",    "UV",         "approx"),
+    ("ambre",          "Ambre",      "exact"),
+    ("amber",          "Ambre",      "exact"),
+    ("orange",         "Orange",     "exact"),
+    # ── Dimmer ───────────────────────────────────────────────────────────────
+    ("dim",            "Dim",        "exact"),
+    ("dim2",           "Dim2",       "exact"),
+    ("dimmer",         "Dim",        "exact"),
+    ("gradateur",      "Dim",        "approx"),
+    ("grad",           "Dim",        "approx"),
+    ("intensite",      "Dim",        "approx"),
+    ("intensity",      "Dim",        "approx"),
+    ("luminosite",     "Dim",        "approx"),
+    ("luminosity",     "Dim",        "approx"),
+    ("master",         "Dim",        "approx"),
+    ("brightness",     "Dim",        "approx"),
+    ("level",          "Dim",        "approx"),
+    # ── Strobe / Shutter ─────────────────────────────────────────────────────
+    ("strobe",         "Strobe",     "exact"),
+    ("stroboscope",    "Strobe",     "approx"),
+    ("strobo",         "Strobe",     "approx"),
+    ("flash",          "Strobe",     "approx"),
+    ("shutter",        "Shutter",    "exact"),
+    ("obturateur",     "Shutter",    "approx"),
+    # ── Pan / Tilt ───────────────────────────────────────────────────────────
+    ("pan",            "Pan",        "exact"),
+    ("panoramique",    "Pan",        "approx"),
+    ("pano",           "Pan",        "approx"),
+    ("gauchedroite",   "Pan",        "approx"),
+    ("panfine",        "PanFine",    "exact"),
+    ("pan fine",       "PanFine",    "exact"),
+    ("panfin",         "PanFine",    "approx"),
+    ("tilt",           "Tilt",       "exact"),
+    ("inclinaison",    "Tilt",       "approx"),
+    ("inclin",         "Tilt",       "approx"),
+    ("hautbas",        "Tilt",       "approx"),
+    ("tiltfine",       "TiltFine",   "exact"),
+    ("tilt fine",      "TiltFine",   "exact"),
+    # ── Vitesse / Speed ──────────────────────────────────────────────────────
+    ("speed",          "Speed",      "exact"),
+    ("vitesse",        "Speed",      "approx"),
+    ("vit",            "Speed",      "approx"),
+    ("ptspeed",        "Speed",      "exact"),
+    ("positionmspeed", "Speed",      "exact"),
+    ("movingspeed",    "Speed",      "exact"),
+    ("panspeed",       "Speed",      "approx"),
+    ("tiltspeed",      "Speed",      "approx"),
+    # ── Gobo ─────────────────────────────────────────────────────────────────
+    ("gobo",           "Gobo1",      "exact"),
+    ("gobo1",          "Gobo1",      "exact"),
+    ("gobowheel",      "Gobo1",      "exact"),
+    ("rouego",         "Gobo1",      "approx"),
+    ("goboroue",       "Gobo1",      "approx"),
+    ("gobo1rot",       "Gobo1Rot",   "exact"),
+    ("gobo1pos",       "Gobo1Rot",   "exact"),
+    ("gobo1 pos",      "Gobo1Rot",   "exact"),
+    ("gobo1rotation",  "Gobo1Rot",   "exact"),
+    ("gobospin",       "Gobo1Rot",   "approx"),
+    ("goborotation",   "Gobo1Rot",   "approx"),
+    ("gobo2",          "Gobo2",      "exact"),
+    ("gobo2rot",       "Gobo2",      "approx"),
+    # ── Couleur / Color Wheel ────────────────────────────────────────────────
+    ("color",          "ColorWheel", "exact"),
+    ("color1",         "ColorWheel", "exact"),
+    ("colorwheel",     "ColorWheel", "exact"),
+    ("colourwheel",    "ColorWheel", "exact"),
+    ("colour",         "ColorWheel", "approx"),
+    ("couleur",        "ColorWheel", "approx"),
+    ("rouecouleur",    "ColorWheel", "approx"),
+    ("roue",           "ColorWheel", "approx"),
+    ("cto",            "ColorWheel", "approx"),
+    ("color2",         "Gobo2",      "approx"),
+    # ── Effets ───────────────────────────────────────────────────────────────
+    ("effects",        "Effects",    "exact"),
+    ("effect",         "Effects",    "exact"),
+    ("effectwheel",    "Effects",    "exact"),
+    ("effets",         "Effects",    "approx"),
+    ("effet",          "Effects",    "approx"),
+    ("macro",          "Effects",    "approx"),
+    ("prism",          "Prism",      "exact"),
+    ("prisme",         "Prism",      "approx"),
+    ("prismrot",       "PrismRot",   "exact"),
+    ("prism rot",      "PrismRot",   "exact"),
+    # ── Optique ──────────────────────────────────────────────────────────────
+    ("zoom",           "Zoom",       "exact"),
+    ("beam",           "Zoom",       "approx"),
+    ("focus",          "Focus",      "exact"),
+    ("iris",           "Focus",      "approx"),
+    ("miseaupoint",    "Focus",      "approx"),
+    # ── Mode / Frost ─────────────────────────────────────────────────────────
+    ("mode",           "Mode",       "exact"),
+    ("frost",          "Mode",       "approx"),
+    ("givre",          "Mode",       "approx"),
+    ("diffusion",      "Mode",       "approx"),
+    ("control",        "Mode",       "approx"),
+    # ── Contrôle / Reset ─────────────────────────────────────────────────────
+    ("reset",          "Reset",      "exact"),
+    ("lampcontrol",    "Reset",      "exact"),
+    ("lamp",           "Reset",      "approx"),
+    ("lampe",          "Reset",      "approx"),
+    ("controllampe",   "Reset",      "approx"),
+    # ── Smoke / Fan ──────────────────────────────────────────────────────────
+    ("smoke",          "Smoke",      "exact"),
+    ("fumee",          "Smoke",      "approx"),
+    ("fog",            "Smoke",      "approx"),
+    ("haze",           "Smoke",      "approx"),
+    ("brouillard",     "Smoke",      "approx"),
+    ("fan",            "Fan",        "exact"),
+    ("ventilateur",    "Fan",        "approx"),
+    ("vent",           "Fan",        "approx"),
+]
+
+# Index rapide : normalisé → (type, confiance)
+_ALIAS_INDEX: dict[str, tuple[str, str]] = {}
+for _raw, _type, _conf in _ALIAS_TABLE:
+    _key = re.sub(r"[\s_\-]", "", _raw.lower())
+    _ALIAS_INDEX[_key] = (_type, _conf)
+
+# Types connus en majuscules pour fallback direct
+_KNOWN_UPPER: dict[str, str] = {t.upper(): t for t in ALL_CHANNEL_TYPES}
+
+
+def _normalize(s: str) -> str:
+    """Normalise une chaîne : minuscules, sans espaces/tirets/underscores, sans accents."""
+    s = s.lower().strip()
+    s = re.sub(r"[\s_\-\.]+", "", s)
+    # Accents courants
+    for src, dst in [("é","e"),("è","e"),("ê","e"),("ë","e"),("à","a"),("â","a"),
+                     ("î","i"),("ï","i"),("ô","o"),("ù","u"),("û","u"),("ü","u"),("ç","c")]:
+        s = s.replace(src, dst)
+    return s
+
+
+def _ai_map(raw: str) -> tuple[str, str]:
+    """Retourne (type_mystrow, confiance) pour un nom de canal brut.
+    confiance : 'exact' | 'approx' | 'inconnu'
+    """
+    if not raw.strip():
+        return raw, "inconnu"
+
+    norm = _normalize(raw)
+
+    # 1. Index alias direct
+    if norm in _ALIAS_INDEX:
+        return _ALIAS_INDEX[norm]
+
+    # 2. Type connu casse-insensible
+    upper = raw.strip().upper()
+    if upper in _KNOWN_UPPER:
+        return _KNOWN_UPPER[upper], "exact"
+
+    # 3. Recherche partielle : la clé alias est contenue dans le token ou vice-versa
+    for key, (t, c) in _ALIAS_INDEX.items():
+        if len(key) >= 3 and (key in norm or norm in key):
+            return t, "approx"
+
+    # 4. Sous-chaîne dans les types connus
+    for upper_key, t in _KNOWN_UPPER.items():
+        ku = upper_key.lower()
+        if len(ku) >= 3 and (ku in norm or norm in ku):
+            return t, "approx"
+
+    return raw.strip(), "inconnu"
+
+
+def _is_separator_cell(s: str) -> bool:
+    """Vrai si la cellule ne contient que des tirets/espaces (ligne séparatrice markdown)."""
+    return bool(s) and re.fullmatch(r"[\-\s:=]+", s) is not None
+
+
+_HEADER_STARTS = ("FONCT", "FUNC", "CHANN", "LABEL", "NAME", "TYPE", "CANAL", "ADRESS")
+
+
+def _extract_tokens(text: str) -> list[tuple[int | None, str]]:
+    """Extrait les tokens (num_canal_ou_None, nom_brut) depuis un texte libre.
+
+    Gère : tables markdown, CSV, espaces, virgules, texte naturel,
+    listes numérotées ou non, tout mélange.
+    Robuste aux caractères de boîte Unicode (│, ─…) et aux espaces insécables.
+    """
+    # ── Normalisation des caractères spéciaux ────────────────────────────────
+    # Pipes de type boîte Unicode → |
+    for ch in "│┃║┆┇┊┋":
+        text = text.replace(ch, "|")
+    # Tirets longs / boîte → -
+    for ch in "─━═—–":
+        text = text.replace(ch, "-")
+    # Espaces insécables → espace normale
+    text = text.replace(" ", " ").replace(" ", " ")
+
+    entries: list[tuple[int | None, str]] = []
+    lines_raw = text.splitlines()
+    lines: list[str] = []
+
+    for ln in lines_raw:
+        ln = ln.strip()
+        if "," in ln or ";" in ln:
+            for part in re.split(r"[,;]", ln):
+                if part.strip():
+                    lines.append(part.strip())
+        else:
+            if ln:
+                lines.append(ln)
+
+    for line in lines:
+        if not line:
+            continue
+
+        # ── Lignes séparatrices (que des pipes/tirets/espaces/colons) ─────────
+        if re.fullmatch(r"[\|\-\s:=+]+", line):
+            continue
+
+        # ── Format pipe ───────────────────────────────────────────────────────
+        if "|" in line:
+            cells = [c.strip() for c in line.split("|") if c.strip()]
+
+            # Ligne séparatrice : toutes les cellules sont des tirets
+            if cells and all(_is_separator_cell(c) for c in cells):
+                continue
+
+            if len(cells) >= 2:
+                col0, col1 = cells[0], cells[1]
+                col0_up, col1_up = col0.upper(), col1.upper()
+
+                # Ligne d'en-tête : une colonne commence par un mot-clé connu
+                if any(col0_up.startswith(h) or col1_up.startswith(h) for h in _HEADER_STARTS):
+                    continue
+
+                # Cellule fonction vide ou séparatrice → ignorer la ligne
+                if not col1 or _is_separator_cell(col1):
+                    continue
+
+                try:
+                    entries.append((int(col0), col1))
+                except ValueError:
+                    # Première colonne non numérique → col1 comme token libre
+                    if not _is_separator_cell(col1):
+                        entries.append((None, col1))
+
+            elif len(cells) == 1 and not _is_separator_cell(cells[0]):
+                entries.append((None, cells[0]))
+
+            continue
+
+        # ── "numéro + nom" : "1 PAN", "1. PAN", "1: PAN", "1-PAN" ───────────
+        m = re.match(r"^(\d{1,3})[.\-:\s]+([A-Za-z].*)$", line)
+        if m:
+            fn = m.group(2).strip()
+            if fn and not _is_separator_cell(fn):
+                entries.append((int(m.group(1)), fn))
+            continue
+
+        # ── Juste un nom de canal (sans numéro) ───────────────────────────────
+        # Ignorer les stop words, les en-têtes, et les nombres seuls
+        up = line.upper()
+        if any(up.startswith(h) for h in _HEADER_STARTS + ("CH ", "CHANNEL")):
+            continue
+        norm = _normalize(line)
+        if norm in _STOP_WORDS or re.fullmatch(r"\d+", norm):
+            continue
+        entries.append((None, line))
+
+    return entries
+
+
+def _ai_parse(text: str) -> list[tuple[str, str, str]]:
+    """Parse le texte libre et retourne une liste de (raw, type_mystrow, confiance).
+
+    C'est le moteur de la 'fausse IA'.
+    """
+    tokens = _extract_tokens(text)
+    if not tokens:
+        return []
+
+    # Si tous ont des numéros, trier par numéro
+    numbered = [(n, r) for n, r in tokens if n is not None]
+    unnamed  = [(n, r) for n, r in tokens if n is None]
+
+    if numbered:
+        numbered.sort(key=lambda x: x[0])
+        result = [(r, *_ai_map(r)) for _, r in numbered]
+        # Ajouter les non-numérotés à la fin
+        result += [(r, *_ai_map(r)) for _, r in unnamed]
+    else:
+        result = [(r, *_ai_map(r)) for _, r in unnamed]
+
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dialog "IA" : import footprint depuis texte libre avec confirmation
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _FootprintImportDialog(QDialog):
+    """Dialog à deux étapes : (1) coller du texte libre → (2) confirmer ce que l'IA a compris."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importer un footprint — IA")
+        self.setMinimumSize(600, 580)
+        self.setStyleSheet(_STYLE_EDITOR)
+        self._result: list[tuple[str, str, str]] = []  # (raw, type, confiance)
+        self._think_dots = 0
+        self._think_timer = QTimer(self)
+        self._think_timer.timeout.connect(self._tick_thinking)
+        self._build_ui()
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setSpacing(0)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        # ── Pages ─────────────────────────────────────────────────────────────
+        from PySide6.QtWidgets import QStackedWidget
+        self._stack = QStackedWidget()
+        root.addWidget(self._stack, 1)
+
+        self._stack.addWidget(self._build_page_input())    # 0 = saisie
+        self._stack.addWidget(self._build_page_confirm())  # 1 = confirmation
+
+    def _build_page_input(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setSpacing(10)
+        lay.setContentsMargins(18, 18, 18, 14)
+
+        # Titre
+        title = QLabel("📋  Coller ton footprint")
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        title.setStyleSheet(f"color:{ACCENT};")
+        lay.addWidget(title)
+
+        hint = QLabel(
+            "N'importe quel format : tableau, liste, virgules, texte libre en français ou anglais.\n"
+            "L'IA va interpréter et mapper vers les types MyStrow."
+        )
+        hint.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background:#2a2a2a; max-height:1px; margin:2px 0;")
+        lay.addWidget(sep)
+
+        self._text_edit = QTextEdit()
+        self._text_edit.setPlaceholderText(
+            "Exemples acceptés :\n\n"
+            "  pan, tilt, zoom, gradateur, couleur, gobo1\n\n"
+            "  1 PAN\n  2 TILT\n  3 DIM\n\n"
+            "  | 1 | COLOR1 |\n  | 2 | GOBO1  |\n\n"
+            "  canal 1 pan, canal 2 tilt, canal 3 dimmer..."
+        )
+        self._text_edit.setFont(QFont("Consolas", 10))
+        lay.addWidget(self._text_edit, 1)
+
+        # Barre inférieure : statut IA + bouton
+        bot = QHBoxLayout()
+        self._status_input = QLabel("")
+        self._status_input.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        bot.addWidget(self._status_input, 1)
+
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setFixedHeight(34)
+        btn_cancel.clicked.connect(self.reject)
+        bot.addWidget(btn_cancel)
+
+        self._btn_analyze = QPushButton("✦  Analyser")
+        self._btn_analyze.setFixedHeight(34)
+        self._btn_analyze.setStyleSheet(
+            f"QPushButton {{ background:{ACCENT}; color:#000; border:none; border-radius:4px;"
+            f" font-weight:bold; font-size:12px; padding:0 20px; }}"
+            f"QPushButton:hover {{ background:#33e0ff; }}"
+            f"QPushButton:disabled {{ background:#1a2a2a; color:#2a5a6a; border:1px solid #2a4a5a; }}"
+        )
+        self._btn_analyze.clicked.connect(self._start_analysis)
+        bot.addWidget(self._btn_analyze)
+        lay.addLayout(bot)
+
+        return page
+
+    def _build_page_confirm(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setSpacing(10)
+        lay.setContentsMargins(18, 18, 18, 14)
+
+        # Titre
+        title = QLabel("✦  Voici ce que j'ai compris")
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        title.setStyleSheet(f"color:{ACCENT};")
+        lay.addWidget(title)
+
+        self._confirm_summary = QLabel("")
+        self._confirm_summary.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+        lay.addWidget(self._confirm_summary)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background:#2a2a2a; max-height:1px; margin:2px 0;")
+        lay.addWidget(sep)
+
+        # Tableau des canaux interprétés (scroll)
+        self._result_scroll = QScrollArea()
+        self._result_scroll.setWidgetResizable(True)
+        self._result_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._result_container = QWidget()
+        self._result_vbox = QVBoxLayout(self._result_container)
+        self._result_vbox.setContentsMargins(0, 4, 0, 4)
+        self._result_vbox.setSpacing(3)
+        self._result_scroll.setWidget(self._result_container)
+        lay.addWidget(self._result_scroll, 1)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet("background:#2a2a2a; max-height:1px; margin:4px 0;")
+        lay.addWidget(sep2)
+
+        # Champs fixture
+        row_fx = QHBoxLayout()
+        row_fx.addWidget(QLabel("Nom :"))
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("Nom de la fixture…")
+        self._name_edit.setFixedHeight(30)
+        row_fx.addWidget(self._name_edit, 2)
+        row_fx.addWidget(QLabel("Fab. :"))
+        self._mfr_edit = QLineEdit()
+        self._mfr_edit.setPlaceholderText("Fabricant…")
+        self._mfr_edit.setFixedHeight(30)
+        row_fx.addWidget(self._mfr_edit, 1)
+        lay.addLayout(row_fx)
+
+        row_type = QHBoxLayout()
+        row_type.addWidget(QLabel("Type :"))
+        self._type_combo = _NoScroll()
+        for ft in FIXTURE_TYPES:
+            self._type_combo.addItem(ft)
+        self._type_combo.setCurrentText("Moving Head")
+        self._type_combo.setFixedHeight(28)
+        row_type.addWidget(self._type_combo)
+        row_type.addWidget(QLabel("Groupe :"))
+        self._group_combo = _NoScroll()
+        for g in GROUP_OPTIONS:
+            self._group_combo.addItem(g)
+        self._group_combo.setFixedHeight(28)
+        row_type.addWidget(self._group_combo)
+        row_type.addStretch()
+        lay.addLayout(row_type)
+
+        # Boutons
+        bot = QHBoxLayout()
+        btn_back = QPushButton("← Modifier le texte")
+        btn_back.setFixedHeight(34)
+        btn_back.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        bot.addWidget(btn_back)
+        bot.addStretch()
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setFixedHeight(34)
+        btn_cancel.clicked.connect(self.reject)
+        bot.addWidget(btn_cancel)
+
+        self._btn_confirm = QPushButton("✔  Créer la fixture")
+        self._btn_confirm.setFixedHeight(34)
+        self._btn_confirm.setStyleSheet(
+            f"QPushButton {{ background:{GREEN}; color:#fff; border:none; border-radius:4px;"
+            f" font-weight:bold; font-size:12px; padding:0 20px; }}"
+            f"QPushButton:hover {{ background:#3a9a4a; }}"
+        )
+        self._btn_confirm.clicked.connect(self.accept)
+        bot.addWidget(self._btn_confirm)
+        lay.addLayout(bot)
+
+        return page
+
+    # ── Analyse ───────────────────────────────────────────────────────────────
+
+    def _start_analysis(self):
+        text = self._text_edit.toPlainText().strip()
+        if not text:
+            self._status_input.setText("Colle quelque chose d'abord…")
+            return
+        self._btn_analyze.setEnabled(False)
+        self._think_dots = 0
+        self._think_timer.start(160)
+        # Vraie analyse immédiate, on attend juste pour l'effet
+        self._result = _ai_parse(text)
+        QTimer.singleShot(900, self._show_results)
+
+    def _tick_thinking(self):
+        self._think_dots = (self._think_dots + 1) % 4
+        self._btn_analyze.setText("✦  Analyse" + "." * self._think_dots)
+
+    def _show_results(self):
+        self._think_timer.stop()
+        self._btn_analyze.setText("✦  Analyser")
+        self._btn_analyze.setEnabled(True)
+
+        if not self._result:
+            self._status_input.setText("Rien compris — reformule ou essaie un autre format.")
+            return
+
+        self._populate_confirm_page()
+        self._stack.setCurrentIndex(1)
+
+    def _populate_confirm_page(self):
+        # Vider l'ancien contenu
+        while self._result_vbox.count():
+            item = self._result_vbox.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        n_exact  = sum(1 for _, _, c in self._result if c == "exact")
+        n_approx = sum(1 for _, _, c in self._result if c == "approx")
+        n_unk    = sum(1 for _, _, c in self._result if c == "inconnu")
+
+        parts = [f"{len(self._result)} canal(s) détecté(s)"]
+        if n_exact:  parts.append(f"<span style='color:#4CAF50'>{n_exact} exacts</span>")
+        if n_approx: parts.append(f"<span style='color:#FFA726'>{n_approx} approximatifs</span>")
+        if n_unk:    parts.append(f"<span style='color:#EF5350'>{n_unk} inconnu(s)</span>")
+        self._confirm_summary.setText("  ·  ".join(parts))
+        self._confirm_summary.setTextFormat(Qt.RichText)
+
+        # En-tête
+        hdr = QWidget()
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(6, 0, 6, 0)
+        hdr_lay.setSpacing(0)
+        for txt, w in [("#", 28), ("Lu dans le texte", 180), ("→", 22), ("Type MyStrow", 120), ("", 60)]:
+            l = QLabel(txt)
+            l.setFixedWidth(w)
+            l.setStyleSheet(f"color:{TEXT_DIM}; font-size:10px; font-weight:bold;")
+            hdr_lay.addWidget(l)
+        hdr_lay.addStretch()
+        self._result_vbox.addWidget(hdr)
+
+        for i, (raw, mapped, conf) in enumerate(self._result):
+            self._result_vbox.addWidget(self._make_channel_row(i, raw, mapped, conf))
+
+        self._result_vbox.addStretch()
+
+    def _make_channel_row(self, idx: int, raw: str, mapped: str, conf: str) -> QWidget:
+        conf_color = {"exact": "#4CAF50", "approx": "#FFA726", "inconnu": "#EF5350"}.get(conf, TEXT_DIM)
+        conf_icon  = {"exact": "✓", "approx": "~", "inconnu": "?"}.get(conf, "?")
+        ch_color   = CHANNEL_COLORS.get(mapped, "#555555")
+
+        row = QFrame()
+        row.setStyleSheet(
+            f"QFrame {{ background:{'#1e2a1e' if conf=='exact' else '#2a2218' if conf=='approx' else '#2a1e1e'};"
+            f" border:1px solid {'#2a3a2a' if conf=='exact' else '#3a3018' if conf=='approx' else '#3a2020'};"
+            f" border-radius:4px; }}"
+        )
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(0)
+
+        num = QLabel(f"{idx+1:02d}")
+        num.setFixedWidth(28)
+        num.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; font-family:Consolas;")
+        lay.addWidget(num)
+
+        raw_lbl = QLabel(raw)
+        raw_lbl.setFixedWidth(180)
+        raw_lbl.setStyleSheet(f"color:{TEXT}; font-size:11px; font-family:Consolas;")
+        raw_lbl.setToolTip(f"Texte original : {raw!r}")
+        lay.addWidget(raw_lbl)
+
+        arr = QLabel("→")
+        arr.setFixedWidth(22)
+        arr.setAlignment(Qt.AlignCenter)
+        arr.setStyleSheet(f"color:{TEXT_DIM};")
+        lay.addWidget(arr)
+
+        # Combo pour permettre correction manuelle
+        combo = _NoScroll()
+        combo.setFixedWidth(120)
+        combo.setFixedHeight(24)
+        for t in ALL_CHANNEL_TYPES:
+            combo.addItem(t)
+        if mapped in ALL_CHANNEL_TYPES:
+            combo.setCurrentText(mapped)
+        combo.setStyleSheet(
+            f"QComboBox {{ background:{ch_color}22; color:{ch_color}; border:1px solid {ch_color}55;"
+            f" border-radius:3px; font-size:11px; font-weight:bold; padding:0 4px; }}"
+            f"QComboBox::drop-down {{ border:none; width:14px; }}"
+            f"QComboBox QAbstractItemView {{ background:#2a2a2a; color:{TEXT};"
+            f" selection-background-color:{ACCENT}; selection-color:#000; }}"
+        )
+        combo.currentTextChanged.connect(lambda t, i=idx: self._on_combo_changed(i, t))
+        lay.addWidget(combo)
+
+        badge = QLabel(f"  {conf_icon} {conf}")
+        badge.setFixedWidth(70)
+        badge.setStyleSheet(f"color:{conf_color}; font-size:10px;")
+        lay.addWidget(badge)
+
+        lay.addStretch()
+
+        # Bouton supprimer ce canal
+        btn_del = QPushButton("✕")
+        btn_del.setFixedSize(22, 22)
+        btn_del.setStyleSheet(
+            f"QPushButton {{ background:transparent; color:#666; border:none; font-size:11px; }}"
+            f"QPushButton:hover {{ color:{RED}; }}"
+        )
+        btn_del.setToolTip("Supprimer ce canal")
+        btn_del.clicked.connect(lambda _, i=idx: self._delete_channel(i))
+        lay.addWidget(btn_del)
+
+        return row
+
+    def _delete_channel(self, idx: int):
+        if 0 <= idx < len(self._result):
+            self._result.pop(idx)
+            self._populate_confirm_page()
+
+    def _on_combo_changed(self, idx: int, new_type: str):
+        if 0 <= idx < len(self._result):
+            raw, _, conf = self._result[idx]
+            self._result[idx] = (raw, new_type, conf)
+
+    # ── Résultat ─────────────────────────────────────────────────────────────
+
+    def result_fixture(self) -> dict:
+        name = self._name_edit.text().strip() or "Fixture importée"
+        return {
+            "name":         name,
+            "manufacturer": self._mfr_edit.text().strip(),
+            "fixture_type": self._type_combo.currentText(),
+            "group":        self._group_combo.currentText(),
+            "profile":      [t for _, t, _ in self._result],
+        }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Widget principal : AdminPackEditorWidget
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -341,6 +1002,12 @@ class AdminPackEditorWidget(QWidget):
         self._btn_dup_fx.clicked.connect(self._duplicate_fixture)
         btn_row.addWidget(self._btn_dup_fx)
         fx_lay.addLayout(btn_row)
+
+        btn_import = QPushButton("📋 Coller footprint")
+        btn_import.setFixedHeight(26)
+        btn_import.setToolTip("Coller un tableau canal→fonction pour créer une fixture")
+        btn_import.clicked.connect(self._import_from_text)
+        fx_lay.addWidget(btn_import)
 
         splitter.addWidget(fx_panel)
 
@@ -983,3 +1650,19 @@ class AdminPackEditorWidget(QWidget):
         QTimer.singleShot(4000, lambda: self._status_lbl.setStyleSheet(
             f"color:{TEXT_DIM}; font-size:11px;"
         ))
+
+    # ── Import depuis texte ──────────────────────────────────────────────────
+
+    def _import_from_text(self):
+        if not self._current_pack:
+            QMessageBox.warning(self, "Aucun pack", "Sélectionnez ou créez un pack d'abord.")
+            return
+        dlg = _FootprintImportDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            fx = dlg.result_fixture()
+            self._current_pack.setdefault("fixtures", []).append(fx)
+            self._cur_fx_idx = len(self._current_pack["fixtures"]) - 1
+            self._rebuild_mfr_list()
+            self._fx_list.setCurrentRow(self._fx_list.count() - 1)
+            self._update_pack_status()
+            self._status_lbl.setText(f"✓ Fixture « {fx['name']} » importée ({len(fx['profile'])} canaux)")

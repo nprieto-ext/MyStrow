@@ -27,6 +27,7 @@ class Projector:
         self.gobo = 0                 # Gobo wheel (0-255)
         self.zoom = 0                 # Zoom (0-255)
         self.shutter = 255            # Shutter/Iris (0-255)
+        self.shutter_inverted = False  # True si convention inversée (0=ouvert, 255=fermé)
         self.color_wheel = 0          # Color wheel (0-255)
         self.prism = 0                # Prism (0=off, >0=actif)
         self.gobo_rotation = 0        # Rotation gobo (0-255)

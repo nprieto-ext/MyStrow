@@ -833,9 +833,10 @@ class ColorWheelCalibWizard(QDialog):
         self._step           = -1
 
         # Sauvegarder l'état original pour restauration si annulation
-        self._orig_shutter = getattr(proj, 'shutter', 255)
-        self._orig_level   = getattr(proj, 'level', 100)
-        self._orig_cw      = getattr(proj, 'color_wheel', 0)
+        self._orig_shutter     = getattr(proj, 'shutter', 255)
+        self._orig_shutter_inv = getattr(proj, 'shutter_inverted', False)
+        self._orig_level       = getattr(proj, 'level', 100)
+        self._orig_cw          = getattr(proj, 'color_wheel', 0)
 
         # Initialiser les valeurs depuis les slots existants ou les défauts
         existing = getattr(proj, 'color_wheel_slots', [])
@@ -935,6 +936,18 @@ class ColorWheelCalibWizard(QDialog):
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("background:#2a2a2a;max-height:1px;border:none;")
         root.addWidget(sep)
+
+        # ── Bouton shutter inversé ────────────────────────────────────────────
+        self._btn_shutter_inv = QPushButton("💡  Ma lyre ne s'allume pas")
+        self._btn_shutter_inv.setStyleSheet(
+            "QPushButton { background: transparent; color: #888; border: none;"
+            " font-size: 11px; text-decoration: underline; padding: 2px 0; }"
+            "QPushButton:hover { color: #ffaa00; }"
+        )
+        self._btn_shutter_inv.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_shutter_inv.clicked.connect(self._toggle_shutter_inverted)
+        self._btn_shutter_inv.setVisible(False)
+        root.addWidget(self._btn_shutter_inv, alignment=Qt.AlignCenter)
 
         # ── Navigation ────────────────────────────────────────────────────────
         nav = QHBoxLayout()
@@ -1043,6 +1056,24 @@ class ColorWheelCalibWizard(QDialog):
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
+    def _toggle_shutter_inverted(self):
+        self._proj.shutter_inverted = not getattr(self._proj, 'shutter_inverted', False)
+        self._send_dmx()
+        if self._proj.shutter_inverted:
+            self._btn_shutter_inv.setText("✓  Shutter inversé — cliquer pour annuler")
+            self._btn_shutter_inv.setStyleSheet(
+                "QPushButton { background: transparent; color: #ffaa00; border: none;"
+                " font-size: 11px; text-decoration: underline; padding: 2px 0; }"
+                "QPushButton:hover { color: #ff7700; }"
+            )
+        else:
+            self._btn_shutter_inv.setText("💡  Ma lyre ne s'allume pas")
+            self._btn_shutter_inv.setStyleSheet(
+                "QPushButton { background: transparent; color: #888; border: none;"
+                " font-size: 11px; text-decoration: underline; padding: 2px 0; }"
+                "QPushButton:hover { color: #ffaa00; }"
+            )
+
     def _go_next(self):
         if self._step == -1:
             # Démarrer : mettre shutter et dim à fond
@@ -1050,6 +1081,7 @@ class ColorWheelCalibWizard(QDialog):
             self._proj.level   = 100
             self._proj.color_wheel = self._values[0]
             self._send_dmx()
+            self._btn_shutter_inv.setVisible(True)
             self._show_step(0)
         elif self._step < len(_CALIB_STEPS) - 1:
             self._show_step(self._step + 1)
@@ -1081,6 +1113,7 @@ class ColorWheelCalibWizard(QDialog):
         for p in targets:
             p.color_wheel_slots = [dict(s) for s in slots]
             p._needs_cw_calib = False
+            p.shutter_inverted = getattr(self._proj, 'shutter_inverted', False)
 
         if self._mw and hasattr(self._mw, 'save_dmx_patch_config'):
             self._mw.save_dmx_patch_config()
@@ -1088,9 +1121,10 @@ class ColorWheelCalibWizard(QDialog):
         self.accept()
 
     def _on_cancel(self):
-        # Restaurer l'état original de la lyre
-        self._proj.shutter     = self._orig_shutter
-        self._proj.level       = self._orig_level
-        self._proj.color_wheel = self._orig_cw
+        # Restaurer l'état original de la lyre (y compris shutter_inverted)
+        self._proj.shutter          = self._orig_shutter
+        self._proj.shutter_inverted = self._orig_shutter_inv
+        self._proj.level            = self._orig_level
+        self._proj.color_wheel      = self._orig_cw
         self._send_dmx()
         self.reject()

@@ -1687,6 +1687,16 @@ class LightTimelineEditor(QDialog):
         """Charge la sequence existante si elle existe"""
         if self.media_row in self.main_window.seq.sequences:
             seq = self.main_window.seq.sequences[self.media_row]
+
+            # Restaurer la durée réelle depuis la sauvegarde si le fichier media
+            # n'est pas accessible (fallback 180000ms sinon)
+            saved_duration = seq.get('duration', 0)
+            if saved_duration > self.media_duration:
+                self.media_duration = saved_duration
+                for track in self.tracks + [self.track_waveform]:
+                    track.total_duration = saved_duration
+                    track.setMinimumWidth(145 + int(saved_duration * track.pixels_per_ms) + 50)
+
             clips_data = seq.get('clips', [])
 
             # Créer les pistes Effet supplémentaires présentes dans la sauvegarde

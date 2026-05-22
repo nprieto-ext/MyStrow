@@ -1958,7 +1958,7 @@ class MainWindow(QMainWindow):
         social_menu.addAction("📸  Instagram", lambda: QDesktopServices.openUrl(QUrl("https://www.instagram.com/niko_mystrow_dmx/")))
         social_menu.addAction("▶️  TikTok",    lambda: QDesktopServices.openUrl(QUrl("https://www.tiktok.com/@niko_mystrow")))
         social_menu.addAction("▶️  YouTube",   lambda: QDesktopServices.openUrl(QUrl("https://www.youtube.com/@MyStrow-x7t")))
-        social_menu.addAction("💬  Discord",   lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/HhJF335K")))
+        social_menu.addAction("💬  Discord",   lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/SZWNgGRc7K")))
         about_menu.addSeparator()
         lang_menu = about_menu.addMenu(tr("menu_language"))
         act_fr = lang_menu.addAction(tr("menu_lang_fr"))
@@ -2739,10 +2739,11 @@ class MainWindow(QMainWindow):
             for mr in range(8):
                 self._style_memory_pad(mc, mr, active=self.active_memory_pads.get(fi) == mr)
 
-        # Refresh position pad styles
+        # Refresh position pad styles + LED physique
         for fi, pc in self._bank_pos_slots():
             for pr in range(8):
                 self._style_position_akai_pad(pc, pr)
+                self._update_pos_pad_led(pc, pr)
 
         # Refresh active color pads
         for col_idx, btn in list(self.active_pads.items()):
@@ -4620,28 +4621,41 @@ class MainWindow(QMainWindow):
         preset = self.position_presets[preset_idx]
         lyres_cur = [p for p in self.projectors
                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
-        # Fallbacks nom et groupe pour les configs qui ont changé
-        lyre_by_name: dict = {}
-        for p in lyres_cur:
-            if p.name and p.name not in lyre_by_name:
-                lyre_by_name[p.name] = p
-        lyre_by_group: dict = {}
-        for p in lyres_cur:
-            lyre_by_group.setdefault(p.group, []).append(p)
+
+        saved_states = preset.get("projectors", [])
+        # Index par adresse DMX (priorité max — unique par fixture)
+        saved_by_addr: dict = {str(s["start_address"]): s
+                               for s in saved_states if s.get("start_address")}
+        # Index par nom (fallback si adresse absente — noms non-uniques → seul le dernier garde)
+        # On construit un index qui mappe chaque nom à TOUS les états pour éviter les collisions
+        saved_by_name_list: dict = {}
+        for s in saved_states:
+            n = s.get("name")
+            if n:
+                saved_by_name_list.setdefault(n, []).append(s)
+        # Compteur d'utilisation par nom pour distribuer correctement les doublons
+        name_cursor: dict = {}
+
         applied = 0
-        for i, proj_state in enumerate(preset.get("projectors", [])):
-            # 1. Match par index (même config que lors de l'enregistrement)
-            p = lyres_cur[i] if i < len(lyres_cur) else None
-            # 2. Fallback : nom unique non vide
-            if p is None:
-                p = lyre_by_name.get(proj_state.get("name"))
-            # 3. Fallback : première lyre disponible du groupe
-            if p is None:
-                candidates = lyre_by_group.get(proj_state.get("group"), [])
-                p = candidates[0] if candidates else None
-            if p:
+        for i, p in enumerate(lyres_cur):
+            saved = None
+            # 1. Match par adresse DMX (robuste, résiste aux renommages)
+            addr_key = str(getattr(p, 'start_address', ''))
+            if addr_key:
+                saved = saved_by_addr.get(addr_key)
+            # 2. Match par nom avec distribution séquentielle (évite les collisions de noms dupliqués)
+            if saved is None and p.name:
+                entries = saved_by_name_list.get(p.name, [])
+                idx_n = name_cursor.get(p.name, 0)
+                if idx_n < len(entries):
+                    saved = entries[idx_n]
+                    name_cursor[p.name] = idx_n + 1
+            # 3. Fallback positionnel (même ordre de fixtures qu'à l'enregistrement)
+            if saved is None and i < len(saved_states):
+                saved = saved_states[i]
+            if saved:
                 self._start_pan_tilt_transition(
-                    p, proj_state.get("pan", 32768), proj_state.get("tilt", 32768), 500)
+                    p, saved.get("pan", 32768), saved.get("tilt", 32768), 500)
                 applied += 1
 
         if applied == 0:
@@ -4675,6 +4689,7 @@ class MainWindow(QMainWindow):
         name = name.strip()
 
         snap = [{"group": p.group, "name": p.name,
+                 "start_address": str(getattr(p, 'start_address', '')),
                  "pan":  getattr(p, 'pan',  32768),
                  "tilt": getattr(p, 'tilt', 32768)} for p in lyres]
         preset = {"name": name, "projectors": snap}
@@ -4703,14 +4718,6 @@ class MainWindow(QMainWindow):
         )
 
         cur_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
-
-        if self.position_presets:
-            hdr = menu.addAction(tr("pos_ctx_assign_hdr"))
-            hdr.setEnabled(False)
-            for i, preset in enumerate(self.position_presets):
-                act = menu.addAction(("✓ " if cur_idx == i else "    ") + preset["name"])
-                act.triggered.connect(lambda _, pi=i: self._assign_position_akai(pos_col, row, pi))
-            menu.addSeparator()
 
         rec_act = menu.addAction(tr("pos_ctx_rec"))
         rec_act.triggered.connect(lambda: self._record_position_akai(pos_col, row))
@@ -4752,22 +4759,26 @@ class MainWindow(QMainWindow):
         per_proj = pdf_preset.get("per_proj", {})
         snap = []
         for p in lyres:
-            if p.name in per_proj:
-                pan_v  = per_proj[p.name].get("pan",  pdf_preset.get("pan",  32768))
-                tilt_v = per_proj[p.name].get("tilt", pdf_preset.get("tilt", 32768))
+            # Le plan de feu stocke per_proj par str(start_address) ; fallback par nom
+            ps = per_proj.get(str(p.start_address)) or per_proj.get(p.name)
+            if ps:
+                pan_v  = ps.get("pan",  pdf_preset.get("pan",  32768))
+                tilt_v = ps.get("tilt", pdf_preset.get("tilt", 32768))
             else:
                 pan_v  = pdf_preset.get("pan",  32768)
                 tilt_v = pdf_preset.get("tilt", 32768)
             snap.append({"group": getattr(p, 'group', ''), "name": p.name,
+                         "start_address": str(getattr(p, 'start_address', '')),
                          "pan": pan_v, "tilt": tilt_v})
         return {"name": pdf_preset["name"], "projectors": snap}
 
     def _import_pdf_preset_to_pad(self, pos_col, row, pdf_preset):
         """Importe un preset Plan de Feu comme preset AKAI et l'assigne au pad."""
         akai = self._pdf_preset_to_akai(pdf_preset)
-        # Réutiliser si même nom existe déjà
+        # Mettre à jour si même nom existe déjà (pour prendre en compte les modifs du plan de feu)
         for i, existing in enumerate(self.position_presets):
             if existing["name"] == akai["name"]:
+                self.position_presets[i] = akai
                 self._assign_position_akai(pos_col, row, i)
                 self._save_akai_config_auto()
                 return
@@ -5956,7 +5967,9 @@ class MainWindow(QMainWindow):
                 effective_speed = cfg.get("speed_override", self.effect_speed)
                 fader_mult = max(0.01, effective_speed / 100.0)
                 freq = (0.05 + speed / 100.0 * 7.0) * fader_mult
-                sp   = spread / 100.0
+                # 180° = distribution parfaite sur 1 cycle (permanent N/2 allumés avec Flash)
+                # 0° = sync, 360° = double-tour (sous-groupes)
+                sp   = spread / 180.0
                 if direction == 0:
                     t_osc = abs(2 * ((freq * t) % 1.0) - 1)
                     x = (t_osc + i / max(n, 1) * sp + phase) % 1.0
@@ -6005,7 +6018,10 @@ class MainWindow(QMainWindow):
                     amplitude = (size / 100.0) * 8192
                     if attr == "Pan":
                         center = saved[3] if saved and len(saved) > 3 else 32768
-                        proj.pan = int(max(0, min(65535, center + (raw - 0.5) * 2 * amplitude)))
+                        _mh_i_pan = _mh_idx.get(id(proj), i)
+                        sym_pan  = ld.get("sym_pan", False)
+                        pan_sign = -1 if (sym_pan and _mh_i_pan * 2 >= _mh_n) else 1
+                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw - 0.5) * 2 * amplitude)))
                     else:
                         center = saved[4] if saved and len(saved) > 4 else 32768
                         proj.tilt = int(max(0, min(65535, center + (raw - 0.5) * 2 * amplitude)))
@@ -6025,8 +6041,10 @@ class MainWindow(QMainWindow):
                     amplitude = (size / 100.0) * 8192
                     saved = self.effect_saved_colors.get(id(proj))
 
-                    # Utiliser l'index relatif parmi les lyres pour le spread
+                    # Utiliser l'index relatif parmi les lyres pour le spread + symétrie
                     _mh_i = _mh_idx.get(id(proj), i)
+                    sym_pan  = ld.get("sym_pan", False)
+                    pan_sign = -1 if (sym_pan and _mh_i * 2 >= _mh_n) else 1
 
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
@@ -6034,7 +6052,7 @@ class MainWindow(QMainWindow):
                         pan_x = (pan_freq * t + _mh_i / _mh_n * sp + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = saved[3] if saved and len(saved) > 3 else 32768
-                        proj.pan = int(max(0, min(65535, c_pan + (pan_raw - 0.5) * 2 * amplitude)))
+                        proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude)))
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
@@ -6049,6 +6067,13 @@ class MainWindow(QMainWindow):
                 elif attr == "Gobo":
                     n_gobos = 8
                     proj.gobo = int(scaled * (n_gobos - 1)) * 32
+                elif attr == "ColorWheel":
+                    slots = getattr(proj, 'color_wheel_slots', [])
+                    if slots:
+                        slot_idx = int(scaled * (len(slots) - 1))
+                        proj.color_wheel = slots[max(0, min(len(slots) - 1, slot_idx))]["dmx"]
+                    else:
+                        proj.color_wheel = int(scaled * 255)
 
             # En mode rec lumière, ignorer les projos éteints sauf ciblage explicite
             if _timeline_mode and _base_level == 0 and not _explicitly_targeted:
@@ -6551,6 +6576,9 @@ class MainWindow(QMainWindow):
                             mem_col = slot.get("mem_col", 0)
                             is_active = self.active_memory_pads.get(col) == row
                             self._update_memory_pad_led(mem_col, row, active=is_active)
+                        elif slot.get("type") == "pos":
+                            pos_col = slot.get("pos_col", 0)
+                            self._update_pos_pad_led(pos_col, row)
 
     def _clear_akai_state(self):
         """Remet l'AKAI à zéro : faders 0-7 à 0 + pads blancs activés."""
@@ -9659,6 +9687,7 @@ class MainWindow(QMainWindow):
             proj.base_color = color
             proj.level = 100
             proj.color = QColor(color.red(), color.green(), color.blue())
+            self._update_color_wheel(proj, color)
         if self.dmx:
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
@@ -10112,6 +10141,11 @@ class MainWindow(QMainWindow):
                 self.plan_de_feu.btn_3d.setChecked(False)
         else:
             self._plan3d.init_scene(self.projectors)
+            # Si la page n'a jamais chargé (race condition ou crash précédent), forcer un rechargement
+            if not self._plan3d._ready:
+                from plan_3d_webwindow import _HTML
+                from PySide6.QtCore import QUrl
+                self._plan3d._view.load(QUrl.fromLocalFile(str(_HTML)))
             # Synchroniser les boutons de scène avec le preset chargé
             code = getattr(self._plan3d, '_scene_preset_code', 'live')
             for k, btn in getattr(self._plan3d, '_scene_btns', {}).items():
@@ -10808,14 +10842,14 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
         )
         btn_pt_reset       = QPushButton("↺  Reset")
-        btn_pt_apply_model = QPushButton("Appliquer à toutes\nles lyres  [ref]")
+        btn_pt_apply_model = QPushButton("Appliquer à toutes\nles lyres du modèle")
         btn_pt_apply_all   = QPushButton("Appliquer à toutes\nles lyres")
         btn_pt_reset.setStyleSheet(_PT_RST_SS)
         btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
         btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
-        btn_pt_reset.setFixedSize(130, 30)
-        btn_pt_apply_model.setFixedSize(140, 44)
-        btn_pt_apply_all.setFixedSize(140, 44)
+        btn_pt_reset.setFixedSize(160, 30)
+        btn_pt_apply_model.setFixedSize(160, 44)
+        btn_pt_apply_all.setFixedSize(160, 44)
 
         pt_side_col = QVBoxLayout()
         pt_side_col.setSpacing(6)

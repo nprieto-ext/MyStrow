@@ -143,7 +143,7 @@ class PresetBar(QWidget):
     _BTN_STYLE = (
         "QPushButton{"
         "background:#181818;border:none;border-left:3px solid #00d4ff;"
-        "color:#c0c0c0;font-size:11px;padding:2px 8px;text-align:left;}"
+        "color:#e8e8e8;font-size:11px;padding:2px 8px;text-align:left;}"
         "QPushButton:hover{background:#222;color:#fff;}"
         "QPushButton:pressed{background:#0d1f2a;color:#00d4ff;}"
     )
@@ -274,7 +274,7 @@ class PresetBar(QWidget):
                 memo_label = tr("pdf_ctx_memorize", pan=pan, tilt=tilt)
             m.addAction(memo_label, lambda: self._memorize(idx))
             m.addSeparator()
-            m.addAction(tr("pdf_ctx_rename"), lambda: self._start_inline_rename(idx))
+            m.addAction(tr("pdf_ctx_rename", name=self._presets[idx]["name"]), lambda: self._start_inline_rename(idx))
             if len(self._presets) > 1:
                 m.addAction(tr("pdf_ctx_delete"), lambda: self._delete(idx))
             m.exec(QCursor.pos())
@@ -303,95 +303,68 @@ class PresetBar(QWidget):
         self._rebuild_buttons()
 
     def _start_inline_rename(self, idx):
-        """Remplace le bouton par un QLineEdit in-place, sans ouvrir de dialog."""
-        if idx >= len(getattr(self, '_btns', [])):
+        """Renomme le preset via un QLineEdit en overlay sur le bouton."""
+        if idx >= len(self._presets) or idx >= len(getattr(self, '_btns', [])):
             return
+
+        # Bloquer les événements souris résiduels du menu contextuel
+        self._ctx_preset_active = True
+        QTimer.singleShot(300, lambda: setattr(self, '_ctx_preset_active', False))
+
+        preset = self._presets[idx]
         btn = self._btns[idx]
 
-        edit = QLineEdit(self._presets[idx]["name"])
-        edit.setFixedHeight(self._BTN_H)
-        edit.setStyleSheet(
-            "QLineEdit{background:#0d1f2a;border:none;border-left:3px solid #00d4ff;"
-            "color:#00d4ff;font-size:11px;padding:2px 8px;selection-background-color:#1a3a4a;}"
+        # Overlay positionné exactement sur le bouton, dans _inner
+        editor = QLineEdit(preset["name"], self._inner)
+        editor.setGeometry(btn.geometry())
+        editor.setStyleSheet(
+            "QLineEdit{"
+            "background:#0d1f2a;border:none;border-left:3px solid #00d4ff;"
+            "color:#fff;font-size:11px;padding:2px 8px;"
+            "selection-background-color:#005577;}"
         )
-        edit.selectAll()
+        editor.show()
+        editor.selectAll()
+        editor.setFocus()
 
-        pos = self._inner_lay.indexOf(btn)
-        self._inner_lay.removeWidget(btn)
-        btn.hide()
-        self._inner_lay.insertWidget(pos, edit)
-        edit.setFocus()
-
-        _done = [False]
-        _busy = [False]
-
-        # QMenu intercepts all keyboard events via its own event loop.
-        # Installing a filter on QApplication AFTER the menu is shown means
-        # our filter runs first (LIFO), so we can redirect keys to the QLineEdit.
-        class _KeyFwd(QObject):
-            def eventFilter(_, obj, event):  # noqa: N805
-                if _busy[0]:
-                    return False
-                if event.type() == QEvent.Type.KeyPress:
-                    if event.key() == Qt.Key.Key_Escape:
-                        _restore()
-                        return True
-                    _busy[0] = True
-                    QApplication.sendEvent(edit, event)
-                    _busy[0] = False
-                    return True
-                return False
-
-        fwd = _KeyFwd(self)
-        QApplication.instance().installEventFilter(fwd)
-
-        def _cleanup():
-            QApplication.instance().removeEventFilter(fwd)
-            self._inner_lay.removeWidget(edit)
-            edit.deleteLater()
-            self._inner_lay.insertWidget(pos, btn)
-            btn.show()
+        committed = [False]
 
         def _commit():
-            if _done[0]:
+            if committed[0]:
                 return
-            _done[0] = True
-            name = edit.text().strip() or self._presets[idx]["name"]
-            self._presets[idx]["name"] = name
+            committed[0] = True
+            name = editor.text().strip() or preset["name"]
+            preset["name"] = name
             _save_presets(self._presets)
             btn.setText(name)
-            _cleanup()
+            editor.hide()
+            editor.deleteLater()
 
-        def _restore():
-            if _done[0]:
-                return
-            _done[0] = True
-            _cleanup()
-
-        edit.returnPressed.connect(_commit)
+        editor.returnPressed.connect(_commit)
+        editor.editingFinished.connect(_commit)
 
     def _add_preset(self):
-        """Enregistre la position courante sans ouvrir de dialog (auto-nom)."""
-        name = f"Pos {len(self._presets) + 1}"
+        """Enregistre immédiatement la position courante puis ouvre le renommage inline."""
+        default_name = f"Pos {len(self._presets) + 1}"
         targets   = self._get_targets()   if self._get_targets   else []
         all_lyres = self._get_all_lyres() if self._get_all_lyres else targets
         if all_lyres:
             per_proj = {str(p.start_address): {"pan": p.pan, "tilt": p.tilt}
                         for p, _g, _i in all_lyres}
             p0 = (targets or all_lyres)[0][0]
-            self._presets.append({"name": name, "pan": p0.pan, "tilt": p0.tilt,
+            self._presets.append({"name": default_name, "pan": p0.pan, "tilt": p0.tilt,
                                    "per_proj": per_proj})
         else:
             pan, tilt = self._get_current()
-            self._presets.append({"name": name, "pan": pan, "tilt": tilt})
+            self._presets.append({"name": default_name, "pan": pan, "tilt": tilt})
         _save_presets(self._presets)
         self._rebuild_buttons()
-        # Scroll vers le bas pour montrer le nouveau preset
-        QTimer.singleShot(
-            30, lambda: self._scroll.verticalScrollBar().setValue(
-                self._scroll.verticalScrollBar().maximum()
-            )
+        new_idx = len(self._presets) - 1
+        # Scroll vers le bas puis ouvrir le renommage inline
+        self._scroll.verticalScrollBar().setValue(
+            self._scroll.verticalScrollBar().maximum()
         )
+        QTimer.singleShot(30, lambda: self._start_inline_rename(new_idx))
 
     def _delete(self, idx):
         if 0 <= idx < len(self._presets):
@@ -436,13 +409,13 @@ class PanTiltPad(QWidget):
     def _val_to_px(self):
         """Retourne (px, py) en pixels absolus dans le widget."""
         m = self._MARGIN
-        px = m + int(self._pan  / 65535.0 * self._PAD_W)
+        px = m + int((1.0 - self._pan  / 65535.0) * self._PAD_W)
         py = m + int(self._tilt / 65535.0 * self._PAD_H)
         return px, py
 
     def _px_to_val(self, x, y):
         m = self._MARGIN
-        pan  = int(max(0, min(65535, (x - m) / self._PAD_W * 65535)))
+        pan  = int(max(0, min(65535, (1.0 - (x - m) / self._PAD_W) * 65535)))
         tilt = int(max(0, min(65535, (y - m) / self._PAD_H * 65535)))
         return pan, tilt
 
@@ -1461,7 +1434,7 @@ class FixtureCanvas(QWidget):
 
             # ── Pan ────────────────────────────────────────────────────
             # 0° = "en avant" (vers le bas canvas) — même repère que le rendu
-            pan_angle = math.degrees(math.atan2(-dx, dy))
+            pan_angle = math.degrees(math.atan2(dx, dy))
             pan_val   = 32768 + int(pan_angle / 135.0 * 32768)
             pan_val   = max(0, min(65535, pan_val))
 
@@ -1572,6 +1545,37 @@ class FixtureCanvas(QWidget):
                     return i
         return None
 
+    def _build_mh_targets(self, ref_idx):
+        """Retourne la liste des Moving Heads à inclure dans un drag pan/tilt.
+        Si la fixture ref_idx est dans la sélection multi, retourne toutes les MH sélectionnées.
+        Sinon, retourne uniquement cette fixture."""
+        proj = self.pdf.projectors[ref_idx]
+        group, local_idx = self._local_idx(ref_idx)
+        key = (group, local_idx)
+        if key in self.pdf.selected_lamps and self.pdf.selected_lamps:
+            ordered = getattr(self.pdf, 'selected_lamps_ordered', [])
+            g_cnt = {}
+            proj_map = {}
+            for _p in self.pdf.projectors:
+                _g = _p.group; _li = g_cnt.get(_g, 0); g_cnt[_g] = _li + 1
+                proj_map[(_g, _li)] = _p
+            targets = []
+            seen_keys = set()
+            for _key in ordered:
+                if _key in self.pdf.selected_lamps and _key not in seen_keys:
+                    _p = proj_map.get(_key)
+                    if _p and getattr(_p, 'fixture_type', '') == 'Moving Head':
+                        targets.append(_p)
+                        seen_keys.add(_key)
+            for j, _p in enumerate(self.pdf.projectors):
+                gj, lj = self._local_idx(j)
+                if (gj, lj) in self.pdf.selected_lamps and (gj, lj) not in seen_keys:
+                    if getattr(_p, 'fixture_type', '') == 'Moving Head':
+                        targets.append(_p)
+        else:
+            targets = [proj]
+        return targets
+
     # ── Dessin ─────────────────────────────────────────────────────
 
     def _get_fill_color(self, proj):
@@ -1647,7 +1651,8 @@ class FixtureCanvas(QWidget):
             _fdy = math.sin(_tilt_rad)
             _defl = math.sqrt(_fdx * _fdx + _fdy * _fdy)  # 0..√2
             # Angle du cône depuis l'axe "profondeur" (= pan=0, tilt=max)
-            pan_angle  = math.degrees(math.atan2(_fdx, _fdy)) if _defl > 0.001 else 0.0
+            # Biais +0.015 sur _fdy : évite atan2(x,0)=±90° quand tilt est neutre (battement visuel)
+            pan_angle  = math.degrees(math.atan2(_fdx, _fdy + 0.015)) if _defl > 0.001 else 0.0
             beam_len   = int(r * 2 + _defl / math.sqrt(2) * r * 6)
             beam_hw    = int(r * 0.5 + _defl / math.sqrt(2) * r * 2.0)
 
@@ -2134,27 +2139,12 @@ class FixtureCanvas(QWidget):
             beam_idx = self._beam_at(pos) if not self._editable else None
             if beam_idx is not None and idx is None:
                 proj = self.pdf.projectors[beam_idx]
-                group, local_idx = self._local_idx(beam_idx)
-                key = (group, local_idx)
-                if key in self.pdf.selected_lamps and self.pdf.selected_lamps:
-                    targets = []
-                    for j, p in enumerate(self.pdf.projectors):
-                        gj, lj = self._local_idx(j)
-                        if (gj, lj) in self.pdf.selected_lamps and getattr(p, 'fixture_type', '') == 'Moving Head':
-                            targets.append(p)
-                else:
-                    targets = [proj]
-                # Mémoriser le beam cliqué SANS commettre le drag :
-                # on attend de voir si l'utilisateur bouge vraiment (> 5 px).
-                # En attendant, on laisse le rubber-band démarrer normalement.
                 self._pending_beam = {
                     'beam_idx': beam_idx,
                     'pos':      pos,
                     'proj':     proj,
-                    'targets':  targets,
+                    'targets':  self._build_mh_targets(beam_idx),
                 }
-                # Ne pas effacer la sélection : l'utilisateur clique sur un faisceau
-                # pour le déplacer — la sélection multi-lyres doit rester intacte.
                 if self._pt_floater is not None:
                     self._pt_floater.hide_floater()
                 self._rubber_origin = pos
@@ -2176,7 +2166,6 @@ class FixtureCanvas(QWidget):
                 elif key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.pdf.selected_lamps_ordered = [key]
-                # Drag uniquement en mode edition
                 if self._editable:
                     cx, cy = self._get_canvas_pos(idx)
                     self._drag_index  = idx
@@ -2188,6 +2177,16 @@ class FixtureCanvas(QWidget):
                         if (p.group, li) in self.pdf.selected_lamps:
                             self._drag_starts[j] = self._get_norm_pos(j)
                         g_cnt[p.group] = li + 1
+                elif getattr(self.pdf.projectors[idx], 'fixture_type', '') == 'Moving Head':
+                    # Clic sur le corps d'une Moving Head → drag pan/tilt (haut/bas=tilt, gauche/droite=pan)
+                    if self._pt_floater is not None:
+                        self._pt_floater.hide_floater()
+                    self._pending_beam = {
+                        'beam_idx': idx,
+                        'pos':      pos,
+                        'proj':     self.pdf.projectors[idx],
+                        'targets':  self._build_mh_targets(idx),
+                    }
                 self.update()
                 self._notify_cpb()
             else:
@@ -2513,48 +2512,20 @@ class FixtureCanvas(QWidget):
 
         # ── Drag faisceau Pan/Tilt ────────────────────────────────
         if self._beam_drag_idx is not None and (event.buttons() & Qt.LeftButton):
-            import math as _m
-            r = 9 if self.compact else 13
-            beam_len_max = float(r * 2 + r * 7)  # beam_len à tilt=255
-
-            if len(self._beam_drag_targets) == 1:
-                # Une seule fixture : le faisceau pointe absolument vers le curseur
-                p, _, _ = self._beam_drag_targets[0]
-                cx, cy = self._get_canvas_pos(self._beam_drag_idx)
-                dx, dy = pos.x() - cx, pos.y() - cy
-                dist = _m.sqrt(dx * dx + dy * dy)
-                angle = _m.degrees(_m.atan2(dx, dy))  # axe de référence = bas
-                pan_angle = max(-135.0, min(135.0, angle))
-                p.pan  = int(max(0, min(65535, 32768 + pan_angle / 135.0 * 32768)))
-                p.tilt = int(max(0, min(65535, dist / beam_len_max * 65535)))
-            else:
-                # Plusieurs fixtures : décalage relatif commun (pan/tilt delta)
-                cx, cy = self._get_canvas_pos(self._beam_drag_idx)
-                # Position de référence = position de départ du premier clic
-                ref_dx = self._beam_drag_start.x() - cx
-                ref_dy = self._beam_drag_start.y() - cy
-                ref_dist = max(1.0, _m.sqrt(ref_dx**2 + ref_dy**2))
-                ref_angle = _m.degrees(_m.atan2(ref_dx, ref_dy))
-                ref_pan   = int(max(0, min(65535, 32768 + max(-135.0, min(135.0, ref_angle)) / 135.0 * 32768)))
-                ref_tilt  = int(max(0, min(65535, ref_dist / beam_len_max * 65535)))
-
-                now_dx = pos.x() - cx
-                now_dy = pos.y() - cy
-                now_dist  = max(1.0, _m.sqrt(now_dx**2 + now_dy**2))
-                now_angle = _m.degrees(_m.atan2(now_dx, now_dy))
-                now_pan   = int(max(0, min(65535, 32768 + max(-135.0, min(135.0, now_angle)) / 135.0 * 32768)))
-                now_tilt  = int(max(0, min(65535, now_dist / beam_len_max * 65535)))
-
-                dpan  = now_pan  - ref_pan
-                dtilt = now_tilt - ref_tilt
-                sym = getattr(self.pdf, 'sym_mode', False)
-                n = len(self._beam_drag_targets)
-                half = n // 2
-                for i, (p, pan0, tilt0) in enumerate(self._beam_drag_targets):
-                    effective_dpan = -dpan if (sym and i >= half) else dpan
-                    p.pan  = int(max(0, min(65535, pan0 + effective_dpan)))
-                    p.tilt = int(max(0, min(65535, tilt0 + dtilt)))
-
+            # 250 px de déplacement = plage complète (0-65535)
+            # Droite → pan augmente | Haut → tilt augmente
+            _PX = 250.0
+            ddx = pos.x() - self._beam_drag_start.x()
+            ddy = pos.y() - self._beam_drag_start.y()
+            sym  = getattr(self.pdf, 'sym_mode', False)
+            n    = len(self._beam_drag_targets)
+            half = n // 2
+            for i, (p, pan0, tilt0) in enumerate(self._beam_drag_targets):
+                dpan = -ddx / _PX * 65535
+                if sym and i >= half:
+                    dpan = -dpan
+                p.pan  = int(max(0, min(65535, pan0  + int(dpan))))
+                p.tilt = int(max(0, min(65535, tilt0 - int(ddy / _PX * 65535))))
             if hasattr(self.pdf, '_flush_dmx'):
                 self.pdf._flush_dmx()
             self.update()
@@ -4699,7 +4670,11 @@ class PlanDeFeu(QFrame):
         menu.setStyleSheet(_MENU_STYLE)
 
         act_add = menu.addAction("+ Ajouter fixture")
-        act_add.triggered.connect(lambda: self._open_add_fixture_dialog(local_pos))
+        def _goto_patch():
+            mw = self.main_window
+            if mw and hasattr(mw, 'show_dmx_patch_config'):
+                mw.show_dmx_patch_config()
+        act_add.triggered.connect(_goto_patch)
         menu.addSeparator()
 
         act_sel_all = menu.addAction("Tout selectionner")

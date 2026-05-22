@@ -792,7 +792,8 @@ class ArtNetDMX:
                     ch_val = getattr(proj, 'color_wheel', 0)
                 elif ch_type == "Shutter":
                     shutter = getattr(proj, 'shutter', 255)
-                    ch_val = shutter if not proj.muted else 0
+                    raw = shutter if not proj.muted else 0
+                    ch_val = (255 - raw) if getattr(proj, 'shutter_inverted', False) else raw
                 elif ch_type == "Prism":
                     ch_val = getattr(proj, 'prism', 0)
                 elif ch_type == "PrismRot":

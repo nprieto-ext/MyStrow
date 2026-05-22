@@ -619,7 +619,8 @@ class Plan3DWebWindow(QMainWindow):
     )
 
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.Window)
+        super().__init__(None, Qt.Window)   # pas de parent Qt → évite le bleeding visuel sur Windows
+        self._parent_mw = parent
         self.setWindowTitle("Plan de feu 3D — WebGL")
         self.resize(1150, 700)
         self.setStyleSheet("background:#05050f;")
@@ -635,6 +636,10 @@ class Plan3DWebWindow(QMainWindow):
         self._channel.registerObject('bridge', self._bridge)
         self._view.page().setWebChannel(self._channel)
 
+        # Connecter loadFinished AVANT load() pour ne pas manquer le signal
+        # (la page locale peut charger avant que la ligne suivante soit atteinte)
+        self._view.loadFinished.connect(self._on_load_finished)
+        self._view.page().renderProcessTerminated.connect(self._on_render_crashed)
         self._view.load(QUrl.fromLocalFile(str(_HTML)))
         self._view.installEventFilter(self)
 
@@ -680,8 +685,6 @@ class Plan3DWebWindow(QMainWindow):
         except Exception:
             pass
 
-        self._view.loadFinished.connect(self._on_load_finished)
-
         # Debounce : on coalesce les refresh rapides (MIDI) → max 25 fps
         self._push_timer = QTimer(self)
         self._push_timer.setSingleShot(True)
@@ -704,39 +707,48 @@ class Plan3DWebWindow(QMainWindow):
         )
         self.addToolBar(tb)
 
-        lbl_amb = QLabel("  Ambiance :")
-        lbl_amb.setStyleSheet("color:#5555aa; font-size:10px;")
-        tb.addWidget(lbl_amb)
-
-        sl_amb = QSlider(Qt.Horizontal)
-        sl_amb.setRange(0, 200)
-        sl_amb.setValue(200)
-        sl_amb.setFixedWidth(120)
-        sl_amb.setToolTip("Lumière de scène — 0 = nuit noire, 100 = demi-jour, 200 = plein feu salle")
-        sl_amb.setStyleSheet(
-            "QSlider::groove:horizontal{height:3px;background:#222244;border-radius:2px;}"
-            "QSlider::handle:horizontal{width:11px;height:11px;margin:-4px 0;"
-            "background:#4455aa;border-radius:6px;}"
-            "QSlider::sub-page:horizontal{background:#3344aa;border-radius:2px;}"
-        )
-        sl_amb.valueChanged.connect(
-            lambda v: self._js(f'ambLight.intensity={v/100:.2f}'))
-        tb.addWidget(sl_amb)
-        self._sl_amb = sl_amb
-
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
+
+        _PDF_BTN = (
+            "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #3a3a3a;"
+            " border-radius:4px; font-size:11px; font-weight:bold; padding:2px 8px; }"
+            "QPushButton:hover { background:#2a2a2a; color:#fff; border-color:#0077bb; }"
+            "QPushButton:pressed { background:#333; }"
+            "QPushButton:checked { background:#0d2030; color:#00d4ff; border-color:#0077bb; }"
+        )
+
+        btn_pin = QPushButton("📌")
+        btn_pin.setCheckable(True)
+        btn_pin.setChecked(False)
+        btn_pin.setToolTip("Garder la fenêtre au premier plan")
+        btn_pin.setFixedSize(28, 28)
+        btn_pin.setStyleSheet(_PDF_BTN)
+        btn_pin.clicked.connect(lambda checked: self._set_always_on_top(checked))
+        tb.addWidget(btn_pin)
+        self._btn_pin = btn_pin
+
+        tb.addSeparator()
 
         self._btn_toggle_panel = QPushButton("Panneau ▶")
         self._btn_toggle_panel.setCheckable(True)
         self._btn_toggle_panel.setChecked(False)
         self._btn_toggle_panel.setToolTip("Masquer / afficher le panneau de droite")
-        self._btn_toggle_panel.setStyleSheet(self._TB_BTN)
+        self._btn_toggle_panel.setStyleSheet(_PDF_BTN)
         self._btn_toggle_panel.clicked.connect(self._toggle_right_panel)
         tb.addWidget(self._btn_toggle_panel)
 
 
+
+    def _set_always_on_top(self, enabled: bool):
+        flags = self.windowFlags()
+        if enabled:
+            flags |= Qt.WindowStaysOnTopHint
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        self.show()
 
     def _toggle_right_panel(self):
         visible = self._right_panel.isVisible()
@@ -809,6 +821,38 @@ class Plan3DWebWindow(QMainWindow):
             btn.clicked.connect(lambda _, c=code: self._set_cam_py(c))
             lay.addWidget(btn)
             self._cam_btns_py[code] = btn
+
+        lay.addSpacing(10)
+
+        # ── Ambiance ──────────────────────────────────────────────────────
+        lbl_amb = QLabel("Ambiance salle")
+        lbl_amb.setStyleSheet("color:#4444aa;font-size:9px;letter-spacing:0.5px;")
+        lay.addWidget(lbl_amb)
+
+        self._amb_val_lbl = QLabel("100%")
+        self._amb_val_lbl.setStyleSheet("color:#7777cc;font-size:9px;")
+        self._amb_val_lbl.setAlignment(Qt.AlignRight)
+        lay.addWidget(self._amb_val_lbl)
+
+        sl_amb = QSlider(Qt.Horizontal)
+        sl_amb.setRange(0, 1000)
+        sl_amb.setValue(200)
+        sl_amb.setToolTip("Lumière ambiante — glissez à droite pour éclairer davantage la salle")
+        sl_amb.setStyleSheet(
+            "QSlider::groove:horizontal{height:4px;background:#0e0e28;border-radius:2px;}"
+            "QSlider::sub-page:horizontal{background:#3344aa;border-radius:2px;}"
+            "QSlider::handle:horizontal{width:12px;height:12px;margin:-4px 0;"
+            "background:#5566cc;border-radius:6px;}"
+            "QSlider::handle:horizontal:hover{background:#7788ff;}"
+        )
+
+        def _on_amb(v):
+            self._amb_val_lbl.setText(f"{v//10}%")
+            self._js(f'ambLight.intensity={v/100:.2f}')
+
+        sl_amb.valueChanged.connect(_on_amb)
+        lay.addWidget(sl_amb)
+        self._sl_amb = sl_amb
 
         lay.addStretch()
 
@@ -1354,7 +1398,7 @@ class Plan3DWebWindow(QMainWindow):
     # ── Sync 3D position → 2D canvas ─────────────────────────────────────────
 
     def _save_patch(self):
-        mw = self.parent()
+        mw = self._parent_mw
         if hasattr(mw, 'save_dmx_patch_config'):
             mw.save_dmx_patch_config()
 
@@ -1364,7 +1408,7 @@ class Plan3DWebWindow(QMainWindow):
             p.canvas_x = max(0.0, min(1.0, p.pos_3d_x / 18.0 + 0.5))
         if getattr(p, 'pos_3d_z', None) is not None:
             p.canvas_y = max(0.0, min(1.0, -p.pos_3d_z / 10.0 + 0.5))
-        mw = self.parent()
+        mw = self._parent_mw
         if mw and hasattr(mw, 'plan_de_feu'):
             mw.plan_de_feu.update()
 
@@ -1580,6 +1624,12 @@ class Plan3DWebWindow(QMainWindow):
 
     # ── Load ─────────────────────────────────────────────────────────────────
 
+    def _on_render_crashed(self, status, exit_code):
+        """Appelé quand le process de rendu WebEngine crashe ou est tué."""
+        self._ready = False
+        # Recharger la page après un court délai pour laisser le crash se nettoyer
+        QTimer.singleShot(800, lambda: self._view.load(QUrl.fromLocalFile(str(_HTML))))
+
     def _on_load_finished(self, ok: bool):
         self._ready = ok
         if ok:
@@ -1704,6 +1754,6 @@ class Plan3DWebWindow(QMainWindow):
     def closeEvent(self, event):
         event.ignore()
         self.hide()
-        mw = self.parent()
+        mw = self._parent_mw
         if mw and hasattr(mw, 'plan_de_feu') and hasattr(mw.plan_de_feu, 'btn_3d'):
             mw.plan_de_feu.btn_3d.setChecked(False)

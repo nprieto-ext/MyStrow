@@ -3644,6 +3644,13 @@ class AdminPanel(QMainWindow):
         btn_add_fix.clicked.connect(self._on_add_fixture)
         ft_lay.addWidget(btn_add_fix)
 
+        btn_footprint = QPushButton("📋  Footprint IA")
+        btn_footprint.setStyleSheet(_BTN_SECONDARY)
+        btn_footprint.setFixedHeight(30)
+        btn_footprint.setToolTip("Coller un footprint texte libre — l'IA détecte les canaux")
+        btn_footprint.clicked.connect(self._on_import_footprint)
+        ft_lay.addWidget(btn_footprint)
+
         btn_fix_import = QPushButton("📥  Importer…")
         btn_fix_import.setStyleSheet(_BTN_SECONDARY)
         btn_fix_import.setFixedHeight(30)
@@ -4843,6 +4850,29 @@ class AdminPanel(QMainWindow):
             result = dlg.get_result()
             if result:
                 self._upload_fixture(result)
+
+    def _on_import_footprint(self):
+        from admin_pack_editor import _FootprintImportDialog
+        dlg = _FootprintImportDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            fx = dlg.result_fixture()
+            profile = fx.get("profile", [])
+            # Convertir au format attendu par _upload_fixture (modes)
+            fixture_data = {
+                "name":         fx.get("name", "Fixture importée"),
+                "manufacturer": fx.get("manufacturer", ""),
+                "fixture_type": fx.get("fixture_type", "Moving Head"),
+                "group":        fx.get("group", "face"),
+                "source":       "footprint-ia",
+                "uuid":         "",
+                "modes": [{
+                    "name":           "Mode 1",
+                    "channelCount":   len(profile),
+                    "profile":        profile,
+                    "default_values": [0] * len(profile),
+                }],
+            }
+            self._upload_fixture(fixture_data)
 
     def _upload_fixture(self, fixture_data: dict):
         self._pending_fixture_name = fixture_data.get("name", "")

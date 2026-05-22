@@ -1,8 +1,5 @@
 {
   "permissions": {
-    "additionalDirectories": [
-      "C:\\Users\\nikop\\Desktop\\mystrow_site"
-    ],
     "allow": [
       "Bash(*)",
       "Edit(C:\\Users\\nikop\\Desktop\\mystrow_site\\**)",
@@ -30,7 +27,11 @@
       "mcp__flutterflow__get_page_by_name",
       "mcp__flutterflow__get_project_yaml",
       "PowerShell(head *)",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\capture\\\\Contest@MSP_575@16_Bit@Initial.xmlp\"\\) | Select-Object -First 32; \\($bytes | ForEach-Object { $_.ToString\\(\"X2\"\\) }\\) -join \" \")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\nikop\\Desktop\\mystrow_site"
     ]
   }
 }
