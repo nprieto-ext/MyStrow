@@ -1501,16 +1501,20 @@ class LightTrack(QWidget):
 
     def _toggle_collapse(self):
         self._collapsed = not self._collapsed
+        scroll_off = 0
+        if hasattr(self.parent_editor, 'tracks_scroll'):
+            scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
         if self._collapsed:
             self._collapse_btn.setText("▶")
-            self._collapse_btn.move(145, 3)
+            self._collapse_btn.move(scroll_off + 119, 3)
             self.setFixedHeight(26)
             self.label.hide()
         else:
             self._collapse_btn.setText("▼")
-            self._collapse_btn.move(119, 18)
+            self._collapse_btn.move(scroll_off + 119, 18)
             self.setMinimumHeight(self._normal_min_height)
             self.setMaximumHeight(16777215)
+            self.label.move(scroll_off + 11, self.label.y())
             self.label.show()
         self.updateGeometry()
         self.update()
@@ -1967,12 +1971,17 @@ print(json.dumps(waveform))
 
         # === MODE PAINT ACTIF ===
         if hasattr(self.parent_editor, 'paint_mode') and self.parent_editor.paint_mode:
-            brush = getattr(self.parent_editor, 'paint_brush', None)
-            if brush and not self.get_clip_at_pos(x, y):
-                click_time = max(0, (x - 145) / self.pixels_per_ms)
-                self._paint_brush_at(click_time, brush)
-                if hasattr(self.parent_editor, 'save_state'):
-                    self.parent_editor.save_state()
+            is_special = (getattr(self, 'is_effect_track', False) or
+                          getattr(self, 'is_sequence_track', False) or
+                          getattr(self, 'is_position_track', False) or
+                          self.name == "Audio")
+            if not is_special:
+                brush = getattr(self.parent_editor, 'paint_brush', None)
+                if brush and not self.get_clip_at_pos(x, y):
+                    click_time = max(0, (x - 145) / self.pixels_per_ms)
+                    self._paint_brush_at(click_time, brush)
+                    if hasattr(self.parent_editor, 'save_state'):
+                        self.parent_editor.save_state()
             return
 
         # === MODE CUT ACTIVE ===
@@ -3919,13 +3928,22 @@ print(json.dumps(waveform))
         painter.drawLine(0, 0, self.width(), 0)
 
         if self._collapsed:
-            # Afficher juste le nom en mode reduit
+            # Afficher juste le nom en mode reduit (dans la zone gelée)
+            scroll_off = 0
+            if hasattr(self.parent_editor, 'tracks_scroll'):
+                scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
+            painter.fillRect(scroll_off, 0, 145, self.height(), QColor("#000000"))
+            painter.setBrush(QBrush(bar_color))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(scroll_off, 0, 5, self.height())
+            painter.setPen(QPen(QColor("#2a2a2a"), 1))
+            painter.drawLine(scroll_off + 145, 0, scroll_off + 145, self.height())
             painter.setPen(QColor("#888"))
             font = painter.font()
             font.setBold(True)
             font.setPixelSize(11)
             painter.setFont(font)
-            painter.drawText(11, 0, 130, 26, Qt.AlignVCenter, self.name)
+            painter.drawText(scroll_off + 11, 0, 130, 26, Qt.AlignVCenter, self.name)
             return
 
         # === FORME D'ONDE ===
@@ -4394,6 +4412,17 @@ print(json.dumps(waveform))
             painter.setPen(QPen(QColor(0, 220, 80, 200), 2))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
+
+        # Colonne label gelée — peinte EN DERNIER pour couvrir tous les clips
+        scroll_off = 0
+        if hasattr(self.parent_editor, 'tracks_scroll'):
+            scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
+        painter.fillRect(scroll_off, 0, 145, self.height(), QColor("#000000"))
+        painter.setBrush(QBrush(bar_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(scroll_off, 0, 5, self.height())
+        painter.setPen(QPen(QColor("#2a2a2a"), 1))
+        painter.drawLine(scroll_off + 145, 0, scroll_off + 145, self.height())
 
         # Surlignage cible cross-track drag
         if self._cross_target_active:

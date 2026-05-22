@@ -2,6 +2,7 @@ PySide6
 cryptography
 python-rtmidi
 miniaudio
+mutagen
 pyserial
 flask
 qrcode

@@ -7690,7 +7690,7 @@ class MainWindow(QMainWindow):
                             if 'clips' in seq_data:
                                 self.seq.sequences[row] = {
                                     'clips': seq_data['clips'],
-                                    'duration': seq_data['duration']
+                                    'duration': seq_data.get('duration', 0)
                                 }
 
                     else:
@@ -7717,12 +7717,12 @@ class MainWindow(QMainWindow):
                             if 'clips' in seq_data:
                                 self.seq.sequences[row] = {
                                     'clips': seq_data['clips'],
-                                    'duration': seq_data['duration']
+                                    'duration': seq_data.get('duration', 0)
                                 }
                             elif 'keyframes' in seq_data:
                                 self.seq.sequences[row] = {
                                     'keyframes': seq_data['keyframes'],
-                                    'duration': seq_data['duration']
+                                    'duration': seq_data.get('duration', 0)
                                 }
                         if 'image_duration' in item:
                             self.seq.image_durations[row] = int(item['image_duration'])
@@ -10283,24 +10283,12 @@ class MainWindow(QMainWindow):
         m_edit.addSeparator()
         act_auto = m_edit.addAction("⚡  Auto Adresse")
 
-        # Bouton Editeur de fixture dans un QHBoxLayout juste après Edition
-        _menu_row = QHBoxLayout()
-        _menu_row.setContentsMargins(0, 0, 0, 0)
-        _menu_row.setSpacing(0)
-        _menu_row.addWidget(menubar, 0)
+        m_create = menubar.addMenu("🛠  Créer votre fixture")
+        act_create_manual = m_create.addAction("🛠  Créer votre fixture manuellement")
+        m_create.addSeparator()
+        act_create_ia = m_create.addAction("✦  Créer votre fixture via IA")
 
-        btn_fixture_editor = QPushButton("🛠  Créer votre fixture")
-        btn_fixture_editor.setAutoDefault(False)
-        btn_fixture_editor.setFixedHeight(28)
-        btn_fixture_editor.setStyleSheet(
-            "QPushButton { background:transparent; color:#aaaaaa; border:none;"
-            " padding:1px 10px; font-size:12px; border-radius:3px; }"
-            "QPushButton:hover { background:#1e1e1e; color:#ffffff; }"
-        )
-        _menu_row.addWidget(btn_fixture_editor, 0)
-        _menu_row.addStretch(1)
-
-        root.addLayout(_menu_row)
+        root.addWidget(menubar)
 
         # ── Toolbar ───────────────────────────────────────────────────────
         toolbar = QWidget()
@@ -12526,13 +12514,53 @@ class MainWindow(QMainWindow):
             if editor.last_saved:
                 self._pending_fixture_select = editor.last_saved
 
+        def _open_fixture_editor_ia():
+            import json as _json
+            from fixture_editor import FixtureEditorDialog, FIXTURE_FILE
+            from admin_pack_editor import _FootprintImportDialog
+            ia_dlg = _FootprintImportDialog(dialog)
+            if ia_dlg.exec() != QDialog.Accepted:
+                return
+            fx = ia_dlg.result_fixture()
+            if not fx.get("profile"):
+                return
+            fx["source"] = "user"
+            try:
+                existing = []
+                if FIXTURE_FILE.exists():
+                    data = _json.loads(FIXTURE_FILE.read_text(encoding="utf-8"))
+                    if isinstance(data, list):
+                        existing = data
+                existing_names = {f["name"] for f in existing}
+                name = fx["name"]
+                if name in existing_names:
+                    c = 2
+                    while f"{name} ({c})" in existing_names:
+                        c += 1
+                    fx["name"] = f"{name} ({c})"
+                existing.append(fx)
+                FIXTURE_FILE.write_text(
+                    _json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            except Exception:
+                pass
+            editor = FixtureEditorDialog(dialog)
+            editor.fixture_added.connect(lambda _: None)
+            editor.setWindowState(Qt.WindowMaximized)
+            if editor._fixtures:
+                editor._select_fixture(len(editor._fixtures) - 1)
+            editor.exec()
+            if editor.last_saved:
+                self._pending_fixture_select = editor.last_saved
+
         act_new.triggered.connect(_open_wizard)
         act_save.triggered.connect(_do_save)
         act_dflt.triggered.connect(_reset_defaults)
         act_undo.triggered.connect(_undo)
         act_redo.triggered.connect(_redo)
         act_auto.triggered.connect(_auto_address)
-        btn_fixture_editor.clicked.connect(_open_fixture_editor)
+        act_create_manual.triggered.connect(_open_fixture_editor)
+        act_create_ia.triggered.connect(_open_fixture_editor_ia)
         act_import.triggered.connect(_import_patch)
         act_export.triggered.connect(_export_patch)
         btn_rename_multi.clicked.connect(_rename_checked)

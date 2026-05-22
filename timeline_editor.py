@@ -654,18 +654,7 @@ class LightTimelineEditor(QDialog):
         bar.setValue(0)
         lay.addWidget(bar)
 
-        # Compteur de secondes écoulées
-        elapsed_label = QLabel("⏱  0 s")
-        elapsed_label.setAlignment(Qt.AlignCenter)
-        elapsed_label.setStyleSheet("font-size: 11px; color: #888;")
-        lay.addWidget(elapsed_label)
-        _elapsed = [0]
         elapsed_timer = QTimer(loading)
-        def _tick():
-            _elapsed[0] += 1
-            elapsed_label.setText(f"⏱  {_elapsed[0]} s")
-        elapsed_timer.timeout.connect(_tick)
-        elapsed_timer.start(1000)
 
         cancel_btn = QPushButton(tr("te_cancel_analysis"))
         cancel_btn.setStyleSheet("""
@@ -696,7 +685,6 @@ class LightTimelineEditor(QDialog):
                 self.media_path, max_samples=5000, progress_callback=on_progress,
                 cancel_check=lambda: self._analysis_cancelled
             )
-            elapsed_timer.stop()
             if self._analysis_cancelled:
                 loading.close()
                 _unlock_buttons()
@@ -716,20 +704,16 @@ class LightTimelineEditor(QDialog):
                 status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
                 bar.setVisible(False)
                 cancel_btn.setVisible(False)
-                elapsed_label.setVisible(False)
                 QApplication.processEvents()
                 QTimer.singleShot(1800, loading.close)
         except _AnalysisCancelled:
-            elapsed_timer.stop()
             print("Analyse annulee par l'utilisateur")
             loading.close()
         except Exception as e:
-            elapsed_timer.stop()
             status.setText("⚠  Analyse Audio Impossible")
             status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
             bar.setVisible(False)
             cancel_btn.setVisible(False)
-            elapsed_label.setVisible(False)
             print(f"Erreur forme d'onde: {e}")
             QApplication.processEvents()
             QTimer.singleShot(1800, loading.close)
@@ -869,9 +853,7 @@ class LightTimelineEditor(QDialog):
         dur_min = duration_seconds // 60
         dur_sec = duration_seconds % 60
         self.total_time_str = f"{dur_min}:{dur_sec:02d}"
-        self.position_label = QLabel(f"⏱ 0:00 / {self.total_time_str}")
-        self.position_label.setStyleSheet("color: #00d4ff; font-size: 13px; border: none; text-decoration: none;")
-        header_layout.addWidget(self.position_label)
+        self._playhead_time_str = "0:00"  # mis à jour par update_playhead / update_cursor
 
         header_layout.addStretch()
 
@@ -1111,7 +1093,16 @@ class LightTimelineEditor(QDialog):
         except Exception:
             pass
 
-        # 2. Essai ffprobe (video ou echec miniaudio) — subprocess sans fenetre
+        # 2. Essai mutagen (MP3, M4A, AAC, FLAC, OGG, WAV, WMA...)
+        try:
+            import mutagen
+            audio = mutagen.File(self.media_path)
+            if audio is not None and audio.info.length > 0:
+                return int(audio.info.length * 1000)
+        except Exception:
+            pass
+
+        # 3. Essai ffprobe (video ou echec mutagen) — subprocess sans fenetre
         try:
             _kwargs = {}
             if _sys.platform == "win32":
@@ -1251,6 +1242,8 @@ class LightTimelineEditor(QDialog):
 
     def ruler_mouse_press(self, event):
         """Clic sur ruler pour deplacer le curseur"""
+        if event.position().x() < 145:
+            return  # zone label gelée, ignorer
         self.ruler_dragging = True
         self.update_cursor_from_ruler(event)
 
@@ -1264,8 +1257,15 @@ class LightTimelineEditor(QDialog):
         self.ruler_dragging = False
 
     def on_scroll_changed(self, value):
-        """Met a jour le ruler quand on scroll"""
+        """Met a jour le ruler quand on scroll et gele la colonne label gauche"""
         self.ruler.update()
+        # Maintenir les labels de piste collés au bord gauche du viewport
+        for track in self.tracks + [self.track_waveform]:
+            if hasattr(track, 'label'):
+                track.label.move(value + 11, track.label.y())
+            if hasattr(track, '_collapse_btn'):
+                track._collapse_btn.move(value + 119, track._collapse_btn.y())
+            track.update()
 
     def update_cursor_from_ruler(self, event):
         """Met a jour curseur depuis position souris (avec auto-scroll aux bords)"""
@@ -1298,11 +1298,9 @@ class LightTimelineEditor(QDialog):
         if self.preview_player is not None:
             self.preview_player.setPosition(int(time_ms))
 
-        # Mettre a jour le compteur
+        # Rafraichir l'affichage (le temps est dessiné dans le ruler)
         pos_sec = int(time_ms / 1000)
-        self.position_label.setText(f"⏱ {pos_sec // 60}:{pos_sec % 60:02d} / {self.total_time_str}")
-
-        # Rafraichir l'affichage
+        self._playhead_time_str = f"{pos_sec // 60}:{pos_sec % 60:02d}"
         self.ruler.update()
         for track in self.tracks:
             track.update()
@@ -1341,44 +1339,73 @@ class LightTimelineEditor(QDialog):
     def paint_ruler(self, event):
         """Dessine la regle temporelle avec curseur rouge (synchronise avec scroll)"""
         painter = QPainter(self.ruler)
-        painter.fillRect(0, 0, self.ruler.width(), self.ruler.height(), QColor("#1a1a1a"))
+        w = self.ruler.width()
+        h = self.ruler.height()
+        painter.fillRect(0, 0, w, h, QColor("#1a1a1a"))
+
+        # Zone label (colonne gauche gelée)
+        painter.fillRect(0, 0, 145, h, QColor("#141414"))
+        painter.setPen(QPen(QColor("#2a2a2a"), 1))
+        painter.drawLine(145, 0, 145, h)
+
+        # Afficher la position courante dans la zone label
+        pos_str = getattr(self, '_playhead_time_str', '0:00')
+        total_str = getattr(self, 'total_time_str', '0:00')
+        font = painter.font()
+        font.setPixelSize(13)
+        font.setBold(True)
+        font.setFamily("Segoe UI")
+        painter.setFont(font)
+        painter.setPen(QColor("#ffffff"))
+        painter.drawText(QRect(0, 0, 145, h), Qt.AlignCenter, f"{pos_str} / {total_str}")
 
         # Recuperer le scroll horizontal pour synchroniser
         scroll_offset = self.tracks_scroll.horizontalScrollBar().value()
 
-        painter.setPen(QColor("#888"))
-        font = painter.font()
-        font.setPixelSize(10)
-        painter.setFont(font)
-
         pixels_per_ms = 0.05 * self.current_zoom
 
-        if self.current_zoom < 0.5:
-            step = 5
-        elif self.current_zoom < 1.0:
-            step = 2
+        # Espacement minimum entre labels : 55px
+        min_step_s = 55.0 / (pixels_per_ms * 1000)
+        step = 1
+        for s in [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]:
+            if s >= min_step_s:
+                step = s
+                break
         else:
-            step = 1
+            step = 3600
+
+        # Clipper les marqueurs à droite de la zone label
+        painter.setClipRect(145, 0, w - 145, h)
+
+        font2 = painter.font()
+        font2.setPixelSize(10)
+        font2.setBold(False)
+        painter.setFont(font2)
+        painter.setPen(QColor("#888"))
 
         for sec in range(0, int(self.media_duration / 1000) + 1, step):
             x = 145 + int(sec * 1000 * pixels_per_ms) - scroll_offset
-            if -50 < x < self.ruler.width() + 50:
-                painter.drawLine(x, 25, x, 35)
+            if x < 145 or x > w + 50:
+                continue
+            painter.setPen(QColor("#888"))
+            painter.drawLine(x, 25, x, h)
 
-                if sec >= 60:
-                    minutes = sec // 60
-                    seconds = sec % 60
-                    time_str = f"{minutes}:{seconds:02d}"
-                else:
-                    time_str = f"{sec}s"
+            if sec >= 3600:
+                time_str = f"{sec // 3600}h{(sec % 3600) // 60:02d}"
+            elif sec >= 60:
+                time_str = f"{sec // 60}:{sec % 60:02d}"
+            else:
+                time_str = f"{sec}s"
 
-                painter.drawText(x - 18, 18, time_str)
+            painter.drawText(x - 18, 18, time_str)
+
+        painter.setClipping(False)
 
         # Curseur de lecture (rouge) - aussi decale par le scroll
         cursor_x = 145 + int(self.playback_position * pixels_per_ms) - scroll_offset
-        if -10 < cursor_x < self.ruler.width() + 10:
+        if cursor_x >= 145 and cursor_x < w + 10:
             painter.setPen(QPen(QColor("#ff0000"), 3))
-            painter.drawLine(cursor_x, 0, cursor_x, self.ruler.height())
+            painter.drawLine(cursor_x, 0, cursor_x, h)
 
             painter.setBrush(QColor("#ff0000"))
             painter.setPen(Qt.NoPen)
@@ -1415,9 +1442,9 @@ class LightTimelineEditor(QDialog):
             # Auto-scroll pour suivre le curseur pendant la lecture
             self.ensure_playhead_visible()
 
-            # Mettre a jour le compteur de position
+            # Mettre a jour le compteur de position (affiché dans le ruler)
             pos_sec = int(self.playback_position / 1000)
-            self.position_label.setText(f"⏱ {pos_sec // 60}:{pos_sec % 60:02d} / {self.total_time_str}")
+            self._playhead_time_str = f"{pos_sec // 60}:{pos_sec % 60:02d}"
 
             # Mise à jour dirty-rect : uniquement la bande du curseur (ancien + nouveau)
             ppm = self.tracks[0].pixels_per_ms if self.tracks else 0
@@ -1688,16 +1715,25 @@ class LightTimelineEditor(QDialog):
         if self.media_row in self.main_window.seq.sequences:
             seq = self.main_window.seq.sequences[self.media_row]
 
-            # Restaurer la durée réelle depuis la sauvegarde si le fichier media
-            # n'est pas accessible (fallback 180000ms sinon)
-            saved_duration = seq.get('duration', 0)
-            if saved_duration > self.media_duration:
-                self.media_duration = saved_duration
-                for track in self.tracks + [self.track_waveform]:
-                    track.total_duration = saved_duration
-                    track.setMinimumWidth(145 + int(saved_duration * track.pixels_per_ms) + 50)
-
             clips_data = seq.get('clips', [])
+
+            # Durée nécessaire = max(durée sauvegardée, fin du dernier clip)
+            # Gère le cas où saved_duration == 180000 mais les clips dépassent
+            saved_duration = seq.get('duration', 0)
+            clips_max_end = 0
+            for c in clips_data:
+                end = c.get('start', 0) + c.get('duration', 0)
+                if end > clips_max_end:
+                    clips_max_end = end
+            needed_duration = max(saved_duration, clips_max_end)
+            if needed_duration > self.media_duration:
+                self.media_duration = needed_duration
+                for track in self.tracks + [self.track_waveform]:
+                    track.total_duration = needed_duration
+                    track.setMinimumWidth(145 + int(needed_duration * track.pixels_per_ms) + 50)
+                # Mettre à jour la durée totale (affichée dans le ruler)
+                dur_s = int(self.media_duration / 1000)
+                self.total_time_str = f"{dur_s // 60}:{dur_s % 60:02d}"
 
             # Créer les pistes Effet supplémentaires présentes dans la sauvegarde
             for clip_data in clips_data:

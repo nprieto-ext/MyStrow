@@ -1349,6 +1349,12 @@ class FixtureCanvas(QWidget):
         # Mode compact : icones plus petites, sans labels (utilisé dans la vue principale)
         self.compact = False
 
+        # Masquer la barre de statut (n fixtures / vue uniquement) si non nécessaire
+        self.show_statusbar = True
+
+        # Mode lecture seule : aucune interaction souris (utilisé dans REC Lumière)
+        self._read_only = False
+
         self._guides      = []   # Smart Guides temporaires pendant le drag
 
         self._drag_index  = None
@@ -1991,7 +1997,7 @@ class FixtureCanvas(QWidget):
         painter.setRenderHint(QPainter.TextAntialiasing)
 
         W, H = self.width(), self.height()
-        SB_H = 22   # hauteur barre de statut
+        SB_H = 22 if getattr(self, 'show_statusbar', True) else 0
 
         # ── Fond general ─────────────────────────────────────────
         painter.fillRect(self.rect(), QColor("#0a0a0a"))
@@ -2098,32 +2104,35 @@ class FixtureCanvas(QWidget):
             self._draw_hover_card(painter, hx, hy, self.pdf.projectors[self._hover_index])
 
         # ── Barre de statut (bas du canvas) ──────────────────────
-        n_fix = len(self.pdf.projectors)
-        n_sel = len(self.pdf.selected_lamps)
-        painter.fillRect(QRect(0, H - SB_H, W, SB_H), QColor("#080808"))
-        painter.setPen(QPen(QColor("#1a1a1a"), 1))
-        painter.drawLine(0, H - SB_H, W, H - SB_H)
+        if getattr(self, 'show_statusbar', True):
+            n_fix = len(self.pdf.projectors)
+            n_sel = len(self.pdf.selected_lamps)
+            painter.fillRect(QRect(0, H - SB_H, W, SB_H), QColor("#080808"))
+            painter.setPen(QPen(QColor("#1a1a1a"), 1))
+            painter.drawLine(0, H - SB_H, W, H - SB_H)
 
-        info_left = f"  {n_fix} fixture{'s' if n_fix != 1 else ''}"
-        if n_sel:
-            sel_word = tr("pdf_status_selected_pl") if n_sel > 1 else tr("pdf_status_selected")
-            info_left += f"  /  {n_sel} {sel_word}{'s' if n_sel != 1 else ''}"
-        if self._editable:
-            info_right = tr("pdf_status_hint_edit")
-        else:
-            info_right = tr("pdf_status_hint_view")
+            info_left = f"  {n_fix} fixture{'s' if n_fix != 1 else ''}"
+            if n_sel:
+                sel_word = tr("pdf_status_selected_pl") if n_sel > 1 else tr("pdf_status_selected")
+                info_left += f"  /  {n_sel} {sel_word}{'s' if n_sel != 1 else ''}"
+            if self._editable:
+                info_right = tr("pdf_status_hint_edit")
+            else:
+                info_right = tr("pdf_status_hint_view")
 
-        painter.setFont(QFont("Segoe UI", 8))
-        painter.setPen(QColor("#3a3a3a"))
-        painter.drawText(QRect(0, H - SB_H, W,   SB_H), Qt.AlignVCenter | Qt.AlignLeft,  info_left)
-        painter.setPen(QColor("#1e1e1e"))
-        painter.drawText(QRect(0, H - SB_H, W-4, SB_H), Qt.AlignVCenter | Qt.AlignRight, info_right)
+            painter.setFont(QFont("Segoe UI", 8))
+            painter.setPen(QColor("#3a3a3a"))
+            painter.drawText(QRect(0, H - SB_H, W,   SB_H), Qt.AlignVCenter | Qt.AlignLeft,  info_left)
+            painter.setPen(QColor("#1e1e1e"))
+            painter.drawText(QRect(0, H - SB_H, W-4, SB_H), Qt.AlignVCenter | Qt.AlignRight, info_right)
 
         painter.end()
 
     # ── Interactions souris ─────────────────────────────────────────
 
     def mousePressEvent(self, event):
+        if self._read_only:
+            return
         pos = event.pos()
 
         # ── Mode ciblage ─────────────────────────────────────────────
@@ -2214,6 +2223,8 @@ class FixtureCanvas(QWidget):
                 self.pdf._show_canvas_context_menu(event.globalPos(), event.pos())
 
     def mouseDoubleClickEvent(self, event):
+        if self._read_only:
+            return
         if event.button() == Qt.LeftButton:
             idx = self._fixture_at(event.pos())
             if idx is not None:
@@ -2478,6 +2489,8 @@ class FixtureCanvas(QWidget):
             painter.drawEllipse(QPoint(tx, ty), R // 2, R // 2)
 
     def mouseMoveEvent(self, event):
+        if self._read_only:
+            return
         pos = event.pos()
 
         # ── Mode ciblage ─────────────────────────────────────────────
@@ -2596,6 +2609,8 @@ class FixtureCanvas(QWidget):
                 self.setCursor(Qt.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
+        if self._read_only:
+            return
         if event.button() == Qt.LeftButton:
             # Annuler le beam en attente (l'utilisateur n'a pas draggé assez)
             if self._pending_beam is not None:
@@ -2642,6 +2657,8 @@ class FixtureCanvas(QWidget):
     # ── Clavier ─────────────────────────────────────────────────────
 
     def keyPressEvent(self, event):
+        if self._read_only:
+            return
         if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
             for i in range(len(self.pdf.projectors)):
                 group, local_idx = self._local_idx(i)
@@ -2834,6 +2851,8 @@ class PlanDeFeu(QFrame):
         # ── Canvas ─────────────────────────────────────────────────
         self.canvas = FixtureCanvas(self)
         self.canvas.compact = True
+        self.canvas.show_statusbar = show_toolbar  # masquer la barre si pas de toolbar
+        self.canvas._read_only = not show_toolbar  # lecture seule dans REC Lumière
         root.addWidget(self.canvas)
 
         self._dirty = True  # Redessiner seulement si les données ont changé

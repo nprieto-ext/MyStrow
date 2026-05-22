@@ -1695,6 +1695,18 @@ class Sequencer(QFrame):
 
         # Debounce: ignorer uniquement si la position n'a pas change du tout
         if current_time == self.timeline_last_update:
+            # Sur pause : si un effet tourne, l'éteindre et envoyer du noir
+            if getattr(self, '_timeline_effect_name', None) is not None:
+                _player = getattr(self.player_ui, 'player', None)
+                _state  = _player.playbackState() if _player else None
+                if _state != QMediaPlayer.PlayingState:
+                    self._stop_timeline_effect()
+                    for _proj in self.player_ui.projectors:
+                        _proj.level      = 0
+                        _proj.base_color = QColor("black")
+                        _proj.color      = QColor("black")
+                    if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
+                        self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)
             return
 
         self.timeline_last_update = current_time
