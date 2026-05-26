@@ -1441,7 +1441,7 @@ class FixtureCanvas(QWidget):
             # ── Pan ────────────────────────────────────────────────────
             # 0° = "en avant" (vers le bas canvas) — même repère que le rendu
             pan_angle = math.degrees(math.atan2(dx, dy))
-            pan_val   = 32768 + int(pan_angle / 135.0 * 32768)
+            pan_val   = 32768 - int(pan_angle / 135.0 * 32768)
             pan_val   = max(0, min(65535, pan_val))
 
             # ── Tilt ───────────────────────────────────────────────────

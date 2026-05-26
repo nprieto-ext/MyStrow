@@ -76,6 +76,7 @@ from i18n import get_language, set_language, tr
 from projector import Projector
 from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode, profile_name, profile_display_text
 from audio_ai import AudioColorAI
+from live_audio import LiveAudioEngine, SoftwareDetector
 from midi_handler import MIDIHandler
 from controller_mapping_wizard import MidiMappingWizard
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton, PositionPadButton
@@ -282,7 +283,8 @@ class AkaiDiagnosticDialog(QDialog):
         super().__init__(parent)
         ctrl_name = getattr(midi_handler, 'controller_name', '') or "Contrôleur MIDI"
         self.setWindowTitle(f"Diagnostic — {ctrl_name}")
-        self.setFixedSize(440, 360)
+        _is_apc_mini = getattr(midi_handler, 'controller_type', '') == 'apc_mini'
+        self.setFixedSize(440, 410 if _is_apc_mini else 360)
         self.setModal(True)
         self._midi = midi_handler
         self._activity_count = 0
@@ -388,6 +390,24 @@ class AkaiDiagnosticDialog(QDialog):
 
         root.addStretch()
 
+        # ── Luminosité APC Mini (affiché seulement pour l'APC Mini) ───────
+        if getattr(midi_handler, 'controller_type', '') == 'apc_mini':
+            from midi_handler import _APPLE_SILICON
+            bright_row = QHBoxLayout()
+            self._bright_chk = QCheckBox("Luminosité pleine (LED bright — désactiver si LEDs trop sombres sur Mac M-series)")
+            self._bright_chk.setStyleSheet("color:#999; font-size:9px;")
+            self._bright_chk.setChecked(getattr(midi_handler, '_apc_bright_mode', True))
+            self._bright_chk.toggled.connect(self._toggle_bright_mode)
+            bright_row.addWidget(self._bright_chk)
+            bright_row.addStretch()
+            root.addLayout(bright_row)
+            if _APPLE_SILICON:
+                warn_lbl = QLabel("⚠  Apple Silicon détecté — mode dim activé automatiquement")
+                warn_lbl.setStyleSheet("color:#e6a817; font-size:9px;")
+                root.addWidget(warn_lbl)
+        else:
+            self._bright_chk = None
+
         # ── Boutons ────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -407,6 +427,15 @@ class AkaiDiagnosticDialog(QDialog):
         btn_row.addWidget(close_btn)
 
         root.addLayout(btn_row)
+
+    def _toggle_bright_mode(self, checked):
+        self._midi.set_apc_bright_mode(checked)
+        # Persist via la config AKAI si la fenêtre principale est accessible
+        mw = self.parent()
+        while mw and not hasattr(mw, '_save_akai_config_auto'):
+            mw = mw.parent()
+        if mw:
+            mw._save_akai_config_auto()
 
     def _on_midi_activity(self, *args):
         self._act_dot.setStyleSheet("color:#FFE000; font-size:14px;")
@@ -630,6 +659,52 @@ class _SlotPickerButton(QPushButton):
         popup.adjustSize()
 
 
+class _DecorativeFader(QWidget):
+    """Fader AKAI décoratif non-interactif — représentation visuelle."""
+    def __init__(self, color="#444", parent=None):
+        super().__init__(parent)
+        self._color = QColor(color)
+        self.setFixedSize(26, 80)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def set_color(self, color):
+        self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        cx = w // 2
+
+        # Track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#1c1c1c"))
+        p.drawRoundedRect(cx - 2, 5, 4, h - 10, 2, 2)
+
+        # Handle — positionné à 38% du haut
+        hw, hh = 20, 10
+        hx = cx - hw // 2
+        hy = int(h * 0.38) - hh // 2
+
+        # Ombre
+        p.setBrush(QColor(0, 0, 0, 90))
+        p.drawRoundedRect(hx + 1, hy + 2, hw, hh, 3, 3)
+
+        # Corps du handle
+        p.setBrush(self._color)
+        p.drawRoundedRect(hx, hy, hw, hh, 3, 3)
+
+        # Reflet haut
+        p.setBrush(QColor(255, 255, 255, 45))
+        p.drawRoundedRect(hx + 2, hy + 1, hw - 4, 3, 1, 1)
+
+        # Encoche centrale
+        p.setPen(QPen(QColor(0, 0, 0, 90), 1))
+        mid = hy + hh // 2
+        p.drawLine(hx + 4, mid, hx + hw - 4, mid)
+
+
 class AkaiLayoutEditorDialog(QDialog):
     """Fenetre d'edition des 8 colonnes AKAI — représentation visuelle du contrôleur."""
 
@@ -642,38 +717,34 @@ class AkaiLayoutEditorDialog(QDialog):
     _FX_COLOR    = "#7722aa"
     _EMPTY_COLOR = "#2a2a2a"
 
-    def __init__(self, slots, last_fader_mode="FX", superposition=False, go_mode=False, parent=None):
+    def __init__(self, slots, last_fader_mode="FX", superposition=False, go_mode=False,
+                 active_brightness=100, inactive_brightness=20, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("akai_cfg_title"))
-        self.setFixedSize(700, 340)
+        self.setFixedSize(700, 440)
         self.setModal(True)
         self.setStyleSheet("""
-            QDialog  { background: #111; color: #ddd; }
+            QDialog  { background: #0d0d0d; color: #ddd; }
             QLabel   { background: transparent; border: none; color: #ddd; }
-            QComboBox {
-                background: #1a1a1a; color: #ddd;
-                border: 1px solid #2a2a2a; border-radius: 5px;
-                padding: 3px 6px; font-size: 9px; font-family: 'Segoe UI';
-            }
-            QComboBox::drop-down { border: none; width: 14px; }
-            QComboBox QAbstractItemView {
-                background: #1a1a1a; color: #ddd;
-                selection-background-color: #0077bb;
-            }
-            QCheckBox { color: #bbb; font-size: 10px; spacing: 8px; }
+            QCheckBox { color: #aaa; font-size: 10px; spacing: 8px; }
             QCheckBox::indicator {
-                width: 15px; height: 15px; border: 1px solid #444;
+                width: 14px; height: 14px; border: 1px solid #3a3a3a;
                 border-radius: 4px; background: #1a1a1a;
             }
             QCheckBox::indicator:checked { background: #0077bb; border-color: #0099dd; }
             QCheckBox:hover { color: #fff; }
+            QSlider::groove:horizontal { height:3px; background:#2a2a2a; border-radius:2px; }
+            QSlider::handle:horizontal { width:12px; height:12px; margin:-5px 0;
+                background:#0077bb; border-radius:6px; }
+            QSlider::sub-page:horizontal { background:#005a99; border-radius:2px; }
         """)
 
         self._combos = []
+        self._faders = []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(16)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(10)
 
         # ── Header ─────────────────────────────────────────────────────────────
         hdr = QHBoxLayout()
@@ -683,112 +754,172 @@ class AkaiLayoutEditorDialog(QDialog):
         hdr.addWidget(title)
         hdr.addStretch()
         preset_btn = QPushButton(tr("btn_preset"))
-        preset_btn.setFixedSize(80, 28)
+        preset_btn.setFixedSize(72, 26)
         preset_btn.setStyleSheet(
-            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #333; "
-            "border-radius: 6px; font-size: 10px; } "
-            "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #555; }"
+            "QPushButton { background:#1a1a1a; color:#666; border:1px solid #252525; "
+            "border-radius:5px; font-size:9px; } "
+            "QPushButton:hover { background:#222; color:#bbb; border-color:#3a3a3a; }"
         )
         preset_btn.clicked.connect(self._load_preset)
         hdr.addWidget(preset_btn)
         root.addLayout(hdr)
 
-        # ── Grille des 8 faders ───────────────────────────────────────────────
-        # Carte conteneur
-        card = QFrame()
-        card.setStyleSheet("QFrame { background: #1a1a1a; border: 1px solid #252525; border-radius: 8px; }")
-        card_lay = QHBoxLayout(card)
-        card_lay.setContentsMargins(16, 14, 16, 14)
-        card_lay.setSpacing(10)
+        # ── Faders ─────────────────────────────────────────────────────────────
+        faders_card = QFrame()
+        faders_card.setStyleSheet(
+            "QFrame { background:#111; border:1px solid #1e1e1e; border-radius:10px; }"
+        )
+        faders_lay = QHBoxLayout(faders_card)
+        faders_lay.setContentsMargins(12, 16, 12, 10)
+        faders_lay.setSpacing(0)
 
         for col in range(8):
             slot = slots[col] if col < len(slots) else {"type": "group", "group": "A"}
             current_val = self._slot_to_option(slot)
+            color = self._col_color(current_val)
 
             col_w = QWidget()
-            col_w.setStyleSheet("background: transparent; border: none;")
+            col_w.setStyleSheet("background:transparent; border:none;")
             col_l = QVBoxLayout(col_w)
             col_l.setContentsMargins(0, 0, 0, 0)
-            col_l.setSpacing(5)
+            col_l.setSpacing(4)
             col_l.setAlignment(Qt.AlignHCenter)
 
-            # Numéro du fader
             num_lbl = QLabel(str(col + 1))
             num_lbl.setAlignment(Qt.AlignCenter)
-            num_lbl.setStyleSheet("color:#555; font-size:9px; font-weight:bold;")
+            num_lbl.setStyleSheet("color:#2a2a2a; font-size:8px; font-weight:bold;")
             col_l.addWidget(num_lbl)
 
-            # Picker d'assignation
+            fdr = _DecorativeFader(color)
+            self._faders.append(fdr)
+            col_l.addWidget(fdr, alignment=Qt.AlignHCenter)
+
             combo = _SlotPickerButton(_AKAI_SLOT_OPTIONS, current_val)
             combo.currentTextChanged.connect(lambda txt, c=col: self._on_col_changed(c, txt))
             self._combos.append(combo)
-            col_l.addWidget(combo)
+            col_l.addWidget(combo, alignment=Qt.AlignHCenter)
 
-            card_lay.addWidget(col_w)
+            faders_lay.addWidget(col_w, 1)
             self._on_col_changed(col, current_val)
 
-        # Séparateur + fader 9
+        # Séparateur + fader 9 (master — non configurable)
         sep9 = QFrame()
         sep9.setFrameShape(QFrame.VLine)
-        sep9.setStyleSheet("background:#2a2a2a; border:none; max-width:1px;")
-        card_lay.addWidget(sep9)
+        sep9.setFixedWidth(1)
+        sep9.setStyleSheet("background:#1e1e1e; border:none;")
+        faders_lay.addWidget(sep9)
+        faders_lay.addSpacing(6)
 
         f9_w = QWidget()
-        f9_w.setStyleSheet("background: transparent; border: none;")
+        f9_w.setStyleSheet("background:transparent; border:none;")
         f9_l = QVBoxLayout(f9_w)
-        f9_l.setContentsMargins(0, 0, 0, 0)
-        f9_l.setSpacing(5)
+        f9_l.setContentsMargins(4, 0, 4, 0)
+        f9_l.setSpacing(4)
         f9_l.setAlignment(Qt.AlignHCenter)
         num9 = QLabel("9")
         num9.setAlignment(Qt.AlignCenter)
-        num9.setStyleSheet("color:#0088cc; font-size:9px; font-weight:bold;")
+        num9.setStyleSheet("color:#1a3a5a; font-size:8px; font-weight:bold;")
         f9_l.addWidget(num9)
+        fdr9 = _DecorativeFader("#0a3a6a")
+        f9_l.addWidget(fdr9, alignment=Qt.AlignHCenter)
         lbl9 = QLabel(tr("akai_amp_fx_label"))
         lbl9.setAlignment(Qt.AlignCenter)
         lbl9.setWordWrap(True)
-        lbl9.setFixedWidth(68)
-        lbl9.setStyleSheet("color:#0088cc; font-size:8px;")
+        lbl9.setFixedWidth(58)
+        lbl9.setStyleSheet("color:#1a4a7a; font-size:7px;")
         f9_l.addWidget(lbl9)
-        card_lay.addWidget(f9_w)
+        faders_lay.addWidget(f9_w)
 
-        root.addWidget(card)
+        root.addWidget(faders_card)
 
-        # ── Options ───────────────────────────────────────────────────────────
-        opts_row = QHBoxLayout()
-        opts_row.setSpacing(24)
+        # ── Options + Luminosité (côte à côte) ─────────────────────────────────
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(10)
 
+        # Panneau Options
+        opts_card = QFrame()
+        opts_card.setStyleSheet(
+            "QFrame { background:#111; border:1px solid #1e1e1e; border-radius:8px; }"
+            "QLabel { background:transparent; border:none; }"
+        )
+        opts_lay = QVBoxLayout(opts_card)
+        opts_lay.setContentsMargins(14, 10, 14, 10)
+        opts_lay.setSpacing(8)
+        opts_title = QLabel("OPTIONS")
+        opts_title.setStyleSheet("color:#2a2a2a; font-size:8px; font-weight:bold; letter-spacing:2px;")
+        opts_lay.addWidget(opts_title)
         self._superposition_check = QCheckBox(tr("fx_superposition_lbl"))
         self._superposition_check.setChecked(superposition)
         self._superposition_check.setToolTip(tr("fx_superposition_tip"))
-        opts_row.addWidget(self._superposition_check)
-
+        opts_lay.addWidget(self._superposition_check)
         self._go_mode_check = QCheckBox(tr("go_mode_lbl"))
         self._go_mode_check.setChecked(go_mode)
         self._go_mode_check.setToolTip(tr("go_mode_tip"))
-        opts_row.addWidget(self._go_mode_check)
+        opts_lay.addWidget(self._go_mode_check)
+        opts_lay.addStretch()
+        bottom_row.addWidget(opts_card, 2)
 
-        opts_row.addStretch()
-        root.addLayout(opts_row)
+        # Panneau Luminosité
+        bright_card = QFrame()
+        bright_card.setStyleSheet(
+            "QFrame { background:#111; border:1px solid #1e1e1e; border-radius:8px; }"
+            "QLabel { background:transparent; border:none; }"
+        )
+        bright_lay = QVBoxLayout(bright_card)
+        bright_lay.setContentsMargins(14, 10, 14, 10)
+        bright_lay.setSpacing(10)
+        bright_title = QLabel("LUMINOSITÉ LEDS")
+        bright_title.setStyleSheet("color:#2a2a2a; font-size:8px; font-weight:bold; letter-spacing:2px;")
+        bright_lay.addWidget(bright_title)
 
+        def _make_slider(label_text, initial, active):
+            row_w = QWidget()
+            row_w.setStyleSheet("background:transparent; border:none;")
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(8)
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(28)
+            lbl.setStyleSheet(f"color:{'#aaa' if active else '#555'}; font-size:9px; font-weight:bold;")
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(0, 100)
+            sl.setValue(initial)
+            val_lbl = QLabel(f"{initial}%")
+            val_lbl.setFixedWidth(36)
+            val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            val_lbl.setStyleSheet("color:#666; font-size:9px; font-family:monospace;")
+            sl.valueChanged.connect(lambda v, vl=val_lbl: vl.setText(f"{v}%"))
+            row_l.addWidget(lbl)
+            row_l.addWidget(sl, 1)
+            row_l.addWidget(val_lbl)
+            bright_lay.addWidget(row_w)
+            return sl
+
+        self._active_brightness_slider   = _make_slider("ON",  active_brightness,   True)
+        self._inactive_brightness_slider = _make_slider("OFF", inactive_brightness, False)
+        bright_lay.addStretch()
+        bottom_row.addWidget(bright_card, 3)
+
+        root.addLayout(bottom_row)
         root.addStretch()
 
         # ── Boutons ────────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         cancel_btn = QPushButton(tr("btn_annuler"))
-        cancel_btn.setFixedSize(90, 32)
+        cancel_btn.setFixedSize(88, 30)
         cancel_btn.setStyleSheet(
-            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #333; "
-            "border-radius: 6px; font-size: 10px; } "
-            "QPushButton:hover { background: #2a2a2a; color: #fff; }"
+            "QPushButton { background:#1a1a1a; color:#666; border:1px solid #252525; "
+            "border-radius:6px; font-size:10px; } "
+            "QPushButton:hover { background:#222; color:#bbb; }"
         )
         cancel_btn.clicked.connect(self.reject)
         ok_btn = QPushButton(tr("btn_apply"))
-        ok_btn.setFixedSize(110, 32)
+        ok_btn.setFixedSize(108, 30)
         ok_btn.setStyleSheet(
-            "QPushButton { background: #0077bb; color: white; border: none; "
-            "border-radius: 6px; font-size: 10px; font-weight: bold; } "
-            "QPushButton:hover { background: #0099dd; }"
+            "QPushButton { background:#0077bb; color:white; border:none; "
+            "border-radius:6px; font-size:10px; font-weight:bold; } "
+            "QPushButton:hover { background:#0099dd; }"
         )
         ok_btn.clicked.connect(self.accept)
         btn_row.addWidget(cancel_btn)
@@ -809,13 +940,15 @@ class AkaiLayoutEditorDialog(QDialog):
         return self._EMPTY_COLOR
 
     def _on_col_changed(self, col, option):
-        """Colore le combo selon le type d'assignation."""
+        """Colore le combo et le fader décoratif selon le type d'assignation."""
         color = self._col_color(option)
         if col < len(self._combos):
             self._combos[col].setStyleSheet(
                 f"QPushButton {{ color:{color}; font-size:9px; background:transparent; border:none; padding:0; }}"
                 f"QPushButton:hover {{ color:{QColor(color).lighter(140).name()}; text-decoration:underline; }}"
             )
+        if col < len(self._faders):
+            self._faders[col].set_color(color)
 
 
     # ── Preset ────────────────────────────────────────────────────────────────
@@ -921,6 +1054,12 @@ class AkaiLayoutEditorDialog(QDialog):
 
     def get_go_mode(self):
         return self._go_mode_check.isChecked()
+
+    def get_active_brightness(self):
+        return self._active_brightness_slider.value()
+
+    def get_inactive_brightness(self):
+        return self._inactive_brightness_slider.value()
 
     def get_slots(self):
         slots = []
@@ -1732,6 +1871,27 @@ class MainWindow(QMainWindow):
 
         # Transport
         self.transport = self.create_transport_panel()
+
+        # Moteur LIVE
+        self.live_engine = LiveAudioEngine(self)
+        self.live_engine.state_ready.connect(self._apply_live_state)
+        self.live_engine.energy_updated.connect(self.seq.live_panel.set_vu)
+        self.live_engine.status_updated.connect(self.seq.live_panel.set_status)
+        self.live_engine.device_info.connect(self.seq.live_panel.set_device_info)
+        self.live_engine.connection_status.connect(self.seq.live_panel.set_connection_status)
+        self.live_engine.transient_hit.connect(self._on_live_transient)
+        self.live_engine.beat_detected.connect(self.seq.live_panel.flash_beat)
+        self.seq.live_btn.toggled.connect(self._on_live_toggle)
+        self.seq.live_panel.color_changed.connect(self.live_engine.update_color)
+        self.seq.live_panel.nervosity_changed.connect(self.live_engine.update_nervosity)
+        self.seq.live_panel.bpm_override.connect(self.live_engine.set_manual_bpm)
+        self.seq.live_panel.bpm_released.connect(self.live_engine.release_manual_bpm)
+        self.seq.live_panel.sensitivity_changed.connect(self.live_engine.update_sensitivity)
+        self.seq.live_panel.set_lyre_position_getter(self._get_live_lyre_positions)
+        self.seq.live_panel.settings_applied.connect(self._on_live_settings_applied)
+
+        # Détecteur de logiciels DJ/audio (démarré au besoin dans _on_live_toggle)
+        self.software_detector = None
 
         # Timer IA
         self.ai_timer = QTimer(self)
@@ -2818,6 +2978,8 @@ class MainWindow(QMainWindow):
             last_fader_mode=getattr(self, '_last_fader_mode', 'FX'),
             superposition=self.effect_superposition,
             go_mode=self.go_mode,
+            active_brightness=self.akai_active_brightness,
+            inactive_brightness=self.akai_inactive_brightness,
             parent=self
         )
         if dlg.exec() != QDialog.Accepted:
@@ -2825,6 +2987,8 @@ class MainWindow(QMainWindow):
         self._custom_bank_slots = dlg.get_slots()
         self.effect_superposition = dlg.get_superposition()
         self.go_mode = dlg.get_go_mode()
+        self.akai_active_brightness   = dlg.get_active_brightness()
+        self.akai_inactive_brightness = dlg.get_inactive_brightness()
         self._update_tap_go_btn_style()
         self.active_pads.clear()
         self.active_memory_pads.clear()
@@ -3986,7 +4150,7 @@ class MainWindow(QMainWindow):
                 self.midi_handler.set_pad_led(row, col_akai, 0, 0)
             else:
                 velocity = rgb_to_akai_velocity(color)
-                brightness = 100 if active else 20
+                brightness = self.akai_active_brightness if active else self.akai_inactive_brightness
                 self.midi_handler.set_pad_led(row, col_akai, velocity, brightness)
 
     def _blink_memory_pad(self, mem_col, row, n_blinks=6):
@@ -4589,9 +4753,9 @@ class MainWindow(QMainWindow):
         for col_idx, slot in enumerate(self._fader_map):
             if slot.get("type") == "pos" and slot.get("pos_col") == pos_col:
                 if is_active and preset_idx is not None:
-                    self.midi_handler.set_pad_led(row, col_idx, 45, brightness_percent=100)  # bleu vif
+                    self.midi_handler.set_pad_led(row, col_idx, 45, brightness_percent=self.akai_active_brightness)
                 elif preset_idx is not None:
-                    self.midi_handler.set_pad_led(row, col_idx, 45, brightness_percent=25)   # bleu sombre
+                    self.midi_handler.set_pad_led(row, col_idx, 45, brightness_percent=self.akai_inactive_brightness)
                 else:
                     self.midi_handler.set_pad_led(row, col_idx, 0, brightness_percent=0)
 
@@ -4831,9 +4995,9 @@ class MainWindow(QMainWindow):
         for col_idx, slot in enumerate(self._fader_map):
             if slot.get("type") == "fx" and slot.get("fx_col") == fx_col:
                 if is_active and cfg:
-                    self.midi_handler.set_pad_led(row, col_idx, 21, brightness_percent=100)
+                    self.midi_handler.set_pad_led(row, col_idx, 21, brightness_percent=self.akai_active_brightness)
                 elif cfg:
-                    self.midi_handler.set_pad_led(row, col_idx, 21, brightness_percent=20)
+                    self.midi_handler.set_pad_led(row, col_idx, 21, brightness_percent=self.akai_inactive_brightness)
                 else:
                     self.midi_handler.set_pad_led(row, col_idx, 0, brightness_percent=0)
 
@@ -5936,13 +6100,16 @@ class MainWindow(QMainWindow):
 
         # En mode rec lumière, l'effet ne s'applique qu'aux projecteurs allumés par les clips
         _timeline_mode = hasattr(getattr(self, 'seq', None), 'timeline_playback_row')
+        # Si effect_target_groups est renseigné au niveau du clip (cfg), les groupes ciblés
+        # sont considérés comme explicites même si les couches individuelles disent "Tous".
+        _cfg_explicit = bool(allowed_groups)
 
         for i, proj in enumerate(projectors):
             _base_level = proj.level   # niveau posé par les clips, avant l'effet
             _base_color = proj.color   # couleur posée par les clips, avant l'effet
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0; w = 0.0; ambre = 0.0; uv = 0.0
             has_dim = False; has_rgb_layer = False; has_w = False; has_ambre = False; has_uv = False
-            _explicitly_targeted = False  # ciblage explicite par groupe/pair/impair
+            _explicitly_targeted = _cfg_explicit  # ciblage explicite par groupe/pair/impair
 
             for ld in layers_dicts:
                 preset = ld.get("target_preset", "Tous")
@@ -6559,17 +6726,17 @@ class MainWindow(QMainWindow):
                         if slot["type"] == "group":
                             base_color = pad.property("base_color")
                             velocity = rgb_to_akai_velocity(base_color)
-                            brightness = 100 if row == 0 else 20
-                            channel = 0x96 if brightness >= 80 else 0x90
+                            brightness = self.akai_active_brightness if row == 0 else self.akai_inactive_brightness
+                            channel = 0x96 if (brightness >= 80 and self.midi_handler._apc_bright_mode) else 0x90
                             self.midi_handler.midi_out.send_message([channel, note, velocity])
                         elif slot.get("type") == "fx":
                             fx_col = slot.get("fx_col", 0)
                             cfg = self.fx_pads[fx_col][row] if 0 <= fx_col < _FX_COL_MAX else None
                             is_active = self.active_fx_pads.get((fx_col, row))
                             if is_active and cfg:
-                                self.midi_handler.set_pad_led(row, col, 21, brightness_percent=100)
+                                self.midi_handler.set_pad_led(row, col, 21, brightness_percent=self.akai_active_brightness)
                             elif cfg:
-                                self.midi_handler.set_pad_led(row, col, 21, brightness_percent=20)
+                                self.midi_handler.set_pad_led(row, col, 21, brightness_percent=self.akai_inactive_brightness)
                             else:
                                 self.midi_handler.set_pad_led(row, col, 0, brightness_percent=0)
                         elif slot.get("type") == "memory":
@@ -6772,9 +6939,605 @@ class MainWindow(QMainWindow):
             return selected_color[0]
         return None
 
+    def _get_live_lyre_positions(self):
+        """Retourne [(pan 0-255, tilt 0-255)] pour chaque lyre (Moving Head)."""
+        return [(p.pan // 257, p.tilt // 257)
+                for p in self.projectors
+                if getattr(p, 'fixture_type', '') == "Moving Head"]
+
+    def _on_live_settings_applied(self, cfg: dict):
+        """Réinitialise les états persistants des lyres quand les presets changent."""
+        self.__dict__.pop('_live_preset_state', None)
+
+    def _on_live_toggle(self, checked: bool):
+        """Démarre ou arrête le moteur audio live."""
+        self.transport.setVisible(not checked)
+        if checked:
+            panel = self.seq.live_panel
+            if panel.source_key == "ia_file":
+                # Mode IA fichier : pas d'audio temps réel, on lit la pré-analyse
+                self._live_ia_mode = True
+                self._ia_live_last_beat = -1
+                if self.audio_ai.analyzed:
+                    panel.set_device_info("Analyse IA — beats pré-calculés")
+                    panel.set_connection_status('connected')
+                else:
+                    panel.set_device_info("Aucune analyse IA — lancez d'abord un fichier IA Lumière")
+                    panel.set_connection_status('waiting')
+            else:
+                self._live_ia_mode = False
+                # Démarrer le détecteur de logiciels DJ
+                if self.software_detector is None:
+                    self.software_detector = SoftwareDetector(self)
+                    self.software_detector.software_changed.connect(
+                        panel.set_detected_software)
+                else:
+                    self.software_detector._timer.start(2000)
+                    self.software_detector.force_check()
+                self.live_engine.start(
+                    source_key=panel.source_key,
+                    dominant_color=panel.dominant_color,
+                    nervosity=panel.nerv_slider.value(),
+                    sensitivity=panel.sens_slider.value(),
+                )
+        else:
+            self._live_ia_mode = False
+            # Arrêter le détecteur et cacher le badge
+            if self.software_detector is not None:
+                self.software_detector.stop()
+                self.seq.live_panel.set_detected_software("", "")
+            self.live_engine.stop()
+            for p in self.projectors:
+                p.level = 0
+                p.color = QColor("black")
+                p.base_color = QColor("black")
+            self.seq.live_panel.set_vu(0)
+            self.seq.live_panel.set_status(bpm=0, section='—')
+            self.seq.live_panel.set_connection_status('off')
+            # Purger les états persistants live
+            for attr in ('_live_sec', '_live_lyre_e', '_live_lyre_phase',
+                         '_live_lyre_speed', '_live_lyre_amp_pan', '_live_lyre_amp_tilt',
+                         '_live_lyre_last_pos', '_live_lyre_chop_until',
+                         '_live_lyre_beat_idx', '_live_lyre_color_smooth',
+                         '_live_transient_flash', '_live_beat_state',
+                         '_live_auto_last_section', '_live_preset_state'):
+                self.__dict__.pop(attr, None)
+
+    def _on_live_transient(self, hit_type: str):
+        """Transitoire audio → effets lumière immédiats (FFT band, plus fiable que RMS)."""
+        if not self.seq.live_mode_active:
+            return
+        if not hasattr(self, '_live_transient_flash'):
+            self._live_transient_flash = {}
+        if not hasattr(self, '_live_beat_state'):
+            self._live_beat_state = {'beat_idx': -1, 'flash_until': 0,
+                                     'strobe_until': 0, 'gobo_idx': 0}
+        pos   = self.live_engine._elapsed_ms
+        bs    = self._live_beat_state
+        panel = self.seq.live_panel
+
+        if hit_type == 'kick':
+            self._live_transient_flash['contre_until'] = pos + 70
+            # Le kick FFT est le beat le plus fiable — l'utiliser pour tout
+            panel.flash_beat()
+            auto = panel.is_tile_active('auto')
+            if panel.is_tile_active('flash') or auto:
+                bs['flash_until'] = max(bs['flash_until'], pos + 105)
+            if panel.is_tile_active('strobe'):
+                bs['strobe_until'] = max(bs['strobe_until'], pos + 380)
+            if panel.is_tile_active('gobo') or auto:
+                bs['gobo_idx'] = (bs['gobo_idx'] + 1) % 8
+        elif hit_type == 'snare':
+            self._live_transient_flash['face_until'] = pos + 55
+            if panel.is_tile_active('strobe'):
+                bs['strobe_until'] = max(bs['strobe_until'], pos + 180)
+        elif hit_type == 'hihat':
+            self._live_transient_flash['lyre_chop_until'] = pos + 40
+
+    def _apply_live_state(self, state: dict):
+        """Applique un état lumière live aux projecteurs (remplace update_audio_ai en mode LIVE)."""
+        if not self.seq.live_mode_active:
+            return
+        if getattr(self, 'active_effect', None) is not None:
+            return
+
+        import math as _math
+        import time as _time
+
+        section   = state.get('section', 'verse')
+        energy    = state.get('energy', 0.5)
+        nerv      = self.seq.live_panel.nervosity
+        position  = state.get('_ia_position', self.live_engine._elapsed_ms)
+        now_ts    = _time.monotonic()
+
+        # Filtres depuis les paramètres Live
+        _settings_pal = self.seq.live_panel.live_palette  # [] = palette auto
+        _allowed_eff  = self.seq.live_panel.allowed_effects  # set() = tous
+        _eff_ok       = lambda e: not _allowed_eff or e in _allowed_eff
+
+        contre_alt = state.get('contre_alt')
+        lat_alt    = state.get('lat_alt')
+        lat_effect = state.get('lat_effect')
+
+        # État persistant de section (wall-clock pour drop_start — résistant au trim)
+        if not hasattr(self, '_live_sec'):
+            self._live_sec = {'last': None, 'drop_start_ts': -1.0}
+        ss = self._live_sec
+
+        def _set_proj(p, color, level):
+            p.level = max(0, min(100, level))
+            p.base_color = color
+            if p.level > 0:
+                f = p.level / 100.0
+                p.color = QColor(int(color.red()*f), int(color.green()*f), int(color.blue()*f))
+            else:
+                p.color = QColor("black")
+
+        # ── 1. État de base avec ia_max_dimmers ──────────────────────────────
+        contre_idx = lat_idx = 0
+        for p in self.projectors:
+            if p.group not in state:
+                continue
+            color, level = state[p.group]
+
+            # Plafonner selon les dimmers IA configurés
+            level = int(level * self.ia_max_dimmers.get(p.group, 100) / 100)
+
+            if p.group == 'contre':
+                if contre_alt and contre_idx % 2 == 1:
+                    color = contre_alt
+                contre_idx += 1
+            elif p.group == 'lat':
+                if lat_alt and lat_idx % 2 == 1:
+                    color = lat_alt
+                if lat_effect == 'strobe':
+                    strobe_ms = int(80 - nerv * 45)
+                    if not (int(position / strobe_ms) % 2) == 0:
+                        level = 0
+                lat_idx += 1
+
+            _set_proj(p, color, level)
+
+        # ── 2. Overrides de section ───────────────────────────────────────────
+        white            = QColor(255, 255, 255)
+        pal              = _settings_pal or self.live_engine.audio_ai.palette or [white]
+        drop_fx          = self.ia_params.get('drop_effect', 'flash_blanc')
+        strobe_ms_fast   = int(38 - nerv * 13)
+        strobe_ms_medium = int(55 - nerv * 20)
+        strobe_ms_slow   = int(75 - nerv * 25)
+
+        if section == 'drop':
+            if ss['last'] != 'drop':
+                ss['drop_start_ts'] = now_ts
+            drop_p = min(1.0, (now_ts - ss['drop_start_ts']) / 1.2)
+
+            if drop_fx == 'flash_blanc':
+                if drop_p < 0.30:
+                    punch = 1.0 - drop_p / 0.30
+                    for p in self.projectors:
+                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        if int(100 * punch) > p.level:
+                            _set_proj(p, white, int(100 * punch))
+                strobe_on = (int(position / strobe_ms_fast) % 2) == 0
+                for p in self.projectors:
+                    if p.group in ('lat', 'contre') and not strobe_on:
+                        p.level = 0; p.color = QColor("black")
+
+            elif drop_fx == 'color_explosion':
+                strobe_on = (int(position / strobe_ms_fast) % 2) == 0
+                for i, p in enumerate(self.projectors):
+                    if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                    if strobe_on:
+                        _set_proj(p, pal[i % len(pal)], 100)
+                    else:
+                        p.level = 0; p.color = QColor("black")
+
+            elif drop_fx == 'blackout_punch':
+                if drop_p < 0.12:
+                    for p in self.projectors:
+                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        p.level = 0; p.color = QColor("black")
+                else:
+                    punch = max(0.0, 1.0 - (drop_p - 0.12) / 0.35)
+                    for p in self.projectors:
+                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        _set_proj(p, white, int(100 * punch))
+                    if drop_p > 0.20:
+                        strobe_on = (int(position / strobe_ms_medium) % 2) == 0
+                        if not strobe_on:
+                            for p in self.projectors:
+                                if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                                    p.level = 0; p.color = QColor("black")
+
+            elif drop_fx == 'stroboscope':
+                strobe_ms = int(45 - nerv * 20)
+                strobe_on = (int(position / strobe_ms) % 2) == 0
+                for p in self.projectors:
+                    if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                    if strobe_on:
+                        _set_proj(p, white, 100)
+                    else:
+                        p.level = 0; p.color = QColor("black")
+
+            elif drop_fx == 'laser_scan':
+                if drop_p < 0.20:
+                    punch = 1.0 - drop_p / 0.20
+                    for p in self.projectors:
+                        if getattr(p, 'fixture_type', '') in ("Machine a fumee", "Moving Head"): continue
+                        _set_proj(p, white, int(100 * punch))
+                strobe_on = (int(position / strobe_ms_slow) % 2) == 0
+                for p in self.projectors:
+                    if p.group == 'lat' and not strobe_on:
+                        p.level = 0; p.color = QColor("black")
+
+            ss['last'] = 'drop'
+
+        elif section == 'build':
+            # Pas de drop prédit en live → energy comme proxy de progression
+            build_p   = min(1.0, energy * 1.4)
+            pulse_hz  = 2.5 + build_p * 10.0
+            pulse_mod = _math.sin(position / 1000.0 * pulse_hz * 2.0 * _math.pi) * 0.5 + 0.5
+
+            for p in self.projectors:
+                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                    continue
+                if p.group == 'contre':
+                    r = min(255, int(p.base_color.red()   + build_p * (255 - p.base_color.red())   * 0.7))
+                    g = int(p.base_color.green() * (1.0 - build_p * 0.5))
+                    b = int(p.base_color.blue()  * (1.0 - build_p * 0.6))
+                    lvl = min(100, int(p.level * (1.0 + build_p * 0.35) * (0.35 + 0.65 * pulse_mod)))
+                    _set_proj(p, QColor(r, g, b), lvl)
+                elif p.group == 'face':
+                    _set_proj(p, p.base_color, min(100, int(p.level * (1.0 + build_p * 0.2))))
+            ss['last'] = 'build'
+
+        else:
+            ss['last'] = section
+
+        # ── Transient flash overrides (kick/snare/hihat) ─────────────────────
+        if hasattr(self, '_live_transient_flash'):
+            tf = self._live_transient_flash
+            if tf.get('contre_until', 0) > position:
+                for p in self.projectors:
+                    if p.group == 'contre' and getattr(p, 'fixture_type', '') != "Machine a fumee":
+                        p.level = min(100, p.level + 30)
+                        if p.level > 0:
+                            f = p.level / 100.0
+                            p.color = QColor(int(p.base_color.red()*f),
+                                             int(p.base_color.green()*f),
+                                             int(p.base_color.blue()*f))
+            if tf.get('face_until', 0) > position:
+                for p in self.projectors:
+                    if p.group == 'face' and getattr(p, 'fixture_type', '') != "Machine a fumee":
+                        p.level = min(100, p.level + 20)
+                        if p.level > 0:
+                            f = p.level / 100.0
+                            p.color = QColor(int(p.base_color.red()*f),
+                                             int(p.base_color.green()*f),
+                                             int(p.base_color.blue()*f))
+
+        # ── Effets beat (Flash blanc · Strobe · Gobo) ────────────────────────
+        if not hasattr(self, '_live_beat_state'):
+            self._live_beat_state = {
+                'beat_idx': -1, 'flash_until': 0,
+                'strobe_until': 0, 'gobo_idx': 0,
+            }
+        bs = self._live_beat_state
+        if '_new_beat' in state:
+            _new_beat = state['_new_beat']              # source IA fichier
+        else:
+            cur_beat = getattr(self.live_engine.audio_ai, '_last_beat_idx', -1)
+            _new_beat = cur_beat >= 0 and cur_beat != bs['beat_idx']
+            if _new_beat:
+                bs['beat_idx'] = cur_beat
+        if _new_beat:
+            if self.seq.live_panel.is_tile_active('flash') and _eff_ok('flash'):
+                bs['flash_until'] = position + 110
+            if self.seq.live_panel.is_tile_active('strobe') and _eff_ok('strobe'):
+                bs['strobe_until'] = position + 450
+            if self.seq.live_panel.is_tile_active('gobo') and _eff_ok('gobo'):
+                bs['gobo_idx'] = (bs['gobo_idx'] + 1) % 8
+
+        # Flash blanc : éclat décroissant sur 110 ms
+        if bs['flash_until'] > position and _eff_ok('flash'):
+            age   = position - (bs['flash_until'] - 110)
+            punch = max(0.0, 1.0 - age / 110.0)
+            for p in self.projectors:
+                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                    continue
+                flash_lvl = int(100 * punch)
+                if flash_lvl > p.level:
+                    v = int(255 * punch)
+                    p.level = flash_lvl
+                    p.color = QColor(v, v, v)
+
+        # Strobe beat : on/off rapide pendant 450 ms
+        _beat_strobe_on = (self.seq.live_panel.is_tile_active('strobe')
+                           and bs['strobe_until'] > position
+                           and _eff_ok('strobe'))
+        _beat_gobo_on   = self.seq.live_panel.is_tile_active('gobo') and _eff_ok('gobo')
+        _beat_gobo_idx  = bs['gobo_idx']
+
+        # ── Lyres — rotation continue dont la vitesse suit le rythme ────────
+        moving_heads = [p for p in self.projectors
+                        if getattr(p, 'fixture_type', '') == "Moving Head"]
+        if moving_heads:
+            n_lyres = len(moving_heads)
+
+            if not hasattr(self, '_live_lyre_e'):
+                self._live_lyre_e            = energy
+                self._live_lyre_phase        = 0.0
+                self._live_lyre_speed        = 0.08   # rot/s initial
+                self._live_lyre_amp_pan      = 18.0
+                self._live_lyre_amp_tilt     = 12.0
+                self._live_lyre_last_pos     = position
+                self._live_lyre_chop_until   = 0
+                self._live_lyre_beat_idx     = -1
+                self._live_lyre_color_smooth = None
+
+            e_alpha = 0.04 if section == 'quiet' else 0.08
+            self._live_lyre_e = e_alpha * energy + (1.0 - e_alpha) * self._live_lyre_e
+            e = self._live_lyre_e
+
+            dt = max(0.0, min(0.12, (position - self._live_lyre_last_pos) / 1000.0))
+            self._live_lyre_last_pos = position
+
+            # Vitesse cible (rot/s) — proportionnelle section + énergie
+            _tgt_speed = {
+                'quiet': 0.04 + e * 0.02,   # très lent, quasi immobile
+                'verse': 0.12 + e * 0.08,
+                'build': 0.22 + e * 0.10,
+                'high':  0.30 + e * 0.12,
+                'drop':  0.50 + e * 0.22,
+            }.get(section, 0.12 + e * 0.08)
+
+            spd_alpha = 0.02 if section == 'quiet' else 0.06
+            self._live_lyre_speed += spd_alpha * (_tgt_speed - self._live_lyre_speed)
+
+            # Avancer la phase
+            self._live_lyre_phase = (
+                self._live_lyre_phase + dt * self._live_lyre_speed * 2.0 * _math.pi
+            ) % (2.0 * _math.pi)
+
+            # Amplitude de balayage cible
+            _tgt_pan, _tgt_tilt = {
+                'quiet': (6.0,  4.0),
+                'verse': (18.0, 12.0),
+                'build': (28.0, 20.0),
+                'high':  (36.0, 25.0),
+                'drop':  (46.0, 32.0),
+            }.get(section, (18.0, 12.0))
+
+            amp_alpha = 0.02 if section == 'quiet' else 0.06
+            self._live_lyre_amp_pan  += amp_alpha * (_tgt_pan  - self._live_lyre_amp_pan)
+            self._live_lyre_amp_tilt += amp_alpha * (_tgt_tilt - self._live_lyre_amp_tilt)
+
+            # Chop sur les beats
+            cur_beat_idx = state.get('_ia_beat_idx',
+                           getattr(self.live_engine.audio_ai, '_last_beat_idx', -1))
+            if cur_beat_idx >= 0 and cur_beat_idx != self._live_lyre_beat_idx:
+                self._live_lyre_beat_idx = cur_beat_idx
+                if e > 0.30 and section != 'quiet':
+                    self._live_lyre_chop_until = position + 55
+
+            # Hihat transient : micro-chop lyre
+            if (hasattr(self, '_live_transient_flash')
+                    and self._live_transient_flash.get('lyre_chop_until', 0) > position):
+                self._live_lyre_chop_until = max(
+                    self._live_lyre_chop_until,
+                    self._live_transient_flash['lyre_chop_until'],
+                )
+
+            # Couleur lyre lissée
+            pal_l = _settings_pal or self.live_engine.audio_ai.palette or [QColor("#ffffff")]
+            c_idx = getattr(self.live_engine.audio_ai, '_contre_color_idx', 0)
+            if section == 'drop':
+                drop_p_now = min(1.0, (now_ts - ss.get('drop_start_ts', now_ts)) / 1.2)
+                lyre_color_tgt = (QColor(255, 255, 255) if drop_p_now < 0.35
+                                  else pal_l[int(position / 80) % len(pal_l)])
+            else:
+                lyre_color_tgt = pal_l[c_idx % len(pal_l)]
+
+            if self._live_lyre_color_smooth is None:
+                self._live_lyre_color_smooth = lyre_color_tgt
+            _ac = 0.55 if section == 'drop' else (0.06 if section == 'quiet' else 0.18)
+            _cc = self._live_lyre_color_smooth
+            self._live_lyre_color_smooth = QColor(
+                int(_cc.red()   + _ac * (lyre_color_tgt.red()   - _cc.red())),
+                int(_cc.green() + _ac * (lyre_color_tgt.green() - _cc.green())),
+                int(_cc.blue()  + _ac * (lyre_color_tgt.blue()  - _cc.blue())),
+            )
+            lyre_color = self._live_lyre_color_smooth
+
+            # Niveau lumineux
+            if position < self._live_lyre_chop_until:
+                lyre_level = 0
+            elif section == 'quiet':
+                lyre_level = int(18 + e * 14)
+            elif section == 'drop':
+                lyre_level = int(65 + e * 35)
+            elif section == 'build':
+                lyre_level = int(55 + e * 35)
+            else:
+                lyre_level = int(45 + e * 45)
+
+            # Gobo auto sur changement de section (tile AUTO)
+            if _auto_on:
+                if not hasattr(self, '_live_auto_last_section'):
+                    self._live_auto_last_section = section
+                if section != self._live_auto_last_section:
+                    self._live_auto_last_section = section
+                    if hasattr(self, '_live_beat_state'):
+                        self._live_beat_state['gobo_idx'] = (
+                            self._live_beat_state['gobo_idx'] + 1) % 8
+
+            # Application pan/tilt — mode selon sélection de l'utilisateur
+            ph = self._live_lyre_phase
+            _lyre_mode = self.seq.live_panel.lyre_mode
+            for i, p in enumerate(moving_heads):
+                offset = i * (2.0 * _math.pi / max(n_lyres, 1))
+                ph_i   = ph + offset
+                if _lyre_mode == "circle":
+                    pan_v  = _math.cos(ph_i)
+                    tilt_v = _math.sin(ph_i)
+                elif _lyre_mode == "eight":
+                    pan_v  = _math.sin(ph_i)
+                    tilt_v = _math.sin(2.0 * ph_i) * 0.5
+                else:                                    # Lissajous (défaut)
+                    pan_v  = _math.cos(ph_i)
+                    tilt_v = _math.sin(ph_i * 1.618)
+                p.pan  = max(0, min(65535,
+                    32768 + int(pan_v  * self._live_lyre_amp_pan  * 256)))
+                p.tilt = max(0, min(65535,
+                    32768 + int(tilt_v * self._live_lyre_amp_tilt * 200)))
+                if p.group not in state:
+                    p.level      = max(0, min(100, lyre_level))
+                    p.base_color = lyre_color
+                    f = p.level / 100.0
+                    p.color = QColor(int(lyre_color.red()*f),
+                                     int(lyre_color.green()*f),
+                                     int(lyre_color.blue()*f))
+                # Changement de gobo sur beat
+                if _beat_gobo_on:
+                    slots = getattr(p, 'gobo_wheel_slots', [])
+                    if slots:
+                        p.gobo = slots[_beat_gobo_idx % len(slots)].get('dmx', 0)
+                    else:
+                        p.gobo = (_beat_gobo_idx % 8) * 32
+                self._update_color_wheel(p, p.base_color or lyre_color)
+
+        # ── Positions lyres prédéfinies (override du mode rotation si actif) ───
+        if moving_heads:
+            presets = self.seq.live_panel.lyre_presets
+            if presets:
+                if not hasattr(self, '_live_preset_state'):
+                    self._live_preset_state = {
+                        'targets': [0] * len(moving_heads),
+                        'pan':     [128.0] * len(moving_heads),
+                        'tilt':    [128.0] * len(moving_heads),
+                    }
+                ps = self._live_preset_state
+                # Étendre les listes si le nombre de lyres a changé
+                while len(ps['targets']) < len(moving_heads):
+                    ps['targets'].append(0)
+                    ps['pan'].append(128.0)
+                    ps['tilt'].append(128.0)
+                if _new_beat:
+                    for i in range(len(moving_heads)):
+                        ps['targets'][i] = (ps['targets'][i] + 1) % len(presets)
+                lerp_alpha = min(0.20, 0.06 + energy * 0.14)
+                for i, p in enumerate(moving_heads):
+                    tgt_pan, tgt_tilt = presets[ps['targets'][i] % len(presets)]
+                    ps['pan'][i]  += lerp_alpha * (tgt_pan  - ps['pan'][i])
+                    ps['tilt'][i] += lerp_alpha * (tgt_tilt - ps['tilt'][i])
+                    p.pan  = max(0, min(65535, int(ps['pan'][i]  * 257)))
+                    p.tilt = max(0, min(65535, int(ps['tilt'][i] * 257)))
+
+        # AUTO tile — comportement intelligent par section
+        _auto_on = self.seq.live_panel.is_tile_active('auto') and _eff_ok('auto')
+        if _auto_on:
+            if section == 'drop':
+                # Strobe automatique pendant tout le drop
+                auto_ms = max(22, int(48 - nerv * 18))
+                if (int(position / auto_ms) % 2) == 1:
+                    for p in self.projectors:
+                        if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                            p.level = 0; p.color = QColor("black")
+            elif section == 'build':
+                # Strobe progressif : démarre quand l'énergie dépasse 65 %
+                build_p = min(1.0, energy * 1.5)
+                if build_p > 0.65:
+                    auto_ms = max(30, int(85 - build_p * 52))
+                    if (int(position / auto_ms) % 2) == 1:
+                        for p in self.projectors:
+                            if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                                p.level = 0; p.color = QColor("black")
+
+        # Strobe beat : override final (tue le niveau pendant les frames OFF)
+        if _beat_strobe_on:
+            strobe_ms = max(20, int(42 - nerv * 18))
+            if (int(position / strobe_ms) % 2) == 1:
+                for p in self.projectors:
+                    if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                        p.level = 0
+                        p.color = QColor("black")
+
+        # ── Filtre groupes (paramètres Live) ────────────────────────────────────
+        _allowed_grps = self.seq.live_panel.allowed_groups
+        if _allowed_grps:
+            for p in self.projectors:
+                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                    continue  # jamais bloquer la machine à fumée
+                is_mh = getattr(p, 'fixture_type', '') == "Moving Head"
+                if is_mh:
+                    if 'lyre' in _allowed_grps:
+                        continue  # lyres autorisées
+                else:
+                    g = p.group
+                    if g in _allowed_grps:
+                        continue  # groupe exact
+                    if g.startswith('douche') and 'douche' in _allowed_grps:
+                        continue  # douche1/2/3 → 'douche'
+                p.level = 0
+                p.color = QColor("black")
+
+    def _drive_ia_live_tick(self):
+        """Mode LIVE source 'ia_file' : pilote les effets live depuis la pré-analyse IA."""
+        import bisect as _bisect
+        if not self.audio_ai.analyzed:
+            return
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer as _QMP
+            if self.player.playbackState() != _QMP.PlayingState:
+                return
+        except Exception:
+            pass
+
+        pos = self.player.position()
+        dur = self.player.duration()
+
+        # État lumière depuis la pré-analyse
+        state = self.audio_ai.get_state_at(pos, dur, max_dimmers=self.ia_max_dimmers)
+
+        # Détection de beat sur les timestamps pré-calculés
+        beats = self.audio_ai.beats
+        beat_idx = _bisect.bisect_right(beats, pos) - 1
+
+        if not hasattr(self, '_ia_live_last_beat'):
+            self._ia_live_last_beat = -1
+
+        new_beat = beat_idx > self._ia_live_last_beat and beat_idx >= 0
+        if new_beat:
+            self._ia_live_last_beat = beat_idx
+            self.seq.live_panel.flash_beat()
+
+        # BPM depuis les intervalles récents
+        if beat_idx >= 3:
+            window = beats[max(0, beat_idx - 8): beat_idx + 1]
+            if len(window) >= 2:
+                ivs = [(window[i + 1] - window[i]) / 1000.0
+                       for i in range(len(window) - 1)]
+                avg_iv = sum(ivs) / len(ivs)
+                if avg_iv > 0:
+                    bpm = 60.0 / avg_iv
+                    self.seq.live_panel.set_status(
+                        bpm=bpm, section=state.get('section', 'verse'))
+
+        # Injecter position et infos beat pour _apply_live_state
+        state['_ia_position']  = pos
+        state['_new_beat']     = new_beat
+        state['_ia_beat_idx']  = beat_idx
+
+        self._apply_live_state(state)
+
     def update_audio_ai(self):
         """IA Lumiere - Met a jour les projecteurs selon l'analyse audio avec effets creatifs"""
         try:
+            # Mode LIVE actif
+            if self.seq.live_mode_active:
+                if getattr(self, '_live_ia_mode', False):
+                    self._drive_ia_live_tick()
+                return
             # Ne pas interférer avec un effet en cours — l'effet a la priorité
             if getattr(self, 'active_effect', None) is not None:
                 return
@@ -7357,13 +8120,13 @@ class MainWindow(QMainWindow):
                             if other_pad:
                                 other_color = other_pad.property("base_color")
                                 other_velocity = rgb_to_akai_velocity(other_color)
-                                self.midi_handler.set_pad_led(r, col, other_velocity, brightness_percent=20)
+                                self.midi_handler.set_pad_led(r, col, other_velocity, brightness_percent=self.akai_inactive_brightness)
 
                     self.activate_pad(pad, col)
                     if MIDI_AVAILABLE and self.midi_handler.midi_out:
                         base_color = pad.property("base_color")
                         velocity = rgb_to_akai_velocity(base_color)
-                        self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
+                        self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=self.akai_active_brightness)
                 elif slot["type"] == "fx":
                     # Pads FX — toggle l'effet mappé sur ce pad
                     fx_col = slot.get("fx_col", 0)
@@ -7922,6 +8685,9 @@ class MainWindow(QMainWindow):
                 for p in self.projectors
                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')
             },
+            "apc_bright_mode": getattr(self.midi, '_apc_bright_mode', True),
+            "akai_active_brightness": self.akai_active_brightness,
+            "akai_inactive_brightness": self.akai_inactive_brightness,
         }
 
     def _apply_akai_config(self, config):
@@ -8021,6 +8787,14 @@ class MainWindow(QMainWindow):
                 if p:
                     p.pan  = int(pt.get("pan",  32768))
                     p.tilt = int(pt.get("tilt", 32768))
+
+        # Luminosité APC Mini — respecte le réglage sauvegardé (ou auto-détection Apple Silicon)
+        if "apc_bright_mode" in config and hasattr(self, 'midi') and self.midi:
+            self.midi.set_apc_bright_mode(bool(config["apc_bright_mode"]))
+        if "akai_active_brightness" in config:
+            self.akai_active_brightness   = int(config["akai_active_brightness"])
+        if "akai_inactive_brightness" in config:
+            self.akai_inactive_brightness = int(config["akai_inactive_brightness"])
 
         # Les pads FX et POS seront rafraîchis lors du prochain _rebuild_akai_pads()
 

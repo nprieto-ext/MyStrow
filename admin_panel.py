@@ -389,29 +389,47 @@ def _delete_fixture_doc(doc_id: str, id_token: str) -> bool:
     return _delete_firestore_doc(f"gdtf_fixtures/{doc_id}", id_token)
 
 
-def _query_downloads(id_token: str, limit: int = 300) -> list:
-    """Récupère les derniers téléchargements depuis Firestore (collection 'downloads')."""
-    url = f"{_FS_BASE.split('/documents')[0]}/documents:runQuery"
-    body = json.dumps({
-        "structuredQuery": {
+def _query_downloads(id_token: str) -> list:
+    """Récupère tous les téléchargements depuis Firestore via pagination par curseur (batch 500)."""
+    base_url = f"{_FS_BASE.split('/documents')[0]}/documents:runQuery"
+    _BATCH = 500
+    rows = []
+    last_ts = None  # curseur sur le champ 'ts'
+
+    while True:
+        query: dict = {
             "from": [{"collectionId": "downloads"}],
             "orderBy": [{"field": {"fieldPath": "ts"}, "direction": "DESCENDING"}],
-            "limit": limit,
+            "limit": _BATCH,
         }
-    }).encode()
-    req = urllib.request.Request(
-        url, data=body,
-        headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        results = json.loads(resp.read().decode())
-    rows = []
-    for r in results:
-        doc = r.get("document")
-        if not doc:
-            continue
-        fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
-        rows.append(fields)
+        if last_ts is not None:
+            # before=false → "commence APRÈS ce curseur" (équivalent startAfter)
+            query["startAt"] = {"values": [{"timestampValue": last_ts}], "before": False}
+
+        body = json.dumps({"structuredQuery": query}).encode()
+        req = urllib.request.Request(
+            base_url, data=body,
+            headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            results = json.loads(resp.read().decode())
+
+        batch_rows = []
+        raw_last_ts = None
+        for r in results:
+            doc = r.get("document")
+            if not doc:
+                continue
+            fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+            batch_rows.append(fields)
+            raw_last_ts = doc.get("fields", {}).get("ts", {}).get("timestampValue")
+
+        rows.extend(batch_rows)
+
+        if len(batch_rows) < _BATCH:
+            break  # dernière page
+        last_ts = raw_last_ts  # avancer le curseur
+
     return rows
 
 
@@ -3497,7 +3515,7 @@ class AdminPanel(QMainWindow):
         self._dl_stats_lbl.setText("…")
 
         def _fetch():
-            return _query_downloads(self._id_token, limit=300)
+            return _query_downloads(self._id_token)
 
         def _on_data(rows: list):
             total = len(rows)

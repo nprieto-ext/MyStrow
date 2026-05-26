@@ -1543,10 +1543,13 @@ class LightTimelineEditor(QDialog):
                 merged_layers = []
                 merged_names  = []
                 merged_type   = ''
+                merged_target_groups = []
+                _has_all_groups = False
                 for clip in new_eff_clips.values():
                     eff_name   = getattr(clip, 'effect_name', '')
                     eff_layers = list(getattr(clip, 'effect_layers', []))
                     eff_type   = getattr(clip, 'effect_type', '')
+                    eff_tg     = list(getattr(clip, 'effect_target_groups', []))
                     if not eff_layers and eff_name:
                         try:
                             from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
@@ -1562,11 +1565,18 @@ class LightTimelineEditor(QDialog):
                         merged_names.append(eff_name)
                     if not merged_type:
                         merged_type = eff_type
+                    if not eff_tg:
+                        _has_all_groups = True
+                    else:
+                        for g in eff_tg:
+                            if g not in merged_target_groups:
+                                merged_target_groups.append(g)
                 combined_name = " + ".join(merged_names) if merged_names else ''
                 cfg = {
                     'name': combined_name, 'type': merged_type,
                     'layers': merged_layers, 'play_mode': 'loop',
-                    'target_groups': [], 'speed_override': 50,
+                    'target_groups': [] if _has_all_groups else merged_target_groups,
+                    'speed_override': 50,
                 }
                 self.main_window.active_effect        = combined_name
                 self.main_window.active_effect_config = cfg

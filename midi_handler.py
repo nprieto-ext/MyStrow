@@ -2,19 +2,27 @@
 Gestionnaire MIDI multi-contrôleur
 Supporte: AKAI APC40, AKAI APC20, AKAI APC Mini, Novation Launchpad Mini MK1/MK2, AKAI MIDImix
 """
+import sys
+import platform
 import threading
 from PySide6.QtCore import QObject, Signal, QTimer
 
 from core import MIDI_AVAILABLE
 from controller_profile import find_profile_for_port, build_reverse_maps
 
+# Sur Apple Silicon (M1/M2/M3/M4/M5), les messages 0x96 (Note On ch7 = LED bright)
+# ne sont pas transmis correctement par CoreMIDI/USB → LEDs toujours en mode dim (0x90).
+_APPLE_SILICON = sys.platform == 'darwin' and platform.machine() == 'arm64'
+
 rtmidi = None
+_USING_RTMIDI2 = False
 if MIDI_AVAILABLE:
     try:
         import rtmidi
     except ImportError:
         try:
             import rtmidi2 as rtmidi
+            _USING_RTMIDI2 = True
         except ImportError:
             pass
 
@@ -196,6 +204,9 @@ class MIDIHandler(QObject):
         self._rev_fader  = {}
         self._rev_led    = {}
         self._custom_vel_remap = {}
+        # Sur Apple Silicon, 0x96 (LED bright) ne fonctionne pas via CoreMIDI/USB.
+        # False = compatibilité (0x90 uniquement, dim mode), True = pleine luminosité (0x96).
+        self._apc_bright_mode = not _APPLE_SILICON
 
         if MIDI_AVAILABLE and rtmidi:
             self.connect_controller()
@@ -910,6 +921,12 @@ class MIDIHandler(QObject):
             except Exception:
                 pass
 
+    def set_apc_bright_mode(self, enabled: bool):
+        """Active/désactive le mode pleine luminosité (0x96) de l'APC Mini.
+        Désactivé par défaut sur Apple Silicon où 0x96 n'est pas transmis correctement.
+        """
+        self._apc_bright_mode = bool(enabled)
+
     def _set_led_apc(self, row, col, color_velocity, brightness_percent):
         if not self.midi_out:
             return
@@ -918,7 +935,9 @@ class MIDIHandler(QObject):
             vel  = 3 if color_velocity > 0 else 0
             self.midi_out.send_message([0x90, note, vel])
         else:
-            ch   = 0x96 if brightness_percent >= 80 else 0x90
+            # 0x96 = Note On ch7 (bright), 0x90 = Note On ch1 (dim).
+            # Sur Apple Silicon, 0x96 n'est pas reçu par l'APC Mini → on utilise 0x90.
+            ch   = 0x96 if (brightness_percent >= 80 and self._apc_bright_mode) else 0x90
             note = (7 - row) * 8 + col
             self.midi_out.send_message([ch, note, color_velocity])
 
