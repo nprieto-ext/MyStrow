@@ -188,7 +188,13 @@ def _ping(ip: str, timeout_ms: int = 1000) -> bool:
 
 
 def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
-    """ArtPoll vers target_ip, filtre les réponses du PC lui-même."""
+    """ArtPoll vers target_ip, filtre les réponses du PC lui-même.
+
+    On utilise toujours un port éphémère (bind 0) pour éviter de recevoir
+    notre propre broadcast en loopback sur le port 6454 (comportement Windows).
+    On vérifie aussi l'opcode ArtPollReply (0x2100) pour ne pas confondre notre
+    propre ArtPoll (0x2000) avec une réponse du node.
+    """
     # Si aucune carte réseau n'a d'IP en 2.x, le boitier est forcément inaccessible
     adapters = _get_ethernet_adapters()
     if not any(ip.startswith("2.") for _, ip, _, _ in adapters):
@@ -197,10 +203,7 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        try:
-            s.bind(("", 6454))
-        except OSError:
-            s.bind(("", 0))
+        s.bind(("", 0))   # port éphémère — pas de loopback broadcast
         s.settimeout(timeout)
         for dst in ("2.255.255.255", "255.255.255.255", target_ip):
             try:
@@ -212,7 +215,11 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
             try:
                 s.settimeout(max(0.05, deadline - time.time()))
                 data, (sender, _) = s.recvfrom(512)
-                if data[:8] == b'Art-Net\x00' and sender not in local_ips:
+                # Accepter uniquement ArtPollReply (opcode 0x2100),
+                # en ignorant notre propre ArtPoll (0x2000) et le PC lui-même
+                if (data[:8] == b'Art-Net\x00'
+                        and data[8:10] == b'\x00\x21'
+                        and sender not in local_ips):
                     s.close()
                     return True
             except Exception:
@@ -488,6 +495,24 @@ class NodeConnectionDialog(QDialog):
         self._msg_lbl.setStyleSheet("color: #555;")
         root.addWidget(self._msg_lbl)
 
+        # Bouton Actualiser inline (affiché uniquement sur câble_issue)
+        self._refresh_inline_btn = QPushButton("🔄  Actualiser")
+        self._refresh_inline_btn.setFixedHeight(34)
+        self._refresh_inline_btn.setStyleSheet(
+            "QPushButton { background: #1a2a1a; color: #66cc66; border: 1px solid #336633;"
+            " border-radius: 6px; padding: 0 20px; font-size: 11px; }"
+            "QPushButton:hover { background: #223322; color: #88ee88; border-color: #448844; }"
+        )
+        self._refresh_inline_btn.setCursor(Qt.PointingHandCursor)
+        self._refresh_inline_btn.setVisible(False)
+        self._refresh_inline_btn.clicked.connect(self._run)
+        _inline_row = QHBoxLayout()
+        _inline_row.addStretch()
+        _inline_row.addWidget(self._refresh_inline_btn)
+        _inline_row.addStretch()
+        root.addSpacing(6)
+        root.addLayout(_inline_row)
+
         root.addStretch()
 
         # Boutons
@@ -530,6 +555,7 @@ class NodeConnectionDialog(QDialog):
     def _run(self):
         self._fix_btn.setVisible(False)
         self._manual_btn.setVisible(False)
+        self._refresh_inline_btn.setVisible(False)
         self._retry_btn.setEnabled(False)
         self._msg_lbl.setText("Analyse en cours...")
         self._msg_lbl.setStyleSheet("color: #555;")
@@ -578,6 +604,7 @@ class NodeConnectionDialog(QDialog):
             self._msg_lbl.setText("Aucune carte Ethernet détectée.\nVérifiez que le câble RJ45 est bien branché.")
             self._msg_lbl.setStyleSheet(f"color: {_C_ERR};")
             self._manual_btn.setVisible(True)
+            self._refresh_inline_btn.setVisible(True)
         elif box_issue and not fixable:
             self._msg_lbl.setText(f"Le boîtier {TARGET_IP} ne répond pas.\nVérifiez qu'il est allumé et que le câble est branché.")
             self._msg_lbl.setStyleSheet(f"color: {_C_ERR};")
@@ -1046,6 +1073,16 @@ class NodeSetupWizard(QDialog):
                 "border-radius: 6px; padding: 12px;")
             lbl.setWordWrap(True); lbl.setAlignment(Qt.AlignCenter)
             self._adapters_layout.insertWidget(0, lbl)
+            btn_scan_again = QPushButton("🔄  Actualiser")
+            btn_scan_again.setFixedHeight(34)
+            btn_scan_again.setCursor(Qt.PointingHandCursor)
+            btn_scan_again.setStyleSheet(
+                "QPushButton { background: #1a2a1a; color: #66cc66; border: 1px solid #336633;"
+                " border-radius: 6px; padding: 0 20px; font-size: 11px; }"
+                "QPushButton:hover { background: #223322; color: #88ee88; border-color: #448844; }"
+            )
+            btn_scan_again.clicked.connect(self._start_adapter_scan)
+            self._adapters_layout.insertWidget(1, btn_scan_again)
         else:
             # Auto-sélection : déjà ok > câble branché > premier
             recommended = next((name for name, ip, d, c in adapters if ip.startswith("2.0.0.")), None)

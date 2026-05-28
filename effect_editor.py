@@ -2385,11 +2385,19 @@ class SimpleEffectPanel(QWidget):
 
         self._ll.addSpacing(4)
 
+        # Placeholder "Sélectionner un effet" (visible quand aucun effet sélectionné)
+        self._no_effect_lbl = QLabel("← Sélectionner un effet")
+        self._no_effect_lbl.setStyleSheet(
+            "color: #2a2a2a; font-size: 11px; font-style: italic; "
+            "background: transparent; padding: 6px 0;"
+        )
+        self._ll.addWidget(self._no_effect_lbl)
+
         # Bouton + sous les couches
-        add_btn = QPushButton("＋  Ajouter une couche")
-        add_btn.setFixedHeight(22)
-        add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.setStyleSheet("""
+        self._add_layer_btn = QPushButton("＋  Ajouter une couche")
+        self._add_layer_btn.setFixedHeight(22)
+        self._add_layer_btn.setCursor(Qt.PointingHandCursor)
+        self._add_layer_btn.setStyleSheet("""
             QPushButton {
                 background: #1a3a1a; color: #55cc55;
                 border: 1px solid #3a6a3a; border-radius: 3px;
@@ -2399,9 +2407,10 @@ class SimpleEffectPanel(QWidget):
             QPushButton:hover { color: #88ff88; border-color: #55aa55; background: #1f4a1f; }
             QPushButton:pressed { background: #0d2a0d; color: #44aa44; }
         """)
-        add_btn.setToolTip("Ajouter une couche")
-        add_btn.clicked.connect(self._on_add_layer)
-        self._ll.addWidget(add_btn)
+        self._add_layer_btn.setToolTip("Ajouter une couche")
+        self._add_layer_btn.clicked.connect(self._on_add_layer)
+        self._add_layer_btn.setVisible(False)
+        self._ll.addWidget(self._add_layer_btn)
 
         self._ll.addSpacing(12)
 
@@ -2741,6 +2750,8 @@ class SimpleEffectPanel(QWidget):
             knob.setEnabled(enabled)
         for btn in self._sens_btns.values():
             btn.setEnabled(enabled)
+        self._no_effect_lbl.setVisible(not enabled)
+        self._add_layer_btn.setVisible(enabled)
 
     # ── Interface publique ────────────────────────────────────────────────────
 

@@ -89,9 +89,12 @@ class RubberBandOverlay(QWidget):
 class LightTimelineEditor(QDialog):
     """Editeur de sequence lumiere - Theme coherent"""
 
+    _saved_geometry = None  # mémorise la taille entre ouvertures
+
     def __init__(self, main_window, media_row):
         super().__init__(main_window,
-            Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint)
+            Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
+            | Qt.WindowCloseButtonHint | Qt.WindowMaximizeButtonHint)
         self.main_window = main_window
         self.media_row = media_row
 
@@ -383,7 +386,23 @@ class LightTimelineEditor(QDialog):
         if self.media_path and os.path.exists(self.media_path) and not is_image and not self.is_tempo:
             QTimer.singleShot(50, self._load_waveform_async)
 
-        # La maximisation est faite par l'appelant via showMaximized() avant exec()
+        if LightTimelineEditor._saved_geometry:
+            self.restoreGeometry(LightTimelineEditor._saved_geometry)
+
+    def closeEvent(self, event):
+        LightTimelineEditor._saved_geometry = self.saveGeometry()
+        # Arrêter le timer de preview
+        if hasattr(self, 'playback_timer'):
+            self.playback_timer.stop()
+        # Blackout : remettre tous les projecteurs à niveau 0 au retour
+        try:
+            for proj in self.main_window.projectors:
+                proj.level = 0
+            if hasattr(self.main_window, 'dmx'):
+                self.main_window.dmx.blackout()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _create_tracks_from_fixtures(self, projectors, tracks_layout):
         """Genere les pistes de la timeline depuis la liste de fixtures"""

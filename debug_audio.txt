@@ -1,0 +1,441 @@
+ï»¿
+raw=0.000038  pass=NON
+raw=0.000031  pass=NON
+raw=0.000033  pass=NON
+raw=0.000030  pass=NON
+raw=0.000035  pass=NON
+raw=0.000032  pass=NON
+raw=0.000034  pass=NON
+raw=0.000031  pass=NON
+raw=0.000039  pass=NON
+raw=0.000030  pass=NON
+raw=0.000032  pass=NON
+raw=0.000031  pass=NON
+raw=0.000038  pass=NON
+raw=0.000032  pass=NON
+raw=0.000035  pass=NON
+raw=0.000032  pass=NON
+raw=0.000034  pass=NON
+raw=0.000033  pass=NON
+raw=0.000037  pass=NON
+raw=0.000037  pass=NON
+raw=0.000031  pass=NON
+raw=0.000030  pass=NON
+raw=0.000033  pass=NON
+raw=0.000034  pass=NON
+raw=0.000029  pass=NON
+raw=0.000033  pass=NON
+raw=0.000034  pass=NON
+raw=0.000033  pass=NON
+raw=0.000036  pass=NON
+raw=0.000034  pass=NON
+raw=0.000033  pass=NON
+raw=0.000040  pass=NON
+raw=0.000033  pass=NON
+raw=0.000035  pass=NON
+raw=0.000035  pass=NON
+raw=0.000034  pass=NON
+raw=0.000039  pass=NON
+raw=0.000032  pass=NON
+raw=0.000035  pass=NON
+raw=0.000039  pass=NON
+raw=0.000036  pass=NON
+raw=0.000031  pass=NON
+raw=0.000037  pass=NON
+raw=0.000030  pass=NON
+raw=0.000039  pass=NON
+raw=0.000032  pass=NON
+raw=0.000030  pass=NON
+raw=0.000033  pass=NON
+raw=0.000036  pass=NON
+raw=0.000032  pass=NON
+raw=0.000033  pass=NON
+raw=0.000031  pass=NON
+raw=0.000034  pass=NON
+raw=0.000033  pass=NON
+raw=0.000035  pass=NON
+raw=0.000030  pass=NON
+raw=0.000040  pass=NON
+raw=0.000033  pass=NON
+raw=0.000036  pass=NON
+raw=0.000038  pass=NON
+raw=0.000033  pass=NON
+raw=0.000036  pass=NON
+raw=0.000034  pass=NON
+raw=0.000040  pass=NON
+raw=0.000033  pass=NON
+raw=0.000035  pass=NON
+raw=0.000040  pass=NON
+raw=0.000033  pass=NON
+raw=0.000033  pass=NON
+raw=0.000032  pass=NON
+raw=0.000036  pass=NON
+raw=0.000030  pass=NON
+raw=0.000039  pass=NON
+raw=0.000035  pass=NON
+raw=0.000033  pass=NON
+raw=0.000038  pass=NON
+raw=0.000036  pass=NON
+raw=0.000035  pass=NON
+raw=0.000040  pass=NON
+raw=0.000032  pass=NON
+raw=0.000034  pass=NON
+raw=0.000041  pass=NON
+raw=0.000035  pass=NON
+raw=0.000037  pass=NON
+raw=0.000035  pass=NON
+raw=0.000033  pass=NON
+raw=0.000035  pass=NON
+raw=0.000034  pass=NON
+raw=0.000037  pass=NON
+raw=0.000040  pass=NON
+raw=0.000034  pass=NON
+raw=0.000029  pass=NON
+raw=0.000038  pass=NON
+raw=0.000031  pass=NON
+raw=0.000036  pass=NON
+raw=0.000032  pass=NON
+raw=0.000031  pass=NON
+raw=0.000031  pass=NON
+raw=0.000035  pass=NON
+raw=0.000033  pass=NON
+raw=0.000042  pass=NON
+raw=0.000033  pass=NON
+raw=0.000030  pass=NON
+raw=0.000031  pass=NON
+
+--- Devices de sortie (défaut=#5) ---
+  [5] Haut-parleurs (USB PnP Audio De [DEFAULT]
+  [4] Mappeur de sons Microsoft - Output
+  [6] Haut-parleurs (Realtek(R) Audio
+  [7] VG245 (2- HD Audio Driver for D
+  [12] Périphérique audio principal
+  [13] Haut-parleurs (USB PnP Audio Device)
+  [14] Haut-parleurs (Realtek(R) Audio)
+  [15] VG245 (2- HD Audio Driver for Display Audio)
+  [16] Haut-parleurs (Realtek(R) Audio)
+  [17] Haut-parleurs (USB PnP Audio Device)
+  [18] VG245 (2- HD Audio Driver for Display Audio)
+  [22] Speakers (Realtek HD Audio output)
+  [24] Headphones (Realtek HD Audio 2nd output)
+  [26] Haut-parleurs ()
+  [27] Casque ()
+  [28] VG245 (ACX HD Audio Speaker)
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC))
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink))
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My))
+  [35] Casque ()
+  [36] Casque ()
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6))
+  [40] Haut-parleurs (USB PnP Audio Device)
+  [5] Haut-parleurs (USB PnP Audio De échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [4] Mappeur de sons Microsoft - Output échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [6] Haut-parleurs (Realtek(R) Audio échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [7] VG245 (2- HD Audio Driver for D échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [12] Périphérique audio principal échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [13] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [14] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [15] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [16] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [17] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [18] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [22] Speakers (Realtek HD Audio output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [24] Headphones (Realtek HD Audio 2nd output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [26] Haut-parleurs () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [27] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [28] VG245 (ACX HD Audio Speaker) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [35] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [36] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [40] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+
+--- Devices de sortie (défaut=#5) ---
+  [5] Haut-parleurs (USB PnP Audio De [DEFAULT]
+  [4] Mappeur de sons Microsoft - Output
+  [6] Haut-parleurs (Realtek(R) Audio
+  [7] VG245 (2- HD Audio Driver for D
+  [12] Périphérique audio principal
+  [13] Haut-parleurs (USB PnP Audio Device)
+  [14] Haut-parleurs (Realtek(R) Audio)
+  [15] VG245 (2- HD Audio Driver for Display Audio)
+  [16] Haut-parleurs (Realtek(R) Audio)
+  [17] Haut-parleurs (USB PnP Audio Device)
+  [18] VG245 (2- HD Audio Driver for Display Audio)
+  [22] Speakers (Realtek HD Audio output)
+  [24] Headphones (Realtek HD Audio 2nd output)
+  [26] Haut-parleurs ()
+  [27] Casque ()
+  [28] VG245 (ACX HD Audio Speaker)
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC))
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink))
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My))
+  [35] Casque ()
+  [36] Casque ()
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6))
+  [40] Haut-parleurs (USB PnP Audio Device)
+  [5] Haut-parleurs (USB PnP Audio De échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [4] Mappeur de sons Microsoft - Output échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [6] Haut-parleurs (Realtek(R) Audio échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [7] VG245 (2- HD Audio Driver for D échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [12] Périphérique audio principal échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [13] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [14] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [15] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [16] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [17] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [18] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [22] Speakers (Realtek HD Audio output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [24] Headphones (Realtek HD Audio 2nd output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [26] Haut-parleurs () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [27] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [28] VG245 (ACX HD Audio Speaker) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [35] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [36] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [40] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+
+--- Devices de sortie (défaut=#5) ---
+  [5] Haut-parleurs (USB PnP Audio De [DEFAULT]
+  [4] Mappeur de sons Microsoft - Output
+  [6] Haut-parleurs (Realtek(R) Audio
+  [7] VG245 (2- HD Audio Driver for D
+  [12] Périphérique audio principal
+  [13] Haut-parleurs (USB PnP Audio Device)
+  [14] Haut-parleurs (Realtek(R) Audio)
+  [15] VG245 (2- HD Audio Driver for Display Audio)
+  [16] Haut-parleurs (Realtek(R) Audio)
+  [17] Haut-parleurs (USB PnP Audio Device)
+  [18] VG245 (2- HD Audio Driver for Display Audio)
+  [22] Speakers (Realtek HD Audio output)
+  [24] Headphones (Realtek HD Audio 2nd output)
+  [26] Haut-parleurs ()
+  [27] Casque ()
+  [28] VG245 (ACX HD Audio Speaker)
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC))
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink))
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My))
+  [35] Casque ()
+  [36] Casque ()
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6))
+  [40] Haut-parleurs (USB PnP Audio Device)
+  [5] Haut-parleurs (USB PnP Audio De échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [4] Mappeur de sons Microsoft - Output échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [6] Haut-parleurs (Realtek(R) Audio échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [7] VG245 (2- HD Audio Driver for D échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [12] Périphérique audio principal échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [13] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [14] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [15] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [16] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [17] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [18] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [22] Speakers (Realtek HD Audio output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [24] Headphones (Realtek HD Audio 2nd output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [26] Haut-parleurs () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [27] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [28] VG245 (ACX HD Audio Speaker) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [35] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [36] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [40] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+
+--- Devices de sortie (défaut=#5) ---
+  [5] Haut-parleurs (USB PnP Audio De [DEFAULT]
+  [4] Mappeur de sons Microsoft - Output
+  [6] Haut-parleurs (Realtek(R) Audio
+  [7] VG245 (2- HD Audio Driver for D
+  [12] Périphérique audio principal
+  [13] Haut-parleurs (USB PnP Audio Device)
+  [14] Haut-parleurs (Realtek(R) Audio)
+  [15] VG245 (2- HD Audio Driver for Display Audio)
+  [16] Haut-parleurs (Realtek(R) Audio)
+  [17] Haut-parleurs (USB PnP Audio Device)
+  [18] VG245 (2- HD Audio Driver for Display Audio)
+  [22] Speakers (Realtek HD Audio output)
+  [24] Headphones (Realtek HD Audio 2nd output)
+  [26] Haut-parleurs ()
+  [27] Casque ()
+  [28] VG245 (ACX HD Audio Speaker)
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC))
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink))
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My))
+  [35] Casque ()
+  [36] Casque ()
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6))
+  [40] Haut-parleurs (USB PnP Audio Device)
+  [5] Haut-parleurs (USB PnP Audio De échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [4] Mappeur de sons Microsoft - Output échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [6] Haut-parleurs (Realtek(R) Audio échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [7] VG245 (2- HD Audio Driver for D échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [12] Périphérique audio principal échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [13] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [14] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [15] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [16] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [17] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [18] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [22] Speakers (Realtek HD Audio output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [24] Headphones (Realtek HD Audio 2nd output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [26] Haut-parleurs () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [27] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [28] VG245 (ACX HD Audio Speaker) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [35] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [36] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [40] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+
+--- Devices de sortie (défaut=#5) ---
+  [5] Haut-parleurs (USB PnP Audio De [DEFAULT]
+  [4] Mappeur de sons Microsoft - Output
+  [6] Haut-parleurs (Realtek(R) Audio
+  [7] VG245 (2- HD Audio Driver for D
+  [12] Périphérique audio principal
+  [13] Haut-parleurs (USB PnP Audio Device)
+  [14] Haut-parleurs (Realtek(R) Audio)
+  [15] VG245 (2- HD Audio Driver for Display Audio)
+  [16] Haut-parleurs (Realtek(R) Audio)
+  [17] Haut-parleurs (USB PnP Audio Device)
+  [18] VG245 (2- HD Audio Driver for Display Audio)
+  [22] Speakers (Realtek HD Audio output)
+  [24] Headphones (Realtek HD Audio 2nd output)
+  [26] Haut-parleurs ()
+  [27] Casque ()
+  [28] VG245 (ACX HD Audio Speaker)
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC))
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink))
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My))
+  [35] Casque ()
+  [36] Casque ()
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6))
+  [40] Haut-parleurs (USB PnP Audio Device)
+  [5] Haut-parleurs (USB PnP Audio De échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [4] Mappeur de sons Microsoft - Output échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [6] Haut-parleurs (Realtek(R) Audio échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [7] VG245 (2- HD Audio Driver for D échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [12] Périphérique audio principal échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [13] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [14] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [15] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [16] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [17] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [18] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [22] Speakers (Realtek HD Audio output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [24] Headphones (Realtek HD Audio 2nd output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [26] Haut-parleurs () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [27] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [28] VG245 (ACX HD Audio Speaker) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [35] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [36] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [40] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+
+--- Devices de sortie (défaut=#5) ---
+  [5] Haut-parleurs (USB PnP Audio De [DEFAULT]
+  [4] Mappeur de sons Microsoft - Output
+  [6] Haut-parleurs (Realtek(R) Audio
+  [7] VG245 (2- HD Audio Driver for D
+  [12] Périphérique audio principal
+  [13] Haut-parleurs (USB PnP Audio Device)
+  [14] Haut-parleurs (Realtek(R) Audio)
+  [15] VG245 (2- HD Audio Driver for Display Audio)
+  [16] Haut-parleurs (Realtek(R) Audio)
+  [17] Haut-parleurs (USB PnP Audio Device)
+  [18] VG245 (2- HD Audio Driver for Display Audio)
+  [22] Speakers (Realtek HD Audio output)
+  [24] Headphones (Realtek HD Audio 2nd output)
+  [26] Haut-parleurs ()
+  [27] Casque ()
+  [28] VG245 (ACX HD Audio Speaker)
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC))
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink))
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My))
+  [35] Casque ()
+  [36] Casque ()
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6))
+  [40] Haut-parleurs (USB PnP Audio Device)
+  [5] Haut-parleurs (USB PnP Audio De échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [4] Mappeur de sons Microsoft - Output échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [6] Haut-parleurs (Realtek(R) Audio échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [7] VG245 (2- HD Audio Driver for D échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [12] Périphérique audio principal échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [13] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [14] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [15] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [16] Haut-parleurs (Realtek(R) Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [17] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [18] VG245 (2- HD Audio Driver for Display Audio) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [22] Speakers (Realtek HD Audio output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [24] Headphones (Realtek HD Audio 2nd output) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [26] Haut-parleurs () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [27] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [28] VG245 (ACX HD Audio Speaker) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [29] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(USB-SPEAKER-MIC)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [31] Casque pour téléphone (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(Bose Mini II SoundLink)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [33] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(AirPods Pro Niko - Find My)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [35] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [36] Casque () échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [38] Casque (@System32\drivers\bthhfenum.sys,#2;%1 Hands-Free%0
+;(WH-1000XM6)) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'
+  [40] Haut-parleurs (USB PnP Audio Device) échoué : WasapiSettings.__init__() got an unexpected keyword argument 'loopback'

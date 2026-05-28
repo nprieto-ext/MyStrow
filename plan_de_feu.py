@@ -799,6 +799,8 @@ class _HSVSlider(QWidget):
 class ColorPickerBlock(QFrame):
     """Color picker HSV avec sliders Teinte/Luminosité."""
 
+    color_changed = Signal(object)   # QColor — émis à chaque changement de couleur
+
     def __init__(self, plan_de_feu, parent=None):
         super().__init__(parent)
         self.plan_de_feu = plan_de_feu
@@ -839,6 +841,14 @@ class ColorPickerBlock(QFrame):
         self._update_sat_stops()
         self._update_bri_stops()
 
+        # Indicateur roue couleur (caché par défaut)
+        self._cw_hint_lbl = QLabel("● Roue couleur")
+        self._cw_hint_lbl.setStyleSheet(
+            "color: #00aaff; font-size: 9px; font-style: italic; padding: 2px 0;")
+        self._cw_hint_lbl.setAlignment(Qt.AlignCenter)
+        self._cw_hint_lbl.setVisible(False)
+        layout.addWidget(self._cw_hint_lbl)
+
     # ── Helpers ───────────────────────────────────────────────────────────────
     @staticmethod
     def _add_row(layout, text: str, value: str) -> QLabel:
@@ -857,6 +867,24 @@ class ColorPickerBlock(QFrame):
 
     def _current_qcolor(self) -> QColor:
         return QColor.fromHsvF(self._h, self._s, self._v)
+
+    def set_color(self, c: QColor):
+        """Met à jour les sliders visuellement SANS émettre de signal ni envoyer de couleur."""
+        self._h = max(0.0, c.hsvHueF()) if c.hsvHueF() >= 0 else 0.0
+        self._s = c.hsvSaturationF()
+        self._v = c.valueF()
+        for sl in (self._hue_slider, self._sat_slider, self._bri_slider):
+            sl.blockSignals(True)
+        self._hue_slider.set_value(self._h)
+        self._sat_slider.set_value(self._s)
+        self._bri_slider.set_value(self._v)
+        for sl in (self._hue_slider, self._sat_slider, self._bri_slider):
+            sl.blockSignals(False)
+        self._hue_val_lbl.setText(f"{int(self._h * 359)}°")
+        self._sat_val_lbl.setText(f"{int(self._s * 100)}%")
+        self._bri_val_lbl.setText(f"{int(self._v * 100)}%")
+        self._update_sat_stops()
+        self._update_bri_stops()
 
     def _update_sat_stops(self):
         white = QColor(255, 255, 255)
@@ -901,6 +929,8 @@ class ColorPickerBlock(QFrame):
 
     def update_selection_state(self):
         pdf = self.plan_de_feu
+        if not pdf:
+            return
         has_rgb = False
         has_cw_only = False
         if getattr(pdf, 'selected_lamps', None):
@@ -914,41 +944,63 @@ class ColorPickerBlock(QFrame):
         # Grisé seulement si 100% Color Wheel (aucun RGB dans la sélection)
         is_cw = has_cw_only and not has_rgb
         self._cw_locked = is_cw
-        from PySide6.QtWidgets import QGraphicsOpacityEffect
-        # Hue + Sat : désactivés pour Color Wheel only
-        for w in (self._hue_slider, self._sat_slider):
-            w.setEnabled(not is_cw)
-            if is_cw:
-                eff = QGraphicsOpacityEffect(w)
-                eff.setOpacity(0.35)
-                w.setGraphicsEffect(eff)
-            else:
-                w.setGraphicsEffect(None)
-        # Luminosité : toujours actif
-        self._bri_slider.setEnabled(True)
-        self._bri_slider.setGraphicsEffect(None)
+        # Tous les sliders actifs — pour la roue couleur, la teinte est mappée au slot le plus proche
+        for w in (self._hue_slider, self._sat_slider, self._bri_slider):
+            w.setEnabled(True)
+            w.setGraphicsEffect(None)
+
+        # Indicateur roue couleur
+        if hasattr(self, '_cw_hint_lbl'):
+            self._cw_hint_lbl.setVisible(is_cw)
 
     # ── DMX output ────────────────────────────────────────────────────────────
     def _send_color(self, color: QColor):
+        self.color_changed.emit(color)
         pdf = self.plan_de_feu
-        if not pdf.selected_lamps:
+        if not pdf or not getattr(pdf, 'selected_lamps', None):
             return
         targets = []
         for g, i in pdf.selected_lamps:
             projs = [p for p in pdf.projectors if p.group == g]
             if i < len(projs):
                 targets.append((projs[i], g, i))
+        _cw_matched_name = None
         for proj, g, i in targets:
             if self._is_cw_only(proj):
-                # Color Wheel : luminosité uniquement, pas de changement de couleur
+                # Color Wheel : mapper la couleur choisie vers le slot le plus proche
+                slots = getattr(proj, 'color_wheel_slots', [])
                 proj.level = max(0, min(100, int(self._v * 100)))
-                br = proj.level / 100.0
-                bc = proj.base_color if proj.base_color else QColor(255, 255, 255)
-                proj.color = QColor(int(bc.red() * br), int(bc.green() * br), int(bc.blue() * br))
+                if slots:
+                    def _dist(s):
+                        sc = QColor(s.get('color', '#ffffff'))
+                        dr = sc.red()   - color.red()
+                        dg = sc.green() - color.green()
+                        db = sc.blue()  - color.blue()
+                        return dr*dr + dg*dg + db*db
+                    best = min(slots, key=_dist)
+                    proj.color_wheel = int(best.get('dmx', 0))
+                    # Feedback visuel : base_color = couleur réelle du slot
+                    slot_color = QColor(best.get('color', '#ffffff'))
+                    proj.base_color = slot_color
+                    br = proj.level / 100.0
+                    proj.color = QColor(int(slot_color.red() * br),
+                                        int(slot_color.green() * br),
+                                        int(slot_color.blue() * br))
+                    _cw_matched_name = best.get('name', '')
+                else:
+                    # Pas de slots définis — fallback luminosité uniquement
+                    br = proj.level / 100.0
+                    bc = proj.base_color if proj.base_color else QColor(255, 255, 255)
+                    proj.color = QColor(int(bc.red() * br), int(bc.green() * br), int(bc.blue() * br))
                 continue
             proj.base_color = color
             proj.level = 100
             proj.color = QColor(color.red(), color.green(), color.blue())
+
+        # Afficher le nom du slot matchédans l'indicateur
+        if _cw_matched_name is not None and hasattr(self, '_cw_hint_lbl'):
+            self._cw_hint_lbl.setText(f"Roue : {_cw_matched_name}")
+            self._cw_hint_lbl.setVisible(True)
         if pdf.main_window and hasattr(pdf.main_window, 'dmx') and pdf.main_window.dmx:
             pdf.main_window.dmx.update_from_projectors(pdf.projectors)
         pdf.refresh()

@@ -918,6 +918,25 @@ class LibraryPanel(QScrollArea):
         hdr_h.addWidget(self._sel_lbl)
         v.addWidget(hdr_row)
 
+        # ── Barre de recherche ────────────────────────────────────────────
+        search_row = QWidget()
+        search_row.setStyleSheet("background: #0a0a0a; border-bottom: 1px solid #161616;")
+        sr_h = QHBoxLayout(search_row)
+        sr_h.setContentsMargins(8, 4, 8, 4)
+        sr_h.setSpacing(4)
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Rechercher…")
+        self._search_input.setClearButtonEnabled(True)
+        self._search_input.setFixedHeight(24)
+        self._search_input.setStyleSheet(
+            "QLineEdit { background: #161616; color: #ccc; border: 1px solid #2a2a2a; "
+            "border-radius: 4px; padding: 0 8px; font-size: 11px; } "
+            "QLineEdit:focus { border-color: #00d4ff44; }"
+        )
+        self._search_input.textChanged.connect(self._filter)
+        sr_h.addWidget(self._search_input)
+        v.addWidget(search_row)
+
         self._sec_color      = _LibrarySection("COULEUR", v)
         self._sec_bi         = _LibrarySection("BICOULEUR", v)
         self._sec_mem        = _LibrarySection("MÉMOIRE", v)
@@ -930,6 +949,23 @@ class LibraryPanel(QScrollArea):
 
         self._populate_static()
         self.refresh()
+
+    def _filter(self, text: str):
+        """Filtre les items de la bibliothèque selon le texte de recherche."""
+        query = text.strip().lower()
+        for item in self._safe_items():
+            visible = not query or query in item._name.lower()
+            item.setVisible(visible)
+        # Masquer les sections entièrement vides
+        for sec in (self._sec_color, self._sec_bi, self._sec_mem,
+                    self._sec_pos, self._sec_eff, self._sec_custom_eff):
+            body = sec._body
+            any_visible = any(
+                body.layout().itemAt(i).widget().isVisible()
+                for i in range(body.layout().count())
+                if body.layout().itemAt(i).widget()
+            )
+            sec.setVisible(any_visible or not query)
 
     def wheelEvent(self, event):
         """Scroll vertical de la bibliothèque — ne remonte jamais à la timeline."""

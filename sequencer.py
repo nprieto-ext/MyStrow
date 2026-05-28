@@ -356,27 +356,25 @@ class LiveSettingsDialog(QDialog):
 
     def __init__(self, config: dict, sources: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Paramètres Live")
+        self.setWindowTitle("PARAMETRE LIVE")
         self.setModal(True)
-        self.setMinimumWidth(500)
-        # Deep copy config
+        self.setMinimumWidth(420)
+        # Deep copy config (on garde 'allowed_groups' + 'no_auto_strobe' uniquement)
         self._config = {
-            'source':          config.get('source', 'loopback'),
-            'allowed_groups':  set(config.get('allowed_groups', set())),
-            'allowed_effects': set(config.get('allowed_effects', set())),
-            'lyre_presets':    list(config.get('lyre_presets', [])),
-            'palette':         list(config.get('palette', [])),
+            'source':           config.get('source', 'loopback'),
+            'allowed_groups':   set(config.get('allowed_groups', set())),
+            'no_auto_strobe':   config.get('no_auto_strobe', False),
+            # champs hérités conservés pour compatibilité (non éditables ici)
+            'allowed_effects':  set(),
+            'lyre_presets':     [],
+            'palette':          [],
         }
-        self._sources      = sources
-        self._color_btns   = []   # [(QPushButton, QColor)]
-        self._preset_rows  = []   # [(QWidget, pan_spin, tilt_spin)]
-        self._pos_getter   = None
+        self._sources = sources
         self._setup_ui()
         self._load_config()
 
     def set_position_getter(self, fn):
-        self._pos_getter = fn
-        self._cap_btn.setVisible(fn is not None)
+        pass   # positions lyres retirées de ce dialog
 
     # ── UI ──────────────────────────────────────────────────────────────────────
 
@@ -432,75 +430,28 @@ class LiveSettingsDialog(QDialog):
         # ── Groupes éclairage ───────────────────────────────────────────────────
         root.addWidget(self._slbl("GROUPES ÉCLAIRAGE  —  vide = tous autorisés", LS))
         grp_row = QHBoxLayout()
-        grp_row.setSpacing(6)
+        grp_row.setSpacing(8)
         self._grp_btns = {}
-        for gid, lbl in [('face','Face'), ('douche','Douche'),
-                          ('lat','Lat'), ('contre','Contre'), ('lyre','Lyres')]:
-            b = self._mkbtn(lbl)
+        _GROUPS = [
+            ('face',     'A', 'Face'),
+            ('lat',      'B', 'Lat'),
+            ('contre',   'C', 'Contre'),
+            ('douche1',  'D', 'Douche 1'),
+            ('douche2',  'E', 'Douche 2'),
+            ('douche3',  'F', 'Douche 3'),
+            ('groupe_g', 'G', 'Groupe G'),
+            ('groupe_h', 'H', 'Groupe H'),
+        ]
+        for gid, letter, fullname in _GROUPS:
+            b = self._mkbtn(letter)
+            b.setFixedSize(36, 36)
+            b.setToolTip(fullname)
             self._grp_btns[gid] = b
             grp_row.addWidget(b)
+        grp_row.addStretch()
         root.addLayout(grp_row)
         root.addWidget(self._sep())
 
-        # ── Effets autorisés ────────────────────────────────────────────────────
-        root.addWidget(self._slbl("EFFETS AUTORISÉS  —  vide = tous autorisés", LS))
-        eff_row = QHBoxLayout()
-        eff_row.setSpacing(6)
-        self._eff_btns = {}
-        for eid, lbl in [('flash','Flash'), ('strobe','Strobe'), ('gobo','Gobo'),
-                          ('auto','AUTO ⚡'), ('circle','Cercle'), ('eight','Huit')]:
-            b = self._mkbtn(lbl)
-            self._eff_btns[eid] = b
-            eff_row.addWidget(b)
-        root.addLayout(eff_row)
-        root.addWidget(self._sep())
-
-        # ── Positions lyres ─────────────────────────────────────────────────────
-        pos_hdr = QHBoxLayout()
-        pos_hdr.addWidget(self._slbl("POSITIONS LYRES PRÉDÉFINIES", LS))
-        pos_hdr.addStretch()
-        add_p = QPushButton("+ Ajouter")
-        add_p.setFixedHeight(24)
-        add_p.setStyleSheet(self._gbtn())
-        add_p.setCursor(Qt.PointingHandCursor)
-        add_p.clicked.connect(lambda: self._add_preset_row(128, 128))
-        pos_hdr.addWidget(add_p)
-        self._cap_btn = QPushButton("📍 Capturer")
-        self._cap_btn.setFixedHeight(24)
-        self._cap_btn.setStyleSheet(self._gbtn())
-        self._cap_btn.setCursor(Qt.PointingHandCursor)
-        self._cap_btn.clicked.connect(self._capture_positions)
-        self._cap_btn.setVisible(False)
-        pos_hdr.addWidget(self._cap_btn)
-        root.addLayout(pos_hdr)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(110)
-        self._pos_container = QWidget()
-        self._pos_layout = QVBoxLayout(self._pos_container)
-        self._pos_layout.setContentsMargins(0, 4, 0, 4)
-        self._pos_layout.setSpacing(4)
-        self._pos_layout.addStretch()
-        scroll.setWidget(self._pos_container)
-        root.addWidget(scroll)
-        root.addWidget(self._sep())
-
-        # ── Palette couleurs ────────────────────────────────────────────────────
-        root.addWidget(self._slbl("PALETTE COULEURS  —  vide = palette auto", LS))
-        pal_w = QWidget()
-        self._pal_row = QHBoxLayout(pal_w)
-        self._pal_row.setContentsMargins(0, 0, 0, 0)
-        self._pal_row.setSpacing(6)
-        self._pal_row.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        add_c = QPushButton("+")
-        add_c.setFixedSize(36, 36)
-        add_c.setToolTip("Ajouter une couleur")
-        add_c.setStyleSheet(self._gbtn() + " QPushButton { font-size:18px; }")
-        add_c.setCursor(Qt.PointingHandCursor)
-        add_c.clicked.connect(self._add_palette_color)
-        self._pal_row.addWidget(add_c)
-        root.addWidget(pal_w)
         root.addWidget(self._sep())
 
         # ── Boutons ─────────────────────────────────────────────────────────────
@@ -580,81 +531,6 @@ class LiveSettingsDialog(QDialog):
                 "padding:0 10px;font-size:11px;}"
                 "QPushButton:hover{background:#1e1e1e;border-color:#333;color:#888;}")
 
-    # ── Positions lyres ──────────────────────────────────────────────────────────
-
-    def _add_preset_row(self, pan: int, tilt: int):
-        row_w = QWidget()
-        rl = QHBoxLayout(row_w)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(8)
-        pan_lbl = QLabel("Pan")
-        pan_lbl.setStyleSheet("color:#666; font-size:11px;")
-        pan_s = QSpinBox()
-        pan_s.setRange(0, 255)
-        pan_s.setValue(pan)
-        pan_s.setFixedWidth(70)
-        tlt_lbl = QLabel("Tilt")
-        tlt_lbl.setStyleSheet("color:#666; font-size:11px;")
-        tlt_s = QSpinBox()
-        tlt_s.setRange(0, 255)
-        tlt_s.setValue(tilt)
-        tlt_s.setFixedWidth(70)
-        rm = QPushButton("✕")
-        rm.setFixedSize(22, 22)
-        rm.setCursor(Qt.PointingHandCursor)
-        rm.setStyleSheet("""
-            QPushButton{background:#1a0808;color:#aa3333;
-                border:1px solid #3a1818;border-radius:4px;padding:0;font-size:10px;}
-            QPushButton:hover{background:#2a1010;}
-        """)
-        rm.clicked.connect(lambda: self._rm_preset(row_w))
-        rl.addWidget(pan_lbl); rl.addWidget(pan_s)
-        rl.addWidget(tlt_lbl); rl.addWidget(tlt_s)
-        rl.addStretch(); rl.addWidget(rm)
-        self._pos_layout.insertWidget(self._pos_layout.count() - 1, row_w)
-        self._preset_rows.append((row_w, pan_s, tlt_s))
-
-    def _rm_preset(self, w: QWidget):
-        self._preset_rows = [(rw, p, t) for rw, p, t in self._preset_rows if rw is not w]
-        w.deleteLater()
-
-    def _capture_positions(self):
-        if self._pos_getter:
-            for pan, tilt in self._pos_getter():
-                self._add_preset_row(pan, tilt)
-
-    # ── Palette ──────────────────────────────────────────────────────────────────
-
-    def _add_color_swatch(self, color: QColor):
-        btn = QPushButton()
-        btn.setFixedSize(36, 36)
-        btn.setCursor(Qt.PointingHandCursor)
-        h = color.name()
-        btn.setToolTip(h)
-        btn.setStyleSheet(
-            f"QPushButton{{background:{h};border:2px solid #3a3a3a;border-radius:4px;}}"
-            "QPushButton:hover{border-color:#00d4ff;}")
-        btn.setContextMenuPolicy(Qt.CustomContextMenu)
-        btn.customContextMenuRequested.connect(lambda _pos, b=btn: self._swatch_menu(b))
-        self._pal_row.insertWidget(self._pal_row.count() - 1, btn)
-        self._color_btns.append((btn, color))
-
-    def _swatch_menu(self, btn):
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu{background:#1a1a1a;color:#e0e0e0;border:1px solid #3a3a3a;}
-            QMenu::item:selected{background:#2a2a2a;}
-        """)
-        rm = menu.addAction("Supprimer")
-        if menu.exec(btn.mapToGlobal(btn.rect().bottomLeft())) == rm:
-            self._color_btns = [(b, c) for b, c in self._color_btns if b is not btn]
-            btn.deleteLater()
-
-    def _add_palette_color(self):
-        c = QColorDialog.getColor(QColor("#ff4400"), self, "Ajouter une couleur",
-                                  QColorDialog.DontUseNativeDialog)
-        if c.isValid():
-            self._add_color_swatch(c)
 
     # ── Load / Reset / Apply ─────────────────────────────────────────────────────
 
@@ -667,38 +543,402 @@ class LiveSettingsDialog(QDialog):
         ag = self._config.get('allowed_groups', set())
         for gid, b in self._grp_btns.items():
             b.setChecked(gid in ag)
-        ae = self._config.get('allowed_effects', set())
-        for eid, b in self._eff_btns.items():
-            b.setChecked(eid in ae)
-        for pan, tilt in self._config.get('lyre_presets', []):
-            self._add_preset_row(pan, tilt)
-        for c in self._config.get('palette', []):
-            self._add_color_swatch(c)
 
     def _reset_all(self):
         for b in self._grp_btns.values():
             b.setChecked(False)
-        for b in self._eff_btns.values():
-            b.setChecked(False)
-        for w, _, _ in list(self._preset_rows):
-            w.deleteLater()
-        self._preset_rows.clear()
-        for b, _ in list(self._color_btns):
-            b.deleteLater()
-        self._color_btns.clear()
 
     def _do_apply(self):
         idx = self._source_combo.currentIndex()
-        self._config['source'] = (self._sources[idx][1]
-                                  if 0 <= idx < len(self._sources) else 'loopback')
-        self._config['allowed_groups']  = {g for g, b in self._grp_btns.items() if b.isChecked()}
-        self._config['allowed_effects'] = {e for e, b in self._eff_btns.items() if b.isChecked()}
-        self._config['lyre_presets']    = [(p.value(), t.value()) for _, p, t in self._preset_rows]
-        self._config['palette']         = [c for _, c in self._color_btns]
+        self._config['source']         = (self._sources[idx][1]
+                                          if 0 <= idx < len(self._sources) else 'loopback')
+        self._config['allowed_groups'] = {g for g, b in self._grp_btns.items() if b.isChecked()}
         self.accept()
 
     def get_config(self) -> dict:
         return self._config
+
+
+class _ModeTile(QFrame):
+    """Tuile cliquable de sélection de mode LIVE."""
+    clicked = Signal(str)
+
+    _CSS_IDLE = """
+        _ModeTile {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+        }
+    """
+    _CSS_ACTIVE = """
+        _ModeTile {
+            background: #130a2a;
+            border: 2px solid #7733ff;
+            border-radius: 8px;
+        }
+    """
+
+    def __init__(self, key: str, icon: str, title: str, subtitle: str, parent=None):
+        super().__init__(parent)
+        self._key = key
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(84)
+        self.setStyleSheet(self._CSS_IDLE)
+
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(6, 8, 6, 8)
+        vbox.setSpacing(3)
+
+        icon_lbl = QLabel(icon)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet("font-size:18px; background:transparent; border:none;")
+
+        title_lbl = QLabel(title)
+        title_lbl.setAlignment(Qt.AlignCenter)
+        title_lbl.setWordWrap(True)
+        title_lbl.setStyleSheet(
+            "color:#e0e0e0; font-size:10px; font-weight:bold;"
+            " letter-spacing:1px; background:transparent; border:none;")
+
+        sub_lbl = QLabel(subtitle)
+        sub_lbl.setAlignment(Qt.AlignCenter)
+        sub_lbl.setWordWrap(True)
+        sub_lbl.setStyleSheet(
+            "color:#999; font-size:11px; font-style:italic;"
+            " background:transparent; border:none;")
+
+        vbox.addWidget(icon_lbl)
+        vbox.addWidget(title_lbl)
+        vbox.addWidget(sub_lbl)
+
+    def set_active(self, active: bool):
+        self.setStyleSheet(self._CSS_ACTIVE if active else self._CSS_IDLE)
+
+    def mousePressEvent(self, event):
+        self.clicked.emit(self._key)
+        super().mousePressEvent(event)
+
+
+class _MovTile(QFrame):
+    """Tuile de pattern de mouvement lyre (grille MOUVEMENTS).
+
+    Trois états visuels :
+      - idle     : gris, non sélectionné
+      - selected : violet pâle, dans le pool de mouvements (sera joué)
+      - playing  : violet vif + bordure lumineuse, en cours d'exécution
+    """
+    clicked = Signal(str)
+
+    _CSS_IDLE = """
+        _MovTile {
+            background: #141414;
+            border: 1px solid #252525;
+            border-radius: 6px;
+        }
+    """
+    _CSS_SELECTED = """
+        _MovTile {
+            background: #0e0720;
+            border: 1px solid #4411aa;
+            border-radius: 6px;
+        }
+    """
+    _CSS_PLAYING = """
+        _MovTile {
+            background: #1e0a42;
+            border: 2px solid #bb77ff;
+            border-radius: 6px;
+        }
+    """
+    # Alias pour compatibilité ascendante
+    _CSS_ACTIVE = _CSS_PLAYING
+
+    def __init__(self, key: str, icon: str, label: str, parent=None):
+        super().__init__(parent)
+        self._key = key
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(54)
+        self.setStyleSheet(self._CSS_IDLE)
+
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(4, 6, 4, 6)
+        vbox.setSpacing(2)
+
+        self._icon_lbl = QLabel(icon)
+        self._icon_lbl.setAlignment(Qt.AlignCenter)
+        self._icon_lbl.setStyleSheet(
+            "font-size:15px; background:transparent; border:none; color:#555;")
+
+        self._title_lbl = QLabel(label)
+        self._title_lbl.setAlignment(Qt.AlignCenter)
+        self._title_lbl.setStyleSheet(
+            "color:#555; font-size:8px; font-weight:bold; letter-spacing:0.5px;"
+            " background:transparent; border:none;")
+
+        vbox.addWidget(self._icon_lbl)
+        vbox.addWidget(self._title_lbl)
+
+    def set_state(self, selected: bool, playing: bool):
+        """Met à jour l'apparence selon l'état (idle / selected / playing)."""
+        if playing:
+            self.setStyleSheet(self._CSS_PLAYING)
+            self._icon_lbl.setStyleSheet(
+                "font-size:15px; background:transparent; border:none; color:#dd99ff;")
+            self._title_lbl.setStyleSheet(
+                "color:#aa77ff; font-size:8px; font-weight:bold; letter-spacing:0.5px;"
+                " background:transparent; border:none;")
+        elif selected:
+            self.setStyleSheet(self._CSS_SELECTED)
+            self._icon_lbl.setStyleSheet(
+                "font-size:15px; background:transparent; border:none; color:#7744cc;")
+            self._title_lbl.setStyleSheet(
+                "color:#5533aa; font-size:8px; font-weight:bold; letter-spacing:0.5px;"
+                " background:transparent; border:none;")
+        else:
+            self.setStyleSheet(self._CSS_IDLE)
+            self._icon_lbl.setStyleSheet(
+                "font-size:15px; background:transparent; border:none; color:#555;")
+            self._title_lbl.setStyleSheet(
+                "color:#555; font-size:8px; font-weight:bold; letter-spacing:0.5px;"
+                " background:transparent; border:none;")
+
+    def set_active(self, active: bool):
+        """Compat ascendante — utiliser set_state() de préférence."""
+        self.set_state(selected=active, playing=active)
+
+    def mousePressEvent(self, event):
+        self.clicked.emit(self._key)
+        super().mousePressEvent(event)
+
+class _ColorTile(QWidget):
+    """Tuile couleur ronde — cercle peint + label.
+
+    AUTO      → cercle sombre avec contour cyan
+    Mono      → cercle plein coloré
+    Bicolore  → cercle coupé diagonalement en deux couleurs
+    États : idle (anneau discret) / selected (anneau violet) / playing (anneau vif + glow)
+    """
+    clicked = Signal(str)
+    D = 36   # diamètre du cercle
+
+    def __init__(self, key: str, color1, color2, label: str, parent=None):
+        super().__init__(parent)
+        self._key    = key
+        self._c1     = QColor(color1) if color1 else None
+        self._c2     = QColor(color2) if color2 else None
+        self._label  = label
+        self._state  = 'idle'   # 'idle' | 'selected' | 'playing'
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(self.D + 8, self.D + 16)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def set_state(self, selected: bool, playing: bool):
+        new = 'playing' if playing else ('selected' if selected else 'idle')
+        if new != self._state:
+            self._state = new
+            self.update()
+
+    def set_active(self, active: bool):
+        self.set_state(active, active)
+
+    def paintEvent(self, _):
+        from PySide6.QtGui import QPainter, QPainterPath, QRadialGradient, QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        cx = self.width() // 2
+        r  = self.D // 2
+        cy = r + 2   # centre vertical du cercle
+
+        # ── Glow playing ──────────────────────────────────────────────────
+        if self._state == 'playing':
+            g = QRadialGradient(cx, cy, r + 6)
+            g.setColorAt(0.0, QColor(180, 100, 255, 80))
+            g.setColorAt(1.0, QColor(0, 0, 0, 0))
+            p.setBrush(g)
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(cx - r - 6, cy - r - 6, (r + 6) * 2, (r + 6) * 2)
+
+        # ── Dessin du cercle ───────────────────────────────────────────────
+        path = QPainterPath()
+        path.addEllipse(cx - r, cy - r, self.D, self.D)
+        p.setClipPath(path)
+
+        if self._c1 is None:
+            # AUTO
+            p.fillPath(path, QColor('#0a1520'))
+        elif self._c2 is None:
+            # Mono
+            p.fillPath(path, self._c1)
+        else:
+            # Bicolore : moitié gauche / moitié droite
+            from PySide6.QtGui import QPolygonF
+            from PySide6.QtCore import QPointF
+            left = QPainterPath()
+            left.addRect(cx - r, cy - r, r, self.D)
+            left = left.intersected(path)
+            p.fillPath(left, self._c1)
+            right = QPainterPath()
+            right.addRect(cx, cy - r, r, self.D)
+            right = right.intersected(path)
+            p.fillPath(right, self._c2)
+
+        p.setClipping(False)
+
+        # ── Anneau d'état ─────────────────────────────────────────────────
+        if self._state == 'playing':
+            pen = QPen(QColor('#cc88ff'), 2.5)
+        elif self._state == 'selected':
+            pen = QPen(QColor('#6633bb'), 1.5)
+        elif self._c1 is None:
+            pen = QPen(QColor('#00d4ff'), 1.5)
+        else:
+            pen = QPen(QColor('#2a2a2a'), 1)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(cx - r + 1, cy - r + 1, self.D - 2, self.D - 2)
+
+        # ── Checkmark (sélectionné ou en cours) ───────────────────────────
+        if self._state in ('selected', 'playing'):
+            ck_color = QColor('#ffffff') if self._state == 'playing' else QColor('#cc88ff')
+            ck_pen = QPen(ck_color, 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(ck_pen)
+            # Petit ✓ centré dans le cercle
+            _ox, _oy = cx - 5, cy - 2
+            from PySide6.QtCore import QLineF
+            p.drawLine(int(_ox),     int(_oy + 4),
+                       int(_ox + 3), int(_oy + 7))
+            p.drawLine(int(_ox + 3), int(_oy + 7),
+                       int(_ox + 9), int(_oy))
+
+        # ── Label ─────────────────────────────────────────────────────────
+        if self._state == 'playing':
+            p.setPen(QColor('#cc88ff'))
+        elif self._state == 'selected':
+            p.setPen(QColor('#7744cc'))
+        else:
+            p.setPen(QColor('#444'))
+        from PySide6.QtGui import QFont as _QFont
+        f = _QFont(); f.setPointSize(7); f.setBold(True)
+        p.setFont(f)
+        p.drawText(0, cy + r + 2, self.width(), 12, Qt.AlignHCenter, self._label)
+        p.end()
+
+    def mousePressEvent(self, event):
+        self.clicked.emit(self._key)
+        super().mousePressEvent(event)
+
+
+class _SpecialTile(_MovTile):
+    """Tuile d'effet spécial — même design que _MovTile.
+    Comportement toggle : cliquer sur l'actif le désactive.
+    """
+
+    def __init__(self, key: str, icon: str, label: str, desc: str, accent: str, parent=None):
+        super().__init__(key, icon, label, parent)
+        self._active = False
+        self.setToolTip(desc)
+
+    def set_active(self, active: bool):
+        self._active = active
+        self.set_state(selected=active, playing=active)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _VuSensWidget(QWidget):
+    """VU-mètre + marqueur de seuil de sensibilité fusionnés.
+    - Barre de niveau audio (gradient bleu)
+    - Marqueur blanc déplaçable = seuil de détection des beats
+    """
+    valueChanged = Signal(int)   # sensibilité 0-100
+
+    def __init__(self, initial_sens=80, parent=None):
+        super().__init__(parent)
+        self._level = 0           # niveau VU courant (0-100)
+        self._sens  = initial_sens
+        self._dragging = False
+        self.setFixedHeight(18)
+        self.setCursor(Qt.SizeHorCursor)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+
+        # Proxy QSlider caché pour compatibilité signaux
+        self._sens_proxy = QSlider(Qt.Horizontal)
+        self._sens_proxy.setRange(0, 100)
+        self._sens_proxy.setValue(initial_sens)
+        self._sens_proxy.hide()
+        self._sens_proxy.valueChanged.connect(self._on_proxy_changed)
+
+    def _on_proxy_changed(self, v):
+        self._sens = v
+        self.update()
+
+    # Compat QProgressBar.setValue (appelé par set_vu)
+    def setValue(self, v: int):
+        self._level = max(0, min(100, v))
+        self.update()
+
+    def setRange(self, lo, hi): pass
+    def setTextVisible(self, v): pass
+
+    def paintEvent(self, _):
+        from PySide6.QtGui import QPainter, QLinearGradient, QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Fond
+        p.setBrush(QColor('#0d1a28'))
+        p.setPen(QPen(QColor('#1a3050'), 1))
+        p.drawRoundedRect(0, 0, w, h, 3, 3)
+
+        # Barre VU — niveau affiché réduit proportionnellement à la sensibilité
+        _displayed = self._level * (self._sens / 100.0)
+        fill_w = int(w * _displayed / 100)
+        if fill_w > 0:
+            g = QLinearGradient(0, 0, w, 0)
+            g.setColorAt(0.0,  QColor('#003355'))
+            g.setColorAt(0.65, QColor('#0088cc'))
+            g.setColorAt(0.92, QColor('#00d4ff'))
+            g.setColorAt(1.0,  QColor('#ffffff'))
+            p.setBrush(g)
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(1, 1, fill_w - 1, h - 2, 2, 2)
+
+        # Marqueur seuil (ligne blanche + triangle)
+        mx = int(w * self._sens / 100)
+        p.setPen(QPen(QColor('#ffffff'), 2))
+        p.drawLine(mx, 0, mx, h)
+        # Petit triangle indicateur en haut
+        from PySide6.QtGui import QPolygon
+        from PySide6.QtCore import QPoint
+        tri = QPolygon([QPoint(mx-4, 0), QPoint(mx+4, 0), QPoint(mx, 5)])
+        p.setBrush(QColor('#ffffff'))
+        p.setPen(Qt.NoPen)
+        p.drawPolygon(tri)
+        p.end()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._dragging = True
+            self._set_from_x(e.position().x())
+            e.accept()
+
+    def mouseMoveEvent(self, e):
+        if self._dragging:
+            self._set_from_x(e.position().x())
+            e.accept()
+
+    def mouseReleaseEvent(self, e):
+        self._dragging = True
+        e.accept()
+
+    def _set_from_x(self, x):
+        v = max(0, min(100, int(x / max(1, self.width()) * 100)))
+        self._sens = v
+        self._sens_proxy.setValue(v)
+        self.valueChanged.emit(v)
+        self.update()
 
 
 class LiveModePanel(QWidget):
@@ -707,18 +947,24 @@ class LiveModePanel(QWidget):
     color_changed       = Signal(object)  # QColor
     nervosity_changed   = Signal(int)     # 0–100
     sensitivity_changed = Signal(int)     # 0–100
+    luminosity_changed  = Signal(int)     # 0–100
     lyre_mode_changed   = Signal(str)     # '' | 'circle' | 'eight'
     bpm_override        = Signal(float)   # BPM manuel
     bpm_released        = Signal()        # retour auto
     settings_applied    = Signal(dict)    # config live mise à jour
+    ia_mode_changed     = Signal(str)     # 'musical' | 'ambiance' | 'manuel'
+    source_changed      = Signal(str)     # nouvelle source_key
+    movement_changed    = Signal(str)     # pattern mouvement lyre
+
+    # Sources fixes + périphériques dynamiques (ajoutés à l'init)
+    _SOURCES_STATIC = [
+        ("Micro / Line In",                              "mic"),
+        ("MIDI Clock  (VirtualDJ, Rekordbox, Serato…)",  "midi_clock"),
+    ]
 
     SOURCES = [
-        ("Loopback système",   "loopback"),
-        ("Micro / Line In",    "mic"),
-        ("MIDI Clock",         "midi_clock"),
-        ("Virtual DJ",         "virtualdj"),
-        ("Rekordbox",          "rekordbox"),
-        ("Analyse IA (fichier)", "ia_file"),
+        ("Micro / Line In",                              "mic"),
+        ("MIDI Clock  (VirtualDJ, Rekordbox, Serato…)",  "midi_clock"),
     ]
 
     # Styles des sections musicales pour l'indicateur animé
@@ -731,11 +977,8 @@ class LiveModePanel(QWidget):
     }
 
     _SOURCE_INFO = {
-        "loopback":   "Spotify, YouTube, VLC, Deezer, tout lecteur système",
         "mic":        "Table de mixage, micro, entrée ligne, interface audio",
-        "midi_clock": "Rekordbox · Traktor · Virtual DJ · Ableton · Serato · Mixxx",
-        "virtualdj":  "Virtual DJ 8 / 2023 / 2024  —  HTTP localhost:8088",
-        "rekordbox":  "Rekordbox 6+  —  Préférences › MIDI › activer MIDI Clock",
+        "midi_clock": "BPM + beats via loopMIDI — VirtualDJ, Rekordbox, Serato, Traktor…",
         "ia_file":    "Utilise la pré-analyse IA du fichier en cours — beats parfaitement calés",
     }
 
@@ -756,25 +999,244 @@ class LiveModePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.dominant_color = QColor("#ff4400")
+        self.color2         = QColor("#0044ff")
         self._pulse_phase   = 0
         self._pulse_section = ''
-        self._bpm_manual    = False
+        self._bpm_manual        = False
+        self._sync_tap_times: list = []   # timestamps des taps SYNC
+        self._sync_reset_timer = None     # QTimer reset après inactivité
+        self._ia_mode            = 'musical'
+        self._movement_patterns  = {'cercle'}   # set des mouvements sélectionnés
+        self._current_movement   = 'cercle'     # mouvement en cours d'exécution
+        self._movement_speed     = 50
+        self._movement_size      = 70
+        self._movement_duration  = 40         # durée en % (0-100)
+        # ── Couleurs lyres (pool + cycle, même principe que mouvements) ────
+        self._color_tile_pool  = {'rouge', 'orange', 'jaune', 'ambre'}
+        self._current_color    = 'rouge'
+        self._color_duration   = 40         # durée en % (0-100)
+        self._color_restrict   = True       # toujours restreindre à la sélection
+        # Enrichir SOURCES avec les périphériques audio détectés
+        self._refresh_audio_sources()
+
+        self._color_max        = 4          # nombre de couleurs simultanées max (1-4)
+        # ── Effet spécial (radio : un seul à la fois) ─────────────────────
+        self._active_special   = None       # None | 'strobe' | 'strobe_couleur' | 'fixe_blanc'
+        self._passage_speed    = 50         # vitesse du passage (1-100)
+        self._gobo_pool        = {0}         # set de slots sélectionnés (comme _movement_patterns)
+        self._current_gobo     = 0          # slot actif en cours
+        self._gobo_duration    = 40         # durée par gobo en % (0-100)
+        self._gobo_rotation    = False      # rotation activée
+        self._gobo_rot_speed   = 50         # vitesse rotation (1-100)
+        self._strob_fast       = True       # autoriser strobe rapide
+        self._strob_slow       = True       # autoriser strobe lent
+        self._strob_none       = True       # autoriser absence de strobe
         self._live_config   = {
             'source':          'loopback',
             'allowed_groups':  set(),
             'allowed_effects': set(),
             'lyre_presets':    [],
             'palette':         [],
+            'no_auto_strobe':  False,
         }
         self._pos_getter = None
+        # Presets live (4 slots, None = vide)
+        self._live_presets: list = [None, None, None, None]
+        # Timestamps press pour clic long (presets)
+        self._preset_press_ts: list = [0.0, 0.0, 0.0, 0.0]
+        # Charger la config sauvegardée AVANT _setup_ui (les valeurs sont lues à la construction)
+        self._load_live_panel_config()
+
         self._setup_ui()
+
+        # Appliquer sensibilité et luminosité chargées
+        if hasattr(self, '_saved_sensitivity') and hasattr(self, '_vu_sens'):
+            self._vu_sens._sens = self._saved_sensitivity
+            self._vu_sens._sens_proxy.setValue(self._saved_sensitivity)
+        if hasattr(self, '_saved_luminosity') and hasattr(self, 'lumi_slider'):
+            self.lumi_slider.setValue(self._saved_luminosity)
+        if hasattr(self, '_saved_reaction') and hasattr(self, 'reac_slider'):
+            self.reac_slider.setValue(self._saved_reaction)
+
         # Brancher les signaux après création des sliders
         self.nerv_slider.valueChanged.connect(self.nervosity_changed)
         self.sens_slider.valueChanged.connect(self.sensitivity_changed)
+        self.lumi_slider.valueChanged.connect(self.luminosity_changed)
+        if hasattr(self, '_vu_sens'):
+            self._vu_sens.valueChanged.connect(self.sensitivity_changed)
+
+        # Sauvegarder sur chaque changement (timer debounce 1s)
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)
+        self._save_timer.timeout.connect(self._save_live_panel_config)
+
+        # Connecter les sliders pour déclencher la sauvegarde
+        for sl_attr in ('lumi_slider', 'nerv_slider', 'sens_slider'):
+            sl = getattr(self, sl_attr, None)
+            if sl:
+                sl.valueChanged.connect(lambda _: self._request_save())
+        if hasattr(self, '_vu_sens'):
+            self._vu_sens.valueChanged.connect(lambda _: self._request_save())
+
         # Timer d'animation section (120 ms)
         self._pulse_timer = QTimer(self)
         self._pulse_timer.timeout.connect(self._pulse_tick)
         self._pulse_timer.start(120)
+
+    @property
+    def ia_mode(self) -> str:
+        return self._ia_mode
+
+    @property
+    def movement_pattern(self) -> str:
+        """Mouvement en cours d'exécution (ou le premier sélectionné)."""
+        return self._current_movement
+
+    @property
+    def movement_patterns(self) -> list:
+        """Liste ordonnée des mouvements dans le pool (ordre de _MOVEMENTS)."""
+        order = [k for k, _, _ in self._MOVEMENTS]
+        return [k for k in order if k in self._movement_patterns]
+
+    @property
+    def movement_speed(self) -> int:
+        return self._movement_speed
+
+    @property
+    def movement_size(self) -> int:
+        return self._movement_size
+
+    @property
+    def movement_duration(self) -> int:
+        return self._movement_duration
+
+    @property
+    def color_restrict(self) -> bool:
+        return self._color_restrict
+
+    @property
+    def color_max(self) -> int:
+        return self._color_max
+
+    @property
+    def color_tile_pool(self) -> list:
+        """Tuiles couleur sélectionnées, dans l'ordre de _COLOR_TILES."""
+        order = [row[0] for row in self._COLOR_TILES]
+        return [k for k in order if k in self._color_tile_pool]
+
+    @property
+    def current_color_tile(self) -> str:
+        return self._current_color
+
+    @property
+    def color_duration(self) -> int:
+        return self._color_duration
+
+    @property
+    def active_special(self):
+        """Effet spécial actif (None si aucun)."""
+        return self._active_special
+
+    @property
+    def passage_speed(self) -> int:
+        return self._passage_speed
+
+    def get_color_data(self, key: str):
+        """Retourne (QColor|None, QColor|None) pour une tuile couleur.
+        color1=None signifie AUTO (utiliser la palette IA)."""
+        for row in self._COLOR_TILES:
+            k, c1, c2 = row[0], row[1], row[2]
+            if k == key:
+                return (QColor(c1) if c1 else None,
+                        QColor(c2) if c2 else None)
+        return None, None
+
+    # ── Persistance ──────────────────────────────────────────────────────────
+
+    _LIVE_PANEL_CFG = str(Path.home() / '.mystrow_live_panel.json')
+
+    def _request_save(self):
+        """Déclenche une sauvegarde différée (debounce 1s)."""
+        if hasattr(self, '_save_timer'):
+            self._save_timer.start()
+
+    def _save_live_panel_config(self):
+        """Sauvegarde tous les réglages du panneau live."""
+        try:
+            import json as _json
+            cfg = {
+                'color_pool':       list(self._color_tile_pool),
+                'current_color':    self._current_color,
+                'color_duration':   self._color_duration,
+                'color_max':        self._color_max,
+                'mov_patterns':     list(self._movement_patterns),
+                'current_mov':      self._current_movement,
+                'mov_speed':        self._movement_speed,
+                'mov_size':         self._movement_size,
+                'mov_duration':     self._movement_duration,
+                'gobo_pool':        list(self._gobo_pool),
+                'current_gobo':     self._current_gobo,
+                'gobo_duration':    self._gobo_duration,
+                'gobo_rotation':    self._gobo_rotation,
+                'gobo_rot_speed':   self._gobo_rot_speed,
+                'strob_fast':       self._strob_fast,
+                'strob_slow':       self._strob_slow,
+                'strob_none':       self._strob_none,
+                'dimmer_values':    getattr(self, '_dimmer_values', {}),
+                'sensitivity':      self._vu_sens._sens if hasattr(self, '_vu_sens') else 80,
+                'ia_mode':          self._ia_mode if hasattr(self, '_ia_mode') else 'musical',
+                'source':           self._live_config.get('source', 'loopback'),
+                'allowed_groups':   list(self._live_config.get('allowed_groups', set())),
+                'luminosity':       self.lumi_slider.value() if hasattr(self, 'lumi_slider') else 100,
+                'reaction':         self.reac_slider.value() if hasattr(self, 'reac_slider') else 70,
+                'live_presets':     getattr(self, '_live_presets', [None, None, None, None]),
+            }
+            with open(self._LIVE_PANEL_CFG, 'w', encoding='utf-8') as f:
+                _json.dump(cfg, f, indent=2)
+        except Exception as e:
+            print(f"[LivePanel] save: {e}")
+
+    def _load_live_panel_config(self):
+        """Charge et applique les réglages sauvegardés."""
+        try:
+            import json as _json
+            if not Path(self._LIVE_PANEL_CFG).exists():
+                return
+            with open(self._LIVE_PANEL_CFG, 'r', encoding='utf-8') as f:
+                cfg = _json.load(f)
+            self._color_tile_pool   = set(cfg.get('color_pool', list(self._color_tile_pool)))
+            self._current_color     = cfg.get('current_color', self._current_color)
+            self._color_duration    = int(cfg.get('color_duration', self._color_duration))
+            self._color_max         = int(cfg.get('color_max', self._color_max))
+            self._movement_patterns = set(cfg.get('mov_patterns', list(self._movement_patterns)))
+            self._current_movement  = cfg.get('current_mov', self._current_movement)
+            self._movement_speed    = int(cfg.get('mov_speed', self._movement_speed))
+            self._movement_size     = int(cfg.get('mov_size', self._movement_size))
+            self._movement_duration = int(cfg.get('mov_duration', self._movement_duration))
+            self._gobo_pool         = set(int(x) for x in cfg.get('gobo_pool', list(self._gobo_pool)))
+            self._current_gobo      = int(cfg.get('current_gobo', self._current_gobo))
+            self._gobo_duration     = int(cfg.get('gobo_duration', self._gobo_duration))
+            self._gobo_rotation     = bool(cfg.get('gobo_rotation', self._gobo_rotation))
+            self._gobo_rot_speed    = int(cfg.get('gobo_rot_speed', self._gobo_rot_speed))
+            self._strob_fast        = bool(cfg.get('strob_fast', self._strob_fast))
+            self._strob_slow        = bool(cfg.get('strob_slow', self._strob_slow))
+            self._strob_none        = bool(cfg.get('strob_none', self._strob_none))
+            if 'dimmer_values' in cfg:
+                self._dimmer_values = cfg['dimmer_values']
+            if 'source' in cfg:
+                self._live_config['source'] = cfg['source']
+            if 'allowed_groups' in cfg:
+                self._live_config['allowed_groups'] = set(cfg['allowed_groups'])
+            self._saved_sensitivity = int(cfg.get('sensitivity', 80))
+            self._saved_luminosity  = int(cfg.get('luminosity', 100))
+            self._saved_reaction    = int(cfg.get('reaction', 70))
+            self._live_presets      = cfg.get('live_presets', [None, None, None, None])
+            # S'assurer que la liste a exactement 4 slots
+            while len(self._live_presets) < 4:
+                self._live_presets.append(None)
+        except Exception as e:
+            print(f"[LivePanel] load: {e}")
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -783,176 +1245,102 @@ class LiveModePanel(QWidget):
 
         lbl_style = "color: #888; font-size: 10px; font-weight: bold; letter-spacing: 1.5px;"
 
-        # ── Source ─────────────────────────────────────────────────────────
-        src_row = QHBoxLayout()
-        src_lbl = QLabel("SOURCE")
-        src_lbl.setStyleSheet(lbl_style)
-        src_lbl.setFixedWidth(100)
+        # ── Source : combo caché (état interne) — affiché dans la carte INPUT ──
+        # Le sélecteur visible est la carte INPUT elle-même (clique → ⚙ paramètres).
         self.source_combo = QComboBox()
-        for label, _ in self.SOURCES:
-            self.source_combo.addItem(label)
-        self.source_combo.setStyleSheet("""
-            QComboBox {
-                background: #1e1e1e; color: #e0e0e0;
-                border: 1px solid #3a3a3a; border-radius: 4px;
-                padding: 6px 12px; font-size: 13px;
-            }
-            QComboBox::drop-down { border: none; width: 24px; }
-            QComboBox QAbstractItemView {
-                background: #1e1e1e; color: #e0e0e0;
-                border: 1px solid #3a3a3a;
-                selection-background-color: #2a4a5a;
-            }
-        """)
+        for label, key in self.SOURCES:
+            if key is None:
+                self.source_combo.addItem(label)
+                item = self.source_combo.model().item(self.source_combo.count() - 1)
+                if item:
+                    item.setEnabled(False)
+            else:
+                self.source_combo.addItem(label, key)
         self.source_combo.wheelEvent = lambda e: e.ignore()
+        # Restaurer la dernière source sélectionnée
+        _saved_src = self._live_config.get('source', 'mic')
+        for _i in range(self.source_combo.count()):
+            if self.source_combo.itemData(_i) == _saved_src:
+                self.source_combo.blockSignals(True)
+                self.source_combo.setCurrentIndex(_i)
+                self.source_combo.blockSignals(False)
+                break
         self.source_combo.currentIndexChanged.connect(self._on_source_changed)
-        src_row.addWidget(src_lbl)
-        src_row.addWidget(self.source_combo, 1)
-
-        # Dot de connexion (●)
+        # Fantômes non affichés (méthodes existantes les référencent)
+        self._source_info_lbl = QLabel()
+        self.device_lbl       = QLabel()
+        self._detected_badge  = QLabel()
+        # Dot de connexion (sera placé dans la carte INPUT)
         self._conn_dot = QLabel()
         self._conn_dot.setFixedSize(10, 10)
         self._conn_dot.setToolTip("Statut de connexion")
         self._set_conn_dot('off')
-        src_row.addWidget(self._conn_dot)
-
-        # Bouton paramètres ⚙
-        cfg_btn = QPushButton("⚙")
-        cfg_btn.setFixedSize(26, 26)
-        cfg_btn.setCursor(Qt.PointingHandCursor)
-        cfg_btn.setToolTip("Paramètres Live")
-        cfg_btn.setStyleSheet("""
-            QPushButton {
-                background:#1a1a1a; color:#666;
-                border:1px solid #252525; border-radius:4px;
-                font-size:13px; padding:0;
-            }
-            QPushButton:hover { background:#222; color:#e0e0e0; border-color:#444; }
-        """)
-        cfg_btn.clicked.connect(self._open_settings)
-        src_row.addWidget(cfg_btn)
-
-        layout.addLayout(src_row)
-
-        # Info source (logiciels compatibles)
-        self._source_info_lbl = QLabel(self._SOURCE_INFO.get("loopback", ""))
-        self._source_info_lbl.setStyleSheet(
-            "color: #505050; font-size: 10px; font-style: italic; padding-left: 104px;")
-        layout.addWidget(self._source_info_lbl)
-
-        # Label device actif (rempli par le moteur au démarrage)
-        self.device_lbl = QLabel("—")
-        self.device_lbl.setStyleSheet(
-            "color: #444; font-size: 10px; font-style: italic; padding-left: 104px;")
-        layout.addWidget(self.device_lbl)
-
-        # Badge logiciel détecté (caché par défaut)
-        self._detected_badge = QLabel()
-        self._detected_badge.setAlignment(Qt.AlignCenter)
-        self._detected_badge.setFixedHeight(26)
-        self._detected_badge.setStyleSheet("""
-            color: #00cc44; font-size: 11px; font-weight: bold;
-            background: #001800; border: 1px solid #00cc44;
-            border-radius: 4px; padding: 0 10px; letter-spacing: 1.5px;
-        """)
-        layout.addWidget(self._detected_badge)
-        self._detected_badge.hide()
-
-        # ── Section MIDI virtuel (loopMIDI) — visible seulement en MIDI Clock ─
+        # MIDI setup — affiché après la carte INPUT si MIDI Clock sélectionné
         self._midi_setup = self._build_midi_setup_widget()
+
+        # ── PARAMETRE LIVE (style carteson) + BPM — côte à côte ─────────────
+        layout.addLayout(self._build_settings_bpm_row())
         layout.addWidget(self._midi_setup)
         self._midi_setup.hide()
 
         layout.addWidget(self._separator())
 
-        # ── Couleur dominante ───────────────────────────────────────────────
-        color_row = QHBoxLayout()
-        color_lbl = QLabel("COULEUR DOMINANTE")
-        color_lbl.setStyleSheet(lbl_style)
-        color_lbl.setFixedWidth(150)
-        self.color_btn = QPushButton()
-        self.color_btn.setFixedSize(110, 30)
-        self.color_btn.setCursor(Qt.PointingHandCursor)
-        self.color_btn.clicked.connect(self._pick_color)
-        self._refresh_color_btn()
-        color_row.addWidget(color_lbl)
-        color_row.addWidget(self.color_btn)
-        color_row.addStretch()
-        layout.addLayout(color_row)
-
-        # ── Nervosité ───────────────────────────────────────────────────────
-        layout.addLayout(self._slider_row("NERVOSITÉ", "nerv", 50,
-                                          "Vitesse des changements d'effets et de couleurs"))
-
-        # ── Sensibilité ─────────────────────────────────────────────────────
-        layout.addLayout(self._slider_row("SENSIBILITÉ", "sens", 70,
-                                          "Seuil de détection des beats"))
+        # ── Sélecteur de mode IA ────────────────────────────────────────────
+        layout.addLayout(self._build_mode_tiles())
 
         layout.addWidget(self._separator())
 
-        # ── VU Mètre ────────────────────────────────────────────────────────
-        vu_lbl = QLabel("NIVEAU AUDIO")
-        vu_lbl.setStyleSheet(lbl_style)
-        layout.addWidget(vu_lbl)
+        # ── Luminosité ──────────────────────────────────────────────────────
+        layout.addLayout(self._slider_row("LUMINOSITÉ", "lumi", 100,
+                                          "Luminosité globale des projecteurs sélectionnés"))
 
+        # ── Réaction ─────────────────────────────────────────────────────────
+        _reac_default = getattr(self, '_saved_reaction', 70)
+        layout.addLayout(self._slider_row("RÉACTION", "reac", _reac_default,
+                                          "Vitesse de réponse de l'IA (0%=lent/lissé, 100%=immédiat)"))
+        self.reac_slider.valueChanged.connect(lambda _: self._request_save())
+
+        # nerv_slider et sens_slider créés ailleurs — fallback si absent
+        if not hasattr(self, 'nerv_slider'):
+            self.nerv_slider = QSlider(Qt.Horizontal)
+            self.nerv_slider.setRange(0, 100)
+            self.nerv_slider.setValue(50)
+        if not hasattr(self, 'sens_slider'):
+            self.sens_slider = QSlider(Qt.Horizontal)
+            self.sens_slider.setRange(0, 100)
+            self.sens_slider.setValue(80)
+
+        # vu_bar conservé (non affiché) pour compatibilité avec set_vu()
         self.vu_bar = QProgressBar()
         self.vu_bar.setRange(0, 100)
-        self.vu_bar.setValue(0)
-        self.vu_bar.setTextVisible(False)
-        self.vu_bar.setFixedHeight(12)
-        self.vu_bar.setStyleSheet("""
-            QProgressBar {
-                background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 5px;
-            }
-            QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #00d4ff, stop:0.6 #00ff88,
-                    stop:0.85 #ffaa00, stop:1 #ff3300);
-                border-radius: 5px;
-            }
-        """)
-        layout.addWidget(self.vu_bar)
 
-        # ── Statut BPM / Section (ligne compacte) ────────────────────────────
-        status_row = QHBoxLayout()
-        self.bpm_lbl = QLabel("BPM  —")
-        self.bpm_lbl.setStyleSheet("color: #555; font-size: 12px; font-weight: bold;")
-        self.section_lbl = QLabel("—")
-        self.section_lbl.setStyleSheet("color: #555; font-size: 12px; font-weight: bold;")
-        status_row.addWidget(self.bpm_lbl)
-        status_row.addStretch()
-        status_row.addWidget(self.section_lbl)
-        layout.addLayout(status_row)
+        layout.addSpacing(8)
 
-        # ── Grand indicateur de section (animé) ──────────────────────────────
-        self._section_ind = QLabel("—")
-        self._section_ind.setAlignment(Qt.AlignCenter)
-        self._section_ind.setFixedHeight(46)
-        self._section_ind.setStyleSheet("""
-            color: #333; font-size: 20px; font-weight: bold;
-            letter-spacing: 4px; background: #0a0a0a;
-            border: 1px solid #1e1e1e; border-radius: 6px;
-        """)
-        layout.addWidget(self._section_ind)
+        # ── Presets live P1–P4 ──────────────────────────────────────────────
+        layout.addLayout(self._build_preset_row())
 
-        layout.addWidget(self._separator())
-
-        # ── Beat + BPM ─────────────────────────────────────────────────────
-        layout.addLayout(self._build_beat_bpm_row())
-
-        layout.addWidget(self._separator())
-
-        # ── Contrôles rapides (tuiles draggables) ───────────────────────────
-        ctrl_lbl = QLabel("CONTRÔLES RAPIDES")
-        ctrl_lbl.setStyleSheet(lbl_style)
-        layout.addWidget(ctrl_lbl)
-
-        self._quick_bar = LiveQuickBar(self)
-        self._quick_bar.lyre_mode_changed.connect(self.lyre_mode_changed)
-        self._quick_bar.color_selected.connect(self._on_color_preset)
-        layout.addWidget(self._quick_bar)
+        # ── Panel Mouvements ────────────────────────────────────────────────
+        layout.addWidget(self._build_movement_panel())
 
         layout.addStretch()
+
+        # ── Mention bêta ────────────────────────────────────────────────────
+        beta_lbl = QLabel(
+            "✦  Fonctionnalité en cours de développement\n"
+            "Nous améliorons continuellement notre algorithme prédictif\n"
+            "pour de meilleures performances.\n\n"
+            "N'hésitez pas à nous <a href='idea' style='color:#00aaff;'>contacter</a>"
+        )
+        beta_lbl.setWordWrap(True)
+        beta_lbl.setAlignment(Qt.AlignCenter)
+        beta_lbl.setTextFormat(Qt.RichText)
+        beta_lbl.setOpenExternalLinks(False)
+        beta_lbl.setStyleSheet(
+            "color:#484848; font-size:13px; font-style:italic; "
+            "padding:10px 10px; background:transparent;"
+        )
+        beta_lbl.linkActivated.connect(self._on_beta_contact_clicked)
+        layout.addWidget(beta_lbl)
 
         self.setStyleSheet("""
             LiveModePanel {
@@ -993,39 +1381,23 @@ class LiveModePanel(QWidget):
         row.addWidget(val_lbl)
         return row
 
-    def _refresh_color_btn(self):
-        hex_c = self.dominant_color.name()
-        lum = (self.dominant_color.red() * 299 +
-               self.dominant_color.green() * 587 +
-               self.dominant_color.blue() * 114) / 1000
-        txt = "#000" if lum > 128 else "#fff"
-        self.color_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {hex_c};
-                border: 2px solid #3a3a3a;
-                border-radius: 4px;
-                color: {txt};
-                font-weight: bold;
-                font-size: 11px;
-            }}
-            QPushButton:hover {{ border-color: #00d4ff; }}
-        """)
-        self.color_btn.setText(hex_c.upper())
-
-    def _pick_color(self):
-        c = QColorDialog.getColor(self.dominant_color, self, "Couleur dominante",
-                                  QColorDialog.DontUseNativeDialog)
-        if c.isValid():
-            self.dominant_color = c
-            self._refresh_color_btn()
-            self.color_changed.emit(c)
-
     # ── API publique (pour le moteur audio - étape 2) ────────────────────────
 
     @property
     def source_key(self):
-        idx = self.source_combo.currentIndex()
-        return self.SOURCES[idx][1] if 0 <= idx < len(self.SOURCES) else "loopback"
+        key = self.source_combo.currentData()
+        return key if key else "loopback"
+
+    @property
+    def luminosity(self) -> float:
+        return self.lumi_slider.value() / 100.0
+
+    @property
+    def reaction(self) -> float:
+        """Vitesse de réaction IA (0.0–1.0, défaut 0.7)."""
+        if hasattr(self, 'reac_slider'):
+            return self.reac_slider.value() / 100.0
+        return 0.7
 
     @property
     def nervosity(self):
@@ -1035,69 +1407,313 @@ class LiveModePanel(QWidget):
     def sensitivity(self):
         return self.sens_slider.value() / 100.0
 
+    # Noms courts affichés dans la carte INPUT
+    _SOURCE_SHORT = {
+        'mic':        'ENTRÉE MICRO',
+        'midi_clock': 'MIDI CLOCK',
+    }
+
+    def _source_display_name(self) -> str:
+        key = self.source_key
+        if key in self._SOURCE_SHORT:
+            return self._SOURCE_SHORT[key]
+        # Pour dev_in:N et dev_out:N → retourner le label du combo
+        if hasattr(self, 'source_combo'):
+            idx = self.source_combo.currentIndex()
+            label = self.source_combo.itemText(idx)
+            if label:
+                # Enlever l'emoji et l'espace initial (🎤  ou 🔊 )
+                return label.lstrip('🎤🔊 ').strip()
+        return key.upper()
+
     def _on_source_changed(self, idx: int):
-        key = self.SOURCES[idx][1] if 0 <= idx < len(self.SOURCES) else "loopback"
+        key = self.source_combo.itemData(idx) or "loopback"
         self._source_info_lbl.setText(self._SOURCE_INFO.get(key, ""))
         self._set_conn_dot('off')
         self.device_lbl.setText("—")
-        is_midi = (key == 'midi_clock')
+        if hasattr(self, '_input_name_lbl'):
+            self._input_name_lbl.setText(self._source_display_name())
+        is_midi = key in ('midi_clock', 'rekordbox')
         self._midi_setup.setVisible(is_midi)
+        # "?" visible pour les sources nécessitant une config (MIDI, VDJ, Rekordbox)
+        needs_help = key in ('midi_clock', 'rekordbox', 'virtualdj')
+        if hasattr(self, '_source_help_btn'):
+            self._source_help_btn.setVisible(needs_help)
+            if not needs_help:
+                self._source_help_btn.setChecked(False)
         if is_midi:
             QTimer.singleShot(0, self._refresh_midi_status)
+            QTimer.singleShot(50, self._refresh_midi_ctrl_combo)
+        # Redémarrer le moteur si live actif
+        self.source_changed.emit(key)
+        self._request_save()
 
     def _build_midi_setup_widget(self):
         frame = QFrame()
-        frame.setStyleSheet("""
-            QFrame {
-                background: #080f08;
-                border: 1px solid #1a3a1a;
-                border-radius: 6px;
-            }
-        """)
+        frame.setStyleSheet(
+            "QFrame { background:#080f08; border:1px solid #1a3a1a; border-radius:6px; }"
+        )
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(12, 10, 12, 10)
-        lay.setSpacing(7)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(6)
 
-        hdr = QHBoxLayout()
-        lbl = QLabel("MIDI VIRTUEL")
-        lbl.setStyleSheet(
-            "color: #44aa44; font-size: 10px; font-weight: bold; letter-spacing: 1.5px;")
+        # ── Ligne 1 : liste contrôleurs + "MIDI VIRTUEL" + dot ──────────────
+        top_row = QHBoxLayout()
+        top_row.setSpacing(6)
+
+        # Combo contrôleurs MIDI détectés
+        self._midi_ctrl_combo = QComboBox()
+        self._midi_ctrl_combo.setStyleSheet(
+            "QComboBox { background:#0d180d; color:#88cc88; border:1px solid #2a4a2a;"
+            " border-radius:4px; padding:3px 8px; font-size:10px; }"
+            "QComboBox::drop-down { border:none; width:14px; }"
+            "QComboBox QAbstractItemView { background:#0d180d; color:#88cc88;"
+            " border:1px solid #2a4a2a; }"
+        )
+        self._midi_ctrl_combo.setCursor(Qt.PointingHandCursor)
+        self._midi_ctrl_combo.setFixedHeight(24)
+        top_row.addWidget(self._midi_ctrl_combo, 1)
+
+        # "MIDI VIRTUEL" compact
+        mv_lbl = QLabel("MIDI VIRTUEL")
+        mv_lbl.setStyleSheet(
+            "color:#2a6a2a; font-size:8px; font-weight:bold; letter-spacing:1px; "
+            "background:transparent; border:none;")
+        mv_lbl.setFixedWidth(72)
+        top_row.addWidget(mv_lbl)
+
+        # Carré vert / rouge
         self._midi_dot = QLabel()
         self._midi_dot.setFixedSize(10, 10)
-        self._midi_dot.setStyleSheet("background: #333; border-radius: 5px;")
-        hdr.addWidget(lbl)
-        hdr.addStretch()
-        hdr.addWidget(self._midi_dot)
-        lay.addLayout(hdr)
+        self._midi_dot.setStyleSheet("background:#333; border-radius:2px;")
+        top_row.addWidget(self._midi_dot)
+
+        lay.addLayout(top_row)
+
+        # ── Ligne 2 : statut + bouton refresh ────────────────────────────────
+        bot_row = QHBoxLayout()
+        bot_row.setSpacing(6)
 
         self._midi_status_lbl = QLabel("Vérification…")
         self._midi_status_lbl.setStyleSheet(
-            "color: #668866; font-size: 11px;")
-        self._midi_status_lbl.setWordWrap(True)
-        lay.addWidget(self._midi_status_lbl)
+            "color:#668866; font-size:10px; background:transparent; border:none;")
+        self._midi_status_lbl.setWordWrap(False)
+        bot_row.addWidget(self._midi_status_lbl, 1)
 
+        # Bouton caché — conservé pour compatibilité
         self._midi_btn = QPushButton()
-        self._midi_btn.setCursor(Qt.PointingHandCursor)
-        self._midi_btn.setStyleSheet("""
-            QPushButton {
-                background: #142014; color: #44cc44;
-                border: 1px solid #2a5a2a; border-radius: 4px;
-                padding: 5px 12px; font-size: 11px; font-weight: bold;
-            }
-            QPushButton:hover { background: #1e341e; border-color: #44cc44; }
-        """)
+        self._midi_btn.hide()
         self._midi_btn.clicked.connect(self._on_midi_btn_clicked)
-        lay.addWidget(self._midi_btn)
+        self._midi_guide_open_btn = QPushButton()
+        self._midi_guide_open_btn.hide()
 
-        self._midi_instr_lbl = QLabel(
-            f'Dans votre logiciel DJ : sélectionnez "{LoopMidiHelper.PORT_NAME}"')
+        lay.addLayout(bot_row)
+
+        self._midi_instr_lbl = QLabel("")
         self._midi_instr_lbl.setStyleSheet(
-            "color: #336633; font-size: 10px; font-style: italic;")
+            "color:#336633; font-size:9px; font-style:italic;"
+            " background:transparent; border:none;")
         self._midi_instr_lbl.setWordWrap(True)
         lay.addWidget(self._midi_instr_lbl)
         self._midi_instr_lbl.hide()
 
+        # ── Container guide (caché par défaut) ───────────────────────────────
+        self._midi_guide_container = QWidget()
+        self._midi_guide_container.setStyleSheet("background:transparent;")
+        gc_lay = QVBoxLayout(self._midi_guide_container)
+        gc_lay.setContentsMargins(0, 4, 0, 0)
+        gc_lay.setSpacing(4)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("QFrame { border:none; border-top:1px solid #1a3a1a; }")
+        gc_lay.addWidget(sep)
+
+        dj_row = QHBoxLayout(); dj_row.setSpacing(4)
+        dj_lbl = QLabel("Logiciel :")
+        dj_lbl.setStyleSheet("color:#446644; font-size:9px; background:transparent; border:none;")
+        dj_lbl.setFixedWidth(52)
+        dj_row.addWidget(dj_lbl)
+        self._midi_dj_combo = QComboBox()
+        self._midi_dj_combo.addItems(["Virtual DJ", "Rekordbox", "Serato"])
+        self._midi_dj_combo.setFixedHeight(22)
+        self._midi_dj_combo.setStyleSheet(
+            "QComboBox { background:#0d180d; color:#88cc88; border:1px solid #2a4a2a;"
+            " border-radius:4px; padding:2px 6px; font-size:9px; }"
+            "QComboBox::drop-down { border:none; width:12px; }"
+            "QComboBox QAbstractItemView { background:#0d180d; color:#88cc88; border:1px solid #2a4a2a; }"
+        )
+        self._midi_dj_combo.currentIndexChanged.connect(self._update_midi_guide)
+        dj_row.addWidget(self._midi_dj_combo, 1)
+        gc_lay.addLayout(dj_row)
+
+        self._midi_guide_lbl = QLabel("")
+        self._midi_guide_lbl.setWordWrap(True)
+        self._midi_guide_lbl.setStyleSheet(
+            "color:#558855; font-size:9px; background:transparent; border:none; padding:2px 0;")
+        gc_lay.addWidget(self._midi_guide_lbl)
+
+        self._midi_guide_container.hide()
+        lay.addWidget(self._midi_guide_container)
+
+        # Remplir le combo contrôleurs
+        QTimer.singleShot(100, self._refresh_midi_ctrl_combo)
+
         return frame
+
+    def _toggle_midi_guide(self, visible: bool):
+        if hasattr(self, '_midi_guide_container'):
+            self._midi_guide_container.setVisible(visible)
+            if visible:
+                self._update_midi_guide()
+
+    def _open_midi_guide_dialog(self):
+        """Ouvre un dialog avec le guide de configuration MIDI Clock."""
+        import platform
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                       QLabel, QPushButton, QComboBox, QFrame,
+                                       QApplication)
+        dlg = QDialog(QApplication.activeWindow())
+        dlg.setWindowTitle("Guide MIDI Clock")
+        dlg.setFixedWidth(420)
+        dlg.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        dlg.setStyleSheet("""
+            QDialog { background:#0d0d0d; color:#e0e0e0; }
+            QLabel  { background:transparent; border:none; }
+            QComboBox { background:#1a1a1a; color:#e0e0e0; border:1px solid #333;
+                border-radius:5px; padding:5px 10px; font-size:12px; }
+            QComboBox::drop-down { border:none; width:18px; }
+            QComboBox QAbstractItemView { background:#1a1a1a; color:#e0e0e0;
+                border:1px solid #333; selection-background-color:#0055aa; }
+        """)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(12)
+
+        title = QLabel("🎛  Guide MIDI Clock")
+        title.setStyleSheet("color:#00aaff; font-size:15px; font-weight:bold;")
+        lay.addWidget(title)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("border-top:1px solid #222;")
+        lay.addWidget(sep)
+
+        # Sélecteur logiciel
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Logiciel DJ :"))
+        combo = QComboBox()
+        combo.addItems(["Virtual DJ", "Rekordbox", "Serato"])
+        row.addWidget(combo, 1)
+        lay.addLayout(row)
+
+        # Texte guide
+        guide_lbl = QLabel()
+        guide_lbl.setWordWrap(True)
+        guide_lbl.setTextFormat(Qt.RichText)
+        guide_lbl.setOpenExternalLinks(True)
+        guide_lbl.setStyleSheet("color:#aaa; font-size:12px;")
+        lay.addWidget(guide_lbl)
+
+        is_mac = platform.system() == 'Darwin'
+        port   = LoopMidiHelper.PORT_NAME
+
+        def update(idx=0):
+            soft = combo.currentText()
+            if is_mac:
+                s1 = "① Ouvrez <b>Audio MIDI Setup</b> (Applications → Utilitaires)"
+                s2 = "② Menu Fenêtre → <b>Afficher le studio MIDI</b>"
+                s3 = f'③ Double-clic sur <b>IAC Driver</b> → cocher <b>"Le périphérique est en ligne"</b> → + → nommer <b>"{port}"</b>'
+            else:
+                s1 = '① Téléchargez <b><a href="https://www.tobias-erichsen.de/software/loopmidi.html" style="color:#00aaff;">loopMIDI</a></b> (gratuit, Windows)'
+                s2 = f'② Lancez loopMIDI → champ en bas → tapez <b>"{port}"</b> → cliquez <b>"+"</b>'
+                s3 = "③ Laissez loopMIDI <b>actif en arrière-plan</b>"
+
+            if soft == "Virtual DJ":
+                s4 = "④ VirtualDJ → <b>Paramètres → Contrôleurs</b>"
+                s5 = f'⑤ <b>Sortie horloge MIDI</b> → sélectionnez <b>"{port}"</b>'
+            elif soft == "Rekordbox":
+                s4 = "④ Rekordbox → <b>Préférences → MIDI</b>"
+                s5 = f'⑤ Activer <b>MIDI Clock</b> → Sortie → <b>"{port}"</b>'
+            else:
+                s4 = "④ Installez le plugin <b>MIDI Link</b> dans Serato (gratuit)"
+                s5 = f'⑤ MIDI Link → Sortie → <b>"{port}"</b>'
+
+            s6 = "⑥ Dans MyStrow → Source audio → <b>MIDI Clock</b> ✓"
+            guide_lbl.setText(f"{s1}<br>{s2}<br>{s3}<br><br>{s4}<br>{s5}<br><br>{s6}")
+
+        combo.currentIndexChanged.connect(update)
+        update()
+
+        close_btn = QPushButton("Fermer")
+        close_btn.setFixedHeight(34)
+        close_btn.setStyleSheet(
+            "QPushButton { background:#1a1a1a; color:#888; border:1px solid #333;"
+            " border-radius:5px; font-size:12px; }"
+            "QPushButton:hover { color:#ccc; }"
+        )
+        close_btn.clicked.connect(dlg.accept)
+        lay.addWidget(close_btn)
+
+        dlg.exec()
+
+    def _update_midi_guide(self):
+        """Met à jour le guide selon l'OS et le logiciel sélectionné."""
+        if not hasattr(self, '_midi_guide_lbl') or not hasattr(self, '_midi_dj_combo'):
+            return
+        import platform
+        is_mac = platform.system() == 'Darwin'
+        soft = self._midi_dj_combo.currentText()
+        port = LoopMidiHelper.PORT_NAME
+
+        if is_mac:
+            step1 = "① Ouvrez Audio MIDI Setup → Utilitaires"
+            step2 = "② Fenêtre → Afficher le studio MIDI"
+            step3 = f'③ IAC Driver → Cocher "En ligne" → + → nommer "{port}"'
+        else:
+            step1 = "① Téléchargez loopMIDI (tobias-erichsen.de)"
+            step2 = f'② Lancez loopMIDI → cliquez "+" → nommez "{port}"'
+            step3 = "③ Laissez loopMIDI actif en arrière-plan"
+
+        if soft == "Virtual DJ":
+            step4 = "④ VDJ → Paramètres → Contrôleurs → Sortie horloge MIDI"
+            step5 = f'⑤ Sélectionnez "{port}" → Valider'
+        elif soft == "Rekordbox":
+            step4 = "④ Rekordbox → Préférences → MIDI"
+            step5 = f'⑤ Activer MIDI Clock → Sortie : "{port}"'
+        else:  # Serato
+            step4 = "④ Installez MIDI Link (plugin Serato, gratuit)"
+            step5 = f'⑤ MIDI Link → Sortie : "{port}"'
+
+        step6 = "⑥ Dans MyStrow → Source : MIDI Clock ✓"
+
+        self._midi_guide_lbl.setText(
+            f"{step1}\n{step2}\n{step3}\n{step4}\n{step5}\n{step6}"
+        )
+
+    def _refresh_midi_ctrl_combo(self):
+        """Remplit le combo avec les ports MIDI disponibles."""
+        if not hasattr(self, '_midi_ctrl_combo'):
+            return
+        self._midi_ctrl_combo.clear()
+        try:
+            try:
+                import rtmidi as _rm
+                ports = _rm.MidiIn().get_ports()
+            except Exception:
+                import rtmidi2 as _rm2
+                ports = _rm2.get_in_ports()
+            if not ports:
+                self._midi_ctrl_combo.addItem("Aucun port MIDI détecté")
+            else:
+                for p in ports:
+                    self._midi_ctrl_combo.addItem(p)
+                # Pré-sélectionner le port MyStrow si présent
+                for i in range(self._midi_ctrl_combo.count()):
+                    if 'mystrow' in self._midi_ctrl_combo.itemText(i).lower():
+                        self._midi_ctrl_combo.setCurrentIndex(i)
+                        break
+        except Exception:
+            self._midi_ctrl_combo.addItem("rtmidi non disponible")
 
     def _refresh_midi_status(self):
         installed = LoopMidiHelper.is_installed()
@@ -1151,134 +1767,1275 @@ class LiveModePanel(QWidget):
 
     def set_device_info(self, text: str):
         self.device_lbl.setText(text)
+        t = text.lower()
+        if any(k in t for k in ('erreur', 'manquant', 'introuvable', 'aucun', 'échoué')):
+            color = "#cc4400"
+        elif any(k in t for k in ('loopback', 'wasapi', 'micro', 'midi', 'rekordbox', 'virtual dj')):
+            color = "#00aa55"
+        else:
+            color = "#666"
         self.device_lbl.setStyleSheet(
-            "color: #558; font-size: 10px; font-style: italic; padding-left: 104px;")
+            f"color: {color}; font-size: 10px; font-style: italic; padding-left: 104px;")
+        # Aussi mettre à jour le sous-titre de la carte INPUT
+        if hasattr(self, '_input_device_lbl') and text and text != "—":
+            self._input_device_lbl.setText(text)
+            self._input_device_lbl.setStyleSheet(
+                f"color:{color}; font-size:9px; font-style:italic;"
+                " background:transparent; border:none;")
 
     def set_vu(self, value_0_100):
-        self.vu_bar.setValue(int(max(0, min(100, value_0_100))))
+        v = int(max(0, min(100, value_0_100)))
+        self.vu_bar.setValue(v)
+        self._input_level_bar.setValue(v)
 
-    def set_status(self, bpm=None, section=None):
-        _section_colors = {
-            'DROP': '#ff3300', 'HIGH': '#ff8800', 'BUILD': '#ffcc00',
-            'VERSE': '#00d4ff', 'QUIET': '#555',
-        }
+    def set_status(self, bpm=None, section=None, bpm_confidence: float = -1.0):
         if bpm is not None:
-            self.bpm_lbl.setText(f"BPM  {bpm:.0f}" if bpm > 0 else "BPM  —")
             self.set_bpm_auto(bpm)
-        if section is not None:
-            tag = section.upper()
-            color = _section_colors.get(tag, '#aaa')
-            self.section_lbl.setText(tag)
-            self.section_lbl.setStyleSheet(
-                f"color: {color}; font-size: 12px; font-weight: bold;")
-            # Mettre à jour le grand indicateur
-            self._pulse_section = tag.lower()
-            self._apply_section_style(tag.lower(), bright=True)
-
-    def _apply_section_style(self, sec: str, bright: bool = True):
-        """Applique le style du grand indicateur pour la section donnée."""
-        style = self._SECTION_STYLES.get(sec)
-        if style:
-            color = style['color_a'] if bright else style['color_b']
-            fs    = style['fs']
-            text  = style['text']
-            self._section_ind.setText(text)
-            self._section_ind.setStyleSheet(f"""
-                color: {color}; font-size: {fs}px; font-weight: bold;
-                letter-spacing: 4px; background: #0a0a0a;
-                border: 1px solid {color}55; border-radius: 6px;
-            """)
-        elif sec in ('—', ''):
-            self._section_ind.setText("—")
-            self._section_ind.setStyleSheet("""
-                color: #333; font-size: 20px; font-weight: bold;
-                letter-spacing: 4px; background: #0a0a0a;
-                border: 1px solid #1e1e1e; border-radius: 6px;
-            """)
+        if bpm_confidence >= 0.0 and hasattr(self, '_bpm_conf_bar'):
+            conf_pct = int(bpm_confidence * 100)
+            self._bpm_conf_bar.setValue(conf_pct)
+            if bpm_confidence >= 0.65:
+                color = '#00cc55'   # vert — stable
+            elif bpm_confidence >= 0.35:
+                color = '#ffaa00'   # orange — moyen
+            else:
+                color = '#ff3333'   # rouge — incertain
+            self._bpm_conf_bar.setStyleSheet(
+                "QProgressBar { background:#1a1a1a; border:none; border-radius:2px; }"
+                f"QProgressBar::chunk {{ background:{color}; border-radius:2px; }}"
+            )
+            # Afficher la barre uniquement quand le BPM est actif
+            self._bpm_conf_bar.setVisible(conf_pct > 0)
 
     def _pulse_tick(self):
-        """Animation de l'indicateur de section (DROP et MONTÉE pulsent)."""
-        self._pulse_phase = (self._pulse_phase + 1) % 10
-        sec = self._pulse_section
-        if sec in ('drop', 'build'):
-            # Dim 1 frame sur 4 pour un effet de pulsation
-            bright = self._pulse_phase % 4 != 0
-            self._apply_section_style(sec, bright)
+        pass  # indicateur de section retiré
 
-    # ── Beat + BPM ────────────────────────────────────────────────────────────
+    # ── Panel Mouvements Lyre ─────────────────────────────────────────────────
 
-    def _build_beat_bpm_row(self) -> QHBoxLayout:
+    # (key, color1_hex|None, color2_hex|None, label)
+    # color1=None → AUTO (suit la palette IA)
+    # color2!=None → bicolore (lyres alternées A/B)
+    _COLOR_TILES = [
+        # (key, c1, c2, label, category)
+        # CHAUD
+        ('rouge',        '#ff1133', None,      'ROUGE',    'chaud'),
+        ('orange',       '#ff8800', None,      'ORANGE',   'chaud'),
+        ('jaune',        '#ffee00', None,      'JAUNE',    'chaud'),
+        ('ambre',        '#ffaa00', None,      'AMBRE',    'chaud'),
+        ('rose',         '#ff44aa', None,      'ROSE',     'chaud'),
+        ('rose_chaud',   '#ff2266', None,      'R.CHAUD',  'chaud'),
+        # FROID
+        ('vert',         '#00ff55', None,      'VERT',     'froid'),
+        ('cyan',         '#00eeff', None,      'CYAN',     'froid'),
+        ('bleu',         '#0055ff', None,      'BLEU',     'froid'),
+        ('bleu_nuit',    '#001aff', None,      'B.NUIT',   'froid'),
+        ('violet',       '#aa22ff', None,      'VIOLET',   'froid'),
+        ('lavande',      '#cc88ff', None,      'LAVANDE',  'froid'),
+        # NEUTRE
+        ('blanc',        '#ffffff', None,      'BLANC',    'neutre'),
+        ('auto',         None,      None,      'AUTO',     'neutre'),
+        # BICOULEUR
+        ('bi_rb',        '#ff1133', '#0055ff', 'R+B',      'bi'),
+        ('bi_vo',        '#aa22ff', '#ff8800', 'V+O',      'bi'),
+        ('bi_vj',        '#00ff55', '#ffee00', 'V+J',      'bi'),
+        ('bi_rv',        '#ff1133', '#aa22ff', 'R+V',      'bi'),
+        ('bi_cc',        '#ff8800', '#00eeff', 'CH+FR',    'bi'),
+        ('bi_bv',        '#0055ff', '#00ff55', 'B+V',      'bi'),
+    ]
+
+    _MOVEMENTS = [
+        ('vague',     '〜', 'VAGUE'),
+        ('cercle',    '○',  'CERCLE'),
+        ('diagonale', '╱',  'DIAGONALE'),
+        ('random',    '✦',  'RANDOM'),
+        ('spirale',   '⊛',  'SPIRALE'),
+        ('bounce',    '⇔',  'BOUNCE'),
+        ('huit',      '∞',  'HUIT'),
+        ('pixel',     '⠿',  'PIXEL'),
+    ]
+
+    # (key, icon, label, description, accent_color)
+    _SPECIAL_TILES = [
+        ('strobe',         '⚡', 'STROBE',         'Stroboscope blanc · suit le BPM',          '#e0e0e0'),
+        ('strobe_couleur', '⚡', 'STROBE COULEUR',  'Stroboscope coloré · couleur active',      '#ff8833'),
+        ('fixe_blanc',     '◻', 'FIXE BLANC',      'Plein blanc statique à 100 %',             '#ffffbb'),
+    ]
+
+    _MOV_SLIDER_STYLE = """
+        QSlider::groove:horizontal {
+            border: 1px solid #2a2040; height: 5px;
+            background: #1a1030; border-radius: 2px;
+        }
+        QSlider::sub-page:horizontal {
+            background: #6622ee; border-radius: 2px;
+        }
+        QSlider::handle:horizontal {
+            background: #aa77ff; border: 2px solid #ffffff;
+            width: 14px; margin: -5px 0; border-radius: 7px;
+        }
+    """
+
+    # ── Presets live ─────────────────────────────────────────────────────────
+
+    def _build_preset_row(self) -> QHBoxLayout:
+        """Ligne P1–P4 : clic simple = rappeler, clic long (>500ms) = sauvegarder."""
+        row = QHBoxLayout()
+        row.setSpacing(6)
+
+        preset_lbl = QLabel("PRESETS")
+        preset_lbl.setStyleSheet(
+            "color:#888; font-size:10px; font-weight:bold; letter-spacing:1.5px;")
+        row.addWidget(preset_lbl)
+        row.addStretch()
+
+        self._preset_btns: list[QPushButton] = []
+        for i in range(4):
+            btn = QPushButton(f"P{i+1}")
+            btn.setFixedSize(36, 24)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(f"Clic = rappeler  |  Clic long = sauvegarder  (Preset {i+1})")
+            self._update_preset_btn_style(btn, i)
+            btn.pressed.connect(lambda _=False, idx=i: self._on_preset_pressed(idx))
+            btn.released.connect(lambda _=False, idx=i: self._on_preset_released(idx))
+            self._preset_btns.append(btn)
+            row.addWidget(btn)
+
+        return row
+
+    def _update_preset_btn_style(self, btn: QPushButton, idx: int):
+        filled = (
+            idx < len(self._live_presets)
+            and self._live_presets[idx] is not None
+        )
+        if filled:
+            btn.setStyleSheet(
+                "QPushButton { background:#1a3a1a; color:#88ee88;"
+                " border:1px solid #44aa44; border-radius:4px;"
+                " font-size:9px; font-weight:bold; }"
+                "QPushButton:hover { background:#224422; border-color:#66cc66; }"
+                "QPushButton:pressed { background:#2a5a2a; }"
+            )
+        else:
+            btn.setStyleSheet(
+                "QPushButton { background:#141414; color:#444;"
+                " border:1px solid #252525; border-radius:4px;"
+                " font-size:9px; font-weight:bold; }"
+                "QPushButton:hover { color:#666; }"
+            )
+
+    def _on_preset_pressed(self, idx: int):
+        import time as _t
+        self._preset_press_ts[idx] = _t.monotonic()
+
+    def _on_preset_released(self, idx: int):
+        import time as _t
+        held = _t.monotonic() - self._preset_press_ts[idx]
+        if held >= 0.5:
+            self._save_preset(idx)
+        else:
+            self._recall_preset(idx)
+
+    def _current_live_state(self) -> dict:
+        """Capture l'état complet du panneau live dans un dict sérialisable."""
+        return {
+            'color_pool':       list(self._color_tile_pool),
+            'current_color':    self._current_color,
+            'color_duration':   self._color_duration,
+            'color_max':        self._color_max,
+            'mov_patterns':     list(self._movement_patterns),
+            'current_mov':      self._current_movement,
+            'mov_speed':        self._movement_speed,
+            'mov_size':         self._movement_size,
+            'mov_duration':     self._movement_duration,
+            'gobo_pool':        list(self._gobo_pool),
+            'current_gobo':     self._current_gobo,
+            'gobo_duration':    self._gobo_duration,
+            'gobo_rotation':    self._gobo_rotation,
+            'gobo_rot_speed':   self._gobo_rot_speed,
+            'strob_fast':       self._strob_fast,
+            'strob_slow':       self._strob_slow,
+            'strob_none':       self._strob_none,
+            'luminosity':       self.lumi_slider.value() if hasattr(self, 'lumi_slider') else 100,
+            'dimmer_values':    dict(getattr(self, '_dimmer_values', {})),
+        }
+
+    def _save_preset(self, idx: int):
+        """Clic long : enregistrer l'état courant dans le preset idx."""
+        self._live_presets[idx] = self._current_live_state()
+        if hasattr(self, '_preset_btns') and idx < len(self._preset_btns):
+            self._update_preset_btn_style(self._preset_btns[idx], idx)
+        self._request_save()
+
+    def _recall_preset(self, idx: int):
+        """Clic simple : rappeler le preset idx (si non vide)."""
+        if idx >= len(self._live_presets) or self._live_presets[idx] is None:
+            return
+        cfg = self._live_presets[idx]
+        # Appliquer la config comme dans _load_live_panel_config
+        if 'color_pool' in cfg:
+            self._color_tile_pool = set(cfg['color_pool'])
+        if 'current_color' in cfg:
+            self._current_color = cfg['current_color']
+        if 'color_duration' in cfg:
+            self._color_duration = int(cfg['color_duration'])
+        if 'color_max' in cfg:
+            self._color_max = int(cfg['color_max'])
+        if 'mov_patterns' in cfg:
+            self._movement_patterns = set(cfg['mov_patterns'])
+        if 'current_mov' in cfg:
+            self._current_movement = cfg['current_mov']
+        if 'mov_speed' in cfg:
+            self._movement_speed = int(cfg['mov_speed'])
+        if 'mov_size' in cfg:
+            self._movement_size = int(cfg['mov_size'])
+        if 'mov_duration' in cfg:
+            self._movement_duration = int(cfg['mov_duration'])
+        if 'gobo_pool' in cfg:
+            self._gobo_pool = set(int(x) for x in cfg['gobo_pool'])
+        if 'current_gobo' in cfg:
+            self._current_gobo = int(cfg['current_gobo'])
+        if 'gobo_duration' in cfg:
+            self._gobo_duration = int(cfg['gobo_duration'])
+        if 'gobo_rotation' in cfg:
+            self._gobo_rotation = bool(cfg['gobo_rotation'])
+        if 'gobo_rot_speed' in cfg:
+            self._gobo_rot_speed = int(cfg['gobo_rot_speed'])
+        if 'strob_fast' in cfg:
+            self._strob_fast = bool(cfg['strob_fast'])
+        if 'strob_slow' in cfg:
+            self._strob_slow = bool(cfg['strob_slow'])
+        if 'strob_none' in cfg:
+            self._strob_none = bool(cfg['strob_none'])
+        if 'luminosity' in cfg and hasattr(self, 'lumi_slider'):
+            self.lumi_slider.setValue(int(cfg['luminosity']))
+        if 'dimmer_values' in cfg:
+            self._dimmer_values = dict(cfg['dimmer_values'])
+        # Rafraîchir les tuiles UI
+        self._refresh_color_tiles()
+        self._refresh_gobo_tiles()
+        if hasattr(self, '_mov_tiles'):
+            self._refresh_mov_tiles()
+        # Strob tiles
+        for key, attr in (('fast', '_strob_fast'), ('slow', '_strob_slow'), ('none', '_strob_none')):
+            t = getattr(self, '_strob_tiles', {}).get(key)
+            if t:
+                v = getattr(self, attr, True)
+                t.set_state(selected=v, playing=v)
+        self._request_save()
+
+    def _build_movement_panel(self) -> QWidget:
+        """Conteneur principal avec onglets MOUVEMENT / COULEURS / SPÉCIAL."""
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(8)
+
+        # ── En-tête + onglets ─────────────────────────────────────────────
+        hdr = QHBoxLayout()
+        hdr.setSpacing(8)
+
+        mov_lbl = QLabel("EFFETS")
+        mov_lbl.setStyleSheet(
+            "color:#888; font-size:10px; font-weight:bold; letter-spacing:1.5px;")
+        hdr.addWidget(mov_lbl)
+        hdr.addStretch()
+
+        self._effect_tab_on  = (
+            "QPushButton { background:#1a0a3a; color:#aa77ff;"
+            " border:1px solid #6622ee; border-radius:4px;"
+            " font-size:9px; font-weight:bold; padding:3px 8px; }"
+        )
+        self._effect_tab_off = (
+            "QPushButton { background:#141414; color:#555;"
+            " border:1px solid #252525; border-radius:4px;"
+            " font-size:9px; font-weight:bold; padding:3px 8px; }"
+            "QPushButton:hover { color:#888; }"
+        )
+        self._effect_tab_btns: dict[str, QPushButton] = {}
+        for i, tab_label in enumerate(("MOUVEMENT", "DIMMER", "COULEURS", "GOBO", "STROB", "SPÉCIAL")):
+            btn = QPushButton(tab_label)
+            btn.setFixedHeight(22)
+            btn.setStyleSheet(self._effect_tab_on if i == 0 else self._effect_tab_off)
+            btn.clicked.connect(lambda _=False, idx=i: self._switch_effect_tab(idx))
+            self._effect_tab_btns[tab_label] = btn
+            hdr.addWidget(btn)
+
+        vbox.addLayout(hdr)
+
+        # ── Pages (QStackedWidget) ────────────────────────────────────────
+        self._effect_stack = QStackedWidget()
+        self._effect_stack.addWidget(self._build_movement_content())  # 0
+        self._effect_stack.addWidget(self._build_dimmer_content())    # 1
+        self._effect_stack.addWidget(self._build_color_content())     # 2
+        self._effect_stack.addWidget(self._build_gobo_content())      # 3
+        self._effect_stack.addWidget(self._build_strob_content())     # 4
+        self._effect_stack.addWidget(self._build_special_content())   # 5
+        self._effect_stack.setCurrentIndex(0)
+        vbox.addWidget(self._effect_stack)
+
+        return container
+
+    def _switch_effect_tab(self, idx: int):
+        """Bascule entre les onglets MOUVEMENT / DIMMER / COULEURS / GOBO / STROB / SPÉCIAL."""
+        self._effect_stack.setCurrentIndex(idx)
+        for i, label in enumerate(("MOUVEMENT", "DIMMER", "COULEURS", "GOBO", "STROB", "SPÉCIAL")):
+            self._effect_tab_btns[label].setStyleSheet(
+                self._effect_tab_on if i == idx else self._effect_tab_off)
+
+    # ── Page 0 : Mouvements ───────────────────────────────────────────────────
+
+    def _build_movement_content(self) -> QWidget:
+        """Grille de patterns de mouvement + sliders VITESSE/TAILLE/DURÉE."""
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 4, 0, 0)
+        vbox.setSpacing(8)
+
+        self._mov_tiles: dict[str, _MovTile] = {}
+        for row_idx in range(2):
+            row_layout = QHBoxLayout()
+            row_layout.setSpacing(6)
+            for col_idx in range(4):
+                i = row_idx * 4 + col_idx
+                key, icon, label = self._MOVEMENTS[i]
+                tile = _MovTile(key, icon, label, w)
+                tile.clicked.connect(self._on_movement_selected)
+                tile.set_state(
+                    selected=key in self._movement_patterns,
+                    playing=key == self._current_movement,
+                )
+                self._mov_tiles[key] = tile
+                row_layout.addWidget(tile)
+            vbox.addLayout(row_layout)
+
+        sliders_row = QHBoxLayout()
+        sliders_row.setSpacing(10)
+
+        def _make_slider(lbl_txt: str, value: int, attr: str) -> QHBoxLayout:
+            h = QHBoxLayout()
+            h.setSpacing(5)
+            lbl = QLabel(lbl_txt)
+            lbl.setStyleSheet(
+                "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+            lbl.setFixedWidth(44)
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(0, 100)
+            sl.setValue(value)
+            sl.setStyleSheet(self._MOV_SLIDER_STYLE)
+            val_lbl = QLabel(f"{value}%")
+            val_lbl.setFixedWidth(28)
+            val_lbl.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
+            sl.valueChanged.connect(lambda v, a=attr, vl=val_lbl: (
+                setattr(self, a, v), vl.setText(f"{v}%")
+            ))
+            h.addWidget(lbl)
+            h.addWidget(sl)
+            h.addWidget(val_lbl)
+            setattr(self, f"_mov_{attr.lstrip('_movement_')}_slider", sl)
+            return h
+
+        sliders_row.addLayout(_make_slider("VITESSE", self._movement_speed,    '_movement_speed'))
+        sliders_row.addLayout(_make_slider("TAILLE",  self._movement_size,     '_movement_size'))
+
+        # Slider DURÉE en secondes (1-30s)
+        dur_h = QHBoxLayout()
+        dur_h.setSpacing(4)
+        dur_lbl_m = QLabel("DURÉE")
+        dur_lbl_m.setStyleSheet("color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+        dur_lbl_m.setFixedWidth(44)
+        dur_sl_m = QSlider(Qt.Horizontal)
+        dur_sl_m.setRange(0, 100)
+        dur_sl_m.setValue(self._movement_duration)
+        dur_sl_m.setStyleSheet(self._MOV_SLIDER_STYLE)
+        dur_val_m = QLabel(f"{self._movement_duration}%")
+        dur_val_m.setFixedWidth(28)
+        dur_val_m.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
+        dur_sl_m.valueChanged.connect(lambda v, vl=dur_val_m: (
+            setattr(self, '_movement_duration', v), vl.setText(f"{v}%")
+        ))
+        dur_h.addWidget(dur_lbl_m)
+        dur_h.addWidget(dur_sl_m)
+        dur_h.addWidget(dur_val_m)
+        sliders_row.addLayout(dur_h)
+        vbox.addLayout(sliders_row)
+        return w
+
+    # ── Page 1 : Dimmer par groupe ───────────────────────────────────────────
+
+    _DIMMER_GROUPS = [
+        ('face',     'A'),
+        ('lat',      'B'),
+        ('contre',   'C'),
+        ('douche1',  'D'),
+        ('douche2',  'E'),
+        ('douche3',  'F'),
+        ('groupe_g', 'G'),
+        ('groupe_h', 'H'),
+        ('lyre',     'LYRES'),
+    ]
+
+    def _build_dimmer_content(self) -> QWidget:
+        """Sliders de dimmer max par groupe — contrôle en temps réel."""
+        if not hasattr(self, '_dimmer_values'):
+            self._dimmer_values = {g: 100 for g, _ in self._DIMMER_GROUPS}
+
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 4, 0, 4)
+        vbox.setSpacing(5)
+
+        self._dimmer_sliders: dict = {}
+        for group, label in self._DIMMER_GROUPS:
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            lbl = QLabel(label)
+            lbl.setStyleSheet(
+                "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+            lbl.setFixedWidth(54)
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(0, 100)
+            sl.setValue(self._dimmer_values.get(group, 100))
+            sl.setStyleSheet(self._MOV_SLIDER_STYLE)
+            val_lbl = QLabel(f"{sl.value()}%")
+            val_lbl.setFixedWidth(28)
+            val_lbl.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
+            sl.valueChanged.connect(
+                lambda v, g=group, vl=val_lbl: (
+                    self._dimmer_values.__setitem__(g, v), vl.setText(f"{v}%")
+                )
+            )
+            row.addWidget(lbl)
+            row.addWidget(sl)
+            row.addWidget(val_lbl)
+            vbox.addLayout(row)
+            self._dimmer_sliders[group] = sl
+
+        vbox.addStretch()
+        return w
+
+    @property
+    def dimmer_values(self) -> dict:
+        return getattr(self, '_dimmer_values', {})
+
+    # ── Page 2 : Couleurs lyres ───────────────────────────────────────────────
+
+    def _build_color_content(self) -> QWidget:
+        """Grille de tuiles couleur par section CHAUD/FROID/NEUTRE/BI + épinglage + DURÉE."""
+        if not hasattr(self, '_pinned_colors'):
+            self._pinned_colors: set = set()
+
+        w = QWidget()
+        self._color_content_widget = w
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 2, 0, 0)
+        vbox.setSpacing(4)
+
+        self._color_tiles: dict[str, _ColorTile] = {}
+
+        def _sec_lbl(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                "color:#444; font-size:8px; font-weight:bold; letter-spacing:1px;"
+                " background:transparent; padding:2px 0 1px 0;")
+            return lbl
+
+        def _make_row(keys_subset):
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            for key in keys_subset:
+                tile = self._color_tiles.get(key)
+                if tile:
+                    row.addWidget(tile)
+            row.addStretch()
+            return row
+
+        # Créer toutes les tuiles
+        for tdef in self._COLOR_TILES:
+            key, c1, c2, label = tdef[0], tdef[1], tdef[2], tdef[3]
+            tile = _ColorTile(key, c1, c2, label, w)
+            tile.set_state(
+                selected=key in self._color_tile_pool,
+                playing=key == self._current_color,
+            )
+            tile.clicked.connect(self._on_color_tile_selected)
+            tile.setContextMenuPolicy(Qt.CustomContextMenu)
+            tile.customContextMenuRequested.connect(
+                lambda pos, k=key: self._on_color_pin_menu(k))
+            self._color_tiles[key] = tile
+
+        # ── Section Épinglés ──────────────────────────────────────────────
+        self._pinned_section_lbl = _sec_lbl("📌  ÉPINGLÉS")
+        self._pinned_row_layout  = QHBoxLayout()
+        self._pinned_row_layout.setSpacing(4)
+        self._pinned_section_container = QWidget()
+        self._pinned_section_container.setStyleSheet("background:transparent;")
+        psc_v = QVBoxLayout(self._pinned_section_container)
+        psc_v.setContentsMargins(0, 0, 0, 0)
+        psc_v.setSpacing(2)
+        psc_v.addWidget(self._pinned_section_lbl)
+        psc_v.addLayout(self._pinned_row_layout)
+        vbox.addWidget(self._pinned_section_container)
+        self._pinned_section_container.setVisible(bool(self._pinned_colors))
+
+        # ── Toutes les couleurs en grille ─────────────────────────────────
+        all_keys = [row[0] for row in self._COLOR_TILES]
+        cols = 8
+        for i in range(0, len(all_keys), cols):
+            vbox.addLayout(_make_row(all_keys[i:i + cols]))
+
+        # ── Nombre de couleurs max simultanées ────────────────────────────
+        max_row = QHBoxLayout()
+        max_row.setSpacing(5)
+        max_lbl = QLabel("COULEURS SIMULTANÉES")
+        max_lbl.setStyleSheet(
+            "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+        max_row.addWidget(max_lbl)
+        max_row.addStretch()
+        for n in (1, 2, 3, 4):
+            btn = QPushButton(str(n))
+            btn.setFixedSize(26, 22)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { background:#1a0a3a; color:#aa77ff; border:1px solid #6622ee;"
+                " border-radius:3px; font-size:10px; font-weight:bold; }"
+                if n == self._color_max else
+                "QPushButton { background:#141414; color:#555; border:1px solid #252525;"
+                " border-radius:3px; font-size:10px; font-weight:bold; }"
+                "QPushButton:hover { color:#888; }"
+            )
+            btn.clicked.connect(lambda _, v=n: self._on_color_max(v))
+            max_row.addWidget(btn)
+            setattr(self, f'_color_max_btn_{n}', btn)
+        vbox.addLayout(max_row)
+
+        # ── Slider DURÉE ──────────────────────────────────────────────────
+        vbox.addSpacing(4)
+        dur_row = QHBoxLayout()
+        dur_row.setSpacing(5)
+        dur_lbl = QLabel("DURÉE")
+        dur_lbl.setStyleSheet(
+            "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+        dur_lbl.setFixedWidth(44)
+        dur_sl = QSlider(Qt.Horizontal)
+        dur_sl.setRange(0, 100)
+        dur_sl.setValue(self._color_duration)
+        dur_sl.setStyleSheet(self._MOV_SLIDER_STYLE)
+        dur_val = QLabel(f"{self._color_duration}%")
+        dur_val.setFixedWidth(28)
+        dur_val.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
+        dur_sl.valueChanged.connect(lambda v, vl=dur_val: (
+            setattr(self, '_color_duration', v), vl.setText(f"{v}%")
+        ))
+        dur_row.addWidget(dur_lbl)
+        dur_row.addWidget(dur_sl)
+        dur_row.addWidget(dur_val)
+        vbox.addLayout(dur_row)
+        vbox.addStretch()
+
+        self._refresh_pinned_row()
+        return w
+
+    def _on_color_pin_menu(self, key: str):
+        """Menu contextuel clic droit : Épingler / Désépingler."""
+        if not hasattr(self, '_pinned_colors'):
+            self._pinned_colors = set()
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background:#1a1a1a; color:#ccc; border:1px solid #333; padding:4px; }"
+            "QMenu::item { padding:6px 16px; border-radius:3px; }"
+            "QMenu::item:selected { background:#2a2a3a; color:#aa77ff; }"
+        )
+        if key in self._pinned_colors:
+            act = menu.addAction("📌  Désépingler")
+            act.triggered.connect(lambda: self._toggle_pin(key))
+        else:
+            act = menu.addAction("📌  Épingler en haut")
+            act.triggered.connect(lambda: self._toggle_pin(key))
+        tile = self._color_tiles.get(key)
+        if tile:
+            menu.exec(tile.mapToGlobal(tile.rect().center()))
+
+    def _toggle_pin(self, key: str):
+        if not hasattr(self, '_pinned_colors'):
+            self._pinned_colors = set()
+        if key in self._pinned_colors:
+            self._pinned_colors.discard(key)
+        else:
+            self._pinned_colors.add(key)
+        self._refresh_pinned_row()
+
+    def _on_color_max(self, value: int):
+        self._color_max = value
+        _SS_ON  = ("QPushButton { background:#1a0a3a; color:#aa77ff; border:1px solid #6622ee;"
+                   " border-radius:3px; font-size:10px; font-weight:bold; }")
+        _SS_OFF = ("QPushButton { background:#141414; color:#555; border:1px solid #252525;"
+                   " border-radius:3px; font-size:10px; font-weight:bold; }"
+                   "QPushButton:hover { color:#888; }")
+        for n in (1, 2, 3, 4):
+            btn = getattr(self, f'_color_max_btn_{n}', None)
+            if btn:
+                btn.setStyleSheet(_SS_ON if n == value else _SS_OFF)
+        self._request_save()
+
+    def _refresh_pinned_row(self):
+        if not hasattr(self, '_pinned_row_layout'):
+            return
+        # Vider la rangée épinglés
+        while self._pinned_row_layout.count():
+            item = self._pinned_row_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        pinned = [row[0] for row in self._COLOR_TILES if row[0] in self._pinned_colors]
+        for key in pinned:
+            tile = self._color_tiles.get(key)
+            if tile:
+                self._pinned_row_layout.addWidget(tile)
+        self._pinned_row_layout.addStretch()
+        has_pins = bool(pinned)
+        if hasattr(self, '_pinned_section_container'):
+            self._pinned_section_container.setVisible(has_pins)
+
+    # ── Page 2 : Spécial ─────────────────────────────────────────────────────
+
+    def _build_special_content(self) -> QWidget:
+        """Trois tuiles d'effets spéciaux (STROBE / STROBE COULEUR / FIXE BLANC)."""
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 4, 0, 4)
+        vbox.setSpacing(6)
+
+        self._special_tiles: dict = {}
+        row = QHBoxLayout()
+        row.setSpacing(5)
+        for key, icon, label, desc, accent in self._SPECIAL_TILES:
+            tile = _SpecialTile(key, icon, label, desc, accent, w)
+            tile.set_active(key == self._active_special)
+            tile.clicked.connect(self._on_special_tile_selected)
+            self._special_tiles[key] = tile
+            row.addWidget(tile)
+        vbox.addLayout(row)
+
+        vbox.addStretch()
+        return w
+
+    def _on_special_tile_selected(self, key: str):
+        """Radio toggle : active la tuile (clic sur l'actif = désactive)."""
+        if self._active_special == key:
+            self._active_special = None
+        else:
+            self._active_special = key
+        self._refresh_special_tiles()
+        self._request_save()
+
+    def _refresh_special_tiles(self):
+        """Rafraîchit l'apparence de toutes les tuiles spéciales."""
+        if not hasattr(self, '_special_tiles'):
+            return
+        for k, tile in self._special_tiles.items():
+            tile.set_active(k == self._active_special)
+
+    # ── Page 4 : Strob ───────────────────────────────────────────────────────
+
+    def _build_strob_content(self) -> QWidget:
+        """3 tuiles toggle : STROB RAPIDE / STROB LENT / PAS DE STROB."""
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 4, 0, 4)
+        vbox.setSpacing(6)
+
+        defs = [
+            ('fast', '⚡', 'RAPIDE',   '_strob_fast'),
+            ('slow', '〜', 'LENT',     '_strob_slow'),
+            ('none', '○', 'Pas de Strobe', '_strob_none'),
+        ]
+
+        self._strob_tiles: dict = {}
+        row = QHBoxLayout()
+        row.setSpacing(5)
+        for key, icon, label, attr in defs:
+            tile = _MovTile(key, icon, label)
+            tile.set_state(selected=True, playing=True)   # tous actifs par défaut
+            tile.clicked.connect(lambda _k, a=attr, t=key: self._on_strob_toggle(a, t))
+            self._strob_tiles[key] = tile
+            row.addWidget(tile)
+        vbox.addLayout(row)
+
+        info = QLabel(
+            "RAPIDE : strobe beat rapide\n"
+            "LENT : strobe lent / build\n"
+            "PAS DE : autorise absence de strobe"
+        )
+        info.setStyleSheet(
+            "color:#333; font-size:8px; background:transparent; padding-top:6px;")
+        vbox.addWidget(info)
+        vbox.addStretch()
+        return w
+
+    def _on_strob_toggle(self, attr: str, key: str):
+        setattr(self, attr, not getattr(self, attr))
+        v = getattr(self, attr)
+        t = self._strob_tiles.get(key)
+        if t:
+            t.set_state(selected=v, playing=v)
+        self._request_save()
+
+    # ── Sources audio dynamiques ─────────────────────────────────────────────
+
+    def _refresh_audio_sources(self):
+        """Enrichit self.SOURCES avec les périphériques audio détectés sur ce PC."""
+        try:
+            from live_audio import get_audio_devices
+            devices = get_audio_devices()
+        except Exception:
+            return
+        sources = list(self._SOURCES_STATIC)
+        if devices:
+            sources.append(("─── Périphériques ───", None))
+            for d in devices:
+                sources.append((d['label'], d['key']))
+        # Mettre à jour la liste de classe pour ce panel
+        LiveModePanel.SOURCES = sources
+        # Mettre à jour le combo si déjà créé
+        if hasattr(self, 'source_combo'):
+            current = self.source_combo.currentData() or 'loopback'
+            self.source_combo.blockSignals(True)
+            self.source_combo.clear()
+            for label, key in sources:
+                if key is None:
+                    self.source_combo.addItem(label)
+                    idx = self.source_combo.count() - 1
+                    item = self.source_combo.model().item(idx)
+                    if item:
+                        item.setEnabled(False)
+                else:
+                    self.source_combo.addItem(label, key)
+            for i in range(self.source_combo.count()):
+                if self.source_combo.itemData(i) == current:
+                    self.source_combo.setCurrentIndex(i)
+                    break
+            self.source_combo.blockSignals(False)
+
+    def _on_beta_contact_clicked(self, _href):
+        """Ouvre la fenêtre Soumettre une idée depuis le lien bêta."""
+        main_win = self.window()
+        if hasattr(main_win, '_show_idea_dialog'):
+            main_win._show_idea_dialog()
+
+    # ── Adaptation dynamique aux fixtures patchées ───────────────────────────
+
+    def adapt_to_fixtures(self, projectors):
+        """Adapte les onglets et couleurs selon les fixtures patchées."""
+        has_moving = any(getattr(p, 'fixture_type', '') == 'Moving Head'    for p in projectors)
+        has_led    = any(getattr(p, 'fixture_type', '') in (
+            'PAR LED', 'Barre LED', 'Gradateur', 'Stroboscope') for p in projectors)
+
+        # ── Visibilité des onglets MOUVEMENT et GOBO ─────────────────────
+        for tab_name in ("MOUVEMENT", "GOBO"):
+            btn = self._effect_tab_btns.get(tab_name)
+            if btn:
+                btn.setVisible(has_moving)
+
+        # Si l'onglet actif est masqué, basculer sur COULEURS (index 1)
+        cur = self._effect_stack.currentIndex()
+        tab_labels = ("MOUVEMENT", "COULEURS", "GOBO", "SPÉCIAL")
+        if cur < len(tab_labels):
+            cur_label = tab_labels[cur]
+            if cur_label in ("MOUVEMENT", "GOBO") and not has_moving:
+                self._switch_effect_tab(1)
+
+        # ── Filtrage des couleurs ─────────────────────────────────────────
+        if not hasattr(self, '_color_tiles'):
+            return
+
+        if has_moving and not has_led:
+            # Uniquement des lyres → filtrer selon la roue couleur
+            _NAME_MAP = {
+                'red': 'rouge',    'rouge': 'rouge',
+                'orange': 'orange',
+                'yellow': 'jaune', 'jaune': 'jaune',
+                'green': 'vert',   'vert': 'vert',
+                'cyan': 'cyan',    'turquoise': 'cyan',
+                'blue': 'bleu',    'bleu': 'bleu',
+                'violet': 'violet','purple': 'violet', 'magenta': 'violet',
+                'white': 'blanc',  'blanc': 'blanc',   'open': 'blanc',
+                'pink': 'rose',    'rose': 'rose',
+                'amber': 'ambre',  'ambre': 'ambre',
+            }
+            wheel_keys = {'auto'}
+            for p in projectors:
+                if getattr(p, 'fixture_type', '') == 'Moving Head':
+                    for slot in getattr(p, 'color_wheel_slots', []):
+                        name = slot.get('name', '').lower().strip()
+                        key = _NAME_MAP.get(name)
+                        if key:
+                            wheel_keys.add(key)
+
+            for tile_key, tile in self._color_tiles.items():
+                tdef = next((r for r in self._COLOR_TILES if r[0] == tile_key), None)
+                is_bi = tdef and tdef[4] == 'bi'
+                tile.setVisible(is_bi or tile_key in wheel_keys)
+        else:
+            # PAR LED présents (ou mixte) → tout afficher
+            for tile in self._color_tiles.values():
+                tile.setVisible(True)
+
+    # ── Page 3 : Gobo ────────────────────────────────────────────────────────
+
+    def _build_gobo_content(self) -> QWidget:
+        """Grille de slots gobo + toggle rotation + vitesse — design _MovTile."""
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 4, 0, 4)
+        vbox.setSpacing(6)
+
+        # Grille 2×4 : OUVERT + Gobo 1-7
+        self._gobo_tiles: list = []
+        slot_defs = [
+            ('○', 'OUVERT'), ('①', 'G1'), ('②', 'G2'), ('③', 'G3'),
+            ('④', 'G4'),     ('⑤', 'G5'), ('⑥', 'G6'), ('⑦', 'G7'),
+        ]
+        for row_idx in range(2):
+            row = QHBoxLayout()
+            row.setSpacing(5)
+            for col_idx in range(4):
+                i = row_idx * 4 + col_idx
+                icon, lbl = slot_defs[i]
+                tile = _MovTile(str(i), icon, lbl)
+                tile.set_state(selected=(i in self._gobo_pool),
+                               playing=(i == self._current_gobo))
+                tile.clicked.connect(lambda _key, idx=i: self._on_gobo_slot(idx))
+                self._gobo_tiles.append(tile)
+                row.addWidget(tile)
+            vbox.addLayout(row)
+
+        # Rotation — tuile _MovTile façon toggle
+        rot_row = QHBoxLayout()
+        rot_row.setSpacing(5)
+        self._gobo_rot_tile = _MovTile('rot', '↻', 'ROTATION')
+        self._gobo_rot_tile.set_state(selected=self._gobo_rotation,
+                                      playing=self._gobo_rotation)
+        self._gobo_rot_tile.clicked.connect(self._on_gobo_rot_toggle)
+        rot_row.addWidget(self._gobo_rot_tile)
+        rot_row.addStretch()
+        vbox.addLayout(rot_row)
+
+        # Slider DURÉE (temps par gobo)
+        dur_row = QHBoxLayout()
+        dur_row.setSpacing(4)
+        dur_lbl = QLabel("DURÉE")
+        dur_lbl.setStyleSheet(
+            "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+        dur_lbl.setFixedWidth(48)
+        dur_sl = QSlider(Qt.Horizontal)
+        dur_sl.setRange(0, 100)
+        dur_sl.setValue(self._gobo_duration)
+        dur_sl.setStyleSheet(self._MOV_SLIDER_STYLE)
+        dur_val = QLabel(f"{self._gobo_duration}%")
+        dur_val.setFixedWidth(28)
+        dur_val.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
+        dur_sl.valueChanged.connect(lambda v, vl=dur_val: (
+            setattr(self, '_gobo_duration', v), vl.setText(f"{v}%")
+        ))
+        dur_row.addWidget(dur_lbl)
+        dur_row.addWidget(dur_sl)
+        dur_row.addWidget(dur_val)
+        vbox.addLayout(dur_row)
+
+        # Slider vitesse rotation
+        spd_row = QHBoxLayout()
+        spd_row.setSpacing(4)
+        spd_lbl = QLabel("ROTATION")
+        spd_lbl.setStyleSheet(
+            "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+        spd_lbl.setFixedWidth(48)
+        spd_sl = QSlider(Qt.Horizontal)
+        spd_sl.setRange(1, 100)
+        spd_sl.setValue(self._gobo_rot_speed)
+        spd_sl.setStyleSheet(self._MOV_SLIDER_STYLE)
+        spd_val = QLabel(f"{self._gobo_rot_speed}%")
+        spd_val.setFixedWidth(28)
+        spd_val.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
+        spd_sl.valueChanged.connect(lambda v, vl=spd_val: (
+            setattr(self, '_gobo_rot_speed', v), vl.setText(f"{v}%")
+        ))
+        spd_row.addWidget(spd_lbl)
+        spd_row.addWidget(spd_sl)
+        spd_row.addWidget(spd_val)
+        vbox.addLayout(spd_row)
+
+        vbox.addStretch()
+        return w
+
+    def _on_gobo_slot(self, idx: int):
+        if idx in self._gobo_pool:
+            if len(self._gobo_pool) <= 1:
+                return
+            self._gobo_pool.discard(idx)
+            if self._current_gobo == idx:
+                self._current_gobo = min(self._gobo_pool)
+        else:
+            self._gobo_pool.add(idx)
+            self._current_gobo = idx
+        self._refresh_gobo_tiles()
+        self._request_save()
+
+    def _refresh_gobo_tiles(self):
+        if not hasattr(self, '_gobo_tiles'):
+            return
+        for i, tile in enumerate(self._gobo_tiles):
+            tile.set_state(
+                selected=(i in self._gobo_pool),
+                playing=(i == self._current_gobo),
+            )
+
+    def _on_gobo_rot_toggle(self, _key):
+        self._gobo_rotation = not self._gobo_rotation
+        if hasattr(self, '_gobo_rot_tile'):
+            self._gobo_rot_tile.set_state(selected=self._gobo_rotation,
+                                           playing=self._gobo_rotation)
+        self._request_save()
+
+    @property
+    def strob_fast(self) -> bool:
+        return self._strob_fast
+
+    @property
+    def strob_slow(self) -> bool:
+        return self._strob_slow
+
+    @property
+    def strob_none(self) -> bool:
+        return self._strob_none
+
+    @property
+    def gobo_pool(self) -> list:
+        """Slots gobo sélectionnés, triés."""
+        return sorted(self._gobo_pool)
+
+    @property
+    def current_gobo(self) -> int:
+        return self._current_gobo
+
+    @property
+    def gobo_duration(self) -> int:
+        return self._gobo_duration
+
+    @property
+    def gobo_rotation(self) -> bool:
+        return self._gobo_rotation
+
+    @property
+    def gobo_rot_speed(self) -> int:
+        return self._gobo_rot_speed
+
+    # ── Handlers couleur ─────────────────────────────────────────────────────
+
+    def _on_color_tile_selected(self, key: str):
+        """Toggle une tuile couleur dans/hors du pool.
+        Cliquer sur une tuile la rend immédiatement 'en cours'."""
+        if key in self._color_tile_pool:
+            if len(self._color_tile_pool) <= 1:
+                return   # ne peut pas décocher la dernière
+            self._color_tile_pool.discard(key)
+            if self._current_color == key:
+                order = [row[0] for row in self._COLOR_TILES]
+                for k in order:
+                    if k in self._color_tile_pool:
+                        self._current_color = k
+                        break
+        else:
+            self._color_tile_pool.add(key)
+            self._current_color = key   # ← joue immédiatement cette couleur
+        self._refresh_color_tiles()
+        self._request_save()
+
+    def set_current_color_tile(self, key: str):
+        """Appelé par le moteur quand il bascule vers la prochaine couleur."""
+        if key not in self._color_tile_pool or key == self._current_color:
+            return
+        self._current_color = key
+        self._refresh_color_tiles()
+
+    def _refresh_color_tiles(self):
+        for k, tile in self._color_tiles.items():
+            tile.set_state(
+                selected=k in self._color_tile_pool,
+                playing=k == self._current_color,
+            )
+
+    def _on_movement_selected(self, key: str):
+        """Toggle un mouvement dans/hors du pool de mouvements."""
+        if key in self._movement_patterns:
+            # Déselectionner : interdit si c'est le dernier
+            if len(self._movement_patterns) <= 1:
+                return
+            self._movement_patterns.discard(key)
+            # Si c'était le courant, passer au premier restant (ordre _MOVEMENTS)
+            if self._current_movement == key:
+                order = [k for k, _, _ in self._MOVEMENTS]
+                for k in order:
+                    if k in self._movement_patterns:
+                        self._current_movement = k
+                        break
+        else:
+            # Ajouter au pool
+            self._movement_patterns.add(key)
+        # Rafraîchir toutes les tuiles
+        self._refresh_mov_tiles()
+        self.movement_changed.emit(self._current_movement)
+        self._request_save()
+
+    def set_current_movement(self, key: str):
+        """Appelé par le moteur quand il bascule vers le prochain mouvement du pool."""
+        if key not in self._movement_patterns or key == self._current_movement:
+            return
+        self._current_movement = key
+        self._refresh_mov_tiles()
+
+    def _refresh_mov_tiles(self):
+        """Met à jour l'état visuel de toutes les tuiles de mouvement."""
+        for k, tile in self._mov_tiles.items():
+            tile.set_state(
+                selected=k in self._movement_patterns,
+                playing=k == self._current_movement,
+            )
+
+    # ── Sélecteur de mode IA ──────────────────────────────────────────────────
+
+    _MODES = [
+        ('musical', '♪', 'MUSICAL IA',  'Réagit à la musique'),
+        ('ambiance', '○', 'AMBIANCE IA', "Lumière d'ambiance"),
+        ('manuel',  '⊟', 'MANUEL',      'Reprenez le contrôle'),
+    ]
+
+    def _build_settings_bpm_row(self) -> QHBoxLayout:
+        """Carte PARAMETRE LIVE (style carteson) — BPM retiré."""
         row = QHBoxLayout()
         row.setSpacing(10)
+        row.addWidget(self._build_settings_block(), 1)
+        # Construire la carte BPM en caché pour conserver les signaux
+        self._build_bpm_card()
+        return row
 
-        # Indicateur beat (cercle)
+    def _build_settings_block(self) -> QFrame:
+        """Carte PARAMETRE LIVE style carteson.png — cliquable, ouvre les paramètres."""
+        card = QFrame()
+        card.setObjectName("settingsCard")
+        card.setCursor(Qt.PointingHandCursor)
+        card.setStyleSheet("""
+            QFrame#settingsCard {
+                background: #0a1520;
+                border: 1px solid #1e3a5a;
+                border-radius: 10px;
+            }
+            QFrame#settingsCard:hover { border-color: #00aaff; }
+        """)
+
+        vbox = QVBoxLayout(card)
+        vbox.setContentsMargins(12, 10, 12, 10)
+        vbox.setSpacing(6)
+
+        # ── Ligne 1 : label "INPUT" + gear ──────────────────────────────────
+        top = QHBoxLayout()
+        top.setSpacing(4)
+
+        param_lbl = QLabel("INPUT")
+        param_lbl.setStyleSheet(
+            "color:#4a7a9a; font-size:9px; font-weight:bold; letter-spacing:1.5px;")
+        top.addWidget(param_lbl)
+        top.addStretch()
+
+        # Dot de connexion intégré à la carte
+        top.addWidget(self._conn_dot)
+
+        vbox.addLayout(top)
+
+        # ── Ligne 2 : nom de l'entrée (dynamique) + indicateur BEAT ─────────
+        mid = QHBoxLayout()
+        mid.setSpacing(8)
+
+        self._input_name_lbl = QLabel(self._source_display_name())
+        self._input_name_lbl.setStyleSheet(
+            "color:#e0e0e0; font-size:16px; font-weight:bold;")
+        mid.addWidget(self._input_name_lbl)
+
+        # Bouton "?" — visible pour les sources MIDI (VDJ, Rekordbox, MIDI Clock)
+        self._source_help_btn = QPushButton("?")
+        self._source_help_btn.setFixedSize(20, 20)
+        self._source_help_btn.setCursor(Qt.PointingHandCursor)
+        self._source_help_btn.setToolTip("Guide de configuration")
+        self._source_help_btn.setCheckable(True)
+        self._source_help_btn.setVisible(False)
+        self._source_help_btn.setStyleSheet(
+            "QPushButton { background:#0a1a2a; color:#0088cc; border:1px solid #0055aa;"
+            " border-radius:10px; font-size:10px; font-weight:bold; }"
+            "QPushButton:checked { background:#0055aa; color:#fff; border-color:#00aaff; }"
+            "QPushButton:hover { background:#0a2a3a; }"
+        )
+        self._source_help_btn.toggled.connect(self._toggle_midi_guide)
+        mid.addWidget(self._source_help_btn)
+        mid.addStretch()
+
+        # Cercle BEAT (intégré dans la carte)
         self._beat_btn = QPushButton("●")
-        self._beat_btn.setFixedSize(44, 44)
+        self._beat_btn.setFixedSize(28, 28)
         self._beat_btn.setEnabled(False)
         self._beat_idle_style = (
-            "QPushButton { background:#0d0d0d; color:#252525;"
-            " border:2px solid #1e1e1e; border-radius:22px; font-size:20px; }"
+            "QPushButton { background:#0d1a28; color:#1e3a5a;"
+            " border:2px solid #1e3a5a; border-radius:14px; font-size:13px; }"
         )
         self._beat_active_style = (
             "QPushButton { background:#ffffff18; color:#ffffff;"
-            " border:2px solid #ffffff; border-radius:22px; font-size:20px; }"
+            " border:2px solid #ffffff; border-radius:14px; font-size:13px; }"
         )
         self._beat_btn.setStyleSheet(self._beat_idle_style)
 
         beat_col = QVBoxLayout()
-        beat_col.setSpacing(2)
+        beat_col.setSpacing(1)
         beat_col.addWidget(self._beat_btn)
-        beat_lbl = QLabel("BEAT")
-        beat_lbl.setStyleSheet(
-            "color:#444; font-size:9px; font-weight:bold; letter-spacing:1px;")
-        beat_lbl.setAlignment(Qt.AlignCenter)
-        beat_col.addWidget(beat_lbl)
-        row.addLayout(beat_col)
+        beat_lbl_w = QLabel("BEAT")
+        beat_lbl_w.setStyleSheet(
+            "color:#2a4a5a; font-size:8px; font-weight:bold; letter-spacing:1px;")
+        beat_lbl_w.setAlignment(Qt.AlignCenter)
+        beat_col.addWidget(beat_lbl_w)
+        mid.addLayout(beat_col)
 
-        row.addStretch()
+        vbox.addLayout(mid)
 
-        # Slider BPM
+        # Sous-titre : device / logiciel détecté ─────────────────────────────
+        self._input_device_lbl = QLabel("")
+        self._input_device_lbl.setStyleSheet(
+            "color:#3a6a8a; font-size:9px; font-style:italic;"
+            " background:transparent; border:none;")
+        vbox.addWidget(self._input_device_lbl)
+
+        # ── VU-mètre + Sensibilité fusionnés ──────────────────────────────────
+        self._vu_sens = _VuSensWidget(initial_sens=80)
+        self._vu_sens.setToolTip("Niveau audio · Glisser le marqueur blanc = seuil de sensibilité")
+        # Alias pour compatibilité avec set_vu() et sens_slider
+        self._input_level_bar = self._vu_sens   # set_vu appelle setValue
+        self.sens_slider       = self._vu_sens._sens_proxy
+        vbox.addSpacing(2)
+        vbox.addWidget(self._vu_sens)
+
+        # Label BPM — visible uniquement en source MIDI Clock
+        self._midi_bpm_lbl = QLabel("")
+        self._midi_bpm_lbl.setAlignment(Qt.AlignCenter)
+        self._midi_bpm_lbl.setStyleSheet(
+            "color:#00d4ff; font-size:18px; font-weight:bold; "
+            "background:transparent; border:none; padding:2px 0;"
+        )
+        self._midi_bpm_lbl.setVisible(False)
+        vbox.addWidget(self._midi_bpm_lbl)
+
+        # Barre de confiance BPM (verte=stable, orange=moyen, rouge=incertain)
+        self._bpm_conf_bar = QProgressBar()
+        self._bpm_conf_bar.setRange(0, 100)
+        self._bpm_conf_bar.setValue(0)
+        self._bpm_conf_bar.setFixedHeight(4)
+        self._bpm_conf_bar.setTextVisible(False)
+        self._bpm_conf_bar.setVisible(False)
+        self._bpm_conf_bar.setStyleSheet(
+            "QProgressBar { background:#1a1a1a; border:none; border-radius:2px; }"
+            "QProgressBar::chunk { background:#00cc55; border-radius:2px; }"
+        )
+        vbox.addWidget(self._bpm_conf_bar)
+
+        card.mousePressEvent = lambda e: self._open_settings()
+        return card
+
+    def _build_bpm_card(self) -> QVBoxLayout:
+        """Carte BPM : affichage grand + bouton SYNC + slider de réglage."""
         bpm_col = QVBoxLayout()
-        bpm_col.setSpacing(4)
+        bpm_col.setSpacing(6)
+        bpm_col.setAlignment(Qt.AlignTop)
 
-        bpm_hdr = QHBoxLayout()
-        bpm_hdr.setSpacing(6)
-        bpm_ttl = QLabel("BPM")
-        bpm_ttl.setStyleSheet(
-            "color:#888; font-size:10px; font-weight:bold; letter-spacing:1.5px;")
-        self._bpm_val_lbl = QLabel("—")
-        self._bpm_val_lbl.setStyleSheet(
-            "color:#00d4ff; font-size:14px; font-weight:bold; min-width:36px;")
-        self._bpm_val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._bpm_auto_btn = QPushButton("AUTO ↺")
-        self._bpm_auto_btn.setFixedHeight(20)
-        self._bpm_auto_btn.setStyleSheet("""
-            QPushButton {
-                background:#1a2a1a; color:#44cc44;
-                border:1px solid #2a5a2a; border-radius:4px;
-                padding:0 6px; font-size:9px; font-weight:bold;
+        bpm_card = QFrame()
+        bpm_card.setFixedSize(130, 96)
+        bpm_card.setStyleSheet("""
+            QFrame {
+                background: #0a1520;
+                border: 1px solid #1e3a5a;
+                border-radius: 10px;
             }
-            QPushButton:hover { background:#223322; }
         """)
-        self._bpm_auto_btn.clicked.connect(self._on_bpm_auto_reset)
-        self._bpm_auto_btn.hide()
-        bpm_hdr.addWidget(bpm_ttl)
-        bpm_hdr.addStretch()
-        bpm_hdr.addWidget(self._bpm_val_lbl)
-        bpm_hdr.addWidget(self._bpm_auto_btn)
+        card_vbox = QVBoxLayout(bpm_card)
+        card_vbox.setContentsMargins(8, 6, 8, 7)
+        card_vbox.setSpacing(4)
 
+        self._bpm_display = QLabel("—  BPM")
+        self._bpm_display.setAlignment(Qt.AlignCenter)
+        self._bpm_display.setStyleSheet(self._BPM_CARD_NORMAL)
+        card_vbox.addWidget(self._bpm_display)
+
+        self._sync_btn = QPushButton("SYNC")
+        self._sync_btn.setFixedHeight(20)
+        self._sync_btn.setCheckable(True)
+        self._sync_btn.setStyleSheet("""
+            QPushButton {
+                background:#1a1a1a; color:#666;
+                border:1px solid #2a2a2a; border-radius:5px;
+                font-size:10px; font-weight:bold; letter-spacing:1.5px;
+            }
+            QPushButton:checked {
+                background:#001a33; color:#00aaff;
+                border:1px solid #0055aa;
+            }
+            QPushButton:hover { background:#252525; }
+            QPushButton:checked:hover { background:#002244; }
+        """)
+        self._sync_btn.clicked.connect(lambda _checked: self._on_sync_clicked())
+        card_vbox.addWidget(self._sync_btn)
+
+        # Slider BPM caché (conservé pour compatibilité des signaux)
         self._bpm_slider = QSlider(Qt.Horizontal)
         self._bpm_slider.setRange(60, 200)
         self._bpm_slider.setValue(120)
-        self._bpm_slider.setStyleSheet(self._SLIDER_STYLE)
         self._bpm_slider.sliderMoved.connect(self._on_bpm_moved)
         self._bpm_slider.valueChanged.connect(self._on_bpm_changed)
+        self._bpm_slider.hide()
 
-        bpm_col.addLayout(bpm_hdr)
-        bpm_col.addWidget(self._bpm_slider)
-        row.addLayout(bpm_col)
+        bpm_card.hide()
+        bpm_col.addWidget(bpm_card)
 
+        # Widgets cachés pour compatibilité
+        self._bpm_val_lbl = QLabel("—")
+        self._bpm_val_lbl.hide()
+        self._bpm_auto_btn = QPushButton("AUTO ↺")
+        self._bpm_auto_btn.clicked.connect(self._on_bpm_auto_reset)
+        self._bpm_auto_btn.hide()
+
+        return bpm_col
+
+    def _build_mode_tiles(self) -> QHBoxLayout:
+        self._mode_tiles: dict[str, _ModeTile] = {}
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        for key, icon, title, sub in self._MODES:
+            tile = _ModeTile(key, icon, title, sub, self)
+            tile.clicked.connect(self._on_mode_selected)
+            tile.set_active(key == self._ia_mode)
+            self._mode_tiles[key] = tile
+            row.addWidget(tile)
         return row
+
+    def _on_mode_selected(self, key: str):
+        if key == self._ia_mode:
+            return
+        self._ia_mode = key
+        for k, tile in self._mode_tiles.items():
+            tile.set_active(k == key)
+        self.ia_mode_changed.emit(key)
+        self._request_save()
+
+    # ── Beat + BPM ────────────────────────────────────────────────────────────
+
+    _BPM_CARD_NORMAL  = ("color:#ffffff; font-size:22px; font-weight:bold;"
+                         " background:transparent; border:none;")
+    _BPM_CARD_MANUAL  = ("color:#ffaa00; font-size:22px; font-weight:bold;"
+                         " background:transparent; border:none;")
+    _BPM_CARD_SYNCED  = ("color:#00aaff; font-size:22px; font-weight:bold;"
+                         " background:transparent; border:none;")
 
     def flash_beat(self):
         """Flash le bouton beat — appelé par le moteur à chaque beat détecté."""
@@ -1286,7 +3043,7 @@ class LiveModePanel(QWidget):
         QTimer.singleShot(80, lambda: self._beat_btn.setStyleSheet(self._beat_idle_style))
 
     def set_bpm_auto(self, bpm: float):
-        """Met à jour le slider BPM en mode auto (ignoré si manuel)."""
+        """Met à jour l'affichage BPM en mode auto (ignoré si manuel/synced)."""
         if self._bpm_manual:
             return
         if bpm > 0:
@@ -1294,23 +3051,82 @@ class LiveModePanel(QWidget):
             self._bpm_slider.setValue(int(min(200, max(60, bpm))))
             self._bpm_slider.blockSignals(False)
         self._bpm_val_lbl.setText(f"{bpm:.0f}" if bpm > 0 else "—")
+        self._bpm_display.setText(f"{bpm:.0f}  BPM" if bpm > 0 else "—  BPM")
+
+        # Afficher le BPM dans la carte INPUT uniquement en source MIDI Clock
+        if hasattr(self, '_midi_bpm_lbl'):
+            is_midi = self.source_key == 'midi_clock'
+            self._midi_bpm_lbl.setVisible(is_midi)
+            if is_midi:
+                self._midi_bpm_lbl.setText(f"{bpm:.0f} BPM" if bpm > 0 else "—")
+
+    def _on_sync_clicked(self):
+        """SYNC tap tempo : appuyez 2+ fois pour calculer le BPM depuis les taps."""
+        import time as _t
+        now = _t.monotonic()
+
+        # Filtrer les taps trop anciens (> 3 s = nouveau cycle)
+        self._sync_tap_times = [t for t in self._sync_tap_times if now - t < 3.0]
+        self._sync_tap_times.append(now)
+        n = len(self._sync_tap_times)
+
+        # Annuler le timer de reset précédent
+        if self._sync_reset_timer:
+            self._sync_reset_timer.stop()
+
+        if n < 2:
+            # 1er tap : attente du 2e
+            self._sync_btn.setChecked(False)
+            self._bpm_display.setStyleSheet(self._BPM_CARD_NORMAL)
+            self._bpm_display.setText("TAP...")
+            return
+
+        # Calculer BPM depuis les intervalles (max 6 derniers taps)
+        taps = self._sync_tap_times[-6:]
+        intervals = [taps[i+1] - taps[i] for i in range(len(taps) - 1)]
+        avg_iv = sum(intervals) / len(intervals)
+        bpm = max(60, min(200, round(60.0 / avg_iv)))
+
+        # Appliquer le BPM
+        self._bpm_manual = True
+        self._sync_btn.setChecked(True)
+        self._bpm_slider.blockSignals(True)
+        self._bpm_slider.setValue(bpm)
+        self._bpm_slider.blockSignals(False)
+        self._bpm_display.setStyleSheet(self._BPM_CARD_SYNCED)
+        self._bpm_display.setText(f"{bpm}  BPM")
+        self.bpm_override.emit(float(bpm))
+
+        # Après 4 s sans tap : retour en mode auto
+        if self._sync_reset_timer is None:
+            self._sync_reset_timer = QTimer()
+            self._sync_reset_timer.setSingleShot(True)
+            self._sync_reset_timer.timeout.connect(self._on_sync_tap_expired)
+        self._sync_reset_timer.start(4000)
+
+    def _on_sync_tap_expired(self):
+        """4 s sans tap → libérer le BPM manuel et repasser en auto."""
+        self._sync_tap_times.clear()
+        self._on_bpm_auto_reset()
 
     def _on_bpm_moved(self):
-        """Déclenché seulement quand l'utilisateur glisse vraiment le handle."""
+        """Déclenché quand l'utilisateur glisse le handle du slider."""
         if not self._bpm_manual:
             self._bpm_manual = True
-            self._bpm_auto_btn.show()
-            self._bpm_val_lbl.setStyleSheet(
-                "color:#ffaa00; font-size:14px; font-weight:bold; min-width:36px;")
+            self._sync_btn.setChecked(True)
+            self._bpm_display.setStyleSheet(self._BPM_CARD_MANUAL)
 
     def _on_bpm_changed(self, value: int):
         self._bpm_val_lbl.setText(str(value))
         if self._bpm_manual:
+            self._bpm_display.setText(f"{value}  BPM")
             self.bpm_override.emit(float(value))
 
     def _on_bpm_auto_reset(self):
         self._bpm_manual = False
         self._bpm_auto_btn.hide()
+        self._sync_btn.setChecked(False)
+        self._bpm_display.setStyleSheet(self._BPM_CARD_NORMAL)
         self._bpm_val_lbl.setStyleSheet(
             "color:#00d4ff; font-size:14px; font-weight:bold; min-width:36px;")
         self.bpm_released.emit()
@@ -1319,13 +3135,12 @@ class LiveModePanel(QWidget):
 
     @property
     def lyre_mode(self) -> str:
-        return self._quick_bar.lyre_mode()
+        return ''
 
     # ── Tile state ────────────────────────────────────────────────────────────
 
     def is_tile_active(self, tile_id: str) -> bool:
-        tile = self._quick_bar._tiles.get(tile_id)
-        return tile.is_checked if tile else False
+        return False
 
     # ── Color presets ─────────────────────────────────────────────────────────
 
@@ -1333,24 +3148,28 @@ class LiveModePanel(QWidget):
         c = QColor(hex_color)
         if c.isValid():
             self.dominant_color = c
-            self._refresh_color_btn()
             self.color_changed.emit(c)
 
     # ── Detected software ─────────────────────────────────────────────────────
 
     def set_detected_software(self, name: str, source_key: str):
-        """Appelé par SoftwareDetector — affiche le badge et auto-sélectionne la source."""
+        """Appelé par SoftwareDetector — auto-sélectionne la source et met à jour la carte INPUT."""
         if name:
-            self._detected_badge.setText(f"◉  {name.upper()} DÉTECTÉ")
-            self._detected_badge.show()
-            # Auto-sélectionner la source correspondante dans le combo
+            # Auto-sélectionner la source correspondante dans le combo (interne)
             for i, (_, key) in enumerate(self.SOURCES):
                 if key == source_key:
                     if self.source_combo.currentIndex() != i:
-                        self.source_combo.setCurrentIndex(i)
+                        self.source_combo.setCurrentIndex(i)   # déclenche _on_source_changed
                     break
+            # Afficher le logiciel détecté dans la carte INPUT (sous-titre vert)
+            if hasattr(self, '_input_device_lbl'):
+                self._input_device_lbl.setText(f"◉  {name}")
+                self._input_device_lbl.setStyleSheet(
+                    "color:#00cc44; font-size:9px; font-style:italic;"
+                    " background:transparent; border:none;")
         else:
-            self._detected_badge.hide()
+            if hasattr(self, '_input_device_lbl'):
+                self._input_device_lbl.setText("")
 
     # ── Paramètres Live ───────────────────────────────────────────────────────
 
@@ -1373,6 +3192,11 @@ class LiveModePanel(QWidget):
     @property
     def live_palette(self) -> list:
         return self._live_config.get('palette', [])
+
+    @property
+    def no_auto_strobe(self) -> bool:
+        """True = stroboscopes automatiques (DROP/BUILD) désactivés."""
+        return self._live_config.get('no_auto_strobe', False)
 
     def _open_settings(self):
         dlg = LiveSettingsDialog(self._live_config, self.SOURCES, self)
@@ -1434,13 +3258,6 @@ class Sequencer(QFrame):
         # Header avec boutons
         header = QHBoxLayout()
 
-        self.autosave_lbl = QLabel()
-        self.autosave_lbl.setStyleSheet("color: #3a8a3a; font-size: 10px;")
-        self.autosave_lbl.hide()
-        header.addWidget(self.autosave_lbl)
-
-        header.addStretch()
-
         btn_style = """
             QPushButton {
                 background: #2a2a2a;
@@ -1458,6 +3275,47 @@ class Sequencer(QFrame):
                 background: #1a1a1a;
             }
         """
+
+        # Bouton LIVE toggle — tout à gauche
+        self.live_btn = QPushButton("● LIVE")
+        self.live_btn.setFixedHeight(32)
+        self.live_btn.setCheckable(True)
+        self.live_btn.setChecked(False)
+        self._live_btn_style_off = btn_style
+        self._live_btn_style_on = """
+            QPushButton {
+                background: #3a0000;
+                border: 1px solid #ff3300;
+                border-radius: 4px;
+                color: #ff3300;
+                font-weight: bold;
+                padding: 6px 14px;
+            }
+            QPushButton:hover {
+                background: #4a0000;
+                border: 1px solid #ff5500;
+            }
+        """
+        self.live_btn.setStyleSheet(self._live_btn_style_off)
+        self.live_btn.clicked.connect(self._toggle_live)
+
+        # Bouton paramètres Live (⚙) — à gauche de LIVE, visible uniquement quand LIVE actif
+        self._live_settings_btn = QPushButton("⚙")
+        self._live_settings_btn.setFixedSize(26, 26)
+        self._live_settings_btn.setCursor(Qt.PointingHandCursor)
+        self._live_settings_btn.setToolTip("Paramètres Live")
+        self._live_settings_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #556677; border: none; "
+            "font-size: 15px; border-radius: 4px; } "
+            "QPushButton:hover { color: #00aaff; background: #1a2a3a; }"
+        )
+        self._live_settings_btn.clicked.connect(
+            lambda: self.live_panel._open_settings())
+        self._live_settings_btn.setVisible(False)
+        header.addWidget(self.live_btn)
+        header.addWidget(self._live_settings_btn)
+
+        header.addStretch()
 
         self.up_btn = QPushButton("▲")
         self.up_btn.setFixedSize(40, 32)
@@ -1483,42 +3341,27 @@ class Sequencer(QFrame):
         self.add_btn.clicked.connect(self.show_add_menu)
         header.addWidget(self.add_btn)
 
-        # Séparateur visuel
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("QFrame { color: #3a3a3a; }")
-        sep.setFixedHeight(24)
-        header.addWidget(sep)
-
-        # Bouton LIVE toggle
-        self.live_btn = QPushButton("● LIVE")
-        self.live_btn.setFixedHeight(32)
-        self.live_btn.setCheckable(True)
-        self.live_btn.setChecked(False)
-        self._live_btn_style_off = btn_style
-        self._live_btn_style_on = """
-            QPushButton {
-                background: #3a0000;
-                border: 1px solid #ff3300;
-                border-radius: 4px;
-                color: #ff3300;
-                font-weight: bold;
-                padding: 6px 14px;
-            }
-            QPushButton:hover {
-                background: #4a0000;
-                border: 1px solid #ff5500;
-            }
-        """
-        self.live_btn.setStyleSheet(self._live_btn_style_off)
-        self.live_btn.clicked.connect(self._toggle_live)
-        self.live_btn.setVisible(False)
-        header.addWidget(self.live_btn)
+        self.autosave_lbl = QLabel()
+        self.autosave_lbl.setStyleSheet("color: #3a8a3a; font-size: 10px;")
+        self.autosave_lbl.hide()
+        header.addWidget(self.autosave_lbl)
 
         layout.addLayout(header)
 
         # Panneau LIVE (créé une seule fois, caché par défaut)
         self.live_panel = LiveModePanel(self)
+
+        # Envelopper le live panel dans un QScrollArea pour éviter
+        # qu'il pousse le transport hors de l'écran
+        self._live_scroll = QScrollArea()
+        self._live_scroll.setWidget(self.live_panel)
+        self._live_scroll.setWidgetResizable(True)
+        self._live_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._live_scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+            "QScrollBar:vertical { background: #0d0d0d; width: 5px; border-radius: 2px; }"
+            "QScrollBar::handle:vertical { background: #2a2a2a; border-radius: 2px; }"
+        )
 
         # Stack : page 0 = table, page 1 = live panel
         self.content_stack = QStackedWidget()
@@ -1573,8 +3416,8 @@ class Sequencer(QFrame):
             }
         """)
 
-        self.content_stack.addWidget(self.table)       # index 0
-        self.content_stack.addWidget(self.live_panel)  # index 1
+        self.content_stack.addWidget(self.table)         # index 0
+        self.content_stack.addWidget(self._live_scroll) # index 1
         layout.addWidget(self.content_stack)
 
         # Timer pour mise a jour UI
@@ -1584,42 +3427,21 @@ class Sequencer(QFrame):
 
     def _toggle_live(self, checked):
         """Active / désactive le mode LIVE"""
+        _playlist_btns = (self.up_btn, self.down_btn, self.del_btn, self.add_btn)
         if checked:
-            self.live_btn.setText("● LIVE")
             self.live_btn.setStyleSheet(self._live_btn_style_on)
             self.content_stack.setCurrentIndex(1)
-            # Désactiver les boutons playlist inutiles en mode LIVE
-            for btn in (self.up_btn, self.down_btn, self.del_btn, self.add_btn):
-                btn.setEnabled(False)
-                btn.setStyleSheet(btn.styleSheet() + "QPushButton { opacity: 0.3; }")
+            self._live_settings_btn.setVisible(True)
+            # Cacher les boutons playlist — inutiles en mode LIVE
+            for btn in _playlist_btns:
+                btn.setVisible(False)
         else:
-            self.live_btn.setText("● LIVE")
             self.live_btn.setStyleSheet(self._live_btn_style_off)
             self.content_stack.setCurrentIndex(0)
-            for btn in (self.up_btn, self.down_btn, self.del_btn, self.add_btn):
-                btn.setEnabled(True)
-            # Re-appliquer les styles d'origine
-            btn_style = """
-                QPushButton {
-                    background: #2a2a2a;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 4px;
-                    color: #00d4ff;
-                    font-weight: bold;
-                    padding: 6px 12px;
-                }
-                QPushButton:hover {
-                    background: #3a3a3a;
-                    border: 1px solid #00d4ff;
-                }
-                QPushButton:pressed {
-                    background: #1a1a1a;
-                }
-            """
-            self.up_btn.setStyleSheet(btn_style)
-            self.down_btn.setStyleSheet(btn_style)
-            self.del_btn.setStyleSheet(btn_style)
-            self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 18px; }")
+            self._live_settings_btn.setVisible(False)
+            # Réafficher les boutons playlist
+            for btn in _playlist_btns:
+                btn.setVisible(True)
 
     @property
     def live_mode_active(self):

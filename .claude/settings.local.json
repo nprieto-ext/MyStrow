@@ -28,7 +28,12 @@
       "mcp__flutterflow__get_project_yaml",
       "PowerShell(head *)",
       "Skill(update-config)",
-      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\capture\\\\Contest@MSP_575@16_Bit@Initial.xmlp\"\\) | Select-Object -First 32; \\($bytes | ForEach-Object { $_.ToString\\(\"X2\"\\) }\\) -join \" \")"
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\capture\\\\Contest@MSP_575@16_Bit@Initial.xmlp\"\\) | Select-Object -First 32; \\($bytes | ForEach-Object { $_.ToString\\(\"X2\"\\) }\\) -join \" \")",
+      "PowerShell(Write-Host \"=== ROOT DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\" -File | Where-Object {$_.Extension -eq \".html\"} | Select-Object Name | Sort-Object Name\\))",
+      "PowerShell(Write-Host \"=== DE DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\de\" -File | Select-Object Name | Sort-Object Name\\))",
+      "PowerShell(Write-Host \"=== ES DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\es\" -File | Select-Object Name | Sort-Object Name\\))",
+      "PowerShell(Write-Host \"=== PT DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\pt\" -File | Select-Object Name | Sort-Object Name\\))",
+      "PowerShell(Get-Process *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

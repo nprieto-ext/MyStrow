@@ -336,19 +336,23 @@ class UpdateChecker(QThread):
 
     def _get_latest_version_redirect(self):
         """Récupère la dernière version via la redirection GitHub releases/latest.
-        Pas de rate limiting — aucun token requis."""
-        req = urllib.request.Request(
-            _RELEASES_LATEST,
-            headers={"User-Agent": "MyStrow-Updater"}
-        )
-        ctx = self._ssl_context()
-        with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
-            final_url = resp.geturl()   # URL finale après redirection
-        # final_url = ".../releases/tag/v3.0.49"
-        if "/tag/" not in final_url:
-            return None
-        tag = final_url.split("/tag/")[-1].strip()
-        return tag.lstrip("v") if tag else None
+        Pas de rate limiting — aucun token requis.
+        Retourne None en cas d'échec (fallback vers l'API dans run())."""
+        try:
+            req = urllib.request.Request(
+                _RELEASES_LATEST,
+                headers={"User-Agent": "MyStrow-Updater"}
+            )
+            ctx = self._ssl_context()
+            with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+                final_url = resp.geturl()   # URL finale après redirection
+            # final_url = ".../releases/tag/v3.0.49"
+            if "/tag/" not in final_url:
+                return None
+            tag = final_url.split("/tag/")[-1].strip()
+            return tag.lstrip("v") if tag else None
+        except Exception:
+            return None  # Fallback vers l'API GitHub
 
     def _build_urls(self, remote_version):
         """Construit les URLs de téléchargement depuis le numéro de version."""

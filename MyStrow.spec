@@ -18,9 +18,31 @@ if os.path.exists('fixtures_bundle_custom.json.gz'):
 if os.path.exists('fixtures_qlcplus.json'):
     datas += [('fixtures_qlcplus.json', '.')]
 binaries = []
-hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio']
+hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio', 'sounddevice', '_sounddevice', '_sounddevice_data', 'pyaudiowpatch', '_pyaudio']
 tmp_ret = collect_all('rtmidi')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# sounddevice + DLLs PortAudio
+for _pkg in ('sounddevice', '_sounddevice_data'):
+    try:
+        _r = collect_all(_pkg)
+        datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
+    except Exception:
+        pass
+# Inclure les DLLs PortAudio manuellement (au cas où collect_all ne les attrape pas)
+try:
+    import _sounddevice_data, os as _os
+    _pa_dir = _os.path.join(_os.path.dirname(_sounddevice_data.__file__), 'portaudio-binaries')
+    for _dll in _os.listdir(_pa_dir):
+        if _dll.endswith('.dll'):
+            binaries += [(_os.path.join(_pa_dir, _dll), '_sounddevice_data/portaudio-binaries')]
+except Exception:
+    pass
+for _pkg in ('pyaudiowpatch',):
+    try:
+        _r = collect_all(_pkg)
+        datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
+    except Exception:
+        pass
 for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'werkzeug', 'jinja2', 'click', 'itsdangerous', 'markupsafe'):
     try:
         _r = collect_all(_pkg)
