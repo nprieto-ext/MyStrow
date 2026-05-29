@@ -7,3 +7,6 @@ pyserial
 flask
 qrcode
 waitress
+numpy
+sounddevice
+PyAudioWPatch; sys_platform == "win32"

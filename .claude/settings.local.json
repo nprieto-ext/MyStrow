@@ -33,7 +33,8 @@
       "PowerShell(Write-Host \"=== DE DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\de\" -File | Select-Object Name | Sort-Object Name\\))",
       "PowerShell(Write-Host \"=== ES DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\es\" -File | Select-Object Name | Sort-Object Name\\))",
       "PowerShell(Write-Host \"=== PT DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\pt\" -File | Select-Object Name | Sort-Object Name\\))",
-      "PowerShell(Get-Process *)"
+      "PowerShell(Get-Process *)",
+      "PowerShell(python -c \"import sounddevice, _sounddevice_data, pyaudiowpatch, numpy; print\\('sounddevice', sounddevice.__version__\\); import os; print\\('portaudio dir:', os.path.join\\(os.path.dirname\\(_sounddevice_data.__file__\\),'portaudio-binaries'\\)\\); print\\(os.listdir\\(os.path.join\\(os.path.dirname\\(_sounddevice_data.__file__\\),'portaudio-binaries'\\)\\)\\)\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

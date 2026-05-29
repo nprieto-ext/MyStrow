@@ -13933,20 +13933,29 @@ class MainWindow(QMainWindow):
             )
             if not path:
                 return
+            print(f"[ImportPatch] Fichier sélectionné : {path}")
             try:
-                with open(path, 'r', encoding='utf-8') as f:
+                # utf-8-sig : tolère un éventuel BOM en tête de fichier
+                with open(path, 'r', encoding='utf-8-sig') as f:
                     config = json.load(f)
-                if 'fixtures' not in config:
-                    QMessageBox.warning(dialog, "Format invalide",
-                        "Ce fichier ne contient pas de données de patch valides.")
+                if not isinstance(config, dict) or 'fixtures' not in config \
+                        or not isinstance(config.get('fixtures'), list):
+                    print(f"[ImportPatch] Format invalide (type={type(config).__name__})")
+                    box = QMessageBox(QMessageBox.Warning, "Format invalide",
+                        "Ce fichier ne contient pas de données de patch valides.",
+                        QMessageBox.Ok, dialog)
+                    box.raise_(); box.activateWindow(); box.exec()
                     return
                 n_fx = len(config['fixtures'])
-                if QMessageBox.question(
-                    dialog, "Importer le patch",
+                print(f"[ImportPatch] {n_fx} fixture(s) détectée(s) — confirmation…")
+                confirm = QMessageBox(QMessageBox.Question, "Importer le patch",
                     f"Charger ce patch ({n_fx} fixture{'s' if n_fx > 1 else ''}) ?\n"
                     "Le patch actuel sera remplacé.",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-                ) != QMessageBox.Yes:
+                    QMessageBox.Yes | QMessageBox.No, dialog)
+                confirm.setDefaultButton(QMessageBox.Yes)
+                confirm.raise_(); confirm.activateWindow()
+                if confirm.exec() != QMessageBox.Yes:
+                    print("[ImportPatch] Import annulé par l'utilisateur")
                     return
                 _push_history()
                 self.projectors.clear()
@@ -13970,11 +13979,18 @@ class MainWindow(QMainWindow):
                 _build_cards()
                 det_stack.setCurrentIndex(0)
                 _mark_dirty()
-                QMessageBox.information(dialog, "Import réussi",
-                    f"{n_fx} fixture{'s' if n_fx > 1 else ''} importée{'s' if n_fx > 1 else ''}.")
+                print(f"[ImportPatch] Import réussi : {n_fx} fixture(s)")
+                box = QMessageBox(QMessageBox.Information, "Import réussi",
+                    f"{n_fx} fixture{'s' if n_fx > 1 else ''} importée{'s' if n_fx > 1 else ''}.",
+                    QMessageBox.Ok, dialog)
+                box.raise_(); box.activateWindow(); box.exec()
             except Exception as e:
-                QMessageBox.critical(dialog, "Erreur d'import",
-                    f"Impossible de lire le fichier :\n{e}")
+                import traceback
+                traceback.print_exc()
+                print(f"[ImportPatch] ERREUR : {e}")
+                box = QMessageBox(QMessageBox.Critical, "Erreur d'import",
+                    f"Impossible de lire le fichier :\n{e}", QMessageBox.Ok, dialog)
+                box.raise_(); box.activateWindow(); box.exec()
 
         # ── Exporter le patch ─────────────────────────────────────────────────
         def _export_patch():
@@ -14313,7 +14329,6 @@ class MainWindow(QMainWindow):
         for p in self.projectors:
             p._needs_cw_calib = False  # reset flag
         if _new_mh:
-            from PySide6.QtWidgets import QMessageBox
             resp = QMessageBox.question(
                 self,
                 "Roue de couleur",
