@@ -571,7 +571,11 @@ class _LibraryItem(QWidget):
             self._drag_start = event.position().toPoint()
             if self._panel:
                 ctrl = bool(event.modifiers() & Qt.ControlModifier)
-                self._panel._toggle_selection(self, ctrl)
+                # Si l'item est déjà sélectionné et qu'on va dragger → ne pas effacer la sélection
+                if not ctrl and self in self._panel._selection:
+                    pass   # garder la sélection existante pour le drag multi
+                else:
+                    self._panel._toggle_selection(self, ctrl)
         super().mousePressEvent(event)
 
     def contextMenuEvent(self, event):
@@ -878,7 +882,7 @@ class LibraryPanel(QScrollArea):
     def __init__(self, parent_editor):
         super().__init__()
         self.parent_editor = parent_editor
-        self._selection: set  = set()   # items actuellement sélectionnés
+        self._selection: list = []       # items sélectionnés dans l'ordre de sélection
         self._all_items: list = []      # tous les _LibraryItem enregistrés
 
         self.setWidgetResizable(True)
@@ -982,7 +986,8 @@ class LibraryPanel(QScrollArea):
         for w in items:
             if w in self._all_items:
                 self._all_items.remove(w)
-            self._selection.discard(w)
+            if w in self._selection:
+                self._selection.remove(w)
 
     # ── Sélection ─────────────────────────────────────────────────────────────
 
@@ -1001,12 +1006,12 @@ class LibraryPanel(QScrollArea):
     def _toggle_selection(self, item, ctrl: bool):
         if ctrl:
             if item in self._selection:
-                self._selection.discard(item)
+                self._selection.remove(item)
                 item._selected = False
                 try: item.update()
                 except RuntimeError: pass
             else:
-                self._selection.add(item)
+                self._selection.append(item)
                 item._selected = True
                 try: item.update()
                 except RuntimeError: pass
@@ -1015,8 +1020,7 @@ class LibraryPanel(QScrollArea):
                 other._selected = False
                 try: other.update()
                 except RuntimeError: pass
-            self._selection.clear()
-            self._selection.add(item)
+            self._selection = [item]
             item._selected = True
             try: item.update()
             except RuntimeError: pass
@@ -1028,7 +1032,7 @@ class LibraryPanel(QScrollArea):
         for item in list(self._selection):
             item._selected = False
             item.update()
-        self._selection.clear()
+        self._selection = []
         self._sel_lbl.setText("")
 
     # ── Drag multi-items ──────────────────────────────────────────────────────
@@ -1039,6 +1043,7 @@ class LibraryPanel(QScrollArea):
         items_data = []
         types_set  = set()
 
+        # Ordre de sélection (ordre des clics)
         for item in self._selection:
             if isinstance(item, _LibraryColorItem):
                 items_data.append({"type": "color",   "value": item._color.name()})
@@ -3687,48 +3692,64 @@ print(json.dumps(waveform))
             raw   = bytes(event.mimeData().data('application/x-multi-library')).decode()
             items = _json.loads(raw)
             drop_x       = event.position().x() - 145
-            current_time = max(0, drop_x / self.pixels_per_ms)
+            drop_time    = max(0, drop_x / self.pixels_per_ms)
+            # Durée par défaut depuis le spinner de l'éditeur
+            _spin = getattr(self.parent_editor, '_default_block_dur_spin', None)
+            _default_dur = int(_spin.value() * 1000) if _spin else 5000
+            # Premier item : trouver la première position libre
+            # Suivants : enchaîner directement (bout à bout, sans gaps)
+            first_item   = True
+            current_time = drop_time
 
             for itd in items:
                 typ = itd.get('type', '')
                 val = itd.get('value', '')
 
                 if typ in ('color', 'bicolor') and not self.is_sequence_track and not self.is_effect_track:
-                    start = self.find_free_position(current_time, 5000)
-                    if '#' in val:
-                        c1h, c2h = val.split('#', 1)
-                        clip = self.add_clip(start, 5000, QColor(c1h), 100)
-                        clip.color2 = QColor(c2h)
+                    dur   = _default_dur
+                    start = self.find_free_position(current_time, dur) if first_item else current_time
+                    if val.count('#') >= 2:
+                        # Bicolore : format "#rrggbb#rrggbb"
+                        c1h, c2h = val[1:].split('#', 1)
+                        clip = self.add_clip(start, dur, QColor('#' + c1h), 100)
+                        clip.color2 = QColor('#' + c2h)
                     else:
-                        clip = self.add_clip(start, 5000, QColor(val), 100)
-                    current_time = start + 5000
+                        clip = self.add_clip(start, dur, QColor(val), 100)
+                    current_time = start + dur
+                    first_item   = False
 
                 elif typ == 'memory' and self.is_sequence_track:
                     parts = val.split(',', 3)
                     if len(parts) == 4:
                         mc, ri, label, chex = int(parts[0]), int(parts[1]), parts[2], parts[3]
-                        start = self.find_free_position(current_time, 5000)
-                        clip  = self.add_clip_direct(start, 5000, QColor(chex), 100)
+                        dur   = _default_dur
+                        start = self.find_free_position(current_time, dur) if first_item else current_time
+                        clip  = self.add_clip_direct(start, dur, QColor(chex), 100)
                         clip.memory_ref   = (mc, ri)
                         clip.memory_label = label
-                        current_time = start + 5000
+                        current_time = start + dur
+                        first_item   = False
 
                 elif typ == 'effect' and self.is_effect_track:
-                    eff = _json.loads(val)
-                    start = self.find_free_position(current_time, 10_000)
-                    clip  = self.add_clip(start, 10_000, QColor("#1a0a2e"), 100)
+                    eff   = _json.loads(val)
+                    dur   = max(_default_dur, 10_000)   # effets : min 10s
+                    start = self.find_free_position(current_time, dur) if first_item else current_time
+                    clip  = self.add_clip(start, dur, QColor("#1a0a2e"), 100)
                     clip.effect_name   = eff.get('name', '')
                     clip.effect_type   = eff.get('type', '')
                     clip.effect_layers = eff.get('layers', [])
-                    current_time = start + 10_000
+                    current_time = start + dur
+                    first_item   = False
 
                 elif typ == 'position' and self.is_position_track:
-                    pos = _json.loads(val)
-                    start = self.find_free_position(current_time, 5_000)
-                    clip  = self.add_clip_direct(start, 5_000, QColor("#0d2a5c"), 0)
+                    pos   = _json.loads(val)
+                    dur   = _default_dur
+                    start = self.find_free_position(current_time, dur) if first_item else current_time
+                    clip  = self.add_clip_direct(start, dur, QColor("#0d2a5c"), 0)
                     clip.position_preset_idx  = pos.get('idx')
                     clip.position_preset_name = pos.get('name', '')
-                    current_time = start + 5_000
+                    current_time = start + dur
+                    first_item   = False
 
             self.update()
             if hasattr(self.parent_editor, 'save_state'):

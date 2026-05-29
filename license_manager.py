@@ -873,6 +873,13 @@ def subscribe_newsletter(email: str) -> tuple[bool, str]:
         from i18n import get_language
         lang = get_language()
 
+        from core import BREVO_API_KEY
+        if not BREVO_API_KEY:
+            # Clé Brevo non configurée → rediriger vers le site
+            import webbrowser
+            webbrowser.open("https://mystrow.fr#newsletter")
+            return True, "Redirection vers le site pour l'inscription."
+
         import brevo_client as bc
         bc.subscribe_contact(email, lang=lang)
 

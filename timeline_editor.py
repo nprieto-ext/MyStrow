@@ -946,7 +946,51 @@ class LightTimelineEditor(QDialog):
         zoom_in_btn.setToolTip("Zoom avant  (ou  Shift + Molette ↑)")
         header_layout.addWidget(zoom_in_btn)
 
-        header_layout.addSpacing(16)
+        header_layout.addSpacing(8)
+
+        # ── Toggle preview vidéo (désactivé par défaut) ───────────────────────
+        self._video_toggle_btn = QPushButton("🎬")
+        self._video_toggle_btn.setToolTip("Activer / Désactiver la preview vidéo\n(désactivée par défaut pour préserver les performances)")
+        self._video_toggle_btn.setFixedSize(45, 45)
+        self._video_toggle_btn.setCheckable(True)
+        self._video_toggle_btn.setChecked(False)
+        self._video_toggle_btn.setVisible(False)   # visible seulement si media vidéo
+        self._video_toggle_btn.setStyleSheet(btn_style + """
+            QPushButton:checked {
+                background: #1a3a1a;
+                border: 2px solid #44cc44;
+            }
+        """)
+        self._video_toggle_btn.toggled.connect(self._toggle_video_preview)
+        header_layout.addWidget(self._video_toggle_btn)
+
+        header_layout.addSpacing(8)
+
+        # ── Durée par défaut des blocs glissés ───────────────────────────────
+        from PySide6.QtWidgets import QDoubleSpinBox as _DSB
+        dur_lbl = QLabel("Bloc :")
+        dur_lbl.setStyleSheet("color:#888; font-size:11px; border:none;")
+        header_layout.addWidget(dur_lbl)
+        self._default_block_dur_spin = _DSB()
+        self._default_block_dur_spin.setRange(0.5, 120.0)
+        self._default_block_dur_spin.setSingleStep(0.5)
+        self._default_block_dur_spin.setValue(5.0)
+        self._default_block_dur_spin.setSuffix(" s")
+        self._default_block_dur_spin.setFixedWidth(72)
+        self._default_block_dur_spin.setFixedHeight(32)
+        self._default_block_dur_spin.setToolTip("Durée par défaut des blocs déposés depuis la bibliothèque")
+        self._default_block_dur_spin.setStyleSheet("""
+            QDoubleSpinBox {
+                background:#2a2a2a; color:#e0e0e0;
+                border:1px solid #444; border-radius:6px;
+                padding:2px 4px; font-size:12px;
+            }
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+                width:16px; background:#3a3a3a; border-radius:3px;
+            }
+        """)
+        header_layout.addWidget(self._default_block_dur_spin)
+        header_layout.addSpacing(8)
 
         # Bouton bascule 2D / 3D
         is_3d_open = hasattr(self.main_window, '_plan3d') and self.main_window._plan3d.isVisible()
@@ -955,15 +999,29 @@ class LightTimelineEditor(QDialog):
         self._btn_vue_3d.setFixedSize(45, 45)
         self._btn_vue_3d.setCheckable(True)
         self._btn_vue_3d.setChecked(is_3d_open)
-        self._btn_vue_3d.setStyleSheet(btn_style + """
-            QPushButton:checked {
-                background: #00d4ff; color: #000000; font-weight: bold;
-            }
-        """)
+        self._btn_vue_3d.setStyleSheet(btn_style)
         self._btn_vue_3d.clicked.connect(self._toggle_vue_3d)
         header_layout.addWidget(self._btn_vue_3d)
 
         return header
+
+    def _toggle_video_preview(self, enabled: bool):
+        """Active/désactive la preview vidéo pour préserver les performances."""
+        if not self.is_video_file or self.preview_video_widget is None:
+            return
+        if enabled:
+            self._video_preview_container.show()
+            self._top_splitter.setSizes([
+                self._top_splitter.width() * 2 // 3,
+                self._top_splitter.width() // 3,
+            ])
+            # Connecter la sortie vidéo seulement maintenant
+            if self.preview_player is not None:
+                self.preview_player.setVideoOutput(self.preview_video_widget)
+        else:
+            self._video_preview_container.hide()
+            if self.preview_player is not None:
+                self.preview_player.setVideoOutput(None)
 
     def _toggle_vue_3d(self):
         if hasattr(self.main_window, 'toggle_3d_window'):
@@ -1152,10 +1210,12 @@ class LightTimelineEditor(QDialog):
             self.preview_video_widget = QVideoWidget()
             self.preview_video_widget.setStyleSheet("background: #000;")
             self._video_preview_container.layout().addWidget(self.preview_video_widget)
-            self._video_preview_container.show()
-            self._top_splitter.setSizes([self._top_splitter.width() * 2 // 3,
-                                         self._top_splitter.width() // 3])
-            self.preview_player.setVideoOutput(self.preview_video_widget)
+            # Vidéo désactivée par défaut — activer via le bouton 🎬 dans le header
+            self._video_preview_container.hide()
+            # Afficher le bouton toggle vidéo dans le header
+            if hasattr(self, '_video_toggle_btn'):
+                self._video_toggle_btn.setVisible(True)
+            # Ne PAS connecter setVideoOutput tant que la preview est cachée
 
         if self.media_path and not is_image and not self.is_tempo:
             self.preview_player.setSource(QUrl.fromLocalFile(self.media_path))
@@ -1191,12 +1251,24 @@ class LightTimelineEditor(QDialog):
             self.playback_timer.start(40)
 
     def seek_relative(self, delta_ms):
-        """Seek relatif (+/- 10s)"""
+        """Seek relatif avec recentrage de la vue sur le curseur."""
         if self.preview_player is None:
             return
         current = self.preview_player.position()
         new_pos = max(0, min(current + delta_ms, self.media_duration))
         self.preview_player.setPosition(int(new_pos))
+        self.playback_position = new_pos
+        # Recentrer la vue sur le nouveau curseur
+        pixels_per_ms = 0.05 * self.current_zoom
+        cursor_x = int(145 + new_pos * pixels_per_ms)
+        viewport_w = self.tracks_scroll.viewport().width()
+        sb = self.tracks_scroll.horizontalScrollBar()
+        target_scroll = cursor_x - viewport_w // 2
+        sb.setValue(max(0, target_scroll))
+        self.ruler.update()
+        for track in self.tracks:
+            track.update()
+        self.track_waveform.update()
 
     def _go_to_start(self):
         """Aller au début de la timeline"""
@@ -2546,13 +2618,15 @@ class LightTimelineEditor(QDialog):
             event.accept()
             return
         elif event.key() == Qt.Key_Left:
-            sb = self.tracks_scroll.horizontalScrollBar()
-            sb.setValue(sb.value() - 120)
+            # Ctrl+← = -30s, ← = -5s
+            delta = -30000 if event.modifiers() & Qt.ControlModifier else -5000
+            self.seek_relative(delta)
             event.accept()
             return
         elif event.key() == Qt.Key_Right:
-            sb = self.tracks_scroll.horizontalScrollBar()
-            sb.setValue(sb.value() + 120)
+            # Ctrl+→ = +30s, → = +5s
+            delta = 30000 if event.modifiers() & Qt.ControlModifier else 5000
+            self.seek_relative(delta)
             event.accept()
             return
         elif event.key() == Qt.Key_Up:

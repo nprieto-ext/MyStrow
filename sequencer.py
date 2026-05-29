@@ -1040,10 +1040,6 @@ class LiveModePanel(QWidget):
             'no_auto_strobe':  False,
         }
         self._pos_getter = None
-        # Presets live (4 slots, None = vide)
-        self._live_presets: list = [None, None, None, None]
-        # Timestamps press pour clic long (presets)
-        self._preset_press_ts: list = [0.0, 0.0, 0.0, 0.0]
         # Charger la config sauvegardée AVANT _setup_ui (les valeurs sont lues à la construction)
         self._load_live_panel_config()
 
@@ -1055,8 +1051,6 @@ class LiveModePanel(QWidget):
             self._vu_sens._sens_proxy.setValue(self._saved_sensitivity)
         if hasattr(self, '_saved_luminosity') and hasattr(self, 'lumi_slider'):
             self.lumi_slider.setValue(self._saved_luminosity)
-        if hasattr(self, '_saved_reaction') and hasattr(self, 'reac_slider'):
-            self.reac_slider.setValue(self._saved_reaction)
 
         # Brancher les signaux après création des sliders
         self.nerv_slider.valueChanged.connect(self.nervosity_changed)
@@ -1189,8 +1183,6 @@ class LiveModePanel(QWidget):
                 'source':           self._live_config.get('source', 'loopback'),
                 'allowed_groups':   list(self._live_config.get('allowed_groups', set())),
                 'luminosity':       self.lumi_slider.value() if hasattr(self, 'lumi_slider') else 100,
-                'reaction':         self.reac_slider.value() if hasattr(self, 'reac_slider') else 70,
-                'live_presets':     getattr(self, '_live_presets', [None, None, None, None]),
             }
             with open(self._LIVE_PANEL_CFG, 'w', encoding='utf-8') as f:
                 _json.dump(cfg, f, indent=2)
@@ -1230,11 +1222,6 @@ class LiveModePanel(QWidget):
                 self._live_config['allowed_groups'] = set(cfg['allowed_groups'])
             self._saved_sensitivity = int(cfg.get('sensitivity', 80))
             self._saved_luminosity  = int(cfg.get('luminosity', 100))
-            self._saved_reaction    = int(cfg.get('reaction', 70))
-            self._live_presets      = cfg.get('live_presets', [None, None, None, None])
-            # S'assurer que la liste a exactement 4 slots
-            while len(self._live_presets) < 4:
-                self._live_presets.append(None)
         except Exception as e:
             print(f"[LivePanel] load: {e}")
 
@@ -1291,14 +1278,11 @@ class LiveModePanel(QWidget):
         layout.addWidget(self._separator())
 
         # ── Luminosité ──────────────────────────────────────────────────────
-        layout.addLayout(self._slider_row("LUMINOSITÉ", "lumi", 100,
-                                          "Luminosité globale des projecteurs sélectionnés"))
-
-        # ── Réaction ─────────────────────────────────────────────────────────
-        _reac_default = getattr(self, '_saved_reaction', 70)
-        layout.addLayout(self._slider_row("RÉACTION", "reac", _reac_default,
-                                          "Vitesse de réponse de l'IA (0%=lent/lissé, 100%=immédiat)"))
-        self.reac_slider.valueChanged.connect(lambda _: self._request_save())
+        # Slider luminosité caché — conservé pour compatibilité signaux
+        self.lumi_slider = QSlider(Qt.Horizontal)
+        self.lumi_slider.setRange(0, 100)
+        self.lumi_slider.setValue(100)
+        self.lumi_slider.hide()
 
         # nerv_slider et sens_slider créés ailleurs — fallback si absent
         if not hasattr(self, 'nerv_slider'):
@@ -1315,9 +1299,6 @@ class LiveModePanel(QWidget):
         self.vu_bar.setRange(0, 100)
 
         layout.addSpacing(8)
-
-        # ── Presets live P1–P4 ──────────────────────────────────────────────
-        layout.addLayout(self._build_preset_row())
 
         # ── Panel Mouvements ────────────────────────────────────────────────
         layout.addWidget(self._build_movement_panel())
@@ -1391,13 +1372,6 @@ class LiveModePanel(QWidget):
     @property
     def luminosity(self) -> float:
         return self.lumi_slider.value() / 100.0
-
-    @property
-    def reaction(self) -> float:
-        """Vitesse de réaction IA (0.0–1.0, défaut 0.7)."""
-        if hasattr(self, 'reac_slider'):
-            return self.reac_slider.value() / 100.0
-        return 0.7
 
     @property
     def nervosity(self):
@@ -1788,24 +1762,9 @@ class LiveModePanel(QWidget):
         self.vu_bar.setValue(v)
         self._input_level_bar.setValue(v)
 
-    def set_status(self, bpm=None, section=None, bpm_confidence: float = -1.0):
+    def set_status(self, bpm=None, section=None):
         if bpm is not None:
             self.set_bpm_auto(bpm)
-        if bpm_confidence >= 0.0 and hasattr(self, '_bpm_conf_bar'):
-            conf_pct = int(bpm_confidence * 100)
-            self._bpm_conf_bar.setValue(conf_pct)
-            if bpm_confidence >= 0.65:
-                color = '#00cc55'   # vert — stable
-            elif bpm_confidence >= 0.35:
-                color = '#ffaa00'   # orange — moyen
-            else:
-                color = '#ff3333'   # rouge — incertain
-            self._bpm_conf_bar.setStyleSheet(
-                "QProgressBar { background:#1a1a1a; border:none; border-radius:2px; }"
-                f"QProgressBar::chunk {{ background:{color}; border-radius:2px; }}"
-            )
-            # Afficher la barre uniquement quand le BPM est actif
-            self._bpm_conf_bar.setVisible(conf_pct > 0)
 
     def _pulse_tick(self):
         pass  # indicateur de section retiré
@@ -1847,11 +1806,9 @@ class LiveModePanel(QWidget):
         ('vague',     '〜', 'VAGUE'),
         ('cercle',    '○',  'CERCLE'),
         ('diagonale', '╱',  'DIAGONALE'),
-        ('random',    '✦',  'RANDOM'),
         ('spirale',   '⊛',  'SPIRALE'),
         ('bounce',    '⇔',  'BOUNCE'),
         ('huit',      '∞',  'HUIT'),
-        ('pixel',     '⠿',  'PIXEL'),
     ]
 
     # (key, icon, label, description, accent_color)
@@ -1874,154 +1831,6 @@ class LiveModePanel(QWidget):
             width: 14px; margin: -5px 0; border-radius: 7px;
         }
     """
-
-    # ── Presets live ─────────────────────────────────────────────────────────
-
-    def _build_preset_row(self) -> QHBoxLayout:
-        """Ligne P1–P4 : clic simple = rappeler, clic long (>500ms) = sauvegarder."""
-        row = QHBoxLayout()
-        row.setSpacing(6)
-
-        preset_lbl = QLabel("PRESETS")
-        preset_lbl.setStyleSheet(
-            "color:#888; font-size:10px; font-weight:bold; letter-spacing:1.5px;")
-        row.addWidget(preset_lbl)
-        row.addStretch()
-
-        self._preset_btns: list[QPushButton] = []
-        for i in range(4):
-            btn = QPushButton(f"P{i+1}")
-            btn.setFixedSize(36, 24)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setToolTip(f"Clic = rappeler  |  Clic long = sauvegarder  (Preset {i+1})")
-            self._update_preset_btn_style(btn, i)
-            btn.pressed.connect(lambda _=False, idx=i: self._on_preset_pressed(idx))
-            btn.released.connect(lambda _=False, idx=i: self._on_preset_released(idx))
-            self._preset_btns.append(btn)
-            row.addWidget(btn)
-
-        return row
-
-    def _update_preset_btn_style(self, btn: QPushButton, idx: int):
-        filled = (
-            idx < len(self._live_presets)
-            and self._live_presets[idx] is not None
-        )
-        if filled:
-            btn.setStyleSheet(
-                "QPushButton { background:#1a3a1a; color:#88ee88;"
-                " border:1px solid #44aa44; border-radius:4px;"
-                " font-size:9px; font-weight:bold; }"
-                "QPushButton:hover { background:#224422; border-color:#66cc66; }"
-                "QPushButton:pressed { background:#2a5a2a; }"
-            )
-        else:
-            btn.setStyleSheet(
-                "QPushButton { background:#141414; color:#444;"
-                " border:1px solid #252525; border-radius:4px;"
-                " font-size:9px; font-weight:bold; }"
-                "QPushButton:hover { color:#666; }"
-            )
-
-    def _on_preset_pressed(self, idx: int):
-        import time as _t
-        self._preset_press_ts[idx] = _t.monotonic()
-
-    def _on_preset_released(self, idx: int):
-        import time as _t
-        held = _t.monotonic() - self._preset_press_ts[idx]
-        if held >= 0.5:
-            self._save_preset(idx)
-        else:
-            self._recall_preset(idx)
-
-    def _current_live_state(self) -> dict:
-        """Capture l'état complet du panneau live dans un dict sérialisable."""
-        return {
-            'color_pool':       list(self._color_tile_pool),
-            'current_color':    self._current_color,
-            'color_duration':   self._color_duration,
-            'color_max':        self._color_max,
-            'mov_patterns':     list(self._movement_patterns),
-            'current_mov':      self._current_movement,
-            'mov_speed':        self._movement_speed,
-            'mov_size':         self._movement_size,
-            'mov_duration':     self._movement_duration,
-            'gobo_pool':        list(self._gobo_pool),
-            'current_gobo':     self._current_gobo,
-            'gobo_duration':    self._gobo_duration,
-            'gobo_rotation':    self._gobo_rotation,
-            'gobo_rot_speed':   self._gobo_rot_speed,
-            'strob_fast':       self._strob_fast,
-            'strob_slow':       self._strob_slow,
-            'strob_none':       self._strob_none,
-            'luminosity':       self.lumi_slider.value() if hasattr(self, 'lumi_slider') else 100,
-            'dimmer_values':    dict(getattr(self, '_dimmer_values', {})),
-        }
-
-    def _save_preset(self, idx: int):
-        """Clic long : enregistrer l'état courant dans le preset idx."""
-        self._live_presets[idx] = self._current_live_state()
-        if hasattr(self, '_preset_btns') and idx < len(self._preset_btns):
-            self._update_preset_btn_style(self._preset_btns[idx], idx)
-        self._request_save()
-
-    def _recall_preset(self, idx: int):
-        """Clic simple : rappeler le preset idx (si non vide)."""
-        if idx >= len(self._live_presets) or self._live_presets[idx] is None:
-            return
-        cfg = self._live_presets[idx]
-        # Appliquer la config comme dans _load_live_panel_config
-        if 'color_pool' in cfg:
-            self._color_tile_pool = set(cfg['color_pool'])
-        if 'current_color' in cfg:
-            self._current_color = cfg['current_color']
-        if 'color_duration' in cfg:
-            self._color_duration = int(cfg['color_duration'])
-        if 'color_max' in cfg:
-            self._color_max = int(cfg['color_max'])
-        if 'mov_patterns' in cfg:
-            self._movement_patterns = set(cfg['mov_patterns'])
-        if 'current_mov' in cfg:
-            self._current_movement = cfg['current_mov']
-        if 'mov_speed' in cfg:
-            self._movement_speed = int(cfg['mov_speed'])
-        if 'mov_size' in cfg:
-            self._movement_size = int(cfg['mov_size'])
-        if 'mov_duration' in cfg:
-            self._movement_duration = int(cfg['mov_duration'])
-        if 'gobo_pool' in cfg:
-            self._gobo_pool = set(int(x) for x in cfg['gobo_pool'])
-        if 'current_gobo' in cfg:
-            self._current_gobo = int(cfg['current_gobo'])
-        if 'gobo_duration' in cfg:
-            self._gobo_duration = int(cfg['gobo_duration'])
-        if 'gobo_rotation' in cfg:
-            self._gobo_rotation = bool(cfg['gobo_rotation'])
-        if 'gobo_rot_speed' in cfg:
-            self._gobo_rot_speed = int(cfg['gobo_rot_speed'])
-        if 'strob_fast' in cfg:
-            self._strob_fast = bool(cfg['strob_fast'])
-        if 'strob_slow' in cfg:
-            self._strob_slow = bool(cfg['strob_slow'])
-        if 'strob_none' in cfg:
-            self._strob_none = bool(cfg['strob_none'])
-        if 'luminosity' in cfg and hasattr(self, 'lumi_slider'):
-            self.lumi_slider.setValue(int(cfg['luminosity']))
-        if 'dimmer_values' in cfg:
-            self._dimmer_values = dict(cfg['dimmer_values'])
-        # Rafraîchir les tuiles UI
-        self._refresh_color_tiles()
-        self._refresh_gobo_tiles()
-        if hasattr(self, '_mov_tiles'):
-            self._refresh_mov_tiles()
-        # Strob tiles
-        for key, attr in (('fast', '_strob_fast'), ('slow', '_strob_slow'), ('none', '_strob_none')):
-            t = getattr(self, '_strob_tiles', {}).get(key)
-            if t:
-                v = getattr(self, attr, True)
-                t.set_state(selected=v, playing=v)
-        self._request_save()
 
     def _build_movement_panel(self) -> QWidget:
         """Conteneur principal avec onglets MOUVEMENT / COULEURS / SPÉCIAL."""
@@ -2092,11 +1901,14 @@ class LiveModePanel(QWidget):
         vbox.setSpacing(8)
 
         self._mov_tiles: dict[str, _MovTile] = {}
-        for row_idx in range(2):
+        cols = 4
+        for row_idx in range((len(self._MOVEMENTS) + cols - 1) // cols):
             row_layout = QHBoxLayout()
             row_layout.setSpacing(6)
-            for col_idx in range(4):
-                i = row_idx * 4 + col_idx
+            for col_idx in range(cols):
+                i = row_idx * cols + col_idx
+                if i >= len(self._MOVEMENTS):
+                    break
                 key, icon, label = self._MOVEMENTS[i]
                 tile = _MovTile(key, icon, label, w)
                 tile.clicked.connect(self._on_movement_selected)
@@ -2171,7 +1983,6 @@ class LiveModePanel(QWidget):
         ('douche3',  'F'),
         ('groupe_g', 'G'),
         ('groupe_h', 'H'),
-        ('lyre',     'LYRES'),
     ]
 
     def _build_dimmer_content(self) -> QWidget:
@@ -2928,19 +2739,6 @@ class LiveModePanel(QWidget):
         self._midi_bpm_lbl.setVisible(False)
         vbox.addWidget(self._midi_bpm_lbl)
 
-        # Barre de confiance BPM (verte=stable, orange=moyen, rouge=incertain)
-        self._bpm_conf_bar = QProgressBar()
-        self._bpm_conf_bar.setRange(0, 100)
-        self._bpm_conf_bar.setValue(0)
-        self._bpm_conf_bar.setFixedHeight(4)
-        self._bpm_conf_bar.setTextVisible(False)
-        self._bpm_conf_bar.setVisible(False)
-        self._bpm_conf_bar.setStyleSheet(
-            "QProgressBar { background:#1a1a1a; border:none; border-radius:2px; }"
-            "QProgressBar::chunk { background:#00cc55; border-radius:2px; }"
-        )
-        vbox.addWidget(self._bpm_conf_bar)
-
         card.mousePressEvent = lambda e: self._open_settings()
         return card
 
@@ -3050,8 +2848,11 @@ class LiveModePanel(QWidget):
             self._bpm_slider.blockSignals(True)
             self._bpm_slider.setValue(int(min(200, max(60, bpm))))
             self._bpm_slider.blockSignals(False)
-        self._bpm_val_lbl.setText(f"{bpm:.0f}" if bpm > 0 else "—")
-        self._bpm_display.setText(f"{bpm:.0f}  BPM" if bpm > 0 else "—  BPM")
+        try:
+            self._bpm_val_lbl.setText(f"{bpm:.0f}" if bpm > 0 else "—")
+            self._bpm_display.setText(f"{bpm:.0f}  BPM" if bpm > 0 else "—  BPM")
+        except RuntimeError:
+            pass
 
         # Afficher le BPM dans la carte INPUT uniquement en source MIDI Clock
         if hasattr(self, '_midi_bpm_lbl'):

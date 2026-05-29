@@ -1876,7 +1876,7 @@ class MainWindow(QMainWindow):
         self.live_engine = LiveAudioEngine(self)
         self.live_engine.state_ready.connect(self._apply_live_state)
         self.live_engine.energy_updated.connect(self.seq.live_panel.set_vu)
-        self.live_engine.status_updated.connect(self._on_live_status_updated)
+        self.live_engine.status_updated.connect(self.seq.live_panel.set_status)
         self.live_engine.device_info.connect(self.seq.live_panel.set_device_info)
         self.live_engine.connection_status.connect(self.seq.live_panel.set_connection_status)
         self.live_engine.transient_hit.connect(self._on_live_transient)
@@ -1892,8 +1892,6 @@ class MainWindow(QMainWindow):
         self.seq.live_panel.settings_applied.connect(self._on_live_settings_applied)
         self.seq.live_panel.ia_mode_changed.connect(self._on_live_ia_mode_changed)
         self.seq.live_panel.source_changed.connect(self._on_live_source_changed)
-        self.live_engine.midi_volume.connect(self._on_midi_volume)
-
         # Détecteur de logiciels DJ/audio (démarré au besoin dans _on_live_toggle)
         self.software_detector = None
 
@@ -6965,14 +6963,6 @@ class MainWindow(QMainWindow):
                 proj.level = int(proj.level * lumi) if lumi < 1.0 else proj.level
         self._live_luminosity = lumi
 
-    def _on_midi_volume(self, value: int):
-        """Reçoit un CC MIDI volume (0-127) → met à jour le slider Luminosité."""
-        if not self.seq.live_mode_active:
-            return
-        lumi_pct = int(value / 127 * 100)
-        if hasattr(self.seq.live_panel, 'lumi_slider'):
-            self.seq.live_panel.lumi_slider.setValue(lumi_pct)
-
     def _on_live_source_changed(self, key: str):
         """Redémarre le moteur audio avec la nouvelle source si le live est actif."""
         if not self.seq.live_mode_active:
@@ -6990,11 +6980,6 @@ class MainWindow(QMainWindow):
         """Réinitialise les états persistants des lyres quand les presets changent."""
         self.__dict__.pop('_live_preset_state', None)
 
-    def _on_live_status_updated(self, bpm: float, section: str):
-        """Transmet le statut BPM + section au panneau live, avec la confiance BPM."""
-        conf = getattr(self.live_engine, 'bpm_confidence', -1.0)
-        self.seq.live_panel.set_status(bpm=bpm, section=section, bpm_confidence=conf)
-
     def _on_live_toggle(self, checked: bool):
         """Démarre ou arrête le moteur audio live."""
         self.transport.setVisible(not checked)
@@ -7009,10 +6994,18 @@ class MainWindow(QMainWindow):
         # Padding bas du color picker : plus grand en live (video cachée, bas tapait dans le splitter)
         self.color_picker_block.layout().setContentsMargins(12, 8, 12, 20 if checked else 8)
         if checked:
+            # Mettre le media en pause si en cours de lecture
+            try:
+                from PySide6.QtMultimedia import QMediaPlayer as _QMP
+                if self.player.playbackState() == _QMP.PlayingState:
+                    self._live_was_playing = True
+                    self.player.pause()
+                else:
+                    self._live_was_playing = False
+            except Exception:
+                self._live_was_playing = False
             panel = self.seq.live_panel
             self._live_ia_mode = False
-            # Fade-in à l'entrée en live
-            self._live_fadein_start = time.monotonic()
             # Démarrer le détecteur de logiciels DJ
             if self.software_detector is None:
                 self.software_detector = SoftwareDetector(self)
@@ -7029,15 +7022,15 @@ class MainWindow(QMainWindow):
             )
         else:
             self._live_ia_mode = False
+            # Reprendre le media si il était en lecture avant le live
+            if getattr(self, '_live_was_playing', False):
+                self.player.play()
+                self._live_was_playing = False
             # Arrêter le détecteur et cacher le badge
             if self.software_detector is not None:
                 self.software_detector.stop()
                 self.seq.live_panel.set_detected_software("", "")
             self.live_engine.stop()
-            for p in self.projectors:
-                p.level = 0
-                p.color = QColor("black")
-                p.base_color = QColor("black")
             self.seq.live_panel.set_vu(0)
             self.seq.live_panel.set_status(bpm=0, section='—')
             self.seq.live_panel.set_connection_status('off')
@@ -7049,7 +7042,6 @@ class MainWindow(QMainWindow):
                          '_live_transient_flash', '_live_beat_state',
                          '_live_auto_last_section', '_live_preset_state',
                          '_live_lyre_switch', '_live_lyre_color_switch', '_smart_fx',
-                         '_live_color_smooth', '_live_fadein_start', '_pause_center_start',
                          '_live_col_cur_prev'):
                 self.__dict__.pop(attr, None)
 
@@ -7211,9 +7203,9 @@ class MainWindow(QMainWindow):
             for p in self.projectors:
                 if getattr(p, 'fixture_type', '') == "Machine a fumee":
                     continue
-                key = 'lyre' if getattr(p, 'fixture_type', '') == 'Moving Head' else p.group
-                cap = _dv.get(key, _dv.get(p.group, 100))
-                p.level = min(p.level, cap)
+                cap = _dv.get(p.group, 100)
+                if cap != 100:
+                    p.level = int(p.level * cap / 100)
 
         # ── Cycling couleur depuis le pool COULEURS ───────────────────────────
         position = self.live_engine._elapsed_ms
@@ -7782,8 +7774,7 @@ class MainWindow(QMainWindow):
                 self._live_lyre_beat_idx     = -1
                 self._live_lyre_color_smooth = None
 
-            _react_e = getattr(self.seq.live_panel, 'reaction', 0.7)
-            e_alpha = (0.01 + _react_e * 0.07) if section == 'quiet' else (0.02 + _react_e * 0.12)
+            e_alpha = 0.07 if section == 'quiet' else 0.12
             self._live_lyre_e = e_alpha * energy + (1.0 - e_alpha) * self._live_lyre_e
             e = self._live_lyre_e
 
@@ -7804,8 +7795,7 @@ class MainWindow(QMainWindow):
             _speed_factor = _mspd_raw ** 2
             _tgt_speed = (_tgt_speed_section * (1.0 - _mspd_raw * 0.7) + _tgt_speed_manual) * _speed_factor
 
-            _react = getattr(self.seq.live_panel, 'reaction', 0.7)
-            spd_alpha = (0.02 + _react * 0.18) if section != 'quiet' else (0.01 + _react * 0.04)
+            spd_alpha = 0.07 if section != 'quiet' else 0.02
             if _mspd_raw < 0.02:
                 self._live_lyre_speed = 0.0
             else:
@@ -7868,9 +7858,7 @@ class MainWindow(QMainWindow):
                         'pool_snap': list(_col_pool),
                     }
                 _cswitch = self._live_lyre_color_switch
-                # Gate sur beat : switcher seulement si un nouveau beat est détecté
-                # ET que la durée minimum est écoulée
-                if position >= _cswitch['switch_at'] and _new_beat:
+                if position >= _cswitch['switch_at']:
                     _cswitch['pool_snap'] = list(_col_pool)
                     try:
                         _ci = _cswitch['pool_snap'].index(_col_cur)
@@ -7961,8 +7949,7 @@ class MainWindow(QMainWindow):
                     }
                 _sw = self._live_lyre_switch
 
-                # Gate sur beat : switcher seulement sur un nouveau beat ET durée min écoulée
-                if position >= _sw['switch_at'] and _new_beat:
+                if position >= _sw['switch_at']:
                     _sw['pool_snap'] = list(_mov_pool)
                     try:
                         _cur_idx = _sw['pool_snap'].index(_mov)
@@ -8056,8 +8043,7 @@ class MainWindow(QMainWindow):
                                 'pool_snap': list(_gobo_pool),
                             }
                         _gsw = self._live_gobo_switch
-                        # Gate sur beat : changer gobo seulement sur beat ET durée min écoulée
-                        if position >= _gsw['switch_at'] and _new_beat:
+                        if position >= _gsw['switch_at']:
                             _gsw['pool_snap'] = list(_gobo_pool)
                             try:
                                 _gi = _gsw['pool_snap'].index(self.seq.live_panel.current_gobo)
@@ -8188,17 +8174,10 @@ class MainWindow(QMainWindow):
             for p in self.projectors:
                 if getattr(p, 'fixture_type', '') == "Machine a fumee":
                     continue
-                key = 'lyre' if getattr(p, 'fixture_type', '') == 'Moving Head' else p.group
-                cap = _dimmer_vals.get(key, _dimmer_vals.get(p.group, 100))
-                p.level = min(p.level, cap)
-
-        # ── Luminosité globale (curseur LUMINOSITÉ du panneau live) ─────────────
-        _lumi = getattr(self.seq.live_panel, 'luminosity', 1.0)
-        if _lumi < 1.0:
-            for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
-                    continue
-                p.level = int(p.level * _lumi)
+                g = p.group
+                cap = _dimmer_vals.get(g, 100)
+                if cap != 100:
+                    p.level = int(p.level * cap / 100)
 
         # ── Fondu progressif au silence (0 → noir en 2 s) ────────────────────
         _fade_start = getattr(self, '_silence_fade_start', None)
@@ -8214,64 +8193,6 @@ class MainWindow(QMainWindow):
                     int(p.color.green() * _fade_mult),
                     int(p.color.blue()  * _fade_mult),
                 )
-
-        # ── Transitions douces entre couleurs (interpolation par projecteur) ─
-        # Facteur de lissage : la valeur _DMX_FPS se calibre sur le timer 25fps
-        # alpha ≈ 0.3 = transition en ~200 ms à 25 fps (5 frames × 0.3 ≈ atteint)
-        _color_smooth = getattr(self, '_live_color_smooth', None)
-        if _color_smooth is None:
-            self._live_color_smooth = {}
-            _color_smooth = self._live_color_smooth
-        _cs_alpha = 0.28   # ~200 ms à 25 fps
-        for p in self.projectors:
-            if getattr(p, 'fixture_type', '') == "Machine a fumee":
-                continue
-            _pid = id(p)
-            tgt = p.color
-            cur = _color_smooth.get(_pid)
-            if cur is None or p.level == 0:
-                # Premier passage ou niveau zéro → snapping immédiat
-                _color_smooth[_pid] = tgt
-                continue
-            # Interpoler uniquement si la couleur change significativement
-            _dr = tgt.red()   - cur.red()
-            _dg = tgt.green() - cur.green()
-            _db = tgt.blue()  - cur.blue()
-            _dist = _dr*_dr + _dg*_dg + _db*_db
-            if _dist < 100:  # déjà proche → snapping (évite micro-flicker)
-                _color_smooth[_pid] = tgt
-                continue
-            _new_c = QColor(
-                int(cur.red()   + _cs_alpha * _dr),
-                int(cur.green() + _cs_alpha * _dg),
-                int(cur.blue()  + _cs_alpha * _db),
-            )
-            _color_smooth[_pid] = _new_c
-            # Appliquer la couleur lissée (level déjà calculé)
-            f = p.level / 100.0
-            p.color = QColor(
-                int(_new_c.red()   * f),
-                int(_new_c.green() * f),
-                int(_new_c.blue()  * f),
-            )
-            p.base_color = _new_c
-
-        # ── Fade-in à l'entrée en mode live (1.5 s) ──────────────────────────
-        _fadein_start = getattr(self, '_live_fadein_start', None)
-        if _fadein_start is not None:
-            _fadein = min(1.0, (now_ts - _fadein_start) / 1.5)
-            if _fadein < 1.0:
-                for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
-                        continue
-                    p.level = int(p.level * _fadein)
-                    p.color = QColor(
-                        int(p.color.red()   * _fadein),
-                        int(p.color.green() * _fadein),
-                        int(p.color.blue()  * _fadein),
-                    )
-            else:
-                self._live_fadein_start = None   # terminé
 
     def _drive_ia_live_tick(self):
         """Mode LIVE source 'ia_file' : pilote les effets live depuis la pré-analyse IA."""
@@ -9334,31 +9255,8 @@ class MainWindow(QMainWindow):
                             self.cartouches[i].media_icon = ""
                     self.cartouches[i].set_idle()
 
-            # Restaurer les memoires depuis le .tui si le show en contient
-            if mem_data:
-                self.memories = [[None]*8 for _ in range(_MEM_COL_MAX)]
-                self.memory_custom_colors = [[None]*8 for _ in range(_MEM_COL_MAX)]
-                self.active_memory_pads = {}
-
-                if isinstance(mem_data, list) and len(mem_data) >= 1:
-                    if isinstance(mem_data[0], list):
-                        for mc in range(min(_MEM_COL_MAX, len(mem_data))):
-                            for mr in range(min(8, len(mem_data[mc]))):
-                                self.memories[mc][mr] = mem_data[mc][mr]
-                    else:
-                        for mc in range(min(_MEM_COL_MAX, len(mem_data))):
-                            if mem_data[mc]:
-                                self.memories[mc][0] = mem_data[mc]
-
-                if custom_colors_data and isinstance(custom_colors_data, list):
-                    for mc in range(min(_MEM_COL_MAX, len(custom_colors_data))):
-                        for mr in range(min(8, len(custom_colors_data[mc]))):
-                            c = custom_colors_data[mc][mr]
-                            self.memory_custom_colors[mc][mr] = QColor(c) if c else None
-
-                if active_pads_data and isinstance(active_pads_data, dict):
-                    for k, v in active_pads_data.items():
-                        self.active_memory_pads[int(k)] = v
+            # Les mémoires/cues sont gérés UNIQUEMENT par la config AKAI
+            # (jamais écrasés par le .tui — _load_akai_config_auto est la source de vérité)
 
             # Mettre a jour l'affichage des pads memoire
             for fi, mc in self._bank_memory_slots():

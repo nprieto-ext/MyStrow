@@ -842,12 +842,8 @@ class ColorPickerBlock(QFrame):
         self._update_bri_stops()
 
         # Indicateur roue couleur (caché par défaut)
-        self._cw_hint_lbl = QLabel("● Roue couleur")
-        self._cw_hint_lbl.setStyleSheet(
-            "color: #00aaff; font-size: 9px; font-style: italic; padding: 2px 0;")
-        self._cw_hint_lbl.setAlignment(Qt.AlignCenter)
+        self._cw_hint_lbl = QLabel()
         self._cw_hint_lbl.setVisible(False)
-        layout.addWidget(self._cw_hint_lbl)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     @staticmethod

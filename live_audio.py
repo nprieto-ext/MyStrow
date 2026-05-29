@@ -280,7 +280,6 @@ class LiveAudioEngine(QObject):
     state_ready       = Signal(object)      # dict état lumière → projecteurs
     transient_hit     = Signal(str)         # 'kick' | 'snare' | 'hihat'
     beat_detected     = Signal()            # flash indicateur beat
-    midi_volume       = Signal(int)         # 0-127 — CC volume reçu via MIDI
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -335,9 +334,6 @@ class LiveAudioEngine(QObject):
         # Beat pending flag (thread-safe via Qt timer)
         self._beat_pending = False
         self._manual_bpm   = False
-
-        # Confiance BPM (0.0–1.0) : régularité des intervalles entre beats
-        self.bpm_confidence: float = 0.0
 
         # Timer Qt émetteur d'état lumière (40 ms)
         self._state_timer = QTimer(self)
@@ -979,13 +975,6 @@ class LiveAudioEngine(QObject):
         if not msg:
             return
 
-        # CC MIDI (0xBx) — écouter CC#7 (volume) ou CC#11 (expression)
-        if (msg[0] & 0xF0) == 0xB0 and len(msg) >= 3:
-            cc_num, cc_val = msg[1], msg[2]
-            if cc_num in (7, 11):   # Volume ou Expression
-                self.midi_volume.emit(cc_val)
-            return
-
         if msg[0] != 0xF8:
             return
 
@@ -997,12 +986,6 @@ class LiveAudioEngine(QObject):
                 if len(self._clock_intervals) >= 6:
                     avg = sum(self._clock_intervals) / len(self._clock_intervals)
                     self._bpm = 60.0 / (24.0 * avg) if avg > 0 else 0.0
-                    # Confiance MIDI Clock : régularité des intervalles d'horloge
-                    _ivs = list(self._clock_intervals)
-                    _mean = sum(_ivs) / len(_ivs)
-                    if _mean > 0:
-                        _std = (sum((x - _mean) ** 2 for x in _ivs) / len(_ivs)) ** 0.5
-                        self.bpm_confidence = max(0.0, min(1.0, 1.0 - (_std / _mean) * 20.0))
         self._last_clock_ts = now
 
         self._clock_ticks += 1
@@ -1348,20 +1331,6 @@ class LiveAudioEngine(QObject):
             self._bpm = self._bpm * (1.0 - alpha) + new_bpm * alpha
         else:
             self._bpm = new_bpm
-
-        # ── Confiance BPM : écart-type des intervalles du cluster (0=parfait) ──
-        if len(cluster) >= 2 and median_iv > 0:
-            _variance = sum((iv - median_iv) ** 2 for iv in cluster) / len(cluster)
-            _std = _variance ** 0.5
-            # Normaliser : 0 ms écart = 1.0, 50 ms écart = 0.0
-            _conf = max(0.0, 1.0 - (_std / median_iv) * 8.0)
-            # Bonus si beaucoup d'intervalles concordants (plus de 4 beats dans le cluster)
-            _size_bonus = min(0.2, (len(cluster) - 2) * 0.05)
-            self.bpm_confidence = min(1.0, _conf + _size_bonus)
-        elif len(cluster) >= 2:
-            self.bpm_confidence = 0.5
-        else:
-            self.bpm_confidence = 0.0
 
     # ── Émission état lumière (thread Qt, 40 ms) ───────────────────────────
 
