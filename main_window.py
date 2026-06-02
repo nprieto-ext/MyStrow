@@ -7815,6 +7815,38 @@ class MainWindow(QMainWindow):
                     p.gobo_rotation = 0
 
     def _apply_live_state(self, state: dict):
+        """Applique un état live, en GELANT les groupes non autorisés.
+
+        Les groupes hors « Groupe Éclairage » doivent rester sous contrôle manuel
+        (fader/pad AKAI) : on capture leur état avant le moteur IA et on le restaure
+        après. Sinon les blocs strobe/drop/dimmer (qui itèrent sur TOUS les
+        projecteurs sans filtre de groupe) les font clignoter et volent la main.
+        """
+        if not self.seq.live_mode_active:
+            return
+        _allowed = self.seq.live_panel.allowed_groups
+        _frozen = None
+        if _allowed:
+            _frozen = [
+                (p, p.level, QColor(p.color), QColor(p.base_color),
+                 getattr(p, 'pan', None), getattr(p, 'tilt', None),
+                 getattr(p, 'gobo', None), getattr(p, 'gobo_rotation', None))
+                for p in self.projectors if p.group not in _allowed
+            ]
+        try:
+            self._apply_live_state_inner(state)
+        finally:
+            if _frozen:
+                for (p, lv, col, base, pan, tilt, gobo, grot) in _frozen:
+                    p.level = lv
+                    p.color = col
+                    p.base_color = base
+                    if pan  is not None: p.pan  = pan
+                    if tilt is not None: p.tilt = tilt
+                    if gobo is not None: p.gobo = gobo
+                    if grot is not None: p.gobo_rotation = grot
+
+    def _apply_live_state_inner(self, state: dict):
         """Applique un état lumière live aux projecteurs (remplace update_audio_ai en mode LIVE)."""
         if not self.seq.live_mode_active:
             return
@@ -13119,6 +13151,15 @@ class MainWindow(QMainWindow):
                 p.start_address = fd_s['start_address']
                 p.canvas_x = fd_s.get('canvas_x')
                 p.canvas_y = fd_s.get('canvas_y')
+                # CRITIQUE : restaurer le profil DMX. Sans ça, _rebuild_dmx_patch
+                # retombe sur le défaut du type (Moving Head → MOVING_8CH) et casse
+                # les lyres 13CH (pan/tilt 16 bits décalés → faisceau au sol).
+                _prof = fd_s.get('profile')
+                if isinstance(_prof, list) and _prof:
+                    p.dmx_profile = list(_prof)
+                p.channel_defaults  = dict(fd_s.get('channel_defaults', {}))
+                p.color_wheel_slots = list(fd_s.get('color_wheel_slots', []))
+                p.gobo_wheel_slots  = list(fd_s.get('gobo_wheel_slots', []))
                 if p.fixture_type == "Machine a fumee":
                     p.fan_speed = 0
                 self.projectors.append(p)
@@ -13126,8 +13167,12 @@ class MainWindow(QMainWindow):
                     'name':          fd_s['name'],
                     'fixture_type':  fd_s['fixture_type'],
                     'group':         fd_s['group'],
+                    'universe':      fd_s.get('universe', 0),
                     'start_address': fd_s['start_address'],
-                    'profile':       fd_s.get('profile', []),
+                    'profile':       list(_prof) if (isinstance(_prof, list) and _prof) else [],
+                    'channel_defaults':   dict(fd_s.get('channel_defaults', {})),
+                    'color_wheel_slots':  list(fd_s.get('color_wheel_slots', [])),
+                    'gobo_wheel_slots':   list(fd_s.get('gobo_wheel_slots', [])),
                 })
             self._rebuild_dmx_patch()
             _build_cards(filter_bar.text())
