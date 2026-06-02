@@ -295,6 +295,7 @@ class LiveAudioEngine(QObject):
         self._source_key     = "loopback"
         self._nervosity      = 0.5
         self._sensitivity    = 0.7
+        self._max_dimmers    = {}            # {groupe: 0–100} plafond de niveau par groupe
 
         # Historiques (~4 s = 80 chunks × 50 ms)
         self._rms_history    = deque(maxlen=80)
@@ -416,6 +417,10 @@ class LiveAudioEngine(QObject):
     def update_sensitivity(self, value_0_100: int):
         self._sensitivity = value_0_100 / 100.0
 
+    def update_dimmers(self, dimmers: dict):
+        """Plafond de niveau par groupe (0–100) appliqué en temps réel au mode LIVE."""
+        self._max_dimmers = dict(dimmers or {})
+
     def set_manual_bpm(self, bpm: float):
         """Active le BPM manuel et remplace la détection automatique."""
         self._manual_bpm = True
@@ -485,10 +490,10 @@ class LiveAudioEngine(QObject):
         # stream is None
         if self._source_key.startswith("dev_out:"):
             self.device_info.emit(
-                "Loopback introuvable — privilégiez la source MIDI Clock")
+                "Aucun signal capté — voir le guide de configuration ( ? )")
         elif self._source_key == "loopback":
             self.device_info.emit(
-                "Loopback introuvable — activez « Stéréo Mix » dans les paramètres son Windows")
+                "Aucune capture audio — voir le guide de configuration ( ? )")
         else:
             self.device_info.emit("Aucun micro / entrée ligne détecté")
         self.connection_status.emit('off')
@@ -877,12 +882,15 @@ class LiveAudioEngine(QObject):
             self.device_info.emit("MIDI Clock : rtmidi manquant")
             self._start_beat_timer()
             return
+        self._midi_clock_logged = False
         try:
             self._midi_clock_in = _rtmidi.MidiIn()
             ports = self._midi_clock_in.get_ports()
+            self._log_audio(f"MIDI Clock : ports détectés = {ports}")
 
             if not ports:
                 self.device_info.emit("MIDI Clock : aucun port MIDI trouvé")
+                self._log_audio("MIDI Clock : AUCUN port MIDI (IAC en ligne ?)")
                 self._start_beat_timer()
                 return
 
@@ -940,8 +948,8 @@ class LiveAudioEngine(QObject):
                         break
             if last_err:
                 self.device_info.emit(
-                    f"MIDI Clock : port « {target_name} » inaccessible — "
-                    "vérifiez que loopMIDI est lancé et qu'aucune autre app n'utilise ce port")
+                    f"MIDI Clock : port « {target_name} » indisponible — "
+                    "voir le guide de configuration ( ? )")
                 self._start_beat_timer()
                 return
             # timing=False = recevoir les 0xF8 (MIDI Clock)
@@ -952,6 +960,7 @@ class LiveAudioEngine(QObject):
             self.device_info.emit(label)
             self.connection_status.emit('waiting')
             self._midi_ever_beat = False
+            self._log_audio(f"MIDI Clock : port ouvert → « {target_name} » (en attente d'horloge…)")
             print(f"LiveAudio: {label}")
 
         except Exception as e:
@@ -977,6 +986,11 @@ class LiveAudioEngine(QObject):
 
         if msg[0] != 0xF8:
             return
+
+        # Diagnostic : confirme (une fois) que l'horloge arrive bien du logiciel DJ
+        if not getattr(self, '_midi_clock_logged', False):
+            self._midi_clock_logged = True
+            self._log_audio("MIDI Clock : premier 0xF8 reçu ✓ (l'émetteur envoie bien)")
 
         now = time.monotonic()
         if self._last_clock_ts > 0:
@@ -1337,7 +1351,7 @@ class LiveAudioEngine(QObject):
     def _emit_state(self):
         if not self._running or self._elapsed_ms == 0:
             return
-        state = self.audio_ai.get_state_at(self._elapsed_ms, 0)
+        state = self.audio_ai.get_state_at(self._elapsed_ms, 0, max_dimmers=self._max_dimmers)
         state['section'] = self._section_state
         state['bands']   = dict(self._band_norm)
         self.state_ready.emit(state)

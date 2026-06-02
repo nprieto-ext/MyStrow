@@ -1537,6 +1537,9 @@ class LightTrack(QWidget):
 
         # Forme d'onde audio
         self.waveform_data = None
+        # Cache pixmap de la waveform (couche statique coûteuse)
+        self._wave_cache = None
+        self._wave_cache_key = None
 
         self.setMouseTracking(True)
 
@@ -3969,41 +3972,9 @@ print(json.dumps(waveform))
         self.pixels_per_ms = pixels_per_ms
         self.update_clips()
 
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        painter = QPainter(self)
-
-        # Barre accent coloree (5px, cote gauche, hauteur totale de la piste)
-        bar_color = QColor(self.track_color)
-        bar_color.setAlpha(220)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(bar_color))
-        painter.drawRect(0, 0, 5, self.height())
-
-        # Separateur haut de piste
-        painter.setPen(QPen(QColor("#3a3a3a"), 1))
-        painter.drawLine(0, 0, self.width(), 0)
-
-        if self._collapsed:
-            # Afficher juste le nom en mode reduit (dans la zone gelée)
-            scroll_off = 0
-            if hasattr(self.parent_editor, 'tracks_scroll'):
-                scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
-            painter.fillRect(scroll_off, 0, 145, self.height(), QColor("#000000"))
-            painter.setBrush(QBrush(bar_color))
-            painter.setPen(Qt.NoPen)
-            painter.drawRect(scroll_off, 0, 5, self.height())
-            painter.setPen(QPen(QColor("#2a2a2a"), 1))
-            painter.drawLine(scroll_off + 145, 0, scroll_off + 145, self.height())
-            painter.setPen(QColor("#888"))
-            font = painter.font()
-            font.setBold(True)
-            font.setPixelSize(11)
-            painter.setFont(font)
-            painter.drawText(scroll_off + 11, 0, 130, 26, Qt.AlignVCenter, self.name)
-            return
-
-        # === FORME D'ONDE ===
+    def _render_waveform(self, painter, paint_rect):
+        """Dessine la couche waveform (extraite de paintEvent pour mise en cache).
+        `paint_rect` = zone à peindre (en coordonnées widget)."""
         if self.waveform_data:
             timeline_width_px = int(self.total_duration * self.pixels_per_ms)
             pixels_per_sample = timeline_width_px / len(self.waveform_data) if self.waveform_data else 1
@@ -4019,7 +3990,7 @@ print(json.dumps(waveform))
                     max_height = (self.height() // 2) - 4
 
                     # Plage visible exacte via clip rect (scroll pris en compte)
-                    clip = event.rect()
+                    clip = paint_rect
                     px_start = max(145, clip.left())
                     px_end   = min(self.width(), clip.right() + 1)
 
@@ -4151,6 +4122,65 @@ print(json.dumps(waveform))
                     painter.setBrush(QBrush(QColor(tc.red(), tc.green(), tc.blue(), alpha)))
                     painter.drawRect(x, y_center - h, bar_w, h * 2)
                 painter.setRenderHint(QPainter.Antialiasing, True)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+
+        # Barre accent coloree (5px, cote gauche, hauteur totale de la piste)
+        bar_color = QColor(self.track_color)
+        bar_color.setAlpha(220)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(bar_color))
+        painter.drawRect(0, 0, 5, self.height())
+
+        # Separateur haut de piste
+        painter.setPen(QPen(QColor("#3a3a3a"), 1))
+        painter.drawLine(0, 0, self.width(), 0)
+
+        if self._collapsed:
+            # Afficher juste le nom en mode reduit (dans la zone gelée)
+            scroll_off = 0
+            if hasattr(self.parent_editor, 'tracks_scroll'):
+                scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
+            painter.fillRect(scroll_off, 0, 145, self.height(), QColor("#000000"))
+            painter.setBrush(QBrush(bar_color))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(scroll_off, 0, 5, self.height())
+            painter.setPen(QPen(QColor("#2a2a2a"), 1))
+            painter.drawLine(scroll_off + 145, 0, scroll_off + 145, self.height())
+            painter.setPen(QColor("#888"))
+            font = painter.font()
+            font.setBold(True)
+            font.setPixelSize(11)
+            painter.setFont(font)
+            painter.drawText(scroll_off + 11, 0, 130, 26, Qt.AlignVCenter, self.name)
+            return
+
+        # === FORME D'ONDE (avec cache pixmap) ===
+        # La waveform est une couche statique coûteuse : on la rend une fois dans
+        # un QPixmap (par zoom/taille), puis on blitte uniquement la zone exposée.
+        # Le cache est invalidé automatiquement via la clé (taille, zoom, id data).
+        if self.waveform_data:
+            er = event.rect()
+            w_px, h_px = self.width(), self.height()
+            key = (w_px, h_px, round(self.pixels_per_ms, 9),
+                   id(self.waveform_data), self.name)
+            if 0 < w_px <= 30000 and h_px > 0:
+                if self._wave_cache_key != key or self._wave_cache is None:
+                    pm = QPixmap(w_px, h_px)
+                    pm.fill(Qt.transparent)
+                    cp = QPainter(pm)
+                    self._render_waveform(cp, QRect(0, 0, w_px, h_px))
+                    cp.end()
+                    self._wave_cache = pm
+                    self._wave_cache_key = key
+                painter.drawPixmap(er, self._wave_cache, er)
+            else:
+                # Largeur hors limites QPixmap (zoom extrême) : rendu direct
+                self._wave_cache = None
+                self._wave_cache_key = None
+                self._render_waveform(painter, er)
 
         # Grille temporelle - seulement les lignes visibles
         if self.pixels_per_ms > 0:

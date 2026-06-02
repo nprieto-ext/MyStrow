@@ -1700,6 +1700,8 @@ class Plan3DWebWindow(QMainWindow):
                 'group':          getattr(p, 'group', ''),
                 'gobo':           int(getattr(p, 'gobo', 0) or 0),
                 'gobo_rotation':  int(getattr(p, 'gobo_rotation', 0) or 0),
+                'prism':          int(getattr(p, 'prism', 0) or 0),
+                'prism_rotation': int(getattr(p, 'prism_rotation', 0) or 0),
             })
         return out
 

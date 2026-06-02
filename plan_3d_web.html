@@ -442,6 +442,19 @@ function _getObj(i) {
   halo.rotation.x = -Math.PI/2;
   halo.renderOrder = 0; _poolGrp.add(halo);
 
+  // ── PRISME : 2 faisceaux + 2 taches latéraux (le faisceau central reste cMain) ──
+  // Donnent le split « \ | / » qui tourne avec prism_rotation. Cachés par défaut.
+  const prismMains = [], prismCores = [], prismPools = [];
+  for (let k = 0; k < 2; k++) {
+    const pm = new THREE.Mesh(GEO_UNIT_CONE_16, makeBeamMat(0.22));
+    pm.renderOrder = 2; pm.visible = false; _beamGrp.add(pm); prismMains.push(pm);
+    const pc = new THREE.Mesh(GEO_UNIT_CONE_10, makeBeamMat(0.55));
+    pc.renderOrder = 3; pc.visible = false; _beamGrp.add(pc); prismCores.push(pc);
+    const pp = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
+    pp.rotation.x = -Math.PI/2; pp.renderOrder = 0; pp.visible = false;
+    _poolGrp.add(pp); prismPools.push(pp);
+  }
+
   // ── PAR LED — modèle compact réaliste ────────────────────────────────
   const parGrp = new THREE.Group();
 
@@ -652,7 +665,8 @@ function _getObj(i) {
 
   const obj = { cHaze, cGlow, cMain, cCore, pool, halo, ptLight,
                 body, lens, groupRing, parGrp,
-                mhGrp, mhHGrp, mhHead, mhLens };
+                mhGrp, mhHGrp, mhHead, mhLens,
+                prismMains, prismCores, prismPools, _fx: null };
   _objs.push(obj);
   return obj;
 }
@@ -926,11 +940,27 @@ window.updateScene = function(projectors) {
       }
       obj.ptLight.visible = true;
 
+      // État pour l'animation continue (prisme + rotation gobo) dans animate()
+      obj._fx = {
+        active:   true,
+        lensX, lensY, lensZ,
+        fx: fx2, fz: fz2, baseY,
+        base_r,
+        poolR:    (0.35 + 2.2 * lvl) * bs,
+        goingUp,
+        prism:    (p.prism || 0) > 0,
+        prismV:   (p.prism_rotation || 0),
+        goboRotV: (p.gobo_rotation || 0),
+        col:      [r, g, b],
+        lvl,
+      };
+
     } else {
       obj.cHaze.visible = obj.cGlow.visible =
       obj.cMain.visible = obj.cCore.visible = false;
       obj.pool.visible  = obj.halo.visible  = false;
       obj.ptLight.visible = false;
+      obj._fx = null;
     }
   }
 
@@ -941,6 +971,7 @@ window.updateScene = function(projectors) {
     o.pool.visible  = o.halo.visible  = o.ptLight.visible = false;
     o.parGrp.visible = false;
     o.mhGrp.visible  = false;
+    o._fx = null;
   }
 };
 
@@ -1003,11 +1034,70 @@ window.addEventListener('resize', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Animation continue : rotation gobo + split prisme (par frame)
+// ─────────────────────────────────────────────────────────────────────────────
+const _fxColBuf = new THREE.Color();
+
+function _orientPrism(obj, t) {
+  const s = obj._fx;
+  const pm0 = obj.prismMains, pc0 = obj.prismCores, pp0 = obj.prismPools;
+  if (!s || !s.active) {
+    for (let k = 0; k < 2; k++) {
+      pm0[k].visible = pc0[k].visible = pp0[k].visible = false;
+    }
+    return;
+  }
+
+  // ── Rotation gobo continue (valeur DMX = vitesse) ──
+  if (obj.pool.visible &&
+      obj.pool.material.uniforms.uGoboBlend.value > 0 &&
+      s.goboRotV > 0) {
+    const gspd = (s.goboRotV / 255) * 2.4;          // rad/s max
+    obj.pool.material.uniforms.uGoboRot.value = t * gspd;
+  }
+
+  // ── Prisme : 2 faisceaux/taches latéraux opposés, tournants ──
+  if (!s.prism) {
+    for (let k = 0; k < 2; k++) {
+      pm0[k].visible = pc0[k].visible = pp0[k].visible = false;
+    }
+    return;
+  }
+  _fxColBuf.setRGB(s.col[0], s.col[1], s.col[2]);
+  const pspd = (s.prismV / 255) * 2.2;              // rad/s — 0 = split fixe (comme une vraie lyre)
+  const ang  = t * pspd;
+  const R    = Math.max(0.4, s.poolR * 0.55);       // écart des faisceaux au sol
+  for (let k = 0; k < 2; k++) {
+    const a  = ang + k * Math.PI;                   // 2 côtés opposés du faisceau central
+    const bx = s.fx + Math.cos(a) * R;
+    const bz = s.fz + Math.sin(a) * R;
+    orientCone(pm0[k], s.lensX, s.lensY, s.lensZ, bx, s.baseY, bz, s.base_r * 0.85);
+    pm0[k].material.uniforms.uColor.value.copy(_fxColBuf);
+    pm0[k].material.uniforms.uAlpha.value = 0.20 * s.lvl;
+    orientCone(pc0[k], s.lensX, s.lensY, s.lensZ, bx, s.baseY, bz, s.base_r * 0.24);
+    pc0[k].material.uniforms.uColor.value.copy(_fxColBuf);
+    pc0[k].material.uniforms.uAlpha.value = 0.55 * s.lvl;
+    if (!s.goingUp) {
+      pp0[k].position.set(bx, 0.02, bz);
+      pp0[k].scale.setScalar(s.poolR * 0.7);
+      pp0[k].material.uniforms.uColor.value.copy(_fxColBuf);
+      pp0[k].material.uniforms.uAlpha.value = 0.50 * s.lvl;
+      pp0[k].material.uniforms.uGoboBlend.value = 0.0;
+      pp0[k].visible = true;
+    } else {
+      pp0[k].visible = false;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Boucle de rendu
 // ─────────────────────────────────────────────────────────────────────────────
 (function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  const _t = performance.now() / 1000;
+  for (let i = 0; i < _objs.length; i++) _orientPrism(_objs[i], _t);
   if (_flags.bloom) {
     composer.render();
   } else {

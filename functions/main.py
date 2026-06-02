@@ -5,7 +5,8 @@ Gère :
   - checkout.session.completed    → crée compte + active licence + facture Axonaut
   - invoice.payment_succeeded     → renouvelle licence + facture Axonaut
   - customer.subscription.deleted → révoque la licence
-  - invoice.payment_failed        → email d'avertissement
+  - customer.subscription.updated → révoque si statut 'unpaid'/'canceled' (filet)
+  - invoice.payment_failed        → email d'avertissement + grâce de 7 jours
 
 Déploiement :
   firebase deploy --only functions
@@ -83,6 +84,10 @@ _PLAN_DAYS = {
     "annual":   366,
     "lifetime": 36500,  # ~100 ans
 }
+
+# Jours de grâce accordés après un échec de paiement (le temps que Stripe
+# relance et que le client mette sa carte à jour) avant coupure de la licence.
+_GRACE_DAYS = 7
 
 
 # ===========================================================================
@@ -162,20 +167,65 @@ def _get_plan_price_ht(plan_type: str) -> float:
         return 0.0
 
 
-def _plan_label(plan_type: str) -> str:
-    return {
-        "monthly":  "Licence MyStrow — Mensuel",
-        "annual":   "Licence MyStrow — Annuel",
-        "lifetime": "Licence MyStrow — À vie",
-    }.get(plan_type, "Licence MyStrow")
+def _plan_label(plan_type: str, lang: str = "fr") -> str:
+    labels = {
+        "fr": {
+            "monthly":  "Licence MyStrow — Mensuel",
+            "annual":   "Licence MyStrow — Annuel",
+            "lifetime": "Licence MyStrow — À vie",
+        },
+        "en": {
+            "monthly":  "MyStrow License — Monthly",
+            "annual":   "MyStrow License — Annual",
+            "lifetime": "MyStrow License — Lifetime",
+        },
+    }
+    table   = labels.get(lang, labels["fr"])
+    default = "MyStrow License" if lang == "en" else "Licence MyStrow"
+    return table.get(plan_type, default)
 
 
 def _compute_expiry(plan_type: str) -> float:
     return time.time() + _PLAN_DAYS.get(plan_type, 31) * 86400
 
 
-def _fmt_date(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d/%m/%Y")
+def _fmt_date(ts: float, lang: str = "fr") -> str:
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    if lang == "en":
+        return dt.strftime("%B %d, %Y")
+    return dt.strftime("%d/%m/%Y")
+
+
+# Locales du navigateur / pays considérés francophones (sinon → anglais).
+_FR_COUNTRIES = {"FR", "BE", "CH", "LU", "MC"}
+
+
+def _detect_lang(locales: list[str] | None = None, country: str | None = None) -> str:
+    """Choisit la langue des emails : 'fr' ou 'en'.
+
+    Priorité : locale du navigateur (Stripe Checkout `locale` / `preferred_locales`),
+    puis pays de facturation. Défaut 'fr' (produit francophone) quand aucun
+    signal n'est disponible — pour ne pas surprendre les clients existants.
+    """
+    for loc in (locales or []):
+        if loc:
+            return "fr" if loc.lower().startswith("fr") else "en"
+    if country:
+        return "fr" if country.upper() in _FR_COUNTRIES else "en"
+    return "fr"
+
+
+def _lang_for_uid(uid: str | None) -> str:
+    """Relit la langue stockée sur la licence (events sans locale Stripe)."""
+    if not uid:
+        return "fr"
+    try:
+        doc = _get_db().collection("licenses").document(uid).get()
+        if doc.exists:
+            return (doc.to_dict() or {}).get("lang") or "fr"
+    except Exception:
+        pass
+    return "fr"
 
 
 # ===========================================================================
@@ -203,6 +253,7 @@ def _set_license(
     expiry_ts: float,
     stripe_customer_id: str = "",
     stripe_subscription_id: str = "",
+    lang: str = "",
 ) -> None:
     """Crée ou met à jour le document Firestore /licenses/{uid}."""
     ref = _get_db().collection("licenses").document(uid)
@@ -215,6 +266,10 @@ def _set_license(
         "stripe_customer_id":     stripe_customer_id,
         "stripe_subscription_id": stripe_subscription_id,
     }
+
+    # Langue des emails (détectée au checkout) — conservée pour les events suivants.
+    if lang:
+        data["lang"] = lang
 
     # Lifetime : licence permanente mais mises à jour limitées à 1 an
     if plan_type == "lifetime":
@@ -239,6 +294,24 @@ def _revoke_license(uid: str) -> None:
         "plan":                   "expired",
         "expiry_utc":             time.time(),
         "stripe_subscription_id": "",
+    })
+
+
+def _apply_payment_grace(uid: str, days: int = _GRACE_DAYS) -> None:
+    """Échec de paiement : prolonge l'accès de `days` jours sans couper.
+
+    On garde plan='license' et on repousse expiry_utc à maintenant + `days`,
+    sans jamais raccourcir une expiration déjà plus lointaine (ex: annuel).
+    """
+    ref = _get_db().collection("licenses").document(uid)
+    doc = ref.get()
+    if not doc.exists:
+        return
+    current     = float((doc.to_dict() or {}).get("expiry_utc", 0) or 0)
+    grace_until = time.time() + days * 86400
+    ref.update({
+        "plan":       "license",
+        "expiry_utc": max(current, grace_until),
     })
 
 
@@ -325,6 +398,31 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
     return None
 
 
+def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str) -> None:
+    """Enregistre un paiement sur une facture Axonaut → la passe en « payée ».
+
+    Endpoint : POST /payments (schéma invoicePayment.post).
+    nature : 1=Prélèvement, 2=Virement, 3=Chèque, 4=Carte bancaire, 5=Espèces, 6=Autre.
+    Stripe = carte bancaire → nature 4. Le montant est le TTC réellement encaissé,
+    pour que la somme des paiements couvre le total TTC et solde la facture.
+    """
+    if not invoice_id or not amount_ttc:
+        print(f"[Axonaut] Paiement non enregistré (invoice_id={invoice_id}, montant={amount_ttc})")
+        return
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    result = _axonaut("POST", "/payments", {
+        "invoice_id": invoice_id,
+        "amount":     round(amount_ttc, 2),
+        "date":       today,
+        "nature":     4,                       # Carte bancaire (Stripe)
+        "reference":  (reference or "Stripe")[:30],
+    })
+    if result:
+        print(f"[Axonaut] Paiement enregistré : invoice_id={invoice_id} montant={round(amount_ttc, 2)} € TTC")
+    else:
+        print(f"[Axonaut] Échec enregistrement paiement (invoice_id={invoice_id})")
+
+
 def _axonaut_create_invoice(
     company_id: int,
     plan_type: str,
@@ -364,6 +462,9 @@ def _axonaut_create_invoice(
                    or f"https://axonaut.com/invoice/{invoice_id}")
     print(f"[Axonaut] Facture creee : id={invoice_id}")
 
+    # Encaisse la facture : TTC = HT (price) + TVA 20 % → la passe en « payée »
+    _axonaut_register_payment(invoice_id, round(amount_eur * 1.20, 2), stripe_ref)
+
     if uid:
         try:
             _get_db().collection("licenses").document(uid) \
@@ -384,7 +485,7 @@ def _axonaut_create_invoice(
 # ===========================================================================
 
 _EMAIL_BASE = """\
-<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+<!DOCTYPE html><html lang="{lang}"><head><meta charset="utf-8">
 <style>
   body{{margin:0;padding:0;background:#f4f4f4;font-family:'Segoe UI',Arial,sans-serif;}}
   .wrap{{max-width:560px;margin:32px auto;background:#1a1a1a;border-radius:8px;overflow:hidden;}}
@@ -402,17 +503,28 @@ _EMAIL_BASE = """\
 <div class="wrap">
   <div class="hdr"><h1>MyStrow</h1></div>
   <div class="body">{content}</div>
-  <div class="ftr">MyStrow · Logiciel de contrôle lumière professionnel<br>
-  Cet email est envoyé automatiquement, merci de ne pas y répondre.</div>
+  <div class="ftr">{footer}</div>
 </div></body></html>"""
 
+_EMAIL_FOOTER = {
+    "fr": ("MyStrow · Logiciel de contrôle lumière professionnel<br>"
+           "Cet email est envoyé automatiquement, merci de ne pas y répondre."),
+    "en": ("MyStrow · Professional lighting control software<br>"
+           "This email is sent automatically, please do not reply."),
+}
 
-def _send_email(to: str, subject: str, content: str, raise_on_error: bool = False) -> None:
+
+def _send_email(to: str, subject: str, content: str,
+                lang: str = "fr", raise_on_error: bool = False) -> None:
     host = _smtp_host()
     if not host:
         print(f"[Email] SMTP_HOST non configuré — email ignoré ({to})")
         return
-    html = _EMAIL_BASE.format(content=content)
+    html = _EMAIL_BASE.format(
+        lang=lang,
+        content=content,
+        footer=_EMAIL_FOOTER.get(lang, _EMAIL_FOOTER["fr"]),
+    )
     msg  = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = _smtp_from()
@@ -431,68 +543,110 @@ def _send_email(to: str, subject: str, content: str, raise_on_error: bool = Fals
             raise
 
 
-def _email_welcome(email: str, password: str, expiry_ts: float, plan_type: str) -> None:
-    _send_email(
-        email,
-        "Bienvenue sur MyStrow — Vos identifiants de connexion",
-        f"""
+_DOWNLOAD_URL = "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Setup.exe"
+
+
+def _email_welcome(email: str, password: str, expiry_ts: float,
+                   plan_type: str, lang: str = "fr") -> None:
+    plan = _plan_label(plan_type, lang)
+    date = _fmt_date(expiry_ts, lang)
+    if lang == "en":
+        subject = "Welcome to MyStrow — Your login credentials"
+        content = f"""
+<h2>Welcome to MyStrow!</h2>
+<p>Your <b>{plan}</b> license has just been activated.
+Here are your credentials:</p>
+<div class="box">
+  ✉️ &nbsp;<b>Email:</b> {email}<br>
+  🔑 &nbsp;<b>Temporary password:</b>
+  <span style="font-family:monospace;font-size:14px;">{password}</span><br>
+  📅 &nbsp;<b>License valid until:</b> {date}
+</div>
+<p>Launch MyStrow, click <b>Log in</b> and enter these credentials.</p>
+<p>You can change your password from your account area.</p>
+<a class="btn" href="{_DOWNLOAD_URL}">Download MyStrow</a>
+"""
+    else:
+        subject = "Bienvenue sur MyStrow — Vos identifiants de connexion"
+        content = f"""
 <h2>Bienvenue sur MyStrow !</h2>
-<p>Votre licence <b>{_plan_label(plan_type)}</b> vient d'être activée.
+<p>Votre licence <b>{plan}</b> vient d'être activée.
 Voici vos identifiants :</p>
 <div class="box">
   ✉️ &nbsp;<b>Email :</b> {email}<br>
   🔑 &nbsp;<b>Mot de passe temporaire :</b>
   <span style="font-family:monospace;font-size:14px;">{password}</span><br>
-  📅 &nbsp;<b>Licence valide jusqu'au :</b> {_fmt_date(expiry_ts)}
+  📅 &nbsp;<b>Licence valide jusqu'au :</b> {date}
 </div>
 <p>Lancez MyStrow, cliquez sur <b>Se connecter</b> et entrez ces identifiants.</p>
 <p>Vous pourrez changer votre mot de passe depuis votre espace compte.</p>
-<a class="btn" href="https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Setup.exe">
-  Télécharger MyStrow
-</a>
-""",
-    )
+<a class="btn" href="{_DOWNLOAD_URL}">Télécharger MyStrow</a>
+"""
+    _send_email(email, subject, content, lang=lang)
 
 
-def _email_renewal(email: str, expiry_ts: float) -> None:
-    _send_email(
-        email,
-        "MyStrow — Licence renouvelée",
-        f"""
+def _email_renewal(email: str, expiry_ts: float, lang: str = "fr") -> None:
+    date = _fmt_date(expiry_ts, lang)
+    if lang == "en":
+        subject = "MyStrow — License renewed"
+        content = f"""
+<h2>Your license has been renewed</h2>
+<p>Your payment was processed successfully. Your MyStrow license has been extended.</p>
+<div class="box">📅 &nbsp;<b>New expiry date:</b> {date}</div>
+<p>No action is required on your part. Keep using MyStrow as usual.</p>
+"""
+    else:
+        subject = "MyStrow — Licence renouvelée"
+        content = f"""
 <h2>Votre licence a été renouvelée</h2>
 <p>Votre paiement a bien été traité. Votre licence MyStrow est prolongée.</p>
-<div class="box">📅 &nbsp;<b>Nouvelle date d'expiration :</b> {_fmt_date(expiry_ts)}</div>
+<div class="box">📅 &nbsp;<b>Nouvelle date d'expiration :</b> {date}</div>
 <p>Aucune action de votre part n'est requise. Continuez à utiliser MyStrow normalement.</p>
-""",
-    )
+"""
+    _send_email(email, subject, content, lang=lang)
 
 
-def _email_cancelled(email: str) -> None:
-    _send_email(
-        email,
-        "MyStrow — Abonnement annulé",
-        """
+def _email_cancelled(email: str, lang: str = "fr") -> None:
+    if lang == "en":
+        subject = "MyStrow — Subscription cancelled"
+        content = """
+<h2>Your subscription has been cancelled</h2>
+<p>Your MyStrow subscription has been cancelled.</p>
+<p>Your license stays active until the end of the current period,
+after which access will be disabled automatically.</p>
+<p>If you would like to resume a subscription, please contact us.</p>
+"""
+    else:
+        subject = "MyStrow — Abonnement annulé"
+        content = """
 <h2>Votre abonnement a été annulé</h2>
 <p>Votre abonnement MyStrow a bien été résilié.</p>
 <p>Votre licence reste active jusqu'à la fin de la période en cours,
 puis l'accès sera désactivé automatiquement.</p>
 <p>Si vous souhaitez reprendre un abonnement, contactez-nous.</p>
-""",
-    )
+"""
+    _send_email(email, subject, content, lang=lang)
 
 
-def _email_payment_failed(email: str) -> None:
-    _send_email(
-        email,
-        "MyStrow — Échec du paiement",
-        """
+def _email_payment_failed(email: str, lang: str = "fr") -> None:
+    if lang == "en":
+        subject = "MyStrow — Payment failed"
+        content = """
+<h2>Payment problem</h2>
+<p>We were unable to collect your MyStrow payment.</p>
+<p>Please update your payment method to avoid any interruption of your license.</p>
+<p>Stripe will automatically retry the payment over the coming days.</p>
+"""
+    else:
+        subject = "MyStrow — Échec du paiement"
+        content = """
 <h2>Problème de paiement</h2>
 <p>Nous n'avons pas pu encaisser votre paiement MyStrow.</p>
 <p>Veuillez mettre à jour votre moyen de paiement pour éviter
 l'interruption de votre licence.</p>
 <p>Stripe effectuera automatiquement une nouvelle tentative dans les prochains jours.</p>
-""",
-    )
+"""
+    _send_email(email, subject, content, lang=lang)
 
 
 # ===========================================================================
@@ -508,6 +662,13 @@ def _on_checkout_completed(session: dict) -> None:
     amount_eur  = session.get("amount_subtotal", 0) / 100.0
     cust_name   = cust_details.get("name") or ""
     cust_address = cust_details.get("address") or {}
+
+    # Langue des emails : locale du Checkout (langue navigateur), sinon pays.
+    sess_locale = (session.get("locale") or "").strip()
+    lang = _detect_lang(
+        locales=[sess_locale] if sess_locale and sess_locale != "auto" else None,
+        country=cust_address.get("country"),
+    )
 
     # Détermine le plan depuis l'abonnement Stripe
     plan_type = "lifetime"
@@ -531,7 +692,8 @@ def _on_checkout_completed(session: dict) -> None:
 
     _set_license(uid, email, plan_type, expiry_ts,
                  stripe_customer_id=customer_id,
-                 stripe_subscription_id=sub_id or "")
+                 stripe_subscription_id=sub_id or "",
+                 lang=lang)
 
     # Stocke le mot de passe pour la récupération future
     if is_new:
@@ -541,9 +703,9 @@ def _on_checkout_completed(session: dict) -> None:
 
     # Email
     if is_new:
-        _email_welcome(email, temp_pwd, expiry_ts, plan_type)
+        _email_welcome(email, temp_pwd, expiry_ts, plan_type, lang)
     else:
-        _email_renewal(email, expiry_ts)
+        _email_renewal(email, expiry_ts, lang)
 
     # Axonaut
     company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address)
@@ -580,12 +742,14 @@ def _on_invoice_paid(invoice: dict) -> None:
     except Exception:
         pass
 
+    lang      = _lang_for_uid(uid)
     expiry_ts = _compute_expiry(plan_type)
     _set_license(uid, email, plan_type, expiry_ts,
                  stripe_customer_id=customer_id,
-                 stripe_subscription_id=sub_id)
+                 stripe_subscription_id=sub_id,
+                 lang=lang)
 
-    _email_renewal(email, expiry_ts)
+    _email_renewal(email, expiry_ts, lang)
 
     company_id = _axonaut_get_or_create_company(email, cust_name)
     _axonaut_create_invoice(company_id, plan_type, amount_eur, stripe_ref=stripe_ref, uid=uid)
@@ -601,6 +765,7 @@ def _on_subscription_deleted(subscription: dict) -> None:
         print(f"[subscription.deleted] UID introuvable pour customer {customer_id}")
         return
 
+    lang = _lang_for_uid(uid)
     _revoke_license(uid)
 
     email = subscription.get("customer_email", "")
@@ -610,17 +775,76 @@ def _on_subscription_deleted(subscription: dict) -> None:
         except Exception:
             pass
     if email:
-        _email_cancelled(email)
+        _email_cancelled(email, lang)
 
     print(f"[subscription.deleted] uid={uid} — licence révoquée")
 
 
 def _on_payment_failed(invoice: dict) -> None:
-    """Échec de paiement — avertit le client."""
-    email = invoice.get("customer_email", "")
+    """Échec de paiement — email + période de grâce.
+
+    On ne coupe pas la licence tout de suite : Stripe va relancer le paiement
+    et le client peut mettre sa carte à jour. La licence reste active encore
+    _GRACE_DAYS jours. Si Stripe finit par annuler / passer en 'unpaid',
+    elle sera révoquée par _on_subscription_deleted / _on_subscription_updated.
+
+    On ignore l'échec de la 1ère facture (billing_reason == 'subscription_create') :
+    c'est une inscription qui n'a jamais abouti, donc aucune licence n'existe —
+    inutile d'envoyer un email « paiement échoué » à un non-client.
+    """
+    if invoice.get("billing_reason") == "subscription_create":
+        print("[invoice.payment_failed] 1er paiement échoué (inscription non aboutie) — ignoré")
+        return
+
+    customer_id = invoice.get("customer", "")
+    email       = invoice.get("customer_email", "")
+
+    uid  = _find_uid_by_customer(customer_id)
+    lang = _lang_for_uid(uid)
+    if uid:
+        _apply_payment_grace(uid)
+        if not email:
+            try:
+                email = auth.get_user(uid).email
+            except Exception:
+                pass
+
     if email:
-        _email_payment_failed(email)
-    print(f"[invoice.payment_failed] {email}")
+        _email_payment_failed(email, lang)
+    print(f"[invoice.payment_failed] {email} — grâce {_GRACE_DAYS}j (uid={uid})")
+
+
+def _on_subscription_updated(subscription: dict) -> None:
+    """Abonnement modifié — révoque si Stripe l'a passé en 'unpaid' ou 'canceled'.
+
+    Filet de sécurité : selon les réglages de relance Stripe, un abonnement
+    impayé peut être marqué 'unpaid' (ou 'canceled') SANS déclencher
+    customer.subscription.deleted. Sans ce handler, la licence resterait
+    active indéfiniment. On ignore tous les autres changements de statut.
+    """
+    status = subscription.get("status", "")
+    if status not in ("unpaid", "canceled"):
+        return
+
+    customer_id = subscription.get("customer", "")
+    uid         = _find_uid_by_customer(customer_id)
+    if not uid:
+        print(f"[subscription.updated] UID introuvable pour customer {customer_id} (status={status})")
+        return
+
+    lang = _lang_for_uid(uid)
+    _revoke_license(uid)
+
+    email = subscription.get("customer_email", "")
+    if not email:
+        try:
+            email = auth.get_user(uid).email
+        except Exception:
+            pass
+    if email:
+        _email_cancelled(email, lang)
+
+    print(f"[subscription.updated] uid={uid} status={status} — licence révoquée")
 
 
 # ===========================================================================
@@ -689,23 +913,38 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
             lic_ref.set({"password": pwd_to_send}, merge=True)
 
         # ── Envoi email ───────────────────────────────────────────────────
-        _send_email(
-            email,
-            "MyStrow — Vos identifiants de connexion",
-            f"""
-<h2 style="color:#fff;margin-top:0;">Vos identifiants MyStrow</h2>
-<p>Voici vos identifiants pour accéder à votre licence MyStrow :</p>
-<div class="box">
+        lang = lic_data.get("lang") or "fr"
+        pwd_box = f"""
   <div style="margin-bottom:10px;">
-    ✉️ &nbsp;<b>Email :</b> <span style="color:#aaa;">{email}</span>
+    ✉️ &nbsp;<b>{{email_label}}</b> <span style="color:#aaa;">{email}</span>
   </div>
   <div>
-    🔑 &nbsp;<b>Mot de passe :</b><br>
+    🔑 &nbsp;<b>{{pwd_label}}</b><br>
     <span style="display:inline-block;margin-top:8px;padding:10px 20px;background:#0d0d0d;
       border:1px solid rgba(0,212,255,0.35);border-radius:8px;
       font-family:Consolas,monospace;font-size:20px;letter-spacing:5px;color:#00d4ff;
       box-shadow:0 0 12px rgba(0,212,255,0.15);">{pwd_to_send}</span>
-  </div>
+  </div>"""
+        if lang == "en":
+            subject = "MyStrow — Your login credentials"
+            content = f"""
+<h2 style="color:#fff;margin-top:0;">Your MyStrow credentials</h2>
+<p>Here are your credentials to access your MyStrow license:</p>
+<div class="box">{pwd_box.format(email_label="Email:", pwd_label="Password:")}
+</div>
+<p style="margin-top:16px;">
+  Open <b>MyStrow</b>, click <b>Log in</b> and enter these credentials.
+</p>
+<p style="color:#555;font-size:11px;border-top:1px solid #2a2a2a;padding-top:12px;margin-top:12px;">
+  If you did not request this, please contact us: nicolas@mystrow.fr
+</p>
+"""
+        else:
+            subject = "MyStrow — Vos identifiants de connexion"
+            content = f"""
+<h2 style="color:#fff;margin-top:0;">Vos identifiants MyStrow</h2>
+<p>Voici vos identifiants pour accéder à votre licence MyStrow :</p>
+<div class="box">{pwd_box.format(email_label="Email :", pwd_label="Mot de passe :")}
 </div>
 <p style="margin-top:16px;">
   Ouvrez <b>MyStrow</b>, cliquez sur <b>Se connecter</b> et entrez ces identifiants.
@@ -713,9 +952,8 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
 <p style="color:#555;font-size:11px;border-top:1px solid #2a2a2a;padding-top:12px;margin-top:12px;">
   Si vous n'avez pas fait cette demande, contactez-nous : nicolas@mystrow.fr
 </p>
-""",
-            raise_on_error=True,
-        )
+"""
+        _send_email(email, subject, content, lang=lang, raise_on_error=True)
 
         # Enregistre l'horodatage du reset
         resets.append(now)
@@ -743,6 +981,7 @@ _HANDLERS = {
     "checkout.session.completed":    _on_checkout_completed,
     "invoice.payment_succeeded":     _on_invoice_paid,
     "customer.subscription.deleted": _on_subscription_deleted,
+    "customer.subscription.updated": _on_subscription_updated,
     "invoice.payment_failed":        _on_payment_failed,
 }
 

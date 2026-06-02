@@ -91,7 +91,7 @@ if IS_MAC:
         argv_emulation=False,
         target_arch=None,           # natif du runner (arm64 sur macos-15, x86_64 sur macos-13)
         codesign_identity=None,
-        entitlements_file=None,
+        entitlements_file='entitlements.plist',   # réseau, audio-input, USB MIDI, disable-library-validation
         icon=[icon_file],
     )
     app = BUNDLE(
@@ -118,6 +118,11 @@ if IS_MAC:
             'NSRequiresAquaSystemAppearance':       False,
             # Sécurité / état restaurable (macOS 12+)
             'NSApplicationSupportsSecureRestorableState': True,
+            # Capture audio (mode LIVE / IA Lumière) — SANS cette clé, macOS bloque
+            # silencieusement l'accès micro/ligne/BlackHole → aucun signal capté.
+            'NSMicrophoneUsageDescription':
+                "MyStrow capte le son pour synchroniser vos lumières en temps réel "
+                "(mode LIVE / IA Lumière).",
         },
     )
 

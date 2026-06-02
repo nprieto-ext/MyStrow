@@ -911,6 +911,27 @@ class LightTimelineEditor(QDialog):
         self.paint_btn.setVisible(False)
         self.paint_btn.clicked.connect(self.toggle_paint_mode)
 
+        header_layout.addSpacing(12)
+
+        # ── Décaler tout le show vers la gauche / droite ──────────────────────
+        # Resynchronise toute la séquence d'un bloc (clic = 100 ms, Ctrl = 1 s, Shift = 10 ms)
+        _shift_tip = "Décaler TOUS les clips {dir}\nClic = 100 ms · Ctrl = 1 s · Shift = 10 ms"
+        shift_left_btn = QPushButton("⟸")
+        shift_left_btn.setToolTip(_shift_tip.format(dir="vers la gauche"))
+        shift_left_btn.setFixedSize(45, 45)
+        shift_left_btn.setFocusPolicy(Qt.NoFocus)
+        shift_left_btn.setStyleSheet(btn_style)
+        shift_left_btn.clicked.connect(self._shift_all_left)
+        header_layout.addWidget(shift_left_btn)
+
+        shift_right_btn = QPushButton("⟹")
+        shift_right_btn.setToolTip(_shift_tip.format(dir="vers la droite"))
+        shift_right_btn.setFixedSize(45, 45)
+        shift_right_btn.setFocusPolicy(Qt.NoFocus)
+        shift_right_btn.setStyleSheet(btn_style)
+        shift_right_btn.clicked.connect(self._shift_all_right)
+        header_layout.addWidget(shift_right_btn)
+
         header_layout.addSpacing(20)
 
         # Zoom
@@ -2163,6 +2184,46 @@ class LightTimelineEditor(QDialog):
             for track in self.tracks:
                 track.clips.clear()
                 track.update()
+            self.save_state()
+
+    def _shift_step_ms(self):
+        """Pas de décalage selon les modificateurs : Ctrl=1s, Shift=10ms, sinon 100ms."""
+        mods = QApplication.keyboardModifiers()
+        if mods & Qt.ControlModifier:
+            return 1000
+        if mods & Qt.ShiftModifier:
+            return 10
+        return 100
+
+    def _shift_all_left(self):
+        self.shift_all_clips(-self._shift_step_ms())
+
+    def _shift_all_right(self):
+        self.shift_all_clips(self._shift_step_ms())
+
+    def shift_all_clips(self, delta_ms):
+        """Décale TOUS les clips de toutes les pistes de delta_ms (gauche<0 / droite>0).
+        Préserve l'espacement relatif et borne le résultat dans [0, durée totale]."""
+        all_clips = [c for t in self.tracks for c in t.clips]
+        if not all_clips:
+            return
+        total       = self.tracks[0].total_duration if self.tracks else 0
+        earliest    = min(c.start_time for c in all_clips)
+        latest_end  = max(c.start_time + c.duration for c in all_clips)
+        if delta_ms < 0:
+            # Ne pas passer sous 0 : on limite au décalage gauche possible
+            delta_ms = -min(-delta_ms, earliest)
+        else:
+            # Ne pas dépasser la fin du média
+            delta_ms = min(delta_ms, max(0, total - latest_end))
+        if delta_ms == 0:
+            return
+        for track in self.tracks:
+            for clip in track.clips:
+                clip.start_time += delta_ms
+            track.update()
+        self.save_state()
+        print(f"↔️ Décalage global de {delta_ms} ms ({len(all_clips)} clips)")
 
     def generate_ai_sequence(self):
         """Genere une sequence avec IA"""

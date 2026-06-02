@@ -955,16 +955,17 @@ class LiveModePanel(QWidget):
     ia_mode_changed     = Signal(str)     # 'musical' | 'ambiance' | 'manuel'
     source_changed      = Signal(str)     # nouvelle source_key
     movement_changed    = Signal(str)     # pattern mouvement lyre
+    dimmers_changed     = Signal(dict)    # {groupe: 0–100} dimmer max par groupe
 
     # Sources fixes + périphériques dynamiques (ajoutés à l'init)
     _SOURCES_STATIC = [
         ("Micro / Line In",                              "mic"),
-        ("MIDI Clock  (VirtualDJ, Rekordbox, Serato…)",  "midi_clock"),
+        ("MIDI Clock",                                   "midi_clock"),
     ]
 
     SOURCES = [
         ("Micro / Line In",                              "mic"),
-        ("MIDI Clock  (VirtualDJ, Rekordbox, Serato…)",  "midi_clock"),
+        ("MIDI Clock",                                   "midi_clock"),
     ]
 
     # Styles des sections musicales pour l'indicateur animé
@@ -978,7 +979,7 @@ class LiveModePanel(QWidget):
 
     _SOURCE_INFO = {
         "mic":        "Table de mixage, micro, entrée ligne, interface audio",
-        "midi_clock": "BPM + beats via loopMIDI — VirtualDJ, Rekordbox, Serato, Traktor…",
+        "midi_clock": "BPM + beats depuis votre logiciel DJ (Traktor, VirtualDJ…) — configuration : bouton ?",
         "ia_file":    "Utilise la pré-analyse IA du fichier en cours — beats parfaitement calés",
     }
 
@@ -1028,9 +1029,10 @@ class LiveModePanel(QWidget):
         self._gobo_duration    = 40         # durée par gobo en % (0-100)
         self._gobo_rotation    = False      # rotation activée
         self._gobo_rot_speed   = 50         # vitesse rotation (1-100)
-        self._strob_fast       = True       # autoriser strobe rapide
-        self._strob_slow       = True       # autoriser strobe lent
-        self._strob_none       = True       # autoriser absence de strobe
+        # Strobe = choix exclusif (radio) : un seul des 3 actif à la fois
+        self._strob_fast       = True       # strobe rapide (défaut)
+        self._strob_slow       = False      # strobe lent
+        self._strob_none       = False      # pas de strobe
         self._live_config   = {
             'source':          'loopback',
             'allowed_groups':  set(),
@@ -1407,17 +1409,11 @@ class LiveModePanel(QWidget):
         self.device_lbl.setText("—")
         if hasattr(self, '_input_name_lbl'):
             self._input_name_lbl.setText(self._source_display_name())
-        is_midi = key in ('midi_clock', 'rekordbox')
-        self._midi_setup.setVisible(is_midi)
-        # "?" visible pour les sources nécessitant une config (MIDI, VDJ, Rekordbox)
-        needs_help = key in ('midi_clock', 'rekordbox', 'virtualdj')
+        # Le guide de configuration est désormais en ligne (bouton "?" de la carte INPUT) :
+        # on n'affiche plus les instructions loopMIDI in-app (incorrectes sur Mac).
+        self._midi_setup.setVisible(False)
         if hasattr(self, '_source_help_btn'):
-            self._source_help_btn.setVisible(needs_help)
-            if not needs_help:
-                self._source_help_btn.setChecked(False)
-        if is_midi:
-            QTimer.singleShot(0, self._refresh_midi_status)
-            QTimer.singleShot(50, self._refresh_midi_ctrl_combo)
+            self._source_help_btn.setVisible(False)
         # Redémarrer le moteur si live actif
         self.source_changed.emit(key)
         self._request_save()
@@ -2012,7 +2008,8 @@ class LiveModePanel(QWidget):
             val_lbl.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
             sl.valueChanged.connect(
                 lambda v, g=group, vl=val_lbl: (
-                    self._dimmer_values.__setitem__(g, v), vl.setText(f"{v}%")
+                    self._dimmer_values.__setitem__(g, v), vl.setText(f"{v}%"),
+                    self.dimmers_changed.emit(dict(self._dimmer_values))
                 )
             )
             row.addWidget(lbl)
@@ -2260,21 +2257,32 @@ class LiveModePanel(QWidget):
             ('none', '○', 'Pas de Strobe', '_strob_none'),
         ]
 
+        # Normalise : exactement UN actif (radio). Priorité fast > slow > none.
+        active = ('fast' if self._strob_fast
+                  else 'slow' if self._strob_slow
+                  else 'none' if self._strob_none
+                  else 'fast')
+        self._strob_fast = (active == 'fast')
+        self._strob_slow = (active == 'slow')
+        self._strob_none = (active == 'none')
+
         self._strob_tiles: dict = {}
         row = QHBoxLayout()
         row.setSpacing(5)
         for key, icon, label, attr in defs:
             tile = _MovTile(key, icon, label)
-            tile.set_state(selected=True, playing=True)   # tous actifs par défaut
+            on = (key == active)
+            tile.set_state(selected=on, playing=on)   # un seul actif (radio)
             tile.clicked.connect(lambda _k, a=attr, t=key: self._on_strob_toggle(a, t))
             self._strob_tiles[key] = tile
             row.addWidget(tile)
         vbox.addLayout(row)
 
         info = QLabel(
+            "Un seul choix à la fois :\n"
             "RAPIDE : strobe beat rapide\n"
             "LENT : strobe lent / build\n"
-            "PAS DE : autorise absence de strobe"
+            "PAS DE : aucun strobe"
         )
         info.setStyleSheet(
             "color:#333; font-size:8px; background:transparent; padding-top:6px;")
@@ -2283,11 +2291,14 @@ class LiveModePanel(QWidget):
         return w
 
     def _on_strob_toggle(self, attr: str, key: str):
-        setattr(self, attr, not getattr(self, attr))
-        v = getattr(self, attr)
-        t = self._strob_tiles.get(key)
-        if t:
-            t.set_state(selected=v, playing=v)
+        # Choix exclusif (radio) : la tuile cliquée devient active, les 2 autres s'éteignent.
+        mapping = {'fast': '_strob_fast', 'slow': '_strob_slow', 'none': '_strob_none'}
+        for k, a in mapping.items():
+            on = (k == key)
+            setattr(self, a, on)
+            t = self._strob_tiles.get(k)
+            if t:
+                t.set_state(selected=on, playing=on)
         self._request_save()
 
     # ── Sources audio dynamiques ─────────────────────────────────────────────
@@ -2655,6 +2666,20 @@ class LiveModePanel(QWidget):
             "color:#4a7a9a; font-size:9px; font-weight:bold; letter-spacing:1.5px;")
         top.addWidget(param_lbl)
         top.addStretch()
+
+        # Bouton "?" → ouvre le guide en ligne (synchroniser MyStrow avec un logiciel DJ)
+        help_web_btn = QPushButton("?")
+        help_web_btn.setFixedSize(18, 18)
+        help_web_btn.setCursor(Qt.PointingHandCursor)
+        help_web_btn.setToolTip("Aide : synchroniser MyStrow avec votre carte son / logiciel DJ")
+        help_web_btn.setStyleSheet(
+            "QPushButton { background:#0a1a2a; color:#00aaff; border:1px solid #0055aa;"
+            " border-radius:9px; font-size:11px; font-weight:bold; }"
+            "QPushButton:hover { background:#0a2a3a; border-color:#00aaff; }"
+        )
+        help_web_btn.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://mystrow.fr/synchroniser-mystrow-logiciel-dj.html")))
+        top.addWidget(help_web_btn)
 
         # Dot de connexion intégré à la carte
         top.addWidget(self._conn_dot)

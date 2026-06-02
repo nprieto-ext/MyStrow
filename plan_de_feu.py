@@ -824,12 +824,10 @@ class ColorPickerBlock(QFrame):
         self._hue_slider.valueChanged.connect(self._on_hue)
         layout.addWidget(self._hue_slider)
 
-        # ── Saturation ───────────────────────────────────────────────────
-        self._sat_val_lbl = self._add_row(layout, "Saturation", "100%")
-        self._sat_slider = _HSVSlider()
+        # ── Saturation : retirée de l'UI, verrouillée à fond (100%) pour gagner de la place ──
+        self._sat_val_lbl = QLabel("100%")   # conservé (référencé ailleurs), non affiché
+        self._sat_slider  = _HSVSlider()     # conservé, non ajouté au layout
         self._sat_slider.set_value(1.0)
-        self._sat_slider.valueChanged.connect(self._on_sat)
-        layout.addWidget(self._sat_slider)
 
         # ── Luminosité ───────────────────────────────────────────────────
         self._bri_val_lbl = self._add_row(layout, "Luminosité", "100%")
@@ -867,7 +865,7 @@ class ColorPickerBlock(QFrame):
     def set_color(self, c: QColor):
         """Met à jour les sliders visuellement SANS émettre de signal ni envoyer de couleur."""
         self._h = max(0.0, c.hsvHueF()) if c.hsvHueF() >= 0 else 0.0
-        self._s = c.hsvSaturationF()
+        self._s = 1.0                       # saturation verrouillée à fond
         self._v = c.valueF()
         for sl in (self._hue_slider, self._sat_slider, self._bri_slider):
             sl.blockSignals(True)
@@ -2224,6 +2222,10 @@ class FixtureCanvas(QWidget):
                     self.pdf.selected_lamps = {key}
                     self.pdf.selected_lamps_ordered = [key]
                 if self._editable:
+                    # Sauvegarder l'état avant un déplacement → permet le Ctrl+Z
+                    _ph = getattr(self.pdf, '_push_history_cb', None)
+                    if callable(_ph):
+                        _ph()
                     cx, cy = self._get_canvas_pos(idx)
                     self._drag_index  = idx
                     self._drag_offset = pos - QPoint(cx, cy)
@@ -2862,10 +2864,10 @@ class PlanDeFeu(QFrame):
             toolbar.addWidget(clr_btn)
             toolbar.addSpacing(2)
 
-            self.dmx_toggle_btn = QPushButton("ON")
+            self.dmx_toggle_btn = QPushButton("DMX ON")
             self.dmx_toggle_btn.setCheckable(True)
             self.dmx_toggle_btn.setChecked(True)
-            self.dmx_toggle_btn.setFixedSize(44, 26)
+            self.dmx_toggle_btn.setFixedSize(72, 26)
             self.dmx_toggle_btn.setToolTip(tr("pdf_tooltip_dmx_toggle"))
             self.dmx_toggle_btn.setStyleSheet(
                 _BTN_SS.format(fg="#00cc66", bd="#00cc66", fgh="#00ff88", bdh="#00ff88")
@@ -2899,7 +2901,7 @@ class PlanDeFeu(QFrame):
         # ── Canvas ─────────────────────────────────────────────────
         self.canvas = FixtureCanvas(self)
         self.canvas.compact = True
-        self.canvas.show_statusbar = show_toolbar  # masquer la barre si pas de toolbar
+        self.canvas.show_statusbar = False  # barre "n fixtures / vue uniquement" masquée (gain de place)
         self.canvas._read_only = not show_toolbar  # lecture seule dans REC Lumière
         root.addWidget(self.canvas)
 
@@ -3225,7 +3227,7 @@ class PlanDeFeu(QFrame):
 
     def set_dmx_blocked(self):
         self.dmx_toggle_btn.setChecked(False)
-        self.dmx_toggle_btn.setText("OFF")
+        self.dmx_toggle_btn.setText("DMX OFF")
         self.dmx_toggle_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
             "border-radius: 4px; font-size: 10px; font-weight: bold; } "
@@ -3236,7 +3238,7 @@ class PlanDeFeu(QFrame):
     def set_dmx_unblocked(self):
         """Réactive le toggle DMX après une reconnexion de licence."""
         self.dmx_toggle_btn.setChecked(True)
-        self.dmx_toggle_btn.setText("ON")
+        self.dmx_toggle_btn.setText("DMX ON")
         self.dmx_toggle_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
             "border-radius: 4px; font-size: 10px; font-weight: bold; } "
@@ -3261,7 +3263,7 @@ class PlanDeFeu(QFrame):
         if self.main_window and hasattr(self.main_window, '_license'):
             if not self.main_window._license.dmx_allowed:
                 self.dmx_toggle_btn.setChecked(False)
-                self.dmx_toggle_btn.setText("OFF")
+                self.dmx_toggle_btn.setText("DMX OFF")
                 from PySide6.QtWidgets import QMessageBox as _QMB
                 state = self.main_window._license.state
                 from license_manager import LicenseState
@@ -3274,7 +3276,7 @@ class PlanDeFeu(QFrame):
                 _QMB.warning(self.main_window, tr("pdf_artnet_output_title"), msg)
                 return
         on = self.dmx_toggle_btn.isChecked()
-        self.dmx_toggle_btn.setText("ON" if on else "OFF")
+        self.dmx_toggle_btn.setText("DMX ON" if on else "DMX OFF")
         if on:
             self.dmx_toggle_btn.setStyleSheet(
                 "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "

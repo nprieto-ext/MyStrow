@@ -15,5 +15,8 @@
     <!-- USB MIDI (CoreMIDI / AKAI APC mini) -->
     <key>com.apple.security.device.usb</key>
     <true/>
+    <!-- Capture audio (mode LIVE / IA Lumière, micro / ligne / BlackHole) -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>
