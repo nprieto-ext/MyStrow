@@ -2274,6 +2274,9 @@ class MainWindow(QMainWindow):
         self.node_menu.addAction(tr("menu_config_output"), self.open_node_connection)
         self.node_menu.addAction("🔍  Diagnostic Node DMX", self.test_node_connection)
         self._refresh_dmx_menu_title()
+        # Sortie DMX réservée aux licences/essais actifs : menu grisé (non cliquable)
+        # tant que la licence n'autorise pas le DMX (essai expiré / non activé).
+        self.node_menu.setEnabled(self._license.dmx_allowed)
 
         audio_menu = conn_menu.addMenu(tr("menu_audio_output"))
         audio_menu.addAction(tr("menu_test_sound"), self.play_test_sound)
@@ -16600,6 +16603,13 @@ class MainWindow(QMainWindow):
 
     def open_node_connection(self):
         """Ouvre le dialogue de paramétrage de la sortie DMX (Node ou USB)."""
+        # Garde licence : impossible d'activer la sortie DMX si l'essai est terminé
+        # ou le logiciel non activé (le menu est déjà grisé, ceci est une 2e barrière).
+        if not self._license.dmx_allowed:
+            QMessageBox.warning(self, "Sortie DMX",
+                "Votre periode d'essai est terminee ou le logiciel n'est pas active.\n"
+                "Activez une licence pour utiliser la sortie Art-Net.")
+            return
         from node_connection import DmxOutputDialog
         dlg = DmxOutputDialog(self)
         dlg.exec()

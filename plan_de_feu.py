@@ -2284,11 +2284,9 @@ class FixtureCanvas(QWidget):
                     self.pdf.selected_lamps = {key}
                     self.update()
                     self._notify_cpb()
-                proj = self.pdf.projectors[idx]
-                if getattr(proj, 'fixture_type', '') == 'Moving Head' and not self._editable:
-                    self._pt_floater.show_for(idx, event.pos())
-                else:
-                    self.pdf._show_fixture_context_menu(event.globalPos(), idx)
+                # Double-clic : menu contextuel de la fixture pour TOUS les types,
+                # y compris les Moving Head (même comportement qu'un projecteur).
+                self.pdf._show_fixture_context_menu(event.globalPos(), idx)
 
     def _resolve_overlaps(self, canvas_w, canvas_h, dragged_set):
         """Pousse les fixtures non-draguées qui chevauchent une fixture draguée."""

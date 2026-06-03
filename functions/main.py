@@ -409,11 +409,14 @@ def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str
     if not invoice_id or not amount_ttc:
         print(f"[Axonaut] Paiement non enregistré (invoice_id={invoice_id}, montant={amount_ttc})")
         return
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Axonaut exige un ISO8601 complet (date + heure + fuseau) pour le champ
+    # `date` du schéma invoicePayment.post — une date seule "YYYY-MM-DD" est
+    # rejetée (HTTP 4xx) et la facture reste impayée.
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")  # 2026-06-02T12:34:56+00:00
     result = _axonaut("POST", "/payments", {
         "invoice_id": invoice_id,
         "amount":     round(amount_ttc, 2),
-        "date":       today,
+        "date":       now_iso,
         "nature":     4,                       # Carte bancaire (Stripe)
         "reference":  (reference or "Stripe")[:30],
     })

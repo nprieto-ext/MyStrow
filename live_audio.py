@@ -336,7 +336,8 @@ class LiveAudioEngine(QObject):
         self._beat_pending = False
         self._manual_bpm   = False
 
-        # Timer Qt émetteur d'état lumière (40 ms)
+        # Timer Qt émetteur d'état lumière (25 ms = 40 fps, aligné sur le DMX)
+        # 40 fps évite les paliers visibles sur le mouvement des lyres en mode live.
         self._state_timer = QTimer(self)
         self._state_timer.timeout.connect(self._emit_state)
 
@@ -381,7 +382,7 @@ class LiveAudioEngine(QObject):
         self._running = True
 
         self._open_stream()
-        self._state_timer.start(40)
+        self._state_timer.start(25)   # 40 fps (aligné DMX) — mouvement lyres plus fluide
 
     def stop(self):
         self._running = False

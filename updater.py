@@ -270,8 +270,14 @@ class UpdateChecker(QThread):
         """Construit les URLs de téléchargement depuis le numéro de version."""
         base = f"https://github.com/{_GITHUB_REPO}/releases/download/v{remote_version}"
         if sys.platform == "darwin":
+            # Le DMG est nommé par architecture dans la release :
+            #   Apple Silicon (M1/M2/M3/M4) → MyStrow_arm64.dmg  (build CI)
+            #   Intel (x86_64)              → MyStrow_intel.dmg   (upload manuel)
+            # (l'ancien nom "MyStrow_Installer.dmg" n'existe pas → 404 → faux "à jour")
+            import platform as _pf
+            dmg = "MyStrow_arm64.dmg" if _pf.machine() == "arm64" else "MyStrow_intel.dmg"
             return {
-                "setup":  f"{base}/MyStrow_Installer.dmg",
+                "setup":  f"{base}/{dmg}",
                 "sha256": "",
                 "sig":    "",
             }

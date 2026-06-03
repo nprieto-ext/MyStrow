@@ -1,6 +1,6 @@
 """
 Gestionnaire MIDI multi-contrôleur
-Supporte: AKAI APC40, AKAI APC20, AKAI APC Mini, Novation Launchpad Mini MK1/MK2, AKAI MIDImix
+Supporte: AKAI APC40, AKAI APC20, AKAI APC Mini, Novation Launchpad Mini MK1/MK2/MK3, AKAI MIDImix
 """
 import sys
 import platform
@@ -57,6 +57,17 @@ SUPPORTED_CONTROLLERS = [
         'name': 'AKAI APC Mini',
         'keywords': ['APC MINI', 'APC'],
         'has_faders': True,
+        'has_pads': True,
+    },
+    {
+        'id': 'launchpad_mini_mk3',
+        'name': 'Novation Launchpad Mini MK3',
+        # MK3 avant MK2/MK1 : 'LAUNCHPAD MINI' matcherait sinon en fallback.
+        # Sur Windows le port s'appelle 'LPMiniMK3', sur Mac 'Launchpad Mini MK3'.
+        'keywords': ['LAUNCHPAD MINI MK3', 'LPMINIMK3', 'MINI MK3'],
+        # Le MK3 expose un port MIDI et un port DAW : on évite le port DAW.
+        'avoid_keywords': ['DAW', 'MIDIIN2', 'MIDIOUT2'],
+        'has_faders': False,
         'has_pads': True,
     },
     {
@@ -152,24 +163,29 @@ def _to_apc40_vel(apc_vel: int) -> int:
     return 2            # vert (vert, cyan, bleu, violet → vert par défaut)
 
 
+def _port_matches(ctrl: dict, port_name: str) -> bool:
+    """True si le port correspond au contrôleur sans tomber sur un port à éviter (ex: DAW)."""
+    up = port_name.upper()
+    for avoid in ctrl.get('avoid_keywords', ()):
+        if avoid in up:
+            return False
+    return any(kw in up for kw in ctrl['keywords'])
+
+
 def _detect_controller(ports: list):
     """Retourne (ctrl_dict, port_name) pour le premier contrôleur trouvé, selon priorité."""
     for ctrl in SUPPORTED_CONTROLLERS:
         for port_name in ports:
-            up = port_name.upper()
-            for kw in ctrl['keywords']:
-                if kw in up:
-                    return ctrl, port_name
+            if _port_matches(ctrl, port_name):
+                return ctrl, port_name
     return None, None
 
 
 def _find_out_port(ctrl: dict, out_ports: list):
     """Trouve le port de sortie correspondant au contrôleur donné."""
     for port_name in out_ports:
-        up = port_name.upper()
-        for kw in ctrl['keywords']:
-            if kw in up:
-                return port_name
+        if _port_matches(ctrl, port_name):
+            return port_name
     return None
 
 
@@ -503,6 +519,8 @@ class MIDIHandler(QObject):
                 self._handle_apc40(message)
             elif ct == 'apc20':
                 self._handle_apc20(message)
+            elif ct == 'launchpad_mini_mk3':
+                self._handle_launchpad_mini_mk3(message)
             elif ct == 'launchpad_mk2':
                 self._handle_launchpad_mk2(message)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
@@ -729,6 +747,46 @@ class MIDIHandler(QObject):
         elif (status == 0x80 or (status == 0x90 and data2 == 0)) and ms_col == 8:
             self.pad_released.emit(ms_row, ms_col)
 
+    def _handle_launchpad_mini_mk3(self, message):
+        """Messages Novation Launchpad Mini MK3 (Programmer mode).
+
+        En Programmer mode, layout note = lp_row1 * 10 + lp_col1 :
+          lp_row1 ∈ 1-8  (1 = bas, 8 = haut)
+          lp_col1 ∈ 1-8  (grille), 9 = boutons scène (colonne droite)
+        Top row (boutons ronds) : CC 91-98 → mute faders 0-7
+        Logo : CC 99 (ignoré)
+        """
+        status = message[0]
+        data1  = message[1]
+        data2  = message[2] if len(message) > 2 else 0
+
+        if self.debug_mode:
+            print(f"🔍 LP Mini MK3: status={hex(status)} d1={data1} d2={data2}")
+
+        # Top row CC 91-98 → mute
+        if status == 0xB0 and 91 <= data1 <= 98:
+            if data2 > 0 and self.owner_window:
+                self.owner_window.toggle_fader_mute_from_midi(data1 - 91)
+            return
+
+        if status not in (0x90, 0x80):
+            return
+
+        note    = data1
+        lp_row1 = note // 10   # 1=bas, 8=haut
+        lp_col1 = note % 10    # 1-8 grille, 9=side
+
+        if lp_row1 < 1 or lp_row1 > 8 or lp_col1 < 1 or lp_col1 > 9:
+            return
+
+        ms_row = 8 - lp_row1       # 0=haut, 7=bas
+        ms_col = lp_col1 - 1       # 0-7 grille, 8=side
+
+        if status == 0x90 and data2 > 0:
+            self.pad_pressed.emit(ms_row, ms_col)
+        elif (status == 0x80 or (status == 0x90 and data2 == 0)) and ms_col == 8:
+            self.pad_released.emit(ms_row, ms_col)
+
     def _handle_launchpad_mk2(self, message):
         """Messages Novation Launchpad MK2 (non-mini).
 
@@ -871,6 +929,19 @@ class MIDIHandler(QObject):
                 for row in range(5):
                     self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
 
+            elif ct == 'launchpad_mini_mk3':
+                # Passage en Programmer mode (sinon le MK3 ignore les LED note 11-88)
+                # SysEx Novation : 00 20 29 02 0D (header) 0E 01 = Programmer mode ON
+                self.midi_out.send_message(
+                    [0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x01, 0xF7])
+                import time as _t; _t.sleep(0.05)
+                # Éteindre la grille 11-88 + colonne scène (col 9) + top row CC 91-98
+                for row1 in range(1, 9):
+                    for col1 in range(1, 10):
+                        self.midi_out.send_message([0x90, row1 * 10 + col1, 0])
+                for cc in range(91, 99):
+                    self.midi_out.send_message([0xB0, cc, 0])
+
             elif ct == 'launchpad_mk2':
                 # Reset — éteint toutes les LEDs
                 self.midi_out.send_message([0xB0, 0x00, 0x00])
@@ -905,6 +976,8 @@ class MIDIHandler(QObject):
                 self._set_led_apc40(row, col, color_velocity)
             elif ct == 'apc20':
                 self._set_led_apc20(row, col, color_velocity)
+            elif ct == 'launchpad_mini_mk3':
+                self._set_led_lp_mk3(row, col, color_velocity)
             elif ct == 'launchpad_mk2':
                 self._set_led_lp_mk2(row, col, color_velocity)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
@@ -949,6 +1022,19 @@ class MIDIHandler(QObject):
         # Calcul note LP Mini : (7-ms_row)*16 + ms_col
         note = (7 - row) * 16 + col
         self.midi_out.send_message([0x90, note, lp_vel])
+
+    def _set_led_lp_mk3(self, row, col, color_velocity):
+        """LED Launchpad Mini MK3 (Programmer mode).
+
+        note = lp_row1*10 + lp_col1, velocity = index palette 0-127 (palette Novation,
+        compatible MK2). En Programmer mode, Note On ch1 contrôle la LED directement.
+        """
+        if not self.midi_out:
+            return
+        lp_row1 = 8 - row           # ms_row 0(haut)→8, ms_row 7(bas)→1
+        lp_col1 = (9 if col == 8 else col + 1)
+        note = lp_row1 * 10 + lp_col1
+        self.midi_out.send_message([0x90, note, color_velocity])
 
     def _set_led_lp_mk2(self, row, col, color_velocity):
         """LED Launchpad MK2 — note = lp_row1*10 + lp_col1, velocity = index couleur 0-127."""
