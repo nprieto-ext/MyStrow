@@ -34,7 +34,8 @@
       "PowerShell(Write-Host \"=== ES DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\es\" -File | Select-Object Name | Sort-Object Name\\))",
       "PowerShell(Write-Host \"=== PT DIRECTORY ===\" ; \\(Get-ChildItem -Path \"C:\\\\Users\\\\nikop\\\\Desktop\\\\mystrow_site\\\\pt\" -File | Select-Object Name | Sort-Object Name\\))",
       "PowerShell(Get-Process *)",
-      "PowerShell(python -c \"import sounddevice, _sounddevice_data, pyaudiowpatch, numpy; print\\('sounddevice', sounddevice.__version__\\); import os; print\\('portaudio dir:', os.path.join\\(os.path.dirname\\(_sounddevice_data.__file__\\),'portaudio-binaries'\\)\\); print\\(os.listdir\\(os.path.join\\(os.path.dirname\\(_sounddevice_data.__file__\\),'portaudio-binaries'\\)\\)\\)\")"
+      "PowerShell(python -c \"import sounddevice, _sounddevice_data, pyaudiowpatch, numpy; print\\('sounddevice', sounddevice.__version__\\); import os; print\\('portaudio dir:', os.path.join\\(os.path.dirname\\(_sounddevice_data.__file__\\),'portaudio-binaries'\\)\\); print\\(os.listdir\\(os.path.join\\(os.path.dirname\\(_sounddevice_data.__file__\\),'portaudio-binaries'\\)\\)\\)\")",
+      "PowerShell($p = Get-Process | Where-Object { $_.ProcessName -match 'python|MyStrow|Maestro' }; if \\($p\\) { $p | Select-Object Id, ProcessName | Format-Table -AutoSize } else { Write-Output \"Aucun MyStrow/python en cours - port MIDI libre.\" })"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

@@ -859,6 +859,16 @@ class FixtureEditorDialog(QDialog):
         self._btn_delete.clicked.connect(self._delete_fixture)
         hdr.addWidget(self._btn_delete)
         hdr.addSpacing(10)
+        self._btn_export = QPushButton("📤  Exporter")
+        self._btn_export.setFixedHeight(30)
+        self._btn_export.setStyleSheet(
+            "QPushButton{background:#1a2a1a;color:#88cc88;border:1px solid #2a442a;"
+            "border-radius:5px;font-size:11px;padding:0 12px;}"
+            "QPushButton:hover{background:#223322;color:#aaeaaa;border-color:#44aa44;}"
+        )
+        self._btn_export.clicked.connect(self._do_export)
+        hdr.addWidget(self._btn_export)
+        hdr.addSpacing(10)
         self._btn_save = QPushButton("💾  Enregistrer")
         self._btn_save.setFixedHeight(30)
         self._btn_save.setStyleSheet(
@@ -1355,6 +1365,35 @@ class FixtureEditorDialog(QDialog):
         self._save_fixtures()
         self._rebuild_list()
         self._select_fixture(len(self._fixtures) - 1)
+
+    # ── Export ────────────────────────────────────────────────────────────────
+
+    def _do_export(self):
+        """Exporte la fixture courante dans un fichier .mft (JSON) réimportable."""
+        # Fixture enregistrée sélectionnée → données complètes (slots, defaults…)
+        if 0 <= self._current_idx < len(self._fixtures):
+            data = copy.deepcopy(self._fixtures[self._current_idx])
+        else:
+            data = self._get_form_data()   # fixture en cours d'édition, non enregistrée
+        if not data.get("name") or not data.get("profile"):
+            QMessageBox.warning(self, "Rien à exporter",
+                "Sélectionnez une fixture (ou renseignez nom + canaux) avant d'exporter.")
+            return
+        safe = "".join(c for c in data["name"] if c.isalnum() or c in " -_").strip() or "fixture"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exporter la fixture", str(Path.home() / f"{safe}.mft"),
+            "Fixture MyStrow (*.mft);;JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            QMessageBox.warning(self, "Export échoué", str(e))
+            return
+        QMessageBox.information(self, "Export réussi",
+            f"« {data['name']} » exportée :\n{path}")
 
     # ── Import ────────────────────────────────────────────────────────────────
 

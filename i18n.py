@@ -61,7 +61,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "searching":             {"en": "Searching...",            "fr": "Recherche...",               "es": "Buscando..."},
     "verifying":             {"en": "Verifying...",            "fr": "Vérification...",            "es": "Verificando..."},
     "starting_app":          {"en": "Starting...",             "fr": "Démarrage...",               "es": "Iniciando..."},
-    "splash_akai_label":     {"en": "AKAI APC mini",           "fr": "AKAI APC mini",              "es": "AKAI APC mini"},
+    "splash_akai_label":     {"en": "Controller",              "fr": "Contrôleur",                "es": "Controlador"},
     "splash_dmx_label":      {"en": "DMX Output",              "fr": "Sortie DMX",                 "es": "Salida DMX"},
     "splash_license_label":  {"en": "License",                 "fr": "Licence",                    "es": "Licencia"},
 

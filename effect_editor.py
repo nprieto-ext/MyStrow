@@ -4084,6 +4084,10 @@ class EffectEditorDialog(QDialog):
 
                 freq      = (0.05 + layer.speed / 100.0 * 7.0) * fader_mult
                 spread    = layer.spread / 100.0
+                # Mouvement (Pan/Tilt) : plafonner a 1.0 = etalement parfait, pas de
+                # re-enroulement des lyres au-dela (idem moteur live).
+                if layer.attribute in ("Pan", "Tilt", "Pan/Tilt"):
+                    spread = min(1.0, spread)
                 phase     = layer.phase  / 100.0
                 direction = getattr(layer, 'direction', 1)
                 if direction == 0:   # bounce

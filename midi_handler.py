@@ -65,8 +65,9 @@ SUPPORTED_CONTROLLERS = [
         # MK3 avant MK2/MK1 : 'LAUNCHPAD MINI' matcherait sinon en fallback.
         # Sur Windows le port s'appelle 'LPMiniMK3', sur Mac 'Launchpad Mini MK3'.
         'keywords': ['LAUNCHPAD MINI MK3', 'LPMINIMK3', 'MINI MK3'],
-        # Le MK3 expose un port MIDI et un port DAW : on évite le port DAW.
-        'avoid_keywords': ['DAW', 'MIDIIN2', 'MIDIOUT2'],
+        # Le MK3 communique (pads ET LED, en Programmer mode) via le PORT DAW,
+        # pas le premier port MIDI. Sur Windows = MIDIIN2/MIDIOUT2, sur Mac = "DAW".
+        'prefer_keywords': ['MIDIIN2', 'MIDIOUT2', 'DAW'],
         'has_faders': False,
         'has_pads': True,
     },
@@ -151,6 +152,23 @@ def _to_lp_mini_vel(apc_vel: int) -> int:
     return 48           # vert bright par défaut
 
 
+# ─── Launchpad Mini MK3 : velocity APC → RGB réel (pour le SysEx RGB) ─────────
+# Le MK3 pilote ses LED en RGB (0-127/canal) via SysEx, ce qui permet la couleur
+# exacte ET la luminosité (pads inactifs atténués). On reconvertit la velocity
+# APC vers la vraie couleur source (cf. HEX_COLOR_MAP de core.py).
+_LP_MK3_VEL_TO_RGB = {
+    1:  (255, 255, 255),   # blanc
+    3:  (255, 255, 255),   # blanc
+    5:  (255, 0,   0),     # rouge
+    9:  (255, 136, 0),     # orange
+    13: (255, 221, 0),     # jaune
+    21: (0,   255, 0),     # vert
+    37: (0,   221, 221),   # cyan
+    45: (0,   0,   255),   # bleu
+    53: (255, 0,   255),   # magenta
+}
+
+
 def _to_apc40_vel(apc_vel: int) -> int:
     """Convertit une velocity APC Mini vers APC40 (palette limitée : vert/jaune/rouge)."""
     # APC40: 0=off 1=green blink 2=green 3=red blink 4=red 5=yellow blink 6=yellow
@@ -163,29 +181,43 @@ def _to_apc40_vel(apc_vel: int) -> int:
     return 2            # vert (vert, cyan, bleu, violet → vert par défaut)
 
 
-def _port_matches(ctrl: dict, port_name: str) -> bool:
-    """True si le port correspond au contrôleur sans tomber sur un port à éviter (ex: DAW)."""
+def _port_matches(ctrl: dict, port_name: str, require_prefer: bool = True) -> bool:
+    """True si le port correspond au contrôleur.
+
+    avoid_keywords  : rejette les ports contenant un de ces mots.
+    prefer_keywords : (si require_prefer) impose qu'un de ces mots soit présent —
+                      ex: le Launchpad Mini MK3 ne communique que via son port DAW.
+    """
     up = port_name.upper()
     for avoid in ctrl.get('avoid_keywords', ()):
         if avoid in up:
+            return False
+    if require_prefer and ctrl.get('prefer_keywords'):
+        if not any(p in up for p in ctrl['prefer_keywords']):
             return False
     return any(kw in up for kw in ctrl['keywords'])
 
 
 def _detect_controller(ports: list):
-    """Retourne (ctrl_dict, port_name) pour le premier contrôleur trouvé, selon priorité."""
-    for ctrl in SUPPORTED_CONTROLLERS:
-        for port_name in ports:
-            if _port_matches(ctrl, port_name):
-                return ctrl, port_name
+    """Retourne (ctrl_dict, port_name) pour le premier contrôleur trouvé, selon priorité.
+
+    Passe 1 : respecte prefer_keywords (port DAW pour le MK3).
+    Passe 2 : fallback sans la préférence si aucun port préféré trouvé.
+    """
+    for require_prefer in (True, False):
+        for ctrl in SUPPORTED_CONTROLLERS:
+            for port_name in ports:
+                if _port_matches(ctrl, port_name, require_prefer):
+                    return ctrl, port_name
     return None, None
 
 
 def _find_out_port(ctrl: dict, out_ports: list):
-    """Trouve le port de sortie correspondant au contrôleur donné."""
-    for port_name in out_ports:
-        if _port_matches(ctrl, port_name):
-            return port_name
+    """Trouve le port de sortie correspondant au contrôleur donné (préférence d'abord)."""
+    for require_prefer in (True, False):
+        for port_name in out_ports:
+            if _port_matches(ctrl, port_name, require_prefer):
+                return port_name
     return None
 
 
@@ -224,6 +256,10 @@ class MIDIHandler(QObject):
         # False = compatibilité (0x90 uniquement, dim mode), True = pleine luminosité (0x96).
         self._apc_bright_mode = not _APPLE_SILICON
 
+        # Contrôleur épinglé par l'utilisateur (id natif, 'custom:<nom>', ou None=Auto).
+        # Quand défini, la détection auto ne bascule plus sur un autre contrôleur.
+        self.pinned_id = None
+
         if MIDI_AVAILABLE and rtmidi:
             self.connect_controller()
             if self.midi_in:
@@ -237,8 +273,91 @@ class MIDIHandler(QObject):
 
     # ─── Connexion ───────────────────────────────────────────────────────────
 
+    def _select_custom(self, in_ports):
+        """(profile, in_name) du profil custom à connecter selon l'épinglage."""
+        pin = self.pinned_id
+        if pin and not str(pin).startswith('custom:'):
+            return None, None   # épinglé sur un contrôleur natif → pas de custom
+        target = str(pin)[7:] if (pin and str(pin).startswith('custom:')) else None
+        try:
+            for port_name in in_ports:
+                profile = find_profile_for_port(port_name)
+                if profile and (target is None or profile.get('name', 'Custom') == target):
+                    return profile, port_name
+        except Exception as e:
+            print(f"⚠️  Lecture profils custom ignorée: {e}")
+        return None, None
+
+    def _select_native(self, in_ports):
+        """(ctrl, in_name) du contrôleur natif à connecter selon l'épinglage."""
+        pin = self.pinned_id
+        if pin and str(pin).startswith('custom:'):
+            return None, None   # épinglé sur un custom → pas de natif
+        if pin:
+            ctrl = next((c for c in SUPPORTED_CONTROLLERS if c['id'] == pin), None)
+            if ctrl is None:
+                return None, None
+            for require_prefer in (True, False):
+                for p in in_ports:
+                    if _port_matches(ctrl, p, require_prefer):
+                        return ctrl, p
+            return None, None
+        return _detect_controller(in_ports)   # Auto
+
+    def _target_present(self, ports):
+        """True si le contrôleur cible (épinglé ou auto) est branché."""
+        prof, _ = self._select_custom(ports)
+        if prof:
+            return True
+        if self.pinned_id and str(self.pinned_id).startswith('custom:'):
+            return False
+        ctrl, _ = self._select_native(ports)
+        return ctrl is not None
+
+    def list_available_controllers(self):
+        """Liste les contrôleurs supportés actuellement branchés.
+
+        Retourne [{'id', 'name', 'port'}] — profils custom puis natifs.
+        Sert à peupler le sélecteur de l'UI (menu connexion).
+        """
+        out = []
+        if not rtmidi:
+            return out
+        try:
+            probe = rtmidi.MidiIn()
+            ports = probe.get_ports()
+            try: probe.close_port()
+            except Exception: pass
+        except Exception:
+            return out
+        seen = set()
+        for p in ports:
+            try:
+                prof = find_profile_for_port(p)
+            except Exception:
+                prof = None
+            if prof:
+                cid = 'custom:' + prof.get('name', 'Custom')
+                if cid not in seen:
+                    seen.add(cid)
+                    out.append({'id': cid, 'name': prof.get('name', 'Custom'), 'port': p})
+        for ctrl in SUPPORTED_CONTROLLERS:
+            for p in ports:
+                if _port_matches(ctrl, p):
+                    if ctrl['id'] not in seen:
+                        seen.add(ctrl['id'])
+                        out.append({'id': ctrl['id'], 'name': ctrl['name'], 'port': p})
+                    break
+        return out
+
+    def set_pinned_controller(self, controller_id):
+        """Épingle un contrôleur (id natif ou 'custom:<nom>') ; None = Auto.
+        Reconnecte immédiatement sur le contrôleur choisi."""
+        self.pinned_id = controller_id or None
+        self.connect_controller()
+
     def connect_controller(self):
-        """Détecte et connecte le premier contrôleur supporté disponible."""
+        """Connecte le contrôleur épinglé, ou le premier supporté (Auto)."""
         if not rtmidi:
             return
         try:
@@ -258,19 +377,8 @@ class MIDIHandler(QObject):
             print(f"[MIDI] Ports IN:  {in_ports}")
             print(f"[MIDI] Ports OUT: {out_ports}")
 
-            # Profils custom en priorité (définis par l'utilisateur)
-            custom_profile = None
-            custom_in_name = None
-            try:
-                for port_name in in_ports:
-                    profile = find_profile_for_port(port_name)
-                    if profile:
-                        custom_profile = profile
-                        custom_in_name = port_name
-                        break
-            except Exception as e:
-                print(f"⚠️  Lecture profils custom ignorée: {e}")
-                custom_profile = None
+            # Profil custom (selon l'épinglage ; en Auto, prioritaire sur le natif)
+            custom_profile, custom_in_name = self._select_custom(in_ports)
 
             if custom_profile:
                 self.controller_type = 'custom'
@@ -305,7 +413,7 @@ class MIDIHandler(QObject):
                         self.midi_timer.start(10)
                 return
 
-            ctrl, in_name = _detect_controller(in_ports)
+            ctrl, in_name = self._select_native(in_ports)
             if ctrl is None:
                 print("⚠️  Aucun contrôleur MIDI supporté détecté")
                 self.midi_in  = None
@@ -360,14 +468,9 @@ class MIDIHandler(QObject):
             ports = probe.get_ports()
             try: probe.close_port()
             except Exception: pass
-            ctrl, _ = _detect_controller(ports)
-            device_present = (ctrl is not None)
-            # Vérifier aussi les profils custom (contrôleurs non hardcodés)
-            if not device_present:
-                for _p in ports:
-                    if find_profile_for_port(_p):
-                        device_present = True
-                        break
+            # Présence du contrôleur CIBLE (épinglé ou auto) — ne rebascule pas
+            # sur un autre contrôleur quand l'utilisateur en a épinglé un.
+            device_present = self._target_present(ports)
         except Exception:
             return
 
@@ -763,10 +866,22 @@ class MIDIHandler(QObject):
         if self.debug_mode:
             print(f"🔍 LP Mini MK3: status={hex(status)} d1={data1} d2={data2}")
 
-        # Top row CC 91-98 → mute
+        # Top row CC 91-98 → monte le fader de la colonne (25/50/75/100/0)
+        # data1 91 = colonne 0 (gauche) … 98 = colonne 7 (droite)
         if status == 0xB0 and 91 <= data1 <= 98:
             if data2 > 0 and self.owner_window:
-                self.owner_window.toggle_fader_mute_from_midi(data1 - 91)
+                self.owner_window.cycle_fader_level_from_midi(data1 - 91)
+            return
+
+        # Colonne de droite (scène) → EFFETS (colonne 8).
+        # Le MK3 envoie ces boutons en CC 19,29,…,89 (et NON en Note On).
+        # CC 89 = haut → effet 0 ; CC 19 = bas → effet 7.
+        if status == 0xB0 and data1 % 10 == 9 and 1 <= data1 // 10 <= 8:
+            ms_row = 8 - (data1 // 10)
+            if data2 > 0:
+                self.pad_pressed.emit(ms_row, 8)
+            else:
+                self.pad_released.emit(ms_row, 8)
             return
 
         if status not in (0x90, 0x80):
@@ -977,7 +1092,7 @@ class MIDIHandler(QObject):
             elif ct == 'apc20':
                 self._set_led_apc20(row, col, color_velocity)
             elif ct == 'launchpad_mini_mk3':
-                self._set_led_lp_mk3(row, col, color_velocity)
+                self._set_led_lp_mk3(row, col, color_velocity, brightness_percent)
             elif ct == 'launchpad_mk2':
                 self._set_led_lp_mk2(row, col, color_velocity)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
@@ -1023,18 +1138,30 @@ class MIDIHandler(QObject):
         note = (7 - row) * 16 + col
         self.midi_out.send_message([0x90, note, lp_vel])
 
-    def _set_led_lp_mk3(self, row, col, color_velocity):
-        """LED Launchpad Mini MK3 (Programmer mode).
+    def _set_led_lp_mk3(self, row, col, color_velocity, brightness_percent=100):
+        """LED Launchpad Mini MK3 (Programmer mode) — pilotage RGB via SysEx.
 
-        note = lp_row1*10 + lp_col1, velocity = index palette 0-127 (palette Novation,
-        compatible MK2). En Programmer mode, Note On ch1 contrôle la LED directement.
+        note = lp_row1*10 + lp_col1. On envoie la couleur en RGB exact (0-127/canal)
+        modulée par brightness_percent → les pads inactifs (20%) sont atténués.
+        SysEx RGB : F0 00 20 29 02 0D 03  03 <note> R G B  F7
         """
         if not self.midi_out:
             return
         lp_row1 = 8 - row           # ms_row 0(haut)→8, ms_row 7(bas)→1
         lp_col1 = (9 if col == 8 else col + 1)
         note = lp_row1 * 10 + lp_col1
-        self.midi_out.send_message([0x90, note, color_velocity])
+
+        if color_velocity <= 0:
+            self.midi_out.send_message([0x90, note, 0])   # éteindre
+            return
+
+        r, g, b = _LP_MK3_VEL_TO_RGB.get(color_velocity, (255, 255, 255))
+        f = max(0.0, min(1.0, brightness_percent / 100.0))
+        r7 = int(r / 255.0 * 127 * f)
+        g7 = int(g / 255.0 * 127 * f)
+        b7 = int(b / 255.0 * 127 * f)
+        self.midi_out.send_message([0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x03,
+                                    0x03, note, r7, g7, b7, 0xF7])
 
     def _set_led_lp_mk2(self, row, col, color_velocity):
         """LED Launchpad MK2 — note = lp_row1*10 + lp_col1, velocity = index couleur 0-127."""

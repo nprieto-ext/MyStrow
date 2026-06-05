@@ -287,20 +287,18 @@ jobs:
             windows-installer/sha256.txt
             mac-dmg/MyStrow_arm64.dmg
 
-      - name: Supprimer les anciennes releases (garder 1)
+      - name: Supprimer les anciennes releases (garder les 3 dernières)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT_TAG="${{ github.ref_name }}"
-          CURRENT_VER="${CURRENT_TAG#v}"
-          gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' | \
-          while read tag; do
-            if [ "$tag" != "$CURRENT_TAG" ]; then
-              TAG_VER="${tag#v}"
-              OLDEST=$(printf "%s\n%s" "$TAG_VER" "$CURRENT_VER" | sort -V | head -1)
-              if [ "$OLDEST" = "$TAG_VER" ]; then
+          KEEP=3
+          # Trie par version décroissante, garde les KEEP plus récentes, supprime le reste.
+          # Garder plusieurs releases préserve le DMG Intel (upload manuel) le temps
+          # qu'il soit publié sur la dernière → l'updater Intel peut y retomber.
+          gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' \
+            | sed 's/^v//' | sort -V -r | tail -n +$((KEEP+1)) \
+            | while read ver; do
+                tag="v$ver"
                 echo "Suppression de la release $tag..."
                 gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag
-              fi
-            fi
-          done
+              done

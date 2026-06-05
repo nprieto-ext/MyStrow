@@ -282,9 +282,9 @@ class AkaiDiagnosticDialog(QDialog):
     def __init__(self, midi_handler, parent=None):
         super().__init__(parent)
         ctrl_name = getattr(midi_handler, 'controller_name', '') or "Contrôleur MIDI"
-        self.setWindowTitle(f"Diagnostic — {ctrl_name}")
+        self.setWindowTitle(f"Contrôleur MIDI — {ctrl_name}")
         _is_apc_mini = getattr(midi_handler, 'controller_type', '') == 'apc_mini'
-        self.setFixedSize(440, 410 if _is_apc_mini else 360)
+        self.setFixedSize(470, 700 if _is_apc_mini else 660)
         self.setModal(True)
         self._midi = midi_handler
         self._activity_count = 0
@@ -311,14 +311,45 @@ class AkaiDiagnosticDialog(QDialog):
         title.setStyleSheet("color:#fff;")
         root.addWidget(title)
 
-        # Sous-titre : contrôleurs supportés
-        supported_lbl = QLabel("Supportés : AKAI APC Mini · Launchpad Mini MK1/MK2 · AKAI MIDImix")
-        supported_lbl.setStyleSheet("color:#555; font-size:9px;")
-        root.addWidget(supported_lbl)
+        # ── Liste visuelle des contrôleurs compatibles ─────────────────────
+        list_hdr = QLabel("Contrôleurs compatibles")
+        list_hdr.setStyleSheet("color:#aaa; font-size:10px; font-weight:bold;")
+        root.addWidget(list_hdr)
 
-        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background:#222; max-height:1px;")
-        root.addWidget(sep)
+        _scroll = QScrollArea()
+        _scroll.setWidgetResizable(True)
+        _scroll.setFixedHeight(212)
+        _scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _scroll.setStyleSheet(
+            "QScrollArea { border:1px solid #222; border-radius:6px; background:#0d0d0d; }"
+            "QScrollBar:vertical { background:#0d0d0d; width:8px; margin:2px; }"
+            "QScrollBar::handle:vertical { background:#2a2a2a; border-radius:4px; min-height:20px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+        )
+        _rows_host = QWidget()
+        _rows_host.setStyleSheet("background:transparent;")
+        self._ctrl_rows_layout = QVBoxLayout(_rows_host)
+        self._ctrl_rows_layout.setContentsMargins(6, 6, 6, 6)
+        self._ctrl_rows_layout.setSpacing(4)
+        _scroll.setWidget(_rows_host)
+        root.addWidget(_scroll)
+
+        self._ctrl_row_widgets = {}   # cid -> (frame, name_lbl, status_lbl)
+        self._populate_controller_rows()
+
+        hint = QLabel("Cliquez un contrôleur pour le forcer, ou « Auto » pour la détection automatique.")
+        hint.setStyleSheet("color:#555; font-size:8px;")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        # Rafraîchit l'état détecté/connecté en direct (branchement à chaud)
+        self._ctrl_refresh_timer = QTimer(self)
+        self._ctrl_refresh_timer.timeout.connect(self._refresh_controller_rows)
+        self._ctrl_refresh_timer.start(2000)
+
+        sep_sel = QFrame(); sep_sel.setFrameShape(QFrame.HLine)
+        sep_sel.setStyleSheet("background:#222; max-height:1px;")
+        root.addWidget(sep_sel)
 
         # ── Statut ports ───────────────────────────────────────────────────
         def _port_row(label, ok):
@@ -410,6 +441,16 @@ class AkaiDiagnosticDialog(QDialog):
 
         # ── Boutons ────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
+
+        add_btn = QPushButton("🎹  Ajouter mon contrôleur MIDI…")
+        add_btn.setStyleSheet(
+            "QPushButton { background:#1a2a1a; color:#88cc88; border:1px solid #2a442a; "
+            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 14px; } "
+            "QPushButton:hover { background:#223322; color:#aaeaaa; border-color:#44aa44; }"
+        )
+        add_btn.clicked.connect(self._open_add_controller)
+        btn_row.addWidget(add_btn)
+
         btn_row.addStretch()
 
         reconnect_btn = QPushButton("🔄  Reconnecter")
@@ -454,6 +495,123 @@ class AkaiDiagnosticDialog(QDialog):
     def _do_reconnect(self):
         self._midi.connect_akai()
         self.accept()
+
+    def _open_add_controller(self):
+        """Ferme le hub et ouvre le wizard d'ajout de contrôleur MIDI custom."""
+        mw = self.parent()
+        while mw and not hasattr(mw, '_open_midi_mapping_wizard'):
+            mw = mw.parent()
+        if mw:
+            self.accept()
+            mw._open_midi_mapping_wizard()
+
+    @staticmethod
+    def _active_controller_id(midi):
+        """Id du contrôleur réellement connecté (natif id, 'custom:<nom>', ou None)."""
+        ct = getattr(midi, 'controller_type', None)
+        if not ct:
+            return None
+        if ct == 'custom':
+            return 'custom:' + getattr(midi, 'controller_name', '')
+        return ct
+
+    def _controller_catalog(self):
+        """[(cid, name)] : Auto + tous les contrôleurs natifs supportés + customs branchés."""
+        from midi_handler import SUPPORTED_CONTROLLERS
+        cat = [(None, "Auto (détection automatique)")]
+        for c in SUPPORTED_CONTROLLERS:
+            cat.append((c['id'], c['name']))
+        try:
+            for c in self._midi.list_available_controllers():
+                if str(c['id']).startswith('custom:'):
+                    cat.append((c['id'], c['name']))
+        except Exception:
+            pass
+        return cat
+
+    def _populate_controller_rows(self):
+        """Construit une ligne cliquable par contrôleur compatible."""
+        while self._ctrl_rows_layout.count():
+            it = self._ctrl_rows_layout.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self._ctrl_row_widgets = {}
+        for cid, name in self._controller_catalog():
+            frame = QFrame()
+            frame.setCursor(Qt.PointingHandCursor)
+            hl = QHBoxLayout(frame)
+            hl.setContentsMargins(10, 7, 10, 7)
+            hl.setSpacing(8)
+            icon = QLabel("🎛️" if cid is None else "🎹")
+            icon.setStyleSheet("background:transparent; font-size:12px;")
+            hl.addWidget(icon)
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet("background:transparent; font-size:10px;")
+            hl.addWidget(name_lbl)
+            hl.addStretch()
+            status = QLabel("")
+            status.setStyleSheet("background:transparent; font-size:9px; font-weight:bold;")
+            hl.addWidget(status)
+            for w in (icon, name_lbl, status):
+                w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            frame.mousePressEvent = lambda e, c=cid: self._on_pick_controller(c)
+            self._ctrl_rows_layout.addWidget(frame)
+            self._ctrl_row_widgets[cid] = (frame, name_lbl, status)
+        self._ctrl_rows_layout.addStretch()
+        self._refresh_controller_rows()
+
+    def _refresh_controller_rows(self):
+        """Met à jour les badges Détecté / Connecté et la ligne sélectionnée."""
+        if not getattr(self, '_ctrl_row_widgets', None):
+            return
+        try:
+            avail = {c['id'] for c in self._midi.list_available_controllers()}
+        except Exception:
+            avail = set()
+        active = self._active_controller_id(self._midi)
+        pinned = getattr(self._midi, 'pinned_id', None)
+        for cid, (frame, name_lbl, status) in self._ctrl_row_widgets.items():
+            is_active = (cid is not None and cid == active)
+            present   = (cid is None) or (cid in avail)
+            selected  = (cid == pinned) or (cid is None and pinned is None)
+            if cid is None:
+                if pinned is None:
+                    status.setText("● Actif"); _c = "#4CAF50"
+                else:
+                    status.setText(""); _c = "#555"
+            elif is_active:
+                status.setText("● Connecté"); _c = "#4CAF50"
+            elif present:
+                status.setText("Détecté"); _c = "#00d4ff"
+            else:
+                status.setText("Non branché"); _c = "#555"
+            status.setStyleSheet(f"background:transparent; font-size:9px; font-weight:bold; color:{_c};")
+            if selected and (is_active or present):
+                border = "#4CAF50" if (is_active or (cid is None and active is None)) else "#00d4ff"
+                frame.setStyleSheet(f"QFrame {{ background:#152015; border:1px solid {border}; border-radius:6px; }}")
+            elif selected:
+                frame.setStyleSheet("QFrame { background:#1a1a1a; border:1px solid #555; border-radius:6px; }")
+            else:
+                frame.setStyleSheet("QFrame { background:#141414; border:1px solid #1e1e1e; border-radius:6px; }")
+            _strong = is_active or selected
+            name_lbl.setStyleSheet(
+                "background:transparent; font-size:10px; color:%s; font-weight:%s;" % (
+                    "#fff" if _strong else ("#ccc" if present else "#777"),
+                    "bold" if _strong else "normal",
+                )
+            )
+
+    def _on_pick_controller(self, cid):
+        """L'utilisateur clique un contrôleur (ou Auto) → épingle + reconnecte + persiste."""
+        self._midi.set_pinned_controller(cid)   # None = Auto
+        mw = self.parent()
+        while mw and not hasattr(mw, '_save_akai_config_auto'):
+            mw = mw.parent()
+        if mw:
+            mw._save_akai_config_auto()
+            if self._midi.midi_in and self._midi.midi_out:
+                QTimer.singleShot(200, mw.activate_default_white_pads)
+        QTimer.singleShot(150, self._refresh_controller_rows)
 
     def closeEvent(self, e):
         try:
@@ -2257,16 +2415,15 @@ class MainWindow(QMainWindow):
 
         ctrl_menu = conn_menu.addMenu(tr("menu_control"))
 
-        akai_menu = ctrl_menu.addMenu(tr("menu_akai_mini"))
-        akai_menu.addAction("🔍  Diagnostic", self._open_akai_diagnostic)
-        akai_menu.addAction("🔄  Reconnecter", self.test_akai_connection)
-        akai_menu.addSeparator()
-        akai_menu.addAction("⚙️  Paramètres", self._open_akai_layout_editor)
+        # Action directe : ouvre le hub contrôleur (liste des contrôleurs
+        # compatibles + détecté/sélectionné, puis diagnostic ports + reconnecter).
+        ctrl_menu.addAction(tr("menu_akai_mini"), self._open_akai_diagnostic)
+        ctrl_menu.addAction("⚙️  Paramètres contrôleur", self._open_akai_layout_editor)
 
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
         ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
-        ctrl_menu.addSeparator()
-        ctrl_menu.addAction("🎹  Ajouter mon contrôleur MIDI...", self._open_midi_mapping_wizard)
+        # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
+        # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
 
         conn_menu.addSeparator()
 
@@ -6589,7 +6746,7 @@ class MainWindow(QMainWindow):
         if n == 0:
             return
 
-        _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') == 'Moving Head']
+        _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
         _mh_idx   = {id(p): j for j, p in enumerate(_mh_projs)}
         _mh_n     = max(len(_mh_projs), 1)
 
@@ -6693,15 +6850,30 @@ class MainWindow(QMainWindow):
                 elif attr in ("Pan", "Tilt"):
                     saved = self.effect_saved_colors.get(id(proj))
                     amplitude = (size / 100.0) * 8192
+                    # Recalcul du dephasage sur l'index lyre + echelle /100 plafonnee
+                    # (comme le Pan/Tilt couple) : le `x` global utilise l'index de
+                    # tous les projos et /180, trop faible pour les lyres.
+                    _mh_i_mv = _mh_idx.get(id(proj), i)
+                    _sp_move = min(1.0, spread / 100.0)
+                    if forme == "Audio":
+                        raw_mv = raw
+                    else:
+                        if direction == 0:
+                            _t_osc = abs(2 * ((freq * t) % 1.0) - 1)
+                            _x_mv = (_t_osc + _mh_i_mv / _mh_n * _sp_move + phase) % 1.0
+                        elif direction == -1:
+                            _x_mv = (freq * t - _mh_i_mv / _mh_n * _sp_move + phase) % 1.0
+                        else:
+                            _x_mv = (freq * t + _mh_i_mv / _mh_n * _sp_move + phase) % 1.0
+                        raw_mv = _wave(forme, _x_mv)
                     if attr == "Pan":
                         center = saved[3] if saved and len(saved) > 3 else 32768
-                        _mh_i_pan = _mh_idx.get(id(proj), i)
                         sym_pan  = ld.get("sym_pan", False)
-                        pan_sign = -1 if (sym_pan and _mh_i_pan * 2 >= _mh_n) else 1
-                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw - 0.5) * 2 * amplitude)))
+                        pan_sign = -1 if (sym_pan and _mh_i_mv * 2 >= _mh_n) else 1
+                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude)))
                     else:
                         center = saved[4] if saved and len(saved) > 4 else 32768
-                        proj.tilt = int(max(0, min(65535, center + (raw - 0.5) * 2 * amplitude)))
+                        proj.tilt = int(max(0, min(65535, center + (raw_mv - 0.5) * 2 * amplitude)))
 
                 elif attr == "Pan/Tilt":
                     # Forme de trajectoire couplée Pan+Tilt
@@ -6723,10 +6895,15 @@ class MainWindow(QMainWindow):
                     sym_pan  = ld.get("sym_pan", False)
                     pan_sign = -1 if (sym_pan and _mh_i * 2 >= _mh_n) else 1
 
+                    # Dephasage mouvement : echelle /100 (alignee sur la preview de
+                    # l'editeur), plafonnee a 1.0 = etalement parfait. Au-dela le
+                    # potard ne re-enroule plus les lyres (plus de re-synchronisation).
+                    _sp_move = min(1.0, spread / 100.0)
+
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
                         pan_freq = (0.05 + speed * pan_mult / 100.0 * 7.0) * fader_mult
-                        pan_x = (pan_freq * t + _mh_i / _mh_n * sp + phase + pan_phase_pct / 100.0) % 1.0
+                        pan_x = (pan_freq * t + _mh_i / _mh_n * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = saved[3] if saved and len(saved) > 3 else 32768
                         proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude)))
@@ -6734,7 +6911,7 @@ class MainWindow(QMainWindow):
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
                         tilt_freq = (0.05 + speed * tilt_mult / 100.0 * 7.0) * fader_mult
-                        tilt_x = (tilt_freq * t + _mh_i / _mh_n * sp + phase + tilt_phase_pct / 100.0) % 1.0
+                        tilt_x = (tilt_freq * t + _mh_i / _mh_n * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = saved[4] if saved and len(saved) > 4 else 32768
                         proj.tilt = int(max(0, min(65535, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
@@ -7232,13 +7409,12 @@ class MainWindow(QMainWindow):
                     pad = self.pads.get((row, col))
                     if pad:
                         slot = self._fader_map[col]
-                        note = (7 - row) * 8 + col
                         if slot["type"] == "group":
                             base_color = pad.property("base_color")
                             velocity = rgb_to_akai_velocity(base_color)
                             brightness = self.akai_active_brightness if row == 0 else self.akai_inactive_brightness
-                            channel = 0x96 if (brightness >= 80 and self.midi_handler._apc_bright_mode) else 0x90
-                            self.midi_handler.midi_out.send_message([channel, note, velocity])
+                            # Passe par set_pad_led → gère APC (0x90/0x96) ET Launchpad MK3 (RGB)
+                            self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=brightness)
                         elif slot.get("type") == "fx":
                             fx_col = slot.get("fx_col", 0)
                             cfg = self.fx_pads[fx_col][row] if 0 <= fx_col < _FX_COL_MAX else None
@@ -9963,6 +10139,7 @@ class MainWindow(QMainWindow):
             "apc_bright_mode": getattr(self.midi_handler, '_apc_bright_mode', True),
             "akai_active_brightness": self.akai_active_brightness,
             "akai_inactive_brightness": self.akai_inactive_brightness,
+            "pinned_controller": getattr(self.midi_handler, 'pinned_id', None),
         }
 
     def _apply_akai_config(self, config):
@@ -10070,6 +10247,13 @@ class MainWindow(QMainWindow):
             self.akai_active_brightness   = int(config["akai_active_brightness"])
         if "akai_inactive_brightness" in config:
             self.akai_inactive_brightness = int(config["akai_inactive_brightness"])
+
+        # Contrôleur épinglé (sélection manuelle) — reconnecte sur le bon si défini
+        if hasattr(self, 'midi_handler') and self.midi_handler:
+            pinned = config.get("pinned_controller")
+            self.midi_handler.pinned_id = pinned or None
+            if pinned:
+                self.midi_handler.connect_controller()
 
         # Les pads FX et POS seront rafraîchis lors du prochain _rebuild_akai_pads()
 
@@ -11679,6 +11863,29 @@ class MainWindow(QMainWindow):
                 velocity = 3 if btn.active else 0
                 self.midi_handler.midi_out.send_message([0x90, note, velocity])
 
+    def cycle_fader_level_from_midi(self, fader_idx):
+        """Monte le fader d'une colonne par paliers : 25 → 50 → 75 → 100 → 0 → 25…
+
+        Utilisé par la rangée du haut du Launchpad Mini MK3 (un bouton par colonne).
+        """
+        if not (0 <= fader_idx <= 7) or fader_idx not in self.faders:
+            return
+        cur = self.faders[fader_idx].value
+        if cur >= 100:
+            nxt = 0
+        else:
+            nxt = next((lvl for lvl in (25, 50, 75, 100) if lvl > cur), 0)
+        self.faders[fader_idx].value = nxt
+        self.faders[fader_idx].update()
+        self.set_proj_level(fader_idx, nxt)
+        # Push tablette (cohérent avec on_midi_fader)
+        try:
+            import tablet_server as _ts
+            if _ts.is_running():
+                _ts.push_fader(fader_idx, nxt)
+        except Exception:
+            pass
+
     # Mapping raccourcis clavier -> couleurs
     COLOR_SHORTCUTS = {
         Qt.Key_R: QColor(255, 0, 0),
@@ -11717,11 +11924,35 @@ class MainWindow(QMainWindow):
             if cart_index < len(self.cartouches):
                 self.on_cartouche_clicked(cart_index)
             event.accept()
+        elif key in (Qt.Key_F5, Qt.Key_F6, Qt.Key_F7, Qt.Key_F8,
+                     Qt.Key_F9, Qt.Key_F10, Qt.Key_F11, Qt.Key_F12):
+            # F5-F12 = les 8 boutons d'effet (carrés verts) 0 à 7, haut → bas.
+            # Respecte le mode du bouton (toggle / flash / timer) comme un vrai appui.
+            if not event.isAutoRepeat():
+                fx_index = key - Qt.Key_F5  # F5=0 … F12=7
+                if fx_index < len(self.effect_buttons):
+                    self._on_effect_press(fx_index)
+            event.accept()
+        elif key == Qt.Key_S and not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)):
+            self._apply_strobe_shortcut()
+            event.accept()
         elif key in self.COLOR_SHORTCUTS:
             self._apply_color_shortcut(self.COLOR_SHORTCUTS[key])
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        """Relâchement F5-F12 : coupe les effets en mode 'flash' (maintien)."""
+        key = event.key()
+        if key in (Qt.Key_F5, Qt.Key_F6, Qt.Key_F7, Qt.Key_F8,
+                   Qt.Key_F9, Qt.Key_F10, Qt.Key_F11, Qt.Key_F12) and not event.isAutoRepeat():
+            fx_index = key - Qt.Key_F5
+            if fx_index < len(self.effect_buttons):
+                self._on_effect_release(fx_index)
+            event.accept()
+        else:
+            super().keyReleaseEvent(event)
 
     def _apply_color_shortcut(self, color):
         """Applique une couleur raccourci aux projecteurs selectionnes"""
@@ -11737,6 +11968,26 @@ class MainWindow(QMainWindow):
             proj.level = 100
             proj.color = QColor(color.red(), color.green(), color.blue())
             self._update_color_wheel(proj, color)
+        if self.dmx:
+            self.dmx.update_from_projectors(self.projectors)
+        self.plan_de_feu.refresh()
+
+    def _apply_strobe_shortcut(self):
+        """Touche S : (dés)active le strobe sur les projecteurs sélectionnés.
+        Bascule : si au moins un strobe est actif → tout couper, sinon strobe ON."""
+        if not self.plan_de_feu.selected_lamps:
+            return
+        targets = []
+        for g, i in self.plan_de_feu.selected_lamps:
+            projs = [p for p in self.projectors if p.group == g]
+            if i < len(projs):
+                targets.append(projs[i])
+        if not targets:
+            return
+        any_on = any(getattr(p, 'strobe_speed', 0) > 0 for p in targets)
+        new_val = 0 if any_on else 100   # 100 = strobe rapide ; 0 = arrêt
+        for proj in targets:
+            proj.strobe_speed = new_val
         if self.dmx:
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
@@ -11798,6 +12049,17 @@ class MainWindow(QMainWindow):
                 ("M", "Magenta"),
                 ("P", "Rose"),
                 ("K", "Noir (eteindre)"),
+                ("S", "Strobe on / off (selection)"),
+            ]),
+            ("EFFETS  (carres verts)", [
+                ("F5", "Effet 1 (carre vert, haut)"),
+                ("F6", "Effet 2"),
+                ("F7", "Effet 3"),
+                ("F8", "Effet 4"),
+                ("F9", "Effet 5"),
+                ("F10", "Effet 6"),
+                ("F11", "Effet 7"),
+                ("F12", "Effet 8 (bas)"),
             ]),
             ("PLAN DE FEU  -  Selection", [
                 ("Ctrl + A", "Tout selectionner"),

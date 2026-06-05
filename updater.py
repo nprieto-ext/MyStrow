@@ -302,6 +302,41 @@ class UpdateChecker(QThread):
         except Exception:
             return True  # Erreur réseau : ne pas bloquer la vérification
 
+    def _find_latest_intel_release(self):
+        """Mac Intel : (version, dmg_url) de la release la plus récente possédant
+        réellement un MyStrow_intel.dmg, sinon None.
+
+        Le DMG Intel est uploadé manuellement (build sur Mac Intel séparé) et peut
+        manquer sur la dernière release ; on remonte les releases pour trouver la
+        dernière qui l'a effectivement.
+        """
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{_GITHUB_REPO}/releases?per_page=20",
+                headers={"Accept": "application/vnd.github.v3+json",
+                         "User-Agent": "MyStrow-Updater"}
+            )
+            with urllib.request.urlopen(req, timeout=8,
+                                        context=self._ssl_context()) as resp:
+                releases = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None
+
+        best = None  # (version_str, url)
+        for rel in releases:
+            if rel.get("draft") or rel.get("prerelease"):
+                continue
+            ver = (rel.get("tag_name") or "").lstrip("v")
+            if not ver:
+                continue
+            for asset in rel.get("assets", []):
+                if asset.get("name") == "MyStrow_intel.dmg":
+                    url = asset.get("browser_download_url")
+                    if url and (best is None or version_gt(ver, best[0])):
+                        best = (ver, url)
+                    break
+        return best
+
     def run(self):
         if self._reminder_active() and not self.force:
             self.check_finished.emit(False, "")
@@ -333,11 +368,26 @@ class UpdateChecker(QThread):
             # ── 3. Construire les URLs (pas d'appel API supplémentaire) ──
             urls = self._build_urls(remote_version)
 
-            # ── 4. Sur macOS, vérifier que le DMG existe vraiment ────────
-            if sys.platform == "darwin" and urls["setup"]:
-                if not self._dmg_available(urls["setup"]):
-                    self.check_finished.emit(False, remote_version)
-                    return
+            # ── 4. macOS : résoudre le bon DMG selon l'architecture ──────
+            if sys.platform == "darwin":
+                import platform as _pf
+                if _pf.machine() != "arm64":
+                    # Mac Intel : le DMG Intel est uploadé manuellement et peut
+                    # manquer sur la dernière release. On retombe sur la release
+                    # la plus récente qui a réellement un MyStrow_intel.dmg
+                    # → évite le 404 ET la boucle de maj (on s'arrête sur la
+                    #   dernière version Intel réellement disponible).
+                    intel = self._find_latest_intel_release()
+                    if not intel or not version_gt(intel[0], VERSION):
+                        self.check_finished.emit(False, remote_version)
+                        return
+                    remote_version = intel[0]
+                    urls = self._build_urls(remote_version)
+                    urls["setup"] = intel[1]   # URL exacte de l'asset Intel
+                elif urls["setup"]:
+                    if not self._dmg_available(urls["setup"]):
+                        self.check_finished.emit(False, remote_version)
+                        return
 
             self.update_available.emit(
                 remote_version, urls["setup"], urls["sha256"], urls["sig"]

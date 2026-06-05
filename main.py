@@ -365,10 +365,19 @@ def main():
             _mi = _rt.MidiIn()
             ports = _mi.get_ports()
             print(f"[MIDI] Ports disponibles: {ports}")
-            for name in ports:
-                if 'APC' in name.upper() or 'AKAI' in name.upper():
-                    _akai_box[0] = True
-                    break
+            # Même détection que MIDIHandler → reconnaît TOUS les contrôleurs
+            # supportés (APC, Launchpad MK3, MIDImix…) + profils custom.
+            from midi_handler import _detect_controller
+            ctrl, _ = _detect_controller(ports)
+            if ctrl is not None:
+                _akai_box[0] = True
+            else:
+                try:
+                    from controller_profile import find_profile_for_port
+                    if any(find_profile_for_port(name) for name in ports):
+                        _akai_box[0] = True
+                except Exception:
+                    pass
             # Fermeture explicite avant que MIDIHandler n'ouvre le port
             try:
                 _mi.close_port()

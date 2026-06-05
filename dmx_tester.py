@@ -345,8 +345,8 @@ class DmxTesterDialog(QDialog):
 
         self.btn_on  = self._btn("●  Full ON",  "#1a2a1a", "#4CAF50")
         self.btn_off = self._btn("○  Full OFF", "#2a1a1a", "#f44336")
-        self.btn_on.setToolTip("Sélection → applique à la sélection. Sans sélection → tous les 512.")
-        self.btn_off.setToolTip("Sélection → applique à la sélection. Sans sélection → tous les 512.")
+        self.btn_on.setToolTip("Monte les 512 canaux de l'univers à 255.")
+        self.btn_off.setToolTip("Descend les 512 canaux de l'univers à 0.")
         self.btn_on.clicked.connect(lambda: self._send_val(255))
         self.btn_off.clicked.connect(lambda: self._send_val(0))
         fl.addWidget(self.btn_on)
@@ -527,15 +527,15 @@ class DmxTesterDialog(QDialog):
         self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:220px;")
 
     def _send_val(self, val):
-        sel = self.grid.selected()
-        targets = sel if sel else list(range(512))
+        # Full ON / Full OFF agissent TOUJOURS sur les 512 canaux de l'univers,
+        # independamment du fader eventuellement selectionne.
+        targets = list(range(512))
         for ch in targets:
             self._dmx.dmx_data[self._uni][ch] = val
         self._dmx.send_dmx()
         color = "#4CAF50" if val == 255 else "#f44336"
         label = "Full ON" if val == 255 else "Full OFF"
-        n = len(targets)
-        self.lbl_status.setText(f"{label} — {n} canal(s) à {val}")
+        self.lbl_status.setText(f"{label} — 512 canaux à {val}")
         self.lbl_status.setStyleSheet(f"color:{color};")
         self._refresh_grid()
 

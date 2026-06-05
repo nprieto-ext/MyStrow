@@ -197,7 +197,7 @@ def _set_auth_password(uid: str, new_password: str) -> bool:
 ADMIN_CACHE = os.path.join(os.path.expanduser("~"), ".maestro_admin.json")
 
 SITE_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "MyStrow2", "SiteWeb"
+    os.path.dirname(os.path.abspath(__file__)), "..", "mystrow_site"
 ))
 SITE_REMOTE = "https://github.com/nprieto-ext/MyStrow_Site.git"
 

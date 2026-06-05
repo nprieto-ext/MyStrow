@@ -230,7 +230,7 @@ class ColorPalette(QWidget):
 
         # ── Couleurs simples ─────────────────────────────────────────
         self.colors = [
-            (_cn("Rouge"),         QColor(255,  45,  45)),
+            (_cn("Rouge"),         QColor(255,   0,   0)),
             (_cn("Rouge vif"),     QColor(255,   0,   0)),
             (_cn("Orange"),        QColor(255, 140,  20)),
             (_cn("Jaune"),         QColor(255, 230,   0)),
@@ -1213,7 +1213,7 @@ class PalettePanel(QWidget):
     )
 
     COLORS = [
-        (_cn("Rouge"),          QColor(255,  45,  45)),
+        (_cn("Rouge"),          QColor(255,   0,   0)),
         (_cn("Rouge vif"),      QColor(255,   0,   0)),
         (_cn("Orange"),         QColor(255, 140,  20)),
         (_cn("Jaune"),          QColor(255, 230,   0)),

@@ -840,8 +840,12 @@ class ColorPickerBlock(QFrame):
         self._update_bri_stops()
 
         # Indicateur roue couleur (caché par défaut)
+        # IMPORTANT : doit être ajouté au layout, sinon (parent=None) un
+        # setVisible(True) l'affiche comme une fenêtre top-level vide « MyStrow ».
         self._cw_hint_lbl = QLabel()
+        self._cw_hint_lbl.setStyleSheet("color:#888; font-size:9px; background:transparent;")
         self._cw_hint_lbl.setVisible(False)
+        layout.addWidget(self._cw_hint_lbl)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     @staticmethod
