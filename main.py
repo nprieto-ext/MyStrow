@@ -49,6 +49,33 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
+# ------------------------------------------------------------------
+# BACKEND VIDÉO — diagnostic uniquement (on NE force PAS le backend).
+# But : savoir quels plugins multimedia sont réellement embarqués. Forcer FFmpeg
+# via QT_MEDIA_BACKEND blanchissait la vidéo dans le visualisateur sur certaines
+# config (rendu QVideoWidget). On laisse donc Qt choisir son backend par défaut ;
+# le packaging (MyStrow.spec) se contente de rendre le plugin FFmpeg DISPONIBLE.
+# ------------------------------------------------------------------
+def _log_media_backend():
+    try:
+        import PySide6
+        _roots = [os.path.dirname(PySide6.__file__)]
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            _roots += [sys._MEIPASS, os.path.join(sys._MEIPASS, 'PySide6')]
+        _plugins = []
+        for _root in _roots:
+            _mm = os.path.join(_root, 'plugins', 'multimedia')
+            if os.path.isdir(_mm):
+                _plugins = os.listdir(_mm)
+                break
+        _has_ffmpeg = any('ffmpeg' in f.lower() for f in _plugins)
+        _forced = os.environ.get("QT_MEDIA_BACKEND", "(defaut Qt)")
+        print(f"[Media] Plugins multimedia: {_plugins or 'AUCUN'} | ffmpeg dispo={'oui' if _has_ffmpeg else 'non'} | backend={_forced}")
+    except Exception as _e:
+        print(f"[Media] diagnostic backend impossible: {_e}")
+
+_log_media_backend()
+
 # Sur Mac (app bundle PyInstaller) : log complet avant tout import Qt
 # faulthandler capture aussi les segfaults (crash Qt natif, dylib manquante…)
 _MAC_LOG_FILE = None

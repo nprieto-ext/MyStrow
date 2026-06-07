@@ -3660,6 +3660,7 @@ class MainWindow(QMainWindow):
             p.level = 0
             p.color = QColor("black")
             p.base_color = QColor("black")
+            p.strobe_speed = 0   # le strobe est de la lumière : il s'éteint au blackout
 
     def full_blackout(self):
         """Blackout complet"""
@@ -3676,6 +3677,7 @@ class MainWindow(QMainWindow):
             p.level = 0
             p.color = QColor("black")
             p.base_color = QColor("black")
+            p.strobe_speed = 0   # le strobe est de la lumière : il s'éteint au blackout
 
         for col, pad in self.active_pads.items():
             if pad:
@@ -6887,7 +6889,10 @@ class MainWindow(QMainWindow):
                     tilt_cfg  = shape_def.get("tilt", ("Sinus",   25, 1.0))
                     pan_forme,  pan_phase_pct,  pan_mult  = pan_cfg
                     tilt_forme, tilt_phase_pct, tilt_mult = tilt_cfg
-                    amplitude = (size / 100.0) * 8192
+                    # size=100 -> course pleine (+/-32768). Les limites physiques de
+                    # chaque lyre sont appliquees en aval via pan_min/pan_max et
+                    # tilt_min/tilt_max (artnet_dmx). Avant : *8192 (plafonnait a +/-12,5%).
+                    amplitude = (size / 100.0) * 32768
                     saved = self.effect_saved_colors.get(id(proj))
 
                     # Utiliser l'index relatif parmi les lyres pour le spread + symétrie
@@ -7487,19 +7492,28 @@ class MainWindow(QMainWindow):
                 self._style_fx_pad(fc, r)
                 self._update_fx_pad_led(fc, r)
 
-        # Remettre à zéro les canaux spéciaux et moving head
+        # Remettre à zéro les canaux spéciaux et moving head.
+        # Liste alignée sur le reset canonique du plan de feu (_clear_targets) :
+        # tout ce que le plan de feu 2D peut envoyer doit revenir au repos, y
+        # compris strobe_speed (sinon le strobe reste actif après CLEAR), les
+        # rotations gobo/prism, les effets bruts et les canaux extras.
         for p in self.projectors:
             p.uv           = 0
             p.white_boost  = 0
             p.amber_boost  = 0
             p.orange_boost = 0
+            p.strobe_speed = 0
             p.pan          = 32768
             p.tilt         = 32768
             p.gobo         = 0
+            p.gobo_rotation = 0
             p.zoom         = 0
             p.shutter      = 255
             p.color_wheel  = 0
             p.prism        = 0
+            p.prism_rotation = 0
+            p.effects      = 0
+            p.channel_extras = {}
 
         # Remettre tous les mutes à zéro + éteindre LEDs physiques
         for idx in list(self._muted_faders):
@@ -17544,9 +17558,14 @@ class MainWindow(QMainWindow):
             p.color = color
             p.base_color = base
 
-        # Rafraichir le plan de feu a chaque tick (25fps)
-        self.plan_de_feu.mark_dirty()
-        self.plan_de_feu.refresh()
+        # Rafraîchir le plan de feu à ~20fps (1 tick sur 2). La sortie DMX part à
+        # chaque tick (40fps) pour le matériel, mais le repaint à l'écran n'a pas
+        # besoin d'être aussi rapide : ça soulage nettement le thread UI sur les
+        # shows lourds (REC long, vidéo 40 min) sans impact visible.
+        self._pdf_refresh_tick = (getattr(self, '_pdf_refresh_tick', 0) + 1) & 1
+        if self._pdf_refresh_tick == 0:
+            self.plan_de_feu.mark_dirty()
+            self.plan_de_feu.refresh()
 
         # Rafraichir la fenêtre 3D si visible
         if hasattr(self, '_plan3d') and self._plan3d.isVisible():

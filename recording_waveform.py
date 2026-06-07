@@ -153,11 +153,15 @@ class RecordingWaveform(QWidget):
             painter.drawText(5, 15, "Timeline Lumiere")
             return
 
-        # Grille temporelle
-        painter.setPen(QPen(QColor("#2a2a2a"), 1))
-        for sec in range(0, int(self.duration / 1000) + 1):
-            x = (sec * 1000 / self.duration) * w
-            painter.drawLine(int(x), 0, int(x), h)
+        # Grille temporelle — pas adaptatif : ne jamais tracer plus de ~120 lignes.
+        # Sans ça, un show de 40 min dessinerait 2400 lignes à chaque repaint.
+        total_sec = int(self.duration / 1000)
+        if total_sec > 0:
+            step = max(1, total_sec // 120)
+            painter.setPen(QPen(QColor("#2a2a2a"), 1))
+            for sec in range(0, total_sec + 1, step):
+                x = (sec * 1000 / self.duration) * w
+                painter.drawLine(int(x), 0, int(x), h)
 
         # Blocs
         painter.setPen(Qt.NoPen)

@@ -386,8 +386,25 @@ class LightTimelineEditor(QDialog):
         if self.media_path and os.path.exists(self.media_path) and not is_image and not self.is_tempo:
             QTimer.singleShot(50, self._load_waveform_async)
 
+        # Ouverture en GRAND, mais bornée à la zone utile (au-dessus de la barre
+        # des tâches) pour que la barre de transport (bouton Play) reste visible.
+        _scr = self.screen() or QApplication.primaryScreen()
+        _avail = _scr.availableGeometry() if _scr else None
         if LightTimelineEditor._saved_geometry:
             self.restoreGeometry(LightTimelineEditor._saved_geometry)
+            # Si la taille mémorisée déborde sous la barre des tâches → on la ramène.
+            if _avail and not self.isMaximized():
+                g = self.frameGeometry()
+                if (g.height() > _avail.height() or g.bottom() > _avail.bottom()
+                        or g.top() < _avail.top()):
+                    self.resize(min(self.width(), _avail.width() - 40),
+                                _avail.height() - 60)
+                    self.move(_avail.left() + 20, _avail.top() + 20)
+        elif _avail:
+            # Première ouverture : grande fenêtre couvrant la zone utile, avec une
+            # marge en bas pour ne jamais masquer le Play sous la barre des tâches.
+            self.resize(_avail.width() - 40, _avail.height() - 60)
+            self.move(_avail.left() + 20, _avail.top() + 20)
 
     def closeEvent(self, event):
         LightTimelineEditor._saved_geometry = self.saveGeometry()

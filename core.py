@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.47"
+VERSION = "3.1.48"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -160,10 +160,13 @@ def resource_path(filename):
 
 
 def fmt_time(ms):
-    """Formate un temps en millisecondes en MM:SS"""
+    """Formate un temps en ms : MM:SS, ou H:MM:SS au-delà d'une heure."""
     if ms <= 0:
         return "00:00"
     s = ms // 1000
+    h = s // 3600
+    if h > 0:
+        return f"{h}:{(s % 3600) // 60:02d}:{s % 60:02d}"
     return f"{s//60:02d}:{s%60:02d}"
 
 

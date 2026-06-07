@@ -4182,15 +4182,25 @@ print(json.dumps(waveform))
                 self._wave_cache_key = None
                 self._render_waveform(painter, er)
 
-        # Grille temporelle - seulement les lignes visibles
+        # Grille temporelle - seulement les lignes visibles, avec pas ADAPTATIF :
+        # à fort dézoom (vidéo 1h30 = 5400 s), 1 trait/seconde donnerait des
+        # milliers de traits collés et illisibles. On garde >= ~10 px entre deux
+        # traits, calé sur des intervalles "propres" (1,5,10,30,60 s…).
         if self.pixels_per_ms > 0:
+            px_per_sec = 1000.0 * self.pixels_per_ms
+            step = 3600
+            for _ns in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600):
+                if _ns * px_per_sec >= 10:
+                    step = _ns
+                    break
             visible_left  = event.rect().left()
             visible_right = event.rect().right()
-            sec_start = max(0, int((visible_left  - 145) / (1000 * self.pixels_per_ms)))
-            sec_end   =        int((visible_right - 145) / (1000 * self.pixels_per_ms)) + 2
+            sec_start = max(0, int((visible_left  - 145) / px_per_sec))
+            sec_start -= sec_start % step
+            sec_end   = int((visible_right - 145) / px_per_sec) + 2
             painter.setPen(QPen(QColor("#2a2a2a"), 1, Qt.SolidLine))
-            for sec in range(sec_start, sec_end):
-                x = 145 + int(sec * 1000 * self.pixels_per_ms)
+            for sec in range(sec_start, sec_end, step):
+                x = 145 + int(sec * px_per_sec)
                 if 145 <= x <= self.width():
                     painter.drawLine(x, 0, x, self.height())
 

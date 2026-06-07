@@ -359,8 +359,31 @@ def _axonaut(method: str, path: str, payload: dict | None = None):
         return None
 
 
-def _axonaut_get_or_create_company(email: str, name: str, address: dict | None = None) -> int | None:
-    """Retourne l'ID Axonaut de la société, la crée si inexistante."""
+def _axonaut_get_or_create_company(email: str, name: str, address: dict | None = None,
+                                   uid: str | None = None) -> int | None:
+    """Retourne l'ID Axonaut de la société, la crée si inexistante.
+
+    L'ID est mémorisé dans /licenses/{uid}.axonaut_company_id et réutilisé
+    aux renouvellements : sans ça, `GET /companies` (paginé / email parfois
+    absent du payload liste) ne retrouvait pas la société et en créait une
+    NOUVELLE à chaque facture mensuelle.
+    """
+    # 1) ID déjà mémorisé pour cet utilisateur → réutilisation directe
+    lic_ref = None
+    if uid:
+        try:
+            lic_ref = _get_db().collection("licenses").document(uid)
+            snap = lic_ref.get()
+            if snap.exists:
+                cached = (snap.to_dict() or {}).get("axonaut_company_id")
+                if cached:
+                    print(f"[Axonaut] Societe reutilisee (cache) : id={cached}")
+                    return int(cached)
+        except Exception as e:
+            print(f"[Axonaut] Lecture cache company_id ignoree : {e}")
+
+    # 2) Recherche par email (best-effort, 1re page)
+    company_id = None
     result = _axonaut("GET", "/companies")
     if isinstance(result, list):
         email_lower = email.lower()
@@ -369,33 +392,42 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
             if isinstance(contacts, list):
                 for c in contacts:
                     if (c.get("email") or "").lower() == email_lower:
-                        print(f"[Axonaut] Societe trouvee via contact : id={company['id']}")
-                        return company["id"]
-            if (company.get("email") or "").lower() == email_lower:
-                print(f"[Axonaut] Societe trouvee via email : id={company['id']}")
-                return company["id"]
+                        company_id = company["id"]
+                        break
+            if company_id is None and (company.get("email") or "").lower() == email_lower:
+                company_id = company["id"]
+            if company_id is not None:
+                print(f"[Axonaut] Societe trouvee : id={company_id}")
+                break
 
-    # Création
-    payload: dict = {
-        "name":  name or email.split("@")[0],
-        "email": email,
-    }
-    if address:
-        if address.get("line1"):
-            payload["address"] = address["line1"]
-        if address.get("postal_code"):
-            payload["zip"] = address["postal_code"]
-        if address.get("city"):
-            payload["city"] = address["city"]
-        if address.get("country"):
-            payload["country"] = address["country"]
+    # 3) Création si rien trouvé
+    if company_id is None:
+        payload: dict = {
+            "name":  name or email.split("@")[0],
+            "email": email,
+        }
+        if address:
+            if address.get("line1"):
+                payload["address"] = address["line1"]
+            if address.get("postal_code"):
+                payload["zip"] = address["postal_code"]
+            if address.get("city"):
+                payload["city"] = address["city"]
+            if address.get("country"):
+                payload["country"] = address["country"]
+        created = _axonaut("POST", "/companies", payload)
+        if created:
+            company_id = created.get("id")
+            print(f"[Axonaut] Societe creee : id={company_id}")
 
-    created = _axonaut("POST", "/companies", payload)
-    if created:
-        cid = created.get("id")
-        print(f"[Axonaut] Societe creee : id={cid}")
-        return cid
-    return None
+    # 4) Mémoriser l'ID pour les prochaines factures de cet utilisateur
+    if company_id and lic_ref is not None:
+        try:
+            lic_ref.set({"axonaut_company_id": int(company_id)}, merge=True)
+        except Exception as e:
+            print(f"[Axonaut] Sauvegarde company_id ignoree : {e}")
+
+    return company_id
 
 
 def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str) -> None:
@@ -711,7 +743,7 @@ def _on_checkout_completed(session: dict) -> None:
         _email_renewal(email, expiry_ts, lang)
 
     # Axonaut
-    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address)
+    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address, uid=uid)
     _axonaut_create_invoice(company_id, plan_type, amount_eur,
                             stripe_ref=session.get("payment_intent", ""),
                             uid=uid)
@@ -754,7 +786,7 @@ def _on_invoice_paid(invoice: dict) -> None:
 
     _email_renewal(email, expiry_ts, lang)
 
-    company_id = _axonaut_get_or_create_company(email, cust_name)
+    company_id = _axonaut_get_or_create_company(email, cust_name, uid=uid)
     _axonaut_create_invoice(company_id, plan_type, amount_eur, stripe_ref=stripe_ref, uid=uid)
 
     print(f"[invoice.paid] {email} — expire {_fmt_date(expiry_ts)}")

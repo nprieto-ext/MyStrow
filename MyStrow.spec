@@ -50,6 +50,28 @@ for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'werkzeu
     except Exception:
         pass
 
+# ------------------------------------------------------------------
+# BACKEND VIDÉO FFmpeg (décodage matériel) — CRUCIAL pour les longues
+# vidéos (spectacles 40 min). Sans le plugin multimedia ffmpeg ET ses DLL
+# codec, l'exe retombe sur le backend Windows (WMF) qui sature le thread UI
+# (lecture saccadée, lumière décalée). On embarque explicitement le plugin
+# + les DLL FFmpeg pour garantir le décodage GPU dans l'app packagée.
+# ------------------------------------------------------------------
+try:
+    import PySide6 as _PS, glob as _glob
+    _ps_dir = os.path.dirname(_PS.__file__)
+    _mm_dir = os.path.join(_ps_dir, 'plugins', 'multimedia')
+    if os.path.isdir(_mm_dir):
+        for _f in os.listdir(_mm_dir):
+            if _f.lower().endswith('.dll'):
+                binaries += [(os.path.join(_mm_dir, _f), os.path.join('PySide6', 'plugins', 'multimedia'))]
+    # DLL FFmpeg requises par ffmpegmediaplugin (avcodec/avformat/avutil/sw*).
+    for _pat in ('avcodec*', 'avformat*', 'avutil*', 'swscale*', 'swresample*', 'avdevice*', 'avfilter*'):
+        for _dll in _glob.glob(os.path.join(_ps_dir, _pat + '.dll')):
+            binaries += [(_dll, 'PySide6')]
+except Exception:
+    pass
+
 IS_MAC = sys.platform == 'darwin'
 icon_file = 'mystrow.icns' if (IS_MAC and os.path.exists('mystrow.icns')) else 'mystrow.ico'
 

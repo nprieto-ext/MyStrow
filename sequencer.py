@@ -3,6 +3,7 @@ Sequenceur - Gestion de la playlist et des sequences lumiere
 """
 import os
 import sys
+import bisect
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -4740,6 +4741,21 @@ class Sequencer(QFrame):
         self.timeline_last_update = -100  # Garantit que le 1er tick fire immediatement
         self._timeline_tick = 0  # Repart de zero pour les effets
 
+        # Pré-indexation : clips triés par start + tableau des starts pour une
+        # recherche bisect O(log N) à chaque tick, au lieu de balayer TOUS les
+        # clips (O(N)). Décisif sur un REC long/dense (vidéo 40 min) où le
+        # balayage par tick saturait le thread UI.
+        self._timeline_sorted = {}
+        _max_end = 0
+        for _tname, _clips in tracks_clips.items():
+            _sc = sorted(_clips, key=lambda c: c['start'])
+            self._timeline_sorted[_tname] = (_sc, [c['start'] for c in _sc])
+            for _c in _sc:
+                _e = _c['start'] + _c['duration']
+                if _e > _max_end:
+                    _max_end = _e
+        self._timeline_last_end = _max_end
+
         if not self.timeline_playback_timer:
             self.timeline_playback_timer = QTimer()
             self.timeline_playback_timer.timeout.connect(self.update_timeline_playback)
@@ -4777,6 +4793,14 @@ class Sequencer(QFrame):
 
         # Debounce: ignorer uniquement si la position n'a pas change du tout
         if current_time == self.timeline_last_update:
+            # Cas image/pause minutee : l'horloge est le TEMPO (timer 100 ms) alors
+            # que la timeline tique a 50 ms. Un tick sur deux lit donc la meme valeur
+            # de tempo_elapsed : la position "fige" sans que ce soit une pause. Comme
+            # le QMediaPlayer reste Stopped pour une image, ne PAS retomber dans le
+            # blackout ci-dessous (sinon strobe ON/OFF a ~10 Hz). On attend le tick
+            # suivant en conservant l'etat courant des projecteurs.
+            if self.tempo_running and not self.tempo_paused:
+                return
             # Position figee = pause/stop probable. Si on n'est pas en lecture,
             # eteindre les projecteurs (et l'effet eventuel) — sinon un bloc de
             # couleur simple resterait allume tant qu'on est en pause.
@@ -4801,49 +4825,53 @@ class Sequencer(QFrame):
         self._timeline_tick += 1
 
         active_clips = {}
-        last_clip_end = 0
+        last_clip_end = getattr(self, '_timeline_last_end', 0)
 
-        for track_name, clips in self.timeline_tracks_data.items():
-            for clip_data in clips:
-                start = clip_data['start']
-                end = start + clip_data['duration']
-                if end > last_clip_end:
-                    last_clip_end = end
+        # Clips non chevauchants par piste : le candidat actif est le dernier dont
+        # le start <= current_time → recherche bisect O(log N) au lieu de balayer
+        # tous les clips à chaque tick (cf. play_timeline_sequence).
+        for track_name, (sclips, starts) in getattr(self, '_timeline_sorted', {}).items():
+            j = bisect.bisect_right(starts, current_time) - 1
+            if j < 0:
+                continue
+            clip_data = sclips[j]
+            start = clip_data['start']
+            end = start + clip_data['duration']
+            if not (start <= current_time <= end):
+                continue
 
-                if start <= current_time <= end:
-                    intensity = self.calculate_clip_intensity(clip_data, current_time)
-                    progress = (current_time - start) / max(1, clip_data['duration'])
+            intensity = self.calculate_clip_intensity(clip_data, current_time)
+            progress = (current_time - start) / max(1, clip_data['duration'])
 
-                    entry = {
-                        'color': QColor(clip_data['color']),
-                        'color2': QColor(clip_data['color2']) if clip_data.get('color2') else None,
-                        'intensity': intensity,
-                        'effect': clip_data.get('effect', None),
-                        'effect_speed':         clip_data.get('effect_speed', 50),
-                        'effect_name':          clip_data.get('effect_name', ''),
-                        'effect_type':          clip_data.get('effect_type', ''),
-                        'effect_layers':        clip_data.get('effect_layers', []),
-                        'effect_target_groups': clip_data.get('effect_target_groups', []),
-                        'memory_ref':    clip_data.get('memory_ref'),
-                        'seq_intensity': intensity,
-                    }
-                    # Mouvement Pan/Tilt
-                    if clip_data.get('move_effect') or 'pan_start' in clip_data:
-                        entry['move_effect']    = clip_data.get('move_effect')
-                        entry['move_speed']     = clip_data.get('move_speed', 0.5)
-                        entry['move_amplitude'] = clip_data.get('move_amplitude', 60)
-                        entry['pan_start']      = clip_data.get('pan_start', 128)
-                        entry['tilt_start']     = clip_data.get('tilt_start', 128)
-                        entry['pan_end']        = clip_data.get('pan_end', 128)
-                        entry['tilt_end']       = clip_data.get('tilt_end', 128)
-                        entry['move_progress']  = progress
-                        entry['move_elapsed']   = (current_time - start) / 1000.0
-                    # Preset de position lyre (plan de feu)
-                    if clip_data.get('position_preset_idx') is not None:
-                        entry['position_preset_idx'] = clip_data['position_preset_idx']
+            entry = {
+                'color': QColor(clip_data['color']),
+                'color2': QColor(clip_data['color2']) if clip_data.get('color2') else None,
+                'intensity': intensity,
+                'effect': clip_data.get('effect', None),
+                'effect_speed':         clip_data.get('effect_speed', 50),
+                'effect_name':          clip_data.get('effect_name', ''),
+                'effect_type':          clip_data.get('effect_type', ''),
+                'effect_layers':        clip_data.get('effect_layers', []),
+                'effect_target_groups': clip_data.get('effect_target_groups', []),
+                'memory_ref':    clip_data.get('memory_ref'),
+                'seq_intensity': intensity,
+            }
+            # Mouvement Pan/Tilt
+            if clip_data.get('move_effect') or 'pan_start' in clip_data:
+                entry['move_effect']    = clip_data.get('move_effect')
+                entry['move_speed']     = clip_data.get('move_speed', 0.5)
+                entry['move_amplitude'] = clip_data.get('move_amplitude', 60)
+                entry['pan_start']      = clip_data.get('pan_start', 128)
+                entry['tilt_start']     = clip_data.get('tilt_start', 128)
+                entry['pan_end']        = clip_data.get('pan_end', 128)
+                entry['tilt_end']       = clip_data.get('tilt_end', 128)
+                entry['move_progress']  = progress
+                entry['move_elapsed']   = (current_time - start) / 1000.0
+            # Preset de position lyre (plan de feu)
+            if clip_data.get('position_preset_idx') is not None:
+                entry['position_preset_idx'] = clip_data['position_preset_idx']
 
-                    active_clips[track_name] = entry
-                    break
+            active_clips[track_name] = entry
 
         # Auto-stop: si tous les clips sont finis et qu'on depasse la fin du dernier clip
         if not active_clips and current_time > last_clip_end and last_clip_end > 0:
@@ -5236,20 +5264,27 @@ class Sequencer(QFrame):
             return
 
         main_window = self.player_ui
-        main_window.recording_waveform.clear()
+        wf = main_window.recording_waveform
+        wf.clear()
 
-        for kf in keyframes:
-            pad_color = None
-            if kf.get("active_pad"):
-                pad_color = QColor(kf["active_pad"]["color"])
-            main_window.recording_waveform.add_keyframe(
-                kf["time"],
-                kf["faders"],
-                pad_color
-            )
+        # Construire les blocs sans déclencher un repaint par keyframe (sur un REC
+        # de 40 min ≈ 4800 keyframes, ça évite une avalanche de repaints au lancement).
+        wf.setUpdatesEnabled(False)
+        try:
+            for kf in keyframes:
+                pad_color = None
+                if kf.get("active_pad"):
+                    pad_color = QColor(kf["active_pad"]["color"])
+                wf.add_keyframe(kf["time"], kf["faders"], pad_color)
+        finally:
+            wf.setUpdatesEnabled(True)
+        wf.duration = sequence.get("duration", 0)
+        wf.show()
+        wf.update()
 
-        main_window.recording_waveform.duration = sequence.get("duration", 0)
-        main_window.recording_waveform.show()
+        # Cache des temps de keyframes (triés) pour une recherche bisect O(log N)
+        # par tick au lieu de rescanner depuis 0 (coût qui grandit avec l'avancement).
+        self._kf_times = [kf["time"] for kf in keyframes]
 
         self.playback_row = row
         self.playback_index = 0
@@ -5273,12 +5308,20 @@ class Sequencer(QFrame):
 
         keyframes = sequence["keyframes"]
 
-        for i, kf in enumerate(keyframes):
-            if kf["time"] <= current_time < (kf["time"] + 500):
-                if i != self.playback_index:
-                    self.apply_keyframe(kf)
-                    self.playback_index = i
-                break
+        # Recherche bisect O(log N) : keyframes triés par temps → le candidat actif
+        # est le dernier dont time <= current_time. Évite de rescanner depuis 0 à
+        # chaque tick (le coût grandissait avec l'avancement → décalage progressif).
+        times = getattr(self, '_kf_times', None)
+        if times is None or len(times) != len(keyframes):
+            times = [kf["time"] for kf in keyframes]
+            self._kf_times = times
+
+        i = bisect.bisect_right(times, current_time) - 1
+        if i >= 0:
+            kf = keyframes[i]
+            if kf["time"] <= current_time < (kf["time"] + 500) and i != self.playback_index:
+                self.apply_keyframe(kf)
+                self.playback_index = i
 
     def apply_keyframe(self, keyframe):
         """Applique un keyframe a l'etat AKAI"""
