@@ -936,6 +936,27 @@ _GEAR = [
     ),
 ]
 
+# Contrôleurs recommandés — à choisir en mode "OU" (un seul suffit)
+# Tuple : (emoji_fallback, nom, desc, url, couleur, fond, image)
+_GEAR_CONTROLLERS = [
+    (
+        "🎹",
+        "AKAI APC mini mk2",
+        "Le contrôleur natif MyStrow.\nGrille 8×8 LED, 9 faders, plug & play.",
+        "https://amzn.to/3PhCmBO",
+        "#E2CE16", "#141100",
+        "AKAIAPCMINI.png",
+    ),
+    (
+        "🎹",
+        "Novation Launchpad Mini MK3",
+        "Alternative compacte, grille 8×8 LED RGB.\nPas de faders physiques — simulés par les pads.",
+        "https://amzn.to/43j8Y1B",
+        "#E2CE16", "#141100",
+        "Novation.png",
+    ),
+]
+
 _GEAR_ARTNET_COMPAT = [
     ("ENTTEC ODE Mk2",           "~200€",  "Node ArtNet 1 univers, référence"),
     ("ENTTEC EtherGate",         "~150€",  "Node compact, ArtNet/sACN"),
@@ -954,11 +975,12 @@ _GEAR_USB_COMPAT = [
 ]
 
 _GEAR_CONTROLLERS_COMPAT = [
-    ("AKAI APC Mini MK1 & MK2",     "Support original, inchangé"),
-    ("Novation Launchpad Mini MK1", "2012"),
-    ("Novation Launchpad Mini MK2", "2014"),
-    ("AKAI APC40",                  ""),
-    ("AKAI MIDImix",                ""),
+    ("AKAI APC Mini MK1 & MK2",      "Support original, inchangé"),
+    ("Novation Launchpad Mini MK3",  "Alternative recommandée"),
+    ("Novation Launchpad Mini MK1",  "2012"),
+    ("Novation Launchpad Mini MK2",  "2014"),
+    ("AKAI APC40",                   ""),
+    ("AKAI MIDImix",                 ""),
 ]
 
 
@@ -968,7 +990,7 @@ class GearDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Matériel recommandé")
-        self.setFixedSize(900, 700)
+        self.setFixedSize(900, 815)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog, QWidget { background: #141414; color: #cccccc;
@@ -979,8 +1001,24 @@ class GearDialog(QDialog):
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 20, 24, 16)
+        lay.setContentsMargins(32, 28, 32, 26)
         lay.setSpacing(0)
+
+        # ── Bouton fermer (en haut à droite) ──────────────────────────────────
+        top_bar = QHBoxLayout()
+        top_bar.addStretch()
+        btn_close_top = QPushButton("✕  Fermer")
+        btn_close_top.setFixedHeight(28)
+        btn_close_top.setCursor(Qt.PointingHandCursor)
+        btn_close_top.setStyleSheet("""
+            QPushButton       { background: #222; color: #888; border: 1px solid #333;
+                                border-radius: 4px; font-size: 11px; padding: 0 14px; }
+            QPushButton:hover { background: #2a2a2a; color: #ccc; }
+        """)
+        btn_close_top.clicked.connect(self.accept)
+        top_bar.addWidget(btn_close_top)
+        lay.addLayout(top_bar)
+        lay.addSpacing(8)
 
         # ── Titre ─────────────────────────────────────────────────────────────
         title = QLabel("Matériel recommandé")
@@ -995,48 +1033,82 @@ class GearDialog(QDialog):
         sub.setAlignment(Qt.AlignCenter)
         sub.setWordWrap(True)
         lay.addWidget(sub)
-        lay.addSpacing(14)
+        lay.addSpacing(26)
 
-        # ── Card AKAI (horizontale, pleine largeur) ────────────────────────────
-        akai_emoji, akai_name, akai_desc, akai_url, akai_color, akai_bg = _GEAR[0]
-        akai_card = QFrame()
-        akai_card.setStyleSheet(
-            f"QFrame {{ background: {akai_bg}; border: 1px solid {akai_color}55; border-radius: 10px; }}"
-        )
-        akai_h = QHBoxLayout(akai_card)
-        akai_h.setContentsMargins(16, 12, 16, 12)
-        akai_h.setSpacing(14)
+        # ── Ligne Contrôleur : AKAI | OU | Novation Launchpad ──────────────────
+        ctrl_lbl = QLabel("Pour le contrôle — choisir une option :")
+        ctrl_lbl.setFont(QFont("Segoe UI", 8))
+        ctrl_lbl.setStyleSheet("color: #444;")
+        ctrl_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(ctrl_lbl)
+        lay.addSpacing(6)
 
-        em_akai = QLabel(akai_emoji)
-        em_akai.setFont(QFont("Segoe UI", 26))
-        em_akai.setStyleSheet("background: transparent; border: none;")
-        akai_h.addWidget(em_akai)
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(16)
 
-        txt_col = QVBoxLayout()
-        txt_col.setSpacing(2)
-        nm_akai = QLabel(akai_name)
-        nm_akai.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        nm_akai.setStyleSheet(f"color: {akai_color}; background: transparent; border: none;")
-        txt_col.addWidget(nm_akai)
-        ds_akai = QLabel(akai_desc.replace("\n", " — "))
-        ds_akai.setFont(QFont("Segoe UI", 8))
-        ds_akai.setStyleSheet("color: #666; background: transparent; border: none;")
-        ds_akai.setWordWrap(True)
-        txt_col.addWidget(ds_akai)
-        akai_h.addLayout(txt_col, stretch=1)
+        for idx, (emoji, name, desc, url, color, bg, img) in enumerate(_GEAR_CONTROLLERS):
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background: {bg}; border: 1px solid {color}55; border-radius: 10px; }}"
+            )
+            card_lay = QVBoxLayout(card)
+            card_lay.setContentsMargins(18, 18, 18, 16)
+            card_lay.setSpacing(10)
 
-        btn_akai = QPushButton("Voir sur Amazon ↗")
-        btn_akai.setFixedSize(130, 28)
-        btn_akai.setCursor(Qt.PointingHandCursor)
-        btn_akai.setStyleSheet(
-            f"QPushButton {{ background: {akai_color}; color: #000; border: none;"
-            f" border-radius: 5px; font-size: 10px; font-weight: bold; }}"
-            f"QPushButton:hover {{ background: white; }}"
-        )
-        btn_akai.clicked.connect(lambda: __import__('webbrowser').open(akai_url))
-        akai_h.addWidget(btn_akai)
-        lay.addWidget(akai_card)
-        lay.addSpacing(12)
+            # Photo du contrôleur (fallback emoji si l'image est introuvable)
+            _img_path = resource_path(img) if img else None
+            em = QLabel()
+            em.setAlignment(Qt.AlignCenter)
+            em.setStyleSheet("background: transparent; border: none;")
+            if _img_path and os.path.exists(_img_path):
+                em.setPixmap(QPixmap(_img_path).scaledToHeight(96, Qt.SmoothTransformation))
+            else:
+                em.setText(emoji)
+                em.setFont(QFont("Segoe UI", 22))
+            card_lay.addWidget(em)
+
+            nm = QLabel(name)
+            nm.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            nm.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+            nm.setAlignment(Qt.AlignCenter)
+            nm.setWordWrap(True)
+            card_lay.addWidget(nm)
+
+            ds = QLabel(desc.replace("\n", " — "))
+            ds.setFont(QFont("Segoe UI", 7))
+            ds.setStyleSheet("color: #666; background: transparent; border: none;")
+            ds.setAlignment(Qt.AlignCenter)
+            ds.setWordWrap(True)
+            card_lay.addWidget(ds)
+
+            card_lay.addStretch()
+
+            btn = QPushButton("Voir sur Amazon ↗")
+            btn.setFixedHeight(24)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {color}; color: #000; border: none;"
+                f" border-radius: 4px; font-size: 9px; font-weight: bold; }}"
+                f"QPushButton:hover {{ background: white; }}"
+            )
+            btn.clicked.connect(lambda _, u=url: __import__('webbrowser').open(u))
+            card_lay.addWidget(btn)
+            ctrl_row.addWidget(card)
+
+            if idx == 0:
+                ou = QLabel("OU")
+                ou.setFont(QFont("Segoe UI", 12, QFont.Black))
+                ou.setStyleSheet(
+                    "color: #E2CE16; background: rgba(226,206,22,0.10);"
+                    " border: 1px solid rgba(226,206,22,0.45); border-radius: 8px;"
+                    " letter-spacing: 1px;"
+                )
+                ou.setAlignment(Qt.AlignCenter)
+                ou.setFixedWidth(46)
+                ctrl_row.addWidget(ou)
+
+        lay.addLayout(ctrl_row)
+        lay.addSpacing(26)
 
         # ── Ligne DMX : Node ArtNet | OU | Interface USB/DMX ─────────────────
         dmx_lbl = QLabel("Pour la sortie DMX — choisir une option :")
@@ -1047,7 +1119,7 @@ class GearDialog(QDialog):
         lay.addSpacing(6)
 
         dmx_row = QHBoxLayout()
-        dmx_row.setSpacing(8)
+        dmx_row.setSpacing(16)
 
         for idx, (emoji, name, desc, url, color, bg) in enumerate(_GEAR[1:]):
             card = QFrame()
@@ -1055,8 +1127,8 @@ class GearDialog(QDialog):
                 "QFrame { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; }"
             )
             card_lay = QVBoxLayout(card)
-            card_lay.setContentsMargins(12, 12, 12, 12)
-            card_lay.setSpacing(4)
+            card_lay.setContentsMargins(18, 18, 18, 16)
+            card_lay.setSpacing(10)
 
             em = QLabel(emoji)
             em.setFont(QFont("Segoe UI", 22))
@@ -1094,10 +1166,14 @@ class GearDialog(QDialog):
 
             if idx == 0:
                 ou = QLabel("OU")
-                ou.setFont(QFont("Segoe UI", 9, QFont.Bold))
-                ou.setStyleSheet("color: #444; background: transparent; border: none;")
+                ou.setFont(QFont("Segoe UI", 12, QFont.Black))
+                ou.setStyleSheet(
+                    "color: #E2CE16; background: rgba(226,206,22,0.10);"
+                    " border: 1px solid rgba(226,206,22,0.45); border-radius: 8px;"
+                    " letter-spacing: 1px;"
+                )
                 ou.setAlignment(Qt.AlignCenter)
-                ou.setFixedWidth(30)
+                ou.setFixedWidth(46)
                 dmx_row.addWidget(ou)
 
         lay.addLayout(dmx_row)
@@ -1201,18 +1277,6 @@ class GearDialog(QDialog):
         aff.setAlignment(Qt.AlignCenter)
         aff.setWordWrap(True)
         lay.addWidget(aff)
-        lay.addSpacing(8)
-
-        # ── Bouton fermer ─────────────────────────────────────────────────────
-        btn_close = QPushButton("Fermer")
-        btn_close.setFixedHeight(30)
-        btn_close.setStyleSheet("""
-            QPushButton       { background: #222; color: #888; border: 1px solid #333;
-                                border-radius: 4px; font-size: 11px; }
-            QPushButton:hover { background: #2a2a2a; color: #ccc; }
-        """)
-        btn_close.clicked.connect(self.accept)
-        lay.addWidget(btn_close)
 
 
 # ============================================================

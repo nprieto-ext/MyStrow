@@ -529,6 +529,30 @@ class AkaiDiagnosticDialog(QDialog):
             pass
         return cat
 
+    @staticmethod
+    def _rank_controllers(catalog, avail, active):
+        """Trie le catalogue : contrôleur connecté en tête, puis détecté, puis
+        Auto, puis le reste. Tri stable → conserve l'ordre d'origine à rang égal."""
+        def _rank(item):
+            cid = item[0]
+            if cid is not None and cid == active:
+                return 0   # connecté (branché + sélectionné)
+            if cid is not None and cid in avail:
+                return 1   # détecté (branché)
+            if cid is None:
+                return 2   # Auto (détection automatique)
+            return 3       # non branché
+        return sorted(catalog, key=_rank)
+
+    def _controller_order_now(self):
+        """État de détection courant → liste ordonnée de (cid, name)."""
+        try:
+            avail = {c['id'] for c in self._midi.list_available_controllers()}
+        except Exception:
+            avail = set()
+        active = self._active_controller_id(self._midi)
+        return self._rank_controllers(self._controller_catalog(), avail, active)
+
     def _populate_controller_rows(self):
         """Construit une ligne cliquable par contrôleur compatible."""
         while self._ctrl_rows_layout.count():
@@ -536,7 +560,7 @@ class AkaiDiagnosticDialog(QDialog):
             if it.widget():
                 it.widget().deleteLater()
         self._ctrl_row_widgets = {}
-        for cid, name in self._controller_catalog():
+        for cid, name in self._controller_order_now():
             frame = QFrame()
             frame.setCursor(Qt.PointingHandCursor)
             hl = QHBoxLayout(frame)
@@ -563,6 +587,12 @@ class AkaiDiagnosticDialog(QDialog):
     def _refresh_controller_rows(self):
         """Met à jour les badges Détecté / Connecté et la ligne sélectionnée."""
         if not getattr(self, '_ctrl_row_widgets', None):
+            return
+        # Branchement à chaud : si l'ordre voulu a changé (un contrôleur vient
+        # d'être détecté/connecté), reconstruire pour le faire remonter en tête.
+        desired = [cid for cid, _ in self._controller_order_now()]
+        if desired != list(self._ctrl_row_widgets.keys()):
+            self._populate_controller_rows()   # rappelle _refresh_controller_rows en fin
             return
         try:
             avail = {c['id'] for c in self._midi.list_available_controllers()}
@@ -2701,6 +2731,9 @@ class MainWindow(QMainWindow):
 
         plan_scroll = QScrollArea()
         plan_scroll.setWidgetResizable(True)
+        # Jamais d'ascenseur horizontal sous le plan de feu (le contenu
+        # s'adapte en largeur via setWidgetResizable).
+        plan_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.plan_de_feu = PlanDeFeu(self.projectors, self)
         if not self._license.dmx_allowed:
             self.plan_de_feu.set_dmx_blocked()
@@ -2956,6 +2989,10 @@ class MainWindow(QMainWindow):
             effect_btn.open_editor_requested.connect(lambda idx: self._open_effect_editor_for_btn(idx))
             self.effect_buttons.append(effect_btn)
             effects_col.addWidget(effect_btn)
+
+        # (Le slider VITESSE des effets rapides a été déplacé dans le menu clic
+        #  droit d'un projecteur du plan de feu → section « Effets rapides ».)
+
         pads_and_effects.addLayout(effects_col)
         pads_and_effects.addStretch()
 
@@ -6640,6 +6677,30 @@ class MainWindow(QMainWindow):
             btn.trigger_duration = duration_ms
         self._save_effect_assignments()
 
+    def _apply_fx_pad_speed(self, value: int):
+        """Slider VITESSE permanent → applique la vitesse aux effets actifs en direct."""
+        for idx, btn in enumerate(self.effect_buttons):
+            if not getattr(btn, 'active', False):
+                continue
+            groups = list(getattr(btn, '_target_groups', None) or ["A", "B", "C", "D", "E", "F", "G", "H"])
+            cfg = self._button_effect_configs.get(idx, {})
+            lyr = cfg.get("layers")
+            if lyr and lyr[0].get("target_groups"):
+                groups = list(lyr[0]["target_groups"])
+            self._on_effect_layer_overrides_changed(idx, groups, value)
+
+    def _sync_fx_pad_speed_slider(self):
+        """Aligne le slider VITESSE permanent sur la vitesse du 1er effet actif."""
+        sl = getattr(self, 'fx_pad_speed_slider', None)
+        if sl is None:
+            return
+        for btn in self.effect_buttons:
+            if getattr(btn, 'active', False):
+                sl.blockSignals(True)
+                sl.setValue(int(getattr(btn, '_speed', 50)))
+                sl.blockSignals(False)
+                break
+
     def _on_effect_press(self, btn_idx: int):
         if btn_idx >= len(self.effect_buttons):
             return
@@ -6652,6 +6713,7 @@ class MainWindow(QMainWindow):
                 self.toggle_effect(btn_idx)
                 if mode == "timer":
                     QTimer.singleShot(btn.trigger_duration, lambda: self._ensure_effect_off(btn_idx))
+        self._sync_fx_pad_speed_slider()
 
     def _on_effect_release(self, btn_idx: int):
         if btn_idx >= len(self.effect_buttons):
@@ -6773,9 +6835,20 @@ class MainWindow(QMainWindow):
         # sont considérés comme explicites même si les couches individuelles disent "Tous".
         _cfg_explicit = bool(allowed_groups)
 
+        # Effet "sans couleur" (Pulse, Strobe, Flash…) : doit hériter de la couleur
+        # assignée et suivre le fade in/out du clip sous-jacent, au lieu d'imposer
+        # sa couleur (blanc) à pleine intensité.
+        # _fx_clip_ids est peuplé chaque frame par les DEUX moteurs timeline
+        # (preview éditeur ET lecture réelle), et n'existe pas en mode live AKAI.
+        _no_color = bool(cfg.get("no_color", False))
+        _clip_ids = getattr(self, '_fx_clip_ids', None)
+
         for i, proj in enumerate(projectors):
             _base_level = proj.level   # niveau posé par les clips, avant l'effet
             _base_color = proj.color   # couleur posée par les clips, avant l'effet
+            _base_pure  = getattr(proj, 'base_color', None)  # couleur pure assignée (sans dim)
+            # L'effet "suit" le clip sous-jacent si ce projo est éclairé par un clip ce frame
+            _follow = bool(_clip_ids is not None and id(proj) in _clip_ids)
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0; w = 0.0; ambre = 0.0; uv = 0.0
             has_dim = False; has_rgb_layer = False; has_w = False; has_ambre = False; has_uv = False
             _explicitly_targeted = _cfg_explicit  # ciblage explicite par groupe/pair/impair
@@ -6836,7 +6909,12 @@ class MainWindow(QMainWindow):
                 elif attr == "UV":    uv    += scaled; has_uv    = True
                 elif attr == "RGB":
                     has_rgb_layer = True
-                    c1 = QColor(ld.get("color1", "#ffffff"))
+                    # Effet sans couleur suivant un clip : teinter par la couleur
+                    # assignée (rouge…) plutôt que par color1 (blanc).
+                    if _no_color and _follow and _base_pure is not None and _base_pure.lightness() > 0:
+                        c1 = _base_pure
+                    else:
+                        c1 = QColor(ld.get("color1", "#ffffff"))
                     r += c1.redF() * scaled
                     g += c1.greenF() * scaled
                     b += c1.blueF() * scaled
@@ -6947,6 +7025,10 @@ class MainWindow(QMainWindow):
             # L'effet contrôle la luminosité indépendamment du fader :
             # on force proj.level=100 et on encode toute la brillance dans proj.color
             bv = level
+            # Suivre le fade in/out du clip sous-jacent : l'enveloppe d'intensité
+            # du clip (montée crescendo, descente…) module la brillance de l'effet.
+            if _follow:
+                bv *= max(0.0, min(1.0, _base_level / 100.0))
 
             has_color_val = r > 0 or g > 0 or b > 0
             if has_color_val or has_rgb_layer:

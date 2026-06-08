@@ -132,6 +132,10 @@ class ArtNetDMX:
         self._serial = None
         self._enttec_stop = False
         self._enttec_thread = None
+        # Suspend l'envoi du thread sans fermer le port (ex: pendant le
+        # Test 100% du diagnostic, pour éviter deux threads écrivant
+        # simultanément sur le même port FTDI).
+        self._enttec_pause = False
 
         # --- ENTTEC DMX USB Pro ---
         self._pro_serial = None
@@ -302,28 +306,36 @@ class ArtNetDMX:
         """Thread dédié ENTTEC : envoie les frames à ~25 fps sans bloquer le thread Qt.
 
         Méthode de break :
-          1. break_condition (SetCommBreak/ClearCommBreak) — standard FTDI/pyserial
+          1. send_break(1 ms) (SetCommBreak/ClearCommBreak) — standard FTDI/pyserial,
+             éprouvé et fiable sur Windows/Linux.
           2. Baud-rate trick (100 kbaud → 0x00 → 250 kbaud) — fallback universel,
              fonctionne même si SetCommBreak n'est pas supporté (CH340, FTDI clones,
-             certains drivers Windows 11).
+             certains drivers Windows 11) et plus fiable sur macOS.
         """
-        # Sur macOS, break_condition FTDI VCP peut réussir sans lever d'exception mais
+        # Sur macOS, send_break FTDI VCP peut réussir sans lever d'exception mais
         # ne génère pas de break électrique valide → les fixtures ignorent tous les frames.
         # Le baud-rate trick est plus fiable sur macOS (et reste valide sur Windows/Linux).
         _use_baud_trick = (sys.platform == 'darwin')
         while not self._enttec_stop:
             t0 = time.monotonic()
             ser = self._serial
+            # Pause : on garde le port ouvert mais on n'écrit pas (un autre
+            # writer — ex: Test 100% — détient temporairement le port).
+            if self._enttec_pause:
+                time.sleep(0.02)
+                continue
             if ser and ser.is_open:
                 try:
                     with self._dmx_lock:
                         frame = b'\x00' + bytes(self.dmx_data[0][:512])
                     if not _use_baud_trick:
-                        # Méthode 1 : break_condition (FTDI VCP standard)
-                        ser.break_condition = True
-                        time.sleep(0.000176)   # ≥ 88 µs requis par DMX512
-                        ser.break_condition = False
-                        # MAB implicite : latence USB + OS entre ClearCommBreak et WriteFile
+                        # Méthode 1 : send_break (SetCommBreak/ClearCommBreak).
+                        # Break de 1 ms — valeur éprouvée et fiable sur Windows
+                        # (regression 3.1.28 : le toggle break_condition à 176 µs
+                        # était trop court — avec la gigue de latence USB FTDI le
+                        # break tombait sous le seuil DMX512 et les projecteurs
+                        # ignoraient toutes les frames, sans aucune erreur visible).
+                        ser.send_break(duration=0.001)
                         ser.write(frame)
                         ser.flush()
                     else:
@@ -342,8 +354,8 @@ class ArtNetDMX:
                     self.connected = True
                 except (AttributeError, OSError) as e:
                     if not _use_baud_trick:
-                        # break_condition non supporté → bascule silencieuse
-                        print(f"ENTTEC: break_condition échoué ({e}), basculement sur baud-rate trick")
+                        # send_break non supporté → bascule silencieuse
+                        print(f"ENTTEC: send_break échoué ({e}), basculement sur baud-rate trick")
                         _use_baud_trick = True
                     else:
                         print(f"ENTTEC thread: {e}")

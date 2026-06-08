@@ -417,6 +417,8 @@ class LightTimelineEditor(QDialog):
                 proj.level = 0
             if hasattr(self.main_window, 'dmx'):
                 self.main_window.dmx.blackout()
+            # Ne pas laisser le suivi clip→effet actif en mode live (ids périmés)
+            self.main_window._fx_clip_ids = None
         except Exception:
             pass
         super().closeEvent(event)
@@ -1612,6 +1614,11 @@ class LightTimelineEditor(QDialog):
             p.strobe_speed = 0
             p.color_wheel = 0
 
+        # Projecteurs sous un clip couleur/séquence actif ce frame : l'effet
+        # (qui s'applique après) devra suivre leur couleur + leur fade in/out
+        # au lieu d'imposer sa propre couleur (blanc) à pleine intensité.
+        self.main_window._fx_clip_ids = set()
+
         # ── Détecter le clip de séquence actif ───────────────────────────────
         seq_track = self.track_map.get("Séquence")
         new_seq_clip = None
@@ -1674,21 +1681,28 @@ class LightTimelineEditor(QDialog):
                 merged_type   = ''
                 merged_target_groups = []
                 _has_all_groups = False
+                merged_no_color = False
+                # Catalogue chargé une seule fois (ce bloc ne s'exécute qu'au
+                # changement de clips d'effet, pas à chaque frame).
+                try:
+                    from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+                    _catalog = BUILTIN_EFFECTS + _load_custom_effects()
+                except Exception:
+                    _catalog = []
                 for clip in new_eff_clips.values():
                     eff_name   = getattr(clip, 'effect_name', '')
                     eff_layers = list(getattr(clip, 'effect_layers', []))
                     eff_type   = getattr(clip, 'effect_type', '')
                     eff_tg     = list(getattr(clip, 'effect_target_groups', []))
-                    if not eff_layers and eff_name:
-                        try:
-                            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
-                            for _e in BUILTIN_EFFECTS + _load_custom_effects():
-                                if _e.get('name') == eff_name:
-                                    eff_layers = [dict(l) for l in _e.get('layers', [])]
-                                    eff_type   = _e.get('type', '')
-                                    break
-                        except Exception:
-                            pass
+                    # Résoudre depuis le catalogue : couches manquantes + flag no_color
+                    # (no_color = l'effet doit hériter de la couleur assignée).
+                    _cat_def = next((_e for _e in _catalog if _e.get('name') == eff_name), None)
+                    if _cat_def:
+                        if not eff_layers:
+                            eff_layers = [dict(l) for l in _cat_def.get('layers', [])]
+                            eff_type   = _cat_def.get('type', '')
+                        if _cat_def.get('no_color'):
+                            merged_no_color = True
                     merged_layers.extend(eff_layers)
                     if eff_name:
                         merged_names.append(eff_name)
@@ -1706,6 +1720,7 @@ class LightTimelineEditor(QDialog):
                     'layers': merged_layers, 'play_mode': 'loop',
                     'target_groups': [] if _has_all_groups else merged_target_groups,
                     'speed_override': 50,
+                    'no_color': merged_no_color,
                 }
                 self.main_window.active_effect        = combined_name
                 self.main_window.active_effect_config = cfg
@@ -1788,6 +1803,7 @@ class LightTimelineEditor(QDialog):
                             color = c1 if (c2 is None or pos % 2 == 0) else c2
                             p.level = intensity
                             p.base_color = color
+                            self.main_window._fx_clip_ids.add(id(p))
                             p.color = QColor(
                                 int(color.red()   * brightness),
                                 int(color.green() * brightness),
@@ -1832,6 +1848,7 @@ class LightTimelineEditor(QDialog):
                                 base = QColor(ps["base_color"])
                                 p.level = lvl
                                 p.base_color = base
+                                self.main_window._fx_clip_ids.add(id(p))
                                 p.color = QColor(
                                     int(base.red()   * lvl / 100.0),
                                     int(base.green() * lvl / 100.0),

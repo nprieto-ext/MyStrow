@@ -4918,17 +4918,19 @@ class Sequencer(QFrame):
         # Charger la config de l'effet (layers depuis BUILTIN_EFFECTS ou custom)
         eff_layers = effet_clip.get('effect_layers', [])
         eff_type   = effet_clip.get('effect_type', '')
-        if not eff_layers:
-            # Chercher dans BUILTIN_EFFECTS
-            try:
-                from effect_editor import BUILTIN_EFFECTS
-                for _e in BUILTIN_EFFECTS:
-                    if _e.get('name') == eff_name:
+        # no_color : l'effet doit hériter de la couleur assignée + suivre le fade
+        eff_no_color = False
+        try:
+            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+            for _e in BUILTIN_EFFECTS + _load_custom_effects():
+                if _e.get('name') == eff_name:
+                    if not eff_layers:
                         eff_layers = [dict(l) for l in _e.get('layers', [])]
                         eff_type   = _e.get('type', '')
-                        break
-            except Exception:
-                pass
+                    eff_no_color = bool(_e.get('no_color', False))
+                    break
+        except Exception:
+            pass
 
         target_groups  = effet_clip.get('effect_target_groups', [])
         speed_override = effet_clip.get('effect_speed', 50)
@@ -4939,6 +4941,7 @@ class Sequencer(QFrame):
             'play_mode':       'loop',
             'target_groups':   target_groups,
             'speed_override':  speed_override,
+            'no_color':        eff_no_color,
         }
 
         # Démarrer l'effet (initialiser l'état sans démarrer le effect_timer —
@@ -4965,6 +4968,8 @@ class Sequencer(QFrame):
     def _stop_timeline_effect(self):
         """Arrête l'effet lancé par la timeline (si c'est bien lui qui tourne)."""
         main_win = self.player_ui
+        # Couper le suivi clip→effet (ids périmés une fois la timeline arrêtée)
+        main_win._fx_clip_ids = None
         timeline_name = getattr(self, '_timeline_effect_name', None)
         if timeline_name is None:
             return
@@ -5043,6 +5048,9 @@ class Sequencer(QFrame):
                             int(base.green() * lvl / 100.0),
                             int(base.blue()  * lvl / 100.0),
                         )
+                        # L'effet de la piste Effet peut suivre cette couleur/fade
+                        if hasattr(main_win, '_fx_clip_ids') and main_win._fx_clip_ids is not None:
+                            main_win._fx_clip_ids.add(id(proj))
 
     def apply_timeline_to_dmx(self, active_clips):
         """Applique les clips actifs aux projecteurs DMX avec effets"""
@@ -5063,10 +5071,18 @@ class Sequencer(QFrame):
 
         tick = getattr(self, '_timeline_tick', 0)
 
+        # Projecteurs sous un clip actif ce frame : l'effet de la piste Effet
+        # (appliqué plus bas via update_effect) suivra leur couleur + leur fade.
+        main_win._fx_clip_ids = set()
+
         for proj in self.player_ui.projectors:
             proj.level = 0
             proj.base_color = QColor("black")
             proj.color = QColor("black")
+            # Sinon un strobe posé avant la lecture (live, quick effect, recall
+            # mémoire…) restait collé sur tout le show — "les couleurs strobent
+            # alors qu'aucun effet n'est lancé". Aligné sur la preview éditeur.
+            proj.strobe_speed = 0
 
         for track_name, clip_info in active_clips.items():
             indices = track_to_indices.get(track_name, [])
@@ -5136,6 +5152,7 @@ class Sequencer(QFrame):
                     int(color.green() * intensity / 100),
                     int(color.blue() * intensity / 100)
                 )
+                main_win._fx_clip_ids.add(id(proj))
 
         # --- Appliquer Pan/Tilt pour les Lyres ---
         # La piste position s'appelle "Position" dans la timeline; fallback sur "Lyres" pour anciens .tui

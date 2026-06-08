@@ -458,11 +458,17 @@ class DmxSetupDialog(QDialog):
         # ── Trouver / ouvrir le port ─────────────────────────────────────────
         ser = None
         opened_here = False
+        paused_live = False   # True si on a suspendu le thread ENTTEC live
         dmx_serial = getattr(self._dmx, '_serial', None)
         port = self.port_combo.currentData()
 
         if dmx_serial and dmx_serial.is_open:
             ser = dmx_serial
+            # Suspendre le thread de fond : sinon il écrit en parallèle sur le
+            # même port FTDI, ce qui provoque une erreur puis la fermeture du
+            # port ("Attempting to use a port that is not open").
+            self._dmx._enttec_pause = True
+            paused_live = True
             self._log_line(f"  ✓  Utilisation de la connexion MyStrow ({self._dmx.com_port})", ok)
         elif port:
             self._log_line(f"  →  Ouverture de {port} pour le test…", "#cccccc")
@@ -508,7 +514,7 @@ class DmxSetupDialog(QDialog):
                 _finish()
                 return
             try:
-                ser.send_break(duration=0.000176)
+                ser.send_break(duration=0.001)   # 1 ms — break fiable (cf. _enttec_loop)
                 ser.write(full_frame)
                 ser.flush()
                 sent[0] += 1
@@ -532,6 +538,8 @@ class DmxSetupDialog(QDialog):
             if opened_here:
                 try: ser.close()
                 except Exception: pass
+            if paused_live:
+                self._dmx._enttec_pause = False   # relancer le thread live
             self.btn_test100.setEnabled(True)
             self.btn_diag.setEnabled(True)
 
@@ -848,6 +856,16 @@ class DmxSetupDialog(QDialog):
         self._log_line("")
         self._log_line("═══ FIN DU DIAGNOSTIC ═══", cyan)
         self.btn_diag.setEnabled(True)
+
+    def closeEvent(self, event):
+        # Garde-fou : ne jamais laisser le thread ENTTEC en pause si le
+        # dialogue est fermé pendant un Test 100% (sinon la sortie DMX reste
+        # figée). On relâche toujours la pause à la fermeture.
+        try:
+            self._dmx._enttec_pause = False
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _copy_report(self):
         """Copie le rapport de diagnostic dans le presse-papiers en texte brut."""

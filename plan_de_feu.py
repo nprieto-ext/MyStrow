@@ -34,10 +34,13 @@ class _EffectState:
     def __init__(self, effect, speed, amplitude, center_pan, center_tilt):
         self.effect       = effect        # "cercle","figure8","balayage_h","balayage_v","aleatoire"
         self.speed        = speed         # Hz (0.1 – 3.0)
+        self.base_speed   = speed         # vitesse "naturelle" — sert de référence au slider VITESSE
         self.amplitude    = amplitude     # 0-120
+        self.base_amplitude = amplitude   # amplitude "naturelle" — référence du slider AMPLITUDE
         self.center_pan   = center_pan
         self.center_tilt  = center_tilt
         self.phase        = 0.0           # radians
+        self.phase_offset = 0.0           # déphasage par fixture (slider DÉPHASAGE)
         # Pour l'effet aléatoire
         self._r_pan   = float(center_pan)
         self._r_tilt  = float(center_tilt)
@@ -51,22 +54,23 @@ class _EffectState:
         import random
         self.phase += 2 * _math_eff.pi * self.speed * self.DT
         a = self.amplitude
+        ph = self.phase + self.phase_offset   # déphasage par fixture
 
         if self.effect == "cercle":
-            pan  = self.center_pan  + a * _math_eff.sin(self.phase)
-            tilt = self.center_tilt + a * _math_eff.cos(self.phase)
+            pan  = self.center_pan  + a * _math_eff.sin(ph)
+            tilt = self.center_tilt + a * _math_eff.cos(ph)
 
         elif self.effect == "figure8":
-            pan  = self.center_pan  + a * _math_eff.sin(self.phase)
-            tilt = self.center_tilt + (a / 2) * _math_eff.sin(2 * self.phase)
+            pan  = self.center_pan  + a * _math_eff.sin(ph)
+            tilt = self.center_tilt + (a / 2) * _math_eff.sin(2 * ph)
 
         elif self.effect == "balayage_h":
-            pan  = self.center_pan  + a * _math_eff.sin(self.phase)
+            pan  = self.center_pan  + a * _math_eff.sin(ph)
             tilt = self.center_tilt
 
         elif self.effect == "balayage_v":
             pan  = self.center_pan
-            tilt = self.center_tilt + a * _math_eff.sin(self.phase)
+            tilt = self.center_tilt + a * _math_eff.sin(ph)
 
         elif self.effect == "aleatoire":
             if self._r_step >= self._r_steps:
@@ -2769,6 +2773,9 @@ class PlanDeFeu(QFrame):
         self._canvas_editable = False  # Vue principale : lecture seule (edition dans Patch DMX)
         self._effects = {}            # id(proj) -> _EffectState  (pan/tilt)
         self._led_effects = {}        # id(proj) -> {"type","phase","speed","saved_level","saved_color"}
+        self._qe_speed = 50           # vitesse des effets rapides (0-100, 50 = vitesse naturelle)
+        self._qe_amplitude = 50       # amplitude des effets rapides (0-100, 50 = amplitude naturelle)
+        self._qe_phase = 0            # déphasage entre fixtures (0 = synchrone, 100 = vague complète)
         self._custom_groups = {}      # nom → frozenset of (group, local_idx)
         self._load_custom_groups()
 
@@ -3134,22 +3141,23 @@ class PlanDeFeu(QFrame):
                 dead_led.append(proj_id)
                 continue
             eff["phase"] += 2 * _math_eff.pi * eff["speed"] * _EffectState.DT
+            _ph = eff["phase"] + eff.get("phase_offset", 0.0)   # déphasage par fixture
             if eff["type"] == "color_pulse":
-                factor = (_math_eff.sin(eff["phase"]) + 1) / 2
+                factor = (_math_eff.sin(_ph) + 1) / 2
                 lvl = max(5, int(eff["saved_level"] * (0.1 + 0.9 * factor)))
                 bc = eff["pulse_color"]
                 proj.base_color = bc
             elif eff["type"] == "breath":
-                factor = (_math_eff.sin(eff["phase"]) + 1) / 2
+                factor = (_math_eff.sin(_ph) + 1) / 2
                 lvl = max(5, int(eff["saved_level"] * (0.15 + 0.85 * factor)))
                 bc = eff["saved_color"]
             elif eff["type"] == "rainbow":
-                hue = int(eff["phase"] * 57.296) % 360
+                hue = int(_ph * 57.296) % 360
                 bc = QColor.fromHsv(hue, 255, 255)
                 lvl = eff["saved_level"]
                 proj.base_color = bc
             elif eff["type"] == "strobe":
-                if _math_eff.sin(eff["phase"]) >= 0:
+                if _math_eff.sin(_ph) >= 0:
                     lvl = eff["saved_level"]
                     bc = QColor(255, 255, 255)
                 else:
@@ -3157,13 +3165,13 @@ class PlanDeFeu(QFrame):
                     bc = QColor(0, 0, 0)
                 proj.base_color = bc
             elif eff["type"] == "rouge_blanc":
-                factor = (_math_eff.sin(eff["phase"]) + 1) / 2
+                factor = (_math_eff.sin(_ph) + 1) / 2
                 gb = int(factor * 255)
                 bc = QColor(255, gb, gb)
                 lvl = eff["saved_level"]
                 proj.base_color = bc
             else:  # "flash"
-                factor = max(0.0, _math_eff.sin(eff["phase"]))
+                factor = max(0.0, _math_eff.sin(_ph))
                 lvl = int(eff["saved_level"] * factor)
                 bc = eff["saved_color"]
             proj.level = lvl
@@ -3200,10 +3208,12 @@ class PlanDeFeu(QFrame):
             base_col = getattr(proj, 'base_color', None) or getattr(proj, 'color', QColor(255, 255, 255))
             saved_lvl = max(10, proj.level) if proj.level > 0 else 80
             self._led_effects[id(proj)] = {
-                "type":        effect_type,
-                "phase":       0.0,
-                "speed":       speed,
-                "saved_level": saved_lvl,
+                "type":         effect_type,
+                "phase":        0.0,
+                "phase_offset": 0.0,    # déphasage par fixture (slider DÉPHASAGE)
+                "speed":        speed,
+                "base_speed":   speed,  # vitesse "naturelle" — référence du slider VITESSE
+                "saved_level":  saved_lvl,
                 "saved_color": QColor(base_col),
                 "pulse_color": QColor(color) if color is not None else QColor(base_col),
             }
@@ -3221,6 +3231,49 @@ class PlanDeFeu(QFrame):
                     int(bc.green() * br),
                     int(bc.blue()  * br),
                 )
+
+    @staticmethod
+    def _qe_value_to_mult(value):
+        """Slider 0-100 → multiplicateur de vitesse (0 ≈ 0.1×, 50 = 1.0×, 100 = 2.0×)."""
+        return max(0.1, value / 50.0)
+
+    def set_quick_effect_speed(self, projectors, value):
+        """Règle en direct la vitesse des effets rapides actifs sur ces projecteurs.
+        La valeur (0-100) est mémorisée et appliquée aussi aux prochains effets lancés."""
+        self._qe_speed = max(0, min(100, int(value)))
+        mult = self._qe_value_to_mult(self._qe_speed)
+        for proj in projectors:
+            st = self._effects.get(id(proj))
+            if st:
+                st.speed = st.base_speed * mult
+            led = self._led_effects.get(id(proj))
+            if led:
+                led["speed"] = led["base_speed"] * mult
+
+    def set_quick_effect_amplitude(self, projectors, value):
+        """Règle en direct l'amplitude (course du mouvement) des effets lyres actifs.
+        Sans effet sur les effets LED (pas de notion d'amplitude)."""
+        self._qe_amplitude = max(0, min(100, int(value)))
+        mult = self._qe_value_to_mult(self._qe_amplitude)   # 50 = 1.0×
+        for proj in projectors:
+            st = self._effects.get(id(proj))
+            if st:
+                st.amplitude = st.base_amplitude * mult
+
+    def set_quick_effect_phase(self, projectors, value):
+        """Décale la phase de chaque fixture (effet de vague). 0 = synchrone,
+        100 = un cycle complet réparti sur l'ensemble des fixtures."""
+        self._qe_phase = max(0, min(100, int(value)))
+        spread = (self._qe_phase / 100.0) * 2 * _math_eff.pi
+        n = max(1, len(projectors))
+        for i, proj in enumerate(projectors):
+            off = (i / n) * spread
+            st = self._effects.get(id(proj))
+            if st:
+                st.phase_offset = off
+            led = self._led_effects.get(id(proj))
+            if led:
+                led["phase_offset"] = off
 
     def set_htp_overrides(self, overrides):
         if overrides != self._htp_overrides:
@@ -4649,6 +4702,9 @@ class PlanDeFeu(QFrame):
                                 p.color = QColor(255, 255, 255)
                             turned_on = True
                     self.start_effect(projs, key, 0.5, 10000)
+                    self.set_quick_effect_speed(projs, self._qe_speed)
+                    self.set_quick_effect_amplitude(projs, self._qe_amplitude)
+                    self.set_quick_effect_phase(projs, self._qe_phase)
                     if turned_on:
                         dim_sli.setValue(100)  # Met à jour le slider + envoie DMX via son signal
                     _flush()
@@ -4698,6 +4754,8 @@ class PlanDeFeu(QFrame):
                             p.level = 80
                             turned_on = True
                     self.start_led_effect(projs, key, _LED_FX_SPEEDS.get(key, 0.5))
+                    self.set_quick_effect_speed(projs, self._qe_speed)
+                    self.set_quick_effect_phase(projs, self._qe_phase)
                     for _eff in [self._led_effects.get(id(p)) for p in projs]:
                         if _eff:
                             _eff["effect_key"] = key
@@ -4733,6 +4791,47 @@ class PlanDeFeu(QFrame):
 
             qe_h.addStretch()
             _wa(qe_w)
+
+            # ── Réglages live des effets rapides (vitesse / amplitude / déphasage) ──
+            _qe_projs = [p for p, _g, _i in targets]
+
+            def _add_qe_slider(label, init_value, tooltip, setter):
+                w = QWidget(); h = QHBoxLayout(w)
+                h.setContentsMargins(8, 0, 10, 4); h.setSpacing(6)
+                lbl = QLabel(label); lbl.setFixedWidth(74)
+                lbl.setStyleSheet("color:#666;font-size:9px;font-weight:bold;"
+                                  "letter-spacing:1px;border:none;background:transparent;")
+                h.addWidget(lbl)
+                sli = QSlider(Qt.Horizontal)
+                sli.setRange(0, 100); sli.setValue(init_value)
+                sli.setToolTip(tooltip)
+                sli.setStyleSheet(
+                    "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
+                    "QSlider::handle:horizontal{background:#00d4ff;width:12px;height:12px;"
+                    "margin:-5px 0;border-radius:6px;}"
+                )
+                val = QLabel(str(init_value))
+                val.setStyleSheet("color:#ddd;font-size:11px;font-weight:bold;"
+                                  "min-width:26px;border:none;background:transparent;")
+                val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                def _on_change(v, _l=val, _set=setter):
+                    _l.setText(str(v))
+                    _set(_qe_projs, v)
+                    _flush()
+                sli.valueChanged.connect(_on_change)
+                h.addWidget(sli, 1); h.addWidget(val)
+                _wa(w)
+
+            _add_qe_slider("VITESSE", self._qe_speed,
+                           "Vitesse des effets rapides (50 = naturelle)",
+                           self.set_quick_effect_speed)
+            if _is_mh:
+                _add_qe_slider("AMPLITUDE", self._qe_amplitude,
+                               "Amplitude du mouvement (50 = naturelle)",
+                               self.set_quick_effect_amplitude)
+            _add_qe_slider("DÉPHASAGE", self._qe_phase,
+                           "Décalage entre fixtures (0 = synchrone, 100 = vague)",
+                           self.set_quick_effect_phase)
 
         menu.exec(self._pos_outside(menu))
 

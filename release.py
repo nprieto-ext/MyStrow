@@ -238,6 +238,8 @@ def build_local_installer(version):
         f"--add-data \"mystrow.ico;.\" "
         f"--add-data \"fixtures_qlcplus.json;.\" "
         f"--add-data \"plan_3d_web.html;.\" "
+        f"--add-data \"AKAIAPCMINI.png;.\" "
+        f"--add-data \"Novation.png;.\" "
         f"{_custom_bundle_flag}"
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "
