@@ -469,6 +469,16 @@ class DmxSetupDialog(QDialog):
             # port ("Attempting to use a port that is not open").
             self._dmx._enttec_pause = True
             paused_live = True
+            # Attendre que le thread live ait acquitté la pause : il doit avoir
+            # atteint sa branche pause (et lâché le port) AVANT qu'on écrive.
+            # Sans cette synchro, les deux threads écrivent en parallèle sur le
+            # FTDI → le thread live tombe en erreur, ferme le port, et le test
+            # échoue avec "Attempting to use a port that is not open".
+            _wait_until = _time.monotonic() + 0.6
+            while (_time.monotonic() < _wait_until
+                   and not getattr(self._dmx, '_enttec_paused', False)):
+                QApplication.processEvents()
+                _time.sleep(0.01)
             self._log_line(f"  ✓  Utilisation de la connexion MyStrow ({self._dmx.com_port})", ok)
         elif port:
             self._log_line(f"  →  Ouverture de {port} pour le test…", "#cccccc")
@@ -794,6 +804,27 @@ class DmxSetupDialog(QDialog):
         self._log_line(f"  Transport : {transport_str}", "#cccccc")
         self._log_line(f"  Port configuré : {com_str}", "#cccccc")
         self._log_line(f"  Connecté : {connected_str}", conn_color)
+
+        # ── Cohérence transport ↔ interface testée ───────────────────────────
+        # Cet assistant ne propose QUE des interfaces USB/série. Si la sortie
+        # live est encore en Art-Net (le défaut), MyStrow n'envoie rien sur le
+        # boîtier USB testé ci-dessus : le DMX part sur le réseau. C'est la
+        # cause n°1 de « le diagnostic passe mais le parc ne réagit pas » —
+        # les étapes [4]–[6] ouvrent le port COM en direct et réussissent, ce
+        # qui masque le fait que la sortie live n'est pas branchée dessus.
+        prod = self._current_product()
+        expected = prod["transport"] if prod else TRANSPORT_ENTTEC
+        if transport_str != expected:
+            prod_name = prod["name"] if prod else "interface USB-DMX"
+            self._log_line("")
+            self._log_line("  ⛔  ATTENTION : la sortie live n'utilise PAS votre interface USB", err)
+            self._log_line(f"      Transport actif = « {transport_str} » (réseau Art-Net),", warn)
+            self._log_line(f"      alors que vous testez une interface USB ({prod_name}).", warn)
+            self._log_line("      Les tests ci-dessus ouvrent le port COM en direct et", dim)
+            self._log_line("      réussissent, MAIS MyStrow envoie le DMX sur le réseau,", dim)
+            self._log_line("      pas sur le boîtier USB → le parc ne peut pas réagir.", dim)
+            self._log_line("      ✅  SOLUTION : à l'ÉTAPE 3 ci-dessous, cliquez « Connecter »", ok)
+            self._log_line("          pour basculer la sortie DMX sur votre boîtier USB.", ok)
 
         # Timer DMX (25fps)
         timer_ok = False

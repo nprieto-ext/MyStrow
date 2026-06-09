@@ -136,6 +136,10 @@ class ArtNetDMX:
         # Test 100% du diagnostic, pour éviter deux threads écrivant
         # simultanément sur le même port FTDI).
         self._enttec_pause = False
+        # Acquittement de pause : passe à True quand le thread a réellement
+        # atteint sa branche pause (et donc lâché le port). Un writer
+        # concurrent (Test 100%) doit attendre cet ack avant d'écrire.
+        self._enttec_paused = False
 
         # --- ENTTEC DMX USB Pro ---
         self._pro_serial = None
@@ -321,9 +325,15 @@ class ArtNetDMX:
             ser = self._serial
             # Pause : on garde le port ouvert mais on n'écrit pas (un autre
             # writer — ex: Test 100% — détient temporairement le port).
+            # On acquitte la pause (_enttec_paused) APRÈS toute écriture en
+            # cours : le writer concurrent attend cet ack avant d'écrire, ce
+            # qui garantit qu'on ne touche plus le port FTDI en parallèle
+            # (sinon collision → fermeture du port → "port that is not open").
             if self._enttec_pause:
+                self._enttec_paused = True
                 time.sleep(0.02)
                 continue
+            self._enttec_paused = False
             if ser and ser.is_open:
                 try:
                     with self._dmx_lock:

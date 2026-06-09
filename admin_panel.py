@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QFileDialog, QSizePolicy, QStackedWidget,
     QScrollArea, QSplitter, QListWidget, QListWidgetItem,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QObject, QTimer
 from PySide6.QtGui import QFont, QColor
 
 import firebase_client as fc
@@ -476,6 +476,24 @@ def _clear_admin_cache():
 # Worker thread générique
 # ---------------------------------------------------------------
 
+class _Invoker(QObject):
+    """Relais avec affinité thread principal : garantit que les callbacks
+    on_success/on_error s'exécutent dans le thread GUI (et pas le worker).
+
+    Sans ça, un signal connecté à un lambda nu (sans QObject de contexte) est
+    délivré en connexion directe -> le callback tourne dans le thread worker,
+    et toucher un widget Qt (QMessageBox…) depuis là fait planter l'appli.
+    """
+    def __init__(self, parent, cb):
+        super().__init__(parent)   # affinité = thread du parent (GUI)
+        self._cb = cb
+
+    @Slot(object)
+    def invoke(self, arg):
+        if self._cb:
+            self._cb(arg)
+
+
 class _Worker(QObject):
     success = Signal(object)
     error   = Signal(str)
@@ -500,10 +518,15 @@ def _run_async(parent, fn, *args, on_success=None, on_error=None, **kwargs):
     worker = _Worker(fn, args, kwargs)
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
+    # On route les callbacks via des _Invoker parentés à `parent` (thread GUI)
+    # pour qu'ils s'exécutent bien dans le thread principal (connexion queued),
+    # et pas dans le worker (sinon crash dès qu'on touche un widget Qt).
     if on_success:
-        worker.success.connect(on_success)
+        succ_inv = _Invoker(parent, on_success)
+        worker.success.connect(succ_inv.invoke)
     if on_error:
-        worker.error.connect(on_error)
+        err_inv = _Invoker(parent, on_error)
+        worker.error.connect(err_inv.invoke)
     worker.success.connect(thread.quit)
     worker.error.connect(thread.quit)
     # deleteLater garantit la destruction dans le bon thread (évite le warning cross-thread)
