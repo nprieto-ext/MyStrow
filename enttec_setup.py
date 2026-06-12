@@ -20,7 +20,56 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
-from artnet_dmx import TRANSPORT_ENTTEC
+from artnet_dmx import TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_D2XX, FTD2XX_AVAILABLE
+
+try:
+    import ftd2xx
+    import ftd2xx.defines as _ftd
+except Exception:
+    ftd2xx = None
+
+
+def _port_info(port_device):
+    """Retourne (present, is_ftdi, serial_number) pour un port COM donné.
+    present = le port figure dans la liste des ports COM actuels."""
+    if not SERIAL_AVAILABLE or not port_device:
+        return False, False, None
+    try:
+        for p in serial.tools.list_ports.comports():
+            if p.device == port_device:
+                is_ftdi = (getattr(p, 'vid', None) == 0x0403)
+                return True, is_ftdi, getattr(p, 'serial_number', None)
+    except Exception:
+        pass
+    return False, False, None
+
+
+def _d2xx_has_device():
+    """True si au moins une puce FTDI est visible via le driver D2XX."""
+    if not FTD2XX_AVAILABLE or ftd2xx is None:
+        return False
+    try:
+        return bool(ftd2xx.listDevices())
+    except Exception:
+        return False
+
+
+def resolve_usb_transport(port_device):
+    """Décide du transport pour un boîtier USB-DMX donné.
+
+    Boîtier FTDI (ENTTEC Open DMX, DMXKing…) + ftd2xx dispo → D2XX (fiable,
+    comme QLC+). Sinon (clone CH340/CP210x, ou ftd2xx absent) → série VCP.
+    Retourne (transport, ftdi_serial)."""
+    present, is_ftdi, serial_no = _port_info(port_device)
+    if FTD2XX_AVAILABLE:
+        if is_ftdi:
+            return TRANSPORT_ENTTEC_D2XX, serial_no
+        # Port COM disparu (souvent parce que la puce est déjà ouverte en D2XX,
+        # ce qui masque le port VCP) mais une puce FTDI reste visible en D2XX :
+        # on reste en D2XX plutôt que de basculer en série (qui échouerait).
+        if not present and _d2xx_has_device():
+            return TRANSPORT_ENTTEC_D2XX, None
+    return TRANSPORT_ENTTEC, None
 
 # ---------------------------------------------------------------------------
 # Catalogue de produits compatibles
@@ -455,12 +504,21 @@ class DmxSetupDialog(QDialog):
         ok   = "#4CAF50"; warn = "#ff9800"; err = "#f44336"; cyan = "#00d4ff"
         self._log_line("═══ TEST DMX — TOUS CANAUX À 100% (255) ═══", cyan)
 
+        port = self.port_combo.currentData()
+
+        # Boîtier FTDI piloté en D2XX : la puce n'est PAS accessible via le port
+        # COM (le driver D2XX la détient), il faut tester via D2XX.
+        live_d2xx = (getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC_D2XX)
+        port_d2xx = (resolve_usb_transport(port)[0] == TRANSPORT_ENTTEC_D2XX) if port else False
+        if live_d2xx or port_d2xx:
+            self._run_test100_d2xx(live_d2xx)
+            return
+
         # ── Trouver / ouvrir le port ─────────────────────────────────────────
         ser = None
         opened_here = False
         paused_live = False   # True si on a suspendu le thread ENTTEC live
         dmx_serial = getattr(self._dmx, '_serial', None)
-        port = self.port_combo.currentData()
 
         if dmx_serial and dmx_serial.is_open:
             ser = dmx_serial
@@ -550,6 +608,108 @@ class DmxSetupDialog(QDialog):
                 except Exception: pass
             if paused_live:
                 self._dmx._enttec_pause = False   # relancer le thread live
+            self.btn_test100.setEnabled(True)
+            self.btn_diag.setEnabled(True)
+
+        _timer = _QTimer(self)
+        _timer.timeout.connect(_send_frame)
+        _timer.start(INTERVAL_MS)
+
+    def _run_test100_d2xx(self, live_d2xx):
+        """Test 100% via le driver FTDI D2XX (boîtier passif FT232R)."""
+        from PySide6.QtCore import QTimer as _QTimer
+        import time as _time
+
+        ok = "#4CAF50"; warn = "#ff9800"; err = "#f44336"
+        self._log_line("  (pilote D2XX direct — comme QLC+)", "#888888")
+
+        dev = None
+        opened_here = False
+        paused_live = False
+
+        if live_d2xx and getattr(self._dmx, 'connected', False):
+            # Réutiliser la puce déjà ouverte par MyStrow : on suspend le thread
+            # live (avec acquittement) pour ne pas écrire à deux sur le FTDI.
+            self._dmx._d2xx_pause = True
+            paused_live = True
+            _wait = _time.monotonic() + 0.6
+            while (_time.monotonic() < _wait
+                   and not getattr(self._dmx, '_d2xx_paused', False)):
+                QApplication.processEvents()
+                _time.sleep(0.01)
+            dev = getattr(self._dmx, '_d2xx', None)   # relire après la pause
+            if dev is None:
+                self._log_line("  ✗  Connexion live active mais handle indisponible — réessayez", err)
+                self._dmx._d2xx_pause = False
+                self.btn_test100.setEnabled(True)
+                self.btn_diag.setEnabled(True)
+                return
+            self._log_line("  ✓  Utilisation de la connexion MyStrow (D2XX)", ok)
+        else:
+            self._log_line("  →  Ouverture de la puce FTDI en D2XX…", "#cccccc")
+            QApplication.processEvents()
+            try:
+                index = self._dmx._resolve_d2xx_index()
+                dev = ftd2xx.open(index)
+                dev.setBaudRate(250000)
+                dev.setDataCharacteristics(_ftd.BITS_8, _ftd.STOP_BITS_2, _ftd.PARITY_NONE)
+                dev.setFlowControl(_ftd.FLOW_NONE, 0, 0)
+                dev.setLatencyTimer(1)
+                dev.setTimeouts(100, 100)
+                dev.purge(_ftd.PURGE_TX | _ftd.PURGE_RX)
+                opened_here = True
+                self._log_line("  ✓  Puce FTDI ouverte (D2XX)", ok)
+            except Exception as e:
+                self._log_line(f"  ✗  Ouverture D2XX impossible : {e}", err)
+                self._log_line("      → Fermez QLC+ ou tout autre logiciel DMX, puis réessayez", warn)
+                self.btn_test100.setEnabled(True)
+                self.btn_diag.setEnabled(True)
+                return
+
+        full_frame = b'\x00' + bytes([255] * 512)
+        DURATION_S = 3
+        INTERVAL_MS = 25   # ~40 fps
+        total_frames = int(DURATION_S * 1000 / INTERVAL_MS)
+        sent = [0]; errors = [0]
+
+        self._log_line("")
+        self._log_line(f"  Envoi de {total_frames} frames ({DURATION_S} s) — tous canaux = 255…", "#cccccc")
+        self._log_line("  Si rien ne réagit : câble XLR, adresse DMX (CH1=001), mode du projo.", warn)
+
+        def _send_frame():
+            if sent[0] >= total_frames:
+                _timer.stop(); _finish(); return
+            try:
+                dev.setBreakOn()
+                _time.sleep(0.0001)
+                dev.setBreakOff()
+                _time.sleep(0.000012)
+                dev.write(full_frame)
+                sent[0] += 1
+            except Exception as ex:
+                errors[0] += 1
+                if errors[0] > 5:
+                    _timer.stop()
+                    self._log_line(f"  ✗  Erreurs répétées — test arrêté : {ex}", err)
+                    _cleanup()
+
+        def _finish():
+            self._log_line("")
+            if errors[0] == 0:
+                self._log_line(f"  ✓  {sent[0]}/{total_frames} frames envoyées sans erreur", ok)
+                self._log_line("  Si aucun appareil ne réagit → problème de câblage DMX ou de patch", warn)
+            else:
+                self._log_line(f"  ⚠  {sent[0]} frames OK, {errors[0]} erreurs", warn)
+            _cleanup()
+
+        def _cleanup():
+            if opened_here and dev is not None:
+                try: dev.setBreakOff()
+                except Exception: pass
+                try: dev.close()
+                except Exception: pass
+            if paused_live:
+                self._dmx._d2xx_pause = False
             self.btn_test100.setEnabled(True)
             self.btn_diag.setEnabled(True)
 
@@ -663,6 +823,42 @@ class DmxSetupDialog(QDialog):
         except Exception:
             pass
 
+        # ── Boîtier FTDI piloté en D2XX → diagnostic via le driver direct ────
+        # La puce n'est pas accessible par le port COM quand D2XX la détient :
+        # on lance un diagnostic D2XX dédié (steps 4-6) puis l'état live.
+        if (resolve_usb_transport(port)[0] == TRANSPORT_ENTTEC_D2XX
+                or getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC_D2XX):
+            self._diag_d2xx_steps()
+            self._diag_live_state()
+            self.btn_diag.setEnabled(True)
+            return
+
+        # ── Pause du thread live ENTTEC avant tout accès au port ─────────────
+        # Sans ça, le thread de fond (_enttec_loop) et le diagnostic ouvrent /
+        # ferment le même handle FTDI en parallèle → crash natif du driver
+        # Windows (l'appli se ferme), reproductible en lançant le diagnostic
+        # 2 fois de suite : le 1er run force le thread live en reconnexion, le
+        # 2e run ouvre le port pile pendant que le thread le rouvre aussi.
+        # On suspend le thread (avec acquittement) le temps des étapes 4-6,
+        # exactement comme le Test 100%. Relâché après l'étape 6 (et sur chaque
+        # sortie anticipée). closeEvent() relâche aussi en garde-fou.
+        _paused_live = False
+        if getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC:
+            self._dmx._enttec_pause = True
+            _paused_live = True
+            _wait_until = _time.monotonic() + 0.6
+            while (_time.monotonic() < _wait_until
+                   and not getattr(self._dmx, '_enttec_paused', False)):
+                QApplication.processEvents()
+                _time.sleep(0.01)
+
+        def _unpause_live():
+            if _paused_live:
+                try:
+                    self._dmx._enttec_pause = False
+                except Exception:
+                    pass
+
         # ── 4. Ouverture du port ─────────────────────────────────────────────
         self._log_line("")
         self._log_line("[ 4 ] Ouverture à 250 000 bauds", cyan)
@@ -694,10 +890,12 @@ class DmxSetupDialog(QDialog):
                     self._log_line("        Fermez tous les logiciels DMX et relancez", warn)
                 elif "could not open" in msg.lower() or "no such" in msg.lower():
                     self._log_line("      → Port introuvable — rebranchez le boîtier", warn)
+                _unpause_live()
                 self.btn_diag.setEnabled(True)
                 return
             except Exception as e:
                 self._log_line(f"  ✗  Erreur inattendue : {e}", err)
+                _unpause_live()
                 self.btn_diag.setEnabled(True)
                 return
 
@@ -793,7 +991,18 @@ class DmxSetupDialog(QDialog):
         except Exception:
             pass
 
+        # Étapes 4-6 terminées : on rend le port au thread live. L'étape 7 ne
+        # lit que l'état (dmx_data), elle ne touche pas au port série.
+        _unpause_live()
+
         # ── 7. État live MyStrow ─────────────────────────────────────────────
+        self._diag_live_state()
+        self.btn_diag.setEnabled(True)
+
+    def _diag_live_state(self):
+        """Étape 7 du diagnostic : état de la sortie DMX live (agnostique au
+        transport — utilisée par le diagnostic série ET D2XX)."""
+        ok = "#4CAF50"; warn = "#ff9800"; err = "#f44336"; dim = "#555555"; cyan = "#00d4ff"
         self._log_line("")
         self._log_line("[ 7 ] État DMX live MyStrow", cyan)
         dmx = self._dmx
@@ -813,8 +1022,11 @@ class DmxSetupDialog(QDialog):
         # les étapes [4]–[6] ouvrent le port COM en direct et réussissent, ce
         # qui masque le fait que la sortie live n'est pas branchée dessus.
         prod = self._current_product()
-        expected = prod["transport"] if prod else TRANSPORT_ENTTEC
-        if transport_str != expected:
+        # enttec (série VCP) ET enttec_d2xx (FTDI direct) sont deux transports
+        # USB valides pour ces boîtiers — seul un transport réseau (Art-Net) ou
+        # Pro signale que la sortie live n'est pas branchée sur l'USB testé.
+        usb_transports = (TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_D2XX)
+        if transport_str not in usb_transports:
             prod_name = prod["name"] if prod else "interface USB-DMX"
             self._log_line("")
             self._log_line("  ⛔  ATTENTION : la sortie live n'utilise PAS votre interface USB", err)
@@ -886,7 +1098,113 @@ class DmxSetupDialog(QDialog):
 
         self._log_line("")
         self._log_line("═══ FIN DU DIAGNOSTIC ═══", cyan)
-        self.btn_diag.setEnabled(True)
+
+    def _diag_d2xx_steps(self):
+        """Étapes 4-6 du diagnostic en mode D2XX (driver FTDI direct)."""
+        import time as _time
+        ok = "#4CAF50"; warn = "#ff9800"; err = "#f44336"; dim = "#555555"; cyan = "#00d4ff"
+
+        self._log_line("")
+        self._log_line("[ 4 ] Driver FTDI D2XX (mode direct, comme QLC+)", cyan)
+        if not FTD2XX_AVAILABLE or ftd2xx is None:
+            self._log_line("  ✗  Module ftd2xx indisponible", err)
+            self._log_line("      → pip install ftd2xx  (et pilote FTDI installé)", warn)
+            return
+        try:
+            devices = ftd2xx.listDevices() or []
+        except Exception as e:
+            self._log_line(f"  ✗  Impossible de lister les puces FTDI : {e}", err)
+            return
+        if not devices:
+            self._log_line("  ✗  Aucune puce FTDI détectée en D2XX", err)
+            self._log_line("      → Fermez QLC+/autre logiciel DMX (la puce ne s'ouvre", warn)
+            self._log_line("        que dans une seule application à la fois)", warn)
+            return
+        for i, sn in enumerate(devices):
+            sn_s = sn.decode(errors="ignore") if isinstance(sn, bytes) else str(sn)
+            self._log_line(f"  ★ FTDI  index {i}  —  série « {sn_s} »", ok)
+
+        # ── 5/6 : ouverture + envoi de frames ────────────────────────────────
+        self._log_line("")
+        self._log_line("[ 5-6 ] Ouverture D2XX + envoi de 10 frames (CH1-4 = 255)", cyan)
+
+        paused_live = False
+        dev = None
+        opened_here = False
+
+        # Si MyStrow tient déjà la puce en D2XX (connexion live active), on NE
+        # PEUT PAS rouvrir un 2e handle (DEVICE_NOT_OPENED) : on suspend le thread
+        # live et on réutilise SON handle. Décision basée sur connected (le handle
+        # peut être transitoirement nul pendant une reconnexion).
+        live_active = (getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC_D2XX
+                       and getattr(self._dmx, 'connected', False))
+        if live_active:
+            self._dmx._d2xx_pause = True
+            paused_live = True
+            _wait = _time.monotonic() + 0.6
+            while (_time.monotonic() < _wait
+                   and not getattr(self._dmx, '_d2xx_paused', False)):
+                QApplication.processEvents()
+                _time.sleep(0.01)
+            dev = getattr(self._dmx, '_d2xx', None)   # relire après la pause
+            if dev is not None:
+                self._log_line("  ⚠  Puce déjà ouverte par MyStrow — réutilisation (D2XX)", warn)
+            else:
+                self._log_line("  –  Connexion live active mais handle indisponible", warn)
+                self._log_line("      → La sortie live MyStrow gère l'envoi (voir étape 7)", dim)
+                self._dmx._d2xx_pause = False
+                return
+        else:
+            try:
+                index = self._dmx._resolve_d2xx_index()
+                dev = ftd2xx.open(index)
+                dev.setBaudRate(250000)
+                dev.setDataCharacteristics(_ftd.BITS_8, _ftd.STOP_BITS_2, _ftd.PARITY_NONE)
+                dev.setFlowControl(_ftd.FLOW_NONE, 0, 0)
+                dev.setLatencyTimer(1)
+                dev.setTimeouts(100, 100)
+                dev.purge(_ftd.PURGE_TX | _ftd.PURGE_RX)
+                opened_here = True
+                self._log_line("  ✓  Puce FTDI ouverte (250 kbaud, latency 1 ms)", ok)
+            except Exception as e:
+                self._log_line(f"  ✗  Ouverture D2XX impossible : {e}", err)
+                self._log_line("      → Fermez QLC+/autre logiciel DMX puis réessayez", warn)
+                return
+
+        frame = b'\x00' + bytes([255, 255, 255, 255] + [0] * 508)
+        ok_count = 0
+        last_err = ""
+        for _ in range(10):
+            try:
+                dev.setBreakOn()
+                _time.sleep(0.0001)
+                dev.setBreakOff()
+                _time.sleep(0.000012)
+                dev.write(frame)
+                ok_count += 1
+            except Exception as e:
+                last_err = str(e)
+            _time.sleep(0.025)
+
+        if ok_count == 10:
+            self._log_line(f"  ✓  10/10 frames envoyées — DMX D2XX opérationnel", ok)
+            self._log_line("      Si les projecteurs ne répondent pas → vérifiez le patch", warn)
+        elif ok_count > 0:
+            self._log_line(f"  ⚠  {ok_count}/10 frames OK — connexion instable", warn)
+            if last_err:
+                self._log_line(f"      Dernière erreur : {last_err[:60]}", err)
+        else:
+            self._log_line(f"  ✗  0/10 frames — envoi impossible", err)
+            if last_err:
+                self._log_line(f"      Erreur : {last_err[:70]}", err)
+
+        if opened_here:
+            try: dev.setBreakOff()
+            except Exception: pass
+            try: dev.close()
+            except Exception: pass
+        if paused_live:
+            self._dmx._d2xx_pause = False
 
     def closeEvent(self, event):
         # Garde-fou : ne jamais laisser le thread ENTTEC en pause si le
@@ -894,6 +1212,10 @@ class DmxSetupDialog(QDialog):
         # figée). On relâche toujours la pause à la fermeture.
         try:
             self._dmx._enttec_pause = False
+        except Exception:
+            pass
+        try:
+            self._dmx._d2xx_pause = False
         except Exception:
             pass
         super().closeEvent(event)
@@ -913,20 +1235,26 @@ class DmxSetupDialog(QDialog):
         self._set_connect("Connexion en cours…")
         QApplication.processEvents()
 
-        kwargs = dict(
-            transport=prod["transport"],
-            product_id=prod["id"],
-            product_name=prod["name"],
-        )
-
         port = self.port_combo.currentData()
         if not port:
             self._set_connect("Sélectionnez un port COM valide", error=True)
             return
-        kwargs["com_port"] = port
+
+        # Boîtier FTDI → on pilote via D2XX (fiable, comme QLC+) plutôt que par
+        # le port COM/VCP dont le Latency Timer casse le timing du break DMX.
+        transport, ftdi_serial = resolve_usb_transport(port)
+
+        kwargs = dict(
+            transport=transport,
+            product_id=prod["id"],
+            product_name=prod["name"],
+            com_port=port,
+            ftdi_serial=ftdi_serial,
+        )
 
         if self._dmx.connect(**kwargs):
-            self._set_connect(f"✓  {prod['name']} connecté", ok=True)
+            mode = "D2XX" if transport == TRANSPORT_ENTTEC_D2XX else "série"
+            self._set_connect(f"✓  {prod['name']} connecté ({mode})", ok=True)
         else:
             self._set_connect("✗  Échec de la connexion", error=True)
 

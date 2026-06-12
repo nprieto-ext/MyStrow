@@ -35,12 +35,34 @@ from i18n import get_language, set_language, tr
 # === SSL ===
 def _make_ssl_context():
     """Contexte SSL compatible Mac/Windows/PyInstaller.
-    Priorité : certifi (bundlé) → contexte système → non vérifié (dernier recours)."""
+
+    On fait confiance à l'UNION des racines :
+      1. magasin système — sur Windows il inclut les racines injectées par les
+         antivirus avec scan HTTPS (Avast, Kaspersky, ESET…) et les proxys
+         d'entreprise. Sans elles, leur MITM TLS casse la vérification et la
+         mise à jour échoue avec une erreur SSL (alors que navigateur/QLC+
+         passent, eux, par le magasin système).
+      2. bundle certifi — indispensable sur macOS où Python n'embarque pas de
+         racines système, et complément utile sur Windows.
+    La vérification reste ACTIVE (pas de downgrade de sécurité)."""
+    ctx = None
+    # 1. Racines système (Windows : magasin ROOT/CA, donc Avast & co.)
+    try:
+        ctx = ssl.create_default_context()
+    except Exception:
+        ctx = None
+    # 2. Ajouter le bundle certifi au même contexte (union des racines)
     try:
         import certifi
-        return ssl.create_default_context(cafile=certifi.where())
+        if ctx is not None:
+            ctx.load_verify_locations(cafile=certifi.where())
+        else:
+            ctx = ssl.create_default_context(cafile=certifi.where())
     except Exception:
         pass
+    if ctx is not None:
+        return ctx
+    # 3. Dernier recours : non vérifié (réseau totalement non standard)
     try:
         return ssl.create_default_context()
     except Exception:

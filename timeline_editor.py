@@ -1858,7 +1858,15 @@ class LightTimelineEditor(QDialog):
                                     self.main_window._update_color_wheel(p, base)
 
         # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
+        # La preview pilote l'effet elle-même, frame par frame, au rythme du
+        # playhead (update_effect ci-dessous). Or start_effect a lancé en plus
+        # le timer autonome de l'effet : on le neutralise, sinon les deux
+        # drivers déphasés écrivent les projecteurs en parallèle et la sortie
+        # DMX strobe (le compteur d'effet avance ~2× de façon irrégulière).
         if getattr(self.main_window, 'active_effect', None) and hasattr(self.main_window, 'update_effect'):
+            _eff_timer = getattr(self.main_window, 'effect_timer', None)
+            if _eff_timer is not None and _eff_timer.isActive():
+                _eff_timer.stop()
             self.main_window.update_effect()
 
         if hasattr(self.main_window, 'send_dmx_update'):

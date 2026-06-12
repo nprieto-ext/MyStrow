@@ -49,6 +49,15 @@ for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'werkzeu
         datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
     except Exception:
         pass
+# ftd2xx : wrapper Python du driver FTDI D2XX (ENTTEC Open DMX USB en direct,
+# comme QLC+). La DLL ftd2xx elle-même provient du driver FTDI installé sur le
+# poste (chargée par ctypes au runtime) — on n'embarque que le module Python.
+if sys.platform == 'win32':
+    try:
+        _r = collect_all('ftd2xx')
+        datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------
 # BACKEND VIDÉO FFmpeg (décodage matériel) — CRUCIAL pour les longues

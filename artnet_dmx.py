@@ -18,6 +18,14 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
+try:
+    import ftd2xx
+    import ftd2xx.defines as _ftd
+    FTD2XX_AVAILABLE = True
+except Exception:
+    # ImportError (package absent) ou OSError (DLL FTDI absente sur la machine)
+    FTD2XX_AVAILABLE = False
+
 # Profils DMX pre-definis : nom -> liste ordonnee de types de canaux
 DMX_PROFILES = {
     "DIM":         ["Dim"],
@@ -103,9 +111,10 @@ def profile_name(profile):
 # ------------------------------------------------------------------
 # Constantes de transport
 # ------------------------------------------------------------------
-TRANSPORT_ENTTEC     = "enttec"      # ENTTEC Open DMX USB (serie, break + data brut)
-TRANSPORT_ENTTEC_PRO = "enttec_pro"  # ENTTEC DMX USB Pro (paquet 7E/E7, Sushi Z1, etc.)
-TRANSPORT_ARTNET     = "artnet"      # Boitier reseau Art-Net (ElectroConcept...)
+TRANSPORT_ENTTEC      = "enttec"       # ENTTEC Open DMX USB (serie VCP, break + data brut)
+TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"  # ENTTEC Open DMX USB via driver FTDI D2XX (comme QLC+)
+TRANSPORT_ENTTEC_PRO  = "enttec_pro"   # ENTTEC DMX USB Pro (paquet 7E/E7, Sushi Z1, etc.)
+TRANSPORT_ARTNET      = "artnet"       # Boitier reseau Art-Net (ElectroConcept...)
 
 
 class ArtNetDMX:
@@ -140,6 +149,18 @@ class ArtNetDMX:
         # atteint sa branche pause (et donc lâché le port). Un writer
         # concurrent (Test 100%) doit attendre cet ack avant d'écrire.
         self._enttec_paused = False
+
+        # --- ENTTEC Open DMX USB via D2XX (driver FTDI direct, comme QLC+) ---
+        # Le boitier passif (FT232R) est piloté de façon fiable par le driver
+        # D2XX plutôt que par le port COM/VCP (dont le Latency Timer corrompt
+        # le timing du break DMX). On identifie la puce par son numéro de série
+        # FTDI (ex: "BG04EMMJ") plutôt que par un port COM.
+        self.ftdi_serial = None
+        self._d2xx = None
+        self._d2xx_stop = False
+        self._d2xx_thread = None
+        self._d2xx_pause = False
+        self._d2xx_paused = False
 
         # --- ENTTEC DMX USB Pro ---
         self._pro_serial = None
@@ -180,6 +201,7 @@ class ArtNetDMX:
                 self.product_id   = cfg.get("product_id", "artnet")
                 self.product_name = cfg.get("product_name", "Art-Net (réseau)")
                 self.com_port     = cfg.get("com_port")
+                self.ftdi_serial  = cfg.get("ftdi_serial")
                 _stored_ip = cfg.get("target_ip", "2.0.0.15")
                 # Corriger une éventuelle IP non-Art-Net stockée par erreur
                 self.target_ip = _stored_ip if _stored_ip.startswith("2.") else "2.0.0.15"
@@ -198,6 +220,7 @@ class ArtNetDMX:
                     "product_id":    self.product_id,
                     "product_name":  self.product_name,
                     "com_port":      self.com_port,
+                    "ftdi_serial":   self.ftdi_serial,
                     "target_ip":     self.target_ip,
                     "target_port":   self.target_port,
                     "universe":      self.universe,
@@ -213,7 +236,8 @@ class ArtNetDMX:
 
     def connect(self, com_port=None, target_ip=None, target_port=None,
                 universe=None, universe2=None, mirror_output=None,
-                transport=None, product_id=None, product_name=None):
+                transport=None, product_id=None, product_name=None,
+                ftdi_serial=None):
         """Ouvre la connexion DMX selon le transport configure.
         Les parametres optionnels ecrasent la config et la sauvegardent."""
         if transport is not None:
@@ -224,6 +248,8 @@ class ArtNetDMX:
             self.product_name = product_name
         if com_port is not None:
             self.com_port = com_port
+        if ftdi_serial is not None:
+            self.ftdi_serial = ftdi_serial
         if target_ip is not None:
             self.target_ip = target_ip
         if target_port is not None:
@@ -239,6 +265,8 @@ class ArtNetDMX:
 
         if self.transport == TRANSPORT_ENTTEC:
             return self._connect_enttec()
+        elif self.transport == TRANSPORT_ENTTEC_D2XX:
+            return self._connect_enttec_d2xx()
         elif self.transport == TRANSPORT_ENTTEC_PRO:
             return self._connect_enttec_pro()
         else:
@@ -250,6 +278,7 @@ class ArtNetDMX:
         if self._serial and self._serial.is_open:
             self._serial.close()
         self._serial = None
+        self._stop_d2xx_thread()
         self._pro_stop = True
         if self._pro_serial and self._pro_serial.is_open:
             self._pro_serial.close()
@@ -410,6 +439,168 @@ class ArtNetDMX:
                 time.sleep(remaining)
 
     def _send_enttec(self):
+        """Maintenu pour compatibilité — le thread dédié gère l'envoi réel."""
+        return True
+
+    # ------------------------------------------------------------------
+    # Transport ENTTEC Open DMX USB via D2XX (driver FTDI direct)
+    # ------------------------------------------------------------------
+    # Le boitier ENTTEC Open DMX USB est un adaptateur PASSIF : la puce FTDI
+    # FT232R bit-bang directement le DMX, tout le timing repose sur le PC.
+    # Via le port COM/VCP, le Latency Timer du driver (16 ms par defaut)
+    # regroupe les ecritures et casse le timing du break -> les projecteurs
+    # ignorent toutes les trames sans aucune erreur visible.
+    # Le driver D2XX (utilise par QLC+) parle directement a la puce, regle le
+    # Latency Timer a 1 ms et genere un break propre via FT_SetBreakOn/Off.
+    # C'est la methode fiable pour ce materiel.
+
+    def _resolve_d2xx_index(self):
+        """Trouve l'index D2XX du boitier a ouvrir.
+        Match sur self.ftdi_serial (numero de serie FTDI, ex "BG04EMMJ").
+        pyserial rapporte parfois ce SN avec un suffixe d'interface (ex "...A"),
+        donc on tolere un match par prefixe. Fallback : premier device (0)."""
+        try:
+            devices = ftd2xx.listDevices() or []
+        except Exception:
+            devices = []
+        target = (self.ftdi_serial or "").strip()
+        if target and devices:
+            for i, sn in enumerate(devices):
+                sn_s = sn.decode(errors="ignore") if isinstance(sn, bytes) else str(sn)
+                sn_s = sn_s.strip()
+                if not sn_s:
+                    continue
+                # Egalite stricte, ou l'un prefixe de l'autre (suffixe d'interface FTDI)
+                if sn_s == target or target.startswith(sn_s) or sn_s.startswith(target):
+                    return i
+        return 0
+
+    def _stop_d2xx_thread(self):
+        """Arrête proprement le thread D2XX et libère la puce FTDI.
+        CRUCIAL : sans ça, un nouveau connect() démarrerait un 2e thread sur le
+        même handle FTDI (anti-pattern « deux writers ») → DEVICE_NOT_OPENED."""
+        self._d2xx_stop = True
+        t = self._d2xx_thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=1.5)
+        self._d2xx_thread = None
+        if self._d2xx is not None:
+            try:
+                self._d2xx.setBreakOff()
+            except Exception:
+                pass
+            try:
+                self._d2xx.close()
+            except Exception:
+                pass
+        self._d2xx = None
+        self._d2xx_pause = False
+        self._d2xx_paused = False
+
+    def _connect_enttec_d2xx(self):
+        if not FTD2XX_AVAILABLE:
+            print("ftd2xx non disponible — pip install ftd2xx (et driver FTDI installé)")
+            self.connected = False
+            return False
+        # Toujours arrêter un éventuel thread D2XX précédent AVANT de rouvrir,
+        # sinon deux threads se battent pour le même handle FTDI.
+        self._stop_d2xx_thread()
+        try:
+
+            index = self._resolve_d2xx_index()
+            dev = ftd2xx.open(index)
+            # Configuration DMX512 : 250 kbaud, 8 bits, 2 stop, sans parité
+            dev.setBaudRate(250000)
+            dev.setDataCharacteristics(_ftd.BITS_8, _ftd.STOP_BITS_2, _ftd.PARITY_NONE)
+            dev.setFlowControl(_ftd.FLOW_NONE, 0, 0)
+            dev.setLatencyTimer(1)      # 1 ms — le réglage clé que le VCP ne fait pas
+            dev.setTimeouts(100, 100)
+            dev.purge(_ftd.PURGE_TX | _ftd.PURGE_RX)
+            self._d2xx = dev
+            self.connected = True
+            try:
+                sn = dev.getDeviceInfo().get("serial", b"")
+                sn = sn.decode(errors="ignore") if isinstance(sn, bytes) else str(sn)
+            except Exception:
+                sn = "?"
+            print(f"ENTTEC Open DMX USB (D2XX) connecté — FTDI {sn}")
+            self._start_d2xx_thread()
+            return True
+        except Exception as e:
+            err = str(e)
+            if "DEVICE_NOT_OPENED" in err or "BUSY" in err.upper() or "ACCESS" in err.upper():
+                print(f"ENTTEC D2XX : puce FTDI déjà utilisée (fermez QLC+/autre logiciel DMX)")
+            else:
+                print(f"Erreur connexion ENTTEC D2XX : {e}")
+            self._d2xx = None
+            self.connected = False
+            return False
+
+    def _start_d2xx_thread(self):
+        import threading
+        self._d2xx_stop = False
+        t = threading.Thread(target=self._d2xx_loop, daemon=True, name="EnttecD2XX")
+        t.start()
+        self._d2xx_thread = t
+
+    def _d2xx_loop(self):
+        """Thread dédié D2XX : break + frame à ~40 fps directement sur la puce FTDI."""
+        while not self._d2xx_stop:
+            t0 = time.monotonic()
+            dev = self._d2xx
+            # Pause coopérative (Test 100% / diagnostic) : on garde la puce
+            # ouverte mais on n'écrit plus, et on acquitte via _d2xx_paused.
+            if self._d2xx_pause:
+                self._d2xx_paused = True
+                time.sleep(0.02)
+                continue
+            self._d2xx_paused = False
+            if dev is not None:
+                try:
+                    with self._dmx_lock:
+                        frame = b'\x00' + bytes(self.dmx_data[0][:512])
+                    # BREAK ≥ 88 µs puis MAB ≥ 8 µs, générés sur la puce
+                    dev.setBreakOn()
+                    time.sleep(0.0001)
+                    dev.setBreakOff()
+                    time.sleep(0.000012)
+                    dev.write(frame)
+                    self.connected = True
+                except Exception as e:
+                    print(f"ENTTEC D2XX thread: {e}")
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                    self._d2xx = None
+                    self.connected = False
+            elif not self._d2xx_stop:
+                # Reconnexion automatique (boitier rebranché)
+                try:
+                    index = self._resolve_d2xx_index()
+                    dev = ftd2xx.open(index)
+                    dev.setBaudRate(250000)
+                    dev.setDataCharacteristics(_ftd.BITS_8, _ftd.STOP_BITS_2, _ftd.PARITY_NONE)
+                    dev.setFlowControl(_ftd.FLOW_NONE, 0, 0)
+                    dev.setLatencyTimer(1)
+                    dev.setTimeouts(100, 100)
+                    dev.purge(_ftd.PURGE_TX | _ftd.PURGE_RX)
+                    self._d2xx = dev
+                    self.connected = True
+                    print("ENTTEC D2XX : reconnexion")
+                except Exception:
+                    time.sleep(1.0)
+                    continue
+            else:
+                time.sleep(0.025)
+                continue
+
+            elapsed = time.monotonic() - t0
+            remaining = 0.025 - elapsed   # ~40 fps
+            if remaining > 0.001:
+                time.sleep(remaining)
+
+    def _send_enttec_d2xx(self):
         """Maintenu pour compatibilité — le thread dédié gère l'envoi réel."""
         return True
 
@@ -590,6 +781,8 @@ class ArtNetDMX:
             return False
         if self.transport == TRANSPORT_ENTTEC:
             return self._send_enttec()
+        elif self.transport == TRANSPORT_ENTTEC_D2XX:
+            return self._send_enttec_d2xx()
         elif self.transport == TRANSPORT_ENTTEC_PRO:
             return self._send_enttec_pro()
         else:
@@ -767,13 +960,14 @@ class ArtNetDMX:
                         ch_val = min(255, int(r * 0.30 + g * 0.59 + b * 0.11)
                                      + getattr(proj, 'white_boost', 0))
                 elif ch_type == "Ambre":
-                    # Ambre = composante chaude : rouge dominant, vert partiel, pas de bleu
-                    ch_val = min(255, int(max(0, r * 0.75 + g * 0.25 - b * 0.5))
-                                 + getattr(proj, 'amber_boost', 0))
+                    # Ambre piloté UNIQUEMENT par le curseur avancé (amber_boost)
+                    # ou le contrôle brut (_ch_extras, géré plus haut). Pas de
+                    # dérivation auto depuis le RGB : sinon un rouge pur allumait
+                    # aussi la LED ambre (r*0.75) → sortie orange au lieu de rouge.
+                    ch_val = min(255, getattr(proj, 'amber_boost', 0))
                 elif ch_type == "Orange":
-                    # Orange = entre rouge et ambre : rouge fort, vert modéré, peu de bleu
-                    ch_val = min(255, int(max(0, r * 0.80 + g * 0.35 - b * 0.4))
-                                 + getattr(proj, 'orange_boost', 0))
+                    # Orange : idem, piloté uniquement par orange_boost.
+                    ch_val = min(255, getattr(proj, 'orange_boost', 0))
                 elif ch_type == "UV":
                     ch_val = getattr(proj, 'uv', 0)
                 elif ch_type == "Zoom":

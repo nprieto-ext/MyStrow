@@ -4,6 +4,7 @@ python-rtmidi
 miniaudio
 mutagen
 pyserial
+ftd2xx; sys_platform == "win32"
 flask
 qrcode
 waitress
