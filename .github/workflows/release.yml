@@ -85,6 +85,10 @@ jobs:
 
       - name: Sign MyStrow.exe (SSL.com eSigner)
         if: steps.check-win-sign.outputs.has_sign == 'true'
+        # Non bloquant : un échec d'authentification/signature SSL.com ne doit
+        # PAS faire échouer tout le build (sinon aucun installeur n'est produit
+        # ni publié). En cas d'échec, l'exe part non signé.
+        continue-on-error: true
         uses: sslcom/esigner-codesign@develop
         with:
           command: sign
@@ -113,6 +117,7 @@ jobs:
 
       - name: Sign MyStrow_Setup.exe (SSL.com eSigner)
         if: steps.check-win-sign.outputs.has_sign == 'true'
+        continue-on-error: true
         uses: sslcom/esigner-codesign@develop
         with:
           command: sign
