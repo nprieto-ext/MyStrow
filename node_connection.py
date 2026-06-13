@@ -1245,11 +1245,15 @@ class NodeSetupWizard(QDialog):
 from PySide6.QtCore import Signal as _Signal
 
 try:
-    from artnet_dmx import TRANSPORT_ARTNET, TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO
+    from artnet_dmx import (
+        TRANSPORT_ARTNET, TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO,
+        TRANSPORT_ENTTEC_D2XX,
+    )
 except ImportError:
     TRANSPORT_ARTNET    = "artnet"
     TRANSPORT_ENTTEC    = "enttec"
     TRANSPORT_ENTTEC_PRO = "enttec_pro"
+    TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"
 
 _SS_DIALOG = """
     QDialog  { background: #131313; }
@@ -1535,8 +1539,8 @@ class DmxOutputDialog(QDialog):
         proto_row.addWidget(proto_lbl)
         proto_row.addStretch()
         self._proto_combo = QComboBox()
-        self._proto_combo.addItem("ENTTEC Open DMX USB  (break série)",  TRANSPORT_ENTTEC)
-        self._proto_combo.addItem("ENTTEC DMX USB Pro  (Sushi Z1, DMXKing…)", TRANSPORT_ENTTEC_PRO)
+        self._proto_combo.addItem("ENTTEC Open DMX USB  (D2XX auto)",  TRANSPORT_ENTTEC)
+        self._proto_combo.addItem("ENTTEC DMX USB Pro  (DMXKing…)", TRANSPORT_ENTTEC_PRO)
         cur_transport = self._dmx.transport if self._dmx else TRANSPORT_ENTTEC
         self._proto_combo.setCurrentIndex(1 if cur_transport == TRANSPORT_ENTTEC_PRO else 0)
         self._proto_combo.setFixedWidth(310)
@@ -1624,9 +1628,9 @@ class DmxOutputDialog(QDialog):
             return
         proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
         if proto == TRANSPORT_ENTTEC_PRO:
-            self._proto_info.setText("Paquet 0x7E/0xE7 — compatible Sushi Z1, DMXKing eDMX1, Eurolite USB-DMX512 PRO…")
+            self._proto_info.setText("Paquet 0x7E/0xE7 — compatible DMXKing eDMX1, Eurolite USB-DMX512 PRO…")
         else:
-            self._proto_info.setText("Break série 250 000 bauds — ENTTEC Open USB DMX (original ou clone FTDI)")
+            self._proto_info.setText("250 000 bauds — ENTTEC Open USB DMX : pilote FTDI D2XX si dispo (comme QLC+), sinon break série")
 
     def _set_transport(self, transport, save=True):
         self._transport = transport
@@ -1704,13 +1708,32 @@ class DmxOutputDialog(QDialog):
             proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
             is_pro = (proto == TRANSPORT_ENTTEC_PRO)
 
-            # Si le port est déjà ouvert sur ce COM avec le même protocole, ne pas reconnecter
-            _ser = getattr(self._dmx, '_pro_serial' if is_pro else '_serial', None)
-            already_open = (
-                _ser and _ser.is_open
-                and getattr(self._dmx, 'com_port', None) == com
-                and getattr(self._dmx, 'transport', None) == proto
-            )
+            # Open DMX USB & assimilés (FTDI passif) : préférer le D2XX, fiable et
+            # propre comme QLC+. Le port COM/VCP corrompt le timing du break DMX
+            # (Latency Timer FTDI) → clignotements / lyres qui bougent seules.
+            # resolve_usb_transport retombe sur la série si le D2XX est indispo.
+            ftdi_serial = None
+            if not is_pro:
+                try:
+                    from enttec_setup import resolve_usb_transport
+                    proto, ftdi_serial = resolve_usb_transport(com)
+                except Exception:
+                    proto = TRANSPORT_ENTTEC
+
+            # Si le boîtier est déjà ouvert avec le même transport, ne pas reconnecter.
+            if proto == TRANSPORT_ENTTEC_D2XX:
+                already_open = (
+                    getattr(self._dmx, '_d2xx', None) is not None
+                    and getattr(self._dmx, 'connected', False)
+                    and getattr(self._dmx, 'transport', None) == proto
+                )
+            else:
+                _ser = getattr(self._dmx, '_pro_serial' if is_pro else '_serial', None)
+                already_open = (
+                    _ser and _ser.is_open
+                    and getattr(self._dmx, 'com_port', None) == com
+                    and getattr(self._dmx, 'transport', None) == proto
+                )
             if already_open:
                 self._dmx.transport    = proto
                 self._dmx.com_port     = com
@@ -1721,6 +1744,7 @@ class DmxOutputDialog(QDialog):
                 ok = self._dmx.connect(
                     transport=proto,
                     com_port=com,
+                    ftdi_serial=ftdi_serial,
                     product_id="enttec_pro" if is_pro else "enttec",
                     product_name="ENTTEC DMX USB Pro" if is_pro else "ENTTEC Open DMX USB",
                 )
@@ -1730,7 +1754,12 @@ class DmxOutputDialog(QDialog):
                         f"Port {com} inaccessible — fermez Chataigne ou toute autre app DMX"
                     )
                     return
-            proto_label = "Pro" if is_pro else "Open"
+            if is_pro:
+                proto_label = "Pro"
+            elif proto == TRANSPORT_ENTTEC_D2XX:
+                proto_label = "Open (D2XX)"
+            else:
+                proto_label = "Open (série)"
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(f"Sortie USB {proto_label} appliquée — {com}")
 

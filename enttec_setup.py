@@ -823,6 +823,27 @@ class DmxSetupDialog(QDialog):
         except Exception:
             pass
 
+        # ── Mode de pilotage retenu : D2XX vs série VCP ──────────────────────
+        # LE point critique sur Open DMX USB. Le D2XX (comme QLC+) génère un
+        # break DMX propre ; la série VCP corrompt son timing (Latency Timer
+        # FTDI) → clignotements et lyres qui bougent seules. Si FTD2XX_AVAILABLE
+        # est faux, MyStrow retombe SILENCIEUSEMENT sur la série VCP : on le
+        # rend visible ici pour ne plus chercher à l'aveugle.
+        resolved = resolve_usb_transport(port)[0]
+        self._log_line("")
+        if FTD2XX_AVAILABLE:
+            self._log_line("      ✓  Pilote D2XX disponible (FTDI direct, comme QLC+)", ok)
+        else:
+            self._log_line("      ⚠  Pilote D2XX INDISPONIBLE → repli sur la série VCP", warn)
+            self._log_line("         La série VCP corrompt le break DMX (clignotements,", dim)
+            self._log_line("         lyres qui bougent seules). Mettez à jour MyStrow", dim)
+            self._log_line("         (la DLL D2XX est désormais embarquée) ou installez", dim)
+            self._log_line("         le pilote FTDI D2XX depuis ftdichip.com.", dim)
+        if resolved == TRANSPORT_ENTTEC_D2XX:
+            self._log_line("      →  Mode retenu pour ce boîtier : D2XX (fiable)", ok)
+        else:
+            self._log_line("      →  Mode retenu pour ce boîtier : série VCP", warn)
+
         # ── Boîtier FTDI piloté en D2XX → diagnostic via le driver direct ────
         # La puce n'est pas accessible par le port COM quand D2XX la détient :
         # on lance un diagnostic D2XX dédié (steps 4-6) puis l'état live.

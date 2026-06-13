@@ -240,6 +240,7 @@ def build_local_installer(version):
         f"--add-data \"plan_3d_web.html;.\" "
         f"--add-data \"AKAIAPCMINI.png;.\" "
         f"--add-data \"Novation.png;.\" "
+        f"--add-binary \"ftd2xx.dll;.\" "
         f"{_custom_bundle_flag}"
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "
@@ -260,6 +261,9 @@ def build_local_installer(version):
         f"--collect-all cryptography "
         f"--collect-all serial "
         f"--hidden-import=serial.tools.list_ports "
+        f"--collect-all ftd2xx "
+        f"--hidden-import=ftd2xx "
+        f"--hidden-import=ftd2xx.defines "
         f"--noupx "
         f"--noconfirm main.py\n"
     )

@@ -488,7 +488,7 @@ class MIDIHandler(QObject):
             return
 
         # Device présent — déjà connecté ?
-        # midi_out peut être None si le contrôleur n'a pas de port output (ex: Sushi Z1)
+        # midi_out peut être None si le contrôleur n'a pas de port output
         if self.midi_in:
             try:
                 if self.midi_in.is_port_open():

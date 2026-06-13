@@ -18,6 +18,18 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
+# Permettre à ftd2xx de trouver la DLL D2XX EMBARQUÉE dans le build, même si
+# le driver FTDI n'est PAS installé sur la machine cible. Sans ça, l'import
+# lève OSError sur un poste sans driver → FTD2XX_AVAILABLE=False → repli
+# silencieux sur la série VCP, dont le Latency Timer corrompt le break DMX
+# (clignotements / lyres qui bougent seules). QLC+ marche justement parce
+# qu'il embarque sa propre FTD2XX.dll : on fait pareil.
+# _ftd2xx.py lit FTD2XX_DLL_DIR et l'ajoute au chemin de recherche des DLL.
+if getattr(sys, "frozen", False):
+    _bundle_dir = getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
+    if _bundle_dir and os.path.exists(os.path.join(_bundle_dir, "ftd2xx.dll")):
+        os.environ.setdefault("FTD2XX_DLL_DIR", _bundle_dir)
+
 try:
     import ftd2xx
     import ftd2xx.defines as _ftd
@@ -113,7 +125,7 @@ def profile_name(profile):
 # ------------------------------------------------------------------
 TRANSPORT_ENTTEC      = "enttec"       # ENTTEC Open DMX USB (serie VCP, break + data brut)
 TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"  # ENTTEC Open DMX USB via driver FTDI D2XX (comme QLC+)
-TRANSPORT_ENTTEC_PRO  = "enttec_pro"   # ENTTEC DMX USB Pro (paquet 7E/E7, Sushi Z1, etc.)
+TRANSPORT_ENTTEC_PRO  = "enttec_pro"   # ENTTEC DMX USB Pro (paquet 7E/E7, DMXKing, etc.)
 TRANSPORT_ARTNET      = "artnet"       # Boitier reseau Art-Net (ElectroConcept...)
 
 
@@ -149,6 +161,10 @@ class ArtNetDMX:
         # atteint sa branche pause (et donc lâché le port). Un writer
         # concurrent (Test 100%) doit attendre cet ack avant d'écrire.
         self._enttec_paused = False
+        # Compteur d'erreurs d'écriture CONSÉCUTIVES : on ne ferme/rouvre le
+        # port qu'après plusieurs erreurs d'affilée (un hoquet USB isolé ne
+        # doit pas réinitialiser la ligne FTDI → flash + trou DMX).
+        self._enttec_err_count = 0
 
         # --- ENTTEC Open DMX USB via D2XX (driver FTDI direct, comme QLC+) ---
         # Le boitier passif (FT232R) est piloté de façon fiable par le driver
@@ -161,6 +177,11 @@ class ArtNetDMX:
         self._d2xx_thread = None
         self._d2xx_pause = False
         self._d2xx_paused = False
+        self._d2xx_err_count = 0   # erreurs d'écriture consécutives (cf. _enttec_err_count)
+
+        # Debug sortie DMX : MYSTROW_DMX_DEBUG=1 → log des trous de flux (>150 ms)
+        # et de la cadence réelle (fps) quand elle chute. Off par défaut.
+        self._dmx_debug = bool(os.environ.get("MYSTROW_DMX_DEBUG"))
 
         # --- ENTTEC DMX USB Pro ---
         self._pro_serial = None
@@ -263,6 +284,12 @@ class ArtNetDMX:
 
         self._save_config()
 
+        # Changement de transport à chaud : arrêter proprement les AUTRES
+        # transports avant d'ouvrir le nouveau. Sinon (ex. série → D2XX sur la
+        # même puce FTDI) l'ancien thread continue d'écrire sur la même puce →
+        # conflit « deux writers » → strobe / clignotements.
+        self._stop_other_transports(self.transport)
+
         if self.transport == TRANSPORT_ENTTEC:
             return self._connect_enttec()
         elif self.transport == TRANSPORT_ENTTEC_D2XX:
@@ -271,6 +298,28 @@ class ArtNetDMX:
             return self._connect_enttec_pro()
         else:
             return self._connect_artnet()
+
+    def _stop_other_transports(self, target):
+        """Arrête threads/ports de tous les transports SAUF `target`.
+        Garantit un seul writer DMX actif lors d'un changement de transport."""
+        if target != TRANSPORT_ENTTEC:
+            self._enttec_stop = True   # désactive aussi la reconnexion auto du thread
+            if self._serial and self._serial.is_open:
+                try: self._serial.close()
+                except Exception: pass
+            self._serial = None
+        if target != TRANSPORT_ENTTEC_D2XX:
+            self._stop_d2xx_thread()
+        if target != TRANSPORT_ENTTEC_PRO:
+            self._pro_stop = True
+            if self._pro_serial and self._pro_serial.is_open:
+                try: self._pro_serial.close()
+                except Exception: pass
+            self._pro_serial = None
+        if target != TRANSPORT_ARTNET and self._socket:
+            try: self._socket.close()
+            except Exception: pass
+            self._socket = None
 
     def disconnect(self):
         """Ferme toutes les connexions ouvertes"""
@@ -335,6 +384,30 @@ class ArtNetDMX:
         t.start()
         self._enttec_thread = t
 
+    def _enttec_bump_error(self, ser, e):
+        """Gère une erreur d'écriture série dans _enttec_loop.
+
+        Retourne True si l'erreur est traitée comme un hoquet transitoire (frame
+        sautée, port gardé ouvert → l'appelant doit faire `continue`), False si le
+        port a été fermé après trop d'erreurs CONSÉCUTIVES (l'appelant laisse la
+        boucle poursuivre, la branche de reconnexion prendra le relais).
+
+        But : un hoquet USB isolé ne doit PAS fermer/rouvrir le port (ce qui
+        crée un trou DMX d'~1 s + réinitialise la ligne FTDI → clignotement)."""
+        self._enttec_err_count += 1
+        if self._enttec_err_count < 5:
+            time.sleep(0.005)
+            return True
+        print(f"ENTTEC thread: {self._enttec_err_count} erreurs consécutives — fermeture ({e})")
+        try:
+            ser.close()
+        except Exception:
+            pass
+        self._serial = None
+        self.connected = False
+        self._enttec_err_count = 0
+        return False
+
     def _enttec_loop(self):
         """Thread dédié ENTTEC : envoie les frames à ~25 fps sans bloquer le thread Qt.
 
@@ -391,27 +464,18 @@ class ArtNetDMX:
                         ser.write(frame)
                         ser.flush()
                     self.connected = True
+                    self._enttec_err_count = 0
                 except (AttributeError, OSError) as e:
                     if not _use_baud_trick:
-                        # send_break non supporté → bascule silencieuse
+                        # send_break non supporté → bascule silencieuse (feature-test
+                        # one-shot, pas une erreur transitoire : pas de compteur).
                         print(f"ENTTEC: send_break échoué ({e}), basculement sur baud-rate trick")
                         _use_baud_trick = True
-                    else:
-                        print(f"ENTTEC thread: {e}")
-                        try:
-                            ser.close()
-                        except Exception:
-                            pass
-                        self._serial = None
-                        self.connected = False
+                    elif self._enttec_bump_error(ser, e):
+                        continue
                 except Exception as e:
-                    print(f"ENTTEC thread: {e}")
-                    try:
-                        ser.close()
-                    except Exception:
-                        pass
-                    self._serial = None
-                    self.connected = False
+                    if self._enttec_bump_error(ser, e):
+                        continue
             elif self.com_port and not self._enttec_stop:
                 # Reconnexion automatique
                 try:
@@ -545,6 +609,10 @@ class ArtNetDMX:
 
     def _d2xx_loop(self):
         """Thread dédié D2XX : break + frame à ~40 fps directement sur la puce FTDI."""
+        _dbg = self._dmx_debug
+        _last_ok = time.monotonic()
+        _fps_t0 = _last_ok
+        _fps_n = 0
         while not self._d2xx_stop:
             t0 = time.monotonic()
             dev = self._d2xx
@@ -566,14 +634,48 @@ class ArtNetDMX:
                     time.sleep(0.000012)
                     dev.write(frame)
                     self.connected = True
+                    self._d2xx_err_count = 0
+                    if _dbg:
+                        _now = time.monotonic()
+                        _gap = _now - _last_ok
+                        if _gap > 0.15:
+                            print(f"[DMX] trou {_gap*1000:.0f} ms dans le flux (pause={self._d2xx_pause})")
+                        _last_ok = _now
+                        _fps_n += 1
+                        if _now - _fps_t0 >= 1.0:
+                            _fps = _fps_n / (_now - _fps_t0)
+                            if _fps < 28:
+                                print(f"[DMX] cadence {_fps:.0f} fps (cible ~36)")
+                            _fps_t0 = _now
+                            _fps_n = 0
+                    # CRUCIAL : dev.write() (D2XX) ne bloque PAS — la trame (513
+                    # octets @ 250 kbaud ≈ 22,6 ms) part en arrière-plan. Il faut
+                    # attendre qu'elle soit ENTIÈREMENT transmise avant le break
+                    # suivant, sinon le break tronque la fin de trame → le
+                    # récepteur perd la synchro → strobe intermittent (en série,
+                    # ser.flush() faisait cette attente ; pas dev.write()).
+                    # time.sleep ne rend jamais la main avant le délai demandé,
+                    # donc ~26 ms garantit la transmission complète + marge.
+                    time.sleep(0.026)
+                    continue
                 except Exception as e:
-                    print(f"ENTTEC D2XX thread: {e}")
-                    try:
-                        dev.close()
-                    except Exception:
-                        pass
-                    self._d2xx = None
-                    self.connected = False
+                    # Hoquet USB transitoire : on saute juste cette frame et on
+                    # réessaie au cycle suivant. On ne ferme/rouvre la puce
+                    # (ce qui réinitialise la ligne FTDI → flash visible + trou
+                    # DMX d'~1 s) qu'après plusieurs erreurs CONSÉCUTIVES.
+                    self._d2xx_err_count += 1
+                    if self._d2xx_err_count >= 5:
+                        print(f"ENTTEC D2XX thread: {self._d2xx_err_count} erreurs consécutives — réouverture ({e})")
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
+                        self._d2xx = None
+                        self.connected = False
+                        self._d2xx_err_count = 0
+                    else:
+                        time.sleep(0.005)
+                        continue
             elif not self._d2xx_stop:
                 # Reconnexion automatique (boitier rebranché)
                 try:
@@ -606,7 +708,7 @@ class ArtNetDMX:
 
     # ------------------------------------------------------------------
     # Transport ENTTEC DMX USB Pro  (protocole paquet 0x7E / 0xE7)
-    # Compatible : ENTTEC Pro, Sushi Z1, DMXKing, Eurolite USB-DMX512 PRO…
+    # Compatible : ENTTEC Pro, DMXKing, Eurolite USB-DMX512 PRO…
     # Spec publique : https://www.enttec.com/products/controls/dmx-usb/
     # ------------------------------------------------------------------
 

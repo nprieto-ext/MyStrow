@@ -61,8 +61,41 @@ jobs:
           Remove-Item _fetch_fixtures.py
 
       - name: Build EXE
-        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py --name MyStrow
+        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-binary "ftd2xx.dll;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow
 
+      # ─────────────────────────────────────────────
+      # SIGNATURE DE CODE WINDOWS — SSL.com eSigner (cloud, CSC)
+      # Non bloquant : si les secrets ES_* sont absents, on saute la signature.
+      # IMPORTANT : signer l'EXE AVANT de générer le .sig (sinon le hash
+      # d'intégrité interne ne correspond plus au binaire signé) et AVANT
+      # Inno Setup (pour que l'installeur embarque l'exe signé).
+      # ─────────────────────────────────────────────
+      - name: Check Windows signing secrets
+        id: check-win-sign
+        shell: bash
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+        run: |
+          if [ -n "$ES_USERNAME" ]; then
+            echo "has_sign=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_sign=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secrets ES_* absents — MyStrow.exe NON signé (Windows)."
+          fi
+
+      - name: Sign MyStrow.exe (SSL.com eSigner)
+        if: steps.check-win-sign.outputs.has_sign == 'true'
+        uses: sslcom/esigner-codesign@develop
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/dist/MyStrow/MyStrow.exe
+          override: true
+          malware_block: false
+          environment_name: PROD
 
       - name: Generate SHA256 and .sig
         shell: pwsh
@@ -77,6 +110,20 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\maestro.iss
         shell: pwsh
+
+      - name: Sign MyStrow_Setup.exe (SSL.com eSigner)
+        if: steps.check-win-sign.outputs.has_sign == 'true'
+        uses: sslcom/esigner-codesign@develop
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/installer/installer_output/MyStrow_Setup.exe
+          override: true
+          malware_block: false
+          environment_name: PROD
 
 
       - name: Collect artifacts (dossier plat)
