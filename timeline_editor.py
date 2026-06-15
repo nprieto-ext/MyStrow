@@ -2867,6 +2867,23 @@ class LightTimelineEditor(QDialog):
                     'effect_name':         getattr(clip, 'effect_name', ''),
                     'effect_type':         getattr(clip, 'effect_type', ''),
                     'effect_target_groups': getattr(clip, 'effect_target_groups', []),
+                    # Pan/Tilt + mouvement (lyres)
+                    'pan_start':  getattr(clip, 'pan_start', 128),
+                    'tilt_start': getattr(clip, 'tilt_start', 128),
+                    'pan_end':    getattr(clip, 'pan_end', 128),
+                    'tilt_end':   getattr(clip, 'tilt_end', 128),
+                    'move_effect':    getattr(clip, 'move_effect', None),
+                    'move_speed':     getattr(clip, 'move_speed', 0.5),
+                    'move_amplitude': getattr(clip, 'move_amplitude', 60),
+                    # Stroboscope
+                    'strobe_speed': getattr(clip, 'strobe_speed', 0),
+                    # Mémoire AKAI (cue) — sinon l'undo la transforme en couleur neutre
+                    'memory_ref':   list(clip.memory_ref) if getattr(clip, 'memory_ref', None) else None,
+                    'memory_label': getattr(clip, 'memory_label', ''),
+                    'cue_index':    getattr(clip, 'cue_index', None),
+                    # Position lyre
+                    'position_preset_idx':  getattr(clip, 'position_preset_idx', None),
+                    'position_preset_name': getattr(clip, 'position_preset_name', ''),
                 }
                 state.append(clip_data)
 
@@ -2909,6 +2926,26 @@ class LightTimelineEditor(QDialog):
                 clip.effect_duration  = clip_data.get('effect_duration', 0)
                 clip.effect_name      = clip_data.get('effect_name', '')
                 clip.effect_type      = clip_data.get('effect_type', '')
+                clip.effect_target_groups = clip_data.get('effect_target_groups', [])
+                # Pan/Tilt + mouvement (lyres)
+                clip.pan_start  = clip_data.get('pan_start', 128)
+                clip.tilt_start = clip_data.get('tilt_start', 128)
+                clip.pan_end    = clip_data.get('pan_end', 128)
+                clip.tilt_end   = clip_data.get('tilt_end', 128)
+                clip.move_effect    = clip_data.get('move_effect', None)
+                clip.move_speed     = clip_data.get('move_speed', 0.5)
+                clip.move_amplitude = clip_data.get('move_amplitude', 60)
+                # Stroboscope
+                clip.strobe_speed = clip_data.get('strobe_speed', 0)
+                # Mémoire AKAI (cue) — restaure l'identité du clip mémoire
+                if clip_data.get('memory_ref'):
+                    clip.memory_ref   = tuple(clip_data['memory_ref'])
+                    clip.memory_label = clip_data.get('memory_label', '')
+                    clip.cue_index    = clip_data.get('cue_index', None)
+                # Position lyre
+                if clip_data.get('position_preset_idx') is not None:
+                    clip.position_preset_idx  = clip_data['position_preset_idx']
+                    clip.position_preset_name = clip_data.get('position_preset_name', '')
 
         for track in self.tracks:
             track.update()
