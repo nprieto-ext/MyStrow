@@ -20,7 +20,8 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
-from artnet_dmx import TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_D2XX, FTD2XX_AVAILABLE
+from artnet_dmx import (TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_D2XX,
+                        TRANSPORT_ENTTEC_PRO, FTD2XX_AVAILABLE)
 
 try:
     import ftd2xx
@@ -77,32 +78,39 @@ def resolve_usb_transport(port_device):
 
 PRODUCTS = [
     {
+        "id":        "eurolite_usb",
+        "name":      "Eurolite USB-DMX512 PRO (MK2)",
+        "transport": TRANSPORT_ENTTEC_PRO,
+        "info":      "Interface USB-DMX — la LED passe au vert quand la sortie est active.",
+        "step1":     "Branchez l'interface sur un port USB.",
+    },
+    {
+        "id":        "enttec_pro",
+        "name":      "ENTTEC DMX USB Pro",
+        "transport": TRANSPORT_ENTTEC_PRO,
+        "info":      "Interface USB-DMX professionnelle.",
+        "step1":     "Branchez l'interface sur un port USB.",
+    },
+    {
         "id":        "enttec_open",
         "name":      "ENTTEC Open DMX USB",
         "transport": TRANSPORT_ENTTEC,
-        "info":      "Adaptateur passif — puce FTDI FT232R",
-        "step1":     "Branchez le boîtier ENTTEC sur un port USB de votre ordinateur.",
+        "info":      "Adaptateur USB-DMX simple.",
+        "step1":     "Branchez le boîtier sur un port USB.",
     },
     {
         "id":        "dmxking_micro",
         "name":      "DMXKing UltraDMX Micro",
         "transport": TRANSPORT_ENTTEC,
-        "info":      "Compact, compatible FTDI",
-        "step1":     "Branchez le boîtier DMXKing sur un port USB.",
-    },
-    {
-        "id":        "eurolite_usb",
-        "name":      "Eurolite USB-DMX512 PRO",
-        "transport": TRANSPORT_ENTTEC,
-        "info":      "Interface USB-DMX512",
-        "step1":     "Branchez l'interface Eurolite sur un port USB.",
+        "info":      "Adaptateur USB-DMX compact.",
+        "step1":     "Branchez le boîtier sur un port USB.",
     },
     {
         "id":        "generic_usb",
-        "name":      "Interface USB-DMX générique",
+        "name":      "Autre interface USB-DMX",
         "transport": TRANSPORT_ENTTEC,
-        "info":      "Tout adaptateur USB-série DMX (FTDI ou clone)",
-        "step1":     "Branchez votre interface USB-DMX sur un port USB.",
+        "info":      "Adaptateur USB-DMX générique (FTDI ou clone).",
+        "step1":     "Branchez votre interface sur un port USB.",
     },
 ]
 
@@ -234,10 +242,9 @@ class DmxSetupDialog(QDialog):
             self.product_list.addItem(item)
             self._id_to_item[prod["id"]] = item
 
-        _header("  USB / Série")
+        _header("  Choisissez votre interface USB-DMX")
         for p in PRODUCTS:
-            if p["transport"] == TRANSPORT_ENTTEC:
-                _item(p)
+            _item(p)
 
     def _restore_selection(self):
         pid = self._dmx.product_id
@@ -1261,9 +1268,13 @@ class DmxSetupDialog(QDialog):
             self._set_connect("Sélectionnez un port COM valide", error=True)
             return
 
-        # Boîtier FTDI → on pilote via D2XX (fiable, comme QLC+) plutôt que par
-        # le port COM/VCP dont le Latency Timer casse le timing du break DMX.
-        transport, ftdi_serial = resolve_usb_transport(port)
+        # ENTTEC Pro : protocole à paquets, piloté par le port série VCP normal
+        # (le boîtier gère lui-même le break DMX → pas besoin du D2XX).
+        # Sinon (Open DMX passif) : D2XX si dispo, repli série VCP.
+        if prod.get("transport") == TRANSPORT_ENTTEC_PRO:
+            transport, ftdi_serial = TRANSPORT_ENTTEC_PRO, None
+        else:
+            transport, ftdi_serial = resolve_usb_transport(port)
 
         kwargs = dict(
             transport=transport,
@@ -1274,7 +1285,8 @@ class DmxSetupDialog(QDialog):
         )
 
         if self._dmx.connect(**kwargs):
-            mode = "D2XX" if transport == TRANSPORT_ENTTEC_D2XX else "série"
+            mode = {TRANSPORT_ENTTEC_D2XX: "D2XX",
+                    TRANSPORT_ENTTEC_PRO:  "ENTTEC Pro"}.get(transport, "série")
             self._set_connect(f"✓  {prod['name']} connecté ({mode})", ok=True)
         else:
             self._set_connect("✗  Échec de la connexion", error=True)

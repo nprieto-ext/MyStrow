@@ -318,6 +318,12 @@ def _expiry_from_months(months: int, base: float = None) -> float:
     return base + months * 30 * 86400
 
 
+def _expiry_from_days(days: int, base: float = None) -> float:
+    if base is None:
+        base = datetime.now(timezone.utc).timestamp()
+    return base + days * 86400
+
+
 def _delete_firestore_doc(path: str, id_token: str) -> bool:
     url = f"{_FS_BASE}/{path}"
     req = urllib.request.Request(
@@ -693,12 +699,13 @@ class CreateClientDialog(QDialog):
 
         dur_lay = QHBoxLayout()
         dur_lay.addWidget(QLabel("Durée de la licence :"))
-        self.months_combo = QComboBox()
-        for months, label in [(1, "1 mois"), (3, "3 mois"), (6, "6 mois (défaut)"), (12, "12 mois")]:
-            self.months_combo.addItem(label, months)
-        self.months_combo.setCurrentIndex(2)
-        self.months_combo.currentIndexChanged.connect(self._update_summary)
-        dur_lay.addWidget(self.months_combo)
+        self.days_combo = QComboBox()
+        for days, label in [(5, "5 jours"), (7, "1 semaine"), (14, "2 semaines"),
+                            (30, "1 mois"), (90, "3 mois"), (180, "6 mois (défaut)"), (360, "12 mois")]:
+            self.days_combo.addItem(label, days)
+        self.days_combo.setCurrentIndex(5)
+        self.days_combo.currentIndexChanged.connect(self._update_summary)
+        dur_lay.addWidget(self.days_combo)
         lay.addLayout(dur_lay)
 
         self.summary_lbl = QLabel("")
@@ -725,16 +732,17 @@ class CreateClientDialog(QDialog):
         lay.addLayout(btns)
 
     def _update_summary(self):
-        months = self.months_combo.currentData()
-        expiry = _expiry_from_months(months)
+        days   = self.days_combo.currentData()
+        label  = self.days_combo.currentText().replace(" (défaut)", "")
+        expiry = _expiry_from_days(days)
         self.summary_lbl.setText(
-            f"Licence {months} mois — expire le {_fmt_date(expiry)}\n"
+            f"Licence {label} — expire le {_fmt_date(expiry)}\n"
             "Un email de définition de mot de passe sera envoyé automatiquement."
         )
 
     def _on_create(self):
-        email  = self.email_edit.text().strip()
-        months = self.months_combo.currentData()
+        email = self.email_edit.text().strip()
+        days  = self.days_combo.currentData()
         if not email or "@" not in email:
             self.err_label.setText("Adresse email invalide.")
             return
@@ -742,13 +750,13 @@ class CreateClientDialog(QDialog):
         self.btn_ok.setText("Création en cours…")
         self.err_label.setText("")
         _run_async(
-            self, self._do_create, email, months,
+            self, self._do_create, email, days,
             on_success=self._on_ok,
             on_error=self._on_err,
         )
 
-    def _do_create(self, email: str, months: int) -> str:
-        expiry   = _expiry_from_months(months)
+    def _do_create(self, email: str, days: int) -> str:
+        expiry   = _expiry_from_days(days)
         temp_pwd = _generate_temp_password()
         auth     = fc.sign_up(email, temp_pwd)
         uid      = auth["uid"]

@@ -370,7 +370,7 @@ def main():
     try:
         import json as _j, os as _o
         _cfg = _j.load(open(_o.path.expanduser("~/.mystrow_dmx.json")))
-        _dmx_node_label = tr("usb_dmx_output") if _cfg.get("transport") == "enttec" else tr("node_output")
+        _dmx_node_label = tr("usb_dmx_output") if _cfg.get("transport") in ("enttec", "enttec_pro") else tr("node_output")
     except Exception:
         pass
     splash.set_hw_label("node", _dmx_node_label)
@@ -424,7 +424,7 @@ def main():
                 cfg = _j.load(f)
             transport    = cfg.get("transport", "enttec")
             product_name = cfg.get("product_name", "")
-            if transport == "enttec":
+            if transport in ("enttec", "enttec_pro"):
                 com = cfg.get("com_port")
                 if com:
                     try:

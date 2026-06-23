@@ -5038,6 +5038,9 @@ class Sequencer(QFrame):
                     # Pan/Tilt toujours appliqués (même si level=0)
                     if "pan"  in ps: proj.pan  = ps["pan"]
                     if "tilt" in ps: proj.tilt = ps["tilt"]
+                    # Strobe restauré depuis le cue (le preview le fait l.1845 ;
+                    # sans ça, un strobe mémorisé ne ressortait pas en restitution).
+                    proj.strobe_speed = int(ps.get("strobe_speed", 0))
                     if ps.get("level", 0) > 0:
                         lvl  = int(ps["level"] * brightness)
                         base = QColor(ps["base_color"])
@@ -5048,6 +5051,10 @@ class Sequencer(QFrame):
                             int(base.green() * lvl / 100.0),
                             int(base.blue()  * lvl / 100.0),
                         )
+                        # Lyres ColorWheel : positionner la roue sur la couleur
+                        # mémorisée (no-op RGB). Aligné sur la preview (l.1858).
+                        if hasattr(main_win, '_update_color_wheel'):
+                            main_win._update_color_wheel(proj, base)
                         # L'effet de la piste Effet peut suivre cette couleur/fade
                         if hasattr(main_win, '_fx_clip_ids') and main_win._fx_clip_ids is not None:
                             main_win._fx_clip_ids.add(id(proj))
@@ -5083,6 +5090,10 @@ class Sequencer(QFrame):
             # mémoire…) restait collé sur tout le show — "les couleurs strobent
             # alors qu'aucun effet n'est lancé". Aligné sur la preview éditeur.
             proj.strobe_speed = 0
+            # Idem roue de couleurs : sans reset, la roue restait figée sur le
+            # dernier slot posé (manuel/mémoire) → "la roue se décale" en
+            # restitution sur les lyres ColorWheel. Aligné sur la preview (l.1615).
+            proj.color_wheel = 0
 
         for track_name, clip_info in active_clips.items():
             indices = track_to_indices.get(track_name, [])
@@ -5152,6 +5163,11 @@ class Sequencer(QFrame):
                     int(color.green() * intensity / 100),
                     int(color.blue() * intensity / 100)
                 )
+                # Lyres ColorWheel : positionner la roue sur la couleur du clip
+                # (no-op pour les lyres RGB). Sans ça, la couleur ne sort pas en
+                # restitution alors qu'elle sort en REC Lumière. Aligné sur preview.
+                if hasattr(main_win, '_update_color_wheel'):
+                    main_win._update_color_wheel(proj, color)
                 main_win._fx_clip_ids.add(id(proj))
 
         # --- Appliquer Pan/Tilt pour les Lyres ---

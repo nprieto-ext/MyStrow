@@ -2915,6 +2915,26 @@ class MainWindow(QMainWindow):
         edit_layout_btn.clicked.connect(self._open_akai_layout_editor)
         title_row.addWidget(edit_layout_btn)
 
+        # EXT — surface d'exécuteurs configurable (à droite du ⚙)
+        ext_btn = QPushButton("EXT")
+        ext_btn.setFixedSize(40, 26)
+        ext_btn.setCheckable(True)
+        ext_btn.setToolTip("Surface configurable (exécuteurs)")
+        ext_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #3a3a3a; "
+            "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+            "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #0077bb; } "
+            "QPushButton:checked { background: #0c2d3a; color: #00d4ff; border-color: #0077bb; }"
+        )
+        ext_btn.clicked.connect(self.toggle_ext_window)
+        self._ext_btn = ext_btn
+        title_row.addWidget(ext_btn)
+        # Fonctionnalité EXT en cours de finition : bouton masqué temporairement.
+        # Repasser à True pour le réactiver.
+        _EXT_BUTTON_ENABLED = False
+        if not _EXT_BUTTON_ENABLED:
+            ext_btn.setVisible(False)
+
         title_row.addStretch()
 
         rec_btn = QPushButton("🔴")
@@ -7012,9 +7032,11 @@ class MainWindow(QMainWindow):
                     else:
                         proj.color_wheel = int(scaled * 255)
 
-            # En mode rec lumière, ignorer les projos éteints sauf ciblage explicite
-            if _timeline_mode and _base_level == 0 and not _explicitly_targeted:
-                continue
+            # Option A — effet DÉCOUPLÉ des blocs couleur : il tourne sur toute la
+            # durée de SON clip, quel que soit le niveau des clips couleur en dessous.
+            # (Avant : on sautait les projos éteints `_base_level == 0`, ce qui faisait
+            #  décrocher l'effet aux coutures/fondus des blocs couleur — « l'effet
+            #  s'arrête » quand il chevauche plusieurs blocs.)
 
             # Aucune couche lumière n'a produit de signal → laisser niveau/couleur inchangés
             # (les layers Pan/Tilt ont déjà agi directement pendant la boucle)
@@ -7025,10 +7047,10 @@ class MainWindow(QMainWindow):
             # L'effet contrôle la luminosité indépendamment du fader :
             # on force proj.level=100 et on encode toute la brillance dans proj.color
             bv = level
-            # Suivre le fade in/out du clip sous-jacent : l'enveloppe d'intensité
-            # du clip (montée crescendo, descente…) module la brillance de l'effet.
-            if _follow:
-                bv *= max(0.0, min(1.0, _base_level / 100.0))
+            # Option A — l'effet contrôle sa PROPRE brillance et ne suit plus le fade
+            # du clip couleur en dessous (sinon il s'éteignait avec lui aux jointures
+            # de blocs). Découplage total. `_follow` reste utilisé plus haut uniquement
+            # pour l'héritage de couleur des effets « sans couleur ».
 
             has_color_val = r > 0 or g > 0 or b > 0
             if has_color_val or has_rgb_layer:
@@ -7087,7 +7109,13 @@ class MainWindow(QMainWindow):
                 return QColor.fromHsv((getattr(self,"effect_hue",0) + idx*30)%360, 255, 255)
             return p.base_color  # "base"
 
-        base_all = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+        # Ciblage par groupes (lettres AKAI A–H) défini au niveau config (fenêtre EXT)
+        _LETTER_TO_GROUP = {"A": "face", "B": "lat", "C": "contre",
+                            "D": "douche1", "E": "douche2", "F": "douche3",
+                            "G": "groupe_g", "H": "groupe_h"}
+        _allowed = {_LETTER_TO_GROUP[l] for l in cfg.get("target_groups", []) if l in _LETTER_TO_GROUP}
+        base_all = [p for p in self.projectors
+                    if p.group != "fumee" and p.level > 0 and (not _allowed or p.group in _allowed)]
         if target == "even":
             active = [p for i, p in enumerate(base_all) if i % 2 == 0]
         elif target == "odd":
@@ -11996,6 +12024,21 @@ class MainWindow(QMainWindow):
         Qt.Key_P: QColor(255, 105, 180),
     }
 
+    # En mode LIVE, les mêmes touches couleur pilotent les "modes de couleurs"
+    # du panel live (tuiles couleur) au lieu d'appliquer aux lampes sélectionnées
+    # (comportement 2D). Valeur = clé de tuile dans LivePanel._COLOR_TILES.
+    LIVE_COLOR_KEYS = {
+        Qt.Key_R: 'rouge',
+        Qt.Key_G: 'vert',
+        Qt.Key_B: 'bleu',
+        Qt.Key_C: 'cyan',
+        Qt.Key_Y: 'jaune',
+        Qt.Key_O: 'orange',
+        Qt.Key_M: 'violet',
+        Qt.Key_P: 'rose',
+        Qt.Key_W: 'blanc',
+    }
+
     def keyPressEvent(self, event):
         """Gere les raccourcis clavier"""
         key = event.key()
@@ -12033,7 +12076,15 @@ class MainWindow(QMainWindow):
             self._apply_strobe_shortcut()
             event.accept()
         elif key in self.COLOR_SHORTCUTS:
-            self._apply_color_shortcut(self.COLOR_SHORTCUTS[key])
+            if getattr(self.seq, 'live_mode_active', False):
+                # LIVE : la touche couleur sélectionne le mode de couleur live
+                # (comme un clic sur la tuile du panel) au lieu d'agir sur la 2D.
+                tile = self.LIVE_COLOR_KEYS.get(key)
+                panel = getattr(self.seq, 'live_panel', None)
+                if tile and panel is not None and hasattr(panel, '_on_color_tile_selected'):
+                    panel._on_color_tile_selected(tile)
+            else:
+                self._apply_color_shortcut(self.COLOR_SHORTCUTS[key])
             event.accept()
         else:
             super().keyPressEvent(event)
@@ -12068,6 +12119,27 @@ class MainWindow(QMainWindow):
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
 
+    def _apply_color_to_groups(self, color, groups=None):
+        """Applique une couleur aux projecteurs de groupes donnés (fenêtre EXT).
+
+        groups == None ou "all" → tous les projecteurs ;
+        groups == liste de groupes internes → seulement ces groupes.
+        Retourne le nombre de projecteurs touchés."""
+        if groups in (None, "all"):
+            targets = list(self.projectors)
+        else:
+            gset = set(groups)
+            targets = [p for p in self.projectors if p.group in gset]
+        for proj in targets:
+            proj.base_color = color
+            proj.level = 100
+            proj.color = QColor(color.red(), color.green(), color.blue())
+            self._update_color_wheel(proj, color)
+        if self.dmx:
+            self.dmx.update_from_projectors(self.projectors)
+        self.plan_de_feu.refresh()
+        return len(targets)
+
     def _apply_strobe_shortcut(self):
         """Touche S : (dés)active le strobe sur les projecteurs sélectionnés.
         Bascule : si au moins un strobe est actif → tout couper, sinon strobe ON."""
@@ -12087,6 +12159,125 @@ class MainWindow(QMainWindow):
         if self.dmx:
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
+
+    def _build_effect_config_by_name(self, name: str):
+        """Config jouable d'un effet à partir de son nom (mêmes sources que les mémoires).
+        Retourne un dict {name, type, layers, play_mode, duration} ou None si introuvable."""
+        if not name:
+            return None
+        # 1) configs assignées aux boutons
+        for cfg in getattr(self, '_button_effect_configs', {}).values():
+            if isinstance(cfg, dict) and cfg.get("name") == name:
+                return dict(cfg)
+        # 2) bibliothèque d'effets édités
+        lib = getattr(self, '_effect_library_configs', {}) or {}
+        if name in lib:
+            return dict(lib[name])
+        # 3) effets intégrés + personnalisés
+        try:
+            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects, EffectLayer
+            for eff in list(BUILTIN_EFFECTS) + _load_custom_effects():
+                if eff.get("name") != name:
+                    continue
+                if eff.get("layers") and isinstance(eff["layers"][0], dict):
+                    cfg = dict(eff)
+                    cfg.setdefault("play_mode", "loop")
+                    cfg.setdefault("duration", 0)
+                    return cfg
+                layers = EffectLayer.layers_from_builtin(eff)
+                return {
+                    "name": name, "type": eff.get("type", ""),
+                    "layers": [l.to_dict() for l in layers],
+                    "play_mode": "loop", "duration": 0,
+                }
+        except Exception:
+            pass
+        return None
+
+    def _toggle_ext_effect(self, name: str, groups=None):
+        """Démarre/arrête un effet par nom depuis la fenêtre EXT.
+        groups : None/"all" → tous les groupes ; liste de groupes internes → ces groupes.
+        Retourne True (démarré), False (arrêté) ou None (introuvable)."""
+        running = hasattr(self, 'effect_timer') and self.effect_timer.isActive()
+        # Re-clic sur l'effet actif → on l'arrête
+        if running and getattr(self, 'active_effect', None) == name:
+            self.stop_effect()
+            self.active_effect = None
+            self.active_effect_config = {}
+            return False
+        cfg = self._build_effect_config_by_name(name)
+        if cfg is None:
+            return None
+        cfg = dict(cfg)
+        # Cible : restreindre l'effet à certains groupes (lettres AKAI A–H)
+        if groups in (None, "all", [], "selection"):
+            cfg["target_groups"] = []          # tous les groupes
+        else:
+            disp = getattr(self, "GROUP_DISPLAY", {}) or {}
+            letters = [disp.get(g) for g in groups]
+            cfg["target_groups"] = [l for l in letters if l and len(l) == 1 and l.isalpha()]
+        if running:
+            self.stop_effect()   # restaure l'état avant de lancer le nouvel effet
+        self.active_effect = name
+        self.active_effect_config = cfg
+        self.start_effect(name)
+        return True
+
+    # ── Actions « Spécial » de la fenêtre EXT ──────────────────────────
+    def _ext_select_all(self) -> int:
+        """Sélectionne tous les projecteurs dans le plan de feu. Retourne le nombre."""
+        pdf = getattr(self, "plan_de_feu", None)
+        if not pdf:
+            return 0
+        keys, counts = [], {}
+        for p in self.projectors:
+            i = counts.get(p.group, 0)
+            keys.append((p.group, i))
+            counts[p.group] = i + 1
+        pdf.selected_lamps = set(keys)
+        pdf.selected_lamps_ordered = list(keys)
+        pdf.refresh()
+        return len(keys)
+
+    def _ext_clear_selection(self):
+        """Vide la sélection de projecteurs."""
+        pdf = getattr(self, "plan_de_feu", None)
+        if not pdf:
+            return
+        pdf.selected_lamps = set()
+        pdf.selected_lamps_ordered = []
+        pdf.refresh()
+
+    def _ext_clear(self):
+        """CLEAR : éteint les couleurs de tous les projecteurs et vide la sélection
+        (sans toucher aux pads AKAI ni aux effets)."""
+        for p in self.projectors:
+            p.base_color = QColor("black")
+            p.color = QColor("black")
+            p.level = 0
+        if self.dmx:
+            self.dmx.update_from_projectors(self.projectors)
+        self._ext_clear_selection()
+
+    def _ext_full_on(self) -> int:
+        """Plein feu : tous les projecteurs en blanc à 100 %."""
+        return self._apply_color_to_groups(QColor(255, 255, 255), "all")
+
+    def _ext_blackout(self):
+        """Blackout complet (projecteurs, pads, effets)."""
+        self.full_blackout()
+        if self.dmx:
+            self.dmx.update_from_projectors(self.projectors)
+        if getattr(self, "plan_de_feu", None):
+            self.plan_de_feu.refresh()
+
+    def _ext_stop_effects(self):
+        """Arrête tous les effets en cours."""
+        self.turn_off_all_effects()
+        if self.dmx:
+            self.dmx.update_from_projectors(self.projectors)
+        if getattr(self, "plan_de_feu", None):
+            self.plan_de_feu.refresh()
 
     def show_shortcuts_dialog(self):
         """Affiche le dialog listant tous les raccourcis clavier"""
@@ -12570,6 +12761,21 @@ class MainWindow(QMainWindow):
             self._plan3d.raise_()
             if hasattr(self.plan_de_feu, 'btn_3d'):
                 self.plan_de_feu.btn_3d.setChecked(True)
+
+    def toggle_ext_window(self):
+        """Affiche ou cache la fenêtre EXT (surface d'exécuteurs configurable)."""
+        if getattr(self, '_ext_window', None) is None:
+            from ext_window import ExtWindow
+            self._ext_window = ExtWindow(self)
+        if self._ext_window.isVisible():
+            self._ext_window.hide()
+            if hasattr(self, '_ext_btn'):
+                self._ext_btn.setChecked(False)
+        else:
+            self._ext_window.show()
+            self._ext_window.raise_()
+            if hasattr(self, '_ext_btn'):
+                self._ext_btn.setChecked(True)
 
     def show_dmx_patch_config(self, select_idx=None):
         """Interface de configuration DMX — master-detail + Plan de feu"""

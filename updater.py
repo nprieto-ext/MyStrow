@@ -951,9 +951,9 @@ _GEAR = [
     ),
     (
         "🔌",
-        "Interface USB / DMX",
-        "Branchement direct USB → DMX512.\nParfait pour débuter ou en itinérant.",
-        "https://amzn.to/4n7cDbH",
+        "USB Node ArtNet",
+        "Vrai node ArtNet en USB, sans carte réseau.\nPlug & play, RDM, opto-isolé. Pour PC à port USB seul.",
+        "https://amzn.to/4w3sY4A",
         "#a064ff", "#1a1a1a",
     ),
 ]

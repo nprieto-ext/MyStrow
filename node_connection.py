@@ -1385,7 +1385,7 @@ class DmxOutputDialog(QDialog):
         btn_cancel.clicked.connect(self.accept)
         btn_row.addWidget(btn_cancel)
 
-        self._btn_apply = QPushButton("✓  Appliquer")
+        self._btn_apply = QPushButton("🔌  Connecter")
         self._btn_apply.setFixedHeight(36)
         self._btn_apply.setStyleSheet(_BTN_APPLY)
         self._btn_apply.clicked.connect(self._apply)
@@ -1532,17 +1532,24 @@ class DmxOutputDialog(QDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
 
-        # Sélecteur protocole
+        # Sélecteur d'interface (le protocole est choisi automatiquement en coulisses)
         proto_row = QHBoxLayout()
-        proto_lbl = QLabel("Protocole")
+        proto_lbl = QLabel("Interface")
         proto_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
         proto_row.addWidget(proto_lbl)
         proto_row.addStretch()
         self._proto_combo = QComboBox()
-        self._proto_combo.addItem("ENTTEC Open DMX USB  (D2XX auto)",  TRANSPORT_ENTTEC)
-        self._proto_combo.addItem("ENTTEC DMX USB Pro  (DMXKing…)", TRANSPORT_ENTTEC_PRO)
+        for _label, _tr in [
+            ("Eurolite USB-DMX512 PRO (MK2)", TRANSPORT_ENTTEC_PRO),
+            ("ENTTEC DMX USB Pro",            TRANSPORT_ENTTEC_PRO),
+            ("ENTTEC Open DMX USB",           TRANSPORT_ENTTEC),
+            ("DMXKing UltraDMX Micro",        TRANSPORT_ENTTEC),
+            ("Autre interface USB-DMX",       TRANSPORT_ENTTEC),
+        ]:
+            self._proto_combo.addItem(_label, _tr)
         cur_transport = self._dmx.transport if self._dmx else TRANSPORT_ENTTEC
-        self._proto_combo.setCurrentIndex(1 if cur_transport == TRANSPORT_ENTTEC_PRO else 0)
+        _idx = self._proto_combo.findData(cur_transport)
+        self._proto_combo.setCurrentIndex(_idx if _idx >= 0 else 0)
         self._proto_combo.setFixedWidth(310)
         self._proto_combo.setFont(QFont("Segoe UI", 9))
         self._proto_combo.setStyleSheet(
@@ -1628,9 +1635,9 @@ class DmxOutputDialog(QDialog):
             return
         proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
         if proto == TRANSPORT_ENTTEC_PRO:
-            self._proto_info.setText("Paquet 0x7E/0xE7 — compatible DMXKing eDMX1, Eurolite USB-DMX512 PRO…")
+            self._proto_info.setText("La LED de l'interface passe au vert quand la sortie DMX est active.")
         else:
-            self._proto_info.setText("250 000 bauds — ENTTEC Open USB DMX : pilote FTDI D2XX si dispo (comme QLC+), sinon break série")
+            self._proto_info.setText("Adaptateur USB-DMX simple — branchez, choisissez le port, activez la sortie.")
 
     def _set_transport(self, transport, save=True):
         self._transport = transport
@@ -1638,10 +1645,11 @@ class DmxOutputDialog(QDialog):
         self._btn_node.setStyleSheet(_BTN_TOGGLE_ON if is_node else _BTN_TOGGLE_OFF)
         self._btn_usb.setStyleSheet(_BTN_TOGGLE_OFF if is_node else _BTN_TOGGLE_ON)
         self._stack.setCurrentIndex(0 if is_node else 1)
-        # Synchroniser le combo protocole si on bascule en mode USB
+        # Synchroniser le combo interface si on bascule en mode USB
         if not is_node and hasattr(self, '_proto_combo'):
-            idx = 1 if transport == TRANSPORT_ENTTEC_PRO else 0
-            self._proto_combo.setCurrentIndex(idx)
+            idx = self._proto_combo.findData(transport)
+            if idx >= 0:
+                self._proto_combo.setCurrentIndex(idx)
         self._status_lbl.setText("")
 
     def _refresh_ports(self):
