@@ -744,6 +744,12 @@ class DmxSetupDialog(QDialog):
         cyan = "#00d4ff"
 
         self._log_line("═══ DIAGNOSTIC DMX USB ═══", cyan)
+        try:
+            import platform as _plat
+            from core import APP_NAME, VERSION
+            self._log_line(f"  {APP_NAME} v{VERSION}  —  {_plat.system()} {_plat.release()}", "#888888")
+        except Exception:
+            pass
 
         # ── 1. Bibliothèque pyserial ─────────────────────────────────────────
         self._log_line("")
@@ -836,20 +842,26 @@ class DmxSetupDialog(QDialog):
         # FTDI) → clignotements et lyres qui bougent seules. Si FTD2XX_AVAILABLE
         # est faux, MyStrow retombe SILENCIEUSEMENT sur la série VCP : on le
         # rend visible ici pour ne plus chercher à l'aveugle.
-        resolved = resolve_usb_transport(port)[0]
         self._log_line("")
-        if FTD2XX_AVAILABLE:
-            self._log_line("      ✓  Pilote D2XX disponible (FTDI direct, comme QLC+)", ok)
+        if getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC_PRO:
+            # Interface ENTTEC Pro : protocole à paquets, le boîtier génère le
+            # break lui-même → le D2XX/VCP ne le concerne pas.
+            self._log_line("      →  Mode retenu : ENTTEC Pro (protocole à paquets)", ok)
+            self._log_line("         Le boîtier gère le break DMX lui-même —", dim)
+            self._log_line("         aucun pilote D2XX nécessaire.", dim)
         else:
-            self._log_line("      ⚠  Pilote D2XX INDISPONIBLE → repli sur la série VCP", warn)
-            self._log_line("         La série VCP corrompt le break DMX (clignotements,", dim)
-            self._log_line("         lyres qui bougent seules). Mettez à jour MyStrow", dim)
-            self._log_line("         (la DLL D2XX est désormais embarquée) ou installez", dim)
-            self._log_line("         le pilote FTDI D2XX depuis ftdichip.com.", dim)
-        if resolved == TRANSPORT_ENTTEC_D2XX:
-            self._log_line("      →  Mode retenu pour ce boîtier : D2XX (fiable)", ok)
-        else:
-            self._log_line("      →  Mode retenu pour ce boîtier : série VCP", warn)
+            resolved = resolve_usb_transport(port)[0]
+            if FTD2XX_AVAILABLE:
+                self._log_line("      ✓  Pilote D2XX disponible (FTDI direct, comme QLC+)", ok)
+            else:
+                self._log_line("      ⚠  Pilote D2XX indisponible → repli sur la série VCP", warn)
+                self._log_line("         Si votre interface est une « Pro » (ENTTEC DMX USB Pro,", dim)
+                self._log_line("         Eurolite USB-DMX512 PRO MK2…), sélectionnez-la dans la", dim)
+                self._log_line("         liste des interfaces : elle n'a pas besoin du D2XX.", dim)
+            if resolved == TRANSPORT_ENTTEC_D2XX:
+                self._log_line("      →  Mode retenu pour ce boîtier : D2XX (fiable)", ok)
+            else:
+                self._log_line("      →  Mode retenu pour ce boîtier : série VCP", warn)
 
         # ── Boîtier FTDI piloté en D2XX → diagnostic via le driver direct ────
         # La puce n'est pas accessible par le port COM quand D2XX la détient :

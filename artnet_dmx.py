@@ -187,6 +187,10 @@ class ArtNetDMX:
         self._pro_serial = None
         self._pro_stop = False
         self._pro_thread = None
+        # Débit série puce↔MCU. Ignoré par un vrai ENTTEC (FT245), mais doit
+        # correspondre au firmware sur les clones FT232R (Eurolite PRO MK2…).
+        # 250000 = valeur des clones FTDI ; surchargeable via ~/.mystrow_dmx.json.
+        self.pro_baud = 250000
 
         # --- Art-Net reseau ---
         self.target_ip = "2.0.0.15"
@@ -230,6 +234,7 @@ class ArtNetDMX:
                 self.universe     = int(cfg.get("universe", 0))
                 self.universe2    = int(cfg.get("universe2", 1))
                 self.mirror_output = bool(cfg.get("mirror_output", True))
+                self.pro_baud      = int(cfg.get("pro_baud", 250000))
         except Exception:
             pass
 
@@ -247,6 +252,7 @@ class ArtNetDMX:
                     "universe":      self.universe,
                     "universe2":     self.universe2,
                     "mirror_output": self.mirror_output,
+                    "pro_baud":      getattr(self, "pro_baud", 250000),
                 }, f, indent=2)
         except Exception:
             pass
@@ -735,17 +741,16 @@ class ArtNetDMX:
         try:
             if self._pro_serial and self._pro_serial.is_open:
                 self._pro_serial.close()
-            # Baud rate indifférent sur USB-CDC ; 57600 = valeur de référence ENTTEC
             self._pro_serial = serial.Serial(
                 port=self.com_port,
-                baudrate=57600,
+                baudrate=getattr(self, "pro_baud", 250000),
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 timeout=0.1,
             )
             self.connected = True
-            print(f"ENTTEC Pro connecté sur {self.com_port}")
+            print(f"ENTTEC Pro connecté sur {self.com_port} @ {getattr(self, 'pro_baud', 250000)} bauds")
             self._start_pro_thread()
             return True
         except Exception as e:
@@ -786,7 +791,7 @@ class ArtNetDMX:
             elif self.com_port and not self._pro_stop:
                 try:
                     self._pro_serial = serial.Serial(
-                        port=self.com_port, baudrate=57600,
+                        port=self.com_port, baudrate=getattr(self, "pro_baud", 250000),
                         bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
                         stopbits=serial.STOPBITS_ONE, timeout=0.1,
                     )
