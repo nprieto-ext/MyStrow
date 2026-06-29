@@ -1548,8 +1548,13 @@ class DmxOutputDialog(QDialog):
         ]:
             self._proto_combo.addItem(_label, _tr)
         cur_transport = self._dmx.transport if self._dmx else TRANSPORT_ENTTEC
+        # enttec_d2xx est une variante d'Open DMX → pointer sur l'entrée Open DMX
+        if cur_transport == TRANSPORT_ENTTEC_D2XX:
+            cur_transport = TRANSPORT_ENTTEC
         _idx = self._proto_combo.findData(cur_transport)
-        self._proto_combo.setCurrentIndex(_idx if _idx >= 0 else 0)
+        if _idx < 0:                                   # défaut sûr = Open DMX, pas Pro
+            _idx = self._proto_combo.findData(TRANSPORT_ENTTEC)
+        self._proto_combo.setCurrentIndex(max(0, _idx))
         self._proto_combo.setFixedWidth(310)
         self._proto_combo.setFont(QFont("Segoe UI", 9))
         self._proto_combo.setStyleSheet(
@@ -1647,7 +1652,8 @@ class DmxOutputDialog(QDialog):
         self._stack.setCurrentIndex(0 if is_node else 1)
         # Synchroniser le combo interface si on bascule en mode USB
         if not is_node and hasattr(self, '_proto_combo'):
-            idx = self._proto_combo.findData(transport)
+            lookup = TRANSPORT_ENTTEC if transport == TRANSPORT_ENTTEC_D2XX else transport
+            idx = self._proto_combo.findData(lookup)
             if idx >= 0:
                 self._proto_combo.setCurrentIndex(idx)
         self._status_lbl.setText("")
