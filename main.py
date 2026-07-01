@@ -541,6 +541,8 @@ def main():
     # Afficher le dialogue d'avertissement licence si necessaire
     # (apres que la fenetre soit visible)
     QTimer.singleShot(500, window.show_license_warning_if_needed)
+    # Télémétrie anonyme (opt-in au 1er lancement + event de démarrage)
+    QTimer.singleShot(1500, window.init_telemetry)
     # Deuxieme tentative de masquage console (cas ou le lanceur n'avait pas quitte)
     QTimer.singleShot(1000, _hide_orphan_console)
 

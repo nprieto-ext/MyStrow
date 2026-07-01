@@ -5352,6 +5352,7 @@ class MainWindow(QMainWindow):
             self.active_effect = effect_name
             self.active_effect_config = self._button_effect_configs.get(effect_idx, {})
             self.start_effect(effect_name)
+            self._track("effect_used", {"name": effect_name, "via": "button"})
             self._log_message(f"Effet ON : {effect_name}", "effect")
             self._warn_effect_no_targets(self.active_effect_config)
             for j, other_btn in enumerate(self.effect_buttons):
@@ -6549,6 +6550,7 @@ class MainWindow(QMainWindow):
 
     def open_effect_editor(self):
         """Ouvre l'editeur d'effets (menu Edition)"""
+        self._track("feature_opened", {"feature": "effect_editor"})
         from effect_editor import EffectEditorDialog
         # Préférer le nom complet dans active_effect_config (ex: "Flash Simple")
         # plutôt que active_effect qui peut être un type legacy (ex: "Flash")
@@ -10778,6 +10780,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, tr("rec_light_title"), tr("rec_light_need_dur2"))
                 return
 
+        self._track("feature_opened", {"feature": "rec_lumiere"})
         editor = LightTimelineEditor(self, current_row)
         editor.showMaximized()
         if sys.platform == 'win32':
@@ -11926,6 +11929,47 @@ class MainWindow(QMainWindow):
         if self.video_output_window:
             self.video_output_window.set_watermark(self._license.watermark_required)
 
+    def _track(self, event, params=None):
+        """Envoi d'un événement de télémétrie (toujours sûr, jamais bloquant)."""
+        try:
+            import telemetry
+            telemetry.track(event, params or {})
+        except Exception:
+            pass
+
+    def init_telemetry(self):
+        """Opt-in télémétrie au 1er lancement + événement de démarrage (anonyme)."""
+        try:
+            import telemetry
+            telemetry.init()
+            if not telemetry.choice_made():
+                box = QMessageBox(self)
+                box.setWindowTitle("Aider à améliorer MyStrow ?")
+                box.setIcon(QMessageBox.Question)
+                box.setText(
+                    "Autorisez-vous MyStrow à envoyer des statistiques d'usage "
+                    "<b>anonymes</b> ?")
+                box.setInformativeText(
+                    "Aucune donnée personnelle : seulement la version, le système "
+                    "et les fonctions utilisées, pour améliorer le logiciel.\n"
+                    "Modifiable à tout moment dans les réglages.")
+                yes = box.addButton("Accepter", QMessageBox.AcceptRole)
+                box.addButton("Refuser", QMessageBox.RejectRole)
+                box.exec()
+                telemetry.set_choice(box.clickedButton() is yes)
+            telemetry.track("app_launch", {
+                "license_state": getattr(getattr(self._license, "state", None), "name", "?"),
+                "dmx_allowed": bool(getattr(self._license, "dmx_allowed", False)),
+            })
+            # Résumé anonyme du parc (combien d'appareils, quels types)
+            counts = {}
+            for p in getattr(self, "projectors", []) or []:
+                t = (getattr(p, "fixture_type", "") or "autre").lower().replace(" ", "_")
+                counts["n_" + t] = counts.get("n_" + t, 0) + 1
+            telemetry.track("rig_summary", dict({"total": len(getattr(self, "projectors", []) or [])}, **counts))
+        except Exception:
+            pass
+
     def show_license_warning_if_needed(self):
         """Affiche le dialogue d'avertissement si necessaire (appele apres show)"""
         if not self._license.show_warning:
@@ -12776,6 +12820,7 @@ class MainWindow(QMainWindow):
             self._ext_window.raise_()
             if hasattr(self, '_ext_btn'):
                 self._ext_btn.setChecked(True)
+            self._track("feature_opened", {"feature": "ext"})
 
     def show_dmx_patch_config(self, select_idx=None):
         """Interface de configuration DMX — master-detail + Plan de feu"""
