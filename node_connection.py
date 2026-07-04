@@ -1777,13 +1777,5 @@ class DmxOutputDialog(QDialog):
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(f"Sortie USB {proto_label} appliquée — {com}")
 
-        try:
-            import telemetry
-            telemetry.track("dmx_connected", {
-                "transport":  getattr(self._dmx, "transport", self._transport),
-                "connected":  bool(getattr(self._dmx, "connected", False)),
-            })
-        except Exception:
-            pass
         self.transport_changed.emit(self._transport)
         self.accept()

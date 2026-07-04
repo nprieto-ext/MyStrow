@@ -368,6 +368,21 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
     absent du payload liste) ne retrouvait pas la société et en créait une
     NOUVELLE à chaque facture mensuelle.
     """
+    # Champs d'adresse au format ATTENDU par Axonaut (address_street, etc.).
+    # ⚠️ Bug historique : on envoyait address/zip/city/country → ignorés par
+    # Axonaut → aucune facture n'avait l'adresse client.
+    addr: dict = {}
+    if address:
+        if address.get("line1"):       addr["address_street"]   = address["line1"]
+        if address.get("postal_code"): addr["address_zip_code"] = address["postal_code"]
+        if address.get("city"):        addr["address_city"]     = address["city"]
+        if address.get("country"):     addr["address_country"]  = address["country"]
+
+    def _patch_addr(cid) -> None:
+        """Met à jour l'adresse d'une société existante (backfill clients anciens)."""
+        if addr and cid:
+            _axonaut("PATCH", f"/companies/{cid}", addr)
+
     # 1) ID déjà mémorisé pour cet utilisateur → réutilisation directe
     lic_ref = None
     if uid:
@@ -378,6 +393,7 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
                 cached = (snap.to_dict() or {}).get("axonaut_company_id")
                 if cached:
                     print(f"[Axonaut] Societe reutilisee (cache) : id={cached}")
+                    _patch_addr(cached)
                     return int(cached)
         except Exception as e:
             print(f"[Axonaut] Lecture cache company_id ignoree : {e}")
@@ -398,6 +414,7 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
                 company_id = company["id"]
             if company_id is not None:
                 print(f"[Axonaut] Societe trouvee : id={company_id}")
+                _patch_addr(company_id)
                 break
 
     # 3) Création si rien trouvé
@@ -406,15 +423,7 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
             "name":  name or email.split("@")[0],
             "email": email,
         }
-        if address:
-            if address.get("line1"):
-                payload["address"] = address["line1"]
-            if address.get("postal_code"):
-                payload["zip"] = address["postal_code"]
-            if address.get("city"):
-                payload["city"] = address["city"]
-            if address.get("country"):
-                payload["country"] = address["country"]
+        payload.update(addr)
         created = _axonaut("POST", "/companies", payload)
         if created:
             company_id = created.get("id")
@@ -763,6 +772,7 @@ def _on_invoice_paid(invoice: dict) -> None:
     amount_eur  = invoice.get("amount_paid", 0) / 100.0
     stripe_ref  = invoice.get("id", "")
     cust_name   = invoice.get("customer_name") or ""
+    cust_address = invoice.get("customer_address") or {}
 
     uid = _find_uid_by_customer(customer_id)
     if not uid:
@@ -786,7 +796,7 @@ def _on_invoice_paid(invoice: dict) -> None:
 
     _email_renewal(email, expiry_ts, lang)
 
-    company_id = _axonaut_get_or_create_company(email, cust_name, uid=uid)
+    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address, uid=uid)
     _axonaut_create_invoice(company_id, plan_type, amount_eur, stripe_ref=stripe_ref, uid=uid)
 
     print(f"[invoice.paid] {email} — expire {_fmt_date(expiry_ts)}")
@@ -1232,6 +1242,56 @@ def _verify_token(req: https_fn.Request) -> str | None:
         return decoded["uid"]
     except Exception:
         return None
+
+
+def _admin_emails() -> set:
+    """Liste blanche d'emails admin (env ADMIN_EMAILS, séparés par des virgules)."""
+    raw = os.environ.get("ADMIN_EMAILS", "")
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+
+def _verify_admin(req: https_fn.Request) -> str | None:
+    """Vérifie le Bearer token ET que l'email est dans ADMIN_EMAILS. Retourne l'email ou None."""
+    _ensure_init()
+    ah = req.headers.get("Authorization", "")
+    if not ah.startswith("Bearer "):
+        return None
+    try:
+        decoded = auth.verify_id_token(ah[7:])
+    except Exception:
+        return None
+    email = (decoded.get("email") or "").lower()
+    allow = _admin_emails()
+    return email if (email and email in allow) else None
+
+
+@https_fn.on_request()
+def admin_cancel_subscription(req: https_fn.Request) -> https_fn.Response:
+    """Annule un abonnement Stripe — RÉSERVÉ aux admins (ADMIN_EMAILS).
+    POST — Authorization: Bearer <firebase_id_token> — Body: {"subscription_id": "sub_..."}
+    Utilise la clé Stripe SERVEUR (compte MyStrow) : plus aucune clé Stripe dans l'app."""
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+    if not _verify_admin(req):
+        return https_fn.Response(json.dumps({"error": "Accès réservé aux administrateurs"}),
+                                 status=403, headers=_CORS_HEADERS)
+    try:
+        body = json.loads(req.data or b"{}")
+    except Exception:
+        body = {}
+    sub_id = (body.get("subscription_id") or "").strip()
+    if not sub_id:
+        return https_fn.Response(json.dumps({"error": "subscription_id manquant"}),
+                                 status=400, headers=_CORS_HEADERS)
+    try:
+        result = _stripe_post(f"/subscriptions/{sub_id}", {"cancel_at_period_end": "true"})
+        return https_fn.Response(
+            json.dumps({"ok": True, "cancel_at_period_end": bool(result.get("cancel_at_period_end"))}),
+            status=200, headers={**_CORS_HEADERS, "Content-Type": "application/json"})
+    except Exception as exc:
+        print(f"[AdminCancel] Erreur Stripe : {exc}")
+        return https_fn.Response(json.dumps({"error": "Erreur Stripe"}),
+                                 status=500, headers=_CORS_HEADERS)
 
 
 @https_fn.on_request()

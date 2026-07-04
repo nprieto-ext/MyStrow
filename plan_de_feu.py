@@ -2873,10 +2873,10 @@ class PlanDeFeu(QFrame):
             toolbar.addWidget(clr_btn)
             toolbar.addSpacing(2)
 
-            self.dmx_toggle_btn = QPushButton("DMX ON")
+            self.dmx_toggle_btn = QPushButton("DMX\nON")
             self.dmx_toggle_btn.setCheckable(True)
             self.dmx_toggle_btn.setChecked(True)
-            self.dmx_toggle_btn.setFixedSize(72, 26)
+            self.dmx_toggle_btn.setFixedSize(46, 34)   # texte sur 2 lignes → moins large
             self.dmx_toggle_btn.setToolTip(tr("pdf_tooltip_dmx_toggle"))
             self.dmx_toggle_btn.setStyleSheet(
                 _BTN_SS.format(fg="#00cc66", bd="#00cc66", fgh="#00ff88", bdh="#00ff88")
@@ -3282,7 +3282,7 @@ class PlanDeFeu(QFrame):
 
     def set_dmx_blocked(self):
         self.dmx_toggle_btn.setChecked(False)
-        self.dmx_toggle_btn.setText("DMX OFF")
+        self.dmx_toggle_btn.setText("DMX\nOFF")
         self.dmx_toggle_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
             "border-radius: 4px; font-size: 10px; font-weight: bold; } "
@@ -3293,7 +3293,7 @@ class PlanDeFeu(QFrame):
     def set_dmx_unblocked(self):
         """Réactive le toggle DMX après une reconnexion de licence."""
         self.dmx_toggle_btn.setChecked(True)
-        self.dmx_toggle_btn.setText("DMX ON")
+        self.dmx_toggle_btn.setText("DMX\nON")
         self.dmx_toggle_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
             "border-radius: 4px; font-size: 10px; font-weight: bold; } "
@@ -3318,7 +3318,7 @@ class PlanDeFeu(QFrame):
         if self.main_window and hasattr(self.main_window, '_license'):
             if not self.main_window._license.dmx_allowed:
                 self.dmx_toggle_btn.setChecked(False)
-                self.dmx_toggle_btn.setText("DMX OFF")
+                self.dmx_toggle_btn.setText("DMX\nOFF")
                 from PySide6.QtWidgets import QMessageBox as _QMB
                 state = self.main_window._license.state
                 from license_manager import LicenseState
@@ -3331,7 +3331,7 @@ class PlanDeFeu(QFrame):
                 _QMB.warning(self.main_window, tr("pdf_artnet_output_title"), msg)
                 return
         on = self.dmx_toggle_btn.isChecked()
-        self.dmx_toggle_btn.setText("DMX ON" if on else "DMX OFF")
+        self.dmx_toggle_btn.setText("DMX\nON" if on else "DMX\nOFF")
         if on:
             self.dmx_toggle_btn.setStyleSheet(
                 "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "

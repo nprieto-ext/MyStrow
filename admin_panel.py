@@ -4593,22 +4593,17 @@ class AdminPanel(QMainWindow):
             return
 
         try:
-            import base64, urllib.request, urllib.parse, json as _json
-            try:
-                from stripe_config import STRIPE_SECRET_KEY as _sk
-            except ImportError:
-                QMessageBox.critical(self, "Erreur",
-                    "stripe_config.py introuvable.\n"
-                    "Créez ce fichier avec STRIPE_SECRET_KEY = 'rk_live_...'")
-                return
-
-            url  = f"https://api.stripe.com/v1/subscriptions/{sub_id}"
-            tok  = base64.b64encode(f"{_sk}:".encode()).decode()
-            data = urllib.parse.urlencode({"cancel_at_period_end": "true"}).encode()
-            req  = urllib.request.Request(url, data=data, method="POST",
-                                          headers={"Authorization": f"Basic {tok}",
-                                                   "Content-Type": "application/x-www-form-urlencoded"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            import urllib.request, urllib.error, json as _json
+            # Annulation côté serveur : la Cloud Function utilise la clé Stripe
+            # du compte MyStrow. Aucune clé Stripe n'est embarquée dans l'app.
+            url = "https://us-central1-mystrow-907be.cloudfunctions.net/admin_cancel_subscription"
+            req = urllib.request.Request(
+                url,
+                data=_json.dumps({"subscription_id": sub_id}).encode(),
+                method="POST",
+                headers={"Authorization": f"Bearer {self._id_token}",
+                         "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 result = _json.loads(resp.read().decode())
 
             if result.get("cancel_at_period_end"):
@@ -4617,10 +4612,16 @@ class AdminPanel(QMainWindow):
                     "La licence sera révoquée automatiquement.")
                 self._load_clients()
             else:
-                QMessageBox.warning(self, "Attention", "Réponse inattendue de Stripe.")
+                QMessageBox.warning(self, "Attention", result.get("error") or "Réponse inattendue.")
 
+        except urllib.error.HTTPError as e:
+            try:
+                msg = _json.loads(e.read().decode()).get("error", str(e))
+            except Exception:
+                msg = str(e)
+            QMessageBox.critical(self, "Erreur", msg)
         except Exception as e:
-            QMessageBox.critical(self, "Erreur Stripe", str(e))
+            QMessageBox.critical(self, "Erreur", str(e))
 
     def _on_new_client(self):
         dlg = CreateClientDialog(self._id_token, self)

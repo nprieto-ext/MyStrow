@@ -1007,6 +1007,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "te_extract_prefix":     {"en": "Audio extraction",             "fr": "Extraction audio",              "es": "Extracción de audio"},
     "te_analyse_prefix":     {"en": "Audio analysis",               "fr": "Analyse audio",                 "es": "Análisis de audio"},
     "te_points_analysed":    {"en": "{n} points analysed",          "fr": "{n} points analyses",           "es": "{n} puntos analizados"},
+    "te_remaining":          {"en": "about {time} left",            "fr": "environ {time} restant",        "es": "quedan unos {time}"},
+    "te_remaining_calc":     {"en": "estimating time left...",      "fr": "estimation du temps restant...", "es": "estimando tiempo restante..."},
     "te_audio_failed":       {"en": "⚠  Audio Analysis Failed",     "fr": "⚠  Analyse Audio Impossible",   "es": "⚠  Análisis de audio fallido"},
     "te_menu_file":          {"en": "File",                         "fr": "Fichier",                       "es": "Archivo"},
     "te_menu_export_rec":    {"en": "⬆  Export REC Light...",       "fr": "⬆  Exporter le REC lumière...", "es": "⬆  Exportar REC Luz..."},

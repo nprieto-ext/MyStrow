@@ -671,7 +671,7 @@ class LightTimelineEditor(QDialog):
 
         loading = QDialog(self)
         loading.setWindowTitle(tr("te_loading_title"))
-        loading.setFixedSize(380, 195)
+        loading.setFixedSize(380, 220)
         loading.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         loading.setStyleSheet("""
             QDialog { background: #1a1a1a; border: 2px solid #00d4ff; border-radius: 10px; }
@@ -692,7 +692,41 @@ class LightTimelineEditor(QDialog):
         bar.setValue(0)
         lay.addWidget(bar)
 
+        # Estimation du temps restant (mise a jour fluide, meme entre 2 callbacks)
+        remaining = QLabel("")
+        remaining.setAlignment(Qt.AlignCenter)
+        remaining.setStyleSheet("font-size: 12px; color: #00d4ff; border: none;")
+        lay.addWidget(remaining)
+
+        import time as _time
+        _start_ts = [0.0]   # rempli au 1er pct > 0
+        _last_pct = [0]
+
+        def _fmt_eta(secs):
+            secs = int(secs + 0.5)
+            if secs >= 60:
+                return f"{secs // 60} min {secs % 60:02d} s"
+            return f"{secs} s"
+
+        def _update_remaining():
+            # Le timer continue de tourner sur un dialog ferme : on le coupe.
+            if not loading.isVisible():
+                elapsed_timer.stop()
+                return
+            pct = _last_pct[0]
+            if _start_ts[0] <= 0 or pct <= 0:
+                return
+            elapsed = _time.monotonic() - _start_ts[0]
+            # Trop tot pour une estimation fiable
+            if pct < 2 or elapsed < 0.4:
+                remaining.setText(tr("te_remaining_calc"))
+                return
+            total_est = elapsed * 100.0 / pct
+            remaining.setText(tr("te_remaining", time=_fmt_eta(max(0.0, total_est - elapsed))))
+
         elapsed_timer = QTimer(loading)
+        elapsed_timer.timeout.connect(_update_remaining)
+        elapsed_timer.start(500)
 
         cancel_btn = QPushButton(tr("te_cancel_analysis"))
         cancel_btn.setStyleSheet("""
@@ -711,9 +745,13 @@ class LightTimelineEditor(QDialog):
         def on_progress(pct):
             if self._analysis_cancelled:
                 raise _AnalysisCancelled()
+            if _start_ts[0] <= 0 and pct > 0:
+                _start_ts[0] = _time.monotonic()
+            _last_pct[0] = pct
             bar.setValue(pct)
             prefix = tr("te_extract_prefix") if is_vid else tr("te_analyse_prefix")
             status.setText(f"{prefix}... {pct}%")
+            _update_remaining()
             QApplication.processEvents()
             if self._analysis_cancelled:
                 raise _AnalysisCancelled()
@@ -723,6 +761,8 @@ class LightTimelineEditor(QDialog):
                 self.media_path, max_samples=5000, progress_callback=on_progress,
                 cancel_check=lambda: self._analysis_cancelled
             )
+            elapsed_timer.stop()
+            remaining.setVisible(False)
             if self._analysis_cancelled:
                 loading.close()
                 _unlock_buttons()
@@ -745,9 +785,12 @@ class LightTimelineEditor(QDialog):
                 QApplication.processEvents()
                 QTimer.singleShot(1800, loading.close)
         except _AnalysisCancelled:
+            elapsed_timer.stop()
             print("Analyse annulee par l'utilisateur")
             loading.close()
         except Exception as e:
+            elapsed_timer.stop()
+            remaining.setVisible(False)
             status.setText("⚠  Analyse Audio Impossible")
             status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
             bar.setVisible(False)
@@ -1184,9 +1227,7 @@ class LightTimelineEditor(QDialog):
         return footer
 
     def get_media_duration(self):
-        """Recupere la duree reelle du media (audio et video)"""
-        import subprocess as _sp, sys as _sys
-
+        """Recupere la duree reelle du media (audio et video), avec cache en session."""
         # TEMPO/PAUSE: utiliser la duree definie
         if hasattr(self, 'media_duration_override') and self.media_duration_override > 0:
             return self.media_duration_override
@@ -1201,25 +1242,54 @@ class LightTimelineEditor(QDialog):
         if not self.media_path or not os.path.exists(self.media_path):
             return 180000
 
-        # 1. Essai miniaudio (audio: MP3, WAV, FLAC, OGG) — pas d'event loop, pas de fenetre WMF
+        # Cache en session (path + mtime) — evite de re-sonder le media a chaque
+        # ouverture de l'editeur (le sondage video peut bloquer plusieurs secondes).
+        cache = getattr(self.main_window, '_media_duration_cache', None)
+        if cache is None:
+            cache = self.main_window._media_duration_cache = {}
         try:
-            import miniaudio
-            info = miniaudio.get_file_info(self.media_path)
-            if info.duration > 0:
-                return int(info.duration * 1000)
-        except Exception:
-            pass
+            key = (self.media_path, os.path.getmtime(self.media_path))
+        except OSError:
+            key = None
+        if key is not None and key in cache:
+            return cache[key]
 
-        # 2. Essai mutagen (MP3, M4A, AAC, FLAC, OGG, WAV, WMA...)
-        try:
-            import mutagen
-            audio = mutagen.File(self.media_path)
-            if audio is not None and audio.info.length > 0:
-                return int(audio.info.length * 1000)
-        except Exception:
-            pass
+        dur_ms = self._probe_media_duration()
 
-        # 3. Essai ffprobe (video ou echec mutagen) — subprocess sans fenetre
+        # On ne met en cache qu'un resultat fiable (pas le defaut 180000), pour
+        # laisser une nouvelle chance au sondage la prochaine fois.
+        if key is not None and dur_ms and dur_ms != 180000:
+            cache[key] = dur_ms
+        return dur_ms
+
+    def _probe_media_duration(self):
+        """Sonde la duree du media via les decodeurs disponibles (en ms)."""
+        import subprocess as _sp, sys as _sys
+
+        is_video = media_icon(self.media_path) == "video"
+
+        # 1+2. Decodeurs audio (miniaudio/mutagen): inutiles et parfois trompeurs
+        #      sur un conteneur video (MKV/AVI/MOV) -> on les saute pour la video.
+        if not is_video:
+            # 1. miniaudio (MP3, WAV, FLAC, OGG) — pas d'event loop, pas de fenetre WMF
+            try:
+                import miniaudio
+                info = miniaudio.get_file_info(self.media_path)
+                if info.duration > 0:
+                    return int(info.duration * 1000)
+            except Exception:
+                pass
+
+            # 2. mutagen (MP3, M4A, AAC, FLAC, OGG, WAV, WMA...)
+            try:
+                import mutagen
+                audio = mutagen.File(self.media_path)
+                if audio is not None and audio.info.length > 0:
+                    return int(audio.info.length * 1000)
+            except Exception:
+                pass
+
+        # 3. ffprobe (video ou echec mutagen) — subprocess sans fenetre
         try:
             _kwargs = {}
             if _sys.platform == "win32":
@@ -1234,6 +1304,49 @@ class LightTimelineEditor(QDialog):
                 return int(dur * 1000)
         except Exception:
             pass
+
+        # 4. Fallback QMediaPlayer (video type MKV/AVI/MOV sans ffprobe installe)
+        #    Qt decode le conteneur et emet durationChanged; fonctionne sans binaire externe.
+        temp_player = None
+        try:
+            import time as _time
+
+            temp_player = QMediaPlayer()
+            temp_audio = QAudioOutput()
+            temp_player.setAudioOutput(temp_audio)
+
+            # Sans output video, Qt ne parse pas correctement certains conteneurs video
+            if is_video and QVideoWidget is not None:
+                temp_video = QVideoWidget()
+                temp_video.setFixedSize(1, 1)
+                temp_video.hide()
+                temp_player.setVideoOutput(temp_video)
+
+            duration_ms = [0]
+
+            def _on_duration_changed(dur):
+                if dur > 0:
+                    duration_ms[0] = dur
+
+            temp_player.durationChanged.connect(_on_duration_changed)
+            temp_player.setSource(QUrl.fromLocalFile(self.media_path))
+
+            timeout = 10 if is_video else 5
+            start = _time.time()
+            while duration_ms[0] == 0 and (_time.time() - start) < timeout:
+                QApplication.processEvents()
+                _time.sleep(0.05)
+
+            if duration_ms[0] > 0:
+                return duration_ms[0]
+        except Exception:
+            pass
+        finally:
+            if temp_player is not None:
+                try:
+                    temp_player.setSource(QUrl())
+                except Exception:
+                    pass
 
         return 180000  # 3 minutes par defaut
 
