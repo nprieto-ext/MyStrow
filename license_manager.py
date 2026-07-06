@@ -141,8 +141,12 @@ def _result_trial_expired():
         action_label="Mon compte"
     )
 
-def _result_license_active(days):
-    warn = days <= 7
+def _result_license_active(days, auto_renew=False):
+    # Abonnements récurrents (mensuel/annuel) : Stripe repousse expiry_utc à chaque
+    # paiement. Le compte à rebours reflète juste la fin de période courante, pas une
+    # vraie expiration → aucune alerte tant que la licence est active. La fin réelle
+    # (résiliation / impayé) est gérée côté webhook (révocation + email de relance).
+    warn = (days <= 7) and not auto_renew
     return LicenseResult(
         state=LicenseState.LICENSE_ACTIVE,
         dmx_allowed=True,
@@ -163,7 +167,14 @@ def _result_license_expired():
         action_label="Renouveler"
     )
 
-def _result_offline(cached_plan, cached_expiry_utc, days_offline):
+def _is_auto_renew(plan_type: str, stripe_subscription_id: str) -> bool:
+    """Vrai abonnement Stripe récurrent : plan mensuel/annuel ET subscription active.
+    Exclut les activations manuelles (admin) qui ont un plan_type mais pas de
+    subscription Stripe → celles-ci gardent leur alerte d'expiration."""
+    return plan_type in ("monthly", "annual") and bool(stripe_subscription_id)
+
+
+def _result_offline(cached_plan, cached_expiry_utc, days_offline, auto_renew=False):
     """Resultat construit depuis le cache local (mode hors-ligne)."""
     now = datetime.now(timezone.utc).timestamp()
     days_remaining = max(0, int((cached_expiry_utc - now) / 86400))
@@ -172,7 +183,7 @@ def _result_offline(cached_plan, cached_expiry_utc, days_offline):
     if cached_plan == "license":
         if now >= cached_expiry_utc:
             return _result_license_expired()
-        r = _result_license_active(days_remaining)
+        r = _result_license_active(days_remaining, auto_renew=auto_renew)
         # Ajouter note hors-ligne sans casser la logique
         object.__setattr__ if False else None
         return LicenseResult(
@@ -646,9 +657,13 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
         fc.add_machine(uid, id_token, machine_id, label=platform.node()[:32])
 
         now = datetime.now(timezone.utc).timestamp()
+        auto_renew = _is_auto_renew(doc.get("plan_type", ""),
+                                    doc.get("stripe_subscription_id", ""))
+
         account["last_verified_utc"] = now
         account["uid"] = uid
         account["cached_plan"] = doc.get("plan", "trial")
+        account["cached_auto_renew"] = auto_renew
         account["cached_expiry_utc"] = doc.get("expiry_utc", now)
         _save_account(machine_id, account)
 
@@ -665,6 +680,7 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
             machines_used=machines_used,
             machines_max=machines_max,
             machines_list=[m for m in machines_list if isinstance(m, dict)],
+            auto_renew=auto_renew,
         )
 
     except Exception as e:
@@ -679,7 +695,7 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
 
 def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0,
                   machines_used: int = 0, machines_max: int = 2,
-                  machines_list: list = None) -> LicenseResult:
+                  machines_list: list = None, auto_renew: bool = False) -> LicenseResult:
     """Construit un LicenseResult depuis les donnees Firestore."""
     now = datetime.now(timezone.utc).timestamp()
     days_remaining = max(0, int((expiry_utc - now) / 86400))
@@ -687,7 +703,7 @@ def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0,
     if plan == "license":
         if now >= expiry_utc:
             return _result_license_expired()
-        r = _result_license_active(max(1, days_remaining))
+        r = _result_license_active(max(1, days_remaining), auto_renew=auto_renew)
         return LicenseResult(
             state=r.state, dmx_allowed=r.dmx_allowed,
             watermark_required=r.watermark_required,
@@ -718,6 +734,7 @@ def _offline_fallback(account: dict) -> LicenseResult:
     """Retourne un resultat depuis le cache si < 7 jours offline.
     Valable pour les comptes licence ET essai (grace period identique)."""
     cached_plan = account.get("cached_plan", "trial")
+    cached_auto_renew = bool(account.get("cached_auto_renew", False))
 
     last_verified = account.get("last_verified_utc", 0)
     now = datetime.now(timezone.utc).timestamp()
@@ -729,7 +746,7 @@ def _offline_fallback(account: dict) -> LicenseResult:
 
     cached_expiry = account.get("cached_expiry_utc", 0)
     print(f"Mode hors-ligne ({days_offline}j) — {cached_plan}")
-    return _result_offline(cached_plan, cached_expiry, days_offline)
+    return _result_offline(cached_plan, cached_expiry, days_offline, auto_renew=cached_auto_renew)
 
 
 # ============================================================
@@ -777,8 +794,10 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
             return False, "Aucun compte licence associe a cet email."
 
         plan       = doc.get("plan", "trial")
+        plan_type  = doc.get("plan_type", "")
         expiry_utc = doc.get("expiry_utc", 0.0)
-        print(f"[LOGIN] plan={plan}  expiry_utc={expiry_utc}  doc={doc}")
+        auto_renew = _is_auto_renew(plan_type, doc.get("stripe_subscription_id", ""))
+        print(f"[LOGIN] plan={plan}  plan_type={plan_type}  auto_renew={auto_renew}  expiry_utc={expiry_utc}  doc={doc}")
 
         # Ajouter la machine
         fc.add_machine(uid, id_token, machine_id, label=platform.node()[:32])
@@ -791,6 +810,7 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
             "email": auth.get("email", email),
             "last_verified_utc": now,
             "cached_plan": plan,
+            "cached_auto_renew": auto_renew,
             "cached_expiry_utc": expiry_utc,
         }
         saved = _save_account(machine_id, account_data)
@@ -809,6 +829,7 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
             machines_used=machines_used,
             machines_max=machines_max,
             machines_list=[m for m in machines_list if isinstance(m, dict)],
+            auto_renew=auto_renew,
         )
         print(f"[LOGIN] _pending_login_result={_pending_login_result}")
 

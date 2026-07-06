@@ -88,6 +88,38 @@ from timeline_editor import LightTimelineEditor
 from updater import UpdateBar, UpdateChecker, download_update, AboutDialog, GearDialog
 from license_manager import LicenseState, LicenseResult, verify_license
 from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog, LoginSuccessDialog
+from pixel_fixture import (
+    PixelFixtureSpec, generate_matrix_projectors, PIXEL_FIXTURE_PRESETS,
+    layout_pixels, matrix_children,
+)
+
+
+# ── Fixtures à pixels (matrices / barres LED) ────────────────────────────────
+# Métadonnées à faire transiter par TOUTES les (dé)sérialisations du patch :
+# persistance disque (.maestro_dmx_patch.json), undo du dialog de patch, et
+# export/import .msp. Centralisées ici pour ne jamais en oublier une (sinon le
+# groupe de pixels serait perdu à l'undo, cf. piège "recréation de Projector").
+_MATRIX_META_FIELDS = (
+    "matrix_id", "matrix_role", "pixel_index", "pixel_row", "pixel_col",
+    "matrix_rows", "matrix_cols", "matrix_phys_w", "matrix_phys_h",
+    "matrix_rot",
+)
+
+
+def _matrix_meta(proj):
+    """Métadonnées matrice d'un projecteur (dict vide si fixture classique)."""
+    if getattr(proj, "matrix_id", None) is None:
+        return {}
+    return {f: getattr(proj, f, None) for f in _MATRIX_META_FIELDS}
+
+
+def _apply_matrix_meta(proj, src):
+    """Restaure les métadonnées matrice sur un projecteur depuis un dict."""
+    if not src or src.get("matrix_id") is None:
+        return
+    for f in _MATRIX_META_FIELDS:
+        if f in src:
+            setattr(proj, f, src[f])
 
 
 # Mapping lettre AKAI -> nom interne du groupe projecteur
@@ -2480,16 +2512,21 @@ class MainWindow(QMainWindow):
         conn_menu.addAction("⌨️  Raccourci Clavier", self.show_shortcuts_dialog)
 
         about_menu = bar.addMenu(tr("menu_about"))
+
+        # ── Bloc « Le logiciel » ──────────────────────────────────────
         about_menu.addAction(tr("menu_about_updates"), self.show_about)
+        if get_language() == "fr":
+            about_menu.addAction("📺  Tutoriels", self._show_tutorials_dialog)
         about_menu.addAction("🎹  Matériel recommandé", self.show_gear)
+
+        # ── Bloc « Mon compte » ───────────────────────────────────────
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_license"), self._open_activation_dialog)
+
+        # ── Bloc « Communauté » (sous-menu regroupant réseaux/newsletter/idée) ─
         about_menu.addSeparator()
-        about_menu.addAction(tr("menu_submit_idea"), self._show_idea_dialog)
-        if get_language() == "fr":
-            about_menu.addAction("📺 Tutoriels", self._show_tutorials_dialog)
-        about_menu.addSeparator()
-        social_menu = about_menu.addMenu("🌐  Suivez-nous sur les réseaux")
+        community_menu = about_menu.addMenu("💬  Communauté")
+        social_menu = community_menu.addMenu("🌐  Suivez-nous sur les réseaux")
 
         def _social_icon(inner, _size=18):
             """Rendu d'un logo réseau (SVG couleur) en icône de menu."""
@@ -2534,7 +2571,10 @@ class MainWindow(QMainWindow):
         social_menu.addAction(_social_icon(_TT_SVG), "TikTok",    lambda: QDesktopServices.openUrl(QUrl("https://www.tiktok.com/@niko_mystrow")))
         social_menu.addAction(_social_icon(_YT_SVG), "YouTube",   lambda: QDesktopServices.openUrl(QUrl("https://www.youtube.com/@MyStrow-x7t")))
         social_menu.addAction(_social_icon(_DC_SVG), "Discord",   lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/SZWNgGRc7K")))
-        about_menu.addAction("✉️  Newsletter", lambda: QDesktopServices.openUrl(QUrl("https://mystrow.fr/newsletter")))
+        community_menu.addAction("✉️  Newsletter", lambda: QDesktopServices.openUrl(QUrl("https://mystrow.fr/newsletter")))
+        community_menu.addAction(tr("menu_submit_idea"), self._show_idea_dialog)
+
+        # ── Bloc « Réglages » ─────────────────────────────────────────
         about_menu.addSeparator()
         lang_menu = about_menu.addMenu(tr("menu_language"))
         act_fr = lang_menu.addAction(tr("menu_lang_fr"))
@@ -2587,9 +2627,10 @@ class MainWindow(QMainWindow):
         title_layout = QHBoxLayout()
         title_layout.addStretch()
 
-        self.video_output_btn = QPushButton("OFF")
+        # Toujours "VIDEO" : vert = sortie ON, rouge = sortie OFF.
+        self.video_output_btn = QPushButton("VIDEO")
         self.video_output_btn.setCheckable(True)
-        self.video_output_btn.setFixedSize(44, 26)
+        self.video_output_btn.setFixedSize(50, 26)
         self.video_output_btn.setToolTip(tr("tooltip_video_output"))
         self.video_output_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
@@ -2679,7 +2720,6 @@ class MainWindow(QMainWindow):
                    "QPushButton:pressed { background: #333; }")
         if self.video_output_btn.isChecked():
             # ON - creer/montrer la fenetre
-            self.video_output_btn.setText("ON")
             self.video_output_btn.setStyleSheet(_SS_ON)
             self._log_message("Sortie vidéo activée", "success")
             if not self.video_output_window:
@@ -2705,7 +2745,6 @@ class MainWindow(QMainWindow):
             self._update_video_output_state()
         else:
             # OFF - cacher la fenetre
-            self.video_output_btn.setText("OFF")
             self.video_output_btn.setStyleSheet(_SS_OFF)
             # Deconnecter le forward de frames
             sink = self.video_widget.videoSink() if QVideoWidget is not None else None
@@ -7832,15 +7871,21 @@ class MainWindow(QMainWindow):
         """Redémarre le moteur audio avec la nouvelle source si le live est actif."""
         if not self.seq.live_mode_active:
             return
-        panel = self.seq.live_panel
-        self.live_engine.stop()
-        self.live_engine.start(
-            source_key=key,
-            dominant_color=panel.dominant_color,
-            nervosity=panel.nerv_slider.value(),
-            sensitivity=panel.sens_slider.value(),
-        )
-        self.live_engine.update_dimmers(panel.dimmer_values)
+        # Slot Qt : une exception ici terminerait l'application (comportement
+        # PySide6). On protège le changement de source pour que l'échec d'un
+        # micro n'entraîne au pire qu'une source inactive, jamais un crash.
+        try:
+            panel = self.seq.live_panel
+            self.live_engine.stop()
+            self.live_engine.start(
+                source_key=key,
+                dominant_color=panel.dominant_color,
+                nervosity=panel.nerv_slider.value(),
+                sensitivity=panel.sens_slider.value(),
+            )
+            self.live_engine.update_dimmers(panel.dimmer_values)
+        except Exception as e:
+            print(f"[Live] changement de source échoué ({key}) : {e}")
 
     def _on_live_settings_applied(self, cfg: dict):
         """Réinitialise les états persistants des lyres quand les presets changent."""
@@ -10446,11 +10491,46 @@ class MainWindow(QMainWindow):
         # Les pads FX et POS seront rafraîchis lors du prochain _rebuild_akai_pads()
 
     def _save_akai_config_auto(self):
-        """Sauvegarde automatique de la config AKAI a la fermeture"""
+        """Sauvegarde automatique de la config AKAI (mémoires) à la fermeture.
+
+        Écriture ATOMIQUE (fichier temporaire + os.replace) pour ne jamais laisser
+        un fichier tronqué si l'app crashe pendant l'écriture. Et FILET DE SÉCURITÉ :
+        si on s'apprête à écrire une grille de mémoires VIDE par-dessus un fichier
+        qui en contenait (typiquement après un chargement raté qui a réinitialisé
+        self.memories), on archive d'abord l'ancien fichier en .bak horodaté —
+        sinon les mémoires du musicien seraient perdues définitivement.
+        """
         try:
+            import shutil
             config = self._serialize_akai_config()
-            with open(self._AKAI_CONFIG_PATH, 'w') as f:
+            path = self._AKAI_CONFIG_PATH
+
+            new_mem = config.get("memories") or []
+            new_has_mem = any(
+                cell is not None
+                for col in new_mem if isinstance(col, list)
+                for cell in col
+            )
+            if not new_has_mem and os.path.exists(path):
+                try:
+                    with open(path, 'r') as f:
+                        old_mem = (json.load(f) or {}).get("memories") or []
+                    old_has_mem = any(
+                        cell is not None
+                        for col in old_mem if isinstance(col, list)
+                        for cell in col
+                    )
+                    if old_has_mem:
+                        bak = f"{path}.{time.strftime('%Y%m%d-%H%M%S')}.bak"
+                        shutil.copy2(path, bak)
+                        print(f"[AKAI] Mémoires vides à écrire — ancien fichier archivé : {bak}")
+                except Exception:
+                    pass
+
+            tmp = path + ".tmp"
+            with open(tmp, 'w') as f:
                 json.dump(config, f, indent=2)
+            os.replace(tmp, path)
         except Exception as e:
             print(f"Erreur sauvegarde config AKAI: {e}")
 
@@ -10464,8 +10544,22 @@ class MainWindow(QMainWindow):
                 self._apply_akai_config(self._build_default_akai_presets())
                 self._save_akai_config_auto()
             else:
-                with open(self._AKAI_CONFIG_PATH, 'r') as f:
-                    config = json.load(f)
+                try:
+                    with open(self._AKAI_CONFIG_PATH, 'r') as f:
+                        config = json.load(f)
+                except Exception as parse_err:
+                    # Fichier illisible/corrompu : NE PAS continuer vers un état vide
+                    # qui serait ensuite ré-écrit par-dessus (perte des mémoires).
+                    # On archive le fichier corrompu pour récupération manuelle et on
+                    # relève l'erreur — la config par défaut ne sera pas persistée ici.
+                    import shutil
+                    bak = f"{self._AKAI_CONFIG_PATH}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
+                    try:
+                        shutil.copy2(self._AKAI_CONFIG_PATH, bak)
+                        print(f"[AKAI] Config corrompue archivée : {bak}")
+                    except Exception:
+                        pass
+                    raise parse_err
                 self._apply_akai_config(config)
                 # Migrer uniquement si le fichier n'a pas de section memories explicite
                 # (vieux fichier de config sans memories) — évite d'écraser un effacement volontaire
@@ -13136,6 +13230,13 @@ class MainWindow(QMainWindow):
         btn_add = _tbar_btn("➕  Ajouter", "#55cc77")
         btn_add.setAutoDefault(False)
         th.addWidget(btn_add)
+        btn_add_matrix = _tbar_btn("▦  Matrice / Barre px", "#cc77dd")
+        btn_add_matrix.setAutoDefault(False)
+        # ── Fonction pixel/matrice EN CHANTIER : masquée à l'utilisateur ──────
+        # Le code part avec le build mais aucun point d'entrée visible tant que
+        # la fonctionnalité n'est pas finie. Repasser à True pour la réactiver.
+        btn_add_matrix.setVisible(False)
+        th.addWidget(btn_add_matrix)
         th.addStretch()
         btn_save = QPushButton("💾  Sauvegarder")
         btn_save.setFixedHeight(34)
@@ -13855,6 +13956,7 @@ class MainWindow(QMainWindow):
                     'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                     'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
+                    **_matrix_meta(proj),
                 })
 
         _rebuild_fd()
@@ -13928,6 +14030,7 @@ class MainWindow(QMainWindow):
                 p.gobo_wheel_slots  = list(fd_s.get('gobo_wheel_slots', []))
                 if p.fixture_type == "Machine a fumee":
                     p.fan_speed = 0
+                _apply_matrix_meta(p, fd_s)
                 self.projectors.append(p)
                 fixture_data.append({
                     'name':          fd_s['name'],
@@ -13939,6 +14042,7 @@ class MainWindow(QMainWindow):
                     'channel_defaults':   dict(fd_s.get('channel_defaults', {})),
                     'color_wheel_slots':  list(fd_s.get('color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(fd_s.get('gobo_wheel_slots', [])),
+                    **{k: fd_s[k] for k in _MATRIX_META_FIELDS if k in fd_s},
                 })
             self._rebuild_dmx_patch()
             _build_cards(filter_bar.text())
@@ -15030,6 +15134,49 @@ class MainWindow(QMainWindow):
             _build_cards(filter_bar.text())
             _select_card(new_idx)
             _mark_dirty()
+
+        def _next_free_address():
+            """Prochaine adresse DMX libre (à la suite du dernier fixture)."""
+            if not self.projectors:
+                return 1
+            last = max(self.projectors, key=lambda p: p.start_address)
+            last_idx = self.projectors.index(last)
+            last_profile = getattr(last, 'dmx_profile', None)
+            if not (isinstance(last_profile, list) and last_profile):
+                last_profile = list(self.dmx._get_profile(f"{last.group}_{last_idx}"))
+            return last.start_address + len(last_profile)
+
+        def _add_matrix():
+            res = self._show_matrix_dialog(default_addr=_next_free_address())
+            if res is None:
+                return
+            base_addr, universe, group, name, fx_spec, orientation = res
+            _push_history()
+            projs = generate_matrix_projectors(
+                fx_spec, base_address=base_addr, universe=universe,
+                group=group, name=name)
+            # Placer les pixels en bloc-grille sur le plan de feu
+            cx, cy = _find_free_canvas_pos(self.projectors, 0.5, 0.35)
+            # Axes réels après orientation (V = transposé)
+            ax_cols = fx_spec.rows if orientation == "V" else fx_spec.cols
+            ax_rows = fx_spec.cols if orientation == "V" else fx_spec.rows
+            sx = min(0.055, 0.80 / max(ax_cols, 1))
+            sy = min(0.070, 0.60 / max(ax_rows, 1))
+            rot0 = 1 if orientation == "V" else 0
+            pixels = [p for p in projs if p.matrix_role == "pixel"]
+            layout_pixels(pixels, cx, cy, sx, sy, rot0)
+            for p in projs:
+                p.matrix_rot = rot0
+                if p.matrix_role != "pixel":  # master : au-dessus du bloc
+                    p.canvas_x = max(0.04, min(0.96, cx))
+                    p.canvas_y = max(0.04, min(0.96, cy - (ax_rows / 2.0 + 0.6) * sy))
+                self.projectors.append(p)
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _build_cards(filter_bar.text())
+            _select_card(len(fixture_data) - 1)
+            _mark_dirty()
+
         def _auto_address():
             if QMessageBox.question(
                 dialog, "Auto-adresser",
@@ -15301,6 +15448,7 @@ class MainWindow(QMainWindow):
                     p = Projector(fd['group'], name=fd.get('name', ''),
                                   fixture_type=fd.get('fixture_type', 'PAR LED'))
                     p.start_address = fd.get('start_address', (i * 10) + 1)
+                    p.universe = fd.get('universe', 0)
                     p.canvas_x = fd.get('pos_x', None)
                     p.canvas_y = fd.get('pos_y', None)
                     _imp_profile = fd.get('profile')
@@ -15308,6 +15456,7 @@ class MainWindow(QMainWindow):
                         p.dmx_profile = list(_imp_profile)
                     if fd.get('fixture_type') == "Machine a fumee":
                         p.fan_speed = 0
+                    _apply_matrix_meta(p, fd)
                     self.projectors.append(p)
                 if 'custom_profiles' in config:
                     self._saved_custom_profiles = config['custom_profiles']
@@ -15346,10 +15495,12 @@ class MainWindow(QMainWindow):
                         'name': proj.name,
                         'fixture_type': proj.fixture_type,
                         'group': proj.group,
+                        'universe': getattr(proj, 'universe', 0),
                         'start_address': proj.start_address,
                         'profile': self.dmx._get_profile(proj_key),
                         'pos_x': getattr(proj, 'canvas_x', None),
                         'pos_y': getattr(proj, 'canvas_y', None),
+                        **_matrix_meta(proj),
                     })
                 config = {
                     'fixtures': fixtures_list,
@@ -15430,6 +15581,7 @@ class MainWindow(QMainWindow):
                     card._chk.setChecked(False)
         btn_desel_multi.clicked.connect(_deselect_all)
         btn_add.clicked.connect(lambda: _add_fixture())
+        btn_add_matrix.clicked.connect(lambda: _add_matrix())
         btn_save.clicked.connect(_do_save)
         filter_bar.textChanged.connect(lambda txt: _build_cards(txt))
 
@@ -15707,6 +15859,186 @@ class MainWindow(QMainWindow):
                 from color_wheel_editor import ColorWheelCalibWizard
                 dlg = ColorWheelCalibWizard(_new_mh[0], self.projectors, self, self)
                 dlg.exec()
+
+    def _show_matrix_dialog(self, default_addr=1):
+        """Dialog de configuration d'une fixture à pixels (matrice / barre).
+
+        Retourne (base_addr, universe, group, name, PixelFixtureSpec) ou None.
+        """
+        CHAN_TEMPLATES = [
+            ("RGB",          ["R", "G", "B"]),
+            ("RGBW",         ["R", "G", "B", "W"]),
+            ("RGBW + Ambre", ["R", "G", "B", "W", "Ambre"]),
+        ]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Ajouter une matrice / barre à pixels")
+        dlg.setMinimumWidth(440)
+        dlg.setStyleSheet(
+            "QDialog { background:#141018; }"
+            "QLabel { color:#ccc; font-size:12px; }"
+            "QLineEdit, QComboBox, QSpinBox { background:#1e1a24; color:#eee;"
+            " border:1px solid #3a2f44; border-radius:5px; padding:5px; }"
+            "QCheckBox { color:#ccc; }"
+        )
+        root = QVBoxLayout(dlg)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+        root.addLayout(grid)
+        r = 0
+
+        def _row(label, w):
+            nonlocal r
+            grid.addWidget(QLabel(label), r, 0)
+            grid.addWidget(w, r, 1)
+            r += 1
+
+        name_edit = QLineEdit()
+        name_edit.setPlaceholderText("Nom (ex. Matrice DJ)")
+        _row("Nom", name_edit)
+
+        preset_combo = QComboBox()
+        preset_combo.addItem("— Personnalisé —", None)
+        for sp in PIXEL_FIXTURE_PRESETS:
+            preset_combo.addItem(sp.describe(), sp)
+        _row("Modèle", preset_combo)
+
+        rows_spin = QSpinBox(); rows_spin.setRange(1, 32); rows_spin.setValue(3)
+        cols_spin = QSpinBox(); cols_spin.setRange(1, 64); cols_spin.setValue(3)
+        rc = QHBoxLayout()
+        rc.addWidget(QLabel("Lignes")); rc.addWidget(rows_spin)
+        rc.addSpacing(12)
+        rc.addWidget(QLabel("Colonnes")); rc.addWidget(cols_spin)
+        rc.addStretch()
+        _wrc = QWidget(); _wrc.setLayout(rc)
+        _row("Grille", _wrc)
+
+        chan_combo = QComboBox()
+        for label, _ in CHAN_TEMPLATES:
+            chan_combo.addItem(label)
+        chan_combo.setCurrentIndex(1)  # RGBW
+        _row("Canaux / pixel", chan_combo)
+
+        dim_cb = QCheckBox("Dim global"); dim_cb.setChecked(True)
+        strobe_cb = QCheckBox("Strobe global"); strobe_cb.setChecked(True)
+        gc = QHBoxLayout(); gc.addWidget(dim_cb); gc.addWidget(strobe_cb); gc.addStretch()
+        _wgc = QWidget(); _wgc.setLayout(gc)
+        _row("Canaux globaux", _wgc)
+
+        wiring_combo = QComboBox()
+        wiring_combo.addItem("Ligne par ligne", "row")
+        wiring_combo.addItem("Serpentin (zig-zag)", "serpentine")
+        _row("Câblage", wiring_combo)
+
+        orient_combo = QComboBox()
+        orient_combo.addItem("Horizontale", "H")
+        orient_combo.addItem("Verticale", "V")
+        _row("Orientation", orient_combo)
+
+        group_combo = QComboBox()
+        for gkey, gdisp in self.GROUP_DISPLAY.items():
+            group_combo.addItem(gdisp, gkey)
+        _gi = group_combo.findData("barre")
+        if _gi >= 0:
+            group_combo.setCurrentIndex(_gi)
+        _row("Groupe", group_combo)
+
+        uni_spin = QSpinBox(); uni_spin.setRange(0, 3); uni_spin.setValue(0)
+        addr_spin = QSpinBox(); addr_spin.setRange(1, 512); addr_spin.setValue(int(default_addr))
+        ua = QHBoxLayout()
+        ua.addWidget(QLabel("Univers")); ua.addWidget(uni_spin)
+        ua.addSpacing(12)
+        ua.addWidget(QLabel("Adresse")); ua.addWidget(addr_spin)
+        ua.addStretch()
+        _wua = QWidget(); _wua.setLayout(ua)
+        _row("Patch", _wua)
+
+        info = QLabel("")
+        info.setStyleSheet("color:#cc99ee; font-size:12px; font-weight:bold;")
+        root.addWidget(info)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        root.addWidget(bb)
+
+        def _template():
+            return list(CHAN_TEMPLATES[chan_combo.currentIndex()][1])
+
+        def _global_head():
+            head = []
+            if dim_cb.isChecked():    head.append("Dim")
+            if strobe_cb.isChecked(): head.append("Strobe")
+            return head
+
+        def _total():
+            return (len(_global_head())
+                    + rows_spin.value() * cols_spin.value() * len(_template()))
+
+        def _update_info():
+            total = _total()
+            start = addr_spin.value()
+            end = start + total - 1
+            npx = rows_spin.value() * cols_spin.value()
+            ok = end <= 512
+            info.setText(
+                f"{npx} pixels · {total} canaux · CH {start}–{end}"
+                + ("" if ok else "  ⚠ dépasse 512 !"))
+            info.setStyleSheet(
+                "font-size:12px; font-weight:bold; color:"
+                + ("#cc99ee" if ok else "#ff6666"))
+            bb.button(QDialogButtonBox.Ok).setEnabled(ok)
+
+        def _apply_preset():
+            sp = preset_combo.currentData()
+            if sp is None:
+                return
+            rows_spin.setValue(sp.rows)
+            cols_spin.setValue(sp.cols)
+            # Retrouver le template le plus proche
+            for i, (_, tmpl) in enumerate(CHAN_TEMPLATES):
+                if tmpl == sp.pixel_channels:
+                    chan_combo.setCurrentIndex(i)
+                    break
+            dim_cb.setChecked("Dim" in sp.global_head)
+            strobe_cb.setChecked("Strobe" in sp.global_head)
+            wi = wiring_combo.findData(sp.wiring)
+            if wi >= 0:
+                wiring_combo.setCurrentIndex(wi)
+            if not name_edit.text().strip():
+                name_edit.setPlaceholderText(sp.name)
+            _update_info()
+
+        preset_combo.currentIndexChanged.connect(_apply_preset)
+        for w in (rows_spin, cols_spin, addr_spin):
+            w.valueChanged.connect(_update_info)
+        chan_combo.currentIndexChanged.connect(_update_info)
+        dim_cb.toggled.connect(_update_info)
+        strobe_cb.toggled.connect(_update_info)
+        _update_info()
+
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+
+        rows_v, cols_v = rows_spin.value(), cols_spin.value()
+        name = name_edit.text().strip()
+        if not name:
+            _sp = preset_combo.currentData()
+            if _sp is not None:
+                name = _sp.name
+            else:
+                name = (f"Barre {cols_v}px" if rows_v == 1
+                        else f"Matrice {rows_v}x{cols_v}")
+        group = group_combo.currentData()
+        ftype = "Barre LED" if rows_v == 1 else "Matrice LED"
+        spec = PixelFixtureSpec(
+            name=name, rows=rows_v, cols=cols_v,
+            pixel_channels=_template(), global_head=_global_head(),
+            wiring=wiring_combo.currentData(), fixture_type=ftype,
+        )
+        return (addr_spin.value(), uni_spin.value(), group, name, spec,
+                orient_combo.currentData())
 
     def _show_fixture_library_dialog(self):
         """Dialog bibliotheque de fixtures. Retourne (preset, qty, custom_name) ou None."""
@@ -16657,6 +16989,7 @@ class MainWindow(QMainWindow):
                 'pan_invert':    getattr(proj, 'pan_invert',    False),
                 'tilt_invert':   getattr(proj, 'tilt_invert',   False),
                 'pan_tilt_swap': getattr(proj, 'pan_tilt_swap', False),
+                **_matrix_meta(proj),
             })
         scene_3d = {}
         if hasattr(self, '_plan3d'):
@@ -16720,6 +17053,7 @@ class MainWindow(QMainWindow):
                         p.pan_invert    = bool(fd.get('pan_invert',    False))
                         p.tilt_invert   = bool(fd.get('tilt_invert',   False))
                         p.pan_tilt_swap = bool(fd.get('pan_tilt_swap', False))
+                        _apply_matrix_meta(p, fd)
                         self.projectors.append(p)
                         proj_key = f"{p.group}_{i}"
                         nb_ch = len(profile)

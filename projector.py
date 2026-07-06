@@ -50,6 +50,21 @@ class Projector:
         self.pan_invert    = False  # Inverser le sens du pan (65535 - valeur)
         self.tilt_invert   = False  # Inverser le sens du tilt (65535 - valeur)
         self.pan_tilt_swap = False  # Permuter pan ↔ tilt
+        # ── Fixture à pixels (matrice / barre LED) ───────────────────────────
+        # Un fixture "matrice" est patché comme N projecteurs enfants (1 par
+        # pixel) + éventuellement 1 projecteur "master" pour les canaux globaux
+        # (Dim/Strobe). Ces champs relient les enfants entre eux et portent la
+        # géométrie (pour le plan de feu 2D/3D). None/0 = projecteur classique.
+        self.matrix_id    = None    # identifiant partagé par les pixels d'une même matrice
+        self.matrix_role  = None    # "master" | "pixel" | None
+        self.pixel_index  = None    # index du pixel dans l'ordre DMX (0-based)
+        self.pixel_row    = None    # ligne physique (0-based)
+        self.pixel_col    = None    # colonne physique (0-based)
+        self.matrix_rows  = 0       # nb de lignes de la matrice
+        self.matrix_cols  = 0       # nb de colonnes de la matrice
+        self.matrix_phys_w = None   # largeur physique (mm), None = inconnu
+        self.matrix_phys_h = None   # hauteur physique (mm), None = inconnu
+        self.matrix_rot   = 0       # rotation du bloc sur le plan (0..3 quarts de tour)
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

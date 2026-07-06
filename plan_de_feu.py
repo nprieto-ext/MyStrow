@@ -2045,6 +2045,91 @@ class FixtureCanvas(QWidget):
                 Qt.AlignLeft, line
             )
 
+    def _matrix_keys_for(self, matrix_id):
+        """Toutes les clés (group, local_idx) des membres d'une matrice."""
+        keys = []
+        g_cnt = {}
+        for p in self.pdf.projectors:
+            g = p.group
+            li = g_cnt.get(g, 0)
+            g_cnt[g] = li + 1
+            if getattr(p, 'matrix_id', None) == matrix_id:
+                keys.append((g, li))
+        return keys
+
+    def _draw_matrix_block(self, painter, indices):
+        """Dessine une matrice/barre comme un bloc cohérent (cadre + nom + cellules)."""
+        pixels = []   # (proj, px, py, key)
+        master = None
+        g_cnt = {}
+        # local_idx par groupe (même ordre que _local_idx)
+        _li_of = {}
+        for j, p in enumerate(self.pdf.projectors):
+            g = p.group
+            li = g_cnt.get(g, 0)
+            g_cnt[g] = li + 1
+            _li_of[j] = (g, li)
+        base_name = None
+        for i in indices:
+            proj = self.pdf.projectors[i]
+            px, py = self._get_canvas_pos(i)
+            key = _li_of[i]
+            if base_name is None:
+                base_name = (proj.name or "Matrice").split(" · ")[0]
+            if getattr(proj, 'matrix_role', None) == 'master':
+                master = (proj, px, py, key)
+            else:
+                pixels.append((proj, px, py, key))
+        if not pixels:
+            return
+
+        hs = 5 if self.compact else 7          # demi-taille d'une cellule
+        xs = [p[1] for p in pixels]
+        ys = [p[2] for p in pixels]
+        pad = hs + 6
+        x0, x1 = min(xs) - pad, max(xs) + pad
+        y0, y1 = min(ys) - pad, max(ys) + pad
+
+        any_sel = any(k in self.pdf.selected_lamps for *_, k in pixels)
+        border = QColor("#00d4ff") if any_sel else QColor("#9b6bd6")
+
+        # Cadre + fond léger
+        frame = QPainterPath()
+        frame.addRoundedRect(QRectF(x0, y0, x1 - x0, y1 - y0), 6, 6)
+        painter.fillPath(frame, QColor(155, 107, 214, 22))
+        painter.setPen(QPen(border, 1.4))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(frame)
+
+        # Cellules pixel
+        for proj, px, py, key in pixels:
+            if getattr(proj, 'muted', False) or proj.level <= 0:
+                fill = QColor("#242430")
+            else:
+                fill = QColor(proj.color)
+            cell = QRectF(px - hs, py - hs, hs * 2, hs * 2)
+            painter.fillRect(cell, fill)
+            sel = key in self.pdf.selected_lamps
+            painter.setPen(QPen(QColor("#00d4ff") if sel else QColor("#3a3a4a"),
+                                1.4 if sel else 0.8))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(cell)
+
+        # Nom du bloc (au-dessus du cadre)
+        if not self.compact and base_name:
+            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            painter.setPen(QColor("#00d4ff") if any_sel else QColor("#b98fe0"))
+            painter.drawText(QRect(int(x0), int(y0) - 15, int(x1 - x0), 13),
+                             Qt.AlignHCenter, base_name[:18])
+
+        # Master : petit repère "⚙" grabbable
+        if master is not None:
+            _, mx, my, mkey = master
+            msel = mkey in self.pdf.selected_lamps
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#00d4ff") if msel else QColor("#6a5a80"))
+            painter.drawEllipse(QPoint(mx, my), 4, 4)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -2103,7 +2188,14 @@ class FixtureCanvas(QWidget):
         font_name = QFont("Segoe UI", 8)
         font_ch   = QFont("Segoe UI", 7)
 
+        _matrix_members = {}   # matrix_id -> [indices]
         for i, proj in enumerate(self.pdf.projectors):
+            # Les matrices/barres à pixels sont dessinées en bloc (voir plus bas)
+            _mid = getattr(proj, 'matrix_id', None)
+            if _mid is not None:
+                _matrix_members.setdefault(_mid, []).append(i)
+                continue
+
             cx, cy = self._get_canvas_pos(i)
             group, local_idx = self._local_idx(i)
             key = (group, local_idx)
@@ -2124,6 +2216,10 @@ class FixtureCanvas(QWidget):
                 painter.setPen(QColor("#333333"))
                 painter.drawText(QRect(cx - 26, cy + 28, 52, 12), Qt.AlignCenter,
                                  f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
+
+        # ── Matrices / barres à pixels (rendu en bloc) ───────────
+        for _mid, _idxs in _matrix_members.items():
+            self._draw_matrix_block(painter, _idxs)
 
         # ── Locate pulse (anneaux sonar) ─────────────────────────
         if self._locate_key:
@@ -2218,7 +2314,9 @@ class FixtureCanvas(QWidget):
             if idx is not None:
                 group, local_idx = self._local_idx(idx)
                 key = (group, local_idx)
+                _mid = getattr(self.pdf.projectors[idx], 'matrix_id', None)
                 if event.modifiers() & Qt.ControlModifier:
+                    # Ctrl+clic : bascule un pixel unique (contrôle fin)
                     if key in self.pdf.selected_lamps:
                         self.pdf.selected_lamps.discard(key)
                         try: self.pdf.selected_lamps_ordered.remove(key)
@@ -2226,6 +2324,12 @@ class FixtureCanvas(QWidget):
                     else:
                         self.pdf.selected_lamps.add(key)
                         self.pdf.selected_lamps_ordered.append(key)
+                elif _mid is not None:
+                    # Clic simple sur une matrice → sélectionner toute la dalle
+                    if key not in self.pdf.selected_lamps:
+                        _keys = self._matrix_keys_for(_mid)
+                        self.pdf.selected_lamps = set(_keys)
+                        self.pdf.selected_lamps_ordered = list(_keys)
                 elif key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.pdf.selected_lamps_ordered = [key]
@@ -2873,27 +2977,28 @@ class PlanDeFeu(QFrame):
             toolbar.addWidget(clr_btn)
             toolbar.addSpacing(2)
 
-            self.dmx_toggle_btn = QPushButton("DMX\nON")
-            self.dmx_toggle_btn.setCheckable(True)
-            self.dmx_toggle_btn.setChecked(True)
-            self.dmx_toggle_btn.setFixedSize(46, 34)   # texte sur 2 lignes → moins large
-            self.dmx_toggle_btn.setToolTip(tr("pdf_tooltip_dmx_toggle"))
-            self.dmx_toggle_btn.setStyleSheet(
-                _BTN_SS.format(fg="#00cc66", bd="#00cc66", fgh="#00ff88", bdh="#00ff88")
-            )
-            self.dmx_toggle_btn.clicked.connect(self._toggle_dmx_output)
-            toolbar.addWidget(self.dmx_toggle_btn)
-            toolbar.addSpacing(2)
-
             self.btn_3d = QPushButton("3D")
             self.btn_3d.setCheckable(True)
-            self.btn_3d.setFixedSize(36, 26)
+            self.btn_3d.setFixedSize(30, 26)
             self.btn_3d.setToolTip("Afficher le plan de feu en 3D")
             self.btn_3d.setStyleSheet(
                 _BTN_SS.format(fg="#aaa", bd="#3a3a3a", fgh="#fff", bdh="#0077bb")
             )
             self.btn_3d.clicked.connect(self._toggle_3d_window)
             toolbar.addWidget(self.btn_3d)
+            toolbar.addSpacing(2)
+
+            # Toujours "DMX" : vert = sortie ON, rouge = sortie OFF. Placé tout à droite.
+            self.dmx_toggle_btn = QPushButton("DMX")
+            self.dmx_toggle_btn.setCheckable(True)
+            self.dmx_toggle_btn.setChecked(True)
+            self.dmx_toggle_btn.setFixedSize(40, 26)
+            self.dmx_toggle_btn.setToolTip(tr("pdf_tooltip_dmx_toggle"))
+            self.dmx_toggle_btn.setStyleSheet(
+                _BTN_SS.format(fg="#00cc66", bd="#00cc66", fgh="#00ff88", bdh="#00ff88")
+            )
+            self.dmx_toggle_btn.clicked.connect(self._toggle_dmx_output)
+            toolbar.addWidget(self.dmx_toggle_btn)
 
             root.addLayout(toolbar)
         else:
@@ -3282,7 +3387,6 @@ class PlanDeFeu(QFrame):
 
     def set_dmx_blocked(self):
         self.dmx_toggle_btn.setChecked(False)
-        self.dmx_toggle_btn.setText("DMX\nOFF")
         self.dmx_toggle_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #cc3333; "
             "border-radius: 4px; font-size: 10px; font-weight: bold; } "
@@ -3293,7 +3397,6 @@ class PlanDeFeu(QFrame):
     def set_dmx_unblocked(self):
         """Réactive le toggle DMX après une reconnexion de licence."""
         self.dmx_toggle_btn.setChecked(True)
-        self.dmx_toggle_btn.setText("DMX\nON")
         self.dmx_toggle_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
             "border-radius: 4px; font-size: 10px; font-weight: bold; } "
@@ -3318,7 +3421,6 @@ class PlanDeFeu(QFrame):
         if self.main_window and hasattr(self.main_window, '_license'):
             if not self.main_window._license.dmx_allowed:
                 self.dmx_toggle_btn.setChecked(False)
-                self.dmx_toggle_btn.setText("DMX\nOFF")
                 from PySide6.QtWidgets import QMessageBox as _QMB
                 state = self.main_window._license.state
                 from license_manager import LicenseState
@@ -3331,7 +3433,6 @@ class PlanDeFeu(QFrame):
                 _QMB.warning(self.main_window, tr("pdf_artnet_output_title"), msg)
                 return
         on = self.dmx_toggle_btn.isChecked()
-        self.dmx_toggle_btn.setText("DMX\nON" if on else "DMX\nOFF")
         if on:
             self.dmx_toggle_btn.setStyleSheet(
                 "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
@@ -5907,6 +6008,9 @@ class _PatchCanvasProxy:
         info.setEnabled(False)
         menu.addSeparator()
         menu.addAction("Modifier...", lambda: self._edit_fixture(idx))
+        if getattr(proj, 'matrix_id', None) is not None:
+            menu.addAction("⟳  Pivoter la matrice 90°",
+                           lambda: self._rotate_matrix(idx))
         menu.addSeparator()
 
         grp_menu = menu.addMenu("⬡  Assigner groupe")
@@ -5921,6 +6025,30 @@ class _PatchCanvasProxy:
                        self._delete_selected_fixtures)
 
         menu.exec(global_pos)
+
+    def _rotate_matrix(self, idx):
+        """Fait pivoter une matrice/barre de 90° autour de son centre (bloc)."""
+        from pixel_fixture import layout_pixels
+        mid = getattr(self.projectors[idx], 'matrix_id', None)
+        if mid is None:
+            return
+        members = [p for p in self.projectors if getattr(p, 'matrix_id', None) == mid]
+        pixels  = [p for p in members if p.matrix_role == 'pixel']
+        if not pixels:
+            return
+        # Centre actuel du bloc (suit un éventuel déplacement précédent)
+        cx = sum(p.canvas_x for p in pixels) / len(pixels)
+        cy = sum(p.canvas_y for p in pixels) / len(pixels)
+        new_rot = (int(getattr(pixels[0], 'matrix_rot', 0)) + 1) % 4
+        layout_pixels(pixels, cx, cy, 0.055, 0.070, new_rot)
+        for p in members:
+            p.matrix_rot = new_rot
+        if self.main_window and hasattr(self.main_window, 'save_dmx_patch_config'):
+            self.main_window.save_dmx_patch_config()
+        if self.canvas_widget:
+            self.canvas_widget.update()
+        if self._refresh_cb:
+            self._refresh_cb()
 
     def _show_canvas_context_menu(self, global_pos, local_pos=None):
         # Calculer la position normalisée pour le placement à l'emplacement du clic

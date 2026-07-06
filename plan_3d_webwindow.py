@@ -1,5 +1,5 @@
 """
-Plan de feu 3D — rendu Three.js/WebGL via QWebEngineView.
+Plan de feu 3D — rendu Three.js via QWebEngineView.
 Remplace Plan3DWindow avec une API identique : init_scene(), refresh().
 """
 import base64
@@ -597,7 +597,7 @@ class _Bridge(QObject):
 
 
 class Plan3DWebWindow(QMainWindow):
-    """Fenêtre 3D WebGL (Three.js) avec bloom, faisceaux volumétriques."""
+    """Fenêtre 3D (Three.js) avec bloom, faisceaux volumétriques."""
 
     _TB_BTN = (
         "QPushButton { background:#1a1a36; color:#7777aa; border:1px solid #282850;"
@@ -621,7 +621,7 @@ class Plan3DWebWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(None, Qt.Window)   # pas de parent Qt → évite le bleeding visuel sur Windows
         self._parent_mw = parent
-        self.setWindowTitle("Plan de feu 3D — WebGL")
+        self.setWindowTitle("Plan de feu 3D")
         self.resize(1150, 700)
         self.setStyleSheet("background:#05050f;")
 
@@ -698,6 +698,20 @@ class Plan3DWebWindow(QMainWindow):
 
     # ── Toolbar ──────────────────────────────────────────────────────────────
 
+    def _svg_icon(self, inner):
+        """Rend un fragment SVG (viewBox 0 0 24 24) en QIcon net (pixmap 48px)."""
+        from PySide6.QtGui import QIcon, QPixmap, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray, QRectF
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">{inner}</svg>'
+        pix = QPixmap(48, 48)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(p, QRectF(0, 0, 48, 48))
+        p.end()
+        return QIcon(pix)
+
     def _build_toolbar(self):
         tb = QToolBar(self)
         tb.setMovable(False)
@@ -719,7 +733,23 @@ class Plan3DWebWindow(QMainWindow):
             "QPushButton:checked { background:#0d2030; color:#00d4ff; border-color:#0077bb; }"
         )
 
-        btn_pin = QPushButton("📌")
+        from PySide6.QtCore import QSize
+        _col = "#d0d0d0"
+        # Épingle (façon Material push_pin)
+        _pin_svg = (
+            f'<path fill="{_col}" d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1'
+            f's.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/>'
+        )
+        # Panneau latéral droit
+        _panel_svg = (
+            f'<rect x="3" y="4.5" width="18" height="15" rx="2.2" fill="none" stroke="{_col}" stroke-width="1.8"/>'
+            f'<rect x="14.3" y="4.5" width="6.7" height="15" rx="2.2" fill="{_col}" opacity="0.7"/>'
+            f'<line x1="14.3" y1="4.5" x2="14.3" y2="19.5" stroke="{_col}" stroke-width="1.8"/>'
+        )
+
+        btn_pin = QPushButton()
+        btn_pin.setIcon(self._svg_icon(_pin_svg))
+        btn_pin.setIconSize(QSize(17, 17))
         btn_pin.setCheckable(True)
         btn_pin.setChecked(False)
         btn_pin.setToolTip("Garder la fenêtre au premier plan")
@@ -731,10 +761,13 @@ class Plan3DWebWindow(QMainWindow):
 
         tb.addSeparator()
 
-        self._btn_toggle_panel = QPushButton("Panneau ▶")
+        self._btn_toggle_panel = QPushButton()
+        self._btn_toggle_panel.setIcon(self._svg_icon(_panel_svg))
+        self._btn_toggle_panel.setIconSize(QSize(18, 18))
         self._btn_toggle_panel.setCheckable(True)
         self._btn_toggle_panel.setChecked(False)
         self._btn_toggle_panel.setToolTip("Masquer / afficher le panneau de droite")
+        self._btn_toggle_panel.setFixedSize(28, 28)
         self._btn_toggle_panel.setStyleSheet(_PDF_BTN)
         self._btn_toggle_panel.clicked.connect(self._toggle_right_panel)
         tb.addWidget(self._btn_toggle_panel)
@@ -755,12 +788,10 @@ class Plan3DWebWindow(QMainWindow):
         if visible:
             self._right_panel_sizes = self._splitter.sizes()
             self._right_panel.setVisible(False)
-            self._btn_toggle_panel.setText("Panneau ◀")
             self._btn_toggle_panel.setChecked(True)
         else:
             self._right_panel.setVisible(True)
             self._splitter.setSizes(self._right_panel_sizes)
-            self._btn_toggle_panel.setText("Panneau ▶")
             self._btn_toggle_panel.setChecked(False)
 
     # ── Panneau latéral droit (onglets) ─────────────────────────────────────

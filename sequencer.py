@@ -4748,10 +4748,10 @@ class Sequencer(QFrame):
         self._timeline_sorted = {}
         _max_end = 0
         for _tname, _clips in tracks_clips.items():
-            _sc = sorted(_clips, key=lambda c: c['start'])
-            self._timeline_sorted[_tname] = (_sc, [c['start'] for c in _sc])
+            _sc = sorted(_clips, key=lambda c: c.get('start', 0))
+            self._timeline_sorted[_tname] = (_sc, [c.get('start', 0) for c in _sc])
             for _c in _sc:
-                _e = _c['start'] + _c['duration']
+                _e = _c.get('start', 0) + _c.get('duration', 0)
                 if _e > _max_end:
                     _max_end = _e
         self._timeline_last_end = _max_end
@@ -4835,16 +4835,16 @@ class Sequencer(QFrame):
             if j < 0:
                 continue
             clip_data = sclips[j]
-            start = clip_data['start']
-            end = start + clip_data['duration']
+            start = clip_data.get('start', 0)
+            end = start + clip_data.get('duration', 0)
             if not (start <= current_time <= end):
                 continue
 
             intensity = self.calculate_clip_intensity(clip_data, current_time)
-            progress = (current_time - start) / max(1, clip_data['duration'])
+            progress = (current_time - start) / max(1, clip_data.get('duration', 0))
 
             entry = {
-                'color': QColor(clip_data['color']),
+                'color': QColor(clip_data.get('color', '#000000')),
                 'color2': QColor(clip_data['color2']) if clip_data.get('color2') else None,
                 'intensity': intensity,
                 'effect': clip_data.get('effect', None),
@@ -4985,9 +4985,15 @@ class Sequencer(QFrame):
 
     def calculate_clip_intensity(self, clip_data, current_time):
         """Calcule intensite avec fades"""
-        start = clip_data['start']
-        duration = clip_data['duration']
+        start = clip_data.get('start', 0)
+        duration = clip_data.get('duration', 0)
         base_intensity = clip_data.get('intensity', 100)
+
+        # Clip dégénéré (durée nulle/négative) : pas de fade possible, on renvoie
+        # l'intensité pleine. Évite un ZeroDivisionError qui, levé dans le timer
+        # de restitution (thread Qt), ferait crasher tout MyStrow en plein show.
+        if duration <= 0:
+            return int(base_intensity)
 
         fade_in = clip_data.get('fade_in', 0)
         fade_out = clip_data.get('fade_out', 0)

@@ -1121,15 +1121,26 @@ class LiveAudioEngine(QObject):
     # ── Callback audio ─────────────────────────────────────────────────────
 
     def _audio_cb(self, indata, frames, time_info, status):
-        """Callback sounddevice — thread audio (GIL protège les list.append)."""
+        """Callback sounddevice — thread audio (GIL protège les list.append).
+
+        Ce callback s'exécute dans le thread C de PortAudio. Une exception qui
+        s'en échappe traverse la frontière C/CFFI et peut faire crasher tout
+        MyStrow (access violation) sur certains micros/pilotes → on encapsule
+        TOUT le corps et on avale l'erreur (on saute juste ce chunk).
+        """
         if not self._running:
             return
-        mono = (indata[:, 0] + indata[:, 1]) * 0.5 if indata.shape[1] >= 2 else indata[:, 0]
-        raw  = float(((mono * mono).mean()) ** 0.5)
-        rms  = raw * 3.0 if raw > 0.0003 else 0.0
-        if HAS_NP:
-            self._update_bands(mono)
-        self._process_chunk(rms)
+        try:
+            if indata.ndim < 2 or indata.shape[1] < 1:
+                return
+            mono = (indata[:, 0] + indata[:, 1]) * 0.5 if indata.shape[1] >= 2 else indata[:, 0]
+            raw  = float(((mono * mono).mean()) ** 0.5)
+            rms  = raw * 3.0 if raw > 0.0003 else 0.0
+            if HAS_NP:
+                self._update_bands(mono)
+            self._process_chunk(rms)
+        except Exception as e:
+            print(f"LiveAudio: _audio_cb erreur ignorée ({e})")
 
     def _update_bands(self, mono):
         """Analyse FFT des bandes fréquentielles depuis le chunk audio brut."""

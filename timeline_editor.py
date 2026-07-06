@@ -313,6 +313,7 @@ class LightTimelineEditor(QDialog):
 
         is_image = self.media_path and media_icon(self.media_path) == "image"
         show_audio = not is_image and not self.is_tempo
+        self._has_audio_track = bool(show_audio)   # utilisé par reanalyze_audio()
 
         if show_audio:
             tracks_layout.addWidget(self.track_waveform)
@@ -671,7 +672,7 @@ class LightTimelineEditor(QDialog):
 
         loading = QDialog(self)
         loading.setWindowTitle(tr("te_loading_title"))
-        loading.setFixedSize(380, 220)
+        loading.setFixedSize(380, 248)
         loading.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         loading.setStyleSheet("""
             QDialog { background: #1a1a1a; border: 2px solid #00d4ff; border-radius: 10px; }
@@ -697,6 +698,14 @@ class LightTimelineEditor(QDialog):
         remaining.setAlignment(Qt.AlignCenter)
         remaining.setStyleSheet("font-size: 12px; color: #00d4ff; border: none;")
         lay.addWidget(remaining)
+
+        # Info : le résultat est mis en cache → la prochaine ouverture sera instantanée.
+        # (Cette branche ne s'exécute qu'au 1er passage — cache miss — donc toujours vrai ici.)
+        next_hint = QLabel(tr("te_next_instant"))
+        next_hint.setAlignment(Qt.AlignCenter)
+        next_hint.setWordWrap(True)
+        next_hint.setStyleSheet("font-size: 10px; color: #777; border: none;")
+        lay.addWidget(next_hint)
 
         import time as _time
         _start_ts = [0.0]   # rempli au 1er pct > 0
@@ -748,6 +757,10 @@ class LightTimelineEditor(QDialog):
             if _start_ts[0] <= 0 and pct > 0:
                 _start_ts[0] = _time.monotonic()
             _last_pct[0] = pct
+            # Le décodeur Qt rapporte une vraie progression → quitter le mode
+            # « occupé » (barre animée) et repasser en barre déterminée 0–100.
+            if bar.maximum() == 0:
+                bar.setRange(0, 100)
             bar.setValue(pct)
             prefix = tr("te_extract_prefix") if is_vid else tr("te_analyse_prefix")
             status.setText(f"{prefix}... {pct}%")
@@ -755,6 +768,13 @@ class LightTimelineEditor(QDialog):
             QApplication.processEvents()
             if self._analysis_cancelled:
                 raise _AnalysisCancelled()
+
+        # Les décodeurs ffmpeg / miniaudio ne rapportent PAS de progression : sans
+        # ça la barre resterait bloquée à 0% pendant tout le décodage (impression de
+        # figé). On démarre donc en mode « occupé » (barre animée) ; on_progress
+        # repasse en 0–100 si un décodeur (Qt) fournit une vraie progression.
+        bar.setRange(0, 0)
+        status.setText(tr("te_analyse_prefix") + "…")
 
         try:
             waveform = self.track_waveform.generate_waveform(
@@ -773,6 +793,7 @@ class LightTimelineEditor(QDialog):
                 self._save_waveform_cache(waveform)
                 if self.media_row in self.main_window.seq.sequences:
                     self.main_window.seq.sequences[self.media_row]['waveform'] = [round(x, 3) for x in waveform]
+                bar.setRange(0, 100)
                 bar.setValue(100)
                 status.setText(tr("te_points_analysed", n=len(waveform)))
                 QApplication.processEvents()
@@ -805,6 +826,43 @@ class LightTimelineEditor(QDialog):
         self.track_waveform.update()
         for track in self.tracks:
             track.update()
+
+    def reanalyze_audio(self):
+        """Relance l'analyse audio (forme d'onde) en ignorant le cache.
+        Utile si le fichier a changé ou si l'analyse précédente était partielle."""
+        if not self.media_path or not getattr(self, '_has_audio_track', False):
+            QMessageBox.information(self, tr("te_reanalyze_title"), tr("te_reanalyze_no_audio"))
+            return
+
+        ret = QMessageBox.question(
+            self, tr("te_reanalyze_title"), tr("te_reanalyze_confirm"),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ret != QMessageBox.Yes:
+            return
+
+        # 1. Supprimer le cache disque de cette forme d'onde
+        cache_path = self._get_waveform_cache_path()
+        if cache_path and os.path.exists(cache_path):
+            try:
+                os.remove(cache_path)
+            except OSError as e:
+                print(f"   Warning: cache waveform non supprimé: {e}")
+
+        # 2. Vider la waveform en mémoire (sinon _load_waveform_async ressort de suite)
+        self.track_waveform.waveform_data = None
+        for track in self.tracks:
+            track.waveform_data = None
+
+        # 3. Vider la copie mémorisée dans la séquence
+        try:
+            seq = self.main_window.seq.sequences.get(self.media_row)
+            if seq and 'waveform' in seq:
+                del seq['waveform']
+        except Exception:
+            pass
+
+        # 4. Relancer la génération (barre de progression + re-cache)
+        self._load_waveform_async()
 
     def _create_menu_bar(self):
         """Cree la barre de menus Edition / Outils / Effet"""
@@ -914,6 +972,9 @@ class LightTimelineEditor(QDialog):
         cut_tool_action = tools_menu.addAction(tr("te_menu_cut_tool"))
         cut_tool_action.triggered.connect(self.toggle_cut_mode_from_menu)
 
+        reanalyze_action = tools_menu.addAction(tr("te_menu_reanalyze"))
+        reanalyze_action.triggered.connect(self.reanalyze_audio)
+
         ai_action = tools_menu.addAction(tr("te_menu_ai_gen"))
         ai_action.triggered.connect(self.generate_ai_sequence)
 
@@ -938,34 +999,42 @@ class LightTimelineEditor(QDialog):
 
         header_layout.addStretch()
 
+        # Style unifié, aligné sur les boutons de la page d'accueil (toolbar plan de
+        # feu) : rectangle arrondi, fond sombre, bordure 1px, survol accent bleu.
+        _BTN = 42   # taille unique de tous les boutons du header
         btn_style = """
             QPushButton {
-                background: #3a3a3a;
-                color: white;
-                border: none;
-                border-radius: 22px;
-                font-size: 22px;
+                background: #1e1e1e;
+                color: #ddd;
+                border: 1px solid #3a3a3a;
+                border-radius: 6px;
+                font-size: 18px;
             }
-            QPushButton:hover { background: #4a4a4a; }
+            QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #0077bb; }
+            QPushButton:pressed { background: #333; }
         """
+        # Variante d'état « activé » (toggles) : accent bleu discret, même famille.
+        _checked_accent = "QPushButton:checked { background:#0a2436; color:#00d4ff; border-color:#0077bb; }"
 
         # Undo
-        undo_btn = QPushButton("↶")
+        undo_btn = QPushButton()
+        undo_btn.setIcon(self._icon_undo())
+        undo_btn.setIconSize(QSize(23, 23))
         undo_btn.setToolTip(tr("te_tooltip_undo"))
         undo_btn.clicked.connect(self.undo)
-        undo_btn.setFixedSize(45, 45)
+        undo_btn.setFixedSize(_BTN, _BTN)
         undo_btn.setStyleSheet(btn_style)
         header_layout.addWidget(undo_btn)
 
         # Cut
-        self.cut_btn = QPushButton("✂")
+        self.cut_btn = QPushButton()
+        self.cut_btn.setIcon(self._icon_cut())
+        self.cut_btn.setIconSize(QSize(23, 23))
         self.cut_btn.setToolTip(tr("te_tooltip_cut_tool"))
         self.cut_btn.clicked.connect(self.toggle_cut_mode)
-        self.cut_btn.setFixedSize(45, 45)
+        self.cut_btn.setFixedSize(_BTN, _BTN)
         self.cut_btn.setCheckable(True)
-        self.cut_btn.setStyleSheet(btn_style + """
-            QPushButton:checked { background: #00d4ff; color: black; }
-        """)
+        self.cut_btn.setStyleSheet(btn_style + _checked_accent)
         header_layout.addWidget(self.cut_btn)
 
         self.paint_btn = QPushButton(header)  # parent obligatoire — sans parent = fenetre fantome top-level
@@ -975,20 +1044,25 @@ class LightTimelineEditor(QDialog):
 
         header_layout.addSpacing(12)
 
-        # ── Décaler tout le show vers la gauche / droite ──────────────────────
-        # Resynchronise toute la séquence d'un bloc (clic = 100 ms, Ctrl = 1 s, Shift = 10 ms)
-        _shift_tip = "Décaler TOUS les clips {dir}\nClic = 100 ms · Ctrl = 1 s · Shift = 10 ms"
-        shift_left_btn = QPushButton("⟸")
+        # ── Décaler les blocs vers la gauche / droite ─────────────────────────
+        # Icône façon Premiere : bord de bloc en pointillés + flèche pleine.
+        # Cible = blocs sélectionnés s'il y en a, sinon tous. (clic = 100 ms, Ctrl = 1 s, Shift = 10 ms)
+        _shift_tip = "Décaler les blocs sélectionnés {dir}\n(ou TOUS si aucun bloc sélectionné)\nClic = 100 ms · Ctrl = 1 s · Shift = 10 ms"
+        shift_left_btn = QPushButton()
+        shift_left_btn.setIcon(self._make_shift_icon('left'))
+        shift_left_btn.setIconSize(QSize(24, 24))
         shift_left_btn.setToolTip(_shift_tip.format(dir="vers la gauche"))
-        shift_left_btn.setFixedSize(45, 45)
+        shift_left_btn.setFixedSize(_BTN, _BTN)
         shift_left_btn.setFocusPolicy(Qt.NoFocus)
         shift_left_btn.setStyleSheet(btn_style)
         shift_left_btn.clicked.connect(self._shift_all_left)
         header_layout.addWidget(shift_left_btn)
 
-        shift_right_btn = QPushButton("⟹")
+        shift_right_btn = QPushButton()
+        shift_right_btn.setIcon(self._make_shift_icon('right'))
+        shift_right_btn.setIconSize(QSize(24, 24))
         shift_right_btn.setToolTip(_shift_tip.format(dir="vers la droite"))
-        shift_right_btn.setFixedSize(45, 45)
+        shift_right_btn.setFixedSize(_BTN, _BTN)
         shift_right_btn.setFocusPolicy(Qt.NoFocus)
         shift_right_btn.setStyleSheet(btn_style)
         shift_right_btn.clicked.connect(self._shift_all_right)
@@ -996,93 +1070,67 @@ class LightTimelineEditor(QDialog):
 
         header_layout.addSpacing(20)
 
-        # Zoom
-        zoom_btn_style = """
-            QPushButton {
-                background: #2a2a2a;
-                color: white;
-                border: 1px solid #3a3a3a;
-                border-radius: 6px;
-                font-size: 18px;
-            }
-            QPushButton:hover { background: #3a3a3a; }
-        """
-
-        zoom_out_btn = QPushButton("➖")
-        zoom_out_btn.clicked.connect(self.zoom_out)
-        zoom_out_btn.setFixedSize(40, 40)
-        zoom_out_btn.setFocusPolicy(Qt.NoFocus)
-        zoom_out_btn.setStyleSheet(zoom_btn_style)
-        zoom_out_btn.setToolTip("Zoom arrière  (ou  Shift + Molette ↓)")
-        header_layout.addWidget(zoom_out_btn)
-
-        self.zoom_label = QLabel("100%")
-        self.zoom_label.setStyleSheet("color: white; padding: 0 15px; font-size: 13px;")
-        self.zoom_label.setToolTip("Niveau de zoom  —  Shift + Molette pour zoomer")
-        header_layout.addWidget(self.zoom_label)
-
-        zoom_in_btn = QPushButton("➕")
-        zoom_in_btn.clicked.connect(self.zoom_in)
-        zoom_in_btn.setFixedSize(40, 40)
-        zoom_in_btn.setFocusPolicy(Qt.NoFocus)
-        zoom_in_btn.setStyleSheet(zoom_btn_style)
-        zoom_in_btn.setToolTip("Zoom avant  (ou  Shift + Molette ↑)")
-        header_layout.addWidget(zoom_in_btn)
+        # Zoom : pavé [−  100%  +] avec libellé « ZOOM » au-dessus
+        zoom_col, self.zoom_label = self._make_labeled_stepper(
+            "ZOOM", self.zoom_out, self.zoom_in, val_width=52,
+            tip="Niveau de zoom  —  Shift + Molette pour zoomer")
+        self.zoom_label.setText("100%")
+        header_layout.addWidget(zoom_col)
 
         header_layout.addSpacing(8)
 
         # ── Toggle preview vidéo (désactivé par défaut) ───────────────────────
         self._video_toggle_btn = QPushButton("🎬")
         self._video_toggle_btn.setToolTip("Activer / Désactiver la preview vidéo\n(désactivée par défaut pour préserver les performances)")
-        self._video_toggle_btn.setFixedSize(45, 45)
+        self._video_toggle_btn.setFixedSize(_BTN, _BTN)
         self._video_toggle_btn.setCheckable(True)
         self._video_toggle_btn.setChecked(False)
         self._video_toggle_btn.setVisible(False)   # visible seulement si media vidéo
         self._video_toggle_btn.setStyleSheet(btn_style + """
-            QPushButton:checked {
-                background: #1a3a1a;
-                border: 2px solid #44cc44;
-            }
+            QPushButton:checked { background: #0d2a14; color: #44cc44; border-color: #2a7a2a; }
         """)
         self._video_toggle_btn.toggled.connect(self._toggle_video_preview)
         header_layout.addWidget(self._video_toggle_btn)
 
         header_layout.addSpacing(8)
 
-        # ── Durée par défaut des blocs glissés ───────────────────────────────
+        # ── Durée par défaut des blocs ────────────────────────────────────────
+        # Le QDoubleSpinBox reste le MODÈLE (valeur/plage/pas) mais est caché : l'UI
+        # visible est un pavé [−  5 s  +] avec libellé « BLOC » au-dessus.
+        # _default_block_dur_ms() lit .value().
         from PySide6.QtWidgets import QDoubleSpinBox as _DSB
-        dur_lbl = QLabel("Bloc :")
-        dur_lbl.setStyleSheet("color:#888; font-size:11px; border:none;")
-        header_layout.addWidget(dur_lbl)
-        self._default_block_dur_spin = _DSB()
+        self._default_block_dur_spin = _DSB(header)
         self._default_block_dur_spin.setRange(0.5, 120.0)
         self._default_block_dur_spin.setSingleStep(0.5)
         self._default_block_dur_spin.setValue(5.0)
-        self._default_block_dur_spin.setSuffix(" s")
-        self._default_block_dur_spin.setFixedWidth(72)
-        self._default_block_dur_spin.setFixedHeight(32)
-        self._default_block_dur_spin.setToolTip("Durée par défaut des blocs déposés depuis la bibliothèque")
-        self._default_block_dur_spin.setStyleSheet("""
-            QDoubleSpinBox {
-                background:#2a2a2a; color:#e0e0e0;
-                border:1px solid #444; border-radius:6px;
-                padding:2px 4px; font-size:12px;
-            }
-            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-                width:16px; background:#3a3a3a; border-radius:3px;
-            }
-        """)
-        header_layout.addWidget(self._default_block_dur_spin)
+        self._default_block_dur_spin.setVisible(False)
+
+        bloc_col, self._dur_val_lbl = self._make_labeled_stepper(
+            "BLOC",
+            lambda: self._default_block_dur_spin.stepBy(-1),
+            lambda: self._default_block_dur_spin.stepBy(1),
+            val_width=48,
+            tip="Durée par défaut des blocs déposés / peints")
+        header_layout.addWidget(bloc_col)
+
+        def _upd_dur_lbl(v):
+            txt = (f"{v:.0f}" if float(v).is_integer() else f"{v:.1f}") + " s"
+            self._dur_val_lbl.setText(txt)
+        self._default_block_dur_spin.valueChanged.connect(_upd_dur_lbl)
+        _upd_dur_lbl(self._default_block_dur_spin.value())
+
         header_layout.addSpacing(8)
 
         # Bouton bascule 2D / 3D
         is_3d_open = hasattr(self.main_window, '_plan3d') and self.main_window._plan3d.isVisible()
         self._btn_vue_3d = QPushButton("3D")
         self._btn_vue_3d.setToolTip("Basculer vue 3D / 2D")
-        self._btn_vue_3d.setFixedSize(45, 45)
+        self._btn_vue_3d.setFixedSize(_BTN, _BTN)
         self._btn_vue_3d.setCheckable(True)
         self._btn_vue_3d.setChecked(is_3d_open)
-        self._btn_vue_3d.setStyleSheet(btn_style)
+        self._btn_vue_3d.setStyleSheet(btn_style + _checked_accent + """
+            QPushButton { font-size: 14px; font-weight: bold; }
+        """)
         self._btn_vue_3d.clicked.connect(self._toggle_vue_3d)
         header_layout.addWidget(self._btn_vue_3d)
 
@@ -2341,6 +2389,135 @@ class LightTimelineEditor(QDialog):
                 track.update()
             self.save_state()
 
+    # Couleur claire commune à toutes les icônes SVG du header
+    _ICON_COL = "#e0e0e0"
+
+    def _svg_icon(self, inner):
+        """Rend un fragment SVG (repère viewBox 0 0 24 24) en QIcon net.
+        Rendu robuste : pixmap simple 48px + rectangle cible explicite. PAS de
+        setDevicePixelRatio (sinon l'icône n'occupe qu'un quart et s'affiche mutilée)."""
+        from PySide6.QtGui import QIcon
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray, QRectF
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">{inner}</svg>'
+        pix = QPixmap(48, 48)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(p, QRectF(0, 0, 48, 48))
+        p.end()
+        return QIcon(pix)
+
+    def _make_shift_icon(self, direction):
+        """Icône de décalage façon Premiere Pro : un bord de bloc en pointillés
+        + une flèche pleine dans le sens du décalage. direction = 'left' | 'right'."""
+        col = self._ICON_COL
+        if direction == 'right':
+            inner = (
+                f'<line x1="4.5" y1="5.5" x2="4.5" y2="18.5" stroke="{col}" stroke-width="2.8" '
+                f'stroke-dasharray="3 3.2" stroke-linecap="round"/>'
+                f'<line x1="9" y1="12" x2="15.5" y2="12" stroke="{col}" stroke-width="3" stroke-linecap="round"/>'
+                f'<path d="M14 6.5 L22 12 L14 17.5 Z" fill="{col}"/>'
+            )
+        else:
+            inner = (
+                f'<line x1="19.5" y1="5.5" x2="19.5" y2="18.5" stroke="{col}" stroke-width="2.8" '
+                f'stroke-dasharray="3 3.2" stroke-linecap="round"/>'
+                f'<line x1="15" y1="12" x2="8.5" y2="12" stroke="{col}" stroke-width="3" stroke-linecap="round"/>'
+                f'<path d="M10 6.5 L2 12 L10 17.5 Z" fill="{col}"/>'
+            )
+        return self._svg_icon(inner)
+
+    def _icon_undo(self):
+        """Flèche de retour arrière (undo)."""
+        c = self._ICON_COL
+        return self._svg_icon(
+            f'<path fill="{c}" d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62'
+            f'c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78'
+            f'C21.08 11.03 17.15 8 12.5 8z"/>'
+        )
+
+    def _icon_cut(self):
+        """Ciseaux (outil couper)."""
+        c = self._ICON_COL
+        return self._svg_icon(
+            f'<path fill="{c}" d="M9.64 7.64c.23-.5.36-1.05.36-1.64 0-2.21-1.79-4-4-4'
+            f'S2 3.79 2 6s1.79 4 4 4c.59 0 1.14-.13 1.64-.36L10 12l-2.36 2.36'
+            f'C7.14 14.13 6.59 14 6 14c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4'
+            f'c0-.59-.13-1.14-.36-1.64L12 14l7 7h3v-1L9.64 7.64zM6 8c-1.1 0-2-.89-2-2'
+            f's.9-2 2-2 2 .89 2 2-.9 2-2 2zm0 12c-1.1 0-2-.89-2-2s.9-2 2-2 2 .89 2 2'
+            f'-.9 2-2 2zm6-7.5c-.28 0-.5-.22-.5-.5s.22-.5.5-.5.5.22.5.5-.22.5-.5.5z'
+            f'M19 3l-6 6 2 2 7-7V3z"/>'
+        )
+
+    # Loupe Material (base commune) — seul le dernier sous-tracé (+ ou −) diffère
+    _ZOOM_BASE = ('M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3'
+                  'S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99'
+                  'L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5'
+                  ' 11.99 14 9.5 14z')
+
+    def _icon_zoom(self, plus):
+        """Loupe avec + (zoom avant) ou − (zoom arrière)."""
+        c = self._ICON_COL
+        sign = 'M9.5 7H9v2H7v1h2v2h1v-2h2V9h-2z' if plus else 'M7 9h5v1H7z'
+        return self._svg_icon(f'<path fill="{c}" d="{self._ZOOM_BASE}{sign}"/>')
+
+    def _make_labeled_stepper(self, caption, on_minus, on_plus, val_width=52, tip=""):
+        """Colonne verticale : petit libellé au-dessus + pavé arrondi [−  valeur  +].
+        Cohérent avec les boutons du header. Renvoie (colonne_widget, value_label)."""
+        from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame
+        PILL_H = 30
+        col = QWidget()
+        cv = QVBoxLayout(col)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(2)
+
+        cap = QLabel(caption)
+        cap.setAlignment(Qt.AlignCenter)
+        cap.setStyleSheet("color:#888; font-size:9px; font-weight:bold; letter-spacing:1.5px; border:none;")
+        cv.addWidget(cap)
+
+        pill = QFrame()
+        pill.setFixedHeight(PILL_H)
+        if tip:
+            pill.setToolTip(tip)
+        pill.setStyleSheet("QFrame { background:#1e1e1e; border:1px solid #3a3a3a; border-radius:6px; }")
+        pl = QHBoxLayout(pill)
+        pl.setContentsMargins(3, 0, 3, 0)
+        pl.setSpacing(0)
+
+        step_ss = (
+            "QPushButton { background:transparent; color:#bbb; border:none;"
+            " font-size:18px; font-weight:bold; }"
+            "QPushButton:hover { color:#00d4ff; }"
+            "QPushButton:pressed { color:#0077bb; }"
+        )
+        bm = QPushButton("−")
+        bm.setFixedSize(24, PILL_H - 2)
+        bm.setFocusPolicy(Qt.NoFocus)
+        bm.setAutoRepeat(True)
+        bm.setStyleSheet(step_ss)
+        bm.clicked.connect(on_minus)
+        pl.addWidget(bm)
+
+        val = QLabel()
+        val.setAlignment(Qt.AlignCenter)
+        val.setFixedWidth(val_width)
+        val.setStyleSheet("color:#e0e0e0; font-size:13px; font-weight:bold;"
+                          " border:none; background:transparent;")
+        pl.addWidget(val)
+
+        bp = QPushButton("+")
+        bp.setFixedSize(24, PILL_H - 2)
+        bp.setFocusPolicy(Qt.NoFocus)
+        bp.setAutoRepeat(True)
+        bp.setStyleSheet(step_ss)
+        bp.clicked.connect(on_plus)
+        pl.addWidget(bp)
+
+        cv.addWidget(pill)
+        return col, val
+
     def _shift_step_ms(self):
         """Pas de décalage selon les modificateurs : Ctrl=1s, Shift=10ms, sinon 100ms."""
         mods = QApplication.keyboardModifiers()
@@ -2357,14 +2534,16 @@ class LightTimelineEditor(QDialog):
         self.shift_all_clips(self._shift_step_ms())
 
     def shift_all_clips(self, delta_ms):
-        """Décale TOUS les clips de toutes les pistes de delta_ms (gauche<0 / droite>0).
+        """Décale des clips de delta_ms (gauche<0 / droite>0).
+        Cible : les clips SÉLECTIONNÉS s'il y en a, sinon TOUS les clips.
         Préserve l'espacement relatif et borne le résultat dans [0, durée totale]."""
-        all_clips = [c for t in self.tracks for c in t.clips]
-        if not all_clips:
+        selected = [c for t in self.tracks for c in getattr(t, 'selected_clips', [])]
+        target_clips = selected if selected else [c for t in self.tracks for c in t.clips]
+        if not target_clips:
             return
         total       = self.tracks[0].total_duration if self.tracks else 0
-        earliest    = min(c.start_time for c in all_clips)
-        latest_end  = max(c.start_time + c.duration for c in all_clips)
+        earliest    = min(c.start_time for c in target_clips)
+        latest_end  = max(c.start_time + c.duration for c in target_clips)
         if delta_ms < 0:
             # Ne pas passer sous 0 : on limite au décalage gauche possible
             delta_ms = -min(-delta_ms, earliest)
@@ -2373,12 +2552,13 @@ class LightTimelineEditor(QDialog):
             delta_ms = min(delta_ms, max(0, total - latest_end))
         if delta_ms == 0:
             return
+        for clip in target_clips:
+            clip.start_time += delta_ms
         for track in self.tracks:
-            for clip in track.clips:
-                clip.start_time += delta_ms
             track.update()
         self.save_state()
-        print(f"↔️ Décalage global de {delta_ms} ms ({len(all_clips)} clips)")
+        _scope = "sélection" if selected else "global"
+        print(f"↔️ Décalage {_scope} de {delta_ms} ms ({len(target_clips)} clips)")
 
     def generate_ai_sequence(self):
         """Genere une sequence avec IA"""

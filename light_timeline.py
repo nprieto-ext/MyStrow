@@ -1783,36 +1783,51 @@ print(json.dumps(waveform))
         import os
 
         temp_wav = None
+        stderr_log = None
         try:
             temp_wav = tempfile.mktemp(suffix='.wav')
+            stderr_log = tempfile.mktemp(suffix='.log')
 
-            # ffmpeg: extraire l'audio en WAV mono 22050Hz 16-bit
+            # ffmpeg: extraire l'audio en WAV mono 22050Hz 16-bit.
+            #  -nostdin : ne jamais attendre une entrée clavier (sinon hang).
+            #  -loglevel error -nostats : sortie stderr minimale.
+            # ⚠ stderr est redirigé vers un FICHIER (jamais bloquant), pas un PIPE :
+            #   un PIPE non drainé pendant la boucle d'attente se remplit (~64 Ko) et
+            #   bloque ffmpeg en écriture → analyse figée à 0% jusqu'au timeout. C'est
+            #   la cause du « bloqué à 0% » sur certains MP3 (plus longs / plus verbeux).
             cmd = [
-                'ffmpeg', '-i', media_path, '-vn', '-ac', '1', '-ar', '22050',
+                'ffmpeg', '-nostdin', '-loglevel', 'error', '-nostats',
+                '-i', media_path, '-vn', '-ac', '1', '-ar', '22050',
                 '-acodec', 'pcm_s16le', '-y', temp_wav
             ]
 
             _ff_kwargs = {}
             if sys.platform == "win32":
                 _ff_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **_ff_kwargs)
-            start_t = time.time()
-            while proc.poll() is None:
-                if cancel_check and cancel_check():
-                    proc.kill()
-                    proc.communicate()
-                    return None
-                QApplication.processEvents()
-                time.sleep(0.1)
-                if time.time() - start_t > 120:
-                    proc.kill()
-                    proc.communicate()
-                    print("   ⚠️ ffmpeg timeout (120s)")
-                    return None
+            with open(stderr_log, 'wb') as _errf:
+                proc = subprocess.Popen(
+                    cmd, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=_errf, **_ff_kwargs)
+                start_t = time.time()
+                while proc.poll() is None:
+                    if cancel_check and cancel_check():
+                        proc.kill()
+                        proc.wait()
+                        return None
+                    QApplication.processEvents()
+                    time.sleep(0.1)
+                    if time.time() - start_t > 120:
+                        proc.kill()
+                        proc.wait()
+                        print("   ⚠️ ffmpeg timeout (120s)")
+                        return None
+                proc.wait()
 
-            _, stderr_bytes = proc.communicate()
             if proc.returncode != 0:
-                stderr_short = stderr_bytes.decode(errors='replace')[:200]
+                try:
+                    stderr_short = open(stderr_log, 'rb').read().decode(errors='replace')[:200]
+                except Exception:
+                    stderr_short = ''
                 print(f"   ⚠️ ffmpeg extraction echouee: {stderr_short}")
                 return None
 
@@ -1842,11 +1857,12 @@ print(json.dumps(waveform))
             print(f"   ❌ Erreur ffmpeg: {e}")
             return None
         finally:
-            if temp_wav:
-                try:
-                    os.unlink(temp_wav)
-                except:
-                    pass
+            for _f in (temp_wav, stderr_log):
+                if _f:
+                    try:
+                        os.unlink(_f)
+                    except OSError:
+                        pass
 
     def _extract_waveform_qt(self, media_path, max_samples, progress_callback=None, cancel_check=None):
         """Extrait la forme d'onde via QAudioDecoder (natif Qt, fonctionne pour audio ET video)"""
@@ -2758,8 +2774,9 @@ print(json.dumps(waveform))
         def _select(mem_col, row_idx, label, color):
             drop_x     = local_pos.x() - 145
             start_time = max(0, drop_x / self.pixels_per_ms)
-            start_time = self.find_free_position(start_time, 5000)
-            clip = self.add_clip_direct(start_time, 5000, color, 100)
+            _dur = self._default_block_dur_ms()
+            start_time = self.find_free_position(start_time, _dur)
+            clip = self.add_clip_direct(start_time, _dur, color, 100)
             clip.memory_ref   = (mem_col, row_idx)
             clip.memory_label = label
             self.update()
@@ -2885,7 +2902,7 @@ print(json.dumps(waveform))
         menu.addSeparator()
 
         mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
-        _DEFAULT_DUR = 5000  # 5 s par défaut
+        _DEFAULT_DUR = self._default_block_dur_ms()  # taille par défaut des blocs (spinner éditeur)
 
         def _add_clip_with_preset(idx, name):
             clip = self.add_clip(click_time_ms, _DEFAULT_DUR, QColor("#2255ee"), 100)
@@ -3684,6 +3701,16 @@ print(json.dumps(waveform))
         self._drag_active = False
         self.update()
 
+    def _default_block_dur_ms(self):
+        """Durée par défaut d'un bloc déposé, lue depuis le spinner de l'éditeur
+        (défaut 5 s). Utilisée par TOUS les chemins de drop pour que le réglage
+        « taille par défaut des blocs » s'applique réellement."""
+        _spin = getattr(self.parent_editor, '_default_block_dur_spin', None)
+        try:
+            return int(_spin.value() * 1000) if _spin else 5000
+        except Exception:
+            return 5000
+
     def dropEvent(self, event):
         """Drop d'une couleur, séquence ou effet sur la piste"""
         self._drag_active = False
@@ -3770,8 +3797,9 @@ print(json.dumps(waveform))
                 data = {}
             drop_x     = event.position().x() - 145
             click_time = max(0, drop_x / self.pixels_per_ms)
-            start_time = self.find_free_position(click_time, 5_000)
-            clip = self.add_clip_direct(start_time, 5_000, QColor("#0d2a5c"), 0)
+            _dur = self._default_block_dur_ms()
+            start_time = self.find_free_position(click_time, _dur)
+            clip = self.add_clip_direct(start_time, _dur, QColor("#0d2a5c"), 0)
             clip.position_preset_idx  = data.get('idx')
             clip.position_preset_name = data.get('name', '')
             self.update()
@@ -3802,7 +3830,8 @@ print(json.dumps(waveform))
                         break
                 gap_duration = gap_end - gap_start
                 if gap_duration > 100:
-                    clip_duration = min(gap_duration, 10_000)
+                    # Effets : plancher 10 s, mais honore un réglage par défaut plus grand
+                    clip_duration = min(gap_duration, max(self._default_block_dur_ms(), 10_000))
                     clip = self.add_clip(gap_start, clip_duration, QColor("#1a0a2e"), 100)
                     clip.effect_name   = eff_name
                     clip.effect_type   = data.get("type", "")
@@ -3836,13 +3865,14 @@ print(json.dumps(waveform))
 
                 if len(cues) <= 1:
                     # Cue unique → un seul clip
-                    start_time = self.find_free_position(start_time, 5000)
-                    clip = self.add_clip_direct(start_time, 5000, QColor(color_hex), 100)
+                    _dur = self._default_block_dur_ms()
+                    start_time = self.find_free_position(start_time, _dur)
+                    clip = self.add_clip_direct(start_time, _dur, QColor(color_hex), 100)
                     clip.memory_ref   = (mem_col, row_idx)
                     clip.memory_label = label
                 else:
                     # Multi-cue → expansion en N clips consécutifs
-                    cue_dur = 5000
+                    cue_dur = self._default_block_dur_ms()
                     total   = cue_dur * len(cues)
                     start_time = self.find_free_position(start_time, total)
                     t = start_time
@@ -3877,7 +3907,7 @@ print(json.dumps(waveform))
 
         drop_x = event.position().x() - 145
         start_time = max(0, drop_x / self.pixels_per_ms)
-        clip_duration = 5000
+        clip_duration = self._default_block_dur_ms()
 
         start_time = self.find_free_position(start_time, clip_duration)
 
@@ -3895,7 +3925,7 @@ print(json.dumps(waveform))
                     self.update()
         else:
             color = QColor(color_data)
-            self.add_clip(start_time, 5000, color, 100)
+            self.add_clip(start_time, clip_duration, color, 100)
 
         if hasattr(self.parent_editor, 'save_state'):
             self.parent_editor.save_state()
@@ -3937,7 +3967,7 @@ print(json.dumps(waveform))
 
     def _paint_brush_at(self, start_time, brush):
         """Place un clip à start_time selon le pinceau paint_brush actif."""
-        dur = 1000  # 1 seconde
+        dur = self._default_block_dur_ms()  # taille par défaut des blocs (spinner éditeur)
         btype = brush.get("type", "color")
         if btype == "color":
             self.add_clip(start_time, dur, brush["color"], 100)
@@ -3980,9 +4010,13 @@ print(json.dumps(waveform))
             pixels_per_sample = timeline_width_px / len(self.waveform_data) if self.waveform_data else 1
             y_center = self.height() // 2
 
-            visible_start = max(0, int((0 - 145) / pixels_per_sample))
+            # Bornes de samples limitées à la zone à peindre (paint_rect) et non à
+            # toute la timeline → coût borné au viewport (zoom bien plus rapide).
+            _left  = max(145, paint_rect.left())
+            _right = min(self.width() + 10, paint_rect.right() + 10)
+            visible_start = max(0, int((_left - 145) / pixels_per_sample))
             visible_end = min(len(self.waveform_data),
-                              int((self.width() + 10 - 145) / pixels_per_sample) + 1)
+                              int((_right - 145) / pixels_per_sample) + 1)
 
             if self.name == "Audio":
                 # ── Piste Audio : waveform pixel-parfaite (1 valeur / pixel) ──
@@ -4162,22 +4196,26 @@ print(json.dumps(waveform))
         # un QPixmap (par zoom/taille), puis on blitte uniquement la zone exposée.
         # Le cache est invalidé automatiquement via la clé (taille, zoom, id data).
         if self.waveform_data:
+            # Cache borné à la ZONE EXPOSÉE (viewport), pas à toute la timeline :
+            # au zoom, on n'alloue/rend plus qu'un pixmap de la taille visible
+            # (~largeur du viewport) au lieu de jusqu'à 30000 px de large par piste.
             er = event.rect()
-            w_px, h_px = self.width(), self.height()
-            key = (w_px, h_px, round(self.pixels_per_ms, 9),
+            ew, eh = er.width(), er.height()
+            key = (er.x(), er.y(), ew, eh, round(self.pixels_per_ms, 9),
                    id(self.waveform_data), self.name)
-            if 0 < w_px <= 30000 and h_px > 0:
+            if 0 < ew <= 8000 and eh > 0:
                 if self._wave_cache_key != key or self._wave_cache is None:
-                    pm = QPixmap(w_px, h_px)
+                    pm = QPixmap(ew, eh)
                     pm.fill(Qt.transparent)
                     cp = QPainter(pm)
-                    self._render_waveform(cp, QRect(0, 0, w_px, h_px))
+                    cp.translate(-er.x(), -er.y())   # dessiner en coords widget
+                    self._render_waveform(cp, er)
                     cp.end()
                     self._wave_cache = pm
                     self._wave_cache_key = key
-                painter.drawPixmap(er, self._wave_cache, er)
+                painter.drawPixmap(er.topLeft(), self._wave_cache)
             else:
-                # Largeur hors limites QPixmap (zoom extrême) : rendu direct
+                # Zone hors limites (cas extrême) : rendu direct sans cache
                 self._wave_cache = None
                 self._wave_cache_key = None
                 self._render_waveform(painter, er)
