@@ -395,6 +395,10 @@ def _delete_fixture_doc(doc_id: str, id_token: str) -> bool:
     return _delete_firestore_doc(f"gdtf_fixtures/{doc_id}", id_token)
 
 
+GA4_VISITS_URL   = "https://us-central1-mystrow-907be.cloudfunctions.net/ga4_visits"
+GA4_INSIGHTS_URL = "https://us-central1-mystrow-907be.cloudfunctions.net/ga4_insights"
+
+
 def _query_downloads(id_token: str) -> list:
     """Récupère tous les téléchargements depuis Firestore via pagination par curseur (batch 500)."""
     base_url = f"{_FS_BASE.split('/documents')[0]}/documents:runQuery"
@@ -2495,10 +2499,18 @@ class _FixtureEditDialog(QDialog):
 class _SparklineWidget(QWidget):
     """Affiche une courbe d'activité journalière avec area fill (QPainter)."""
 
-    def __init__(self, parent=None):
+    def __init__(self, color=ACCENT, parent=None):
         super().__init__(parent)
         self._data: list = []   # list of (date_str, count)
+        self._color = color
+        self._pts: list = []    # [(x, y, date_str, value)] pour l'infobulle au survol
         self.setMinimumHeight(130)
+        self.setMouseTracking(True)
+        # Infobulle au survol : texte blanc sur fond sombre
+        self.setStyleSheet(
+            "QToolTip { color: #ffffff; background-color: #1e1e1e;"
+            " border: 1px solid #3a3a3a; padding: 3px 6px; font-size: 11px; }"
+        )
 
     def set_data(self, data: list):
         """data = [(date_str, count), ...] trié par date asc."""
@@ -2517,6 +2529,7 @@ class _SparklineWidget(QWidget):
         p.fillRect(0, 0, W, H, QC(BG_PANEL))
 
         if not self._data:
+            self._pts = []
             p.setPen(QC(TEXT_DIM))
             p.drawText(self.rect(), Qt.AlignCenter, "Aucune donnée")
             p.end()
@@ -2545,26 +2558,21 @@ class _SparklineWidget(QWidget):
             p.drawText(0, int(y) - 7, pad_l - 4, 14, Qt.AlignRight | Qt.AlignVCenter, lbl)
             p.setPen(grid_pen)
 
-        # Area fill (dégradé)
-        path_area = QPainterPath()
-        path_area.moveTo(x_of(0), pad_t + draw_h)
-        for i, v in enumerate(values):
-            path_area.lineTo(x_of(i), y_of(v))
-        path_area.lineTo(x_of(n - 1), pad_t + draw_h)
-        path_area.closeSubpath()
-
-        grad = QLinearGradient(0, pad_t, 0, pad_t + draw_h)
-        from PySide6.QtGui import QColor as QC2
-        c_top = QC2(ACCENT); c_top.setAlpha(80)
-        c_bot = QC2(ACCENT); c_bot.setAlpha(0)
-        grad.setColorAt(0.0, c_top)
-        grad.setColorAt(1.0, c_bot)
-        p.setBrush(grad)
+        # Bâtons par jour (meilleure lisibilité) : un fin trait vertical par jour
+        base_y = pad_t + draw_h
+        bw = max(1.5, min(9.0, draw_w / max(n, 1) * 0.55))
+        c_bar = QC(self._color); c_bar.setAlpha(70)
         p.setPen(Qt.NoPen)
-        p.drawPath(path_area)
+        p.setBrush(c_bar)
+        for i, v in enumerate(values):
+            if v <= 0:
+                continue
+            bx = x_of(i) - bw / 2.0
+            by = y_of(v)
+            p.drawRoundedRect(int(bx), int(by), max(1, int(bw)), int(base_y - by), 1, 1)
 
         # Courbe
-        line_pen = QPen(QC(ACCENT))
+        line_pen = QPen(QC(self._color))
         line_pen.setWidth(2)
         p.setPen(line_pen)
         p.setBrush(Qt.NoBrush)
@@ -2575,23 +2583,53 @@ class _SparklineWidget(QWidget):
         p.drawPath(path_line)
 
         # Points sur valeurs > 0
-        p.setBrush(QC(ACCENT))
+        p.setBrush(QC(self._color))
         for i, v in enumerate(values):
             if v > 0:
                 p.drawEllipse(int(x_of(i)) - 3, int(y_of(v)) - 3, 6, 6)
 
-        # Labels dates (début, milieu, fin)
+        # Mémorise les positions écran pour l'infobulle au survol
+        self._pts = [(x_of(i), y_of(values[i]), dates[i], values[i]) for i in range(n)]
+
+        # Labels dates sur l'axe : autant que la largeur le permet (sans se chevaucher)
         p.setPen(QC(TEXT_DIM))
         label_font = self.font()
         label_font.setPointSize(8)
         p.setFont(label_font)
-        indices = [0, n // 2, n - 1] if n >= 3 else list(range(n))
-        for i in set(indices):
+        max_lbls = max(2, int(draw_w // 68))
+        step = max(1, n // max_lbls)
+        idxs = list(range(0, n, step))
+        if (n - 1) not in idxs:
+            idxs.append(n - 1)
+        for i in idxs:
             lbl = dates[i][5:]  # MM-DD
             p.drawText(int(x_of(i)) - 20, H - pad_b + 4, 40, pad_b - 2,
                        Qt.AlignHCenter | Qt.AlignTop, lbl)
 
         p.end()
+
+    def mouseMoveEvent(self, e):
+        """Infobulle au survol : affiche la date et le nombre du point le plus proche."""
+        from PySide6.QtWidgets import QToolTip
+        if not self._pts:
+            return
+        try:
+            px = e.position().x()
+        except AttributeError:
+            px = e.x()
+        nx, ny, nd, nv = min(self._pts, key=lambda t: abs(t[0] - px))
+        if abs(nx - px) <= 16:
+            try:
+                gp = e.globalPosition().toPoint()
+            except AttributeError:
+                gp = e.globalPos()
+            QToolTip.showText(gp, f"{nd} : {nv}", self)
+        else:
+            QToolTip.hideText()
+
+    def leaveEvent(self, e):
+        from PySide6.QtWidgets import QToolTip
+        QToolTip.hideText()
 
 
 # ---------------------------------------------------------------
@@ -2785,6 +2823,7 @@ class AdminPanel(QMainWindow):
         self._load_clients()
         self._load_github_downloads()
         self._load_firestore_downloads()
+        self._load_ga4_visits()
 
         # Rafraîchissement automatique du token toutes les 50 min (expire à 60 min)
         self._token_timer = QTimer(self)
@@ -3115,7 +3154,7 @@ class AdminPanel(QMainWindow):
         btn_ref = QPushButton("↺  Actualiser")
         btn_ref.setFixedHeight(28)
         btn_ref.setStyleSheet(_BTN_SECONDARY)
-        btn_ref.clicked.connect(lambda: (self._load_clients(), self._load_github_downloads()))
+        btn_ref.clicked.connect(lambda: (self._load_clients(), self._load_github_downloads(), self._load_firestore_downloads(), self._load_ga4_visits()))
         hdr_lay.addWidget(btn_ref)
         root.addWidget(hdr)
 
@@ -3130,6 +3169,27 @@ class AdminPanel(QMainWindow):
         inner_lay.setSpacing(20)
         scroll.setWidget(inner)
         root.addWidget(scroll, 1)
+
+        # ── EN HAUT : courbes jour après jour (téléchargements + abonnements) ──
+        def _curve_card(title, widget):
+            c = QFrame()
+            c.setStyleSheet(f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+            cl = QVBoxLayout(c)
+            cl.setContentsMargins(16, 14, 16, 14)
+            cl.setSpacing(8)
+            tt = QLabel(title)
+            tt.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            tt.setStyleSheet(f"color:{TEXT}; background:transparent;")
+            cl.addWidget(tt)
+            cl.addWidget(widget, 1)
+            return c
+
+        self._visits_sparkline = _SparklineWidget(color="#2ecc71")
+        inner_lay.addWidget(_curve_card("Visites du site par jour", self._visits_sparkline))
+        self._dl_sparkline = _SparklineWidget(color="#3498db")
+        inner_lay.addWidget(_curve_card("Téléchargements par jour", self._dl_sparkline))
+        self._sparkline = _SparklineWidget(color=ACCENT)
+        inner_lay.addWidget(_curve_card("Abonnements par jour", self._sparkline))
 
         # ── Ligne 1 : KPI cards ───────────────────────────────────────────────
         kpi_row = QHBoxLayout()
@@ -3273,24 +3333,9 @@ class AdminPanel(QMainWindow):
 
         inner_lay.addLayout(mid)
 
-        # ── Ligne 3 : Sparkline 90j + Clients récents ─────────────────────────
+        # ── Ligne 3 : Clients récents ─────────────────────────────────────────
         row4 = QHBoxLayout()
         row4.setSpacing(16)
-
-        # Sparkline
-        spark_card = QFrame()
-        spark_card.setStyleSheet(
-            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
-        spark_lay = QVBoxLayout(spark_card)
-        spark_lay.setContentsMargins(16, 14, 16, 14)
-        spark_lay.setSpacing(8)
-        t4 = QLabel("Inscriptions — 90 derniers jours")
-        t4.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        t4.setStyleSheet(f"color:{TEXT}; background:transparent;")
-        spark_lay.addWidget(t4)
-        self._sparkline = _SparklineWidget()
-        spark_lay.addWidget(self._sparkline, 1)
-        row4.addWidget(spark_card, 3)
 
         # Clients récents
         recent_card = QFrame()
@@ -3541,6 +3586,93 @@ class AdminPanel(QMainWindow):
         _run_async(self, _fetch, on_success=_on_releases,
                    on_error=lambda _: self._stat_downloads.setText("—"))
 
+    def _load_ga4_visits(self):
+        """Charge les visites du site par jour (GA4 via la Cloud Function) → courbe Stats."""
+        if not hasattr(self, "_visits_sparkline"):
+            return
+
+        def _fetch():
+            req = urllib.request.Request(
+                GA4_VISITS_URL + "?days=90&metric=sessions",
+                headers={"Authorization": f"Bearer {self._id_token}"},
+            )
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                return json.loads(resp.read().decode())
+
+        def _on_ok(data):
+            if not isinstance(data, list):
+                self._visits_sparkline.set_data([])
+                return
+            raw = {r["date"]: int(r.get("visits", 0)) for r in data if r.get("date")}
+            if not raw:
+                self._visits_sparkline.set_data([])
+                return
+            # GA4 omet les jours à 0 → on comble pour un axe temps régulier
+            series = sorted(raw.items())
+            try:
+                import datetime as _dt
+                d0   = _dt.date.fromisoformat(series[0][0])
+                d1   = datetime.now(timezone.utc).date()
+                last = _dt.date.fromisoformat(series[-1][0])
+                if last > d1:
+                    d1 = last
+                filled, cur = [], d0
+                while cur <= d1:
+                    k = cur.isoformat()
+                    filled.append((k, raw.get(k, 0)))
+                    cur += _dt.timedelta(days=1)
+                if filled:
+                    series = filled
+            except Exception:
+                pass
+            self._visits_sparkline.set_data(series)
+
+        def _on_err(msg):
+            print(f"[ga4_visits] {msg}")
+            self._visits_sparkline.set_data([])
+
+        _run_async(self, _fetch, on_success=_on_ok, on_error=_on_err)
+
+    def _load_ga4_insights(self):
+        """Charge le comportement des visiteurs (GA4) : tunnel, pages, sources."""
+        if not hasattr(self, "_ga4_pages_table"):
+            return
+        self._ga4_status.setText("…")
+
+        def _fetch():
+            req = urllib.request.Request(
+                GA4_INSIGHTS_URL + "?days=90",
+                headers={"Authorization": f"Bearer {self._id_token}"},
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+
+        def _ok(data):
+            if not isinstance(data, dict) or data.get("error"):
+                msg = data.get("error", "?") if isinstance(data, dict) else "réponse invalide"
+                self._ga4_status.setText(f"Erreur : {str(msg)[:90]}")
+                return
+            f = data.get("funnel", {})
+            for key, lbl in self._ga4_funnel.items():
+                lbl.setText(f"{int(f.get(key, 0)):,}".replace(",", " "))
+            pages = data.get("top_pages", [])
+            self._ga4_pages_table.setRowCount(len(pages))
+            for i, p in enumerate(pages):
+                self._ga4_pages_table.setItem(i, 0, QTableWidgetItem(p.get("page", "")))
+                self._ga4_pages_table.setItem(i, 1, QTableWidgetItem(str(p.get("views", 0))))
+                self._ga4_pages_table.setItem(i, 2, QTableWidgetItem(str(p.get("users", 0))))
+            srcs = data.get("sources", [])
+            self._ga4_sources_table.setRowCount(len(srcs))
+            for i, s in enumerate(srcs):
+                self._ga4_sources_table.setItem(i, 0, QTableWidgetItem(s.get("channel", "") or "(non défini)"))
+                self._ga4_sources_table.setItem(i, 1, QTableWidgetItem(str(s.get("sessions", 0))))
+            self._ga4_status.setText("")
+
+        def _err(msg):
+            self._ga4_status.setText(f"Erreur : {str(msg)[:90]}")
+
+        _run_async(self, _fetch, on_success=_ok, on_error=_err)
+
     def _load_firestore_downloads(self):
         """Récupère les derniers téléchargements depuis Firestore et peuple le tableau."""
         self._dl_stats_lbl.setText("…")
@@ -3606,6 +3738,33 @@ class AdminPanel(QMainWindow):
                 daily[d] += 1
             self._dl_daily_bars.set_data(sorted(daily.items()))
 
+            # Courbe « Téléchargements par jour » de la page Stats.
+            # Base = EXACTEMENT les mêmes données que l'histogramme (sorted(daily.items())).
+            # On tente de combler les jours vides (axe temps régulier), mais en cas de
+            # moindre souci on retombe sur les données brutes → la courbe n'est JAMAIS
+            # vide alors que l'histogramme, lui, contient des données.
+            if hasattr(self, "_dl_sparkline"):
+                items = sorted(daily.items())
+                series = items
+                try:
+                    import datetime as _dt
+                    d0 = _dt.date.fromisoformat(items[0][0])
+                    d1 = datetime.now(timezone.utc).date()
+                    last = _dt.date.fromisoformat(items[-1][0])
+                    if last > d1:
+                        d1 = last
+                    filled = []
+                    cur = d0
+                    while cur <= d1:
+                        k = cur.isoformat()
+                        filled.append((k, daily.get(k, 0)))
+                        cur += _dt.timedelta(days=1)
+                    if filled:
+                        series = filled
+                except Exception:
+                    series = items
+                self._dl_sparkline.set_data(series)
+
         def _on_error(msg: str):
             self._dl_stats_lbl.setText(f"Erreur : {msg[:120]}")
             print(f"[downloads] ERREUR Firestore : {msg}")
@@ -3650,6 +3809,9 @@ class AdminPanel(QMainWindow):
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
+        if idx == 5 and not getattr(self, "_ga4_insights_loaded", False):
+            self._ga4_insights_loaded = True
+            self._load_ga4_insights()
 
     def _build_fixtures_panel(self):
         fix_page = QWidget()
@@ -4084,9 +4246,17 @@ class AdminPanel(QMainWindow):
         GA4_PROPERTY_URL   = f"https://analytics.google.com"
 
         page = QWidget()
-        lay = QVBoxLayout(page)
+        _outer = QVBoxLayout(page)
+        _outer.setContentsMargins(0, 0, 0, 0)
+        _scroll = QScrollArea()
+        _scroll.setWidgetResizable(True)
+        _scroll.setStyleSheet("QScrollArea { border: none; }")
+        _inner = QWidget()
+        lay = QVBoxLayout(_inner)
         lay.setContentsMargins(32, 28, 32, 24)
         lay.setSpacing(20)
+        _scroll.setWidget(_inner)
+        _outer.addWidget(_scroll)
 
         title = QLabel("Analytics — mystrow.fr")
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
@@ -4185,6 +4355,89 @@ class AdminPanel(QMainWindow):
         sc_btn_row.addStretch()
         sc_lay.addLayout(sc_btn_row)
         lay.addWidget(sc_frame)
+
+        # ── Bloc Comportement (données GA4 en direct) ─────────────────────────
+        beh_frame = QFrame()
+        beh_frame.setStyleSheet("QFrame { background: #212121; border: 1px solid #2e2e2e; border-radius: 8px; }")
+        beh_lay = QVBoxLayout(beh_frame)
+        beh_lay.setContentsMargins(20, 18, 20, 18)
+        beh_lay.setSpacing(14)
+
+        beh_hdr = QHBoxLayout()
+        beh_title = QLabel("Comportement des visiteurs — 90 derniers jours")
+        beh_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        beh_title.setStyleSheet(f"color: {TEXT};")
+        beh_hdr.addWidget(beh_title)
+        beh_hdr.addStretch()
+        self._ga4_status = QLabel("")
+        self._ga4_status.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        beh_hdr.addWidget(self._ga4_status)
+        btn_beh_ref = QPushButton("↺")
+        btn_beh_ref.setFixedSize(30, 28)
+        btn_beh_ref.setStyleSheet(_BTN_SECONDARY)
+        btn_beh_ref.clicked.connect(self._load_ga4_insights)
+        beh_hdr.addWidget(btn_beh_ref)
+        beh_lay.addLayout(beh_hdr)
+
+        # Tunnel de conversion
+        self._ga4_funnel = {}
+        funnel_row = QHBoxLayout()
+        funnel_row.setSpacing(10)
+
+        def _funnel_tile(icon, label, key, color):
+            c = QFrame()
+            c.setStyleSheet("QFrame { background: #1a1a1a; border: 1px solid #2e2e2e; border-radius: 6px; }")
+            cl = QVBoxLayout(c); cl.setContentsMargins(14, 10, 14, 10); cl.setSpacing(2)
+            v = QLabel("—"); v.setFont(QFont("Segoe UI", 20, QFont.Bold))
+            v.setStyleSheet(f"color: {color}; background: transparent;")
+            cl.addWidget(v)
+            n = QLabel(f"{icon}  {label}")
+            n.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; background: transparent;")
+            cl.addWidget(n)
+            self._ga4_funnel[key] = v
+            return c
+
+        funnel_row.addWidget(_funnel_tile("👤", "Visiteurs", "visiteurs", "#2ecc71"))
+        funnel_row.addWidget(_funnel_tile("⬇", "Clics « Télécharger »", "download_click", "#3498db"))
+        funnel_row.addWidget(_funnel_tile("🛒", "Checkout lancé", "begin_checkout", "#635bff"))
+        funnel_row.addWidget(_funnel_tile("✉", "Clics Contact", "contact_click", ACCENT))
+        beh_lay.addLayout(funnel_row)
+
+        # Pages les plus vues + Sources de trafic
+        tables_row = QHBoxLayout()
+        tables_row.setSpacing(14)
+
+        def _mk_table(headers, stretch_col):
+            t = QTableWidget()
+            t.setColumnCount(len(headers))
+            t.setHorizontalHeaderLabels(headers)
+            for ci in range(len(headers)):
+                mode = QHeaderView.Stretch if ci == stretch_col else QHeaderView.ResizeToContents
+                t.horizontalHeader().setSectionResizeMode(ci, mode)
+            t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            t.setSelectionMode(QAbstractItemView.NoSelection)
+            t.verticalHeader().setVisible(False)
+            t.setShowGrid(False)
+            t.setAlternatingRowColors(True)
+            t.setFixedHeight(300)
+            return t
+
+        pages_box = QVBoxLayout(); pages_box.setSpacing(6)
+        _pl = QLabel("Pages les plus vues"); _pl.setStyleSheet(f"color:{TEXT}; font-weight:bold; font-size:12px;")
+        pages_box.addWidget(_pl)
+        self._ga4_pages_table = _mk_table(["Page", "Vues", "Visiteurs"], 0)
+        pages_box.addWidget(self._ga4_pages_table)
+        tables_row.addLayout(pages_box, 3)
+
+        src_box = QVBoxLayout(); src_box.setSpacing(6)
+        _sl = QLabel("Sources de trafic"); _sl.setStyleSheet(f"color:{TEXT}; font-weight:bold; font-size:12px;")
+        src_box.addWidget(_sl)
+        self._ga4_sources_table = _mk_table(["Source", "Sessions"], 0)
+        src_box.addWidget(self._ga4_sources_table)
+        tables_row.addLayout(src_box, 2)
+
+        beh_lay.addLayout(tables_row)
+        lay.addWidget(beh_frame)
 
         lay.addStretch()
         self._content_stack.addWidget(page)

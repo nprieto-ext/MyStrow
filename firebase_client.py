@@ -149,6 +149,10 @@ def _from_firestore(field: dict):
     """Convertit un champ Firestore en valeur Python."""
     if "stringValue" in field:
         return field["stringValue"]
+    if "timestampValue" in field:
+        # Timestamp Firestore : chaîne RFC3339 (ex "2026-07-08T12:34:56.789Z").
+        # Renvoyée telle quelle (ISO 8601) — le code consommateur fait ts[:10] ou fromisoformat().
+        return field["timestampValue"]
     if "integerValue" in field:
         return int(field["integerValue"])
     if "doubleValue" in field:

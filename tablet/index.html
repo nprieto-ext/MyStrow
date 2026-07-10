@@ -51,6 +51,11 @@
     .page.active { display: flex; }
 
     /* AKAI */
+    #akai-pagenav { display: none; flex-shrink: 0; align-items: center; justify-content: center; gap: 10px; height: clamp(26px, 4vh, 40px); }
+    #akai-pagenav.show { display: flex; }
+    #akai-pagenav button { width: clamp(40px, 8vw, 66px); height: 100%; border: 1px solid #2a2a2a; border-radius: 6px; background: #111; color: #bbb; font-size: clamp(13px, 2.2vw, 19px); font-weight: 700; cursor: pointer; touch-action: manipulation; }
+    #akai-pagenav button:active { background: #0a1820; color: var(--accent); border-color: var(--accent); }
+    #pg-num { font-size: clamp(11px, 1.7vw, 16px); font-weight: 700; color: #ccc; letter-spacing: 1px; min-width: 44px; text-align: center; }
     #grid-area { display: flex; gap: 6px; flex: 1; min-height: 0; justify-content: flex-start; }
     #grid-col { display: flex; flex-direction: column; height: 100%; flex-shrink: 0; gap: 6px; }
     /* La grille reste carrée (aspect-ratio + hauteur pilotée) et sa largeur suit
@@ -188,6 +193,11 @@
 
   <!-- AKAI -->
   <div id="akai-page" class="page active">
+    <div id="akai-pagenav">
+      <button id="pg-prev">◀</button>
+      <span id="pg-num">1/1</span>
+      <button id="pg-next">▶</button>
+    </div>
     <div id="grid-area">
       <div id="grid-col">
         <div id="grid"></div>
@@ -363,6 +373,17 @@ window.addEventListener('resize',()=>{ resizeCanvas(); refreshFaders(); });
 
 // ── sendEvent ─────────────────────────────────────────────────────────────────
 function sendEvent(data){ fetch('/api/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).catch(()=>{}); }
+
+// ── Navigateur de pages de layout (◀ x/n ▶) ──────────────────────
+const pagenavEl=document.getElementById('akai-pagenav');
+const pgNumEl=document.getElementById('pg-num');
+document.getElementById('pg-prev').addEventListener('click',()=>sendEvent({type:'bankpage',action:'prev'}));
+document.getElementById('pg-next').addEventListener('click',()=>sendEvent({type:'bankpage',action:'next'}));
+function applyBankPages(count,index){
+  count=count||1; index=index||0;
+  pgNumEl.textContent=(index+1)+'/'+count;
+  pagenavEl.classList.toggle('show',count>1);
+}
 
 // ── Events pads ──────────────────────────────────────────────────────────────
 function padPress(el){ el.classList.add('press'); sendEvent({type:'pad',row:+el.dataset.r,col:+el.dataset.c}); }
@@ -619,6 +640,7 @@ function connectSSE(){
       if(d.carts) d.carts.forEach((c,i)=>updateCart(i,c.title,c.state));
       if(d.projectors) applyProjectors(d.projectors);
       if(d.layout&&d.layout.length) applyLayout(d.layout);
+      if(d.bank_pages) applyBankPages(d.bank_pages.count,d.bank_pages.index);
       if(d.rec_active!==undefined) applyRecState(d.rec_active);
       requestAnimationFrame(refreshFaders);
     } else if(t==='pad'){const el=padEls[`${msg.row}_${msg.col}`];if(el)applyPadColor(el,msg.color,msg.bright);}
@@ -630,6 +652,7 @@ function connectSSE(){
     else if(t==='projectors'){applyProjectors(msg.data);}
     else if(t==='proj_colors'){applyProjColors(msg.data);}
     else if(t==='layout'){applyLayout(msg.labels||[]);}
+    else if(t==='bank_pages'){applyBankPages(msg.count,msg.index);}
     else if(t==='rec_state'){applyRecState(msg.active);}
   };
 }

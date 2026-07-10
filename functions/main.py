@@ -1542,3 +1542,174 @@ def download_redirect(req: https_fn.Request) -> https_fn.Response:
         print(f"[download_redirect] Firestore write error: {e}")
 
     return https_fn.Response("", status=302, headers={"Location": redirect_url, **_DL_CORS})
+
+
+# ---------------------------------------------------------------------------
+# GA4 — visites du site par jour (réservé aux admins)
+# ---------------------------------------------------------------------------
+
+_GA4_PROPERTY_ID  = "530160506"
+_GA4_ADMIN_EMAILS = {"nicop421@gmail.com"}
+_GA4_CORS = {
+    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+}
+
+
+def _ga4_is_admin(req) -> bool:
+    """Vérifie le jeton Firebase de l'appelant et qu'il fait partie des admins."""
+    authz = req.headers.get("Authorization", "") or ""
+    if not authz.startswith("Bearer "):
+        return False
+    token = authz.split(" ", 1)[1].strip()
+    try:
+        _ensure_init()
+        decoded = auth.verify_id_token(token)
+    except Exception as e:
+        print(f"[ga4_visits] jeton invalide : {e}")
+        return False
+    return (decoded.get("email") or "").lower() in _GA4_ADMIN_EMAILS
+
+
+@https_fn.on_request(max_instances=3)
+def ga4_visits(req: https_fn.Request) -> https_fn.Response:
+    """Visites du site par jour via l'API GA4 Data. Réservé aux admins.
+    Query params : days (défaut 90), metric (sessions|activeUsers, défaut sessions)."""
+    if req.method == "OPTIONS":
+        return https_fn.Response("", status=204, headers=_GA4_CORS)
+
+    if not _ga4_is_admin(req):
+        return https_fn.Response(
+            json.dumps({"error": "unauthorized"}),
+            status=401, headers={"Content-Type": "application/json", **_GA4_CORS})
+
+    try:
+        days = int(req.args.get("days", "90"))
+    except (TypeError, ValueError):
+        days = 90
+    days = max(1, min(days, 365))
+    metric = req.args.get("metric", "sessions")
+    if metric not in ("sessions", "activeUsers", "totalUsers", "screenPageViews"):
+        metric = "sessions"
+
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import (
+            DateRange, Dimension, Metric, RunReportRequest,
+        )
+        client = BetaAnalyticsDataClient()
+        request = RunReportRequest(
+            property=f"properties/{_GA4_PROPERTY_ID}",
+            dimensions=[Dimension(name="date")],
+            metrics=[Metric(name=metric)],
+            date_ranges=[DateRange(start_date=f"{days}daysAgo", end_date="today")],
+        )
+        resp = client.run_report(request)
+        out = []
+        for row in resp.rows:
+            d = row.dimension_values[0].value  # "YYYYMMDD"
+            try:
+                v = int(row.metric_values[0].value or 0)
+            except (TypeError, ValueError):
+                v = 0
+            if len(d) == 8 and d.isdigit():
+                out.append({"date": f"{d[:4]}-{d[4:6]}-{d[6:8]}", "visits": v})
+        out.sort(key=lambda r: r["date"])
+        return https_fn.Response(
+            json.dumps(out),
+            status=200, headers={"Content-Type": "application/json", **_GA4_CORS})
+    except Exception as e:
+        print(f"[ga4_visits] erreur : {e}")
+        return https_fn.Response(
+            json.dumps({"error": str(e)}),
+            status=500, headers={"Content-Type": "application/json", **_GA4_CORS})
+
+
+@https_fn.on_request(max_instances=3)
+def ga4_insights(req: https_fn.Request) -> https_fn.Response:
+    """Comportement des visiteurs (GA4) : pages les plus vues, sources de trafic,
+    tunnel de conversion. Réservé aux admins. Query param : days (défaut 90)."""
+    if req.method == "OPTIONS":
+        return https_fn.Response("", status=204, headers=_GA4_CORS)
+
+    if not _ga4_is_admin(req):
+        return https_fn.Response(
+            json.dumps({"error": "unauthorized"}),
+            status=401, headers={"Content-Type": "application/json", **_GA4_CORS})
+
+    try:
+        days = int(req.args.get("days", "90"))
+    except (TypeError, ValueError):
+        days = 90
+    days = max(1, min(days, 365))
+
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import (
+            DateRange, Dimension, Metric, RunReportRequest, OrderBy,
+        )
+        client = BetaAnalyticsDataClient()
+        dr   = DateRange(start_date=f"{days}daysAgo", end_date="today")
+        prop = f"properties/{_GA4_PROPERTY_ID}"
+
+        def _run(dims, mets, order=None, limit=None):
+            kw = dict(
+                property=prop, date_ranges=[dr],
+                dimensions=[Dimension(name=d) for d in dims],
+                metrics=[Metric(name=m) for m in mets],
+            )
+            if order:
+                kw["order_bys"] = [OrderBy(
+                    metric=OrderBy.MetricOrderBy(metric_name=order), desc=True)]
+            if limit:
+                kw["limit"] = limit
+            return client.run_report(RunReportRequest(**kw))
+
+        # Pages les plus vues
+        top_pages = []
+        for row in _run(["pagePath"], ["screenPageViews", "activeUsers"],
+                        order="screenPageViews", limit=15).rows:
+            top_pages.append({
+                "page":  row.dimension_values[0].value,
+                "views": int(row.metric_values[0].value or 0),
+                "users": int(row.metric_values[1].value or 0),
+            })
+
+        # Sources de trafic
+        sources = []
+        for row in _run(["sessionDefaultChannelGroup"], ["sessions"],
+                        order="sessions", limit=10).rows:
+            sources.append({
+                "channel":  row.dimension_values[0].value,
+                "sessions": int(row.metric_values[0].value or 0),
+            })
+
+        # Événements (pour le tunnel)
+        events = {}
+        for row in _run(["eventName"], ["eventCount"]).rows:
+            events[row.dimension_values[0].value] = int(row.metric_values[0].value or 0)
+
+        # Totaux
+        totals = {"sessions": 0, "activeUsers": 0}
+        tr = _run([], ["sessions", "activeUsers"])
+        if tr.rows:
+            totals["sessions"]    = int(tr.rows[0].metric_values[0].value or 0)
+            totals["activeUsers"] = int(tr.rows[0].metric_values[1].value or 0)
+
+        funnel = {
+            "visiteurs":      totals["activeUsers"],
+            "sessions":       totals["sessions"],
+            "download_click": events.get("download_click", 0),
+            "begin_checkout": events.get("begin_checkout", 0),
+            "contact_click":  events.get("contact_click", 0),
+        }
+
+        return https_fn.Response(
+            json.dumps({"top_pages": top_pages, "sources": sources, "funnel": funnel}),
+            status=200, headers={"Content-Type": "application/json", **_GA4_CORS})
+    except Exception as e:
+        print(f"[ga4_insights] erreur : {e}")
+        return https_fn.Response(
+            json.dumps({"error": str(e)}),
+            status=500, headers={"Content-Type": "application/json", **_GA4_CORS})

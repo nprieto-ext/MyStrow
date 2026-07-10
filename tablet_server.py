@@ -220,6 +220,13 @@ def push_layout(slots: list):
         _broadcast({"type": "layout", "labels": labels})
 
 
+def push_bank_pages(count: int, index: int):
+    """Pousse le nombre de pages de layout et l'index courant (navigateur ◀ ▶)."""
+    _state["bank_pages"] = {"count": count, "index": index}
+    if _running:
+        _broadcast({"type": "bank_pages", "count": count, "index": index})
+
+
 def push_rec_state(active: bool):
     """Pousse l'état du mode REC mémoire."""
     _state["rec_active"] = active

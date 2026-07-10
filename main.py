@@ -105,6 +105,52 @@ if sys.platform == "darwin" and getattr(sys, 'frozen', False):
         pass
 
 
+# ------------------------------------------------------------------
+# CAPTURE DES CRASHS — Windows / Linux (macOS frozen a son propre bloc ci-dessus)
+# But : un crash NATIF (segfault Qt, plugin multimedia ffmpeg/WMF, driver audio,
+# décodage d'un .wav/.mp4 exotique…) ne laisse AUCUNE trace sur Windows sans
+# faulthandler. On écrit dans un log dédié, gardé ouvert toute la vie du process,
+# + un excepthook global pour les exceptions Python non rattrapées.
+# ------------------------------------------------------------------
+_CRASH_LOG_FILE = None
+if not (sys.platform == "darwin" and getattr(sys, "frozen", False)):
+    try:
+        if sys.platform == "win32":
+            _cl_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "MyStrow", "Logs")
+        else:
+            _cl_dir = os.path.join(os.path.expanduser("~"), ".mystrow_logs")
+        os.makedirs(_cl_dir, exist_ok=True)
+        _cl_path = os.path.join(_cl_dir, "faulthandler.log")
+        # Plafond : repartir à zéro si le fichier dépasse 5 Mo (évite l'inflation)
+        _cl_mode = "a"
+        try:
+            if os.path.exists(_cl_path) and os.path.getsize(_cl_path) > 5 * 1024 * 1024:
+                _cl_mode = "w"
+        except Exception:
+            pass
+        _CRASH_LOG_FILE = open(_cl_path, _cl_mode, encoding="utf-8", buffering=1)
+        import datetime as _dt
+        print(f"\n===== MyStrow session {_dt.datetime.now().isoformat()} =====",
+              file=_CRASH_LOG_FILE, flush=True)
+        # Capture des crashs natifs (segfault, abort) avec pile C de tous les threads
+        faulthandler.enable(file=_CRASH_LOG_FILE, all_threads=True)
+
+        # Capture des exceptions Python non rattrapées au niveau global
+        _prev_excepthook = sys.excepthook
+        def _log_excepthook(exc_type, exc_val, exc_tb):
+            try:
+                print("----- Exception Python non rattrapée -----",
+                      file=_CRASH_LOG_FILE, flush=True)
+                traceback.print_exception(exc_type, exc_val, exc_tb, file=_CRASH_LOG_FILE)
+                _CRASH_LOG_FILE.flush()
+            except Exception:
+                pass
+            _prev_excepthook(exc_type, exc_val, exc_tb)
+        sys.excepthook = _log_excepthook
+    except Exception:
+        pass
+
+
 def _mac_fatal(title: str, msg: str):
     """Affiche une alerte macOS native sans Qt (osascript) et écrit dans le log."""
     if _MAC_LOG_FILE:
@@ -223,7 +269,16 @@ def _free_console():
         import ctypes
         log_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "MyStrow", "Logs")
         os.makedirs(log_dir, exist_ok=True)
-        _log = open(os.path.join(log_dir, "console.log"), "a", encoding="utf-8", errors="replace", buffering=1)
+        _log_path = os.path.join(log_dir, "console.log")
+        # Plafond 20 Mo : le log s'ouvrait en append sans limite (vu à 256 Mo).
+        # Au-delà, on repart d'un fichier vide au lieu de gonfler indéfiniment.
+        _log_mode = "a"
+        try:
+            if os.path.exists(_log_path) and os.path.getsize(_log_path) > 20 * 1024 * 1024:
+                _log_mode = "w"
+        except Exception:
+            pass
+        _log = open(_log_path, _log_mode, encoding="utf-8", errors="replace", buffering=1)
         sys.stdout = _log
         sys.stderr = _log
         try:

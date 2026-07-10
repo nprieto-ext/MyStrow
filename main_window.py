@@ -300,6 +300,7 @@ class MessageLogWidget(QWidget):
 _MEM_COL_MAX = 99
 _FX_COL_MAX  = 8
 _POS_COL_MAX = 5   # 5 colonnes POS × 8 pads = 40 positions max
+_N_BANK_PAGES = 20  # nombre FIXE de pages de layout APC (navigables ◀ ▶)
 _AKAI_SLOT_OPTIONS = (
     ["A", "B", "C", "D", "E", "F", "G", "H"]
     + [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
@@ -1106,7 +1107,8 @@ class AkaiLayoutEditorDialog(QDialog):
     _EMPTY_COLOR = "#2a2a2a"
 
     def __init__(self, slots, last_fader_mode="FX", superposition=False, go_mode=False,
-                 active_brightness=100, inactive_brightness=20, parent=None):
+                 active_brightness=100, inactive_brightness=20, parent=None,
+                 pages=None, page_idx=0):
         super().__init__(parent)
         self.setWindowTitle(tr("akai_cfg_title"))
         self.setFixedSize(700, 440)
@@ -1129,6 +1131,15 @@ class AkaiLayoutEditorDialog(QDialog):
 
         self._combos = []
         self._faders = []
+        # Pages de layout : le dialogue édite les N pages ; le sélecteur en haut
+        # choisit la page en cours d'édition. `slots` = page active (construit les combos).
+        if pages:
+            self._pages = [[dict(s) for s in p] for p in pages]
+            self._cur_page = max(0, min(int(page_idx), len(self._pages) - 1))
+        else:
+            self._pages = [[dict(s) for s in slots]]
+            self._cur_page = 0
+        slots = self._pages[self._cur_page]
         # Slots d'origine — sert à préserver le réglage fader des colonnes POS
         # (axe pan/tilt + groupe), non éditable ici mais à ne pas écraser.
         self._initial_slots = [dict(s) for s in slots]
@@ -1144,15 +1155,33 @@ class AkaiLayoutEditorDialog(QDialog):
         title.setStyleSheet("color:#fff;")
         hdr.addWidget(title)
         hdr.addStretch()
-        preset_btn = QPushButton(tr("btn_preset"))
-        preset_btn.setFixedSize(72, 26)
-        preset_btn.setStyleSheet(
-            "QPushButton { background:#1a1a1a; color:#666; border:1px solid #252525; "
-            "border-radius:5px; font-size:9px; } "
-            "QPushButton:hover { background:#222; color:#bbb; border-color:#3a3a3a; }"
+        # Navigateur de page — même style que la page d'accueil (◀ x/n ▶)
+        _PG_SS = (
+            "QPushButton { background:#1e1e1e; color:#bbb; border:1px solid #3a3a3a;"
+            " border-radius:4px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { background:#2a2a2a; color:#00d4ff; border-color:#0077bb; }"
+            "QPushButton:pressed { background:#333; }"
         )
-        preset_btn.clicked.connect(self._load_preset)
-        hdr.addWidget(preset_btn)
+        _cap = QLabel("Page :")
+        _cap.setStyleSheet("color:#888; font-size:10px;")
+        hdr.addWidget(_cap)
+        _pg_prev = QPushButton("◀")
+        _pg_prev.setFixedSize(24, 26)
+        _pg_prev.setStyleSheet(_PG_SS)
+        _pg_prev.setToolTip("Page précédente")
+        _pg_prev.clicked.connect(lambda: self._dlg_goto_page(self._cur_page - 1))
+        hdr.addWidget(_pg_prev)
+        self._page_lbl = QLabel(f"{self._cur_page + 1}/{len(self._pages)}")
+        self._page_lbl.setAlignment(Qt.AlignCenter)
+        self._page_lbl.setFixedWidth(40)
+        self._page_lbl.setStyleSheet("color:#ccc; font-size:11px; font-weight:bold; border:none;")
+        hdr.addWidget(self._page_lbl)
+        _pg_next = QPushButton("▶")
+        _pg_next.setFixedSize(24, 26)
+        _pg_next.setStyleSheet(_PG_SS)
+        _pg_next.setToolTip("Page suivante")
+        _pg_next.clicked.connect(lambda: self._dlg_goto_page(self._cur_page + 1))
+        hdr.addWidget(_pg_next)
         root.addLayout(hdr)
 
         # ── Faders ─────────────────────────────────────────────────────────────
@@ -1477,6 +1506,26 @@ class AkaiLayoutEditorDialog(QDialog):
                 slots.append({"type": "group", "group": val, "label": val})
         return slots
 
+    def _dlg_goto_page(self, new_idx):
+        """Sauvegarde la page éditée et charge la page cible (◀ ▶, avec bouclage)."""
+        n = len(self._pages)
+        new_idx = new_idx % n
+        if new_idx == self._cur_page:
+            return
+        self._pages[self._cur_page] = self.get_slots()                 # sauver l'édition courante
+        self._cur_page = new_idx
+        self._initial_slots = [dict(s) for s in self._pages[new_idx]]  # préservation POS
+        self._apply_slots(self._pages[new_idx])                        # charger la nouvelle page
+        self._page_lbl.setText(f"{new_idx + 1}/{n}")
+
+    def get_pages(self):
+        """Retourne les pages éditées (avec la page courante sauvegardée)."""
+        self._pages[self._cur_page] = self.get_slots()
+        return [[dict(s) for s in p] for p in self._pages]
+
+    def get_current_index(self):
+        return self._cur_page
+
     def get_last_fader_mode(self):
         return "FX"
 
@@ -1673,22 +1722,6 @@ class _StatusCornerWidget(QWidget):
         self._dot.setStyleSheet("color:#333; font-size:8pt;")
         lay.addWidget(self._dot, alignment=Qt.AlignVCenter)
 
-        # ── Séparateur ───────────────────────────────────────
-        lay.addWidget(_mk_sep(_sep), alignment=Qt.AlignVCenter)
-
-        # ── CPU ──────────────────────────────────────────────
-        lbl_cpu = QLabel("CPU")
-        lbl_cpu.setStyleSheet(_lbl)
-        lay.addWidget(lbl_cpu, alignment=Qt.AlignVCenter)
-
-        self._cpu_val = QLabel("--")
-        self._cpu_val.setStyleSheet(_val)
-        self._cpu_val.setFixedWidth(34)
-        lay.addWidget(self._cpu_val, alignment=Qt.AlignVCenter)
-
-        # ── Séparateur ───────────────────────────────────────
-        lay.addWidget(_mk_sep(_sep), alignment=Qt.AlignVCenter)
-
         # ── Horloge ──────────────────────────────────────────
         self._clock = QLabel("--:--:--")
         self._clock.setStyleSheet(_val)
@@ -1701,14 +1734,6 @@ class _StatusCornerWidget(QWidget):
         self._tick_clock.start(1000)
         self._update_clock()
 
-        # Timer CPU (toutes les 1.5 s)
-        if _psutil is not None:
-            _psutil.cpu_percent(interval=None)
-            self._tick_cpu = QTimer(self)
-            self._tick_cpu.timeout.connect(self._update_cpu)
-            self._tick_cpu.start(1500)
-            QTimer.singleShot(800, self._update_cpu)
-
     def set_audio(self, level: float, playing: bool):
         """level : 0.0-1.0. Appelé à 25 FPS."""
         self._meter.set_level(level)
@@ -1719,19 +1744,6 @@ class _StatusCornerWidget(QWidget):
 
     def _update_clock(self):
         self._clock.setText(_dt.datetime.now().strftime("%H:%M:%S"))
-
-    def _update_cpu(self):
-        if _psutil is None:
-            return
-        pct = _psutil.cpu_percent(interval=None)
-        self._cpu_val.setText(f"{pct:.0f}%")
-        if pct > 80:
-            col = "#cc4444"
-        elif pct > 50:
-            col = "#d4a020"
-        else:
-            col = "#ccc"
-        self._cpu_val.setStyleSheet(f"color:{col}; font-size:9px; font-weight:bold;")
 
 
 class PanTiltLimitWidget(QWidget):
@@ -2151,8 +2163,17 @@ class MainWindow(QMainWindow):
         self._pan_tilt_anim_timer.setInterval(25)   # ~40 fps
         self._pan_tilt_anim_timer.timeout.connect(self._tick_pan_tilt_anim)
 
-        # Layout AKAI personnalisable (8 slots, éditables via AkaiLayoutEditorDialog)
-        self._custom_bank_slots = [dict(s) for s in AKAI_BANK_PRESETS[0]["slots"]]
+        # Layout AKAI personnalisable (8 slots) — désormais organisé en PAGES :
+        # _bank_pages = liste de dispositions 8-colonnes, navigables en live (◀ ▶).
+        # _custom_bank_slots pointe TOUJOURS sur la page active _bank_pages[_bank_page_idx]
+        # (invariant : self._custom_bank_slots is self._bank_pages[self._bank_page_idx]).
+        self._bank_pages = [[dict(s) for s in AKAI_BANK_PRESETS[0]["slots"]]
+                            for _ in range(_N_BANK_PAGES)]
+        self._bank_page_idx = 0
+        self._custom_bank_slots = self._bank_pages[0]
+        # NB : changer de page ne modifie PAS l'état lumineux (surface de contrôle seule).
+        # Au switch, les faders/pads sont ALIGNÉS sur l'état courant du rig (source de vérité),
+        # d'où l'absence de mémoire de faders/couleurs par page — voir _sync_controls_to_state.
         self.memories = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.memory_custom_colors = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.active_memory_pads = {}  # {fader_idx: row} pad actif par colonne memoire
@@ -2329,6 +2350,9 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, self.activate_default_white_pads)
         QTimer.singleShot(200, self.turn_off_all_effects)
         QTimer.singleShot(300, self._init_default_fx_speed)
+        # Faders BAISSÉS au démarrage — forcé TARDIVEMENT (après les syncs de connexion
+        # MIDI ~400 ms) pour ne pas se faire remonter par un sync.
+        QTimer.singleShot(650, self._startup_faders_down)
         QTimer.singleShot(1000, self.test_dmx_on_startup)
         QTimer.singleShot(1500, self._log_startup_status)
 
@@ -3015,6 +3039,39 @@ class MainWindow(QMainWindow):
 
         title_row.addStretch()
 
+        # ── Navigateur de PAGES de layout : ◀ x/n ▶ (20 pages fixes) ──────────
+        self._bank_page_nav = QWidget()
+        _bpn = QHBoxLayout(self._bank_page_nav)
+        _bpn.setContentsMargins(0, 0, 0, 0)
+        _bpn.setSpacing(3)
+        _PG_SS = (
+            "QPushButton { background:#1e1e1e; color:#bbb; border:1px solid #3a3a3a;"
+            " border-radius:4px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { background:#2a2a2a; color:#00d4ff; border-color:#0077bb; }"
+            "QPushButton:pressed { background:#333; }"
+        )
+        _pg_prev = QPushButton("◀")
+        _pg_prev.setFixedSize(24, 26)
+        _pg_prev.setToolTip("Page de layout précédente")
+        _pg_prev.setStyleSheet(_PG_SS)
+        _pg_prev.clicked.connect(self._prev_bank_page)
+        _bpn.addWidget(_pg_prev)
+        self._bank_page_lbl = QLabel("1")
+        self._bank_page_lbl.setAlignment(Qt.AlignCenter)
+        self._bank_page_lbl.setFixedWidth(20)
+        self._bank_page_lbl.setToolTip("Page de layout du contrôleur")
+        self._bank_page_lbl.setStyleSheet("color:#ccc; font-size:11px; font-weight:bold; border:none;")
+        _bpn.addWidget(self._bank_page_lbl)
+        _pg_next = QPushButton("▶")
+        _pg_next.setFixedSize(24, 26)
+        _pg_next.setToolTip("Page de layout suivante")
+        _pg_next.setStyleSheet(_PG_SS)
+        _pg_next.clicked.connect(self._next_bank_page)
+        _bpn.addWidget(_pg_next)
+        title_row.addWidget(self._bank_page_nav)
+
+        title_row.addStretch()
+
         rec_btn = QPushButton("🔴")
         rec_btn.setFixedSize(26, 26)
         rec_btn.setToolTip(tr("tooltip_rec_mem"))
@@ -3251,6 +3308,7 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
+        self._update_bank_page_indicator()   # état initial du navigateur de pages
         return frame
 
     _BASE_PAD_COLORS = [
@@ -3480,7 +3538,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _open_akai_layout_editor(self):
-        """Ouvre l'éditeur de layout AKAI APC mini."""
+        """Ouvre l'éditeur de layout du contrôleur (édition multi-pages)."""
         dlg = AkaiLayoutEditorDialog(
             self._custom_bank_slots,
             last_fader_mode=getattr(self, '_last_fader_mode', 'FX'),
@@ -3488,11 +3546,16 @@ class MainWindow(QMainWindow):
             go_mode=self.go_mode,
             active_brightness=self.akai_active_brightness,
             inactive_brightness=self.akai_inactive_brightness,
-            parent=self
+            parent=self,
+            pages=self._bank_pages,
+            page_idx=self._bank_page_idx,
         )
         if dlg.exec() != QDialog.Accepted:
             return
-        self._custom_bank_slots = dlg.get_slots()
+        # Récupérer les pages éditées + la page sélectionnée devient la page active
+        self._bank_pages = dlg.get_pages()
+        self._bank_page_idx = max(0, min(dlg.get_current_index(), len(self._bank_pages) - 1))
+        self._custom_bank_slots = self._bank_pages[self._bank_page_idx]
         self.effect_superposition = dlg.get_superposition()
         self.go_mode = dlg.get_go_mode()
         self.akai_active_brightness   = dlg.get_active_brightness()
@@ -3511,8 +3574,138 @@ class MainWindow(QMainWindow):
             for i, lbl in enumerate(self._fader_label_widgets):
                 if i < len(self._fader_map):
                     lbl.setText(self._fader_map[i]["label"])
-        self.activate_default_white_pads()
+        self._sync_controls_to_state()   # reflète l'état courant, ne renvoie aucun DMX
+        self._update_bank_page_indicator()
         self._save_akai_config_auto()
+
+    # ── Pages de layout AKAI (navigables en live ◀ ▶) ─────────────────────────
+
+    def _apply_active_bank_layout(self):
+        """Applique la page active à l'APC : reconstruit pads/faders, LEDs, labels,
+        pousse à la tablette. Partagé par la bascule de page et l'édition."""
+        self.active_pads.clear()
+        self.active_memory_pads.clear()
+        self._rebuild_akai_pads()
+        if hasattr(self, '_fader_label_widgets'):
+            for i, lbl in enumerate(self._fader_label_widgets):
+                if i < len(self._fader_map):
+                    lbl.setText(self._fader_map[i]["label"])
+        self._sync_controls_to_state()   # reflète l'état courant, ne renvoie aucun DMX
+        self._update_bank_page_indicator()
+        try:
+            import tablet_server as _ts
+            if _ts.is_running():
+                _ts.push_layout(self._custom_bank_slots)
+                if hasattr(_ts, "push_bank_pages"):
+                    _ts.push_bank_pages(len(self._bank_pages), self._bank_page_idx)
+        except Exception:
+            pass
+
+    def _set_bank_page(self, idx):
+        """Bascule sur la page de layout `idx` (bornée).
+        Une page = une SURFACE DE CONTRÔLE (quel fader/pad pilote quoi), PAS une scène.
+        Le changement de page ne modifie JAMAIS l'état lumineux : on re-mappe les
+        contrôles puis on les aligne sur l'état courant du rig (voir _sync_controls_to_state)."""
+        pages = getattr(self, "_bank_pages", None)
+        if not pages:
+            return
+        idx = max(0, min(int(idx), len(pages) - 1))
+        if idx == self._bank_page_idx and self._custom_bank_slots is pages[idx]:
+            self._update_bank_page_indicator()
+            return
+        self._bank_page_idx = idx
+        self._custom_bank_slots = pages[idx]
+        self._apply_active_bank_layout()      # rebuild + _sync_controls_to_state (aucun DMX renvoyé)
+        self._save_akai_config_auto()
+
+    def _current_group_pad_row(self, col, slot):
+        """Ligne du pad de la colonne `col` dont la couleur == base_color COURANTE du groupe.
+        Sert à refléter la couleur active sans jamais la modifier. Défaut = 0 (blanc)."""
+        groups = self._slot_groups(slot)
+        cur = None
+        for p in self.projectors:
+            if p.group in groups:
+                cur = getattr(p, "base_color", None)
+                break
+        if isinstance(cur, QColor):
+            for r in range(8):
+                pad = self.pads.get((r, col))
+                if pad:
+                    pc = pad.property("base_color")
+                    if isinstance(pc, QColor) and pc.rgb() == cur.rgb():
+                        return r
+        return 0
+
+    def _sync_controls_to_state(self):
+        """Après un changement de page : la surface de contrôle change, PAS l'état lumineux.
+        On aligne seulement les faders et les pads actifs sur l'état COURANT de ce qu'ils
+        contrôlent désormais — aucun envoi DMX, aucune perte de lumière (pupitre à pages)."""
+        # Pads groupe : refléter la couleur courante de chaque groupe (sans la changer)
+        group_rows = {}
+        for col, slot in enumerate(self._fader_map):
+            if slot.get("type") == "group":
+                group_rows[col] = self._current_group_pad_row(col, slot)
+        self.activate_default_white_pads(group_rows=group_rows)
+
+        # Faders : refléter le niveau courant de la cible (JAMAIS de set_proj_level)
+        try:
+            import tablet_server as _ts
+            ts_on = _ts.is_running()
+        except Exception:
+            _ts, ts_on = None, False
+        for i in range(8):
+            if i not in self.faders or i >= len(self._fader_map):
+                continue
+            slot = self._fader_map[i]
+            stype = slot.get("type")
+            if stype == "group":
+                groups = self._slot_groups(slot)
+                val = 0
+                for p in self.projectors:
+                    if p.group in groups:
+                        val = max(val, int(getattr(p, "level", 0)))
+            elif stype == "fx":
+                fx_col = slot.get("fx_col", 0)
+                val = int(self.fx_amplitudes[fx_col]) if 0 <= fx_col < _FX_COL_MAX else 0
+            else:
+                # mémoire / position : surface neutre, on ne pilote rien
+                val = 0
+            val = max(0, min(100, val))
+            self.faders[i].value = val
+            self.faders[i].update()
+            if ts_on:
+                _ts.push_fader(i, val)
+
+    def _startup_faders_down(self):
+        """Démarrage : force TOUS les faders colonnes (0-7) à 0 ET éteint leur cible,
+        pour que rien ne soit allumé au lancement. Exécuté tardivement (après les syncs
+        de connexion) afin de ne pas se faire remonter."""
+        try:
+            import tablet_server as _ts
+            ts_on = _ts.is_running()
+        except Exception:
+            _ts, ts_on = None, False
+        for i in range(8):
+            if i in self.faders:
+                self.faders[i].value = 0
+                self.faders[i].update()
+                self.set_proj_level(i, 0)
+                if ts_on:
+                    _ts.push_fader(i, 0)
+
+    def _next_bank_page(self):
+        if getattr(self, "_bank_pages", None):
+            self._set_bank_page((self._bank_page_idx + 1) % len(self._bank_pages))
+
+    def _prev_bank_page(self):
+        if getattr(self, "_bank_pages", None):
+            self._set_bank_page((self._bank_page_idx - 1) % len(self._bank_pages))
+
+    def _update_bank_page_indicator(self):
+        """Met à jour l'affichage du numéro de page courant (sans total, gain de place)."""
+        lbl = getattr(self, "_bank_page_lbl", None)
+        if lbl is not None:
+            lbl.setText(str(self._bank_page_idx + 1))
 
     def create_transport_panel(self):
         """Cree le panneau transport avec timeline"""
@@ -3525,7 +3718,7 @@ class MainWindow(QMainWindow):
         timeline_container = QHBoxLayout()
 
         self.time_label = QLabel("00:00")
-        self.time_label.setStyleSheet("color: #00d4ff; font-weight: bold; font-size: 12px;")
+        self.time_label.setStyleSheet("color: #00d4ff; font-weight: bold; font-size: 12px; border: none; background: transparent;")
         self.time_label.setFixedWidth(50)
         timeline_container.addWidget(self.time_label)
 
@@ -3553,7 +3746,7 @@ class MainWindow(QMainWindow):
         timeline_container.addWidget(self.timeline)
 
         self.remaining_label = QLabel("-00:00")
-        self.remaining_label.setStyleSheet("color: #ff8800; font-weight: bold; font-size: 12px;")
+        self.remaining_label.setStyleSheet("color: #ff8800; font-weight: bold; font-size: 12px; border: none; background: transparent;")
         self.remaining_label.setFixedWidth(60)
         self.remaining_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         timeline_container.addWidget(self.remaining_label)
@@ -3746,6 +3939,13 @@ class MainWindow(QMainWindow):
                 self.stop_recording()
                 return
 
+            # Lecture en boucle : rejouer le même média au lieu d'avancer.
+            # singleShot(0) = même garde de ré-entrance que l'avance normale.
+            if self.seq.is_row_loop(self.seq.current_row):
+                loop_row = self.seq.current_row
+                QTimer.singleShot(0, lambda r=loop_row: self.seq.play_row(r))
+                return
+
             current_mode = self.seq.get_dmx_mode(self.seq.current_row)
             next_row = self.seq.current_row + 1
 
@@ -3776,7 +3976,12 @@ class MainWindow(QMainWindow):
                 elif current_mode == "Programme" and next_mode == "Manuel":
                     self.full_blackout()
 
-                self.seq.play_row(next_row)
+                # Différer l'avance : play_row() fait stop()/setSource()/play()
+                # sur le QMediaPlayer. Appelé DIRECTEMENT ici, on muterait le
+                # player depuis l'intérieur de son propre signal mediaStatusChanged
+                # (ré-entrance) → crash natif intermittent aux transitions de
+                # média en playlist. singleShot(0) exécute au tour de boucle suivant.
+                QTimer.singleShot(0, lambda r=next_row: self.seq.play_row(r))
             else:
                 if current_mode == "Play Lumiere":
                     self.full_blackout()
@@ -6157,6 +6362,12 @@ class MainWindow(QMainWindow):
 
     def start_effect(self, effect_name):
         """Demarre l'effet selectionne par nom"""
+        # Switch effet → effet : si un effet tourne déjà, le couper d'abord pour
+        # RESTAURER ses projecteurs. Sinon les projos de l'effet précédent (hors
+        # cibles du nouvel effet) restaient figés/allumés. La garde isActive()
+        # évite tout doublon quand l'appelant a déjà fait stop_effect (mémoire/cue).
+        if getattr(self, 'effect_timer', None) is not None and self.effect_timer.isActive():
+            self.stop_effect()
         self.effect_state = 0
         self.effect_saved_colors = {}
 
@@ -7611,15 +7822,26 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def activate_default_white_pads(self):
-        """Active les pads blancs au demarrage pour les colonnes groupe - un par colonne"""
+    def activate_default_white_pads(self, group_rows=None):
+        """Active un pad par colonne groupe (pur affichage : surbrillance + LED, ne pilote
+        jamais les projecteurs). Par défaut = pad blanc (row 0). Si `group_rows` = {col: row}
+        est fourni, c'est CE pad qui est mis en surbrillance (reflet de la couleur courante)."""
+        def _active_row(col):
+            if group_rows and col in group_rows:
+                try:
+                    return max(0, min(7, int(group_rows[col])))
+                except (ValueError, TypeError):
+                    return 0
+            return 0
+
         for col, slot in enumerate(self._fader_map):
             if slot["type"] == "group":
-                white_pad = self.pads.get((0, col))
-                if white_pad:
-                    color = white_pad.property("base_color")
-                    white_pad.setStyleSheet(f"QPushButton {{ background: {color.name()}; border: 2px solid {color.lighter(130).name()}; border-radius: 4px; }}")
-                    self.active_pads[col] = white_pad
+                arow = _active_row(col)
+                pad = self.pads.get((arow, col)) or self.pads.get((0, col))
+                if pad:
+                    color = pad.property("base_color")
+                    pad.setStyleSheet(f"QPushButton {{ background: {color.name()}; border: 2px solid {color.lighter(130).name()}; border-radius: 4px; }}")
+                    self.active_pads[col] = pad
 
         if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
             for row in range(8):
@@ -7630,7 +7852,7 @@ class MainWindow(QMainWindow):
                         if slot["type"] == "group":
                             base_color = pad.property("base_color")
                             velocity = rgb_to_akai_velocity(base_color)
-                            brightness = self.akai_active_brightness if row == 0 else self.akai_inactive_brightness
+                            brightness = self.akai_active_brightness if row == _active_row(col) else self.akai_inactive_brightness
                             # Passe par set_pad_led → gère APC (0x90/0x96) ET Launchpad MK3 (RGB)
                             self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=brightness)
                         elif slot.get("type") == "fx":
@@ -9987,6 +10209,8 @@ class MainWindow(QMainWindow):
                         'v':    vol_item.text(),
                         'd':    dmx_mode,
                     }
+                    if self.seq.is_row_loop(r):
+                        row_data['loop'] = True
                     if dmx_mode == "IA Lumiere" and r in self.seq.ia_colors:
                         row_data['ia_color'] = self.seq.ia_colors[r].name()
                     if r in self.seq.ia_analysis:
@@ -10198,6 +10422,8 @@ class MainWindow(QMainWindow):
                                 }
                         if 'image_duration' in item:
                             self.seq.image_durations[row] = int(item['image_duration'])
+                        if item.get('loop'):
+                            self.seq.set_row_loop(row, True)
             finally:
                 self.seq._loading = False
 
@@ -10357,7 +10583,9 @@ class MainWindow(QMainWindow):
             "memories": self.memories,
             "memory_custom_colors": custom_colors_serial,
             "active_memory_pads": active_pads_serial,
-            "custom_bank_slots": [dict(s) for s in self._custom_bank_slots],
+            "custom_bank_slots": [dict(s) for s in self._custom_bank_slots],  # compat descendante = page active
+            "bank_pages":        [[dict(s) for s in page] for page in self._bank_pages],
+            "bank_page_idx":     self._bank_page_idx,
             "last_fader_mode": "FX",
             "fx_pads": self.fx_pads,
             "effect_superposition": self.effect_superposition,
@@ -10385,24 +10613,57 @@ class MainWindow(QMainWindow):
         self.memory_custom_colors = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.active_memory_pads = {}
 
-        # Restore custom layout (ou compat ascendante avec bank_preset_idx)
-        custom_slots = config.get("custom_bank_slots")
-        if custom_slots and isinstance(custom_slots, list) and len(custom_slots) == 8:
-            # Migration: convertir les anciens slots "groups": ["face"] → "group": "A"
-            migrated = []
-            for s in custom_slots:
+        # ── Restore des PAGES de layout (avec compat ascendante) ──────────────
+        def _migrate_slots(slots):
+            # Convertit les anciens slots "groups": ["face"] → "group": "A"
+            out = []
+            for s in slots:
                 if s.get("type") == "group" and "groups" in s and "group" not in s:
                     old_groups = s["groups"]
                     letter = _AKAI_GROUP_REVERSE.get(old_groups[0], "A") if old_groups else "A"
-                    migrated.append({"type": "group", "group": letter, "label": s.get("label", letter)})
+                    out.append({"type": "group", "group": letter, "label": s.get("label", letter)})
                 else:
-                    migrated.append(s)
-            self._custom_bank_slots = migrated
+                    out.append(dict(s))
+            return out
+
+        bank_pages = config.get("bank_pages")
+        if isinstance(bank_pages, list) and bank_pages:
+            pages = [_migrate_slots(p) for p in bank_pages
+                     if isinstance(p, list) and len(p) == 8]
+            if pages:
+                self._bank_pages = pages
+                self._bank_page_idx = max(0, min(int(config.get("bank_page_idx", 0)), len(pages) - 1))
+                self._custom_bank_slots = self._bank_pages[self._bank_page_idx]
         else:
-            # Ancien format : bank_preset_idx
-            old_idx = config.get("bank_preset_idx", 0)
-            if 0 <= old_idx < len(AKAI_BANK_PRESETS):
-                self._custom_bank_slots = [dict(s) for s in AKAI_BANK_PRESETS[old_idx]["slots"]]
+            # Ancien format = layout unique → une seule page
+            custom_slots = config.get("custom_bank_slots")
+            if custom_slots and isinstance(custom_slots, list) and len(custom_slots) == 8:
+                single = _migrate_slots(custom_slots)
+            else:
+                old_idx = config.get("bank_preset_idx", 0)
+                old_idx = old_idx if 0 <= old_idx < len(AKAI_BANK_PRESETS) else 0
+                single = [dict(s) for s in AKAI_BANK_PRESETS[old_idx]["slots"]]
+            self._bank_pages = [single]
+            # Migration unique : injecter les presets déjà enregistrés par l'utilisateur
+            # comme pages suivantes (2, 3, 4…), puisque le système de presets est remplacé
+            # par les pages. Ne s'exécute qu'à la 1re bascule vers le format "bank_pages".
+            try:
+                _user_presets = AkaiLayoutEditorDialog._read_user_presets()
+            except Exception:
+                _user_presets = []
+            for _up in _user_presets:
+                _sl = _up.get("slots") if isinstance(_up, dict) else None
+                if (isinstance(_sl, list) and len(_sl) == 8
+                        and len(self._bank_pages) < _N_BANK_PAGES):
+                    self._bank_pages.append(_migrate_slots(_sl))
+            self._bank_page_idx = 0
+            self._custom_bank_slots = self._bank_pages[0]
+
+        # Toujours garantir _N_BANK_PAGES pages (padding des configs plus anciens)
+        while len(self._bank_pages) < _N_BANK_PAGES:
+            self._bank_pages.append([dict(s) for s in AKAI_BANK_PRESETS[0]["slots"]])
+        self._bank_page_idx = max(0, min(self._bank_page_idx, len(self._bank_pages) - 1))
+        self._custom_bank_slots = self._bank_pages[self._bank_page_idx]
 
         if mem_data and isinstance(mem_data, list):
             if len(mem_data) >= 1 and isinstance(mem_data[0], list):
@@ -10572,7 +10833,10 @@ class MainWindow(QMainWindow):
                     for i, lbl in enumerate(self._fader_label_widgets):
                         if i < len(self._fader_map):
                             lbl.setText(self._fader_map[i]["label"])
-            # Toujours activer le pad du haut de chaque colonne memoire au demarrage
+            self._update_bank_page_indicator()   # reflète le nombre de pages chargées
+            # Toujours activer le pad du haut de chaque colonne memoire au demarrage.
+            # (Les faders sont forcés BAISSÉS au lancement par _startup_faders_down, ~650 ms
+            # après l'init — après les syncs de connexion — pour rien allumer au démarrage.)
             self._activate_top_pads_default()
         except Exception as e:
             print(f"Erreur chargement config AKAI: {e}")
@@ -11239,7 +11503,24 @@ class MainWindow(QMainWindow):
 
             threading.Thread(target=_do_request, daemon=True).start()
 
+        # Bouton d'accès aux logs : le client peut récupérer faulthandler.log /
+        # console.log pour les joindre à son signalement, sans fouiller les menus.
+        btn_logs = QPushButton("📁  Joindre les logs")
+        btn_logs.setFixedHeight(38)
+        btn_logs.setCursor(Qt.PointingHandCursor)
+        btn_logs.setToolTip("Ouvre le dossier des logs (à joindre en cas de bug/plantage)")
+        btn_logs.setStyleSheet("""
+            QPushButton {
+                background: #1a1a1a; color: #888; font-size: 12px;
+                border: 1px solid #2a2a2a; border-radius: 8px; padding: 0 16px;
+            }
+            QPushButton:hover { background: #222; color: #ccc; border-color: #444; }
+        """)
+        btn_logs.clicked.connect(self.open_logs_folder)
+
         btn_send.clicked.connect(_send)
+        btn_row.addWidget(btn_logs)
+        btn_row.addStretch()
         btn_row.addWidget(btn_send)
         btn_row.addWidget(btn_close)
         root.addLayout(btn_row)
@@ -11582,8 +11863,10 @@ class MainWindow(QMainWindow):
         self._push_cart_state_to_tablet(_ts)
         # Projecteurs
         _ts.push_projectors(self._proj_snapshot())
-        # Layout colonnes AKAI + état REC
+        # Layout colonnes AKAI + pages + état REC
         _ts.push_layout(self._custom_bank_slots)
+        if hasattr(_ts, "push_bank_pages"):
+            _ts.push_bank_pages(len(self._bank_pages), self._bank_page_idx)
         _ts.push_rec_state(self._mem_rec_mode)
 
     def _push_seq_state_to_tablet(self, _ts=None):
@@ -11676,6 +11959,14 @@ class MainWindow(QMainWindow):
                         self.seq.play_row(self.seq.current_row + 1)
                     elif action == "prev":
                         self.seq.play_row(self.seq.current_row - 1)
+                elif etype == "bankpage":
+                    action = ev.get("action", "")
+                    if action == "next":
+                        self._next_bank_page()
+                    elif action == "prev":
+                        self._prev_bank_page()
+                    elif action == "set":
+                        self._set_bank_page(int(ev.get("idx", 0)))
                 elif etype == "cartouche":
                     idx = ev.get("idx", -1)
                     if 0 <= idx < len(self.cartouches):
@@ -11958,6 +12249,34 @@ class MainWindow(QMainWindow):
     def show_gear(self):
         """Ouvre la fenêtre Matériel recommandé"""
         GearDialog(self).exec()
+
+    def open_logs_folder(self):
+        """Ouvre l'explorateur sur le dossier des logs (diagnostic de crash).
+
+        Sert au support : en cas de crash, le client clique ici et envoie le
+        fichier faulthandler.log (pile du crash natif) / console.log.
+        """
+        import os, sys, subprocess
+        if sys.platform == "win32":
+            log_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "MyStrow", "Logs")
+        elif sys.platform == "darwin":
+            log_dir = os.path.join(os.path.expanduser("~"), "Library", "Logs", "MyStrow")
+        else:
+            log_dir = os.path.join(os.path.expanduser("~"), ".mystrow_logs")
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            pass
+        # Sélectionner directement faulthandler.log si présent (Windows), sinon
+        # ouvrir le dossier. QDesktopServices en secours multiplateforme.
+        try:
+            fh = os.path.join(log_dir, "faulthandler.log")
+            if sys.platform == "win32" and os.path.exists(fh):
+                subprocess.Popen(["explorer", "/select,", fh])
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(log_dir))
+        except Exception:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(log_dir))
 
     def _show_tutorials_dialog(self):
         from tutorials_dialog import TutorialsDialog
@@ -12243,6 +12562,12 @@ class MainWindow(QMainWindow):
 
         if key in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
             self.toggle_play()
+            event.accept()
+        elif key == Qt.Key_PageDown and (event.modifiers() & Qt.ControlModifier):
+            self._next_bank_page()       # Ctrl+PageDown = page de layout suivante
+            event.accept()
+        elif key == Qt.Key_PageUp and (event.modifiers() & Qt.ControlModifier):
+            self._prev_bank_page()       # Ctrl+PageUp = page de layout précédente
             event.accept()
         elif key == Qt.Key_PageDown:
             self.next_media()

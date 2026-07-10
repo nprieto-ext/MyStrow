@@ -3044,6 +3044,11 @@ class LiveModePanel(QWidget):
 class Sequencer(QFrame):
     """Sequenceur de medias avec gestion des sequences lumiere"""
 
+    # Data-role sur l'item titre (col 1) : True si le média est en lecture boucle.
+    # Stocké sur l'item → suit la ligne lors d'un swap et survit à un renommage.
+    LOOP_ROLE = Qt.UserRole + 1
+    _LOOP_PREFIX = "\U0001f501 "   # « 🔁 » affiché devant le nom dans la playlist
+
     def __init__(self, player_ui):
         super().__init__()
         self.player_ui = player_ui
@@ -4555,7 +4560,33 @@ class Sequencer(QFrame):
                 print(f"Erreur lecture: {e}")
                 QMessageBox.critical(None, tr("err_save_title"), tr("seq_err_play_msg", e=e))
 
+    def _log_tick_error(self, where, exc):
+        """Log throttlé d'une exception survenue dans un callback de timer.
+
+        Un timer de restitution tique à 20 Hz : sans throttling, une erreur
+        récurrente inonderait la console. On ne réémet un message que si le
+        texte d'erreur change (nouveau type de défaut).
+        """
+        try:
+            key = f"{where}:{type(exc).__name__}:{exc}"
+            if getattr(self, '_last_tick_error', None) != key:
+                self._last_tick_error = key
+                import traceback
+                print(f"[restitution:{where}] {type(exc).__name__}: {exc}")
+                traceback.print_exc()
+        except Exception:
+            pass
+
     def update_tempo_timeline(self):
+        """Callback QTimer (100 ms) — protégé : une exception non rattrapée
+        dans un slot de timer fait crasher tout MyStrow (PySide6 abort). On
+        logge au lieu de crasher pour ne jamais interrompre un show."""
+        try:
+            self._do_update_tempo_timeline()
+        except Exception as e:
+            self._log_tick_error('tempo', e)
+
+    def _do_update_tempo_timeline(self):
         """Met a jour la timeline pendant une Pause minutee"""
         if not self.tempo_running:
             return
@@ -4597,6 +4628,11 @@ class Sequencer(QFrame):
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row
         self.timeline_tracks_data = {}
+
+        # Image en boucle : rejouer la même ligne au lieu d'avancer
+        if self.is_row_loop(tempo_row):
+            self.play_row(tempo_row)
+            return
 
         next_row = tempo_row + 1
         if next_row < self.table.rowCount():
@@ -4763,6 +4799,15 @@ class Sequencer(QFrame):
         self.timeline_playback_timer.start(50)
 
     def update_timeline_playback(self):
+        """Callback QTimer (50 ms) — protégé : une exception non rattrapée dans
+        ce slot (clip malformé, couleur invalide, attribut projecteur manquant…)
+        ferait crasher tout MyStrow en plein show (PySide6 abort). On logge."""
+        try:
+            self._do_update_timeline_playback()
+        except Exception as e:
+            self._log_tick_error('timeline', e)
+
+    def _do_update_timeline_playback(self):
         """Met a jour DMX selon position timeline"""
         if not hasattr(self, 'timeline_playback_row'):
             return
@@ -5335,6 +5380,15 @@ class Sequencer(QFrame):
         self.playback_timer.start(50)
 
     def update_sequence_playback(self):
+        """Callback QTimer (50 ms) — protégé : un keyframe issu d'un ancien .tui
+        peut manquer une clé (faders/active_pad/active_effects) → KeyError qui,
+        levé dans ce slot, crasherait tout MyStrow (PySide6 abort). On logge."""
+        try:
+            self._do_update_sequence_playback()
+        except Exception as e:
+            self._log_tick_error('keyframes', e)
+
+    def _do_update_sequence_playback(self):
         """Met a jour la lecture de la sequence"""
         if self.playback_row < 0:
             return
@@ -5405,6 +5459,53 @@ class Sequencer(QFrame):
             if active != btn.active:
                 main_window.toggle_effect(i)
 
+    def is_row_loop(self, row) -> bool:
+        """True si le média de cette ligne est marqué « jouer en boucle »."""
+        item = self.table.item(row, 1)
+        return bool(item and item.data(self.LOOP_ROLE))
+
+    def _loop_icon(self):
+        """Icône « répéter » nette (SVG → QIcon, même style que le REC Lumière). Mise en cache."""
+        ic = getattr(self, '_loop_icon_cache', None)
+        if ic is not None:
+            return ic
+        from PySide6.QtGui import QIcon, QPixmap, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray, QRectF
+        col = "#00d4ff"
+        inner = (f'<path fill="{col}" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4'
+                 f'v-3h12v-6h-2v4z"/>')
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">{inner}</svg>'
+        pix = QPixmap(32, 32)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(p, QRectF(0, 0, 32, 32))
+        p.end()
+        ic = QIcon(pix)
+        self._loop_icon_cache = ic
+        return ic
+
+    def set_row_loop(self, row, enabled: bool):
+        """Active/désactive la lecture en boucle d'un média + met à jour le visuel."""
+        from PySide6.QtGui import QIcon
+        item = self.table.item(row, 1)
+        if not item:
+            return
+        item.setData(self.LOOP_ROLE, True if enabled else None)
+        # Nettoyer un éventuel ancien préfixe emoji (versions précédentes)
+        txt = item.text()
+        if txt.startswith(self._LOOP_PREFIX):
+            item.setText(txt[len(self._LOOP_PREFIX):])
+        # Icône « répéter » devant le nom + teinte cyan pour bien voir la ligne
+        item.setIcon(self._loop_icon() if enabled else QIcon())
+        item.setForeground(QBrush(QColor("#00d4ff")) if enabled else QBrush(QColor("#e0e0e0")))
+        self.is_dirty = True
+
+    def toggle_row_loop(self, row):
+        """Bascule l'état boucle depuis le menu contextuel."""
+        self.set_row_loop(row, not self.is_row_loop(row))
+
     def show_media_context_menu(self, pos):
         """Menu contextuel sur media"""
         row = self.table.rowAt(pos.y())
@@ -5440,6 +5541,12 @@ class Sequencer(QFrame):
         if media_type == "image":
             duration_action = menu.addAction(tr("seq_menu_set_duration"))
             duration_action.triggered.connect(lambda: self.edit_image_duration(row))
+
+        # Jouer en boucle (audio / video / image — pas les pauses)
+        if media_type in ("audio", "video", "image"):
+            loop_label = tr("seq_menu_loop_off") if self.is_row_loop(row) else tr("seq_menu_loop")
+            loop_action = menu.addAction(loop_label)
+            loop_action.triggered.connect(lambda: self.toggle_row_loop(row))
 
         menu.addSeparator()
 

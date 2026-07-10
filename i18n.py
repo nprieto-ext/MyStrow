@@ -214,7 +214,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "btn_activate_dmx":      {"en": "Activate DMX output",          "fr": "Activer la sortie DMX",      "es": "Activar salida DMX"},
 
     # ------------------------------------------------------------------ main_window / AkaiLayoutEditorDialog
-    "akai_cfg_title":        {"en": "AKAI APC mini Configuration",  "fr": "Configuration AKAI APC mini",  "es": "Configuración AKAI APC mini"},
+    "akai_cfg_title":        {"en": "Controller Configuration",     "fr": "Configuration du contrôleur", "es": "Configuración del controlador"},
     "btn_preset":            {"en": "⊞  Preset",                    "fr": "⊞  Preset",                   "es": "⊞  Preset"},
     "btn_apply":             {"en": "✔  Apply",                     "fr": "✔  Appliquer",                 "es": "✔  Aplicar"},
     "btn_annuler":           {"en": "Cancel",                       "fr": "Annuler",                      "es": "Cancelar"},
@@ -751,6 +751,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "seq_menu_rec_light":        {"en": "🔴 REC Light",             "fr": "🔴 REC Lumière",               "es": "🔴 REC Luz"},
     "seq_menu_delete":           {"en": "🗑️ Delete",                "fr": "🗑️ Supprimer",                  "es": "🗑️ Eliminar"},
     "seq_menu_volume":           {"en": "🔊 Volume",                "fr": "🔊 Volume",                     "es": "🔊 Volumen"},
+    "seq_menu_loop":             {"en": "🔁 Play in a loop",        "fr": "🔁 Jouer en boucle",            "es": "🔁 Reproducir en bucle"},
+    "seq_menu_loop_off":         {"en": "🔁 Remove loop",           "fr": "🔁 Enlever la boucle",          "es": "🔁 Quitar bucle"},
     "seq_analyzing_audio":       {"en": "Analyzing audio...",       "fr": "Analyse audio en cours...",     "es": "Analizando audio..."},
     "seq_file_not_found_title":  {"en": "File not found",           "fr": "Fichier introuvable",           "es": "Archivo no encontrado"},
     "seq_file_not_found_msg":    {"en": "The media cannot be found:\n\n{name}\n\nThe file was moved, deleted or renamed.",
