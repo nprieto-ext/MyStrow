@@ -3,6 +3,53 @@ Classe Projector pour la gestion des projecteurs DMX
 """
 from PySide6.QtGui import QColor
 
+import os as _os, time as _time, traceback as _traceback
+
+# ── Mouchard DEBUG (build 3.1.63) — barre LED qui s'éteint/strobe au patch ─────
+# But : logger QUI met la barre à level=0 / couleur=noir, avec la pile d'appel,
+# pour identifier la régression 3.1.62. Guardé, dédupliqué (une pile = 1 ligne),
+# plafonné, et JAMAIS fatal (tout est try/except). Mettre _BAR_DEBUG = False
+# pour désactiver complètement (build normal).
+_BAR_DEBUG = True
+_BAR_MATCH = "swing"      # sous-chaîne (minuscules) du NOM des fixtures surveillées
+_BAR_SEEN  = set()        # signatures de piles déjà loggées (anti-flood)
+_BAR_MAX   = 60           # plafond d'événements distincts
+
+
+def _bar_logpath():
+    try:
+        d = _os.path.join(_os.path.expanduser("~"), "AppData", "Local", "MyStrow", "Logs")
+        _os.makedirs(d, exist_ok=True)
+        return _os.path.join(d, "bar_debug.log")
+    except Exception:
+        return _os.path.join(_os.path.expanduser("~"), "mystrow_bar_debug.log")
+
+
+def _bar_log(kind, proj, old, new):
+    try:
+        if len(_BAR_SEEN) >= _BAR_MAX:
+            return
+        stack = _traceback.extract_stack()[:-2]          # sans _bar_log ni __setattr__
+        sig = tuple((fr.filename, fr.lineno) for fr in stack[-8:])
+        if sig in _BAR_SEEN:
+            return
+        _BAR_SEEN.add(sig)
+        with open(_bar_logpath(), "a", encoding="utf-8") as f:
+            f.write(f"\n===== {_time.strftime('%H:%M:%S')}  '{getattr(proj, 'name', '?')}' "
+                    f"({getattr(proj, 'group', '?')})  {kind}: {old} -> {new} =====\n")
+            f.write("".join(_traceback.format_list(stack[-18:])))
+    except Exception:
+        pass
+
+
+if _BAR_DEBUG:
+    try:
+        with open(_bar_logpath(), "a", encoding="utf-8") as _f:
+            _f.write(f"\n########## SESSION {_time.ctime()} — mouchard barre actif "
+                     f"(match='{_BAR_MATCH}') ##########\n")
+    except Exception:
+        pass
+
 
 class Projector:
     """Represente un projecteur avec son etat (niveau, couleur, mute)"""
@@ -65,6 +112,33 @@ class Projector:
         self.matrix_phys_w = None   # largeur physique (mm), None = inconnu
         self.matrix_phys_h = None   # hauteur physique (mm), None = inconnu
         self.matrix_rot   = 0       # rotation du bloc sur le plan (0..3 quarts de tour)
+
+    def __setattr__(self, key, value):
+        # Mouchard DEBUG (build 3.1.63) : trace qui éteint la barre LED surveillée.
+        # Jamais fatal — object.__setattr__ effectue toujours l'écriture réelle.
+        if _BAR_DEBUG and key in ("level", "color"):
+            try:
+                nm = getattr(self, "name", "") or ""
+                ft = getattr(self, "fixture_type", "") or ""
+                if _BAR_MATCH in nm.lower() or ft == "Barre LED":
+                    if key == "level":
+                        old = getattr(self, "level", 0)
+                        if old not in (0, None) and value == 0:
+                            _bar_log("level", self, old, value)
+                    elif value is not None:  # key == "color"
+                        old = getattr(self, "color", None)
+                        try:
+                            was_on  = old is not None and (old.red() or old.green() or old.blue())
+                            now_off = not (value.red() or value.green() or value.blue())
+                        except Exception:
+                            was_on = now_off = False
+                        if was_on and now_off:
+                            _bar_log("color->noir", self,
+                                     old.getRgb()[:3] if old else None,
+                                     value.getRgb()[:3])
+            except Exception:
+                pass
+        object.__setattr__(self, key, value)
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""
