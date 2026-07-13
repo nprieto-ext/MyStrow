@@ -4935,66 +4935,92 @@ class Sequencer(QFrame):
                 self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)
             return
 
-        # ── Gérer la piste Effet (priorité sur tout) ─────────────────────
-        effet_clip = active_clips.pop("Effet", None)
-        self._handle_timeline_effect(effet_clip)
+        # ── Gérer les pistes Effet (Effet + Effet 2/3/4… → superposition) ──
+        # On retire TOUTES les pistes Effet de active_clips et on les fusionne,
+        # à parité avec l'aperçu REC Lumière (sinon seul « Effet » jouait en show).
+        effet_clips = [active_clips.pop(tn) for tn in list(active_clips)
+                       if tn == "Effet" or tn.startswith("Effet ")]
+        self._handle_timeline_effect(effet_clips)
 
         self.apply_timeline_to_dmx(active_clips)
 
-    def _handle_timeline_effect(self, effet_clip):
-        """Démarre / maintient / arrête l'effet de la piste Effet de la timeline."""
+    def _handle_timeline_effect(self, effet_clips):
+        """Démarre / maintient / arrête l'effet des pistes Effet de la timeline.
+
+        Fusionne TOUTES les pistes Effet actives (Effet, Effet 2, …) en un seul
+        effet combiné → superposition, à parité avec l'aperçu REC Lumière
+        (cf. timeline_editor._apply_preview_to_projectors)."""
         main_win = self.player_ui
-        if effet_clip is None:
-            # Aucun clip actif → arrêter l'effet timeline s'il était actif
+        if not effet_clips:
+            # Aucune piste Effet active → arrêter l'effet timeline s'il tournait
             self._stop_timeline_effect()
             return
 
-        eff_name = effet_clip.get('effect_name', '')
-        if not eff_name:
-            self._stop_timeline_effect()
-            return
-
-        # Déjà le bon effet en cours avec mêmes paramètres → ne pas redémarrer
-        same_group = getattr(self, '_timeline_effect_group', None) == tuple(effet_clip.get('effect_target_groups', []))
-        same_speed = getattr(self, '_timeline_effect_speed', None) == effet_clip.get('effect_speed', 50)
-        if getattr(self, '_timeline_effect_name', None) == eff_name and same_group and same_speed:
-            return
-
-        # Charger la config de l'effet (layers depuis BUILTIN_EFFECTS ou custom)
-        eff_layers = effet_clip.get('effect_layers', [])
-        eff_type   = effet_clip.get('effect_type', '')
-        # no_color : l'effet doit hériter de la couleur assignée + suivre le fade
-        eff_no_color = False
+        # Fusionner les couches de tous les clips d'effet actifs
         try:
             from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
-            for _e in BUILTIN_EFFECTS + _load_custom_effects():
-                if _e.get('name') == eff_name:
-                    if not eff_layers:
-                        eff_layers = [dict(l) for l in _e.get('layers', [])]
-                        eff_type   = _e.get('type', '')
-                    eff_no_color = bool(_e.get('no_color', False))
-                    break
+            _catalog = BUILTIN_EFFECTS + _load_custom_effects()
         except Exception:
-            pass
+            _catalog = []
+        merged_layers, merged_names, merged_tg = [], [], []
+        merged_type = ''
+        has_all_groups = False
+        merged_no_color = False
+        for clip in effet_clips:
+            eff_name   = clip.get('effect_name', '')
+            eff_layers = list(clip.get('effect_layers', []))
+            eff_type   = clip.get('effect_type', '')
+            eff_tg     = list(clip.get('effect_target_groups', []))
+            # Résoudre depuis le catalogue : couches manquantes + flag no_color
+            _cat = next((_e for _e in _catalog if _e.get('name') == eff_name), None)
+            if _cat:
+                if not eff_layers:
+                    eff_layers = [dict(l) for l in _cat.get('layers', [])]
+                    eff_type   = _cat.get('type', '')
+                if _cat.get('no_color'):
+                    merged_no_color = True
+            merged_layers.extend(eff_layers)
+            if eff_name:
+                merged_names.append(eff_name)
+            if not merged_type:
+                merged_type = eff_type
+            if not eff_tg:
+                has_all_groups = True
+            else:
+                for g in eff_tg:
+                    if g not in merged_tg:
+                        merged_tg.append(g)
 
-        target_groups  = effet_clip.get('effect_target_groups', [])
-        speed_override = effet_clip.get('effect_speed', 50)
+        combined_name  = " + ".join(merged_names) if merged_names else ''
+        if not combined_name or not merged_layers:
+            self._stop_timeline_effect()
+            return
+
+        target_groups  = [] if has_all_groups else merged_tg
+        speed_override = effet_clips[0].get('effect_speed', 50)
+
+        # Déjà le bon effet combiné en cours (mêmes params) → ne pas réinitialiser
+        same_group = getattr(self, '_timeline_effect_group', None) == tuple(target_groups)
+        same_speed = getattr(self, '_timeline_effect_speed', None) == speed_override
+        if getattr(self, '_timeline_effect_name', None) == combined_name and same_group and same_speed:
+            return
+
         cfg = {
-            'name':            eff_name,
-            'type':            eff_type,
-            'layers':          eff_layers,
+            'name':            combined_name,
+            'type':            merged_type,
+            'layers':          merged_layers,
             'play_mode':       'loop',
             'target_groups':   target_groups,
             'speed_override':  speed_override,
-            'no_color':        eff_no_color,
+            'no_color':        merged_no_color,
         }
 
         # Démarrer l'effet (initialiser l'état sans démarrer le effect_timer —
         # la timeline appelle update_effect() elle-même à chaque tick)
-        self._timeline_effect_name  = eff_name
-        self._timeline_effect_group = tuple(effet_clip.get('effect_target_groups', []))
-        self._timeline_effect_speed = effet_clip.get('effect_speed', 50)
-        main_win.active_effect        = eff_name
+        self._timeline_effect_name  = combined_name
+        self._timeline_effect_group = tuple(target_groups)
+        self._timeline_effect_speed = speed_override
+        main_win.active_effect        = combined_name
         main_win.active_effect_config = cfg
         # Initialiser les compteurs d'état de l'effet
         main_win.effect_state      = 0

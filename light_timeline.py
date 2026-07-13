@@ -2029,6 +2029,18 @@ print(json.dumps(waveform))
         x = event.position().x()
         y = event.position().y()
 
+        # Pan (clic molette) : se déplacer sur la timeline sans attraper de bloc.
+        # (Au trackpad, utiliser le défilement à deux doigts — vertical/horizontal.)
+        if event.button() == Qt.MiddleButton:
+            self._panning   = True
+            self._pan_start = event.globalPosition().toPoint()
+            _sc = self.parent_editor.tracks_scroll
+            self._pan_h0 = _sc.horizontalScrollBar().value()
+            self._pan_v0 = _sc.verticalScrollBar().value()
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+
         # === MODE PAINT ACTIF ===
         if hasattr(self.parent_editor, 'paint_mode') and self.parent_editor.paint_mode:
             is_special = (getattr(self, 'is_effect_track', False) or
@@ -2039,9 +2051,28 @@ print(json.dumps(waveform))
                 brush = getattr(self.parent_editor, 'paint_brush', None)
                 if brush and not self.get_clip_at_pos(x, y):
                     click_time = max(0, (x - 145) / self.pixels_per_ms)
-                    self._paint_brush_at(click_time, brush)
-                    if hasattr(self.parent_editor, 'save_state'):
-                        self.parent_editor.save_state()
+                    if event.modifiers() & Qt.ShiftModifier:
+                        # Shift+clic = poser le bloc sur TOUTES les pistes de groupe
+                        # d'un coup (couleur commune à plusieurs groupes).
+                        painted = False
+                        for track in self.parent_editor.tracks:
+                            if (getattr(track, 'is_effect_track', False) or
+                                    getattr(track, 'is_sequence_track', False) or
+                                    getattr(track, 'is_position_track', False) or
+                                    track.name == "Audio"):
+                                continue
+                            # ne pas superposer si un clip couvre déjà ce temps
+                            if any(c.start_time <= click_time <= c.start_time + c.duration
+                                   for c in track.clips):
+                                continue
+                            track._paint_brush_at(click_time, brush)
+                            painted = True
+                        if painted and hasattr(self.parent_editor, 'save_state'):
+                            self.parent_editor.save_state()
+                    else:
+                        self._paint_brush_at(click_time, brush)
+                        if hasattr(self.parent_editor, 'save_state'):
+                            self.parent_editor.save_state()
             return
 
         # === MODE CUT ACTIVE ===
@@ -2098,21 +2129,24 @@ print(json.dumps(waveform))
             fade_in_px = int(clip.fade_in_duration * self.pixels_per_ms) if clip.fade_in_duration > 0 else 0
             fade_out_px = int(clip.fade_out_duration * self.pixels_per_ms) if clip.fade_out_duration > 0 else 0
 
-            if fade_in_px > 0 and x < clip_x + fade_in_px and y >= 10 and y <= 50:
+            # Priorité aux bords EXTRÊMES (5 px) = redimension de la DURÉE. Le
+            # handle de fade est à l'intérieur (au-delà des 5 px) : ça évite de
+            # « manger » le fade quand on veut juste changer la durée du bloc.
+            if x < clip_x + 5:
+                self.resizing_clip = clip
+                self.resize_edge = 'left'
+                self._save_resize_positions(clip)
+            elif x > clip_x + clip_width - 5:
+                self.resizing_clip = clip
+                self.resize_edge = 'right'
+                self._save_resize_positions(clip)
+            elif fade_in_px > 0 and x < clip_x + fade_in_px and y >= 10 and y <= 50:
                 self.resizing_clip = clip
                 self.resize_edge = 'fade_in'
                 self.saved_positions = {clip: (clip.start_time, clip.duration)}
             elif fade_out_px > 0 and x > clip_x + clip_width - fade_out_px and y >= 10 and y <= 50:
                 self.resizing_clip = clip
                 self.resize_edge = 'fade_out'
-                self.saved_positions = {clip: (clip.start_time, clip.duration)}
-            elif x < clip_x + 5:
-                self.resizing_clip = clip
-                self.resize_edge = 'left'
-                self.saved_positions = {clip: (clip.start_time, clip.duration)}
-            elif x > clip_x + clip_width - 5:
-                self.resizing_clip = clip
-                self.resize_edge = 'right'
                 self.saved_positions = {clip: (clip.start_time, clip.duration)}
             else:
                 # Drag - sauvegarder positions de TOUS les clips selectionnes (multi-pistes)
@@ -2147,6 +2181,17 @@ print(json.dumps(waveform))
             for track in self.parent_editor.tracks:
                 all_clips.extend(track.selected_clips)
         return all_clips
+
+    def _save_resize_positions(self, clip):
+        """Sauve (start, durée) de TOUS les clips sélectionnés → redimension
+        groupée : tirer un bord réduit/agrandit toute la sélection du même delta."""
+        self.saved_positions = {}
+        for track in self.parent_editor.tracks:
+            for sc in track.selected_clips:
+                self.saved_positions[sc] = (sc.start_time, sc.duration)
+        self.saved_positions[clip] = (clip.start_time, clip.duration)
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
 
     def _apply_snap(self, time_ms, exclude_clip=None):
         """Retourne time_ms snappé au point le plus proche (playhead + bords clips).
@@ -2187,6 +2232,14 @@ print(json.dumps(waveform))
     def mouseMoveEvent(self, event):
         """Gere drag et resize + ANTI-COLLISION + DRAG MULTI-CLIPS"""
         x = event.position().x()
+
+        # Pan en cours (clic molette) → défiler la vue, ne rien attraper
+        if getattr(self, '_panning', False):
+            _sc = self.parent_editor.tracks_scroll
+            cur = event.globalPosition().toPoint()
+            _sc.horizontalScrollBar().setValue(self._pan_h0 - (cur.x() - self._pan_start.x()))
+            _sc.verticalScrollBar().setValue(self._pan_v0 - (cur.y() - self._pan_start.y()))
+            return
 
         # Si mode cut actif
         if hasattr(self.parent_editor, 'cut_mode') and self.parent_editor.cut_mode:
@@ -2292,6 +2345,36 @@ print(json.dumps(waveform))
 
                 self.resizing_clip.duration = max(100, new_duration_ms)
 
+            # Redimension GROUPÉE : appliquer le même delta à TOUS les clips
+            # sélectionnés (réduire/agrandir la sélection en une fois).
+            if self.resize_edge in ('left', 'right') and len(self.saved_positions) > 1:
+                rc = self.resizing_clip
+                rc_s0, rc_d0 = self.saved_positions.get(rc, (rc.start_time, rc.duration))
+                d_start = rc.start_time - rc_s0
+                d_dur   = rc.duration - rc_d0
+                for sc, (s0, d0) in self.saved_positions.items():
+                    if sc is rc:
+                        continue
+                    if self.resize_edge == 'right':
+                        sc.duration = max(100, d0 + d_dur)
+                    else:  # left : décale le bord gauche (start + durée compensée)
+                        new_s = max(0, s0 + d_start)
+                        sc.duration   = max(100, d0 - (new_s - s0))
+                        sc.start_time = new_s
+
+            # Après un changement de DURÉE, re-clamper les fades de TOUS les clips
+            # redimensionnés pour qu'ils ne débordent jamais (sinon ils "disparaissent").
+            if self.resize_edge in ('left', 'right'):
+                _resized = (list(self.saved_positions.keys())
+                            if len(self.saved_positions) > 1 else [self.resizing_clip])
+                for c in _resized:
+                    if c.fade_in_duration + c.fade_out_duration > c.duration:
+                        c.fade_out_duration = max(0, min(c.fade_out_duration, c.duration))
+                        c.fade_in_duration  = max(0, min(c.fade_in_duration, c.duration - c.fade_out_duration))
+
+            # Rafraîchir toutes les pistes (les clips redimensionnés sont ailleurs)
+            for track in self.parent_editor.tracks:
+                track.update()
             self.update()
 
         else:
@@ -2333,6 +2416,12 @@ print(json.dumps(waveform))
 
     def mouseReleaseEvent(self, event):
         """Fin drag/resize — résout les chevauchements éventuels."""
+        if getattr(self, '_panning', False):
+            self._panning = False
+            self.setCursor(Qt.ArrowCursor)
+            event.accept()
+            return
+
         if self.dragging_clip:
             target    = self._cross_track_target
             clip      = self.dragging_clip
@@ -3960,7 +4049,10 @@ print(json.dumps(waveform))
         new_clip.effect_duration   = clip.effect_duration
         new_clip.effect_name       = clip.effect_name
         new_clip.effect_target_groups = list(clip.effect_target_groups)
-        for attr in ('memory_ref', 'cue_index', 'memory_label'):
+        for attr in ('memory_ref', 'cue_index', 'memory_label',
+                     'pan_start', 'tilt_start', 'pan_end', 'tilt_end',
+                     'move_effect', 'move_speed', 'move_amplitude',
+                     'strobe_speed', 'position_preset_idx'):
             if hasattr(clip, attr):
                 setattr(new_clip, attr, getattr(clip, attr))
         return new_clip

@@ -3487,6 +3487,11 @@ class PlanDeFeu(QFrame):
             proj.prism        = 0
             proj.prism_rotation = 0
             proj.effects      = 0
+            proj.strobe_speed = 0
+            # Vider les contrôles bruts (curseurs avancés) : sinon un canal
+            # « Mode »/« Effects »/Reset posé à la main reste actif (channel_extras
+            # est prioritaire dans le moteur DMX) → le canal ne revient pas au défaut.
+            proj.channel_extras = {}
         self.selected_lamps.clear()
         self.refresh()
 

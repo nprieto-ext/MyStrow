@@ -634,6 +634,9 @@ class CartoucheButton(QPushButton):
         self.volume = 100  # Volume 0-100, defaut 100%
         self.setFixedHeight(36)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Ne jamais forcer la colonne à s'élargir à cause d'un titre long :
+        # largeur mini = 0, et le texte est élidé (…) pour tenir (voir _apply_text).
+        self.setMinimumWidth(0)
         self.setCursor(Qt.PointingHandCursor)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self._update_style()
@@ -644,12 +647,7 @@ class CartoucheButton(QPushButton):
         b = self.base_color.blue()
         hex_col = self.base_color.name()
 
-        if self.media_title:
-            label = f"{self.media_icon} {self.media_title}" if self.media_icon else self.media_title
-        else:
-            label = tr("uic_cartouche_label", n=self.index + 1)
-        vol_str = f"   {self.volume}%" if self.volume < 100 else ""
-        self.setText(label + vol_str)
+        self._apply_text()
 
         if self.state == self.PLAYING:
             self.setStyleSheet(f"""
@@ -691,6 +689,27 @@ class CartoucheButton(QPushButton):
                     color: #bbbbbb;
                 }}
             """)
+
+    def _apply_text(self):
+        """Texte du bouton, élidé (…) pour tenir dans la largeur courante.
+        Un titre long ne doit jamais élargir la colonne des cartouches."""
+        if self.media_title:
+            label = f"{self.media_icon} {self.media_title}" if self.media_icon else self.media_title
+        else:
+            label = tr("uic_cartouche_label", n=self.index + 1)
+        vol_str = f"   {self.volume}%" if self.volume < 100 else ""
+        fm = self.fontMetrics()
+        # Réserver la place du % + le padding gauche/droite (~26 px)
+        avail = self.width() - 26 - fm.horizontalAdvance(vol_str)
+        if avail < 24:
+            avail = 24
+        self.setText(fm.elidedText(label, Qt.ElideRight, avail) + vol_str)
+        # Titre complet au survol (utile quand il est tronqué)
+        self.setToolTip(self.media_title or "")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_text()
 
     def set_idle(self):
         self.state = self.IDLE

@@ -306,7 +306,41 @@ _AKAI_SLOT_OPTIONS = (
     + [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
     + [f"FX {i}"  for i in range(1, _FX_COL_MAX + 1)]
     + [f"POS {i}" for i in range(1, _POS_COL_MAX + 1)]
+    + ["PLAY", "SANS SLOT"]
 )
+
+# Colonne PLAY : rôle de chaque pad (haut → bas) = (action, glyphe, couleur).
+# action : "playpause" | "prev" | "next" | "cart0..3" | "stop".
+# Le fader de cette colonne pilote le VOLUME du lecteur (défaut 100 %, exclu des
+# remises à zéro startup/clear — voir _startup_faders_down / _clear_akai_state).
+_PLAY_ROWS = [
+    ("playpause", "▶", "#22cc44"),   # row 0 : ▶ / ⏸
+    ("prev",      "⏮", "#2288dd"),   # row 1 : ⏮
+    ("next",      "⏭", "#2288dd"),   # row 2 : ⏭
+    ("cart0",     "1",      "#dd8822"),   # row 3 : SLOT 1
+    ("cart1",     "2",      "#dd8822"),   # row 4 : SLOT 2
+    ("cart2",     "3",      "#dd8822"),   # row 5 : SLOT 3
+    ("cart3",     "4",      "#dd8822"),   # row 6 : SLOT 4
+    ("stop",      "⏹", "#cc3333"),   # row 7 : ⏹
+]
+
+# Variante « TRANSPORT » : transport seul, SANS les 4 slots cartouches.
+# action=None → pad vide/inactif. Slot = {"type":"play", "slots": False}.
+_PLAY_ROWS_NOSLOT = [
+    ("playpause", "▶", "#22cc44"),   # row 0
+    ("prev",      "⏮", "#2288dd"),   # row 1
+    ("next",      "⏭", "#2288dd"),   # row 2
+    ("stop",      "⏹", "#cc3333"),   # row 3
+    (None, "", "#101010"),                # row 4-7 : vides
+    (None, "", "#101010"),
+    (None, "", "#101010"),
+    (None, "", "#101010"),
+]
+
+
+def _play_rows(slot):
+    """Table des rôles de pads selon la variante de colonne PLAY."""
+    return _PLAY_ROWS if slot.get("slots", True) else _PLAY_ROWS_NOSLOT
 
 
 class AkaiDiagnosticDialog(QDialog):
@@ -824,10 +858,12 @@ class _SlotPickerPopup(QFrame):
         self._add_section("Mémoires", mems, self._MEM_COLOR, current, cols=10)
         # POS — colonnes position lyre
         self._add_section(tr("pos_slot_section"), pos, "#2255ee", current)
+        # PLAY — transport lecteur (avec slots) + SANS SLOT (transport seul)
+        self._add_section("Lecteur", ["PLAY", "SANS SLOT"], "#2f8f57", current, cols=2, btn_w=78)
 
         self._inner_lay.addStretch()
 
-    def _add_section(self, title, items, color, current, cols=6):
+    def _add_section(self, title, items, color, current, cols=6, btn_w=44):
         lbl = QLabel(title.upper())
         lbl.setStyleSheet("color:#555; font-size:8px; letter-spacing:1px; background:transparent; border:none;")
         self._inner_lay.addWidget(lbl)
@@ -840,7 +876,7 @@ class _SlotPickerPopup(QFrame):
 
         for i, item in enumerate(items):
             btn = QPushButton(item)
-            btn.setFixedSize(44, 22)
+            btn.setFixedSize(btn_w, 22)
             active = (item == current)
             btn.setStyleSheet(self._btn_style(color, active))
             btn.clicked.connect(lambda _, v=item: self._pick(v))
@@ -1357,6 +1393,8 @@ class AkaiLayoutEditorDialog(QDialog):
             return self._FX_COLOR
         if option.startswith("POS "):
             return "#2255ee"
+        if option in ("PLAY", "SANS SLOT"):
+            return "#3fbf6a"
         return self._EMPTY_COLOR
 
     def _on_col_changed(self, col, option):
@@ -1502,6 +1540,10 @@ class AkaiLayoutEditorDialog(QDialog):
                     if init.get("fader_group"):
                         slot["fader_group"] = init["fader_group"]
                 slots.append(slot)
+            elif val == "PLAY":
+                slots.append({"type": "play", "label": "PLAY"})
+            elif val == "SANS SLOT":
+                slots.append({"type": "play", "slots": False, "label": "SANS SLOT"})
             else:
                 slots.append({"type": "group", "group": val, "label": val})
         return slots
@@ -3422,6 +3464,35 @@ class MainWindow(QMainWindow):
                     b.customContextMenuRequested.connect(
                         lambda p, pc=pos_col, pr=r, btn=b: self._show_pos_context_menu(p, pc, pr, btn)
                     )
+                elif slot["type"] == "play":
+                    action, glyph, color = _play_rows(slot)[r]
+                    b = QPushButton(glyph)
+                    b.setFixedSize(28, 28)
+                    _qc = QColor(color)
+                    if action is None:
+                        # Pad vide (variante TRANSPORT, lignes inutilisées)
+                        b.setStyleSheet(
+                            "QPushButton { background: #0e0e0e; border: 1px solid #1a1a1a; "
+                            "border-radius: 4px; }"
+                        )
+                        b.setEnabled(False)
+                        b.setProperty("base_color", QColor("#101010"))
+                        b.setProperty("play_action", None)
+                    else:
+                        b.setStyleSheet(
+                            f"QPushButton {{ background: {_qc.darker(170).name()}; "
+                            f"color: {color}; border: 1px solid {_qc.darker(230).name()}; "
+                            f"border-radius: 4px; font-size: 12px; font-weight: bold; }}"
+                        )
+                        b.setProperty("base_color", _qc)
+                        b.setProperty("play_action", action)
+                        b.setToolTip({
+                            "playpause": "Play / Pause", "prev": "Précédent", "next": "Suivant",
+                            "stop": "Stop", "cart0": "Cartouche 1", "cart1": "Cartouche 2",
+                            "cart2": "Cartouche 3", "cart3": "Cartouche 4",
+                        }.get(action, action))
+                        b.clicked.connect(lambda _, a=action: self._activate_play_pad(a))
+                    b.setProperty("color2", None)
                 else:  # memory
                     mem_col = slot["mem_col"]
                     b = QPushButton()
@@ -3465,6 +3536,63 @@ class MainWindow(QMainWindow):
                     new_btn.setStyleSheet(f"QPushButton {{ background: {color.name()}; border: 2px solid {color.lighter(130).name()}; border-radius: 4px; }}")
                     self.active_pads[col_idx] = new_btn
 
+        # Colonnes PLAY : LEDs + fader aligné sur le volume courant (défaut 100 %)
+        for c in self._play_columns():
+            if c in self.faders and hasattr(self, "audio"):
+                try:
+                    self.faders[c].value = int(round(self.audio.volume() * 100))
+                    self.faders[c].update()
+                except Exception:
+                    pass
+        self._refresh_play_leds()
+
+    def _play_columns(self):
+        """Indices des colonnes assignées au type 'play'."""
+        return [c for c, s in enumerate(self._fader_map) if s.get("type") == "play"]
+
+    def _refresh_play_leds(self):
+        """Allume les LEDs des pads des colonnes PLAY sur l'APC (play/pause suit l'état)."""
+        if not (MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out):
+            return
+        try:
+            playing = self.player.playbackState() == QMediaPlayer.PlayingState
+        except Exception:
+            playing = False
+        for c in self._play_columns():
+            rows = _play_rows(self._fader_map[c]) if c < len(self._fader_map) else _PLAY_ROWS
+            for r, (action, _glyph, color) in enumerate(rows):
+                if action is None:
+                    self.midi_handler.set_pad_led(r, c, 0, brightness_percent=0)
+                    continue
+                qc = QColor(color)
+                vel = rgb_to_akai_velocity(qc)
+                if action == "playpause":
+                    bri = self.akai_active_brightness if playing else self.akai_inactive_brightness
+                else:
+                    bri = self.akai_inactive_brightness
+                # Passer le VRAI RGB : les LEDs RGB natives (Launchpad MK3) affichent
+                # la couleur exacte au lieu de la velocity approximée (orange/rouge → blanc).
+                self.midi_handler.set_pad_led(r, c, vel, brightness_percent=bri,
+                                              rgb=(qc.red(), qc.green(), qc.blue()))
+
+    def _activate_play_pad(self, action):
+        """Déclenche l'action d'un pad de la colonne PLAY (playpause/prev/next/stop/cartN)."""
+        try:
+            if action == "playpause":
+                self.toggle_play()
+            elif action == "prev":
+                self.previous_media()
+            elif action == "next":
+                self.next_media()
+            elif action == "stop":
+                self.player.stop()
+                self._stop_all_cartouches()
+            elif action.startswith("cart"):
+                self.on_cartouche_clicked(int(action[4:]))
+        except Exception as e:
+            print(f"[play pad] erreur action '{action}': {e}")
+        self._refresh_play_leds()
+
     def _open_fader_slot_picker(self, fader_idx):
         """Ouvre le picker d'assignation directement depuis l'étiquette du fader."""
         cur_slot = self._custom_bank_slots[fader_idx]
@@ -3502,6 +3630,10 @@ class MainWindow(QMainWindow):
             elif value.startswith("POS "):
                 pos_col = int(value.split()[1]) - 1
                 slot = {"type": "pos", "pos_col": pos_col, "label": value}
+            elif value == "PLAY":
+                slot = {"type": "play", "label": "PLAY"}
+            elif value == "SANS SLOT":
+                slot = {"type": "play", "slots": False, "label": "SANS SLOT"}
             else:
                 slot = {"type": "group", "group": value, "label": value}
             _apply_slot(value, slot)
@@ -3667,6 +3799,12 @@ class MainWindow(QMainWindow):
             elif stype == "fx":
                 fx_col = slot.get("fx_col", 0)
                 val = int(self.fx_amplitudes[fx_col]) if 0 <= fx_col < _FX_COL_MAX else 0
+            elif stype == "play":
+                # Colonne PLAY : le fader reflète le volume courant du lecteur
+                try:
+                    val = int(round(self.audio.volume() * 100))
+                except Exception:
+                    val = 100
             else:
                 # mémoire / position : surface neutre, on ne pilote rien
                 val = 0
@@ -3686,6 +3824,10 @@ class MainWindow(QMainWindow):
         except Exception:
             _ts, ts_on = None, False
         for i in range(8):
+            # La colonne PLAY = volume : ne JAMAIS la baisser au démarrage
+            # (sinon le son est coupé au lancement — piège ergonomique).
+            if i < len(self._fader_map) and self._fader_map[i].get("type") == "play":
+                continue
             if i in self.faders:
                 self.faders[i].value = 0
                 self.faders[i].update()
@@ -3884,7 +4026,16 @@ class MainWindow(QMainWindow):
         elif self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
         else:
-            self.player.play()
+            # Rien en lecture. Si la playlist n'a jamais démarré (aucun média
+            # chargé), lancer directement le média sélectionné (ou le 1er) —
+            # évite d'avoir à double-cliquer sur le premier média.
+            if self.seq.current_row < 0 and self.seq.table.rowCount() > 0:
+                target = self.seq.table.currentRow()
+                if target < 0:
+                    target = 0
+                self.seq.play_row(target)
+            else:
+                self.player.play()
 
     def update_play_icon(self, s):
         """Met a jour l'icone play/pause"""
@@ -3892,6 +4043,9 @@ class MainWindow(QMainWindow):
             self.play_btn.setIcon(create_icon("pause", "#ffffff"))
         else:
             self.play_btn.setIcon(create_icon("play", "#ffffff"))
+        # Refléter l'état sur la LED play/pause des colonnes PLAY de l'APC
+        if hasattr(self, "_refresh_play_leds"):
+            self._refresh_play_leds()
 
     def on_timeline_update(self, position):
         """Met a jour la timeline"""
@@ -5443,6 +5597,16 @@ class MainWindow(QMainWindow):
         if index >= len(self._fader_map):
             return
         slot = self._fader_map[index]
+
+        if slot["type"] == "play":
+            # Fader de la colonne PLAY = volume du lecteur média (0-100 %).
+            if index in self.faders:
+                self.faders[index].value = value
+            try:
+                self.audio.setVolume(max(0, min(100, value)) / 100.0)
+            except Exception:
+                pass
+            return
 
         if slot["type"] == "memory":
             mem_col = slot["mem_col"]
@@ -7875,8 +8039,13 @@ class MainWindow(QMainWindow):
 
     def _clear_akai_state(self):
         """Remet l'AKAI à zéro : faders 0-7 à 0 + pads blancs activés."""
-        # Faders à 0
+        def _is_play(idx):
+            return idx < len(self._fader_map) and self._fader_map[idx].get("type") == "play"
+        # Faders à 0 — SAUF la colonne PLAY (volume) : le clear ne doit jamais
+        # couper le son (piège ergonomique).
         for idx in range(8):
+            if _is_play(idx):
+                continue
             if idx in self.faders:
                 self.faders[idx].value = 0
                 self.faders[idx].update()
@@ -7885,6 +8054,8 @@ class MainWindow(QMainWindow):
         # MIDI faders à 0
         if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
             for idx in range(8):
+                if _is_play(idx):
+                    continue
                 self.midi_handler.midi_out.send_message([0xB0, idx, 0])
 
         # Désactiver les pads actifs sur les colonnes groupe
@@ -10066,6 +10237,12 @@ class MainWindow(QMainWindow):
                     # Pads POS — rappelle la position lyre
                     pos_col = slot.get("pos_col", 0)
                     self._activate_position_akai_pad(pad, pos_col, row, col_akai=col)
+                elif slot["type"] == "play":
+                    # Colonne PLAY/TRANSPORT — le rôle dépend de la ligne + la variante
+                    rows = _play_rows(slot)
+                    action = rows[row][0] if row < len(rows) else None
+                    if action:
+                        self._activate_play_pad(action)
                 else:
                     # Memory pads individuels
                     mem_col = slot["mem_col"]

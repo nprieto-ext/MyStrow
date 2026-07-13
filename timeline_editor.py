@@ -953,6 +953,11 @@ class LightTimelineEditor(QDialog):
         delete_all_action = edit_menu.addAction(tr("te_menu_delete_all"))
         delete_all_action.triggered.connect(self.clear_all_clips)
 
+        edit_menu.addSeparator()
+
+        dup_track_action = edit_menu.addAction("⧉  Dupliquer une piste sur une autre…")
+        dup_track_action.triggered.connect(self.duplicate_group_track)
+
         # === TOOLS ===
         effect_menu = menubar.addMenu(tr("te_menu_effect"))
         fade_in_action = effect_menu.addAction("🎬 Fade In")
@@ -1041,6 +1046,15 @@ class LightTimelineEditor(QDialog):
         self.paint_btn.setCheckable(True)
         self.paint_btn.setVisible(False)
         self.paint_btn.clicked.connect(self.toggle_paint_mode)
+        self.paint_btn.setToolTip("Peinture — clic pose un bloc.  Shift + clic = sur TOUS les groupes.")
+
+        # Indice visible : affiché uniquement quand le mode Peinture est actif
+        self._paint_hint = QLabel("💡 Shift + clic = poser sur tous les groupes")
+        self._paint_hint.setStyleSheet(
+            "color:#cc44ff; font-size:11px; font-weight:600; padding:0 10px; background:transparent;"
+        )
+        self._paint_hint.setVisible(False)
+        header_layout.addWidget(self._paint_hint)
 
         header_layout.addSpacing(12)
 
@@ -2389,6 +2403,69 @@ class LightTimelineEditor(QDialog):
                 track.update()
             self.save_state()
 
+    def duplicate_group_track(self):
+        """Outil Édition : dupliquer TOUT le contenu d'une piste de groupe sur
+        une autre (ex. copier tout ce qui est sur A vers B)."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                       QLabel, QComboBox, QPushButton)
+        group_tracks = [t for t in self.tracks
+                        if not (getattr(t, 'is_effect_track', False)
+                                or getattr(t, 'is_sequence_track', False)
+                                or getattr(t, 'is_position_track', False)
+                                or t.name == "Audio")]
+        names = [t.name for t in group_tracks]
+        if len(names) < 2:
+            QMessageBox.information(self, "Dupliquer",
+                "Il faut au moins deux pistes de groupe pour dupliquer.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Dupliquer une piste")
+        dlg.setStyleSheet(
+            "QDialog{background:#1a1a1a;} QLabel{color:#ddd;font-size:13px;} "
+            "QComboBox{background:#2a2a2a;color:#fff;border:1px solid #444;border-radius:5px;padding:6px 10px;} "
+            "QComboBox QAbstractItemView{background:#2a2a2a;color:#fff;selection-background-color:#00d4ff;} "
+            "QPushButton{background:#2a2a2a;color:#fff;border:1px solid #444;border-radius:6px;padding:8px 18px;} "
+            "QPushButton:hover{border-color:#00d4ff;}")
+        v = QVBoxLayout(dlg)
+        v.setContentsMargins(22, 20, 22, 18); v.setSpacing(10)
+        v.addWidget(QLabel("Copier tout le contenu de la piste :"))
+        src_cb = QComboBox(); src_cb.addItems(names); v.addWidget(src_cb)
+        v.addWidget(QLabel("… vers la piste :"))
+        dst_cb = QComboBox(); dst_cb.addItems(names)
+        dst_cb.setCurrentIndex(1)
+        v.addWidget(dst_cb)
+        row = QHBoxLayout(); row.addStretch()
+        cancel = QPushButton("Annuler"); ok = QPushButton("Dupliquer")
+        cancel.clicked.connect(dlg.reject); ok.clicked.connect(dlg.accept)
+        row.addWidget(cancel); row.addWidget(ok); v.addLayout(row)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._do_duplicate_track(src_cb.currentText(), dst_cb.currentText())
+
+    def _do_duplicate_track(self, src_name, dst_name):
+        """Copie tous les clips de la piste src_name vers dst_name (remplace)."""
+        if src_name == dst_name:
+            QMessageBox.information(self, "Dupliquer", "Choisis deux pistes différentes.")
+            return
+        src = self.track_map.get(src_name)
+        dst = self.track_map.get(dst_name)
+        if not src or not dst:
+            return
+        if dst.clips:
+            if QMessageBox.question(self, "Remplacer ?",
+                    f"La piste {dst_name} contient déjà {len(dst.clips)} bloc(s).\n"
+                    f"Les remplacer par une copie de {src_name} ?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        self.save_state()
+        dst.clips.clear()
+        dst.selected_clips.clear()
+        for c in src.clips:
+            dst.clips.append(src._clone_clip(c, dst))
+        dst.update()
+
     # Couleur claire commune à toutes les icônes SVG du header
     _ICON_COL = "#e0e0e0"
 
@@ -2872,21 +2949,38 @@ class LightTimelineEditor(QDialog):
         return super().eventFilter(obj, event)
 
     def _handle_wheel(self, event):
-        """Logique partagée scroll : Shift=zoom, Ctrl=vertical, sinon horizontal."""
+        """Scroll adapté trackpad ET souris :
+        - Shift            → zoom
+        - Ctrl             → scroll horizontal (temps) — secours molette souris
+        - geste vertical   → scroll vertical (pistes)   [angleDelta().y()]
+        - geste horizontal → scroll horizontal (temps)  [angleDelta().x()]
+        """
+        dx = event.angleDelta().x()
+        dy = event.angleDelta().y()
+
         if event.modifiers() & Qt.ShiftModifier:
-            if event.angleDelta().y() > 0:
+            if dy > 0:
                 self.zoom_in()
-            else:
+            elif dy < 0:
                 self.zoom_out()
-        elif event.modifiers() & Qt.ControlModifier:
-            sb = self.tracks_scroll.verticalScrollBar()
-            sb.setValue(sb.value() - event.angleDelta().y())
-        else:
-            sb = self.tracks_scroll.horizontalScrollBar()
-            sb.setValue(sb.value() - event.angleDelta().y())
+            return
+
+        if event.modifiers() & Qt.ControlModifier:
+            # Molette souris (axe Y seul) → défiler le temps volontairement
+            sbh = self.tracks_scroll.horizontalScrollBar()
+            sbh.setValue(sbh.value() - (dy or dx))
+            return
+
+        # Sans modificateur : axes naturels (le trackpad fournit x ET/OU y)
+        if dx:
+            sbh = self.tracks_scroll.horizontalScrollBar()
+            sbh.setValue(sbh.value() - dx)
+        if dy:
+            sbv = self.tracks_scroll.verticalScrollBar()
+            sbv.setValue(sbv.value() - dy)
 
     def wheelEvent(self, event):
-        """Shift+Scroll = Zoom | Ctrl+Scroll = vertical | Scroll = horizontal"""
+        """Shift=Zoom | Ctrl=horizontal | geste vertical=vertical | horizontal=temps"""
         self._handle_wheel(event)
         event.accept()
 
@@ -3375,6 +3469,9 @@ class LightTimelineEditor(QDialog):
     def toggle_paint_mode(self):
         """Active/desactive le mode PAINT (pinceau sur la timeline)"""
         self.paint_mode = not self.paint_mode
+
+        if hasattr(self, '_paint_hint'):
+            self._paint_hint.setVisible(self.paint_mode)
 
         if self.paint_mode:
             self.setCursor(Qt.CrossCursor)

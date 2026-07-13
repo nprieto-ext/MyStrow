@@ -3113,8 +3113,22 @@ class EffectEditorDialog(QDialog):
         self.finished.connect(lambda _: self._stop_preview())
         self.finished.connect(lambda _: self._autosave_on_close())
 
+        self._selected_card_widget = None
         self._build_ui()
         self._rebuild_rows()
+        # Défiler la bibliothèque de gauche jusqu'à l'effet du clip (sinon on ne
+        # voit pas quel effet est sélectionné si sa carte est plus bas).
+        QTimer.singleShot(0, self._reveal_selected_card)
+
+    def _reveal_selected_card(self):
+        """Amène la carte de l'effet sélectionné dans la vue de la bibliothèque."""
+        try:
+            w  = getattr(self, '_selected_card_widget', None)
+            sc = getattr(self, '_lib_scroll', None)
+            if w and sc:
+                sc.ensureWidgetVisible(w, 0, 40)
+        except Exception:
+            pass
 
     # ── Construction ──────────────────────────────────────────────────────────
 
@@ -3208,6 +3222,7 @@ class EffectEditorDialog(QDialog):
         self._list_vl.addStretch()
         scroll.setWidget(self._list_w)
         lv.addWidget(scroll, 1)
+        self._lib_scroll = scroll   # pour défiler jusqu'à l'effet sélectionné
 
         self._rebuild_library()
         return panel
@@ -3328,6 +3343,9 @@ class EffectEditorDialog(QDialog):
             }}
             QWidget#ECard:hover {{ background: {hover_bg}; border-color: #282828; }}
         """)
+
+        if sel:
+            self._selected_card_widget = card   # cible du défilement auto à l'ouverture
 
         vl = QVBoxLayout(card)
         vl.setContentsMargins(4, 5, 4, 4)

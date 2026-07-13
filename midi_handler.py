@@ -1077,11 +1077,14 @@ class MIDIHandler(QObject):
         except Exception as e:
             print(f"❌ Erreur init LEDs: {e}")
 
-    def set_pad_led(self, row, col, color_velocity, brightness_percent=100):
+    def set_pad_led(self, row, col, color_velocity, brightness_percent=100, rgb=None):
         """Allume un pad sur le contrôleur actif.
 
         color_velocity : velocity AKAI (couleur/intensité)
         brightness_percent : 20 (dim) ou 100 (full) — utilisé par APC Mini seulement
+        rgb : (r,g,b) 0-255 optionnel. Si fourni, les contrôleurs RGB natifs
+              (Launchpad Mini MK3) l'utilisent DIRECTEMENT au lieu de reconvertir
+              la velocity (évite qu'une couleur custom orange/rouge sorte blanche).
         """
         try:
             ct = self.controller_type
@@ -1092,7 +1095,7 @@ class MIDIHandler(QObject):
             elif ct == 'apc20':
                 self._set_led_apc20(row, col, color_velocity)
             elif ct == 'launchpad_mini_mk3':
-                self._set_led_lp_mk3(row, col, color_velocity, brightness_percent)
+                self._set_led_lp_mk3(row, col, color_velocity, brightness_percent, rgb)
             elif ct == 'launchpad_mk2':
                 self._set_led_lp_mk2(row, col, color_velocity)
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
@@ -1138,12 +1141,15 @@ class MIDIHandler(QObject):
         note = (7 - row) * 16 + col
         self.midi_out.send_message([0x90, note, lp_vel])
 
-    def _set_led_lp_mk3(self, row, col, color_velocity, brightness_percent=100):
+    def _set_led_lp_mk3(self, row, col, color_velocity, brightness_percent=100, rgb=None):
         """LED Launchpad Mini MK3 (Programmer mode) — pilotage RGB via SysEx.
 
         note = lp_row1*10 + lp_col1. On envoie la couleur en RGB exact (0-127/canal)
         modulée par brightness_percent → les pads inactifs (20%) sont atténués.
         SysEx RGB : F0 00 20 29 02 0D 03  03 <note> R G B  F7
+
+        Si `rgb` (0-255) est fourni, on l'utilise tel quel (couleur exacte) ; sinon
+        on reconvertit la velocity via _LP_MK3_VEL_TO_RGB (approximatif).
         """
         if not self.midi_out:
             return
@@ -1151,11 +1157,14 @@ class MIDIHandler(QObject):
         lp_col1 = (9 if col == 8 else col + 1)
         note = lp_row1 * 10 + lp_col1
 
-        if color_velocity <= 0:
+        if color_velocity <= 0 and not rgb:
             self.midi_out.send_message([0x90, note, 0])   # éteindre
             return
 
-        r, g, b = _LP_MK3_VEL_TO_RGB.get(color_velocity, (255, 255, 255))
+        if rgb is not None:
+            r, g, b = rgb
+        else:
+            r, g, b = _LP_MK3_VEL_TO_RGB.get(color_velocity, (255, 255, 255))
         f = max(0.0, min(1.0, brightness_percent / 100.0))
         r7 = int(r / 255.0 * 127 * f)
         g7 = int(g / 255.0 * 127 * f)
