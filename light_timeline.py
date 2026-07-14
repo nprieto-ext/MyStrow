@@ -3262,6 +3262,57 @@ print(json.dumps(waveform))
             }
         """)
 
+        # === SÉLECTION MULTIPLE : menu « groupe » dédié ===
+        # Si plusieurs blocs sont sélectionnés et que le bloc cliqué en fait
+        # partie, on affiche UNIQUEMENT les actions de groupe. Les actions
+        # par-bloc (couleur unique, couper ici, copier vers…) n'auraient pas de
+        # sens sur une sélection → on ne les mélange pas.
+        selected = self.get_all_selected_clips()
+        if len(selected) > 1 and clip in selected:
+            n = len(selected)
+            hdr = menu.addAction(f"✦  Sélection — {n} blocs")
+            hdr.setEnabled(False)
+            menu.addSeparator()
+
+            sel_int = menu.addMenu(f"🔅  Intensité ({n} blocs)")
+            for val in [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
+                a = sel_int.addAction(f"{val}%")
+                a.triggered.connect(lambda checked=False, v=val: self.set_selection_intensity(v))
+            sel_int.addSeparator()
+            a = sel_int.addAction(tr("lt_menu_custom"))
+            a.triggered.connect(lambda: self.edit_selection_intensity())
+
+            sel_col = menu.addMenu(f"🎨  Couleur ({n} blocs)")
+            for name, col in [("Rouge", QColor(255, 0, 0)), ("Vert", QColor(0, 255, 0)),
+                              ("Bleu", QColor(0, 0, 255)), ("Jaune", QColor(200, 200, 0)),
+                              ("Magenta", QColor(255, 0, 255)), ("Cyan", QColor(0, 255, 255)),
+                              ("Blanc", QColor(255, 255, 255)), ("Black Light", QColor(100, 0, 255))]:
+                pix = QPixmap(16, 16); pix.fill(col)
+                a = sel_col.addAction(QIcon(pix), name)
+                a.triggered.connect(lambda checked=False, c=col: self.set_selection_color(c))
+
+            sel_fi = menu.addMenu(f"🎬  Fade In ({n} blocs)")
+            sel_fo = menu.addMenu(f"🎬  Fade Out ({n} blocs)")
+            for label, ms in [("250 ms", 250), ("500 ms", 500), ("1 s", 1000),
+                              ("2 s", 2000), ("3 s", 3000)]:
+                ai = sel_fi.addAction(label)
+                ai.triggered.connect(lambda checked=False, m=ms: self.add_selection_fade_in(m))
+                ao = sel_fo.addAction(label)
+                ao.triggered.connect(lambda checked=False, m=ms: self.add_selection_fade_out(m))
+
+            # « Retirer les fades » : uniquement si au moins un bloc en a un
+            if any(getattr(c, 'fade_in_duration', 0) > 0 or getattr(c, 'fade_out_duration', 0) > 0
+                   for c in selected):
+                clr = menu.addAction("✖  Retirer les fades")
+                clr.triggered.connect(lambda: self.clear_selection_fades())
+
+            menu.addSeparator()
+            dele = menu.addAction(f"🗑  Supprimer les {n} blocs")
+            dele.triggered.connect(lambda: self.parent_editor.delete_selected_clips())
+
+            menu.exec(global_pos)
+            return
+
         # === INTENSITE ===
         intensity_menu = menu.addMenu(tr("lt_menu_intensity"))
         for val in [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
@@ -3734,6 +3785,99 @@ print(json.dumps(waveform))
             self.parent_editor.save_state()
         if hasattr(self.parent_editor, '_save_sequence_no_close'):
             self.parent_editor._save_sequence_no_close()
+
+    # ── Application groupée à la sélection multiple ────────────────────────────
+    def _refresh_after_selection_change(self):
+        """Repeint toutes les pistes + sauvegarde (undo + persistance)."""
+        for track in getattr(self.parent_editor, 'tracks', [self]):
+            track.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+        if hasattr(self.parent_editor, '_save_sequence_no_close'):
+            self.parent_editor._save_sequence_no_close()
+
+    def set_selection_intensity(self, value):
+        """Applique une intensité (dimmer) à tous les blocs sélectionnés."""
+        for cl in self.get_all_selected_clips():
+            cl.intensity = int(value)
+        self._refresh_after_selection_change()
+
+    def set_selection_color(self, color):
+        """Applique une couleur commune à tous les blocs sélectionnés."""
+        for cl in self.get_all_selected_clips():
+            cl.color = QColor(color)
+            cl.color2 = None
+        self._refresh_after_selection_change()
+
+    def add_selection_fade_in(self, ms):
+        """Applique un fade in à tous les blocs sélectionnés (borné à leur durée)."""
+        for cl in self.get_all_selected_clips():
+            cl.fade_in_duration = min(int(ms), int(cl.duration))
+        self._refresh_after_selection_change()
+
+    def add_selection_fade_out(self, ms):
+        """Applique un fade out à tous les blocs sélectionnés (borné à leur durée)."""
+        for cl in self.get_all_selected_clips():
+            cl.fade_out_duration = min(int(ms), int(cl.duration))
+        self._refresh_after_selection_change()
+
+    def clear_selection_fades(self):
+        """Retire les fades de tous les blocs sélectionnés."""
+        for cl in self.get_all_selected_clips():
+            cl.fade_in_duration = 0
+            cl.fade_out_duration = 0
+        self._refresh_after_selection_change()
+
+    def edit_selection_intensity(self):
+        """Dialogue slider pour appliquer une intensité commune à la sélection."""
+        selected = self.get_all_selected_clips()
+        if not selected:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr("lt_dlg_intensity_title"))
+        dialog.setFixedSize(360, 210)
+        dialog.setStyleSheet("""
+            QDialog { background: #1a1a1a; }
+            QLabel { color: white; }
+            QPushButton {
+                background: #cccccc; color: black;
+                border: 1px solid #999999; border-radius: 6px;
+                padding: 10px 20px; font-weight: bold;
+            }
+            QPushButton:hover { background: #00d4ff; }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 24, 30, 24)
+
+        title = QLabel(f"Intensité — {len(selected)} blocs")
+        title.setStyleSheet("color:#00d4ff; font-size:13px; font-weight:bold;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        init = int(selected[0].intensity)
+        value_label = QLabel(f"{init}%")
+        value_label.setStyleSheet("color: white; font-size: 32px; font-weight: bold;")
+        value_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(value_label)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(init)
+        slider.valueChanged.connect(lambda v: value_label.setText(f"{v}%"))
+        layout.addWidget(slider)
+
+        btn_layout = QHBoxLayout()
+        cancel = QPushButton(tr("btn_cancel_x"))
+        cancel.clicked.connect(dialog.reject)
+        btn_layout.addWidget(cancel)
+        ok = QPushButton("✅ OK")
+        ok.clicked.connect(dialog.accept)
+        ok.setStyleSheet("background: #00d4ff; color: black; font-weight: bold;")
+        btn_layout.addWidget(ok)
+        layout.addLayout(btn_layout)
+
+        if dialog.exec() == QDialog.Accepted:
+            self.set_selection_intensity(slider.value())
 
     def dragEnterEvent(self, event):
         mime = event.mimeData()

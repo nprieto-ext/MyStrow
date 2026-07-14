@@ -2255,6 +2255,10 @@ class MainWindow(QMainWindow):
         # Configuration AKAI
         self.akai_active_brightness = 100
         self.akai_inactive_brightness = 20
+        # Offset de synchro lumière/vidéo (ms) : retarde l'horloge de restitution
+        # pour compenser la latence du pipeline vidéo (position() qui devance le
+        # son audible). Global, réglable, persistant. Défaut 0 = aucun effet.
+        self.light_sync_offset_ms = 0
         self.blackout_active = False
         self._last_fader_mode = "FX"   # "FX" ou "MASTER" pour le fader 9
         self.master_level = 100        # 0-100, appliqué en sortie DMX
@@ -2538,6 +2542,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(tr("menu_effect_editor"), self.open_effect_editor)
         edit_menu.addSeparator()
         edit_menu.addAction(tr("menu_ia_lumiere"), self.show_ia_lumiere_config)
+        edit_menu.addAction("🎬  Synchro lumière / vidéo…", self._open_light_sync_dialog)
 
         conn_menu = bar.addMenu(tr("menu_connection"))
 
@@ -4874,6 +4879,8 @@ class MainWindow(QMainWindow):
             p.gobo_rotation = int(proj_state.get("gobo_rotation", 0))
             p.zoom          = int(proj_state.get("zoom",         0))
             p.strobe_speed  = int(proj_state.get("strobe_speed", 0))
+            # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
+            p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
             if proj_state["level"] <= 0:
                 p.level = 0
                 p.base_color = QColor("black")
@@ -4982,6 +4989,8 @@ class MainWindow(QMainWindow):
             p.gobo_rotation = int(ds.get("gobo_rotation", 0))
             p.zoom          = int(ds.get("zoom",          0))
             p.strobe_speed  = int(ds.get("strobe_speed",  0))
+            # Canaux bruts (Mode…) : pilotés par la mémoire au fader dominant
+            p.channel_extras = dict(ds.get("channel_extras", {}) or {})
             if "pan" in ds or "tilt" in ds:
                 np_ = ds.get("pan",  getattr(p, 'pan',  32768))
                 nt_ = ds.get("tilt", getattr(p, 'tilt', 32768))
@@ -5214,6 +5223,8 @@ class MainWindow(QMainWindow):
                 "gobo_rotation": getattr(p, 'gobo_rotation', 0),
                 "zoom":         getattr(p, 'zoom',         0),
                 "strobe_speed": getattr(p, 'strobe_speed', 0),
+                # Canaux bruts prioritaires posés à la main (Mode, Effects, Reset…)
+                "channel_extras": dict(getattr(p, 'channel_extras', {}) or {}),
             })
         return {"projectors": snapshot, "effect": {}, "duration": 0}
 
@@ -10744,6 +10755,75 @@ class MainWindow(QMainWindow):
 
     _AKAI_CONFIG_PATH = str(Path.home() / '.maestro_akai_config.json')
 
+    def _open_light_sync_dialog(self):
+        """Réglage global de l'offset de synchro lumière/vidéo (ms).
+
+        Compense la latence du pipeline vidéo : sur un mp4, position() peut
+        devancer le son audible → les lumières partent trop tôt. À régler une
+        fois par machine ; la valeur est persistée dans la config AKAI.
+        """
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                       QLabel, QSpinBox, QPushButton)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Synchro lumière / vidéo")
+        dlg.setStyleSheet(
+            "QDialog { background:#161616; }"
+            "QLabel { color:#ddd; font-size:12px; }"
+            "QSpinBox { background:#111; color:#00d4ff; border:1px solid #333;"
+            " border-radius:4px; padding:4px 8px; font-size:14px; min-width:120px; }"
+            "QPushButton { background:#222; color:#eee; border:1px solid #333;"
+            " border-radius:5px; padding:6px 16px; }"
+            "QPushButton:hover { border-color:#00d4ff; }"
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(12)
+
+        info = QLabel(
+            "Sur les <b>vidéos</b>, les lumières peuvent partir <b>en avance</b> sur le\n"
+            "son (latence du décodage vidéo). Augmentez le décalage pour <b>retarder</b>\n"
+            "les lumières et les recaler sur le son.\n\n"
+            "Ce réglage ne s'applique <b>qu'aux vidéos</b> — les fichiers audio (mp3…)\n"
+            "ne sont jamais décalés. Réglage global, une seule fois par machine."
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Décalage lumière :"))
+        spin = QSpinBox()
+        spin.setRange(-5000, 20000)
+        spin.setSingleStep(100)
+        spin.setSuffix(" ms")
+        spin.setValue(int(getattr(self, 'light_sync_offset_ms', 0) or 0))
+        row.addWidget(spin)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+        hint = QLabel("Positif = lumières retardées (cas le plus courant sur vidéo). "
+                      "Négatif = lumières avancées.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#888; font-size:11px;")
+        lay.addWidget(hint)
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        b_cancel = QPushButton("Annuler")
+        b_ok = QPushButton("Appliquer")
+        b_ok.setStyleSheet("background:#0a5; color:#fff; border:none;")
+        b_cancel.clicked.connect(dlg.reject)
+        b_ok.clicked.connect(dlg.accept)
+        btns.addWidget(b_cancel)
+        btns.addWidget(b_ok)
+        lay.addLayout(btns)
+
+        if dlg.exec():
+            self.light_sync_offset_ms = int(spin.value())
+            try:
+                self._save_akai_config_auto()
+            except Exception as e:
+                print(f"[SYNC] sauvegarde offset échouée: {e}")
+
     def _serialize_akai_config(self):
         """Serialise les memoires AKAI en dict JSON"""
         custom_colors_serial = []
@@ -10777,6 +10857,7 @@ class MainWindow(QMainWindow):
             "apc_bright_mode": getattr(self.midi_handler, '_apc_bright_mode', True),
             "akai_active_brightness": self.akai_active_brightness,
             "akai_inactive_brightness": self.akai_inactive_brightness,
+            "light_sync_offset_ms": int(getattr(self, 'light_sync_offset_ms', 0) or 0),
             "pinned_controller": getattr(self.midi_handler, 'pinned_id', None),
         }
 
@@ -10918,6 +10999,8 @@ class MainWindow(QMainWindow):
             self.akai_active_brightness   = int(config["akai_active_brightness"])
         if "akai_inactive_brightness" in config:
             self.akai_inactive_brightness = int(config["akai_inactive_brightness"])
+        if "light_sync_offset_ms" in config:
+            self.light_sync_offset_ms = int(config.get("light_sync_offset_ms", 0) or 0)
 
         # Contrôleur épinglé (sélection manuelle) — reconnecte sur le bon si défini
         if hasattr(self, 'midi_handler') and self.midi_handler:

@@ -1788,6 +1788,8 @@ class LightTimelineEditor(QDialog):
             p.color = QColor("black")
             p.strobe_speed = 0
             p.color_wheel = 0
+            # Canaux bruts (Mode…) remis à zéro chaque frame — parité restitution
+            p.channel_extras = {}
 
         # Projecteurs sous un clip couleur/séquence actif ce frame : l'effet
         # (qui s'applique après) devra suivre leur couleur + leur fade in/out
@@ -2018,6 +2020,8 @@ class LightTimelineEditor(QDialog):
                             if "pan"  in ps: p.pan  = ps["pan"]
                             if "tilt" in ps: p.tilt = ps["tilt"]
                             p.strobe_speed = int(ps.get("strobe_speed", 0))
+                            # Canaux bruts (Mode…) : parité avec la restitution (sequencer.py)
+                            p.channel_extras = dict(ps.get("channel_extras", {}) or {})
                             if ps.get("level", 0) > 0:
                                 lvl = int(ps["level"] * brightness)
                                 base = QColor(ps["base_color"])

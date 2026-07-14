@@ -4807,6 +4807,30 @@ class Sequencer(QFrame):
         except Exception as e:
             self._log_tick_error('timeline', e)
 
+    def _media_light_time(self):
+        """Position média (ms) corrigée de l'offset de synchro lumière.
+
+        Sur une vidéo, QMediaPlayer.position() peut devancer le son audible
+        (latence du pipeline vidéo) → les lumières partent trop tôt. L'offset
+        (global, réglable, défaut 0) retarde l'horloge lumière pour recaler sur
+        le son. Réglé une fois par machine (menu Réglages → Synchro lumière/vidéo).
+
+        IMPORTANT : l'offset ne compense QUE la latence vidéo. On ne l'applique
+        donc que si le média courant a une piste vidéo — les fichiers audio (mp3…)
+        étaient déjà parfaitement synchro et ne doivent surtout pas être décalés.
+        """
+        pos = self.player_ui.player.position()
+        off = int(getattr(self.player_ui, 'light_sync_offset_ms', 0) or 0)
+        if not off:
+            return pos
+        try:
+            is_video = bool(self.player_ui.player.hasVideo())
+        except Exception:
+            is_video = False
+        if not is_video:
+            return pos
+        return max(0, pos - off)
+
     def _do_update_timeline_playback(self):
         """Met a jour DMX selon position timeline"""
         if not hasattr(self, 'timeline_playback_row'):
@@ -4834,7 +4858,7 @@ class Sequencer(QFrame):
         if self.tempo_running:
             current_time = self.tempo_elapsed
         else:
-            current_time = self.player_ui.player.position()
+            current_time = self._media_light_time()
 
         # Debounce: ignorer uniquement si la position n'a pas change du tout
         if current_time == self.timeline_last_update:
@@ -5118,6 +5142,9 @@ class Sequencer(QFrame):
                     # Strobe restauré depuis le cue (le preview le fait l.1845 ;
                     # sans ça, un strobe mémorisé ne ressortait pas en restitution).
                     proj.strobe_speed = int(ps.get("strobe_speed", 0))
+                    # Canaux bruts (Mode, Effects…) restaurés depuis le cue —
+                    # parité avec la preview de l'éditeur REC Lumière.
+                    proj.channel_extras = dict(ps.get("channel_extras", {}) or {})
                     if ps.get("level", 0) > 0:
                         lvl  = int(ps["level"] * brightness)
                         base = QColor(ps["base_color"])
@@ -5171,6 +5198,9 @@ class Sequencer(QFrame):
             # dernier slot posé (manuel/mémoire) → "la roue se décale" en
             # restitution sur les lyres ColorWheel. Aligné sur la preview (l.1615).
             proj.color_wheel = 0
+            # Idem canaux bruts (Mode, Effects…) : sans reset, le Mode posé par
+            # un clip-mémoire resterait collé après la fin du clip. Aligné preview.
+            proj.channel_extras = {}
 
         for track_name, clip_info in active_clips.items():
             indices = track_to_indices.get(track_name, [])
@@ -5419,7 +5449,7 @@ class Sequencer(QFrame):
         if self.playback_row < 0:
             return
 
-        current_time = self.player_ui.player.position()
+        current_time = self._media_light_time()
 
         sequence = self.sequences.get(self.playback_row)
         if not sequence:
@@ -5574,6 +5604,13 @@ class Sequencer(QFrame):
             loop_action = menu.addAction(loop_label)
             loop_action.triggered.connect(lambda: self.toggle_row_loop(row))
 
+        # Localiser le fichier dans l'explorateur système (fichiers réels)
+        if path and media_type in ("audio", "video", "image"):
+            locate_action = menu.addAction("📂  Localiser le fichier")
+            # NB : triggered émet un bool `checked` → on l'absorbe pour ne pas
+            # écraser p (sinon _reveal_in_explorer reçoit False au lieu du chemin).
+            locate_action.triggered.connect(lambda checked=False, p=path: self._reveal_in_explorer(p))
+
         menu.addSeparator()
 
         rec_action = menu.addAction(tr("seq_menu_rec_light"))
@@ -5584,6 +5621,39 @@ class Sequencer(QFrame):
         delete_action.triggered.connect(lambda: self.delete_media_row(row))
 
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _reveal_in_explorer(self, path):
+        """Ouvre l'explorateur (Windows/macOS/Linux) sur l'emplacement du média.
+        Robuste : gère QUrl / URL file:// / chemin brut, ouvre le dossier en secours,
+        et logge le chemin exact si introuvable (diagnostic)."""
+        import sys, os, subprocess
+        from PySide6.QtCore import QUrl
+        raw = path
+        if isinstance(path, QUrl):
+            path = path.toLocalFile()
+        elif isinstance(path, str) and path.strip().lower().startswith("file:"):
+            path = QUrl(path.strip()).toLocalFile()
+        path = os.path.normpath(str(path or "").strip().strip('"'))
+
+        is_file = bool(path) and os.path.isfile(path)
+        folder  = os.path.dirname(path) if path else ""
+        has_dir = bool(folder) and os.path.isdir(folder)
+
+        print(f"[localiser] brut={raw!r} normalise={path!r} is_file={is_file} has_dir={has_dir}")
+
+        if not is_file and not has_dir:
+            QMessageBox.warning(self, "Fichier introuvable",
+                                "Emplacement introuvable :\n" + str(path))
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", path] if is_file else ["explorer", folder])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", path] if is_file else ["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception as e:
+            print(f"[localiser] erreur ouverture explorateur : {e}")
 
     def edit_media_volume(self, row):
         """Edite le volume d'un media (audio/video uniquement)"""
