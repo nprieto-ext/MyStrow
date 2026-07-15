@@ -8400,6 +8400,11 @@ class MainWindow(QMainWindow):
         if surface is None:
             return
         self._pads_surface = surface
+        # Le passage par QScrollArea retourne autoFillBackground sur la surface,
+        # et takeWidget() ne le remet pas : sans ça elle revient dans sa fenêtre
+        # en peignant sa palette (claire) par-dessus le noir. On mémorise pour
+        # restaurer à l'identique.
+        self._pads_autofill = surface.autoFillBackground()
 
         # La colonne centrale est plus étroite que la fenêtre PADS (conçue pour
         # 1240 px) : sans ça les blocs de droite sont rognés et inatteignables.
@@ -8449,6 +8454,9 @@ class MainWindow(QMainWindow):
         self._pads_scroll.deleteLater()
         self._pads_scroll = None
         self._ext_window.setCentralWidget(surface)
+        # Après setCentralWidget : la surface doit retrouver l'état exact qu'elle
+        # avait avant d'être embarquée, sinon fond clair dans la fenêtre.
+        surface.setAutoFillBackground(getattr(self, "_pads_autofill", False))
         self._pads_surface = None
 
     def _sync_view_menu(self, live_on: bool):
