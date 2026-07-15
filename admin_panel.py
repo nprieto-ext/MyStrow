@@ -216,6 +216,15 @@ RED      = "#a83232"
 TEXT     = "#ffffff"
 TEXT_DIM = "#aaaaaa"
 
+# Quota de signatures eSigner (SSL.com, Tier 1 IV/OV) : 20 signatures/mois.
+# Chaque release consomme 2 signatures (MyStrow.exe puis MyStrow_Setup.exe,
+# cf. .github/workflows/release.yml) → 10 releases/mois incluses, puis 1 $ par
+# signature supplémentaire. Les signatures non utilisées se reportent au mois
+# suivant, donc un dépassement ponctuel n'est pas forcément facturé.
+ESIGNER_MONTHLY_QUOTA    = 20
+ESIGNER_SIGS_PER_RELEASE = 2
+ESIGNER_EXTRA_SIG_COST   = 1.0   # $ par signature au-delà du quota
+
 STYLE_APP = f"""
     QMainWindow, QDialog {{ background: {BG_MAIN}; }}
     QWidget {{ background: {BG_MAIN}; color: {TEXT}; font-family: 'Segoe UI', sans-serif; }}
@@ -3809,6 +3818,8 @@ class AdminPanel(QMainWindow):
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
+        if idx == 3 and hasattr(self, "_rel_quota_label"):
+            self._update_esigner_quota()
         if idx == 5 and not getattr(self, "_ga4_insights_loaded", False):
             self._ga4_insights_loaded = True
             self._load_ga4_insights()
@@ -4442,6 +4453,77 @@ class AdminPanel(QMainWindow):
         lay.addStretch()
         self._content_stack.addWidget(page)
 
+    def _esigner_releases_this_month(self) -> int:
+        """Nombre de releases du mois en cours, compté sur les tags git v*.
+
+        Les tags sont la source de vérité : le workflow ne signe que sur push
+        d'un tag v* (`on: push: tags`), donc 1 tag = 1 build = 2 signatures.
+        Retourne -1 si git est inutilisable (exe packagé, dépôt absent...).
+        """
+        try:
+            r = subprocess.run(
+                ["git", "for-each-ref", "--format=%(creatordate:short)", "refs/tags/v*"],
+                cwd=str(Path(__file__).resolve().parent),
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+        except Exception:
+            return -1
+        if r.returncode != 0:
+            return -1
+        month = datetime.now().strftime("%Y-%m")
+        return sum(1 for l in (r.stdout or "").splitlines()
+                   if l.strip().startswith(month))
+
+    def _update_esigner_quota(self):
+        """Rafraîchit l'indicateur de quota de signatures eSigner."""
+        releases = self._esigner_releases_this_month()
+        if releases < 0:
+            self._rel_quota_label.setText(
+                f"<span style='color:{TEXT_DIM};'>Signatures eSigner : indisponible "
+                f"(dépôt git introuvable)</span>"
+            )
+            self._rel_quota_bar.setVisible(False)
+            self._rel_quota_hint.setText("")
+            return
+
+        used  = releases * ESIGNER_SIGS_PER_RELEASE
+        quota = ESIGNER_MONTHLY_QUOTA
+        over  = max(0, used - quota)
+
+        if over:
+            color = RED
+        elif used >= quota * 0.7:
+            color = ORANGE
+        else:
+            color = GREEN
+
+        self._rel_quota_label.setText(
+            f"Signatures eSigner : <b style='color:{color};'>{used} / {quota}</b>"
+            f" ce mois-ci &nbsp;<span style='color:{TEXT_DIM};'>"
+            f"({releases} release{'s' if releases > 1 else ''} × {ESIGNER_SIGS_PER_RELEASE})</span>"
+        )
+        self._rel_quota_bar.setVisible(True)
+        self._rel_quota_bar.setValue(min(used, quota))
+        self._rel_quota_bar.setStyleSheet(
+            f"QProgressBar {{ border:none; background:{BG_INPUT}; border-radius:3px; }}"
+            f"QProgressBar::chunk {{ background:{color}; border-radius:3px; }}"
+        )
+
+        if over:
+            cost = over * ESIGNER_EXTRA_SIG_COST
+            self._rel_quota_hint.setText(
+                f"Dépassement de {over} signature{'s' if over > 1 else ''} → ~{cost:.0f} $ "
+                f"ce mois-ci. Estimation hors report des signatures non utilisées "
+                f"des mois précédents, qui peut l'absorber."
+            )
+        else:
+            left = (quota - used) // ESIGNER_SIGS_PER_RELEASE
+            self._rel_quota_hint.setText(
+                f"Encore {left} release{'s' if left > 1 else ''} avant dépassement "
+                f"(puis ~{ESIGNER_SIGS_PER_RELEASE * ESIGNER_EXTRA_SIG_COST:.0f} $ par release)."
+            )
+
     def _build_release_panel(self):
         """Page 2 : Release pipeline + Backup, intégrés directement dans l'onglet."""
         page = QWidget()
@@ -4476,6 +4558,23 @@ class AdminPanel(QMainWindow):
         v_row.addWidget(self._rel_version_edit)
         v_row.addStretch()
         lay.addLayout(v_row)
+
+        # ── Quota de signatures eSigner ───────────────────────────────────────
+        self._rel_quota_label = QLabel()
+        self._rel_quota_label.setTextFormat(Qt.RichText)
+        lay.addWidget(self._rel_quota_label)
+
+        self._rel_quota_bar = QProgressBar()
+        self._rel_quota_bar.setFixedHeight(6)
+        self._rel_quota_bar.setTextVisible(False)
+        self._rel_quota_bar.setMaximum(ESIGNER_MONTHLY_QUOTA)
+        lay.addWidget(self._rel_quota_bar)
+
+        self._rel_quota_hint = QLabel()
+        self._rel_quota_hint.setStyleSheet("color: #555; font-size: 10px;")
+        lay.addWidget(self._rel_quota_hint)
+
+        self._update_esigner_quota()
 
         # ── Action + bouton Lancer ────────────────────────────────────────────
         a_row = QHBoxLayout()
