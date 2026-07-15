@@ -573,6 +573,19 @@ class GridCanvas(QWidget):
             b.update()
         self.update()
 
+    def content_size(self) -> tuple:
+        """Encombrement réel des blocs en px (largeur, hauteur).
+
+        Les blocs sont positionnés en absolu sur la grille : si le canvas est
+        plus étroit que ça, ceux de droite deviennent inatteignables. Sert à
+        dimensionner la zone défilante quand la surface est embarquée au centre.
+        """
+        w = h = 0
+        for b in self.blocks:
+            w = max(w, b.x() + b.width())
+            h = max(h, b.y() + b.height())
+        return w + _CELL_MARGIN, h + _CELL_MARGIN
+
     def _cols(self) -> int:
         return max(1, self.width() // GRID_CELL)
 

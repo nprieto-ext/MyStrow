@@ -2561,8 +2561,6 @@ class MainWindow(QMainWindow):
             view_menu.addAction(act)
             self._view_actions[key] = act
         self._view_actions["media"].setChecked(True)
-        # La surface Pads n'est pas encore embarquable (elle vit dans ExtWindow).
-        self._view_actions["pads"].setEnabled(False)
         # NB : pas de connexion à self.seq ici — _create_menu() tourne avant que
         # le séquenceur existe. Le branchement se fait après sa création.
 
@@ -8335,8 +8333,14 @@ class MainWindow(QMainWindow):
         via _on_live_toggle. « none » cache la colonne pour rendre la place à
         l'AKAI et au plan de feu.
         """
+        if key != "pads":
+            self._release_pads_surface()
+
         if key == "none":
             self._center_stack.setVisible(False)
+        elif key == "pads":
+            self._center_stack.setVisible(True)
+            self._embed_pads_surface()
         else:
             self._center_stack.setVisible(True)
             self._center_stack.setCurrentIndex(0)
@@ -8349,6 +8353,77 @@ class MainWindow(QMainWindow):
         act = self._view_actions.get(key)
         if act:
             act.setChecked(True)
+
+    def _embed_pads_surface(self):
+        """Déplace la surface Pads de sa fenêtre flottante vers la colonne centrale.
+
+        Un widget Qt n'a qu'un seul parent : la surface ne peut pas être aux deux
+        endroits à la fois. On déplace donc l'unique exemplaire au lieu d'en créer
+        un second — ça garde un seul writer sur l'état des blocs (et un seul
+        _state_timer), et évite que deux surfaces se disputent ~/.mystrow_ext.json.
+        """
+        if getattr(self, "_pads_surface", None) is not None:
+            self._center_stack.setCurrentWidget(self._pads_scroll)
+            return
+        win = self._ensure_ext_window()
+        if win.isVisible():
+            win.hide()
+        if hasattr(self, "_ext_btn"):
+            self._ext_btn.setChecked(False)
+        surface = win.takeCentralWidget()
+        if surface is None:
+            return
+        self._pads_surface = surface
+
+        # La colonne centrale est plus étroite que la fenêtre PADS (conçue pour
+        # 1240 px) : sans ça les blocs de droite sont rognés et inatteignables.
+        # On empêche le canvas de descendre sous son contenu et on rend le tout
+        # défilant — uniquement ici, la fenêtre flottante garde son comportement.
+        canvas = getattr(win, "canvas", None)
+        if canvas is not None:
+            cw, ch = canvas.content_size()
+            canvas.setMinimumSize(max(400, cw), max(300, ch))
+
+        self._pads_scroll = QScrollArea()
+        self._pads_scroll.setWidgetResizable(True)
+        # Le fond doit être imposé par feuille de style, pas par palette : la
+        # règle globale `QWidget { color: #ddd; }` de la fenêtre matche tous les
+        # widgets, donc Qt les considère « stylés » et ignore autoFillBackground.
+        # Sans ces règles, le viewport part en blanc (le noir de MyStrow vient de
+        # `QMainWindow { background: #050505; }`, que la zone défilante masque).
+        self._pads_scroll.setStyleSheet(
+            "QScrollArea { border: none; background: #0e0e0e; }"
+            "QScrollArea > QWidget > QWidget { background: #0e0e0e; }"
+        )
+        self._pads_scroll.setWidget(surface)
+        self._center_stack.addWidget(self._pads_scroll)
+        self._center_stack.setCurrentWidget(self._pads_scroll)
+
+    def _release_pads_surface(self):
+        """Rend la surface Pads à sa fenêtre flottante."""
+        surface = getattr(self, "_pads_surface", None)
+        if surface is None:
+            return
+        # ExtWindow ne sauve son layout que dans closeEvent : embarquée, sa
+        # fenêtre ne se ferme jamais, donc on sauve ici — sinon les blocs
+        # déplacés en vue Pads seraient perdus.
+        try:
+            self._ext_window._save_layout()
+        except Exception:
+            pass
+
+        # Rendre au canvas sa taille minimale d'origine, sinon la fenêtre
+        # flottante hériterait de la contrainte posée pour la vue centrale.
+        canvas = getattr(self._ext_window, "canvas", None)
+        if canvas is not None:
+            canvas.setMinimumSize(400, 300)
+
+        self._pads_scroll.takeWidget()          # rend la propriété du widget
+        self._center_stack.removeWidget(self._pads_scroll)
+        self._pads_scroll.deleteLater()
+        self._pads_scroll = None
+        self._ext_window.setCentralWidget(surface)
+        self._pads_surface = None
 
     def _sync_view_menu(self, live_on: bool):
         """Reflète le bouton LIVE du séquenceur dans le menu Affichage."""
@@ -13589,6 +13664,14 @@ class MainWindow(QMainWindow):
         # Sauvegarder automatiquement la config AKAI
         self._save_akai_config_auto()
 
+        # Surface Pads embarquée au centre : sa fenêtre n'a jamais été fermée,
+        # donc son closeEvent (seul endroit qui sauve le layout) n'a pas tourné.
+        if getattr(self, '_pads_surface', None) is not None:
+            try:
+                self._ext_window._save_layout()
+            except Exception:
+                pass
+
         # Fermer la fenetre de sortie video
         if self.video_output_window:
             self.video_output_window.close()
@@ -13703,11 +13786,20 @@ class MainWindow(QMainWindow):
             if hasattr(self.plan_de_feu, 'btn_3d'):
                 self.plan_de_feu.btn_3d.setChecked(True)
 
-    def toggle_ext_window(self):
-        """Affiche ou cache la fenêtre EXT (surface d'exécuteurs configurable)."""
+    def _ensure_ext_window(self):
+        """Crée la fenêtre EXT à la demande (elle porte toute la logique Pads)."""
         if getattr(self, '_ext_window', None) is None:
             from ext_window import ExtWindow
             self._ext_window = ExtWindow(self)
+        return self._ext_window
+
+    def toggle_ext_window(self):
+        """Affiche ou cache la fenêtre EXT (surface d'exécuteurs configurable)."""
+        self._ensure_ext_window()
+        # La surface ne peut pas être au centre ET dans la fenêtre : si elle est
+        # embarquée, on la rend d'abord à la fenêtre, sinon celle-ci s'ouvrirait vide.
+        if getattr(self, '_pads_surface', None) is not None:
+            self.set_center_view("media")
         if self._ext_window.isVisible():
             self._ext_window.hide()
             if hasattr(self, '_ext_btn'):
