@@ -1,0 +1,39 @@
+name: Test eSigner (diagnostic)
+
+# Vérifie que l'abonnement eSigner et les secrets ES_* sont toujours
+# fonctionnels, SANS signer de fichier ni publier de release.
+# Les commandes get_credential_ids / credential_info ne consomment
+# aucune signature du quota mensuel (20/mois en Tier 1).
+#
+# Lancement : onglet Actions → "Test eSigner (diagnostic)" → Run workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-esigner:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Liste les credentials du compte : valide ES_USERNAME / ES_PASSWORD
+      # et montre si une (ou plusieurs) credential est facturée.
+      - name: List eSigner credential IDs
+        uses: sslcom/esigner-codesign@develop
+        with:
+          command: get_credential_ids
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          environment_name: PROD
+
+      # Détail du certificat rattaché à la credential : valide ES_CREDENTIAL_ID
+      # et confirme que le certificat est vivant (date d'expiration attendue :
+      # 09/06/2027).
+      - name: Show certificate info
+        uses: sslcom/esigner-codesign@develop
+        with:
+          command: credential_info
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          environment_name: PROD
