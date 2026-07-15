@@ -9,7 +9,7 @@ import json
 import secrets
 import string
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 import subprocess
 import shutil
 import time
@@ -216,14 +216,24 @@ RED      = "#a83232"
 TEXT     = "#ffffff"
 TEXT_DIM = "#aaaaaa"
 
-# Quota de signatures eSigner (SSL.com, Tier 1 IV/OV) : 20 signatures/mois.
-# Chaque release consomme 2 signatures (MyStrow.exe puis MyStrow_Setup.exe,
-# cf. .github/workflows/release.yml) → 10 releases/mois incluses, puis 1 $ par
-# signature supplémentaire. Les signatures non utilisées se reportent au mois
-# suivant, donc un dépassement ponctuel n'est pas forcément facturé.
+# Quota de signatures eSigner (SSL.com, Tier 1 IV/OV) : 20 signatures par cycle
+# de facturation. Chaque release en consomme 2 (MyStrow.exe puis
+# MyStrow_Setup.exe, cf. .github/workflows/release.yml) → 10 releases incluses,
+# puis 1 $ par signature supplémentaire.
+#
+# ⚠️ Le cycle est GLISSANT, ancré sur la date d'abonnement (certificat émis le
+# 09/06/2026 → cycles du 9 au 8), pas sur le mois calendaire.
+# ⚠️ Les signatures non utilisées se reportent d'un cycle sur l'autre, sans
+# expiration tant que l'abonnement est actif → ce qui est facturé est le solde
+# cumulé, pas le dépassement d'un cycle isolé.
+#
+# À confirmer sur la facture SSL.com si un doute : la date de prélèvement donne
+# le jour d'ancrage exact.
 ESIGNER_MONTHLY_QUOTA    = 20
 ESIGNER_SIGS_PER_RELEASE = 2
-ESIGNER_EXTRA_SIG_COST   = 1.0   # $ par signature au-delà du quota
+ESIGNER_EXTRA_SIG_COST   = 1.0          # $ par signature au-delà du quota
+ESIGNER_CYCLE_ANCHOR_DAY = 9            # jour de bascule du cycle
+ESIGNER_BILLING_START    = date(2026, 7, 9)  # 1er cycle facturé (30 j d'essai avant)
 
 STYLE_APP = f"""
     QMainWindow, QDialog {{ background: {BG_MAIN}; }}
@@ -4453,12 +4463,12 @@ class AdminPanel(QMainWindow):
         lay.addStretch()
         self._content_stack.addWidget(page)
 
-    def _esigner_releases_this_month(self) -> int:
-        """Nombre de releases du mois en cours, compté sur les tags git v*.
+    def _esigner_release_dates(self) -> list:
+        """Dates des tags git v*, source de vérité des signatures consommées.
 
-        Les tags sont la source de vérité : le workflow ne signe que sur push
-        d'un tag v* (`on: push: tags`), donc 1 tag = 1 build = 2 signatures.
-        Retourne -1 si git est inutilisable (exe packagé, dépôt absent...).
+        Le workflow ne signe que sur push d'un tag v* (`on: push: tags`), donc
+        1 tag = 1 build = 2 signatures. Retourne None si git est inutilisable
+        (exe packagé, dépôt absent...).
         """
         try:
             r = subprocess.run(
@@ -4468,17 +4478,36 @@ class AdminPanel(QMainWindow):
                 timeout=10,
             )
         except Exception:
-            return -1
+            return None
         if r.returncode != 0:
-            return -1
-        month = datetime.now().strftime("%Y-%m")
-        return sum(1 for l in (r.stdout or "").splitlines()
-                   if l.strip().startswith(month))
+            return None
+        out = []
+        for line in (r.stdout or "").splitlines():
+            try:
+                out.append(date.fromisoformat(line.strip()))
+            except ValueError:
+                continue
+        return out
+
+    @staticmethod
+    def _esigner_cycle_start(d: date) -> date:
+        """Début du cycle de facturation contenant `d` (cycle glissant du 9 au 8)."""
+        day = min(ESIGNER_CYCLE_ANCHOR_DAY, 28)
+        if d.day >= day:
+            return d.replace(day=day)
+        # On est avant l'ancre : le cycle a démarré le mois précédent.
+        year, month = (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
+        return date(year, month, day)
+
+    @staticmethod
+    def _esigner_add_month(d: date) -> date:
+        year, month = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+        return date(year, month, d.day)
 
     def _update_esigner_quota(self):
         """Rafraîchit l'indicateur de quota de signatures eSigner."""
-        releases = self._esigner_releases_this_month()
-        if releases < 0:
+        dates = self._esigner_release_dates()
+        if dates is None:
             self._rel_quota_label.setText(
                 f"<span style='color:{TEXT_DIM};'>Signatures eSigner : indisponible "
                 f"(dépôt git introuvable)</span>"
@@ -4487,10 +4516,24 @@ class AdminPanel(QMainWindow):
             self._rel_quota_hint.setText("")
             return
 
-        used  = releases * ESIGNER_SIGS_PER_RELEASE
-        quota = ESIGNER_MONTHLY_QUOTA
-        over  = max(0, used - quota)
+        today       = date.today()
+        cycle_start = self._esigner_cycle_start(today)
+        cycle_end   = self._esigner_add_month(cycle_start)
 
+        releases = sum(1 for d in dates if cycle_start <= d < cycle_end)
+        used     = releases * ESIGNER_SIGS_PER_RELEASE
+        quota    = ESIGNER_MONTHLY_QUOTA
+
+        # Report : les signatures non consommées des cycles déjà facturés
+        # s'accumulent sans expirer tant que l'abonnement est actif.
+        cycles_done = max(0, (cycle_start.year  - ESIGNER_BILLING_START.year) * 12
+                             + cycle_start.month - ESIGNER_BILLING_START.month)
+        used_before = ESIGNER_SIGS_PER_RELEASE * sum(
+            1 for d in dates if ESIGNER_BILLING_START <= d < cycle_start
+        )
+        reserve = max(0, cycles_done * quota - used_before)
+
+        over = max(0, used - quota - reserve)
         if over:
             color = RED
         elif used >= quota * 0.7:
@@ -4498,10 +4541,18 @@ class AdminPanel(QMainWindow):
         else:
             color = GREEN
 
+        _fr = ("janv.", "févr.", "mars", "avr.", "mai", "juin",
+               "juil.", "août", "sept.", "oct.", "nov.", "déc.")
+        last = cycle_end.toordinal() - 1
+        last = date.fromordinal(last)
+        window = (f"{cycle_start.day} {_fr[cycle_start.month - 1]} → "
+                  f"{last.day} {_fr[last.month - 1]}")
+
         self._rel_quota_label.setText(
             f"Signatures eSigner : <b style='color:{color};'>{used} / {quota}</b>"
-            f" ce mois-ci &nbsp;<span style='color:{TEXT_DIM};'>"
-            f"({releases} release{'s' if releases > 1 else ''} × {ESIGNER_SIGS_PER_RELEASE})</span>"
+            f" sur ce cycle &nbsp;<span style='color:{TEXT_DIM};'>"
+            f"({releases} release{'s' if releases > 1 else ''} × {ESIGNER_SIGS_PER_RELEASE}"
+            f" — {window})</span>"
         )
         self._rel_quota_bar.setVisible(True)
         self._rel_quota_bar.setValue(min(used, quota))
@@ -4514,13 +4565,14 @@ class AdminPanel(QMainWindow):
             cost = over * ESIGNER_EXTRA_SIG_COST
             self._rel_quota_hint.setText(
                 f"Dépassement de {over} signature{'s' if over > 1 else ''} → ~{cost:.0f} $ "
-                f"ce mois-ci. Estimation hors report des signatures non utilisées "
-                f"des mois précédents, qui peut l'absorber."
+                f"sur ce cycle, report inclus."
             )
         else:
-            left = (quota - used) // ESIGNER_SIGS_PER_RELEASE
+            left = (quota + reserve - used) // ESIGNER_SIGS_PER_RELEASE
+            extra = (f", report de {reserve} signature{'s' if reserve > 1 else ''} inclus"
+                     if reserve else "")
             self._rel_quota_hint.setText(
-                f"Encore {left} release{'s' if left > 1 else ''} avant dépassement "
+                f"Encore {left} release{'s' if left > 1 else ''} avant dépassement{extra} "
                 f"(puis ~{ESIGNER_SIGS_PER_RELEASE * ESIGNER_EXTRA_SIG_COST:.0f} $ par release)."
             )
 
