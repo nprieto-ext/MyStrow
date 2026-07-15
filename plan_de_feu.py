@@ -2986,6 +2986,10 @@ class PlanDeFeu(QFrame):
             )
             self.btn_3d.clicked.connect(self._toggle_3d_window)
             toolbar.addWidget(self.btn_3d)
+            # Remplacé par Affichage ▸ Fenêtre externe ▸ Plan 3D. Le bouton
+            # survit caché : MainWindow.toggle_3d_window s'en sert comme porteur
+            # d'état (setChecked), et le menu suit son signal `toggled`.
+            self.btn_3d.setVisible(False)
             toolbar.addSpacing(2)
 
             # Toujours "DMX" : vert = sortie ON, rouge = sortie OFF. Placé tout à droite.

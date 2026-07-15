@@ -273,6 +273,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "menu_view_live":        {"en": "Live mode",                    "fr": "Mode Live",                    "es": "Modo Live"},
     "menu_view_pads":        {"en": "Pads surface",                 "fr": "Surface Pads",                 "es": "Superficie Pads"},
     "menu_view_none":        {"en": "No panel",                     "fr": "Aucun panneau",                "es": "Ningún panel"},
+    "menu_view_external":    {"en": "External window",              "fr": "Fenêtre externe",              "es": "Ventana externa"},
+    "menu_view_ext_3d":      {"en": "3D plan",                      "fr": "Plan 3D",                      "es": "Plano 3D"},
     "menu_dmx_patch":        {"en": "🔌 DMX Patch",                 "fr": "🔌 Patch DMX",                  "es": "🔌 Patch DMX"},
     "menu_dmx_tester":       {"en": "🔬 DMX Tester",                "fr": "🔬 DMX Tester",                 "es": "🔬 Tester DMX"},
     "menu_rec_light":        {"en": "🔴 REC Light",                 "fr": "🔴 REC Lumière",               "es": "🔴 REC Luz"},

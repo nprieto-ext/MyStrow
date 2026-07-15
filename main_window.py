@@ -2375,6 +2375,15 @@ class MainWindow(QMainWindow):
         # Layout principal
         self._create_main_layout()
 
+        # Les anciens boutons PADS / 3D sont désormais cachés et pilotés par
+        # Affichage ▸ Fenêtre externe. Ils restent les porteurs d'état (tout le
+        # code fait setChecked dessus) : on coche le menu depuis eux. Branché ici
+        # car _create_menu() tourne avant l'AKAI et le plan de feu.
+        self._ext_btn.toggled.connect(
+            lambda on: self._view_ext_actions["pads"].setChecked(on))
+        self.plan_de_feu.btn_3d.toggled.connect(
+            lambda on: self._view_ext_actions["3d"].setChecked(on))
+
         self.player.playbackStateChanged.connect(self.update_play_icon)
         self.apply_styles()
 
@@ -2561,6 +2570,20 @@ class MainWindow(QMainWindow):
             view_menu.addAction(act)
             self._view_actions[key] = act
         self._view_actions["media"].setChecked(True)
+
+        # Fenêtres flottantes : remplacent les anciens boutons PADS et 3D.
+        # Non exclusives entre elles, et hors du _view_group (elles ne décrivent
+        # pas le contenu du centre).
+        view_menu.addSeparator()
+        ext_menu = view_menu.addMenu(tr("menu_view_external"))
+        self._view_ext_actions = {}
+        for key, label, slot in (("pads", tr("menu_view_pads"),  self.toggle_ext_window),
+                                 ("3d",   tr("menu_view_ext_3d"), self.toggle_3d_window)):
+            act = QAction(label, self, checkable=True)
+            act.triggered.connect(lambda _c, s=slot: s())
+            ext_menu.addAction(act)
+            self._view_ext_actions[key] = act
+
         # NB : pas de connexion à self.seq ici — _create_menu() tourne avant que
         # le séquenceur existe. Le branchement se fait après sa création.
 
@@ -3109,7 +3132,10 @@ class MainWindow(QMainWindow):
         ext_btn.clicked.connect(self.toggle_ext_window)
         self._ext_btn = ext_btn
         title_row.addWidget(ext_btn)
-        _EXT_BUTTON_ENABLED = True
+        # Remplacé par Affichage ▸ Fenêtre externe ▸ Surface Pads. Le bouton
+        # survit caché : tout le code existant s'en sert comme porteur d'état
+        # (setChecked), et le menu se synchronise sur son signal `toggled`.
+        _EXT_BUTTON_ENABLED = False
         if not _EXT_BUTTON_ENABLED:
             ext_btn.setVisible(False)
 
