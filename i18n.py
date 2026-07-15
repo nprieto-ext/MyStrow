@@ -272,7 +272,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "menu_view_media":       {"en": "Media sequencer",              "fr": "Séquenceur média",             "es": "Secuenciador media"},
     "menu_view_live":        {"en": "Live mode",                    "fr": "Mode Live",                    "es": "Modo Live"},
     "menu_view_pads":        {"en": "Pads surface",                 "fr": "Surface Pads",                 "es": "Superficie Pads"},
-    "menu_view_none":        {"en": "None",                         "fr": "Rien",                         "es": "Nada"},
+    "menu_view_none":        {"en": "No panel",                     "fr": "Aucun panneau",                "es": "Ningún panel"},
     "menu_dmx_patch":        {"en": "🔌 DMX Patch",                 "fr": "🔌 Patch DMX",                  "es": "🔌 Patch DMX"},
     "menu_dmx_tester":       {"en": "🔬 DMX Tester",                "fr": "🔬 DMX Tester",                 "es": "🔬 Tester DMX"},
     "menu_rec_light":        {"en": "🔴 REC Light",                 "fr": "🔴 REC Lumière",               "es": "🔴 REC Luz"},
