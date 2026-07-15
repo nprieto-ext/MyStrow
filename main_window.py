@@ -27,7 +27,7 @@ except ImportError:
     _psutil = None
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
-    QPalette, QPolygon, QAction, QDesktopServices
+    QPalette, QPolygon, QAction, QActionGroup, QDesktopServices
 )
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
@@ -2348,6 +2348,9 @@ class MainWindow(QMainWindow):
         self.live_engine.transient_hit.connect(self._on_live_transient)
         self.live_engine.beat_detected.connect(self.seq.live_panel.flash_beat)
         self.seq.live_btn.toggled.connect(self._on_live_toggle)
+        # Le bouton LIVE reste utilisable directement : on garde le menu Affichage
+        # en phase avec lui.
+        self.seq.live_btn.toggled.connect(self._sync_view_menu)
         self.seq.live_panel.color_changed.connect(self.live_engine.update_color)
         self.seq.live_panel.nervosity_changed.connect(self.live_engine.update_nervosity)
         self.seq.live_panel.bpm_override.connect(self.live_engine.set_manual_bpm)
@@ -2543,6 +2546,25 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction(tr("menu_ia_lumiere"), self.show_ia_lumiere_config)
         edit_menu.addAction("🎬  Synchro lumière / vidéo…", self._open_light_sync_dialog)
+
+        view_menu = bar.addMenu(tr("menu_view"))
+        self._view_group = QActionGroup(self)
+        self._view_group.setExclusive(True)
+        self._view_actions = {}
+        for key, label in (("media", tr("menu_view_media")),
+                           ("live",  tr("menu_view_live")),
+                           ("pads",  tr("menu_view_pads")),
+                           ("none",  tr("menu_view_none"))):
+            act = QAction(label, self, checkable=True)
+            act.triggered.connect(lambda _c, k=key: self.set_center_view(k))
+            self._view_group.addAction(act)
+            view_menu.addAction(act)
+            self._view_actions[key] = act
+        self._view_actions["media"].setChecked(True)
+        # La surface Pads n'est pas encore embarquable (elle vit dans ExtWindow).
+        self._view_actions["pads"].setEnabled(False)
+        # NB : pas de connexion à self.seq ici — _create_menu() tourne avant que
+        # le séquenceur existe. Le branchement se fait après sa création.
 
         conn_menu = bar.addMenu(tr("menu_connection"))
 
@@ -2880,6 +2902,15 @@ class MainWindow(QMainWindow):
         mv.addWidget(self.seq)
         mv.addWidget(self.transport)
 
+        # Colonne centrale commutable via le menu Affichage.
+        # Page CENTER_SEQ = séquenceur : c'est lui qui bascule en interne entre
+        # la playlist MEDIA et le panneau LIVE (seq.content_stack), et le
+        # transport se cache tout seul en LIVE via _on_live_toggle.
+        # « Rien » ne met pas une page vide : on cache le stack pour que l'AKAI
+        # et le plan de feu récupèrent la place.
+        self._center_stack = QStackedWidget()
+        self._center_stack.addWidget(mid)
+
         plan_scroll = QScrollArea()
         plan_scroll.setWidgetResizable(True)
         # Jamais d'ascenseur horizontal sous le plan de feu (le contenu
@@ -2920,7 +2951,7 @@ class MainWindow(QMainWindow):
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(2)
         main_split.addWidget(self.akai)
-        main_split.addWidget(mid)
+        main_split.addWidget(self._center_stack)
         main_split.addWidget(right)
         main_split.setStretchFactor(0, 0)  # AKAI = taille fixe
         main_split.setStretchFactor(1, 4)  # Sequenceur = priorite
@@ -8294,6 +8325,38 @@ class MainWindow(QMainWindow):
     def _on_live_settings_applied(self, cfg: dict):
         """Réinitialise les états persistants des lyres quand les presets changent."""
         self.__dict__.pop('_live_preset_state', None)
+
+    def set_center_view(self, key: str):
+        """Change ce qu'affiche la colonne centrale (menu Affichage).
+
+        « media » et « live » sont les deux pages du séquenceur : on pilote son
+        bouton LIVE, qui reste la seule source de vérité du mode (les gardes sur
+        seq.live_mode_active en dépendent) et qui cache le transport tout seul
+        via _on_live_toggle. « none » cache la colonne pour rendre la place à
+        l'AKAI et au plan de feu.
+        """
+        if key == "none":
+            self._center_stack.setVisible(False)
+        else:
+            self._center_stack.setVisible(True)
+            self._center_stack.setCurrentIndex(0)
+            want_live = (key == "live")
+            if self.seq.live_btn.isChecked() != want_live:
+                # setChecked déclenche `toggled` (moteur + transport) mais pas
+                # `clicked` : _toggle_live (page interne + style) reste à appeler.
+                self.seq.live_btn.setChecked(want_live)
+                self.seq._toggle_live(want_live)
+        act = self._view_actions.get(key)
+        if act:
+            act.setChecked(True)
+
+    def _sync_view_menu(self, live_on: bool):
+        """Reflète le bouton LIVE du séquenceur dans le menu Affichage."""
+        if not getattr(self, "_view_actions", None):
+            return
+        if not getattr(self, "_center_stack", None) or not self._center_stack.isVisible():
+            return
+        self._view_actions["live" if live_on else "media"].setChecked(True)
 
     def _on_live_toggle(self, checked: bool):
         """Démarre ou arrête le moteur audio live."""
