@@ -5,6 +5,11 @@ name: Test eSigner (diagnostic)
 # Les commandes get_credential_ids / credential_info ne consomment
 # aucune signature du quota mensuel (20/mois en Tier 1).
 #
+# On appelle CodeSignTool directement plutôt que via l'action
+# sslcom/esigner-codesign : celle-ci ne transmet username/password qu'à
+# la commande `sign`, et échoue sur `get_credential_ids` avec
+# "Missing required options".
+#
 # Lancement : onglet Actions → "Test eSigner (diagnostic)" → Run workflow
 
 on:
@@ -14,26 +19,41 @@ jobs:
   test-esigner:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Download CodeSignTool
+        shell: pwsh
+        run: |
+          $url = "https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.0/CodeSignTool-v1.3.0-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile cst.zip
+          Expand-Archive -LiteralPath cst.zip -DestinationPath cst -Force
+          # Pointe explicitement sur l'environnement PROD de SSL.com
+          @'
+          CLIENT_ID=kaXTRACNijSWsFdRKg_KAfD3fqrBlzMbWs6TwWHwAn8
+          OAUTH2_ENDPOINT=https://login.ssl.com/oauth2/token
+          CSC_API_ENDPOINT=https://cs.ssl.com
+          TSA_URL=http://ts.ssl.com
+          TSA_LEGACY_URL=http://ts.ssl.com/legacy
+          '@ | Out-File -Encoding ascii cst\CodeSignTool-v1.3.0\conf\code_sign_tool.properties
 
-      # Liste les credentials du compte : valide ES_USERNAME / ES_PASSWORD
-      # et montre si une (ou plusieurs) credential est facturée.
+      # Valide ES_USERNAME / ES_PASSWORD et liste les credentials du compte.
+      # Une seule credential listée = un seul abonnement à 20 $/mois.
       - name: List eSigner credential IDs
-        uses: sslcom/esigner-codesign@develop
-        with:
-          command: get_credential_ids
-          username: ${{ secrets.ES_USERNAME }}
-          password: ${{ secrets.ES_PASSWORD }}
-          environment_name: PROD
+        shell: pwsh
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+        run: |
+          cd cst\CodeSignTool-v1.3.0
+          .\CodeSignTool.bat get_credential_ids -username="$env:ES_USERNAME" -password="$env:ES_PASSWORD"
 
       # Détail du certificat rattaché à la credential : valide ES_CREDENTIAL_ID
-      # et confirme que le certificat est vivant (date d'expiration attendue :
-      # 09/06/2027).
+      # et confirme que le certificat est vivant (expiration attendue : 09/06/2027).
       - name: Show certificate info
-        uses: sslcom/esigner-codesign@develop
-        with:
-          command: credential_info
-          username: ${{ secrets.ES_USERNAME }}
-          password: ${{ secrets.ES_PASSWORD }}
-          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
-          environment_name: PROD
+        if: always()
+        shell: pwsh
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+        run: |
+          cd cst\CodeSignTool-v1.3.0
+          .\CodeSignTool.bat credential_info -username="$env:ES_USERNAME" -password="$env:ES_PASSWORD" -credential_id="$env:ES_CREDENTIAL_ID"
