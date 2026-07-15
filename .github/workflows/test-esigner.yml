@@ -25,14 +25,24 @@ jobs:
           $url = "https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.0/CodeSignTool-v1.3.0-windows.zip"
           Invoke-WebRequest -Uri $url -OutFile cst.zip
           Expand-Archive -LiteralPath cst.zip -DestinationPath cst -Force
+
+          # La structure du zip varie selon les versions : on localise le .bat
+          # plutôt que de coder un chemin en dur.
+          $bat = Get-ChildItem -Path cst -Filter CodeSignTool.bat -Recurse | Select-Object -First 1
+          if (-not $bat) { throw "CodeSignTool.bat introuvable dans le zip" }
+          $root = $bat.Directory.FullName
+          Write-Host "CodeSignTool root: $root"
+          "CST_ROOT=$root" | Out-File -Encoding ascii -Append $env:GITHUB_ENV
+
           # Pointe explicitement sur l'environnement PROD de SSL.com
+          New-Item -ItemType Directory -Force -Path "$root\conf" | Out-Null
           @'
           CLIENT_ID=kaXTRACNijSWsFdRKg_KAfD3fqrBlzMbWs6TwWHwAn8
           OAUTH2_ENDPOINT=https://login.ssl.com/oauth2/token
           CSC_API_ENDPOINT=https://cs.ssl.com
           TSA_URL=http://ts.ssl.com
           TSA_LEGACY_URL=http://ts.ssl.com/legacy
-          '@ | Out-File -Encoding ascii cst\CodeSignTool-v1.3.0\conf\code_sign_tool.properties
+          '@ | Out-File -Encoding ascii "$root\conf\code_sign_tool.properties"
 
       # Valide ES_USERNAME / ES_PASSWORD et liste les credentials du compte.
       # Une seule credential listée = un seul abonnement à 20 $/mois.
@@ -42,7 +52,7 @@ jobs:
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
           ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
         run: |
-          cd cst\CodeSignTool-v1.3.0
+          Set-Location $env:CST_ROOT
           .\CodeSignTool.bat get_credential_ids -username="$env:ES_USERNAME" -password="$env:ES_PASSWORD"
 
       # Détail du certificat rattaché à la credential : valide ES_CREDENTIAL_ID
@@ -55,5 +65,5 @@ jobs:
           ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
           ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
         run: |
-          cd cst\CodeSignTool-v1.3.0
+          Set-Location $env:CST_ROOT
           .\CodeSignTool.bat credential_info -username="$env:ES_USERNAME" -password="$env:ES_PASSWORD" -credential_id="$env:ES_CREDENTIAL_ID"
