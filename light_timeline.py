@@ -159,6 +159,27 @@ def lerp_qcolor(c1, c2, t):
     )
 
 
+def scope_layers_to_groups(layers, groups):
+    """Restreint chaque couche d'effet aux `groups` (lettres) du clip.
+
+    Sert à cloisonner les pistes Effet lors de leur FUSION (superposition) : sans
+    ça, une couche « Tous » d'un effet (ex. couleur sur A,B) déborde sur les
+    groupes d'un autre effet fusionné (ex. lyre sur D) → la lyre se fait flasher.
+    On ne tague QUE les couches non déjà restreintes par groupe (preset
+    Tous/Pair/Impair et pas de target_groups). Parité aperçu/show obligatoire.
+    """
+    if not groups:
+        return list(layers)
+    out = []
+    for l in layers:
+        l = dict(l)
+        preset = l.get('target_preset', 'Tous')
+        if not l.get('target_groups') and preset in ('Tous', 'Pair', 'Impair', '', None):
+            l['target_groups'] = list(groups)
+        out.append(l)
+    return out
+
+
 def xfade_obj_get(clip, key, default=None):
     """Accesseur `xfade_resolve` pour un LightClip (objet). Mappe start→start_time."""
     if key == 'start':

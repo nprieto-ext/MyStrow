@@ -46,7 +46,8 @@ except ImportError:
     QVideoWidget = None
 
 from light_timeline import (LightTrack, LightClip, PalettePanel, LibraryPanel,
-                            xfade_resolve, xfade_obj_get as _clip_obj_get)
+                            xfade_resolve, xfade_obj_get as _clip_obj_get,
+                            scope_layers_to_groups)
 from core import media_icon, create_icon
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
@@ -1897,6 +1898,10 @@ class LightTimelineEditor(QDialog):
                             eff_type   = _cat_def.get('type', '')
                         if _cat_def.get('no_color'):
                             merged_no_color = True
+                    # Cloisonner les couches par groupe du clip (parité restitution) :
+                    # évite qu'une couche couleur "Tous" d'un effet A/B déborde sur
+                    # la lyre (D) quand 2 effets fusionnent (superposition).
+                    eff_layers = scope_layers_to_groups(eff_layers, eff_tg)
                     merged_layers.extend(eff_layers)
                     if eff_name:
                         merged_names.append(eff_name)
@@ -2440,13 +2445,31 @@ class LightTimelineEditor(QDialog):
             clip.effect_duration   = clip_data.get('effect_duration', 0)
             clip.effect_name       = clip_data.get('effect_name', '')
             clip.effect_type       = clip_data.get('effect_type', '')
+            # ⚠️ effect_target_groups était OUBLIÉ ici → les groupes cible des
+            # effets étaient perdus à l'import, et tous les effets retombaient sur
+            # « tous les groupes » (couleur qui déborde sur les lyres, etc.).
+            clip.effect_target_groups = clip_data.get('effect_target_groups', [])
+            clip.strobe_speed      = clip_data.get('strobe_speed', 0)
             if clip_data.get('color2'):
                 clip.color2 = QColor(clip_data['color2'])
+            # Clip de séquence mémoire / position lyre / mouvement pan-tilt
+            if clip_data.get('memory_ref'):
+                clip.memory_ref   = tuple(clip_data['memory_ref'])
+                clip.memory_label = clip_data.get('memory_label', '')
+                clip.cue_index    = clip_data.get('cue_index')
+            if clip_data.get('position_preset_idx') is not None:
+                clip.position_preset_idx  = clip_data['position_preset_idx']
+                clip.position_preset_name = clip_data.get('position_preset_name', '')
+            for _a in ('pan_start', 'tilt_start', 'pan_end', 'tilt_end',
+                       'move_effect', 'move_speed', 'move_amplitude'):
+                if _a in clip_data:
+                    setattr(clip, _a, clip_data[_a])
 
         for track in self.tracks:
             track.update()
 
         self.save_state()
+        self._save_sequence_no_close()   # persiste dans seq.sequences (restitution)
         QMessageBox.information(self, tr("te_import_ok_title"),
             tr("te_import_ok_msg", n=len(clips_data)))
 

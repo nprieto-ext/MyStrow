@@ -5003,6 +5003,7 @@ class Sequencer(QFrame):
             _catalog = BUILTIN_EFFECTS + _load_custom_effects()
         except Exception:
             _catalog = []
+        from light_timeline import scope_layers_to_groups as _scope_layers_to_groups
         merged_layers, merged_names, merged_tg = [], [], []
         merged_type = ''
         has_all_groups = False
@@ -5020,6 +5021,13 @@ class Sequencer(QFrame):
                     eff_type   = _cat.get('type', '')
                 if _cat.get('no_color'):
                     merged_no_color = True
+            # Cloisonner les couches par groupe : chaque couche de CE clip ne doit
+            # s'appliquer qu'aux groupes du clip. Sinon, quand 2 effets se
+            # superposent (couleur sur A,B + lyre sur D), la fusion applique les
+            # couches "Tous" à toute l'union A,B,D → la lyre (D) se fait flasher
+            # par l'effet couleur des A,B. On tague donc chaque couche non déjà
+            # restreinte avec les groupes cible du clip.
+            eff_layers = _scope_layers_to_groups(eff_layers, eff_tg)
             merged_layers.extend(eff_layers)
             if eff_name:
                 merged_names.append(eff_name)
