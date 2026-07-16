@@ -14,7 +14,17 @@
 #
 # FOIS SUIVANTES : bash build_intel_mac.sh
 #
-# Résultat : ~/Desktop/MyStrow_intel.dmg  (signé + notarisé)
+# Le script se SYNCHRONISE d'abord sur origin/main (git reset --hard) : il est
+# donc IMPOSSIBLE de builder une vieille version, et inutile de faire git pull
+# avant. Il s'auto-localise (peut être lancé par chemin absolu depuis n'importe
+# où) et UPLOADE automatiquement le DMG sur la GitHub Release (via gh).
+#
+# Astuce (une seule fois, pour le lancer de partout sans se tromper de dossier) :
+#   echo "alias mystrow-release='bash \"$(pwd)/build_intel_mac.sh\"'" >> ~/.zshrc
+#   source ~/.zshrc
+#   → ensuite, taper simplement :  mystrow-release
+#
+# Résultat : ~/Desktop/MyStrow_intel.dmg  (signé + notarisé + uploadé)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -24,6 +34,7 @@ DMG_NAME="MyStrow_intel.dmg"
 DIST_DIR="$SCRIPT_DIR/dist"
 DESKTOP="$HOME/Desktop"
 NOTARY_PROFILE="mystrow-notarize"   # nom du profil créé avec notarytool store-credentials
+GITHUB_REPO="nprieto-ext/MAESTRO"   # repo des releases (upload automatique du DMG)
 
 # ── Couleurs terminales ───────────────────────────────────────────────────────
 GRN="\033[0;32m"; YLW="\033[1;33m"; RED="\033[0;31m"; BLD="\033[1m"; NC="\033[0m"
@@ -67,23 +78,25 @@ else
   warn "  xcrun notarytool store-credentials '$NOTARY_PROFILE' --apple-id TON@APPLE.ID --team-id TEAMID --password APP-PASSWORD"
 fi
 
-# ── 1) Git pull ───────────────────────────────────────────────────────────────
-step "Récupération de la dernière version (git pull)"
+# ── 1) Synchronisation Git — GARANTIT la dernière version ─────────────────────
+# On force le working tree à correspondre EXACTEMENT à origin/main (reset --hard).
+# → impossible de builder une vieille version, et plus besoin de `git pull` ni de
+#   `git checkout MyStrow.spec` avant : toute modif locale (spec, etc.) est écrasée.
+#   Ce Mac est une machine de build dédiée, l'écrasement est voulu.
+step "Synchronisation sur origin/main (dernière version)"
 cd "$SCRIPT_DIR"
 
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+  || die "Ce dossier n'est pas un dépôt git : $SCRIPT_DIR"
+
 git fetch origin 2>&1 | sed 's/^/    /'
-LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/main 2>/dev/null || echo "")
 
 if [ -z "$REMOTE" ]; then
   warn "Impossible de joindre origin/main — build avec la version locale."
-elif [ "$LOCAL" = "$REMOTE" ]; then
-  ok "Déjà à jour : $(git log -1 --pretty='%h — %s')"
 else
-  # Stash les modifications locales pour permettre le pull propre
-  git stash push --include-untracked -m "pre-build-stash" >/dev/null 2>&1 || true
-  git pull origin main 2>&1 | sed 's/^/    /'
-  ok "Mis à jour → $(git log -1 --pretty='%h — %s')"
+  git reset --hard origin/main 2>&1 | sed 's/^/    /'
+  ok "Synchronisé sur origin/main → $(git log -1 --pretty='%h — %s')"
 fi
 
 VERSION=$(python3 -c "
@@ -261,6 +274,37 @@ if [ "$NOTARY_OK" = true ]; then
   fi
 fi
 
+# ── 9b) Upload automatique sur la GitHub Release ──────────────────────────────
+step "Upload sur la GitHub Release (v$VERSION)"
+TAG="v$VERSION"
+UPLOAD_OK=false
+if [ "$VERSION" = "?" ]; then
+  warn "Version inconnue (core.py illisible) — upload ignoré, upload le DMG à la main."
+elif ! command -v gh >/dev/null 2>&1; then
+  warn "GitHub CLI 'gh' introuvable — upload ignoré."
+  warn "  Installe-le une fois : brew install gh && gh auth login"
+elif ! gh auth status >/dev/null 2>&1; then
+  warn "'gh' non authentifié — upload ignoré. Lance : gh auth login  puis relance."
+else
+  # La release est créée par le CI au moment de la sortie. Comme on lance ce
+  # script APRÈS, elle existe en général déjà ; on laisse quand même quelques
+  # tentatives au cas où le CI finirait juste.
+  for attempt in 1 2 3 4 5 6; do
+    if gh release view "$TAG" --repo "$GITHUB_REPO" >/dev/null 2>&1; then
+      if gh release upload "$TAG" "$DMG_OUT" --repo "$GITHUB_REPO" --clobber 2>&1 | sed 's/^/    /'; then
+        UPLOAD_OK=true
+        ok "DMG uploadé sur la release $TAG"
+        echo "  https://github.com/$GITHUB_REPO/releases/tag/$TAG"
+      fi
+      break
+    fi
+    warn "Release $TAG pas encore publiée — nouvelle tentative dans 20 s ($attempt/6)…"
+    sleep 20
+  done
+  [ "$UPLOAD_OK" = true ] || \
+    warn "Upload non effectué (release $TAG absente ?) — vérifie que la version est bien sortie, puis relance ou upload le DMG à la main."
+fi
+
 # ── 10) Résumé ────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BLD}${GRN}╔══════════════════════════════════════════════════════════╗${NC}"
@@ -272,6 +316,7 @@ echo "  Taille   : $(du -sh "$DMG_OUT" | cut -f1)"
 echo "  Version  : $VERSION  |  Arch : $ARCH"
 [ -n "$IDENTITY" ]    && echo "  Signé    : ✓" || echo "  Signé    : ✗ (certificat manquant)"
 [ "$NOTARY_OK" = true ] && echo "  Notarisé : ✓" || echo "  Notarisé : ✗ (profil '$NOTARY_PROFILE' non configuré)"
+[ "$UPLOAD_OK" = true ] && echo "  Upload   : ✓ release $TAG" || echo "  Upload   : ✗ (à faire à la main)"
 echo ""
 
 open "$DESKTOP"
