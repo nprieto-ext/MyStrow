@@ -4912,9 +4912,26 @@ class Sequencer(QFrame):
             intensity = self.calculate_clip_intensity(clip_data, current_time)
             progress = (current_time - start) / max(1, clip_data.get('duration', 0))
 
+            _color  = QColor(clip_data.get('color', '#000000'))
+            _color2 = QColor(clip_data['color2']) if clip_data.get('color2') else None
+            # Fondu enchaîné couleur CENTRÉ sur la jointure (parité aperçu
+            # éditeur) : morphe couleur + intensité entre les 2 blocs sans passer
+            # par le noir. Le bloc actif peut être en tête (jointure gauche, il
+            # porte le xfade) ou en queue (jointure droite, le suivant le porte).
+            from light_timeline import xfade_resolve, xfade_dict_get
+            _prev_c = sclips[j - 1] if j > 0 else None
+            _next_c = sclips[j + 1] if (j + 1) < len(sclips) else None
+            _xr = xfade_resolve(clip_data, _prev_c, _next_c, current_time, xfade_dict_get)
+            if _xr:
+                _xc, _xc2, _xi = _xr
+                _color = _xc
+                if _xc2 is not None:
+                    _color2 = _xc2
+                intensity = _xi
+
             entry = {
-                'color': QColor(clip_data.get('color', '#000000')),
-                'color2': QColor(clip_data['color2']) if clip_data.get('color2') else None,
+                'color': _color,
+                'color2': _color2,
                 'intensity': intensity,
                 'effect': clip_data.get('effect', None),
                 'effect_speed':         clip_data.get('effect_speed', 50),

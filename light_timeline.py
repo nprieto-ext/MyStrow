@@ -117,6 +117,11 @@ class LightClip:
         # Fades
         self.fade_in_duration = 0
         self.fade_out_duration = 0
+        # Fondu enchaîné couleur (crossfade) avec le bloc PRÉCÉDENT adjacent de
+        # la même piste : sur les `xfade` premières ms du bloc, la couleur morphe
+        # de la couleur du bloc précédent vers la sienne (sans passer par le
+        # noir), l'intensité étant interpolée aussi. 0 = désactivé.
+        self.xfade = 0
 
         # Mouvement Pan/Tilt (Moving Head uniquement)
         self.pan_start    = 128   # 0-255
@@ -142,6 +147,97 @@ class LightClip:
         # Clip de position lyre
         self.position_preset_idx  = None  # index dans main_window.position_presets
         self.position_preset_name = ""    # nom pour affichage
+
+
+def lerp_qcolor(c1, c2, t):
+    """Interpolation linéaire entre deux QColor (t=0 → c1, t=1 → c2)."""
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    return QColor(
+        int(c1.red()   + (c2.red()   - c1.red())   * t),
+        int(c1.green() + (c2.green() - c1.green()) * t),
+        int(c1.blue()  + (c2.blue()  - c1.blue())  * t),
+    )
+
+
+def xfade_obj_get(clip, key, default=None):
+    """Accesseur `xfade_resolve` pour un LightClip (objet). Mappe start→start_time."""
+    if key == 'start':
+        return getattr(clip, 'start_time', default)
+    return getattr(clip, key, default)
+
+
+def xfade_dict_get(clip, key, default=None):
+    """Accesseur `xfade_resolve` pour un clip sérialisé (dict)."""
+    return clip.get(key, default)
+
+
+def _xfade_morph(left, right, p, get):
+    """Interpole (couleur, couleur2, intensité) du bloc `left` vers `right` à p∈[0,1].
+
+    `color2` n'est renvoyé que si au moins un des deux blocs est bicolore (on
+    conserve alors la structure bicolore pendant le morph)."""
+    def _col(clip, key):
+        v = get(clip, key, None)
+        if v is None:
+            return None
+        return v if isinstance(v, QColor) else QColor(v)
+
+    lc1 = _col(left,  'color') or QColor("black")
+    rc1 = _col(right, 'color') or QColor("black")
+    li  = get(left,  'intensity', 100)
+    ri  = get(right, 'intensity', 100)
+
+    color     = lerp_qcolor(lc1, rc1, p)
+    intensity = int(li + (ri - li) * p)
+
+    lc2 = _col(left,  'color2')
+    rc2 = _col(right, 'color2')
+    color2 = None
+    if lc2 is not None or rc2 is not None:
+        color2 = lerp_qcolor(lc2 or lc1, rc2 or rc1, p)
+    return color, color2, intensity
+
+
+def xfade_resolve(active_clip, prev_clip, next_clip, current_time, get):
+    """Résout un fondu enchaîné couleur CENTRÉ sur la jointure entre 2 blocs.
+
+    Le champ `xfade` (ms) est porté par le bloc de DROITE d'une jointure. Le
+    fondu est centré sur la coupe : il s'étale de `jointure - xfade/2` à
+    `jointure + xfade/2` (moitié sur chaque bloc), la couleur ET l'intensité
+    morphant du bloc gauche vers le bloc droit sans passer par le noir.
+
+    `active_clip` = le bloc actif ce frame (celui que le moteur a sélectionné).
+    On teste sa TÊTE (jointure avec `prev_clip`, si active porte un xfade) et sa
+    QUEUE (jointure avec `next_clip`, si next porte un xfade). Renvoie
+    (color, color2, intensity) ou None hors zone de fondu. Sert les DEUX moteurs
+    (aperçu éditeur + show) — parité obligatoire.
+    """
+    start = get(active_clip, 'start', 0)
+    dur   = get(active_clip, 'duration', 0)
+    end   = start + dur
+
+    # ── TÊTE : la jointure gauche (active_clip morphe DEPUIS prev_clip) ──
+    x_head = (get(active_clip, 'xfade', 0) or 0)
+    if x_head > 0 and prev_clip is not None:
+        p_end = get(prev_clip, 'start', 0) + get(prev_clip, 'duration', 0)
+        if abs(p_end - start) <= 5:  # adjacent
+            half = x_head / 2.0
+            if current_time <= start + half:  # moitié droite du fondu, sur active
+                p = (current_time - (start - half)) / x_head   # 0.5 → 1.0
+                return _xfade_morph(prev_clip, active_clip, p, get)
+
+    # ── QUEUE : la jointure droite (active_clip morphe VERS next_clip) ──
+    if next_clip is not None:
+        x_tail = (get(next_clip, 'xfade', 0) or 0)
+        if x_tail > 0:
+            n_start = get(next_clip, 'start', 0)
+            if abs(end - n_start) <= 5:  # adjacent
+                half = x_tail / 2.0
+                if current_time >= n_start - half:  # moitié gauche du fondu, sur active
+                    p = (current_time - (n_start - half)) / x_tail   # 0.0 → 0.5
+                    return _xfade_morph(active_clip, next_clip, p, get)
+
+    return None
 
 
 class _ColorSwatch(QPushButton):
@@ -1518,6 +1614,8 @@ class LightTrack(QWidget):
         self.drag_start_positions = {}  # Pour drag multi-clips
         self.resizing_clip = None
         self.resize_edge = None
+        self.resizing_xfade = None      # bloc dont on redimensionne le fondu enchaîné
+        self._xfade_junction_x = 0
         self.selected_clips = []
         self.saved_positions = {}
 
@@ -2024,6 +2122,27 @@ print(json.dumps(waveform))
 
         return start_time
 
+    def _cross_compatible(self, other):
+        """True si un clip peut être glissé de self vers `other` (drag vertical).
+
+        On ne mélange jamais les familles : couleur↔couleur uniquement, et
+        effet↔effet uniquement. Séquence et Position n'acceptent pas le
+        cross-track."""
+        if other is self:
+            return False
+        if self.is_sequence_track or self.is_position_track:
+            return False
+        if self.is_effect_track:
+            return getattr(other, 'is_effect_track', False)
+        # self = piste couleur → cible = autre piste couleur
+        return not (other.is_sequence_track or other.is_effect_track
+                    or other.is_position_track)
+
+    def _cross_drag_enabled(self):
+        """La piste autorise-t-elle le glisser cross-track ? (couleur ou effet)"""
+        return self.is_effect_track or not (self.is_sequence_track
+                                            or self.is_position_track)
+
     def mousePressEvent(self, event):
         """Gere clic souris pour drag/resize/fade/menu + CUT MODE"""
         x = event.position().x()
@@ -2088,6 +2207,20 @@ print(json.dumps(waveform))
                 for track in self.parent_editor.tracks:
                     track.setCursor(Qt.ArrowCursor)
             return
+
+        # === REDIMENSION D'UN FONDU ENCHAÎNÉ (drag sur le marqueur) ===
+        # Prioritaire sur le drag de bloc : on saisit le marqueur (demi-hauteur)
+        # et on tire pour élargir/réduire le fondu (centré → xfade = 2×|curseur−coupe|).
+        if event.button() == Qt.LeftButton:
+            _xr = self._xfade_marker_at(x, y)
+            if _xr is not None:
+                self.resizing_xfade = _xr
+                self._xfade_junction_x = 145 + int(_xr.start_time * self.pixels_per_ms)
+                if hasattr(self.parent_editor, 'save_state'):
+                    self.parent_editor.save_state()
+                self.setCursor(Qt.SizeHorCursor)
+                event.accept()
+                return
 
         result = self.get_clip_at_pos(x, y)
 
@@ -2250,6 +2383,20 @@ print(json.dumps(waveform))
                 self.setCursor(Qt.ForbiddenCursor)
             return
 
+        # Redimension d'un fondu enchaîné en cours (drag du marqueur)
+        if getattr(self, 'resizing_xfade', None) is not None:
+            rc = self.resizing_xfade
+            half_px = abs(x - self._xfade_junction_x)
+            new_ms = int((half_px / max(self.pixels_per_ms, 1e-6)) * 2)
+            _prev = self._adjacent_prev_clip(rc)
+            _limit = int(rc.duration)
+            if _prev is not None:
+                _limit = min(_limit, int(_prev.duration))
+            rc.xfade = max(0, min(new_ms, _limit))
+            self.setCursor(Qt.SizeHorCursor)
+            self.update()
+            return
+
         if self.dragging_clip:
             # Calculer le delta de deplacement
             new_x = max(145, x - self.drag_offset)
@@ -2282,12 +2429,13 @@ print(json.dumps(waveform))
             else:
                 self.setCursor(Qt.ClosedHandCursor)
 
-            # Détection cross-track : trouver la piste sous le curseur
-            if not self.is_sequence_track and not self.is_effect_track and not self.is_position_track:
+            # Détection cross-track : piste compatible sous le curseur
+            # (couleur→couleur ET effet→effet)
+            if self._cross_drag_enabled():
                 global_pos = event.globalPosition().toPoint()
                 new_target = None
                 for track in self.parent_editor.tracks:
-                    if track is self or track.is_sequence_track or track.is_effect_track or track.is_position_track:
+                    if not self._cross_compatible(track):
                         continue
                     local_y = track.mapFromGlobal(global_pos).y()
                     if 0 <= local_y <= track.height():
@@ -2378,6 +2526,12 @@ print(json.dumps(waveform))
             self.update()
 
         else:
+            # Survol d'un marqueur de fondu enchaîné → curseur de redimension
+            if self._xfade_marker_at(x, event.position().y()) is not None:
+                self.setCursor(Qt.SizeHorCursor)
+                QToolTip.hideText()
+                super().mouseMoveEvent(event)
+                return
             result = self.get_clip_at_pos(x, event.position().y())
             if result:
                 clip, clip_x, clip_width = result
@@ -2422,6 +2576,16 @@ print(json.dumps(waveform))
             event.accept()
             return
 
+        # Fin de redimension d'un fondu enchaîné (drag du marqueur)
+        if getattr(self, 'resizing_xfade', None) is not None:
+            self.resizing_xfade = None
+            self.setCursor(Qt.ArrowCursor)
+            if hasattr(self.parent_editor, '_save_sequence_no_close'):
+                self.parent_editor._save_sequence_no_close()
+            self.update()
+            event.accept()
+            return
+
         if self.dragging_clip:
             target    = self._cross_track_target
             clip      = self.dragging_clip
@@ -2433,18 +2597,20 @@ print(json.dumps(waveform))
                 target.update()
             self._cross_track_target = None
 
-            if target and not self.is_sequence_track and not self.is_effect_track and not self.is_position_track:
-                # ── Cross-track ───────────────────────────────────────────
+            if target and self._cross_compatible(target):
+                # ── Cross-track (couleur→couleur ou effet→effet) ──────────
                 global_pos = event.globalPosition().toPoint()
                 target_local_x = target.mapFromGlobal(global_pos).x() - self.drag_offset
                 primary_target_time = max(0, (target_local_x - 145) / self.pixels_per_ms)
                 primary_orig = self.drag_start_positions.get(clip, clip.start_time)
                 delta = primary_target_time - primary_orig
 
-                # Collecter tous les clips sélectionnés
+                # Collecter les clips à déplacer : uniquement ceux des pistes
+                # compatibles avec la cible (une piste effet ne draine que des
+                # clips effet, une couleur que des clips couleur).
                 to_act = []
                 for track in self.parent_editor.tracks:
-                    if track.is_sequence_track or track.is_effect_track or track.is_position_track:
+                    if not (track is self or self._cross_compatible(track)):
                         continue
                     for sel_clip in list(track.selected_clips):
                         if sel_clip in self.drag_start_positions:
@@ -2590,8 +2756,20 @@ print(json.dumps(waveform))
                 self.show_position_empty_menu(event.pos(), event.globalPos(), click_time)
         elif result:
             clip, clip_x, _ = result
-            click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
-            self.show_clip_menu(clip, event.globalPos(), click_pos_in_clip)
+            _mk = self._xfade_marker_at(event.pos().x(), event.pos().y())
+            _junc = self._junction_near_x(event.pos().x())
+            if _mk is not None:
+                # Clic droit SUR un fondu existant → menu d'ajustement/retrait.
+                self.show_xfade_junction_menu(_mk, event.globalPos())
+            elif _junc is not None and getattr(_junc, 'xfade', 0) > 0:
+                self.show_xfade_junction_menu(_junc, event.globalPos())
+            elif _junc is not None:
+                # Clic droit sur une couture nue → fondu enchaîné DIRECT 1 s
+                # (par défaut), ensuite réglable au drag ou via clic droit.
+                self.set_clip_xfade(_junc, 1000)
+            else:
+                click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
+                self.show_clip_menu(clip, event.globalPos(), click_pos_in_clip)
         else:
             self.show_empty_menu(event.pos(), event.globalPos())
 
@@ -3306,6 +3484,24 @@ print(json.dumps(waveform))
                 clr = menu.addAction("✖  Retirer les fades")
                 clr.triggered.connect(lambda: self.clear_selection_fades())
 
+            # Fondu enchaîné : si EXACTEMENT 2 blocs adjacents sélectionnés sur la
+            # même piste → morph couleur à la jointure (posé sur le bloc de droite).
+            if n == 2:
+                _a, _b = sorted(selected, key=lambda c: c.start_time)
+                _same_track = getattr(_a, 'parent_track', None) is getattr(_b, 'parent_track', None)
+                _adj = abs((_a.start_time + _a.duration) - _b.start_time) <= 5
+                if _same_track and _adj:
+                    menu.addSeparator()
+                    m_xf = menu.addMenu("↔  Fondu enchaîné entre les 2 blocs")
+                    for _lbl, _ms in [("250 ms", 250), ("500 ms", 500), ("1 s", 1000), ("2 s", 2000)]:
+                        a = m_xf.addAction(_lbl)
+                        a.triggered.connect(lambda checked=False, c=_b, m=_ms:
+                                            _b.parent_track.set_clip_xfade(c, m))
+                    if getattr(_b, 'xfade', 0) > 0:
+                        a = m_xf.addAction("✖  Retirer")
+                        a.triggered.connect(lambda checked=False, c=_b:
+                                            _b.parent_track.set_clip_xfade(c, 0))
+
             menu.addSeparator()
             dele = menu.addAction(f"🗑  Supprimer les {n} blocs")
             dele.triggered.connect(lambda: self.parent_editor.delete_selected_clips())
@@ -3387,6 +3583,14 @@ print(json.dumps(waveform))
             clear_fades = menu.addAction(tr("lt_menu_clear_fades"))
             clear_fades.triggered.connect(lambda: self.clear_clip_fades(clip))
 
+        # Fondu enchaîné : géré par le menu dédié en cliquant droit SUR la couture
+        # entre 2 blocs (show_xfade_junction_menu). Un rappel discret ici quand le
+        # bloc a déjà un fondu, pour pouvoir le retirer/régler depuis le bloc.
+        if getattr(clip, 'xfade', 0) > 0:
+            menu.addSeparator()
+            a = menu.addAction(f"↔  Fondu enchaîné : {int(clip.xfade)} ms…")
+            a.triggered.connect(lambda checked=False, c=clip: self.edit_clip_xfade(c))
+
         # === COPIER VERS ===
         menu.addSeparator()
         if hasattr(self.parent_editor, 'tracks'):
@@ -3465,6 +3669,180 @@ print(json.dumps(waveform))
             self.update()
             if hasattr(self.parent_editor, 'save_state'):
                 self.parent_editor.save_state()
+
+    def _adjacent_next_clip(self, clip):
+        """Bloc de CETTE piste dont le début touche la fin de `clip` (jointure droite)."""
+        for c in self.clips:
+            if c is not clip and abs(c.start_time - (clip.start_time + clip.duration)) <= 5:
+                return c
+        return None
+
+    def _adjacent_prev_clip(self, clip):
+        """Bloc de CETTE piste dont la fin touche le début de `clip` (jointure gauche)."""
+        for c in self.clips:
+            if c is not clip and abs((c.start_time + c.duration) - clip.start_time) <= 5:
+                return c
+        return None
+
+    def _junction_near_x(self, x, px_threshold=9):
+        """Si `x` est à ≤ threshold px d'une couture entre 2 blocs adjacents de
+        cette piste, retourne le bloc de DROITE (porteur du xfade). Sinon None."""
+        best, best_d = None, px_threshold
+        for c in self.clips:
+            if self._adjacent_prev_clip(c) is None:
+                continue
+            jx = 145 + int(c.start_time * self.pixels_per_ms)
+            d = abs(x - jx)
+            if d <= best_d:
+                best_d = d
+                best = c
+        return best
+
+    def _xfade_marker_at(self, x, y, tol=6):
+        """Si (x, y) est SUR un marqueur de fondu enchaîné existant (moitié BASSE
+        du bloc), retourne le bloc de DROITE porteur du xfade. Sinon None."""
+        if y < 30 or y > 50:   # marqueur = demi-hauteur basse (y ∈ [30, 50])
+            return None
+        for c in self.clips:
+            xf = getattr(c, 'xfade', 0)
+            if xf <= 0 or self._adjacent_prev_clip(c) is None:
+                continue
+            jx = 145 + int(c.start_time * self.pixels_per_ms)
+            half = int((xf / 2.0) * self.pixels_per_ms)
+            if (jx - half - tol) <= x <= (jx + half + tol):
+                return c
+        return None
+
+    def show_xfade_junction_menu(self, right_clip, global_pos):
+        """Menu affiché sur une couture : UNIQUEMENT le fondu enchaîné couleur."""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background:#2a2a2a; color:white; border:2px solid #00d4ff;
+                    padding:5px; font-size:13px; }
+            QMenu::item { padding:8px 30px; border-radius:4px; }
+            QMenu::item:selected { background:#00d4ff; color:black; }
+            QMenu::separator { background:#4a4a4a; height:1px; margin:5px 10px; }
+        """)
+        hdr = menu.addAction("↔  Fondu enchaîné")
+        hdr.setEnabled(False)
+        menu.addSeparator()
+        cur = getattr(right_clip, 'xfade', 0)
+        for lbl, ms in [("Court  (250 ms)", 250), ("Moyen  (500 ms)", 500),
+                        ("Long  (1 s)", 1000), ("Très long  (2 s)", 2000)]:
+            a = menu.addAction(("● " if cur == ms else "○  ") + lbl)
+            a.triggered.connect(lambda checked=False, c=right_clip, m=ms: self.set_clip_xfade(c, m))
+        a = menu.addAction("⋯  Personnalisé…")
+        a.triggered.connect(lambda checked=False, c=right_clip: self.edit_clip_xfade(c))
+        if cur > 0:
+            menu.addSeparator()
+            a = menu.addAction("✖  Retirer le fondu enchaîné")
+            a.triggered.connect(lambda checked=False, c=right_clip: self.set_clip_xfade(c, 0))
+        menu.exec(global_pos)
+
+    def edit_clip_xfade(self, clip):
+        """Dialog curseur pour régler la durée du fondu enchaîné (ms)."""
+        _prev = self._adjacent_prev_clip(clip)
+        _max = int(clip.duration)
+        if _prev is not None:
+            _max = min(_max, int(_prev.duration))
+        _max = max(50, min(_max, 5000))
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Fondu enchaîné")
+        dialog.setFixedSize(360, 190)
+        dialog.setStyleSheet("""
+            QDialog { background:#1a1a1a; } QLabel { color:white; }
+            QPushButton { background:#ccc; color:black; border:1px solid #999;
+                          border-radius:6px; padding:10px 20px; font-weight:bold; }
+            QPushButton:hover { background:#00d4ff; }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 24, 30, 24)
+        val_lbl = QLabel(f"{getattr(clip, 'xfade', 0)} ms")
+        val_lbl.setStyleSheet("color:white; font-size:30px; font-weight:bold;")
+        val_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(val_lbl)
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, _max)
+        slider.setValue(min(int(getattr(clip, 'xfade', 0)), _max))
+        slider.valueChanged.connect(lambda v: val_lbl.setText(f"{v} ms"))
+        layout.addWidget(slider)
+        btns = QHBoxLayout()
+        cancel = QPushButton(tr("btn_cancel_x"))
+        cancel.clicked.connect(dialog.reject)
+        btns.addWidget(cancel)
+        ok = QPushButton("✅ OK")
+        ok.setStyleSheet("background:#00d4ff; color:black; font-weight:bold;")
+        ok.clicked.connect(dialog.accept)
+        btns.addWidget(ok)
+        layout.addLayout(btns)
+        if dialog.exec() == QDialog.Accepted:
+            self.set_clip_xfade(clip, slider.value())
+
+    def _paint_xfade_markers(self, painter):
+        """Dessine les marqueurs de fondu enchaîné centrés sur les jointures.
+
+        Le xfade est porté par le bloc de DROITE ; le marqueur est centré sur la
+        coupe (moitié sur chaque bloc), avec dégradé de morph + icône « nœud
+        papillon » (X) façon Premiere. Peint en 2e passe → jamais écrasé par
+        l'ordre de dessin des clips."""
+        # Marqueur sur la MOITIÉ BASSE du bloc : le fondu classique occupe la
+        # moitié haute, le fondu enchaîné la moitié basse (zones distinctes).
+        top = 30
+        bot = 50   # demi-hauteur basse (bloc = y ∈ [10, 50])
+        for clip in self.clips:
+            xf = getattr(clip, 'xfade', 0)
+            if xf <= 0:
+                continue
+            prev = self._adjacent_prev_clip(clip)
+            if prev is None:
+                continue
+            jx = 145 + int(clip.start_time * self.pixels_per_ms)   # jointure
+            half_px = int((xf / 2.0) * self.pixels_per_ms)
+            if half_px < 2:
+                continue
+            x0, x1 = jx - half_px, jx + half_px
+            w = x1 - x0
+            hh = bot - top
+            # Fond dégradé prev.color → clip.color = aperçu du morph
+            grad = QLinearGradient(float(x0), 0.0, float(x1), 0.0)
+            grad.setColorAt(0.0, prev.color)
+            grad.setColorAt(1.0, clip.color)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(grad))
+            painter.drawRoundedRect(x0, top, w, hh, 4, 4)
+            # Icône transition : nœud papillon (2 diagonales) + cadre
+            painter.setPen(QPen(QColor(255, 255, 255, 220), 2))
+            painter.drawLine(x0, top, x1, bot)
+            painter.drawLine(x0, bot, x1, top)
+            painter.setPen(QPen(QColor(255, 255, 255, 170), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(x0, top, w, hh, 4, 4)
+            # Poignées de bord (repères de saisie pour le drag)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(255, 255, 255, 230))
+            for _hx in (x0, x1):
+                painter.drawRect(_hx - 1, top + 3, 2, hh - 6)
+
+    def set_clip_xfade(self, clip, duration):
+        """Active/retire le fondu enchaîné couleur à la jointure GAUCHE de `clip`.
+
+        Le fondu est CENTRÉ sur la coupe (moitié sur chaque bloc) et morphe la
+        couleur + l'intensité depuis le bloc précédent adjacent. On borne la
+        durée à celle du plus petit des 2 blocs (le fondu déborde de xfade/2 de
+        chaque côté : xfade ≤ min(durée bloc gauche, bloc droit))."""
+        d = int(duration)
+        if d > 0:
+            _prev = self._adjacent_prev_clip(clip)
+            _limit = int(clip.duration)
+            if _prev is not None:
+                _limit = min(_limit, int(_prev.duration))
+            d = max(0, min(d, _limit))
+        clip.xfade = d
+        self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+        if hasattr(self.parent_editor, '_save_sequence_no_close'):
+            self.parent_editor._save_sequence_no_close()
 
     def set_clip_color(self, clip, color):
         clip.color = color
@@ -4186,6 +4564,7 @@ print(json.dumps(waveform))
         new_clip.color2 = QColor(clip.color2) if clip.color2 else None
         new_clip.fade_in_duration  = clip.fade_in_duration
         new_clip.fade_out_duration = clip.fade_out_duration
+        new_clip.xfade             = getattr(clip, 'xfade', 0)
         new_clip.effect            = clip.effect
         new_clip.effect_speed      = clip.effect_speed
         new_clip.effect_layers     = list(clip.effect_layers)
@@ -4732,37 +5111,59 @@ print(json.dumps(waveform))
             fade_line = QColor(0, 0, 0) if is_bright else QColor(255, 255, 255)
             fade_handle = QColor(80, 80, 80) if is_bright else QColor(0, 0, 0)
 
-            if fade_in_px > 5:
-                painter.setBrush(fade_fill)
+            # Fondu classique : MÊME design que le fondu enchaîné, et MÊME zone
+            # (moitié BASSE du bloc) : boîte arrondie + dégradé sombre→transparent
+            # (aperçu de la montée d'intensité) + diagonale d'enveloppe + poignée
+            # de bord. Les fondus in/out sont aux extrémités, le fondu enchaîné à
+            # la couture → ils ne se chevauchent pas en pratique.
+            _fh_top = clip_rect.top() + 20
+            _fh_bot = clip_rect.top() + 40   # demi-hauteur basse
+            _fh_h   = _fh_bot - _fh_top
+            if fade_in_px > 3:
+                grad = QLinearGradient(float(clip_rect.left()), 0.0,
+                                       float(clip_rect.left() + fade_in_px), 0.0)
+                grad.setColorAt(0.0, QColor(0, 0, 0, 150))   # début sombre (0 %)
+                grad.setColorAt(1.0, QColor(0, 0, 0, 0))     # fin pleine intensité
                 painter.setPen(Qt.NoPen)
-                painter.drawPolygon(QPolygon([
-                    QPoint(clip_rect.left(), clip_rect.top()),
-                    QPoint(clip_rect.left() + fade_in_px, clip_rect.top()),
-                    QPoint(clip_rect.left(), clip_rect.bottom())
-                ]))
-                painter.setPen(QPen(fade_line, 3))
-                painter.drawLine(clip_rect.left() + fade_in_px, clip_rect.top(), clip_rect.left(), clip_rect.bottom())
-                painter.setPen(QPen(fade_handle, 5))
-                painter.drawLine(clip_rect.left() + fade_in_px, clip_rect.top() + 5, clip_rect.left() + fade_in_px, clip_rect.bottom() - 5)
+                painter.setBrush(QBrush(grad))
+                painter.drawRoundedRect(clip_rect.left(), _fh_top, fade_in_px, _fh_h, 4, 4)
+                painter.setPen(QPen(fade_line, 1.6))
+                painter.drawLine(clip_rect.left(), _fh_bot,
+                                 clip_rect.left() + fade_in_px, _fh_top)
+                painter.setPen(QPen(fade_line, 1))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(clip_rect.left(), _fh_top, fade_in_px, _fh_h, 4, 4)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(fade_line)
+                painter.drawRect(clip_rect.left() + fade_in_px - 1, _fh_top + 2, 2, _fh_h - 4)
 
-            if fade_out_px > 5:
-                painter.setBrush(fade_fill)
+            if fade_out_px > 3:
+                grad = QLinearGradient(float(clip_rect.right() - fade_out_px), 0.0,
+                                       float(clip_rect.right()), 0.0)
+                grad.setColorAt(0.0, QColor(0, 0, 0, 0))     # début pleine intensité
+                grad.setColorAt(1.0, QColor(0, 0, 0, 150))   # fin sombre (0 %)
                 painter.setPen(Qt.NoPen)
-                painter.drawPolygon(QPolygon([
-                    QPoint(clip_rect.right() - fade_out_px, clip_rect.top()),
-                    QPoint(clip_rect.right(), clip_rect.top()),
-                    QPoint(clip_rect.right(), clip_rect.bottom())
-                ]))
-                painter.setPen(QPen(fade_line, 3))
-                painter.drawLine(clip_rect.right() - fade_out_px, clip_rect.top(), clip_rect.right(), clip_rect.bottom())
-                painter.setPen(QPen(fade_handle, 5))
-                painter.drawLine(clip_rect.right() - fade_out_px, clip_rect.top() + 5, clip_rect.right() - fade_out_px, clip_rect.bottom() - 5)
+                painter.setBrush(QBrush(grad))
+                painter.drawRoundedRect(clip_rect.right() - fade_out_px, _fh_top, fade_out_px, _fh_h, 4, 4)
+                painter.setPen(QPen(fade_line, 1.6))
+                painter.drawLine(clip_rect.right() - fade_out_px, _fh_top,
+                                 clip_rect.right(), _fh_bot)
+                painter.setPen(QPen(fade_line, 1))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(clip_rect.right() - fade_out_px, _fh_top, fade_out_px, _fh_h, 4, 4)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(fade_line)
+                painter.drawRect(clip_rect.right() - fade_out_px - 1, _fh_top + 2, 2, _fh_h - 4)
 
             # Selection
             if clip in self.selected_clips:
                 painter.setBrush(Qt.NoBrush)
                 painter.setPen(QPen(QColor("#00d4ff"), 3))
                 painter.drawRoundedRect(clip_rect, 6, 6)
+
+        # Marqueurs de fondu enchaîné (2e passe : PAR-DESSUS les 2 blocs) —
+        # centrés sur la jointure, façon transition Premiere.
+        self._paint_xfade_markers(painter)
 
         # Curseur de lecture
         if hasattr(self.parent_editor, 'playback_position'):

@@ -1642,6 +1642,12 @@ function _makeCatwalk(x, z, length, w=1.0) {
 // Presets de scène
 // ─────────────────────────────────────────────────────────────────────────────
 const SCENE_PRESETS = {
+  // Scène nue : aucun truss, aucun accessoire. Pour les décors importés (GLB),
+  // sinon le rig du preset reste visible sous le modèle.
+  vide: {
+    trusses: [],
+    buildProps() {}
+  },
   live: {
     trusses: [
       { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9.0, x_r:9.0 },
@@ -1767,19 +1773,32 @@ window.loadGLTF = function(b64, isGLB) {
 
   _gltfLoader.parse(buffer, '', (gltf) => {
     _importedGrp.clear();
-    // Centre + normalise la scène importée
+    // Normalise la scène importée, puis la POSE SUR LE SOL (y=0) en la centrant
+    // seulement en X/Z. Centrer aussi en Y enterrait le modèle : le plancher du
+    // plan traversait le décor à mi-hauteur.
     const box    = new THREE.Box3().setFromObject(gltf.scene);
     const center = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
     const scale  = maxDim > 0.01 ? 12.0 / maxDim : 1.0;
-    gltf.scene.position.sub(center.multiplyScalar(scale));
     gltf.scene.scale.setScalar(scale);
+    gltf.scene.position.set(-center.x * scale,
+                            -box.min.y * scale,
+                            -center.z * scale);
     _importedGrp.add(gltf.scene);
   }, (err) => console.error('GLTF import error:', err));
 };
 
 window.clearImportedScene = function() { _importedGrp.clear(); };
+
+// Sol / grille / cyclorama : ajoutés directement à la scène (pas dans _propsGrp),
+// donc les presets ne peuvent pas les enlever. Nécessaire quand le décor vient
+// d'un modèle importé qui apporte son propre sol.
+window.setStageFloor = function(visible) {
+  floorMesh.visible  = visible;
+  gridHelper.visible = visible;
+  cycMesh.visible    = visible;
+};
 
 window.setBloom = function(strength) {
   if (window.bloomPass) window.bloomPass.strength = strength;

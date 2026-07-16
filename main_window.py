@@ -309,6 +309,16 @@ _AKAI_SLOT_OPTIONS = (
     + ["PLAY", "SANS SLOT"]
 )
 
+
+def _fader_label_text(label: str) -> str:
+    """Texte affiché sous une colonne AKAI.
+
+    « SANS SLOT » est une colonne PLAY sans les carts : le libellé complet
+    déborde sous la colonne (largeur _PAD_W) → on affiche « PLAY ». Le choix
+    reste nommé « SANS SLOT » dans le sélecteur de slot.
+    """
+    return "PLAY" if label == "SANS SLOT" else label
+
 # Colonne PLAY : rôle de chaque pad (haut → bas) = (action, glyphe, couleur).
 # action : "playpause" | "prev" | "next" | "cart0..3" | "stop".
 # Le fader de cette colonne pilote le VOLUME du lecteur (défaut 100 %, exclu des
@@ -2560,11 +2570,12 @@ class MainWindow(QMainWindow):
         self._view_group = QActionGroup(self)
         self._view_group.setExclusive(True)
         self._view_actions = {}
+        _view_emoji = {"media": "🎬", "live": "🎚️", "pads": "🎛️", "none": "🚫"}
         for key, label in (("media", tr("menu_view_media")),
                            ("live",  tr("menu_view_live")),
                            ("pads",  tr("menu_view_pads")),
                            ("none",  tr("menu_view_none"))):
-            act = QAction(label, self, checkable=True)
+            act = QAction(f"{_view_emoji[key]}  {label}", self, checkable=True)
             act.triggered.connect(lambda _c, k=key: self.set_center_view(k))
             self._view_group.addAction(act)
             view_menu.addAction(act)
@@ -2575,11 +2586,12 @@ class MainWindow(QMainWindow):
         # Non exclusives entre elles, et hors du _view_group (elles ne décrivent
         # pas le contenu du centre).
         view_menu.addSeparator()
-        ext_menu = view_menu.addMenu(tr("menu_view_external"))
+        ext_menu = view_menu.addMenu(f"🪟  {tr('menu_view_external')}")
         self._view_ext_actions = {}
         for key, label, slot in (("pads", tr("menu_view_pads"),  self.toggle_ext_window),
                                  ("3d",   tr("menu_view_ext_3d"), self.toggle_3d_window)):
-            act = QAction(label, self, checkable=True)
+            _emoji = "🎛️" if key == "pads" else "🧊"
+            act = QAction(f"{_emoji}  {label}", self, checkable=True)
             act.triggered.connect(lambda _c, s=slot: s())
             ext_menu.addAction(act)
             self._view_ext_actions[key] = act
@@ -3279,7 +3291,7 @@ class MainWindow(QMainWindow):
             self.faders[i] = fader
             col_layout.addWidget(fader, alignment=Qt.AlignHCenter)
 
-            lbl_letter = QPushButton(self._fader_map[i]["label"])
+            lbl_letter = QPushButton(_fader_label_text(self._fader_map[i]["label"]))
             lbl_letter.setFixedHeight(14)
             lbl_letter.setStyleSheet(
                 "QPushButton { color:#666; font-size:9px; background:transparent; border:none; padding:0; }"
@@ -3667,7 +3679,7 @@ class MainWindow(QMainWindow):
             # Mettre à jour l'étiquette + tooltip
             if fader_idx < len(self._fader_label_widgets):
                 lbl = self._fader_label_widgets[fader_idx]
-                lbl.setText(value)
+                lbl.setText(_fader_label_text(value))
                 if slot.get("type") == "pos" and slot.get("fader_axis"):
                     grp = slot.get("fader_group") or "Toutes"
                     lbl.setToolTip(f"{value} — fader {slot['fader_axis'].upper()} · groupe {grp}")
@@ -3765,7 +3777,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_fader_label_widgets'):
             for i, lbl in enumerate(self._fader_label_widgets):
                 if i < len(self._fader_map):
-                    lbl.setText(self._fader_map[i]["label"])
+                    lbl.setText(_fader_label_text(self._fader_map[i]["label"]))
         self._sync_controls_to_state()   # reflète l'état courant, ne renvoie aucun DMX
         self._update_bank_page_indicator()
         self._save_akai_config_auto()
@@ -3781,7 +3793,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_fader_label_widgets'):
             for i, lbl in enumerate(self._fader_label_widgets):
                 if i < len(self._fader_map):
-                    lbl.setText(self._fader_map[i]["label"])
+                    lbl.setText(_fader_label_text(self._fader_map[i]["label"]))
         self._sync_controls_to_state()   # reflète l'état courant, ne renvoie aucun DMX
         self._update_bank_page_indicator()
         try:
@@ -4457,6 +4469,7 @@ class MainWindow(QMainWindow):
             if mem:
                 self._mem_ensure_cues(mem)
                 if len(mem.get("cues", [])) > 1:
+                    self._release_manual_grabs()   # action volontaire → on repeint
                     self._mem_advance_cue(mem_col, row)
                     fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
                     self._recompute_memory_mix()
@@ -4495,6 +4508,7 @@ class MainWindow(QMainWindow):
                 self.effect_saved_colors = {}
 
         # Activer le nouveau pad (cue 0 par défaut)
+        self._release_manual_grabs()   # action volontaire → on repeint
         self._mem_cue_idx[(mem_col, row)] = 0
         self.active_memory_pads[col_akai] = row
         self._style_memory_pad(mem_col, row, active=True)
@@ -4558,6 +4572,19 @@ class MainWindow(QMainWindow):
         if not cues:
             return {}
         return cues[max(0, min(idx, len(cues) - 1))]
+
+    def _release_manual_grabs(self):
+        """Rend la main aux mémoires sur tous les projecteurs.
+
+        La prise en main (plan 2D) ne protège que des réécritures PASSIVES —
+        typiquement un mouvement de fader. Toute action mémoire volontaire
+        (appui pad, clic sur un cue) ou l'avance auto du minutage doit repeindre :
+        sinon une fixture reste verrouillée sans que rien ne l'indique, et les
+        cues comme le minutage semblent morts.
+        """
+        for p in self.projectors:
+            p._manual_color = False
+            p._manual_move = False
 
     def _mem_advance_cue(self, mem_col: int, row: int) -> bool:
         """Avance au cue suivant. Retourne False si on reste au même (boucle désactivée + fin)."""
@@ -4690,6 +4717,7 @@ class MainWindow(QMainWindow):
         mc, r = self._cue_panel.mem_col, self._cue_panel.row
         if mc < 0 or self.memories[mc][r] is None:
             return
+        self._release_manual_grabs()   # clic sur un cue = action volontaire
         self._mem_cue_idx[(mc, r)] = cue_idx
         col_akai = self._mem_col_to_fader(mc)
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 100
@@ -4793,6 +4821,25 @@ class MainWindow(QMainWindow):
         self._fade_start = time.time()
         self._fade_dur   = fade_secs
         self._fade_timer.start()
+        # Pan/tilt : _fade_tick n'interpole QUE level/couleur. Sans ça, un cue
+        # avec fondu n'envoie jamais sa position (le cue sans fondu, lui, passe
+        # par _apply_memory_to_projectors qui la gère). On anime sur la durée du
+        # fondu pour que la lyre arrive en même temps que la couleur.
+        for i, ps in enumerate(cue.get("projectors", [])):
+            if i >= len(self.projectors):
+                break
+            p = self.projectors[i]
+            if ("pan" not in ps and "tilt" not in ps) or getattr(p, '_manual_move', False):
+                continue
+            new_pan  = ps.get("pan",  getattr(p, 'pan',  32768))
+            new_tilt = ps.get("tilt", getattr(p, 'tilt', 32768))
+            new_pan  = new_pan  * 256 if new_pan  <= 255 else new_pan
+            new_tilt = new_tilt * 256 if new_tilt <= 255 else new_tilt
+            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
+                self._start_pan_tilt_transition(p, new_pan, new_tilt,
+                                                int(fade_secs * 1000))
+            else:
+                p.pan, p.tilt = new_pan, new_tilt
         # Déclencher/arrêter l'effet du cue
         mem_raw = self.memories[mem_col][row] or {}
         eff_cfg = cue.get("effect") or mem_raw.get("effect") or {}
@@ -4814,17 +4861,25 @@ class MainWindow(QMainWindow):
         for i, p in enumerate(self.projectors):
             if i >= len(self._fade_to):
                 break
+            if getattr(p, '_manual_color', False):
+                continue   # pris en main depuis le plan 2D : le fondu l'ignore
             fl, fc = (self._fade_from[i] if i < len(self._fade_from)
                       else (0, QColor("black")))
             tl, tc = self._fade_to[i]
             level = int(fl + (tl - fl) * ratio)
-            rv = int(fc.red()   + (tc.red()   - fc.red())   * ratio)
-            gv = int(fc.green() + (tc.green() - fc.green()) * ratio)
-            bv = int(fc.blue()  + (tc.blue()  - fc.blue())  * ratio)
+            # fc/tc sont des base_color PURES : on interpole la teinte, puis on
+            # applique le niveau. Le moteur DMX exige color == base_color*level/100 ;
+            # poser la teinte pure dans color lui fait croire à un effet et pousse
+            # le canal Dim à 255 (lyres au plein feu pendant tout le fondu).
+            rv = max(0, min(255, int(fc.red()   + (tc.red()   - fc.red())   * ratio)))
+            gv = max(0, min(255, int(fc.green() + (tc.green() - fc.green()) * ratio)))
+            bv = max(0, min(255, int(fc.blue()  + (tc.blue()  - fc.blue())  * ratio)))
+            base = QColor(rv, gv, bv)
             p.level = level
-            p.color = QColor(max(0,min(255,rv)), max(0,min(255,gv)), max(0,min(255,bv)))
-            if ratio >= 1.0:
-                p.base_color = tc
+            p.base_color = base
+            p.color = QColor(int(rv * level / 100.0),
+                             int(gv * level / 100.0),
+                             int(bv * level / 100.0))
         if ratio >= 1.0:
             self._fade_timer.stop()
 
@@ -4865,6 +4920,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "_cue_panel"):
                 self._cue_panel.set_progress(-1)
             return
+        self._release_manual_grabs()   # avance auto du minutage → on repeint
         cue_idx = self._mem_cue_idx.get((mc, r), 0)
         col_akai = self._mem_col_to_fader(mc)
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 100
@@ -4915,7 +4971,11 @@ class MainWindow(QMainWindow):
             if i >= len(self.projectors):
                 break
             p = self.projectors[i]
-            if "pan" in proj_state or "tilt" in proj_state:
+            # Pan/tilt pris en main depuis le plan 2D → intouchable jusqu'au CLEAR.
+            # Ce chemin est aussi celui des changements de cue AUTOMATIQUES
+            # (_on_duration_elapsed) : sans cette garde, la lyre repart toute seule.
+            if ("pan" in proj_state or "tilt" in proj_state) \
+                    and not getattr(p, '_manual_move', False):
                 new_pan  = proj_state.get("pan",  getattr(p, 'pan',  32768))
                 new_tilt = proj_state.get("tilt", getattr(p, 'tilt', 32768))
                 new_pan  = new_pan  * 256 if new_pan  <= 255 else new_pan
@@ -4936,6 +4996,10 @@ class MainWindow(QMainWindow):
             p.strobe_speed  = int(proj_state.get("strobe_speed", 0))
             # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
             p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
+            # Couleur prise en main depuis le plan 2D → le cue n'y touche pas
+            # (même mécanisme que _compute_htp_overrides). Libéré par CLEAR.
+            if getattr(p, '_manual_color', False):
+                continue
             if proj_state["level"] <= 0:
                 p.level = 0
                 p.base_color = QColor("black")
@@ -4997,6 +5061,10 @@ class MainWindow(QMainWindow):
 
         # 2. Compositer chaque projecteur
         for i, p in enumerate(self.projectors):
+            # Prise en main depuis le plan 2D : ne pas réécrire cette fixture, sinon
+            # un simple mouvement de fader effacerait la couleur posée à la main.
+            if getattr(p, '_manual_color', False):
+                continue
             profile  = getattr(p, 'dmx_profile', []) or []
             has_rgb  = ('R' in profile and 'G' in profile and 'B' in profile)
             is_cwheel = ('ColorWheel' in profile) and not has_rgb
@@ -5046,7 +5114,9 @@ class MainWindow(QMainWindow):
             p.strobe_speed  = int(ds.get("strobe_speed",  0))
             # Canaux bruts (Mode…) : pilotés par la mémoire au fader dominant
             p.channel_extras = dict(ds.get("channel_extras", {}) or {})
-            if "pan" in ds or "tilt" in ds:
+            # Pan/tilt pris en main depuis le plan 2D → la mémoire n'y touche plus
+            # (elle continue de piloter couleur/intensité). Libéré par CLEAR.
+            if ("pan" in ds or "tilt" in ds) and not getattr(p, '_manual_move', False):
                 np_ = ds.get("pan",  getattr(p, 'pan',  32768))
                 nt_ = ds.get("tilt", getattr(p, 'tilt', 32768))
                 p.pan  = np_ * 256 if np_ <= 255 else np_
@@ -5211,7 +5281,11 @@ class MainWindow(QMainWindow):
             else:
                 velocity = rgb_to_akai_velocity(color)
                 brightness = self.akai_active_brightness if active else self.akai_inactive_brightness
-                self.midi_handler.set_pad_led(row, col_akai, velocity, brightness)
+                # Passer le VRAI RGB : sans lui, les LEDs RGB natives (Launchpad MK3)
+                # reconvertissent la velocity via une table de 9 couleurs → l'orange
+                # sort blanc, le violet sort bleu…
+                self.midi_handler.set_pad_led(row, col_akai, velocity, brightness,
+                                              rgb=(color.red(), color.green(), color.blue()))
 
     def _blink_memory_pad(self, mem_col, row, n_blinks=6):
         """Fait clignoter un pad mémoire n_blinks fois après enregistrement."""
@@ -10525,6 +10599,7 @@ class MainWindow(QMainWindow):
             self.add_recent_file(path)
             self.setWindowTitle(f"{APP_NAME} - {os.path.basename(path)}")
             self.plan_de_feu.refresh()
+            self._log_message(f"Show enregistré : {os.path.basename(path)}", "success")
             return True
         except Exception as e:
             QMessageBox.critical(self, tr("err_save_title"), tr("err_save_msg", e=e))
@@ -11264,7 +11339,7 @@ class MainWindow(QMainWindow):
                 if hasattr(self, '_fader_label_widgets'):
                     for i, lbl in enumerate(self._fader_label_widgets):
                         if i < len(self._fader_map):
-                            lbl.setText(self._fader_map[i]["label"])
+                            lbl.setText(_fader_label_text(self._fader_map[i]["label"]))
             self._update_bank_page_indicator()   # reflète le nombre de pages chargées
             # Toujours activer le pad du haut de chaque colonne memoire au demarrage.
             # (Les faders sont forcés BAISSÉS au lancement par _startup_faders_down, ~650 ms
@@ -14735,6 +14810,20 @@ class MainWindow(QMainWindow):
 
         _rebuild_fd()
 
+        def _sync_wheels_to_fd():
+            """Recopie les slots de roues des projecteurs vers fixture_data.
+
+            Les roues sont calibrées directement sur le Projector (assistant de
+            calibration), jamais via fixture_data. Sans cette resynchro, le
+            prochain _apply_fd_to_dmx() (commit d'adresse, sauvegarde…) réécrit
+            les slots périmés et efface la calibration.
+            """
+            for i, proj in enumerate(self.projectors):
+                if i >= len(fixture_data):
+                    break
+                fixture_data[i]['color_wheel_slots'] = list(getattr(proj, 'color_wheel_slots', []))
+                fixture_data[i]['gobo_wheel_slots']  = list(getattr(proj, 'gobo_wheel_slots', []))
+
         def _apply_fd_to_dmx():
             """Applique fixture_data au DMX en respectant les profils choisis par l'utilisateur."""
             self.dmx.clear_patch()
@@ -15041,6 +15130,7 @@ class MainWindow(QMainWindow):
                             dlg = GoboWheelEditorDialog(_p, self.projectors, main_window=self, parent=self)
                         if not dlg.exec():
                             return
+                        _sync_wheels_to_fd()
                         _mark_dirty()
                         # ── Proposer d'appliquer à d'autres lyres ─────────────
                         slots_attr = 'color_wheel_slots' if _is else 'gobo_wheel_slots'
@@ -15079,6 +15169,7 @@ class MainWindow(QMainWindow):
                         for tp in targets:
                             setattr(tp, slots_attr, list(new_slots))
                         if targets:
+                            _sync_wheels_to_fd()
                             _mark_dirty()
 
                     calib_btn.clicked.connect(_open_calib)
@@ -15899,7 +15990,11 @@ class MainWindow(QMainWindow):
                 # Copier les slots roue couleur/gobo depuis le preset OFL
                 p.color_wheel_slots = list(preset.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(preset.get('gobo_wheel_slots', []))
-                if p.fixture_type == "Moving Head":
+                # Le type "Moving Head" ne garantit pas une roue : une lyre RGBW
+                # n'en a pas. Sans ce test, on propose de calibrer dans le vide.
+                _prof = getattr(p, 'dmx_profile', None)
+                if p.fixture_type == "Moving Head" \
+                        and isinstance(_prof, list) and "ColorWheel" in _prof:
                     p._needs_cw_calib = True
                 self.projectors.append(p)
             self._rebuild_dmx_patch()
@@ -17125,61 +17220,93 @@ class MainWindow(QMainWindow):
         result = [None]
 
         # ── Helpers ───────────────────────────────────────────────────────────
-        def _fill_preset_list(fixtures):
-            preset_list.clear()
-            for preset in fixtures:
-                name  = preset.get("name", "?")
-                mfr   = preset.get("manufacturer", "")
-                n_ch  = len(preset.get("profile", []))
-                ftype = preset.get("fixture_type", "")
-                parts = [f"{name}  ({n_ch}ch)"]
-                if mfr and mfr != cat_list.currentItem().text() if cat_list.currentItem() else True:
-                    parts.append(f"— {mfr}")
-                label = "  ".join(parts)
-                item = QListWidgetItem(label)
-                item.setData(Qt.UserRole, preset)
-                preset_list.addItem(item)
-            n = preset_list.count()
-            count_lbl.setText(f"{n} fixture{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
+        _ALL_MFR = "Tous les fabricants"
 
-        def on_cat_changed():
-            if search_edit.text().strip():
-                return
-            cat = cat_list.currentItem()
-            if not cat:
-                return
-            _fill_preset_list(FIXTURE_LIBRARY.get(cat.text(), []))
-
-        def on_search(text):
-            q = text.strip().lower()
-            if not q:
-                # Retour au mode fabricant normal
-                cat_list.setEnabled(True)
-                cat_list.show()
-                on_cat_changed()
-                return
-            cat_list.setEnabled(False)
-            matches = [
+        def _search_matches(q):
+            return [
                 fx for fx in ALL_FIXTURES
                 if q in fx.get("name", "").lower()
                 or q in fx.get("manufacturer", "").lower()
                 or q in fx.get("fixture_type", "").lower()
             ]
+
+        def _fill_preset_list(fixtures, show_mfr=True, searching=False):
             preset_list.clear()
-            for preset in matches:
+            for preset in fixtures:
                 name  = preset.get("name", "?")
                 mfr   = preset.get("manufacturer", "")
                 n_ch  = len(preset.get("profile", []))
                 label = f"{name}  ({n_ch}ch)"
-                if mfr:
+                if show_mfr and mfr:
                     label += f"   — {mfr}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.UserRole, preset)
                 preset_list.addItem(item)
             n = preset_list.count()
-            count_lbl.setText(f"{n} résultat{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
-            if n > 0:
+            word = "résultat" if searching else "fixture"
+            count_lbl.setText(
+                f"{n} {word}{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
+            if searching and n:
                 preset_list.setCurrentRow(0)
+
+        def _refresh_results():
+            """Résultats = recherche (toute la bibliothèque) ∩ fabricant sélectionné."""
+            q        = search_edit.text().strip().lower()
+            cat      = cat_list.currentItem()
+            cat_name = cat.text() if cat else None
+            if q:
+                fixtures = _search_matches(q)
+                if cat_name and cat_name != _ALL_MFR:
+                    fixtures = [
+                        fx for fx in fixtures
+                        if fx.get("manufacturer", "Générique") == cat_name
+                    ]
+            elif cat_name:
+                fixtures = FIXTURE_LIBRARY.get(cat_name, [])
+            else:
+                fixtures = []
+            # Le fabricant n'est redondant que si la liste ne montre que lui.
+            _fill_preset_list(fixtures,
+                              show_mfr=cat_name in (None, _ALL_MFR),
+                              searching=bool(q))
+
+        _searching = [False]
+
+        def _rebuild_cat_list():
+            """Fabricants listés : tous, ou seulement ceux ayant des résultats."""
+            q    = search_edit.text().strip().lower()
+            prev = cat_list.currentItem().text() if cat_list.currentItem() else None
+            # En entrant en recherche, repartir de "Tous les fabricants" : garder le
+            # fabricant courant restreindrait la recherche à lui sans le dire.
+            if q and not _searching[0]:
+                prev = _ALL_MFR
+            _searching[0] = bool(q)
+            cat_list.blockSignals(True)
+            cat_list.clear()
+            if q:
+                mfrs = {fx.get("manufacturer", "Générique") for fx in _search_matches(q)}
+                cat_list.addItem(_ALL_MFR)
+                for _m in sorted(mfrs):
+                    cat_list.addItem(_m)
+            else:
+                for cat in FIXTURE_LIBRARY.keys():
+                    cat_list.addItem(cat)
+            row = 0
+            if prev:
+                for i in range(cat_list.count()):
+                    if cat_list.item(i).text() == prev:
+                        row = i
+                        break
+            if cat_list.count():
+                cat_list.setCurrentRow(row)
+            cat_list.blockSignals(False)
+
+        def on_cat_changed():
+            _refresh_results()
+
+        def on_search(text):
+            _rebuild_cat_list()
+            _refresh_results()
 
         def _do_import():
             from fixture_parser import parse_file as _parse_file
@@ -17278,11 +17405,8 @@ class MainWindow(QMainWindow):
                 _sorted2[_k] = FIXTURE_LIBRARY[_k]
             FIXTURE_LIBRARY.clear()
             FIXTURE_LIBRARY.update(_sorted2)
-            cat_list.clear()
-            for cat in FIXTURE_LIBRARY.keys():
-                cat_list.addItem(cat)
-            if cat_list.count():
-                cat_list.setCurrentRow(0)
+            _rebuild_cat_list()
+            _refresh_results()
             msg = f"{imported} fixture{'s' if imported > 1 else ''} importée{'s' if imported > 1 else ''}."
             if errors:
                 msg += f"\n\n{len(errors)} fichier(s) ignoré(s) :\n" + "\n".join(errors)
@@ -17324,17 +17448,8 @@ class MainWindow(QMainWindow):
                 _sorted3[_k3] = FIXTURE_LIBRARY[_k3]
             FIXTURE_LIBRARY.clear()
             FIXTURE_LIBRARY.update(_sorted3)
-            prev_cat = cat_list.currentItem().text() if cat_list.currentItem() else None
-            cat_list.clear()
-            for cat in FIXTURE_LIBRARY.keys():
-                cat_list.addItem(cat)
-            if prev_cat:
-                for i in range(cat_list.count()):
-                    if cat_list.item(i).text() == prev_cat:
-                        cat_list.setCurrentRow(i)
-                        break
-            elif cat_list.count():
-                cat_list.setCurrentRow(0)
+            _rebuild_cat_list()
+            _refresh_results()
 
         def _do_refresh(silent: bool = False):
             from PySide6.QtCore import QObject as _QObject, Signal as _Signal, QThread as _QThread
@@ -17769,6 +17884,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_plan3d'):
             scene_3d['preset'] = getattr(self._plan3d, '_scene_preset_code', 'live')
             scene_3d['trusses'] = list(getattr(self._plan3d, '_trusses', []))
+            # Décor importé : on garde le CHEMIN, pas le contenu — un GLB fait
+            # plusieurs Mo et ce fichier de config doit rester léger.
+            _imp = getattr(self._plan3d, '_imported_path', '')
+            if _imp:
+                scene_3d['imported_model'] = _imp
         config = {
             'fixtures': fixtures_list,
             'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
@@ -19018,6 +19138,10 @@ class MainWindow(QMainWindow):
                 cue = cues[min(cue_idx, len(cues)-1)] if cues else {}
                 mem_projs = cue.get("projectors", [])
                 for i, proj in enumerate(self.projectors):
+                    # Fixture prise en main depuis le plan 2D → la mémoire la laisse
+                    # tranquille jusqu'au CLEAR.
+                    if getattr(proj, '_manual_color', False):
+                        continue
                     if i < len(mem_projs):
                         ms = mem_projs[i]
                         mem_level = int(ms["level"] * fv / 100.0)
@@ -19084,11 +19208,17 @@ class MainWindow(QMainWindow):
 
     def send_dmx_update(self):
         """Envoie les donnees DMX avec HTP memoires + pads AKAI + refresh plan de feu"""
-        # Appliquer l'effet en cours — sauf si la timeline gère les projecteurs
-        # (en mode Play Lumière, apply_timeline_to_dmx appelle update_effect() lui-même)
+        # Appliquer l'effet en cours — sauf si un autre moteur pilote déjà les
+        # projecteurs et appelle update_effect() lui-même :
+        #  • timeline (Play Lumière) → apply_timeline_to_dmx
+        #  • aperçu REC Lumière → _apply_preview_to_projectors
+        # Sinon l'effet serait piloté à 2 cadences déphasées (ce timer 25 ms +
+        # l'autre moteur) → un effet à compteur strobe.
         _seq = getattr(self, 'seq', None)
         _timeline_active = hasattr(_seq, 'timeline_playback_row') if _seq else False
-        if not _timeline_active and getattr(self, 'active_effect', None) is not None:
+        _preview_active  = getattr(self, '_rec_preview_active', False)
+        if not _timeline_active and not _preview_active \
+                and getattr(self, 'active_effect', None) is not None:
             self.update_effect()
 
         # Zéroter temporairement les projecteurs des mémoires mutées (enforcement du mute)

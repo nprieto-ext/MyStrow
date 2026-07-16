@@ -102,6 +102,18 @@ _DEFAULT_PRESETS = [
 ]
 
 
+def _grab_move(projs):
+    """Marque un pan/tilt comme pris en main depuis le plan 2D.
+
+    Sans ça, les mémoires réécrivent la position : au prochain mouvement de
+    fader (_recompute_memory_mix) ou au prochain changement de cue — y compris
+    automatique (_apply_memory_to_projectors) — la lyre repart toute seule.
+    Libéré par CLEAR.
+    """
+    for p in projs:
+        p._manual_move = True
+
+
 def _load_presets():
     try:
         with open(_PRESETS_FILE, "r", encoding="utf-8") as f:
@@ -1361,6 +1373,7 @@ class _PanTiltFloater(QFrame):
         return result
 
     def _on_changed(self, pan, tilt):
+        _grab_move(self._targets)
         sym = getattr(self._canvas.pdf, 'sym_mode', False)
         if sym and len(self._targets) >= 2:
             n = len(self._targets)
@@ -1512,6 +1525,7 @@ class FixtureCanvas(QWidget):
             if getattr(proj, 'pan_tilt_swap', False):
                 pan_val, tilt_val = tilt_val, pan_val
 
+            _grab_move((proj,))
             proj.pan  = pan_val
             proj.tilt = tilt_val
 
@@ -2697,6 +2711,7 @@ class FixtureCanvas(QWidget):
                 dpan = -ddx / _PX * 65535
                 if sym and i >= half:
                     dpan = -dpan
+                _grab_move((p,))
                 p.pan  = int(max(0, min(65535, pan0  + int(dpan))))
                 p.tilt = int(max(0, min(65535, tilt0 - int(ddy / _PX * 65535))))
             if hasattr(self.pdf, '_flush_dmx'):
@@ -3472,6 +3487,8 @@ class PlanDeFeu(QFrame):
         self._effects.clear()
         self._led_effects.clear()
         for proj in self.projectors:
+            proj._manual_color = False   # CLEAR rend la main aux mémoires
+            proj._manual_move  = False
             proj.level = 0
             proj.base_color = QColor(0, 0, 0)
             proj.color = QColor(0, 0, 0)
@@ -3907,6 +3924,10 @@ class PlanDeFeu(QFrame):
 
     def _apply_color_to_targets(self, targets, color, close_menu=None):
         for proj, g, i in targets:
+            # Prise en main manuelle : les mémoires ne doivent plus écraser la
+            # couleur de cette fixture (sinon send_dmx_update la réapplique en
+            # HTP 40 fois par seconde). Libérée par CLEAR.
+            proj._manual_color = True
             proj.base_color = color
             if proj.level == 0:
                 proj.level = 100
@@ -4038,6 +4059,8 @@ class PlanDeFeu(QFrame):
             self.stop_effect(projs_to_clear)
             self.stop_led_effect(projs_to_clear)
             for p, g, i in t:
+                p._manual_color  = False   # CLEAR rend la main aux mémoires
+                p._manual_move   = False
                 p.level          = 0
                 p.base_color     = black
                 p.color          = black
@@ -4267,6 +4290,7 @@ class PlanDeFeu(QFrame):
             def _on_pantilt(pan, tilt, t=targets,
                             init_pan=_pad_init_pan, init_tilt=_pad_init_tilt,
                             init_c=_init_centers):
+                _grab_move(p for p, _g, _i in t)
                 d_pan  = pan  - init_pan
                 d_tilt = tilt - init_tilt
                 esc = getattr(_mw, 'effect_saved_colors', {}) if _mw else {}
@@ -4297,6 +4321,7 @@ class PlanDeFeu(QFrame):
                 ],
             )
             def _on_preset(preset, pad=pt_pad, t=targets):
+                _grab_move(p for p, _g, _i in t)
                 per_proj = preset.get("per_proj", {})
                 pan_g, tilt_g = preset["pan"], preset["tilt"]
                 pad.set_values(pan_g, tilt_g)

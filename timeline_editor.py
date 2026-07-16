@@ -45,7 +45,8 @@ try:
 except ImportError:
     QVideoWidget = None
 
-from light_timeline import LightTrack, LightClip, PalettePanel, LibraryPanel
+from light_timeline import (LightTrack, LightClip, PalettePanel, LibraryPanel,
+                            xfade_resolve, xfade_obj_get as _clip_obj_get)
 from core import media_icon, create_icon
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
@@ -97,6 +98,13 @@ class LightTimelineEditor(QDialog):
             | Qt.WindowCloseButtonHint | Qt.WindowMaximizeButtonHint)
         self.main_window = main_window
         self.media_row = media_row
+
+        # L'aperçu REC Lumière devient le SEUL pilote de l'effet (il appelle
+        # update_effect() lui-même à chaque frame du playhead). On le signale à
+        # send_dmx_update pour qu'il NE re-pilote PAS l'effet en parallèle
+        # (timer DMX 25 ms) : sinon un effet à compteur avance à 2 cadences
+        # déphasées → strobe dans l'aperçu (OK en restitution car timeline_active).
+        self.main_window._rec_preview_active = True
 
         # Recuperer infos du media
         item = main_window.seq.table.item(media_row, 1)
@@ -412,8 +420,17 @@ class LightTimelineEditor(QDialog):
         # Arrêter le timer de preview
         if hasattr(self, 'playback_timer'):
             self.playback_timer.stop()
+        # L'aperçu ne pilote plus l'effet : rendre la main à send_dmx_update.
+        self.main_window._rec_preview_active = False
         # Blackout : remettre tous les projecteurs à niveau 0 au retour
         try:
+            # Couper un effet éventuellement laissé actif par l'aperçu (sinon il
+            # continue de tourner dans la fenêtre principale après fermeture).
+            if getattr(self.main_window, 'active_effect', None):
+                self.main_window.active_effect = None
+                self.main_window.active_effect_config = {}
+                if hasattr(self.main_window, 'stop_effect'):
+                    self.main_window.stop_effect()
             for proj in self.main_window.projectors:
                 proj.level = 0
             if hasattr(self.main_window, 'dmx'):
@@ -1904,6 +1921,20 @@ class LightTimelineEditor(QDialog):
                 if hasattr(self.main_window, 'start_effect') and merged_layers:
                     self.main_window.start_effect(combined_name)
 
+        # Sécurité (hors garde par changement) : aucune ligne d'effet active ce
+        # frame → aucun effet ne doit tourner dans l'aperçu. La garde ci-dessus ne
+        # coupe l'effet QUE lorsque l'ensemble des clips d'effet CHANGE ; quand il
+        # n'y en a jamais eu (empty → empty, `{} != {}` faux), elle ne s'exécute
+        # pas et un effet RÉSIDUEL laissé actif par la fenêtre principale (pad
+        # effet, cue mémoire à effet…) survit et repeint les clips couleur en
+        # fondu → strobe. « Pas de clip d'effet » ⇒ l'effet actif n'appartient pas
+        # à l'aperçu, on peut donc le stopper sans risque.
+        if not new_eff_clips and getattr(self.main_window, 'active_effect', None):
+            self.main_window.active_effect        = None
+            self.main_window.active_effect_config = {}
+            if hasattr(self.main_window, 'stop_effect'):
+                self.main_window.stop_effect()
+
         # ── Détecter le clip de position actif ───────────────────────────────
         pos_track = self.track_map.get("Position")
         new_pos_clip = None
@@ -1961,6 +1992,25 @@ class LightTimelineEditor(QDialog):
 
                     c1 = clip.color
                     c2 = getattr(clip, 'color2', None)
+                    # Fondu enchaîné couleur CENTRÉ sur la jointure : morphe
+                    # couleur + intensité entre les 2 blocs (sans passer par le
+                    # noir). Le bloc actif peut être en TÊTE (jointure gauche) ou
+                    # en QUEUE (jointure droite) du fondu. Parité show.
+                    _prev = _next = None
+                    for _c in track.clips:
+                        if _c is clip:
+                            continue
+                        if abs((_c.start_time + _c.duration) - start) <= 5:
+                            _prev = _c
+                        if abs(_c.start_time - end) <= 5:
+                            _next = _c
+                    _xr = xfade_resolve(clip, _prev, _next, current_time, _clip_obj_get)
+                    if _xr:
+                        _xc, _xc2, _xi = _xr
+                        c1 = _xc
+                        if _xc2 is not None:
+                            c2 = _xc2
+                        intensity = _xi
                     brightness = intensity / 100.0
                     # Interpolation pan/tilt (lyres)
                     pan_s  = getattr(clip, 'pan_start',  128)
@@ -2099,6 +2149,7 @@ class LightTimelineEditor(QDialog):
 
                     clip.fade_in_duration = clip_data.get('fade_in', 0)
                     clip.fade_out_duration = clip_data.get('fade_out', 0)
+                    clip.xfade = clip_data.get('xfade', 0)
                     clip.effect = clip_data.get('effect')
                     clip.effect_speed = clip_data.get('effect_speed', 50)
                     clip.effect_layers    = clip_data.get('effect_layers', [])
@@ -2153,6 +2204,7 @@ class LightTimelineEditor(QDialog):
                     'intensity': clip.intensity,
                     'fade_in': getattr(clip, 'fade_in_duration', 0),
                     'fade_out': getattr(clip, 'fade_out_duration', 0),
+                    'xfade': getattr(clip, 'xfade', 0),
                     'effect': getattr(clip, 'effect', None),
                     'effect_speed': getattr(clip, 'effect_speed', 50),
                     'effect_layers': getattr(clip, 'effect_layers', []),
@@ -2204,6 +2256,7 @@ class LightTimelineEditor(QDialog):
                     'intensity': clip.intensity,
                     'fade_in': getattr(clip, 'fade_in_duration', 0),
                     'fade_out': getattr(clip, 'fade_out_duration', 0),
+                    'xfade': getattr(clip, 'xfade', 0),
                     'effect': getattr(clip, 'effect', None),
                     'effect_speed': getattr(clip, 'effect_speed', 50),
                     'effect_layers': getattr(clip, 'effect_layers', []),
@@ -2291,6 +2344,7 @@ class LightTimelineEditor(QDialog):
                     'intensity': clip.intensity,
                     'fade_in': getattr(clip, 'fade_in_duration', 0),
                     'fade_out': getattr(clip, 'fade_out_duration', 0),
+                    'xfade': getattr(clip, 'xfade', 0),
                     'effect': getattr(clip, 'effect', None),
                     'effect_speed': getattr(clip, 'effect_speed', 50),
                     'effect_layers': getattr(clip, 'effect_layers', []),
@@ -2378,6 +2432,7 @@ class LightTimelineEditor(QDialog):
             )
             clip.fade_in_duration  = clip_data.get('fade_in', 0)
             clip.fade_out_duration = clip_data.get('fade_out', 0)
+            clip.xfade             = clip_data.get('xfade', 0)
             clip.effect            = clip_data.get('effect')
             clip.effect_speed      = clip_data.get('effect_speed', 50)
             clip.effect_layers     = clip_data.get('effect_layers', [])
@@ -3177,6 +3232,7 @@ class LightTimelineEditor(QDialog):
                     'intensity': clip.intensity,
                     'fade_in': clip.fade_in_duration,
                     'fade_out': clip.fade_out_duration,
+                    'xfade': getattr(clip, 'xfade', 0),
                     'effect': clip.effect,
                     'effect_speed': clip.effect_speed,
                     'effect_layers': getattr(clip, 'effect_layers', []),
@@ -3220,6 +3276,7 @@ class LightTimelineEditor(QDialog):
                 clip.color2 = QColor(item['color2'])
             clip.fade_in_duration = item.get('fade_in', 0)
             clip.fade_out_duration = item.get('fade_out', 0)
+            clip.xfade = item.get('xfade', 0)
             clip.effect = item.get('effect')
             clip.effect_speed = item.get('effect_speed', 50)
             clip.effect_layers    = item.get('effect_layers', [])
@@ -3250,6 +3307,7 @@ class LightTimelineEditor(QDialog):
                     'intensity': clip.intensity,
                     'fade_in': clip.fade_in_duration,
                     'fade_out': clip.fade_out_duration,
+                    'xfade': getattr(clip, 'xfade', 0),
                     'effect': clip.effect,
                     'effect_speed': clip.effect_speed,
                     'effect_layers': getattr(clip, 'effect_layers', []),
@@ -3310,6 +3368,7 @@ class LightTimelineEditor(QDialog):
                     clip.color2 = QColor(clip_data['color2'])
                 clip.fade_in_duration = clip_data.get('fade_in', 0)
                 clip.fade_out_duration = clip_data.get('fade_out', 0)
+                clip.xfade = clip_data.get('xfade', 0)
                 clip.effect = clip_data.get('effect')
                 clip.effect_speed = clip_data.get('effect_speed', 50)
                 clip.effect_layers    = clip_data.get('effect_layers', [])

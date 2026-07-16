@@ -24,6 +24,12 @@ TRUSS_Y   = 7.0
 _HTML     = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'plan_3d_web.html'
 
 _SCENE_PRESETS = {
+    'vide': {
+        # Scène nue : ni truss ni accessoires. Utile quand le décor vient d'un
+        # modèle importé (GLTF/GLB) — sinon le rig du preset reste dessous.
+        'label': 'Aucun décor',
+        'trusses': [],
+    },
     'live': {
         'label': 'Live',
         'trusses': [
@@ -671,6 +677,7 @@ class Plan3DWebWindow(QMainWindow):
             {'label': 'Truss arrière', 'enabled': True, 'height': TRUSS_Y, 'z':  4.0, 'x_l': -9.0, 'x_r': 9.0},
         ]
         self._scene_preset_code = 'live'
+        self._imported_path = ''
 
         # Charger la scène sauvegardée depuis le patch, avant que la page HTML charge
         try:
@@ -682,6 +689,7 @@ class Plan3DWebWindow(QMainWindow):
                     self._scene_preset_code = _s3d['preset']
                 if _s3d.get('trusses'):
                     self._trusses = _s3d['trusses']
+                self._imported_path = _s3d.get('imported_model', '') or ''
         except Exception:
             pass
 
@@ -1538,6 +1546,7 @@ class Plan3DWebWindow(QMainWindow):
 
         self._scene_btns = {}
         for code, label in [
+            ('vide','Aucun décor'),
             ('live','Live'), ('dj','DJ'), ('concert','Concert'), ('club','Club'),
             ('festival','Festival'), ('arena','Grande scène'),
             ('sono','Sono Mobile'), ('totem','Totems'),
@@ -1596,11 +1605,33 @@ class Plan3DWebWindow(QMainWindow):
         )
         if not path:
             return
-        with open(path, 'rb') as f:
-            raw = f.read()
+        if self._push_model(path):
+            self._imported_path = path
+            self._save_patch()
+
+    def _push_model(self, path: str) -> bool:
+        """Envoie un GLTF/GLB à la vue. False si le fichier est illisible."""
+        try:
+            with open(path, 'rb') as f:
+                raw = f.read()
+        except OSError:
+            return False
         b64 = base64.b64encode(raw).decode('ascii')
         is_glb = path.lower().endswith('.glb')
         self._js(f'if(window.loadGLTF)window.loadGLTF("{b64}",{str(is_glb).lower()})')
+        return True
+
+    def _restore_imported_model(self):
+        """Recharge le décor importé mémorisé (appelé quand la page est prête).
+
+        Le fichier peut avoir été déplacé/supprimé depuis : on oublie alors la
+        référence plutôt que de la traîner indéfiniment.
+        """
+        path = getattr(self, '_imported_path', '')
+        if not path:
+            return
+        if not self._push_model(path):
+            self._imported_path = ''
 
     # ── Truss Editor ─────────────────────────────────────────────────────────
 
@@ -1611,6 +1642,7 @@ class Plan3DWebWindow(QMainWindow):
         self._scene_preset_code = code
         self._trusses = [t.copy() for t in preset['trusses']]
         self._js(f"window.setScenePreset('{code}')")
+        self._js(f'if(window.setStageFloor)window.setStageFloor({str(code != "vide").lower()})')
         for k, btn in getattr(self, '_scene_btns', {}).items():
             btn.setChecked(k == code)
         self._btn_trusses.setChecked(False)
@@ -1666,8 +1698,12 @@ class Plan3DWebWindow(QMainWindow):
         if ok:
             # Restaurer le preset de scène (décors 3D + trusses du preset)
             self._js(f"window.setScenePreset('{self._scene_preset_code}')")
+            self._js('if(window.setStageFloor)window.setStageFloor('
+                     f'{str(self._scene_preset_code != "vide").lower()})')
             # Puis appliquer les trusses réellement configurés (peuvent différer du preset)
             self._js(f'window.setTrusses({json.dumps(self._trusses)})')
+            # Décor importé mémorisé : le recharger (page neuve = _importedGrp vide)
+            self._restore_imported_model()
             amb = getattr(self, '_sl_amb', None)
             if amb:
                 self._js(f'window.ambLight.intensity={amb.value()/100:.2f}')
