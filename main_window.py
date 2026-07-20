@@ -8607,7 +8607,29 @@ class MainWindow(QMainWindow):
                          '_live_col_cur_prev'):
                 self.__dict__.pop(attr, None)
 
+    def _log_live_error(self, where, exc):
+        """Log throttlé d'une exception dans un slot LIVE piloté par le thread
+        audio. Une exception non rattrapée dans ces slots fait crasher MyStrow
+        (PySide6 abort) : on logge au lieu de crasher. On ne réémet un message
+        que si le texte d'erreur change."""
+        try:
+            key = f"{where}:{type(exc).__name__}:{exc}"
+            if getattr(self, '_last_live_error', None) != key:
+                self._last_live_error = key
+                import traceback
+                print(f"[live:{where}] {type(exc).__name__}: {exc}")
+                traceback.print_exc()
+        except Exception:
+            pass
+
     def _on_live_transient(self, hit_type: str):
+        """Slot signal (thread audio) protégé — voir _log_live_error."""
+        try:
+            self._on_live_transient_inner(hit_type)
+        except Exception as e:
+            self._log_live_error('transient', e)
+
+    def _on_live_transient_inner(self, hit_type: str):
         """Transitoire audio → effets lumière immédiats (FFT band, plus fiable que RMS)."""
         if not self.seq.live_mode_active:
             return
@@ -8663,6 +8685,13 @@ class MainWindow(QMainWindow):
             self._live_transient_flash['lyre_chop_until'] = pos + 40
 
     def _on_live_ia_mode_changed(self, mode: str):
+        """Slot signal protégé — le basculement de mode ne doit jamais crasher."""
+        try:
+            self._on_live_ia_mode_changed_inner(mode)
+        except Exception as e:
+            self._log_live_error('ia_mode', e)
+
+    def _on_live_ia_mode_changed_inner(self, mode: str):
         """Changement de mode IA — réinitialise les états persistants si nécessaire."""
         for attr in ('_live_sec', '_live_beat_state', '_live_transient_flash',
                      '_ambiance_phase', '_ambiance_t', '_smart_fx',
@@ -8897,6 +8926,12 @@ class MainWindow(QMainWindow):
             ]
         try:
             self._apply_live_state_inner(state)
+        except Exception as e:
+            # Slot appelé via un signal émis depuis le thread audio du moteur
+            # LIVE : une exception non rattrapée ici fait crasher tout MyStrow
+            # (PySide6 abort). On logge (throttlé) au lieu de crasher — notamment
+            # lors du basculement Manuel ↔ Ambiance/Musical IA.
+            self._log_live_error('apply_state', e)
         finally:
             if _frozen:
                 for (p, lv, col, base, pan, tilt, gobo, grot) in _frozen:
@@ -16922,9 +16957,18 @@ class MainWindow(QMainWindow):
             if _fx_file.exists():
                 _data = _json.loads(_fx_file.read_text(encoding="utf-8"))
                 if isinstance(_data, list):
+                    # Dédoublonnage par (nom, fabricant) : les fichiers écrits par
+                    # d'anciennes versions peuvent contenir à la fois la copie "user"
+                    # et la copie "firestore" d'une même fixture. La copie locale
+                    # (écrite en premier) est prioritaire.
+                    _seen_uf = set()
                     for _f in _data:
                         if not isinstance(_f, dict) or _f.get("builtin"):
                             continue
+                        _uf_key = (_f.get("name", ""), _f.get("manufacturer", ""))
+                        if _uf_key in _seen_uf:
+                            continue
+                        _seen_uf.add(_uf_key)
                         # Normaliser les fixtures admin panel (modes sans profile racine)
                         if not _f.get("profile") and _f.get("modes"):
                             _f["profile"] = _f["modes"][0].get("profile", [])
@@ -17510,7 +17554,19 @@ class MainWindow(QMainWindow):
                 except Exception:
                     existing = []
                 local_only = [f for f in existing if f.get("source", "user") not in ("firestore", "ofl")]
-                merged = local_only + remote_fixtures
+                # Dédoublonner : ne pas ré-ajouter une fixture distante qui existe
+                # déjà en copie locale "user" (même nom + fabricant). Sinon les
+                # projecteurs ajoutés par l'utilisateur/admin (présents à la fois en
+                # local et dans Firestore) apparaissent en double à chaque refresh.
+                _local_keys = {
+                    (f.get("name", ""), f.get("manufacturer", ""))
+                    for f in local_only
+                }
+                remote_dedup = [
+                    f for f in remote_fixtures
+                    if (f.get("name", ""), f.get("manufacturer", "")) not in _local_keys
+                ]
+                merged = local_only + remote_dedup
                 try:
                     _fx_file2.write_text(_json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
                 except Exception:

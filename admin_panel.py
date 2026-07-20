@@ -373,17 +373,24 @@ def _patch_firestore(path: str, fields: dict, id_token: str, mask: list = None):
 
 
 def _query_all_licenses(id_token: str) -> list:
-    url = f"{_FS_BASE}/licenses"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        data = json.loads(resp.read().decode())
-    docs = data.get("documents", [])
     results = []
-    for doc in docs:
-        uid = doc["name"].split("/")[-1]
-        fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
-        fields["_uid"] = uid
-        results.append(fields)
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/licenses?pageSize=300"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        docs = data.get("documents", [])
+        for doc in docs:
+            uid = doc["name"].split("/")[-1]
+            fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+            fields["_uid"] = uid
+            results.append(fields)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
     return results
 
 
@@ -4863,7 +4870,7 @@ class AdminPanel(QMainWindow):
         )
 
     def _on_clients_loaded(self, clients: list):
-        clients.sort(key=lambda d: d.get("expiry_utc", 0), reverse=True)
+        clients.sort(key=lambda d: d.get("email", "").lower())
         self._clients = clients
         self.search_edit.clear()  # réinitialise la recherche à chaque refresh
         self._populate_table(clients)

@@ -3680,6 +3680,12 @@ class Sequencer(QFrame):
                         self.table.setCellWidget(r1, col, self._create_dmx_cell_widget(r1))
                         new_combo1 = self._get_dmx_combo(r1)
                         if new_combo1:
+                            # Le combo recréé ne contient que Manuel/IA : réinsérer
+                            # les modes ajoutés dynamiquement (Play Lumiere/Programme)
+                            # sinon setCurrentText échoue et le mode retombe sur
+                            # Manuel → REC Lumière orphelin/perdu au déplacement.
+                            if new_combo1.findText(w2_data) == -1:
+                                new_combo1.addItem(w2_data)
                             new_combo1.blockSignals(True)
                             new_combo1.setCurrentText(w2_data)
                             new_combo1.blockSignals(False)
@@ -3703,6 +3709,8 @@ class Sequencer(QFrame):
                         self.table.setCellWidget(r2, col, self._create_dmx_cell_widget(r2))
                         new_combo2 = self._get_dmx_combo(r2)
                         if new_combo2:
+                            if new_combo2.findText(w1_data) == -1:
+                                new_combo2.addItem(w1_data)
                             new_combo2.blockSignals(True)
                             new_combo2.setCurrentText(w1_data)
                             new_combo2.blockSignals(False)

@@ -165,16 +165,34 @@ def scope_layers_to_groups(layers, groups):
     Sert à cloisonner les pistes Effet lors de leur FUSION (superposition) : sans
     ça, une couche « Tous » d'un effet (ex. couleur sur A,B) déborde sur les
     groupes d'un autre effet fusionné (ex. lyre sur D) → la lyre se fait flasher.
-    On ne tague QUE les couches non déjà restreintes par groupe (preset
-    Tous/Pair/Impair et pas de target_groups). Parité aperçu/show obligatoire.
+
+    L'assignation de groupe du clip est AUTORITAIRE : une couche qui porte déjà
+    son propre `target_groups` (ex. les 8 groupes hérités de la définition de
+    l'effet) est INTERSECTÉE avec les groupes du clip. Sinon, en multi-piste
+    (où le filtre projecteur `cfg.target_groups` devient l'union et ne cloisonne
+    plus), un effet assigné à un seul groupe débordait sur tous les projos ciblés.
+    En mono-piste ce garde-fou était masqué par le filtre projecteur, d'où un bug
+    visible « uniquement avec plusieurs pistes effet, uniquement dans le show ».
+    L'intersection ne doit jamais retomber sur une liste vide (= « Tous » dans le
+    moteur) : dans ce cas on force les groupes du clip. Parité aperçu/show.
     """
     if not groups:
         return list(layers)
+    gset = set(groups)
     out = []
     for l in layers:
         l = dict(l)
         preset = l.get('target_preset', 'Tous')
-        if not l.get('target_groups') and preset in ('Tous', 'Pair', 'Impair', '', None):
+        existing = l.get('target_groups')
+        if existing:
+            # Couche déjà restreinte → intersecter avec les groupes du clip.
+            inter = [g for g in existing if g in gset]
+            l['target_groups'] = inter if inter else list(groups)
+        elif preset in ('Tous', 'Pair', 'Impair', '', None):
+            # Couche générique → la cloisonner aux groupes du clip.
+            l['target_groups'] = list(groups)
+        elif preset not in gset:
+            # Preset = un groupe précis hors périmètre du clip → forcer le clip.
             l['target_groups'] = list(groups)
         out.append(l)
     return out
