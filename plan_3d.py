@@ -751,6 +751,7 @@ class _Canvas3D(QWidget):
         # ── Pass A — taches au sol (blending additif) ─────────────────────
         painter.setCompositionMode(QPainter.CompositionMode_Plus)
         for p in sorted_prjs:
+            if p.get('_skip_3d'): continue
             lvl = max(0.0, min(1.0, p['level']/100.0))
             if lvl < 0.03: continue
             r,g,b = _strobe_rgb(p)
@@ -801,6 +802,7 @@ class _Canvas3D(QWidget):
         ]
         now = _time.time()
         for p in sorted_prjs:
+            if p.get('_skip_3d'): continue
             lvl = max(0.0, min(1.0, p['level']/100.0))
             if lvl < 0.03: continue
             r,g,b = _strobe_rgb(p)
@@ -857,6 +859,7 @@ class _Canvas3D(QWidget):
 
         # ── Pass D — corps de fixture ──────────────────────────────────────
         for p in sorted_prjs:
+            if p.get('_skip_3d'): continue
             x, z = p['x'], p['z']
             lvl  = max(0.0, min(1.0, p['level']/100.0))
             r,g,b = _strobe_rgb(p)
@@ -1820,8 +1823,46 @@ class Plan3DWindow(QMainWindow):
                 'dmx_mode':       getattr(p,'dmx_mode',''),
                 'name':           getattr(p,'name',''),
                 'group':          getattr(p,'group',''),
+                'matrix_id':      getattr(p,'matrix_id', None),
+                'matrix_role':    getattr(p,'matrix_role', None),
             })
+        # Barres/matrices : ne dessiner qu'UN objet par appareil, pas ses N
+        # pixels. On garde toutes les entrées (l'index doit rester aligné sur
+        # mw.projectors pour le clic), mais on marque les membres non
+        # représentants `_skip_3d` et on colore le représentant par la moyenne
+        # des pixels allumés — même principe que le bloc du plan 2D.
+        self._collapse_matrices_3d(out)
         return out
+
+    @staticmethod
+    def _collapse_matrices_3d(entries):
+        groups = {}
+        for i, e in enumerate(entries):
+            mid = e.get('matrix_id')
+            if mid is not None:
+                groups.setdefault(mid, []).append(i)
+        for mid, idxs in groups.items():
+            pixels = [entries[i] for i in idxs
+                      if entries[i].get('matrix_role') == 'pixel'] or \
+                     [entries[i] for i in idxs]
+            # Représentant = premier membre (index le plus bas) ; les autres
+            # ne sont pas dessinés.
+            rep = entries[idxs[0]]
+            for i in idxs[1:]:
+                entries[i]['_skip_3d'] = True
+            # Position = centroïde du bloc
+            rep['x'] = sum(p['x'] for p in pixels) / len(pixels)
+            rep['z'] = sum(p['z'] for p in pixels) / len(pixels)
+            # Couleur = moyenne des pixels allumés ; niveau = le plus fort
+            lit = [p for p in pixels if p['level'] > 0]
+            if lit:
+                rep['r'] = int(sum(p['r'] for p in lit) / len(lit))
+                rep['g'] = int(sum(p['g'] for p in lit) / len(lit))
+                rep['b'] = int(sum(p['b'] for p in lit) / len(lit))
+                rep['level'] = max(p['level'] for p in lit)
+            else:
+                rep['level'] = 0
+            rep['_skip_3d'] = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 

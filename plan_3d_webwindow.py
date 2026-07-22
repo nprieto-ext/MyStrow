@@ -409,6 +409,7 @@ class ProjectorTableDialog(QDialog):
         self._npos = norm_pos_cb      # (projectors, i) → (cx, cy)
         self._cb   = refresh_cb       # (projectors) → None
         self._busy = False
+        self._rows = []               # modèle : 1 ligne = 1 appareil (barre = 1)
         self._build_ui()
 
     # ── Construction ─────────────────────────────────────────────────────────
@@ -495,14 +496,45 @@ class ProjectorTableDialog(QDialog):
 
     def populate(self, projectors):
         self._busy = True
-        self._tbl.setRowCount(len(projectors))
 
-        for row, p in enumerate(projectors):
-            # Initialise pos_3d depuis canvas si absent
+        # Init pos_3d pour TOUS les projecteurs (y compris les pixels d'une barre
+        # non affichés) — sinon déplacer une barre casserait sur un pos None.
+        for i, p in enumerate(projectors):
             if getattr(p, 'pos_3d_x', None) is None:
-                cx, cy = self._npos(projectors, row)
+                cx, cy = self._npos(projectors, i)
                 p.pos_3d_x = round((cx - 0.5) * 18.0, 2)
                 p.pos_3d_z = round(-(cy - 0.5) * 10.0, 2)
+
+        # Modèle de lignes : UN appareil par ligne. Une barre/matrice = 1 ligne
+        # (ses N pixels regroupés), pas N lignes « · px1, · px2… ».
+        self._rows = []
+        seen = {}
+        for i, p in enumerate(projectors):
+            mid = getattr(p, 'matrix_id', None)
+            if mid is not None:
+                g = seen.get(mid)
+                if g is None:
+                    name = (getattr(p, 'name', '') or '').split(' · ')[0] \
+                        or getattr(p, 'group', '') or f'#{i + 1}'
+                    g = {'rep': i, 'members': [], 'name': name,
+                         'group': getattr(p, 'group', '')}
+                    seen[mid] = g
+                    self._rows.append(g)
+                g['members'].append(i)
+            else:
+                name = getattr(p, 'name', '') or getattr(p, 'group', '') or f'#{i + 1}'
+                self._rows.append({'rep': i, 'members': [i], 'name': name,
+                                   'group': getattr(p, 'group', '')})
+
+        self._tbl.setRowCount(len(self._rows))
+        for row, rd in enumerate(self._rows):
+            p = projectors[rd['rep']]
+            members = rd['members']
+            # Position affichée = centroïde de l'appareil (barre : centre, pas 1 px)
+            cx3 = sum(getattr(projectors[m], 'pos_3d_x', 0.0) or 0.0
+                      for m in members) / len(members)
+            cz3 = sum(getattr(projectors[m], 'pos_3d_z', 0.0) or 0.0
+                      for m in members) / len(members)
 
             # Col 0 — checkbox
             if not self._tbl.item(row, 0):
@@ -511,20 +543,21 @@ class ProjectorTableDialog(QDialog):
                 chk.setCheckState(Qt.Unchecked)
                 self._tbl.setItem(row, 0, chk)
 
-            # Col 1 — nom coloré selon le groupe
-            if not self._tbl.item(row, 1):
-                grp  = getattr(p, 'group', '')
-                name = getattr(p, 'name', '') or grp or f'#{row + 1}'
-                nm   = QTableWidgetItem(name)
-                nm.setFlags(Qt.ItemIsEnabled)
-                nm.setForeground(QBrush(QColor(self._GRP_COLOR.get(grp, '#666688'))))
-                self._tbl.setItem(row, 1, nm)
+            # Col 1 — nom de l'appareil, coloré selon le groupe
+            grp  = rd['group']
+            nm_item = self._tbl.item(row, 1)
+            if nm_item is None:
+                nm_item = QTableWidgetItem()
+                nm_item.setFlags(Qt.ItemIsEnabled)
+                self._tbl.setItem(row, 1, nm_item)
+            nm_item.setText(rd['name'])
+            nm_item.setForeground(QBrush(QColor(self._GRP_COLOR.get(grp, '#666688'))))
 
             # Cols 2-7 — spinboxes
             vals = [
-                getattr(p, 'pos_3d_x',      0.0),
+                cx3,
                 getattr(p, 'fixture_height', 7.0),
-                getattr(p, 'pos_3d_z',       0.0),
+                cz3,
                 getattr(p, 'body_rotation',  0.0),
                 getattr(p, 'rot3d_x',        0.0),
                 getattr(p, 'rot3d_z',        0.0),
@@ -561,31 +594,50 @@ class ProjectorTableDialog(QDialog):
         rows  = self._checked()
         if row not in rows:
             rows = [row]
+        # X/Z : déplacer l'appareil ENTIER en delta (une barre garde l'écart de
+        # ses pixels). Hauteur/rotations : valeur absolue, identique à tous.
+        is_pos = attr in ('pos_3d_x', 'pos_3d_z')
 
         self._busy = True
         for r in rows:
-            if r < len(projs):
-                setattr(projs[r], attr, value)
-                if r != row:
-                    sp = self._tbl.cellWidget(r, col)
-                    if sp:
-                        sp.blockSignals(True)
-                        sp.setValue(value)
-                        sp.blockSignals(False)
+            if r >= len(self._rows):
+                continue
+            members = self._rows[r]['members']
+            if is_pos:
+                cur = sum((getattr(projs[m], attr, 0.0) or 0.0)
+                          for m in members) / len(members)
+                delta = value - cur
+                for m in members:
+                    if m < len(projs):
+                        base = getattr(projs[m], attr, 0.0) or 0.0
+                        setattr(projs[m], attr, base + delta)
+            else:
+                for m in members:
+                    if m < len(projs):
+                        setattr(projs[m], attr, value)
+            if r != row:
+                sp = self._tbl.cellWidget(r, col)
+                if sp:
+                    sp.blockSignals(True)
+                    sp.setValue(value)
+                    sp.blockSignals(False)
         self._busy = False
         self._cb(projs)
 
     def _reset_sel(self):
         projs = self._get()
-        rows  = self._checked() or list(range(len(projs)))
+        rows  = self._checked() or list(range(len(self._rows)))
         for r in rows:
-            if r < len(projs):
-                p = projs[r]
-                p.pos_3d_x      = None
-                p.pos_3d_z      = None
-                p.body_rotation = 0.0
-                p.rot3d_x       = 0.0
-                p.rot3d_z       = 0.0
+            if r >= len(self._rows):
+                continue
+            for m in self._rows[r]['members']:
+                if m < len(projs):
+                    p = projs[m]
+                    p.pos_3d_x      = None
+                    p.pos_3d_z      = None
+                    p.body_rotation = 0.0
+                    p.rot3d_x       = 0.0
+                    p.rot3d_z       = 0.0
         self.populate(projs)
         self._cb(projs)
 
@@ -1769,7 +1821,56 @@ class Plan3DWebWindow(QMainWindow):
                 'gobo_rotation':  int(getattr(p, 'gobo_rotation', 0) or 0),
                 'prism':          int(getattr(p, 'prism', 0) or 0),
                 'prism_rotation': int(getattr(p, 'prism_rotation', 0) or 0),
+                'matrix_id':      getattr(p, 'matrix_id', None),
+                'matrix_role':    getattr(p, 'matrix_role', None),
+                # Zoom : largeur de faisceau pilotée par DMX. `has_zoom` évite
+                # de rétrécir les projos SANS canal zoom (dont zoom=0 en
+                # permanence). Le zoom manuel passe par channel_extras['Zoom']
+                # (canal avancé), pas proj.zoom — mêmes priorités que l'Art-Net,
+                # sinon un changement de zoom manuel ne se voyait pas en 3D.
+                'zoom':           int((getattr(p, 'channel_extras', None) or {}).get(
+                                       'Zoom', getattr(p, 'zoom', 0)) or 0),
+                'has_zoom':       'Zoom' in (getattr(p, 'dmx_profile', None) or []),
             })
+        # Barres/matrices : rendu PER-PIXEL. Chaque pixel garde sa couleur, son
+        # niveau et sa position → un chase se VOIT courir le long de la barre.
+        # On ne dessine pas une lyre/PAR complet par pixel (16 corps + 16
+        # faisceaux = lourd et absurde), mais une petite cellule lumineuse
+        # (drapeau `is_pixel`). Le master (canaux globaux) n'a pas de forme :
+        # `is_master`, non dessiné.
+        import math as _m
+        groups = {}
+        for i, e in enumerate(out):
+            role = e.get('matrix_role')
+            if role == 'pixel':
+                e['is_pixel'] = True
+            elif role == 'master':
+                e['is_master'] = True
+            mid = e.get('matrix_id')
+            if mid is not None:
+                groups.setdefault(mid, []).append(i)
+
+        # Boîtier physique de l'appareil : sans lui, les pixels flottants se
+        # lisent comme un « rectangle coloré » abstrait, pas comme une barre.
+        # On attache au représentant (1er membre) la géométrie d'une réglette
+        # sombre reliant les pixels : centre, longueur, angle dans le plan XZ.
+        for mid, idxs in groups.items():
+            pix = [out[i] for i in idxs if out[i].get('is_pixel')] or \
+                  [out[i] for i in idxs]
+            if not pix:
+                continue
+            xs = [p['x'] for p in pix]
+            zs = [p['z'] for p in pix]
+            cx = sum(xs) / len(pix)
+            cz = sum(zs) / len(pix)
+            # Direction = extrêmes du bloc ; longueur = diagonale + marge pixel
+            dx = max(xs) - min(xs)
+            dz = max(zs) - min(zs)
+            length = _m.hypot(dx, dz) + 0.18
+            angle = _m.atan2(dz, dx) if (dx or dz) else 0.0
+            out[idxs[0]]['housing'] = {
+                'cx': cx, 'cz': cz, 'len': length, 'angle': angle,
+            }
         return out
 
     # ── Push vers Three.js ───────────────────────────────────────────────────

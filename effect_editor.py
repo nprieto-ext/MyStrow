@@ -16,16 +16,63 @@ from PySide6.QtWidgets import (
     QPushButton, QComboBox, QScrollArea, QFrame, QSizePolicy, QSlider,
     QGridLayout, QSpinBox,
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QSize, Signal
+from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
+
+from core import SPREAD_MODES, spread_rank
+
+
+class SpreadPreview(QWidget):
+    """
+    Aperçu de la répartition : 8 pastilles teintées selon leur rang.
+
+    Deux fixtures de même teinte partent ensemble. « Miroir (bords) » montre
+    donc 1 et 8 identiques, puis 2 et 7, etc. Lire « 1&8, puis 2&7 » dans une
+    infobulle demande un effort ; le voir est immédiat.
+    """
+
+    def __init__(self, count=8, parent=None):
+        super().__init__(parent)
+        self._count = count
+        self._mode = "lineaire"
+        self.setFixedHeight(22)
+        self.setMinimumWidth(120)
+
+    def set_mode(self, mode):
+        if mode != self._mode:
+            self._mode = mode or "lineaire"
+            self.update()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        n = self._count
+        w = self.width() / max(n, 1)
+        for i in range(n):
+            r = spread_rank(i, n, self._mode)
+            # Rang 0 = part en premier = plein cyan ; rang 1 = sombre
+            inten = 1.0 - min(1.0, max(0.0, r)) * 0.82
+            col = QColor(int(0x00 + 0x22 * inten), int(0x2a + 0xaa * inten),
+                         int(0x36 + 0xc9 * inten))
+            rect = QRectF(i * w + 1.5, 3, max(2.0, w - 3), self.height() - 6)
+            p.setPen(Qt.NoPen)
+            p.setBrush(col)
+            p.drawRoundedRect(rect, 2, 2)
+            p.setPen(QColor("#000") if inten > 0.55 else QColor("#667"))
+            f = p.font(); f.setPointSize(7); f.setBold(True); p.setFont(f)
+            p.drawText(rect, Qt.AlignCenter, str(i + 1))
+        p.end()
 
 
 # ─── Raccourci couche ──────────────────────────────────────────────────────────
 
-def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0, direction=1, color1="#ff0000", color2="#0000ff", shape="cercle", sym_pan=False):
+def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0, direction=1, color1="#ff0000", color2="#0000ff", shape="cercle", sym_pan=False, spread_mode="lineaire"):
     d = {"attribute": attr, "forme": forme, "target_preset": target,
          "speed": speed, "size": size, "spread": spread, "phase": phase,
-         "fade": fade, "direction": direction, "color1": color1, "color2": color2}
+         "fade": fade, "direction": direction, "color1": color1, "color2": color2,
+         # Répartition du décalage entre fixtures : linéaire (chenillard),
+         # miroir, pair/impair… « lineaire » = comportement historique.
+         "spread_mode": spread_mode}
     if attr == "Pan/Tilt":
         d["mouvement_shape"] = shape
     if sym_pan:
@@ -149,6 +196,46 @@ BUILTIN_EFFECTS = [
     {"name": "Escalier",          "emoji": "↗", "category": "Mouvement", "type": "Chase",
      "no_color": True,
      "layers": [_L("RGB", "Montée", speed=55, spread=180, direction=1, color1="#ffffff")]},
+
+    # ── Répartitions : chases symétriques et à traînée ────────────────────────
+    # Pensés pour les barres à pixels, mais valables sur 8 PAR : un pixel est
+    # une fixture comme une autre.
+    {"name": "Comète",            "emoji": "☄", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=45, spread=360, fade=45,
+                   color1="#ffffff")]},
+
+    {"name": "Miroir",            "emoji": "⇹", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=45, spread=180, fade=30,
+                   spread_mode="miroir_in", color1="#ffffff")]},
+
+    {"name": "Miroir Comète",     "emoji": "⋈", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=40, spread=360, fade=50,
+                   spread_mode="miroir_in", color1="#ffffff")]},
+
+    {"name": "Explosion",         "emoji": "✷", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=45, spread=180, fade=40,
+                   spread_mode="miroir", color1="#ffffff")]},
+
+    {"name": "Alterné",           "emoji": "⇵", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", speed=45, spread=180,
+                   spread_mode="pair_impair", color1="#ffffff")]},
+
+    # Aller-retour : direction=0 fait osciller la base de temps, le chase
+    # remonte donc de 8 vers 1 après être allé de 1 à 8.
+    {"name": "Va-et-vient",       "emoji": "⇋", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Flash", speed=42, spread=180, direction=0,
+                   color1="#ffffff")]},
+
+    {"name": "Va-et-vient Comète", "emoji": "⤿", "category": "Mouvement", "type": "Chase",
+     "no_color": True,
+     "layers": [_L("RGB", "Descente", speed=38, spread=360, fade=45,
+                   direction=0, color1="#ffffff")]},
 
     {"name": "Scan",              "emoji": "↕", "category": "Mouvement", "type": "Chase",
      "no_color": True,
@@ -528,6 +615,9 @@ class EffectLayer:
         self.color2 = "#0000ff"
         self.mouvement_shape = "libre"  # forme de trajectoire Pan/Tilt
         self.sym_pan = False            # miroir pan sur la 2e moitié des fixtures
+        # Répartition du décalage entre fixtures (voir SPREAD_MODES) :
+        # "lineaire" = chenillard 1,2,3… ; "miroir_in" = 1&8, 2&7, 3&6…
+        self.spread_mode = "lineaire"
 
     def to_dict(self):
         return {
@@ -547,6 +637,7 @@ class EffectLayer:
             "color2": self.color2,
             "mouvement_shape": self.mouvement_shape,
             "sym_pan": self.sym_pan,
+            "spread_mode": self.spread_mode,
         }
 
     @classmethod
@@ -571,6 +662,7 @@ class EffectLayer:
         layer.color2 = d.get("color2", "#0000ff")
         layer.mouvement_shape = d.get("mouvement_shape", "libre")
         layer.sym_pan = d.get("sym_pan", False)
+        layer.spread_mode = d.get("spread_mode", "lineaire")
         return layer
 
     @classmethod
@@ -592,6 +684,9 @@ class EffectLayer:
             layer.max_val   = ld.get("max_val", 100)
             layer.color1 = ld.get("color1", "#ff0000")
             layer.color2 = ld.get("color2", "#0000ff")
+            layer.mouvement_shape = ld.get("mouvement_shape", "libre")
+            layer.sym_pan = ld.get("sym_pan", False)
+            layer.spread_mode = ld.get("spread_mode", "lineaire")
             result.append(layer)
         return result
 
@@ -2004,11 +2099,19 @@ class LayerCard(QFrame):
         )
         self._sens_btns = {}
         cur_dir = getattr(self.layer, 'direction', 1)
+        # Le sens « ↔ » fait osciller la base de temps : le chase va de 1 à 8
+        # PUIS revient de 8 à 1. Sans infobulle personne ne pouvait le deviner.
+        _sens_tips = {
+            1:  "Sens direct — 1, 2, 3… jusqu'à la dernière fixture",
+            -1: "Sens inverse — de la dernière vers la première",
+            0:  "Aller-retour — 1→8 puis 8→1, en boucle",
+        }
         for dval, dlabel in [(1, "→"), (-1, "←"), (0, "↔")]:
             sb = QPushButton(dlabel)
             sb.setFixedSize(22, 22)
             sb.setCheckable(True)
             sb.setChecked(dval == cur_dir)
+            sb.setToolTip(_sens_tips[dval])
             sb.setCursor(Qt.PointingHandCursor)
             on_ss  = _sens_style.format(bg="#001a2a", fg="#00d4ff", bd="#004466")
             off_ss = _sens_style.format(bg="#0c0c0c", fg="#444",    bd="#1c1c1c")
@@ -2069,15 +2172,103 @@ class LayerCard(QFrame):
         self._sl_min,    self._vl_min    = self._mk_slider("MIN", getattr(self.layer, 'min_val', 0))
         self._sl_max,    self._vl_max    = self._mk_slider("MAX", getattr(self.layer, 'max_val', 100))
         self._sl_spread, self._vl_spread = self._mk_slider("DÉC", self.layer.spread)
+        # FADE adoucit la forme (0 = franc, 100 = fondu). Il était utilisé au
+        # rendu et par plusieurs effets prédéfinis, mais n'avait aucun contrôle :
+        # impossible de refaire une traînée de comète à la main.
+        self._sl_fade,   self._vl_fade   = self._mk_slider("FONDU", getattr(self.layer, 'fade', 0))
 
         self._sl_min.valueChanged.connect(   lambda v: (setattr(self.layer, 'min_val', v), self._vl_min.setText(str(v)),    self.changed.emit()))
         self._sl_max.valueChanged.connect(   lambda v: (setattr(self.layer, 'max_val', v), self._vl_max.setText(str(v)),    self.changed.emit()))
         self._sl_spread.valueChanged.connect(lambda v: (setattr(self.layer, 'spread',  v), self._vl_spread.setText(str(v)), self.changed.emit()))
+        self._sl_fade.valueChanged.connect(  lambda v: (setattr(self.layer, 'fade',    v), self._vl_fade.setText(str(v)),   self.changed.emit()))
 
         for container in self._slider_containers:
             row2b.addWidget(container, 1)
 
         outer.addLayout(row2b)
+
+        # ── Row 2c : RÉPARTITION du décalage ─────────────────────────────────
+        # Le curseur DÉC dit de COMBIEN les fixtures sont décalées ; ceci dit
+        # DANS QUEL ORDRE. « Miroir (bords) » donne 1&8, puis 2&7, puis 3&6.
+        row2c = QHBoxLayout()
+        row2c.setSpacing(8)
+        _lbl_sm = QLabel("RÉPARTITION")
+        _lbl_sm.setStyleSheet("color:#666;font-size:9px;font-weight:bold;"
+                              "letter-spacing:1px;background:transparent;border:none;")
+        _lbl_sm.setFixedWidth(84)
+        row2c.addWidget(_lbl_sm)
+
+        self._cb_spread_mode = QComboBox()
+        self._cb_spread_mode.setFixedHeight(26)
+        self._cb_spread_mode.setStyleSheet(
+            "QComboBox{background:#161616;color:#ddd;border:1px solid #2a2a2a;"
+            "border-radius:4px;padding:2px 8px;font-size:11px;}"
+            "QComboBox::drop-down{border:none;width:18px;}"
+            "QComboBox QAbstractItemView{background:#161616;color:#ddd;"
+            "selection-background-color:#00d4ff;selection-color:#000;"
+            "border:1px solid #2a2a2a;}")
+        for _key, _lbl, _hint in SPREAD_MODES:
+            self._cb_spread_mode.addItem(_lbl, _key)
+            self._cb_spread_mode.setItemData(
+                self._cb_spread_mode.count() - 1, _hint, Qt.ToolTipRole)
+        _cur_sm = getattr(self.layer, 'spread_mode', 'lineaire')
+        _i_sm = next((k for k, (kk, _l, _h) in enumerate(SPREAD_MODES)
+                      if kk == _cur_sm), 0)
+        self._cb_spread_mode.setCurrentIndex(_i_sm)
+        self._cb_spread_mode.setToolTip(SPREAD_MODES[_i_sm][2])
+
+        self._spread_prev = SpreadPreview(8)
+        self._spread_prev.set_mode(_cur_sm)
+        self._spread_prev.setToolTip(
+            "Ordre de démarrage des fixtures : même teinte = partent ensemble.")
+
+        def _on_spread_mode(idx):
+            key = self._cb_spread_mode.itemData(idx) or "lineaire"
+            self.layer.spread_mode = key
+            self._cb_spread_mode.setToolTip(
+                next((h for k, _l, h in SPREAD_MODES if k == key), ""))
+            self._spread_prev.set_mode(key)
+            self.changed.emit()
+        self._cb_spread_mode.currentIndexChanged.connect(_on_spread_mode)
+
+        row2c.addWidget(self._cb_spread_mode, 1)
+        row2c.addWidget(self._spread_prev, 1)
+
+        # DÉPART : décalage temporel de CETTE couche. C'est lui qui décale le
+        # rouge, le vert et le bleu dans les arcs-en-ciel prédéfinis — il était
+        # utilisé au rendu sans aucun contrôle, donc ces effets n'étaient pas
+        # reproductibles à la main.
+        _lbl_ph = QLabel("DÉPART")
+        _lbl_ph.setStyleSheet("color:#666;font-size:9px;font-weight:bold;"
+                              "letter-spacing:1px;background:transparent;border:none;")
+        _lbl_ph.setFixedWidth(52)
+        row2c.addWidget(_lbl_ph)
+
+        self._sl_phase = QSlider(Qt.Horizontal)
+        self._sl_phase.setRange(0, 100)
+        self._sl_phase.setValue(int(getattr(self.layer, 'phase', 0) or 0))
+        self._sl_phase.setFixedWidth(96)
+        self._sl_phase.setToolTip(
+            "Décale le démarrage de cette couche dans le cycle.\n"
+            "0 = en même temps que les autres, 33 = un tiers de cycle plus tard.\n"
+            "C'est ainsi qu'on décale R, V et B pour obtenir un arc-en-ciel.")
+        self._sl_phase.setStyleSheet(
+            "QSlider::groove:horizontal{background:#222;height:4px;border-radius:2px;}"
+            "QSlider::handle:horizontal{background:#00d4ff;width:10px;height:10px;"
+            "margin:-4px 0;border-radius:5px;}")
+        self._vl_phase = QLabel(str(self._sl_phase.value()))
+        self._vl_phase.setFixedWidth(24)
+        self._vl_phase.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._vl_phase.setStyleSheet("color:#ddd;font-size:10px;font-weight:bold;"
+                                     "background:transparent;border:none;")
+        self._sl_phase.valueChanged.connect(
+            lambda v: (setattr(self.layer, 'phase', v),
+                       self._vl_phase.setText(str(v)),
+                       self.changed.emit()))
+        row2c.addWidget(self._sl_phase)
+        row2c.addWidget(self._vl_phase)
+
+        outer.addLayout(row2c)
 
         # ── Row 3 : Cible (pills multi-select) ────────────────────────────────
         row3 = QHBoxLayout()
@@ -2129,9 +2320,30 @@ class LayerCard(QFrame):
 
         self._refresh_color_btns()
 
+    # Ce que règle chaque curseur, en clair. Les abréviations sur 3 lettres ne
+    # disent rien à personne : « DÉC » est le réglage le plus puissant de
+    # l'éditeur et le moins compréhensible sans explication.
+    _SLIDER_TIPS = {
+        "VIT":   "Vitesse du cycle.\n0 = très lent, 100 = très rapide.",
+        "AMP":   "Amplitude : intensité maximale atteinte par l'effet.",
+        "MIN":   "Niveau plancher : l'effet ne descend jamais en dessous.\n"
+                 "Au-dessus de 0, les projecteurs ne s'éteignent plus complètement.",
+        "MAX":   "Niveau plafond : l'effet ne monte jamais au-dessus.",
+        "DÉC":   "Décalage entre fixtures — c'est lui qui crée le chenillard.\n"
+                 "0 = toutes ensemble · 180 = réparties sur un cycle · "
+                 "360 = deux motifs simultanés.\n"
+                 "L'ORDRE des fixtures se choisit avec RÉPARTITION.",
+        "FONDU": "Adoucit la forme.\n0 = transitions franches, 100 = fondu doux.\n"
+                 "Combiné à la forme « Descente », c'est ce qui fait la traînée "
+                 "d'une comète.",
+    }
+
     def _mk_slider(self, label: str, val: int):
         container = QWidget()
         container.setStyleSheet("background: transparent;")
+        _tip = self._SLIDER_TIPS.get(label)
+        if _tip:
+            container.setToolTip(_tip)
         vl = QVBoxLayout(container)
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(1)
@@ -2154,6 +2366,8 @@ class LayerCard(QFrame):
         slider.setValue(val)
         slider.setFixedHeight(14)
         slider.setStyleSheet(_SLIDER_STYLE)
+        if _tip:
+            slider.setToolTip(_tip)   # le survol du curseur lui-même compte
         vl.addWidget(slider)
 
         if not hasattr(self, '_slider_containers'):
@@ -3891,6 +4105,28 @@ class EffectEditorDialog(QDialog):
         lay.setContentsMargins(16, 8, 16, 8)
         lay.addStretch()
 
+        # ── Sortie live DMX ───────────────────────────────────────────────────
+        # Volontairement un interrupteur, pas un envoi permanent : ouvrir
+        # l'éditeur pendant un show ne doit pas prendre la main sur les lampes.
+        self._btn_live_dmx = QPushButton("  Sortie live")
+        self._btn_live_dmx.setCheckable(True)
+        self._btn_live_dmx.setFixedHeight(34)
+        self._btn_live_dmx.setCursor(Qt.PointingHandCursor)
+        self._btn_live_dmx.setToolTip(
+            "Envoie l'aperçu sur le DMX : tes projecteurs jouent l'effet\n"
+            "pendant que tu le règles.\n"
+            "Désactivé, l'éditeur ne touche à rien.")
+        self._live_dmx_off_ss = (
+            "QPushButton{background:#1e1e1e;color:#888;border:1px solid #2e2e2e;"
+            "border-radius:6px;font-size:12px;padding:0 14px;}"
+            "QPushButton:hover{background:#2a2a2a;color:#ccc;}")
+        self._live_dmx_on_ss = (
+            "QPushButton{background:#3a0f0f;color:#ff5555;border:1px solid #ff5555;"
+            "border-radius:6px;font-size:12px;font-weight:bold;padding:0 14px;}")
+        self._btn_live_dmx.setStyleSheet(self._live_dmx_off_ss)
+        self._btn_live_dmx.toggled.connect(self._on_live_dmx_toggled)
+        lay.addWidget(self._btn_live_dmx)
+
         cancel = QPushButton("Annuler")
         cancel.setFixedSize(96, 34)
         cancel.setStyleSheet("""
@@ -4003,6 +4239,9 @@ class EffectEditorDialog(QDialog):
 
     def _stop_preview(self):
         self._preview_timer.stop()
+        # L'aperçu s'arrête → plus personne n'alimente les overrides. Les
+        # laisser en place figerait les projecteurs sur la dernière frame.
+        self._release_live_dmx()
         plan = getattr(self, '_plan_widget', None)
         if plan is not None:
             try:
@@ -4018,6 +4257,38 @@ class EffectEditorDialog(QDialog):
         cfg = getattr(mw, 'active_effect_config', {})
         if isinstance(cfg, dict) and cfg.get('name') == self._selected_card:
             cfg['layers'] = [l.to_dict() for l in self._layers]
+
+    def _on_live_dmx_toggled(self, checked):
+        """Active/coupe l'envoi DMX de l'aperçu."""
+        btn = self._btn_live_dmx
+        btn.setText("  ⏺  Sortie live" if checked else "  Sortie live")
+        btn.setStyleSheet(self._live_dmx_on_ss if checked else self._live_dmx_off_ss)
+        mw = self._main_window
+        if mw is None:
+            return
+        if checked:
+            if not self._preview_timer.isActive() and self._layers:
+                self._preview_t0 = _time.monotonic()
+                self._preview_timer.start(40)
+        else:
+            # Rendre la main immédiatement, sans attendre le prochain tick
+            mw._editor_live_overrides = None
+
+    def _release_live_dmx(self):
+        """Coupe la sortie live — à appeler sur toute sortie de l'éditeur."""
+        mw = self._main_window
+        if mw is not None:
+            mw._editor_live_overrides = None
+
+    def closeEvent(self, event):
+        self._release_live_dmx()
+        super().closeEvent(event)
+
+    def done(self, r):
+        # Couvre Sauvegarder ET Annuler ET la croix : sans ça, fermer l'éditeur
+        # laisserait les projecteurs figés sur la dernière frame d'aperçu.
+        self._release_live_dmx()
+        super().done(r)
 
     def _preview_tick(self):
         plan = getattr(self, '_plan_widget', None)
@@ -4035,6 +4306,10 @@ class EffectEditorDialog(QDialog):
             overrides = self._compute_preview(t)
             if plan is not None:
                 plan.set_htp_overrides(overrides)
+            # Sortie live : la boucle DMX les applique puis les restaure
+            if self._main_window is not None:
+                self._main_window._editor_live_overrides = (
+                    overrides if self._btn_live_dmx.isChecked() else None)
             # Alimenter la mini strip (même filtre anti-fumée que _compute_preview)
             all_proj = getattr(self._main_window, 'projectors', [])
             strip_proj = [p for p in all_proj if getattr(p, 'group', '') != 'fumee'][:16]

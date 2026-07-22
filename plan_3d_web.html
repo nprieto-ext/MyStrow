@@ -49,6 +49,8 @@ import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass }       from 'three/addons/postprocessing/ShaderPass.js';
+import { Reflector }        from 'three/addons/objects/Reflector.js';
 import { GLTFLoader }       from 'three/addons/loaders/GLTFLoader.js';
 
 document.getElementById('loading').remove();
@@ -65,8 +67,10 @@ let   _ptrDownPos  = null;   // pour distinguer clic vs drag
 const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.toneMapping       = THREE.ReinhardToneMapping;
-renderer.toneMappingExposure = 1.2;
+// Tone mapping ACES : rendu plus « filmique », meilleure tenue des hautes
+// lumières (les faisceaux saturés ne cramment plus en blanc pur).
+renderer.toneMapping       = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 renderer.outputColorSpace  = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 window.renderer = renderer;
@@ -76,8 +80,15 @@ window.renderer = renderer;
 // ─────────────────────────────────────────────────────────────────────────────
 const scene  = new THREE.Scene();
 scene.background = new THREE.Color(0x05050f);
-const fog = new THREE.FogExp2(0x05050f, 0.022);
+// Haze atmosphérique : un peu plus dense qu'avant → l'air « accroche » la
+// lumière, les faisceaux lointains se fondent dans une ambiance enfumée
+// (l'équivalent light du brouillard volumétrique d'Unreal, en bien plus léger).
+const fog = new THREE.FogExp2(0x060612, 0.030);
 scene.fog = fog;
+// Réglable en live depuis Python si besoin (densité 0.010–0.060).
+window.setHaze = function(density) {
+  fog.density = Math.max(0.0, Math.min(0.08, density));
+};
 
 const W = () => window.innerWidth;
 const H = () => window.innerHeight;
@@ -115,6 +126,33 @@ window.bloomPass = new UnrealBloomPass(
   0.08   // threshold — très bas pour capter même les lumières faibles
 );
 composer.addPass(window.bloomPass);
+
+// Vignette + léger boost de contraste : touche « ciné » qui concentre le
+// regard au centre et assombrit les bords, comme dans les rendus Unreal.
+const VignetteShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uStrength: { value: 0.62 },   // 0 = aucune vignette, 1 = très marquée
+    uContrast: { value: 1.06 },
+  },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float uStrength; uniform float uContrast;
+    varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      // Contraste doux autour du gris moyen
+      c.rgb = (c.rgb - 0.5) * uContrast + 0.5;
+      // Vignette radiale
+      vec2 d = vUv - 0.5;
+      float v = smoothstep(0.85, 0.30, dot(d, d) * uStrength * 4.0);
+      gl_FragColor = vec4(c.rgb * (0.55 + 0.45 * v), c.a);
+    }`,
+};
+window.vignettePass = new ShaderPass(VignetteShader);
+composer.addPass(window.vignettePass);
+
 composer.addPass(new OutputPass());
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,18 +173,35 @@ scene.add(_fillLight);
 // Géométrie de scène
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Sol — parquet sombre
-const floorMesh = new THREE.Mesh(
+// Sol — RÉFLECTEUR (effet « sol mouillé ») : renvoie les faisceaux et les
+// taches de couleur, comme dans les rendus Unreal. C'est le plus gros gain de
+// réalisme. Une nappe sombre semi-transparente par-dessus dose l'intensité
+// pour garder un parquet noir brillant, pas un miroir parfait.
+const _reflRes = Math.min(1024, Math.floor(window.innerWidth * 0.9));
+const floorReflector = new Reflector(
   new THREE.PlaneGeometry(18, 10),
-  new THREE.MeshStandardMaterial({ color:0x0c0907, roughness:0.92, metalness:0.05 })
+  { textureWidth: _reflRes, textureHeight: _reflRes,
+    color: 0x6a6a78 }        // teinte du reflet (plus sombre = plus discret)
 );
-floorMesh.rotation.x = -Math.PI / 2;
-floorMesh.receiveShadow = false;
-scene.add(floorMesh);
+floorReflector.rotation.x = -Math.PI / 2;
+floorReflector.position.y = 0.0;
+scene.add(floorReflector);
+window.floorReflector = floorReflector;
+
+// Nappe sombre par-dessus le miroir : donne la couleur du sol et atténue le
+// reflet (opacité = force du reflet ; plus opaque = sol plus mat).
+const floorTint = new THREE.Mesh(
+  new THREE.PlaneGeometry(18, 10),
+  new THREE.MeshBasicMaterial({ color:0x090710, transparent:true, opacity:0.62 })
+);
+floorTint.rotation.x = -Math.PI / 2;
+floorTint.position.y = 0.004;
+scene.add(floorTint);
+window.floorTint = floorTint;
 
 // Grille de scène
-const gridHelper = new THREE.GridHelper(18, 18, 0x0e0a06, 0x0b0806);
-gridHelper.position.y = 0.005;
+const gridHelper = new THREE.GridHelper(18, 18, 0x141018, 0x0d0a12);
+gridHelper.position.y = 0.008;
 scene.add(gridHelper);
 
 // Cyclorama (fond de scène)
@@ -663,10 +718,41 @@ function _getObj(i) {
   const ptLight = new THREE.PointLight(0xffffff, 0, 14, 1.8);
   _lightGrp.add(ptLight);
 
+  // ── Cellule pixel (barre/matrice) ────────────────────────────────────
+  // Petit cube émissif à la place d'un corps + faisceau complet : c'est ce
+  // qui permet de voir un chase courir sans faire ramer la scène.
+  const pxCell = new THREE.Mesh(
+    new THREE.BoxGeometry(0.16, 0.16, 0.16),
+    new THREE.MeshStandardMaterial({ color:0x111111, roughness:0.4, metalness:0.3,
+                                     emissive:0x000000, emissiveIntensity:0 })
+  );
+  pxCell.userData.projoIndex = i;
+  pxCell.visible = false;
+  _fixtureGrp.add(pxCell);
+  // Nappe wash au sol sous le pixel : 2 couches (proche + halo large et doux)
+  // pour la lueur diffuse d'un ruban LED, pas un spot net.
+  const pxGlow = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
+  pxGlow.rotation.x = -Math.PI/2; pxGlow.renderOrder = 0; pxGlow.visible = false;
+  _poolGrp.add(pxGlow);
+  const pxHalo = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
+  pxHalo.rotation.x = -Math.PI/2; pxHalo.renderOrder = 0; pxHalo.visible = false;
+  _poolGrp.add(pxHalo);
+  // Boîtier physique de la barre/matrice : réglette d'alu sombre (échelle X =
+  // longueur, posée sur le représentant). C'est ce qui fait « fixture » plutôt
+  // que « rectangle lumineux ». Cube unité (1×1×1) → mis à l'échelle au runtime.
+  const pxHousing = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color:0x16171c, roughness:0.55, metalness:0.65 })
+  );
+  pxHousing.userData.projoIndex = i;
+  pxHousing.visible = false;
+  _fixtureGrp.add(pxHousing);
+
   const obj = { cHaze, cGlow, cMain, cCore, pool, halo, ptLight,
                 body, lens, groupRing, parGrp,
                 mhGrp, mhHGrp, mhHead, mhLens,
-                prismMains, prismCores, prismPools, _fx: null };
+                prismMains, prismCores, prismPools,
+                pxCell, pxGlow, pxHalo, pxHousing, _fx: null };
   _objs.push(obj);
   return obj;
 }
@@ -815,6 +901,68 @@ window.updateScene = function(projectors) {
   for (let i = 0; i < projectors.length; i++) {
     const p   = projectors[i];
     const obj = _getObj(i);
+
+    // ── Barre/matrice : rendu per-pixel (cellule légère, pas de corps/faisceau) ──
+    if (p.is_pixel || p.is_master) {
+      // Masquer les formes « fixture classique » de ce slot
+      obj.parGrp.visible = obj.mhGrp.visible = false;
+      obj.cHaze.visible = obj.cGlow.visible =
+      obj.cMain.visible = obj.cCore.visible = false;
+      obj.pool.visible  = obj.halo.visible  = false;
+      obj.ptLight.visible = false;
+      obj._fx = null;
+
+      if (p.is_master) {                 // canaux globaux : aucune forme
+        obj.pxCell.visible = false;
+        obj.pxGlow.visible = false; obj.pxHalo.visible = false;
+        obj.pxHousing.visible = false;
+        continue;
+      }
+      const plvl = Math.max(0, Math.min(1, p.level / 100.0));
+      const hy   = p.fixture_height ?? 7.0;
+
+      // Boîtier de la barre (seul le représentant porte `housing`)
+      if (p.housing) {
+        const h = p.housing;
+        obj.pxHousing.visible = _flags.fixtures;
+        obj.pxHousing.position.set(h.cx, hy + 0.02, h.cz);
+        obj.pxHousing.rotation.y = -h.angle;      // aligne l'axe X sur la barre
+        obj.pxHousing.scale.set(Math.max(0.2, h.len), 0.11, 0.11);
+      } else {
+        obj.pxHousing.visible = false;
+      }
+
+      obj.pxCell.visible = true;
+      obj.pxCell.position.set(p.x, hy, p.z);
+      _colBuf.setRGB(p.r/255, p.g/255, p.b/255);
+      obj.pxCell.material.color.copy(_colBuf).multiplyScalar(0.25);
+      obj.pxCell.material.emissive.copy(_colBuf);
+      // Émissif un peu plus fort : le bloom de la scène crée le glow diffus
+      obj.pxCell.material.emissiveIntensity = plvl > 0 ? (0.5 + plvl * 3.6) : 0;
+      // Nappe wash au sol : couche proche + halo large et très doux
+      if (plvl > 0.02) {
+        obj.pxGlow.visible = true;
+        obj.pxGlow.position.set(p.x, 0.02, p.z);
+        obj.pxGlow.scale.setScalar((0.45 + 1.1 * plvl) * bs);   // plus large
+        obj.pxGlow.material.uniforms.uColor.value.copy(_colBuf);
+        obj.pxGlow.material.uniforms.uAlpha.value = 0.42 * plvl; // plus doux
+        obj.pxHalo.visible = true;
+        obj.pxHalo.position.set(p.x, 0.012, p.z);
+        obj.pxHalo.scale.setScalar((0.45 + 1.1 * plvl) * bs * 2.6);
+        obj.pxHalo.material.uniforms.uColor.value.copy(_colBuf);
+        obj.pxHalo.material.uniforms.uAlpha.value = 0.13 * plvl;
+      } else {
+        obj.pxGlow.visible = false;
+        obj.pxHalo.visible = false;
+      }
+      continue;
+    }
+    // Slot redevenu une fixture classique : cacher les cellules pixel
+    obj.pxCell.visible = false;
+    obj.pxGlow.visible = false;
+    obj.pxHalo.visible = false;
+    obj.pxHousing.visible = false;
+
     const lvl = Math.max(0, Math.min(1, p.level / 100.0));
     const r = p.r/255, g = p.g/255, b = p.b/255;
     _colBuf.setRGB(r, g, b);
@@ -878,7 +1026,18 @@ window.updateScene = function(projectors) {
 
     // ── Faisceaux ────────────────────────────────────────────────────
     if (lvl > 0.03) {
-      const base_r = (0.22 + 2.0 * lvl) * bs;
+      // WASH (PAR LED) vs BEAM (lyre spot). Un PAR est une nappe large et
+      // douce SANS cœur défini ; une lyre est un faisceau serré et punchy.
+      const isWash = p.fixture_type === 'PAR LED';
+      // Zoom DMX → largeur du faisceau (uniquement si le projo a un canal Zoom,
+      // sinon zoom=0 rétrécirait tout). 0 = serré, 255 = large.
+      const _zoomF = p.has_zoom ? (0.6 + (p.zoom / 255) * 1.6) : 1.0;
+      const _spread = (isWash ? 1.9  : 1.0) * _zoomF;  // wash + zoom
+      const _mainA  = isWash ? 0.20 : 0.32;  // wash = corps plus diffus
+      const _coreA  = isWash ? 0.14 : 0.80;  // wash = quasi pas de cœur
+      const _coreR  = isWash ? 0.70 : 0.28;  // wash = cœur large et flou
+
+      const base_r = (0.22 + 2.0 * lvl) * bs * _spread;
       const fx2 = fx, fz2 = fz;
 
       const baseY = goingUp ? 14.5 : 0.03;
@@ -886,33 +1045,34 @@ window.updateScene = function(projectors) {
       // Haze extérieur (très large, très transparent)
       orientCone(obj.cHaze, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 3.0);
       obj.cHaze.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cHaze.material.uniforms.uAlpha.value = 0.04 * lvl;
+      obj.cHaze.material.uniforms.uAlpha.value = (isWash ? 0.05 : 0.04) * lvl;
 
       // Glow intermédiaire
       orientCone(obj.cGlow, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 1.8);
       obj.cGlow.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cGlow.material.uniforms.uAlpha.value = 0.11 * lvl;
+      obj.cGlow.material.uniforms.uAlpha.value = (isWash ? 0.14 : 0.11) * lvl;
 
       // Faisceau principal
       orientCone(obj.cMain, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 1.0);
       obj.cMain.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cMain.material.uniforms.uAlpha.value = 0.32 * lvl;
+      obj.cMain.material.uniforms.uAlpha.value = _mainA * lvl;
 
-      // Cœur brillant (très fin)
-      orientCone(obj.cCore, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 0.28);
+      // Cœur brillant (fin sur une lyre, large et flou sur un wash)
+      orientCone(obj.cCore, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * _coreR);
       obj.cCore.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cCore.material.uniforms.uAlpha.value = 0.80 * lvl;
+      obj.cCore.material.uniforms.uAlpha.value = _coreA * lvl;
 
       if (!goingUp) {
         // Tache principale au sol (avec gobo)
         const goboSlot  = Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8));
         const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
         const goboRot   = ((p.gobo_rotation || 0) / 255.0) * Math.PI * 2;
-        const poolR = (0.35 + 2.2*lvl) * bs;
+        // Wash : nappe au sol plus large et plus douce qu'un spot de lyre
+        const poolR = (0.35 + 2.2*lvl) * bs * (isWash ? 1.6 : 1.0);
         obj.pool.position.set(fx2, 0.02, fz2);
         obj.pool.scale.setScalar(poolR);
         obj.pool.material.uniforms.uColor.value.copy(_colBuf);
-        obj.pool.material.uniforms.uAlpha.value = 0.70 * lvl;
+        obj.pool.material.uniforms.uAlpha.value = (isWash ? 0.52 : 0.70) * lvl;
         obj.pool.material.uniforms.uGoboTex.value   = _goboTextures[goboSlot];
         obj.pool.material.uniforms.uGoboBlend.value = goboBlend;
         obj.pool.material.uniforms.uGoboRot.value   = goboRot;
@@ -971,6 +1131,10 @@ window.updateScene = function(projectors) {
     o.pool.visible  = o.halo.visible  = o.ptLight.visible = false;
     o.parGrp.visible = false;
     o.mhGrp.visible  = false;
+    o.pxCell.visible = false;
+    o.pxGlow.visible = false;
+    o.pxHalo.visible = false;
+    o.pxHousing.visible = false;
     o._fx = null;
   }
 };
@@ -1017,7 +1181,8 @@ window.toggleFlag = function(what) {
   if (what === 'bloom')    { /* handled in animate */ }
   if (what === 'fixtures') { _fixtureGrp.visible = _flags.fixtures; }
   if (what === 'trusses')  { _trussGrp.visible   = _flags.trusses;  }
-  if (what === 'floor')    { floorMesh.visible    = _flags.floor;    }
+  if (what === 'floor')    { floorReflector.visible = _flags.floor;
+                             floorTint.visible      = _flags.floor;   }
   if (what === 'grid')     { gridHelper.visible   = _flags.grid;     }
   if (what === 'fog')      { scene.fog = _flags.fog ? fog : null;    }
 };
@@ -1795,7 +1960,8 @@ window.clearImportedScene = function() { _importedGrp.clear(); };
 // donc les presets ne peuvent pas les enlever. Nécessaire quand le décor vient
 // d'un modèle importé qui apporte son propre sol.
 window.setStageFloor = function(visible) {
-  floorMesh.visible  = visible;
+  floorReflector.visible = visible;
+  floorTint.visible      = visible;
   gridHelper.visible = visible;
   cycMesh.visible    = visible;
 };

@@ -47,7 +47,8 @@ except ImportError:
 
 from light_timeline import (LightTrack, LightClip, PalettePanel, LibraryPanel,
                             xfade_resolve, xfade_obj_get as _clip_obj_get,
-                            scope_layers_to_groups)
+                            scope_layers_to_groups,
+                            REC_MEM_COL_START, REC_MEM_COL_END)
 from core import media_icon, create_icon
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
@@ -259,7 +260,10 @@ class LightTimelineEditor(QDialog):
         self._top_splitter = top_splitter
 
         try:
-            pdf = PlanDeFeu(self.main_window.projectors, main_window=self.main_window, show_toolbar=False)
+            pdf = PlanDeFeu(self.main_window.projectors, main_window=self.main_window,
+                            show_toolbar=False, interactive=True)
+            pdf._menu_at_cursor = True   # menu contextuel au curseur (plan embarqué)
+            pdf._allow_quick_effects = False   # pas d'effets rapides en REC Lumière
             pdf.setStyleSheet("border: none; background: #0d0d0d;")
             top_splitter.addWidget(pdf)
             self._live_pdf = pdf
@@ -382,8 +386,27 @@ class LightTimelineEditor(QDialog):
         self.preview_video_widget = None
         QTimer.singleShot(0, self.setup_audio_player)
 
+        # ── État du poussoir REC ───────────────────────────────────────────────
+        # REC est cliquable dès que rien ne joue. Au clic, il capture l'état
+        # AFFICHÉ du rig (peu importe la source : plan 2D OU bloc de la timeline
+        # sous le curseur). Le message « rien n'est envoyé » n'apparaît que si le
+        # rig est réellement tout noir. Un petit timer synchronise juste l'état
+        # du bouton avec la lecture (grisé pendant qu'on joue).
+        self._update_rec_btn_state()
+        self._rec_watch_timer = QTimer(self)
+        self._rec_watch_timer.setInterval(200)
+        self._rec_watch_timer.timeout.connect(self._update_rec_btn_state)
+        self._rec_watch_timer.start()
+
         # Raccourci Espace global (capturé au niveau fenetre, independant du focus)
         QShortcut(QKeySequence(Qt.Key_Space), self, self.toggle_play_pause)
+
+        # Échap global : sort du mode « bloquer » (peinture) / coupe même si le
+        # focus est sur la bibliothèque après un clic droit. WindowShortcut =
+        # capté partout dans la fenêtre.
+        _esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        _esc.setContext(Qt.WindowShortcut)
+        _esc.activated.connect(self._on_escape)
 
         # Charger sequence existante
         self.load_existing_sequence()
@@ -421,6 +444,9 @@ class LightTimelineEditor(QDialog):
         # Arrêter le timer de preview
         if hasattr(self, 'playback_timer'):
             self.playback_timer.stop()
+        # Arrêter le timer de surveillance REC
+        if hasattr(self, '_rec_watch_timer'):
+            self._rec_watch_timer.stop()
         # L'aperçu ne pilote plus l'effet : rendre la main à send_dmx_update.
         self.main_window._rec_preview_active = False
         # Blackout : remettre tous les projecteurs à niveau 0 au retour
@@ -500,17 +526,10 @@ class LightTimelineEditor(QDialog):
         _aer_lay = QHBoxLayout(self._add_eff_btn_row)
         _aer_lay.setContentsMargins(11, 2, 11, 2)
         _aer_lay.setSpacing(0)
-        self._add_eff_btn = QPushButton("＋ Piste Effet")
+        self._add_eff_btn = QPushButton("＋  Effet")
         self._add_eff_btn.setFixedHeight(20)
-        self._add_eff_btn.setStyleSheet("""
-            QPushButton {
-                background: #1a1a1a; color: #cc44ff;
-                border: 1px dashed #553355; border-radius: 4px;
-                font-size: 10px; font-weight: bold; padding: 0 8px;
-            }
-            QPushButton:hover { background: #2a1a2a; border-color: #cc44ff; }
-            QPushButton:disabled { color: #444; border-color: #333; }
-        """)
+        self._add_eff_btn.setCursor(Qt.PointingHandCursor)
+        self._add_eff_btn.setStyleSheet(self._add_track_btn_style("#cc44ff"))
         self._add_eff_btn.clicked.connect(self._add_effect_track)
         _aer_lay.addWidget(self._add_eff_btn)
         _aer_lay.addStretch()
@@ -522,7 +541,27 @@ class LightTimelineEditor(QDialog):
         seq_track.setMinimumHeight(50)
         self.tracks.append(seq_track)
         self.track_map["Séquence"] = seq_track
+        self._sequence_tracks = [seq_track]
         tracks_layout.addWidget(seq_track)
+
+        # ── Bouton + Piste Séquence (superposition HTP de plusieurs mémoires) ─
+        self._add_seq_btn_row = QWidget()
+        self._add_seq_btn_row.setFixedHeight(24)
+        self._add_seq_btn_row.setStyleSheet("background: #0a0a0a;")
+        _asr_lay = QHBoxLayout(self._add_seq_btn_row)
+        _asr_lay.setContentsMargins(11, 2, 11, 2)
+        _asr_lay.setSpacing(0)
+        self._add_seq_btn = QPushButton("＋  Séquence")
+        self._add_seq_btn.setFixedHeight(20)
+        self._add_seq_btn.setCursor(Qt.PointingHandCursor)
+        self._add_seq_btn.setStyleSheet(self._add_track_btn_style("#aa77ff"))
+        self._add_seq_btn.setToolTip(
+            "Ajoute une piste Séquence : plusieurs mémoires jouées en même temps.\n"
+            "Sur un projecteur partagé, la plus lumineuse gagne (HTP).")
+        self._add_seq_btn.clicked.connect(self._add_sequence_track)
+        _asr_lay.addWidget(self._add_seq_btn)
+        _asr_lay.addStretch()
+        tracks_layout.addWidget(self._add_seq_btn_row)
 
         # ── Piste Position Lyre (si au moins une lyre dans le patch) ──────────
         has_lyres = any(getattr(p, 'fixture_type', '') == 'Moving Head' for p in projectors)
@@ -547,6 +586,35 @@ class LightTimelineEditor(QDialog):
         self.track_douche2 = self.track_map.get("E")
         self.track_douche3 = self.track_map.get("F")
         self.track_contre = self.track_map.get("C")
+
+    @staticmethod
+    def _add_track_btn_style(accent):
+        """
+        Boutons « + Piste » : discrets. Gris neutre au repos, l'accent
+        n'apparaît qu'au survol — beaucoup moins fluo qu'une pastille colorée.
+        """
+        return f"""
+            QPushButton {{
+                background: transparent; color: #6a6a72;
+                border: 1px solid #2a2a2e; border-radius: 6px;
+                font-size: 11px; font-weight: 500; padding: 3px 14px;
+            }}
+            QPushButton:hover {{ background: {accent}14; color: {accent};
+                                 border-color: {accent}55; }}
+            QPushButton:disabled {{ color: #333; border-color: #1e1e1e; }}
+        """
+
+    @staticmethod
+    def _remove_track_btn_style(accent):
+        """Style commun du × de suppression d'une piste supplémentaire."""
+        return f"""
+            QPushButton {{
+                background: transparent; color: #666;
+                border: none; border-radius: 8px;
+                font-size: 13px; font-weight: bold; padding: 0;
+            }}
+            QPushButton:hover {{ background: {accent}; color: #000; }}
+        """
 
     _MAX_EFFECT_TRACKS = 8
 
@@ -577,16 +645,11 @@ class LightTimelineEditor(QDialog):
         self._effect_tracks.append(new_track)
         # Bouton × de suppression
         rm_btn = QPushButton("×", new_track)
-        rm_btn.setFixedSize(14, 14)
-        rm_btn.move(139, 3)
-        rm_btn.setStyleSheet("""
-            QPushButton {
-                background: #3a1a1a; color: #ff6666;
-                border: none; border-radius: 3px;
-                font-size: 9px; font-weight: bold; padding: 0;
-            }
-            QPushButton:hover { background: #cc3333; color: white; }
-        """)
+        rm_btn.setFixedSize(16, 16)
+        rm_btn.move(118, 2)
+        rm_btn.setCursor(Qt.PointingHandCursor)
+        rm_btn.setToolTip("Supprimer cette piste")
+        rm_btn.setStyleSheet(self._remove_track_btn_style("#cc44ff"))
         rm_btn.clicked.connect(lambda checked=False, t=new_track: self._remove_effect_track(t))
         rm_btn.show()
         if len(self._effect_tracks) >= self._MAX_EFFECT_TRACKS:
@@ -608,6 +671,281 @@ class LightTimelineEditor(QDialog):
         self._tracks_layout.removeWidget(track)
         track.deleteLater()
         self._add_eff_btn.setEnabled(True)
+
+    # ── REC séquence (poussoir) ────────────────────────────────────────────────
+
+    def _rec_capture_block(self):
+        """Poussoir REC : capture le look live (composé sur le plan 2D) en une
+        mémoire REC, l'insère comme bloc dans la piste Séquence à la position du
+        curseur, puis avance le curseur d'un bloc (durée BLOC)."""
+        mw = self.main_window
+        seq_track = self.track_map.get("Séquence")
+        if seq_track is None or mw is None:
+            return
+        # Jamais pendant la lecture (le bouton est déjà grisé, garde défensive).
+        if self._is_playing():
+            return
+
+        # ── Rien envoyé au plan 2D → guider l'utilisateur (proposer un noir) ────
+        # Le rig est-il allumé ? (état affiché, source indifférente : plan 2D OU
+        # bloc de timeline sous le curseur). Sinon → proposer un blackout.
+        force_black = False
+        if not self._rig_is_lit():
+            box = QMessageBox(self)
+            box.setWindowTitle("REC séquence")
+            box.setIcon(QMessageBox.Information)
+            box.setText("Rien n'est envoyé dans votre plan de feu.")
+            box.setInformativeText(
+                "Faites un clic droit sur vos projecteurs pour leur adresser un état,\n"
+                "ou enregistrez un blackout comme étape de séquence.")
+            box.setStyleSheet("background:#1e1e1e; color:white;")
+            b_black = box.addButton("Enregistrer un blackout", QMessageBox.AcceptRole)
+            box.addButton("Annuler", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is not b_black:
+                return
+            # On est ici car le rig est déjà tout noir (_rig_is_lit() faux) → le
+            # snapshot capturera bien un blackout, rien à forcer.
+            force_black = True
+
+        t0  = max(0.0, float(self.playback_position))
+        dur = seq_track._default_block_dur_ms()
+
+        # ── Écrasement : blocs de séquence chevauchant [t0, t1) ────────────────
+        # Coupe « rasoir » : on conserve la 1ère partie du bloc (avant le curseur)
+        # et sa queue éventuelle (après le nouveau bloc) ; seul le milieu couvert
+        # par la capture est remplacé.
+        t1 = t0 + dur
+        overlap = [c for c in seq_track.clips
+                   if c.start_time < t1 and c.start_time + c.duration > t0]
+        if overlap:
+            ret = QMessageBox.question(
+                self, "REC séquence",
+                f"{len(overlap)} bloc(s) chevauchent cette position.\n"
+                "La 1ère partie des blocs (avant le curseur) est conservée,\n"
+                "le reste est remplacé par la nouvelle capture. Continuer ?",
+                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+            if ret != QMessageBox.Yes:
+                return
+            for c in list(overlap):
+                a = c.start_time
+                b = c.start_time + c.duration
+                keep_left  = a < t0 - 1     # tolérance 1 ms
+                keep_right = b > t1 + 1
+                if keep_left and keep_right:
+                    # Le nouveau bloc coupe c en deux → tête tronquée + queue clonée.
+                    c.duration = t0 - a
+                    tail = seq_track._clone_clip(c, seq_track)
+                    tail.start_time = t1
+                    tail.duration   = b - t1
+                    seq_track.clips.append(tail)
+                elif keep_left:
+                    c.duration = t0 - a          # garder la 1ère partie
+                elif keep_right:
+                    c.start_time = t1            # garder la queue
+                    c.duration   = b - t1
+                else:
+                    if c in seq_track.clips:
+                        seq_track.clips.remove(c)
+                    if c in getattr(seq_track, 'selected_clips', []):
+                        seq_track.selected_clips.remove(c)
+
+        # ── Allouer un slot mémoire REC (colonnes réservées, hors AKAI) ────────
+        slot = self._alloc_rec_memory_slot()
+        if slot is None:
+            QMessageBox.warning(
+                self, "REC séquence",
+                "Plus de slot REC disponible (grille pleine).\n"
+                "Supprime d'anciennes captures REC dans la bibliothèque.")
+            return
+        col, row = slot
+        name = self._next_rec_name()
+
+        # ── Snapshot du look courant (couleur + lyres + canaux bruts/strobe) ───
+        try:
+            snap = mw._build_snapshot()
+        except Exception:
+            snap = {"projectors": [], "effect": {}, "duration": 0}
+        snap["label"] = "Cue 1"
+        mw.memories[col][row] = {"cues": [snap], "loop": True, "name": name, "_rec": True}
+        try:
+            mw._save_akai_config_auto()
+        except Exception:
+            pass
+
+        # ── Bloc dans la piste Séquence, calé exactement au curseur ────────────
+        # Couleur dominante calculée sur le cue (les projecteurs sont imbriqués
+        # dans cues[0], pas au niveau haut de la mémoire).
+        color = QColor("#0a0a0a") if force_black \
+            else PalettePanel._dominant_color(snap, mw, col, row)
+        clip = seq_track.add_clip_direct(t0, dur, color, 100)
+        clip.memory_ref   = (col, row)
+        clip.memory_label = name
+        seq_track.update()
+
+        # ── Rafraîchir la biblio (la mémoire REC apparaît dans la section REC) ─
+        if getattr(self, '_library', None):
+            try:
+                self._library.refresh()
+            except Exception:
+                pass
+
+        if hasattr(self, 'save_state'):
+            self.save_state()
+
+        # ── Avancer le curseur d'un bloc ───────────────────────────────────────
+        self._advance_playhead(dur)
+
+    def _rec_clear(self):
+        """CLEAR : efface la compo MANUELLE envoyée au plan 2D, mais CONSERVE ce
+        que la timeline pilote au curseur. On ré-applique l'état timeline à la
+        position (reset complet des projos puis application des seuls clips actifs
+        → pousse le DMX + rafraîchit le plan). S'il n'y a rien sur la timeline au
+        curseur, ça revient à un blackout."""
+        try:
+            self._apply_preview_to_projectors(self.playback_position)
+        except Exception:
+            pass
+
+    def _mem_col_mapped_anywhere(self, col):
+        """Vrai si cette colonne mémoire est mappée à un fader AKAI (dans n'importe
+        quelle page de layout ou le fader_map courant) → à éviter pour les REC."""
+        mw = self.main_window
+        pages = getattr(mw, '_bank_pages', None) or []
+        for page in pages:
+            for s in (page or []):
+                if isinstance(s, dict) and s.get('type') == 'memory' and s.get('mem_col') == col:
+                    return True
+        for s in (getattr(mw, '_fader_map', None) or []):
+            if isinstance(s, dict) and s.get('type') == 'memory' and s.get('mem_col') == col:
+                return True
+        return False
+
+    def _alloc_rec_memory_slot(self):
+        """Premier slot libre dans la plage réservée au REC, en sautant les
+        colonnes mappées sur l'AKAI (pour rester invisible sur le contrôleur)."""
+        mems = getattr(self.main_window, 'memories', None)
+        if not mems:
+            return None
+        for col in range(REC_MEM_COL_START, REC_MEM_COL_END + 1):
+            if col >= len(mems):
+                break
+            if self._mem_col_mapped_anywhere(col):
+                continue
+            for row in range(len(mems[col])):
+                if mems[col][row] is None:
+                    return (col, row)
+        return None
+
+    def _next_rec_name(self):
+        """Nom auto « REC n » (n = plus grand indice « REC n » existant + 1).
+        Compte TOUTES les mémoires nommées REC (taguées ou anciennes) pour ne
+        jamais réutiliser un numéro."""
+        import re
+        mems = getattr(self.main_window, 'memories', None) or []
+        mx = 0
+        for col_mems in mems:
+            for mem in (col_mems or []):
+                if isinstance(mem, dict):
+                    m = re.match(r'REC\s+(\d+)', mem.get('name', '') or '')
+                    if m:
+                        mx = max(mx, int(m.group(1)))
+        return f"REC {mx + 1}"
+
+    def _advance_playhead(self, delta_ms):
+        """Avance le curseur de delta_ms (borné à la durée du média) et rafraîchit."""
+        new_pos = min(self.playback_position + delta_ms, self.media_duration)
+        self.playback_position = new_pos
+        self._prev_playback_position = new_pos
+        if self.preview_player is not None:
+            try:
+                self.preview_player.setPosition(int(new_pos))
+            except Exception:
+                pass
+        pos_sec = int(new_pos / 1000)
+        self._playhead_time_str = f"{pos_sec // 60}:{pos_sec % 60:02d}"
+        self.ruler.update()
+        for track in self.tracks:
+            track.update()
+        self.track_waveform.update()
+        self.ensure_playhead_visible()
+
+    # ── Armement du poussoir REC (guard lecture) ───────────────────────────────
+
+    def _is_playing(self):
+        """Vrai si la preview OU le player principal est en lecture."""
+        if self.preview_player is not None and \
+                self.preview_player.playbackState() == QMediaPlayer.PlayingState:
+            return True
+        try:
+            return self.main_window.player.playbackState() == QMediaPlayer.PlayingState
+        except Exception:
+            return False
+
+    def _rig_is_lit(self):
+        """Vrai si au moins un projecteur est allumé (état actuellement affiché,
+        quelle qu'en soit la source : plan 2D ou bloc de timeline sous le curseur)."""
+        try:
+            return any(getattr(p, 'level', 0) > 0 for p in self.main_window.projectors)
+        except Exception:
+            return False
+
+    def _update_rec_btn_state(self):
+        """REC cliquable à l'arrêt (grisé seulement pendant la lecture)."""
+        if not hasattr(self, '_rec_btn'):
+            return
+        self._rec_btn.setEnabled(not self._is_playing())
+
+    _MAX_SEQUENCE_TRACKS = 8
+
+    def _add_sequence_track(self):
+        """Ajoute une piste Séquence supplémentaire (superposition HTP)."""
+        if len(self._sequence_tracks) >= self._MAX_SEQUENCE_TRACKS:
+            return
+        existing = {t.name for t in self._sequence_tracks}
+        n = 2
+        while f"Séquence {n}" in existing:
+            n += 1
+        self._add_sequence_track_named(f"Séquence {n}")
+
+    def _add_sequence_track_named(self, name):
+        """Crée une piste Séquence et l'insère juste avant le bouton +."""
+        if len(self._sequence_tracks) >= self._MAX_SEQUENCE_TRACKS:
+            return
+        new_track = LightTrack(name, self.media_duration, self, "#aa77ff")
+        new_track.is_sequence_track = True
+        new_track.setMinimumHeight(50)
+        idx = self._tracks_layout.indexOf(self._add_seq_btn_row)
+        self._tracks_layout.insertWidget(idx, new_track)
+        last_idx = self.tracks.index(self._sequence_tracks[-1])
+        self.tracks.insert(last_idx + 1, new_track)
+        self.track_map[name] = new_track
+        self._sequence_tracks.append(new_track)
+        rm_btn = QPushButton("×", new_track)
+        rm_btn.setFixedSize(16, 16)
+        rm_btn.move(118, 2)
+        rm_btn.setCursor(Qt.PointingHandCursor)
+        rm_btn.setToolTip("Supprimer cette piste")
+        rm_btn.setStyleSheet(self._remove_track_btn_style("#aa77ff"))
+        rm_btn.clicked.connect(lambda checked=False, t=new_track: self._remove_sequence_track(t))
+        rm_btn.show()
+        if len(self._sequence_tracks) >= self._MAX_SEQUENCE_TRACKS:
+            self._add_seq_btn.setEnabled(False)
+        if self.track_waveform.waveform_data:
+            new_track.waveform_data = self.track_waveform.waveform_data
+        new_track.update()
+
+    def _remove_sequence_track(self, track):
+        """Supprime une piste Séquence supplémentaire (la première reste)."""
+        if track not in self._sequence_tracks or self._sequence_tracks.index(track) == 0:
+            return
+        self._sequence_tracks.remove(track)
+        self.track_map.pop(track.name, None)
+        if track in self.tracks:
+            self.tracks.remove(track)
+        self._tracks_layout.removeWidget(track)
+        track.deleteLater()
+        self._add_seq_btn.setEnabled(True)
 
     def _get_waveform_cache_path(self):
         """Retourne le chemin du fichier cache pour la forme d'onde"""
@@ -1064,12 +1402,13 @@ class LightTimelineEditor(QDialog):
         self.paint_btn.setCheckable(True)
         self.paint_btn.setVisible(False)
         self.paint_btn.clicked.connect(self.toggle_paint_mode)
-        self.paint_btn.setToolTip("Peinture — clic pose un bloc.  Shift + clic = sur TOUS les groupes.")
+        self.paint_btn.setToolTip("Peinture — clic pose un bloc.")
 
-        # Indice visible : affiché uniquement quand le mode Peinture est actif
-        self._paint_hint = QLabel("💡 Shift + clic = poser sur tous les groupes")
+        # Info-bulle « <nom> bloqué » — visible seulement en mode peinture.
+        self._paint_hint = QLabel("")
         self._paint_hint.setStyleSheet(
-            "color:#cc44ff; font-size:11px; font-weight:600; padding:0 10px; background:transparent;"
+            "color:#00d4ff; font-size:11px; font-weight:600; padding:3px 12px;"
+            " background:#0a2a36; border:1px solid #00d4ff66; border-radius:6px;"
         )
         self._paint_hint.setVisible(False)
         header_layout.addWidget(self._paint_hint)
@@ -1144,6 +1483,41 @@ class LightTimelineEditor(QDialog):
             val_width=48,
             tip="Durée par défaut des blocs déposés / peints")
         header_layout.addWidget(bloc_col)
+
+        # ── Bouton ● REC : capture le look 2D live en un bloc de séquence ──────
+        header_layout.addSpacing(8)
+        self._rec_btn = QPushButton("●  REC")
+        self._rec_btn.setToolTip(
+            "Envoyez votre plan de feu, en cliquant sur vos projecteurs. Puis cliquez sur ce bouton REC.\n"
+            "Votre séquence sera automatiquement ajoutée dans la ligne Séquence.")
+        self._rec_btn.setFixedHeight(_BTN)
+        self._rec_btn.setCursor(Qt.PointingHandCursor)
+        self._rec_btn.setFocusPolicy(Qt.NoFocus)
+        self._rec_btn.setStyleSheet(
+            "QPushButton { background:#2a0d0d; color:#ff5555; border:1px solid #7a2a2a;"
+            " border-radius:6px; font-size:12px; font-weight:bold; padding:0 12px; }"
+            "QPushButton:hover { background:#3a1010; color:#ff7777; border-color:#aa3333; }"
+            "QPushButton:pressed { background:#550000; color:#ffffff; }"
+        )
+        self._rec_btn.clicked.connect(self._rec_capture_block)
+        header_layout.addWidget(self._rec_btn)
+
+        # ── Bouton CLEAR : coupe le look en cours sur le plan 2D (blackout) ────
+        self._rec_clear_btn = QPushButton("CLEAR")
+        self._rec_clear_btn.setToolTip(
+            "Efface votre composition manuelle sur le plan 2D.\n"
+            "Conserve ce que la timeline envoie au curseur.")
+        self._rec_clear_btn.setFixedHeight(_BTN)
+        self._rec_clear_btn.setCursor(Qt.PointingHandCursor)
+        self._rec_clear_btn.setFocusPolicy(Qt.NoFocus)
+        self._rec_clear_btn.setStyleSheet(
+            "QPushButton { background:#1e1e1e; color:#bbb; border:1px solid #3a3a3a;"
+            " border-radius:6px; font-size:11px; font-weight:bold; padding:0 12px; }"
+            "QPushButton:hover { background:#2a2a2a; color:#fff; border-color:#777; }"
+            "QPushButton:pressed { background:#333; }"
+        )
+        self._rec_clear_btn.clicked.connect(self._rec_clear)
+        header_layout.addWidget(self._rec_clear_btn)
 
         def _upd_dur_lbl(v):
             txt = (f"{v:.0f}" if float(v).is_integer() else f"{v:.1f}") + " s"
@@ -2049,47 +2423,41 @@ class LightTimelineEditor(QDialog):
                                 self.main_window._update_color_wheel(p, color)
                     break
 
-        # ── 2) Appliquer la séquence par-dessus les groupes (priorité haute) ──
-        if new_seq_clip:
-            mem_ref = getattr(new_seq_clip, 'memory_ref', None)
-            if mem_ref:
-                mem_col, row = mem_ref
-                memories = getattr(self.main_window, 'memories', None)
-                if memories and mem_col < len(memories) and row < len(memories[mem_col]):
-                    mem = memories[mem_col][row]
-                    if mem:
-                        # Lire depuis les cues (format actuel) ou le niveau supérieur (ancienne migration)
-                        cues = mem.get("cues", [])
-                        if cues:
-                            cue_idx = getattr(new_seq_clip, 'cue_index', None) or 0
-                            cue = cues[min(cue_idx, len(cues) - 1)]
-                            projectors_state = cue.get("projectors", [])
-                        else:
-                            projectors_state = mem.get("projectors", [])
-                        brightness = new_seq_clip.intensity / 100.0
-                        for i, ps in enumerate(projectors_state):
-                            if i >= len(projectors):
-                                continue
-                            p = projectors[i]
-                            # Pan/Tilt toujours appliqués (même si projecteur éteint)
-                            if "pan"  in ps: p.pan  = ps["pan"]
-                            if "tilt" in ps: p.tilt = ps["tilt"]
-                            p.strobe_speed = int(ps.get("strobe_speed", 0))
-                            # Canaux bruts (Mode…) : parité avec la restitution (sequencer.py)
-                            p.channel_extras = dict(ps.get("channel_extras", {}) or {})
-                            if ps.get("level", 0) > 0:
-                                lvl = int(ps["level"] * brightness)
-                                base = QColor(ps["base_color"])
-                                p.level = lvl
-                                p.base_color = base
-                                self.main_window._fx_clip_ids.add(id(p))
-                                p.color = QColor(
-                                    int(base.red()   * lvl / 100.0),
-                                    int(base.green() * lvl / 100.0),
-                                    int(base.blue()  * lvl / 100.0),
-                                )
-                                if hasattr(self.main_window, '_update_color_wheel'):
-                                    self.main_window._update_color_wheel(p, base)
+        # ── 2) Appliquer les séquences par-dessus les groupes (HTP) ───────────
+        # Toutes les pistes Séquence, fusionnées en HTP via la MÊME fonction que
+        # la restitution → l'aperçu montre exactement ce que jouera le show.
+        from light_timeline import apply_seq_memories_htp
+
+        def _faded_brightness(clip):
+            _seq_i = clip.intensity
+            _dur = clip.duration
+            _fi = getattr(clip, 'fade_in_duration', 0)
+            _fo = getattr(clip, 'fade_out_duration', 0)
+            if _dur > 0:
+                _rel = (current_time - clip.start_time) / _dur
+                if _fi > 0 and _rel < (_fi / _dur):
+                    _seq_i *= _rel / (_fi / _dur)
+                if _fo > 0 and _rel > (1 - _fo / _dur):
+                    _seq_i *= (1 - _rel) / (_fo / _dur)
+            return max(0.0, _seq_i) / 100.0
+
+        _seq_entries = []
+        for _t in self.tracks:
+            if not getattr(_t, 'is_sequence_track', False):
+                continue
+            for _c in _t.clips:
+                if not getattr(_c, 'memory_ref', None):
+                    continue
+                if _c.start_time <= current_time <= _c.start_time + _c.duration:
+                    _seq_entries.append({
+                        'memory_ref': _c.memory_ref,
+                        'cue_index': getattr(_c, 'cue_index', None),
+                        'brightness': _faded_brightness(_c),
+                    })
+        if _seq_entries:
+            apply_seq_memories_htp(
+                _seq_entries, getattr(self.main_window, 'memories', None),
+                projectors, self.main_window)
 
         # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
         # La preview pilote l'effet elle-même, frame par frame, au rythme du
@@ -2138,6 +2506,8 @@ class LightTimelineEditor(QDialog):
                 tname = clip_data.get('track', '')
                 if tname.startswith('Effet') and tname != 'Effet' and tname not in self.track_map:
                     self._add_effect_track_named(tname)
+                elif tname.startswith('Séquence') and tname != 'Séquence' and tname not in self.track_map:
+                    self._add_sequence_track_named(tname)
 
             for clip_data in clips_data:
                 track_name = clip_data.get('track')
@@ -3110,7 +3480,10 @@ class LightTimelineEditor(QDialog):
         rv.addWidget(pdf_title)
 
         try:
-            pdf = PlanDeFeu(self.main_window.projectors, main_window=self.main_window, show_toolbar=False)
+            pdf = PlanDeFeu(self.main_window.projectors, main_window=self.main_window,
+                            show_toolbar=False, interactive=True)
+            pdf._menu_at_cursor = True   # menu contextuel au curseur (plan embarqué)
+            pdf._allow_quick_effects = False   # pas d'effets rapides en REC Lumière
             pdf.setStyleSheet("border: none; background: #0d0d0d;")
             rv.addWidget(pdf, 1)
             self._live_pdf = pdf
@@ -3556,8 +3929,7 @@ class LightTimelineEditor(QDialog):
         """Active/desactive le mode PAINT (pinceau sur la timeline)"""
         self.paint_mode = not self.paint_mode
 
-        if hasattr(self, '_paint_hint'):
-            self._paint_hint.setVisible(self.paint_mode)
+        self._update_paint_hint()
 
         if self.paint_mode:
             self.setCursor(Qt.CrossCursor)
@@ -3580,6 +3952,49 @@ class LightTimelineEditor(QDialog):
                 item._is_paint_active = False
                 try: item.update()
                 except RuntimeError: pass
+
+    @staticmethod
+    def _paint_brush_name(brush):
+        """Nom lisible du pinceau actif (pour l'info-bulle « bloqué »)."""
+        if not brush:
+            return ""
+        t = brush.get("type")
+        if t == "mem":
+            return brush.get("label") or "Mémoire"
+        if t == "effect":
+            return (brush.get("eff") or {}).get("name") or "Effet"
+        if t == "bicolor":
+            return "Bicouleur"
+        return "Couleur"
+
+    def _update_paint_hint(self):
+        """Affiche/masque l'info-bulle de statut du mode « bloquer » (peinture)."""
+        if not hasattr(self, '_paint_hint'):
+            return
+        brush = getattr(self, 'paint_brush', None)
+        if getattr(self, 'paint_mode', False) and brush:
+            name = self._paint_brush_name(brush)
+            fem = brush.get("type") in ("color", "bicolor")   # accord grammatical
+            bloq = "bloquée" if fem else "bloqué"
+            self._paint_hint.setText(
+                f"🔒 {name} {bloq} — cliquez sur la timeline pour ajouter vos blocs"
+                "   ·   Échap pour quitter")
+            self._paint_hint.setVisible(True)
+        else:
+            self._paint_hint.setVisible(False)
+
+    def _on_escape(self):
+        """Échap : sort du mode « bloquer » (peinture) / coupe, puis déselectionne.
+        Ne ferme jamais l'éditeur (comportement historique)."""
+        if getattr(self, 'cut_mode', False):
+            if hasattr(self, 'cut_btn'):
+                self.cut_btn.setChecked(False)
+            self.toggle_cut_mode()
+        if getattr(self, 'paint_mode', False):
+            if hasattr(self, 'paint_btn'):
+                self.paint_btn.setChecked(False)
+            self.toggle_paint_mode()
+        self.clear_all_selections()
 
     def clear_all_selections(self):
         """Deselectionne tous les clips sur toutes les pistes"""

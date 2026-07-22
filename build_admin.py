@@ -134,7 +134,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon={repr(str(BASE_DIR / "mystrow.ico"))},
+    icon={repr(str(BASE_DIR / "mystrow_admin.ico"))},
 )
 
 coll = COLLECT(

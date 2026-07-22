@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
     QScrollArea, QWidget, QLineEdit, QComboBox, QFrame,
     QMessageBox, QListWidget, QListWidgetItem, QFileDialog,
     QAbstractItemView, QSizePolicy, QSplitter, QMenu,
-    QStyledItemDelegate, QGridLayout,
+    QStyledItemDelegate, QGridLayout, QSpinBox, QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QRectF, QMimeData, QPoint
+
+from core import channel_label
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QDrag, QPixmap, QCursor
 
 import gzip
@@ -192,8 +194,9 @@ class DmxPreviewWidget(QWidget):
             painter.drawText(x, 3, bw, 11, Qt.AlignCenter, str(i + 1))
             painter.setPen(c.lighter(170))
             painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            _lbl = channel_label(ch)
             painter.drawText(x, 14, bw, h - 17, Qt.AlignCenter,
-                             ch if len(ch) <= 5 else ch[:4] + ".")
+                             _lbl if len(_lbl) <= 5 else _lbl[:4] + ".")
         painter.end()
 
 
@@ -333,7 +336,7 @@ class _ProfileBlockDelegate(QStyledItemDelegate):
         # Nom du canal (centré, bold, texte contrasté)
         painter.setPen(text_col)
         painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        painter.drawText(r, Qt.AlignCenter, ch)
+        painter.drawText(r, Qt.AlignCenter, channel_label(ch))
 
         # Badge valeur fixe — fond semi-transparent, texte contrasté
         if val is not None:
@@ -501,9 +504,9 @@ class _ProfileStrip(QListWidget):
         return result
 
     def add_channel(self, ch_type) -> bool:
-        if ch_type != "Mode":
-            if any(self.item(i).data(_ROLE_CH) == ch_type for i in range(self.count())):
-                return False
+        # Les doublons sont autorisés : un appareil à pixels répète son motif
+        # (R V B R V B…), et le moteur DMX écrit chaque canal par son INDEX,
+        # pas par son type — toutes les barres OFL en contiennent déjà.
         self.addItem(self._make_item(ch_type))
         self.scrollToItem(self.item(self.count() - 1))
         self.order_changed.emit()
@@ -556,7 +559,7 @@ class _PaletteBlock(QWidget):
         # Nom centré, texte contrasté
         painter.setPen(self._text_col)
         painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        painter.drawText(r, Qt.AlignCenter, self._ch)
+        painter.drawText(r, Qt.AlignCenter, channel_label(self._ch))
         painter.end()
 
     def mousePressEvent(self, event):
@@ -958,6 +961,33 @@ class FixtureEditorDialog(QDialog):
         rv.addWidget(self._presets_wrap)
         rv.addSpacing(14)
 
+        # ── Générateur barre / matrice à pixels ───────────────────────────────
+        # Une barre 16 px RGB fait 48 canaux : les poser un par un est
+        # impraticable, et surtout le résultat ne serait qu'un gros projecteur.
+        # Ce générateur écrit le profil ET la géométrie qui en fait une barre.
+        px_row = QHBoxLayout()
+        px_row.setSpacing(6)
+        btn_px = QPushButton("▦  Générer une barre / matrice à pixels")
+        btn_px.setFixedHeight(28)
+        btn_px.setCursor(Qt.PointingHandCursor)
+        btn_px.setToolTip(
+            "Compose automatiquement le profil d'un appareil à pixels :\n"
+            "canaux globaux puis le motif répété pour chaque pixel.\n"
+            "Sans ça, MyStrow verrait un seul projecteur au lieu d'une barre.")
+        btn_px.setStyleSheet(
+            "QPushButton{background:#1a1024;color:#cc77dd;border:1px solid #3a2a4a;"
+            "border-radius:5px;font-size:11px;font-weight:bold;padding:0 12px;}"
+            "QPushButton:hover{background:#241634;border-color:#cc77dd;}")
+        btn_px.clicked.connect(self._gen_pixel_profile)
+        px_row.addWidget(btn_px)
+
+        self._px_info = QLabel("")
+        self._px_info.setStyleSheet("font-size:10px;color:#cc77dd;background:transparent;")
+        px_row.addWidget(self._px_info)
+        px_row.addStretch()
+        rv.addLayout(px_row)
+        rv.addSpacing(10)
+
         # Ligne de profil (blocs drag & drop)
         profile_hint = QLabel(
             "Profil actuel — glisser pour réordonner · double-clic/Suppr pour retirer · clic droit pour valeur fixe"
@@ -1076,6 +1106,13 @@ class FixtureEditorDialog(QDialog):
         self._rebuild_presets(fx.get("fixture_type", "PAR LED"))
         self._mode_name_edit.setText(fx.get("mode_name", ""))
         max_ch = fx.get("max_channels", 512)
+        # Repartir de la géométrie de CETTE fixture (ou aucune) : sans ça,
+        # celle générée pour la précédente serait recollée à la suivante.
+        self._pixel_matrix = dict(fx["matrix"]) if isinstance(fx.get("matrix"), dict) else None
+        if hasattr(self, "_px_info"):
+            _m = self._pixel_matrix
+            self._px_info.setText(
+                f"▦ {_m['rows']}×{_m['cols']} = {_m['pixel_count']} pixels" if _m else "")
         self._ch_list.set_channels(fx.get("profile", []), fx.get("defaults"))
         self._btn_delete.setEnabled(True)
         self._my_list.blockSignals(True)
@@ -1230,6 +1267,13 @@ class FixtureEditorDialog(QDialog):
         if fx.get("mode_name"):
             self._mode_name_edit.setText(fx["mode_name"])
         max_ch = fx.get("max_channels", 512)
+        # Repartir de la géométrie de CETTE fixture (ou aucune) : sans ça,
+        # celle générée pour la précédente serait recollée à la suivante.
+        self._pixel_matrix = dict(fx["matrix"]) if isinstance(fx.get("matrix"), dict) else None
+        if hasattr(self, "_px_info"):
+            _m = self._pixel_matrix
+            self._px_info.setText(
+                f"▦ {_m['rows']}×{_m['cols']} = {_m['pixel_count']} pixels" if _m else "")
         self._ch_list.set_channels(fx.get("profile", []), fx.get("defaults"))
 
     # ── Presets dynamiques ────────────────────────────────────────────────────
@@ -1265,8 +1309,127 @@ class FixtureEditorDialog(QDialog):
         channels = self._ch_list.get_channels()
         n = len(channels)
         self._ch_count_lbl.setText(f"{n} canal{'x' if n > 1 else ''}")
+        self._check_pixel_hint(channels)
+
+    def _check_pixel_hint(self, channels):
+        """
+        Prévient quand un motif de couleur se répète sans géométrie déclarée.
+
+        Poser R V B R V B à la main donne un profil DMX juste, mais MyStrow n'y
+        verra qu'UN projecteur : sans la métadonnée `matrix`, pas de bloc sur le
+        plan de feu ni d'effet par pixel. L'utilisateur ne peut pas deviner que
+        son travail correct produira un résultat décevant — autant le lui dire
+        pendant qu'il compose, pas après.
+        """
+        if not hasattr(self, '_px_info'):
+            return
+        _mx = getattr(self, '_pixel_matrix', None)
+        if _mx:
+            self._px_info.setText(
+                f"▦ {_mx['rows']}×{_mx['cols']} = {_mx['pixel_count']} pixels")
+            self._px_info.setStyleSheet(
+                "font-size:10px;color:#cc77dd;background:transparent;")
+            return
+
+        # Un canal de couleur répété = motif par pixel très probable
+        _reps = max((channels.count(c) for c in ("R", "G", "B", "W")), default=0)
+        if _reps >= 2:
+            self._px_info.setText(
+                f"⚠  Motif répété {_reps}× — utilise « ▦ Générer » pour que ce "
+                f"soit une vraie barre à pixels")
+            self._px_info.setStyleSheet(
+                "font-size:10px;color:#ffaa33;font-weight:bold;background:transparent;")
+            self._px_info.setToolTip(
+                "Le profil sera correct et l'appareil s'allumera, mais MyStrow y\n"
+                "verra UN projecteur : pas de bloc sur le plan de feu, pas\n"
+                "d'effet par pixel, pas de chenillard.\n"
+                "Le générateur ▦ pose en plus la géométrie qui manque.")
+        else:
+            self._px_info.setText("")
+            self._px_info.setToolTip("")
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
+
+    def _gen_pixel_profile(self):
+        """Compose le profil d'un appareil à pixels et retient sa géométrie."""
+        from PySide6.QtWidgets import QDialogButtonBox, QFormLayout
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Barre / matrice à pixels")
+        dlg.setStyleSheet(self.styleSheet())
+        form = QFormLayout(dlg)
+        form.setContentsMargins(18, 16, 18, 12)
+        form.setSpacing(10)
+
+        sp_rows = QSpinBox(); sp_rows.setRange(1, 64); sp_rows.setValue(1)
+        sp_cols = QSpinBox(); sp_cols.setRange(1, 128); sp_cols.setValue(8)
+        cb_cell = QComboBox()
+        _CELLS = [("RVB", ["R", "G", "B"]),
+                  ("RVB + Blanc", ["R", "G", "B", "W"]),
+                  ("RVB + Blanc + Ambre", ["R", "G", "B", "W", "Ambre"]),
+                  ("RVB + Dim", ["Dim", "R", "G", "B"]),
+                  ("Blanc seul", ["W"])]
+        for lbl, _c in _CELLS:
+            cb_cell.addItem(lbl)
+        chk_dim = QCheckBox("Dimmer général"); chk_dim.setChecked(True)
+        chk_str = QCheckBox("Strobe général"); chk_str.setChecked(True)
+
+        form.addRow("Lignes :", sp_rows)
+        form.addRow("Colonnes (pixels) :", sp_cols)
+        form.addRow("Canaux par pixel :", cb_cell)
+        form.addRow("Canaux globaux :", chk_dim)
+        form.addRow("", chk_str)
+
+        _tot = QLabel("")
+        _tot.setStyleSheet("color:#cc77dd;font-size:11px;font-weight:bold;")
+        form.addRow("Total :", _tot)
+
+        def _recount():
+            cell = _CELLS[cb_cell.currentIndex()][1]
+            head = (1 if chk_dim.isChecked() else 0) + (1 if chk_str.isChecked() else 0)
+            n = sp_rows.value() * sp_cols.value()
+            _tot.setText(f"{head + n * len(cell)} canaux "
+                         f"({n} pixels × {len(cell)}"
+                         f"{f' + {head} globaux' if head else ''})")
+        for w in (sp_rows, sp_cols):
+            w.valueChanged.connect(lambda _: _recount())
+        cb_cell.currentIndexChanged.connect(lambda _: _recount())
+        chk_dim.toggled.connect(lambda _: _recount())
+        chk_str.toggled.connect(lambda _: _recount())
+        _recount()
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        cell = _CELLS[cb_cell.currentIndex()][1]
+        head = (["Dim"] if chk_dim.isChecked() else []) + \
+               (["Strobe"] if chk_str.isChecked() else [])
+        rows, cols = sp_rows.value(), sp_cols.value()
+        n_px = rows * cols
+        profile = list(head) + cell * n_px
+
+        self._ch_list.set_channels(profile, None)
+        # Géométrie retenue pour _get_form_data — c'est elle qui distingue une
+        # barre d'un simple projecteur à 48 canaux.
+        self._pixel_matrix = {
+            "rows": rows, "cols": cols,
+            "pixel_count": n_px, "pixel_channels": list(cell),
+            "head": list(head), "tail": [],
+            "offset": len(head), "order": "perPixel",
+        }
+        self._px_info.setText(
+            f"▦ {rows}×{cols} = {n_px} pixels · {len(profile)} canaux")
+        if not self._type_combo.currentText().startswith(("Barre", "Matrice")):
+            _want = "Barre LED" if rows <= 1 else "Matrice LED"
+            _i = self._type_combo.findText(_want)
+            if _i >= 0:
+                self._type_combo.setCurrentIndex(_i)
+        self._on_channels_changed()
 
     def _get_form_data(self):
         profile  = self._ch_list.get_channels()
@@ -1283,6 +1446,14 @@ class FixtureEditorDialog(QDialog):
         }
         if any(v is not None for v in defaults):
             data["defaults"] = defaults
+        # Géométrie pixel : conservée seulement si le profil correspond encore
+        # (l'utilisateur a pu retirer des canaux à la main après génération).
+        _mx = getattr(self, '_pixel_matrix', None)
+        if _mx:
+            _expected = (len(_mx["head"]) +
+                         _mx["pixel_count"] * len(_mx["pixel_channels"]))
+            if len(profile) == _expected:
+                data["matrix"] = dict(_mx)
         return data
 
     def _save_current(self):

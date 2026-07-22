@@ -1565,12 +1565,49 @@ class FixtureCanvas(QWidget):
         li = group_indices.index(i) if i in group_indices else 0
         return group, li
 
+    def _matrix_hit(self, px, py):
+        """
+        Index d'un pixel si (px, py) tombe dans le cadre d'une barre/matrice.
+
+        Sans ça seules les cellules seraient cliquables : entre elles et dans la
+        marge du cadre, le clic tombait dans le vide et l'appareil paraissait
+        impossible à attraper, alors qu'un PAR se prend n'importe où.
+        """
+        blocks = {}
+        for i, p in enumerate(self.pdf.projectors):
+            mid = getattr(p, 'matrix_id', None)
+            if mid is None or getattr(p, 'matrix_role', None) == 'master':
+                continue
+            blocks.setdefault(mid, []).append(i)
+
+        best = None
+        for idxs in blocks.values():
+            pts = [self._get_canvas_pos(i) for i in idxs]
+            xs = [q[0] for q in pts]
+            ys = [q[1] for q in pts]
+            pad = 10 if self.compact else 12
+            if (min(xs) - pad <= px <= max(xs) + pad
+                    and min(ys) - pad <= py <= max(ys) + pad):
+                # Le pixel le plus proche du clic : Ctrl+clic reste précis
+                d, near = min(
+                    (((px - q[0]) ** 2 + (py - q[1]) ** 2), i)
+                    for i, q in zip(idxs, pts)
+                )
+                if best is None or d < best[0]:
+                    best = (d, near)
+        return best[1] if best else None
+
     def _fixture_at(self, pos):
         """Retourne l'index de la fixture sous pos, ou None"""
         px, py = pos.x(), pos.y()
         for i in range(len(self.pdf.projectors) - 1, -1, -1):
+            proj_i = self.pdf.projectors[i]
+            # Membres de matrice : traités en bloc plus bas. Le master n'est
+            # jamais cliquable (il n'a pas de représentation visuelle).
+            if getattr(proj_i, 'matrix_id', None) is not None:
+                continue
             cx, cy = self._get_canvas_pos(i)
-            ftype = getattr(self.pdf.projectors[i], 'fixture_type', 'PAR LED')
+            ftype = getattr(proj_i, 'fixture_type', 'PAR LED')
             if ftype == "Barre LED":
                 if abs(px - cx) <= 16 and abs(py - cy) <= 6:
                     return i
@@ -1584,7 +1621,8 @@ class FixtureCanvas(QWidget):
             else:
                 if (px - cx) ** 2 + (py - cy) ** 2 <= 13 * 13:
                     return i
-        return None
+        # Les fixtures classiques priment ; sinon on teste les blocs pixel
+        return self._matrix_hit(px, py)
 
     def _beam_at(self, pos):
         """Retourne l'index d'une Moving Head dont le faisceau est sous pos, ou None."""
@@ -2097,15 +2135,60 @@ class FixtureCanvas(QWidget):
         if not pixels:
             return
 
-        hs = 5 if self.compact else 7          # demi-taille d'une cellule
         xs = [p[1] for p in pixels]
         ys = [p[2] for p in pixels]
-        pad = hs + 6
+
+        # Demi-taille d'une cellule déduite de l'écart réel entre pixels : le
+        # bloc reste dense quel que soit le nombre de pixels, et les cellules
+        # ne se chevauchent jamais. Plafonné pour rester comparable aux autres
+        # fixtures (r = 9 compact / 13 normal).
+        _hs_max = 5 if self.compact else 7
+        _gaps = []
+        for _a in range(len(pixels)):
+            for _b in range(_a + 1, len(pixels)):
+                _d = max(abs(xs[_a] - xs[_b]), abs(ys[_a] - ys[_b]))
+                if _d > 0:
+                    _gaps.append(_d)
+        # Plancher à 3 (cellule 6 px) : en dessous les pixels sont illisibles.
+        # Un léger chevauchement est préférable — une vraie barre LED est un
+        # ruban continu, pas des points espacés.
+        hs = max(3, min(_hs_max, int(min(_gaps) / 2))) if _gaps else _hs_max
+        pad = hs + 4
         x0, x1 = min(xs) - pad, max(xs) + pad
         y0, y1 = min(ys) - pad, max(ys) + pad
 
         any_sel = any(k in self.pdf.selected_lamps for *_, k in pixels)
         border = QColor("#00d4ff") if any_sel else QColor("#9b6bd6")
+
+        # Couleur de chaque pixel par le MÊME chemin que les autres fixtures :
+        # _get_fill_color gère les overrides HTP (moteur de show), le strobe et
+        # le mute. Lire proj.color en direct affichait n'importe quoi en
+        # restitution, où le niveau ne vient pas de proj.level.
+        _htp = self.pdf._htp_overrides
+        fills = []
+        lit = []
+        for proj, px, py, key in pixels:
+            fills.append(self._get_fill_color(proj))
+            _e = _htp.get(id(proj)) if _htp else None
+            lit.append(not proj.muted
+                       and (proj.level > 0 or (_e is not None and _e[0] > 0)))
+
+        # Halo quand au moins un pixel est allumé (comme _draw_fixture)
+        _on = [c for c, l in zip(fills, lit) if l]
+        if _on:
+            _ar = sum(c.red()   for c in _on) // len(_on)
+            _ag = sum(c.green() for c in _on) // len(_on)
+            _ab = sum(c.blue()  for c in _on) // len(_on)
+            gcx, gcy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            grad_r = max(x1 - x0, y1 - y0) / 2.0 + (9 if self.compact else 14)
+            grad = QRadialGradient(gcx, gcy, grad_r)
+            _a = int(110 * len(_on) / len(fills))
+            grad.setColorAt(0.0, QColor(_ar, _ag, _ab, _a))
+            grad.setColorAt(0.5, QColor(_ar, _ag, _ab, _a // 3))
+            grad.setColorAt(1.0, QColor(_ar, _ag, _ab, 0))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(grad))
+            painter.drawEllipse(QPointF(gcx, gcy), grad_r, grad_r)
 
         # Cadre + fond léger
         frame = QPainterPath()
@@ -2116,11 +2199,7 @@ class FixtureCanvas(QWidget):
         painter.drawPath(frame)
 
         # Cellules pixel
-        for proj, px, py, key in pixels:
-            if getattr(proj, 'muted', False) or proj.level <= 0:
-                fill = QColor("#242430")
-            else:
-                fill = QColor(proj.color)
+        for (proj, px, py, key), fill in zip(pixels, fills):
             cell = QRectF(px - hs, py - hs, hs * 2, hs * 2)
             painter.fillRect(cell, fill)
             sel = key in self.pdf.selected_lamps
@@ -2129,20 +2208,26 @@ class FixtureCanvas(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(cell)
 
-        # Nom du bloc (au-dessus du cadre)
+        # Nom + adresse SOUS le bloc, comme les fixtures classiques
         if not self.compact and base_name:
-            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-            painter.setPen(QColor("#00d4ff") if any_sel else QColor("#b98fe0"))
-            painter.drawText(QRect(int(x0), int(y0) - 15, int(x1 - x0), 13),
-                             Qt.AlignHCenter, base_name[:18])
+            _cx = int((x0 + x1) / 2)
+            painter.setFont(QFont("Segoe UI", 8))
+            painter.setPen(QColor("#00d4ff") if any_sel else QColor("#888888"))
+            painter.drawText(QRect(_cx - 38, int(y1) + 3, 76, 14),
+                             Qt.AlignCenter, base_name[:11])
 
-        # Master : petit repère "⚙" grabbable
-        if master is not None:
-            _, mx, my, mkey = master
-            msel = mkey in self.pdf.selected_lamps
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor("#00d4ff") if msel else QColor("#6a5a80"))
-            painter.drawEllipse(QPoint(mx, my), 4, 4)
+            # Adresse de l'appareil entier = celle de son premier canal
+            _all = ([master[0]] if master else []) + [p[0] for p in pixels]
+            _base_addr = min(getattr(p, 'start_address', 1) for p in _all)
+            _uni = getattr(_all[0], 'universe', 0) + 1
+            painter.setFont(QFont("Segoe UI", 7))
+            painter.setPen(QColor("#5f5f5f"))
+            painter.drawText(QRect(_cx - 26, int(y1) + 15, 52, 12),
+                             Qt.AlignCenter, f"U{_uni} CH {_base_addr}")
+
+        # Le master (canaux globaux Dim/Strobe) n'est PAS dessiné : il fait
+        # partie de l'appareil, que le bloc représente déjà. Le montrer en point
+        # séparé donnait un repère orphelin à côté de la barre.
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -2225,9 +2310,9 @@ class FixtureCanvas(QWidget):
                 painter.drawText(QRect(cx - 38, cy + 16, 76, 14), Qt.AlignCenter,
                                  (proj.name[:11] if proj.name else group[:11]))
 
-                # Adresse DMX discrete
+                # Adresse DMX discrete (assez claire pour rester lisible)
                 painter.setFont(font_ch)
-                painter.setPen(QColor("#333333"))
+                painter.setPen(QColor("#5f5f5f"))
                 painter.drawText(QRect(cx - 26, cy + 28, 52, 12), Qt.AlignCenter,
                                  f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
 
@@ -2425,6 +2510,11 @@ class FixtureCanvas(QWidget):
 
         for i, pi in enumerate(self.pdf.projectors):
             if i in dragged_set:
+                continue
+            if getattr(pi, 'matrix_id', None) is not None:
+                # Membre de barre/matrice : sa position est celle du bloc. Le
+                # pousser individuellement (min_sep = 32 px alors que 2 pixels
+                # sont espacés de ~7 px) disloquerait l'appareil.
                 continue
             if pi.canvas_x is None or pi.canvas_y is None:
                 continue  # Fixture auto-positionnée, ne pas forcer sa position
@@ -2747,10 +2837,17 @@ class FixtureCanvas(QWidget):
             orig = self._drag_starts.get(self._drag_index, (None, None))
             if orig[0] is not None:
                 dx, dy = new_x - orig[0], new_y - orig[1]
+                # Clamper le DÉPLACEMENT, pas chaque fixture : sinon les membres
+                # qui touchent un bord se figent pendant que les autres avancent
+                # et la sélection se déforme (une barre LED s'écrase).
+                _oxs = [o[0] for o in self._drag_starts.values()]
+                _oys = [o[1] for o in self._drag_starts.values()]
+                dx = max(x_min - min(_oxs), min(x_max - max(_oxs), dx))
+                dy = max(y_min - min(_oys), min(y_max - max(_oys), dy))
                 for j, (ox, oy) in self._drag_starts.items():
                     p = self.pdf.projectors[j]
-                    p.canvas_x = max(x_min, min(x_max, ox + dx))
-                    p.canvas_y = max(y_min, min(y_max, oy + dy))
+                    p.canvas_x = ox + dx
+                    p.canvas_y = oy + dy
             else:
                 proj = self.pdf.projectors[self._drag_index]
                 proj.canvas_x = new_x
@@ -2880,7 +2977,7 @@ class FixtureCanvas(QWidget):
 class PlanDeFeu(QFrame):
     """Visualisation du plan de feu - canvas 2D libre"""
 
-    def __init__(self, projectors, main_window=None, show_toolbar=True):
+    def __init__(self, projectors, main_window=None, show_toolbar=True, interactive=None):
         super().__init__()
         self.setFocusPolicy(Qt.ClickFocus)
         self.projectors = projectors
@@ -3001,10 +3098,10 @@ class PlanDeFeu(QFrame):
             )
             self.btn_3d.clicked.connect(self._toggle_3d_window)
             toolbar.addWidget(self.btn_3d)
-            # Remplacé par Affichage ▸ Fenêtre externe ▸ Plan 3D. Le bouton
-            # survit caché : MainWindow.toggle_3d_window s'en sert comme porteur
-            # d'état (setChecked), et le menu suit son signal `toggled`.
-            self.btn_3d.setVisible(False)
+            # Bouton 3D visible dans la barre d'outils du plan de feu. Il reste
+            # aussi le porteur d'état pour Affichage ▸ Fenêtre externe ▸ Plan 3D
+            # (setChecked), et le menu suit son signal.
+            self.btn_3d.setVisible(True)
             toolbar.addSpacing(2)
 
             # Toujours "DMX" : vert = sortie ON, rouge = sortie OFF. Placé tout à droite.
@@ -3035,7 +3132,11 @@ class PlanDeFeu(QFrame):
         self.canvas = FixtureCanvas(self)
         self.canvas.compact = True
         self.canvas.show_statusbar = False  # barre "n fixtures / vue uniquement" masquée (gain de place)
-        self.canvas._read_only = not show_toolbar  # lecture seule dans REC Lumière
+        # Interactivité découplée de la toolbar : par défaut suit show_toolbar
+        # (comportement historique), mais REC Lumière demande explicitement un
+        # plan interactif SANS toolbar (interactive=True) pour envoyer des états.
+        _interactive = show_toolbar if interactive is None else interactive
+        self.canvas._read_only = not _interactive
         root.addWidget(self.canvas)
 
         self._dirty = True  # Redessiner seulement si les données ont changé
@@ -3337,24 +3438,62 @@ class PlanDeFeu(QFrame):
                 "phase_offset": 0.0,    # déphasage par fixture (slider DÉPHASAGE)
                 "speed":        speed,
                 "base_speed":   speed,  # vitesse "naturelle" — référence du slider VITESSE
+                # Niveau de RÉFÉRENCE de l'effet : forcé > 0, sinon un projecteur
+                # éteint resterait éteint et l'effet serait invisible.
                 "saved_level":  saved_lvl,
                 "saved_color": QColor(base_col),
+                # État à RESTAURER au stop — distinct du précédent, qui est une
+                # amplitude de travail et pas l'état d'origine.
+                "restore_level": proj.level,
+                "restore_color": QColor(base_col),
                 "pulse_color": QColor(color) if color is not None else QColor(base_col),
             }
 
+    def snapshot_led_state(self, projectors):
+        """État (niveau, couleur de base) avant allumage, pour un retour fidèle."""
+        snap = {}
+        for p in projectors:
+            bc = getattr(p, 'base_color', None) or getattr(p, 'color', None) \
+                or QColor(255, 255, 255)
+            snap[id(p)] = (p.level, QColor(bc))
+        return snap
+
+    def set_restore_state(self, projectors, snapshot):
+        """
+        Fixe l'état de retour d'un effet déjà démarré.
+
+        Les boutons d'effet allument le projecteur AVANT de lancer l'effet :
+        sans ça l'état mémorisé serait celui d'après allumage, et « stop »
+        laisserait la fixture allumée en blanc au lieu de la rendre à son
+        état d'origine.
+        """
+        for p in projectors:
+            eff = self._led_effects.get(id(p))
+            if eff and id(p) in snapshot:
+                lvl, col = snapshot[id(p)]
+                eff["restore_level"] = lvl
+                eff["restore_color"] = QColor(col)
+
     def stop_led_effect(self, projectors):
-        """Stoppe l'effet LED et restaure le niveau."""
+        """Stoppe l'effet LED et rend la fixture à son état d'avant l'effet."""
         for proj in projectors:
             eff = self._led_effects.pop(id(proj), None)
-            if eff:
-                proj.level = eff["saved_level"]
-                br = proj.level / 100.0
-                bc = eff["saved_color"]
-                proj.color = QColor(
-                    int(bc.red()   * br),
-                    int(bc.green() * br),
-                    int(bc.blue()  * br),
-                )
+            if not eff:
+                continue
+            # restore_* = l'état réel d'avant ; saved_* n'est qu'une amplitude
+            lvl = eff.get("restore_level", eff["saved_level"])
+            bc = eff.get("restore_color") or eff["saved_color"]
+            proj.level = lvl
+            # base_color DOIT être rendue : les effets l'écrasent (arc-en-ciel,
+            # strobe, pulse). Sans ça la fixture garde la couleur de l'effet et
+            # le prochain changement de niveau repart d'une base fausse.
+            proj.base_color = QColor(bc)
+            br = max(0, lvl) / 100.0
+            proj.color = QColor(
+                int(bc.red()   * br),
+                int(bc.green() * br),
+                int(bc.blue()  * br),
+            )
 
     @staticmethod
     def _qe_value_to_mult(value):
@@ -3398,6 +3537,97 @@ class PlanDeFeu(QFrame):
             led = self._led_effects.get(id(proj))
             if led:
                 led["phase_offset"] = off
+
+    def matrix_pixel_chains(self, projectors):
+        """
+        Pour chaque barre/matrice touchée, ses pixels ordonnés le long du ruban.
+
+        L'ordre (ligne puis colonne) est ce qui donne son sens à un chenillard :
+        c'est lui qui définit « de la gauche vers la droite ».
+        """
+        mids = {getattr(p, 'matrix_id', None) for p in projectors}
+        mids.discard(None)
+        chains = []
+        for mid in mids:
+            px = [p for p in self.projectors
+                  if getattr(p, 'matrix_id', None) == mid
+                  and getattr(p, 'matrix_role', None) == 'pixel']
+            px.sort(key=lambda p: (getattr(p, 'pixel_row', 0) or 0,
+                                   getattr(p, 'pixel_col', 0) or 0))
+            if px:
+                chains.append(px)
+        return chains
+
+    # Directions de propagation d'un effet. Une barre 1D n'est PAS limitée à
+    # l'horizontale : « radial » y devient un motif miroir (1&8, 2&7, 3&6…).
+    PIXEL_DIRECTIONS = ("h", "v", "diag", "radial", "radial_in",
+                        "odd_even", "chain")
+
+    @staticmethod
+    def _pixel_phase_scalar(row, col, rows, cols, direction):
+        """
+        Position normalisée (0..1) d'un pixel selon la direction de propagation.
+
+        C'est tout le moteur spatial : convertir (ligne, colonne) en un scalaire
+        que le déphasage transforme en balayage. Les motifs ne diffèrent que par
+        cette formule.
+
+        Sur une barre (rows == 1) :
+        - « radial »    part du centre vers les extrémités ;
+        - « radial_in » part des extrémités vers le centre — c'est le motif
+          1&8, puis 2&7, puis 3&6, les paires symétriques allumées ensemble.
+        """
+        _c = (cols - 1) or 1
+        _r = (rows - 1) or 1
+        if direction == "v":
+            return row / _r
+        if direction == "diag":
+            return (row / _r + col / _c) / 2.0
+        if direction in ("radial", "radial_in"):
+            # Écarts au centre, ramenés dans [-1, 1] sur chaque axe présent
+            dy = (row - (rows - 1) / 2.0) / (_r / 2.0) if rows > 1 else 0.0
+            dx = (col - (cols - 1) / 2.0) / (_c / 2.0) if cols > 1 else 0.0
+            # Normaliser par la diagonale des axes RÉELLEMENT présents, sinon
+            # une barre plafonnerait à 0.707 et n'atteindrait jamais ses bords.
+            norm = _math_eff.hypot(1.0 if cols > 1 else 0.0,
+                                   1.0 if rows > 1 else 0.0) or 1.0
+            d = min(1.0, _math_eff.hypot(dx, dy) / norm)
+            return (1.0 - d) if direction == "radial_in" else d
+        return col / _c        # "h" et repli
+
+    def start_pixel_effect(self, pixels, effect_type, speed=1.0, cycles=1.0,
+                           direction="h"):
+        """
+        Effet réparti sur une barre/matrice.
+
+        C'est le même effet LED que sur un projecteur classique, appliqué à
+        chaque pixel avec un déphasage fonction de sa POSITION : le moteur
+        existant suffit, un chenillard n'est qu'une onde décalée pixel à pixel.
+
+        `cycles`    = nombre de motifs visibles simultanément.
+        `direction` = h (gauche→droite), v (haut→bas), diag, radial (centre→bords),
+                      chain (ordre de câblage).
+        """
+        self.start_led_effect(pixels, effect_type, speed)
+        n = max(1, len(pixels))
+        rows = max((getattr(p, 'matrix_rows', 1) or 1) for p in pixels)
+        cols = max((getattr(p, 'matrix_cols', 1) or 1) for p in pixels)
+        for i, p in enumerate(pixels):
+            led = self._led_effects.get(id(p))
+            if not led:
+                continue
+            if direction == "chain" or rows <= 1:
+                # Barre 1D : la position dans la chaîne EST la position spatiale
+                scalar = (i / n) if direction == "chain" else \
+                    self._pixel_phase_scalar(0, getattr(p, 'pixel_col', i) or i,
+                                             1, max(cols, n), "h")
+            else:
+                scalar = self._pixel_phase_scalar(
+                    getattr(p, 'pixel_row', 0) or 0,
+                    getattr(p, 'pixel_col', 0) or 0,
+                    rows, cols, direction)
+            # Négatif : le motif progresse dans le sens de la direction
+            led["phase_offset"] = -scalar * 2 * _math_eff.pi * cycles
 
     def set_htp_overrides(self, overrides):
         if overrides != self._htp_overrides:
@@ -4023,6 +4253,22 @@ class PlanDeFeu(QFrame):
             max(screen_rect.top(), widget_rect.top() - menu_sz.height() - 4)
         )
 
+    def _menu_pos(self, menu, global_pos):
+        """Position d'ouverture d'un menu contextuel.
+        - Mode normal (fenêtre principale) : à côté du plan (_pos_outside), pour ne
+          pas le recouvrir.
+        - Mode « au curseur » (_menu_at_cursor, activé dans REC Lumière où le plan
+          est embarqué) : pile là où on a cliqué, borné à l'écran."""
+        if not getattr(self, '_menu_at_cursor', False) or global_pos is None:
+            return self._pos_outside(menu)
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.screenAt(global_pos) or QGuiApplication.primaryScreen()
+        sr = screen.availableGeometry()
+        sz = menu.sizeHint()
+        x = max(sr.left(), min(global_pos.x(), sr.right()  - sz.width()))
+        y = max(sr.top(),  min(global_pos.y(), sr.bottom() - sz.height()))
+        return QPoint(x, y)
+
     def _show_fixture_context_menu(self, global_pos, fixture_idx):
         proj = self.projectors[fixture_idx]
         group, local_idx = self.canvas._local_idx(fixture_idx)
@@ -4042,6 +4288,30 @@ class PlanDeFeu(QFrame):
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #005577,stop:1 #00d4ff);
                 border-radius:3px; }
         """
+
+        def _mk_slider_row(label_text, cur_val, max_val, on_change, label_w=None):
+            """
+            Ligne « label + slider + valeur » du menu contextuel.
+
+            Constructeur unique pour TOUTES les sections (Pan/Tilt, roue, prisme,
+            canaux avancés…) : sans ça chaque section refaisait sa ligne avec ses
+            propres dimensions et couleurs, et le menu partait en patchwork.
+            """
+            row_w = QWidget(); row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(10, 4, 10, 4); row_h.setSpacing(8)
+            lbl = QLabel(label_text); lbl.setStyleSheet(_SS)
+            if label_w:
+                lbl.setFixedWidth(label_w)
+            sli = QSlider(Qt.Horizontal)
+            sli.setRange(0, max_val); sli.setValue(cur_val)
+            sli.setFixedWidth(140); sli.setStyleSheet(_SLI)
+            val_lbl = QLabel(str(cur_val))
+            val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:28px;")
+            val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            sli.valueChanged.connect(lambda v: val_lbl.setText(str(v)))
+            sli.valueChanged.connect(on_change)
+            for w in (lbl, sli, val_lbl): row_h.addWidget(w)
+            return row_w
 
         def _flush(t=targets):
             if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
@@ -4364,21 +4634,8 @@ class PlanDeFeu(QFrame):
                            "border-radius:4px;font-size:12px;padding:0 4px;}"
                            "QPushButton:hover{background:#2a2a2a;color:#fff;border-color:#555;}")
 
-            def _slider_row(label_text, cur_val, max_val, on_change):
-                """Crée une ligne label + slider + valeur numérique."""
-                row_w = QWidget(); row_h = QHBoxLayout(row_w)
-                row_h.setContentsMargins(10, 4, 10, 4); row_h.setSpacing(8)
-                lbl = QLabel(label_text); lbl.setStyleSheet(_SS)
-                sli = QSlider(Qt.Horizontal)
-                sli.setRange(0, max_val); sli.setValue(cur_val)
-                sli.setFixedWidth(140); sli.setStyleSheet(_SLI)
-                val_lbl = QLabel(str(cur_val))
-                val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:28px;")
-                val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                sli.valueChanged.connect(lambda v: val_lbl.setText(str(v)))
-                sli.valueChanged.connect(on_change)
-                for w in (lbl, sli, val_lbl): row_h.addWidget(w)
-                return row_w
+            # Même constructeur que les autres sections du menu
+            _slider_row = _mk_slider_row
 
             # ── Roue de couleur (uniquement si pas de canaux RGB) ───────
             if (not has_profile or 'ColorWheel' in proj_profile) and not _has_rgb_mh:
@@ -4726,21 +4983,13 @@ class PlanDeFeu(QFrame):
         if _adv_channels:
             menu.addSeparator()
             _adv_sec = QLabel("CANAUX AVANCÉS")
-            _adv_sec.setStyleSheet(
-                "color:#ff8844;font-size:9px;font-weight:bold;"
-                "padding:2px 10px;border:none;background:transparent;"
-            )
+            _adv_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                   "padding:2px 10px;border:none;background:transparent;")
             _wa(_adv_sec)
 
-            _SLI_ADV = (
-                "QSlider::groove:horizontal{background:#333;height:6px;border-radius:3px;}"
-                "QSlider::handle:horizontal{background:#ff8844;width:14px;height:14px;"
-                "margin:-4px 0;border-radius:7px;}"
-                "QSlider::sub-page:horizontal{background:#ff884455;border-radius:3px;}"
-            )
             _cur_extras = getattr(targets[0][0], 'channel_extras', {})
 
-            def _make_adv_cb(ctype, val_lbl):
+            def _make_adv_cb(ctype):
                 def _cb(v, t=targets):
                     for p, _g, _i in t:
                         if not hasattr(p, 'channel_extras'):
@@ -4749,35 +4998,16 @@ class PlanDeFeu(QFrame):
                             p.channel_extras.pop(ctype, None)
                         else:
                             p.channel_extras[ctype] = v
-                    val_lbl.setText(str(v))
                     _flush()
                 return _cb
 
+            # Libellés alignés : les noms de canaux bruts sont de longueurs très
+            # variables (Mode, Reset, Effects…), contrairement aux autres sections.
+            _adv_lw = min(96, max(52, max(len(c) for c in _adv_channels) * 7 + 10))
             for _ch_type in _adv_channels:
-                _cur_raw = _cur_extras.get(_ch_type, 0)
-                _adv_w = QWidget(); _adv_h = QHBoxLayout(_adv_w)
-                _adv_h.setContentsMargins(10, 4, 10, 4); _adv_h.setSpacing(8)
-
-                _adv_lbl = QLabel(_ch_type)
-                _adv_lbl.setStyleSheet(
-                    "color:#ff8844;font-size:11px;font-weight:bold;"
-                    "border:none;background:transparent;"
-                )
-                _adv_lbl.setFixedWidth(72)
-
-                _adv_sli = QSlider(Qt.Horizontal)
-                _adv_sli.setRange(0, 255); _adv_sli.setValue(_cur_raw)
-                _adv_sli.setFixedWidth(130); _adv_sli.setStyleSheet(_SLI_ADV)
-
-                _adv_val = QLabel(str(_cur_raw))
-                _adv_val.setStyleSheet(
-                    "color:#ddd;font-size:12px;font-weight:bold;min-width:30px;"
-                )
-                _adv_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-                _adv_sli.valueChanged.connect(_make_adv_cb(_ch_type, _adv_val))
-                for _w in (_adv_lbl, _adv_sli, _adv_val): _adv_h.addWidget(_w)
-                _wa(_adv_w)
+                _wa(_mk_slider_row(
+                    _ch_type, _cur_extras.get(_ch_type, 0), 255,
+                    _make_adv_cb(_ch_type), label_w=_adv_lw))
 
         # ── Bas de menu ──────────────────────────────────────────────────
         menu.addSeparator()
@@ -4790,12 +5020,21 @@ class PlanDeFeu(QFrame):
         _has_mh    = "Moving Head" in _all_types
         _has_led   = bool(_all_types - {"Moving Head", "Machine a fumee"})
         _mixed     = _has_mh and _has_led  # sélection hétérogène → pas d'effets rapides
-        if not _is_smoke and not _mixed:
+        # Sélection 100 % barre/matrice : seuls les effets pixel ont du sens.
+        # Les effets LED classiques piloteraient les 8 pixels à l'identique
+        # (une barre qui strobe en bloc), et le curseur DÉPHASAGE écraserait le
+        # décalage pixel à pixel qui fait justement le chenillard.
+        _only_matrix = bool(targets) and all(
+            getattr(p, 'matrix_id', None) is not None for p, _g, _i in targets)
+        # Effets rapides masqués si désactivés (REC Lumière : une mémoire est un
+        # instantané statique, un effet dynamique n'y a pas sa place).
+        if getattr(self, '_allow_quick_effects', True) and not _is_smoke and not _mixed:
             menu.addSeparator()
-            eff_sec = QLabel(tr("pdf_qe_section"))
-            eff_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
-                                  "padding:2px 10px;border:none;background:transparent;")
-            _wa(eff_sec)
+            if not _only_matrix:
+                eff_sec = QLabel(tr("pdf_qe_section"))
+                eff_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                      "padding:2px 10px;border:none;background:transparent;")
+                _wa(eff_sec)
 
             qe_w = QWidget(); qe_h = QHBoxLayout(qe_w)
             qe_h.setContentsMargins(8, 2, 8, 6); qe_h.setSpacing(5)
@@ -4811,7 +5050,9 @@ class PlanDeFeu(QFrame):
 
             _qe_btns = {}
 
-            if _is_mh:
+            if _only_matrix:
+                pass          # rangée générique vide : place aux effets pixel
+            elif _is_mh:
                 # ── Moving Head : cercle, figure8, pan, tilt ──────────────
                 _active_qe = None
                 _ae = self._effects.get(id(targets[0][0]))
@@ -4883,12 +5124,15 @@ class PlanDeFeu(QFrame):
 
                 def _qe_start_led(key):
                     projs = [p for p, _g, _i in targets]
+                    # État d'origine capturé avant l'allumage forcé (cf. stop)
+                    _snap_led = self.snapshot_led_state(projs)
                     turned_on = False
                     for p in projs:
                         if p.level < 5:
                             p.level = 80
                             turned_on = True
                     self.start_led_effect(projs, key, _LED_FX_SPEEDS.get(key, 0.5))
+                    self.set_restore_state(projs, _snap_led)
                     self.set_quick_effect_speed(projs, self._qe_speed)
                     self.set_quick_effect_phase(projs, self._qe_phase)
                     for _eff in [self._led_effects.get(id(p)) for p in projs]:
@@ -4925,7 +5169,140 @@ class PlanDeFeu(QFrame):
                 qe_h.addWidget(_stop_btn)
 
             qe_h.addStretch()
-            _wa(qe_w)
+            if not _only_matrix:
+                _wa(qe_w)
+
+            # ── Effets pixel (barres / matrices uniquement) ──────────────
+            # Un chenillard n'est qu'un effet LED décalé pixel par pixel : on
+            # réutilise le moteur existant, seul le déphasage change.
+            _chains = self.matrix_pixel_chains([p for p, _g, _i in targets])
+            if _chains:
+                _px_sec = QLabel("EFFETS BARRE / MATRICE")
+                _px_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                      "padding:2px 10px;border:none;background:transparent;")
+                _wa(_px_sec)
+
+                _px_w = QWidget(); _px_h = QHBoxLayout(_px_w)
+                _px_h.setContentsMargins(8, 2, 8, 6); _px_h.setSpacing(5)
+                _px_btns = {}
+                _n_px = sum(len(c) for c in _chains)
+
+                # (icône, type moteur, vitesse, cycles visibles, infobulle)
+                _PX_FX = [
+                    ("🏃", "flash",   1.2, 1.0, "Chenillard — un point qui court le long de la barre"),
+                    ("🌊", "breath",  0.8, 1.0, "Onde — dégradé d'intensité qui se déplace"),
+                    ("🌈", "rainbow", 0.4, 1.0, "Arc-en-ciel défilant — une couleur par pixel"),
+                    ("✨", "flash",   2.0, 3.0, "Scintillement — trois points qui courent"),
+                ]
+
+                # Direction de propagation, mémorisée entre deux ouvertures
+                if not hasattr(self, '_px_direction'):
+                    self._px_direction = "h"
+                _px_last = {"fx": None}
+
+                def _px_start(key, fx_type, spd, cyc):
+                    _px_last["fx"] = (key, fx_type, spd, cyc)
+                    for _chain in _chains:
+                        # Capturer AVANT d'allumer : c'est cet état que « stop »
+                        # doit rendre, pas le blanc à 80 % qu'on force ici.
+                        _snap = self.snapshot_led_state(_chain)
+                        for _p in _chain:
+                            if _p.level < 5:
+                                _p.level = 80
+                            _bc = getattr(_p, 'base_color', None)
+                            if not _bc or _bc.lightness() < 10:
+                                _p.base_color = QColor(255, 255, 255)
+                        self.start_pixel_effect(_chain, fx_type, spd, cyc,
+                                                self._px_direction)
+                        self.set_restore_state(_chain, _snap)
+                        for _p in _chain:
+                            _e = self._led_effects.get(id(_p))
+                            if _e:
+                                _e["effect_key"] = key
+                    _flush()
+                    for _k, _b in _px_btns.items():
+                        _b.setStyleSheet(_QE_ON if _k == key else _QE_OFF)
+
+                def _px_stop():
+                    for _chain in _chains:
+                        self.stop_led_effect(_chain)
+                    _flush()
+                    for _b in _px_btns.values():
+                        _b.setStyleSheet(_QE_OFF)
+
+                _px_active = None
+                _first_px = _chains[0][0]
+                _fpe = self._led_effects.get(id(_first_px))
+                if _fpe:
+                    _px_active = _fpe.get("effect_key")
+
+                for _icon, _ftype, _spd, _cyc, _tip in _PX_FX:
+                    _key = f"px_{_icon}"
+                    _b = QPushButton(_icon)
+                    _b.setToolTip(f"{_tip}  ({_n_px} pixels)")
+                    _b.setStyleSheet(_QE_ON if _key == _px_active else _QE_OFF)
+                    _b.clicked.connect(
+                        lambda chk=False, k=_key, t=_ftype, s=_spd, c=_cyc:
+                        _px_start(k, t, s, c))
+                    _px_btns[_key] = _b
+                    _px_h.addWidget(_b)
+
+                _px_stop_btn = QPushButton("■")
+                _px_stop_btn.setToolTip("Arrêter l'effet pixel")
+                _px_stop_btn.setStyleSheet(_QE_STP)
+                _px_stop_btn.clicked.connect(_px_stop)
+                _px_h.addWidget(_px_stop_btn)
+                _px_h.addStretch()
+                _wa(_px_w)
+
+                # ── Direction de propagation (matrices 2D seulement) ─────
+                # Sur une barre 1D il n'y a qu'un axe : le choix n'aurait
+                # aucun effet visible, on ne montre donc rien.
+                _is_2d = any(
+                    (getattr(_c[0], 'matrix_rows', 1) or 1) > 1 for _c in _chains)
+                if _is_2d:
+                    _dir_w = QWidget(); _dir_h = QHBoxLayout(_dir_w)
+                    _dir_h.setContentsMargins(8, 0, 8, 6); _dir_h.setSpacing(5)
+                    _dir_lbl = QLabel("SENS")
+                    _dir_lbl.setFixedWidth(74)
+                    _dir_lbl.setStyleSheet(
+                        "color:#666;font-size:9px;font-weight:bold;letter-spacing:1px;"
+                        "border:none;background:transparent;")
+                    _dir_h.addWidget(_dir_lbl)
+
+                    _DIR_SS_ON = ("QPushButton{background:#005577;color:#00d4ff;"
+                                  "border:1px solid #00d4ff;border-radius:4px;"
+                                  "font-size:13px;min-width:32px;min-height:24px;}")
+                    _DIR_SS_OFF = ("QPushButton{background:#1e1e1e;color:#444;"
+                                   "border:1px solid #282828;border-radius:4px;"
+                                   "font-size:13px;min-width:32px;min-height:24px;}"
+                                   "QPushButton:hover{color:#aaa;border-color:#555;}")
+                    _dir_btns = {}
+
+                    def _px_set_dir(d):
+                        self._px_direction = d
+                        for _k, _b in _dir_btns.items():
+                            _b.setStyleSheet(_DIR_SS_ON if _k == d else _DIR_SS_OFF)
+                        # Rejouer l'effet en cours avec la nouvelle direction
+                        if _px_last["fx"]:
+                            _px_start(*_px_last["fx"])
+
+                    for _dic, _dk, _dtip in [
+                        ("→", "h",      "Balayage horizontal (gauche → droite)"),
+                        ("↓", "v",      "Balayage vertical (haut → bas)"),
+                        ("↘", "diag",   "Diagonale"),
+                        ("⊙", "radial", "Expansion depuis le centre"),
+                    ]:
+                        _db = QPushButton(_dic)
+                        _db.setToolTip(_dtip)
+                        _db.setStyleSheet(_DIR_SS_ON if _dk == self._px_direction
+                                          else _DIR_SS_OFF)
+                        _db.clicked.connect(
+                            lambda chk=False, d=_dk: _px_set_dir(d))
+                        _dir_btns[_dk] = _db
+                        _dir_h.addWidget(_db)
+                    _dir_h.addStretch()
+                    _wa(_dir_w)
 
             # ── Réglages live des effets rapides (vitesse / amplitude / déphasage) ──
             _qe_projs = [p for p, _g, _i in targets]
@@ -4964,11 +5341,15 @@ class PlanDeFeu(QFrame):
                 _add_qe_slider("AMPLITUDE", self._qe_amplitude,
                                "Amplitude du mouvement (50 = naturelle)",
                                self.set_quick_effect_amplitude)
-            _add_qe_slider("DÉPHASAGE", self._qe_phase,
-                           "Décalage entre fixtures (0 = synchrone, 100 = vague)",
-                           self.set_quick_effect_phase)
+            # Pas de DÉPHASAGE sur une barre : il réécrirait le décalage
+            # pixel à pixel posé par start_pixel_effect, et le motif
+            # s'effondrerait d'un coup en clignotement synchrone.
+            if not _only_matrix:
+                _add_qe_slider("DÉPHASAGE", self._qe_phase,
+                               "Décalage entre fixtures (0 = synchrone, 100 = vague)",
+                               self.set_quick_effect_phase)
 
-        menu.exec(self._pos_outside(menu))
+        menu.exec(self._menu_pos(menu, global_pos))
 
     def _show_canvas_context_menu(self, global_pos, local_pos=None):
         menu = QMenu(self)
@@ -5015,7 +5396,7 @@ class PlanDeFeu(QFrame):
                     act = sel_menu.addAction(f"★  {gname}  ({len(members)})")
                     act.triggered.connect(lambda checked, m=members: self._select_custom_group(m))
 
-        menu.exec(self._pos_outside(menu))
+        menu.exec(self._menu_pos(menu, global_pos))
 
     # ── Ajout / edition / suppression ────────────────────────────────
 
@@ -5099,14 +5480,24 @@ class PlanDeFeu(QFrame):
         if fixture_idx >= len(self.projectors):
             return
         proj = self.projectors[fixture_idx]
-        name = proj.name or f"{proj.group}"
+        # Barre/matrice : supprimer l'appareil entier, pas le pixel cliqué,
+        # sinon il reste des pixels orphelins impossibles à retrouver.
+        _mid = getattr(proj, 'matrix_id', None)
+        if _mid is not None:
+            _idxs = [i for i, p in enumerate(self.projectors)
+                     if getattr(p, 'matrix_id', None) == _mid]
+            name = (proj.name or proj.group).split(" · ")[0]
+        else:
+            _idxs = [fixture_idx]
+            name = proj.name or f"{proj.group}"
         reply = QMessageBox.question(
             self, "Supprimer fixture",
             f"Supprimer '{name}' ?",
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            self.projectors.pop(fixture_idx)
+            for i in sorted(_idxs, reverse=True):
+                self.projectors.pop(i)
             self.selected_lamps.clear()
             if self.main_window and hasattr(self.main_window, '_rebuild_dmx_patch'):
                 self.main_window._rebuild_dmx_patch()
@@ -5116,14 +5507,6 @@ class PlanDeFeu(QFrame):
         selected = list(self.selected_lamps)
         if not selected:
             return
-        if len(selected) > 1:
-            reply = QMessageBox.question(
-                self, "Supprimer fixtures",
-                f"Supprimer {len(selected)} fixture(s) selectionnee(s) ?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply != QMessageBox.Yes:
-                return
 
         # Construire les indices a supprimer
         to_remove = set()
@@ -5134,6 +5517,28 @@ class PlanDeFeu(QFrame):
             group_counters[g] = li + 1
             if (g, li) in self.selected_lamps:
                 to_remove.add(i)
+
+        # Une barre/matrice = UN appareil, pas N pixels : on la supprime en
+        # entier (même si un seul pixel est sélectionné) et on la compte pour 1.
+        _mids = {getattr(self.projectors[i], 'matrix_id', None) for i in to_remove}
+        _mids.discard(None)
+        if _mids:
+            for i, proj in enumerate(self.projectors):
+                if getattr(proj, 'matrix_id', None) in _mids:
+                    to_remove.add(i)
+        n_devices = len(_mids) + sum(
+            1 for i in to_remove
+            if getattr(self.projectors[i], 'matrix_id', None) is None
+        )
+
+        if n_devices > 1:
+            reply = QMessageBox.question(
+                self, "Supprimer fixtures",
+                f"Supprimer {n_devices} fixture(s) selectionnee(s) ?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
 
         for i in sorted(to_remove, reverse=True):
             self.projectors.pop(i)
@@ -6073,8 +6478,36 @@ class _PatchCanvasProxy:
         # Centre actuel du bloc (suit un éventuel déplacement précédent)
         cx = sum(p.canvas_x for p in pixels) / len(pixels)
         cy = sum(p.canvas_y for p in pixels) / len(pixels)
-        new_rot = (int(getattr(pixels[0], 'matrix_rot', 0)) + 1) % 4
-        layout_pixels(pixels, cx, cy, 0.055, 0.070, new_rot)
+        old_rot = int(getattr(pixels[0], 'matrix_rot', 0)) % 4
+        new_rot = (old_rot + 1) % 4
+
+        # L'espacement doit venir de la TAILLE ACTUELLE du bloc, pas d'une
+        # constante : une barre de 16 pixels espacés de 0.070 occupait 1.12 en
+        # normalisé, soit plus que la hauteur du plan. On mesure le pas réel en
+        # pixels écran et on le reporte sur l'axe d'arrivée, pour que pivoter
+        # ne change que l'orientation — jamais la longueur apparente.
+        W = H = 0
+        _cw = getattr(self, 'canvas_widget', None) or getattr(self, 'canvas', None)
+        if _cw is not None:
+            W, H = _cw.width(), _cw.height()
+        W = W or 1100
+        H = H or 700
+
+        R = max(1, int(getattr(pixels[0], 'matrix_rows', 1) or 1))
+        C = max(1, int(getattr(pixels[0], 'matrix_cols', 1) or 1))
+        # Dimensions de la grille telle qu'elle est actuellement à l'écran
+        GX, GY = (C, R) if old_rot in (0, 2) else (R, C)
+
+        xs = [p.canvas_x for p in pixels]
+        ys = [p.canvas_y for p in pixels]
+        pitch_x = ((max(xs) - min(xs)) * W) / max(GX - 1, 1)
+        pitch_y = ((max(ys) - min(ys)) * H) / max(GY - 1, 1)
+        # Une barre 1D n'a d'étendue que sur un axe : l'autre pas est nul
+        pitch_x = pitch_x or pitch_y
+        pitch_y = pitch_y or pitch_x
+
+        # 90° : ce qui courait en X court désormais en Y, et inversement
+        layout_pixels(pixels, cx, cy, pitch_y / W, pitch_x / H, new_rot)
         for p in members:
             p.matrix_rot = new_rot
         if self.main_window and hasattr(self.main_window, 'save_dmx_patch_config'):

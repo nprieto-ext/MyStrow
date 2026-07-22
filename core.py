@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.68"
+VERSION = "3.1.69"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -233,3 +233,65 @@ def create_icon(icon_type, color="#ffffff"):
 
     painter.end()
     return QIcon(pixmap)
+
+
+# ─── Répartition des effets entre fixtures ────────────────────────────────────
+# Partagé par le moteur (main_window) et l'éditeur d'effets : une seule source
+# de vérité, sinon les deux divergeraient et l'aperçu mentirait sur le rendu.
+
+SPREAD_MODES = [
+    ("lineaire",    "Linéaire",         "1, 2, 3, 4… — chenillard classique"),
+    ("miroir",      "Miroir (centre)",  "Part du centre vers les extrémités"),
+    ("miroir_in",   "Miroir (bords)",   "1&8, puis 2&7, puis 3&6 — paires symétriques"),
+    ("pair_impair", "Pair / impair",    "Une fixture sur deux, en alternance"),
+    ("aleatoire",   "Aléatoire",        "Ordre dispersé, mais reproductible"),
+]
+
+
+def spread_rank(i, n, mode="lineaire"):
+    """
+    Rang normalisé (0..1) d'une fixture pour la répartition d'un effet.
+
+    C'est ce rang que le « Décalage » transforme en déphasage. En linéaire il
+    suit l'ordre de patch (1, 2, 3…), d'où le chenillard classique. Les autres
+    modes rendent le même rang à plusieurs fixtures, qui s'allument alors
+    ensemble — « miroir (bords) » donne 1&8, puis 2&7, puis 3&6.
+
+    Vaut pour des projecteurs classiques comme pour les pixels d'une barre :
+    un pixel est une fixture parmi les autres.
+    """
+    n = max(1, int(n))
+    if n == 1:
+        return 0.0
+    # Distance au centre, 0 au milieu → 1 aux extrémités.
+    # Rang le plus BAS = fixture qui passe en premier.
+    dist = abs(i - (n - 1) / 2.0) / ((n - 1) / 2.0)
+    if mode == "miroir":
+        return dist            # centre d'abord, puis vers les bords
+    if mode == "miroir_in":
+        return 1.0 - dist      # bords d'abord : 1&8, puis 2&7, puis 3&6
+    if mode == "pair_impair":
+        return 0.0 if i % 2 == 0 else 0.5
+    if mode == "aleatoire":
+        # Déterministe : un show rejoué doit donner exactement la même figure.
+        # Mélange type Knuth : un simple i*K % M reste monotone sur de petits
+        # index et ne disperserait rien du tout.
+        h = (i + 1) * 2654435761 % 4294967296
+        h ^= h >> 13
+        h = (h * 1274126177) % 4294967296
+        h ^= h >> 16
+        return (h % 10000) / 10000.0
+    return i / n
+
+
+# ─── Libellés courts de canaux ────────────────────────────────────────────────
+# Le TYPE stocké reste inchangé (« Ambre ») : seul l'affichage est raccourci,
+# pour tenir dans les pastilles et les blocs de profil.
+CH_SHORT = {
+    "Ambre": "A",
+}
+
+
+def channel_label(ch):
+    """Libellé d'affichage d'un type de canal."""
+    return CH_SHORT.get(ch, ch)

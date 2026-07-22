@@ -30,6 +30,7 @@ import random
 import math
 import struct
 import time
+import re
 from pathlib import Path
 
 from i18n import tr
@@ -91,6 +92,31 @@ def _get_builtin_effects():
         except Exception:
             _builtin_effects_cache = []
     return _builtin_effects_cache
+
+
+# ── Colonnes de mémoire réservées aux captures « REC séquence » ────────────────
+# Plage haute de colonnes où sont allouées les mémoires REC. L'allocation SAUTE
+# toute colonne mappée à un fader AKAI (cf. _alloc_rec_memory_slot) : les mémoires
+# REC restent donc invisibles sur le contrôleur, tout en réutilisant l'infra
+# mémoire (snapshot, résolution memory_ref, persistance, parité aperçu/show).
+# La classification biblio (section « REC ») repose sur le tag mem["_rec"], pas
+# sur la colonne — robuste même si l'utilisateur a des mémoires dans cette plage.
+REC_MEM_COL_START = 50
+REC_MEM_COL_END   = 98   # inclus → 49 colonnes × 8 = 392 slots
+
+
+_REC_NAME_RE = re.compile(r'^REC \d')
+
+
+def _is_rec_memory(mem) -> bool:
+    """Vrai si la mémoire est une capture REC. Reconnue par le tag `_rec` (posé à
+    l'enregistrement) OU, en repli auto-réparant, par un nom « REC n » — ainsi les
+    anciennes captures (créées avant le tag) restent classées dans la section REC."""
+    if not isinstance(mem, dict):
+        return False
+    if mem.get("_rec"):
+        return True
+    return bool(_REC_NAME_RE.match(mem.get("name") or ""))
 
 
 class LightClip:
@@ -157,6 +183,87 @@ def lerp_qcolor(c1, c2, t):
         int(c1.green() + (c2.green() - c1.green()) * t),
         int(c1.blue()  + (c2.blue()  - c1.blue())  * t),
     )
+
+
+def resolve_memory_projectors(mem_ref, cue_index, memories):
+    """État projecteurs d'une mémoire (cue courant ou fixé), ou None."""
+    if not mem_ref or not memories:
+        return None
+    col, row = mem_ref[0], mem_ref[1]
+    if col >= len(memories) or row >= len(memories[col]):
+        return None
+    mem = memories[col][row]
+    if not mem:
+        return None
+    cues = mem.get("cues", [])
+    if cues:
+        ci = cue_index or 0
+        return cues[min(ci, len(cues) - 1)].get("projectors", [])
+    return mem.get("projectors", [])
+
+
+def apply_seq_memories_htp(entries, memories, projectors, main_win):
+    """
+    Applique une ou plusieurs mémoires de séquence en HTP sur les projecteurs.
+
+    HTP = « highest takes precedence » : pour chaque projecteur, la mémoire qui
+    l'allume le plus fort gagne (couleur, niveau, pan/tilt, strobe, canaux
+    bruts). Les mémoires qui touchent des projecteurs disjoints s'empilent donc
+    naturellement ; sur un projecteur partagé, la plus lumineuse l'emporte —
+    aucun mélange additif (deux couches ne virent pas au blanc).
+
+    UNE seule fonction pour l'aperçu (timeline_editor) ET la restitution
+    (sequencer) : c'est ce qui garantit qu'un show rejoué est identique à ce
+    qu'on a réglé dans l'éditeur.
+
+    `entries` : liste de dicts {memory_ref, cue_index, brightness(0..1)}.
+    """
+    # 1) Résoudre chaque mémoire en (état projecteurs, luminosité)
+    resolved = []
+    for e in entries:
+        ps_list = resolve_memory_projectors(
+            e.get("memory_ref"), e.get("cue_index"), memories)
+        if ps_list:
+            resolved.append((ps_list, e.get("brightness", 1.0)))
+    if not resolved:
+        return
+
+    # 2) Fusion HTP : par projecteur, garder la contribution la plus lumineuse
+    merged = {}   # idx -> (niveau_effectif, ps, brightness)
+    for ps_list, brightness in resolved:
+        for i, ps in enumerate(ps_list):
+            if i >= len(projectors):
+                continue
+            eff = ps.get("level", 0) * brightness
+            cur = merged.get(i)
+            if cur is None or eff > cur[0]:
+                merged[i] = (eff, ps, brightness)
+
+    # 3) Application
+    fx_ids = getattr(main_win, '_fx_clip_ids', None)
+    for i, (_eff, ps, brightness) in merged.items():
+        proj = projectors[i]
+        # Pan/Tilt/Strobe/canaux bruts suivent la mémoire gagnante
+        if "pan" in ps:
+            proj.pan = ps["pan"]
+        if "tilt" in ps:
+            proj.tilt = ps["tilt"]
+        proj.strobe_speed = int(ps.get("strobe_speed", 0))
+        proj.channel_extras = dict(ps.get("channel_extras", {}) or {})
+        if ps.get("level", 0) > 0:
+            lvl = int(ps["level"] * brightness)
+            base = QColor(ps["base_color"])
+            proj.level = lvl
+            proj.base_color = base
+            proj.color = QColor(
+                int(base.red()   * lvl / 100.0),
+                int(base.green() * lvl / 100.0),
+                int(base.blue()  * lvl / 100.0),
+            )
+            if hasattr(main_win, '_update_color_wheel'):
+                main_win._update_color_wheel(proj, base)
+            if fx_ids is not None and hasattr(fx_ids, 'add'):
+                fx_ids.add(id(proj))
 
 
 def scope_layers_to_groups(layers, groups):
@@ -655,6 +762,15 @@ class _LibraryItem(QWidget):
         )
         lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
         h.addWidget(lbl, 1)
+        self._lbl = lbl   # exposé pour recoloration du libellé (ex. REC)
+
+    def _set_label_color(self, color):
+        """Recolore le texte du libellé (identification visuelle)."""
+        if getattr(self, '_lbl', None) is not None:
+            self._lbl.setStyleSheet(
+                f"color: {QColor(color).name()}; font-size: 11px; "
+                "font-weight: 600; background: transparent; border: none;"
+            )
 
     # ── Swatch (override) ────────────────────────────────────────────────────
 
@@ -663,6 +779,11 @@ class _LibraryItem(QWidget):
 
     def _get_paint_brush(self):
         return None  # override in subclasses
+
+    def _lock_labels(self):
+        """(texte « Bloquer », texte « Débloquer ») du menu contextuel.
+        Surchargé par type d'item (couleur / séquence / REC / effet)."""
+        return ("🔒  Bloquer cette couleur", "🔓  Débloquer cette couleur")
 
     # ── Visuel ───────────────────────────────────────────────────────────────
 
@@ -714,9 +835,6 @@ class _LibraryItem(QWidget):
         super().mousePressEvent(event)
 
     def contextMenuEvent(self, event):
-        brush = self._get_paint_brush()
-        if brush is None:
-            return
         ed = self._panel.parent_editor if self._panel else None
         if ed is None:
             return
@@ -727,15 +845,31 @@ class _LibraryItem(QWidget):
             "QMenu::item { padding: 7px 20px; font-size: 12px; }"
             "QMenu::item:selected { background: #2a2a2a; color: white; }"
         )
-        if self._is_paint_active:
-            act = menu.addAction("🔓  Débloquer cette couleur")
-        else:
-            act = menu.addAction("🔒  Bloquer cette couleur")
+        handlers = {}
+        if self._get_paint_brush() is not None:
+            _lock, _unlock = self._lock_labels()
+            lock_act = menu.addAction(_unlock if self._is_paint_active else _lock)
+            handlers[lock_act] = self._toggle_paint_lock
+        handlers.update(self._context_extra_actions(menu, ed))
 
-        chosen = menu.exec(event.globalPos())
-        if chosen != act:
+        if menu.isEmpty():
             return
+        chosen = menu.exec(event.globalPos())
+        cb = handlers.get(chosen)
+        if cb:
+            cb()
 
+    def _context_extra_actions(self, menu, ed):
+        """Actions contextuelles en plus du « Bloquer » — retourne {QAction: callable}.
+        Surchargé par sous-classe (ex. Renommer / Supprimer un REC)."""
+        return {}
+
+    def _toggle_paint_lock(self):
+        """Active / désactive le mode peinture avec cet item comme pinceau."""
+        brush = self._get_paint_brush()
+        ed = self._panel.parent_editor if self._panel else None
+        if brush is None or ed is None:
+            return
         if self._is_paint_active:
             # Désactiver
             ed.paint_mode = False
@@ -771,6 +905,9 @@ class _LibraryItem(QWidget):
                 it._is_paint_active = (it is self)
                 try: it.update()
                 except RuntimeError: pass
+        # Rafraîchir l'info-bulle « <nom> bloqué » de l'éditeur.
+        if hasattr(ed, '_update_paint_hint'):
+            ed._update_paint_hint()
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
@@ -847,14 +984,169 @@ class _LibraryBicolorItem(_LibraryItem):
 
 
 class _LibraryMemItem(_LibraryItem):
-    def __init__(self, label, color, mem_col, row, panel=None, parent=None):
+    def __init__(self, label, color, mem_col, row, panel=None, parent=None, is_rec=False):
         self._mem_color = color
         self._mem_col   = mem_col
         self._mem_row   = row
+        self._is_rec    = is_rec
         super().__init__(label, panel, parent)
+        # REC avec une couleur perso choisie → colorer aussi le libellé.
+        if is_rec:
+            _ed, _mw = self._mw()
+            try:
+                _custom = _mw.memory_custom_colors[mem_col][row] if _mw else None
+            except Exception:
+                _custom = None
+            if _custom:
+                self._set_label_color(_custom)
 
     def _get_paint_brush(self):
         return {"type": "mem", "color": self._mem_color, "col": self._mem_col, "row": self._mem_row, "label": self._name}
+
+    def _lock_labels(self):
+        if self._is_rec:
+            return ("🔒  Bloquer ce REC", "🔓  Débloquer ce REC")
+        return ("🔒  Bloquer cette séquence", "🔓  Débloquer cette séquence")
+
+    def _context_extra_actions(self, menu, ed):
+        # Renommer / Supprimer réservés aux captures REC (pas aux mémoires AKAI,
+        # qui se gèrent depuis la fenêtre principale).
+        if not self._is_rec:
+            return {}
+        menu.addSeparator()
+        handlers = {}
+        rename_act = menu.addAction("✏️  Renommer ce REC")
+        handlers[rename_act] = self._rename_rec
+        # Sous-menu palette : choisir la couleur du REC parmi plusieurs pastilles.
+        color_menu = menu.addMenu("🎨  Couleur")
+        for hexc in self._REC_PALETTE:
+            act = color_menu.addAction(self._color_icon(hexc), hexc)
+            handlers[act] = (lambda h=hexc: self._recolor_rec(h))
+        delete_act = menu.addAction("🗑️  Supprimer ce REC")
+        handlers[delete_act] = self._delete_rec
+        return handlers
+
+    _REC_PALETTE = ["#ffffff", "#ff0000", "#ff8800", "#ffdd00",
+                    "#00ff00", "#00dddd", "#2266ff", "#ff00ff",
+                    "#ff66aa", "#8844ff", "#888888"]
+
+    @staticmethod
+    def _color_icon(hexc):
+        from PySide6.QtGui import QIcon
+        pix = QPixmap(16, 16)
+        pix.fill(QColor(hexc))
+        return QIcon(pix)
+
+    def _recolor_rec(self, hexc):
+        ed, mw = self._mw()
+        if not mw:
+            return
+        qc = QColor(hexc)
+        try:
+            mw.memory_custom_colors[self._mem_col][self._mem_row] = qc
+        except Exception:
+            pass
+        if hasattr(mw, '_save_akai_config_auto'):
+            mw._save_akai_config_auto()
+        # Répercuter la couleur d'affichage sur les blocs de séquence liés
+        # (purement visuel — la lumière vient de la mémoire, pas de clip.color).
+        ref = (self._mem_col, self._mem_row)
+        if ed:
+            for t in getattr(ed, 'tracks', []):
+                for c in getattr(t, 'clips', []):
+                    if getattr(c, 'memory_ref', None) == ref:
+                        c.color = QColor(qc)
+                t.update()
+        if self._panel:
+            self._panel.refresh()
+
+    def _mw(self):
+        ed = self._panel.parent_editor if self._panel else None
+        return ed, (getattr(ed, 'main_window', None) if ed else None)
+
+    def _rename_rec(self):
+        from PySide6.QtWidgets import QInputDialog, QLineEdit
+        ed, mw = self._mw()
+        if not mw:
+            return
+        name, ok = QInputDialog.getText(self, "Renommer le REC",
+                                        "Nouveau nom :", QLineEdit.Normal, self._name)
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        try:
+            mem = mw.memories[self._mem_col][self._mem_row]
+        except Exception:
+            mem = None
+        if isinstance(mem, dict):
+            mem["name"] = name
+            if hasattr(mw, '_save_akai_config_auto'):
+                mw._save_akai_config_auto()
+        # Mettre à jour le libellé des blocs de séquence qui pointent dessus.
+        ref = (self._mem_col, self._mem_row)
+        if ed:
+            for t in getattr(ed, 'tracks', []):
+                for c in getattr(t, 'clips', []):
+                    if getattr(c, 'memory_ref', None) == ref:
+                        c.memory_label = name
+                t.update()
+        if self._panel:
+            self._panel.refresh()
+
+    def _delete_rec(self):
+        from PySide6.QtWidgets import QMessageBox
+        ed, mw = self._mw()
+        if not mw:
+            return
+        ref = (self._mem_col, self._mem_row)
+        n_refs = 0
+        if ed:
+            for t in getattr(ed, 'tracks', []):
+                for c in getattr(t, 'clips', []):
+                    if getattr(c, 'memory_ref', None) == ref:
+                        n_refs += 1
+        msg = f"Supprimer « {self._name} » ?"
+        if n_refs:
+            msg += (f"\n\n⚠ {n_refs} bloc(s) de séquence l'utilisent — "
+                    "ils seront supprimés aussi.")
+        box = QMessageBox(self)
+        box.setWindowTitle("Supprimer le REC")
+        box.setIcon(QMessageBox.Warning)
+        box.setText(msg)
+        box.setStyleSheet(
+            "QMessageBox { background:#1e1e1e; }"
+            "QLabel { color:#eee; font-size:12px; }"
+            "QPushButton { background:#2a2a2a; color:#fff; border:1px solid #444;"
+            " border-radius:5px; padding:6px 18px; min-width:90px; font-size:12px; }"
+            "QPushButton:hover { border-color:#00d4ff; background:#333; }"
+        )
+        del_btn = box.addButton("Supprimer", QMessageBox.AcceptRole)
+        box.addButton("Annuler", QMessageBox.RejectRole)
+        box.setDefaultButton(box.buttons()[-1])   # défaut = Annuler (sécurité)
+        box.exec()
+        if box.clickedButton() is not del_btn:
+            return
+        # Retirer les blocs qui référencent cette mémoire.
+        if ed:
+            for t in getattr(ed, 'tracks', []):
+                t.clips = [c for c in t.clips if getattr(c, 'memory_ref', None) != ref]
+                if hasattr(t, 'selected_clips'):
+                    t.selected_clips = [c for c in t.selected_clips
+                                        if getattr(c, 'memory_ref', None) != ref]
+                t.update()
+        # Supprimer la mémoire REC.
+        try:
+            mw.memories[self._mem_col][self._mem_row] = None
+        except Exception:
+            pass
+        if hasattr(mw, '_save_akai_config_auto'):
+            mw._save_akai_config_auto()
+        if ed and hasattr(ed, 'save_state'):
+            ed.save_state()
+        if self._panel:
+            self._panel.refresh()
 
     def _swatch_paint(self, event):
         p = QPainter(self._sw)
@@ -891,6 +1183,9 @@ class _LibraryEffectItem(_LibraryItem):
 
     def _get_paint_brush(self):
         return {"type": "effect", "eff": self._eff}
+
+    def _lock_labels(self):
+        return ("🔒  Bloquer cet effet", "🔓  Débloquer cet effet")
 
     def _swatch_paint(self, event):
         p = QPainter(self._sw)
@@ -1079,6 +1374,7 @@ class LibraryPanel(QScrollArea):
         self._sec_color      = _LibrarySection("COULEUR", v)
         self._sec_bi         = _LibrarySection("BICOULEUR", v)
         self._sec_mem        = _LibrarySection("MÉMOIRE", v)
+        self._sec_rec        = _LibrarySection("REC", v)
         self._sec_pos        = _LibrarySection(tr("lt_sec_positions"), v)
         self._sec_eff        = _LibrarySection("EFFETS", v)
         self._sec_custom_eff = _LibrarySection("MES EFFETS", v)
@@ -1096,7 +1392,7 @@ class LibraryPanel(QScrollArea):
             visible = not query or query in item._name.lower()
             item.setVisible(visible)
         # Masquer les sections entièrement vides
-        for sec in (self._sec_color, self._sec_bi, self._sec_mem,
+        for sec in (self._sec_color, self._sec_bi, self._sec_mem, self._sec_rec,
                     self._sec_pos, self._sec_eff, self._sec_custom_eff):
             body = sec._body
             any_visible = any(
@@ -1286,8 +1582,8 @@ class LibraryPanel(QScrollArea):
         if memories:
             for mem_col, col_mems in enumerate(memories):
                 for row_idx, mem in enumerate(col_mems):
-                    if mem is None:
-                        continue
+                    if mem is None or _is_rec_memory(mem):
+                        continue   # captures REC → section « REC » dédiée
                     color = PalettePanel._dominant_color(mem, mw, mem_col, row_idx)
                     label = f"MEM {mem_col + 1}.{row_idx + 1}"
                     self._sec_mem.add_item(
@@ -1302,6 +1598,33 @@ class LibraryPanel(QScrollArea):
                 "background: transparent; padding: 5px 10px;"
             )
             self._sec_mem.add_item(empty)
+
+        # ── Section REC (captures « REC séquence », colonnes réservées) ─────────
+        removed_rec = self._sec_rec.clear_items()
+        self._deregister_list(removed_rec)
+        rec_count = 0
+        if memories:
+            for mem_col, col_mems in enumerate(memories):
+                for row_idx, mem in enumerate(col_mems):
+                    if not _is_rec_memory(mem):
+                        continue
+                    # Les projecteurs sont dans cues[0] → couleur dominante réelle.
+                    cues = mem.get("cues") if isinstance(mem, dict) else None
+                    cue0 = cues[0] if cues else mem
+                    color = PalettePanel._dominant_color(cue0, mw, mem_col, row_idx)
+                    label = (mem.get("name") if isinstance(mem, dict) else None) \
+                        or f"REC {mem_col}.{row_idx}"
+                    self._sec_rec.add_item(
+                        _LibraryMemItem(label, color, mem_col, row_idx, panel=self, is_rec=True)
+                    )
+                    rec_count += 1
+        if rec_count == 0:
+            empty_rec = QLabel("  Aucun REC")
+            empty_rec.setStyleSheet(
+                "color: #2a2a2a; font-size: 10px; font-style: italic; "
+                "background: transparent; padding: 5px 10px;"
+            )
+            self._sec_rec.add_item(empty_rec)
 
         # ── Section Positions lyre ─────────────────────────────────────────────
         removed_pos = self._sec_pos.clear_items()
@@ -2201,36 +2524,46 @@ print(json.dumps(waveform))
 
         # === MODE PAINT ACTIF ===
         if hasattr(self.parent_editor, 'paint_mode') and self.parent_editor.paint_mode:
-            is_special = (getattr(self, 'is_effect_track', False) or
-                          getattr(self, 'is_sequence_track', False) or
-                          getattr(self, 'is_position_track', False) or
-                          self.name == "Audio")
-            if not is_special:
-                brush = getattr(self.parent_editor, 'paint_brush', None)
-                if brush and not self.get_clip_at_pos(x, y):
-                    click_time = max(0, (x - 145) / self.pixels_per_ms)
-                    if event.modifiers() & Qt.ShiftModifier:
-                        # Shift+clic = poser le bloc sur TOUTES les pistes de groupe
-                        # d'un coup (couleur commune à plusieurs groupes).
-                        painted = False
-                        for track in self.parent_editor.tracks:
-                            if (getattr(track, 'is_effect_track', False) or
-                                    getattr(track, 'is_sequence_track', False) or
-                                    getattr(track, 'is_position_track', False) or
-                                    track.name == "Audio"):
-                                continue
-                            # ne pas superposer si un clip couvre déjà ce temps
-                            if any(c.start_time <= click_time <= c.start_time + c.duration
-                                   for c in track.clips):
-                                continue
-                            track._paint_brush_at(click_time, brush)
-                            painted = True
-                        if painted and hasattr(self.parent_editor, 'save_state'):
-                            self.parent_editor.save_state()
-                    else:
-                        self._paint_brush_at(click_time, brush)
-                        if hasattr(self.parent_editor, 'save_state'):
-                            self.parent_editor.save_state()
+            brush = getattr(self.parent_editor, 'paint_brush', None)
+            btype = (brush or {}).get("type")
+            is_seq   = getattr(self, 'is_sequence_track', False)
+            is_eff   = getattr(self, 'is_effect_track', False)
+            is_pos   = getattr(self, 'is_position_track', False)
+            is_group = not (is_seq or is_eff or is_pos or self.name == "Audio")
+            # Compatibilité brosse ↔ piste : une mémoire/REC se pose sur la piste
+            # Séquence, un effet sur une piste Effet, une couleur sur un groupe.
+            if btype == "mem":
+                allowed = is_seq
+            elif btype == "effect":
+                allowed = is_eff
+            elif btype in ("color", "bicolor"):
+                allowed = is_group
+            else:
+                allowed = False
+            if allowed and brush and not self.get_clip_at_pos(x, y):
+                click_time = max(0, (x - 145) / self.pixels_per_ms)
+                if btype in ("color", "bicolor") and (event.modifiers() & Qt.ShiftModifier):
+                    # Shift+clic = poser le bloc sur TOUTES les pistes de groupe
+                    # d'un coup (couleur commune à plusieurs groupes).
+                    painted = False
+                    for track in self.parent_editor.tracks:
+                        if (getattr(track, 'is_effect_track', False) or
+                                getattr(track, 'is_sequence_track', False) or
+                                getattr(track, 'is_position_track', False) or
+                                track.name == "Audio"):
+                            continue
+                        # ne pas superposer si un clip couvre déjà ce temps
+                        if any(c.start_time <= click_time <= c.start_time + c.duration
+                               for c in track.clips):
+                            continue
+                        track._paint_brush_at(click_time, brush)
+                        painted = True
+                    if painted and hasattr(self.parent_editor, 'save_state'):
+                        self.parent_editor.save_state()
+                else:
+                    self._paint_brush_at(click_time, brush)
+                    if hasattr(self.parent_editor, 'save_state'):
+                        self.parent_editor.save_state()
             return
 
         # === MODE CUT ACTIVE ===
@@ -3114,6 +3447,19 @@ print(json.dumps(waveform))
             m.exec(global_pos)
 
         act_change.triggered.connect(_open_mem_picker)
+
+        # ── Fondus : montée/descente d'intensité de la mémoire rappelée ────
+        # Le moteur applique déjà le fade (il multiplie les niveaux de la
+        # mémoire par l'intensité fadée) ; il ne manquait que le moyen de le
+        # poser. Mêmes actions que sur un bloc couleur.
+        menu.addSeparator()
+        act_fi = menu.addAction(tr("lt_menu_fade_in"))
+        act_fi.triggered.connect(lambda: self.add_clip_fade_in(clip))
+        act_fo = menu.addAction(tr("lt_menu_fade_out"))
+        act_fo.triggered.connect(lambda: self.add_clip_fade_out(clip))
+        if getattr(clip, 'fade_in_duration', 0) > 0 or getattr(clip, 'fade_out_duration', 0) > 0:
+            act_cf = menu.addAction(tr("lt_menu_clear_fades"))
+            act_cf.triggered.connect(lambda: self.clear_clip_fades(clip))
 
         menu.addSeparator()
         act_del = menu.addAction(tr("lt_menu_delete"))
@@ -4139,15 +4485,18 @@ print(json.dumps(waveform))
 
         print(f"✂️ CUT: Clip {clip.start_time/1000:.2f}s → coupe a {cut_point/1000:.2f}s")
 
-        clip.duration = first_duration
+        # Seconde moitié = clone COMPLET du clip (couleur, memory_ref séquence,
+        # effets, mouvement lyre, fondus…). Indispensable : sans ça, couper un REC
+        # perd son memory_ref et la moitié droite s'affiche en bloc rouge « vide ».
+        new_clip = self._clone_clip(clip, self)
+        new_clip.start_time       = cut_point
+        new_clip.duration         = second_duration
+        new_clip.fade_in_duration = 0     # pas de refondu au point de coupe
+        new_clip.xfade            = 0
+        self.clips.append(new_clip)
 
-        new_clip = self.add_clip_direct(cut_point, second_duration, clip.color, clip.intensity)
-
-        if clip.color2:
-            new_clip.color2 = clip.color2
-        new_clip.effect = clip.effect
-        new_clip.effect_speed = clip.effect_speed
-        new_clip.fade_out_duration = clip.fade_out_duration
+        # Première moitié = clip tronqué ; le fondu de sortie passe à la 2e moitié.
+        clip.duration          = first_duration
         clip.fade_out_duration = 0
 
         self.update()
@@ -4614,7 +4963,7 @@ print(json.dumps(waveform))
         for attr in ('memory_ref', 'cue_index', 'memory_label',
                      'pan_start', 'tilt_start', 'pan_end', 'tilt_end',
                      'move_effect', 'move_speed', 'move_amplitude',
-                     'strobe_speed', 'position_preset_idx'):
+                     'strobe_speed', 'position_preset_idx', 'position_preset_name'):
             if hasattr(clip, attr):
                 setattr(new_clip, attr, getattr(clip, attr))
         return new_clip
@@ -4630,9 +4979,23 @@ print(json.dumps(waveform))
             clip.color2 = brush["c2"]
             self.update()
         elif btype == "mem":
-            self.add_clip(start_time, dur, brush["color"], 100)
+            # Mémoire / REC → vrai bloc de séquence pointant sur la mémoire.
+            col, row = brush.get("col"), brush.get("row")
+            clip = self.add_clip(start_time, dur,
+                                 brush.get("color") or QColor("#888888"), 100)
+            if col is not None and row is not None:
+                clip.memory_ref   = (col, row)
+                clip.memory_label = brush.get("label", "")
+            self.update()
         elif btype == "effect":
-            self.add_clip(start_time, dur, QColor("#22083a"), 100)
+            # Effet → vrai clip d'effet (layers), pas un simple bloc coloré.
+            eff = brush.get("eff", {}) or {}
+            clip = self.add_clip(start_time, dur, QColor("#1a0a2e"), 100)
+            clip.effect_name          = eff.get("name", "")
+            clip.effect_layers        = eff.get("layers", [])
+            clip.effect_type          = eff.get("type", "")
+            clip.effect_target_groups = LightTrack._auto_target_groups(clip.effect_layers)
+            self.update()
 
     def update_clips(self):
         """Met a jour la position/taille de tous les clips"""

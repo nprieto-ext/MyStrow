@@ -4884,17 +4884,27 @@ class Sequencer(QFrame):
             _player = getattr(self.player_ui, 'player', None)
             _state  = _player.playbackState() if _player else None
             if _state is not None and _state != QMediaPlayer.PlayingState:
-                if getattr(self, '_timeline_effect_name', None) is not None:
-                    self._stop_timeline_effect()
-                for _proj in self.player_ui.projectors:
-                    _proj.level      = 0
-                    _proj.base_color = QColor("black")
-                    _proj.color      = QColor("black")
-                if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
-                    self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)
+                # Noircir UNE SEULE FOIS. Répété à chaque tick (50 ms), ce bloc
+                # réécrasait les projecteurs 20 fois par seconde : après un stop,
+                # toute reprise en main manuelle (plan de feu 2D, AKAI, pads)
+                # était effacée dans la foulée et paraissait sans effet.
+                if not getattr(self, '_timeline_pause_blackout', False):
+                    self._timeline_pause_blackout = True
+                    if getattr(self, '_timeline_effect_name', None) is not None:
+                        self._stop_timeline_effect()
+                    for _proj in self.player_ui.projectors:
+                        _proj.level      = 0
+                        _proj.base_color = QColor("black")
+                        _proj.color      = QColor("black")
+                    if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
+                        self.player_ui.artnet.update_from_projectors(
+                            self.player_ui.projectors)
             return
 
         self.timeline_last_update = current_time
+        # La position a bougé : on est bien en lecture. Réarmer le blackout de
+        # pause, sinon la prochaine pause laisserait les lumières allumées.
+        self._timeline_pause_blackout = False
 
         # Compteur pour les effets
         if not hasattr(self, '_timeline_tick'):
@@ -4948,6 +4958,7 @@ class Sequencer(QFrame):
                 'effect_layers':        clip_data.get('effect_layers', []),
                 'effect_target_groups': clip_data.get('effect_target_groups', []),
                 'memory_ref':    clip_data.get('memory_ref'),
+                'cue_index':     clip_data.get('cue_index'),
                 'seq_intensity': intensity,
             }
             # Mouvement Pan/Tilt
@@ -5413,8 +5424,20 @@ class Sequencer(QFrame):
                         proj.pan  = pan_val
                         proj.tilt = tilt_val
 
-        # ── Appliquer la séquence mémoire par-dessus les groupes ────────────
-        self._apply_seq_memory(active_clips.get('Séquence'), main_win)
+        # ── Appliquer les séquences mémoire (HTP) par-dessus les groupes ────
+        # Toutes les pistes Séquence actives sont fusionnées : sur un projecteur
+        # partagé, la mémoire la plus lumineuse gagne ; les mémoires disjointes
+        # s'empilent. Même fonction que l'aperçu éditeur → parité garantie.
+        from light_timeline import apply_seq_memories_htp
+        _seq_entries = [
+            {'memory_ref': c.get('memory_ref'),
+             'cue_index': c.get('cue_index'),
+             'brightness': c.get('seq_intensity', 100) / 100.0}
+            for c in active_clips.values()
+            if isinstance(c, dict) and c.get('memory_ref')
+        ]
+        apply_seq_memories_htp(_seq_entries, getattr(main_win, 'memories', None),
+                               main_win.projectors, main_win)
 
         # ── Appliquer l'effet de la piste Effet par-dessus tout ─────────────
         # (le effect_timer n'est pas actif en mode timeline — on gère ici)
@@ -5806,3 +5829,5 @@ class Sequencer(QFrame):
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row
         self.timeline_tracks_data = {}
+        # Le prochain démarrage doit pouvoir noircir à nouveau sur pause
+        self._timeline_pause_blackout = False

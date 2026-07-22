@@ -98,7 +98,84 @@ def _get_channel_type(channel_name: str, channel_data: dict) -> str:
     return _SIMPLE_MAP.get(cap_type, "Mode")
 
 
-def _map_channels(available: dict, mode_channels: list) -> list:
+_PIXEL_TOKEN = "$pixelKey"
+
+
+def _matrix_pixel_keys(matrix: dict) -> tuple:
+    """
+    Liste ordonnée des pixel keys d'une matrice OFL + géométrie (cols, rows).
+
+    Deux formes possibles côté OFL :
+    - "pixelKeys": tableau 3D [z][y][x] de noms (trous = null)
+    - "pixelCount": [x, y, z] → clés auto "1".."N" en 1D
+    """
+    if not isinstance(matrix, dict):
+        return [], (0, 0)
+
+    keys = matrix.get("pixelKeys")
+    if isinstance(keys, list) and keys:
+        out, rows, cols = [], 0, 0
+        for z_layer in keys:
+            if not isinstance(z_layer, list):
+                continue
+            for y_row in z_layer:
+                if not isinstance(y_row, list):
+                    continue
+                rows += 1
+                cols = max(cols, len(y_row))
+                out.extend(k for k in y_row if k)
+        return out, (cols, rows)
+
+    pc = matrix.get("pixelCount")
+    if isinstance(pc, list) and len(pc) == 3:
+        try:
+            x, y, z = (max(1, int(v)) for v in pc)
+        except (TypeError, ValueError):
+            return [], (0, 0)
+        out = []
+        for zz in range(1, z + 1):
+            for yy in range(1, y + 1):
+                for xx in range(1, x + 1):
+                    # 1D → clés "1".."N" ; sinon coordonnées façon OFL
+                    out.append(str(len(out) + 1) if (y == 1 and z == 1)
+                               else f"({xx}, {yy}, {zz})")
+        return out, (x, y * z)
+
+    return [], (0, 0)
+
+
+def _template_lookup(templates: dict) -> list:
+    """
+    Prépare la résolution des noms dérivés d'un templateChannel.
+
+    Un mode peut référencer "Red Master" ou "Red 3" : ces canaux n'existent pas
+    dans availableChannels, ils sont générés depuis le template "Red $pixelKey".
+    On retourne des couples (prefixe, suffixe, nom_template, data) pour matcher
+    n'importe quelle pixel key sans avoir à la deviner.
+    """
+    out = []
+    for tpl_name, tpl_data in (templates or {}).items():
+        if _PIXEL_TOKEN not in tpl_name:
+            continue
+        prefix, _, suffix = tpl_name.partition(_PIXEL_TOKEN)
+        out.append((prefix, suffix, tpl_name, tpl_data))
+    # Les préfixes longs d'abord : "Red Fine $pixelKey" avant "Red $pixelKey"
+    out.sort(key=lambda t: len(t[0]) + len(t[1]), reverse=True)
+    return out
+
+
+def _resolve_template(ch_name: str, lookup: list):
+    """Retrouve (nom_template, data) pour un canal dérivé, sinon (None, None)."""
+    for prefix, suffix, tpl_name, tpl_data in lookup:
+        if len(ch_name) <= len(prefix) + len(suffix):
+            continue
+        if ch_name.startswith(prefix) and ch_name.endswith(suffix):
+            return tpl_name, tpl_data
+    return None, None
+
+
+def _map_channels(available: dict, mode_channels: list,
+                  templates: dict = None, matrix: dict = None) -> tuple:
     """
     Construit le profil de canaux MyStrow pour un mode OFL.
 
@@ -106,8 +183,18 @@ def _map_channels(available: dict, mode_channels: list) -> list:
     - Fine channels (fineChannelAliases sur le canal parent)
     - Gobo1 / Gobo2 selon l'ordre d'apparition
     - Canaux null (trou DMX) → "Mode"
-    - Références matricielles (dict) → ignorées
+    - Canaux dérivés d'un templateChannel ("Red Master" ← "Red $pixelKey")
+    - Références matricielles (insert: matrixChannels) → développées en canaux
+      pixel réels, et géométrie remontée en métadonnée
+
+    Retourne (profile, matrix_meta) ; matrix_meta vaut None si le mode n'a
+    aucun canal pixel.
     """
+    templates = templates or {}
+    tpl_lookup = _template_lookup(templates)
+    pixel_keys, (mx_cols, mx_rows) = _matrix_pixel_keys(matrix or {})
+    pixel_groups = list((matrix or {}).get("pixelGroups", {}).keys())
+
     # Pré-calcul : mapping fine_alias_name -> (parent_name, parent_mystrow)
     fine_aliases: dict[str, str] = {}  # alias_name -> parent_channel_name
     for ch_name, ch_data in available.items():
@@ -116,42 +203,121 @@ def _map_channels(available: dict, mode_channels: list) -> list:
 
     gobo_count = 0
     profile = []
+    matrix_meta = None
 
-    for ref in mode_channels:
-        if ref is None:
-            profile.append("Mode")
-            continue
-        if isinstance(ref, dict):
-            # matrixChannels ou autre construction complexe → ignorer
-            continue
-        ch_name = str(ref)
-
-        # Est-ce un alias fin ?
+    def _type_of(ch_name):
+        """Type MyStrow d'un canal, qu'il soit direct ou dérivé d'un template."""
         if ch_name in fine_aliases:
             parent = fine_aliases[ch_name]
             parent_type = _get_channel_type(parent, available.get(parent, {}))
-            if parent_type in ("Pan", "Tilt"):
-                profile.append(parent_type + "Fine")
-            else:
-                profile.append("Mode")
-            continue
+            return parent_type + "Fine" if parent_type in ("Pan", "Tilt") else "Mode"
+        if ch_name in available:
+            return _get_channel_type(ch_name, available[ch_name])
+        # Pas dans availableChannels : canal généré depuis un templateChannel
+        tpl_name, tpl_data = _resolve_template(ch_name, tpl_lookup)
+        if tpl_data is not None:
+            return _get_channel_type(tpl_name, tpl_data)
+        return "Mode"
 
-        ch_data = available.get(ch_name, {})
-        mtype = _get_channel_type(ch_name, ch_data)
-
+    def _emit(mtype):
+        nonlocal gobo_count
         if mtype == "Gobo":
             gobo_count += 1
             profile.append("Gobo1" if gobo_count <= 1 else "Gobo2")
         else:
             profile.append(mtype)
 
-    return profile
+    for ref in mode_channels:
+        if ref is None:
+            profile.append("Mode")
+            continue
+
+        if isinstance(ref, dict):
+            if ref.get("insert") != "matrixChannels":
+                continue  # construction inconnue → on saute
+            tpl_names = ref.get("templateChannels") or []
+            cell = [_get_channel_type(t, templates.get(t, {})) for t in tpl_names]
+
+            repeat = ref.get("repeatFor")
+            if isinstance(repeat, list):
+                targets = list(repeat)
+            elif repeat == "eachPixelGroup":
+                targets = pixel_groups
+            else:  # eachPixelXYZ / eachPixelXZY / ... → tous les pixels
+                targets = pixel_keys
+            n = len(targets)
+            if n == 0 or not cell:
+                continue
+
+            start = len(profile)
+            per_pixel = ref.get("channelOrder", "perPixel") != "perChannel"
+            if per_pixel:
+                for _ in range(n):
+                    for t in cell:
+                        _emit(t)
+            else:
+                for t in cell:
+                    for _ in range(n):
+                        _emit(t)
+
+            # Une seule géométrie retenue par mode (le plus gros bloc pixel)
+            if matrix_meta is None or n * len(cell) > matrix_meta["pixel_count"] * len(matrix_meta["pixel_channels"]):
+                cols = mx_cols if targets is pixel_keys and mx_cols else n
+                rows = mx_rows if targets is pixel_keys and mx_rows else 1
+                if cols * rows != n:      # groupes / sous-ensemble → traiter en 1D
+                    cols, rows = n, 1
+                matrix_meta = {
+                    "rows":           rows,
+                    "cols":           cols,
+                    "pixel_count":    n,
+                    "pixel_channels": list(cell),
+                    "head":           list(profile[:start]),
+                    "offset":         start,
+                    "order":          "perPixel" if per_pixel else "perChannel",
+                }
+            continue
+
+        _emit(_type_of(str(ref)))
+
+    if matrix_meta is not None:
+        matrix_meta["tail"] = list(profile[matrix_meta["offset"]
+                                           + matrix_meta["pixel_count"]
+                                           * len(matrix_meta["pixel_channels"]):])
+
+    return profile, matrix_meta
 
 
-def _detect_fixture_type(profile: list) -> str:
+def _physical_dims(obj: dict, mode: dict = None) -> dict:
+    """
+    Dimensions physiques (mm) d'une fixture OFL : {"w":…, "h":…, "d":…}.
+
+    Sert à dessiner une barre à sa vraie échelle sur le plan de feu (une barre
+    d'1 m et un wash de 20 cm ne doivent pas avoir la même taille). Un mode peut
+    redéfinir le physique (ex : version longue/courte du même modèle).
+    """
+    dims = None
+    if isinstance(mode, dict):
+        dims = (mode.get("physical") or {}).get("dimensions")
+    if not dims:
+        dims = (obj.get("physical") or {}).get("dimensions")
+    if not (isinstance(dims, list) and len(dims) >= 2):
+        return {}
+    try:
+        w, h = float(dims[0]), float(dims[1])
+        d = float(dims[2]) if len(dims) > 2 else 0.0
+    except (TypeError, ValueError):
+        return {}
+    if w <= 0 or h <= 0:
+        return {}
+    return {"w": w, "h": h, "d": d}
+
+
+def _detect_fixture_type(profile: list, matrix_meta: dict = None) -> str:
     """Déduit le type de fixture depuis son profil."""
     if "Pan" in profile or "Tilt" in profile:
         return "Moving Head"
+    if matrix_meta:
+        return "Barre LED" if matrix_meta.get("rows", 1) <= 1 else "Matrice LED"
     return "PAR LED"
 
 
@@ -311,24 +477,35 @@ def parse_ofl_json(
     manufacturer = manufacturer_name or manufacturer_key
 
     available = obj.get("availableChannels", {})
+    templates = obj.get("templateChannels", {})
+    matrix    = obj.get("matrix", {})
     raw_modes  = obj.get("modes", [])
 
     modes = []
     for m in raw_modes:
         mode_name     = m.get("name") or m.get("shortName", f"Mode {len(modes)+1}")
         mode_channels = m.get("channels", [])
-        profile       = _map_channels(available, mode_channels)
-        modes.append({
+        profile, mx   = _map_channels(available, mode_channels, templates, matrix)
+        entry = {
             "name":         mode_name,
             "channelCount": len(profile),
             "profile":      profile,
-        })
+        }
+        if mx:
+            entry["matrix"] = mx
+        _mph = _physical_dims(obj, m)
+        if _mph:
+            entry["physical"] = _mph
+        modes.append(entry)
 
     if not modes:
         modes = [{"name": "Mode 1", "channelCount": 0, "profile": []}]
 
     first_profile = modes[0]["profile"] if modes else []
-    ftype = _detect_fixture_type(first_profile)
+    # Le type suit le mode le plus riche : une barre reste une barre même si son
+    # premier mode est le 3 canaux "Master".
+    _mx_any = next((m.get("matrix") for m in modes if m.get("matrix")), None)
+    ftype = _detect_fixture_type(first_profile, _mx_any)
 
     wheel_slots = _extract_wheel_slots(obj, available)
 
@@ -340,6 +517,10 @@ def parse_ofl_json(
         "uuid":         f"ofl:{manufacturer_key}/{fixture_key}" if manufacturer_key else "",
         "modes":        modes,
     }
+    _phys = _physical_dims(obj)
+    if _phys:
+        result["physical"] = _phys
+
     if wheel_slots["color_wheel_slots"]:
         result["color_wheel_slots"] = wheel_slots["color_wheel_slots"]
     if wheel_slots["gobo_wheel_slots"]:

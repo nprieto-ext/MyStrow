@@ -17,9 +17,12 @@ from PySide6.QtWidgets import (
     QToolButton, QMenu, QMenuBar, QFileDialog, QMessageBox, QDialog,
     QComboBox, QTableWidget, QTableWidgetItem, QWidgetAction, QSpinBox,
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
-    QHeaderView, QCheckBox, QTextEdit, QToolTip, QDialogButtonBox
+    QHeaderView, QCheckBox, QTextEdit, QToolTip, QDialogButtonBox,
+    QLayout, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QPoint, QDateTime, QEvent, Signal
+from PySide6.QtCore import (
+    Qt, QTimer, QUrl, QSize, QPoint, QRect, QDateTime, QEvent, Signal
+)
 import datetime as _dt
 try:
     import psutil as _psutil
@@ -27,8 +30,118 @@ except ImportError:
     _psutil = None
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
-    QPalette, QPolygon, QAction, QActionGroup, QDesktopServices
+    QPalette, QPolygon, QAction, QActionGroup, QDesktopServices,
+    QFontMetrics
 )
+
+
+class FlowLayout(QLayout):
+    """
+    Layout qui place les widgets de gauche à droite et passe à la ligne quand
+    la largeur est atteinte. Utilisé pour les pastilles de canaux DMX : une
+    lyre 32 canaux ne doit pas déborder de la fenêtre.
+    """
+
+    def __init__(self, parent=None, margin=0, spacing=4):
+        super().__init__(parent)
+        self._items = []
+        self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+
+    def __del__(self):
+        while self._items:
+            self._items.pop()
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientations(Qt.Orientation(0))
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _do_layout(self, rect, test_only):
+        m = self.contentsMargins()
+        eff = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x, y, line_h = eff.x(), eff.y(), 0
+        space = self.spacing()
+
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + space
+            if next_x - space > eff.right() and line_h > 0:
+                x = eff.x()
+                y = y + line_h + space
+                next_x = x + hint.width() + space
+                line_h = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_h = max(line_h, hint.height())
+
+        return y + line_h - rect.y() + m.bottom()
+
+
+class ElidedLabel(QLabel):
+    """
+    QLabel qui tronque son texte avec « … » au lieu de pousser la fenêtre.
+    Le texte complet reste accessible en infobulle.
+    """
+
+    def __init__(self, text="", parent=None, mode=Qt.ElideRight):
+        super().__init__(text, parent)
+        self._full_text = text
+        self._mode = mode
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setMinimumWidth(0)
+
+    def setText(self, text):
+        self._full_text = text or ""
+        if self._full_text:
+            self.setToolTip(self._full_text)
+        self._apply_elide()
+
+    def text(self):
+        return self._full_text
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_elide()
+
+    def _apply_elide(self):
+        w = max(0, self.width())
+        if w <= 0:
+            super().setText(self._full_text)
+            return
+        fm = QFontMetrics(self.font())
+        super().setText(fm.elidedText(self._full_text, self._mode, w))
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 except ImportError:
@@ -70,7 +183,8 @@ except ImportError:
 
 from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
-    rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path
+    rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
+    spread_rank, SPREAD_MODES, channel_label
 )
 from i18n import get_language, set_language, tr
 from projector import Projector
@@ -88,6 +202,7 @@ from timeline_editor import LightTimelineEditor
 from updater import UpdateBar, UpdateChecker, download_update, AboutDialog, GearDialog
 from license_manager import LicenseState, LicenseResult, verify_license
 from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog, LoginSuccessDialog
+from dataclasses import replace as _dc_replace
 from pixel_fixture import (
     PixelFixtureSpec, generate_matrix_projectors, PIXEL_FIXTURE_PRESETS,
     layout_pixels, matrix_children,
@@ -99,6 +214,255 @@ from pixel_fixture import (
 # persistance disque (.maestro_dmx_patch.json), undo du dialog de patch, et
 # export/import .msp. Centralisées ici pour ne jamais en oublier une (sinon le
 # groupe de pixels serait perdu à l'undo, cf. piège "recréation de Projector").
+# Largeur de scène représentée par le plan de feu, en mm. Sert d'échelle : une
+# barre d'1 m occupe donc ~1/12 de la largeur du plan. OFL fournit les
+# dimensions réelles de 593 fixtures sur 627, autant s'en servir plutôt que
+# d'inventer une taille à partir du nombre de pixels.
+_STAGE_WIDTH_MM = 12000.0
+
+_MX_SPAN_MIN = 0.055      # ~60 px : plancher, sous lequel les cellules sont illisibles
+_MX_SPAN_MAX = 0.130      # ~145 px : plafond, pour ne pas manger le plan
+_MX_SPAN_PER_PIXEL = 0.009   # repli quand les dimensions sont inconnues
+
+
+def _matrix_span(cols, phys_w=None):
+    """
+    Largeur normalisée d'un bloc pixel.
+
+    Depuis la largeur physique réelle (mm) si on la connaît — une barre d'1 m et
+    un wash de 20 cm n'ont alors pas la même taille à l'écran — sinon repli sur
+    une estimation par nombre de pixels.
+    """
+    if phys_w:
+        span = float(phys_w) / _STAGE_WIDTH_MM
+    else:
+        span = _MX_SPAN_PER_PIXEL * max(cols, 1)
+    return min(_MX_SPAN_MAX, max(_MX_SPAN_MIN, span))
+
+# Couleur d'affichage par type de canal DMX (patch + bibliothèque de fixtures)
+CH_COLORS = {
+    "R":          "#cc1111",
+    "G":          "#22aa33",
+    "B":          "#1155dd",
+    "W":          "#cccccc",
+    "Dim":        "#cc9900",
+    "Strobe":     "#bb33cc",
+    "UV":         "#6611dd",
+    "Ambre":      "#cc6600",
+    "Orange":     "#dd4400",
+    "Pan":        "#1199cc",
+    "Tilt":       "#11ccaa",
+    "Smoke":      "#5588aa",
+    "Fan":        "#336677",
+    "Gobo1":      "#993355",
+    "Gobo2":      "#774455",
+    "Shutter":    "#999911",
+    "Speed":      "#557722",
+    "Mode":       "#445566",
+    "ColorWheel": "#aa2299",
+    "Prism":      "#2266aa",
+    "Focus":      "#776622",
+    "PanFine":    "#0077bb",
+    "TiltFine":   "#00aa88",
+}
+
+# Libellé court et francisé d'un canal, pour l'aperçu de profil
+CH_LABELS = {
+    "R": "R", "G": "V", "B": "B", "W": "W",
+    "Dim": "DIM", "Strobe": "STROBE", "UV": "UV",
+    "Ambre": "A", "Orange": "ORANGE",
+    "Pan": "PAN", "Tilt": "TILT",
+    "PanFine": "PAN+", "TiltFine": "TILT+",
+    "Zoom": "ZOOM", "Focus": "FOCUS", "Iris": "IRIS",
+    "Prism": "PRISME", "PrismRot": "PRISME↻",
+    "Gobo1": "GOBO1", "Gobo2": "GOBO2", "Gobo1Rot": "GOBO↻",
+    "ColorWheel": "ROUE", "Speed": "VITESSE",
+    "Smoke": "FUMÉE", "Fan": "VENTIL", "Shutter": "SHUTTER",
+    "Effects": "EFFETS", "Mode": "MODE",
+}
+
+
+class PixelStrip(QWidget):
+    """
+    Représentation d'une barre / matrice à pixels, dans le Patch DMX.
+
+    Une case par pixel — leur nombre est déduit du profil, pas saisi. Le chiffre
+    affiché est le rang DANS LA CHAÎNE DMX : inverser l'ordre ou passer en
+    serpentin se voit immédiatement, sans avoir à lire des adresses.
+
+    Glisser une case sur une autre échange leurs adresses. Le déplacement est
+    magnétique : on ne peut relâcher que sur une case, jamais entre deux.
+    """
+
+    order_changed = Signal(list)   # nouvelle liste d'indices, ordre DMX
+
+    CELL = 30
+    GAP = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cells = []       # [(idx, rang_dmx, adresse, QColor)]
+        self._rows = 1
+        self._cols = 0
+        self._drag_from = None
+        self._hover = None
+        self.setMouseTracking(True)
+        self.setMinimumHeight(self.CELL + 18)
+
+    def set_pixels(self, cells, rows, cols):
+        self._cells = list(cells)
+        self._rows = max(1, rows)
+        self._cols = max(1, cols)
+        self._drag_from = None
+        self._hover = None
+        self.setMinimumHeight(self._rows * (self.CELL + self.GAP) + 16)
+        self.updateGeometry()
+        self.update()
+
+    # ── géométrie ────────────────────────────────────────────────────────
+    def _cell_rect(self, pos):
+        r, c = divmod(pos, self._cols)
+        step = self.CELL + self.GAP
+        return QRect(int(c * step) + 1, int(r * step) + 1, self.CELL, self.CELL)
+
+    def _cell_at(self, pt):
+        for k in range(len(self._cells)):
+            if self._cell_rect(k).contains(pt):
+                return k
+        return None
+
+    # ── interaction ──────────────────────────────────────────────────────
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag_from = self._cell_at(e.pos())
+            self.update()
+
+    def mouseMoveEvent(self, e):
+        h = self._cell_at(e.pos())
+        if h != self._hover:
+            self._hover = h
+            self.update()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() != Qt.LeftButton or self._drag_from is None:
+            return
+        target = self._cell_at(e.pos())
+        src = self._drag_from
+        self._drag_from = None
+        # Magnétique : relâcher hors d'une case n'échange rien
+        if target is not None and target != src:
+            # Échanger les RANGS DMX, pas les positions dans la liste : celle-ci
+            # est en ordre spatial, et réaffecter les adresses dans cet ordre
+            # écraserait une inversion ou un serpentin déjà appliqués.
+            ranks = {c[0]: c[1] for c in self._cells}
+            i_src, i_tgt = self._cells[src][0], self._cells[target][0]
+            ranks[i_src], ranks[i_tgt] = ranks[i_tgt], ranks[i_src]
+            order = [i for i, _r in sorted(ranks.items(), key=lambda kv: kv[1])]
+            self.order_changed.emit(order)
+        self.update()
+
+    def leaveEvent(self, _e):
+        self._hover = None
+        self.update()
+
+    # ── rendu ────────────────────────────────────────────────────────────
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        for k, (_idx, rank, addr, col) in enumerate(self._cells):
+            rect = self._cell_rect(k)
+            sel = (k == self._drag_from)
+            hov = (k == self._hover)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(col))
+            p.drawRoundedRect(rect, 4, 4)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor("#00d4ff") if (sel or hov) else QColor("#3a3a4a"),
+                          2 if sel else 1))
+            p.drawRoundedRect(rect, 4, 4)
+
+            c = QColor(col)
+            lum = c.red() * 0.299 + c.green() * 0.587 + c.blue() * 0.114
+            p.setPen(QColor("#ffffff") if lum < 130 else QColor("#111111"))
+            f = p.font(); f.setPointSize(9); f.setBold(True); p.setFont(f)
+            p.drawText(rect, Qt.AlignCenter, str(rank))
+
+            # Adresse DMX sous la case (barres seulement : sinon illisible)
+            if self._rows == 1:
+                f.setPointSize(7); f.setBold(False); p.setFont(f)
+                p.setPen(QColor("#555"))
+                p.drawText(QRect(rect.x(), rect.bottom() + 1, rect.width(), 12),
+                           Qt.AlignCenter, str(addr))
+        p.end()
+
+
+def _chip_text_color(hex_col):
+    """Noir ou blanc selon la luminance du fond, pour rester lisible."""
+    try:
+        r, g, b = (int(hex_col[i:i + 2], 16) for i in (1, 3, 5))
+    except (ValueError, IndexError):
+        return "#ffffff"
+    return "#ffffff" if (r * 0.299 + g * 0.587 + b * 0.114) < 145 else "#111111"
+
+
+def build_channel_chips(profile, start_index=1, numbered=True):
+    """
+    Profil DMX en pastilles rectangulaires colorées, comme dans le Patch DMX.
+
+    Retourne un QWidget : une rangée de rectangles arrondis (nom du canal) avec
+    le numéro de canal dessous. Purement décoratif — aucune interaction, à la
+    différence des pastilles du patch qui éditent les valeurs par défaut.
+    """
+    host = QWidget()
+    host.setStyleSheet("background:transparent;")
+    hl = QHBoxLayout(host)
+    hl.setContentsMargins(0, 0, 0, 0)
+    hl.setSpacing(4)
+
+    if not profile:
+        empty = QLabel("aucun canal")
+        empty.setStyleSheet("color:#555; font-size:11px; background:transparent; border:none;")
+        hl.addWidget(empty)
+        hl.addStretch()
+        return host
+
+    for i, ch in enumerate(profile):
+        lbl_txt = CH_LABELS.get(ch, str(ch).upper())
+        col = CH_COLORS.get(ch, "#444455")
+        cw = max(36, len(lbl_txt) * 7 + 14)
+
+        col_w = QWidget()
+        col_w.setStyleSheet("background:transparent;")
+        cv = QVBoxLayout(col_w)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(2)
+
+        chip = QLabel(lbl_txt)
+        chip.setFixedSize(cw, 24)
+        chip.setAlignment(Qt.AlignCenter)
+        chip.setStyleSheet(
+            f"background:{col}; color:{_chip_text_color(col)}; border:none;"
+            f" border-radius:5px; font-size:10px; font-weight:bold;"
+        )
+        chip.setToolTip(f"Canal {start_index + i} : {ch}")
+        cv.addWidget(chip)
+
+        if numbered:
+            num = QLabel(str(start_index + i))
+            num.setFixedWidth(cw)
+            num.setAlignment(Qt.AlignCenter)
+            num.setStyleSheet(
+                f"color:{col}; font-size:9px; font-weight:bold;"
+                f" border:none; background:transparent;"
+            )
+            cv.addWidget(num)
+
+        hl.addWidget(col_w)
+
+    hl.addStretch()
+    return host
+
+
 _MATRIX_META_FIELDS = (
     "matrix_id", "matrix_role", "pixel_index", "pixel_row", "pixel_col",
     "matrix_rows", "matrix_cols", "matrix_phys_w", "matrix_phys_h",
@@ -120,6 +484,54 @@ def _apply_matrix_meta(proj, src):
     for f in _MATRIX_META_FIELDS:
         if f in src:
             setattr(proj, f, src[f])
+
+
+def _preset_pixel_spec(preset):
+    """
+    Construit un PixelFixtureSpec depuis un preset de bibliothèque, si celui-ci
+    décrit une fixture à pixels. Retourne None pour un fixture classique.
+
+    La géométrie est posée par le parser OFL (clé "matrix" du mode). Le preset
+    peut l'exposer à sa racine ou dans la liste "modes" : on retrouve le bon
+    mode en comparant le profil retenu.
+    """
+    if not isinstance(preset, dict):
+        return None
+
+    mx = preset.get("matrix")
+    phys = preset.get("physical") or {}
+    if not isinstance(mx, dict):
+        prof = preset.get("profile")
+        for m in preset.get("modes") or []:
+            if not isinstance(m, dict) or not isinstance(m.get("matrix"), dict):
+                continue
+            if prof is None or m.get("profile") == prof:
+                mx = m["matrix"]
+                phys = m.get("physical") or phys
+                break
+    if not isinstance(mx, dict):
+        return None
+
+    cell = list(mx.get("pixel_channels") or [])
+    rows = int(mx.get("rows") or 1)
+    cols = int(mx.get("cols") or 0)
+    if not cell or rows < 1 or cols < 1 or rows * cols < 2:
+        return None  # un seul pixel = fixture classique, rien à éclater
+
+    ftype = preset.get("fixture_type") or ("Barre LED" if rows <= 1 else "Matrice LED")
+    return PixelFixtureSpec(
+        name=preset.get("name", "Barre LED"),
+        manufacturer=preset.get("manufacturer", ""),
+        rows=rows,
+        cols=cols,
+        pixel_channels=cell,
+        global_head=list(mx.get("head") or []),
+        global_tail=list(mx.get("tail") or []),
+        wiring="row",
+        phys_w=phys.get("w") if isinstance(phys, dict) else None,
+        phys_h=phys.get("h") if isinstance(phys, dict) else None,
+        fixture_type=ftype,
+    )
 
 
 # Mapping lettre AKAI -> nom interne du groupe projecteur
@@ -2269,6 +2681,11 @@ class MainWindow(QMainWindow):
         # pour compenser la latence du pipeline vidéo (position() qui devance le
         # son audible). Global, réglable, persistant. Défaut 0 = aucun effet.
         self.light_sync_offset_ms = 0
+        # Dernier mode DMX choisi par fixture (clé = uuid ou fabricant/nom)
+        self._fixture_mode_prefs = {}
+        # Sortie live de l'éditeur d'effets : {id(proj): (level, color, pan, tilt)}
+        # Alimenté par l'éditeur quand « Sortie live » est armé, None sinon.
+        self._editor_live_overrides = None
         self.blackout_active = False
         self._last_fader_mode = "FX"   # "FX" ou "MASTER" pour le fader 9
         self.master_level = 100        # 0-100, appliqué en sortie DMX
@@ -7517,13 +7934,18 @@ class MainWindow(QMainWindow):
                 # 180° = distribution parfaite sur 1 cycle (permanent N/2 allumés avec Flash)
                 # 0° = sync, 360° = double-tour (sous-groupes)
                 sp   = spread / 180.0
+                # Rang de la fixture dans la répartition choisie. « Linéaire »
+                # reproduit exactement l'ancien i/n : les effets existants sont
+                # inchangés. Les autres modes donnent le même rang à plusieurs
+                # fixtures, qui s'allument alors ensemble (miroir, pair/impair…).
+                _rk = spread_rank(i, n, ld.get("spread_mode", "lineaire"))
                 if direction == 0:
                     t_osc = abs(2 * ((freq * t) % 1.0) - 1)
-                    x = (t_osc + i / max(n, 1) * sp + phase) % 1.0
+                    x = (t_osc + _rk * sp + phase) % 1.0
                 elif direction == -1:
-                    x = (freq * t - i / max(n, 1) * sp + phase) % 1.0
+                    x = (freq * t - _rk * sp + phase) % 1.0
                 else:
-                    x = (freq * t + i / max(n, 1) * sp + phase) % 1.0
+                    x = (freq * t + _rk * sp + phase) % 1.0
 
                 if forme == "Audio":
                     import random as _rand
@@ -8222,6 +8644,20 @@ class MainWindow(QMainWindow):
                 btn.active = False
                 btn.update_style()
 
+        # Effets du plan de feu 2D — SECOND moteur, avec son propre timer.
+        # Sans ça un effet lancé par clic droit (strobe, chenillard, pan/tilt)
+        # continuait d'écrire sur les projecteurs 25 fois par seconde : CLEAR
+        # semblait sans effet et seul un redémarrage rendait la main.
+        _pdf = getattr(self, 'plan_de_feu', None)
+        if _pdf is not None:
+            try:
+                if hasattr(_pdf, 'stop_led_effect'):
+                    _pdf.stop_led_effect(list(self.projectors))
+                if hasattr(_pdf, 'stop_effect'):
+                    _pdf.stop_effect(list(self.projectors))
+            except Exception as _e:
+                print(f"[CLEAR] arrêt des effets du plan de feu impossible : {_e}")
+
         # Éteindre complètement tous les projecteurs
         for p in self.projectors:
             if p.group != "fumee":
@@ -8433,6 +8869,9 @@ class MainWindow(QMainWindow):
         via _on_live_toggle. « none » cache la colonne pour rendre la place à
         l'AKAI et au plan de feu.
         """
+        # Mémorisé pour être restauré au prochain lancement (_akai_config)
+        self._center_view_key = key
+
         if key != "pads":
             self._release_pads_surface()
 
@@ -8453,6 +8892,20 @@ class MainWindow(QMainWindow):
         act = self._view_actions.get(key)
         if act:
             act.setChecked(True)
+
+    def _restore_center_view(self, key):
+        """
+        Réapplique la vue centrale sauvegardée, au démarrage.
+
+        Protégé : la config peut venir d'une version où la vue n'existe plus, et
+        une exception ici empêcherait l'appli de finir de démarrer.
+        """
+        try:
+            if getattr(self, '_center_stack', None) is None:
+                return
+            self.set_center_view(key)
+        except Exception as e:
+            print(f"[view] restauration de la vue centrale '{key}' impossible : {e}")
 
     def _embed_pads_surface(self):
         """Déplace la surface Pads de sa fenêtre flottante vers la colonne centrale.
@@ -11141,6 +11594,10 @@ class MainWindow(QMainWindow):
             "akai_inactive_brightness": self.akai_inactive_brightness,
             "light_sync_offset_ms": int(getattr(self, 'light_sync_offset_ms', 0) or 0),
             "pinned_controller": getattr(self.midi_handler, 'pinned_id', None),
+            # Colonne centrale (menu Affichage) : media / live / pads / none
+            "center_view": getattr(self, '_center_view_key', 'media'),
+            # Dernier mode DMX retenu par fixture (bibliothèque)
+            "fixture_mode_prefs": dict(getattr(self, '_fixture_mode_prefs', {})),
         }
 
     def _apply_akai_config(self, config):
@@ -11283,6 +11740,18 @@ class MainWindow(QMainWindow):
             self.akai_inactive_brightness = int(config["akai_inactive_brightness"])
         if "light_sync_offset_ms" in config:
             self.light_sync_offset_ms = int(config.get("light_sync_offset_ms", 0) or 0)
+
+        # Colonne centrale (menu Affichage) : retrouver la vue quittée.
+        # Différé : _set_center_view touche le séquenceur et la surface Pads,
+        # qui ne sont pas encore prêts quand la config est appliquée.
+        _cv = config.get("center_view")
+        if _cv in ("media", "live", "pads", "none"):
+            QTimer.singleShot(0, lambda k=_cv: self._restore_center_view(k))
+
+        _fmp = config.get("fixture_mode_prefs")
+        if isinstance(_fmp, dict):
+            self._fixture_mode_prefs = {str(k): str(v) for k, v in _fmp.items()
+                                        if isinstance(v, str)}
 
         # Contrôleur épinglé (sélection manuelle) — reconnecte sur le bon si défini
         if hasattr(self, 'midi_handler') and self.midi_handler:
@@ -14014,31 +14483,8 @@ class MainWindow(QMainWindow):
             "fumee": "Fumée", "lyre": "Lyres", "barre": "Barres", "strobe": "Strobos",
         }
         FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee"]
-        CH_COLORS = {
-            "R":          "#cc1111",
-            "G":          "#22aa33",
-            "B":          "#1155dd",
-            "W":          "#cccccc",
-            "Dim":        "#cc9900",
-            "Strobe":     "#bb33cc",
-            "UV":         "#6611dd",
-            "Ambre":      "#cc6600",
-            "Orange":     "#dd4400",
-            "Pan":        "#1199cc",
-            "Tilt":       "#11ccaa",
-            "Smoke":      "#5588aa",
-            "Fan":        "#336677",
-            "Gobo1":      "#993355",
-            "Gobo2":      "#774455",
-            "Shutter":    "#999911",
-            "Speed":      "#557722",
-            "Mode":       "#445566",
-            "ColorWheel": "#aa2299",
-            "Prism":      "#2266aa",
-            "Focus":      "#776622",
-            "PanFine":    "#0077bb",
-            "TiltFine":   "#00aa88",
-        }
+        # Palette partagée avec la bibliothèque de fixtures (niveau module)
+        CH_COLORS = globals()["CH_COLORS"]
 
         root = QVBoxLayout(dialog)
         root.setContentsMargins(0, 0, 0, 0)
@@ -14116,9 +14562,11 @@ class MainWindow(QMainWindow):
         th.addWidget(btn_add)
         btn_add_matrix = _tbar_btn("▦  Matrice / Barre px", "#cc77dd")
         btn_add_matrix.setAutoDefault(False)
-        # ── Fonction pixel/matrice EN CHANTIER : masquée à l'utilisateur ──────
-        # Le code part avec le build mais aucun point d'entrée visible tant que
-        # la fonctionnalité n'est pas finie. Repasser à True pour la réactiver.
+        # ── Filet de secours, masqué ──────────────────────────────────────────
+        # Le chemin normal est « ➕ Ajouter » : une barre/matrice de la
+        # bibliothèque est éclatée en projecteurs-pixels automatiquement
+        # (cf. _preset_pixel_spec). Ce bouton reste pour construire une matrice
+        # à la main si un modèle exotique manque à la base. Repasser à True.
         btn_add_matrix.setVisible(False)
         th.addWidget(btn_add_matrix)
         th.addStretch()
@@ -14668,6 +15116,214 @@ class MainWindow(QMainWindow):
         fv.addWidget(pt_section)
         pt_section.setVisible(False)
 
+        # ── Section Disposition des pixels (barres / matrices) ──────────
+        # Ces réglages changent ce que l'appareil FAIT (quel canal pilote quelle
+        # LED), pas seulement son dessin : une barre accrochée à l'envers a son
+        # pixel 1 à droite, et tous les chenillards partent du mauvais côté.
+        px_section = QWidget()
+        px_section.setStyleSheet("background:transparent;")
+        px_vl = QVBoxLayout(px_section)
+        px_vl.setContentsMargins(0, 0, 0, 0)
+        px_vl.setSpacing(6)
+        px_vl.addWidget(_sec("Disposition des pixels"))
+
+        _PX_BTN = ("QPushButton{background:#161622;color:#cc77dd;"
+                   "border:1px solid #33334a;border-radius:5px;"
+                   "font-size:11px;padding:5px 12px;}"
+                   "QPushButton:hover{background:#22223a;border-color:#cc77dd;}")
+
+        px_row1 = QHBoxLayout()
+        px_row1.setSpacing(6)
+        btn_px_rev = QPushButton("⇄  Inverser l'ordre")
+        btn_px_rev.setStyleSheet(_PX_BTN)
+        btn_px_rev.setToolTip(
+            "Le pixel 1 passe de l'autre côté.\n"
+            "À utiliser quand la barre est accrochée retournée : les chenillards\n"
+            "partent alors du bon bord sans avoir à repatcher.")
+        px_row1.addWidget(btn_px_rev)
+
+        btn_px_grid = QPushButton("⊞  Répartir régulièrement")
+        btn_px_grid.setStyleSheet(_PX_BTN)
+        btn_px_grid.setToolTip(
+            "Reconstruit la grille à intervalles égaux.\n"
+            "Utile après avoir déplacé des pixels à la main par erreur.")
+        px_row1.addWidget(btn_px_grid)
+        px_row1.addStretch()
+        px_vl.addLayout(px_row1)
+
+        px_row2 = QHBoxLayout()
+        px_row2.setSpacing(6)
+        lbl_wiring = QLabel("Câblage :")
+        lbl_wiring.setStyleSheet("color:#777;font-size:11px;border:none;background:transparent;")
+        px_row2.addWidget(lbl_wiring)
+        cb_wiring = QComboBox()
+        cb_wiring.addItem("Lignes (chaque ligne repart à gauche)", "row")
+        cb_wiring.addItem("Serpentin (une ligne sur deux inversée)", "serpentine")
+        cb_wiring.setFixedHeight(26)
+        cb_wiring.setToolTip(
+            "Ordre de câblage interne des pixels.\n"
+            "Beaucoup de dalles bon marché câblent la ligne 2 de droite à gauche :\n"
+            "sans le déclarer, un balayage horizontal zigzague.")
+        cb_wiring.setStyleSheet(
+            "QComboBox{background:#1e1e1e;color:#ddd;border:1px solid #333;"
+            "border-radius:5px;padding:2px 8px;font-size:11px;}"
+            "QComboBox::drop-down{border:none;width:18px;}"
+            "QComboBox QAbstractItemView{background:#1e1e1e;color:#ddd;"
+            "selection-background-color:#00d4ff;selection-color:#000;"
+            "border:1px solid #333;}")
+        px_row2.addWidget(cb_wiring, 1)
+        px_vl.addLayout(px_row2)
+
+        px_strip = PixelStrip()
+        px_strip.setToolTip(
+            "Le chiffre est le rang du pixel dans la chaîne DMX.\n"
+            "Glisse une case sur une autre pour échanger leurs adresses.")
+        px_vl.addWidget(px_strip)
+
+        px_hint = QLabel("")
+        px_hint.setStyleSheet("color:#333;font-size:10px;border:none;background:transparent;")
+        px_vl.addWidget(px_hint)
+
+        fv.addWidget(px_section)
+        px_section.setVisible(False)
+
+        def _px_members(idx):
+            """(infos matrice, indices des pixels triés par position) ou None."""
+            g = _matrix_info_for(idx)
+            if not g:
+                return None, []
+            px = [i for i in g["members"]
+                  if fixture_data[i].get("matrix_role") == "pixel"]
+            px.sort(key=lambda i: ((fixture_data[i].get("pixel_row") or 0),
+                                   (fixture_data[i].get("pixel_col") or 0)))
+            return g, px
+
+        def _px_reassign(idx, order):
+            """
+            Réaffecte les adresses des pixels selon `order` (liste d'indices).
+
+            On ne déplace pas les pixels à l'écran : on change QUEL canal DMX
+            pilote QUELLE position. C'est ce qui corrige une barre accrochée à
+            l'envers sans toucher au plan de feu.
+            """
+            g, _px = _px_members(idx)
+            if not g or not order:
+                return
+            head = sum(len(fixture_data[i].get("profile") or [])
+                       for i in g["members"]
+                       if fixture_data[i].get("matrix_role") != "pixel")
+            addr = g["start"] + head
+            for i in order:
+                fd_i = fixture_data[i]
+                fd_i["start_address"] = addr
+                if i < len(self.projectors):
+                    self.projectors[i].start_address = addr
+                addr += len(fd_i.get("profile") or [])
+            _apply_fd_to_dmx()
+            _rebuild_fd()
+            _build_cards(filter_bar.text())
+            # Le représentant d'une matrice est son membre à l'adresse la plus
+            # basse : réordonner peut donc le CHANGER. Garder l'ancien index
+            # laisserait la sélection sur un membre désormais replié, et le
+            # panneau de détail se viderait.
+            _mid_sel = fixture_data[idx].get("matrix_id") if idx < len(fixture_data) else None
+            if _mid_sel is not None:
+                _same = [j for j, f2 in enumerate(fixture_data)
+                         if f2.get("matrix_id") == _mid_sel]
+                if _same:
+                    idx = min(_same, key=lambda j: fixture_data[j]["start_address"])
+            _select_card(idx)
+            _mark_dirty()
+
+        def _refresh_px_strip(idx):
+            """Alimente la bande depuis le profil : une case par pixel."""
+            g, px = _px_members(idx) if idx is not None else (None, [])
+            if not g or not px:
+                px_strip.set_pixels([], 1, 1)
+                return
+            # Rang = position dans la chaîne DMX (l'ordre des adresses)
+            by_addr = sorted(px, key=lambda i: fixture_data[i]["start_address"])
+            rank_of = {i: k + 1 for k, i in enumerate(by_addr)}
+            cells = []
+            for i in px:                      # ordre spatial : ligne puis colonne
+                proj = self.projectors[i] if i < len(self.projectors) else None
+                col = QColor(proj.color) if proj is not None else QColor("#222")
+                if col.lightness() < 24:
+                    col = QColor("#242430")   # éteint : gris lisible
+                cells.append((i, rank_of[i], fixture_data[i]["start_address"], col))
+            px_strip.set_pixels(cells, int(g.get("rows") or 1),
+                                int(g.get("cols") or 1))
+
+        def _on_px_strip_reorder(order):
+            """Glisser-déposer dans la bande : échange les adresses."""
+            idx = _sel[0]
+            if idx is None:
+                return
+            _px_reassign(idx, order)
+            px_hint.setText("Pixels échangés.")
+
+        px_strip.order_changed.connect(_on_px_strip_reorder)
+
+        def _on_px_reverse():
+            idx = _sel[0]
+            g, px = _px_members(idx) if idx is not None else (None, [])
+            if not g:
+                return
+            # Inverser l'ordre ACTUEL d'adressage, pas l'ordre des positions :
+            # celui-ci ne change jamais, l'action ne serait donc pas réversible
+            # et un second clic ne ramènerait pas la barre à son état d'origine.
+            cur = sorted(px, key=lambda i: fixture_data[i]["start_address"])
+            _px_reassign(idx, list(reversed(cur)))
+            px_hint.setText("Ordre inversé — le pixel 1 est passé de l'autre côté.")
+
+        def _on_px_wiring(_i=0):
+            idx = _sel[0]
+            g, px = _px_members(idx) if idx is not None else (None, [])
+            if not g:
+                return
+            mode = cb_wiring.currentData() or "row"
+            rows = max(1, int(g.get("rows") or 1))
+            cols = max(1, int(g.get("cols") or 1))
+            by_pos = {((fixture_data[i].get("pixel_row") or 0),
+                       (fixture_data[i].get("pixel_col") or 0)): i for i in px}
+            order = []
+            for r in range(rows):
+                cs = range(cols)
+                if mode == "serpentine" and r % 2 == 1:
+                    cs = reversed(range(cols))
+                for c in cs:
+                    if (r, c) in by_pos:
+                        order.append(by_pos[(r, c)])
+            if len(order) == len(px):
+                _px_reassign(idx, order)
+                px_hint.setText(
+                    "Câblage serpentin appliqué." if mode == "serpentine"
+                    else "Câblage par lignes appliqué.")
+
+        def _on_px_regrid():
+            """Reconstruit la grille à intervalles réguliers, sans toucher au DMX."""
+            idx = _sel[0]
+            g, px = _px_members(idx) if idx is not None else (None, [])
+            if not g or not px:
+                return
+            projs = [self.projectors[i] for i in px if i < len(self.projectors)]
+            if not projs:
+                return
+            cx = sum(p.canvas_x or 0.5 for p in projs) / len(projs)
+            cy = sum(p.canvas_y or 0.5 for p in projs) / len(projs)
+            cols = max(1, int(g.get("cols") or 1))
+            rows = max(1, int(g.get("rows") or 1))
+            span = _matrix_span(cols, getattr(projs[0], 'matrix_phys_w', None))
+            layout_pixels(projs, cx, cy, span / cols, span * 1.6 / rows,
+                          int(getattr(projs[0], 'matrix_rot', 0) or 0))
+            canvas.update()
+            _mark_dirty()
+            px_hint.setText("Pixels répartis régulièrement.")
+
+        btn_px_rev.clicked.connect(_on_px_reverse)
+        btn_px_grid.clicked.connect(_on_px_regrid)
+        cb_wiring.currentIndexChanged.connect(_on_px_wiring)
+
         def _on_pt_limits_changed(pm, px, tm, tx):
             idx = _sel[0]
             if idx is None or idx >= len(self.projectors): return
@@ -14798,13 +15454,6 @@ class MainWindow(QMainWindow):
 
         es.addStretch()
 
-        # ── Réinitialiser positions ───────────────────────────────────
-        btn_reset_pos_c = QPushButton("↺  Positions auto")
-        btn_reset_pos_c.setToolTip("Remettre toutes les fixtures à leur position par défaut")
-        btn_reset_pos_c.setStyleSheet(_ES)
-        btn_reset_pos_c.setFixedHeight(28)
-        es.addWidget(btn_reset_pos_c)
-
         vl_canvas.addWidget(edit_strip)
 
         proxy = _PatchCanvasProxy(self.projectors, self)
@@ -14832,6 +15481,7 @@ class MainWindow(QMainWindow):
             for i, proj in enumerate(self.projectors):
                 fixture_data.append({
                     'name':          proj.name or proj.group,
+                    'manufacturer':  getattr(proj, 'manufacturer', ''),
                     'fixture_type':  getattr(proj, 'fixture_type', 'PAR LED'),
                     'group':         proj.group,
                     'universe':      getattr(proj, 'universe', 0),
@@ -14844,6 +15494,87 @@ class MainWindow(QMainWindow):
                 })
 
         _rebuild_fd()
+
+        # ── Repli des fixtures à pixels ───────────────────────────────────────
+        # Une barre/matrice occupe N entrées de fixture_data (1 par pixel, plus
+        # un éventuel master), parce que le moteur DMX pilote chaque pixel comme
+        # un projecteur normal. Mais pour l'utilisateur c'est UN appareil : le
+        # patch n'affiche qu'une carte, celle du membre à l'adresse la plus
+        # basse, qui porte l'empreinte DMX complète.
+        _mx_cache = {}
+
+        def _matrix_view():
+            """{matrix_id: infos agrégées} + {index: matrix_id} pour fixture_data."""
+            key = len(fixture_data)
+            groups, of_idx = {}, {}
+            for i, fd in enumerate(fixture_data):
+                mid = fd.get("matrix_id")
+                if mid is None:
+                    continue
+                of_idx[i] = mid
+                end = fd["start_address"] + len(fd["profile"]) - 1
+                g = groups.setdefault(mid, {
+                    "repr": i, "start": fd["start_address"], "end": end,
+                    "pixels": 0, "members": [],
+                    "rows": fd.get("matrix_rows") or 1,
+                    "cols": fd.get("matrix_cols") or 1,
+                    "type": fd.get("fixture_type", "Barre LED"),
+                    "group": fd["group"], "universe": fd.get("universe", 0),
+                    "name": str(fd["name"]).split(" · ")[0],
+                })
+                g["members"].append(i)
+                g["end"] = max(g["end"], end)
+                if fd["start_address"] < g["start"]:
+                    g["start"], g["repr"] = fd["start_address"], i
+                if fd.get("matrix_role") == "pixel":
+                    g["pixels"] += 1
+            _mx_cache[key] = (groups, of_idx)
+            return groups, of_idx
+
+        def _matrix_info_for(idx):
+            """Infos matrice si idx est la carte représentante, sinon None."""
+            groups, of_idx = _matrix_view()
+            mid = of_idx.get(idx)
+            if mid is None:
+                return None
+            g = groups[mid]
+            return g if g["repr"] == idx else None
+
+        def _matrix_full_profile(g):
+            """
+            Profil DMX de TOUT l'appareil : les canaux de chaque membre bout à
+            bout, dans l'ordre des adresses. Sans ça le panneau de détail
+            n'afficherait que les canaux du représentant (3 pour un pixel RGB),
+            alors que la barre en occupe 24.
+            """
+            prof = []
+            for i in sorted(g["members"], key=lambda j: fixture_data[j]["start_address"]):
+                prof.extend(fixture_data[i]["profile"])
+            return prof
+
+        def _matrix_owners(g):
+            """
+            Pour chaque canal de _matrix_full_profile(), le membre qui le porte
+            et son libellé (« Master », « px3 »). Sans ça un clic droit sur le
+            canal 7 d'une barre écrirait la valeur par défaut sur le pixel 1.
+            """
+            owners = []
+            n_px = 0
+            for i in sorted(g["members"], key=lambda j: fixture_data[j]["start_address"]):
+                fd_m = fixture_data[i]
+                if fd_m.get("matrix_role") == "pixel":
+                    n_px += 1
+                    tag = f"px{n_px}"
+                else:
+                    tag = "Master"
+                owners.extend((i, tag) for _ in fd_m["profile"])
+            return owners
+
+        def _matrix_hidden(idx):
+            """True si idx est un membre de matrice qui ne doit PAS avoir de carte."""
+            groups, of_idx = _matrix_view()
+            mid = of_idx.get(idx)
+            return mid is not None and groups[mid]["repr"] != idx
 
         def _sync_wheels_to_fd():
             """Recopie les slots de roues des projecteurs vers fixture_data.
@@ -14979,7 +15710,14 @@ class MainWindow(QMainWindow):
                 conflict_banner.setVisible(False)
 
         tabs.currentChanged.connect(lambda _: _update_conflict_banner(_get_conflicts()))
-        def _update_chips(profile):
+        def _update_chips(profile, owners=None):
+            """
+            Affiche les pastilles de canaux.
+
+            `owners` = [(index_fixture_data, libellé)] aligné sur `profile`,
+            pour les barres/matrices dont les canaux appartiennent à plusieurs
+            projecteurs internes. None = tous les canaux sont au fixture courant.
+            """
             while chips_vl.count():
                 item = chips_vl.takeAt(0)
                 if item.widget():
@@ -14988,8 +15726,17 @@ class MainWindow(QMainWindow):
                 return
 
             cur_idx = _sel[0]
-            fd_cur = fixture_data[cur_idx] if cur_idx is not None and cur_idx < len(fixture_data) else {}
-            ch_defs = fd_cur.get('channel_defaults', {})
+
+            def _owner_of(ci):
+                """(index fixture_data, libellé) du canal ci."""
+                if owners and ci < len(owners):
+                    return owners[ci]
+                return cur_idx, ""
+
+            def _defs_of(si):
+                if si is not None and si < len(fixture_data):
+                    return fixture_data[si].get('channel_defaults', {})
+                return {}
 
             def _set_default(ch_type, pct, snap_idx):
                 """Applique une valeur par défaut (0-100%) et rafraîchit l'affichage."""
@@ -15003,7 +15750,7 @@ class MainWindow(QMainWindow):
             def _show_default_popup(chip_lbl, ch_type, snap_idx, col):
                 """Menu clic droit : curseur 0-100% pour régler la valeur par défaut."""
                 from PySide6.QtWidgets import QMenu, QWidgetAction, QSlider, QLabel as _QL
-                pct_cur = int(round(ch_defs.get(ch_type, 0) / 255.0 * 100))
+                pct_cur = int(round(_defs_of(snap_idx).get(ch_type, 0) / 255.0 * 100))
 
                 m = QMenu(chip_lbl)
                 m.setStyleSheet(
@@ -15214,21 +15961,24 @@ class MainWindow(QMainWindow):
                 m.addAction(wa)
                 m.exec(chip_lbl.mapToGlobal(chip_lbl.rect().bottomLeft()))
 
-            row_p = QWidget(); row_p.setStyleSheet("background:transparent;")
-            rp = QHBoxLayout(row_p); rp.setContentsMargins(0, 0, 0, 0); rp.setSpacing(4)
-            row_n = QWidget(); row_n.setStyleSheet("background:transparent;")
-            rn = QHBoxLayout(row_n); rn.setContentsMargins(0, 0, 0, 0); rn.setSpacing(4)
-            row_u = QWidget(); row_u.setStyleSheet("background:transparent;")
-            ru = QHBoxLayout(row_u); ru.setContentsMargins(0, 0, 0, 0); ru.setSpacing(4)
+            # Une colonne par canal (% / pastille / n°), disposées en flow :
+            # ça repasse à la ligne au lieu de déborder de la fenêtre.
+            flow_w = QWidget()
+            flow_w.setStyleSheet("background:transparent;")
+            flow = FlowLayout(flow_w, margin=0, spacing=4)
 
             for ci, ch in enumerate(profile):
                 col = CH_COLORS.get(ch, "#444455")
-                cw = max(36, len(ch) * 7 + 14)
+                _disp = channel_label(ch)     # « Ambre » s'affiche « A »
+                cw = max(36, len(_disp) * 7 + 14)
                 _r = int(col[1:3], 16); _g = int(col[3:5], 16); _b = int(col[5:7], 16)
                 text_col = "#ffffff" if (_r * 0.299 + _g * 0.587 + _b * 0.114) < 145 else "#111111"
 
+                # Le canal peut appartenir à un pixel et pas au fixture affiché
+                own_idx, own_tag = _owner_of(ci)
+
                 # Petit label % au-dessus
-                pct_val = int(round(ch_defs.get(ch, 0) / 255.0 * 100))
+                pct_val = int(round(_defs_of(own_idx).get(ch, 0) / 255.0 * 100))
                 pct_lbl = QLabel(f"{pct_val}%" if pct_val > 0 else "")
                 pct_lbl.setFixedWidth(cw)
                 pct_lbl.setAlignment(Qt.AlignCenter)
@@ -15236,7 +15986,7 @@ class MainWindow(QMainWindow):
                     f"color:{col}; font-size:8px; background:transparent; border:none;"
                 )
 
-                chip = QLabel(ch)
+                chip = QLabel(_disp)
                 chip.setFixedSize(cw, 24)
                 chip.setAlignment(Qt.AlignCenter)
                 chip.setStyleSheet(
@@ -15245,7 +15995,9 @@ class MainWindow(QMainWindow):
                 )
                 chip.setToolTip(
                     f"Canal {ci + 1}: {ch}"
-                    + (f"\nDéfaut : {pct_val}%" if pct_val > 0 else "\nClic droit → régler valeur par défaut")
+                    + (f"  ({own_tag})" if own_tag else "")
+                    + (f"\nDéfaut : {pct_val}%" if pct_val > 0
+                       else "\nClic droit → régler valeur par défaut")
                 )
                 chip.setCursor(Qt.PointingHandCursor)
 
@@ -15254,8 +16006,9 @@ class MainWindow(QMainWindow):
                 num.setAlignment(Qt.AlignCenter)
                 num.setStyleSheet(f"color:{col}; font-size:9px; font-weight:bold; border:none; background:transparent;")
 
-                # Clic droit → popup curseur
-                def _make_ctx(c=chip, ch_type=ch, si=cur_idx, color=col, pl=pct_lbl):
+                # Clic droit → popup curseur. `si` = le membre propriétaire du
+                # canal (le pixel concerné sur une barre), pas le fixture affiché.
+                def _make_ctx(c=chip, ch_type=ch, si=own_idx, color=col, pl=pct_lbl):
                     def _ctx(event):
                         if event.button() == Qt.RightButton:
                             _show_default_popup(c, ch_type, si, color)
@@ -15267,14 +16020,18 @@ class MainWindow(QMainWindow):
                     return _ctx
                 chip.mousePressEvent = _make_ctx()
 
-                rp.addWidget(pct_lbl)
-                rn.addWidget(chip)
-                ru.addWidget(num)
+                cell = QWidget()
+                cell.setStyleSheet("background:transparent;")
+                cell.setFixedWidth(cw)
+                cvl = QVBoxLayout(cell)
+                cvl.setContentsMargins(0, 0, 0, 0)
+                cvl.setSpacing(1)
+                cvl.addWidget(pct_lbl)
+                cvl.addWidget(chip)
+                cvl.addWidget(num)
+                flow.addWidget(cell)
 
-            rp.addStretch(); rn.addStretch(); ru.addStretch()
-            chips_vl.addWidget(row_p)
-            chips_vl.addWidget(row_n)
-            chips_vl.addWidget(row_u)
+            chips_vl.addWidget(flow_w)
 
 
         _dirty = [False]
@@ -15374,6 +16131,13 @@ class MainWindow(QMainWindow):
             uni_lbl  = f"U{fd.get('universe', 0) + 1} "
             gname    = self.GROUP_DISPLAY.get(group, group)
 
+            # Carte représentante d'une barre/matrice : elle parle pour tout
+            # l'appareil (nom sans suffixe pixel, empreinte DMX complète).
+            _mxi      = _matrix_info_for(idx)
+            _card_name = _mxi["name"] if _mxi else fd['name']
+            if _mxi:
+                end_ch = _mxi["end"]
+
             from PySide6.QtWidgets import QCheckBox
             card = QFrame()
             card.setFixedHeight(60)
@@ -15425,11 +16189,20 @@ class MainWindow(QMainWindow):
             tv = QVBoxLayout()
             tv.setSpacing(2)
             tv.setContentsMargins(0, 0, 0, 0)
-            nm = QLabel(fd['name'] or self.GROUP_DISPLAY.get(fd['group'], fd['group']))
+            # Nom tronqué « … » : un nom long ne doit pas élargir la colonne
+            nm = ElidedLabel(_card_name or self.GROUP_DISPLAY.get(fd['group'], fd['group']))
             nm.setFont(QFont("Segoe UI", 11, QFont.Bold))
             nm.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; border:none; background:transparent;")
             card._namelbl = nm
-            sub = QLabel(f"{fd['fixture_type']}  ·  Groupe {gname}")
+            # Fabricant en tête : « Chauvet DJ · Barre LED · 16 px · Groupe … »
+            _mfr = (fd.get('manufacturer') or '').strip()
+            _pre = f"{_mfr}  ·  " if _mfr else ""
+            if _mxi:
+                _geo = (f"{_mxi['pixels']} px" if _mxi["rows"] <= 1
+                        else f"{_mxi['rows']}×{_mxi['cols']} px")
+                sub = QLabel(f"{_pre}{fd['fixture_type']}  ·  {_geo}  ·  Groupe {gname}")
+            else:
+                sub = QLabel(f"{_pre}{fd['fixture_type']}  ·  Groupe {gname}")
             _sub_col = "#{:02x}{:02x}{:02x}".format(
                 (int(gc[1:3], 16) + 0x44) // 2,
                 (int(gc[3:5], 16) + 0x44) // 2,
@@ -15475,11 +16248,22 @@ class MainWindow(QMainWindow):
                     m.setStyleSheet(
                         "QMenu{background:#1e1e1e;color:#ccc;border:1px solid #2a2a2a;font-size:12px;}"
                         "QMenu::item{padding:7px 20px;border-radius:3px;}"
-                        "QMenu::item:selected{background:#cc333318;color:#ee6666;}"
+                        "QMenu::item:selected{background:#00d4ff18;color:#00d4ff;}"
+                        "QMenu::separator{height:1px;background:#2a2a2a;margin:4px 8px;}"
                     )
+                    act_locate  = m.addAction("🎯  Localiser")
+                    act_locate.setToolTip("Sélectionner cette fixture dans le Plan de feu")
+                    act_replace = m.addAction("🔄  Remplacer")
+                    act_replace.setToolTip("Remplacer par une autre fixture de la bibliothèque")
+                    m.addSeparator()
                     act_del = m.addAction("🗑  Supprimer")
-                    if m.exec(e.globalPos()) == act_del:
+                    _chosen = m.exec(e.globalPos())
+                    if _chosen == act_del:
                         _del_selected()
+                    elif _chosen == act_locate:
+                        _locate_selected()
+                    elif _chosen == act_replace:
+                        _replace_selected()
                     return
                 if e.button() != Qt.LeftButton:
                     return
@@ -15518,8 +16302,14 @@ class MainWindow(QMainWindow):
             conflicts = _get_conflicts()
             # Créer toutes les cartes indexées par fixture_idx
             for idx, fd in enumerate(fixture_data):
+                # Pixels d'une barre/matrice : repliés derrière leur carte parente
+                if _matrix_hidden(idx):
+                    _cards.append(None)
+                    continue
                 if ft:
-                    hay = (fd['name'] + fd['fixture_type'] +
+                    _mxi = _matrix_info_for(idx)
+                    _hay_name = _mxi["name"] if _mxi else fd['name']
+                    hay = (_hay_name + fd['fixture_type'] +
                            self.GROUP_DISPLAY.get(fd['group'], fd['group'])).lower()
                     if ft not in hay:
                         _cards.append(None)
@@ -15571,7 +16361,13 @@ class MainWindow(QMainWindow):
             uni_cb.blockSignals(True);   uni_cb.setCurrentIndex(fd.get('universe', 0));  uni_cb.blockSignals(False)
             addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);           addr_sb.blockSignals(False)
             _update_addr_range()
-            _update_chips(fd['profile'])
+            # Barre/matrice : montrer les canaux de TOUT l'appareil, pas ceux
+            # du seul membre représentant (3 pour un pixel RGB).
+            _mxd = _matrix_info_for(idx)
+            if _mxd:
+                _update_chips(_matrix_full_profile(_mxd), _matrix_owners(_mxd))
+            else:
+                _update_chips(fd['profile'])
 
             if idx in conflicts:
                 others = []
@@ -15592,6 +16388,18 @@ class MainWindow(QMainWindow):
             # Pan/tilt limits section — visible only for Moving Head
             is_mh = fd.get('fixture_type', '') == 'Moving Head'
             pt_section.setVisible(is_mh)
+
+            # Disposition des pixels — seulement sur la carte d'une barre/matrice
+            _gpx = _matrix_info_for(idx)
+            px_section.setVisible(bool(_gpx))
+            if _gpx:
+                # Le câblage n'a de sens qu'en 2D : sur une barre, « serpentin »
+                # et « lignes » donnent le même ordre.
+                _is2d = int(_gpx.get("rows") or 1) > 1
+                lbl_wiring.setVisible(_is2d)
+                cb_wiring.setVisible(_is2d)
+                px_hint.setText("")
+                _refresh_px_strip(idx)
             if is_mh:
                 proj = self.projectors[idx]
                 pt_widget.set_limits(
@@ -15621,6 +16429,40 @@ class MainWindow(QMainWindow):
 
             if fd.get('profile'):
                 proj.dmx_profile = fd['profile']
+
+            # Barre/matrice : l'appareil est UN tout. Réadresser le seul membre
+            # représentant disloquerait la barre — les autres pixels garderaient
+            # leurs anciens canaux et se chevaucheraient. On réadresse donc en
+            # chaîne depuis la nouvelle base, et on propage groupe/univers/nom.
+            _mid_c = fd.get('matrix_id')
+            if _mid_c is not None:
+                _mem = [i for i, f2 in enumerate(fixture_data)
+                        if f2.get('matrix_id') == _mid_c]
+                # Ordre CANONIQUE : master (canaux de tête) puis pixels dans
+                # l'ordre de câblage. Trier sur l'adresse courante serait faux :
+                # celle du représentant vient d'être modifiée, il se retrouverait
+                # à la fin et le master passerait après les pixels.
+                _mem.sort(key=lambda i: (
+                    0 if fixture_data[i].get('matrix_role') == 'master' else 1,
+                    fixture_data[i].get('pixel_index') or 0))
+                _base = fd['start_address']
+                _addr = _base
+                _root = str(fd['name']).split(" · ")[0]
+                for i in _mem:
+                    f2 = fixture_data[i]
+                    p2 = self.projectors[i] if i < len(self.projectors) else None
+                    f2['start_address'] = _addr
+                    f2['group']         = fd['group']
+                    f2['universe']      = fd['universe']
+                    # Nom : garder le suffixe « · px3 » / « · Master »
+                    _suf = str(f2.get('name', '')).split(" · ")
+                    f2['name'] = f"{_root} · {_suf[1]}" if len(_suf) > 1 else _root
+                    if p2 is not None:
+                        p2.start_address = _addr
+                        p2.group         = fd['group']
+                        p2.universe      = fd['universe']
+                        p2.name          = f2['name']
+                    _addr += len(f2.get('profile') or [])
             _apply_fd_to_dmx()
             _mark_dirty()
             conflicts = _get_conflicts()
@@ -15639,19 +16481,32 @@ class MainWindow(QMainWindow):
                     (int(new_gc[3:5], 16) + 0x44) // 2,
                     (int(new_gc[5:7], 16) + 0x44) // 2,
                 ) if len(new_gc) == 7 else "#545454"
-                card._namelbl.setText(fd['name'] or self.GROUP_DISPLAY.get(fd['group'], fd['group']))
-                card._sublbl.setText(
-                    f"{fd['fixture_type']}  ·  Groupe {self.GROUP_DISPLAY.get(fd['group'], fd['group'])}"
-                )
+                # Une barre/matrice garde son identité d'appareil entier :
+                # nom sans suffixe pixel, géométrie, empreinte DMX complète.
+                _mxc = _matrix_info_for(idx)
+                _gdisp = self.GROUP_DISPLAY.get(fd['group'], fd['group'])
+                card._namelbl.setText(
+                    (_mxc["name"] if _mxc else fd['name']) or _gdisp)
+                _mfr2 = (fd.get('manufacturer') or '').strip()
+                _pre2 = f"{_mfr2}  ·  " if _mfr2 else ""
+                if _mxc:
+                    _geo = (f"{_mxc['pixels']} px" if _mxc["rows"] <= 1
+                            else f"{_mxc['rows']}×{_mxc['cols']} px")
+                    card._sublbl.setText(
+                        f"{_pre2}{fd['fixture_type']}  ·  {_geo}  ·  Groupe {_gdisp}")
+                else:
+                    card._sublbl.setText(
+                        f"{_pre2}{fd['fixture_type']}  ·  Groupe {_gdisp}")
                 card._sublbl.setStyleSheet(
                     f"color:{_sub_col}; font-size:10px; border:none; background:transparent;"
                 )
-                end_ch = fd['start_address'] + len(fd['profile']) - 1
                 _u = fd.get('universe', 0) + 1
-                _e = fd['start_address'] + len(fd['profile']) - 1
+                _e = (_mxc["end"] if _mxc
+                      else fd['start_address'] + len(fd['profile']) - 1)
+                _s = _mxc["start"] if _mxc else fd['start_address']
                 card._chlbl.setText(
                     f'<span style="color:#2a6670">U{_u}</span>'
-                    f'<span style="color:#00d4ff">  ·  CH {fd["start_address"]}–{_e}</span>'
+                    f'<span style="color:#00d4ff">  ·  CH {_s}–{_e}</span>'
                 )
                 card._upd(True, idx in conflicts)
             lbl_det_name.setText(fd['name'])
@@ -15683,10 +16538,15 @@ class MainWindow(QMainWindow):
             idx = _sel[0]
             if idx is None or idx >= len(fixture_data):
                 return
-            _update_chips(fixture_data[idx].get('profile', []))
+            _mxt = _matrix_info_for(idx)
+            if _mxt:
+                _update_chips(_matrix_full_profile(_mxt), _matrix_owners(_mxt))
+            else:
+                _update_chips(fixture_data[idx].get('profile', []))
             _commit()
             is_mh = det_type_cb.currentText() == 'Moving Head'
             pt_section.setVisible(is_mh)
+            px_section.setVisible(bool(_matrix_info_for(idx)))
             if is_mh and idx is not None and idx < len(self.projectors):
                 proj = self.projectors[idx]
                 pt_widget.set_limits(
@@ -15709,11 +16569,29 @@ class MainWindow(QMainWindow):
             if idx is None or idx >= len(fixture_data):
                 return
             _push_history()
-            fixture_data.pop(idx)
-            if 0 <= idx < len(self.projectors):
-                self.projectors.pop(idx)
+
+            # Une barre/matrice = UN appareil : retirer tous ses membres. Sinon
+            # on n'enlève qu'un pixel, un autre devient représentant, et la carte
+            # semble impossible à supprimer.
+            _mid = fixture_data[idx].get("matrix_id")
+            if _mid is not None:
+                _idxs = [i for i, fd in enumerate(fixture_data)
+                         if fd.get("matrix_id") == _mid]
+            else:
+                _idxs = [idx]
+
+            for i in sorted(_idxs, reverse=True):
+                fixture_data.pop(i)
+                if 0 <= i < len(self.projectors):
+                    self.projectors.pop(i)
             _sel[0] = None
-            _checked.discard(idx)
+            # Réindexer la multi-sélection : les index au-dessus des membres
+            # retirés se décalent (de 8 pour une barre, pas de 1).
+            _removed = set(_idxs)
+            _remap = {c - sum(1 for r in _removed if r < c)
+                      for c in _checked if c not in _removed}
+            _checked.clear()
+            _checked.update(_remap)
             self._rebuild_dmx_patch()
             _rebuild_fd()
             _build_cards(filter_bar.text())
@@ -15742,7 +16620,15 @@ class MainWindow(QMainWindow):
             idx = _sel[0]
             if idx is None or idx >= len(fixture_data):
                 return
-            fname = fixture_data[idx]['name']
+            # La bande de confirmation vit dans le panneau de détail : si celui-ci
+            # est sur sa page « aucune sélection », elle serait invisible et la
+            # suppression paraîtrait ne rien faire.
+            if det_stack.currentIndex() != 1:
+                _select_card(idx)
+
+            # Nom de l'appareil entier pour une barre/matrice, pas « … · px1 »
+            _mxs = _matrix_info_for(idx)
+            fname = _mxs["name"] if _mxs else fixture_data[idx]['name']
             _confirm_idx[0] = idx
             _confirm_lbl.setText(f"Supprimer  « {fname[:30]} » ?")
             btn_det_locate.setVisible(False)
@@ -15938,7 +16824,15 @@ class MainWindow(QMainWindow):
 
         def _del_checked():
             if not _checked: return
-            idxs = sorted(_checked, reverse=True)
+            # Cocher une barre = cocher l'appareil : étendre à tous ses membres
+            _mids = {fixture_data[i].get("matrix_id") for i in _checked
+                     if i < len(fixture_data)}
+            _mids.discard(None)
+            _all = set(_checked)
+            if _mids:
+                _all.update(i for i, fd in enumerate(fixture_data)
+                            if fd.get("matrix_id") in _mids)
+            idxs = sorted(_all, reverse=True)
             _push_history()
             for i in idxs:
                 if i < len(fixture_data): fixture_data.pop(i)
@@ -15999,6 +16893,55 @@ class MainWindow(QMainWindow):
             _preset_profile = preset.get('profile')
             if not (isinstance(_preset_profile, list) and _preset_profile):
                 _preset_profile = None
+
+            # ── Fixture à pixels (barre / matrice) ────────────────────────────
+            # Même chemin que n'importe quel fixture : l'utilisateur choisit sa
+            # barre dans la bibliothèque, on l'éclate en projecteurs-pixels.
+            _spec = _preset_pixel_spec(preset)
+            if _spec is not None:
+                _grp = preset.get('group', 'face')
+                _uni = preset.get('universe', 0)
+                for n in range(qty):
+                    _spec_n = _dc_replace(_spec, name=(f"{base_name} {n + 1}"
+                                                       if qty > 1 else base_name))
+                    projs = generate_matrix_projectors(
+                        _spec_n, base_address=_next_free_address(),
+                        universe=_uni, group=_grp, name=_spec_n.name)
+                    cx, cy = _find_free_canvas_pos(self.projectors, *canvas_positions[n])
+                    # C'est l'appareil entier qui occupe la largeur calculée,
+                    # pas chaque pixel. Sinon une barre 8 px mangeait le plan.
+                    _span = _matrix_span(_spec.cols, _spec.phys_w)
+                    sx = _span / max(_spec.cols, 1)
+                    # Garder les proportions réelles de l'appareil quand on les
+                    # connaît (le canvas est plus large que haut → facteur W/H).
+                    if _spec.phys_w and _spec.phys_h and _spec.rows > 1:
+                        _ratio = min(2.5, float(_spec.phys_h) / float(_spec.phys_w))
+                        sy = _span * _ratio * 1.6 / max(_spec.rows, 1)
+                    else:
+                        sy = _span * 1.6 / max(_spec.rows, 1)
+                    pixels = [p for p in projs if p.matrix_role == "pixel"]
+                    layout_pixels(pixels, cx, cy, sx, sy, 0)
+                    for p in projs:
+                        p.matrix_rot = 0
+                        p.manufacturer = preset.get('manufacturer', '')
+                        if p.matrix_role != "pixel":
+                            # Master : au centre du bloc. Il n'est pas dessiné
+                            # (l'appareil, c'est le bloc), mais il doit suivre
+                            # le déplacement sans traîner à l'écart.
+                            p.canvas_x = max(0.04, min(0.96, cx))
+                            p.canvas_y = max(0.04, min(0.96, cy))
+                        self.projectors.append(p)
+                    # Les projos suivants doivent voir ceux qu'on vient d'ajouter
+                    self._rebuild_dmx_patch()
+                    _last_first = len(self.projectors) - len(projs)
+                _rebuild_fd()
+                _build_cards(filter_bar.text())
+                # Sélectionner la carte parente (1er membre = adresse la plus
+                # basse), pas le dernier pixel, qui n'a pas de carte.
+                _select_card(_last_first)
+                _mark_dirty()
+                return
+
             for n in range(qty):
                 if self.projectors:
                     last = max(self.projectors, key=lambda p: p.start_address)
@@ -16016,6 +16959,7 @@ class MainWindow(QMainWindow):
                     fixture_type=preset.get('fixture_type', 'PAR LED')
                 )
                 p.universe = preset.get('universe', 0)
+                p.manufacturer = preset.get('manufacturer', '')
                 p.start_address = next_addr
                 if _preset_profile:
                     p.dmx_profile = list(_preset_profile)
@@ -16610,19 +17554,9 @@ class MainWindow(QMainWindow):
             self._rebuild_dmx_patch(); _rebuild_fd()
             _build_cards(filter_bar.text()); canvas.update()
 
-        def _reset_canvas_positions():
-            if QMessageBox.question(
-                dialog, "Réinitialiser les positions",
-                "Remettre toutes les fixtures à leur position automatique ?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            ) != QMessageBox.Yes: return
-            _push_history()
-            for proj in self.projectors: proj.canvas_x = None; proj.canvas_y = None
-            _mark_dirty(); canvas.update()
         btn_sel_all_c.clicked.connect(_select_all_canvas)
         btn_desel_c.clicked.connect(_deselect_canvas)
         btn_groups_c.clicked.connect(_show_groups_popup)
-        btn_reset_pos_c.clicked.connect(_reset_canvas_positions)
 
         proxy._add_cb             = _add_fixture
         proxy._wizard_cb          = _open_wizard
@@ -16733,6 +17667,37 @@ class MainWindow(QMainWindow):
                 _sync_canvas_to_fixtures()
 
         tabs.currentChanged.connect(_on_tab_changed)
+
+        def _patch_key(event):
+            """
+            Échap = désélectionner, PAS fermer la fenêtre.
+
+            Sur un QDialog, Échap déclenche reject() par défaut : on perdait
+            toute la fenêtre de patch pour une simple désélection.
+            """
+            if event.key() == Qt.Key_Escape:
+                # 1) Une confirmation de suppression en cours ? l'annuler
+                if _confirm_strip.isVisible():
+                    _confirm_hide()
+                    return
+                # 2) Sinon : tout désélectionner (les deux onglets)
+                _checked.clear()
+                _sel[0] = None
+                proxy.selected_lamps.clear()
+                _lamps_ordered = getattr(proxy, 'selected_lamps_ordered', None)
+                if _lamps_ordered is not None:
+                    _lamps_ordered.clear()
+                btn_del_multi.setVisible(False)
+                btn_rename_multi.setVisible(False)
+                btn_group_multi.setVisible(False)
+                btn_desel_multi.setVisible(False)
+                _build_cards(filter_bar.text())
+                det_stack.setCurrentIndex(0)
+                canvas.update()
+                return
+            QDialog.keyPressEvent(dialog, event)
+
+        dialog.keyPressEvent = _patch_key
 
         _build_cards()
         if select_idx is not None and 0 <= select_idx < len(fixture_data):
@@ -17279,8 +18244,23 @@ class MainWindow(QMainWindow):
             for preset in fixtures:
                 name  = preset.get("name", "?")
                 mfr   = preset.get("manufacturer", "")
-                n_ch  = len(preset.get("profile", []))
-                label = f"{name}  ({n_ch}ch)"
+                # Le libellé décrit la FIXTURE, pas son mode 0 : afficher
+                # « 1ch » pour une barre de 121 modes parce que son premier
+                # mode est un « Look » 1 canal était trompeur.
+                # Défensif : la bibliothèque vient de Firestore, une fixture
+                # mal formée ne doit pas faire tomber toute la liste.
+                try:
+                    _sizes = sorted({len(m.get("profile") or [])
+                                     for m in (preset.get("modes") or [])
+                                     if isinstance(m, dict) and m.get("profile")})
+                except Exception:
+                    _sizes = []
+                if len(_sizes) > 1:
+                    label = (f"{name}  ({len(_sizes)} modes, "
+                             f"{_sizes[0]}–{_sizes[-1]} canaux)")
+                else:
+                    _n = _sizes[0] if _sizes else len(preset.get("profile", []))
+                    label = f"{name}  ({_n} canal)" if _n == 1 else f"{name}  ({_n} canaux)"
                 if show_mfr and mfr:
                     label += f"   — {mfr}"
                 item = QListWidgetItem(label)
@@ -17614,19 +18594,263 @@ class MainWindow(QMainWindow):
 
         # ── Accept ────────────────────────────────────────────────────────────
         def accept():
-            if tab_widget.currentIndex() == 1:
-                item = my_list.currentItem()
-            else:
-                item = preset_list.currentItem()
-            if not item:
-                return
-            preset = item.data(Qt.UserRole)
+            # Preset résolu sur le MODE choisi (profil, géométrie, dimensions)
+            preset = _resolved_preset()
             if preset:
+                _k = _mode_pref_key(preset)
+                if _k and preset.get("mode_name"):
+                    self._fixture_mode_prefs[_k] = preset["mode_name"]
                 result[0] = preset
                 dialog.accept()
 
         preset_list.itemDoubleClicked.connect(lambda _: accept())
         my_list.itemDoubleClicked.connect(lambda _: accept())
+
+        # ── Sélecteur de mode ─────────────────────────────────────────────────
+        # Une fixture OFL a souvent plusieurs modes DMX (la Chroma-Q Color Force
+        # en a 121). Sans ce sélecteur seul le mode 0 était accessible : sur
+        # cette barre c'est « Look », 1 canal — tous les modes pixel étaient
+        # hors d'atteinte.
+        mode_row = QWidget()
+        mode_h = QHBoxLayout(mode_row)
+        mode_h.setContentsMargins(0, 0, 0, 0)
+        mode_h.setSpacing(8)
+        lbl_mode = QLabel("Mode DMX :")
+        lbl_mode.setStyleSheet("color:#888; font-size:11px; background:transparent;")
+        mode_cb = QComboBox()
+        mode_cb.setFixedHeight(30)
+        mode_cb.setStyleSheet(
+            "QComboBox { background:#1e1e1e; color:#fff; border:1px solid #444;"
+            " border-radius:6px; padding:4px 8px; font-size:12px; }"
+            "QComboBox::drop-down { border:none; width:20px; }"
+            "QComboBox QAbstractItemView { background:#1e1e1e; color:#fff;"
+            " selection-background-color:#00d4ff; selection-color:#000;"
+            " border:1px solid #444; }"
+        )
+        mode_h.addWidget(lbl_mode)
+        mode_h.addWidget(mode_cb, 1)
+        layout.addWidget(mode_row)
+
+        def _lib_slot_error(where, exc):
+            """
+            Journalise une exception de slot au lieu de laisser mourir l'appli.
+
+            PySide6 abandonne le processus sur une exception non rattrapée dans
+            un slot : sans ce garde-fou, une fixture mal formée dans la
+            bibliothèque fait disparaître MyStrow sans le moindre message.
+            """
+            import traceback
+            print(f"[bibliotheque] erreur dans {where} : {exc}")
+            traceback.print_exc()
+
+        def _preset_modes(preset):
+            """Modes exploitables d'un preset (ceux qui ont des canaux)."""
+            if not isinstance(preset, dict):
+                return []
+            out = []
+            for m in (preset.get("modes") or []):
+                if isinstance(m, dict) and m.get("profile"):
+                    out.append(m)
+            return out
+
+        def _current_preset():
+            item = (my_list.currentItem() if tab_widget.currentIndex() == 1
+                    else preset_list.currentItem())
+            return item.data(Qt.UserRole) if item else None
+
+        def _resolved_preset():
+            """
+            Le preset tel qu'il sera ajouté : profil, géométrie pixel et
+            dimensions du MODE choisi, pas ceux du mode 0.
+            """
+            preset = _current_preset()
+            if not preset:
+                return None
+            modes = _preset_modes(preset)
+            idx = mode_cb.currentIndex()
+            if not modes or idx < 0 or idx >= len(modes):
+                return preset
+            m = modes[idx]
+            out = dict(preset)
+            out["profile"] = list(m.get("profile") or [])
+            out["mode_name"] = m.get("name", "")
+            if m.get("matrix"):
+                out["matrix"] = m["matrix"]
+            else:
+                out.pop("matrix", None)
+            if m.get("physical"):
+                out["physical"] = m["physical"]
+            return out
+
+        def _mode_pref_key(preset):
+            if not isinstance(preset, dict):
+                return None
+            return preset.get("uuid") or (f"{preset.get('manufacturer','')}/"
+                                          f"{preset.get('name','')}")
+
+        def _refresh_modes():
+            try:
+                preset = _current_preset()
+                modes = _preset_modes(preset)
+                mode_cb.blockSignals(True)
+                mode_cb.clear()
+                for m in modes:
+                    n = len(m.get("profile") or [])
+                    mode_cb.addItem(f"{m.get('name', '?')}   —   {n} "
+                                    f"{'canal' if n == 1 else 'canaux'}")
+                mode_cb.blockSignals(False)
+                # Un seul mode exploitable → le sélecteur n'apporte rien
+                mode_row.setVisible(len(modes) > 1)
+                if modes:
+                    # Retrouver le mode choisi la dernière fois pour cette
+                    # fixture : on patche rarement une barre toute seule, et
+                    # repartir du mode 0 (souvent un « Look » inutile) obligeait
+                    # à le resélectionner à chaque ajout.
+                    _pref = self._fixture_mode_prefs.get(_mode_pref_key(preset))
+                    _i = next((k for k, m in enumerate(modes)
+                               if m.get("name") == _pref), 0)
+                    mode_cb.setCurrentIndex(_i)
+            except Exception as e:
+                mode_cb.blockSignals(False)
+                mode_row.setVisible(False)
+                _lib_slot_error("_refresh_modes", e)
+
+        # ── Aperçu du profil DMX de la fixture sélectionnée ───────────────────
+        # Mêmes pastilles que le Patch DMX, en lecture seule.
+        prof_host = QWidget()
+        prof_host.setStyleSheet("background:transparent;")
+        prof_vl = QVBoxLayout(prof_host)
+        prof_vl.setContentsMargins(8, 6, 8, 6)
+        prof_vl.setSpacing(5)
+
+        prof_scroll = QScrollArea()
+        prof_scroll.setWidget(prof_host)
+        prof_scroll.setWidgetResizable(True)
+        prof_scroll.setFixedHeight(104)
+        prof_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        prof_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        prof_scroll.setStyleSheet(
+            "QScrollArea { border:1px solid #222; border-radius:6px; background:#0d0d0d; }"
+        )
+        layout.addWidget(prof_scroll)
+
+        def _prof_clear():
+            while prof_vl.count():
+                it = prof_vl.takeAt(0)
+                if it.widget():
+                    it.widget().deleteLater()
+
+        def _prof_caption(txt):
+            lb = QLabel(txt)
+            lb.setTextFormat(Qt.RichText)
+            lb.setStyleSheet("color:#777; font-size:10px; background:transparent; border:none;")
+            return lb
+
+        # Le détail complet d'une barre (90 pastilles) est masqué par défaut :
+        # replié on montre le motif, déplié on montre chaque pixel adressé.
+        _prof_expanded = [False]
+
+        def _prof_caption_row(txt, n_total):
+            """Légende + bouton « … » qui déplie le détail canal par canal."""
+            row = QWidget()
+            row.setStyleSheet("background:transparent;")
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(6)
+            rl.addWidget(_prof_caption(txt))
+
+            btn = QPushButton("…" if not _prof_expanded[0] else "▲")
+            btn.setFixedSize(26, 18)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(
+                f"Replier le détail" if _prof_expanded[0]
+                else f"Voir le détail des {n_total} canaux, pixel par pixel"
+            )
+            btn.setStyleSheet(
+                "QPushButton { background:#1a1a2a; color:#cc77dd; border:1px solid #33334a;"
+                " border-radius:4px; font-size:11px; font-weight:bold; padding:0; }"
+                "QPushButton:hover { background:#26263a; border-color:#cc77dd; }"
+            )
+
+            def _toggle():
+                _prof_expanded[0] = not _prof_expanded[0]
+                _update_profile_preview(keep_expand=True)
+            btn.clicked.connect(_toggle)
+
+            rl.addWidget(btn)
+            rl.addStretch()
+            return row
+
+        def _update_profile_preview(keep_expand=False):
+            """Affiche le profil de la fixture sélectionnée, onglet courant."""
+            try:
+                _do_update_profile_preview(keep_expand)
+            except Exception as e:
+                _lib_slot_error("_update_profile_preview", e)
+
+        def _do_update_profile_preview(keep_expand=False):
+            if not keep_expand:
+                _prof_expanded[0] = False      # nouvelle fixture → on replie
+            _prof_clear()
+            # Profil du mode CHOISI, pas du mode 0
+            preset = _resolved_preset()
+            if not preset:
+                prof_scroll.setFixedHeight(104)
+                prof_vl.addWidget(_prof_caption(
+                    "Sélectionne une fixture pour voir son profil DMX"))
+                prof_vl.addStretch()
+                return
+
+            profile = preset.get("profile") or []
+            spec = _preset_pixel_spec(preset)
+
+            if spec is not None:
+                n_px  = spec.rows * spec.cols
+                n_pch = len(spec.pixel_channels)
+                head  = len(spec.global_head)
+                geo   = (f"{spec.cols} px" if spec.rows <= 1
+                         else f"{spec.rows}×{spec.cols} px")
+                prof_vl.addWidget(_prof_caption(
+                    f"{len(profile)} {'canal' if len(profile) == 1 else 'canaux'}  ·  "
+                    f'<span style="color:#cc77dd; font-weight:bold">{geo}</span>'))
+                if spec.global_head:
+                    prof_vl.addWidget(_prof_caption(
+                        f"Canaux globaux  ·  CH 1–{head}"))
+                    prof_vl.addWidget(build_channel_chips(spec.global_head, 1))
+
+                if _prof_expanded[0]:
+                    # Détail : une rangée par pixel, avec ses vraies adresses
+                    prof_vl.addWidget(_prof_caption_row(
+                        f"Détail des {n_px} pixels", len(profile)))
+                    for i in range(n_px):
+                        first = head + i * n_pch + 1
+                        pos = (f"px {i + 1}" if spec.rows <= 1
+                               else f"px {i + 1}  (L{i // spec.cols + 1}"
+                                    f"C{i % spec.cols + 1})")
+                        prof_vl.addWidget(_prof_caption(
+                            f'<span style="color:#cc77dd">{pos}</span>'
+                            f'<span style="color:#555">  ·  CH {first}–'
+                            f'{first + n_pch - 1}</span>'))
+                        prof_vl.addWidget(build_channel_chips(
+                            spec.pixel_channels, first))
+                else:
+                    prof_vl.addWidget(_prof_caption_row(
+                        f"Motif répété sur chaque pixel  ·  ×{n_px}", len(profile)))
+                    chips = build_channel_chips(spec.pixel_channels, head + 1)
+                    chips.setToolTip(
+                        f"Ces {n_pch} canaux se répètent {n_px} fois, "
+                        f"du CH {head + 1} au CH {head + n_px * n_pch}.\n"
+                        f"Clique sur « … » pour voir chaque pixel."
+                    )
+                    prof_vl.addWidget(chips)
+                prof_scroll.setFixedHeight(240 if _prof_expanded[0] else 128)
+            else:
+                prof_scroll.setFixedHeight(104)
+                prof_vl.addWidget(_prof_caption(
+                    f"{len(profile)} {'canal' if len(profile) == 1 else 'canaux'}"))
+                prof_vl.addWidget(build_channel_chips(profile, 1))
+
+            prof_vl.addStretch()
 
         # ── Bas de dialog : nom + quantité ────────────────────────────────────
         qty_row = QHBoxLayout()
@@ -17658,6 +18882,16 @@ class MainWindow(QMainWindow):
                 if preset:
                     name_edit.setPlaceholderText(preset.get("name", ""))
         preset_list.currentItemChanged.connect(lambda *_: _on_preset_selected())
+
+        def _on_fixture_changed():
+            _refresh_modes()          # recharger les modes AVANT l'aperçu
+            _update_profile_preview()
+
+        preset_list.currentItemChanged.connect(lambda *_: _on_fixture_changed())
+        my_list.currentItemChanged.connect(lambda *_: _on_fixture_changed())
+        tab_widget.currentChanged.connect(lambda *_: _on_fixture_changed())
+        mode_cb.currentIndexChanged.connect(lambda *_: _update_profile_preview())
+        _on_fixture_changed()
 
         qty_row.addWidget(lbl_name)
         qty_row.addWidget(name_edit, 1)
@@ -17915,6 +19149,7 @@ class MainWindow(QMainWindow):
             proj_key = f"{proj.group}_{i}"
             fixtures_list.append({
                 'name': proj.name,
+                'manufacturer': getattr(proj, 'manufacturer', ''),
                 'fixture_type': proj.fixture_type,
                 'group': proj.group,
                 'universe':      getattr(proj, 'universe', 0),
@@ -18003,6 +19238,7 @@ class MainWindow(QMainWindow):
                         p.pan_invert    = bool(fd.get('pan_invert',    False))
                         p.tilt_invert   = bool(fd.get('tilt_invert',   False))
                         p.pan_tilt_swap = bool(fd.get('pan_tilt_swap', False))
+                        p.manufacturer  = fd.get('manufacturer', '')
                         _apply_matrix_meta(p, fd)
                         self.projectors.append(p)
                         proj_key = f"{p.group}_{i}"
@@ -19227,6 +20463,47 @@ class MainWindow(QMainWindow):
                 proj.base_color = base
         return saved
 
+    def _apply_editor_live_overrides(self):
+        """
+        Applique la sortie live de l'éditeur d'effets, le temps d'une frame DMX.
+
+        Format volontairement distinct des overrides HTP : l'éditeur produit
+        `(level, color, pan, tilt)` — il pilote aussi le mouvement des lyres,
+        ce que les mémoires ne font pas. Retourne l'état sauvegardé, à restaurer
+        après l'envoi comme pour les autres sources temporaires.
+        """
+        ov = getattr(self, '_editor_live_overrides', None)
+        if not ov:
+            return None
+        saved = []
+        for proj in self.projectors:
+            entry = ov.get(id(proj))
+            if entry is None:
+                continue
+            saved.append((proj, proj.level, QColor(proj.color),
+                          QColor(proj.base_color), proj.pan, proj.tilt))
+            level, color = entry[0], entry[1]
+            proj.level = level
+            proj.color = QColor(color)
+            proj.base_color = QColor(color)
+            if len(entry) > 3:
+                if entry[2] is not None:
+                    proj.pan = entry[2]
+                if entry[3] is not None:
+                    proj.tilt = entry[3]
+        return saved
+
+    @staticmethod
+    def _restore_editor_live_overrides(saved):
+        if not saved:
+            return
+        for proj, lvl, col, base, pan, tilt in saved:
+            proj.level = lvl
+            proj.color = col
+            proj.base_color = base
+            proj.pan = pan
+            proj.tilt = tilt
+
     def _apply_pad_overrides_htp(self):
         """Applique les pads AKAI actifs en HTP par-dessus l'etat courant des projecteurs.
         Retourne la liste des etats sauvegardes pour restauration apres envoi DMX."""
@@ -19314,9 +20591,17 @@ class MainWindow(QMainWindow):
             # Appliquer temporairement les pads AKAI en HTP (fonctionne dans TOUS les modes)
             saved_pads = self._apply_pad_overrides_htp()
 
+            # Sortie live de l'éditeur d'effets : appliquée en DERNIER, donc
+            # prioritaire — c'est une action explicite de l'utilisateur qui règle
+            # son effet et veut voir CE qu'il règle sur ses lampes.
+            saved_editor = self._apply_editor_live_overrides()
+
             # Envoyer DMX
             self.dmx.update_from_projectors(self.projectors, self.effect_speed)
             self.dmx.send_dmx()
+
+            # Restaurer dans l'ordre inverse de l'application
+            self._restore_editor_live_overrides(saved_editor)
 
             # Restaurer etat pads
             for i, level, color, base_color in saved_pads:
