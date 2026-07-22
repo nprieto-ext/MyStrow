@@ -72,6 +72,8 @@ _state: dict = {
     "projectors": [],  # [{"name","group","color","level","muted","x","y"}]
     "layout": [],       # [{"label": "A", "type": "group"}, ...]  — 8 colonnes AKAI
     "rec_active": False,
+    # Surface d'exécuteurs (fenêtre EXT « surface pad ») reflétée sur la tablette.
+    "surface": {"blocks": [], "cols": 0, "rows": 0},
 }
 
 # ── Clients SSE connectés ─────────────────────────────────────────────────────
@@ -88,27 +90,49 @@ def _build_app():
     global _app
     _app = Flask(__name__, static_folder=None)
 
+    # Base des fichiers statiques. En exe PyInstaller (onefile), les datas sont
+    # extraites dans sys._MEIPASS ; en dev, c'est le dossier du module.
+    import sys as _sys
+    if getattr(_sys, 'frozen', False) and hasattr(_sys, '_MEIPASS'):
+        _BASE = Path(_sys._MEIPASS)
+    else:
+        _BASE = Path(__file__).parent
+
+    def _serve_bytes(relpath, mimetype):
+        """Sert un fichier statique en lisant ses octets directement.
+
+        On N'UTILISE PAS send_file : sous waitress (serveur de prod par défaut),
+        son wrapper de fichier WSGI (wsgi.file_wrapper) échoue de façon fiable sur
+        les fichiers du sous-dossier tablet/ → « Internal Server Error » (500) côté
+        tablette, alors que test_client/Flask-dev passaient. Lire les octets et les
+        renvoyer dans une Response est robuste sur les deux serveurs. Les assets
+        sont petits (HTML/JSON/JS), le coût mémoire est négligeable."""
+        try:
+            data = (_BASE / relpath).read_bytes()
+        except Exception as e:
+            print(f"[Tablet] Fichier introuvable: {relpath} ({e})")
+            return Response(f"Not found: {relpath}", status=404)
+        return Response(data, mimetype=mimetype)
+
     @_app.route("/")
     def index():
-        return send_file_fn(str(Path(__file__).parent / "tablet" / "index.html"))
+        # mimetype "text/html" seul : Flask ajoute automatiquement "; charset=utf-8".
+        return _serve_bytes("tablet/index.html", "text/html")
 
     @_app.route("/manifest.json")
     def manifest():
-        return send_file_fn(str(Path(__file__).parent / "tablet" / "manifest.json"),
-                            mimetype="application/manifest+json")
+        return _serve_bytes("tablet/manifest.json", "application/manifest+json")
 
     @_app.route("/sw.js")
     def service_worker():
-        resp = send_file_fn(str(Path(__file__).parent / "tablet" / "sw.js"),
-                            mimetype="application/javascript")
+        resp = _serve_bytes("tablet/sw.js", "application/javascript")
         resp.headers["Service-Worker-Allowed"] = "/"
         resp.headers["Cache-Control"] = "no-cache"
         return resp
 
     @_app.route("/icon.png")
     def icon():
-        return send_file_fn(str(Path(__file__).parent / "logo.png"),
-                            mimetype="image/png")
+        return _serve_bytes("logo.png", "image/png")
 
     @_app.route("/stream")
     def stream():
@@ -232,6 +256,13 @@ def push_rec_state(active: bool):
     _state["rec_active"] = active
     if _running:
         _broadcast({"type": "rec_state", "active": active})
+
+
+def push_surface(data: dict):
+    """Pousse le layout de la surface d'exécuteurs (blocs + dimensions de grille)."""
+    _state["surface"] = data or {"blocks": [], "cols": 0, "rows": 0}
+    if _running:
+        _broadcast({"type": "surface", "data": _state["surface"]})
 
 
 def push_projectors(projectors: list):

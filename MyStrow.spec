@@ -13,6 +13,11 @@ def _get_version():
         return '0.0.0'
 
 datas = [('logo.png', '.'), ('mystrow.ico', '.'), ('plan_3d_web.html', '.'), ('AKAIAPCMINI.png', '.'), ('Novation.png', '.')]
+# Interface tablette (PWA statique servie par tablet_server.py). SANS ces fichiers
+# dans l'exe, le serveur tablette renvoie 404/500 ("Internal Server Error").
+for _tf in ('index.html', 'manifest.json', 'sw.js'):
+    if os.path.exists(os.path.join('tablet', _tf)):
+        datas += [(os.path.join('tablet', _tf), 'tablet')]
 if os.path.exists('fixtures_bundle_custom.json.gz'):
     datas += [('fixtures_bundle_custom.json.gz', '.')]
 if os.path.exists('fixtures_qlcplus.json'):

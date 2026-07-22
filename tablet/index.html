@@ -71,15 +71,14 @@
       display: flex; align-items: center; justify-content: center; gap: 5px;
       transition: background 0.1s, border-color 0.1s, color 0.1s; touch-action: manipulation; }
     .akai-btn:active { filter: brightness(1.3); transform: scale(0.96); }
-    #btn-akai-clear { border-color: #2a1818; color: #774444; }
-    #btn-akai-clear:hover { background: #1a0a0a; border-color: #aa3333; color: #ee6666; }
-    #btn-akai-rec { border-color: #2a1818; color: #774444; }
-    #btn-akai-rec:hover { background: #1a0808; border-color: #cc3333; color: #ff5555; }
-    #btn-akai-rec.rec-active { background: #2a0505; border-color: #cc3333; color: #ff4444;
-      box-shadow: 0 0 8px #cc333366; animation: rec-pulse 1s ease-in-out infinite; }
-    @keyframes rec-pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
-    #btn-akai-params { border-color: #1a2030; color: #445566; }
-    #btn-akai-params:hover { background: #0d1520; border-color: #336699; color: #66aadd; }
+    /* CLEAR : gris neutre — comme la page principale */
+    #btn-akai-clear { background:#1e1e1e; border-color:#3a3a3a; color:#888; font-size: clamp(9px,1.4vw,13px); }
+    #btn-akai-clear:active { background:#333; color:#fff; }
+    /* REC mémoire : 🔴 rouge, état ACTIF bien visible (mode d'enregistrement) */
+    #btn-akai-rec { background:#1e1e1e; border-color:#3a3a3a; color:#cc3333; }
+    #btn-akai-rec.rec-active { background:#2a0505; border-color:#cc3333; color:#ff4444;
+      box-shadow: 0 0 10px #cc333388; animation: rec-pulse 1s ease-in-out infinite; }
+    @keyframes rec-pulse { 0%,100%{opacity:1} 50%{opacity:0.55} }
     .pad { background: var(--pad-off); border: 1px solid var(--pad-border); border-radius: 5px; cursor: pointer;
       transition: filter 80ms, transform 80ms, box-shadow 80ms; min-width: 0; min-height: 0; }
     .pad.lit { border-color: transparent; }
@@ -140,6 +139,22 @@
     .cart-icon { font-size: clamp(14px, 2.2vw, 22px); }
     .cart-title { font-size: clamp(8px, 1.1vw, 12px); color: inherit; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; text-align: center; padding: 0 2px; }
 
+    /* SURFACE (exécuteurs) */
+    #surface-page { overflow: auto; }
+    #surface-grid { display: grid; gap: 6px; padding: 4px; grid-auto-rows: clamp(42px, 8vh, 70px); }
+    .sfx-block { border: 1px solid #2a2a2a; border-radius: 8px; background: #141414; color: #eee;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+      font-size: clamp(9px, 1.6vw, 13px); font-weight: 700; padding: 2px; cursor: pointer;
+      touch-action: manipulation; overflow: hidden; line-height: 1.1; user-select: none;
+      border-left: 4px solid #333; transition: filter .1s, transform .05s; }
+    .sfx-block:active { transform: scale(0.96); filter: brightness(1.4); }
+    .sfx-block.active { box-shadow: 0 0 0 2px var(--accent) inset; }
+    .sfx-fader { flex-direction: column; gap: 4px; padding: 6px 2px; }
+    .sfx-fader input[type=range] { writing-mode: vertical-lr; direction: rtl;
+      width: 22px; flex: 1; accent-color: var(--accent); }
+    .sfx-fader .sfx-fval { font-size: 10px; color: #aaa; }
+    .sfx-clock { font-variant-numeric: tabular-nums; letter-spacing: 1px; color: #ccc; }
+
     /* SCENE */
     #scene-page { position: relative; }
     #stage-canvas { flex: 1; min-height: 0; width: 100%; border-radius: 8px; background: #080808; border: 1px solid #1a1a1a; display: block; }
@@ -156,6 +171,10 @@
     #proj-panel-name { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 2px; }
     #proj-panel-group { font-size: 10px; color: #555; letter-spacing: 1px; margin-bottom: 14px; }
     #proj-level-row, #proj-strobe-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    #proj-pantilt-row { display: none; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    #proj-pantilt-row.show { display: flex; }
+    #proj-pantilt-lbl { font-size: 10px; color: #666; letter-spacing: 1px; font-weight: 700; }
+    #proj-pantilt-pad { width: 100%; height: 150px; background: #0a0a0a; border: 1px solid #2a2a2a; border-radius: 8px; touch-action: none; }
     #proj-level-lbl, #proj-strobe-lbl { font-size: 9px; color: #555; width: 36px; flex-shrink: 0; letter-spacing: 1px; }
     #proj-level-slider { flex: 1; accent-color: var(--accent); }
     #proj-strobe-slider { flex: 1; accent-color: #ff8844; }
@@ -187,6 +206,7 @@
       <button class="tab-btn active" data-tab="akai-page">AKAI</button>
       <button class="tab-btn"       data-tab="media-page">MEDIA</button>
       <button class="tab-btn"       data-tab="scene-page">SCÈNE</button>
+      <button class="tab-btn"       data-tab="surface-page">SURFACE</button>
     </div>
     <div id="conn-status">···</div>
   </div>
@@ -203,9 +223,8 @@
         <div id="grid"></div>
         <div id="faders-area"></div>
         <div id="akai-ctrl">
-          <button class="akai-btn" id="btn-akai-clear">✕ CLEAR</button>
-          <button class="akai-btn" id="btn-akai-rec">⏺ REC</button>
-          <button class="akai-btn" id="btn-akai-params">⚙ PARAMS</button>
+          <button class="akai-btn" id="btn-akai-rec">🔴 REC</button>
+          <button class="akai-btn" id="btn-akai-clear">CLEAR</button>
         </div>
       </div>
       <div class="vdiv"></div>
@@ -241,6 +260,11 @@
       <button class="scene-btn" id="btn-scene-select">SELECT ALL</button>
     </div>
   </div>
+
+  <!-- SURFACE (exécuteurs) -->
+  <div id="surface-page" class="page">
+    <div id="surface-grid"></div>
+  </div>
 </div>
 
 <!-- Proj panel -->
@@ -258,6 +282,10 @@
     <span id="proj-strobe-lbl">STROBE</span>
     <input id="proj-strobe-slider" type="range" min="0" max="100" value="0">
     <span id="proj-strobe-val">OFF</span>
+  </div>
+  <div id="proj-pantilt-row">
+    <span id="proj-pantilt-lbl">POSITION</span>
+    <canvas id="proj-pantilt-pad" width="220" height="150"></canvas>
   </div>
   <div id="proj-panel-btns">
     <button id="btn-proj-mute">MUTE</button>
@@ -284,9 +312,10 @@ const projPanel=document.getElementById('proj-panel');
 
 const padEls={}, effEls={}, faderData=[], faderLbls=[];
 let _projectors=[], _seqItems=[], _selectedProjIdx=-1;
+let _selection=[];   // indices sélectionnés (multi). _selectedProjIdx = dernier tapé (affichage panneau)
+function _selIdxs(){ return _selection.length ? _selection.slice() : (_selectedProjIdx>=0?[_selectedProjIdx]:[]); }
 const btnClear=document.getElementById('btn-akai-clear');
 const btnRec=document.getElementById('btn-akai-rec');
-const btnParams=document.getElementById('btn-akai-params');
 
 // Swatches couleurs (= PRESET_COLORS plan_de_feu.py)
 const SWATCH_COLORS=['#ffffff','#ff0000','#ff8800','#ffdd00','#00ff00','#00dddd','#0000ff','#ff00ff'];
@@ -295,11 +324,11 @@ SWATCH_COLORS.forEach(hex=>{
   const s=document.createElement('div');
   s.className='proj-swatch'; s.style.background=hex; s.dataset.color=hex;
   s.addEventListener('click',()=>{
-    if(_selectedProjIdx<0) return;
+    const idxs=_selIdxs(); if(!idxs.length) return;
     projColorsEl.querySelectorAll('.proj-swatch').forEach(x=>x.classList.remove('active'));
     s.classList.add('active');
-    if(_projectors[_selectedProjIdx]) _projectors[_selectedProjIdx].base_color=hex;
-    sendEvent({type:'proj_color',idx:_selectedProjIdx,color:hex});
+    idxs.forEach(i=>{ if(_projectors[i]) _projectors[i].base_color=hex; });
+    sendEvent({type:'proj_color',idxs,color:hex});
   });
   projColorsEl.appendChild(s);
 });
@@ -476,26 +505,73 @@ function drawStage(projectors){
     stageCtx.fillText('Aucun projecteur',W/2,H/2); return;
   }
   const R=Math.max(10,Math.min(W,H)*0.042);
-  projectors.forEach(p=>{
+  projectors.forEach((p,i)=>{
     const px=(p.x??0.5)*W, py=(p.y??0.5)*H;
     const color=p.color||'#000000';
     const isLit=p.level>0&&!p.muted&&color!=='#000000';
     const gcolor=GROUP_COLORS[p.group]||'#666';
+    // Halo de sélection (multi-sélection tactile)
+    if(_selection.indexOf(i)>=0){
+      stageCtx.beginPath(); stageCtx.arc(px,py,R*1.7,0,Math.PI*2);
+      stageCtx.strokeStyle='#00d4ff'; stageCtx.lineWidth=2.5;
+      stageCtx.setLineDash([4,3]); stageCtx.stroke(); stageCtx.setLineDash([]);
+    }
     if(isLit){
       const grad=stageCtx.createRadialGradient(px,py,R*0.3,px,py,R*3);
       grad.addColorStop(0,color+'99'); grad.addColorStop(1,color+'00');
       stageCtx.fillStyle=grad; stageCtx.beginPath(); stageCtx.arc(px,py,R*3,0,Math.PI*2); stageCtx.fill();
     }
-    stageCtx.beginPath(); stageCtx.arc(px,py,R,0,Math.PI*2);
-    stageCtx.fillStyle=isLit?color:'#111'; stageCtx.fill();
-    stageCtx.strokeStyle=isLit?'#fff':gcolor; stageCtx.lineWidth=isLit?2:1;
-    stageCtx.globalAlpha=isLit?1:0.45; stageCtx.stroke(); stageCtx.globalAlpha=1;
+    if(p.is_lyre){
+      drawLyre(px,py,R,color,isLit,gcolor,p);
+    }else{
+      stageCtx.beginPath(); stageCtx.arc(px,py,R,0,Math.PI*2);
+      stageCtx.fillStyle=isLit?color:'#111'; stageCtx.fill();
+      stageCtx.strokeStyle=isLit?'#fff':gcolor; stageCtx.lineWidth=isLit?2:1;
+      stageCtx.globalAlpha=isLit?1:0.45; stageCtx.stroke(); stageCtx.globalAlpha=1;
+    }
     stageCtx.font=`bold ${Math.max(7,Math.round(R*0.52))}px sans-serif`;
     stageCtx.textAlign='center'; stageCtx.fillStyle=isLit?'#fff':'#2a2a2a';
     stageCtx.globalAlpha=isLit?0.9:0.6;
-    stageCtx.fillText(p.name||p.group,px,py+R+Math.round(R*0.75));
+    stageCtx.fillText(p.name||p.group,px,py+R+Math.round(R*0.9));
     stageCtx.globalAlpha=1;
   });
+}
+
+// Dessine une lyre : socle arrondi (yoke) + tête ronde colorée + petit cône de
+// faisceau orienté selon pan/tilt. Rendu épuré pour rester lisible en scène.
+function drawLyre(px,py,R,color,isLit,gcolor,p){
+  const pan=(p.pan??32768)/65535, tilt=(p.tilt??32768)/65535;
+  // pan → orientation gauche/droite autour de la verticale ; tilt → inclinaison
+  const ang=(pan-0.5)*Math.PI*1.4 - Math.PI/2;   // -90° = tout droit vers le haut
+  // ── Cône de faisceau (uniquement si allumée) ──
+  if(isLit){
+    const beamLen=R*(1.0+tilt*1.4), spread=0.32;
+    const ax=px+Math.cos(ang-spread)*beamLen, ay=py+Math.sin(ang-spread)*beamLen;
+    const bx=px+Math.cos(ang+spread)*beamLen, by=py+Math.sin(ang+spread)*beamLen;
+    const g=stageCtx.createRadialGradient(px,py,R*0.3,px,py,beamLen);
+    g.addColorStop(0,color+'aa'); g.addColorStop(1,color+'00');
+    stageCtx.fillStyle=g;
+    stageCtx.beginPath(); stageCtx.moveTo(px,py); stageCtx.lineTo(ax,ay); stageCtx.lineTo(bx,by);
+    stageCtx.closePath(); stageCtx.fill();
+  }
+  // ── Socle arrondi (yoke) ──
+  const s=R*1.5, r2=R*0.34;
+  stageCtx.beginPath();
+  if(stageCtx.roundRect) stageCtx.roundRect(px-s/2,py-s/2,s,s,r2);
+  else stageCtx.rect(px-s/2,py-s/2,s,s);
+  stageCtx.fillStyle='#161616'; stageCtx.fill();
+  stageCtx.strokeStyle=isLit?'#e8e8e8':gcolor; stageCtx.lineWidth=isLit?2:1.4;
+  stageCtx.globalAlpha=isLit?1:0.6; stageCtx.stroke(); stageCtx.globalAlpha=1;
+  // ── Tête ronde colorée ──
+  stageCtx.beginPath(); stageCtx.arc(px,py,R*0.66,0,Math.PI*2);
+  stageCtx.fillStyle=isLit?color:'#1e1e1e'; stageCtx.fill();
+  stageCtx.strokeStyle=isLit?'#fff':gcolor; stageCtx.lineWidth=1.2;
+  stageCtx.globalAlpha=isLit?0.95:0.5; stageCtx.stroke(); stageCtx.globalAlpha=1;
+  // ── Repère de direction (petit point sur le bord, sens du faisceau) ──
+  const dx=px+Math.cos(ang)*R*0.66, dy=py+Math.sin(ang)*R*0.66;
+  stageCtx.beginPath(); stageCtx.arc(dx,dy,R*0.16,0,Math.PI*2);
+  stageCtx.fillStyle=isLit?'#fff':gcolor; stageCtx.globalAlpha=isLit?0.9:0.6;
+  stageCtx.fill(); stageCtx.globalAlpha=1;
 }
 
 function buildLegend(projectors){ if(!legendEl) return;
@@ -538,30 +614,87 @@ function projAtPoint(cx,cy){
   return best;
 }
 
-let _longPressTimer=null, _touchX=0, _touchY=0;
-
-function startLongPress(clientX, clientY){
+// Interaction scène :
+//  • TAP sur un projecteur (peu de mouvement) = ajoute/retire de la sélection.
+//  • GLISSER un rectangle (lasso) = sélectionne tous les projos à l'intérieur.
+//  • TAP dans le vide = tout désélectionner.
+let _tapStartX=0, _tapStartY=0, _tapStartT=0, _tapActive=false;
+let _rbActive=false, _rbX=0, _rbY=0;   // rubber-band (rectangle de sélection)
+function _localXY(clientX, clientY){
   const rect=stageCanvas.getBoundingClientRect();
-  _touchX=clientX-rect.left; _touchY=clientY-rect.top;
-  _longPressTimer=setTimeout(()=>{
-    const idx=projAtPoint(_touchX,_touchY);
-    if(idx>=0) openProjPanel(idx);
-  },500);
+  return [clientX-rect.left, clientY-rect.top];
 }
-function cancelLongPress(){ if(_longPressTimer){clearTimeout(_longPressTimer);_longPressTimer=null;} }
-
-stageCanvas.addEventListener('touchstart',e=>{e.preventDefault();startLongPress(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
-stageCanvas.addEventListener('touchend',e=>{e.preventDefault();cancelLongPress();},{passive:false});
-stageCanvas.addEventListener('touchmove',e=>{e.preventDefault();cancelLongPress();},{passive:false});
-stageCanvas.addEventListener('mousedown',e=>startLongPress(e.clientX,e.clientY));
-stageCanvas.addEventListener('mouseup',cancelLongPress);
-stageCanvas.addEventListener('mousemove',cancelLongPress);
+function tapStart(clientX, clientY){
+  [_tapStartX,_tapStartY]=_localXY(clientX,clientY);
+  _tapStartT=Date.now(); _tapActive=true; _rbActive=false;
+}
+function tapMove(clientX, clientY){
+  if(!_tapActive) return;
+  [_rbX,_rbY]=_localXY(clientX,clientY);
+  const moved=Math.hypot(_rbX-_tapStartX,_rbY-_tapStartY);
+  if(moved>14) _rbActive=true;   // au-delà du seuil → mode rectangle
+  if(_rbActive){
+    drawStage(_projectors);
+    // Dessiner le rectangle de sélection par-dessus
+    const x=Math.min(_tapStartX,_rbX), y=Math.min(_tapStartY,_rbY);
+    const w=Math.abs(_rbX-_tapStartX), h=Math.abs(_rbY-_tapStartY);
+    stageCtx.fillStyle='rgba(0,212,255,0.12)';
+    stageCtx.fillRect(x,y,w,h);
+    stageCtx.strokeStyle='#00d4ff'; stageCtx.lineWidth=1.5;
+    stageCtx.setLineDash([5,3]); stageCtx.strokeRect(x,y,w,h); stageCtx.setLineDash([]);
+  }
+}
+function tapEnd(clientX, clientY){
+  if(!_tapActive) return; _tapActive=false;
+  if(_rbActive){
+    // Fin du lasso : ajoute (union) tous les projos dans le rectangle.
+    _rbActive=false;
+    const W=stageCanvas.width, H=stageCanvas.height;
+    const x0=Math.min(_tapStartX,_rbX), y0=Math.min(_tapStartY,_rbY);
+    const x1=Math.max(_tapStartX,_rbX), y1=Math.max(_tapStartY,_rbY);
+    _projectors.forEach((p,i)=>{
+      const px=(p.x??0.5)*W, py=(p.y??0.5)*H;
+      if(px>=x0&&px<=x1&&py>=y0&&py<=y1 && _selection.indexOf(i)<0) _selection.push(i);
+    });
+    _selectedProjIdx = _selection.length ? _selection[_selection.length-1] : -1;
+    drawStage(_projectors);
+    if(_selection.length) openProjPanel(_selectedProjIdx); else closeProjPanel();
+    return;
+  }
+  const [x,y]=_localXY(clientX,clientY);
+  const moved=Math.hypot(x-_tapStartX,y-_tapStartY);
+  const dt=Date.now()-_tapStartT;
+  if(moved<14 && dt<600){
+    const idx=projAtPoint(_tapStartX,_tapStartY);
+    if(idx>=0){
+      const pos=_selection.indexOf(idx);
+      if(pos>=0){ _selection.splice(pos,1); }
+      else { _selection.push(idx); }
+      _selectedProjIdx = _selection.length ? _selection[_selection.length-1] : -1;
+      drawStage(_projectors);
+      if(_selection.length) openProjPanel(_selectedProjIdx);
+      else closeProjPanel();
+    } else {
+      _selection=[]; _selectedProjIdx=-1; drawStage(_projectors); closeProjPanel();
+    }
+  }
+}
+stageCanvas.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];tapStart(t.clientX,t.clientY);},{passive:false});
+stageCanvas.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];tapMove(t.clientX,t.clientY);},{passive:false});
+stageCanvas.addEventListener('touchend',e=>{e.preventDefault();const t=(e.changedTouches&&e.changedTouches[0])||{};tapEnd(t.clientX,t.clientY);},{passive:false});
+stageCanvas.addEventListener('touchcancel',()=>{_tapActive=false;_rbActive=false;});
+stageCanvas.addEventListener('mousedown',e=>tapStart(e.clientX,e.clientY));
+stageCanvas.addEventListener('mousemove',e=>{ if(_tapActive) tapMove(e.clientX,e.clientY); });
+stageCanvas.addEventListener('mouseup',e=>tapEnd(e.clientX,e.clientY));
 
 function openProjPanel(idx){
   _selectedProjIdx=idx;
   const p=_projectors[idx];
-  document.getElementById('proj-panel-name').textContent=p.name||p.group;
-  document.getElementById('proj-panel-group').textContent=(p.group||'').toUpperCase();
+  const nSel=_selection.length;
+  document.getElementById('proj-panel-name').textContent =
+    nSel>1 ? (nSel+' sélectionnés') : (p.name||p.group);
+  document.getElementById('proj-panel-group').textContent =
+    nSel>1 ? '' : (p.group||'').toUpperCase();
   const slider=document.getElementById('proj-level-slider');
   slider.value=p.level||0;
   document.getElementById('proj-level-val').textContent=p.level||0;
@@ -576,29 +709,94 @@ function openProjPanel(idx){
   const muteBtn=document.getElementById('btn-proj-mute');
   muteBtn.textContent=p.muted?'UNMUTE':'MUTE';
   muteBtn.classList.toggle('muted',!!p.muted);
+  // Pad Pan/Tilt : visible dès qu'au moins une lyre est sélectionnée.
+  const anyLyre=_selIdxs().some(i=>_projectors[i] && _projectors[i].is_lyre);
+  const ptRow=document.getElementById('proj-pantilt-row');
+  ptRow.classList.toggle('show', anyLyre);
+  if(anyLyre) drawPanTiltPad(p);
   projOverlay.classList.add('open'); projPanel.classList.add('open');
 }
-function closeProjPanel(){ projOverlay.classList.remove('open'); projPanel.classList.remove('open'); _selectedProjIdx=-1; }
+
+// ── Pad Pan/Tilt (lyres) ──────────────────────────────────────────────────────
+const ptPad=document.getElementById('proj-pantilt-pad');
+const ptCtx=ptPad.getContext('2d');
+function drawPanTiltPad(p){
+  const W=ptPad.width=ptPad.clientWidth||220, H=ptPad.height=150;
+  ptCtx.clearRect(0,0,W,H);
+  ptCtx.fillStyle='#0a0a0a'; ptCtx.fillRect(0,0,W,H);
+  // Grille + croix centrale
+  ptCtx.strokeStyle='#1e1e1e'; ptCtx.lineWidth=1;
+  ptCtx.beginPath(); ptCtx.moveTo(W/2,0); ptCtx.lineTo(W/2,H); ptCtx.moveTo(0,H/2); ptCtx.lineTo(W,H/2); ptCtx.stroke();
+  // Point courant : pan → x, tilt → y
+  const pan=(p.pan??32768)/65535, tilt=(p.tilt??32768)/65535;
+  const x=pan*W, y=tilt*H;
+  const color=p.base_color||'#00d4ff';
+  ptCtx.beginPath(); ptCtx.arc(x,y,10,0,Math.PI*2);
+  ptCtx.fillStyle=color; ptCtx.fill();
+  ptCtx.strokeStyle='#fff'; ptCtx.lineWidth=2; ptCtx.stroke();
+}
+function ptFromEvent(e){
+  const r=ptPad.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  const x=Math.max(0,Math.min(1,(t.clientX-r.left)/r.width));
+  const y=Math.max(0,Math.min(1,(t.clientY-r.top)/r.height));
+  return {pan:x, tilt:y};
+}
+let _ptDragging=false, _ptLastSend=0;
+function _ptApply(pan,tilt){
+  const idxs=_selIdxs().filter(i=>_projectors[i] && _projectors[i].is_lyre);
+  idxs.forEach(i=>{ _projectors[i].pan=Math.round(pan*65535); _projectors[i].tilt=Math.round(tilt*65535); });
+  return idxs;
+}
+function ptMove(e){
+  if(_ptDragging===false) return;
+  e.preventDefault();
+  const {pan,tilt}=ptFromEvent(e);
+  const idxs=_ptApply(pan,tilt);
+  if(!idxs.length) return;
+  if(_projectors[_selectedProjIdx]) drawPanTiltPad(_projectors[_selectedProjIdx]);
+  const now=Date.now();
+  if(now-_ptLastSend>40){   // throttle ~25 Hz
+    _ptLastSend=now;
+    sendEvent({type:'proj_pantilt',idxs,pan,tilt});
+  }
+}
+function ptEnd(e){
+  if(!_ptDragging) return;
+  _ptDragging=false;
+  const {pan,tilt}=ptFromEvent(e);
+  const idxs=_ptApply(pan,tilt);
+  if(idxs.length) sendEvent({type:'proj_pantilt',idxs,pan,tilt});  // valeur finale exacte
+}
+ptPad.addEventListener('mousedown',e=>{_ptDragging=true; ptMove(e);});
+ptPad.addEventListener('mousemove',ptMove);
+window.addEventListener('mouseup',ptEnd);
+ptPad.addEventListener('touchstart',e=>{_ptDragging=true; ptMove(e);},{passive:false});
+ptPad.addEventListener('touchmove',ptMove,{passive:false});
+ptPad.addEventListener('touchend',ptEnd);
+function closeProjPanel(){
+  projOverlay.classList.remove('open'); projPanel.classList.remove('open');
+  _selectedProjIdx=-1; _selection=[]; drawStage(_projectors);
+}
 
 document.getElementById('proj-level-slider').addEventListener('input',e=>{
   const val=+e.target.value;
   document.getElementById('proj-level-val').textContent=val;
-  if(_selectedProjIdx>=0) sendEvent({type:'proj_level',idx:_selectedProjIdx,value:val});
+  const idxs=_selIdxs(); if(idxs.length) sendEvent({type:'proj_level',idxs,value:val});
 });
 document.getElementById('proj-strobe-slider').addEventListener('input',e=>{
   const val=+e.target.value;
   document.getElementById('proj-strobe-val').textContent=val>0?val+'%':'OFF';
-  if(_selectedProjIdx>=0){
-    if(_projectors[_selectedProjIdx]) _projectors[_selectedProjIdx].strobe=val;
-    sendEvent({type:'proj_strobe',idx:_selectedProjIdx,value:val});
-  }
+  const idxs=_selIdxs();
+  idxs.forEach(i=>{ if(_projectors[i]) _projectors[i].strobe=val; });
+  if(idxs.length) sendEvent({type:'proj_strobe',idxs,value:val});
 });
 document.getElementById('btn-proj-mute').addEventListener('click',()=>{
-  if(_selectedProjIdx<0) return;
-  const p=_projectors[_selectedProjIdx];
+  const idxs=_selIdxs(); if(!idxs.length) return;
+  const p=_projectors[_selectedProjIdx]||_projectors[idxs[0]];
   const newMuted=!p.muted;
-  sendEvent({type:'proj_mute',idx:_selectedProjIdx,muted:newMuted});
-  p.muted=newMuted;
+  idxs.forEach(i=>{ if(_projectors[i]) _projectors[i].muted=newMuted; });
+  sendEvent({type:'proj_mute',idxs,muted:newMuted});
   const btn=document.getElementById('btn-proj-mute');
   btn.textContent=newMuted?'UNMUTE':'MUTE'; btn.classList.toggle('muted',newMuted);
 });
@@ -608,7 +806,6 @@ projOverlay.addEventListener('click',closeProjPanel);
 // ── Boutons AKAI (CLEAR / REC / PARAMS) ──────────────────────────────────────
 btnClear.addEventListener('click',()=>sendEvent({type:'clear'}));
 btnRec.addEventListener('click',()=>sendEvent({type:'rec_toggle'}));
-btnParams.addEventListener('click',()=>sendEvent({type:'open_params'}));
 
 function applyRecState(active){
   btnRec.classList.toggle('rec-active',active);
@@ -619,6 +816,54 @@ function applyLayout(labels){
     if(faderLbls[i]) faderLbls[i].textContent=slot.label||`G${i+1}`;
   });
 }
+
+// ── SURFACE (exécuteurs) ──────────────────────────────────────────────────────
+const surfaceGrid=document.getElementById('surface-grid');
+let _surfaceClocks=[];
+function applySurface(data){
+  data=data||{blocks:[],cols:0,rows:0};
+  const cols=Math.max(1,data.cols||1), rows=Math.max(1,data.rows||1);
+  surfaceGrid.style.gridTemplateColumns=`repeat(${cols},1fr)`;
+  surfaceGrid.innerHTML=''; _surfaceClocks=[];
+  (data.blocks||[]).forEach(b=>{
+    const a=b.action||{}; const type=a.type||'';
+    const el=document.createElement('div');
+    el.className='sfx-block';
+    el.style.gridColumn=`${(b.col||0)+1} / span ${b.span_c||1}`;
+    el.style.gridRow=`${(b.row||0)+1} / span ${b.span_r||1}`;
+    el.style.borderLeftColor=b.color||'#333';
+    if(type==='color'){ el.style.background=b.color||'#141414';
+      el.style.color=_textOn(b.color||'#141414'); }
+    if(type==='fader'){
+      el.classList.add('sfx-fader');
+      const val=document.createElement('span'); val.className='sfx-fval'; val.textContent='0';
+      const inp=document.createElement('input'); inp.type='range'; inp.min=0; inp.max=100; inp.value=0;
+      inp.addEventListener('input',()=>{ val.textContent=inp.value;
+        sendEvent({type:'ext_fader',action:a,value:+inp.value}); });
+      const lbl=document.createElement('span'); lbl.textContent=b.label||''; lbl.style.fontSize='9px';
+      el.appendChild(lbl); el.appendChild(inp); el.appendChild(val);
+    } else if(type==='clock'){
+      el.classList.add('sfx-clock'); el.textContent='--:--:--'; _surfaceClocks.push(el);
+    } else {
+      el.textContent=b.label||'';
+      el.addEventListener('click',()=>{
+        sendEvent({type:'ext_action',action:a});
+        el.classList.add('active'); setTimeout(()=>el.classList.remove('active'),180);
+      });
+    }
+    surfaceGrid.appendChild(el);
+  });
+}
+function _textOn(hex){
+  const c=hex.replace('#',''); if(c.length<6) return '#fff';
+  const r=parseInt(c.slice(0,2),16),g=parseInt(c.slice(2,4),16),b=parseInt(c.slice(4,6),16);
+  return (r*0.299+g*0.587+b*0.114)>150?'#000':'#fff';
+}
+setInterval(()=>{ if(!_surfaceClocks.length) return;
+  const now=new Date();
+  const s=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  _surfaceClocks.forEach(el=>el.textContent=s);
+},1000);
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
 let _es=null,_reconnectDelay=1000;
@@ -642,8 +887,10 @@ function connectSSE(){
       if(d.layout&&d.layout.length) applyLayout(d.layout);
       if(d.bank_pages) applyBankPages(d.bank_pages.count,d.bank_pages.index);
       if(d.rec_active!==undefined) applyRecState(d.rec_active);
+      if(d.surface) applySurface(d.surface);
       requestAnimationFrame(refreshFaders);
-    } else if(t==='pad'){const el=padEls[`${msg.row}_${msg.col}`];if(el)applyPadColor(el,msg.color,msg.bright);}
+    } else if(t==='surface'){applySurface(msg.data);}
+    else if(t==='pad'){const el=padEls[`${msg.row}_${msg.col}`];if(el)applyPadColor(el,msg.color,msg.bright);}
     else if(t==='fader'){setFaderUI(msg.idx,msg.value);}
     else if(t==='effect'){const el=effEls[msg.row];if(el)el.classList.toggle('on',msg.active);}
     else if(t==='seq'){buildSeqList(msg.items||[],msg.current_row??-1);updateSeqRow(msg.current_row??-1,msg.playing??false);}

@@ -7898,6 +7898,13 @@ class MainWindow(QMainWindow):
         _no_color = bool(cfg.get("no_color", False))
         _clip_ids = getattr(self, '_fx_clip_ids', None)
 
+        # Compensation ratio pan/tilt (~540°/270°) → pan à demi-amplitude pour un
+        # vrai cercle. Même valeur que l'aperçu de l'éditeur d'effets (parité).
+        try:
+            from effect_editor import PAN_ANGULAR_RATIO as _PAN_RATIO
+        except Exception:
+            _PAN_RATIO = 0.5
+
         for i, proj in enumerate(projectors):
             _base_level = proj.level   # niveau posé par les clips, avant l'effet
             _base_color = proj.color   # couleur posée par les clips, avant l'effet
@@ -8010,7 +8017,7 @@ class MainWindow(QMainWindow):
                         center = saved[3] if saved and len(saved) > 3 else 32768
                         sym_pan  = ld.get("sym_pan", False)
                         pan_sign = -1 if (sym_pan and _mh_i_mv * 2 >= _mh_n) else 1
-                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude)))
+                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude * _PAN_RATIO)))
                     else:
                         center = saved[4] if saved and len(saved) > 4 else 32768
                         proj.tilt = int(max(0, min(65535, center + (raw_mv - 0.5) * 2 * amplitude)))
@@ -8049,7 +8056,7 @@ class MainWindow(QMainWindow):
                         pan_x = (pan_freq * t + _mh_i / _mh_n * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = saved[3] if saved and len(saved) > 3 else 32768
-                        proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude)))
+                        proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude * _PAN_RATIO)))
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
@@ -12879,6 +12886,9 @@ class MainWindow(QMainWindow):
         if hasattr(_ts, "push_bank_pages"):
             _ts.push_bank_pages(len(self._bank_pages), self._bank_page_idx)
         _ts.push_rec_state(self._mem_rec_mode)
+        # Surface d'exécuteurs (fenêtre EXT « surface pad »)
+        if hasattr(_ts, "push_surface"):
+            _ts.push_surface(self._surface_snapshot())
 
     def _push_seq_state_to_tablet(self, _ts=None):
         """Pousse la liste complète du séquenceur et la ligne courante."""
@@ -12941,14 +12951,62 @@ class MainWindow(QMainWindow):
                 "strobe":     getattr(p, 'strobe_speed', 0),
                 "x":          dx,
                 "y":          dy,
+                # Type + pan/tilt : permettent à la tablette de distinguer une lyre
+                # (dessin dédié + pad Pan/Tilt au clic) d'un PAR classique.
+                "ftype":      getattr(p, 'fixture_type', ''),
+                "is_lyre":    getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'),
+                "pan":        getattr(p, 'pan',  32768),
+                "tilt":       getattr(p, 'tilt', 32768),
             })
         return out
+
+    def _surface_snapshot(self) -> dict:
+        """Layout de la surface d'exécuteurs (fenêtre EXT) pour la tablette :
+        blocs (label/couleur/action/position/span) + dimensions de grille.
+        Reflète la surface construite sur le desktop."""
+        try:
+            win = self._ensure_ext_window()   # créée cachée si besoin (layout chargé)
+            data = win._layout_data()
+            blocks = data.get("blocks", [])
+        except Exception:
+            blocks = []
+        cols = rows = 0
+        out = []
+        for b in blocks:
+            col = int(b.get("col", 0)); row = int(b.get("row", 0))
+            sc = int(b.get("span_c", 1) or 1); sr = int(b.get("span_r", 1) or 1)
+            cols = max(cols, col + sc); rows = max(rows, row + sr)
+            out.append({
+                "label":  b.get("label", ""),
+                "color":  b.get("color", "#333333"),
+                "action": b.get("action", {}) or {},
+                "col": col, "row": row, "span_c": sc, "span_r": sr,
+            })
+        return {"blocks": out, "cols": cols, "rows": rows}
+
+    def _push_surface_to_tablet(self):
+        """Repousse la surface à la tablette (après édition desktop)."""
+        try:
+            import tablet_server as _ts
+            if _ts.is_running() and hasattr(_ts, "push_surface"):
+                _ts.push_surface(self._surface_snapshot())
+        except Exception:
+            pass
 
     def _drain_tablet_events(self):
         """Appelé toutes les 50 ms — traite les events envoyés par la tablette."""
         import tablet_server as _ts
         if not _ts.is_running():
             return
+
+        def _ev_idxs(ev):
+            """Indices projecteurs ciblés : nouveau format `idxs` (multi-sélection
+            tablette) ou ancien `idx` (compat)."""
+            if isinstance(ev.get("idxs"), list):
+                return [int(i) for i in ev["idxs"]]
+            i = ev.get("idx", -1)
+            return [int(i)] if i is not None else []
+
         try:
             while True:
                 ev = _ts.event_queue.get_nowait()
@@ -12987,42 +13045,75 @@ class MainWindow(QMainWindow):
                     if row >= 0:
                         self.seq.play_row(row)
                 elif etype == "proj_level":
-                    idx = ev.get("idx", -1)
                     val = int(ev.get("value", 0))
-                    if 0 <= idx < len(self.projectors) and hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu.set_projector_dimmer(self.projectors[idx], val)
-                    elif 0 <= idx < len(self.projectors):
-                        self.projectors[idx].set_level(val)
-                        self.send_dmx_update()
+                    for idx in _ev_idxs(ev):
+                        if 0 <= idx < len(self.projectors) and hasattr(self, 'plan_de_feu'):
+                            self.plan_de_feu.set_projector_dimmer(self.projectors[idx], val)
+                        elif 0 <= idx < len(self.projectors):
+                            self.projectors[idx].set_level(val)
+                    self.send_dmx_update()
                 elif etype == "proj_color":
-                    idx = ev.get("idx", -1)
                     hex_color = ev.get("color", "#ffffff")
-                    if 0 <= idx < len(self.projectors) and hasattr(self, 'plan_de_feu'):
-                        proj = self.projectors[idx]
+                    idxs = [i for i in _ev_idxs(ev) if 0 <= i < len(self.projectors)]
+                    if idxs and hasattr(self, 'plan_de_feu'):
                         from plan_de_feu import _DEFAULT_POSITIONS
                         group_lists: dict = {}
                         for j, q in enumerate(self.projectors):
                             group_lists.setdefault(q.group, []).append(j)
-                        g_list = group_lists[proj.group]
-                        li = g_list.index(idx)
-                        targets = [(proj, proj.group, li)]
+                        targets = []
+                        for idx in idxs:
+                            proj = self.projectors[idx]
+                            li = group_lists[proj.group].index(idx)
+                            targets.append((proj, proj.group, li))
                         self.plan_de_feu._apply_color_to_targets(targets, QColor(hex_color))
                         self.plan_de_feu.mark_dirty()
                 elif etype == "proj_strobe":
-                    idx = ev.get("idx", -1)
                     val = int(ev.get("value", 0))
-                    if 0 <= idx < len(self.projectors):
-                        self.projectors[idx].strobe_speed = val
-                        self.send_dmx_update()
-                        if hasattr(self, 'plan_de_feu'):
-                            self.plan_de_feu.mark_dirty()
+                    for idx in _ev_idxs(ev):
+                        if 0 <= idx < len(self.projectors):
+                            self.projectors[idx].strobe_speed = val
+                    self.send_dmx_update()
+                    if hasattr(self, 'plan_de_feu'):
+                        self.plan_de_feu.mark_dirty()
+                elif etype == "proj_pantilt":
+                    # pan/tilt normalisés 0..1 depuis le pad tactile → 0..65535.
+                    for idx in _ev_idxs(ev):
+                        if 0 <= idx < len(self.projectors):
+                            p = self.projectors[idx]
+                            if "pan" in ev:
+                                p.pan  = max(0, min(65535, int(float(ev["pan"])  * 65535)))
+                            if "tilt" in ev:
+                                p.tilt = max(0, min(65535, int(float(ev["tilt"]) * 65535)))
+                            p._manual_move = True   # ne pas écraser par la restitution
+                    self.send_dmx_update()
+                    if hasattr(self, 'plan_de_feu'):
+                        self.plan_de_feu.mark_dirty()
                 elif etype == "proj_mute":
-                    idx = ev.get("idx", -1)
-                    if 0 <= idx < len(self.projectors):
-                        self.projectors[idx].muted = ev.get("muted", False)
-                        self.send_dmx_update()
-                        if hasattr(self, 'plan_de_feu'):
-                            self.plan_de_feu.mark_dirty()
+                    muted = ev.get("muted", False)
+                    for idx in _ev_idxs(ev):
+                        if 0 <= idx < len(self.projectors):
+                            self.projectors[idx].muted = muted
+                    self.send_dmx_update()
+                    if hasattr(self, 'plan_de_feu'):
+                        self.plan_de_feu.mark_dirty()
+                elif etype == "ext_action":
+                    # Tap sur un bloc de la surface → dispatch réel (réutilise la
+                    # logique de la fenêtre EXT). block=None : pas de latch visuel Qt.
+                    action = ev.get("action", {}) or {}
+                    try:
+                        win = self._ensure_ext_window()
+                        win._dispatch_action(action, None)
+                        self._push_surface_to_tablet()   # reflète latchs éventuels
+                    except Exception as _e:
+                        print(f"[Tablet] ext_action échec: {_e}")
+                elif etype == "ext_fader":
+                    action = ev.get("action", {}) or {}
+                    val = int(ev.get("value", 0))
+                    try:
+                        win = self._ensure_ext_window()
+                        win._dispatch_fader(action, val)
+                    except Exception as _e:
+                        print(f"[Tablet] ext_fader échec: {_e}")
                 elif etype == "scene_clear":
                     if hasattr(self, 'plan_de_feu'):
                         self.plan_de_feu._clear_plan_de_feu()

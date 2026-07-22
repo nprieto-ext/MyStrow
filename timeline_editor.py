@@ -5,6 +5,7 @@ import os
 import json
 import hashlib
 import random
+import time
 from i18n import tr
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton,
@@ -384,6 +385,10 @@ class LightTimelineEditor(QDialog):
         self.preview_audio = None
         self.is_video_file = False
         self.preview_video_widget = None
+        # Lecture d'une pause temporisée (pas de média) : horloge manuelle.
+        self._tempo_playing    = False
+        self._tempo_start_wall = 0.0
+        self._tempo_start_pos  = 0
         QTimer.singleShot(0, self.setup_audio_player)
 
         # ── État du poussoir REC ───────────────────────────────────────────────
@@ -873,7 +878,9 @@ class LightTimelineEditor(QDialog):
     # ── Armement du poussoir REC (guard lecture) ───────────────────────────────
 
     def _is_playing(self):
-        """Vrai si la preview OU le player principal est en lecture."""
+        """Vrai si la preview, le player principal, OU une pause temporisée jouent."""
+        if getattr(self, '_tempo_playing', False):
+            return True
         if self.preview_player is not None and \
                 self.preview_player.playbackState() == QMediaPlayer.PlayingState:
             return True
@@ -1833,11 +1840,13 @@ class LightTimelineEditor(QDialog):
             return
         main_playing = self.main_window.player.playbackState() == QMediaPlayer.PlayingState
         preview_playing = self.preview_player.playbackState() == QMediaPlayer.PlayingState
+        tempo_playing = getattr(self, '_tempo_playing', False)
 
-        if preview_playing or main_playing:
-            # Arreter les deux
+        if preview_playing or main_playing or tempo_playing:
+            # Arreter tout
             self.preview_player.pause()
             self.main_window.player.pause()
+            self._tempo_playing = False
             self.play_pause_btn.setIcon(create_icon("play", "#ffffff"))
             self.playback_timer.stop()
             # Arrêter les effets actifs (séquence et effet track)
@@ -1849,11 +1858,20 @@ class LightTimelineEditor(QDialog):
                 self._seq_clip_active  = None
                 self._eff_clips_active = {}
         else:
-            # Lancer le preview a la position actuelle du curseur
             pos = int(self.playback_position)
-            if pos > 0:
-                self.preview_player.setPosition(pos)
-            self.preview_player.play()
+            if self.is_tempo or not self.media_path:
+                # Pause / tempo : pas de média → horloge manuelle.
+                if pos >= self.media_duration:
+                    pos = 0                       # au bout → repartir du début
+                    self.playback_position = 0
+                self._tempo_playing    = True
+                self._tempo_start_wall = time.monotonic()
+                self._tempo_start_pos  = pos
+            else:
+                # Lancer le preview a la position actuelle du curseur
+                if pos > 0:
+                    self.preview_player.setPosition(pos)
+                self.preview_player.play()
             self.play_pause_btn.setIcon(create_icon("pause", "#ffffff"))
             self.playback_timer.start(40)
 
@@ -2126,10 +2144,19 @@ class LightTimelineEditor(QDialog):
                 self.playback_timer.stop()
 
     def update_playhead(self):
-        """Met a jour la position du curseur pendant lecture (preview ou player principal)"""
+        """Met a jour la position du curseur pendant lecture (preview, player principal, ou pause)"""
         playing = False
+        tempo_end = False
 
-        if self.preview_player is not None and self.preview_player.playbackState() == QMediaPlayer.PlayingState:
+        if getattr(self, '_tempo_playing', False):
+            # Pause / tempo : pas de média → horloge manuelle (temps mural).
+            elapsed = (time.monotonic() - self._tempo_start_wall) * 1000.0
+            self.playback_position = self._tempo_start_pos + elapsed
+            if self.playback_position >= self.media_duration:
+                self.playback_position = self.media_duration
+                tempo_end = True
+            playing = True
+        elif self.preview_player is not None and self.preview_player.playbackState() == QMediaPlayer.PlayingState:
             self.playback_position = self.preview_player.position()
             playing = True
         elif self.main_window.player.playbackState() == QMediaPlayer.PlayingState:
@@ -2164,6 +2191,13 @@ class LightTimelineEditor(QDialog):
 
             # Appliquer les clips actifs aux projecteurs pour le plan de feu live
             self._apply_preview_to_projectors(self.playback_position)
+
+            # Fin d'une pause temporisée → stopper proprement.
+            if tempo_end:
+                self._tempo_playing = False
+                self.playback_timer.stop()
+                if hasattr(self, 'play_pause_btn'):
+                    self.play_pause_btn.setIcon(create_icon("play", "#ffffff"))
 
     def _apply_preview_to_projectors(self, current_time):
         """Applique directement les clips actifs aux projecteurs (preview rapide)."""

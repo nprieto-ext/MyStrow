@@ -501,6 +501,13 @@ FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", 
 # Formes de trajectoire pour les lyres (Pan/Tilt couplés mathématiquement)
 # Chaque forme : {"pan": (forme, phase 0-100, speed_mult), "tilt": (forme, phase, speed_mult)}
 # phase 25 = décalage de 90°, speed_mult 2.0 = vitesse double
+# Compensation physique du ratio pan/tilt : le PAN d'une lyre couvre ~540° pour
+# ~270° de TILT. À amplitude DMX égale, le pan balaie 2× plus d'angle → un
+# « cercle » se projette en « 8 » (et le pan qui fait 1,5 tour repasse au centre).
+# On réduit donc l'amplitude PAN de moitié pour que pan et tilt couvrent le même
+# angle → vrai cercle à amplitude max. (Ajustable si vos lyres ont un autre ratio.)
+PAN_ANGULAR_RATIO = 0.5
+
 PAN_TILT_SHAPES = {
     "cercle":    {"label": "○  Cercle",     "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",    25, 1.0)},
     "huit":      {"label": "8  Huit",       "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",     0, 2.0)},
@@ -546,6 +553,11 @@ _DIALOG_STYLE = """
     QWidget  { font-family: 'Segoe UI', Arial, sans-serif; color: #ddd; }
     QLabel   { border: none; }
     QFrame   { border: none; }
+    QToolTip {
+        color: #ffffff; background-color: #1e1e1e;
+        border: 1px solid #555; border-radius: 4px; padding: 4px 8px;
+        font-size: 11px;
+    }
 """ + _COMBO_STYLE
 
 # ─── Paramètres "magiques" par type d'effet ────────────────────────────────
@@ -2003,6 +2015,7 @@ class LayerCard(QFrame):
 
     deleted = Signal(object)
     changed = Signal()
+    pan_tilt_created = Signal()   # émis quand l'utilisateur passe la couche en Pan/Tilt
 
     _ATTRS  = ["Dimmer", "R", "V", "B", "W", "Ambre", "UV", "RGB", "Permut",
                "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
@@ -2392,6 +2405,9 @@ class LayerCard(QFrame):
         if is_pt:
             self._on_shape_changed(self._shape_cb.currentIndex())
         self.changed.emit()
+        if is_pt:
+            # Mouvement créé à la main → le parent le rend visible & lent par défaut.
+            self.pan_tilt_created.emit()
 
     def _on_shape_changed(self, _idx: int):
         sid = self._shape_cb.currentData() or "libre"
@@ -3072,8 +3088,41 @@ class SimpleEffectPanel(QWidget):
             card = LayerCard(layer)
             card.deleted.connect(lambda _w, l=layer: self._on_delete_layer(l))
             card.changed.connect(self.changed)
+            card.pan_tilt_created.connect(self._on_pan_tilt_created)
             self._layers_vl.addWidget(card)
             self._layer_cards.append(card)
+
+    def _on_pan_tilt_created(self):
+        """Un Pan/Tilt vient d'être créé à la main → le rendre prêt à l'emploi :
+        dimmer fixe 100 % + couleur blanche (mouvement visible) et vitesse douce.
+        Les variantes/builtins ne passent JAMAIS ici (chargées sans action UI)."""
+        has_dim   = any(l.attribute == "Dimmer" for l in self._layers)
+        has_color = any(l.attribute in ("R", "V", "B", "RGB", "Permut")
+                        for l in self._layers)
+        # Cibler les mêmes fixtures que le mouvement (sinon le blanc part sur « Tous »).
+        pt = next((l for l in self._layers
+                   if l.attribute in ("Pan/Tilt", "Pan", "Tilt")), None)
+        tp = pt.target_preset if pt else "Tous"
+        tg = list(pt.target_groups) if pt else []
+        changed = False
+        if not has_dim:
+            dl = EffectLayer()
+            dl.attribute = "Dimmer"; dl.forme = "Fixe"; dl.size = 100
+            dl.target_preset = tp; dl.target_groups = list(tg)
+            self._layers.append(dl); changed = True
+        if not has_color:
+            cl = EffectLayer()
+            cl.attribute = "RGB"; cl.forme = "Fixe"; cl.color1 = "#ffffff"; cl.size = 100
+            cl.target_preset = tp; cl.target_groups = list(tg)
+            self._layers.append(cl); changed = True
+        # Vitesse douce par défaut pour le mouvement (règle knob + toutes les couches).
+        if hasattr(self, '_knob_speed'):
+            self._knob_speed.set_value(15)
+        if changed:
+            # Reconstruction différée : ne pas détruire la LayerCard pendant son
+            # propre handler _on_attr (qui a émis ce signal).
+            QTimer.singleShot(0, self._rebuild_layer_widgets)
+        self.changed.emit()
 
     def _on_add_layer(self):
         new_layer           = EffectLayer()
@@ -4431,7 +4480,7 @@ class EffectEditorDialog(QDialog):
                     g += (c1.greenF() * raw + c2.greenF() * r2) * amp
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr == "Pan":
-                    amp = (layer.size / 100.0) * 8192
+                    amp = (layer.size / 100.0) * 8192 * PAN_ANGULAR_RATIO
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and i * 2 >= n) else 1
                     pan_v = int(max(0, min(65535, 32768 + pan_sign * (raw - 0.5) * 2 * amp)))
@@ -4453,7 +4502,7 @@ class EffectEditorDialog(QDialog):
                         p_freq = (0.05 + layer.speed * p_mult / 100.0 * 7.0) * fader_mult
                         p_x    = (p_freq * t + i / max(n, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
-                        pan_v  = int(max(0, min(65535, 32768 + pan_sign * (p_raw - 0.5) * 2 * pt_amp)))
+                        pan_v  = int(max(0, min(65535, 32768 + pan_sign * (p_raw - 0.5) * 2 * pt_amp * PAN_ANGULAR_RATIO)))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
                         t_freq = (0.05 + layer.speed * t_mult / 100.0 * 7.0) * fader_mult
@@ -4481,9 +4530,11 @@ class EffectEditorDialog(QDialog):
                 # level est déjà appliqué par _get_fill_color, on passe la couleur brute
                 color = QColor(proj.color)
             elif has_movement:
-                # Pan/Tilt seul (Lyre) : faisceau visible avec couleur blanche pleine
-                color = QColor("#ffffff")
-                level = 1.0
+                # Pan/Tilt seul : NE force PAS de couleur/intensité (parité avec la
+                # restitution réelle, qui laisse la lyre dans son état). L'effet ne
+                # fait que DÉPLACER la lyre — sa couleur vient d'un bloc/mémoire.
+                color = QColor(proj.color)
+                level = getattr(proj, 'level', 0) / 100.0
             else:
                 # Aucune couche ne cible ce projecteur → ne pas forcer de couleur
                 continue
