@@ -51,7 +51,27 @@
       "Skill(schedule)",
       "PowerShell(Test-Path *)",
       "PowerShell(python -c \"import PIL; print\\(PIL.__version__\\)\")",
-      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\844a1945-32bd-4e11-a614-db5fc7499e11\\\\scratchpad\\\\make_admin_icon.py\")"
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\844a1945-32bd-4e11-a614-db5fc7499e11\\\\scratchpad\\\\make_admin_icon.py\")",
+      "PowerShell(python -c \"import ast,sys; ast.parse\\(open\\(r'C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\effect_editor.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\smoke_cols.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\shot_dialog.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\shot_real.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\shot_sel.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\check_pt.py\")",
+      "PowerShell(python -m py_compile \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\effect_editor.py\"; if \\($?\\) { \"compile OK\" })",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\shot_col.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\shot_plan.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\orphans.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\trace_frames.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\shot_plan2.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\repro_carre.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\avant_apres.py\")",
+      "PowerShell(python -m py_compile \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\plan_de_feu.py\" \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\effect_editor.py\"; if \\($?\\) { \"compile OK\" }; python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\shot_col.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_htp_tablette.py\")",
+      "PowerShell(python -m py_compile \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\main_window.py\" \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\tablet_server.py\"; if \\($?\\) { \"compile OK\" }; node --check \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\tablet\\\\index.html\" 2>&1 | Select-Object -First 3)",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\check_effets.py\" 2>&1 | Select-Object -Last 60)",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\check_integration.py\" 2>&1 | Select-Object -Last 45)",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_pro_pause.py\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

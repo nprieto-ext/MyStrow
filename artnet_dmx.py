@@ -187,6 +187,13 @@ class ArtNetDMX:
         self._pro_serial = None
         self._pro_stop = False
         self._pro_thread = None
+        # Pause coopérative, comme _enttec_pause / _d2xx_pause. Elle manquait ici :
+        # le diagnostic ouvrait un SECOND handle sur le même tty pendant que
+        # _pro_loop y écrivait à 25 fps. Deux writers sur le même port série =
+        # crash natif du driver (l'appli se ferme), puis sortie DMX morte parce
+        # que le handle live a été refermé au passage.
+        self._pro_pause = False
+        self._pro_paused = False
         # Débit série puce↔MCU. Ignoré par un vrai ENTTEC (FT245), mais doit
         # correspondre au firmware sur les clones FT232R (Eurolite PRO MK2…).
         # 250000 = valeur des clones FTDI ; surchargeable via ~/.mystrow_dmx.json.
@@ -766,6 +773,8 @@ class ArtNetDMX:
     def _start_pro_thread(self):
         import threading
         self._pro_stop = False
+        self._pro_pause = False
+        self._pro_paused = False
         t = threading.Thread(target=self._pro_loop, daemon=True, name="EnttecProDMX")
         t.start()
         self._pro_thread = t
@@ -775,6 +784,15 @@ class ArtNetDMX:
         while not self._pro_stop:
             t0 = time.monotonic()
             ser = self._pro_serial
+            # Pause : on garde le port ouvert mais on n'écrit plus, et on
+            # acquitte via _pro_paused. Le writer concurrent (diagnostic) attend
+            # cet ack avant de toucher au port — sans quoi les deux écrivent sur
+            # le même tty et le driver USB série tombe (crash de l'appli).
+            if self._pro_pause:
+                self._pro_paused = True
+                time.sleep(0.02)
+                continue
+            self._pro_paused = False
             if ser and ser.is_open:
                 try:
                     with self._dmx_lock:

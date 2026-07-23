@@ -23,6 +23,10 @@ if os.path.exists('fixtures_bundle_custom.json.gz'):
 if os.path.exists('fixtures_qlcplus.json'):
     datas += [('fixtures_qlcplus.json', '.')]
 binaries = []
+# ffmpeg embarqué (décodage audio robuste, transparent : pas de ffmpeg requis
+# dans le PATH client). Optionnel : ajouté seulement si ffmpeg.exe est présent.
+if os.path.exists('ffmpeg.exe'):
+    binaries += [('ffmpeg.exe', '.')]
 hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio', 'sounddevice', '_sounddevice', '_sounddevice_data', 'pyaudiowpatch', '_pyaudio']
 tmp_ret = collect_all('rtmidi')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]

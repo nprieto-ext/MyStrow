@@ -3776,7 +3776,14 @@ class Sequencer(QFrame):
             QMessageBox.warning(self, tr("seq_delete_impossible_title"),
                 tr("seq_delete_impossible_msg"))
             return
-        for row in rows:
+        self._delete_rows(rows)
+
+    def _delete_rows(self, rows):
+        """Chemin UNIQUE de suppression de lignes : retire chaque ligne (de bas en
+        haut) et réindexe sequences / ia_colors / ia_analysis / image_durations via
+        _reindex_ia_colors. Toute suppression DOIT passer par ici — dupliquer la
+        réindexation ailleurs a déjà causé une perte de REC Lumière."""
+        for row in sorted(set(rows), reverse=True):
             self.table.removeRow(row)
             self._reindex_ia_colors(row)
             if self.current_row > row:
@@ -3827,14 +3834,17 @@ class Sequencer(QFrame):
         self.sequences = new_seqs
 
     def _reindex_sequences_insert(self, inserted_row):
-        """Décale les sequences d'un cran vers le bas après insertion d'une ligne au milieu."""
-        new_seqs = {}
-        for old_row, seq in self.sequences.items():
-            if old_row < inserted_row:
-                new_seqs[old_row] = seq
-            else:
-                new_seqs[old_row + 1] = seq
-        self.sequences = new_seqs
+        """Décale d'un cran vers le bas TOUTES les données indexées par ligne après
+        insertion d'une ligne à `inserted_row` : sequences (REC Lumière) + ia_colors
+        + ia_analysis + image_durations. Contrepartie de _reindex_ia_colors (côté
+        suppression) — sans ça, insérer une pause au milieu désalignait les
+        couleurs/analyses IA et durées des médias situés en dessous."""
+        def _shift(d):
+            return {(old + 1 if old >= inserted_row else old): v for old, v in d.items()}
+        self.sequences       = _shift(self.sequences)
+        self.ia_colors       = _shift(self.ia_colors)
+        self.ia_analysis     = _shift(self.ia_analysis)
+        self.image_durations = _shift(self.image_durations)
 
     def clear_sequence(self):
         self.table.setRowCount(0)
@@ -3920,20 +3930,21 @@ class Sequencer(QFrame):
             menu.setStyleSheet(_MENU_SS)
             edit_action   = menu.addAction(tr("seq_menu_set_duration"))
             rec_action    = menu.addAction(tr("seq_menu_rec_light"))
+            duplicate_action = menu.addAction("⧉  Dupliquer (avec REC Lumière)")
             delete_action = menu.addAction(tr("seq_menu_delete"))
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
             if action == edit_action:
                 self.edit_pause_duration(row)
             elif action == rec_action:
                 self.open_light_editor_for_row(row)
+            elif action == duplicate_action:
+                self.duplicate_media_row(row)
             elif action == delete_action:
                 if row == self.current_row:
                     QMessageBox.warning(self, tr("seq_delete_impossible_title"),
                         tr("seq_delete_impossible_msg"))
                 else:
-                    self.table.removeRow(row)
-                    self._reindex_ia_colors(row)
-                    self.is_dirty = True
+                    self._delete_rows([row])   # chemin de suppression unifié
         else:
             self.show_media_context_menu(pos)
 
@@ -5324,6 +5335,7 @@ class Sequencer(QFrame):
         # --- Appliquer Pan/Tilt pour les Lyres ---
         # La piste position s'appelle "Position" dans la timeline; fallback sur "Lyres" pour anciens .tui
         lyres_clip = active_clips.get('Position') or active_clips.get('Lyres')
+        _pos_locked_idxs = set()   # lyres dont le pan/tilt est piloté par la piste Position
         if lyres_clip:
             # Recuperer les indices du groupe "lyres" / "Lyres"
             lyres_indices = track_to_indices.get('Lyres', [])
@@ -5332,6 +5344,9 @@ class Sequencer(QFrame):
                     i for i, p in enumerate(main_win.projectors)
                     if getattr(p, 'fixture_type', '') == 'Moving Head'
                 ]
+            # Ces lyres sont sous contrôle Position → les séquences ne doivent pas
+            # écraser leur pan/tilt (la piste Position prime).
+            _pos_locked_idxs = set(lyres_indices)
 
             # --- Cas 1 : preset de position nommé (par lyre, 16-bit, avec transition animée) ---
             if lyres_clip.get('position_preset_idx') is not None:
@@ -5437,7 +5452,8 @@ class Sequencer(QFrame):
             if isinstance(c, dict) and c.get('memory_ref')
         ]
         apply_seq_memories_htp(_seq_entries, getattr(main_win, 'memories', None),
-                               main_win.projectors, main_win)
+                               main_win.projectors, main_win,
+                               lock_pantilt_idxs=_pos_locked_idxs)
 
         # ── Appliquer l'effet de la piste Effet par-dessus tout ─────────────
         # (le effect_timer n'est pas actif en mode timeline — on gère ici)
@@ -5672,6 +5688,9 @@ class Sequencer(QFrame):
         rec_action = menu.addAction(tr("seq_menu_rec_light"))
         rec_action.triggered.connect(lambda: self.open_light_editor_for_row(row))
 
+        duplicate_action = menu.addAction("⧉  Dupliquer (avec REC Lumière)")
+        duplicate_action.triggered.connect(lambda: self.duplicate_media_row(row))
+
         menu.addSeparator()
         delete_action = menu.addAction(tr("seq_menu_delete"))
         delete_action.triggered.connect(lambda: self.delete_media_row(row))
@@ -5800,21 +5819,92 @@ class Sequencer(QFrame):
         )
 
         if reply == QMessageBox.Yes:
-            self.table.removeRow(row)
+            # Chemin de suppression unifié (même réindexation que le bouton
+            # corbeille) → plus aucun risque de double décalage / perte REC Lumière.
+            self._delete_rows([row])
 
-            if row in self.sequences:
-                del self.sequences[row]
+    def _apply_row_dmx(self, row, mode):
+        """(Re)crée le widget DMX de `row` et applique `mode`. Réinjecte les modes
+        dynamiques (Play Lumiere / Programme) absents du combo par défaut, et
+        réaffiche l'indicateur de couleur IA si la ligne en a une. Sert à poser le
+        mode d'une ligne dupliquée ET à recâbler les lignes décalées (leurs closures
+        capturent l'ancien index — sinon un changement de mode viserait la mauvaise
+        ligne)."""
+        self.table.setCellWidget(row, 4, self._create_dmx_cell_widget(row))
+        combo = self._get_dmx_combo(row)
+        if combo and mode:
+            if combo.findText(mode) == -1:
+                combo.addItem(mode)
+            combo.blockSignals(True)
+            combo.setCurrentText(mode)
+            combo.blockSignals(False)
+            if mode == "IA Lumiere":
+                self._apply_ia_style(combo)
+            elif mode == "Play Lumiere":
+                self._apply_play_lumiere_style(combo)
+            else:
+                self._refresh_dmx_btn(combo)
+        if row in self.ia_colors:
+            self._update_color_indicator(row, self.ia_colors[row])
 
-            new_sequences = {}
-            for old_row, seq in self.sequences.items():
-                if old_row < row:
-                    new_sequences[old_row] = seq
-                elif old_row > row:
-                    new_sequences[old_row - 1] = seq
-            self.sequences = new_sequences
+    def duplicate_media_row(self, row):
+        """Duplique une ligne (média ou pause) juste en dessous, en copiant aussi son
+        REC Lumière (sequences), sa couleur/analyse IA et sa durée d'image si présents."""
+        import copy
+        if row < 0 or row >= self.table.rowCount():
+            return
 
-            self._reindex_ia_colors(row)  # Also reindexes ia_analysis
-            self.is_dirty = True
+        was_loop = self.is_row_loop(row)
+        src_mode = self.get_dmx_mode(row)
+        has_dmx  = self.table.cellWidget(row, 4) is not None
+        dst      = row + 1
+
+        # Modes des lignes qui vont être décalées (pour recâbler leurs widgets).
+        shifted_modes = {r: self.get_dmx_mode(r)
+                         for r in range(dst, self.table.rowCount())
+                         if self.table.cellWidget(r, 4) is not None}
+
+        # Insérer + décaler toutes les données par-ligne (>= dst). La source
+        # (row < dst) reste intacte.
+        self.table.insertRow(dst)
+        self._reindex_sequences_insert(dst)
+
+        # Cellules 0..3 : icône, titre (+chemin), durée, volume.
+        for col in (0, 1, 2, 3):
+            src = self.table.item(row, col)
+            if src is None:
+                continue
+            new = QTableWidgetItem(src.text())
+            new.setData(Qt.UserRole, src.data(Qt.UserRole))
+            new.setTextAlignment(src.textAlignment())
+            self.table.setItem(dst, col, new)
+
+        # Données par-ligne (deep copy pour ne pas partager les objets mutables).
+        if row in self.sequences:
+            self.sequences[dst] = copy.deepcopy(self.sequences[row])
+        if row in self.ia_colors:
+            self.ia_colors[dst] = self.ia_colors[row]
+        if row in self.ia_analysis:
+            self.ia_analysis[dst] = copy.deepcopy(self.ia_analysis[row])
+        if row in self.image_durations:
+            self.image_durations[dst] = self.image_durations[row]
+
+        # Widget DMX du duplicata + recâblage des lignes décalées (leur index a
+        # changé de r → r+1).
+        if has_dmx:
+            self._apply_row_dmx(dst, src_mode)
+        for r, m in sorted(shifted_modes.items(), reverse=True):
+            self._apply_row_dmx(r + 1, m)
+
+        # Flag boucle + visuel.
+        if was_loop:
+            self.set_row_loop(dst, True)
+
+        # current_row décalé si la ligne courante était au-dessous du point d'insert.
+        if self.current_row >= dst:
+            self.current_row += 1
+
+        self.is_dirty = True
 
     def stop_sequence_playback(self):
         """Arrete la lecture de la sequence"""

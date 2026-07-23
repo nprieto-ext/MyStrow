@@ -3118,15 +3118,18 @@ class PlanDeFeu(QFrame):
 
             root.addLayout(toolbar)
         else:
-            # Stubs pour éviter les AttributeError (sans parent = pas de fenêtre top-level)
-            self.dmx_toggle_btn = QPushButton(self)
-            self.dmx_toggle_btn.setVisible(False)
-            self.btn_3d = QPushButton(self)
-            self.btn_3d.setVisible(False)
-            self.btn_target = QPushButton(self)
-            self.btn_target.setVisible(False)
-            self.btn_sym = QPushButton(self)
-            self.btn_sym.setVisible(False)
+            # Stubs pour éviter les AttributeError (sans parent = pas de fenêtre top-level).
+            # Taille nulle : ces boutons n'ont ni texte ni style, et du code
+            # ailleurs les rend visibles selon l'état (_sync_sym_visibility
+            # rallume btn_sym dès 2 lyres sélectionnées). Sans toolbar, ça
+            # posait un rectangle gris nu de 100x30 dans le coin du plan.
+            # Les cacher ne suffit donc pas — il faut qu'ils ne puissent rien
+            # dessiner même affichés.
+            for _nom in ("dmx_toggle_btn", "btn_3d", "btn_target", "btn_sym"):
+                _b = QPushButton(self)
+                _b.setFixedSize(0, 0)
+                _b.setVisible(False)
+                setattr(self, _nom, _b)
 
         # ── Canvas ─────────────────────────────────────────────────
         self.canvas = FixtureCanvas(self)

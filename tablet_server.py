@@ -279,7 +279,12 @@ def push_projectors_colors(projectors: list):
             _state["projectors"][i]["base_color"] = p.get("base_color", "#ffffff")
             _state["projectors"][i]["level"]      = p["level"]
             _state["projectors"][i]["muted"]      = p["muted"]
+            # Allumage réel (overrides HTP inclus) : sans lui, un client qui se
+            # (re)connecte en pleine mémoire lumière recevrait une scène éteinte.
+            _state["projectors"][i]["lit"]        = p.get("lit", False)
             _state["projectors"][i]["strobe"]     = p.get("strobe", 0)
+            _state["projectors"][i]["pan"]        = p.get("pan", 32768)
+            _state["projectors"][i]["tilt"]       = p.get("tilt", 32768)
     if _running:
         _broadcast({"type": "proj_colors", "data": projectors})
 

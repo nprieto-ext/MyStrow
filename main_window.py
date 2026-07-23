@@ -7905,6 +7905,15 @@ class MainWindow(QMainWindow):
         except Exception:
             _PAN_RATIO = 0.5
 
+        # Amplitude min/max PAR GROUPE (répliquée sur les couches). Si un groupe a
+        # une entrée, l'intensité de ses projos est remappée dans [min, max] au
+        # lieu du min_val/max_val de la couche.
+        _group_amp = {}
+        for _ld in layers_dicts:
+            _gd = _ld.get("group_amp")
+            if _gd:
+                _group_amp.update(_gd)
+
         for i, proj in enumerate(projectors):
             _base_level = proj.level   # niveau posé par les clips, avant l'effet
             _base_color = proj.color   # couleur posée par les clips, avant l'effet
@@ -7962,8 +7971,13 @@ class MainWindow(QMainWindow):
                 if fade > 0:
                     sin_val = (_math.sin(2 * _math.pi * x) + 1) / 2
                     raw = raw * (1 - fade) + sin_val * fade
-                min_v = ld.get("min_val", 0) / 100.0
-                max_v = ld.get("max_val", 100) / 100.0
+                _grp = getattr(proj, 'group', '')
+                if _grp in _group_amp:
+                    min_v = _group_amp[_grp][0] / 100.0
+                    max_v = _group_amp[_grp][1] / 100.0
+                else:
+                    min_v = ld.get("min_val", 0) / 100.0
+                    max_v = ld.get("max_val", 100) / 100.0
                 scaled = (min_v + raw * (max_v - min_v)) * size / 100.0
 
                 if attr in ("Dimmer", "Strobe"):
@@ -12907,7 +12921,18 @@ class MainWindow(QMainWindow):
                 itype = "tempo"
             else:
                 itype = "media"
-            items.append({"title": title, "type": itype})
+            dur_item = self.seq.table.item(r, 2)
+            vol_item = self.seq.table.item(r, 3)
+            try:
+                dmx = self.seq.get_dmx_mode(r)
+            except Exception:
+                dmx = ""
+            items.append({
+                "title": title, "type": itype,
+                "dur": dur_item.text() if dur_item else "",
+                "vol": vol_item.text() if vol_item else "",
+                "dmx": dmx,
+            })
         try:
             from PySide6.QtMultimedia import QMediaPlayer as _QMP
             playing = self.player.playbackState() == _QMP.PlaybackState.Playing
@@ -12931,6 +12956,14 @@ class MainWindow(QMainWindow):
         group_lists: dict = {}
         for i, p in enumerate(self.projectors):
             group_lists.setdefault(p.group, []).append(i)
+        # Overrides HTP (mémoires lumière au fader, aperçu d'effet…) : la boucle
+        # DMX les applique aux projecteurs, envoie, puis RESTAURE. Au moment où
+        # la tablette lit p.color/p.level, ils sont donc déjà revenus à leur
+        # valeur d'avant — noir la plupart du temps. C'est la source du
+        # « allumé en DMX, éteint sur la scène 2D ». Le plan de feu du desktop
+        # lit ces mêmes overrides (_get_fill_color) : on fait pareil ici, sinon
+        # les deux représentations divergent.
+        htp = getattr(getattr(self, 'plan_de_feu', None), '_htp_overrides', None)
         out = []
         for i, p in enumerate(self.projectors):
             if p.canvas_x is not None and p.canvas_y is not None:
@@ -12941,11 +12974,27 @@ class MainWindow(QMainWindow):
                 n  = len(g_list)
                 pos_fn = _DEFAULT_POSITIONS.get(p.group, lambda li, n: (0.5, 0.5))
                 dx, dy = pos_fn(li, n)
+            ent = htp.get(id(p)) if htp else None
+            if ent is not None and ent[0] > 0 and not p.muted:
+                # ent = (niveau, couleur d'affichage déjà pondérée[, couleur de base])
+                disp_col = QColor(ent[1]).name()
+                base_col = (QColor(ent[2]).name()
+                            if len(ent) > 2 and ent[2] else disp_col)
+                lit = True
+            else:
+                disp_col = p.color.name() if p.color else "#000000"
+                base_col = p.base_color.name() if p.base_color else "#ffffff"
+                lit = (not p.muted) and p.level > 0 and disp_col != "#000000"
+
             out.append({
                 "name":       p.name,
                 "group":      p.group,
-                "color":      p.color.name() if p.color else "#000000",
-                "base_color": p.base_color.name() if p.base_color else "#ffffff",
+                "color":      disp_col,
+                "base_color": base_col,
+                # Allumé ou non, décidé ici : le niveau envoyé reste le niveau
+                # PROPRE du projecteur (c'est lui qu'affiche le curseur de la
+                # fiche fixture), il ne dit donc rien de ce que sort le DMX.
+                "lit":        lit,
                 "level":      p.level,
                 "muted":      p.muted,
                 "strobe":     getattr(p, 'strobe_speed', 0),
@@ -13132,12 +13181,22 @@ class MainWindow(QMainWindow):
         # ── Surveillance des changements séquenceur/cartouches ────────────────
         try:
             seq_count = self.seq.table.rowCount()
-            # Hash léger du contenu : (count, tuple des titres)
-            _titles = tuple(
-                (self.seq.table.item(r, 1).text() if self.seq.table.item(r, 1) else "")
-                for r in range(seq_count)
-            )
-            seq_sig = (seq_count, _titles)
+            # Hash léger du contenu : (count, tuple par ligne). On inclut titre,
+            # durée, volume et mode DMX → un changement de mode/volume repousse
+            # la liste (colonnes affichées sur la tablette, comme dans MyStrow).
+            def _row_sig(r):
+                it1 = self.seq.table.item(r, 1)
+                it2 = self.seq.table.item(r, 2)
+                it3 = self.seq.table.item(r, 3)
+                try:
+                    dmx = self.seq.get_dmx_mode(r)
+                except Exception:
+                    dmx = ""
+                return (it1.text() if it1 else "",
+                        it2.text() if it2 else "",
+                        it3.text() if it3 else "", dmx)
+            _rows = tuple(_row_sig(r) for r in range(seq_count))
+            seq_sig = (seq_count, _rows)
             if getattr(self, '_tablet_last_seq_sig', None) != seq_sig:
                 self._tablet_last_seq_sig = seq_sig
                 self._push_seq_state_to_tablet(_ts)
@@ -13166,7 +13225,15 @@ class MainWindow(QMainWindow):
             snap = self._proj_snapshot()
             colors_only = [{"color": p["color"], "base_color": p.get("base_color","#ffffff"),
                             "level": p["level"], "muted": p["muted"],
-                            "strobe": p.get("strobe", 0)} for p in snap]
+                            # « lit » vient des overrides HTP : sans lui dans la
+                            # signature, allumer une mémoire ne repousserait rien.
+                            "lit": p.get("lit", False),
+                            "strobe": p.get("strobe", 0),
+                            # Pan/tilt inclus → un mouvement de lyre (même sans
+                            # changement de couleur) repousse l'état à la tablette
+                            # pour que les faisceaux bougent en direct sur la scène.
+                            "pan": p.get("pan", 32768), "tilt": p.get("tilt", 32768)}
+                           for p in snap]
             if getattr(self, '_tablet_last_proj_colors', None) != colors_only:
                 self._tablet_last_proj_colors = colors_only
                 _ts.push_projectors_colors(snap)

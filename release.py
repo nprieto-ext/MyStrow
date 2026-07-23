@@ -227,6 +227,15 @@ def build_local_installer(version):
         if _custom_bundle.exists() else ""
     )
 
+    # ffmpeg embarqué (décodage audio robuste sans dépendance PATH côté client).
+    # Poser ffmpeg.exe à la racine du repo ; s'il est absent, on n'échoue pas
+    # (repli PATH/miniaudio/Qt) mais on prévient car c'est le décodeur le plus sûr.
+    _ffmpeg_bin = BASE_DIR / "ffmpeg.exe"
+    _ffmpeg_flag = f"--add-binary \"ffmpeg.exe;.\" " if _ffmpeg_bin.exists() else ""
+    if not _ffmpeg_bin.exists():
+        print("⚠️  ffmpeg.exe absent de la racine — l'exe n'embarquera PAS ffmpeg "
+              "(analyse audio sur repli miniaudio/Qt). Voir README pour l'ajouter.")
+
     bat_path = BASE_DIR / "_build_tmp.bat"
     bat_path.write_text(
         f"@echo off\n"
@@ -240,7 +249,13 @@ def build_local_installer(version):
         f"--add-data \"plan_3d_web.html;.\" "
         f"--add-data \"AKAIAPCMINI.png;.\" "
         f"--add-data \"Novation.png;.\" "
+        # Interface tablette (PWA statique servie par tablet_server.py). SANS ces
+        # fichiers dans l'exe, le serveur renvoie « Not found: tablet/index.html » (404).
+        f"--add-data \"tablet/index.html;tablet\" "
+        f"--add-data \"tablet/manifest.json;tablet\" "
+        f"--add-data \"tablet/sw.js;tablet\" "
         f"--add-binary \"ftd2xx.dll;.\" "
+        f"{_ffmpeg_flag}"
         f"{_custom_bundle_flag}"
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "

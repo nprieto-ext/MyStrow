@@ -882,20 +882,29 @@ class DmxSetupDialog(QDialog):
         # On suspend le thread (avec acquittement) le temps des étapes 4-6,
         # exactement comme le Test 100%. Relâché après l'étape 6 (et sur chaque
         # sortie anticipée). closeEvent() relâche aussi en garde-fou.
+        # L'ENTTEC Pro a exactement le même problème : son thread (_pro_loop)
+        # écrit à 25 fps sur le tty. Il n'était pas suspendu — d'où le crash de
+        # l'appli au lancement du diagnostic avec une Pro connectée, puis une
+        # sortie DMX morte (LED qui cesse de clignoter, fixtures en autonome).
         _paused_live = False
-        if getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC:
-            self._dmx._enttec_pause = True
+        _live_transport = getattr(self._dmx, 'transport', '')
+        _attr_pause = {TRANSPORT_ENTTEC:     ('_enttec_pause', '_enttec_paused'),
+                       TRANSPORT_ENTTEC_PRO: ('_pro_pause',    '_pro_paused')}.get(
+                           _live_transport)
+        if _attr_pause:
+            _drapeau, _ack = _attr_pause
+            setattr(self._dmx, _drapeau, True)
             _paused_live = True
             _wait_until = _time.monotonic() + 0.6
             while (_time.monotonic() < _wait_until
-                   and not getattr(self._dmx, '_enttec_paused', False)):
+                   and not getattr(self._dmx, _ack, False)):
                 QApplication.processEvents()
                 _time.sleep(0.01)
 
         def _unpause_live():
             if _paused_live:
                 try:
-                    self._dmx._enttec_pause = False
+                    setattr(self._dmx, _attr_pause[0], False)
                 except Exception:
                     pass
 
@@ -903,8 +912,12 @@ class DmxSetupDialog(QDialog):
         self._log_line("")
         self._log_line("[ 4 ] Ouverture à 250 000 bauds", cyan)
 
-        # Vérifier si le port est déjà ouvert par MyStrow
-        dmx_serial = getattr(self._dmx, '_serial', None)
+        # Vérifier si le port est déjà ouvert par MyStrow. Les deux handles
+        # comptent : _serial (Open DMX) ET _pro_serial (ENTTEC Pro). N'en
+        # regarder qu'un laissait le diagnostic rouvrir le tty d'une Pro déjà
+        # tenue par la sortie live.
+        dmx_serial = (getattr(self._dmx, '_serial', None)
+                      or getattr(self._dmx, '_pro_serial', None))
         if dmx_serial and dmx_serial.is_open and getattr(dmx_serial, 'port', None) == port:
             self._log_line(f"  ⚠  Port déjà ouvert par MyStrow (connexion active)", warn)
             self._log_line("      Le test d'ouverture est ignoré — port en cours d'utilisation", dim)

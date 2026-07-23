@@ -56,19 +56,23 @@
     #akai-pagenav button { width: clamp(40px, 8vw, 66px); height: 100%; border: 1px solid #2a2a2a; border-radius: 6px; background: #111; color: #bbb; font-size: clamp(13px, 2.2vw, 19px); font-weight: 700; cursor: pointer; touch-action: manipulation; }
     #akai-pagenav button:active { background: #0a1820; color: var(--accent); border-color: var(--accent); }
     #pg-num { font-size: clamp(11px, 1.7vw, 16px); font-weight: 700; color: #ccc; letter-spacing: 1px; min-width: 44px; text-align: center; }
-    #grid-area { display: flex; gap: 6px; flex: 1; min-height: 0; justify-content: flex-start; }
+    #grid-area { display: flex; gap: 6px; flex: 1; min-height: 0; justify-content: center; }
     #grid-col { display: flex; flex-direction: column; height: 100%; flex-shrink: 0; gap: 6px; }
+    /* Colonne de droite : boutons scène (alignés sur la grille) + REC/CLEAR
+       (alignés sur les faders). Largeur fluide, comme des touches d'APC. */
+    #akai-right { display: flex; flex-direction: column; height: 100%; flex-shrink: 0; gap: 6px; width: clamp(46px, 6.5vw, 82px); }
     /* La grille reste carrée (aspect-ratio + hauteur pilotée) et sa largeur suit
        sa hauteur → la colonne s'ajuste et les faders restent alignés dessous.
        L'espace réservé en bas n'est plus un « 214px » figé : il vaut EXACTEMENT
        la hauteur fluide des faders + boutons + gaps → remplissage correct du 8"
        au 13". --faders-h / --ctrl-h sont réutilisés par les règles ci-dessous. */
-    :root { --faders-h: clamp(120px, 22vh, 240px); --ctrl-h: clamp(30px, 5.5vh, 48px); }
-    #grid { aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); gap: var(--pad-gap); height: calc(100% - var(--faders-h) - var(--ctrl-h) - 12px); width: auto; max-width: 100%; }
-    #akai-ctrl { flex-shrink: 0; height: var(--ctrl-h); display: flex; gap: 6px; align-items: center; }
-    .akai-btn { flex: 1; height: 100%; border-radius: 6px; border: 1px solid #252525; background: #111;
-      color: #555; font-size: clamp(10px, 1.5vw, 15px); font-weight: 700; letter-spacing: 1px; cursor: pointer;
-      display: flex; align-items: center; justify-content: center; gap: 5px;
+    :root { --faders-h: clamp(120px, 22vh, 240px); }
+    #grid { aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); gap: var(--pad-gap); height: calc(100% - var(--faders-h) - 6px); width: auto; max-width: 100%; }
+    /* REC/CLEAR : empilés à droite, alignés en hauteur sur les 9 faders. */
+    #akai-ctrl { flex-shrink: 0; height: var(--faders-h); display: flex; flex-direction: column; gap: 6px; }
+    .akai-btn { flex: 1; width: 100%; min-height: 0; border-radius: 6px; border: 1px solid #252525; background: #111;
+      color: #555; font-size: clamp(9px, 1.4vw, 13px); font-weight: 700; letter-spacing: 1px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap;
       transition: background 0.1s, border-color 0.1s, color 0.1s; touch-action: manipulation; }
     .akai-btn:active { filter: brightness(1.3); transform: scale(0.96); }
     /* CLEAR : gris neutre — comme la page principale */
@@ -83,7 +87,7 @@
       transition: filter 80ms, transform 80ms, box-shadow 80ms; min-width: 0; min-height: 0; }
     .pad.lit { border-color: transparent; }
     .pad.press { transform: scale(0.88); filter: brightness(1.4); }
-    #effects { display: flex; flex-direction: column; gap: var(--pad-gap); width: clamp(32px, 4.5vw, 60px); flex-shrink: 0; }
+    #effects { display: flex; flex-direction: column; gap: var(--pad-gap); width: 100%; flex: 1; min-height: 0; }
     .eff-btn { flex: 1; background: #0d1f0d; border: 1px solid #1a3a1a; border-radius: 5px; cursor: pointer; transition: background 100ms, box-shadow 100ms; }
     .eff-btn.on { background: #0a5a00; border-color: #33cc00; box-shadow: 0 0 8px #33cc0066; }
     .eff-btn.press { filter: brightness(1.5); }
@@ -130,6 +134,14 @@
     .seq-num  { font-size: clamp(9px, 1.2vw, 13px); color: #2e2e2e; width: clamp(18px, 2.4vw, 28px); flex-shrink: 0; text-align: right; }
     .seq-icon { font-size: clamp(13px, 1.8vw, 19px); flex-shrink: 0; }
     .seq-title { font-size: clamp(12px, 1.7vw, 18px); color: #888; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .seq-item.current .seq-dur, .seq-item.current .seq-vol { color: #bcd; }
+    .seq-dur { font-size: clamp(9px, 1.3vw, 14px); color: #777; font-variant-numeric: tabular-nums; width: clamp(42px, 5.5vw, 70px); text-align: right; flex-shrink: 0; }
+    .seq-vol { font-size: clamp(9px, 1.2vw, 13px); color: #4a9a6a; font-variant-numeric: tabular-nums; width: clamp(28px, 3.6vw, 48px); text-align: right; flex-shrink: 0; }
+    .seq-badge { font-size: clamp(8px, 1.1vw, 12px); font-weight: 700; border-radius: 8px; padding: 3px 6px; flex-shrink: 0; width: clamp(50px, 6.5vw, 84px); text-align: center; border: 1px solid transparent; box-sizing: border-box; }
+    .seq-badge.m-manuel { background: #1c1c1c; border-color: #2e2e2e; color: #777; }
+    .seq-badge.m-ia     { background: #0d1f3a; border-color: #2a5090; color: #6aadff; }
+    .seq-badge.m-seq    { background: #2a0d0d; border-color: #7a2020; color: #ff7070; }
+    .seq-badge.m-prg    { background: #0d2a0d; border-color: #207020; color: #70dd70; }
     #carts-area { flex-shrink: 0; display: flex; gap: 6px; height: clamp(58px, 10vh, 92px); }
     .cart-btn { flex: 1; border-radius: 8px; border: 1px solid #222; background: #111; color: #555; font-size: 10px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 4px 2px; transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s; touch-action: manipulation; overflow: hidden; }
     .cart-btn:active { transform: scale(0.94); filter: brightness(1.25); }
@@ -222,13 +234,15 @@
       <div id="grid-col">
         <div id="grid"></div>
         <div id="faders-area"></div>
+      </div>
+      <div class="vdiv"></div>
+      <div id="akai-right">
+        <div id="effects"></div>
         <div id="akai-ctrl">
           <button class="akai-btn" id="btn-akai-rec">🔴 REC</button>
           <button class="akai-btn" id="btn-akai-clear">CLEAR</button>
         </div>
       </div>
-      <div class="vdiv"></div>
-      <div id="effects"></div>
     </div>
   </div>
 
@@ -461,6 +475,16 @@ btnPlay.addEventListener('click',()=>sendEvent({type:'transport',action:'play_pa
 cartBtns.forEach(btn=>btn.addEventListener('click',()=>sendEvent({type:'cartouche',idx:+btn.dataset.idx})));
 
 // ── Séquenceur ───────────────────────────────────────────────────────────────
+// Mode DMX → badge (label + classe couleur), miroir de sequencer._SS_BTN.
+function dmxBadge(mode){
+  switch(mode){
+    case 'IA Lumiere':   return {label:'IA',    cls:'m-ia'};
+    case 'Play Lumiere': return {label:'▶ Seq', cls:'m-seq'};
+    case 'Programme':    return {label:'PRG',   cls:'m-prg'};
+    case 'Manuel':       return {label:'Manuel',cls:'m-manuel'};
+    default:             return null;
+  }
+}
 function buildSeqList(items,currentRow){
   _seqItems=items; seqListEl.innerHTML='';
   items.forEach((item,i)=>{
@@ -468,7 +492,17 @@ function buildSeqList(items,currentRow){
     div.className='seq-item'+(i===currentRow?' current':'')+(item.type==='pause'?' pause':'')+(item.type==='tempo'?' tempo':'');
     div.dataset.row=i;
     const icon=item.type==='pause'?'⏸':item.type==='tempo'?'⏱':'🎵';
-    div.innerHTML=`<span class="seq-num">${i+1}</span><span class="seq-icon">${icon}</span><span class="seq-title">${escHtml(item.title||'—')}</span>`;
+    const dur=(item.dur&&item.dur!=='--:--')?item.dur:'';
+    const vol=(item.vol&&item.vol!=='--')?item.vol:'';
+    const b=(item.type==='media')?dmxBadge(item.dmx):null;
+    const badge=b?`<span class="seq-badge ${b.cls}">${escHtml(b.label)}</span>`
+                 :`<span class="seq-badge" style="visibility:hidden"></span>`;
+    div.innerHTML=`<span class="seq-num">${i+1}</span>`+
+                  `<span class="seq-icon">${icon}</span>`+
+                  `<span class="seq-title">${escHtml(item.title||'—')}</span>`+
+                  `<span class="seq-dur">${escHtml(dur)}</span>`+
+                  `<span class="seq-vol">${escHtml(vol)}</span>`+
+                  badge;
     div.addEventListener('click',()=>sendEvent({type:'seq_row',row:i}));
     seqListEl.appendChild(div);
   });
@@ -508,7 +542,12 @@ function drawStage(projectors){
   projectors.forEach((p,i)=>{
     const px=(p.x??0.5)*W, py=(p.y??0.5)*H;
     const color=p.color||'#000000';
-    const isLit=p.level>0&&!p.muted&&color!=='#000000';
+    // « lit » est calculé côté desktop, overrides HTP compris (mémoire lumière
+    // au fader, aperçu d'effet) : p.level ne reflète que le niveau propre du
+    // projecteur et reste à 0 pendant qu'une mémoire l'allume. Repli sur
+    // l'ancien test pour un desktop plus ancien qui n'enverrait pas le champ.
+    const isLit=(p.lit!==undefined)?!!p.lit
+                                   :(p.level>0&&!p.muted&&color!=='#000000');
     const gcolor=GROUP_COLORS[p.group]||'#666';
     // Halo de sélection (multi-sélection tactile)
     if(_selection.indexOf(i)>=0){
@@ -521,8 +560,13 @@ function drawStage(projectors){
       grad.addColorStop(0,color+'99'); grad.addColorStop(1,color+'00');
       stageCtx.fillStyle=grad; stageCtx.beginPath(); stageCtx.arc(px,py,R*3,0,Math.PI*2); stageCtx.fill();
     }
-    if(p.is_lyre){
+    const _ft=p.ftype||'';
+    if(p.is_lyre||_ft==='Moving Head'||_ft==='Lyre'){
       drawLyre(px,py,R,color,isLit,gcolor,p);
+    }else if(_ft==='Barre LED'){
+      drawBarre(px,py,R,color,isLit,gcolor);
+    }else if(_ft==='Stroboscope'){
+      drawStrobe(px,py,R,color,isLit,gcolor);
     }else{
       stageCtx.beginPath(); stageCtx.arc(px,py,R,0,Math.PI*2);
       stageCtx.fillStyle=isLit?color:'#111'; stageCtx.fill();
@@ -537,41 +581,132 @@ function drawStage(projectors){
   });
 }
 
-// Dessine une lyre : socle arrondi (yoke) + tête ronde colorée + petit cône de
-// faisceau orienté selon pan/tilt. Rendu épuré pour rester lisible en scène.
-function drawLyre(px,py,R,color,isLit,gcolor,p){
-  const pan=(p.pan??32768)/65535, tilt=(p.tilt??32768)/65535;
-  // pan → orientation gauche/droite autour de la verticale ; tilt → inclinaison
-  const ang=(pan-0.5)*Math.PI*1.4 - Math.PI/2;   // -90° = tout droit vers le haut
-  // ── Cône de faisceau (uniquement si allumée) ──
-  if(isLit){
-    const beamLen=R*(1.0+tilt*1.4), spread=0.32;
-    const ax=px+Math.cos(ang-spread)*beamLen, ay=py+Math.sin(ang-spread)*beamLen;
-    const bx=px+Math.cos(ang+spread)*beamLen, by=py+Math.sin(ang+spread)*beamLen;
-    const g=stageCtx.createRadialGradient(px,py,R*0.3,px,py,beamLen);
-    g.addColorStop(0,color+'aa'); g.addColorStop(1,color+'00');
-    stageCtx.fillStyle=g;
-    stageCtx.beginPath(); stageCtx.moveTo(px,py); stageCtx.lineTo(ax,ay); stageCtx.lineTo(bx,by);
-    stageCtx.closePath(); stageCtx.fill();
-  }
-  // ── Socle arrondi (yoke) ──
-  const s=R*1.5, r2=R*0.34;
+// ── Helpers de dessin (parité avec plan_de_feu.py) ────────────────────────────
+function hexToRgb(hex){ hex=(hex||'#000000').replace('#',''); if(hex.length<6) hex='000000';
+  return parseInt(hex.slice(0,2),16)+','+parseInt(hex.slice(2,4),16)+','+parseInt(hex.slice(4,6),16); }
+function shade(hex,f){ const p=hexToRgb(hex).split(',').map(Number);
+  const c=v=>Math.max(0,Math.min(255,Math.round(v*f)));
+  return `rgb(${c(p[0])},${c(p[1])},${c(p[2])})`; }
+function roundRectPath(x,y,w,h,rad){ rad=Math.min(rad,w/2,h/2);
   stageCtx.beginPath();
-  if(stageCtx.roundRect) stageCtx.roundRect(px-s/2,py-s/2,s,s,r2);
-  else stageCtx.rect(px-s/2,py-s/2,s,s);
-  stageCtx.fillStyle='#161616'; stageCtx.fill();
-  stageCtx.strokeStyle=isLit?'#e8e8e8':gcolor; stageCtx.lineWidth=isLit?2:1.4;
-  stageCtx.globalAlpha=isLit?1:0.6; stageCtx.stroke(); stageCtx.globalAlpha=1;
-  // ── Tête ronde colorée ──
-  stageCtx.beginPath(); stageCtx.arc(px,py,R*0.66,0,Math.PI*2);
-  stageCtx.fillStyle=isLit?color:'#1e1e1e'; stageCtx.fill();
-  stageCtx.strokeStyle=isLit?'#fff':gcolor; stageCtx.lineWidth=1.2;
-  stageCtx.globalAlpha=isLit?0.95:0.5; stageCtx.stroke(); stageCtx.globalAlpha=1;
-  // ── Repère de direction (petit point sur le bord, sens du faisceau) ──
-  const dx=px+Math.cos(ang)*R*0.66, dy=py+Math.sin(ang)*R*0.66;
-  stageCtx.beginPath(); stageCtx.arc(dx,dy,R*0.16,0,Math.PI*2);
-  stageCtx.fillStyle=isLit?'#fff':gcolor; stageCtx.globalAlpha=isLit?0.9:0.6;
-  stageCtx.fill(); stageCtx.globalAlpha=1;
+  if(stageCtx.roundRect){ stageCtx.roundRect(x,y,w,h,rad); }
+  else { stageCtx.moveTo(x+rad,y); stageCtx.arcTo(x+w,y,x+w,y+h,rad); stageCtx.arcTo(x+w,y+h,x,y+h,rad);
+    stageCtx.arcTo(x,y+h,x,y,rad); stageCtx.arcTo(x,y,x+w,y,rad); stageCtx.closePath(); } }
+
+// Barre LED : boîtier arrondi horizontal + segments internes (cf. plan_de_feu).
+function drawBarre(px,py,R,color,isLit,gcolor){
+  const hw=R*1.23, hh=Math.max(3,R*0.38);
+  stageCtx.fillStyle=isLit?color:'#141414';
+  stageCtx.strokeStyle=isLit?'#fff':gcolor; stageCtx.lineWidth=isLit?1.6:1;
+  stageCtx.globalAlpha=isLit?1:0.6;
+  roundRectPath(px-hw,py-hh,hw*2,hh*2,3); stageCtx.fill(); stageCtx.stroke();
+  stageCtx.globalAlpha=1;
+  if(isLit){
+    stageCtx.strokeStyle='rgba(0,0,0,0.35)'; stageCtx.lineWidth=1;
+    const step=hw*2/4;
+    for(let s=1;s<4;s++){ const sx=px-hw+s*step;
+      stageCtx.beginPath(); stageCtx.moveTo(sx,py-hh+1); stageCtx.lineTo(sx,py+hh-1); stageCtx.stroke(); }
+  }
+}
+
+// Stroboscope : boîtier métal sombre + panneau de flash rayonnant (cf. plan_de_feu).
+function drawStrobe(px,py,R,color,isLit,gcolor){
+  const sw=R*1.18, sh=R*0.62, m=2;
+  stageCtx.fillStyle='#26262f';
+  stageCtx.strokeStyle=isLit?'#fff':gcolor; stageCtx.lineWidth=isLit?1.6:1;
+  roundRectPath(px-sw,py-sh,sw*2,sh*2,3); stageCtx.fill(); stageCtx.stroke();
+  if(isLit){
+    const rgb=hexToRgb(color);
+    const g=stageCtx.createRadialGradient(px,py,R*0.2,px,py,sw);
+    g.addColorStop(0,`rgba(${rgb},0.9)`); g.addColorStop(0.7,`rgba(${rgb},0.47)`); g.addColorStop(1,`rgba(${rgb},0.12)`);
+    stageCtx.fillStyle=g;
+  } else stageCtx.fillStyle='#1a1a22';
+  stageCtx.strokeStyle='rgba(55,55,68,1)'; stageCtx.lineWidth=1;
+  roundRectPath(px-sw+m,py-sh+m,sw*2-m*2,sh*2-m*2,2); stageCtx.fill(); stageCtx.stroke();
+}
+
+// Lyre / Moving Head : faisceau orienté (Pan→X, Tilt→profondeur, vers le bas)
+// + corps de lyre (barre truss, 2 bras, tête ronde). Modèle identique à
+// plan_de_feu._draw_fixture : le cône pointe vers +y (la scène) et pivote de
+// pan_angle = atan2(sin(pan), sin(tilt)) — c'est ce qui corrigeait le faisceau
+// « à l'envers » de l'ancien rendu tablette.
+function drawLyre(px,py,R,color,isLit,gcolor,p){
+  const r=R;
+  const panRad =((p.pan ??32768)-32768)/32768*Math.PI;
+  const tiltRad=((p.tilt??32768)-32768)/32768*Math.PI*0.75;
+  const fdx=Math.sin(panRad), fdy=Math.sin(tiltRad);
+  const defl=Math.hypot(fdx,fdy);                         // 0..√2
+  const panAngle=defl>0.001?Math.atan2(fdx,fdy+0.015):0;  // radians
+  const beamLen=r*2+defl/Math.SQRT2*r*6;
+  const beamHw =r*0.5+defl/Math.SQRT2*r*2;
+  const rgb=hexToRgb(color);
+
+  // ── Cône de faisceau (uniquement allumée), pivoté autour de la source ──
+  if(isLit){
+    stageCtx.save();
+    stageCtx.translate(px,py);
+    stageCtx.rotate(panAngle);
+    // Halo extérieur large et doux
+    let g=stageCtx.createLinearGradient(0,r,0,beamLen);
+    g.addColorStop(0,`rgba(${rgb},0.39)`); g.addColorStop(1,`rgba(${rgb},0)`);
+    stageCtx.fillStyle=g;
+    stageCtx.beginPath();
+    stageCtx.moveTo(-beamHw,r); stageCtx.lineTo(beamHw,r);
+    stageCtx.lineTo(beamHw*2.2,beamLen); stageCtx.lineTo(-beamHw*2.2,beamLen);
+    stageCtx.closePath(); stageCtx.fill();
+    // Cône principal
+    g=stageCtx.createLinearGradient(0,r,0,beamLen);
+    g.addColorStop(0,`rgba(${rgb},0.76)`); g.addColorStop(0.65,`rgba(${rgb},0.15)`); g.addColorStop(1,`rgba(${rgb},0)`);
+    stageCtx.fillStyle=g;
+    stageCtx.beginPath();
+    stageCtx.moveTo(-r/2,r); stageCtx.lineTo(r/2,r);
+    stageCtx.lineTo(beamHw,beamLen); stageCtx.lineTo(-beamHw,beamLen);
+    stageCtx.closePath(); stageCtx.fill();
+    // Impact au sol
+    stageCtx.fillStyle=`rgba(${rgb},0.37)`;
+    stageCtx.beginPath(); stageCtx.ellipse(0,beamLen,beamHw,Math.max(2,beamHw/3),0,0,Math.PI*2); stageCtx.fill();
+    stageCtx.restore();
+  }
+
+  // ── Corps de lyre (non pivoté) ──
+  const lr=r*1.4;
+  const yokeTopHw=lr*0.88, yokeBotHw=lr*0.54;
+  const barT=Math.max(3,lr*0.26);
+  const armTtop=Math.max(3,lr*0.26), armTbot=Math.max(2,lr*0.20);
+  const armBotY=py+lr*0.08;
+  const headR=lr*0.46, headCy=armBotY;
+  const strokeCol=isLit?'#e8e8e8':gcolor;
+  stageCtx.lineWidth=isLit?1.6:1.1; stageCtx.globalAlpha=isLit?1:0.7;
+
+  // Barre de fixation (truss)
+  stageCtx.fillStyle=shade(gcolor,isLit?1.35:0.9); stageCtx.strokeStyle=strokeCol;
+  roundRectPath(px-yokeTopHw,py-lr,yokeTopHw*2,barT,barT/2); stageCtx.fill(); stageCtx.stroke();
+
+  // Bras gauche + droit (trapèzes)
+  stageCtx.fillStyle=shade(gcolor,0.9);
+  stageCtx.beginPath();
+  stageCtx.moveTo(px-yokeTopHw,py-lr+barT); stageCtx.lineTo(px-yokeTopHw+armTtop,py-lr+barT);
+  stageCtx.lineTo(px-yokeBotHw+armTbot,armBotY); stageCtx.lineTo(px-yokeBotHw,armBotY);
+  stageCtx.closePath(); stageCtx.fill(); stageCtx.stroke();
+  stageCtx.beginPath();
+  stageCtx.moveTo(px+yokeTopHw-armTtop,py-lr+barT); stageCtx.lineTo(px+yokeTopHw,py-lr+barT);
+  stageCtx.lineTo(px+yokeBotHw,armBotY); stageCtx.lineTo(px+yokeBotHw-armTbot,armBotY);
+  stageCtx.closePath(); stageCtx.fill(); stageCtx.stroke();
+  stageCtx.globalAlpha=1;
+
+  // Tête ronde
+  if(isLit){
+    const hg=stageCtx.createRadialGradient(px-headR*0.28,headCy-headR*0.28,headR*0.2,px,headCy,headR*1.4);
+    hg.addColorStop(0,shade(color,1.55)); hg.addColorStop(0.55,color); hg.addColorStop(1,shade(color,0.6));
+    stageCtx.fillStyle=hg;
+  } else stageCtx.fillStyle='#1e1e1e';
+  stageCtx.strokeStyle=strokeCol; stageCtx.lineWidth=1.2;
+  stageCtx.beginPath(); stageCtx.arc(px,headCy,headR,0,Math.PI*2); stageCtx.fill(); stageCtx.stroke();
+  // Lentille sombre + reflet
+  stageCtx.fillStyle=isLit?shade(color,0.5):'#111';
+  stageCtx.beginPath(); stageCtx.arc(px,headCy,headR*0.5,0,Math.PI*2); stageCtx.fill();
+  if(isLit){ stageCtx.fillStyle='rgba(255,255,255,0.82)';
+    stageCtx.beginPath(); stageCtx.arc(px-headR*0.18,headCy-headR*0.18,Math.max(1,headR*0.18),0,Math.PI*2); stageCtx.fill(); }
 }
 
 function buildLegend(projectors){ if(!legendEl) return;
@@ -593,7 +728,8 @@ function applyProjectors(data){
   resizeCanvas();
 }
 function applyProjColors(data){
-  data.forEach((p,i)=>{ if(_projectors[i]){_projectors[i].color=p.color;_projectors[i].base_color=p.base_color||_projectors[i].base_color;_projectors[i].level=p.level;_projectors[i].muted=p.muted;_projectors[i].strobe=p.strobe??0;} });
+  data.forEach((p,i)=>{ if(_projectors[i]){_projectors[i].color=p.color;_projectors[i].base_color=p.base_color||_projectors[i].base_color;_projectors[i].level=p.level;_projectors[i].muted=p.muted;_projectors[i].lit=p.lit;_projectors[i].strobe=p.strobe??0;
+    if(p.pan!==undefined)_projectors[i].pan=p.pan; if(p.tilt!==undefined)_projectors[i].tilt=p.tilt;} });
   drawStage(_projectors);
 }
 
@@ -809,7 +945,7 @@ btnRec.addEventListener('click',()=>sendEvent({type:'rec_toggle'}));
 
 function applyRecState(active){
   btnRec.classList.toggle('rec-active',active);
-  btnRec.textContent=active?'⏺ REC ●':'⏺ REC';
+  btnRec.textContent=active?'⏺ REC':'🔴 REC';
 }
 function applyLayout(labels){
   labels.forEach((slot,i)=>{

@@ -1111,6 +1111,12 @@ class LightTimelineEditor(QDialog):
         cancel_btn.clicked.connect(lambda: setattr(self, '_analysis_cancelled', True))
         lay.addWidget(cancel_btn, alignment=Qt.AlignCenter)
 
+        # Crédit discret : l'analyse audio s'appuie sur ffmpeg (licence libre).
+        ffmpeg_credit = QLabel("Analyse audio propulsée par ffmpeg")
+        ffmpeg_credit.setAlignment(Qt.AlignCenter)
+        ffmpeg_credit.setStyleSheet("font-size: 9px; color: #444; border: none;")
+        lay.addWidget(ffmpeg_credit)
+
         loading.show()
         QApplication.processEvents()
 
@@ -1500,11 +1506,13 @@ class LightTimelineEditor(QDialog):
         self._rec_btn.setFixedHeight(_BTN)
         self._rec_btn.setCursor(Qt.PointingHandCursor)
         self._rec_btn.setFocusPolicy(Qt.NoFocus)
+        # Style discret : base neutre (comme CLEAR) avec un rouge atténué qui ne
+        # ressort qu'au survol — le bouton reste identifiable sans être criard.
         self._rec_btn.setStyleSheet(
-            "QPushButton { background:#2a0d0d; color:#ff5555; border:1px solid #7a2a2a;"
+            "QPushButton { background:#1e1e1e; color:#b85a5a; border:1px solid #3a3a3a;"
             " border-radius:6px; font-size:12px; font-weight:bold; padding:0 12px; }"
-            "QPushButton:hover { background:#3a1010; color:#ff7777; border-color:#aa3333; }"
-            "QPushButton:pressed { background:#550000; color:#ffffff; }"
+            "QPushButton:hover { background:#2a1414; color:#ff6b6b; border-color:#7a3a3a; }"
+            "QPushButton:pressed { background:#3a1010; color:#ffffff; }"
         )
         self._rec_btn.clicked.connect(self._rec_capture_block)
         header_layout.addWidget(self._rec_btn)
@@ -1820,16 +1828,22 @@ class LightTimelineEditor(QDialog):
         is_image = self.media_path and media_icon(self.media_path) == "image"
 
         self.is_video_file = self.media_path and media_icon(self.media_path) == "video"
-        if self.is_video_file and QVideoWidget is not None:
+        _show_video_btn = bool(self.is_video_file and QVideoWidget is not None)
+        if _show_video_btn:
             self.preview_video_widget = QVideoWidget()
             self.preview_video_widget.setStyleSheet("background: #000;")
             self._video_preview_container.layout().addWidget(self.preview_video_widget)
             # Vidéo désactivée par défaut — activer via le bouton 🎬 dans le header
             self._video_preview_container.hide()
-            # Afficher le bouton toggle vidéo dans le header
-            if hasattr(self, '_video_toggle_btn'):
-                self._video_toggle_btn.setVisible(True)
             # Ne PAS connecter setVideoOutput tant que la preview est cachée
+        # Le bouton 🎬 n'est disponible QUE pour un média vidéo : sur un fichier
+        # audio (ou image), on le cache et on coupe toute preview résiduelle
+        # (couvre aussi la réutilisation de l'éditeur avec un autre média).
+        if hasattr(self, '_video_toggle_btn'):
+            self._video_toggle_btn.setVisible(_show_video_btn)
+            if not _show_video_btn:
+                self._video_toggle_btn.setChecked(False)
+                self._video_preview_container.hide()
 
         if self.media_path and not is_image and not self.is_tempo:
             self.preview_player.setSource(QUrl.fromLocalFile(self.media_path))
@@ -2489,9 +2503,15 @@ class LightTimelineEditor(QDialog):
                         'brightness': _faded_brightness(_c),
                     })
         if _seq_entries:
+            # Un clip de la piste Position actif verrouille le pan/tilt des lyres :
+            # les séquences ne doivent pas l'écraser (la piste Position prime).
+            _pos_locked_idxs = set()
+            if new_pos_clip is not None:
+                _pos_locked_idxs = {i for i, p in enumerate(projectors)
+                                    if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
             apply_seq_memories_htp(
                 _seq_entries, getattr(self.main_window, 'memories', None),
-                projectors, self.main_window)
+                projectors, self.main_window, lock_pantilt_idxs=_pos_locked_idxs)
 
         # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
         # La preview pilote l'effet elle-même, frame par frame, au rythme du

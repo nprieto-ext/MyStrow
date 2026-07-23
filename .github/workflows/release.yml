@@ -60,8 +60,26 @@ jobs:
           python _fetch_fixtures.py
           Remove-Item _fetch_fixtures.py
 
+      - name: Bundle ffmpeg (build statique autonome)
+        shell: pwsh
+        run: |
+          # On embarque un ffmpeg STATIQUE (essentials) → un ffmpeg.exe autonome,
+          # sans DLL, décodage audio robuste et transparent pour l'utilisateur
+          # (aucun ffmpeg requis dans son PATH). On évite volontairement le ffmpeg
+          # du runner qui peut être un build "shared" (dépendances DLL à côté).
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          Write-Host "Téléchargement ffmpeg statique (essentials)..."
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip -UseBasicParsing
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_dl -Force
+          $exe = Get-ChildItem ffmpeg_dl -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $exe) { throw "ffmpeg.exe introuvable dans l'archive téléchargée" }
+          Copy-Item $exe.FullName ffmpeg.exe -Force
+          Remove-Item ffmpeg.zip, ffmpeg_dl -Recurse -Force
+          $sz = [math]::Round((Get-Item ffmpeg.exe).Length/1MB, 1)
+          Write-Host "ffmpeg statique prêt à la racine ($sz Mo)"
+
       - name: Build EXE
-        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-binary "ftd2xx.dll;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow
+        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "AKAIAPCMINI.png;." --add-data "Novation.png;." --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow
 
       # ─────────────────────────────────────────────
       # SIGNATURE DE CODE WINDOWS — SSL.com eSigner (cloud, CSC)

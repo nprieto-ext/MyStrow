@@ -35,6 +35,24 @@ from pathlib import Path
 
 from i18n import tr
 
+
+def _ffmpeg_exe():
+    """Chemin de l'exécutable ffmpeg.
+
+    Priorité au binaire EMBARQUÉ (bundlé dans l'exe via PyInstaller → transparent
+    pour l'utilisateur, aucune installation ni ffmpeg dans le PATH requis). Repli
+    sur « ffmpeg » du PATH (utile en dev ou si un ffmpeg système est présent)."""
+    import os as _os
+    name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    try:
+        from core import resource_path
+        p = resource_path(name)
+        if _os.path.exists(p):
+            return p
+    except Exception:
+        pass
+    return "ffmpeg"
+
 # Map FR colour name → i18n key (used for both ColorPalette and PalettePanel)
 _COLOR_KEYS = {
     "Rouge":          "color_rouge",
@@ -202,7 +220,7 @@ def resolve_memory_projectors(mem_ref, cue_index, memories):
     return mem.get("projectors", [])
 
 
-def apply_seq_memories_htp(entries, memories, projectors, main_win):
+def apply_seq_memories_htp(entries, memories, projectors, main_win, lock_pantilt_idxs=None):
     """
     Applique une ou plusieurs mémoires de séquence en HTP sur les projecteurs.
 
@@ -243,11 +261,15 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win):
     fx_ids = getattr(main_win, '_fx_clip_ids', None)
     for i, (_eff, ps, brightness) in merged.items():
         proj = projectors[i]
-        # Pan/Tilt/Strobe/canaux bruts suivent la mémoire gagnante
-        if "pan" in ps:
-            proj.pan = ps["pan"]
-        if "tilt" in ps:
-            proj.tilt = ps["tilt"]
+        # Pan/Tilt/Strobe/canaux bruts suivent la mémoire gagnante — SAUF le
+        # pan/tilt des projecteurs sous contrôle d'un clip de la piste Position :
+        # cette piste dédiée PRIME sur le pan/tilt des séquences (sinon poser une
+        # séquence écrasait les positions réglées dans le REC Lumière).
+        if not (lock_pantilt_idxs and i in lock_pantilt_idxs):
+            if "pan" in ps:
+                proj.pan = ps["pan"]
+            if "tilt" in ps:
+                proj.tilt = ps["tilt"]
         proj.strobe_speed = int(ps.get("strobe_speed", 0))
         proj.channel_extras = dict(ps.get("channel_extras", {}) or {})
         if ps.get("level", 0) > 0:
@@ -2122,9 +2144,21 @@ class LightTrack(QWidget):
 
             thread = threading.Thread(target=_run, daemon=True)
             thread.start()
+            _ma_start = time.time()
+            _ma_timed_out = False
             while thread.is_alive():
                 if cancel_check and cancel_check():
                     return None
+                # Garde-fou : miniaudio (décodeur C) peut se figer INDÉFINIMENT sur
+                # certains MP3 (VBR / ID3 non standard). Sans cette borne, la boucle
+                # tournait à l'infini → « analyse bloquée » sur les machines SANS
+                # ffmpeg (le seul chemin qui atteint miniaudio ici — avec ffmpeg
+                # dans le PATH, l'étape précédente court-circuite). On abandonne
+                # après 30 s et on laisse le décodeur Qt natif prendre le relais.
+                if time.time() - _ma_start > 30:
+                    _ma_timed_out = True
+                    print("   ⚠️ miniaudio direct s'est figé (>30s) — abandon, bascule décodeur Qt")
+                    break
                 QApplication.processEvents()
                 time.sleep(0.05)
 
@@ -2133,6 +2167,10 @@ class LightTrack(QWidget):
                 return result_holder[0]
             if error_holder[0]:
                 print(f"   ⚠️ miniaudio direct echoue: {error_holder[0]}")
+            if _ma_timed_out:
+                # Le même décodeur relancé en subprocess se figerait pareil : on
+                # saute directement au décodeur Qt (géré par l'appelant).
+                return None
 
         # Essai 2 : subprocess vers Python 3.12 qui a miniaudio
         return self._decode_via_subprocess(audio_path, max_samples, cancel_check=cancel_check)
@@ -2256,7 +2294,7 @@ print(json.dumps(waveform))
             #   bloque ffmpeg en écriture → analyse figée à 0% jusqu'au timeout. C'est
             #   la cause du « bloqué à 0% » sur certains MP3 (plus longs / plus verbeux).
             cmd = [
-                'ffmpeg', '-nostdin', '-loglevel', 'error', '-nostats',
+                _ffmpeg_exe(), '-nostdin', '-loglevel', 'error', '-nostats',
                 '-i', media_path, '-vn', '-ac', '1', '-ar', '22050',
                 '-acodec', 'pcm_s16le', '-y', temp_wav
             ]
