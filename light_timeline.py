@@ -261,14 +261,18 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win, lock_pantilt
     fx_ids = getattr(main_win, '_fx_clip_ids', None)
     for i, (_eff, ps, brightness) in merged.items():
         proj = projectors[i]
-        # Pan/Tilt/Strobe/canaux bruts suivent la mémoire gagnante — SAUF le
-        # pan/tilt des projecteurs sous contrôle d'un clip de la piste Position :
-        # cette piste dédiée PRIME sur le pan/tilt des séquences (sinon poser une
-        # séquence écrasait les positions réglées dans le REC Lumière).
+        # Pan/Tilt/Strobe/canaux bruts suivent la mémoire gagnante — avec DEUX
+        # garde-fous sur le pan/tilt (sinon poser une séquence téléportait les
+        # lyres à la position capturée dans la mémoire) :
+        #  1) un clip de la piste Position actif PRIME (verrou explicite) ;
+        #  2) une mémoire capture le pan/tilt de TOUTES les lyres, même non
+        #     visées → on ne relaie que si la valeur n'est PAS au centre (32768).
+        #     Centre = « lyre non aimée dans la séquence » → on garde la position
+        #     posée dessous (piste Position / manuel). Par axe, indépendamment.
         if not (lock_pantilt_idxs and i in lock_pantilt_idxs):
-            if "pan" in ps:
+            if ps.get("pan", 32768) != 32768:
                 proj.pan = ps["pan"]
-            if "tilt" in ps:
+            if ps.get("tilt", 32768) != 32768:
                 proj.tilt = ps["tilt"]
         proj.strobe_speed = int(ps.get("strobe_speed", 0))
         proj.channel_extras = dict(ps.get("channel_extras", {}) or {})
@@ -312,6 +316,12 @@ def scope_layers_to_groups(layers, groups):
     for l in layers:
         l = dict(l)
         preset = l.get('target_preset', 'Tous')
+        # Cible « Sélection » : elle vise des projecteurs PRÉCIS et prime sur le
+        # groupe du clip → on ne la cloisonne surtout pas (sinon la sélection
+        # serait vidée si elle sort du périmètre du clip).
+        if preset == 'Selection':
+            out.append(l)
+            continue
         existing = l.get('target_groups')
         if existing:
             # Couche déjà restreinte → intersecter avec les groupes du clip.
@@ -3200,6 +3210,10 @@ print(json.dumps(waveform))
             else:
                 preset = getattr(ld, 'target_preset', 'Tous')
                 grps   = getattr(ld, 'target_groups', [])
+            # Cible « Sélection » : par projecteur, pas par groupe → ne contribue
+            # à aucune lettre-groupe (elle prime sur le groupe du clip ailleurs).
+            if preset == "Selection":
+                continue
             if preset in ("Tous", "Pair", "Impair", ""):
                 return []
             if preset:

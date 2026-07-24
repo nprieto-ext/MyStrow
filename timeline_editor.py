@@ -2620,51 +2620,66 @@ class LightTimelineEditor(QDialog):
         # Sauvegarder l'etat initial pour undo
         self.save_state()
 
+    @staticmethod
+    def _clip_to_dict(clip, track) -> dict:
+        """Sérialise UN clip en dict JSON — source unique pour la sauvegarde .tui,
+        l'autosave .lrec ET l'export manuel .lrec.
+
+        Avant, l'export manuel avait sa propre version appauvrie (sans memory_ref /
+        position_preset_idx / mouvement) : un clip de séquence ou de position
+        exporté puis réimporté retombait en simple bloc couleur (souvent noir).
+        Un seul writer garantit qu'export/import préserve TOUS les types de clip.
+        """
+        d = {
+            'track': track.name,
+            'start': clip.start_time,
+            'duration': clip.duration,
+            'color': clip.color.name(),
+            'intensity': clip.intensity,
+            'fade_in': getattr(clip, 'fade_in_duration', 0),
+            'fade_out': getattr(clip, 'fade_out_duration', 0),
+            'xfade': getattr(clip, 'xfade', 0),
+            'effect': getattr(clip, 'effect', None),
+            'effect_speed': getattr(clip, 'effect_speed', 50),
+            'effect_layers': getattr(clip, 'effect_layers', []),
+            'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
+            'effect_duration': getattr(clip, 'effect_duration', 0),
+            'effect_name': getattr(clip, 'effect_name', ''),
+            'effect_type': getattr(clip, 'effect_type', ''),
+            'effect_target_groups': getattr(clip, 'effect_target_groups', []),
+            'strobe_speed': getattr(clip, 'strobe_speed', 0),
+        }
+        if getattr(clip, 'color2', None):
+            d['color2'] = clip.color2.name()
+        # Clip de séquence AKAI (mémoire)
+        if getattr(clip, 'memory_ref', None):
+            d['memory_ref'] = list(clip.memory_ref)
+            d['memory_label'] = getattr(clip, 'memory_label', '')
+            if getattr(clip, 'cue_index', None) is not None:
+                d['cue_index'] = clip.cue_index
+        # Clip de position lyre
+        if getattr(clip, 'position_preset_idx', None) is not None:
+            d['position_preset_idx']  = clip.position_preset_idx
+            d['position_preset_name'] = getattr(clip, 'position_preset_name', '')
+        # Mouvement Pan/Tilt
+        if (getattr(clip, 'move_effect', None) or
+                getattr(clip, 'pan_start', 128) != 128 or getattr(clip, 'pan_end', 128) != 128 or
+                getattr(clip, 'tilt_start', 128) != 128 or getattr(clip, 'tilt_end', 128) != 128):
+            d.update({
+                'pan_start':      getattr(clip, 'pan_start', 128),
+                'tilt_start':     getattr(clip, 'tilt_start', 128),
+                'pan_end':        getattr(clip, 'pan_end', 128),
+                'tilt_end':       getattr(clip, 'tilt_end', 128),
+                'move_effect':    getattr(clip, 'move_effect', None),
+                'move_speed':     getattr(clip, 'move_speed', 0.5),
+                'move_amplitude': getattr(clip, 'move_amplitude', 60),
+            })
+        return d
+
     def _save_sequence_no_close(self):
         """Sauvegarde seq.sequences sans fermer l'éditeur (modif inline d'un clip)."""
-        all_clips = []
-        for track in self.tracks:
-            for clip in track.clips:
-                clip_data = {
-                    'track': track.name,
-                    'start': clip.start_time,
-                    'duration': clip.duration,
-                    'color': clip.color.name(),
-                    'intensity': clip.intensity,
-                    'fade_in': getattr(clip, 'fade_in_duration', 0),
-                    'fade_out': getattr(clip, 'fade_out_duration', 0),
-                    'xfade': getattr(clip, 'xfade', 0),
-                    'effect': getattr(clip, 'effect', None),
-                    'effect_speed': getattr(clip, 'effect_speed', 50),
-                    'effect_layers': getattr(clip, 'effect_layers', []),
-                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
-                    'effect_duration': getattr(clip, 'effect_duration', 0),
-                    'effect_name': getattr(clip, 'effect_name', ''),
-                    'effect_type': getattr(clip, 'effect_type', ''),
-                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
-                    'strobe_speed': getattr(clip, 'strobe_speed', 0),
-                }
-                if hasattr(clip, 'color2') and clip.color2:
-                    clip_data['color2'] = clip.color2.name()
-                if getattr(clip, 'memory_ref', None):
-                    clip_data['memory_ref'] = list(clip.memory_ref)
-                    clip_data['memory_label'] = getattr(clip, 'memory_label', '')
-                    if getattr(clip, 'cue_index', None) is not None:
-                        clip_data['cue_index'] = clip.cue_index
-                if getattr(clip, 'position_preset_idx', None) is not None:
-                    clip_data['position_preset_idx']  = clip.position_preset_idx
-                    clip_data['position_preset_name'] = getattr(clip, 'position_preset_name', '')
-                if (getattr(clip, 'move_effect', None) or
-                        getattr(clip, 'pan_start', 128) != 128 or getattr(clip, 'pan_end', 128) != 128 or
-                        getattr(clip, 'tilt_start', 128) != 128 or getattr(clip, 'tilt_end', 128) != 128):
-                    clip_data.update({
-                        'pan_start': getattr(clip, 'pan_start', 128), 'tilt_start': getattr(clip, 'tilt_start', 128),
-                        'pan_end': getattr(clip, 'pan_end', 128), 'tilt_end': getattr(clip, 'tilt_end', 128),
-                        'move_effect': getattr(clip, 'move_effect', None),
-                        'move_speed': getattr(clip, 'move_speed', 0.5),
-                        'move_amplitude': getattr(clip, 'move_amplitude', 60),
-                    })
-                all_clips.append(clip_data)
+        all_clips = [self._clip_to_dict(clip, track)
+                     for track in self.tracks for clip in track.clips]
         self.main_window.seq.sequences[self.media_row] = {
             'clips': all_clips,
             'duration': self.media_duration,
@@ -2674,57 +2689,8 @@ class LightTimelineEditor(QDialog):
 
     def save_sequence(self):
         """Sauvegarde la sequence au format .tui avec effets et bicolore"""
-        all_clips = []
-        for track in self.tracks:
-            for clip in track.clips:
-                clip_data = {
-                    'track': track.name,
-                    'start': clip.start_time,
-                    'duration': clip.duration,
-                    'color': clip.color.name(),
-                    'intensity': clip.intensity,
-                    'fade_in': getattr(clip, 'fade_in_duration', 0),
-                    'fade_out': getattr(clip, 'fade_out_duration', 0),
-                    'xfade': getattr(clip, 'xfade', 0),
-                    'effect': getattr(clip, 'effect', None),
-                    'effect_speed': getattr(clip, 'effect_speed', 50),
-                    'effect_layers': getattr(clip, 'effect_layers', []),
-                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
-                    'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':         getattr(clip, 'effect_name', ''),
-                    'effect_type':         getattr(clip, 'effect_type', ''),
-                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
-                    'strobe_speed': getattr(clip, 'strobe_speed', 0),
-                }
-
-                if hasattr(clip, 'color2') and clip.color2:
-                    clip_data['color2'] = clip.color2.name()
-                # Clip de séquence AKAI
-                if getattr(clip, 'memory_ref', None):
-                    clip_data['memory_ref'] = list(clip.memory_ref)
-                    clip_data['memory_label'] = getattr(clip, 'memory_label', '')
-                    if getattr(clip, 'cue_index', None) is not None:
-                        clip_data['cue_index'] = clip.cue_index
-                # Clip de position lyre
-                if getattr(clip, 'position_preset_idx', None) is not None:
-                    clip_data['position_preset_idx']  = clip.position_preset_idx
-                    clip_data['position_preset_name'] = getattr(clip, 'position_preset_name', '')
-                # Mouvement Pan/Tilt
-                if (getattr(clip, 'move_effect', None) or
-                        getattr(clip, 'pan_start', 128) != 128 or
-                        getattr(clip, 'pan_end', 128) != 128 or
-                        getattr(clip, 'tilt_start', 128) != 128 or
-                        getattr(clip, 'tilt_end', 128) != 128):
-                    clip_data.update({
-                        'pan_start':     getattr(clip, 'pan_start', 128),
-                        'tilt_start':    getattr(clip, 'tilt_start', 128),
-                        'pan_end':       getattr(clip, 'pan_end', 128),
-                        'tilt_end':      getattr(clip, 'tilt_end', 128),
-                        'move_effect':   getattr(clip, 'move_effect', None),
-                        'move_speed':    getattr(clip, 'move_speed', 0.5),
-                        'move_amplitude':getattr(clip, 'move_amplitude', 60),
-                    })
-                all_clips.append(clip_data)
+        all_clips = [self._clip_to_dict(clip, track)
+                     for track in self.tracks for clip in track.clips]
 
         self.main_window.seq.sequences[self.media_row] = {
             'clips': all_clips,
@@ -2762,30 +2728,11 @@ class LightTimelineEditor(QDialog):
         if not path:
             return
 
-        all_clips = []
-        for track in self.tracks:
-            for clip in track.clips:
-                clip_data = {
-                    'track': track.name,
-                    'start': clip.start_time,
-                    'duration': clip.duration,
-                    'color': clip.color.name(),
-                    'intensity': clip.intensity,
-                    'fade_in': getattr(clip, 'fade_in_duration', 0),
-                    'fade_out': getattr(clip, 'fade_out_duration', 0),
-                    'xfade': getattr(clip, 'xfade', 0),
-                    'effect': getattr(clip, 'effect', None),
-                    'effect_speed': getattr(clip, 'effect_speed', 50),
-                    'effect_layers': getattr(clip, 'effect_layers', []),
-                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
-                    'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':         getattr(clip, 'effect_name', ''),
-                    'effect_type':         getattr(clip, 'effect_type', ''),
-                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
-                }
-                if hasattr(clip, 'color2') and clip.color2:
-                    clip_data['color2'] = clip.color2.name()
-                all_clips.append(clip_data)
+        # MÊME writer que la sauvegarde .tui/autosave (_clip_to_dict) : sinon les
+        # clips de séquence (memory_ref) et de position (position_preset_idx)
+        # perdaient leur nature à l'export et revenaient en blocs couleur noirs.
+        all_clips = [self._clip_to_dict(clip, track)
+                     for track in self.tracks for clip in track.clips]
 
         data = {
             'version': 1,

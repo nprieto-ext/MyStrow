@@ -169,7 +169,14 @@ def _build_app():
             headers={
                 "Cache-Control":    "no-cache",
                 "X-Accel-Buffering":"no",
-                "Connection":       "keep-alive",
+                # NE PAS poser "Connection": c'est un header « hop-by-hop »
+                # interdit à une app WSGI (PEP 3333). Waitress (serveur utilisé
+                # dans l'exe gelé) applique la règle strictement et lève une
+                # AssertionError → /stream renvoie 500 → tout le flux SSE
+                # desktop→tablette meurt (projos/playlist/surface/couleurs muets)
+                # alors que /api/event (POST) marche encore. Le serveur de dev de
+                # Flask, lui, tolère ce header — d'où « OK en Python, KO en exe ».
+                # Le serveur gère la persistance de connexion lui-même.
             },
         )
         resp.call_on_close(lambda: cleanup(None))
@@ -285,6 +292,8 @@ def push_projectors_colors(projectors: list):
             _state["projectors"][i]["strobe"]     = p.get("strobe", 0)
             _state["projectors"][i]["pan"]        = p.get("pan", 32768)
             _state["projectors"][i]["tilt"]       = p.get("tilt", 32768)
+            _state["projectors"][i]["gobo"]        = p.get("gobo", 0)
+            _state["projectors"][i]["color_wheel"] = p.get("color_wheel", 0)
     if _running:
         _broadcast({"type": "proj_colors", "data": projectors})
 

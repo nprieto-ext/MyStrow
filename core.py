@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.73"
+VERSION = "3.1.74"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -282,6 +282,46 @@ def spread_rank(i, n, mode="lineaire"):
         h ^= h >> 16
         return (h % 10000) / 10000.0
     return i / n
+
+
+def projector_selection_keys(projectors):
+    """Clé (groupe, index_local) de chaque projecteur, dans l'ordre de la liste.
+
+    Même convention que le plan de feu (PlanDeFeu._local_idx_for) : un compteur
+    par groupe. C'est l'identité utilisée par la cible « Sélection » d'un effet
+    pour viser des projecteurs PRÉCIS, indépendamment de leur groupe. Doit rester
+    identique entre l'aperçu de l'éditeur (_compute_preview) et le moteur de
+    restitution (_update_effect_from_layers) — sinon l'aperçu diverge du show.
+    """
+    keys = []
+    counters = {}
+    for p in projectors:
+        g = getattr(p, 'group', '')
+        li = counters.get(g, 0)
+        counters[g] = li + 1
+        keys.append((g, li))
+    return keys
+
+
+def layer_selection_set(layer):
+    """Ensemble {(groupe, index_local)} ciblé par une couche « Sélection ».
+
+    Accepte un dict (moteur) ou un objet EffectLayer (éditeur). Retourne un set
+    de tuples pour un test d'appartenance O(1) ; vide si la couche ne cible pas
+    une sélection.
+    """
+    if isinstance(layer, dict):
+        sel = layer.get('target_selection') or []
+    else:
+        sel = getattr(layer, 'target_selection', None) or []
+    out = set()
+    for pair in sel:
+        try:
+            g, li = pair
+            out.add((g, int(li)))
+        except Exception:
+            continue
+    return out
 
 
 # ─── Libellés courts de canaux ────────────────────────────────────────────────

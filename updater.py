@@ -1430,17 +1430,39 @@ def _create_updater_shell(new_dmg: str, current_app: str) -> Path:
     """Crée le script shell de mise à jour Mac (DMG → remplacement .app + relance)."""
     script_path = Path(tempfile.gettempdir()) / "mystrow_update" / "update_mystrow.sh"
     script_path.parent.mkdir(parents=True, exist_ok=True)
+    # ⚠️ NE PAS utiliser `cp -rf "$APP" "{current_app}"` : quand le bundle de
+    # destination existe déjà (cas d'une MISE À JOUR), cp copie le nouveau .app
+    # DEDANS → /Applications/MyStrow.app/MyStrow.app, et le bundle qui tourne
+    # reste inchangé. Résultat : l'app se ferme, se rouvre sur l'ANCIENNE version,
+    # « mise à jour non prise en compte ». On remplace donc le bundle en entier.
     content = f"""#!/bin/bash
 sleep 2
 MOUNT="/tmp/mystrow_dmg_mount_$$"
 hdiutil attach "{new_dmg}" -nobrowse -quiet -mountpoint "$MOUNT" 2>/dev/null
 APP=$(ls -d "$MOUNT"/*.app 2>/dev/null | head -1)
+OK=0
 if [ -n "$APP" ]; then
-    cp -rf "$APP" "{current_app}"
-    hdiutil detach "$MOUNT" -quiet 2>/dev/null
+    # Staging dans le MÊME dossier que l'app (même volume → mv atomique, et ça
+    # sonde qu'on a les droits d'écriture avant de toucher à l'ancien bundle).
+    PARENT=$(dirname "{current_app}")
+    STAGE="$PARENT/.mystrow_update_$$.app"
+    rm -rf "$STAGE"
+    if ditto "$APP" "$STAGE" 2>/dev/null; then
+        rm -rf "{current_app}"
+        if mv "$STAGE" "{current_app}" 2>/dev/null; then
+            OK=1
+            # Sans ça, Gatekeeper peut bloquer la copie fraîche au 1er lancement.
+            xattr -dr com.apple.quarantine "{current_app}" 2>/dev/null
+        fi
+    fi
+    rm -rf "$STAGE" 2>/dev/null
+fi
+hdiutil detach "$MOUNT" -quiet 2>/dev/null
+if [ "$OK" = "1" ]; then
     open "{current_app}"
 else
-    hdiutil detach "$MOUNT" -quiet 2>/dev/null
+    # Échec (bundle introuvable ou droits insuffisants) : ouvrir le DMG pour que
+    # l'utilisateur glisse l'app à la main, plutôt que de relancer l'ancienne.
     open "{new_dmg}"
 fi
 rm -f "$0"

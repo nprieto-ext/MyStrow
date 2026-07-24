@@ -1421,6 +1421,9 @@ class FixtureCanvas(QWidget):
 
         # Mode lecture seule : aucune interaction souris (utilisé dans REC Lumière)
         self._read_only = False
+        # Sélection autorisée (clic + lasso) mais aucune édition (drag pan/tilt,
+        # menus couleur) : pour un plan « sélecteur » comme dans l'éditeur d'effet.
+        self._select_only = False
 
         self._guides      = []   # Smart Guides temporaires pendant le drag
 
@@ -2394,7 +2397,7 @@ class FixtureCanvas(QWidget):
         if event.button() == Qt.LeftButton:
             # Clic sur le faisceau d'une Moving Head → drag pan/tilt (en attente de mouvement)
             # Désactivé en mode édition (Patch DMX) : on veut seulement déplacer les fixtures.
-            beam_idx = self._beam_at(pos) if not self._editable else None
+            beam_idx = self._beam_at(pos) if (not self._editable and not self._select_only) else None
             if beam_idx is not None and idx is None:
                 proj = self.pdf.projectors[beam_idx]
                 self._pending_beam = {
@@ -2447,7 +2450,8 @@ class FixtureCanvas(QWidget):
                         if (p.group, li) in self.pdf.selected_lamps:
                             self._drag_starts[j] = self._get_norm_pos(j)
                         g_cnt[p.group] = li + 1
-                elif getattr(self.pdf.projectors[idx], 'fixture_type', '') == 'Moving Head':
+                elif (getattr(self.pdf.projectors[idx], 'fixture_type', '') == 'Moving Head'
+                        and not self._select_only):
                     # Clic sur le corps d'une Moving Head → drag pan/tilt (haut/bas=tilt, gauche/droite=pan)
                     if self._pt_floater is not None:
                         self._pt_floater.hide_floater()
@@ -2471,7 +2475,7 @@ class FixtureCanvas(QWidget):
                 self.update()
                 self._notify_cpb()
 
-        elif event.button() == Qt.RightButton:
+        elif event.button() == Qt.RightButton and not self._select_only:
             if idx is not None:
                 group, local_idx = self._local_idx(idx)
                 key = (group, local_idx)
@@ -2484,7 +2488,7 @@ class FixtureCanvas(QWidget):
                 self.pdf._show_canvas_context_menu(event.globalPos(), event.pos())
 
     def mouseDoubleClickEvent(self, event):
-        if self._read_only:
+        if self._read_only or self._select_only:
             return
         if event.button() == Qt.LeftButton:
             idx = self._fixture_at(event.pos())
@@ -2977,7 +2981,8 @@ class FixtureCanvas(QWidget):
 class PlanDeFeu(QFrame):
     """Visualisation du plan de feu - canvas 2D libre"""
 
-    def __init__(self, projectors, main_window=None, show_toolbar=True, interactive=None):
+    def __init__(self, projectors, main_window=None, show_toolbar=True, interactive=None,
+                 select_only=False):
         super().__init__()
         self.setFocusPolicy(Qt.ClickFocus)
         self.projectors = projectors
@@ -3138,8 +3143,14 @@ class PlanDeFeu(QFrame):
         # Interactivité découplée de la toolbar : par défaut suit show_toolbar
         # (comportement historique), mais REC Lumière demande explicitement un
         # plan interactif SANS toolbar (interactive=True) pour envoyer des états.
-        _interactive = show_toolbar if interactive is None else interactive
-        self.canvas._read_only = not _interactive
+        # `select_only` : plan interactif mais UNIQUEMENT pour sélectionner
+        # (clic + lasso) — pas de drag pan/tilt de lyre, pas de menus couleur.
+        # Utilisé par l'éditeur d'effet (cible « Sélection ») pour ne surtout pas
+        # modifier l'état réel des projecteurs pendant l'édition.
+        _interactive = True if select_only else (
+            show_toolbar if interactive is None else interactive)
+        self.canvas._read_only   = not _interactive
+        self.canvas._select_only = select_only
         root.addWidget(self.canvas)
 
         self._dirty = True  # Redessiner seulement si les données ont changé

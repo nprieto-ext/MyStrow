@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
-from core import SPREAD_MODES
+from core import projector_selection_keys, layer_selection_set
 
 
 # ─── Raccourci couche ──────────────────────────────────────────────────────────
@@ -438,7 +438,7 @@ BUILTIN_EFFECTS = [
 
 # ─── Constantes ───────────────────────────────────────────────────────────────
 
-FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
+FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Aléatoire", "Fixe", "Off"]
 
 # Formes de trajectoire pour les lyres (Pan/Tilt couplés mathématiquement)
 # Chaque forme : {"pan": (forme, phase 0-100, speed_mult), "tilt": (forme, phase, speed_mult)}
@@ -459,14 +459,19 @@ PAN_TILT_SHAPES = {
     "carre":     {"label": "□  Carré",      "pan": ("Triangle", 0,  1.0), "tilt": ("Triangle", 25, 1.0)},
     "libre":     {"label": "~  Libre",      "pan": (None,       0,  1.0), "tilt": (None,        0, 1.0)},
 }
-_PT_SHAPE_ORDER = ["cercle", "huit", "infini", "balancier", "pendule", "carre", "libre"]
+# « libre » reste défini dans PAN_TILT_SHAPES (compat des anciens effets) mais
+# n'est plus proposé dans le menu — le défaut est désormais « cercle ».
+_PT_SHAPE_ORDER = ["cercle", "huit", "infini", "balancier", "pendule", "carre"]
 
 # Migration des anciens noms (fichiers .tui sauvegardés avant la refonte)
 _FORME_COMPAT = {
     "Chase": "Flash", "Phase 1": "Montée", "Phase 2": "Descente",
     "Phase 3": "Triangle", "Sinusoïdale": "Sinus",
     "Toujours au max": "Fixe", "Toujours au min": "Off",
-    "Son": "Audio", "Pause": "Fixe",
+    "Son": "Aléatoire", "Pause": "Fixe",
+    # « Audio » = ancien nom trompeur (ne réagissait pas au son dans un effet,
+    # juste un scintillement aléatoire) → renommé « Aléatoire ».
+    "Audio": "Aléatoire",
 }
 
 
@@ -535,6 +540,21 @@ _COMBO_STYLE_COMPACT = """
 
 # ─── Modèle de données ────────────────────────────────────────────────────────
 
+def _norm_selection(raw):
+    """Normalise une liste de sélection en [[groupe, index_local(int)], ...].
+
+    Tolère les tuples/listes venus du JSON et ignore les entrées malformées.
+    """
+    out = []
+    for pair in (raw or []):
+        try:
+            g, li = pair
+            out.append([g, int(li)])
+        except Exception:
+            continue
+    return out
+
+
 class EffectLayer:
     """Données d'une couche d'effet (sérialisé en dict JSON dans LightClip)."""
 
@@ -543,6 +563,10 @@ class EffectLayer:
         self.forme         = "Sinus"
         self.target_preset = "Tous"
         self.target_groups = []
+        # Cible « Sélection » : liste figée de projecteurs précis, identifiés par
+        # (groupe, index_local) — même convention que le plan de feu. Active quand
+        # target_preset == "Selection". Prime sur le groupe d'un clip en REC.
+        self.target_selection = []
         self.speed     = 50    # vitesse du cycle 0-100
         self.size      = 100   # amplitude 0-100
         self.spread    = 0     # décalage de phase entre fixtures 0-100
@@ -558,7 +582,7 @@ class EffectLayer:
         self.group_amp = {}
         self.color1 = "#ff0000"
         self.color2 = "#0000ff"
-        self.mouvement_shape = "libre"  # forme de trajectoire Pan/Tilt
+        self.mouvement_shape = "cercle"  # forme de trajectoire Pan/Tilt (défaut)
         self.sym_pan = False            # miroir pan sur la 2e moitié des fixtures
         # Répartition du décalage entre fixtures (voir SPREAD_MODES) :
         # "lineaire" = chenillard 1,2,3… ; "miroir_in" = 1&8, 2&7, 3&6…
@@ -570,6 +594,7 @@ class EffectLayer:
             "forme":         self.forme,
             "target_preset": self.target_preset,
             "target_groups": list(self.target_groups),
+            "target_selection": [list(x) for x in (self.target_selection or [])],
             "speed":     self.speed,
             "size":      self.size,
             "spread":    self.spread,
@@ -596,6 +621,7 @@ class EffectLayer:
             layer.forme = "Sinus"
         layer.target_preset = d.get("target_preset", "Tous")
         layer.target_groups = list(d.get("target_groups", []))
+        layer.target_selection = _norm_selection(d.get("target_selection"))
         layer.speed     = d.get("speed",  50)
         layer.size      = d.get("size",   d.get("amplitude", 100))
         layer.spread    = d.get("spread", 0)
@@ -619,9 +645,11 @@ class EffectLayer:
         for ld in eff.get("layers", []):
             layer = cls()
             layer.attribute     = ld.get("attribute",     "Dimmer")
-            layer.forme         = ld.get("forme",         "Sinus")
+            _bf                 = ld.get("forme",         "Sinus")
+            layer.forme         = _FORME_COMPAT.get(_bf, _bf)  # ex. « Audio » → « Aléatoire »
             layer.target_preset = ld.get("target_preset", "Tous")
             layer.target_groups = list(ld.get("target_groups", []))
+            layer.target_selection = _norm_selection(ld.get("target_selection"))
             layer.speed     = ld.get("speed",  50)
             layer.size      = ld.get("size",   100)
             layer.spread    = ld.get("spread", 0)
@@ -827,7 +855,7 @@ class WaveformCanvas(QWidget):
         for xi in range(N):
             xn = xi / max(N - 1, 1)
             x  = (freq * self._t + xn * 2) % 1.0
-            if layer.forme == "Audio":
+            if layer.forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
                 rng = _rnd.Random(int(self._t * 12) * 100 + xi)
                 raw = max(0.0, min(1.0, 0.5 + rng.uniform(-0.4, 0.4)))
             else:
@@ -932,8 +960,16 @@ class TrajectoryCanvas(QWidget):
         p.drawLine(cx, mg, cx, h - mg)
 
         # ── Point animé ───────────────────────────────────────────────────────
-        freq   = max(0.01, layer.speed / 100.0) * 2.0
-        t_anim = self._t * freq
+        # Suit le VRAI mouvement : le SENS (direction) fait tourner le point dans
+        # le bon sens, comme les lyres (→ avant · ← inverse · ↔ aller-retour).
+        freq = max(0.01, layer.speed / 100.0) * 2.0
+        _d   = getattr(layer, 'direction', 1)
+        if _d == 0:      # aller-retour
+            t_anim = abs(2 * ((self._t * freq) % 1.0) - 1)
+        elif _d == -1:   # inverse
+            t_anim = -self._t * freq
+        else:            # avant
+            t_anim = self._t * freq
         ax  = int(mg + _pv(t_anim) * inner_w)
         ay  = int(mg + (1.0 - _tv(t_anim)) * inner_h)
 
@@ -960,7 +996,7 @@ LAYER_COLS = [
      "Tous, une sur deux, ou des groupes précis."),
     ("canal",  "CANAL",        76,
      "Le paramètre animé : intensité, couleur, position…"),
-    ("forme",  "FORME",       122,
+    ("forme",  "FORME",       166,
      "La courbe que suit le canal.\n"
      "Sur une couche Pan/Tilt : la trajectoire de la lyre."),
     ("vit",    "VIT",          42,
@@ -975,8 +1011,7 @@ LAYER_COLS = [
     ("dec",    "DÉC",          46,
      "Décalage entre fixtures — c'est lui qui crée le chenillard.\n"
      "0 = toutes ensemble · 180 = réparties sur un cycle · "
-     "360 = deux motifs simultanés.\n"
-     "L'ORDRE des fixtures se choisit avec RÉPARTITION."),
+     "360 = deux motifs simultanés."),
     ("fondu",  "FONDU",        46,
      "Adoucit la forme.\n0 = transitions franches, 100 = fondu doux.\n"
      "Combiné à la forme « Descente », c'est ce qui fait la traînée d'une comète."),
@@ -987,9 +1022,6 @@ LAYER_COLS = [
     ("sens",   "SENS",        102,   # 3 boutons carrés : voir LAYER_BTN
      "Sens de parcours des fixtures.\n"
      "→ direct · ← inverse · ↔ aller-retour"),
-    ("repart", "RÉPARTITION",  94,
-     "L'ordre dans lequel le DÉCALAGE parcourt les fixtures.\n"
-     "Linéaire = chenillard · Miroir (bords) = 1&8, puis 2&7…"),
     ("coul",   "COUL.",        68,   # 2 pastilles carrées
      "Couleur(s) de la couche — canaux RGB et Permut uniquement."),
     ("del",    "",             32, ""),
@@ -1020,7 +1052,7 @@ LAYER_TABLE_W = (sum(c[2] for c in LAYER_COLS)
 LAYER_COL_FLEX = {
     "cible": 3, "canal": 3, "forme": 5,
     "vit": 2, "amp": 2, "min": 2, "max": 2, "dec": 2, "fondu": 2, "depart": 2,
-    "sens": 0, "repart": 4, "coul": 0, "del": 0,
+    "sens": 0, "coul": 0, "del": 0,
 }
 
 _LAYER_COL_MIN = {c[0]: c[2] for c in LAYER_COLS}
@@ -1031,7 +1063,7 @@ _LAYER_COL_MIN = {c[0]: c[2] for c in LAYER_COLS}
 # et la liste de groupes), et les recopier séparément donnerait des lignes
 # incohérentes.
 LAYER_COL_ATTRS = {
-    "cible":  ("target_preset", "target_groups"),
+    "cible":  ("target_preset", "target_groups", "target_selection"),
     "canal":  ("attribute",),
     "forme":  ("forme", "mouvement_shape"),
     "vit":    ("speed",),
@@ -1042,7 +1074,6 @@ LAYER_COL_ATTRS = {
     "fondu":  ("fade",),
     "depart": ("phase",),
     "sens":   ("direction",),
-    "repart": ("spread_mode",),
     "coul":   ("color1", "color2"),
 }
 
@@ -1287,11 +1318,14 @@ class _CiblePopup(QFrame):
             "border-radius:3px;font-size:9px;font-weight:bold;padding:0 5px;}"
             "QPushButton:hover{border-color:#333;color:#888;}")
 
-    def __init__(self, layers, parent=None):
+    def __init__(self, layers, parent=None, sel_source=None):
         super().__init__(parent, Qt.Popup)
         # Une liste : une seule couche pour une cellule de ligne, toutes les
         # couches quand le popup est ouvert depuis l'en-tête de colonne.
         self.layers = layers if isinstance(layers, (list, tuple)) else [layers]
+        # Callable () -> iterable de (groupe, index_local) actuellement
+        # sélectionnés sur le plan de feu. None = fonction Sélection indisponible.
+        self._sel_source = sel_source
         self.setStyleSheet(
             "QFrame{background:#131313;border:1px solid #2a2a2a;border-radius:6px;}")
 
@@ -1323,6 +1357,19 @@ class _CiblePopup(QFrame):
             r2.addWidget(b)
         v.addLayout(r2)
 
+        # ── Cible « Sélection » : capture les projos sélectionnés sur le plan ──
+        if self._sel_source is not None:
+            b = QPushButton("Sélection du plan")
+            b.setFixedHeight(22)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(self._pick_selection)
+            self._btns["Selection"] = b
+            v.addWidget(b)
+            self._sel_hint = QLabel("")
+            self._sel_hint.setStyleSheet("color:#666;font-size:8px;")
+            self._sel_hint.setAlignment(Qt.AlignCenter)
+            v.addWidget(self._sel_hint)
+
         self._refresh()
 
     def _pick(self, val, preset):
@@ -1341,6 +1388,23 @@ class _CiblePopup(QFrame):
         for couche in self.layers:
             couche.target_preset = cible
             couche.target_groups = list(groupes)
+            # Quitter le mode « Sélection » dès qu'on repasse par un preset/groupe.
+            couche.target_selection = []
+        self._refresh()
+        self.changed.emit()
+
+    def _pick_selection(self):
+        """Capte les projecteurs sélectionnés sur le plan et fige la cible dessus."""
+        if self._sel_source is None:
+            return
+        try:
+            keys = [[g, int(li)] for g, li in self._sel_source()]
+        except Exception:
+            keys = []
+        for couche in self.layers:
+            couche.target_preset    = "Selection"
+            couche.target_groups    = []
+            couche.target_selection = [list(k) for k in keys]
         self._refresh()
         self.changed.emit()
 
@@ -1348,14 +1412,27 @@ class _CiblePopup(QFrame):
         ref = self.layers[0] if self.layers else None
         preset = (getattr(ref, 'target_preset', '') or "Tous") if ref else "Tous"
         groups = (getattr(ref, 'target_groups', None) or []) if ref else []
+        is_sel = (preset == "Selection")
         for label, b in self._btns.items():
-            active = (label in groups) if label not in ("Tous", "Pair", "Impair") \
-                else (label == preset and not groups)
+            if label == "Selection":
+                active = is_sel
+            elif label not in ("Tous", "Pair", "Impair"):
+                active = (label in groups) and not is_sel
+            else:
+                active = (label == preset and not groups and not is_sel)
             b.setStyleSheet(self._ON if active else self._OFF)
+        hint = getattr(self, '_sel_hint', None)
+        if hint is not None:
+            n = len(getattr(ref, 'target_selection', None) or []) if ref else 0
+            hint.setText(f"{n} projecteur(s) figé(s)" if is_sel
+                         else "sélectionne des projos sur le plan, puis clique")
 
 
 def cible_text(layer) -> str:
     """Résumé court de la cible, tel qu'affiché dans la cellule CIBLE."""
+    if (getattr(layer, 'target_preset', '') == "Selection"):
+        n = len(getattr(layer, 'target_selection', None) or [])
+        return f"Sél. ({n})"
     groups = getattr(layer, 'target_groups', None) or []
     if groups:
         return ",".join(groups)
@@ -1454,7 +1531,7 @@ class LayerRow(QFrame):
 
     _ATTRS  = ["Dimmer", "R", "V", "B", "W", "Ambre", "UV", "RGB", "Permut",
                "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
-    _FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
+    _FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Aléatoire", "Fixe", "Off"]
 
     _ATTR_COLORS = WaveformCanvas._ATTR_COLORS
 
@@ -1545,10 +1622,9 @@ class LayerRow(QFrame):
             self._boites[key] = self._mk_num(key, attr, maximum)
             h.addWidget(self._boites[key])
         self._boites["sens"]   = self._mk_sens()
-        self._boites["repart"] = self._mk_repart()
         self._boites["coul"]   = self._mk_coul()
         self._boites["del"]    = self._mk_del()
-        for cle in ("sens", "repart", "coul", "del"):
+        for cle in ("sens", "coul", "del"):
             h.addWidget(self._boites[cle])
 
         # Cadre de colonne sélectionnée : transparent aux clics, sinon il
@@ -1600,11 +1676,24 @@ class LayerRow(QFrame):
         return b
 
     def _open_cible_popup(self):
-        pop = _CiblePopup([self.layer], self)
+        pop = _CiblePopup([self.layer], self, sel_source=self._plan_selection_source())
         pop.changed.connect(self._on_cible_changed)
         pop.adjustSize()
         pop.move(self._cible_btn.mapToGlobal(QPoint(0, self._cible_btn.height() + 2)))
         pop.show()
+
+    def _plan_selection_source(self):
+        """Callable () -> sélection courante du plan de feu de l'éditeur, ou None.
+
+        Remonte la chaîne des parents jusqu'au dialogue qui porte `_plan_widget`.
+        """
+        w = self.parent()
+        while w is not None:
+            plan = getattr(w, '_plan_widget', None)
+            if plan is not None and hasattr(plan, 'selected_lamps'):
+                return lambda pl=plan: set(pl.selected_lamps)
+            w = w.parent()
+        return None
 
     def _on_cible_changed(self):
         self._cible_btn.setText(cible_text(self.layer))
@@ -1629,7 +1718,7 @@ class LayerRow(QFrame):
         bh.setContentsMargins(0, 0, 0, 0)
         bh.setSpacing(4)
 
-        self._wave = WaveformCanvas(self.layer, w=44, h=LAYER_CELL_H - 4)
+        self._wave = WaveformCanvas(self.layer, w=88, h=LAYER_CELL_H - 4)
         bh.addWidget(self._wave)
 
         self._forme_cb = QComboBox()
@@ -1651,7 +1740,7 @@ class LayerRow(QFrame):
         cur = getattr(self.layer, 'mouvement_shape', 'libre')
         self._shape_cb.setCurrentIndex(
             _PT_SHAPE_ORDER.index(cur) if cur in _PT_SHAPE_ORDER
-            else len(_PT_SHAPE_ORDER) - 1)
+            else 0)   # forme retirée (ex. « libre ») → afficher « cercle »
         self._shape_cb.setFixedSize(96, LAYER_CELL_H)
         self._shape_cb.setStyleSheet(_COMBO_STYLE_COMPACT)
         self._shape_cb.currentIndexChanged.connect(self._on_shape_changed)
@@ -1688,19 +1777,29 @@ class LayerRow(QFrame):
                 and self.layer.forme in self._FORMES_CONSTANTES
                 and not getattr(self.layer, 'fade', 0))
 
+        # Sortie = (MIN + forme×(MAX−MIN)) × AMP. Sur une forme constante :
+        #  · « Fixe » (forme=1) → sortie = MAX×AMP : MIN s'annule → inerte.
+        #  · « Off »  (forme=0) → sortie = MIN×AMP : MAX s'annule → inerte.
+        # AMP et le niveau restant (MAX sur Fixe / MIN sur Off) restent utiles.
+        dead_level = None
+        if gele:
+            dead_level = "min" if self.layer.forme == "Fixe" else "max"
+
         for key in ("vit", "dec", "depart"):
             self._cells[key].setEnabled(not gele)
         self._sens_box.setEnabled(not gele)
-        self._repart_cb.setEnabled(not gele)
+        self._cells["min"].setEnabled(dead_level != "min")
+        self._cells["max"].setEnabled(dead_level != "max")
 
         tip = ("Sans effet sur une forme constante : ouvrez le FONDU pour "
                "réanimer la couche.")
         for w, key in ((self._cells["vit"],    "vit"),
                        (self._cells["dec"],    "dec"),
                        (self._cells["depart"], "depart"),
-                       (self._sens_box,        "sens"),
-                       (self._repart_cb,       "repart")):
+                       (self._sens_box,        "sens")):
             w.setToolTip(tip if gele else self._tip[key])
+        self._cells["min"].setToolTip(tip if dead_level == "min" else self._tip["min"])
+        self._cells["max"].setToolTip(tip if dead_level == "max" else self._tip["max"])
 
     def _mk_num(self, key, attr, maximum):
         cell = _NumCell(getattr(self.layer, attr, 0), maximum,
@@ -1744,7 +1843,7 @@ class LayerRow(QFrame):
         les couches, chaque ligne se remet ensuite en accord. Reconstruire les
         lignes à chaque cran de glisser détruirait le widget en cours d'usage.
         """
-        blocs = (self._attr_cb, self._forme_cb, self._shape_cb, self._repart_cb)
+        blocs = (self._attr_cb, self._forme_cb, self._shape_cb)
         for w in blocs:
             w.blockSignals(True)
 
@@ -1757,11 +1856,7 @@ class LayerRow(QFrame):
         shape = getattr(self.layer, 'mouvement_shape', 'libre')
         self._shape_cb.setCurrentIndex(
             _PT_SHAPE_ORDER.index(shape) if shape in _PT_SHAPE_ORDER
-            else len(_PT_SHAPE_ORDER) - 1)
-
-        mode = getattr(self.layer, 'spread_mode', 'lineaire')
-        self._repart_cb.setCurrentIndex(
-            next((i for i, m in enumerate(SPREAD_MODES) if m[0] == mode), 0))
+            else 0)   # forme retirée (ex. « libre ») → afficher « cercle »
 
         for w in blocs:
             w.blockSignals(False)
@@ -1782,21 +1877,6 @@ class LayerRow(QFrame):
         self._refresh_color_btns()
         self._sync_forme_mode()
         self._sync_enabled_state()
-
-    def _mk_repart(self):
-        cb = QComboBox()
-        for mode_id, label, tip in SPREAD_MODES:
-            cb.addItem(label, mode_id)
-            cb.setItemData(cb.count() - 1, tip, Qt.ToolTipRole)
-        cur = getattr(self.layer, 'spread_mode', 'lineaire')
-        idx = next((i for i, m in enumerate(SPREAD_MODES) if m[0] == cur), 0)
-        cb.setCurrentIndex(idx)
-        cb.setFixedSize(self._w["repart"], LAYER_CELL_H)
-        cb.setStyleSheet(_COMBO_STYLE_COMPACT)
-        cb.setToolTip(self._tip["repart"])
-        cb.currentIndexChanged.connect(self._on_repart)
-        self._repart_cb = cb
-        return cb
 
     def _mk_coul(self):
         box = QWidget()
@@ -1861,10 +1941,6 @@ class LayerRow(QFrame):
         self.layer.mouvement_shape = self._shape_cb.currentData() or "libre"
         self._traj.update()
         self._emit("forme")
-
-    def _on_repart(self, _idx):
-        self.layer.spread_mode = self._repart_cb.currentData() or "lineaire"
-        self._emit("repart")
 
     def _on_sens(self, val):
         self.layer.direction = val
@@ -3117,7 +3193,11 @@ class EffectEditorDialog(QDialog):
         try:
             from plan_de_feu import PlanDeFeu
             projectors = getattr(self._main_window, 'projectors', [])
-            self._plan_widget = PlanDeFeu(projectors, self._main_window, show_toolbar=False)
+            # select_only : le plan sert à SÉLECTIONNER des projos pour la cible
+            # « Sélection » (clic + lasso), sans jamais modifier leur état réel
+            # (pas de drag pan/tilt ni de menus couleur) pendant l'édition d'effet.
+            self._plan_widget = PlanDeFeu(projectors, self._main_window,
+                                          show_toolbar=False, select_only=True)
             pv.addWidget(self._plan_widget, 1)
         except Exception:
             self._plan_widget = None
@@ -3477,6 +3557,14 @@ class EffectEditorDialog(QDialog):
         n      = len(projectors)
         result = {}
 
+        # Cible « Sélection » : clés (groupe, index_local) sur la liste COMPLÈTE
+        # (convention plan de feu) + set par couche pour un test O(1). Identique
+        # au moteur live pour la parité aperçu/show.
+        _all_proj = getattr(self._main_window, 'projectors', [])
+        _sel_key_by_id = {id(p): k for p, k in
+                          zip(_all_proj, projector_selection_keys(_all_proj))}
+        _layer_sel = {id(_l): layer_selection_set(_l) for _l in self._layers}
+
         # Amplitude min/max par groupe (répliquée sur les couches) — parité moteur.
         _group_amp = {}
         for _l in self._layers:
@@ -3500,9 +3588,12 @@ class EffectEditorDialog(QDialog):
             for layer in self._layers:
                 preset = layer.target_preset
                 groups = list(getattr(layer, 'target_groups', []))
-                if preset == "Pair"   and i % 2 != 0: continue
-                if preset == "Impair" and i % 2 != 1: continue
-                if preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
+                if preset == "Selection":
+                    if _sel_key_by_id.get(id(proj)) not in _layer_sel.get(id(layer), ()):
+                        continue
+                elif preset == "Pair"   and i % 2 != 0: continue
+                elif preset == "Impair" and i % 2 != 1: continue
+                elif preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
                 if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
 
                 freq      = (0.05 + layer.speed / 100.0 * 7.0) * fader_mult
@@ -3521,7 +3612,7 @@ class EffectEditorDialog(QDialog):
                 else:                  # avant (défaut)
                     x = (freq * t + i / max(n, 1) * spread + phase) % 1.0
 
-                if layer.forme == "Audio":
+                if layer.forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
                     rng = _rnd.Random(int(t * 15) * 100 + i)
                     raw = max(0.0, min(1.0, 0.5 + rng.uniform(-0.4, 0.4)))
                 else:
@@ -3583,16 +3674,23 @@ class EffectEditorDialog(QDialog):
                     pt_amp   = (layer.size / 100.0) * 8192
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and i * 2 >= n) else 1
+                    # SENS de la trajectoire : → avant · ← inverse (la lyre tourne
+                    # dans l'autre sens) · ↔ aller-retour. On agit sur le TEMPS,
+                    # pas sur l'étalement (c'est le sens de MOUVEMENT de chaque lyre).
+                    def _pt_time(freq, _d=direction):
+                        if _d == 0:   return abs(2 * ((freq * t) % 1.0) - 1)
+                        if _d == -1:  return -freq * t
+                        return freq * t
                     p_forme, p_ph, p_mult = pan_cfg
                     if p_forme and p_forme != "Fixe":
                         p_freq = (0.05 + layer.speed * p_mult / 100.0 * 7.0) * fader_mult
-                        p_x    = (p_freq * t + i / max(n, 1) * spread + phase + p_ph / 100.0) % 1.0
+                        p_x    = (_pt_time(p_freq) + i / max(n, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
                         pan_v  = int(max(0, min(65535, 32768 + pan_sign * (p_raw - 0.5) * 2 * pt_amp * PAN_ANGULAR_RATIO)))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
                         t_freq = (0.05 + layer.speed * t_mult / 100.0 * 7.0) * fader_mult
-                        t_x    = (t_freq * t + i / max(n, 1) * spread + phase + t_ph / 100.0) % 1.0
+                        t_x    = (_pt_time(t_freq) + i / max(n, 1) * spread + phase + t_ph / 100.0) % 1.0
                         t_raw  = self._wave(t_forme, t_x)
                         tilt_v = int(max(0, min(65535, 32768 + (t_raw - 0.5) * 2 * pt_amp)))
                     has_movement = True

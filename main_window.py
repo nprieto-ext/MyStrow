@@ -184,7 +184,8 @@ except ImportError:
 from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
-    spread_rank, SPREAD_MODES, channel_label
+    spread_rank, SPREAD_MODES, channel_label,
+    projector_selection_keys, layer_selection_set,
 )
 from i18n import get_language, set_language, tr
 from projector import Projector
@@ -4737,6 +4738,36 @@ class MainWindow(QMainWindow):
         # Envoi DMX immediat sans attendre le prochain tick
         self.send_dmx_update()
 
+    # Slots génériques de roue de couleurs (repli quand la fixture n'a pas de
+    # color_wheel_slots OFL) — mêmes valeurs que le menu du plan de feu (parité).
+    _GENERIC_WHEEL_SLOTS = [
+        {"dmx": 0, "color": "#ffffff"}, {"dmx": 20, "color": "#ff3300"},
+        {"dmx": 42, "color": "#ff8800"}, {"dmx": 64, "color": "#ffff00"},
+        {"dmx": 85, "color": "#00cc44"}, {"dmx": 106, "color": "#00ccff"},
+        {"dmx": 128, "color": "#0044ff"}, {"dmx": 149, "color": "#cc00ff"},
+        {"dmx": 170, "color": "#ff99cc"}, {"dmx": 192, "color": "#ffee88"},
+    ]
+
+    def _apply_color_wheel_dmx(self, p, dmx: int) -> None:
+        """Pose une valeur DMX de roue de couleurs sur un projecteur (chemin tablette).
+
+        Miroir de `_on_cw` du plan de feu : fixe `color_wheel`, puis reflète la
+        couleur du slot le plus proche sur `base_color`/`color` (scène 2D + preview)
+        et prend la main manuelle pour que les mémoires ne l'écrasent pas."""
+        dmx = max(0, min(255, int(dmx)))
+        p.color_wheel = dmx
+        slots = getattr(p, 'color_wheel_slots', []) or self._GENERIC_WHEEL_SLOTS
+        passed = [s for s in slots if s.get("dmx", 0) <= dmx]
+        closest = (max(passed, key=lambda s: s.get("dmx", 0)) if passed
+                   else min(slots, key=lambda s: s.get("dmx", 0)))
+        qc = QColor(closest.get("color", "#ffffff"))
+        if p.level == 0:
+            p.level = 100
+        br = p.level / 100.0
+        p.base_color = qc
+        p.color = QColor(int(qc.red() * br), int(qc.green() * br), int(qc.blue() * br))
+        p._manual_color = True
+
     def _update_color_wheel(self, p, color: QColor) -> None:
         """Met à jour p.color_wheel pour les lyres avec roue de couleurs."""
         profile = getattr(p, 'dmx_profile', [])
@@ -7859,11 +7890,25 @@ class MainWindow(QMainWindow):
                             "G": "groupe_g", "H": "groupe_h"}
         target_letters = cfg.get("target_groups", [])
         allowed_groups = {_LETTER_TO_GROUP[l] for l in target_letters if l in _LETTER_TO_GROUP}
+        # Cible « Sélection » : une couche qui vise des projos précis doit pouvoir
+        # les atteindre HORS du groupe du clip (elle prime sur le groupe). Dès
+        # qu'une couche est en mode Sélection, on neutralise le pré-filtre par
+        # groupe du cfg → la liste = tous les projos (comme l'aperçu, qui n'a
+        # jamais eu ce pré-filtre) : parité aperçu/show conservée.
+        _has_selection = any(ld.get("target_preset") == "Selection" for ld in layers_dicts)
+        if _has_selection:
+            allowed_groups = set()
         projectors = [p for p in self.projectors
                       if p.group != "fumee" and (not allowed_groups or p.group in allowed_groups)]
         n = len(projectors)
         if n == 0:
             return
+
+        # Clés (groupe, index_local) sur la liste COMPLÈTE (convention plan de feu)
+        # + set par couche → test d'appartenance O(1). Identique à _compute_preview.
+        _sel_key_by_id = {id(p): k for p, k in
+                          zip(self.projectors, projector_selection_keys(self.projectors))}
+        _layer_sel = {id(ld): layer_selection_set(ld) for ld in layers_dicts}
 
         _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
         _mh_idx   = {id(p): j for j, p in enumerate(_mh_projs)}
@@ -7927,9 +7972,12 @@ class MainWindow(QMainWindow):
             for ld in layers_dicts:
                 preset = ld.get("target_preset", "Tous")
                 groups = ld.get("target_groups", [])
-                if preset == "Pair"   and i % 2 != 0: continue
-                if preset == "Impair" and i % 2 != 1: continue
-                if preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
+                if preset == "Selection":
+                    if _sel_key_by_id.get(id(proj)) not in _layer_sel.get(id(ld), ()):
+                        continue
+                elif preset == "Pair"   and i % 2 != 0: continue
+                elif preset == "Impair" and i % 2 != 1: continue
+                elif preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
                 if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
                 # Ciblage explicite → l'effet peut allumer ce projo même s'il est éteint
                 if preset != "Tous" or groups:
@@ -7963,7 +8011,7 @@ class MainWindow(QMainWindow):
                 else:
                     x = (freq * t + _rk * sp + phase) % 1.0
 
-                if forme == "Audio":
+                if forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
                     import random as _rand
                     raw = _rand.random()
                 else:
@@ -8016,7 +8064,7 @@ class MainWindow(QMainWindow):
                     # tous les projos et /180, trop faible pour les lyres.
                     _mh_i_mv = _mh_idx.get(id(proj), i)
                     _sp_move = min(1.0, spread / 100.0)
-                    if forme == "Audio":
+                    if forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
                         raw_mv = raw
                     else:
                         if direction == 0:
@@ -8064,10 +8112,18 @@ class MainWindow(QMainWindow):
                     # potard ne re-enroule plus les lyres (plus de re-synchronisation).
                     _sp_move = min(1.0, spread / 100.0)
 
+                    # SENS de la trajectoire : → avant · ← inverse (la lyre tourne
+                    # dans l'autre sens) · ↔ aller-retour. Agit sur le TEMPS (sens de
+                    # mouvement de la lyre). Parité avec l'aperçu de l'éditeur.
+                    def _pt_time(freq, _d=direction):
+                        if _d == 0:   return abs(2 * ((freq * t) % 1.0) - 1)
+                        if _d == -1:  return -freq * t
+                        return freq * t
+
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
                         pan_freq = (0.05 + speed * pan_mult / 100.0 * 7.0) * fader_mult
-                        pan_x = (pan_freq * t + _mh_i / _mh_n * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
+                        pan_x = (_pt_time(pan_freq) + _mh_i / _mh_n * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = saved[3] if saved and len(saved) > 3 else 32768
                         proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude * _PAN_RATIO)))
@@ -8075,7 +8131,7 @@ class MainWindow(QMainWindow):
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
                         tilt_freq = (0.05 + speed * tilt_mult / 100.0 * 7.0) * fader_mult
-                        tilt_x = (tilt_freq * t + _mh_i / _mh_n * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
+                        tilt_x = (_pt_time(tilt_freq) + _mh_i / _mh_n * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = saved[4] if saved and len(saved) > 4 else 32768
                         proj.tilt = int(max(0, min(65535, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
@@ -13006,8 +13062,64 @@ class MainWindow(QMainWindow):
                 "is_lyre":    getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'),
                 "pan":        getattr(p, 'pan',  32768),
                 "tilt":       getattr(p, 'tilt', 32768),
+                # Gobo + roue de couleurs : la tablette n'affiche ces contrôles que
+                # si la fixture possède le canal (has_gobo / has_wheel), et propose
+                # les vrais slots (OFL) sinon des slots génériques.
+                **self._proj_gobo_wheel_meta(p),
             })
         return out
+
+    @staticmethod
+    def _proj_gobo_wheel_meta(p) -> dict:
+        """Méta gobo/roue de couleurs d'un projecteur pour la tablette.
+
+        has_gobo/has_wheel = présence du canal (profil DMX). gobo/color_wheel =
+        valeur DMX courante. gobo_slots/wheel_slots = presets réels (OFL) ou repli
+        générique — mêmes valeurs que le menu du plan de feu (parité)."""
+        prof = getattr(p, 'dmx_profile', []) or []
+        has_rgb = 'R' in prof
+        has_gobo  = ('Gobo1' in prof)
+        has_wheel = ('ColorWheel' in prof) and not has_rgb
+
+        gobo_slots = []
+        if has_gobo:
+            _ofl = getattr(p, 'gobo_wheel_slots', []) or []
+            if _ofl:
+                gobo_slots = [{"dmx": int(s.get('dmx', 0)),
+                               "label": (s.get('name', '') or 'Gobo')[:8]} for s in _ofl]
+            else:
+                gobo_slots = [{"dmx": i * 32, "label": ("Open" if i == 0 else f"G{i}")}
+                              for i in range(8)]
+
+        wheel_slots = []
+        if has_wheel:
+            _ofl = getattr(p, 'color_wheel_slots', []) or []
+            if _ofl:
+                wheel_slots = [{"dmx": int(s.get('dmx', 0)),
+                                "color": s.get('color', '#ffffff'),
+                                "name": (s.get('name', '') or '')[:8]} for s in _ofl]
+            else:
+                wheel_slots = [
+                    {"dmx": 0, "color": "#ffffff", "name": "Open"},
+                    {"dmx": 20, "color": "#ff3300", "name": "Rouge"},
+                    {"dmx": 42, "color": "#ff8800", "name": "Orange"},
+                    {"dmx": 64, "color": "#ffff00", "name": "Jaune"},
+                    {"dmx": 85, "color": "#00cc44", "name": "Vert"},
+                    {"dmx": 106, "color": "#00ccff", "name": "Cyan"},
+                    {"dmx": 128, "color": "#0044ff", "name": "Bleu"},
+                    {"dmx": 149, "color": "#cc00ff", "name": "Magenta"},
+                    {"dmx": 170, "color": "#ff99cc", "name": "Rose"},
+                    {"dmx": 192, "color": "#ffee88", "name": "CTO"},
+                ]
+
+        return {
+            "has_gobo":    has_gobo,
+            "gobo":        int(getattr(p, 'gobo', 0)),
+            "gobo_slots":  gobo_slots,
+            "has_wheel":   has_wheel,
+            "color_wheel": int(getattr(p, 'color_wheel', 0)),
+            "wheel_slots": wheel_slots,
+        }
 
     def _surface_snapshot(self) -> dict:
         """Layout de la surface d'exécuteurs (fenêtre EXT) pour la tablette :
@@ -13115,6 +13227,28 @@ class MainWindow(QMainWindow):
                             li = group_lists[proj.group].index(idx)
                             targets.append((proj, proj.group, li))
                         self.plan_de_feu._apply_color_to_targets(targets, QColor(hex_color))
+                        # Lyres à roue de couleurs (sans RGB) : faire suivre la roue
+                        # sur le slot le plus proche — sinon poser une couleur ne fait
+                        # rien sur ces fixtures. No-op pour les fixtures RGB.
+                        for proj, _g, _i in targets:
+                            self._update_color_wheel(proj, QColor(hex_color))
+                        self.send_dmx_update()
+                        self.plan_de_feu.mark_dirty()
+                elif etype == "proj_gobo":
+                    val = max(0, min(255, int(ev.get("value", 0))))
+                    for idx in _ev_idxs(ev):
+                        if 0 <= idx < len(self.projectors):
+                            self.projectors[idx].gobo = val
+                    self.send_dmx_update()
+                    if hasattr(self, 'plan_de_feu'):
+                        self.plan_de_feu.mark_dirty()
+                elif etype == "proj_colorwheel":
+                    val = max(0, min(255, int(ev.get("value", 0))))
+                    for idx in _ev_idxs(ev):
+                        if 0 <= idx < len(self.projectors):
+                            self._apply_color_wheel_dmx(self.projectors[idx], val)
+                    self.send_dmx_update()
+                    if hasattr(self, 'plan_de_feu'):
                         self.plan_de_feu.mark_dirty()
                 elif etype == "proj_strobe":
                     val = int(ev.get("value", 0))
@@ -13221,6 +13355,19 @@ class MainWindow(QMainWindow):
                     self._tablet_last_carts[i] = key
                     _ts.push_cart(i, cart.media_title or "", cart.state)
 
+            # Boutons d'effet — refléter l'état actif (carré vert) quel que soit
+            # le déclencheur (AKAI, tablette, UI, superposition). On NE PEUT PAS
+            # compter sur la LED : sa mise à jour est conditionnée à un AKAI
+            # physique branché (set_pad_led n'est appelé que si midi_out existe),
+            # donc l'observer LED ne se déclenche pas en usage tablette seule.
+            if not hasattr(self, '_tablet_last_effects'):
+                self._tablet_last_effects = {}
+            for _r, _btn in enumerate(getattr(self, 'effect_buttons', [])):
+                _act = bool(getattr(_btn, 'active', False))
+                if self._tablet_last_effects.get(_r) != _act:
+                    self._tablet_last_effects[_r] = _act
+                    _ts.push_effect(_r, _act)
+
             # Projecteurs — mise à jour couleurs/niveaux
             snap = self._proj_snapshot()
             colors_only = [{"color": p["color"], "base_color": p.get("base_color","#ffffff"),
@@ -13232,7 +13379,10 @@ class MainWindow(QMainWindow):
                             # Pan/tilt inclus → un mouvement de lyre (même sans
                             # changement de couleur) repousse l'état à la tablette
                             # pour que les faisceaux bougent en direct sur la scène.
-                            "pan": p.get("pan", 32768), "tilt": p.get("tilt", 32768)}
+                            "pan": p.get("pan", 32768), "tilt": p.get("tilt", 32768),
+                            # Gobo/roue courants → un changement fait desktop se
+                            # reflète sur le panneau de la tablette.
+                            "gobo": p.get("gobo", 0), "color_wheel": p.get("color_wheel", 0)}
                            for p in snap]
             if getattr(self, '_tablet_last_proj_colors', None) != colors_only:
                 self._tablet_last_proj_colors = colors_only
