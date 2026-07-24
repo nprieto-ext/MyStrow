@@ -63,20 +63,71 @@ jobs:
       - name: Bundle ffmpeg (build statique autonome)
         shell: pwsh
         run: |
-          # On embarque un ffmpeg STATIQUE (essentials) → un ffmpeg.exe autonome,
-          # sans DLL, décodage audio robuste et transparent pour l'utilisateur
-          # (aucun ffmpeg requis dans son PATH). On évite volontairement le ffmpeg
-          # du runner qui peut être un build "shared" (dépendances DLL à côté).
-          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-          Write-Host "Téléchargement ffmpeg statique (essentials)..."
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip -UseBasicParsing
+          # On embarque un ffmpeg STATIQUE → un ffmpeg.exe autonome, sans DLL,
+          # décodage audio robuste et transparent pour l'utilisateur (aucun
+          # ffmpeg requis dans son PATH). On évite volontairement le ffmpeg du
+          # runner, qui peut être un build "shared" (dépendances DLL à côté).
+          #
+          # Plusieurs sources + réessais : une release ne doit pas échouer parce
+          # qu'un hébergeur tiers renvoie un 503 passager — c'est exactement ce
+          # qui est arrivé avec gyan.dev. La source primaire est hébergée par
+          # GitHub, donc sur le même réseau que le runner. Les deux fournissent
+          # un build statique GPL équivalent.
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference    = 'SilentlyContinue'   # sinon le téléchargement rame
+          $sources = @(
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          )
+          $obtenu = $null
+          foreach ($url in $sources) {
+            if ($obtenu) { break }
+            foreach ($essai in 1..3) {
+              try {
+                Write-Host "ffmpeg — $url  (essai $essai/3)"
+                if (Test-Path ffmpeg.zip) { Remove-Item ffmpeg.zip -Force }
+                Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip -UseBasicParsing -TimeoutSec 300
+                # Une page d'erreur HTML enregistrée en .zip pèse quelques Ko :
+                # sans ce contrôle, l'échec ne se verrait qu'à l'extraction.
+                $mo = (Get-Item ffmpeg.zip).Length / 1MB
+                if ($mo -lt 10) { throw "archive suspecte ($([math]::Round($mo,2)) Mo)" }
+                $obtenu = $url
+                break
+              } catch {
+                Write-Host "  échec : $($_.Exception.Message)"
+                if (Test-Path ffmpeg.zip) { Remove-Item ffmpeg.zip -Force }
+                if ($essai -lt 3) { Start-Sleep -Seconds (10 * $essai) }
+              }
+            }
+          }
+          if (-not $obtenu) {
+            throw "ffmpeg indisponible sur toutes les sources — build interrompu (mieux vaut échouer que livrer un exe sans ffmpeg)"
+          }
+
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_dl -Force
           $exe = Get-ChildItem ffmpeg_dl -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           if (-not $exe) { throw "ffmpeg.exe introuvable dans l'archive téléchargée" }
           Copy-Item $exe.FullName ffmpeg.exe -Force
           Remove-Item ffmpeg.zip, ffmpeg_dl -Recurse -Force
+
+          # Le binaire doit tourner SEUL : un build "shared" démarrerait ici (les
+          # DLL sont encore à côté) mais planterait chez le client une fois isolé
+          # dans le bundle. On l'exécute depuis un dossier vide pour le prouver.
+          $tmp = (New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\ffcheck").FullName
+          Copy-Item ffmpeg.exe "$tmp\ffmpeg.exe" -Force
+          # ErrorActionPreference relâché le temps de l'appel natif : en pwsh 7.4
+          # un code de retour non nul lèverait avant qu'on puisse le lire.
+          $ErrorActionPreference = 'Continue'
+          $v = & "$tmp\ffmpeg.exe" -version | Select-Object -First 1
+          $code = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          if ($code -ne 0 -or -not $v) {
+            throw "ffmpeg.exe ne s'exécute pas isolé (build non statique ?) — code $code"
+          }
+          Remove-Item $tmp -Recurse -Force
           $sz = [math]::Round((Get-Item ffmpeg.exe).Length/1MB, 1)
-          Write-Host "ffmpeg statique prêt à la racine ($sz Mo)"
+          Write-Host "ffmpeg statique prêt ($sz Mo) — source : $obtenu"
+          Write-Host "  $v"
 
       - name: Build EXE
         run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "AKAIAPCMINI.png;." --add-data "Novation.png;." --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow

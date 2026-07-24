@@ -71,7 +71,10 @@
       "PowerShell(python -m py_compile \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\main_window.py\" \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\tablet_server.py\"; if \\($?\\) { \"compile OK\" }; node --check \"C:\\\\Users\\\\nikop\\\\Desktop\\\\MyStrow\\\\tablet\\\\index.html\" 2>&1 | Select-Object -First 3)",
       "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\check_effets.py\" 2>&1 | Select-Object -Last 60)",
       "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\check_integration.py\" 2>&1 | Select-Object -Last 45)",
-      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_pro_pause.py\")"
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_pro_pause.py\")",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_failover.ps1\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_beam_rot.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_ry_hint.py\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

@@ -1251,6 +1251,8 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(btn_flip)
 
         # Lignes RY et RZ
+        self._jog_ry_row = []      # widgets de la ligne RY, à estomper si inerte
+        self._jog_ry_sp  = None
         for attr, lbl_txt in [('body_rotation', 'RY'), ('rot3d_z', 'RZ')]:
             r_row = QHBoxLayout()
             r_row.setSpacing(3)
@@ -1282,7 +1284,21 @@ class Plan3DWebWindow(QMainWindow):
             btn_p.clicked.connect(lambda _, a=attr: self._jog_rot(a, 1))
             r_row.addWidget(btn_p)
 
+            if attr == 'body_rotation':
+                self._jog_ry_row = [lbl_r, btn_m, sp_r, btn_p]
+                self._jog_ry_sp  = sp_r
+                self._jog_ry_lbl = lbl_r
+
             lay.addLayout(r_row)
+
+        # Explication de l'inertie de RY, affichée seulement quand elle s'applique.
+        self._jog_ry_hint = QLabel("")
+        self._jog_ry_hint.setWordWrap(True)
+        self._jog_ry_hint.setStyleSheet(
+            "color:#886644;font-size:8px;background:transparent;border:none;"
+            "padding:0 0 0 17px;")
+        self._jog_ry_hint.setVisible(False)
+        lay.addWidget(self._jog_ry_hint)
 
         return frame
 
@@ -1315,6 +1331,7 @@ class Plan3DWebWindow(QMainWindow):
             sp.blockSignals(True)
             sp.setValue(float(getattr(projs[primary], attr, 0.0) or 0.0))
             sp.blockSignals(False)
+        self._sync_ry_state()
         self.refresh(projs)
         self._save_patch()
 
@@ -1338,6 +1355,7 @@ class Plan3DWebWindow(QMainWindow):
             sp.blockSignals(True)
             sp.setValue(float(getattr(projs[primary], 'rot3d_x', 0.0) or 0.0))
             sp.blockSignals(False)
+        self._sync_ry_state()
         self.refresh(projs)
         self._save_patch()
 
@@ -1362,6 +1380,7 @@ class Plan3DWebWindow(QMainWindow):
                 sp.blockSignals(True); sp.setValue(value); sp.blockSignals(False)
         if attr in ('pos_3d_x', 'pos_3d_z'):
             self._sync_canvas_pos(p)
+        self._sync_ry_state()
         self.refresh(projs)
         self._save_patch()
 
@@ -1565,6 +1584,52 @@ class Plan3DWebWindow(QMainWindow):
             dflt = _defaults.get(attr, 0.0)
             sp.setValue(float(getattr(p, attr, dflt) or dflt))
             sp.blockSignals(False)
+        self._sync_ry_state()
+
+    def _sync_ry_state(self):
+        """Signale quand RY ne peut rien faire au faisceau.
+
+        Le calcul du faisceau (beamFloor, plan_3d_web.html) donne
+        bx = sin(RY)·sin(RX) et bz = cos(RY)·sin(RX) : RY n'y intervient que
+        MULTIPLIÉ par sin(RX). Tilt à 0 → le faisceau descend à la verticale et
+        aucune valeur de RY ne le déplace, alors que le corps du projecteur,
+        lui, pivote bien à l'écran. D'où l'impression que « le faisceau reste
+        bloqué ». On ne bride pas la commande (régler RY avant d'incliner reste
+        légitime), on dit juste pourquoi il ne se passe rien.
+
+        Cas de la lyre : son orientation vient du Pan/Tilt DMX, qui écrase
+        mhGrp.rotation.y — là, RY est inerte pour de bon, corps compris.
+        """
+        if not getattr(self, '_jog_ry_row', None):
+            return
+        idx   = self._highlighted_row
+        projs = self._last_projectors
+        p     = projs[idx] if (projs and 0 <= idx < len(projs)) else None
+
+        if p is None:
+            inerte, court, long_ = False, "", ""
+        elif getattr(p, 'fixture_type', '') == 'Moving Head':
+            inerte = True
+            court  = "Lyre : orientation pilotée par le Pan/Tilt DMX."
+            long_  = ("Sur une lyre, l'orientation vient du Pan/Tilt DMX.\n"
+                      "RY n'a aucun effet ici, ni sur le corps ni sur le faisceau.")
+        elif abs(float(getattr(p, 'rot3d_x', 0.0) or 0.0)) < 0.05:
+            inerte = True
+            court  = "Faisceau à la verticale : inclinez avec RX pour que RY le déplace."
+            long_  = ("Le faisceau vise le sol à la verticale : le faire pivoter\n"
+                      "autour de son propre axe ne déplace pas la tache.\n\n"
+                      "Inclinez d'abord avec RX — RY balaiera alors la salle.")
+        else:
+            inerte, court, long_ = False, "", ""
+
+        for w in self._jog_ry_row:
+            w.setToolTip(long_)
+        self._jog_ry_lbl.setStyleSheet(
+            ("color:#886644;" if inerte else "color:#444466;")
+            + "font-size:9px;font-weight:700;background:transparent;"
+              "border:none;min-width:14px;")
+        self._jog_ry_hint.setText(court)
+        self._jog_ry_hint.setVisible(inerte)
 
     def _on_projo_selected(self, index: int):
         """Sélection simple (depuis la table ou depuis le clic 3D)."""
