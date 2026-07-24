@@ -117,13 +117,20 @@ jobs:
           Copy-Item ffmpeg.exe "$tmp\ffmpeg.exe" -Force
           # ErrorActionPreference relâché le temps de l'appel natif : en pwsh 7.4
           # un code de retour non nul lèverait avant qu'on puisse le lire.
+          #
+          # La sortie est collectée EN ENTIER avant de lire $LASTEXITCODE.
+          # Un « | Select-Object -First 1 » interrompt le pipeline en amont dès
+          # la 1re ligne : la commande native est stoppée et $LASTEXITCODE n'est
+          # jamais renseigné — il vaut alors $null, ce que « -ne 0 » lit comme
+          # un échec. C'est ce qui faisait échouer le build sur un ffmpeg sain.
           $ErrorActionPreference = 'Continue'
-          $v = & "$tmp\ffmpeg.exe" -version | Select-Object -First 1
-          $code = $LASTEXITCODE
+          $sortie = & "$tmp\ffmpeg.exe" -version
+          $code   = $LASTEXITCODE
           $ErrorActionPreference = 'Stop'
-          if ($code -ne 0 -or -not $v) {
+          if ($code -ne 0) {
             throw "ffmpeg.exe ne s'exécute pas isolé (build non statique ?) — code $code"
           }
+          $v = @($sortie)[0]
           Remove-Item $tmp -Recurse -Force
           $sz = [math]::Round((Get-Item ffmpeg.exe).Length/1MB, 1)
           Write-Host "ffmpeg statique prêt ($sz Mo) — source : $obtenu"
