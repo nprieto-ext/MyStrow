@@ -6,6 +6,7 @@ import base64
 import json
 import time as _time
 from pathlib import Path
+from effect_editor import _NumCell
 
 from PySide6.QtWidgets import (
     QMainWindow, QToolBar, QLabel, QSlider, QPushButton,
@@ -17,8 +18,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent, QRectF
+from PySide6.QtGui import QColor, QBrush, QPainter, QPen
 
 TRUSS_Y   = 7.0
 _HTML     = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'plan_3d_web.html'
@@ -91,33 +92,33 @@ _SCENE_PRESETS = {
     },
 }
 
-_DARK  = "background:#0c0c20; color:#7777aa;"
+_DARK  = "background:#0c0c20; color:#999999;"
 _STYLE_DLG = """
-    QDialog, QWidget { background:#0c0c1e; color:#aaaacc;
+    QDialog, QWidget { background:#0c0c1e; color:#aaaaaa;
                        font-family:'Segoe UI',sans-serif; }
     QLabel  { background:transparent; border:none; }
     QLineEdit {
-        background:#12122a; color:#ccccff; border:1px solid #222244;
+        background:#12122a; color:#dddddd; border:1px solid #222244;
         border-radius:3px; padding:2px 6px; font-size:11px;
     }
     QCheckBox { spacing:6px; }
     QCheckBox::indicator { width:14px; height:14px; border-radius:3px;
-        border:1px solid #333366; background:#12122a; }
+        border:1px solid #00d4ff; background:#12122a; }
     QCheckBox::indicator:checked { background:#003d66; border-color:#00d4ff; }
     QScrollArea { border:none; background:transparent; }
     QScrollBar:vertical { background:#0c0c20; width:5px; border:none; }
     QScrollBar::handle:vertical { background:#222244; border-radius:2px; }
 """
 _STYLE_SPIN = (
-    "QDoubleSpinBox { background:#12122a; color:#ccccff; border:1px solid #222244;"
+    "QDoubleSpinBox { background:#12122a; color:#dddddd; border:1px solid #222244;"
     " border-radius:3px; padding:1px 4px; font-size:10px; }"
     "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button"
-    " { background:#1a1a38; width:14px; border:none; }"
+    " { background:#252525; width:14px; border:none; }"
 )
 _STYLE_ROW_BTN = (
-    "QPushButton { background:#12122a; color:#7777aa; border:1px solid #1c1c40;"
+    "QPushButton { background:#12122a; color:#999999; border:1px solid #1c1c40;"
     " border-radius:3px; font-size:10px; padding:2px 8px; }"
-    "QPushButton:hover { background:#1a1a38; color:#ccccff; }"
+    "QPushButton:hover { background:#252525; color:#dddddd; }"
     "QPushButton:pressed { background:#222255; }"
 )
 
@@ -133,6 +134,7 @@ class _WheelSpinBox(QDoubleSpinBox):
         le = self.lineEdit()
         le.setCursor(Qt.SizeHorCursor)
         le.installEventFilter(self)   # intercepte les events avant la QLineEdit
+
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
@@ -172,7 +174,7 @@ class _TrussRow(QFrame):
         self._t = truss
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet(
-            "QFrame { background:#0e0e26; border:1px solid #1a1a38; border-radius:5px; }"
+            "QFrame { background:#111111; border:1px solid #252525; border-radius:5px; }"
         )
 
         root = QVBoxLayout(self)
@@ -201,7 +203,7 @@ class _TrussRow(QFrame):
             rw.setSpacing(6)
             lbl = QLabel(label)
             lbl.setFixedWidth(self._LABEL_W)
-            lbl.setStyleSheet("color:#444466; font-size:9px;")
+            lbl.setStyleSheet("color:#4a4a4a; font-size:9px;")
             sp = _WheelSpinBox()
             sp.setRange(lo, hi); sp.setSingleStep(step)
             sp.setDecimals(1); sp.setValue(val)
@@ -249,9 +251,9 @@ class TrussEditorDialog(QDialog):
     trusses_changed = Signal(list)
 
     _BTN = (
-        "QPushButton { background:#1a1a36; color:#7777aa; border:1px solid #282850;"
+        "QPushButton { background:#1a1a36; color:#999999; border:1px solid #282850;"
         " border-radius:4px; font-size:10px; padding:4px 14px; }"
-        "QPushButton:hover { background:#252550; color:#ccccff; }"
+        "QPushButton:hover { background:#252550; color:#dddddd; }"
         "QPushButton:pressed { background:#003d66; color:#00d4ff; }"
     )
 
@@ -295,7 +297,7 @@ class TrussEditorDialog(QDialog):
 
         # Boutons bas
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("border:none; border-top:1px solid #1a1a38;")
+        sep.setStyleSheet("border:none; border-top:1px solid #252525;")
         root.addWidget(sep)
 
         btns = QHBoxLayout()
@@ -372,17 +374,17 @@ class ProjectorTableDialog(QDialog):
         'groupe_g': '#22ddcc', 'groupe_h': '#ff7722',
     }
     _TBL = (
-        "QTableWidget{background:#080818;color:#aaaacc;border:1px solid #1a1a38;"
-        "gridline-color:#111128;font-size:10px;font-family:'Segoe UI',sans-serif;}"
+        "QTableWidget{background:#0d0d0d;color:#aaaaaa;border:1px solid #252525;"
+        "gridline-color:#1c1c1c;font-size:10px;font-family:'Segoe UI',sans-serif;}"
         "QTableWidget::item{padding:0;border:none;}"
-        "QHeaderView::section{background:#0c0c22;color:#333355;border:none;"
-        "border-right:1px solid #111128;border-bottom:1px solid #1a1a38;"
+        "QHeaderView::section{background:#111111;color:#333355;border:none;"
+        "border-right:1px solid #1c1c1c;border-bottom:1px solid #252525;"
         "padding:4px 4px;font-size:8px;letter-spacing:1px;font-weight:700;}"
-        "QScrollBar:vertical{background:#080818;width:6px;border:none;}"
-        "QScrollBar::handle:vertical{background:#1a1a38;border-radius:3px;}"
+        "QScrollBar:vertical{background:#0d0d0d;width:6px;border:none;}"
+        "QScrollBar::handle:vertical{background:#252525;border-radius:3px;}"
     )
     _SP = (
-        "QDoubleSpinBox{background:#0c0c20;color:#ccccff;border:none;"
+        "QDoubleSpinBox{background:#0c0c20;color:#dddddd;border:none;"
         "padding:2px 1px;font-size:10px;font-family:'Segoe UI',sans-serif;}"
         "QDoubleSpinBox::up-button,QDoubleSpinBox::down-button"
         "{background:#151530;border:none;width:12px;}"
@@ -394,9 +396,9 @@ class ProjectorTableDialog(QDialog):
         "{background:#003366;border:none;width:12px;}"
     )
     _BTN = (
-        "QPushButton{background:#1a1a36;color:#7777aa;border:1px solid #282850;"
+        "QPushButton{background:#1a1a36;color:#999999;border:1px solid #282850;"
         "border-radius:4px;font-size:10px;padding:4px 12px;}"
-        "QPushButton:hover{background:#252550;color:#ccccff;}"
+        "QPushButton:hover{background:#252550;color:#dddddd;}"
         "QPushButton:pressed{background:#003d66;color:#00d4ff;}"
     )
 
@@ -447,7 +449,7 @@ class ProjectorTableDialog(QDialog):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("border:none;border-top:1px solid #1a1a38;")
+        sep.setStyleSheet("border:none;border-top:1px solid #252525;")
         root.addWidget(sep)
 
         bot = QHBoxLayout()
@@ -654,25 +656,77 @@ class _Bridge(QObject):
         self._win._on_projo_selected(index)
 
 
+class _P3Cell(_NumCell):
+    """Cellule chiffrée du tableau 3D — celle de l'éditeur d'effets.
+
+    Même geste et même rendu que dans l'éditeur : glisser vers le haut/bas
+    règle la valeur, la molette l'affine, un double-clic permet de la taper, et
+    une jauge de fond donne le niveau d'un coup d'œil. On lui ajoute juste
+    l'API d'un QDoubleSpinBox (`setValue`) pour que le reste du tableau, qui
+    manipule ses cellules comme des spinboxes, n'ait pas à changer.
+    """
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._row_sel = False
+
+    def set_row_selected(self, on: bool):
+        on = bool(on)
+        if on != self._row_sel:
+            self._row_sel = on
+            self.update()
+
+    def paintEvent(self, e):
+        """Rendu normal, plus un liseré cyan quand la ligne est sélectionnée.
+
+        On repeint par-dessus au lieu de dupliquer le dessin de la cellule :
+        la feuille de style, elle, n'a aucun effet ici — la cellule se peint
+        entièrement au QPainter, c'est pourquoi l'ancien surlignage restait
+        invisible sur ces colonnes.
+        """
+        super().paintEvent(e)
+        if not self._row_sel:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor("#00d4ff"), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 4, 4)
+        p.end()
+    def setValue(self, v):
+        self.set_value(int(round(float(v))), emit=False)
+
+    def wheelEvent(self, event):
+        """La molette fait défiler le tableau, elle ne règle pas la valeur.
+
+        Dans l'éditeur d'effets la liste tient à l'écran, la molette peut donc
+        affiner une valeur sans ambiguïté. Ici le tableau défile : molette sur
+        une cellule en cherchant la ligne du bas, et on déréglait un projecteur
+        au passage — sans le voir, puisqu'on regardait ailleurs.
+        On laisse l'événement remonter à la zone de défilement.
+        """
+        event.ignore()
+
+
 class Plan3DWebWindow(QMainWindow):
     """Fenêtre 3D (Three.js) avec bloom, faisceaux volumétriques."""
 
     _TB_BTN = (
-        "QPushButton { background:#1a1a36; color:#7777aa; border:1px solid #282850;"
+        "QPushButton { background:#1a1a36; color:#999999; border:1px solid #282850;"
         " border-radius:4px; font-size:10px; padding:3px 10px; min-width:44px; }"
-        "QPushButton:hover { background:#252550; color:#ccccff; }"
+        "QPushButton:hover { background:#252550; color:#dddddd; }"
         "QPushButton:checked { background:#003d66; color:#00d4ff; border-color:#005588; }"
     )
     _JOG_BTN = (
-        "QPushButton{background:#0e0e28;color:#6666aa;border:1px solid #1a1a38;"
+        "QPushButton{background:#151515;color:#999999;border:1px solid #252525;"
         "border-radius:4px;font-size:14px;padding:3px;}"
-        "QPushButton:hover{background:#1a1a38;color:#ccccff;}"
+        "QPushButton:hover{background:#252525;color:#dddddd;}"
         "QPushButton:pressed{background:#003d66;color:#00d4ff;}"
     )
     _JOG_STEP_BTN = (
-        "QPushButton{background:#0c0c22;color:#444466;border:1px solid #1a1a38;"
+        "QPushButton{background:#111111;color:#4a4a4a;border:1px solid #252525;"
         "border-radius:3px;font-size:8px;padding:2px 4px;}"
-        "QPushButton:hover{background:#1a1a38;color:#aaaacc;}"
+        "QPushButton:hover{background:#252525;color:#aaaaaa;}"
         "QPushButton:checked{background:#003d66;color:#00d4ff;border-color:#005588;}"
     )
 
@@ -701,20 +755,10 @@ class Plan3DWebWindow(QMainWindow):
         self._view.load(QUrl.fromLocalFile(str(_HTML)))
         self._view.installEventFilter(self)
 
-        # Layout : QSplitter (vue 3D | panneau onglets redimensionnable)
-        self._right_panel = self._build_right_panel()
-        self._splitter = QSplitter(Qt.Horizontal)
-        self._splitter.setStyleSheet(
-            "QSplitter::handle{background:#0e0e28;width:4px;}"
-            "QSplitter::handle:hover{background:#003d66;}"
-        )
-        self._splitter.addWidget(self._view)
-        self._splitter.addWidget(self._right_panel)
-        self._splitter.setSizes([850, 240])
-        self._splitter.setChildrenCollapsible(False)
-        self._right_panel_sizes = [850, 240]
-        self.setCentralWidget(self._splitter)
-
+        # État interne AVANT _build_right_panel() : l'onglet Cam. lit
+        # self._quality pour positionner son combo. Défini après, il levait
+        # AttributeError en pleine construction de MainWindow — MyStrow
+        # mourait juste après le splash, sans fenêtre ni message.
         self._projectors      = []
         self._last_projectors = []
         self._pending         = None
@@ -730,6 +774,19 @@ class Plan3DWebWindow(QMainWindow):
         ]
         self._scene_preset_code = 'live'
         self._imported_path = ''
+        self._pinned = False   # « toujours au-dessus » demandé par l'utilisateur
+        # Points de vue mémorisés : nom → dict {pos, tgt, fov}
+        # Vues mémorisées : l'interface a été retirée du panneau, mais on
+        # continue de lire et réécrire la clé pour ne pas effacer les cadrages
+        # déjà enregistrés dans le patch d'un utilisateur.
+        self._views: dict = {}
+        # Niveau de qualité de rendu (index dans QUALITY côté JS)
+        self._quality = 2
+        self._auto_quality = True
+        # Ambiance salle, en unités du curseur (200 = 100 %). 160 = 80 %, valeur
+        # jugée plus juste à l'usage que le 100 % d'origine, et surtout
+        # mémorisée : c'était un réglage à refaire à chaque ouverture.
+        self._ambience = 160
 
         # Charger la scène sauvegardée depuis le patch, avant que la page HTML charge
         try:
@@ -739,11 +796,38 @@ class Plan3DWebWindow(QMainWindow):
                 _s3d = _cfg.get('scene_3d', {})
                 if _s3d.get('preset') in _SCENE_PRESETS:
                     self._scene_preset_code = _s3d['preset']
-                if _s3d.get('trusses'):
+                # `in` et non truthiness : une liste VIDE est fausse en Python.
+                # Avec l'ancien test, « aucune structure » ne se relisait jamais
+                # — le patch enregistrait bien [], mais au chargement on gardait
+                # les deux trusses par défaut. D'où un décor qui réapparaissait
+                # à chaque démarrage sans qu'on puisse s'en débarrasser.
+                if isinstance(_s3d.get('trusses'), list):
                     self._trusses = _s3d['trusses']
                 self._imported_path = _s3d.get('imported_model', '') or ''
+                if isinstance(_s3d.get('views'), dict):
+                    self._views = _s3d['views']
+                if isinstance(_s3d.get('quality'), int):
+                    self._quality = max(0, min(3, _s3d['quality']))
+                self._auto_quality = bool(_s3d.get('auto_quality', True))
+                if isinstance(_s3d.get('ambience'), (int, float)):
+                    self._ambience = max(0, min(4000, int(_s3d['ambience'])))
         except Exception:
             pass
+
+        # Layout : QSplitter (vue 3D | panneau onglets redimensionnable)
+        self._right_panel = self._build_right_panel()
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.setStyleSheet(
+            "QSplitter::handle{background:#151515;width:4px;}"
+            "QSplitter::handle:hover{background:#003d66;}"
+        )
+        self._splitter.addWidget(self._view)
+        self._splitter.addWidget(self._right_panel)
+        self._splitter.setSizes([850, 240])
+        self._splitter.setChildrenCollapsible(False)
+        self._right_panel_sizes = [850, 240]
+        self.setCentralWidget(self._splitter)
+
 
         # Debounce : on coalesce les refresh rapides (MIDI) → max 25 fps
         self._push_timer = QTimer(self)
@@ -776,7 +860,7 @@ class Plan3DWebWindow(QMainWindow):
         tb = QToolBar(self)
         tb.setMovable(False)
         tb.setStyleSheet(
-            "QToolBar { background:#0c0c20; border-bottom:1px solid #1a1a38;"
+            "QToolBar { background:#0c0c20; border-bottom:1px solid #252525;"
             " spacing:4px; padding:3px 8px; }"
         )
         self.addToolBar(tb)
@@ -835,6 +919,10 @@ class Plan3DWebWindow(QMainWindow):
 
 
     def _set_always_on_top(self, enabled: bool):
+        self._pinned = bool(enabled)
+        self._apply_on_top(enabled)
+
+    def _apply_on_top(self, enabled: bool):
         flags = self.windowFlags()
         if enabled:
             flags |= Qt.WindowStaysOnTopHint
@@ -842,6 +930,26 @@ class Plan3DWebWindow(QMainWindow):
             flags &= ~Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.show()
+
+    def event(self, e):
+        """Désépingle temporairement quand un dialogue modal s'ouvre.
+
+        Une fenêtre épinglée reste au-dessus de TOUT, y compris d'un dialogue
+        modal — lequel bloque en retour toutes les autres fenêtres. Résultat :
+        le plan 3D masquait le patch DMX tout en refusant le moindre clic, sa
+        croix de fermeture comprise. Plus aucun moyen de s'en sortir sans tuer
+        l'application.
+
+        Qt prévient les fenêtres concernées par WindowBlocked / WindowUnblocked :
+        on retire l'épinglage le temps du dialogue, et on le remet après. Le
+        bouton reste coché — du point de vue de l'utilisateur, rien n'a changé.
+        """
+        t = e.type()
+        if t == QEvent.WindowBlocked and getattr(self, '_pinned', False):
+            self._apply_on_top(False)
+        elif t == QEvent.WindowUnblocked and getattr(self, '_pinned', False):
+            self._apply_on_top(True)
+        return super().event(e)
 
     def _toggle_right_panel(self):
         visible = self._right_panel.isVisible()
@@ -858,29 +966,53 @@ class Plan3DWebWindow(QMainWindow):
 
     _PANEL_W = 248
 
+    # Palette alignée sur le reste du logiciel (éditeur d'effets, dialogues) :
+    # gris neutres #0d0d0d / #151515 / #252525 et cyan #00d4ff en accent.
+    # Le panneau 3D tirait vers le bleu nuit (#0d0d0d, #151515) et jurait avec
+    # tout le reste, tableau compris.
     _TAB_STYLE = (
-        "QTabWidget::pane{border:none;background:#080818;}"
-        "QTabBar{background:#060616;}"
-        "QTabBar::tab{background:#060616;color:#2a2a4a;border:none;"
-        "padding:6px 10px;font-size:9px;letter-spacing:0.8px;font-weight:700;"
-        "border-right:1px solid #0e0e28;}"
-        "QTabBar::tab:selected{background:#080818;color:#00d4ff;"
-        "border-bottom:2px solid #00d4ff;}"
-        "QTabBar::tab:hover{color:#7777aa;}"
+        "QTabWidget::pane{border:none;background:#0d0d0d;}"
+        "QTabBar{background:#0d0d0d;}"
+        "QTabBar::tab{background:transparent;color:#4a4a4a;border:none;"
+        "padding:7px 14px;font-size:10px;letter-spacing:1px;font-weight:700;"
+        "font-family:'Segoe UI',sans-serif;border-bottom:2px solid transparent;}"
+        "QTabBar::tab:selected{color:#00d4ff;border-bottom:2px solid #00d4ff;}"
+        "QTabBar::tab:hover:!selected{color:#999999;}"
     )
     _PANEL_BTN = (
-        "QPushButton{background:#0e0e28;color:#555577;border:1px solid #1a1a38;"
-        "border-radius:4px;font-size:10px;letter-spacing:0.5px;padding:5px 0;"
+        "QPushButton{background:#151515;color:#999999;border:1px solid #252525;"
+        "border-radius:5px;font-size:10px;letter-spacing:0.5px;padding:6px 0;"
         "font-family:'Segoe UI',sans-serif;}"
-        "QPushButton:hover{background:#1a1a38;color:#aaaacc;border-color:#333366;}"
-        "QPushButton:checked{background:rgba(0,55,100,0.85);color:#00d4ff;"
-        "border-color:#005588;}"
+        "QPushButton:hover{background:#1e1e1e;color:#00d4ff;border-color:#00d4ff;}"
+        "QPushButton:checked{background:#00303d;color:#00d4ff;"
+        "border-color:#00d4ff;}"
+    )
+
+    _PANEL_COMBO = (
+        "QComboBox{background:#151515;color:#aaaaaa;border:1px solid #252525;"
+        "border-radius:4px;font-size:10px;padding:4px 6px;"
+        "font-family:'Segoe UI',sans-serif;}"
+        "QComboBox:hover{border-color:#00d4ff;}"
+        "QComboBox::drop-down{border:none;width:16px;}"
+        "QComboBox QAbstractItemView{background:#151515;color:#dddddd;"
+        "selection-background-color:#00d4ff;selection-color:#000000;"
+        "border:1px solid #00d4ff;outline:none;font-size:10px;}"
+    )
+
+    _PANEL_CHK = (
+        "QCheckBox{color:#999999;font-size:10px;spacing:6px;"
+        "font-family:'Segoe UI',sans-serif;}"
+        "QCheckBox:hover{color:#00d4ff;}"
+        "QCheckBox::indicator{width:12px;height:12px;border-radius:3px;"
+        "border:1px solid #252525;background:#151515;}"
+        "QCheckBox::indicator:hover{border-color:#00d4ff;}"
+        "QCheckBox::indicator:checked{background:#00d4ff;border-color:#00d4ff;}"
     )
 
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setMinimumWidth(160)
-        w.setStyleSheet("background:#080818;border-left:1px solid #0e0e28;")
+        w.setStyleSheet("background:#0d0d0d;border-left:1px solid #1c1c1c;")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
@@ -898,7 +1030,7 @@ class Plan3DWebWindow(QMainWindow):
 
     def _build_cam_tab(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background:#080818;")
+        w.setStyleSheet("background:#0d0d0d;")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 10, 8, 8)
         lay.setSpacing(4)
@@ -926,11 +1058,14 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(self._amb_val_lbl)
 
         sl_amb = QSlider(Qt.Horizontal)
-        sl_amb.setRange(0, 1000)
-        sl_amb.setValue(200)
+        # Plafond porté de 1000 à 4000 : ×4 de marge en haut de course. 200 reste
+        # le réglage d'origine (affiché 100 %), la butée haute monte à 2000 %.
+        sl_amb.setRange(0, 4000)
+        sl_amb.setValue(getattr(self, '_ambience', 160))
+        sl_amb.setPageStep(200)
         sl_amb.setToolTip("Lumière ambiante — glissez à droite pour éclairer davantage la salle")
         sl_amb.setStyleSheet(
-            "QSlider::groove:horizontal{height:4px;background:#0e0e28;border-radius:2px;}"
+            "QSlider::groove:horizontal{height:4px;background:#151515;border-radius:2px;}"
             "QSlider::sub-page:horizontal{background:#3344aa;border-radius:2px;}"
             "QSlider::handle:horizontal{width:12px;height:12px;margin:-4px 0;"
             "background:#5566cc;border-radius:6px;}"
@@ -938,12 +1073,58 @@ class Plan3DWebWindow(QMainWindow):
         )
 
         def _on_amb(v):
-            self._amb_val_lbl.setText(f"{v//10}%")
-            self._js(f'ambLight.intensity={v/100:.2f}')
+            # 200 = réglage d'origine → affiché 100 %. Le curseur monte jusqu'à
+            # 500 %, et pilote les trois lumières d'ambiance via setRoomAmbience
+            # (il ne touchait que l'AmbientLight, d'où son manque d'effet).
+            self._amb_val_lbl.setText(f"{v//2}%")
+            self._ambience = int(v)
+            self._js(f'window.setRoomAmbience && window.setRoomAmbience({v/200:.3f})')
 
         sl_amb.valueChanged.connect(_on_amb)
+        # Enregistrement au relâchement seulement : valueChanged part à chaque
+        # pixel du glissement, réécrire le patch à ce rythme serait absurde.
+        sl_amb.sliderReleased.connect(self._save_patch)
+        _on_amb(sl_amb.value())          # applique l'état mémorisé à l'ouverture
         lay.addWidget(sl_amb)
         self._sl_amb = sl_amb
+
+        lay.addSpacing(12)
+
+        btn_snap = QPushButton("📷 Exporter l'image…")
+        btn_snap.setStyleSheet(self._PANEL_BTN)
+        btn_snap.setToolTip("Enregistrer le rendu courant en PNG")
+        btn_snap.clicked.connect(self._export_image)
+        lay.addWidget(btn_snap)
+
+        lay.addSpacing(12)
+
+        # ── Qualité de rendu ──────────────────────────────────────────────
+        lbl_q = QLabel("Qualité de rendu")
+        lbl_q.setStyleSheet("color:#4444aa;font-size:9px;letter-spacing:0.5px;")
+        lay.addWidget(lbl_q)
+
+        self._cb_quality = QComboBox()
+        self._cb_quality.setStyleSheet(self._PANEL_COMBO)
+        self._cb_quality.addItems(["Bas", "Moyen", "Haut", "Ultra"])
+        self._cb_quality.setCurrentIndex(self._quality)
+        self._cb_quality.setToolTip(
+            "Finesse des faisceaux volumétriques.\n"
+            "Baissez si l'affichage saccade avec beaucoup de projecteurs.")
+        self._cb_quality.activated.connect(self._on_quality_changed)
+        lay.addWidget(self._cb_quality)
+
+        self._chk_auto_q = QCheckBox("Baisser auto si ça rame")
+        self._chk_auto_q.setChecked(self._auto_quality)
+        self._chk_auto_q.setStyleSheet(self._PANEL_CHK)
+        self._chk_auto_q.toggled.connect(self._on_auto_quality)
+        lay.addWidget(self._chk_auto_q)
+
+        self._chk_fps = QCheckBox("Afficher les FPS")
+        self._chk_fps.setChecked(False)
+        self._chk_fps.setStyleSheet(self._PANEL_CHK)
+        self._chk_fps.toggled.connect(
+            lambda on: self._js(f'window.showFps && window.showFps({str(bool(on)).lower()})'))
+        lay.addWidget(self._chk_fps)
 
         lay.addStretch()
 
@@ -959,23 +1140,70 @@ class Plan3DWebWindow(QMainWindow):
             b.setChecked(k == code)
         self._js(f"window.setCam('{code}')")
 
+    # ── Export image ─────────────────────────────────────────────────────────
+
+    def _export_image(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exporter le plan 3D", "plan_3d.png", "Image PNG (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith('.png'):
+            path += '.png'
+
+        def _got(data_url):
+            if not data_url or not isinstance(data_url, str):
+                self._snap_failed("aucune donnée renvoyée par le rendu")
+                return
+            if data_url.startswith('ERR:'):
+                self._snap_failed(data_url[4:])
+                return
+            try:
+                b64 = data_url.split(',', 1)[1]
+                Path(path).write_bytes(base64.b64decode(b64))
+            except Exception as e:
+                self._snap_failed(str(e))
+
+        self._view.page().runJavaScript("window.snapshot && window.snapshot()", _got)
+
+    def _snap_failed(self, why: str):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, "Export impossible",
+                            f"Le rendu n'a pas pu être exporté.\n\n{why}")
+
+    # ── Qualité de rendu ─────────────────────────────────────────────────────
+
+    def _on_quality_changed(self, idx: int):
+        self._quality = max(0, min(3, int(idx)))
+        self._js(f"window.setQuality && window.setQuality({self._quality})")
+        self._save_patch()
+
+    def _on_auto_quality(self, on: bool):
+        self._auto_quality = bool(on)
+        self._js(f"window.autoQuality = {str(bool(on)).lower()}")
+        self._save_patch()
+
     # ── Onglet Placement (mini-table) ─────────────────────────────────────────
 
+    # Habillage repris de l'éditeur d'effets : fond noir, pas de quadrillage
+    # (ce sont les cellules qui dessinent leur propre cadre arrondi), en-têtes
+    # gris discrets qui passent au cyan au survol.
     _MINI_TBL = (
-        "QTableWidget{background:#060616;color:#aaaacc;border:none;"
-        "gridline-color:#0e0e28;font-size:9px;font-family:'Segoe UI',sans-serif;}"
+        "QTableWidget{background:#0d0d0d;color:#aaaaaa;border:none;"
+        "gridline-color:transparent;font-size:9px;font-family:'Segoe UI',sans-serif;}"
         "QTableWidget::item{padding:0;border:none;}"
-        "QHeaderView::section{background:#080820;color:#2a2a4a;border:none;"
-        "border-right:1px solid #0e0e28;border-bottom:1px solid #0e0e28;"
-        "padding:3px 2px;font-size:7px;letter-spacing:0.8px;font-weight:700;}"
-        "QScrollBar:vertical{background:#060616;width:5px;border:none;}"
-        "QScrollBar::handle:vertical{background:#1a1a38;border-radius:2px;}"
+        "QHeaderView::section{background:#0d0d0d;color:#4a4a4a;border:none;"
+        "padding:4px 2px;font-size:9px;letter-spacing:1px;font-weight:700;}"
+        "QHeaderView::section:hover{color:#00d4ff;}"
+        "QScrollBar:vertical{background:#0d0d0d;width:6px;border:none;}"
+        "QScrollBar::handle:vertical{background:#262626;border-radius:3px;}"
+        "QScrollBar:horizontal{background:#0d0d0d;height:6px;border:none;}"
+        "QScrollBar::handle:horizontal{background:#262626;border-radius:3px;}"
     )
     _MINI_SP = (
-        "QDoubleSpinBox{background:#060616;color:#ccccff;border:none;"
+        "QDoubleSpinBox{background:#0d0d0d;color:#dddddd;border:none;"
         "padding:1px 0;font-size:9px;}"
         "QDoubleSpinBox::up-button,QDoubleSpinBox::down-button"
-        "{background:#0e0e28;border:none;width:10px;}"
+        "{background:#151515;border:none;width:10px;}"
     )
     _MINI_SP_ON = (
         "QDoubleSpinBox{background:#002244;color:#00d4ff;border:none;"
@@ -986,28 +1214,47 @@ class Plan3DWebWindow(QMainWindow):
 
     def _build_placement_tab(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background:#080818;")
+        w.setStyleSheet("background:#0d0d0d;")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
         # Mini-table : checkbox + nom + X / Z / Haut
-        self._mini_tbl = QTableWidget(0, 4)
-        self._mini_tbl.setHorizontalHeaderLabels(['Projecteur', 'X', 'Z', 'H'])
+        # Tableau complet : position, orientation ET puissance de faisceau.
+        # Tout se règle ici, ligne par ligne, sans passer par le jog pad qui ne
+        # traite qu'un projecteur à la fois.
+        self._mini_tbl = QTableWidget(0, 8)
+        self._mini_tbl.setHorizontalHeaderLabels(
+            ['Projecteur', 'X', 'Z', 'H', 'RX', 'RY', 'RZ', 'Faisc.'])
         self._mini_tbl.setStyleSheet(self._MINI_TBL)
         self._mini_tbl.verticalHeader().setVisible(False)
         self._mini_tbl.setSelectionMode(QAbstractItemView.NoSelection)
         self._mini_tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        cw = [80, 34, 34, 34]
+        cw = [78, 44, 44, 44, 44, 44, 44, 48]
         for i, w_ in enumerate(cw):
             self._mini_tbl.setColumnWidth(i, w_)
-        self._mini_tbl.horizontalHeader().setStretchLastSection(True)
+        self._mini_tbl.horizontalHeader().setStretchLastSection(False)
+        for _c, _tip in enumerate((
+                "Projecteur", "Position gauche/droite (m)", "Position avant/arrière (m)",
+                "Hauteur d'accroche (m)", "Inclinaison — retourne l'appareil (°)",
+                "Orientation horizontale du corps (°)", "Roulis sur l'axe du faisceau (°)",
+                "Puissance du faisceau en 3D (%) — n'affecte pas la sortie DMX")):
+            _h = self._mini_tbl.horizontalHeaderItem(_c)
+            if _h is not None:
+                _h.setToolTip(_tip)
         self._mini_tbl.cellClicked.connect(self._on_mini_tbl_clicked)
         lay.addWidget(self._mini_tbl, 1)
 
-        # Jog pad
+        # Jog pad : construit mais NON affiché. Le tableau ci-dessus expose
+        # désormais toutes ses valeurs — position, orientation, faisceau — ligne
+        # par ligne, ce que le pad ne faisait que pour un projecteur à la fois.
+        # On le garde vivant plutôt que de le supprimer : sept méthodes
+        # (_jog_spin_changed, _jog_move, _jog_flip, _sync_ry_state, l'annulation…)
+        # écrivent dans ses champs. Les arracher demanderait de réécrire tout ce
+        # code de synchronisation, pour ne rien gagner de visible.
         self._jog_pad = self._build_jog_pad()
-        lay.addWidget(self._jog_pad)
+        self._jog_pad.setParent(w)
+        self._jog_pad.hide()
 
         return w
 
@@ -1020,6 +1267,7 @@ class Plan3DWebWindow(QMainWindow):
                 p.pos_3d_x = None; p.pos_3d_z = None
                 p.body_rotation = 0.0
                 p.rot3d_x = 0.0;  p.rot3d_z = 0.0
+                p.beam_gain = 100.0
         self._populate_mini(projs)
         self.refresh(projs)
         self._save_patch()
@@ -1032,11 +1280,35 @@ class Plan3DWebWindow(QMainWindow):
             1: 'pos_3d_x',
             2: 'pos_3d_z',
             3: 'fixture_height',
+            4: 'rot3d_x',
+            5: 'body_rotation',   # envoyé à la 3D sous le nom rot3d_y
+            6: 'rot3d_z',
+            7: 'beam_gain',       # pourcentage : 100 = rendu d'origine
         }
         attr = attr_map.get(col)
         if attr is None:
             return
         rows = list(self._selected_rows) if row in self._selected_rows else [row]
+
+        # Ctrl+Z : on empile l'état AVANT modification. Un geste de glissement
+        # émet des dizaines de valeurs ; on ne garde que la première, sinon la
+        # pile ne contiendrait qu'un seul mouvement de souris étalé sur 50 pas.
+        _key = (tuple(sorted(rows)), attr)
+        if getattr(self, '_mini_undo_key', None) != _key:
+            self._mini_undo_key = _key
+            _def = 100.0 if attr == 'beam_gain' else (
+                7.0 if attr == 'fixture_height' else 0.0)
+            # Défaut explicite : l'attribut peut ne pas exister encore sur le
+            # projecteur, et restaurer None le casserait au lieu de l'annuler.
+            self._push_undo([
+                {'idx': r, 'attrs': {attr: (getattr(projs[r], attr, None)
+                                            if getattr(projs[r], attr, None) is not None
+                                            else _def)}}
+                for r in rows if r < len(projs)])
+
+        # Les cellules de position parlent en centimètres, les projecteurs en mètres.
+        if attr in ('pos_3d_x', 'pos_3d_z', 'fixture_height'):
+            value = float(value) / 100.0
         for r in rows:
             if r < len(projs):
                 p = projs[r]
@@ -1049,7 +1321,8 @@ class Plan3DWebWindow(QMainWindow):
                     sp = self._mini_tbl.cellWidget(r, col)
                     if sp:
                         sp.blockSignals(True)
-                        sp.setValue(value)
+                        sp.setValue(value * 100 if attr in (
+                            'pos_3d_x', 'pos_3d_z', 'fixture_height') else value)
                         sp.blockSignals(False)
         # Sync jog pad spinbox si la ligne modifiée est le primaire
         if row == self._highlighted_row and attr in self._jog_spins:
@@ -1080,39 +1353,49 @@ class Plan3DWebWindow(QMainWindow):
                     ProjectorTableDialog._GRP_COLOR.get(grp, '#666688'))))
                 self._mini_tbl.setItem(row, 0, nm)
 
+            # Les positions passent en CENTIMÈTRES : la cellule de l'éditeur
+            # d'effets est entière, et le cm est de toute façon plus parlant
+            # qu'un mètre à une décimale pour placer un projecteur.
             vals  = [
-                getattr(p, 'pos_3d_x',       0.0),
-                getattr(p, 'pos_3d_z',        0.0),
-                getattr(p, 'fixture_height',  7.0),
+                (getattr(p, 'pos_3d_x',      0.0) or 0.0) * 100,
+                (getattr(p, 'pos_3d_z',      0.0) or 0.0) * 100,
+                (getattr(p, 'fixture_height', 7.0) or 7.0) * 100,
+                getattr(p, 'rot3d_x',       0.0) or 0.0,
+                getattr(p, 'body_rotation', 0.0) or 0.0,
+                getattr(p, 'rot3d_z',       0.0) or 0.0,
+                getattr(p, 'beam_gain',   100.0) if getattr(p, 'beam_gain', None) is not None else 100.0,
             ]
             specs = [
-                (-12, 12, 0.1, 1),
-                (-8,  10, 0.1, 1),
-                (1,   15, 0.1, 1),
+                (-1200, 1200), (-800, 1000), (100, 1500),
+                (-180, 180), (-180, 180), (-180, 180),
+                (0, 200),
             ]
-            for ci, (val, (lo, hi, step, dec)) in enumerate(zip(vals, specs)):
+            _accent = ProjectorTableDialog._GRP_COLOR.get(
+                getattr(p, 'group', ''), '#00d4ff')
+            for ci, (val, (lo, hi)) in enumerate(zip(vals, specs)):
                 col = ci + 1
                 sp  = self._mini_tbl.cellWidget(row, col)
                 if sp is None:
-                    sp = _WheelSpinBox()
-                    sp.setRange(lo, hi); sp.setSingleStep(step); sp.setDecimals(dec)
-                    sp.setButtonSymbols(QDoubleSpinBox.UpDownArrows)
-                    sp.setStyleSheet(self._MINI_SP); sp.setFrame(False)
+                    sp = _P3Cell(value=int(val), maximum=hi, minimum=lo,
+                                 width=self._mini_tbl.columnWidth(col) - 4,
+                                 accent=_accent, height=self._CELL_H)
                     sp.valueChanged.connect(
                         lambda v, r=row, c=col: self._mini_spin_changed(r, c, v))
                     self._mini_tbl.setCellWidget(row, col, sp)
+                else:
+                    sp.set_accent(_accent)
                 sp.blockSignals(True)
-                sp.setValue(float(val) if val is not None else 0.0)
+                sp.setValue(val)
                 sp.blockSignals(False)
 
-            self._mini_tbl.setRowHeight(row, 22)
+            self._mini_tbl.setRowHeight(row, self._CELL_H + 4)
 
     # ── Jog pad ───────────────────────────────────────────────────────────────
 
     def _build_jog_pad(self) -> QFrame:
         frame = QFrame()
         frame.setStyleSheet(
-            "QFrame{background:#050514;border-top:1px solid #1a1a38;}"
+            "QFrame{background:#050514;border-top:1px solid #252525;}"
         )
         lay = QVBoxLayout(frame)
         lay.setContentsMargins(8, 6, 8, 8)
@@ -1147,18 +1430,18 @@ class Plan3DWebWindow(QMainWindow):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("border:none;border-top:1px solid #0e0e28;margin:1px 0;")
+        sep.setStyleSheet("border:none;border-top:1px solid #151515;margin:1px 0;")
         lay.addWidget(sep)
 
         # Rangées d'axe : [label] [−] [spinbox] [+]
         _AXIS_SP = (
-            "QDoubleSpinBox{background:#0c0c22;color:#ccccff;border:1px solid #1a1a38;"
+            "QDoubleSpinBox{background:#111111;color:#dddddd;border:1px solid #252525;"
             "border-radius:3px;padding:1px 2px;font-size:10px;}"
             "QDoubleSpinBox::up-button,QDoubleSpinBox::down-button"
-            "{background:#0e0e28;border:none;width:12px;}"
+            "{background:#151515;border:none;width:12px;}"
         )
         _AXIS_LBL = (
-            "color:#444466;font-size:9px;font-weight:700;"
+            "color:#4a4a4a;font-size:9px;font-weight:700;"
             "background:transparent;border:none;min-width:14px;"
         )
         self._jog_spins: dict = {}
@@ -1205,7 +1488,7 @@ class Plan3DWebWindow(QMainWindow):
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet("border:none;border-top:1px solid #0e0e28;margin:1px 0;")
+        sep2.setStyleSheet("border:none;border-top:1px solid #151515;margin:1px 0;")
         lay.addWidget(sep2)
 
         # Ligne RX — rotation du corps (retournement)
@@ -1242,9 +1525,9 @@ class Plan3DWebWindow(QMainWindow):
 
         btn_flip = QPushButton("↕ Retourner  (0° ↔ 180°)")
         btn_flip.setStyleSheet(
-            "QPushButton{background:#0e0e28;color:#6666aa;border:1px solid #1a1a38;"
+            "QPushButton{background:#151515;color:#999999;border:1px solid #252525;"
             "border-radius:4px;font-size:10px;padding:4px;}"
-            "QPushButton:hover{background:#1a1a38;color:#ccccff;}"
+            "QPushButton:hover{background:#252525;color:#dddddd;}"
             "QPushButton:pressed{background:#003d66;color:#00d4ff;}"
         )
         btn_flip.clicked.connect(self._jog_flip)
@@ -1372,12 +1655,7 @@ class Plan3DWebWindow(QMainWindow):
             p.pos_3d_z = round(-(cy - 0.5) * 10.0, 2)
         setattr(p, attr, value)
         # Sync mini-table spinbox
-        attr_col = {'pos_3d_x': 1, 'pos_3d_z': 2, 'fixture_height': 3}
-        col = attr_col.get(attr)
-        if col is not None:
-            sp = self._mini_tbl.cellWidget(idx, col)
-            if sp:
-                sp.blockSignals(True); sp.setValue(value); sp.blockSignals(False)
+        self._tbl_sync(idx, attr, value)
         if attr in ('pos_3d_x', 'pos_3d_z'):
             self._sync_canvas_pos(p)
         self._sync_ry_state()
@@ -1422,13 +1700,8 @@ class Plan3DWebWindow(QMainWindow):
             if dx or dz:
                 self._sync_canvas_pos(p)
             # Sync mini-table spinboxes
-            attr_col = {'pos_3d_x': 1, 'pos_3d_z': 2, 'fixture_height': 3}
-            for attr, col in attr_col.items():
-                sp = self._mini_tbl.cellWidget(r, col)
-                if sp:
-                    sp.blockSignals(True)
-                    sp.setValue(float(getattr(p, attr, 0) or 0))
-                    sp.blockSignals(False)
+            for attr in ('pos_3d_x', 'pos_3d_z', 'fixture_height'):
+                self._tbl_sync(r, attr, getattr(p, attr, 0) or 0)
 
         # Met à jour les spinboxes du jog pad depuis le projecteur primaire
         primary = self._highlighted_row
@@ -1446,6 +1719,34 @@ class Plan3DWebWindow(QMainWindow):
 
     # ── Undo (Ctrl+Z) ────────────────────────────────────────────────────────
 
+    # Correspondance attribut ↔ colonne du tableau, et attributs affichés en
+    # centimètres. Défini une seule fois : trois méthodes synchronisent le
+    # tableau (jog pad, déplacement au clavier, annulation) et elles doivent
+    # rester d'accord — c'est en les laissant diverger qu'une colonne cessait
+    # d'être rafraîchie.
+    # Hauteur des cellules du tableau. Volontairement plus compacte que dans
+    # l'éditeur d'effets (42 px) : ici les lignes sont nombreuses — un
+    # projecteur chacune — et c'est le nombre de lignes visibles d'un coup qui
+    # compte, pas la place pour un aperçu graphique.
+    _CELL_H = 24
+
+    _TBL_COL = {'pos_3d_x': 1, 'pos_3d_z': 2, 'fixture_height': 3,
+                'rot3d_x': 4, 'body_rotation': 5, 'rot3d_z': 6, 'beam_gain': 7}
+    _TBL_CM  = ('pos_3d_x', 'pos_3d_z', 'fixture_height')
+
+    def _tbl_sync(self, row, attr, value):
+        """Réaffiche une cellule sans déclencher son signal."""
+        col = self._TBL_COL.get(attr)
+        if col is None:
+            return
+        sp = self._mini_tbl.cellWidget(row, col)
+        if sp is None:
+            return
+        v = 0.0 if value is None else float(value)
+        sp.blockSignals(True)
+        sp.setValue(v * 100 if attr in self._TBL_CM else v)
+        sp.blockSignals(False)
+
     _UNDO_MAX = 50
 
     def _push_undo(self, steps: list):
@@ -1455,13 +1756,17 @@ class Plan3DWebWindow(QMainWindow):
         self._undo_stack.append(steps)
 
     def _undo(self):
+        # Le prochain réglage devra ré-empiler : sans ça, modifier de nouveau
+        # la même case après un Ctrl+Z passerait pour la suite du même geste et
+        # ne serait plus annulable.
+        self._mini_undo_key = None
         if not self._undo_stack:
             return
         steps = self._undo_stack.pop()
         projs = self._last_projectors
         if not projs:
             return
-        attr_col = {'pos_3d_x': 1, 'pos_3d_z': 2, 'fixture_height': 3}
+
         for step in steps:
             idx = step['idx']
             if idx >= len(projs):
@@ -1470,13 +1775,8 @@ class Plan3DWebWindow(QMainWindow):
             for attr, val in step['attrs'].items():
                 setattr(p, attr, val)
             self._sync_canvas_pos(p)
-            for attr, col in attr_col.items():
-                if attr in step['attrs']:
-                    sp = self._mini_tbl.cellWidget(idx, col)
-                    if sp:
-                        sp.blockSignals(True)
-                        sp.setValue(float(getattr(p, attr, 0) or 0))
-                        sp.blockSignals(False)
+            for attr in step['attrs']:
+                self._tbl_sync(idx, attr, getattr(p, attr, None))
         # Sync jog spinboxes depuis le primaire
         _def = {'pos_3d_x': 0.0, 'pos_3d_z': 0.0, 'fixture_height': 7.0, 'rot3d_x': 0.0}
         primary = self._highlighted_row
@@ -1523,17 +1823,24 @@ class Plan3DWebWindow(QMainWindow):
             mw.plan_de_feu.update()
 
     def _mini_tbl_set_highlight(self, row: int, on: bool):
-        bg = QColor('#003d80') if on else QColor('#060616')
-        fg = QColor('#ffffff') if on else QColor('#aaaacc')
-        for col in range(self._mini_tbl.columnCount()):
-            it = self._mini_tbl.item(row, col)
-            if it:
-                it.setBackground(QBrush(bg))
-                it.setForeground(QBrush(fg))
-        for col in (1, 2, 3):
+        """Surligne toute la ligne d'un projecteur.
+
+        Le nom prend un fond cyan sombre, et CHAQUE cellule chiffrée reçoit un
+        liseré cyan. L'ancienne version ne traitait que les colonnes 1 à 3 et
+        passait par une feuille de style — sans effet sur des cellules peintes
+        au QPainter : la sélection ne se voyait donc quasiment pas.
+        """
+        it = self._mini_tbl.item(row, 0)
+        if it:
+            it.setBackground(QBrush(QColor('#00303d') if on else QColor('#0d0d0d')))
+            it.setForeground(QBrush(QColor('#00d4ff') if on else QColor(
+                ProjectorTableDialog._GRP_COLOR.get(
+                    getattr(self._last_projectors[row], 'group', ''), '#666688')
+                if row < len(self._last_projectors) else '#666688')))
+        for col in range(1, self._mini_tbl.columnCount()):
             sp = self._mini_tbl.cellWidget(row, col)
-            if sp:
-                sp.setStyleSheet(self._MINI_SP_ON if on else self._MINI_SP)
+            if sp is not None and hasattr(sp, 'set_row_selected'):
+                sp.set_row_selected(on)
 
     # ── Sélection (simple et multi Ctrl+clic) ────────────────────────────────
 
@@ -1561,8 +1868,21 @@ class Plan3DWebWindow(QMainWindow):
             item = self._mini_tbl.item(index, 0)
             if item:
                 self._mini_tbl.scrollToItem(item)
-        self._js(f'if(window.highlightProjo)window.highlightProjo({self._highlighted_row})')
+        self._push_selection_3d()
         self._update_jog_pad_from_primary()
+
+    def _push_selection_3d(self):
+        """Envoie la sélection complète à la vue 3D.
+
+        `highlightProjo` ne connaît qu'un projecteur — le primaire, celui dont
+        le corps est surligné. Il faut donc lui adjoindre l'ensemble, sinon un
+        Ctrl+clic n'allumait en blanc que le dernier cliqué.
+        L'ordre compte : highlightProjo réduit la sélection à ce seul index.
+        """
+        self._js(f'if(window.highlightProjo)window.highlightProjo({self._highlighted_row})')
+        rows = sorted(r for r in self._selected_rows if r >= 0)
+        self._js('if(window.setSelectedProjos)'
+                 f'window.setSelectedProjos({json.dumps(rows)})')
 
     def _update_jog_pad_from_primary(self):
         """Met à jour le jog pad depuis le projecteur primaire sélectionné."""
@@ -1625,7 +1945,7 @@ class Plan3DWebWindow(QMainWindow):
         for w in self._jog_ry_row:
             w.setToolTip(long_)
         self._jog_ry_lbl.setStyleSheet(
-            ("color:#886644;" if inerte else "color:#444466;")
+            ("color:#886644;" if inerte else "color:#4a4a4a;")
             + "font-size:9px;font-weight:700;background:transparent;"
               "border:none;min-width:14px;")
         self._jog_ry_hint.setText(court)
@@ -1638,7 +1958,7 @@ class Plan3DWebWindow(QMainWindow):
         self._selected_rows = {index} if index >= 0 else set()
         self._highlighted_row = index
 
-        self._js(f'if(window.highlightProjo)window.highlightProjo({index})')
+        self._push_selection_3d()
 
         projs = self._last_projectors
         if index < 0 or not projs or index >= len(projs):
@@ -1656,7 +1976,7 @@ class Plan3DWebWindow(QMainWindow):
 
     def _build_scene_tab(self) -> QWidget:
         w = QWidget()
-        w.setStyleSheet("background:#080818;")
+        w.setStyleSheet("background:#0d0d0d;")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 10, 8, 8)
         lay.setSpacing(4)
@@ -1679,12 +1999,12 @@ class Plan3DWebWindow(QMainWindow):
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         self._btn_trusses = QPushButton()  # kept for _apply_preset compat, not displayed
-        sep.setStyleSheet("border:none;border-top:1px solid #1a1a38;margin:6px 0;")
+        sep.setStyleSheet("border:none;border-top:1px solid #252525;margin:6px 0;")
         lay.addWidget(sep)
 
         lbl = QLabel("IMPORTER SCÈNE")
         lbl.setStyleSheet(
-            "color:#2a2a4a;font-size:8px;letter-spacing:1.2px;font-weight:700;")
+            "color:#4a4a4a;font-size:8px;letter-spacing:1.2px;font-weight:700;")
         lay.addWidget(lbl)
 
         btn_gltf = QPushButton("↓  GLTF / GLB")
@@ -1699,8 +2019,7 @@ class Plan3DWebWindow(QMainWindow):
 
         btn_clear = QPushButton("✕  Effacer import")
         btn_clear.setStyleSheet(self._PANEL_BTN)
-        btn_clear.clicked.connect(
-            lambda: self._js('if(window.clearImportedScene)window.clearImportedScene()'))
+        btn_clear.clicked.connect(self._clear_import)
         lay.addWidget(btn_clear)
 
         lay.addStretch()
@@ -1737,6 +2056,18 @@ class Plan3DWebWindow(QMainWindow):
         is_glb = path.lower().endswith('.glb')
         self._js(f'if(window.loadGLTF)window.loadGLTF("{b64}",{str(is_glb).lower()})')
         return True
+
+    def _clear_import(self):
+        """Efface le décor importé — définitivement.
+
+        Le bouton ne vidait que le groupe 3D de la page. Le chemin restait
+        dans `_imported_path`, donc réécrit dans le patch, et
+        `_restore_imported_model()` le rechargeait à l'ouverture suivante :
+        le décor revenait indéfiniment malgré l'effacement.
+        """
+        self._js('if(window.clearImportedScene)window.clearImportedScene()')
+        self._imported_path = ''
+        self._save_patch()
 
     def _restore_imported_model(self):
         """Recharge le décor importé mémorisé (appelé quand la page est prête).
@@ -1804,9 +2135,24 @@ class Plan3DWebWindow(QMainWindow):
 
     # ── Load ─────────────────────────────────────────────────────────────────
 
+    _render_crashes = 0
+
     def _on_render_crashed(self, status, exit_code):
-        """Appelé quand le process de rendu WebEngine crashe ou est tué."""
+        """Appelé quand le process de rendu WebEngine crashe ou est tué.
+
+        La page était rechargée en silence : à l'écran, le plan 3D disparaît
+        puis revient — un « glitch » inexplicable et introuvable dans les logs.
+        On le trace désormais, avec un compteur : un incident isolé est bénin,
+        des plantages répétés désignent le pilote graphique ou la scène.
+        """
         self._ready = False
+        Plan3DWebWindow._render_crashes += 1
+        print(f"[Plan3D] Le rendu 3D a planté (statut={status}, code={exit_code}) "
+              f"— rechargement automatique. Incident n°{self._render_crashes} "
+              f"depuis le lancement.")
+        if self._render_crashes >= 3:
+            print("[Plan3D] Plantages répétés : pilote graphique probablement en cause. "
+                  "Baisser la qualité de rendu (onglet Cam.) réduit la charge GPU.")
         # Recharger la page après un court délai pour laisser le crash se nettoyer
         QTimer.singleShot(800, lambda: self._view.load(QUrl.fromLocalFile(str(_HTML))))
 
@@ -1822,10 +2168,23 @@ class Plan3DWebWindow(QMainWindow):
             # Décor importé mémorisé : le recharger (page neuve = _importedGrp vide)
             self._restore_imported_model()
             amb = getattr(self, '_sl_amb', None)
+            if amb is None:
+                self._js('window.setRoomAmbience && '
+                         f'window.setRoomAmbience({getattr(self, "_ambience", 160)/200:.3f})')
             if amb:
-                self._js(f'window.ambLight.intensity={amb.value()/100:.2f}')
+                # Même formule que le curseur : cette ligne ne rétablissait que
+                # l'AmbientLight, à l'ancienne échelle. Au moindre rechargement
+                # de page (changement de preset, décor importé), le réglage
+                # d'ambiance retombait donc silencieusement à sa version faible.
+                self._js('window.setRoomAmbience && '
+                         f'window.setRoomAmbience({amb.value()/200:.3f})')
             self._js('if(window.setBloom)window.setBloom(0.0)')
             self._js('window.beamScale=0.5')
+            # Qualité de rendu des faisceaux volumétriques
+            self._js(f'window.autoQuality = {str(bool(self._auto_quality)).lower()}')
+            self._js(f'if(window.setQuality)window.setQuality({int(self._quality)})')
+            if getattr(self, '_chk_fps', None) and self._chk_fps.isChecked():
+                self._js('window.showFps && window.showFps(true)')
             if self._pending is not None:
                 self._do_push()
 
@@ -1879,6 +2238,8 @@ class Plan3DWebWindow(QMainWindow):
                 'body_rotation':  getattr(p, 'body_rotation', 0.0),
                 'rot3d_x':        getattr(p, 'rot3d_x', 0.0),
                 'rot3d_y':        getattr(p, 'body_rotation', 0.0),
+                # Puissance de faisceau par projecteur (%) → facteur 0..2
+                'beam_gain':      float(getattr(p, 'beam_gain', 100.0) or 0.0) / 100.0,
                 'rot3d_z':        getattr(p, 'rot3d_z', 0.0),
                 'name':           getattr(p, 'name', ''),
                 'group':          getattr(p, 'group', ''),

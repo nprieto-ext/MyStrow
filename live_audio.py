@@ -21,15 +21,36 @@ from PySide6.QtGui import QColor
 
 from audio_ai import AudioColorAI
 
-try:
-    import sounddevice as sd
-    HAS_SD = True
-    _SD_ERR = ""
-except Exception as _e:
-    sd = None
-    HAS_SD = False
-    _SD_ERR = f"{type(_e).__name__}: {_e}"
-    print(f"[LiveAudio] sounddevice indisponible au démarrage : {_SD_ERR}")
+# sounddevice est chargé À LA DEMANDE, jamais à l'import de ce module.
+#
+# `import sounddevice` exécute Pa_Initialize() de PortAudio, qui peut mourir en
+# « Windows fatal exception: access violation » selon les pilotes et les
+# périphériques audio présents. Ce n'est PAS une exception Python : le
+# try/except qui entourait cet import ne rattrapait rien, le process était tué
+# net. Et comme live_audio est importé par main_window, ça emportait TOUT le
+# démarrage : splash affiché, puis plus rien, sans le moindre message.
+#
+# L'audio ne sert qu'au mode LIVE. On repousse donc l'import à ce moment-là :
+# si PortAudio tombe, seul le mode LIVE est perdu, pas l'application.
+sd = None
+HAS_SD = False
+_SD_ERR = "chargement différé"
+
+
+def ensure_sounddevice():
+    """Charge sounddevice au premier besoin réel. True s'il est utilisable."""
+    global sd, HAS_SD, _SD_ERR
+    if HAS_SD:
+        return True
+    try:
+        import sounddevice as _sd
+        sd = _sd
+        HAS_SD = True
+        _SD_ERR = ""
+    except Exception as e:
+        _SD_ERR = f"{type(e).__name__}: {e}"
+        print(f"[LiveAudio] sounddevice indisponible : {_SD_ERR}")
+    return HAS_SD
 
 # pyaudiowpatch — WASAPI loopback natif sur Windows (Spotify, YouTube, etc.)
 try:
@@ -81,7 +102,7 @@ def get_audio_devices() -> list:
     Format : [{'label': str, 'key': str, 'type': 'input'|'output'}]
     """
     devices = []
-    if not HAS_SD:
+    if not ensure_sounddevice():
         return devices
     try:
         all_devs   = sd.query_devices()
@@ -446,17 +467,9 @@ class LiveAudioEngine(QObject):
     # ── Sources audio (Loopback / Micro) ───────────────────────────────────
 
     def _open_audio(self):
-        global sd, HAS_SD, _SD_ERR
-        # Tentative d'import tardif (peut réussir si installé après démarrage)
-        if not HAS_SD:
-            try:
-                import sounddevice as _sd_late
-                sd = _sd_late
-                HAS_SD = True
-                _SD_ERR = ""
-            except Exception:
-                pass
-        if not HAS_SD:
+        # Premier point où l'audio est réellement nécessaire : c'est ici que
+        # sounddevice est chargé (cf. ensure_sounddevice en haut du module).
+        if not ensure_sounddevice():
             import sys
             if getattr(sys, 'frozen', False):
                 # EXE PyInstaller : sounddevice absent du bundle → rebuild nécessaire

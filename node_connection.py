@@ -131,6 +131,33 @@ def _get_ethernet_adapters_windows():
     return adapters
 
 
+def _mac_hardware_ports():
+    """Associe chaque interface BSD macOS à son nom lisible.
+
+    `ifconfig` ne connaît que en0, en1, en5… — des noms qui ne disent rien à
+    l'utilisateur, et qui se ressemblent tous. `networksetup` donne le libellé
+    du Réglage Système correspondant (« Wi-Fi », « Ethernet Thunderbolt »…).
+    Retourne {"en0": "Wi-Fi", ...}, vide si la commande échoue.
+    """
+    ports = {}
+    try:
+        r = subprocess.run(["networksetup", "-listallhardwareports"],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:
+        return ports
+    label = None
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("Hardware Port:"):
+            label = line.split(":", 1)[1].strip()
+        elif line.startswith("Device:") and label:
+            device = line.split(":", 1)[1].strip()
+            if device:
+                ports[device] = label
+            label = None
+    return ports
+
+
 def _get_ethernet_adapters_mac():
     """Détecte les interfaces réseau sur macOS via ifconfig."""
     _SKIP_PREFIXES = ("lo", "utun", "awdl", "llw", "stf", "gif", "anpi",
@@ -140,17 +167,40 @@ def _get_ethernet_adapters_mac():
     except Exception:
         return []
 
+    hw_ports = _mac_hardware_ports()
+
     adapters = []
     current_name = None
     current_ip = ""
     current_connected = False
 
+    def _keep(device, ip):
+        """Une interface mérite-t-elle d'être proposée à l'utilisateur ?
+
+        Un Mac expose une dizaine d'interfaces en*, dont la plupart sont des
+        emplacements Thunderbolt/USB vides : sans nom lisible ET sans adresse,
+        elles n'apportent rien et noient la vraie carte dans la liste.
+        """
+        if not device or any(device.startswith(p) for p in _SKIP_PREFIXES):
+            return False
+        return bool(ip) or device in hw_ports
+
+    def _label(device):
+        """« Ethernet Thunderbolt (en5) » plutôt que « en5 »."""
+        port = hw_ports.get(device)
+        return f"{port} ({device})" if port else device
+
+    def _flush():
+        if _keep(current_name, current_ip):
+            # description = nom BSD brut, utile en diagnostic.
+            adapters.append((_label(current_name), current_ip,
+                             current_name, current_connected))
+
     for line in r.stdout.splitlines():
         # Ligne d'en-tête d'interface : "en0: flags=..."
         m = re.match(r'^(\w[\w.]*): ', line)
         if m:
-            if current_name and not any(current_name.startswith(p) for p in _SKIP_PREFIXES):
-                adapters.append((current_name, current_ip, current_name, current_connected))
+            _flush()
             current_name = m.group(1)
             current_ip = ""
             current_connected = "UP" in line
@@ -164,9 +214,10 @@ def _get_ethernet_adapters_mac():
                         current_ip = ip
                         current_connected = True
 
-    if current_name and not any(current_name.startswith(p) for p in _SKIP_PREFIXES):
-        adapters.append((current_name, current_ip, current_name, current_connected))
+    _flush()
 
+    # Les cartes configurées passent devant : c'est celle du node qu'on cherche.
+    adapters.sort(key=lambda a: (not a[1].startswith("2."), not a[1]))
     return adapters
 
 
@@ -190,10 +241,16 @@ def _ping(ip: str, timeout_ms: int = 1000) -> bool:
 def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
     """ArtPoll vers target_ip, filtre les réponses du PC lui-même.
 
-    On utilise toujours un port éphémère (bind 0) pour éviter de recevoir
-    notre propre broadcast en loopback sur le port 6454 (comportement Windows).
-    On vérifie aussi l'opcode ArtPollReply (0x2100) pour ne pas confondre notre
-    propre ArtPoll (0x2000) avec une réponse du node.
+    On écoute sur le port 6454, PAS sur un port éphémère : la spec Art-Net veut
+    que l'ArtPollReply soit émis vers le port 6454, pas vers le port source. Un
+    node qui respecte la spec répondait donc dans le vide, et l'assistant
+    concluait « le boîtier n'a pas répondu » alors qu'il répondait très bien
+    (reproduit sur Mac : le même ArtPoll lancé depuis le Terminal, socket liée
+    à 6454, recevait la réponse immédiatement).
+
+    Le port éphémère servait à ne pas recevoir notre propre broadcast en
+    loopback sous Windows ; le filtre sur l'opcode ArtPollReply (0x2100) et sur
+    les IP locales couvre déjà ce cas, sans sacrifier les réponses réelles.
     """
     # Si aucune carte réseau n'a d'IP en 2.x, le boitier est forcément inaccessible
     adapters = _get_ethernet_adapters()
@@ -203,7 +260,20 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        s.bind(("", 0))   # port éphémère — pas de loopback broadcast
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):
+            # macOS/BSD : sans ça, cohabiter avec une autre appli DMX sur 6454
+            # échoue même avec SO_REUSEADDR.
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except OSError:
+                pass
+        try:
+            s.bind(("", 6454))
+        except OSError:
+            # Port déjà pris (QLC+, Chataigne…) : on retombe sur un port
+            # éphémère, qui ne verra que les nodes répondant au port source.
+            s.bind(("", 0))
         s.settimeout(timeout)
         for dst in ("2.255.255.255", "255.255.255.255", target_ip):
             try:
@@ -1324,11 +1394,48 @@ class DmxOutputDialog(QDialog):
 
         dmx = getattr(parent, 'dmx', None)
         self._dmx = dmx
-        self._transport = dmx.transport if dmx else TRANSPORT_ARTNET
+        self._transport = self._initial_transport(dmx)
 
         self._build_ui()
         self._refresh_ports()
         self._set_transport(self._transport, save=False)
+
+    def _usb_port_available(self, dmx):
+        """Un port série exploitable est-il réellement présent ?"""
+        try:
+            import serial.tools.list_ports as _lp
+            devices = [p.device for p in _lp.comports()]
+        except Exception:
+            return False
+        if not devices:
+            return False
+        com = getattr(dmx, 'com_port', None)
+        # Port mémorisé toujours là → on peut rester en USB. Aucun port mémorisé
+        # mais des ports disponibles → l'utilisateur en choisira un.
+        return (com in devices) if com else True
+
+    def _initial_transport(self, dmx):
+        """Onglet affiché à l'ouverture du dialogue.
+
+        On suivait aveuglément le champ `transport` de ~/.mystrow_dmx.json. Or
+        ce champ est écrit par tout `connect()`, y compris ceux des scripts de
+        diagnostic : une seule session de test USB, et le dialogue s'ouvrait
+        pour toujours sur « Sortie DMX USB » — même boîtier débranché, même sur
+        une installation Art-Net. Même effet si l'utilisateur range son boîtier
+        USB après l'avoir utilisé une fois.
+
+        On montre donc ce qui fonctionne réellement, et on retombe sur le Node
+        (le cas le plus courant) dès qu'il y a le moindre doute.
+        """
+        if dmx is None:
+            return TRANSPORT_ARTNET
+        transport = getattr(dmx, 'transport', TRANSPORT_ARTNET)
+        if transport == TRANSPORT_ARTNET:
+            return TRANSPORT_ARTNET
+        # Sortie USB réellement ouverte : c'est bien celle-là qu'il faut montrer.
+        if getattr(dmx, 'connected', False):
+            return transport
+        return transport if self._usb_port_available(dmx) else TRANSPORT_ARTNET
 
     # ── Construction UI ────────────────────────────────────────────────
 
@@ -1543,6 +1650,7 @@ class DmxOutputDialog(QDialog):
             ("Eurolite USB-DMX512 PRO (MK2)", TRANSPORT_ENTTEC_PRO),
             ("ENTTEC DMX USB Pro",            TRANSPORT_ENTTEC_PRO),
             ("ENTTEC Open DMX USB",           TRANSPORT_ENTTEC),
+            ("OPTO OPEN DMX (ElectroConcept)", TRANSPORT_ENTTEC),
             ("DMXKing UltraDMX Micro",        TRANSPORT_ENTTEC),
             ("Autre interface USB-DMX",       TRANSPORT_ENTTEC),
         ]:

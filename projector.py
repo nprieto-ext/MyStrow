@@ -65,6 +65,9 @@ class Projector:
         self.matrix_phys_w = None   # largeur physique (mm), None = inconnu
         self.matrix_phys_h = None   # hauteur physique (mm), None = inconnu
         self.matrix_rot   = 0       # rotation du bloc sur le plan (0..3 quarts de tour)
+        # Puissance du faisceau dans le plan 3D, en % (100 = rendu d'origine).
+        # Purement visuel : n'entre jamais dans les niveaux DMX envoyés.
+        self.beam_gain    = 100.0
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

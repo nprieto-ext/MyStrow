@@ -6,6 +6,7 @@ import json
 import os
 import time as _time
 from i18n import tr
+from core import projector_selection_keys
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
     QLabel, QMenu, QWidgetAction, QPushButton, QSlider,
@@ -1229,6 +1230,15 @@ def _find_free_canvas_pos(projectors, pref_x, pref_y, min_dist=0.13):
 
 # ── FixtureCanvas ─────────────────────────────────────────────────────────────
 
+# Viser une lyre en glissant la souris sur son faisceau ou son corps dans le
+# plan 2D. Désactivé : le geste entrait sans cesse en conflit avec la simple
+# sélection de projecteurs — un clic un peu appuyé déplaçait le faisceau au
+# lieu de sélectionner. Le pan/tilt reste réglable au contrôleur, aux faders
+# et dans les propriétés du projecteur.
+# Repasser à True suffit à tout réactiver : rien d'autre n'a été supprimé.
+BEAM_MOUSE_AIM = False
+
+
 class _PanTiltFloater(QFrame):
     """Panneau flottant Pan/Tilt qui s'accroche à une Moving Head dans le canvas."""
 
@@ -1424,6 +1434,10 @@ class FixtureCanvas(QWidget):
         # Sélection autorisée (clic + lasso) mais aucune édition (drag pan/tilt,
         # menus couleur) : pour un plan « sélecteur » comme dans l'éditeur d'effet.
         self._select_only = False
+        # Numéroter les fixtures sélectionnées (1, 2, 3…) dans l'ordre des clics.
+        # C'est cet ordre que la cible « Sélection » d'un effet rejoue : sans le
+        # voir, impossible de savoir dans quel sens partira un chenillard.
+        self.show_selection_order = False
 
         self._guides      = []   # Smart Guides temporaires pendant le drag
 
@@ -2112,7 +2126,44 @@ class FixtureCanvas(QWidget):
                 keys.append((g, li))
         return keys
 
-    def _draw_matrix_block(self, painter, indices):
+    def _selection_rank_map(self):
+        """{(groupe, index_local): rang 0-based} à afficher, {} si désactivé."""
+        if not getattr(self, 'show_selection_order', False):
+            return {}
+        if not getattr(self.pdf, 'selected_lamps', None):
+            return {}
+        fn = getattr(self.pdf, 'selection_rank_map', None)
+        if not callable(fn):
+            return {}
+        try:
+            return fn()
+        except Exception:
+            return {}
+
+    def _draw_selection_badge(self, painter, cx, cy, rank):
+        """Pastille numérotée SOUS la fixture : sa place dans la sélection.
+
+        Le rang affiché part de 1 (l'utilisateur compte 1, 2, 3…), alors que le
+        rang stocké part de 0 comme dans les moteurs d'effet.
+        """
+        r     = 9 if self.compact else 13
+        txt   = str(rank + 1)
+        rad   = 7.0 if len(txt) < 2 else 9.0
+        bx, by = float(cx), float(cy + r + rad + 1)
+        # Fixture posée en bas du plan : basculer la pastille au-dessus plutôt
+        # que de la laisser se faire rogner par le bord (ou la barre de statut).
+        _bas = self.height() - (22 if getattr(self, 'show_statusbar', True) else 0)
+        if by + rad > _bas:
+            by = float(cy - r - rad - 1)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 212, 255, 235))
+        painter.drawEllipse(QPointF(bx, by), rad, rad)
+        painter.setPen(QColor("#04141a"))
+        painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        painter.drawText(QRectF(bx - rad, by - rad, rad * 2, rad * 2),
+                         Qt.AlignCenter, txt)
+
+    def _draw_matrix_block(self, painter, indices, sel_rank=None):
         """Dessine une matrice/barre comme un bloc cohérent (cadre + nom + cellules)."""
         pixels = []   # (proj, px, py, key)
         master = None
@@ -2211,6 +2262,14 @@ class FixtureCanvas(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(cell)
 
+        # Rang de sélection du bloc = celui de son premier pixel sélectionné.
+        # Numéroter chaque pixel noierait la barre sous les chiffres.
+        if sel_rank:
+            _ranks = [sel_rank[k] for *_, k in pixels if k in sel_rank]
+            if _ranks:
+                self._draw_selection_badge(painter, int((x0 + x1) / 2), int(y1) - 9,
+                                           min(_ranks))
+
         # Nom + adresse SOUS le bloc, comme les fixtures classiques
         if not self.compact and base_name:
             _cx = int((x0 + x1) / 2)
@@ -2290,6 +2349,9 @@ class FixtureCanvas(QWidget):
         font_name = QFont("Segoe UI", 8)
         font_ch   = QFont("Segoe UI", 7)
 
+        # Rang de sélection (1, 2, 3…) — vide si la numérotation est désactivée.
+        _sel_rank = self._selection_rank_map()
+
         _matrix_members = {}   # matrix_id -> [indices]
         for i, proj in enumerate(self.pdf.projectors):
             # Les matrices/barres à pixels sont dessinées en bloc (voir plus bas)
@@ -2306,6 +2368,9 @@ class FixtureCanvas(QWidget):
 
             self._draw_fixture(painter, cx, cy, proj, is_selected, is_hover)
 
+            if is_selected and key in _sel_rank:
+                self._draw_selection_badge(painter, cx, cy, _sel_rank[key])
+
             if not self.compact:
                 # Nom (en cyan si selectionne)
                 painter.setFont(font_name)
@@ -2321,7 +2386,7 @@ class FixtureCanvas(QWidget):
 
         # ── Matrices / barres à pixels (rendu en bloc) ───────────
         for _mid, _idxs in _matrix_members.items():
-            self._draw_matrix_block(painter, _idxs)
+            self._draw_matrix_block(painter, _idxs, _sel_rank)
 
         # ── Locate pulse (anneaux sonar) ─────────────────────────
         if self._locate_key:
@@ -2397,7 +2462,9 @@ class FixtureCanvas(QWidget):
         if event.button() == Qt.LeftButton:
             # Clic sur le faisceau d'une Moving Head → drag pan/tilt (en attente de mouvement)
             # Désactivé en mode édition (Patch DMX) : on veut seulement déplacer les fixtures.
-            beam_idx = self._beam_at(pos) if (not self._editable and not self._select_only) else None
+            beam_idx = (self._beam_at(pos)
+                        if (BEAM_MOUSE_AIM and not self._editable
+                            and not self._select_only) else None)
             if beam_idx is not None and idx is None:
                 proj = self.pdf.projectors[beam_idx]
                 self._pending_beam = {
@@ -2450,7 +2517,8 @@ class FixtureCanvas(QWidget):
                         if (p.group, li) in self.pdf.selected_lamps:
                             self._drag_starts[j] = self._get_norm_pos(j)
                         g_cnt[p.group] = li + 1
-                elif (getattr(self.pdf.projectors[idx], 'fixture_type', '') == 'Moving Head'
+                elif (BEAM_MOUSE_AIM
+                        and getattr(self.pdf.projectors[idx], 'fixture_type', '') == 'Moving Head'
                         and not self._select_only):
                     # Clic sur le corps d'une Moving Head → drag pan/tilt (haut/bas=tilt, gauche/droite=pan)
                     if self._pt_floater is not None:
@@ -3151,6 +3219,10 @@ class PlanDeFeu(QFrame):
             show_toolbar if interactive is None else interactive)
         self.canvas._read_only   = not _interactive
         self.canvas._select_only = select_only
+        # Plan « sélecteur » (éditeur d'effet) : afficher le rang de sélection.
+        # Ailleurs (vue principale) ce serait du bruit — la sélection y sert à
+        # poser une couleur, pas à ordonner un chenillard.
+        self.canvas.show_selection_order = select_only
         root.addWidget(self.canvas)
 
         self._dirty = True  # Redessiner seulement si les données ont changé
@@ -3717,12 +3789,44 @@ class PlanDeFeu(QFrame):
 
     # ── Selection helpers ────────────────────────────────────────────
 
+    def selection_ordered(self):
+        """Sélection courante DANS L'ORDRE de sélection : [(groupe, index_local)…].
+
+        `selected_lamps` est un set : il perd l'ordre des clics, alors que c'est
+        justement lui qui donne son sens à un chenillard (cible « Sélection » d'un
+        effet). On rejoue donc `selected_lamps_ordered`, filtré par le set pour
+        écarter les entrées périmées, puis on ajoute les lampes entrées par un
+        autre chemin (Ctrl+A, presets de groupe…) dans l'ordre du plan.
+
+        La liste ordonnée est réécrite au passage : elle reste ainsi le reflet
+        exact du set, quel que soit le chemin de sélection utilisé.
+        """
+        sel = self.selected_lamps
+        ordered = []
+        vus = set()
+        for k in getattr(self, 'selected_lamps_ordered', []):
+            if k in sel and k not in vus:
+                ordered.append(k)
+                vus.add(k)
+        for k in projector_selection_keys(self.projectors):
+            if k in sel and k not in vus:
+                ordered.append(k)
+                vus.add(k)
+        self.selected_lamps_ordered = ordered
+        return list(ordered)
+
+    def selection_rank_map(self):
+        """{(groupe, index_local): rang 0-based} de la sélection ordonnée."""
+        return {k: i for i, k in enumerate(self.selection_ordered())}
+
     def _deselect_all(self):
         self.selected_lamps.clear()
+        self.selected_lamps_ordered.clear()
         self.refresh()
 
     def _select_all(self):
         self.selected_lamps.clear()
+        self.selected_lamps_ordered.clear()
         for group, local_idx, _ in self.lamps:
             self.selected_lamps.add((group, local_idx))
         self.refresh()
@@ -4150,11 +4254,7 @@ class PlanDeFeu(QFrame):
     # ── Couleur / dimmer ─────────────────────────────────────────────
 
     def _get_target_projectors(self, group, idx):
-        ordered = getattr(self, 'selected_lamps_ordered', [])
-        # Compléter avec les lampes sélectionnées absentes de la liste ordonnée
-        ordered_set = set(ordered)
-        full = [k for k in ordered if k in self.selected_lamps] + \
-               [k for k in self.selected_lamps if k not in ordered_set]
+        full = self.selection_ordered()
         targets = []
         for g, i in full:
             projs = [p for p in self.projectors if p.group == g]

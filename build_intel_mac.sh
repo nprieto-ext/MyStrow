@@ -158,6 +158,7 @@ else
   ARGS=(
     --onefile --windowed
     --add-data "logo.png:." --add-data "fixtures_qlcplus.json:." --add-data "plan_3d_web.html:."
+    --add-data "vendor/three:vendor/three"
     --add-data "AKAIAPCMINI.png:." --add-data "Novation.png:."
     "--name=$APP_NAME" "--paths=$SCRIPT_DIR"
     --hidden-import=rtmidi --hidden-import=rtmidi._rtmidi --collect-all rtmidi

@@ -23,9 +23,9 @@ from PySide6.QtWidgets import (
     QPushButton, QProgressBar, QDialog, QMessageBox, QApplication, QFrame,
     QScrollArea,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRect
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRect, QPointF
 from PySide6.QtGui import (
-    QFont, QScreen, QPixmap, QDesktopServices,
+    QFont, QFontMetricsF, QScreen, QPixmap, QDesktopServices,
     QColor, QPainter, QRadialGradient, QBrush, QPen
 )
 
@@ -91,6 +91,46 @@ def version_gt(remote, local):
 # ============================================================
 # SPLASH SCREEN
 # ============================================================
+class _SplashTitle(QWidget):
+    """Titre « MYSTROW » bicolore, centré au pixel près.
+
+    Historique de ce petit widget — deux tentatives ratées avant lui :
+      1. deux QLabel côte à côte : décalés dès que la police de repli n'avait
+         pas les mêmes métriques d'une plateforme à l'autre ;
+      2. un QLabel unique en texte riche : sur macOS, Qt passe alors par un
+         QTextDocument qui se centre sur SA largeur idéale, pas sur celle du
+         label — le titre partait ~20 px à gauche du logo et de la version.
+
+    On mesure donc le texte nous-mêmes et on le peint. Aucune dépendance à la
+    résolution de police ni au moteur de texte riche : même rendu partout.
+    """
+
+    def __init__(self, font, parent=None):
+        super().__init__(parent)
+        self._font = font
+        fm = QFontMetricsF(font)
+        # L'espacement absolu est ajouté APRÈS chaque caractère, y compris le
+        # dernier : cette avance en trop décentrerait le texte vers la gauche.
+        self._trailing = (font.letterSpacing()
+                          if font.letterSpacingType() == QFont.AbsoluteSpacing else 0.0)
+        self._w_my = fm.horizontalAdvance("MY")
+        self._w_all = fm.horizontalAdvance("MYSTROW") - self._trailing
+        self.setMinimumHeight(int(fm.height()) + 6)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+        p.setFont(self._font)
+        fm = QFontMetricsF(self._font)
+        x = (self.width() - self._w_all) / 2.0
+        y = (self.height() + fm.ascent() - fm.descent()) / 2.0
+        p.setPen(QColor("#ffffff"))
+        p.drawText(QPointF(x, y), "MY")
+        p.setPen(QColor("#FFE000"))
+        p.drawText(QPointF(x + self._w_my, y), "STROW")
+        p.end()
+
+
 class SplashScreen(QWidget):
     """Ecran de chargement au demarrage"""
 
@@ -131,14 +171,9 @@ class SplashScreen(QWidget):
         _title_font.setFamilies(["Bebas Neue", "Impact", "Arial Black", "Arial"])
         _title_font.setPointSize(36)
         _title_font.setLetterSpacing(QFont.AbsoluteSpacing, 2)
-        # Un seul QLabel HTML évite les problèmes de centrage quand les métriques
-        # de police diffèrent selon la plateforme (deux labels côte à côte pouvaient
-        # sembler décalés si le font fallback avait des dimensions différentes).
-        lbl_title = QLabel('<span style="color:#ffffff;">MY</span>'
-                           '<span style="color:#FFE000;">STROW</span>')
-        lbl_title.setFont(_title_font)
-        lbl_title.setAlignment(Qt.AlignCenter)
-        lbl_title.setStyleSheet("background: transparent;")
+        # Peint à la main : ni deux labels (métriques divergentes), ni texte
+        # riche (QTextDocument mal centré sur macOS). Voir _SplashTitle.
+        lbl_title = _SplashTitle(_title_font)
         layout.addWidget(lbl_title)
 
         # --- Version sous le titre ---
@@ -210,21 +245,56 @@ class SplashScreen(QWidget):
         value = QLabel(initial_value)
         value.setFont(QFont("Segoe UI", 10))
         value.setStyleSheet("color: #888888;")
+        value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         row.addWidget(value)
 
-        return {"layout": row, "indicator": indicator, "value": value, "label": label}
+        # `full` garde le texte entier : `value` n'affiche qu'une version
+        # tronquée quand la place manque (voir `_ajuster_valeur`).
+        return {"layout": row, "indicator": indicator, "value": value,
+                "label": label, "full": initial_value, "detail": ""}
+
+    # Place occupée par le reste de la ligne : marges du layout du splash
+    # (30+30), marges de la ligne (10+10), pastille (16) et les deux espaces
+    # de 8 px. Ce qui reste est le budget du texte de droite.
+    _FIXE_LIGNE_STATUT = 30 + 30 + 10 + 10 + 16 + 8 + 8
+
+    def _ajuster_valeur(self, row):
+        """Pose la valeur d'une ligne, tronquée si elle déborde encore.
+
+        Les libellés sont volontairement courts (« Art-Net · 2.0.0.15 ») pour
+        tenir dans la largeur fixe du splash ; cette élision n'est qu'un
+        garde-fou, pour un port ou une IP inhabituellement longs. On coupe au
+        milieu — le début (le type de sortie) et la fin (l'état) sont les deux
+        parties utiles. Le détail complet reste en infobulle.
+        """
+        valeur = row["value"]
+        plein  = row.get("full", "")
+        valeur.setToolTip(row.get("detail") or plein)
+        dispo = (self.width() - self._FIXE_LIGNE_STATUT
+                 - row["label"].sizeHint().width())
+        if dispo <= 0:
+            valeur.setText(plein)
+            return
+        valeur.setText(valeur.fontMetrics().elidedText(
+            plein, Qt.ElideMiddle, dispo))
 
     def set_hw_label(self, target, text):
         """Met à jour l'étiquette gauche d'une ligne de statut hardware."""
         row = getattr(self, f"status_{target}", None)
         if row and "label" in row:
             row["label"].setText(text)
+            # L'étiquette de gauche mange le budget de la valeur : la
+            # re-tronquer, sinon la ligne déborde à nouveau.
+            self._ajuster_valeur(row)
 
-    def set_hw_status(self, target, text, ok):
+    def set_hw_status(self, target, text, ok, detail=None):
         """Met a jour un statut hardware (akai, node, license).
         ok=True  -> vert  (connecte)
         ok=False -> rouge (erreur / non configure)
-        ok=None  -> orange (configure mais non verifie)"""
+        ok=None  -> orange (configure mais non verifie)
+
+        `detail` : texte long (nom commercial, port, IP) montré en infobulle.
+        La ligne elle-même reste courte, faute de place sur le splash."""
         row = getattr(self, f"status_{target}", None)
         if not row:
             return
@@ -236,7 +306,9 @@ class SplashScreen(QWidget):
             color = "#f44336"   # Rouge
         row["indicator"].setStyleSheet(f"color: {color};")
         row["value"].setStyleSheet(f"color: {color};")
-        row["value"].setText(text)
+        row["full"]   = text or ""
+        row["detail"] = detail or ""
+        self._ajuster_valeur(row)
 
     def _center_on_screen(self):
         screen = QApplication.primaryScreen()
@@ -984,6 +1056,7 @@ _GEAR_ARTNET_COMPAT = [
     ("ENTTEC EtherGate",         "~150€",  "Node compact, ArtNet/sACN"),
     ("DMXking eDMX1 PRO",        "~130€",  "Compact, ArtNet/sACN — recommandé"),
     ("DMXking eDMX2 PRO",        "~200€",  "2 univers ArtNet/sACN"),
+    ("Node ArtNet 4 univers",    "129€",   "4 univers, XLR + RJ45 — recommandé multi-scène"),
     ("Luminex Ethernet-DMX",     "~300€+", "Pro, multi-univers"),
     ("Node générique (Alibaba)", "20–60€", "Fonctionne, qualité variable"),
     ("ESP32 DIY + lib ArtNet",   "~10€",   "Solution DIY, très répandue"),

@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.74"
+VERSION = "3.1.75"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -284,6 +284,117 @@ def spread_rank(i, n, mode="lineaire"):
     return i / n
 
 
+def position_preset_values(preset, lyres):
+    """{id(lyre): (pan, tilt)} d'un preset de position, apparié aux lyres présentes.
+
+    Règle d'appariement, dans l'ordre : adresse DMX (unique par fixture, donc
+    insensible aux renommages), puis nom — distribué séquentiellement, sinon
+    deux lyres homonymes recevraient toutes les deux le premier état —, puis
+    rang dans la liste. Une lyre sans correspondance est absente du résultat :
+    à l'appelant de lui laisser la position qu'elle a déjà.
+
+    Source unique pour le rappel manuel d'une position ET pour le centre d'un
+    effet Pan/Tilt : un cercle doit tourner autour du point où le rappel aurait
+    posé la lyre, pas ailleurs.
+    """
+    out = {}
+    etats = (preset or {}).get("projectors", []) or []
+    par_addr = {str(s["start_address"]): s for s in etats if s.get("start_address")}
+    par_nom = {}
+    for s in etats:
+        nom = s.get("name")
+        if nom:
+            par_nom.setdefault(nom, []).append(s)
+    curseur = {}
+
+    for i, p in enumerate(lyres):
+        etat = None
+        addr = str(getattr(p, 'start_address', '') or '')
+        if addr:
+            etat = par_addr.get(addr)
+        if etat is None and getattr(p, 'name', ''):
+            entrees = par_nom.get(p.name, [])
+            k = curseur.get(p.name, 0)
+            if k < len(entrees):
+                etat = entrees[k]
+                curseur[p.name] = k + 1
+        if etat is None and i < len(etats):
+            etat = etats[i]
+        if etat is not None:
+            out[id(p)] = (int(etat.get("pan", 32768)),
+                          int(etat.get("tilt", 32768)))
+    return out
+
+
+def find_position_preset(presets, idx, name=""):
+    """Retrouve un preset de position par index, en se rattrapant sur le nom.
+
+    Les couches d'effet stockent l'index (convention des clips de position),
+    mais un preset renommé, inséré ou supprimé décalerait la liste : le nom
+    sert alors de filet. Rend None si rien ne correspond.
+    """
+    presets = presets or []
+    if idx is not None and 0 <= int(idx) < len(presets):
+        trouve = presets[int(idx)]
+        if not name or trouve.get("name") == name:
+            return trouve
+    if name:
+        return next((p for p in presets if p.get("name") == name), None)
+    return None
+
+
+def chase_slot(pos_cycles, n, direction=1):
+    """Rang allumé à un instant donné d'un chenillard exclusif (forme « Un par un »).
+
+    `pos_cycles` = position exprimée en NOMBRE DE CYCLES (`freq*t` + départ) :
+    un cycle entier fait défiler la cible une fois de bout en bout. La fonction
+    ne rend qu'UN seul rang — c'est là toute l'exclusivité : les autres fixtures
+    sont éteintes, sans dépendre du DÉCALAGE ni de la largeur d'une forme d'onde.
+
+    Les formes classiques ne peuvent pas donner ça : « Flash » est allumé la
+    moitié du cycle, donc la moitié du rig est toujours allumée, quel que soit
+    le décalage.
+
+    Sens : 1 = 1,2,3… · -1 = 1, puis n, n-1… · 0 = aller-retour sans redoubler
+    les extrémités (1,2,3,4,5,4,3,2).
+    """
+    n = max(1, int(n))
+    if n == 1:
+        return 0
+    # `// 1` plutôt qu'int() : il faut un plancher, y compris sur un départ
+    # négatif — int() tronquerait vers zéro et ferait bégayer le rang 0.
+    p = int((float(pos_cycles) * n) // 1)
+    if direction == 0:
+        m = 2 * n - 2
+        q = p % m
+        return q if q < n else m - q
+    if direction == -1:
+        return (-p) % n
+    return p % n
+
+
+def block_index(i, n, block):
+    """Replie l'index d'une fixture sur des paquets de `block` fixtures.
+
+    C'est la colonne GROUPER de l'éditeur d'effets : au lieu d'une phase par
+    fixture, une phase par PAQUET. Avec 25 projecteurs et block=5, les 5
+    premiers partagent l'index 0, les 5 suivants l'index 1… soit 5 phases —
+    la rangée entière s'allume d'un coup et c'est la rangée qui défile.
+
+    Retourne (index de paquet, nombre de paquets), à passer tels quels à
+    `spread_rank`. block ≤ 1 rend l'index inchangé : les effets existants,
+    enregistrés sans cette clé, gardent exactement leur figure.
+
+    Le dernier paquet peut être incomplet (25 fixtures par 4 → 6 paquets dont
+    un de 1) : c'est voulu, plutôt que de refuser les tailles non divisibles.
+    """
+    n = max(1, int(n))
+    b = max(1, int(block or 1))
+    if b <= 1:
+        return int(i), n
+    return int(i) // b, max(1, (n + b - 1) // b)
+
+
 def projector_selection_keys(projectors):
     """Clé (groupe, index_local) de chaque projecteur, dans l'ordre de la liste.
 
@@ -303,25 +414,41 @@ def projector_selection_keys(projectors):
     return keys
 
 
-def layer_selection_set(layer):
-    """Ensemble {(groupe, index_local)} ciblé par une couche « Sélection ».
+def layer_selection_ranks(layer):
+    """Rang de chaque projecteur d'une couche « Sélection », dans l'ordre choisi.
 
-    Accepte un dict (moteur) ou un objet EffectLayer (éditeur). Retourne un set
-    de tuples pour un test d'appartenance O(1) ; vide si la couche ne cible pas
-    une sélection.
+    Retourne {(groupe, index_local): rang}, rang partant de 0. L'ORDRE de la
+    liste `target_selection` est celui des clics sur le plan de feu : c'est lui
+    que les moteurs donnent à `spread_rank`, pour qu'un chenillard parte dans le
+    sens voulu (1, 2, 3…) au lieu de l'ordre du patch. Un doublon garde son
+    premier rang.
+
+    Accepte un dict (moteur) ou un objet EffectLayer (éditeur) ; vide si la
+    couche ne cible pas une sélection.
     """
     if isinstance(layer, dict):
         sel = layer.get('target_selection') or []
     else:
         sel = getattr(layer, 'target_selection', None) or []
-    out = set()
+    out = {}
     for pair in sel:
         try:
             g, li = pair
-            out.add((g, int(li)))
+            key = (g, int(li))
         except Exception:
             continue
+        if key not in out:
+            out[key] = len(out)
     return out
+
+
+def layer_selection_set(layer):
+    """Ensemble {(groupe, index_local)} ciblé par une couche « Sélection ».
+
+    Conservé pour un simple test d'appartenance : les moteurs, eux, utilisent
+    `layer_selection_ranks` car ils ont aussi besoin de l'ordre.
+    """
+    return set(layer_selection_ranks(layer))
 
 
 # ─── Libellés courts de canaux ────────────────────────────────────────────────
@@ -335,3 +462,63 @@ CH_SHORT = {
 def channel_label(ch):
     """Libellé d'affichage d'un type de canal."""
     return CH_SHORT.get(ch, ch)
+
+
+# === RAPPORTS DE DIAGNOSTIC ===
+
+SUPPORT_EMAIL = "nicolas@mystrow.fr"
+
+# Les clients mail tronquent les URL mailto trop longues (et Outlook refuse
+# carrément au-delà de ~2000 caractères). On coupe le rapport et on invite à
+# coller la version complète, déjà placée dans le presse-papiers.
+_MAILTO_BODY_MAX = 1500
+
+
+def copy_report(text):
+    """Place un rapport dans le presse-papiers. Retourne True si non vide."""
+    if not text or not text.strip():
+        return False
+    QApplication.clipboard().setText(text)
+    return True
+
+
+def send_report_email(parent, subject, report, intro=""):
+    """Ouvre le client mail de l'utilisateur avec le rapport pré-rempli.
+
+    Le rapport est TOUJOURS copié dans le presse-papiers d'abord : si le client
+    mail tronque le corps du message (ou ne s'ouvre pas du tout), l'utilisateur
+    a de quoi coller le rapport complet à la main.
+    """
+    import urllib.parse
+    from PySide6.QtGui import QDesktopServices
+
+    report = (report or "").strip()
+    copy_report(report)
+
+    body = report
+    truncated = len(body) > _MAILTO_BODY_MAX
+    if truncated:
+        body = body[:_MAILTO_BODY_MAX] + "\n\n[…rapport tronqué — le rapport complet est dans votre presse-papiers, faites Coller ici…]"
+
+    head = intro or "Bonjour,\n\nVoici le rapport de diagnostic généré par MyStrow."
+    full = f"{head}\n\nMyStrow {VERSION} — {sys.platform}\n\n--- RAPPORT ---\n{body}\n"
+
+    url = QUrl("mailto:{}?subject={}&body={}".format(
+        SUPPORT_EMAIL,
+        urllib.parse.quote(f"[MyStrow {VERSION}] {subject}"),
+        urllib.parse.quote(full),
+    ))
+    ok = QDesktopServices.openUrl(url)
+    if not ok:
+        QMessageBox.information(
+            parent, "Envoyer le rapport",
+            f"Impossible d'ouvrir votre logiciel de messagerie.\n\n"
+            f"Le rapport a été copié dans le presse-papiers : collez-le dans un "
+            f"mail à {SUPPORT_EMAIL}.")
+    elif truncated:
+        QMessageBox.information(
+            parent, "Envoyer le rapport",
+            "Votre mail est ouvert. Le rapport étant long, il a été raccourci "
+            "dans le message — la version complète est dans le presse-papiers "
+            "(Coller pour la joindre).")
+    return ok

@@ -1018,8 +1018,13 @@ class LiveModePanel(QWidget):
         self._current_color    = 'rouge'
         self._color_duration   = 40         # durée en % (0-100)
         self._color_restrict   = True       # toujours restreindre à la sélection
-        # Enrichir SOURCES avec les périphériques audio détectés
-        self._refresh_audio_sources()
+        # Les périphériques audio NE sont PAS énumérés ici : les lister charge
+        # PortAudio, dont l'initialisation peut tuer le process (access
+        # violation non rattrapable) selon les pilotes de la machine — et donc
+        # empêcher MyStrow de démarrer alors que l'utilisateur ne veut même pas
+        # du mode LIVE. L'énumération se fait au premier affichage du panneau
+        # (showEvent), c'est-à-dire quand on passe vraiment en mode LIVE.
+        self._audio_sources_loaded = False
 
         self._color_max        = 4          # nombre de couleurs simultanées max (1-4)
         # ── Effet spécial (radio : un seul à la fois) ─────────────────────
@@ -2303,6 +2308,18 @@ class LiveModePanel(QWidget):
         self._request_save()
 
     # ── Sources audio dynamiques ─────────────────────────────────────────────
+
+    def showEvent(self, event):
+        """Premier affichage du panneau LIVE : c'est là qu'on énumère l'audio.
+
+        Repousser jusqu'ici garantit qu'une machine dont la pile audio fait
+        tomber PortAudio peut quand même lancer MyStrow et travailler en
+        manuel, en séquenceur ou en REC Lumière.
+        """
+        super().showEvent(event)
+        if not getattr(self, '_audio_sources_loaded', False):
+            self._audio_sources_loaded = True
+            self._refresh_audio_sources()
 
     def _refresh_audio_sources(self):
         """Enrichit self.SOURCES avec les périphériques audio détectés sur ce PC."""

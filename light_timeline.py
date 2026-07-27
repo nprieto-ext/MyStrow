@@ -2532,6 +2532,43 @@ print(json.dumps(waveform))
 
         return start_time
 
+    # En dessous de ce seuil un bloc posé est inexploitable : invisible à la
+    # lecture, impossible à rattraper à la souris. On préfère le repousser.
+    MIN_DROP_MS = 1000
+
+    def place_dropped_block(self, click_time, wanted_dur, min_dur=None):
+        """(début, durée) d'un bloc lâché à `click_time`.
+
+        Règle unique à toutes les familles — couleur, bicolore, mémoire AKAI,
+        position, effet. Le bloc démarre LÀ OÙ on lâche : c'est ça, le geste.
+        La durée n'est qu'un défaut, c'est donc elle qui cède quand la place
+        manque. Sauf si le trou est si petit que le bloc n'aurait plus aucun
+        sens (< min_dur) : on le repousse alors après le clip suivant.
+
+        Avant, chaque branche de dropEvent() avait sa propre règle — les effets
+        se recalaient au début du trou courant, les autres non — d'où un drop
+        au comportement différent selon ce qu'on glissait.
+        """
+        if min_dur is None:
+            min_dur = self.MIN_DROP_MS
+        start = max(0, click_time)
+
+        def _room(t):
+            later = [c.start_time for c in self.clips if c.start_time >= t]
+            return (min(later) if later else self.total_duration) - t
+
+        # Lâché à l'intérieur d'un clip existant : impossible de démarrer là.
+        for c in self.clips:
+            if c.start_time <= start < c.start_time + c.duration:
+                start = c.start_time + c.duration
+                break
+
+        room = _room(start)
+        if room < min_dur:
+            start = self.find_free_position(start, max(wanted_dur, min_dur))
+            room = _room(start)
+        return start, max(0, min(wanted_dur, room))
+
     def _cross_compatible(self, other):
         """True si un clip peut être glissé de self vers `other` (drag vertical).
 
@@ -4787,8 +4824,10 @@ print(json.dumps(waveform))
                 val = itd.get('value', '')
 
                 if typ in ('color', 'bicolor') and not self.is_sequence_track and not self.is_effect_track:
-                    dur   = _default_dur
-                    start = self.find_free_position(current_time, dur) if first_item else current_time
+                    if first_item:
+                        start, dur = self.place_dropped_block(current_time, _default_dur)
+                    else:
+                        start, dur = current_time, _default_dur
                     if val.count('#') >= 2:
                         # Bicolore : format "#rrggbb#rrggbb"
                         c1h, c2h = val[1:].split('#', 1)
@@ -4803,8 +4842,10 @@ print(json.dumps(waveform))
                     parts = val.split(',', 3)
                     if len(parts) == 4:
                         mc, ri, label, chex = int(parts[0]), int(parts[1]), parts[2], parts[3]
-                        dur   = _default_dur
-                        start = self.find_free_position(current_time, dur) if first_item else current_time
+                        if first_item:
+                            start, dur = self.place_dropped_block(current_time, _default_dur)
+                        else:
+                            start, dur = current_time, _default_dur
                         clip  = self.add_clip_direct(start, dur, QColor(chex), 100)
                         clip.memory_ref   = (mc, ri)
                         clip.memory_label = label
@@ -4813,8 +4854,11 @@ print(json.dumps(waveform))
 
                 elif typ == 'effect' and self.is_effect_track:
                     eff   = _json.loads(val)
-                    dur   = max(_default_dur, 10_000)   # effets : min 10s
-                    start = self.find_free_position(current_time, dur) if first_item else current_time
+                    _want = max(_default_dur, 10_000)   # effets : min 10s
+                    if first_item:
+                        start, dur = self.place_dropped_block(current_time, _want)
+                    else:
+                        start, dur = current_time, _want
                     clip  = self.add_clip(start, dur, QColor("#1a0a2e"), 100)
                     clip.effect_name   = eff.get('name', '')
                     clip.effect_type   = eff.get('type', '')
@@ -4824,8 +4868,10 @@ print(json.dumps(waveform))
 
                 elif typ == 'position' and self.is_position_track:
                     pos   = _json.loads(val)
-                    dur   = _default_dur
-                    start = self.find_free_position(current_time, dur) if first_item else current_time
+                    if first_item:
+                        start, dur = self.place_dropped_block(current_time, _default_dur)
+                    else:
+                        start, dur = current_time, _default_dur
                     clip  = self.add_clip_direct(start, dur, QColor("#0d2a5c"), 0)
                     clip.position_preset_idx  = pos.get('idx')
                     clip.position_preset_name = pos.get('name', '')
@@ -4848,8 +4894,8 @@ print(json.dumps(waveform))
                 data = {}
             drop_x     = event.position().x() - 145
             click_time = max(0, drop_x / self.pixels_per_ms)
-            _dur = self._default_block_dur_ms()
-            start_time = self.find_free_position(click_time, _dur)
+            start_time, _dur = self.place_dropped_block(
+                click_time, self._default_block_dur_ms())
             clip = self.add_clip_direct(start_time, _dur, QColor("#0d2a5c"), 0)
             clip.position_preset_idx  = data.get('idx')
             clip.position_preset_name = data.get('name', '')
@@ -4871,19 +4917,16 @@ print(json.dumps(waveform))
             if eff_name:
                 drop_x    = event.position().x() - 145
                 click_time = max(0, drop_x / self.pixels_per_ms)
-                sorted_clips = sorted(self.clips, key=lambda c: c.start_time)
-                gap_start, gap_end = 0, self.total_duration
-                for c in sorted_clips:
-                    if c.start_time + c.duration <= click_time:
-                        gap_start = c.start_time + c.duration
-                    elif c.start_time >= click_time:
-                        gap_end = c.start_time
-                        break
-                gap_duration = gap_end - gap_start
-                if gap_duration > 100:
-                    # Effets : plancher 10 s, mais honore un réglage par défaut plus grand
-                    clip_duration = min(gap_duration, max(self._default_block_dur_ms(), 10_000))
-                    clip = self.add_clip(gap_start, clip_duration, QColor("#1a0a2e"), 100)
+                # Même règle que les couleurs, mémoires et positions : le clip
+                # démarre LÀ OÙ on lâche, et n'est repoussé que s'il chevauche
+                # un clip existant. L'effet était auparavant recalé au début du
+                # trou courant (fin du clip précédent) : lâché au milieu d'une
+                # zone vide, il sautait en arrière — d'où l'impression que le
+                # drop ne se comporte pas pareil selon ce qu'on glisse.
+                wanted = max(self._default_block_dur_ms(), 10_000)
+                start, clip_duration = self.place_dropped_block(click_time, wanted)
+                if clip_duration > 100:
+                    clip = self.add_clip(start, clip_duration, QColor("#1a0a2e"), 100)
                     clip.effect_name   = eff_name
                     clip.effect_type   = data.get("type", "")
                     clip.effect_layers = data.get("layers", [])
@@ -4916,8 +4959,8 @@ print(json.dumps(waveform))
 
                 if len(cues) <= 1:
                     # Cue unique → un seul clip
-                    _dur = self._default_block_dur_ms()
-                    start_time = self.find_free_position(start_time, _dur)
+                    start_time, _dur = self.place_dropped_block(
+                        start_time, self._default_block_dur_ms())
                     clip = self.add_clip_direct(start_time, _dur, QColor(color_hex), 100)
                     clip.memory_ref   = (mem_col, row_idx)
                     clip.memory_label = label
@@ -4958,9 +5001,8 @@ print(json.dumps(waveform))
 
         drop_x = event.position().x() - 145
         start_time = max(0, drop_x / self.pixels_per_ms)
-        clip_duration = self._default_block_dur_ms()
-
-        start_time = self.find_free_position(start_time, clip_duration)
+        start_time, clip_duration = self.place_dropped_block(
+            start_time, self._default_block_dur_ms())
 
         if '#' in color_data and color_data.count('#') >= 2:
             parts = color_data.split('#')

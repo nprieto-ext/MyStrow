@@ -247,6 +247,9 @@ def build_local_installer(version):
         f"--add-data \"mystrow.ico;.\" "
         f"--add-data \"fixtures_qlcplus.json;.\" "
         f"--add-data \"plan_3d_web.html;.\" "
+        # Three.js vendorisé : importé par chemin relatif au HTML. Sans lui, la
+        # fenêtre 3D reste bloquée sur « Chargement Three.js… » (échec muet).
+        f"--add-data \"vendor/three;vendor/three\" "
         f"--add-data \"AKAIAPCMINI.png;.\" "
         f"--add-data \"Novation.png;.\" "
         # Interface tablette (PWA statique servie par tablet_server.py). SANS ces

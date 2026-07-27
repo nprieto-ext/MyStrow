@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
-from core import projector_selection_keys, layer_selection_set
+from core import (projector_selection_keys, layer_selection_ranks,
+                  block_index, chase_slot, position_preset_values,
+                  find_position_preset)
 
 
 # ─── Raccourci couche ──────────────────────────────────────────────────────────
@@ -438,7 +440,11 @@ BUILTIN_EFFECTS = [
 
 # ─── Constantes ───────────────────────────────────────────────────────────────
 
-FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Aléatoire", "Fixe", "Off"]
+# « Un par un » n'est pas une forme d'onde comme les autres : sa position vient
+# du RANG de la fixture, pas d'une courbe échantillonnée. C'est ce qui lui permet
+# de n'allumer qu'une fixture (ou qu'un paquet) à la fois — voir `core.chase_slot`.
+FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Un par un",
+          "Aléatoire", "Fixe", "Off"]
 
 # Formes de trajectoire pour les lyres (Pan/Tilt couplés mathématiquement)
 # Chaque forme : {"pan": (forme, phase 0-100, speed_mult), "tilt": (forme, phase, speed_mult)}
@@ -476,6 +482,17 @@ _FORME_COMPAT = {
 
 
 # ─── Styles ───────────────────────────────────────────────────────────────────
+
+_MENU_STYLE = """
+    QMenu {
+        background: #1a1a2e; color: #ccc;
+        border: 1px solid #333; border-radius: 4px;
+    }
+    QMenu::item { padding: 5px 18px; }
+    QMenu::item:selected { background: #2a2a4e; color: #fff; }
+    QMenu::item:disabled { color: #555; }
+    QMenu::separator { height: 1px; background: #333; margin: 2px 0; }
+"""
 
 _COMBO_STYLE = """
     QComboBox {
@@ -555,6 +572,29 @@ def _norm_selection(raw):
     return out
 
 
+def _norm_pos_idx(raw):
+    """Index de preset de position, ou None (= centre de course par défaut)."""
+    if raw is None or raw == "":
+        return None
+    try:
+        idx = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return idx if idx >= 0 else None
+
+
+def _norm_block(raw):
+    """Taille de paquet GROUPER, ramenée à un entier ≥ 1.
+
+    Un effet enregistré avant l'arrivée de la colonne n'a pas la clé : il vaut
+    1, soit exactement l'ancien comportement (une fixture par phase).
+    """
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 1
+
+
 class EffectLayer:
     """Données d'une couche d'effet (sérialisé en dict JSON dans LightClip)."""
 
@@ -584,9 +624,24 @@ class EffectLayer:
         self.color2 = "#0000ff"
         self.mouvement_shape = "cercle"  # forme de trajectoire Pan/Tilt (défaut)
         self.sym_pan = False            # miroir pan sur la 2e moitié des fixtures
+        # POSITION : point AUTOUR duquel tourne un mouvement Pan/Tilt. Sans elle,
+        # la trajectoire est centrée au milieu de la course (32768) — un cercle
+        # « au centre du plateau ». Un preset de position donne à CHAQUE lyre son
+        # propre centre, donc le cercle tourne autour de son point de visée.
+        # None = pas de position choisie (centre par défaut). L'index suit la
+        # convention des clips de position ; le nom sert de filet si la liste
+        # de presets a bougé.
+        self.pos_preset_idx  = None
+        self.pos_preset_name = ""
         # Répartition du décalage entre fixtures (voir SPREAD_MODES) :
         # "lineaire" = chenillard 1,2,3… ; "miroir_in" = 1&8, 2&7, 3&6…
         self.spread_mode = "lineaire"
+        # GROUPER : taille des paquets de fixtures qui partent ENSEMBLE. 1 = une
+        # fixture à la fois (comportement historique). 5 sur 25 projecteurs =
+        # 5 paquets de 5, donc un chenillard rangée par rangée au lieu de projo
+        # par projo. Le paquet suit l'ordre de répartition, donc l'ordre de la
+        # sélection quand la cible est « Sélection ».
+        self.block = 1
 
     def to_dict(self):
         return {
@@ -609,6 +664,9 @@ class EffectLayer:
             "mouvement_shape": self.mouvement_shape,
             "sym_pan": self.sym_pan,
             "spread_mode": self.spread_mode,
+            "block": self.block,
+            "pos_preset_idx":  self.pos_preset_idx,
+            "pos_preset_name": self.pos_preset_name,
         }
 
     @classmethod
@@ -637,6 +695,9 @@ class EffectLayer:
         layer.mouvement_shape = d.get("mouvement_shape", "libre")
         layer.sym_pan = d.get("sym_pan", False)
         layer.spread_mode = d.get("spread_mode", "lineaire")
+        layer.block = _norm_block(d.get("block"))
+        layer.pos_preset_idx  = _norm_pos_idx(d.get("pos_preset_idx"))
+        layer.pos_preset_name = d.get("pos_preset_name", "") or ""
         return layer
 
     @classmethod
@@ -665,6 +726,9 @@ class EffectLayer:
             layer.mouvement_shape = ld.get("mouvement_shape", "libre")
             layer.sym_pan = ld.get("sym_pan", False)
             layer.spread_mode = ld.get("spread_mode", "lineaire")
+            layer.block = _norm_block(ld.get("block"))
+            layer.pos_preset_idx  = _norm_pos_idx(ld.get("pos_preset_idx"))
+            layer.pos_preset_name = ld.get("pos_preset_name", "") or ""
             result.append(layer)
         return result
 
@@ -789,12 +853,19 @@ class ColorWheel(QWidget):
 # ─── Fonction d'onde (module-level) ──────────────────────────────────────────
 
 def _layer_wave(forme: str, x: float) -> float:
-    """Valeur 0-1 de la forme pour position x dans le cycle."""
+    """Valeur 0-1 de la forme pour position x dans le cycle.
+
+    « Un par un » n'a pas de courbe propre : sa position vient du rang de la
+    fixture, pas de x (voir `core.chase_slot`). On rend ici une impulsion
+    étroite, qui est ce que la vignette du tableau doit montrer — et qui reste
+    un repli lisible si un chemin oubliait le cas particulier.
+    """
     if forme == "Sinus":      return (math.sin(2 * math.pi * x) + 1) / 2
     elif forme == "Flash":    return 1.0 if x < 0.5 else 0.0
     elif forme == "Triangle": return 1.0 - abs(2 * x - 1)
     elif forme == "Montée":   return x
     elif forme == "Descente": return 1.0 - x
+    elif forme == "Un par un": return 1.0 if x < 0.25 else 0.0
     elif forme == "Fixe":     return 1.0
     return 0.0
 
@@ -823,6 +894,18 @@ class WaveformCanvas(QWidget):
         """Rebrancher la courbe sur une autre couche (réutilisation de la ligne)."""
         self._layer = layer
         self.update()
+
+    def set_width(self, w):
+        """Partie élastique de la cellule FORME : la courbe s'étire ou se serre.
+
+        La courbe est échantillonnée sur sa largeur en pixels, elle reste donc
+        juste à n'importe quelle taille — contrairement au nom de la forme, qui
+        devient illisible dès qu'il est tronqué.
+        """
+        w = int(w)
+        if w != self.width():
+            self.setFixedWidth(w)
+            self.update()
 
     def set_time(self, t: float):
         self._t = t
@@ -1012,6 +1095,13 @@ LAYER_COLS = [
      "Décalage entre fixtures — c'est lui qui crée le chenillard.\n"
      "0 = toutes ensemble · 180 = réparties sur un cycle · "
      "360 = deux motifs simultanés."),
+    ("group",  "GROUPER",      52,
+     "Nombre de fixtures qui partent ENSEMBLE, par paquets.\n"
+     "1 = une par une (chenillard classique).\n"
+     "5 sur 25 projecteurs = 5 paquets de 5 : la rangée entière s'allume\n"
+     "d'un coup, et c'est la rangée qui défile.\n"
+     "Les paquets suivent l'ordre de la CIBLE — donc l'ordre de sélection\n"
+     "sur le plan quand la cible est « Sélection »."),
     ("fondu",  "FONDU",        46,
      "Adoucit la forme.\n0 = transitions franches, 100 = fondu doux.\n"
      "Combiné à la forme « Descente », c'est ce qui fait la traînée d'une comète."),
@@ -1024,6 +1114,12 @@ LAYER_COLS = [
      "→ direct · ← inverse · ↔ aller-retour"),
     ("coul",   "COUL.",        68,   # 2 pastilles carrées
      "Couleur(s) de la couche — canaux RGB et Permut uniquement."),
+    ("pos",    "POSITION",     78,
+     "Point autour duquel tourne le mouvement — canaux Pan, Tilt et Pan/Tilt.\n"
+     "Sans position, la trajectoire est centrée au milieu de la course :\n"
+     "un cercle « au centre du plateau », pour toutes les lyres au même endroit.\n"
+     "Avec une position enregistrée, chaque lyre tourne autour de SON point\n"
+     "de visée — le même que celui du rappel de position."),
     ("del",    "",             32, ""),
 ]
 
@@ -1034,15 +1130,48 @@ LAYER_BTN         = 32   # côté des petits boutons carrés (sens, couleurs, �
 LAYER_ROW_BORDER  = 3    # bordure d'accent à gauche de chaque ligne
 LAYER_WAVE_W      = 44   # aperçu de courbe, dans la cellule FORME
 LAYER_TRAJ_W      = LAYER_CELL_H - 4   # aperçu de trajectoire (carré), idem
+# L'aperçu de courbe est la partie élastique de la cellule FORME : il s'étire
+# quand la fenêtre est large et cède le premier quand elle est étroite.
+LAYER_WAVE_MAX_W  = 88
+LAYER_WAVE_MIN_W  = 44
 
-# Largeur totale du tableau à sa taille MINIMALE : sert de plancher au calcul
-# élastique et de largeur de contenu défilable, pour que le défilement
-# horizontal n'apparaisse que si la fenêtre est trop étroite.
+# Largeur totale du tableau à sa taille CONFORTABLE : c'est le point d'équilibre
+# du calcul élastique — au-dessus les colonnes s'étirent, en dessous elles se
+# resserrent jusqu'à leur plancher.
 # La bordure d'accent est comptée ici et compensée par la marge de l'en-tête,
 # sans quoi les titres seraient décalés de 3 px par rapport aux cellules.
 LAYER_TABLE_W = (sum(c[2] for c in LAYER_COLS)
                  + LAYER_COL_SPACING * (len(LAYER_COLS) - 1)
                  + 12 + LAYER_ROW_BORDER)
+
+# Largeur PLANCHER de chaque colonne, quand la fenêtre est trop étroite pour la
+# largeur confortable. Absente = colonne incompressible.
+#
+# Sans ce resserrement, le tableau ne faisait que défiler horizontalement : à
+# force d'ajouter des colonnes, le ✕ de suppression sortait de l'écran et une
+# ligne devenait impossible à supprimer sans faire défiler. Mieux vaut des
+# cellules serrées mais toutes atteignables.
+#
+# Les cellules à boutons carrés (SENS, COUL., ✕) n'ont pas de plancher : leurs
+# boutons font 32 px fixes, les rétrécir les déformerait ou les tronquerait.
+# Les cellules chiffrées descendent à 32 px : « 360 », la plus large valeur
+# possible, y tient encore en Segoe UI 12 gras.
+# FORME ne peut pas passer sous aperçu + liste à leurs minimums respectifs
+# (LAYER_WAVE_MIN_W + espacement + 56), sans quoi son contenu déborderait de
+# la cellule au lieu de la remplir.
+_LAYER_COL_FLOOR = {
+    "cible": 42, "canal": 48,
+    "forme": LAYER_WAVE_MIN_W + 4 + 56,
+    "vit": 32, "amp": 32, "min": 32, "max": 32, "dec": 32,
+    "group": 32, "fondu": 32, "depart": 32,
+    "pos": 40,
+}
+
+# Largeur du tableau une fois TOUT resserré : en dessous, le défilement
+# horizontal reprend ses droits — il n'y a plus rien à gagner.
+LAYER_TABLE_MIN_W = (sum(_LAYER_COL_FLOOR.get(c[0], c[2]) for c in LAYER_COLS)
+                     + LAYER_COL_SPACING * (len(LAYER_COLS) - 1)
+                     + 12 + LAYER_ROW_BORDER)
 
 # Part de la place EXCÉDENTAIRE que prend chaque colonne quand la fenêtre est
 # plus large que le tableau. 0 = colonne figée : les boutons carrés (sens,
@@ -1051,8 +1180,9 @@ LAYER_TABLE_W = (sum(c[2] for c in LAYER_COLS)
 # chaque pixel — c'est là que le texte est tronqué en fenêtre étroite.
 LAYER_COL_FLEX = {
     "cible": 3, "canal": 3, "forme": 5,
-    "vit": 2, "amp": 2, "min": 2, "max": 2, "dec": 2, "fondu": 2, "depart": 2,
-    "sens": 0, "coul": 0, "del": 0,
+    "vit": 2, "amp": 2, "min": 2, "max": 2, "dec": 2, "group": 2,
+    "fondu": 2, "depart": 2,
+    "sens": 0, "coul": 0, "pos": 3, "del": 0,
 }
 
 _LAYER_COL_MIN = {c[0]: c[2] for c in LAYER_COLS}
@@ -1071,27 +1201,67 @@ LAYER_COL_ATTRS = {
     "min":    ("min_val",),
     "max":    ("max_val",),
     "dec":    ("spread",),
+    "group":  ("block",),
     "fondu":  ("fade",),
     "depart": ("phase",),
     "sens":   ("direction",),
     "coul":   ("color1", "color2"),
+    # Index ET nom : recopier le seul index sur une autre couche laisserait un
+    # libellé faux dans sa cellule.
+    "pos":    ("pos_preset_idx", "pos_preset_name"),
 }
 
 
 def layer_col_widths(dispo):
     """Largeur de chaque colonne pour une largeur de tableau `dispo`.
 
-    En dessous de `LAYER_TABLE_W` on rend les largeurs minimales (le tableau
-    défile horizontalement). Au-dessus, le surplus est distribué au prorata de
-    `LAYER_COL_FLEX`, le reliquat entier allant à la dernière colonne élastique
+    Au-dessus de `LAYER_TABLE_W`, le surplus est distribué au prorata de
+    `LAYER_COL_FLEX`. En dessous, le manque est repris aux colonnes qui ont
+    de la marge (au prorata de cette marge) jusqu'à leur plancher : le tableau
+    entier reste ainsi visible, ✕ de suppression compris, au lieu de déborder
+    à droite. Sous `LAYER_TABLE_MIN_W` tout est au plancher et le défilement
+    horizontal reprend.
+
+    Dans les deux sens, le reliquat entier va à la dernière colonne concernée
     pour que la somme retombe EXACTEMENT sur la largeur demandée — sinon
     l'en-tête et les lignes dérivent de quelques pixels l'un par rapport à
     l'autre, et l'alignement du tableau saute.
     """
     largeurs = dict(_LAYER_COL_MIN)
     surplus  = int(dispo) - LAYER_TABLE_W
-    total    = sum(LAYER_COL_FLEX.values())
-    if surplus <= 0 or total <= 0:
+
+    if surplus < 0:
+        manque = -surplus
+        # Marge cédable de chaque colonne, dans l'ordre du tableau.
+        marges = [(c[0], _LAYER_COL_MIN[c[0]] - _LAYER_COL_FLOOR[c[0]])
+                  for c in LAYER_COLS if c[0] in _LAYER_COL_FLOOR]
+        marges = [(k, m) for k, m in marges if m > 0]
+        total  = sum(m for _, m in marges)
+        if total <= 0:
+            return largeurs
+        if manque >= total:                 # tout au plancher
+            for cle, _ in marges:
+                largeurs[cle] = _LAYER_COL_FLOOR[cle]
+            return largeurs
+        repris = 0
+        for cle, marge in marges:
+            part = manque * marge // total
+            largeurs[cle] -= part
+            repris += part
+        # Reliquat de la division entière : repris pixel par pixel sur les
+        # colonnes qui ont encore de la marge. Le donner d'un bloc à la
+        # dernière la ferait passer sous son plancher quand elle est étroite.
+        i = 0
+        while repris < manque and i < len(marges) * 64:
+            cle = marges[i % len(marges)][0]
+            if largeurs[cle] > _LAYER_COL_FLOOR[cle]:
+                largeurs[cle] -= 1
+                repris += 1
+            i += 1
+        return largeurs
+
+    total = sum(LAYER_COL_FLEX.values())
+    if surplus == 0 or total <= 0:
         return largeurs
 
     elastiques = [k for k, f in LAYER_COL_FLEX.items() if f > 0]
@@ -1106,23 +1276,52 @@ def layer_col_widths(dispo):
 
 def layer_table_width(dispo):
     """Largeur réellement occupée par le tableau dans `dispo` pixels."""
-    return max(LAYER_TABLE_W, int(dispo))
+    return max(LAYER_TABLE_MIN_W, int(dispo))
 
 
 class _ElasticBody(QWidget):
-    """Conteneur qui signale ses changements de largeur.
+    """Conteneur qui signale la place réellement disponible pour le tableau.
 
     C'est lui qui déclenche le recalcul des colonnes : le tableau n'a pas de
     layout capable de s'étirer tout seul (chaque cellule est à largeur fixe,
     seul moyen de garder l'en-tête et les lignes rigoureusement alignés), donc
     quelqu'un doit redistribuer la place à chaque redimensionnement.
+
+    On rapporte la largeur de la ZONE DE DÉFILEMENT, pas la sienne. Les lignes
+    sont à largeur fixe : elles poussent la largeur minimale de ce conteneur:
+    se mesurer soi-même revenait à lire la largeur qu'on vient d'imposer, donc
+    à ne jamais voir qu'on est à l'étroit — les colonnes ne se resserraient
+    jamais et le tableau débordait à droite, ✕ de suppression compris.
+    """
+
+    resized = Signal(int)
+
+    def _dispo(self):
+        p = self.parentWidget()          # viewport de la QScrollArea
+        zone = p.parentWidget() if p is not None else None
+        if zone is not None and hasattr(zone, 'viewport'):
+            return zone.viewport().width()
+        return self.width()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.resized.emit(self._dispo())
+
+
+class _ElasticScroll(QScrollArea):
+    """Zone de défilement du tableau, qui signale la place qu'elle offre.
+
+    Indispensable en plus de `_ElasticBody` : quand la fenêtre rétrécit sous la
+    largeur du tableau, le conteneur intérieur garde sa taille (ses lignes sont
+    fixes) et ne reçoit donc aucun resizeEvent. Seule la zone de défilement voit
+    qu'elle a rapetissé — c'est elle qui doit demander le resserrement.
     """
 
     resized = Signal(int)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        self.resized.emit(self.width())
+        self.resized.emit(self.viewport().width())
 
 _SENS_TIPS = {
     1:  "Sens direct — 1, 2, 3… jusqu'à la dernière fixture",
@@ -1141,10 +1340,15 @@ class _NumCell(QWidget):
 
     valueChanged = Signal(int)
 
-    def __init__(self, value=0, maximum=100, width=42, accent="#00d4ff", parent=None):
+    def __init__(self, value=0, maximum=100, width=42, accent="#00d4ff", parent=None,
+                 minimum=0, height=None):
         super().__init__(parent)
-        self._max    = max(1, int(maximum))
-        self._value  = max(0, min(self._max, int(value)))
+        # `minimum` permet de réutiliser la cellule pour des grandeurs signées
+        # (angles −180..180, coordonnées en cm). 0 par défaut : les couches
+        # d'effet, seul usage historique, ne changent pas de comportement.
+        self._min    = int(minimum)
+        self._max    = max(self._min + 1, int(maximum))
+        self._value  = max(self._min, min(self._max, int(value)))
         self._accent = accent
         self._drag_y = None
         self._drag_v = None
@@ -1153,7 +1357,9 @@ class _NumCell(QWidget):
         # valeur (en-tête de colonne). On affiche un tiret plutôt qu'un chiffre
         # qui ne correspondrait à aucune ligne.
         self._mixed  = False
-        self.setFixedSize(width, LAYER_CELL_H)
+        # `height` : le tableau du plan 3D veut des lignes plus compactes que
+        # l'éditeur d'effets, où la cellule voisine des aperçus de courbe.
+        self.setFixedSize(width, LAYER_CELL_H if height is None else int(height))
         self.setCursor(Qt.SizeVerCursor)
 
     def set_width(self, w):
@@ -1171,7 +1377,7 @@ class _NumCell(QWidget):
             self.update()
 
     def set_value(self, v, emit=True):
-        v = max(0, min(self._max, int(v)))
+        v = max(self._min, min(self._max, int(v)))
         if v != self._value:
             self._value = v
             self.update()
@@ -1188,7 +1394,7 @@ class _NumCell(QWidget):
         etait_mixte = self._mixed
         self._mixed = False
         if etait_mixte:
-            self._value = max(0, min(self._max, int(v)))
+            self._value = max(self._min, min(self._max, int(v)))
             self.update()
             self.valueChanged.emit(self._value)
         else:
@@ -1209,7 +1415,8 @@ class _NumCell(QWidget):
         if self._drag_y is not None:
             # 1 px = max/100 : la course complète tient dans ~100 px de geste,
             # que la plage aille jusqu'à 100 (niveaux) ou 360 (décalage).
-            delta = int((self._drag_y - e.globalPosition().y()) * self._max / 100.0)
+            delta = int((self._drag_y - e.globalPosition().y())
+                        * (self._max - self._min) / 100.0)
             self._user_set(self._drag_v + delta)
 
     def mouseReleaseEvent(self, _e):
@@ -1276,7 +1483,8 @@ class _NumCell(QWidget):
         # Jauge de fond proportionnelle : lire « 180 » demande un instant,
         # voir la barre aux trois quarts est immédiat. Éteinte si le réglage
         # est sans effet : afficher un niveau qui ne sert à rien induit en erreur.
-        frac = self._value / float(self._max)
+        _etendue = float(self._max - self._min) or 1.0
+        frac = (self._value - self._min) / _etendue
         if frac > 0 and live and not self._mixed:
             c = QColor(self._accent)
             c.setAlpha(46)
@@ -1424,8 +1632,8 @@ class _CiblePopup(QFrame):
         hint = getattr(self, '_sel_hint', None)
         if hint is not None:
             n = len(getattr(ref, 'target_selection', None) or []) if ref else 0
-            hint.setText(f"{n} projecteur(s) figé(s)" if is_sel
-                         else "sélectionne des projos sur le plan, puis clique")
+            hint.setText(f"{n} projecteur(s) figé(s), dans l'ordre 1→{n}" if is_sel
+                         else "clique les projos sur le plan (1, 2, 3…), puis ici")
 
 
 def cible_text(layer) -> str:
@@ -1531,19 +1739,23 @@ class LayerRow(QFrame):
 
     _ATTRS  = ["Dimmer", "R", "V", "B", "W", "Ambre", "UV", "RGB", "Permut",
                "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
-    _FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Aléatoire", "Fixe", "Off"]
+    _FORMES = list(FORMES)
 
     _ATTR_COLORS = WaveformCanvas._ATTR_COLORS
 
-    # (clé de colonne, attribut de la couche, maximum)
+    # (clé de colonne, attribut de la couche, maximum, minimum)
+    # GROUPER part de 1 : un paquet de 0 fixture ne veut rien dire, et la
+    # cellule doit refuser de descendre en dessous plutôt que de laisser passer
+    # une valeur que les moteurs devraient rattraper.
     _NUM_FIELDS = [
-        ("vit",    "speed",   100),
-        ("amp",    "size",    100),
-        ("min",    "min_val", 100),
-        ("max",    "max_val", 100),
-        ("dec",    "spread",  360),
-        ("fondu",  "fade",    100),
-        ("depart", "phase",   100),
+        ("vit",    "speed",   100, 0),
+        ("amp",    "size",    100, 0),
+        ("min",    "min_val", 100, 0),
+        ("max",    "max_val", 100, 0),
+        ("dec",    "spread",  360, 0),
+        ("group",  "block",    64, 1),
+        ("fondu",  "fade",    100, 0),
+        ("depart", "phase",   100, 0),
     ]
 
     def __init__(self, layer, parent=None):
@@ -1618,13 +1830,14 @@ class LayerRow(QFrame):
         self._boites["forme"] = self._mk_forme()
         for cle in ("cible", "canal", "forme"):
             h.addWidget(self._boites[cle])
-        for key, attr, maximum in self._NUM_FIELDS:
-            self._boites[key] = self._mk_num(key, attr, maximum)
+        for key, attr, maximum, mini in self._NUM_FIELDS:
+            self._boites[key] = self._mk_num(key, attr, maximum, mini)
             h.addWidget(self._boites[key])
         self._boites["sens"]   = self._mk_sens()
         self._boites["coul"]   = self._mk_coul()
+        self._boites["pos"]    = self._mk_pos()
         self._boites["del"]    = self._mk_del()
-        for cle in ("sens", "coul", "del"):
+        for cle in ("sens", "coul", "pos", "del"):
             h.addWidget(self._boites[cle])
 
         # Cadre de colonne sélectionnée : transparent aux clics, sinon il
@@ -1637,6 +1850,7 @@ class LayerRow(QFrame):
         self._marqueur.hide()
 
         self._refresh_color_btns()
+        self._refresh_pos_btn()
         self._sync_enabled_state()
 
     # ── Largeurs élastiques ───────────────────────────────────────────────────
@@ -1646,6 +1860,9 @@ class LayerRow(QFrame):
         Même calcul que l'en-tête, donc même alignement. Les cellules qui
         contiennent un aperçu (courbe, trajectoire) rendent le surplus à leur
         liste déroulante : c'est le texte qui manque de place, pas le dessin.
+        À l'inverse, quand la place manque, c'est l'aperçu de courbe qui cède
+        en premier — une courbe étroite reste lisible, un nom de forme tronqué
+        à trois lettres ne l'est plus.
         """
         self.setFixedWidth(total)
         for cle, boite in self._boites.items():
@@ -1657,9 +1874,26 @@ class LayerRow(QFrame):
                 boite.setFixedWidth(largeurs[cle])
 
         reste_forme = largeurs["forme"] - 4
-        self._forme_cb.setFixedWidth(max(60, reste_forme - self._wave.width()))
-        self._shape_cb.setFixedWidth(max(60, reste_forme - self._traj.width()))
+        self._wave.set_width(min(LAYER_WAVE_MAX_W, max(LAYER_WAVE_MIN_W,
+                                                       reste_forme - 74)))
+        self._forme_cb.setFixedWidth(max(56, reste_forme - self._wave.width()))
+        self._shape_cb.setFixedWidth(max(56, reste_forme - self._traj.width()))
         self._place_marqueur()
+
+    # ── Menu contextuel ───────────────────────────────────────────────────────
+    def contextMenuEvent(self, e):
+        """Clic droit n'importe où sur la ligne : supprimer la couche.
+
+        Filet de sécurité pour les écrans étroits. Le ✕ est en bout de ligne :
+        si la fenêtre est trop petite même pour le tableau resserré, il part
+        hors champ et il faut faire défiler pour l'atteindre. Le clic droit,
+        lui, tombe toujours sur la ligne.
+        """
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        act = menu.addAction("✕   Supprimer cette couche")
+        if menu.exec(e.globalPos()) is act:
+            self.deleted.emit(self)
 
     # ── Cellules ──────────────────────────────────────────────────────────────
     def _mk_cible(self):
@@ -1691,7 +1925,20 @@ class LayerRow(QFrame):
         while w is not None:
             plan = getattr(w, '_plan_widget', None)
             if plan is not None and hasattr(plan, 'selected_lamps'):
-                return lambda pl=plan: set(pl.selected_lamps)
+                # ORDRE de sélection, pas un ensemble. C'est lui qui donne son
+                # sens à un chenillard : « Sélection » doit déclencher les
+                # projecteurs dans l'ordre où on les a cliqués — c'est aussi
+                # l'ordre des pastilles numérotées affichées sur le plan. Un set
+                # le perdait, et l'effet repartait dans l'ordre du patch.
+                def _ordonnee(pl=plan):
+                    fn = getattr(pl, 'selection_ordered', None)
+                    if callable(fn):
+                        return fn()
+                    ordre = list(getattr(pl, 'selected_lamps_ordered', []))
+                    vus = set(ordre)
+                    return ([k for k in ordre if k in pl.selected_lamps]
+                            + [k for k in pl.selected_lamps if k not in vus])
+                return _ordonnee
             w = w.parent()
         return None
 
@@ -1770,12 +2017,20 @@ class LayerRow(QFrame):
         sinus, et ce sinus dépend à nouveau du temps : tout se rallume. Le fondu
         reste donc toujours réglable, c'est la porte de sortie.
 
+        « Un par un » est l'autre cas : il tire sa position du RANG de la
+        fixture, pas d'une courbe parcourue. Le DÉCALAGE (qui déphase une
+        courbe) et le FONDU (qui la mélange vers un sinus) n'ont alors plus
+        de prise — et le fondu rallumerait les voisins, ce qui détruirait
+        justement l'exclusivité recherchée.
+
         Les couches Pan/Tilt sont hors sujet : leur mouvement vient de la
         trajectoire, pas de `forme`.
         """
         gele = (self.layer.attribute != "Pan/Tilt"
                 and self.layer.forme in self._FORMES_CONSTANTES
                 and not getattr(self.layer, 'fade', 0))
+        un_par_un = (self.layer.attribute != "Pan/Tilt"
+                     and self.layer.forme == "Un par un")
 
         # Sortie = (MIN + forme×(MAX−MIN)) × AMP. Sur une forme constante :
         #  · « Fixe » (forme=1) → sortie = MAX×AMP : MIN s'annule → inerte.
@@ -1785,25 +2040,47 @@ class LayerRow(QFrame):
         if gele:
             dead_level = "min" if self.layer.forme == "Fixe" else "max"
 
-        for key in ("vit", "dec", "depart"):
+        for key in ("vit", "depart"):
             self._cells[key].setEnabled(not gele)
+        self._cells["dec"].setEnabled(not gele and not un_par_un)
+        self._cells["fondu"].setEnabled(not un_par_un)
         self._sens_box.setEnabled(not gele)
         self._cells["min"].setEnabled(dead_level != "min")
         self._cells["max"].setEnabled(dead_level != "max")
 
+        # GROUPER ne fait que regrouper le DÉCALAGE : sans décalage, tout part
+        # déjà ensemble et la valeur ne changerait rien. On la grise plutôt que
+        # de laisser régler un paquet qui resterait sans effet visible.
+        # Exception « Un par un » : il ignore le décalage mais respecte les
+        # paquets (un paquet allumé à la fois), donc GROUPER y reste utile.
+        _sans_dec = not gele and not un_par_un and not getattr(self.layer, 'spread', 0)
+        self._cells["group"].setEnabled(not gele and not _sans_dec)
+
         tip = ("Sans effet sur une forme constante : ouvrez le FONDU pour "
                "réanimer la couche.")
+        tip_upu = ("Sans objet sur « Un par un » : la position vient du rang "
+                   "de la fixture, pas d'une courbe déphasée.")
         for w, key in ((self._cells["vit"],    "vit"),
-                       (self._cells["dec"],    "dec"),
                        (self._cells["depart"], "depart"),
                        (self._sens_box,        "sens")):
             w.setToolTip(tip if gele else self._tip[key])
+        self._cells["dec"].setToolTip(
+            tip if gele else tip_upu if un_par_un else self._tip["dec"])
+        self._cells["fondu"].setToolTip(
+            ("Sans objet sur « Un par un » : adoucir la forme rallumerait les "
+             "voisins et il n'y aurait plus un seul projecteur allumé.")
+            if un_par_un else self._tip["fondu"])
+        self._cells["group"].setToolTip(
+            tip if gele else
+            "Sans effet tant que DÉC vaut 0 : les fixtures partent déjà toutes "
+            "ensemble." if _sans_dec else self._tip["group"])
         self._cells["min"].setToolTip(tip if dead_level == "min" else self._tip["min"])
         self._cells["max"].setToolTip(tip if dead_level == "max" else self._tip["max"])
 
-    def _mk_num(self, key, attr, maximum):
-        cell = _NumCell(getattr(self.layer, attr, 0), maximum,
-                        width=self._w[key], accent=self._accent())
+    def _mk_num(self, key, attr, maximum, minimum=0):
+        cell = _NumCell(getattr(self.layer, attr, minimum), maximum,
+                        width=self._w[key], accent=self._accent(),
+                        minimum=minimum)
         cell.setToolTip(self._tip[key])
         cell.valueChanged.connect(
             lambda v, a=attr, k=key: (setattr(self.layer, a, v),
@@ -1861,11 +2138,11 @@ class LayerRow(QFrame):
         for w in blocs:
             w.blockSignals(False)
 
-        for key, attr, _max in self._NUM_FIELDS:
+        for key, attr, _max, _min in self._NUM_FIELDS:
             cell = self._cells[key]
             cell.blockSignals(True)
             cell.set_mixed(False)
-            cell.set_value(getattr(self.layer, attr, 0), emit=False)
+            cell.set_value(getattr(self.layer, attr, _min), emit=False)
             cell.blockSignals(False)
 
         self._apply_frame_style()
@@ -1875,6 +2152,7 @@ class LayerRow(QFrame):
         self._wave.set_layer(self.layer)
         self._refresh_sens()
         self._refresh_color_btns()
+        self._refresh_pos_btn()
         self._sync_forme_mode()
         self._sync_enabled_state()
 
@@ -1925,6 +2203,7 @@ class LayerRow(QFrame):
         for cell in self._cells.values():
             cell.set_accent(accent)
         self._refresh_color_btns()
+        self._refresh_pos_btn()
         self._sync_forme_mode()
         self._sync_enabled_state()
         is_pt = (v == "Pan/Tilt")
@@ -1971,6 +2250,95 @@ class LayerRow(QFrame):
             setattr(self.layer, attr, c.name())
             self._refresh_color_btns()
             self._emit("coul")
+
+    # ── Position de départ (canaux de mouvement) ──────────────────────────────
+    _ATTRS_MOUVEMENT = ("Pan", "Tilt", "Pan/Tilt")
+
+    def _mk_pos(self):
+        b = QPushButton("—")
+        b.setFixedSize(self._w["pos"], LAYER_CELL_H)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setToolTip(self._tip["pos"])
+        b.setStyleSheet(
+            "QPushButton{background:#0f0f0f;color:#ff9900;border:1px solid #1e1e1e;"
+            "border-radius:4px;font-size:10px;font-weight:bold;}"
+            "QPushButton:hover{border-color:#ff9900;}")
+        b.clicked.connect(self._open_pos_menu)
+        self._pos_btn = b
+        return b
+
+    def _position_presets(self):
+        """Positions enregistrées de l'application, ou [] si introuvables.
+
+        Même remontée de parents que le plan de feu : la ligne ne connaît pas
+        la fenêtre principale, seul le dialogue d'édition la porte.
+        """
+        w = self.parent()
+        while w is not None:
+            mw = getattr(w, '_main_window', None)
+            if mw is not None:
+                return list(getattr(mw, 'position_presets', []) or [])
+            w = w.parent()
+        return []
+
+    def _open_pos_menu(self):
+        presets = self._position_presets()
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        cur = getattr(self.layer, 'pos_preset_idx', None)
+
+        act = menu.addAction(("✓ " if cur is None else "    ") + "Centre (par défaut)")
+        act.triggered.connect(lambda: self._set_pos(None, ""))
+
+        if presets:
+            menu.addSeparator()
+            for i, p in enumerate(presets):
+                nom = p.get("name", f"Position {i + 1}")
+                a = menu.addAction(("✓ " if cur == i else "    ") + nom)
+                a.triggered.connect(lambda _=False, k=i, n=nom: self._set_pos(k, n))
+        else:
+            a = menu.addAction("    (aucune position enregistrée)")
+            a.setEnabled(False)
+
+        menu.exec(self._pos_btn.mapToGlobal(QPoint(0, self._pos_btn.height() + 2)))
+
+    def _set_pos(self, idx, nom):
+        self.layer.pos_preset_idx  = idx
+        self.layer.pos_preset_name = nom
+        self._refresh_pos_btn()
+        self._emit("pos")
+
+    def _refresh_pos_btn(self):
+        """Le bouton POSITION ne concerne que les canaux de mouvement.
+
+        Sur une couche Dimmer ou RGB il n'y a pas de trajectoire à centrer :
+        on le cache, comme les pastilles de couleur hors RGB/Permut.
+        """
+        btn = getattr(self, '_pos_btn', None)
+        if btn is None:
+            return
+        actif = self.layer.attribute in self._ATTRS_MOUVEMENT
+        btn.setVisible(actif)
+        if not actif:
+            return
+        idx = getattr(self.layer, 'pos_preset_idx', None)
+        nom = getattr(self.layer, 'pos_preset_name', '') or ''
+        if idx is None:
+            btn.setText("—")
+            btn.setToolTip(self._tip["pos"])
+            return
+        presets = self._position_presets()
+        trouve = find_position_preset(presets, idx, nom)
+        if trouve is None:
+            # Preset supprimé : le dire plutôt que d'afficher un nom qui ne
+            # correspond plus à rien — le moteur retombera sur le centre.
+            btn.setText("⚠ " + (nom[:8] if nom else "?"))
+            btn.setToolTip(f"Position « {nom} » introuvable — l'effet repart "
+                           f"du centre de course.")
+            return
+        vrai = trouve.get("name", nom) or nom
+        btn.setText(vrai[:10])
+        btn.setToolTip(f"Centré sur la position « {vrai} ».\n\n" + self._tip["pos"])
 
     def _refresh_color_btns(self):
         attr = self.layer.attribute
@@ -2072,8 +2440,9 @@ class SimpleEffectPanel(QWidget):
         bl.setSpacing(0)
 
         # ── Colonne gauche (scrollable) : couches + contrôles ─────────────────
-        # Largeurs de colonnes : minimales tant qu'on ne connaît pas la place
-        # disponible, recalculées au premier resize de `lw_inner`.
+        # Largeurs de colonnes : confortables tant qu'on ne connaît pas la place
+        # disponible, recalculées au premier resize de `lw_inner` (qui les
+        # resserrera si la fenêtre est plus étroite).
         self._table_w = LAYER_TABLE_W
         self._col_w   = layer_col_widths(LAYER_TABLE_W)
 
@@ -2142,7 +2511,8 @@ class SimpleEffectPanel(QWidget):
 
         self._ll.addStretch()
 
-        lw_scroll = QScrollArea()
+        lw_scroll = _ElasticScroll()
+        lw_scroll.resized.connect(self._on_body_resized)
         lw_scroll.setWidget(lw_inner)
         lw_scroll.setWidgetResizable(True)
         # Le tableau a une largeur fixe : la barre horizontale n'apparaît que si
@@ -2175,7 +2545,10 @@ class SimpleEffectPanel(QWidget):
         # 14 + 10 de marges du layout, plus 4 px de garde pour que le tableau ne
         # vienne jamais frôler la barre de défilement (elle apparaîtrait, ce qui
         # rétrécirait le corps, ce qui la ferait disparaître… en boucle).
-        dispo = max(LAYER_TABLE_W, largeur_body - 28)
+        # Plancher = tableau entièrement resserré, pas la largeur confortable :
+        # entre les deux, les colonnes se resserrent au lieu de déborder à
+        # droite (le ✕ de suppression restait alors hors écran).
+        dispo = max(LAYER_TABLE_MIN_W, largeur_body - 28)
         if dispo == self._table_w:
             return
         self._table_w = dispo
@@ -2531,8 +2904,9 @@ class EffectEditorDialog(QDialog):
         self.setMinimumSize(1160, 620)
         # Assez large pour que les colonnes du tableau tiennent sans défilement :
         # 260 (bibliothèque) + 300 (plan de feu) + séparateurs + LAYER_TABLE_W.
-        # Le minimum reste bas : sur un petit écran la grille défile latéralement,
-        # et replier la bibliothèque (◀) rend sa largeur au tableau.
+        # Le minimum reste bas : sur un petit écran les colonnes se resserrent
+        # d'elles-mêmes, et replier la bibliothèque (◀) ou le plan de feu (▶)
+        # rend leurs 220 + 260 px au tableau — de quoi tout afficher même là.
         self.resize(LAYER_TABLE_W + 620, 800)
         self.setStyleSheet(_DIALOG_STYLE)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
@@ -2674,6 +3048,9 @@ class EffectEditorDialog(QDialog):
         self._list_vl.addStretch()
         scroll.setWidget(self._list_w)
         lv.addWidget(scroll, 1)
+        # Même ressort de queue que la colonne du plan : replié, le panneau n'a
+        # plus d'élément extensible et son bouton dériverait vers le milieu.
+        lv.addStretch(0)
         self._lib_scroll = scroll   # pour défiler jusqu'à l'effet sélectionné
 
         self._rebuild_library()
@@ -2967,17 +3344,8 @@ class EffectEditorDialog(QDialog):
         self._apply_preset(custom)
 
     def _show_card_context_menu(self, card, pos, eff: dict, deletable: bool):
-        from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background: #1a1a2e; color: #ccc;
-                border: 1px solid #333; border-radius: 4px;
-            }
-            QMenu::item { padding: 5px 18px; }
-            QMenu::item:selected { background: #2a2a4e; color: #fff; }
-            QMenu::separator { height: 1px; background: #333; margin: 2px 0; }
-        """)
+        menu.setStyleSheet(_MENU_STYLE)
         act_dup = menu.addAction("Dupliquer")
         act_exp = menu.addAction("Exporter…")
         if deletable:
@@ -3165,29 +3533,72 @@ class EffectEditorDialog(QDialog):
 
     # ── Colonne 3 : plan de feu + contrôles ──────────────────────────────────
 
+    _PLAN_W = 300
+
     def _mk_plan_panel(self):
         panel = QWidget()
-        panel.setFixedWidth(300)
+        panel.setFixedWidth(self._PLAN_W)
         panel.setStyleSheet("background: #0a0a0a;")
+        self._plan_panel = panel
 
         pv = QVBoxLayout(panel)
         pv.setContentsMargins(0, 0, 0, 0)
         pv.setSpacing(0)
 
+        # ── En-tête repliable ─────────────────────────────────────────────────
+        # Symétrique de celui de la bibliothèque : les deux colonnes latérales se
+        # replient de la même façon, et leurs 260 + 300 px reviennent au tableau
+        # des couches quand la fenêtre est trop étroite pour toutes ses colonnes.
+        hdr = QWidget()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet("background: #080808; border-bottom: 1px solid #161616;")
+        hh = QHBoxLayout(hdr)
+        hh.setContentsMargins(10, 0, 14, 0)
+        self._plan_hdr_layout = hh
+
+        collapse = QPushButton("▶")
+        collapse.setFixedSize(20, 26)
+        collapse.setCursor(Qt.PointingHandCursor)
+        collapse.setToolTip("Replier le plan de feu")
+        collapse.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #3a3a3a;
+                border: 1px solid #1e1e1e; border-radius: 4px;
+                font-size: 10px; font-weight: bold;
+            }
+            QPushButton:hover { color: #00d4ff; border-color: #1e3a44; background: #0a1a1f; }
+        """)
+        collapse.clicked.connect(self._toggle_plan)
+        hh.addWidget(collapse)
+        self._plan_collapse_btn = collapse
+        self._plan_collapsed    = False
+
+        ttl = QLabel("Plan de feu")
+        ttl.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        ttl.setStyleSheet("color: #ddd;")
+        hh.addStretch()
+        hh.addWidget(ttl)
+        self._plan_title = ttl
+
+        pv.addWidget(hdr)
+
         # ── AU-DESSUS du plan de feu : ASSIGNER ───────────────────────────────
         # Widget créé dans le panneau simple (colonne 2) mais reparenté ici.
         # « Ajuster tout » a disparu : chaque colonne du tableau se règle
         # désormais depuis son en-tête, qui écrit sur toutes les couches.
+        self._plan_repliables = []   # ce que le repli doit masquer
         sp = getattr(self, '_simple_panel', None)
         if sp is not None:
             w = getattr(sp, '_assign_widget', None)
             if w is not None:
                 pv.addWidget(w)
+                self._plan_repliables.append(w)
             sep = QFrame()
             sep.setFrameShape(QFrame.HLine)
             sep.setFixedHeight(1)
             sep.setStyleSheet("QFrame { border: none; background: #161616; }")
             pv.addWidget(sep)
+            self._plan_repliables.append(sep)
 
         # ── Plan de feu (remplit le reste) ────────────────────────────────────
         try:
@@ -3199,14 +3610,42 @@ class EffectEditorDialog(QDialog):
             self._plan_widget = PlanDeFeu(projectors, self._main_window,
                                           show_toolbar=False, select_only=True)
             pv.addWidget(self._plan_widget, 1)
+            self._plan_repliables.append(self._plan_widget)
         except Exception:
             self._plan_widget = None
             fallback = QLabel("Plan de feu\nnon disponible")
             fallback.setAlignment(Qt.AlignCenter)
             fallback.setStyleSheet("color: #444; font-size: 11px;")
             pv.addWidget(fallback, 1)
+            self._plan_repliables.append(fallback)
+
+        # Ressort de queue : une fois le panneau replié, tout ce qui pouvait
+        # s'étirer est masqué et la colonne n'a plus rien pour absorber sa
+        # hauteur — le bouton se retrouverait centré au milieu du vide au lieu
+        # de rester en haut, en face de celui de la bibliothèque.
+        pv.addStretch(0)
 
         return panel
+
+    def _toggle_plan(self):
+        """Replie / déplie le plan de feu pour élargir le tableau des couches.
+
+        Le plan sert à composer la cible « Sélection » ; une fois la sélection
+        figée dans les couches, il ne sert plus à rien pendant qu'on règle les
+        colonnes — d'où l'intérêt de lui rendre sa place.
+        """
+        self._plan_collapsed = not self._plan_collapsed
+        replie = self._plan_collapsed
+
+        self._plan_panel.setFixedWidth(40 if replie else self._PLAN_W)
+        self._plan_title.setVisible(not replie)
+        for w in self._plan_repliables:
+            w.setVisible(not replie)
+        self._plan_hdr_layout.setContentsMargins(
+            *((6, 0, 6, 0) if replie else (10, 0, 14, 0)))
+        self._plan_collapse_btn.setText("◀" if replie else "▶")
+        self._plan_collapse_btn.setToolTip(
+            "Afficher le plan de feu" if replie else "Replier le plan de feu")
 
     def _refresh_assign_btns(self):
         if not self._main_window:
@@ -3537,6 +3976,10 @@ class EffectEditorDialog(QDialog):
             return x
         elif forme == "Descente":
             return 1.0 - x
+        elif forme == "Un par un":
+            # Repli seulement : le vrai « Un par un » est calculé sur le rang
+            # (voir `core.chase_slot`), pas échantillonné sur x.
+            return 1.0 if x < 0.25 else 0.0
         elif forme == "Fixe":
             return 1.0
         elif forme == "Off":
@@ -3563,7 +4006,10 @@ class EffectEditorDialog(QDialog):
         _all_proj = getattr(self._main_window, 'projectors', [])
         _sel_key_by_id = {id(p): k for p, k in
                           zip(_all_proj, projector_selection_keys(_all_proj))}
-        _layer_sel = {id(_l): layer_selection_set(_l) for _l in self._layers}
+        # {clé: rang} et non un set : sur une cible « Sélection », l'étalement
+        # doit suivre l'ORDRE de sélection (chenillard 1→2→3), pas l'ordre du
+        # patch. Idem moteur live, pour la parité aperçu/show.
+        _layer_sel = {id(_l): layer_selection_ranks(_l) for _l in self._layers}
 
         # Amplitude min/max par groupe (répliquée sur les couches) — parité moteur.
         _group_amp = {}
@@ -3571,6 +4017,22 @@ class EffectEditorDialog(QDialog):
             _gd = getattr(_l, 'group_amp', None)
             if _gd:
                 _group_amp.update(_gd)
+
+        # POSITION : centre de la trajectoire, par couche et par lyre. Résolu sur
+        # TOUTES les lyres (pas la liste filtrée) — même règle que le moteur live,
+        # dont l'appariement de secours se fait par rang.
+        _all_lyres = [p for p in _all_proj
+                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+        _presets = getattr(self._main_window, 'position_presets', []) or []
+        _pos_centers = {}
+        for _l in self._layers:
+            if getattr(_l, 'attribute', '') not in ("Pan", "Tilt", "Pan/Tilt"):
+                continue
+            _pr = find_position_preset(_presets,
+                                       getattr(_l, 'pos_preset_idx', None),
+                                       getattr(_l, 'pos_preset_name', ''))
+            if _pr is not None:
+                _pos_centers[id(_l)] = position_preset_values(_pr, _all_lyres)
 
         for i, proj in enumerate(projectors):
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0
@@ -3588,13 +4050,24 @@ class EffectEditorDialog(QDialog):
             for layer in self._layers:
                 preset = layer.target_preset
                 groups = list(getattr(layer, 'target_groups', []))
+                # Index d'étalement : par défaut la place dans le patch, mais sur
+                # une cible « Sélection » la place dans la SÉLECTION (ordre des
+                # clics sur le plan) — c'est ce qui rend le chenillard dirigeable.
+                i_fx, n_fx = i, n
                 if preset == "Selection":
-                    if _sel_key_by_id.get(id(proj)) not in _layer_sel.get(id(layer), ()):
+                    _ranks = _layer_sel.get(id(layer), {})
+                    _k     = _sel_key_by_id.get(id(proj))
+                    if _k not in _ranks:
                         continue
+                    i_fx, n_fx = _ranks[_k], max(1, len(_ranks))
                 elif preset == "Pair"   and i % 2 != 0: continue
                 elif preset == "Impair" and i % 2 != 1: continue
                 elif preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
                 if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
+
+                # GROUPER : replier l'index sur des paquets. Les fixtures d'un
+                # même paquet partagent la phase, donc partent ensemble.
+                i_fx, n_fx = block_index(i_fx, n_fx, getattr(layer, 'block', 1))
 
                 freq      = (0.05 + layer.speed / 100.0 * 7.0) * fader_mult
                 spread    = layer.spread / 100.0
@@ -3606,21 +4079,28 @@ class EffectEditorDialog(QDialog):
                 direction = getattr(layer, 'direction', 1)
                 if direction == 0:   # bounce
                     t_osc = abs(2 * ((freq * t) % 1.0) - 1)
-                    x = (t_osc + i / max(n, 1) * spread + phase) % 1.0
+                    x = (t_osc + i_fx / max(n_fx, 1) * spread + phase) % 1.0
                 elif direction == -1:  # arrière
-                    x = (freq * t - i / max(n, 1) * spread + phase) % 1.0
+                    x = (freq * t - i_fx / max(n_fx, 1) * spread + phase) % 1.0
                 else:                  # avant (défaut)
-                    x = (freq * t + i / max(n, 1) * spread + phase) % 1.0
+                    x = (freq * t + i_fx / max(n_fx, 1) * spread + phase) % 1.0
 
-                if layer.forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
+                if layer.forme == "Un par un":
+                    # Chenillard exclusif : allumée uniquement quand c'est son
+                    # tour. Position prise sur le RANG, pas sur la forme d'onde
+                    # (identique au moteur live — parité aperçu/show).
+                    raw = 1.0 if chase_slot(freq * t + phase, n_fx,
+                                            direction) == i_fx else 0.0
+                elif layer.forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
                     rng = _rnd.Random(int(t * 15) * 100 + i)
                     raw = max(0.0, min(1.0, 0.5 + rng.uniform(-0.4, 0.4)))
                 else:
                     raw = self._wave(layer.forme, x)
 
-                # FADE : adoucit la forme vers un sinus (0=dur, 100=doux)
+                # FADE : adoucit la forme vers un sinus (0=dur, 100=doux).
+                # Sans objet sur « Un par un » : il rallumerait les voisins.
                 fade_f = getattr(layer, 'fade', 0) / 100.0
-                if fade_f > 0:
+                if fade_f > 0 and layer.forme != "Un par un":
                     sin_val = (math.sin(2 * math.pi * x) + 1) / 2
                     raw = raw * (1.0 - fade_f) + sin_val * fade_f
 
@@ -3659,12 +4139,16 @@ class EffectEditorDialog(QDialog):
                 elif attr == "Pan":
                     amp = (layer.size / 100.0) * 8192 * PAN_ANGULAR_RATIO
                     sym_pan  = getattr(layer, 'sym_pan', False)
-                    pan_sign = -1 if (sym_pan and i * 2 >= n) else 1
-                    pan_v = int(max(0, min(65535, 32768 + pan_sign * (raw - 0.5) * 2 * amp)))
+                    pan_sign = -1 if (sym_pan and i_fx * 2 >= n_fx) else 1
+                    _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
+                    c_pan = _ctr[0] if _ctr is not None else 32768
+                    pan_v = int(max(0, min(65535, c_pan + pan_sign * (raw - 0.5) * 2 * amp)))
                     has_movement = True
                 elif attr == "Tilt":
                     amp = (layer.size / 100.0) * 8192
-                    tilt_v = int(max(0, min(65535, 32768 + (raw - 0.5) * 2 * amp)))
+                    _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
+                    c_tilt = _ctr[1] if _ctr is not None else 32768
+                    tilt_v = int(max(0, min(65535, c_tilt + (raw - 0.5) * 2 * amp)))
                     has_movement = True
                 elif attr == "Pan/Tilt":
                     sid      = getattr(layer, 'mouvement_shape', 'cercle')
@@ -3673,7 +4157,7 @@ class EffectEditorDialog(QDialog):
                     tilt_cfg = sdef.get('tilt', ('Sinus', 25, 1.0))
                     pt_amp   = (layer.size / 100.0) * 8192
                     sym_pan  = getattr(layer, 'sym_pan', False)
-                    pan_sign = -1 if (sym_pan and i * 2 >= n) else 1
+                    pan_sign = -1 if (sym_pan and i_fx * 2 >= n_fx) else 1
                     # SENS de la trajectoire : → avant · ← inverse (la lyre tourne
                     # dans l'autre sens) · ↔ aller-retour. On agit sur le TEMPS,
                     # pas sur l'étalement (c'est le sens de MOUVEMENT de chaque lyre).
@@ -3681,18 +4165,24 @@ class EffectEditorDialog(QDialog):
                         if _d == 0:   return abs(2 * ((freq * t) % 1.0) - 1)
                         if _d == -1:  return -freq * t
                         return freq * t
+                    # Centre de la trajectoire : POSITION choisie, sinon milieu
+                    # de course (l'aperçu n'a pas d'état capturé, contrairement
+                    # au moteur live).
+                    _ctr   = _pos_centers.get(id(layer), {}).get(id(proj))
+                    c_pan  = _ctr[0] if _ctr is not None else 32768
+                    c_tilt = _ctr[1] if _ctr is not None else 32768
                     p_forme, p_ph, p_mult = pan_cfg
                     if p_forme and p_forme != "Fixe":
                         p_freq = (0.05 + layer.speed * p_mult / 100.0 * 7.0) * fader_mult
-                        p_x    = (_pt_time(p_freq) + i / max(n, 1) * spread + phase + p_ph / 100.0) % 1.0
+                        p_x    = (_pt_time(p_freq) + i_fx / max(n_fx, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
-                        pan_v  = int(max(0, min(65535, 32768 + pan_sign * (p_raw - 0.5) * 2 * pt_amp * PAN_ANGULAR_RATIO)))
+                        pan_v  = int(max(0, min(65535, c_pan + pan_sign * (p_raw - 0.5) * 2 * pt_amp * PAN_ANGULAR_RATIO)))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
                         t_freq = (0.05 + layer.speed * t_mult / 100.0 * 7.0) * fader_mult
-                        t_x    = (_pt_time(t_freq) + i / max(n, 1) * spread + phase + t_ph / 100.0) % 1.0
+                        t_x    = (_pt_time(t_freq) + i_fx / max(n_fx, 1) * spread + phase + t_ph / 100.0) % 1.0
                         t_raw  = self._wave(t_forme, t_x)
-                        tilt_v = int(max(0, min(65535, 32768 + (t_raw - 0.5) * 2 * pt_amp)))
+                        tilt_v = int(max(0, min(65535, c_tilt + (t_raw - 0.5) * 2 * pt_amp)))
                     has_movement = True
                 # Gobo ignoré pour la prévisualisation
 

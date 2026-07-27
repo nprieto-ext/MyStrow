@@ -4,6 +4,7 @@ Colonne gauche : sélection du matériel.
 Colonne droite : 3 étapes guidées (connecter → diagnostiquer → activer).
 """
 import socket as _sock
+import sys
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -11,7 +12,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QFrame, QTextEdit,
 )
 from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 
 try:
     import serial
@@ -21,7 +22,8 @@ except ImportError:
     SERIAL_AVAILABLE = False
 
 from artnet_dmx import (TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_D2XX,
-                        TRANSPORT_ENTTEC_PRO, FTD2XX_AVAILABLE)
+                        TRANSPORT_ENTTEC_PRO, FTD2XX_AVAILABLE,
+                        BREAK_BAUD, BREAK_US)
 
 try:
     import ftd2xx
@@ -99,6 +101,13 @@ PRODUCTS = [
         "step1":     "Branchez le boîtier sur un port USB.",
     },
     {
+        "id":        "electroconcept_opto",
+        "name":      "OPTO OPEN DMX (ElectroConcept)",
+        "transport": TRANSPORT_ENTTEC,
+        "info":      "Open DMX USB opto-isolé — puce FTDI, piloté en D2XX si dispo.",
+        "step1":     "Branchez le boîtier sur un port USB.",
+    },
+    {
         "id":        "dmxking_micro",
         "name":      "DMXKing UltraDMX Micro",
         "transport": TRANSPORT_ENTTEC,
@@ -142,13 +151,67 @@ _LOG_STYLE = (
 # Dialog
 # ---------------------------------------------------------------------------
 
+# Threads de connexion encore en vol. Un QThread détruit pendant qu'il tourne
+# fait tomber le process : tant qu'il n'a pas fini, on garde une référence ici,
+# même si le dialogue qui l'a lancé a déjà été fermé.
+_PENDING_CONNECTS = set()
+
+
+class _ConnectWorker(QThread):
+    """Ouvre la sortie DMX hors du thread GUI.
+
+    `serial.Serial()` et l'ouverture D2XX sont des appels système bloquants,
+    sans borne de temps quand le boîtier ne répond pas (typique sur macOS quand
+    la puce FTDI est déjà réservée par un autre driver) : exécutés sur le thread
+    GUI, ils gelaient toute l'application — seul un « Forcer à quitter » en
+    sortait. Ici l'UI reste vivante et le dialogue peut abandonner.
+    """
+
+    result = Signal(bool, str)   # (succès, transport réellement utilisé)
+
+    def __init__(self, dmx, prod, port):
+        super().__init__(None)
+        self._dmx, self._prod, self._port = dmx, prod, port
+
+    def run(self):
+        transport = ""
+        try:
+            # ENTTEC Pro : protocole à paquets, piloté par le port série VCP normal
+            # (le boîtier gère lui-même le break DMX → pas besoin du D2XX).
+            # Sinon (Open DMX passif) : D2XX si dispo, repli série VCP.
+            if self._prod.get("transport") == TRANSPORT_ENTTEC_PRO:
+                transport, ftdi_serial = TRANSPORT_ENTTEC_PRO, None
+            else:
+                transport, ftdi_serial = resolve_usb_transport(self._port)
+            ok = self._dmx.connect(
+                transport=transport,
+                product_id=self._prod["id"],
+                product_name=self._prod["name"],
+                com_port=self._port,
+                ftdi_serial=ftdi_serial,
+            )
+            self.result.emit(bool(ok), transport)
+        except Exception as e:
+            print(f"[DMX] connexion échouée: {e}")
+            self.result.emit(False, transport)
+
+
 class DmxSetupDialog(QDialog):
     """Assistant de configuration de la sortie DMX"""
+
+    # Au-delà, on rend la main à l'utilisateur au lieu de le laisser devant une
+    # fenêtre morte. Large exprès : une ouverture série lente mais valide (≈2-3 s
+    # sur certains câbles) doit réussir, on ne coupe que les cas vraiment bloqués.
+    CONNECT_TIMEOUT_MS = 8000
 
     def __init__(self, dmx, parent=None):
         super().__init__(parent)
         self._dmx = dmx
         self._parent_win = parent
+        self._connect_worker = None    # thread de connexion en cours (ou None)
+        self._connect_timer = None
+        self._connect_timed_out = False
+        self._connect_name = ""
         self.setWindowTitle("Sortie DMX — Configuration")
         self.setFixedSize(680, 560)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -349,6 +412,16 @@ class DmxSetupDialog(QDialog):
         )
         btn_copy.clicked.connect(self._copy_report)
         copy_row.addWidget(btn_copy)
+
+        btn_send = QPushButton("✉️  Envoyer au support")
+        btn_send.setFixedHeight(22)
+        btn_send.setStyleSheet(
+            "QPushButton { background: #1a1a1a; color: #555; border: 1px solid #2a2a2a;"
+            " border-radius: 3px; padding: 0 10px; font-size: 9px; }"
+            "QPushButton:hover { color: #ccc; border-color: #444; }"
+        )
+        btn_send.clicked.connect(self._send_report)
+        copy_row.addWidget(btn_send)
         lay.addLayout(copy_row)
 
         lay.addSpacing(12)
@@ -919,9 +992,15 @@ class DmxSetupDialog(QDialog):
         dmx_serial = (getattr(self._dmx, '_serial', None)
                       or getattr(self._dmx, '_pro_serial', None))
         if dmx_serial and dmx_serial.is_open and getattr(dmx_serial, 'port', None) == port:
+            # Le thread live vient d'être suspendu juste au-dessus : on peut
+            # emprunter SON handle au lieu de sauter les tests. Avant, les étapes
+            # 5 et 6 étaient « ignorées » dès que la sortie était connectée —
+            # c'est-à-dire précisément quand l'utilisateur cherche pourquoi ses
+            # projecteurs ne répondent pas. Le diagnostic ne testait alors plus
+            # rien et concluait quand même « opérationnel ».
             self._log_line(f"  ⚠  Port déjà ouvert par MyStrow (connexion active)", warn)
-            self._log_line("      Le test d'ouverture est ignoré — port en cours d'utilisation", dim)
-            ser = None
+            self._log_line("      Tests menés sur cette connexion (envoi live suspendu)", dim)
+            ser = dmx_serial
             port_already_open = True
         else:
             port_already_open = False
@@ -957,9 +1036,25 @@ class DmxSetupDialog(QDialog):
         self._log_line("[ 5 ] Signal Break DMX", cyan)
         _break_ok = False
         _break_method_used = "—"
-        if port_already_open:
-            self._log_line("  –   Port occupé par MyStrow — test ignoré", dim)
-            _break_ok = True  # supposé OK si le thread tourne
+        if ser and sys.platform == 'darwin':
+            # macOS : on teste la MÊME méthode que la sortie live (_enttec_loop).
+            # `break_condition` y réussit sans lever d'exception tout en ne
+            # produisant aucun break électrique valide — le tester ici afficherait
+            # un « ✓ » mensonger alors que les projecteurs ignorent tout.
+            try:
+                ser.baudrate = BREAK_BAUD
+                ser.reset_output_buffer()
+                ser.write(b'\x00')
+                ser.flush()
+                _time.sleep(0.0015)
+                ser.reset_output_buffer()
+                ser.baudrate = 250000
+                self._log_line(f"  ✓  Baud-rate trick OK — break ≈ {BREAK_US:.0f} µs", ok)
+                self._log_line("      (méthode utilisée par la sortie live sur macOS)", dim)
+                _break_ok = True
+                _break_method_used = "baud-rate trick"
+            except Exception as e:
+                self._log_line(f"  ✗  Baud-rate trick échoué : {e}", err)
         elif ser:
             # Méthode 1 : break_condition (FTDI VCP standard)
             try:
@@ -974,7 +1069,7 @@ class DmxSetupDialog(QDialog):
                 self._log_line("      → Tentative de la méthode baud-rate…", dim)
                 # Méthode 2 : baud-rate trick (CH340, FTDI clones, drivers Windows 11)
                 try:
-                    ser.baudrate = 100000
+                    ser.baudrate = BREAK_BAUD
                     ser.write(b'\x00')
                     ser.flush()
                     _time.sleep(0.001)
@@ -993,10 +1088,7 @@ class DmxSetupDialog(QDialog):
         # ── 6. Envoi de frames DMX ───────────────────────────────────────────
         self._log_line("")
         self._log_line("[ 6 ] Envoi 10 frames DMX (canaux 1-4 = 255)", cyan)
-        if port_already_open:
-            self._log_line("  –   Port occupé par MyStrow — test ignoré", dim)
-            self._log_line("      MyStrow gère l'envoi en direct (voir étape 7)", dim)
-        elif ser and _break_ok:
+        if ser and _break_ok:
             test_data = bytearray(512)
             test_data[0] = 255   # CH1
             test_data[1] = 255   # CH2
@@ -1008,7 +1100,7 @@ class DmxSetupDialog(QDialog):
             for i in range(10):
                 try:
                     if _break_method_used == "baud-rate trick":
-                        ser.baudrate = 100000
+                        ser.baudrate = BREAK_BAUD
                         ser.write(b'\x00')
                         ser.flush()
                         _time.sleep(0.001)
@@ -1271,6 +1363,10 @@ class DmxSetupDialog(QDialog):
             self._dmx._d2xx_pause = False
         except Exception:
             pass
+        # Le compte à rebours n'a plus de destinataire une fois la fenêtre fermée.
+        # Le thread de connexion, lui, continue : il se libère seul (_PENDING_CONNECTS).
+        if self._connect_timer is not None:
+            self._connect_timer.stop()
         super().closeEvent(event)
 
     def _copy_report(self):
@@ -1279,42 +1375,94 @@ class DmxSetupDialog(QDialog):
         if text.strip():
             QApplication.clipboard().setText(text)
 
+    def _send_report(self):
+        """Ouvre un mail au support avec le rapport USB pré-rempli."""
+        from core import send_report_email
+        prod = self._current_product()
+        name = prod["name"] if prod else "interface inconnue"
+        port = self.port_combo.currentData() or "aucun port"
+        report = (f"Interface : {name}\nPort : {port}\n\n"
+                  + self._log.toPlainText())
+        send_report_email(
+            self, "Diagnostic sortie DMX USB", report,
+            intro="Bonjour,\n\nVoici le rapport du diagnostic de ma sortie DMX USB.")
+
     # ── Connexion ───────────────────────────────────────────────────────────
 
     def _connect(self):
+        """Lance la connexion dans un thread, avec abandon au bout du délai.
+
+        L'ouverture du port ne se fait plus sur le thread GUI : sur macOS un
+        boîtier qui ne répond pas figeait l'application entière, sans issue.
+        """
         prod = self._current_product()
         if not prod:
             return
-        self._set_connect("Connexion en cours…")
-        QApplication.processEvents()
+
+        # Ré-entrance : tant qu'un thread de connexion tourne, un 2e clic
+        # lancerait un second connect() par-dessus le premier → deux writers
+        # sur la même puce. Le bouton est désactivé, mais on verrouille aussi
+        # ici car un clic peut déjà être en file d'attente.
+        if self._connect_worker is not None:
+            return
 
         port = self.port_combo.currentData()
         if not port:
             self._set_connect("Sélectionnez un port COM valide", error=True)
             return
 
-        # ENTTEC Pro : protocole à paquets, piloté par le port série VCP normal
-        # (le boîtier gère lui-même le break DMX → pas besoin du D2XX).
-        # Sinon (Open DMX passif) : D2XX si dispo, repli série VCP.
-        if prod.get("transport") == TRANSPORT_ENTTEC_PRO:
-            transport, ftdi_serial = TRANSPORT_ENTTEC_PRO, None
-        else:
-            transport, ftdi_serial = resolve_usb_transport(port)
+        self.btn_connect.setEnabled(False)
+        self._set_connect("Connexion en cours…")
+        self._connect_timed_out = False
+        self._connect_name = prod["name"]
 
-        kwargs = dict(
-            transport=transport,
-            product_id=prod["id"],
-            product_name=prod["name"],
-            com_port=port,
-            ftdi_serial=ftdi_serial,
-        )
+        worker = _ConnectWorker(self._dmx, prod, port)
+        self._connect_worker = worker
+        _PENDING_CONNECTS.add(worker)
+        # Libération portée par le thread lui-même : si le dialogue est fermé
+        # avant la fin, ses slots sont déconnectés et ne rendraient jamais la
+        # référence — le thread resterait dans le set pour toujours.
+        worker.finished.connect(lambda w=worker: _PENDING_CONNECTS.discard(w))
+        worker.result.connect(self._on_connect_result)
+        worker.finished.connect(self._on_connect_finished)
 
-        if self._dmx.connect(**kwargs):
+        self._connect_timer = QTimer(self)
+        self._connect_timer.setSingleShot(True)
+        self._connect_timer.timeout.connect(self._on_connect_timeout)
+        self._connect_timer.start(self.CONNECT_TIMEOUT_MS)
+        worker.start()
+
+    def _on_connect_timeout(self):
+        """Délai dépassé : on rend la main sans figer l'interface.
+
+        Le thread n'est pas tuable (il est coincé dans un appel système), on le
+        laisse se terminer seul. Le bouton reste désactivé jusque-là : relancer
+        une connexion en parallèle de celle qui traîne recréerait exactement le
+        double writer qu'on cherche à éviter.
+        """
+        self._connect_timed_out = True
+        self._set_connect("✗  Délai dépassé — le boîtier ne répond pas", error=True)
+
+    def _on_connect_result(self, ok, transport):
+        """Résultat du thread — peut arriver après le délai (connexion lente)."""
+        if self._connect_timer is not None:
+            self._connect_timer.stop()
+        if ok:
             mode = {TRANSPORT_ENTTEC_D2XX: "D2XX",
                     TRANSPORT_ENTTEC_PRO:  "ENTTEC Pro"}.get(transport, "série")
-            self._set_connect(f"✓  {prod['name']} connecté ({mode})", ok=True)
-        else:
+            self._set_connect(f"✓  {self._connect_name} connecté ({mode})", ok=True)
+        elif not self._connect_timed_out:
+            # Après un timeout on garde le message de délai dépassé, plus parlant.
             self._set_connect("✗  Échec de la connexion", error=True)
+
+    def _on_connect_finished(self):
+        """Le thread est terminé : on relâche le verrou et le bouton."""
+        worker = self._connect_worker
+        self._connect_worker = None
+        if worker is not None:
+            _PENDING_CONNECTS.discard(worker)
+            worker.deleteLater()
+        self.btn_connect.setEnabled(True)
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 

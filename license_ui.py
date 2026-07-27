@@ -25,10 +25,11 @@ from license_manager import (
 # LIENS STRIPE
 # ============================================================
 
+# Doivent rester alignés avec mystrow.fr/tarifs (mêmes produits, mêmes prix).
 STRIPE_LINKS = {
     "monthly":  "https://buy.stripe.com/5kQcMXeNn7FeaxabN208g03",
-    "lifetime": "https://buy.stripe.com/7sY6ozgVve3CfRu9EU08g01",
-    "annual":   "https://buy.stripe.com/3cI3cngVvf7G34IcR608g04",
+    "lifetime": "https://buy.stripe.com/dRm8wH7kV7Fe5cQ2cs08g06",
+    "annual":   "https://buy.stripe.com/dRm4greNn0cM48MbN208g05",
 }
 
 # Page d'inscription à la newsletter (gérée côté site, comme le menu Communauté)
@@ -843,7 +844,7 @@ class ActivationDialog(QDialog):
             cl.addLayout(tog_row)
 
             # Prix dynamique
-            price_lbl = QLabel("19,99 €")
+            price_lbl = QLabel("23,99 €")
             price_lbl.setFont(QFont("Segoe UI", 22, QFont.Bold))
             price_lbl.setStyleSheet(f"color:{ACCENT};background:transparent;border:none;")
             cl.addWidget(price_lbl)
@@ -880,13 +881,13 @@ class ActivationDialog(QDialog):
             def _toggle(annual):
                 _annual[0] = annual
                 if annual:
-                    price_lbl.setText("9,99 €")
-                    billing_lbl.setText("TTC / mois · facturé 119,88 €/an")
+                    price_lbl.setText("11,99 €")
+                    billing_lbl.setText("TTC / mois · facturé 143,86 €/an")
                     saving_badge.show()
                     btn_m.setStyleSheet(_S_OFF("4px 0 0 4px"))
                     btn_a.setStyleSheet(_S_ON("0 4px 4px 0"))
                 else:
-                    price_lbl.setText("19,99 €")
+                    price_lbl.setText("23,99 €")
                     billing_lbl.setText("TTC / mois")
                     saving_badge.hide()
                     btn_m.setStyleSheet(_S_ON("4px 0 0 4px"))
@@ -904,7 +905,7 @@ class ActivationDialog(QDialog):
         ))
         cards_row.addWidget(_pro_card_widget())
         cards_row.addWidget(_plan_card(
-            "♾️", tr("plan_lifetime_name"), "239,99 €", tr("plan_lifetime_billing"),
+            "♾️", tr("plan_lifetime_name"), "287,99 €", tr("plan_lifetime_billing"),
             [tr("plan_monthly_f1"), tr("plan_lifetime_f2"), tr("plan_lifetime_f3")],
             "lifetime", accent="#a78bfa", badge="MEILLEUR PRIX",
         ))

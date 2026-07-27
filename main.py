@@ -418,17 +418,14 @@ def main():
 
     _license_box = [None]
     _akai_box    = [False]
-    _dmx_box     = [False, tr("not_configured")]  # [ok, label]
+    # [ok, libellé court affiché, détail complet pour l'infobulle]
+    _dmx_box     = [False, tr("not_configured"), ""]
 
-    # Déterminer le type de sortie DMX depuis la config pour le splash
-    _dmx_node_label = tr("node_output")
-    try:
-        import json as _j, os as _o
-        _cfg = _j.load(open(_o.path.expanduser("~/.mystrow_dmx.json")))
-        _dmx_node_label = tr("usb_dmx_output") if _cfg.get("transport") in ("enttec", "enttec_pro") else tr("node_output")
-    except Exception:
-        pass
-    splash.set_hw_label("node", _dmx_node_label)
+    # La ligne garde son libellé neutre « Sortie DMX ». Elle affichait
+    # « Sortie DMX USB » ou « Sortie Node » selon le transport enregistré, ce qui
+    # exposait un détail de câblage sans utilité au démarrage — et induisait en
+    # erreur quand la config gardait un transport obsolète. Même choix que le
+    # menu Connexion : c'est la même sortie, quel que soit le câble derrière.
 
     def _bg_license():
         _license_box[0] = verify_license()
@@ -479,7 +476,14 @@ def main():
                 cfg = _j.load(f)
             transport    = cfg.get("transport", "enttec")
             product_name = cfg.get("product_name", "")
-            if transport in ("enttec", "enttec_pro"):
+            # Le splash a une largeur fixe : la ligne « Sortie DMX » tient en
+            # une petite trentaine de caractères. On y met donc un nom COURT —
+            # le type de sortie et son point de raccordement — et rien d'autre.
+            # Le nom commercial du produit est trompeur en plus d'être long :
+            # il reste celui du dernier matériel configuré, si bien qu'un
+            # « Art-Net (réseau) » s'affichait encore sur une sortie USB.
+            # Tout le détail part dans l'infobulle.
+            if transport in ("enttec", "enttec_pro", "enttec_d2xx"):
                 com = cfg.get("com_port")
                 if com:
                     try:
@@ -487,15 +491,16 @@ def main():
                         p = _s.Serial(com, 250000, stopbits=_s.STOPBITS_TWO, timeout=0.5)
                         p.close()
                         _dmx_box[0] = True
-                        _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {com}"
+                        _dmx_box[1] = f"USB DMX · {com}"
                     except Exception:
                         _dmx_box[0] = False
-                        _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {com} {tr('offline')}"
+                        _dmx_box[1] = f"USB DMX · {tr('offline')}"
+                    _dmx_box[2] = f"{product_name or 'USB DMX'} — {com}"
                 else:
-                    _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {tr('not_configured')}"
+                    _dmx_box[1] = f"USB DMX · {tr('not_configured')}"
+                    _dmx_box[2] = product_name or "USB DMX"
             else:
-                ip   = cfg.get("target_ip", "")
-                name = product_name or "Electroconcept"
+                ip = cfg.get("target_ip", "")
                 if ip:
                     try:
                         import socket as _sock
@@ -507,9 +512,12 @@ def main():
                         _dmx_box[0] = True if r in (0, 111, 10061) else False
                     except Exception:
                         _dmx_box[0] = None  # orange = inconnu
+                    _dmx_box[1] = (f"Art-Net · {ip}" if _dmx_box[0] is not False
+                                   else f"Art-Net · {tr('offline')}")
                 else:
                     _dmx_box[0] = False
-                _dmx_box[1] = name if ip else f"{name}  —  {tr('not_configured')}"
+                    _dmx_box[1] = f"Art-Net · {tr('not_configured')}"
+                _dmx_box[2] = f"{product_name or 'Art-Net'} — {ip or tr('not_configured')}"
         except Exception:
             pass
 
@@ -535,7 +543,7 @@ def main():
                 akai_effect.start()
 
         if not dmx_shown and not t_dmx.is_alive():
-            splash.set_hw_status("node", _dmx_box[1], _dmx_box[0])
+            splash.set_hw_status("node", _dmx_box[1], _dmx_box[0], detail=_dmx_box[2])
             app.processEvents()
             dmx_shown = True
 
@@ -548,7 +556,7 @@ def main():
     if not akai_shown:
         splash.set_hw_status("akai", tr("not_detected"), False)
     if not dmx_shown:
-        splash.set_hw_status("node", _dmx_box[1], _dmx_box[0])
+        splash.set_hw_status("node", _dmx_box[1], _dmx_box[0], detail=_dmx_box[2])
 
     license_result = _license_box[0] or _result_not_activated()
     print(f"Licence: {license_result}")

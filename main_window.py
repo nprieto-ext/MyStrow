@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QLayout, QSizePolicy
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QUrl, QSize, QPoint, QRect, QDateTime, QEvent, Signal
+    Qt, QTimer, QUrl, QSize, QPoint, QRect, QDateTime, QEvent, Signal, QThread
 )
 import datetime as _dt
 try:
@@ -33,6 +33,36 @@ from PySide6.QtGui import (
     QPalette, QPolygon, QAction, QActionGroup, QDesktopServices,
     QFontMetrics
 )
+
+
+# Threads de connexion DMX encore en vol. Un QThread détruit pendant qu'il
+# tourne fait tomber le process : on garde une référence jusqu'à sa fin.
+_PENDING_DMX_CONNECTS = set()
+
+
+class _DmxConnectWorker(QThread):
+    """Ouvre la sortie DMX hors du thread GUI.
+
+    `ArtNetDMX.connect()` finit sur `serial.Serial()` ou une ouverture D2XX :
+    appels système bloquants, sans borne de temps quand le boîtier ne répond
+    pas (typique sur macOS quand la puce FTDI est déjà réservée). Appelé sur le
+    thread GUI au démarrage, il gelait MyStrow avant même l'affichage de la
+    fenêtre — seul un « Forcer à quitter » en sortait.
+    """
+
+    result = Signal(bool)
+
+    def __init__(self, dmx, kwargs=None):
+        super().__init__(None)
+        self._dmx = dmx
+        self._kwargs = kwargs or {}
+
+    def run(self):
+        try:
+            self.result.emit(bool(self._dmx.connect(**self._kwargs)))
+        except Exception as e:
+            print(f"[DMX] connexion échouée: {e}")
+            self.result.emit(False)
 
 
 class FlowLayout(QLayout):
@@ -185,7 +215,9 @@ from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
     spread_rank, SPREAD_MODES, channel_label,
-    projector_selection_keys, layer_selection_set,
+    projector_selection_keys, layer_selection_ranks, block_index, chase_slot,
+    position_preset_values, find_position_preset,
+    copy_report, send_report_email,
 )
 from i18n import get_language, set_language, tr
 from projector import Projector
@@ -226,6 +258,13 @@ _MX_SPAN_MAX = 0.130      # ~145 px : plafond, pour ne pas manger le plan
 _MX_SPAN_PER_PIXEL = 0.009   # repli quand les dimensions sont inconnues
 
 
+# Bornes d'affichage quand la taille réelle est connue : de ~15 cm (un petit
+# cube LED) à 7 m (une barre sur toute la largeur d'un truss), sur une scène
+# de 12 m. Volontairement larges — c'est l'utilisateur qui sait.
+_MX_SPAN_REAL_MIN = 0.012
+_MX_SPAN_REAL_MAX = 0.60
+
+
 def _matrix_span(cols, phys_w=None):
     """
     Largeur normalisée d'un bloc pixel.
@@ -235,9 +274,15 @@ def _matrix_span(cols, phys_w=None):
     une estimation par nombre de pixels.
     """
     if phys_w:
-        span = float(phys_w) / _STAGE_WIDTH_MM
-    else:
-        span = _MX_SPAN_PER_PIXEL * max(cols, 1)
+        # Dimension RÉELLE connue : on la respecte. Les bornes serrées
+        # ci-dessous existent pour encadrer une largeur DEVINÉE d'après le
+        # nombre de pixels ; les appliquer ici écraserait la saisie de
+        # l'utilisateur — sur une scène de 12 m elles interdisaient tout ce
+        # qui est sous 66 cm ou au-dessus de 1,56 m. On garde seulement un
+        # plancher, pour qu'un appareil reste visible et cliquable.
+        return min(_MX_SPAN_REAL_MAX,
+                   max(_MX_SPAN_REAL_MIN, float(phys_w) / _STAGE_WIDTH_MM))
+    span = _MX_SPAN_PER_PIXEL * max(cols, 1)
     return min(_MX_SPAN_MAX, max(_MX_SPAN_MIN, span))
 
 # Couleur d'affichage par type de canal DMX (patch + bibliothèque de fixtures)
@@ -487,6 +532,49 @@ def _apply_matrix_meta(proj, src):
             setattr(proj, f, src[f])
 
 
+def _infer_pixel_matrix(profile):
+    """Déduit la géométrie d'une barre/matrice depuis un profil DMX brut.
+
+    Beaucoup de fixtures n'apportent aucune géométrie : la bibliothèque QLC+
+    livrée avec MyStrow n'en fournit pour AUCUNE de ses 1710 entrées, alors que
+    131 sont typées « Barre LED ». Sans géométrie, une barre est patchée comme
+    un projecteur unique — un spot en 3D et une vignette minuscule en 2D.
+
+    On cherche donc le motif répété. Exemple réel, i-Pix BB4 mode 10 : 36 canaux
+    = 4 × [Dim, Dim, Strobe, R, R, G, G, B, B] → barre de 4 segments.
+
+    Garde-fous, pour ne jamais transformer un projecteur classique en barre :
+      - au moins 2 répétitions, et une cellule d'au moins 2 canaux ;
+      - la cellule doit contenir une couleur (R/G/B/W/A/UV) — un simple
+        Dim+Strobe répété n'est pas une barre à pixels ;
+      - on retient la PLUS PETITE cellule qui se répète, c'est-à-dire la
+        période fondamentale du motif. Prendre la plus grande donnerait
+        toujours 2 pixels (la moitié du profil se répète trivialement).
+    Retourne un dict au format du parser OFL, ou None.
+    """
+    if not isinstance(profile, list) or len(profile) < 4:
+        return None
+    n = len(profile)
+    _COLORS = {"R", "G", "B", "W", "A", "UV", "Amber", "Lime", "Cyan", "Magenta", "Yellow"}
+
+    for cell_len in range(2, n // 2 + 1):
+        if n % cell_len:
+            continue
+        cell = profile[:cell_len]
+        if not any(c in _COLORS for c in cell):
+            continue
+        reps = n // cell_len
+        if reps < 2:
+            continue
+        if all(profile[i * cell_len:(i + 1) * cell_len] == cell for i in range(reps)):
+            return {
+                "rows": 1, "cols": reps, "pixel_count": reps,
+                "pixel_channels": list(cell),
+                "head": [], "tail": [], "offset": 0, "order": "perPixel",
+            }
+    return None
+
+
 def _preset_pixel_spec(preset):
     """
     Construit un PixelFixtureSpec depuis un preset de bibliothèque, si celui-ci
@@ -510,6 +598,11 @@ def _preset_pixel_spec(preset):
                 mx = m["matrix"]
                 phys = m.get("physical") or phys
                 break
+    if not isinstance(mx, dict):
+        # Aucune géométrie fournie : la déduire du profil. C'est le cas de
+        # toutes les fixtures issues de la bibliothèque QLC+, et de celles
+        # saisies à la main dans l'éditeur.
+        mx = _infer_pixel_matrix(preset.get("profile"))
     if not isinstance(mx, dict):
         return None
 
@@ -2984,6 +3077,57 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(tr("menu_ia_lumiere"), self.show_ia_lumiere_config)
         edit_menu.addAction("🎬  Synchro lumière / vidéo…", self._open_light_sync_dialog)
 
+        # Connexion avant Affichage : c'est le menu qu'on ouvre en premier au
+        # montage (contrôleur, sortie DMX, audio, vidéo).
+        conn_menu = bar.addMenu(tr("menu_connection"))
+
+        ctrl_menu = conn_menu.addMenu(tr("menu_control"))
+
+        # Action directe : ouvre le hub contrôleur (liste des contrôleurs
+        # compatibles + détecté/sélectionné, puis diagnostic ports + reconnecter).
+        ctrl_menu.addAction(tr("menu_akai_mini"), self._open_akai_diagnostic)
+        ctrl_menu.addAction("⚙️  Paramètres contrôleur", self._open_akai_layout_editor)
+
+        ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
+        ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
+        # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
+        # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
+
+        conn_menu.addSeparator()
+
+        self.node_menu = conn_menu.addMenu(tr("menu_dmx_output"))
+        self.node_menu.addAction(tr("menu_config_output"), self.open_node_connection)
+        self._refresh_dmx_menu_title()
+        # Sortie DMX réservée aux licences/essais actifs. Le menu reste volontairement
+        # cliquable même sans droit DMX : un menu grisé n'explique rien à l'utilisateur.
+        # Ce sont les actions qui portent la garde et affichent _dmx_locked_notice(),
+        # laquelle propose d'ouvrir directement la page « Choisir un plan ».
+
+        audio_menu = conn_menu.addMenu(tr("menu_audio_output"))
+        audio_menu.addAction(tr("menu_test_sound"), self.play_test_sound)
+        self.audio_output_menu = audio_menu.addMenu(tr("menu_audio_out_sub"))
+        self.audio_output_menu.aboutToShow.connect(self._populate_audio_output_menu)
+
+        video_menu = conn_menu.addMenu(tr("menu_video_output"))
+        self.video_test_action = video_menu.addAction(tr("menu_test_logo"), self.show_test_logo)
+        self.video_screen_menu = video_menu.addMenu(tr("menu_broadcast_on"))
+        self.video_screen_menu.aboutToShow.connect(self._populate_screen_menu)
+        self.video_target_screen = 1  # Ecran cible par defaut (second ecran)
+
+        conn_menu.addSeparator()
+
+        # Tous les tests au même endroit : quand une sortie ne marche pas, on
+        # cherche « diagnostic », pas le sous-menu de la sortie concernée.
+        diag_menu = conn_menu.addMenu("🩺  Diagnostic")
+        diag_menu.addAction("🌐  Test RJ45 (réseau / Node Art-Net)", self.test_node_connection)
+        diag_menu.addAction("🔌  Test USB (interface DMX)", self.open_usb_diagnostic)
+        diag_menu.addAction("📱  Test tablette", self.test_tablet_connection)
+        diag_menu.addSeparator()
+        diag_menu.addAction("🩺  Diagnostic complet (BRAD)", self.open_brad_diagnostic)
+
+        conn_menu.addSeparator()
+        conn_menu.addAction("⌨️  Raccourci Clavier", self.show_shortcuts_dialog)
+
         view_menu = bar.addMenu(tr("menu_view"))
         self._view_group = QActionGroup(self)
         self._view_group.setExclusive(True)
@@ -3016,44 +3160,6 @@ class MainWindow(QMainWindow):
 
         # NB : pas de connexion à self.seq ici — _create_menu() tourne avant que
         # le séquenceur existe. Le branchement se fait après sa création.
-
-        conn_menu = bar.addMenu(tr("menu_connection"))
-
-        ctrl_menu = conn_menu.addMenu(tr("menu_control"))
-
-        # Action directe : ouvre le hub contrôleur (liste des contrôleurs
-        # compatibles + détecté/sélectionné, puis diagnostic ports + reconnecter).
-        ctrl_menu.addAction(tr("menu_akai_mini"), self._open_akai_diagnostic)
-        ctrl_menu.addAction("⚙️  Paramètres contrôleur", self._open_akai_layout_editor)
-
-        ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
-        ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
-        # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
-        # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
-
-        conn_menu.addSeparator()
-
-        self.node_menu = conn_menu.addMenu(tr("menu_dmx_output"))
-        self.node_menu.addAction(tr("menu_config_output"), self.open_node_connection)
-        self.node_menu.addAction("🔍  Diagnostic Node DMX", self.test_node_connection)
-        self._refresh_dmx_menu_title()
-        # Sortie DMX réservée aux licences/essais actifs : menu grisé (non cliquable)
-        # tant que la licence n'autorise pas le DMX (essai expiré / non activé).
-        self.node_menu.setEnabled(self._license.dmx_allowed)
-
-        audio_menu = conn_menu.addMenu(tr("menu_audio_output"))
-        audio_menu.addAction(tr("menu_test_sound"), self.play_test_sound)
-        self.audio_output_menu = audio_menu.addMenu(tr("menu_audio_out_sub"))
-        self.audio_output_menu.aboutToShow.connect(self._populate_audio_output_menu)
-
-        video_menu = conn_menu.addMenu(tr("menu_video_output"))
-        self.video_test_action = video_menu.addAction(tr("menu_test_logo"), self.show_test_logo)
-        self.video_screen_menu = video_menu.addMenu(tr("menu_broadcast_on"))
-        self.video_screen_menu.aboutToShow.connect(self._populate_screen_menu)
-        self.video_target_screen = 1  # Ecran cible par defaut (second ecran)
-
-        conn_menu.addSeparator()
-        conn_menu.addAction("⌨️  Raccourci Clavier", self.show_shortcuts_dialog)
 
         about_menu = bar.addMenu(tr("menu_about"))
 
@@ -6572,40 +6678,17 @@ class MainWindow(QMainWindow):
         lyres_cur = [p for p in self.projectors
                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
 
-        saved_states = preset.get("projectors", [])
-        # Index par adresse DMX (priorité max — unique par fixture)
-        saved_by_addr: dict = {str(s["start_address"]): s
-                               for s in saved_states if s.get("start_address")}
-        # Index par nom (fallback si adresse absente — noms non-uniques → seul le dernier garde)
-        # On construit un index qui mappe chaque nom à TOUS les états pour éviter les collisions
-        saved_by_name_list: dict = {}
-        for s in saved_states:
-            n = s.get("name")
-            if n:
-                saved_by_name_list.setdefault(n, []).append(s)
-        # Compteur d'utilisation par nom pour distribuer correctement les doublons
-        name_cursor: dict = {}
+        # Appariement preset ↔ lyres : adresse DMX, puis nom, puis rang. Partagé
+        # avec le centre des effets Pan/Tilt (colonne POSITION de l'éditeur) —
+        # les deux doivent viser le même point, sinon un cercle tournerait
+        # ailleurs que là où le rappel pose la lyre.
+        cibles = position_preset_values(preset, lyres_cur)
 
         applied = 0
-        for i, p in enumerate(lyres_cur):
-            saved = None
-            # 1. Match par adresse DMX (robuste, résiste aux renommages)
-            addr_key = str(getattr(p, 'start_address', ''))
-            if addr_key:
-                saved = saved_by_addr.get(addr_key)
-            # 2. Match par nom avec distribution séquentielle (évite les collisions de noms dupliqués)
-            if saved is None and p.name:
-                entries = saved_by_name_list.get(p.name, [])
-                idx_n = name_cursor.get(p.name, 0)
-                if idx_n < len(entries):
-                    saved = entries[idx_n]
-                    name_cursor[p.name] = idx_n + 1
-            # 3. Fallback positionnel (même ordre de fixtures qu'à l'enregistrement)
-            if saved is None and i < len(saved_states):
-                saved = saved_states[i]
-            if saved:
-                self._start_pan_tilt_transition(
-                    p, saved.get("pan", 32768), saved.get("tilt", 32768), 500)
+        for p in lyres_cur:
+            pt = cibles.get(id(p))
+            if pt:
+                self._start_pan_tilt_transition(p, pt[0], pt[1], 500)
                 applied += 1
 
         if applied == 0:
@@ -7906,13 +7989,34 @@ class MainWindow(QMainWindow):
 
         # Clés (groupe, index_local) sur la liste COMPLÈTE (convention plan de feu)
         # + set par couche → test d'appartenance O(1). Identique à _compute_preview.
-        _sel_key_by_id = {id(p): k for p, k in
-                          zip(self.projectors, projector_selection_keys(self.projectors))}
-        _layer_sel = {id(ld): layer_selection_set(ld) for ld in layers_dicts}
+        _all_keys      = projector_selection_keys(self.projectors)
+        _sel_key_by_id = {id(p): k for p, k in zip(self.projectors, _all_keys)}
+        # {clé: rang} et non un set : sur une cible « Sélection », l'étalement
+        # suit l'ORDRE de sélection (les pastilles 1, 2, 3… du plan de feu) et
+        # non l'ordre du patch — c'est ce qui permet de diriger un chenillard.
+        _layer_sel = {id(ld): layer_selection_ranks(ld) for ld in layers_dicts}
 
         _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
         _mh_idx   = {id(p): j for j, p in enumerate(_mh_projs)}
         _mh_n     = max(len(_mh_projs), 1)
+
+        # Même chose pour le mouvement : les lyres d'une sélection sont classées
+        # entre elles dans l'ordre choisi, sinon le Pan/Tilt d'un chenillard
+        # repartirait dans l'ordre du patch alors que le dimmer, lui, suivrait.
+        _mh_ids = {id(p) for p in _mh_projs}
+        _proj_by_key = {k: p for k, p in zip(_all_keys, self.projectors)}
+        _layer_mh = {}
+        for _ld in layers_dicts:
+            if _ld.get("target_preset") != "Selection":
+                continue
+            _ranks = _layer_sel.get(id(_ld), {})
+            _keys  = [k for k, _ in sorted(_ranks.items(), key=lambda kv: kv[1])]
+            _sub = {}
+            for _k in _keys:
+                _p = _proj_by_key.get(_k)
+                if _p is not None and id(_p) in _mh_ids:
+                    _sub[_k] = len(_sub)
+            _layer_mh[id(_ld)] = _sub
 
         _LETTER_TO_GROUP = {
             "A": "face", "B": "lat", "C": "contre",
@@ -7920,12 +8024,32 @@ class MainWindow(QMainWindow):
             "G": "groupe_g", "H": "groupe_h",
         }
 
+        # POSITION : centre de la trajectoire, par couche et par lyre. Sans elle
+        # un cercle tourne autour du milieu de course (le « cercle du milieu »).
+        # Résolu sur TOUTES les lyres, pas sur la liste filtrée par groupe : le
+        # preset a été enregistré sur l'ensemble du rig, et son appariement de
+        # secours se fait par rang — filtrer décalerait les correspondances.
+        _all_lyres = [p for p in self.projectors
+                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+        _pos_centers = {}
+        for _ld in layers_dicts:
+            if _ld.get("attribute") not in ("Pan", "Tilt", "Pan/Tilt"):
+                continue
+            _pr = find_position_preset(getattr(self, 'position_presets', []),
+                                       _ld.get("pos_preset_idx"),
+                                       _ld.get("pos_preset_name", ""))
+            if _pr is not None:
+                _pos_centers[id(_ld)] = position_preset_values(_pr, _all_lyres)
+
         def _wave(forme, x):
             if forme == "Sinus":      return (_math.sin(2 * _math.pi * x) + 1) / 2
             elif forme == "Flash":    return 1.0 if x < 0.5 else 0.0
             elif forme == "Triangle": return 1.0 - abs(2 * x - 1)
             elif forme == "Montée":   return x
             elif forme == "Descente": return 1.0 - x
+            # Repli seulement : le vrai « Un par un » se calcule sur le rang
+            # (voir `core.chase_slot`), pas sur x.
+            elif forme == "Un par un": return 1.0 if x < 0.25 else 0.0
             elif forme == "Fixe":     return 1.0
             return 0.0
 
@@ -7972,9 +8096,20 @@ class MainWindow(QMainWindow):
             for ld in layers_dicts:
                 preset = ld.get("target_preset", "Tous")
                 groups = ld.get("target_groups", [])
+                # Index d'étalement : par défaut la place dans le patch, mais sur
+                # une cible « Sélection » la place dans la SÉLECTION (pastilles
+                # 1, 2, 3… du plan) — c'est ce qui rend le chenillard dirigeable.
+                i_fx, n_fx = i, n
+                _mh_i_sel  = None
                 if preset == "Selection":
-                    if _sel_key_by_id.get(id(proj)) not in _layer_sel.get(id(ld), ()):
+                    _ranks = _layer_sel.get(id(ld), {})
+                    _k     = _sel_key_by_id.get(id(proj))
+                    if _k not in _ranks:
                         continue
+                    i_fx, n_fx = _ranks[_k], max(1, len(_ranks))
+                    _mh_sub    = _layer_mh.get(id(ld), {})
+                    if _k in _mh_sub:
+                        _mh_i_sel = (_mh_sub[_k], max(1, len(_mh_sub)))
                 elif preset == "Pair"   and i % 2 != 0: continue
                 elif preset == "Impair" and i % 2 != 1: continue
                 elif preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
@@ -7998,11 +8133,16 @@ class MainWindow(QMainWindow):
                 # 180° = distribution parfaite sur 1 cycle (permanent N/2 allumés avec Flash)
                 # 0° = sync, 360° = double-tour (sous-groupes)
                 sp   = spread / 180.0
+                # GROUPER : replier l'index sur des paquets AVANT le calcul du
+                # rang. Les fixtures d'un même paquet obtiennent alors le même
+                # rang, donc la même phase, donc elles partent ensemble.
+                _blk = ld.get("block", 1)
+                i_rk, n_rk = block_index(i_fx, n_fx, _blk)
                 # Rang de la fixture dans la répartition choisie. « Linéaire »
                 # reproduit exactement l'ancien i/n : les effets existants sont
                 # inchangés. Les autres modes donnent le même rang à plusieurs
                 # fixtures, qui s'allument alors ensemble (miroir, pair/impair…).
-                _rk = spread_rank(i, n, ld.get("spread_mode", "lineaire"))
+                _rk = spread_rank(i_rk, n_rk, ld.get("spread_mode", "lineaire"))
                 if direction == 0:
                     t_osc = abs(2 * ((freq * t) % 1.0) - 1)
                     x = (t_osc + _rk * sp + phase) % 1.0
@@ -8011,12 +8151,23 @@ class MainWindow(QMainWindow):
                 else:
                     x = (freq * t + _rk * sp + phase) % 1.0
 
-                if forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
+                if forme == "Un par un":
+                    # Chenillard exclusif : la fixture est allumée uniquement
+                    # quand c'est SON tour. La position vient du rang, pas de la
+                    # forme d'onde — c'est ce qui garantit un seul allumé à la
+                    # fois quel que soit le DÉCALAGE (une forme classique reste
+                    # allumée une fraction fixe du cycle, d'où plusieurs projos
+                    # allumés en même temps).
+                    raw = 1.0 if chase_slot(freq * t + phase, n_rk,
+                                            direction) == i_rk else 0.0
+                elif forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
                     import random as _rand
                     raw = _rand.random()
                 else:
                     raw = _wave(forme, x)
-                if fade > 0:
+                # Le FONDU rallumerait les voisins et ruinerait l'exclusivité :
+                # il est sans objet sur « Un par un » (et grisé dans le tableau).
+                if fade > 0 and forme != "Un par un":
                     sin_val = (_math.sin(2 * _math.pi * x) + 1) / 2
                     raw = raw * (1 - fade) + sin_val * fade
                 _grp = getattr(proj, 'group', '')
@@ -8062,26 +8213,36 @@ class MainWindow(QMainWindow):
                     # Recalcul du dephasage sur l'index lyre + echelle /100 plafonnee
                     # (comme le Pan/Tilt couple) : le `x` global utilise l'index de
                     # tous les projos et /180, trop faible pour les lyres.
-                    _mh_i_mv = _mh_idx.get(id(proj), i)
+                    _mh_i_mv, _mh_n_mv = ((_mh_idx.get(id(proj), i), _mh_n)
+                                          if _mh_i_sel is None else _mh_i_sel)
+                    _mh_i_mv, _mh_n_mv = block_index(_mh_i_mv, _mh_n_mv, _blk)
                     _sp_move = min(1.0, spread / 100.0)
-                    if forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
+                    if forme in ("Audio", "Aléatoire", "Un par un"):
+                        # Formes sans courbe échantillonnable : la valeur déjà
+                        # calculée sert telle quelle (position par paliers).
                         raw_mv = raw
                     else:
                         if direction == 0:
                             _t_osc = abs(2 * ((freq * t) % 1.0) - 1)
-                            _x_mv = (_t_osc + _mh_i_mv / _mh_n * _sp_move + phase) % 1.0
+                            _x_mv = (_t_osc + _mh_i_mv / _mh_n_mv * _sp_move + phase) % 1.0
                         elif direction == -1:
-                            _x_mv = (freq * t - _mh_i_mv / _mh_n * _sp_move + phase) % 1.0
+                            _x_mv = (freq * t - _mh_i_mv / _mh_n_mv * _sp_move + phase) % 1.0
                         else:
-                            _x_mv = (freq * t + _mh_i_mv / _mh_n * _sp_move + phase) % 1.0
+                            _x_mv = (freq * t + _mh_i_mv / _mh_n_mv * _sp_move + phase) % 1.0
                         raw_mv = _wave(forme, _x_mv)
+                    # Centre du mouvement : la POSITION choisie prime sur l'état
+                    # capturé au démarrage de l'effet, lui-même devant le milieu
+                    # de course.
+                    _ctr = _pos_centers.get(id(ld), {}).get(id(proj))
                     if attr == "Pan":
-                        center = saved[3] if saved and len(saved) > 3 else 32768
+                        center = (_ctr[0] if _ctr is not None else
+                                  saved[3] if saved and len(saved) > 3 else 32768)
                         sym_pan  = ld.get("sym_pan", False)
-                        pan_sign = -1 if (sym_pan and _mh_i_mv * 2 >= _mh_n) else 1
+                        pan_sign = -1 if (sym_pan and _mh_i_mv * 2 >= _mh_n_mv) else 1
                         proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude * _PAN_RATIO)))
                     else:
-                        center = saved[4] if saved and len(saved) > 4 else 32768
+                        center = (_ctr[1] if _ctr is not None else
+                                  saved[4] if saved and len(saved) > 4 else 32768)
                         proj.tilt = int(max(0, min(65535, center + (raw_mv - 0.5) * 2 * amplitude)))
 
                 elif attr == "Pan/Tilt":
@@ -8103,9 +8264,12 @@ class MainWindow(QMainWindow):
                     saved = self.effect_saved_colors.get(id(proj))
 
                     # Utiliser l'index relatif parmi les lyres pour le spread + symétrie
-                    _mh_i = _mh_idx.get(id(proj), i)
+                    # (ou le rang dans la sélection quand la couche cible une sélection)
+                    _mh_i, _mh_n_pt = ((_mh_idx.get(id(proj), i), _mh_n)
+                                       if _mh_i_sel is None else _mh_i_sel)
+                    _mh_i, _mh_n_pt = block_index(_mh_i, _mh_n_pt, _blk)
                     sym_pan  = ld.get("sym_pan", False)
-                    pan_sign = -1 if (sym_pan and _mh_i * 2 >= _mh_n) else 1
+                    pan_sign = -1 if (sym_pan and _mh_i * 2 >= _mh_n_pt) else 1
 
                     # Dephasage mouvement : echelle /100 (alignee sur la preview de
                     # l'editeur), plafonnee a 1.0 = etalement parfait. Au-dela le
@@ -8120,20 +8284,26 @@ class MainWindow(QMainWindow):
                         if _d == -1:  return -freq * t
                         return freq * t
 
+                    # Centre de la trajectoire : POSITION choisie, sinon l'état
+                    # capturé au démarrage, sinon le milieu de course.
+                    _ctr = _pos_centers.get(id(ld), {}).get(id(proj))
+
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
                         pan_freq = (0.05 + speed * pan_mult / 100.0 * 7.0) * fader_mult
-                        pan_x = (_pt_time(pan_freq) + _mh_i / _mh_n * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
+                        pan_x = (_pt_time(pan_freq) + _mh_i / _mh_n_pt * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
-                        c_pan = saved[3] if saved and len(saved) > 3 else 32768
+                        c_pan = (_ctr[0] if _ctr is not None else
+                                 saved[3] if saved and len(saved) > 3 else 32768)
                         proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude * _PAN_RATIO)))
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
                         tilt_freq = (0.05 + speed * tilt_mult / 100.0 * 7.0) * fader_mult
-                        tilt_x = (_pt_time(tilt_freq) + _mh_i / _mh_n * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
+                        tilt_x = (_pt_time(tilt_freq) + _mh_i / _mh_n_pt * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
-                        c_tilt = saved[4] if saved and len(saved) > 4 else 32768
+                        c_tilt = (_ctr[1] if _ctr is not None else
+                                  saved[4] if saved and len(saved) > 4 else 32768)
                         proj.tilt = int(max(0, min(65535, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
 
                 elif attr == "Zoom":
@@ -13718,6 +13888,39 @@ class MainWindow(QMainWindow):
         dlg.activation_success.connect(self._on_activation_success)
         dlg.exec()
 
+    def _open_purchase_dialog(self):
+        """Ouvre le dialogue licence directement sur la page « Choisir un plan »."""
+        dlg = ActivationDialog(self, license_result=self._license, start_purchase=True)
+        dlg.activation_success.connect(self._on_activation_success)
+        dlg.exec()
+
+    def _dmx_locked_notice(self):
+        """Explique pourquoi la sortie DMX est verrouillée et propose les plans.
+
+        Remplace le grisage du menu Sortie DMX : l'entrée reste cliquable, et
+        c'est ce message qui indique l'état de la licence puis ouvre la fenêtre
+        « Choisir un plan » si l'utilisateur le souhaite.
+        """
+        state = getattr(self._license, 'state', None)
+        if state == LicenseState.TRIAL_EXPIRED:
+            reason = tr("dmx_lic_trial_over")
+        elif state == LicenseState.LICENSE_EXPIRED:
+            reason = tr("dmx_lic_license_over")
+        else:
+            reason = tr("dmx_lic_not_active")
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(tr("dmx_lic_warn_title"))
+        box.setText(reason)
+        box.setInformativeText(tr("dmx_lic_locked_hint"))
+        btn_plan = box.addButton(tr("btn_choose_plan"), QMessageBox.AcceptRole)
+        box.addButton(tr("btn_close"), QMessageBox.RejectRole)
+        box.setDefaultButton(btn_plan)
+        box.exec()
+        if box.clickedButton() is btn_plan:
+            self._open_purchase_dialog()
+
     def _on_activation_success(self):
         """Appele apres une activation reussie - re-verifie et applique"""
         from license_manager import pop_login_result
@@ -13744,9 +13947,8 @@ class MainWindow(QMainWindow):
             self.plan_de_feu.set_dmx_blocked()
             LoginSuccessDialog(dmx_allowed=False, parent=self).exec()
 
-        # Activer/desactiver menu Node
-        if hasattr(self, 'node_menu'):
-            self.node_menu.setEnabled(self._license.dmx_allowed)
+        # Le menu Sortie DMX reste toujours cliquable : la garde licence est portée
+        # par les actions elles-mêmes (voir _dmx_locked_notice).
 
         # Watermark video integre
         if not self._license.watermark_required:
@@ -15482,6 +15684,44 @@ class MainWindow(QMainWindow):
         px_row2.addWidget(cb_wiring, 1)
         px_vl.addLayout(px_row2)
 
+        # ── Taille réelle de l'appareil ──────────────────────────────────
+        # Sans cette information, une barre est dessinée d'après son NOMBRE de
+        # pixels : une barre d'1 m et une de 20 cm avec autant de segments
+        # sortaient identiques. Les bibliothèques QLC+ ne fournissent aucune
+        # dimension, donc c'est ici que l'utilisateur la donne — une fois.
+        px_row3 = QHBoxLayout()
+        px_row3.setSpacing(6)
+        lbl_size = QLabel("Taille réelle :")
+        lbl_size.setStyleSheet("color:#777;font-size:11px;border:none;background:transparent;")
+        px_row3.addWidget(lbl_size)
+
+        _PX_SPIN = ("QSpinBox{background:#1e1e1e;color:#ddd;border:1px solid #333;"
+                    "border-radius:5px;padding:2px 6px;font-size:11px;}"
+                    "QSpinBox::up-button,QSpinBox::down-button{width:14px;}")
+        spin_pw = QSpinBox()
+        spin_pw.setRange(5, 600)
+        spin_pw.setSingleStep(5)
+        spin_pw.setSuffix(" cm")
+        spin_pw.setFixedHeight(26)
+        spin_pw.setStyleSheet(_PX_SPIN)
+        spin_pw.setToolTip("Largeur réelle de la barre, bout à bout.\n"
+                           "Elle fixe sa taille sur le plan 2D et en 3D.")
+        px_row3.addWidget(spin_pw)
+
+        lbl_size_h = QLabel("×")
+        lbl_size_h.setStyleSheet("color:#555;font-size:11px;border:none;background:transparent;")
+        px_row3.addWidget(lbl_size_h)
+        spin_ph = QSpinBox()
+        spin_ph.setRange(5, 600)
+        spin_ph.setSingleStep(5)
+        spin_ph.setSuffix(" cm")
+        spin_ph.setFixedHeight(26)
+        spin_ph.setStyleSheet(_PX_SPIN)
+        spin_ph.setToolTip("Hauteur réelle — utile seulement sur une matrice.")
+        px_row3.addWidget(spin_ph)
+        px_row3.addStretch()
+        px_vl.addLayout(px_row3)
+
         px_strip = PixelStrip()
         px_strip.setToolTip(
             "Le chiffre est le rang du pixel dans la chaîne DMX.\n"
@@ -15627,6 +15867,39 @@ class MainWindow(QMainWindow):
             canvas.update()
             _mark_dirty()
             px_hint.setText("Pixels répartis régulièrement.")
+
+        def _on_px_size(_v=None):
+            """Applique la taille réelle saisie, puis reconstruit la grille."""
+            idx = _sel[0]
+            g, px = _px_members(idx) if idx is not None else (None, [])
+            if not g or not px:
+                return
+            projs = [self.projectors[i] for i in px if i < len(self.projectors)]
+            if not projs:
+                return
+            w_mm = spin_pw.value() * 10.0
+            h_mm = spin_ph.value() * 10.0
+            # Le maître porte aussi la dimension : c'est lui qu'on relit au
+            # rechargement du patch, et lui que la 3D interroge.
+            for p in projs + [self.projectors[g["repr"]]]:
+                p.matrix_phys_w = w_mm
+                p.matrix_phys_h = h_mm
+            cx = sum(p.canvas_x or 0.5 for p in projs) / len(projs)
+            cy = sum(p.canvas_y or 0.5 for p in projs) / len(projs)
+            cols = max(1, int(g.get("cols") or 1))
+            rows = max(1, int(g.get("rows") or 1))
+            span = _matrix_span(cols, w_mm)
+            ratio = min(2.5, h_mm / w_mm) if w_mm else 1.0
+            layout_pixels(projs, cx, cy, span / cols,
+                          span * ratio * 1.6 / rows,
+                          int(getattr(projs[0], 'matrix_rot', 0) or 0))
+            canvas.update()
+            _mark_dirty()
+            px_hint.setText(f"Taille appliquée : {spin_pw.value()} cm"
+                            + (f" × {spin_ph.value()} cm" if rows > 1 else ""))
+
+        spin_pw.editingFinished.connect(_on_px_size)
+        spin_ph.editingFinished.connect(_on_px_size)
 
         btn_px_rev.clicked.connect(_on_px_reverse)
         btn_px_grid.clicked.connect(_on_px_regrid)
@@ -16706,6 +16979,16 @@ class MainWindow(QMainWindow):
                 _is2d = int(_gpx.get("rows") or 1) > 1
                 lbl_wiring.setVisible(_is2d)
                 cb_wiring.setVisible(_is2d)
+                # Hauteur : sans objet sur une barre (une seule ligne).
+                lbl_size_h.setVisible(_is2d)
+                spin_ph.setVisible(_is2d)
+                _rep = self.projectors[_gpx["repr"]]
+                _pw = getattr(_rep, 'matrix_phys_w', None)
+                _ph = getattr(_rep, 'matrix_phys_h', None)
+                for _sp, _mm, _def in ((spin_pw, _pw, 100), (spin_ph, _ph, 20)):
+                    _sp.blockSignals(True)
+                    _sp.setValue(int(round(float(_mm) / 10)) if _mm else _def)
+                    _sp.blockSignals(False)
                 px_hint.setText("")
                 _refresh_px_strip(idx)
             if is_mh:
@@ -19471,6 +19754,7 @@ class MainWindow(QMainWindow):
                 'body_rotation':   getattr(proj, 'body_rotation', 0.0),
                 'rot3d_x':         getattr(proj, 'rot3d_x',       0.0),
                 'rot3d_z':         getattr(proj, 'rot3d_z',       0.0),
+                'beam_gain':       getattr(proj, 'beam_gain',   100.0),
                 'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                 'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
@@ -19488,6 +19772,13 @@ class MainWindow(QMainWindow):
             _imp = getattr(self._plan3d, '_imported_path', '')
             if _imp:
                 scene_3d['imported_model'] = _imp
+            # Points de vue mémorisés + réglages de rendu
+            _vws = getattr(self._plan3d, '_views', None)
+            if _vws:
+                scene_3d['views'] = dict(_vws)
+            scene_3d['quality'] = getattr(self._plan3d, '_quality', 2)
+            scene_3d['auto_quality'] = getattr(self._plan3d, '_auto_quality', True)
+            scene_3d['ambience'] = getattr(self._plan3d, '_ambience', 160)
         config = {
             'fixtures': fixtures_list,
             'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
@@ -19535,6 +19826,7 @@ class MainWindow(QMainWindow):
                         p.body_rotation = float(fd.get('body_rotation', 0.0))
                         p.rot3d_x       = float(fd.get('rot3d_x',       0.0))
                         p.rot3d_z       = float(fd.get('rot3d_z',       0.0))
+                        p.beam_gain     = float(fd.get('beam_gain', 100.0))
                         if fd.get('fixture_type') == "Machine a fumee":
                             p.fan_speed = 0
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
@@ -19762,20 +20054,58 @@ class MainWindow(QMainWindow):
             print(f"Erreur chargement IA config: {e}")
 
     def test_dmx_on_startup(self):
-        """Test automatique de la connexion DMX au demarrage"""
+        """Connexion DMX au démarrage — en arrière-plan.
+
+        L'ouverture du port est déportée dans un thread : sur un boîtier USB qui
+        ne répond pas, l'appel bloquait le thread GUI et MyStrow ne s'affichait
+        jamais. L'application démarre maintenant sans sortie DMX, et l'active
+        quand (et si) la connexion aboutit.
+        """
         # Bloquer DMX si licence non autorisee
         if not self._license.dmx_allowed:
             self.dmx.connected = False
             print("DMX bloque par la licence")
             return
+        self._connect_dmx_async(on_ok=self._on_startup_dmx_ready)
 
-        # Creer le socket UDP inconditionnellement (Art-Net = UDP sans confirmation,
-        # pas besoin de ping pour ouvrir le socket)
-        if self.dmx.connect():
-            # Réactiver le toggle plan de feu si la licence vient d'être reconnectée
-            if hasattr(self, 'plan_de_feu') and not self.plan_de_feu.is_dmx_enabled():
-                self.plan_de_feu.set_dmx_unblocked()
-            self.update_connection_indicators()
+    def _on_startup_dmx_ready(self):
+        """Sortie DMX ouverte : débloquer le plan de feu et rafraîchir les voyants."""
+        if hasattr(self, 'plan_de_feu') and not self.plan_de_feu.is_dmx_enabled():
+            self.plan_de_feu.set_dmx_unblocked()
+        self.update_connection_indicators()
+
+    def _connect_dmx_async(self, on_ok=None, **kwargs):
+        """Ouvre la sortie DMX dans un thread. `on_ok` est appelé sur le thread GUI.
+
+        Un seul essai à la fois : deux connect() concurrents laisseraient deux
+        threads writers sur la même puce (cf. _stop_enttec_thread dans
+        artnet_dmx.py). Un essai déjà en vol fait simplement ignorer l'appel.
+        """
+        if getattr(self, '_dmx_connect_worker', None) is not None:
+            print("[DMX] connexion déjà en cours — appel ignoré")
+            return
+
+        worker = _DmxConnectWorker(self.dmx, kwargs)
+        self._dmx_connect_worker = worker
+        _PENDING_DMX_CONNECTS.add(worker)
+        worker.finished.connect(lambda w=worker: _PENDING_DMX_CONNECTS.discard(w))
+
+        def _done(ok):
+            # Slot piloté par un thread : une exception non rattrapée ici ferait
+            # abort PySide6 (même règle que les timers de restitution).
+            try:
+                if ok and on_ok is not None:
+                    on_ok()
+            except Exception as e:
+                print(f"[DMX] post-connexion: {e}")
+
+        def _cleanup():
+            self._dmx_connect_worker = None
+            worker.deleteLater()
+
+        worker.result.connect(_done)
+        worker.finished.connect(_cleanup)
+        worker.start()
 
     def _log_startup_status(self):
         """Rapport d'état initial des sorties au démarrage."""
@@ -20195,11 +20525,10 @@ class MainWindow(QMainWindow):
     def open_node_connection(self):
         """Ouvre le dialogue de paramétrage de la sortie DMX (Node ou USB)."""
         # Garde licence : impossible d'activer la sortie DMX si l'essai est terminé
-        # ou le logiciel non activé (le menu est déjà grisé, ceci est une 2e barrière).
+        # ou le logiciel non activé. Le menu n'étant plus grisé, c'est ici que
+        # l'utilisateur apprend pourquoi — avec un accès direct aux plans.
         if not self._license.dmx_allowed:
-            QMessageBox.warning(self, "Sortie DMX",
-                "Votre periode d'essai est terminee ou le logiciel n'est pas active.\n"
-                "Activez une licence pour utiliser la sortie Art-Net.")
+            self._dmx_locked_notice()
             return
         from node_connection import DmxOutputDialog
         dlg = DmxOutputDialog(self)
@@ -20216,15 +20545,16 @@ class MainWindow(QMainWindow):
         self._refresh_dmx_menu_title()
 
     def _refresh_dmx_menu_title(self):
-        """Met à jour le titre du menu Sortie selon le transport actif."""
+        """Titre du menu Sortie DMX.
+
+        Le titre ne dépend plus du transport : il affichait « Sortie DMX USB »
+        dès qu'un boîtier série était actif, ce qui laissait croire à un menu
+        différent. C'est la même sortie, quel que soit le câble derrière.
+        """
         if not hasattr(self, 'node_menu'):
             return
         try:
-            from artnet_dmx import TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO
-            if self.dmx.transport in (TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO):
-                self.node_menu.setTitle("🔌 Sortie DMX USB")
-            else:
-                self.node_menu.setTitle("🌐 Sortie DMX")
+            self.node_menu.setTitle(tr("menu_dmx_output"))
         except Exception:
             pass
 
@@ -20234,11 +20564,287 @@ class MainWindow(QMainWindow):
         dlg = BradDiagnosticDialog(self)
         dlg.exec()
 
+    def _show_diag_report(self, title, report, subject):
+        """Affiche un rapport de diagnostic, avec copie et envoi au support."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumSize(520, 340)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setStyleSheet(
+            "QDialog { background: #1a1a1a; }"
+            "QLabel { color: #cccccc; border: none; background: transparent; }"
+            "QTextEdit { background: #101010; color: #cccccc; border: 1px solid #2a2a2a;"
+            " border-radius: 4px; font-family: Consolas, monospace; font-size: 11px; }"
+            "QPushButton { background: #2a2a2a; color: #ccc; border: 1px solid #444;"
+            " border-radius: 4px; padding: 6px 14px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #666; }"
+        )
+
+        lay = QVBoxLayout(dlg)
+        hdr = QLabel(subject)
+        hdr.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lay.addWidget(hdr)
+
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setPlainText(report)
+        lay.addWidget(view)
+
+        row = QHBoxLayout()
+        btn_copy = QPushButton("📋  Copier le rapport")
+        btn_copy.clicked.connect(lambda: (copy_report(view.toPlainText()),
+                                          btn_copy.setText("✓  Copié !")))
+        row.addWidget(btn_copy)
+
+        btn_send = QPushButton("✉️  Envoyer au support")
+        btn_send.clicked.connect(lambda: send_report_email(
+            dlg, subject, view.toPlainText(),
+            intro=f"Bonjour,\n\nVoici le rapport « {subject} » généré par MyStrow."))
+        row.addWidget(btn_send)
+
+        row.addStretch()
+        btn_close = QPushButton("Fermer")
+        btn_close.clicked.connect(dlg.accept)
+        row.addWidget(btn_close)
+        lay.addLayout(row)
+
+        dlg.exec()
+
+    def _rj45_deep_report(self):
+        """Rapport détaillé réseau / Art-Net, dans l'esprit de BRAD.
+
+        Le test RJ45 affiche deux voyants — carte réseau, node — ce qui suffit
+        à savoir SI ça marche, pas POURQUOI ça ne marche pas. Ce rapport
+        rassemble ce qu'on finit toujours par demander à l'utilisateur : ses
+        cartes, sa route vers le boîtier, qui répond, et qui tient le port.
+        """
+        import socket as _s, subprocess as _sp, sys as _sys, time as _t
+        from node_connection import (_get_ethernet_adapters, _artpoll_packet,
+                                     TARGET_IP, TARGET_PORT)
+        L = []
+        A = L.append
+        A("═══ DIAGNOSTIC RÉSEAU / ART-NET ═══")
+        A(f"MyStrow {VERSION} — {_sys.platform}")
+        A("")
+
+        A("[ 1 ] Cartes réseau")
+        try:
+            adapters = _get_ethernet_adapters()
+        except Exception as e:
+            adapters = []
+            A(f"  ✗  énumération impossible : {e}")
+        if not adapters:
+            A("  ✗  aucune carte détectée — câble RJ45 branché ?")
+        for name, ip, desc, up in adapters:
+            mark = "★" if str(ip).startswith("2.") else " "
+            A(f"  {mark} {name}")
+            A(f"      IP {ip or '(non configurée)'}   {'active' if up else 'inactive'}")
+        if not any(str(a[1]).startswith("2.") for a in adapters):
+            A("  ⚠  AUCUNE carte en 2.x.x.x : le boîtier est inaccessible.")
+            A("      Configurer 2.0.0.1 / 255.0.0.0 sur la carte du node.")
+        A("")
+
+        A("[ 2 ] Configuration MyStrow")
+        A(f"  Transport   : {getattr(self.dmx, 'transport', '?')}")
+        A(f"  IP cible    : {getattr(self.dmx, 'target_ip', '?')}:"
+          f"{getattr(self.dmx, 'target_port', '?')}")
+        A(f"  Univers     : {getattr(self.dmx, 'universe', '?')}")
+        A(f"  Connecté    : {'OUI' if getattr(self.dmx, 'connected', False) else 'NON'}")
+        A("")
+
+        A("[ 3 ] Port Art-Net 6454")
+        try:
+            _p = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+            _p.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEADDR, 1)
+            _p.bind(("", TARGET_PORT))
+            _p.close()
+            A("  ✓  libre — aucune autre application DMX ne l'occupe")
+        except Exception as e:
+            A(f"  ⚠  occupé ({e})")
+            A("      QLC+, Chataigne ou un autre logiciel DMX est ouvert.")
+            A("      Deux applications ne peuvent pas écouter le même port.")
+        A("")
+
+        A("[ 4 ] Réponse du boîtier")
+        A("  Le ping est un mauvais test : beaucoup de nodes l'ignorent")
+        A("  volontairement tout en répondant parfaitement à l'Art-Net.")
+        try:
+            _flags = ["-n", "1", "-w", "800"] if _sys.platform == "win32" else ["-c", "1", "-W", "1"]
+            _r = _sp.run(["ping"] + _flags + [TARGET_IP], capture_output=True,
+                         creationflags=0x08000000 if _sys.platform == "win32" else 0)
+            A(f"  {'✓' if _r.returncode == 0 else '·'}  ping {TARGET_IP} : "
+              f"{'répond' if _r.returncode == 0 else 'muet (normal sur beaucoup de nodes)'}")
+        except Exception as e:
+            A(f"  ·  ping impossible : {e}")
+
+        found = {}
+        try:
+            k = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+            k.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEADDR, 1)
+            k.setsockopt(_s.SOL_SOCKET, _s.SO_BROADCAST, 1)
+            if hasattr(_s, "SO_REUSEPORT"):
+                try: k.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEPORT, 1)
+                except OSError: pass
+            k.bind(("", TARGET_PORT))
+            k.settimeout(0.4)
+            for dst in ("2.255.255.255", "255.255.255.255", TARGET_IP):
+                try: k.sendto(_artpoll_packet(), (dst, TARGET_PORT))
+                except Exception: pass
+            fin = _t.time() + 2.5
+            while _t.time() < fin:
+                try:
+                    data, (snd, _) = k.recvfrom(1024)
+                except Exception:
+                    break
+                if data[:8] == b'Art-Net' + bytes([0]) and data[8:10] == bytes([0, 0x21]):
+                    found[snd] = data[26:44].split(bytes([0]))[0].decode('latin-1', 'replace')
+            k.close()
+        except Exception as e:
+            A(f"  ✗  ArtPoll impossible : {e}")
+        if found:
+            for ip_n, nom in sorted(found.items()):
+                A(f"  ✓  ArtPoll : {ip_n}  « {nom} »")
+            if TARGET_IP not in found:
+                A(f"  ⚠  Le boîtier répond mais PAS sur {TARGET_IP}.")
+                A(f"      Corriger l'IP cible dans MyStrow : {sorted(found)[0]}")
+        else:
+            A("  ✗  aucune réponse ArtPoll")
+            A("      • câble sur le port RÉSEAU du boîtier (pas la sortie DMX) ?")
+            A("      • boîtier alimenté, LED du port ethernet allumée ?")
+            A("      • s'il a deux ports ethernet, essayer l'autre")
+        A("")
+        A("═══ FIN ═══")
+        return chr(10).join(L)
+
+    def open_usb_diagnostic(self):
+        """Ouvre l'assistant de sortie DMX USB, sur son étape diagnostic."""
+        if not self._license.dmx_allowed:
+            self._dmx_locked_notice()
+            return
+        from enttec_setup import DmxSetupDialog
+        dlg = DmxSetupDialog(self.dmx, parent=self)
+        dlg.exec()
+        self._refresh_dmx_menu_title()
+
+    def test_tablet_connection(self):
+        """Diagnostic du contrôleur tablette : dépendances, serveur, port, clients.
+
+        Le symptôme classique (« la tablette affiche une page vide ») a plusieurs
+        causes très différentes — serveur non démarré, dépendances absentes, port
+        occupé, pare-feu. Ce test les distingue au lieu de laisser deviner.
+        """
+        import socket as _s
+        import tablet_server as _ts
+
+        lines = []
+
+        def add(label, ok, detail):
+            mark = "✓" if ok else "✗"
+            lines.append(f"{mark}  {label} : {detail}")
+            return ok
+
+        # 1. Dépendances (Flask/waitress) — installées à la volée au 1er démarrage
+        try:
+            deps_ok = bool(_ts._try_import())
+        except Exception as e:
+            deps_ok = False
+            print(f"[Tablet] test dépendances: {e}")
+        add("Dépendances (Flask/waitress)", deps_ok,
+            "présentes" if deps_ok else "absentes — le serveur ne peut pas démarrer")
+
+        # 2. Serveur démarré ?
+        running = False
+        try:
+            running = bool(_ts.is_running())
+        except Exception as e:
+            print(f"[Tablet] test is_running: {e}")
+        add("Serveur tablette", running,
+            "démarré" if running else "arrêté — Connexion ▸ Contrôle externe pour l'allumer")
+
+        # 3. IP locale et URL à saisir sur la tablette
+        ip = ""
+        try:
+            ip = _ts.get_local_ip()
+        except Exception as e:
+            print(f"[Tablet] test IP: {e}")
+        add("Adresse du PC sur le réseau", bool(ip),
+            f"http://{ip}:{_ts.TABLET_PORT}" if ip else "introuvable — carte réseau active ?")
+
+        # 4. Le port répond-il vraiment ? (le serveur peut se croire démarré)
+        port_ok = False
+        if running:
+            try:
+                with _s.create_connection(("127.0.0.1", _ts.TABLET_PORT), timeout=1.5):
+                    port_ok = True
+            except Exception as e:
+                print(f"[Tablet] test port: {e}")
+            add(f"Port {_ts.TABLET_PORT} en écoute", port_ok,
+                "répond" if port_ok else "ne répond pas — port occupé ou serveur planté")
+
+        # 5. Le port répond-il depuis le RÉSEAU, et pas seulement en local ?
+        #    C'est LE test qui compte : 127.0.0.1 réussit toujours, pare-feu ou
+        #    non. Seule l'écoute sur l'IP du réseau dit si une tablette peut
+        #    joindre le serveur.
+        lan_ok = False
+        if running and ip:
+            try:
+                with _s.create_connection((ip, _ts.TABLET_PORT), timeout=1.5):
+                    lan_ok = True
+            except Exception as e:
+                print(f"[Tablet] test LAN: {e}")
+            add(f"Accessible depuis le réseau ({ip})", lan_ok,
+                "oui" if lan_ok else
+                "NON — pare-feu Windows ou serveur lié à 127.0.0.1 seulement")
+
+        # 6. Les deux routes que la tablette utilise réellement.
+        #    /stream est le flux temps réel : c'est lui qui a déjà cassé en
+        #    version compilée (en-tête « Connection » refusé par waitress → 500),
+        #    avec une tablette qui affiche une page vide sans message d'erreur.
+        if running and ip:
+            import urllib.request as _u
+            for route, libelle in (("/", "Page de la tablette"),
+                                   ("/stream", "Flux temps réel (SSE)")):
+                url = f"http://{ip}:{_ts.TABLET_PORT}{route}"
+                try:
+                    req = _u.Request(url, headers={"Accept": "text/event-stream"}
+                                     if route == "/stream" else {})
+                    with _u.urlopen(req, timeout=2.0) as r:
+                        add(libelle, 200 <= r.status < 400, f"HTTP {r.status}")
+                except Exception as e:
+                    code = getattr(e, 'code', None)
+                    add(libelle, False,
+                        f"HTTP {code}" if code else f"injoignable ({type(e).__name__})")
+
+        # 7. Tablettes actuellement connectées
+        try:
+            n_clients = len(_ts._clients)
+        except Exception:
+            n_clients = 0
+        lines.append(f"{'✓' if n_clients else '·'}  Tablettes connectées : {n_clients}")
+
+        if running and lan_ok and not n_clients:
+            lines.append("")
+            lines.append("Le serveur répond, mais aucune tablette n'est connectée.")
+            lines.append("À vérifier sur la TABLETTE, dans cet ordre :")
+            lines.append(f"  1. ouvrir exactement  http://{ip}:{_ts.TABLET_PORT}")
+            lines.append("  2. être sur le MÊME réseau Wi-Fi que ce PC")
+            lines.append("  3. certaines box isolent les appareils entre eux")
+            lines.append("     (« isolation client » / « réseau invité ») : à désactiver")
+        elif running and ip and not lan_ok:
+            lines.append("")
+            lines.append("Le serveur tourne mais reste injoignable depuis le réseau.")
+            lines.append("Cause la plus fréquente : le pare-feu Windows bloque l'entrée.")
+            lines.append(f"Autoriser python.exe / MyStrow.exe sur le port {_ts.TABLET_PORT}")
+            lines.append("en réseau PRIVÉ suffit dans la quasi-totalité des cas.")
+
+        report = "\n".join(lines)
+        self._show_diag_report("Test tablette", report,
+                               "Diagnostic du contrôleur tablette")
+
     def test_node_connection(self):
         """Diagnostic Node DMX : carte reseau + node"""
         if not self._license.dmx_allowed:
-            QMessageBox.warning(self, "Sortie DMX",
-                "Votre periode d'essai est terminee ou le logiciel n'est pas active.\nActivez une licence pour utiliser la sortie Art-Net.")
+            self._dmx_locked_notice()
             return
 
         import socket as _socket
@@ -20443,11 +21049,11 @@ class MainWindow(QMainWindow):
                         f"Répond sur {found_ip}  —  Art-Net opérationnel\n"
                         f"IP cible mise à jour ({self.dmx.target_ip} → {found_ip})"
                     )
-                    self.dmx.connect(target_ip=found_ip)
+                    self._connect_dmx_async(target_ip=found_ip)
                 else:
                     detail_node.setText(f"Node détecté sur {found_ip}  —  Art-Net opérationnel")
                     if not self.dmx.connected:
-                        self.dmx.connect()
+                        self._connect_dmx_async()
                 detail_node.setStyleSheet("color: #4CAF50;")
             else:
                 icon_node.setText("✗")
@@ -20481,6 +21087,45 @@ class MainWindow(QMainWindow):
         btn_refresh.clicked.connect(_run_checks)
         btn_row.insertWidget(btn_row.count() - 1, btn_refresh)   # juste avant Fermer
 
+        # Envoi du rapport : on relit les libellés affichés, c'est exactement ce
+        # que l'utilisateur a sous les yeux au moment où il clique.
+        def _rj45_report():
+            return ("Test RJ45 — réseau / Node Art-Net\n\n"
+                    f"IP cible configurée : {self.dmx.target_ip}\n\n"
+                    f"{icon_net.text()}  Carte réseau : {detail_net.text()}\n"
+                    f"{icon_node.text()}  Node Art-Net : {detail_node.text()}\n")
+
+        btn_send = QPushButton("✉️  Envoyer au support")
+        btn_send.setFixedHeight(30)
+        btn_send.setStyleSheet(
+            "QPushButton { background: #2a2a2a; color: #ccc; border: 1px solid #444;"
+            " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
+            "QPushButton:hover { border-color: #666; }"
+        )
+        btn_send.setToolTip("Ouvre un mail pré-rempli avec ce rapport "
+                            "(le rapport est aussi copié dans le presse-papiers)")
+        btn_send.clicked.connect(lambda: send_report_email(
+            dlg, "Test RJ45 (réseau / Node Art-Net)", _rj45_report(),
+            intro="Bonjour,\n\nVoici le rapport du test RJ45 (réseau / Node Art-Net)."))
+        btn_row.insertWidget(btn_row.count() - 1, btn_send)
+
+        # Analyse approfondie : les deux voyants disent SI ça marche, pas
+        # POURQUOI ça ne marche pas. Ce bouton ouvre le détail — cartes, route,
+        # conflit de port, réponse ArtPoll nominative — avec copie et envoi.
+        btn_deep = QPushButton("🔎  Analyse détaillée")
+        btn_deep.setFixedHeight(30)
+        btn_deep.setStyleSheet(
+            "QPushButton { background: #1a2a3a; color: #66aadd; border: 1px solid #2a4a6a;"
+            " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
+            "QPushButton:hover { color: #88ccff; border-color: #4a7aaa; }"
+        )
+        btn_deep.setToolTip("Rapport complet : cartes réseau, port Art-Net, "
+                            "réponse du boîtier, IP réellement détectée")
+        btn_deep.clicked.connect(lambda: self._show_diag_report(
+            "Analyse réseau détaillée", self._rj45_deep_report(),
+            "Diagnostic réseau / Art-Net"))
+        btn_row.insertWidget(btn_row.count() - 1, btn_deep)
+
         dlg.show()
         _run_checks()
         dlg.exec()
@@ -20488,8 +21133,7 @@ class MainWindow(QMainWindow):
     def configure_node(self):
         """Configure les parametres du Node DMX"""
         if not self._license.dmx_allowed:
-            QMessageBox.warning(self, "Sortie DMX",
-                "Votre periode d'essai est terminee ou le logiciel n'est pas active.\nActivez une licence pour utiliser la sortie Art-Net.")
+            self._dmx_locked_notice()
             return
 
         dialog = QDialog(self)

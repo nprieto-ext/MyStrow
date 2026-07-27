@@ -271,11 +271,8 @@ def _set_license(
     if lang:
         data["lang"] = lang
 
-    # Lifetime : licence permanente mais mises à jour limitées à 1 an
-    if plan_type == "lifetime":
-        # N'écraser updates_until_utc que si c'est un nouveau document
-        if not doc.exists:
-            data["updates_until_utc"] = time.time() + 365 * 86400
+    # Lifetime : licence permanente ET mises à jour à vie. On n'écrit donc plus
+    # de updates_until_utc — la limite d'un an a été supprimée de l'offre.
 
     if doc.exists:
         ref.update(data)

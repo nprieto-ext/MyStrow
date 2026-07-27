@@ -13,6 +13,14 @@ def _get_version():
         return '0.0.0'
 
 datas = [('logo.png', '.'), ('mystrow.ico', '.'), ('plan_3d_web.html', '.'), ('AKAIAPCMINI.png', '.'), ('Novation.png', '.')]
+# Three.js vendorisé (vendor/three) : la 3D l'importe par chemin RELATIF au
+# HTML, donc l'arbre doit être reproduit tel quel à côté de plan_3d_web.html.
+# SANS ces fichiers, la fenêtre 3D reste bloquée sur « Chargement Three.js… »
+# et l'échec est totalement silencieux.
+for _root, _dirs, _files in os.walk(os.path.join('vendor', 'three')):
+    for _f in _files:
+        if _f.endswith('.js'):
+            datas += [(os.path.join(_root, _f), _root)]
 # Interface tablette (PWA statique servie par tablet_server.py). SANS ces fichiers
 # dans l'exe, le serveur tablette renvoie 404/500 ("Internal Server Error").
 for _tf in ('index.html', 'manifest.json', 'sw.js'):
@@ -163,6 +171,13 @@ if IS_MAC:
             'NSMicrophoneUsageDescription':
                 "MyStrow capte le son pour synchroniser vos lumières en temps réel "
                 "(mode LIVE / IA Lumière).",
+            # Réseau local (macOS 14+) — MÊME PIÈGE que le micro : sans cette
+            # clé, macOS bloque silencieusement le broadcast/multicast UDP, donc
+            # l'ArtPoll ne trouve jamais le node et la sortie Art-Net reste
+            # muette. Aucune erreur affichée, juste « le boîtier n'a pas répondu ».
+            'NSLocalNetworkUsageDescription':
+                "MyStrow dialogue avec votre boîtier DMX Art-Net sur le réseau "
+                "local (recherche du node et envoi des univers DMX).",
         },
     )
 

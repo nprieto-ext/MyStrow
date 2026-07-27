@@ -18,10 +18,10 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QProgressBar, QFrame, QApplication, QInputDialog,
+    QTextEdit, QProgressBar, QFrame, QApplication,
 )
 
-from core import APP_NAME, VERSION
+from core import APP_NAME, VERSION, send_report_email
 
 CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
 
@@ -358,6 +358,21 @@ _STATUS_ICON = {
 }
 
 
+def _ajuster_largeur(btn, marge=48):
+    """Garantit que le libellé d'un bouton tient en entier.
+
+    Les libellés commencent par un emoji, qui passe par une police de repli
+    dont Qt estime mal la largeur : la taille naturelle calculée était trop
+    courte et le texte se retrouvait tronqué. On mesure donc nous-mêmes.
+
+    `ensurePolished()` est indispensable : sans lui on mesurerait la police par
+    défaut du widget, pas celle que la feuille de style vient de lui poser.
+    `marge` couvre le remplissage horizontal du style plus les bordures.
+    """
+    btn.ensurePolished()
+    btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(btn.text()) + marge)
+
+
 class BradDiagnosticDialog(QDialog):
     """Assistant BRAD — diagnostic complet DMX/Réseau."""
 
@@ -426,7 +441,7 @@ class BradDiagnosticDialog(QDialog):
             QPushButton {
                 background: #003a4a; color: #00d4ff;
                 border: 1px solid #00d4ff44; border-radius: 6px;
-                padding: 10px 28px; font-size: 13px; font-weight: bold;
+                padding: 10px 18px; font-size: 13px; font-weight: bold;
             }
             QPushButton:hover  { background: #004a5a; border-color: #00d4ff99; }
             QPushButton:pressed { background: #001a2a; }
@@ -434,18 +449,19 @@ class BradDiagnosticDialog(QDialog):
         """)
         self._copy_btn.clicked.connect(self._copy_report)
 
-        self._fix_btn = QPushButton("🔧  Corriger automatiquement")
-        self._fix_btn.setVisible(False)
-        self._fix_btn.setStyleSheet("""
+        self._send_btn = QPushButton("✉️  Envoyer au support")
+        self._send_btn.setEnabled(False)
+        self._send_btn.setStyleSheet("""
             QPushButton {
-                background: #3a2000; color: #ff9800;
-                border: 1px solid #ff980044; border-radius: 6px;
-                padding: 10px 28px; font-size: 13px; font-weight: bold;
+                background: #2a2a2a; color: #cccccc;
+                border: 1px solid #444; border-radius: 6px;
+                padding: 10px 18px; font-size: 13px; font-weight: bold;
             }
-            QPushButton:hover  { background: #4a2800; border-color: #ff980099; }
-            QPushButton:pressed { background: #1a1000; }
+            QPushButton:hover  { background: #333; border-color: #666; }
+            QPushButton:pressed { background: #222; }
+            QPushButton:disabled { background: #1a1a1a; color: #333; border-color: #222; }
         """)
-        self._fix_btn.clicked.connect(self._auto_fix)
+        self._send_btn.clicked.connect(self._send_report)
 
         self._retry_btn = QPushButton("↺  Relancer")
         self._retry_btn.setEnabled(False)
@@ -454,16 +470,29 @@ class BradDiagnosticDialog(QDialog):
         close_btn = QPushButton("Fermer")
         close_btn.clicked.connect(self.accept)
 
+        btn_row.setSpacing(10)
         btn_row.addWidget(self._copy_btn)
-        btn_row.addWidget(self._fix_btn)
+        btn_row.addWidget(self._send_btn)
         btn_row.addStretch()
         btn_row.addWidget(self._retry_btn)
         btn_row.addWidget(close_btn)
         root.addLayout(btn_row)
 
+        # Mesure APRÈS que la feuille de style du dialogue soit posée : c'est
+        # elle qui fixe la police et le remplissage des boutons.
+        # Le minimum est calculé sur « 📋  Copier le rapport », plus long que
+        # le « ✓  Copié ! » qui le remplace un instant : le bouton garde donc
+        # sa taille et la rangée ne saute pas pendant le message.
+        for _b in (self._copy_btn, self._send_btn, self._retry_btn, close_btn):
+            _ajuster_largeur(_b)
+
         self._raw_lines = []   # lignes texte brut pour le copier-coller
         self._worker = None
-        self._fixable = {}    # problèmes corrigeables détectés {clé: valeur}
+        # Problèmes réseau détectés {clé: valeur}. Servent à formuler un
+        # diagnostic clair ; la correction, elle, reste manuelle — l'ancien
+        # bouton « Corriger automatiquement » reconnectait le DMX dans le dos
+        # de l'utilisateur, ce qui n'a pas sa place dans un outil de constat.
+        self._fixable = {}
 
         QTimer.singleShot(150, self._start)
 
@@ -618,71 +647,22 @@ class BradDiagnosticDialog(QDialog):
             )
 
         self._copy_btn.setEnabled(True)
+        self._send_btn.setEnabled(True)
         self._retry_btn.setEnabled(True)
-        self._fix_btn.setVisible(bool(self._fixable))
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _append_html(self, html: str):
         self._output.append(html)
 
-    def _auto_fix(self):
-        """Applique les corrections détectées automatiquement."""
-        from artnet_dmx import TRANSPORT_ARTNET
-        from PySide6.QtWidgets import QMessageBox
-        dmx = self._window.dmx
-
-        if "no_ethernet" in self._fixable:
-            QMessageBox.warning(self, "Câble non branché",
-                "Aucun adaptateur Ethernet détecté.\n\n"
-                "Branchez le câble RJ45 entre votre PC et le boîtier Art-Net,\n"
-                "puis relancez le diagnostic.")
-            return
-        fixes = []
-
-        new_transport = self._fixable.get("transport", dmx.transport)
-        # Si l'IP cible est celle du PC et qu'aucun boîtier n'a été détecté, demander l'IP
-        if "target_ip" in self._fixable:
-            new_ip = self._fixable["target_ip"]
-        elif "target_ip_local" in self._fixable:
-            ip_input, ok = QInputDialog.getText(
-                self, "IP du boîtier Art-Net",
-                "Aucun boîtier détecté automatiquement.\n"
-                "Entrez l'IP de votre boîtier Art-Net :",
-                text="2.0.0.30"
-            )
-            if not ok or not ip_input.strip():
-                return
-            new_ip = ip_input.strip()
-            self._fixable["target_ip"] = new_ip
-        else:
-            new_ip = dmx.target_ip
-
-        if new_transport != dmx.transport:
-            fixes.append(f"Transport : {dmx.transport} → {new_transport}")
-        if new_ip != dmx.target_ip:
-            fixes.append(f"IP cible  : {dmx.target_ip} → {new_ip}")
-
-        dmx.connected = False
-        dmx.connect(
-            transport=TRANSPORT_ARTNET,
-            target_ip=new_ip,
-        )
-
-        self._append_html(
-            '<br><span style="color:#4caf50;font-weight:bold;">🔧 Corrections appliquées :</span>'
-        )
-        for fix in fixes:
-            self._append_html(f'<span style="color:#4caf50;">  ✓ {fix}</span>')
-
-        self._fix_btn.setVisible(False)
-        self._retry_btn.setEnabled(True)
-
-        # Relancer le diagnostic pour confirmer
-        QTimer.singleShot(800, self._start)
-
     def _copy_report(self):
         text = "\n".join(self._raw_lines)
         QApplication.clipboard().setText(text)
         self._copy_btn.setText("✓  Copié !")
         QTimer.singleShot(2000, lambda: self._copy_btn.setText("📋  Copier le rapport"))
+
+    def _send_report(self):
+        """Ouvre un mail au support avec le rapport BRAD pré-rempli."""
+        send_report_email(
+            self, "Diagnostic BRAD (DMX / réseau)", "\n".join(self._raw_lines),
+            intro="Bonjour,\n\nVoici le rapport du diagnostic BRAD (sortie DMX / réseau).")

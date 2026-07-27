@@ -21,6 +21,14 @@ canvas { display:block; }
   color:#333355; font-family:'Segoe UI',sans-serif; font-size:12px;
   letter-spacing:1px;
 }
+/* ── Compteur de performance (masqué par défaut) ──────────────────────── */
+#fps {
+  position:fixed; top:6px; right:8px; display:none;
+  color:#5ad0ff; font-size:10px; font-family:Consolas,monospace;
+  background:rgba(6,6,18,0.72); border:1px solid #1c2740;
+  border-radius:3px; padding:3px 7px; letter-spacing:0.4px;
+  pointer-events:none; white-space:pre;
+}
 </style>
 </head>
 <body>
@@ -28,14 +36,21 @@ canvas { display:block; }
 <div id="loading">Chargement Three.js…</div>
 
 
+<div id="fps"></div>
+
 <div id="footer">drag: orbite · scroll: zoom · double-clic: reset</div>
 
-<!-- Three.js via CDN avec import maps (Chromium / QWebEngineView) -->
+<!-- Three.js EN LOCAL (vendor/three, version 0.161.0).
+     Surtout pas de CDN : en prestation la machine est très souvent hors ligne
+     ou derrière un réseau fermé, et un import de module qui échoue est
+     silencieux — la fenêtre resterait bloquée sur « Chargement Three.js… ».
+     Les chemins sont relatifs au HTML, donc vendor/ doit rester à côté de
+     plan_3d_web.html (y compris dans le bundle PyInstaller). -->
 <script type="importmap">
 {
   "imports": {
-    "three":          "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
-    "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+    "three":          "./vendor/three/three.module.js",
+    "three/addons/":  "./vendor/three/addons/"
   }
 }
 </script>
@@ -50,13 +65,16 @@ import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass }       from 'three/addons/postprocessing/ShaderPass.js';
-import { Reflector }        from 'three/addons/objects/Reflector.js';
 import { GLTFLoader }       from 'three/addons/loaders/GLTFLoader.js';
 
 document.getElementById('loading').remove();
 
 // ── Sélection projector (raycasting + QWebChannel) ───────────────────────────
 let _selectedProjo = -1;
+// Sélection MULTIPLE : tous les projecteurs sélectionnés s'allument en blanc et
+// clignotent. `_selectedProjo` reste le « primaire » — celui dont le corps
+// prend le surlignage bleu et que suit le panneau de réglages.
+let _selSet = new Set();
 const _raycaster   = new THREE.Raycaster();
 const _mouse2D     = new THREE.Vector2();
 let   _ptrDownPos  = null;   // pour distinguer clic vs drag
@@ -85,6 +103,7 @@ scene.background = new THREE.Color(0x05050f);
 // (l'équivalent light du brouillard volumétrique d'Unreal, en bien plus léger).
 const fog = new THREE.FogExp2(0x060612, 0.030);
 scene.fog = fog;
+window.scene = scene;   // exposé pour le diagnostic depuis Qt
 // Réglable en live depuis Python si besoin (densité 0.010–0.060).
 window.setHaze = function(density) {
   fog.density = Math.max(0.0, Math.min(0.08, density));
@@ -169,30 +188,49 @@ const _fillLight = new THREE.DirectionalLight(0xb0c0e0, 0.35);
 _fillLight.position.set(0, 10, 4);
 scene.add(_fillLight);
 
+// Ambiance salle — un seul point d'entrée pour les TROIS lumières d'ambiance.
+// Le curseur ne pilotait que l'AmbientLight : elle éclaire à plat, sature vite
+// et ne donne jamais l'impression d'une salle éclairée. En montant aussi
+// l'hémisphérique (dégradé haut/bas, qui « ouvre » le volume) et le
+// remplissage, le curseur devient réellement efficace sur toute sa course.
+// x = 1.0 reproduit exactement le réglage d'origine.
+window.setRoomAmbience = function (x) {
+  x = Math.max(0, x);
+  window.ambLight.intensity = 2.0  * x;
+  hemi.intensity            = 0.18 * x;
+  _fillLight.intensity      = 0.35 * x;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Géométrie de scène
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Sol — RÉFLECTEUR (effet « sol mouillé ») : renvoie les faisceaux et les
-// taches de couleur, comme dans les rendus Unreal. C'est le plus gros gain de
-// réalisme. Une nappe sombre semi-transparente par-dessus dose l'intensité
-// pour garder un parquet noir brillant, pas un miroir parfait.
-const _reflRes = Math.min(1024, Math.floor(window.innerWidth * 0.9));
-const floorReflector = new Reflector(
+// Sol — plan mat, SANS réflexion.
+//
+// C'était un Reflector (effet « sol mouillé ») qui renvoyait les faisceaux et
+// les taches de couleur. Rendu flatteur en capture d'écran, mais gênant à
+// l'usage : chaque projecteur apparaissait en double et la scène devenait
+// difficile à lire. Le miroir est supprimé, pas seulement masqué — un
+// Reflector coûte une passe de rendu complète et une cible 1024², donc autant
+// de FPS récupérés sur les machines modestes.
+//
+// `floorReflector` reste le nom exposé : c'est lui que manipulent le bouton
+// « Sol », le niveau de qualité et window.setFloorVisible(). Il désigne
+// désormais ce plan mat, et tous ces réglages continuent de fonctionner.
+const floorReflector = new THREE.Mesh(
   new THREE.PlaneGeometry(18, 10),
-  { textureWidth: _reflRes, textureHeight: _reflRes,
-    color: 0x6a6a78 }        // teinte du reflet (plus sombre = plus discret)
+  new THREE.MeshStandardMaterial({ color:0x0d0b16, roughness:0.94, metalness:0.04 })
 );
 floorReflector.rotation.x = -Math.PI / 2;
 floorReflector.position.y = 0.0;
 scene.add(floorReflector);
 window.floorReflector = floorReflector;
 
-// Nappe sombre par-dessus le miroir : donne la couleur du sol et atténue le
-// reflet (opacité = force du reflet ; plus opaque = sol plus mat).
+// Voile sombre conservé : il donnait sa couleur au sol en plus d'atténuer le
+// reflet. Opaque maintenant qu'il n'y a plus de miroir dessous.
 const floorTint = new THREE.Mesh(
   new THREE.PlaneGeometry(18, 10),
-  new THREE.MeshBasicMaterial({ color:0x090710, transparent:true, opacity:0.62 })
+  new THREE.MeshBasicMaterial({ color:0x090710, transparent:true, opacity:0.55 })
 );
 floorTint.rotation.x = -Math.PI / 2;
 floorTint.position.y = 0.004;
@@ -281,38 +319,234 @@ buildTrusses([
 // ─────────────────────────────────────────────────────────────────────────────
 // Shaders — faisceau conique volumétrique
 // ─────────────────────────────────────────────────────────────────────────────
+// Le faisceau n'est plus un empilement de cônes translucides : on intègre
+// réellement la lumière diffusée par la fumée le long du rayon de vue
+// (raymarching dans le volume du cône). C'est ce qui donne le cœur chaud, la
+// pénombre douce sur les bords et surtout l'éblouissement quand le faisceau
+// pointe vers la caméra — les trois choses qui manquaient.
 const BEAM_VERT = `
-  varying float vT;
+  varying vec3 vObjPos;
+  varying vec3 vWorldPos;
   void main() {
-    vT = uv.y;   // 0 = base (sol), 1 = tip (fixture)
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-const BEAM_FRAG = `
-  uniform vec3  uColor;
-  uniform float uAlpha;
-  varying float vT;
-  void main() {
-    // Dégradé quadratique : plus lumineux près de la source (tip)
-    float fade = vT * vT * (3.0 - 2.0*vT);  // smoothstep
-    gl_FragColor = vec4(uColor, uAlpha * fade);
+    vObjPos = position;
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
   }
 `;
 
-function makeBeamMat(alpha) {
-  return new THREE.ShaderMaterial({
+const BEAM_FRAG = `
+  precision highp float;
+
+  uniform vec3  uColor;
+  uniform float uAlpha;     // intensité globale (niveau du projecteur)
+  uniform float uSharp;     // concentration radiale : spot élevé, wash faible
+  uniform float uCore;      // sur-brillance du cœur
+  uniform float uHaze;      // absorption de la fumée, par mètre
+  uniform float uAniso;     // g de Henyey-Greenstein (diffusion avant)
+  uniform float uFall;      // chute d'intensité avec la distance
+  uniform int   uSteps;     // pas de raymarching — piloté par la qualité
+  // Gobo projeté DANS le volume : un vrai gobo est un masque placé au foyer,
+  // il découpe donc le faisceau lui-même, pas seulement la tache au sol. Le
+  // motif est constant en coupe normalisée — c'est ce qui lui fait épouser
+  // l'ouverture du cône, comme en vrai.
+  uniform sampler2D uGoboTex;
+  uniform float     uGoboBlend;   // 0 = pas de gobo (aucun coût : branche évitée)
+  uniform float     uGoboRot;
+  uniform float     uGoboScale;   // enveloppe / rayon utile (cf. orientCone)
+  // Three n'injecte modelMatrix que dans le vertex shader : on la passe ici.
+  uniform mat4  uModel;
+  uniform mat4  uInvModel;
+
+  varying vec3 vObjPos;
+  varying vec3 vWorldPos;
+
+  // Décale le premier pas pour casser le banding. Bruit à gradient entrelacé
+  // (Jorge Jimenez) plutôt qu'un hash : le motif est bien mieux réparti, donc
+  // beaucoup moins de grain visible à nombre de pas égal.
+  float ign(vec2 p) {
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+  }
+
+  // Repère du gobo, perpendiculaire au faisceau et STABLE.
+  //
+  // On ne peut pas se servir du repère local du cône : orientCone() l'oriente
+  // avec la rotation d'arc minimal (setFromUnitVectors), qui laisse le roulis
+  // autour de l'axe indéterminé. Le motif tournait donc tout seul au gré des
+  // mouvements de la lyre, sans jamais correspondre à la tache au sol.
+  // On reconstruit ici une base déterministe à partir des axes du monde : pour
+  // un faisceau vertical elle s'aligne sur X/Z, exactement comme la tache.
+  void goboBasis(vec3 axis, out vec3 u, out vec3 v) {
+    vec3 ref = abs(axis.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    u = normalize(cross(ref, axis));
+    v = cross(axis, u);
+  }
+
+  void main() {
+    mat3 M  = mat3(uModel);
+    vec3 gU, gV;
+    goboBasis(normalize(M * vec3(0.0, -1.0, 0.0)), gU, gV);
+    vec3 ro = (uInvModel * vec4(cameraPosition, 1.0)).xyz;  // caméra en espace objet
+    vec3 rd = normalize(vObjPos - ro);
+
+    // Cône unité : apex en (0, 0.5, 0), rayon 1 en y = -0.5. Solide convexe,
+    // donc un rayon le traverse en un seul segment : entrée = face avant,
+    // sortie = face arrière. On choisit la borne selon la face rasterisée,
+    // ce qui évite de compter l'intégrale deux fois.
+    float hCam = 0.5 - ro.y;
+    bool camInside = (hCam > 0.0 && hCam < 1.0 && length(ro.xz) < hCam);
+
+    float tFrag = length(vObjPos - ro);
+    float tStart, tEnd;
+    if (camInside) {
+      if (gl_FrontFacing) discard;    // la face arrière porte l'intégrale
+      tStart = 0.0;
+      tEnd   = tFrag;
+    } else {
+      if (!gl_FrontFacing) discard;   // la face avant porte l'intégrale
+      tStart = tFrag;
+      tEnd   = tFrag + 2.25;          // diamètre de la sphère englobante
+      if (abs(rd.y) > 1e-6) {         // resserre via la tranche y ∈ [-0.5, 0.5]
+        float ta = (0.5 - ro.y) / rd.y;
+        float tb = (-0.5 - ro.y) / rd.y;
+        tEnd = min(tEnd, max(ta, tb));
+      }
+    }
+    if (tEnd <= tStart) discard;
+
+    float lenW = length(M * vec3(0.0, 1.0, 0.0));  // longueur du faisceau, en mètres
+    float rW   = length(M * vec3(1.0, 0.0, 0.0));  // rayon de l'enveloppe, en mètres
+    float o2w  = length(M * rd);                   // 1 unité objet → mètres
+
+    float dt  = (tEnd - tStart) / float(uSteps);
+    float jit = ign(gl_FragCoord.xy) * dt;
+    float acc = 0.0;
+
+    for (int i = 0; i < 48; i++) {
+      if (i >= uSteps) break;
+      float t = tStart + jit + float(i) * dt;
+      if (t > tEnd) break;
+      vec3 p = ro + rd * t;
+
+      float h = 0.5 - p.y;               // 0 = lentille, 1 = bout du faisceau
+      if (h <= 0.001 || h > 1.0) continue;
+      float rr = length(p.xz) / h;       // 0 = axe, 1 = bord de l'enveloppe
+      if (rr > 1.0) continue;
+
+      // Profil radial : cœur gaussien + pénombre qui s'éteint sur le bord
+      float dens = exp(-rr * rr * uSharp)
+                 + uCore * exp(-rr * rr * uSharp * 4.0);
+      dens *= 0.25 + 0.75 * (1.0 - smoothstep(0.45, 1.0, rr));
+
+      // Masque gobo. rr donne la distance à l'axe (0 au centre, 1 au bord,
+      // donc indépendante de la distance parcourue : le motif s'ouvre avec le
+      // cône). L'ANGLE, lui, est pris dans le repère stable ci-dessus et non
+      // dans le repère local du cône. Testé sur uGoboBlend : sans gobo, aucune
+      // lecture de texture dans la boucle.
+      if (uGoboBlend > 0.0) {
+        vec3  perp = p - vec3(0.0, 0.5, 0.0);
+        perp = perp - vec3(0.0, -1.0, 0.0) * dot(perp, vec3(0.0, -1.0, 0.0));
+        vec3  pw   = M * perp;
+        vec2  dir  = vec2(dot(pw, gU), dot(pw, gV));
+        float dl   = length(dir);
+        if (dl > 1e-5) {
+          dir /= dl;
+          float gc = cos(uGoboRot), gs = sin(uGoboRot);
+          vec2  gd = vec2(gc * dir.x - gs * dir.y, gs * dir.x + gc * dir.y);
+          // rr = 1 au bord de l'ENVELOPPE, or celle-ci est volontairement
+        // dessinée deux fois plus large que le faisceau utile (orientCone est
+        // appelé avec base_r * 2.0, la densité étant déjà nulle bien avant le
+        // bord). Sans ce facteur, le motif s'étalait sur l'enveloppe : le
+        // faisceau paraissait plus large que le gobo projeté.
+        vec2  gr = gd * clamp(rr * uGoboScale, 0.0, 1.0);
+          float gm = texture2D(uGoboTex, clamp(gr * 0.5 + 0.5, 0.001, 0.999)).r;
+          dens *= mix(1.0, gm, uGoboBlend);
+        }
+      }
+
+      // Absorption de la fumée + chute avec la distance parcourue
+      float dist = h * lenW;
+      dens *= exp(-uHaze * dist) / (1.0 + uFall * dist * dist);
+      dens *= smoothstep(0.0, 0.03, h);  // adoucit la sortie de lentille
+
+      acc += dens;
+    }
+    // Normalisation par le rayon : sans ça, l'intégrale grandit avec la taille
+    // du faisceau et un zoom large partirait en surexposition totale.
+    acc *= dt * o2w / max(rW, 1e-3);
+    if (acc <= 0.0) discard;
+
+    // Diffusion avant : dans la vraie fumée, un faisceau pointé vers l'œil
+    // est bien plus lumineux que vu de côté. Sans ça les faisceaux ont l'air
+    // plats quels que soient l'angle de vue.
+    vec3  axisW = normalize(M * vec3(0.0, -1.0, 0.0));   // sens de propagation
+    vec3  toCam = normalize(cameraPosition - vWorldPos);
+    float cosT  = dot(axisW, toCam);
+    float g     = uAniso;
+    float gg    = g * g;
+    float hg    = (1.0 - gg) / pow(max(1.0 + gg - 2.0 * g * cosT, 1e-4), 1.5);
+    float hg0   = (1.0 - gg) / pow(1.0 + gg, 1.5);       // normalisé sur le profil à 90°
+    float phase = clamp(hg / max(hg0, 1e-4), 0.35, 6.0);
+
+    gl_FragColor = vec4(uColor * acc * uAlpha * phase, 1.0);
+  }
+`;
+
+// Qualité de rendu des faisceaux : nombre de pas de raymarching.
+// Piloté depuis Python via window.setBeamQuality().
+window.beamQuality = 24;
+const _beamMats = [];
+
+function makeBeamMat(alpha, opts) {
+  opts = opts || {};
+  const m = new THREE.ShaderMaterial({
     uniforms: {
-      uColor: { value: new THREE.Color(1,1,1) },
-      uAlpha: { value: alpha },
+      uColor:    { value: new THREE.Color(1, 1, 1) },
+      uAlpha:    { value: alpha },
+      uSharp:    { value: opts.sharp !== undefined ? opts.sharp : 8.0 },
+      uCore:     { value: opts.core  !== undefined ? opts.core  : 0.9 },
+      uHaze:     { value: 0.045 },
+      uAniso:    { value: 0.55 },
+      uFall:     { value: 0.004 },
+      uSteps:    { value: window.beamQuality },
+      uGoboTex:   { value: null },
+      uGoboBlend: { value: 0.0 },
+      uGoboRot:   { value: 0.0 },
+      uGoboScale: { value: 2.0 },
+      uModel:    { value: new THREE.Matrix4() },
+      uInvModel: { value: new THREE.Matrix4() },
     },
     vertexShader:   BEAM_VERT,
     fragmentShader: BEAM_FRAG,
     transparent:    true,
     depthWrite:     false,
     blending:       THREE.AdditiveBlending,
-    side:           THREE.DoubleSide,
+    side:           THREE.DoubleSide,   // requis : le shader trie via gl_FrontFacing
   });
+  _beamMats.push(m);
+  return m;
 }
+
+// L'inverse de la matrice monde doit être réévalué à chaque rendu puisque la
+// caméra orbite et que le faisceau bouge.
+function makeVolBeam(geo, alpha, opts) {
+  const mesh = new THREE.Mesh(geo, makeBeamMat(alpha, opts));
+  mesh.onBeforeRender = function () {
+    const u = this.material.uniforms;
+    u.uModel.value.copy(this.matrixWorld);
+    u.uInvModel.value.copy(this.matrixWorld).invert();
+  };
+  return mesh;
+}
+
+// Densité de fumée globale : agit sur l'absorption ET sur la diffusion avant.
+window.setBeamHaze = function (v) {
+  for (const m of _beamMats) m.uniforms.uHaze.value = v;
+};
+window.setBeamQuality = function (steps) {
+  window.beamQuality = Math.max(4, Math.min(48, steps | 0));
+  for (const m of _beamMats) m.uniforms.uSteps.value = window.beamQuality;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shader — tache au sol
@@ -435,8 +669,41 @@ function _createGoboTexture(slot) {
 const _goboTextures = Array.from({length:8}, (_,i) => _createGoboTexture(i));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Halo de lentille — le flare vu sur la source elle-même
+// ─────────────────────────────────────────────────────────────────────────────
+const _LENS_GLOW_TEX = (function () {
+  const s = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  const g = cv.getContext('2d');
+  const grd = g.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+  grd.addColorStop(0.00, 'rgba(255,255,255,1.00)');
+  grd.addColorStop(0.10, 'rgba(255,255,255,0.72)');
+  grd.addColorStop(0.32, 'rgba(255,255,255,0.18)');
+  grd.addColorStop(1.00, 'rgba(255,255,255,0.00)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, s, s);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+
+function makeLensGlowMat() {
+  return new THREE.SpriteMaterial({
+    map:         _LENS_GLOW_TEX,
+    color:       0xffffff,
+    transparent: true,
+    depthWrite:  false,
+    blending:    THREE.AdditiveBlending,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Géométries template (unit — scalées à la volée)
 // ─────────────────────────────────────────────────────────────────────────────
+// Cône fermé (avec le disque de base) : le raymarching a besoin d'une face
+// avant même quand on regarde le faisceau par en dessous.
+const GEO_VOL_CONE     = new THREE.CylinderGeometry(0, 1, 1, 28, 1, false);
 const GEO_UNIT_CONE_24 = new THREE.CylinderGeometry(0, 1, 1, 24, 1, true);
 const GEO_UNIT_CONE_16 = new THREE.CylinderGeometry(0, 1, 1, 16, 1, true);
 const GEO_UNIT_CONE_10 = new THREE.CylinderGeometry(0, 1, 1, 10, 1, true);
@@ -467,25 +734,32 @@ const GROUP_COLOR = {
 
 let _objs = [];   // un objet par projecteur
 window.beamScale = 1.7;
+// Gain global des faisceaux volumétriques — permet de doser l'intensité
+// sans toucher au niveau DMX des projecteurs.
+// 1.0 → 0.62 : à pleine échelle les faisceaux écrasaient tout le reste de la
+// scène (sol, structures, taches au sol devenaient illisibles). On garde les
+// rapports wash/spot d'origine, seul le niveau global descend.
+window.beamGain = 0.62;
+
+// Gain global des halos lumineux (auréoles autour des lentilles et des cellules
+// de barre LED). À ne pas confondre avec le bloom : l'UnrealBloomPass est déjà
+// coupé au chargement par Python, ces halos sont des maillages additifs dessinés
+// autour de chaque source. C'est eux qui donnent l'impression de « glow ».
+// Ils ne portent aucune information — la tache au sol, si — donc on peut les
+// baisser franchement sans perdre en lisibilité.
+window.glowGain = 0.55;
 
 function _getObj(i) {
   if (i < _objs.length) return _objs[i];
 
-  // Outer haze cone
-  const cHaze = new THREE.Mesh(GEO_UNIT_CONE_10, makeBeamMat(0.04));
-  cHaze.renderOrder = 0; _beamGrp.add(cHaze);
+  // Faisceau volumétrique — un seul cône remplace l'ancien empilement
+  // haze/glow/main/core : le profil radial est intégré dans le shader.
+  const cVol = makeVolBeam(GEO_VOL_CONE, 1.0);
+  cVol.renderOrder = 2; _beamGrp.add(cVol);
 
-  // Mid glow cone
-  const cGlow = new THREE.Mesh(GEO_UNIT_CONE_16, makeBeamMat(0.10));
-  cGlow.renderOrder = 1; _beamGrp.add(cGlow);
-
-  // Main beam cone
-  const cMain = new THREE.Mesh(GEO_UNIT_CONE_24, makeBeamMat(0.28));
-  cMain.renderOrder = 2; _beamGrp.add(cMain);
-
-  // Core (cœur très fin et brillant)
-  const cCore = new THREE.Mesh(GEO_UNIT_CONE_10, makeBeamMat(0.65));
-  cCore.renderOrder = 3; _beamGrp.add(cCore);
+  // Halo de lentille (toujours face caméra)
+  const lensGlow = new THREE.Sprite(makeLensGlowMat());
+  lensGlow.renderOrder = 4; lensGlow.visible = false; _beamGrp.add(lensGlow);
 
   // Tache au sol
   const pool = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
@@ -497,14 +771,12 @@ function _getObj(i) {
   halo.rotation.x = -Math.PI/2;
   halo.renderOrder = 0; _poolGrp.add(halo);
 
-  // ── PRISME : 2 faisceaux + 2 taches latéraux (le faisceau central reste cMain) ──
+  // ── PRISME : 2 faisceaux + 2 taches latéraux (le faisceau central reste cVol) ──
   // Donnent le split « \ | / » qui tourne avec prism_rotation. Cachés par défaut.
-  const prismMains = [], prismCores = [], prismPools = [];
+  const prismBeams = [], prismPools = [];
   for (let k = 0; k < 2; k++) {
-    const pm = new THREE.Mesh(GEO_UNIT_CONE_16, makeBeamMat(0.22));
-    pm.renderOrder = 2; pm.visible = false; _beamGrp.add(pm); prismMains.push(pm);
-    const pc = new THREE.Mesh(GEO_UNIT_CONE_10, makeBeamMat(0.55));
-    pc.renderOrder = 3; pc.visible = false; _beamGrp.add(pc); prismCores.push(pc);
+    const pm = makeVolBeam(GEO_VOL_CONE, 1.0);
+    pm.renderOrder = 2; pm.visible = false; _beamGrp.add(pm); prismBeams.push(pm);
     const pp = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
     pp.rotation.x = -Math.PI/2; pp.renderOrder = 0; pp.visible = false;
     _poolGrp.add(pp); prismPools.push(pp);
@@ -748,10 +1020,10 @@ function _getObj(i) {
   pxHousing.visible = false;
   _fixtureGrp.add(pxHousing);
 
-  const obj = { cHaze, cGlow, cMain, cCore, pool, halo, ptLight,
+  const obj = { cVol, lensGlow, pool, halo, ptLight,
                 body, lens, groupRing, parGrp,
                 mhGrp, mhHGrp, mhHead, mhLens,
-                prismMains, prismCores, prismPools,
+                prismBeams, prismPools,
                 pxCell, pxGlow, pxHalo, pxHousing, _fx: null };
   _objs.push(obj);
   return obj;
@@ -760,6 +1032,22 @@ function _getObj(i) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Sélection par clic — raycasting sur les fixtures
 // ─────────────────────────────────────────────────────────────────────────────
+window.setSelectedProjos = function(list) {
+  // Efface les références de clignotement de l'ancienne sélection : elles
+  // décrivent des valeurs qui ne la concernent plus.
+  for (const i of _selSet) {
+    if (i >= 0 && i < _objs.length) {
+      const o = _objs[i];
+      o._selA = o._selG = o._selP = undefined;
+    }
+  }
+  _selSet = new Set((list || []).filter(i => i >= 0 && i < _objs.length));
+  for (const i of _selSet) {
+    const o = _objs[i];
+    o._selA = o._selG = o._selP = undefined;   // repris à la prochaine image
+  }
+};
+
 window.highlightProjo = function(idx) {
   // Efface ancien surlignage
   if (_selectedProjo >= 0 && _selectedProjo < _objs.length) {
@@ -771,8 +1059,14 @@ window.highlightProjo = function(idx) {
     if (prev.groupRing) {
       prev.groupRing.material.emissiveIntensity = 0.5;   // retour à l'accent normal
     }
+    // Références de clignotement : elles décrivent l'ancien sélectionné,
+    // elles n'ont plus de sens pour le nouveau.
+    prev._selA = prev._selG = prev._selP = undefined;
   }
   _selectedProjo = idx;
+  // Appelé seul (clic dans la 3D, sélection simple) : la sélection se résume à
+  // ce projecteur. Le tableau, lui, complète ensuite avec setSelectedProjos().
+  window.setSelectedProjos(idx >= 0 ? [idx] : []);
   if (idx >= 0 && idx < _objs.length) {
     const cur = _objs[idx];
     cur.body.material.emissive.setHex(0x0055aa);
@@ -824,11 +1118,22 @@ function beamFloor(p) {
     const panA  = (p.pan - 32768)  / 32768.0 * Math.PI;
     const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
     const rx    = (p.rot3d_x || 0) * Math.PI / 180;
+    const rz    = (p.rot3d_z || 0) * Math.PI / 180;
     // Direction correcte : tilt dévie le faisceau DANS la direction du pan.
     // Pan seul (tilt=0) → faisceau droit vers le bas. Tilt → déviation dans le plan pan.
-    const bx_raw = Math.sin(theta) * Math.sin(panA);
-    const by_raw = -Math.cos(theta);
-    const bz_raw = Math.sin(theta) * Math.cos(panA);
+    //
+    // L'ordre reproduit exactement la hiérarchie Three.js du corps :
+    // mhGrp porte (rx, pan, rz) en Euler XYZ, donc R = Rx·Ry·Rz, et la tête
+    // porte le tilt. Rz s'applique donc EN PREMIER, avant le pan.
+    // Il manquait ici : le corps pivotait avec rot3d_z, le faisceau non — d'où
+    // un projecteur retourné dont le faisceau partait dans une autre direction.
+    const vy0 = -Math.cos(theta), vz0 = Math.sin(theta);
+    const wx  =  -vy0 * Math.sin(rz);          // Rz autour de l'axe du corps
+    const wy  =   vy0 * Math.cos(rz);
+    const wz  =   vz0;
+    const bx_raw = wx * Math.cos(panA) + wz * Math.sin(panA);
+    const by_raw = wy;
+    const bz_raw = -wx * Math.sin(panA) + wz * Math.cos(panA);
     // Rotation de corps (rx)
     const bx = bx_raw;
     const by = by_raw * Math.cos(rx) - bz_raw * Math.sin(rx);
@@ -836,9 +1141,15 @@ function beamFloor(p) {
     // Position réelle de la lentille (même ordre : Ry d'abord, puis Rx)
     const ly_l  = -0.35 - 0.248 * Math.cos(theta);
     const lz_l  =          0.248 * Math.sin(theta);
-    const lensX = p.x + lz_l * Math.sin(panA);
-    const lensY = hy  + ly_l * Math.cos(rx) - lz_l * Math.cos(panA) * Math.sin(rx);
-    const lensZ = p.z + ly_l * Math.sin(rx) + lz_l * Math.cos(panA) * Math.cos(rx);
+    // Même chaîne Rz → Ry → Rx que la direction : sans ça, sur un projecteur
+    // pivoté, le faisceau démarrait à côté de la lentille au lieu d'en sortir.
+    const qx = -ly_l * Math.sin(rz), qy = ly_l * Math.cos(rz), qz = lz_l;
+    const ax =  qx * Math.cos(panA) + qz * Math.sin(panA);
+    const ay =  qy;
+    const az = -qx * Math.sin(panA) + qz * Math.cos(panA);
+    const lensX = p.x + ax;
+    const lensY = hy  + ay * Math.cos(rx) - az * Math.sin(rx);
+    const lensZ = p.z + ay * Math.sin(rx) + az * Math.cos(rx);
     const goingUp = by > 0.05;
     let t;
     if      (by < -0.05)  t = Math.min(lensY / (-by), 10.0);
@@ -906,8 +1217,7 @@ window.updateScene = function(projectors) {
     if (p.is_pixel || p.is_master) {
       // Masquer les formes « fixture classique » de ce slot
       obj.parGrp.visible = obj.mhGrp.visible = false;
-      obj.cHaze.visible = obj.cGlow.visible =
-      obj.cMain.visible = obj.cCore.visible = false;
+      obj.cVol.visible = obj.lensGlow.visible = false;
       obj.pool.visible  = obj.halo.visible  = false;
       obj.ptLight.visible = false;
       obj._fx = null;
@@ -945,12 +1255,12 @@ window.updateScene = function(projectors) {
         obj.pxGlow.position.set(p.x, 0.02, p.z);
         obj.pxGlow.scale.setScalar((0.45 + 1.1 * plvl) * bs);   // plus large
         obj.pxGlow.material.uniforms.uColor.value.copy(_colBuf);
-        obj.pxGlow.material.uniforms.uAlpha.value = 0.42 * plvl; // plus doux
+        obj.pxGlow.material.uniforms.uAlpha.value = 0.42 * plvl * window.glowGain;
         obj.pxHalo.visible = true;
         obj.pxHalo.position.set(p.x, 0.012, p.z);
         obj.pxHalo.scale.setScalar((0.45 + 1.1 * plvl) * bs * 2.6);
         obj.pxHalo.material.uniforms.uColor.value.copy(_colBuf);
-        obj.pxHalo.material.uniforms.uAlpha.value = 0.13 * plvl;
+        obj.pxHalo.material.uniforms.uAlpha.value = 0.13 * plvl * window.glowGain;
       } else {
         obj.pxGlow.visible = false;
         obj.pxHalo.visible = false;
@@ -963,8 +1273,16 @@ window.updateScene = function(projectors) {
     obj.pxHalo.visible = false;
     obj.pxHousing.visible = false;
 
-    const lvl = Math.max(0, Math.min(1, p.level / 100.0));
-    const r = p.r/255, g = p.g/255, b = p.b/255;
+    // Projecteur sélectionné dans le tableau : on le force allumé en blanc,
+    // à pleine puissance. C'est ce qui permet de le repérer d'un coup d'œil
+    // dans la scène, même s'il est éteint dans le show — cas le plus fréquent
+    // quand on cherche « lequel est-ce ? ». Le clignotement est appliqué par
+    // animate(), image par image (voir _selBlink).
+    const _isSel = _selSet.has(i);
+    const lvl = _isSel ? 1.0 : Math.max(0, Math.min(1, p.level / 100.0));
+    const r = _isSel ? 1.0 : p.r/255,
+          g = _isSel ? 1.0 : p.g/255,
+          b = _isSel ? 1.0 : p.b/255;
     _colBuf.setRGB(r, g, b);
     const hy  = p.fixture_height ?? 7.0;
     const bf  = beamFloor(p);
@@ -1033,56 +1351,78 @@ window.updateScene = function(projectors) {
       // sinon zoom=0 rétrécirait tout). 0 = serré, 255 = large.
       const _zoomF = p.has_zoom ? (0.6 + (p.zoom / 255) * 1.6) : 1.0;
       const _spread = (isWash ? 1.9  : 1.0) * _zoomF;  // wash + zoom
-      const _mainA  = isWash ? 0.20 : 0.32;  // wash = corps plus diffus
-      const _coreA  = isWash ? 0.14 : 0.80;  // wash = quasi pas de cœur
-      const _coreR  = isWash ? 0.70 : 0.28;  // wash = cœur large et flou
 
       const base_r = (0.22 + 2.0 * lvl) * bs * _spread;
       const fx2 = fx, fz2 = fz;
 
       const baseY = goingUp ? 14.5 : 0.03;
 
-      // Haze extérieur (très large, très transparent)
-      orientCone(obj.cHaze, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 3.0);
-      obj.cHaze.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cHaze.material.uniforms.uAlpha.value = (isWash ? 0.05 : 0.04) * lvl;
+      // Un seul cône, dont l'enveloppe est volontairement serrée : au-delà de
+      // ~2× le rayon utile la densité est déjà nulle, et chaque mètre de
+      // rayon en trop coûte des fragments raymarchés au carré.
+      orientCone(obj.cVol, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 2.0);
+      const _bu = obj.cVol.material.uniforms;
+      _bu.uColor.value.copy(_colBuf);
+      // Un wash est une nappe large sans cœur défini ; une lyre est un
+      // faisceau serré avec un cœur très chaud. Le zoom resserre le profil
+      // en plus d'élargir l'enveloppe.
+      // uSharp est exprimé sur le rayon NORMALISÉ de l'enveloppe : en la
+      // resserrant de 3× à 2×, le même rayon physique donne un rr 1,5× plus
+      // grand, donc le coefficient doit être divisé par 1,5² pour conserver
+      // exactement la même largeur de faisceau à l'écran.
+      _bu.uSharp.value = (isWash ? 1.35 : 4.40) / Math.max(0.35, _zoomF);
+      _bu.uCore.value  = isWash ? 0.35 : 2.20;
+      // beamGain = réglage global ; p.beam_gain = dosage par projecteur,
+      // réglé dans le tableau de l'onglet Plan.
+      _bu.uAlpha.value = (isWash ? 1.70 : 2.40) * lvl * window.beamGain
+                       * (p.beam_gain ?? 1.0);
+      // Valeur de référence du clignotement : sans elle, _selBlink
+      // multiplierait sa propre sortie à chaque image et le faisceau
+      // s'éteindrait en quelques dixièmes de seconde.
+      if (_isSel) obj._selA = _bu.uAlpha.value;
 
-      // Glow intermédiaire
-      orientCone(obj.cGlow, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 1.8);
-      obj.cGlow.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cGlow.material.uniforms.uAlpha.value = (isWash ? 0.14 : 0.11) * lvl;
+      // Halo de lentille : grossit et s'intensifie avec le niveau
+      obj.lensGlow.visible = true;
+      obj.lensGlow.position.set(lensX, lensY, lensZ);
+      obj.lensGlow.scale.setScalar((0.30 + 0.85 * lvl) * (isWash ? 1.25 : 1.0) * bs);
+      obj.lensGlow.material.color.copy(_colBuf);
+      obj.lensGlow.material.opacity = Math.min(1.0, (0.35 + 0.65 * lvl) * lvl * window.glowGain);
+      if (_isSel) obj._selG = obj.lensGlow.material.opacity;
 
-      // Faisceau principal
-      orientCone(obj.cMain, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * 1.0);
-      obj.cMain.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cMain.material.uniforms.uAlpha.value = _mainA * lvl;
-
-      // Cœur brillant (fin sur une lyre, large et flou sur un wash)
-      orientCone(obj.cCore, lensX, lensY, lensZ, fx2, baseY, fz2, base_r * _coreR);
-      obj.cCore.material.uniforms.uColor.value.copy(_colBuf);
-      obj.cCore.material.uniforms.uAlpha.value = _coreA * lvl;
+      // Gobo : calculé ici et non dans le bloc « tache au sol », car il
+      // découpe AUSSI le faisceau — y compris quand la lyre pointe vers le
+      // haut, cas où il n'y a pas de tache au sol du tout.
+      const goboSlot  = Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8));
+      const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
+      const goboRot   = ((p.gobo_rotation || 0) / 255.0) * Math.PI * 2;
+      _bu.uGoboTex.value   = _goboTextures[goboSlot];
+      _bu.uGoboBlend.value = goboBlend;
+      // Rotation continue en cours ? C'est animate() qui pilote l'angle, image
+      // par image. L'écraser ici — 25 fois par seconde, à la cadence des envois
+      // Python — ramenait sans cesse le motif à son angle de départ : le gobo
+      // tressautait au lieu de tourner.
+      if (!((p.gobo_rotation || 0) > 0)) _bu.uGoboRot.value = goboRot;
 
       if (!goingUp) {
         // Tache principale au sol (avec gobo)
-        const goboSlot  = Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8));
-        const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
-        const goboRot   = ((p.gobo_rotation || 0) / 255.0) * Math.PI * 2;
         // Wash : nappe au sol plus large et plus douce qu'un spot de lyre
         const poolR = (0.35 + 2.2*lvl) * bs * (isWash ? 1.6 : 1.0);
         obj.pool.position.set(fx2, 0.02, fz2);
         obj.pool.scale.setScalar(poolR);
         obj.pool.material.uniforms.uColor.value.copy(_colBuf);
         obj.pool.material.uniforms.uAlpha.value = (isWash ? 0.52 : 0.70) * lvl;
+        if (_isSel) obj._selP = obj.pool.material.uniforms.uAlpha.value;
         obj.pool.material.uniforms.uGoboTex.value   = _goboTextures[goboSlot];
         obj.pool.material.uniforms.uGoboBlend.value = goboBlend;
-        obj.pool.material.uniforms.uGoboRot.value   = goboRot;
+        if (!((p.gobo_rotation || 0) > 0))
+          obj.pool.material.uniforms.uGoboRot.value = goboRot;
         obj.pool.visible = true;
 
         // Halo diffus au sol (plus large)
         obj.halo.position.set(fx2, 0.015, fz2);
         obj.halo.scale.setScalar(poolR * 2.8);
         obj.halo.material.uniforms.uColor.value.copy(_colBuf);
-        obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl;
+        obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl * window.glowGain;
         obj.halo.visible = true;
 
         // Point light au sol
@@ -1116,8 +1456,7 @@ window.updateScene = function(projectors) {
       };
 
     } else {
-      obj.cHaze.visible = obj.cGlow.visible =
-      obj.cMain.visible = obj.cCore.visible = false;
+      obj.cVol.visible = obj.lensGlow.visible = false;
       obj.pool.visible  = obj.halo.visible  = false;
       obj.ptLight.visible = false;
       obj._fx = null;
@@ -1127,7 +1466,7 @@ window.updateScene = function(projectors) {
   // Masquer les slots inutilisés
   for (let i = projectors.length; i < _objs.length; i++) {
     const o = _objs[i];
-    o.cHaze.visible = o.cGlow.visible = o.cMain.visible = o.cCore.visible =
+    o.cVol.visible  = o.lensGlow.visible =
     o.pool.visible  = o.halo.visible  = o.ptLight.visible = false;
     o.parGrp.visible = false;
     o.mhGrp.visible  = false;
@@ -1168,17 +1507,61 @@ window.setCam = function(name) {
   });
 };
 
+// ── Points de vue mémorisés ──────────────────────────────────────────────
+// Un préréglage fige un angle ; ici on capture exactement où en est la
+// caméra, pour retrouver un cadrage de travail au clic.
+window.getView = function () {
+  return JSON.stringify({
+    pos: camera.position.toArray(),
+    tgt: controls.target.toArray(),
+    fov: camera.fov,
+  });
+};
+
+window.setView = function (v) {
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) { return false; } }
+  if (!v || !v.pos || !v.tgt) return false;
+  camera.position.fromArray(v.pos);
+  controls.target.fromArray(v.tgt);
+  if (v.fov) { camera.fov = v.fov; camera.updateProjectionMatrix(); }
+  controls.update();
+  Object.keys(CAM_BTNS).forEach(k => {
+    const el = document.getElementById(CAM_BTNS[k]);
+    if (el) el.classList.remove('on');
+  });
+  return true;
+};
+
+// ── Export image ─────────────────────────────────────────────────────────
+// Le contexte WebGL est créé sans preserveDrawingBuffer : on relit donc le
+// canvas dans la MÊME tâche que le rendu, avant que le compositeur ne l'efface.
+window.snapshot = function () {
+  try {
+    if (_flags.bloom) composer.render(); else renderer.render(scene, camera);
+    return renderer.domElement.toDataURL('image/png');
+  } catch (e) {
+    return 'ERR:' + e.message;
+  }
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Flags d'affichage
 // ─────────────────────────────────────────────────────────────────────────────
 const _flags = { bloom:true,  fixtures:true, trusses:true, floor:true, grid:true, fog:true };
+// Souhait de l'utilisateur pour le bloom, indépendant de ce que la qualité
+// impose : en qualité basse le bloom est coupé, mais on doit le retrouver
+// allumé en remontant la qualité si l'utilisateur ne l'avait pas éteint.
+let _bloomWanted = true;
 
 window.toggleFlag = function(what) {
   _flags[what] = !_flags[what];
   const _el = document.getElementById('b-'+what);
   if (_el) _el.classList.toggle('on', _flags[what]);
 
-  if (what === 'bloom')    { /* handled in animate */ }
+  if (what === 'bloom')    { _bloomWanted = _flags.bloom;
+                             // Le composer n'est plus redimensionné tant que le
+                             // bloom est éteint : on le remet à niveau ici.
+                             if (_flags.bloom) composer.setSize(W(), H()); }
   if (what === 'fixtures') { _fixtureGrp.visible = _flags.fixtures; }
   if (what === 'trusses')  { _trussGrp.visible   = _flags.trusses;  }
   if (what === 'floor')    { floorReflector.visible = _flags.floor;
@@ -1190,12 +1573,23 @@ window.toggleFlag = function(what) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Resize
 // ─────────────────────────────────────────────────────────────────────────────
+// Redimensionnement : ne RIEN faire si la taille n'a pas bougé.
+//
+// setSize() réalloue les tampons du GPU, ce qui coûte une image noire sur
+// beaucoup de pilotes. Or l'événement `resize` part aussi pour des raisons qui
+// ne changent pas la taille utile de la vue — apparition d'une barre de
+// défilement à côté, redessin du panneau, changement d'échelle système. D'où
+// des clignotements noirs dans le plan 3D seul, sans que rien n'ait bougé.
+let _lastW = 0, _lastH = 0;
 window.addEventListener('resize', () => {
-  camera.aspect = W() / H();
+  const w = W(), h = H();
+  if (w === _lastW && h === _lastH) return;
+  _lastW = w; _lastH = h;
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(W(), H());
-  composer.setSize(W(), H());
-  bloomPass.resolution.set(W(), H());
+  renderer.setSize(w, h);
+  if (_flags.bloom) composer.setSize(w, h);
+  bloomPass.resolution.set(w, h);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1205,26 +1599,30 @@ const _fxColBuf = new THREE.Color();
 
 function _orientPrism(obj, t) {
   const s = obj._fx;
-  const pm0 = obj.prismMains, pc0 = obj.prismCores, pp0 = obj.prismPools;
+  const pm0 = obj.prismBeams, pp0 = obj.prismPools;
   if (!s || !s.active) {
     for (let k = 0; k < 2; k++) {
-      pm0[k].visible = pc0[k].visible = pp0[k].visible = false;
+      pm0[k].visible = pp0[k].visible = false;
     }
     return;
   }
 
   // ── Rotation gobo continue (valeur DMX = vitesse) ──
-  if (obj.pool.visible &&
-      obj.pool.material.uniforms.uGoboBlend.value > 0 &&
-      s.goboRotV > 0) {
+  if (s.goboRotV > 0) {
     const gspd = (s.goboRotV / 255) * 2.4;          // rad/s max
-    obj.pool.material.uniforms.uGoboRot.value = t * gspd;
+    const grot = t * gspd;
+    if (obj.pool.material.uniforms.uGoboBlend.value > 0)
+      obj.pool.material.uniforms.uGoboRot.value = grot;
+    // Le faisceau tourne avec la tache : sans ça, gobo figé dans la fumée et
+    // motif tournant au sol — deux images du même gobo qui se contredisent.
+    const _bu2 = obj.cVol && obj.cVol.material.uniforms;
+    if (_bu2 && _bu2.uGoboBlend.value > 0) _bu2.uGoboRot.value = grot;
   }
 
   // ── Prisme : 2 faisceaux/taches latéraux opposés, tournants ──
   if (!s.prism) {
     for (let k = 0; k < 2; k++) {
-      pm0[k].visible = pc0[k].visible = pp0[k].visible = false;
+      pm0[k].visible = pp0[k].visible = false;
     }
     return;
   }
@@ -1236,12 +1634,13 @@ function _orientPrism(obj, t) {
     const a  = ang + k * Math.PI;                   // 2 côtés opposés du faisceau central
     const bx = s.fx + Math.cos(a) * R;
     const bz = s.fz + Math.sin(a) * R;
-    orientCone(pm0[k], s.lensX, s.lensY, s.lensZ, bx, s.baseY, bz, s.base_r * 0.85);
-    pm0[k].material.uniforms.uColor.value.copy(_fxColBuf);
-    pm0[k].material.uniforms.uAlpha.value = 0.20 * s.lvl;
-    orientCone(pc0[k], s.lensX, s.lensY, s.lensZ, bx, s.baseY, bz, s.base_r * 0.24);
-    pc0[k].material.uniforms.uColor.value.copy(_fxColBuf);
-    pc0[k].material.uniforms.uAlpha.value = 0.55 * s.lvl;
+    // Faisceau latéral : même shader volumétrique, enveloppe plus étroite
+    orientCone(pm0[k], s.lensX, s.lensY, s.lensZ, bx, s.baseY, bz, s.base_r * 1.1);
+    const _pu = pm0[k].material.uniforms;
+    _pu.uColor.value.copy(_fxColBuf);
+    _pu.uSharp.value = 5.20;
+    _pu.uCore.value  = 1.3;
+    _pu.uAlpha.value = 0.65 * s.lvl * window.beamGain;
     if (!s.goingUp) {
       pp0[k].position.set(bx, 0.02, bz);
       pp0[k].scale.setScalar(s.poolR * 0.7);
@@ -1258,15 +1657,121 @@ function _orientPrism(obj, t) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Boucle de rendu
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Niveaux de qualité ───────────────────────────────────────────────────
+// Le raymarching coûte au fragment : sur un portable modeste avec beaucoup de
+// projecteurs, il faut pouvoir retomber sur un rendu plus léger.
+const QUALITY = [
+  { name:'Bas',   steps: 8,  ratio: 1.0, refl:false, bloom:false },
+  { name:'Moyen', steps: 16, ratio: 1.5, refl:true,  bloom:true  },
+  { name:'Haut',  steps: 24, ratio: 2.0, refl:true,  bloom:true  },
+  { name:'Ultra', steps: 40, ratio: 2.0, refl:true,  bloom:true  },
+];
+window.qualityLevel = 2;
+window.autoQuality  = true;
+
+window.setQuality = function (lvl, redimensionner) {
+  lvl = Math.max(0, Math.min(QUALITY.length - 1, lvl | 0));
+  window.qualityLevel = lvl;
+  const q = QUALITY[lvl];
+  window.setBeamQuality(q.steps);
+
+  // Changer la résolution de rendu réalloue les tampons du GPU, ce qui coûte
+  // UNE IMAGE NOIRE sur beaucoup de pilotes. Acceptable quand l'utilisateur
+  // choisit lui-même sa qualité — il s'y attend. Inacceptable quand c'est la
+  // dégradation automatique qui se déclenche : l'écran clignote en noir sans
+  // que personne n'ait rien demandé, et ça se répète à chaque palier.
+  // Par défaut on redimensionne ; la dégradation auto passe `false` et se
+  // contente de réduire les pas de raymarching, qui est de toute façon le
+  // poste le plus coûteux.
+  const _ratioVoulu = Math.min(window.devicePixelRatio, q.ratio);
+  if (redimensionner !== false &&
+      Math.abs(renderer.getPixelRatio() - _ratioVoulu) > 1e-3) {
+    renderer.setPixelRatio(_ratioVoulu);
+    renderer.setSize(W(), H());
+    composer.setSize(W(), H());
+  }
+  // Le sol n'est plus un miroir : la qualité n'a plus à l'éteindre. Garder
+  // ces lignes ferait disparaître le sol lui-même en qualité Bas/Moyen, où
+  // `refl` valait false. Seul le bouton « Sol » contrôle sa visibilité.
+  _flags.bloom = q.bloom && _bloomWanted;
+  return q.name;
+};
+
+// ── Compteur de performance ──────────────────────────────────────────────
+const _fpsEl = document.getElementById('fps');
+let _fpsFrames = 0, _fpsLast = performance.now(), _fpsValue = 60;
+let _slowStreak = 0;
+window.showFps = function (on) {
+  _fpsEl.style.display = on ? 'block' : 'none';
+};
+window.getFps = function () { return _fpsValue; };
+
+// Clignotement blanc du projecteur sélectionné.
+//
+// Appliqué dans la boucle de rendu et non dans updateScene() : celle-ci n'est
+// appelée que lorsque Python pousse un état (~25 fps, et pas du tout si rien
+// ne bouge dans le show). Un clignotement qui s'arrête dès que la scène est
+// figée n'attirerait l'œil que par hasard.
+function _selBlink(t) {
+  if (_selSet.size === 0) return;
+  // Battement doux entre 25 % et 100 % — un créneau franc fatigue vite.
+  // Même phase pour tous : des projecteurs qui battent ensemble se lisent
+  // comme un groupe, alors que des phases décalées ressembleraient à un effet.
+  const k = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 6.0));
+  for (const i of _selSet) _selBlinkOne(i, k);
+}
+
+function _selBlinkOne(i, k) {
+  if (i < 0 || i >= _objs.length) return;
+  const obj = _objs[i];
+  const bu = obj.cVol && obj.cVol.visible && obj.cVol.material.uniforms;
+  if (bu && obj._selA !== undefined) bu.uAlpha.value = obj._selA * k;
+  if (obj.lensGlow && obj.lensGlow.visible && obj._selG !== undefined)
+    obj.lensGlow.material.opacity = obj._selG * k;
+  if (obj.pool && obj.pool.visible && obj._selP !== undefined)
+    obj.pool.material.uniforms.uAlpha.value = obj._selP * k;
+}
+
 (function animate() {
   requestAnimationFrame(animate);
   controls.update();
-  const _t = performance.now() / 1000;
+  const _now = performance.now();
+  const _t = _now / 1000;
   for (let i = 0; i < _objs.length; i++) _orientPrism(_objs[i], _t);
+  _selBlink(_t);
   if (_flags.bloom) {
     composer.render();
   } else {
     renderer.render(scene, camera);
+  }
+
+  // Mesure sur une fenêtre glissante d'une demi-seconde
+  _fpsFrames++;
+  if (_now - _fpsLast >= 500) {
+    _fpsValue = (_fpsFrames * 1000) / (_now - _fpsLast);
+    _fpsFrames = 0;
+    _fpsLast = _now;
+    if (_fpsEl.style.display !== 'none') {
+      const inf = renderer.info.render;
+      _fpsEl.textContent =
+        `${_fpsValue.toFixed(0)} fps · ${QUALITY[window.qualityLevel].name}\n` +
+        `${inf.calls} draws · ${window.beamQuality} pas`;
+    }
+    // Dégradation automatique : on ne descend jamais tout seul d'un coup, il
+    // faut 3 mesures lentes d'affilée (≈1,5 s) pour éviter de réagir à un
+    // à-coup de chargement.
+    // Seuil bas volontairement : MyStrow ne pousse l'état des projecteurs
+    // qu'à 25 fps, au-delà le rendu n'apporte plus rien. On ne dégrade donc
+    // que quand ça devient réellement saccadé.
+    if (window.autoQuality && _fpsValue < 20 && window.qualityLevel > 0) {
+      if (++_slowStreak >= 3) {
+        _slowStreak = 0;
+        // Sans redimensionnement : pas de clignotement noir à l'écran.
+        window.setQuality(window.qualityLevel - 1, false);
+      }
+    } else {
+      _slowStreak = 0;
+    }
   }
 })();
 
@@ -1456,16 +1961,12 @@ function _makeTotem(x, z, height=4.5, nSpk=5) {
     }
   }
 
-  // Lyre dorée au sommet
-  const topY = 0.48 + colH;
-  const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.32,0.06,0.10), mat(0xc09030,0.28,0.82));
-  yoke.position.set(0, topY+0.08, 0); g.add(yoke);
-  for (const yx of [-0.11,0.11]) {
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.22,0.08), mat(0xc09030,0.28,0.82));
-    arm.position.set(yx, topY-0.07, 0); g.add(arm);
-  }
-  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.072,0.092,0.17,12), mat(0xc09030,0.28,0.82));
-  head.position.set(0, topY-0.18, 0); g.add(head);
+  // Pas de lyre décorative au sommet des totems : ces 4 maillages dorés
+  // (yoke + 2 bras + tête) imitaient un projecteur qui n'existe pas dans le
+  // patch. On voyait donc 6 lyres orange allumées en permanence, impossibles à
+  // piloter et faciles à confondre avec de vrais projecteurs. Le décor ne doit
+  // représenter que ce qui n'est pas un projecteur ; les projecteurs, eux,
+  // viennent du patch.
 
   g.position.set(x, 0, z);
   return g;

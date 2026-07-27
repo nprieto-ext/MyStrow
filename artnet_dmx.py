@@ -128,6 +128,16 @@ TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"  # ENTTEC Open DMX USB via driver FTDI D2X
 TRANSPORT_ENTTEC_PRO  = "enttec_pro"   # ENTTEC DMX USB Pro (paquet 7E/E7, DMXKing, etc.)
 TRANSPORT_ARTNET      = "artnet"       # Boitier reseau Art-Net (ElectroConcept...)
 
+# Break DMX genere par « baud-rate trick » : un octet 0x00 emis a BREAK_BAUD
+# tient la ligne a LOW pendant 1 bit de start + 8 bits de donnees = 9 bits.
+# C'est le repli quand send_break n'est pas exploitable — cas de macOS, ou il
+# reussit sans lever d'exception mais ne produit aucun break electrique valide.
+# 100 000 bauds ne donnaient que 90 us, SOUS le minimum de 92 us impose au
+# transmetteur par DMX512-A : un break limite, que des fixtures peuvent rejeter
+# sans le moindre message d'erreur.
+BREAK_BAUD = 90000
+BREAK_US   = 9 * 1_000_000 / BREAK_BAUD   # ~100 us
+
 
 class ArtNetDMX:
     """Envoi DMX via ENTTEC Open DMX USB ou boitier reseau Art-Net.
@@ -315,20 +325,15 @@ class ArtNetDMX:
     def _stop_other_transports(self, target):
         """Arrête threads/ports de tous les transports SAUF `target`.
         Garantit un seul writer DMX actif lors d'un changement de transport."""
+        # On JOINT les threads (et pas seulement fermer le port) : fermer le
+        # handle sans attendre laissait l'ancien thread tourner une fraction de
+        # seconde de plus et rouvrir/écrire par-dessus le nouveau transport.
         if target != TRANSPORT_ENTTEC:
-            self._enttec_stop = True   # désactive aussi la reconnexion auto du thread
-            if self._serial and self._serial.is_open:
-                try: self._serial.close()
-                except Exception: pass
-            self._serial = None
+            self._stop_enttec_thread()
         if target != TRANSPORT_ENTTEC_D2XX:
             self._stop_d2xx_thread()
         if target != TRANSPORT_ENTTEC_PRO:
-            self._pro_stop = True
-            if self._pro_serial and self._pro_serial.is_open:
-                try: self._pro_serial.close()
-                except Exception: pass
-            self._pro_serial = None
+            self._stop_pro_thread()
         if target != TRANSPORT_ARTNET and self._socket:
             try: self._socket.close()
             except Exception: pass
@@ -336,15 +341,9 @@ class ArtNetDMX:
 
     def disconnect(self):
         """Ferme toutes les connexions ouvertes"""
-        self._enttec_stop = True
-        if self._serial and self._serial.is_open:
-            self._serial.close()
-        self._serial = None
+        self._stop_enttec_thread()
         self._stop_d2xx_thread()
-        self._pro_stop = True
-        if self._pro_serial and self._pro_serial.is_open:
-            self._pro_serial.close()
-        self._pro_serial = None
+        self._stop_pro_thread()
         if self._socket:
             self._socket.close()
         self._socket = None
@@ -365,9 +364,12 @@ class ArtNetDMX:
             self.connected = False
             return False
 
+        # Reconnexion sur un transport DÉJÀ actif : arrêter le thread en place
+        # AVANT d'ouvrir le nouveau port, sinon l'ancien thread récupère le
+        # nouveau handle et on se retrouve à deux writers sur la même puce.
+        self._stop_enttec_thread()
+
         try:
-            if self._serial and self._serial.is_open:
-                self._serial.close()
             self._serial = serial.Serial(
                 port=self.com_port,
                 baudrate=250000,
@@ -390,8 +392,52 @@ class ArtNetDMX:
             self.connected = False
             return False
 
+    def _stop_enttec_thread(self):
+        """Arrête proprement le thread ENTTEC série et ferme le port.
+
+        Symétrique de _stop_d2xx_thread, et tout aussi CRUCIAL : sans ça, un
+        2e connect() sur le MÊME transport laissait le thread précédent en vie
+        (`_start_enttec_thread` remet `_enttec_stop` à False, donc l'ancien ne
+        sort jamais de sa boucle) → deux threads écrivant break/baudrate/frame
+        sur le même handle série, sans verrou. Cas réel : l'app se connecte au
+        démarrage depuis ~/.mystrow_dmx.json, puis l'utilisateur clique
+        « Connecter » dans l'assistant → 2 writers. Très destructeur sur macOS
+        où chaque trame reconfigure le baudrate (tcsetattr + ioctl)."""
+        self._enttec_stop = True
+        t = self._enttec_thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=1.5)
+        self._enttec_thread = None
+        # Une pause restée armée bloquerait le prochain thread dès son départ.
+        self._enttec_pause = False
+        self._enttec_paused = False
+        self._enttec_err_count = 0
+        if self._serial is not None:
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+        self._serial = None
+
+    def _stop_pro_thread(self):
+        """Arrête proprement le thread ENTTEC Pro et ferme le port.
+        Même raison que _stop_enttec_thread : `_start_pro_thread` réarme
+        `_pro_stop` à False, donc sans join l'ancien thread survit."""
+        self._pro_stop = True
+        t = self._pro_thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=1.5)
+        self._pro_thread = None
+        self._pro_pause = False
+        self._pro_paused = False
+        if self._pro_serial is not None:
+            try:
+                self._pro_serial.close()
+            except Exception:
+                pass
+        self._pro_serial = None
+
     def _start_enttec_thread(self):
-        import threading
         self._enttec_stop = False
         t = threading.Thread(target=self._enttec_loop, daemon=True, name="EnttecDMX")
         t.start()
@@ -464,9 +510,9 @@ class ArtNetDMX:
                         ser.write(frame)
                         ser.flush()
                     else:
-                        # Méthode 2 : baud-rate trick — break généré par un 0x00 @ 100 kbaud
-                        # (10 bits × 10 µs = 100 µs de LOW = break valide)
-                        ser.baudrate = 100000
+                        # Méthode 2 : baud-rate trick — break généré par un 0x00
+                        # (9 bits LOW à BREAK_BAUD ≈ 100 µs, cf. constante)
+                        ser.baudrate = BREAK_BAUD
                         ser.reset_output_buffer()
                         ser.write(b'\x00')
                         ser.flush()
@@ -745,9 +791,10 @@ class ArtNetDMX:
             print("Aucun port COM configuré pour l'ENTTEC Pro")
             self.connected = False
             return False
+        # Idem transport série : couper le thread en place avant de rouvrir.
+        self._stop_pro_thread()
+
         try:
-            if self._pro_serial and self._pro_serial.is_open:
-                self._pro_serial.close()
             self._pro_serial = serial.Serial(
                 port=self.com_port,
                 baudrate=getattr(self, "pro_baud", 250000),
