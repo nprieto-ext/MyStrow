@@ -1196,8 +1196,17 @@ class Plan3DWebWindow(QMainWindow):
         "QHeaderView::section:hover{color:#00d4ff;}"
         "QScrollBar:vertical{background:#0d0d0d;width:6px;border:none;}"
         "QScrollBar::handle:vertical{background:#262626;border-radius:3px;}"
-        "QScrollBar:horizontal{background:#0d0d0d;height:6px;border:none;}"
-        "QScrollBar::handle:horizontal{background:#262626;border-radius:3px;}"
+        # Ascenseur HORIZONTAL volontairement plus visible que le vertical :
+        # les 8 colonnes font 390 px dans un panneau qui descend à 160 px, donc
+        # RZ et Faisc. sont hors cadre — et rien ne le laissait deviner. Le
+        # débordement vertical, lui, se devine au nombre de lignes.
+        "QScrollBar:horizontal{background:#111118;height:11px;border:none;margin:0;}"
+        "QScrollBar::handle:horizontal{background:#3d3d5c;border-radius:5px;min-width:36px;}"
+        "QScrollBar::handle:horizontal:hover{background:#00d4ff;}"
+        "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal"
+        "{width:0;height:0;}"
+        "QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal"
+        "{background:transparent;}"
     )
     _MINI_SP = (
         "QDoubleSpinBox{background:#0d0d0d;color:#dddddd;border:none;"
@@ -1234,6 +1243,10 @@ class Plan3DWebWindow(QMainWindow):
         for i, w_ in enumerate(cw):
             self._mini_tbl.setColumnWidth(i, w_)
         self._mini_tbl.horizontalHeader().setStretchLastSection(False)
+        # Toujours affiché, même quand le panneau est assez large : c'est LUI
+        # qui annonce qu'il y a des colonnes à droite. En mode « au besoin »,
+        # il n'apparaît qu'une fois qu'on a compris qu'il fallait défiler.
+        self._mini_tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         for _c, _tip in enumerate((
                 "Projecteur", "Position gauche/droite (m)", "Position avant/arrière (m)",
                 "Hauteur d'accroche (m)", "Inclinaison — retourne l'appareil (°)",

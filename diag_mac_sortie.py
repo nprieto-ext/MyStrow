@@ -50,8 +50,17 @@ def t_artnet(ip):
 
 def ouvrir(port):
     import serial
-    return serial.Serial(port=port, baudrate=250000, bytesize=8,
-                         parity='N', stopbits=2, timeout=1)
+    s = serial.Serial(port=port, baudrate=250000, bytesize=8,
+                      parity='N', stopbits=2, timeout=1)
+    # RTS commande le Driver Enable du transceiver RS485 sur l'ENTTEC Open DMX
+    # USB : pyserial l'asserte a l'ouverture, l'emetteur reste alors muet et
+    # ce test conclurait « tout est envoye » sur une ligne DMX morte.
+    try:
+        s.rts = False
+        s.dtr = False
+    except Exception:
+        pass
+    return s
 
 
 def t_serie(port, methode):

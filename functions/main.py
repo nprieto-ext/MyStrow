@@ -78,6 +78,13 @@ def _brevo_key()     -> str: return _cfg("BREVO_API_KEY").strip()
 
 AXONAUT_BASE = "https://axonaut.com/api/v2"
 
+# Taux de TVA des factures Axonaut, en pourcentage.
+# Les montants Stripe sont des montants TTC (prix affiché au client) ; Axonaut
+# attend un prix unitaire HT et rajoute la TVA. Ce taux sert donc DEUX fois —
+# pour déduire le HT et pour le champ `tax_rate` — et les deux doivent rester
+# cohérents, d'où la constante unique.
+TVA_RATE = 20
+
 # Durée des plans en jours
 _PLAN_DAYS = {
     "monthly":  31,
@@ -148,8 +155,14 @@ def _get_plan_type(price_id: str) -> str:
     return "monthly"
 
 
-def _get_plan_price_ht(plan_type: str) -> float:
-    """Montant HT depuis le price Stripe configuré — fallback quand amount_eur=0."""
+def _get_plan_price_ttc(plan_type: str) -> float:
+    """Montant TTC depuis le price Stripe configuré — fallback quand le montant
+    encaissé est absent de l'événement.
+
+    C'est bien du TTC : les prix Stripe sont les montants affichés au client
+    (23,99 € = ce qu'il paie), aucune taxe n'est ajoutée au moment du paiement.
+    L'ancien nom (`_get_plan_price_ht`) est à l'origine de la facturation
+    erronée corrigée le 28/07/2026 — cf. TVA_RATE."""
     _map = {
         "monthly":  _stripe_price_monthly,
         "annual":   _stripe_price_annual,
@@ -163,7 +176,7 @@ def _get_plan_price_ht(plan_type: str) -> float:
         cents = price.get("unit_amount") or 0
         return round(cents / 100.0, 2)
     except Exception as e:
-        print(f"[_get_plan_price_ht] {e}")
+        print(f"[_get_plan_price_ttc] {e}")
         return 0.0
 
 
@@ -467,19 +480,30 @@ def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str
 def _axonaut_create_invoice(
     company_id: int,
     plan_type: str,
-    amount_eur: float,
+    amount_ttc: float | None,
     stripe_ref: str,
     uid: str = "",
 ) -> None:
-    """Crée une facture dans Axonaut et stocke le lien dans Firestore."""
+    """Crée une facture dans Axonaut et stocke le lien dans Firestore.
+
+    `amount_ttc` est le montant réellement encaissé par Stripe, donc du TTC :
+    c'est le prix affiché au client (23,99 €). Axonaut, lui, attend un prix
+    unitaire HORS TAXES et rajoute la TVA par-dessus. Passer le TTC tel quel
+    dans `price` produisait « 23,99 € HT / 28,79 € TTC » — le client payait
+    23,99 € et la facture en annonçait 28,79 €."""
     if not company_id:
         print("[Axonaut] company_id manquant — facture non creee")
         return
-    if not amount_eur:
-        amount_eur = _get_plan_price_ht(plan_type)
-        print(f"[Axonaut] amount_eur=0 → fallback Stripe price : {amount_eur} €")
+    # `None` seulement, jamais `not amount_ttc` : avec un code promo à 100 %,
+    # le montant encaissé vaut légitimement 0 € et le repli sur le tarif du
+    # plan facturerait le prix fort une commande offerte.
+    if amount_ttc is None:
+        amount_ttc = _get_plan_price_ttc(plan_type)
+        print(f"[Axonaut] montant absent → fallback Stripe price : {amount_ttc} € TTC")
+    price_ht = round(amount_ttc / (1 + TVA_RATE / 100.0), 2)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    print(f"[Axonaut] Création facture — plan={plan_type} amount_eur={amount_eur} company_id={company_id}")
+    print(f"[Axonaut] Création facture — plan={plan_type} "
+          f"{price_ht} € HT / {round(amount_ttc, 2)} € TTC company_id={company_id}")
     result = _axonaut("POST", "/invoices", {
         "company_id":     company_id,
         "reference":      (stripe_ref or "")[:30],
@@ -488,8 +512,8 @@ def _axonaut_create_invoice(
         "products": [{
             "name":     _plan_label(plan_type),
             "quantity": 1,
-            "price":    round(amount_eur, 2),
-            "tax_rate": 20,
+            "price":    price_ht,
+            "tax_rate": TVA_RATE,
         }],
     })
     if not result:
@@ -503,15 +527,18 @@ def _axonaut_create_invoice(
                    or f"https://axonaut.com/invoice/{invoice_id}")
     print(f"[Axonaut] Facture creee : id={invoice_id}")
 
-    # Encaisse la facture : TTC = HT (price) + TVA 20 % → la passe en « payée »
-    _axonaut_register_payment(invoice_id, round(amount_eur * 1.20, 2), stripe_ref)
+    # Encaisse la facture avec le montant RÉELLEMENT prélevé par Stripe.
+    # Avant : amount * 1,20 — on enregistrait 28,79 € alors que la banque
+    # n'avait encaissé que 23,99 €, soit 4,80 € d'écart par facture.
+    _axonaut_register_payment(invoice_id, round(amount_ttc, 2), stripe_ref)
 
     if uid:
         try:
             _get_db().collection("licenses").document(uid) \
                 .collection("invoices").add({
                     "date":        today,
-                    "amount_eur":  round(amount_eur, 2),
+                    "amount_eur":  round(amount_ttc, 2),   # TTC payé (inchangé)
+                    "amount_ht":   price_ht,
                     "plan":        plan_type,
                     "invoice_url": invoice_url,
                     "axonaut_id":  invoice_id,
@@ -700,7 +727,14 @@ def _on_checkout_completed(session: dict) -> None:
     email       = cust_details.get("email") or session.get("customer_email", "")
     customer_id = session.get("customer", "")
     sub_id      = session.get("subscription", "")
-    amount_eur  = session.get("amount_subtotal", 0) / 100.0
+    # TTC réellement débité, APRÈS remise éventuelle. `amount_total` et non
+    # `amount_subtotal` : le subtotal ignore les codes promo, on facturerait
+    # alors plus cher que ce que la carte a payé.
+    # `None` (clé absente) = montant inconnu → repli sur le tarif du plan ;
+    # 0 = commande réellement gratuite, qu'il ne faut PAS remplacer par le
+    # tarif plein (cf. _axonaut_create_invoice).
+    _amt        = session.get("amount_total")
+    amount_ttc  = (_amt / 100.0) if _amt is not None else None
     cust_name   = cust_details.get("name") or ""
     cust_address = cust_details.get("address") or {}
 
@@ -719,10 +753,10 @@ def _on_checkout_completed(session: dict) -> None:
             price_id  = sub["items"]["data"][0]["price"]["id"]
             plan_type = _get_plan_type(price_id)
             # Pour les abonnements, amount_total est parfois 0 sur la session ;
-            # le vrai montant encaissé est sur la première facture.
-            if amount_eur == 0 and sub.get("latest_invoice"):
+            # le vrai montant encaissé (remise déduite) est sur la 1re facture.
+            if not amount_ttc and sub.get("latest_invoice"):
                 inv = _stripe_get(f"/invoices/{sub['latest_invoice']}")
-                amount_eur = (inv.get("amount_paid") or inv.get("amount_due") or 0) / 100.0
+                amount_ttc = (inv.get("amount_paid") or inv.get("amount_due") or 0) / 100.0
         except Exception as e:
             print(f"[Handler] Impossible de lire le plan Stripe : {e}")
 
@@ -750,7 +784,7 @@ def _on_checkout_completed(session: dict) -> None:
 
     # Axonaut
     company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address, uid=uid)
-    _axonaut_create_invoice(company_id, plan_type, amount_eur,
+    _axonaut_create_invoice(company_id, plan_type, amount_ttc,
                             stripe_ref=session.get("payment_intent", ""),
                             uid=uid)
 
@@ -766,7 +800,9 @@ def _on_invoice_paid(invoice: dict) -> None:
     customer_id = invoice.get("customer", "")
     sub_id      = invoice.get("subscription", "")
     email       = invoice.get("customer_email", "")
-    amount_eur  = invoice.get("amount_paid", 0) / 100.0
+    # TTC encaissé, remise déduite (amount_paid est toujours net de promo).
+    _amt        = invoice.get("amount_paid")
+    amount_ttc  = (_amt / 100.0) if _amt is not None else None
     stripe_ref  = invoice.get("id", "")
     cust_name   = invoice.get("customer_name") or ""
     cust_address = invoice.get("customer_address") or {}
@@ -794,7 +830,7 @@ def _on_invoice_paid(invoice: dict) -> None:
     _email_renewal(email, expiry_ts, lang)
 
     company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address, uid=uid)
-    _axonaut_create_invoice(company_id, plan_type, amount_eur, stripe_ref=stripe_ref, uid=uid)
+    _axonaut_create_invoice(company_id, plan_type, amount_ttc, stripe_ref=stripe_ref, uid=uid)
 
     print(f"[invoice.paid] {email} — expire {_fmt_date(expiry_ts)}")
 

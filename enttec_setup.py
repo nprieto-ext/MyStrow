@@ -9,7 +9,7 @@ import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QListWidget, QListWidgetItem,
-    QApplication, QWidget, QFrame, QTextEdit,
+    QApplication, QWidget, QFrame, QTextEdit, QMessageBox,
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -23,7 +23,8 @@ except ImportError:
 
 from artnet_dmx import (TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_D2XX,
                         TRANSPORT_ENTTEC_PRO, FTD2XX_AVAILABLE,
-                        BREAK_BAUD, BREAK_US)
+                        BREAK_BAUD, BREAK_US,
+                        SERIAL_LINES_MODES, SERIAL_LINES_LABELS)
 
 try:
     import ftd2xx
@@ -387,6 +388,24 @@ class DmxSetupDialog(QDialog):
         self.btn_test100.clicked.connect(self._run_test100)
         btn_row.addWidget(self.btn_test100)
 
+        # Balayage RTS/DTR : sert quand le boîtier passif reste muet alors que
+        # tout le diagnostic est vert (émetteur RS485 inhibé — cf. artnet_dmx).
+        self.btn_lines = QPushButton("🔌  Test RTS/DTR")
+        self.btn_lines.setFixedSize(120, 28)
+        self.btn_lines.setToolTip(
+            "Boîtier Open DMX muet alors que le diagnostic est vert ?\n"
+            "Ce test envoie 4 s de DMX plein feu pour chacune des 4 positions\n"
+            "possibles des lignes RTS/DTR, puis mémorise celle qui a fonctionné."
+        )
+        self.btn_lines.setStyleSheet(
+            "QPushButton { background: #241a2e; color: #c07bff; border: 1px solid #c07bff;"
+            " border-radius: 4px; font-size: 10px; font-weight: bold; }"
+            "QPushButton:hover { background: #2f2340; }"
+            "QPushButton:disabled { color: #444; border-color: #333; background: #1a1a1a; }"
+        )
+        self.btn_lines.clicked.connect(self._run_lines_test)
+        btn_row.addWidget(self.btn_lines)
+
         btn_row.addStretch(1)
         lay.addLayout(btn_row)
 
@@ -572,6 +591,200 @@ class DmxSetupDialog(QDialog):
 
     # ── TEST 100% ───────────────────────────────────────────────────────────
 
+    def _send_serial_frame(self, ser, frame):
+        """Émet UNE trame DMX (break + MAB + data) sur un port série brut.
+
+        Copie EXACTE de la séquence de `ArtNetDMX._enttec_loop`, choix de la
+        méthode de break par plateforme compris. Un test qui n'utilise pas la
+        même séquence que la sortie live ne prouve rien : sur macOS,
+        `send_break` réussit sans lever d'exception mais ne produit aucun break
+        électrique valide — le Test 100 % s'en servait, il pouvait donc annoncer
+        « frames envoyées sans erreur » sur une ligne DMX totalement silencieuse.
+        """
+        import time as _time
+        if sys.platform == 'darwin':
+            ser.baudrate = BREAK_BAUD
+            ser.write(b'\x00')
+            ser.flush()
+            _time.sleep(0.0015)
+            ser.baudrate = 250000
+            _time.sleep(0.0001)      # MAB ≥ 8 µs
+        else:
+            ser.send_break(duration=0.001)
+        ser.write(frame)
+        ser.flush()
+
+    def _run_lines_test(self):
+        """Balaye les 4 états possibles des lignes RTS/DTR, 4 s de plein feu chacun.
+
+        À utiliser quand un boîtier passif (Open DMX) reste muet alors que tout
+        le diagnostic est vert : sur ce matériel la broche Driver Enable du
+        transceiver RS485 peut être câblée sur RTS ou DTR, et pyserial les
+        asserte à l'ouverture — l'émetteur reste alors désactivé, sans la
+        moindre erreur côté PC (cf. SERIAL_LINES_MODES dans artnet_dmx.py).
+        L'état qui allume les projecteurs est mémorisé dans ~/.mystrow_dmx.json,
+        donc trouvé une fois, il s'applique à toutes les connexions suivantes.
+        """
+        import time as _time
+
+        ok = "#4CAF50"; warn = "#ff9800"; err = "#f44336"; cyan = "#00d4ff"; dim = "#888888"
+
+        # `btn_diag` sert de drapeau « occupé » commun aux trois tests : il est
+        # désactivé pendant le diagnostic ET pendant le Test 100 %. Deux writers
+        # simultanés sur la même puce FTDI = port refermé en pleine séquence.
+        if not self.btn_diag.isEnabled():
+            self._log_line("  ⏳  Un test est déjà en cours — attendez la fin.", warn)
+            return
+
+        self._log.clear()
+        self._log_line("═══ TEST DES LIGNES RTS / DTR ═══", cyan)
+
+        live_transport = getattr(self._dmx, 'transport', '')
+        port = self.port_combo.currentData()
+        port_transport = resolve_usb_transport(port)[0] if port else TRANSPORT_ENTTEC
+        if live_transport == TRANSPORT_ENTTEC_D2XX or port_transport == TRANSPORT_ENTTEC_D2XX:
+            self._log_line("  –  Boîtier piloté en D2XX : les lignes sont gérées par le", dim)
+            self._log_line("     driver FTDI, ce test ne s'applique pas.", dim)
+            return
+        if live_transport == TRANSPORT_ENTTEC_PRO or port_transport == TRANSPORT_ENTTEC_PRO:
+            self._log_line("  –  Interface « Pro » (microcontrôleur) : elle n'utilise pas", dim)
+            self._log_line("     RTS/DTR pour activer sa sortie. Test inutile ici.", dim)
+            return
+
+        self.btn_diag.setEnabled(False)
+        self.btn_test100.setEnabled(False)
+        self.btn_lines.setEnabled(False)
+
+        # ── Port : emprunter celui de la sortie live, ou l'ouvrir ────────────
+        ser = None
+        opened_here = False
+        paused_live = False
+        dmx_serial = getattr(self._dmx, '_serial', None)
+
+        if dmx_serial and dmx_serial.is_open:
+            self._dmx._enttec_pause = True
+            paused_live = True
+            _wait = _time.monotonic() + 0.6
+            while (_time.monotonic() < _wait
+                   and not getattr(self._dmx, '_enttec_paused', False)):
+                QApplication.processEvents()
+                _time.sleep(0.01)
+            ser = dmx_serial
+            self._log_line(f"  ✓  Connexion MyStrow empruntée ({self._dmx.com_port})", ok)
+        elif port:
+            try:
+                ser = serial.Serial(
+                    port=port, baudrate=250000,
+                    bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_TWO, timeout=0.1,
+                )
+                opened_here = True
+                self._log_line(f"  ✓  Port {port} ouvert", ok)
+            except Exception as e:
+                self._log_line(f"  ✗  Impossible d'ouvrir le port : {e}", err)
+                self._lines_test_done()
+                return
+        else:
+            self._log_line("  ✗  Aucun port disponible — connectez d'abord le boîtier", err)
+            self._lines_test_done()
+            return
+
+        modes = list(SERIAL_LINES_MODES.keys())
+        DURATION_S = 4
+        INTERVAL_MS = 40                       # 25 fps, comme la sortie live
+        per_mode = int(DURATION_S * 1000 / INTERVAL_MS)
+        full_frame = b'\x00' + bytes([255] * 512)
+        state = {"mode": -1, "sent": 0, "errors": 0}
+
+        self._log_line("")
+        self._log_line(f"  4 séquences de {DURATION_S} s, tous canaux à 255.", "#cccccc")
+        self._log_line("  👀  REGARDEZ LES PROJECTEURS et notez le n° qui les allume.", warn)
+        self._log_line("")
+
+        def _start_mode():
+            state["mode"] += 1
+            state["sent"] = 0
+            if state["mode"] >= len(modes):
+                _timer.stop()
+                _ask()
+                return
+            mode = modes[state["mode"]]
+            self._dmx.apply_serial_lines(ser, mode)
+            self._log_line(f"  [{state['mode'] + 1}/4]  {SERIAL_LINES_LABELS[mode]}…", cyan)
+
+        def _tick():
+            # Callback QTimer : toute exception non rattrapée ici tue le
+            # process PySide6 (cf. les wrappers des timers de restitution).
+            try:
+                if state["sent"] >= per_mode:
+                    _start_mode()
+                    return
+                try:
+                    self._send_serial_frame(ser, full_frame)
+                    state["sent"] += 1
+                except Exception as ex:
+                    state["errors"] += 1
+                    if state["errors"] > 10:
+                        _timer.stop()
+                        self._log_line(f"  ✗  Erreurs répétées — test arrêté : {ex}", err)
+                        _cleanup(None)
+            except Exception as ex:
+                _timer.stop()
+                self._log_line(f"  ✗  Test interrompu : {ex}", err)
+                self._lines_test_done()
+
+        def _ask():
+            box = QMessageBox(self)
+            box.setWindowTitle("Test RTS/DTR")
+            box.setIcon(QMessageBox.Question)
+            box.setText("Quelle séquence a allumé vos projecteurs ?")
+            box.setInformativeText(
+                "Le réglage correspondant sera mémorisé et appliqué à chaque "
+                "connexion de ce boîtier."
+            )
+            buttons = {}
+            for i, mode in enumerate(modes):
+                buttons[box.addButton(f"{i + 1} — {SERIAL_LINES_LABELS[mode]}",
+                                      QMessageBox.AcceptRole)] = mode
+            btn_none = box.addButton("Aucune", QMessageBox.RejectRole)
+            box.exec()
+            _cleanup(buttons.get(box.clickedButton()) if box.clickedButton() is not btn_none else None)
+
+        def _cleanup(chosen):
+            self._log_line("")
+            if chosen:
+                self._dmx.serial_lines = chosen
+                self._dmx._save_config()
+                self._log_line(f"  ✓  Réglage mémorisé : {SERIAL_LINES_LABELS[chosen]}", ok)
+            else:
+                self._log_line("  ⚠  Aucune séquence retenue — réglage inchangé "
+                               f"({SERIAL_LINES_LABELS.get(getattr(self._dmx, 'serial_lines', 'clear'), '?')})", warn)
+                self._log_line("      Le problème est alors ailleurs : câble XLR, adresse DMX,", dim)
+                self._log_line("      ou boîtier exigeant le driver D2XX.", dim)
+            # Le balayage a laissé les lignes sur le DERNIER mode testé : sans
+            # cette remise en état, la sortie live resterait muette jusqu'à la
+            # prochaine reconnexion.
+            try:
+                self._dmx.apply_serial_lines(ser)
+            except Exception:
+                pass
+            if opened_here:
+                try: ser.close()
+                except Exception: pass
+            if paused_live:
+                self._dmx._enttec_pause = False
+            self._lines_test_done()
+
+        _timer = QTimer(self)          # créé AVANT _start_mode : la closure l'utilise
+        _timer.timeout.connect(_tick)
+        _start_mode()
+        _timer.start(INTERVAL_MS)
+
+    def _lines_test_done(self):
+        self.btn_diag.setEnabled(True)
+        self.btn_test100.setEnabled(True)
+        self.btn_lines.setEnabled(True)
+
     def _run_test100(self):
         """Envoie 3 secondes de DMX full (tous canaux = 255) via l'Enttec connecté."""
         from PySide6.QtCore import QTimer as _QTimer
@@ -628,6 +841,10 @@ class DmxSetupDialog(QDialog):
                     stopbits=serial.STOPBITS_TWO, timeout=0.1,
                 )
                 opened_here = True
+                # Mêmes lignes RTS/DTR que la sortie live, sinon le test peut
+                # rester muet (ou marcher !) pour une raison qui ne se
+                # reproduira pas en show.
+                self._dmx.apply_serial_lines(ser)
                 self._log_line(f"  ✓  Port ouvert", ok)
             except Exception as e:
                 self._log_line(f"  ✗  Impossible d'ouvrir le port : {e}", err)
@@ -662,9 +879,9 @@ class DmxSetupDialog(QDialog):
                 _finish()
                 return
             try:
-                ser.send_break(duration=0.001)   # 1 ms — break fiable (cf. _enttec_loop)
-                ser.write(full_frame)
-                ser.flush()
+                # Même séquence break + trame que la sortie live, plateforme
+                # comprise (sur macOS send_break ne produit pas de break valide).
+                self._send_serial_frame(ser, full_frame)
                 sent[0] += 1
             except Exception as ex:
                 errors[0] += 1
@@ -1013,6 +1230,7 @@ class DmxSetupDialog(QDialog):
                     stopbits=serial.STOPBITS_TWO, timeout=0.1,
                 )
                 elapsed = (_time.perf_counter() - t0) * 1000
+                self._dmx.apply_serial_lines(ser)   # comme la sortie live
                 self._log_line(f"  ✓  Ouvert en {elapsed:.0f} ms", ok)
             except serial.SerialException as e:
                 msg = str(e)
@@ -1160,6 +1378,13 @@ class DmxSetupDialog(QDialog):
         self._log_line(f"  Transport : {transport_str}", "#cccccc")
         self._log_line(f"  Port configuré : {com_str}", "#cccccc")
         self._log_line(f"  Connecté : {connected_str}", conn_color)
+        # Sur le transport série brut, l'état RTS/DTR conditionne l'activation
+        # de l'émetteur RS485 de certains boîtiers passifs : à faire figurer
+        # dans le rapport, sinon une sortie muette reste inexplicable.
+        if transport_str == TRANSPORT_ENTTEC:
+            _lines = getattr(dmx, 'serial_lines', 'clear')
+            self._log_line(f"  Lignes RTS/DTR : {SERIAL_LINES_LABELS.get(_lines, _lines)}",
+                           "#cccccc")
 
         # ── Cohérence transport ↔ interface testée ───────────────────────────
         # Cet assistant ne propose QUE des interfaces USB/série. Si la sortie

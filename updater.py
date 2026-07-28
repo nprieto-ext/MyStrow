@@ -611,14 +611,65 @@ class UpdateBar(QWidget):
 # ============================================================
 # DOWNLOAD + INSTALL
 # ============================================================
+class _UpdateDialog(QDialog):
+    """Fenetre de telechargement — volontairement impossible a fermer par megarde.
+
+    Le telechargement tourne dans le THREAD PRINCIPAL (boucle read() +
+    processEvents) : la fenetre est le seul retour visuel, et rien ne reprend
+    la main si elle disparait. Sur macOS un simple clic a cote suffisait a la
+    faire passer derriere la fenetre principale — de l'avis de l'utilisateur,
+    la mise a jour etait « perdue ».
+
+    D'ou : modale applicative (les clics exterieurs ne l'atteignent plus),
+    pas de bouton de fermeture, Echap neutralise, et closeEvent refuse tant que
+    `verrouille` est vrai. Toutes les sorties passent par `_fermer()`, qui leve
+    le verrou : ne JAMAIS appeler dlg.close() directement, la fenetre
+    resterait a l'ecran."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.verrouille = True
+        self.setWindowModality(Qt.ApplicationModal)
+
+    def closeEvent(self, event):
+        if self.verrouille:
+            event.ignore()
+        else:
+            super().closeEvent(event)
+
+    def keyPressEvent(self, event):
+        # Echap declenche reject() sur un QDialog : on l'avale pendant le
+        # telechargement, sinon la fenetre se ferme sans rien interrompre.
+        if self.verrouille and event.key() == Qt.Key_Escape:
+            event.ignore()
+            return
+        super().keyPressEvent(event)
+
+    def reject(self):
+        if not self.verrouille:
+            super().reject()
+
+
 def download_update(parent, version, exe_url, hash_url, sig_url=""):
     """Telecharge la mise a jour avec verification SHA256 et lance le batch updater"""
 
-    dlg = QDialog(parent)
+    # Sans parent, la fenetre flotte librement et passe derriere l'application
+    # au premier clic exterieur (macOS) : on la rattache a la fenetre active.
+    if parent is None:
+        parent = QApplication.activeWindow()
+
+    dlg = _UpdateDialog(parent)
     dlg.setWindowTitle(tr("update_dlg_title", ver=version))
     dlg.setFixedSize(460, 200)
-    dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+    dlg.setWindowFlags(dlg.windowFlags()
+                       & ~Qt.WindowContextHelpButtonHint
+                       & ~Qt.WindowCloseButtonHint)
     dlg.setStyleSheet("background: #1e1e1e; color: #cccccc;")
+
+    def _fermer():
+        """Seule facon de fermer la fenetre : leve le verrou puis ferme."""
+        dlg.verrouille = False
+        dlg.close()
 
     layout = QVBoxLayout(dlg)
     layout.setContentsMargins(24, 20, 24, 20)
@@ -729,7 +780,7 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
                         status_label.setText(tr("downloading"))
                     QApplication.processEvents()
     except Exception as e:
-        dlg.close()
+        _fermer()
         QMessageBox.critical(parent, tr("err_download_title"), tr("err_download_msg", err=e))
         return
 
@@ -756,7 +807,7 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
                     sha.update(chunk)
             actual_hash = sha.hexdigest().lower()
             if actual_hash != expected_hash:
-                dlg.close()
+                _fermer()
                 try:
                     new_file.unlink()
                 except Exception:
@@ -774,12 +825,12 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
     QApplication.processEvents()
 
     if not getattr(sys, 'frozen', False):
-        dlg.close()
+        _fermer()
         QMessageBox.information(parent, tr("dev_mode_title"), tr("dev_mode_msg", path=new_file))
         return
 
     # Petite pause pour que l'utilisateur voit l'etape installation
-    QTimer.singleShot(800, dlg.close)
+    QTimer.singleShot(800, _fermer)
     QTimer.singleShot(800, QApplication.quit)
 
     is_dmg = exe_url.lower().endswith(".dmg")

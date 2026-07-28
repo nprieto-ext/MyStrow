@@ -532,6 +532,32 @@ def _apply_matrix_meta(proj, src):
             setattr(proj, f, src[f])
 
 
+_PANTILT_META_FIELDS = (
+    "pan_min", "pan_max", "tilt_min", "tilt_max",
+    "pan_invert", "tilt_invert", "pan_tilt_swap",
+)
+
+
+def _pantilt_meta(proj):
+    """Zone de mouvement + inversions d'une lyre, pour sauvegarde/snapshot.
+
+    À rappeler dans TOUT endroit qui sérialise ou recrée un Projector : ces
+    champs vivaient uniquement en mémoire, donc la zone patiemment délimitée
+    par l'utilisateur repartait à 0–65535 au moindre redémarrage ou Ctrl+Z
+    dans l'éditeur de patch — la lyre recommençait à balayer le côté interdit
+    sans que rien ne l'explique."""
+    return {f: getattr(proj, f, None) for f in _PANTILT_META_FIELDS}
+
+
+def _apply_pantilt_meta(proj, src):
+    """Restaure zone de mouvement et inversions depuis un dict (cf. _pantilt_meta)."""
+    if not src:
+        return
+    for f in _PANTILT_META_FIELDS:
+        if src.get(f) is not None:
+            setattr(proj, f, src[f])
+
+
 def _infer_pixel_matrix(profile):
     """Déduit la géométrie d'une barre/matrice depuis un profil DMX brut.
 
@@ -16200,6 +16226,10 @@ class MainWindow(QMainWindow):
                     p = self.projectors[i]
                     entry['canvas_x'] = getattr(p, 'canvas_x', None)
                     entry['canvas_y'] = getattr(p, 'canvas_y', None)
+                    # fixture_data ne porte pas la zone pan/tilt ni les
+                    # inversions : sans ça, un Ctrl+Z rendait à la lyre toute
+                    # sa course, en pleine session.
+                    entry.update(_pantilt_meta(p))
                 snap.append(entry)
             _history.append(snap)
             _redo_stack.clear()
@@ -16214,6 +16244,10 @@ class MainWindow(QMainWindow):
                     p = self.projectors[i]
                     entry['canvas_x'] = getattr(p, 'canvas_x', None)
                     entry['canvas_y'] = getattr(p, 'canvas_y', None)
+                    # fixture_data ne porte pas la zone pan/tilt ni les
+                    # inversions : sans ça, un Ctrl+Z rendait à la lyre toute
+                    # sa course, en pleine session.
+                    entry.update(_pantilt_meta(p))
                 snap.append(entry)
             return snap
 
@@ -16240,6 +16274,7 @@ class MainWindow(QMainWindow):
                 p.gobo_wheel_slots  = list(fd_s.get('gobo_wheel_slots', []))
                 if p.fixture_type == "Machine a fumee":
                     p.fan_speed = 0
+                _apply_pantilt_meta(p, fd_s)
                 _apply_matrix_meta(p, fd_s)
                 self.projectors.append(p)
                 fixture_data.append({
@@ -16252,6 +16287,7 @@ class MainWindow(QMainWindow):
                     'channel_defaults':   dict(fd_s.get('channel_defaults', {})),
                     'color_wheel_slots':  list(fd_s.get('color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(fd_s.get('gobo_wheel_slots', [])),
+                    **{k: fd_s[k] for k in _PANTILT_META_FIELDS if k in fd_s},
                     **{k: fd_s[k] for k in _MATRIX_META_FIELDS if k in fd_s},
                 })
             self._rebuild_dmx_patch()
@@ -19758,9 +19794,7 @@ class MainWindow(QMainWindow):
                 'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                 'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
-                'pan_invert':    getattr(proj, 'pan_invert',    False),
-                'tilt_invert':   getattr(proj, 'tilt_invert',   False),
-                'pan_tilt_swap': getattr(proj, 'pan_tilt_swap', False),
+                **_pantilt_meta(proj),
                 **_matrix_meta(proj),
             })
         scene_3d = {}
@@ -19835,9 +19869,7 @@ class MainWindow(QMainWindow):
                         p.channel_defaults  = dict(fd.get('channel_defaults', {}))
                         p.color_wheel_slots = list(fd.get('color_wheel_slots', []))
                         p.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
-                        p.pan_invert    = bool(fd.get('pan_invert',    False))
-                        p.tilt_invert   = bool(fd.get('tilt_invert',   False))
-                        p.pan_tilt_swap = bool(fd.get('pan_tilt_swap', False))
+                        _apply_pantilt_meta(p, fd)
                         p.manufacturer  = fd.get('manufacturer', '')
                         _apply_matrix_meta(p, fd)
                         self.projectors.append(p)

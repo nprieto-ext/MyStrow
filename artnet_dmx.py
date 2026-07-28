@@ -138,6 +138,38 @@ TRANSPORT_ARTNET      = "artnet"       # Boitier reseau Art-Net (ElectroConcept.
 BREAK_BAUD = 90000
 BREAK_US   = 9 * 1_000_000 / BREAK_BAUD   # ~100 us
 
+# Etat des lignes de controle modem (RTS / DTR) sur le transport serie brut.
+#
+# POURQUOI CA COMPTE : un boitier « Open DMX » est passif — la puce FTDI attaque
+# directement l'emetteur RS485 (75176 & co). Sur l'ENTTEC Open DMX USB, la
+# broche DE (Driver Enable) de cet emetteur est cablee sur RTS et non tiree en
+# dur a VCC. Or pyserial ASSERTE RTS et DTR a l'ouverture du port : l'emetteur
+# reste alors muet — le PC envoie ses trames sans la moindre erreur, le
+# diagnostic est tout vert, et rien ne sort du XLR. C'est exactement ce que
+# QLC+ et OLA evitent en appelant clearRts() sur ce materiel.
+#
+# MESURE (28/07/2026, ENTTEC Open DMX USB, FTDI BG04EMMJ, macOS 24.2, 4 x 6 s
+# de plein feu clignotant a 25 fps) :
+#     RTS ✗ / DTR ✗ -> ALLUME      RTS ✓ / DTR ✓ -> muet
+#     RTS ✗ / DTR ✓ -> ALLUME      RTS ✓ / DTR ✗ -> muet
+# Seul RTS discrimine ; DTR n'a aucun effet. C'est bien RTS qui porte le DE.
+# Un boitier dont le DE est cable en dur (cas de l'USB Opto ElectroConcept, qui
+# fonctionne deja) ignore completement ces lignes : desasserter est sans risque.
+# Le mode est surchargeable via ~/.mystrow_dmx.json (cle "serial_lines") pour
+# couvrir un cablage exotique sans rebuild — cf. assistant, « Test RTS/DTR ».
+SERIAL_LINES_MODES = {
+    "clear":  (False, False),   # defaut : RTS et DTR desassertes (QLC+ / OLA)
+    "legacy": (True,  True),    # comportement < 3.1.77 (defaut pyserial)
+    "rts":    (True,  False),
+    "dtr":    (False, True),
+}
+SERIAL_LINES_LABELS = {
+    "clear":  "RTS ✗ / DTR ✗ (défaut)",
+    "legacy": "RTS ✓ / DTR ✓ (ancien)",
+    "rts":    "RTS ✓ / DTR ✗",
+    "dtr":    "RTS ✗ / DTR ✓",
+}
+
 
 class ArtNetDMX:
     """Envoi DMX via ENTTEC Open DMX USB ou boitier reseau Art-Net.
@@ -175,6 +207,8 @@ class ArtNetDMX:
         # port qu'après plusieurs erreurs d'affilée (un hoquet USB isolé ne
         # doit pas réinitialiser la ligne FTDI → flash + trou DMX).
         self._enttec_err_count = 0
+        # Etat RTS/DTR applique a l'ouverture du port serie (cf. SERIAL_LINES_MODES)
+        self.serial_lines = "clear"
 
         # --- ENTTEC Open DMX USB via D2XX (driver FTDI direct, comme QLC+) ---
         # Le boitier passif (FT232R) est piloté de façon fiable par le driver
@@ -252,6 +286,8 @@ class ArtNetDMX:
                 self.universe2    = int(cfg.get("universe2", 1))
                 self.mirror_output = bool(cfg.get("mirror_output", True))
                 self.pro_baud      = int(cfg.get("pro_baud", 250000))
+                _lines = str(cfg.get("serial_lines", "clear"))
+                self.serial_lines = _lines if _lines in SERIAL_LINES_MODES else "clear"
         except Exception:
             pass
 
@@ -270,6 +306,7 @@ class ArtNetDMX:
                     "universe2":     self.universe2,
                     "mirror_output": self.mirror_output,
                     "pro_baud":      getattr(self, "pro_baud", 250000),
+                    "serial_lines":  getattr(self, "serial_lines", "clear"),
                 }, f, indent=2)
         except Exception:
             pass
@@ -353,6 +390,38 @@ class ArtNetDMX:
     # Transport ENTTEC Open DMX USB
     # ------------------------------------------------------------------
 
+    def apply_serial_lines(self, ser, mode=None):
+        """Positionne RTS/DTR sur un port serie DMX brut (cf. SERIAL_LINES_MODES).
+
+        Appele apres CHAQUE ouverture (connexion initiale ET reconnexion auto) :
+        pyserial asserte les deux lignes a l'ouverture, ce qui peut inhiber
+        l'emetteur RS485 d'un boitier Open DMX passif — sortie muette sans
+        aucune erreur. Volontairement public : l'assistant s'en sert pour
+        balayer les 4 combinaisons sur le port live."""
+        rts, dtr = SERIAL_LINES_MODES.get(mode or getattr(self, "serial_lines", "clear"),
+                                          SERIAL_LINES_MODES["clear"])
+        try:
+            ser.rts = rts
+        except Exception as e:
+            print(f"ENTTEC: RTS non pilotable ({e})")
+        try:
+            ser.dtr = dtr
+        except Exception as e:
+            print(f"ENTTEC: DTR non pilotable ({e})")
+
+    def _open_enttec_serial(self):
+        """Ouvre le port serie DMX brut (250 kbauds, 8N2) lignes RTS/DTR reglees."""
+        ser = serial.Serial(
+            port=self.com_port,
+            baudrate=250000,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_TWO,
+            timeout=0.1,
+        )
+        self.apply_serial_lines(ser)
+        return ser
+
     def _connect_enttec(self):
         if not SERIAL_AVAILABLE:
             print("pyserial non disponible — pip install pyserial")
@@ -370,16 +439,10 @@ class ArtNetDMX:
         self._stop_enttec_thread()
 
         try:
-            self._serial = serial.Serial(
-                port=self.com_port,
-                baudrate=250000,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_TWO,
-                timeout=0.1,
-            )
+            self._serial = self._open_enttec_serial()
             self.connected = True
-            print(f"ENTTEC Open DMX USB connecte sur {self.com_port}")
+            print(f"ENTTEC Open DMX USB connecte sur {self.com_port} "
+                  f"(lignes {getattr(self, 'serial_lines', 'clear')})")
             self._start_enttec_thread()
             return True
         except Exception as e:
@@ -549,14 +612,7 @@ class ArtNetDMX:
             elif self.com_port and not self._enttec_stop:
                 # Reconnexion automatique
                 try:
-                    self._serial = serial.Serial(
-                        port=self.com_port,
-                        baudrate=250000,
-                        bytesize=serial.EIGHTBITS,
-                        parity=serial.PARITY_NONE,
-                        stopbits=serial.STOPBITS_TWO,
-                        timeout=0.1,
-                    )
+                    self._serial = self._open_enttec_serial()
                     self.connected = True
                     print(f"ENTTEC: reconnexion sur {self.com_port}")
                 except Exception:
@@ -649,6 +705,17 @@ class ArtNetDMX:
             dev.setFlowControl(_ftd.FLOW_NONE, 0, 0)
             dev.setLatencyTimer(1)      # 1 ms — le réglage clé que le VCP ne fait pas
             dev.setTimeouts(100, 100)
+            # RTS désassertée, comme QLC+ : mesuré sur ENTTEC Open DMX USB, la
+            # broche Driver Enable du transceiver RS485 y est câblée — RTS
+            # assertée = sortie totalement muette (et aucune erreur). C'est
+            # déjà l'état par défaut de FT_Open (d'où le fonctionnement en
+            # D2XX sous Windows), on l'écrit explicitement pour ne pas
+            # dépendre d'un défaut de driver.
+            try:
+                dev.clrRts()
+                dev.clrDtr()
+            except Exception as e:
+                print(f"ENTTEC D2XX : RTS/DTR non pilotables ({e})")
             dev.purge(_ftd.PURGE_TX | _ftd.PURGE_RX)
             self._d2xx = dev
             self.connected = True
@@ -1096,19 +1163,28 @@ class ArtNetDMX:
             _ch_defaults = getattr(proj, 'channel_defaults', {})
             _ch_extras   = getattr(proj, 'channel_extras',   {})
 
-            # Pan/Tilt effectifs : swap puis inversion, puis limites
-            _raw_pan  = getattr(proj, 'pan',  32768)
-            _raw_tilt = getattr(proj, 'tilt', 32768)
-            if getattr(proj, 'pan_tilt_swap', False):
-                _raw_pan, _raw_tilt = _raw_tilt, _raw_pan
-            if getattr(proj, 'pan_invert',  False):
-                _raw_pan  = 65535 - _raw_pan
-            if getattr(proj, 'tilt_invert', False):
-                _raw_tilt = 65535 - _raw_tilt
+            # Pan/Tilt effectifs : LIMITES d'abord, puis swap et inversion.
+            #
+            # L'ordre n'est pas cosmetique. Les limites sont exprimees dans le
+            # repere de l'APPLICATION — c'est celui du carre de reglage, du
+            # point jaune, des positions memorisees et des faders POS. Swap et
+            # inversion, eux, ne corrigent que le cablage/l'accrochage en bout
+            # de chaine. Clamper apres l'inversion appliquait donc la zone en
+            # MIROIR : l'utilisateur tirait la limite droite et la lyre se
+            # bloquait a gauche, en continuant d'aller du cote qu'il voulait
+            # justement interdire (remonte utilisateur, 28/07/2026).
             _eff_pan  = max(getattr(proj, 'pan_min',  0),
-                            min(getattr(proj, 'pan_max',  65535), _raw_pan))
+                            min(getattr(proj, 'pan_max',  65535),
+                                getattr(proj, 'pan',  32768)))
             _eff_tilt = max(getattr(proj, 'tilt_min', 0),
-                            min(getattr(proj, 'tilt_max', 65535), _raw_tilt))
+                            min(getattr(proj, 'tilt_max', 65535),
+                                getattr(proj, 'tilt', 32768)))
+            if getattr(proj, 'pan_tilt_swap', False):
+                _eff_pan, _eff_tilt = _eff_tilt, _eff_pan
+            if getattr(proj, 'pan_invert',  False):
+                _eff_pan  = 65535 - _eff_pan
+            if getattr(proj, 'tilt_invert', False):
+                _eff_tilt = 65535 - _eff_tilt
 
             # Pour les fixtures RGBW : extraire W = min(R,G,B) et le soustraire
             # des canaux RGB pour éviter la contamination blanche (double envoi)

@@ -46,6 +46,13 @@ else:
         bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
         stopbits=serial.STOPBITS_TWO, timeout=0.1,
     )
+# RTS = Driver Enable du RS485 sur l'ENTTEC Open DMX USB (asserte par pyserial
+# a l'ouverture => sortie muette, sans aucune erreur). Cf. artnet_dmx.py.
+try:
+    ser.rts = False
+    ser.dtr = False
+except Exception as e:
+    print(f"(RTS/DTR non pilotables : {e})")
 print("OK")
 print("Envoi 25 fps... (Ctrl+C pour arreter)")
 
