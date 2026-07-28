@@ -64,11 +64,11 @@ try:
                 ser.break_condition = False
                 ser.write(frame); ser.flush()
             elif METHOD == "baudtrick":
+                # Pas de reset_output_buffer() : ~1 s par appel sur macOS, ce
+                # qui écroulerait la mesure de débit de ce banc de test.
                 ser.baudrate = 100000
-                ser.reset_output_buffer()
                 ser.write(b'\x00'); ser.flush()
                 time.sleep(0.0015)
-                ser.reset_output_buffer()
                 ser.baudrate = 250000
                 time.sleep(0.0001)
                 ser.write(frame); ser.flush()

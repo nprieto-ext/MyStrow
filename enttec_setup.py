@@ -1042,12 +1042,14 @@ class DmxSetupDialog(QDialog):
             # produisant aucun break électrique valide — le tester ici afficherait
             # un « ✓ » mensonger alors que les projecteurs ignorent tout.
             try:
+                # Pas de reset_output_buffer() : il bloque ~1 s par appel sur
+                # macOS (FTDI VCP) et jetterait le break qu'on vient d'émettre.
+                # Doit rester la copie EXACTE de `_enttec_loop`, sinon ce test
+                # valide une séquence que la sortie live n'utilise pas.
                 ser.baudrate = BREAK_BAUD
-                ser.reset_output_buffer()
                 ser.write(b'\x00')
                 ser.flush()
                 _time.sleep(0.0015)
-                ser.reset_output_buffer()
                 ser.baudrate = 250000
                 self._log_line(f"  ✓  Baud-rate trick OK — break ≈ {BREAK_US:.0f} µs", ok)
                 self._log_line("      (méthode utilisée par la sortie live sur macOS)", dim)

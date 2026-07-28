@@ -512,12 +512,23 @@ class ArtNetDMX:
                     else:
                         # Méthode 2 : baud-rate trick — break généré par un 0x00
                         # (9 bits LOW à BREAK_BAUD ≈ 100 µs, cf. constante)
+                        #
+                        # SURTOUT PAS de reset_output_buffer() ici. Sur macOS
+                        # (FTDI VCP) chaque appel BLOQUE près d'une seconde :
+                        # mesuré sur MacBook M1, 2 appels par trame font tomber
+                        # la sortie à 8 trames en 8 s — 1 fps. Un projecteur
+                        # DMX512 coupe après ~1 s sans trame valide, donc plus
+                        # rien ne s'allume, sans la moindre erreur pour le dire.
+                        # Sans ces appels : 154 trames en 8 s (19 fps) et les
+                        # projecteurs répondent.
+                        # Ils étaient de toute façon inutiles : `flush()`
+                        # (tcdrain) a déjà vidé la sortie — il ne reste rien à
+                        # jeter, et jeter APRÈS le flush ne peut que supprimer
+                        # le break qu'on vient d'émettre.
                         ser.baudrate = BREAK_BAUD
-                        ser.reset_output_buffer()
                         ser.write(b'\x00')
                         ser.flush()
                         time.sleep(0.0015)     # 1.5 ms — marge pour latence USB macOS
-                        ser.reset_output_buffer()
                         ser.baudrate = 250000
                         time.sleep(0.0001)     # MAB explicite ≥ 8 µs requis DMX512
                         ser.write(frame)

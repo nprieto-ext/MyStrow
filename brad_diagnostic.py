@@ -100,13 +100,26 @@ class _DiagWorker(QThread):
         self.progress.emit(35, "État DMX en mémoire...")
         try:
             dmx = w.dmx
-            add("DMX live", "info", f"Transport   : {dmx.transport}")
-            add("DMX live", "info", f"IP cible    : {dmx.target_ip}")
-            add("DMX live", "info", f"Port        : {dmx.target_port}")
+            # Décrire le transport RÉELLEMENT actif. Afficher « IP cible / port
+            # 6454 / socket fermé » sur une sortie USB faisait chercher un
+            # problème réseau là où il n'y en a pas — et masquait le vrai sujet.
+            _serie = dmx.transport in ("enttec", "enttec_pro", "enttec_d2xx")
+            add("DMX live", "info", f"Transport   : {dmx.transport}"
+                                    f"  ({'USB / série' if _serie else 'réseau Art-Net'})")
+            if _serie:
+                add("DMX live", "info", f"Port série  : {dmx.com_port or '— non configuré —'}")
+                add("DMX live", "info",
+                    f"Port ouvert : {'oui' if getattr(dmx, '_serial', None) else 'non'}")
+                add("DMX live", "warn",
+                    f"(IP {dmx.target_ip} ignorée : ce transport n'utilise pas le réseau)")
+            else:
+                add("DMX live", "info", f"IP cible    : {dmx.target_ip}")
+                add("DMX live", "info", f"Port        : {dmx.target_port}")
+                add("DMX live", "info", f"Socket      : {'ouvert' if dmx._socket else 'fermé'}")
             add("DMX live", "info", f"Univers     : {dmx.universe}")
             add("DMX live", "ok" if dmx.connected else "err",
-                f"Connecté    : {'OUI' if dmx.connected else 'NON'}")
-            add("DMX live", "info", f"Socket      : {'ouvert' if dmx._socket else 'fermé'}")
+                f"Connecté    : {'OUI' if dmx.connected else 'NON'}"
+                + ("" if dmx.connected else "  ← rien ne sort tant que c'est NON"))
             nb_patched = len(dmx.projector_channels)
             add("DMX live", "ok" if nb_patched > 0 else "err",
                 f"Fixtures patchées : {nb_patched}")
@@ -128,13 +141,8 @@ class _DiagWorker(QThread):
         # ── 7. Carte réseau ───────────────────────────────────────────────
         self.progress.emit(50, "Cartes réseau...")
         try:
-            result = subprocess.run(
-                ["ipconfig"], capture_output=True, text=True,
-                encoding="cp850", errors="replace",
-                creationflags=CREATE_NO_WINDOW
-            )
             # Tous les adaptateurs (sans filtre agressif)
-            all_adapters = _parse_adapters(result.stdout, filter_irrelevant=False)
+            all_adapters = _lire_adaptateurs(filter_irrelevant=False)
             # Filtrer loopback/tunnel pour l'affichage
             skip_display = ["loopback", "bluetooth", "tunnel", "vmware", "vethernet", "isatap"]
             adapters = [(n, ip) for n, ip in all_adapters
@@ -155,7 +163,7 @@ class _DiagWorker(QThread):
                 else:
                     add("Réseau", "err", "Aucun adaptateur Ethernet détecté — branchez le câble RJ45 !")
         except Exception as e:
-            add("Réseau", "err", f"ipconfig échoué : {e}")
+            add("Réseau", "warn", f"Liste des interfaces indisponible : {e}")
 
         # ── 8. ArtPoll broadcast ──────────────────────────────────────────
         self.progress.emit(62, "ArtPoll broadcast...")
@@ -174,27 +182,42 @@ class _DiagWorker(QThread):
         # ── 9. Scan ARP — détection boîtiers sur 2.x.x.x ────────────────
         self.progress.emit(62, "Scan réseau 2.0.0.x...")
         try:
-            # Ping sweep rapide sur 2.0.0.1 → 2.0.0.30 pour peupler la table ARP
-            scan_cmd = "for /L %i in (1,1,30) do @ping -n 1 -w 80 2.0.0.%i > nul"
-            subprocess.run(["cmd", "/c", scan_cmd], capture_output=True,
-                           creationflags=CREATE_NO_WINDOW, timeout=15)
-            # Lire la table ARP
+            # Balayage 2.0.0.1 → 2.0.0.30 pour peupler la table ARP. Un simple
+            # datagramme UDP suffit : l'envoyer force la résolution ARP de
+            # l'IP visée, sans les droits root d'un ping ICMP et sans dépendre
+            # d'un shell (l'ancien `cmd /c for /L …` échouait sur macOS avec
+            # « No such file or directory: 'cmd' », et le scan ne servait plus).
+            _sonde = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _sonde.settimeout(0.05)
+            for _n in range(1, 31):
+                try:
+                    _sonde.sendto(b"\x00", (f"2.0.0.{_n}", 6454))
+                except Exception:
+                    pass
+            _sonde.close()
+            time.sleep(0.6)          # laisser les réponses ARP arriver
+
             arp = subprocess.run(["arp", "-a"], capture_output=True, text=True,
-                                 encoding="cp850", errors="replace",
+                                 encoding=_ENCODAGE_CMD, errors="replace",
+                                 timeout=10,
                                  creationflags=CREATE_NO_WINDOW)
             import re as _re
             found_devices = []
+            # Windows : « 2.0.0.15   00-11-22-33-44-55   dynamique »
+            # macOS   : « ? (2.0.0.15) at 0:11:22:33:44:55 on en5 … »
+            # `(?<![\d.])` est indispensable : sans lui, « 192.168.1.1 » se fait
+            # lire comme « 2.168.1.1 » et le rapport invente un boîtier sur le
+            # réseau 2.x qui n'existe pas.
+            _rx = _re.compile(r"(?<![\d.])(2\.\d{1,3}\.\d{1,3}\.\d{1,3})\)?\s+(?:at\s+)?"
+                              r"([0-9a-fA-F]{1,2}(?:[:-][0-9a-fA-F]{1,2}){5})")
+            _locales = {ip for _, ip in _lire_adaptateurs(filter_irrelevant=False)}
             for line in arp.stdout.splitlines():
-                m = _re.search(r"(2\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+([\w-]{17})", line)
+                m = _rx.search(line)
                 if m:
-                    ip, mac = m.group(1), m.group(2)
-                    if not ip == "2.0.0.1" or True:  # inclure toutes les IPs 2.x
-                        found_devices.append((ip, mac))
+                    found_devices.append((m.group(1), m.group(2)))
             if found_devices:
                 for ip, mac in found_devices:
-                    is_pc = ip == w.dmx.target_ip or any(
-                        ip == a[1] for a in _parse_adapters(arp.stdout, filter_irrelevant=False)
-                    )
+                    is_pc = ip == w.dmx.target_ip or ip in _locales
                     label = " ← boîtier probable" if not is_pc else " ← ce PC"
                     add("Scan réseau", "ok" if not is_pc else "info",
                         f"Appareil trouvé : {ip}  MAC={mac}{label}")
@@ -207,16 +230,27 @@ class _DiagWorker(QThread):
         self.progress.emit(68, "Ping boîtier...")
         try:
             target = w.dmx.target_ip
+            # `-n` (nombre) et `-w` (délai en ms) sont propres à Windows ; sur
+            # macOS/Linux ce sont `-c` et `-W` (en secondes). Avec les mauvais
+            # arguments, ping sortait en erreur et le rapport concluait « ne
+            # répond PAS » sur un boîtier parfaitement joignable.
+            _args = (["ping", "-n", "2", "-w", "1000", target] if _WINDOWS
+                     else ["ping", "-c", "2", "-W", "1", target])
             ping_result = subprocess.run(
-                ["ping", "-n", "2", "-w", "1000", target],
-                capture_output=True, text=True, encoding="cp850", errors="replace",
+                _args, capture_output=True, text=True,
+                encoding=_ENCODAGE_CMD, errors="replace", timeout=10,
                 creationflags=CREATE_NO_WINDOW
             )
-            ping_ok = "TTL=" in ping_result.stdout or "ttl=" in ping_result.stdout.lower()
+            ping_ok = "ttl=" in ping_result.stdout.lower()
             if ping_ok:
                 add("Ping", "ok", f"Boîtier {target} répond au ping ✓")
             else:
-                add("Ping", "err", f"Boîtier {target} ne répond PAS au ping — vérifiez l'IP et le câble")
+                # Beaucoup de nodes Art-Net ignorent l'ICMP par conception :
+                # un ping muet n'est PAS une preuve de panne. C'est l'ArtPoll
+                # unicast juste après qui tranche.
+                add("Ping", "warn",
+                    f"Boîtier {target} ne répond pas au ping "
+                    f"(normal sur beaucoup de nodes — voir l'ArtPoll ci-dessous)")
         except Exception as e:
             add("Ping", "err", f"Ping échoué : {e}")
 
@@ -315,6 +349,53 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5,
     except Exception:
         pass
     return False, ""
+
+
+_WINDOWS = platform.system() == "Windows"
+_ENCODAGE_CMD = "cp850" if _WINDOWS else "utf-8"
+
+
+def _lire_adaptateurs(filter_irrelevant: bool = True):
+    """Liste [(nom, IPv4)] des interfaces réseau, quel que soit le système.
+
+    Sur macOS/Linux, `ipconfig` n'existe pas : le diagnostic annonçait alors
+    « Aucun adaptateur Ethernet détecté — branchez le câble RJ45 » alors que le
+    câble était branché et que le boîtier répondait à l'ArtPoll juste en
+    dessous. Un diagnostic qui ment sur ce point envoie chercher la panne au
+    mauvais endroit.
+    """
+    if _WINDOWS:
+        out = subprocess.run(["ipconfig"], capture_output=True, text=True,
+                             encoding=_ENCODAGE_CMD, errors="replace",
+                             creationflags=CREATE_NO_WINDOW).stdout
+        return _parse_adapters(out, filter_irrelevant)
+
+    out = subprocess.run(["ifconfig", "-a"], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=10).stdout
+    return _parse_adapters_unix(out, filter_irrelevant)
+
+
+def _parse_adapters_unix(ifconfig_out: str, filter_irrelevant: bool = True):
+    """Parse `ifconfig` (macOS / Linux) pour extraire (nom, IPv4).
+
+    Un bloc commence en colonne 0 par « en0: flags=… » et porte ses adresses
+    sur les lignes indentées qui suivent (« inet 2.0.0.5 netmask … »).
+    """
+    import re
+    adapters = []
+    current = None
+    ignorer = ("lo", "gif", "stf", "awdl", "llw", "utun", "bridge", "ap")
+    for line in ifconfig_out.splitlines():
+        if line and not line[0].isspace():
+            nom = line.split(":", 1)[0].strip()
+            saute = filter_irrelevant and nom.startswith(ignorer)
+            current = None if saute else nom
+        elif current:
+            m = re.match(r"\s+inet\s+(\d{1,3}(?:\.\d{1,3}){3})", line)
+            if m and not m.group(1).startswith("127."):
+                adapters.append((current, m.group(1)))
+                current = None
+    return adapters
 
 
 def _parse_adapters(ipconfig_out: str, filter_irrelevant: bool = True):
@@ -546,12 +627,7 @@ class BradDiagnosticDialog(QDialog):
         # Récupérer les IPs locales pour détecter si target_ip == PC lui-même
         local_ips = set()
         try:
-            import subprocess as _sp, platform as _pl
-            r = _sp.run(["ipconfig"], capture_output=True, text=True,
-                        encoding="cp850", errors="replace",
-                        creationflags=CREATE_NO_WINDOW)
-            for a in _parse_adapters(r.stdout):
-                local_ips.add(a[1])
+            local_ips = {ip for _, ip in _lire_adaptateurs()}
         except Exception:
             pass
 
@@ -624,6 +700,34 @@ class BradDiagnosticDialog(QDialog):
             f"{'PROBLÈMES: ' + str(len(errors)) if errors else 'OK — Aucun problème détecté'}"
         )
         self._raw_lines.append("=" * 60)
+
+        # ── Le piège n°1 : un node répond, mais la sortie est réglée sur USB ──
+        # `send_dmx()` aiguille sur le transport ACTIF : avec `enttec`, l'envoi
+        # Art-Net n'est jamais appelé et le node ne reçoit rien — alors que tous
+        # les tests réseau ci-dessus sont au vert, puisqu'ils ouvrent leur PROPRE
+        # socket et ne passent pas par la sortie de l'application. C'est
+        # exactement ce qui fait chercher des heures du côté du réseau.
+        _tr = getattr(dmx, 'transport', '')
+        if _tr in ("enttec", "enttec_pro", "enttec_d2xx"):
+            _node = next((d.split("réponse de")[-1].strip()
+                          for c, s, d in results
+                          if c.startswith("ArtPoll") and s == "ok" and "réponse de" in d),
+                         None)
+            if _node:
+                self._append_html(
+                    f'<br><span style="color:#ff9800;font-size:13px;font-weight:bold;">'
+                    f'⚠ Un node Art-Net répond sur {_node}, mais la sortie est réglée '
+                    f'sur « {_tr} » (USB).</span>'
+                    f'<br><span style="color:#ccc;">Rien ne part sur le réseau tant que '
+                    f'le transport est sur USB — les tests réseau ci-dessus passent par '
+                    f'leur propre socket, pas par la sortie de MyStrow.<br>'
+                    f'→ Connexions ▸ 🌐 Sortie DMX ▸ ⚙️ Paramétrer la sortie, '
+                    f'choisir le node Art-Net, puis <b>Connecter</b>.</span>'
+                )
+                self._raw_lines.append("")
+                self._raw_lines.append(
+                    f"  ⚠ Node Art-Net détecté sur {_node} mais transport = {_tr} (USB)"
+                    f" — rien ne part sur le réseau.")
 
         # Avertissement câble débranché
         if "no_ethernet" in self._fixable:
