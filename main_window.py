@@ -962,27 +962,41 @@ class AkaiDiagnosticDialog(QDialog):
 
         # ── Statut ports ───────────────────────────────────────────────────
         def _port_row(label, ok):
+            """Retourne (layout, dot, status) — les voyants sont rafraîchis en direct."""
             row = QHBoxLayout()
             dot = QLabel("●")
-            dot.setStyleSheet(f"color:{'#4CAF50' if ok else '#f44336'}; font-size:11px;")
             row.addWidget(dot)
             lbl = QLabel(label)
-            lbl.setStyleSheet(f"color:{'#ccc' if ok else '#888'}; font-size:10px;")
+            lbl.setStyleSheet("color:#ccc; font-size:10px;")
             row.addWidget(lbl)
             row.addStretch()
-            status = QLabel("Connecté" if ok else "Non détecté")
-            status.setStyleSheet(f"color:{'#4CAF50' if ok else '#f44336'}; font-size:10px; font-weight:bold;")
+            status = QLabel("")
             row.addWidget(status)
-            return row
+            return row, dot, status
 
-        try:
-            in_ok  = bool(midi_handler.midi_in  and midi_handler.midi_in.is_port_open())
-            out_ok = bool(midi_handler.midi_out and midi_handler.midi_out.is_port_open())
-        except Exception:
-            in_ok = out_ok = False
+        # Le nom du port ouvert compte autant que le voyant : un contrôleur à
+        # deux ports (Launchpad Mini MK3 : DAW + MIDI) peut afficher « connecté »
+        # tout en écoutant le mauvais. Sans le nom, il n'y a rien à diagnostiquer.
+        self._in_lbl = QLabel("")
+        self._in_lbl.setStyleSheet("color:#888; font-size:9px;")
+        self._in_lbl.setWordWrap(True)
+        self._out_lbl = QLabel("")
+        self._out_lbl.setStyleSheet("color:#888; font-size:9px;")
+        self._out_lbl.setWordWrap(True)
 
-        root.addLayout(_port_row("Entrée MIDI  (contrôleur → logiciel)", in_ok))
-        root.addLayout(_port_row("Sortie MIDI  (logiciel → LEDs contrôleur)", out_ok))
+        _row, self._in_dot, self._in_status = _port_row("Entrée MIDI  (contrôleur → logiciel)", False)
+        root.addLayout(_row)
+        root.addWidget(self._in_lbl)
+        _row, self._out_dot, self._out_status = _port_row("Sortie MIDI  (logiciel → LEDs contrôleur)", False)
+        root.addLayout(_row)
+        root.addWidget(self._out_lbl)
+
+        # Erreur de scan (sonde MIDI en échec) — sinon la détection meurt en silence.
+        self._scan_err_lbl = QLabel("")
+        self._scan_err_lbl.setStyleSheet("color:#f44336; font-size:9px;")
+        self._scan_err_lbl.setWordWrap(True)
+        self._scan_err_lbl.setVisible(False)
+        root.addWidget(self._scan_err_lbl)
 
         # ── Ports disponibles ──────────────────────────────────────────────
         try:
@@ -1019,10 +1033,27 @@ class AkaiDiagnosticDialog(QDialog):
         act_row.addStretch()
         root.addLayout(act_row)
 
+        # Trafic BRUT : compté dès l'arrivée, avant tout décodage. Un compteur qui
+        # grimpe pendant que le témoin ci-dessus reste éteint signifie que le
+        # contrôleur parle mais que son décodeur écarte les messages — c'est la
+        # seule façon de distinguer ce cas d'un vrai silence côté pilote.
+        self._raw_lbl = QLabel("Messages bruts reçus : 0")
+        self._raw_lbl.setStyleSheet("color:#555; font-size:9px;")
+        self._raw_lbl.setWordWrap(True)
+        root.addWidget(self._raw_lbl)
+
         # Timer pour faire clignoter le dot (on_midi_pad/fader notifie via signal)
         self._blink_timer = QTimer(self)
         self._blink_timer.timeout.connect(self._dim_activity)
         self._blink_timer.start(300)
+
+        # Rafraîchissement du statut : l'ancienne version calculait l'état des
+        # ports UNE fois à l'ouverture. Brancher le contrôleur fenêtre ouverte
+        # ne changeait donc rien à l'écran.
+        self._status_timer = QTimer(self)
+        self._status_timer.timeout.connect(self._refresh_status)
+        self._status_timer.start(500)
+        self._refresh_status()
 
         # On écoute les signaux MIDI du handler
         midi_handler.pad_pressed.connect(self._on_midi_activity)
@@ -1062,6 +1093,17 @@ class AkaiDiagnosticDialog(QDialog):
 
         btn_row.addStretch()
 
+        rescan_btn = QPushButton("🔍  Rescanner")
+        rescan_btn.setToolTip("Relance la détection sans redémarrer MyStrow")
+        rescan_btn.setStyleSheet(
+            "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #333; "
+            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 16px; } "
+            "QPushButton:hover { background:#252525; color:#eee; border-color:#555; }"
+        )
+        rescan_btn.clicked.connect(self._do_rescan)
+        btn_row.addWidget(rescan_btn)
+        btn_row.addSpacing(8)
+
         reconnect_btn = QPushButton("🔄  Reconnecter")
         reconnect_btn.setStyleSheet(
             "QPushButton { background:#0a3a5a; color:white; border:none; "
@@ -1087,6 +1129,46 @@ class AkaiDiagnosticDialog(QDialog):
         if mw:
             mw._save_akai_config_auto()
 
+    def _refresh_status(self):
+        """Met à jour voyants, noms de ports, trafic brut et erreur de scan."""
+        m = self._midi
+        try:
+            in_ok  = bool(m.midi_in  and m.midi_in.is_port_open())
+        except Exception:
+            in_ok = False
+        try:
+            out_ok = bool(m.midi_out and m.midi_out.is_port_open())
+        except Exception:
+            out_ok = False
+
+        for dot, status, ok in ((self._in_dot, self._in_status, in_ok),
+                                (self._out_dot, self._out_status, out_ok)):
+            color = '#4CAF50' if ok else '#f44336'
+            dot.setStyleSheet(f"color:{color}; font-size:11px;")
+            status.setText("Connecté" if ok else "Non détecté")
+            status.setStyleSheet(f"color:{color}; font-size:10px; font-weight:bold;")
+
+        try:
+            noms = m.open_input_names()
+        except Exception:
+            noms = []
+        self._in_lbl.setText(("     ↳ " + "  +  ".join(noms)) if noms else "")
+        out_name = getattr(m, '_out_name', '')
+        self._out_lbl.setText(f"     ↳ {out_name}" if out_name else "")
+
+        n = getattr(m, 'rx_count', 0)
+        raw = getattr(m, 'last_raw', None)
+        txt = f"Messages bruts reçus : {n}"
+        if raw:
+            txt += "   —   dernier : " + " ".join(f"{b:02X}" for b in raw)
+        self._raw_lbl.setText(txt)
+        self._raw_lbl.setStyleSheet(
+            f"color:{'#888' if n else '#555'}; font-size:9px;")
+
+        err = getattr(m, 'last_error', '')
+        self._scan_err_lbl.setText(f"⚠  {err}" if err else "")
+        self._scan_err_lbl.setVisible(bool(err))
+
     def _on_midi_activity(self, *args):
         self._act_dot.setStyleSheet("color:#FFE000; font-size:14px;")
         self._act_info.setStyleSheet("color:#ccc; font-size:9px;")
@@ -1100,6 +1182,17 @@ class AkaiDiagnosticDialog(QDialog):
                 self._act_dot.setStyleSheet("color:#333; font-size:14px;")
                 self._act_info.setText("En attente…")
                 self._act_info.setStyleSheet("color:#555; font-size:9px;")
+
+    def _do_rescan(self):
+        """Relance la détection SANS fermer la fenêtre — on veut voir le résultat."""
+        try:
+            self._midi.rescan()
+        except Exception as e:
+            self._scan_err_lbl.setText(f"⚠  Rescan impossible : {e}")
+            self._scan_err_lbl.setVisible(True)
+            return
+        self._refresh_status()
+        self._refresh_controller_rows()
 
     def _do_reconnect(self):
         self._midi.connect_akai()
@@ -1253,6 +1346,14 @@ class AkaiDiagnosticDialog(QDialog):
         QTimer.singleShot(150, self._refresh_controller_rows)
 
     def closeEvent(self, e):
+        # Les timers sont parentés au dialogue, mais on les arrête explicitement :
+        # `_refresh_status` touche le handler MIDI, inutile de le laisser tourner
+        # sur une fenêtre en cours de destruction.
+        for attr in ('_status_timer', '_blink_timer'):
+            t = getattr(self, attr, None)
+            if t is not None:
+                try: t.stop()
+                except Exception: pass
         try:
             self._midi.pad_pressed.disconnect(self._on_midi_activity)
             self._midi.fader_changed.disconnect(self._on_midi_activity)
@@ -8260,6 +8361,11 @@ class MainWindow(QMainWindow):
                     # capturé au démarrage de l'effet, lui-même devant le milieu
                     # de course.
                     _ctr = _pos_centers.get(id(ld), {}).get(id(proj))
+                    # À défaut de colonne POSITION, un clip de la piste
+                    # Position impose le centre : sinon l'effet tourne autour
+                    # d'une capture périmée et la lyre quitte sa position.
+                    if _ctr is None:
+                        _ctr = getattr(self, '_timeline_pos_centers', {}).get(id(proj))
                     if attr == "Pan":
                         center = (_ctr[0] if _ctr is not None else
                                   saved[3] if saved and len(saved) > 3 else 32768)
@@ -8313,6 +8419,8 @@ class MainWindow(QMainWindow):
                     # Centre de la trajectoire : POSITION choisie, sinon l'état
                     # capturé au démarrage, sinon le milieu de course.
                     _ctr = _pos_centers.get(id(ld), {}).get(id(proj))
+                    if _ctr is None:
+                        _ctr = getattr(self, '_timeline_pos_centers', {}).get(id(proj))
 
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
@@ -15231,18 +15339,10 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_w)
         lv.addWidget(scroll, 1)
 
-        lbl_guide = QLabel(
-            '<a href="https://mystrow.fr/importer-fixture-dmx-mystrow"'
-            ' style="color:#333;text-decoration:none;font-size:10px;">'
-            'Fixture introuvable ? → Consulter le guide</a>'
-        )
-        lbl_guide.setStyleSheet(
-            "background:#060606; padding:0 14px; border-top:1px solid #101010;"
-        )
-        lbl_guide.setOpenExternalLinks(True)
-        lbl_guide.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        lbl_guide.setFixedHeight(20)
-        lv.addWidget(lbl_guide)
+        from core import guide_banner
+        lv.addWidget(guide_banner(
+            "Fixture introuvable ?",
+            "https://mystrow.fr/importer-fixture-dmx-mystrow"))
 
         bstrip = QWidget()
         bstrip.setFixedHeight(40)
@@ -17599,8 +17699,12 @@ class MainWindow(QMainWindow):
                 # Le type "Moving Head" ne garantit pas une roue : une lyre RGBW
                 # n'en a pas. Sans ce test, on propose de calibrer dans le vide.
                 _prof = getattr(p, 'dmx_profile', None)
+                # Roue déjà décrite par le fichier de fixture (OFL, GrandMA, et
+                # désormais QLC+) → rien à calibrer : proposer l'assistant
+                # reviendrait à demander de ressaisir ce qu'on vient de lire.
                 if p.fixture_type == "Moving Head" \
-                        and isinstance(_prof, list) and "ColorWheel" in _prof:
+                        and isinstance(_prof, list) and "ColorWheel" in _prof \
+                        and not p.color_wheel_slots:
                     p._needs_cw_calib = True
                 self.projectors.append(p)
             self._rebuild_dmx_patch()
@@ -19813,6 +19917,9 @@ class MainWindow(QMainWindow):
             scene_3d['quality'] = getattr(self._plan3d, '_quality', 2)
             scene_3d['auto_quality'] = getattr(self._plan3d, '_auto_quality', True)
             scene_3d['ambience'] = getattr(self._plan3d, '_ambience', 160)
+            scene_3d['fog']       = getattr(self._plan3d, '_fog', 0)
+            scene_3d['fog_scale'] = getattr(self._plan3d, '_fog_scale', 55)
+            scene_3d['fog_speed'] = getattr(self._plan3d, '_fog_speed', 35)
         config = {
             'fixtures': fixtures_list,
             'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
@@ -20140,13 +20247,25 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _log_startup_status(self):
-        """Rapport d'état initial des sorties au démarrage."""
-        # Sortie DMX
-        dmx_on = self._license.dmx_allowed and getattr(self.dmx, 'connected', False)
-        if dmx_on:
-            self._log_message("Sortie DMX : activée", "success")
+        """Rapport d'état initial des sorties au démarrage.
+
+        On rapporte l'ÉTAT VOULU — le bouton DMX du plan de feu — et surtout
+        pas le résultat d'une connexion. Deux versions s'y sont cassé les dents
+        en interrogeant `dmx.connected` : la connexion part dans un thread et
+        se rétablit toute seule en cours de route, si bien que le journal
+        annonçait « désactivée » sur une sortie qui marchait très bien. Un
+        rapport de démarrage décrit ce que l'utilisateur a demandé, pas l'état
+        d'un port à un instant t — les vrais problèmes de liaison ont leur
+        place dans le diagnostic (Connexions ▸ Sortie DMX), qui teste, lui."""
+        if not self._license.dmx_allowed:
+            self._log_message("Sortie DMX : désactivée (licence)", "info")
         else:
-            self._log_message("Sortie DMX : désactivée", "info")
+            pf = getattr(self, 'plan_de_feu', None)
+            dmx_on = pf.is_dmx_enabled() if pf is not None else False
+            if dmx_on:
+                self._log_message("Sortie DMX : activée", "success")
+            else:
+                self._log_message("Sortie DMX : désactivée", "info")
 
         # Sortie vidéo (toujours off au démarrage)
         self._log_message("Sortie vidéo : désactivée", "info")
@@ -20758,6 +20877,63 @@ class MainWindow(QMainWindow):
         dlg.exec()
         self._refresh_dmx_menu_title()
 
+    @staticmethod
+    def _firewall_port_status(port):
+        """(entrées bloquées par défaut ?, une règle couvre-t-elle ce port ?).
+
+        Chaque valeur vaut None si l'information n'a pas pu être obtenue — on ne
+        présente jamais une incertitude comme un diagnostic.
+
+        Les libellés de `netsh` sont traduits, mais pas les mots-clés de
+        politique (`BlockInbound`) ni le nom de champ `LocalPort` : on s'appuie
+        uniquement sur eux, sinon le test ne marcherait qu'en français.
+        """
+        import subprocess as _sp
+        sans_fenetre = getattr(_sp, "CREATE_NO_WINDOW", 0)
+
+        def _netsh(args, timeout):
+            return _sp.run(["netsh", "advfirewall"] + args, capture_output=True,
+                           text=True, errors="replace", timeout=timeout,
+                           creationflags=sans_fenetre)
+
+        bloque = None
+        try:
+            r = _netsh(["show", "currentprofile"], 8)
+            if r.returncode == 0:
+                bloque = "BlockInbound" in r.stdout
+        except Exception as e:
+            print(f"[Tablet] pare-feu profil: {e}")
+
+        regle = None
+        try:
+            r = _netsh(["firewall", "show", "rule", "name=all", "dir=in", "verbose"], 20)
+            if r.returncode == 0:
+                trouve = False
+                for ligne in r.stdout.splitlines():
+                    if "LocalPort" not in ligne:
+                        continue
+                    valeurs = ligne.split(":", 1)[-1]
+                    for bout in valeurs.split(","):
+                        bout = bout.strip()
+                        if bout in ("Any", "*"):
+                            continue
+                        try:
+                            if "-" in bout:      # plage « 5000-5020 »
+                                lo, hi = bout.split("-", 1)
+                                if int(lo) <= port <= int(hi):
+                                    trouve = True
+                            elif int(bout) == port:
+                                trouve = True
+                        except ValueError:
+                            continue
+                    if trouve:
+                        break
+                regle = trouve
+        except Exception as e:
+            print(f"[Tablet] pare-feu règles: {e}")
+
+        return bloque, regle
+
     def test_tablet_connection(self):
         """Diagnostic du contrôleur tablette : dépendances, serveur, port, clients.
 
@@ -20769,6 +20945,16 @@ class MainWindow(QMainWindow):
         import tablet_server as _ts
 
         lines = []
+
+        # Nombre de tablettes AVANT nos propres requêtes de test. Le test de la
+        # route /stream ouvre lui-même une connexion SSE, que le serveur inscrit
+        # aussitôt dans _clients et ne retire qu'à la fermeture effective du flux.
+        # Lu après coup, le compteur affichait donc « Tablettes connectées : 1 »
+        # alors qu'AUCUNE tablette n'était là — le diagnostic se comptait lui-même.
+        try:
+            n_clients_avant = len(_ts._clients)
+        except Exception:
+            n_clients_avant = 0
 
         def add(label, ok, detail):
             mark = "✓" if ok else "✗"
@@ -20813,10 +20999,15 @@ class MainWindow(QMainWindow):
             add(f"Port {_ts.TABLET_PORT} en écoute", port_ok,
                 "répond" if port_ok else "ne répond pas — port occupé ou serveur planté")
 
-        # 5. Le port répond-il depuis le RÉSEAU, et pas seulement en local ?
-        #    C'est LE test qui compte : 127.0.0.1 réussit toujours, pare-feu ou
-        #    non. Seule l'écoute sur l'IP du réseau dit si une tablette peut
-        #    joindre le serveur.
+        # 5. Le socket est-il ouvert sur l'IP du réseau (et pas seulement en local) ?
+        #    ⚠️ Ce test NE PROUVE PAS qu'une tablette peut joindre le serveur.
+        #    Une connexion partie de CE PC vers sa PROPRE adresse réseau ne
+        #    traverse jamais le pare-feu entrant de Windows : elle réussit même
+        #    quand le port est intégralement bloqué pour l'extérieur. Il a
+        #    longtemps été présenté comme « LE test qui compte », d'où des
+        #    diagnostics tout verts en face d'une tablette qui affiche
+        #    « Ce site est inaccessible ». Il dit seulement que le serveur écoute
+        #    sur 0.0.0.0 et non sur 127.0.0.1 — utile, mais rien de plus.
         lan_ok = False
         if running and ip:
             try:
@@ -20824,9 +21015,9 @@ class MainWindow(QMainWindow):
                     lan_ok = True
             except Exception as e:
                 print(f"[Tablet] test LAN: {e}")
-            add(f"Accessible depuis le réseau ({ip})", lan_ok,
-                "oui" if lan_ok else
-                "NON — pare-feu Windows ou serveur lié à 127.0.0.1 seulement")
+            add(f"Socket ouvert sur {ip} (vu depuis ce PC)", lan_ok,
+                "oui — ne préjuge pas du pare-feu" if lan_ok else
+                "NON — le serveur n'écoute que sur 127.0.0.1")
 
         # 6. Les deux routes que la tablette utilise réellement.
         #    /stream est le flux temps réel : c'est lui qui a déjà cassé en
@@ -20847,21 +21038,41 @@ class MainWindow(QMainWindow):
                     add(libelle, False,
                         f"HTTP {code}" if code else f"injoignable ({type(e).__name__})")
 
-        # 7. Tablettes actuellement connectées
-        try:
-            n_clients = len(_ts._clients)
-        except Exception:
-            n_clients = 0
+        # 7. Pare-feu Windows : existe-t-il une règle entrante pour ce port ?
+        #    C'est la cause n°1 de « site inaccessible » côté tablette alors que
+        #    tout est vert côté PC. Absence de règle = indication forte, pas une
+        #    preuve : une règle peut aussi viser le PROGRAMME (python.exe) plutôt
+        #    que le port — d'où un libellé prudent.
+        if sys.platform == "win32" and running:
+            bloque, regle = self._firewall_port_status(_ts.TABLET_PORT)
+            if bloque is not None:
+                add("Pare-feu — entrées par défaut", not bloque,
+                    "autorisées" if not bloque else "BLOQUÉES (une règle est nécessaire)")
+            if regle is not None:
+                add(f"Règle pare-feu pour le port {_ts.TABLET_PORT}", regle,
+                    "présente" if regle else
+                    "AUCUNE — cause la plus probable du « site inaccessible »")
+
+        # 8. Tablettes actuellement connectées (comptées AVANT nos propres tests)
+        n_clients = n_clients_avant
         lines.append(f"{'✓' if n_clients else '·'}  Tablettes connectées : {n_clients}")
 
         if running and lan_ok and not n_clients:
             lines.append("")
-            lines.append("Le serveur répond, mais aucune tablette n'est connectée.")
-            lines.append("À vérifier sur la TABLETTE, dans cet ordre :")
-            lines.append(f"  1. ouvrir exactement  http://{ip}:{_ts.TABLET_PORT}")
-            lines.append("  2. être sur le MÊME réseau Wi-Fi que ce PC")
-            lines.append("  3. certaines box isolent les appareils entre eux")
+            lines.append("Le serveur écoute, mais aucune tablette n'est connectée.")
+            lines.append("Rien ci-dessus ne prouve qu'un AUTRE appareil peut entrer :")
+            lines.append("les tests partent de ce PC et ne traversent pas son pare-feu.")
+            lines.append("")
+            lines.append("Si la tablette affiche « Ce site est inaccessible », dans l'ordre :")
+            lines.append(f"  1. Pare-feu Windows — autoriser le port {_ts.TABLET_PORT} en entrée.")
+            lines.append("     En ligne de commande, en ADMINISTRATEUR :")
+            lines.append(f'     netsh advfirewall firewall add rule name="MyStrow tablette" '
+                         f'dir=in action=allow protocol=TCP localport={_ts.TABLET_PORT}')
+            lines.append("  2. Tablette et PC sur le MÊME réseau Wi-Fi (pas un invité,")
+            lines.append("     pas la 4G, pas un VPN actif sur l'un des deux)")
+            lines.append("  3. Certaines box isolent les appareils entre eux")
             lines.append("     (« isolation client » / « réseau invité ») : à désactiver")
+            lines.append(f"  4. Depuis la tablette, tester d'abord  http://{ip}:{_ts.TABLET_PORT}")
         elif running and ip and not lan_ok:
             lines.append("")
             lines.append("Le serveur tourne mais reste injoignable depuis le réseau.")

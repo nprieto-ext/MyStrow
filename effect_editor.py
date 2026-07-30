@@ -1128,6 +1128,13 @@ LAYER_ROW_H       = 54   # hauteur d'une ligne
 LAYER_CELL_H      = 42   # hauteur des cellules à l'intérieur
 LAYER_BTN         = 32   # côté des petits boutons carrés (sens, couleurs, ✕)
 LAYER_ROW_BORDER  = 3    # bordure d'accent à gauche de chaque ligne
+# Bordure des trois autres côtés du cadre d'une ligne. Elle a l'air anodine,
+# mais Qt l'enlève de la zone de contenu au même titre que l'accent de gauche :
+# une ligne dispose donc de 1 px de MOINS que l'en-tête, qui n'a pas de cadre.
+# Non comptée, les colonnes réclamaient 1 px de plus que la place réelle et Qt
+# rognait une cellule au hasard — tout ce qui suivait se décalait, d'où des
+# titres qui ne tombaient plus en face de leurs cases.
+LAYER_ROW_BORDER_R = 1
 LAYER_WAVE_W      = 44   # aperçu de courbe, dans la cellule FORME
 LAYER_TRAJ_W      = LAYER_CELL_H - 4   # aperçu de trajectoire (carré), idem
 # L'aperçu de courbe est la partie élastique de la cellule FORME : il s'étire
@@ -1142,7 +1149,7 @@ LAYER_WAVE_MIN_W  = 44
 # sans quoi les titres seraient décalés de 3 px par rapport aux cellules.
 LAYER_TABLE_W = (sum(c[2] for c in LAYER_COLS)
                  + LAYER_COL_SPACING * (len(LAYER_COLS) - 1)
-                 + 12 + LAYER_ROW_BORDER)
+                 + 12 + LAYER_ROW_BORDER + LAYER_ROW_BORDER_R)
 
 # Largeur PLANCHER de chaque colonne, quand la fenêtre est trop étroite pour la
 # largeur confortable. Absente = colonne incompressible.
@@ -1171,7 +1178,7 @@ _LAYER_COL_FLOOR = {
 # horizontal reprend ses droits — il n'y a plus rien à gagner.
 LAYER_TABLE_MIN_W = (sum(_LAYER_COL_FLOOR.get(c[0], c[2]) for c in LAYER_COLS)
                      + LAYER_COL_SPACING * (len(LAYER_COLS) - 1)
-                     + 12 + LAYER_ROW_BORDER)
+                     + 12 + LAYER_ROW_BORDER + LAYER_ROW_BORDER_R)
 
 # Part de la place EXCÉDENTAIRE que prend chaque colonne quand la fenêtre est
 # plus large que le tableau. 0 = colonne figée : les boutons carrés (sens,
@@ -1670,7 +1677,9 @@ class LayerTableHeader(QWidget):
         self.setStyleSheet("background: transparent;")
 
         th = QHBoxLayout(self)
-        th.setContentsMargins(6 + LAYER_ROW_BORDER, 0, 6, 0)
+        # Mêmes marges UTILES que la ligne : l'en-tête n'ayant pas de cadre, il
+        # compense à la main les DEUX bordures que Qt retire à la ligne.
+        th.setContentsMargins(6 + LAYER_ROW_BORDER, 0, 6 + LAYER_ROW_BORDER_R, 0)
         th.setSpacing(LAYER_COL_SPACING)
 
         for cle, titre, largeur, tip in LAYER_COLS:
@@ -1775,7 +1784,7 @@ class LayerRow(QFrame):
         self.setStyleSheet(f"""
             QFrame#LRow {{
                 background: #111111;
-                border: 1px solid #1c1c1c;
+                border: {LAYER_ROW_BORDER_R}px solid #1c1c1c;
                 border-left: {LAYER_ROW_BORDER}px solid {self._accent()};
                 border-radius: 5px;
             }}

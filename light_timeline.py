@@ -192,6 +192,13 @@ class LightClip:
         self.position_preset_idx  = None  # index dans main_window.position_presets
         self.position_preset_name = ""    # nom pour affichage
 
+        # Clip de gobo
+        self.gobo_dmx      = None   # valeur DMX du slot de roue (0-255)
+        self.gobo_name     = ""     # nom du gobo, pour l'affichage
+        self.gobo_rotation = 0      # canal Gobo1Rot (0-255), brut : les plages
+                                    # de rotation varient d'une lyre à l'autre,
+                                    # on n'invente pas de correspondance nommée
+
 
 def lerp_qcolor(c1, c2, t):
     """Interpolation linéaire entre deux QColor (t=0 → c1, t=1 → c2)."""
@@ -1213,19 +1220,17 @@ class _LibraryEffectItem(_LibraryItem):
         name  = eff_dict.get("name", "")
         super().__init__(f"{emoji}  {name}", panel, parent)
 
+        # L'emoji de l'effet fait déjà office de pastille : le swatch violet
+        # vide était un doublon. On le masque — le layout l'ignore et l'emoji
+        # vient donc se placer pile dans la colonne des swatches des autres
+        # sections, l'alignement de la bibliothèque est conservé.
+        self._sw.hide()
+
     def _get_paint_brush(self):
         return {"type": "effect", "eff": self._eff}
 
     def _lock_labels(self):
         return ("🔒  Bloquer cet effet", "🔓  Débloquer cet effet")
-
-    def _swatch_paint(self, event):
-        p = QPainter(self._sw)
-        p.setRenderHint(QPainter.Antialiasing)
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, self.SW, self.SW, 3, 3)
-        p.fillPath(path, QBrush(QColor("#22083a")))
-        p.end()
 
     def _do_single_drag(self):
         import json as _json
@@ -1301,9 +1306,18 @@ class _LibrarySection(QWidget):
 class _LibraryPositionItem(_LibraryItem):
     """Item draggable représentant un preset de position lyre."""
 
-    def __init__(self, preset_idx, name, panel=None, parent=None):
+    def __init__(self, preset_idx, name, panel=None, parent=None, pdf=None):
+        """`pdf` : preset Plan de Feu pas encore converti en position AKAI.
+
+        Ces presets vivent dans un AUTRE fichier (~/.mystrow_moving_presets.json)
+        que les positions AKAI (~/.maestro_akai_config.json). On les affiche donc
+        ici, mais la conversion n'a lieu qu'au moment où l'on s'en sert : ouvrir
+        REC Lumière ne doit pas recopier 30 presets dans la config au passage.
+        """
         self._preset_idx = preset_idx
-        super().__init__(f"↕  {name}", panel, parent)
+        self._pdf        = pdf
+        # Pas de « ↕ » devant le nom : le swatch en dessine déjà un (doublon).
+        super().__init__(name, panel, parent)
 
     def _get_paint_brush(self):
         return None  # pas de peinture couleur
@@ -1319,11 +1333,36 @@ class _LibraryPositionItem(_LibraryItem):
         p.drawText(QRect(0, 0, self.SW, self.SW), Qt.AlignCenter, "↕")
         p.end()
 
+    def _resolve_idx(self):
+        """Index dans position_presets, en convertissant le preset Plan de Feu au besoin."""
+        if self._preset_idx is not None or not self._pdf:
+            return self._preset_idx
+        panel = getattr(self, '_panel', None)
+        mw = getattr(getattr(panel, 'parent_editor', None), 'main_window', None)
+        if mw is None or not hasattr(mw, '_pdf_preset_to_akai'):
+            return None
+        try:
+            akai = mw._pdf_preset_to_akai(self._pdf)
+            for ei, ep in enumerate(getattr(mw, 'position_presets', [])):
+                if ep.get("name") == akai.get("name"):
+                    self._preset_idx = ei
+                    return ei
+            mw.position_presets.append(akai)
+            self._preset_idx = len(mw.position_presets) - 1
+            mw._save_akai_config_auto()
+            return self._preset_idx
+        except Exception as e:
+            print(f"[REC] conversion position Plan de Feu impossible: {e}")
+            return None
+
     def _do_single_drag(self):
         import json as _json
+        idx = self._resolve_idx()
+        if idx is None:
+            return
         drag = QDrag(self)
         mime = QMimeData()
-        data = {"idx": self._preset_idx, "name": self._name.replace("↕  ", "")}
+        data = {"idx": idx, "name": self._name}
         mime.setData('application/x-position', _json.dumps(data).encode())
         drag.setMimeData(mime)
         pix = QPixmap(80, 46)
@@ -1337,9 +1376,54 @@ class _LibraryPositionItem(_LibraryItem):
         drag.exec(Qt.CopyAction)
 
 
-class LibraryPanel(QScrollArea):
+class _LibraryGoboItem(_LibraryItem):
+    """Item draggable représentant un gobo de la roue."""
+
+    def __init__(self, dmx, name, color="#aaaaaa", panel=None, parent=None):
+        self._gobo_dmx   = int(dmx)
+        self._gobo_color = color or "#aaaaaa"
+        # Pas de « ◍ » devant le nom : le swatch dessine déjà le cercle (doublon).
+        super().__init__(name, panel, parent)
+
+    def _get_paint_brush(self):
+        return None  # pas de peinture couleur
+
+    def _swatch_paint(self, event):
+        p = QPainter(self._sw)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, self.SW, self.SW, 3, 3)
+        p.fillPath(path, QBrush(QColor("#2a2410")))
+        p.setPen(QColor(self._gobo_color))
+        p.drawEllipse(QRect(2, 2, self.SW - 4, self.SW - 4))
+        p.end()
+
+    def _do_single_drag(self):
+        import json as _json
+        drag = QDrag(self)
+        mime = QMimeData()
+        data = {"dmx": self._gobo_dmx, "name": self._name}
+        mime.setData('application/x-gobo', _json.dumps(data).encode())
+        drag.setMimeData(mime)
+        pix = QPixmap(80, 46)
+        pix.fill(QColor("#2a2410"))
+        p = QPainter(pix)
+        p.setPen(QColor("#e6c060"))
+        f = p.font(); f.setBold(True); f.setPixelSize(11); p.setFont(f)
+        p.drawText(pix.rect(), Qt.AlignCenter, data["name"])
+        p.end()
+        drag.setPixmap(pix); drag.setHotSpot(QPoint(40, 23))
+        drag.exec(Qt.CopyAction)
+
+
+class LibraryPanel(QWidget):
     """Panneau bibliothèque à droite : COULEUR / BICOULEUR / MÉMOIRE / EFFETS.
-    Supporte la sélection multiple (Ctrl+clic) et le drag multi-items."""
+    Supporte la sélection multiple (Ctrl+clic) et le drag multi-items.
+
+    Le titre et la barre de recherche sont épinglés en haut : seules les
+    sections défilent, pour garder le champ de recherche accessible même en
+    bas de la liste (elle fait plusieurs milliers de pixels avec les effets).
+    """
 
     def __init__(self, parent_editor):
         super().__init__()
@@ -1347,16 +1431,33 @@ class LibraryPanel(QScrollArea):
         self._selection: list = []       # items sélectionnés dans l'ordre de sélection
         self._all_items: list = []      # tous les _LibraryItem enregistrés
 
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setObjectName("libPanel")
         self.setMinimumWidth(190)
         self.setMaximumWidth(280)
         self.setStyleSheet(
-            "QScrollArea { background: #0f0f0f; border: none; border-right: 1px solid #1c1c1c; }"
+            "#libPanel { background: #0f0f0f; border: none;"
+            " border-right: 1px solid #1c1c1c; }"
+            "QScrollArea { background: #0f0f0f; border: none; }"
             "QScrollBar:vertical { background: #0a0a0a; width: 6px; margin: 0; }"
             "QScrollBar::handle:vertical { background: #252525; border-radius: 3px; min-height: 20px; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
         )
+
+        # Colonne fixe : [en-tête épinglé] [recherche épinglée] [zone scrollable]
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        header = QVBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(0)
+        root.addLayout(header)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(self._scroll, 1)
 
         content = QWidget()
         content.setStyleSheet("background: #0f0f0f;")
@@ -1382,7 +1483,7 @@ class LibraryPanel(QScrollArea):
         )
         self._sel_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         hdr_h.addWidget(self._sel_lbl)
-        v.addWidget(hdr_row)
+        header.addWidget(hdr_row)
 
         # ── Barre de recherche ────────────────────────────────────────────
         search_row = QWidget()
@@ -1401,18 +1502,19 @@ class LibraryPanel(QScrollArea):
         )
         self._search_input.textChanged.connect(self._filter)
         sr_h.addWidget(self._search_input)
-        v.addWidget(search_row)
+        header.addWidget(search_row)
 
         self._sec_color      = _LibrarySection("COULEUR", v)
         self._sec_bi         = _LibrarySection("BICOULEUR", v)
         self._sec_mem        = _LibrarySection("MÉMOIRE", v)
         self._sec_rec        = _LibrarySection("REC", v)
         self._sec_pos        = _LibrarySection(tr("lt_sec_positions"), v)
+        self._sec_gobo       = _LibrarySection("GOBOS", v)
         self._sec_eff        = _LibrarySection("EFFETS", v)
         self._sec_custom_eff = _LibrarySection("MES EFFETS", v)
 
         v.addStretch()
-        self.setWidget(content)
+        self._scroll.setWidget(content)
 
         self._populate_static()
         self.refresh()
@@ -1425,7 +1527,8 @@ class LibraryPanel(QScrollArea):
             item.setVisible(visible)
         # Masquer les sections entièrement vides
         for sec in (self._sec_color, self._sec_bi, self._sec_mem, self._sec_rec,
-                    self._sec_pos, self._sec_eff, self._sec_custom_eff):
+                    self._sec_pos, self._sec_gobo, self._sec_eff,
+                    self._sec_custom_eff):
             body = sec._body
             any_visible = any(
                 body.layout().itemAt(i).widget().isVisible()
@@ -1436,7 +1539,7 @@ class LibraryPanel(QScrollArea):
 
     def wheelEvent(self, event):
         """Scroll vertical de la bibliothèque — ne remonte jamais à la timeline."""
-        sb = self.verticalScrollBar()
+        sb = self._scroll.verticalScrollBar()
         sb.setValue(sb.value() - event.angleDelta().y() // 2)
         event.accept()
 
@@ -1532,7 +1635,7 @@ class LibraryPanel(QScrollArea):
                 items_data.append({"type": "position",
                                    "value": _json.dumps({
                                        "idx":  item._preset_idx,
-                                       "name": item._name.replace("↕  ", ""),
+                                       "name": item._name,
                                    })})
                 types_set.add("position")
 
@@ -1663,11 +1766,33 @@ class LibraryPanel(QScrollArea):
         self._deregister_list(removed_pos)
 
         pos_presets = getattr(mw, 'position_presets', []) if mw else []
-        if pos_presets:
+        # Les positions viennent de DEUX fichiers distincts : les positions AKAI
+        # (position_presets, ~/.maestro_akai_config.json) et les presets du plan
+        # de feu (~/.mystrow_moving_presets.json). Seules les premières étaient
+        # listées ici — d'où l'impression d'avoir perdu des positions alors
+        # qu'elles n'étaient simplement pas affichées. On montre les deux, en
+        # écartant par NOM les presets déjà repris côté AKAI pour ne pas doubler.
+        pdf_presets = []
+        try:
+            if mw and hasattr(mw, '_load_pdf_presets'):
+                deja = {p.get("name") for p in pos_presets}
+                pdf_presets = [p for p in (mw._load_pdf_presets() or [])
+                               if p.get("name") not in deja]
+        except Exception as e:
+            print(f"[REC] presets plan de feu illisibles: {e}")
+
+        if pos_presets or pdf_presets:
             for pi, preset in enumerate(pos_presets):
-                item = _LibraryPositionItem(pi, preset.get("name", f"POS {pi+1}"), panel=self)
-                self._register(item)
-                self._sec_pos.add_item(item)
+                # _LibraryItem s'enregistre déjà auprès du panneau : un
+                # _register() supplémentaire inscrivait chaque position DEUX fois
+                # dans _all_items, que _deregister_list ne retirait qu'une fois —
+                # la liste grossissait de 9 entrées à chaque rafraîchissement.
+                self._sec_pos.add_item(
+                    _LibraryPositionItem(pi, preset.get("name", f"POS {pi+1}"), panel=self))
+            for preset in pdf_presets:
+                self._sec_pos.add_item(
+                    _LibraryPositionItem(None, preset.get("name", "POS"),
+                                         panel=self, pdf=preset))
         else:
             empty_pos = QLabel(tr("lt_pos_empty"))
             empty_pos.setStyleSheet(
@@ -1676,7 +1801,61 @@ class LibraryPanel(QScrollArea):
             )
             self._sec_pos.add_item(empty_pos)
 
+        # ── Section Gobos ──────────────────────────────────────────────────────
+        removed_gobo = self._sec_gobo.clear_items()
+        self._deregister_list(removed_gobo)
+
+        for dmx, nom, coul in self._available_gobos(mw):
+            self._sec_gobo.add_item(_LibraryGoboItem(dmx, nom, coul, panel=self))
+        if not self._sec_gobo._bv.count():
+            empty_gobo = QLabel("aucune fixture avec roue de gobos")
+            empty_gobo.setStyleSheet(
+                "color: #2a2a2a; font-size: 10px; font-style: italic; "
+                "background: transparent; padding: 5px 10px;"
+            )
+            self._sec_gobo.add_item(empty_gobo)
+
         self._refresh_custom_effects()
+
+    @staticmethod
+    def _available_gobos(mw):
+        """[(dmx, nom, couleur)] des gobos du patch, dédoublonnés par valeur DMX.
+
+        On agrège les roues de TOUTES les fixtures équipées : deux lyres de
+        modèles différents n'ont pas les mêmes slots, et n'afficher que ceux de
+        la première priverait l'utilisateur des gobos des autres. Le
+        dédoublonnage se fait sur la valeur DMX, seule donnée qui parte
+        réellement sur le câble.
+        """
+        vus, out = set(), []
+        for proj in getattr(mw, 'projectors', []) or []:
+            prof = getattr(proj, 'dmx_profile', None) or []
+            if 'Gobo1' not in prof:
+                continue
+            slots = getattr(proj, 'gobo_wheel_slots', None) or []
+            if not slots:
+                # Roue non décrite (fixture patchée avant l'extraction des roues,
+                # ou profil sans détail) : on propose la table générique plutôt
+                # qu'une section vide. Sans ça, une lyre équipée d'un canal Gobo1
+                # n'offrait AUCUN bloc à glisser — la piste était inutilisable.
+                # Mêmes valeurs que l'éditeur de roue de gobos.
+                try:
+                    from color_wheel_editor import _GENERIC_GOBO_SLOTS
+                    slots = _GENERIC_GOBO_SLOTS
+                except Exception:
+                    slots = []
+            for slot in slots:
+                try:
+                    dmx = int(slot.get("dmx"))
+                except (TypeError, ValueError):
+                    continue
+                if dmx in vus:
+                    continue
+                vus.add(dmx)
+                out.append((dmx, slot.get("name") or f"Gobo {dmx}",
+                            slot.get("color") or "#aaaaaa"))
+        out.sort(key=lambda t: t[0])
+        return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1957,6 +2136,7 @@ class LightTrack(QWidget):
         self.is_sequence_track  = False   # piste dédiée aux clips de séquence AKAI
         self.is_effect_track    = False   # piste dédiée aux effets lumière
         self.is_position_track  = False   # piste dédiée aux positions lyre
+        self.is_gobo_track      = False   # piste dédiée aux gobos
 
         self._collapsed = False
         self._normal_min_height = 100 if name == "Audio" else 60
@@ -2577,18 +2757,19 @@ print(json.dumps(waveform))
         cross-track."""
         if other is self:
             return False
-        if self.is_sequence_track or self.is_position_track:
+        if self.is_sequence_track or self.is_position_track or self.is_gobo_track:
             return False
         if self.is_effect_track:
             return getattr(other, 'is_effect_track', False)
         # self = piste couleur → cible = autre piste couleur
         return not (other.is_sequence_track or other.is_effect_track
-                    or other.is_position_track)
+                    or other.is_position_track or other.is_gobo_track)
 
     def _cross_drag_enabled(self):
         """La piste autorise-t-elle le glisser cross-track ? (couleur ou effet)"""
         return self.is_effect_track or not (self.is_sequence_track
-                                            or self.is_position_track)
+                                            or self.is_position_track
+                                            or self.is_gobo_track)
 
     def mousePressEvent(self, event):
         """Gere clic souris pour drag/resize/fade/menu + CUT MODE"""
@@ -2614,7 +2795,8 @@ print(json.dumps(waveform))
             is_seq   = getattr(self, 'is_sequence_track', False)
             is_eff   = getattr(self, 'is_effect_track', False)
             is_pos   = getattr(self, 'is_position_track', False)
-            is_group = not (is_seq or is_eff or is_pos or self.name == "Audio")
+            is_gob   = getattr(self, 'is_gobo_track', False)
+            is_group = not (is_seq or is_eff or is_pos or is_gob or self.name == "Audio")
             # Compatibilité brosse ↔ piste : une mémoire/REC se pose sur la piste
             # Séquence, un effet sur une piste Effet, une couleur sur un groupe.
             if btype == "mem":
@@ -2635,6 +2817,7 @@ print(json.dumps(waveform))
                         if (getattr(track, 'is_effect_track', False) or
                                 getattr(track, 'is_sequence_track', False) or
                                 getattr(track, 'is_position_track', False) or
+                                getattr(track, 'is_gobo_track', False) or
                                 track.name == "Audio"):
                             continue
                         # ne pas superposer si un clip couvre déjà ce temps
@@ -3204,6 +3387,10 @@ print(json.dumps(waveform))
                 self.show_sequence_clip_menu(clip, event.globalPos())
             else:
                 self.show_sequence_empty_menu(event.pos(), event.globalPos())
+        elif self.is_gobo_track:
+            if result:
+                clip, clip_x, _ = result
+                self.show_gobo_clip_menu(clip, event.globalPos())
         elif self.is_position_track:
             if result:
                 clip, clip_x, _ = result
@@ -3554,6 +3741,108 @@ print(json.dumps(waveform))
         act_del = menu.addAction(tr("lt_menu_delete"))
         act_del.triggered.connect(lambda: self._delete_clip(clip))
         menu.exec(global_pos)
+
+    def show_gobo_clip_menu(self, clip, global_pos):
+        """Menu clic droit sur un clip de gobo : changer le gobo, régler la rotation."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:2px; font-size:11px; }"
+            "QMenu::item { padding:4px 12px; border-radius:3px; color:#e0e0e0; }"
+            "QMenu::item:selected { background:#4a3c14; color:#fff; }"
+            "QMenu::item:disabled { color:#555; font-size:9px; letter-spacing:1px; }"
+            "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
+        )
+        cur = getattr(clip, 'gobo_name', '') or '—'
+        hdr = menu.addAction(f"GOBO : {cur}")
+        hdr.setEnabled(False)
+        menu.addSeparator()
+
+        mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
+        gobos = LibraryPanel._available_gobos(mw) if mw else []
+        if gobos:
+            chg = menu.addAction("Changer le gobo")
+            sub = QMenu(menu)
+            sub.setStyleSheet(menu.styleSheet())
+            for dmx, nom, _c in gobos:
+                coche = "✓ " if getattr(clip, 'gobo_dmx', None) == dmx else "    "
+                a = sub.addAction(coche + nom)
+                a.triggered.connect(
+                    lambda _, d=dmx, n=nom: self._set_clip_gobo(clip, d, n))
+            chg.setMenu(sub)
+
+        rot = getattr(clip, 'gobo_rotation', 0) or 0
+        act_rot = menu.addAction(f"Rotation du gobo…   ({rot})")
+        act_rot.triggered.connect(lambda: self._edit_gobo_rotation(clip))
+        if rot:
+            act_stop = menu.addAction("Arrêter la rotation")
+            act_stop.triggered.connect(lambda: self._set_gobo_rotation(clip, 0))
+
+        menu.addSeparator()
+        act_del = menu.addAction(tr("lt_menu_delete"))
+        act_del.triggered.connect(lambda: self._delete_clip(clip))
+        menu.exec(global_pos)
+
+    def _set_clip_gobo(self, clip, dmx, nom):
+        clip.gobo_dmx  = dmx
+        clip.gobo_name = nom
+        self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+
+    def _set_gobo_rotation(self, clip, valeur):
+        clip.gobo_rotation = max(0, min(255, int(valeur)))
+        self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+
+    def _edit_gobo_rotation(self, clip):
+        """Curseur 0-255 sur le canal Gobo1Rot, avec aperçu en direct.
+
+        Valeur BRUTE volontairement : chaque constructeur découpe ce canal en
+        plages différentes (index, rotation horaire, antihoraire, vitesses).
+        Proposer « lent / rapide » supposerait des plages qu'on ne connaît pas
+        et afficherait des libellés faux sur la moitié des lyres.
+        """
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QSlider, QDialogButtonBox
+        depart = getattr(clip, 'gobo_rotation', 0) or 0
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Rotation du gobo")
+        dlg.setStyleSheet("QDialog { background:#141414; } QLabel { color:#ddd; }")
+        lay = QVBoxLayout(dlg)
+
+        info = QLabel("Canal Gobo1Rot — valeur DMX brute.\n"
+                      "Consultez la notice de la lyre pour ses plages.")
+        info.setStyleSheet("color:#777; font-size:10px;")
+        lay.addWidget(info)
+
+        val_lbl = QLabel(str(depart))
+        val_lbl.setAlignment(Qt.AlignCenter)
+        val_lbl.setStyleSheet("color:#e6c060; font-size:20px; font-weight:bold;")
+        lay.addWidget(val_lbl)
+
+        sli = QSlider(Qt.Horizontal)
+        sli.setRange(0, 255)
+        sli.setValue(depart)
+        lay.addWidget(sli)
+
+        def _preview(v):
+            val_lbl.setText(str(v))
+            mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
+            for proj in (getattr(mw, 'projectors', []) or []):
+                if 'Gobo1' in (getattr(proj, 'dmx_profile', None) or []):
+                    proj.gobo_rotation = v
+        sli.valueChanged.connect(_preview)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        if dlg.exec() == QDialog.Accepted:
+            self._set_gobo_rotation(clip, sli.value())
+        else:
+            _preview(depart)   # l'aperçu ne doit rien laisser derrière lui
 
     def show_position_clip_menu(self, clip, global_pos):
         """Menu clic droit sur un clip de position lyre."""
@@ -4761,8 +5050,14 @@ print(json.dumps(waveform))
         is_seq = mime.hasFormat('application/x-sequence')
         is_eff = mime.hasFormat('application/x-effect')
         is_pos = mime.hasFormat('application/x-position')
+        is_gob = mime.hasFormat('application/x-gobo')
         accepted = False
-        if self.is_effect_track:
+        if self.is_gobo_track:
+            if is_gob:
+                event.acceptProposedAction(); accepted = True
+            else:
+                event.ignore()
+        elif self.is_effect_track:
             if is_eff:
                 event.acceptProposedAction(); accepted = True
             else:
@@ -4778,7 +5073,7 @@ print(json.dumps(waveform))
             else:
                 event.ignore()
         else:
-            if not is_seq and not is_pos and mime.hasText():
+            if not is_seq and not is_pos and not is_gob and mime.hasText():
                 event.acceptProposedAction(); accepted = True
             else:
                 event.ignore()
@@ -4899,6 +5194,28 @@ print(json.dumps(waveform))
             clip = self.add_clip_direct(start_time, _dur, QColor("#0d2a5c"), 0)
             clip.position_preset_idx  = data.get('idx')
             clip.position_preset_name = data.get('name', '')
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+            event.acceptProposedAction()
+            return
+
+        # ── Drop gobo sur piste Gobo ────────────────────────────────────
+        if self.is_gobo_track and event.mimeData().hasFormat('application/x-gobo'):
+            import json as _json
+            raw = bytes(event.mimeData().data('application/x-gobo')).decode()
+            try:
+                data = _json.loads(raw)
+            except Exception:
+                data = {}
+            drop_x     = event.position().x() - 145
+            click_time = max(0, drop_x / self.pixels_per_ms)
+            start_time, _dur = self.place_dropped_block(
+                click_time, self._default_block_dur_ms())
+            clip = self.add_clip_direct(start_time, _dur, QColor("#4a3c14"), 0)
+            clip.gobo_dmx      = data.get('dmx')
+            clip.gobo_name     = data.get('name', '')
+            clip.gobo_rotation = 0
             self.update()
             if hasattr(self.parent_editor, 'save_state'):
                 self.parent_editor.save_state()
@@ -5057,7 +5374,8 @@ print(json.dumps(waveform))
         for attr in ('memory_ref', 'cue_index', 'memory_label',
                      'pan_start', 'tilt_start', 'pan_end', 'tilt_end',
                      'move_effect', 'move_speed', 'move_amplitude',
-                     'strobe_speed', 'position_preset_idx', 'position_preset_name'):
+                     'strobe_speed', 'position_preset_idx', 'position_preset_name',
+                     'gobo_dmx', 'gobo_name', 'gobo_rotation'):
             if hasattr(clip, attr):
                 setattr(new_clip, attr, getattr(clip, attr))
         return new_clip
@@ -5368,7 +5686,37 @@ print(json.dumps(waveform))
 
             clip_rect = QRect(x, y, max(20, width), height)
 
-            if getattr(clip, 'position_preset_idx', None) is not None or getattr(self, 'is_position_track', False):
+            if getattr(self, 'is_gobo_track', False):
+                # ── Clip de gobo ───────────────────────────────────────
+                ACCENT = QColor("#e6c060")
+                path = QPainterPath()
+                path.addRoundedRect(clip_rect.x(), clip_rect.y(), clip_rect.width(), clip_rect.height(), 5, 5)
+                painter.setClipPath(path)
+                painter.fillRect(clip_rect, QColor("#171205"))
+                grad = QLinearGradient(float(clip_rect.left()), 0, float(clip_rect.right()), 0)
+                grad.setColorAt(0.0, QColor(230, 192, 96, 70))
+                grad.setColorAt(1.0, QColor(230, 192, 96, 12))
+                painter.fillRect(clip_rect, QBrush(grad))
+                painter.fillRect(QRect(clip_rect.left(), clip_rect.top(), 5, clip_rect.height()), ACCENT)
+                painter.setClipRect(self.rect())
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(180, 150, 70, 160), 1))
+                painter.drawRoundedRect(clip_rect, 5, 5)
+                if width > 30:
+                    font = painter.font()
+                    font.setBold(True)
+                    font.setPixelSize(13)
+                    painter.setFont(font)
+                    painter.setPen(QColor(240, 220, 160, 235))
+                    nom = getattr(clip, 'gobo_name', '') or 'Gobo'
+                    # La rotation est invisible autrement : sans ce rappel, deux
+                    # blocs du même gobo à vitesses différentes sont identiques.
+                    rot = getattr(clip, 'gobo_rotation', 0) or 0
+                    txt = f"◍  {nom}" + (f"   ↻ {rot}" if rot else "")
+                    painter.drawText(clip_rect.adjusted(10, 0, -4, 0),
+                                     Qt.AlignVCenter | Qt.AlignLeft, txt)
+
+            elif getattr(clip, 'position_preset_idx', None) is not None or getattr(self, 'is_position_track', False):
                 # ── Clip de position lyre ──────────────────────────────
                 ACCENT = QColor("#2255ee")
                 path = QPainterPath()

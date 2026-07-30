@@ -629,6 +629,67 @@ def export_mystrow(fixture: dict, path: str) -> None:
 # API publique
 # ---------------------------------------------------------------------------
 
+# Noms de couleurs rencontrés dans les <Capability> QLC+ anciens, qui ne
+# portent pas encore l'attribut Color. Sert de repli pour teinter le slot.
+_QLC_CAP_COLOURS = {
+    "white": "#ffffff", "blanc": "#ffffff",
+    "red": "#ff0000", "rouge": "#ff0000",
+    "orange": "#ff8800",
+    "amber": "#ffbf00", "ambre": "#ffbf00",
+    "yellow": "#ffdd00", "jaune": "#ffdd00",
+    "green": "#00ff00", "vert": "#00ff00",
+    "cyan": "#00dddd",
+    "blue": "#0000ff", "bleu": "#0000ff",
+    "lavender": "#b57edc", "lavande": "#b57edc",
+    "magenta": "#ff00ff", "pink": "#ff69b4", "rose": "#ff69b4",
+    "purple": "#8000ff", "violet": "#8000ff",
+    "uv": "#6600cc",
+    "congo": "#1a1aff", "ctb": "#aaccff", "cto": "#ffcc88",
+}
+
+# Capacités qui ne désignent PAS une position fixe de roue : les retenir
+# comme slots ferait choisir « défilement arc-en-ciel » quand on demande du
+# rouge, puisque la sélection se fait par proximité de couleur.
+_QLC_CAP_SKIP = ("rotation", "rotate", "scroll", "rainbow", "spin",
+                 "cw", "ccw", "sound", "reset", "index", "continuous")
+
+
+def _qlc_capability_slots(ch_el, coloured: bool) -> list:
+    """[{name, color, dmx}] depuis les <Capability> d'un canal QLC+.
+
+    `dmx` = MILIEU de la plage : les bornes tombent souvent pile à la frontière
+    avec la capacité voisine, et un arrondi suffit alors à sélectionner le
+    mauvais gobo ou la mauvaise couleur.
+    """
+    slots = []
+    for cap in ch_el.findall("Capability"):
+        nom = (cap.text or "").strip()
+        if not nom:
+            continue
+        bas = nom.lower()
+        if any(k in bas for k in _QLC_CAP_SKIP):
+            continue
+        try:
+            mn = int(cap.get("Min", "0"))
+            mx = int(cap.get("Max", mn))
+        except ValueError:
+            continue
+        dmx = (mn + mx) // 2
+
+        if coloured:
+            couleur = cap.get("Color") or ""
+            if not couleur:
+                for mot, hexa in _QLC_CAP_COLOURS.items():
+                    if mot in bas:
+                        couleur = hexa
+                        break
+            couleur = couleur or "#888888"
+        else:
+            couleur = "#888888"
+        slots.append({"name": nom, "color": couleur, "dmx": dmx})
+    return slots
+
+
 def parse_qlcplus_xml(data: bytes) -> dict:
     """
     Parse un fichier XML QLC+ (FixtureDefinition) depuis des bytes.
@@ -648,9 +709,14 @@ def parse_qlcplus_xml(data: bytes) -> dict:
     qlc_type     = (type_el.text.strip()  if type_el  is not None and type_el.text  else "")
 
     # Mapping type QLC+ -> fixture_type MyStrow
+    # ⚠️ "Moving Head" et NON "Lyre" : c'est le libellé utilisé partout ailleurs
+    # (builtin_fixtures, _detect_fixture_type, admin). Avec "Lyre", une lyre
+    # importée de QLC+ n'était reconnue comme lyre nulle part — ni par le
+    # curseur de couleur (_is_cw_only), ni par la proposition de calibration,
+    # ni par la piste Position du séquenceur.
     _TYPE_MAP = {
-        "Moving Head":    "Lyre",
-        "Scanner":        "Lyre",
+        "Moving Head":    "Moving Head",
+        "Scanner":        "Moving Head",
         "Dimmer":         "Dimmer",
         "Smoke":          "Machine a fumee",
         "Hazer":          "Machine a fumee",
@@ -663,6 +729,7 @@ def parse_qlcplus_xml(data: bytes) -> dict:
 
     # Construire la table canal_name -> type_mystrow
     channel_table = {}
+    cw_slots, gobo_slots = [], []
     for ch_el in root.findall("Channel"):
         ch_name = ch_el.get("Name") or ""
         group_el  = ch_el.find("Group")
@@ -681,6 +748,14 @@ def parse_qlcplus_xml(data: bytes) -> dict:
         else:
             ch_type = "Mode"
         channel_table[ch_name] = ch_type
+
+        # Roues : les positions sont décrites par les <Capability> du canal.
+        # Sans ça la fixture arrivait avec des roues VIDES et MyStrow retombait
+        # sur une table générique teinte → DMX, sans rapport avec le matériel.
+        if ch_type == "ColorWheel" and not cw_slots:
+            cw_slots = _qlc_capability_slots(ch_el, coloured=True)
+        elif ch_type in ("Gobo1", "Gobo2") and not gobo_slots:
+            gobo_slots = _qlc_capability_slots(ch_el, coloured=False)
 
     # Parser les modes
     modes = []
@@ -719,8 +794,8 @@ def parse_qlcplus_xml(data: bytes) -> dict:
         "source":            "qlcplus",
         "uuid":              "",
         "modes":             modes,
-        "color_wheel_slots": [],
-        "gobo_wheel_slots":  [],
+        "color_wheel_slots": cw_slots,
+        "gobo_wheel_slots":  gobo_slots,
         "channel_defaults":  {},
     }
 

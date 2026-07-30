@@ -787,6 +787,11 @@ class Plan3DWebWindow(QMainWindow):
         # jugée plus juste à l'usage que le 100 % d'origine, et surtout
         # mémorisée : c'était un réglage à refaire à chaque ouverture.
         self._ambience = 160
+        # Brouillard dans les faisceaux : 0 % par défaut, donc rendu inchangé
+        # pour qui ne va pas le chercher — et aucun coût GPU tant qu'il est nul.
+        self._fog = 0
+        self._fog_scale = 55        # 0,55 m⁻¹ ≈ une volute tous les 1,8 m
+        self._fog_speed = 35        # ≈ 10 cm/s : la fumée flotte, elle ne file pas
 
         # Charger la scène sauvegardée depuis le patch, avant que la page HTML charge
         try:
@@ -811,6 +816,12 @@ class Plan3DWebWindow(QMainWindow):
                 self._auto_quality = bool(_s3d.get('auto_quality', True))
                 if isinstance(_s3d.get('ambience'), (int, float)):
                     self._ambience = max(0, min(4000, int(_s3d['ambience'])))
+                if isinstance(_s3d.get('fog'), (int, float)):
+                    self._fog = max(0, min(100, int(_s3d['fog'])))
+                if isinstance(_s3d.get('fog_scale'), (int, float)):
+                    self._fog_scale = max(15, min(200, int(_s3d['fog_scale'])))
+                if isinstance(_s3d.get('fog_speed'), (int, float)):
+                    self._fog_speed = max(0, min(100, int(_s3d['fog_speed'])))
         except Exception:
             pass
 
@@ -1009,6 +1020,18 @@ class Plan3DWebWindow(QMainWindow):
         "QCheckBox::indicator:checked{background:#00d4ff;border-color:#00d4ff;}"
     )
 
+    # Style commun aux curseurs des panneaux (ambiance, brouillard…). Extrait
+    # en constante parce que le bloc Brouillard vit dans l'onglet Scène alors
+    # qu'il empruntait la feuille de style du curseur d'ambiance, resté dans
+    # l'onglet Caméra.
+    _SLIDER_QSS = (
+        "QSlider::groove:horizontal{height:4px;background:#151515;border-radius:2px;}"
+        "QSlider::sub-page:horizontal{background:#3344aa;border-radius:2px;}"
+        "QSlider::handle:horizontal{width:12px;height:12px;margin:-4px 0;"
+        "background:#5566cc;border-radius:6px;}"
+        "QSlider::handle:horizontal:hover{background:#7788ff;}"
+    )
+
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setMinimumWidth(160)
@@ -1024,6 +1047,7 @@ class Plan3DWebWindow(QMainWindow):
         tabs.addTab(self._build_scene_tab(),     "Scène")
         lay.addWidget(tabs)
         self._right_tabs = tabs
+        tabs.currentChanged.connect(self._on_right_tab_changed)
         return w
 
     # ── Onglet Caméra ─────────────────────────────────────────────────────────
@@ -1087,6 +1111,9 @@ class Plan3DWebWindow(QMainWindow):
         _on_amb(sl_amb.value())          # applique l'état mémorisé à l'ouverture
         lay.addWidget(sl_amb)
         self._sl_amb = sl_amb
+
+        lay.addSpacing(10)
+
 
         lay.addSpacing(12)
 
@@ -1804,17 +1831,27 @@ class Plan3DWebWindow(QMainWindow):
         self._save_patch()
 
     def eventFilter(self, obj, event):
-        if (obj is self._view and
-                event.type() == QEvent.KeyPress and
-                event.modifiers() == Qt.ControlModifier and
-                event.key() == Qt.Key_Z):
-            self._undo()
-            return True
+        # La vue web avale les touches dès qu'elle a le focus — c'est-à-dire dès
+        # qu'on a orbité dans la 3D, donc la plupart du temps. Tout raccourci
+        # doit être traité ICI en plus de keyPressEvent, sinon il ne répond
+        # qu'une fois sur deux selon l'endroit où on a cliqué en dernier.
+        if obj is self._view and event.type() == QEvent.KeyPress:
+            if (event.modifiers() == Qt.ControlModifier
+                    and event.key() == Qt.Key_Z):
+                self._undo()
+                return True
+            if event.key() == Qt.Key_Escape:
+                self.clear_selection()
+                return True
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Z:
             self._undo()
+        elif event.key() == Qt.Key_Escape:
+            # Échap éteint le repérage — la touche ne servait à rien jusqu'ici
+            # (QMainWindow, donc pas de reject() comme sur un QDialog).
+            self.clear_selection()
         else:
             super().keyPressEvent(event)
 
@@ -1864,6 +1901,34 @@ class Plan3DWebWindow(QMainWindow):
             self._toggle_select(row)
         else:
             self._on_projo_selected(row)
+
+    def clear_selection(self):
+        """Éteint le repérage : plus aucun projecteur surligné, en 3D ni au tableau.
+
+        Il n'existait aucun moyen d'en sortir. Une fois un faisceau repéré, il
+        le restait : quitter l'onglet Plan masquait le tableau — donc le seul
+        endroit d'où désélectionner — et Échap n'était traité nulle part (ni
+        `keyPressEvent`, qui ne connaissait que Ctrl+Z, ni la page web). Le
+        repérage restait donc allumé en travers du plan de feu, sans issue."""
+        if not self._selected_rows and self._highlighted_row < 0:
+            return
+        lignes = set(self._selected_rows)
+        if self._highlighted_row >= 0:
+            lignes.add(self._highlighted_row)      # primaire pas toujours dans le lot
+        for r in lignes:
+            self._mini_tbl_set_highlight(r, False)
+        self._selected_rows.clear()
+        self._highlighted_row = -1
+        self._push_selection_3d()
+
+    def _on_right_tab_changed(self, index: int):
+        """Quitter l'onglet Plan coupe le repérage.
+
+        Le tableau est le seul pilote de cette sélection : le laisser actif
+        alors qu'il n'est plus à l'écran laisse un faisceau marqué que plus rien
+        ne commande."""
+        if self._right_tabs is not None and self._right_tabs.tabText(index) != "Plan":
+            self.clear_selection()
 
     def _toggle_select(self, index: int):
         """Ctrl+clic : ajoute ou retire un projecteur de la sélection multiple."""
@@ -2010,6 +2075,93 @@ class Plan3DWebWindow(QMainWindow):
             lay.addWidget(btn)
             self._scene_btns[code] = btn
 
+        # ── Brouillard ────────────────────────────────────────────────────
+        # Module la densité de fumée DANS les faisceaux (bruit 3D animé en
+        # coordonnées monde). À 0 %, la branche du shader n'est jamais prise :
+        # aucun surcoût pour qui n'en veut pas.
+        lbl_fog = QLabel("Brouillard")
+        lbl_fog.setStyleSheet("color:#4444aa;font-size:9px;letter-spacing:0.5px;")
+        lay.addWidget(lbl_fog)
+
+        self._fog_val_lbl = QLabel("0%")
+        self._fog_val_lbl.setStyleSheet("color:#7777cc;font-size:9px;")
+        self._fog_val_lbl.setAlignment(Qt.AlignRight)
+        lay.addWidget(self._fog_val_lbl)
+
+        sl_fog = QSlider(Qt.Horizontal)
+        sl_fog.setRange(0, 100)
+        sl_fog.setValue(getattr(self, '_fog', 0))
+        sl_fog.setPageStep(10)
+        sl_fog.setToolTip(
+            "Volutes de fumée dans les faisceaux.\n"
+            "0 % = faisceaux lisses  ·  50-70 % = machine à brouillard  ·  "
+            "100 % = fumée dense"
+        )
+        sl_fog.setStyleSheet(self._SLIDER_QSS)
+        self._sl_fog = sl_fog
+
+        sl_gr = QSlider(Qt.Horizontal)      # finesse des volutes
+
+        def _on_fog(v):
+            self._fog_val_lbl.setText(f"{v}%")
+            self._fog = int(v)
+            self._js(f'window.setFog && window.setFog({v})')
+            # Finesse et vitesse ne se règlent que s'il y a de la fumée à régler.
+            # (définis plus bas : _on_fog n'est appelé qu'en fin de construction)
+            for _w in (sl_gr, lbl_gr, sl_vit, lbl_vit):
+                _w.setEnabled(v > 0)
+
+        sl_fog.valueChanged.connect(_on_fog)
+        sl_fog.sliderReleased.connect(self._save_patch)
+        lay.addWidget(sl_fog)
+
+        lbl_gr = QLabel("Finesse des volutes")
+        lbl_gr.setStyleSheet("color:#3a3a88;font-size:9px;letter-spacing:0.5px;")
+        lay.addWidget(lbl_gr)
+
+        # 15..200 → 0,15..2,0 m⁻¹ : nappes larges à gauche, fumée nerveuse à droite
+        sl_gr.setRange(15, 200)
+        sl_gr.setValue(getattr(self, '_fog_scale', 55))
+        sl_gr.setPageStep(20)
+        sl_gr.setToolTip("Gauche : larges nappes  ·  Droite : volutes serrées")
+        sl_gr.setStyleSheet(self._SLIDER_QSS)
+
+        def _on_fog_scale(v):
+            self._fog_scale = int(v)
+            self._js(f'window.setFogScale && window.setFogScale({v/100:.2f})')
+
+        sl_gr.valueChanged.connect(_on_fog_scale)
+        sl_gr.sliderReleased.connect(self._save_patch)
+        lay.addWidget(sl_gr)
+        self._sl_fog_scale = sl_gr
+
+        lbl_vit = QLabel("Vitesse de brassage")
+        lbl_vit.setStyleSheet("color:#3a3a88;font-size:9px;letter-spacing:0.5px;")
+        lay.addWidget(lbl_vit)
+
+        sl_vit = QSlider(Qt.Horizontal)
+        sl_vit.setRange(0, 100)
+        sl_vit.setValue(getattr(self, '_fog_speed', 35))
+        sl_vit.setPageStep(10)
+        sl_vit.setToolTip(
+            "0 % = fumée figée (utile pour une photo)  ·  "
+            "35 % ≈ 10 cm/s  ·  100 % = brassage vif"
+        )
+        sl_vit.setStyleSheet(self._SLIDER_QSS)
+
+        def _on_fog_speed(v):
+            self._fog_speed = int(v)
+            self._js(f'window.setFogSpeed && window.setFogSpeed({v})')
+
+        sl_vit.valueChanged.connect(_on_fog_speed)
+        sl_vit.sliderReleased.connect(self._save_patch)
+        lay.addWidget(sl_vit)
+        self._sl_fog_speed = sl_vit
+
+        _on_fog_scale(sl_gr.value())
+        _on_fog_speed(sl_vit.value())
+        _on_fog(sl_fog.value())          # applique l'état mémorisé (et grise si 0)
+
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         self._btn_trusses = QPushButton()  # kept for _apply_preset compat, not displayed
         sep.setStyleSheet("border:none;border-top:1px solid #252525;margin:6px 0;")
@@ -2036,15 +2188,6 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(btn_clear)
 
         lay.addStretch()
-
-        hint = QLabel(
-            "Blender (gratuit) est recommandé :\n"
-            "File → Export → glTF 2.0 → Format: GLB"
-        )
-        hint.setStyleSheet(
-            "color:#1e1e3a;font-size:8px;font-family:'Segoe UI',sans-serif;")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
         return w
 
     def _import_scene(self):
@@ -2191,6 +2334,14 @@ class Plan3DWebWindow(QMainWindow):
                 # d'ambiance retombait donc silencieusement à sa version faible.
                 self._js('window.setRoomAmbience && '
                          f'window.setRoomAmbience({amb.value()/200:.3f})')
+            # Même piège que l'ambiance juste au-dessus : sans ce rappel, le
+            # brouillard retombe à 0 au moindre rechargement de page
+            # (changement de preset, import de décor…), sans rien dire.
+            self._js('window.setFogScale && '
+                     f'window.setFogScale({getattr(self, "_fog_scale", 55)/100:.2f})')
+            self._js('window.setFogSpeed && '
+                     f'window.setFogSpeed({int(getattr(self, "_fog_speed", 35))})')
+            self._js(f'window.setFog && window.setFog({int(getattr(self, "_fog", 0))})')
             self._js('if(window.setBloom)window.setBloom(0.0)')
             self._js('window.beamScale=0.5')
             # Qualité de rendu des faisceaux volumétriques

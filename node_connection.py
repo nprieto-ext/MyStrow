@@ -13,6 +13,7 @@ import platform
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QApplication,
     QWidget, QStackedWidget, QScrollArea, QLineEdit, QComboBox, QCheckBox,
+    QGridLayout,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QCursor
@@ -1317,13 +1318,14 @@ from PySide6.QtCore import Signal as _Signal
 try:
     from artnet_dmx import (
         TRANSPORT_ARTNET, TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO,
-        TRANSPORT_ENTTEC_D2XX,
+        TRANSPORT_ENTTEC_D2XX, OUTPUT_OFF,
     )
 except ImportError:
     TRANSPORT_ARTNET    = "artnet"
     TRANSPORT_ENTTEC    = "enttec"
     TRANSPORT_ENTTEC_PRO = "enttec_pro"
     TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"
+    OUTPUT_OFF = -1
 
 _SS_DIALOG = """
     QDialog  { background: #131313; }
@@ -1388,7 +1390,6 @@ class DmxOutputDialog(QDialog):
         super().__init__(parent)
         self._main_win = parent
         self.setWindowTitle("Paramétrer la sortie DMX")
-        self.setFixedSize(520, 490)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet(_SS_DIALOG)
 
@@ -1399,6 +1400,25 @@ class DmxOutputDialog(QDialog):
         self._build_ui()
         self._refresh_ports()
         self._set_transport(self._transport, save=False)
+        self._fit_to_content()
+
+    def _fit_to_content(self):
+        """Ouvre la fenêtre à la hauteur réellement demandée par la page.
+
+        Largeur figée (520), hauteur calculée : hauteur de tout ce qui entoure
+        la zone défilante + hauteur souhaitée par la plus grande des pages,
+        plafonnée à l'écran. Sans ça, la page Node dépassait la taille fixe et
+        la carte « Aiguillage des sorties » se retrouvait rognée.
+        """
+        besoin = (self.layout().minimumSize().height()
+                  - self._scroll.minimumHeight()
+                  + self._stack.sizeHint().height())
+        ecran = self.screen() or QApplication.primaryScreen()
+        dispo = int(ecran.availableGeometry().height() * 0.92) if ecran else 800
+        self.setFixedWidth(520)
+        self.setMinimumHeight(min(430, besoin))
+        self.setMaximumHeight(besoin)
+        self.resize(520, min(besoin, dispo))
 
     def _usb_port_available(self, dmx):
         """Un port série exploitable est-il réellement présent ?"""
@@ -1440,15 +1460,15 @@ class DmxOutputDialog(QDialog):
     # ── Construction UI ────────────────────────────────────────────────
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 20)
-        root.setSpacing(16)
+        content = QVBoxLayout(self)
+        content.setContentsMargins(28, 24, 28, 20)
+        content.setSpacing(16)
 
         # Titre
         title = QLabel("Paramétrer la sortie DMX")
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet("color: #f0f0f0;")
-        root.addWidget(title)
+        content.addWidget(title)
 
         # Toggle Node / USB
         toggle_row = QHBoxLayout()
@@ -1465,18 +1485,54 @@ class DmxOutputDialog(QDialog):
         self._btn_usb.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_usb.clicked.connect(lambda: self._set_transport(TRANSPORT_ENTTEC))
         toggle_row.addWidget(self._btn_usb)
-        root.addLayout(toggle_row)
+        content.addLayout(toggle_row)
+
+        # Bandeau guide — en haut de la fenêtre, façon bibliothèque de fixtures.
+        # En pied de fenêtre il passait sous la barre de tâches sur certaines
+        # configs et personne ne le voyait.
+        hint = QLabel(
+            '💡  Besoin d\'aide pour brancher votre matériel ?  '
+            '<a href="https://mystrow.fr/configurer-node-usb-artnet-dmx-mystrow.html" '
+            'style="color:#44cc88; text-decoration:underline;">Consulter le guide →</a>'
+        )
+        hint.setWordWrap(True)
+        hint.setOpenExternalLinks(True)
+        hint.setStyleSheet(
+            "color:#888; font-size:11px; background:#161f16; border:1px solid #2a3a2a;"
+            " border-radius:5px; padding:5px 10px;"
+        )
+        content.addWidget(hint)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("QFrame { border: none; border-top: 1px solid #222; }")
-        root.addWidget(sep)
+        content.addWidget(sep)
 
-        # Pages
+        # Pages — dans une zone défilante. La fenêtre était figée à 490 px de
+        # haut alors que la page Node en réclame ~660 avec l'aiguillage des
+        # sorties : Qt écrasait la carte et la tronquait en plein milieu des
+        # combos. Ici la fenêtre s'ouvre à la bonne hauteur, et si l'écran est
+        # trop petit on scrolle au lieu de couper.
         self._stack = QStackedWidget()
         self._stack.addWidget(self._page_node())
         self._stack.addWidget(self._page_usb())
-        root.addWidget(self._stack, 1)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setMinimumHeight(180)
+        self._scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+            "QScrollBar:vertical { background: #1e1e1e; width: 6px; border-radius: 3px; }"
+            "QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 3px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }")
+        # Sans ça le viewport du QScrollArea se peint en clair (palette par
+        # défaut) et découpe un rectangle blanc au milieu du dialogue sombre.
+        self._scroll.viewport().setStyleSheet("background: transparent;")
+        self._stack.setStyleSheet("background: transparent;")
+        self._scroll.setWidget(self._stack)
+        content.addWidget(self._scroll, 1)
 
         # Boutons bas
         btn_row = QHBoxLayout()
@@ -1497,7 +1553,7 @@ class DmxOutputDialog(QDialog):
         self._btn_apply.setStyleSheet(_BTN_APPLY)
         self._btn_apply.clicked.connect(self._apply)
         btn_row.addWidget(self._btn_apply)
-        root.addLayout(btn_row)
+        content.addLayout(btn_row)
 
     def _page_node(self):
         """Page Art-Net : statut de connexion (lecture seule) + bouton de configuration."""
@@ -1506,10 +1562,6 @@ class DmxOutputDialog(QDialog):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(14)
-
-        info = QLabel("Boîtier réseau Art-Net (ElectroConcept, MA Lighting, etc.)")
-        info.setStyleSheet("color: #555; font-size: 10px;")
-        lay.addWidget(info)
 
         card = QFrame()
         card.setStyleSheet(
@@ -1553,28 +1605,70 @@ class DmxOutputDialog(QDialog):
         net_row.addWidget(self._node_net_lbl)
         card_lay.addLayout(net_row)
 
-        # Miroir sortie 2
+        # Aiguillage des 4 sorties du Node.
+        # Remplace l'ancien sélecteur « DMX 2 / Miroir », qui n'avait AUCUN effet :
+        # `mirror_output` était sauvegardé mais jamais lu par `_send_artnet`.
+        # Ici, mettre deux sorties sur le même univers reproduit le miroir, et
+        # permet en plus n'importe quelle autre combinaison.
+        self._out_combos = []
         if self._dmx is not None:
             card_lay.addWidget(_sep())
-            dmx2_row = QHBoxLayout()
-            dmx2_key = QLabel("DMX 2")
-            dmx2_key.setFont(QFont("Segoe UI", 9))
-            dmx2_key.setStyleSheet("color: #666; background: transparent; border: none;")
-            dmx2_row.addWidget(dmx2_key)
-            dmx2_row.addStretch()
-            self._mirror_combo = QComboBox()
-            self._mirror_combo.addItem("Désactivé")
-            self._mirror_combo.addItem("DMX 1 (Miroir)")
-            self._mirror_combo.setCurrentIndex(1 if self._dmx.mirror_output else 0)
-            self._mirror_combo.setFixedWidth(150)
-            self._mirror_combo.setFont(QFont("Segoe UI", 9))
-            self._mirror_combo.setStyleSheet(
-                "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
-                " border-radius:4px; padding:3px 8px; }"
-                "QComboBox::drop-down { border: none; }"
-                "QComboBox QAbstractItemView { background:#2a2a2a; color:white; }")
-            dmx2_row.addWidget(self._mirror_combo)
-            card_lay.addLayout(dmx2_row)
+
+            titre = QLabel("Aiguillage des sorties")
+            titre.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            titre.setStyleSheet("color: #888; background: transparent; border: none;")
+            card_lay.addWidget(titre)
+
+            aide = QLabel("Quel univers part sur quelle sortie physique du Node.")
+            aide.setStyleSheet("color: #555; font-size: 9px; background: transparent; border: none;")
+            aide.setWordWrap(True)
+            card_lay.addWidget(aide)
+
+            grille = QGridLayout()
+            grille.setContentsMargins(0, 6, 0, 0)
+            grille.setHorizontalSpacing(10)
+            grille.setVerticalSpacing(6)
+
+            for n in range(4):
+                sortie = QLabel(f"DMX {n + 1}")
+                sortie.setFont(QFont("Segoe UI", 9))
+                sortie.setStyleSheet("color: #999; background: transparent; border: none;")
+                grille.addWidget(sortie, n, 0)
+
+                fleche = QLabel("←")
+                fleche.setStyleSheet("color: #444; background: transparent; border: none;")
+                grille.addWidget(fleche, n, 1)
+
+                combo = QComboBox()
+                for u in range(4):
+                    combo.addItem(f"Univers {u + 1}", userData=u)
+                combo.addItem("Désactivé", userData=OUTPUT_OFF)
+                courant = (self._dmx.output_map[n]
+                           if n < len(getattr(self._dmx, 'output_map', [])) else n)
+                combo.setCurrentIndex(4 if courant == OUTPUT_OFF else max(0, min(3, courant)))
+                combo.setFont(QFont("Segoe UI", 9))
+                combo.setStyleSheet(
+                    "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
+                    " border-radius:4px; padding:3px 8px; }"
+                    "QComboBox::drop-down { border: none; }"
+                    "QComboBox QAbstractItemView { background:#2a2a2a; color:white; }")
+                combo.currentIndexChanged.connect(self._refresh_out_hint)
+                grille.addWidget(combo, n, 2)
+
+                art = QLabel("")
+                art.setStyleSheet("color: #444; font-size: 9px; background: transparent; border: none;")
+                grille.addWidget(art, n, 3)
+
+                self._out_combos.append((combo, art))
+
+            grille.setColumnStretch(2, 1)
+            card_lay.addLayout(grille)
+
+            self._out_hint = QLabel("")
+            self._out_hint.setStyleSheet("color: #e6a817; font-size: 9px; background: transparent; border: none;")
+            self._out_hint.setWordWrap(True)
+            card_lay.addWidget(self._out_hint)
+            self._refresh_out_hint()
 
         lay.addWidget(card)
 
@@ -1747,10 +1841,12 @@ class DmxOutputDialog(QDialog):
         if not hasattr(self, '_proto_info'):
             return
         proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
-        if proto == TRANSPORT_ENTTEC_PRO:
-            self._proto_info.setText("La LED de l'interface passe au vert quand la sortie DMX est active.")
-        else:
-            self._proto_info.setText("Adaptateur USB-DMX simple — branchez, choisissez le port, activez la sortie.")
+        # Rien à dire sur les adaptateurs simples : le label est masqué pour ne
+        # pas laisser une ligne vide sous le sélecteur d'interface.
+        texte = ("La LED de l'interface passe au vert quand la sortie DMX est active."
+                 if proto == TRANSPORT_ENTTEC_PRO else "")
+        self._proto_info.setText(texte)
+        self._proto_info.setVisible(bool(texte))
 
     def _set_transport(self, transport, save=True):
         self._transport = transport
@@ -1797,6 +1893,49 @@ class DmxOutputDialog(QDialog):
                     break
         dlg.exec()
 
+    def _out_map_from_ui(self):
+        """Correspondance sortie -> univers lue dans les combos."""
+        return [c.currentData() for c, _ in getattr(self, '_out_combos', [])]
+
+    def _refresh_out_hint(self):
+        """Rappelle l'univers Art-Net de chaque sortie et signale les cas piégeux."""
+        if not getattr(self, '_out_combos', None) or self._dmx is None:
+            return
+        base = getattr(self._dmx, 'universe', 0)
+        mapping = self._out_map_from_ui()
+
+        for n, (_c, art) in enumerate(self._out_combos):
+            art.setText("— noir —" if mapping[n] == OUTPUT_OFF else f"Art-Net {base + n}")
+
+        # Un univers qui ne part sur AUCUNE sortie est invisible sur scène alors
+        # que les projecteurs y sont patchés — c'est l'erreur qui coûte le plus
+        # cher en production, elle mérite d'être dite avant de cliquer Connecter.
+        orphelins = [u + 1 for u in range(4) if u not in mapping]
+        doublons  = sorted({u + 1 for u in mapping
+                            if u != OUTPUT_OFF and mapping.count(u) > 1})
+        eteintes  = [n + 1 for n, u in enumerate(mapping) if u == OUTPUT_OFF]
+        msgs = []
+        if eteintes:
+            msgs.append("Sortie désactivée : DMX " + ", DMX ".join(map(str, eteintes)))
+        if orphelins:
+            msgs.append("Univers non diffusé : " + ", ".join(map(str, orphelins)))
+        if doublons:
+            msgs.append("Dupliqué (miroir) : " + ", ".join(map(str, doublons)))
+        self._out_hint.setText("   ·   ".join(msgs))
+
+    def _journal(self, text: str, level: str = "info"):
+        """Écrit dans le journal de la fenêtre principale, si elle est joignable.
+
+        Le dialogue peut être ouvert sans parent (tests, diagnostic) : l'absence
+        de journal ne doit jamais empêcher la connexion de se faire.
+        """
+        win = self._main_win
+        if win is not None and hasattr(win, '_log_message'):
+            try:
+                win._log_message(text, level)
+            except Exception:
+                pass
+
     def _apply(self):
         """Sauvegarde le transport actif et reconnecte."""
         if not self._dmx:
@@ -1804,8 +1943,13 @@ class DmxOutputDialog(QDialog):
             return
 
         if self._transport == TRANSPORT_ARTNET:
-            combo = getattr(self, '_mirror_combo', None)
-            mirror_on = (combo.currentIndex() == 1) if combo else self._dmx.mirror_output
+            # Aiguillage des sorties, appliqué AVANT connect() : c'est lui qui
+            # décide quelles données partent sur quelle sortie du Node.
+            mapping = self._out_map_from_ui()
+            if mapping:
+                self._dmx.set_output_map(mapping)
+            actifs = [u for u in mapping if u != OUTPUT_OFF]
+            mirror_on = len(set(actifs)) < len(actifs)
             u2 = self._dmx.universe + 1
             self._dmx.connect(
                 transport=TRANSPORT_ARTNET,
@@ -1817,9 +1961,19 @@ class DmxOutputDialog(QDialog):
                 product_id="artnet",
                 product_name="Art-Net (réseau)",
             )
-            mirror_info = f"  •  Miroir univers {u2}" if mirror_on else ""
+            # Résumé lisible de l'aiguillage : « DMX1←U1  DMX2←U1  DMX3←U3… »
+            routage = "  ".join(
+                f"DMX{n+1}←{'OFF' if u == OUTPUT_OFF else f'U{u+1}'}"
+                for n, u in enumerate(mapping)) if mapping else ""
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
-            self._status_lbl.setText(f"Sortie Node appliquée — {TARGET_IP}:{TARGET_PORT}{mirror_info}")
+            self._status_lbl.setText(
+                f"Sortie Node appliquée — {TARGET_IP}:{TARGET_PORT}"
+                + (f"  •  {routage}" if routage else ""))
+            self._journal(
+                f"Sortie DMX : Art-Net connecté — {TARGET_IP}:{TARGET_PORT}"
+                + (f"  ({routage})" if routage else ""),
+                "success",
+            )
         else:
             com = self._port_combo.currentData()
             if not com:
@@ -1875,6 +2029,10 @@ class DmxOutputDialog(QDialog):
                     self._status_lbl.setText(
                         f"Port {com} inaccessible — fermez Chataigne ou toute autre app DMX"
                     )
+                    self._journal(
+                        f"Sortie DMX : échec de connexion sur {com} — port inaccessible",
+                        "error",
+                    )
                     return
             if is_pro:
                 proto_label = "Pro"
@@ -1884,6 +2042,14 @@ class DmxOutputDialog(QDialog):
                 proto_label = "Open (série)"
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(f"Sortie USB {proto_label} appliquée — {com}")
+            # Vaut aussi pour la branche « déjà ouvert » : l'utilisateur a cliqué
+            # « Connecter », le journal doit confirmer l'état obtenu — pas
+            # rester muet sous prétexte qu'aucun port n'a été rouvert.
+            self._journal(
+                f"Sortie DMX : {'ENTTEC DMX USB Pro' if is_pro else 'ENTTEC Open DMX USB'} "
+                f"connecté — {com} ({proto_label})",
+                "success",
+            )
 
         self.transport_changed.emit(self._transport)
         self.accept()

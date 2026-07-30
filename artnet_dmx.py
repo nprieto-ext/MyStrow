@@ -128,6 +128,11 @@ TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"  # ENTTEC Open DMX USB via driver FTDI D2X
 TRANSPORT_ENTTEC_PRO  = "enttec_pro"   # ENTTEC DMX USB Pro (paquet 7E/E7, DMXKing, etc.)
 TRANSPORT_ARTNET      = "artnet"       # Boitier reseau Art-Net (ElectroConcept...)
 
+# Valeur d'`ArtNetDMX.output_map` marquant une sortie du Node desactivee.
+# On EMET quand meme, avec 512 zeros : cesser d'emettre laisserait la plupart
+# des nodes rejouer la derniere trame recue — projecteurs figes allumes.
+OUTPUT_OFF = -1
+
 # Break DMX genere par « baud-rate trick » : un octet 0x00 emis a BREAK_BAUD
 # tient la ligne a LOW pendant 1 bit de start + 8 bits de donnees = 9 bits.
 # C'est le repli quand send_break n'est pas exploitable — cas de macOS, ou il
@@ -246,9 +251,21 @@ class ArtNetDMX:
         # --- Art-Net reseau ---
         self.target_ip = "2.0.0.15"
         self.target_port = 6454       # Port Art-Net standard
-        self.universe = 0             # Univers Art-Net sortie 1 (0-based)
-        self.universe2 = 1            # Univers Art-Net sortie 2 (miroir)
-        self.mirror_output = True     # Envoyer sur les 2 sorties du NODE (miroir par defaut)
+        self.universe = 0             # Univers Art-Net de la sortie 1 du Node (0-based)
+        self.universe2 = 1            # OBSOLETE — remplace par output_map, garde pour la relecture des vieux .json
+        self.mirror_output = True     # OBSOLETE — idem (voir output_map)
+        # Correspondance sortie physique du Node -> univers interne MyStrow.
+        # output_map[n] = index (0-3) du tampon dmx_data emis sur la sortie n du
+        # Node, c'est-a-dire sur l'univers Art-Net (self.universe + n).
+        # Par defaut chaque sortie recoit son univers homonyme : 1->1, 2->2...
+        # Deux sorties peuvent pointer le MEME univers : c'est le miroir, en plus
+        # souple que l'ancien booleen `mirror_output` — lequel n'etait de toute
+        # facon jamais lu par _send_artnet.
+        # OUTPUT_OFF (-1) = sortie desactivee. On continue d'EMETTRE, avec tous
+        # les canaux a zero : couper l'emission laisserait la plupart des nodes
+        # rejouer indefiniment la derniere trame recue, donc des projecteurs
+        # figes allumes en scene.
+        self.output_map = [0, 1, 2, 3]
         self._artnet_seq = 0
         self._socket = None
 
@@ -285,11 +302,37 @@ class ArtNetDMX:
                 self.universe     = int(cfg.get("universe", 0))
                 self.universe2    = int(cfg.get("universe2", 1))
                 self.mirror_output = bool(cfg.get("mirror_output", True))
+                self.set_output_map(cfg.get("output_map"))
                 self.pro_baud      = int(cfg.get("pro_baud", 250000))
                 _lines = str(cfg.get("serial_lines", "clear"))
                 self.serial_lines = _lines if _lines in SERIAL_LINES_MODES else "clear"
         except Exception:
             pass
+
+    def set_output_map(self, mapping):
+        """Fixe la correspondance sortie du Node -> univers interne.
+
+        Valeurs acceptees : 0-3 (index d'univers) ou OUTPUT_OFF pour desactiver.
+
+        Tolerant a dessein : une config absente, tronquee ou corrompue ne doit
+        jamais empecher la sortie DMX de fonctionner. Toute entree invalide
+        retombe sur l'identite (sortie n -> univers n), qui est le cablage
+        attendu par defaut. Une entree illisible ne desactive JAMAIS une sortie :
+        se retrouver dans le noir a cause d'un fichier abime serait pire que de
+        diffuser le mauvais univers.
+        """
+        if not isinstance(mapping, (list, tuple)):
+            self.output_map = [0, 1, 2, 3]
+            return
+        out = []
+        for n in range(4):
+            try:
+                v = int(mapping[n])
+            except Exception:
+                out.append(n)
+                continue
+            out.append(OUTPUT_OFF if v == OUTPUT_OFF else max(0, min(3, v)))
+        self.output_map = out
 
     def _save_config(self):
         try:
@@ -305,6 +348,7 @@ class ArtNetDMX:
                     "universe":      self.universe,
                     "universe2":     self.universe2,
                     "mirror_output": self.mirror_output,
+                    "output_map":    list(self.output_map),
                     "pro_baud":      getattr(self, "pro_baud", 250000),
                     "serial_lines":  getattr(self, "serial_lines", "clear"),
                 }, f, indent=2)
@@ -976,10 +1020,15 @@ class ArtNetDMX:
     def _build_artnet_packet(self, universe, seq, data_universe=0):
         """Construit un paquet ArtDMX pour l'univers donne.
         universe     : numero Art-Net envoye dans le paquet
-        data_universe: indice dans self.dmx_data (0-3) dont les donnees sont utilisees
+        data_universe: indice dans self.dmx_data (0-3), ou OUTPUT_OFF pour une
+                       trame de 512 zeros (sortie desactivee)
         """
         sub_uni = universe & 0xFF
         net     = (universe >> 8) & 0x7F
+        if data_universe == OUTPUT_OFF:
+            payload = bytes(512)
+        else:
+            payload = bytes(self.dmx_data[max(0, min(3, data_universe))][:512])
         return (
             b'Art-Net\x00'
             + b'\x00\x50'
@@ -988,7 +1037,7 @@ class ArtNetDMX:
             + b'\x00'
             + bytes([sub_uni, net])
             + b'\x02\x00'
-            + bytes(self.dmx_data[max(0, min(3, data_universe))][:512])
+            + payload
         )
 
     def _send_artnet(self):
@@ -997,9 +1046,13 @@ class ArtNetDMX:
             return False
         try:
             self._artnet_seq = (self._artnet_seq + 1) % 256
-            for uni_idx in range(4):
-                art_uni = self.universe + uni_idx  # univers Art-Net = base + offset
-                pkt = self._build_artnet_packet(art_uni, self._artnet_seq, data_universe=uni_idx)
+            for sortie in range(4):
+                # L'univers Art-Net reste base + n : c'est le cablage physique du
+                # Node, qu'on ne change pas. Ce qui est reglable, c'est QUELLES
+                # donnees partent sur cette sortie.
+                art_uni = self.universe + sortie
+                src = self.output_map[sortie] if sortie < len(self.output_map) else sortie
+                pkt = self._build_artnet_packet(art_uni, self._artnet_seq, data_universe=src)
                 self._socket.sendto(pkt, (self.target_ip, self.target_port))
             self._last_artnet_error = None
             return True

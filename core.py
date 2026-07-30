@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.77"
+VERSION = "3.1.78"
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -462,6 +462,41 @@ CH_SHORT = {
 def channel_label(ch):
     """Libellé d'affichage d'un type de canal."""
     return CH_SHORT.get(ch, ch)
+
+
+# === BANDEAU « CONSULTER LE GUIDE » ===
+
+# Bandeau discret en pied de fenêtre renvoyant vers un guide du site.
+# Centralisé ici pour que toutes les fenêtres gardent EXACTEMENT la même
+# présentation : le style était recopié à la main d'une fenêtre à l'autre, et
+# rien n'empêchait une couleur ou une taille de dériver au fil des ajouts.
+GUIDE_BANNER_HEIGHT = 20
+GUIDE_BANNER_BG     = "#060606"
+GUIDE_BANNER_BORDER = "#101010"
+GUIDE_BANNER_FG     = "#333"
+GUIDE_BANNER_SIZE   = "10px"
+
+
+def guide_banner(texte: str, url: str) -> QLabel:
+    """Bandeau « <texte> → Consulter le guide » cliquable, en pied de fenêtre.
+
+    `texte` est l'accroche, sans la flèche ni la mention du guide : elles sont
+    ajoutées ici pour que la formulation reste homogène partout.
+    """
+    lbl = QLabel(
+        f'<a href="{url}"'
+        f' style="color:{GUIDE_BANNER_FG};text-decoration:none;'
+        f'font-size:{GUIDE_BANNER_SIZE};">'
+        f'{texte} → Consulter le guide</a>'
+    )
+    lbl.setStyleSheet(
+        f"background:{GUIDE_BANNER_BG}; padding:0 14px; "
+        f"border-top:1px solid {GUIDE_BANNER_BORDER};"
+    )
+    lbl.setOpenExternalLinks(True)
+    lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    lbl.setFixedHeight(GUIDE_BANNER_HEIGHT)
+    return lbl
 
 
 # === RAPPORTS DE DIAGNOSTIC ===

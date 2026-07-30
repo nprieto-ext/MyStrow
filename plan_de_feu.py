@@ -933,7 +933,9 @@ class ColorPickerBlock(QFrame):
     # ── Color Wheel detection ────────────────────────────────────────────────
     @staticmethod
     def _is_cw_only(proj) -> bool:
-        if getattr(proj, 'fixture_type', '') != 'Moving Head':
+        # « Lyre » : ancien libellé produit par l'import QLC+. Les fixtures déjà
+        # patchées le portent encore — les rejeter obligerait à tout réimporter.
+        if getattr(proj, 'fixture_type', '') not in ('Moving Head', 'Lyre'):
             return False
         profile = getattr(proj, 'dmx_profile', None) or []
         if not profile:
@@ -981,10 +983,23 @@ class ColorPickerBlock(QFrame):
                 targets.append((projs[i], g, i))
         _cw_matched_name = None
         for proj, g, i in targets:
+            # Prise en main manuelle, comme le fait déjà le clic droit
+            # « appliquer une couleur » (_apply_color_to_targets). Sans ce
+            # drapeau, la restitution HTP des mémoires réécrit la fixture
+            # ~40 fois par seconde et efface aussitôt la couleur choisie —
+            # le curseur semblait alors sans effet. Libéré par CLEAR.
+            proj._manual_color = True
             if self._is_cw_only(proj):
                 # Color Wheel : mapper la couleur choisie vers le slot le plus proche
                 slots = getattr(proj, 'color_wheel_slots', [])
+                # Le niveau vient du curseur de luminosité (une roue ne peut pas
+                # porter l'intensité dans sa couleur, contrairement au RGB).
+                # Mais un niveau hérité à 0 rendait la lyre noire alors qu'on ne
+                # touchait que la teinte : on remonte à 100, comme le fait
+                # _apply_color_to_targets.
                 proj.level = max(0, min(100, int(self._v * 100)))
+                if proj.level == 0:
+                    proj.level = 100
                 if slots:
                     def _dist(s):
                         sc = QColor(s.get('color', '#ffffff'))
@@ -1003,10 +1018,21 @@ class ColorPickerBlock(QFrame):
                                         int(slot_color.blue() * br))
                     _cw_matched_name = best.get('name', '')
                 else:
-                    # Pas de slots définis — fallback luminosité uniquement
                     br = proj.level / 100.0
-                    bc = proj.base_color if proj.base_color else QColor(255, 255, 255)
-                    proj.color = QColor(int(bc.red() * br), int(bc.green() * br), int(bc.blue() * br))
+                    # Roue non renseignée : on ignore quelle valeur DMX donne
+                    # quelle couleur. On délègue à _update_color_wheel, qui
+                    # porte la table générique teinte → DMX et sert déjà aux
+                    # mémoires et au show — même source de vérité.
+                    # Avant, cette branche ne faisait que redimensionner la
+                    # luminosité : le curseur semblait sans effet sur une lyre
+                    # dont la roue n'avait pas été décrite (import QLC+ ancien).
+                    proj.base_color = color
+                    proj.color = QColor(int(color.red() * br),
+                                        int(color.green() * br),
+                                        int(color.blue() * br))
+                    _mw = getattr(pdf, 'main_window', None)
+                    if _mw is not None and hasattr(_mw, '_update_color_wheel'):
+                        _mw._update_color_wheel(proj, color)
                 continue
             proj.base_color = color
             proj.level = 100
@@ -1084,6 +1110,24 @@ _DEFAULT_POSITIONS = {
     "groupe_g": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.62),
     "groupe_h": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.46),
 }
+
+
+def pan_mirror_value(proj, pan):
+    """Valeur Pan miroir d'une lyre, prise dans SA course utile.
+
+    Le miroir se calcule au milieu de [pan_min, pan_max], pas au milieu du
+    16 bits. Sur une lyre dont la zone de mouvement est restreinte,
+    `65535 - pan` sort de la zone et se fait clamper à la sortie DMX
+    (cf. artnet_dmx) : la lyre se colle sur sa butée et cesse de suivre le
+    pad, alors que ses voisines continuent. Avec la zone par défaut
+    (0–65535) la formule redonne exactement `65535 - pan`.
+    """
+    lo = getattr(proj, 'pan_min', 0) or 0
+    hi = getattr(proj, 'pan_max', 65535)
+    hi = 65535 if hi is None else hi
+    if hi < lo:
+        lo, hi = hi, lo
+    return int(max(lo, min(hi, (lo + hi) - int(pan))))
 
 class _PersistentMenu(QMenu):
     """QMenu qui ne se ferme pas quand on clique sur un QWidgetAction.
@@ -1384,17 +1428,12 @@ class _PanTiltFloater(QFrame):
 
     def _on_changed(self, pan, tilt):
         _grab_move(self._targets)
-        sym = getattr(self._canvas.pdf, 'sym_mode', False)
-        if sym and len(self._targets) >= 2:
-            n = len(self._targets)
-            half = n // 2
-            for i, p in enumerate(self._targets):
-                p.pan  = (65535 - pan) if i >= half else pan
-                p.tilt = tilt
-        else:
-            for p in self._targets:
-                p.pan  = pan
-                p.tilt = tilt
+        _pdf = self._canvas.pdf
+        mir  = (_pdf.sym_mirror_ids(self._targets)
+                if getattr(_pdf, 'sym_mode', False) else set())
+        for p in self._targets:
+            p.pan  = pan_mirror_value(p, pan) if id(p) in mir else pan
+            p.tilt = tilt
         self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
         self._canvas.update()
         pdf = self._canvas.pdf
@@ -1449,6 +1488,7 @@ class FixtureCanvas(QWidget):
         self._beam_drag_start   = None   # QPoint origin du drag
         self._beam_drag_pt0     = None   # (pan0, tilt0) au début du drag
         self._beam_drag_targets = []     # [(proj, pan0, tilt0)] à modifier
+        self._beam_drag_mirror  = set()  # {id(proj)} en Pan miroir (⇄ SYM)
         self._drag_starts = {}         # {proj_idx: (norm_x, norm_y)} pour multi-drag
         self._hover_index = None
         self._rubber_origin = None
@@ -1730,6 +1770,24 @@ class FixtureCanvas(QWidget):
         if getattr(proj, 'fixture_type', '') == 'Gradateur':
             br = proj.level / 100.0
             return QColor(255, int(220 * br), int(100 * br))
+
+        # Lyre à roue de couleurs : la couleur affichée vient de la POSITION DE
+        # LA ROUE, pas de base_color. Une roue est toujours sur un slot — elle
+        # ne peut pas être noire. Se fier à base_color affichait la fixture
+        # éteinte tant qu'aucune couleur n'avait été posée à la main, alors
+        # qu'elle sort bel et bien du blanc.
+        _prof = getattr(proj, 'dmx_profile', None) or []
+        if _prof and 'ColorWheel' in _prof and not (
+                'R' in _prof and 'G' in _prof and 'B' in _prof):
+            _slots = getattr(proj, 'color_wheel_slots', None) or []
+            if _slots:
+                _cw = int(getattr(proj, 'color_wheel', 0) or 0)
+                _best = min(_slots, key=lambda s: abs(int(s.get('dmx', 0)) - _cw))
+                _c = QColor(_best.get('color', '#ffffff'))
+                _br = proj.level / 100.0
+                return QColor(int(_c.red() * _br), int(_c.green() * _br),
+                              int(_c.blue() * _br))
+
         return QColor(proj.color)
 
     def _draw_fixture(self, painter, cx, cy, proj, is_selected, is_hover):
@@ -2852,6 +2910,11 @@ class FixtureCanvas(QWidget):
                 self._beam_drag_start   = pb['pos']
                 self._beam_drag_pt0     = (getattr(proj, 'pan', 32768), getattr(proj, 'tilt', 32768))
                 self._beam_drag_targets = [(p, getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)) for p in targets]
+                # Jeu de lyres en miroir figé à l'appui : la souris est tenue,
+                # inutile de le recalculer à chaque mouvement.
+                self._beam_drag_mirror = (
+                    self.pdf.sym_mirror_ids(targets)
+                    if getattr(self.pdf, 'sym_mode', False) else set())
                 for p in targets:
                     if p.level == 0:
                         p.level = 100
@@ -2866,12 +2929,10 @@ class FixtureCanvas(QWidget):
             _PX = 250.0
             ddx = pos.x() - self._beam_drag_start.x()
             ddy = pos.y() - self._beam_drag_start.y()
-            sym  = getattr(self.pdf, 'sym_mode', False)
-            n    = len(self._beam_drag_targets)
-            half = n // 2
-            for i, (p, pan0, tilt0) in enumerate(self._beam_drag_targets):
+            mir = getattr(self, '_beam_drag_mirror', None) or set()
+            for (p, pan0, tilt0) in self._beam_drag_targets:
                 dpan = -ddx / _PX * 65535
-                if sym and i >= half:
+                if id(p) in mir:
                     dpan = -dpan
                 _grab_move((p,))
                 p.pan  = int(max(0, min(65535, pan0  + int(dpan))))
@@ -2964,6 +3025,7 @@ class FixtureCanvas(QWidget):
                 self._beam_drag_start   = None
                 self._beam_drag_pt0     = None
                 self._beam_drag_targets = []
+                self._beam_drag_mirror  = set()
                 self.setCursor(Qt.ArrowCursor)
                 self.update()
                 return
@@ -3130,7 +3192,9 @@ class PlanDeFeu(QFrame):
             self.btn_sym.setCheckable(True)
             self.btn_sym.setFixedSize(46, 26)
             self.btn_sym.setToolTip(
-                "Symétrie Pan — 1ère moitié = Pan normal, 2ème moitié = Pan inversé\n"
+                "Symétrie Pan — les lyres à droite de l'axe de la sélection\n"
+                "partent en Pan inversé, celles à gauche en Pan normal.\n"
+                "Le partage suit la position sur le plan, pas l'ordre de clic.\n"
                 "Visible quand 2+ lyres sélectionnées"
             )
             self.btn_sym.setStyleSheet(_SYM_OFF)
@@ -3369,26 +3433,31 @@ class PlanDeFeu(QFrame):
 
     def _refresh_sym_btn(self):
         """Affiche/cache btn_sym selon le nombre de lyres sélectionnées."""
-        n_lyres = sum(
-            1 for (g, li) in self.selected_lamps
-            if any(
-                getattr(p, 'fixture_type', '') == 'Moving Head'
-                for j, p in enumerate(self.projectors)
-                if self._local_idx_for(j) == (g, li)
-            )
-        )
+        # Un seul passage : l'ancienne version rappelait _local_idx_for (qui
+        # reparcourt tous les projecteurs) pour chaque projecteur ET pour
+        # chaque lampe sélectionnée — du O(n³) rejoué 10 fois par seconde.
+        g_cnt, n_lyres = {}, 0
+        for p in self.projectors:
+            g  = p.group
+            li = g_cnt.get(g, 0)
+            g_cnt[g] = li + 1
+            if ((g, li) in self.selected_lamps
+                    and getattr(p, 'fixture_type', '') == 'Moving Head'):
+                n_lyres += 1
         show = n_lyres >= 2
-        was_visible = self.btn_sym.isVisible()
-        if was_visible != show:
+        if self.btn_sym.isVisible() != show:
             self.btn_sym.setVisible(show)
-        # Réinitialiser SYM quand on passe sous 2 lyres, ou quand le bouton réapparaît
+        # SYM ne retombe à zéro que quand il devient indisponible (< 2 lyres).
+        #
+        # Il y avait ici un second cas « le bouton vient d'apparaître → SYM
+        # off », détecté via isVisible(). Piège : isVisible() est faux dès
+        # qu'un PARENT est caché (page masquée, splitter replié, fenêtre
+        # minimisée), sans que la sélection ait bougé. Au retour, SYM était
+        # donc désarmé en silence — et tant que le plan restait masqué, ce
+        # branchement le remettait à zéro 10 fois par seconde. Le cas était
+        # de toute façon redondant : si le bouton était caché c'est qu'il y
+        # avait moins de 2 lyres, et la garde ci-dessous a déjà désarmé SYM.
         if not show and self.sym_mode:
-            self.sym_mode = False
-            self.btn_sym.blockSignals(True)
-            self.btn_sym.setChecked(False)
-            self.btn_sym.blockSignals(False)
-        elif show and not was_visible:
-            # Le bouton vient d'apparaître : SYM désactivé par défaut
             self.sym_mode = False
             self.btn_sym.blockSignals(True)
             self.btn_sym.setChecked(False)
@@ -3818,6 +3887,57 @@ class PlanDeFeu(QFrame):
     def selection_rank_map(self):
         """{(groupe, index_local): rang 0-based} de la sélection ordonnée."""
         return {k: i for i, k in enumerate(self.selection_ordered())}
+
+    # ── Symétrie Pan (bouton ⇄ SYM) ──────────────────────────────────
+
+    def _sym_norm_x(self, proj):
+        """Abscisse normalisée (0-1) d'un projecteur sur le plan.
+
+        Même repli que FixtureCanvas._get_canvas_pos quand la fixture n'a
+        jamais été déplacée : position par défaut du groupe.
+        """
+        cx = getattr(proj, 'canvas_x', None)
+        if cx is not None:
+            return float(cx)
+        group = getattr(proj, 'group', None)
+        idxs  = [j for j, p in enumerate(self.projectors) if p.group == group]
+        li = 0
+        for k, j in enumerate(idxs):
+            if self.projectors[j] is proj:
+                li = k
+                break
+        fx, _fy = _DEFAULT_POSITIONS.get(
+            group, lambda li, n: (0.5, 0.5))(li, max(len(idxs), 1))
+        return float(fx)
+
+    def sym_mirror_ids(self, projs):
+        """{id(proj)} des lyres qui doivent partir en Pan miroir.
+
+        Le tri se fait sur la POSITION des lyres sur le plan, pas sur l'ordre
+        de sélection. « Symétrie » veut dire « celles de l'autre côté de l'axe
+        partent dans l'autre sens » : or l'ordre de sélection vient de l'ordre
+        des clics — et de l'ordre de PATCH pour un lasso ou un Ctrl+A — donc il
+        n'a aucun rapport avec la gauche et la droite du plateau. C'est ce qui
+        faisait basculer les mauvaises lyres dès que l'accrochage ne suivait
+        pas l'ordre des adresses DMX.
+
+        L'axe est le milieu de l'étendue en x de la sélection : avec un nombre
+        impair de lyres, celle du centre reste en Pan normal (l'ancien
+        `n // 2` en mirroitait deux sur trois).
+        """
+        projs = [p for p in projs if p is not None]
+        if len(projs) < 2:
+            return set()
+        xs = [(id(p), self._sym_norm_x(p)) for p in projs]
+        lo = min(x for _i, x in xs)
+        hi = max(x for _i, x in xs)
+        if hi - lo < 1e-6:
+            # Toutes au même x (positions par défaut jamais personnalisées) :
+            # la position ne discrimine rien, on retombe sur l'ordre.
+            return {id(p) for p in projs[len(projs) // 2:]}
+        axis = (lo + hi) / 2.0
+        tol  = (hi - lo) * 0.02
+        return {i for i, x in xs if x > axis + tol}
 
     def _deselect_all(self):
         self.selected_lamps.clear()
@@ -4678,11 +4798,10 @@ class PlanDeFeu(QFrame):
                 d_pan  = pan  - init_pan
                 d_tilt = tilt - init_tilt
                 esc = getattr(_mw, 'effect_saved_colors', {}) if _mw else {}
-                sym  = getattr(self, 'sym_mode', False)
-                n    = len(t)
-                half = n // 2
-                for idx_t, (p, g, i) in enumerate(t):
-                    mirror = sym and n >= 2 and idx_t >= half
+                sym     = getattr(self, 'sym_mode', False)
+                mir_ids = self.sym_mirror_ids([p for p, _g, _i in t]) if sym else set()
+                for p, g, i in t:
+                    mirror = id(p) in mir_ids
                     if id(p) in esc:
                         sv = esc[id(p)]
                         ic = init_c.get(id(p), (32768, 32768))
@@ -4690,7 +4809,7 @@ class PlanDeFeu(QFrame):
                                       max(0, min(65535, ic[0] + (-d_pan if mirror else d_pan))),
                                       max(0, min(65535, ic[1] + d_tilt)))
                     else:
-                        p.pan  = (65535 - pan) if mirror else pan
+                        p.pan  = pan_mirror_value(p, pan) if mirror else pan
                         p.tilt = tilt
                 _flush()
             pt_pad.changed.connect(_on_pantilt)

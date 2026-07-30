@@ -1136,8 +1136,18 @@ class GearDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Matériel recommandé")
-        self.setFixedSize(900, 815)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        # Fenêtre redimensionnable : le contenu est dans une zone scrollable, on
+        # se contente donc de ne jamais dépasser l'écran disponible.
+        self.setMinimumSize(700, 380)
+        _h, _w = 815, 900
+        try:
+            _avail = QApplication.primaryScreen().availableGeometry()
+            _h = min(_h, _avail.height() - 60)
+            _w = min(_w, _avail.width() - 40)
+        except Exception:
+            pass
+        self.resize(_w, _h)
         self.setStyleSheet("""
             QDialog, QWidget { background: #141414; color: #cccccc;
                                font-family: 'Segoe UI', sans-serif; }
@@ -1146,7 +1156,31 @@ class GearDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self):
-        lay = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── Zone scrollable englobant tout le contenu ─────────────────────────
+        page = QScrollArea()
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.NoFrame)
+        page.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        page.setStyleSheet(
+            "QScrollArea { border: none; background: #141414; }"
+            "QScrollBar:vertical { background: #111; width: 8px; border: none;"
+            " margin: 0; }"
+            "QScrollBar::handle:vertical { background: #2f2f2f; border-radius: 4px;"
+            " min-height: 30px; }"
+            "QScrollBar::handle:vertical:hover { background: #444; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+        )
+        content = QWidget()
+        content.setStyleSheet("background: #141414;")
+        page.setWidget(content)
+        outer.addWidget(page)
+
+        lay = QVBoxLayout(content)
         lay.setContentsMargins(32, 28, 32, 26)
         lay.setSpacing(0)
 
@@ -1339,16 +1373,8 @@ class GearDialog(QDialog):
         lay.addWidget(compat_lbl)
         lay.addSpacing(6)
 
-        # ── Liste modèles (scrollable, 2 colonnes) ────────────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(
-            "QScrollArea { border: none; background: transparent; }"
-            "QScrollBar:vertical { background: #111; width: 5px; border: none; }"
-            "QScrollBar::handle:vertical { background: #2a2a2a; border-radius: 2px; }"
-        )
-
+        # ── Liste modèles (3 colonnes) ────────────────────────────────────────
+        # Pas de scroll imbriqué : la fenêtre entière défile désormais.
         scroll_widget = QWidget()
         scroll_widget.setStyleSheet("background: transparent;")
         scroll_lay = QHBoxLayout(scroll_widget)
@@ -1399,9 +1425,7 @@ class GearDialog(QDialog):
             col_container.setLayout(section_col)
             scroll_lay.addWidget(col_container)
 
-        scroll.setWidget(scroll_widget)
-        scroll.setFixedHeight(150)
-        lay.addWidget(scroll)
+        lay.addWidget(scroll_widget)
         lay.addSpacing(8)
 
         # ── Note technique ────────────────────────────────────────────────────

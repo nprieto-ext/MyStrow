@@ -5003,6 +5003,10 @@ class Sequencer(QFrame):
             # Preset de position lyre (plan de feu)
             if clip_data.get('position_preset_idx') is not None:
                 entry['position_preset_idx'] = clip_data['position_preset_idx']
+            # Gobo
+            if clip_data.get('gobo_dmx') is not None:
+                entry['gobo_dmx']      = clip_data['gobo_dmx']
+                entry['gobo_rotation'] = clip_data.get('gobo_rotation', 0)
 
             active_clips[track_name] = entry
 
@@ -5349,10 +5353,25 @@ class Sequencer(QFrame):
                     main_win._update_color_wheel(proj, color)
                 main_win._fx_clip_ids.add(id(proj))
 
+        # --- Appliquer la piste Gobo ---
+        # Parité obligatoire avec l'aperçu REC Lumière : la roue de couleurs
+        # avait déjà été oubliée ici et ne sortait qu'en REC, pas en show.
+        gobo_clip = active_clips.get('Gobo')
+        if gobo_clip and gobo_clip.get('gobo_dmx') is not None:
+            _g_val = max(0, min(255, int(gobo_clip['gobo_dmx'])))
+            _g_rot = max(0, min(255, int(gobo_clip.get('gobo_rotation', 0) or 0)))
+            for proj in main_win.projectors:
+                if 'Gobo1' in (getattr(proj, 'dmx_profile', None) or []):
+                    proj.gobo = _g_val
+                    proj.gobo_rotation = _g_rot
+
         # --- Appliquer Pan/Tilt pour les Lyres ---
         # La piste position s'appelle "Position" dans la timeline; fallback sur "Lyres" pour anciens .tui
         lyres_clip = active_clips.get('Position') or active_clips.get('Lyres')
         _pos_locked_idxs = set()   # lyres dont le pan/tilt est piloté par la piste Position
+        # Remis à vide à CHAQUE image : hors clip Position, le moteur d'effets
+        # doit retrouver son comportement d'origine (centre = état capturé).
+        main_win._timeline_pos_centers = {}
         if lyres_clip:
             # Recuperer les indices du groupe "lyres" / "Lyres"
             lyres_indices = track_to_indices.get('Lyres', [])
@@ -5364,6 +5383,24 @@ class Sequencer(QFrame):
             # Ces lyres sont sous contrôle Position → les séquences ne doivent pas
             # écraser leur pan/tilt (la piste Position prime).
             _pos_locked_idxs = set(lyres_indices)
+
+            # Centre imposé au moteur d'effets. Parité obligatoire avec l'aperçu
+            # REC Lumière : sans ça une couche Pan/Tilt sans colonne POSITION
+            # recentre sur l'état capturé au démarrage de l'effet, et les lyres
+            # dérivent de la position posée par le clip.
+            try:
+                from core import position_preset_values, find_position_preset
+                _pr = find_position_preset(
+                    getattr(main_win, 'position_presets', []) or [],
+                    lyres_clip.get('position_preset_idx'),
+                    lyres_clip.get('position_preset_name', ''))
+                _lyres_obj = [main_win.projectors[i] for i in lyres_indices
+                              if i < len(main_win.projectors)]
+                main_win._timeline_pos_centers = (
+                    position_preset_values(_pr, _lyres_obj) if _pr else {})
+            except Exception as _e:
+                print(f"[SHOW] centre de position indisponible : {_e}")
+                main_win._timeline_pos_centers = {}
 
             # --- Cas 1 : preset de position nommé (par lyre, 16-bit, avec transition animée) ---
             if lyres_clip.get('position_preset_idx') is not None:

@@ -1433,12 +1433,20 @@ class GdtfUploadDialog(QDialog):
     Parse les fichiers localement puis les envoie via la CF gdtf_upload.
     """
 
+    # Index des colonnes de la table
+    COL_STATUS, COL_NAME, COL_MFR, COL_TYPE, COL_GROUP, COL_MODES = range(6)
+
     def __init__(self, parent=None, id_token: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Importer fixtures vers Firestore")
-        self.setMinimumSize(680, 500)
+        self.setMinimumSize(880, 560)
         self._id_token = id_token
-        self._parsed: list = []   # liste de dicts fixture parsés
+        self._parsed: list = []   # liste de dicts fixture parsés (ceux qui partiront)
+        # Aligné 1:1 sur les lignes de la table : dict fixture, ou None pour une
+        # ligne en erreur. Les dicts sont les MÊMES objets que dans _parsed, donc
+        # une édition via la table se répercute directement sur l'upload.
+        self._row_fx: list = []
+        self._loading = False     # garde anti-réentrance pendant le remplissage
         self._thread = None
         self._worker = None
         self._build_ui()
@@ -1491,19 +1499,67 @@ class GdtfUploadDialog(QDialog):
         pick_row.addWidget(btn_clear)
         lay.addLayout(pick_row)
 
-        # Table des fixtures parsées
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Statut", "Nom", "Fabricant", "Modes"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # Table des fixtures parsées — éditable avant upload
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ["Statut", "Nom", "Fabricant", "Type", "Groupe", "Modes"]
+        )
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(self.COL_STATUS, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(self.COL_NAME,   QHeaderView.Stretch)
+        hdr.setSectionResizeMode(self.COL_MFR,    QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(self.COL_TYPE,   QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(self.COL_GROUP,  QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(self.COL_MODES,  QHeaderView.Stretch)
+        # Nom / Fabricant éditables in-place ; Type / Groupe via combos ;
+        # Modes via le formulaire complet (double-clic).
+        self.table.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setMinimumHeight(160)
         self.table.verticalHeader().setVisible(False)
+        self.table.itemChanged.connect(self._on_item_changed)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         lay.addWidget(self.table)
+
+        hint = QLabel(
+            "✏️ Double-clic sur <b>Nom</b> / <b>Fabricant</b> pour corriger · "
+            "<b>Type</b> et <b>Groupe</b> via les listes · double-clic sur "
+            "<b>Modes</b> pour éditer les canaux. Les modifications sont "
+            "envoyées telles quelles à l'upload."
+        )
+        hint.setStyleSheet(f"color: {TEXT_DIM}; font-size: 10px;")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        # Actions sur la ligne sélectionnée
+        row_act = QHBoxLayout()
+        row_act.setSpacing(6)
+
+        self.btn_edit = QPushButton("✏️  Éditer le profil…")
+        self.btn_edit.setStyleSheet(_BTN_SECONDARY)
+        self.btn_edit.setFixedHeight(28)
+        self.btn_edit.setToolTip(
+            "Ouvrir le formulaire complet (modes, canaux, valeurs par défaut)"
+        )
+        self.btn_edit.setEnabled(False)
+        self.btn_edit.clicked.connect(self._on_edit_selected)
+        row_act.addWidget(self.btn_edit)
+
+        self.btn_remove = QPushButton("🗑  Retirer du lot")
+        self.btn_remove.setStyleSheet(_BTN_SECONDARY)
+        self.btn_remove.setFixedHeight(28)
+        self.btn_remove.setToolTip("Exclure la/les fixture(s) sélectionnée(s) de l'upload")
+        self.btn_remove.setEnabled(False)
+        self.btn_remove.clicked.connect(self._on_remove_selected)
+        row_act.addWidget(self.btn_remove)
+
+        row_act.addStretch()
+        lay.addLayout(row_act)
+
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
 
         # Log
         self.log = QTextEdit()
@@ -1559,13 +1615,24 @@ class GdtfUploadDialog(QDialog):
 
     def _set_busy(self, busy: bool):
         self.btn_upload.setEnabled(not busy and bool(self._parsed))
+        self.table.setEnabled(not busy)
+        if busy:
+            self.btn_edit.setEnabled(False)
+            self.btn_remove.setEnabled(False)
+        else:
+            self._on_selection_changed()
         self.progress.setVisible(busy)
 
     def _on_clear(self):
         self._parsed.clear()
+        self._row_fx.clear()
+        self._loading = True
         self.table.setRowCount(0)
+        self._loading = False
         self.lbl_count.setText("Aucun fichier sélectionné")
         self.btn_upload.setEnabled(False)
+        self.btn_edit.setEnabled(False)
+        self.btn_remove.setEnabled(False)
         self.log.clear()
 
     _FIXTURE_EXTS = {".mystrow", ".xml"}
@@ -1596,42 +1663,27 @@ class GdtfUploadDialog(QDialog):
     def _process_paths(self, paths: list):
         from fixture_parser import parse_file
         ok = 0
-        for path in paths:
-            fname = os.path.basename(path)
-            try:
-                fx = parse_file(path)
-                fx["_source_file"] = fname
-                self._parsed.append(fx)
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                self.table.setItem(row, 0, QTableWidgetItem("✅"))
-                self.table.item(row, 0).setForeground(QColor("#2ecc71"))
-                self.table.setItem(row, 1, QTableWidgetItem(fx.get("name", "")))
-                self.table.setItem(row, 2, QTableWidgetItem(fx.get("manufacturer", "")))
-                modes_info = ", ".join(
-                    f"{m['name']} ({m.get('channelCount', 0)}ch)"
-                    for m in fx.get("modes", [])
-                )
-                self.table.setItem(row, 3, QTableWidgetItem(modes_info))
-                self._append_log(
-                    f"✅ {fname}  →  {fx.get('name')} "
-                    f"[{fx.get('source','?').upper()}]  "
-                    f"({len(fx.get('modes', []))} mode(s))",
-                    "#2ecc71",
-                )
-                ok += 1
-            except Exception as e:
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                icon = "❌"
-                msg  = str(e)
-                self.table.setItem(row, 0, QTableWidgetItem(icon))
-                self.table.item(row, 0).setForeground(QColor("#e67e22" if locked else RED))
-                self.table.setItem(row, 1, QTableWidgetItem(fname))
-                self.table.setItem(row, 2, QTableWidgetItem(""))
-                self.table.setItem(row, 3, QTableWidgetItem(msg))
-                self._append_log(f"{icon} {fname}  :  {msg}",
-                                 "#e67e22" if locked else RED)
+        self._loading = True
+        try:
+            for path in paths:
+                fname = os.path.basename(path)
+                try:
+                    fx = parse_file(path)
+                    fx["_source_file"] = fname
+                    self._parsed.append(fx)
+                    self._add_fixture_row(fx)
+                    self._append_log(
+                        f"✅ {fname}  →  {fx.get('name')} "
+                        f"[{fx.get('source','?').upper()}]  "
+                        f"({len(fx.get('modes', []))} mode(s))",
+                        "#2ecc71",
+                    )
+                    ok += 1
+                except Exception as e:
+                    self._add_error_row(fname, str(e))
+                    self._append_log(f"❌ {fname}  :  {e}", RED)
+        finally:
+            self._loading = False
 
         total = len(self._parsed)
         self.lbl_count.setText(
@@ -1639,6 +1691,220 @@ class GdtfUploadDialog(QDialog):
             f"({ok}/{len(paths)} parsée{'s' if ok > 1 else ''})"
         )
         self.btn_upload.setEnabled(total > 0)
+
+    # ── Construction / rafraîchissement des lignes ────────────────────────
+
+    def _modes_summary(self, fx: dict) -> str:
+        return ", ".join(
+            f"{m.get('name', '?')} ({m.get('channelCount', len(m.get('profile', [])))}ch)"
+            for m in fx.get("modes", [])
+        ) or "— aucun mode —"
+
+    def _add_fixture_row(self, fx: dict):
+        """Insère une ligne éditable pour une fixture parsée."""
+        from fixture_editor import FIXTURE_TYPES, GROUP_OPTIONS, _NoScrollCombo
+
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self._row_fx.append(fx)
+
+        st = QTableWidgetItem("✅")
+        st.setForeground(QColor("#2ecc71"))
+        st.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        st.setToolTip(fx.get("_source_file", ""))
+        self.table.setItem(row, self.COL_STATUS, st)
+
+        for col, key in ((self.COL_NAME, "name"), (self.COL_MFR, "manufacturer")):
+            it = QTableWidgetItem(str(fx.get(key, "")))
+            it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+            self.table.setItem(row, col, it)
+
+        combo_css = (
+            f"QComboBox {{ background: {BG_INPUT}; color: {TEXT};"
+            f" border: 1px solid #3a3a3a; border-radius: 3px;"
+            f" padding: 2px 6px; font-size: 11px; min-width: 90px; }}"
+        )
+        for col, key, options, fallback in (
+            (self.COL_TYPE,  "fixture_type", FIXTURE_TYPES, FIXTURE_TYPES[0]),
+            (self.COL_GROUP, "group",        GROUP_OPTIONS, "face"),
+        ):
+            combo = _NoScrollCombo()
+            combo.addItems(options)
+            cur = fx.get(key) or fallback
+            if cur not in options:
+                # Valeur inconnue venue du parseur : on la garde en tête de liste
+                # plutôt que de la remplacer silencieusement.
+                combo.insertItem(0, str(cur))
+            combo.setCurrentText(str(cur))
+            combo.setStyleSheet(combo_css)
+            fx[key] = combo.currentText()
+            combo.currentTextChanged.connect(
+                lambda text, f=fx, k=key: self._on_combo_changed(f, k, text)
+            )
+            self.table.setCellWidget(row, col, combo)
+
+        md = QTableWidgetItem(self._modes_summary(fx))
+        md.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        md.setToolTip("Double-clic pour éditer les modes et les canaux")
+        self.table.setItem(row, self.COL_MODES, md)
+
+    def _add_error_row(self, fname: str, msg: str):
+        """Insère une ligne non éditable signalant un fichier non parsé."""
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self._row_fx.append(None)
+        for col, text in (
+            (self.COL_STATUS, "❌"), (self.COL_NAME, fname), (self.COL_MFR, ""),
+            (self.COL_TYPE, ""), (self.COL_GROUP, ""), (self.COL_MODES, msg),
+        ):
+            it = QTableWidgetItem(text)
+            it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            if col == self.COL_STATUS:
+                it.setForeground(QColor(RED))
+            self.table.setItem(row, col, it)
+
+    def _row_of(self, fx: dict) -> int:
+        """Ligne courante d'une fixture (comparaison par identité, pas par valeur)."""
+        for i, f in enumerate(self._row_fx):
+            if f is fx:
+                return i
+        return -1
+
+    def _mark_edited(self, row: int):
+        """Passe le statut de la ligne en « modifié »."""
+        if not 0 <= row < self.table.rowCount():
+            return
+        fx = self._row_fx[row]
+        if fx is None:
+            return
+        fx["_edited"] = True
+        it = self.table.item(row, self.COL_STATUS)
+        if it is not None:
+            it.setText("✏️")
+            it.setForeground(QColor(ACCENT))
+            it.setToolTip(
+                f"{fx.get('_source_file', '')} — modifié localement, "
+                f"sera uploadé tel qu'affiché"
+            )
+
+    # ── Édition ──────────────────────────────────────────────────────────
+
+    def _on_selection_changed(self):
+        rows = {i.row() for i in self.table.selectedIndexes()}
+        editable = [r for r in rows if self._row_fx[r] is not None] if rows else []
+        self.btn_edit.setEnabled(len(editable) == 1)
+        self.btn_remove.setEnabled(bool(rows))
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        """Répercute une édition in-place de Nom / Fabricant dans le dict fixture."""
+        if self._loading:
+            return
+        row, col = item.row(), item.column()
+        if not 0 <= row < len(self._row_fx):
+            return
+        fx = self._row_fx[row]
+        if fx is None or col not in (self.COL_NAME, self.COL_MFR):
+            return
+        key = "name" if col == self.COL_NAME else "manufacturer"
+        new = item.text().strip()
+        if new == fx.get(key, ""):
+            return
+        if not new:
+            # Nom / fabricant vides refusés par la CF : on restaure l'ancienne valeur.
+            self._append_log(
+                f"⚠ {'Nom' if key == 'name' else 'Fabricant'} vide refusé — "
+                f"valeur précédente restaurée.", ORANGE
+            )
+            self._loading = True
+            item.setText(fx.get(key, ""))
+            self._loading = False
+            return
+        old = fx.get(key, "")
+        fx[key] = new
+        self._mark_edited(row)
+        self._append_log(f"✏️ {key} : « {old} » → « {new} »", ACCENT)
+
+    def _on_combo_changed(self, fx: dict, key: str, text: str):
+        if self._loading or fx.get(key) == text:
+            return
+        old = fx.get(key, "")
+        fx[key] = text
+        self._mark_edited(self._row_of(fx))
+        self._append_log(f"✏️ {key} : « {old} » → « {text} »", ACCENT)
+
+    def _on_cell_double_clicked(self, row: int, col: int):
+        # Le double-clic sur la colonne Modes ouvre le formulaire complet ;
+        # les autres colonnes gardent l'édition in-place.
+        if col == self.COL_MODES and self._row_fx[row] is not None:
+            self._edit_row(row)
+
+    def _on_edit_selected(self):
+        rows = [r for r in {i.row() for i in self.table.selectedIndexes()}
+                if self._row_fx[r] is not None]
+        if len(rows) == 1:
+            self._edit_row(rows[0])
+
+    def _edit_row(self, row: int):
+        """Ouvre _FixtureEditDialog sur la fixture de la ligne et fusionne le retour."""
+        fx = self._row_fx[row]
+        if fx is None:
+            return
+        dlg = _FixtureEditDialog(self, fixture=dict(fx))
+        if dlg.exec() != QDialog.Accepted:
+            return
+        res = dlg.get_result()
+        if not res:
+            return
+        # Fusion et pas remplacement : get_result() ne renvoie pas les roues de
+        # couleur/gobo ni channel_defaults extraits par le parseur, il ne faut
+        # pas les perdre au passage dans l'éditeur.
+        fx.update(res)
+        self._loading = True
+        try:
+            self.table.item(row, self.COL_NAME).setText(fx.get("name", ""))
+            self.table.item(row, self.COL_MFR).setText(fx.get("manufacturer", ""))
+            for col, key in ((self.COL_TYPE, "fixture_type"), (self.COL_GROUP, "group")):
+                combo = self.table.cellWidget(row, col)
+                if combo is not None:
+                    val = str(fx.get(key, ""))
+                    if combo.findText(val) < 0:
+                        combo.insertItem(0, val)
+                    combo.setCurrentText(val)
+            self.table.item(row, self.COL_MODES).setText(self._modes_summary(fx))
+        finally:
+            self._loading = False
+        self._mark_edited(row)
+        self._append_log(
+            f"✏️ Profil édité : {fx.get('name')} — "
+            f"{len(fx.get('modes', []))} mode(s), "
+            f"{sum(len(m.get('profile', [])) for m in fx.get('modes', []))} canal/canaux",
+            ACCENT,
+        )
+
+    def _on_remove_selected(self):
+        rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
+        if not rows:
+            return
+        self._loading = True
+        try:
+            for row in rows:
+                fx = self._row_fx.pop(row)
+                if fx is not None:
+                    for i, f in enumerate(self._parsed):
+                        if f is fx:
+                            self._parsed.pop(i)
+                            break
+                    self._append_log(f"🗑 Retiré du lot : {fx.get('name', '?')}", TEXT_DIM)
+                self.table.removeRow(row)
+        finally:
+            self._loading = False
+        total = len(self._parsed)
+        self.lbl_count.setText(
+            f"{total} fixture{'s' if total > 1 else ''} prête{'s' if total > 1 else ''}"
+            if total else "Aucune fixture"
+        )
+        self.btn_upload.setEnabled(total > 0)
+        self._on_selection_changed()
 
     def _on_upload(self):
         if not self._parsed:

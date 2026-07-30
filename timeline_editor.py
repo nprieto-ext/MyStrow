@@ -539,6 +539,8 @@ class LightTimelineEditor(QDialog):
         _aer_lay.addWidget(self._add_eff_btn)
         _aer_lay.addStretch()
         tracks_layout.addWidget(self._add_eff_btn_row)
+        # Gardé pour épingler le bouton au bord gauche du viewport (on_scroll_changed).
+        self._add_eff_btn_lay = _aer_lay
 
         # ── Piste Séquence (avant les groupes) ────────────────────────────
         seq_track = LightTrack("Séquence", self.media_duration, self, "#aa77ff")
@@ -567,6 +569,7 @@ class LightTimelineEditor(QDialog):
         _asr_lay.addWidget(self._add_seq_btn)
         _asr_lay.addStretch()
         tracks_layout.addWidget(self._add_seq_btn_row)
+        self._add_seq_btn_lay = _asr_lay
 
         # ── Piste Position Lyre (si au moins une lyre dans le patch) ──────────
         has_lyres = any(getattr(p, 'fixture_type', '') == 'Moving Head' for p in projectors)
@@ -577,6 +580,17 @@ class LightTimelineEditor(QDialog):
             self.tracks.append(pos_track)
             self.track_map["Position"] = pos_track
             tracks_layout.addWidget(pos_track)
+
+        # ── Piste Gobo (si au moins une fixture a une roue de gobos) ──────────
+        has_gobo = any('Gobo1' in (getattr(p, 'dmx_profile', None) or [])
+                       for p in projectors)
+        if has_gobo:
+            gobo_track = LightTrack("Gobo", self.media_duration, self, "#e6c060")
+            gobo_track.is_gobo_track = True
+            gobo_track.setMinimumHeight(50)
+            self.tracks.append(gobo_track)
+            self.track_map["Gobo"] = gobo_track
+            tracks_layout.addWidget(gobo_track)
 
         for gname in seen_groups:
             color = TRACK_COLORS.get(gname, "#4488ff")
@@ -1848,6 +1862,72 @@ class LightTimelineEditor(QDialog):
         if self.media_path and not is_image and not self.is_tempo:
             self.preview_player.setSource(QUrl.fromLocalFile(self.media_path))
 
+    def _position_centers(self, pos_clip):
+        """{id(lyre): (pan, tilt)} imposé par le clip Position actif, {} sinon.
+
+        Même source que le rappel manuel d'une position (`position_preset_values`)
+        pour que l'effet tourne autour du point exact où le rappel aurait posé
+        la lyre.
+        """
+        if pos_clip is None:
+            return {}
+        try:
+            from core import position_preset_values, find_position_preset
+            presets = getattr(self.main_window, 'position_presets', []) or []
+            preset = find_position_preset(
+                presets,
+                getattr(pos_clip, 'position_preset_idx', None),
+                getattr(pos_clip, 'position_preset_name', ''))
+            if not preset:
+                return {}
+            lyres = [p for p in self.main_window.projectors
+                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+            return position_preset_values(preset, lyres)
+        except Exception as e:
+            print(f"[REC] centre de position indisponible : {e}")
+            return {}
+
+    def _reset_before_play(self):
+        """Remet les projecteurs à plat avant de lancer l'aperçu.
+
+        Pan/Tilt volontairement PRÉSERVÉS : les recentrer ferait bouger les
+        lyres à chaque Play, y compris sans clip Position. Quand une piste
+        Position existe, elle les repositionne de toute façon.
+        """
+        try:
+            for proj in self.main_window.projectors:
+                # Rend la main aux mémoires et à la timeline.
+                proj._manual_color = False
+                proj._manual_move  = False
+                proj.level = 0
+                proj.base_color = QColor(0, 0, 0)
+                proj.color      = QColor(0, 0, 0)
+                proj.uv = proj.white_boost = 0
+                proj.amber_boost = proj.orange_boost = 0
+                proj.gobo = proj.gobo_rotation = 0
+                proj.zoom = 0
+                proj.shutter = 255
+                proj.color_wheel = 0
+                proj.prism = proj.prism_rotation = 0
+                proj.effects = 0
+                proj.strobe_speed = 0
+                # Canaux bruts : prioritaires dans le moteur DMX, un « Mode » ou
+                # un Reset posé à la main resterait actif tout l'aperçu.
+                proj.channel_extras = {}
+
+            # État interne de l'aperçu : sans ça un effet du passage précédent
+            # continue de tourner par-dessus (strobe résiduel déjà constaté).
+            self._seq_clip_active  = None
+            self._eff_clips_active = {}
+            self._pos_clip_active  = None
+            self.main_window.active_effect        = None
+            self.main_window.active_effect_config = {}
+            if hasattr(self.main_window, 'stop_effect'):
+                self.main_window.stop_effect()
+        except Exception as e:
+            # Un aperçu doit démarrer même si le nettoyage échoue.
+            print(f"[REC] reset avant lecture ignoré : {e}")
+
     def toggle_play_pause(self):
         """Toggle play/pause avec timer - synchro preview et player principal"""
         if self.preview_player is None:
@@ -1872,6 +1952,12 @@ class LightTimelineEditor(QDialog):
                 self._seq_clip_active  = None
                 self._eff_clips_active = {}
         else:
+            # Repartir d'un état propre : sans ça l'aperçu démarre sur ce qui
+            # traîne d'une édition manuelle au plan de feu 2D, et ne montre pas
+            # ce que donnera le show. Le drapeau `_manual_color` est le vrai
+            # coupable : posé dès qu'on touche un projecteur à la main, il lui
+            # fait IGNORER les mémoires ensuite, et il survivait au Play.
+            self._reset_before_play()
             pos = int(self.playback_position)
             if self.is_tempo or not self.media_path:
                 # Pause / tempo : pas de média → horloge manuelle.
@@ -1996,6 +2082,27 @@ class LightTimelineEditor(QDialog):
             if hasattr(track, '_collapse_btn'):
                 track._collapse_btn.move(value + 119, track._collapse_btn.y())
             track.update()
+        self._pin_add_track_buttons(value)
+
+    def _pin_add_track_buttons(self, value=None):
+        """Colle les boutons « ＋ Effet » / « ＋ Séquence » au bord gauche du viewport.
+
+        Ils vivent dans le conteneur qui défile horizontalement : sans ça, ajouter
+        une piste obligeait à revenir tout au début de la timeline pour retrouver
+        le bouton. Les libellés de piste étaient déjà épinglés, pas eux.
+
+        On décale la MARGE du layout plutôt que de déplacer le bouton : un
+        simple move() serait annulé au premier recalcul de layout.
+        """
+        if value is None:
+            value = self.tracks_scroll.horizontalScrollBar().value()
+        for lay in (getattr(self, '_add_eff_btn_lay', None),
+                    getattr(self, '_add_seq_btn_lay', None)):
+            if lay is None:
+                continue
+            m = lay.contentsMargins()
+            if m.left() != value + 11:
+                lay.setContentsMargins(value + 11, m.top(), m.right(), m.bottom())
 
     def update_cursor_from_ruler(self, event):
         """Met a jour curseur depuis position souris (avec auto-scroll aux bords)"""
@@ -2370,6 +2477,13 @@ class LightTimelineEditor(QDialog):
                 if clip.start_time <= current_time <= clip.start_time + clip.duration:
                     new_pos_clip = clip
                     break
+        # Publier le centre imposé par le clip Position pour le moteur d'effets.
+        # Sans ça, une couche Pan/Tilt sans colonne POSITION se recentre sur
+        # l'état capturé au DÉMARRAGE de l'effet — périmé dès que la position
+        # change — voire sur le milieu de course : les lyres dérivaient de la
+        # position choisie dès qu'un effet tournait. Recalculé à chaque image.
+        self.main_window._timeline_pos_centers = self._position_centers(new_pos_clip)
+
         if new_pos_clip is not self._pos_clip_active:
             self._pos_clip_active = new_pos_clip
             if new_pos_clip is not None:
@@ -2397,11 +2511,31 @@ class LightTimelineEditor(QDialog):
                             self.main_window._start_pan_tilt_transition(
                                 p, proj_state.get("pan", 32768), proj_state.get("tilt", 32768), 500)
 
+        # ── Piste Gobo ────────────────────────────────────────────────────────
+        # Appliqué à CHAQUE passage et non au seul changement de clip : un autre
+        # émetteur (mémoire, effet) peut avoir repositionné la roue entre-temps,
+        # et le gobo resterait alors figé sur la mauvaise valeur.
+        gobo_track = self.track_map.get("Gobo")
+        if gobo_track:
+            g_clip = None
+            for clip in gobo_track.clips:
+                if clip.start_time <= current_time <= clip.start_time + clip.duration:
+                    g_clip = clip
+                    break
+            if g_clip is not None and getattr(g_clip, 'gobo_dmx', None) is not None:
+                g_val = max(0, min(255, int(g_clip.gobo_dmx)))
+                g_rot = max(0, min(255, int(getattr(g_clip, 'gobo_rotation', 0) or 0)))
+                for p in self.main_window.projectors:
+                    if 'Gobo1' in (getattr(p, 'dmx_profile', None) or []):
+                        p.gobo = g_val
+                        p.gobo_rotation = g_rot
+
         # ── 1) Appliquer les clips de couleur par groupe (priorité basse) ─────
         for track in self.tracks:
             if (getattr(track, 'is_sequence_track', False) or
                     getattr(track, 'is_effect_track', False) or
-                    getattr(track, 'is_position_track', False)):
+                    getattr(track, 'is_position_track', False) or
+                    getattr(track, 'is_gobo_track', False)):
                 continue
             for clip in track.clips:
                 start = clip.start_time
@@ -2605,6 +2739,10 @@ class LightTimelineEditor(QDialog):
                     if clip_data.get('position_preset_idx') is not None:
                         clip.position_preset_idx  = clip_data['position_preset_idx']
                         clip.position_preset_name = clip_data.get('position_preset_name', '')
+                    if clip_data.get('gobo_dmx') is not None:
+                        clip.gobo_dmx      = clip_data['gobo_dmx']
+                        clip.gobo_name     = clip_data.get('gobo_name', '')
+                        clip.gobo_rotation = clip_data.get('gobo_rotation', 0)
 
             # Charger la forme d'onde depuis les donnees de sequence
             waveform = seq.get('waveform')
@@ -2661,6 +2799,11 @@ class LightTimelineEditor(QDialog):
         if getattr(clip, 'position_preset_idx', None) is not None:
             d['position_preset_idx']  = clip.position_preset_idx
             d['position_preset_name'] = getattr(clip, 'position_preset_name', '')
+        # Clip de gobo
+        if getattr(clip, 'gobo_dmx', None) is not None:
+            d['gobo_dmx']      = clip.gobo_dmx
+            d['gobo_name']     = getattr(clip, 'gobo_name', '')
+            d['gobo_rotation'] = getattr(clip, 'gobo_rotation', 0)
         # Mouvement Pan/Tilt
         if (getattr(clip, 'move_effect', None) or
                 getattr(clip, 'pan_start', 128) != 128 or getattr(clip, 'pan_end', 128) != 128 or
@@ -2831,6 +2974,10 @@ class LightTimelineEditor(QDialog):
             if clip_data.get('position_preset_idx') is not None:
                 clip.position_preset_idx  = clip_data['position_preset_idx']
                 clip.position_preset_name = clip_data.get('position_preset_name', '')
+            if clip_data.get('gobo_dmx') is not None:
+                clip.gobo_dmx      = clip_data['gobo_dmx']
+                clip.gobo_name     = clip_data.get('gobo_name', '')
+                clip.gobo_rotation = clip_data.get('gobo_rotation', 0)
             for _a in ('pan_start', 'tilt_start', 'pan_end', 'tilt_end',
                        'move_effect', 'move_speed', 'move_amplitude'):
                 if _a in clip_data:
@@ -2865,6 +3012,7 @@ class LightTimelineEditor(QDialog):
                         if not (getattr(t, 'is_effect_track', False)
                                 or getattr(t, 'is_sequence_track', False)
                                 or getattr(t, 'is_position_track', False)
+                                or getattr(t, 'is_gobo_track', False)
                                 or t.name == "Audio")]
         names = [t.name for t in group_tracks]
         if len(names) < 2:
@@ -3142,7 +3290,8 @@ class LightTimelineEditor(QDialog):
 
         tracks_checks = {}
         for track in self.tracks:
-            if getattr(track, 'is_sequence_track', False) or getattr(track, 'is_position_track', False):
+            if (getattr(track, 'is_sequence_track', False) or getattr(track, 'is_position_track', False)
+                    or getattr(track, 'is_gobo_track', False)):
                 continue
             clip_count = len(track.clips)
             checkbox = QCheckBox(f"{track.name} {'(' + str(clip_count) + ' clips)' if clip_count > 0 else ''}")
@@ -3730,6 +3879,10 @@ class LightTimelineEditor(QDialog):
                     # Position lyre
                     'position_preset_idx':  getattr(clip, 'position_preset_idx', None),
                     'position_preset_name': getattr(clip, 'position_preset_name', ''),
+                    # Gobo
+                    'gobo_dmx':      getattr(clip, 'gobo_dmx', None),
+                    'gobo_name':     getattr(clip, 'gobo_name', ''),
+                    'gobo_rotation': getattr(clip, 'gobo_rotation', 0),
                 }
                 state.append(clip_data)
 
@@ -3793,6 +3946,10 @@ class LightTimelineEditor(QDialog):
                 if clip_data.get('position_preset_idx') is not None:
                     clip.position_preset_idx  = clip_data['position_preset_idx']
                     clip.position_preset_name = clip_data.get('position_preset_name', '')
+                if clip_data.get('gobo_dmx') is not None:
+                    clip.gobo_dmx      = clip_data['gobo_dmx']
+                    clip.gobo_name     = clip_data.get('gobo_name', '')
+                    clip.gobo_rotation = clip_data.get('gobo_rotation', 0)
 
         for track in self.tracks:
             track.update()
@@ -3824,7 +3981,9 @@ class LightTimelineEditor(QDialog):
         """Applique un effet aux clips selectionnes (pistes A-F uniquement)"""
         selected = []
         for track in self.tracks:
-            if not getattr(track, 'is_sequence_track', False) and not getattr(track, 'is_position_track', False):
+            if (not getattr(track, 'is_sequence_track', False)
+                    and not getattr(track, 'is_position_track', False)
+                    and not getattr(track, 'is_gobo_track', False)):
                 selected.extend(track.selected_clips)
 
         if not selected:
@@ -4115,7 +4274,9 @@ class LightTimelineEditor(QDialog):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton
         selected = []
         for track in self.tracks:
-            if not getattr(track, 'is_sequence_track', False) and not getattr(track, 'is_position_track', False):
+            if (not getattr(track, 'is_sequence_track', False)
+                    and not getattr(track, 'is_position_track', False)
+                    and not getattr(track, 'is_gobo_track', False)):
                 selected.extend(track.selected_clips)
 
         if not selected:
@@ -4190,7 +4351,9 @@ class LightTimelineEditor(QDialog):
         """Ouvre l'editeur d'effets par couches sur les clips selectionnes (pistes A-F uniquement)"""
         selected = []
         for track in self.tracks:
-            if not getattr(track, 'is_sequence_track', False) and not getattr(track, 'is_position_track', False):
+            if (not getattr(track, 'is_sequence_track', False)
+                    and not getattr(track, 'is_position_track', False)
+                    and not getattr(track, 'is_gobo_track', False)):
                 selected.extend(track.selected_clips)
 
         if not selected:

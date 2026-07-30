@@ -5,6 +5,7 @@ Supporte: AKAI APC40, AKAI APC20, AKAI APC Mini, Novation Launchpad Mini MK1/MK2
 import sys
 import platform
 import threading
+import time
 from PySide6.QtCore import QObject, Signal, QTimer
 
 from core import MIDI_AVAILABLE
@@ -260,6 +261,30 @@ class MIDIHandler(QObject):
         # Quand défini, la détection auto ne bascule plus sur un autre contrôleur.
         self.pinned_id = None
 
+        # Entrées secondaires du MÊME contrôleur, ouvertes en parallèle.
+        # Un Launchpad Mini MK3 expose deux ports (DAW et MIDI) et ne parle pas
+        # forcément sur celui qui reçoit ses LED : sur Mac, les pads s'allumaient
+        # sans qu'aucune touche ne remonte. Plutôt que de parier sur le bon port,
+        # on écoute les deux — les messages arrivent dans la même file.
+        self._extra_ins = []
+        # Noms des ports ouverts, pour que la fenêtre de diagnostic puisse dire
+        # LEQUEL est ouvert au lieu d'un simple voyant vert.
+        self._in_name = ""
+        self._extra_in_names = []
+        self._out_name = ""
+
+        # Sonde de listage des ports, réutilisée d'un scan à l'autre.
+        self._probe = None
+        # Dernière erreur de scan, pour l'afficher au lieu de mourir en silence.
+        self.last_error = ""
+        self._scan_fail_count = 0
+        # Trafic entrant BRUT (voir _midi_callback).
+        self.rx_count = 0
+        self.last_raw = None
+        # Anti-doublon inter-ports (voir _midi_callback).
+        self._last_msg   = None
+        self._last_msg_t = 0.0
+
         if MIDI_AVAILABLE and rtmidi:
             self.connect_controller()
             if self.midi_in:
@@ -272,6 +297,90 @@ class MIDIHandler(QObject):
             self.connection_check_timer.start(2000)
 
     # ─── Connexion ───────────────────────────────────────────────────────────
+
+    def scan_ports(self):
+        """Liste les ports d'entrée MIDI. [] si le scan échoue.
+
+        La sonde est CONSERVÉE d'un appel à l'autre. L'ancienne version créait un
+        `rtmidi.MidiIn()` neuf toutes les 2 s — 1800 par heure — uniquement pour
+        lire la liste ; le jour où cette création échoue (limite de clients
+        CoreMIDI sur Mac, handles WinMM), l'ancien `except: return` avalait
+        l'erreur et la détection automatique restait morte jusqu'au redémarrage.
+        Ici l'échec est mémorisé dans `last_error`, la sonde est jetée et sera
+        recréée au prochain passage : le système peut se rétablir tout seul.
+        """
+        if not rtmidi:
+            return []
+        try:
+            if self._probe is None:
+                self._probe = rtmidi.MidiIn()
+            ports = self._probe.get_ports()
+            if self._scan_fail_count:
+                print(f"[MIDI] Scan des ports rétabli après {self._scan_fail_count} échec(s)")
+            self._scan_fail_count = 0
+            self.last_error = ""
+            return ports
+        except Exception as e:
+            # Sonde jetée : la suivante repart sur un objet neuf.
+            self._probe = None
+            self._scan_fail_count += 1
+            self.last_error = f"Scan des ports MIDI impossible : {e}"
+            if self._scan_fail_count in (1, 10, 100):
+                print(f"⚠️  {self.last_error} (échec n°{self._scan_fail_count})")
+            return []
+
+    def rescan(self):
+        """Repart de zéro : sonde neuve puis détection immédiate.
+
+        Sert au bouton « Rescanner » — il ne doit jamais rester bloqué par une
+        sonde en mauvais état, c'est précisément le cas qui obligeait à
+        redémarrer l'application.
+        """
+        self._probe = None
+        self._scan_fail_count = 0
+        self.last_error = ""
+        self.check_connection()
+
+    def _close_extra_inputs(self):
+        """Ferme les entrées secondaires ouvertes en parallèle."""
+        for port in self._extra_ins:
+            try:
+                port.close_port()
+            except Exception:
+                pass
+        self._extra_ins = []
+
+    def _open_extra_inputs(self, in_ports, primary_name, accepts):
+        """Ouvre toutes les AUTRES entrées du contrôleur, sur la même file.
+
+        `accepts(port_name)` dit si le port appartient au contrôleur retenu.
+        Une entrée qui refuse de s'ouvrir est simplement ignorée : c'est un
+        bonus de robustesse, jamais une raison de rater la connexion.
+        """
+        for name in in_ports:
+            if name == primary_name or not accepts(name):
+                continue
+            try:
+                port = rtmidi.MidiIn()
+                port.open_port(in_ports.index(name))
+                port.set_callback(self._midi_callback)
+                port.ignore_types(sysex=True, timing=True, active_sense=True)
+                self._extra_ins.append(port)
+                self._extra_in_names.append(name)
+                print(f"✅ Entrée secondaire ouverte : {name}")
+            except Exception as e:
+                print(f"⚠️  Entrée secondaire ignorée ({name}) : {e}")
+
+    def open_input_names(self):
+        """Noms des ports d'entrée réellement ouverts — pour l'affichage."""
+        names = []
+        try:
+            if self.midi_in and self.midi_in.is_port_open():
+                names.append(self._in_name or "?")
+        except Exception:
+            pass
+        names += list(self._extra_in_names)
+        return names
 
     def _select_custom(self, in_ports):
         """(profile, in_name) du profil custom à connecter selon l'épinglage."""
@@ -323,13 +432,7 @@ class MIDIHandler(QObject):
         out = []
         if not rtmidi:
             return out
-        try:
-            probe = rtmidi.MidiIn()
-            ports = probe.get_ports()
-            try: probe.close_port()
-            except Exception: pass
-        except Exception:
-            return out
+        ports = self.scan_ports()
         seen = set()
         for p in ports:
             try:
@@ -361,6 +464,10 @@ class MIDIHandler(QObject):
         if not rtmidi:
             return
         try:
+            self._close_extra_inputs()
+            self._extra_in_names = []
+            self._in_name = ""
+            self._out_name = ""
             if self.midi_in:
                 try: self.midi_in.close_port()
                 except Exception: pass
@@ -390,7 +497,12 @@ class MIDIHandler(QObject):
                     self._midi_queue.clear()
                 self.midi_in.set_callback(self._midi_callback)
                 self.midi_in.ignore_types(sysex=True, timing=True, active_sense=True)
+                self._in_name = custom_in_name
                 print(f"✅ {self.controller_name} connecté (profil custom): {custom_in_name}")
+                kws = [k.upper() for k in custom_profile.get('keywords', [])]
+                self._open_extra_inputs(
+                    in_ports, custom_in_name,
+                    lambda n: any(k in n.upper() for k in kws))
                 out_name = None
                 for p in out_ports:
                     up = p.upper()
@@ -431,12 +543,19 @@ class MIDIHandler(QObject):
                 self._midi_queue.clear()
             self.midi_in.set_callback(self._midi_callback)
             self.midi_in.ignore_types(sysex=True, timing=True, active_sense=True)
+            self._in_name = in_name
             print(f"✅ {ctrl['name']} connecté (input): {in_name}")
+
+            # Les autres entrées du même appareil (port MIDI quand on est sur le
+            # port DAW, et inversement). Voir le commentaire de `_extra_ins`.
+            self._open_extra_inputs(
+                in_ports, in_name, lambda n: _port_matches(ctrl, n, require_prefer=False))
 
             out_name = _find_out_port(ctrl, out_ports)
             if out_name:
                 out_idx = out_ports.index(out_name)
                 self.midi_out.open_port(out_idx)
+                self._out_name = out_name
                 print(f"✅ {ctrl['name']} connecté (output): {out_name}")
                 self.initialize_leds()
             else:
@@ -463,19 +582,25 @@ class MIDIHandler(QObject):
         """Vérifie et reconnecte automatiquement si le contrôleur est rebranché."""
         if not rtmidi:
             return
+        ports = self.scan_ports()
+        if not ports:
+            # Scan en échec (last_error renseigné) OU aucun port sur la machine.
+            # Dans les deux cas il n'y a rien à conclure : on ne débranche pas un
+            # contrôleur qui marche sur la foi d'une liste vide, et on retentera
+            # dans 2 s avec une sonde neuve.
+            return
         try:
-            probe = rtmidi.MidiIn()
-            ports = probe.get_ports()
-            try: probe.close_port()
-            except Exception: pass
             # Présence du contrôleur CIBLE (épinglé ou auto) — ne rebascule pas
             # sur un autre contrôleur quand l'utilisateur en a épinglé un.
             device_present = self._target_present(ports)
-        except Exception:
+        except Exception as e:
+            self.last_error = f"Détection impossible : {e}"
             return
 
         if not device_present:
             if self.midi_in or self.midi_out:
+                self._close_extra_inputs()
+                self._extra_in_names = []
                 try:
                     if self.midi_in: self.midi_in.close_port()
                 except Exception: pass
@@ -485,6 +610,8 @@ class MIDIHandler(QObject):
                 self.midi_in  = None
                 self.midi_out = None
                 self.controller_type = None
+                self._in_name = ""
+                self._out_name = ""
             return
 
         # Device présent — déjà connecté ?
@@ -510,8 +637,28 @@ class MIDIHandler(QObject):
 
     def _midi_callback(self, event, data=None):
         msg, _dt = event
+        msg = list(msg)
         with self._midi_lock:
-            self._midi_queue.append(list(msg))
+            # Anti-doublon inter-ports. On écoute TOUTES les entrées du
+            # contrôleur (cf. _extra_ins) ; mesuré sur Launchpad Mini MK3 en
+            # Windows, seul le port DAW émet — mais si un appareil parlait sur
+            # ses deux ports, chaque appui déclencherait DEUX fois le cue.
+            # Deux copies venant de deux ports arrivent à quelques microsecondes
+            # d'intervalle : 5 ms suffisent à les coller sans jamais avaler une
+            # vraie double frappe (physiquement impossible à cette vitesse).
+            now = time.monotonic()
+            if msg == self._last_msg and (now - self._last_msg_t) < 0.005:
+                return
+            self._last_msg   = msg
+            self._last_msg_t = now
+
+            self._midi_queue.append(msg)
+            # Compteur BRUT, avant tout décodage. C'est lui qui distingue
+            # « rien n'arrive » (port/pilote) de « ça arrive mais le décodeur
+            # du contrôleur l'écarte » — les deux se ressemblent à l'écran,
+            # et l'ancien témoin d'activité ne réagissait qu'après décodage.
+            self.rx_count += 1
+            self.last_raw = list(msg)
 
     def set_raw_capture(self, callback):
         """Route tous les messages MIDI bruts vers callback(msg) — pour le wizard de mapping."""
@@ -1237,9 +1384,11 @@ class MIDIHandler(QObject):
             self.midi_timer.stop()
         if hasattr(self, 'connection_check_timer') and self.connection_check_timer:
             self.connection_check_timer.stop()
+        self._close_extra_inputs()
         if self.midi_in:
             try: self.midi_in.close_port()
             except Exception: pass
         if self.midi_out:
             try: self.midi_out.close_port()
             except Exception: pass
+        self._probe = None

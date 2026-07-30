@@ -354,6 +354,20 @@ const BEAM_FRAG = `
   uniform float     uGoboBlend;   // 0 = pas de gobo (aucun coût : branche évitée)
   uniform float     uGoboRot;
   uniform float     uGoboScale;   // enveloppe / rayon utile (cf. orientCone)
+  // Brouillard : la fumée n'est pas homogène, elle fait des volutes. C'est ce
+  // qui donne les stries et les nuages DANS le faisceau, au lieu d'un cône
+  // uniforme qui trahit tout de suite le rendu de synthèse.
+  //
+  // Le bruit est échantillonné en coordonnées MONDE — jamais dans le repère du
+  // cône. C'est le point décisif : la fumée appartient à la salle, pas au
+  // projecteur. Deux faisceaux qui se croisent traversent donc la MÊME volute,
+  // et une lyre qui balaye révèle un brouillard immobile au lieu d'emporter ses
+  // volutes avec elle.
+  uniform float uFogAmt;    // 0 = pas de brouillard (branche entièrement évitée)
+  uniform float uFogScale;  // finesse des volutes (m⁻¹)
+  uniform vec3  uFogDrift;  // dérive lente du volume (pré-multipliée par le temps)
+  uniform int   uFogOct;    // octaves — indexé sur la qualité
+
   // Three n'injecte modelMatrix que dans le vertex shader : on la passe ici.
   uniform mat4  uModel;
   uniform mat4  uInvModel;
@@ -366,6 +380,42 @@ const BEAM_FRAG = `
   // beaucoup moins de grain visible à nombre de pas égal.
   float ign(vec2 p) {
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+  }
+
+  // Bruit de valeur 3D + fbm. Procédural plutôt qu'une texture 3D : pas de
+  // téléversement GPU, pas de tuilage visible, et surtout un coût nul quand le
+  // brouillard est à zéro puisque la branche n'est jamais prise.
+  float hash13(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+
+  float vnoise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);          // lissage hermite : pas d'arêtes de grille
+    return mix(mix(mix(hash13(i + vec3(0.0, 0.0, 0.0)),
+                       hash13(i + vec3(1.0, 0.0, 0.0)), f.x),
+                   mix(hash13(i + vec3(0.0, 1.0, 0.0)),
+                       hash13(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+               mix(mix(hash13(i + vec3(0.0, 0.0, 1.0)),
+                       hash13(i + vec3(1.0, 0.0, 1.0)), f.x),
+                   mix(hash13(i + vec3(0.0, 1.0, 1.0)),
+                       hash13(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
+  }
+
+  // Boucle bornée à 3 : WebGL1 exige un nombre d'itérations constant.
+  float fbm(vec3 p, int oct) {
+    float amp = 0.5, som = 0.0, norm = 0.0;
+    for (int k = 0; k < 3; k++) {
+      if (k >= oct) break;
+      som  += amp * vnoise(p);
+      norm += amp;
+      p    *= 2.03;      // décalé de 2.0 pour éviter que les octaves se calent
+      amp  *= 0.5;
+    }
+    return som / max(norm, 1e-4);
   }
 
   // Repère du gobo, perpendiculaire au faisceau et STABLE.
@@ -464,6 +514,40 @@ const BEAM_FRAG = `
         }
       }
 
+      // Volutes de fumée. Le facteur est centré sur 1 (le bruit vaut 0,5 en
+      // moyenne, d'où 0.30 + 1.40 * 0.5 ≈ 1) : activer le brouillard
+      // REDISTRIBUE la lumière, il ne l'assombrit pas. Sans ça, monter le
+      // curseur éteignait tout le plan de feu.
+      if (uFogAmt > 0.0) {
+        vec3 pw = (uModel * vec4(p, 1.0)).xyz;      // coordonnées MONDE
+        // Étirement du bruit le long de l'axe du faisceau. Sans lui, l'effet
+        // est INVISIBLE : on somme 24 à 40 échantillons le long du rayon de
+        // vue, et un bruit isotrope se moyenne à ~1 sur ce trajet — il ne
+        // restait qu'un voile uniforme, strictement identique au rendu sans
+        // brouillard (vérifié au rendu). En comprimant la composante axiale,
+        // les volutes deviennent de longues traînées parallèles au faisceau :
+        // elles varient d'un pixel à l'autre EN TRAVERS, donc elles survivent
+        // à l'intégration. C'est aussi ce qu'on voit en vrai, la fumée étant
+        // brassée par le flux d'air du projecteur.
+        vec3 ax = normalize(M * vec3(0.0, -1.0, 0.0));
+        vec3 q  = pw - ax * dot(pw, ax) * 0.82;
+        float f = clamp(fbm(q * uFogScale + uFogDrift, uFogOct), 0.0, 1.0);
+        // Le contraste doit croître avec le curseur, et fort. Sommer 24 à 40
+        // échantillons le long du rayon écrase les écarts : mesuré au rendu,
+        // une modulation de ±15 % est purement et simplement invisible, et
+        // même ±80 % ne donne qu'un frémissement. À fond, la fenêtre se
+        // resserre presque en seuil — ce sont alors de vraies déchirures de
+        // fumée, comme sur une scène enfumée à la machine.
+        f = smoothstep(0.32 + 0.10 * uFogAmt, 0.72 - 0.10 * uFogAmt, f);
+        // Plancher à 18 % et non ~0 : les volutes font plus d'un mètre, un
+        // faisceau entier peut donc tomber dans un creux du bruit. Avec un
+        // plancher trop bas il s'ÉTEIGNAIT complètement pendant quelques
+        // secondes (constaté au rendu) — on croyait le projecteur coupé. 18 %
+        // laisse traverser la fumée épaisse sans jamais perdre le faisceau.
+        // La moyenne reste 1 (0,18 + 1,64 × 0,5), donc pas d'assombrissement.
+        dens *= mix(1.0, 0.18 + 1.64 * f, uFogAmt);
+      }
+
       // Absorption de la fumée + chute avec la distance parcourue
       float dist = h * lenW;
       dens *= exp(-uHaze * dist) / (1.0 + uFall * dist * dist);
@@ -495,6 +579,11 @@ const BEAM_FRAG = `
 // Qualité de rendu des faisceaux : nombre de pas de raymarching.
 // Piloté depuis Python via window.setBeamQuality().
 window.beamQuality = 24;
+// Brouillard : 0 = faisceaux lisses (rendu d'avant), 1 = fumée bien marquée.
+// Doit exister AVANT le premier makeBeamMat(), qui lit ces valeurs.
+window.fogAmount  = 0.0;
+window.fogOctaves = 2;
+window.fogSpeed   = 0.35;   // 0 = fumée figée, 1 = brassage vif
 const _beamMats = [];
 
 function makeBeamMat(alpha, opts) {
@@ -513,6 +602,10 @@ function makeBeamMat(alpha, opts) {
       uGoboBlend: { value: 0.0 },
       uGoboRot:   { value: 0.0 },
       uGoboScale: { value: 2.0 },
+      uFogAmt:   { value: window.fogAmount },
+      uFogScale: { value: 0.55 },   // ≈ 1,8 m par volute
+      uFogDrift: { value: new THREE.Vector3() },
+      uFogOct:   { value: window.fogOctaves },
       uModel:    { value: new THREE.Matrix4() },
       uInvModel: { value: new THREE.Matrix4() },
     },
@@ -546,6 +639,32 @@ window.setBeamHaze = function (v) {
 window.setBeamQuality = function (steps) {
   window.beamQuality = Math.max(4, Math.min(48, steps | 0));
   for (const m of _beamMats) m.uniforms.uSteps.value = window.beamQuality;
+};
+
+// Brouillard — 0 à 100 %. Piloté depuis Python (onglet Scène).
+window.setFog = function (pct) {
+  window.fogAmount = Math.max(0, Math.min(100, pct)) / 100;
+  for (const m of _beamMats) m.uniforms.uFogAmt.value = window.fogAmount;
+};
+
+// Vitesse de brassage — 0 à 100 %. À 0 la fumée est complètement figée, ce qui
+// est utile pour juger une photo de plan de feu.
+window.setFogSpeed = function (pct) {
+  window.fogSpeed = Math.max(0, Math.min(100, pct)) / 100;
+};
+
+// Finesse des volutes : petit = nappes larges, grand = fumée nerveuse.
+window.setFogScale = function (v) {
+  const s = Math.max(0.15, Math.min(2.0, v));
+  for (const m of _beamMats) m.uniforms.uFogScale.value = s;
+};
+
+// Octaves de bruit. Le fbm est LA dépense de la boucle de raymarching : une
+// octave de plus, c'est 8 hachages de plus à chaque pas, sur chaque fragment
+// de chaque faisceau. On l'indexe donc sur la qualité plutôt que de l'exposer.
+window.setFogOctaves = function (n) {
+  window.fogOctaves = Math.max(1, Math.min(3, n | 0));
+  for (const m of _beamMats) m.uniforms.uFogOct.value = window.fogOctaves;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1111,6 +1230,15 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Calcul direction faisceau (miroir exact du code Python)
 // ─────────────────────────────────────────────────────────────────────────────
+// Longueur maximale d'un faisceau qui ne rencontre ni le sol ni le plafond.
+// UNE seule valeur pour tous les cas : c'est ce qui garantit la continuité au
+// franchissement de l'horizontale (cf. beamFloor).
+// 22 m ≈ diagonale utile de la scène. UNE seule distance pour la longueur
+// dessinée ET pour décider si le faisceau touche le sol : avec deux valeurs
+// différentes, il existait une bande de tilt où la tache s'affichait alors
+// que le cône s'arrêtait encore à 2 m du sol.
+const BEAM_TMAX = 22.0;
+
 function beamFloor(p) {
   const hy  = p.fixture_height ?? 7.0;
   const isMH = p.fixture_type === 'Moving Head';
@@ -1151,14 +1279,29 @@ function beamFloor(p) {
     const lensY = hy  + ay * Math.cos(rx) - az * Math.sin(rx);
     const lensZ = p.z + ay * Math.sin(rx) + az * Math.cos(rx);
     const goingUp = by > 0.05;
+    // Longueur du faisceau : jusqu'au sol s'il descend, jusqu'au plafond s'il
+    // monte, bornée à BEAM_TMAX.
+    //
+    // Les trois branches d'origine ne se raccordaient PAS : 10 m en descendant,
+    // 10 m dans la zone morte |by| <= 0.05, mais 15 m dès que ça montait. Au
+    // franchissement de l'horizontale, la longueur sautait de 10 à 15 m et le
+    // point d'arrivée basculait du sol au plafond — le faisceau paraissait
+    // sauter « de bas en haut » (constaté entre tilt 54995 et 55499 sur une
+    // lyre à 7 m). Avec une borne UNIQUE, les deux quotients divergent vers
+    // BEAM_TMAX quand by → 0 de part et d'autre : la longueur est continue.
     let t;
-    if      (by < -0.05)  t = Math.min(lensY / (-by), 10.0);
-    else if (goingUp)     t = Math.min((15.0 - lensY) / by, 15.0);
-    else                  t = 10.0;
+    if      (by < 0) t = Math.min(lensY / (-by), BEAM_TMAX);
+    else if (by > 0) t = Math.min((15.0 - lensY) / by, BEAM_TMAX);
+    else             t = BEAM_TMAX;
     return {
       fx: Math.max(-11, Math.min(11, lensX + bx*t)),
+      // Altitude d'arrivée calculée comme fx/fz, et NON forcée au sol ou au
+      // plafond selon `goingUp`. C'est ce forçage qui téléportait le faisceau :
+      // au franchissement du seuil, l'extrémité sautait de 0.03 à 14.5 m.
+      fy: Math.max(0.03, Math.min(14.5, lensY + by*t)),
       fz: Math.max(-8,  Math.min(13, lensZ + bz*t)),
       lensX, lensY, lensZ, bx, by, bz, isMH, goingUp,
+      hitsFloor: by < -1e-6 && (lensY / -by) <= BEAM_TMAX,
     };
   } else {
     const lensY = hy - 0.333;
@@ -1168,13 +1311,18 @@ function beamFloor(p) {
     const by    = -Math.cos(rx);
     const bz    = Math.cos(ry) * Math.sin(rx);
     const goingUp = by > 0.05;
-    const t = by < -0.05 ? Math.min(lensY / (-by), 12.0)
-            : goingUp    ? Math.min((15.0 - lensY) / by, 15.0)
-            :               12.0;
+    // Même borne unique que pour les lyres — voir le commentaire plus haut :
+    // trois bornes différentes (12 / 15 / 12) faisaient sauter la longueur au
+    // franchissement de l'horizontale.
+    const t = by < 0 ? Math.min(lensY / (-by), BEAM_TMAX)
+            : by > 0 ? Math.min((15.0 - lensY) / by, BEAM_TMAX)
+            :          BEAM_TMAX;
     return {
       fx: Math.max(-11, Math.min(11, p.x + bx * t)),
+      fy: Math.max(0.03, Math.min(14.5, lensY + by * t)),
       fz: Math.max(-8,  Math.min(13, p.z + bz * t)),
       lensX: p.x, lensY, lensZ: p.z, bx, by, bz, isMH: false, goingUp,
+      hitsFloor: by < -1e-6 && (lensY / -by) <= BEAM_TMAX,
     };
   }
 }
@@ -1286,7 +1434,7 @@ window.updateScene = function(projectors) {
     _colBuf.setRGB(r, g, b);
     const hy  = p.fixture_height ?? 7.0;
     const bf  = beamFloor(p);
-    const { fx, fz, lensX, lensY, lensZ, isMH, goingUp } = bf;
+    const { fx, fy, fz, lensX, lensY, lensZ, isMH, goingUp, hitsFloor } = bf;
 
     // ── Corps de fixture ─────────────────────────────────────────────
     if (isMH) {
@@ -1355,7 +1503,11 @@ window.updateScene = function(projectors) {
       const base_r = (0.22 + 2.0 * lvl) * bs * _spread;
       const fx2 = fx, fz2 = fz;
 
-      const baseY = goingUp ? 14.5 : 0.03;
+      // Extrémité réelle du rayon (fy), et non le sol ou le plafond selon un
+      // booléen : c'est ce qui rend le faisceau continu quand il franchit
+      // l'horizontale. Constaté entre tilt 54885 et 55397 sur des lyres à 7 m,
+      // où le faisceau sautait du sol au plafond d'un pas de tilt à l'autre.
+      const baseY = fy;
 
       // Un seul cône, dont l'enveloppe est volontairement serrée : au-delà de
       // ~2× le rayon utile la densité est déjà nulle, et chaque mètre de
@@ -1403,7 +1555,7 @@ window.updateScene = function(projectors) {
       // tressautait au lieu de tourner.
       if (!((p.gobo_rotation || 0) > 0)) _bu.uGoboRot.value = goboRot;
 
-      if (!goingUp) {
+      if (hitsFloor) {
         // Tache principale au sol (avec gobo)
         // Wash : nappe au sol plus large et plus douce qu'un spot de lyre
         const poolR = (0.35 + 2.2*lvl) * bs * (isWash ? 1.6 : 1.0);
@@ -1448,6 +1600,7 @@ window.updateScene = function(projectors) {
         base_r,
         poolR:    (0.35 + 2.2 * lvl) * bs,
         goingUp,
+        hitsFloor,
         prism:    (p.prism || 0) > 0,
         prismV:   (p.prism_rotation || 0),
         goboRotV: (p.gobo_rotation || 0),
@@ -1641,7 +1794,7 @@ function _orientPrism(obj, t) {
     _pu.uSharp.value = 5.20;
     _pu.uCore.value  = 1.3;
     _pu.uAlpha.value = 0.65 * s.lvl * window.beamGain;
-    if (!s.goingUp) {
+    if (s.hitsFloor) {
       pp0[k].position.set(bx, 0.02, bz);
       pp0[k].scale.setScalar(s.poolR * 0.7);
       pp0[k].material.uniforms.uColor.value.copy(_fxColBuf);
@@ -1660,11 +1813,13 @@ function _orientPrism(obj, t) {
 // ── Niveaux de qualité ───────────────────────────────────────────────────
 // Le raymarching coûte au fragment : sur un portable modeste avec beaucoup de
 // projecteurs, il faut pouvoir retomber sur un rendu plus léger.
+// `oct` = octaves de bruit du brouillard. En qualité Bas on tombe à 1 : les
+// volutes restent lisibles alors que le fbm coûte trois fois moins.
 const QUALITY = [
-  { name:'Bas',   steps: 8,  ratio: 1.0, refl:false, bloom:false },
-  { name:'Moyen', steps: 16, ratio: 1.5, refl:true,  bloom:true  },
-  { name:'Haut',  steps: 24, ratio: 2.0, refl:true,  bloom:true  },
-  { name:'Ultra', steps: 40, ratio: 2.0, refl:true,  bloom:true  },
+  { name:'Bas',   steps: 8,  ratio: 1.0, refl:false, bloom:false, oct: 1 },
+  { name:'Moyen', steps: 16, ratio: 1.5, refl:true,  bloom:true,  oct: 2 },
+  { name:'Haut',  steps: 24, ratio: 2.0, refl:true,  bloom:true,  oct: 2 },
+  { name:'Ultra', steps: 40, ratio: 2.0, refl:true,  bloom:true,  oct: 3 },
 ];
 window.qualityLevel = 2;
 window.autoQuality  = true;
@@ -1674,6 +1829,7 @@ window.setQuality = function (lvl, redimensionner) {
   window.qualityLevel = lvl;
   const q = QUALITY[lvl];
   window.setBeamQuality(q.steps);
+  window.setFogOctaves(q.oct);
 
   // Changer la résolution de rendu réalloue les tampons du GPU, ce qui coûte
   // UNE IMAGE NOIRE sur beaucoup de pilotes. Acceptable quand l'utilisateur
@@ -1737,6 +1893,25 @@ function _selBlinkOne(i, k) {
   controls.update();
   const _now = performance.now();
   const _t = _now / 1000;
+  // Dérive du brouillard.
+  //
+  // L'offset est SOUSTRAIT de la position d'échantillonnage du bruit : une
+  // composante Y négative fait donc MONTER les volutes — c'est le sens dans
+  // lequel une fumée de scène se déplace, tirée par la chaleur des lampes.
+  // Les termes en sinus, de périodes non harmoniques, ajoutent un balancement
+  // latéral : sans eux, la fumée défile comme un tapis roulant, ce qui se
+  // repère tout de suite. Les vitesses sont en unités de bruit par seconde ;
+  // à la finesse par défaut (0,55 m⁻¹), 0,16 vaut ≈ 29 cm/s.
+  if (window.fogAmount > 0) {
+    const v = window.fogSpeed;
+    const w = _t * v;
+    const dx =  w * 0.055 + Math.sin(_t * 0.11 * v) * 0.35 * v;
+    const dy = -w * 0.160;
+    const dz =  w * 0.037 + Math.cos(_t * 0.09 * v) * 0.28 * v;
+    for (let i = 0; i < _beamMats.length; i++) {
+      _beamMats[i].uniforms.uFogDrift.value.set(dx, dy, dz);
+    }
+  }
   for (let i = 0; i < _objs.length; i++) _orientPrism(_objs[i], _t);
   _selBlink(_t);
   if (_flags.bloom) {

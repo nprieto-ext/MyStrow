@@ -1669,6 +1669,8 @@ class DmxSetupDialog(QDialog):
         """
         self._connect_timed_out = True
         self._set_connect("✗  Délai dépassé — le boîtier ne répond pas", error=True)
+        self._journal(
+            f"Sortie DMX : {self._connect_name} ne répond pas — délai dépassé", "error")
 
     def _on_connect_result(self, ok, transport):
         """Résultat du thread — peut arriver après le délai (connexion lente)."""
@@ -1678,9 +1680,14 @@ class DmxSetupDialog(QDialog):
             mode = {TRANSPORT_ENTTEC_D2XX: "D2XX",
                     TRANSPORT_ENTTEC_PRO:  "ENTTEC Pro"}.get(transport, "série")
             self._set_connect(f"✓  {self._connect_name} connecté ({mode})", ok=True)
+            self._journal(
+                f"Sortie DMX : {self._connect_name} connecté "
+                f"({mode}) — {self._dmx.com_port}", "success")
         elif not self._connect_timed_out:
             # Après un timeout on garde le message de délai dépassé, plus parlant.
             self._set_connect("✗  Échec de la connexion", error=True)
+            self._journal(
+                f"Sortie DMX : échec de connexion — {self._connect_name}", "error")
 
     def _on_connect_finished(self):
         """Le thread est terminé : on relâche le verrou et le bouton."""
@@ -1697,6 +1704,19 @@ class DmxSetupDialog(QDialog):
         color = "#4CAF50" if ok else ("#f44336" if error else "#555")
         self.lbl_connect.setText(text)
         self.lbl_connect.setStyleSheet(f"color: {color};")
+
+    def _journal(self, text: str, level: str = "info"):
+        """Écrit dans le journal de la fenêtre principale, si elle est joignable.
+
+        L'assistant s'ouvre aussi depuis le diagnostic, parfois sans parent :
+        l'absence de journal ne doit jamais gêner la connexion.
+        """
+        win = self._parent_win
+        if win is not None and hasattr(win, '_log_message'):
+            try:
+                win._log_message(text, level)
+            except Exception:
+                pass
 
 
 # Alias de compatibilité
