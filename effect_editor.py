@@ -19,9 +19,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
-from core import (projector_selection_keys, layer_selection_ranks,
+from core import (projector_selection_keys, layer_selection_ranks,
                   block_index, chase_slot, position_preset_values,
-                  find_position_preset)
+                  find_position_preset, ComboSansMolette)
+from i18n import tr
 
 
 # ─── Raccourci couche ──────────────────────────────────────────────────────────
@@ -751,7 +752,7 @@ class ColorWheel(QWidget):
         d = self._R * 2 + 8
         self.setFixedSize(d, d)
         self.setCursor(Qt.CrossCursor)
-        self.setToolTip("Cliquer / glisser pour choisir la couleur")
+        self.setToolTip(tr("ee2_pick_colour"))
 
     # ── Accès couleur ─────────────────────────────────────────────────────────
 
@@ -1574,7 +1575,7 @@ class _CiblePopup(QFrame):
 
         # ── Cible « Sélection » : capture les projos sélectionnés sur le plan ──
         if self._sel_source is not None:
-            b = QPushButton("Sélection du plan")
+            b = QPushButton(tr("ee2_plan_select"))
             b.setFixedHeight(22)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(self._pick_selection)
@@ -1956,7 +1957,7 @@ class LayerRow(QFrame):
         self._emit("cible")
 
     def _mk_canal(self):
-        cb = QComboBox()
+        cb = ComboSansMolette()
         cb.addItems(self._ATTRS)
         cb.setCurrentText(self.layer.attribute)
         cb.setFixedSize(self._w["canal"], LAYER_CELL_H)
@@ -1977,7 +1978,7 @@ class LayerRow(QFrame):
         self._wave = WaveformCanvas(self.layer, w=88, h=LAYER_CELL_H - 4)
         bh.addWidget(self._wave)
 
-        self._forme_cb = QComboBox()
+        self._forme_cb = ComboSansMolette()
         self._forme_cb.addItems(self._FORMES)
         self._forme_cb.setCurrentText(
             self.layer.forme if self.layer.forme in self._FORMES else "Sinus")
@@ -1990,7 +1991,7 @@ class LayerRow(QFrame):
         self._traj = TrajectoryCanvas(self.layer, size=LAYER_CELL_H - 4)
         bh.addWidget(self._traj)
 
-        self._shape_cb = QComboBox()
+        self._shape_cb = ComboSansMolette()
         for sid in _PT_SHAPE_ORDER:
             self._shape_cb.addItem(PAN_TILT_SHAPES[sid]["label"], sid)
         cur = getattr(self.layer, 'mouvement_shape', 'libre')
@@ -2192,7 +2193,7 @@ class LayerRow(QFrame):
         b = QPushButton("×")
         b.setFixedSize(self._w["del"], LAYER_BTN)
         b.setCursor(Qt.PointingHandCursor)
-        b.setToolTip("Supprimer cette couche")
+        b.setToolTip(tr("ee2_del_layer"))
         b.setStyleSheet(
             "QPushButton{background:#0d0606;color:#2e1010;border:1px solid #180c0c;"
             "border-radius:4px;font-size:11px;font-weight:bold;}"
@@ -2273,6 +2274,16 @@ class LayerRow(QFrame):
             "border-radius:4px;font-size:10px;font-weight:bold;}"
             "QPushButton:hover{border-color:#ff9900;}")
         b.clicked.connect(self._open_pos_menu)
+        # La cellule POSITION est masquee hors canaux de mouvement, mais elle
+        # doit GARDER SA PLACE : un widget cache sort du layout, et QHBoxLayout
+        # redistribue alors ses 78 px dans les ecarts entre toutes les autres
+        # cellules. Chaque colonne glissait vers la droite un peu plus que la
+        # precedente (+5, +10, +15... +65 px mesures), et tout ce qui suit POS
+        # partait au contraire vers la gauche : les libelles de l'en-tete ne
+        # tombaient plus en face de leurs cellules.
+        _sp = b.sizePolicy()
+        _sp.setRetainSizeWhenHidden(True)
+        b.setSizePolicy(_sp)
         self._pos_btn = b
         return b
 
@@ -2410,7 +2421,7 @@ class SimpleEffectPanel(QWidget):
 
         tc = QVBoxLayout()
         tc.setSpacing(1)
-        self._eff_title = QLabel("Sélectionnez un effet")
+        self._eff_title = QLabel(tr("ee2_pick_effect"))
         self._eff_title.setStyleSheet(
             "color: #1e1e1e; font-size: 13px; font-weight: bold; background: transparent;"
         )
@@ -2424,7 +2435,7 @@ class SimpleEffectPanel(QWidget):
         self._rename_btn = QPushButton("✏")
         self._rename_btn.setFixedSize(28, 28)
         self._rename_btn.setCursor(Qt.PointingHandCursor)
-        self._rename_btn.setToolTip("Renommer cet effet")
+        self._rename_btn.setToolTip(tr("ee2_rename_effect"))
         self._rename_btn.setVisible(False)
         self._rename_btn.setStyleSheet("""
             QPushButton {
@@ -2491,7 +2502,7 @@ class SimpleEffectPanel(QWidget):
         self._ll.addSpacing(4)
 
         # Placeholder "Sélectionner un effet" (visible quand aucun effet sélectionné)
-        self._no_effect_lbl = QLabel("← Sélectionner un effet")
+        self._no_effect_lbl = QLabel(tr("ee2_back_select"))
         self._no_effect_lbl.setStyleSheet(
             "color: #2a2a2a; font-size: 11px; font-style: italic; "
             "background: transparent; padding: 6px 0;"
@@ -2499,7 +2510,7 @@ class SimpleEffectPanel(QWidget):
         self._ll.addWidget(self._no_effect_lbl)
 
         # Bouton + sous les couches
-        self._add_layer_btn = QPushButton("＋  Ajouter une couche")
+        self._add_layer_btn = QPushButton(tr("ee2_add_layer_btn"))
         self._add_layer_btn.setFixedHeight(22)
         self._add_layer_btn.setCursor(Qt.PointingHandCursor)
         self._add_layer_btn.setStyleSheet("""
@@ -2512,7 +2523,7 @@ class SimpleEffectPanel(QWidget):
             QPushButton:hover { color: #88ff88; border-color: #55aa55; background: #1f4a1f; }
             QPushButton:pressed { background: #0d2a0d; color: #44aa44; }
         """)
-        self._add_layer_btn.setToolTip("Ajouter une couche")
+        self._add_layer_btn.setToolTip(tr("ee2_add_layer"))
         self._add_layer_btn.clicked.connect(self._on_add_layer)
         self._add_layer_btn.setVisible(False)
         self._add_layer_btn.setFixedWidth(LAYER_TABLE_W)
@@ -3002,10 +3013,10 @@ class EffectEditorDialog(QDialog):
         hh.addWidget(ttl)
         hh.addStretch()
         self._lib_title = ttl
-        save_btn = QPushButton("＋ Ajouter un effet")
+        save_btn = QPushButton(tr("ee2_add_effect"))
         save_btn.setFixedHeight(26)
         save_btn.setCursor(Qt.PointingHandCursor)
-        save_btn.setToolTip("Sauvegarder l'effet actuel dans Mes Effets")
+        save_btn.setToolTip(tr("ee2_save_effect"))
         save_btn.setStyleSheet("""
             QPushButton {
                 background: #0a1a0a; color: #285028;
@@ -3023,7 +3034,7 @@ class EffectEditorDialog(QDialog):
         collapse = QPushButton("◀")
         collapse.setFixedSize(20, 26)
         collapse.setCursor(Qt.PointingHandCursor)
-        collapse.setToolTip("Replier la liste des effets")
+        collapse.setToolTip(tr("ee2_fold_list"))
         collapse.setStyleSheet("""
             QPushButton {
                 background: #101010; color: #444;
@@ -3078,7 +3089,7 @@ class EffectEditorDialog(QDialog):
             *((6, 0, 6, 0) if collapsed else (14, 0, 10, 0)))
         self._lib_collapse_btn.setText("▶" if collapsed else "◀")
         self._lib_collapse_btn.setToolTip(
-            "Afficher la liste des effets" if collapsed
+            tr("ee2_show_list") if collapsed
             else "Replier la liste des effets")
 
     def _rebuild_library(self):
@@ -3136,7 +3147,7 @@ class EffectEditorDialog(QDialog):
         mes_hdr_h.addWidget(mes_hdr_lbl, 1)
         imp_btn = QPushButton("+")
         imp_btn.setFixedSize(16, 16)
-        imp_btn.setToolTip("Importer un effet (.mystrow_effect)")
+        imp_btn.setToolTip(tr("ee2_import_effect"))
         imp_btn.setCursor(Qt.PointingHandCursor)
         imp_btn.setStyleSheet("""
             QPushButton {
@@ -3165,7 +3176,7 @@ class EffectEditorDialog(QDialog):
                 row_w.setFixedHeight(58)
                 self._list_vl.insertWidget(self._list_vl.count() - 1, row_w)
         else:
-            empty_lbl = QLabel("Aucun effet — importez ou créez-en un")
+            empty_lbl = QLabel(tr("ee2_no_effect"))
             empty_lbl.setAlignment(Qt.AlignCenter)
             empty_lbl.setStyleSheet(
                 "color: #222; font-size: 9px; font-style: italic; background: transparent;"
@@ -3568,7 +3579,7 @@ class EffectEditorDialog(QDialog):
         collapse = QPushButton("▶")
         collapse.setFixedSize(20, 26)
         collapse.setCursor(Qt.PointingHandCursor)
-        collapse.setToolTip("Replier le plan de feu")
+        collapse.setToolTip(tr("ee2_fold_plan"))
         collapse.setStyleSheet("""
             QPushButton {
                 background: transparent; color: #3a3a3a;
@@ -3654,7 +3665,7 @@ class EffectEditorDialog(QDialog):
             *((6, 0, 6, 0) if replie else (10, 0, 14, 0)))
         self._plan_collapse_btn.setText("◀" if replie else "▶")
         self._plan_collapse_btn.setToolTip(
-            "Afficher le plan de feu" if replie else "Replier le plan de feu")
+            tr("ee2_show_plan") if replie else "Replier le plan de feu")
 
     def _refresh_assign_btns(self):
         if not self._main_window:

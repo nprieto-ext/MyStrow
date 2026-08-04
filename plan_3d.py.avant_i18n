@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QMenu, QWidgetAction,
                                 QFrame, QPushButton, QDoubleSpinBox,
                                 QCheckBox, QToolBar)
 from PySide6.QtCore    import Qt, QPoint, QPointF, QRectF, QTimer, Signal
-from i18n import tr
 from PySide6.QtGui     import (QPainter, QPen, QBrush, QColor, QPolygonF,
                                 QFont, QLinearGradient, QRadialGradient,
                                 QPainterPath)
@@ -1265,7 +1264,7 @@ class _MovePanel(QWidget):
         """ + self._SPIN_STYLE)
         self.setObjectName("movePanel")
 
-        self._title = QLabel(tr("p32_none_selected"))
+        self._title = QLabel("0 sélectionné")
         self._title.setObjectName("title")
         self._title.setAlignment(Qt.AlignCenter)
 
@@ -1302,7 +1301,7 @@ class _MovePanel(QWidget):
         sep3 = QFrame(); sep3.setFrameShape(QFrame.HLine)
         sep3.setStyleSheet("color:#333355;")
 
-        desel = QPushButton(tr("p32_deselect"))
+        desel = QPushButton("✕  Désélectionner")
         desel.clicked.connect(self.deselect_all)
 
         vlay = QVBoxLayout(self)
@@ -1524,7 +1523,7 @@ class Plan3DWindow(QMainWindow):
         tb.addWidget(self._btn_truss)
 
         tb.addSeparator()
-        _lbl_amb = QLabel(tr("p32_light"))
+        _lbl_amb = QLabel("  Lumière :")
         _lbl_amb.setStyleSheet("color:#7777aa; font-size:11px;")
         tb.addWidget(_lbl_amb)
         self._amb_slider = QSlider(Qt.Horizontal)

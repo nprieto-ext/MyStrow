@@ -932,7 +932,7 @@ class AkaiDiagnosticDialog(QDialog):
         root.addWidget(title)
 
         # ── Liste visuelle des contrôleurs compatibles ─────────────────────
-        list_hdr = QLabel(tr("mw_ctrl_compat"))
+        list_hdr = QLabel("Contrôleurs compatibles")
         list_hdr.setStyleSheet("color:#aaa; font-size:10px; font-weight:bold;")
         root.addWidget(list_hdr)
 
@@ -957,7 +957,7 @@ class AkaiDiagnosticDialog(QDialog):
         self._ctrl_row_widgets = {}   # cid -> (frame, name_lbl, status_lbl)
         self._populate_controller_rows()
 
-        hint = QLabel(tr("mw_ctrl_force"))
+        hint = QLabel("Cliquez un contrôleur pour le forcer, ou « Auto » pour la détection automatique.")
         hint.setStyleSheet("color:#555; font-size:8px;")
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -1032,7 +1032,7 @@ class AkaiDiagnosticDialog(QDialog):
 
         # ── Activité MIDI en direct ────────────────────────────────────────
         act_row = QHBoxLayout()
-        act_lbl = QLabel(tr("mw_midi_activity"))
+        act_lbl = QLabel("Activité MIDI :")
         act_lbl.setStyleSheet("color:#777; font-size:10px;")
         act_row.addWidget(act_lbl)
         self._act_dot = QLabel("●")
@@ -1048,7 +1048,7 @@ class AkaiDiagnosticDialog(QDialog):
         # grimpe pendant que le témoin ci-dessus reste éteint signifie que le
         # contrôleur parle mais que son décodeur écarte les messages — c'est la
         # seule façon de distinguer ce cas d'un vrai silence côté pilote.
-        self._raw_lbl = QLabel(tr("mw_midi_raw"))
+        self._raw_lbl = QLabel("Messages bruts reçus : 0")
         self._raw_lbl.setStyleSheet("color:#555; font-size:9px;")
         self._raw_lbl.setWordWrap(True)
         root.addWidget(self._raw_lbl)
@@ -1076,7 +1076,7 @@ class AkaiDiagnosticDialog(QDialog):
         if getattr(midi_handler, 'controller_type', '') == 'apc_mini':
             from midi_handler import _APPLE_SILICON
             bright_row = QHBoxLayout()
-            self._bright_chk = QCheckBox(tr("mw_led_full"))
+            self._bright_chk = QCheckBox("Luminosité pleine (LED bright — désactiver si LEDs trop sombres sur Mac M-series)")
             self._bright_chk.setStyleSheet("color:#999; font-size:9px;")
             self._bright_chk.setChecked(getattr(midi_handler, '_apc_bright_mode', True))
             self._bright_chk.toggled.connect(self._toggle_bright_mode)
@@ -1084,7 +1084,7 @@ class AkaiDiagnosticDialog(QDialog):
             bright_row.addStretch()
             root.addLayout(bright_row)
             if _APPLE_SILICON:
-                warn_lbl = QLabel(tr("mw_apple_dim"))
+                warn_lbl = QLabel("⚠  Apple Silicon détecté — mode dim activé automatiquement")
                 warn_lbl.setStyleSheet("color:#e6a817; font-size:9px;")
                 root.addWidget(warn_lbl)
         else:
@@ -1093,7 +1093,7 @@ class AkaiDiagnosticDialog(QDialog):
         # ── Boutons ────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
 
-        add_btn = QPushButton(tr("mw_add_ctrl"))
+        add_btn = QPushButton("🎹  Ajouter mon contrôleur MIDI…")
         add_btn.setStyleSheet(
             "QPushButton { background:#1a2a1a; color:#88cc88; border:1px solid #2a442a; "
             "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 14px; } "
@@ -1105,7 +1105,7 @@ class AkaiDiagnosticDialog(QDialog):
         btn_row.addStretch()
 
         rescan_btn = QPushButton("🔍  Rescanner")
-        rescan_btn.setToolTip(tr("mw_rescan_hint"))
+        rescan_btn.setToolTip("Relance la détection sans redémarrer MyStrow")
         rescan_btn.setStyleSheet(
             "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #333; "
             "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 16px; } "
@@ -1156,7 +1156,7 @@ class AkaiDiagnosticDialog(QDialog):
                                 (self._out_dot, self._out_status, out_ok)):
             color = '#4CAF50' if ok else '#f44336'
             dot.setStyleSheet(f"color:{color}; font-size:11px;")
-            status.setText(tr("mw_connected") if ok else "Non détecté")
+            status.setText("Connecté" if ok else "Non détecté")
             status.setStyleSheet(f"color:{color}; font-size:10px; font-weight:bold;")
 
         try:
@@ -1183,7 +1183,7 @@ class AkaiDiagnosticDialog(QDialog):
     def _on_midi_activity(self, *args):
         self._act_dot.setStyleSheet("color:#FFE000; font-size:14px;")
         self._act_info.setStyleSheet("color:#ccc; font-size:9px;")
-        self._act_info.setText(tr("mw_signal_recv"))
+        self._act_info.setText("Signal reçu")
         self._activity_count = 6  # durée du flash
 
     def _dim_activity(self):
@@ -1323,11 +1323,11 @@ class AkaiDiagnosticDialog(QDialog):
                 else:
                     status.setText(""); _c = "#555"
             elif is_active:
-                status.setText(tr("mw_connected_dot")); _c = "#4CAF50"
+                status.setText("● Connecté"); _c = "#4CAF50"
             elif present:
-                status.setText(tr("mw_detected")); _c = "#00d4ff"
+                status.setText("Détecté"); _c = "#00d4ff"
             else:
-                status.setText(tr("mw_unplugged")); _c = "#555"
+                status.setText("Non branché"); _c = "#555"
             status.setStyleSheet(f"background:transparent; font-size:9px; font-weight:bold; color:{_c};")
             if selected and (is_active or present):
                 border = "#4CAF50" if (is_active or (cid is None and active is None)) else "#00d4ff"
@@ -1591,7 +1591,7 @@ class _SlotPickerPopup(QFrame):
         pl.setContentsMargins(10, 8, 10, 8)
         pl.setSpacing(7)
 
-        self._pos_title = QLabel(tr("mw_pos_col_setup"))
+        self._pos_title = QLabel("RÉGLAGE COLONNE POS")
         self._pos_title.setStyleSheet("color:#88aaff; font-size:8px; letter-spacing:1px; background:transparent; border:none;")
         pl.addWidget(self._pos_title)
 
@@ -1858,7 +1858,7 @@ class AkaiLayoutEditorDialog(QDialog):
         _pg_prev = QPushButton("◀")
         _pg_prev.setFixedSize(24, 26)
         _pg_prev.setStyleSheet(_PG_SS)
-        _pg_prev.setToolTip(tr("mw_prev_page"))
+        _pg_prev.setToolTip("Page précédente")
         _pg_prev.clicked.connect(lambda: self._dlg_goto_page(self._cur_page - 1))
         hdr.addWidget(_pg_prev)
         self._page_lbl = QLabel(f"{self._cur_page + 1}/{len(self._pages)}")
@@ -1978,7 +1978,7 @@ class AkaiLayoutEditorDialog(QDialog):
         bright_lay = QVBoxLayout(bright_card)
         bright_lay.setContentsMargins(14, 10, 14, 10)
         bright_lay.setSpacing(10)
-        bright_title = QLabel(tr("mw_led_brightness"))
+        bright_title = QLabel("LUMINOSITÉ LEDS")
         bright_title.setStyleSheet("color:#2a2a2a; font-size:8px; font-weight:bold; letter-spacing:2px;")
         bright_lay.addWidget(bright_title)
 
@@ -2095,7 +2095,7 @@ class AkaiLayoutEditorDialog(QDialog):
         menu.setStyleSheet(_MENU_SS)
 
         # ── Presets intégrés ──
-        lbl_builtin = QAction(tr("mw_builtin_presets"), menu)
+        lbl_builtin = QAction("— Presets intégrés —", menu)
         lbl_builtin.setEnabled(False)
         menu.addAction(lbl_builtin)
         for preset in AKAI_BANK_PRESETS:
@@ -2784,7 +2784,7 @@ class MissingMediaDialog(QDialog):
     def _mark_found(self, idx, new_path):
         self.remapped[idx] = new_path
         st = self.tbl.item(idx, 2)
-        st.setText(tr("mw_located"))
+        st.setText("✓  Localisé")
         st.setForeground(QColor("#44dd88"))
         btn = self.tbl.cellWidget(idx, 3)
         if btn:
@@ -2793,7 +2793,7 @@ class MissingMediaDialog(QDialog):
     def _mark_auto(self, idx, new_path):
         self.remapped[idx] = new_path
         st = self.tbl.item(idx, 2)
-        st.setText(tr("mw_auto_linked"))
+        st.setText("🔗  Lié auto")
         st.setForeground(QColor("#44aaff"))
         btn = self.tbl.cellWidget(idx, 3)
         if btn:
@@ -3807,7 +3807,7 @@ class MainWindow(QMainWindow):
         ext_btn = QPushButton("PADS")
         ext_btn.setFixedSize(40, 26)
         ext_btn.setCheckable(True)
-        ext_btn.setToolTip(tr("mw_exec_surface"))
+        ext_btn.setToolTip("Surface configurable (exécuteurs)")
         ext_btn.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #3a3a3a; "
             "border-radius: 4px; font-size: 10px; font-weight: bold; } "
@@ -3839,14 +3839,14 @@ class MainWindow(QMainWindow):
         )
         _pg_prev = QPushButton("◀")
         _pg_prev.setFixedSize(24, 26)
-        _pg_prev.setToolTip(tr("mw_prev_layout"))
+        _pg_prev.setToolTip("Page de layout précédente")
         _pg_prev.setStyleSheet(_PG_SS)
         _pg_prev.clicked.connect(self._prev_bank_page)
         _bpn.addWidget(_pg_prev)
         self._bank_page_lbl = QLabel("1")
         self._bank_page_lbl.setAlignment(Qt.AlignCenter)
         self._bank_page_lbl.setFixedWidth(20)
-        self._bank_page_lbl.setToolTip(tr("mw_ctrl_layout"))
+        self._bank_page_lbl.setToolTip("Page de layout du contrôleur")
         self._bank_page_lbl.setStyleSheet("color:#ccc; font-size:11px; font-weight:bold; border:none;")
         _bpn.addWidget(self._bank_page_lbl)
         _pg_next = QPushButton("▶")
@@ -4695,7 +4695,7 @@ class MainWindow(QMainWindow):
         prev.setIconSize(QSize(28, 28))
         prev.setFixedSize(52, 52)
         prev.setStyleSheet(side_style)
-        prev.setToolTip(tr("mw_prev_media"))
+        prev.setToolTip("Média précédent")
         prev.clicked.connect(lambda: self.seq.play_row(self.seq.current_row - 1))
 
         self.play_btn = QToolButton()
@@ -4711,7 +4711,7 @@ class MainWindow(QMainWindow):
         nxt.setIconSize(QSize(28, 28))
         nxt.setFixedSize(52, 52)
         nxt.setStyleSheet(side_style)
-        nxt.setToolTip(tr("mw_next_media"))
+        nxt.setToolTip("Média suivant")
         nxt.clicked.connect(lambda: self.seq.play_row(self.seq.current_row + 1))
 
         btns.addStretch()
@@ -4957,7 +4957,7 @@ class MainWindow(QMainWindow):
                     "border-radius: 4px; font-size: 13px; } "
                     "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
                 )
-                self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
             self._show_error_toast("✖ Impossible d'enregistrer sur un Groupe — Sélectionnez une mémoire")
             return
         target_groups = self._slot_groups(slot)
@@ -5096,14 +5096,14 @@ class MainWindow(QMainWindow):
                 "QPushButton { background: #cc3333; color: white; border: 2px solid #ff6666; "
                 "border-radius: 4px; font-size: 13px; }"
             )
-            self._rec_mem_btn.setToolTip(tr("mw_rec_active"))
+            self._rec_mem_btn.setToolTip("REC actif — cliquez sur un pad mémoire pour enregistrer")
         else:
             self._rec_mem_btn.setStyleSheet(
                 "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #3a3a3a; "
                 "border-radius: 4px; font-size: 13px; } "
                 "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
             )
-            self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
+            self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
         # Mettre à jour les tooltips des pads non-mémoire
         self._update_non_mem_pad_tooltips()
         try:
@@ -5159,7 +5159,7 @@ class MainWindow(QMainWindow):
                     "border-radius: 4px; font-size: 13px; } "
                     "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
                 )
-                self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
             self._log_message(f"Rec MEM {mem_col + 1}.{row + 1} OK", "rec")
             self._blink_memory_pad(mem_col, row)
             return
@@ -6335,7 +6335,7 @@ class MainWindow(QMainWindow):
         lay.addLayout(form)
         btn_row = QHBoxLayout(); btn_row.addStretch()
         cancel = QPushButton("Annuler"); cancel.clicked.connect(dlg.reject)
-        ok = QPushButton(tr("mw_move"))
+        ok = QPushButton("Déplacer")
         ok.setStyleSheet("QPushButton { background:#0077bb; color:#fff; border:none; border-radius:5px; "
                          "padding:5px 14px; font-weight:bold; } QPushButton:hover { background:#0099dd; }")
         ok.clicked.connect(dlg.accept)
@@ -6819,7 +6819,7 @@ class MainWindow(QMainWindow):
                     "border-radius: 4px; font-size: 13px; } "
                     "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
                 )
-                self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
             self._update_non_mem_pad_tooltips()
             return
         self._recall_position_akai(pos_col, row)
@@ -7096,7 +7096,7 @@ class MainWindow(QMainWindow):
                     "border-radius: 4px; font-size: 13px; } "
                     "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
                 )
-                self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
             self._update_non_mem_pad_tooltips()
             self._show_error_toast("✖ Impossible d'enregistrer sur un FX — Pour ajouter un effet, cliquez droit sur le pad")
             return
@@ -7246,7 +7246,7 @@ class MainWindow(QMainWindow):
         trig_outer = QWidget(); trig_outer.setStyleSheet("background: transparent;")
         trig_vlay = QVBoxLayout(trig_outer)
         trig_vlay.setContentsMargins(10, 4, 10, 6); trig_vlay.setSpacing(4)
-        trig_hdr_lbl = QLabel(tr("mw_trigger")); trig_hdr_lbl.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        trig_hdr_lbl = QLabel("  DÉCLENCHEMENT"); trig_hdr_lbl.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
         trig_vlay.addWidget(trig_hdr_lbl)
 
         _TRIG_ON  = ("QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;"
@@ -7264,7 +7264,7 @@ class MainWindow(QMainWindow):
         trig_vlay.addLayout(trig_btns_row)
 
         dur_row = QHBoxLayout(); dur_row.setSpacing(6); dur_row.setContentsMargins(0,2,0,0)
-        dur_lbl = QLabel(tr("mw_duration")); dur_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        dur_lbl = QLabel("Durée :"); dur_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
         dur_spin = QDoubleSpinBox()
         dur_spin.setRange(0.1, 60.0); dur_spin.setSingleStep(0.5)
         dur_spin.setValue(trigger_duration / 1000.0); dur_spin.setSuffix(" s")
@@ -7305,7 +7305,7 @@ class MainWindow(QMainWindow):
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(6, 4, 6, 4)
         search_input = QLineEdit()
-        search_input.setPlaceholderText(tr("mw_search_effect"))
+        search_input.setPlaceholderText("  Rechercher un effet…")
         search_input.setClearButtonEnabled(True)
         search_input.setStyleSheet("""
             QLineEdit {
@@ -8785,7 +8785,7 @@ class MainWindow(QMainWindow):
         if self.go_mode:
             btn.setText("▶")
             btn.setFont(QFont("Segoe UI", 7, QFont.Bold))
-            btn.setToolTip(tr("mw_go_next_mem"))
+            btn.setToolTip("GO — avance à la mémoire suivante")
             btn.setStyleSheet("""
                 QToolButton {
                     background: #006633;
@@ -9238,7 +9238,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 15, 20, 15)
         layout.setSpacing(12)
 
-        title = QLabel(tr("mw_pick_dominant"))
+        title = QLabel("Choisissez la couleur dominante")
         title.setStyleSheet("font-size: 15px; font-weight: bold;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
@@ -12063,7 +12063,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
                                        QLabel, QSpinBox, QPushButton)
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("mw_sync_title"))
+        dlg.setWindowTitle("Synchro lumière / vidéo")
         dlg.setStyleSheet(
             "QDialog { background:#161616; }"
             "QLabel { color:#ddd; font-size:12px; }"
@@ -12088,7 +12088,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(info)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel(tr("mw_light_offset")))
+        row.addWidget(QLabel("Décalage lumière :"))
         spin = QSpinBox()
         spin.setRange(-5000, 20000)
         spin.setSingleStep(100)
@@ -13084,11 +13084,11 @@ class MainWindow(QMainWindow):
 
         # Bouton d'accès aux logs : le client peut récupérer faulthandler.log /
         # console.log pour les joindre à son signalement, sans fouiller les menus.
-        btn_logs = QPushButton(tr("mw_attach_logs"))
+        btn_logs = QPushButton("📁  Joindre les logs")
         btn_logs.setFixedHeight(38)
         fit_button(btn_logs)
         btn_logs.setCursor(Qt.PointingHandCursor)
-        btn_logs.setToolTip(tr("mw_logs_tip"))
+        btn_logs.setToolTip("Ouvre le dossier des logs (à joindre en cas de bug/plantage)")
         btn_logs.setStyleSheet("""
             QPushButton {
                 background: #1a1a1a; color: #888; font-size: 12px;
@@ -13335,7 +13335,7 @@ class MainWindow(QMainWindow):
 
         # Bouton toggle
         if running:
-            btn_tog = QPushButton(tr("mw_disable"))
+            btn_tog = QPushButton("⏹  Désactiver")
             btn_tog.setStyleSheet("QPushButton{background:#2a0a0a;color:#ff5555;"
                                   "font-weight:bold;font-size:13px;"
                                   "border:1px solid #ff555533;border-radius:8px;}"
@@ -15593,7 +15593,7 @@ class MainWindow(QMainWindow):
         btn_desel_multi = QPushButton("✕")
         btn_desel_multi.setFixedSize(26, 26)
         btn_desel_multi.setVisible(False)
-        btn_desel_multi.setToolTip(tr("mw_deselect_all"))
+        btn_desel_multi.setToolTip("Désélectionner tout")
         btn_desel_multi.setStyleSheet(
             "QPushButton { background:#1a1a1a; color:#666; border:1px solid #333;"
             " border-radius:5px; font-size:12px; font-weight:bold; }"
@@ -15614,7 +15614,7 @@ class MainWindow(QMainWindow):
         no_sel_w.setStyleSheet("background:#0f0f0f;")
         nsl = QVBoxLayout(no_sel_w)
         nsl.setAlignment(Qt.AlignCenter)
-        lbl_nosel = QLabel(tr("mw_pick_fixture"))
+        lbl_nosel = QLabel("← Sélectionnez une fixture\npour la modifier")
         lbl_nosel.setAlignment(Qt.AlignCenter)
         lbl_nosel.setStyleSheet("color:#1e1e1e; font-size:16px;")
         nsl.addWidget(lbl_nosel)
@@ -15638,7 +15638,7 @@ class MainWindow(QMainWindow):
         dth.addStretch()
         btn_det_locate = QPushButton("🎯  Localiser")
         btn_det_locate.setFixedHeight(30)
-        btn_det_locate.setToolTip(tr("mw_select_in_plan"))
+        btn_det_locate.setToolTip("Sélectionner cette fixture dans le Plan de feu")
         btn_det_locate.setStyleSheet(
             "QPushButton { background:#0a1020; color:#4488cc; border:1px solid #1a3050;"
             " border-radius:6px; padding:4px 14px; font-size:11px; }"
@@ -15648,7 +15648,7 @@ class MainWindow(QMainWindow):
 
         btn_det_replace = QPushButton("🔄  Remplacer")
         btn_det_replace.setFixedHeight(30)
-        btn_det_replace.setToolTip(tr("mw_replace_fixture"))
+        btn_det_replace.setToolTip("Remplacer par une autre fixture de la bibliothèque")
         btn_det_replace.setStyleSheet(
             "QPushButton { background:#0a1a10; color:#44bb77; border:1px solid #1a3a20;"
             " border-radius:6px; padding:4px 14px; font-size:11px; }"
@@ -15728,7 +15728,7 @@ class MainWindow(QMainWindow):
 
         fv.addWidget(_sec("Identité"))
         det_name_e = QLineEdit()
-        det_name_e.setPlaceholderText(tr("mw_fixture_name"))
+        det_name_e.setPlaceholderText("Nom de la fixture")
         det_name_e.setFixedHeight(44)
         det_name_e.setFont(QFont("Segoe UI", 14, QFont.Bold))
         det_name_e.setStyleSheet(
@@ -15924,8 +15924,8 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
         )
         btn_pt_reset       = QPushButton("↺  Reset")
-        btn_pt_apply_model = QPushButton(tr("mw_apply_model"))
-        btn_pt_apply_all   = QPushButton(tr("mw_apply_all_mh"))
+        btn_pt_apply_model = QPushButton("Appliquer à toutes\nles lyres du modèle")
+        btn_pt_apply_all   = QPushButton("Appliquer à toutes\nles lyres")
         btn_pt_reset.setStyleSheet(_PT_RST_SS)
         btn_pt_apply_model.setStyleSheet(_PT_APL_SS)
         btn_pt_apply_all.setStyleSheet(_PT_APL_SS)
@@ -15947,7 +15947,7 @@ class MainWindow(QMainWindow):
         pt_main_row.addStretch()
         pt_vl.addLayout(pt_main_row)
 
-        pt_hint = QLabel(tr("mw_drag_yellow"))
+        pt_hint = QLabel("Glissez le point jaune pour tester le mouvement en temps réel.")
         pt_hint.setStyleSheet(
             "color:#333; font-size:10px; border:none; background:transparent;"
         )
@@ -15982,7 +15982,7 @@ class MainWindow(QMainWindow):
             "partent alors du bon bord sans avoir à repatcher.")
         px_row1.addWidget(btn_px_rev)
 
-        btn_px_grid = QPushButton(tr("mw_spread_even"))
+        btn_px_grid = QPushButton("⊞  Répartir régulièrement")
         btn_px_grid.setStyleSheet(_PX_BTN)
         btn_px_grid.setToolTip(
             "Reconstruit la grille à intervalles égaux.\n"
@@ -15993,7 +15993,7 @@ class MainWindow(QMainWindow):
 
         px_row2 = QHBoxLayout()
         px_row2.setSpacing(6)
-        lbl_wiring = QLabel(tr("mw_wiring"))
+        lbl_wiring = QLabel("Câblage :")
         lbl_wiring.setStyleSheet("color:#777;font-size:11px;border:none;background:transparent;")
         px_row2.addWidget(lbl_wiring)
         cb_wiring = ComboSansMolette()
@@ -16021,7 +16021,7 @@ class MainWindow(QMainWindow):
         # dimension, donc c'est ici que l'utilisateur la donne — une fois.
         px_row3 = QHBoxLayout()
         px_row3.setSpacing(6)
-        lbl_size = QLabel(tr("mw_real_size"))
+        lbl_size = QLabel("Taille réelle :")
         lbl_size.setStyleSheet("color:#777;font-size:11px;border:none;background:transparent;")
         px_row3.addWidget(lbl_size)
 
@@ -16047,7 +16047,7 @@ class MainWindow(QMainWindow):
         spin_ph.setSuffix(" cm")
         spin_ph.setFixedHeight(26)
         spin_ph.setStyleSheet(_PX_SPIN)
-        spin_ph.setToolTip(tr("mw_real_height"))
+        spin_ph.setToolTip("Hauteur réelle — utile seulement sur une matrice.")
         px_row3.addWidget(spin_ph)
         px_row3.addStretch()
         px_vl.addLayout(px_row3)
@@ -16138,7 +16138,7 @@ class MainWindow(QMainWindow):
             if idx is None:
                 return
             _px_reassign(idx, order)
-            px_hint.setText(tr("mw_pixels_swapped"))
+            px_hint.setText("Pixels échangés.")
 
         px_strip.order_changed.connect(_on_px_strip_reorder)
 
@@ -16152,7 +16152,7 @@ class MainWindow(QMainWindow):
             # et un second clic ne ramènerait pas la barre à son état d'origine.
             cur = sorted(px, key=lambda i: fixture_data[i]["start_address"])
             _px_reassign(idx, list(reversed(cur)))
-            px_hint.setText(tr("mw_order_reversed"))
+            px_hint.setText("Ordre inversé — le pixel 1 est passé de l'autre côté.")
 
         def _on_px_wiring(_i=0):
             idx = _sel[0]
@@ -16175,7 +16175,7 @@ class MainWindow(QMainWindow):
             if len(order) == len(px):
                 _px_reassign(idx, order)
                 px_hint.setText(
-                    tr("mw_snake_applied") if mode == "serpentine"
+                    "Câblage serpentin appliqué." if mode == "serpentine"
                     else "Câblage par lignes appliqué.")
 
         def _on_px_regrid():
@@ -16196,7 +16196,7 @@ class MainWindow(QMainWindow):
                           int(getattr(projs[0], 'matrix_rot', 0) or 0))
             canvas.update()
             _mark_dirty()
-            px_hint.setText(tr("mw_pixels_spread"))
+            px_hint.setText("Pixels répartis régulièrement.")
 
         def _on_px_size(_v=None):
             """Applique la taille réelle saisie, puis reconstruit la grille."""
@@ -16340,13 +16340,13 @@ class MainWindow(QMainWindow):
 
         # ── Alignement ────────────────────────────────────────────────
         btn_align_row  = QPushButton("⟶  Aligner H")
-        btn_align_row.setToolTip(tr("mw_align_h"))
+        btn_align_row.setToolTip("Aligner les fixtures sélectionnées sur la même ligne horizontale (Ctrl+Z pour annuler)")
         btn_align_col  = QPushButton("↕  Aligner V")
-        btn_align_col.setToolTip(tr("mw_align_v"))
-        btn_distribute = QPushButton(tr("mw_spread_h"))
-        btn_distribute.setToolTip(tr("mw_spread_h_tip"))
-        btn_distribute_v = QPushButton(tr("mw_spread_v"))
-        btn_distribute_v.setToolTip(tr("mw_spread_v_tip"))
+        btn_align_col.setToolTip("Aligner les fixtures sélectionnées sur la même colonne verticale (Ctrl+Z pour annuler)")
+        btn_distribute = QPushButton("⟺  Répartir H")
+        btn_distribute.setToolTip("Répartir à espacement horizontal égal les fixtures sélectionnées")
+        btn_distribute_v = QPushButton("⇳  Répartir V")
+        btn_distribute_v.setToolTip("Répartir à espacement vertical égal les fixtures sélectionnées")
         for b in [btn_align_row, btn_align_col, btn_distribute, btn_distribute_v]:
             b.setStyleSheet(_EA)
             b.setFixedHeight(28)
@@ -16355,8 +16355,8 @@ class MainWindow(QMainWindow):
         es.addWidget(_vsep())
 
         # ── Sélection ─────────────────────────────────────────────────
-        btn_sel_all_c = QPushButton(tr("mw_select_all_short"))
-        btn_desel_c   = QPushButton(tr("mw_deselect_short"))
+        btn_sel_all_c = QPushButton("Tout sél.")
+        btn_desel_c   = QPushButton("Désél.")
         btn_groups_c  = QPushButton("Groupes  ▾")
         for b in [btn_sel_all_c, btn_desel_c, btn_groups_c]:
             b.setStyleSheet(_ES)
@@ -16778,7 +16778,7 @@ class MainWindow(QMainWindow):
                     tog_row.setSpacing(6)
 
                     if ch_type == "Pan":
-                        btn_inv_pan = QPushButton(tr("mw_pan_inverted"))
+                        btn_inv_pan = QPushButton("↔  Pan inversé")
                         btn_inv_pan.setCheckable(True)
                         btn_inv_pan.setChecked(getattr(proj_pt, 'pan_invert', False))
                         btn_inv_pan.setStyleSheet(_TOG_SS)
@@ -16788,7 +16788,7 @@ class MainWindow(QMainWindow):
                         tog_row.addWidget(btn_inv_pan)
 
                     if ch_type == "Tilt":
-                        btn_inv_tilt = QPushButton(tr("mw_tilt_inverted"))
+                        btn_inv_tilt = QPushButton("↕  Tilt inversé")
                         btn_inv_tilt.setCheckable(True)
                         btn_inv_tilt.setChecked(getattr(proj_pt, 'tilt_invert', False))
                         btn_inv_tilt.setStyleSheet(_TOG_SS)
@@ -16859,8 +16859,8 @@ class MainWindow(QMainWindow):
                         _BTN_TYPE  = f"Toutes les lyres « {src_type} »" if same_type else None
                         _BTN_ALL   = f"Toutes les lyres ({len(other_all) + 1})"
                         msg = QMessageBox(self)
-                        msg.setWindowTitle(tr("mw_apply_calib"))
-                        msg.setText(tr("mw_calib_others"))
+                        msg.setWindowTitle("Appliquer la calibration")
+                        msg.setText("Appliquer cette calibration à d'autres lyres ?")
                         msg.addButton(_BTN_THIS, QMessageBox.AcceptRole)
                         if _BTN_TYPE:
                             msg.addButton(_BTN_TYPE, QMessageBox.ActionRole)
@@ -17177,9 +17177,9 @@ class MainWindow(QMainWindow):
                         "QMenu::separator{height:1px;background:#2a2a2a;margin:4px 8px;}"
                     )
                     act_locate  = m.addAction("🎯  Localiser")
-                    act_locate.setToolTip(tr("mw_select_in_plan"))
+                    act_locate.setToolTip("Sélectionner cette fixture dans le Plan de feu")
                     act_replace = m.addAction("🔄  Remplacer")
-                    act_replace.setToolTip(tr("mw_replace_fixture"))
+                    act_replace.setToolTip("Remplacer par une autre fixture de la bibliothèque")
                     m.addSeparator()
                     act_del = m.addAction("🗑  Supprimer")
                     _chosen = m.exec(e.globalPos())
@@ -18027,7 +18027,7 @@ class MainWindow(QMainWindow):
             cl = QVBoxLayout(choice_dlg)
             cl.setContentsMargins(24, 20, 24, 20)
             cl.setSpacing(12)
-            lbl = QLabel(tr("mw_how_create_patch"))
+            lbl = QLabel("Comment voulez-vous créer votre patch ?")
             lbl.setStyleSheet("font-size:13px; color:#eee;")
             lbl.setWordWrap(True)
             cl.addWidget(lbl)
@@ -18527,8 +18527,8 @@ class MainWindow(QMainWindow):
         def _on_close_event(event):
             if _dirty[0]:
                 mb = QMessageBox(dialog)
-                mb.setWindowTitle(tr("mw_unsaved_title"))
-                mb.setText(tr("mw_unsaved_msg"))
+                mb.setWindowTitle("Modifications non sauvegardées")
+                mb.setText("Vous avez des modifications non sauvegardées.\nVoulez-vous les sauvegarder avant de quitter ?")
                 mb.setIcon(QMessageBox.Warning)
                 btn_sauv    = mb.addButton("Sauvegarder",  QMessageBox.AcceptRole)
                 btn_ignorer = mb.addButton("Ignorer",       QMessageBox.DestructiveRole)
@@ -18680,7 +18680,7 @@ class MainWindow(QMainWindow):
         ]
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("mw_add_matrix"))
+        dlg.setWindowTitle("Ajouter une matrice / barre à pixels")
         dlg.setMinimumWidth(440)
         dlg.setStyleSheet(
             "QDialog { background:#141018; }"
@@ -18970,7 +18970,7 @@ class MainWindow(QMainWindow):
         """
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(tr("mw_fixture_library"))
+        dialog.setWindowTitle("Bibliothèque de fixtures")
         dialog.resize(780, 540)
         dialog.setMinimumSize(600, 420)
         dialog.setStyleSheet(_SS)
@@ -18999,10 +18999,10 @@ class MainWindow(QMainWindow):
         search_row.setSpacing(8)
         search_edit = QLineEdit()
         search_edit.setFixedHeight(36)
-        search_edit.setPlaceholderText(tr("mw_search_fixture"))
+        search_edit.setPlaceholderText("🔍  Rechercher une fixture ou un fabricant...")
         btn_import = QPushButton("📥  Importer")
         btn_import.setFixedHeight(36)
-        btn_import.setToolTip(tr("mw_import_fixtures"))
+        btn_import.setToolTip("Importer des fixtures depuis un fichier (.mft, .json, .xml)")
         btn_import.setStyleSheet(
             "QPushButton { background:#1a3a2a; color:#44cc88; border:1px solid #44cc8844;"
             " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
@@ -19429,7 +19429,7 @@ class MainWindow(QMainWindow):
             btn_refresh.setEnabled(False)
             btn_refresh.setText("⏳  Chargement...")
             if not silent:
-                count_lbl.setText(tr("mw_firestore_conn"))
+                count_lbl.setText("Connexion à Firestore...")
 
             class _FetchWorker(_QObject):
                 done  = _Signal(list)
@@ -19798,9 +19798,9 @@ class MainWindow(QMainWindow):
         lbl_name = QLabel("Nom :")
         name_edit = QLineEdit()
         name_edit.setFixedHeight(32)
-        name_edit.setPlaceholderText(tr("mw_custom_name"))
+        name_edit.setPlaceholderText("Nom personnalisé (optionnel)")
 
-        lbl_qty = QLabel(tr("mw_quantity"))
+        lbl_qty = QLabel("Quantité :")
         qty_spin = ComboSansMolette()
         for _q in range(1, 21):
             qty_spin.addItem(str(_q))
@@ -19898,7 +19898,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        title = QLabel(tr("mw_compose_profile"))
+        title = QLabel("Composer le profil")
         title.setFont(QFont("Segoe UI", 12, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
@@ -20233,7 +20233,7 @@ class MainWindow(QMainWindow):
     def show_ia_lumiere_config(self):
         """Configuration avancée IA Lumiere : niveaux, nervosité, effet drop"""
         dialog = QDialog(self)
-        dialog.setWindowTitle(tr("mw_ia_settings"))
+        dialog.setWindowTitle("Paramètres IA Lumière")
         dialog.setFixedSize(560, 760)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
@@ -20287,7 +20287,7 @@ class MainWindow(QMainWindow):
             return row, sl
 
         # ── Titre ────────────────────────────────────────────────────────────
-        title = QLabel(tr("mw_ia_advanced"))
+        title = QLabel("IA Lumière — Paramètres avancés")
         title.setStyleSheet("font-size:15px; font-weight:bold; padding-bottom:8px;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
@@ -20298,7 +20298,7 @@ class MainWindow(QMainWindow):
         nerv_row, nerv_sl = _slider_row(
             "Nervosité générale", 'nervosity', self.ia_params, 0, 100, "%"
         )
-        nerv_info = QLabel(tr("mw_ia_nerv_tip"))
+        nerv_info = QLabel("Contrôle la réactivité : vitesse des strobes, lyres, fréquence des effets.")
         nerv_info.setStyleSheet("color:#666; font-size:11px; padding-left:4px;")
         nerv_info.setWordWrap(True)
         layout.addLayout(nerv_row)
@@ -20332,7 +20332,7 @@ class MainWindow(QMainWindow):
 
         # ── Niveaux max par groupe ────────────────────────────────────────────
         layout.addWidget(_section_title("🎚  Niveaux maximum par groupe"))
-        dim_info = QLabel(tr("mw_ia_dim_tip"))
+        dim_info = QLabel("Plafonnent le dimmer de chaque groupe en mode IA Lumière.")
         dim_info.setStyleSheet("color:#666; font-size:11px; padding-left:4px;")
         layout.addWidget(dim_info)
         layout.addSpacing(4)
@@ -20545,7 +20545,7 @@ class MainWindow(QMainWindow):
             _ico.setAlignment(Qt.AlignCenter)
             _ico.setStyleSheet("font-size:32px;")
             _lay.addWidget(_ico)
-            _msg = QLabel(tr("mw_akai_ok"))
+            _msg = QLabel("AKAI APC mini connecté et opérationnel")
             _msg.setAlignment(Qt.AlignCenter)
             _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#4CAF50;")
             _lay.addWidget(_msg)
@@ -20594,7 +20594,7 @@ class MainWindow(QMainWindow):
             _ico.setAlignment(Qt.AlignCenter)
             _ico.setStyleSheet("font-size:32px;")
             _lay.addWidget(_ico)
-            _msg = QLabel(tr("mw_akai_reconnected"))
+            _msg = QLabel("AKAI APC mini reconnecté avec succès !")
             _msg.setAlignment(Qt.AlignCenter)
             _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#4CAF50;")
             _lay.addWidget(_msg)
@@ -20622,7 +20622,7 @@ class MainWindow(QMainWindow):
             _ico.setAlignment(Qt.AlignCenter)
             _ico.setStyleSheet("font-size:28px;")
             _lay.addWidget(_ico)
-            _msg = QLabel(tr("mw_akai_failed"))
+            _msg = QLabel("Connexion échouée — AKAI non détecté")
             _msg.setAlignment(Qt.AlignCenter)
             _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#f44336;")
             _lay.addWidget(_msg)
@@ -20633,7 +20633,7 @@ class MainWindow(QMainWindow):
                 _btn_midi_setup.setStyleSheet(
                     "QPushButton{background:#3a2a5a;color:white;border:none;border-radius:5px;font-size:12px;font-weight:bold;}"
                     "QPushButton:hover{background:#4a3a7a;}")
-                _btn_midi_setup.setToolTip(tr("mw_akai_check_mac"))
+                _btn_midi_setup.setToolTip("Vérifier que l'APC mini est bien visible dans Audio MIDI Setup")
                 _btn_midi_setup.clicked.connect(lambda: _sub.Popen(["open", "-a", "Audio MIDI Setup"]))
                 _lay.addWidget(_btn_midi_setup)
             _btn_row = QHBoxLayout()
@@ -20812,7 +20812,7 @@ class MainWindow(QMainWindow):
 
         btn_row = QHBoxLayout()
 
-        btn_copy = QPushButton(tr("mw_copy_report"))
+        btn_copy = QPushButton("Copier le rapport")
         btn_copy.setFixedHeight(34)
         btn_copy.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
                                "QPushButton:hover{background:#1e4a7a;}")
@@ -20828,7 +20828,7 @@ class MainWindow(QMainWindow):
             btn_sys.clicked.connect(lambda: subprocess.Popen(["open", "-a", "Audio MIDI Setup"]))
             btn_row.addWidget(btn_sys)
         elif is_win:
-            btn_sys = QPushButton(tr("mw_device_manager"))
+            btn_sys = QPushButton("⚙️ Gestionnaire périphériques")
             btn_sys.setFixedHeight(34)
             btn_sys.setStyleSheet("QPushButton{background:#3a2a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
                                   "QPushButton:hover{background:#4a3a7a;}")
@@ -20858,13 +20858,13 @@ class MainWindow(QMainWindow):
             _sp.Popen([sys.executable] + sys.argv)
             QApplication.quit()
 
-        restart_hint = QLabel(tr("mw_restart_helps"))
+        restart_hint = QLabel("Si l'AKAI n'est toujours pas détecté, un redémarrage résout souvent le problème.")
         restart_hint.setWordWrap(True)
         restart_hint.setAlignment(Qt.AlignCenter)
         restart_hint.setStyleSheet("color: #888; font-size: 10px; background: transparent;")
         layout.addWidget(restart_hint)
 
-        btn_restart = QPushButton(tr("mw_restart_mystrow"))
+        btn_restart = QPushButton("⟳  Redémarrer MyStrow")
         btn_restart.setFixedHeight(38)
         btn_restart.setCursor(Qt.PointingHandCursor)
         btn_restart.setStyleSheet(
@@ -20972,9 +20972,9 @@ class MainWindow(QMainWindow):
         lay.addWidget(view)
 
         row = QHBoxLayout()
-        btn_copy = QPushButton(tr("mw_copy_report_btn"))
+        btn_copy = QPushButton("📋  Copier le rapport")
         btn_copy.clicked.connect(lambda: (copy_report(view.toPlainText()),
-                                          btn_copy.setText(tr("mw_copied"))))
+                                          btn_copy.setText("✓  Copié !")))
         row.addWidget(btn_copy)
 
         btn_send = QPushButton("✉️  Envoyer au support")
@@ -21372,7 +21372,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(28, 22, 28, 18)
         root.setSpacing(16)
 
-        title = QLabel(tr("mw_node_diag_title"))
+        title = QLabel("Diagnostic de la sortie Node DMX")
         title.setFont(QFont("Segoe UI", 12, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
         root.addWidget(title)
@@ -21391,7 +21391,7 @@ class MainWindow(QMainWindow):
             lbl = QLabel(label_text)
             lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
             col.addWidget(lbl)
-            detail = QLabel(tr("mw_checking"))
+            detail = QLabel("Vérification en cours...")
             detail.setFont(QFont("Segoe UI", 9))
             detail.setStyleSheet("color: #555555;")
             detail.setWordWrap(True)
@@ -21422,7 +21422,7 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(btn_config)
         # Bouton connexions réseau selon la plateforme
         if _sys.platform == "darwin":
-            btn_net = QPushButton(tr("mw_net_prefs_mac"))
+            btn_net = QPushButton("🌐  Préférences Réseau")
             btn_net.setFixedHeight(30)
             fit_button(btn_net)
             btn_net.setStyleSheet(
@@ -21430,11 +21430,11 @@ class MainWindow(QMainWindow):
                 " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
                 "QPushButton:hover { background: #333355; color: #ccccee; }"
             )
-            btn_net.setToolTip(tr("mw_net_prefs_mac_t"))
+            btn_net.setToolTip("Ouvrir les Préférences Réseau macOS pour configurer l'IP")
             btn_net.clicked.connect(lambda: _sub.Popen(
                 ["open", "x-apple.systempreferences:com.apple.preference.network"]))
         else:
-            btn_net = QPushButton(tr("mw_net_conn_win"))
+            btn_net = QPushButton("🌐  Connexions réseau")
             btn_net.setFixedHeight(30)
             fit_button(btn_net)
             btn_net.setStyleSheet(
@@ -21442,7 +21442,7 @@ class MainWindow(QMainWindow):
                 " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
                 "QPushButton:hover { background: #333355; color: #ccccee; }"
             )
-            btn_net.setToolTip(tr("mw_net_conn_win_t"))
+            btn_net.setToolTip("Ouvrir les connexions réseau Windows")
             from node_connection import _open_network_connections
             btn_net.clicked.connect(_open_network_connections)
         btn_row.addWidget(btn_net)
@@ -21462,9 +21462,9 @@ class MainWindow(QMainWindow):
         def _run_checks():
             # Réinitialiser l'affichage
             icon_net.setText("…");  icon_net.setStyleSheet("color: #555555;")
-            detail_net.setText(tr("mw_checking_ell")); detail_net.setStyleSheet("color: #555555;")
+            detail_net.setText("Vérification en cours…"); detail_net.setStyleSheet("color: #555555;")
             icon_node.setText("…"); icon_node.setStyleSheet("color: #555555;")
-            detail_node.setText(tr("mw_checking_ell")); detail_node.setStyleSheet("color: #555555;")
+            detail_node.setText("Vérification en cours…"); detail_node.setStyleSheet("color: #555555;")
             btn_config.hide()
             btn_refresh.setEnabled(False)
             btn_refresh.setText("…")
@@ -21492,7 +21492,7 @@ class MainWindow(QMainWindow):
             else:
                 icon_net.setText("✗")
                 icon_net.setStyleSheet("color: #f44336;")
-                detail_net.setText(tr("mw_no_ethernet"))
+                detail_net.setText("Aucune carte Ethernet détectée — vérifiez le câble RJ45")
                 detail_net.setStyleSheet("color: #f44336;")
                 net_ok = False
 
@@ -21577,7 +21577,7 @@ class MainWindow(QMainWindow):
                         f"Vérifiez que le boîtier est allumé et le câble RJ45 branché"
                     )
                 else:
-                    detail_node.setText(tr("mw_config_card_first"))
+                    detail_node.setText("Configurez d'abord la carte réseau (2.0.0.1 / 255.0.0.0)")
                 detail_node.setStyleSheet("color: #f44336;")
 
             if not net_ok or not node_ok:
@@ -21596,7 +21596,7 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background: #223322; color: #88ee88; }"
             "QPushButton:disabled { color: #444; border-color: #333; }"
         )
-        btn_refresh.setToolTip(tr("mw_rescan_net"))
+        btn_refresh.setToolTip("Relancer la détection réseau et du boîtier Art-Net")
         btn_refresh.clicked.connect(_run_checks)
         btn_row.insertWidget(btn_row.count() - 1, btn_refresh)   # juste avant Fermer
 
@@ -21626,7 +21626,7 @@ class MainWindow(QMainWindow):
         # Analyse approfondie : les deux voyants disent SI ça marche, pas
         # POURQUOI ça ne marche pas. Ce bouton ouvre le détail — cartes, route,
         # conflit de port, réponse ArtPoll nominative — avec copie et envoi.
-        btn_deep = QPushButton(tr("mw_detailed_scan"))
+        btn_deep = QPushButton("🔎  Analyse détaillée")
         btn_deep.setFixedHeight(30)
         btn_deep.setStyleSheet(
             "QPushButton { background: #1a2a3a; color: #66aadd; border: 1px solid #2a4a6a;"
@@ -21666,7 +21666,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 15, 20, 15)
         layout.setSpacing(10)
 
-        title = QLabel(tr("mw_node_config"))
+        title = QLabel("Configuration du Node DMX")
         title.setStyleSheet("font-size: 14px; font-weight: bold;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
@@ -21694,7 +21694,7 @@ class MainWindow(QMainWindow):
 
         # Miroir sortie 2
         from PySide6.QtWidgets import QCheckBox
-        mirror_chk = QCheckBox(tr("mw_mirror_out2"))
+        mirror_chk = QCheckBox("Miroir sur sortie 2  (univers suivant)")
         mirror_chk.setChecked(self.dmx.mirror_output)
         mirror_chk.setStyleSheet("color: white;")
         layout.addWidget(mirror_chk)

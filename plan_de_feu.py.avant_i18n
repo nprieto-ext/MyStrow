@@ -201,7 +201,7 @@ class PresetBar(QWidget):
 
         rst_btn = QPushButton("↺")
         rst_btn.setFixedSize(20, 20)
-        rst_btn.setToolTip(tr("pdf2_reset_presets"))
+        rst_btn.setToolTip("Réinitialiser aux presets par défaut (Centre, Face, Sol…)")
         rst_btn.setStyleSheet(
             "QPushButton{background:#1a1a2a;color:#555;border:1px solid #2a2a3a;"
             "border-radius:4px;font-size:11px;}"
@@ -3155,7 +3155,7 @@ class PlanDeFeu(QFrame):
             if main_window is not None and hasattr(main_window, 'show_dmx_patch_config'):
                 patch_btn = QPushButton("⚙")
                 patch_btn.setFixedSize(26, 26)
-                patch_btn.setToolTip(tr("pdf2_patch_title"))
+                patch_btn.setToolTip("Patch DMX — configuration des adresses de canaux")
                 patch_btn.setStyleSheet(_PARAM_SS)
                 patch_btn.clicked.connect(main_window.show_dmx_patch_config)
                 toolbar.addWidget(patch_btn)
@@ -3237,7 +3237,7 @@ class PlanDeFeu(QFrame):
             self.btn_3d = QPushButton("3D")
             self.btn_3d.setCheckable(True)
             self.btn_3d.setFixedSize(30, 26)
-            self.btn_3d.setToolTip(tr("pdf2_show_3d"))
+            self.btn_3d.setToolTip("Afficher le plan de feu en 3D")
             self.btn_3d.setStyleSheet(
                 _BTN_SS.format(fg="#aaa", bd="#3a3a3a", fgh="#fff", bdh="#0077bb")
             )
@@ -3363,7 +3363,7 @@ class PlanDeFeu(QFrame):
         vl.setContentsMargins(10, 8, 10, 8)
         vl.setSpacing(6)
 
-        lbl = QLabel(tr("pdf2_target_groups"))
+        lbl = QLabel("GROUPES À CIBLER")
         lbl.setStyleSheet(
             "color:#555; font-size:9px; font-weight:bold; letter-spacing:2px; background:transparent;"
         )
@@ -4700,7 +4700,7 @@ class PlanDeFeu(QFrame):
                 continue
             if not _extra_shown:
                 menu.addSeparator()
-                _sec_lbl = QLabel(tr("pdf2_special_ch"))
+                _sec_lbl = QLabel("CANAUX SPÉCIAUX")
                 _sec_lbl.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
                                        "padding:2px 10px;border:none;background:transparent;")
                 _wa(_sec_lbl)
@@ -5004,9 +5004,9 @@ class PlanDeFeu(QFrame):
                 cw_tr.addWidget(cw_btns_row, 1)
 
                 # Bouton éditeur de roue
-                _edit_cw_btn = QPushButton(tr("pdf2_edit"))
+                _edit_cw_btn = QPushButton("✏  Éditer")
                 _edit_cw_btn.setFixedHeight(22)
-                _edit_cw_btn.setToolTip(tr("pdf2_edit_cw"))
+                _edit_cw_btn.setToolTip("Éditer la roue de couleur de cette fixture")
                 _edit_cw_btn.setStyleSheet(
                     "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
                     "border-radius:4px;font-size:11px;padding:0 6px;}"
@@ -5033,7 +5033,7 @@ class PlanDeFeu(QFrame):
 
                 _calib_cw_btn = QPushButton("⚡  Calibrer")
                 _calib_cw_btn.setFixedHeight(22)
-                _calib_cw_btn.setToolTip(tr("pdf2_calib_cw"))
+                _calib_cw_btn.setToolTip("Calibrer la roue de couleur pas-à-pas")
                 _calib_cw_btn.setStyleSheet(
                     "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
                     "border-radius:4px;font-size:11px;padding:0 6px;}"
@@ -5093,9 +5093,9 @@ class PlanDeFeu(QFrame):
                 gobo_h.addStretch()
 
                 # Bouton éditeur de gobo
-                _edit_gobo_btn = QPushButton(tr("pdf2_edit"))
+                _edit_gobo_btn = QPushButton("✏  Éditer")
                 _edit_gobo_btn.setFixedHeight(22)
-                _edit_gobo_btn.setToolTip(tr("pdf2_edit_gobo"))
+                _edit_gobo_btn.setToolTip("Éditer la roue de gobos de cette fixture")
                 _edit_gobo_btn.setStyleSheet(
                     "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
                     "border-radius:4px;font-size:11px;padding:0 6px;}"
@@ -5234,7 +5234,7 @@ class PlanDeFeu(QFrame):
         ]
         if _adv_channels:
             menu.addSeparator()
-            _adv_sec = QLabel(tr("pdf2_advanced_ch"))
+            _adv_sec = QLabel("CANAUX AVANCÉS")
             _adv_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
                                    "padding:2px 10px;border:none;background:transparent;")
             _wa(_adv_sec)
@@ -5500,7 +5500,7 @@ class PlanDeFeu(QFrame):
                     _px_h.addWidget(_b)
 
                 _px_stop_btn = QPushButton("■")
-                _px_stop_btn.setToolTip(tr("pdf2_stop_pixel_fx"))
+                _px_stop_btn.setToolTip("Arrêter l'effet pixel")
                 _px_stop_btn.setStyleSheet(_QE_STP)
                 _px_stop_btn.clicked.connect(_px_stop)
                 _px_h.addWidget(_px_stop_btn)
@@ -5971,7 +5971,7 @@ class AddFixtureDialog(QDialog):
 
     def __init__(self, projectors, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr("pdf2_add_fixture"))
+        self.setWindowTitle("Ajouter une fixture")
         self.setMinimumSize(500, 380)
         self._projectors = projectors
         self._result_data = None
@@ -6073,7 +6073,7 @@ class EditFixtureDialog(QDialog):
 
     def __init__(self, proj, projectors, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr("pdf2_edit_fixture"))
+        self.setWindowTitle("Modifier la fixture")
         self.setMinimumSize(420, 300)
         self._result_data = None
 
@@ -6477,7 +6477,7 @@ class NewPlanWizard(QDialog):
         vl.setContentsMargins(50, 28, 50, 24)
         vl.setSpacing(0)
 
-        sub = QLabel(tr("pdf2_plan_ready"))
+        sub = QLabel("Voici votre plan de feu. Cliquez sur Configurer pour l'appliquer.")
         sub.setStyleSheet("color: #888; font-size: 12px;")
         sub.setAlignment(Qt.AlignCenter)
         vl.addWidget(sub)
@@ -6570,7 +6570,7 @@ class NewPlanWizard(QDialog):
         row += 1
 
         if total_fx == 0:
-            warn = QLabel(tr("pdf2_no_fixture"))
+            warn = QLabel("⚠  Aucune fixture configurée. Ajoutez au moins un projecteur.")
             warn.setStyleSheet("color: #ff8800; font-size: 12px;")
             warn.setAlignment(Qt.AlignCenter)
             grid.addWidget(warn, row, 0, 1, 4)
@@ -6613,7 +6613,7 @@ class NewPlanWizard(QDialog):
 
         if is_summary:
             self._stack.setCurrentWidget(self._summary_page)
-            self._title_lbl.setText(tr("pdf2_summary"))
+            self._title_lbl.setText("Résumé")
             self._next_btn.setText("✓  Configurer")
             self._next_btn.setStyleSheet(
                 "background:#22cc55; color:white; font-weight:bold;"

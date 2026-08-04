@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QRect, QPoint, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QLinearGradient
-from i18n import tr
 
 
 # ── Dimensions des faders ─────────────────────────────────────────────────────
@@ -265,7 +264,7 @@ class DmxTesterDialog(QDialog):
         t.setStyleSheet("color:#00d4ff;")
         hl.addWidget(t)
         hl.addStretch()
-        self.lbl_status = QLabel(tr("dt2_drag_hint"))
+        self.lbl_status = QLabel("Clic + glisser pour régler  ·  Ctrl = multi-sélection  ·  Shift = plage")
         self.lbl_status.setFont(QFont("Segoe UI", 9))
         self.lbl_status.setStyleSheet("color:#333;")
         hl.addWidget(self.lbl_status)
@@ -303,7 +302,7 @@ class DmxTesterDialog(QDialog):
         cl.setContentsMargins(20, 10, 20, 10)
         cl.setSpacing(12)
 
-        self.lbl_sel_info = QLabel(tr("dt2_no_channel"))
+        self.lbl_sel_info = QLabel("Aucun canal sélectionné")
         self.lbl_sel_info.setFont(QFont("Segoe UI", 10, QFont.Bold))
         self.lbl_sel_info.setStyleSheet("color:#555; min-width:220px;")
         cl.addWidget(self.lbl_sel_info)
@@ -346,8 +345,8 @@ class DmxTesterDialog(QDialog):
 
         self.btn_on  = self._btn("●  Full ON",  "#1a2a1a", "#4CAF50")
         self.btn_off = self._btn("○  Full OFF", "#2a1a1a", "#f44336")
-        self.btn_on.setToolTip(tr("dt2_all_up"))
-        self.btn_off.setToolTip(tr("dt2_all_down"))
+        self.btn_on.setToolTip("Monte les 512 canaux de l'univers à 255.")
+        self.btn_off.setToolTip("Descend les 512 canaux de l'univers à 0.")
         self.btn_on.clicked.connect(lambda: self._send_val(255))
         self.btn_off.clicked.connect(lambda: self._send_val(0))
         fl.addWidget(self.btn_on)
@@ -420,7 +419,7 @@ class DmxTesterDialog(QDialog):
         nav.addWidget(self.btn_next_grp)
         lay.addLayout(nav)
 
-        self.btn_send_grp = QPushButton(tr("dt2_send_100"))
+        self.btn_send_grp = QPushButton("● Envoyer à 100%")
         self.btn_send_grp.setFixedHeight(30)
         self.btn_send_grp.setStyleSheet(
             "QPushButton{background:#1a2a1a;color:#4CAF50;border:1px solid #4CAF5044;"
@@ -430,7 +429,7 @@ class DmxTesterDialog(QDialog):
         self.btn_send_grp.clicked.connect(self._send_group)
         lay.addWidget(self.btn_send_grp)
 
-        btn_send_next = QPushButton(tr("dt2_send_next"))
+        btn_send_next = QPushButton("▶▶  Envoyer les suivants")
         btn_send_next.setFixedHeight(30)
         btn_send_next.setStyleSheet(
             "QPushButton{background:#1a2a2a;color:#00d4ff;border:1px solid #00d4ff44;"
@@ -440,7 +439,7 @@ class DmxTesterDialog(QDialog):
         btn_send_next.clicked.connect(self._send_group_and_advance)
         lay.addWidget(btn_send_next)
 
-        btn_cut_next = QPushButton(tr("dt2_send_only"))
+        btn_cut_next = QPushButton("✂  Envoyer uniquement les suivants")
         btn_cut_next.setFixedHeight(30)
         btn_cut_next.setStyleSheet(
             "QPushButton{background:#2a1a1a;color:#f44336;border:1px solid #f4433644;"
@@ -493,7 +492,7 @@ class DmxTesterDialog(QDialog):
     def _on_selection_changed(self, sel):
         n = len(sel)
         if n == 0:
-            self.lbl_sel_info.setText(tr("dt2_no_channel"))
+            self.lbl_sel_info.setText("Aucun canal sélectionné")
             self.lbl_sel_info.setStyleSheet("color:#444; min-width:220px;")
             self.lbl_val.setText("—")
             self.slider.setEnabled(False)
@@ -545,7 +544,7 @@ class DmxTesterDialog(QDialog):
             for i, v in enumerate(self._snapshot[u]):
                 self._dmx.dmx_data[u][i] = v
         self._dmx.send_dmx()
-        self.lbl_status.setText(tr("dt2_show_restored"))
+        self.lbl_status.setText("Show restauré ✓")
         self.lbl_status.setStyleSheet("color:#4CAF50;")
         self._refresh_grid()
 

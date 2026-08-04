@@ -200,12 +200,11 @@ if False:  # noqa
 # DIALOGUE ERREUR INTEGRITE
 # ------------------------------------------------------------------
 def _show_integrity_error():
-    is_mac = platform.system() == "Darwin"
-    download_url = (
-        "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Installer.dmg"
-        if is_mac else
-        "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Setup.exe"
-    )
+    # URL centralisee dans core : ce dialogue pointait sur un nom d'asset
+    # GitHub disparu (MyStrow_Installer.dmg) — bouton en 404 cote Mac, au pire
+    # moment possible puisque l'application refuse alors de demarrer.
+    from core import download_url as _download_url
+    download_url = _download_url()
 
     dlg = QDialog()
     dlg.setWindowTitle(tr("integrity_title"))

@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QCursor
+from core import ComboSansMolette, guide_banner
+from i18n import tr
 
 # ============================================================
 # CONSTANTES
@@ -461,7 +463,7 @@ class NodeConnectionDialog(QDialog):
     def __init__(self, parent=None, target_ip: str = TARGET_IP):
         super().__init__(parent)
         self._main_win = parent
-        self.setWindowTitle("Paramétrer la sortie Node DMX")
+        self.setWindowTitle(tr("nc_setup_node_out"))
         self.setFixedSize(480, 520)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
@@ -537,7 +539,7 @@ class NodeConnectionDialog(QDialog):
             t = QLabel(label)
             t.setFont(QFont("Segoe UI", 10, QFont.Bold))
             t.setStyleSheet("color: #ccc;")
-            d = QLabel("Vérification en cours...")
+            d = QLabel(tr("nc_checking"))
             d.setFont(QFont("Segoe UI", 9))
             d.setStyleSheet(f"color: {_C_DIM};")
             d.setWordWrap(True)
@@ -589,7 +591,7 @@ class NodeConnectionDialog(QDialog):
         # Boutons
         btn_row = QHBoxLayout()
 
-        self._fix_btn = QPushButton("⚙️  Configurer le réseau")
+        self._fix_btn = QPushButton(tr("nc_config_network"))
         self._fix_btn.setVisible(False)
         self._fix_btn.setStyleSheet("""
             QPushButton {
@@ -605,7 +607,7 @@ class NodeConnectionDialog(QDialog):
         self._retry_btn.setEnabled(False)
         self._retry_btn.clicked.connect(self._run)
 
-        self._manual_btn = QPushButton("📂  Réseau")
+        self._manual_btn = QPushButton(tr("nc_network_folder"))
         self._manual_btn.setVisible(False)
         self._manual_btn.clicked.connect(_open_network_connections)
 
@@ -633,7 +635,7 @@ class NodeConnectionDialog(QDialog):
         for icon, t, d in self._row_widgets:
             icon.setText("◌")
             icon.setStyleSheet(f"color: {_C_DIM};")
-            d.setText("Vérification en cours...")
+            d.setText(tr("nc_checking"))
             d.setStyleSheet(f"color: {_C_DIM};")
 
         # Injecter l'instance dmx dans un attribut module pour que le worker y accède
@@ -669,10 +671,10 @@ class NodeConnectionDialog(QDialog):
         box_issue = any(r[3] == "fix_box" for r in errors)
 
         if not errors:
-            self._msg_lbl.setText("Tout est opérationnel ✓")
+            self._msg_lbl.setText(tr("nc_all_ok"))
             self._msg_lbl.setStyleSheet(f"color: {_C_OK}; font-weight: bold;")
         elif cable_issue:
-            self._msg_lbl.setText("Aucune carte Ethernet détectée.\nVérifiez que le câble RJ45 est bien branché.")
+            self._msg_lbl.setText(tr("nc_no_ethernet"))
             self._msg_lbl.setStyleSheet(f"color: {_C_ERR};")
             self._manual_btn.setVisible(True)
             self._refresh_inline_btn.setVisible(True)
@@ -1018,7 +1020,7 @@ class NodeSetupWizard(QDialog):
         ip_t.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
         ip_t.setAlignment(Qt.AlignCenter); il.addWidget(ip_t)
         lay.addWidget(info); lay.addSpacing(10)
-        note = QLabel("ⓘ  Droits administrateur requis pour la configuration auto")
+        note = QLabel(tr("nc_admin_required"))
         note.setFont(QFont("Segoe UI", 9)); note.setWordWrap(True)
         note.setStyleSheet("color: #444444; background: transparent;")
         note.setAlignment(Qt.AlignCenter); lay.addWidget(note)
@@ -1139,7 +1141,7 @@ class NodeSetupWizard(QDialog):
         self._btn_net_suivant.setEnabled(False)
 
         if not adapters:
-            lbl = QLabel("Aucune carte Ethernet détectée.\nVérifiez que le câble RJ45 est bien branché.")
+            lbl = QLabel(tr("nc_no_ethernet"))
             lbl.setStyleSheet("color: #fbbf24; background: #2a2000; border: 1px solid #554400; "
                 "border-radius: 6px; padding: 12px;")
             lbl.setWordWrap(True); lbl.setAlignment(Qt.AlignCenter)
@@ -1349,6 +1351,13 @@ _SS_DIALOG = """
     }
 """
 
+_BTN_NET_TODO = (
+    "QPushButton { background: #2a2413; color: #e6a817; border: 1px solid #5a4820; "
+    "border-radius: 6px; font-size: 11px; font-weight: bold; } "
+    "QPushButton:hover { background: #3a3018; color: #ffc94a; }"
+)
+
+
 _BTN_TOGGLE_ON = (
     "QPushButton { background: #00d4ff; color: #000; font-weight: 700; "
     "border: none; border-radius: 8px; font-size: 12px; padding: 0 20px; }"
@@ -1389,7 +1398,7 @@ class DmxOutputDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._main_win = parent
-        self.setWindowTitle("Paramétrer la sortie DMX")
+        self.setWindowTitle(tr("nc_setup_dmx_out"))
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet(_SS_DIALOG)
 
@@ -1465,7 +1474,7 @@ class DmxOutputDialog(QDialog):
         content.setSpacing(16)
 
         # Titre
-        title = QLabel("Paramétrer la sortie DMX")
+        title = QLabel(tr("nc_setup_dmx_out"))
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet("color: #f0f0f0;")
         content.addWidget(title)
@@ -1487,6 +1496,7 @@ class DmxOutputDialog(QDialog):
         toggle_row.addWidget(self._btn_usb)
         content.addLayout(toggle_row)
 
+
         # Bandeau guide — en haut de la fenêtre, façon bibliothèque de fixtures.
         # En pied de fenêtre il passait sous la barre de tâches sur certaines
         # configs et personne ne le voyait.
@@ -1495,6 +1505,7 @@ class DmxOutputDialog(QDialog):
             '<a href="https://mystrow.fr/configurer-node-usb-artnet-dmx-mystrow.html" '
             'style="color:#44cc88; text-decoration:underline;">Consulter le guide →</a>'
         )
+        hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)
         hint.setOpenExternalLinks(True)
         hint.setStyleSheet(
@@ -1555,6 +1566,7 @@ class DmxOutputDialog(QDialog):
         btn_row.addWidget(self._btn_apply)
         content.addLayout(btn_row)
 
+
     def _page_node(self):
         """Page Art-Net : statut de connexion (lecture seule) + bouton de configuration."""
         w = QWidget()
@@ -1578,7 +1590,7 @@ class DmxOutputDialog(QDialog):
         self._node_status_dot.setStyleSheet(
             "color: #555; font-size: 20px; background: transparent; border: none;")
         status_row.addWidget(self._node_status_dot)
-        self._node_status_lbl = QLabel("Vérification en cours…")
+        self._node_status_lbl = QLabel(tr("nc_checking_ell"))
         self._node_status_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self._node_status_lbl.setStyleSheet("color: #aaa; background: transparent; border: none;")
         status_row.addWidget(self._node_status_lbl, 1)
@@ -1593,17 +1605,30 @@ class DmxOutputDialog(QDialog):
 
         # Carte réseau (lecture seule)
         net_row = QHBoxLayout()
-        net_key = QLabel("Carte réseau")
+        net_key = QLabel(tr("nc_network_card"))
         net_key.setFont(QFont("Segoe UI", 9))
         net_key.setStyleSheet("color: #666; background: transparent; border: none;")
         net_row.addWidget(net_key)
         net_row.addStretch()
-        self._node_net_lbl = QLabel("Détection…")
+        self._node_net_lbl = QLabel(tr("nc_detecting"))
         self._node_net_lbl.setFont(QFont("Segoe UI", 9))
         self._node_net_lbl.setStyleSheet("color: #888; background: transparent; border: none;")
         self._node_net_lbl.setAlignment(Qt.AlignRight)
         net_row.addWidget(self._node_net_lbl)
         card_lay.addLayout(net_row)
+
+        # Le bouton qui regle le probleme est place LA, juste sous le statut
+        # reseau, plutot qu'une consigne texte renvoyant vers un bouton en bas
+        # de page. Il reste visible en permanence — reconfigurer le reseau est
+        # utile meme quand tout va bien — et passe en orange quand la carte
+        # n'est pas en 2.x (voir _set_net_hint).
+        cfg_btn = QPushButton(tr("nc_config_net_conn"))
+        self._node_cfg_btn = cfg_btn
+        cfg_btn.setFixedHeight(32)
+        cfg_btn.setStyleSheet(_BTN_DIAG)
+        cfg_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        cfg_btn.clicked.connect(self._open_node_wizard)
+        card_lay.addWidget(cfg_btn)
 
         # Aiguillage des 4 sorties du Node.
         # Remplace l'ancien sélecteur « DMX 2 / Miroir », qui n'avait AUCUN effet :
@@ -1614,12 +1639,12 @@ class DmxOutputDialog(QDialog):
         if self._dmx is not None:
             card_lay.addWidget(_sep())
 
-            titre = QLabel("Aiguillage des sorties")
+            titre = QLabel(tr("nc_output_routing"))
             titre.setFont(QFont("Segoe UI", 9, QFont.Bold))
             titre.setStyleSheet("color: #888; background: transparent; border: none;")
             card_lay.addWidget(titre)
 
-            aide = QLabel("Quel univers part sur quelle sortie physique du Node.")
+            aide = QLabel(tr("nc_routing_hint"))
             aide.setStyleSheet("color: #555; font-size: 9px; background: transparent; border: none;")
             aide.setWordWrap(True)
             card_lay.addWidget(aide)
@@ -1639,7 +1664,7 @@ class DmxOutputDialog(QDialog):
                 fleche.setStyleSheet("color: #444; background: transparent; border: none;")
                 grille.addWidget(fleche, n, 1)
 
-                combo = QComboBox()
+                combo = ComboSansMolette()
                 for u in range(4):
                     combo.addItem(f"Univers {u + 1}", userData=u)
                 combo.addItem("Désactivé", userData=OUTPUT_OFF)
@@ -1672,12 +1697,6 @@ class DmxOutputDialog(QDialog):
 
         lay.addWidget(card)
 
-        cfg_btn = QPushButton("⚙️  Configurer la connexion réseau")
-        cfg_btn.setFixedHeight(36)
-        cfg_btn.setStyleSheet(_BTN_DIAG)
-        cfg_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        cfg_btn.clicked.connect(self._open_node_wizard)
-        lay.addWidget(cfg_btn)
 
         lay.addStretch()
 
@@ -1698,13 +1717,13 @@ class DmxOutputDialog(QDialog):
         if found:
             self._node_status_dot.setStyleSheet(
                 "color: #4ade80; font-size: 20px; background: transparent; border: none;")
-            self._node_status_lbl.setText("Boîtier connecté  ✓")
+            self._node_status_lbl.setText(tr("nc_device_connected"))
             self._node_status_lbl.setStyleSheet(
                 "color: #4ade80; font-weight: 700; background: transparent; border: none;")
         else:
             self._node_status_dot.setStyleSheet(
                 "color: #f87171; font-size: 20px; background: transparent; border: none;")
-            self._node_status_lbl.setText("Boîtier non détecté")
+            self._node_status_lbl.setText(tr("nc_device_not_found"))
             self._node_status_lbl.setStyleSheet(
                 "color: #f87171; font-weight: 700; background: transparent; border: none;")
 
@@ -1714,10 +1733,19 @@ class DmxOutputDialog(QDialog):
                 self._node_net_lbl.setText(name)
                 self._node_net_lbl.setStyleSheet(
                     "color: #aaa; background: transparent; border: none;")
+                self._set_net_hint(False)
                 return
-        self._node_net_lbl.setText("Non configurée")
+        self._node_net_lbl.setText(tr("nc_not_configured"))
         self._node_net_lbl.setStyleSheet(
             "color: #f87171; background: transparent; border: none;")
+        self._set_net_hint(True)
+
+    def _set_net_hint(self, a_configurer: bool):
+        """Met le bouton de configuration reseau en avant quand la carte
+        n'est pas en 2.x."""
+        btn = getattr(self, '_node_cfg_btn', None)
+        if btn is not None:
+            btn.setStyleSheet(_BTN_NET_TODO if a_configurer else _BTN_DIAG)
 
     def _open_node_wizard(self):
         self.accept()
@@ -1739,7 +1767,7 @@ class DmxOutputDialog(QDialog):
         proto_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
         proto_row.addWidget(proto_lbl)
         proto_row.addStretch()
-        self._proto_combo = QComboBox()
+        self._proto_combo = ComboSansMolette()
         for _label, _tr in [
             ("Eurolite USB-DMX512 PRO (MK2)", TRANSPORT_ENTTEC_PRO),
             ("ENTTEC DMX USB Pro",            TRANSPORT_ENTTEC_PRO),
@@ -1788,7 +1816,7 @@ class DmxOutputDialog(QDialog):
         port_row.addWidget(port_lbl)
         port_row.addStretch()
 
-        self._port_combo = QComboBox()
+        self._port_combo = ComboSansMolette()
         self._port_combo.setFixedWidth(200)
         port_row.addWidget(self._port_combo)
 
@@ -1815,7 +1843,7 @@ class DmxOutputDialog(QDialog):
         self._usb_indicator.setFixedWidth(18)
         status_row.addWidget(self._usb_indicator)
 
-        self._usb_status_lbl = QLabel("Sélectionnez un port")
+        self._usb_status_lbl = QLabel(tr("nc_select_port"))
         self._usb_status_lbl.setStyleSheet("color: #666; font-size: 10px;")
         status_row.addWidget(self._usb_status_lbl, 1)
 
@@ -1828,6 +1856,43 @@ class DmxOutputDialog(QDialog):
         card_lay.addLayout(status_row)
 
         lay.addWidget(card)
+
+        # ── Renvoi vers l'onglet Node (masqué tant qu'un port existe) ────────
+        self._renvoi_node = QFrame()
+        self._renvoi_node.setStyleSheet(
+            "QFrame { background: #1e1a10; border: 1px solid #4a3a15;"
+            " border-radius: 8px; }")
+        rn_lay = QVBoxLayout(self._renvoi_node)
+        rn_lay.setContentsMargins(12, 10, 12, 10)
+        rn_lay.setSpacing(8)
+
+        rn_txt = QLabel(
+            "Aucune interface USB-DMX série détectée sur cet ordinateur.<br><br>"
+            "Votre boîtier porte la mention <b>Art-Net</b>, <b>Node</b> ou "
+            "<b>RDM</b> ? Alors ce n'est pas ici, même s'il se branche en USB : "
+            "c'est le cas de l'<b>Interface USB Node DMX Art-Net RDM</b> "
+            "d'ElectroConcept. Ces boîtiers passent par le câble USB mais "
+            "parlent Art-Net, pas DMX série : ils se configurent dans l'onglet "
+            "<b>Sortie Node</b>.<br><br>"
+            "Cet onglet-ci ne sert qu'aux interfaces USB-DMX série : ENTTEC "
+            "Open DMX ou DMX USB Pro, Eurolite, OPTO OPEN DMX, DMXKing.")
+        rn_txt.setWordWrap(True)
+        rn_txt.setStyleSheet(
+            "color: #d6b878; font-size: 10px; background: transparent; border: none;")
+        rn_lay.addWidget(rn_txt)
+
+        rn_btn = QPushButton(tr("nc_go_node_tab"))
+        rn_btn.setFixedHeight(30)
+        rn_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        rn_btn.setStyleSheet(
+            "QPushButton { background: #2a2413; color: #e6a817; border: 1px solid #5a4820;"
+            " border-radius: 6px; font-size: 10px; font-weight: bold; padding: 0 14px; }"
+            "QPushButton:hover { background: #3a3018; color: #ffc94a; }")
+        rn_btn.clicked.connect(lambda: self._set_transport(TRANSPORT_ARTNET))
+        rn_lay.addWidget(rn_btn, 0, Qt.AlignLeft)
+
+        self._renvoi_node.setVisible(False)   # affiché par _maj_renvoi_node
+        lay.addWidget(self._renvoi_node)
 
         lay.addStretch()
         return w
@@ -1865,6 +1930,7 @@ class DmxOutputDialog(QDialog):
     def _refresh_ports(self):
         """Actualise la liste des ports COM disponibles."""
         self._port_combo.clear()
+        aucun = False
         try:
             import serial.tools.list_ports as _lp
             ports = list(_lp.comports())
@@ -1877,8 +1943,25 @@ class DmxOutputDialog(QDialog):
                     self._port_combo.setCurrentIndex(self._port_combo.count() - 1)
             if not ports:
                 self._port_combo.addItem("Aucun port détecté", None)
+                aucun = True
         except ImportError:
             self._port_combo.addItem("Module série non disponible", None)
+            aucun = True
+        self._maj_renvoi_node(aucun)
+
+    def _maj_renvoi_node(self, aucun_port: bool):
+        """Affiche le renvoi vers l'onglet Node quand l'onglet USB est une impasse.
+
+        « Aucun port détecté » est exactement l'écran où atterrit quelqu'un qui a
+        acheté un Node Art-Net et cherche à le brancher ici. Sans renvoi, il
+        recharge la liste en boucle et conclut que son boîtier est mort. Le
+        message n'apparaît que dans ce cas : quand un port existe, il n'y a pas
+        d'ambiguïté à lever.
+        """
+        bloc = getattr(self, '_renvoi_node', None)
+        if bloc is None:
+            return
+        bloc.setVisible(aucun_port)
 
     def _open_usb_diagnostic(self):
         """Ouvre le diagnostic complet DMX USB (enttec_setup.py)."""
@@ -1978,7 +2061,7 @@ class DmxOutputDialog(QDialog):
             com = self._port_combo.currentData()
             if not com:
                 self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
-                self._status_lbl.setText("Sélectionnez un port COM")
+                self._status_lbl.setText(tr("nc_select_com_port"))
                 return
 
             proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC

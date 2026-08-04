@@ -224,7 +224,7 @@ class EffectButton(QPushButton):
         trig_vlay = QVBoxLayout(trig_outer)
         trig_vlay.setContentsMargins(10, 4, 10, 6); trig_vlay.setSpacing(4)
 
-        trig_hdr = QLabel(tr("ui2_trigger")); trig_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        trig_hdr = QLabel("  DÉCLENCHEMENT"); trig_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
         trig_vlay.addWidget(trig_hdr)
 
         _TRIG_ON  = ("QPushButton{background:#00aaff;color:#fff;border:1px solid #0088cc;"

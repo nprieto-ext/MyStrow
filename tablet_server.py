@@ -77,6 +77,9 @@ _state: dict = {
 }
 
 # ── Clients SSE connectés ─────────────────────────────────────────────────────
+# Taille max de la file d'un client SSE. ~200 events = quelques secondes de
+# retard tolerees ; au-dela le client est considere mort et evince.
+_CLIENT_QUEUE_MAX = 200
 _clients: list = []
 _clients_lock = threading.Lock()
 
@@ -137,7 +140,12 @@ def _build_app():
     @_app.route("/stream")
     def stream():
         """Server-Sent Events : pousse les mises à jour en temps réel."""
-        client_q: queue.Queue = queue.Queue()
+        # File BORNEE : un client qui ne consomme plus (tablette en veille,
+        # Wi-Fi coupe, connexion de test laissee ouverte par le diagnostic)
+        # faisait gonfler sa file sans aucune limite, alimentee par les
+        # pushs continus de l'appli. Memoire en croissance permanente
+        # jusqu'au plantage. Plein = client mort, on l'evince (_broadcast).
+        client_q: queue.Queue = queue.Queue(maxsize=_CLIENT_QUEUE_MAX)
         with _clients_lock:
             _clients.append(client_q)
 
@@ -199,10 +207,27 @@ def _build_app():
 
 # ── API publique : Qt → Tablette ──────────────────────────────────────────────
 def _broadcast(event: dict):
-    """Envoie un event SSE à tous les clients connectés."""
+    """Envoie un event SSE à tous les clients connectés.
+
+    Un client dont la file est PLEINE ne consomme plus : il est evince. Sans
+    ca, une connexion morte restait inscrite indefiniment — le diagnostic
+    tablette en laissait justement une derriere lui a chaque execution — et
+    chaque push de l'appli empilait un event de plus dans une file que
+    personne ne vidait."""
     with _clients_lock:
+        morts = []
         for q in _clients:
-            q.put(event)
+            try:
+                q.put_nowait(event)
+            except queue.Full:
+                morts.append(q)
+        for q in morts:
+            try:
+                _clients.remove(q)
+            except ValueError:
+                pass
+        if morts:
+            print(f"[Tablet] {len(morts)} client(s) SSE inactif(s) evince(s)")
 
 
 def push_pad(row: int, col: int, color_hex: str, bright: int):

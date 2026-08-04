@@ -415,7 +415,7 @@ class LiveSettingsDialog(QDialog):
         LS = "color:#888; font-size:10px; font-weight:bold; letter-spacing:1.5px;"
 
         # Title
-        tl = QLabel(tr("seq2_live_params_hdr"))
+        tl = QLabel("⚙  PARAMÈTRES LIVE")
         tl.setStyleSheet("color:#e0e0e0; font-size:14px; font-weight:bold; letter-spacing:2px;")
         root.addWidget(tl)
         root.addWidget(self._sep())
@@ -458,7 +458,7 @@ class LiveSettingsDialog(QDialog):
 
         # ── Boutons ─────────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
-        rst = QPushButton(tr("seq2_reset"))
+        rst = QPushButton("Réinitialiser")
         rst.setStyleSheet(self._gbtn())
         rst.setCursor(Qt.PointingHandCursor)
         rst.clicked.connect(self._reset_all)
@@ -1462,7 +1462,7 @@ class LiveModePanel(QWidget):
         bot_row = QHBoxLayout()
         bot_row.setSpacing(6)
 
-        self._midi_status_lbl = QLabel(tr("seq2_checking"))
+        self._midi_status_lbl = QLabel("Vérification…")
         self._midi_status_lbl.setStyleSheet(
             "color:#668866; font-size:10px; background:transparent; border:none;")
         self._midi_status_lbl.setWordWrap(False)
@@ -1692,19 +1692,19 @@ class LiveModePanel(QWidget):
                 "background: #00cc44; border-radius: 5px;")
             self._midi_status_lbl.setText(
                 f'Port "{LoopMidiHelper.PORT_NAME}" actif')
-            self._midi_btn.setText(tr("seq2_refresh"))
+            self._midi_btn.setText("↺  Rafraîchir")
             self._midi_instr_lbl.show()
         elif installed:
             self._midi_dot.setStyleSheet(
                 "background: #ffaa00; border-radius: 5px;")
             self._midi_status_lbl.setText(
-                tr("seq2_loopmidi_port"))
+                "loopMIDI installé · port manquant")
             self._midi_btn.setText(f'Créer le port "{LoopMidiHelper.PORT_NAME}"')
             self._midi_instr_lbl.hide()
         else:
             self._midi_dot.setStyleSheet(
                 "background: #444; border-radius: 5px;")
-            self._midi_status_lbl.setText(tr("seq2_loopmidi_none"))
+            self._midi_status_lbl.setText("loopMIDI non installé (gratuit)")
             self._midi_btn.setText("Installer loopMIDI  ↗")
             self._midi_instr_lbl.hide()
 
@@ -1946,7 +1946,7 @@ class LiveModePanel(QWidget):
         # Slider DURÉE en secondes (1-30s)
         dur_h = QHBoxLayout()
         dur_h.setSpacing(4)
-        dur_lbl_m = QLabel(tr("seq2_duration"))
+        dur_lbl_m = QLabel("DURÉE")
         dur_lbl_m.setStyleSheet("color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
         dur_lbl_m.setFixedWidth(44)
         dur_sl_m = QSlider(Qt.Horizontal)
@@ -2092,7 +2092,7 @@ class LiveModePanel(QWidget):
         # ── Nombre de couleurs max simultanées ────────────────────────────
         max_row = QHBoxLayout()
         max_row.setSpacing(5)
-        max_lbl = QLabel(tr("seq2_sim_colours"))
+        max_lbl = QLabel("COULEURS SIMULTANÉES")
         max_lbl.setStyleSheet(
             "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
         max_row.addWidget(max_lbl)
@@ -2118,7 +2118,7 @@ class LiveModePanel(QWidget):
         vbox.addSpacing(4)
         dur_row = QHBoxLayout()
         dur_row.setSpacing(5)
-        dur_lbl = QLabel(tr("seq2_duration"))
+        dur_lbl = QLabel("DURÉE")
         dur_lbl.setStyleSheet(
             "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
         dur_lbl.setFixedWidth(44)
@@ -2448,7 +2448,7 @@ class LiveModePanel(QWidget):
         # Slider DURÉE (temps par gobo)
         dur_row = QHBoxLayout()
         dur_row.setSpacing(4)
-        dur_lbl = QLabel(tr("seq2_duration"))
+        dur_lbl = QLabel("DURÉE")
         dur_lbl.setStyleSheet(
             "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
         dur_lbl.setFixedWidth(48)
@@ -2675,7 +2675,7 @@ class LiveModePanel(QWidget):
         help_web_btn = QPushButton("?")
         help_web_btn.setFixedSize(18, 18)
         help_web_btn.setCursor(Qt.PointingHandCursor)
-        help_web_btn.setToolTip(tr("seq2_sync_help"))
+        help_web_btn.setToolTip("Aide : synchroniser MyStrow avec votre carte son / logiciel DJ")
         help_web_btn.setStyleSheet(
             "QPushButton { background:#0a1a2a; color:#00aaff; border:1px solid #0055aa;"
             " border-radius:9px; font-size:11px; font-weight:bold; }"
@@ -2751,7 +2751,7 @@ class LiveModePanel(QWidget):
 
         # ── VU-mètre + Sensibilité fusionnés ──────────────────────────────────
         self._vu_sens = _VuSensWidget(initial_sens=80)
-        self._vu_sens.setToolTip(tr("seq2_audio_level"))
+        self._vu_sens.setToolTip("Niveau audio · Glisser le marqueur blanc = seuil de sensibilité")
         # Alias pour compatibilité avec set_vu() et sens_slider
         self._input_level_bar = self._vu_sens   # set_vu appelle setValue
         self.sens_slider       = self._vu_sens._sens_proxy
@@ -3138,7 +3138,7 @@ class Sequencer(QFrame):
         self._live_settings_btn = QPushButton("⚙")
         self._live_settings_btn.setFixedSize(26, 26)
         self._live_settings_btn.setCursor(Qt.PointingHandCursor)
-        self._live_settings_btn.setToolTip(tr("seq2_live_params"))
+        self._live_settings_btn.setToolTip("Paramètres Live")
         self._live_settings_btn.setStyleSheet(
             "QPushButton { background: transparent; color: #556677; border: none; "
             "font-size: 15px; border-radius: 4px; } "

@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from core import ComboSansMolette
-from i18n import tr
 
 try:
     import serial
@@ -276,7 +275,7 @@ class DmxSetupDialog(QDialog):
         lay.setContentsMargins(0, 10, 0, 10)
         lay.setSpacing(0)
 
-        hint = QLabel(tr("es2_your_iface"))
+        hint = QLabel("  Votre interface DMX")
         hint.setFont(QFont("Segoe UI", 8))
         hint.setStyleSheet("color: #3a3a3a; padding: 0 8px 6px 8px;")
         lay.addWidget(hint)
@@ -368,7 +367,7 @@ class DmxSetupDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(26, 0, 0, 0)
 
-        self.btn_diag = QPushButton(tr("es2_run_diag"))
+        self.btn_diag = QPushButton("▶  Lancer le diagnostic")
         self.btn_diag.setFixedSize(160, 28)
         self.btn_diag.setStyleSheet(
             "QPushButton { background: #1e2a3a; color: #00d4ff; border: 1px solid #00d4ff;"
@@ -418,13 +417,13 @@ class DmxSetupDialog(QDialog):
         self._log.setReadOnly(True)
         self._log.setFixedHeight(140)
         self._log.setStyleSheet(_LOG_STYLE)
-        self._log.setPlaceholderText(tr("es2_results_here"))
+        self._log.setPlaceholderText("Les résultats du diagnostic s'affichent ici…")
         lay.addWidget(self._log)
 
         copy_row = QHBoxLayout()
         copy_row.setContentsMargins(0, 2, 0, 0)
         copy_row.addStretch()
-        btn_copy = QPushButton(tr("es2_copy_report"))
+        btn_copy = QPushButton("📋  Copier le rapport")
         btn_copy.setFixedHeight(22)
         btn_copy.setStyleSheet(
             "QPushButton { background: #1a1a1a; color: #555; border: 1px solid #2a2a2a;"
@@ -521,7 +520,7 @@ class DmxSetupDialog(QDialog):
         row.addWidget(self.port_combo, 1)
         btn_r = QPushButton("↻")
         btn_r.setFixedSize(26, 26)
-        btn_r.setToolTip(tr("es2_refresh_ports"))
+        btn_r.setToolTip("Rafraîchir les ports")
         btn_r.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #777; border: 1px solid #2a2a2a;"
             " border-radius: 4px; font-size: 13px; }"
@@ -579,11 +578,11 @@ class DmxSetupDialog(QDialog):
 
         if not ports:
             self.port_combo.addItem("Aucun port détecté")
-            self.lbl_port_hint.setText(tr("es2_plug_then"))
+            self.lbl_port_hint.setText("Branchez le boîtier puis ↻")
         elif enttec:
             self.lbl_port_hint.setText(f"{len(enttec)} boîtier(s) FTDI détecté(s) ★")
         else:
-            self.lbl_port_hint.setText(tr("es2_manual_port"))
+            self.lbl_port_hint.setText("Sélectionnez le port manuellement")
 
         if self._dmx.com_port:
             for i in range(self.port_combo.count()):
@@ -739,7 +738,7 @@ class DmxSetupDialog(QDialog):
             box = QMessageBox(self)
             box.setWindowTitle("Test RTS/DTR")
             box.setIcon(QMessageBox.Question)
-            box.setText(tr("es2_which_seq"))
+            box.setText("Quelle séquence a allumé vos projecteurs ?")
             box.setInformativeText(
                 "Le réglage correspondant sera mémorisé et appliqué à chaque "
                 "connexion de ce boîtier."

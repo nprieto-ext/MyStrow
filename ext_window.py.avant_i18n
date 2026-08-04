@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QDialog, QRadioButton, QCheckBox, QDialogButtonBox, QMessageBox, QFileDialog,
     QSpinBox, QDoubleSpinBox,
 )
-from i18n import tr
 from PySide6.QtCore import Qt, QTimer, QPoint, QMimeData
 from PySide6.QtGui import QPainter, QColor, QPen, QDrag, QFont
 
@@ -844,7 +843,7 @@ class ExtWindow(QMainWindow):
         bl.addWidget(self._status)
         bl.addSpacing(10)
 
-        self._lock_btn = QPushButton(tr("ext2_edit"))
+        self._lock_btn = QPushButton("🔓  Édition")
         self._lock_btn.setCheckable(True)
         self._lock_btn.setChecked(True)   # démarre en Édition
         self._lock_btn.setFixedHeight(28)
@@ -1044,7 +1043,7 @@ class ExtWindow(QMainWindow):
         self.resize(max(600, self.width() + delta), self.height())
 
     def _on_lock_toggled(self, edit_on: bool):
-        self._lock_btn.setText(tr("ext2_edit") if edit_on else "🔒  Live")
+        self._lock_btn.setText("🔓  Édition" if edit_on else "🔒  Live")
         self.canvas.set_edit_mode(edit_on)
         self._set_palette(edit_on)   # palette masquée en Live, largeur compensée
 
@@ -1053,7 +1052,7 @@ class ExtWindow(QMainWindow):
         self._lock_btn.blockSignals(True)
         self._lock_btn.setChecked(edit_on)
         self._lock_btn.blockSignals(False)
-        self._lock_btn.setText(tr("ext2_edit") if edit_on else "🔒  Live")
+        self._lock_btn.setText("🔓  Édition" if edit_on else "🔒  Live")
         self.canvas.set_edit_mode(edit_on)
         self._set_palette(edit_on)   # palette masquée en Live, largeur compensée
 
@@ -1267,7 +1266,7 @@ class ExtWindow(QMainWindow):
         accent = blk.spec.get("color", "#00d4ff")
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("ext2_master_cfg"))
+        dlg.setWindowTitle("Réglages du bloc master")
         dlg.setMinimumWidth(320)
         dlg.setStyleSheet(f"""
             QDialog {{ background:#161616; }}
@@ -1285,10 +1284,10 @@ class ExtWindow(QMainWindow):
         hdr = QLabel(f"Master {'−' if sign < 0 else '+'}  « {blk.spec.get('label', '?')} »")
         hdr.setObjectName("hdr")
         lay.addWidget(hdr)
-        lay.addWidget(QLabel(tr("ext2_master_hint")))
+        lay.addWidget(QLabel("De combien le master monte / descend, et en combien de temps."))
         lay.addSpacing(6)
 
-        lay.addWidget(QLabel(tr("ext2_step_pct")))
+        lay.addWidget(QLabel("Pas (%)"))
         sp_step = QSpinBox()
         sp_step.setRange(1, 100)
         sp_step.setSuffix(" %")
@@ -1547,7 +1546,7 @@ class ExtWindow(QMainWindow):
 
         accent = blk.spec.get("color", "#00d4ff")
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("ext2_colour_target") if is_color
+        dlg.setWindowTitle("Cible de la couleur" if is_color
                            else ("Cible du fader" if is_fader else "Cible de l'effet"))
         dlg.setMinimumWidth(340)
         dlg.setStyleSheet(f"""
@@ -1572,16 +1571,16 @@ class ExtWindow(QMainWindow):
                       + f"  « {blk.spec.get('label', '?')} »"))
         hdr.setObjectName("hdr")
         lay.addWidget(hdr)
-        sub = QLabel(tr("ext2_where_colour") if is_color
+        sub = QLabel("Où envoyer la couleur ?" if is_color
                      else ("Quels projecteurs piloter ?" if is_fader
                            else "Sur quels groupes jouer l'effet ?"))
         sub.setObjectName("sub")
         lay.addWidget(sub)
         lay.addSpacing(10)
 
-        rb_all = QRadioButton(tr("ext2_all_groups"))
-        rb_sel = QRadioButton(tr("ext2_selected"))   # couleurs uniquement
-        rb_grp = QRadioButton(tr("ext2_spec_groups"))
+        rb_all = QRadioButton("Tous les groupes")
+        rb_sel = QRadioButton("Projecteurs sélectionnés")   # couleurs uniquement
+        rb_grp = QRadioButton("Groupes spécifiques")
         lay.addWidget(rb_all)
         if is_color:
             lay.addWidget(rb_sel)

@@ -14,7 +14,8 @@ from PySide6.QtGui import QFont, QColor, QDesktopServices
 from PySide6.QtCore import QUrl
 
 from controller_profile import list_profiles, save_profile
-from core import MIDI_AVAILABLE
+from core import MIDI_AVAILABLE, ComboSansMolette
+from i18n import tr
 
 # ─── Style cohérent avec le thème MyStrow ────────────────────────────────────
 _STYLE = """
@@ -192,7 +193,7 @@ class MidiMappingWizard(QDialog):
     def __init__(self, midi_handler, parent=None):
         super().__init__(parent)
         self.midi_handler = midi_handler
-        self.setWindowTitle("Mon contrôleur n'est pas reconnu — MyStrow")
+        self.setWindowTitle(tr("cmw_win_title"))
         self.setMinimumSize(700, 520)
         self.setStyleSheet(_STYLE)
         self.setModal(True)
@@ -288,7 +289,7 @@ class MidiMappingWizard(QDialog):
         v.setContentsMargins(40, 32, 40, 32)
         v.setSpacing(16)
 
-        lbl_title = QLabel("🎹  Mon contrôleur n'est pas reconnu")
+        lbl_title = QLabel(tr("cmw_title"))
         lbl_title.setObjectName("title")
         v.addWidget(lbl_title)
 
@@ -299,7 +300,7 @@ class MidiMappingWizard(QDialog):
         card = QFrame(); card.setObjectName("card")
         card_v = QVBoxLayout(card); card_v.setContentsMargins(20, 16, 20, 16); card_v.setSpacing(10)
 
-        lbl_community = QLabel("MyStrow, c'est une communauté.")
+        lbl_community = QLabel(tr("cmw_community"))
         lbl_community.setStyleSheet("color: #00aaff; font-size: 12pt; font-weight: bold;")
         card_v.addWidget(lbl_community)
 
@@ -312,13 +313,13 @@ class MidiMappingWizard(QDialog):
         lbl_explain.setWordWrap(True)
         card_v.addWidget(lbl_explain)
 
-        lbl_promise = QLabel("✉️  Un mail vous sera envoyé à notre équipe. Réponse rapide garantie.")
+        lbl_promise = QLabel(tr("cmw_mail_notice"))
         lbl_promise.setStyleSheet("color: #00cc44; font-size: 9pt;")
         card_v.addWidget(lbl_promise)
         v.addWidget(card)
 
         v.addStretch()
-        btn = QPushButton("Commencer le test  →")
+        btn = QPushButton(tr("cmw_start_test"))
         btn.setObjectName("primary")
         btn.setFixedHeight(48)
         btn.clicked.connect(self._welcome_next)
@@ -331,23 +332,23 @@ class MidiMappingWizard(QDialog):
         v.setContentsMargins(40, 32, 40, 32)
         v.setSpacing(14)
 
-        lbl_title = QLabel("Nouveau contrôleur")
+        lbl_title = QLabel(tr("cmw_new_ctrl"))
         lbl_title.setObjectName("title")
         v.addWidget(lbl_title)
 
-        lbl_sub = QLabel("Donnez un nom à votre contrôleur et indiquez son port MIDI.")
+        lbl_sub = QLabel(tr("cmw_name_and_port"))
         lbl_sub.setObjectName("sub")
         v.addWidget(lbl_sub)
         v.addSpacing(8)
 
-        v.addWidget(QLabel("Nom du contrôleur :"))
+        v.addWidget(QLabel(tr("cmw_ctrl_name")))
         self._inp_name = QLineEdit()
         self._inp_name.setPlaceholderText("ex: Novation Launchpad X")
         v.addWidget(self._inp_name)
 
         v.addSpacing(4)
-        v.addWidget(QLabel("Port MIDI détecté (sélectionnez le vôtre) :"))
-        self._combo_ports = QComboBox()
+        v.addWidget(QLabel(tr("cmw_midi_port")))
+        self._combo_ports = ComboSansMolette()
         self._combo_ports.addItem("— Aucun port sélectionné —", None)
         for p in _get_midi_ports():
             self._combo_ports.addItem(p, p)
@@ -355,12 +356,12 @@ class MidiMappingWizard(QDialog):
         v.addWidget(self._combo_ports)
 
         v.addSpacing(4)
-        v.addWidget(QLabel("Mot-clé de détection (extrait automatiquement, modifiable) :"))
+        v.addWidget(QLabel(tr("cmw_keyword")))
         self._inp_keyword = QLineEdit()
         self._inp_keyword.setPlaceholderText("ex: LAUNCHPAD X")
         v.addWidget(self._inp_keyword)
 
-        lbl_hint = QLabel("Ce mot-clé sera cherché dans le nom du port MIDI au démarrage.")
+        lbl_hint = QLabel(tr("cmw_keyword_hint"))
         lbl_hint.setObjectName("warn")
         v.addWidget(lbl_hint)
 
@@ -383,10 +384,10 @@ class MidiMappingWizard(QDialog):
         v.setContentsMargins(40, 32, 40, 32)
         v.setSpacing(14)
 
-        lbl_title = QLabel("Structure du contrôleur")
+        lbl_title = QLabel(tr("cmw_structure"))
         lbl_title.setObjectName("title")
         v.addWidget(lbl_title)
-        lbl_sub = QLabel("Indiquez combien de pads, faders et boutons possède votre contrôleur.\nMettez 0 s'il n'en a pas.")
+        lbl_sub = QLabel(tr("cmw_structure_hint"))
         lbl_sub.setObjectName("sub"); lbl_sub.setWordWrap(True)
         v.addWidget(lbl_sub)
         v.addSpacing(8)
@@ -399,7 +400,7 @@ class MidiMappingWizard(QDialog):
             s.setFixedWidth(90)
             return s
 
-        grid.addWidget(QLabel("Lignes de pads (0 = pas de pads) :"), 0, 0)
+        grid.addWidget(QLabel(tr("cmw_pad_rows")), 0, 0)
         self._spin_rows = _spin(0, 16, 8)
         grid.addWidget(self._spin_rows, 0, 1)
 
@@ -447,31 +448,31 @@ class MidiMappingWizard(QDialog):
 
         # Panneau droit
         right = QVBoxLayout(); right.setSpacing(10)
-        lbl_title = QLabel("Mapping des pads"); lbl_title.setObjectName("title")
+        lbl_title = QLabel(tr("cmw_pad_mapping")); lbl_title.setObjectName("title")
         right.addWidget(lbl_title)
 
-        self._pad_instr = QLabel("Appuyez sur le pad indiqué\nsur votre contrôleur.")
+        self._pad_instr = QLabel(tr("cmw_press_pad"))
         self._pad_instr.setWordWrap(True)
         self._pad_instr.setStyleSheet("font-size: 12pt; color: #ddd;")
         right.addWidget(self._pad_instr)
 
-        self._listen_label = QLabel("● En écoute MIDI...")
+        self._listen_label = QLabel(tr("cmw_listening"))
         self._listen_label.setObjectName("listen")
         right.addWidget(self._listen_label)
 
         right.addSpacing(8)
 
-        btn_skip_cell = QPushButton("Passer cette position")
+        btn_skip_cell = QPushButton(tr("cmw_skip_pos"))
         btn_skip_cell.setObjectName("skip")
         btn_skip_cell.clicked.connect(self._pad_skip_cell)
         right.addWidget(btn_skip_cell)
 
-        btn_end_row = QPushButton("← Fin de cette ligne")
+        btn_end_row = QPushButton(tr("cmw_end_row"))
         btn_end_row.setObjectName("skip")
         btn_end_row.clicked.connect(self._pad_end_row)
         right.addWidget(btn_end_row)
 
-        btn_done = QPushButton("✓  Terminer les pads")
+        btn_done = QPushButton(tr("cmw_finish_pads"))
         btn_done.setObjectName("danger")
         btn_done.clicked.connect(self._pad_done)
         right.addWidget(btn_done)
@@ -499,7 +500,7 @@ class MidiMappingWizard(QDialog):
         v.setContentsMargins(40, 32, 40, 32)
         v.setSpacing(14)
 
-        lbl_title = QLabel("Mapping des faders"); lbl_title.setObjectName("title")
+        lbl_title = QLabel(tr("cmw_fader_mapping")); lbl_title.setObjectName("title")
         v.addWidget(lbl_title)
         lbl_sub = QLabel(
             "Bougez chaque fader de bas en haut. Passez par tous les faders\n"
@@ -509,11 +510,11 @@ class MidiMappingWizard(QDialog):
         v.addWidget(lbl_sub)
         v.addSpacing(8)
 
-        self._fader_instr = QLabel("Bougez le fader 1")
+        self._fader_instr = QLabel(tr("cmw_move_fader1"))
         self._fader_instr.setStyleSheet("font-size: 14pt; color: #ddd;")
         v.addWidget(self._fader_instr)
 
-        self._fader_listen = QLabel("● En écoute MIDI...")
+        self._fader_listen = QLabel(tr("cmw_listening"))
         self._fader_listen.setObjectName("listen")
         v.addWidget(self._fader_listen)
 
@@ -545,7 +546,7 @@ class MidiMappingWizard(QDialog):
         v.setContentsMargins(40, 32, 40, 32)
         v.setSpacing(12)
 
-        lbl_title = QLabel("Test des LEDs"); lbl_title.setObjectName("title")
+        lbl_title = QLabel(tr("cmw_led_test")); lbl_title.setObjectName("title")
         v.addWidget(lbl_title)
 
         self._led_phase_label = QLabel("")
@@ -586,13 +587,13 @@ class MidiMappingWizard(QDialog):
         self._bright_slider.valueChanged.connect(self._on_bright_slider)
         bright_v.addWidget(self._bright_slider)
 
-        self._bright_vel_label = QLabel("Velocité : 64  /  127")
+        self._bright_vel_label = QLabel(tr("cmw_velocity"))
         self._bright_vel_label.setAlignment(Qt.AlignCenter)
         self._bright_vel_label.setStyleSheet("color: #00aaff; font-size: 11pt;")
         bright_v.addWidget(self._bright_vel_label)
 
         h_bright1 = QHBoxLayout(); h_bright1.setSpacing(10)
-        btn_bright_ok1 = QPushButton("✓  La luminosité change — Valider")
+        btn_bright_ok1 = QPushButton(tr("cmw_bright_ok"))
         btn_bright_ok1.setFixedHeight(38)
         btn_bright_ok1.setStyleSheet(
             "background:#0a2a0a; border:1px solid #004400; color:#00cc44;"
@@ -683,7 +684,7 @@ class MidiMappingWizard(QDialog):
         lbl_color_intro.setObjectName("sub"); lbl_color_intro.setWordWrap(True)
         color_v.addWidget(lbl_color_intro)
 
-        self._led_vel_label = QLabel("Velocité testée : —")
+        self._led_vel_label = QLabel(tr("cmw_velocity_none"))
         self._led_vel_label.setStyleSheet("font-size: 12pt; color: #00aaff;")
         color_v.addWidget(self._led_vel_label)
 
@@ -713,7 +714,7 @@ class MidiMappingWizard(QDialog):
             self._led_color_btns[name] = btn
         color_v.addLayout(color_grid)
 
-        btn_skip_color = QPushButton("Passer le test de couleur")
+        btn_skip_color = QPushButton(tr("cmw_skip_colour"))
         btn_skip_color.setObjectName("skip")
         btn_skip_color.clicked.connect(self._led_skip)
         color_v.addWidget(btn_skip_color)
@@ -728,7 +729,7 @@ class MidiMappingWizard(QDialog):
         v.setContentsMargins(40, 32, 40, 32)
         v.setSpacing(14)
 
-        lbl_title = QLabel("✅  Test terminé — Envoyez-nous les résultats")
+        lbl_title = QLabel(tr("cmw_test_done"))
         lbl_title.setObjectName("title")
         v.addWidget(lbl_title)
 
@@ -743,7 +744,7 @@ class MidiMappingWizard(QDialog):
         frame_send = QFrame(); frame_send.setObjectName("card")
         fs = QVBoxLayout(frame_send); fs.setContentsMargins(16, 14, 16, 14); fs.setSpacing(10)
 
-        lbl_send_title = QLabel("📩  Envoyez le test à l'équipe MyStrow")
+        lbl_send_title = QLabel(tr("cmw_send_team"))
         lbl_send_title.setStyleSheet("color: #00aaff; font-weight: bold; font-size: 11pt;")
         fs.addWidget(lbl_send_title)
 
@@ -754,7 +755,7 @@ class MidiMappingWizard(QDialog):
         lbl_send_sub.setObjectName("sub"); lbl_send_sub.setWordWrap(True)
         fs.addWidget(lbl_send_sub)
 
-        btn_send = QPushButton("✉️  Envoyer à l'équipe MyStrow  →")
+        btn_send = QPushButton(tr("cmw_send_btn"))
         btn_send.setObjectName("share"); btn_send.setFixedHeight(44)
         btn_send.setStyleSheet(
             "background:#0a2a0a; border:1px solid #005500; color:#00cc44;"
@@ -795,7 +796,7 @@ class MidiMappingWizard(QDialog):
         instr.setStyleSheet("font-size: 14pt; color: #ddd;")
         v.addWidget(instr)
 
-        listen = QLabel("● En écoute MIDI...")
+        listen = QLabel(tr("cmw_listening"))
         listen.setObjectName("listen")
         v.addWidget(listen)
 
@@ -1154,7 +1155,7 @@ class MidiMappingWizard(QDialog):
         self._bright_section.setVisible(True)
         self._bright_specific_section.setVisible(False)
         self._color_section.setVisible(False)
-        self._led_phase_label.setText("Étape 1 / 2  —  Test de luminosité")
+        self._led_phase_label.setText(tr("cmw_step1"))
         self._bright_alt_ch = 0
         self._bright_alt_channel_label.setText("Canal 1")
         self._bright_specific_vel = None
@@ -1176,7 +1177,7 @@ class MidiMappingWizard(QDialog):
         """Phase 1 échoue → affiche la phase 2 (velocités précises)."""
         self._bright_section.setVisible(False)
         self._bright_specific_section.setVisible(True)
-        self._led_phase_label.setText("Étape 1 / 2  —  Test de luminosité (essai 2)")
+        self._led_phase_label.setText(tr("cmw_step1_retry"))
         # Éteindre le pad pour partir d'un état neutre
         self._turn_off_test_pad()
 
@@ -1246,7 +1247,7 @@ class MidiMappingWizard(QDialog):
         self._led_vel_idx = 0
         self._bright_section.setVisible(False)
         self._color_section.setVisible(True)
-        self._led_phase_label.setText("Étape 2 / 2  —  Test des couleurs")
+        self._led_phase_label.setText(tr("cmw_step2"))
         self._send_led_test()
 
     def _send_led_test(self):

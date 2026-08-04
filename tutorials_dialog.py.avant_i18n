@@ -21,7 +21,6 @@ def _ssl_ctx():
 
 from PySide6.QtCore import Qt, QThread, Signal, QByteArray
 from PySide6.QtGui import QPixmap, QCursor
-from i18n import tr
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QGridLayout, QSizePolicy, QFrame,
@@ -169,13 +168,13 @@ class TutorialsDialog(QDialog):
         ttl.setStyleSheet("font-size:17px; font-weight:700; color:#E2CE16;")
         hdr.addWidget(ttl)
         hdr.addStretch()
-        btn = QPushButton(tr("td2_full_playlist"))
+        btn = QPushButton("▶  Playlist complète")
         btn.setStyleSheet(self._BTN)
         btn.clicked.connect(lambda: webbrowser.open(PLAYLIST_LINK))
         hdr.addWidget(btn)
         root.addLayout(hdr)
 
-        sub = QLabel(tr("td2_click_video"))
+        sub = QLabel("Cliquez sur une vidéo pour la regarder sur YouTube")
         sub.setStyleSheet("color:#555; font-size:11px;")
         root.addWidget(sub)
 
@@ -191,7 +190,7 @@ class TutorialsDialog(QDialog):
         scroll.setWidget(self._container)
         root.addWidget(scroll)
 
-        self._status = QLabel(tr("td2_loading"))
+        self._status = QLabel("Chargement de la playlist…")
         self._status.setAlignment(Qt.AlignCenter)
         self._status.setStyleSheet("color:#888; font-size:13px;")
         self._grid.addWidget(self._status, 0, 0, 1, 2)
@@ -212,7 +211,7 @@ class TutorialsDialog(QDialog):
                 item.widget().setParent(None)
 
         if not videos:
-            lbl = QLabel(tr("td2_no_video"))
+            lbl = QLabel("Aucune vidéo trouvée dans la playlist.")
             lbl.setStyleSheet("color:#888;")
             self._grid.addWidget(lbl, 0, 0)
             return

@@ -1206,7 +1206,7 @@ class GearDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr("up2_reco_hw"))
+        self.setWindowTitle("Matériel recommandé")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         # Fenêtre redimensionnable : le contenu est dans une zone scrollable, on
         # se contente donc de ne jamais dépasser l'écran disponible.
@@ -1272,13 +1272,13 @@ class GearDialog(QDialog):
         lay.addSpacing(8)
 
         # ── Titre ─────────────────────────────────────────────────────────────
-        title = QLabel(tr("up2_reco_hw"))
+        title = QLabel("Matériel recommandé")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title.setStyleSheet("color: #E2CE16;")
         title.setAlignment(Qt.AlignCenter)
         lay.addWidget(title)
 
-        sub = QLabel(tr("up2_two_products"))
+        sub = QLabel("2 produits suffisent pour piloter une scène entière avec MyStrow.")
         sub.setFont(QFont("Segoe UI", 9))
         sub.setStyleSheet("color: #555;")
         sub.setAlignment(Qt.AlignCenter)
@@ -1287,7 +1287,7 @@ class GearDialog(QDialog):
         lay.addSpacing(26)
 
         # ── Ligne Contrôleur : AKAI | OU | Novation Launchpad ──────────────────
-        ctrl_lbl = QLabel(tr("up2_for_control"))
+        ctrl_lbl = QLabel("Pour le contrôle — choisir une option :")
         ctrl_lbl.setFont(QFont("Segoe UI", 8))
         ctrl_lbl.setStyleSheet("color: #444;")
         ctrl_lbl.setAlignment(Qt.AlignCenter)
@@ -1334,7 +1334,7 @@ class GearDialog(QDialog):
 
             card_lay.addStretch()
 
-            btn = QPushButton(tr("up2_see_amazon"))
+            btn = QPushButton("Voir sur Amazon ↗")
             btn.setFixedHeight(24)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
@@ -1362,7 +1362,7 @@ class GearDialog(QDialog):
         lay.addSpacing(26)
 
         # ── Ligne DMX : Node ArtNet | OU | Interface USB/DMX ─────────────────
-        dmx_lbl = QLabel(tr("up2_for_dmx_out"))
+        dmx_lbl = QLabel("Pour la sortie DMX — choisir une option :")
         dmx_lbl.setFont(QFont("Segoe UI", 8))
         dmx_lbl.setStyleSheet("color: #444;")
         dmx_lbl.setAlignment(Qt.AlignCenter)
@@ -1403,7 +1403,7 @@ class GearDialog(QDialog):
 
             card_lay.addStretch()
 
-            btn = QPushButton(tr("up2_see_amazon"))
+            btn = QPushButton("Voir sur Amazon ↗")
             btn.setFixedHeight(24)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
@@ -1437,7 +1437,7 @@ class GearDialog(QDialog):
         lay.addWidget(sep)
         lay.addSpacing(8)
 
-        compat_lbl = QLabel(tr("up2_other_models"))
+        compat_lbl = QLabel("Autres modèles compatibles")
         compat_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
         compat_lbl.setStyleSheet("color: #444;")
         compat_lbl.setAlignment(Qt.AlignCenter)
@@ -1484,7 +1484,7 @@ class GearDialog(QDialog):
                 section_col.addWidget(row_w)
 
             if not show_price and items is _GEAR_CONTROLLERS_COMPAT:
-                soon_lbl = QLabel(tr("up2_more_soon"))
+                soon_lbl = QLabel("⏳  D'autres contrôleurs arrivent prochainement")
                 soon_lbl.setFont(QFont("Segoe UI", 7))
                 soon_lbl.setStyleSheet("color: #444; padding-top: 4px;")
                 soon_lbl.setWordWrap(True)
@@ -1512,7 +1512,7 @@ class GearDialog(QDialog):
         lay.addSpacing(4)
 
         # ── Disclaimer affilié ────────────────────────────────────────────────
-        aff = QLabel(tr("up2_affiliate"))
+        aff = QLabel("* Liens affiliés Amazon — si vous achetez via ces liens, nous percevons une petite commission sans aucun surcoût pour vous.")
         aff.setFont(QFont("Segoe UI", 7))
         aff.setStyleSheet("color: #2a2a2a;")
         aff.setAlignment(Qt.AlignCenter)

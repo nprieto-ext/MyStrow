@@ -558,7 +558,7 @@ class LightTimelineEditor(QDialog):
         _asr_lay = QHBoxLayout(self._add_seq_btn_row)
         _asr_lay.setContentsMargins(11, 2, 11, 2)
         _asr_lay.setSpacing(0)
-        self._add_seq_btn = QPushButton(tr("te2_add_sequence"))
+        self._add_seq_btn = QPushButton("＋  Séquence")
         self._add_seq_btn.setFixedHeight(20)
         self._add_seq_btn.setCursor(Qt.PointingHandCursor)
         self._add_seq_btn.setStyleSheet(self._add_track_btn_style("#aa77ff"))
@@ -667,7 +667,7 @@ class LightTimelineEditor(QDialog):
         rm_btn.setFixedSize(16, 16)
         rm_btn.move(118, 2)
         rm_btn.setCursor(Qt.PointingHandCursor)
-        rm_btn.setToolTip(tr("te2_del_track"))
+        rm_btn.setToolTip("Supprimer cette piste")
         rm_btn.setStyleSheet(self._remove_track_btn_style("#cc44ff"))
         rm_btn.clicked.connect(lambda checked=False, t=new_track: self._remove_effect_track(t))
         rm_btn.show()
@@ -711,9 +711,9 @@ class LightTimelineEditor(QDialog):
         force_black = False
         if not self._rig_is_lit():
             box = QMessageBox(self)
-            box.setWindowTitle(tr("te2_rec_sequence"))
+            box.setWindowTitle("REC séquence")
             box.setIcon(QMessageBox.Information)
-            box.setText(tr("te2_nothing_sent"))
+            box.setText("Rien n'est envoyé dans votre plan de feu.")
             box.setInformativeText(
                 "Faites un clic droit sur vos projecteurs pour leur adresser un état,\n"
                 "ou enregistrez un blackout comme étape de séquence.")
@@ -946,7 +946,7 @@ class LightTimelineEditor(QDialog):
         rm_btn.setFixedSize(16, 16)
         rm_btn.move(118, 2)
         rm_btn.setCursor(Qt.PointingHandCursor)
-        rm_btn.setToolTip(tr("te2_del_track"))
+        rm_btn.setToolTip("Supprimer cette piste")
         rm_btn.setStyleSheet(self._remove_track_btn_style("#aa77ff"))
         rm_btn.clicked.connect(lambda checked=False, t=new_track: self._remove_sequence_track(t))
         rm_btn.show()
@@ -1126,7 +1126,7 @@ class LightTimelineEditor(QDialog):
         lay.addWidget(cancel_btn, alignment=Qt.AlignCenter)
 
         # Crédit discret : l'analyse audio s'appuie sur ffmpeg (licence libre).
-        ffmpeg_credit = QLabel(tr("te2_ffmpeg"))
+        ffmpeg_credit = QLabel("Analyse audio propulsée par ffmpeg")
         ffmpeg_credit.setAlignment(Qt.AlignCenter)
         ffmpeg_credit.setStyleSheet("font-size: 9px; color: #444; border: none;")
         lay.addWidget(ffmpeg_credit)
@@ -1429,7 +1429,7 @@ class LightTimelineEditor(QDialog):
         self.paint_btn.setCheckable(True)
         self.paint_btn.setVisible(False)
         self.paint_btn.clicked.connect(self.toggle_paint_mode)
-        self.paint_btn.setToolTip(tr("te2_paint"))
+        self.paint_btn.setToolTip("Peinture — clic pose un bloc.")
 
         # Info-bulle « <nom> bloqué » — visible seulement en mode peinture.
         self._paint_hint = QLabel("")
@@ -1479,7 +1479,7 @@ class LightTimelineEditor(QDialog):
 
         # ── Toggle preview vidéo (désactivé par défaut) ───────────────────────
         self._video_toggle_btn = QPushButton("🎬")
-        self._video_toggle_btn.setToolTip(tr("te2_video_preview"))
+        self._video_toggle_btn.setToolTip("Activer / Désactiver la preview vidéo\n(désactivée par défaut pour préserver les performances)")
         self._video_toggle_btn.setFixedSize(_BTN, _BTN)
         self._video_toggle_btn.setCheckable(True)
         self._video_toggle_btn.setChecked(False)
@@ -1641,7 +1641,7 @@ class LightTimelineEditor(QDialog):
         start_btn.setIconSize(QSize(28, 28))
         start_btn.setFixedSize(52, 52)
         start_btn.setStyleSheet(side_style)
-        start_btn.setToolTip(tr("te2_go_start"))
+        start_btn.setToolTip("Aller au début")
         start_btn.clicked.connect(self._go_to_start)
 
         # Play / Pause
@@ -1659,7 +1659,7 @@ class LightTimelineEditor(QDialog):
         end_btn.setIconSize(QSize(28, 28))
         end_btn.setFixedSize(52, 52)
         end_btn.setStyleSheet(side_style)
-        end_btn.setToolTip(tr("te2_go_end"))
+        end_btn.setToolTip("Aller à la fin")
         end_btn.clicked.connect(self._go_to_end)
 
         # Transport centré
@@ -3031,7 +3031,7 @@ class LightTimelineEditor(QDialog):
             return
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("te2_dup_track"))
+        dlg.setWindowTitle("Dupliquer une piste")
         dlg.setStyleSheet(
             "QDialog{background:#1a1a1a;} QLabel{color:#ddd;font-size:13px;} "
             "QComboBox{background:#2a2a2a;color:#fff;border:1px solid #444;border-radius:5px;padding:6px 10px;} "
@@ -3040,9 +3040,9 @@ class LightTimelineEditor(QDialog):
             "QPushButton:hover{border-color:#00d4ff;}")
         v = QVBoxLayout(dlg)
         v.setContentsMargins(22, 20, 22, 18); v.setSpacing(10)
-        v.addWidget(QLabel(tr("te2_copy_from")))
+        v.addWidget(QLabel("Copier tout le contenu de la piste :"))
         src_cb = ComboSansMolette(); src_cb.addItems(names); v.addWidget(src_cb)
-        v.addWidget(QLabel(tr("te2_copy_to")))
+        v.addWidget(QLabel("… vers la piste :"))
         dst_cb = ComboSansMolette(); dst_cb.addItems(names)
         dst_cb.setCurrentIndex(1)
         v.addWidget(dst_cb)

@@ -200,16 +200,46 @@ class _PyAudioLoopbackStream:
         self._running = False
 
     def close(self):
+        """Extinction du flux — l'ORDRE est critique, il a fait crasher MyStrow.
+
+        Avant, on fermait le stream d'abord, exprès, « pour débloquer le reader »
+        coincé dans `stream.read()`. C'est précisément le geste interdit :
+        `Pa_CloseStream` libère les tampons pendant que le thread de lecture
+        écrit dedans. Deux crashs natifs relevés chez un utilisateur en sortant
+        du mode LIVE — `access violation`, puis `0xc0000374` (corruption du tas),
+        les deux avec `pyaudiowpatch.read`/`close` en haut de pile.
+
+        Ordre correct : arrêter le flux (ce qui débloque la lecture SANS libérer
+        les tampons), attendre la fin du thread, et seulement ensuite fermer.
+        """
         self._running = False
-        # Le reader peut bloquer sur stream.read() → on ferme le stream pour le débloquer
+
+        # 1. stop_stream() — débloque le read() en cours sans rien libérer.
+        try:
+            self._stream.stop_stream()
+        except Exception:
+            pass
+
+        # 2. Attendre que le thread de lecture soit VRAIMENT sorti de read().
+        lecteur_sorti = True
+        if self._reader_thread and self._reader_thread.is_alive():
+            self._reader_thread.join(timeout=2.0)
+            lecteur_sorti = not self._reader_thread.is_alive()
+        if self._watchdog_thread and self._watchdog_thread.is_alive():
+            self._watchdog_thread.join(timeout=0.5)
+
+        # 3. Fermer seulement si plus personne ne lit. Si le thread est encore
+        #    dans read() (WASAPI muet peut y rester longtemps), on préfère fuir
+        #    un flux — récupéré à la fermeture du process — plutôt que de libérer
+        #    sous ses pieds la mémoire qu'il écrit : ça tuait l'application.
+        if not lecteur_sorti:
+            print("[live] flux audio laissé ouvert : thread de lecture encore bloqué")
+            return
+
         try:
             self._stream.close()
         except Exception:
             pass
-        if self._reader_thread and self._reader_thread.is_alive():
-            self._reader_thread.join(timeout=2.0)
-        if self._watchdog_thread and self._watchdog_thread.is_alive():
-            self._watchdog_thread.join(timeout=0.5)
         try:
             self._pa.terminate()
         except Exception:

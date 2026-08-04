@@ -1529,9 +1529,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # ---------------------------------------- cue_list.py (textes migres)
     "cl2_duration": {"en": "Duration", "fr": "Durée", "es": "Duración"},
     "cl2_open_cues": {"en": "Open a memory pad menu\nthen click  📋 Cues", "fr": "Ouvre le menu d'un pad mémoire\npuis clique sur  📋 Cues", "es": "Abra el menú de un pad de memoria\ny haga clic en  📋 Cues"},
-
-    # ---------------------------------------- ui_components.py (textes migres)
-    "ui2_trigger": {"en": "  TRIGGER", "fr": "  DÉCLENCHEMENT", "es": "  DISPARO"},
 }
 
 

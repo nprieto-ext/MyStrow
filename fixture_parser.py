@@ -16,6 +16,7 @@ import gzip
 import io
 import json
 import os
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
@@ -148,6 +149,103 @@ _MA3_ATTR_MAP = {
     "FIXTURERESET":       "Reset",
     "LAMPRESET":          "Reset",
 }
+
+# ---------------------------------------------------------------------------
+# Résolution des LED de couleur (« emitters ») MA2/MA3
+#
+# ⚠️ COLORRGB<n> n'est PAS un code couleur : c'est le n-ième emitter de la
+# fixture. Les bibliothèques MA numérotent librement — la Contest irLED64 SIX
+# déclare son BLANC en COLORRGB5 et son AMBRE en COLORRGB4, l'inverse de
+# _MA3_ATTR_MAP. La vraie couleur est portée par l'attribut color="ffffff" du
+# ChannelType et/ou par subattribute_user_name="White". On s'en sert d'abord,
+# et on ne retombe sur la numérotation que sans aucun indice.
+# ---------------------------------------------------------------------------
+_EMITTER_NAMES = {
+    "r": "R", "red": "R", "rouge": "R",
+    "g": "G", "green": "G", "vert": "G", "lime": "G",
+    "b": "B", "blue": "B", "bleu": "B",
+    "w": "W", "white": "W", "blanc": "W", "wht": "W",
+    "ww": "W", "warm white": "W", "warmwhite": "W",
+    "cw": "W", "cold white": "W", "cool white": "W", "neutral white": "W",
+    "amber": "Ambre", "ambre": "Ambre",
+    "uv": "UV", "ultraviolet": "UV",
+    "orange": "Orange",
+}
+# NB : ni « yellow » ni « cyan »/« magenta » ici — sur un spot ce sont les
+# drapeaux CMY (soustractifs, 0 = ouvert), pas des LED. Les traiter comme des
+# emitters mettait le jaune d'une CMY sur le canal Orange de MyStrow.
+
+# Couleurs de référence des emitters -> canal MyStrow (plus proche en RGB)
+_EMITTER_HEX = [
+    ((255,   0,   0), "R"),      # rouge
+    ((255,   0, 255), "R"),      # magenta
+    ((  0, 255,   0), "G"),      # vert
+    ((  0, 255, 255), "G"),      # cyan
+    ((204, 255,   0), "G"),      # lime
+    ((  0,   0, 255), "B"),      # bleu
+    ((255, 255, 255), "W"),      # blanc
+    ((255, 204, 136), "W"),      # blanc chaud
+    ((255, 191,   0), "Ambre"),
+    ((255, 136,   0), "Orange"),
+    ((255, 221,   0), "Orange"),  # jaune
+    ((147,   0, 255), "UV"),
+    ((102,   0, 204), "UV"),
+    (( 51,   0, 255), "UV"),      # violet profond : la Contest SIX code son UV ainsi
+    (( 75,   0, 130), "UV"),      # indigo
+]
+
+
+def _emitter_from_hex(raw: str):
+    """'ffffff' / '#ffbf00' -> 'W' / 'Ambre'. None si illisible."""
+    txt = (raw or "").strip().lstrip("#")
+    if len(txt) != 6:
+        return None
+    try:
+        r, g, b = (int(txt[i:i+2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+    best, best_d = None, None
+    for (cr, cg, cb), ch_type in _EMITTER_HEX:
+        d = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+        if best_d is None or d < best_d:
+            best, best_d = ch_type, d
+    return best
+
+
+def _emitter_from_name(raw: str):
+    """'White' / 'W1' / 'Warm White' -> 'W'. None si non reconnu."""
+    txt = re.sub(r"[\s_\-]+", " ", (raw or "").strip().lower())
+    txt = re.sub(r"\s*\d+$", "", txt)          # « W1 », « White 2 » -> « w », « white »
+    return _EMITTER_NAMES.get(txt)
+
+
+def _resolve_emitter(ct) -> str | None:
+    """Type de canal d'un emitter depuis sa couleur déclarée, sinon son nom."""
+    mapped = _emitter_from_hex(ct.get("color") or ct.get("Color") or "")
+    if mapped:
+        return mapped
+    for src in (ct, *ct.findall("ChannelFunction")):
+        for key in ("subattribute_user_name", "attribute_user_name", "name"):
+            mapped = _emitter_from_name(src.get(key) or "")
+            if mapped:
+                return mapped
+    return None
+
+
+def _is_emitter_attr(attr: str, ct) -> bool:
+    """Le canal pilote-t-il une LED de couleur (mélange additif) ?"""
+    if attr.startswith(("COLORRGB", "COLORADD")):
+        return True
+    if attr in ("COLORAMBER", "COLORUV", "COLORWHITE", "COLORLIME"):
+        return True
+    # Bibliothèques « maison » : attribute libre (R1, G1, W1...) mais preset COLOR
+    if attr not in _MA3_ATTR_MAP:
+        preset  = (ct.get("preset") or "").upper()
+        feature = (ct.get("feature") or "").upper()
+        if preset == "COLOR" or feature.startswith("COLOR"):
+            return True
+    return False
+
 
 # Fine channels associés à leur canal coarse
 _FINE_MAP = {
@@ -415,11 +513,16 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         except ValueError:
             ch_index = 0
 
-        # Résolution du type de canal
-        mapped = _MA3_ATTR_MAP.get(attr)
+        # Résolution du type de canal — la couleur déclarée prime sur le
+        # numéro d'emitter (cf. _resolve_emitter)
+        mapped = _resolve_emitter(ct) if _is_emitter_attr(attr, ct) else None
         if mapped is None:
+            mapped = _MA3_ATTR_MAP.get(attr)
+        if mapped is None:
+            # Repli par préfixe, sans avaler un numéro d'emitter voisin :
+            # COLORRGB15 ne doit PAS être reconnu comme COLORRGB1 (rouge).
             for key, val in _MA3_ATTR_MAP.items():
-                if attr.startswith(key):
+                if attr.startswith(key) and not attr[len(key):len(key)+1].isdigit():
                     mapped = val
                     break
         ch_type = mapped if mapped else "Mode"
@@ -738,7 +841,11 @@ def parse_qlcplus_xml(data: bytes) -> dict:
         colour = (colour_el.text.strip() if colour_el is not None and colour_el.text else "")
 
         if group == "Intensity":
-            ch_type = _QLC_COLOUR_MAP.get(colour, "Dim")
+            # <Colour> absent sur les définitions anciennes/faites main : sans
+            # repli sur le nom, un canal « White » devenait un second Dimmer.
+            ch_type = (_QLC_COLOUR_MAP.get(colour)
+                       or _emitter_from_name(ch_name)
+                       or "Dim")
         elif group in _QLC_GROUP_MAP:
             ch_type = _QLC_GROUP_MAP[group]
             # Pan Fine / Tilt Fine via attribut Byte="1"

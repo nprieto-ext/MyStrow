@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QColor, QFont, QCursor
-from i18n import tr
 
 # ── Profil générique de départ (si aucun profil OFL disponible) ───────────────
 _GENERIC_SLOTS = [
@@ -108,7 +107,7 @@ class _SlotRow(QWidget):
         self._color_btn.setFixedSize(30, 30)
         self._color_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._apply_color_style()
-        self._color_btn.setToolTip(tr("cwe2_click_colour"))
+        self._color_btn.setToolTip("Cliquer pour changer la couleur")
         self._color_btn.clicked.connect(self._pick_color)
         row.addWidget(self._color_btn)
 
@@ -334,7 +333,7 @@ class ColorWheelEditorDialog(QDialog):
 
         # ── Bouton ajouter ────────────────────────────────────────────────
         add_row = QHBoxLayout()
-        btn_add = QPushButton(tr("cwe2_add_colour"))
+        btn_add = QPushButton("+ Ajouter une couleur")
         btn_add.setFixedHeight(30)
         btn_add.setStyleSheet(_BTN_ADD)
         btn_add.setCursor(QCursor(Qt.PointingHandCursor))
@@ -639,7 +638,7 @@ class GoboWheelEditorDialog(QDialog):
 
         # ── Bouton ajouter ────────────────────────────────────────────────
         add_row = QHBoxLayout()
-        btn_add = QPushButton(tr("cwe2_add_gobo"))
+        btn_add = QPushButton("+ Ajouter un gobo")
         btn_add.setFixedHeight(30)
         btn_add.setStyleSheet(_BTN_ADD)
         btn_add.setCursor(QCursor(Qt.PointingHandCursor))
@@ -968,7 +967,7 @@ class ColorWheelCalibWizard(QDialog):
         root.addWidget(sep)
 
         # ── Bouton shutter inversé ────────────────────────────────────────────
-        self._btn_shutter_inv = QPushButton(tr("cwe2_no_light"))
+        self._btn_shutter_inv = QPushButton("💡  Ma lyre ne s'allume pas")
         self._btn_shutter_inv.setStyleSheet(
             "QPushButton { background: transparent; color: #888; border: none;"
             " font-size: 11px; text-decoration: underline; padding: 2px 0; }"
@@ -988,12 +987,12 @@ class ColorWheelCalibWizard(QDialog):
         btn_cancel.setCursor(QCursor(Qt.PointingHandCursor))
         btn_cancel.clicked.connect(self._on_cancel)
 
-        self._btn_prev = QPushButton(tr("cwe2_prev"))
+        self._btn_prev = QPushButton("◀  Précédent")
         self._btn_prev.setStyleSheet(_BTN_PREV)
         self._btn_prev.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_prev.clicked.connect(self._go_prev)
 
-        self._btn_next = QPushButton(tr("cwe2_start"))
+        self._btn_next = QPushButton("Démarrer  ▶")
         self._btn_next.setStyleSheet(_BTN_NEXT)
         self._btn_next.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_next.clicked.connect(self._go_next)
@@ -1040,7 +1039,7 @@ class ColorWheelCalibWizard(QDialog):
             )
             self._slider_w.setVisible(False)
             self._btn_prev.setVisible(False)
-            self._btn_next.setText(tr("cwe2_start"))
+            self._btn_next.setText("Démarrer  ▶")
 
         else:
             name, color, label = _CALIB_STEPS[step]

@@ -35,7 +35,13 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.78"
+VERSION = "3.1.79"
+
+# Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
+# Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
+# après un passage dans le testeur DMX, et le parc restait à 25 fps pour tout
+# le reste de la session — « le DMX rame, un redémarrage corrige ».
+DMX_FRAME_MS = 25
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -287,11 +293,22 @@ def spread_rank(i, n, mode="lineaire"):
 def position_preset_values(preset, lyres):
     """{id(lyre): (pan, tilt)} d'un preset de position, apparié aux lyres présentes.
 
-    Règle d'appariement, dans l'ordre : adresse DMX (unique par fixture, donc
-    insensible aux renommages), puis nom — distribué séquentiellement, sinon
-    deux lyres homonymes recevraient toutes les deux le premier état —, puis
-    rang dans la liste. Une lyre sans correspondance est absente du résultat :
-    à l'appelant de lui laisser la position qu'elle a déjà.
+    Appariement en trois passes — adresse DMX (clé la plus sûre : unique par
+    fixture et insensible aux renommages), puis nom, puis rang dans la liste.
+    Trois passes et non un test à trois branches par lyre : sinon une lyre
+    appariée par nom pouvait manger l'entrée qu'une lyre suivante réclamait par
+    son adresse.
+
+    Une entrée déjà attribuée est **consommée** : deux lyres ne peuvent pas
+    hériter du même état. Sans ça, deux lyres homonymes dont la seconde a été
+    repatchée recevaient toutes les deux la position de la première (elle
+    n'avait pas consommé son entrée en s'appariant par adresse), et deux lyres
+    à la même adresse tombaient toutes les deux sur la dernière entrée.
+
+    Une lyre sans correspondance est absente du résultat : à l'appelant de lui
+    laisser la position qu'elle a déjà — et de prévenir l'utilisateur, car un
+    preset enregistré quand le rig comptait moins de lyres laisse sinon les
+    nouvelles immobiles, sans le moindre message.
 
     Source unique pour le rappel manuel d'une position ET pour le centre d'un
     effet Pan/Tilt : un cercle doit tourner autour du point où le rappel aurait
@@ -299,30 +316,57 @@ def position_preset_values(preset, lyres):
     """
     out = {}
     etats = (preset or {}).get("projectors", []) or []
-    par_addr = {str(s["start_address"]): s for s in etats if s.get("start_address")}
-    par_nom = {}
-    for s in etats:
+
+    par_addr, par_nom = {}, {}
+    for j, s in enumerate(etats):
+        addr = str(s.get("start_address") or "")
+        if addr:
+            par_addr.setdefault(addr, []).append(j)
         nom = s.get("name")
         if nom:
-            par_nom.setdefault(nom, []).append(s)
-    curseur = {}
+            par_nom.setdefault(nom, []).append(j)
+
+    pris = set()          # index des entrées déjà attribuées
+    apparie = {}          # index de lyre -> index d'entrée
+
+    def _libre(indices):
+        for j in indices:
+            if j not in pris:
+                return j
+        return None
+
+    # Passe 1 : adresse DMX
+    for i, p in enumerate(lyres):
+        addr = str(getattr(p, 'start_address', '') or '')
+        j = _libre(par_addr.get(addr, [])) if addr else None
+        if j is not None:
+            apparie[i] = j
+            pris.add(j)
+
+    # Passe 2 : nom
+    for i, p in enumerate(lyres):
+        if i in apparie:
+            continue
+        nom = getattr(p, 'name', '')
+        j = _libre(par_nom.get(nom, [])) if nom else None
+        if j is not None:
+            apparie[i] = j
+            pris.add(j)
+
+    # Passe 3 : rang dans la liste
+    for i, p in enumerate(lyres):
+        if i in apparie or i >= len(etats) or i in pris:
+            continue
+        apparie[i] = i
+        pris.add(i)
 
     for i, p in enumerate(lyres):
-        etat = None
-        addr = str(getattr(p, 'start_address', '') or '')
-        if addr:
-            etat = par_addr.get(addr)
-        if etat is None and getattr(p, 'name', ''):
-            entrees = par_nom.get(p.name, [])
-            k = curseur.get(p.name, 0)
-            if k < len(entrees):
-                etat = entrees[k]
-                curseur[p.name] = k + 1
-        if etat is None and i < len(etats):
-            etat = etats[i]
-        if etat is not None:
-            out[id(p)] = (int(etat.get("pan", 32768)),
-                          int(etat.get("tilt", 32768)))
+        j = apparie.get(i)
+        if j is None:
+            continue
+        etat = etats[j]
+        out[id(p)] = (int(etat.get("pan", 32768)),
+                      int(etat.get("tilt", 32768)))
     return out
 
 
@@ -462,6 +506,165 @@ CH_SHORT = {
 def channel_label(ch):
     """Libellé d'affichage d'un type de canal."""
     return CH_SHORT.get(ch, ch)
+
+
+# ─── Téléchargement officiel ──────────────────────────────────────────────────
+
+SITE_URL = "https://mystrow.fr/"
+
+# Point d'entrée officiel du téléchargement : la Cloud Function du site, qui
+# redirige vers l'asset GitHub de la dernière version ET enregistre la
+# statistique de téléchargement. On ne code donc PAS l'URL GitHub en dur — le
+# dialogue d'erreur d'intégrité pointait ainsi sur « MyStrow_Installer.dmg »,
+# un nom d'asset qui n'existe plus : bouton en 404 pour tous les utilisateurs
+# Mac, précisément au moment où l'application refuse de démarrer.
+_DOWNLOAD_REDIRECT = ("https://us-central1-mystrow-907be.cloudfunctions.net"
+                      "/download_redirect?p=")
+
+
+def download_url() -> str:
+    """URL de téléchargement de l'installeur pour la plateforme courante."""
+    if sys.platform == "darwin":
+        import platform as _pf
+        return _DOWNLOAD_REDIRECT + ("mac" if _pf.machine() == "arm64" else "mac_intel")
+    return _DOWNLOAD_REDIRECT + "win"
+
+
+def fit_button(btn, marge: int = 30):
+    """Donne à un bouton une largeur minimale suffisante pour SON texte.
+
+    Les libellés sont traduits (fr/en/es) et souvent préfixés d'un emoji : une
+    largeur figée finit toujours par tronquer dans une langue ou une autre, ou
+    dès qu'on ajoute un bouton dans la rangée. Mesuré : « 📁 Joindre les logs »
+    réclame 242 px et n'en recevait que 120 dans la fenêtre « Soumettre une
+    idée » (3 boutons dans 420 px fixes).
+
+    `marge` couvre le rembourrage de la feuille de style et la bordure.
+    """
+    texte = btn.text()
+    if texte:
+        btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(texte) + marge)
+    return btn
+
+
+# ─── Listes déroulantes insensibles à la molette ──────────────────────────────
+
+class ComboSansMolette(QComboBox):
+    """QComboBox qui IGNORE la molette.
+
+    Presque toutes nos listes vivent dans une fenêtre défilante. Avec un
+    QComboBox standard, faire défiler la page en passant au-dessus d'une liste
+    en change la valeur au lieu de scroller — et la liste avale en plus le
+    défilement, donc la page ne bouge pas : l'utilisateur insiste, et modifie un
+    réglage à chaque cran, sans le moindre retour visuel. Sur l'aiguillage des
+    sorties DMX ça réaffecte un univers, sur le patch ça change le profil d'une
+    fixture, en pleine prestation.
+
+    `ignore()` laisse l'événement remonter à la zone défilante : la page scrolle
+    normalement. La valeur reste réglable au clic et au clavier.
+
+    À utiliser pour TOUTE nouvelle liste déroulante — le seul cas où un
+    QComboBox nu se justifie est une liste hors de toute zone défilante, et ça
+    ne coûte rien de prendre celle-ci quand même.
+    """
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+# ─── Blocs « canal dédié » (UV / Ambre) ───────────────────────────────────────
+# Deux couleurs de la palette REC Lumière ne désignent pas une teinte à
+# reconstituer en RVB mais une LED DÉDIÉE de la fixture : « Black Light » = la
+# LED UV, « Ambre » = la LED ambre. Poser ces blocs doit piloter CE canal seul,
+# à 100 %, et laisser le RVB à zéro — un violet RVB n'excite aucun pigment
+# fluorescent, et l'ambre reconstitué en RVB donne un jaune sale à côté de la
+# vraie LED. Même logique que les curseurs du plan de feu : ces canaux ne sont
+# jamais dérivés du RVB (cf. artnet_dmx, Ambre/Orange pilotés au boost seul).
+SPECIAL_BLOCK_COLORS = {
+    (100,   0, 255): ("UV",    "uv"),            # « Black Light »
+    (255, 180,  30): ("Ambre", "amber_boost"),   # « Ambre »
+}
+
+# Teinte d'AFFICHAGE des canaux dédiés (plan de feu). Uniquement du rendu :
+# proj.color doit rester la vraie valeur RVB envoyée en DMX, sinon la LED
+# rouge/bleue s'allumerait en même temps que la LED dédiée.
+SPECIAL_TINTS = {
+    "uv":           (136,  68, 255),
+    "amber_boost":  (255, 153,   0),
+}
+
+
+def special_block_channel(color):
+    """(canal_du_profil, attribut_projecteur) si `color` est un bloc dédié.
+
+    Reconnaissance par valeur RVB EXACTE. C'est ce qui fait marcher les shows
+    déjà enregistrés : un bloc couleur n'est sérialisé que par sa couleur, il
+    n'y a donc aucun drapeau à migrer dans les .tui/.lrec existants. Une teinte
+    voisine choisie à la main (violet, orange…) reste du RVB normal.
+    """
+    if color is None:
+        return None
+    try:
+        key = (color.red(), color.green(), color.blue())
+    except AttributeError:
+        return None
+    return SPECIAL_BLOCK_COLORS.get(key)
+
+
+def apply_special_block(proj, color, intensity):
+    """Applique un bloc « canal dédié » (UV / Ambre) sur `proj`.
+
+    Retourne True si le bloc a été traité comme canal dédié — l'appelant ne doit
+    alors PAS poser la couleur RVB. Retourne False si la fixture n'a pas ce
+    canal : on retombe sur le rendu RVB d'origine (approximation), sinon poser
+    un bloc UV sur un PAR RVB l'éteindrait purement et simplement.
+
+    Le niveau du bloc est conservé : sur une fixture à canal Dim, la LED dédiée
+    passe DERRIÈRE le master (Dim = proj.level dans le moteur DMX) — la mettre à
+    255 avec un dimmer fermé ne donnerait rien.
+    """
+    spec = special_block_channel(color)
+    if not spec:
+        return False
+    ch_name, attr = spec
+    if ch_name not in (getattr(proj, 'dmx_profile', None) or []):
+        return False
+    lvl = max(0, min(100, int(intensity)))
+    setattr(proj, attr, int(255 * lvl / 100.0))
+    proj.level      = lvl
+    proj.base_color = QColor(0, 0, 0)
+    proj.color      = QColor(0, 0, 0)
+    return True
+
+
+def clear_special_blocks(proj):
+    """Éteint les canaux dédiés qu'un bloc peut allumer (UV, Ambre).
+
+    À appeler quand on pose une couleur NORMALE par un chemin exclusif (boutons
+    couleur de la fenêtre EXT, raccourcis clavier) : ces boutons se remplacent
+    l'un l'autre, et sans ça « BLACK LIGHT puis ROUGE » sortait rouge **avec**
+    l'UV encore allumé. Ne touche pas aux boosts Blanc/Orange, qui ne sont
+    réglables qu'aux curseurs et restent additifs.
+    """
+    for _ch, attr in SPECIAL_BLOCK_COLORS.values():
+        setattr(proj, attr, 0)
+
+
+def special_tint_color(proj):
+    """Couleur d'affichage d'une fixture allumée uniquement sur un canal dédié.
+
+    Sans ça, un bloc UV affiche la fixture ÉTEINTE dans le plan de feu (son RVB
+    est à zéro) alors qu'elle éclaire pour de vrai.
+    """
+    r = g = b = 0.0
+    for attr, (tr, tg, tb) in SPECIAL_TINTS.items():
+        f = max(0, min(255, int(getattr(proj, attr, 0) or 0))) / 255.0
+        if f <= 0:
+            continue
+        r += tr * f
+        g += tg * f
+        b += tb * f
+    return QColor(min(255, int(r)), min(255, int(g)), min(255, int(b)))
 
 
 # === BANDEAU « CONSULTER LE GUIDE » ===

@@ -1158,7 +1158,7 @@ class _LibraryMemItem(_LibraryItem):
             msg += (f"\n\n⚠ {n_refs} bloc(s) de séquence l'utilisent — "
                     "ils seront supprimés aussi.")
         box = QMessageBox(self)
-        box.setWindowTitle(tr("lt2_delete_rec"))
+        box.setWindowTitle("Supprimer le REC")
         box.setIcon(QMessageBox.Warning)
         box.setText(msg)
         box.setStyleSheet(
@@ -1484,7 +1484,7 @@ class LibraryPanel(QWidget):
         # Titre + compteur sélection
         hdr_row = QWidget(); hdr_row.setStyleSheet("background: #0a0a0a;")
         hdr_h = QHBoxLayout(hdr_row); hdr_h.setContentsMargins(0, 0, 0, 0)
-        title = QLabel(tr("lt2_library"))
+        title = QLabel("  BIBLIOTHÈQUE")
         title.setFixedHeight(24)
         title.setStyleSheet(
             "color: #383838; font-size: 8px; font-weight: bold; letter-spacing: 2px; "
@@ -1714,7 +1714,7 @@ class LibraryPanel(QWidget):
                 item = _LibraryEffectItem(eff, panel=self)
                 self._sec_custom_eff.add_item(item)
         else:
-            empty = QLabel(tr("lt2_no_custom_fx"))
+            empty = QLabel("  Aucun effet personnalisé")
             empty.setStyleSheet(
                 "color: #2a2a2a; font-size: 10px; font-style: italic; "
                 "background: transparent; padding: 5px 10px;"
@@ -1743,7 +1743,7 @@ class LibraryPanel(QWidget):
                     count += 1
 
         if count == 0:
-            empty = QLabel(tr("lt2_no_memory"))
+            empty = QLabel("  Aucune mémoire")
             empty.setStyleSheet(
                 "color: #2a2a2a; font-size: 10px; font-style: italic; "
                 "background: transparent; padding: 5px 10px;"
@@ -1830,7 +1830,7 @@ class LibraryPanel(QWidget):
         for dmx, nom, coul in self._available_gobos(mw):
             self._sec_gobo.add_item(_LibraryGoboItem(dmx, nom, coul, panel=self))
         if not self._sec_gobo._bv.count():
-            empty_gobo = QLabel(tr("lt2_no_gobo_wheel"))
+            empty_gobo = QLabel("aucune fixture avec roue de gobos")
             empty_gobo.setStyleSheet(
                 "color: #2a2a2a; font-size: 10px; font-style: italic; "
                 "background: transparent; padding: 5px 10px;"
@@ -3665,7 +3665,7 @@ print(json.dumps(waveform))
         sl = QHBoxLayout(search_w)
         sl.setContentsMargins(6, 4, 6, 4)
         search_input = QLineEdit()
-        search_input.setPlaceholderText(tr("lt2_search_memory"))
+        search_input.setPlaceholderText("Rechercher une mémoire…")
         search_input.setClearButtonEnabled(True)
         search_input.setStyleSheet("""
             QLineEdit {
@@ -3829,7 +3829,7 @@ print(json.dumps(waveform))
         depart = getattr(clip, 'gobo_rotation', 0) or 0
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("lt2_gobo_rotation"))
+        dlg.setWindowTitle("Rotation du gobo")
         dlg.setStyleSheet("QDialog { background:#141414; } QLabel { color:#ddd; }")
         lay = QVBoxLayout(dlg)
 
@@ -4532,7 +4532,7 @@ print(json.dumps(waveform))
             _max = min(_max, int(_prev.duration))
         _max = max(50, min(_max, 5000))
         dialog = QDialog(self)
-        dialog.setWindowTitle(tr("lt2_crossfade"))
+        dialog.setWindowTitle("Fondu enchaîné")
         dialog.setFixedSize(360, 190)
         dialog.setStyleSheet("""
             QDialog { background:#1a1a1a; } QLabel { color:white; }
@@ -4723,7 +4723,7 @@ print(json.dumps(waveform))
         cur = list(getattr(clip, 'effect_target_groups', []))
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("lt2_target_groups"))
+        dlg.setWindowTitle("Groupes ciblés")
         dlg.setFixedSize(380, 220)
         dlg.setStyleSheet("""
             QDialog { background:#1a1a1a; }
@@ -4739,7 +4739,7 @@ print(json.dumps(waveform))
         vl.setContentsMargins(20, 14, 20, 14)
         vl.setSpacing(10)
 
-        lbl = QLabel(tr("lt2_groups_hint"))
+        lbl = QLabel("Sélectionne les groupes (vide = Tous)")
         lbl.setStyleSheet("color:#888; font-size:11px;")
         vl.addWidget(lbl)
 

@@ -20,6 +20,8 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent, QRectF
 from PySide6.QtGui import QColor, QBrush, QPainter, QPen
+from core import ComboSansMolette
+from i18n import tr
 
 TRUSS_Y   = 7.0
 _HTML     = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'plan_3d_web.html'
@@ -192,7 +194,7 @@ class _TrussRow(QFrame):
 
         self._name = QLineEdit(truss.get('label', 'Truss'))
         self._name.setFixedWidth(130)
-        self._name.setToolTip("Nom du truss")
+        self._name.setToolTip(tr("p3w_truss_name"))
         top.addWidget(self._name)
         top.addStretch()
         root.addLayout(top)
@@ -259,7 +261,7 @@ class TrussEditorDialog(QDialog):
 
     def __init__(self, trusses: list, parent=None):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Éditeur de Trusses")
+        self.setWindowTitle(tr("p3w_truss_editor"))
         self.resize(340, 560)
         self.setStyleSheet(_STYLE_DLG)
         self._trusses = [t.copy() for t in trusses]
@@ -277,7 +279,7 @@ class TrussEditorDialog(QDialog):
         title.setStyleSheet("color:#00d4ff; font-size:13px; font-weight:bold;")
         root.addWidget(title)
 
-        sub = QLabel("Les modifications sont appliquées en temps réel.")
+        sub = QLabel(tr("p3w_live_changes"))
         sub.setStyleSheet("color:#333355; font-size:9px;")
         sub.setWordWrap(True)
         root.addWidget(sub)
@@ -302,12 +304,12 @@ class TrussEditorDialog(QDialog):
 
         btns = QHBoxLayout()
         btns.setSpacing(6)
-        btn_add = QPushButton("+ Ajouter un truss")
+        btn_add = QPushButton(tr("p3w_add_truss"))
         btn_add.setStyleSheet(self._BTN)
         btn_add.clicked.connect(self._add_truss)
         btns.addWidget(btn_add)
 
-        btn_del = QPushButton("− Supprimer le dernier")
+        btn_del = QPushButton(tr("p3w_del_truss"))
         btn_del.setStyleSheet(self._BTN)
         btn_del.clicked.connect(self._remove_last)
         btns.addWidget(btn_del)
@@ -421,7 +423,7 @@ class ProjectorTableDialog(QDialog):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
-        hdr = QLabel("Positionnement des projecteurs")
+        hdr = QLabel(tr("p3w_fixture_pos"))
         hdr.setStyleSheet("color:#00d4ff;font-size:13px;font-weight:bold;")
         root.addWidget(hdr)
 
@@ -907,7 +909,7 @@ class Plan3DWebWindow(QMainWindow):
         btn_pin.setIconSize(QSize(17, 17))
         btn_pin.setCheckable(True)
         btn_pin.setChecked(False)
-        btn_pin.setToolTip("Garder la fenêtre au premier plan")
+        btn_pin.setToolTip(tr("p3w_always_top"))
         btn_pin.setFixedSize(28, 28)
         btn_pin.setStyleSheet(_PDF_BTN)
         btn_pin.clicked.connect(lambda checked: self._set_always_on_top(checked))
@@ -921,7 +923,7 @@ class Plan3DWebWindow(QMainWindow):
         self._btn_toggle_panel.setIconSize(QSize(18, 18))
         self._btn_toggle_panel.setCheckable(True)
         self._btn_toggle_panel.setChecked(False)
-        self._btn_toggle_panel.setToolTip("Masquer / afficher le panneau de droite")
+        self._btn_toggle_panel.setToolTip(tr("p3w_toggle_panel"))
         self._btn_toggle_panel.setFixedSize(28, 28)
         self._btn_toggle_panel.setStyleSheet(_PDF_BTN)
         self._btn_toggle_panel.clicked.connect(self._toggle_right_panel)
@@ -1087,7 +1089,7 @@ class Plan3DWebWindow(QMainWindow):
         sl_amb.setRange(0, 4000)
         sl_amb.setValue(getattr(self, '_ambience', 160))
         sl_amb.setPageStep(200)
-        sl_amb.setToolTip("Lumière ambiante — glissez à droite pour éclairer davantage la salle")
+        sl_amb.setToolTip(tr("p3w_ambient"))
         sl_amb.setStyleSheet(
             "QSlider::groove:horizontal{height:4px;background:#151515;border-radius:2px;}"
             "QSlider::sub-page:horizontal{background:#3344aa;border-radius:2px;}"
@@ -1119,18 +1121,18 @@ class Plan3DWebWindow(QMainWindow):
 
         btn_snap = QPushButton("📷 Exporter l'image…")
         btn_snap.setStyleSheet(self._PANEL_BTN)
-        btn_snap.setToolTip("Enregistrer le rendu courant en PNG")
+        btn_snap.setToolTip(tr("p3w_save_png"))
         btn_snap.clicked.connect(self._export_image)
         lay.addWidget(btn_snap)
 
         lay.addSpacing(12)
 
         # ── Qualité de rendu ──────────────────────────────────────────────
-        lbl_q = QLabel("Qualité de rendu")
+        lbl_q = QLabel(tr("p3w_quality"))
         lbl_q.setStyleSheet("color:#4444aa;font-size:9px;letter-spacing:0.5px;")
         lay.addWidget(lbl_q)
 
-        self._cb_quality = QComboBox()
+        self._cb_quality = ComboSansMolette()
         self._cb_quality.setStyleSheet(self._PANEL_COMBO)
         self._cb_quality.addItems(["Bas", "Moyen", "Haut", "Ultra"])
         self._cb_quality.setCurrentIndex(self._quality)
@@ -1140,13 +1142,13 @@ class Plan3DWebWindow(QMainWindow):
         self._cb_quality.activated.connect(self._on_quality_changed)
         lay.addWidget(self._cb_quality)
 
-        self._chk_auto_q = QCheckBox("Baisser auto si ça rame")
+        self._chk_auto_q = QCheckBox(tr("p3w_auto_lower"))
         self._chk_auto_q.setChecked(self._auto_quality)
         self._chk_auto_q.setStyleSheet(self._PANEL_CHK)
         self._chk_auto_q.toggled.connect(self._on_auto_quality)
         lay.addWidget(self._chk_auto_q)
 
-        self._chk_fps = QCheckBox("Afficher les FPS")
+        self._chk_fps = QCheckBox(tr("p3w_show_fps"))
         self._chk_fps.setChecked(False)
         self._chk_fps.setStyleSheet(self._PANEL_CHK)
         self._chk_fps.toggled.connect(
@@ -1452,7 +1454,7 @@ class Plan3DWebWindow(QMainWindow):
         # Sélecteur de pas
         step_row = QHBoxLayout()
         step_row.setSpacing(2)
-        lbl_step = QLabel("Pas :")
+        lbl_step = QLabel(tr("p3w_step"))
         lbl_step.setStyleSheet(
             "color:#333355;font-size:8px;background:transparent;border:none;")
         step_row.addWidget(lbl_step)
@@ -2115,7 +2117,7 @@ class Plan3DWebWindow(QMainWindow):
         sl_fog.sliderReleased.connect(self._save_patch)
         lay.addWidget(sl_fog)
 
-        lbl_gr = QLabel("Finesse des volutes")
+        lbl_gr = QLabel(tr("p3w_fog_detail"))
         lbl_gr.setStyleSheet("color:#3a3a88;font-size:9px;letter-spacing:0.5px;")
         lay.addWidget(lbl_gr)
 
@@ -2123,7 +2125,7 @@ class Plan3DWebWindow(QMainWindow):
         sl_gr.setRange(15, 200)
         sl_gr.setValue(getattr(self, '_fog_scale', 55))
         sl_gr.setPageStep(20)
-        sl_gr.setToolTip("Gauche : larges nappes  ·  Droite : volutes serrées")
+        sl_gr.setToolTip(tr("p3w_fog_hint"))
         sl_gr.setStyleSheet(self._SLIDER_QSS)
 
         def _on_fog_scale(v):
@@ -2167,7 +2169,7 @@ class Plan3DWebWindow(QMainWindow):
         sep.setStyleSheet("border:none;border-top:1px solid #252525;margin:6px 0;")
         lay.addWidget(sep)
 
-        lbl = QLabel("IMPORTER SCÈNE")
+        lbl = QLabel(tr("p3w_import_scene"))
         lbl.setStyleSheet(
             "color:#4a4a4a;font-size:8px;letter-spacing:1.2px;font-weight:700;")
         lay.addWidget(lbl)

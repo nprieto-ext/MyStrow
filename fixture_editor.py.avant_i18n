@@ -21,7 +21,6 @@ from PySide6.QtGui import QColor, QPainter, QPen, QFont, QDrag, QPixmap, QCursor
 import gzip
 
 from builtin_fixtures import BUILTIN_FIXTURES
-from i18n import tr
 from fixture_packs import (
     FixturePackBanner, FixturePackDownloadDialog,
     FixturePackCheckWorker, load_packs_state, should_check_now,
@@ -804,7 +803,7 @@ class FixtureEditorDialog(QDialog):
         )
         btn_new.clicked.connect(self._new_fixture)
         fl.addWidget(btn_new)
-        btn_copy_lib = QPushButton(tr("fe2_copy_lib"))
+        btn_copy_lib = QPushButton("📋  Copier depuis bibliothèque")
         btn_copy_lib.setFixedHeight(28)
         btn_copy_lib.setStyleSheet(
             "QPushButton{background:#1a1a2a;color:#8899cc;border:1px solid #2a2a44;"
@@ -968,7 +967,7 @@ class FixtureEditorDialog(QDialog):
         # Ce générateur écrit le profil ET la géométrie qui en fait une barre.
         px_row = QHBoxLayout()
         px_row.setSpacing(6)
-        btn_px = QPushButton(tr("fe2_gen_matrix"))
+        btn_px = QPushButton("▦  Générer une barre / matrice à pixels")
         btn_px.setFixedHeight(28)
         btn_px.setCursor(Qt.PointingHandCursor)
         btn_px.setToolTip(
@@ -991,7 +990,7 @@ class FixtureEditorDialog(QDialog):
 
         # Ligne de profil (blocs drag & drop)
         profile_hint = QLabel(
-            tr("fe2_profile_hint")
+            "Profil actuel — glisser pour réordonner · double-clic/Suppr pour retirer · clic droit pour valeur fixe"
         )
         profile_hint.setStyleSheet("font-size:10px;color:#444;")
         rv.addWidget(profile_hint)
@@ -1003,7 +1002,7 @@ class FixtureEditorDialog(QDialog):
         rv.addSpacing(18)
 
         # Palette — tous les canaux disponibles
-        palette_lbl = QLabel(tr("fe2_channels_avail"))
+        palette_lbl = QLabel("Canaux disponibles — cliquer ou glisser vers le profil")
         palette_lbl.setStyleSheet("font-size:10px;color:#444;")
         rv.addWidget(palette_lbl)
         rv.addSpacing(8)
@@ -1150,7 +1149,7 @@ class FixtureEditorDialog(QDialog):
         )
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("fe2_copy_from_lib"))
+        dlg.setWindowTitle("Copier depuis la bibliothèque")
         dlg.resize(560, 460)
         dlg.setStyleSheet(
             "QDialog{background:#141414;color:#e0e0e0;}"
@@ -1180,12 +1179,12 @@ class FixtureEditorDialog(QDialog):
         lst = QListWidget()
         vl.addWidget(lst, 1)
 
-        hint = QLabel(tr("fe2_dblclick_hint"))
+        hint = QLabel("Double-clic ou bouton Copier pour importer le profil dans l'éditeur.")
         hint.setAlignment(Qt.AlignCenter)
         vl.addWidget(hint)
 
         btn_row = QHBoxLayout()
-        btn_ok = QPushButton(tr("fe2_copy_profile"))
+        btn_ok = QPushButton("Copier le profil")
         btn_ok.setFixedHeight(36)
         btn_ok.setStyleSheet(
             "QPushButton{background:#00d4ff;color:#000;font-weight:bold;"
@@ -1356,7 +1355,7 @@ class FixtureEditorDialog(QDialog):
         from PySide6.QtWidgets import QDialogButtonBox, QFormLayout
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("fe2_pixel_bar"))
+        dlg.setWindowTitle("Barre / matrice à pixels")
         dlg.setStyleSheet(self.styleSheet())
         form = QFormLayout(dlg)
         form.setContentsMargins(18, 16, 18, 12)
@@ -1372,8 +1371,8 @@ class FixtureEditorDialog(QDialog):
                   ("Blanc seul", ["W"])]
         for lbl, _c in _CELLS:
             cb_cell.addItem(lbl)
-        chk_dim = QCheckBox(tr("fe2_master_dim")); chk_dim.setChecked(True)
-        chk_str = QCheckBox(tr("fe2_master_strobe")); chk_str.setChecked(True)
+        chk_dim = QCheckBox("Dimmer général"); chk_dim.setChecked(True)
+        chk_str = QCheckBox("Strobe général"); chk_str.setChecked(True)
 
         form.addRow("Lignes :", sp_rows)
         form.addRow("Colonnes (pixels) :", sp_cols)
@@ -1495,7 +1494,7 @@ class FixtureEditorDialog(QDialog):
             self.fixture_added.emit(data)
 
         orig = self._btn_save.text()
-        self._btn_save.setText(tr("fe2_saved"))
+        self._btn_save.setText("✓  Enregistré !")
         self._btn_save.setEnabled(False)
         QTimer.singleShot(1200, lambda: (
             self._btn_save.setText(orig),

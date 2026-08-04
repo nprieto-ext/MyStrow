@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
 )
 
 from core import APP_NAME, VERSION, send_report_email
-from i18n import tr
 
 CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
 
@@ -491,7 +490,7 @@ class BradDiagnosticDialog(QDialog):
         title = QLabel("Assistant de diagnostic Node")
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
-        sub = QLabel(tr("bd2_title"))
+        sub = QLabel("Diagnostic automatique de la sortie DMX Art-Net")
         sub.setStyleSheet("color: #555; font-size: 11px;")
         root.addWidget(title)
         root.addWidget(sub)
@@ -504,7 +503,7 @@ class BradDiagnosticDialog(QDialog):
         self._prog = QProgressBar()
         self._prog.setRange(0, 100)
         self._prog.setValue(0)
-        self._status_lbl = QLabel(tr("bd2_starting"))
+        self._status_lbl = QLabel("Démarrage des tests...")
         self._status_lbl.setStyleSheet("color: #666; font-size: 10px;")
         root.addWidget(self._prog)
         root.addWidget(self._status_lbl)
@@ -517,7 +516,7 @@ class BradDiagnosticDialog(QDialog):
 
         # ── Boutons ──
         btn_row = QHBoxLayout()
-        self._copy_btn = QPushButton(tr("bd2_copy_report"))
+        self._copy_btn = QPushButton("📋  Copier le rapport")
         self._copy_btn.setEnabled(False)
         self._copy_btn.setStyleSheet("""
             QPushButton {
@@ -609,7 +608,7 @@ class BradDiagnosticDialog(QDialog):
 
     def _on_done(self, results: list):
         self._prog.setValue(100)
-        self._status_lbl.setText(tr("bd2_finished"))
+        self._status_lbl.setText("Terminé.")
         self._fixable = {}
 
         # Détecter les problèmes corrigeables avant d'afficher
@@ -763,8 +762,8 @@ class BradDiagnosticDialog(QDialog):
     def _copy_report(self):
         text = "\n".join(self._raw_lines)
         QApplication.clipboard().setText(text)
-        self._copy_btn.setText(tr("bd2_copied"))
-        QTimer.singleShot(2000, lambda: self._copy_btn.setText(tr("bd2_copy_report")))
+        self._copy_btn.setText("✓  Copié !")
+        QTimer.singleShot(2000, lambda: self._copy_btn.setText("📋  Copier le rapport"))
 
     def _send_report(self):
         """Ouvre un mail au support avec le rapport BRAD pré-rempli."""

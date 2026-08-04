@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QThread, QObject, QTimer
 from PySide6.QtGui import QColor, QFont
-from i18n import tr
 
 # Fichiers locaux
 PACKS_STATE_FILE = Path.home() / ".mystrow_fixture_packs.json"
@@ -257,7 +256,7 @@ class FixturePackBanner(QWidget):
         )
         lay.addWidget(self._lbl, 1)
 
-        self._btn_dl = QPushButton(tr("fp2_download"))
+        self._btn_dl = QPushButton("Télécharger")
         self._btn_dl.setFixedHeight(26)
         self._btn_dl.setCursor(Qt.PointingHandCursor)
         self._btn_dl.setStyleSheet(
@@ -330,7 +329,7 @@ class FixturePackDownloadDialog(QDialog):
 
     def __init__(self, packs: list, id_token: str = None, parent=None):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle(tr("fp2_title"))
+        self.setWindowTitle("Téléchargement des packs de fixtures — MyStrow")
         self.setFixedSize(520, 440)
         self.setStyleSheet(self._STYLE)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -352,7 +351,7 @@ class FixturePackDownloadDialog(QDialog):
         lay.setSpacing(12)
 
         # Titre
-        title = QLabel(tr("fp2_updating"))
+        title = QLabel("Mise à jour des packs de fixtures")
         title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         title.setStyleSheet("color:#00d4ff;")
         lay.addWidget(title)
@@ -376,7 +375,7 @@ class FixturePackDownloadDialog(QDialog):
         lay.addWidget(self._pack_list)
 
         # Pack courant
-        self._cur_label = QLabel(tr("fp2_preparing"))
+        self._cur_label = QLabel("Préparation…")
         self._cur_label.setStyleSheet("font-size:11px; color:#888;")
         lay.addWidget(self._cur_label)
 
@@ -394,7 +393,7 @@ class FixturePackDownloadDialog(QDialog):
         lay.addWidget(sep)
 
         # Compteur global (centré, bien visible)
-        self._counter_lbl = QLabel(tr("fp2_zero_new"))
+        self._counter_lbl = QLabel("0 nouveau(x) fixture(s) téléchargé(s)")
         self._counter_lbl.setFont(QFont("Segoe UI", 12))
         self._counter_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(self._counter_lbl)
@@ -473,7 +472,7 @@ class FixturePackDownloadDialog(QDialog):
         self._global_bar.setValue(n)
         self._global_lbl.setText(f"{n} / {n} pack(s)")
         self._fx_bar.setValue(100)
-        self._cur_label.setText(tr("fp2_done"))
+        self._cur_label.setText("Téléchargement terminé  ✓")
         self._cur_label.setStyleSheet("font-size:11px; color:#4CAF50;")
 
         if total_new > 0:
@@ -484,7 +483,7 @@ class FixturePackDownloadDialog(QDialog):
                 "font-size:13px; color:#4CAF50; font-weight:bold;"
             )
         else:
-            self._counter_lbl.setText(tr("fp2_up_to_date"))
+            self._counter_lbl.setText("Bibliothèque déjà à jour — aucun doublon ajouté")
             self._counter_lbl.setStyleSheet("font-size:12px; color:#888;")
 
         self._btn_close.setEnabled(True)
