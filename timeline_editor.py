@@ -2,6 +2,7 @@
 Editeur de timeline lumiere - LightTimelineEditor
 """
 import os
+import copy
 import json
 import hashlib
 import random
@@ -413,6 +414,22 @@ class LightTimelineEditor(QDialog):
         _esc.setContext(Qt.WindowShortcut)
         _esc.activated.connect(self._on_escape)
 
+        # ── Instantané d'annulation ──────────────────────────────────────────
+        # Les éditions inline (fin de redimensionnement, fades, vitesse d'effet,
+        # fondu enchaîné…) écrivent DIRECTEMENT dans seq.sequences via
+        # _save_sequence_no_close, pour que la restitution suive sans passer par
+        # Sauvegarder. Conséquence : « Fermer sans sauvegarder » n'avait rien à
+        # restaurer et la modification survivait. On garde donc l'état d'avant.
+        # La waveform est gardée par référence : ce n'est pas de l'édition, et
+        # elle est de toute façon recalculable depuis le cache fichier.
+        _src = self.main_window.seq.sequences.get(self.media_row)
+        self._orig_sequence = None if _src is None else {
+            k: (v if k == 'waveform' else copy.deepcopy(v)) for k, v in _src.items()
+        }
+        # L'éditeur est modal : rien d'autre ne peut salir le show entre-temps,
+        # donc ce drapeau reflète bien l'état d'avant l'ouverture.
+        self._orig_is_dirty = getattr(self.main_window.seq, 'is_dirty', False)
+
         # Charger sequence existante
         self.load_existing_sequence()
 
@@ -531,7 +548,7 @@ class LightTimelineEditor(QDialog):
         _aer_lay = QHBoxLayout(self._add_eff_btn_row)
         _aer_lay.setContentsMargins(11, 2, 11, 2)
         _aer_lay.setSpacing(0)
-        self._add_eff_btn = QPushButton("＋  Effet")
+        self._add_eff_btn = QPushButton(tr("tle_add_effect"))
         self._add_eff_btn.setFixedHeight(20)
         self._add_eff_btn.setCursor(Qt.PointingHandCursor)
         self._add_eff_btn.setStyleSheet(self._add_track_btn_style("#cc44ff"))
@@ -563,8 +580,7 @@ class LightTimelineEditor(QDialog):
         self._add_seq_btn.setCursor(Qt.PointingHandCursor)
         self._add_seq_btn.setStyleSheet(self._add_track_btn_style("#aa77ff"))
         self._add_seq_btn.setToolTip(
-            "Ajoute une piste Séquence : plusieurs mémoires jouées en même temps.\n"
-            "Sur un projecteur partagé, la plus lumineuse gagne (HTP).")
+            tr("tle_add_seq_hint"))
         self._add_seq_btn.clicked.connect(self._add_sequence_track)
         _asr_lay.addWidget(self._add_seq_btn)
         _asr_lay.addStretch()
@@ -715,11 +731,10 @@ class LightTimelineEditor(QDialog):
             box.setIcon(QMessageBox.Information)
             box.setText(tr("te2_nothing_sent"))
             box.setInformativeText(
-                "Faites un clic droit sur vos projecteurs pour leur adresser un état,\n"
-                "ou enregistrez un blackout comme étape de séquence.")
+                tr("tle_rec_dialog_hint"))
             box.setStyleSheet("background:#1e1e1e; color:white;")
-            b_black = box.addButton("Enregistrer un blackout", QMessageBox.AcceptRole)
-            box.addButton("Annuler", QMessageBox.RejectRole)
+            b_black = box.addButton(tr("tle_rec_blackout"), QMessageBox.AcceptRole)
+            box.addButton(tr("tle_cancel"), QMessageBox.RejectRole)
             box.exec()
             if box.clickedButton() is not b_black:
                 return
@@ -739,10 +754,8 @@ class LightTimelineEditor(QDialog):
                    if c.start_time < t1 and c.start_time + c.duration > t0]
         if overlap:
             ret = QMessageBox.question(
-                self, "REC séquence",
-                f"{len(overlap)} bloc(s) chevauchent cette position.\n"
-                "La 1ère partie des blocs (avant le curseur) est conservée,\n"
-                "le reste est remplacé par la nouvelle capture. Continuer ?",
+                self, tr("tle_rec_seq"),
+                tr("tle_f_overlap", a0=len(overlap)),
                 QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
             if ret != QMessageBox.Yes:
                 return
@@ -773,9 +786,8 @@ class LightTimelineEditor(QDialog):
         slot = self._alloc_rec_memory_slot()
         if slot is None:
             QMessageBox.warning(
-                self, "REC séquence",
-                "Plus de slot REC disponible (grille pleine).\n"
-                "Supprime d'anciennes captures REC dans la bibliothèque.")
+                self, tr("tle_rec_seq"),
+                tr("tle_no_rec_slot"))
             return
         col, row = slot
         name = self._next_rec_name()
@@ -1195,7 +1207,7 @@ class LightTimelineEditor(QDialog):
         except Exception as e:
             elapsed_timer.stop()
             remaining.setVisible(False)
-            status.setText("⚠  Analyse Audio Impossible")
+            status.setText(tr("tle_audio_failed"))
             status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
             bar.setVisible(False)
             cancel_btn.setVisible(False)
@@ -1338,14 +1350,14 @@ class LightTimelineEditor(QDialog):
 
         edit_menu.addSeparator()
 
-        dup_track_action = edit_menu.addAction("⧉  Dupliquer une piste sur une autre…")
+        dup_track_action = edit_menu.addAction(tr("tle_dup_track"))
         dup_track_action.triggered.connect(self.duplicate_group_track)
 
         # === TOOLS ===
         effect_menu = menubar.addMenu(tr("te_menu_effect"))
-        fade_in_action = effect_menu.addAction("🎬 Fade In")
+        fade_in_action = effect_menu.addAction(tr("tle_fade_in"))
         fade_in_action.triggered.connect(self.apply_fade_in_to_selection)
-        fade_out_action = effect_menu.addAction("🎬 Fade Out")
+        fade_out_action = effect_menu.addAction(tr("tle_fade_out"))
         fade_out_action.triggered.connect(self.apply_fade_out_to_selection)
         remove_fades_action = effect_menu.addAction(tr("te_menu_remove_fades"))
         remove_fades_action.triggered.connect(self.remove_fades_from_selection)
@@ -1513,10 +1525,9 @@ class LightTimelineEditor(QDialog):
 
         # ── Bouton ● REC : capture le look 2D live en un bloc de séquence ──────
         header_layout.addSpacing(8)
-        self._rec_btn = QPushButton("●  REC")
+        self._rec_btn = QPushButton(tr("tle_rec"))
         self._rec_btn.setToolTip(
-            "Envoyez votre plan de feu, en cliquant sur vos projecteurs. Puis cliquez sur ce bouton REC.\n"
-            "Votre séquence sera automatiquement ajoutée dans la ligne Séquence.")
+            tr("tle_rec_hint"))
         self._rec_btn.setFixedHeight(_BTN)
         self._rec_btn.setCursor(Qt.PointingHandCursor)
         self._rec_btn.setFocusPolicy(Qt.NoFocus)
@@ -1534,8 +1545,7 @@ class LightTimelineEditor(QDialog):
         # ── Bouton CLEAR : coupe le look en cours sur le plan 2D (blackout) ────
         self._rec_clear_btn = QPushButton("CLEAR")
         self._rec_clear_btn.setToolTip(
-            "Efface votre composition manuelle sur le plan 2D.\n"
-            "Conserve ce que la timeline envoie au curseur.")
+            tr("tle_clear_hint"))
         self._rec_clear_btn.setFixedHeight(_BTN)
         self._rec_clear_btn.setCursor(Qt.PointingHandCursor)
         self._rec_clear_btn.setFocusPolicy(Qt.NoFocus)
@@ -1559,7 +1569,7 @@ class LightTimelineEditor(QDialog):
         # Bouton bascule 2D / 3D
         is_3d_open = hasattr(self.main_window, '_plan3d') and self.main_window._plan3d.isVisible()
         self._btn_vue_3d = QPushButton("3D")
-        self._btn_vue_3d.setToolTip("Basculer vue 3D / 2D")
+        self._btn_vue_3d.setToolTip(tr("tle_toggle_3d"))
         self._btn_vue_3d.setFixedSize(_BTN, _BTN)
         self._btn_vue_3d.setCheckable(True)
         self._btn_vue_3d.setChecked(is_3d_open)
@@ -1650,7 +1660,7 @@ class LightTimelineEditor(QDialog):
         self.play_pause_btn.setIconSize(QSize(36, 36))
         self.play_pause_btn.setFixedSize(72, 72)
         self.play_pause_btn.setStyleSheet(play_style)
-        self.play_pause_btn.setToolTip("Play / Pause  (Espace)")
+        self.play_pause_btn.setToolTip(tr("tle_play_pause"))
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
 
         # Aller à la fin
@@ -2857,7 +2867,7 @@ class LightTimelineEditor(QDialog):
         combo = self.main_window.seq._get_dmx_combo(self.media_row)
         if combo:
             if combo.findText("Play Lumiere") == -1:
-                combo.addItem("Play Lumiere")
+                combo.addItem(tr("tle_play_light"))
             combo.blockSignals(True)
             combo.setCurrentText("Play Lumiere")
             combo.blockSignals(False)
@@ -3026,8 +3036,8 @@ class LightTimelineEditor(QDialog):
                                 or t.name == "Audio")]
         names = [t.name for t in group_tracks]
         if len(names) < 2:
-            QMessageBox.information(self, "Dupliquer",
-                "Il faut au moins deux pistes de groupe pour dupliquer.")
+            QMessageBox.information(self, tr("tle_duplicate"),
+                tr("tle_need_two_tracks"))
             return
 
         dlg = QDialog(self)
@@ -3047,7 +3057,7 @@ class LightTimelineEditor(QDialog):
         dst_cb.setCurrentIndex(1)
         v.addWidget(dst_cb)
         row = QHBoxLayout(); row.addStretch()
-        cancel = QPushButton("Annuler"); ok = QPushButton("Dupliquer")
+        cancel = QPushButton(tr("tle_cancel")); ok = QPushButton(tr("tle_duplicate"))
         cancel.clicked.connect(dlg.reject); ok.clicked.connect(dlg.accept)
         row.addWidget(cancel); row.addWidget(ok); v.addLayout(row)
 
@@ -3058,16 +3068,15 @@ class LightTimelineEditor(QDialog):
     def _do_duplicate_track(self, src_name, dst_name):
         """Copie tous les clips de la piste src_name vers dst_name (remplace)."""
         if src_name == dst_name:
-            QMessageBox.information(self, "Dupliquer", "Choisis deux pistes différentes.")
+            QMessageBox.information(self, tr("tle_duplicate"), tr("tle_pick_two_tracks"))
             return
         src = self.track_map.get(src_name)
         dst = self.track_map.get(dst_name)
         if not src or not dst:
             return
         if dst.clips:
-            if QMessageBox.question(self, "Remplacer ?",
-                    f"La piste {dst_name} contient déjà {len(dst.clips)} bloc(s).\n"
-                    f"Les remplacer par une copie de {src_name} ?",
+            if QMessageBox.question(self, tr("tle_replace_q"),
+                    tr("tle_f_track_not_empty", dst_name=dst_name, a0=len(dst.clips), src_name=src_name),
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
         self.save_state()
@@ -4147,8 +4156,7 @@ class LightTimelineEditor(QDialog):
             fem = brush.get("type") in ("color", "bicolor")   # accord grammatical
             bloq = "bloquée" if fem else "bloqué"
             self._paint_hint.setText(
-                f"🔒 {name} {bloq} — cliquez sur la timeline pour ajouter vos blocs"
-                "   ·   Échap pour quitter")
+                tr("tle_f_locked_track", name=name, bloq=bloq))
             self._paint_hint.setVisible(True)
         else:
             self._paint_hint.setVisible(False)
@@ -4401,6 +4409,31 @@ class LightTimelineEditor(QDialog):
         """Retourne True si des modifications n'ont pas été sauvegardées."""
         return self.history_index != self._saved_history_index
 
+    def _restore_original_sequence(self):
+        """Remet seq.sequences dans l'état d'avant l'ouverture de l'éditeur.
+
+        Contrepartie des écritures inline de _save_sequence_no_close : sans ça,
+        « Fermer sans sauvegarder » laissait la modification en place, et un
+        enregistrement ultérieur du show l'écrivait dans le .tui.
+        """
+        seq = self.main_window.seq
+        cur = seq.sequences.get(self.media_row)
+        wf = cur.get('waveform') if isinstance(cur, dict) else None
+
+        if self._orig_sequence is None:
+            # Aucune séquence avant l'ouverture : tout ce qui a été créé pendant
+            # la session est abandonné, le média redevient sans REC Lumière.
+            seq.sequences.pop(self.media_row, None)
+        else:
+            restored = dict(self._orig_sequence)
+            if wf and not restored.get('waveform'):
+                restored['waveform'] = wf   # analyse faite pendant la session
+            seq.sequences[self.media_row] = restored
+
+        # Ne pas « nettoyer » un show qui était déjà modifié avant l'ouverture
+        if not self._orig_is_dirty:
+            seq.is_dirty = False
+
     def close_editor(self):
         """Ferme l'éditeur — alerte si modifications non sauvegardées."""
         if self._is_dirty():
@@ -4429,6 +4462,7 @@ class LightTimelineEditor(QDialog):
                 return  # save_sequence appellera close_editor après confirmation
             if clicked != btn_discard:
                 return  # fenêtre fermée sans choix → on annule
+            self._restore_original_sequence()   # abandonner les écritures inline
 
         self.playback_timer.stop()
         if self.preview_player is not None:

@@ -358,7 +358,7 @@ class LiveSettingsDialog(QDialog):
 
     def __init__(self, config: dict, sources: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("PARAMETRE LIVE")
+        self.setWindowTitle(tr("seq_live_params"))
         self.setModal(True)
         self.setMinimumWidth(420)
         # Deep copy config (on garde 'allowed_groups' + 'no_auto_strobe' uniquement)
@@ -462,11 +462,11 @@ class LiveSettingsDialog(QDialog):
         rst.setStyleSheet(self._gbtn())
         rst.setCursor(Qt.PointingHandCursor)
         rst.clicked.connect(self._reset_all)
-        cnl = QPushButton("Annuler")
+        cnl = QPushButton(tr("seq_cancel"))
         cnl.setStyleSheet(self._gbtn())
         cnl.setCursor(Qt.PointingHandCursor)
         cnl.clicked.connect(self.reject)
-        apl = QPushButton("Appliquer")
+        apl = QPushButton(tr("seq_apply"))
         apl.setStyleSheet("""
             QPushButton {
                 background:#003a50; color:#00d4ff;
@@ -1269,7 +1269,7 @@ class LiveModePanel(QWidget):
         # Dot de connexion (sera placé dans la carte INPUT)
         self._conn_dot = QLabel()
         self._conn_dot.setFixedSize(10, 10)
-        self._conn_dot.setToolTip("Statut de connexion")
+        self._conn_dot.setToolTip(tr("seq_conn_status"))
         self._set_conn_dot('off')
         # MIDI setup — affiché après la carte INPUT si MIDI Clock sélectionné
         self._midi_setup = self._build_midi_setup_widget()
@@ -1497,7 +1497,7 @@ class LiveModePanel(QWidget):
         gc_lay.addWidget(sep)
 
         dj_row = QHBoxLayout(); dj_row.setSpacing(4)
-        dj_lbl = QLabel("Logiciel :")
+        dj_lbl = QLabel(tr("seq_software"))
         dj_lbl.setStyleSheet("color:#446644; font-size:9px; background:transparent; border:none;")
         dj_lbl.setFixedWidth(52)
         dj_row.addWidget(dj_lbl)
@@ -1541,7 +1541,7 @@ class LiveModePanel(QWidget):
                                        QLabel, QPushButton, QComboBox, QFrame,
                                        QApplication)
         dlg = QDialog(QApplication.activeWindow())
-        dlg.setWindowTitle("Guide MIDI Clock")
+        dlg.setWindowTitle(tr("seq_midi_clock_guide"))
         dlg.setFixedWidth(420)
         dlg.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         dlg.setStyleSheet("""
@@ -1558,7 +1558,7 @@ class LiveModePanel(QWidget):
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(12)
 
-        title = QLabel("🎛  Guide MIDI Clock")
+        title = QLabel(tr("seq_midi_clock_guide_m"))
         title.setStyleSheet("color:#00aaff; font-size:15px; font-weight:bold;")
         lay.addWidget(title)
 
@@ -1568,7 +1568,7 @@ class LiveModePanel(QWidget):
 
         # Sélecteur logiciel
         row = QHBoxLayout()
-        row.addWidget(QLabel("Logiciel DJ :"))
+        row.addWidget(QLabel(tr("seq_dj_software")))
         combo = ComboSansMolette()
         combo.addItems(["Virtual DJ", "Rekordbox", "Serato"])
         row.addWidget(combo, 1)
@@ -1612,7 +1612,7 @@ class LiveModePanel(QWidget):
         combo.currentIndexChanged.connect(update)
         update()
 
-        close_btn = QPushButton("Fermer")
+        close_btn = QPushButton(tr("seq_close"))
         close_btn.setFixedHeight(34)
         close_btn.setStyleSheet(
             "QPushButton { background:#1a1a1a; color:#888; border:1px solid #333;"
@@ -1671,7 +1671,7 @@ class LiveModePanel(QWidget):
                 import rtmidi2 as _rm2
                 ports = _rm2.get_in_ports()
             if not ports:
-                self._midi_ctrl_combo.addItem("Aucun port MIDI détecté")
+                self._midi_ctrl_combo.addItem(tr("seq_no_midi_port"))
             else:
                 for p in ports:
                     self._midi_ctrl_combo.addItem(p)
@@ -1681,7 +1681,7 @@ class LiveModePanel(QWidget):
                         self._midi_ctrl_combo.setCurrentIndex(i)
                         break
         except Exception:
-            self._midi_ctrl_combo.addItem("rtmidi non disponible")
+            self._midi_ctrl_combo.addItem(tr("seq_no_rtmidi"))
 
     def _refresh_midi_status(self):
         installed = LoopMidiHelper.is_installed()
@@ -1691,7 +1691,7 @@ class LiveModePanel(QWidget):
             self._midi_dot.setStyleSheet(
                 "background: #00cc44; border-radius: 5px;")
             self._midi_status_lbl.setText(
-                f'Port "{LoopMidiHelper.PORT_NAME}" actif')
+                tr("seq_f_port_active", a0=LoopMidiHelper.PORT_NAME))
             self._midi_btn.setText(tr("seq2_refresh"))
             self._midi_instr_lbl.show()
         elif installed:
@@ -1699,13 +1699,13 @@ class LiveModePanel(QWidget):
                 "background: #ffaa00; border-radius: 5px;")
             self._midi_status_lbl.setText(
                 tr("seq2_loopmidi_port"))
-            self._midi_btn.setText(f'Créer le port "{LoopMidiHelper.PORT_NAME}"')
+            self._midi_btn.setText(tr("seq_f_create_port", a0=LoopMidiHelper.PORT_NAME))
             self._midi_instr_lbl.hide()
         else:
             self._midi_dot.setStyleSheet(
                 "background: #444; border-radius: 5px;")
             self._midi_status_lbl.setText(tr("seq2_loopmidi_none"))
-            self._midi_btn.setText("Installer loopMIDI  ↗")
+            self._midi_btn.setText(tr("seq_install_loopmidi"))
             self._midi_instr_lbl.hide()
 
     def _on_midi_btn_clicked(self):
@@ -1837,7 +1837,7 @@ class LiveModePanel(QWidget):
         hdr = QHBoxLayout()
         hdr.setSpacing(8)
 
-        mov_lbl = QLabel("EFFETS")
+        mov_lbl = QLabel(tr("seq_effects"))
         mov_lbl.setStyleSheet(
             "color:#888; font-size:10px; font-weight:bold; letter-spacing:1.5px;")
         hdr.addWidget(mov_lbl)
@@ -2152,10 +2152,10 @@ class LiveModePanel(QWidget):
             "QMenu::item:selected { background:#2a2a3a; color:#aa77ff; }"
         )
         if key in self._pinned_colors:
-            act = menu.addAction("📌  Désépingler")
+            act = menu.addAction(tr("seq_unpin"))
             act.triggered.connect(lambda: self._toggle_pin(key))
         else:
-            act = menu.addAction("📌  Épingler en haut")
+            act = menu.addAction(tr("seq_pin_top"))
             act.triggered.connect(lambda: self._toggle_pin(key))
         tile = self._color_tiles.get(key)
         if tile:
@@ -2277,10 +2277,7 @@ class LiveModePanel(QWidget):
         vbox.addLayout(row)
 
         info = QLabel(
-            "Un seul choix à la fois :\n"
-            "RAPIDE : strobe beat rapide\n"
-            "LENT : strobe lent / build\n"
-            "PAS DE : aucun strobe"
+            tr("seq_strobe_hint")
         )
         info.setStyleSheet(
             "color:#333; font-size:8px; background:transparent; padding-top:6px;")
@@ -2470,7 +2467,7 @@ class LiveModePanel(QWidget):
         # Slider vitesse rotation
         spd_row = QHBoxLayout()
         spd_row.setSpacing(4)
-        spd_lbl = QLabel("ROTATION")
+        spd_lbl = QLabel(tr("seq_rotation"))
         spd_lbl.setStyleSheet(
             "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
         spd_lbl.setFixedWidth(48)
@@ -2703,7 +2700,7 @@ class LiveModePanel(QWidget):
         self._source_help_btn = QPushButton("?")
         self._source_help_btn.setFixedSize(20, 20)
         self._source_help_btn.setCursor(Qt.PointingHandCursor)
-        self._source_help_btn.setToolTip("Guide de configuration")
+        self._source_help_btn.setToolTip(tr("seq_setup_guide"))
         self._source_help_btn.setCheckable(True)
         self._source_help_btn.setVisible(False)
         self._source_help_btn.setStyleSheet(
@@ -3529,9 +3526,9 @@ class Sequencer(QFrame):
                 if hours > 0:
                     title_item.setText(f"Pause ({hours}h {minutes:02d}m {seconds:02d}s)" if seconds else f"Pause ({hours}h {minutes:02d}m)")
                 elif minutes > 0:
-                    title_item.setText(f"Pause ({minutes}m {seconds}s)")
+                    title_item.setText(tr("seq_f_pause_ms", minutes=minutes, seconds=seconds))
                 else:
-                    title_item.setText(f"Pause ({value}s)")
+                    title_item.setText(tr("seq_f_pause_s", value=value))
                 dur_item = self.table.item(row, 2)
                 if dur_item:
                     if hours > 0:
@@ -3561,7 +3558,7 @@ class Sequencer(QFrame):
         )
 
         # Bouton visible
-        btn = QPushButton("Manuel", container)
+        btn = QPushButton(tr("seq_manual"), container)
         btn.setObjectName("dmx_btn")
         btn.setCursor(Qt.PointingHandCursor)
         btn.setFocusPolicy(Qt.NoFocus)
@@ -3581,7 +3578,7 @@ class Sequencer(QFrame):
                 act.setCheckable(True)
                 act.setChecked(c.currentText() == txt)
             menu.addSeparator()
-            rec_act = menu.addAction("✦ Rec Lumière")
+            rec_act = menu.addAction(tr("seq_rec_light"))
             rec_act.setData("__rec__")
             chosen = menu.exec(b.mapToGlobal(b.rect().bottomLeft()))
             if not chosen:
@@ -3890,12 +3887,12 @@ class Sequencer(QFrame):
         if len(selected_rows) > 1:
             menu = QMenu(self)
             menu.setStyleSheet(_MENU_SS)
-            menu.addAction(f"{len(selected_rows)} tracks sélectionnés").setEnabled(False)
+            menu.addAction(tr("seq_f_tracks_sel", a0=len(selected_rows))).setEnabled(False)
             menu.addSeparator()
-            ia_act  = menu.addAction("Basculer en IA Lumiere")
-            man_act = menu.addAction("Basculer en Manuel")
+            ia_act  = menu.addAction(tr("seq_switch_to_ai"))
+            man_act = menu.addAction(tr("seq_switch_to_manual"))
             menu.addSeparator()
-            del_act = menu.addAction(f"Supprimer ({len(selected_rows)})")
+            del_act = menu.addAction(tr("seq_f_delete", a0=len(selected_rows)))
 
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
 
@@ -3933,7 +3930,7 @@ class Sequencer(QFrame):
             menu.setStyleSheet(_MENU_SS)
             edit_action   = menu.addAction(tr("seq_menu_set_duration"))
             rec_action    = menu.addAction(tr("seq_menu_rec_light"))
-            duplicate_action = menu.addAction("⧉  Dupliquer (avec REC Lumière)")
+            duplicate_action = menu.addAction(tr("seq_duplicate_with_rec"))
             delete_action = menu.addAction(tr("seq_menu_delete"))
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
             if action == edit_action:
@@ -4298,7 +4295,7 @@ class Sequencer(QFrame):
 
         # Dialog de chargement
         loading = QDialog(self)
-        loading.setWindowTitle("IA Lumiere")
+        loading.setWindowTitle(tr("seq_ai_light"))
         loading.setFixedSize(320, 90)
         loading.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         loading.setStyleSheet("""
@@ -5681,7 +5678,7 @@ class Sequencer(QFrame):
 
         # Localiser le fichier dans l'explorateur système (fichiers réels)
         if path and media_type in ("audio", "video", "image"):
-            locate_action = menu.addAction("📂  Localiser le fichier")
+            locate_action = menu.addAction(tr("seq_locate_file_m"))
             # NB : triggered émet un bool `checked` → on l'absorbe pour ne pas
             # écraser p (sinon _reveal_in_explorer reçoit False au lieu du chemin).
             locate_action.triggered.connect(lambda checked=False, p=path: self._reveal_in_explorer(p))
@@ -5691,7 +5688,7 @@ class Sequencer(QFrame):
         rec_action = menu.addAction(tr("seq_menu_rec_light"))
         rec_action.triggered.connect(lambda: self.open_light_editor_for_row(row))
 
-        duplicate_action = menu.addAction("⧉  Dupliquer (avec REC Lumière)")
+        duplicate_action = menu.addAction(tr("seq_duplicate_with_rec"))
         duplicate_action.triggered.connect(lambda: self.duplicate_media_row(row))
 
         menu.addSeparator()
@@ -5720,7 +5717,7 @@ class Sequencer(QFrame):
         print(f"[localiser] brut={raw!r} normalise={path!r} is_file={is_file} has_dir={has_dir}")
 
         if not is_file and not has_dir:
-            QMessageBox.warning(self, "Fichier introuvable",
+            QMessageBox.warning(self, tr("seq_file_not_found"),
                                 "Emplacement introuvable :\n" + str(path))
             return
         try:

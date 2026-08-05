@@ -196,7 +196,7 @@ class EffectButton(QPushButton):
         grp_vlay = QVBoxLayout(grp_outer)
         grp_vlay.setContentsMargins(10, 6, 10, 2); grp_vlay.setSpacing(4)
 
-        grp_hdr = QLabel("  GROUPES"); grp_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        grp_hdr = QLabel(tr("uic_groups")); grp_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
         grp_vlay.addWidget(grp_hdr)
 
         btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
@@ -208,7 +208,7 @@ class EffectButton(QPushButton):
         grp_vlay.addLayout(btns_h)
 
         spd_row = QHBoxLayout(); spd_row.setSpacing(6); spd_row.setContentsMargins(0, 2, 0, 0)
-        spd_lbl = QLabel("Vitesse :"); spd_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        spd_lbl = QLabel(tr("uic_speed")); spd_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
         spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
         spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
         _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
@@ -327,7 +327,7 @@ class EffectButton(QPushButton):
             "QMenu::item:checked:selected { background: #005500; color: #55ff55; }"
         )
 
-        act_none = menu.addAction("  — Aucun —")
+        act_none = menu.addAction(tr("uic_none"))
         act_none.setCheckable(True)
         act_none.setChecked(not cur)
         act_none.triggered.connect(lambda: self._select_editor_effect(None))
@@ -403,9 +403,18 @@ class EffectButton(QPushButton):
         search_input.textChanged.connect(_apply_filter)
         QTimer.singleShot(0, search_input.setFocus)
 
-        menu.addSeparator()
+        # « Éditeur d'effets » remonté en TÊTE du menu. Il est construit ici,
+        # après la liste, mais déplacé en première position : la liste fait 92
+        # effets intégrés plus les effets perso, et l'entrée se retrouvait tout
+        # en bas, hors de vue sans faire défiler. Rien ne dépend de sa place,
+        # l'action est branchée sur triggered.
         act_editor = menu.addAction(tr("uic_effect_editor_menu"))
         act_editor.triggered.connect(lambda: self.open_editor_requested.emit(self.index))
+        _premier = next((a for a in menu.actions() if a is not act_editor), None)
+        if _premier is not None:
+            menu.removeAction(act_editor)
+            menu.insertAction(_premier, act_editor)
+            menu.insertSeparator(_premier)
 
         menu.exec(self.mapToGlobal(pos))
 

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
-from core import (projector_selection_keys, layer_selection_ranks,
+from core import (projector_selection_keys, layer_selection_ranks,
                   block_index, chase_slot, position_preset_values,
                   find_position_preset, ComboSansMolette)
 from i18n import tr
@@ -1121,6 +1121,13 @@ LAYER_COLS = [
      "un cercle « au centre du plateau », pour toutes les lyres au même endroit.\n"
      "Avec une position enregistrée, chaque lyre tourne autour de SON point\n"
      "de visée — le même que celui du rappel de position."),
+    ("sym",    "SYM",          44,
+     "Symétrie Pan — canaux Pan et Pan/Tilt.\n"
+     "Les lyres situées à droite de l'axe partent en Pan INVERSÉ, celles de\n"
+     "gauche en Pan normal : les trajectoires se répondent en miroir.\n"
+     "C'est ce qui fait les ailes du « Lyre Papillon ».\n"
+     "Le partage suit la POSITION sur le plan de feu, pas l'ordre du patch —\n"
+     "même règle que le bouton SYM du plan 2D."),
     ("del",    "",             32, ""),
 ]
 
@@ -1190,7 +1197,7 @@ LAYER_COL_FLEX = {
     "cible": 3, "canal": 3, "forme": 5,
     "vit": 2, "amp": 2, "min": 2, "max": 2, "dec": 2, "group": 2,
     "fondu": 2, "depart": 2,
-    "sens": 0, "coul": 0, "pos": 3, "del": 0,
+    "sens": 0, "coul": 0, "pos": 3, "sym": 0, "del": 0,
 }
 
 _LAYER_COL_MIN = {c[0]: c[2] for c in LAYER_COLS}
@@ -1217,6 +1224,7 @@ LAYER_COL_ATTRS = {
     # Index ET nom : recopier le seul index sur une autre couche laisserait un
     # libellé faux dans sa cellule.
     "pos":    ("pos_preset_idx", "pos_preset_name"),
+    "sym":    ("sym_pan",),
 }
 
 
@@ -1846,8 +1854,9 @@ class LayerRow(QFrame):
         self._boites["sens"]   = self._mk_sens()
         self._boites["coul"]   = self._mk_coul()
         self._boites["pos"]    = self._mk_pos()
+        self._boites["sym"]    = self._mk_sym()
         self._boites["del"]    = self._mk_del()
-        for cle in ("sens", "coul", "pos", "del"):
+        for cle in ("sens", "coul", "pos", "sym", "del"):
             h.addWidget(self._boites[cle])
 
         # Cadre de colonne sélectionnée : transparent aux clics, sinon il
@@ -1861,6 +1870,7 @@ class LayerRow(QFrame):
 
         self._refresh_color_btns()
         self._refresh_pos_btn()
+        self._refresh_sym()
         self._sync_enabled_state()
 
     # ── Largeurs élastiques ───────────────────────────────────────────────────
@@ -1901,7 +1911,7 @@ class LayerRow(QFrame):
         """
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        act = menu.addAction("✕   Supprimer cette couche")
+        act = menu.addAction(tr("fx_del_layer"))
         if menu.exec(e.globalPos()) is act:
             self.deleted.emit(self)
 
@@ -2163,6 +2173,7 @@ class LayerRow(QFrame):
         self._refresh_sens()
         self._refresh_color_btns()
         self._refresh_pos_btn()
+        self._refresh_sym()
         self._sync_forme_mode()
         self._sync_enabled_state()
 
@@ -2214,6 +2225,7 @@ class LayerRow(QFrame):
             cell.set_accent(accent)
         self._refresh_color_btns()
         self._refresh_pos_btn()
+        self._refresh_sym()
         self._sync_forme_mode()
         self._sync_enabled_state()
         is_pt = (v == "Pan/Tilt")
@@ -2287,6 +2299,47 @@ class LayerRow(QFrame):
         self._pos_btn = b
         return b
 
+    # ── Symétrie Pan (canaux Pan et Pan/Tilt) ─────────────────────────────────
+    # Tilt est exclu : sym_pan n'inverse que le Pan, la case n'y produirait rien.
+    _ATTRS_SYM = ("Pan", "Pan/Tilt")
+
+    def _mk_sym(self):
+        b = QPushButton("⇄")
+        b.setCheckable(True)
+        b.setFixedSize(self._w["sym"], LAYER_CELL_H)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setToolTip(self._tip["sym"])
+        b.setStyleSheet(
+            "QPushButton{background:#0f0f0f;color:#555;border:1px solid #1e1e1e;"
+            "border-radius:4px;font-size:14px;font-weight:bold;}"
+            "QPushButton:hover{border-color:#00d4ff;}"
+            "QPushButton:checked{background:#0d1f2a;color:#00d4ff;"
+            "border-color:#00d4ff;}")
+        b.toggled.connect(self._on_sym_toggled)
+        # Même raison que POSITION : garder la place quand la cellule est
+        # masquée, sinon toutes les colonnes suivantes glissent.
+        _sp = b.sizePolicy()
+        _sp.setRetainSizeWhenHidden(True)
+        b.setSizePolicy(_sp)
+        self._sym_btn = b
+        return b
+
+    def _on_sym_toggled(self, on):
+        self.layer.sym_pan = bool(on)
+        self._emit("sym")
+
+    def _refresh_sym(self):
+        btn = getattr(self, '_sym_btn', None)
+        if btn is None:
+            return
+        actif = self.layer.attribute in self._ATTRS_SYM
+        btn.setVisible(actif)
+        if not actif:
+            return
+        btn.blockSignals(True)
+        btn.setChecked(bool(getattr(self.layer, 'sym_pan', False)))
+        btn.blockSignals(False)
+
     def _position_presets(self):
         """Positions enregistrées de l'application, ou [] si introuvables.
 
@@ -2317,7 +2370,7 @@ class LayerRow(QFrame):
                 a = menu.addAction(("✓ " if cur == i else "    ") + nom)
                 a.triggered.connect(lambda _=False, k=i, n=nom: self._set_pos(k, n))
         else:
-            a = menu.addAction("    (aucune position enregistrée)")
+            a = menu.addAction(tr("fx_no_position"))
             a.setEnabled(False)
 
         menu.exec(self._pos_btn.mapToGlobal(QPoint(0, self._pos_btn.height() + 2)))
@@ -2326,6 +2379,7 @@ class LayerRow(QFrame):
         self.layer.pos_preset_idx  = idx
         self.layer.pos_preset_name = nom
         self._refresh_pos_btn()
+        self._refresh_sym()
         self._emit("pos")
 
     def _refresh_pos_btn(self):
@@ -2353,8 +2407,7 @@ class LayerRow(QFrame):
             # Preset supprimé : le dire plutôt que d'afficher un nom qui ne
             # correspond plus à rien — le moteur retombera sur le centre.
             btn.setText("⚠ " + (nom[:8] if nom else "?"))
-            btn.setToolTip(f"Position « {nom} » introuvable — l'effet repart "
-                           f"du centre de course.")
+            btn.setToolTip(tr("fx_f_pos_missing", nom=nom))
             return
         vrai = trouve.get("name", nom) or nom
         btn.setText(vrai[:10])
@@ -2375,7 +2428,7 @@ class LayerRow(QFrame):
                     f"QPushButton{{background:{col};border:1px solid #333;"
                     f"border-radius:4px;}}"
                     f"QPushButton:hover{{border-color:#666;}}")
-                btn.setToolTip(f"Couleur {key[-1]} : {col}")
+                btn.setToolTip(tr("fx_f_color", a0=key[-1], col=col))
 
 
 # ─── Panneau d'édition simplifié (colonne centrale) ───────────────────────────
@@ -2859,7 +2912,7 @@ def _ask_name(parent, title: str, label: str, default: str = "") -> tuple[str, b
     btn_row = QHBoxLayout()
     btn_row.setSpacing(8)
     btn_row.addStretch()
-    cancel = QPushButton("Annuler")
+    cancel = QPushButton(tr("fx_cancel"))
     ok     = QPushButton("OK")
     ok.setObjectName("ok_btn")
     ok.setDefault(True)
@@ -2920,7 +2973,7 @@ class EffectEditorDialog(QDialog):
                 self._effect_duration = _saved_cfg.get("duration",   self._effect_duration)
         self._custom_effects = _load_custom_effects()
 
-        self.setWindowTitle("Editeur d'effets")
+        self.setWindowTitle(tr("fx_title"))
         self.setMinimumSize(1160, 620)
         # Assez large pour que les colonnes du tableau tiennent sans défilement :
         # 260 (bibliothèque) + 300 (plan de feu) + séparateurs + LAYER_TABLE_W.
@@ -3007,7 +3060,7 @@ class EffectEditorDialog(QDialog):
         hh = QHBoxLayout(hdr)
         hh.setContentsMargins(14, 0, 10, 0)
         self._lib_hdr_layout = hh
-        ttl = QLabel("Effets")
+        ttl = QLabel(tr("fx_effects"))
         ttl.setFont(QFont("Segoe UI", 12, QFont.Bold))
         ttl.setStyleSheet("color: #ddd;")
         hh.addWidget(ttl)
@@ -3139,7 +3192,7 @@ class EffectEditorDialog(QDialog):
         mes_hdr_h = QHBoxLayout(mes_hdr_w)
         mes_hdr_h.setContentsMargins(2, 0, 2, 0)
         mes_hdr_h.setSpacing(4)
-        mes_hdr_lbl = QLabel("MES EFFETS")
+        mes_hdr_lbl = QLabel(tr("fx_my_effects"))
         mes_hdr_lbl.setStyleSheet(
             "color: #2a2a2a; font-size: 8px; font-weight: bold; "
             "letter-spacing: 1.5px; background: transparent;"
@@ -3232,7 +3285,7 @@ class EffectEditorDialog(QDialog):
             ren_btn = QPushButton("✎")
             ren_btn.setFixedSize(14, 14)
             ren_btn.setCursor(Qt.PointingHandCursor)
-            ren_btn.setToolTip("Renommer")
+            ren_btn.setToolTip(tr("fx_rename"))
             ren_btn.setStyleSheet("""
                 QPushButton {
                     background: transparent; color: #446644;
@@ -3366,11 +3419,11 @@ class EffectEditorDialog(QDialog):
     def _show_card_context_menu(self, card, pos, eff: dict, deletable: bool):
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
-        act_dup = menu.addAction("Dupliquer")
-        act_exp = menu.addAction("Exporter…")
+        act_dup = menu.addAction(tr("fx_duplicate"))
+        act_exp = menu.addAction(tr("fx_export"))
         if deletable:
             menu.addSeparator()
-            act_del = menu.addAction("Supprimer")
+            act_del = menu.addAction(tr("fx_delete"))
         else:
             act_del = None
         chosen = menu.exec(card.mapToGlobal(pos))
@@ -3445,7 +3498,7 @@ class EffectEditorDialog(QDialog):
                 _j.dumps(export_data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
         except Exception as exc:
-            QMessageBox.warning(self, "Erreur export", str(exc))
+            QMessageBox.warning(self, tr("fx_export_error"), str(exc))
 
     def _import_custom_effect(self):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -3460,10 +3513,10 @@ class EffectEditorDialog(QDialog):
         try:
             data = _j.loads(_pathlib.Path(path).read_text(encoding="utf-8"))
         except Exception as exc:
-            QMessageBox.warning(self, "Erreur import", f"Fichier invalide :\n{exc}")
+            QMessageBox.warning(self, tr("fx_import_error"), tr("fx_f_invalid_file", exc=exc))
             return
         if not isinstance(data, dict) or "layers" not in data:
-            QMessageBox.warning(self, "Erreur import", "Ce fichier ne contient pas un effet valide.")
+            QMessageBox.warning(self, tr("fx_import_error"), tr("fx_invalid_effect"))
             return
         existing_names = {e.get("name", "") for e in self._custom_effects} | \
                          {e.get("name", "") for e in BUILTIN_EFFECTS}
@@ -3494,7 +3547,7 @@ class EffectEditorDialog(QDialog):
         new_name = new_name.strip()
         if new_name in existing:
             from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Nom déjà utilisé", f'Un effet "{new_name}" existe déjà.')
+            QMessageBox.warning(self, tr("fx_name_taken"), tr("fx_f_effect_exists", new_name=new_name))
             return
         # Mettre à jour le dict de l'effet
         eff["name"] = new_name
@@ -3593,7 +3646,7 @@ class EffectEditorDialog(QDialog):
         self._plan_collapse_btn = collapse
         self._plan_collapsed    = False
 
-        ttl = QLabel("Plan de feu")
+        ttl = QLabel(tr("fx_light_plan"))
         ttl.setFont(QFont("Segoe UI", 12, QFont.Bold))
         ttl.setStyleSheet("color: #ddd;")
         hh.addStretch()
@@ -3633,7 +3686,7 @@ class EffectEditorDialog(QDialog):
             self._plan_repliables.append(self._plan_widget)
         except Exception:
             self._plan_widget = None
-            fallback = QLabel("Plan de feu\nnon disponible")
+            fallback = QLabel(tr("fx_plan_unavailable"))
             fallback.setAlignment(Qt.AlignCenter)
             fallback.setStyleSheet("color: #444; font-size: 11px;")
             pv.addWidget(fallback, 1)
@@ -3768,26 +3821,24 @@ class EffectEditorDialog(QDialog):
         lay = QHBoxLayout(w)
         lay.setContentsMargins(16, 7, 14, 7)
         lay.setSpacing(8)
-        title = QLabel("Editeur d'effets")
+        title = QLabel(tr("fx_title"))
         title.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
         lay.addWidget(title)
         if self._clips:
             n   = len(self._clips)
-            sub = QLabel(f"— {n} bloc{'s' if n > 1 else ''} sélectionné{'s' if n > 1 else ''}")
+            sub = QLabel(tr("fx_f_blocks_sel", n=n, a0='s' if n > 1 else '', a1='s' if n > 1 else ''))
             sub.setStyleSheet("color: #444; font-size: 11px; margin-left: 8px;")
             lay.addWidget(sub)
         lay.addStretch()
 
         # ── Actions déplacées en haut (comme le patch DMX) ────────────────────
         # Sortie live · Annuler · Sauvegarder.
-        self._btn_live_dmx = QPushButton("  Sortie live")
+        self._btn_live_dmx = QPushButton(tr("fx_live_out"))
         self._btn_live_dmx.setCheckable(True)
         self._btn_live_dmx.setFixedHeight(34)
         self._btn_live_dmx.setCursor(Qt.PointingHandCursor)
         self._btn_live_dmx.setToolTip(
-            "Envoie l'aperçu sur le DMX : tes projecteurs jouent l'effet\n"
-            "pendant que tu le règles.\n"
-            "Désactivé, l'éditeur ne touche à rien.")
+            tr("fx_live_out_hint"))
         self._live_dmx_off_ss = (
             "QPushButton{background:#1e1e1e;color:#888;border:1px solid #2e2e2e;"
             "border-radius:6px;font-size:12px;padding:0 14px;}"
@@ -3799,7 +3850,7 @@ class EffectEditorDialog(QDialog):
         self._btn_live_dmx.toggled.connect(self._on_live_dmx_toggled)
         lay.addWidget(self._btn_live_dmx)
 
-        cancel = QPushButton("Annuler")
+        cancel = QPushButton(tr("fx_cancel"))
         cancel.setFixedSize(96, 34)
         cancel.setStyleSheet("""
             QPushButton {
@@ -3811,7 +3862,7 @@ class EffectEditorDialog(QDialog):
         cancel.clicked.connect(self.reject)
         lay.addWidget(cancel)
 
-        ok = QPushButton("Sauvegarder")
+        ok = QPushButton(tr("fx_save"))
         ok.setFixedSize(116, 34)
         ok.setStyleSheet("""
             QPushButton {
@@ -4054,6 +4105,21 @@ class EffectEditorDialog(QDialog):
             if _pr is not None:
                 _pos_centers[id(_l)] = position_preset_values(_pr, _all_lyres)
 
+        # SYM : quelles lyres partent en Pan miroir. Le partage se fait sur la
+        # POSITION sur le plan (même règle que le bouton SYM du plan 2D), pas
+        # sur l'index de la fixture dans l'effet : deux règles différentes pour
+        # le même mot, c'était intenable. Import différé — effect_editor est
+        # importé par plan_de_feu en amont.
+        _sym_ids = {}
+        if any(getattr(_l, 'sym_pan', False) for _l in self._layers):
+            from plan_de_feu import sym_mirror_ids as _sym_mirror_ids
+            _lyres_fx = [p for p in projectors
+                         if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+            _mir = _sym_mirror_ids(_lyres_fx, _all_proj)
+            for _l in self._layers:
+                if getattr(_l, 'sym_pan', False):
+                    _sym_ids[id(_l)] = _mir
+
         for i, proj in enumerate(projectors):
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0
             has_dim = False
@@ -4159,7 +4225,7 @@ class EffectEditorDialog(QDialog):
                 elif attr == "Pan":
                     amp = (layer.size / 100.0) * 8192 * PAN_ANGULAR_RATIO
                     sym_pan  = getattr(layer, 'sym_pan', False)
-                    pan_sign = -1 if (sym_pan and i_fx * 2 >= n_fx) else 1
+                    pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
                     c_pan = _ctr[0] if _ctr is not None else 32768
                     pan_v = int(max(0, min(65535, c_pan + pan_sign * (raw - 0.5) * 2 * amp)))
@@ -4177,7 +4243,7 @@ class EffectEditorDialog(QDialog):
                     tilt_cfg = sdef.get('tilt', ('Sinus', 25, 1.0))
                     pt_amp   = (layer.size / 100.0) * 8192
                     sym_pan  = getattr(layer, 'sym_pan', False)
-                    pan_sign = -1 if (sym_pan and i_fx * 2 >= n_fx) else 1
+                    pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     # SENS de la trajectoire : → avant · ← inverse (la lyre tourne
                     # dans l'autre sens) · ↔ aller-retour. On agit sur le TEMPS,
                     # pas sur l'étalement (c'est le sens de MOUVEMENT de chaque lyre).

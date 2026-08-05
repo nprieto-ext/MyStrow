@@ -461,7 +461,7 @@ class BradDiagnosticDialog(QDialog):
     def __init__(self, window):
         super().__init__(window)
         self._window = window
-        self.setWindowTitle("Assistant de diagnostic Node — Diagnostic DMX")
+        self.setWindowTitle(tr("brad_title_full"))
         self.setMinimumSize(680, 580)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
@@ -488,7 +488,7 @@ class BradDiagnosticDialog(QDialog):
         root.setSpacing(14)
 
         # ── Titre ──
-        title = QLabel("Assistant de diagnostic Node")
+        title = QLabel(tr("brad_title"))
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
         sub = QLabel(tr("bd2_title"))
@@ -531,7 +531,7 @@ class BradDiagnosticDialog(QDialog):
         """)
         self._copy_btn.clicked.connect(self._copy_report)
 
-        self._send_btn = QPushButton("✉️  Envoyer au support")
+        self._send_btn = QPushButton(tr("brad_send_support"))
         self._send_btn.setEnabled(False)
         self._send_btn.setStyleSheet("""
             QPushButton {
@@ -545,11 +545,11 @@ class BradDiagnosticDialog(QDialog):
         """)
         self._send_btn.clicked.connect(self._send_report)
 
-        self._retry_btn = QPushButton("↺  Relancer")
+        self._retry_btn = QPushButton(tr("brad_rerun"))
         self._retry_btn.setEnabled(False)
         self._retry_btn.clicked.connect(self._start)
 
-        close_btn = QPushButton("Fermer")
+        close_btn = QPushButton(tr("brad_close"))
         close_btn.clicked.connect(self.accept)
 
         btn_row.setSpacing(10)

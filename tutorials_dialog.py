@@ -154,7 +154,7 @@ class TutorialsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Tutoriels MyStrow")
+        self.setWindowTitle(tr("tuto_title"))
         self.setModal(True)
         self.setMinimumSize(590, 520)
         self.setStyleSheet("background:#141414; color:#eee;")
@@ -165,7 +165,7 @@ class TutorialsDialog(QDialog):
 
         # En-tête
         hdr = QHBoxLayout()
-        ttl = QLabel("📺  Tutoriels MyStrow")
+        ttl = QLabel(tr("tuto_header"))
         ttl.setStyleSheet("font-size:17px; font-weight:700; color:#E2CE16;")
         hdr.addWidget(ttl)
         hdr.addStretch()
@@ -234,7 +234,6 @@ class TutorialsDialog(QDialog):
 
     def _on_error(self, msg: str):
         self._status.setText(
-            "Impossible de charger la playlist.\n"
-            "Vérifiez votre connexion internet."
+            tr("tuto_load_error")
         )
         self._status.setStyleSheet("color:#e44; font-size:12px;")

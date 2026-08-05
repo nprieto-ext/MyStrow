@@ -358,7 +358,7 @@ class FixturePackDownloadDialog(QDialog):
         lay.addWidget(title)
 
         n   = len(self._packs)
-        sub = QLabel(f"Téléchargement de {n} pack(s) depuis MyStrow Cloud…")
+        sub = QLabel(tr("fp_f_downloading", n=n))
         sub.setStyleSheet("color:#666; font-size:11px;")
         lay.addWidget(sub)
 
@@ -407,14 +407,14 @@ class FixturePackDownloadDialog(QDialog):
         self._global_bar.setTextVisible(False)
         lay.addWidget(self._global_bar)
 
-        self._global_lbl = QLabel(f"0 / {n} pack(s)")
+        self._global_lbl = QLabel(tr("fp_f_zero_of", n=n))
         self._global_lbl.setStyleSheet("font-size:11px; color:#555;")
         self._global_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(self._global_lbl)
 
         lay.addStretch()
 
-        self._btn_close = QPushButton("Fermer")
+        self._btn_close = QPushButton(tr("fp_close"))
         self._btn_close.setEnabled(False)
         self._btn_close.clicked.connect(self.accept)
         lay.addWidget(self._btn_close, alignment=Qt.AlignRight)
@@ -441,10 +441,10 @@ class FixturePackDownloadDialog(QDialog):
 
     def _on_pack_started(self, pack_name: str, idx: int):
         n = len(self._packs)
-        self._cur_label.setText(f"Téléchargement : {pack_name}…")
+        self._cur_label.setText(tr("fp_f_downloading_one", pack_name=pack_name))
         self._fx_bar.setValue(0)
         self._global_bar.setValue(idx)
-        self._global_lbl.setText(f"{idx + 1} / {n} pack(s)")
+        self._global_lbl.setText(tr("fp_f_progress", a0=idx + 1, n=n))
 
         item = self._pack_list.item(idx)
         if item:
@@ -458,7 +458,7 @@ class FixturePackDownloadDialog(QDialog):
     def _on_pack_done(self, pack_name: str, added: int):
         self._total_new += added
         self._counter_lbl.setText(
-            f"{self._total_new} nouveau(x) fixture(s) téléchargé(s)"
+            tr("fp_f_new_downloaded", a0=self._total_new)
         )
         # Trouver le bon item dans la liste et le cocher
         for i in range(self._pack_list.count()):
@@ -471,14 +471,14 @@ class FixturePackDownloadDialog(QDialog):
     def _on_all_done(self, total_new: int, total_packs: int):
         n = len(self._packs)
         self._global_bar.setValue(n)
-        self._global_lbl.setText(f"{n} / {n} pack(s)")
+        self._global_lbl.setText(tr("fp_f_progress2", n=n, a0=n))
         self._fx_bar.setValue(100)
         self._cur_label.setText(tr("fp2_done"))
         self._cur_label.setStyleSheet("font-size:11px; color:#4CAF50;")
 
         if total_new > 0:
             self._counter_lbl.setText(
-                f"{total_new} nouveau(x) fixture(s) ajouté(s) à votre bibliothèque"
+                tr("fp_f_added_library", total_new=total_new)
             )
             self._counter_lbl.setStyleSheet(
                 "font-size:13px; color:#4CAF50; font-weight:bold;"
@@ -491,6 +491,6 @@ class FixturePackDownloadDialog(QDialog):
         self.download_complete.emit(total_new)
 
     def _on_error(self, msg: str):
-        self._cur_label.setText(f"Erreur : {msg}")
+        self._cur_label.setText(tr("fp_f_error", msg=msg))
         self._cur_label.setStyleSheet("font-size:11px; color:#f44336;")
         self._btn_close.setEnabled(True)

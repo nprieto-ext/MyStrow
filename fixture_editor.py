@@ -460,16 +460,16 @@ class _ProfileStrip(QListWidget):
         )
         lbl = f"Valeur fixe : {val}" if val is not None else "Définir valeur fixe…"
         act_set   = menu.addAction(lbl)
-        act_clear = menu.addAction("Effacer la valeur fixe")
+        act_clear = menu.addAction(tr("fe_clear_fixed"))
         act_clear.setEnabled(val is not None)
         menu.addSeparator()
-        act_del = menu.addAction("Supprimer ce canal")
+        act_del = menu.addAction(tr("fe_del_channel"))
 
         chosen = menu.exec(self.mapToGlobal(event.pos()))
         if chosen == act_set:
             v, ok = QInputDialog.getInt(
-                self, "Valeur fixe DMX",
-                f"Valeur DMX pour « {ch} » (0 = éteint, 255 = 100%) :",
+                self, tr("fe_fixed_dmx"),
+                tr("fe_f_dmx_value", ch=ch),
                 val if val is not None else 0, 0, 255
             )
             if ok:
@@ -545,7 +545,7 @@ class _PaletteBlock(QWidget):
         self._text_col = QColor("#ffffff") if lum < 145 else QColor("#111111")
         self.setFixedSize(self._W, self._H)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(f"Cliquer ou glisser pour ajouter « {ch_type} »")
+        self.setToolTip(tr("fe_f_add_channel", ch_type=ch_type))
         self._drag_start: QPoint | None = None
 
     def paintEvent(self, event):
@@ -633,7 +633,7 @@ class FixtureEditorDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Mes projecteurs — MyStrow")
+        self.setWindowTitle(tr("fe_title"))
         self.setMinimumSize(860, 520)
         self.setWindowState(Qt.WindowMaximized)
 
@@ -683,7 +683,7 @@ class FixtureEditorDialog(QDialog):
                 encoding="utf-8",
             )
         except Exception as e:
-            QMessageBox.warning(self, "Erreur", f"Sauvegarde impossible :\n{e}")
+            QMessageBox.warning(self, tr("fe_error"), tr("fe_f_save_failed", e=e))
 
     # ── Packs de fixtures distants ────────────────────────────────────────────
 
@@ -768,7 +768,7 @@ class FixtureEditorDialog(QDialog):
         hbar.setStyleSheet("background:#111;border-bottom:1px solid #1e1e1e;")
         hbl = QHBoxLayout(hbar)
         hbl.setContentsMargins(14, 0, 10, 0)
-        lbl = QLabel("Mes projecteurs")
+        lbl = QLabel(tr("fe_my_fixtures"))
         lbl.setStyleSheet("font-size:13px;font-weight:bold;color:#ddd;")
         hbl.addWidget(lbl)
         lv.addWidget(hbar)
@@ -795,7 +795,7 @@ class FixtureEditorDialog(QDialog):
         fl = QVBoxLayout(foot)
         fl.setContentsMargins(10, 8, 10, 8)
         fl.setSpacing(5)
-        btn_new = QPushButton("+ Nouveau projecteur")
+        btn_new = QPushButton(tr("fe_new_fixture"))
         btn_new.setFixedHeight(34)
         btn_new.setStyleSheet(
             "QPushButton{background:#00d4ff;color:#000;border:none;"
@@ -813,9 +813,9 @@ class FixtureEditorDialog(QDialog):
         )
         btn_copy_lib.clicked.connect(self._copy_from_library)
         fl.addWidget(btn_copy_lib)
-        btn_import = QPushButton("📥  Importer fixture")
+        btn_import = QPushButton(tr("fe_import_fixture"))
         btn_import.setFixedHeight(28)
-        btn_import.setToolTip("Compatible QLC+, GrandMA2/3 — formats .xml, .mft, .json")
+        btn_import.setToolTip(tr("fe_import_formats"))
         btn_import.setStyleSheet(
             "QPushButton{background:#1a2a1a;color:#88cc88;border:1px solid #2a442a;"
             "border-radius:6px;font-size:11px;}"
@@ -846,12 +846,12 @@ class FixtureEditorDialog(QDialog):
 
         # Titre + Supprimer
         hdr = QHBoxLayout()
-        self._editor_title = QLabel("Nouveau projecteur")
+        self._editor_title = QLabel(tr("fe_new_fixture_title"))
         self._editor_title.setStyleSheet(
             "font-size:22px;font-weight:bold;color:#00d4ff;"
         )
         hdr.addWidget(self._editor_title, 1)
-        self._btn_delete = QPushButton("🗑  Supprimer")
+        self._btn_delete = QPushButton(tr("fe_delete_m"))
         self._btn_delete.setFixedHeight(30)
         self._btn_delete.setEnabled(False)
         self._btn_delete.setStyleSheet(
@@ -863,7 +863,7 @@ class FixtureEditorDialog(QDialog):
         self._btn_delete.clicked.connect(self._delete_fixture)
         hdr.addWidget(self._btn_delete)
         hdr.addSpacing(10)
-        self._btn_export = QPushButton("📤  Exporter")
+        self._btn_export = QPushButton(tr("fe_export_m"))
         self._btn_export.setFixedHeight(30)
         self._btn_export.setStyleSheet(
             "QPushButton{background:#1a2a1a;color:#88cc88;border:1px solid #2a442a;"
@@ -873,7 +873,7 @@ class FixtureEditorDialog(QDialog):
         self._btn_export.clicked.connect(self._do_export)
         hdr.addWidget(self._btn_export)
         hdr.addSpacing(10)
-        self._btn_save = QPushButton("💾  Enregistrer")
+        self._btn_save = QPushButton(tr("fe_save_m"))
         self._btn_save.setFixedHeight(30)
         self._btn_save.setStyleSheet(
             "QPushButton{background:#00d4ff;color:#000;border:none;"
@@ -884,7 +884,7 @@ class FixtureEditorDialog(QDialog):
         self._btn_save.clicked.connect(self._save_current)
         hdr.addWidget(self._btn_save)
         hdr.addSpacing(10)
-        btn_close = QPushButton("✕  Fermer")
+        btn_close = QPushButton(tr("fe_close_m"))
         btn_close.setFixedHeight(30)
         btn_close.setStyleSheet(
             "QPushButton{background:transparent;color:#666;border:1px solid #333;"
@@ -901,7 +901,7 @@ class FixtureEditorDialog(QDialog):
         rv.addSpacing(5)
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText(
-            "Ex : Chauvet SlimPAR Pro H, ADJ Mega Tri Par, Lyre Beam 7R…"
+            tr("fe_ex_name")
         )
         self._name_edit.setFixedHeight(40)
         self._name_edit.textChanged.connect(
@@ -929,7 +929,7 @@ class FixtureEditorDialog(QDialog):
         mc.setSpacing(5)
         mc.addWidget(self._lbl("NOM DU MODE / PROTOCOLE"))
         self._mode_name_edit = QLineEdit()
-        self._mode_name_edit.setPlaceholderText("Ex : Mode 8ch, Standard, Extended…")
+        self._mode_name_edit.setPlaceholderText(tr("fe_ex_mode"))
         self._mode_name_edit.setFixedHeight(38)
         mc.addWidget(self._mode_name_edit)
         type_mode_row.addLayout(mc, 1)
@@ -944,7 +944,7 @@ class FixtureEditorDialog(QDialog):
         # ── Section canaux ────────────────────────────────────────────────────
         ch_hdr = QHBoxLayout()
         ch_hdr.addWidget(self._lbl("PROFIL DMX"))
-        self._ch_count_lbl = QLabel("0 canal")
+        self._ch_count_lbl = QLabel(tr("fe_zero_channel"))
         self._ch_count_lbl.setStyleSheet("font-size:11px;color:#444;")
         ch_hdr.addStretch()
         ch_hdr.addWidget(self._ch_count_lbl)
@@ -972,9 +972,7 @@ class FixtureEditorDialog(QDialog):
         btn_px.setFixedHeight(28)
         btn_px.setCursor(Qt.PointingHandCursor)
         btn_px.setToolTip(
-            "Compose automatiquement le profil d'un appareil à pixels :\n"
-            "canaux globaux puis le motif répété pour chaque pixel.\n"
-            "Sans ça, MyStrow verrait un seul projecteur au lieu d'une barre.")
+            tr("fe_pixel_gen_hint"))
         btn_px.setStyleSheet(
             "QPushButton{background:#1a1024;color:#cc77dd;border:1px solid #3a2a4a;"
             "border-radius:5px;font-size:11px;font-weight:bold;padding:0 12px;}"
@@ -1047,7 +1045,7 @@ class FixtureEditorDialog(QDialog):
     def _show_empty_state(self):
         self._current_idx = -1
         self._name_edit.setText("")
-        self._editor_title.setText("Nouveau projecteur")
+        self._editor_title.setText(tr("fe_new_fixture_title"))
         self._type_combo.setCurrentIndex(0)
         self._rebuild_presets(FIXTURE_TYPES[0])
         self._mode_name_edit.setText("")
@@ -1082,8 +1080,8 @@ class FixtureEditorDialog(QDialog):
             "QMenu::item{padding:7px 20px;}"
             "QMenu::item:selected{background:#00d4ff18;color:#00d4ff;}"
         )
-        act_dup = menu.addAction("Dupliquer")
-        act_del = menu.addAction("Supprimer")
+        act_dup = menu.addAction(tr("fe_duplicate"))
+        act_del = menu.addAction(tr("fe_delete"))
         act = menu.exec(self._my_list.mapToGlobal(pos))
         if act == act_dup:
             self._duplicate_at(row)
@@ -1129,7 +1127,7 @@ class FixtureEditorDialog(QDialog):
         self._name_edit.blockSignals(True)
         self._name_edit.setText("")
         self._name_edit.blockSignals(False)
-        self._editor_title.setText("Nouveau projecteur")
+        self._editor_title.setText(tr("fe_new_fixture_title"))
         self._type_combo.blockSignals(True)
         self._type_combo.setCurrentIndex(0)
         self._type_combo.blockSignals(False)
@@ -1173,7 +1171,7 @@ class FixtureEditorDialog(QDialog):
         vl.setSpacing(10)
 
         search = QLineEdit()
-        search.setPlaceholderText("🔍  Rechercher par nom ou type…")
+        search.setPlaceholderText(tr("fe_search"))
         search.setFixedHeight(36)
         vl.addWidget(search)
 
@@ -1192,7 +1190,7 @@ class FixtureEditorDialog(QDialog):
             "border:none;border-radius:6px;padding:6px 24px;font-size:13px;}"
             "QPushButton:hover{background:#33ddff;}"
         )
-        btn_cancel = QPushButton("Annuler")
+        btn_cancel = QPushButton(tr("fe_cancel"))
         btn_cancel.setFixedHeight(36)
         btn_cancel.clicked.connect(dlg.reject)
         btn_row.addStretch()
@@ -1309,7 +1307,7 @@ class FixtureEditorDialog(QDialog):
     def _on_channels_changed(self):
         channels = self._ch_list.get_channels()
         n = len(channels)
-        self._ch_count_lbl.setText(f"{n} canal{'x' if n > 1 else ''}")
+        self._ch_count_lbl.setText(tr("fe_f_n_channels", n=n, a0='x' if n > 1 else ''))
         self._check_pixel_hint(channels)
 
     def _check_pixel_hint(self, channels):
@@ -1336,15 +1334,11 @@ class FixtureEditorDialog(QDialog):
         _reps = max((channels.count(c) for c in ("R", "G", "B", "W")), default=0)
         if _reps >= 2:
             self._px_info.setText(
-                f"⚠  Motif répété {_reps}× — utilise « ▦ Générer » pour que ce "
-                f"soit une vraie barre à pixels")
+                tr("fe_f_pattern_repeat", _reps=_reps))
             self._px_info.setStyleSheet(
                 "font-size:10px;color:#ffaa33;font-weight:bold;background:transparent;")
             self._px_info.setToolTip(
-                "Le profil sera correct et l'appareil s'allumera, mais MyStrow y\n"
-                "verra UN projecteur : pas de bloc sur le plan de feu, pas\n"
-                "d'effet par pixel, pas de chenillard.\n"
-                "Le générateur ▦ pose en plus la géométrie qui manque.")
+                tr("fe_pixel_warning"))
         else:
             self._px_info.setText("")
             self._px_info.setToolTip("")
@@ -1389,9 +1383,7 @@ class FixtureEditorDialog(QDialog):
             cell = _CELLS[cb_cell.currentIndex()][1]
             head = (1 if chk_dim.isChecked() else 0) + (1 if chk_str.isChecked() else 0)
             n = sp_rows.value() * sp_cols.value()
-            _tot.setText(f"{head + n * len(cell)} canaux "
-                         f"({n} pixels × {len(cell)}"
-                         f"{f' + {head} globaux' if head else ''})")
+            _tot.setText(tr("fe_f_channels_px", a0=head + n * len(cell), n=n, a1=len(cell), a2=f' + {head} globaux' if head else ''))
         for w in (sp_rows, sp_cols):
             w.valueChanged.connect(lambda _: _recount())
         cb_cell.currentIndexChanged.connect(lambda _: _recount())
@@ -1424,7 +1416,7 @@ class FixtureEditorDialog(QDialog):
             "offset": len(head), "order": "perPixel",
         }
         self._px_info.setText(
-            f"▦ {rows}×{cols} = {n_px} pixels · {len(profile)} canaux")
+            tr("fe_f_matrix", rows=rows, cols=cols, n_px=n_px, a0=len(profile)))
         if not self._type_combo.currentText().startswith(("Barre", "Matrice")):
             _want = "Barre LED" if rows <= 1 else "Matrice LED"
             _i = self._type_combo.findText(_want)
@@ -1460,13 +1452,13 @@ class FixtureEditorDialog(QDialog):
     def _save_current(self):
         data = self._get_form_data()
         if not data["name"]:
-            QMessageBox.warning(self, "Nom requis",
-                "Veuillez entrer un nom pour le projecteur.")
+            QMessageBox.warning(self, tr("fe_name_required"),
+                tr("fe_enter_name"))
             self._name_edit.setFocus()
             return
         if not data["profile"]:
-            QMessageBox.warning(self, "Canaux requis",
-                "Ajoutez au moins un canal DMX.")
+            QMessageBox.warning(self, tr("fe_channels_required"),
+                tr("fe_add_one_channel"))
             return
 
         is_new = self._current_idx < 0
@@ -1510,8 +1502,8 @@ class FixtureEditorDialog(QDialog):
             return
         name = self._fixtures[idx].get("name", "ce projecteur")
         if QMessageBox.question(
-            self, "Supprimer",
-            f"Supprimer « {name} » ?",
+            self, tr("fe_delete"),
+            tr("fe_f_delete_q", name=name),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         ) != QMessageBox.Yes:
             return
@@ -1548,8 +1540,8 @@ class FixtureEditorDialog(QDialog):
         else:
             data = self._get_form_data()   # fixture en cours d'édition, non enregistrée
         if not data.get("name") or not data.get("profile"):
-            QMessageBox.warning(self, "Rien à exporter",
-                "Sélectionnez une fixture (ou renseignez nom + canaux) avant d'exporter.")
+            QMessageBox.warning(self, tr("fe_nothing_to_export"),
+                tr("fe_select_before_export"))
             return
         safe = "".join(c for c in data["name"] if c.isalnum() or c in " -_").strip() or "fixture"
         path, _ = QFileDialog.getSaveFileName(
@@ -1562,10 +1554,10 @@ class FixtureEditorDialog(QDialog):
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            QMessageBox.warning(self, "Export échoué", str(e))
+            QMessageBox.warning(self, tr("fe_export_failed"), str(e))
             return
-        QMessageBox.information(self, "Export réussi",
-            f"« {data['name']} » exportée :\n{path}")
+        QMessageBox.information(self, tr("fe_export_ok"),
+            tr("fe_f_exported", a0=data['name'], path=path))
 
     # ── Import ────────────────────────────────────────────────────────────────
 
@@ -1612,7 +1604,7 @@ class FixtureEditorDialog(QDialog):
                     if len(candidates) > 1:
                         names = [c["name"] for c in candidates]
                         choice, ok = QInputDialog.getItem(
-                            self, "Mode à importer", "Choisir :", names, 0, False)
+                            self, tr("fe_mode_to_import"), tr("fe_choose"), names, 0, False)
                         if not ok:
                             continue
                         to_add = [candidates[names.index(choice)]]
@@ -1647,7 +1639,7 @@ class FixtureEditorDialog(QDialog):
             msg = "Aucune fixture importée."
             if errors:
                 msg += "\n\n" + "\n".join(errors)
-            QMessageBox.warning(self, "Import échoué", msg)
+            QMessageBox.warning(self, tr("fe_import_failed"), msg)
             return
 
         self._save_fixtures()
@@ -1656,6 +1648,6 @@ class FixtureEditorDialog(QDialog):
         msg = f"{imported} fixture{'s' if imported > 1 else ''} importée{'s' if imported > 1 else ''}."
         if errors:
             msg += f"\n\n{len(errors)} ignoré(s) :\n" + "\n".join(errors)
-            QMessageBox.warning(self, "Import partiel", msg)
+            QMessageBox.warning(self, tr("fe_import_partial"), msg)
         else:
-            QMessageBox.information(self, "Import réussi", msg)
+            QMessageBox.information(self, tr("fe_import_ok"), msg)

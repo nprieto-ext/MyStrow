@@ -1,0 +1,410 @@
+"""
+vmix_link.py — Ce que MyStrow FAIT des evenements vMix, et son reglage.
+
+vmix_client.py parle le protocole ; ce module decide de l'effet. La separation
+n'est pas cosmetique : le client ne connait ni MainWindow ni les memoires, on
+peut donc le tester (et le rejouer) sans lancer l'application.
+
+Modele repris du Stream Deck : une entree vMix qui passe au PROGRAMME declenche
+une action choisie dans le meme vocabulaire (memoire, effet, cartouche). La
+camera a l'antenne appelle son eclairage.
+"""
+
+import threading
+
+from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
+)
+
+from vmix_client import VmixClient, VMIX_TCP_PORT, query_inputs
+
+# Types d'action declenchables par une entree vMix
+ACTION_NONE      = "none"
+ACTION_MEMORY    = "memory"
+ACTION_EFFECT    = "effect"
+ACTION_CARTOUCHE = "cartouche"
+
+ACTION_LABELS = [
+    (ACTION_NONE,      "— Rien —"),
+    (ACTION_MEMORY,    "Memoire"),
+    (ACTION_EFFECT,    "Effet"),
+    (ACTION_CARTOUCHE, "Cartouche"),
+]
+
+
+class VmixLink(QObject):
+    """Detient le client, la table de correspondance, et applique les actions."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self._window = window
+        self.client = VmixClient(window)
+        self.enabled = False
+        self.host = "127.0.0.1"
+        self.port = VMIX_TCP_PORT
+        # {numero d'entree vMix (int): {"type": ..., "value": ...}}
+        self.mappings = {}
+        self.client.program_entered.connect(self._on_program_entered)
+
+    # ── persistance (dans ~/.maestro_akai_config.json) ──────────────────────
+
+    def to_config(self) -> dict:
+        return {
+            "enabled": bool(self.enabled),
+            "host": self.host,
+            "port": int(self.port),
+            # Les cles JSON sont forcement des chaines
+            "mappings": {str(k): dict(v) for k, v in self.mappings.items()},
+        }
+
+    def from_config(self, cfg: dict):
+        if not isinstance(cfg, dict):
+            return
+        self.enabled = bool(cfg.get("enabled", False))
+        self.host = str(cfg.get("host", "127.0.0.1") or "127.0.0.1")
+        try:
+            self.port = int(cfg.get("port", VMIX_TCP_PORT) or VMIX_TCP_PORT)
+        except (TypeError, ValueError):
+            self.port = VMIX_TCP_PORT
+        self.mappings = {}
+        for k, v in (cfg.get("mappings") or {}).items():
+            try:
+                self.mappings[int(k)] = dict(v)
+            except (TypeError, ValueError):
+                continue
+
+    # ── cycle de vie ────────────────────────────────────────────────────────
+
+    def apply(self):
+        """Demarre ou arrete la liaison selon `enabled`."""
+        if self.enabled:
+            self.client.start(self.host, self.port)
+        else:
+            self.client.stop()
+
+    def stop(self):
+        self.client.stop()
+
+    # ── declenchement ───────────────────────────────────────────────────────
+
+    def _on_program_entered(self, numero: int):
+        """Slot Qt appele dans le thread principal (signal emis par le reseau).
+
+        Enveloppe try/except de bout en bout : une exception non rattrapee dans
+        un slot Qt fait tomber tout le processus sous PySide6. Un titre de
+        media exotique ou une memoire effacee entre-temps ne doit pas emporter
+        la console d'eclairage en plein direct.
+        """
+        try:
+            self._declencher(self.mappings.get(int(numero)))
+        except Exception as exc:
+            print(f"[vMix] action ignoree pour l'entree {numero} : {exc}")
+
+    def _declencher(self, action):
+        if not action:
+            return
+        w = self._window
+        t = action.get("type", ACTION_NONE)
+        val = action.get("value")
+
+        if t == ACTION_MEMORY:
+            col_s, _, row_s = str(val).partition(".")
+            col, row = int(col_s) - 1, int(row_s) - 1     # 1-based → 0-based
+            if 0 <= col <= 7 and 0 <= row <= 7:
+                w.trigger_memory(col, row)
+
+        elif t == ACTION_CARTOUCHE:
+            idx = int(val)
+            if 0 <= idx <= 3:
+                w.on_cartouche_clicked(idx)
+
+        elif t == ACTION_EFFECT:
+            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+            tous = list(BUILTIN_EFFECTS) + _load_custom_effects()
+            cfg = next((e for e in tous if e.get("name") == val), None)
+            if cfg is None:
+                return                       # effet renomme ou supprime
+            w.active_effect = val
+            w.active_effect_config = cfg
+            w.start_effect(val)
+
+
+# ---------------------------------------------------------------------------
+# Interrogation non bloquante des entrees vMix
+# ---------------------------------------------------------------------------
+
+class _InputProbe(QObject):
+    """`query_inputs` dans un thread : jusqu'a 4 s d'attente reseau.
+
+    Dans le thread Qt, cette attente gelerait la fenetre — et surtout la trame
+    DMX a 25 fps, qui tourne sur le meme timer.
+    """
+
+    done   = Signal(list)
+    failed = Signal(str)
+
+    def run(self, host, port):
+        def _travail():
+            try:
+                self.done.emit(query_inputs(host, port))
+            except Exception as exc:
+                self.failed.emit(str(exc))
+        threading.Thread(target=_travail, daemon=True, name="vmix-probe").start()
+
+
+# ---------------------------------------------------------------------------
+# Dialogue de configuration
+# ---------------------------------------------------------------------------
+
+_STYLE = """
+QDialog { background: #0f0f0f; }
+QLabel { color: #ddd; background: transparent; border: none; }
+QLineEdit, QSpinBox, QComboBox {
+    background: #1a1a1a; color: #ddd; border: 1px solid #2a2a2a;
+    border-radius: 4px; padding: 5px;
+}
+QPushButton {
+    background: #1f1f1f; color: #ddd; border: 1px solid #2f2f2f;
+    border-radius: 5px; padding: 7px 16px;
+}
+QPushButton:hover { background: #2a2a2a; }
+QPushButton#primary { background: #00d4ff; color: #000; font-weight: bold; border: none; }
+QPushButton#primary:hover { background: #33ddff; }
+QTableWidget {
+    background: #141414; color: #ddd; border: 1px solid #2a2a2a;
+    gridline-color: #222;
+}
+QHeaderView::section {
+    background: #1a1a1a; color: #999; border: none; padding: 6px;
+}
+"""
+
+
+class VmixDialog(QDialog):
+    """Connexion vMix + correspondance entree → action lumiere."""
+
+    def __init__(self, window, link: VmixLink):
+        super().__init__(window)
+        self._window = window
+        self._link = link
+        self._inputs = link.client.inputs()
+
+        self.setWindowTitle("vMix — liaison video → lumiere")
+        self.setMinimumWidth(640)
+        self.setStyleSheet(_STYLE)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(12)
+
+        titre = QLabel("🎥  vMix pilote MyStrow")
+        f = QFont(); f.setPointSize(13); f.setBold(True)
+        titre.setFont(f)
+        root.addWidget(titre)
+
+        sous = QLabel("Quand une entree vMix passe au PROGRAMME, MyStrow "
+                      "declenche l'action choisie.\nLa liaison est a sens unique : "
+                      "MyStrow ne commande jamais vMix.")
+        sous.setStyleSheet("color:#888; font-size:11px;")
+        sous.setWordWrap(True)
+        root.addWidget(sous)
+
+        # ── Connexion ───────────────────────────────────────────────────────
+        ligne = QHBoxLayout()
+        ligne.addWidget(QLabel("Hote"))
+        self._hote = QLineEdit(link.host)
+        self._hote.setFixedWidth(150)
+        ligne.addWidget(self._hote)
+        ligne.addWidget(QLabel("Port"))
+        self._port = QSpinBox()
+        self._port.setRange(1, 65535)
+        self._port.setValue(int(link.port))
+        self._port.setFixedWidth(90)
+        ligne.addWidget(self._port)
+        self._btn_test = QPushButton("Tester la connexion")
+        self._btn_test.clicked.connect(self._tester)
+        ligne.addWidget(self._btn_test)
+        ligne.addStretch()
+        root.addLayout(ligne)
+
+        self._etat = QLabel("")
+        self._etat.setStyleSheet("color:#888; font-size:11px;")
+        root.addWidget(self._etat)
+        self._maj_etat(link.client.is_connected(),
+                       "Connecte" if link.client.is_connected() else "Non connecte")
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color:#222;")
+        root.addWidget(sep)
+
+        # ── Table de correspondance ─────────────────────────────────────────
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Entree vMix", "Action", "Cible"])
+        self._table.verticalHeader().setVisible(False)
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self._table.setColumnWidth(1, 130)
+        self._table.setColumnWidth(2, 200)
+        root.addWidget(self._table)
+
+        self._vide = QLabel("Testez la connexion pour lister les entrees de vMix.")
+        self._vide.setStyleSheet("color:#666; font-size:11px;")
+        root.addWidget(self._vide)
+
+        # ── Activation + boutons ────────────────────────────────────────────
+        bas = QHBoxLayout()
+        self._actif = QCheckBox("Activer la liaison vMix")
+        self._actif.setChecked(link.enabled)
+        self._actif.setStyleSheet("color:#ddd;")
+        bas.addWidget(self._actif)
+        bas.addStretch()
+        annuler = QPushButton("Annuler")
+        annuler.clicked.connect(self.reject)
+        bas.addWidget(annuler)
+        ok = QPushButton("Enregistrer")
+        ok.setObjectName("primary")
+        ok.clicked.connect(self._enregistrer)
+        bas.addWidget(ok)
+        root.addLayout(bas)
+
+        # Etat de connexion en direct pendant que le dialogue est ouvert
+        link.client.connection_changed.connect(self._maj_etat)
+        link.client.inputs_changed.connect(self._peupler)
+
+        self._sonde = _InputProbe(self)
+        self._sonde.done.connect(self._sonde_ok)
+        self._sonde.failed.connect(self._sonde_ko)
+
+        if self._inputs:
+            self._peupler(self._inputs)
+
+    # ── etat ────────────────────────────────────────────────────────────────
+
+    def _maj_etat(self, connecte: bool, message: str):
+        couleur = "#5f5" if connecte else "#888"
+        puce = "●" if connecte else "○"
+        self._etat.setText(f"{puce}  {message}")
+        self._etat.setStyleSheet(f"color:{couleur}; font-size:11px;")
+
+    def _tester(self):
+        self._btn_test.setEnabled(False)
+        self._maj_etat(False, "Connexion en cours…")
+        self._sonde.run(self._hote.text().strip() or "127.0.0.1", self._port.value())
+
+    def _sonde_ok(self, entrees: list):
+        self._btn_test.setEnabled(True)
+        self._maj_etat(True, f"vMix repond — {len(entrees)} entree(s)")
+        self._peupler(entrees)
+
+    def _sonde_ko(self, message: str):
+        self._btn_test.setEnabled(True)
+        self._maj_etat(False, f"Echec : {message}")
+
+    # ── table ───────────────────────────────────────────────────────────────
+
+    def _memoires_disponibles(self) -> list:
+        """[(identifiant « 1.1 », libelle affiche)] pour les memoires definies."""
+        out = []
+        mems = getattr(self._window, "memories", []) or []
+        for col in range(min(8, len(mems))):
+            for row in range(min(8, len(mems[col]))):
+                mem = mems[col][row]
+                if mem is None:
+                    continue
+                ident = f"{col + 1}.{row + 1}"
+                nom = mem.get("name") if isinstance(mem, dict) else None
+                out.append((ident, f"MEM {ident}" + (f" — {nom}" if nom else "")))
+        return out
+
+    def _effets_disponibles(self) -> list:
+        try:
+            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+            return [e.get("name", "") for e in list(BUILTIN_EFFECTS) + _load_custom_effects()
+                    if e.get("name")]
+        except Exception:
+            return []
+
+    def _peupler(self, entrees: list):
+        self._inputs = list(entrees)
+        self._vide.setVisible(not entrees)
+        self._table.setRowCount(0)
+        for e in entrees:
+            num = e["number"]
+            ligne = self._table.rowCount()
+            self._table.insertRow(ligne)
+
+            item = QTableWidgetItem(f"{num} — {e['title']}")
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            item.setData(Qt.UserRole, num)
+            self._table.setItem(ligne, 0, item)
+
+            combo = QComboBox()
+            for code, libelle in ACTION_LABELS:
+                combo.addItem(libelle, code)
+            cible = QComboBox()
+            self._table.setCellWidget(ligne, 1, combo)
+            self._table.setCellWidget(ligne, 2, cible)
+
+            actuel = self._link.mappings.get(num, {})
+            idx = combo.findData(actuel.get("type", ACTION_NONE))
+            combo.setCurrentIndex(max(0, idx))
+            self._remplir_cible(cible, combo.currentData(), actuel.get("value"))
+            combo.currentIndexChanged.connect(
+                lambda _i, c=combo, t=cible: self._remplir_cible(t, c.currentData(), None))
+
+    def _remplir_cible(self, cible: QComboBox, type_action: str, valeur):
+        cible.clear()
+        if type_action == ACTION_MEMORY:
+            for ident, libelle in self._memoires_disponibles():
+                cible.addItem(libelle, ident)
+        elif type_action == ACTION_EFFECT:
+            for nom in self._effets_disponibles():
+                cible.addItem(nom, nom)
+        elif type_action == ACTION_CARTOUCHE:
+            for i in range(4):
+                cible.addItem(f"Cartouche {i + 1}", i)
+        cible.setEnabled(cible.count() > 0)
+        if valeur is not None:
+            i = cible.findData(valeur)
+            if i >= 0:
+                cible.setCurrentIndex(i)
+
+    # ── validation ──────────────────────────────────────────────────────────
+
+    def _enregistrer(self):
+        mappings = {}
+        for ligne in range(self._table.rowCount()):
+            num = self._table.item(ligne, 0).data(Qt.UserRole)
+            combo = self._table.cellWidget(ligne, 1)
+            cible = self._table.cellWidget(ligne, 2)
+            code = combo.currentData()
+            if code == ACTION_NONE or cible.count() == 0:
+                continue
+            mappings[int(num)] = {"type": code, "value": cible.currentData()}
+
+        # Les entrees non listees (vMix ferme au moment du reglage) gardent leur
+        # correspondance : effacer la table entiere parce qu'on n'a pas pu
+        # joindre vMix ferait perdre le patch d'un show deja regle.
+        if self._inputs:
+            connus = {e["number"] for e in self._inputs}
+            for num, act in self._link.mappings.items():
+                if num not in connus:
+                    mappings[num] = act
+        else:
+            mappings = dict(self._link.mappings)
+
+        self._link.mappings = mappings
+        self._link.host = self._hote.text().strip() or "127.0.0.1"
+        self._link.port = self._port.value()
+        self._link.enabled = self._actif.isChecked()
+        self._link.apply()
+        try:
+            self._window._save_akai_config_auto()
+        except Exception:
+            pass
+        self.accept()

@@ -229,7 +229,8 @@ from live_audio import LiveAudioEngine, SoftwareDetector
 from midi_handler import MIDIHandler
 from controller_mapping_wizard import MidiMappingWizard
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton, PositionPadButton
-from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy, _find_free_canvas_pos
+from plan_de_feu import (PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy,
+                         _find_free_canvas_pos, sym_mirror_ids)
 from plan_3d_webwindow import Plan3DWebWindow as Plan3DWindow
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
@@ -242,6 +243,14 @@ from pixel_fixture import (
     PixelFixtureSpec, generate_matrix_projectors, PIXEL_FIXTURE_PRESETS,
     layout_pixels, matrix_children,
 )
+from i18n import tr
+
+
+# Liaison vMix (tally → lumière) : fonctionnalité en cours, jamais testée contre
+# un vrai vMix. Le menu est masqué le temps de la finir — repasser à True pour
+# le réafficher, le reste du code est en place et continue de charger/sauver sa
+# configuration sans rien casser.
+VMIX_ENABLED = False
 
 
 # ── Fixtures à pixels (matrices / barres LED) ────────────────────────────────
@@ -468,7 +477,7 @@ def build_channel_chips(profile, start_index=1, numbered=True):
     hl.setSpacing(4)
 
     if not profile:
-        empty = QLabel("aucun canal")
+        empty = QLabel(tr("mw_no_channel"))
         empty.setStyleSheet("color:#555; font-size:11px; background:transparent; border:none;")
         hl.addWidget(empty)
         hl.addStretch()
@@ -492,7 +501,7 @@ def build_channel_chips(profile, start_index=1, numbered=True):
             f"background:{col}; color:{_chip_text_color(col)}; border:none;"
             f" border-radius:5px; font-size:10px; font-weight:bold;"
         )
-        chip.setToolTip(f"Canal {start_index + i} : {ch}")
+        chip.setToolTip(tr("mw_f_channel", a0=start_index + i, ch=ch))
         cv.addWidget(chip)
 
         if numbered:
@@ -760,7 +769,7 @@ class MessageLogWidget(QWidget):
         hdr = QHBoxLayout()
         hdr.setContentsMargins(2, 0, 2, 0)
 
-        title = QLabel("Journal")
+        title = QLabel(tr("mw_log"))
         title.setStyleSheet(
             "color:#555; font-size:9px; font-weight:bold; "
             "background:transparent; border:none;"
@@ -774,7 +783,7 @@ class MessageLogWidget(QWidget):
         hdr.addWidget(self._count_lbl)
         hdr.addStretch()
 
-        clear_btn = QPushButton("✕ Vider")
+        clear_btn = QPushButton(tr("mw_log_clear"))
         clear_btn.setFixedHeight(13)
         clear_btn.setStyleSheet(
             "QPushButton { background:transparent; color:#3a3a3a; font-size:8px; "
@@ -859,8 +868,29 @@ def _fader_label_text(label: str) -> str:
     « SANS SLOT » est une colonne PLAY sans les carts : le libellé complet
     déborde sous la colonne (largeur _PAD_W) → on affiche « PLAY ». Le choix
     reste nommé « SANS SLOT » dans le sélecteur de slot.
+
+    « MEM 1 » est abrégé en « M01 » (idem « MEM 12 » → « M12 ») : avec 99
+    colonnes possibles, le libellé complet déborde sous la colonne. Les noms
+    longs restent utilisés partout ailleurs (sélecteur, journal, tooltips).
     """
-    return "PLAY" if label == "SANS SLOT" else label
+    if label == "SANS SLOT":
+        return "PLAY"
+    if label.startswith("MEM "):
+        try:
+            return f"M{int(label.split()[1]):02d}"
+        except (IndexError, ValueError):
+            return label
+    return label
+
+
+def _fader_label_tooltip(slot: dict) -> str:
+    """Tooltip de l'étiquette sous une colonne AKAI («» si le libellé suffit)."""
+    if slot.get("type") == "pos" and slot.get("fader_axis"):
+        grp = slot.get("fader_group") or "Toutes"
+        return f"{slot['label']} — fader {slot['fader_axis'].upper()} · groupe {grp}"
+    if slot.get("type") == "memory":
+        return slot.get("label", "")   # « M01 » abrégé → nom complet en tooltip
+    return ""
 
 # Colonne PLAY : rôle de chaque pad (haut → bas) = (action, glyphe, couleur).
 # action : "playpause" | "prev" | "next" | "cart0..3" | "stop".
@@ -902,7 +932,7 @@ class AkaiDiagnosticDialog(QDialog):
     def __init__(self, midi_handler, parent=None):
         super().__init__(parent)
         ctrl_name = getattr(midi_handler, 'controller_name', '') or "Contrôleur MIDI"
-        self.setWindowTitle(f"Contrôleur MIDI — {ctrl_name}")
+        self.setWindowTitle(tr("mw_f_midi_ctrl", ctrl_name=ctrl_name))
         _is_apc_mini = getattr(midi_handler, 'controller_type', '') == 'apc_mini'
         self.setFixedSize(470, 700 if _is_apc_mini else 660)
         self.setModal(True)
@@ -1038,7 +1068,7 @@ class AkaiDiagnosticDialog(QDialog):
         self._act_dot = QLabel("●")
         self._act_dot.setStyleSheet("color:#333; font-size:14px;")
         act_row.addWidget(self._act_dot)
-        self._act_info = QLabel("En attente…")
+        self._act_info = QLabel(tr("mw_waiting"))
         self._act_info.setStyleSheet("color:#555; font-size:9px;")
         act_row.addWidget(self._act_info)
         act_row.addStretch()
@@ -1104,7 +1134,7 @@ class AkaiDiagnosticDialog(QDialog):
 
         btn_row.addStretch()
 
-        rescan_btn = QPushButton("🔍  Rescanner")
+        rescan_btn = QPushButton(tr("mw_rescan"))
         rescan_btn.setToolTip(tr("mw_rescan_hint"))
         rescan_btn.setStyleSheet(
             "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #333; "
@@ -1115,7 +1145,7 @@ class AkaiDiagnosticDialog(QDialog):
         btn_row.addWidget(rescan_btn)
         btn_row.addSpacing(8)
 
-        reconnect_btn = QPushButton("🔄  Reconnecter")
+        reconnect_btn = QPushButton(tr("mw_reconnect"))
         reconnect_btn.setStyleSheet(
             "QPushButton { background:#0a3a5a; color:white; border:none; "
             "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 16px; } "
@@ -1125,7 +1155,7 @@ class AkaiDiagnosticDialog(QDialog):
         btn_row.addWidget(reconnect_btn)
         btn_row.addSpacing(8)
 
-        close_btn = QPushButton("Fermer")
+        close_btn = QPushButton(tr("mw_close"))
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
 
@@ -1191,7 +1221,7 @@ class AkaiDiagnosticDialog(QDialog):
             self._activity_count -= 1
             if self._activity_count == 0:
                 self._act_dot.setStyleSheet("color:#333; font-size:14px;")
-                self._act_info.setText("En attente…")
+                self._act_info.setText(tr("mw_waiting"))
                 self._act_info.setStyleSheet("color:#555; font-size:9px;")
 
     def _do_rescan(self):
@@ -1199,7 +1229,7 @@ class AkaiDiagnosticDialog(QDialog):
         try:
             self._midi.rescan()
         except Exception as e:
-            self._scan_err_lbl.setText(f"⚠  Rescan impossible : {e}")
+            self._scan_err_lbl.setText(tr("mw_f_rescan_failed", e=e))
             self._scan_err_lbl.setVisible(True)
             return
         self._refresh_status()
@@ -1319,7 +1349,7 @@ class AkaiDiagnosticDialog(QDialog):
             selected  = (cid == pinned) or (cid is None and pinned is None)
             if cid is None:
                 if pinned is None:
-                    status.setText("● Actif"); _c = "#4CAF50"
+                    status.setText(tr("mw_active_dot")); _c = "#4CAF50"
                 else:
                     status.setText(""); _c = "#555"
             elif is_active:
@@ -1464,7 +1494,7 @@ class _SlotPickerPopup(QFrame):
 
         # Champ recherche
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Rechercher… (A, MEM 5, FX 2)")
+        self._search.setPlaceholderText(tr("mw_search_slot"))
         self._search.setFixedHeight(26)
         self._search.textChanged.connect(self._filter)
         lay.addWidget(self._search)
@@ -1598,7 +1628,7 @@ class _SlotPickerPopup(QFrame):
         # Ligne axe : le fader pilote PAN ou TILT
         axis_row = QHBoxLayout()
         axis_row.setSpacing(6)
-        cap = QLabel("Fader →")
+        cap = QLabel(tr("mw_fader_arrow"))
         cap.setStyleSheet("color:#aaa; font-size:9px; background:transparent; border:none;")
         axis_row.addWidget(cap)
         self._axis_btns = {}
@@ -1612,7 +1642,7 @@ class _SlotPickerPopup(QFrame):
         pl.addLayout(axis_row)
 
         # Ligne groupe : sur quel groupe de lyres
-        grp_cap = QLabel("Groupe")
+        grp_cap = QLabel(tr("mw_group"))
         grp_cap.setStyleSheet("color:#aaa; font-size:9px; background:transparent; border:none;")
         pl.addWidget(grp_cap)
         grp_row = QHBoxLayout()
@@ -1631,7 +1661,7 @@ class _SlotPickerPopup(QFrame):
         # Bouton valider
         val_row = QHBoxLayout()
         val_row.addStretch()
-        ok = QPushButton("Valider")
+        ok = QPushButton(tr("mw_confirm"))
         ok.setFixedSize(80, 24)
         ok.setStyleSheet(
             "QPushButton { background:#2255ee; color:#fff; border:none; border-radius:4px; "
@@ -1656,7 +1686,7 @@ class _SlotPickerPopup(QFrame):
         if not getattr(self, "_pos_panel", None):
             return
         if self._pending_pos:
-            self._pos_title.setText(f"RÉGLAGE {self._pending_pos}")
+            self._pos_title.setText(tr("mw_f_setting", a0=self._pending_pos))
         # Axe
         for key, b in self._axis_btns.items():
             active = (self._pos_axis == key)
@@ -1852,7 +1882,7 @@ class AkaiLayoutEditorDialog(QDialog):
             "QPushButton:hover { background:#2a2a2a; color:#00d4ff; border-color:#0077bb; }"
             "QPushButton:pressed { background:#333; }"
         )
-        _cap = QLabel("Page :")
+        _cap = QLabel(tr("mw_page"))
         _cap.setStyleSheet("color:#888; font-size:10px;")
         hdr.addWidget(_cap)
         _pg_prev = QPushButton("◀")
@@ -1869,7 +1899,7 @@ class AkaiLayoutEditorDialog(QDialog):
         _pg_next = QPushButton("▶")
         _pg_next.setFixedSize(24, 26)
         _pg_next.setStyleSheet(_PG_SS)
-        _pg_next.setToolTip("Page suivante")
+        _pg_next.setToolTip(tr("mw_next_page"))
         _pg_next.clicked.connect(lambda: self._dlg_goto_page(self._cur_page + 1))
         hdr.addWidget(_pg_next)
         root.addLayout(hdr)
@@ -1955,7 +1985,7 @@ class AkaiLayoutEditorDialog(QDialog):
         opts_lay = QVBoxLayout(opts_card)
         opts_lay.setContentsMargins(14, 10, 14, 10)
         opts_lay.setSpacing(8)
-        opts_title = QLabel("OPTIONS")
+        opts_title = QLabel(tr("mw_options"))
         opts_title.setStyleSheet("color:#2a2a2a; font-size:8px; font-weight:bold; letter-spacing:2px;")
         opts_lay.addWidget(opts_title)
         self._superposition_check = QCheckBox(tr("fx_superposition_lbl"))
@@ -2106,20 +2136,20 @@ class AkaiLayoutEditorDialog(QDialog):
         user_presets = self._read_user_presets()
         if user_presets:
             menu.addSeparator()
-            lbl_user = QAction("— Mes presets —", menu)
+            lbl_user = QAction(tr("mw_my_presets"), menu)
             lbl_user.setEnabled(False)
             menu.addAction(lbl_user)
             for up in user_presets:
                 sub = menu.addMenu(up["label"])
                 sub.setStyleSheet(_MENU_SS)
-                load_a = sub.addAction("✅  Charger")
+                load_a = sub.addAction(tr("mw_load"))
                 load_a.setData(("load", up["slots"]))
-                del_a  = sub.addAction("🗑  Supprimer")
+                del_a  = sub.addAction(tr("mw_delete_m"))
                 del_a.setData(("delete", up["label"]))
 
         # ── Sauvegarder ──
         menu.addSeparator()
-        save_a = menu.addAction("💾  Sauvegarder le layout actuel…")
+        save_a = menu.addAction(tr("mw_save_layout"))
         save_a.setData(("save", None))
 
         btn = self.sender()
@@ -2133,7 +2163,7 @@ class AkaiLayoutEditorDialog(QDialog):
 
         elif action == "save":
             from PySide6.QtWidgets import QInputDialog
-            name, ok = QInputDialog.getText(self, "Sauvegarder preset", "Nom du preset :")
+            name, ok = QInputDialog.getText(self, tr("mw_save_preset"), tr("mw_preset_name"))
             if not ok or not name.strip():
                 return
             name = name.strip()
@@ -2631,7 +2661,7 @@ class MissingMediaDialog(QDialog):
     def __init__(self, missing, parent=None):
         # missing = [(row, filename, original_path), ...]
         super().__init__(parent)
-        self.setWindowTitle("Fichiers introuvables")
+        self.setWindowTitle(tr("mw_files_missing"))
         self.setMinimumWidth(780)
         self.setMinimumHeight(320)
         self.missing = list(missing)
@@ -2687,11 +2717,7 @@ class MissingMediaDialog(QDialog):
         n = len(self.missing)
         plural = "s" if n > 1 else ""
         info = QLabel(
-            f"<b style='color:#fff'>{n} fichier{plural} introuvable{plural}</b> "
-            f"dans la playlist.<br>"
-            "Utilisez <i>Localiser…</i> pour retrouver chaque fichier. "
-            "Si plusieurs fichiers étaient dans le même dossier renommé, "
-            "ils seront reliés automatiquement."
+            tr("mw_f_missing_files", n=n, plural=plural, a0=plural)
         )
         info.setWordWrap(True)
         lay.addWidget(info)
@@ -2722,7 +2748,7 @@ class MissingMediaDialog(QDialog):
             status.setForeground(QColor("#ff5555"))
             self.tbl.setItem(i, 2, status)
 
-            btn = QPushButton("Localiser…")
+            btn = QPushButton(tr("mw_locate"))
             btn.setObjectName("locate_btn")
             btn.setFixedHeight(26)
             btn.clicked.connect(lambda checked, idx=i: self._locate(idx))
@@ -2735,7 +2761,7 @@ class MissingMediaDialog(QDialog):
         sep.setStyleSheet("background: #222; max-height: 1px;")
         lay.addWidget(sep)
 
-        close_btn = QPushButton("Fermer")
+        close_btn = QPushButton(tr("mw_close"))
         close_btn.setFixedSize(110, 32)
         close_btn.clicked.connect(self.accept)
         row_btns = QHBoxLayout()
@@ -2775,10 +2801,8 @@ class MissingMediaDialog(QDialog):
 
         if auto_count:
             QMessageBox.information(
-                self, "Liaison automatique",
-                f"{auto_count} fichier{'s' if auto_count > 1 else ''} "
-                f"lié{'s' if auto_count > 1 else ''} automatiquement\n"
-                f"(même dossier source détecté)."
+                self, tr("mw_auto_link"),
+                tr("mw_f_auto_linked", auto_count=auto_count, a0='s' if auto_count > 1 else '', a1='s' if auto_count > 1 else '')
             )
 
     def _mark_found(self, idx, new_path):
@@ -3213,7 +3237,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(tr("menu_effect_editor"), self.open_effect_editor)
         edit_menu.addSeparator()
         edit_menu.addAction(tr("menu_ia_lumiere"), self.show_ia_lumiere_config)
-        edit_menu.addAction("🎬  Synchro lumière / vidéo…", self._open_light_sync_dialog)
+        edit_menu.addAction(tr("mw_menu_sync"), self._open_light_sync_dialog)
 
         # Connexion avant Affichage : c'est le menu qu'on ouvre en premier au
         # montage (contrôleur, sortie DMX, audio, vidéo).
@@ -3224,10 +3248,17 @@ class MainWindow(QMainWindow):
         # Action directe : ouvre le hub contrôleur (liste des contrôleurs
         # compatibles + détecté/sélectionné, puis diagnostic ports + reconnecter).
         ctrl_menu.addAction(tr("menu_akai_mini"), self._open_akai_diagnostic)
-        ctrl_menu.addAction("⚙️  Paramètres contrôleur", self._open_akai_layout_editor)
+        ctrl_menu.addAction(tr("mw_menu_ctrl_settings"), self._open_akai_layout_editor)
 
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
         ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
+
+        # Regie video : elle PILOTE MyStrow (tally → lumiere), au meme titre
+        # qu'un Stream Deck. D'ou sa place ici et non dans un menu « video »,
+        # qui regroupe les SORTIES.
+        if VMIX_ENABLED:
+            ctrl_menu.addSeparator()
+            ctrl_menu.addAction(tr("mw_menu_vmix"), self._open_vmix_dialog)
         # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
         # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
 
@@ -3256,15 +3287,15 @@ class MainWindow(QMainWindow):
 
         # Tous les tests au même endroit : quand une sortie ne marche pas, on
         # cherche « diagnostic », pas le sous-menu de la sortie concernée.
-        diag_menu = conn_menu.addMenu("🩺  Diagnostic")
-        diag_menu.addAction("🌐  Test RJ45 (réseau / Node Art-Net)", self.test_node_connection)
-        diag_menu.addAction("🔌  Test USB (interface DMX)", self.open_usb_diagnostic)
-        diag_menu.addAction("📱  Test tablette", self.test_tablet_connection)
+        diag_menu = conn_menu.addMenu(tr("mw_menu_diag"))
+        diag_menu.addAction(tr("mw_menu_test_rj45"), self.test_node_connection)
+        diag_menu.addAction(tr("mw_menu_test_usb"), self.open_usb_diagnostic)
+        diag_menu.addAction(tr("mw_menu_test_tablet"), self.test_tablet_connection)
         diag_menu.addSeparator()
-        diag_menu.addAction("🩺  Diagnostic complet (BRAD)", self.open_brad_diagnostic)
+        diag_menu.addAction(tr("mw_menu_diag_full"), self.open_brad_diagnostic)
 
         conn_menu.addSeparator()
-        conn_menu.addAction("⌨️  Raccourci Clavier", self.show_shortcuts_dialog)
+        conn_menu.addAction(tr("mw_menu_shortcuts"), self.show_shortcuts_dialog)
 
         view_menu = bar.addMenu(tr("menu_view"))
         self._view_group = QActionGroup(self)
@@ -3304,8 +3335,8 @@ class MainWindow(QMainWindow):
         # ── Bloc « Le logiciel » ──────────────────────────────────────
         about_menu.addAction(tr("menu_about_updates"), self.show_about)
         if get_language() == "fr":
-            about_menu.addAction("📺  Tutoriels", self._show_tutorials_dialog)
-        about_menu.addAction("🎹  Matériel recommandé", self.show_gear)
+            about_menu.addAction(tr("mw_menu_tutorials"), self._show_tutorials_dialog)
+        about_menu.addAction(tr("mw_menu_hardware"), self.show_gear)
 
         # ── Bloc « Mon compte » ───────────────────────────────────────
         about_menu.addSeparator()
@@ -3313,8 +3344,8 @@ class MainWindow(QMainWindow):
 
         # ── Bloc « Communauté » (sous-menu regroupant réseaux/newsletter/idée) ─
         about_menu.addSeparator()
-        community_menu = about_menu.addMenu("💬  Communauté")
-        social_menu = community_menu.addMenu("🌐  Suivez-nous sur les réseaux")
+        community_menu = about_menu.addMenu(tr("mw_menu_community"))
+        social_menu = community_menu.addMenu(tr("mw_menu_social"))
 
         def _social_icon(inner, _size=18):
             """Rendu d'un logo réseau (SVG couleur) en icône de menu."""
@@ -3359,7 +3390,7 @@ class MainWindow(QMainWindow):
         social_menu.addAction(_social_icon(_TT_SVG), "TikTok",    lambda: QDesktopServices.openUrl(QUrl("https://www.tiktok.com/@niko_mystrow")))
         social_menu.addAction(_social_icon(_YT_SVG), "YouTube",   lambda: QDesktopServices.openUrl(QUrl("https://www.youtube.com/@MyStrow-x7t")))
         social_menu.addAction(_social_icon(_DC_SVG), "Discord",   lambda: QDesktopServices.openUrl(QUrl("https://discord.gg/SZWNgGRc7K")))
-        community_menu.addAction("✉️  Newsletter", lambda: QDesktopServices.openUrl(QUrl("https://mystrow.fr/newsletter")))
+        community_menu.addAction(tr("mw_menu_newsletter"), lambda: QDesktopServices.openUrl(QUrl("https://mystrow.fr/newsletter")))
         community_menu.addAction(tr("menu_submit_idea"), self._show_idea_dialog)
 
         # ── Bloc « Réglages » ─────────────────────────────────────────
@@ -3368,15 +3399,23 @@ class MainWindow(QMainWindow):
         act_fr = lang_menu.addAction(tr("menu_lang_fr"))
         act_en = lang_menu.addAction(tr("menu_lang_en"))
         act_es = lang_menu.addAction(tr("menu_lang_es"))
+        act_de = lang_menu.addAction(tr("menu_lang_de"))
+        act_pt = lang_menu.addAction(tr("menu_lang_pt"))
         act_fr.setCheckable(True)
         act_en.setCheckable(True)
         act_es.setCheckable(True)
+        act_de.setCheckable(True)
+        act_pt.setCheckable(True)
         act_fr.setChecked(get_language() == "fr")
         act_en.setChecked(get_language() == "en")
         act_es.setChecked(get_language() == "es")
+        act_de.setChecked(get_language() == "de")
+        act_pt.setChecked(get_language() == "pt")
         act_fr.triggered.connect(lambda: self._change_language("fr"))
         act_en.triggered.connect(lambda: self._change_language("en"))
         act_es.triggered.connect(lambda: self._change_language("es"))
+        act_de.triggered.connect(lambda: self._change_language("de"))
+        act_pt.triggered.connect(lambda: self._change_language("pt"))
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_restart"), self.restart_application)
 
@@ -3612,6 +3651,16 @@ class MainWindow(QMainWindow):
         # s'adapte en largeur via setWidgetResizable).
         plan_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.plan_de_feu = PlanDeFeu(self.projectors, self)
+
+        # Ctrl+Z du plan 2D. Un QShortcut de FENÊTRE et non keyPressEvent : dès
+        # qu'on clique sur le plan, c'est le canvas qui a le focus, et la touche
+        # n'atteignait pas la fenêtre. WindowShortcut le capte quel que soit le
+        # widget focalisé, mais reste sans effet dans les dialogues modaux
+        # (Patch DMX, REC Lumière) qui ont leur propre Ctrl+Z.
+        from PySide6.QtGui import QShortcut as _QShortcut, QKeySequence as _QKS
+        _undo_sc = _QShortcut(_QKS("Ctrl+Z"), self)
+        _undo_sc.setContext(Qt.WindowShortcut)
+        _undo_sc.activated.connect(self._undo_plan_2d)
         if not self._license.dmx_allowed:
             self.plan_de_feu.set_dmx_blocked()
         plan_scroll.setWidget(self.plan_de_feu)
@@ -3851,7 +3900,7 @@ class MainWindow(QMainWindow):
         _bpn.addWidget(self._bank_page_lbl)
         _pg_next = QPushButton("▶")
         _pg_next.setFixedSize(24, 26)
-        _pg_next.setToolTip("Page de layout suivante")
+        _pg_next.setToolTip(tr("mw_next_layout_page"))
         _pg_next.setStyleSheet(_PG_SS)
         _pg_next.clicked.connect(self._next_bank_page)
         _bpn.addWidget(_pg_next)
@@ -3971,10 +4020,7 @@ class MainWindow(QMainWindow):
                 "QPushButton:hover { color:#aaa; text-decoration:underline; }"
             )
             lbl_letter.setCursor(Qt.PointingHandCursor)
-            _sl = self._fader_map[i]
-            if _sl.get("type") == "pos" and _sl.get("fader_axis"):
-                _grp = _sl.get("fader_group") or "Toutes"
-                lbl_letter.setToolTip(f"{_sl['label']} — fader {_sl['fader_axis'].upper()} · groupe {_grp}")
+            lbl_letter.setToolTip(_fader_label_tooltip(self._fader_map[i]))
             lbl_letter.clicked.connect(lambda _, idx=i: self._open_fader_slot_picker(idx))
             col_layout.addWidget(lbl_letter)
             self._fader_label_widgets.append(lbl_letter)
@@ -4353,11 +4399,7 @@ class MainWindow(QMainWindow):
             if fader_idx < len(self._fader_label_widgets):
                 lbl = self._fader_label_widgets[fader_idx]
                 lbl.setText(_fader_label_text(value))
-                if slot.get("type") == "pos" and slot.get("fader_axis"):
-                    grp = slot.get("fader_group") or "Toutes"
-                    lbl.setToolTip(f"{value} — fader {slot['fader_axis'].upper()} · groupe {grp}")
-                else:
-                    lbl.setToolTip("")
+                lbl.setToolTip(_fader_label_tooltip(slot))
             # Reconstruire les pads et syncer
             self.active_pads.clear()
             self.active_memory_pads.clear()
@@ -4451,6 +4493,7 @@ class MainWindow(QMainWindow):
             for i, lbl in enumerate(self._fader_label_widgets):
                 if i < len(self._fader_map):
                     lbl.setText(_fader_label_text(self._fader_map[i]["label"]))
+                    lbl.setToolTip(_fader_label_tooltip(self._fader_map[i]))
         self._sync_controls_to_state()   # reflète l'état courant, ne renvoie aucun DMX
         self._update_bank_page_indicator()
         self._save_akai_config_auto()
@@ -4467,6 +4510,7 @@ class MainWindow(QMainWindow):
             for i, lbl in enumerate(self._fader_label_widgets):
                 if i < len(self._fader_map):
                     lbl.setText(_fader_label_text(self._fader_map[i]["label"]))
+                    lbl.setToolTip(_fader_label_tooltip(self._fader_map[i]))
         self._sync_controls_to_state()   # reflète l'état courant, ne renvoie aucun DMX
         self._update_bank_page_indicator()
         try:
@@ -4703,7 +4747,7 @@ class MainWindow(QMainWindow):
         self.play_btn.setIconSize(QSize(36, 36))
         self.play_btn.setFixedSize(72, 72)
         self.play_btn.setStyleSheet(play_style)
-        self.play_btn.setToolTip("Play / Pause")
+        self.play_btn.setToolTip(tr("mw_play_pause"))
         self.play_btn.clicked.connect(self.toggle_play)
 
         nxt = QToolButton()
@@ -5383,7 +5427,7 @@ class MainWindow(QMainWindow):
 
         self._cue_panel.load(mem_col, row, mem)
         self._cue_panel.highlight_cue(self._mem_cue_idx.get((mem_col, row), 0))
-        self._cue_float_lbl.setText(f"Cues — MEM {mem_col+1}.{row+1}")
+        self._cue_float_lbl.setText(tr("mw_f_cues_mem", a0=mem_col + 1, a1=row + 1))
 
         # Positionner près du pad
         anchor = None
@@ -5471,7 +5515,7 @@ class MainWindow(QMainWindow):
             self._cue_panel.set_cue_effect(cue_row, name)
             self._save_akai_config_auto()
 
-        act_none = menu.addAction("⭕  Aucun effet")
+        act_none = menu.addAction(tr("mw_no_effect"))
         act_none.setCheckable(True)
         act_none.setChecked(not current_eff)
         act_none.triggered.connect(lambda: _set(None))
@@ -6072,11 +6116,11 @@ class MainWindow(QMainWindow):
             from PySide6.QtWidgets import QMessageBox
             msg = QMessageBox(self)
             msg.setWindowTitle(f"MEM {mem_col + 1}.{row + 1}")
-            msg.setText(f"Cette mémoire contient déjà {n} cue{'s' if n > 1 else ''}.")
+            msg.setText(tr("mw_f_mem_has_cues", n=n, a0='s' if n > 1 else ''))
             msg.setStyleSheet("background:#1e1e1e; color:white;")
-            btn_replace = msg.addButton("Remplacer le cue actuel", QMessageBox.AcceptRole)
-            btn_add     = msg.addButton(f"Ajouter cue {n + 1}", QMessageBox.ActionRole)
-            msg.addButton("Annuler", QMessageBox.RejectRole)
+            btn_replace = msg.addButton(tr("mw_replace_cue"), QMessageBox.AcceptRole)
+            btn_add     = msg.addButton(tr("mw_f_add_cue", a0=n + 1), QMessageBox.ActionRole)
+            msg.addButton(tr("mw_cancel"), QMessageBox.RejectRole)
             msg.exec()
             clicked = msg.clickedButton()
             if clicked == btn_replace:
@@ -6111,7 +6155,7 @@ class MainWindow(QMainWindow):
         old = mem.get("name", "")
         name, ok = QInputDialog.getText(
             self, f"MEM {mem_col + 1}.{row + 1}",
-            "Nom (max 10 caractères) :", QLineEdit.Normal, old)
+            tr("mw_name_max10"), QLineEdit.Normal, old)
         if not ok:
             return
         name = name.strip()[:10]
@@ -6163,17 +6207,17 @@ class MainWindow(QMainWindow):
             self._blink_memory_pad(mem_col, row)
 
         if self.memories[mem_col][row] is None:
-            save_action = menu.addAction("💾  Sauvegarder")
+            save_action = menu.addAction(tr("mw_save_m"))
             save_action.triggered.connect(_record_and_feedback)
-            import_action = menu.addAction("⬇️  Importer un cue…")
+            import_action = menu.addAction(tr("mw_import_cue"))
             import_action.triggered.connect(lambda: self._import_memory(mem_col, row))
         else:
-            replace_action = menu.addAction("🔄  Remplacer")
+            replace_action = menu.addAction(tr("mw_replace_m"))
             replace_action.triggered.connect(_record_and_feedback)
-            clear_action = menu.addAction("🗑  Effacer")
+            clear_action = menu.addAction(tr("mw_erase"))
             clear_action.triggered.connect(lambda: self._clear_memory(mem_col, row))
 
-            rename_action = menu.addAction("✏  Renommer…")
+            rename_action = menu.addAction(tr("mw_rename_dots"))
             rename_action.triggered.connect(lambda: self._rename_memory(mem_col, row))
 
             mem_tmp = self.memories[mem_col][row]
@@ -6186,20 +6230,20 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
 
             # Déplacer / Exporter / Importer
-            move_action = menu.addAction("↔️  Déplacer vers…")
+            move_action = menu.addAction(tr("mw_move_to"))
             move_action.triggered.connect(lambda: self._open_move_memory_dialog(mem_col, row))
-            export_action = menu.addAction("⬆️  Exporter le cue…")
+            export_action = menu.addAction(tr("mw_export_cue"))
             export_action.triggered.connect(lambda: self._export_memory(mem_col, row))
-            import_action = menu.addAction("⬇️  Importer un cue…")
+            import_action = menu.addAction(tr("mw_import_cue"))
             import_action.triggered.connect(lambda: self._import_memory(mem_col, row))
 
             menu.addSeparator()
 
             # Sous-menu couleur du pad
-            color_menu = menu.addMenu("🎨  Couleur du pad")
+            color_menu = menu.addMenu(tr("mw_pad_color"))
             color_menu.setStyleSheet(menu_style)
 
-            auto_action = color_menu.addAction("Auto (dominante)")
+            auto_action = color_menu.addAction(tr("mw_pad_color_auto"))
             auto_action.triggered.connect(lambda: self._set_memory_custom_color(mem_col, row, None))
 
             pad_colors = [
@@ -6238,7 +6282,7 @@ class MainWindow(QMainWindow):
                 col_akai = self._mem_col_to_fader(mc)
                 self._style_memory_pad(mc, r, self.active_memory_pads.get(col_akai) == r)
 
-            act_none = effect_menu.addAction("⭕  Aucun")
+            act_none = effect_menu.addAction(tr("mw_none_m"))
             act_none.setCheckable(True)
             act_none.setChecked(not current_effect)
             act_none.triggered.connect(lambda: _apply_effect(None))
@@ -6317,7 +6361,7 @@ class MainWindow(QMainWindow):
         if self.memories[mem_col][row] is None:
             return
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Déplacer MEM {mem_col + 1}.{row + 1}")
+        dlg.setWindowTitle(tr("mw_f_move_mem", a0=mem_col + 1, a1=row + 1))
         dlg.setStyleSheet(
             "QDialog { background:#1e1e1e; color:#ddd; }"
             "QLabel { color:#ddd; background:transparent; }"
@@ -6326,7 +6370,7 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background:#3a3a3a; color:#fff; }"
         )
         lay = QVBoxLayout(dlg)
-        lay.addWidget(QLabel(f"Déplacer le contenu de MEM {mem_col + 1}.{row + 1} vers :"))
+        lay.addWidget(QLabel(tr("mw_f_move_mem_to", a0=mem_col + 1, a1=row + 1)))
         form = QFormLayout()
         col_spin = QSpinBox(); col_spin.setRange(1, _MEM_COL_MAX); col_spin.setValue(mem_col + 1)
         row_spin = QSpinBox(); row_spin.setRange(1, 8); row_spin.setValue(row + 1)
@@ -6334,7 +6378,7 @@ class MainWindow(QMainWindow):
         form.addRow("Ligne (1–8)", row_spin)
         lay.addLayout(form)
         btn_row = QHBoxLayout(); btn_row.addStretch()
-        cancel = QPushButton("Annuler"); cancel.clicked.connect(dlg.reject)
+        cancel = QPushButton(tr("mw_cancel")); cancel.clicked.connect(dlg.reject)
         ok = QPushButton(tr("mw_move"))
         ok.setStyleSheet("QPushButton { background:#0077bb; color:#fff; border:none; border-radius:5px; "
                          "padding:5px 14px; font-weight:bold; } QPushButton:hover { background:#0099dd; }")
@@ -6355,8 +6399,8 @@ class MainWindow(QMainWindow):
         if self.memories[dst_col][dst_row] is not None:
             from PySide6.QtWidgets import QMessageBox
             if QMessageBox.question(
-                self, "Mémoire occupée",
-                f"MEM {dst_col + 1}.{dst_row + 1} contient déjà un cue. L'écraser ?",
+                self, tr("mw_mem_busy"),
+                tr("mw_f_mem_overwrite", a0=dst_col + 1, a1=dst_row + 1),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             ) != QMessageBox.Yes:
                 return
@@ -6422,8 +6466,8 @@ class MainWindow(QMainWindow):
             return
         if self.memories[mem_col][row] is not None:
             if QMessageBox.question(
-                self, "Mémoire occupée",
-                f"MEM {mem_col + 1}.{row + 1} contient déjà un cue. L'écraser ?",
+                self, tr("mw_mem_busy"),
+                tr("mw_f_mem_overwrite", a0=mem_col + 1, a1=row + 1),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             ) != QMessageBox.Yes:
                 return
@@ -6935,7 +6979,7 @@ class MainWindow(QMainWindow):
         pdf_presets = self._load_pdf_presets()
         if pdf_presets:
             menu.addSeparator()
-            pdf_hdr = menu.addAction("▸ Plan de Feu")
+            pdf_hdr = menu.addAction(tr("mw_light_plan_arrow"))
             pdf_hdr.setEnabled(False)
             for pp in pdf_presets:
                 act = menu.addAction("    " + pp["name"])
@@ -7222,7 +7266,7 @@ class MainWindow(QMainWindow):
         grp_outer = QWidget(); grp_outer.setStyleSheet("background: transparent;")
         grp_vlay = QVBoxLayout(grp_outer)
         grp_vlay.setContentsMargins(10, 6, 10, 2); grp_vlay.setSpacing(4)
-        grp_hdr = QLabel("  GROUPES"); grp_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
+        grp_hdr = QLabel(tr("mw_groups_label")); grp_hdr.setStyleSheet("color:#555;font-size:9px;letter-spacing:1px;background:transparent;")
         grp_vlay.addWidget(grp_hdr)
         btns_h = QHBoxLayout(); btns_h.setSpacing(3); btns_h.setContentsMargins(0, 0, 0, 0)
         for _gid in ["A","B","C","D","E","F","G","H"]:
@@ -7232,7 +7276,7 @@ class MainWindow(QMainWindow):
             _grp_btn_map[_gid] = _gb; btns_h.addWidget(_gb)
         grp_vlay.addLayout(btns_h)
         spd_row = QHBoxLayout(); spd_row.setSpacing(6); spd_row.setContentsMargins(0, 2, 0, 0)
-        spd_lbl = QLabel("Vitesse :"); spd_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
+        spd_lbl = QLabel(tr("mw_speed")); spd_lbl.setStyleSheet("color:#aaa;font-size:11px;background:transparent;")
         spd_val_lbl = QLabel(f"{_init_speed}"); spd_val_lbl.setFixedWidth(26)
         spd_val_lbl.setStyleSheet("color:#fff;font-size:11px;background:transparent;")
         _spd_slider.valueChanged.connect(lambda v: spd_val_lbl.setText(f"{v}"))
@@ -7341,7 +7385,7 @@ class MainWindow(QMainWindow):
         )
         menu.setStyleSheet(_MENU_BASE_SS + _SEL_SS)
 
-        act_none = menu.addAction("  — Aucun —")
+        act_none = menu.addAction(tr("mw_none_dash"))
         act_none.setCheckable(True)
         act_none.setChecked(not cur)
         act_none.triggered.connect(lambda: _select(None))
@@ -7396,9 +7440,19 @@ class MainWindow(QMainWindow):
         search_input.textChanged.connect(_apply_filter)
         QTimer.singleShot(0, search_input.setFocus)
 
-        menu.addSeparator()
-        act_editor = menu.addAction("  Éditeur d'effets")
+        # « Éditeur d'effets » remonté en TÊTE du menu. Il est construit ici,
+        # après la liste, parce qu'il a besoin de fx_col/row — mais il est
+        # ensuite déplacé en première position : la liste d'effets fait 92
+        # entrées, l'entrée se retrouvait tout en bas, hors de vue sans
+        # défiler. Rien ne dépend de sa place dans le menu, l'action est
+        # branchée sur triggered.
+        act_editor = menu.addAction(tr("mw_effect_editor"))
         act_editor.triggered.connect(lambda: self._open_effect_editor_for_fx_pad(fx_col, row))
+        _premier = next((a for a in menu.actions() if a is not act_editor), None)
+        if _premier is not None:
+            menu.removeAction(act_editor)
+            menu.insertAction(_premier, act_editor)
+            menu.insertSeparator(_premier)
 
         menu.exec(btn.mapToGlobal(pos))
 
@@ -8207,6 +8261,13 @@ class MainWindow(QMainWindow):
         _mh_idx   = {id(p): j for j, p in enumerate(_mh_projs)}
         _mh_n     = max(len(_mh_projs), 1)
 
+        # SYM : lyres qui partent en Pan miroir. Partage sur la POSITION sur le
+        # plan — même règle que le bouton SYM du plan 2D et que l'aperçu de
+        # l'éditeur d'effets. Auparavant c'était l'index dans l'effet, ce qui
+        # donnait un miroir différent selon l'ordre du patch.
+        _sym_mir = (sym_mirror_ids(_mh_projs, self.projectors)
+                    if any(ld.get("sym_pan") for ld in layers_dicts) else set())
+
         # Même chose pour le mouvement : les lyres d'une sélection sont classées
         # entre elles dans l'ordre choisi, sinon le Pan/Tilt d'un chenillard
         # repartirait dans l'ordre du patch alors que le dimmer, lui, suivrait.
@@ -8450,7 +8511,7 @@ class MainWindow(QMainWindow):
                         center = (_ctr[0] if _ctr is not None else
                                   saved[3] if saved and len(saved) > 3 else 32768)
                         sym_pan  = ld.get("sym_pan", False)
-                        pan_sign = -1 if (sym_pan and _mh_i_mv * 2 >= _mh_n_mv) else 1
+                        pan_sign = -1 if (sym_pan and id(proj) in _sym_mir) else 1
                         proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude * _PAN_RATIO)))
                     else:
                         center = (_ctr[1] if _ctr is not None else
@@ -8481,7 +8542,7 @@ class MainWindow(QMainWindow):
                                        if _mh_i_sel is None else _mh_i_sel)
                     _mh_i, _mh_n_pt = block_index(_mh_i, _mh_n_pt, _blk)
                     sym_pan  = ld.get("sym_pan", False)
-                    pan_sign = -1 if (sym_pan and _mh_i * 2 >= _mh_n_pt) else 1
+                    pan_sign = -1 if (sym_pan and id(proj) in _sym_mir) else 1
 
                     # Dephasage mouvement : echelle /100 (alignee sur la preview de
                     # l'editeur), plafonnee a 1.0 = etalement parfait. Au-dela le
@@ -9227,7 +9288,7 @@ class MainWindow(QMainWindow):
     def show_ia_color_dialog(self):
         """Dialogue de selection de couleur dominante pour IA Lumiere"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("IA Lumiere")
+        dialog.setWindowTitle(tr("mw_ai_light"))
         dialog.setFixedSize(420, 220)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
@@ -9279,7 +9340,7 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(colors_layout)
 
-        cancel_btn = QPushButton("Annuler")
+        cancel_btn = QPushButton(tr("mw_cancel"))
         cancel_btn.setStyleSheet("""
             QPushButton {
                 background: #3a3a3a; color: white; border: none;
@@ -11863,7 +11924,7 @@ class MainWindow(QMainWindow):
                             combo = self.seq._get_dmx_combo(row)
                             if combo:
                                 if item['d'] == "Play Lumiere" and combo.findText("Play Lumiere") == -1:
-                                    combo.addItem("Play Lumiere")
+                                    combo.addItem(tr("mw_play_light"))
                                 combo.setCurrentText(item['d'])
 
                         # Charger la sequence lumiere
@@ -11890,7 +11951,7 @@ class MainWindow(QMainWindow):
                             combo = self.seq._get_dmx_combo(row)
                             if combo:
                                 if item['d'] == "Play Lumiere" and combo.findText("Play Lumiere") == -1:
-                                    combo.addItem("Play Lumiere")
+                                    combo.addItem(tr("mw_play_light"))
                                 combo.setCurrentText(item['d'])
                                 self.seq.on_dmx_changed(row, item['d'])
                         if 'sequence' in item:
@@ -12078,11 +12139,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(12)
 
         info = QLabel(
-            "Sur les <b>vidéos</b>, les lumières peuvent partir <b>en avance</b> sur le\n"
-            "son (latence du décodage vidéo). Augmentez le décalage pour <b>retarder</b>\n"
-            "les lumières et les recaler sur le son.\n\n"
-            "Ce réglage ne s'applique <b>qu'aux vidéos</b> — les fichiers audio (mp3…)\n"
-            "ne sont jamais décalés. Réglage global, une seule fois par machine."
+            tr("mw_sync_help")
         )
         info.setWordWrap(True)
         lay.addWidget(info)
@@ -12098,16 +12155,15 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         lay.addLayout(row)
 
-        hint = QLabel("Positif = lumières retardées (cas le plus courant sur vidéo). "
-                      "Négatif = lumières avancées.")
+        hint = QLabel(tr("mw_sync_sign"))
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#888; font-size:11px;")
         lay.addWidget(hint)
 
         btns = QHBoxLayout()
         btns.addStretch(1)
-        b_cancel = QPushButton("Annuler")
-        b_ok = QPushButton("Appliquer")
+        b_cancel = QPushButton(tr("mw_cancel"))
+        b_ok = QPushButton(tr("mw_apply"))
         b_ok.setStyleSheet("background:#0a5; color:#fff; border:none;")
         b_cancel.clicked.connect(dlg.reject)
         b_ok.clicked.connect(dlg.accept)
@@ -12161,6 +12217,13 @@ class MainWindow(QMainWindow):
             "center_view": getattr(self, '_center_view_key', 'media'),
             # Dernier mode DMX retenu par fixture (bibliothèque)
             "fixture_mode_prefs": dict(getattr(self, '_fixture_mode_prefs', {})),
+            # Régie vidéo vMix (tally → lumière). Si la liaison n'a jamais été
+            # instanciée cette session, on réécrit la config lue au démarrage
+            # telle quelle : sans ça, une sauvegarde auto effacerait le réglage
+            # de tous ceux qui n'ouvrent pas le menu vMix à chaque lancement.
+            "vmix": (self._vmix_link.to_config()
+                     if getattr(self, '_vmix_link', None) is not None
+                     else dict(getattr(self, '_vmix_config_pending', {}) or {})),
         }
 
     def _apply_akai_config(self, config):
@@ -12316,6 +12379,21 @@ class MainWindow(QMainWindow):
             self._fixture_mode_prefs = {str(k): str(v) for k, v in _fmp.items()
                                         if isinstance(v, str)}
 
+        # Régie vidéo vMix : on mémorise la config sans instancier la liaison.
+        # Elle n'est créée — et la socket ouverte — que si l'utilisateur avait
+        # coché « Activer », ou s'il ouvre le menu. Le démarrage est différé :
+        # ici, les mémoires et les cartouches ne sont pas encore en place, et
+        # un tally reçu dans la seconde déclencherait une action dans le vide.
+        # La config est TOUJOURS relue et re-sauvée (rien n'est perdu pour ceux
+        # qui l'avaient déjà réglée), mais tant que VMIX_ENABLED est False on
+        # n'ouvre pas la socket : le menu étant masqué, personne ne pourrait
+        # plus désactiver une liaison qui démarrerait toute seule.
+        _vm = config.get("vmix")
+        if isinstance(_vm, dict):
+            self._vmix_config_pending = dict(_vm)
+            if _vm.get("enabled") and VMIX_ENABLED:
+                QTimer.singleShot(1500, self._start_vmix_if_enabled)
+
         # Contrôleur épinglé (sélection manuelle) — reconnecte sur le bon si défini
         if hasattr(self, 'midi_handler') and self.midi_handler:
             pinned = config.get("pinned_controller")
@@ -12407,6 +12485,7 @@ class MainWindow(QMainWindow):
                     for i, lbl in enumerate(self._fader_label_widgets):
                         if i < len(self._fader_map):
                             lbl.setText(_fader_label_text(self._fader_map[i]["label"]))
+                            lbl.setToolTip(_fader_label_tooltip(self._fader_map[i]))
             self._update_bank_page_indicator()   # reflète le nombre de pages chargées
             # Toujours activer le pad du haut de chaque colonne memoire au demarrage.
             # (Les faders sont forcés BAISSÉS au lancement par _startup_faders_down, ~650 ms
@@ -12572,8 +12651,8 @@ class MainWindow(QMainWindow):
         """Efface toutes les mémoires des colonnes MEM1–MEM99."""
         reply = QMessageBox.warning(
             self,
-            "Effacer toutes les mémoires",
-            "Cette action est irréversible.\n\nToutes les mémoires (MEM 1 à 99) seront définitivement supprimées.\n\nContinuer ?",
+            tr("mw_clear_all_mem"),
+            tr("mw_clear_all_mem_confirm"),
             QMessageBox.Yes | QMessageBox.Cancel
         )
         if reply != QMessageBox.Yes:
@@ -12828,6 +12907,17 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         editor.exec()
+
+    def _undo_plan_2d(self):
+        """Ctrl+Z : annule la dernière modification faite depuis le plan 2D.
+
+        Sans effet — et sans bip — si rien n'a encore été touché.
+        """
+        try:
+            if hasattr(self, 'plan_de_feu') and self.plan_de_feu.undo():
+                self._log_message(tr("mw_undo_done"), "go")
+        except Exception as e:
+            print(f"[undo plan 2D] {e}")
 
     def _edit_current_volume(self):
         """Edite le volume du media selectionne (audio/video uniquement)"""
@@ -13198,6 +13288,38 @@ class MainWindow(QMainWindow):
 
         dlg.exec()
 
+    # ── Régie vidéo vMix ──────────────────────────────────────────────────────
+
+    def _get_vmix_link(self):
+        """Crée la liaison vMix à la demande.
+
+        Import différé et création paresseuse : tant que personne n'ouvre le
+        menu, MyStrow ne charge pas le module et n'ouvre aucune socket. Un
+        éclairagiste qui n'utilise pas de régie vidéo ne paie rien.
+        """
+        link = getattr(self, '_vmix_link', None)
+        if link is None:
+            from vmix_link import VmixLink
+            link = VmixLink(self)
+            link.from_config(getattr(self, '_vmix_config_pending', {}) or {})
+            self._vmix_link = link
+        return link
+
+    def _open_vmix_dialog(self):
+        from vmix_link import VmixDialog
+        VmixDialog(self, self._get_vmix_link()).exec()
+
+    def _start_vmix_if_enabled(self):
+        """Reconnecte la liaison vMix au démarrage si elle était active.
+
+        Protégé : vMix éteint, hôte injoignable ou module absent ne doivent pas
+        empêcher MyStrow de démarrer. Le client gère seul ses reconnexions.
+        """
+        try:
+            self._get_vmix_link().apply()
+        except Exception as exc:
+            print(f"[vMix] liaison non démarrée : {exc}")
+
     # ── Contrôleur Tablette ───────────────────────────────────────────────────
 
     def _start_tablet_server(self):
@@ -13341,7 +13463,7 @@ class MainWindow(QMainWindow):
                                   "border:1px solid #ff555533;border-radius:8px;}"
                                   "QPushButton:hover{background:#3a1010;}")
         else:
-            btn_tog = QPushButton("▶  Activer")
+            btn_tog = QPushButton(tr("mw_activate"))
             btn_tog.setStyleSheet("QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
                                   "stop:0 #005566,stop:1 #007799);color:#fff;"
                                   "font-weight:bold;font-size:13px;border:none;border-radius:8px;}"
@@ -14041,7 +14163,7 @@ class MainWindow(QMainWindow):
             note.setStyleSheet("color:#444;font-size:9px;padding:2px;background:transparent;")
             root.addWidget(note)
 
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("mw_close"))
         btn_close.setFixedHeight(34)
         fit_button(btn_close)
         btn_close.setCursor(Qt.PointingHandCursor)
@@ -14098,7 +14220,8 @@ class MainWindow(QMainWindow):
 
     def _change_language(self, lang: str):
         set_language(lang)
-        label = {"fr": "Français", "en": "English", "es": "Español"}.get(lang, lang)
+        label = {"fr": "Français", "en": "English", "es": "Español",
+                 "de": "Deutsch", "pt": "Português"}.get(lang, lang)
         QMessageBox.information(self, tr("lang_changed_title"), tr("lang_changed_msg", label=label))
 
     def on_update_available(self, version, exe_url, hash_url, sig_url=""):
@@ -14299,8 +14422,8 @@ class MainWindow(QMainWindow):
 
     def restart_application(self):
         """Redemarre l'application"""
-        reply = QMessageBox.question(self, "Redemarrer",
-            "Voulez-vous redemarrer l'application ?",
+        reply = QMessageBox.question(self, tr("mw_restart"),
+            tr("mw_restart_confirm"),
             QMessageBox.Yes | QMessageBox.No)
 
         if reply == QMessageBox.Yes:
@@ -14757,7 +14880,7 @@ class MainWindow(QMainWindow):
     def show_shortcuts_dialog(self):
         """Affiche le dialog listant tous les raccourcis clavier"""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Raccourcis clavier")
+        dlg.setWindowTitle(tr("mw_shortcuts"))
         dlg.setMinimumSize(700, 620)
         dlg.setStyleSheet("""
             QDialog { background: #1a1a1a; color: #e0e0e0; }
@@ -14770,7 +14893,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        title = QLabel("Raccourcis clavier")
+        title = QLabel(tr("mw_shortcuts"))
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("color: #ffffff; padding-bottom: 4px;")
@@ -14890,7 +15013,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
 
-        close_btn = QPushButton("Fermer")
+        close_btn = QPushButton(tr("mw_close"))
         close_btn.setStyleSheet("""
             QPushButton {
                 background: #333333; color: #aaaaaa;
@@ -15057,10 +15180,10 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
-        load_action = menu.addAction("Charger un media")
+        load_action = menu.addAction(tr("mw_load_media"))
         clear_action = None
         if cart.media_path:
-            clear_action = menu.addAction("Vider la cartouche")
+            clear_action = menu.addAction(tr("mw_clear_cart"))
 
         action = menu.exec(cart.mapToGlobal(cart.rect().bottomLeft()))
 
@@ -15081,8 +15204,8 @@ class MainWindow(QMainWindow):
         try:
             size_mb = os.path.getsize(path) / (1024 * 1024)
             if size_mb > 300:
-                QMessageBox.warning(self, "Fichier trop volumineux",
-                    f"Le fichier fait {size_mb:.0f} Mo.\nLimite: 300 Mo pour les cartouches.")
+                QMessageBox.warning(self, tr("mw_file_too_big"),
+                    tr("mw_f_file_size", size_mb=size_mb))
                 return
         except OSError:
             pass
@@ -15142,13 +15265,22 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_streamdeck_server'):
             self._streamdeck_server.stop()
 
+        # Liaison vMix : le thread réseau est en recv() bloquant, c'est stop()
+        # qui ferme la socket sous lui pour le débloquer.
+        if getattr(self, '_vmix_link', None) is not None:
+            try:
+                self._vmix_link.stop()
+            except Exception:
+                pass
+
         if self.seq.is_dirty:
-            res = QMessageBox.question(self, "Quitter",
-                "Sauvegarder avant de quitter ?",
+            res = QMessageBox.question(self, tr("mw_quit"),
+                tr("mw_save_before_quit"),
                 QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
             if res == QMessageBox.Yes:
                 if self.save_show():
                     self._allow_sleep()
+                    self._close_detached_windows()
                     e.accept()
                 else:
                     e.ignore()
@@ -15156,10 +15288,29 @@ class MainWindow(QMainWindow):
                 e.ignore()
             else:
                 self._allow_sleep()
+                self._close_detached_windows()
                 e.accept()
         else:
             self._allow_sleep()
+            self._close_detached_windows()
             e.accept()
+
+    def _close_detached_windows(self):
+        """Ferme les fenêtres sans parent Qt, juste avant de quitter.
+
+        Le plan de feu 3D est créé sans parent (pour éviter le bleeding visuel
+        sous Windows) et son closeEvent masque au lieu de fermer. Résultat : à
+        la fermeture de MyStrow elle restait à l'écran — épinglée par-dessus
+        tout si l'utilisateur l'avait épinglée — et empêchait Qt de quitter,
+        `quitOnLastWindowClosed` n'étant déclenché que par une vraie fermeture.
+        Appelé seulement une fois la sortie confirmée (pas sur « Annuler »).
+        """
+        p3d = getattr(self, '_plan3d', None)
+        if p3d is not None:
+            try:
+                p3d.force_close()
+            except Exception:
+                pass
 
     def apply_styles(self):
         """Applique les styles CSS"""
@@ -15277,7 +15428,7 @@ class MainWindow(QMainWindow):
 
         # ── Dialog ────────────────────────────────────────────────────────
         dialog = QDialog(self)
-        dialog.setWindowTitle("Patch DMX")
+        dialog.setWindowTitle(tr("mw_patch_dmx"))
         dialog.setWindowFlags(Qt.Window | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
 
         _SS = """
@@ -15361,25 +15512,25 @@ class MainWindow(QMainWindow):
             QMenu::item:selected { background: #00d4ff22; color: #00d4ff; }
             QMenu::separator { background: #1e1e1e; height: 1px; margin: 3px 8px; }
         """)
-        m_file = menubar.addMenu("📁  Fichier")
-        act_new  = m_file.addAction("✨  Nouveau Patch")
-        act_save = m_file.addAction("💾  Enregistrer Patch")
+        m_file = menubar.addMenu(tr("mw_file"))
+        act_new  = m_file.addAction(tr("mw_new_patch"))
+        act_save = m_file.addAction(tr("mw_save_patch"))
         m_file.addSeparator()
-        act_dflt = m_file.addAction("🏠  Patch par défaut")
+        act_dflt = m_file.addAction(tr("mw_default_patch"))
         m_file.addSeparator()
-        act_import = m_file.addAction("📂  Importer le patch...")
-        act_export = m_file.addAction("📤  Exporter le patch...")
+        act_import = m_file.addAction(tr("mw_import_patch"))
+        act_export = m_file.addAction(tr("mw_export_patch"))
 
-        m_edit = menubar.addMenu("✏️  Edition")
-        act_undo = m_edit.addAction("↩  Annuler\tCtrl+Z")
-        act_redo = m_edit.addAction("↪  Rétablir\tCtrl+Y")
+        m_edit = menubar.addMenu(tr("mw_edit"))
+        act_undo = m_edit.addAction(tr("mw_undo"))
+        act_redo = m_edit.addAction(tr("mw_redo"))
         m_edit.addSeparator()
-        act_auto = m_edit.addAction("⚡  Auto Adresse")
+        act_auto = m_edit.addAction(tr("mw_auto_addr"))
 
-        m_create = menubar.addMenu("🛠  Créer votre fixture")
-        act_create_manual = m_create.addAction("🛠  Créer votre fixture manuellement")
+        m_create = menubar.addMenu(tr("mw_create_fixture"))
+        act_create_manual = m_create.addAction(tr("mw_create_fixture_manual"))
         m_create.addSeparator()
-        act_create_ia = m_create.addAction("✦  Créer votre fixture via IA")
+        act_create_ia = m_create.addAction(tr("mw_create_fixture_ai"))
 
         root.addWidget(menubar)
 
@@ -15390,7 +15541,7 @@ class MainWindow(QMainWindow):
         th = QHBoxLayout(toolbar)
         th.setContentsMargins(20, 0, 20, 0)
         th.setSpacing(8)
-        lbl_ttl = QLabel("Patch DMX")
+        lbl_ttl = QLabel(tr("mw_patch_dmx"))
         lbl_ttl.setFont(QFont("Segoe UI", 14, QFont.Bold))
         lbl_ttl.setStyleSheet("color:white; padding-right:16px;")
         th.addWidget(lbl_ttl)
@@ -15418,7 +15569,7 @@ class MainWindow(QMainWindow):
         btn_add_matrix.setVisible(False)
         th.addWidget(btn_add_matrix)
         th.addStretch()
-        btn_save = QPushButton("💾  Sauvegarder")
+        btn_save = QPushButton(tr("mw_save_m"))
         btn_save.setFixedHeight(34)
         btn_save.setEnabled(False)
         btn_save.setStyleSheet(
@@ -15430,7 +15581,7 @@ class MainWindow(QMainWindow):
         )
         th.addWidget(btn_save)
         th.addSpacing(8)
-        close_btn = QPushButton("✕  Fermer")
+        close_btn = QPushButton(tr("mw_close_m"))
         close_btn.setFixedHeight(34)
         close_btn.setStyleSheet(
             "QPushButton { background:#2a0a0a; color:#cc4444; border:1px solid #4a1a1a;"
@@ -15491,7 +15642,7 @@ class MainWindow(QMainWindow):
         lv.setSpacing(0)
 
         filter_bar = QLineEdit()
-        filter_bar.setPlaceholderText("  🔍  Filtrer...")
+        filter_bar.setPlaceholderText(tr("mw_filter"))
         filter_bar.setFixedHeight(36)
         filter_bar.setStyleSheet(
             "QLineEdit { background:#0e0e0e; color:#777; border:none;"
@@ -15518,7 +15669,7 @@ class MainWindow(QMainWindow):
                 "QPushButton:checked { color:#00d4ff; background:#00d4ff18; }"
             )
             return b
-        lbl_sort = QLabel("Trier :")
+        lbl_sort = QLabel(tr("mw_sort"))
         lbl_sort.setStyleSheet("color:#252525; font-size:10px; border:none;")
         sort_hl.addWidget(lbl_sort)
         btn_sort_dmx  = _sort_btn("Adresse")
@@ -15560,7 +15711,7 @@ class MainWindow(QMainWindow):
         bsv.addWidget(lbl_cnt)
         bsv.addStretch()
 
-        btn_rename_multi = QPushButton("✏  Renommer")
+        btn_rename_multi = QPushButton(tr("mw_rename_m"))
         btn_rename_multi.setFixedHeight(26)
         btn_rename_multi.setVisible(False)
         btn_rename_multi.setStyleSheet(
@@ -15570,7 +15721,7 @@ class MainWindow(QMainWindow):
         )
         bsv.addWidget(btn_rename_multi)
 
-        btn_group_multi = QPushButton("⬡  Groupe")
+        btn_group_multi = QPushButton(tr("mw_group_m"))
         btn_group_multi.setFixedHeight(26)
         btn_group_multi.setVisible(False)
         btn_group_multi.setStyleSheet(
@@ -15580,7 +15731,7 @@ class MainWindow(QMainWindow):
         )
         bsv.addWidget(btn_group_multi)
 
-        btn_del_multi = QPushButton("🗑  Supprimer")
+        btn_del_multi = QPushButton(tr("mw_delete_m"))
         btn_del_multi.setFixedHeight(26)
         btn_del_multi.setVisible(False)
         btn_del_multi.setStyleSheet(
@@ -15636,7 +15787,7 @@ class MainWindow(QMainWindow):
         dth.addWidget(lbl_det_name)
         dth.addWidget(lbl_det_group)
         dth.addStretch()
-        btn_det_locate = QPushButton("🎯  Localiser")
+        btn_det_locate = QPushButton(tr("mw_locate_m"))
         btn_det_locate.setFixedHeight(30)
         btn_det_locate.setToolTip(tr("mw_select_in_plan"))
         btn_det_locate.setStyleSheet(
@@ -15646,7 +15797,7 @@ class MainWindow(QMainWindow):
         )
         dth.addWidget(btn_det_locate)
 
-        btn_det_replace = QPushButton("🔄  Remplacer")
+        btn_det_replace = QPushButton(tr("mw_replace_m"))
         btn_det_replace.setFixedHeight(30)
         btn_det_replace.setToolTip(tr("mw_replace_fixture"))
         btn_det_replace.setStyleSheet(
@@ -15656,7 +15807,7 @@ class MainWindow(QMainWindow):
         )
         dth.addWidget(btn_det_replace)
 
-        btn_det_del = QPushButton("🗑  Supprimer")
+        btn_det_del = QPushButton(tr("mw_delete_m"))
         btn_det_del.setFixedHeight(30)
         btn_det_del.setAutoDefault(False)
         btn_det_del.setStyleSheet(
@@ -15676,8 +15827,8 @@ class MainWindow(QMainWindow):
         _confirm_lbl.setStyleSheet(
             "color:#ff7755; font-size:11px; border:none; background:transparent;"
         )
-        _btn_cnl = QPushButton("Annuler")
-        _btn_cok = QPushButton("Supprimer")
+        _btn_cnl = QPushButton(tr("mw_cancel"))
+        _btn_cok = QPushButton(tr("mw_delete"))
         for _b in (_btn_cnl, _btn_cok):
             _b.setFixedHeight(28)
             _b.setAutoDefault(False)
@@ -15812,7 +15963,7 @@ class MainWindow(QMainWindow):
 
         tg_lbl_row = QHBoxLayout()
         tg_lbl_row.setSpacing(8)
-        lbl_type_title = QLabel("Type")
+        lbl_type_title = QLabel(tr("mw_type"))
         lbl_type_title.setStyleSheet("color:#555; font-size:11px; border:none; background:transparent;")
         tg_lbl_row.addWidget(lbl_type_title, 1)
         tg_lbl_row.addWidget(_col_header("Groupe",  _TIP_GROUPE,  _GRP_W))
@@ -15923,7 +16074,7 @@ class MainWindow(QMainWindow):
             " border-radius:6px; padding:5px 8px; font-size:10px; }"
             "QPushButton:hover { color:#66aadd; border-color:#2a5070; background:#142030; }"
         )
-        btn_pt_reset       = QPushButton("↺  Reset")
+        btn_pt_reset       = QPushButton(tr("mw_reset_m"))
         btn_pt_apply_model = QPushButton(tr("mw_apply_model"))
         btn_pt_apply_all   = QPushButton(tr("mw_apply_all_mh"))
         btn_pt_reset.setStyleSheet(_PT_RST_SS)
@@ -15974,19 +16125,16 @@ class MainWindow(QMainWindow):
 
         px_row1 = QHBoxLayout()
         px_row1.setSpacing(6)
-        btn_px_rev = QPushButton("⇄  Inverser l'ordre")
+        btn_px_rev = QPushButton(tr("mw_pix_reverse"))
         btn_px_rev.setStyleSheet(_PX_BTN)
         btn_px_rev.setToolTip(
-            "Le pixel 1 passe de l'autre côté.\n"
-            "À utiliser quand la barre est accrochée retournée : les chenillards\n"
-            "partent alors du bon bord sans avoir à repatcher.")
+            tr("mw_pix_reverse_hint"))
         px_row1.addWidget(btn_px_rev)
 
         btn_px_grid = QPushButton(tr("mw_spread_even"))
         btn_px_grid.setStyleSheet(_PX_BTN)
         btn_px_grid.setToolTip(
-            "Reconstruit la grille à intervalles égaux.\n"
-            "Utile après avoir déplacé des pixels à la main par erreur.")
+            tr("mw_pix_rebuild_hint"))
         px_row1.addWidget(btn_px_grid)
         px_row1.addStretch()
         px_vl.addLayout(px_row1)
@@ -15997,13 +16145,11 @@ class MainWindow(QMainWindow):
         lbl_wiring.setStyleSheet("color:#777;font-size:11px;border:none;background:transparent;")
         px_row2.addWidget(lbl_wiring)
         cb_wiring = ComboSansMolette()
-        cb_wiring.addItem("Lignes (chaque ligne repart à gauche)", "row")
-        cb_wiring.addItem("Serpentin (une ligne sur deux inversée)", "serpentine")
+        cb_wiring.addItem(tr("mw_pix_rows"), "row")
+        cb_wiring.addItem(tr("mw_pix_serpentine"), "serpentine")
         cb_wiring.setFixedHeight(26)
         cb_wiring.setToolTip(
-            "Ordre de câblage interne des pixels.\n"
-            "Beaucoup de dalles bon marché câblent la ligne 2 de droite à gauche :\n"
-            "sans le déclarer, un balayage horizontal zigzague.")
+            tr("mw_pix_wiring_hint"))
         cb_wiring.setStyleSheet(
             "QComboBox{background:#1e1e1e;color:#ddd;border:1px solid #333;"
             "border-radius:5px;padding:2px 8px;font-size:11px;}"
@@ -16034,8 +16180,7 @@ class MainWindow(QMainWindow):
         spin_pw.setSuffix(" cm")
         spin_pw.setFixedHeight(26)
         spin_pw.setStyleSheet(_PX_SPIN)
-        spin_pw.setToolTip("Largeur réelle de la barre, bout à bout.\n"
-                           "Elle fixe sa taille sur le plan 2D et en 3D.")
+        spin_pw.setToolTip(tr("mw_pix_width_hint"))
         px_row3.addWidget(spin_pw)
 
         lbl_size_h = QLabel("×")
@@ -16054,8 +16199,7 @@ class MainWindow(QMainWindow):
 
         px_strip = PixelStrip()
         px_strip.setToolTip(
-            "Le chiffre est le rang du pixel dans la chaîne DMX.\n"
-            "Glisse une case sur une autre pour échanger leurs adresses.")
+            tr("mw_pix_order_hint"))
         px_vl.addWidget(px_strip)
 
         px_hint = QLabel("")
@@ -16296,7 +16440,7 @@ class MainWindow(QMainWindow):
         spl.setSizes([280, 900])
         fx_root.addWidget(spl)
 
-        tabs.addTab(tab_fx, "📋  Fixtures")
+        tabs.addTab(tab_fx, tr("mw_fixtures_m"))
 
         # ── Onglet 2 : Plan de feu ─────────────────────────────────────
         tab_canvas = QWidget()
@@ -16339,9 +16483,9 @@ class MainWindow(QMainWindow):
             return s
 
         # ── Alignement ────────────────────────────────────────────────
-        btn_align_row  = QPushButton("⟶  Aligner H")
+        btn_align_row  = QPushButton(tr("mw_align_h_btn"))
         btn_align_row.setToolTip(tr("mw_align_h"))
-        btn_align_col  = QPushButton("↕  Aligner V")
+        btn_align_col  = QPushButton(tr("mw_align_v_btn"))
         btn_align_col.setToolTip(tr("mw_align_v"))
         btn_distribute = QPushButton(tr("mw_spread_h"))
         btn_distribute.setToolTip(tr("mw_spread_h_tip"))
@@ -16357,7 +16501,7 @@ class MainWindow(QMainWindow):
         # ── Sélection ─────────────────────────────────────────────────
         btn_sel_all_c = QPushButton(tr("mw_select_all_short"))
         btn_desel_c   = QPushButton(tr("mw_deselect_short"))
-        btn_groups_c  = QPushButton("Groupes  ▾")
+        btn_groups_c  = QPushButton(tr("mw_groups_menu"))
         for b in [btn_sel_all_c, btn_desel_c, btn_groups_c]:
             b.setStyleSheet(_ES)
             b.setFixedHeight(28)
@@ -16376,7 +16520,7 @@ class MainWindow(QMainWindow):
         canvas_timer.timeout.connect(canvas.update)
         canvas_timer.start(80)
 
-        tabs.addTab(tab_canvas, "🎭  Plan de feu")
+        tabs.addTab(tab_canvas, tr("mw_light_plan"))
 
         # ════════════════════════════════════════════════════════════════
         # DONNÉES + HELPERS
@@ -16624,8 +16768,7 @@ class MainWindow(QMainWindow):
             if conflicts and tabs.currentIndex() == 0:
                 n = len(conflicts)
                 conflict_banner.setText(
-                    f"  ⚠  {n} fixture{'s' if n > 1 else ''} avec des canaux DMX qui se chevauchent"
-                    "  —  utilisez ⚡ Auto-addr. pour corriger"
+                    tr("mw_f_overlap_warn", n=n, a0='s' if n > 1 else '')
                 )
                 conflict_banner.setVisible(True)
             else:
@@ -16749,7 +16892,7 @@ class MainWindow(QMainWindow):
                     # canal ne se remettait plus à jour. Vu 3× dans le log user.
                     _set_default(ch_type, v, snap_idx)
                     chip_lbl.setToolTip(
-                        f"Canal {ch_type} — clic droit pour régler le défaut\nDéfaut actuel : {v}%"
+                        tr("mw_f_channel_default", ch_type=ch_type, v=v)
                     )
                     # Mettre à jour le petit label %
                     chip_lbl.setProperty("def_pct", v)
@@ -16797,7 +16940,7 @@ class MainWindow(QMainWindow):
                         )
                         tog_row.addWidget(btn_inv_tilt)
 
-                    btn_swap = QPushButton("⇄  Swap Pan/Tilt")
+                    btn_swap = QPushButton(tr("mw_swap_pantilt"))
                     btn_swap.setCheckable(True)
                     btn_swap.setChecked(getattr(proj_pt, 'pan_tilt_swap', False))
                     btn_swap.setStyleSheet(_TOG_SS)
@@ -17046,7 +17189,7 @@ class MainWindow(QMainWindow):
                 addr_sb.setValue(max_addr)
             addr_sb.blockSignals(False)
             end = addr_sb.value() + n - 1
-            lbl_addr_range.setText(f"→ CH {end}   ({n} canal{'x' if n > 1 else ''})")
+            lbl_addr_range.setText(tr("mw_f_ch_end", end=end, n=n, a0='x' if n > 1 else ''))
             lbl_addr_range.setStyleSheet("color:#2a2a2a; font-size:12px; padding-left:6px; border:none;")
         def _make_card(idx):
             fd    = fixture_data[idx]
@@ -17125,9 +17268,9 @@ class MainWindow(QMainWindow):
             if _mxi:
                 _geo = (f"{_mxi['pixels']} px" if _mxi["rows"] <= 1
                         else f"{_mxi['rows']}×{_mxi['cols']} px")
-                sub = QLabel(f"{_pre}{fd['fixture_type']}  ·  {_geo}  ·  Groupe {gname}")
+                sub = QLabel(tr("mw_f_fx_geo_group", _pre=_pre, a0=fd['fixture_type'], _geo=_geo, gname=gname))
             else:
-                sub = QLabel(f"{_pre}{fd['fixture_type']}  ·  Groupe {gname}")
+                sub = QLabel(tr("mw_f_fx_group", _pre=_pre, a0=fd['fixture_type'], gname=gname))
             _sub_col = "#{:02x}{:02x}{:02x}".format(
                 (int(gc[1:3], 16) + 0x44) // 2,
                 (int(gc[3:5], 16) + 0x44) // 2,
@@ -17176,12 +17319,12 @@ class MainWindow(QMainWindow):
                         "QMenu::item:selected{background:#00d4ff18;color:#00d4ff;}"
                         "QMenu::separator{height:1px;background:#2a2a2a;margin:4px 8px;}"
                     )
-                    act_locate  = m.addAction("🎯  Localiser")
+                    act_locate  = m.addAction(tr("mw_locate_m"))
                     act_locate.setToolTip(tr("mw_select_in_plan"))
-                    act_replace = m.addAction("🔄  Remplacer")
+                    act_replace = m.addAction(tr("mw_replace_m"))
                     act_replace.setToolTip(tr("mw_replace_fixture"))
                     m.addSeparator()
-                    act_del = m.addAction("🗑  Supprimer")
+                    act_del = m.addAction(tr("mw_delete_m"))
                     _chosen = m.exec(e.globalPos())
                     if _chosen == act_del:
                         _del_selected()
@@ -17257,7 +17400,7 @@ class MainWindow(QMainWindow):
             for i in visible:
                 card_vl.insertWidget(card_vl.count() - 1, _cards[i])
             n = len(fixture_data)
-            lbl_cnt.setText(f"{n} fixture{'s' if n != 1 else ''}")
+            lbl_cnt.setText(tr("mw_f_n_fixtures", n=n, a0='s' if n != 1 else ''))
             _update_conflict_banner(conflicts)
         def _select_card(idx):
             if _sel[0] is not None and _sel[0] < len(_cards):
@@ -17303,7 +17446,7 @@ class MainWindow(QMainWindow):
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
                         others.append(fd2['name'] or fd2['group'])
-                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {', '.join(others)}")
+                lbl_conflict_det.setText(tr("mw_f_overlap_with", a0=', '.join(others)))
                 lbl_conflict_det.setVisible(True)
             else:
                 lbl_conflict_det.setVisible(False)
@@ -17428,10 +17571,10 @@ class MainWindow(QMainWindow):
                     _geo = (f"{_mxc['pixels']} px" if _mxc["rows"] <= 1
                             else f"{_mxc['rows']}×{_mxc['cols']} px")
                     card._sublbl.setText(
-                        f"{_pre2}{fd['fixture_type']}  ·  {_geo}  ·  Groupe {_gdisp}")
+                        tr("mw_f_fx_geo_group2", _pre2=_pre2, a0=fd['fixture_type'], _geo=_geo, _gdisp=_gdisp))
                 else:
                     card._sublbl.setText(
-                        f"{_pre2}{fd['fixture_type']}  ·  Groupe {_gdisp}")
+                        tr("mw_f_fx_group2", _pre2=_pre2, a0=fd['fixture_type'], _gdisp=_gdisp))
                 card._sublbl.setStyleSheet(
                     f"color:{_sub_col}; font-size:10px; border:none; background:transparent;"
                 )
@@ -17458,7 +17601,7 @@ class MainWindow(QMainWindow):
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
                         others.append(fd2['name'] or fd2['group'])
-                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {', '.join(others)}")
+                lbl_conflict_det.setText(tr("mw_f_overlap_with", a0=', '.join(others)))
                 lbl_conflict_det.setVisible(True)
             else:
                 lbl_conflict_det.setVisible(False)
@@ -17565,7 +17708,7 @@ class MainWindow(QMainWindow):
             _mxs = _matrix_info_for(idx)
             fname = _mxs["name"] if _mxs else fixture_data[idx]['name']
             _confirm_idx[0] = idx
-            _confirm_lbl.setText(f"Supprimer  « {fname[:30]} » ?")
+            _confirm_lbl.setText(tr("mw_f_delete_q", a0=fname[:30]))
             btn_det_locate.setVisible(False)
             btn_det_replace.setVisible(False)
             btn_det_del.setVisible(False)
@@ -17661,7 +17804,7 @@ class MainWindow(QMainWindow):
                 "QPushButton:hover{border-color:#00d4ff;color:#fff;}"
             )
             pick = QDialog(dialog)
-            pick.setWindowTitle("Remplacer par…")
+            pick.setWindowTitle(tr("mw_replace_with"))
             pick.resize(600, 480)
             pick.setStyleSheet(_SS2)
             pv = QVBoxLayout(pick)
@@ -17669,7 +17812,7 @@ class MainWindow(QMainWindow):
             pv.setSpacing(10)
 
             srch = QLineEdit()
-            srch.setPlaceholderText("🔍  Rechercher…")
+            srch.setPlaceholderText(tr("mw_search_m"))
             srch.setFixedHeight(36)
             pv.addWidget(srch)
 
@@ -17677,14 +17820,14 @@ class MainWindow(QMainWindow):
             pv.addWidget(plst, 1)
 
             pbr = QHBoxLayout()
-            pok = QPushButton("Remplacer")
+            pok = QPushButton(tr("mw_replace"))
             pok.setFixedHeight(36)
             pok.setStyleSheet(
                 "QPushButton{background:#00d4ff;color:#000;font-weight:bold;"
                 "border:none;border-radius:6px;padding:6px 24px;font-size:13px;}"
                 "QPushButton:hover{background:#33ddff;}"
             )
-            pcancel = QPushButton("Annuler")
+            pcancel = QPushButton(tr("mw_cancel"))
             pcancel.setFixedHeight(36)
             pcancel.clicked.connect(pick.reject)
             pbr.addStretch()
@@ -17966,9 +18109,8 @@ class MainWindow(QMainWindow):
 
         def _auto_address():
             if QMessageBox.question(
-                dialog, "Auto-adresser",
-                "Recalculer automatiquement toutes les adresses DMX ?\n"
-                "Les adresses seront réassignées de façon continue, sans espaces.",
+                dialog, tr("mw_auto_address"),
+                tr("mw_auto_address_confirm"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             ) != QMessageBox.Yes: return
             _push_history()
@@ -17991,8 +18133,8 @@ class MainWindow(QMainWindow):
             if cur is not None: _select_card(cur)
         def _reset_defaults():
             if QMessageBox.question(
-                dialog, "Réinitialiser",
-                "Réinitialiser les fixtures par défaut ?\nToutes les modifications seront perdues.",
+                dialog, tr("mw_reset"),
+                tr("mw_reset_fixtures_confirm"),
                 QMessageBox.Yes | QMessageBox.No
             ) != QMessageBox.Yes: return
             _push_history()
@@ -18018,7 +18160,7 @@ class MainWindow(QMainWindow):
         def _open_wizard():
             # ── Choix : Assistant ou Patch vide ───────────────────────────
             choice_dlg = QDialog(dialog)
-            choice_dlg.setWindowTitle("Nouveau Patch")
+            choice_dlg.setWindowTitle(tr("mw_new_patch_title"))
             choice_dlg.setFixedSize(360, 200)
             choice_dlg.setStyleSheet(
                 "QDialog { background:#111; color:#ddd; }"
@@ -18073,9 +18215,8 @@ class MainWindow(QMainWindow):
             if self.projectors:
                 label = "l'assistant" if _choice[0] == "wizard" else "un patch vide"
                 if QMessageBox.question(
-                    dialog, "Nouveau Patch",
-                    f"Cette action remplacera les {len(self.projectors)} fixture(s) existante(s).\n"
-                    f"Continuer vers {label} ?",
+                    dialog, tr("mw_new_patch_title"),
+                    tr("mw_f_replace_fixtures", a0=len(self.projectors), label=label),
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No
                 ) != QMessageBox.Yes:
                     return
@@ -18125,7 +18266,7 @@ class MainWindow(QMainWindow):
             if n == 1:
                 idx = indices[0]
                 old = fixture_data[idx]['name']
-                new_name, ok = QInputDialog.getText(dialog, "Renommer", "Nouveau nom :", text=old)
+                new_name, ok = QInputDialog.getText(dialog, tr("mw_rename"), tr("mw_new_name"), text=old)
                 if not ok or not new_name.strip():
                     return
                 _push_history()
@@ -18133,9 +18274,8 @@ class MainWindow(QMainWindow):
                 self.projectors[idx].name = new_name.strip()
             else:
                 base, ok = QInputDialog.getText(
-                    dialog, "Renommer en série",
-                    f"Nom de base pour les {n} fixtures sélectionnées :\n"
-                    "(Ex: « PAR Face » donnera « PAR Face 1 », « PAR Face 2 »...)"
+                    dialog, tr("mw_rename_batch"),
+                    tr("mw_f_batch_rename", n=n)
                 )
                 if not ok or not base.strip():
                     return
@@ -18295,11 +18435,11 @@ class MainWindow(QMainWindow):
                 }
                 with open(path, 'w', encoding='utf-8') as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
-                QMessageBox.information(dialog, "Export réussi",
-                    f"Patch exporté :\n{path}")
+                QMessageBox.information(dialog, tr("mw_export_ok"),
+                    tr("mw_f_patch_exported", path=path))
             except Exception as e:
-                QMessageBox.critical(dialog, "Erreur d'export",
-                    f"Impossible d'exporter le patch :\n{e}")
+                QMessageBox.critical(dialog, tr("mw_export_error"),
+                    tr("mw_f_export_patch_err", e=e))
 
         def _open_fixture_editor():
             from fixture_editor import FixtureEditorDialog
@@ -18478,8 +18618,8 @@ class MainWindow(QMainWindow):
             n = len(proxy.selected_lamps)
             if not n: return
             if QMessageBox.question(
-                dialog, "Supprimer",
-                f"Supprimer {n} fixture{'s' if n > 1 else ''} sélectionnée{'s' if n > 1 else ''} ?",
+                dialog, tr("mw_delete"),
+                tr("mw_f_delete_sel", n=n, a0='s' if n > 1 else '', a1='s' if n > 1 else ''),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             ) != QMessageBox.Yes: return
             _push_history()
@@ -18530,9 +18670,9 @@ class MainWindow(QMainWindow):
                 mb.setWindowTitle(tr("mw_unsaved_title"))
                 mb.setText(tr("mw_unsaved_msg"))
                 mb.setIcon(QMessageBox.Warning)
-                btn_sauv    = mb.addButton("Sauvegarder",  QMessageBox.AcceptRole)
-                btn_ignorer = mb.addButton("Ignorer",       QMessageBox.DestructiveRole)
-                btn_annuler = mb.addButton("Annuler",       QMessageBox.RejectRole)
+                btn_sauv    = mb.addButton(tr("mw_save"),  QMessageBox.AcceptRole)
+                btn_ignorer = mb.addButton(tr("mw_skip"),       QMessageBox.DestructiveRole)
+                btn_annuler = mb.addButton(tr("mw_cancel"),       QMessageBox.RejectRole)
                 mb.setDefaultButton(btn_sauv)
                 mb.exec()
                 clicked = mb.clickedButton()
@@ -18657,9 +18797,8 @@ class MainWindow(QMainWindow):
         if _new_mh:
             resp = QMessageBox.question(
                 self,
-                "Roue de couleur",
-                f"Vous avez ajouté {len(_new_mh)} lyre(s) avec une roue de couleur.\n"
-                "Voulez-vous calibrer les positions DMX maintenant ?",
+                tr("mw_color_wheel"),
+                tr("mw_f_calib_offer", a0=len(_new_mh)),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -18703,11 +18842,11 @@ class MainWindow(QMainWindow):
             r += 1
 
         name_edit = QLineEdit()
-        name_edit.setPlaceholderText("Nom (ex. Matrice DJ)")
+        name_edit.setPlaceholderText(tr("mw_name_example"))
         _row("Nom", name_edit)
 
         preset_combo = ComboSansMolette()
-        preset_combo.addItem("— Personnalisé —", None)
+        preset_combo.addItem(tr("mw_custom"), None)
         for sp in PIXEL_FIXTURE_PRESETS:
             preset_combo.addItem(sp.describe(), sp)
         _row("Modèle", preset_combo)
@@ -18715,9 +18854,9 @@ class MainWindow(QMainWindow):
         rows_spin = QSpinBox(); rows_spin.setRange(1, 32); rows_spin.setValue(3)
         cols_spin = QSpinBox(); cols_spin.setRange(1, 64); cols_spin.setValue(3)
         rc = QHBoxLayout()
-        rc.addWidget(QLabel("Lignes")); rc.addWidget(rows_spin)
+        rc.addWidget(QLabel(tr("mw_rows"))); rc.addWidget(rows_spin)
         rc.addSpacing(12)
-        rc.addWidget(QLabel("Colonnes")); rc.addWidget(cols_spin)
+        rc.addWidget(QLabel(tr("mw_cols"))); rc.addWidget(cols_spin)
         rc.addStretch()
         _wrc = QWidget(); _wrc.setLayout(rc)
         _row("Grille", _wrc)
@@ -18728,20 +18867,20 @@ class MainWindow(QMainWindow):
         chan_combo.setCurrentIndex(1)  # RGBW
         _row("Canaux / pixel", chan_combo)
 
-        dim_cb = QCheckBox("Dim global"); dim_cb.setChecked(True)
-        strobe_cb = QCheckBox("Strobe global"); strobe_cb.setChecked(True)
+        dim_cb = QCheckBox(tr("mw_global_dim")); dim_cb.setChecked(True)
+        strobe_cb = QCheckBox(tr("mw_global_strobe")); strobe_cb.setChecked(True)
         gc = QHBoxLayout(); gc.addWidget(dim_cb); gc.addWidget(strobe_cb); gc.addStretch()
         _wgc = QWidget(); _wgc.setLayout(gc)
         _row("Canaux globaux", _wgc)
 
         wiring_combo = ComboSansMolette()
-        wiring_combo.addItem("Ligne par ligne", "row")
-        wiring_combo.addItem("Serpentin (zig-zag)", "serpentine")
+        wiring_combo.addItem(tr("mw_row_by_row"), "row")
+        wiring_combo.addItem(tr("mw_serpentine"), "serpentine")
         _row("Câblage", wiring_combo)
 
         orient_combo = ComboSansMolette()
-        orient_combo.addItem("Horizontale", "H")
-        orient_combo.addItem("Verticale", "V")
+        orient_combo.addItem(tr("mw_horizontal"), "H")
+        orient_combo.addItem(tr("mw_vertical"), "V")
         _row("Orientation", orient_combo)
 
         group_combo = ComboSansMolette()
@@ -18755,9 +18894,9 @@ class MainWindow(QMainWindow):
         uni_spin = QSpinBox(); uni_spin.setRange(0, 3); uni_spin.setValue(0)
         addr_spin = QSpinBox(); addr_spin.setRange(1, 512); addr_spin.setValue(int(default_addr))
         ua = QHBoxLayout()
-        ua.addWidget(QLabel("Univers")); ua.addWidget(uni_spin)
+        ua.addWidget(QLabel(tr("mw_universe"))); ua.addWidget(uni_spin)
         ua.addSpacing(12)
-        ua.addWidget(QLabel("Adresse")); ua.addWidget(addr_spin)
+        ua.addWidget(QLabel(tr("mw_address"))); ua.addWidget(addr_spin)
         ua.addStretch()
         _wua = QWidget(); _wua.setLayout(ua)
         _row("Patch", _wua)
@@ -19000,7 +19139,7 @@ class MainWindow(QMainWindow):
         search_edit = QLineEdit()
         search_edit.setFixedHeight(36)
         search_edit.setPlaceholderText(tr("mw_search_fixture"))
-        btn_import = QPushButton("📥  Importer")
+        btn_import = QPushButton(tr("mw_import_m"))
         btn_import.setFixedHeight(36)
         btn_import.setToolTip(tr("mw_import_fixtures"))
         btn_import.setStyleSheet(
@@ -19008,7 +19147,7 @@ class MainWindow(QMainWindow):
             " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
             "QPushButton:hover { border-color:#44cc88; color:#66ee99; }"
         )
-        btn_refresh = QPushButton("🔄  Actualiser")
+        btn_refresh = QPushButton(tr("mw_refresh_m"))
         btn_refresh.setFixedHeight(36)
         btn_refresh.setStyleSheet(
             "QPushButton { background:#1a2a3a; color:#44aaee; border:1px solid #44aaee44;"
@@ -19021,9 +19160,7 @@ class MainWindow(QMainWindow):
         tab1_layout.addLayout(search_row)
 
         xml_hint = QLabel(
-            '💡  Vous pouvez importer n\'importe quelle fixture au format <b>XML</b> (GrandMA, QLC+…) via le bouton Importer.  '
-            '<a href="https://mystrow.fr/importer-fixture-dmx-mystrow" '
-            'style="color:#44cc88; text-decoration:underline;">Consulter le guide →</a>'
+            tr("mw_import_xml_hint")
         )
         xml_hint.setWordWrap(True)
         xml_hint.setOpenExternalLinks(True)
@@ -19054,7 +19191,7 @@ class MainWindow(QMainWindow):
         count_lbl.setAlignment(Qt.AlignRight)
         tab1_layout.addWidget(count_lbl)
 
-        tab_widget.addTab(tab1, "Bibliothèque de fixtures")
+        tab_widget.addTab(tab1, tr("mw_fixture_library"))
 
         # ── Tab 2 : Mes projecteurs ────────────────────────────────────────────
         tab2 = QWidget()
@@ -19086,7 +19223,7 @@ class MainWindow(QMainWindow):
             my_list.addItem(_empty_item)
         tab2_layout.addWidget(my_list, 1)
 
-        tab_widget.addTab(tab2, "Mes projecteurs")
+        tab_widget.addTab(tab2, tr("mw_my_fixtures"))
 
         # ── Suppression depuis "Mes projecteurs" ──────────────────────────────
         def _delete_my_fixture(row):
@@ -19096,8 +19233,8 @@ class MainWindow(QMainWindow):
             fx = item.data(Qt.UserRole)
             name = fx.get("name", "cette fixture")
             if QMessageBox.question(
-                dialog, "Supprimer",
-                f"Supprimer « {name} » de vos fixtures ?",
+                dialog, tr("mw_delete"),
+                tr("mw_f_delete_named", name=name),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             ) != QMessageBox.Yes:
                 return
@@ -19114,7 +19251,7 @@ class MainWindow(QMainWindow):
                 ]
                 _fx_file2.write_text(_json.dumps(existing2, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception as _e:
-                QMessageBox.warning(dialog, "Erreur", f"Impossible de supprimer : {_e}")
+                QMessageBox.warning(dialog, tr("mw_error"), tr("mw_f_delete_err", _e=_e))
                 return
             my_list.takeItem(row)
             if my_list.count() == 0:
@@ -19135,7 +19272,7 @@ class MainWindow(QMainWindow):
                 "QMenu::item{padding:7px 20px;border-radius:3px;}"
                 "QMenu::item:selected{background:#cc333318;color:#ee6666;}"
             )
-            act_del = m.addAction("🗑  Supprimer")
+            act_del = m.addAction(tr("mw_delete_m"))
             if m.exec(my_list.mapToGlobal(pos)) == act_del:
                 _delete_my_fixture(row)
 
@@ -19208,7 +19345,7 @@ class MainWindow(QMainWindow):
             n = preset_list.count()
             word = "résultat" if searching else "fixture"
             count_lbl.setText(
-                f"{n} {word}{'s' if n > 1 else ''}  —  {_TOTAL_FIXTURES} au total")
+                tr("mw_f_n_total", n=n, word=word, a0='s' if n > 1 else '', _TOTAL_FIXTURES=_TOTAL_FIXTURES))
             if searching and n:
                 preset_list.setCurrentRow(0)
 
@@ -19317,8 +19454,8 @@ class MainWindow(QMainWindow):
                         if len(candidates) > 1:
                             mode_names = [c["name"] for c in candidates]
                             choice, ok = QInputDialog.getItem(
-                                dialog, "Choisir un mode",
-                                f"{ofl_fx.get('name')} — {len(candidates)} modes.\nMode à importer :",
+                                dialog, tr("mw_choose_mode"),
+                                tr("mw_f_modes_import", a0=ofl_fx.get('name'), a1=len(candidates)),
                                 mode_names, 0, False
                             )
                             if not ok:
@@ -19351,7 +19488,7 @@ class MainWindow(QMainWindow):
                 msg = "Aucune fixture importée."
                 if errors:
                     msg += "\n\n" + "\n".join(errors)
-                QMessageBox.warning(dialog, "Import échoué", msg)
+                QMessageBox.warning(dialog, tr("mw_import_failed"), msg)
                 return
             _fx_file.write_text(_json.dumps(existing_user, ensure_ascii=False, indent=2), encoding="utf-8")
             # Rafraîchir la bibliothèque en place
@@ -19373,9 +19510,9 @@ class MainWindow(QMainWindow):
             msg = f"{imported} fixture{'s' if imported > 1 else ''} importée{'s' if imported > 1 else ''}."
             if errors:
                 msg += f"\n\n{len(errors)} fichier(s) ignoré(s) :\n" + "\n".join(errors)
-                QMessageBox.warning(dialog, "Import partiel", msg)
+                QMessageBox.warning(dialog, tr("mw_import_partial"), msg)
             else:
-                QMessageBox.information(dialog, "Import réussi", msg)
+                QMessageBox.information(dialog, tr("mw_import_ok"), msg)
 
         def _rebuild_library_ui(new_user_fixtures: list):
             """Reconstruit ALL_FIXTURES / FIXTURE_LIBRARY et rafraîchit cat_list."""
@@ -19427,7 +19564,7 @@ class MainWindow(QMainWindow):
                 pass
 
             btn_refresh.setEnabled(False)
-            btn_refresh.setText("⏳  Chargement...")
+            btn_refresh.setText(tr("mw_loading_m"))
             if not silent:
                 count_lbl.setText(tr("mw_firestore_conn"))
 
@@ -19503,21 +19640,20 @@ class MainWindow(QMainWindow):
                 n = len(remote_fixtures)
                 if not silent:
                     count_lbl.setText(
-                        f"Firestore — {n} fixture{'s' if n > 1 else ''} chargée{'s' if n > 1 else ''}"
-                        f"  —  {_TOTAL_FIXTURES} au total"
+                        tr("mw_f_firestore_loaded", n=n, a0='s' if n > 1 else '', a1='s' if n > 1 else '', _TOTAL_FIXTURES=_TOTAL_FIXTURES)
                     )
                 btn_refresh.setEnabled(True)
-                btn_refresh.setText("🔄  Actualiser")
+                btn_refresh.setText(tr("mw_refresh_m"))
 
             def _on_error(msg: str):
                 thread.quit()
                 dialog._refresh_thread = None
                 dialog._refresh_worker = None
                 btn_refresh.setEnabled(True)
-                btn_refresh.setText("🔄  Actualiser")
+                btn_refresh.setText(tr("mw_refresh_m"))
                 if not silent:
-                    count_lbl.setText("Erreur Firestore")
-                    QMessageBox.warning(dialog, "Erreur Firestore", f"Impossible de charger les fixtures :\n{msg}")
+                    count_lbl.setText(tr("mw_firestore_error"))
+                    QMessageBox.warning(dialog, tr("mw_firestore_error"), tr("mw_f_load_fixtures_err", msg=msg))
 
             worker.done.connect(_on_done)
             worker.error.connect(_on_error)
@@ -19554,7 +19690,7 @@ class MainWindow(QMainWindow):
         mode_h = QHBoxLayout(mode_row)
         mode_h.setContentsMargins(0, 0, 0, 0)
         mode_h.setSpacing(8)
-        lbl_mode = QLabel("Mode DMX :")
+        lbl_mode = QLabel(tr("mw_dmx_mode"))
         lbl_mode.setStyleSheet("color:#888; font-size:11px; background:transparent;")
         mode_cb = ComboSansMolette()
         mode_cb.setFixedHeight(30)
@@ -19777,9 +19913,7 @@ class MainWindow(QMainWindow):
                         f"Motif répété sur chaque pixel  ·  ×{n_px}", len(profile)))
                     chips = build_channel_chips(spec.pixel_channels, head + 1)
                     chips.setToolTip(
-                        f"Ces {n_pch} canaux se répètent {n_px} fois, "
-                        f"du CH {head + 1} au CH {head + n_px * n_pch}.\n"
-                        f"Clique sur « … » pour voir chaque pixel."
+                        tr("mw_f_pixel_repeat", n_pch=n_pch, n_px=n_px, a0=head + 1, a1=head + n_px * n_pch)
                     )
                     prof_vl.addWidget(chips)
                 prof_scroll.setFixedHeight(240 if _prof_expanded[0] else 128)
@@ -19795,7 +19929,7 @@ class MainWindow(QMainWindow):
         qty_row = QHBoxLayout()
         qty_row.setSpacing(10)
 
-        lbl_name = QLabel("Nom :")
+        lbl_name = QLabel(tr("mw_name_colon"))
         name_edit = QLineEdit()
         name_edit.setFixedHeight(32)
         name_edit.setPlaceholderText(tr("mw_custom_name"))
@@ -19839,14 +19973,14 @@ class MainWindow(QMainWindow):
         layout.addLayout(qty_row)
 
         btn_row = QHBoxLayout()
-        ok_btn = QPushButton("Ajouter")
+        ok_btn = QPushButton(tr("mw_add"))
         ok_btn.setFixedHeight(36)
         ok_btn.setStyleSheet(
             "QPushButton { background:#00d4ff; color:#000; font-weight:bold;"
             " border:none; border-radius:6px; padding:8px 28px; font-size:13px; }"
             "QPushButton:hover { background:#33ddff; }"
         )
-        cancel_b = QPushButton("Annuler")
+        cancel_b = QPushButton(tr("mw_cancel"))
         cancel_b.setFixedHeight(36)
         ok_btn.clicked.connect(accept)
         cancel_b.clicked.connect(dialog.reject)
@@ -19865,7 +19999,7 @@ class MainWindow(QMainWindow):
     def _show_custom_profile_dialog(self, initial=None):
         """Dialog pour composer un profil DMX custom. Retourne la liste ou None si annule."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Profil DMX Custom")
+        dialog.setWindowTitle(tr("mw_custom_profile"))
         dialog.setFixedSize(400, 420)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; color: #e0e0e0; }
@@ -19917,14 +20051,14 @@ class MainWindow(QMainWindow):
             type_combo.addItem(ct)
         add_row.addWidget(type_combo)
 
-        add_btn = QPushButton("Ajouter")
+        add_btn = QPushButton(tr("mw_add"))
         add_btn.setStyleSheet("QPushButton { background: #00d4ff; color: #000; font-weight: bold; } QPushButton:hover { background: #33ddff; }")
 
         def add_channel():
             ch = type_combo.currentText()
             existing = [list_widget.item(r).text() for r in range(list_widget.count())]
             if ch in existing:
-                QMessageBox.warning(dialog, "Doublon", f"Le canal '{ch}' est deja dans le profil.")
+                QMessageBox.warning(dialog, tr("mw_duplicate"), tr("mw_f_channel_dup", ch=ch))
                 return
             list_widget.addItem(ch)
 
@@ -19934,9 +20068,9 @@ class MainWindow(QMainWindow):
 
         # Boutons monter / descendre / supprimer
         action_row = QHBoxLayout()
-        up_btn = QPushButton("Monter")
-        down_btn = QPushButton("Descendre")
-        del_btn = QPushButton("Supprimer")
+        up_btn = QPushButton(tr("mw_move_up"))
+        down_btn = QPushButton(tr("mw_move_down"))
+        del_btn = QPushButton(tr("mw_delete"))
         del_btn.setStyleSheet("QPushButton { background: #662222; color: #ff8888; border: 1px solid #883333; } QPushButton:hover { background: #883333; }")
 
         def move_item(direction):
@@ -19977,7 +20111,7 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         ok_btn = QPushButton("OK")
         ok_btn.setStyleSheet("QPushButton { background: #00d4ff; color: #000; font-weight: bold; padding: 8px 24px; } QPushButton:hover { background: #33ddff; }")
-        cancel_btn = QPushButton("Annuler")
+        cancel_btn = QPushButton(tr("mw_cancel"))
         cancel_btn.setStyleSheet("QPushButton { padding: 8px 24px; }")
 
         result = [None]
@@ -19985,7 +20119,7 @@ class MainWindow(QMainWindow):
         def accept():
             items = [list_widget.item(r).text() for r in range(list_widget.count())]
             if not items:
-                QMessageBox.warning(dialog, "Profil vide", "Le profil doit contenir au moins 1 canal.")
+                QMessageBox.warning(dialog, tr("mw_empty_profile"), tr("mw_profile_min_channel"))
                 return
             result[0] = items
             dialog.accept()
@@ -20003,8 +20137,8 @@ class MainWindow(QMainWindow):
         """Demande un nom court (max 8 car.) pour un profil custom. Retourne le nom ou None."""
         from PySide6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(
-            self, "Nom du profil",
-            "Nom du profil (8 caracteres max) :",
+            self, tr("mw_profile_name"),
+            tr("mw_profile_name_max8"),
         )
         if ok and name:
             name = name.strip()[:8]
@@ -20015,7 +20149,7 @@ class MainWindow(QMainWindow):
     def apply_dmx_modes(self, dialog, fixture_data):
         """Applique les fixtures configurees"""
         if not fixture_data:
-            QMessageBox.warning(dialog, "Aucune fixture", "La liste de fixtures est vide.")
+            QMessageBox.warning(dialog, tr("mw_no_fixture"), tr("mw_fixture_list_empty"))
             return
 
         # Mémoriser les positions pan/tilt actuelles avant de recréer les projecteurs
@@ -20047,8 +20181,8 @@ class MainWindow(QMainWindow):
             self.dmx.set_projector_patch(proj_key, channels, profile=profile)
 
         self.save_dmx_patch_config()
-        QMessageBox.information(dialog, "Patch applique",
-            "Fixtures DMX appliquees avec succes !")
+        QMessageBox.information(dialog, tr("mw_patch_applied"),
+            tr("mw_patch_applied_ok"))
         dialog.accept()
 
     def _rebuild_dmx_patch(self):
@@ -20114,6 +20248,7 @@ class MainWindow(QMainWindow):
                 'rot3d_x':         getattr(proj, 'rot3d_x',       0.0),
                 'rot3d_z':         getattr(proj, 'rot3d_z',       0.0),
                 'beam_gain':       getattr(proj, 'beam_gain',   100.0),
+                'beam_angle':      getattr(proj, 'beam_angle',  100.0),
                 'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                 # Convention d'obturateur inversée (0 = ouvert). Réglée par
                 # « Ma lyre ne s'allume pas » dans la calibration de roue —
@@ -20192,6 +20327,10 @@ class MainWindow(QMainWindow):
                         p.rot3d_x       = float(fd.get('rot3d_x',       0.0))
                         p.rot3d_z       = float(fd.get('rot3d_z',       0.0))
                         p.beam_gain     = float(fd.get('beam_gain', 100.0))
+                        # Patch antérieur à la colonne « Angle » : absente du
+                        # fichier, la clé doit retomber sur 100 (rendu d'origine)
+                        # et surtout pas sur 0, qui donnerait un faisceau nul.
+                        p.beam_angle    = float(fd.get('beam_angle', 100.0) or 100.0)
                         if fd.get('fixture_type') == "Machine a fumee":
                             p.fan_speed = 0
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
@@ -20354,7 +20493,7 @@ class MainWindow(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
 
-        apply_btn = QPushButton("✅ Appliquer")
+        apply_btn = QPushButton(tr("mw_apply_m"))
         apply_btn.setStyleSheet("""
             QPushButton { background: #2a5a2a; color: white; border: none;
                 border-radius: 6px; padding: 10px 25px; font-weight: bold; font-size: 13px; }
@@ -20365,7 +20504,7 @@ class MainWindow(QMainWindow):
         )
         btn_layout.addWidget(apply_btn)
 
-        cancel_btn = QPushButton("❌ Annuler")
+        cancel_btn = QPushButton(tr("mw_cancel_m"))
         cancel_btn.setStyleSheet("""
             QPushButton { background: #3a3a3a; color: white; border: none;
                 border-radius: 6px; padding: 10px 25px; font-weight: bold; font-size: 13px; }
@@ -20550,7 +20689,7 @@ class MainWindow(QMainWindow):
             _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#4CAF50;")
             _lay.addWidget(_msg)
             _btn_row = QHBoxLayout()
-            _btn_reconnect = QPushButton("🔄  Actualiser")
+            _btn_reconnect = QPushButton(tr("mw_refresh_m"))
             _btn_reconnect.setFixedHeight(32)
             _btn_reconnect.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;"
                                          "border-radius:5px;font-size:12px;}"
@@ -20628,7 +20767,7 @@ class MainWindow(QMainWindow):
             _lay.addWidget(_msg)
             # Bouton Audio MIDI Setup (Mac uniquement)
             if _sys.platform == "darwin":
-                _btn_midi_setup = QPushButton("🎹  Ouvrir Audio MIDI Setup")
+                _btn_midi_setup = QPushButton(tr("mw_open_midi_setup"))
                 _btn_midi_setup.setFixedHeight(34)
                 _btn_midi_setup.setStyleSheet(
                     "QPushButton{background:#3a2a5a;color:white;border:none;border-radius:5px;font-size:12px;font-weight:bold;}"
@@ -20637,19 +20776,19 @@ class MainWindow(QMainWindow):
                 _btn_midi_setup.clicked.connect(lambda: _sub.Popen(["open", "-a", "Audio MIDI Setup"]))
                 _lay.addWidget(_btn_midi_setup)
             _btn_row = QHBoxLayout()
-            _btn_refresh = QPushButton("🔄  Actualiser")
+            _btn_refresh = QPushButton(tr("mw_refresh_m"))
             _btn_refresh.setFixedHeight(32)
             _btn_refresh.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;border-radius:5px;font-size:12px;}"
                                        "QPushButton:hover{background:#3a7a3a;}")
             _btn_refresh.clicked.connect(lambda: (_dlg.accept(), self.test_akai_connection()))
             _btn_row.addWidget(_btn_refresh)
-            _btn_diag = QPushButton("Diagnostic")
+            _btn_diag = QPushButton(tr("mw_diagnostic"))
             _btn_diag.setFixedHeight(32)
             _btn_diag.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
                                     "QPushButton:hover{background:#1e4a7a;}")
             _btn_diag.clicked.connect(lambda: (_dlg.accept(), self.show_midi_diagnostic()))
             _btn_row.addWidget(_btn_diag)
-            _btn_close2 = QPushButton("Fermer")
+            _btn_close2 = QPushButton(tr("mw_close"))
             _btn_close2.setFixedHeight(32)
             _btn_close2.setStyleSheet("QPushButton{background:#2a2a2a;color:#aaa;border:1px solid #3a3a3a;border-radius:5px;font-size:12px;}"
                                       "QPushButton:hover{background:#333;color:#ddd;}")
@@ -20661,7 +20800,7 @@ class MainWindow(QMainWindow):
     def reset_akai(self):
         """Reinitialise la connexion, les LEDs et les faders de l'AKAI"""
         if not MIDI_AVAILABLE:
-            QMessageBox.warning(self, "AKAI", "Module MIDI non installe.")
+            QMessageBox.warning(self, "AKAI", tr("mw_midi_missing"))
             return
 
         try:
@@ -20678,13 +20817,12 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(300, self.turn_off_all_effects)
                 # Synchroniser les faders UI avec les niveaux actuels des projecteurs
                 QTimer.singleShot(400, self._sync_faders_to_projectors)
-                QMessageBox.information(self, "AKAI", "AKAI reinitialise avec succes !")
+                QMessageBox.information(self, "AKAI", tr("mw_akai_reset_ok"))
             else:
                 QMessageBox.warning(self, "AKAI",
-                    "AKAI APC mini non detecte.\n\n"
-                    "Verifiez que le controleur est branche en USB.")
+                    tr("mw_akai_not_found"))
         except Exception as e:
-            QMessageBox.critical(self, "Erreur", f"Erreur reinitialisation AKAI: {e}")
+            QMessageBox.critical(self, tr("mw_error"), tr("mw_f_akai_reset_err", e=e))
 
     def show_midi_diagnostic(self):
         """Affiche tous les ports MIDI disponibles pour diagnostiquer la detection AKAI."""
@@ -20785,7 +20923,7 @@ class MainWindow(QMainWindow):
 
         # ── Dialogue ───────────────────────────────────────────────────────
         dlg = QDialog(self)
-        dlg.setWindowTitle("Diagnostique AKAI")
+        dlg.setWindowTitle(tr("mw_akai_diag"))
         dlg.setFixedSize(520, 420)
         dlg.setStyleSheet("QDialog, QWidget { background: #1a1a1a; color: #e0e0e0; }"
                           "QLabel { background: transparent; }")
@@ -20794,7 +20932,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(10)
 
-        title = QLabel("Diagnostique AKAI APC mini")
+        title = QLabel(tr("mw_akai_diag_full"))
         title.setStyleSheet("font-size: 14px; font-weight: bold; color: #00d4ff;")
         layout.addWidget(title)
 
@@ -20821,7 +20959,7 @@ class MainWindow(QMainWindow):
 
         # Bouton système selon la plateforme
         if is_mac:
-            btn_sys = QPushButton("🎹 Configuration MIDI Audio")
+            btn_sys = QPushButton(tr("mw_midi_audio_setup"))
             btn_sys.setFixedHeight(34)
             btn_sys.setStyleSheet("QPushButton{background:#3a2a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
                                   "QPushButton:hover{background:#4a3a7a;}")
@@ -20835,14 +20973,14 @@ class MainWindow(QMainWindow):
             btn_sys.clicked.connect(lambda: subprocess.Popen(["devmgmt.msc"], shell=True))
             btn_row.addWidget(btn_sys)
 
-        btn_reconnect = QPushButton("Reconnexion")
+        btn_reconnect = QPushButton(tr("mw_reconnecting"))
         btn_reconnect.setFixedHeight(34)
         btn_reconnect.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;border-radius:5px;font-size:12px;}"
                                     "QPushButton:hover{background:#3a7a3a;}")
         btn_reconnect.clicked.connect(lambda: (dlg.accept(), self.test_akai_connection()))
         btn_row.addWidget(btn_reconnect)
 
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("mw_close"))
         btn_close.setFixedHeight(34)
         fit_button(btn_close)
         btn_close.setStyleSheet("QPushButton{background:#2a2a2a;color:#aaa;border:1px solid #3a3a3a;border-radius:5px;font-size:12px;}"
@@ -20977,14 +21115,14 @@ class MainWindow(QMainWindow):
                                           btn_copy.setText(tr("mw_copied"))))
         row.addWidget(btn_copy)
 
-        btn_send = QPushButton("✉️  Envoyer au support")
+        btn_send = QPushButton(tr("mw_send_support"))
         btn_send.clicked.connect(lambda: send_report_email(
             dlg, subject, view.toPlainText(),
             intro=f"Bonjour,\n\nVoici le rapport « {subject} » généré par MyStrow."))
         row.addWidget(btn_send)
 
         row.addStretch()
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("mw_close"))
         btn_close.clicked.connect(dlg.accept)
         row.addWidget(btn_close)
         lay.addLayout(row)
@@ -21358,7 +21496,7 @@ class MainWindow(QMainWindow):
         from node_connection import _get_ethernet_adapters, _artpoll_packet, TARGET_IP, TARGET_PORT
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Diagnostic Node DMX")
+        dlg.setWindowTitle(tr("mw_node_diag"))
         # Minimum et non taille FIXE : avec « Ouvrir l'assistant de connexion »
         # visible, la rangee de boutons reclame ~740 px pour 404 disponibles.
         dlg.setMinimumSize(460, 260)
@@ -21409,7 +21547,7 @@ class MainWindow(QMainWindow):
         import subprocess as _sub
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_config = QPushButton("Ouvrir l'assistant de connexion")
+        btn_config = QPushButton(tr("mw_open_conn_wizard"))
         btn_config.setFixedHeight(30)
         fit_button(btn_config)
         btn_config.setStyleSheet(
@@ -21446,7 +21584,7 @@ class MainWindow(QMainWindow):
             from node_connection import _open_network_connections
             btn_net.clicked.connect(_open_network_connections)
         btn_row.addWidget(btn_net)
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("mw_close"))
         btn_close.setFixedHeight(30)
         fit_button(btn_close)
         btn_close.setStyleSheet(
@@ -21478,7 +21616,7 @@ class MainWindow(QMainWindow):
                 name, ip = ok_adapters[0]
                 icon_net.setText("✓")
                 icon_net.setStyleSheet("color: #4CAF50;")
-                detail_net.setText(f"{name}  —  IP : {ip}")
+                detail_net.setText(tr("mw_f_name_ip", name=name, ip=ip))
                 detail_net.setStyleSheet("color: #4CAF50;")
                 net_ok = True
             elif adapters:
@@ -21486,7 +21624,7 @@ class MainWindow(QMainWindow):
                 ip_display = ip if ip else "non configurée"
                 icon_net.setText("⚠")
                 icon_net.setStyleSheet("color: #ff9800;")
-                detail_net.setText(f"{name}  —  IP : {ip_display}  (attendu : 2.0.0.x)")
+                detail_net.setText(tr("mw_f_ip_expected", name=name, ip_display=ip_display))
                 detail_net.setStyleSheet("color: #ff9800;")
                 net_ok = False
             else:
@@ -21559,12 +21697,11 @@ class MainWindow(QMainWindow):
                 # et seulement si l'IP est différente ET dans la plage 2.x.x.x
                 if _node_via_artpoll and found_ip != self.dmx.target_ip and found_ip.startswith("2."):
                     detail_node.setText(
-                        f"Répond sur {found_ip}  —  Art-Net opérationnel\n"
-                        f"IP cible mise à jour ({self.dmx.target_ip} → {found_ip})"
+                        tr("mw_f_node_found_updated", found_ip=found_ip, a0=self.dmx.target_ip, a1=found_ip)
                     )
                     self._connect_dmx_async(target_ip=found_ip)
                 else:
-                    detail_node.setText(f"Node détecté sur {found_ip}  —  Art-Net opérationnel")
+                    detail_node.setText(tr("mw_f_node_found", found_ip=found_ip))
                     if not self.dmx.connected:
                         self._connect_dmx_async()
                 detail_node.setStyleSheet("color: #4CAF50;")
@@ -21573,8 +21710,7 @@ class MainWindow(QMainWindow):
                 icon_node.setStyleSheet("color: #f44336;")
                 if net_ok:
                     detail_node.setText(
-                        f"Aucun boîtier Art-Net détecté sur le réseau 2.x.x.x\n"
-                        f"Vérifiez que le boîtier est allumé et le câble RJ45 branché"
+                        tr("mw_f_no_node")
                     )
                 else:
                     detail_node.setText(tr("mw_config_card_first"))
@@ -21584,11 +21720,11 @@ class MainWindow(QMainWindow):
                 btn_config.show()
 
             btn_refresh.setEnabled(True)
-            btn_refresh.setText("🔄  Actualiser")
+            btn_refresh.setText(tr("mw_refresh_m"))
             QApplication.processEvents()
 
         # Bouton Actualiser (inséré avant Fermer)
-        btn_refresh = QPushButton("🔄  Actualiser")
+        btn_refresh = QPushButton(tr("mw_refresh_m"))
         btn_refresh.setFixedHeight(30)
         btn_refresh.setStyleSheet(
             "QPushButton { background: #1a2a1a; color: #66cc66; border: 1px solid #336633;"
@@ -21608,7 +21744,7 @@ class MainWindow(QMainWindow):
                     f"{icon_net.text()}  Carte réseau : {detail_net.text()}\n"
                     f"{icon_node.text()}  Node Art-Net : {detail_node.text()}\n")
 
-        btn_send = QPushButton("✉️  Envoyer au support")
+        btn_send = QPushButton(tr("mw_send_support"))
         btn_send.setFixedHeight(30)
         fit_button(btn_send)
         btn_send.setStyleSheet(
@@ -21616,8 +21752,7 @@ class MainWindow(QMainWindow):
             " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
             "QPushButton:hover { border-color: #666; }"
         )
-        btn_send.setToolTip("Ouvre un mail pré-rempli avec ce rapport "
-                            "(le rapport est aussi copié dans le presse-papiers)")
+        btn_send.setToolTip(tr("mw_send_report_hint"))
         btn_send.clicked.connect(lambda: send_report_email(
             dlg, "Test RJ45 (réseau / Node Art-Net)", _rj45_report(),
             intro="Bonjour,\n\nVoici le rapport du test RJ45 (réseau / Node Art-Net)."))
@@ -21633,8 +21768,7 @@ class MainWindow(QMainWindow):
             " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
             "QPushButton:hover { color: #88ccff; border-color: #4a7aaa; }"
         )
-        btn_deep.setToolTip("Rapport complet : cartes réseau, port Art-Net, "
-                            "réponse du boîtier, IP réellement détectée")
+        btn_deep.setToolTip(tr("mw_report_contents"))
         btn_deep.clicked.connect(lambda: self._show_diag_report(
             "Analyse réseau détaillée", self._rj45_deep_report(),
             "Diagnostic réseau / Art-Net"))
@@ -21651,7 +21785,7 @@ class MainWindow(QMainWindow):
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Parametres NODE DMX")
+        dialog.setWindowTitle(tr("mw_node_settings"))
         dialog.setFixedSize(350, 310)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
@@ -21673,21 +21807,21 @@ class MainWindow(QMainWindow):
 
         # IP
         ip_layout = QHBoxLayout()
-        ip_layout.addWidget(QLabel("Adresse IP:"))
+        ip_layout.addWidget(QLabel(tr("mw_ip_addr")))
         ip_edit = QLineEdit(self.dmx.target_ip)
         ip_layout.addWidget(ip_edit)
         layout.addLayout(ip_layout)
 
         # Port
         port_layout = QHBoxLayout()
-        port_layout.addWidget(QLabel("Port:"))
+        port_layout.addWidget(QLabel(tr("mw_port")))
         port_edit = QLineEdit(str(self.dmx.target_port))
         port_layout.addWidget(port_edit)
         layout.addLayout(port_layout)
 
         # Univers
         univers_layout = QHBoxLayout()
-        univers_layout.addWidget(QLabel("Univers:"))
+        univers_layout.addWidget(QLabel(tr("mw_universe_colon")))
         univers_edit = QLineEdit(str(self.dmx.universe))
         univers_layout.addWidget(univers_edit)
         layout.addLayout(univers_layout)
@@ -21700,7 +21834,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(mirror_chk)
 
         univers2_layout = QHBoxLayout()
-        univers2_label = QLabel("  Univers sortie 2:")
+        univers2_label = QLabel(tr("mw_out2_universe"))
         univers2_edit  = QLineEdit(str(self.dmx.universe2))
         univers2_layout.addWidget(univers2_label)
         univers2_layout.addWidget(univers2_edit)
@@ -21714,7 +21848,7 @@ class MainWindow(QMainWindow):
 
         # Boutons
         btn_layout = QHBoxLayout()
-        apply_btn = QPushButton("Appliquer")
+        apply_btn = QPushButton(tr("mw_apply"))
         apply_btn.setStyleSheet("""
             QPushButton { background: #2a5a2a; color: white; border: none;
                 border-radius: 6px; padding: 8px 20px; font-weight: bold; }
@@ -21750,16 +21884,12 @@ class MainWindow(QMainWindow):
             dialog.accept()
             mirror_info = f"\nMiroir sortie 2: univers {self.dmx.universe2}" if new_mirror else ""
             QMessageBox.information(self, "NODE",
-                f"Configuration appliquee:\n"
-                f"IP: {self.dmx.target_ip}\n"
-                f"Port: {self.dmx.target_port}\n"
-                f"Univers: {self.dmx.universe}"
-                f"{mirror_info}")
+                tr("mw_f_node_applied", a0=self.dmx.target_ip, a1=self.dmx.target_port, a2=self.dmx.universe, mirror_info=mirror_info))
 
         apply_btn.clicked.connect(apply_config)
         btn_layout.addWidget(apply_btn)
 
-        cancel_btn = QPushButton("Annuler")
+        cancel_btn = QPushButton(tr("mw_cancel"))
         cancel_btn.setStyleSheet("""
             QPushButton { background: #3a3a3a; color: white; border: none;
                 border-radius: 6px; padding: 8px 20px; font-weight: bold; }
@@ -21797,9 +21927,9 @@ class MainWindow(QMainWindow):
 
             self.cart_player.setSource(QUrl.fromLocalFile(filepath))
             self.cart_player.play()
-            QMessageBox.information(self, "AUDIO", "Son de test envoyé !")
+            QMessageBox.information(self, "AUDIO", tr("mw_test_sound_sent"))
         except Exception as e:
-            QMessageBox.warning(self, "AUDIO", f"Erreur generation son: {e}")
+            QMessageBox.warning(self, "AUDIO", tr("mw_f_sound_err", e=e))
 
     def _populate_audio_output_menu(self):
         """Remplit dynamiquement le sous-menu Sortie Audio avec les peripheriques"""
@@ -21846,7 +21976,7 @@ class MainWindow(QMainWindow):
         from core import resource_path
         logo_path = resource_path("logo.png")
         if not os.path.exists(logo_path):
-            QMessageBox.warning(self, "VIDEO", "Fichier logo.png introuvable.")
+            QMessageBox.warning(self, "VIDEO", tr("mw_logo_missing"))
             return
 
         # Afficher dans le preview local (toujours)
@@ -21873,9 +22003,9 @@ class MainWindow(QMainWindow):
         self.toggle_video_output()
         # Mettre a jour le texte du menu
         if self.video_output_btn.isChecked():
-            self.video_menu_toggle.setText("🟢 Desactiver sortie video")
+            self.video_menu_toggle.setText(tr("mw_video_out_off"))
         else:
-            self.video_menu_toggle.setText("🔴 Activer sortie video")
+            self.video_menu_toggle.setText(tr("mw_video_out_on"))
 
     def _compute_htp_overrides(self):
         """Calcule les valeurs HTP des memoires SANS modifier les projecteurs.

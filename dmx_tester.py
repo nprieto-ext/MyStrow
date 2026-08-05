@@ -220,7 +220,7 @@ class DmxTesterDialog(QDialog):
         self._tx_timer.timeout.connect(self._dmx.send_dmx)
         self._tx_timer.start(40)
 
-        self.setWindowTitle("DMX Tester")
+        self.setWindowTitle(tr("dt_title"))
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog   { background: #111111; }
@@ -260,7 +260,7 @@ class DmxTesterDialog(QDialog):
         hdr.setStyleSheet("background:#0a0a0a; border-bottom:1px solid #1e1e1e;")
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(20, 0, 20, 0)
-        t = QLabel("🔬  DMX Tester")
+        t = QLabel(tr("dt_header"))
         t.setFont(QFont("Segoe UI", 13, QFont.Bold))
         t.setStyleSheet("color:#00d4ff;")
         hl.addWidget(t)
@@ -369,7 +369,7 @@ class DmxTesterDialog(QDialog):
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(12)
 
-        t = QLabel("ASSISTANT")
+        t = QLabel(tr("dt_wizard"))
         t.setFont(QFont("Segoe UI", 8, QFont.Bold))
         t.setStyleSheet("color:#00d4ff; letter-spacing:2px; border:none; background:transparent;")
         lay.addWidget(t)
@@ -378,7 +378,7 @@ class DmxTesterDialog(QDialog):
         sep.setStyleSheet("border:1px solid #1e1e1e;")
         lay.addWidget(sep)
 
-        lbl_sz = QLabel("Canaux par groupe")
+        lbl_sz = QLabel(tr("dt_chan_per_group"))
         lbl_sz.setFont(QFont("Segoe UI", 9))
         lbl_sz.setStyleSheet("color:#555; border:none; background:transparent;")
         lay.addWidget(lbl_sz)
@@ -454,7 +454,7 @@ class DmxTesterDialog(QDialog):
         sep_uni.setStyleSheet("border:1px solid #1e1e1e;")
         lay.addWidget(sep_uni)
 
-        lbl_uni = QLabel("Univers DMX")
+        lbl_uni = QLabel(tr("dt_universe"))
         lbl_uni.setFont(QFont("Segoe UI", 9))
         lbl_uni.setStyleSheet("color:#555; border:none; background:transparent;")
         lay.addWidget(lbl_uni)
@@ -500,12 +500,12 @@ class DmxTesterDialog(QDialog):
         elif n == 1:
             ch  = sel[0]
             val = self._dmx.dmx_data[self._uni][ch]
-            self.lbl_sel_info.setText(f"Canal {ch+1}  —  {val} / 255")
+            self.lbl_sel_info.setText(tr("dt_channel_val", a0=ch + 1, val=val))
             self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:220px;")
             self._set_slider(val)
             self.slider.setEnabled(True)
         else:
-            self.lbl_sel_info.setText(f"{n} canaux sélectionnés")
+            self.lbl_sel_info.setText(tr("dt_n_channels", n=n))
             self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:220px;")
             vals = {self._dmx.dmx_data[self._uni][c] for c in sel}
             if len(vals) == 1:
@@ -536,7 +536,7 @@ class DmxTesterDialog(QDialog):
         self._dmx.send_dmx()
         color = "#4CAF50" if val == 255 else "#f44336"
         label = "Full ON" if val == 255 else "Full OFF"
-        self.lbl_status.setText(f"{label} — 512 canaux à {val}")
+        self.lbl_status.setText(tr("dt_univ_full", label=label, val=val))
         self.lbl_status.setStyleSheet(f"color:{color};")
         self._refresh_grid()
 
@@ -624,7 +624,7 @@ class DmxTesterDialog(QDialog):
     def _update_status(self):
         sel = self.grid.selected()
         if sel:
-            self.lbl_status.setText(f"{len(sel)} canal(s) sélectionné(s)")
+            self.lbl_status.setText(tr("dt_n_channels_sel", a0=len(sel)))
             self.lbl_status.setStyleSheet("color:#555;")
 
     def closeEvent(self, event):
@@ -654,7 +654,7 @@ class DmxTesterDialog(QDialog):
             b.setStyleSheet(self._uni_btn_style(i == idx))
         self.grid.set_selection([])
         self._refresh_grid()
-        self.lbl_status.setText(f"Univers {idx + 1} actif")
+        self.lbl_status.setText(tr("dt_univ_active", a0=idx + 1))
         self.lbl_status.setStyleSheet("color:#00d4ff;")
 
     def _uni_btn_style(self, active):

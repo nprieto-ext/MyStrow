@@ -319,26 +319,26 @@ class ExtBlock(QPushButton):
         act_edit = act_flash = act_settings = act_cues = None
         slot_acts = {}
         if atype in ("color", "effect", "fader"):
-            act_edit = menu.addAction("🎯  Modifier les groupes…")
+            act_edit = menu.addAction(tr("ext_edit_groups"))
         if atype == "master_nudge":
-            act_settings = menu.addAction("⚙  Réglages…")
+            act_settings = menu.addAction(tr("ext_settings"))
         if atype == "mem":
-            act_cues = menu.addAction("🎬  Gérer les cues…")
+            act_cues = menu.addAction(tr("ext_manage_cues"))
         if atype in ("cartouche", "slot"):
             cur_idx = int(self.spec.get("action", {}).get("index", 0))
-            sub = menu.addMenu("◈  Lier au slot…")
+            sub = menu.addMenu(tr("ext_link_slot"))
             for i in range(4):
                 a = sub.addAction(f"Slot {i + 1}")
                 a.setCheckable(True)
                 a.setChecked(i == cur_idx)
                 slot_acts[a] = i
         if atype in ("effect", "strobe", "color"):
-            act_flash = menu.addAction("⚡  Mode flash (momentané)")
+            act_flash = menu.addAction(tr("ext_flash_mode"))
             act_flash.setCheckable(True)
             act_flash.setChecked(bool(self.spec.get("flash")))
         if menu.actions():
             menu.addSeparator()
-        act_del = menu.addAction("🗑  Supprimer le bloc")
+        act_del = menu.addAction(tr("ext_del_block"))
         chosen = menu.exec(ev.globalPos())
         if chosen is None:
             return
@@ -749,7 +749,7 @@ class ExtWindow(QMainWindow):
         self._owner = parent          # MainWindow : pour brancher les actions réelles
         self._current_cat = "color"
         self._palette_shown = False   # la colonne palette occupe-t-elle 170 px ?
-        self.setWindowTitle("PADS — Surface configurable")
+        self.setWindowTitle(tr("ext_title"))
         self.setFont(QFont("Segoe UI"))   # même police que le reste du logiciel
         self.resize(1240, 760)
         self._build_ui()
@@ -1295,7 +1295,7 @@ class ExtWindow(QMainWindow):
         sp_step.setValue(abs(cur_delta) or 10)
         lay.addWidget(sp_step)
 
-        lay.addWidget(QLabel("Temps de fondu"))
+        lay.addWidget(QLabel(tr("ext_fade_time")))
         sp_fade = QDoubleSpinBox()
         sp_fade.setRange(0.0, 10.0)
         sp_fade.setSingleStep(0.5)
@@ -1305,8 +1305,8 @@ class ExtWindow(QMainWindow):
         lay.addWidget(sp_fade)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Valider")
-        bb.button(QDialogButtonBox.Cancel).setText("Annuler")
+        bb.button(QDialogButtonBox.Ok).setText(tr("ext_confirm"))
+        bb.button(QDialogButtonBox.Cancel).setText(tr("ext_cancel"))
         bb.setStyleSheet(f"""
             QPushButton {{ background:#1e1e1e; color:#bbb; border:1px solid #333;
                 border-radius:6px; padding:8px 20px; font-size:12px; }}
@@ -1633,8 +1633,8 @@ class ExtWindow(QMainWindow):
         _sync()
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Valider")
-        bb.button(QDialogButtonBox.Cancel).setText("Annuler")
+        bb.button(QDialogButtonBox.Ok).setText(tr("ext_confirm"))
+        bb.button(QDialogButtonBox.Cancel).setText(tr("ext_cancel"))
         bb.setStyleSheet(f"""
             QPushButton {{ background:#1e1e1e; color:#bbb; border:1px solid #333;
                 border-radius:6px; padding:8px 20px; font-size:12px; }}
@@ -1830,9 +1830,8 @@ class ExtWindow(QMainWindow):
     def _reset_to_defaults(self):
         """Vide la surface et repose le layout par défaut (avec confirmation)."""
         resp = QMessageBox.question(
-            self, "Réinitialiser la surface",
-            "Remettre la surface PADS à sa configuration par défaut ?\n"
-            "Les blocs actuels seront perdus.",
+            self, tr("ext_reset_surface"),
+            tr("ext_reset_surface_confirm"),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if resp != QMessageBox.Yes:
@@ -1849,8 +1848,8 @@ class ExtWindow(QMainWindow):
             self._flash_status("Surface déjà vide")
             return
         resp = QMessageBox.question(
-            self, "Tout effacer",
-            "Effacer tous les blocs de la surface PADS ?",
+            self, tr("ext_clear_all"),
+            tr("ext_clear_all_confirm"),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if resp != QMessageBox.Yes:
@@ -1869,12 +1868,12 @@ class ExtWindow(QMainWindow):
             "QMenu::item:selected { background:#0c2d3a; color:#fff; }"
             "QMenu::separator { height:1px; background:#333; margin:4px 8px; }"
         )
-        act_reset  = menu.addAction("↺  Réinitialiser (défaut)")
-        act_clear  = menu.addAction("🗑  Tout effacer")
+        act_reset  = menu.addAction(tr("ext_reset_default"))
+        act_clear  = menu.addAction(tr("ext_clear_all_m"))
         act_clear.setEnabled(bool(self.canvas.blocks))
         menu.addSeparator()
-        act_import = menu.addAction("📥  Importer une disposition…")
-        act_export = menu.addAction("📤  Exporter la disposition…")
+        act_import = menu.addAction(tr("ext_import_layout"))
+        act_export = menu.addAction(tr("ext_export_layout"))
         act_export.setEnabled(bool(self.canvas.blocks))
         # Positionne le menu sous le bouton ☰
         chosen = menu.exec(self._menu_btn.mapToGlobal(
@@ -1900,7 +1899,7 @@ class ExtWindow(QMainWindow):
                 json.dump(self._layout_data(), f, ensure_ascii=False, indent=2)
             self._flash_status("Disposition exportée")
         except Exception as e:
-            QMessageBox.warning(self, "Exporter", f"Échec de l'export :\n{e}")
+            QMessageBox.warning(self, tr("ext_export"), f"Échec de l'export :\n{e}")
 
     def _import_layout(self):
         """Remplace la surface par une disposition chargée depuis un fichier .json."""
@@ -1913,12 +1912,12 @@ class ExtWindow(QMainWindow):
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
-            QMessageBox.warning(self, "Importer", f"Fichier illisible :\n{e}")
+            QMessageBox.warning(self, tr("ext_import"), f"Fichier illisible :\n{e}")
             return
         blocks = data.get("blocks") if isinstance(data, dict) else None
         if not isinstance(blocks, list):
-            QMessageBox.warning(self, "Importer",
-                                "Ce fichier n'est pas une disposition EXT valide.")
+            QMessageBox.warning(self, tr("ext_import"),
+                                tr("ext_invalid_layout"))
             return
         for blk in list(self.canvas.blocks):
             self.canvas.remove_block(blk)

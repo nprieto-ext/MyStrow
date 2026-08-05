@@ -20,7 +20,7 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent, QRectF
 from PySide6.QtGui import QColor, QBrush, QPainter, QPen
-from core import ComboSansMolette
+from core import ComboSansMolette
 from i18n import tr
 
 TRUSS_Y   = 7.0
@@ -189,7 +189,7 @@ class _TrussRow(QFrame):
 
         self._chk = QCheckBox()
         self._chk.setChecked(truss.get('enabled', True))
-        self._chk.setToolTip("Activer / masquer ce truss")
+        self._chk.setToolTip(tr("p3w_truss_toggle"))
         top.addWidget(self._chk)
 
         self._name = QLineEdit(truss.get('label', 'Truss'))
@@ -275,7 +275,7 @@ class TrussEditorDialog(QDialog):
         root.setSpacing(6)
 
         # Titre
-        title = QLabel("Trusses 3D")
+        title = QLabel(tr("p3w_trusses"))
         title.setStyleSheet("color:#00d4ff; font-size:13px; font-weight:bold;")
         root.addWidget(title)
 
@@ -406,7 +406,7 @@ class ProjectorTableDialog(QDialog):
 
     def __init__(self, get_projectors, norm_pos_cb, refresh_cb, parent=None):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Positionnement 3D")
+        self.setWindowTitle(tr("p3w_positioning"))
         self.resize(700, 480)
         self.setStyleSheet(_STYLE_DLG)
         self._get  = get_projectors   # () → list[Projector]
@@ -428,9 +428,7 @@ class ProjectorTableDialog(QDialog):
         root.addWidget(hdr)
 
         sub = QLabel(
-            "Cochez plusieurs lignes pour les modifier ensemble.  "
-            "X/Z = position sur scène  ·  Y = hauteur de suspension  ·  "
-            "Rot Y = pivot horizontal (pan)  ·  Rot X = inclinaison (tilt)  ·  Rot Z = roulis"
+            tr("p3w_positioning_hint")
         )
         sub.setStyleSheet("color:#333355;font-size:9px;")
         sub.setWordWrap(True)
@@ -735,7 +733,7 @@ class Plan3DWebWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(None, Qt.Window)   # pas de parent Qt → évite le bleeding visuel sur Windows
         self._parent_mw = parent
-        self.setWindowTitle("Plan de feu 3D")
+        self.setWindowTitle(tr("p3w_title"))
         self.resize(1150, 700)
         self.setStyleSheet("background:#05050f;")
 
@@ -936,6 +934,34 @@ class Plan3DWebWindow(QMainWindow):
         self._apply_on_top(enabled)
 
     def _apply_on_top(self, enabled: bool):
+        """Met la fenêtre au-dessus des autres, SANS toucher aux flags Qt.
+
+        `setWindowFlags()` masque la fenêtre et impose un `show()` derrière :
+        chaque bascule (y compris les désépinglages automatiques ci-dessous,
+        déclenchés par le moindre dialogue modal) ré-affiche donc le plan 3D et
+        lui redonne le premier plan — au milieu d'une séquence de fermeture,
+        c'est tout sauf souhaitable.
+
+        Sous Windows, SetWindowPos bascule le style WS_EX_TOPMOST sur la
+        fenêtre existante : pas de hide/show, pas de vol de focus, pas de
+        clignotement de la vue QWebEngine. Mesuré : le HWND est inchangé et le
+        style survit à un cycle hide()/show().
+        """
+        import sys as _sys
+        if _sys.platform == 'win32':
+            try:
+                import ctypes
+                HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+                SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+                ctypes.windll.user32.SetWindowPos(
+                    ctypes.c_void_p(int(self.winId())),
+                    ctypes.c_void_p(HWND_TOPMOST if enabled else HWND_NOTOPMOST),
+                    0, 0, 0, 0,
+                    SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+                return
+            except Exception:
+                pass    # repli sur les flags Qt
+
         flags = self.windowFlags()
         if enabled:
             flags |= Qt.WindowStaysOnTopHint
@@ -943,6 +969,12 @@ class Plan3DWebWindow(QMainWindow):
             flags &= ~Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.show()
+
+    def showEvent(self, event):
+        """Réapplique l'épinglage : Qt peut avoir recréé la fenêtre entre-temps."""
+        super().showEvent(event)
+        if getattr(self, '_pinned', False):
+            self._apply_on_top(True)
 
     def event(self, e):
         """Désépingle temporairement quand un dialogue modal s'ouvre.
@@ -1044,9 +1076,9 @@ class Plan3DWebWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.setStyleSheet(self._TAB_STYLE)
-        tabs.addTab(self._build_cam_tab(),       "Cam.")
-        tabs.addTab(self._build_placement_tab(), "Plan")
-        tabs.addTab(self._build_scene_tab(),     "Scène")
+        tabs.addTab(self._build_cam_tab(),       tr("p3w_cam"))
+        tabs.addTab(self._build_placement_tab(), tr("p3w_plan"))
+        tabs.addTab(self._build_scene_tab(),     tr("p3w_stage"))
         lay.addWidget(tabs)
         self._right_tabs = tabs
         tabs.currentChanged.connect(self._on_right_tab_changed)
@@ -1074,7 +1106,7 @@ class Plan3DWebWindow(QMainWindow):
         lay.addSpacing(10)
 
         # ── Ambiance ──────────────────────────────────────────────────────
-        lbl_amb = QLabel("Ambiance salle")
+        lbl_amb = QLabel(tr("p3w_room_ambience"))
         lbl_amb.setStyleSheet("color:#4444aa;font-size:9px;letter-spacing:0.5px;")
         lay.addWidget(lbl_amb)
 
@@ -1119,7 +1151,7 @@ class Plan3DWebWindow(QMainWindow):
 
         lay.addSpacing(12)
 
-        btn_snap = QPushButton("📷 Exporter l'image…")
+        btn_snap = QPushButton(tr("p3w_export_img"))
         btn_snap.setStyleSheet(self._PANEL_BTN)
         btn_snap.setToolTip(tr("p3w_save_png"))
         btn_snap.clicked.connect(self._export_image)
@@ -1137,8 +1169,7 @@ class Plan3DWebWindow(QMainWindow):
         self._cb_quality.addItems(["Bas", "Moyen", "Haut", "Ultra"])
         self._cb_quality.setCurrentIndex(self._quality)
         self._cb_quality.setToolTip(
-            "Finesse des faisceaux volumétriques.\n"
-            "Baissez si l'affichage saccade avec beaucoup de projecteurs.")
+            tr("p3w_beam_quality"))
         self._cb_quality.activated.connect(self._on_quality_changed)
         lay.addWidget(self._cb_quality)
 
@@ -1157,7 +1188,7 @@ class Plan3DWebWindow(QMainWindow):
 
         lay.addStretch()
 
-        hint = QLabel("drag · scroll · double-clic reset")
+        hint = QLabel(tr("p3w_cam_hint"))
         hint.setStyleSheet(
             "color:#1a1a32;font-size:8px;font-family:'Segoe UI',sans-serif;")
         hint.setWordWrap(True)
@@ -1196,8 +1227,8 @@ class Plan3DWebWindow(QMainWindow):
 
     def _snap_failed(self, why: str):
         from PySide6.QtWidgets import QMessageBox
-        QMessageBox.warning(self, "Export impossible",
-                            f"Le rendu n'a pas pu être exporté.\n\n{why}")
+        QMessageBox.warning(self, tr("p3w_export_failed"),
+                            tr("p3w_export_failed_why", why=why))
 
     # ── Qualité de rendu ─────────────────────────────────────────────────────
 
@@ -1261,14 +1292,14 @@ class Plan3DWebWindow(QMainWindow):
         # Tableau complet : position, orientation ET puissance de faisceau.
         # Tout se règle ici, ligne par ligne, sans passer par le jog pad qui ne
         # traite qu'un projecteur à la fois.
-        self._mini_tbl = QTableWidget(0, 8)
+        self._mini_tbl = QTableWidget(0, 9)
         self._mini_tbl.setHorizontalHeaderLabels(
-            ['Projecteur', 'X', 'Z', 'H', 'RX', 'RY', 'RZ', 'Faisc.'])
+            ['Projecteur', 'X', 'Z', 'H', 'RX', 'RY', 'RZ', 'Faisc.', 'Angle'])
         self._mini_tbl.setStyleSheet(self._MINI_TBL)
         self._mini_tbl.verticalHeader().setVisible(False)
         self._mini_tbl.setSelectionMode(QAbstractItemView.NoSelection)
         self._mini_tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        cw = [78, 44, 44, 44, 44, 44, 44, 48]
+        cw = [78, 44, 44, 44, 44, 44, 44, 48, 48]
         for i, w_ in enumerate(cw):
             self._mini_tbl.setColumnWidth(i, w_)
         self._mini_tbl.horizontalHeader().setStretchLastSection(False)
@@ -1280,7 +1311,10 @@ class Plan3DWebWindow(QMainWindow):
                 "Projecteur", "Position gauche/droite (m)", "Position avant/arrière (m)",
                 "Hauteur d'accroche (m)", "Inclinaison — retourne l'appareil (°)",
                 "Orientation horizontale du corps (°)", "Roulis sur l'axe du faisceau (°)",
-                "Puissance du faisceau en 3D (%) — n'affecte pas la sortie DMX")):
+                "Puissance du faisceau en 3D (%) — n'affecte pas la sortie DMX",
+                "Ouverture du faisceau en 3D (%) — 100 = rendu d'origine,\n"
+                "moins = faisceau plus serré. N'affecte pas la sortie DMX\n"
+                "(le canal Zoom, lui, reste piloté par le patch)")):
             _h = self._mini_tbl.horizontalHeaderItem(_c)
             if _h is not None:
                 _h.setToolTip(_tip)
@@ -1310,6 +1344,7 @@ class Plan3DWebWindow(QMainWindow):
                 p.body_rotation = 0.0
                 p.rot3d_x = 0.0;  p.rot3d_z = 0.0
                 p.beam_gain = 100.0
+                p.beam_angle = 100.0
         self._populate_mini(projs)
         self.refresh(projs)
         self._save_patch()
@@ -1326,6 +1361,7 @@ class Plan3DWebWindow(QMainWindow):
             5: 'body_rotation',   # envoyé à la 3D sous le nom rot3d_y
             6: 'rot3d_z',
             7: 'beam_gain',       # pourcentage : 100 = rendu d'origine
+            8: 'beam_angle',      # pourcentage : 100 = rendu d'origine
         }
         attr = attr_map.get(col)
         if attr is None:
@@ -1338,7 +1374,7 @@ class Plan3DWebWindow(QMainWindow):
         _key = (tuple(sorted(rows)), attr)
         if getattr(self, '_mini_undo_key', None) != _key:
             self._mini_undo_key = _key
-            _def = 100.0 if attr == 'beam_gain' else (
+            _def = 100.0 if attr in ('beam_gain', 'beam_angle') else (
                 7.0 if attr == 'fixture_height' else 0.0)
             # Défaut explicite : l'attribut peut ne pas exister encore sur le
             # projecteur, et restaurer None le casserait au lieu de l'annuler.
@@ -1406,11 +1442,15 @@ class Plan3DWebWindow(QMainWindow):
                 getattr(p, 'body_rotation', 0.0) or 0.0,
                 getattr(p, 'rot3d_z',       0.0) or 0.0,
                 getattr(p, 'beam_gain',   100.0) if getattr(p, 'beam_gain', None) is not None else 100.0,
+                getattr(p, 'beam_angle',  100.0) if getattr(p, 'beam_angle', None) is not None else 100.0,
             ]
             specs = [
                 (-1200, 1200), (-800, 1000), (100, 1500),
                 (-180, 180), (-180, 180), (-180, 180),
                 (0, 200),
+                # Minimum 10 et non 0 : à 0 le cône a un rayon nul, la géométrie
+                # dégénère et le faisceau disparaît au lieu de se resserrer.
+                (10, 200),
             ]
             _accent = ProjectorTableDialog._GRP_COLOR.get(
                 getattr(p, 'group', ''), '#00d4ff')
@@ -1565,7 +1605,7 @@ class Plan3DWebWindow(QMainWindow):
         rx_row.addWidget(btn_rx_p)
         lay.addLayout(rx_row)
 
-        btn_flip = QPushButton("↕ Retourner  (0° ↔ 180°)")
+        btn_flip = QPushButton(tr("p3w_flip"))
         btn_flip.setStyleSheet(
             "QPushButton{background:#151515;color:#999999;border:1px solid #252525;"
             "border-radius:4px;font-size:10px;padding:4px;}"
@@ -1773,7 +1813,8 @@ class Plan3DWebWindow(QMainWindow):
     _CELL_H = 24
 
     _TBL_COL = {'pos_3d_x': 1, 'pos_3d_z': 2, 'fixture_height': 3,
-                'rot3d_x': 4, 'body_rotation': 5, 'rot3d_z': 6, 'beam_gain': 7}
+                'rot3d_x': 4, 'body_rotation': 5, 'rot3d_z': 6, 'beam_gain': 7,
+                'beam_angle': 8}
     _TBL_CM  = ('pos_3d_x', 'pos_3d_z', 'fixture_height')
 
     def _tbl_sync(self, row, attr, value):
@@ -2072,7 +2113,7 @@ class Plan3DWebWindow(QMainWindow):
             btn.setCheckable(True)
             btn.setChecked(code == 'live')
             btn.setStyleSheet(self._PANEL_BTN)
-            btn.setToolTip(f"Preset scène : {_SCENE_PRESETS[code]['label']}")
+            btn.setToolTip(tr("p3w_stage_preset", a0=_SCENE_PRESETS[code]['label']))
             btn.clicked.connect(lambda _, c=code: self._apply_preset(c))
             lay.addWidget(btn)
             self._scene_btns[code] = btn
@@ -2081,7 +2122,7 @@ class Plan3DWebWindow(QMainWindow):
         # Module la densité de fumée DANS les faisceaux (bruit 3D animé en
         # coordonnées monde). À 0 %, la branche du shader n'est jamais prise :
         # aucun surcoût pour qui n'en veut pas.
-        lbl_fog = QLabel("Brouillard")
+        lbl_fog = QLabel(tr("p3w_fog"))
         lbl_fog.setStyleSheet("color:#4444aa;font-size:9px;letter-spacing:0.5px;")
         lay.addWidget(lbl_fog)
 
@@ -2094,11 +2135,7 @@ class Plan3DWebWindow(QMainWindow):
         sl_fog.setRange(0, 100)
         sl_fog.setValue(getattr(self, '_fog', 0))
         sl_fog.setPageStep(10)
-        sl_fog.setToolTip(
-            "Volutes de fumée dans les faisceaux.\n"
-            "0 % = faisceaux lisses  ·  50-70 % = machine à brouillard  ·  "
-            "100 % = fumée dense"
-        )
+        sl_fog.setToolTip(tr("p3w_fog_amount_hint"))
         sl_fog.setStyleSheet(self._SLIDER_QSS)
         self._sl_fog = sl_fog
 
@@ -2137,7 +2174,7 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(sl_gr)
         self._sl_fog_scale = sl_gr
 
-        lbl_vit = QLabel("Vitesse de brassage")
+        lbl_vit = QLabel(tr("p3w_fog_speed"))
         lbl_vit.setStyleSheet("color:#3a3a88;font-size:9px;letter-spacing:0.5px;")
         lay.addWidget(lbl_vit)
 
@@ -2146,8 +2183,7 @@ class Plan3DWebWindow(QMainWindow):
         sl_vit.setValue(getattr(self, '_fog_speed', 35))
         sl_vit.setPageStep(10)
         sl_vit.setToolTip(
-            "0 % = fumée figée (utile pour une photo)  ·  "
-            "35 % ≈ 10 cm/s  ·  100 % = brassage vif"
+            tr("p3w_fog_speed_hint")
         )
         sl_vit.setStyleSheet(self._SLIDER_QSS)
 
@@ -2177,14 +2213,11 @@ class Plan3DWebWindow(QMainWindow):
         btn_gltf = QPushButton("↓  GLTF / GLB")
         btn_gltf.setStyleSheet(self._PANEL_BTN)
         btn_gltf.setToolTip(
-            "Importe un modèle 3D GLTF ou GLB\n"
-            "Blender : File › Export › glTF 2.0 (.glb)\n"
-            "SketchUp : Extensions › glTF Export\n"
-            "Vectorworks : Export › 3D › glTF")
+            tr("p3w_import_hint"))
         btn_gltf.clicked.connect(self._import_scene)
         lay.addWidget(btn_gltf)
 
-        btn_clear = QPushButton("✕  Effacer import")
+        btn_clear = QPushButton(tr("p3w_clear_import"))
         btn_clear.setStyleSheet(self._PANEL_BTN)
         btn_clear.clicked.connect(self._clear_import)
         lay.addWidget(btn_clear)
@@ -2406,6 +2439,11 @@ class Plan3DWebWindow(QMainWindow):
                 'rot3d_y':        getattr(p, 'body_rotation', 0.0),
                 # Puissance de faisceau par projecteur (%) → facteur 0..2
                 'beam_gain':      float(getattr(p, 'beam_gain', 100.0) or 0.0) / 100.0,
+                # Ouverture de faisceau par projecteur (%) → facteur 0,1..2.
+                # `or` refuserait 0 mais laisserait passer None ; le plancher
+                # est repris ici pour qu'un patch ancien ou bidouillé à la main
+                # ne puisse pas envoyer un cône de rayon nul à la 3D.
+                'beam_angle':     max(0.1, float(getattr(p, 'beam_angle', 100.0) or 100.0) / 100.0),
                 'rot3d_z':        getattr(p, 'rot3d_z', 0.0),
                 'name':           getattr(p, 'name', ''),
                 'group':          getattr(p, 'group', ''),
@@ -2423,6 +2461,14 @@ class Plan3DWebWindow(QMainWindow):
                 'zoom':           int((getattr(p, 'channel_extras', None) or {}).get(
                                        'Zoom', getattr(p, 'zoom', 0)) or 0),
                 'has_zoom':       'Zoom' in (getattr(p, 'dmx_profile', None) or []),
+                # Focus : même logique que le zoom, la valeur vit dans les
+                # canaux bruts (curseur « Focus » des canaux avancés).
+                # Sans canal Focus, l'appareil est mis au point une fois pour
+                # toutes sur le plateau → la 3D le rend net, plutôt que de
+                # laisser un gobo flou que rien ne permettrait de régler.
+                'has_focus':      'Focus' in (getattr(p, 'dmx_profile', None) or []),
+                'focus':          int((getattr(p, 'channel_extras', None) or {}).get(
+                                       'Focus', 0) or 0),
             })
         # Barres/matrices : rendu PER-PIXEL. Chaque pixel garde sa couleur, son
         # niveau et sa position → un chase se VOIT courir le long de la barre.
@@ -2513,9 +2559,46 @@ class Plan3DWebWindow(QMainWindow):
         self._trusses = trusses
         self._js(f'window.setTrusses({json.dumps(trusses)})')
 
+    def force_close(self):
+        """Fermeture réelle, appelée quand l'application se termine.
+
+        La fenêtre n'a pas de parent Qt (cf. __init__) et son closeEvent se
+        contente de masquer : à l'arrêt de MyStrow elle restait donc affichée,
+        épinglée par-dessus tout, et maintenait le processus en vie —
+        `quitOnLastWindowClosed` ne se déclenche que sur une vraie fermeture,
+        jamais sur un hide().
+        """
+        self._pinned = False
+        try:
+            self._apply_on_top(False)
+        except Exception:
+            pass
+        self._force_close = True
+        self.close()
+
     def closeEvent(self, event):
+        if getattr(self, '_force_close', False):
+            for _t in ('_push_timer', '_strobe_timer'):
+                try:
+                    getattr(self, _t).stop()
+                except Exception:
+                    pass
+            event.accept()
+            return
+
+        # Fermeture par l'utilisateur : on masque pour garder la scène chargée.
+        # On désépingle d'abord, sinon la fenêtre suivante à s'ouvrir hérite
+        # d'un topmost fantôme au ré-affichage.
+        if getattr(self, '_pinned', False):
+            try:
+                self._apply_on_top(False)
+            except Exception:
+                pass
         event.ignore()
         self.hide()
-        mw = self._parent_mw
-        if mw and hasattr(mw, 'plan_de_feu') and hasattr(mw.plan_de_feu, 'btn_3d'):
-            mw.plan_de_feu.btn_3d.setChecked(False)
+        try:
+            mw = self._parent_mw
+            if mw and hasattr(mw, 'plan_de_feu') and hasattr(mw.plan_de_feu, 'btn_3d'):
+                mw.plan_de_feu.btn_3d.setChecked(False)
+        except RuntimeError:
+            pass    # fenêtre principale déjà détruite côté C++

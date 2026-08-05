@@ -114,7 +114,7 @@ class _SlotRow(QWidget):
 
         # ── Nom ───────────────────────────────────────────────────────────
         self._name = QLineEdit(slot.get("name", ""))
-        self._name.setPlaceholderText("Nom…")
+        self._name.setPlaceholderText(tr("cwe_name"))
         self._name.setFixedWidth(100)
         self._name.textChanged.connect(self._notify)
         row.addWidget(self._name)
@@ -164,7 +164,7 @@ class _SlotRow(QWidget):
         self._btn_del.setFixedSize(22, 22)
         self._btn_del.setStyleSheet(_BTN_DEL)
         self._btn_del.setCursor(QCursor(Qt.PointingHandCursor))
-        self._btn_del.setToolTip("Supprimer ce slot")
+        self._btn_del.setToolTip(tr("cwe_del_slot"))
         row.addWidget(self._btn_del)
 
     # ── Getters ──────────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ class ColorWheelEditorDialog(QDialog):
         self._main_window    = main_window
         self._rows: list[_SlotRow] = []
 
-        self.setWindowTitle(f"Roue de couleur — {proj.name or proj.group}")
+        self.setWindowTitle(tr("cwe_wheel_named", a0=proj.name or proj.group))
         self.setMinimumSize(520, 500)
         self.resize(540, 580)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -231,14 +231,13 @@ class ColorWheelEditorDialog(QDialog):
         root.setSpacing(12)
 
         # ── En-tête ───────────────────────────────────────────────────────
-        title_lbl = QLabel(f"Roue de couleur")
+        title_lbl = QLabel(tr("cwe_wheel"))
         title_lbl.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title_lbl.setStyleSheet("color:#00d4ff;")
         root.addWidget(title_lbl)
 
         sub_lbl = QLabel(
-            "Associez chaque couleur de la roue à sa valeur DMX exacte.\n"
-            "Utilisez le sélecteur de couleur pour la teinte visuelle et ajustez le DMX."
+            tr("cwe_color_intro")
         )
         sub_lbl.setStyleSheet("color:#666;font-size:11px;")
         sub_lbl.setWordWrap(True)
@@ -254,7 +253,7 @@ class ColorWheelEditorDialog(QDialog):
         live_h = QHBoxLayout(live_w)
         live_h.setContentsMargins(0, 0, 0, 4); live_h.setSpacing(8)
 
-        live_lbl = QLabel("Test direct")
+        live_lbl = QLabel(tr("cwe_test_live"))
         live_lbl.setStyleSheet("color:#666;font-size:11px;min-width:70px;")
         live_h.addWidget(live_lbl)
 
@@ -369,8 +368,7 @@ class ColorWheelEditorDialog(QDialog):
 
         if _same_name:
             self._chk_same = QCheckBox(
-                f"Uniquement les \"{(proj.name or proj.group).rsplit(' ', 1)[0]}\" "
-                f"({len(_same_name) + 1} fixtures)"
+                tr("cwe_only_type", a0=(proj.name or proj.group).rsplit(' ', 1)[0], a1=len(_same_name) + 1)
             )
             self._chk_same.setChecked(True)
             root.addWidget(self._chk_same)
@@ -390,12 +388,12 @@ class ColorWheelEditorDialog(QDialog):
         root.addWidget(btn_sep)
 
         btn_row = QHBoxLayout()
-        btn_cancel = QPushButton("Annuler")
+        btn_cancel = QPushButton(tr("cwe_cancel"))
         btn_cancel.setStyleSheet(_BTN_CANCEL)
         btn_cancel.setCursor(QCursor(Qt.PointingHandCursor))
         btn_cancel.clicked.connect(self.reject)
 
-        btn_save = QPushButton("✓  Enregistrer")
+        btn_save = QPushButton(tr("cwe_save"))
         btn_save.setStyleSheet(_BTN_SAVE)
         btn_save.setCursor(QCursor(Qt.PointingHandCursor))
         btn_save.clicked.connect(self._save)
@@ -526,7 +524,7 @@ class GoboWheelEditorDialog(QDialog):
         self._main_window    = main_window
         self._rows: list[_SlotRow] = []
 
-        self.setWindowTitle(f"Roue de gobos — {proj.name or proj.group}")
+        self.setWindowTitle(tr("cwe_gobo_named", a0=proj.name or proj.group))
         self.setMinimumSize(520, 500)
         self.resize(540, 580)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -538,14 +536,13 @@ class GoboWheelEditorDialog(QDialog):
         root.setSpacing(12)
 
         # ── En-tête ───────────────────────────────────────────────────────
-        title_lbl = QLabel("Roue de gobos")
+        title_lbl = QLabel(tr("cwe_gobo_wheel"))
         title_lbl.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title_lbl.setStyleSheet("color:#ff9900;")
         root.addWidget(title_lbl)
 
         sub_lbl = QLabel(
-            "Associez chaque gobo à sa valeur DMX exacte.\n"
-            "La couleur sert d'indicateur visuel (teinture du gobo)."
+            tr("cwe_gobo_intro")
         )
         sub_lbl.setStyleSheet("color:#666;font-size:11px;")
         sub_lbl.setWordWrap(True)
@@ -561,7 +558,7 @@ class GoboWheelEditorDialog(QDialog):
         live_h = QHBoxLayout(live_w)
         live_h.setContentsMargins(0, 0, 0, 4); live_h.setSpacing(8)
 
-        live_lbl = QLabel("Test direct")
+        live_lbl = QLabel(tr("cwe_test_live"))
         live_lbl.setStyleSheet("color:#666;font-size:11px;min-width:70px;")
         live_h.addWidget(live_lbl)
 
@@ -673,8 +670,7 @@ class GoboWheelEditorDialog(QDialog):
 
         if _same_name:
             self._chk_same = QCheckBox(
-                f"Uniquement les \"{(proj.name or proj.group).rsplit(' ', 1)[0]}\" "
-                f"({len(_same_name) + 1} fixtures)"
+                tr("cwe_only_type", a0=(proj.name or proj.group).rsplit(' ', 1)[0], a1=len(_same_name) + 1)
             )
             self._chk_same.setChecked(True)
             root.addWidget(self._chk_same)
@@ -693,12 +689,12 @@ class GoboWheelEditorDialog(QDialog):
         root.addWidget(btn_sep)
 
         btn_row = QHBoxLayout()
-        btn_cancel = QPushButton("Annuler")
+        btn_cancel = QPushButton(tr("cwe_cancel"))
         btn_cancel.setStyleSheet(_BTN_CANCEL)
         btn_cancel.setCursor(QCursor(Qt.PointingHandCursor))
         btn_cancel.clicked.connect(self.reject)
 
-        btn_save = QPushButton("✓  Enregistrer")
+        btn_save = QPushButton(tr("cwe_save"))
         btn_save.setStyleSheet(_BTN_SAVE)
         btn_save.setCursor(QCursor(Qt.PointingHandCursor))
         btn_save.clicked.connect(self._save)
@@ -877,7 +873,7 @@ class ColorWheelCalibWizard(QDialog):
             )
             self._values.append(match['dmx'] if match else _DEFAULT_CALIB_DMX[i])
 
-        self.setWindowTitle("Calibration — Roue de couleur")
+        self.setWindowTitle(tr("cwe_calib_title"))
         self.setFixedSize(460, 380)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -888,7 +884,7 @@ class ColorWheelCalibWizard(QDialog):
         root.setSpacing(14)
 
         # ── Titre ────────────────────────────────────────────────────────────
-        self._title_lbl = QLabel("Calibration — Roue de couleur")
+        self._title_lbl = QLabel(tr("cwe_calib_title"))
         self._title_lbl.setFont(QFont("Segoe UI", 15, QFont.Bold))
         self._title_lbl.setStyleSheet("color:#00d4ff;")
         self._title_lbl.setAlignment(Qt.AlignCenter)
@@ -983,7 +979,7 @@ class ColorWheelCalibWizard(QDialog):
         nav = QHBoxLayout()
         nav.setSpacing(8)
 
-        btn_cancel = QPushButton("Annuler")
+        btn_cancel = QPushButton(tr("cwe_cancel"))
         btn_cancel.setStyleSheet(_BTN_CANCEL)
         btn_cancel.setCursor(QCursor(Qt.PointingHandCursor))
         btn_cancel.clicked.connect(self._on_cancel)
@@ -1026,17 +1022,14 @@ class ColorWheelCalibWizard(QDialog):
         self._step = step
 
         if step == -1:
-            self._title_lbl.setText("Calibration — Roue de couleur")
+            self._title_lbl.setText(tr("cwe_calib_title"))
             self._title_lbl.setStyleSheet("color:#00d4ff;")
             self._progress_lbl.setText(
-                f"{len(_CALIB_STEPS)} couleurs à configurer"
+                tr("cwe_n_colors", a0=len(_CALIB_STEPS))
             )
             self._circle_wrap.setVisible(False)
             self._instr_lbl.setText(
-                "Cet assistant configure les positions DMX\n"
-                "de votre roue de couleur en temps réel.\n\n"
-                "Assurez-vous que la lyre est alimentée et connectée.\n"
-                "Le Shutter et le Dimmer seront mis à fond automatiquement."
+                tr("cwe_calib_intro")
             )
             self._slider_w.setVisible(False)
             self._btn_prev.setVisible(False)
@@ -1045,7 +1038,7 @@ class ColorWheelCalibWizard(QDialog):
         else:
             name, color, label = _CALIB_STEPS[step]
 
-            self._progress_lbl.setText(f"Couleur {step + 1} / {len(_CALIB_STEPS)}")
+            self._progress_lbl.setText(tr("cwe_color_n", a0=step + 1, a1=len(_CALIB_STEPS)))
 
             self._circle.setStyleSheet(
                 f"background:{color};border-radius:38px;border:3px solid #555;"
@@ -1061,8 +1054,7 @@ class ColorWheelCalibWizard(QDialog):
             self._title_lbl.setStyleSheet(f"color:{display_color};")
 
             self._instr_lbl.setText(
-                "Bougez le curseur jusqu'à ce que votre lyre\n"
-                "affiche cette couleur, puis cliquez sur Suivant."
+                tr("cwe_calib_step")
             )
 
             self._slider_w.setVisible(True)
@@ -1080,9 +1072,9 @@ class ColorWheelCalibWizard(QDialog):
             self._btn_prev.setEnabled(step > 0)
 
             if step == len(_CALIB_STEPS) - 1:
-                self._btn_next.setText("✓  Terminer")
+                self._btn_next.setText(tr("cwe_finish"))
             else:
-                self._btn_next.setText("Suivant  ▶")
+                self._btn_next.setText(tr("cwe_next"))
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
@@ -1117,7 +1109,7 @@ class ColorWheelCalibWizard(QDialog):
         _s, _i, lbl = self._OPEN_MODES[self._open_mode]
         if self._open_mode == 0 and not self._has_strobe:
             lbl = "Aucune ouverture forcée"
-        self._btn_shutter_inv.setText(f"💡  Ma lyre ne s'allume pas — essai : {lbl}")
+        self._btn_shutter_inv.setText(tr("cwe_not_lighting", lbl=lbl))
         _actif = self._OPEN_MODES[self._open_mode][0] > 0 or self._OPEN_MODES[self._open_mode][1]
         _col = "#ffaa00" if _actif else "#888"
         self._btn_shutter_inv.setStyleSheet(

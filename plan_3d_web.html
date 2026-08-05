@@ -353,6 +353,7 @@ const BEAM_FRAG = `
   uniform sampler2D uGoboTex;
   uniform float     uGoboBlend;   // 0 = pas de gobo (aucun coût : branche évitée)
   uniform float     uGoboRot;
+  uniform float     uGoboBlur;    // 0 = net, 1 = flou (canal Focus)
   uniform float     uGoboScale;   // enveloppe / rayon utile (cf. orientCone)
   // Brouillard : la fumée n'est pas homogène, elle fait des volutes. C'est ce
   // qui donne les stries et les nuages DANS le faisceau, au lieu d'un cône
@@ -510,7 +511,14 @@ const BEAM_FRAG = `
         // faisceau paraissait plus large que le gobo projeté.
         vec2  gr = gd * clamp(rr * uGoboScale, 0.0, 1.0);
           float gm = texture2D(uGoboTex, clamp(gr * 0.5 + 0.5, 0.001, 0.999)).r;
-          dens *= mix(1.0, gm, uGoboBlend);
+          // Netteté du gobo. Ici, contrairement à la tache au sol, on se
+          // contente d'élargir le seuil : chaque pas de raymarching paierait
+          // les prélèvements supplémentaires d'un vrai flou, soit 9× le coût
+          // du gobo sur TOUT le volume. L'approximation passe parce que le
+          // faisceau en l'air est de toute façon lissé par l'intégration le
+          // long du rayon — c'est au sol que la netteté se juge.
+          float e = 0.15 + uGoboBlur * 0.34;
+          dens *= mix(1.0, smoothstep(0.5 - e, 0.5 + e, gm), uGoboBlend);
         }
       }
 
@@ -601,6 +609,7 @@ function makeBeamMat(alpha, opts) {
       uGoboTex:   { value: null },
       uGoboBlend: { value: 0.0 },
       uGoboRot:   { value: 0.0 },
+      uGoboBlur:  { value: 0.0 },
       uGoboScale: { value: 2.0 },
       uFogAmt:   { value: window.fogAmount },
       uFogScale: { value: 0.55 },   // ≈ 1,8 m par volute
@@ -683,7 +692,13 @@ const POOL_FRAG = `
   uniform sampler2D uGoboTex;
   uniform float     uGoboBlend;
   uniform float     uGoboRot;
+  uniform float     uGoboBlur;   // 0 = net au sol, 1 = complètement flou
   varying vec2      vUv;
+
+  float goboTap(vec2 uv) {
+    return texture2D(uGoboTex, clamp(uv, 0.001, 0.999)).r;
+  }
+
   void main() {
     float d = length(vUv - vec2(0.5));
     if (d > 0.5) discard;
@@ -694,7 +709,44 @@ const POOL_FRAG = `
     float c = cos(uGoboRot), s = sin(uGoboRot);
     vec2 uv0 = vUv - 0.5;
     vec2 uvR = vec2(c*uv0.x - s*uv0.y, s*uv0.x + c*uv0.y) + 0.5;
-    float goboMask = mix(1.0, texture2D(uGoboTex, clamp(uvR, 0.001, 0.999)).r, uGoboBlend);
+
+    float gm;
+    if (uGoboBlur <= 0.002) {
+      // NET. La texture est dessinée au canvas, donc anticrénelée : son bord
+      // s'étale sur plusieurs texels et, étiré sur une tache de plusieurs
+      // mètres, ça donne un motif mou. Le seuil raidit ce bord — c'est lui qui
+      // fait la différence entre « un gobo » et « une vague tache plus sombre ».
+      gm = smoothstep(0.35, 0.65, goboTap(uvR));
+    } else {
+      // FLOU : vraie moyenne spatiale. Élargir un seuil ne suffirait pas — la
+      // texture ne vaut presque partout que 0 ou 1, un seuil ne toucherait donc
+      // que les bords et le motif resterait net au milieu du flou.
+      //
+      // DEUX anneaux décalés d'un demi-pas, pas un seul. Avec un anneau unique
+      // de 8 prélèvements, le flou se lit comme 8 copies du motif : le bord
+      // devient un octogone au lieu de s'estomper (constaté au banc de test).
+      // Le deuxième anneau, plus serré et tourné de 22,5°, remplit ces creux.
+      //
+      // Pas de biais de mipmap ici, qui serait pourtant moins cher : le niveau
+      // choisi dépendrait du zoom de la caméra, et la mise au point changerait
+      // en s'approchant de la scène.
+      float r  = uGoboBlur * 0.070;
+      float ri = r * 0.55;
+      float k  = 0.3827;   // sin(22,5°)
+      float m  = 0.9239;   // cos(22,5°)
+      gm  = goboTap(uvR) * 0.14;
+      gm += (goboTap(uvR + vec2( r, 0.0)) + goboTap(uvR + vec2(-r, 0.0))
+           + goboTap(uvR + vec2(0.0,  r)) + goboTap(uvR + vec2(0.0, -r))) * 0.06;
+      float rd = r * 0.707;
+      gm += (goboTap(uvR + vec2( rd,  rd)) + goboTap(uvR + vec2(-rd,  rd))
+           + goboTap(uvR + vec2( rd, -rd)) + goboTap(uvR + vec2(-rd, -rd))) * 0.06;
+      gm += (goboTap(uvR + vec2( ri*m,  ri*k)) + goboTap(uvR + vec2(-ri*m,  ri*k))
+           + goboTap(uvR + vec2( ri*m, -ri*k)) + goboTap(uvR + vec2(-ri*m, -ri*k))
+           + goboTap(uvR + vec2( ri*k,  ri*m)) + goboTap(uvR + vec2(-ri*k,  ri*m))
+           + goboTap(uvR + vec2( ri*k, -ri*m)) + goboTap(uvR + vec2(-ri*k, -ri*m))) * 0.0475;
+    }
+
+    float goboMask = mix(1.0, gm, uGoboBlend);
     gl_FragColor = vec4(uColor + hot*0.25, clamp(alpha * goboMask, 0.0, 1.0));
   }
 `;
@@ -707,6 +759,7 @@ function makePoolMat() {
       uGoboTex:   { value: _goboTextures[0] },
       uGoboBlend: { value: 0.0 },
       uGoboRot:   { value: 0.0 },
+      uGoboBlur:  { value: 0.0 },
     },
     vertexShader:   POOL_VERT,
     fragmentShader: POOL_FRAG,
@@ -822,6 +875,18 @@ function makeLensGlowMat() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Cône fermé (avec le disque de base) : le raymarching a besoin d'une face
 // avant même quand on regarde le faisceau par en dessous.
+// Prisme : nombre de facettes. 3 est de loin le plus répandu sur les lyres de
+// scène ; aucun profil DMX de MyStrow ne transporte ce nombre, il est donc figé
+// ici plutôt que deviné à partir de la valeur du canal Prism (laquelle ne code
+// que « actif / inactif », voire le choix d'un prisme parmi plusieurs).
+const PRISM_FACETS = 3;
+// Écart des copies, en fraction du rayon de la tache. Les trois centres sont
+// sur un cercle de rayon R = PRISM_SPREAD × poolR ; deux copies voisines sont
+// donc distantes de R·√3. Le shader de tache éteint bien avant son rayon
+// géométrique, d'où une valeur inférieure à la tangence théorique (1,15) :
+// réglé à l'œil sur le rendu, trois images distinctes mais qui se touchent.
+const PRISM_SPREAD = 0.62;
+
 const GEO_VOL_CONE     = new THREE.CylinderGeometry(0, 1, 1, 28, 1, false);
 const GEO_UNIT_CONE_24 = new THREE.CylinderGeometry(0, 1, 1, 24, 1, true);
 const GEO_UNIT_CONE_16 = new THREE.CylinderGeometry(0, 1, 1, 16, 1, true);
@@ -890,10 +955,14 @@ function _getObj(i) {
   halo.rotation.x = -Math.PI/2;
   halo.renderOrder = 0; _poolGrp.add(halo);
 
-  // ── PRISME : 2 faisceaux + 2 taches latéraux (le faisceau central reste cVol) ──
-  // Donnent le split « \ | / » qui tourne avec prism_rotation. Cachés par défaut.
+  // ── PRISME : 3 faisceaux + 3 taches, une par facette ──────────────────
+  // Un prisme 3 facettes ne « décore » pas le faisceau : il en produit trois
+  // copies complètes, gobo compris, à 120° autour de l'axe. Le faisceau
+  // central (cVol) est donc éteint tant que le prisme est actif — sinon on
+  // verrait quatre images là où l'optique n'en donne que trois.
+  // Cachés par défaut, pilotés par _orientPrism().
   const prismBeams = [], prismPools = [];
-  for (let k = 0; k < 2; k++) {
+  for (let k = 0; k < PRISM_FACETS; k++) {
     const pm = makeVolBeam(GEO_VOL_CONE, 1.0);
     pm.renderOrder = 2; pm.visible = false; _beamGrp.add(pm); prismBeams.push(pm);
     const pp = new THREE.Mesh(GEO_UNIT_CIRCLE, makePoolMat());
@@ -1498,7 +1567,13 @@ window.updateScene = function(projectors) {
       // Zoom DMX → largeur du faisceau (uniquement si le projo a un canal Zoom,
       // sinon zoom=0 rétrécirait tout). 0 = serré, 255 = large.
       const _zoomF = p.has_zoom ? (0.6 + (p.zoom / 255) * 1.6) : 1.0;
-      const _spread = (isWash ? 1.9  : 1.0) * _zoomF;  // wash + zoom
+      // Ouverture réglée à la main (colonne « Angle » du tableau) : elle se
+      // compose avec le zoom DMX au lieu de le remplacer. Un projecteur sans
+      // canal Zoom n'a que ce réglage ; une lyre qui zoome garde sa course,
+      // recentrée autour de l'ouverture choisie.
+      const _angF  = Math.max(0.1, p.beam_angle === undefined ? 1.0 : p.beam_angle);
+      const _openF = _zoomF * _angF;
+      const _spread = (isWash ? 1.9  : 1.0) * _openF;  // wash + zoom + angle
 
       const base_r = (0.22 + 2.0 * lvl) * bs * _spread;
       const fx2 = fx, fz2 = fz;
@@ -1522,6 +1597,12 @@ window.updateScene = function(projectors) {
       // resserrant de 3× à 2×, le même rayon physique donne un rr 1,5× plus
       // grand, donc le coefficient doit être divisé par 1,5² pour conserver
       // exactement la même largeur de faisceau à l'écran.
+      // `_zoomF` SEUL ici, surtout pas `_openF`. uSharp est exprimé sur le
+      // rayon normalisé : à uSharp constant, la largeur visible suit
+      // exactement l'enveloppe. En divisant AUSSI par l'angle, on resserrait
+      // le profil EN PLUS du cône et la largeur variait en angle^1,5 — mesuré :
+      // à 50 %, un faisceau à 35 % posé sur une tache à 50 %, qui ne se
+      // rejoignent plus au sol. Le zoom garde son dosage d'origine.
       _bu.uSharp.value = (isWash ? 1.35 : 4.40) / Math.max(0.35, _zoomF);
       _bu.uCore.value  = isWash ? 0.35 : 2.20;
       // beamGain = réglage global ; p.beam_gain = dosage par projecteur,
@@ -1547,8 +1628,20 @@ window.updateScene = function(projectors) {
       const goboSlot  = Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8));
       const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
       const goboRot   = ((p.gobo_rotation || 0) / 255.0) * Math.PI * 2;
+      // Netteté du gobo.
+      //
+      // Sans canal Focus, l'appareil est mis au point à la main sur le plateau
+      // une fois pour toutes : la 3D le montre NET. L'alternative — un flou
+      // fixe — afficherait un défaut que l'utilisateur n'aurait aucun moyen de
+      // corriger depuis le logiciel.
+      //
+      // Avec un canal Focus, c'est le curseur qui décide : 0 = flou,
+      // 255 = net. Convention monotone assumée — la course réelle dépend de
+      // l'appareil ET du jeté, que rien ici ne permet de connaître.
+      const goboBlur = p.has_focus ? (1.0 - Math.min(255, Math.max(0, p.focus || 0)) / 255) : 0.0;
       _bu.uGoboTex.value   = _goboTextures[goboSlot];
       _bu.uGoboBlend.value = goboBlend;
+      _bu.uGoboBlur.value  = goboBlur;
       // Rotation continue en cours ? C'est animate() qui pilote l'angle, image
       // par image. L'écraser ici — 25 fois par seconde, à la cadence des envois
       // Python — ramenait sans cesse le motif à son angle de départ : le gobo
@@ -1558,7 +1651,11 @@ window.updateScene = function(projectors) {
       if (hitsFloor) {
         // Tache principale au sol (avec gobo)
         // Wash : nappe au sol plus large et plus douce qu'un spot de lyre
-        const poolR = (0.35 + 2.2*lvl) * bs * (isWash ? 1.6 : 1.0);
+        // La tache suit l'ouverture : un faisceau resserré qui garderait une
+        // tache pleine largeur se lit tout de suite comme un bug.
+        // (Le zoom DMX, lui, n'a jamais agi sur la tache — comportement
+        // d'origine laissé tel quel, ce n'est pas l'objet de ce réglage.)
+        const poolR = (0.35 + 2.2*lvl) * bs * (isWash ? 1.6 : 1.0) * _angF;
         obj.pool.position.set(fx2, 0.02, fz2);
         obj.pool.scale.setScalar(poolR);
         obj.pool.material.uniforms.uColor.value.copy(_colBuf);
@@ -1566,6 +1663,7 @@ window.updateScene = function(projectors) {
         if (_isSel) obj._selP = obj.pool.material.uniforms.uAlpha.value;
         obj.pool.material.uniforms.uGoboTex.value   = _goboTextures[goboSlot];
         obj.pool.material.uniforms.uGoboBlend.value = goboBlend;
+        obj.pool.material.uniforms.uGoboBlur.value  = goboBlur;
         if (!((p.gobo_rotation || 0) > 0))
           obj.pool.material.uniforms.uGoboRot.value = goboRot;
         obj.pool.visible = true;
@@ -1598,7 +1696,10 @@ window.updateScene = function(projectors) {
         lensX, lensY, lensZ,
         fx: fx2, fz: fz2, baseY,
         base_r,
-        poolR:    (0.35 + 2.2 * lvl) * bs,
+        // Rayon EXACT de la tache principale, facteurs wash et ouverture
+        // compris : les taches du prisme sont des copies, elles doivent avoir
+        // la même taille — et leur écartement en dépend aussi.
+        poolR:    (0.35 + 2.2 * lvl) * bs * (isWash ? 1.6 : 1.0) * _angF,
         goingUp,
         hitsFloor,
         prism:    (p.prism || 0) > 0,
@@ -1754,7 +1855,7 @@ function _orientPrism(obj, t) {
   const s = obj._fx;
   const pm0 = obj.prismBeams, pp0 = obj.prismPools;
   if (!s || !s.active) {
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < PRISM_FACETS; k++) {
       pm0[k].visible = pp0[k].visible = false;
     }
     return;
@@ -1772,34 +1873,80 @@ function _orientPrism(obj, t) {
     if (_bu2 && _bu2.uGoboBlend.value > 0) _bu2.uGoboRot.value = grot;
   }
 
-  // ── Prisme : 2 faisceaux/taches latéraux opposés, tournants ──
+  // ── Prisme : PRISM_FACETS copies complètes du faisceau ──
   if (!s.prism) {
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < PRISM_FACETS; k++) {
       pm0[k].visible = pp0[k].visible = false;
     }
     return;
   }
+
+  // Le prisme ne s'ajoute pas au faisceau : il le REMPLACE par ses copies.
+  // Laisser cVol allumé donnait une image centrale que l'optique ne produit
+  // pas, et surtout un gobo net au milieu de trois copies floues — d'où
+  // l'impression que « le prisme fonctionne mal ». La tache principale part
+  // avec lui ; le halo, la lentille et la point light restent, eux, le
+  // rayonnement diffus ne disparaît pas quand on insère un prisme.
+  // Les alphas sont lus dans les UNIFORMS, jamais via .visible : updateScene()
+  // ne tourne qu'aux ~25 fps des envois Python alors qu'animate() tourne à 60,
+  // donc dès la deuxième image on relirait le `visible = false` qu'on vient
+  // d'écrire — et les copies s'éteindraient une image sur deux.
+  const _cu = obj.cVol && obj.cVol.material.uniforms;
+  const _mp = obj.pool.material.uniforms;
+  const _centerAlpha = _cu ? _cu.uAlpha.value : 0;
+  const _centerPoolA = _mp.uAlpha.value;
+  obj.cVol.visible = false;
+  obj.pool.visible = false;
+
   _fxColBuf.setRGB(s.col[0], s.col[1], s.col[2]);
   const pspd = (s.prismV / 255) * 2.2;              // rad/s — 0 = split fixe (comme une vraie lyre)
   const ang  = t * pspd;
-  const R    = Math.max(0.4, s.poolR * 0.55);       // écart des faisceaux au sol
-  for (let k = 0; k < 2; k++) {
-    const a  = ang + k * Math.PI;                   // 2 côtés opposés du faisceau central
+
+  // Écart des copies, exprimé en rayons de tache — et non en divergence
+  // angulaire depuis la lentille. Un prisme sépare bien ses images d'un angle
+  // fixe, mais les deux grandeurs croissent ensemble avec le jeté : leur
+  // RAPPORT est ce qui définit l'aspect du split, et c'est lui qu'il faut
+  // tenir. Calculer l'écart à partir du jeté seul donnait ici 0,7 m pour des
+  // taches de 4,3 m de rayon — trois copies empilées, soit exactement la
+  // bouillie qu'on cherche à corriger.
+  const R = Math.max(0.35, s.poolR * PRISM_SPREAD);
+
+  for (let k = 0; k < PRISM_FACETS; k++) {
+    const a  = ang + k * (2 * Math.PI / PRISM_FACETS);
     const bx = s.fx + Math.cos(a) * R;
     const bz = s.fz + Math.sin(a) * R;
-    // Faisceau latéral : même shader volumétrique, enveloppe plus étroite
-    orientCone(pm0[k], s.lensX, s.lensY, s.lensZ, bx, s.baseY, bz, s.base_r * 1.1);
+    orientCone(pm0[k], s.lensX, s.lensY, s.lensZ, bx, s.baseY, bz, s.base_r * 2.0);
     const _pu = pm0[k].material.uniforms;
     _pu.uColor.value.copy(_fxColBuf);
-    _pu.uSharp.value = 5.20;
-    _pu.uCore.value  = 1.3;
-    _pu.uAlpha.value = 0.65 * s.lvl * window.beamGain;
+    // Copie conforme du faisceau d'origine : même profil (donc même zoom, même
+    // distinction wash/beam) et surtout MÊME GOBO. C'est tout l'intérêt d'un
+    // prisme : il multiplie le motif projeté, il ne le remplace pas par des
+    // taches lisses. uGoboRot est repris tel quel, rotation continue comprise,
+    // pour que les trois images tournent ensemble.
+    if (_cu) {
+      _pu.uSharp.value     = _cu.uSharp.value;
+      _pu.uCore.value      = _cu.uCore.value;
+      _pu.uGoboTex.value   = _cu.uGoboTex.value;
+      _pu.uGoboBlend.value = _cu.uGoboBlend.value;
+      _pu.uGoboRot.value   = _cu.uGoboRot.value;
+      _pu.uGoboBlur.value  = _cu.uGoboBlur.value;
+    }
+    // Chaque facette reçoit une fraction du flux. Pas 1/3 strict : l'œil (et
+    // le rendu HDR + bloom) écraserait trois faisceaux à 33 %, alors qu'un
+    // prisme réel reste très lisible sur scène.
+    _pu.uAlpha.value = _centerAlpha * 0.62;
+    pm0[k].visible = true;
+
     if (s.hitsFloor) {
+      const _ppu = pp0[k].material.uniforms;
       pp0[k].position.set(bx, 0.02, bz);
-      pp0[k].scale.setScalar(s.poolR * 0.7);
-      pp0[k].material.uniforms.uColor.value.copy(_fxColBuf);
-      pp0[k].material.uniforms.uAlpha.value = 0.50 * s.lvl;
-      pp0[k].material.uniforms.uGoboBlend.value = 0.0;
+      pp0[k].scale.setScalar(s.poolR);        // une copie a la taille de l'original
+      _ppu.uColor.value.copy(_fxColBuf);
+      _ppu.uAlpha.value = _centerPoolA * 0.62;
+      _ppu.uGoboTex.value   = _mp.uGoboTex.value;
+      _ppu.uGoboBlend.value = _mp.uGoboBlend.value;
+      _ppu.uGoboRot.value   = _mp.uGoboRot.value;
+      _ppu.uGoboBlur.value  = _mp.uGoboBlur.value;
       pp0[k].visible = true;
     } else {
       pp0[k].visible = false;

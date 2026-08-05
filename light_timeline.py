@@ -283,16 +283,25 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win, lock_pantilt
                 proj.tilt = ps["tilt"]
         proj.strobe_speed = int(ps.get("strobe_speed", 0))
         proj.channel_extras = dict(ps.get("channel_extras", {}) or {})
-        # Canaux dédiés (UV, Blanc, Ambre, Orange) : ils étaient tout simplement
-        # oubliés ici. Une mémoire contenant de l'UV ne sortait donc pas en show
-        # (et ne « marchait » en aperçu que par accident : le rappel one-shot au
-        # changement de clip posait l'UV, que rien ne remettait ensuite à zéro).
-        # Comme le niveau, ils suivent l'intensité du bloc de séquence.
-        for _attr in ("uv", "white_boost", "amber_boost", "orange_boost"):
-            setattr(proj, _attr, int(ps.get(_attr, 0) * brightness))
         if ps.get("level", 0) > 0:
             lvl = int(ps["level"] * brightness)
             base = QColor(ps["base_color"])
+            # Canaux dédiés (UV, Blanc, Ambre, Orange) : DANS ce bloc, jamais
+            # au-dessus.
+            #
+            # Une mémoire capture l'état de TOUS les projecteurs, y compris ceux
+            # qu'elle ne vise pas — ils y figurent avec level 0 et sans clé
+            # `uv`. Appliqués inconditionnellement (régression 3.1.79), ces
+            # `setattr(proj, attr, 0)` s'exécutaient donc sur tout le rig dès
+            # qu'une piste Séquence était active, et remettaient à zéro l'UV ou
+            # l'Ambre posés juste avant par un bloc de la piste couleur — lequel
+            # met le RVB à zéro par conception (cf. core.apply_special_block).
+            # Résultat : bloc « Black Light » ou « Ambre » totalement muet,
+            # projecteur éteint. Ici, une mémoire ne peut effacer ces canaux que
+            # lorsqu'elle allume réellement le projecteur, donc qu'elle en
+            # définit l'état complet — ce que fait déjà la couleur RVB.
+            for _attr in ("uv", "white_boost", "amber_boost", "orange_boost"):
+                setattr(proj, _attr, int(ps.get(_attr, 0) * brightness))
             proj.level = lvl
             proj.base_color = base
             proj.color = QColor(
@@ -1061,14 +1070,14 @@ class _LibraryMemItem(_LibraryItem):
             return {}
         menu.addSeparator()
         handlers = {}
-        rename_act = menu.addAction("✏️  Renommer ce REC")
+        rename_act = menu.addAction(tr("lt_rename_rec"))
         handlers[rename_act] = self._rename_rec
         # Sous-menu palette : choisir la couleur du REC parmi plusieurs pastilles.
-        color_menu = menu.addMenu("🎨  Couleur")
+        color_menu = menu.addMenu(tr("lt_color"))
         for hexc in self._REC_PALETTE:
             act = color_menu.addAction(self._color_icon(hexc), hexc)
             handlers[act] = (lambda h=hexc: self._recolor_rec(h))
-        delete_act = menu.addAction("🗑️  Supprimer ce REC")
+        delete_act = menu.addAction(tr("lt_delete_rec"))
         handlers[delete_act] = self._delete_rec
         return handlers
 
@@ -1115,8 +1124,8 @@ class _LibraryMemItem(_LibraryItem):
         ed, mw = self._mw()
         if not mw:
             return
-        name, ok = QInputDialog.getText(self, "Renommer le REC",
-                                        "Nouveau nom :", QLineEdit.Normal, self._name)
+        name, ok = QInputDialog.getText(self, tr("lt_rename_rec_title"),
+                                        tr("lt_new_name"), QLineEdit.Normal, self._name)
         if not ok:
             return
         name = name.strip()
@@ -1168,8 +1177,8 @@ class _LibraryMemItem(_LibraryItem):
             " border-radius:5px; padding:6px 18px; min-width:90px; font-size:12px; }"
             "QPushButton:hover { border-color:#00d4ff; background:#333; }"
         )
-        del_btn = box.addButton("Supprimer", QMessageBox.AcceptRole)
-        box.addButton("Annuler", QMessageBox.RejectRole)
+        del_btn = box.addButton(tr("lt_delete"), QMessageBox.AcceptRole)
+        box.addButton(tr("lt_cancel"), QMessageBox.RejectRole)
         box.setDefaultButton(box.buttons()[-1])   # défaut = Annuler (sécurité)
         box.exec()
         if box.clickedButton() is not del_btn:
@@ -1508,7 +1517,7 @@ class LibraryPanel(QWidget):
         sr_h.setContentsMargins(8, 4, 8, 4)
         sr_h.setSpacing(4)
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("Rechercher…")
+        self._search_input.setPlaceholderText(tr("lt_search"))
         self._search_input.setClearButtonEnabled(True)
         self._search_input.setFixedHeight(24)
         self._search_input.setStyleSheet(
@@ -1770,7 +1779,7 @@ class LibraryPanel(QWidget):
                     )
                     rec_count += 1
         if rec_count == 0:
-            empty_rec = QLabel("  Aucun REC")
+            empty_rec = QLabel(tr("lt_no_rec"))
             empty_rec.setStyleSheet(
                 "color: #2a2a2a; font-size: 10px; font-style: italic; "
                 "background: transparent; padding: 5px 10px;"
@@ -3571,7 +3580,7 @@ print(json.dumps(waveform))
         menu.setStyleSheet(self._EFFECT_MENU_STYLE)
 
         # Éditeur d'effet (ouvre la config complète du clip dans l'éditeur)
-        act_editor = menu.addAction("✏️  Éditeur d'effet")
+        act_editor = menu.addAction(tr("lt_effect_editor"))
         def _open_editor():
             mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
             if mw is None:
@@ -3611,12 +3620,12 @@ print(json.dumps(waveform))
         # Groupe cible
         cur_groups = getattr(clip, 'effect_target_groups', [])
         grp_label_str = ", ".join(cur_groups) if cur_groups else "Tous"
-        act_grp = menu.addAction(f"🎯  Groupes : {grp_label_str}")
+        act_grp = menu.addAction(tr("lt_f_groups", grp_label_str=grp_label_str))
         act_grp.triggered.connect(lambda: self._edit_effect_target_groups(clip))
 
         # Vitesse
         cur_speed = getattr(clip, 'effect_speed', 50)
-        act_speed = menu.addAction(f"⚡  Vitesse : {cur_speed}")
+        act_speed = menu.addAction(tr("lt_f_speed", cur_speed=cur_speed))
         act_speed.triggered.connect(lambda: self.edit_clip_effect_speed(clip))
 
         menu.addSeparator()
@@ -3775,14 +3784,14 @@ print(json.dumps(waveform))
             "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
         )
         cur = getattr(clip, 'gobo_name', '') or '—'
-        hdr = menu.addAction(f"GOBO : {cur}")
+        hdr = menu.addAction(tr("lt_f_gobo", cur=cur))
         hdr.setEnabled(False)
         menu.addSeparator()
 
         mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
         gobos = LibraryPanel._available_gobos(mw) if mw else []
         if gobos:
-            chg = menu.addAction("Changer le gobo")
+            chg = menu.addAction(tr("lt_change_gobo"))
             sub = QMenu(menu)
             sub.setStyleSheet(menu.styleSheet())
             for dmx, nom, _c in gobos:
@@ -3793,10 +3802,10 @@ print(json.dumps(waveform))
             chg.setMenu(sub)
 
         rot = getattr(clip, 'gobo_rotation', 0) or 0
-        act_rot = menu.addAction(f"Rotation du gobo…   ({rot})")
+        act_rot = menu.addAction(tr("lt_f_gobo_rot", rot=rot))
         act_rot.triggered.connect(lambda: self._edit_gobo_rotation(clip))
         if rot:
-            act_stop = menu.addAction("Arrêter la rotation")
+            act_stop = menu.addAction(tr("lt_stop_rotation"))
             act_stop.triggered.connect(lambda: self._set_gobo_rotation(clip, 0))
 
         menu.addSeparator()
@@ -3833,8 +3842,7 @@ print(json.dumps(waveform))
         dlg.setStyleSheet("QDialog { background:#141414; } QLabel { color:#ddd; }")
         lay = QVBoxLayout(dlg)
 
-        info = QLabel("Canal Gobo1Rot — valeur DMX brute.\n"
-                      "Consultez la notice de la lyre pour ses plages.")
+        info = QLabel(tr("lt_gobo_rot_hint"))
         info.setStyleSheet("color:#777; font-size:10px;")
         lay.addWidget(info)
 
@@ -3911,7 +3919,7 @@ print(json.dumps(waveform))
         mw = getattr(getattr(self, 'parent_editor', None), 'main_window', None)
         pdf_presets = mw._load_pdf_presets() if mw and hasattr(mw, '_load_pdf_presets') else []
         if pdf_presets:
-            pdf_sub_act = menu.addAction("Plan de Feu ▸")
+            pdf_sub_act = menu.addAction(tr("lt_light_plan_r"))
             pdf_sub = QMenu(menu)
             pdf_sub.setStyleSheet(menu.styleSheet())
             for pp in pdf_presets:
@@ -3949,7 +3957,7 @@ print(json.dumps(waveform))
             "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
         )
         menu.setStyleSheet(_style)
-        hdr = menu.addAction("Ajouter une position")
+        hdr = menu.addAction(tr("lt_add_position"))
         hdr.setEnabled(False)
         menu.addSeparator()
 
@@ -3975,7 +3983,7 @@ print(json.dumps(waveform))
         # Presets Plan de Feu
         pdf_presets = mw._load_pdf_presets() if mw and hasattr(mw, '_load_pdf_presets') else []
         if pdf_presets:
-            pdf_hdr = menu.addAction("▸ Plan de Feu")
+            pdf_hdr = menu.addAction(tr("lt_light_plan_l"))
             pdf_hdr.setEnabled(False)
             for pp in pdf_presets:
                 def _add_from_pdf(_, pdf=pp):
@@ -3994,7 +4002,7 @@ print(json.dumps(waveform))
                 a2.triggered.connect(_add_from_pdf)
 
         if not akai_presets and not pdf_presets:
-            no_act = menu.addAction("Aucun preset — enregistrez d'abord depuis les pads POS ou le plan de feu")
+            no_act = menu.addAction(tr("lt_no_pos_preset"))
             no_act.setEnabled(False)
 
         menu.exec(global_pos)
@@ -4104,7 +4112,7 @@ print(json.dumps(waveform))
             action = fill_gap_menu.addAction(f"■■ {name}")
             action.triggered.connect(lambda checked=False, c1=col1, c2=col2, p=local_pos: self.fill_gap_bicolor_at_pos(c1, c2, p))
 
-        act_del_gap = menu.addAction("⇤  Supprimer le vide")
+        act_del_gap = menu.addAction(tr("lt_remove_gap"))
         act_del_gap.triggered.connect(lambda checked=False, p=local_pos: self.delete_gap_at_pos(p))
 
         menu.exec(global_pos)
@@ -4233,11 +4241,11 @@ print(json.dumps(waveform))
         selected = self.get_all_selected_clips()
         if len(selected) > 1 and clip in selected:
             n = len(selected)
-            hdr = menu.addAction(f"✦  Sélection — {n} blocs")
+            hdr = menu.addAction(tr("lt_f_selection", n=n))
             hdr.setEnabled(False)
             menu.addSeparator()
 
-            sel_int = menu.addMenu(f"🔅  Intensité ({n} blocs)")
+            sel_int = menu.addMenu(tr("lt_f_intensity_n", n=n))
             for val in [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
                 a = sel_int.addAction(f"{val}%")
                 a.triggered.connect(lambda checked=False, v=val: self.set_selection_intensity(v))
@@ -4245,7 +4253,7 @@ print(json.dumps(waveform))
             a = sel_int.addAction(tr("lt_menu_custom"))
             a.triggered.connect(lambda: self.edit_selection_intensity())
 
-            sel_col = menu.addMenu(f"🎨  Couleur ({n} blocs)")
+            sel_col = menu.addMenu(tr("lt_f_color_n", n=n))
             for name, col in [("Rouge", QColor(255, 0, 0)), ("Vert", QColor(0, 255, 0)),
                               ("Bleu", QColor(0, 0, 255)), ("Jaune", QColor(200, 200, 0)),
                               ("Magenta", QColor(255, 0, 255)), ("Cyan", QColor(0, 255, 255)),
@@ -4254,8 +4262,8 @@ print(json.dumps(waveform))
                 a = sel_col.addAction(QIcon(pix), name)
                 a.triggered.connect(lambda checked=False, c=col: self.set_selection_color(c))
 
-            sel_fi = menu.addMenu(f"🎬  Fade In ({n} blocs)")
-            sel_fo = menu.addMenu(f"🎬  Fade Out ({n} blocs)")
+            sel_fi = menu.addMenu(tr("lt_f_fadein_n", n=n))
+            sel_fo = menu.addMenu(tr("lt_f_fadeout_n", n=n))
             for label, ms in [("250 ms", 250), ("500 ms", 500), ("1 s", 1000),
                               ("2 s", 2000), ("3 s", 3000)]:
                 ai = sel_fi.addAction(label)
@@ -4266,7 +4274,7 @@ print(json.dumps(waveform))
             # « Retirer les fades » : uniquement si au moins un bloc en a un
             if any(getattr(c, 'fade_in_duration', 0) > 0 or getattr(c, 'fade_out_duration', 0) > 0
                    for c in selected):
-                clr = menu.addAction("✖  Retirer les fades")
+                clr = menu.addAction(tr("lt_remove_fades"))
                 clr.triggered.connect(lambda: self.clear_selection_fades())
 
             # Fondu enchaîné : si EXACTEMENT 2 blocs adjacents sélectionnés sur la
@@ -4277,18 +4285,18 @@ print(json.dumps(waveform))
                 _adj = abs((_a.start_time + _a.duration) - _b.start_time) <= 5
                 if _same_track and _adj:
                     menu.addSeparator()
-                    m_xf = menu.addMenu("↔  Fondu enchaîné entre les 2 blocs")
+                    m_xf = menu.addMenu(tr("lt_crossfade_between"))
                     for _lbl, _ms in [("250 ms", 250), ("500 ms", 500), ("1 s", 1000), ("2 s", 2000)]:
                         a = m_xf.addAction(_lbl)
                         a.triggered.connect(lambda checked=False, c=_b, m=_ms:
                                             _b.parent_track.set_clip_xfade(c, m))
                     if getattr(_b, 'xfade', 0) > 0:
-                        a = m_xf.addAction("✖  Retirer")
+                        a = m_xf.addAction(tr("lt_remove"))
                         a.triggered.connect(lambda checked=False, c=_b:
                                             _b.parent_track.set_clip_xfade(c, 0))
 
             menu.addSeparator()
-            dele = menu.addAction(f"🗑  Supprimer les {n} blocs")
+            dele = menu.addAction(tr("lt_f_delete_n", n=n))
             dele.triggered.connect(lambda: self.parent_editor.delete_selected_clips())
 
             menu.exec(global_pos)
@@ -4373,7 +4381,7 @@ print(json.dumps(waveform))
         # bloc a déjà un fondu, pour pouvoir le retirer/régler depuis le bloc.
         if getattr(clip, 'xfade', 0) > 0:
             menu.addSeparator()
-            a = menu.addAction(f"↔  Fondu enchaîné : {int(clip.xfade)} ms…")
+            a = menu.addAction(tr("lt_f_crossfade_ms", a0=int(clip.xfade)))
             a.triggered.connect(lambda checked=False, c=clip: self.edit_clip_xfade(c))
 
         # === COPIER VERS ===
@@ -4508,7 +4516,7 @@ print(json.dumps(waveform))
             QMenu::item:selected { background:#00d4ff; color:black; }
             QMenu::separator { background:#4a4a4a; height:1px; margin:5px 10px; }
         """)
-        hdr = menu.addAction("↔  Fondu enchaîné")
+        hdr = menu.addAction(tr("lt_crossfade"))
         hdr.setEnabled(False)
         menu.addSeparator()
         cur = getattr(right_clip, 'xfade', 0)
@@ -4516,11 +4524,11 @@ print(json.dumps(waveform))
                         ("Long  (1 s)", 1000), ("Très long  (2 s)", 2000)]:
             a = menu.addAction(("● " if cur == ms else "○  ") + lbl)
             a.triggered.connect(lambda checked=False, c=right_clip, m=ms: self.set_clip_xfade(c, m))
-        a = menu.addAction("⋯  Personnalisé…")
+        a = menu.addAction(tr("lt_custom"))
         a.triggered.connect(lambda checked=False, c=right_clip: self.edit_clip_xfade(c))
         if cur > 0:
             menu.addSeparator()
-            a = menu.addAction("✖  Retirer le fondu enchaîné")
+            a = menu.addAction(tr("lt_remove_crossfade"))
             a.triggered.connect(lambda checked=False, c=right_clip: self.set_clip_xfade(c, 0))
         menu.exec(global_pos)
 
@@ -4765,7 +4773,7 @@ print(json.dumps(waveform))
         vl.addStretch()
 
         btns = QHBoxLayout()
-        btn_all = QPushButton("Tous")
+        btn_all = QPushButton(tr("lt_all"))
         btn_all.setStyleSheet("background:#2a2a2a;color:#e0e0e0;border:1px solid #444;border-radius:4px;padding:6px 12px;")
         btn_all.clicked.connect(lambda: [cb.setChecked(False) for cb in checks.values()])
         btns.addWidget(btn_all)
@@ -5015,7 +5023,7 @@ print(json.dumps(waveform))
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(30, 24, 30, 24)
 
-        title = QLabel(f"Intensité — {len(selected)} blocs")
+        title = QLabel(tr("lt_f_intensity_blocks", a0=len(selected)))
         title.setStyleSheet("color:#00d4ff; font-size:13px; font-weight:bold;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)

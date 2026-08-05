@@ -305,9 +305,7 @@ class MidiMappingWizard(QDialog):
         card_v.addWidget(lbl_community)
 
         lbl_explain = QLabel(
-            "Votre contrôleur n'est pas encore dans notre liste ? Pas de problème.\n"
-            "Faites le test ci-dessous en 3 minutes — appuyez sur vos pads, bougez vos faders —\n"
-            "et on revient vers vous rapidement pour l'ajouter à MyStrow."
+            tr("cmw_intro")
         )
         lbl_explain.setObjectName("sub")
         lbl_explain.setWordWrap(True)
@@ -343,13 +341,13 @@ class MidiMappingWizard(QDialog):
 
         v.addWidget(QLabel(tr("cmw_ctrl_name")))
         self._inp_name = QLineEdit()
-        self._inp_name.setPlaceholderText("ex: Novation Launchpad X")
+        self._inp_name.setPlaceholderText(tr("cmw_ex_model"))
         v.addWidget(self._inp_name)
 
         v.addSpacing(4)
         v.addWidget(QLabel(tr("cmw_midi_port")))
         self._combo_ports = ComboSansMolette()
-        self._combo_ports.addItem("— Aucun port sélectionné —", None)
+        self._combo_ports.addItem(tr("cmw_no_port"), None)
         for p in _get_midi_ports():
             self._combo_ports.addItem(p, p)
         self._combo_ports.currentIndexChanged.connect(self._port_selected)
@@ -358,7 +356,7 @@ class MidiMappingWizard(QDialog):
         v.addSpacing(4)
         v.addWidget(QLabel(tr("cmw_keyword")))
         self._inp_keyword = QLineEdit()
-        self._inp_keyword.setPlaceholderText("ex: LAUNCHPAD X")
+        self._inp_keyword.setPlaceholderText(tr("cmw_ex_port"))
         v.addWidget(self._inp_keyword)
 
         lbl_hint = QLabel(tr("cmw_keyword_hint"))
@@ -367,11 +365,11 @@ class MidiMappingWizard(QDialog):
 
         v.addStretch()
         h = QHBoxLayout()
-        btn_back = QPushButton("← Retour"); btn_back.setObjectName("skip")
+        btn_back = QPushButton(tr("cmw_back")); btn_back.setObjectName("skip")
         btn_back.clicked.connect(lambda: self._show_page(self.PAGE_WELCOME))
         h.addWidget(btn_back)
         h.addStretch()
-        btn_next = QPushButton("Continuer  →"); btn_next.setObjectName("primary")
+        btn_next = QPushButton(tr("cmw_continue")); btn_next.setObjectName("primary")
         btn_next.setFixedHeight(42)
         btn_next.clicked.connect(self._name_next)
         h.addWidget(btn_next)
@@ -404,15 +402,15 @@ class MidiMappingWizard(QDialog):
         self._spin_rows = _spin(0, 16, 8)
         grid.addWidget(self._spin_rows, 0, 1)
 
-        grid.addWidget(QLabel("Colonnes de pads :"), 1, 0)
+        grid.addWidget(QLabel(tr("cmw_pad_cols")), 1, 0)
         self._spin_cols = _spin(0, 16, 8)
         grid.addWidget(self._spin_cols, 1, 1)
 
-        grid.addWidget(QLabel("Nombre de faders (0 = aucun) :"), 2, 0)
+        grid.addWidget(QLabel(tr("cmw_fader_count")), 2, 0)
         self._spin_faders = _spin(0, 16, 8)
         grid.addWidget(self._spin_faders, 2, 1)
 
-        grid.addWidget(QLabel("Boutons effet / colonne droite (0 = aucun) :"), 3, 0)
+        grid.addWidget(QLabel(tr("cmw_fx_buttons")), 3, 0)
         self._spin_effects = _spin(0, 16, 8)
         grid.addWidget(self._spin_effects, 3, 1)
 
@@ -420,10 +418,10 @@ class MidiMappingWizard(QDialog):
         v.addStretch()
 
         h = QHBoxLayout()
-        btn_back = QPushButton("← Retour"); btn_back.setObjectName("skip")
+        btn_back = QPushButton(tr("cmw_back")); btn_back.setObjectName("skip")
         btn_back.clicked.connect(lambda: self._show_page(self.PAGE_NAME))
         h.addWidget(btn_back); h.addStretch()
-        btn_next = QPushButton("Continuer  →"); btn_next.setObjectName("primary")
+        btn_next = QPushButton(tr("cmw_continue")); btn_next.setObjectName("primary")
         btn_next.setFixedHeight(42)
         btn_next.clicked.connect(self._dimensions_next)
         h.addWidget(btn_next)
@@ -503,8 +501,7 @@ class MidiMappingWizard(QDialog):
         lbl_title = QLabel(tr("cmw_fader_mapping")); lbl_title.setObjectName("title")
         v.addWidget(lbl_title)
         lbl_sub = QLabel(
-            "Bougez chaque fader de bas en haut. Passez par tous les faders\n"
-            "avant d'accéder aux boutons effets."
+            tr("cmw_fader_step")
         )
         lbl_sub.setObjectName("sub"); lbl_sub.setWordWrap(True)
         v.addWidget(lbl_sub)
@@ -524,7 +521,7 @@ class MidiMappingWizard(QDialog):
 
         v.addSpacing(8)
 
-        btn_skip = QPushButton("Passer ce fader →")
+        btn_skip = QPushButton(tr("cmw_skip_fader"))
         btn_skip.setObjectName("skip")
         btn_skip.clicked.connect(self._fader_skip)
         v.addWidget(btn_skip)
@@ -562,8 +559,7 @@ class MidiMappingWizard(QDialog):
         bright_v.setSpacing(10)
 
         lbl_bright_intro = QLabel(
-            "Test 1 — Bougez le curseur et observez le pad en haut à gauche.\n"
-            "Si la luminosité de la LED change, validez !"
+            tr("cmw_test1")
         )
         lbl_bright_intro.setObjectName("sub"); lbl_bright_intro.setWordWrap(True)
         bright_v.addWidget(lbl_bright_intro)
@@ -601,7 +597,7 @@ class MidiMappingWizard(QDialog):
         )
         btn_bright_ok1.clicked.connect(self._bright_confirm)
         h_bright1.addWidget(btn_bright_ok1)
-        btn_next_test = QPushButton("Aucun changement — Essayer autre chose →")
+        btn_next_test = QPushButton(tr("cmw_no_change"))
         btn_next_test.setObjectName("skip")
         btn_next_test.clicked.connect(self._bright_try_specific)
         h_bright1.addWidget(btn_next_test)
@@ -615,9 +611,7 @@ class MidiMappingWizard(QDialog):
         spec_v.setSpacing(10)
 
         lbl_spec_intro = QLabel(
-            "Test 2 — Cliquez sur chaque bouton et observez le pad.\n"
-            "Certains contrôleurs (ex. AKAI) n'ont pas de luminosité variable\n"
-            "mais réagissent différemment selon la plage de velocité."
+            tr("cmw_test2")
         )
         lbl_spec_intro.setObjectName("sub"); lbl_spec_intro.setWordWrap(True)
         spec_v.addWidget(lbl_spec_intro)
@@ -641,14 +635,14 @@ class MidiMappingWizard(QDialog):
 
         # Méthodes alternatives sur une ligne
         h_alt = QHBoxLayout(); h_alt.setSpacing(8)
-        self._bright_alt_channel_label = QLabel("Canal 1")
+        self._bright_alt_channel_label = QLabel(tr("cmw_channel1"))
         self._bright_alt_channel_label.setStyleSheet("color: #555; font-size: 8pt;")
-        btn_alt_ch = QPushButton("Canal alternatif (1→6)")
+        btn_alt_ch = QPushButton(tr("cmw_channel_alt"))
         btn_alt_ch.setObjectName("skip"); btn_alt_ch.setFixedHeight(28)
         btn_alt_ch.clicked.connect(self._bright_test_channel)
         h_alt.addWidget(btn_alt_ch)
         h_alt.addWidget(self._bright_alt_channel_label)
-        btn_alt_off = QPushButton("Note Off + vel")
+        btn_alt_off = QPushButton(tr("cmw_note_off_vel"))
         btn_alt_off.setObjectName("skip"); btn_alt_off.setFixedHeight(28)
         btn_alt_off.clicked.connect(self._bright_test_noteoff)
         h_alt.addWidget(btn_alt_off)
@@ -656,7 +650,7 @@ class MidiMappingWizard(QDialog):
         spec_v.addLayout(h_alt)
 
         h_bright2 = QHBoxLayout(); h_bright2.setSpacing(10)
-        btn_bright_ok2 = QPushButton("✓  Quelque chose change — Valider")
+        btn_bright_ok2 = QPushButton(tr("cmw_something_changes"))
         btn_bright_ok2.setFixedHeight(38)
         btn_bright_ok2.setStyleSheet(
             "background:#0a2a0a; border:1px solid #004400; color:#00cc44;"
@@ -664,7 +658,7 @@ class MidiMappingWizard(QDialog):
         )
         btn_bright_ok2.clicked.connect(self._bright_confirm)
         h_bright2.addWidget(btn_bright_ok2)
-        btn_skip_all = QPushButton("Rien ne change — Passer au test couleurs")
+        btn_skip_all = QPushButton(tr("cmw_nothing_changes"))
         btn_skip_all.setObjectName("skip")
         btn_skip_all.clicked.connect(self._bright_skip)
         h_bright2.addWidget(btn_skip_all)
@@ -678,8 +672,7 @@ class MidiMappingWizard(QDialog):
         color_v.setSpacing(10)
 
         lbl_color_intro = QLabel(
-            "Nous envoyons différentes velocités au pad.\n"
-            "Cliquez sur la couleur qui s'affiche sur votre contrôleur."
+            tr("cmw_color_test")
         )
         lbl_color_intro.setObjectName("sub"); lbl_color_intro.setWordWrap(True)
         color_v.addWidget(lbl_color_intro)
@@ -749,8 +742,7 @@ class MidiMappingWizard(QDialog):
         fs.addWidget(lbl_send_title)
 
         lbl_send_sub = QLabel(
-            "Un clic suffit — votre client mail s'ouvre avec tout le contenu rempli.\n"
-            "On revient vers vous rapidement pour ajouter votre contrôleur à MyStrow !"
+            tr("cmw_send_hint")
         )
         lbl_send_sub.setObjectName("sub"); lbl_send_sub.setWordWrap(True)
         fs.addWidget(lbl_send_sub)
@@ -768,11 +760,11 @@ class MidiMappingWizard(QDialog):
         v.addStretch()
 
         h = QHBoxLayout(); h.setSpacing(10)
-        btn_save = QPushButton("💾  Sauvegarder en local"); btn_save.setObjectName("skip")
+        btn_save = QPushButton(tr("cmw_save_local")); btn_save.setObjectName("skip")
         btn_save.setFixedHeight(36); btn_save.clicked.connect(self._do_save)
         h.addWidget(btn_save)
         h.addStretch()
-        btn_close = QPushButton("Fermer"); btn_close.setObjectName("skip")
+        btn_close = QPushButton(tr("cmw_close")); btn_close.setObjectName("skip")
         btn_close.clicked.connect(self.accept)
         h.addWidget(btn_close)
         v.addLayout(h)
@@ -792,7 +784,7 @@ class MidiMappingWizard(QDialog):
         v.addWidget(lbl_sub)
         v.addSpacing(8)
 
-        instr = QLabel(f"Bouton 1")
+        instr = QLabel(tr("cmw_f_button1"))
         instr.setStyleSheet("font-size: 14pt; color: #ddd;")
         v.addWidget(instr)
 
@@ -807,7 +799,7 @@ class MidiMappingWizard(QDialog):
         v.addSpacing(8)
         h_btns = QHBoxLayout(); h_btns.setSpacing(10)
 
-        btn_skip = QPushButton("Passer"); btn_skip.setObjectName("skip")
+        btn_skip = QPushButton(tr("cmw_skip")); btn_skip.setObjectName("skip")
         btn_done = QPushButton(skip_all_label); btn_done.setObjectName("danger")
         h_btns.addWidget(btn_skip); h_btns.addWidget(btn_done)
         v.addLayout(h_btns)
@@ -828,7 +820,7 @@ class MidiMappingWizard(QDialog):
         self._pulse_timer.stop()
         self._stack.setCurrentIndex(idx)
         steps = ["Bienvenue", "Nom", "Dimensions", "Pads", "Mutes", "Faders", "Effets", "LEDs", "Sauvegarde"]
-        self._step_label.setText(f"Étape {idx+1}/9  —  {steps[idx]}")
+        self._step_label.setText(tr("cmw_f_step", a0=idx + 1, a1=steps[idx]))
 
         if idx == self.PAGE_PADS:
             self._start_pad_phase()
@@ -908,7 +900,7 @@ class MidiMappingWizard(QDialog):
     def _name_next(self):
         name = self._inp_name.text().strip()
         if not name:
-            self._inp_name.setPlaceholderText("⚠️  Nom requis !")
+            self._inp_name.setPlaceholderText(tr("cmw_name_required"))
             return
         self._profile_name = name
         kw = self._inp_keyword.text().strip().upper()
@@ -959,7 +951,7 @@ class MidiMappingWizard(QDialog):
         if self._pad_grid_widget:
             self._pad_grid_widget.set_target(r, c)
         self._pad_instr.setText(
-            f"Appuyez sur le pad\nColonne {c+1}, Ligne {r+1}\nsur votre contrôleur"
+            tr("cmw_f_press_pad", a0=c + 1, a1=r + 1)
         )
 
     def _on_pad_midi(self, msg):
@@ -1037,12 +1029,11 @@ class MidiMappingWizard(QDialog):
         progress = getattr(self, f"_{prefix}_progress")
         if prefix == "mute":
             instr.setText(
-                f"Appuyez sur le bouton de la tranche {cursor + 1}\n"
-                f"(le bouton qui coupe le son / mute / solo)"
+                tr("cmw_f_press_strip_btn", a0=cursor + 1)
             )
         else:
-            instr.setText(f"Appuyez sur le bouton effet {cursor + 1}\n(colonne de droite)")
-        progress.setText(f"Tranche {cursor + 1} / {total}")
+            instr.setText(tr("cmw_f_press_fx_btn", a0=cursor + 1))
+        progress.setText(tr("cmw_f_strip", a0=cursor + 1, total=total))
 
     def _generic_skip(self, prefix, target_map, count, midi_cb, done_cb):
         cursor = getattr(self, f"_{prefix}_cursor", 0)
@@ -1099,7 +1090,7 @@ class MidiMappingWizard(QDialog):
         self._start_pulse(self._fader_listen)
 
     def _update_fader_ui(self):
-        self._fader_instr.setText(f"Bougez le fader {self._fader_cursor + 1} complètement")
+        self._fader_instr.setText(tr("cmw_f_move_fader", a0=self._fader_cursor + 1))
         self._fader_progress.setText(f"{self._fader_cursor + 1} / {self._fader_count}")
 
     def _on_fader_midi(self, msg):
@@ -1157,7 +1148,7 @@ class MidiMappingWizard(QDialog):
         self._color_section.setVisible(False)
         self._led_phase_label.setText(tr("cmw_step1"))
         self._bright_alt_ch = 0
-        self._bright_alt_channel_label.setText("Canal 1")
+        self._bright_alt_channel_label.setText(tr("cmw_channel1"))
         self._bright_specific_vel = None
 
         self._bright_slider.setValue(64)
@@ -1168,7 +1159,7 @@ class MidiMappingWizard(QDialog):
         )
 
     def _on_bright_slider(self, val):
-        self._bright_vel_label.setText(f"Velocité : {val}  /  127")
+        self._bright_vel_label.setText(tr("cmw_f_velocity", val=val))
         entry = self._bright_ref_entry
         if entry:
             self._send_to_pad(entry.get("channel", 0), entry["note"], val)
@@ -1191,7 +1182,7 @@ class MidiMappingWizard(QDialog):
     def _bright_test_channel(self):
         """Envoie la note sur le prochain canal MIDI (1→6) pour tester le mode APC/Launchpad."""
         self._bright_alt_ch = (self._bright_alt_ch + 1) % 7  # canaux 0-6
-        self._bright_alt_channel_label.setText(f"Canal {self._bright_alt_ch + 1}")
+        self._bright_alt_channel_label.setText(tr("cmw_f_channel", a0=self._bright_alt_ch + 1))
         entry = self._bright_ref_entry
         if entry:
             val = self._bright_slider.value()
@@ -1255,7 +1246,7 @@ class MidiMappingWizard(QDialog):
             self._show_page(self.PAGE_SAVE)
             return
         vel, _label, _ = _LED_VELOCITIES[self._led_vel_idx]
-        self._led_vel_label.setText(f"Velocité testée : {vel}   (envoyée au pad 1)")
+        self._led_vel_label.setText(tr("cmw_f_velocity_test", vel=vel))
         entry = self._bright_ref_entry or self._get_first_pad_entry()
         if entry:
             self._send_to_pad(entry.get("channel", 0), entry["note"], vel)

@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.80"
+VERSION = "3.1.79"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -72,7 +72,6 @@ except ImportError:
 # === MIDI SUPPORT ===
 # Détection via find_spec (sans importer le module — évite le scan MIDI au démarrage)
 import importlib.util as _iutil
-from i18n import tr
 MIDI_AVAILABLE = False
 midi_lib = None
 if _iutil.find_spec("rtmidi") is not None:
@@ -750,10 +749,14 @@ def send_report_email(parent, subject, report, intro=""):
     ok = QDesktopServices.openUrl(url)
     if not ok:
         QMessageBox.information(
-            parent, tr("core_send_report"),
-            tr("core_mail_failed", mail=SUPPORT_EMAIL))
+            parent, "Envoyer le rapport",
+            f"Impossible d'ouvrir votre logiciel de messagerie.\n\n"
+            f"Le rapport a été copié dans le presse-papiers : collez-le dans un "
+            f"mail à {SUPPORT_EMAIL}.")
     elif truncated:
         QMessageBox.information(
-            parent, tr("core_send_report"),
-            tr("core_report_shortened"))
+            parent, "Envoyer le rapport",
+            "Votre mail est ouvert. Le rapport étant long, il a été raccourci "
+            "dans le message — la version complète est dans le presse-papiers "
+            "(Coller pour la joindre).")
     return ok

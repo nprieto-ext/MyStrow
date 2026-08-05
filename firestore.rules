@@ -8,26 +8,34 @@ service cloud.firestore {
 
       // Creation du document par le client (firebase_client.create_license_doc).
       //
-      // Aucun utilisateur final ne passe par la : l'essai de 15 jours est
-      // 100 % LOCAL (fichier chiffre + empreinte machine, il ne touche jamais
-      // Firestore) et les comptes payants sont crees par la Cloud Function
-      // Stripe via le SDK Admin, qui ignore ces regles. Le seul appelant est
-      // activate_dev.py (provisionnement manuel d'un compte).
+      // ⚠️ CE CHEMIN EST UTILISE PAR LES UTILISATEURS FINAUX :
+      // license_manager.register_account() appelle create_license_doc() juste
+      // apres sign_up(). Un commentaire precedent affirmait le contraire
+      // (« essai 100 % local, seul activate_dev.py passe par la ») — c'est faux,
+      // et c'est ce qui avait dispense de tester la regle : toute creation de
+      // compte depuis l'application traverse ces lignes.
       //
       // L'ancienne regle ne couvrait la creation que par `allow write`, dont
       // les conditions lisent `resource.data` — or `resource` est null a la
-      // creation : la condition tombait en erreur, donc refus. activate_dev.py
-      // ne pouvait donc creer un compte que pour l'adresse admin.
+      // creation : la condition tombait en erreur, donc refus.
       //
       // Valeurs bornees : sans ca, autoriser la creation reviendrait a laisser
       // n'importe quel compte s'ecrire un plan 'license' a dix ans.
+      //
+      // ⚠️ `request.time.toMillis() / 1000` et SURTOUT PAS `request.time.seconds` :
+      // sur un timestamp, `seconds` n'est pas l'epoch mais un accesseur de champ
+      // inexistant. L'evaluation levait « Type error. Received: [timestamp]
+      // Expected: [map,path] », donc la condition entiere tombait en erreur et
+      // la creation etait TOUJOURS refusee — inscriptions cassees du 03/08 au
+      // 04/08/2026. Le deploiement, lui, passe sans broncher : l'erreur est
+      // levee a l'execution, pas a la compilation des regles.
       allow create: if request.auth != null
                     && request.auth.uid == uid
                     && request.resource.data.plan == 'trial'
                     && request.resource.data.email == request.auth.token.email
                     && request.resource.data.machines.size() == 0
                     && request.resource.data.expiry_utc
-                         <= request.time.seconds + (16 * 86400);
+                         <= request.time.toMillis() / 1000 + (16 * 86400);
 
       // Mise a jour LIMITEE a ce que le client ecrit vraiment
       // (firebase_client.py : add_machine / remove_machine / newsletter+lang).

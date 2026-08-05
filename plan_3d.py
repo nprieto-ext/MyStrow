@@ -1411,7 +1411,7 @@ class _TrussPanel(QWidget):
         self._build()
 
     def _build(self):
-        title = QLabel("Configuration Truss")
+        title = QLabel(tr("p3d_truss_config"))
         title.setObjectName("title")
         title.setAlignment(Qt.AlignCenter)
 
@@ -1489,7 +1489,7 @@ class Plan3DWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
-        self.setWindowTitle("Plan de feu 3D")
+        self.setWindowTitle(tr("p3d_title"))
         self.resize(900, 580)
         self.setStyleSheet("background:#0d0d14; QToolBar { background:#12121e; border:none; spacing:4px; padding:3px 8px; }")
         self._canvas = _Canvas3D()
@@ -1517,7 +1517,7 @@ class Plan3DWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
 
-        self._btn_truss = QPushButton("Truss")
+        self._btn_truss = QPushButton(tr("p3d_truss"))
         self._btn_truss.setCheckable(True)
         self._btn_truss.setStyleSheet(self._TB_BTN)
         self._btn_truss.clicked.connect(self._toggle_truss_panel)
@@ -1531,7 +1531,7 @@ class Plan3DWindow(QMainWindow):
         self._amb_slider.setRange(5, 80)
         self._amb_slider.setValue(18)
         self._amb_slider.setFixedWidth(110)
-        self._amb_slider.setToolTip("Ambiance (5 = nuit noire  |  80 = plein jour)")
+        self._amb_slider.setToolTip(tr("p3d_ambiance"))
         self._amb_slider.setStyleSheet(
             "QSlider::groove:horizontal { height:4px; background:#333355; border-radius:2px; }"
             "QSlider::handle:horizontal { width:12px; height:12px; margin:-4px 0;"
@@ -1676,7 +1676,7 @@ class Plan3DWindow(QMainWindow):
             QMenu::item:disabled { color:#666688; }
         """)
 
-        title = menu.addAction(f"  {name}  —  Moving Head")
+        title = menu.addAction(tr("p3d_menu_title", name=name))
         title.setEnabled(False)
         menu.addSeparator()
 
@@ -1716,7 +1716,7 @@ class Plan3DWindow(QMainWindow):
         menu.addAction(_slider_action("UV",          'uv'))
         menu.addSeparator()
 
-        a_close = menu.addAction("✕  Fermer")
+        a_close = menu.addAction(tr("p3d_close"))
         a_close.triggered.connect(menu.close)
 
         menu.exec(global_pos)

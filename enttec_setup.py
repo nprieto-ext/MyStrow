@@ -215,7 +215,7 @@ class DmxSetupDialog(QDialog):
         self._connect_timer = None
         self._connect_timed_out = False
         self._connect_name = ""
-        self.setWindowTitle("Sortie DMX — Configuration")
+        self.setWindowTitle(tr("ent_title"))
         self.setFixedSize(680, 560)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
@@ -248,7 +248,7 @@ class DmxSetupDialog(QDialog):
         hdr.setStyleSheet("background: #0f0f0f;")
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(20, 0, 20, 0)
-        lbl = QLabel("Sortie DMX — Configuration")
+        lbl = QLabel(tr("ent_title"))
         lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
         lbl.setStyleSheet("color: #00d4ff;")
         hl.addWidget(lbl)
@@ -379,7 +379,7 @@ class DmxSetupDialog(QDialog):
         self.btn_diag.clicked.connect(self._run_diag)
         btn_row.addWidget(self.btn_diag)
 
-        self.btn_test100 = QPushButton("💡  Test 100%")
+        self.btn_test100 = QPushButton(tr("ent_test_full"))
         self.btn_test100.setFixedSize(110, 28)
         self.btn_test100.setStyleSheet(
             "QPushButton { background: #2a1e00; color: #ffaa00; border: 1px solid #ffaa00;"
@@ -392,12 +392,10 @@ class DmxSetupDialog(QDialog):
 
         # Balayage RTS/DTR : sert quand le boîtier passif reste muet alors que
         # tout le diagnostic est vert (émetteur RS485 inhibé — cf. artnet_dmx).
-        self.btn_lines = QPushButton("🔌  Test RTS/DTR")
+        self.btn_lines = QPushButton(tr("ent_test_rtsdtr"))
         self.btn_lines.setFixedSize(120, 28)
         self.btn_lines.setToolTip(
-            "Boîtier Open DMX muet alors que le diagnostic est vert ?\n"
-            "Ce test envoie 4 s de DMX plein feu pour chacune des 4 positions\n"
-            "possibles des lignes RTS/DTR, puis mémorise celle qui a fonctionné."
+            tr("ent_rtsdtr_intro")
         )
         self.btn_lines.setStyleSheet(
             "QPushButton { background: #241a2e; color: #c07bff; border: 1px solid #c07bff;"
@@ -434,7 +432,7 @@ class DmxSetupDialog(QDialog):
         btn_copy.clicked.connect(self._copy_report)
         copy_row.addWidget(btn_copy)
 
-        btn_send = QPushButton("✉️  Envoyer au support")
+        btn_send = QPushButton(tr("ent_send_support"))
         btn_send.setFixedHeight(22)
         btn_send.setStyleSheet(
             "QPushButton { background: #1a1a1a; color: #555; border: 1px solid #2a2a2a;"
@@ -453,7 +451,7 @@ class DmxSetupDialog(QDialog):
 
         row3 = QHBoxLayout()
         row3.setContentsMargins(26, 0, 0, 0)
-        self.btn_connect = QPushButton("Connecter")
+        self.btn_connect = QPushButton(tr("ent_connect"))
         self.btn_connect.setFixedSize(100, 32)
         self.btn_connect.setStyleSheet(
             "QPushButton { background: #1e4a1e; color: #4CAF50; border: 1px solid #4CAF50;"
@@ -473,7 +471,7 @@ class DmxSetupDialog(QDialog):
         # Fermer
         footer = QHBoxLayout()
         footer.addStretch()
-        btn_close = QPushButton("Fermer")
+        btn_close = QPushButton(tr("ent_close"))
         btn_close.setFixedHeight(28)
         btn_close.setStyleSheet(
             "QPushButton { background: #1e1e1e; color: #777; border: 1px solid #2a2a2a;"
@@ -512,7 +510,7 @@ class DmxSetupDialog(QDialog):
         lay.setSpacing(5)
 
         row = QHBoxLayout()
-        lbl = QLabel("Port COM :")
+        lbl = QLabel(tr("ent_com_port"))
         lbl.setFont(QFont("Segoe UI", 10))
         lbl.setFixedWidth(72)
         row.addWidget(lbl)
@@ -564,7 +562,7 @@ class DmxSetupDialog(QDialog):
     def _refresh_ports(self):
         self.port_combo.clear()
         if not SERIAL_AVAILABLE:
-            self.port_combo.addItem("pyserial non installé")
+            self.port_combo.addItem(tr("ent_no_pyserial"))
             self.lbl_port_hint.setText("pip install pyserial")
             return
 
@@ -578,10 +576,10 @@ class DmxSetupDialog(QDialog):
             self.port_combo.addItem(f"{p.device}  —  {p.description}", userData=p.device)
 
         if not ports:
-            self.port_combo.addItem("Aucun port détecté")
+            self.port_combo.addItem(tr("ent_no_port"))
             self.lbl_port_hint.setText(tr("es2_plug_then"))
         elif enttec:
-            self.lbl_port_hint.setText(f"{len(enttec)} boîtier(s) FTDI détecté(s) ★")
+            self.lbl_port_hint.setText(tr("ent_n_ftdi", a0=len(enttec)))
         else:
             self.lbl_port_hint.setText(tr("es2_manual_port"))
 
@@ -737,18 +735,17 @@ class DmxSetupDialog(QDialog):
 
         def _ask():
             box = QMessageBox(self)
-            box.setWindowTitle("Test RTS/DTR")
+            box.setWindowTitle(tr("ent_rtsdtr"))
             box.setIcon(QMessageBox.Question)
             box.setText(tr("es2_which_seq"))
             box.setInformativeText(
-                "Le réglage correspondant sera mémorisé et appliqué à chaque "
-                "connexion de ce boîtier."
+                tr("ent_rtsdtr_saved")
             )
             buttons = {}
             for i, mode in enumerate(modes):
                 buttons[box.addButton(f"{i + 1} — {SERIAL_LINES_LABELS[mode]}",
                                       QMessageBox.AcceptRole)] = mode
-            btn_none = box.addButton("Aucune", QMessageBox.RejectRole)
+            btn_none = box.addButton(tr("ent_none"), QMessageBox.RejectRole)
             box.exec()
             _cleanup(buttons.get(box.clickedButton()) if box.clickedButton() is not btn_none else None)
 

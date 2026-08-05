@@ -612,7 +612,8 @@ class ActivationDialog(QDialog):
         # Lien vers la page newsletter du site (inscription gérée côté web,
         # comme le menu « Communauté → Newsletter »).
         self._newsletter_link = QLabel(
-            tr("lu_f_newsletter", NEWSLETTER_URL=NEWSLETTER_URL, a0=tr('newsletter_subscribe'))
+            f'<a href="{NEWSLETTER_URL}" style="color:#00d4ff; '
+            f'text-decoration:none;">✉️&nbsp;&nbsp;{tr("newsletter_subscribe")} →</a>'
         )
         self._newsletter_link.setFont(QFont("Segoe UI", 10))
         self._newsletter_link.setStyleSheet("background: transparent;")
@@ -816,7 +817,7 @@ class ActivationDialog(QDialog):
             name_lbl.setStyleSheet("color:#fff;background:transparent;border:none;")
             h_row.addWidget(name_lbl)
             h_row.addStretch()
-            pop_lbl = QLabel(tr("lu_popular"))
+            pop_lbl = QLabel("POPULAIRE")
             pop_lbl.setFont(QFont("Segoe UI", 6, QFont.Bold))
             pop_lbl.setStyleSheet(f"color:#000;background:{ACCENT};border:none;border-radius:3px;padding:2px 5px;")
             h_row.addWidget(pop_lbl)
@@ -824,8 +825,8 @@ class ActivationDialog(QDialog):
 
             # Toggle Mensuel / Annuel
             tog_row = QHBoxLayout(); tog_row.setSpacing(0); tog_row.addStretch()
-            btn_m = QPushButton(tr("lu_monthly"))
-            btn_a = QPushButton(tr("lu_yearly"))
+            btn_m = QPushButton("Mensuel")
+            btn_a = QPushButton("Annuel")
             for _b in (btn_m, btn_a):
                 _b.setFixedHeight(20)
                 _b.setCursor(QCursor(Qt.PointingHandCursor))
@@ -848,7 +849,7 @@ class ActivationDialog(QDialog):
             price_lbl.setStyleSheet(f"color:{ACCENT};background:transparent;border:none;")
             cl.addWidget(price_lbl)
 
-            billing_lbl = QLabel(tr("lu_incl_tax_month"))
+            billing_lbl = QLabel("TTC / mois")
             billing_lbl.setFont(QFont("Segoe UI", 8))
             billing_lbl.setStyleSheet("color:#555;background:transparent;border:none;")
             cl.addWidget(billing_lbl)
@@ -881,16 +882,13 @@ class ActivationDialog(QDialog):
                 _annual[0] = annual
                 if annual:
                     price_lbl.setText("11,99 €")
-                    # Le prix reste un littéral UNIQUE ici : le recopier dans les
-                    # 3 langues du dictionnaire ferait 3 endroits de plus à tenir
-                    # à jour à chaque changement de tarif.
-                    billing_lbl.setText(tr("lu_billed_yearly", price="143,86 €"))
+                    billing_lbl.setText("TTC / mois · facturé 143,86 €/an")
                     saving_badge.show()
                     btn_m.setStyleSheet(_S_OFF("4px 0 0 4px"))
                     btn_a.setStyleSheet(_S_ON("0 4px 4px 0"))
                 else:
                     price_lbl.setText("23,99 €")
-                    billing_lbl.setText(tr("lu_incl_tax_month"))
+                    billing_lbl.setText("TTC / mois")
                     saving_badge.hide()
                     btn_m.setStyleSheet(_S_ON("4px 0 0 4px"))
                     btn_a.setStyleSheet(_S_OFF("0 4px 4px 0"))

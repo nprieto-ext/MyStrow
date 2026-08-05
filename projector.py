@@ -68,6 +68,11 @@ class Projector:
         # Puissance du faisceau dans le plan 3D, en % (100 = rendu d'origine).
         # Purement visuel : n'entre jamais dans les niveaux DMX envoyés.
         self.beam_gain    = 100.0
+        # Ouverture du faisceau dans le plan 3D, en % (100 = rendu d'origine).
+        # Permet de resserrer un beam ou d'élargir un wash pour coller à
+        # l'optique réelle de l'appareil. Purement visuel lui aussi : le canal
+        # Zoom DMX, lui, reste piloté par `zoom` et sort bien en DMX.
+        self.beam_angle   = 100.0
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

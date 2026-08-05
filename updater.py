@@ -31,6 +31,7 @@ from PySide6.QtGui import (
 
 from core import VERSION, resource_path
 from i18n import get_language, set_language, tr
+from i18n import tr
 
 # === SSL ===
 def _make_ssl_context():
@@ -1258,7 +1259,7 @@ class GearDialog(QDialog):
         # ── Bouton fermer (en haut à droite) ──────────────────────────────────
         top_bar = QHBoxLayout()
         top_bar.addStretch()
-        btn_close_top = QPushButton("✕  Fermer")
+        btn_close_top = QPushButton(tr("upd_close"))
         btn_close_top.setFixedHeight(28)
         btn_close_top.setCursor(Qt.PointingHandCursor)
         btn_close_top.setStyleSheet("""
@@ -1347,7 +1348,7 @@ class GearDialog(QDialog):
             ctrl_row.addWidget(card)
 
             if idx == 0:
-                ou = QLabel("OU")
+                ou = QLabel(tr("upd_or"))
                 ou.setFont(QFont("Segoe UI", 12, QFont.Black))
                 ou.setStyleSheet(
                     "color: #E2CE16; background: rgba(226,206,22,0.10);"
@@ -1416,7 +1417,7 @@ class GearDialog(QDialog):
             dmx_row.addWidget(card)
 
             if idx == 0:
-                ou = QLabel("OU")
+                ou = QLabel(tr("upd_or"))
                 ou.setFont(QFont("Segoe UI", 12, QFont.Black))
                 ou.setStyleSheet(
                     "color: #E2CE16; background: rgba(226,206,22,0.10);"
@@ -1501,8 +1502,7 @@ class GearDialog(QDialog):
 
         # ── Note technique ────────────────────────────────────────────────────
         note_tech = QLabel(
-            "💡  MyStrow envoie en ArtNet UDP vers 2.0.0.15:6454 — "
-            "un Node ArtNet est recommandé en production (aucun driver, faible latence)."
+            tr("upd_artnet_hint")
         )
         note_tech.setFont(QFont("Segoe UI", 7))
         note_tech.setStyleSheet("color: #333;")
