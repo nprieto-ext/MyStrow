@@ -523,10 +523,43 @@ def _watch_github_actions(version):
             if conclusion == "success":
                 print(f"✅  Release v{version} créée avec succès !")
                 print(f"    https://github.com/{GITHUB_REPO}/releases/tag/{tag}")
+                return True
             else:
                 print(f"❌  Build échoué (conclusion: {conclusion})")
                 print(f"    https://github.com/{GITHUB_REPO}/actions/runs/{run_id}")
-            break
+                return False
+
+
+# ------------------------------------------------------------------
+# DISCORD
+# ------------------------------------------------------------------
+
+def _notify_discord(version):
+    """Met a jour le canal #telechargement_MyStrow apres une release reussie.
+
+    Volontairement non bloquant : un probleme de reseau ou un webhook revoque
+    ne doit jamais faire echouer une release deja publiee sur GitHub.
+    """
+    script = BASE_DIR / "tools" / "discord_release.py"
+    if not script.exists():
+        return
+
+    print("\n---------- DISCORD ----------")
+    res = subprocess.run([sys.executable, str(script), "--latest"])
+    if res.returncode != 0:
+        print("⚠️  Mise à jour Discord échouée — le canal garde l'ancienne version.")
+        print(f"    Relance à la main : python tools/discord_release.py --latest")
+        return
+
+    # L'annonce notifie tous les membres : elle reste un choix explicite,
+    # pour ne pas spammer le serveur a chaque correctif.
+    rep = input("\nAnnoncer aussi cette version dans le canal ? [o/N] : ").strip().lower()
+    if rep in ("o", "oui", "y", "yes"):
+        notes = input("Quoi de neuf (vide = juste les liens) : ").strip()
+        cmd = [sys.executable, str(script), "--announce"]
+        if notes:
+            cmd += ["--notes", notes]
+        subprocess.run(cmd)
 
 
 # ------------------------------------------------------------------
@@ -573,7 +606,10 @@ def main():
         run("git push origin main")
         run(f"git push origin v{new_version}")
         print(f"\n========== TAG v{new_version} POUSSE ==========")
-        _watch_github_actions(new_version)
+        if _watch_github_actions(new_version):
+            # Uniquement si le build a reussi : les liens de telechargement
+            # pointent vers releases/latest, qui n'existe pas si la CI a echoue.
+            _notify_discord(new_version)
 
 
 if __name__ == "__main__":
