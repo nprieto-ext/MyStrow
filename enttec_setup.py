@@ -60,12 +60,60 @@ def _d2xx_has_device():
         return False
 
 
+# Préfixe des entrées « puce FTDI » de la liste des ports : elles ne désignent
+# pas un port COM mais un numéro de série FTDI, adressé par le driver D2XX.
+D2XX_PREFIX = "D2XX:"
+
+
+def d2xx_devices():
+    """Liste les puces FTDI visibles par le driver D2XX -> [(index, serial, description)].
+
+    Une puce dont le port COM/VCP n'existe pas — pilote VCP décoché dans le
+    gestionnaire de périphériques, ou puce DÉJÀ OUVERTE en D2XX par un autre
+    process (QLC+, une instance de MyStrow restée en fond…) — ne figure PAS
+    dans `comports()`. C'est la seule façon de la voir, et sans ça l'assistant
+    affiche « aucun port » alors que le boîtier est bien branché."""
+    if not FTD2XX_AVAILABLE or ftd2xx is None:
+        return []
+    try:
+        serials = ftd2xx.listDevices() or []
+    except Exception:
+        return []
+    out = []
+    for i, sn in enumerate(serials):
+        sn_s = sn.decode(errors="ignore") if isinstance(sn, bytes) else str(sn or "")
+        desc = ""
+        try:
+            info = ftd2xx.getDeviceInfoDetail(i) or {}
+            raw = info.get("description", b"")
+            desc = raw.decode(errors="ignore") if isinstance(raw, bytes) else str(raw or "")
+        except Exception:
+            pass
+        out.append((i, sn_s.strip(), desc.strip()))
+    return out
+
+
+def _serials_match(a, b):
+    """Egalite stricte ou prefixe (suffixe d'interface FTDI : BG04EMMJ / BG04EMMJA).
+    Meme regle que `ArtNetDMX._resolve_d2xx_index`, pour que la liste et le
+    moteur designent la meme puce."""
+    a = (a or "").strip()
+    b = (b or "").strip()
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b) or b.startswith(a)
+
+
 def resolve_usb_transport(port_device):
     """Décide du transport pour un boîtier USB-DMX donné.
 
     Boîtier FTDI (ENTTEC Open DMX, DMXKing…) + ftd2xx dispo → D2XX (fiable,
     comme QLC+). Sinon (clone CH340/CP210x, ou ftd2xx absent) → série VCP.
     Retourne (transport, ftdi_serial)."""
+    # Entrée « puce FTDI » : il n'y a aucun port COM derrière, le numéro de
+    # série suffit à ouvrir la puce en D2XX.
+    if port_device and str(port_device).startswith(D2XX_PREFIX):
+        return TRANSPORT_ENTTEC_D2XX, (str(port_device)[len(D2XX_PREFIX):].strip() or None)
     present, is_ftdi, serial_no = _port_info(port_device)
     if FTD2XX_AVAILABLE:
         if is_ftdi:
@@ -575,19 +623,47 @@ class DmxSetupDialog(QDialog):
         for p in others:
             self.port_combo.addItem(f"{p.device}  —  {p.description}", userData=p.device)
 
-        if not ports:
+        # Puces FTDI vues UNIQUEMENT par le D2XX (aucun port COM en face) :
+        # sans elles, un Open DMX dont le VCP n'est pas chargé — ou dont la puce
+        # est déjà ouverte par un autre process, ce qui fait disparaître le port
+        # COM de Windows — n'apparaissait nulle part dans l'assistant.
+        com_serials = [(getattr(p, 'serial_number', '') or '') for p in enttec]
+        d2xx_only = []
+        for idx, sn, desc in d2xx_devices():
+            if any(_serials_match(cs, sn) for cs in com_serials):
+                continue   # déjà listée via son port COM
+            label = f"FTDI {sn or idx}  ★  {desc or 'puce D2XX'}"
+            self.port_combo.addItem(label, userData=f"{D2XX_PREFIX}{sn}")
+            d2xx_only.append(sn)
+
+        if not ports and not d2xx_only:
             self.port_combo.addItem(tr("ent_no_port"))
             self.lbl_port_hint.setText(tr("es2_plug_then"))
+        elif d2xx_only:
+            self.lbl_port_hint.setText(tr("ent_d2xx_only", a0=len(d2xx_only)))
         elif enttec:
             self.lbl_port_hint.setText(tr("ent_n_ftdi", a0=len(enttec)))
         else:
             self.lbl_port_hint.setText(tr("es2_manual_port"))
 
+        # Restauration du choix enregistré. Le port COM d'abord ; s'il a disparu
+        # (puce passée en D2XX), on retrouve la même puce par son numéro de série.
+        idx = -1
         if self._dmx.com_port:
             for i in range(self.port_combo.count()):
                 if self.port_combo.itemData(i) == self._dmx.com_port:
-                    self.port_combo.setCurrentIndex(i)
+                    idx = i
                     break
+        if idx < 0:
+            sn_saved = getattr(self._dmx, 'ftdi_serial', '') or ''
+            for i in range(self.port_combo.count()):
+                data = str(self.port_combo.itemData(i) or "")
+                if data.startswith(D2XX_PREFIX) and _serials_match(
+                        data[len(D2XX_PREFIX):], sn_saved):
+                    idx = i
+                    break
+        if idx >= 0:
+            self.port_combo.setCurrentIndex(idx)
 
     # ── TEST 100% ───────────────────────────────────────────────────────────
 
@@ -1653,6 +1729,15 @@ class DmxSetupDialog(QDialog):
         port = self.port_combo.currentData()
         if not port:
             self._set_connect("Sélectionnez un port COM valide", error=True)
+            return
+
+        # Une interface « Pro » parle un protocole à paquets sur son port série :
+        # elle ne peut pas être pilotée par l'entrée « puce FTDI » (D2XX brut),
+        # qui n'existe que pour les boîtiers passifs type Open DMX.
+        if (str(port).startswith(D2XX_PREFIX)
+                and prod.get("transport") == TRANSPORT_ENTTEC_PRO):
+            self._set_connect("Interface « Pro » : activez le pilote VCP et "
+                              "choisissez son port COM", error=True)
             return
 
         self.btn_connect.setEnabled(False)

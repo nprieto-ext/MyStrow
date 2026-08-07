@@ -5002,6 +5002,10 @@ class Sequencer(QFrame):
 
         # Auto-stop: si tous les clips sont finis et qu'on depasse la fin du dernier clip
         if not active_clips and current_time > last_clip_end and last_clip_end > 0:
+            # Plus aucun clip Position : oublier la visée qu'il imposait AVANT de
+            # couper l'effet, sinon `stop_effect` y ramène les lyres et le
+            # prochain effet live tournerait autour d'une position périmée.
+            self.player_ui._timeline_pos_centers = {}
             self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
             if hasattr(self, 'timeline_playback_row'):
@@ -5117,12 +5121,9 @@ class Sequencer(QFrame):
         main_win.effect_brightness = 0
         main_win.effect_direction  = 1
         main_win.effect_hue        = 0
-        main_win.effect_saved_colors = {}
-        for p in main_win.projectors:
-            main_win.effect_saved_colors[id(p)] = (
-                p.base_color, p.color, p.level,
-                getattr(p, 'pan', 128), getattr(p, 'tilt', 128)
-            )
+        # Même capture que le live AKAI : c'est stop_effect() qui la restitue,
+        # et lui attend le tuple complet (roue de couleurs, gobo, zoom…).
+        main_win._snapshot_effect_state()
         import time as _time
         main_win.effect_t0 = _time.monotonic()
 

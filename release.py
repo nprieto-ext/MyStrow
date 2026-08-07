@@ -268,6 +268,10 @@ def build_local_installer(version):
         f"--collect-all sounddevice "
         f"--collect-all _sounddevice_data "
         f"--collect-all pyaudiowpatch "
+        # pygame = pilote de manette (pan/tilt au stick). collect-all embarque
+        # les binaires SDL2, sinon pygame._sdl2.controller casse dans l'exe.
+        f"--collect-all pygame "
+        f"--hidden-import=pygame._sdl2.controller "
         f"--hidden-import=numpy "
         f"--hidden-import=miniaudio "
         f"--hidden-import=node_connection "

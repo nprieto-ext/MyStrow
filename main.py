@@ -482,7 +482,22 @@ def main():
             # il reste celui du dernier matériel configuré, si bien qu'un
             # « Art-Net (réseau) » s'affichait encore sur une sortie USB.
             # Tout le détail part dans l'infobulle.
-            if transport in ("enttec", "enttec_pro", "enttec_d2xx"):
+            if transport == "enttec_d2xx":
+                # Boîtier piloté par le driver FTDI : il n'a pas forcément de
+                # port COM (le D2XX le masque), donc l'ouvrir en série pour
+                # tester sa présence répondait « hors ligne » sur une sortie
+                # parfaitement fonctionnelle. On interroge le D2XX.
+                sn = (cfg.get("ftdi_serial") or "").strip()
+                try:
+                    import ftd2xx as _f
+                    _devs = list(_f.listDevices() or [])
+                except Exception:
+                    _devs = []
+                _dmx_box[0] = bool(_devs)
+                _dmx_box[1] = (f"USB DMX · {sn or 'FTDI'}" if _devs
+                               else f"USB DMX · {tr('offline')}")
+                _dmx_box[2] = f"{product_name or 'USB DMX'} — FTDI {sn or '?'} (D2XX)"
+            elif transport in ("enttec", "enttec_pro"):
                 com = cfg.get("com_port")
                 if com:
                     try:

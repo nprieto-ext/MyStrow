@@ -73,6 +73,12 @@ class Projector:
         # l'optique réelle de l'appareil. Purement visuel lui aussi : le canal
         # Zoom DMX, lui, reste piloté par `zoom` et sort bien en DMX.
         self.beam_angle   = 100.0
+        # Taille du CORPS de l'appareil dans le plan 3D, en % (100 = modèle
+        # d'origine). Les modèles 3D sont dessinés à une taille moyenne : sur
+        # une scène étroite ils paraissent énormes, sur un grand plateau
+        # minuscules. Purement visuel — la position d'accroche, elle, ne bouge
+        # pas : seule la lentille suit le corps, et le faisceau part d'elle.
+        self.fixture_scale = 100.0
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

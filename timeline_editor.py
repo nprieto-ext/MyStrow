@@ -1961,6 +1961,10 @@ class LightTimelineEditor(QDialog):
                     self.main_window.stop_effect()
                 self._seq_clip_active  = None
                 self._eff_clips_active = {}
+            self._pos_clip_active = None
+            # L'aperçu ne tourne plus : la visée qu'imposait le clip Position ne
+            # doit plus servir de centre aux effets joués à la main ensuite.
+            self.main_window._timeline_pos_centers = {}
         else:
             # Repartir d'un état propre : sans ça l'aperçu démarre sur ce qui
             # traîne d'une édition manuelle au plan de feu 2D, et ne montre pas
@@ -2374,6 +2378,7 @@ class LightTimelineEditor(QDialog):
                 self.main_window.active_effect_config = {}
                 if hasattr(self.main_window, 'stop_effect'):
                     self.main_window.stop_effect()
+                self._pos_clip_active = None   # réarmer la piste Position
             self._seq_clip_active = new_seq_clip
             if new_seq_clip:
                 mem_ref = getattr(new_seq_clip, 'memory_ref', None)
@@ -2413,6 +2418,9 @@ class LightTimelineEditor(QDialog):
                 self.main_window.active_effect_config = {}
                 if hasattr(self.main_window, 'stop_effect'):
                     self.main_window.stop_effect()
+                # L'effet vient de rendre le pan/tilt : réarmer le clip Position
+                # pour qu'il repose sa visée (voir plus bas).
+                self._pos_clip_active = None
             else:
                 # Fusionner les couches de tous les clips actifs
                 merged_layers = []
@@ -2483,6 +2491,7 @@ class LightTimelineEditor(QDialog):
             self.main_window.active_effect_config = {}
             if hasattr(self.main_window, 'stop_effect'):
                 self.main_window.stop_effect()
+            self._pos_clip_active = None
 
         # ── Détecter le clip de position actif ───────────────────────────────
         pos_track = self.track_map.get("Position")
@@ -2499,32 +2508,22 @@ class LightTimelineEditor(QDialog):
         # position choisie dès qu'un effet tournait. Recalculé à chaque image.
         self.main_window._timeline_pos_centers = self._position_centers(new_pos_clip)
 
+        # Le clip Position se ré-applique au changement de clip ET à la fin d'un
+        # effet (`_pos_clip_active` remis à None par l'arrêt d'effet) : un effet
+        # Pan/Tilt superposé laisse la lyre là où sa dernière image l'a posée, et
+        # sans ce rappel elle ne revenait jamais à la position du clip.
         if new_pos_clip is not self._pos_clip_active:
             self._pos_clip_active = new_pos_clip
             if new_pos_clip is not None:
-                idx = getattr(new_pos_clip, 'position_preset_idx', None)
-                presets = getattr(self.main_window, 'position_presets', [])
-                if idx is not None and idx < len(presets):
-                    preset = presets[idx]
-                    lyres_cur = [p for p in self.main_window.projectors
-                                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
-                    lyre_by_name: dict = {}
-                    for p in lyres_cur:
-                        if p.name and p.name not in lyre_by_name:
-                            lyre_by_name[p.name] = p
-                    lyre_by_group: dict = {}
-                    for p in lyres_cur:
-                        lyre_by_group.setdefault(p.group, []).append(p)
-                    for i, proj_state in enumerate(preset.get("projectors", [])):
-                        p = lyres_cur[i] if i < len(lyres_cur) else None
-                        if p is None:
-                            p = lyre_by_name.get(proj_state.get("name"))
-                        if p is None:
-                            candidates = lyre_by_group.get(proj_state.get("group"), [])
-                            p = candidates[0] if candidates else None
-                        if p and hasattr(self.main_window, '_start_pan_tilt_transition'):
-                            self.main_window._start_pan_tilt_transition(
-                                p, proj_state.get("pan", 32768), proj_state.get("tilt", 32768), 500)
+                # Même appariement que le centre d'effet et que le rappel manuel
+                # (`position_preset_values`) : l'appariement par rang qui était
+                # codé ici donnait une visée différente sur la 2e lyre.
+                centers = self.main_window._timeline_pos_centers
+                if centers and hasattr(self.main_window, '_start_pan_tilt_transition'):
+                    for p in self.main_window.projectors:
+                        pt = centers.get(id(p))
+                        if pt is not None:
+                            self.main_window._start_pan_tilt_transition(p, pt[0], pt[1], 500)
 
         # ── Piste Gobo ────────────────────────────────────────────────────────
         # Appliqué à CHAQUE passage et non au seul changement de clip : un autre
@@ -2730,39 +2729,7 @@ class LightTimelineEditor(QDialog):
                         clip_data.get('intensity', 80)
                     )
 
-                    clip.fade_in_duration = clip_data.get('fade_in', 0)
-                    clip.fade_out_duration = clip_data.get('fade_out', 0)
-                    clip.xfade = clip_data.get('xfade', 0)
-                    clip.effect = clip_data.get('effect')
-                    clip.effect_speed = clip_data.get('effect_speed', 50)
-                    clip.effect_layers    = clip_data.get('effect_layers', [])
-                    clip.effect_play_mode = clip_data.get('effect_play_mode', 'loop')
-                    clip.effect_duration  = clip_data.get('effect_duration', 0)
-                    clip.effect_name         = clip_data.get('effect_name', '')
-                    clip.effect_type         = clip_data.get('effect_type', '')
-                    clip.effect_target_groups = clip_data.get('effect_target_groups', [])
-                    if clip_data.get('color2'):
-                        clip.color2 = QColor(clip_data['color2'])
-                    clip.pan_start      = clip_data.get('pan_start', 128)
-                    clip.tilt_start     = clip_data.get('tilt_start', 128)
-                    clip.pan_end        = clip_data.get('pan_end', 128)
-                    clip.tilt_end       = clip_data.get('tilt_end', 128)
-                    clip.move_effect    = clip_data.get('move_effect', None)
-                    clip.move_speed     = clip_data.get('move_speed', 0.5)
-                    clip.move_amplitude = clip_data.get('move_amplitude', 60)
-                    clip.strobe_speed   = clip_data.get('strobe_speed', 0)
-                    if clip_data.get('memory_ref'):
-                        clip.memory_ref   = tuple(clip_data['memory_ref'])
-                        clip.memory_label = clip_data.get('memory_label', '')
-                        if 'cue_index' in clip_data:
-                            clip.cue_index = clip_data['cue_index']
-                    if clip_data.get('position_preset_idx') is not None:
-                        clip.position_preset_idx  = clip_data['position_preset_idx']
-                        clip.position_preset_name = clip_data.get('position_preset_name', '')
-                    if clip_data.get('gobo_dmx') is not None:
-                        clip.gobo_dmx      = clip_data['gobo_dmx']
-                        clip.gobo_name     = clip_data.get('gobo_name', '')
-                        clip.gobo_rotation = clip_data.get('gobo_rotation', 0)
+                    self._apply_clip_dict(clip, clip_data)
 
             # Charger la forme d'onde depuis les donnees de sequence
             waveform = seq.get('waveform')
@@ -2799,12 +2766,15 @@ class LightTimelineEditor(QDialog):
             'xfade': getattr(clip, 'xfade', 0),
             'effect': getattr(clip, 'effect', None),
             'effect_speed': getattr(clip, 'effect_speed', 50),
-            'effect_layers': getattr(clip, 'effect_layers', []),
+            # Copies détachées : le dict sert aussi d'historique undo et de
+            # presse-papier — partager la liste vivante ferait muter le passé
+            # (et les clips collés) à chaque édition des couches.
+            'effect_layers': copy.deepcopy(getattr(clip, 'effect_layers', [])),
             'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
             'effect_duration': getattr(clip, 'effect_duration', 0),
             'effect_name': getattr(clip, 'effect_name', ''),
             'effect_type': getattr(clip, 'effect_type', ''),
-            'effect_target_groups': getattr(clip, 'effect_target_groups', []),
+            'effect_target_groups': list(getattr(clip, 'effect_target_groups', [])),
             'strobe_speed': getattr(clip, 'strobe_speed', 0),
         }
         if getattr(clip, 'color2', None):
@@ -2839,6 +2809,58 @@ class LightTimelineEditor(QDialog):
             })
         return d
 
+    @staticmethod
+    def _apply_clip_dict(clip, d: dict) -> None:
+        """Recopie sur `clip` tout ce que `_clip_to_dict` a écrit — LECTEUR unique.
+
+        Symétrique du writer. Les chemins qui reconstruisent un clip (chargement
+        .tui, import .lrec, undo/redo, copier-coller) avaient chacun leur copie
+        de cette liste, et celle du copier-coller n'avait jamais été mise à jour :
+        un bloc de position collé perdait `position_preset_idx` / `_name`, donc
+        son titre ET sa visée, et retombait en simple bloc couleur.
+
+        N'applique PAS start/duration/color/intensity : ils sont consommés à la
+        création du clip (add_clip), et le collage repositionne le clip.
+        """
+        if d.get('color2'):
+            clip.color2 = QColor(d['color2'])
+        clip.fade_in_duration  = d.get('fade_in', 0)
+        clip.fade_out_duration = d.get('fade_out', 0)
+        clip.xfade             = d.get('xfade', 0)
+        clip.effect            = d.get('effect')
+        clip.effect_speed      = d.get('effect_speed', 50)
+        # Copie profonde : sans elle, deux clips issus du même dict partagent la
+        # MÊME liste de couches — éditer l'un modifiait l'autre.
+        clip.effect_layers     = copy.deepcopy(d.get('effect_layers', []))
+        clip.effect_play_mode  = d.get('effect_play_mode', 'loop')
+        clip.effect_duration   = d.get('effect_duration', 0)
+        clip.effect_name       = d.get('effect_name', '')
+        clip.effect_type       = d.get('effect_type', '')
+        clip.effect_target_groups = list(d.get('effect_target_groups', []))
+        clip.strobe_speed      = d.get('strobe_speed', 0)
+        # Mouvement Pan/Tilt (lyres)
+        clip.pan_start      = d.get('pan_start', 128)
+        clip.tilt_start     = d.get('tilt_start', 128)
+        clip.pan_end        = d.get('pan_end', 128)
+        clip.tilt_end       = d.get('tilt_end', 128)
+        clip.move_effect    = d.get('move_effect', None)
+        clip.move_speed     = d.get('move_speed', 0.5)
+        clip.move_amplitude = d.get('move_amplitude', 60)
+        # Clip de séquence AKAI (mémoire)
+        if d.get('memory_ref'):
+            clip.memory_ref   = tuple(d['memory_ref'])
+            clip.memory_label = d.get('memory_label', '')
+            clip.cue_index    = d.get('cue_index', None)
+        # Clip de position lyre
+        if d.get('position_preset_idx') is not None:
+            clip.position_preset_idx  = d['position_preset_idx']
+            clip.position_preset_name = d.get('position_preset_name', '')
+        # Clip de gobo
+        if d.get('gobo_dmx') is not None:
+            clip.gobo_dmx      = d['gobo_dmx']
+            clip.gobo_name     = d.get('gobo_name', '')
+            clip.gobo_rotation = d.get('gobo_rotation', 0)
+
     def _save_sequence_no_close(self):
         """Sauvegarde seq.sequences sans fermer l'éditeur (modif inline d'un clip)."""
         all_clips = [self._clip_to_dict(clip, track)
@@ -2867,7 +2889,12 @@ class LightTimelineEditor(QDialog):
         combo = self.main_window.seq._get_dmx_combo(self.media_row)
         if combo:
             if combo.findText("Play Lumiere") == -1:
-                combo.addItem(tr("tle_play_light"))
+                # CODE et non libellé traduit : le combo est un index de modes,
+                # le texte affiché vient du bouton. Avec tr(...) ici, le
+                # setCurrentText qui suit ne trouvait rien hors français — la
+                # ligne restait sur « Manuel » et la séquence qu'on venait
+                # d'enregistrer ne jouait jamais.
+                combo.addItem("Play Lumiere")
             combo.blockSignals(True)
             combo.setCurrentText("Play Lumiere")
             combo.blockSignals(False)
@@ -2969,39 +2996,11 @@ class LightTimelineEditor(QDialog):
                 color,
                 clip_data.get('intensity', 80)
             )
-            clip.fade_in_duration  = clip_data.get('fade_in', 0)
-            clip.fade_out_duration = clip_data.get('fade_out', 0)
-            clip.xfade             = clip_data.get('xfade', 0)
-            clip.effect            = clip_data.get('effect')
-            clip.effect_speed      = clip_data.get('effect_speed', 50)
-            clip.effect_layers     = clip_data.get('effect_layers', [])
-            clip.effect_play_mode  = clip_data.get('effect_play_mode', 'loop')
-            clip.effect_duration   = clip_data.get('effect_duration', 0)
-            clip.effect_name       = clip_data.get('effect_name', '')
-            clip.effect_type       = clip_data.get('effect_type', '')
             # ⚠️ effect_target_groups était OUBLIÉ ici → les groupes cible des
             # effets étaient perdus à l'import, et tous les effets retombaient sur
             # « tous les groupes » (couleur qui déborde sur les lyres, etc.).
-            clip.effect_target_groups = clip_data.get('effect_target_groups', [])
-            clip.strobe_speed      = clip_data.get('strobe_speed', 0)
-            if clip_data.get('color2'):
-                clip.color2 = QColor(clip_data['color2'])
-            # Clip de séquence mémoire / position lyre / mouvement pan-tilt
-            if clip_data.get('memory_ref'):
-                clip.memory_ref   = tuple(clip_data['memory_ref'])
-                clip.memory_label = clip_data.get('memory_label', '')
-                clip.cue_index    = clip_data.get('cue_index')
-            if clip_data.get('position_preset_idx') is not None:
-                clip.position_preset_idx  = clip_data['position_preset_idx']
-                clip.position_preset_name = clip_data.get('position_preset_name', '')
-            if clip_data.get('gobo_dmx') is not None:
-                clip.gobo_dmx      = clip_data['gobo_dmx']
-                clip.gobo_name     = clip_data.get('gobo_name', '')
-                clip.gobo_rotation = clip_data.get('gobo_rotation', 0)
-            for _a in ('pan_start', 'tilt_start', 'pan_end', 'tilt_end',
-                       'move_effect', 'move_speed', 'move_amplitude'):
-                if _a in clip_data:
-                    setattr(clip, _a, clip_data[_a])
+            # C'est ce genre d'oubli que le lecteur unique supprime.
+            self._apply_clip_dict(clip, clip_data)
 
         for track in self.tracks:
             track.update()
@@ -3788,25 +3787,10 @@ class LightTimelineEditor(QDialog):
             for clip in track.selected_clips:
                 if min_start is None or clip.start_time < min_start:
                     min_start = clip.start_time
-                self.clipboard.append({
-                    'track': track.name,
-                    'start': clip.start_time,
-                    'duration': clip.duration,
-                    'color': clip.color.name(),
-                    'color2': clip.color2.name() if clip.color2 else None,
-                    'intensity': clip.intensity,
-                    'fade_in': clip.fade_in_duration,
-                    'fade_out': clip.fade_out_duration,
-                    'xfade': getattr(clip, 'xfade', 0),
-                    'effect': clip.effect,
-                    'effect_speed': clip.effect_speed,
-                    'effect_layers': getattr(clip, 'effect_layers', []),
-                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
-                    'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':         getattr(clip, 'effect_name', ''),
-                    'effect_type':         getattr(clip, 'effect_type', ''),
-                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
-                })
+                # MÊME writer que la sauvegarde : la version locale d'avant
+                # oubliait position / mémoire / gobo / pan-tilt, et n'était
+                # jamais complétée quand un nouveau type de bloc arrivait.
+                self.clipboard.append(self._clip_to_dict(clip, track))
         # Stocker les offsets relatifs au premier clip
         if min_start is not None:
             for item in self.clipboard:
@@ -3836,20 +3820,10 @@ class LightTimelineEditor(QDialog):
             if not track:
                 continue
             start = paste_time + item.get('offset', 0)
-            clip = track.add_clip(start, item['duration'], QColor(item['color']), item['intensity'])
-            if item.get('color2'):
-                clip.color2 = QColor(item['color2'])
-            clip.fade_in_duration = item.get('fade_in', 0)
-            clip.fade_out_duration = item.get('fade_out', 0)
-            clip.xfade = item.get('xfade', 0)
-            clip.effect = item.get('effect')
-            clip.effect_speed = item.get('effect_speed', 50)
-            clip.effect_layers    = item.get('effect_layers', [])
-            clip.effect_play_mode = item.get('effect_play_mode', 'loop')
-            clip.effect_duration  = item.get('effect_duration', 0)
-            clip.effect_name         = item.get('effect_name', '')
-            clip.effect_type         = item.get('effect_type', '')
-            clip.effect_target_groups = item.get('effect_target_groups', [])
+            clip = track.add_clip(start, item.get('duration', 1000),
+                                  QColor(item.get('color', '#ffffff')),
+                                  item.get('intensity', 80))
+            self._apply_clip_dict(clip, item)
             track.selected_clips.append(clip)
             count += 1
 
@@ -3860,50 +3834,10 @@ class LightTimelineEditor(QDialog):
 
     def save_state(self):
         """Sauvegarde l'etat actuel pour undo"""
-        state = []
-        for track in self.tracks:
-            for clip in track.clips:
-                clip_data = {
-                    'track': track.name,
-                    'start': clip.start_time,
-                    'duration': clip.duration,
-                    'color': clip.color.name(),
-                    'color2': clip.color2.name() if clip.color2 else None,
-                    'intensity': clip.intensity,
-                    'fade_in': clip.fade_in_duration,
-                    'fade_out': clip.fade_out_duration,
-                    'xfade': getattr(clip, 'xfade', 0),
-                    'effect': clip.effect,
-                    'effect_speed': clip.effect_speed,
-                    'effect_layers': getattr(clip, 'effect_layers', []),
-                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
-                    'effect_duration':  getattr(clip, 'effect_duration', 0),
-                    'effect_name':         getattr(clip, 'effect_name', ''),
-                    'effect_type':         getattr(clip, 'effect_type', ''),
-                    'effect_target_groups': getattr(clip, 'effect_target_groups', []),
-                    # Pan/Tilt + mouvement (lyres)
-                    'pan_start':  getattr(clip, 'pan_start', 128),
-                    'tilt_start': getattr(clip, 'tilt_start', 128),
-                    'pan_end':    getattr(clip, 'pan_end', 128),
-                    'tilt_end':   getattr(clip, 'tilt_end', 128),
-                    'move_effect':    getattr(clip, 'move_effect', None),
-                    'move_speed':     getattr(clip, 'move_speed', 0.5),
-                    'move_amplitude': getattr(clip, 'move_amplitude', 60),
-                    # Stroboscope
-                    'strobe_speed': getattr(clip, 'strobe_speed', 0),
-                    # Mémoire AKAI (cue) — sinon l'undo la transforme en couleur neutre
-                    'memory_ref':   list(clip.memory_ref) if getattr(clip, 'memory_ref', None) else None,
-                    'memory_label': getattr(clip, 'memory_label', ''),
-                    'cue_index':    getattr(clip, 'cue_index', None),
-                    # Position lyre
-                    'position_preset_idx':  getattr(clip, 'position_preset_idx', None),
-                    'position_preset_name': getattr(clip, 'position_preset_name', ''),
-                    # Gobo
-                    'gobo_dmx':      getattr(clip, 'gobo_dmx', None),
-                    'gobo_name':     getattr(clip, 'gobo_name', ''),
-                    'gobo_rotation': getattr(clip, 'gobo_rotation', 0),
-                }
-                state.append(clip_data)
+        # Même writer que la sauvegarde et le copier-coller : un attribut oublié
+        # ici, et l'undo transformerait le bloc en couleur neutre.
+        state = [self._clip_to_dict(clip, track)
+                 for track in self.tracks for clip in track.clips]
 
         # Tronquer l'historique si on a fait undo puis nouvelle action
         self.history = self.history[:self.history_index + 1]
@@ -3933,42 +3867,7 @@ class LightTimelineEditor(QDialog):
                     color,
                     clip_data.get('intensity', 80)
                 )
-                if clip_data.get('color2'):
-                    clip.color2 = QColor(clip_data['color2'])
-                clip.fade_in_duration = clip_data.get('fade_in', 0)
-                clip.fade_out_duration = clip_data.get('fade_out', 0)
-                clip.xfade = clip_data.get('xfade', 0)
-                clip.effect = clip_data.get('effect')
-                clip.effect_speed = clip_data.get('effect_speed', 50)
-                clip.effect_layers    = clip_data.get('effect_layers', [])
-                clip.effect_play_mode = clip_data.get('effect_play_mode', 'loop')
-                clip.effect_duration  = clip_data.get('effect_duration', 0)
-                clip.effect_name      = clip_data.get('effect_name', '')
-                clip.effect_type      = clip_data.get('effect_type', '')
-                clip.effect_target_groups = clip_data.get('effect_target_groups', [])
-                # Pan/Tilt + mouvement (lyres)
-                clip.pan_start  = clip_data.get('pan_start', 128)
-                clip.tilt_start = clip_data.get('tilt_start', 128)
-                clip.pan_end    = clip_data.get('pan_end', 128)
-                clip.tilt_end   = clip_data.get('tilt_end', 128)
-                clip.move_effect    = clip_data.get('move_effect', None)
-                clip.move_speed     = clip_data.get('move_speed', 0.5)
-                clip.move_amplitude = clip_data.get('move_amplitude', 60)
-                # Stroboscope
-                clip.strobe_speed = clip_data.get('strobe_speed', 0)
-                # Mémoire AKAI (cue) — restaure l'identité du clip mémoire
-                if clip_data.get('memory_ref'):
-                    clip.memory_ref   = tuple(clip_data['memory_ref'])
-                    clip.memory_label = clip_data.get('memory_label', '')
-                    clip.cue_index    = clip_data.get('cue_index', None)
-                # Position lyre
-                if clip_data.get('position_preset_idx') is not None:
-                    clip.position_preset_idx  = clip_data['position_preset_idx']
-                    clip.position_preset_name = clip_data.get('position_preset_name', '')
-                if clip_data.get('gobo_dmx') is not None:
-                    clip.gobo_dmx      = clip_data['gobo_dmx']
-                    clip.gobo_name     = clip_data.get('gobo_name', '')
-                    clip.gobo_rotation = clip_data.get('gobo_rotation', 0)
+                self._apply_clip_dict(clip, clip_data)
 
         for track in self.tracks:
             track.update()

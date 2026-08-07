@@ -30,12 +30,43 @@ except ImportError:
     # Fallback si le backend multimedia n'est pas disponible (ex: Mac sans dylibs)
     QVideoWidget = None
 
-# === FILTRE FICHIERS MEDIA ===
-MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.aiff *.mp4 *.mov *.avi *.mkv *.wmv *.flv *.webm *.m4v *.mpg *.mpeg *.png *.jpg *.jpeg *.gif *.bmp *.svg *.webp *.tiff)"
+# === EXTENSIONS MEDIA ===
+# SOURCE UNIQUE. La liste était recopiée dans cinq filtres de fichiers qui ont
+# divergé avec le temps : un ALAC (.m4a) ou un AIFF (.aif) n'apparaissait pas
+# dans la moitié des dialogues, alors que le lecteur les décode très bien
+# (backend Qt/FFmpeg embarqué). L'utilisateur en concluait « format non
+# supporté » — il ne l'était que dans la boîte d'ouverture.
+# Toutes ces extensions ont été vérifiées : QMediaPlayer les charge et rend
+# leur durée correctement.
+AUDIO_EXTENSIONS = (
+    ".mp3", ".wav", ".flac", ".aac", ".m4a", ".m4b",
+    ".aif", ".aiff", ".aifc", ".caf",          # AIFF / Apple (ALAC en .m4a et .caf)
+    ".ogg", ".oga", ".opus", ".wma", ".wv",
+)
+VIDEO_EXTENSIONS = (
+    ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm",
+    ".m4v", ".mpg", ".mpeg",
+)
+IMAGE_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".tiff",
+)
+
+
+def _ext_filter(label, *groups):
+    """« Medias (*.mp3 *.wav …) » à partir des tuples d'extensions."""
+    exts = " ".join(f"*{e}" for group in groups for e in group)
+    return f"{label} ({exts})"
+
+
+# === FILTRES FICHIERS ===
+MEDIA_EXTENSIONS_FILTER = _ext_filter(
+    "Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS)
+# Cartouches et localisation de média : audio + vidéo, sans les images.
+AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.80"
+VERSION = "3.1.81"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -166,6 +197,27 @@ def resource_path(filename):
     return os.path.join(base, filename)
 
 
+def ffmpeg_exe():
+    """Chemin de l'exécutable ffmpeg.
+
+    Priorité au binaire EMBARQUÉ (bundlé dans l'exe via PyInstaller → transparent
+    pour l'utilisateur, aucune installation ni ffmpeg dans le PATH requis). Repli
+    sur « ffmpeg » du PATH (utile en dev ou si un ffmpeg système est présent).
+
+    Vit ici et non dans light_timeline : c'est le SEUL décodeur capable de lire
+    l'ALAC, l'AIFF ou l'Opus (miniaudio s'arrête à wav/mp3/flac/ogg), donc la
+    forme d'onde ET l'IA Lumière en dépendent toutes les deux.
+    """
+    name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    try:
+        p = resource_path(name)
+        if os.path.exists(p):
+            return p
+    except Exception:
+        pass
+    return "ffmpeg"
+
+
 def fmt_time(ms):
     """Formate un temps en ms : MM:SS, ou H:MM:SS au-delà d'une heure."""
     if ms <= 0:
@@ -180,11 +232,11 @@ def fmt_time(ms):
 def media_icon(path):
     """Retourne un emoji selon le type de fichier media"""
     ext = Path(path).suffix.lower()
-    if ext in [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".aiff"]:
+    if ext in AUDIO_EXTENSIONS:
         return "audio"
-    if ext in [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg"]:
+    if ext in VIDEO_EXTENSIONS:
         return "video"
-    if ext in [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".tiff"]:
+    if ext in IMAGE_EXTENSIONS:
         return "image"
     return "file"
 
@@ -581,9 +633,20 @@ class ComboSansMolette(QComboBox):
 # fluorescent, et l'ambre reconstitué en RVB donne un jaune sale à côté de la
 # vraie LED. Même logique que les curseurs du plan de feu : ces canaux ne sont
 # jamais dérivés du RVB (cf. artnet_dmx, Ambre/Orange pilotés au boost seul).
+#
+# Chaque bloc liste PLUSIEURS canaux candidats, par ordre de préférence : une
+# même LED physique n'a pas le même nom d'un patch à l'autre. La LED ambre d'un
+# par 6-en-1 (RVB + Blanc + Ambre + UV) s'appelle « Ambre » dans un profil
+# custom, mais « Orange » dans le profil intégré RGBWOUV — et l'import de
+# bibliothèque range aussi les emitters ambrés sous « Orange » quand leur teinte
+# déclarée penche vers #ff8800. Ne chercher que « Ambre » faisait échouer le
+# bloc sur ces fixtures : il retombait sur l'approximation RVB, et le moteur DMX
+# extrait alors min(R,V,B) vers le canal W — la LED ambre restait éteinte et
+# c'est la BLANCHE qui s'allumait (« l'ambre sort du blanc », remonté en 3.1.79,
+# la version qui a introduit ces blocs).
 SPECIAL_BLOCK_COLORS = {
-    (100,   0, 255): ("UV",    "uv"),            # « Black Light »
-    (255, 180,  30): ("Ambre", "amber_boost"),   # « Ambre »
+    (100,   0, 255): (("UV",    "uv"),),                                # « Black Light »
+    (255, 180,  30): (("Ambre", "amber_boost"), ("Orange", "orange_boost")),  # « Ambre »
 }
 
 # Teinte d'AFFICHAGE des canaux dédiés (plan de feu). Uniquement du rendu :
@@ -592,16 +655,21 @@ SPECIAL_BLOCK_COLORS = {
 SPECIAL_TINTS = {
     "uv":           (136,  68, 255),
     "amber_boost":  (255, 153,   0),
+    "orange_boost": (255, 136,   0),
 }
 
 
-def special_block_channel(color):
+def special_block_channel(color, profile=None):
     """(canal_du_profil, attribut_projecteur) si `color` est un bloc dédié.
 
     Reconnaissance par valeur RVB EXACTE. C'est ce qui fait marcher les shows
     déjà enregistrés : un bloc couleur n'est sérialisé que par sa couleur, il
     n'y a donc aucun drapeau à migrer dans les .tui/.lrec existants. Une teinte
     voisine choisie à la main (violet, orange…) reste du RVB normal.
+
+    `profile` : liste des canaux de la fixture. Le premier candidat qu'elle
+    possède gagne. Sans profil, on renvoie le candidat préféré (usage hors
+    fixture, comme l'extinction de tous les canaux dédiés).
     """
     if color is None:
         return None
@@ -609,7 +677,15 @@ def special_block_channel(color):
         key = (color.red(), color.green(), color.blue())
     except AttributeError:
         return None
-    return SPECIAL_BLOCK_COLORS.get(key)
+    candidats = SPECIAL_BLOCK_COLORS.get(key)
+    if not candidats:
+        return None
+    if profile is None:
+        return candidats[0]
+    for ch_name, attr in candidats:
+        if ch_name in profile:
+            return (ch_name, attr)
+    return None
 
 
 def apply_special_block(proj, color, intensity):
@@ -624,12 +700,10 @@ def apply_special_block(proj, color, intensity):
     passe DERRIÈRE le master (Dim = proj.level dans le moteur DMX) — la mettre à
     255 avec un dimmer fermé ne donnerait rien.
     """
-    spec = special_block_channel(color)
+    spec = special_block_channel(color, getattr(proj, 'dmx_profile', None) or [])
     if not spec:
         return False
-    ch_name, attr = spec
-    if ch_name not in (getattr(proj, 'dmx_profile', None) or []):
-        return False
+    _ch_name, attr = spec
     lvl = max(0, min(100, int(intensity)))
     setattr(proj, attr, int(255 * lvl / 100.0))
     proj.level      = lvl
@@ -644,11 +718,14 @@ def clear_special_blocks(proj):
     À appeler quand on pose une couleur NORMALE par un chemin exclusif (boutons
     couleur de la fenêtre EXT, raccourcis clavier) : ces boutons se remplacent
     l'un l'autre, et sans ça « BLACK LIGHT puis ROUGE » sortait rouge **avec**
-    l'UV encore allumé. Ne touche pas aux boosts Blanc/Orange, qui ne sont
-    réglables qu'aux curseurs et restent additifs.
+    l'UV encore allumé. Couvre TOUS les canaux qu'un bloc peut viser, y compris
+    `orange_boost` — sur les profils où la LED ambre s'appelle « Orange », c'est
+    lui que le bloc Ambre a allumé. Le boost Blanc n'est jamais touché : aucun
+    bloc ne le pilote, il reste purement additif.
     """
-    for _ch, attr in SPECIAL_BLOCK_COLORS.values():
-        setattr(proj, attr, 0)
+    for candidats in SPECIAL_BLOCK_COLORS.values():
+        for _ch, attr in candidats:
+            setattr(proj, attr, 0)
 
 
 def special_tint_color(proj):
@@ -700,6 +777,39 @@ def guide_banner(texte: str, url: str) -> QLabel:
     lbl.setOpenExternalLinks(True)
     lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     lbl.setFixedHeight(GUIDE_BANNER_HEIGHT)
+    return lbl
+
+
+# Variante encadrée verte, à poser EN HAUT de la fenêtre. Le bandeau discret
+# ci-dessus se fait oublier — précisément ce qu'on ne veut pas quand le réglage
+# se joue pour moitié dans un AUTRE logiciel (le node DMX, OBS, vMix) et que
+# rien dans la fenêtre ne peut le montrer. En pied de fenêtre il passait en
+# prime sous la barre des tâches sur certaines configurations.
+GUIDE_ENCART_BG     = "#161f16"
+GUIDE_ENCART_BORDER = "#2a3a2a"
+GUIDE_ENCART_FG     = "#888"
+GUIDE_ENCART_LINK   = "#44cc88"
+
+
+def guide_banner_encart(texte: str, url: str, lien: str = "Consulter le guide →") -> QLabel:
+    """Encart vert « 💡 <texte>  <lien> », centré, à placer en tête de fenêtre.
+
+    `texte` est l'accroche seule ; l'ampoule et le libellé du lien sont ajoutés
+    ici pour que les fenêtres qui renvoient vers le site restent identiques.
+    """
+    lbl = QLabel(
+        f'💡  {texte}  '
+        f'<a href="{url}" style="color:{GUIDE_ENCART_LINK};'
+        f'text-decoration:underline;">{lien}</a>'
+    )
+    lbl.setAlignment(Qt.AlignCenter)
+    lbl.setWordWrap(True)
+    lbl.setOpenExternalLinks(True)
+    lbl.setStyleSheet(
+        f"color:{GUIDE_ENCART_FG}; font-size:11px; background:{GUIDE_ENCART_BG};"
+        f" border:1px solid {GUIDE_ENCART_BORDER}; border-radius:5px;"
+        f" padding:5px 10px;"
+    )
     return lbl
 
 

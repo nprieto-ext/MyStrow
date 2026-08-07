@@ -25,6 +25,9 @@ from i18n import tr
 
 TRUSS_Y   = 7.0
 _HTML     = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'plan_3d_web.html'
+# Décors 3D livrés avec l'application. Même résolution que _HTML : en EXE, tout
+# est déplié dans le dossier temporaire de PyInstaller (_MEIPASS).
+_DOSSIER_SCENES = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'scenes3d'
 
 _SCENE_PRESETS = {
     'vide': {
@@ -32,6 +35,17 @@ _SCENE_PRESETS = {
         # modèle importé (GLTF/GLB) — sinon le rig du preset reste dessous.
         'label': 'Aucun décor',
         'trusses': [],
+    },
+    # ── Décors livrés en modèle 3D ────────────────────────────────────────
+    # `glb` = fichier du dossier scenes3d/, pousse dans la vue par
+    # `_apply_preset`. Ces scenes n'ont AUCUN truss : le modele apporte sa
+    # propre structure, en dessiner un second le ferait flotter au travers.
+    # Les projecteurs qui accompagnaient le modele d'origine ont ete retires :
+    # le rig, c'est le patch de l'utilisateur qui le pose, pas le decor.
+    'concert_glb': {
+        'label': 'Scène de concert',
+        'trusses': [],
+        'glb': 'concert_stage.glb',
     },
     'live': {
         'label': 'Live',
@@ -77,13 +91,6 @@ _SCENE_PRESETS = {
             {'label': 'Avant',   'enabled': True, 'height': 10.0, 'z': -5.0, 'x_l': -11.0, 'x_r': 11.0},
             {'label': 'Milieu',  'enabled': True, 'height':  9.5, 'z':  0.5, 'x_l': -10.0, 'x_r': 10.0},
             {'label': 'Arrière', 'enabled': True, 'height':  9.0, 'z':  6.0, 'x_l': -10.0, 'x_r': 10.0},
-        ],
-    },
-    'sono': {
-        'label': 'Sono Mobile',
-        'trusses': [
-            {'label': 'Truss face',    'enabled': True, 'height': 3.4, 'z': -0.5, 'x_l': -2.5, 'x_r': 2.5},
-            {'label': 'Truss arrière', 'enabled': True, 'height': 3.4, 'z': -3.5, 'x_l': -2.5, 'x_r': 2.5},
         ],
     },
     'totem': {
@@ -1257,9 +1264,9 @@ class Plan3DWebWindow(QMainWindow):
         "QScrollBar:vertical{background:#0d0d0d;width:6px;border:none;}"
         "QScrollBar::handle:vertical{background:#262626;border-radius:3px;}"
         # Ascenseur HORIZONTAL volontairement plus visible que le vertical :
-        # les 8 colonnes font 390 px dans un panneau qui descend à 160 px, donc
-        # RZ et Faisc. sont hors cadre — et rien ne le laissait deviner. Le
-        # débordement vertical, lui, se devine au nombre de lignes.
+        # les colonnes font 486 px dans un panneau qui descend à 160 px, donc
+        # RZ, Faisc. et Taille sont hors cadre — et rien ne le laissait
+        # deviner. Le débordement vertical, lui, se devine au nombre de lignes.
         "QScrollBar:horizontal{background:#111118;height:11px;border:none;margin:0;}"
         "QScrollBar::handle:horizontal{background:#3d3d5c;border-radius:5px;min-width:36px;}"
         "QScrollBar::handle:horizontal:hover{background:#00d4ff;}"
@@ -1292,14 +1299,14 @@ class Plan3DWebWindow(QMainWindow):
         # Tableau complet : position, orientation ET puissance de faisceau.
         # Tout se règle ici, ligne par ligne, sans passer par le jog pad qui ne
         # traite qu'un projecteur à la fois.
-        self._mini_tbl = QTableWidget(0, 9)
+        self._mini_tbl = QTableWidget(0, 10)
         self._mini_tbl.setHorizontalHeaderLabels(
-            ['Projecteur', 'X', 'Z', 'H', 'RX', 'RY', 'RZ', 'Faisc.', 'Angle'])
+            ['Projecteur', 'X', 'Z', 'H', 'RX', 'RY', 'RZ', 'Faisc.', 'Angle', 'Taille'])
         self._mini_tbl.setStyleSheet(self._MINI_TBL)
         self._mini_tbl.verticalHeader().setVisible(False)
         self._mini_tbl.setSelectionMode(QAbstractItemView.NoSelection)
         self._mini_tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        cw = [78, 44, 44, 44, 44, 44, 44, 48, 48]
+        cw = [78, 44, 44, 44, 44, 44, 44, 48, 48, 48]
         for i, w_ in enumerate(cw):
             self._mini_tbl.setColumnWidth(i, w_)
         self._mini_tbl.horizontalHeader().setStretchLastSection(False)
@@ -1314,7 +1321,11 @@ class Plan3DWebWindow(QMainWindow):
                 "Puissance du faisceau en 3D (%) — n'affecte pas la sortie DMX",
                 "Ouverture du faisceau en 3D (%) — 100 = rendu d'origine,\n"
                 "moins = faisceau plus serré. N'affecte pas la sortie DMX\n"
-                "(le canal Zoom, lui, reste piloté par le patch)")):
+                "(le canal Zoom, lui, reste piloté par le patch)",
+                "Taille du corps de l'appareil en 3D (%) — 100 = modèle d'origine.\n"
+                "À réduire pour que les projecteurs soient à l'échelle de\n"
+                "votre scène. Le point d'accroche ne bouge pas ; le faisceau\n"
+                "continue de partir de la lentille")):
             _h = self._mini_tbl.horizontalHeaderItem(_c)
             if _h is not None:
                 _h.setToolTip(_tip)
@@ -1345,6 +1356,7 @@ class Plan3DWebWindow(QMainWindow):
                 p.rot3d_x = 0.0;  p.rot3d_z = 0.0
                 p.beam_gain = 100.0
                 p.beam_angle = 100.0
+                p.fixture_scale = 100.0
         self._populate_mini(projs)
         self.refresh(projs)
         self._save_patch()
@@ -1362,6 +1374,7 @@ class Plan3DWebWindow(QMainWindow):
             6: 'rot3d_z',
             7: 'beam_gain',       # pourcentage : 100 = rendu d'origine
             8: 'beam_angle',      # pourcentage : 100 = rendu d'origine
+            9: 'fixture_scale',   # pourcentage : 100 = modèle d'origine
         }
         attr = attr_map.get(col)
         if attr is None:
@@ -1374,7 +1387,7 @@ class Plan3DWebWindow(QMainWindow):
         _key = (tuple(sorted(rows)), attr)
         if getattr(self, '_mini_undo_key', None) != _key:
             self._mini_undo_key = _key
-            _def = 100.0 if attr in ('beam_gain', 'beam_angle') else (
+            _def = 100.0 if attr in ('beam_gain', 'beam_angle', 'fixture_scale') else (
                 7.0 if attr == 'fixture_height' else 0.0)
             # Défaut explicite : l'attribut peut ne pas exister encore sur le
             # projecteur, et restaurer None le casserait au lieu de l'annuler.
@@ -1443,6 +1456,7 @@ class Plan3DWebWindow(QMainWindow):
                 getattr(p, 'rot3d_z',       0.0) or 0.0,
                 getattr(p, 'beam_gain',   100.0) if getattr(p, 'beam_gain', None) is not None else 100.0,
                 getattr(p, 'beam_angle',  100.0) if getattr(p, 'beam_angle', None) is not None else 100.0,
+                getattr(p, 'fixture_scale', 100.0) if getattr(p, 'fixture_scale', None) is not None else 100.0,
             ]
             specs = [
                 (-1200, 1200), (-800, 1000), (100, 1500),
@@ -1451,6 +1465,10 @@ class Plan3DWebWindow(QMainWindow):
                 # Minimum 10 et non 0 : à 0 le cône a un rayon nul, la géométrie
                 # dégénère et le faisceau disparaît au lieu de se resserrer.
                 (10, 200),
+                # Taille du corps : même plancher, un appareil à 0 % disparaît
+                # complètement de la scène et rien ne permettrait de le
+                # retrouver pour le regrandir.
+                (10, 300),
             ]
             _accent = ProjectorTableDialog._GRP_COLOR.get(
                 getattr(p, 'group', ''), '#00d4ff')
@@ -1814,7 +1832,7 @@ class Plan3DWebWindow(QMainWindow):
 
     _TBL_COL = {'pos_3d_x': 1, 'pos_3d_z': 2, 'fixture_height': 3,
                 'rot3d_x': 4, 'body_rotation': 5, 'rot3d_z': 6, 'beam_gain': 7,
-                'beam_angle': 8}
+                'beam_angle': 8, 'fixture_scale': 9}
     _TBL_CM  = ('pos_3d_x', 'pos_3d_z', 'fixture_height')
 
     def _tbl_sync(self, row, attr, value):
@@ -2103,12 +2121,10 @@ class Plan3DWebWindow(QMainWindow):
         lay.setSpacing(4)
 
         self._scene_btns = {}
-        for code, label in [
-            ('vide','Aucun décor'),
-            ('live','Live'), ('dj','DJ'), ('concert','Concert'), ('club','Club'),
-            ('festival','Festival'), ('arena','Grande scène'),
-            ('sono','Sono Mobile'), ('totem','Totems'),
-        ]:
+        # Liste construite depuis _SCENE_PRESETS, et non recopiee a la main :
+        # les deux etaient tenues separement, si bien qu'une scene ajoutee au
+        # dictionnaire n'apparaissait nulle part dans le panneau.
+        for code, label in [(c, p['label']) for c, p in _SCENE_PRESETS.items()]:
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(code == 'live')
@@ -2260,6 +2276,34 @@ class Plan3DWebWindow(QMainWindow):
         self._imported_path = ''
         self._save_patch()
 
+    def _push_scene_glb(self, preset: dict):
+        """Envoie (ou retire) le décor 3D livré avec une scène par défaut.
+
+        Toujours appelé, y compris pour les scènes sans modèle : c'est ce qui
+        retire le décor de la scène précédente. Sans cet appel systématique, la
+        scène de concert restait affichée sous le rig de la scène suivante.
+        Le décor importé à la main par l'utilisateur n'est pas concerné, il vit
+        dans un autre groupe.
+        """
+        nom = preset.get('glb')
+        if not nom:
+            self._js('if(window.clearSceneGLB)window.clearSceneGLB()')
+            return
+        chemin = _DOSSIER_SCENES / nom
+        try:
+            b64 = base64.b64encode(chemin.read_bytes()).decode('ascii')
+        except OSError as exc:
+            print(f"[3D] décor de scène introuvable ({chemin}) : {exc}")
+            self._js('if(window.clearSceneGLB)window.clearSceneGLB()')
+            return
+        self._js(f'if(window.loadSceneGLB)window.loadSceneGLB("{b64}")')
+
+    def _restore_scene_glb(self):
+        """Recharge le décor de la scène courante quand la page est prête."""
+        preset = _SCENE_PRESETS.get(getattr(self, '_scene_preset_code', ''), None)
+        if preset:
+            self._push_scene_glb(preset)
+
     def _restore_imported_model(self):
         """Recharge le décor importé mémorisé (appelé quand la page est prête).
 
@@ -2282,6 +2326,7 @@ class Plan3DWebWindow(QMainWindow):
         self._trusses = [t.copy() for t in preset['trusses']]
         self._js(f"window.setScenePreset('{code}')")
         self._js(f'if(window.setStageFloor)window.setStageFloor({str(code != "vide").lower()})')
+        self._push_scene_glb(preset)
         for k, btn in getattr(self, '_scene_btns', {}).items():
             btn.setChecked(k == code)
         self._btn_trusses.setChecked(False)
@@ -2356,6 +2401,9 @@ class Plan3DWebWindow(QMainWindow):
                      f'{str(self._scene_preset_code != "vide").lower()})')
             # Puis appliquer les trusses réellement configurés (peuvent différer du preset)
             self._js(f'window.setTrusses({json.dumps(self._trusses)})')
+            # Décor de la scène courante : page neuve = _sceneGrp vide, il faut
+            # le repousser, sinon la scène choisie revient sans son modèle.
+            self._restore_scene_glb()
             # Décor importé mémorisé : le recharger (page neuve = _importedGrp vide)
             self._restore_imported_model()
             amb = getattr(self, '_sl_amb', None)
@@ -2444,6 +2492,10 @@ class Plan3DWebWindow(QMainWindow):
                 # est repris ici pour qu'un patch ancien ou bidouillé à la main
                 # ne puisse pas envoyer un cône de rayon nul à la 3D.
                 'beam_angle':     max(0.1, float(getattr(p, 'beam_angle', 100.0) or 100.0) / 100.0),
+                # Taille du corps (%) → facteur 0,1..3. Même plancher que
+                # l'ouverture, pour la même raison : un facteur nul escamote
+                # l'appareil sans moyen de le récupérer depuis la 3D.
+                'fixture_scale':  max(0.1, float(getattr(p, 'fixture_scale', 100.0) or 100.0) / 100.0),
                 'rot3d_z':        getattr(p, 'rot3d_z', 0.0),
                 'name':           getattr(p, 'name', ''),
                 'group':          getattr(p, 'group', ''),

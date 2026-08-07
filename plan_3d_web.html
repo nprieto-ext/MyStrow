@@ -1311,6 +1311,13 @@ const BEAM_TMAX = 22.0;
 function beamFloor(p) {
   const hy  = p.fixture_height ?? 7.0;
   const isMH = p.fixture_type === 'Moving Head';
+  // Taille du corps (colonne « Taille » de l'onglet Plan). Le groupe de la
+  // fixture est mis à l'échelle dans updateScene(), donc TOUS les décalages
+  // internes qui suivent — pivot du yoke, sortie de lentille — se contractent
+  // d'autant. Les laisser en dur ferait démarrer le faisceau à côté de
+  // l'appareil dès qu'on le réduit : à 40 %, le cône partait 20 cm sous une
+  // lentille qui, elle, était remontée.
+  const fs = p.fixture_scale ?? 1.0;
   if (isMH) {
     const panA  = (p.pan - 32768)  / 32768.0 * Math.PI;
     const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
@@ -1336,8 +1343,8 @@ function beamFloor(p) {
     const by = by_raw * Math.cos(rx) - bz_raw * Math.sin(rx);
     const bz = by_raw * Math.sin(rx) + bz_raw * Math.cos(rx);
     // Position réelle de la lentille (même ordre : Ry d'abord, puis Rx)
-    const ly_l  = -0.35 - 0.248 * Math.cos(theta);
-    const lz_l  =          0.248 * Math.sin(theta);
+    const ly_l  = (-0.35 - 0.248 * Math.cos(theta)) * fs;
+    const lz_l  = (         0.248 * Math.sin(theta)) * fs;
     // Même chaîne Rz → Ry → Rx que la direction : sans ça, sur un projecteur
     // pivoté, le faisceau démarrait à côté de la lentille au lieu d'en sortir.
     const qx = -ly_l * Math.sin(rz), qy = ly_l * Math.cos(rz), qz = lz_l;
@@ -1373,7 +1380,7 @@ function beamFloor(p) {
       hitsFloor: by < -1e-6 && (lensY / -by) <= BEAM_TMAX,
     };
   } else {
-    const lensY = hy - 0.333;
+    const lensY = hy - 0.333 * fs;
     const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;  // pan — pivot horizontal
     const rx    = (p.rot3d_x ?? 0) * Math.PI / 180;  // tilt — inclinaison depuis nadir
     const bx    = Math.sin(ry) * Math.sin(rx);
@@ -1454,7 +1461,11 @@ window.updateScene = function(projectors) {
         obj.pxHousing.visible = _flags.fixtures;
         obj.pxHousing.position.set(h.cx, hy + 0.02, h.cz);
         obj.pxHousing.rotation.y = -h.angle;      // aligne l'axe X sur la barre
-        obj.pxHousing.scale.set(Math.max(0.2, h.len), 0.11, 0.11);
+        // Seule la SECTION du boîtier suit la taille : sa longueur est celle
+        // de la barre réelle, déduite du patch. La rétrécir mentirait sur
+        // l'encombrement de l'appareil au lieu de l'ajuster.
+        const _hs = 0.11 * (p.fixture_scale ?? 1.0);
+        obj.pxHousing.scale.set(Math.max(0.2, h.len), _hs, _hs);
       } else {
         obj.pxHousing.visible = false;
       }
@@ -1515,6 +1526,11 @@ window.updateScene = function(projectors) {
       const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
       const rx    = (p.rot3d_x || 0) * Math.PI / 180;
       obj.mhGrp.position.set(p.x, hy, p.z);
+      // Le groupe est mis à l'échelle depuis son ORIGINE, qui est le point
+      // d'accroche : réduire l'appareil ne le décroche pas de la structure,
+      // il rapetisse vers le haut. Les décalages internes correspondants sont
+      // repris dans beamFloor() (constante `fs`).
+      obj.mhGrp.scale.setScalar(p.fixture_scale ?? 1.0);
       obj.mhGrp.rotation.x  = rx;
       obj.mhGrp.rotation.y  = panA;
       obj.mhGrp.rotation.z  = (p.rot3d_z || 0) * Math.PI / 180;
@@ -1536,6 +1552,7 @@ window.updateScene = function(projectors) {
 
       // ── Groupe PAR LED ───────────────────────────────────────────
       obj.parGrp.position.set(p.x, hy, p.z);
+      obj.parGrp.scale.setScalar(p.fixture_scale ?? 1.0);   // cf. mhGrp
       obj.parGrp.rotation.x = (p.rot3d_x ?? 0) * Math.PI / 180;
       obj.parGrp.rotation.y = (p.rot3d_y ?? 0) * Math.PI / 180;
       obj.parGrp.visible = _flags.fixtures;
@@ -2636,6 +2653,13 @@ const SCENE_PRESETS = {
     trusses: [],
     buildProps() {}
   },
+  // Décors livrés en GLB : ils apportent leur propre structure, donc aucun
+  // truss dessiné ici — sinon un second rig flotterait dans le modèle. Le
+  // fichier est poussé par Python via loadSceneGLB().
+  concert_glb: {
+    trusses: [],
+    buildProps() {}
+  },
   live: {
     trusses: [
       { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9.0, x_r:9.0 },
@@ -2711,19 +2735,6 @@ const SCENE_PRESETS = {
       _propsGrp.add(_makeSpeakerColumn( 8.5, 0.0, 6));
     }
   },
-  sono: {
-    // Remorque centrée en z=-2 ; piste de danse devant (z > 0)
-    // Barres avant/arrière du truss à z=-0.5 et z=-3.5 (= ±1.5m depuis le centre véhicule)
-    trusses: [
-      { label:'Truss face',    enabled:true, height:3.4, z:-0.5, x_l:-2.5, x_r:2.5 },
-      { label:'Truss arrière', enabled:true, height:3.4, z:-3.5, x_l:-2.5, x_r:2.5 },
-    ],
-    buildProps() {
-      _propsGrp.add(_makeSonomobile(0, -2));
-      for (const [x,z] of [[-2.0,1.8],[-1.0,1.2],[0.0,2.2],[1.0,1.2],[2.0,1.8]])
-        _propsGrp.add(_makePersonSilhouette(x,z,0.95));
-    }
-  },
   totem: {
     trusses: [
       { label:'Rig central', enabled:true, height:5.5, z:-1.0, x_l:-2.5, x_r:2.5 },
@@ -2778,6 +2789,37 @@ window.loadGLTF = function(b64, isGLB) {
 };
 
 window.clearImportedScene = function() { _importedGrp.clear(); };
+
+// ── Décor livré avec une scène par défaut ────────────────────────────────────
+// Groupe SÉPARÉ de `_importedGrp` à dessein : le décor importé à la main par
+// l'utilisateur et celui qui accompagne un preset sont deux choses distinctes.
+// Partager le groupe ferait disparaître l'import personnel dès qu'on change de
+// scène — et le ferait réapparaître par-dessus le décor du preset à l'inverse.
+const _sceneGrp = new THREE.Group();
+scene.add(_sceneGrp);
+
+window.loadSceneGLB = function(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  _gltfLoader.parse(bytes.buffer, '', (gltf) => {
+    _sceneGrp.clear();
+    // Même normalisation que l'import manuel : mise à l'échelle sur la plus
+    // grande dimension, centrage en X/Z, et POSE SUR LE SOL (y = 0).
+    const box    = new THREE.Box3().setFromObject(gltf.scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale  = maxDim > 0.01 ? 18.0 / maxDim : 1.0;
+    gltf.scene.scale.setScalar(scale);
+    gltf.scene.position.set(-center.x * scale,
+                            -box.min.y * scale,
+                            -center.z * scale);
+    _sceneGrp.add(gltf.scene);
+  }, (err) => console.error('Scene GLB error:', err));
+};
+
+window.clearSceneGLB = function() { _sceneGrp.clear(); };
 
 // Sol / grille / cyclorama : ajoutés directement à la scène (pas dans _propsGrp),
 // donc les presets ne peuvent pas les enlever. Nécessaire quand le décor vient

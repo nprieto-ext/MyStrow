@@ -24,6 +24,7 @@ from PySide6.QtGui import (
 )
 
 import sys
+import copy
 import wave
 import array
 import random
@@ -37,21 +38,13 @@ from i18n import tr
 
 
 def _ffmpeg_exe():
-    """Chemin de l'exécutable ffmpeg.
+    """Chemin de l'exécutable ffmpeg — voir core.ffmpeg_exe().
 
-    Priorité au binaire EMBARQUÉ (bundlé dans l'exe via PyInstaller → transparent
-    pour l'utilisateur, aucune installation ni ffmpeg dans le PATH requis). Repli
-    sur « ffmpeg » du PATH (utile en dev ou si un ffmpeg système est présent)."""
-    import os as _os
-    name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
-    try:
-        from core import resource_path
-        p = resource_path(name)
-        if _os.path.exists(p):
-            return p
-    except Exception:
-        pass
-    return "ffmpeg"
+    Conservé comme alias : l'IA Lumière en a besoin aussi, la logique a donc
+    déménagé dans core plutôt que d'être recopiée.
+    """
+    from core import ffmpeg_exe
+    return ffmpeg_exe()
 
 # Map FR colour name → i18n key (used for both ColorPalette and PalettePanel)
 _COLOR_KEYS = {
@@ -2235,6 +2228,14 @@ class LightTrack(QWidget):
         self._cross_target_active = False
         self._cross_track_target = None
 
+        # Fantômes d'Alt+glisser (copie) : [(start_ms, duree_ms, QColor)].
+        # Pendant une copie, les blocs d'origine restent en place et c'est ce
+        # fantôme qui suit le curseur — comme sur un pupitre lumière.
+        self._drag_ghosts = []
+        # Décalage courant du glisser. En copie les blocs ne bougeant plus,
+        # c'est la SEULE trace de la distance parcourue au relâché.
+        self._drag_delta = 0.0
+
         # Position du clic droit pour "Couper ici"
         self.last_context_click_x = 0
 
@@ -2783,13 +2784,15 @@ print(json.dumps(waveform))
     def _cross_compatible(self, other):
         """True si un clip peut être glissé de self vers `other` (drag vertical).
 
-        On ne mélange jamais les familles : couleur↔couleur uniquement, et
-        effet↔effet uniquement. Séquence et Position n'acceptent pas le
-        cross-track."""
+        On ne mélange jamais les familles : couleur↔couleur, effet↔effet et
+        séquence↔séquence. Position et Gobo n'ont qu'une piste chacune, donc
+        pas de cross-track possible."""
         if other is self:
             return False
-        if self.is_sequence_track or self.is_position_track or self.is_gobo_track:
+        if self.is_position_track or self.is_gobo_track:
             return False
+        if self.is_sequence_track:
+            return getattr(other, 'is_sequence_track', False)
         if self.is_effect_track:
             return getattr(other, 'is_effect_track', False)
         # self = piste couleur → cible = autre piste couleur
@@ -2797,10 +2800,50 @@ print(json.dumps(waveform))
                     or other.is_position_track or other.is_gobo_track)
 
     def _cross_drag_enabled(self):
-        """La piste autorise-t-elle le glisser cross-track ? (couleur ou effet)"""
-        return self.is_effect_track or not (self.is_sequence_track
-                                            or self.is_position_track
-                                            or self.is_gobo_track)
+        """La piste autorise-t-elle le glisser cross-track ? (couleur, effet, séquence)"""
+        return not (self.is_position_track or self.is_gobo_track)
+
+    def _build_drag_ghosts(self, delta):
+        """Place les fantômes d'Alt+glisser à la position visée par la copie.
+
+        Un fantôme par bloc entraîné, sur la piste cible s'il y a un survol
+        cross-track, sinon sur la piste du bloc. La position affichée est la
+        position BRUTE du curseur : la résolution des chevauchements n'a lieu
+        qu'au relâché, la simuler ici ferait sautiller le fantôme.
+        """
+        target = self._cross_track_target
+        ghosts = {}
+        for track in self.parent_editor.tracks:
+            if not (track is self or self._cross_compatible(track)):
+                continue
+            for sel_clip in track.selected_clips:
+                orig = self.drag_start_positions.get(sel_clip)
+                if orig is None:
+                    continue
+                dest = target if target is not None else track
+                ghosts.setdefault(dest, []).append(
+                    (max(0, orig + delta), sel_clip.duration, QColor(sel_clip.color)))
+        # Le bloc saisi n'est pas forcément dans une sélection (clic simple)
+        clip = self.dragging_clip
+        if clip is not None and clip not in self.selected_clips:
+            orig = self.drag_start_positions.get(clip)
+            if orig is not None:
+                dest = target if target is not None else self
+                ghosts.setdefault(dest, []).append(
+                    (max(0, orig + delta), clip.duration, QColor(clip.color)))
+
+        for track in self.parent_editor.tracks:
+            new = ghosts.get(track, [])
+            if new or track._drag_ghosts:
+                track._drag_ghosts = new
+                track.update()
+
+    def _clear_drag_ghosts(self):
+        """Retire les fantômes de copie de toutes les pistes."""
+        for track in self.parent_editor.tracks:
+            if track._drag_ghosts:
+                track._drag_ghosts = []
+                track.update()
 
     def mousePressEvent(self, event):
         """Gere clic souris pour drag/resize/fade/menu + CUT MODE"""
@@ -3087,7 +3130,30 @@ print(json.dumps(waveform))
                     if original_start + clamped_delta < 0:
                         clamped_delta = -original_start
 
-            if abs(clamped_delta) > 0.1:
+            # Alt = COPIE : les blocs d'origine ne bougent plus d'un pixel, un
+            # fantôme suit le curseur à leur place (cf. `_build_drag_ghosts`).
+            # Avant, l'original partait avec la souris et ne revenait à sa place
+            # qu'au relâché : impossible de viser la copie par rapport au bloc
+            # qu'on duplique.
+            copy_mode = bool(event.modifiers() & Qt.AltModifier)
+            self._drag_delta = clamped_delta
+
+            if copy_mode:
+                # Ramener les originaux (l'Alt peut être enfoncé en cours de drag)
+                for track in self.parent_editor.tracks:
+                    _moved = False
+                    for sel_clip in track.selected_clips:
+                        _orig = self.drag_start_positions.get(sel_clip)
+                        if _orig is not None and sel_clip.start_time != _orig:
+                            sel_clip.start_time = _orig
+                            _moved = True
+                    if _moved:
+                        track.update()
+                _orig = self.drag_start_positions.get(self.dragging_clip)
+                if _orig is not None and self.dragging_clip.start_time != _orig:
+                    self.dragging_clip.start_time = _orig
+                    self.update()
+            elif abs(clamped_delta) > 0.1:
                 for track in self.parent_editor.tracks:
                     for sel_clip in track.selected_clips:
                         if sel_clip in self.drag_start_positions:
@@ -3095,7 +3161,7 @@ print(json.dumps(waveform))
                     track.update()
 
             # Curseur visuel : main fermée ou copie (Alt)
-            if event.modifiers() & Qt.AltModifier:
+            if copy_mode:
                 self.setCursor(Qt.DragCopyCursor)
             else:
                 self.setCursor(Qt.ClosedHandCursor)
@@ -3120,6 +3186,13 @@ print(json.dumps(waveform))
                     if new_target:
                         new_target._cross_target_active = True
                         new_target.update()
+
+            # Après la détection cross-track : le fantôme doit apparaître sur la
+            # piste réellement visée, pas sur celle de l'image précédente.
+            if copy_mode:
+                self._build_drag_ghosts(clamped_delta)
+            else:
+                self._clear_drag_ghosts()
 
         elif self.resizing_clip:
             clip_x = 145 + int(self.resizing_clip.start_time * self.pixels_per_ms)
@@ -3327,7 +3400,10 @@ print(json.dumps(waveform))
                     for track in self.parent_editor.tracks:
                         dragged = [c for c in track.selected_clips if c in self.drag_start_positions]
                         for c in dragged:
-                            dragged_pos = c.start_time        # position après le drag
+                            # Position visée = origine + décalage parcouru. Ne PAS
+                            # lire c.start_time : en copie l'original n'a jamais
+                            # bougé, le clone se poserait pile dessus.
+                            dragged_pos = max(0, self.drag_start_positions[c] + self._drag_delta)
                             c.start_time = self.drag_start_positions[c]  # restaurer original
                             new_clip = self._clone_clip(c, track)
                             new_clip.start_time = dragged_pos
@@ -3343,6 +3419,8 @@ print(json.dumps(waveform))
 
         was_resizing = self.resizing_clip is not None
 
+        self._clear_drag_ghosts()
+        self._drag_delta = 0.0
         self.dragging_clip = None
         self.drag_start_positions = {}
         self.resizing_clip = None
@@ -3737,6 +3815,11 @@ print(json.dumps(waveform))
         menu = QMenu(self)
         menu.setStyleSheet(self._SEQ_MENU_STYLE)
 
+        # ── Info : ce que la mémoire va imposer ────────────────────────
+        act_info = menu.addAction(tr("lt_seq_info_action"))
+        act_info.triggered.connect(lambda: self.show_sequence_info(clip))
+        menu.addSeparator()
+
         # ── Changer la mémoire ─────────────────────────────────────────
         cur_label = getattr(clip, 'memory_label', '') or ''
         changer_lbl = f"Changer ({cur_label})" if cur_label else "Changer de mémoire"
@@ -3772,6 +3855,259 @@ print(json.dumps(waveform))
         act_del = menu.addAction(tr("lt_menu_delete"))
         act_del.triggered.connect(lambda: self._delete_clip(clip))
         menu.exec(global_pos)
+
+    # ── Info d'un clip Séquence ─────────────────────────────────────────────
+
+    def _seq_info_rows(self, clip, projectors, group_display):
+        """Ce que la mémoire du clip impose, projecteur par projecteur.
+
+        Ne retient que les projecteurs réellement concernés : une mémoire
+        capture l'état de TOUT le rig, y compris ceux qu'elle ne vise pas
+        (niveau 0, pan/tilt au centre) — les lister tous noierait
+        l'information. Les critères retenus sont exactement ceux qu'applique
+        `apply_seq_memories_htp` : niveau > 0 (couleur + canaux dédiés), ou
+        pan/tilt hors centre, ou strobe, ou canaux bruts — ces trois derniers
+        partant MÊME si le niveau est à 0.
+        """
+        mw       = getattr(self.parent_editor, 'main_window', None)
+        memories = getattr(mw, 'memories', None) if mw else None
+        ps_list  = resolve_memory_projectors(
+            getattr(clip, 'memory_ref', None), getattr(clip, 'cue_index', None), memories)
+        if not ps_list:
+            return []
+
+        inten = getattr(clip, 'intensity', 100) or 0
+        rows = []
+        for i, ps in enumerate(ps_list):
+            if i >= len(projectors):
+                break
+            lvl    = int(ps.get("level", 0) or 0)
+            pan    = int(ps.get("pan", 32768) or 32768)
+            tilt   = int(ps.get("tilt", 32768) or 32768)
+            strobe = int(ps.get("strobe_speed", 0) or 0)
+            extras = dict(ps.get("channel_extras", {}) or {})
+            if not (lvl > 0 or pan != 32768 or tilt != 32768 or strobe or extras):
+                continue
+
+            p = projectors[i]
+            misc = []
+            if lvl > 0:
+                for attr, label in (("uv", "UV"), ("white_boost", "Blanc"),
+                                    ("amber_boost", "Ambre"), ("orange_boost", "Orange")):
+                    v = int(ps.get(attr, 0) or 0)
+                    if v:
+                        misc.append(f"{label} {int(v * inten / 100)}")
+            if strobe:
+                misc.append(f"Strobe {strobe}")
+            misc += [f"{k} {v}" for k, v in extras.items()]
+
+            pos = []
+            if pan != 32768:
+                pos.append(f"Pan {round(pan * 100 / 65535)} %")
+            if tilt != 32768:
+                pos.append(f"Tilt {round(tilt * 100 / 65535)} %")
+
+            rows.append({
+                "idx":   i,
+                "name":  getattr(p, 'name', '') or f"#{i + 1}",
+                "group": group_display.get(getattr(p, 'group', ''), getattr(p, 'group', '')),
+                "addr":  (f"U{getattr(p, 'universe', 0) + 1}·{getattr(p, 'start_address', 1)}"
+                          if getattr(p, 'universe', 0) else str(getattr(p, 'start_address', 1))),
+                "level": lvl,
+                "eff":   int(lvl * inten / 100),
+                "color": QColor(ps.get("base_color", "#ffffff")).name() if lvl > 0 else "",
+                "pos":   " · ".join(pos),
+                "misc":  " · ".join(misc),
+            })
+        return rows
+
+    def show_sequence_info(self, clip):
+        """Fenêtre « Info » d'un clip Séquence : contenu de la mémoire rappelée.
+
+        Volontairement limitée à CE que la mémoire impose — pas au résultat
+        final sur le câble, qui dépend de ce qui est posé en même temps sur les
+        autres pistes (fusion HTP). Le rappel est écrit en pied de fenêtre pour
+        que la distinction ne se perde pas.
+        """
+        from PySide6.QtWidgets import QTextBrowser, QDialogButtonBox
+
+        label = getattr(clip, 'memory_label', '') or tr("lt_seq_info_no_mem")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("lt_seq_info_title", mem=label))
+        dlg.setMinimumSize(760, 440)
+        lay = QVBoxLayout(dlg)
+
+        view = QTextBrowser()
+        view.setStyleSheet("QTextBrowser { background:#141414; border:1px solid #333; }")
+        # Les liens « ✖ » du tableau ne sont pas des URL à ouvrir : on les
+        # intercepte pour supprimer le projecteur de la mémoire.
+        view.setOpenLinks(False)
+        view.anchorClicked.connect(lambda url: self._seq_info_anchor(url, clip, view))
+        view.setHtml(self._seq_info_html(clip))
+        lay.addWidget(view)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(dlg.reject)
+        btns.accepted.connect(dlg.accept)
+        lay.addWidget(btns)
+        dlg.exec()
+
+    def _seq_info_html(self, clip):
+        """Page HTML de la fenêtre Info — régénérée après chaque suppression."""
+        mw         = getattr(self.parent_editor, 'main_window', None)
+        projectors = getattr(mw, 'projectors', None) or []
+        group_disp = getattr(mw, 'GROUP_DISPLAY', {}) if mw else {}
+        label      = getattr(clip, 'memory_label', '') or tr("lt_seq_info_no_mem")
+
+        rows  = self._seq_info_rows(clip, projectors, group_display=group_disp)
+        inten = getattr(clip, 'intensity', 100)
+
+        # En-tête : ce qui module les niveaux de la mémoire (intensité, fondus,
+        # cue choisi) — sinon on lit des pourcentages sans savoir d'où ils sortent.
+        head = [f"<b style='font-size:15px'>{label}</b>"]
+        cues = self._seq_info_cue_count(clip)
+        if cues > 1:
+            head.append(tr("lt_seq_info_cue", n=(getattr(clip, 'cue_index', 0) or 0) + 1, total=cues))
+        head.append(tr("lt_seq_info_intensity", v=inten))
+        fi = int(getattr(clip, 'fade_in_duration', 0) or 0)
+        fo = int(getattr(clip, 'fade_out_duration', 0) or 0)
+        if fi or fo:
+            head.append(tr("lt_seq_info_fades", fi=fi, fo=fo))
+
+        html = [
+            "<style>"
+            "body { color:#e0e0e0; font-family:'Segoe UI',sans-serif; font-size:12px; }"
+            "table { border-collapse:collapse; width:100%; }"
+            "th { text-align:left; padding:5px 8px; color:#00d4ff; font-size:11px;"
+            "     border-bottom:1px solid #333; }"
+            "td { padding:4px 8px; border-bottom:1px solid #222; }"
+            ".dim { color:#888; }"
+            "</style>",
+            "<div>" + "&nbsp;&nbsp;·&nbsp;&nbsp;".join(head) + "</div><br>",
+        ]
+        if not rows:
+            html.append(f"<p class='dim'>{tr('lt_seq_info_empty')}</p>")
+        else:
+            html.append(
+                "<table><tr>"
+                f"<th>{tr('lt_seq_info_col_proj')}</th>"
+                f"<th>{tr('lt_seq_info_col_group')}</th>"
+                f"<th>{tr('lt_seq_info_col_addr')}</th>"
+                f"<th>{tr('lt_seq_info_col_level')}</th>"
+                f"<th>{tr('lt_seq_info_col_color')}</th>"
+                f"<th>{tr('lt_seq_info_col_pos')}</th>"
+                f"<th>{tr('lt_seq_info_col_misc')}</th>"
+                "<th></th>"
+                "</tr>")
+            _dash = "<span class='dim'>—</span>"
+            for r in rows:
+                if r["level"] <= 0:
+                    lvl_txt = "<span class='dim'>0 %</span>"
+                elif r["eff"] != r["level"]:
+                    lvl_txt = f"{r['level']} % <span class='dim'>&rarr; {r['eff']} %</span>"
+                else:
+                    lvl_txt = f"{r['level']} %"
+                if r["color"]:
+                    swatch = (f"<span style='background:{r['color']}'>&nbsp;&nbsp;&nbsp;</span> "
+                              f"<span class='dim'>{r['color']}</span>")
+                else:
+                    swatch = "<span class='dim'>—</span>"
+                html.append(
+                    f"<tr><td>{r['name']}</td><td>{r['group']}</td>"
+                    f"<td class='dim'>{r['addr']}</td><td>{lvl_txt}</td><td>{swatch}</td>"
+                    f"<td>{r['pos'] or _dash}</td>"
+                    f"<td>{r['misc'] or _dash}</td>"
+                    f"<td><a href='del:{r['idx']}' style='color:#f44336;"
+                    f"text-decoration:none' title='{tr('lt_seq_info_del_tip')}'>&#10006;</a></td>"
+                    "</tr>")
+            html.append("</table>")
+            html.append(f"<p class='dim'>{tr('lt_seq_info_count', n=len(rows))} · "
+                        f"{tr('lt_seq_info_del_hint')}</p>")
+
+        return "".join(html)
+
+    def _seq_info_anchor(self, url, clip, view):
+        """Clic sur un lien du tableau Info : seule la suppression est gérée."""
+        s = url.toString() if hasattr(url, 'toString') else str(url)
+        if not s.startswith("del:"):
+            return
+        try:
+            idx = int(s[4:])
+        except ValueError:
+            return
+        if self._seq_info_delete_projector(clip, idx):
+            view.setHtml(self._seq_info_html(clip))
+
+    def _seq_info_delete_projector(self, clip, idx):
+        """Retire un projecteur de la mémoire rappelée. Retourne True si fait.
+
+        « Retirer » = NEUTRALISER l'entrée, jamais la sortir de la liste : cette
+        liste est indexée par NUMÉRO DE PROJECTEUR (`for i, ps in enumerate(...)
+        → projectors[i]`), un `pop()` décalerait tout le rig d'un cran.
+
+        Les clés `pan`/`tilt` sont SUPPRIMÉES au lieu d'être remises à 32768 :
+        le rappel par pad AKAI (`_apply_memory_to_projectors`) applique le
+        pan/tilt dès que la clé existe, même au centre — il recentrerait donc la
+        lyre au lieu de la laisser tranquille. Absente, les deux moteurs
+        l'ignorent.
+
+        L'édition porte sur la mémoire elle-même : elle vaut pour TOUS les clips
+        qui la rappellent et pour le pad AKAI, d'où la confirmation.
+        """
+        mw       = getattr(self.parent_editor, 'main_window', None)
+        memories = getattr(mw, 'memories', None) if mw else None
+        ref      = getattr(clip, 'memory_ref', None)
+        ps_list  = resolve_memory_projectors(ref, getattr(clip, 'cue_index', None), memories)
+        if not ps_list or idx < 0 or idx >= len(ps_list):
+            return False
+
+        projs = getattr(mw, 'projectors', None) or []
+        name  = (getattr(projs[idx], 'name', '') or f"#{idx + 1}") if idx < len(projs) else f"#{idx + 1}"
+        label = getattr(clip, 'memory_label', '') or (
+            f"MEM {ref[0] + 1}.{ref[1] + 1}" if ref else "?")
+
+        if QMessageBox.question(
+                self, tr("lt_seq_info_del_title"),
+                tr("lt_seq_info_del_confirm", proj=name, mem=label),
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel) != QMessageBox.Yes:
+            return False
+
+        ps = ps_list[idx]
+        ps["level"]        = 0
+        ps["base_color"]   = "#000000"
+        ps["strobe_speed"] = 0
+        ps["channel_extras"] = {}
+        for k in ("uv", "white_boost", "amber_boost", "orange_boost",
+                  "gobo", "gobo_rotation", "zoom"):
+            if k in ps:
+                ps[k] = 0
+        ps.pop("pan", None)
+        ps.pop("tilt", None)
+
+        # Persistance immédiate : les mémoires ne vivent QUE dans
+        # ~/.maestro_akai_config.json, et le Ctrl+Z de REC Lumière ne les couvre pas.
+        if mw is not None and ref:
+            if hasattr(mw, '_save_akai_config_auto'):
+                mw._save_akai_config_auto()
+            if hasattr(mw, '_refresh_memory_pad'):
+                mw._refresh_memory_pad(ref[0], ref[1])
+        self.update()
+        return True
+
+    def _seq_info_cue_count(self, clip):
+        """Nombre de cues de la mémoire rappelée (0 si mémoire introuvable)."""
+        mw       = getattr(self.parent_editor, 'main_window', None)
+        memories = getattr(mw, 'memories', None) if mw else None
+        ref      = getattr(clip, 'memory_ref', None)
+        if not ref or not memories:
+            return 0
+        col, row = ref[0], ref[1]
+        if col >= len(memories) or row >= len(memories[col]):
+            return 0
+        mem = memories[col][row]
+        return len(mem.get("cues", [])) if mem else 0
 
     def show_gobo_clip_menu(self, clip, global_pos):
         """Menu clic droit sur un clip de gobo : changer le gobo, régler la rotation."""
@@ -4919,21 +5255,17 @@ print(json.dumps(waveform))
         clips_to_copy = self.selected_clips if len(self.selected_clips) > 1 else [clip]
 
         for source_clip in clips_to_copy:
-            new_clip = target_track.add_clip(
-                source_clip.start_time,
-                source_clip.duration,
-                source_clip.color,
-                source_clip.intensity
-            )
-
-            if source_clip.color2:
-                new_clip.color2 = source_clip.color2
-            new_clip.fade_in_duration = source_clip.fade_in_duration
-            new_clip.fade_out_duration = source_clip.fade_out_duration
-            new_clip.effect = source_clip.effect
-            new_clip.effect_speed = source_clip.effect_speed
+            # Clone COMPLET : cette copie ne reprenait que couleur/fondus/effet,
+            # donc un bloc de position (ou de mémoire, ou de gobo) copié vers une
+            # autre piste perdait son preset — plus de titre, plus de visée.
+            new_clip = self._clone_clip(source_clip, target_track)
+            new_clip.start_time = target_track.find_free_position(
+                source_clip.start_time, source_clip.duration)
+            target_track.clips.append(new_clip)
 
         target_track.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
 
     def add_clip_fade_in(self, clip):
         clip.fade_in_duration = 1000
@@ -5388,7 +5720,14 @@ print(json.dumps(waveform))
         return clip
 
     def _clone_clip(self, clip, dest_track):
-        """Crée une copie profonde d'un clip pour le Alt+drag."""
+        """Copie COMPLÈTE d'un clip — Alt+drag, coupe, copie vers une autre piste.
+
+        Seul cloneur en mémoire de l'éditeur : toute duplication passe par ici.
+        Ce qui manque à cette liste est silencieusement perdu par la copie, et
+        un bloc qui perd son identité (position, mémoire, gobo) retombe en
+        simple bloc couleur — d'où le doublon qui n'avait « ni le bon titre ni
+        la bonne position ».
+        """
         new_clip = LightClip(clip.start_time, clip.duration, QColor(clip.color), clip.intensity, dest_track)
         new_clip.color2 = QColor(clip.color2) if clip.color2 else None
         new_clip.fade_in_duration  = clip.fade_in_duration
@@ -5396,10 +5735,11 @@ print(json.dumps(waveform))
         new_clip.xfade             = getattr(clip, 'xfade', 0)
         new_clip.effect            = clip.effect
         new_clip.effect_speed      = clip.effect_speed
-        new_clip.effect_layers     = list(clip.effect_layers)
+        new_clip.effect_layers     = copy.deepcopy(clip.effect_layers)
         new_clip.effect_play_mode  = clip.effect_play_mode
         new_clip.effect_duration   = clip.effect_duration
         new_clip.effect_name       = clip.effect_name
+        new_clip.effect_type       = getattr(clip, 'effect_type', '')
         new_clip.effect_target_groups = list(clip.effect_target_groups)
         for attr in ('memory_ref', 'cue_index', 'memory_label',
                      'pan_start', 'tilt_start', 'pan_end', 'tilt_end',
@@ -5924,8 +6264,14 @@ print(json.dumps(waveform))
                 painter.setPen(QPen(QColor(0, 0, 0, 80), 1))
                 painter.drawRoundedRect(clip_rect, r, r)
 
+            # Étiquette « intensité % » des blocs couleur. Les pistes qui
+            # dessinent DÉJÀ leur propre libellé (aligné à gauche) doivent être
+            # exclues, sinon les deux textes se superposent dès que le bloc est
+            # trop étroit pour les séparer — c'est ce qui arrivait à la piste
+            # Gobo au dézoom. Un gobo n'a de toute façon pas d'intensité.
             if (not getattr(self, 'is_effect_track', False) and
                     not getattr(self, 'is_position_track', False) and
+                    not getattr(self, 'is_gobo_track', False) and
                     not getattr(clip, 'memory_ref', None) and width > 40):
                 luminance = (clip.color.red() * 0.299 + clip.color.green() * 0.587 + clip.color.blue() * 0.114)
                 txt_color = QColor(0, 0, 0, 200) if luminance > 140 else QColor(255, 255, 255, 220)
@@ -6034,6 +6380,21 @@ print(json.dumps(waveform))
                 painter.setBrush(Qt.NoBrush)
                 painter.setPen(QPen(QColor("#00d4ff"), 3))
                 painter.drawRoundedRect(clip_rect, 6, 6)
+
+        # Fantômes d'Alt+glisser : aperçu de la copie à venir, en pointillés,
+        # pendant que les blocs d'origine restent visibles à leur place.
+        for _g_start, _g_dur, _g_col in self._drag_ghosts:
+            gx = 145 + int(_g_start * self.pixels_per_ms)
+            gw = max(20, int(_g_dur * self.pixels_per_ms))
+            if gx + gw < _ev_left or gx > _ev_right:
+                continue
+            g_rect = QRect(gx, 10, gw, 40)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(QColor(_g_col.red(), _g_col.green(), _g_col.blue(), 70)))
+            painter.drawRoundedRect(g_rect, 6, 6)
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#ffffff"), 2, Qt.DashLine))
+            painter.drawRoundedRect(g_rect, 6, 6)
 
         # Marqueurs de fondu enchaîné (2e passe : PAR-DESSUS les 2 blocs) —
         # centrés sur la jointure, façon transition Premiere.

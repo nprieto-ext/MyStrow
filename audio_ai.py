@@ -6,6 +6,8 @@ import array
 import math
 import os
 import subprocess
+import sys
+import tempfile
 import json
 
 from PySide6.QtGui import QColor
@@ -180,7 +182,16 @@ class AudioColorAI:
         except Exception as e:
             print(f"IA Lumiere: Erreur WAV: {e}")
 
-        # Essai 2 : miniaudio direct
+        # Essai 2 : ffmpeg (embarqué). Le SEUL décodeur qui couvre l'ALAC,
+        # l'AIFF, l'Opus et le WMA — miniaudio s'arrête à wav/mp3/flac/ogg et
+        # renvoie « failed to decode file » sur tout le reste. Sans ce passage,
+        # l'IA Lumière restait muette sur ces formats alors que le lecteur les
+        # jouait normalement.
+        samples = self._read_via_ffmpeg(filepath)
+        if samples:
+            return samples
+
+        # Essai 3 : miniaudio direct
         if HAS_MINIAUDIO:
             try:
                 decoded = miniaudio.decode_file(
@@ -197,8 +208,58 @@ class AudioColorAI:
             except Exception as e:
                 print(f"IA Lumiere: miniaudio echoue: {e}")
 
-        # Essai 3 : subprocess Python 3.12 (calcule energy_map directement)
+        # Essai 4 : subprocess Python 3.12 (calcule energy_map directement)
         return self._read_via_subprocess(filepath)
+
+    def _read_via_ffmpeg(self, filepath):
+        """Décode n'importe quel format vers du mono 22050 Hz via ffmpeg.
+
+        Même recette que la forme d'onde du REC Lumière : WAV temporaire, et
+        surtout `-nostdin` + stderr vers un FICHIER — un PIPE non drainé se
+        remplit à ~64 Ko et fige ffmpeg en écriture.
+        """
+        try:
+            from core import ffmpeg_exe
+        except Exception:
+            return None
+
+        temp_wav = tempfile.mktemp(suffix='.wav')
+        stderr_log = tempfile.mktemp(suffix='.log')
+        try:
+            cmd = [
+                ffmpeg_exe(), '-nostdin', '-loglevel', 'error', '-nostats',
+                '-i', filepath, '-vn', '-ac', '1', '-ar', '22050',
+                '-acodec', 'pcm_s16le', '-y', temp_wav,
+            ]
+            kwargs = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            with open(stderr_log, 'wb') as errf:
+                rc = subprocess.call(
+                    cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=errf, timeout=180, **kwargs)
+            if rc != 0 or not os.path.exists(temp_wav) or os.path.getsize(temp_wav) < 100:
+                return None
+
+            with wave.open(temp_wav, 'rb') as wf:
+                frames = wf.readframes(wf.getnframes())
+            raw = array.array('h', frames)
+            if not raw:
+                return None
+            max_val = max((abs(s) for s in raw), default=1)
+            samples = [s / max_val for s in raw] if max_val > 0 else [0.0] * len(raw)
+            print(f"IA Lumiere: ffmpeg ({len(samples)} samples)")
+            return samples
+        except Exception as e:
+            print(f"IA Lumiere: ffmpeg echoue: {e}")
+            return None
+        finally:
+            for f in (temp_wav, stderr_log):
+                try:
+                    if os.path.exists(f):
+                        os.remove(f)
+                except Exception:
+                    pass
 
     def _read_via_subprocess(self, filepath):
         """Decode et analyse via subprocess Python qui a miniaudio"""

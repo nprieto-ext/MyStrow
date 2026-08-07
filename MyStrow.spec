@@ -21,6 +21,14 @@ for _root, _dirs, _files in os.walk(os.path.join('vendor', 'three')):
     for _f in _files:
         if _f.endswith('.js'):
             datas += [(os.path.join(_root, _f), _root)]
+# Décors 3D des scènes par défaut (scenes3d/*.glb). Chargés par
+# plan_3d_webwindow._push_scene_glb depuis _MEIPASS : absents de l'exe, les
+# scènes « Scène de concert » et « Sono mobile » s'affichent vides, sans erreur
+# visible — seulement une ligne dans la console.
+for _root, _dirs, _files in os.walk('scenes3d'):
+    for _f in _files:
+        if _f.lower().endswith(('.glb', '.gltf')):
+            datas += [(os.path.join(_root, _f), _root)]
 # Interface tablette (PWA statique servie par tablet_server.py). SANS ces fichiers
 # dans l'exe, le serveur tablette renvoie 404/500 ("Internal Server Error").
 for _tf in ('index.html', 'manifest.json', 'sw.js'):
@@ -32,9 +40,15 @@ if os.path.exists('fixtures_qlcplus.json'):
     datas += [('fixtures_qlcplus.json', '.')]
 binaries = []
 # ffmpeg embarqué (décodage audio robuste, transparent : pas de ffmpeg requis
-# dans le PATH client). Optionnel : ajouté seulement si ffmpeg.exe est présent.
+# dans le PATH client). Optionnel : ajouté seulement si le binaire est présent.
+# C'est LUI qui donne l'ALAC, l'AIFF, l'Opus et le WMA à la forme d'onde et à
+# l'IA Lumière (miniaudio s'arrête à wav/mp3/flac/ogg). Le CI Windows le
+# télécharge avant le build ; sur macOS il faut déposer le binaire « ffmpeg »
+# à côté du .spec, sinon ces formats se lisent mais ne s'analysent pas.
 if os.path.exists('ffmpeg.exe'):
     binaries += [('ffmpeg.exe', '.')]
+elif os.path.exists('ffmpeg'):
+    binaries += [('ffmpeg', '.')]
 hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio', 'sounddevice', '_sounddevice', '_sounddevice_data', 'pyaudiowpatch', '_pyaudio']
 tmp_ret = collect_all('rtmidi')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
@@ -66,6 +80,17 @@ for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'werkzeu
         datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
     except Exception:
         pass
+# pygame : utilisé UNIQUEMENT comme pilote de manette (gamepad_client.py), pour
+# le pan/tilt des lyres au stick. collect_all est nécessaire pour embarquer les
+# binaires SDL2, sans lesquels l'import de pygame._sdl2.controller échoue dans
+# l'exe alors qu'il passe en développement.
+try:
+    _r = collect_all('pygame')
+    datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
+    hiddenimports += ['pygame._sdl2', 'pygame._sdl2.controller']
+except Exception:
+    pass
+
 # ftd2xx : wrapper Python du driver FTDI D2XX (ENTTEC Open DMX USB en direct,
 # comme QLC+). La DLL ftd2xx elle-même provient du driver FTDI installé sur le
 # poste (chargée par ctypes au runtime) — on n'embarque que le module Python.

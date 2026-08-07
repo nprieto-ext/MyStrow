@@ -5,6 +5,7 @@ DualColorButton, EffectButton, FaderButton, ApcFader
 import json
 from pathlib import Path
 from i18n import tr
+from core import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
 from PySide6.QtWidgets import (
     QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
     QVBoxLayout, QDoubleSpinBox, QLineEdit, QSizePolicy, QSlider,
@@ -403,13 +404,43 @@ class EffectButton(QPushButton):
         search_input.textChanged.connect(_apply_filter)
         QTimer.singleShot(0, search_input.setFocus)
 
-        # « Éditeur d'effets » remonté en TÊTE du menu. Il est construit ici,
-        # après la liste, mais déplacé en première position : la liste fait 92
-        # effets intégrés plus les effets perso, et l'entrée se retrouvait tout
-        # en bas, hors de vue sans faire défiler. Rien ne dépend de sa place,
-        # l'action est branchée sur triggered.
-        act_editor = menu.addAction(tr("uic_effect_editor_menu"))
-        act_editor.triggered.connect(lambda: self.open_editor_requested.emit(self.index))
+        # « Éditeur d'effets » : un BOUTON pleine largeur en tête du menu, pas
+        # une ligne de menu de plus. Remonté en première position ne suffisait
+        # pas — au-dessus de 92 effets intégrés plus les effets perso, une
+        # entrée de menu de plus se lit comme un effet parmi les autres.
+        # Construit ici, après la liste, puis déplacé en tête : rien ne dépend
+        # de sa place, l'action est branchée sur le clic du bouton.
+        edit_outer = QWidget()
+        edit_outer.setStyleSheet("background: transparent;")
+        edit_lay = QVBoxLayout(edit_outer)
+        edit_lay.setContentsMargins(6, 6, 6, 2)
+        edit_lay.setSpacing(0)
+
+        btn_editor = QPushButton(tr("uic_effect_editor_menu").strip() + "   ›")
+        btn_editor.setCursor(Qt.PointingHandCursor)
+        btn_editor.setFixedHeight(30)
+        btn_editor.setStyleSheet(
+            "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #0d2b33, stop:1 #101820);color:#00d4ff;"
+            "border:1px solid #00d4ff55;border-radius:4px;font-size:11px;"
+            "font-weight:bold;letter-spacing:0.5px;padding:4px 10px;text-align:left;}"
+            "QPushButton:hover{background:#0f3a45;border-color:#00d4ff;color:#7fe9ff;}"
+            "QPushButton:pressed{background:#08222a;}"
+        )
+
+        def _open_editor():
+            # Un QWidgetAction avale le clic : le menu ne se ferme pas tout
+            # seul. Et on n'ouvre pas l'éditeur DEPUIS la boucle d'événements
+            # du menu — d'où le report au tour suivant.
+            menu.close()
+            QTimer.singleShot(0, lambda: self.open_editor_requested.emit(self.index))
+
+        btn_editor.clicked.connect(_open_editor)
+        edit_lay.addWidget(btn_editor)
+
+        act_editor = QWidgetAction(menu)
+        act_editor.setDefaultWidget(edit_outer)
+        menu.addAction(act_editor)
         _premier = next((a for a in menu.actions() if a is not act_editor), None)
         if _premier is not None:
             menu.removeAction(act_editor)
@@ -628,8 +659,11 @@ class CartoucheButton(QPushButton):
         QColor("#00d4ff"),
     ]
 
-    VIDEO_EXTS = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm'}
-    AUDIO_EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.aac', '.wma'}
+    # Listes prises dans core : elles avaient divergé, et une cartouche chargée
+    # avec un .m4a ou un .aif tombait dans le « else » (icône fichier, type
+    # inconnu) alors que le lecteur la joue sans broncher.
+    VIDEO_EXTS = set(VIDEO_EXTENSIONS)
+    AUDIO_EXTS = set(AUDIO_EXTENSIONS)
 
     def __init__(self, index, callback):
         super().__init__()

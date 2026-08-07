@@ -1273,6 +1273,33 @@ def sym_apply(proj, origin, d_pan, d_tilt, mirror):
     return (pan_clamp(proj, origin[0] + (-d_pan if mirror else d_pan)),
             int(max(0, min(65535, origin[1] + d_tilt))))
 
+
+def apply_pan_tilt(main_window, proj, pan, tilt):
+    """Pose une visée sur la lyre ET recale le centre mémorisé de l'effet.
+
+    Les deux écritures sont nécessaires, chacune couvre un cas que l'autre rate :
+
+    • `proj.pan/tilt` seul : un effet qui pilote le mouvement le réécrit à la
+      frame suivante depuis son centre capturé — la lyre revient sur place.
+    • `effect_saved_colors` (le centre) seul : un effet de COULEUR (Rainbow) ne
+      touche jamais `proj.pan`, donc plus rien ne reporte le centre déplacé sur
+      la lyre — le pad et les presets du plan 2D devenaient inertes, et la
+      position n'apparaissait qu'à l'arrêt de l'effet, qui restaure ce centre.
+
+    Écrire les deux donne le même résultat dans les deux cas.
+    """
+    pan  = int(max(0, min(65535, pan)))
+    tilt = int(max(0, min(65535, tilt)))
+    proj.pan, proj.tilt = pan, tilt
+    esc = getattr(main_window, 'effect_saved_colors', None) if main_window else None
+    if esc and id(proj) in esc:
+        sv = esc[id(proj)]
+        # sv[5:] : white_boost, amber_boost, uv, color_wheel… Reconstruire un
+        # tuple de 5 éléments les perdait, et l'arrêt de l'effet ne les
+        # restituait plus.
+        esc[id(proj)] = sv[:3] + (pan, tilt) + sv[5:]
+
+
 class _PersistentMenu(QMenu):
     """QMenu qui ne se ferme pas quand on clique sur un QWidgetAction.
 
@@ -3098,13 +3125,18 @@ class FixtureCanvas(QWidget):
             ddx = pos.x() - self._beam_drag_start.x()
             ddy = pos.y() - self._beam_drag_start.y()
             mir = getattr(self, '_beam_drag_mirror', None) or set()
+            _mw_drag = getattr(self.pdf, 'main_window', None)
             for (p, pan0, tilt0) in self._beam_drag_targets:
                 dpan = -ddx / _PX * 65535
                 if id(p) in mir:
                     dpan = -dpan
                 _grab_move((p,))
-                p.pan  = int(max(0, min(65535, pan0  + int(dpan))))
-                p.tilt = int(max(0, min(65535, tilt0 - int(ddy / _PX * 65535))))
+                # Recale aussi le centre de l'effet en cours : sinon la visée
+                # posée à la souris sautait à l'ancienne position dès l'arrêt
+                # de l'effet (qui restaure depuis ce centre).
+                apply_pan_tilt(_mw_drag, p,
+                               pan0 + int(dpan),
+                               tilt0 - int(ddy / _PX * 65535))
             if hasattr(self.pdf, '_flush_dmx'):
                 self.pdf._flush_dmx()
             self.update()
@@ -5029,11 +5061,12 @@ class PlanDeFeu(QFrame):
                 for p, g, i in t:
                     mirror = id(p) in mir_ids
                     if id(p) in esc:
-                        sv = esc[id(p)]
+                        # Effet en cours : relatif au centre capturé, et la lyre
+                        # suit tout de suite (voir apply_pan_tilt).
                         ic = init_c.get(id(p), (32768, 32768))
-                        esc[id(p)] = (sv[0], sv[1], sv[2],
-                                      max(0, min(65535, ic[0] + (-d_pan if mirror else d_pan))),
-                                      max(0, min(65535, ic[1] + d_tilt)))
+                        apply_pan_tilt(_mw, p,
+                                       ic[0] + (-d_pan if mirror else d_pan),
+                                       ic[1] + d_tilt)
                     elif sym:
                         # Relatif : chaque lyre garde sa visée et s'écarte en
                         # miroir à partir de là (même modèle que la branche
@@ -5063,17 +5096,11 @@ class PlanDeFeu(QFrame):
                 per_proj = preset.get("per_proj", {})
                 pan_g, tilt_g = preset["pan"], preset["tilt"]
                 pad.set_values(pan_g, tilt_g)
-                esc = getattr(_mw, 'effect_saved_colors', {}) if _mw else {}
                 for p, g, i in t:
                     key = str(p.start_address)
                     new_pan  = per_proj[key]["pan"]  if key in per_proj else pan_g
                     new_tilt = per_proj[key]["tilt"] if key in per_proj else tilt_g
-                    if id(p) in esc:
-                        sv = esc[id(p)]
-                        esc[id(p)] = (sv[0], sv[1], sv[2], new_pan, new_tilt)
-                    else:
-                        p.pan  = new_pan
-                        p.tilt = new_tilt
+                    apply_pan_tilt(_mw, p, new_pan, new_tilt)
                 _flush()
             preset_bar.preset_selected.connect(_on_preset)
             mh_h.addWidget(preset_bar)

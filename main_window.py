@@ -219,7 +219,7 @@ from core import (
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
     copy_report, send_report_email, DMX_FRAME_MS,
-    fit_button,
+    fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
 )
 from i18n import get_language, set_language, tr
 from projector import Projector
@@ -246,11 +246,12 @@ from pixel_fixture import (
 from i18n import tr
 
 
-# Liaison vMix (tally → lumière) : fonctionnalité en cours, jamais testée contre
-# un vrai vMix. Le menu est masqué le temps de la finir — repasser à True pour
-# le réafficher, le reste du code est en place et continue de charger/sauver sa
-# configuration sans rien casser.
-VMIX_ENABLED = False
+# Liaisons régie vidéo → lumière (vMix, OBS). Le protocole des deux est testé
+# contre des serveurs de simulation, mais PAS encore contre les vrais logiciels.
+# Repasser l'un de ces drapeaux à False masque son entrée de menu sans rien
+# casser : le reste du code continue de charger et sauver la configuration.
+VMIX_ENABLED = True
+OBS_ENABLED  = True
 
 
 # ── Fixtures à pixels (matrices / barres LED) ────────────────────────────────
@@ -1145,16 +1146,6 @@ class AkaiDiagnosticDialog(QDialog):
         btn_row.addWidget(rescan_btn)
         btn_row.addSpacing(8)
 
-        reconnect_btn = QPushButton(tr("mw_reconnect"))
-        reconnect_btn.setStyleSheet(
-            "QPushButton { background:#0a3a5a; color:white; border:none; "
-            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 16px; } "
-            "QPushButton:hover { background:#0d4e7a; }"
-        )
-        reconnect_btn.clicked.connect(self._do_reconnect)
-        btn_row.addWidget(reconnect_btn)
-        btn_row.addSpacing(8)
-
         close_btn = QPushButton(tr("mw_close"))
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
@@ -1234,10 +1225,6 @@ class AkaiDiagnosticDialog(QDialog):
             return
         self._refresh_status()
         self._refresh_controller_rows()
-
-    def _do_reconnect(self):
-        self._midi.connect_akai()
-        self.accept()
 
     def _open_add_controller(self):
         """Ferme le hub et ouvre le wizard d'ajout de contrôleur MIDI custom."""
@@ -2777,9 +2764,7 @@ class MissingMediaDialog(QDialog):
 
         new_path, _ = QFileDialog.getOpenFileName(
             self, f"Localiser : {name}", start_dir,
-            "Médias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma "
-            "*.mp4 *.mov *.avi *.mkv *.wmv *.m4v "
-            "*.png *.jpg *.jpeg *.gif *.bmp *.webp);;Tous (*.*)"
+            f"{MEDIA_EXTENSIONS_FILTER};;Tous (*.*)"
         )
         if not new_path:
             return
@@ -3253,12 +3238,20 @@ class MainWindow(QMainWindow):
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
         ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
 
-        # Regie video : elle PILOTE MyStrow (tally → lumiere), au meme titre
-        # qu'un Stream Deck. D'ou sa place ici et non dans un menu « video »,
-        # qui regroupe les SORTIES.
-        if VMIX_ENABLED:
+        # Regie video : elle PILOTE MyStrow (source à l'antenne → lumiere), au
+        # meme titre qu'un Stream Deck. D'ou sa place ici et non dans un menu
+        # « video », qui regroupe les SORTIES.
+        if VMIX_ENABLED or OBS_ENABLED:
             ctrl_menu.addSeparator()
+        if VMIX_ENABLED:
             ctrl_menu.addAction(tr("mw_menu_vmix"), self._open_vmix_dialog)
+        if OBS_ENABLED:
+            ctrl_menu.addAction(tr("mw_menu_obs"), self._open_obs_dialog)
+
+        # Manette de jeu : elle pilote le pan/tilt des lyres au stick, comme la
+        # trackball d'une console. C'est bien une source de controle entrante,
+        # d'ou sa place dans ce menu.
+        ctrl_menu.addAction(tr("mw_menu_gamepad"), self._open_gamepad_dialog)
         # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
         # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
 
@@ -5979,22 +5972,78 @@ class MainWindow(QMainWindow):
         pad.setToolTip(self._build_memory_tooltip(mem_col, row))
 
     def _build_memory_tooltip(self, mem_col, row):
-        """Construit le tooltip HTML d'un pad mémoire."""
+        """Construit le tooltip HTML d'un pad mémoire : ce que la mémoire impose.
+
+        Résumé par GROUPE (le détail projecteur par projecteur est dans REC
+        Lumière, clic droit sur un clip Séquence > Info) : couleur dominante,
+        nombre de projecteurs, niveau le plus fort.
+
+        Deux pièges que ce tooltip doit éviter :
+        - une mémoire au format « cues » n'a plus de clé `projectors` à la
+          racine — lire `mem["projectors"]` directement ne renvoyait rien ;
+        - une mémoire capture TOUT le rig, y compris les projecteurs qu'elle ne
+          vise pas (niveau 0, pan/tilt au centre) : on ne compte donc que ceux
+          réellement touchés, avec les mêmes critères que
+          `light_timeline.apply_seq_memories_htp`.
+        """
         label = f"MEM {mem_col + 1}.{row + 1}"
         mem = self.memories[mem_col][row]
         if not mem:
-            return f"<b>{label}</b><br><small style='color:#888'>Vide</small>"
-        lines = [f"<b>{label}</b>"]
-        group_info = {}
-        for i, ps in enumerate(mem.get("projectors", [])):
-            if ps.get("level", 0) > 0 and i < len(self.projectors):
-                g = self.projectors[i].group
+            return f"<b>{label}</b><br><small style='color:#888'>{tr('mem_tt_empty')}</small>"
+        try:
+            self._mem_ensure_cues(mem)
+            cues    = mem.get("cues", []) or []
+            n_cues  = len(cues)
+            cue_idx = getattr(self, '_mem_cue_idx', {}).get((mem_col, row), 0)
+            cue     = cues[max(0, min(cue_idx, n_cues - 1))] if cues else {}
+
+            head = f"<b>{label}</b>"
+            if n_cues > 1:
+                head += (f" <span style='color:#888'>· "
+                         f"{tr('mem_tt_cue', n=min(cue_idx, n_cues - 1) + 1, total=n_cues)}</span>")
+            lines = [head]
+
+            lit   = {}   # groupe -> [nb, niveau max, couleur du plus fort]
+            moved = {}   # groupe -> nb (pan/tilt, strobe ou canal brut, mais éteint)
+            for i, ps in enumerate(cue.get("projectors", []) or []):
+                if i >= len(self.projectors):
+                    break
+                g     = self.projectors[i].group
                 gname = self.GROUP_DISPLAY.get(g, g.capitalize())
-                color_hex = ps.get("base_color", "#ffffff")
-                lvl = ps.get("level", 0)
-                if gname not in group_info:
-                    group_info[gname] = (color_hex, lvl)
-        return f"<b>{label}</b>"
+                lvl   = int(ps.get("level", 0) or 0)
+                if lvl > 0:
+                    cur = lit.get(gname)
+                    if cur is None:
+                        lit[gname] = [1, lvl, ps.get("base_color", "#ffffff")]
+                    else:
+                        cur[0] += 1
+                        if lvl > cur[1]:
+                            cur[1], cur[2] = lvl, ps.get("base_color", "#ffffff")
+                elif (ps.get("pan", 32768) != 32768 or ps.get("tilt", 32768) != 32768
+                        or int(ps.get("strobe_speed", 0) or 0)
+                        or (ps.get("channel_extras") or {})):
+                    moved[gname] = moved.get(gname, 0) + 1
+
+            for gname, (n, lvl, chex) in lit.items():
+                swatch = (f"<span style='background-color:{QColor(chex).name()}'>"
+                          f"&nbsp;&nbsp;&nbsp;</span>")
+                lines.append(f"{swatch} <b>{gname}</b> "
+                             f"<span style='color:#aaa'>{tr('mem_tt_projs', n=n)} · {lvl} %</span>")
+            for gname, n in moved.items():
+                lines.append(f"<span style='color:#888'>&nbsp;&nbsp;&nbsp; <b>{gname}</b> "
+                             f"{tr('mem_tt_moved', n=n)}</span>")
+            if not lit and not moved:
+                lines.append(f"<small style='color:#888'>{tr('mem_tt_nothing')}</small>")
+
+            eff = cue.get("effect") or mem.get("effect") or {}
+            if eff.get("layers") and eff.get("name"):
+                lines.append(f"<span style='color:#00d4ff'>⚡ "
+                             f"{tr('mem_tt_effect', name=eff['name'])}</span>")
+            return "<br>".join(lines)
+        except Exception:
+            # Le tooltip est reconstruit à chaque restyle de pad : une mémoire
+            # au format inattendu ne doit pas casser l'affichage de la grille.
+            return f"<b>{label}</b>"
 
     def _get_memory_pad_color(self, mem_col, row):
         """Retourne la couleur custom ou dominante du snapshot"""
@@ -6649,12 +6698,7 @@ class MainWindow(QMainWindow):
                 }
                 if not self._stacked_effects:
                     # Premier effet : sauvegarder les couleurs et démarrer le timer
-                    self.effect_saved_colors = {}
-                    for p in self.projectors:
-                        self.effect_saved_colors[id(p)] = (
-                            p.base_color, p.color, p.level,
-                            getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)
-                        )
+                    self._snapshot_effect_state()
                     if not hasattr(self, 'effect_timer'):
                         self.effect_timer = QTimer()
                         self.effect_timer.timeout.connect(self.update_effect)
@@ -6672,12 +6716,7 @@ class MainWindow(QMainWindow):
                     # Dernier effet : arrêter le timer et restaurer les couleurs
                     if hasattr(self, 'effect_timer'):
                         self.effect_timer.stop()
-                    for p in self.projectors:
-                        if id(p) in self.effect_saved_colors:
-                            saved = self.effect_saved_colors[id(p)]
-                            p.base_color, p.color, p.level = saved[0], saved[1], saved[2]
-                            if len(saved) > 3:
-                                p.pan = saved[3]; p.tilt = saved[4]
+                    self._restore_effect_state()
                     # Ramener les Moving Heads au centre (transition fluide)
                     for p in self.projectors:
                         if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
@@ -7456,6 +7495,51 @@ class MainWindow(QMainWindow):
 
         menu.exec(btn.mapToGlobal(pos))
 
+    # ── État capturé au démarrage d'un effet ─────────────────────────────────
+    #
+    # ⚠ Tout attribut qu'une couche d'effet peut écrire DOIT figurer ici, sinon
+    # il reste figé sur la dernière image de l'effet une fois celui-ci coupé.
+    # C'est ce qui est arrivé à `color_wheel` : une couche RVB (Rainbow) appelle
+    # `_update_color_wheel` pour les lyres sans RVB, la roue restait donc sur la
+    # dernière teinte. Invisible en 3D (qui lit `color`), bien visible sur le
+    # plan 2D et sur le vrai DMX (qui lisent la position de la roue).
+    # Le tuple ne peut que S'ALLONGER : plan_de_feu lit sv[0..4] par index.
+
+    def _snapshot_effect_state(self):
+        """Capture l'état des projecteurs avant application d'un effet."""
+        self.effect_saved_colors = {
+            id(p): (p.base_color, p.color, p.level,
+                    getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768),
+                    getattr(p, 'white_boost', 0), getattr(p, 'amber_boost', 0),
+                    getattr(p, 'uv', 0), getattr(p, 'color_wheel', 0),
+                    getattr(p, 'gobo', 0), getattr(p, 'zoom', 0))
+            for p in self.projectors
+        }
+
+    def _restore_effect_state(self):
+        """Rend aux projecteurs leur état d'avant l'effet, puis vide la capture.
+
+        Le vidage compte autant que la restitution : tant que la capture reste
+        en place, le plan 2D croit qu'un effet tourne et redirige ses réglages
+        (pan/tilt, dimmer) vers ce dictionnaire mort au lieu des projecteurs.
+        """
+        for p in self.projectors:
+            saved = self.effect_saved_colors.get(id(p))
+            if not saved:
+                continue
+            p.base_color, p.color, p.level = saved[0], saved[1], saved[2]
+            if len(saved) > 4:
+                p.pan, p.tilt = saved[3], saved[4]
+            if len(saved) > 6:
+                p.white_boost, p.amber_boost = saved[5], saved[6]
+            if len(saved) > 7:
+                p.uv = saved[7]
+            if len(saved) > 8:
+                p.color_wheel = saved[8]
+            if len(saved) > 10:
+                p.gobo, p.zoom = saved[9], saved[10]
+        self.effect_saved_colors = {}
+
     def start_effect(self, effect_name):
         """Demarre l'effet selectionne par nom"""
         # Switch effet → effet : si un effet tourne déjà, le couper d'abord pour
@@ -7465,13 +7549,7 @@ class MainWindow(QMainWindow):
         if getattr(self, 'effect_timer', None) is not None and self.effect_timer.isActive():
             self.stop_effect()
         self.effect_state = 0
-        self.effect_saved_colors = {}
-
-        for p in self.projectors:
-            self.effect_saved_colors[id(p)] = (p.base_color, p.color, p.level,
-                                               getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768),
-                                               getattr(p, 'white_boost', 0), getattr(p, 'amber_boost', 0),
-                                               getattr(p, 'uv', 0))
+        self._snapshot_effect_state()
 
         if not hasattr(self, 'effect_timer'):
             self.effect_timer = QTimer()
@@ -7585,28 +7663,24 @@ class MainWindow(QMainWindow):
         for p in self.projectors:
             p.dmx_mode = "Manuel"
 
-        for p in self.projectors:
-            if id(p) in self.effect_saved_colors:
-                saved = self.effect_saved_colors[id(p)]
-                p.base_color, p.color, p.level = saved[0], saved[1], saved[2]
-                if len(saved) > 3:
-                    p.pan  = saved[3]
-                    p.tilt = saved[4]
-                if len(saved) > 5:
-                    p.white_boost = saved[5]
-                    p.amber_boost = saved[6]
-                if len(saved) > 7:
-                    p.uv = saved[7]
+        self._restore_effect_state()
 
-        # Ramener les Moving Heads au centre quand plus aucun effet n'est actif (transition fluide)
+        # Ramener les Moving Heads au centre quand plus aucun effet n'est actif
+        # (transition fluide) — SAUF si un clip Position de la timeline impose
+        # encore une visée : la lyre doit y revenir, pas partir au milieu de
+        # course. Sans cette exception, un effet Pan/Tilt posé PAR-DESSUS un clip
+        # Position laissait la lyre au centre à sa dernière image, et rien ne la
+        # ramenait (l'aperçu REC n'applique le clip Position qu'à son début).
         any_active = any(
             getattr(btn, 'active', False)
             for btn in getattr(self, 'effect_buttons', [])
         )
         if not any_active:
+            centers = getattr(self, '_timeline_pos_centers', None) or {}
             for p in self.projectors:
                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                    self._start_pan_tilt_transition(p, 32768, 32768, 500)
+                    pan, tilt = centers.get(id(p), (32768, 32768))
+                    self._start_pan_tilt_transition(p, pan, tilt, 500)
 
     def _bascule(self):
         """Effet Bascule : echange les couleurs entre les deux groupes ou alterne un/deux."""
@@ -11726,6 +11800,59 @@ class MainWindow(QMainWindow):
             return False
         return True
 
+    def _apply_show_positions_fx(self, raw: dict):
+        """Applique les positions et pads FX portés par un show (.tui v6+).
+
+        Rien n'est écrasé quand la clé est absente : un show enregistré avec une
+        version antérieure ne doit pas vider la bibliothèque de positions de la
+        machine qui l'ouvre. C'est la différence entre « ce show n'a pas de
+        positions » et « ce show dit qu'il n'y en a aucune » — seul le second
+        cas, une liste vide explicitement enregistrée, remet à zéro.
+        """
+        presets = raw.get("position_presets")
+        pads    = raw.get("position_pads")
+        fx      = raw.get("fx_pads")
+        n_pos = n_fx = 0
+
+        if isinstance(presets, list):
+            self.position_presets = [dict(p) for p in presets if isinstance(p, dict)]
+            n_pos = len(self.position_presets)
+
+        if isinstance(pads, list):
+            self.position_pads = [[None] * 8 for _ in range(_POS_COL_MAX)]
+            for pc in range(min(_POS_COL_MAX, len(pads))):
+                colonne = pads[pc] or []
+                for pr in range(min(8, len(colonne))):
+                    v = colonne[pr]
+                    # Un index qui dépasse la bibliothèque relue laisserait un
+                    # pad allumé pointant dans le vide : on le neutralise.
+                    if isinstance(v, int) and 0 <= v < len(self.position_presets):
+                        self.position_pads[pc][pr] = v
+            self.active_position_pads.clear()
+
+        if isinstance(fx, list):
+            self.fx_pads = [[None] * 8 for _ in range(_FX_COL_MAX)]
+            for fc in range(min(_FX_COL_MAX, len(fx))):
+                colonne = fx[fc] or []
+                for fr in range(min(8, len(colonne))):
+                    cfg = colonne[fr]
+                    if isinstance(cfg, dict):
+                        self.fx_pads[fc][fr] = cfg
+                        n_fx += 1
+            self.active_fx_pads.clear()
+
+        if presets is None and pads is None and fx is None:
+            return   # show antérieur à la v6 : on ne touche à rien
+
+        self._rebuild_akai_pads()
+        # La config locale devient le reflet du show ouvert, comme pour tout le
+        # reste de la surface : sans ça, le prochain démarrage relirait les
+        # anciennes positions de la machine et le show repartirait amputé.
+        self._save_akai_config_auto()
+        if n_pos or n_fx:
+            self._log_message(
+                f"Show : {n_pos} position(s) et {n_fx} pad(s) FX restaurés", "info")
+
     def _build_save_data(self) -> dict:
         """Sérialise l'état complet du show en dict JSON-compatible (thread principal)."""
         data = []
@@ -11801,7 +11928,7 @@ class MainWindow(QMainWindow):
                 active_color_pads[str(col_idx)] = bc.name()
 
         return {
-            "version": 5,
+            "version": 6,
             "sequence": data,
             "cartouches": cart_data,
             "memories": self.memories,
@@ -11810,6 +11937,21 @@ class MainWindow(QMainWindow):
             "plan_de_feu": plan_de_feu_state,
             "faders": faders_state,
             "active_color_pads": active_color_pads,
+            # ── Contenu de show qui ne voyageait pas (ajouté en version 6) ──
+            # Ces trois entrepôts ne vivaient QUE dans ~/.maestro_akai_config.json,
+            # c'est-à-dire sur la machine. Emporter son .tui sur un poste de
+            # secours donnait donc un show sans positions et sans effets — et
+            # surtout des REC Lumière inertes : un clip Position désigne son
+            # preset par index+nom (voir core.find_position_preset), donc sans
+            # `position_presets` il ne vise rien et la séquence paraît vide.
+            #
+            # On n'emporte QUE ce qui appartient au spectacle. Les préférences
+            # de la machine — luminosité de l'APC, contrôleur épinglé, réglages
+            # vMix/OBS, disposition des pages de la surface — restent locales :
+            # charger le show d'un collègue ne doit pas reconfigurer votre régie.
+            "position_presets": self.position_presets,
+            "position_pads":    self.position_pads,
+            "fx_pads":          self.fx_pads,
         }
 
     def _autosave(self):
@@ -11923,8 +12065,13 @@ class MainWindow(QMainWindow):
                         if 'd' in item:
                             combo = self.seq._get_dmx_combo(row)
                             if combo:
+                                # Le combo porte les CODES, pas les libellés :
+                                # c'est le bouton visible qui affiche le texte
+                                # traduit. Y insérer tr(...) rendait la ligne
+                                # introuvable par setCurrentText hors français,
+                                # donc silencieusement laissée sur « Manuel ».
                                 if item['d'] == "Play Lumiere" and combo.findText("Play Lumiere") == -1:
-                                    combo.addItem(tr("mw_play_light"))
+                                    combo.addItem("Play Lumiere")
                                 combo.setCurrentText(item['d'])
 
                         # Charger la sequence lumiere
@@ -11937,7 +12084,20 @@ class MainWindow(QMainWindow):
                                 }
 
                     else:
+                        # `add_files` REFUSE les extensions qu'il ne connaît pas
+                        # (core.media_icon renvoie "file") et avale les erreurs.
+                        # Sans ce contrôle, `row` désignait alors la ligne
+                        # PRÉCÉDENTE : la REC Lumière du média sauté venait
+                        # écraser celle du média d'avant, et tout le reste du
+                        # show se décalait d'un cran. Une ligne perdue vaut
+                        # mieux qu'une ligne perdue plus une ligne corrompue.
+                        avant = self.seq.table.rowCount()
                         self.seq.add_files([item['p']])
+                        if self.seq.table.rowCount() == avant:
+                            self._log_message(
+                                f"Média ignoré au chargement : {item.get('p', '?')}",
+                                "warning")
+                            continue
                         row = self.seq.table.rowCount() - 1
                         vol_item = self.seq.table.item(row, 3)
                         if vol_item and vol_item.text() != "--":
@@ -11950,8 +12110,10 @@ class MainWindow(QMainWindow):
                                 self.seq.ia_analysis[row] = item['ia_analysis']
                             combo = self.seq._get_dmx_combo(row)
                             if combo:
+                                # Voir plus haut : on ajoute le CODE, jamais le
+                                # libellé traduit.
                                 if item['d'] == "Play Lumiere" and combo.findText("Play Lumiere") == -1:
-                                    combo.addItem(tr("mw_play_light"))
+                                    combo.addItem("Play Lumiere")
                                 combo.setCurrentText(item['d'])
                                 self.seq.on_dmx_changed(row, item['d'])
                         if 'sequence' in item:
@@ -11999,6 +12161,16 @@ class MainWindow(QMainWindow):
                 for mr in range(8):
                     is_active = self.active_memory_pads.get(fi) == mr
                     self._style_memory_pad(mc, mr, active=is_active)
+
+            # Positions et pads FX embarqués dans le show (v6+)
+            #
+            # Sur un poste de secours, ces données n'existent pas localement :
+            # sans elles, les clips Position des REC Lumière ne visent rien.
+            # On n'applique QUE ce que le fichier contient réellement : un .tui
+            # antérieur à la v6 n'a pas ces clés, et il ne doit surtout pas
+            # effacer les positions déjà présentes sur la machine.
+            if isinstance(raw, dict):
+                self._apply_show_positions_fx(raw)
 
             # Restaurer l'etat du plan de feu (v5+)
             if isinstance(raw, dict):
@@ -12217,13 +12389,20 @@ class MainWindow(QMainWindow):
             "center_view": getattr(self, '_center_view_key', 'media'),
             # Dernier mode DMX retenu par fixture (bibliothèque)
             "fixture_mode_prefs": dict(getattr(self, '_fixture_mode_prefs', {})),
-            # Régie vidéo vMix (tally → lumière). Si la liaison n'a jamais été
-            # instanciée cette session, on réécrit la config lue au démarrage
-            # telle quelle : sans ça, une sauvegarde auto effacerait le réglage
-            # de tous ceux qui n'ouvrent pas le menu vMix à chaque lancement.
+            # Régies vidéo (source à l'antenne → lumière). Si la liaison n'a
+            # jamais été instanciée cette session, on réécrit la config lue au
+            # démarrage telle quelle : sans ça, une sauvegarde auto effacerait
+            # le réglage de tous ceux qui n'ouvrent pas le menu à chaque
+            # lancement.
             "vmix": (self._vmix_link.to_config()
                      if getattr(self, '_vmix_link', None) is not None
                      else dict(getattr(self, '_vmix_config_pending', {}) or {})),
+            "obs": (self._obs_link.to_config()
+                    if getattr(self, '_obs_link', None) is not None
+                    else dict(getattr(self, '_obs_config_pending', {}) or {})),
+            "gamepad": (self._gamepad_link.to_config()
+                        if getattr(self, '_gamepad_link', None) is not None
+                        else dict(getattr(self, '_gamepad_config_pending', {}) or {})),
         }
 
     def _apply_akai_config(self, config):
@@ -12379,13 +12558,13 @@ class MainWindow(QMainWindow):
             self._fixture_mode_prefs = {str(k): str(v) for k, v in _fmp.items()
                                         if isinstance(v, str)}
 
-        # Régie vidéo vMix : on mémorise la config sans instancier la liaison.
-        # Elle n'est créée — et la socket ouverte — que si l'utilisateur avait
-        # coché « Activer », ou s'il ouvre le menu. Le démarrage est différé :
-        # ici, les mémoires et les cartouches ne sont pas encore en place, et
-        # un tally reçu dans la seconde déclencherait une action dans le vide.
+        # Régies vidéo : on mémorise la config sans instancier la liaison. Elle
+        # n'est créée — et la socket ouverte — que si l'utilisateur avait coché
+        # « Activer », ou s'il ouvre le menu. Le démarrage est différé : ici,
+        # les mémoires et les cartouches ne sont pas encore en place, et un
+        # événement reçu dans la seconde déclencherait une action dans le vide.
         # La config est TOUJOURS relue et re-sauvée (rien n'est perdu pour ceux
-        # qui l'avaient déjà réglée), mais tant que VMIX_ENABLED est False on
+        # qui l'avaient déjà réglée), mais tant que le drapeau est False on
         # n'ouvre pas la socket : le menu étant masqué, personne ne pourrait
         # plus désactiver une liaison qui démarrerait toute seule.
         _vm = config.get("vmix")
@@ -12393,6 +12572,21 @@ class MainWindow(QMainWindow):
             self._vmix_config_pending = dict(_vm)
             if _vm.get("enabled") and VMIX_ENABLED:
                 QTimer.singleShot(1500, self._start_vmix_if_enabled)
+
+        _obs = config.get("obs")
+        if isinstance(_obs, dict):
+            self._obs_config_pending = dict(_obs)
+            if _obs.get("enabled") and OBS_ENABLED:
+                QTimer.singleShot(1500, self._start_obs_if_enabled)
+
+        # Manette : même création paresseuse. Le démarrage différé importe moins
+        # ici (aucune action n'est déclenchée, seul le pan/tilt bouge), mais les
+        # projecteurs doivent exister avant que le premier mouvement n'arrive.
+        _gp = config.get("gamepad")
+        if isinstance(_gp, dict):
+            self._gamepad_config_pending = dict(_gp)
+            if _gp.get("enabled"):
+                QTimer.singleShot(1500, self._start_gamepad_if_enabled)
 
         # Contrôleur épinglé (sélection manuelle) — reconnecte sur le bon si défini
         if hasattr(self, 'midi_handler') and self.midi_handler:
@@ -12647,34 +12841,267 @@ class MainWindow(QMainWindow):
             tr("load_mem_success_msg")
         )
 
+    # ── Fenêtre « Effacer des données » ───────────────────────────────────
+    #
+    # L'entrée de menu effaçait autrefois les mémoires, et rien d'autre, sans
+    # rien demander. Impossible de vider les seules positions, ou de repartir
+    # d'effets propres en gardant ses mémoires. Chaque entrepôt de données est
+    # donc listé ici, avec son décompte, et coché individuellement.
+    #
+    # Les positions vivent dans DEUX fichiers (pads POS de l'AKAI d'un côté,
+    # presets du Plan de Feu de l'autre) : ils apparaissent sur deux lignes
+    # distinctes, sans quoi « effacer les positions » en laisserait la moitié
+    # en place.
+
+    def _clearable_items(self):
+        """[(clé, groupe, libellé, aide, nombre)] — l'inventaire de ce qui est effaçable.
+
+        Le décompte sert autant à informer qu'à désactiver les lignes vides :
+        proposer d'effacer un entrepôt déjà vide n'apporte rien.
+        """
+        try:
+            from effect_editor import _load_custom_effects
+            n_custom = len(_load_custom_effects() or [])
+        except Exception:
+            n_custom = 0
+
+        n_mem = sum(1 for mc in range(_MEM_COL_MAX) for mr in range(8)
+                    if self.memories[mc][mr] is not None)
+        n_pos = len(getattr(self, 'position_presets', []) or [])
+        n_fx = sum(1 for fc in range(_FX_COL_MAX) for fr in range(8)
+                   if self.fx_pads[fc][fr])
+        n_btn = len(getattr(self, '_button_effect_configs', {}) or {})
+        n_lib = n_custom + len(getattr(self, '_effect_library_configs', {}) or {})
+        # `_load_pdf_presets` retombe sur les presets d'usine quand le fichier
+        # n'existe pas : compter son retour ferait croire qu'il y a toujours
+        # quelque chose à effacer. Seul un fichier réellement écrit compte.
+        try:
+            from plan_de_feu import _PRESETS_FILE
+            n_pdf = len(self._load_pdf_presets() or []) if os.path.exists(_PRESETS_FILE) else 0
+        except Exception:
+            n_pdf = 0
+        n_seq = len(getattr(getattr(self, 'seq', None), 'sequences', {}) or {})
+
+        return [
+            ("mem", "pads", tr("clr_it_mem"), tr("clr_hint_mem"), n_mem),
+            ("pos", "pads", tr("clr_it_pos"), tr("clr_hint_pos"), n_pos),
+            ("fx",  "pads", tr("clr_it_fx"),  tr("clr_hint_fx"),  n_fx),
+            ("btn", "pads", tr("clr_it_btn"), tr("clr_hint_btn"), n_btn),
+            ("lib", "lib",  tr("clr_it_lib"), tr("clr_hint_lib"), n_lib),
+            ("pdf", "lib",  tr("clr_it_pdf"), tr("clr_hint_pdf"), n_pdf),
+            ("seq", "show", tr("clr_it_seq"), tr("clr_hint_seq"), n_seq),
+        ]
+
     def clear_all_memories(self):
-        """Efface toutes les mémoires des colonnes MEM1–MEM99."""
-        reply = QMessageBox.warning(
-            self,
-            tr("mw_clear_all_mem"),
-            tr("mw_clear_all_mem_confirm"),
-            QMessageBox.Yes | QMessageBox.Cancel
-        )
-        if reply != QMessageBox.Yes:
+        """Ouvre la fenêtre de choix, puis efface ce qui a été coché."""
+        items = self._clearable_items()
+        if not any(n for _k, _g, _l, _h, n in items):
+            self._show_mem_toast(tr("clr_nothing"))
             return
 
-        for mc in range(_MEM_COL_MAX):
-            for mr in range(8):
-                self.memories[mc][mr] = None
-                self.memory_custom_colors[mc][mr] = None
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("clr_dlg_title"))
+        dlg.setStyleSheet(
+            "QDialog { background:#141414; }"
+            "QLabel { color:#ddd; background:transparent; }"
+            "QCheckBox { color:#e0e0e0; background:transparent; font-size:12px; spacing:8px; }"
+            "QCheckBox:disabled { color:#555; }"
+            "QCheckBox::indicator { width:15px; height:15px; border-radius:3px; "
+            "border:1px solid #3a3a3a; background:#0d0d0d; }"
+            "QCheckBox::indicator:checked { background:#cc3333; border-color:#ff6666; }"
+            "QCheckBox::indicator:disabled { border-color:#252525; background:#111; }"
+            "QPushButton { background:#2a2a2a; color:#ddd; border:1px solid #3a3a3a; "
+            "border-radius:5px; padding:6px 16px; font-size:11px; }"
+            "QPushButton:hover { background:#3a3a3a; color:#fff; }"
+        )
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(18, 16, 18, 14)
+        root.setSpacing(10)
 
-        self.active_memory_pads.clear()
-        self._rebuild_akai_pads()
+        intro = QLabel(tr("clr_dlg_intro"))
+        intro.setStyleSheet("color:#999; font-size:11px;")
+        intro.setWordWrap(True)
+        root.addWidget(intro)
 
-        # Éteindre les LEDs physiques de tous les pads mémoire sur l'AKAI
-        if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
-            for fi, mc in self._bank_memory_slots():
+        checks = {}
+        group_titles = {"pads": tr("clr_grp_pads"), "lib": tr("clr_grp_lib"),
+                        "show": tr("clr_grp_show")}
+        cur_group = None
+        for key, group, label, hint, count in items:
+            if group != cur_group:
+                cur_group = group
+                hdr = QLabel(group_titles[group])
+                hdr.setStyleSheet("color:#666; font-size:9px; font-weight:bold; "
+                                  "letter-spacing:1px; margin-top:6px;")
+                root.addWidget(hdr)
+
+            chk = QCheckBox(f"{label}  —  "
+                            + (tr("clr_count", n=count) if count else tr("clr_empty")))
+            chk.setToolTip(hint)
+            chk.setEnabled(count > 0)
+            root.addWidget(chk)
+
+            sub = QLabel(hint)
+            sub.setStyleSheet("color:#5a5a5a; font-size:9px; margin-left:23px;")
+            sub.setWordWrap(True)
+            root.addWidget(sub)
+
+            checks[key] = (chk, label, count)
+
+        # ── Boutons ───────────────────────────────────────────────────────
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background:#262626; max-height:1px; margin-top:8px;")
+        root.addWidget(sep)
+
+        btn_row = QHBoxLayout()
+        all_btn = QPushButton(tr("clr_select_all"))
+        all_btn.setStyleSheet("QPushButton { background:transparent; color:#777; border:none; "
+                              "font-size:10px; padding:4px 6px; } QPushButton:hover { color:#ccc; }")
+        none_btn = QPushButton(tr("clr_select_none"))
+        none_btn.setStyleSheet(all_btn.styleSheet())
+        all_btn.clicked.connect(
+            lambda: [c.setChecked(True) for c, _l, n in checks.values() if n])
+        none_btn.clicked.connect(
+            lambda: [c.setChecked(False) for c, _l, _n in checks.values()])
+        btn_row.addWidget(all_btn)
+        btn_row.addWidget(none_btn)
+        btn_row.addStretch()
+
+        cancel = QPushButton(tr("mw_cancel"))
+        cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel)
+
+        delete = QPushButton(tr("clr_btn_delete"))
+        delete.setStyleSheet(
+            "QPushButton { background:#7a1e1e; color:#fff; border:none; border-radius:5px; "
+            "padding:6px 18px; font-size:11px; font-weight:bold; } "
+            "QPushButton:hover { background:#9c2727; } "
+            "QPushButton:disabled { background:#2a1c1c; color:#5a4444; }"
+        )
+        delete.setEnabled(False)
+        delete.clicked.connect(dlg.accept)
+        btn_row.addWidget(delete)
+        root.addLayout(btn_row)
+
+        def _sync_delete():
+            delete.setEnabled(any(c.isChecked() for c, _l, _n in checks.values()))
+        for c, _l, _n in checks.values():
+            c.toggled.connect(_sync_delete)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        selected = [k for k, (c, _l, _n) in checks.items() if c.isChecked()]
+        if not selected:
+            return
+
+        recap = "\n".join("  • " + checks[k][1] + f"  ({checks[k][2]})" for k in selected)
+        if QMessageBox.warning(
+            self, tr("clr_confirm_title"), tr("clr_confirm_msg", list=recap),
+            QMessageBox.Yes | QMessageBox.Cancel
+        ) != QMessageBox.Yes:
+            return
+
+        self._perform_clear(selected)
+        self._show_mem_toast(tr("clr_done", list=", ".join(checks[k][1] for k in selected)))
+
+    def _perform_clear(self, keys):
+        """Efface les entrepôts demandés. `keys` ⊂ clés de `_clearable_items`."""
+        keys = set(keys)
+        touches_akai_config = bool(keys & {"mem", "pos", "fx"})
+
+        if "mem" in keys:
+            for mc in range(_MEM_COL_MAX):
                 for mr in range(8):
-                    note = (7 - mr) * 8 + fi
-                    self.midi_handler.midi_out.send_message([0x90, note, 0])
+                    self.memories[mc][mr] = None
+                    self.memory_custom_colors[mc][mr] = None
+            self.active_memory_pads.clear()
+            self._mem_cue_idx.clear()
+            # Éteindre les LEDs physiques de tous les pads mémoire sur l'AKAI
+            if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
+                for fi, _mc in self._bank_memory_slots():
+                    for mr in range(8):
+                        note = (7 - mr) * 8 + fi
+                        self.midi_handler.midi_out.send_message([0x90, note, 0])
 
-        self._save_akai_config_auto()
-        self._show_mem_toast("🗑️ Mémoires effacées")
+        if "pos" in keys:
+            self.position_presets = []
+            self.position_pads = [[None] * 8 for _ in range(_POS_COL_MAX)]
+            self.active_position_pads.clear()
+            for pc in range(_POS_COL_MAX):
+                for pr in range(8):
+                    self._update_pos_pad_led(pc, pr)
+
+        if "fx" in keys:
+            # Un pad FX actif tient un effet en cours : le couper AVANT de vider
+            # la config, sinon l'effet continue de tourner sans pad pour l'éteindre.
+            if self.active_fx_pads:
+                try:
+                    self.stop_effect()
+                except Exception as e:
+                    print(f"[CLEAR] arrêt de l'effet FX impossible : {e}")
+            self.active_fx_pads.clear()
+            for fc in range(_FX_COL_MAX):
+                for fr in range(8):
+                    self.fx_pads[fc][fr] = None
+                    self._update_fx_pad_led(fc, fr)
+
+        if "btn" in keys:
+            for i in range(len(self.effect_buttons)):
+                self._on_effect_assigned(i, None)
+
+        if "lib" in keys:
+            try:
+                from effect_editor import _save_custom_effects
+                _save_custom_effects([])
+            except Exception as e:
+                print(f"[CLEAR] effets personnalisés non effacés : {e}")
+            self._effect_library_configs = {}
+            self._save_effect_library()
+
+        if "pdf" in keys:
+            # Fichier absent = le Plan de Feu repart sur ses positions d'usine,
+            # exactement comme son bouton « ↺ ».
+            try:
+                from plan_de_feu import _PRESETS_FILE
+                if os.path.exists(_PRESETS_FILE):
+                    os.remove(_PRESETS_FILE)
+            except Exception as e:
+                print(f"[CLEAR] positions Plan de Feu non effacées : {e}")
+            self._refresh_open_pdf_preset_bars()
+
+        if "seq" in keys:
+            # _remove_play_lumiere remet aussi le combo DMX de la ligne sur
+            # Manuel : sans ça la playlist garderait un mode « Play Lumière »
+            # pointant vers une séquence disparue.
+            try:
+                for row in list(getattr(self.seq, 'sequences', {}).keys()):
+                    self.seq._remove_play_lumiere(row)
+                self.seq.sequences.clear()
+            except Exception as e:
+                print(f"[CLEAR] séquences REC Lumière non effacées : {e}")
+
+        self._rebuild_akai_pads()
+        if touches_akai_config:
+            self._save_akai_config_auto()
+
+    def _refresh_open_pdf_preset_bars(self):
+        """Recharge les presets des barres Plan de Feu déjà ouvertes.
+
+        Le fichier fait foi, mais une fenêtre ouverte garde sa copie en mémoire
+        et réécrirait les presets supprimés à la première sauvegarde.
+        """
+        try:
+            from plan_de_feu import PresetBar, _load_presets
+        except Exception:
+            return
+        for w in QApplication.allWidgets():
+            if isinstance(w, PresetBar):
+                try:
+                    w._presets = _load_presets()
+                    w._rebuild_buttons()
+                except Exception as e:
+                    print(f"[CLEAR] barre de presets non rafraîchie : {e}")
 
     def load_default_effects(self):
         """Charge les effets par défaut sur les boutons E1-E9."""
@@ -13319,6 +13746,71 @@ class MainWindow(QMainWindow):
             self._get_vmix_link().apply()
         except Exception as exc:
             print(f"[vMix] liaison non démarrée : {exc}")
+
+    # ── Régie vidéo OBS Studio ────────────────────────────────────────────────
+
+    def _get_obs_link(self):
+        """Crée la liaison OBS à la demande.
+
+        Même création paresseuse que vMix : tant que personne n'ouvre le menu,
+        MyStrow ne charge pas le module et n'ouvre aucune socket. Un
+        éclairagiste qui n'utilise pas de régie vidéo ne paie rien.
+        """
+        link = getattr(self, '_obs_link', None)
+        if link is None:
+            from obs_link import ObsLink
+            link = ObsLink(self)
+            link.from_config(getattr(self, '_obs_config_pending', {}) or {})
+            self._obs_link = link
+        return link
+
+    def _open_obs_dialog(self):
+        from obs_link import ObsDialog
+        ObsDialog(self, self._get_obs_link()).exec()
+
+    def _start_obs_if_enabled(self):
+        """Reconnecte la liaison OBS au démarrage si elle était active.
+
+        Protégé : OBS éteint, serveur WebSocket désactivé ou mot de passe
+        changé ne doivent pas empêcher MyStrow de démarrer. Le client gère seul
+        ses reconnexions.
+        """
+        try:
+            self._get_obs_link().apply()
+        except Exception as exc:
+            print(f"[OBS] liaison non démarrée : {exc}")
+
+    # ── Manette de jeu (pan/tilt au stick) ────────────────────────────────────
+
+    def _get_gamepad_link(self):
+        """Crée la liaison manette à la demande.
+
+        Import différé : pygame n'est chargé que si quelqu'un ouvre le menu ou
+        avait activé la manette. Un éclairagiste qui n'en utilise pas ne paie
+        ni le temps de chargement ni le timer de sondage.
+        """
+        link = getattr(self, '_gamepad_link', None)
+        if link is None:
+            from gamepad_link import GamepadLink
+            link = GamepadLink(self)
+            link.from_config(getattr(self, '_gamepad_config_pending', {}) or {})
+            self._gamepad_link = link
+        return link
+
+    def _open_gamepad_dialog(self):
+        from gamepad_link import GamepadDialog
+        GamepadDialog(self, self._get_gamepad_link()).exec()
+
+    def _start_gamepad_if_enabled(self):
+        """Redémarre la manette au lancement si elle était active.
+
+        Protégé : pygame absent de l'installation ou manette débranchée ne
+        doivent pas empêcher MyStrow de démarrer.
+        """
+        try:
+            self._get_gamepad_link().apply()
+        except Exception as exc:
+            print(f"[Manette] liaison non démarrée : {exc}")
 
     # ── Contrôleur Tablette ───────────────────────────────────────────────────
 
@@ -15067,8 +15559,7 @@ class MainWindow(QMainWindow):
 
         # Video: rediriger vers le video_widget
         ext = os.path.splitext(cart.media_path)[1].lower()
-        video_exts = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm'}
-        if ext in video_exts and QVideoWidget is not None:
+        if ext in CartoucheButton.VIDEO_EXTS and QVideoWidget is not None:
             self.cart_player.setVideoOutput(self.video_widget)
         else:
             self.cart_player.setVideoOutput(None)
@@ -15196,7 +15687,7 @@ class MainWindow(QMainWindow):
         """Charge un fichier dans une cartouche"""
         path, _ = QFileDialog.getOpenFileName(
             self, f"Charger Cartouche {index + 1}", "",
-            "Medias (*.mp3 *.wav *.ogg *.flac *.aac *.wma *.mp4 *.avi *.mkv *.mov *.wmv *.webm)"
+            f"{AV_EXTENSIONS_FILTER};;Tous (*.*)"
         )
         if not path:
             return
@@ -15265,13 +15756,16 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_streamdeck_server'):
             self._streamdeck_server.stop()
 
-        # Liaison vMix : le thread réseau est en recv() bloquant, c'est stop()
-        # qui ferme la socket sous lui pour le débloquer.
-        if getattr(self, '_vmix_link', None) is not None:
-            try:
-                self._vmix_link.stop()
-            except Exception:
-                pass
+        # Liaisons régie vidéo : le thread réseau est en recv() bloquant, c'est
+        # stop() qui ferme la socket sous lui pour le débloquer. Sans ça, la
+        # fermeture de MyStrow attendrait le prochain événement de la régie.
+        for _attr in ('_vmix_link', '_obs_link', '_gamepad_link'):
+            _lien = getattr(self, _attr, None)
+            if _lien is not None:
+                try:
+                    _lien.stop()
+                except Exception:
+                    pass
 
         if self.seq.is_dirty:
             res = QMessageBox.question(self, tr("mw_quit"),
@@ -15520,6 +16014,9 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         act_import = m_file.addAction(tr("mw_import_patch"))
         act_export = m_file.addAction(tr("mw_export_patch"))
+        m_file.addSeparator()
+        act_xlsx = m_file.addAction(tr("mw_export_patch_xlsx"))
+        act_pdf  = m_file.addAction(tr("mw_export_patch_pdf"))
 
         m_edit = menubar.addMenu(tr("mw_edit"))
         act_undo = m_edit.addAction(tr("mw_undo"))
@@ -18441,6 +18938,79 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(dialog, tr("mw_export_error"),
                     tr("mw_f_export_patch_err", e=e))
 
+        # ── Sorties « papier » : tableur Excel + plan de feu PDF ──────────────
+        # Ce que le régisseur emporte en salle. Les deux passent par
+        # patch_export, qui lit les MÊMES données que le plan à l'écran
+        # (positions normalisées + profil DMX résolu par artnet_dmx).
+        def _show_name():
+            if getattr(self, 'current_show_path', None):
+                return os.path.splitext(os.path.basename(self.current_show_path))[0]
+            return ""
+
+        def _profile_of(i, proj):
+            return self.dmx._get_profile(f"{proj.group}_{i}")
+
+        def _offer_open(path, text):
+            box = QMessageBox(QMessageBox.Information, tr("mw_export_ok"),
+                              text, QMessageBox.NoButton, dialog)
+            btn_open = box.addButton(tr("mw_open_file"), QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Close)
+            box.exec()
+            if box.clickedButton() is btn_open:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(path)))
+
+        def _export_patch_xlsx():
+            if not self.projectors:
+                QMessageBox.information(dialog, tr("mw_export_patch_xlsx"),
+                                        tr("mw_export_empty_patch"))
+                return
+            base = _show_name()
+            default = f"patch_{base}.xlsx" if base else "patch_dmx.xlsx"
+            path, _ = QFileDialog.getSaveFileName(
+                dialog, tr("mw_export_patch_xlsx"), default, "Excel (*.xlsx)")
+            if not path:
+                return
+            if not path.lower().endswith(".xlsx"):
+                path += ".xlsx"
+            try:
+                import patch_export
+                n_fix, n_ch = patch_export.export_patch_xlsx(
+                    path, self.projectors, _profile_of, _show_name())
+                _offer_open(path, tr("mw_f_xlsx_exported",
+                                     n=n_fix, ch=n_ch, path=path))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                QMessageBox.critical(dialog, tr("mw_export_error"),
+                                     tr("mw_f_export_patch_err", e=e))
+
+        def _export_patch_pdf():
+            if not self.projectors:
+                QMessageBox.information(dialog, tr("mw_export_patch_pdf"),
+                                        tr("mw_export_empty_patch"))
+                return
+            base = _show_name()
+            default = f"plan_de_feu_{base}.pdf" if base else "plan_de_feu.pdf"
+            path, _ = QFileDialog.getSaveFileName(
+                dialog, tr("mw_export_patch_pdf"), default, "PDF (*.pdf)")
+            if not path:
+                return
+            if not path.lower().endswith(".pdf"):
+                path += ".pdf"
+            try:
+                import patch_export
+                n_fix, n_conf = patch_export.export_patch_pdf(
+                    path, self.projectors, _profile_of, _show_name())
+                msg = tr("mw_f_pdf_exported", n=n_fix, path=path)
+                if n_conf:
+                    msg += "\n\n" + tr("mw_f_pdf_conflicts", n=n_conf)
+                _offer_open(path, msg)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                QMessageBox.critical(dialog, tr("mw_export_error"),
+                                     tr("mw_f_export_patch_err", e=e))
+
         def _open_fixture_editor():
             from fixture_editor import FixtureEditorDialog
             editor = FixtureEditorDialog(dialog)
@@ -18499,6 +19069,8 @@ class MainWindow(QMainWindow):
         act_create_ia.triggered.connect(_open_fixture_editor_ia)
         act_import.triggered.connect(_import_patch)
         act_export.triggered.connect(_export_patch)
+        act_xlsx.triggered.connect(_export_patch_xlsx)
+        act_pdf.triggered.connect(_export_patch_pdf)
         btn_rename_multi.clicked.connect(_rename_checked)
         btn_group_multi.clicked.connect(_assign_group_checked)
 
@@ -20249,6 +20821,7 @@ class MainWindow(QMainWindow):
                 'rot3d_z':         getattr(proj, 'rot3d_z',       0.0),
                 'beam_gain':       getattr(proj, 'beam_gain',   100.0),
                 'beam_angle':      getattr(proj, 'beam_angle',  100.0),
+                'fixture_scale':   getattr(proj, 'fixture_scale', 100.0),
                 'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                 # Convention d'obturateur inversée (0 = ouvert). Réglée par
                 # « Ma lyre ne s'allume pas » dans la calibration de roue —
@@ -20331,6 +20904,10 @@ class MainWindow(QMainWindow):
                         # fichier, la clé doit retomber sur 100 (rendu d'origine)
                         # et surtout pas sur 0, qui donnerait un faisceau nul.
                         p.beam_angle    = float(fd.get('beam_angle', 100.0) or 100.0)
+                        # Même précaution que pour l'angle : un patch antérieur
+                        # à la colonne « Taille » n'a pas la clé, et 0 ferait
+                        # disparaître le corps de l'appareil.
+                        p.fixture_scale = float(fd.get('fixture_scale', 100.0) or 100.0)
                         if fd.get('fixture_type') == "Machine a fumee":
                             p.fan_speed = 0
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
