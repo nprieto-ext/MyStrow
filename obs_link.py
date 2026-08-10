@@ -62,6 +62,7 @@ class ObsDialog(VideoDialog):
     CLE_INTRO   = "obs_intro"
     CLE_ASTUCE  = "obs_test_hint"
     CLE_ACTIVER = "obs_enable"
+    CLE_TEASER  = "obs_guide_teaser"
 
     def __init__(self, window, link: ObsLink):
         self.COL_DECLENCHEUR = tr("obs_col_scene")

@@ -220,6 +220,268 @@ def resolve_memory_projectors(mem_ref, cue_index, memories):
     return mem.get("projectors", [])
 
 
+class SequenceInfoDialog(QDialog):
+    """Fenêtre « Info » d'une mémoire : ce qu'elle impose, projecteur par projecteur.
+
+    UNE seule implémentation pour les deux portes d'entrée — le clic droit sur
+    un clip Séquence de REC Lumière, et le clic droit sur un pad mémoire de
+    l'AKAI. C'est la même mémoire qu'on regarde : deux tableaux séparés
+    finiraient par diverger sur les critères de filtrage ou sur ce que
+    « supprimer un projecteur » veut dire.
+
+    Volontairement limitée à CE QUE LA MÉMOIRE IMPOSE — pas au résultat final
+    sur le câble, qui dépend de ce qui est posé en même temps ailleurs (fusion
+    HTP). Le rappel est écrit en pied de fenêtre.
+
+    `intensity` module les niveaux affichés (colonne « 85 % → 68 % ») : c'est
+    l'intensité du clip côté REC Lumière, le fader de la colonne côté pad AKAI.
+    `intensity_key` nomme correctement cette modulation dans l'en-tête.
+    """
+
+    def __init__(self, parent, main_window, memory_ref, cue_index=0, label="",
+                 intensity=100, fades=(0, 0),
+                 intensity_key="lt_seq_info_intensity", on_change=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QTextBrowser, QDialogButtonBox
+
+        self._mw    = main_window
+        self._ref   = memory_ref
+        self._cue   = cue_index or 0
+        self._label = label or (f"MEM {memory_ref[0] + 1}.{memory_ref[1] + 1}"
+                                if memory_ref else tr("lt_seq_info_no_mem"))
+        self._inten = intensity
+        self._fades = fades
+        self._inten_key = intensity_key
+        self._on_change = on_change     # rafraîchir l'appelant après suppression
+
+        self.setWindowTitle(tr("lt_seq_info_title", mem=self._label))
+        self.setMinimumSize(760, 440)
+        lay = QVBoxLayout(self)
+
+        self._view = QTextBrowser()
+        self._view.setStyleSheet("QTextBrowser { background:#141414; border:1px solid #333; }")
+        # Les « ✖ » du tableau ne sont pas des URL à ouvrir : on les intercepte
+        # pour retirer le projecteur de la mémoire.
+        self._view.setOpenLinks(False)
+        self._view.anchorClicked.connect(self._on_anchor)
+        self._view.setHtml(self._html())
+        lay.addWidget(self._view)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        btns.accepted.connect(self.accept)
+        lay.addWidget(btns)
+
+    # ── Données ───────────────────────────────────────────────────────────
+
+    def _memories(self):
+        return getattr(self._mw, 'memories', None)
+
+    def _cue_count(self) -> int:
+        mems = self._memories()
+        if not self._ref or not mems:
+            return 0
+        col, row = self._ref[0], self._ref[1]
+        if col >= len(mems) or row >= len(mems[col]):
+            return 0
+        mem = mems[col][row]
+        return len(mem.get("cues", [])) if mem else 0
+
+    def _rows(self):
+        """Projecteurs réellement concernés par la mémoire.
+
+        Une mémoire capture l'état de TOUT le rig, y compris les projecteurs
+        qu'elle ne vise pas (niveau 0, pan/tilt au centre) : les lister tous
+        noierait l'information. Les critères sont exactement ceux
+        qu'applique `apply_seq_memories_htp` — niveau > 0 (couleur et canaux
+        dédiés), ou pan/tilt hors centre, ou strobe, ou canaux bruts, ces
+        trois derniers partant MÊME à niveau 0.
+        """
+        ps_list = resolve_memory_projectors(self._ref, self._cue, self._memories())
+        if not ps_list:
+            return []
+        projectors = getattr(self._mw, 'projectors', None) or []
+        group_display = getattr(self._mw, 'GROUP_DISPLAY', {}) or {}
+        inten = self._inten or 0
+        rows = []
+        for i, ps in enumerate(ps_list):
+            if i >= len(projectors):
+                break
+            lvl    = int(ps.get("level", 0) or 0)
+            pan    = int(ps.get("pan", 32768) or 32768)
+            tilt   = int(ps.get("tilt", 32768) or 32768)
+            strobe = int(ps.get("strobe_speed", 0) or 0)
+            extras = dict(ps.get("channel_extras", {}) or {})
+            if not (lvl > 0 or pan != 32768 or tilt != 32768 or strobe or extras):
+                continue
+
+            p = projectors[i]
+            misc = []
+            if lvl > 0:
+                for attr, lb in (("uv", "UV"), ("white_boost", "Blanc"),
+                                 ("amber_boost", "Ambre"), ("orange_boost", "Orange")):
+                    v = int(ps.get(attr, 0) or 0)
+                    if v:
+                        misc.append(f"{lb} {int(v * inten / 100)}")
+            if strobe:
+                misc.append(f"Strobe {strobe}")
+            misc += [f"{k} {v}" for k, v in extras.items()]
+
+            pos = []
+            if pan != 32768:
+                pos.append(f"Pan {round(pan * 100 / 65535)} %")
+            if tilt != 32768:
+                pos.append(f"Tilt {round(tilt * 100 / 65535)} %")
+
+            rows.append({
+                "idx":   i,
+                "name":  getattr(p, 'name', '') or f"#{i + 1}",
+                "group": group_display.get(getattr(p, 'group', ''), getattr(p, 'group', '')),
+                "addr":  (f"U{getattr(p, 'universe', 0) + 1}·{getattr(p, 'start_address', 1)}"
+                          if getattr(p, 'universe', 0) else str(getattr(p, 'start_address', 1))),
+                "level": lvl,
+                "eff":   int(lvl * inten / 100),
+                "color": QColor(ps.get("base_color", "#ffffff")).name() if lvl > 0 else "",
+                "pos":   " · ".join(pos),
+                "misc":  " · ".join(misc),
+            })
+        return rows
+
+    # ── Rendu ─────────────────────────────────────────────────────────────
+
+    def _html(self):
+        rows = self._rows()
+
+        # En-tête : ce qui module les niveaux (cue joué, intensité/fader,
+        # fondus) — sinon on lit des pourcentages sans savoir d'où ils sortent.
+        head = [f"<b style='font-size:15px'>{self._label}</b>"]
+        cues = self._cue_count()
+        if cues > 1:
+            head.append(tr("lt_seq_info_cue", n=self._cue + 1, total=cues))
+        head.append(tr(self._inten_key, v=self._inten))
+        fi, fo = int(self._fades[0] or 0), int(self._fades[1] or 0)
+        if fi or fo:
+            head.append(tr("lt_seq_info_fades", fi=fi, fo=fo))
+
+        html = [
+            "<style>"
+            "body { color:#e0e0e0; font-family:'Segoe UI',sans-serif; font-size:12px; }"
+            "table { border-collapse:collapse; width:100%; }"
+            "th { text-align:left; padding:5px 8px; color:#00d4ff; font-size:11px;"
+            "     border-bottom:1px solid #333; }"
+            "td { padding:4px 8px; border-bottom:1px solid #222; }"
+            ".dim { color:#888; }"
+            "</style>",
+            "<div>" + "&nbsp;&nbsp;·&nbsp;&nbsp;".join(head) + "</div><br>",
+        ]
+        if not rows:
+            html.append(f"<p class='dim'>{tr('lt_seq_info_empty')}</p>")
+            return "".join(html)
+
+        html.append(
+            "<table><tr>"
+            f"<th>{tr('lt_seq_info_col_proj')}</th>"
+            f"<th>{tr('lt_seq_info_col_group')}</th>"
+            f"<th>{tr('lt_seq_info_col_addr')}</th>"
+            f"<th>{tr('lt_seq_info_col_level')}</th>"
+            f"<th>{tr('lt_seq_info_col_color')}</th>"
+            f"<th>{tr('lt_seq_info_col_pos')}</th>"
+            f"<th>{tr('lt_seq_info_col_misc')}</th>"
+            "<th></th>"
+            "</tr>")
+        _dash = "<span class='dim'>—</span>"
+        for r in rows:
+            if r["level"] <= 0:
+                lvl_txt = "<span class='dim'>0 %</span>"
+            elif r["eff"] != r["level"]:
+                lvl_txt = f"{r['level']} % <span class='dim'>&rarr; {r['eff']} %</span>"
+            else:
+                lvl_txt = f"{r['level']} %"
+            if r["color"]:
+                swatch = (f"<span style='background:{r['color']}'>&nbsp;&nbsp;&nbsp;</span> "
+                          f"<span class='dim'>{r['color']}</span>")
+            else:
+                swatch = "<span class='dim'>—</span>"
+            html.append(
+                f"<tr><td>{r['name']}</td><td>{r['group']}</td>"
+                f"<td class='dim'>{r['addr']}</td><td>{lvl_txt}</td><td>{swatch}</td>"
+                f"<td>{r['pos'] or _dash}</td>"
+                f"<td>{r['misc'] or _dash}</td>"
+                f"<td><a href='del:{r['idx']}' style='color:#f44336;"
+                f"text-decoration:none' title='{tr('lt_seq_info_del_tip')}'>&#10006;</a></td>"
+                "</tr>")
+        html.append("</table>")
+        html.append(f"<p class='dim'>{tr('lt_seq_info_count', n=len(rows))} · "
+                    f"{tr('lt_seq_info_del_hint')}</p>")
+        return "".join(html)
+
+    # ── Suppression d'un projecteur ───────────────────────────────────────
+
+    def _on_anchor(self, url):
+        s = url.toString() if hasattr(url, 'toString') else str(url)
+        if not s.startswith("del:"):
+            return
+        try:
+            idx = int(s[4:])
+        except ValueError:
+            return
+        if self._delete_projector(idx):
+            self._view.setHtml(self._html())
+            if callable(self._on_change):
+                self._on_change()
+
+    def _delete_projector(self, idx):
+        """Retire un projecteur de la mémoire. Retourne True si c'est fait.
+
+        « Retirer » = NEUTRALISER l'entrée, jamais la sortir de la liste :
+        celle-ci est indexée par NUMÉRO DE PROJECTEUR (`enumerate` →
+        `projectors[i]`), un `pop()` décalerait tout le rig d'un cran.
+
+        Les clés `pan`/`tilt` sont SUPPRIMÉES et non remises à 32768 : le
+        rappel par pad AKAI (`_apply_memory_to_projectors`) applique le
+        pan/tilt dès que la clé existe, même au centre — il recentrerait donc
+        la lyre au lieu de la laisser tranquille. Absente, les deux moteurs
+        l'ignorent.
+
+        L'édition porte sur la mémoire elle-même : elle vaut pour TOUS les
+        clips qui la rappellent ET pour le pad AKAI, d'où la confirmation.
+        """
+        ps_list = resolve_memory_projectors(self._ref, self._cue, self._memories())
+        if not ps_list or idx < 0 or idx >= len(ps_list):
+            return False
+
+        projs = getattr(self._mw, 'projectors', None) or []
+        name = (getattr(projs[idx], 'name', '') or f"#{idx + 1}") if idx < len(projs) else f"#{idx + 1}"
+
+        if QMessageBox.question(
+                self, tr("lt_seq_info_del_title"),
+                tr("lt_seq_info_del_confirm", proj=name, mem=self._label),
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel) != QMessageBox.Yes:
+            return False
+
+        ps = ps_list[idx]
+        ps["level"]          = 0
+        ps["base_color"]     = "#000000"
+        ps["strobe_speed"]   = 0
+        ps["channel_extras"] = {}
+        for k in ("uv", "white_boost", "amber_boost", "orange_boost",
+                  "gobo", "gobo_rotation", "zoom"):
+            if k in ps:
+                ps[k] = 0
+        ps.pop("pan", None)
+        ps.pop("tilt", None)
+
+        # Persistance immédiate : les mémoires ne vivent QUE dans
+        # ~/.maestro_akai_config.json, et le Ctrl+Z de REC Lumière ne les couvre pas.
+        if self._mw is not None and self._ref:
+            if hasattr(self._mw, '_save_akai_config_auto'):
+                self._mw._save_akai_config_auto()
+            if hasattr(self._mw, '_refresh_memory_pad'):
+                self._mw._refresh_memory_pad(self._ref[0], self._ref[1])
+        return True
+
+
 def apply_seq_memories_htp(entries, memories, projectors, main_win, lock_pantilt_idxs=None):
     """
     Applique une ou plusieurs mémoires de séquence en HTP sur les projecteurs.
@@ -3858,256 +4120,24 @@ print(json.dumps(waveform))
 
     # ── Info d'un clip Séquence ─────────────────────────────────────────────
 
-    def _seq_info_rows(self, clip, projectors, group_display):
-        """Ce que la mémoire du clip impose, projecteur par projecteur.
-
-        Ne retient que les projecteurs réellement concernés : une mémoire
-        capture l'état de TOUT le rig, y compris ceux qu'elle ne vise pas
-        (niveau 0, pan/tilt au centre) — les lister tous noierait
-        l'information. Les critères retenus sont exactement ceux qu'applique
-        `apply_seq_memories_htp` : niveau > 0 (couleur + canaux dédiés), ou
-        pan/tilt hors centre, ou strobe, ou canaux bruts — ces trois derniers
-        partant MÊME si le niveau est à 0.
-        """
-        mw       = getattr(self.parent_editor, 'main_window', None)
-        memories = getattr(mw, 'memories', None) if mw else None
-        ps_list  = resolve_memory_projectors(
-            getattr(clip, 'memory_ref', None), getattr(clip, 'cue_index', None), memories)
-        if not ps_list:
-            return []
-
-        inten = getattr(clip, 'intensity', 100) or 0
-        rows = []
-        for i, ps in enumerate(ps_list):
-            if i >= len(projectors):
-                break
-            lvl    = int(ps.get("level", 0) or 0)
-            pan    = int(ps.get("pan", 32768) or 32768)
-            tilt   = int(ps.get("tilt", 32768) or 32768)
-            strobe = int(ps.get("strobe_speed", 0) or 0)
-            extras = dict(ps.get("channel_extras", {}) or {})
-            if not (lvl > 0 or pan != 32768 or tilt != 32768 or strobe or extras):
-                continue
-
-            p = projectors[i]
-            misc = []
-            if lvl > 0:
-                for attr, label in (("uv", "UV"), ("white_boost", "Blanc"),
-                                    ("amber_boost", "Ambre"), ("orange_boost", "Orange")):
-                    v = int(ps.get(attr, 0) or 0)
-                    if v:
-                        misc.append(f"{label} {int(v * inten / 100)}")
-            if strobe:
-                misc.append(f"Strobe {strobe}")
-            misc += [f"{k} {v}" for k, v in extras.items()]
-
-            pos = []
-            if pan != 32768:
-                pos.append(f"Pan {round(pan * 100 / 65535)} %")
-            if tilt != 32768:
-                pos.append(f"Tilt {round(tilt * 100 / 65535)} %")
-
-            rows.append({
-                "idx":   i,
-                "name":  getattr(p, 'name', '') or f"#{i + 1}",
-                "group": group_display.get(getattr(p, 'group', ''), getattr(p, 'group', '')),
-                "addr":  (f"U{getattr(p, 'universe', 0) + 1}·{getattr(p, 'start_address', 1)}"
-                          if getattr(p, 'universe', 0) else str(getattr(p, 'start_address', 1))),
-                "level": lvl,
-                "eff":   int(lvl * inten / 100),
-                "color": QColor(ps.get("base_color", "#ffffff")).name() if lvl > 0 else "",
-                "pos":   " · ".join(pos),
-                "misc":  " · ".join(misc),
-            })
-        return rows
-
     def show_sequence_info(self, clip):
         """Fenêtre « Info » d'un clip Séquence : contenu de la mémoire rappelée.
 
-        Volontairement limitée à CE que la mémoire impose — pas au résultat
-        final sur le câble, qui dépend de ce qui est posé en même temps sur les
-        autres pistes (fusion HTP). Le rappel est écrit en pied de fenêtre pour
-        que la distinction ne se perde pas.
+        Le tableau, ses critères de filtrage et la suppression d'un projecteur
+        vivent dans `SequenceInfoDialog` — partagés avec le clic droit sur un
+        pad mémoire de l'AKAI, qui regarde exactement la même mémoire.
         """
-        from PySide6.QtWidgets import QTextBrowser, QDialogButtonBox
-
-        label = getattr(clip, 'memory_label', '') or tr("lt_seq_info_no_mem")
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("lt_seq_info_title", mem=label))
-        dlg.setMinimumSize(760, 440)
-        lay = QVBoxLayout(dlg)
-
-        view = QTextBrowser()
-        view.setStyleSheet("QTextBrowser { background:#141414; border:1px solid #333; }")
-        # Les liens « ✖ » du tableau ne sont pas des URL à ouvrir : on les
-        # intercepte pour supprimer le projecteur de la mémoire.
-        view.setOpenLinks(False)
-        view.anchorClicked.connect(lambda url: self._seq_info_anchor(url, clip, view))
-        view.setHtml(self._seq_info_html(clip))
-        lay.addWidget(view)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Close)
-        btns.rejected.connect(dlg.reject)
-        btns.accepted.connect(dlg.accept)
-        lay.addWidget(btns)
-        dlg.exec()
-
-    def _seq_info_html(self, clip):
-        """Page HTML de la fenêtre Info — régénérée après chaque suppression."""
-        mw         = getattr(self.parent_editor, 'main_window', None)
-        projectors = getattr(mw, 'projectors', None) or []
-        group_disp = getattr(mw, 'GROUP_DISPLAY', {}) if mw else {}
-        label      = getattr(clip, 'memory_label', '') or tr("lt_seq_info_no_mem")
-
-        rows  = self._seq_info_rows(clip, projectors, group_display=group_disp)
-        inten = getattr(clip, 'intensity', 100)
-
-        # En-tête : ce qui module les niveaux de la mémoire (intensité, fondus,
-        # cue choisi) — sinon on lit des pourcentages sans savoir d'où ils sortent.
-        head = [f"<b style='font-size:15px'>{label}</b>"]
-        cues = self._seq_info_cue_count(clip)
-        if cues > 1:
-            head.append(tr("lt_seq_info_cue", n=(getattr(clip, 'cue_index', 0) or 0) + 1, total=cues))
-        head.append(tr("lt_seq_info_intensity", v=inten))
-        fi = int(getattr(clip, 'fade_in_duration', 0) or 0)
-        fo = int(getattr(clip, 'fade_out_duration', 0) or 0)
-        if fi or fo:
-            head.append(tr("lt_seq_info_fades", fi=fi, fo=fo))
-
-        html = [
-            "<style>"
-            "body { color:#e0e0e0; font-family:'Segoe UI',sans-serif; font-size:12px; }"
-            "table { border-collapse:collapse; width:100%; }"
-            "th { text-align:left; padding:5px 8px; color:#00d4ff; font-size:11px;"
-            "     border-bottom:1px solid #333; }"
-            "td { padding:4px 8px; border-bottom:1px solid #222; }"
-            ".dim { color:#888; }"
-            "</style>",
-            "<div>" + "&nbsp;&nbsp;·&nbsp;&nbsp;".join(head) + "</div><br>",
-        ]
-        if not rows:
-            html.append(f"<p class='dim'>{tr('lt_seq_info_empty')}</p>")
-        else:
-            html.append(
-                "<table><tr>"
-                f"<th>{tr('lt_seq_info_col_proj')}</th>"
-                f"<th>{tr('lt_seq_info_col_group')}</th>"
-                f"<th>{tr('lt_seq_info_col_addr')}</th>"
-                f"<th>{tr('lt_seq_info_col_level')}</th>"
-                f"<th>{tr('lt_seq_info_col_color')}</th>"
-                f"<th>{tr('lt_seq_info_col_pos')}</th>"
-                f"<th>{tr('lt_seq_info_col_misc')}</th>"
-                "<th></th>"
-                "</tr>")
-            _dash = "<span class='dim'>—</span>"
-            for r in rows:
-                if r["level"] <= 0:
-                    lvl_txt = "<span class='dim'>0 %</span>"
-                elif r["eff"] != r["level"]:
-                    lvl_txt = f"{r['level']} % <span class='dim'>&rarr; {r['eff']} %</span>"
-                else:
-                    lvl_txt = f"{r['level']} %"
-                if r["color"]:
-                    swatch = (f"<span style='background:{r['color']}'>&nbsp;&nbsp;&nbsp;</span> "
-                              f"<span class='dim'>{r['color']}</span>")
-                else:
-                    swatch = "<span class='dim'>—</span>"
-                html.append(
-                    f"<tr><td>{r['name']}</td><td>{r['group']}</td>"
-                    f"<td class='dim'>{r['addr']}</td><td>{lvl_txt}</td><td>{swatch}</td>"
-                    f"<td>{r['pos'] or _dash}</td>"
-                    f"<td>{r['misc'] or _dash}</td>"
-                    f"<td><a href='del:{r['idx']}' style='color:#f44336;"
-                    f"text-decoration:none' title='{tr('lt_seq_info_del_tip')}'>&#10006;</a></td>"
-                    "</tr>")
-            html.append("</table>")
-            html.append(f"<p class='dim'>{tr('lt_seq_info_count', n=len(rows))} · "
-                        f"{tr('lt_seq_info_del_hint')}</p>")
-
-        return "".join(html)
-
-    def _seq_info_anchor(self, url, clip, view):
-        """Clic sur un lien du tableau Info : seule la suppression est gérée."""
-        s = url.toString() if hasattr(url, 'toString') else str(url)
-        if not s.startswith("del:"):
-            return
-        try:
-            idx = int(s[4:])
-        except ValueError:
-            return
-        if self._seq_info_delete_projector(clip, idx):
-            view.setHtml(self._seq_info_html(clip))
-
-    def _seq_info_delete_projector(self, clip, idx):
-        """Retire un projecteur de la mémoire rappelée. Retourne True si fait.
-
-        « Retirer » = NEUTRALISER l'entrée, jamais la sortir de la liste : cette
-        liste est indexée par NUMÉRO DE PROJECTEUR (`for i, ps in enumerate(...)
-        → projectors[i]`), un `pop()` décalerait tout le rig d'un cran.
-
-        Les clés `pan`/`tilt` sont SUPPRIMÉES au lieu d'être remises à 32768 :
-        le rappel par pad AKAI (`_apply_memory_to_projectors`) applique le
-        pan/tilt dès que la clé existe, même au centre — il recentrerait donc la
-        lyre au lieu de la laisser tranquille. Absente, les deux moteurs
-        l'ignorent.
-
-        L'édition porte sur la mémoire elle-même : elle vaut pour TOUS les clips
-        qui la rappellent et pour le pad AKAI, d'où la confirmation.
-        """
-        mw       = getattr(self.parent_editor, 'main_window', None)
-        memories = getattr(mw, 'memories', None) if mw else None
-        ref      = getattr(clip, 'memory_ref', None)
-        ps_list  = resolve_memory_projectors(ref, getattr(clip, 'cue_index', None), memories)
-        if not ps_list or idx < 0 or idx >= len(ps_list):
-            return False
-
-        projs = getattr(mw, 'projectors', None) or []
-        name  = (getattr(projs[idx], 'name', '') or f"#{idx + 1}") if idx < len(projs) else f"#{idx + 1}"
-        label = getattr(clip, 'memory_label', '') or (
-            f"MEM {ref[0] + 1}.{ref[1] + 1}" if ref else "?")
-
-        if QMessageBox.question(
-                self, tr("lt_seq_info_del_title"),
-                tr("lt_seq_info_del_confirm", proj=name, mem=label),
-                QMessageBox.Yes | QMessageBox.Cancel,
-                QMessageBox.Cancel) != QMessageBox.Yes:
-            return False
-
-        ps = ps_list[idx]
-        ps["level"]        = 0
-        ps["base_color"]   = "#000000"
-        ps["strobe_speed"] = 0
-        ps["channel_extras"] = {}
-        for k in ("uv", "white_boost", "amber_boost", "orange_boost",
-                  "gobo", "gobo_rotation", "zoom"):
-            if k in ps:
-                ps[k] = 0
-        ps.pop("pan", None)
-        ps.pop("tilt", None)
-
-        # Persistance immédiate : les mémoires ne vivent QUE dans
-        # ~/.maestro_akai_config.json, et le Ctrl+Z de REC Lumière ne les couvre pas.
-        if mw is not None and ref:
-            if hasattr(mw, '_save_akai_config_auto'):
-                mw._save_akai_config_auto()
-            if hasattr(mw, '_refresh_memory_pad'):
-                mw._refresh_memory_pad(ref[0], ref[1])
-        self.update()
-        return True
-
-    def _seq_info_cue_count(self, clip):
-        """Nombre de cues de la mémoire rappelée (0 si mémoire introuvable)."""
-        mw       = getattr(self.parent_editor, 'main_window', None)
-        memories = getattr(mw, 'memories', None) if mw else None
-        ref      = getattr(clip, 'memory_ref', None)
-        if not ref or not memories:
-            return 0
-        col, row = ref[0], ref[1]
-        if col >= len(memories) or row >= len(memories[col]):
-            return 0
-        mem = memories[col][row]
-        return len(mem.get("cues", [])) if mem else 0
+        SequenceInfoDialog(
+            self,
+            getattr(self.parent_editor, 'main_window', None),
+            memory_ref=getattr(clip, 'memory_ref', None),
+            cue_index=getattr(clip, 'cue_index', 0),
+            label=getattr(clip, 'memory_label', '') or tr("lt_seq_info_no_mem"),
+            intensity=getattr(clip, 'intensity', 100),
+            fades=(getattr(clip, 'fade_in_duration', 0),
+                   getattr(clip, 'fade_out_duration', 0)),
+            on_change=self.update,
+        ).exec()
 
     def show_gobo_clip_menu(self, clip, global_pos):
         """Menu clic droit sur un clip de gobo : changer le gobo, régler la rotation."""

@@ -318,6 +318,29 @@ QHeaderView::section {
 """
 
 
+class _ComboSansMolette(QComboBox):
+    """Liste deroulante qui laisse passer la molette au lieu de changer de valeur.
+
+    Ces combos vivent dans les cellules d'un tableau qui defile. Avec le
+    comportement Qt par defaut, faire defiler la liste des declencheurs modifiait
+    silencieusement l'action de la ligne survolee — on croyait avoir juste fait
+    defiler, et le reglage avait change sans un mot. `ignore()` fait remonter
+    l'evenement au tableau, qui defile normalement ; la valeur ne se change plus
+    qu'au clic ou au clavier, deliberement.
+
+    `StrongFocus` complete la manoeuvre : sans lui la combo prend le focus au
+    simple passage de la molette (`WheelFocus` par defaut) et le piege revient
+    des le deuxieme cran.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class VideoDialog(QDialog):
     """Connexion a la regie + correspondance declencheur → action lumiere."""
 
@@ -327,6 +350,7 @@ class VideoDialog(QDialog):
     CLE_INTRO   = ""      # cle i18n du paragraphe d'explication
     CLE_ASTUCE  = ""      # cle i18n affichee quand la liste est vide
     CLE_ACTIVER = ""      # cle i18n de la case « activer la liaison »
+    CLE_TEASER  = "vlink_guide_teaser"  # cle i18n de l'encart guide (nomme la regie)
     COL_DECLENCHEUR = ""  # en-tete de la 1re colonne (« Entree vMix », « Scene OBS »)
     # Un seul guide pour les deux regies : la marche a suivre est la meme des
     # deux cotes (activer le serveur, relever l'adresse, associer les sources),
@@ -361,7 +385,7 @@ class VideoDialog(QDialog):
         # du reglage se joue dans OBS ou vMix — activer le serveur, relever le
         # mot de passe — et aucun libelle de cette fenetre ne peut le montrer.
         root.addWidget(guide_banner_encart(
-            tr("vlink_guide_teaser"), self.URL_GUIDE, tr("vlink_guide_link")))
+            tr(self.CLE_TEASER), self.URL_GUIDE, tr("vlink_guide_link")))
 
         # ── Connexion ───────────────────────────────────────────────────────
         ligne = QHBoxLayout()
@@ -563,10 +587,10 @@ class VideoDialog(QDialog):
             item.setData(Qt.UserRole, clef)
             self._table.setItem(ligne, 0, item)
 
-            combo = QComboBox()
+            combo = _ComboSansMolette()
             for code, libelle in ACTION_LABELS:
                 combo.addItem(libelle, code)
-            cible = QComboBox()
+            cible = _ComboSansMolette()
             self._table.setCellWidget(ligne, 1, combo)
             self._table.setCellWidget(ligne, 2, cible)
 

@@ -114,6 +114,12 @@ def _ch_name_to_mystrow(ch_name: str, preset: str, group: str, byte: str) -> str
 
     # 3. Heuristique sur le nom
     n = ch_name.lower()
+    # Temperature de couleur AVANT les mots-cles couleur : « Color Temperature »
+    # contient « color » et serait sinon classe en roue de couleurs.
+    if "cto" in n or ("colour temp" in n) or ("color temp" in n):
+        return "CTO"
+    if "ctb" in n or "ctc" in n:
+        return "CTB"
     for kw, val in [("red","R"),("green","G"),("blue","B"),("white","W"),
                     ("amber","A"),("uv","UV"),("dim","Dim"),("master","Dim"),
                     ("intensity","Dim"),("strobe","Strobe"),("shutter","Strobe"),

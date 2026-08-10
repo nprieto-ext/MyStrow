@@ -66,7 +66,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.81"
+VERSION = "3.1.82"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -559,6 +559,39 @@ CH_SHORT = {
 def channel_label(ch):
     """Libellé d'affichage d'un type de canal."""
     return CH_SHORT.get(ch, ch)
+
+
+# ─── Noms de canaux : un seul vocabulaire ─────────────────────────────────────
+# Deux bibliothèques alimentent les profils, et elles ne nommaient pas les mêmes
+# canaux pareil. Les 194 fixtures natives emploient le vocabulaire du moteur
+# (« Ambre ») ; les 1710 fixtures QLC+ étaient recopiées telles quelles avec le
+# leur (« A »). Résultat : le moteur cherchait « Ambre » dans un profil qui
+# disait « A », et la branche correspondante ne s'exécutait JAMAIS.
+#
+# `Effects` et `Gobo1Rot` étaient les plus touchés : aucune des deux
+# bibliothèques ne les écrivait sous ce nom, donc ces deux branches de
+# `artnet_dmx` étaient du code mort — 3654 canaux « Effect » et 56 « GoboRot »
+# dans la base, tous muets.
+CHANNEL_ALIASES = {
+    "A":        "Ambre",     # QLC+ : LED ambre
+    "Amber":    "Ambre",
+    "Effect":   "Effects",   # QLC+ : canal macro/effet interne
+    "GoboRot":  "Gobo1Rot",  # QLC+ : rotation/indexation du gobo
+    "Gobo1Rotation": "Gobo1Rot",
+    "PrismRotation": "PrismRot",
+}
+
+
+def canonical_channel(ch):
+    """Nom de canal ramené au vocabulaire du moteur DMX."""
+    return CHANNEL_ALIASES.get(ch, ch) if isinstance(ch, str) else ch
+
+
+def canonical_profile(profile):
+    """Profil complet canonicalisé. Tolère None et les valeurs non-texte."""
+    if not profile:
+        return []
+    return [canonical_channel(c) for c in profile]
 
 
 # ─── Téléchargement officiel ──────────────────────────────────────────────────

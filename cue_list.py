@@ -31,6 +31,7 @@ _ACCENT = "#00d4ff"
 _SEL_BG = "#1e3a4a"
 _TEXT   = "#e0e0e0"
 _MUTED  = "#666666"
+_WARN   = "#ffb84d"   # fondu plus long que la durée du cue — signalé, pas corrigé
 
 _BTN = f"""
     QPushButton {{
@@ -258,6 +259,7 @@ class CueListPanel(QWidget):
     cues_changed         = Signal()
     cue_activated        = Signal(int)
     effect_pick_requested = Signal(int)   # row index
+    play_pause_requested = Signal()       # ▶ / ⏸ : suspendre ou reprendre
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -299,9 +301,17 @@ class CueListPanel(QWidget):
         self._progress = _ProgressStrip()
         root.addWidget(self._progress)
 
-        # Barre d'outils : ▲▼ = naviguer, 🗑 = supprimer
+        # Barre d'outils : ▶/⏸ = enchaînement, ▲▼ = naviguer, 🗑 = supprimer
         tb = QHBoxLayout()
         tb.setSpacing(6)
+        # Lecture/pause en PREMIER et détaché des trois autres : c'est le seul
+        # bouton qui agit sur le spectacle en cours, les autres éditent la
+        # liste. Les confondre à la souris pendant un show coûterait cher.
+        self._playing = False
+        self._btn_play = self._mk_btn("▶", self.play_pause_requested.emit)
+        self._btn_play.setFixedSize(40, 32)
+        tb.addWidget(self._btn_play)
+        tb.addSpacing(10)
         self._btn_prev = self._mk_btn("▲", self._nav_prev)
         self._btn_next = self._mk_btn("▼", self._nav_next)
         self._btn_del  = self._mk_btn("🗑", self._delete_cue)
@@ -310,6 +320,7 @@ class CueListPanel(QWidget):
             tb.addWidget(b)
         tb.addStretch()
         root.addLayout(tb)
+        self.set_playing(False)
 
         # Table
         self._table = QTableWidget(0, 5)
@@ -343,6 +354,23 @@ class CueListPanel(QWidget):
         b.setStyleSheet(_BTN)
         b.clicked.connect(slot)
         return b
+
+    def set_playing(self, playing: bool):
+        """Reflète l'état de l'enchaînement automatique sur le bouton ▶/⏸.
+
+        Piloté par la fenêtre principale et pas par le clic : l'enchaînement
+        s'arrête aussi tout seul (fin de liste, CLEAR, pad relâché), et un
+        bouton qui afficherait « en lecture » dans ces cas-là mentirait.
+        """
+        self._playing = bool(playing)
+        self._btn_play.setText("⏸" if self._playing else "▶")
+        self._btn_play.setToolTip(tr("cl_pause") if self._playing else tr("cl_play"))
+        if self._playing:
+            self._btn_play.setStyleSheet(
+                _BTN + "QPushButton { color:#111; background:%s; border-color:%s; "
+                       "font-weight:bold; }" % (_ACCENT, _ACCENT))
+        else:
+            self._btn_play.setStyleSheet(_BTN)
 
     # ── API publique ──────────────────────────────────────────────────────
 
@@ -386,6 +414,14 @@ class CueListPanel(QWidget):
                 item = self._table.item(r, c)
                 if item:
                     item.setForeground(QBrush(QColor(_ACCENT) if is_active else QColor(_TEXT)))
+            # Le surlignage repeint TOUTE la ligne : sans ce rappel, l'alerte
+            # « fondu plus long que la durée » disparaissait au premier
+            # changement de cue, alors qu'elle porte une information que la
+            # couleur de ligne, elle, n'a pas.
+            if r < len(self.cues):
+                cue = self.cues[r]
+                if 0 < float(cue.get("duration", 0)) < float(cue.get("fade", 0)):
+                    self._style_time_cell(r, 3)
         if 0 <= idx < self._table.rowCount():
             self._table.setCurrentCell(idx, 0)
             self._table.scrollToItem(self._table.item(idx, 0))
@@ -441,19 +477,21 @@ class CueListPanel(QWidget):
         lbl.setFlags(_rw)
         self._table.setItem(idx, 1, lbl)
 
-        dur_val = float(cue.get("duration", 0))
-        dur = QTableWidgetItem(_fmt_time(dur_val))
+        dur = QTableWidgetItem("")
         dur.setTextAlignment(Qt.AlignCenter)
         dur.setFlags(_ro)
-        dur.setForeground(QBrush(QColor(_ACCENT) if dur_val > 0 else QColor(_MUTED)))
         self._table.setItem(idx, 2, dur)
 
-        fade_val = float(cue.get("fade", 0))
-        fade = QTableWidgetItem(_fmt_time(fade_val))
+        fade = QTableWidgetItem("")
         fade.setTextAlignment(Qt.AlignCenter)
         fade.setFlags(_ro)
-        fade.setForeground(QBrush(QColor(_ACCENT) if fade_val > 0 else QColor(_MUTED)))
         self._table.setItem(idx, 3, fade)
+
+        # Une seule écriture de ces deux cellules dans tout le fichier : le
+        # texte, la couleur et l'alerte « fondu plus long que la durée » sont
+        # décidés au même endroit qu'après une édition.
+        self._style_time_cell(idx, 2)
+        self._style_time_cell(idx, 3)
 
         eff_name = (cue.get("effect") or {}).get("name", "")
         eff_item = QTableWidgetItem(f"{_effect_emoji(eff_name)} {eff_name}" if eff_name else "—")
@@ -486,37 +524,53 @@ class CueListPanel(QWidget):
             self.effect_pick_requested.emit(row)
 
     def _on_popup_committed(self, secs: float):
+        """Écrit la valeur réglée au curseur — et RIEN d'autre.
+
+        Ce gestionnaire « corrigeait » auparavant l'autre colonne de la même
+        ligne : régler la durée rabotait le fondu qui la dépassait, régler le
+        fondu allongeait la durée, et poser un fondu sur un cue manuel
+        (durée 0) lui inventait une durée — c'est-à-dire qu'il transformait un
+        cue attendant le GO en cue qui part tout seul. Rien à l'écran ne le
+        signalait : l'utilisateur voyait bouger un réglage auquel il n'avait
+        pas touché.
+
+        Ces contraintes ne protégeaient de rien. `_apply_cue_with_fade` prend
+        un instantané de l'état COURANT des projecteurs au lancement du fondu :
+        un cue qui enchaîne au milieu du fondu précédent repart proprement de
+        là où les lampes en sont. Un fondu plus long que la durée est donc
+        parfaitement jouable — il est désormais simplement signalé à l'œil.
+        """
         row, col = self._popup_row, self._popup_col
         if not (0 <= row < len(self.cues)) or col not in (2, 3):
             return
-        cue = self.cues[row]
-        if col == 2:  # Durée
-            cue["duration"] = secs
-            # Fade ne peut pas dépasser la durée
-            if secs > 0 and float(cue.get("fade", 0)) > secs:
-                cue["fade"] = secs
-                self._refresh_cell(row, 3, secs)
-        else:  # Fade
-            cue["fade"] = secs
-            # Durée doit être au moins égale au fade
-            dur = float(cue.get("duration", 0))
-            if secs > 0 and (dur == 0 or dur < secs):
-                cue["duration"] = secs
-                self._refresh_cell(row, 2, secs)
-        self._table.blockSignals(True)
-        item = self._table.item(row, col)
-        if item:
-            item.setText(_fmt_time(secs))
-            item.setForeground(QBrush(QColor(_ACCENT) if secs > 0 else QColor(_MUTED)))
-        self._table.blockSignals(False)
+        self.cues[row]["duration" if col == 2 else "fade"] = secs
+        # Les deux cellules sont repeintes : la couleur d'alerte du fondu
+        # dépend de la durée, elle doit suivre quand c'est la durée qui bouge.
+        self._style_time_cell(row, 2)
+        self._style_time_cell(row, 3)
         self.cues_changed.emit()
 
-    def _refresh_cell(self, row: int, col: int, secs: float):
-        self._table.blockSignals(True)
+    def _style_time_cell(self, row: int, col: int):
+        """Peint une cellule Durée/Fade d'après le cue : texte, couleur, infobulle."""
+        if not (0 <= row < len(self.cues)):
+            return
         item = self._table.item(row, col)
-        if item:
-            item.setText(_fmt_time(secs))
+        if item is None:
+            return
+        cue  = self.cues[row]
+        dur  = float(cue.get("duration", 0))
+        fade = float(cue.get("fade", 0))
+        secs = dur if col == 2 else fade
+        self._table.blockSignals(True)
+        item.setText(_fmt_time(secs))
+        if col == 3 and dur > 0 and fade > dur:
+            # Pas une erreur, mais ça ne se devine pas en lisant deux nombres :
+            # le fondu n'aura pas fini quand le cue suivant partira.
+            item.setForeground(QBrush(QColor(_WARN)))
+            item.setToolTip(tr("cl_fade_over", d=_fmt_time(dur)))
+        else:
             item.setForeground(QBrush(QColor(_ACCENT) if secs > 0 else QColor(_MUTED)))
+            item.setToolTip("")
         self._table.blockSignals(False)
 
     # — Navigation ▲▼

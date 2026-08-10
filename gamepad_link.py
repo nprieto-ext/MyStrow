@@ -41,7 +41,11 @@ from PySide6.QtCore import Qt
 
 from gamepad_client import GamepadClient, lister_manettes
 from video_link import STYLE_DIALOGUE
+from core import guide_banner_encart
 from i18n import tr
+
+# Guide en ligne : manettes compatibles, reglages et cas de la manette PS3.
+URL_GUIDE = "https://mystrow.fr/manette-jeu-lyres-mystrow"
 
 # Course complete d'un axe pan/tilt (16 bits).
 COURSE = 65535
@@ -353,10 +357,26 @@ class GamepadDialog(QDialog):
         intro.setWordWrap(True)
         root.addWidget(intro)
 
+        # Encart vers le guide, en HAUT comme pour la regie video : le sujet
+        # deborde de cette fenetre — quelle manette acheter, et le cas de la
+        # PS3 qui demande un pilote Windows. Aucun libelle d'ici ne peut le dire.
+        root.addWidget(guide_banner_encart(
+            tr("gp_guide_teaser"), URL_GUIDE, tr("vlink_guide_link")))
+
         # ── Peripherique ────────────────────────────────────────────────────
         self._etat = QLabel("")
         self._etat.setStyleSheet("color:#888; font-size:11px;")
         root.addWidget(self._etat)
+
+        # Une manette peut etre parfaitement reconnue et n'envoyer strictement
+        # rien (DualShock 3 sous Windows). Sans cette ligne, l'utilisateur voit
+        # une pastille verte et des barres qui ne bougent pas, sans rien pour
+        # lui dire ou chercher.
+        self._alerte = QLabel("")
+        self._alerte.setWordWrap(True)
+        self._alerte.setStyleSheet("color:#ffb84d; font-size:11px;")
+        self._alerte.setVisible(False)
+        root.addWidget(self._alerte)
 
         ligne_dev = QHBoxLayout()
         self._btn_detect = QPushButton(tr("gp_detect"))
@@ -452,6 +472,7 @@ class GamepadDialog(QDialog):
         root.addLayout(bas)
 
         link.client.connection_changed.connect(self._maj_etat)
+        link.client.avertissement.connect(self._maj_alerte)
         link.client.axes_changed.connect(self._maj_apercu)
         self._maj_etat(link.client.is_connected(),
                        link.client.name() or tr("gp_none"))
@@ -485,6 +506,12 @@ class GamepadDialog(QDialog):
         puce = "●" if connecte else "○"
         self._etat.setText(f"{puce}  {message}")
         self._etat.setStyleSheet(f"color:{couleur}; font-size:11px;")
+        if not connecte:
+            self._maj_alerte("")
+
+    def _maj_alerte(self, message: str):
+        self._alerte.setText(f"⚠  {message}" if message else "")
+        self._alerte.setVisible(bool(message))
 
     def _maj_apercu(self, lx, ly, rx, ry):
         zm = self._zm.value() / 100.0
@@ -499,8 +526,18 @@ class GamepadDialog(QDialog):
             return
         if not manettes:
             self._maj_etat(False, tr("gp_none"))
+            from gamepad_client import avertissement_aucune
+            self._maj_alerte(avertissement_aucune())
             return
         self._maj_etat(True, ", ".join(nom for _, nom in manettes))
+        # Le bouton « Détecter » doit dire la même chose que l'attache
+        # automatique : une manette listée n'est pas une manette qui parle.
+        from gamepad_client import avertissement_pour
+        for i, _ in manettes:
+            avert = avertissement_pour(i)
+            if avert:
+                self._maj_alerte(avert)
+                break
 
     # ── validation ──────────────────────────────────────────────────────────
 

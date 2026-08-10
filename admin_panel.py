@@ -421,6 +421,60 @@ def _delete_fixture_doc(doc_id: str, id_token: str) -> bool:
     return _delete_firestore_doc(f"gdtf_fixtures/{doc_id}", id_token)
 
 
+def _query_fixture_submissions(id_token: str, status: str = "") -> list:
+    """
+    Charge la file de modération : collection 'fixture_submissions'.
+    Ces documents sont déposés par la Cloud Function fixture_submit quand un
+    utilisateur propose une fixture importée. Rien n'y est publié tant qu'un
+    administrateur ne l'a pas approuvé.
+
+    status : filtre optionnel ("pending", "approved", "rejected"). Le filtrage
+    est fait localement pour éviter d'avoir à créer un index Firestore.
+    """
+    results = []
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/fixture_submissions?pageSize=300"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            # Collection encore inexistante : file vide, pas une erreur.
+            if e.code == 404:
+                return []
+            raise
+        for doc in data.get("documents", []):
+            fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+            fields["_doc_id"] = doc["name"].split("/")[-1]
+            if status and fields.get("status") != status:
+                continue
+            results.append(fields)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    results.sort(key=lambda d: d.get("created_at", 0), reverse=True)
+    return results
+
+
+def _set_submission_status(doc_id: str, status: str, id_token: str,
+                           reviewer: str = "", reason: str = "") -> bool:
+    """Marque une soumission comme approuvée ou refusée (trace de la décision)."""
+    fields = {
+        "status":      {"stringValue": status},
+        "reviewed_by": {"stringValue": reviewer},
+        "reviewed_at": {"doubleValue": datetime.now(timezone.utc).timestamp()},
+    }
+    mask = ["status", "reviewed_by", "reviewed_at"]
+    if reason:
+        fields["review_reason"] = {"stringValue": reason}
+        mask.append("review_reason")
+    _patch_firestore(f"fixture_submissions/{doc_id}", fields, id_token, mask=mask)
+    return True
+
+
 GA4_VISITS_URL   = "https://us-central1-mystrow-907be.cloudfunctions.net/ga4_visits"
 GA4_INSIGHTS_URL = "https://us-central1-mystrow-907be.cloudfunctions.net/ga4_insights"
 
@@ -3230,6 +3284,15 @@ class AdminPanel(QMainWindow):
         self._btn_nav_analytics.clicked.connect(lambda: self._switch_view(5))
         nav_lay.addWidget(self._btn_nav_analytics)
 
+        # Modération des fixtures proposées par les utilisateurs. Le libellé
+        # porte le nombre de dossiers en attente, sinon la file se remplit sans
+        # que personne ne la regarde.
+        self._btn_nav_mod = QPushButton("Modération")
+        self._btn_nav_mod.setFixedHeight(38)
+        self._btn_nav_mod.setStyleSheet(_nav_idle)
+        self._btn_nav_mod.clicked.connect(lambda: self._switch_view(6))
+        nav_lay.addWidget(self._btn_nav_mod)
+
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
 
@@ -3418,6 +3481,9 @@ class AdminPanel(QMainWindow):
 
         # ── Page 5 : Analytics ────────────────────────────────────────────────
         self._build_analytics_panel()
+
+        # ── Page 6 : Modération des contributions ─────────────────────────────
+        self._build_moderation_panel()
 
     # ------------------------------------------------------------------
 
@@ -4098,6 +4164,7 @@ class AdminPanel(QMainWindow):
         self._btn_nav_release.setStyleSheet(_active if idx == 3 else _idle)
         self._btn_nav_dl.setStyleSheet(_active if idx == 4 else _idle)
         self._btn_nav_analytics.setStyleSheet(_active if idx == 5 else _idle)
+        self._btn_nav_mod.setStyleSheet(_active if idx == 6 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -4106,6 +4173,8 @@ class AdminPanel(QMainWindow):
         if idx == 5 and not getattr(self, "_ga4_insights_loaded", False):
             self._ga4_insights_loaded = True
             self._load_ga4_insights()
+        if idx == 6 and not getattr(self, "_submissions_loaded", False):
+            self._load_submissions()
 
     def _build_fixtures_panel(self):
         fix_page = QWidget()
@@ -4249,6 +4318,341 @@ class AdminPanel(QMainWindow):
         self._filtered_fixtures: list = []
         self._fix_sort_col = 0
         self._fix_sort_asc = True
+
+    # ── Page Modération ───────────────────────────────────────────────────────
+
+    def _build_moderation_panel(self):
+        """
+        File de modération des fixtures proposées par les utilisateurs.
+
+        Le partage est déjà filtré côté client et côté Cloud Function (provenance
+        redistribuable, attestation, quota). Cette page est le dernier maillon :
+        rien n'atteint gdtf_fixtures sans qu'un humain ait cliqué « Approuver ».
+        """
+        mod_page = QWidget()
+        mod_lay = QVBoxLayout(mod_page)
+        mod_lay.setContentsMargins(0, 0, 0, 0)
+        mod_lay.setSpacing(0)
+
+        # Barre d'outils
+        mod_toolbar = QFrame()
+        mod_toolbar.setFixedHeight(46)
+        mod_toolbar.setStyleSheet(f"background: {BG_MAIN}; border-bottom: 1px solid #242424;")
+        mt_lay = QHBoxLayout(mod_toolbar)
+        mt_lay.setContentsMargins(16, 0, 16, 0)
+        mt_lay.setSpacing(8)
+
+        self._mod_filter = QComboBox()
+        self._mod_filter.addItem("En attente", "pending")
+        self._mod_filter.addItem("Approuvées", "approved")
+        self._mod_filter.addItem("Refusées", "rejected")
+        self._mod_filter.addItem("Toutes", "")
+        self._mod_filter.setFixedHeight(30)
+        self._mod_filter.setStyleSheet(f"""
+            QComboBox {{
+                background: {BG_INPUT}; color: {TEXT};
+                border: 1px solid #3a3a3a; border-radius: 5px;
+                padding: 0 10px; font-size: 12px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {BG_INPUT}; color: {TEXT};
+                selection-background-color: {ACCENT}; selection-color: #000;
+            }}
+        """)
+        self._mod_filter.currentIndexChanged.connect(lambda *_: self._refresh_mod_table())
+        mt_lay.addWidget(self._mod_filter)
+
+        self._mod_count = QLabel("—")
+        self._mod_count.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
+        mt_lay.addWidget(self._mod_count)
+
+        mt_lay.addStretch()
+
+        btn_mod_refresh = QPushButton("↻  Actualiser")
+        btn_mod_refresh.setStyleSheet(_BTN_SECONDARY)
+        btn_mod_refresh.setFixedHeight(30)
+        btn_mod_refresh.clicked.connect(self._load_submissions)
+        mt_lay.addWidget(btn_mod_refresh)
+
+        mod_lay.addWidget(mod_toolbar)
+
+        self._mod_loading = QLabel("Chargement des contributions…")
+        self._mod_loading.setAlignment(Qt.AlignCenter)
+        self._mod_loading.setStyleSheet(f"color: {TEXT_DIM}; font-size: 13px; padding: 20px;")
+        self._mod_loading.hide()
+        mod_lay.addWidget(self._mod_loading)
+
+        self._mod_table = QTableWidget()
+        self._mod_table.setColumnCount(8)
+        self._mod_table.setHorizontalHeaderLabels(
+            ["Nom", "Fabricant", "Type", "Canaux", "Provenance", "Licence",
+             "Contributeur", "Reçue le"]
+        )
+        mhdr = self._mod_table.horizontalHeader()
+        mhdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        for _c in range(1, 8):
+            mhdr.setSectionResizeMode(_c, QHeaderView.ResizeToContents)
+        self._mod_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._mod_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._mod_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._mod_table.setAlternatingRowColors(True)
+        self._mod_table.verticalHeader().setVisible(False)
+        self._mod_table.setShowGrid(False)
+        self._mod_table.selectionModel().selectionChanged.connect(
+            self._on_mod_selection_changed)
+        self._mod_table.cellDoubleClicked.connect(lambda *_: self._on_mod_inspect())
+        mod_lay.addWidget(self._mod_table)
+
+        # Barre d'actions
+        mod_action_bar = QFrame()
+        mod_action_bar.setFixedHeight(48)
+        mod_action_bar.setStyleSheet(f"background: {BG_PANEL}; border-top: 1px solid #2a2a2a;")
+        ma_lay = QHBoxLayout(mod_action_bar)
+        ma_lay.setContentsMargins(16, 0, 16, 0)
+        ma_lay.setSpacing(8)
+
+        hint = QLabel("Vérifiez la provenance déclarée avant d'approuver — "
+                      "l'approbation publie le profil pour tous les utilisateurs.")
+        hint.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        ma_lay.addWidget(hint)
+        ma_lay.addStretch()
+
+        self._btn_mod_inspect = QPushButton("🔍  Détail")
+        self._btn_mod_inspect.setStyleSheet(_BTN_SECONDARY)
+        self._btn_mod_inspect.setFixedHeight(32)
+        self._btn_mod_inspect.setEnabled(False)
+        self._btn_mod_inspect.clicked.connect(self._on_mod_inspect)
+        ma_lay.addWidget(self._btn_mod_inspect)
+
+        self._btn_mod_reject = QPushButton("✗  Refuser")
+        self._btn_mod_reject.setStyleSheet(f"""
+            QPushButton {{ background:transparent; color:{RED}; border:1px solid #6a2020;
+                          border-radius:4px; font-size:11px; padding: 0 12px; }}
+            QPushButton:hover {{ background:{RED}; color:white; }}
+            QPushButton:disabled {{ color:#444; border-color:#333; }}
+        """)
+        self._btn_mod_reject.setFixedHeight(32)
+        self._btn_mod_reject.setEnabled(False)
+        self._btn_mod_reject.clicked.connect(self._on_mod_reject)
+        ma_lay.addWidget(self._btn_mod_reject)
+
+        self._btn_mod_approve = QPushButton("✓  Approuver et publier")
+        self._btn_mod_approve.setStyleSheet(_BTN_PRIMARY)
+        self._btn_mod_approve.setFixedHeight(32)
+        self._btn_mod_approve.setEnabled(False)
+        self._btn_mod_approve.clicked.connect(self._on_mod_approve)
+        ma_lay.addWidget(self._btn_mod_approve)
+
+        mod_lay.addWidget(mod_action_bar)
+        self._content_stack.addWidget(mod_page)
+
+        # State
+        self._submissions_loaded = False
+        self._all_submissions: list = []
+        self._filtered_submissions: list = []
+
+    def _load_submissions(self):
+        self._mod_loading.show()
+        self._mod_table.hide()
+        _run_async(
+            self, _query_fixture_submissions, self._id_token,
+            on_success=self._on_submissions_loaded,
+            on_error=self._on_submissions_error,
+        )
+
+    def _on_submissions_loaded(self, submissions: list):
+        self._submissions_loaded = True
+        self._all_submissions = submissions or []
+        self._mod_loading.hide()
+        self._mod_table.show()
+        self._refresh_mod_table()
+        self._update_mod_badge()
+
+    def _on_submissions_error(self, msg: str):
+        self._mod_loading.hide()
+        self._mod_table.show()
+        QMessageBox.warning(self, "Modération",
+                            f"Impossible de charger la file de modération :\n{msg}")
+
+    def _update_mod_badge(self):
+        n = sum(1 for s in self._all_submissions if s.get("status") == "pending")
+        self._btn_nav_mod.setText(f"Modération ({n})" if n else "Modération")
+
+    def _refresh_mod_table(self):
+        wanted = self._mod_filter.currentData()
+        rows = [s for s in self._all_submissions
+                if not wanted or s.get("status") == wanted]
+        self._filtered_submissions = rows
+
+        self._mod_table.setRowCount(len(rows))
+        for r, sub in enumerate(rows):
+            modes = sub.get("modes") or []
+            first = modes[0] if modes and isinstance(modes[0], dict) else {}
+            n_ch  = first.get("channelCount") or len(first.get("profile") or [])
+            ts    = sub.get("created_at") or 0
+            try:
+                when = datetime.fromtimestamp(float(ts), timezone.utc).strftime("%d/%m/%Y")
+            except Exception:
+                when = "—"
+            values = [
+                sub.get("name", ""),
+                sub.get("manufacturer", ""),
+                sub.get("fixture_type", ""),
+                f"{n_ch}" + (f"  ({len(modes)} modes)" if len(modes) > 1 else ""),
+                sub.get("declared_source", ""),
+                sub.get("license", ""),
+                sub.get("contributed_by", ""),
+                when,
+            ]
+            for c, val in enumerate(values):
+                item = QTableWidgetItem(str(val))
+                status = sub.get("status")
+                if status == "rejected":
+                    item.setForeground(QColor("#8a5a5a"))
+                elif status == "approved":
+                    item.setForeground(QColor("#5aa86f"))
+                self._mod_table.setItem(r, c, item)
+
+        self._mod_count.setText(f"{len(rows)} contribution(s)")
+        self._on_mod_selection_changed()
+
+    def _selected_submission(self) -> dict | None:
+        rows = self._mod_table.selectionModel().selectedRows()
+        if not rows:
+            return None
+        idx = rows[0].row()
+        if 0 <= idx < len(self._filtered_submissions):
+            return self._filtered_submissions[idx]
+        return None
+
+    def _on_mod_selection_changed(self, *_):
+        sub = self._selected_submission()
+        pending = bool(sub) and sub.get("status") == "pending"
+        self._btn_mod_inspect.setEnabled(bool(sub))
+        self._btn_mod_approve.setEnabled(pending)
+        self._btn_mod_reject.setEnabled(pending)
+
+    def _on_mod_inspect(self):
+        """Affiche la fiche complète : provenance déclarée + patch DMX proposé."""
+        sub = self._selected_submission()
+        if not sub:
+            return
+        lines = [
+            f"Nom            : {sub.get('name', '')}",
+            f"Fabricant      : {sub.get('manufacturer', '')}",
+            f"Type           : {sub.get('fixture_type', '')}",
+            "",
+            f"Provenance     : {sub.get('declared_source', '')}",
+            f"Licence        : {sub.get('license', '')}",
+            f"Attribution    : {sub.get('attribution', '') or '—'}",
+            f"Attestation    : {'oui' if sub.get('attestation') else 'NON'}",
+            f"Contributeur   : {sub.get('contributed_by', '')}",
+            f"Statut         : {sub.get('status', '')}",
+            "",
+            "Canaux DMX :",
+        ]
+        for m in (sub.get("modes") or []):
+            if not isinstance(m, dict):
+                continue
+            profile = m.get("profile") or []
+            lines.append(f"\n  ▸ {m.get('name', 'Mode')} — {len(profile)} canaux")
+            for i, ch in enumerate(profile, 1):
+                lines.append(f"      {i:>3}. {ch}")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Contribution — {sub.get('name', '')}")
+        dlg.resize(520, 620)
+        dlg.setStyleSheet(f"QDialog {{ background: {BG_MAIN}; }}")
+        lay = QVBoxLayout(dlg)
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setPlainText("\n".join(lines))
+        txt.setStyleSheet(f"background:{BG_INPUT}; color:{TEXT}; border:1px solid #3a3a3a;"
+                          " font-family: Consolas, monospace; font-size: 12px;")
+        lay.addWidget(txt)
+        btn = QPushButton("Fermer")
+        btn.setStyleSheet(_BTN_SECONDARY)
+        btn.clicked.connect(dlg.accept)
+        lay.addWidget(btn)
+        dlg.exec()
+
+    def _on_mod_approve(self):
+        """Publie la fixture dans gdtf_fixtures, licence et attribution incluses."""
+        sub = self._selected_submission()
+        if not sub or sub.get("status") != "pending":
+            return
+        name = sub.get("name", "")
+        if QMessageBox.question(
+            self, "Publier la contribution",
+            f"Publier « {name} » dans la bibliothèque commune ?\n\n"
+            f"Provenance déclarée : {sub.get('declared_source', '')}\n"
+            f"Licence : {sub.get('license', '')}\n"
+            f"Contributeur : {sub.get('contributed_by', '')}\n\n"
+            "Le profil deviendra visible par tous les utilisateurs.",
+        ) != QMessageBox.Yes:
+            return
+
+        fixture_data = {
+            "name":            name,
+            "manufacturer":    sub.get("manufacturer", ""),
+            "fixture_type":    sub.get("fixture_type", "PAR LED"),
+            "source":          "community",
+            "uuid":            sub.get("fingerprint", ""),
+            "modes":           sub.get("modes", []),
+            # Traçabilité juridique conservée sur la fixture publiée
+            "license":         sub.get("license", ""),
+            "attribution":     sub.get("attribution", ""),
+            "declared_source": sub.get("declared_source", ""),
+            "contributor_uid": sub.get("contributor_uid", ""),
+            "contributed_by":  sub.get("contributed_by", ""),
+        }
+        doc_id = sub.get("_doc_id", "")
+
+        def _publish(fx, doc, token, refresh):
+            token = _do_upload_fixture_async(fx, token, refresh)
+            _set_submission_status(doc, "approved", token, reviewer=self._admin_email)
+            return token
+
+        self._btn_mod_approve.setEnabled(False)
+        _run_async(
+            self, _publish, fixture_data, doc_id, self._id_token, self._refresh_token,
+            on_success=self._on_mod_approved,
+            on_error=self._on_mod_action_error,
+        )
+
+    def _on_mod_approved(self, token: str):
+        if token:
+            self._id_token = token
+        QMessageBox.information(self, "Modération", "Contribution publiée.")
+        self._load_submissions()
+
+    def _on_mod_reject(self):
+        sub = self._selected_submission()
+        if not sub or sub.get("status") != "pending":
+            return
+        from PySide6.QtWidgets import QInputDialog
+        reason, ok = QInputDialog.getText(
+            self, "Refuser la contribution",
+            f"Motif du refus pour « {sub.get('name', '')} » :\n"
+            "(licence douteuse, doublon, profil incomplet…)",
+        )
+        if not ok:
+            return
+        self._btn_mod_reject.setEnabled(False)
+        _run_async(
+            self, _set_submission_status, sub.get("_doc_id", ""), "rejected",
+            self._id_token, self._admin_email, reason.strip(),
+            on_success=lambda *_: self._on_mod_rejected(),
+            on_error=self._on_mod_action_error,
+        )
+
+    def _on_mod_rejected(self):
+        QMessageBox.information(self, "Modération", "Contribution refusée.")
+        self._load_submissions()
+
+    def _on_mod_action_error(self, msg: str):
+        self._on_mod_selection_changed()
+        QMessageBox.warning(self, "Modération", f"Action impossible :\n{msg}")
 
     def _open_fixture_editor(self):
         """Ouvre l'éditeur de fixtures MyStrow en fenêtre autonome."""
@@ -6089,10 +6493,27 @@ class ReleaseWorker(QObject):
                 if conclusion == "success":
                     self._p(f"\n✅  Release v{version} créée !")
                     self._p(f"    https://github.com/{GITHUB_REPO}/releases/tag/v{version}")
+                    self._notify_discord(version)
                 else:
                     self._p(f"\n❌  Build échoué ({conclusion})")
                     self._p(f"    https://github.com/{GITHUB_REPO}/actions/runs/{run_id}")
                 break
+
+    def _notify_discord(self, version: str):
+        """Met a jour le message "derniere version" du canal telechargement.
+
+        Uniquement apres un build reussi : les liens visent releases/latest,
+        qui ne contiendrait pas cette version si la CI avait echoue.
+        """
+        if not _RELEASE_OK:
+            return
+        try:
+            from release import notify_discord_latest
+        except Exception:
+            return
+        self._p("\n---------- DISCORD ----------")
+        ok, msg = notify_discord_latest(version)
+        self._p(("✅  " if ok else "⚠️  ") + msg)
 
 
 # ---------------------------------------------------------------

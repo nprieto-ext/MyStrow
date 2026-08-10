@@ -33,6 +33,15 @@ class Projector:
         self.gobo_rotation = 0        # Rotation gobo (0-255)
         self.prism_rotation = 0       # Rotation prisme (0-255)
         self.effects          = 0   # Effects/Macro channel (0-255) — programme interne fixture
+        # Canaux longtemps declares mais jamais pilotes : ils sortaient 0 en dur
+        # et n'etaient atteignables qu'au curseur brut. Ils ont desormais un etat
+        # propre, donc sauvegarde dans le show et rejouable dans un cue.
+        self.focus            = 0   # Nettete du gobo (0-255)
+        self.gobo2            = 0   # 2e roue de gobos (0-255)
+        self.speed            = 0   # Vitesse de deplacement pan/tilt (0-255)
+        # Canal macro/controle de la fixture. 0 = repos : NE PAS le piloter tout
+        # seul, ces plages declenchent reset, extinction de lampe, calibrations.
+        self.mode_value       = 0
         self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
         self.channel_extras   = {}    # {ch_type: 0-255} contrôle brut prioritaire (Reset, Mode…)
         # Canaux spéciaux — contrôle manuel indépendant
@@ -79,6 +88,23 @@ class Projector:
         # minuscules. Purement visuel — la position d'accroche, elle, ne bouge
         # pas : seule la lentille suit le corps, et le faisceau part d'elle.
         self.fixture_scale = 100.0
+        self._dmx_profile = []
+
+    # ── Profil DMX ───────────────────────────────────────────────────────────
+    # Propriete et non simple attribut : c'est le SEUL passage oblige des noms
+    # de canaux. Ils arrivent d'une douzaine d'endroits (bibliotheque QLC+,
+    # fixtures natives, .tui d'un show, presets, import de patch, pixels...) et
+    # canonicaliser a chacun aurait laisse passer le prochain. Ici, un profil
+    # enregistre avec l'ancien vocabulaire est aussi rattrape au chargement.
+
+    @property
+    def dmx_profile(self):
+        return self._dmx_profile
+
+    @dmx_profile.setter
+    def dmx_profile(self, value):
+        from core import canonical_profile
+        self._dmx_profile = canonical_profile(value)
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

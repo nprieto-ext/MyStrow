@@ -78,7 +78,9 @@
       "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\41acec23-8026-4cf2-822e-414d0692a0d8\\\\scratchpad\\\\test_lastexitcode.ps1\")",
       "PowerShell($p = Get-Command pwsh -ErrorAction SilentlyContinue; if \\($p\\) { \"pwsh trouve : \" + $p.Source; & pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString\\(\\)' } else { \"pwsh \\(PowerShell 7\\) absent de cette machine\" })",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 8777 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { Stop-Process -Id $c.OwningProcess -Force; \"serveur de test arrete \\(PID $\\($c.OwningProcess\\)\\)\" } else { \"aucun serveur sur 8777\" })",
-      "Artifact"
+      "Artifact",
+      "mcp__claude_ai_Gmail__search_threads",
+      "mcp__claude_ai_Gmail__get_thread"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

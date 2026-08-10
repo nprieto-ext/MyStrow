@@ -33,7 +33,14 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE = os.path.join(os.path.dirname(HERE), "core.py")
+ROOT = os.path.dirname(HERE)
+CORE = os.path.join(ROOT, "core.py")
+
+# Le coeur de --latest vit dans release.py : c'est le seul fichier que
+# PyInstaller embarque dans MyStrow_Admin.exe (admin_panel l'importe deja).
+# On le reutilise ici plutot que d'en tenir une seconde copie.
+sys.path.insert(0, ROOT)
+from release import notify_discord_latest, discord_embed_latest  # noqa: E402
 
 WEBHOOK_ENV = "MYSTROW_DISCORD_WEBHOOK_RELEASE"
 WEBHOOK_FILE = os.path.expanduser("~/.mystrow_discord_webhook_release.txt")
@@ -76,27 +83,6 @@ def links_block():
         f"🍎  **macOS Apple Silicon** (M1 → M4) — [télécharger le .dmg]({DL_MAC})\n"
         f"🍏  **macOS Intel** — [télécharger le .dmg]({DL_MAC_INTEL})"
     )
-
-
-def embed_latest(version):
-    return {
-        "title": f"⬇️  MyStrow {version} — dernière version",
-        "url": DL,
-        "color": YELLOW,
-        "description": (
-            f"{links_block()}\n\n"
-            "Les liens ci-dessus pointent **toujours** vers la version la plus "
-            "récente : pas besoin de revenir chercher un nouveau lien à chaque "
-            "mise à jour.\n\n"
-            "L'application se met aussi à jour toute seule au démarrage."
-        ),
-        "fields": [
-            {"name": "Version", "value": version, "inline": True},
-            {"name": "Mise en ligne", "value": today_fr(), "inline": True},
-        ],
-        "footer": {"text": "Gratuit pour démarrer · la sortie DMX demande une "
-                           "licence Pro ou Lifetime · mystrow.fr"},
-    }
 
 
 def embed_announce(version, notes):
@@ -161,29 +147,12 @@ def send(webhook, embed):
                    {"username": USERNAME, "avatar_url": AVATAR, "embeds": [embed]})
 
 
-def do_latest(webhook, version):
-    """Cree le message la premiere fois, le re-edite ensuite."""
-    state = load_state()
-    mid = state.get("latest_message_id")
-    embed = embed_latest(version)
-
-    if mid:
-        try:
-            request("%s/messages/%s" % (webhook, mid), {"embeds": [embed]}, method="PATCH")
-            print("  message 'derniere version' mis a jour -> %s (id %s)" % (version, mid))
-            state["latest_version"] = version
-            save_state(state)
-            return
-        except SystemExit:
-            # message supprime a la main : on en repost un
-            print("  message %s introuvable, republication..." % mid)
-
-    res = send(webhook, embed)
-    state["latest_message_id"] = res.get("id")
-    state["latest_version"] = version
-    save_state(state)
-    print("  message 'derniere version' publie -> %s (id %s)" % (version, res.get("id")))
-    print("  → pense a l'EPINGLER dans le canal.")
+def do_latest(version):
+    """Delegue a release.notify_discord_latest — implementation unique."""
+    ok, msg = notify_discord_latest(version)
+    print("  " + msg)
+    if not ok:
+        sys.exit(1)
 
 
 def do_announce(webhook, version, notes):
@@ -230,14 +199,14 @@ def main():
     version = a.version or get_version()
 
     if a.dry_run:
-        show(embed_latest(version) if a.latest else embed_announce(version, a.notes))
+        show(discord_embed_latest(version) if a.latest
+             else embed_announce(version, a.notes))
         return
 
-    webhook = load_webhook()
     if a.latest:
-        do_latest(webhook, version)
+        do_latest(version)
     else:
-        do_announce(webhook, version, a.notes)
+        do_announce(load_webhook(), version, a.notes)
 
 
 if __name__ == "__main__":

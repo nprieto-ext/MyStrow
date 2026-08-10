@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import APP_NAME, VERSION, send_report_email
+from artnet_dmx import FTD2XX_AVAILABLE, SERIAL_LINES_LABELS
 from i18n import tr
 
 CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
@@ -111,6 +112,25 @@ class _DiagWorker(QThread):
                 add("DMX live", "info", f"Port série  : {dmx.com_port or '— non configuré —'}")
                 add("DMX live", "info",
                     f"Port ouvert : {'oui' if getattr(dmx, '_serial', None) else 'non'}")
+                # Les deux causes racines connues d'une sortie Open DMX muette
+                # n'apparaissaient nulle part dans le rapport, ce qui obligeait
+                # a les deviner : RTS assertee inhibe le Driver Enable RS485, et
+                # un Open DMX pilote en serie VCP au lieu du D2XX voit son break
+                # detruit par le Latency Timer FTDI (16 ms).
+                _lignes = getattr(dmx, "serial_lines", "clear")
+                add("DMX live", "ok" if _lignes == "clear" else "warn",
+                    f"Lignes série: {SERIAL_LINES_LABELS.get(_lignes, _lignes)}"
+                    + ("" if _lignes == "clear"
+                       else "  ← RTS assertée inhibe l'émetteur RS485 sur Open DMX"))
+                if dmx.transport == "enttec":
+                    add("DMX live", "warn" if FTD2XX_AVAILABLE else "err",
+                        f"Driver D2XX : {'disponible' if FTD2XX_AVAILABLE else 'ABSENT'}"
+                        f" — transport en série VCP"
+                        + ("  ← un Open DMX USB devrait tourner en « enttec_d2xx »"
+                           if FTD2XX_AVAILABLE else
+                           "  ← repli silencieux : break DMX cassé par le Latency Timer FTDI"))
+                elif dmx.transport == "enttec_d2xx":
+                    add("DMX live", "ok", "Driver D2XX : actif (comme QLC+)")
                 add("DMX live", "warn",
                     f"(IP {dmx.target_ip} ignorée : ce transport n'utilise pas le réseau)")
             else:
@@ -259,10 +279,19 @@ class _DiagWorker(QThread):
         self.progress.emit(74, "ArtPoll unicast...")
         try:
             target = w.dmx.target_ip
+            _usb = w.dmx.transport in ("enttec", "enttec_pro", "enttec_d2xx")
             found, sender = _artpoll_probe(target, timeout=1.5, unicast=True)
-            add("ArtPoll unicast",
-                "ok" if found else "err",
-                f"{target} → {'réponse de ' + sender if found else 'PAS DE RÉPONSE ← PROBLÈME'}")
+            if found:
+                add("ArtPoll unicast", "ok", f"{target} → réponse de {sender}")
+            elif _usb:
+                # Sur une sortie USB, cette IP ne sert a rien : la signaler comme
+                # « PROBLÈME » envoyait chercher une panne reseau inexistante,
+                # alors que le rapport dit lui-meme deux lignes plus haut que
+                # l'IP est ignoree par ce transport.
+                add("ArtPoll unicast", "info",
+                    f"{target} → pas de réponse (sans effet : la sortie est en USB)")
+            else:
+                add("ArtPoll unicast", "err", f"{target} → PAS DE RÉPONSE ← PROBLÈME")
         except Exception as e:
             add("ArtPoll unicast", "err", f"Erreur : {e}")
 
@@ -288,8 +317,19 @@ class _DiagWorker(QThread):
             )
             s.sendto(packet, (target_ip, target_port))
             s.close()
-            add("Envoi test", "ok",
-                f"Paquet ArtDMX envoyé → {target_ip}:{target_port} (univers {universe}, 512 ch à 0)")
+            # Ce test ouvre SON PROPRE socket : il ne prouve rien sur la sortie
+            # reelle de l'application. Un « ✓ » ici sur une sortie USB laissait
+            # croire que le reseau fonctionnait alors que rien ne passe par ce
+            # chemin — cf. le meme piege que les tests ArtPoll.
+            if w.dmx.transport in ("enttec", "enttec_pro", "enttec_d2xx"):
+                add("Envoi test", "info",
+                    f"Paquet ArtDMX envoyé → {target_ip}:{target_port} "
+                    f"(socket de test isolé — la sortie réelle est en USB, "
+                    f"ce résultat ne dit rien du parc)")
+            else:
+                add("Envoi test", "ok",
+                    f"Paquet ArtDMX envoyé → {target_ip}:{target_port} "
+                    f"(univers {universe}, 512 ch à 0)")
         except Exception as e:
             add("Envoi test", "err", f"Erreur envoi : {e}")
 
@@ -341,7 +381,14 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5,
             try:
                 s.settimeout(max(0.05, deadline - time.time()))
                 data, (sender, _) = s.recvfrom(512)
-                if data[:8] == b'Art-Net\x00':
+                # Seul un ArtPollReply (OpCode 0x2100) prouve qu'un node est là.
+                # La sonde est bindée sur 6454 et emet en broadcast : elle
+                # recoit donc SON PROPRE ArtPoll (OpCode 0x2000) en retour par
+                # la boucle locale. Accepter tout paquet « Art-Net\0 » faisait
+                # passer cet echo pour « reponse de 127.0.0.1 », et le controle
+                # de transport plus bas conseillait alors de quitter une sortie
+                # USB qui marchait pour un node qui n'existe pas.
+                if data[:8] == b'Art-Net\x00' and data[8:10] == b'\x00\x21':
                     s.close()
                     return True, sender
             except Exception:
@@ -710,9 +757,15 @@ class BradDiagnosticDialog(QDialog):
         # exactement ce qui fait chercher des heures du côté du réseau.
         _tr = getattr(dmx, 'transport', '')
         if _tr in ("enttec", "enttec_pro", "enttec_d2xx"):
+            # Une IP loopback ou une IP du PC lui-même n'est PAS un node : c'est
+            # notre propre paquet qui revient. Le garde-fou existait deja plus
+            # haut (`found_ip not in local_ips`) mais manquait ici, et c'est
+            # precisement ce chemin qui donne un conseil destructeur.
             _node = next((d.split("réponse de")[-1].strip()
                           for c, s, d in results
-                          if c.startswith("ArtPoll") and s == "ok" and "réponse de" in d),
+                          if c.startswith("ArtPoll") and s == "ok" and "réponse de" in d
+                          and not d.split("réponse de")[-1].strip().startswith("127.")
+                          and d.split("réponse de")[-1].strip() not in local_ips),
                          None)
             if _node:
                 self._append_html(

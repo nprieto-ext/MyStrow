@@ -159,6 +159,9 @@ else
     --onefile --windowed
     --add-data "logo.png:." --add-data "fixtures_qlcplus.json:." --add-data "plan_3d_web.html:."
     --add-data "vendor/three:vendor/three"
+    # Decors 3D des scenes par defaut : sans eux les presets a modele retombent
+    # sur une scene vide, sans message visible.
+    --add-data "scenes3d:scenes3d"
     --add-data "AKAIAPCMINI.png:." --add-data "Novation.png:."
     "--name=$APP_NAME" "--paths=$SCRIPT_DIR"
     --hidden-import=rtmidi --hidden-import=rtmidi._rtmidi --collect-all rtmidi

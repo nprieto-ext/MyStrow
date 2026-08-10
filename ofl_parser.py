@@ -26,6 +26,9 @@ _SIMPLE_MAP = {
     "Iris":             "Iris",
     "Prism":            "Prism",
     "PrismRotation":    "PrismRot",
+    # OFL nomme les correcteurs de temperature « ColorTemperature ». Sans cette
+    # entree ils tombaient dans le fourre-tout « Mode ».
+    "ColorTemperature": "CTO",
     "WheelRotation":    "Gobo1Rot",
     "WheelSlotRotation": "Gobo1Rot",
     "ShutterStrobe":    "Strobe",

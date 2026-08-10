@@ -5,6 +5,8 @@ Intégré dans l'AdminPanel de MyStrow.
 
 import json
 import base64
+import html
+import re
 import urllib.request
 import urllib.error
 import webbrowser
@@ -13,7 +15,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QSplitter, QScrollArea, QGridLayout,
-    QFrame, QComboBox, QProgressBar,
+    QFrame, QComboBox, QProgressBar, QCheckBox,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QPixmap, QImage
@@ -175,6 +177,71 @@ class _PublishWorker(QObject):
             self.error.emit(str(e))
 
 
+class _DiscordWorker(QObject):
+    """Relaie un article publié vers un canal Discord via webhook.
+
+    Volontairement silencieux en cas d'échec côté remontée : l'article est
+    déjà en ligne sur WordPress, un webhook mort ne doit pas ressembler à un
+    échec de publication.
+    """
+    finished = Signal()
+    error    = Signal(str)
+
+    def __init__(self, webhook: str, title: str, excerpt: str,
+                 url: str, image: str):
+        super().__init__()
+        self._webhook = webhook
+        self._title, self._excerpt = title, excerpt
+        self._url, self._image = url, image
+
+    def run(self):
+        try:
+            embed = {
+                "author": {"name": "Nouvel article"},
+                "title":  self._title,
+                "url":    self._url,
+                "color":  0xE2CE16,
+                "description": self._excerpt,
+                "footer": {"text": "mystrow.fr"},
+            }
+            if self._image:
+                embed["image"] = {"url": self._image}
+
+            payload = {
+                "username":   "MyStrow",
+                "avatar_url": "https://mystrow.fr/og-image.webp",
+                "embeds":     [embed],
+            }
+            req = urllib.request.Request(
+                self._webhook, data=json.dumps(payload).encode("utf-8"),
+                method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("User-Agent", "MyStrow/1.0")
+            with urllib.request.urlopen(req, timeout=20):
+                pass
+            self.finished.emit()
+        except urllib.error.HTTPError as e:
+            self.error.emit("HTTP %s — %s" % (e.code, e.read().decode(errors="ignore")[:200]))
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+def _excerpt_from_html(content: str, limit: int = 320) -> str:
+    """Transforme le HTML de l'article en resume lisible pour un embed."""
+    txt = re.sub(r"(?is)<(script|style).*?</\1>", " ", content)
+    txt = re.sub(r"(?i)<br\s*/?>|</p>|</h[1-6]>", "\n", txt)
+    txt = re.sub(r"<[^>]+>", " ", txt)
+    txt = html.unescape(txt)
+    txt = re.sub(r"[ \t]+", " ", txt)
+    txt = re.sub(r"\n\s*\n+", "\n\n", txt).strip()
+    if len(txt) > limit:
+        cut = txt[:limit]
+        # couper sur une frontiere de phrase plutot qu'en plein mot
+        stop = max(cut.rfind(". "), cut.rfind("\n"))
+        txt = (cut[:stop + 1] if stop > limit // 2 else cut.rstrip()) + " […]"
+    return txt
+
+
 class _ThumbLoader(QObject):
     done = Signal(bytes)
     fail = Signal()
@@ -287,6 +354,7 @@ class BlogPanel(QWidget):
         self._cfg = _load_cfg()
         self._media_items: list   = []
         self._featured_id         = None
+        self._featured_url        = ""
         self._thumb_labels: list  = []
         self._threads: list       = []
         self._build_ui()
@@ -338,6 +406,22 @@ class BlogPanel(QWidget):
         self._inp_wp_pwd.setFixedWidth(215)
         self._inp_wp_pwd.setStyleSheet(_inp())
         lay.addWidget(self._inp_wp_pwd)
+
+        lay.addSpacing(8)
+        self._chk_discord = QCheckBox("→ Discord")
+        self._chk_discord.setChecked(bool(self._cfg.get("discord_enabled", False)))
+        self._chk_discord.setToolTip(
+            "Annonce l'article sur Discord apres publication.\n"
+            "Sans effet sur un brouillon.")
+        self._chk_discord.setStyleSheet(f"color:{TEXT}; font-size:11px;")
+        lay.addWidget(self._chk_discord)
+
+        self._inp_discord = QLineEdit(self._cfg.get("discord_webhook", ""))
+        self._inp_discord.setEchoMode(QLineEdit.Password)
+        self._inp_discord.setPlaceholderText("https://discord.com/api/webhooks/…")
+        self._inp_discord.setFixedWidth(200)
+        self._inp_discord.setStyleSheet(_inp())
+        lay.addWidget(self._inp_discord)
 
         btn = QPushButton("Sauvegarder")
         btn.setFixedHeight(30)
@@ -505,9 +589,11 @@ class BlogPanel(QWidget):
     # ── Slots ─────────────────────────────────────────────────────────────────
 
     def _save_cfg_ui(self):
-        self._cfg["claude_api_key"] = self._inp_claude.text().strip()
-        self._cfg["wp_user"]        = self._inp_wp_user.text().strip()
-        self._cfg["wp_pwd"]         = self._inp_wp_pwd.text().strip()
+        self._cfg["claude_api_key"]  = self._inp_claude.text().strip()
+        self._cfg["wp_user"]         = self._inp_wp_user.text().strip()
+        self._cfg["wp_pwd"]          = self._inp_wp_pwd.text().strip()
+        self._cfg["discord_webhook"] = self._inp_discord.text().strip()
+        self._cfg["discord_enabled"] = self._chk_discord.isChecked()
         _save_cfg(self._cfg)
         self._set_status("Config sauvegardée.")
 
@@ -546,6 +632,7 @@ class BlogPanel(QWidget):
 
     def _on_thumb_click(self, item: dict):
         self._featured_id = item["id"]
+        self._featured_url = item.get("url", "")
         name = item.get("alt") or item["url"].split("/")[-1]
         self._lbl_featured.setText(f"Image principale : {name}")
         self._lbl_featured.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
@@ -612,6 +699,14 @@ class BlogPanel(QWidget):
             self._set_status("Contenu vide.", error=True); return
 
         wp_status = "publish" if self._cmb_pub.currentText() == "Publier" else "draft"
+        # Fige le contenu tel qu'envoye : l'editeur peut etre modifie pendant
+        # que la requete WordPress est en vol.
+        self._pending_discord = {
+            "announce": wp_status == "publish",
+            "title":    title,
+            "excerpt":  _excerpt_from_html(content),
+            "image":    self._featured_url,
+        }
         self._btn_publish.setEnabled(False)
         self._set_status("Publication en cours…")
 
@@ -630,8 +725,44 @@ class BlogPanel(QWidget):
     def _on_published(self, url: str):
         self._btn_publish.setEnabled(True)
         self._set_status(f"Publié ! {url}")
+        self._announce_on_discord(url)
         if url:
             webbrowser.open(url)
+
+    # ── Relais Discord ────────────────────────────────────────────────────────
+
+    def _announce_on_discord(self, url: str):
+        pending = getattr(self, "_pending_discord", None)
+        self._pending_discord = None
+        if not pending or not pending["announce"]:
+            return          # brouillon : rien a annoncer
+        if not self._chk_discord.isChecked():
+            return
+        webhook = (self._inp_discord.text().strip()
+                   or self._cfg.get("discord_webhook", ""))
+        if "discord.com/api/webhooks/" not in webhook or not url:
+            return
+
+        worker = _DiscordWorker(webhook, pending["title"], pending["excerpt"],
+                                url, pending["image"])
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda: self._set_status(
+            f"Publié et annoncé sur Discord ! {url}"))
+        worker.finished.connect(thread.quit)
+        worker.error.connect(self._on_discord_error)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        # Reference gardee : sans elle le QThread est collecte et Qt abort.
+        self._threads.append(thread)
+        thread.start()
+
+    def _on_discord_error(self, err: str):
+        # L'article EST en ligne : on le dit, sans faire passer ca pour un echec
+        # de publication.
+        self._set_status(f"Publié — mais l'annonce Discord a échoué : {err}",
+                         error=True)
 
     def _on_publish_error(self, err: str):
         self._btn_publish.setEnabled(True)

@@ -43,6 +43,7 @@ class VmixDialog(VideoDialog):
     CLE_INTRO   = "vmix_intro"
     CLE_ASTUCE  = "vmix_test_hint"
     CLE_ACTIVER = "vmix_enable"
+    CLE_TEASER  = "vmix_guide_teaser"
 
     def __init__(self, window, link: VmixLink):
         self.COL_DECLENCHEUR = tr("vmix_col_input")

@@ -1920,6 +1920,7 @@ class LightTimelineEditor(QDialog):
                 proj.color_wheel = 0
                 proj.prism = proj.prism_rotation = 0
                 proj.effects = 0
+                proj.focus = proj.gobo2 = proj.speed = proj.mode_value = 0
                 proj.strobe_speed = 0
                 # Canaux bruts : prioritaires dans le moteur DMX, un « Mode » ou
                 # un Reset posé à la main resterait actif tout l'aperçu.

@@ -1579,6 +1579,7 @@ class FixtureEditorDialog(QDialog):
         }
         existing = {f["name"] for f in self._fixtures}
         imported, errors = 0, []
+        newly_imported = []   # proposées ensuite au partage communautaire
 
         for path in paths:
             ext = Path(path).suffix.lower()
@@ -1600,6 +1601,10 @@ class FixtureEditorDialog(QDialog):
                         "gobo_wheel_slots":  ofl_fx.get("gobo_wheel_slots", []),
                         "channel_defaults":  ofl_fx.get("channel_defaults", {}),
                         "source": "user",
+                        # Provenance réelle du fichier : "source" est écrasé par
+                        # "user" pour marquer la fixture comme locale, mais le
+                        # partage communautaire a besoin de l'origine d'origine.
+                        "origin_source": ofl_fx.get("source", ""),
                     } for m in modes]
                     if len(candidates) > 1:
                         names = [c["name"] for c in candidates]
@@ -1631,6 +1636,7 @@ class FixtureEditorDialog(QDialog):
                         fx["name"] = f"{name} ({c})"
                     self._fixtures.append(fx)
                     existing.add(fx["name"])
+                    newly_imported.append(fx)
                     imported += 1
             except Exception as e:
                 errors.append(f"• {Path(path).name} : {e}")
@@ -1651,3 +1657,9 @@ class FixtureEditorDialog(QDialog):
             QMessageBox.warning(self, tr("fe_import_partial"), msg)
         else:
             QMessageBox.information(self, tr("fe_import_ok"), msg)
+
+        # Proposer de verser ces appareils à la bibliothèque commune (modération
+        # + filtrage par licence côté fixture_share). Silencieux si l'utilisateur
+        # n'est pas connecté : l'import local ne dépend pas du partage.
+        from fixture_share import offer_share
+        offer_share(self, newly_imported)

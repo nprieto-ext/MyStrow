@@ -337,6 +337,8 @@ CH_LABELS = {
     "ColorWheel": "ROUE", "Speed": "VITESSE",
     "Smoke": "FUMÉE", "Fan": "VENTIL", "Shutter": "SHUTTER",
     "Effects": "EFFETS", "Mode": "MODE",
+    "CTO": "CTO", "CTB": "CTB",
+    "C": "CYAN", "M": "MAGENTA", "Y": "JAUNE", "Lime": "LIME",
 }
 
 
@@ -2906,6 +2908,27 @@ class MainWindow(QMainWindow):
         self._dur_row     = -1
         self._dur_start   = 0.0
         self._dur_secs    = 0.0
+        # Temps restant du cue quand on met l'enchaînement en pause. None =
+        # pas de pause en cours. Un QTimer ne sait pas dire ce qu'il lui reste
+        # une fois arrêté : il faut le retenir pour pouvoir reprendre au bon
+        # endroit plutôt que de relancer le cue depuis le début.
+        self._dur_paused_left = None
+
+        # — Clignotement du pad pendant un enchaînement automatique
+        #
+        # Un pad qui enchaîne ses cues tout seul a exactement la même tête
+        # qu'un pad posé à la main : rien, sur la grille, ne dit que la
+        # mémoire est en train de dérouler. Le clignotement le montre.
+        #
+        # Le clignotement SUIT le timer de durée : le tick vérifie qu'il tourne
+        # encore et s'éteint sinon. Cette dépendance unique évite d'avoir à
+        # penser à l'éteindre depuis chacun des chemins qui arrêtent
+        # l'enchaînement — CLEAR, pad relâché, fin de liste, pause.
+        self._auto_blink      = None    # (mem_col, row) qui clignote, None sinon
+        self._auto_blink_on   = False
+        self._auto_blink_timer = QTimer(self)
+        self._auto_blink_timer.setInterval(420)
+        self._auto_blink_timer.timeout.connect(self._auto_blink_tick)
 
         # — Mise à jour barre de progression (10 fps)
         self._dur_progress_timer = QTimer(self)
@@ -4098,6 +4121,7 @@ class MainWindow(QMainWindow):
         self._cue_panel = CueListPanel()
         self._cue_panel.cues_changed.connect(self._on_cue_panel_changed)
         self._cue_panel.cue_activated.connect(self._on_cue_activated)
+        self._cue_panel.play_pause_requested.connect(self._on_cue_play_pause)
         self._cue_panel.effect_pick_requested.connect(self._on_cue_effect_pick)
         self._cue_float = None
 
@@ -5420,6 +5444,9 @@ class MainWindow(QMainWindow):
 
         self._cue_panel.load(mem_col, row, mem)
         self._cue_panel.highlight_cue(self._mem_cue_idx.get((mem_col, row), 0))
+        # Le panneau peut s'ouvrir sur une mémoire déjà en train d'enchaîner :
+        # le bouton doit afficher ⏸, pas ▶.
+        self._sync_cue_play_button()
         self._cue_float_lbl.setText(tr("mw_f_cues_mem", a0=mem_col + 1, a1=row + 1))
 
         # Positionner près du pad
@@ -5634,7 +5661,13 @@ class MainWindow(QMainWindow):
             self._cue_panel.set_progress(-1)
         cue = self._mem_active_cue(mem_col, row)
         dur = float(cue.get("duration", 0))
+        self._dur_paused_left = None
         if dur <= 0:
+            # Pas de durée = pas d'enchaînement : ni clignotement, ni bouton
+            # en lecture. Sans cette remise à plat, un pad garderait le
+            # clignotement du cue précédent qui, lui, était minuté.
+            self._auto_blink_stop()
+            self._sync_cue_play_button()
             return
         self._dur_mem_col = mem_col
         self._dur_row     = row
@@ -5642,6 +5675,106 @@ class MainWindow(QMainWindow):
         self._dur_secs    = dur
         self._dur_timer.start(int(dur * 1000))
         self._dur_progress_timer.start()
+        self._auto_blink_start(mem_col, row)
+        self._sync_cue_play_button()
+
+    # ── Clignotement du pad en enchaînement automatique ────────────────────
+
+    def _auto_blink_start(self, mem_col: int, row: int):
+        if self._auto_blink == (mem_col, row) and self._auto_blink_timer.isActive():
+            return
+        self._auto_blink_stop()
+        self._auto_blink    = (mem_col, row)
+        self._auto_blink_on = True
+        self._auto_blink_timer.start()
+
+    def _auto_blink_stop(self):
+        """Arrête le clignotement et remet le pad dans son état réel."""
+        cible, self._auto_blink = self._auto_blink, None
+        self._auto_blink_timer.stop()
+        if cible is None:
+            return
+        mc, r = cible
+        col = self._mem_col_to_fader(mc)
+        actif = self.active_memory_pads.get(col) == r
+        self._style_memory_pad(mc, r, active=actif)
+        self._update_memory_pad_led(mc, r, active=actif)
+
+    def _auto_blink_tick(self):
+        # Le clignotement n'a de sens que tant que l'enchaînement tourne.
+        if self._auto_blink is None or not self._dur_timer.isActive():
+            self._auto_blink_stop()
+            return
+        mc, r = self._auto_blink
+        self._auto_blink_on = not self._auto_blink_on
+        if self._auto_blink_on:
+            self._style_memory_pad(mc, r, active=True)
+            self._update_memory_pad_led(mc, r, active=True)
+            return
+        # Phase éteinte : LED coupée franchement plutôt qu'atténuée. L'APC Mini
+        # ne distingue le « dim » du « bright » que si le mode pleine
+        # luminosité est actif (il ne l'est pas sur Apple Silicon) — un
+        # clignotement invisible sur une machine sur deux ne vaut rien.
+        self._style_memory_pad(mc, r, active=False)
+        if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
+            for col_akai in self._mem_col_to_faders(mc):
+                self.midi_handler.set_pad_led(r, col_akai, 0, 0)
+
+    # ── Lecture / pause de l'enchaînement ──────────────────────────────────
+
+    def _cue_chain_running(self) -> bool:
+        return self._dur_timer.isActive()
+
+    def _sync_cue_play_button(self):
+        panel = getattr(self, "_cue_panel", None)
+        if panel is None:
+            return
+        # Le bouton ne parle que de l'enchaînement affiché par le panneau.
+        sien = (panel.mem_col, panel.row) == (self._dur_mem_col, self._dur_row)
+        panel.set_playing(self._cue_chain_running() and sien)
+
+    def _on_cue_play_pause(self):
+        """▶ / ⏸ du panneau Cues : suspend ou reprend l'enchaînement."""
+        panel = self._cue_panel
+        mc, r = panel.mem_col, panel.row
+        if mc < 0 or r < 0 or self.memories[mc][r] is None:
+            return
+
+        # En cours sur CE pad → pause, en gardant le temps restant.
+        if self._cue_chain_running() and (mc, r) == (self._dur_mem_col, self._dur_row):
+            reste = self._dur_secs - (time.time() - self._dur_start)
+            self._dur_timer.stop()
+            self._dur_progress_timer.stop()
+            self._dur_paused_left = max(0.05, reste)
+            self._auto_blink_stop()
+            self._log_message(f"MEM {mc+1}.{r+1} — enchaînement en pause "
+                              f"({self._dur_paused_left:.1f} s restantes)", "mem")
+        # En pause sur ce pad → reprendre là où on s'était arrêté.
+        elif (self._dur_paused_left is not None
+              and (mc, r) == (self._dur_mem_col, self._dur_row)):
+            reste = self._dur_paused_left
+            self._dur_paused_left = None
+            self._dur_start = time.time() - (self._dur_secs - reste)
+            self._dur_timer.start(int(reste * 1000))
+            self._dur_progress_timer.start()
+            self._auto_blink_start(mc, r)
+            self._log_message(f"MEM {mc+1}.{r+1} — enchaînement repris", "mem")
+        # Rien en cours → lancer l'enchaînement depuis le cue affiché, à
+        # condition que le pad soit posé (sinon on jouerait une mémoire que
+        # personne n'a appelée).
+        else:
+            col_akai = self._mem_col_to_fader(mc)
+            if self.active_memory_pads.get(col_akai) != r:
+                self._log_message(f"MEM {mc+1}.{r+1} — posez d'abord la mémoire "
+                                  f"pour lancer l'enchaînement", "warn")
+                self._sync_cue_play_button()
+                return
+            self._dur_paused_left = None
+            self._start_cue_duration(mc, r)
+            if not self._cue_chain_running():
+                self._log_message(f"MEM {mc+1}.{r+1} — ce cue n'a pas de durée, "
+                                  f"rien à enchaîner", "warn")
+        self._sync_cue_play_button()
 
     def _update_cue_progress(self):
         if self._dur_secs <= 0:
@@ -5660,6 +5793,8 @@ class MainWindow(QMainWindow):
         if not self._mem_advance_cue(mc, r):
             if hasattr(self, "_cue_panel"):
                 self._cue_panel.set_progress(-1)
+            self._auto_blink_stop()          # fin de liste : le pad se fige
+            self._sync_cue_play_button()
             return
         self._release_manual_grabs()   # avance auto du minutage → on repeint
         cue_idx = self._mem_cue_idx.get((mc, r), 0)
@@ -5735,6 +5870,13 @@ class MainWindow(QMainWindow):
             p.gobo_rotation = int(proj_state.get("gobo_rotation", 0))
             p.zoom          = int(proj_state.get("zoom",         0))
             p.strobe_speed  = int(proj_state.get("strobe_speed", 0))
+            # Valeurs brutes de fixture : jamais scalées par le fader du cue —
+            # une mise au point ou une vitesse de déplacement n'a rien à voir
+            # avec la luminosité.
+            p.focus         = int(proj_state.get("focus",        0))
+            p.gobo2         = int(proj_state.get("gobo2",        0))
+            p.speed         = int(proj_state.get("speed",        0))
+            p.mode_value    = int(proj_state.get("mode_value",   0))
             # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
             p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
             # Couleur prise en main depuis le plan 2D → le cue n'y touche pas
@@ -5853,6 +5995,12 @@ class MainWindow(QMainWindow):
             p.gobo_rotation = int(ds.get("gobo_rotation", 0))
             p.zoom          = int(ds.get("zoom",          0))
             p.strobe_speed  = int(ds.get("strobe_speed",  0))
+            # Non scalés par `scale` : la mise au point, la 2e roue de gobos, la
+            # vitesse et le canal Mode ne sont pas des grandeurs lumineuses.
+            p.focus         = int(ds.get("focus",         0))
+            p.gobo2         = int(ds.get("gobo2",         0))
+            p.speed         = int(ds.get("speed",         0))
+            p.mode_value    = int(ds.get("mode_value",    0))
             # Canaux bruts (Mode…) : pilotés par la mémoire au fader dominant
             p.channel_extras = dict(ds.get("channel_extras", {}) or {})
             # Pan/tilt pris en main depuis le plan 2D → la mémoire n'y touche plus
@@ -5948,12 +6096,17 @@ class MainWindow(QMainWindow):
             """)
         elif active:
             pad.setProperty("base_color", color)
+            # Texte noir sur fond clair : un pad actif est peint avec SA
+            # couleur, et le « 2/5 » des cues ou le « ⚡ » d'un effet
+            # disparaissaient en blanc sur blanc — cas devenu courant depuis
+            # qu'une mémoire sans rien d'allumé s'affiche en blanc.
+            _txt = "rgba(0,0,0,0.75)" if color.lightness() > 160 else "rgba(255,255,255,0.8)"
             pad.setStyleSheet(f"""
                 QPushButton {{
                     background: {color.name()};
                     border: 2px solid {color.lighter(130).name()};
                     border-radius: 4px;
-                    color: rgba(255,255,255,0.8);
+                    color: {_txt};
                     font-size: 8px;
                 }}
             """)
@@ -6046,14 +6199,22 @@ class MainWindow(QMainWindow):
             return f"<b>{label}</b>"
 
     def _get_memory_pad_color(self, mem_col, row):
-        """Retourne la couleur custom ou dominante du snapshot"""
+        """Couleur du pad : celle choisie à la main, sinon la dominante du snapshot.
+
+        Le noir est réservé à l'ABSENCE de mémoire. Une mémoire enregistrée dont
+        rien n'est allumé — un noir, une scène qui ne porte que des positions,
+        un strobe ou des canaux bruts — n'a pas de couleur dominante : elle
+        ressortait noire, donc LED éteinte et pad vide à l'écran, exactement
+        comme un emplacement libre. Impossible alors de savoir qu'il y a
+        quelque chose dedans. Elle s'affiche donc en blanc.
+        """
         custom = self.memory_custom_colors[mem_col][row]
         if custom:
             return custom
 
         mem = self.memories[mem_col][row]
         if not mem:
-            return QColor("black")
+            return QColor("black")          # emplacement libre : pad éteint
         self._mem_ensure_cues(mem)
         projectors = (mem["cues"][0].get("projectors", []) if mem.get("cues") else
                       mem.get("projectors", []))
@@ -6063,9 +6224,11 @@ class MainWindow(QMainWindow):
                 c = ms["base_color"]
                 color_counts[c] = color_counts.get(c, 0) + 1
         if not color_counts:
-            return QColor("black")
-        dominant = max(color_counts, key=color_counts.get)
-        return QColor(dominant)
+            return QColor("white")          # mémoire sans rien d'allumé
+        dominant = QColor(max(color_counts, key=color_counts.get))
+        # La dominante elle-même peut être noire : un gradateur monté n'a pas
+        # de couleur. Même raison qu'au-dessus, le pad doit rester visible.
+        return dominant if dominant != QColor("black") else QColor("white")
 
     def _update_memory_pad_led(self, mem_col, row, active):
         """Envoie LED MIDI pour un pad memoire — met à jour toutes les colonnes mappées sur ce MEM."""
@@ -6149,6 +6312,13 @@ class MainWindow(QMainWindow):
                 "gobo_rotation": getattr(p, 'gobo_rotation', 0),
                 "zoom":         getattr(p, 'zoom',         0),
                 "strobe_speed": getattr(p, 'strobe_speed', 0),
+                # Ces quatre canaux ne vivaient que dans `channel_extras`. Depuis
+                # qu'ils ont un état propre, il faut les capturer ici aussi —
+                # sinon une mémoire enregistrée les perdrait en silence.
+                "focus":        getattr(p, 'focus',        0),
+                "gobo2":        getattr(p, 'gobo2',        0),
+                "speed":        getattr(p, 'speed',        0),
+                "mode_value":   getattr(p, 'mode_value',   0),
                 # Canaux bruts prioritaires posés à la main (Mode, Effects, Reset…)
                 "channel_extras": dict(getattr(p, 'channel_extras', {}) or {}),
             })
@@ -6214,6 +6384,38 @@ class MainWindow(QMainWindow):
             mem.pop("name", None)
         self._save_akai_config_auto()
 
+    def _show_memory_info(self, mem_col, row):
+        """« Info » d'un pad mémoire — même fenêtre que le clic droit sur un
+        clip Séquence de REC Lumière.
+
+        Le cue montré est celui que le pad JOUE (ou jouerait) : sur une
+        mémoire multi-cue, regarder systématiquement le cue 1 mentirait dès
+        qu'un enchaînement est en cours.
+
+        Ce sont les niveaux de la mémoire qui sont modulés par le FADER de la
+        colonne, exactement comme l'intensité du clip côté REC Lumière — d'où
+        la colonne « 85 % → 51 % » et l'en-tête qui nomme le fader.
+        """
+        mem = self.memories[mem_col][row]
+        if mem is None:
+            return
+        from light_timeline import SequenceInfoDialog
+        self._mem_ensure_cues(mem)
+        label = f"MEM {mem_col + 1}.{row + 1}"
+        if mem.get("name"):
+            label = f"{label}  ·  {mem['name']}"
+        col_akai = self._mem_col_to_fader(mem_col)
+        fader = self.faders[col_akai].value if col_akai in self.faders else 100
+        SequenceInfoDialog(
+            self, self,
+            memory_ref=(mem_col, row),
+            cue_index=self._mem_cue_idx.get((mem_col, row), 0),
+            label=label,
+            intensity=fader,
+            intensity_key="mem_info_fader",
+            on_change=lambda: self._refresh_memory_pad(mem_col, row),
+        ).exec()
+
     def _show_memory_context_menu(self, pos, mem_col, row, btn):
         """Menu contextuel sur un pad memoire"""
         menu_style = """
@@ -6256,18 +6458,23 @@ class MainWindow(QMainWindow):
             self._blink_memory_pad(mem_col, row)
 
         if self.memories[mem_col][row] is None:
-            save_action = menu.addAction(tr("mw_save_m"))
+            save_action = menu.addAction(tr("mw_mem_save_state"))
             save_action.triggered.connect(_record_and_feedback)
             import_action = menu.addAction(tr("mw_import_cue"))
             import_action.triggered.connect(lambda: self._import_memory(mem_col, row))
         else:
-            replace_action = menu.addAction(tr("mw_replace_m"))
-            replace_action.triggered.connect(_record_and_feedback)
-            clear_action = menu.addAction(tr("mw_erase"))
-            clear_action.triggered.connect(lambda: self._clear_memory(mem_col, row))
+            # Menu rangé par INTENTION, dans l'ordre où les questions se posent :
+            #   1. qu'y a-t-il dedans, et comment ça se joue ;
+            #   2. son identité (nom, couleur du pad) ;
+            #   3. le remplacer, le déplacer, l'échanger avec un fichier ;
+            #   4. le détruire.
+            # « Effacer » était en 2e position, collé à « Remplacer » : le seul
+            # geste irréversible du menu était le plus facile à toucher par
+            # erreur. Il est désormais seul, tout en bas, après un séparateur.
 
-            rename_action = menu.addAction(tr("mw_rename_dots"))
-            rename_action.triggered.connect(lambda: self._rename_memory(mem_col, row))
+            # ── 1. Contenu ──────────────────────────────────────────────────
+            info_action = menu.addAction(tr("lt_seq_info_action"))
+            info_action.triggered.connect(lambda: self._show_memory_info(mem_col, row))
 
             mem_tmp = self.memories[mem_col][row]
             self._mem_ensure_cues(mem_tmp)
@@ -6276,43 +6483,8 @@ class MainWindow(QMainWindow):
             cues_action = menu.addAction(cues_lbl)
             cues_action.triggered.connect(lambda: self._open_cue_editor(mem_col, row))
 
-            menu.addSeparator()
-
-            # Déplacer / Exporter / Importer
-            move_action = menu.addAction(tr("mw_move_to"))
-            move_action.triggered.connect(lambda: self._open_move_memory_dialog(mem_col, row))
-            export_action = menu.addAction(tr("mw_export_cue"))
-            export_action.triggered.connect(lambda: self._export_memory(mem_col, row))
-            import_action = menu.addAction(tr("mw_import_cue"))
-            import_action.triggered.connect(lambda: self._import_memory(mem_col, row))
-
-            menu.addSeparator()
-
-            # Sous-menu couleur du pad
-            color_menu = menu.addMenu(tr("mw_pad_color"))
-            color_menu.setStyleSheet(menu_style)
-
-            auto_action = color_menu.addAction(tr("mw_pad_color_auto"))
-            auto_action.triggered.connect(lambda: self._set_memory_custom_color(mem_col, row, None))
-
-            pad_colors = [
-                ("Blanc", QColor(255, 255, 255)),
-                ("Rouge", QColor(255, 0, 0)),
-                ("Orange", QColor(255, 136, 0)),
-                ("Jaune", QColor(255, 221, 0)),
-                ("Vert", QColor(0, 255, 0)),
-                ("Cyan", QColor(0, 221, 221)),
-                ("Bleu", QColor(0, 0, 255)),
-                ("Magenta", QColor(255, 0, 255)),
-            ]
-            for name, col in pad_colors:
-                px = QPixmap(16, 16)
-                px.fill(col)
-                action = color_menu.addAction(QIcon(px), name)
-                action.triggered.connect(lambda _, c=col: self._set_memory_custom_color(mem_col, row, c))
-
-            # Sous-menu effet
-            menu.addSeparator()
+            # Le sous-menu Effet est construit plus bas (il a besoin de la
+            # bibliothèque d'effets) mais s'insère ICI : c'est du contenu.
             mem_data = self.memories[mem_col][row]
             current_effect = (mem_data or {}).get("effect", {}).get("name") if mem_data else None
             eff_label = f"⚡  Effet : {current_effect}" if current_effect else "⚡  Ajouter un effet"
@@ -6350,6 +6522,49 @@ class MainWindow(QMainWindow):
                     act.setCheckable(True)
                     act.setChecked(name_eff == current_effect)
                     act.triggered.connect(lambda checked=False, e=dict(eff): _apply_effect(e))
+
+            # ── 2. Identité du pad ──────────────────────────────────────────
+            menu.addSeparator()
+            rename_action = menu.addAction(tr("mw_rename_dots"))
+            rename_action.triggered.connect(lambda: self._rename_memory(mem_col, row))
+
+            color_menu = menu.addMenu(tr("mw_pad_color"))
+            color_menu.setStyleSheet(menu_style)
+            auto_action = color_menu.addAction(tr("mw_pad_color_auto"))
+            auto_action.triggered.connect(lambda: self._set_memory_custom_color(mem_col, row, None))
+            pad_colors = [
+                ("Blanc", QColor(255, 255, 255)),
+                ("Rouge", QColor(255, 0, 0)),
+                ("Orange", QColor(255, 136, 0)),
+                ("Jaune", QColor(255, 221, 0)),
+                ("Vert", QColor(0, 255, 0)),
+                ("Cyan", QColor(0, 221, 221)),
+                ("Bleu", QColor(0, 0, 255)),
+                ("Magenta", QColor(255, 0, 255)),
+            ]
+            for name, col in pad_colors:
+                px = QPixmap(16, 16)
+                px.fill(col)
+                action = color_menu.addAction(QIcon(px), name)
+                action.triggered.connect(lambda _, c=col: self._set_memory_custom_color(mem_col, row, c))
+
+            # ── 3. Remplacer / déplacer / échanger ──────────────────────────
+            menu.addSeparator()
+            replace_action = menu.addAction(tr("mw_mem_replace_state"))
+            replace_action.triggered.connect(_record_and_feedback)
+            move_action = menu.addAction(tr("mw_move_to"))
+            move_action.triggered.connect(lambda: self._open_move_memory_dialog(mem_col, row))
+            export_action = menu.addAction(tr("mw_export_cue"))
+            export_action.triggered.connect(lambda: self._export_memory(mem_col, row))
+            # Sur un pad REMPLI, importer écrase ce qu'il y a : le libellé le
+            # dit, il était rangé à côté d'« Exporter » comme s'il était anodin.
+            import_action = menu.addAction(tr("mw_import_replace"))
+            import_action.triggered.connect(lambda: self._import_memory(mem_col, row))
+
+            # ── 4. Destruction, seule et en dernier ─────────────────────────
+            menu.addSeparator()
+            clear_action = menu.addAction(tr("mw_erase"))
+            clear_action.triggered.connect(lambda: self._clear_memory(mem_col, row))
 
         menu.exec(btn.mapToGlobal(pos))
 
@@ -6717,10 +6932,16 @@ class MainWindow(QMainWindow):
                     if hasattr(self, 'effect_timer'):
                         self.effect_timer.stop()
                     self._restore_effect_state()
-                    # Ramener les Moving Heads au centre (transition fluide)
+                    # Ramener les Moving Heads au centre (transition fluide) —
+                    # centre de la ZONE autorisée, pas le milieu de course, qui
+                    # peut tomber hors des limites du profil (`_pantilt_in_limits`).
                     for p in self.projectors:
                         if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                            self._start_pan_tilt_transition(p, 32768, 32768, 500)
+                            self._start_pan_tilt_transition(
+                                p,
+                                self._pantilt_in_limits(p, 'pan',  0.0, 0),
+                                self._pantilt_in_limits(p, 'tilt', 0.0, 0),
+                                500)
                     self.active_effect = None
                     self.active_effect_config = {}
                 else:
@@ -7679,7 +7900,14 @@ class MainWindow(QMainWindow):
             centers = getattr(self, '_timeline_pos_centers', None) or {}
             for p in self.projectors:
                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                    pan, tilt = centers.get(id(p), (32768, 32768))
+                    # À défaut de visée imposée : centre de la ZONE autorisée et
+                    # non le milieu de course, qui peut tomber HORS des limites du
+                    # profil — la lyre partait alors vers un point interdit et
+                    # finissait plaquée sur la butée de sa zone (cf.
+                    # `_pantilt_in_limits`, norm=0 → centre).
+                    pan, tilt = centers.get(id(p)) or (
+                        self._pantilt_in_limits(p, 'pan',  0.0, 0),
+                        self._pantilt_in_limits(p, 'tilt', 0.0, 0))
                     self._start_pan_tilt_transition(p, pan, tilt, 500)
 
     def _bascule(self):
@@ -9303,6 +9531,7 @@ class MainWindow(QMainWindow):
             p.prism        = 0
             p.prism_rotation = 0
             p.effects      = 0
+            p.focus = p.gobo2 = p.speed = p.mode_value = 0
             p.channel_extras = {}
 
         # Remettre tous les mutes à zéro + éteindre LEDs physiques
@@ -9319,6 +9548,9 @@ class MainWindow(QMainWindow):
             self._mem_cue_idx[(mc, r)] = 0
         self._dur_timer.stop()
         self._dur_progress_timer.stop()
+        self._dur_paused_left = None
+        self._auto_blink_stop()
+        self._sync_cue_play_button()
         if hasattr(self, "_cue_panel"):
             self._cue_panel.set_progress(-1)
             mc, r = self._cue_panel.mem_col, self._cue_panel.row
@@ -9864,6 +10096,34 @@ class MainWindow(QMainWindow):
                     proj.base_color = QColor(0, 0, 0)
                 self.dmx.blackout()
 
+    @staticmethod
+    def _pantilt_in_limits(proj, axis, norm, amp):
+        """Place une oscillation `norm` (-1..+1) DANS la zone autorisée de la lyre.
+
+        Les motifs des modes IA et Live étaient bâtis autour du milieu de course
+        (32768) avec une amplitude fixe, sans jamais lire `pan_min/pan_max` ni
+        `tilt_min/tilt_max` : la zone réglée dans le profil de la lyre était
+        purement ignorée. Le clamp de sortie (`artnet_dmx`) empêchait bien de
+        SORTIR de la zone, mais en écrêtant — la lyre passait le plus clair du
+        cycle plaquée en butée, le cercle/huit rogné, et une zone décentrée la
+        collait sur un bord. On centre donc sur le milieu de la ZONE et on
+        plafonne l'amplitude à sa demi-largeur : le motif garde sa forme, à
+        l'intérieur des limites. Même repère que les faders POS et le carré de
+        réglage (limites exprimées AVANT swap/inversion, cf. `artnet_dmx`).
+        """
+        lo = getattr(proj, f'{axis}_min', 0)
+        hi = getattr(proj, f'{axis}_max', 65535)
+        if not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)) or hi <= lo:
+            lo, hi = 0, 65535          # zone absente ou dégénérée → course pleine
+        # `+ 1` : sur la course pleine le milieu vaut 32768, la valeur de repos
+        # employée partout ailleurs (rappel au centre, défaut des effets, patch).
+        # Avec cette forme, une lyre SANS limites retrouve au bit près l'ancien
+        # calcul `32768 + int(norm * amp)` — aucune régression sur les rigs qui
+        # n'utilisent pas la zone.
+        center = (lo + hi + 1) // 2
+        amp    = min(abs(amp), (hi - lo) / 2.0)
+        return int(max(lo, min(hi, center + int(norm * amp))))
+
     def _apply_ambiance_live(self):
         """Mode Ambiance : lumière douce + respiration lente + lyres qui tournent."""
         import math as _math
@@ -9926,18 +10186,20 @@ class MainWindow(QMainWindow):
             _lyre_idx += 1
 
             if _mov == 'huit':
-                _pan_v  = int(32768 + _amp_pan  * _math.sin(_ph + _offset))
-                _tilt_v = int(32768 + _amp_tilt * _math.sin(2 * (_ph + _offset)))
+                _pan_n  = _math.sin(_ph + _offset)
+                _tilt_n = _math.sin(2 * (_ph + _offset))
             elif _mov in ('vague', 'diagonale'):
-                _pan_v  = int(32768 + _amp_pan  * _math.sin(_ph + _offset))
-                _tilt_v = int(32768 + _amp_tilt * _math.sin(_ph + _offset + _math.pi / 3))
+                _pan_n  = _math.sin(_ph + _offset)
+                _tilt_n = _math.sin(_ph + _offset + _math.pi / 3)
             else:
                 # cercle (défaut)
-                _pan_v  = int(32768 + _amp_pan  * _math.sin(_ph + _offset))
-                _tilt_v = int(32768 + _amp_tilt * _math.cos(_ph + _offset))
+                _pan_n  = _math.sin(_ph + _offset)
+                _tilt_n = _math.cos(_ph + _offset)
 
-            p.pan  = max(0, min(65535, _pan_v))
-            p.tilt = max(0, min(65535, _tilt_v))
+            # Motif recentré/borné sur la zone du profil de la lyre (voir
+            # `_pantilt_in_limits`) au lieu du milieu de course.
+            p.pan  = self._pantilt_in_limits(p, 'pan',  _pan_n,  _amp_pan)
+            p.tilt = self._pantilt_in_limits(p, 'tilt', _tilt_n, _amp_tilt)
 
         # ── Dimmer par groupe (onglet DIMMER) ─────────────────────────────────
         _dv = self.seq.live_panel.dimmer_values
@@ -10107,8 +10369,13 @@ class MainWindow(QMainWindow):
                 if getattr(p, 'fixture_type', '') == "Moving Head":
                     _cur_pan  = getattr(p, 'pan',  32768)
                     _cur_tilt = getattr(p, 'tilt', 32768)
-                    p.pan  = int(_cur_pan  + _pause_center_progress * (32768 - _cur_pan))
-                    p.tilt = int(_cur_tilt + _pause_center_progress * (32768 - _cur_tilt))
+                    # Centre de la ZONE autorisée, pas le milieu de course : une
+                    # lyre bridée était renvoyée vers un point interdit et finissait
+                    # plaquée sur la butée de sa zone (norm=0 → centre).
+                    _c_pan  = self._pantilt_in_limits(p, 'pan',  0.0, 0)
+                    _c_tilt = self._pantilt_in_limits(p, 'tilt', 0.0, 0)
+                    p.pan  = int(_cur_pan  + _pause_center_progress * (_c_pan  - _cur_pan))
+                    p.tilt = int(_cur_tilt + _pause_center_progress * (_c_tilt - _cur_tilt))
             return
         else:
             # Réinitialiser le compteur de centrage quand la pause se termine
@@ -10799,8 +11066,10 @@ class MainWindow(QMainWindow):
                     pan_v  = _math.cos(ph_i)
                     tilt_v = _math.sin(ph_i * 1.618)
 
-                p.pan  = max(0, min(65535, 32768 + int(pan_v  * _amp_pan)))
-                p.tilt = max(0, min(65535, 32768 + int(tilt_v * _amp_tilt)))
+                # Motif recentré/borné sur la zone du profil de la lyre (voir
+                # `_pantilt_in_limits`) au lieu du milieu de course.
+                p.pan  = self._pantilt_in_limits(p, 'pan',  pan_v,  _amp_pan)
+                p.tilt = self._pantilt_in_limits(p, 'tilt', tilt_v, _amp_tilt)
                 if p.group not in state:
                     p.level = max(0, min(100, lyre_level))
 
@@ -11526,12 +11795,13 @@ class MainWindow(QMainWindow):
                 for i, p in enumerate(moving_heads):
                     phi = i * (2.0 * math.pi / max(len(moving_heads), 1))
 
-                    # Mouvement cercle — vitesse et amplitude fixes, indépendantes de la musique
-                    pan_val  = 32768 + int(amp * 256 * math.cos(ph + phi))
-                    tilt_val = 32768 + int(amp * 200 * math.sin(ph + phi))
-
-                    p.pan  = max(0, min(65535, pan_val))
-                    p.tilt = max(0, min(65535, tilt_val))
+                    # Mouvement cercle — vitesse et amplitude fixes, indépendantes
+                    # de la musique, mais recentré/borné sur la zone du profil de
+                    # la lyre au lieu du milieu de course (`_pantilt_in_limits`).
+                    p.pan  = self._pantilt_in_limits(
+                        p, 'pan',  math.cos(ph + phi), amp * 256)
+                    p.tilt = self._pantilt_in_limits(
+                        p, 'tilt', math.sin(ph + phi), amp * 200)
 
                     # Couleur : appliquée seulement si l'IA principale ne gère pas ce groupe
                     if p.group not in state:
@@ -20003,6 +20273,7 @@ class MainWindow(QMainWindow):
             existing_names = {f["name"] for f in existing_user if isinstance(f, dict)}
             imported = 0
             errors = []
+            newly_imported = []   # proposées ensuite au partage communautaire
             for path in paths:
                 ext = Path(path).suffix.lower()
                 try:
@@ -20053,6 +20324,7 @@ class MainWindow(QMainWindow):
                             fx["name"] = f"{name} ({c})"
                         existing_user.append(fx)
                         existing_names.add(fx["name"])
+                        newly_imported.append(fx)
                         imported += 1
                 except Exception as e:
                     errors.append(f"• {Path(path).name} : {e}")
@@ -20085,6 +20357,12 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(dialog, tr("mw_import_partial"), msg)
             else:
                 QMessageBox.information(dialog, tr("mw_import_ok"), msg)
+
+            # Proposer de verser ces appareils à la bibliothèque commune
+            # (modération + filtrage par licence côté fixture_share). Silencieux
+            # si l'utilisateur n'est pas connecté.
+            from fixture_share import offer_share
+            offer_share(dialog, newly_imported)
 
         def _rebuild_library_ui(new_user_fixtures: list):
             """Reconstruit ALL_FIXTURES / FIXTURE_LIBRARY et rafraîchit cat_list."""
@@ -20815,6 +21093,11 @@ class MainWindow(QMainWindow):
                 'pos_y': getattr(proj, 'canvas_y', None),
                 'pos_3d_x': getattr(proj, 'pos_3d_x', None),
                 'pos_3d_z': getattr(proj, 'pos_3d_z', None),
+                # Provenance de la position 3D (cf. `_set_pos3d_auto`) : sans
+                # elle, toute position déduite du plan 2D repasserait pour un
+                # placement manuel au rechargement, et le plan de feu serait de
+                # nouveau débranché de la 3D.
+                'pos_3d_src': list(getattr(proj, '_pos3d_src', None) or ()) or None,
                 'fixture_height':  getattr(proj, 'fixture_height', None),
                 'body_rotation':   getattr(proj, 'body_rotation', 0.0),
                 'rot3d_x':         getattr(proj, 'rot3d_x',       0.0),
@@ -20893,6 +21176,14 @@ class MainWindow(QMainWindow):
                         p3z = fd.get('pos_3d_z')
                         if p3x is not None: p.pos_3d_x = float(p3x)
                         if p3z is not None: p.pos_3d_z = float(p3z)
+                        # Attribut laissé ABSENT quand la clé n'est pas dans le
+                        # fichier : un show antérieur est alors migré au premier
+                        # affichage 3D (cf. `_sync_pos3d_with_canvas`), au lieu
+                        # d'être pris à tort pour un placement manuel.
+                        if 'pos_3d_src' in fd:
+                            _src = fd.get('pos_3d_src')
+                            p._pos3d_src = ((float(_src[0]), float(_src[1]))
+                                            if _src and len(_src) == 2 else None)
                         fh = fd.get('fixture_height')
                         if fh is not None:
                             p.fixture_height = float(fh)

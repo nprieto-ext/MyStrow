@@ -250,6 +250,11 @@ def build_local_installer(version):
         # Three.js vendorisé : importé par chemin relatif au HTML. Sans lui, la
         # fenêtre 3D reste bloquée sur « Chargement Three.js… » (échec muet).
         f"--add-data \"vendor/three;vendor/three\" "
+        # Décors 3D des scènes par défaut. Absents, les presets à modèle (« Scène
+        # de concert », « Scène couverte ») retombent silencieusement sur une
+        # scène vide : _push_scene_glb n'ecrit que sur stdout, invisible en
+        # --windowed. Ne vit que dans MyStrow.spec sinon.
+        f"--add-data \"scenes3d;scenes3d\" "
         f"--add-data \"AKAIAPCMINI.png;.\" "
         f"--add-data \"Novation.png;.\" "
         # Interface tablette (PWA statique servie par tablet_server.py). SANS ces
@@ -533,6 +538,113 @@ def _watch_github_actions(version):
 # ------------------------------------------------------------------
 # DISCORD
 # ------------------------------------------------------------------
+#
+# Le coeur vit ici, et pas dans tools/discord_release.py, pour une raison
+# precise : admin_panel.py importe deja `release`, donc PyInstaller embarque
+# ce fichier dans MyStrow_Admin.exe. Un module range dans tools/ ne serait
+# importe par personne, donc jamais embarque, et la mise a jour Discord
+# marcherait depuis le script mais pas depuis l'admin panel.
+
+DISCORD_WEBHOOK_FILE = Path.home() / ".mystrow_discord_webhook_release.txt"
+DISCORD_STATE_FILE   = Path.home() / ".mystrow_discord_release.json"
+
+_DL_CF = "https://us-central1-mystrow-907be.cloudfunctions.net/download_redirect?p="
+_MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+         "août", "septembre", "octobre", "novembre", "décembre")
+
+
+def discord_load_webhook():
+    """URL du webhook, ou "" si non configure. Ne leve jamais."""
+    import os
+    url = os.environ.get("MYSTROW_DISCORD_WEBHOOK_RELEASE", "").strip()
+    if not url:
+        try:
+            url = DISCORD_WEBHOOK_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+    return url.rstrip("/") if "discord.com/api/webhooks/" in url else ""
+
+
+def discord_embed_latest(version):
+    from datetime import date
+    d = date.today()
+    liens = (
+        f"🪟  **Windows 10 / 11** — [télécharger l'installeur]({_DL_CF}win)\n"
+        f"🍎  **macOS Apple Silicon** (M1 → M4) — [télécharger le .dmg]({_DL_CF}mac)\n"
+        f"🍏  **macOS Intel** — [télécharger le .dmg]({_DL_CF}mac_intel)"
+    )
+    return {
+        "title": f"⬇️  MyStrow {version} — dernière version",
+        "url": "https://mystrow.fr/telecharger",
+        "color": 0xE2CE16,
+        "description": (
+            f"{liens}\n\n"
+            "Les liens ci-dessus pointent **toujours** vers la version la plus "
+            "récente : pas besoin de revenir chercher un nouveau lien à chaque "
+            "mise à jour.\n\n"
+            "L'application se met aussi à jour toute seule au démarrage."
+        ),
+        "fields": [
+            {"name": "Version", "value": version, "inline": True},
+            {"name": "Mise en ligne",
+             "value": f"{d.day} {_MOIS[d.month - 1]} {d.year}", "inline": True},
+        ],
+        "footer": {"text": "Gratuit pour démarrer · la sortie DMX demande une "
+                           "licence Pro ou Lifetime · mystrow.fr"},
+    }
+
+
+def _discord_send(url, payload, method="POST"):
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"), method=method,
+        headers={"Content-Type": "application/json", "User-Agent": "MyStrow/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        body = r.read().decode("utf-8")
+    return json.loads(body) if body.strip() else {}
+
+
+def notify_discord_latest(version):
+    """Cree ou re-edite LE message "derniere version" du canal telechargement.
+
+    Renvoie (ok: bool, message: str). Ne leve jamais : une release reussie ne
+    doit pas ressembler a un echec parce qu'un webhook est mort.
+    """
+    webhook = discord_load_webhook()
+    if not webhook:
+        return False, "webhook Discord non configuré — canal inchangé"
+
+    payload = {"username": "MyStrow",
+               "avatar_url": "https://mystrow.fr/og-image.webp",
+               "embeds": [discord_embed_latest(version)]}
+
+    state = {}
+    try:
+        state = json.loads(DISCORD_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    mid = state.get("latest_message_id")
+
+    try:
+        if mid:
+            try:
+                _discord_send(f"{webhook}/messages/{mid}",
+                              {"embeds": payload["embeds"]}, method="PATCH")
+                state["latest_version"] = version
+                DISCORD_STATE_FILE.write_text(json.dumps(state, indent=2),
+                                              encoding="utf-8")
+                return True, f"message Discord mis à jour → {version}"
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                # message supprime a la main : on en repost un
+        res = _discord_send(f"{webhook}?wait=true", payload)
+        state["latest_message_id"] = res.get("id")
+        state["latest_version"] = version
+        DISCORD_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        return True, f"message Discord publié → {version} (pense à l'épingler)"
+    except Exception as e:
+        return False, f"échec Discord : {e}"
+
 
 def _notify_discord(version):
     """Met a jour le canal #telechargement_MyStrow apres une release reussie.
@@ -540,15 +652,15 @@ def _notify_discord(version):
     Volontairement non bloquant : un probleme de reseau ou un webhook revoque
     ne doit jamais faire echouer une release deja publiee sur GitHub.
     """
-    script = BASE_DIR / "tools" / "discord_release.py"
-    if not script.exists():
+    print("\n---------- DISCORD ----------")
+    ok, msg = notify_discord_latest(version)
+    print(("✅  " if ok else "⚠️  ") + msg)
+    if not ok:
+        print("    Relance à la main : python tools/discord_release.py --latest")
         return
 
-    print("\n---------- DISCORD ----------")
-    res = subprocess.run([sys.executable, str(script), "--latest"])
-    if res.returncode != 0:
-        print("⚠️  Mise à jour Discord échouée — le canal garde l'ancienne version.")
-        print(f"    Relance à la main : python tools/discord_release.py --latest")
+    script = BASE_DIR / "tools" / "discord_release.py"
+    if not script.exists():
         return
 
     # L'annonce notifie tous les membres : elle reste un choix explicite,

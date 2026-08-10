@@ -3,7 +3,10 @@ Plan de feu 3D — rendu Three.js via QWebEngineView.
 Remplace Plan3DWindow avec une API identique : init_scene(), refresh().
 """
 import base64
+import datetime
 import json
+import os
+import sys
 import time as _time
 from pathlib import Path
 from effect_editor import _NumCell
@@ -16,7 +19,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWebEngineCore import QWebEngineSettings
+from PySide6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent, QRectF
 from PySide6.QtGui import QColor, QBrush, QPainter, QPen
@@ -28,6 +31,67 @@ _HTML     = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) 
 # Décors 3D livrés avec l'application. Même résolution que _HTML : en EXE, tout
 # est déplié dans le dossier temporaire de PyInstaller (_MEIPASS).
 _DOSSIER_SCENES = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'scenes3d'
+
+
+def _pos3d_from_canvas(cx, cy):
+    """Position 3D (x, z) déduite d'une position du plan de feu 2D.
+
+    Les DEUX axes sont inversés, et pour la même raison : la vue de référence
+    est celle du PUBLIC. Une caméra placée en salle regarde vers les Z
+    croissants, ce qui met les X croissants à sa gauche — côté jardin. Sans le
+    signe sur X, le plan 2D et la 3D se lisaient en miroir : deux lyres posées à
+    jardin sortaient à cour (remontée du 10/08/2026).
+    """
+    return round(-(cx - 0.5) * 18.0, 2), round(-(cy - 0.5) * 10.0, 2)
+
+
+def _canvas_from_pos3d(x, z):
+    """Réciproque de `_pos3d_from_canvas` : 3D → plan de feu 2D."""
+    return (max(0.0, min(1.0, -x / 18.0 + 0.5)),
+            max(0.0, min(1.0, -z / 10.0 + 0.5)))
+
+
+def _set_pos3d_auto(proj, cx, cy):
+    """Pose une position 3D DÉDUITE du plan 2D, en gardant sa provenance.
+
+    `_pos3d_src` retient le point 2D d'où vient la position. Il distingue une
+    position simplement recopiée du plan de feu d'une position réglée à la main
+    dans le tableau 3D — sans lui, les deux sont indiscernables, et c'est ce qui
+    débranchait le plan 2D : le tableau initialise `pos_3d_*` pour TOUS les
+    projecteurs dès sa première ouverture, or `pos_3d_*` prime sur le 2D. Une
+    lyre déplacée ensuite sur le plan de feu ne bougeait plus jamais en 3D
+    (« je relance la 3D et je suis sur mon ancien plan de feu », 10/08/2026).
+    """
+    proj.pos_3d_x, proj.pos_3d_z = _pos3d_from_canvas(cx, cy)
+    proj._pos3d_src = (cx, cy)
+
+
+def _sync_pos3d_with_canvas(proj, cx, cy):
+    """Recale la position 3D si le projecteur a bougé sur le plan 2D depuis.
+
+    Ne touche pas aux positions réglées à la main dans le tableau 3D : celles-là
+    n'ont pas de `_pos3d_src` (il est effacé à l'édition) et restent maîtresses.
+    """
+    if not hasattr(proj, '_pos3d_src'):
+        # Show enregistré avant l'existence de `_pos3d_src` : si la position 3D
+        # est exactement celle que le plan 2D produirait, c'est qu'elle en a été
+        # déduite — on la rebranche. Sinon elle a été posée à la main, on la
+        # laisse. Vrai tant que rien n'a bougé depuis le chargement, d'où cette
+        # migration au tout premier passage.
+        p3 = (getattr(proj, 'pos_3d_x', None), getattr(proj, 'pos_3d_z', None))
+        proj._pos3d_src = (cx, cy) if p3 == _pos3d_from_canvas(cx, cy) else None
+        return
+    src = proj._pos3d_src
+    if src is None:
+        return
+    bouge = abs(src[0] - cx) > 1e-9 or abs(src[1] - cy) > 1e-9
+    # La FORMULE elle-même a pu changer (inversion de l'axe X du 10/08/2026) :
+    # une position déduite qui ne correspond plus à ce que produit la conversion
+    # courante est refaite. C'est ce qui remet d'aplomb, sans rien demander, les
+    # rigs enregistrés avant l'inversion.
+    perimee = (proj.pos_3d_x, proj.pos_3d_z) != _pos3d_from_canvas(*src)
+    if bouge or perimee:
+        _set_pos3d_auto(proj, cx, cy)
 
 _SCENE_PRESETS = {
     'vide': {
@@ -46,7 +110,51 @@ _SCENE_PRESETS = {
         'label': 'Scène de concert',
         'trusses': [],
         'glb': 'concert_stage.glb',
+        # Ce modèle est bâti fond de scène vers les Z NÉGATIFS, or ici les Z
+        # négatifs sont l'avant-scène (cf. les trusses ci-dessous : « avant »
+        # à z<0, « arrière » à z>0) et le plan 2D est converti dans ce repère.
+        # Sans ce demi-tour, la ligne de contre du patch se retrouvait devant
+        # le décor, côté public, et la face collée au fond (remontée du
+        # 10/08/2026). Mesuré : 183 m² de mur à z=-5 contre 57 m² à z=+5.
+        'yaw': 180.0,
+        # Le grill du modèle est à 9,31 m à taille d'origine, mais `span` le
+        # ramène à 16,2 m (×0,9) : il redescend donc à 8,4–9,0 m. Un projecteur
+        # sans hauteur explicite s'accroche au milieu de cette poutre, au lieu
+        # de rester à TRUSS_Y (7 m) et de flotter deux mètres plus bas.
+        # ⚠️ Toute retouche de `span` déplace le grill : refaire le calcul.
+        'rig_height': 8.7,
+        # Ramené de 18 m à 16,2 m : c'est exactement l'emprise qu'un projecteur
+        # peut atteindre depuis le plan de feu 2D (bornes 0,05–0,95 → ±8,1 m).
+        # Les tours et les extrémités du grill tombent ainsi pile sur la position
+        # la plus extérieure posable en 2D, et le grill avant/arrière (±4,1 m
+        # après réduction) rentre dans les ±4,1/4,4 m atteignables en profondeur.
+        'span': 16.2,
     },
+    'truss_glb': {
+        'label': 'Structure truss',
+        'trusses': [],
+        'glb': 'truss_structure.glb',
+        # Portique : 3 arches reliées par des poutres longitudinales.
+        # Symétrique en Z (mesuré : 15,3 m² de structure à z=-9 contre 16,3 à
+        # z=+9) → pas de demi-tour à appliquer.
+        # 20 m au lieu de 18 : la largeur passe à ±8,08 m, soit exactement
+        # l'emprise atteignable depuis le plan de feu 2D (±8,1 m). Le rig tient
+        # alors sous le portique au lieu de déborder sur les côtés.
+        'span': 20.0,
+        # La poutre haute court de 6,50 à 7,27 m (l'arche est cintrée, elle
+        # n'est pas plate) : on accroche SOUS son point le plus bas, sinon les
+        # projecteurs des extrémités traverseraient la structure.
+        'rig_height': 6.3,
+        # Ce portique est profond de ±10 m alors que le cyclorama est planté à
+        # z = +5,6 : tout ce qui le dépasse passait derrière et se faisait
+        # trancher net, la structure apparaissait coupée par un écran noir.
+        'cyc': False,
+    },
+    # « Scène couverte » (warehouse_construction.glb) retirée le 10/08/2026 :
+    # le modèle porte des éléments de structure qui flottent au milieu de l'aire
+    # de jeu, impossibles à isoler proprement (géométrie partagée entre nœuds).
+    # Le .glb a été sorti de `scenes3d/` — le dossier part en entier dans les 4
+    # chemins de build, il aurait pesé pour rien dans l'installeur.
     'live': {
         'label': 'Live',
         'trusses': [
@@ -367,7 +475,10 @@ class TrussEditorDialog(QDialog):
 class ProjectorTableDialog(QDialog):
     """Tableau de positionnement 3D — édition X/Y/Z/RotXYZ, multi-sélection."""
 
-    _HDR  = ['', 'Projecteur', 'X (m)', 'Y haut.', 'Z (m)', 'Rot Y°', 'Rot X°', 'Rot Z°']
+    # En-tête de la colonne des cases : cliquable pour tout cocher d'un coup.
+    # Une colonne vide ne disait pas qu'on pouvait sélectionner plusieurs
+    # appareils, et les boutons du bas passaient inaperçus.
+    _HDR  = ['☑', 'Projecteur', 'X (m)', 'Y haut.', 'Z (m)', 'Rot Y°', 'Rot X°', 'Rot Z°']
     _ATTR = [None, None, 'pos_3d_x', 'fixture_height', 'pos_3d_z',
              'body_rotation', 'rot3d_x', 'rot3d_z']
     _LO   = [None, None, -12.0,  1.0, -8.0, -180.0, -90.0, -180.0]
@@ -442,7 +553,12 @@ class ProjectorTableDialog(QDialog):
         root.addWidget(sub)
 
         self._tbl = QTableWidget(0, len(self._HDR))
-        self._tbl.setHorizontalHeaderLabels(self._HDR)
+        # Libellés posés ICI et non dans `_HDR` : cet attribut de classe est
+        # évalué à l'import, donc un `tr()` y resterait figé sur la langue du
+        # démarrage. `_HDR` ne sert plus qu'à compter les colonnes.
+        self._tbl.setHorizontalHeaderLabels(
+            ['☑', tr("p3w_col_fixture"), 'X (m)', tr("p3w_col_height"), 'Z (m)',
+             'Rot Y°', 'Rot X°', 'Rot Z°'])
         self._tbl.setStyleSheet(self._TBL)
         self._tbl.verticalHeader().setVisible(False)
         self._tbl.setSelectionMode(QAbstractItemView.NoSelection)
@@ -452,6 +568,10 @@ class ProjectorTableDialog(QDialog):
             self._tbl.setColumnWidth(i, w)
         self._tbl.horizontalHeader().setStretchLastSection(True)
         self._tbl.itemChanged.connect(self._on_chk_changed)
+        # Clic sur l'en-tête de la colonne des cases = tout cocher / tout
+        # décocher, le geste attendu d'un tableau à cases.
+        self._tbl.horizontalHeader().setSectionsClickable(True)
+        self._tbl.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         root.addWidget(self._tbl, 1)
 
         sep = QFrame()
@@ -462,16 +582,23 @@ class ProjectorTableDialog(QDialog):
         bot = QHBoxLayout()
         bot.setSpacing(6)
         for label, slot in [
-            ("Tout cocher",       lambda: self._set_all(True)),
-            ("Tout décocher",     lambda: self._set_all(False)),
-            ("Réinit. sélection", self._reset_sel),
+            (tr("p3w_check_all"),   lambda: self._set_all(True)),
+            (tr("p3w_uncheck_all"), lambda: self._set_all(False)),
+            (tr("p3w_reset_sel"),   self._reset_sel),
         ]:
             b = QPushButton(label)
             b.setStyleSheet(self._BTN)
             b.clicked.connect(slot)
             bot.addWidget(b)
         bot.addStretch()
+        # Dit noir sur blanc à quoi s'applique la prochaine édition. Sans ce
+        # repère, rien ne signalait qu'une valeur tapée sur une ligne allait
+        # aussi partir sur toutes les autres lignes cochées.
+        self._lbl_sel = QLabel()
+        self._lbl_sel.setStyleSheet("color:#00d4ff;font-size:10px;")
+        bot.addWidget(self._lbl_sel)
         root.addLayout(bot)
+        self._maj_compteur()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -488,6 +615,20 @@ class ProjectorTableDialog(QDialog):
             if w:
                 w.setStyleSheet(s)
 
+    def _maj_compteur(self):
+        n = len(self._checked())
+        if n > 1:
+            self._lbl_sel.setText(tr("p3w_sel_many", n=n))
+        elif n == 1:
+            self._lbl_sel.setText(tr("p3w_sel_one"))
+        else:
+            self._lbl_sel.setText(tr("p3w_sel_none"))
+
+    def _on_header_clicked(self, col):
+        """Clic sur l'en-tête ☑ : bascule tout coché / tout décoché."""
+        if col == 0:
+            self._set_all(len(self._checked()) < self._tbl.rowCount())
+
     def _set_all(self, state):
         self._busy = True
         for r in range(self._tbl.rowCount()):
@@ -496,10 +637,12 @@ class ProjectorTableDialog(QDialog):
                 it.setCheckState(Qt.Checked if state else Qt.Unchecked)
                 self._refresh_row_style(r)
         self._busy = False
+        self._maj_compteur()
 
     def _on_chk_changed(self, item):
         if item.column() == 0 and not self._busy:
             self._refresh_row_style(item.row())
+            self._maj_compteur()
 
     # ── Populate ──────────────────────────────────────────────────────────────
 
@@ -509,10 +652,14 @@ class ProjectorTableDialog(QDialog):
         # Init pos_3d pour TOUS les projecteurs (y compris les pixels d'une barre
         # non affichés) — sinon déplacer une barre casserait sur un pos None.
         for i, p in enumerate(projectors):
+            cx, cy = self._npos(projectors, i)
             if getattr(p, 'pos_3d_x', None) is None:
-                cx, cy = self._npos(projectors, i)
-                p.pos_3d_x = round((cx - 0.5) * 18.0, 2)
-                p.pos_3d_z = round(-(cy - 0.5) * 10.0, 2)
+                _set_pos3d_auto(p, cx, cy)
+            else:
+                # Déjà une position 3D : la recaler si elle vient du plan 2D et
+                # que le projecteur y a bougé depuis (patch modifié, fixture
+                # déplacée d'un groupe à l'autre…).
+                _sync_pos3d_with_canvas(p, cx, cy)
 
         # Modèle de lignes : UN appareil par ligne. Une barre/matrice = 1 ligne
         # (ses N pixels regroupés), pas N lignes « · px1, · px2… ».
@@ -592,6 +739,7 @@ class ProjectorTableDialog(QDialog):
             self._tbl.setRowHeight(row, 26)
 
         self._busy = False
+        self._maj_compteur()
 
     # ── Edition ───────────────────────────────────────────────────────────────
 
@@ -607,19 +755,32 @@ class ProjectorTableDialog(QDialog):
         # ses pixels). Hauteur/rotations : valeur absolue, identique à tous.
         is_pos = attr in ('pos_3d_x', 'pos_3d_z')
 
+        # Le déplacement se mesure UNE FOIS, sur la ligne qu'on manipule, puis
+        # s'applique tel quel à toute la sélection. Il était recalculé pour
+        # chaque ligne (`value - centroïde de la ligne`), ce qui amenait chaque
+        # appareil sur la MÊME valeur absolue : sélectionner tout le rig et
+        # toucher X empilait les projecteurs sur un seul point au lieu de les
+        # décaler ensemble. L'écart entre appareils est maintenant conservé,
+        # comme l'était déjà celui des pixels d'une barre.
+        delta = 0.0
+        if is_pos and row < len(self._rows):
+            _ref = self._rows[row]['members']
+            delta = value - (sum((getattr(projs[m], attr, 0.0) or 0.0)
+                                 for m in _ref) / len(_ref))
+
         self._busy = True
         for r in rows:
             if r >= len(self._rows):
                 continue
             members = self._rows[r]['members']
             if is_pos:
-                cur = sum((getattr(projs[m], attr, 0.0) or 0.0)
-                          for m in members) / len(members)
-                delta = value - cur
                 for m in members:
                     if m < len(projs):
                         base = getattr(projs[m], attr, 0.0) or 0.0
                         setattr(projs[m], attr, base + delta)
+                        # Placement 3D voulu par l'utilisateur : il cesse de
+                        # suivre le plan 2D (cf. `_set_pos3d_auto`).
+                        projs[m]._pos3d_src = None
             else:
                 for m in members:
                     if m < len(projs):
@@ -627,8 +788,16 @@ class ProjectorTableDialog(QDialog):
             if r != row:
                 sp = self._tbl.cellWidget(r, col)
                 if sp:
+                    # En déplacement, chaque ligne garde SA valeur (décalée du
+                    # même delta) : réafficher `value` partout ferait mentir le
+                    # tableau, qui annoncerait un rig empilé sur un point.
+                    if is_pos:
+                        _shown = sum((getattr(projs[m], attr, 0.0) or 0.0)
+                                     for m in members) / len(members)
+                    else:
+                        _shown = value
                     sp.blockSignals(True)
-                    sp.setValue(value)
+                    sp.setValue(_shown)
                     sp.blockSignals(False)
         self._busy = False
         self._cb(projs)
@@ -644,11 +813,69 @@ class ProjectorTableDialog(QDialog):
                     p = projs[m]
                     p.pos_3d_x      = None
                     p.pos_3d_z      = None
+                    p._pos3d_src    = None   # repartira du plan 2D
                     p.body_rotation = 0.0
                     p.rot3d_x       = 0.0
                     p.rot3d_z       = 0.0
         self.populate(projs)
         self._cb(projs)
+
+
+def _diag_log_path() -> str:
+    """Fichier journal du plan 3D, à côté des autres logs de l'application."""
+    if sys.platform == "win32":
+        d = os.path.join(os.path.expanduser("~"), "AppData", "Local", "MyStrow", "Logs")
+    else:
+        d = os.path.join(os.path.expanduser("~"), ".mystrow_logs")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "plan3d.log")
+
+
+_diag_fh = None
+
+
+def _diag_note(txt: str):
+    """Journalise une ligne de diagnostic 3D : terminal ET fichier.
+
+    Le fichier compte autant que la sortie standard : le glitch dure un quart
+    de seconde et l'application est lancée au clic la plupart du temps —
+    demander de guetter un terminal ne tient pas. Le fichier, lui, s'envoie.
+    """
+    global _diag_fh
+    print(f"[Plan3D] {txt}")
+    try:
+        if _diag_fh is None:
+            chemin = _diag_log_path()
+            # Repartir à zéro au-delà de 2 Mo : ce journal sert à porter un
+            # incident récent, pas à s'accumuler indéfiniment.
+            mode = "a"
+            if os.path.exists(chemin) and os.path.getsize(chemin) > 2 * 1024 * 1024:
+                mode = "w"
+            _diag_fh = open(chemin, mode, encoding="utf-8", buffering=1)
+            _diag_fh.write(
+                f"\n===== session {datetime.datetime.now():%d/%m/%Y %H:%M:%S} =====\n")
+        _diag_fh.write(
+            f"{datetime.datetime.now():%H:%M:%S.%f}"[:-3] + f"  {txt}\n")
+    except Exception:
+        pass   # un journal ne doit jamais empêcher la 3D de tourner
+
+
+class _LoggingPage(QWebEnginePage):
+    """Page qui fait remonter les messages de diagnostic de la scène 3D.
+
+    QWebEngine avale les `console.*` par défaut. Or c'est la page — et elle
+    seule — qui voit passer une perte de contexte WebGL, une image anormalement
+    longue ou un changement de qualité. Sans ce relais, l'enquête sur le
+    clignotement noir se faisait à l'aveugle.
+
+    Filtré volontairement sur le préfixe `[3D]` : le bruit d'une page WebGL
+    (avertissements de shaders, dépréciations) noierait le journal.
+    """
+
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        if not message.startswith("[3D]"):
+            return
+        _diag_note(message[4:].strip())
 
 
 class _Bridge(QObject):
@@ -661,6 +888,27 @@ class _Bridge(QObject):
     @Slot(int)
     def projoSelected(self, index: int):
         self._win._on_projo_selected(index)
+
+    @Slot(str, str)
+    def saveGlitchShot(self, data_url: str, raison: str):
+        """Écrit sur le disque l'image que la scène juge fautive.
+
+        Le clignotement dure un quart de seconde : impossible de cliquer sur
+        « exporter » à temps, et une photo d'écran prise au téléphone ne permet
+        pas de distinguer un vrai tramage d'un moiré d'appareil photo. La scène
+        se capture donc elle-même, au pixel près, à l'instant où sa sonde
+        déclenche.
+        """
+        try:
+            b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
+            nom = (f"plan3d_{raison}_"
+                   f"{datetime.datetime.now():%H%M%S}.jpg")
+            chemin = os.path.join(os.path.dirname(_diag_log_path()), nom)
+            with open(chemin, "wb") as f:
+                f.write(base64.b64decode(b64))
+            _diag_note(f"capture écrite : {chemin}")
+        except Exception as e:
+            _diag_note(f"capture non enregistrée : {e}")
 
 
 class _P3Cell(_NumCell):
@@ -745,6 +993,11 @@ class Plan3DWebWindow(QMainWindow):
         self.setStyleSheet("background:#05050f;")
 
         self._view = QWebEngineView()
+        # Sans cette page, les `console.*` de la scène 3D ne vont NULLE PART :
+        # QWebEngine les avale en silence. C'est ce qui rendait le clignotement
+        # noir introuvable — tout ce que la page savait du problème restait
+        # enfermé dedans. On ne remonte que ce qui est diagnostique.
+        self._view.setPage(_LoggingPage(self._view))
         s = self._view.settings()
         s.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
         s.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
@@ -1300,8 +1553,11 @@ class Plan3DWebWindow(QMainWindow):
         # Tout se règle ici, ligne par ligne, sans passer par le jog pad qui ne
         # traite qu'un projecteur à la fois.
         self._mini_tbl = QTableWidget(0, 10)
+        # X/Z/H/RX/RY/RZ restent tels quels : ce sont des symboles d'axes, pas
+        # des mots — les traduire ne ferait que les rendre méconnaissables.
         self._mini_tbl.setHorizontalHeaderLabels(
-            ['Projecteur', 'X', 'Z', 'H', 'RX', 'RY', 'RZ', 'Faisc.', 'Angle', 'Taille'])
+            [tr("p3w_col_fixture"), 'X', 'Z', 'H', 'RX', 'RY', 'RZ',
+             tr("p3w_col_beam"), tr("p3w_col_angle"), tr("p3w_col_size")])
         self._mini_tbl.setStyleSheet(self._MINI_TBL)
         self._mini_tbl.verticalHeader().setVisible(False)
         self._mini_tbl.setSelectionMode(QAbstractItemView.NoSelection)
@@ -1315,22 +1571,26 @@ class Plan3DWebWindow(QMainWindow):
         # il n'apparaît qu'une fois qu'on a compris qu'il fallait défiler.
         self._mini_tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         for _c, _tip in enumerate((
-                "Projecteur", "Position gauche/droite (m)", "Position avant/arrière (m)",
-                "Hauteur d'accroche (m)", "Inclinaison — retourne l'appareil (°)",
-                "Orientation horizontale du corps (°)", "Roulis sur l'axe du faisceau (°)",
-                "Puissance du faisceau en 3D (%) — n'affecte pas la sortie DMX",
-                "Ouverture du faisceau en 3D (%) — 100 = rendu d'origine,\n"
-                "moins = faisceau plus serré. N'affecte pas la sortie DMX\n"
-                "(le canal Zoom, lui, reste piloté par le patch)",
-                "Taille du corps de l'appareil en 3D (%) — 100 = modèle d'origine.\n"
-                "À réduire pour que les projecteurs soient à l'échelle de\n"
-                "votre scène. Le point d'accroche ne bouge pas ; le faisceau\n"
-                "continue de partir de la lentille")):
+                tr("p3w_tip_fixture"), tr("p3w_tip_x"), tr("p3w_tip_z"),
+                tr("p3w_tip_h"), tr("p3w_tip_rx"), tr("p3w_tip_ry"),
+                tr("p3w_tip_rz"), tr("p3w_tip_beam"), tr("p3w_tip_angle"),
+                tr("p3w_tip_size"))):
             _h = self._mini_tbl.horizontalHeaderItem(_c)
             if _h is not None:
                 _h.setToolTip(_tip)
         self._mini_tbl.cellClicked.connect(self._on_mini_tbl_clicked)
         lay.addWidget(self._mini_tbl, 1)
+
+        # La sélection multiple existait — Ctrl+clic, et toute valeur modifiée
+        # part sur toutes les lignes retenues — mais RIEN ne l'annonçait : ni
+        # case à cocher, ni libellé, ni raccourci listé. Fonction invisible =
+        # fonction absente. Ce bandeau l'énonce et sert de compteur vivant.
+        self._lbl_multi = QLabel(tr("p3w_plan_multi_hint"))
+        self._lbl_multi.setStyleSheet(
+            "color:#556; font-size:9px; padding:3px 4px;"
+            "border-top:1px solid #1c1c1c;")
+        self._lbl_multi.setWordWrap(True)
+        lay.addWidget(self._lbl_multi)
 
         # Jog pad : construit mais NON affiché. Le tableau ci-dessus expose
         # désormais toutes ses valeurs — position, orientation, faisceau — ligne
@@ -1405,8 +1665,7 @@ class Plan3DWebWindow(QMainWindow):
                 p = projs[r]
                 if attr in ('pos_3d_x', 'pos_3d_z') and getattr(p, 'pos_3d_x', None) is None:
                     cx, cy = self._norm_pos(projs, r)
-                    p.pos_3d_x = round((cx - 0.5) * 18.0, 2)
-                    p.pos_3d_z = round(-(cy - 0.5) * 10.0, 2)
+                    p.pos_3d_x, p.pos_3d_z = _pos3d_from_canvas(cx, cy)
                 setattr(p, attr, value)
                 if r != row:
                     sp = self._mini_tbl.cellWidget(r, col)
@@ -1432,8 +1691,7 @@ class Plan3DWebWindow(QMainWindow):
         for row, p in enumerate(projectors):
             if getattr(p, 'pos_3d_x', None) is None:
                 cx, cy = self._norm_pos(projectors, row)
-                p.pos_3d_x = round((cx - 0.5) * 18.0, 2)
-                p.pos_3d_z = round(-(cy - 0.5) * 10.0, 2)
+                p.pos_3d_x, p.pos_3d_z = _pos3d_from_canvas(cx, cy)
 
             if not self._mini_tbl.item(row, 0):
                 grp  = getattr(p, 'group', '')
@@ -1751,8 +2009,7 @@ class Plan3DWebWindow(QMainWindow):
         p = projs[idx]
         if attr in ('pos_3d_x', 'pos_3d_z') and getattr(p, 'pos_3d_x', None) is None:
             cx, cy = self._norm_pos(projs, idx)
-            p.pos_3d_x = round((cx - 0.5) * 18.0, 2)
-            p.pos_3d_z = round(-(cy - 0.5) * 10.0, 2)
+            p.pos_3d_x, p.pos_3d_z = _pos3d_from_canvas(cx, cy)
         setattr(p, attr, value)
         # Sync mini-table spinbox
         self._tbl_sync(idx, attr, value)
@@ -1776,8 +2033,7 @@ class Plan3DWebWindow(QMainWindow):
             p = projs[r]
             if getattr(p, 'pos_3d_x', None) is None:
                 cx, cy = self._norm_pos(projs, r)
-                p.pos_3d_x = round((cx - 0.5) * 18.0, 2)
-                p.pos_3d_z = round(-(cy - 0.5) * 10.0, 2)
+                p.pos_3d_x, p.pos_3d_z = _pos3d_from_canvas(cx, cy)
             undo_steps.append({'idx': r, 'attrs': {
                 'pos_3d_x':      float(getattr(p, 'pos_3d_x',      0)   or 0),
                 'pos_3d_z':      float(getattr(p, 'pos_3d_z',      0)   or 0),
@@ -1909,6 +2165,11 @@ class Plan3DWebWindow(QMainWindow):
     def keyPressEvent(self, event):
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Z:
             self._undo()
+        elif event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_A:
+            # Tout sélectionner. Il fallait jusqu'ici Ctrl+cliquer chaque ligne
+            # une par une — sur un rig de 40 projecteurs, la sélection multiple
+            # était théorique.
+            self._select_all_rows()
         elif event.key() == Qt.Key_Escape:
             # Échap éteint le repérage — la touche ne servait à rien jusqu'ici
             # (QMainWindow, donc pas de reject() comme sur un QDialog).
@@ -1926,9 +2187,9 @@ class Plan3DWebWindow(QMainWindow):
     def _sync_canvas_pos(self, p):
         """Met à jour canvas_x/canvas_y depuis pos_3d et redessine le plan 2D."""
         if getattr(p, 'pos_3d_x', None) is not None:
-            p.canvas_x = max(0.0, min(1.0, p.pos_3d_x / 18.0 + 0.5))
+            p.canvas_x = _canvas_from_pos3d(p.pos_3d_x, 0.0)[0]
         if getattr(p, 'pos_3d_z', None) is not None:
-            p.canvas_y = max(0.0, min(1.0, -p.pos_3d_z / 10.0 + 0.5))
+            p.canvas_y = _canvas_from_pos3d(0.0, p.pos_3d_z)[1]
         mw = self._parent_mw
         if mw and hasattr(mw, 'plan_de_feu'):
             mw.plan_de_feu.update()
@@ -1981,6 +2242,7 @@ class Plan3DWebWindow(QMainWindow):
         self._selected_rows.clear()
         self._highlighted_row = -1
         self._push_selection_3d()
+        self._maj_bandeau_multi()
 
     def _on_right_tab_changed(self, index: int):
         """Quitter l'onglet Plan coupe le repérage.
@@ -1990,6 +2252,41 @@ class Plan3DWebWindow(QMainWindow):
         ne commande."""
         if self._right_tabs is not None and self._right_tabs.tabText(index) != "Plan":
             self.clear_selection()
+
+    def _select_all_rows(self):
+        """Ctrl+A : retient toutes les lignes du tableau (ou vide la sélection).
+
+        Bascule volontairement : sur un rig entièrement sélectionné, Ctrl+A
+        redonne une table vierge sans avoir à viser la touche Échap.
+        """
+        total = self._mini_tbl.rowCount()
+        if total and len(self._selected_rows) >= total:
+            self.clear_selection()
+            self._maj_bandeau_multi()
+            return
+        for r in range(total):
+            self._selected_rows.add(r)
+            self._mini_tbl_set_highlight(r, True)
+        if total:
+            self._highlighted_row = 0
+        self._push_selection_3d()
+        self._update_jog_pad_from_primary()
+        self._maj_bandeau_multi()
+
+    def _maj_bandeau_multi(self):
+        """Le bandeau de l'onglet Plan devient un compteur dès qu'on sélectionne."""
+        lbl = getattr(self, '_lbl_multi', None)
+        if lbl is None:
+            return
+        n = len(self._selected_rows)
+        if n > 1:
+            lbl.setText(tr("p3w_sel_many", n=n))
+            lbl.setStyleSheet("color:#00d4ff;font-size:9px;padding:3px 4px;"
+                              "border-top:1px solid #1c1c1c;")
+        else:
+            lbl.setText(tr("p3w_plan_multi_hint"))
+            lbl.setStyleSheet("color:#556;font-size:9px;padding:3px 4px;"
+                              "border-top:1px solid #1c1c1c;")
 
     def _toggle_select(self, index: int):
         """Ctrl+clic : ajoute ou retire un projecteur de la sélection multiple."""
@@ -2009,6 +2306,7 @@ class Plan3DWebWindow(QMainWindow):
                 self._mini_tbl.scrollToItem(item)
         self._push_selection_3d()
         self._update_jog_pad_from_primary()
+        self._maj_bandeau_multi()
 
     def _push_selection_3d(self):
         """Envoie la sélection complète à la vue 3D.
@@ -2276,6 +2574,14 @@ class Plan3DWebWindow(QMainWindow):
         self._imported_path = ''
         self._save_patch()
 
+    def _push_cyclorama(self, preset: dict, code: str):
+        """Allume ou éteint le fond de scène selon le décor.
+
+        Toujours appelé, et APRÈS `setStageFloor` qui le rallume sans condition.
+        """
+        on = bool(preset.get('cyc', True)) and code != 'vide'
+        self._js(f'if(window.setCyclorama)window.setCyclorama({str(on).lower()})')
+
     def _push_scene_glb(self, preset: dict):
         """Envoie (ou retire) le décor 3D livré avec une scène par défaut.
 
@@ -2296,7 +2602,9 @@ class Plan3DWebWindow(QMainWindow):
             print(f"[3D] décor de scène introuvable ({chemin}) : {exc}")
             self._js('if(window.clearSceneGLB)window.clearSceneGLB()')
             return
-        self._js(f'if(window.loadSceneGLB)window.loadSceneGLB("{b64}")')
+        yaw  = float(preset.get('yaw', 0.0))
+        span = float(preset.get('span', 18.0))
+        self._js(f'if(window.loadSceneGLB)window.loadSceneGLB("{b64}",{yaw},{span})')
 
     def _restore_scene_glb(self):
         """Recharge le décor de la scène courante quand la page est prête."""
@@ -2326,6 +2634,7 @@ class Plan3DWebWindow(QMainWindow):
         self._trusses = [t.copy() for t in preset['trusses']]
         self._js(f"window.setScenePreset('{code}')")
         self._js(f'if(window.setStageFloor)window.setStageFloor({str(code != "vide").lower()})')
+        self._push_cyclorama(preset, code)
         self._push_scene_glb(preset)
         for k, btn in getattr(self, '_scene_btns', {}).items():
             btn.setChecked(k == code)
@@ -2383,12 +2692,12 @@ class Plan3DWebWindow(QMainWindow):
         """
         self._ready = False
         Plan3DWebWindow._render_crashes += 1
-        print(f"[Plan3D] Le rendu 3D a planté (statut={status}, code={exit_code}) "
-              f"— rechargement automatique. Incident n°{self._render_crashes} "
-              f"depuis le lancement.")
+        _diag_note(f"Le rendu 3D a planté (statut={status}, code={exit_code}) "
+                   f"— rechargement automatique. Incident n°{self._render_crashes} "
+                   f"depuis le lancement.")
         if self._render_crashes >= 3:
-            print("[Plan3D] Plantages répétés : pilote graphique probablement en cause. "
-                  "Baisser la qualité de rendu (onglet Cam.) réduit la charge GPU.")
+            _diag_note("Plantages répétés : pilote graphique probablement en cause. "
+                       "Baisser la qualité de rendu (onglet Cam.) réduit la charge GPU.")
         # Recharger la page après un court délai pour laisser le crash se nettoyer
         QTimer.singleShot(800, lambda: self._view.load(QUrl.fromLocalFile(str(_HTML))))
 
@@ -2399,6 +2708,12 @@ class Plan3DWebWindow(QMainWindow):
             self._js(f"window.setScenePreset('{self._scene_preset_code}')")
             self._js('if(window.setStageFloor)window.setStageFloor('
                      f'{str(self._scene_preset_code != "vide").lower()})')
+            # Après `setStageFloor`, qui rallume le cyclorama sans condition :
+            # sans ce rappel, le fond de scène revenait couper le décor au
+            # premier rechargement de la page.
+            _p = _SCENE_PRESETS.get(self._scene_preset_code)
+            if _p:
+                self._push_cyclorama(_p, self._scene_preset_code)
             # Puis appliquer les trusses réellement configurés (peuvent différer du preset)
             self._js(f'window.setTrusses({json.dumps(self._trusses)})')
             # Décor de la scène courante : page neuve = _sceneGrp vide, il faut
@@ -2437,6 +2752,21 @@ class Plan3DWebWindow(QMainWindow):
 
     # ── Conversion projecteurs → JSON ─────────────────────────────────────────
 
+    def _rig_height(self):
+        """Hauteur d'accroche par défaut, selon le décor affiché.
+
+        Un projecteur sans `fixture_height` explicite retombait toujours sur
+        `TRUSS_Y` (7 m), la hauteur des trusses dessinés par les presets. Sur un
+        décor livré en modèle 3D, le grill est là où le modèle l'a mis — celui de
+        la scène de concert est à 9,3 m — et tout le rig flottait 2 m en dessous
+        au lieu d'être accroché. La valeur reste surchargeable projecteur par
+        projecteur : elle ne sert que de défaut.
+        """
+        preset = _SCENE_PRESETS.get(getattr(self, '_scene_preset_code', ''), None)
+        if preset:
+            return float(preset.get('rig_height', TRUSS_Y))
+        return TRUSS_Y
+
     def _norm_pos(self, projectors, i):
         from plan_de_feu import _DEFAULT_POSITIONS
         p  = projectors[i]
@@ -2469,10 +2799,15 @@ class Plan3DWebWindow(QMainWindow):
                     r = g = b = 0
             cx, cy = self._norm_pos(projectors, i)
             fh  = getattr(p, 'fixture_height', None)
+            # Le plan de feu 2D reste maître d'une position 3D qui en a été
+            # déduite : sans ce recalage, une fixture déplacée sur le plan (ou
+            # changée de groupe dans le patch) gardait sa place d'avant en 3D.
+            _sync_pos3d_with_canvas(p, cx, cy)
             p3x = getattr(p, 'pos_3d_x', None)
             p3z = getattr(p, 'pos_3d_z', None)
-            x_w = p3x if p3x is not None else (cx - 0.5) * 18.0
-            z_w = p3z if p3z is not None else -(cy - 0.5) * 10.0
+            _dx, _dz = _pos3d_from_canvas(cx, cy)
+            x_w = p3x if p3x is not None else _dx
+            z_w = p3z if p3z is not None else _dz
             out.append({
                 'level':          int(getattr(p, 'level', 0)),
                 'r': r, 'g': g, 'b': b,
@@ -2481,7 +2816,7 @@ class Plan3DWebWindow(QMainWindow):
                 'pan':            getattr(p, 'pan',  32768),
                 'tilt':           getattr(p, 'tilt', 32768),
                 'fixture_type':   getattr(p, 'fixture_type', 'PAR LED'),
-                'fixture_height': fh if fh is not None else TRUSS_Y,
+                'fixture_height': fh if fh is not None else self._rig_height(),
                 'body_rotation':  getattr(p, 'body_rotation', 0.0),
                 'rot3d_x':        getattr(p, 'rot3d_x', 0.0),
                 'rot3d_y':        getattr(p, 'body_rotation', 0.0),
@@ -2520,7 +2855,7 @@ class Plan3DWebWindow(QMainWindow):
                 # laisser un gobo flou que rien ne permettrait de régler.
                 'has_focus':      'Focus' in (getattr(p, 'dmx_profile', None) or []),
                 'focus':          int((getattr(p, 'channel_extras', None) or {}).get(
-                                       'Focus', 0) or 0),
+                                       'Focus', getattr(p, 'focus', 0)) or 0),
             })
         # Barres/matrices : rendu PER-PIXEL. Chaque pixel garde sa couleur, son
         # niveau et sa position → un chase se VOIT courir le long de la barre.

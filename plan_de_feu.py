@@ -2556,8 +2556,16 @@ class FixtureCanvas(QWidget):
         painter.fillRect(self.rect(), QColor("#0a0a0a"))
 
         # ── Zone scene ───────────────────────────────────────────
-        mx  = int(W * 0.04)
-        my  = int(H * 0.05)
+        # Le déplacement borne le CENTRE d'une fixture (0,05–0,95 en x, cf.
+        # mouseMoveEvent), mais l'icône a un rayon : posée à l'extrémité, elle
+        # débordait du rectangle de scène — d'autant plus que la fenêtre est
+        # petite, la marge étant en % et le rayon en pixels. Une rangée alignée
+        # d'un bord à l'autre sortait donc du cadre. On élargit le TRACÉ jusqu'à
+        # englober les icônes extrêmes ; aucune position n'est touchée, et sur
+        # une grande fenêtre la marge de 4 % reste la plus serrée des deux.
+        _R_ICON = 13
+        mx  = max(0, min(int(W * 0.04), int(W * 0.05) - _R_ICON))
+        my  = max(0, min(int(H * 0.05), int(H * 0.05) - _R_ICON))
         sw  = W - 2 * mx
         sh  = H - 2 * my - SB_H
         sx, sy = mx, my
@@ -3515,6 +3523,7 @@ class PlanDeFeu(QFrame):
     _UNDO_ATTRS = (
         "level", "pan", "tilt", "color_wheel", "strobe_speed", "shutter",
         "gobo", "gobo_rotation", "prism", "prism_rotation", "zoom", "effects",
+        "focus", "gobo2", "speed", "mode_value",
         "amber_boost", "orange_boost", "white_boost", "uv",
         "_manual_color", "_manual_move", "_special_master",
     )
@@ -4216,6 +4225,7 @@ class PlanDeFeu(QFrame):
             proj.prism        = 0
             proj.prism_rotation = 0
             proj.effects      = 0
+            proj.focus = proj.gobo2 = proj.speed = proj.mode_value = 0
             proj.strobe_speed = 0
             # Vider les contrôles bruts (curseurs avancés) : sinon un canal
             # « Mode »/« Effects »/Reset posé à la main reste actif (channel_extras
@@ -4828,6 +4838,7 @@ class PlanDeFeu(QFrame):
                 p.color_wheel    = 0
                 p.prism          = 0
                 p.effects        = 0
+                p.focus = p.gobo2 = p.speed = p.mode_value = 0
                 p.channel_extras = {}
             _flush()
 
@@ -4931,6 +4942,14 @@ class PlanDeFeu(QFrame):
             ("Ambre",   "Ambre",        "#ff9900", "amber_boost",  0,   255),
             ("Orange",  "Orange",       "#ff6600", "orange_boost", 0,   255),
             ("Effects", "Effects",      "#cc44ff", "effects",      0,   255),
+            # Ces quatre-la sortaient 0 en dur et n'existaient qu'en curseur brut.
+            # Ils ont maintenant un etat propre, donc un curseur dedie — et ils
+            # sont retires de la liste des canaux avances (_HANDLED_IN_MENU) pour
+            # ne pas se retrouver avec DEUX curseurs qui ecrivent le meme canal.
+            ("Focus",   "Focus",        "#776622", "focus",        0,   255),
+            ("Gobo2",   "Gobo 2",       "#888888", "gobo2",        0,   255),
+            ("Speed",   "Vitesse",      "#4488aa", "speed",        0,   255),
+            ("Mode",    "Mode",         "#aa4444", "mode_value",   0,   255),
         ]
 
         _extra_shown = False
@@ -5452,6 +5471,7 @@ class PlanDeFeu(QFrame):
             "Dim", "Dim2", "Strobe",
             "Pan", "PanFine", "Tilt", "TiltFine",
             "Gobo1", "Gobo1Rot", "ColorWheel", "Shutter", "Prism", "PrismRot",
+            "Focus", "Gobo2", "Speed", "Mode",
         }
         _seen_adv = set()
         _adv_channels = [

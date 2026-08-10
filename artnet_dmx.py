@@ -72,6 +72,15 @@ CHANNEL_TYPES = [
     "Smoke", "Fan",
     "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo1Rot", "Gobo2",
     "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode", "Effects",
+    # Correcteurs de temperature de couleur. Ce sont des canaux a part entiere :
+    # ils etaient jusqu'ici rabattus sur « ColorWheel » par le parser, donc
+    # confondus avec la vraie roue de couleurs de l'appareil.
+    "CTO", "CTB",
+    # Trichromie. ATTENTION : « C » ne veut pas dire la meme chose partout —
+    # soustractif sur un spot a drapeaux (227 modes de la base), additif sur une
+    # LED a emetteurs cyan/magenta/jaune (25 modes : ETC Lustr, ADJ Starburst).
+    # Le moteur tranche sur la presence de R/G/B dans le profil.
+    "C", "M", "Y", "Lime",
 ]
 
 # Noms courts pour l'affichage dans les combos
@@ -84,7 +93,8 @@ CHANNEL_DISPLAY = {
     "Gobo1": "Gobo1", "Gobo1Rot": "GoboR", "Gobo2": "Gobo2",
     "Prism": "Prism", "PrismRot": "PrsmR", "Focus": "Focus",
     "ColorWheel": "CWheel", "Shutter": "Shut", "Speed": "Speed", "Mode": "Mode",
-    "Effects": "FX",
+    "Effects": "FX", "CTO": "CTO", "CTB": "CTB",
+    "C": "C", "M": "M", "Y": "Y", "Lime": "Lime",
 }
 
 
@@ -1157,9 +1167,18 @@ class ArtNetDMX:
 
             # Mute
             if hasattr(proj, 'muted') and proj.muted:
-                for ch in channels:
-                    if ch > 0:
-                        self.set_channel(ch, 0, universe)
+                # « Tout a zero » n'eteint PAS un spot a trichromie soustractive :
+                # zero, c'est le filtre grand ouvert. Le noir se fait au
+                # contraire en fermant les trois. Sans canal Dim pour couper le
+                # faisceau, une lyre mutee serait restee blanche.
+                _mute_sub_cmy = not ({"R", "G", "B"} <= set(profile))
+                for _i, ch in enumerate(channels):
+                    if ch <= 0:
+                        continue
+                    _t = profile[_i] if _i < len(profile) else None
+                    self.set_channel(
+                        ch, 255 if (_mute_sub_cmy and _t in ("C", "M", "Y")) else 0,
+                        universe)
                 continue
 
             level  = proj.level if hasattr(proj, 'level') else 0
@@ -1328,8 +1347,46 @@ class ArtNetDMX:
                     ch_val = getattr(proj, 'prism_rotation', 0)
                 elif ch_type == "Effects":
                     ch_val = getattr(proj, 'effects', 0)
-                elif ch_type in ("Gobo2", "Focus", "Speed", "Mode"):
+                elif ch_type in ("C", "M", "Y"):
+                    if _has_rgb:
+                        # LED a emetteurs cyan/magenta/jaune : ADDITIF. Comme
+                        # l'ambre et l'orange, jamais derive du RGB — sinon un
+                        # rouge pur allumerait le magenta et virerait rose. Se
+                        # pousse au curseur brut.
+                        ch_val = 0
+                    else:
+                        # Spot a drapeaux : SOUSTRACTIF. 0 = filtre ouvert,
+                        # 255 = couleur pleine. Le Dim porte deja le niveau, ces
+                        # canaux ne portent que la teinte — d'ou l'usage de la
+                        # couleur PURE (r/g/b sont deja la teinte des qu'il y a
+                        # un Dim). Sur les rares fixtures sans Dim, r/g/b sont
+                        # attenues et la formule ferme les filtres a mesure : le
+                        # noir se fait alors correctement par soustraction.
+                        ch_val = 255 - (r if ch_type == "C" else
+                                        g if ch_type == "M" else b)
+                elif ch_type == "Lime":
+                    # Emetteur additif supplementaire, manuel uniquement (meme
+                    # regle que Ambre/Orange).
                     ch_val = 0
+                elif ch_type in ("CTO", "CTB"):
+                    # 0 = aucune correction, et c'est le repos voulu : une lyre
+                    # ne doit pas partir avec un filtre pose. La valeur se donne
+                    # au curseur brut (channel_extras), traite plus haut, ou par
+                    # `channel_defaults` juste en dessous.
+                    ch_val = 0
+                elif ch_type == "Focus":
+                    ch_val = getattr(proj, 'focus', 0)
+                elif ch_type == "Gobo2":
+                    ch_val = getattr(proj, 'gobo2', 0)
+                elif ch_type == "Speed":
+                    # 0 = deplacement le plus rapide sur la quasi-totalite des
+                    # lyres : c'est bien le repos attendu, pas une lyre bridee.
+                    ch_val = getattr(proj, 'speed', 0)
+                elif ch_type == "Mode":
+                    # Jamais derive de quoi que ce soit : les plages de ce canal
+                    # declenchent reset, extinction de lampe, calibration. Il ne
+                    # bouge que si l'utilisateur le demande explicitement.
+                    ch_val = getattr(proj, 'mode_value', 0)
                 else:
                     ch_val = 0
 
@@ -1343,6 +1400,12 @@ class ArtNetDMX:
         self.projector_channels[proj_key] = channels
         self.projector_universes[proj_key] = max(0, min(3, int(universe)))
         if profile is not None:
+            # Le moteur garde SA copie du profil et ne relit pas `proj.dmx_profile`
+            # ensuite : canonicaliser ici aussi, sinon un patch restaure depuis la
+            # config disque rentrerait avec l'ancien vocabulaire et court-circuiterait
+            # la propriete de Projector.
+            from core import canonical_profile
+            profile = canonical_profile(profile)
             self.projector_profiles[proj_key] = profile
             name = profile_name(profile)
             self.projector_modes[proj_key] = name if name else "CUSTOM"

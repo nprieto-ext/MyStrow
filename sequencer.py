@@ -4978,6 +4978,13 @@ class Sequencer(QFrame):
                 'memory_ref':    clip_data.get('memory_ref'),
                 'cue_index':     clip_data.get('cue_index'),
                 'seq_intensity': intensity,
+                # Identité du clip source. `_handle_timeline_effect` s'en sert pour
+                # savoir qu'on a CHANGÉ de clip d'effet : deux clips voisins
+                # portent souvent le même nom d'effet, les mêmes groupes et la
+                # même vitesse tout en ayant des couches différentes (Sinus puis
+                # Montée…). Sans elle, la garde « même effet en cours » ne
+                # redémarrait pas et le clip précédent débordait sur le suivant.
+                '_fx_key': (track_name, start, clip_data.get('duration', 0)),
             }
             # Mouvement Pan/Tilt
             if clip_data.get('move_effect') or 'pan_start' in clip_data:
@@ -5030,6 +5037,29 @@ class Sequencer(QFrame):
 
         self.apply_timeline_to_dmx(active_clips)
 
+    def _fx_catalog(self):
+        """Catalogue d'effets (intégrés + perso), mis en cache.
+
+        Il était rechargé — lecture disque + parse JSON — à CHAQUE image de la
+        restitution (25 fps, dans le timer qui alimente le DMX) alors qu'il ne
+        sert qu'au changement de clip d'effet. Le cache est invalidé sur la date
+        de modification du fichier : un effet édité en cours de show reste pris
+        en compte.
+        """
+        try:
+            from effect_editor import (BUILTIN_EFFECTS, _load_custom_effects,
+                                       _CUSTOM_EFFECTS_FILE)
+            try:
+                stamp = _CUSTOM_EFFECTS_FILE.stat().st_mtime_ns
+            except OSError:
+                stamp = None   # fichier absent : rien à recharger
+            if getattr(self, '_fx_catalog_stamp', '?') != stamp:
+                self._fx_catalog_stamp = stamp
+                self._fx_catalog_cache = BUILTIN_EFFECTS + _load_custom_effects()
+            return self._fx_catalog_cache
+        except Exception:
+            return []
+
     def _handle_timeline_effect(self, effet_clips):
         """Démarre / maintient / arrête l'effet des pistes Effet de la timeline.
 
@@ -5043,11 +5073,7 @@ class Sequencer(QFrame):
             return
 
         # Fusionner les couches de tous les clips d'effet actifs
-        try:
-            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
-            _catalog = BUILTIN_EFFECTS + _load_custom_effects()
-        except Exception:
-            _catalog = []
+        _catalog = self._fx_catalog()
         from light_timeline import scope_layers_to_groups as _scope_layers_to_groups
         merged_layers, merged_names, merged_tg = [], [], []
         merged_type = ''
@@ -5093,10 +5119,25 @@ class Sequencer(QFrame):
         target_groups  = [] if has_all_groups else merged_tg
         speed_override = effet_clips[0].get('effect_speed', 50)
 
-        # Déjà le bon effet combiné en cours (mêmes params) → ne pas réinitialiser
+        # Déjà le bon effet combiné en cours → ne pas réinitialiser.
+        # L'identité de l'effet, c'est le JEU DE CLIPS actifs, pas (nom, groupes,
+        # vitesse) : dans un show réel, les clips voisins d'une même piste portent
+        # presque toujours le même `effect_name` (« Strobe Rouge »…), les mêmes
+        # `effect_target_groups` et la même `effect_speed`, alors que leurs COUCHES
+        # diffèrent (forme Sinus → Montée, vitesse de couche 48 → 65, groupe B,E →
+        # B,E + C,D). La garde concluait « c'est le même effet » et gardait l'ancien
+        # en vie : l'effet précédent débordait sur le suivant (« le sinus continue à
+        # la place de la montée », « le triangle empiète sur l'aléatoire ») et les
+        # groupes ajoutés par le nouveau clip restaient sans effet, en couleur fixe.
+        # Rien de tout ça dans l'aperçu REC, qui compare l'IDENTITÉ des clips
+        # (cf. timeline_editor `new_eff_clips != self._eff_clips_active`) : d'où le
+        # « pas le même rendu qu'à l'enregistrement ». On compare donc pareil.
+        clips_key  = tuple(sorted(c.get('_fx_key') or () for c in effet_clips))
+        same_clips = getattr(self, '_timeline_effect_clips', None) == clips_key
         same_group = getattr(self, '_timeline_effect_group', None) == tuple(target_groups)
         same_speed = getattr(self, '_timeline_effect_speed', None) == speed_override
-        if getattr(self, '_timeline_effect_name', None) == combined_name and same_group and same_speed:
+        if (getattr(self, '_timeline_effect_name', None) == combined_name
+                and same_clips and same_group and same_speed):
             return
 
         cfg = {
@@ -5112,6 +5153,7 @@ class Sequencer(QFrame):
         # Démarrer l'effet (initialiser l'état sans démarrer le effect_timer —
         # la timeline appelle update_effect() elle-même à chaque tick)
         self._timeline_effect_name  = combined_name
+        self._timeline_effect_clips = clips_key
         self._timeline_effect_group = tuple(target_groups)
         self._timeline_effect_speed = speed_override
         main_win.active_effect        = combined_name
@@ -5136,6 +5178,7 @@ class Sequencer(QFrame):
         if timeline_name is None:
             return
         self._timeline_effect_name  = None
+        self._timeline_effect_clips = None
         self._timeline_effect_group = None
         self._timeline_effect_speed = None
         # N'arrêter que si c'est encore l'effet de la timeline qui tourne

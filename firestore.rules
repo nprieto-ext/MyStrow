@@ -95,5 +95,30 @@ service cloud.firestore {
                    && request.auth.token.email == "nicop421@gmail.com";
     }
 
+    // File de moderation des fixtures proposees par les utilisateurs.
+    //
+    // AUCUNE ecriture client : les depots passent exclusivement par la Cloud
+    // Function fixture_submit (SDK Admin, non soumis a ces regles), qui est le
+    // seul endroit ou la provenance declaree, l'attestation et le quota
+    // journalier sont verifies. Laisser le client ecrire ici contournerait les
+    // trois garde-fous d'un coup.
+    //
+    // Lecture reservee a l'admin : la file contient l'email du contributeur.
+    // L'admin panel lit cette collection et y ecrit le statut de la decision
+    // (approved / rejected) via l'API REST, donc en passant par ces regles.
+    match /fixture_submissions/{submissionId} {
+      allow read, write: if request.auth != null
+                         && request.auth.token.email == "nicop421@gmail.com";
+    }
+
+    // Compteurs de quota journalier par utilisateur, tenus par fixture_submit.
+    // Rien ni personne cote client ne doit pouvoir les lire ni les remettre a
+    // zero : un compteur modifiable par son proprietaire ne serait pas un quota.
+    match /fixture_quota/{uid} {
+      allow read: if request.auth != null
+                  && request.auth.token.email == "nicop421@gmail.com";
+      allow write: if false;
+    }
+
   }
 }

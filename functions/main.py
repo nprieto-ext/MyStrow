@@ -1169,6 +1169,15 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
                 "updatedAtVersion": new_ver,
             }
 
+            # Tracabilite juridique des profils issus d'une contribution
+            # utilisateur : licence d'origine, mention d'attribution a afficher
+            # et identifiant du contributeur. Champs optionnels : les imports
+            # admin classiques ne les portent pas.
+            for _k in ("license", "attribution", "contributor_uid",
+                       "contributed_by", "declared_source"):
+                if fx.get(_k):
+                    doc_data[_k] = fx[_k]
+
             ref      = db.collection("gdtf_fixtures").document(doc_id)
             existing = ref.get()
             if existing.exists:
@@ -1206,6 +1215,265 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
             status=500,
             headers={"Content-Type": "application/json"},
         )
+
+
+# ===========================================================================
+# CLOUD FUNCTION: fixture_submit (contribution utilisateur -> moderation)
+# ===========================================================================
+
+# Provenances redistribuables, avec la licence imposee cote serveur.
+# Toute source absente de ce tableau est refusee : fichier constructeur,
+# GDTF Share ou origine inconnue restent en import local chez l'utilisateur.
+_SHAREABLE_SOURCES = {
+    "perso":   {"license": "MyStrow-Community", "attribution": ""},
+    "ofl":     {"license": "CC0-1.0",     "attribution": "Open Fixture Library — CC0 1.0"},
+    "qlcplus": {"license": "Apache-2.0",  "attribution": "QLC+ Fixture Library — Apache 2.0"},
+}
+
+# Quota anti-dump : nombre maximum de fixtures proposees par compte et par jour.
+# Ecarte le scenario d'extraction substantielle d'une base tierce, ou
+# l'accumulation d'extractions non substantielles finit par recopier la source.
+_DAILY_SUBMIT_QUOTA = 20
+
+# Nombre maximum de fixtures dans une seule requete.
+_MAX_ITEMS_PER_CALL = 20
+
+
+def _fixture_fingerprint(fixture: dict) -> str:
+    """
+    Empreinte deterministe (fabricant + nom + structure des canaux).
+    Doit rester identique a fixture_share.fixture_fingerprint cote application.
+    """
+    mfr  = str(fixture.get("manufacturer", "")).strip().lower()
+    name = str(fixture.get("name", "")).strip().lower()
+    profile = fixture.get("profile") or []
+    if not profile:
+        modes = fixture.get("modes") or []
+        if modes and isinstance(modes[0], dict):
+            profile = modes[0].get("profile") or []
+    chans = "|".join(str(c) for c in profile)
+    key = f"{mfr}::{name}::{chans}".encode("utf-8", "replace")
+    return hashlib.sha1(key).hexdigest()[:32]
+
+
+def _consume_submit_quota(db, uid: str, wanted: int) -> int:
+    """
+    Reserve *wanted* unites du quota journalier de l'utilisateur.
+    Retourne le nombre d'unites reellement accordees (0 si le quota est epuise).
+
+    Implemente avec un compteur par utilisateur dans une transaction plutot
+    qu'un comptage de documents : pas d'index composite a creer, une seule
+    lecture, et pas de course entre deux envois simultanes.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ref   = db.collection("fixture_quota").document(uid)
+
+    @firestore.transactional
+    def _txn(transaction):
+        snap = ref.get(transaction=transaction)
+        data = snap.to_dict() if snap.exists else {}
+        used = int(data.get("count", 0) or 0) if data.get("day") == today else 0
+        granted = max(0, min(wanted, _DAILY_SUBMIT_QUOTA - used))
+        if granted:
+            transaction.set(ref, {
+                "day":       today,
+                "count":     used + granted,
+                "updatedAt": time.time(),
+            }, merge=True)
+        return granted
+
+    return _txn(db.transaction())
+
+
+def _refund_submit_quota(db, uid: str, amount: int) -> None:
+    """
+    Rend au compteur journalier les unites reservees mais non utilisees
+    (doublons ecartes, entrees invalides). Sans cela, proposer 10 fois la meme
+    fixture consommerait le quota de la journee sans rien deposer.
+    """
+    if amount <= 0:
+        return
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ref   = db.collection("fixture_quota").document(uid)
+
+    @firestore.transactional
+    def _txn(transaction):
+        snap = ref.get(transaction=transaction)
+        data = snap.to_dict() if snap.exists else {}
+        if data.get("day") != today:
+            return
+        used = int(data.get("count", 0) or 0)
+        transaction.set(ref, {
+            "day":       today,
+            "count":     max(0, used - amount),
+            "updatedAt": time.time(),
+        }, merge=True)
+
+    _txn(db.transaction())
+
+
+@https_fn.on_request(max_instances=5, timeout_sec=120)
+def fixture_submit(req: https_fn.Request) -> https_fn.Response:
+    """
+    Endpoint HTTPS : POST /fixture_submit
+
+    Recoit des fixtures proposees par un utilisateur et les depose dans
+    `fixture_submissions` avec le statut "pending". Rien n'est publie ici :
+    seule la validation d'un administrateur ecrit dans `gdtf_fixtures`.
+
+    Trois refus possibles, tous rejoues cote serveur car les controles de
+    l'application cliente sont contournables :
+      - provenance non redistribuable  -> 403
+      - attestation non cochee         -> 400
+      - quota journalier epuise        -> 429
+
+    Body : {"items": [{"fingerprint": str, "fixture": {...}}],
+            "source": str, "attestation": true}
+    """
+    _get_db()
+
+    auth_header = req.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Connectez-vous pour proposer une fixture."}),
+            status=403, headers={"Content-Type": "application/json"})
+    try:
+        decoded = auth.verify_id_token(auth_header[len("Bearer "):])
+        uid   = decoded.get("uid", "")
+        email = decoded.get("email", "")
+    except Exception as e:
+        print(f"[fixture_submit] Token invalide : {e}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Session expiree — reconnectez-vous."}),
+            status=403, headers={"Content-Type": "application/json"})
+
+    try:
+        body = json.loads(req.get_data() or b"{}")
+    except Exception as e:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": f"JSON invalide : {e}"}),
+            status=400, headers={"Content-Type": "application/json"})
+
+    items  = body.get("items") or []
+    source = str(body.get("source", "")).strip()
+
+    # Garde-fou 2 : attestation explicite du contributeur.
+    if body.get("attestation") is not True:
+        return https_fn.Response(
+            json.dumps({"ok": False,
+                        "error": "Attestation de droit de partage manquante."}),
+            status=400, headers={"Content-Type": "application/json"})
+
+    # Garde-fou 3 : filtrage par licence de la source declaree.
+    policy = _SHAREABLE_SOURCES.get(source)
+    if policy is None:
+        return https_fn.Response(
+            json.dumps({"ok": False,
+                        "error": "Cette provenance n'est pas redistribuable : "
+                                 "la fixture reste dans votre bibliotheque locale."}),
+            status=403, headers={"Content-Type": "application/json"})
+
+    if not isinstance(items, list) or not items:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Aucune fixture dans la requete"}),
+            status=400, headers={"Content-Type": "application/json"})
+    if len(items) > _MAX_ITEMS_PER_CALL:
+        return https_fn.Response(
+            json.dumps({"ok": False,
+                        "error": f"Au plus {_MAX_ITEMS_PER_CALL} fixtures par envoi."}),
+            status=400, headers={"Content-Type": "application/json"})
+
+    try:
+        db = _get_db()
+
+        # Garde-fou 4 : quota journalier, reserve avant toute ecriture.
+        granted = _consume_submit_quota(db, uid, len(items))
+        if granted == 0:
+            return https_fn.Response(
+                json.dumps({"ok": False, "quota_left": 0,
+                            "error": f"Quota atteint : {_DAILY_SUBMIT_QUOTA} fixtures "
+                                     f"par jour. Reessayez demain."}),
+                status=429, headers={"Content-Type": "application/json"})
+
+        submitted = 0
+        skipped   = 0
+        errors    = []
+        now       = time.time()
+
+        for item in items[:granted]:
+            fixture = (item or {}).get("fixture") or {}
+            name    = str(fixture.get("name", "")).strip()
+            if not name:
+                errors.append("Fixture sans nom ignoree")
+                skipped += 1
+                continue
+
+            fingerprint = str((item or {}).get("fingerprint", "")).strip()
+            if not fingerprint:
+                fingerprint = _fixture_fingerprint(fixture)
+
+            ref  = db.collection("fixture_submissions").document(fingerprint)
+            snap = ref.get()
+            if snap.exists:
+                existing = snap.to_dict() or {}
+                # Deja en file d'attente, deja publiee, ou deja refusee : ne pas
+                # ecraser la decision (ni le contributeur d'origine).
+                if existing.get("status") in ("pending", "approved", "rejected"):
+                    skipped += 1
+                    continue
+
+            ref.set({
+                "status":          "pending",
+                "fingerprint":     fingerprint,
+                "name":            name,
+                "manufacturer":    str(fixture.get("manufacturer", "")).strip(),
+                "fixture_type":    fixture.get("fixture_type", "PAR LED"),
+                "modes":           fixture.get("modes", []),
+                "declared_source": source,
+                "license":         policy["license"],
+                "attribution":     policy["attribution"],
+                "attestation":     True,
+                "contributor_uid": uid,
+                "contributed_by":  email,
+                "created_at":      now,
+                "fixture":         fixture,
+            })
+            submitted += 1
+
+        # Rendre le quota non consomme (doublons ecartes, entrees invalides).
+        if skipped:
+            try:
+                _refund_submit_quota(db, uid, skipped)
+            except Exception as e:
+                print(f"[fixture_submit] restitution quota impossible : {e}")
+
+        # Fixtures laissees de cote faute de quota suffisant sur cet envoi.
+        deferred = max(0, len(items) - granted)
+        if deferred:
+            errors.append(f"{deferred} fixture(s) non envoyee(s) : quota journalier atteint.")
+
+        try:
+            snap  = db.collection("fixture_quota").document(uid).get()
+            data  = snap.to_dict() if snap.exists else {}
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            used  = int(data.get("count", 0) or 0) if data.get("day") == today else 0
+            quota_left = max(0, _DAILY_SUBMIT_QUOTA - used)
+        except Exception:
+            quota_left = 0
+
+        print(f"[fixture_submit] {email} : {submitted} en attente, {skipped} ignoree(s), "
+              f"{deferred} differee(s)")
+        return https_fn.Response(
+            json.dumps({"ok": True, "submitted": submitted, "skipped": skipped,
+                        "deferred": deferred, "quota_left": quota_left,
+                        "errors": errors}),
+            status=200, headers={"Content-Type": "application/json"})
+
+    except Exception as exc:
+        print(f"[fixture_submit] ERREUR: {exc}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": str(exc)}),
+            status=500, headers={"Content-Type": "application/json"})
 
 
 # ===========================================================================

@@ -62,7 +62,11 @@ _MA_MAP = {
     "Prism Rotation":  "PrismRot",
     "Color Wheel":     "ColorWheel",
     "Color":           "ColorWheel",
-    "CTO":             "ColorWheel",
+    # CTO/CTB : canaux propres, PAS la roue de couleurs. Les confondre les
+    # gangait avec elle — un correcteur de temperature faisait tourner la roue.
+    "CTO":             "CTO",
+    "CTB":             "CTB",
+    "CTC":             "CTB",
     "Speed":           "Speed",
     "Mode":            "Mode",
     "Control":         "Mode",
@@ -81,8 +85,12 @@ _QLC_COLOUR_MAP = {
     "Red": "R", "Green": "G", "Blue": "B",
     "White": "W", "Warm White": "W", "Cold White": "W", "Neutral White": "W",
     "Amber": "Ambre", "UV": "UV", "UV Violet": "UV", "Indigo": "UV",
-    "Orange": "Orange", "Yellow": "Orange",
-    "Lime": "G", "Cyan": "G", "Magenta": "R", "Pink": "R",
+    "Orange": "Orange", "Pink": "R",
+    # Trichromie et lime : canaux propres depuis qu'ils existent. Les rabattre
+    # sur R/G/Orange envoyait carrement la mauvaise valeur — l'intensite du VERT
+    # partait sur le drapeau cyan d'un spot CMY. Le moteur distingue ensuite
+    # additif et soustractif selon la presence de R/G/B dans le profil.
+    "Cyan": "C", "Magenta": "M", "Yellow": "Y", "Lime": "Lime",
 }
 _QLC_GROUP_MAP = {
     "Pan": "Pan", "Tilt": "Tilt",
@@ -138,7 +146,10 @@ _MA3_ATTR_MAP = {
     "COLOR1":             "ColorWheel",
     "COLOR2":             "ColorWheel",
     "COLORWHEEL":         "ColorWheel",
-    "CTOMIXER":           "ColorWheel",
+    "CTOMIXER":           "CTO",
+    "CTO":                "CTO",
+    "CTB":                "CTB",
+    "CTBMIXER":           "CTB",
     # Speed / control
     "POSITIONMSPEED":     "Speed",
     "SPEED":              "Speed",

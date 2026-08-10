@@ -54,6 +54,8 @@ class GamepadClient(QObject):
 
     # (connecte, nom du peripherique)
     connection_changed = Signal(bool, str)
+    # Manette reconnue mais qui n'emettra jamais rien (cf. `avertissement_pour`)
+    avertissement      = Signal(str)
     # lx, ly, rx, ry — normalises entre -1.0 et 1.0, bruts (sans zone morte)
     axes_changed       = Signal(float, float, float, float)
 
@@ -158,6 +160,10 @@ class GamepadClient(QObject):
             self._nom = controller.name_forindex(i) or "Manette"
             self._connecte = True
             self.connection_changed.emit(True, self._nom)
+            avert = avertissement_pour(i)
+            if avert:
+                print(f"[Manette] {avert}")
+                self.avertissement.emit(avert)
             return
 
     def _detacher(self):
@@ -175,6 +181,85 @@ class GamepadClient(QObject):
 # ---------------------------------------------------------------------------
 # Detection ponctuelle (dialogue de configuration)
 # ---------------------------------------------------------------------------
+
+def _vid_pid(guid: str) -> tuple:
+    """(vendeur, produit) lus dans le GUID SDL d'un joystick.
+
+    Le GUID SDL range ses champs en petit-boutiste : `0300f9d24c05000068020…`
+    porte le vendeur en positions 8..11 (`4c05` → 0x054C) et le produit en
+    16..19 (`6802` → 0x0268).
+    """
+    try:
+        v = int(guid[10:12] + guid[8:10], 16)
+        p = int(guid[18:20] + guid[16:18], 16)
+        return v, p
+    except Exception:
+        return 0, 0
+
+
+# Sony DualShock 3 / Sixaxis.
+_VID_SONY, _PID_DS3 = 0x054C, 0x0268
+
+
+def avertissement_pour(index: int) -> str:
+    """Message a afficher quand la manette ne pourra JAMAIS rien envoyer.
+
+    Le cas verifie ici est le DualShock 3 sous Windows avec le pilote HID
+    d'origine : il s'enumere normalement, SDL le reconnait meme comme
+    « PS3 Controller » avec un mapping complet — et il n'emet aucun rapport,
+    parce que personne ne lui a ecrit son rapport de fonctionnalite 0xF4.
+    Mesure faite avec la manette en main : tous les axes figes, aucun bouton, et
+    `HidD_SetFeature` refuse par Windows (erreur 87) meme a la taille exacte que
+    le peripherique declare. C'est ce que corrigent les pilotes tiers.
+
+    Sans ce message, l'utilisateur voit « manette connectee » en vert et rien ne
+    bouge : rien dans l'interface ne lui dit ou chercher.
+    """
+    import sys
+    if not sys.platform.startswith("win"):
+        return ""
+    try:
+        import pygame
+        pygame.joystick.init()
+        if index >= pygame.joystick.get_count():
+            return ""
+        j = pygame.joystick.Joystick(index)
+        j.init()
+        v, p = _vid_pid(j.get_guid())
+        # Un DS3 passe par un pilote tiers (DsHidMini, ScpToolkit) se presente
+        # en XInput/DS4 avec 6 axes : la manette marche, on ne dit rien.
+        if (v, p) == (_VID_SONY, _PID_DS3) and j.get_numaxes() < 6:
+            from i18n import tr
+            return tr("gp_ds3_mute")
+    except Exception:
+        pass
+    return ""
+
+
+def avertissement_aucune() -> str:
+    """Message quand Windows voit un peripherique de jeu, mais pas SDL.
+
+    `lister_manettes()` ne garde que ce que SDL reconnait comme GameController.
+    Une manette generique sans mapping dans la base SDL disparait donc de la
+    liste, et l'interface affiche « aucune manette detectee » alors qu'il y en a
+    une de branchee : le pire message possible, il envoie chercher du cote du
+    cable. On nomme le peripherique pour lever le doute.
+    """
+    try:
+        import pygame
+        pygame.joystick.init()
+        noms = []
+        for i in range(pygame.joystick.get_count()):
+            j = pygame.joystick.Joystick(i)
+            j.init()
+            noms.append(j.get_name())
+        if noms:
+            from i18n import tr
+            return tr("gp_unmapped", nom=", ".join(noms))
+    except Exception:
+        pass
+    return ""
+
 
 def lister_manettes() -> list:
     """[(index, nom)] des manettes reconnues. Leve une exception explicite si

@@ -112,7 +112,7 @@ window.setHaze = function(density) {
 const W = () => window.innerWidth;
 const H = () => window.innerHeight;
 const camera = new THREE.PerspectiveCamera(52, W()/H(), 0.2, 300);
-camera.position.set(14, 11, 20);
+camera.position.set(14, 11, -20);
 camera.lookAt(0, 3, 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ controls.update();
 
 
 renderer.domElement.addEventListener('dblclick', () => {
-  camera.position.set(14, 11, 20);
+  camera.position.set(14, 11, -20);
   controls.target.set(0, 3, 0);
   controls.update();
 });
@@ -242,12 +242,20 @@ const gridHelper = new THREE.GridHelper(18, 18, 0x141018, 0x0d0a12);
 gridHelper.position.y = 0.008;
 scene.add(gridHelper);
 
-// Cyclorama (fond de scène)
+// Cyclorama (fond de scène) — DERRIÈRE la scène, donc côté Z positif, face
+// tournée vers la salle. Il était à z = -5.6 tourné vers +Z : correct tant que
+// la caméra regardait depuis le fond, mais depuis qu'elle est passée côté
+// public il se retrouvait ENTRE la caméra et le rig, en voile bleu vertical
+// devant tout — et il s'évanouissait dès qu'on tournait un peu, puisque
+// `FrontSide` le rend invisible de dos.
+// `FrontSide` est gardé volontairement : en passant derrière la scène, le fond
+// s'efface au lieu de masquer le rig.
 const cycMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(20, 11),
   new THREE.MeshStandardMaterial({ color:0x060412, roughness:1.0, side:THREE.FrontSide })
 );
-cycMesh.position.set(0, 5.5, -5.6);
+cycMesh.position.set(0, 5.5, 5.6);
+cycMesh.rotation.y = Math.PI;
 scene.add(cycMesh);
 
 
@@ -1319,7 +1327,12 @@ function beamFloor(p) {
   // lentille qui, elle, était remontée.
   const fs = p.fixture_scale ?? 1.0;
   if (isMH) {
-    const panA  = (p.pan - 32768)  / 32768.0 * Math.PI;
+    // Signe négatif : le repère a jardin du côté des X POSITIFS (cf. la
+    // conversion depuis le plan 2D), alors qu'un pan « gauche » vaut moins de
+    // 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
+    // qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du
+    // côté opposé, corps et faisceau compris.
+    const panA  = -(p.pan - 32768)  / 32768.0 * Math.PI;
     const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
     const rx    = (p.rot3d_x || 0) * Math.PI / 180;
     const rz    = (p.rot3d_z || 0) * Math.PI / 180;
@@ -1522,7 +1535,12 @@ window.updateScene = function(projectors) {
       obj.parGrp.visible = false;
 
       // Positionne + oriente le Moving Head
-      const panA  = (p.pan - 32768)  / 32768.0 * Math.PI;
+      // Signe négatif : le repère a jardin du côté des X POSITIFS (cf. la
+    // conversion depuis le plan 2D), alors qu'un pan « gauche » vaut moins de
+    // 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
+    // qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du
+    // côté opposé, corps et faisceau compris.
+    const panA  = -(p.pan - 32768)  / 32768.0 * Math.PI;
       const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
       const rx    = (p.rot3d_x || 0) * Math.PI / 180;
       obj.mhGrp.position.set(p.x, hy, p.z);
@@ -1990,6 +2008,14 @@ window.autoQuality  = true;
 
 window.setQuality = function (lvl, redimensionner) {
   lvl = Math.max(0, Math.min(QUALITY.length - 1, lvl | 0));
+  // Tracé : la dégradation automatique est à SENS UNIQUE (aucune remontée).
+  // Si elle se déclenche, la baisse est définitive — un tramage permanent des
+  // faisceaux, pas un glitch passager. Le journal permet de trancher.
+  if (lvl !== window.qualityLevel) {
+    console.log(`[3D] qualité ${QUALITY[window.qualityLevel].name} → `
+              + `${QUALITY[lvl].name} (${QUALITY[lvl].steps} pas, `
+              + `redimensionnement=${redimensionner !== false})`);
+  }
   window.qualityLevel = lvl;
   const q = QUALITY[lvl];
   window.setBeamQuality(q.steps);
@@ -2020,6 +2046,272 @@ window.setQuality = function (lvl, redimensionner) {
 // ── Compteur de performance ──────────────────────────────────────────────
 const _fpsEl = document.getElementById('fps');
 let _fpsFrames = 0, _fpsLast = performance.now(), _fpsValue = 60;
+let _diagPrev = 0, _diagLongFrames = 0, _diagCtxLost = 0;
+
+// ── Perte de contexte WebGL ────────────────────────────────────────────────
+// Symptôme identique au clignotement signalé : tout devient noir un instant
+// puis revient sans que la scène soit rechargée. Le pilote peut réinitialiser
+// le contexte (TDR Windows, bascule GPU, veille) à tout moment.
+//
+// ⚠️ Ceci est du DIAGNOSTIC, pas un correctif : Three.js pose déjà son propre
+// gestionnaire et appelle `preventDefault()` (`three.module.js`, onContextLost),
+// la restauration marchait donc déjà. Ce qui manquait, c'est de le SAVOIR — ses
+// messages n'ont pas le préfixe `[3D]` et n'atteignent pas le terminal Python.
+renderer.domElement.addEventListener('webglcontextlost', () => {
+  _diagCtxLost++;
+  console.log(`[3D] CONTEXTE WEBGL PERDU (${_diagCtxLost}e fois) — `
+            + `Three.js va tenter la restauration`);
+}, false);
+
+renderer.domElement.addEventListener('webglcontextrestored', () => {
+  console.log('[3D] contexte WebGL restauré');
+}, false);
+
+// Visibilité de la page. Deux raisons de la tracer : elle explique les écarts
+// de plusieurs secondes entre deux images (rendu suspendu, cf. boucle de
+// rendu), et une reprise d'affichage est justement un moment où le compositeur
+// réalloue sa surface — donc un suspect pour le clignotement.
+document.addEventListener('visibilitychange', () => {
+  _diagPrev = 0;
+  console.log(`[3D] page ${document.hidden ? 'masquée — rendu suspendu' : 'visible'}`);
+});
+
+// ── Détecteur de glitch ────────────────────────────────────────────────────
+// Les sondes ci-dessus ne voient QUE des causes supposées (contexte perdu,
+// image longue, qualité). Si le clignotement vient d'ailleurs — tramage des
+// faisceaux, ordre de dessin, bloom — elles restent muettes et l'utilisateur
+// aura reproduit pour rien. Celle-ci mesure le SYMPTÔME.
+//
+// DEUX symptômes, parce que la capture `glitch.jpg` en montre deux à la fois :
+// la scène qui s'assombrit, ET les faisceaux qui se trament pixel par pixel.
+//   • `lum`  : luminance moyenne — attrape le « tout devient noir ».
+//   • `dith` : alternance d'un pixel au suivant (laplacien horizontal
+//              normalisé). Un dégradé lisse donne ~0,02 ; un damier 1 pixel
+//              monte au-delà de 1. C'est la signature du bruit de raymarching
+//              (`ign(gl_FragCoord.xy)`) devenu visible.
+//
+// On lit une BANDE en travers de toute l'image et non un carré au centre :
+// les faisceaux sont répartis sur la largeur, un carré central peut très bien
+// tomber sur du vide et ne rien voir du glitch.
+//
+// `readPixels` force une synchronisation GPU, donc jamais à 60 Hz : ~10 Hz
+// suffit largement à attraper un glitch d'un quart de seconde (~15 images).
+// Mettre `window.diagBlack = false` pour le couper.
+window.diagBlack = true;
+let _dbLast = 0, _dbMoy = -1, _dbHits = 0;
+let _dbInst = -1, _dbSamples = 0, _dbTrace = 0, _dbMin = 1e9;
+let _dbBuf = null, _dbBufW = 0, _dbLum = null;
+let _ditMoy = -1, _ditInst = 0, _ditMax = 0, _ditHits = 0;
+
+// Capture de l'image fautive. C'est LE point qui manquait : une photo de
+// l'écran prise au téléphone ne permet pas de distinguer un tramage réel d'un
+// moiré d'appareil photo, et le glitch est trop bref pour cliquer sur quoi que
+// ce soit. Ici l'image est prise dans la MÊME tâche que le rendu — obligatoire,
+// le contexte n'a pas `preserveDrawingBuffer` — puis remise à Python qui
+// l'écrit à côté du journal.
+let _shots = 0, _shotLast = -1e9;
+const _SHOTS_MAX = 8;
+
+function _capturerGlitch(raison) {
+  if (_shots >= _SHOTS_MAX) return;
+  const t = performance.now();
+  if (t - _shotLast < 2000) return;   // un glitch = une image, pas une rafale
+  _shotLast = t;
+  _shots++;
+  try {
+    const url = renderer.domElement.toDataURL('image/jpeg', 0.92);
+    if (window._bridge && window._bridge.saveGlitchShot) {
+      window._bridge.saveGlitchShot(url, raison);
+    } else {
+      console.log('[3D] capture impossible : pont Python absent');
+    }
+  } catch (e) {
+    console.log('[3D] capture échouée : ' + e.message);
+  }
+}
+
+// ── Sonde rapide : UNE mesure par image ────────────────────────────────────
+// La sonde large ci-dessous tourne à 10 Hz. C'est suffisant pour un glitch
+// d'un quart de seconde, mais **pas** pour un clignotement d'une seule image :
+// 16 ms sur 100, elle a une chance sur six de tomber dessus. Or c'est
+// exactement ce qui a été observé — dix minutes de journal parfaitement plats
+// alors que l'utilisateur voyait le glitch.
+//
+// Celle-ci ne lit que 32×4 pixels au centre (512 octets) : le coût n'est pas
+// dans le volume mais dans la synchronisation GPU qu'impose `readPixels`.
+// Mesuré à ~60 fps maintenus sur la scène de test. `window.diagFast = false`
+// la coupe si la cadence en souffre.
+window.diagFast = true;
+let _fastBuf = new Uint8Array(4 * 32 * 4), _fastMoy = -1, _fastHits = 0;
+let _fastCout = 0, _fastN = 0;
+
+function _sondeRapide(now) {
+  if (!window.diagFast) return;
+  const gl = renderer.getContext();
+  const cw = renderer.domElement.width, ch = renderer.domElement.height;
+  if (cw < 64 || ch < 64) return;
+  const t0 = performance.now();
+  try {
+    gl.readPixels((cw / 2 - 16) | 0, (ch * 0.45) | 0, 32, 4,
+                  gl.RGBA, gl.UNSIGNED_BYTE, _fastBuf);
+  } catch (e) { return; }
+  // Auto-limitation. Le coût de `readPixels` n'est pas dans les 512 octets lus
+  // mais dans la synchronisation GPU qu'il impose, et celle-ci dépend de la
+  // machine. Un diagnostic n'a pas le droit de coûter le confort de rendu à
+  // l'utilisateur : s'il pèse, il s'éteint tout seul et le journal le dit.
+  _fastCout += performance.now() - t0;
+  if (++_fastN === 120) {
+    const moyen = _fastCout / _fastN;
+    console.log(`[3D] sonde par image : ${moyen.toFixed(2)} ms par lecture`);
+    if (moyen > 4.0) {
+      window.diagFast = false;
+      console.log('[3D] sonde par image COUPÉE (trop coûteuse) — '
+                + 'seule la sonde 10 Hz reste active');
+    }
+  }
+  let s = 0;
+  for (let i = 0; i < _fastBuf.length; i += 4)
+    s += _fastBuf[i] * 0.299 + _fastBuf[i + 1] * 0.587 + _fastBuf[i + 2] * 0.114;
+  const lum = s / (_fastBuf.length / 4);
+  if (_fastMoy < 0) { _fastMoy = lum; return; }
+
+  if (_fastMoy > 8 && lum < _fastMoy * 0.55) {
+    _fastHits++;
+    const inf = renderer.info.render;
+    console.log(`[3D] IMAGE NOIRE (${_fastHits}e) : luminance ${lum.toFixed(1)} `
+              + `contre ${_fastMoy.toFixed(1)} — ${inf.calls} draws, `
+              + `${inf.triangles} tri, ambiance ${window.ambLight.intensity.toFixed(1)}, `
+              + `bloom=${_flags.bloom}, ${_fpsValue.toFixed(0)} fps`);
+    _capturerGlitch('noire');
+  }
+  // Moyenne lente (~0,8 s) : une image isolée ne la tire pas, un changement
+  // voulu (caméra, projecteurs éteints) est suivi en moins d'une seconde.
+  _fastMoy = _fastMoy * 0.98 + lum * 0.02;
+}
+
+function _mesurerNoirceur(now) {
+  if (!window.diagBlack || now - _dbLast < 100) { _sondeRapide(now); return; }
+  _dbLast = now;
+  const gl = renderer.getContext();
+  const cw = renderer.domElement.width, ch = renderer.domElement.height;
+  if (cw < 64 || ch < 64) return;
+  const w = Math.min(cw, 1280), h = 8;
+  const x0 = ((cw - w) / 2) | 0, y0 = (ch * 0.45) | 0;
+  if (_dbBufW !== w) { _dbBufW = w; _dbBuf = new Uint8Array(4 * w * h);
+                       _dbLum = new Float32Array(w); }
+  try {
+    gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, _dbBuf);
+  } catch (e) { return; }
+
+  let som = 0, lap = 0, somClair = 0, nClair = 0;
+  for (let r = 0; r < h; r++) {
+    const base = r * w * 4;
+    for (let i = 0; i < w; i++) {
+      const o = base + i * 4;
+      _dbLum[i] = _dbBuf[o] * 0.299 + _dbBuf[o + 1] * 0.587 + _dbBuf[o + 2] * 0.114;
+      som += _dbLum[i];
+    }
+    // Le laplacien n'a de sens que là où il y a quelque chose à voir : sur du
+    // noir il vaut 0 et diluerait la mesure jusqu'à la rendre aveugle.
+    for (let i = 1; i < w - 1; i++) {
+      const a = _dbLum[i - 1], b = _dbLum[i], c = _dbLum[i + 1];
+      if (Math.max(a, b, c) < 14) continue;
+      lap += Math.abs(2 * b - a - c);
+      somClair += b;
+      nClair++;
+    }
+  }
+  const lum  = som / (w * h);
+  const dith = nClair > 64 ? (lap / nClair) / (2 * Math.max(somClair / nClair, 1)) : 0;
+  _dbInst = lum;
+  _ditInst = dith;
+  _ditMax = Math.max(_ditMax, dith);
+  _dbMin = Math.min(_dbMin, lum);
+  _dbSamples++;
+
+  const inf = renderer.info.render;
+  const etat = `qualité ${QUALITY[window.qualityLevel].name}, ${window.beamQuality} pas, `
+             + `${_fpsValue.toFixed(0)} fps, ${inf.calls} draws, `
+             + `ambiance ${window.ambLight.intensity.toFixed(1)}, bloom=${_flags.bloom}`;
+
+  if (_dbMoy < 0) { _dbMoy = lum; _ditMoy = dith; return; }
+
+  // Chute brutale = glitch. Le seuil est relatif : une scène sombre par nature
+  // ne doit pas déclencher en permanence.
+  if (_dbMoy > 8 && lum < _dbMoy * 0.45) {
+    _dbHits++;
+    console.log(`[3D] IMAGE ASSOMBRIE (${_dbHits}e) : luminance ${lum.toFixed(1)} `
+              + `contre ${_dbMoy.toFixed(1)} en moyenne — ${etat}`);
+    _capturerGlitch('assombrie');
+  }
+  // Tramage. Le nombre de draws est journalisé avec : s'il s'effondre, ce sont
+  // les objets qui ne sont plus dessinés ; s'il ne bouge pas, c'est le rendu
+  // des faisceaux lui-même qui se dégrade.
+  if (dith > 0.25 && dith > _ditMoy * 1.6 + 0.04) {
+    _ditHits++;
+    console.log(`[3D] IMAGE TRAMÉE (${_ditHits}e) : indice ${dith.toFixed(3)} `
+              + `contre ${Math.max(_ditMoy, 0).toFixed(3)} en moyenne — ${etat}`);
+    _capturerGlitch('tramee');
+  }
+  // Trace périodique. Les seuils ci-dessus reposent sur des hypothèses, et une
+  // hypothèse peut être fausse sur la scène de quelqu'un d'autre. Ce relevé,
+  // lui, ne suppose rien : si le clignotement a bien lieu, le creux se lit dans
+  // la suite des valeurs même si aucun seuil n'a rien vu. Une ligne toutes les
+  // 5 s, c'est négligeable dans un journal.
+  if (now - _dbTrace > 5000) {
+    _dbTrace = now;
+    console.log(`[3D] luminance ${lum.toFixed(1)} (moyenne ${_dbMoy.toFixed(1)}, `
+              + `min ${_dbMin.toFixed(1)}), tramage ${dith.toFixed(3)} `
+              + `(max ${_ditMax.toFixed(3)}), ${_fpsValue.toFixed(0)} fps, `
+              + `${inf.calls} draws`);
+    _dbMin = lum;
+    _ditMax = dith;
+  }
+
+  // Moyennes glissantes lentes : elles suivent les changements voulus (on bouge
+  // la caméra, on éteint les projecteurs) sans se laisser tirer par un glitch
+  // isolé.
+  _dbMoy  = _dbMoy  * 0.9 + lum  * 0.1;
+  _ditMoy = _ditMoy * 0.9 + dith * 0.1;
+}
+
+// Journal consultable depuis Python (bouton « Diagnostic » de l'onglet Cam.)
+window.diag3d = function () {
+  return {
+    imagesLongues:   _diagLongFrames,
+    contextesPerdus: _diagCtxLost,
+    imagesNoires:    _fastHits,
+    imagesAssombries: _dbHits,
+    imagesTramees:   _ditHits,
+    luminanceMoyenne: +_dbMoy.toFixed(1),
+    luminanceInstant: +_dbInst.toFixed(1),
+    tramageMoyen:    +Math.max(_ditMoy, 0).toFixed(3),
+    tramageInstant:  +_ditInst.toFixed(3),
+    captures:        _shots,
+    mesures:          _dbSamples,
+    qualite:         QUALITY[window.qualityLevel].name,
+    pas:             window.beamQuality,
+    fps:             Math.round(_fpsValue),
+  };
+};
+
+// Capture à la demande : `window.captureGlitch()` depuis Python, ou la touche G
+// dans la vue 3D. Sert de témoin — comparer une image saine à une image fautive
+// est le seul moyen de trancher sur le tramage.
+//
+// DIFFÉRÉE d'une image, contrairement à la capture automatique : le contexte
+// n'a pas `preserveDrawingBuffer`, donc relire le canevas depuis un gestionnaire
+// de touche ou depuis `runJavaScript` — c'est-à-dire hors de la tâche qui a
+// rendu l'image — ne ramènerait que du noir. La boucle de rendu honore la
+// demande juste après le prochain `render()`.
+let _shotPending = '';
+window.captureGlitch = function () {
+  _shotLast = -1e9;
+  _shotPending = 'manuelle';
+};
+window.addEventListener('keydown', (e) => {
+  if ((e.key === 'g' || e.key === 'G') && !e.ctrlKey && !e.altKey) window.captureGlitch();
+});
 let _slowStreak = 0;
 window.showFps = function (on) {
   _fpsEl.style.display = on ? 'block' : 'none';
@@ -2052,8 +2344,18 @@ function _selBlinkOne(i, k) {
     obj.pool.material.uniforms.uAlpha.value = obj._selP * k;
 }
 
+// Compteurs de rendu remis à zéro À LA MAIN, une fois par image.
+//
+// Par défaut, Three.js les remet à zéro à CHAQUE `renderer.render()`. Avec le
+// bloom, l'EffectComposer enchaîne plusieurs passes : `info.render.calls` ne
+// rapportait donc que la DERNIÈRE — 1 draw, quelle que soit la scène. Or c'est
+// justement ce compteur qui doit dire, pendant un glitch, si les objets ont
+// cessé d'être dessinés ou si c'est leur rendu qui se dégrade.
+renderer.info.autoReset = false;
+
 (function animate() {
   requestAnimationFrame(animate);
+  renderer.info.reset();
   controls.update();
   const _now = performance.now();
   const _t = _now / 1000;
@@ -2083,6 +2385,40 @@ function _selBlinkOne(i, k) {
   } else {
     renderer.render(scene, camera);
   }
+
+  // Capture demandée à la main : ici et pas ailleurs, l'image vient d'être
+  // rendue et le canevas est encore lisible.
+  if (_shotPending) { const r = _shotPending; _shotPending = ''; _capturerGlitch(r); }
+
+  // ── Diagnostic du clignotement noir ──────────────────────────────────────
+  // Une image anormalement longue et une perte de contexte WebGL donnent le
+  // MÊME symptôme à l'œil (noir bref, scène intacte ensuite) mais n'ont rien
+  // à voir : l'une est un à-coup CPU/GPU, l'autre une réinitialisation du
+  // pilote. Les distinguer demande de les horodater au moment où ça arrive.
+  //
+  // ⚠️ Un écart de plusieurs secondes n'est PAS un à-coup : Chromium suspend
+  // `requestAnimationFrame` dès que la page n'est plus visible (fenêtre
+  // masquée, minimisée, autre onglet). Le premier journal était rempli de
+  // « images longues » de 16 s, 29 s, 53 s — c'était simplement l'utilisateur
+  // travaillant dans la fenêtre principale. Les compter comme des à-coups
+  // aurait envoyé l'enquête droit dans le mur.
+  if (_diagPrev > 0 && !document.hidden) {
+    const _dt = _now - _diagPrev;
+    if (_dt > 2000) {
+      console.log(`[3D] rendu repris après ${(_dt / 1000).toFixed(1)} s `
+                + `(vue masquée ou GPU suspendu) — pas un à-coup`);
+    } else if (_dt > 70) {
+      // 70 ms = quatre images sautées à 60 Hz. Le seuil était à 150 ms, ce qui
+      // laissait passer le saut d'image le plus banal — or c'est exactement ce
+      // qu'on cherche : un clignotement d'une seule image ne dure que 16 ms.
+      _diagLongFrames++;
+      console.log(`[3D] image longue : ${_dt.toFixed(0)} ms `
+                + `(${_diagLongFrames}e depuis l'ouverture, qualité `
+                + `${QUALITY[window.qualityLevel].name}, ${window.beamQuality} pas)`);
+    }
+  }
+  _diagPrev = _now;
+  _mesurerNoirceur(_now);
 
   // Mesure sur une fenêtre glissante d'une demi-seconde
   _fpsFrames++;
@@ -2660,6 +2996,10 @@ const SCENE_PRESETS = {
     trusses: [],
     buildProps() {}
   },
+  truss_glb: {
+    trusses: [],
+    buildProps() {}
+  },
   live: {
     trusses: [
       { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9.0, x_r:9.0 },
@@ -2798,7 +3138,18 @@ window.clearImportedScene = function() { _importedGrp.clear(); };
 const _sceneGrp = new THREE.Group();
 scene.add(_sceneGrp);
 
-window.loadSceneGLB = function(b64) {
+// `yawDeg` : demi-tour (ou quart de tour) autour de Y pour remettre le décor
+// dans le repère du plan — fond de scène vers les Z POSITIFS, public vers les
+// Z négatifs. Les modèles ne sont pas tous bâtis dans ce sens ; l'angle est
+// déclaré par décor dans `_SCENE_PRESETS` (clé `yaw`), jamais en dur ici.
+// `spanM` : largeur en mètres à laquelle ramener le décor. C'est le plan de feu
+// 2D qui fait foi — un projecteur ne peut y être posé qu'entre 5 % et 95 % du
+// cadre, soit ±8,1 m une fois converti : un décor ramené à 18 m avait donc sa
+// structure 90 cm trop large de chaque côté, et aligner une rangée de projos sur
+// le grill devenait impossible sans les sortir du rectangle de scène. On réduit
+// le décor jusqu'au 2D plutôt que d'élargir le 2D : aucune position de show
+// existant n'est déplacée.
+window.loadSceneGLB = function(b64, yawDeg, spanM) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -2806,16 +3157,23 @@ window.loadSceneGLB = function(b64) {
     _sceneGrp.clear();
     // Même normalisation que l'import manuel : mise à l'échelle sur la plus
     // grande dimension, centrage en X/Z, et POSE SUR LE SOL (y = 0).
+    // La rotation est portée par un groupe PARENT et non par `gltf.scene` :
+    // la boîte englobante doit être mesurée sur le modèle non tourné, sinon
+    // l'échelle et le centrage changeraient avec l'angle.
     const box    = new THREE.Box3().setFromObject(gltf.scene);
     const center = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    const scale  = maxDim > 0.01 ? 18.0 / maxDim : 1.0;
+    const scale  = maxDim > 0.01 ? (spanM || 18.0) / maxDim : 1.0;
     gltf.scene.scale.setScalar(scale);
     gltf.scene.position.set(-center.x * scale,
                             -box.min.y * scale,
                             -center.z * scale);
-    _sceneGrp.add(gltf.scene);
+    const pivot = new THREE.Group();
+    pivot.rotation.y = (yawDeg || 0) * Math.PI / 180;
+    pivot.add(gltf.scene);
+    _sceneGrp.add(pivot);
+
   }, (err) => console.error('Scene GLB error:', err));
 };
 
@@ -2831,14 +3189,30 @@ window.setStageFloor = function(visible) {
   cycMesh.visible    = visible;
 };
 
+// Le cyclorama est un plan VERTICAL planté à z = +5,6 : un décor plus profond
+// que ça passe derrière et se fait trancher net — la structure apparaît coupée
+// par un « écran noir » en plein milieu. On peut donc l'éteindre seul, sans
+// perdre le sol ni la grille. À appeler APRÈS `setStageFloor`, qui le rallume.
+window.setCyclorama = function(visible) { cycMesh.visible = visible; };
+
 window.setBloom = function(strength) {
   if (window.bloomPass) window.bloomPass.strength = strength;
   _flags.bloom = strength > 0;
 };
 
 window.setScenePreset = function(name) {
-  const preset = SCENE_PRESETS[name];
-  if (!preset) return;
+  // Un preset inconnu ici est presque toujours un preset déclaré côté Python
+  // (`_SCENE_PRESETS`) et oublié dans la liste ci-dessus. L'ancien `return`
+  // sortait AVANT le nettoyage : le décor précédent — trusses, totems,
+  // silhouettes — restait affiché par-dessus le nouveau, et le seul symptôme
+  // était « ça n'efface pas les autres quand on clique dessus ». On nettoie
+  // donc quoi qu'il arrive, et on se rabat sur une scène nue : un décor GLB
+  // n'a de toute façon ni truss ni accessoire à dessiner.
+  const preset = SCENE_PRESETS[name] || { trusses: [], buildProps() {} };
+  if (!SCENE_PRESETS[name]) {
+    console.warn(`[decor] preset « ${name} » absent de SCENE_PRESETS (html) — `
+                 + `scène nue. À déclarer si ce décor doit dessiner des trusses.`);
+  }
   _propsGrp.clear();
   buildTrusses(preset.trusses);
   preset.buildProps();

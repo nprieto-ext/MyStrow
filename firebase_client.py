@@ -33,6 +33,11 @@ _FS_BASE = (
 
 _TIMEOUT = 8  # secondes
 
+# Cloud Function de soumission communautaire d'une fixture (file de modération)
+_FIXTURE_SUBMIT_URL = (
+    f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/fixture_submit"
+)
+
 
 def has_internet(timeout: float = 3.0) -> bool:
     """Test rapide de connectivité HTTPS vers les serveurs Firebase (port 443)."""
@@ -621,6 +626,64 @@ def fetch_fixture_pack(pack_id: str, id_token: str = None) -> dict:
     d = _doc_to_dict(doc)
     d["id"] = pack_id
     return d
+
+
+# ---------------------------------------------------------------
+# Contribution communautaire : soumission d'une fixture à la modération
+# ---------------------------------------------------------------
+
+def submit_fixture_contribution(
+    items: list,
+    source: str,
+    license_id: str,
+    attribution: str,
+    id_token: str,
+) -> dict:
+    """
+    Propose une ou plusieurs fixtures à la bibliothèque commune.
+
+    N'écrit PAS dans gdtf_fixtures : la Cloud Function dépose les soumissions
+    dans `fixture_submissions` avec le statut "pending". Un administrateur
+    valide ensuite depuis l'admin panel.
+
+    items : [{"fingerprint": str, "fixture": {...}}, ...]
+
+    Retourne : {"ok", "submitted", "skipped", "quota_left", "errors": [...]}
+    Lève une Exception si le serveur refuse (quota dépassé, licence non
+    redistribuable, token invalide).
+    """
+    payload = json.dumps({
+        "items":       items,
+        "source":      source,
+        "license":     license_id,
+        "attribution": attribution,
+        "attestation": True,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        _FIXTURE_SUBMIT_URL,
+        data=payload,
+        headers={
+            "Content-Type":  "application/json",
+            "Authorization": f"Bearer {id_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
+            result = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = json.loads(e.read().decode()).get("error", "")
+        except Exception:
+            pass
+        raise Exception(detail or f"HTTP {e.code} — {e.reason}")
+    except (urllib.error.URLError, OSError):
+        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
+
+    if not result.get("ok"):
+        raise Exception(result.get("error", "Soumission refusée."))
+    return result
 
 
 # ---------------------------------------------------------------

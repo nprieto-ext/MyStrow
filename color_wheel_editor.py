@@ -781,18 +781,26 @@ class GoboWheelEditorDialog(QDialog):
 
 # ── Wizard de calibration pas-à-pas ──────────────────────────────────────────
 
+# 4e champ = étape OPTIONNELLE. Les correcteurs de température (CTO, CTB) et
+# l'UV n'existent que sur une minorité de lyres : les imposer à tout le monde
+# ferait enregistrer des positions DMX inventées, qui renverraient ensuite une
+# couleur fausse en restitution. Elles sont donc décochées par défaut et ne
+# sont sauvegardées que si l'utilisateur les déclare présentes.
 _CALIB_STEPS = [
-    ("Open",    "#ffffff", "Blanc / Open"),
-    ("Rouge",   "#ff2200", "Rouge"),
-    ("Orange",  "#ff8800", "Orange"),
-    ("Jaune",   "#ffff00", "Jaune"),
-    ("Vert",    "#00cc44", "Vert"),
-    ("Cyan",    "#00ccff", "Cyan"),
-    ("Bleu",    "#0044ff", "Bleu"),
-    ("Magenta", "#cc00ff", "Magenta"),
+    ("Open",    "#ffffff", "Blanc / Open", False),
+    ("Rouge",   "#ff2200", "Rouge",        False),
+    ("Orange",  "#ff8800", "Orange",       False),
+    ("Jaune",   "#ffff00", "Jaune",        False),
+    ("Vert",    "#00cc44", "Vert",         False),
+    ("Cyan",    "#00ccff", "Cyan",         False),
+    ("Bleu",    "#0044ff", "Bleu",         False),
+    ("Magenta", "#cc00ff", "Magenta",      False),
+    ("CTO",     "#ffcc66", "CTO",          True),
+    ("CTB",     "#aaddff", "CTB",          True),
+    ("UV",      "#7722dd", "UV",           True),
 ]
 
-_DEFAULT_CALIB_DMX = [0, 20, 42, 64, 85, 106, 128, 149]
+_DEFAULT_CALIB_DMX = [0, 20, 42, 64, 85, 106, 128, 149, 170, 192, 213]
 
 _BTN_NEXT = (
     "QPushButton { background: #00d4ff; color: #000; border: none; "
@@ -867,14 +875,32 @@ class ColorWheelCalibWizard(QDialog):
         # Initialiser les valeurs depuis les slots existants ou les défauts
         existing = getattr(proj, 'color_wheel_slots', [])
         self._values: list[int] = []
-        for i, (name, color, label) in enumerate(_CALIB_STEPS):
+        # `_present` dit ce qui sera ECRIT a la fin. Une etape obligatoire l'est
+        # toujours ; une optionnelle ne l'est que si la lyre a deja ce slot,
+        # c'est-a-dire si l'utilisateur l'a declaree lors d'une passe precedente
+        # (ou si le profil OFL la fournit).
+        self._present: list[bool] = []
+        for i, (name, color, label, optional) in enumerate(_CALIB_STEPS):
             match = next(
                 (s for s in existing if s.get('name', '').lower() == name.lower()), None
             )
             self._values.append(match['dmx'] if match else _DEFAULT_CALIB_DMX[i])
+            self._present.append(True if not optional else match is not None)
+
+        # Slots que l'assistant ne couvre pas (Rose, ou tout nom saisi a la main
+        # dans l'editeur). Ils sont mis de cote ici pour etre RECOPIES au moment
+        # d'enregistrer : sans cela, une passe de calibration les effacait.
+        _connus = {n.lower() for n, _c, _l, _o in _CALIB_STEPS}
+        self._extra_slots = [
+            dict(s) for s in existing
+            if s.get('name', '').strip().lower() not in _connus
+        ]
 
         self.setWindowTitle(tr("cwe_calib_title"))
-        self.setFixedSize(460, 380)
+        # 410 et non 380 : les etapes optionnelles ajoutent une ligne de consigne
+        # et la case « Ma lyre possede cette couleur ». Hauteur FIXE malgre tout,
+        # pour que la fenetre ne saute pas d'une etape a l'autre.
+        self.setFixedSize(460, 410)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(_DLG_SS)
@@ -958,6 +984,14 @@ class ColorWheelCalibWizard(QDialog):
         self._sli.valueChanged.connect(self._on_slider)
         root.addWidget(self._slider_w)
 
+        # ── Présence de la couleur (étapes optionnelles) ──────────────────────
+        self._chk_present = QCheckBox(tr("cwe_calib_has_colour"))
+        self._chk_present.setStyleSheet("color:#ffaa00;font-size:11px;")
+        self._chk_present.setCursor(QCursor(Qt.PointingHandCursor))
+        self._chk_present.toggled.connect(self._on_present_toggled)
+        self._chk_present.setVisible(False)
+        root.addWidget(self._chk_present, alignment=Qt.AlignCenter)
+
         # ── Séparateur ────────────────────────────────────────────────────────
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("background:#2a2a2a;max-height:1px;border:none;")
@@ -1013,8 +1047,17 @@ class ColorWheelCalibWizard(QDialog):
         self._val_lbl.setText(str(v))
         if self._step >= 0:
             self._values[self._step] = v
+            # Chercher la position au curseur SUR une etape optionnelle, c'est
+            # declarer qu'on a trouve la couleur : cocher tout seul evite le
+            # piege de la regler puis de la perdre en cliquant « Suivant ».
+            if _CALIB_STEPS[self._step][3] and not self._present[self._step]:
+                self._chk_present.setChecked(True)
             self._proj.color_wheel = v
             self._send_dmx()
+
+    def _on_present_toggled(self, on: bool):
+        if self._step >= 0 and _CALIB_STEPS[self._step][3]:
+            self._present[self._step] = on
 
     # ── Affichage par étape ───────────────────────────────────────────────────
 
@@ -1024,19 +1067,23 @@ class ColorWheelCalibWizard(QDialog):
         if step == -1:
             self._title_lbl.setText(tr("cwe_calib_title"))
             self._title_lbl.setStyleSheet("color:#00d4ff;")
+            # Annoncer 11 couleurs decouragerait : 3 ne concernent qu'une
+            # minorite de lyres. On separe les deux comptes.
+            _n_opt = sum(1 for s in _CALIB_STEPS if s[3])
             self._progress_lbl.setText(
-                tr("cwe_n_colors", a0=len(_CALIB_STEPS))
+                tr("cwe_n_colors_opt", a0=len(_CALIB_STEPS) - _n_opt, a1=_n_opt)
             )
             self._circle_wrap.setVisible(False)
             self._instr_lbl.setText(
                 tr("cwe_calib_intro")
             )
             self._slider_w.setVisible(False)
+            self._chk_present.setVisible(False)
             self._btn_prev.setVisible(False)
             self._btn_next.setText(tr("cwe2_start"))
 
         else:
-            name, color, label = _CALIB_STEPS[step]
+            name, color, label, optional = _CALIB_STEPS[step]
 
             self._progress_lbl.setText(tr("cwe_color_n", a0=step + 1, a1=len(_CALIB_STEPS)))
 
@@ -1045,7 +1092,8 @@ class ColorWheelCalibWizard(QDialog):
             )
             self._circle_wrap.setVisible(True)
 
-            self._title_lbl.setText(label)
+            self._title_lbl.setText(
+                f"{label} — {tr('cwe_calib_optional')}" if optional else label)
             # Use the color directly; if it's dark against our dark background,
             # fall back to a lighter tint by reducing darkness threshold.
             lum = sum(int(color.lstrip('#')[i*2:i*2+2], 16) * w
@@ -1054,8 +1102,17 @@ class ColorWheelCalibWizard(QDialog):
             self._title_lbl.setStyleSheet(f"color:{display_color};")
 
             self._instr_lbl.setText(
-                tr("cwe_calib_step")
+                tr("cwe_calib_optional_step") if optional else tr("cwe_calib_step")
             )
+
+            # La case reflete l'etat courant sans le reecrire : `setChecked`
+            # declenche `toggled`, qui repasserait par `_on_present_toggled`
+            # avec l'etape deja changee.
+            self._chk_present.setVisible(optional)
+            if optional:
+                self._chk_present.blockSignals(True)
+                self._chk_present.setChecked(self._present[step])
+                self._chk_present.blockSignals(False)
 
             self._slider_w.setVisible(True)
             # Block signal to avoid sending DMX prematurely
@@ -1143,10 +1200,16 @@ class ColorWheelCalibWizard(QDialog):
     # ── Sauvegarde ────────────────────────────────────────────────────────────
 
     def _save(self):
+        # Une etape optionnelle non declaree n'est PAS ecrite : un slot « UV »
+        # sur une lyre qui n'en a pas enverrait la roue sur une position au
+        # hasard. Les slots hors assistant (Rose, noms saisis a la main) sont
+        # recopies : la liste etait jusqu'ici reconstruite a partir des seules
+        # etapes, ce qui les effacait a chaque calibration.
         slots = [
             {"name": name, "color": color, "dmx": self._values[i]}
-            for i, (name, color, _label) in enumerate(_CALIB_STEPS)
-        ]
+            for i, (name, color, _label, _opt) in enumerate(_CALIB_STEPS)
+            if self._present[i]
+        ] + self._extra_slots
 
         # Appliquer à toutes les fixtures de même nom (même modèle de lyre)
         base = (self._proj.name or self._proj.group).rsplit(" ", 1)[0]
