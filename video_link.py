@@ -149,9 +149,28 @@ class VideoLink(QObject):
             print(f"[{self.__class__.__name__}] action ignoree pour {clef!r} : {exc}")
 
     def _declencher(self, action):
+        w = self._window
+
+        # Un nouveau plan passe a l'antenne : l'effet du plan precedent s'arrete,
+        # QUELLE QUE SOIT l'action de la nouvelle entree — y compris s'il n'y en
+        # a aucune. Sans ca, seules les actions Effet et Memoire coupaient
+        # l'effet en cours (start_effect et _recompute_memory_mix le font
+        # d'eux-memes) : une Cartouche ou une entree non mappee laissaient un
+        # strobe tourner sur le plan suivant, pendant tout le direct.
+        #
+        # C'est le front MONTANT qui sert de declencheur, pas un front
+        # descendant : vMix renvoie l'etat complet en une seule trame, donc la
+        # sortie de l'ancienne source et l'entree de la nouvelle arrivent
+        # ensemble. Se caler sur l'arrivee evite d'avoir a garantir un ordre
+        # entre les deux — et donc de risquer de tuer l'effet qu'on vient de
+        # lancer.
+        if getattr(w, "active_effect", None):
+            w.stop_effect()
+            w.active_effect = None
+            w.active_effect_config = {}
+
         if not action:
             return
-        w = self._window
         t = action.get("type", ACTION_NONE)
         val = action.get("value")
 

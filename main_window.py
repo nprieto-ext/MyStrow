@@ -5,6 +5,7 @@ Module extrait de maestro.py pour une meilleure organisation
 import sys
 import os
 import json
+import copy
 import random
 import ctypes
 import platform as _platform
@@ -31,7 +32,7 @@ except ImportError:
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
     QPalette, QPolygon, QAction, QActionGroup, QDesktopServices,
-    QFontMetrics
+    QFontMetrics, QCursor
 )
 
 
@@ -216,6 +217,7 @@ from core import (
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
     spread_rank, SPREAD_MODES, channel_label,
     projector_selection_keys, layer_selection_ranks, block_index, chase_slot,
+    layer_frequency, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
     copy_report, send_report_email, DMX_FRAME_MS,
@@ -1135,6 +1137,16 @@ class AkaiDiagnosticDialog(QDialog):
         add_btn.clicked.connect(self._open_add_controller)
         btn_row.addWidget(add_btn)
 
+        import_btn = QPushButton(tr("mw_ctrl_import"))
+        import_btn.setToolTip(tr("mw_ctrl_import_hint"))
+        import_btn.setStyleSheet(
+            "QPushButton { background:#1a1a2a; color:#8899cc; border:1px solid #2a2a44; "
+            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 14px; } "
+            "QPushButton:hover { background:#222233; color:#aabbee; border-color:#4444aa; }"
+        )
+        import_btn.clicked.connect(self._import_profile)
+        btn_row.addWidget(import_btn)
+
         btn_row.addStretch()
 
         rescan_btn = QPushButton(tr("mw_rescan"))
@@ -1248,15 +1260,26 @@ class AkaiDiagnosticDialog(QDialog):
         return ct
 
     def _controller_catalog(self):
-        """[(cid, name)] : Auto + tous les contrôleurs natifs supportés + customs branchés."""
+        """[(cid, name)] : Auto + contrôleurs natifs + TOUS les profils installés.
+
+        Les profils étaient auparavant listés seulement quand leur contrôleur
+        était branché — un mapping raté devenait alors ingérable dès que le
+        matériel n'était pas là, alors que c'est précisément le moment où on
+        veut le corriger ou le supprimer.
+        """
         from midi_handler import SUPPORTED_CONTROLLERS
+        from controller_profile import list_profiles
         cat = [(None, "Auto (détection automatique)")]
         for c in SUPPORTED_CONTROLLERS:
             cat.append((c['id'], c['name']))
+        self._custom_files = {}
         try:
-            for c in self._midi.list_available_controllers():
-                if str(c['id']).startswith('custom:'):
-                    cat.append((c['id'], c['name']))
+            for entry in list_profiles():
+                name = entry["data"].get("name", "Custom")
+                cid  = 'custom:' + name
+                if cid not in self._custom_files:
+                    self._custom_files[cid] = entry["file"]
+                    cat.append((cid, name))
         except Exception:
             pass
         return cat
@@ -1310,6 +1333,20 @@ class AkaiDiagnosticDialog(QDialog):
             hl.addWidget(status)
             for w in (icon, name_lbl, status):
                 w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            # Profils utilisateur : menu de gestion. Le bouton doit rester
+            # cliquable, donc pas de WA_TransparentForMouseEvents dessus.
+            if cid is not None and str(cid).startswith('custom:'):
+                menu_btn = QToolButton()
+                menu_btn.setText("⋯")
+                menu_btn.setCursor(Qt.PointingHandCursor)
+                menu_btn.setToolTip(tr("mw_ctrl_manage"))
+                menu_btn.setStyleSheet(
+                    "QToolButton { background:transparent; color:#888; border:none;"
+                    " font-size:13px; padding:0 4px; }"
+                    "QToolButton:hover { color:#fff; }"
+                )
+                menu_btn.clicked.connect(lambda _=False, c=cid: self._open_profile_menu(c))
+                hl.addWidget(menu_btn)
             frame.mousePressEvent = lambda e, c=cid: self._on_pick_controller(c)
             self._ctrl_rows_layout.addWidget(frame)
             self._ctrl_row_widgets[cid] = (frame, name_lbl, status)
@@ -1362,6 +1399,132 @@ class AkaiDiagnosticDialog(QDialog):
                     "bold" if _strong else "normal",
                 )
             )
+
+    def _open_profile_menu(self, cid):
+        """Menu de gestion d'un profil utilisateur : renommer / rééditer / exporter / supprimer."""
+        path = getattr(self, '_custom_files', {}).get(cid)
+        if not path:
+            return
+        menu = QMenu(self)
+        act_rename = menu.addAction(tr("mw_ctrl_rename"))
+        act_edit   = menu.addAction(tr("mw_ctrl_reedit"))
+        act_export = menu.addAction(tr("mw_ctrl_export"))
+        menu.addSeparator()
+        act_delete = menu.addAction(tr("mw_ctrl_delete"))
+        chosen = menu.exec(QCursor.pos())
+        if chosen is act_rename:
+            self._rename_profile(cid, path)
+        elif chosen is act_edit:
+            self._reedit_profile(path)
+        elif chosen is act_export:
+            self._export_installed_profile(path)
+        elif chosen is act_delete:
+            self._delete_profile(cid, path)
+
+    def _rename_profile(self, cid, path):
+        from PySide6.QtWidgets import QInputDialog
+        from controller_profile import rename_profile
+        old = cid[7:]
+        new, ok = QInputDialog.getText(self, tr("mw_ctrl_rename"), tr("mw_ctrl_rename_ask"), text=old)
+        new = (new or "").strip()
+        if not ok or not new or new == old:
+            return
+        try:
+            rename_profile(path, new)
+        except Exception as e:
+            QMessageBox.warning(self, tr("mw_ctrl_rename"), str(e))
+            return
+        # L'identifiant épinglé contient le nom : sans ça, le contrôleur
+        # sélectionné deviendrait introuvable et se débrancherait tout seul.
+        if getattr(self._midi, 'pinned_id', None) == cid:
+            self._midi.set_pinned_controller('custom:' + new)
+            self._persist_akai_config()
+        self._populate_controller_rows()
+
+    def _reedit_profile(self, path):
+        mw = self.parent()
+        while mw and not hasattr(mw, '_open_midi_mapping_wizard'):
+            mw = mw.parent()
+        if mw:
+            self.accept()
+            mw._open_midi_mapping_wizard(edit_path=path)
+
+    def _export_installed_profile(self, path):
+        from controller_profile import load_profile, export_profile
+        try:
+            data = load_profile(path)
+        except Exception as e:
+            QMessageBox.warning(self, tr("mw_ctrl_export"), str(e))
+            return
+        dest, _ = QFileDialog.getSaveFileName(
+            self, tr("mw_ctrl_export"), f"{data.get('id') or 'controleur'}.json",
+            "Profil MyStrow (*.json)")
+        if not dest:
+            return
+        try:
+            export_profile(data, dest)
+        except OSError as e:
+            QMessageBox.warning(self, tr("mw_ctrl_export"), str(e))
+
+    def _delete_profile(self, cid, path):
+        from controller_profile import delete_profile
+        name = cid[7:]
+        if QMessageBox.question(
+            self, tr("mw_ctrl_delete"), tr("mw_ctrl_delete_ask", name=name),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        ) != QMessageBox.Yes:
+            return
+        if not delete_profile(path):
+            QMessageBox.warning(self, tr("mw_ctrl_delete"), tr("mw_ctrl_delete_failed"))
+            return
+        # Épinglé sur le profil qu'on vient d'effacer → repasser en Auto, sinon
+        # le handler chercherait indéfiniment un profil qui n'existe plus.
+        if getattr(self._midi, 'pinned_id', None) == cid:
+            self._midi.set_pinned_controller(None)
+            self._persist_akai_config()
+        self._populate_controller_rows()
+
+    def _import_profile(self):
+        """Installe un profil reçu d'un autre utilisateur."""
+        from controller_profile import import_profile, profile_path_for_name
+        src, _ = QFileDialog.getOpenFileName(
+            self, tr("mw_ctrl_import"), "", "Profil MyStrow (*.json)")
+        if not src:
+            return
+        try:
+            with open(src, encoding="utf-8") as f:
+                name = (json.load(f) or {}).get("name", "")
+        except Exception as e:
+            QMessageBox.warning(self, tr("mw_ctrl_import"), tr("mw_ctrl_import_bad", e=str(e)))
+            return
+        overwrite = False
+        if name and profile_path_for_name(name):
+            answer = QMessageBox.question(
+                self, tr("mw_ctrl_import"), tr("mw_ctrl_import_dup", name=name),
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.Yes)
+            if answer == QMessageBox.Cancel:
+                return
+            overwrite = (answer == QMessageBox.Yes)
+        try:
+            data, dest = import_profile(src, overwrite=overwrite)
+        except ValueError as e:
+            QMessageBox.warning(self, tr("mw_ctrl_import"), tr("mw_ctrl_import_bad", e=str(e)))
+            return
+        except Exception as e:
+            QMessageBox.warning(self, tr("mw_ctrl_import"), str(e))
+            return
+        self._midi.connect_controller()
+        self._populate_controller_rows()
+        QMessageBox.information(
+            self, tr("mw_ctrl_import"),
+            tr("mw_ctrl_import_ok", name=data.get("name", ""), path=dest))
+
+    def _persist_akai_config(self):
+        mw = self.parent()
+        while mw and not hasattr(mw, '_save_akai_config_auto'):
+            mw = mw.parent()
+        if mw:
+            mw._save_akai_config_auto()
 
     def _on_pick_controller(self, cid):
         """L'utilisateur clique un contrôleur (ou Auto) → épingle + reconnecte + persiste."""
@@ -4456,10 +4619,16 @@ class MainWindow(QMainWindow):
         picker.show()
         picker._keep_on_screen()
 
-    def _open_midi_mapping_wizard(self):
-        """Ouvre l'assistant de mapping pour configurer un nouveau contrôleur MIDI."""
+    def _open_midi_mapping_wizard(self, edit_path: str = None):
+        """Ouvre l'assistant de mapping. `edit_path` = profil existant à réécrire."""
         wizard = MidiMappingWizard(self.midi_handler, self)
         wizard.profile_saved.connect(self._on_custom_profile_saved)
+        if edit_path:
+            try:
+                wizard.load_for_edit(edit_path)
+            except Exception as e:
+                QMessageBox.warning(self, tr("mw_ctrl_reedit"), str(e))
+                return
         wizard.exec()
 
     def _on_custom_profile_saved(self, profile_path: str):
@@ -5350,6 +5519,7 @@ class MainWindow(QMainWindow):
         for p in self.projectors:
             p._manual_color = False
             p._manual_move = False
+            p._manual_beam = False
 
     def _mem_advance_cue(self, mem_col: int, row: int) -> bool:
         """Avance au cue suivant. Retourne False si on reste au même (boucle désactivée + fin)."""
@@ -5861,24 +6031,27 @@ class MainWindow(QMainWindow):
                 else:
                     p.pan  = new_pan
                     p.tilt = new_tilt
-            # Canaux spéciaux toujours restaurés (même si level == 0)
-            p.uv           = int(proj_state.get("uv",           0) * brightness)
-            p.amber_boost  = int(proj_state.get("amber_boost",  0) * brightness)
-            p.white_boost  = int(proj_state.get("white_boost",  0) * brightness)
-            p.orange_boost = int(proj_state.get("orange_boost", 0) * brightness)
-            p.gobo          = int(proj_state.get("gobo",         0))
-            p.gobo_rotation = int(proj_state.get("gobo_rotation", 0))
-            p.zoom          = int(proj_state.get("zoom",         0))
-            p.strobe_speed  = int(proj_state.get("strobe_speed", 0))
-            # Valeurs brutes de fixture : jamais scalées par le fader du cue —
-            # une mise au point ou une vitesse de déplacement n'a rien à voir
-            # avec la luminosité.
-            p.focus         = int(proj_state.get("focus",        0))
-            p.gobo2         = int(proj_state.get("gobo2",        0))
-            p.speed         = int(proj_state.get("speed",        0))
-            p.mode_value    = int(proj_state.get("mode_value",   0))
-            # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
-            p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
+            # Canaux spéciaux toujours restaurés (même si level == 0) — sauf si
+            # le faisceau a été pris en main depuis le plan 2D (même garde que
+            # `_recompute_memory_mix`). Libéré par CLEAR.
+            if not getattr(p, '_manual_beam', False):
+                p.uv           = int(proj_state.get("uv",           0) * brightness)
+                p.amber_boost  = int(proj_state.get("amber_boost",  0) * brightness)
+                p.white_boost  = int(proj_state.get("white_boost",  0) * brightness)
+                p.orange_boost = int(proj_state.get("orange_boost", 0) * brightness)
+                p.gobo          = int(proj_state.get("gobo",         0))
+                p.gobo_rotation = int(proj_state.get("gobo_rotation", 0))
+                p.zoom          = int(proj_state.get("zoom",         0))
+                p.strobe_speed  = int(proj_state.get("strobe_speed", 0))
+                # Valeurs brutes de fixture : jamais scalées par le fader du cue —
+                # une mise au point ou une vitesse de déplacement n'a rien à voir
+                # avec la luminosité.
+                p.focus         = int(proj_state.get("focus",        0))
+                p.gobo2         = int(proj_state.get("gobo2",        0))
+                p.speed         = int(proj_state.get("speed",        0))
+                p.mode_value    = int(proj_state.get("mode_value",   0))
+                # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
+                p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
             # Couleur prise en main depuis le plan 2D → le cue n'y touche pas
             # (même mécanisme que _compute_htp_overrides). Libéré par CLEAR.
             if getattr(p, '_manual_color', False):
@@ -5987,22 +6160,28 @@ class MainWindow(QMainWindow):
             # Canaux spéciaux + pan/tilt : mémoire au fader le plus haut
             ds    = spec_state
             scale = best_bright          # luminosité du fader dominant (0-1)
-            p.uv           = int(ds.get("uv",           0) * scale)
-            p.amber_boost  = int(ds.get("amber_boost",  0) * scale)
-            p.white_boost  = int(ds.get("white_boost",  0) * scale)
-            p.orange_boost = int(ds.get("orange_boost", 0) * scale)
-            p.gobo          = int(ds.get("gobo",          0))
-            p.gobo_rotation = int(ds.get("gobo_rotation", 0))
-            p.zoom          = int(ds.get("zoom",          0))
-            p.strobe_speed  = int(ds.get("strobe_speed",  0))
-            # Non scalés par `scale` : la mise au point, la 2e roue de gobos, la
-            # vitesse et le canal Mode ne sont pas des grandeurs lumineuses.
-            p.focus         = int(ds.get("focus",         0))
-            p.gobo2         = int(ds.get("gobo2",         0))
-            p.speed         = int(ds.get("speed",         0))
-            p.mode_value    = int(ds.get("mode_value",    0))
-            # Canaux bruts (Mode…) : pilotés par la mémoire au fader dominant
-            p.channel_extras = dict(ds.get("channel_extras", {}) or {})
+            # Gobo/rotation/zoom/focus réglés à la main depuis le plan 2D → la
+            # mémoire ne les réimpose plus. Cette fonction tourne à CHAQUE
+            # mouvement de fader : sans la garde, un gobo posé à la main sautait
+            # dès qu'on effleurait un fader. La couleur, elle, reste pilotée par
+            # la mémoire (garde séparée `_manual_color`). Libéré par CLEAR.
+            if not getattr(p, '_manual_beam', False):
+                p.uv           = int(ds.get("uv",           0) * scale)
+                p.amber_boost  = int(ds.get("amber_boost",  0) * scale)
+                p.white_boost  = int(ds.get("white_boost",  0) * scale)
+                p.orange_boost = int(ds.get("orange_boost", 0) * scale)
+                p.gobo          = int(ds.get("gobo",          0))
+                p.gobo_rotation = int(ds.get("gobo_rotation", 0))
+                p.zoom          = int(ds.get("zoom",          0))
+                p.strobe_speed  = int(ds.get("strobe_speed",  0))
+                # Non scalés par `scale` : la mise au point, la 2e roue de gobos, la
+                # vitesse et le canal Mode ne sont pas des grandeurs lumineuses.
+                p.focus         = int(ds.get("focus",         0))
+                p.gobo2         = int(ds.get("gobo2",         0))
+                p.speed         = int(ds.get("speed",         0))
+                p.mode_value    = int(ds.get("mode_value",    0))
+                # Canaux bruts (Mode…) : pilotés par la mémoire au fader dominant
+                p.channel_extras = dict(ds.get("channel_extras", {}) or {})
             # Pan/tilt pris en main depuis le plan 2D → la mémoire n'y touche plus
             # (elle continue de piloter couleur/intensité). Libéré par CLEAR.
             if ("pan" in ds or "tilt" in ds) and not getattr(p, '_manual_move', False):
@@ -6322,7 +6501,21 @@ class MainWindow(QMainWindow):
                 # Canaux bruts prioritaires posés à la main (Mode, Effects, Reset…)
                 "channel_extras": dict(getattr(p, 'channel_extras', {}) or {}),
             })
-        return {"projectors": snapshot, "effect": {}, "duration": 0}
+        # Effet en cours : capturé comme le reste de l'état. Ce champ valait `{}`
+        # en dur — un REC fait pendant qu'un effet tournait (rotation de gobo,
+        # chenillard…) enregistrait la position, le gobo et les couleurs mais
+        # perdait l'effet en silence, et le rappel restituait une lyre figée.
+        # `copy.deepcopy` : la config courante continue de vivre pendant le show
+        # (l'éditeur d'effets la modifie en place), la mémoire doit en garder un
+        # instantané indépendant. Le format est celui déjà posé par
+        # `_set_memory_effect` (clic droit) et déjà sérialisé en JSON.
+        effect = {}
+        eff_cfg = getattr(self, 'active_effect_config', None)
+        if getattr(self, 'active_effect', None) and isinstance(eff_cfg, dict) \
+                and eff_cfg.get("layers"):
+            effect = copy.deepcopy(eff_cfg)
+            effect.setdefault("name", self.active_effect)
+        return {"projectors": snapshot, "effect": effect, "duration": 0}
 
     def _record_memory(self, mem_col, row):
         """Capture l'état courant. Si la mémoire existe, propose Remplacer / Ajouter cue."""
@@ -8699,7 +8892,7 @@ class MainWindow(QMainWindow):
 
                 effective_speed = cfg.get("speed_override", self.effect_speed)
                 fader_mult = max(0.01, effective_speed / 100.0)
-                freq = (0.05 + speed / 100.0 * 7.0) * fader_mult
+                freq = layer_frequency(speed, fader_mult=fader_mult)
                 # 180° = distribution parfaite sur 1 cycle (permanent N/2 allumés avec Flash)
                 # 0° = sync, 360° = double-tour (sous-groupes)
                 sp   = spread / 180.0
@@ -8867,7 +9060,7 @@ class MainWindow(QMainWindow):
 
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
-                        pan_freq = (0.05 + speed * pan_mult / 100.0 * 7.0) * fader_mult
+                        pan_freq = layer_frequency(speed, pan_mult, fader_mult)
                         pan_x = (_pt_time(pan_freq) + _mh_i / _mh_n_pt * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = (_ctr[0] if _ctr is not None else
@@ -8876,7 +9069,7 @@ class MainWindow(QMainWindow):
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
-                        tilt_freq = (0.05 + speed * tilt_mult / 100.0 * 7.0) * fader_mult
+                        tilt_freq = layer_frequency(speed, tilt_mult, fader_mult)
                         tilt_x = (_pt_time(tilt_freq) + _mh_i / _mh_n_pt * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = (_ctr[1] if _ctr is not None else
@@ -8939,7 +9132,8 @@ class MainWindow(QMainWindow):
                 # Utiliser base_color (couleur stable) et non proj.color (déjà modifié
                 # par le frame précédent) pour éviter la boucle de feedback vers le noir.
                 proj.level = int(bv * 100)
-                _stable = getattr(proj, 'base_color', None) or _base_color
+                _stable = effect_dim_base_color(
+                    proj, getattr(proj, 'base_color', None) or _base_color)
                 proj.color = QColor(
                     int(_stable.red()   * bv),
                     int(_stable.green() * bv),
@@ -10223,9 +10417,16 @@ class MainWindow(QMainWindow):
                     'pool_snap': list(_col_pool),
                 }
             _asw = self._ambiance_color_switch
-            # Gate sur beat : switcher couleur seulement sur un nouveau beat
+            # Gate sur beat : caler le changement de couleur sur un nouveau beat,
+            # AVEC repli au temps quand il n'y a pas de musique. Sans ce repli,
+            # le mode Ambiance — précisément celui qui doit tourner sans musique —
+            # restait bloqué sur une seule couleur du pool : aucun des chemins de
+            # détection de `live_audio` ne pose `_beat_pending` en quasi-silence
+            # (seuil `norm > 0.20`), donc la condition n'était jamais vraie.
             _amb_new_beat = getattr(self.live_engine, '_beat_pending', False)
-            if position >= _asw['switch_at'] and _amb_new_beat:
+            _amb_last_beat = getattr(self.live_engine, '_last_beat_ts', 0.0) or 0.0
+            _amb_no_music  = (_time.monotonic() - _amb_last_beat) > 2.0
+            if position >= _asw['switch_at'] and (_amb_new_beat or _amb_no_music):
                 _asw['pool_snap'] = list(_col_pool)
                 try:
                     _ci = _asw['pool_snap'].index(self.seq.live_panel.current_color_tile)
@@ -19989,6 +20190,14 @@ class MainWindow(QMainWindow):
             " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
             "QPushButton:hover { border-color:#44cc88; color:#66ee99; }"
         )
+        btn_create = QPushButton(tr("mw_create_fixture_m"))
+        btn_create.setFixedHeight(36)
+        btn_create.setToolTip(tr("mw_create_fixture_hint"))
+        btn_create.setStyleSheet(
+            "QPushButton { background:#3a2e1a; color:#eeaa44; border:1px solid #eeaa4444;"
+            " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { border-color:#eeaa44; color:#ffcc66; }"
+        )
         btn_refresh = QPushButton(tr("mw_refresh_m"))
         btn_refresh.setFixedHeight(36)
         btn_refresh.setStyleSheet(
@@ -19998,6 +20207,7 @@ class MainWindow(QMainWindow):
         )
         search_row.addWidget(search_edit, 1)
         search_row.addWidget(btn_import)
+        search_row.addWidget(btn_create)
         search_row.addWidget(btn_refresh)
         tab1_layout.addLayout(search_row)
 
@@ -20364,6 +20574,32 @@ class MainWindow(QMainWindow):
             from fixture_share import offer_share
             offer_share(dialog, newly_imported)
 
+        def _do_create():
+            """Créer une fixture de zéro, sans partir d'un fichier à importer."""
+            from fixture_editor import FixtureEditorDialog, FIXTURE_FILE
+            editor = FixtureEditorDialog(dialog)
+            editor.setWindowState(Qt.WindowMaximized)
+            editor.exec()
+            saved = editor.last_saved
+            if not saved:
+                return
+            # L'éditeur écrit dans FIXTURE_FILE : on relit ce fichier plutôt que
+            # d'ajouter `saved` à la main, pour rester juste même si l'utilisateur
+            # a enregistré plusieurs fixtures sans fermer l'éditeur.
+            try:
+                existing = _json.loads(FIXTURE_FILE.read_text(encoding="utf-8")) \
+                           if FIXTURE_FILE.exists() else []
+                if not isinstance(existing, list):
+                    existing = []
+            except Exception:
+                existing = []
+            _rebuild_library_ui([f for f in existing
+                                 if isinstance(f, dict) and not f.get("builtin")])
+            # Montrer tout de suite ce qui vient d'être créé.
+            name = saved.get("name", "") if isinstance(saved, dict) else ""
+            if name:
+                search_edit.setText(name)
+
         def _rebuild_library_ui(new_user_fixtures: list):
             """Reconstruit ALL_FIXTURES / FIXTURE_LIBRARY et rafraîchit cat_list."""
             new_custom = []
@@ -20510,6 +20746,7 @@ class MainWindow(QMainWindow):
             thread.start()
 
         btn_import.clicked.connect(_do_import)
+        btn_create.clicked.connect(_do_create)
         btn_refresh.clicked.connect(lambda: _do_refresh(silent=False))
         cat_list.currentItemChanged.connect(on_cat_changed)
         search_edit.textChanged.connect(on_search)

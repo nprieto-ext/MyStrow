@@ -273,12 +273,23 @@ def _set_license(
     doc = ref.get()
 
     data = {
-        "plan":                   "license",
-        "expiry_utc":             expiry_ts,
-        "plan_type":              plan_type,
-        "stripe_customer_id":     stripe_customer_id,
-        "stripe_subscription_id": stripe_subscription_id,
+        "plan":       "license",
+        "expiry_utc": expiry_ts,
+        "plan_type":  plan_type,
     }
+
+    # Les identifiants Stripe ne sont écrits QUE s'ils sont renseignés.
+    #
+    # Un champ absent de l'événement reçu ne doit jamais effacer une donnée
+    # valide en base : c'est exactement ce qui s'est produit avec
+    # `stripe_subscription_id`, vidé au fil des renouvellements pour 14 abonnés
+    # actifs (constaté le 12/08/2026) parce que Stripe a sorti `subscription` de
+    # la racine de l'objet invoice. La suppression *volontaire* de l'identifiant
+    # reste possible, mais elle passe par _revoke_license().
+    if stripe_customer_id:
+        data["stripe_customer_id"] = stripe_customer_id
+    if stripe_subscription_id:
+        data["stripe_subscription_id"] = stripe_subscription_id
 
     # Langue des emails (détectée au checkout) — conservée pour les events suivants.
     if lang:
@@ -290,7 +301,11 @@ def _set_license(
     if doc.exists:
         ref.update(data)
     else:
+        # Document neuf : aucune valeur à préserver, on pose les deux champs
+        # même vides pour que le schéma reste homogène.
         ref.set({
+            "stripe_customer_id":     stripe_customer_id,
+            "stripe_subscription_id": stripe_subscription_id,
             **data,
             "email":       email,
             "created_utc": time.time(),
@@ -726,7 +741,7 @@ def _on_checkout_completed(session: dict) -> None:
     cust_details = session.get("customer_details") or {}
     email       = cust_details.get("email") or session.get("customer_email", "")
     customer_id = session.get("customer", "")
-    sub_id      = session.get("subscription", "")
+    sub_id      = _id_of(session.get("subscription"))   # nu ou objet étendu
     # TTC réellement débité, APRÈS remise éventuelle. `amount_total` et non
     # `amount_subtotal` : le subtotal ignore les codes promo, on facturerait
     # alors plus cher que ce que la carte a payé.
@@ -791,6 +806,75 @@ def _on_checkout_completed(session: dict) -> None:
     print(f"[checkout.completed] {email} — {plan_type} — expire {_fmt_date(expiry_ts)}")
 
 
+def _id_of(value) -> str:
+    """Un champ Stripe peut arriver en identifiant nu ou en objet étendu."""
+    if isinstance(value, dict):
+        return value.get("id") or ""
+    return value or ""
+
+
+def _subscription_id_from_invoice(invoice: dict) -> str:
+    """Identifiant d'abonnement d'une facture, quel que soit son emplacement.
+
+    Stripe a sorti `subscription` de la racine de l'objet invoice : il vit
+    maintenant sous `parent.subscription_details.subscription`. Comme
+    `_stripe_get` n'épingle aucune version d'API, la forme reçue dépend de la
+    version configurée sur le endpoint webhook — on lit donc les deux, plus les
+    lignes de facture en dernier recours.
+    """
+    sub = _id_of(invoice.get("subscription"))
+    if sub:
+        return sub
+
+    details = (invoice.get("parent") or {}).get("subscription_details") or {}
+    sub = _id_of(details.get("subscription"))
+    if sub:
+        return sub
+
+    for line in (invoice.get("lines") or {}).get("data") or []:
+        sub = _id_of(line.get("subscription"))
+        if sub:
+            return sub
+        item = (line.get("parent") or {}).get("subscription_item_details") or {}
+        sub = _id_of(item.get("subscription"))
+        if sub:
+            return sub
+    return ""
+
+
+def _known_plan_from_price(price_id: str) -> str:
+    """Plan correspondant à un price Stripe, ou "" s'il est inconnu.
+
+    `_get_plan_type` retombe sur "monthly" pour tout price non reconnu : c'est
+    tenable au checkout, jamais en repli sur un renouvellement (un annuel se
+    verrait rétrogradé sans le moindre signe).
+    """
+    if not price_id:
+        return ""
+    for plan, getter in (("monthly",  _stripe_price_monthly),
+                         ("annual",   _stripe_price_annual),
+                         ("lifetime", _stripe_price_lifetime)):
+        try:
+            if price_id == getter():
+                return plan
+        except Exception:
+            continue
+    return ""
+
+
+def _price_id_from_invoice(invoice: dict) -> str:
+    """Prix facturé, lu sur la 1re ligne (ancien `price`, nouveau `pricing`)."""
+    for line in (invoice.get("lines") or {}).get("data") or []:
+        price = _id_of(line.get("price"))
+        if price:
+            return price
+        details = (line.get("pricing") or {}).get("price_details") or {}
+        price = _id_of(details.get("price"))
+        if price:
+            return price
+    return ""
+
+
 def _on_invoice_paid(invoice: dict) -> None:
     """Renouvellement mensuel / annuel."""
     # On ignore la 1ère facture (déjà gérée par checkout.session.completed)
@@ -798,7 +882,7 @@ def _on_invoice_paid(invoice: dict) -> None:
         return
 
     customer_id = invoice.get("customer", "")
-    sub_id      = invoice.get("subscription", "")
+    sub_id      = _subscription_id_from_invoice(invoice)
     email       = invoice.get("customer_email", "")
     # TTC encaissé, remise déduite (amount_paid est toujours net de promo).
     _amt        = invoice.get("amount_paid")
@@ -812,13 +896,31 @@ def _on_invoice_paid(invoice: dict) -> None:
         print(f"[invoice.paid] UID introuvable pour customer {customer_id}")
         return
 
-    plan_type = "monthly"
-    try:
-        sub      = _stripe_get(f"/subscriptions/{sub_id}")
-        price_id = sub["items"]["data"][0]["price"]["id"]
-        plan_type = _get_plan_type(price_id)
-    except Exception:
-        pass
+    # Plan facturé. On ne retombe JAMAIS en silence sur "monthly" : un annuel
+    # renouvelé s'en trouverait rétrogradé, et _compute_expiry lui donnerait
+    # 31 jours d'accès au lieu de 366 — client payant coupé au bout d'un mois.
+    # (Dégât déjà constaté : cf. fix_annual_licenses.py.)
+    plan_type = ""
+    if sub_id:
+        try:
+            sub       = _stripe_get(f"/subscriptions/{sub_id}")
+            price_id  = sub["items"]["data"][0]["price"]["id"]
+            plan_type = _known_plan_from_price(price_id)
+        except Exception as e:
+            print(f"[invoice.paid] abonnement {sub_id} illisible : {e}")
+    else:
+        print("[invoice.paid] aucun subscription_id dans la facture "
+              f"{invoice.get('id', '?')} — repli sur la ligne de facture")
+
+    if not plan_type:
+        plan_type = _known_plan_from_price(_price_id_from_invoice(invoice))
+    if not plan_type:
+        # Dernier recours : le plan déjà enregistré pour ce client.
+        _doc = _get_db().collection("licenses").document(uid).get()
+        plan_type = ((_doc.to_dict() or {}).get("plan_type") or "") if _doc.exists else ""
+    if not plan_type:
+        plan_type = "monthly"
+        print(f"[invoice.paid] plan indéterminable pour {email} — defaut 'monthly'")
 
     lang      = _lang_for_uid(uid)
     expiry_ts = _compute_expiry(plan_type)

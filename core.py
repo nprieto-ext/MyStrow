@@ -66,7 +66,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.82"
+VERSION = "3.1.83"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -492,6 +492,66 @@ def block_index(i, n, block):
     return int(i) // b, max(1, (n + b - 1) // b)
 
 
+def layer_frequency(speed, mult=1.0, fader_mult=1.0):
+    """Cycles par seconde d'une couche d'effet, depuis sa VITESSE 0-100.
+
+    La formule `0.05 + speed/100 * 7` portait un plancher de 0.05 Hz qui ne
+    disparaissait JAMAIS : vitesse 0 laissait tourner l'effet à un cycle toutes
+    les 20 secondes. Le curseur descend bien à 0 (cf. _NUM_FIELDS), et un
+    utilisateur qui pose 0 attend un arrêt, pas un rampement invisible qu'on
+    finit par prendre pour une dérive de l'application.
+
+    Vitesse 0 rend donc 0.0 : la couche est FIGÉE. Elle n'est pas éteinte pour
+    autant — la forme reste évaluée à sa position de départ, décalage et
+    RÉPARTITION compris, ce qui donne une pose statique étalée sur les
+    fixtures. C'est la seule lecture cohérente de « vitesse nulle ».
+
+    `mult` est le multiplicateur de vitesse d'un axe (trajectoires Pan/Tilt),
+    appliqué à la VITESSE, donc avant le plancher — comme dans le code d'origine.
+    `fader_mult` est le fader FX général, appliqué à la fréquence finale : à 0
+    il gelait déjà tout, ce comportement est conservé.
+
+    ⚠️ Point UNIQUE : sept endroits recopiaient cette formule (l'aperçu de
+    l'éditeur, sa vignette de courbe, les deux axes d'une trajectoire, et les
+    trois équivalents du moteur de restitution). Toute divergence entre eux
+    rejoue « l'aperçu ne ressemble pas au show ». Passer par ici.
+    """
+    s = max(0.0, float(speed or 0.0)) * float(mult if mult is not None else 1.0)
+    if s <= 0.0:
+        return 0.0
+    return (0.05 + s / 100.0 * 7.0) * float(fader_mult if fader_mult is not None else 1.0)
+
+
+def effect_dim_base_color(proj, current):
+    """Couleur que module un effet DIMMER SEUL sur cette fixture.
+
+    Une couche Dimmer sans couche couleur ne fait qu'atténuer la couleur déjà
+    posée sur le projecteur. Sur un spot dont la couleur vient de sa ROUE — un
+    profil sans canal R/G/B — cette couleur RGB est une fiction : le faisceau
+    sort blanc dès que le Dim s'ouvre, quelle que soit la valeur RGB gardée
+    côté application.
+
+    Or `base_color` est remis à NOIR par tous les chemins d'extinction
+    (blackout, rappel de mémoire sans projecteur actif, reset de cue). Noir ×
+    dimmer restait noir : la lyre s'affichait éteinte dans le plan de feu, la
+    3D et l'aperçu de l'éditeur — alors que le canal Dim sortait bien et que le
+    vrai projecteur pulsait. D'où le réflexe d'ajouter une couche RGB blanche
+    qui ne servait qu'à réparer l'image.
+
+    Rend donc BLANC pour ces fixtures, et `current` inchangé partout ailleurs :
+    un profil vide (fixture non patchée) compte comme « ailleurs », faute de
+    quoi on repeindrait en blanc des projecteurs dont on ne sait rien.
+
+    ⚠️ Point UNIQUE : le moteur de restitution et l'aperçu de l'éditeur ont
+    chacun leur branche « Dimmer seul ». Les faire diverger ici, c'est rejouer
+    « l'aperçu ne ressemble pas au show ». Passer par ici.
+    """
+    profile = getattr(proj, 'dmx_profile', None) or []
+    if not profile or 'R' in profile or 'G' in profile or 'B' in profile:
+        return current
+    return QColor(255, 255, 255)
+
+
 def projector_selection_keys(projectors):
     """Clé (groupe, index_local) de chaque projecteur, dans l'ordre de la liste.
 
@@ -592,6 +652,53 @@ def canonical_profile(profile):
     if not profile:
         return []
     return [canonical_channel(c) for c in profile]
+
+
+# ─── TLS : un seul contexte pour tout le réseau sortant ───────────────────────
+
+_SSL_CTX_CACHE = None
+
+
+def make_ssl_context():
+    """Contexte SSL compatible Mac / Windows / PyInstaller.
+
+    On fait confiance à l'UNION des racines :
+      1. magasin système — sur Windows il inclut les racines injectées par les
+         antivirus à scan HTTPS (Avast, Kaspersky, ESET…) et les proxys
+         d'entreprise. Sans elles, leur MITM TLS casse la vérification (alors
+         que le navigateur, lui, passe par le magasin système) ;
+      2. bundle certifi — indispensable sur macOS où Python n'embarque pas de
+         racines système, et complément utile sur Windows.
+    La vérification reste ACTIVE : aucun downgrade de sécurité.
+
+    ⚠️ Ne JAMAIS écrire `ssl.create_default_context(cafile=certifi.where())` :
+    passer un `cafile` empêche CPython de charger les racines système
+    (`create_default_context` ne fait `load_default_certs()` que si aucun
+    cafile/capath/cadata n'est fourni). On obtient alors certifi SEUL, ce qui
+    a laissé les écrans de licence en erreur SSL derrière un antivirus bien
+    après que la mise à jour, elle, ait été réparée (remontée du 12/08/2026).
+    """
+    global _SSL_CTX_CACHE
+    if _SSL_CTX_CACHE is not None:
+        return _SSL_CTX_CACHE
+    import ssl
+    ctx = None
+    try:
+        ctx = ssl.create_default_context()        # racines système
+    except Exception:
+        ctx = None
+    try:
+        import certifi
+        if ctx is not None:
+            ctx.load_verify_locations(cafile=certifi.where())   # + certifi
+        else:
+            ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    if ctx is None:
+        ctx = ssl.create_default_context()
+    _SSL_CTX_CACHE = ctx
+    return ctx
 
 
 # ─── Téléchargement officiel ──────────────────────────────────────────────────

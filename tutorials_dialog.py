@@ -9,10 +9,11 @@ import xml.etree.ElementTree as ET
 
 
 def _ssl_ctx():
+    """Union magasin système + certifi (cf. core.make_ssl_context)."""
     try:
-        import certifi
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
+        from core import make_ssl_context
+        return make_ssl_context()
+    except Exception:
         pass
     try:
         return ssl.create_default_context()

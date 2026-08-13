@@ -961,7 +961,13 @@ def _get_fresh_token() -> str | None:
         import firebase_client as fc
         result = fc.refresh_id_token(refresh_token)
         return result.get("id_token")
-    except Exception:
+    except Exception as e:
+        # Ne jamais échouer en silence : un None ici est indiscernable d'un
+        # « pas connecté », alors qu'il peut venir du réseau (erreur SSL
+        # derrière un antivirus). L'appelant repart sans jeton et Firestore
+        # répond 403 — l'utilisateur voit « Erreur Firestore » et personne ne
+        # remonte à la vraie cause (remontée du 12/08/2026).
+        print(f"[TOKEN] rafraichissement impossible : {e}")
         return None
 
 

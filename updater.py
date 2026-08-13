@@ -35,39 +35,22 @@ from i18n import tr
 
 # === SSL ===
 def _make_ssl_context():
-    """Contexte SSL compatible Mac/Windows/PyInstaller.
+    """Contexte SSL de l'updater — délégué à core.make_ssl_context().
 
-    On fait confiance à l'UNION des racines :
-      1. magasin système — sur Windows il inclut les racines injectées par les
-         antivirus avec scan HTTPS (Avast, Kaspersky, ESET…) et les proxys
-         d'entreprise. Sans elles, leur MITM TLS casse la vérification et la
-         mise à jour échoue avec une erreur SSL (alors que navigateur/QLC+
-         passent, eux, par le magasin système).
-      2. bundle certifi — indispensable sur macOS où Python n'embarque pas de
-         racines système, et complément utile sur Windows.
-    La vérification reste ACTIVE (pas de downgrade de sécurité)."""
-    ctx = None
-    # 1. Racines système (Windows : magasin ROOT/CA, donc Avast & co.)
+    L'implémentation vivait ici, et c'est précisément le problème qu'elle a
+    causé : les autres clients réseau (licence, Brevo, tutoriels) ont continué
+    d'utiliser un contexte certifi SEUL, donc de tomber en erreur SSL derrière
+    un antivirus à scan HTTPS pendant que la mise à jour, elle, passait.
+    """
     try:
-        ctx = ssl.create_default_context()
+        from core import make_ssl_context
+        return make_ssl_context()
     except Exception:
-        ctx = None
-    # 2. Ajouter le bundle certifi au même contexte (union des racines)
-    try:
-        import certifi
-        if ctx is not None:
-            ctx.load_verify_locations(cafile=certifi.where())
-        else:
-            ctx = ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        pass
-    if ctx is not None:
-        return ctx
-    # 3. Dernier recours : non vérifié (réseau totalement non standard)
-    try:
-        return ssl.create_default_context()
-    except Exception:
-        return ssl._create_unverified_context()
+        # Dernier recours : réseau totalement non standard
+        try:
+            return ssl.create_default_context()
+        except Exception:
+            return ssl._create_unverified_context()
 
 # === CONSTANTES ===
 _GITHUB_REPO       = "nprieto-ext/MAESTRO"
@@ -1029,23 +1012,29 @@ class AboutDialog(QDialog):
         self.btn_recheck.clicked.connect(self._start_check)
         lay.addWidget(self.btn_recheck, alignment=Qt.AlignCenter)
 
-        # Lien vers la page de telechargement du site. Utile quand la mise a
-        # jour automatique ne peut pas aboutir (integrite, droits, antivirus) :
-        # « A propos » est l'ecran ou l'utilisateur va chercher sa version, donc
-        # celui ou il doit trouver de quoi reinstaller.
-        from core import SITE_URL
-        site_lbl = QLabel(
-            f'<a href="{SITE_URL}" style="color:#4a90d9;text-decoration:none;">'
-            f'{tr("about_download_site")}</a>')
-        site_lbl.setOpenExternalLinks(True)
-        site_lbl.setAlignment(Qt.AlignCenter)
-        site_lbl.setStyleSheet("font-size:10px; background:transparent; border:none;")
-        lay.addWidget(site_lbl)
         lay.addSpacing(18)
 
         # Boutons bas
         btns_lay = QHBoxLayout()
         btns_lay.setSpacing(8)
+
+        # Page de telechargement du site — un vrai bouton, pas un lien : c'est
+        # le recours quand la mise a jour automatique ne peut pas aboutir
+        # (integrite, droits, antivirus), et « A propos » est l'ecran ou
+        # l'utilisateur vient chercher sa version, donc celui ou il doit
+        # trouver de quoi reinstaller. Un lien en 10 px se remarquait a peine.
+        from core import SITE_URL
+        btn_site = QPushButton(tr("about_download_site"))
+        btn_site.setFixedHeight(34)
+        btn_site.setCursor(Qt.PointingHandCursor)
+        btn_site.setStyleSheet("""
+            QPushButton       { background: #16232e; color: #4a90d9; border: 1px solid #2c4a63;
+                                border-radius: 4px; font-size: 11px; }
+            QPushButton:hover { background: #1d3242; color: #7fb6ef; border-color: #4a90d9; }
+        """)
+        btn_site.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(SITE_URL)))
+        btns_lay.addWidget(btn_site, 2)
 
         btn_close = QPushButton(tr("btn_close"))
         btn_close.setFixedHeight(34)
@@ -1055,7 +1044,7 @@ class AboutDialog(QDialog):
             QPushButton:hover { background: #333; color: #ccc; }
         """)
         btn_close.clicked.connect(self.accept)
-        btns_lay.addWidget(btn_close)
+        btns_lay.addWidget(btn_close, 1)
 
         lay.addLayout(btns_lay)
 
@@ -1089,7 +1078,7 @@ class AboutDialog(QDialog):
         )
         self.status_lbl.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
         self.status_lbl.setText(tr("version_available", ver=version))
-        self.btn_download.setText(tr("btn_download_ver", ver=version))
+        self.btn_download.setText(tr("btn_download_update"))
         self.btn_download.show()
 
     def _on_check_finished(self, found, version):

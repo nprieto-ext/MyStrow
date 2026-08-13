@@ -10,13 +10,16 @@ from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QLineEdit, QComboBox, QFrame,
     QMessageBox, QListWidget, QListWidgetItem, QFileDialog,
-    QAbstractItemView, QSizePolicy, QSplitter, QMenu,
-    QStyledItemDelegate, QGridLayout, QSpinBox, QCheckBox,
+    QSizePolicy, QSplitter, QMenu,
+    QGridLayout, QSpinBox, QCheckBox, QCompleter,
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QRectF, QMimeData, QPoint
+from PySide6.QtCore import (
+    Qt, Signal, QTimer, QThread, QRectF,
+    QStringListModel, QEvent,
+)
 
 from core import channel_label, ComboSansMolette
-from PySide6.QtGui import QColor, QPainter, QPen, QFont, QDrag, QPixmap, QCursor
+from PySide6.QtGui import QColor, QPainter, QPen, QFont
 
 import gzip
 
@@ -151,6 +154,43 @@ _PRESETS_BY_TYPE = {
 }
 
 
+def _mode_defaults(mode: dict) -> list:
+    """Valeurs fixes d'un mode, ramenées à la convention de l'éditeur (None = libre)."""
+    if isinstance(mode.get("defaults"), list):
+        return list(mode["defaults"])
+    # Format admin panel / Firestore : des entiers, où 0 ne veut pas dire
+    # « forcer à 0 » mais « rien d'imposé » — c'est la valeur de remplissage.
+    return [v if isinstance(v, int) and v > 0 else None
+            for v in (mode.get("default_values") or [])]
+
+
+def _fixture_modes(fx: dict) -> list:
+    """Modes éditables d'une fixture, quel que soit le format d'origine.
+
+    Les canaux vivent soit à la racine (`profile`, fixtures de l'éditeur), soit
+    dans `modes` (admin panel, OFL, QLC+). La liste rendue n'est jamais vide :
+    l'éditeur a toujours un mode à afficher.
+    """
+    out = []
+    for m in fx.get("modes") or []:
+        if not isinstance(m, dict) or not m.get("profile"):
+            continue
+        out.append({
+            "name":     m.get("name", ""),
+            "profile":  list(m.get("profile") or []),
+            "defaults": _mode_defaults(m),
+            "matrix":   m["matrix"] if isinstance(m.get("matrix"), dict) else None,
+        })
+    if out:
+        return out
+    return [{
+        "name":     fx.get("mode_name", ""),
+        "profile":  list(fx.get("profile") or []),
+        "defaults": _mode_defaults(fx),
+        "matrix":   fx["matrix"] if isinstance(fx.get("matrix"), dict) else None,
+    }]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Classes conservées pour compatibilité avec admin_pack_editor / admin_panel
 # ──────────────────────────────────────────────────────────────────────────────
@@ -158,6 +198,204 @@ _PRESETS_BY_TYPE = {
 class _NoScrollCombo(QComboBox):
     def wheelEvent(self, event):
         event.ignore()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Recherche d'un type de canal : taper « pa » propose Pan puis PanFine
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _ch_norm(s: str) -> str:
+    """Clé de comparaison : minuscules, sans accents ni séparateurs."""
+    s = (s or "").lower().strip()
+    for src, dst in (("é", "e"), ("è", "e"), ("ê", "e"), ("ë", "e"), ("à", "a"),
+                     ("â", "a"), ("î", "i"), ("ï", "i"), ("ô", "o"), ("ù", "u"),
+                     ("û", "u"), ("ü", "u"), ("ç", "c")):
+        s = s.replace(src, dst)
+    return "".join(c for c in s if c.isalnum())
+
+
+# Alias normalisé → type de canal, alimenté par qui possède déjà un tel
+# vocabulaire (le pack editor admin, cf. register_channel_search_aliases). On
+# l'enregistre au lieu de l'importer : `fixture_editor` est embarqué dans l'app
+# utilisateur, un import vers un module admin y ferait entrer du code admin.
+# Table absente = recherche sur les seuls noms de types, ce qui couvre déjà
+# « pan » → Pan / PanFine.
+_CH_ALIAS_INDEX: dict[str, str] = {}
+
+
+def register_channel_search_aliases(mapping: dict):
+    """Ajoute des alias de recherche (« amber » → Ambre, « obturateur » → Shutter)."""
+    _CH_ALIAS_INDEX.update({_ch_norm(k): v for k, v in mapping.items()})
+
+
+def channel_type_matches(text: str) -> list[str]:
+    """Types de canaux correspondant à une saisie libre, du plus pertinent au moins.
+
+    « pa » ou « pan » → [Pan, PanFine] · « fine » → [PanFine, TiltFine] ·
+    « amber » → [Ambre] (via alias). Saisie vide → la liste complète.
+    """
+    q = _ch_norm(text)
+    if not q:
+        return list(ALL_CHANNEL_TYPES)
+
+    exact, starts, contains = [], [], []
+    for t in ALL_CHANNEL_TYPES:
+        n = _ch_norm(t)
+        if n == q:
+            exact.append(t)
+        elif n.startswith(q):
+            starts.append(t)
+        elif q in n:
+            contains.append(t)
+
+    direct = exact + starts + contains
+    if direct:
+        # Les alias ne servent que de repêchage : sinon « pa » ferait remonter
+        # Speed (via l'alias « panspeed ») derrière Pan et PanFine.
+        return direct
+
+    alias = []
+    for key, t in _CH_ALIAS_INDEX.items():
+        if t in ALL_CHANNEL_TYPES and t not in alias and q in key:
+            alias.append(t)
+    alias.sort(key=ALL_CHANNEL_TYPES.index)
+    return alias
+
+
+class ChannelTypeCombo(_NoScrollCombo):
+    """Combo des types de canaux avec recherche par saisie.
+
+    Éditable uniquement pour saisir un filtre : la valeur retenue est toujours
+    un élément de ALL_CHANNEL_TYPES (insertion désactivée, et toute saisie non
+    résolue revient au type courant). D'où le signal `type_changed`, qui ne part
+    que sur un type valide — `currentTextChanged` partirait à chaque frappe.
+    """
+
+    type_changed = Signal(str)
+
+    def __init__(self, ch_type: str = "", parent=None):
+        super().__init__(parent)
+        self.addItems(ALL_CHANNEL_TYPES)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+        self.setToolTip("Tapez pour rechercher : « pan » → Pan, PanFine")
+        self.lineEdit().setPlaceholderText("Rechercher un canal…")
+        # padding/margin remis à zéro explicitement : une feuille de style
+        # d'application (STYLE_APP de l'admin : « QLineEdit{padding:8px} ») vise
+        # aussi ce QLineEdit interne, et ce qu'on ne redéfinit pas ici en est
+        # hérité. Avec 8 px haut et bas dans les 22 px utiles du combo, le texte
+        # du canal se retrouve rogné.
+        self.lineEdit().setStyleSheet(
+            "background:transparent;border:none;color:#e0e0e0;"
+            "padding:0;margin:0;font-size:12px;")
+        # Un combo éditable place un curseur au lieu d'ouvrir la liste : on
+        # rétablit le geste d'avant (clic = liste complète), la frappe filtrant
+        # ensuite. Sans ça, le champ n'a plus aucune affordance de liste, la
+        # feuille de style des lignes de canal masquant déjà la flèche.
+        self.lineEdit().installEventFilter(self)
+
+        self._model     = QStringListModel(list(ALL_CHANNEL_TYPES), self)
+        self._completer = QCompleter(self._model, self)
+        self._completer.setCaseSensitivity(Qt.CaseInsensitive)
+        # Le modèle est déjà filtré par channel_type_matches : on demande au
+        # completer de tout afficher. En mode filtré il re-filtrerait par
+        # préfixe, et « amber » (qui ne préfixe pas « Ambre ») ne proposerait
+        # plus rien.
+        self._completer.setCompletionMode(QCompleter.UnfilteredPopupCompletion)
+        # Le popup d'un QCompleter n'a rien du menu déroulant natif d'un combo :
+        # il n'affiche que 7 lignes par défaut (sur 29 types) et prend la largeur
+        # du champ au lieu de se dimensionner sur son contenu. On rétablit les
+        # deux, sinon la liste paraît tronquée en hauteur comme en largeur.
+        self._completer.setMaxVisibleItems(16)
+        popup = self._completer.popup()
+        popup.setStyleSheet(
+            "QAbstractItemView{background:#222;color:#e0e0e0;"
+            "border:1px solid #3a3a3a;outline:none;}"
+            "QAbstractItemView::item{padding:2px 4px;}"
+            "QAbstractItemView::item:selected{background:#00c8ff;color:#000;}"
+            "QScrollBar:vertical{background:#1a1a1a;width:10px;margin:0;}"
+            "QScrollBar::handle:vertical{background:#3a3a3a;border-radius:5px;"
+            "min-height:24px;}"
+            "QScrollBar::handle:vertical:hover{background:#4a4a4a;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:none;}"
+        )
+        _fm = popup.fontMetrics()
+        popup.setMinimumWidth(
+            max(_fm.horizontalAdvance(t) for t in ALL_CHANNEL_TYPES) + 40)
+        self.setCompleter(self._completer)
+
+        self.set_type(ch_type)
+        self.lineEdit().textEdited.connect(self._on_text_edited)
+        self.lineEdit().editingFinished.connect(self._on_editing_finished)
+        self._completer.activated[str].connect(self._commit)
+        self.activated.connect(lambda i: self._commit(self.itemText(i)))
+
+    # ── API ───────────────────────────────────────────────────────────────────
+
+    def current_type(self) -> str:
+        """Type retenu — jamais le texte de recherche en cours de frappe."""
+        return self._type
+
+    def set_type(self, ch_type: str):
+        """Positionne le type sans émettre type_changed (chargement d'un profil)."""
+        idx = ALL_CHANNEL_TYPES.index(ch_type) if ch_type in ALL_CHANNEL_TYPES else 0
+        self._type = ALL_CHANNEL_TYPES[idx]
+        self.blockSignals(True)
+        self.setCurrentIndex(idx)
+        self.blockSignals(False)
+        self.lineEdit().setText(self._type)
+
+    # ── Interne ───────────────────────────────────────────────────────────────
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        # Sélectionner le texte : taper remplace la recherche au lieu de s'y ajouter
+        self.lineEdit().selectAll()
+
+    def eventFilter(self, obj, event):
+        if (obj is self.lineEdit() and event.type() == QEvent.MouseButtonPress
+                and self.isEnabled()):
+            # Différé : ouvrir le popup pendant le clic le ferait refermer aussitôt
+            QTimer.singleShot(0, self._show_all)
+        return super().eventFilter(obj, event)
+
+    def _show_all(self):
+        self._model.setStringList(list(ALL_CHANNEL_TYPES))
+        self.lineEdit().selectAll()
+        self._completer.complete()
+
+    def _on_text_edited(self, text: str):
+        matches = channel_type_matches(text)
+        self._model.setStringList(matches)
+        if matches:
+            self._completer.complete()
+        else:
+            self._completer.popup().hide()
+
+    def _commit(self, ch_type: str):
+        if ch_type not in ALL_CHANNEL_TYPES:
+            return
+        # On compare au type retenu (self._type) et pas à currentIndex : Qt
+        # resynchronise l'index tout seul dès que le texte saisi correspond à un
+        # élément (« pan » → Pan), ce qui ferait passer le changement inaperçu.
+        changed = ch_type != self._type
+        self._type = ch_type
+        self.blockSignals(True)
+        self.setCurrentIndex(ALL_CHANNEL_TYPES.index(ch_type))
+        self.blockSignals(False)
+        self.lineEdit().setText(ch_type)
+        if changed:
+            self.type_changed.emit(ch_type)
+
+    def _on_editing_finished(self):
+        """Sortie du champ : on résout la saisie, ou on revient au type courant."""
+        text = self.lineEdit().text()
+        matches = channel_type_matches(text) if text.strip() else []
+        if matches and _ch_norm(text) != _ch_norm(self.current_type()):
+            self._commit(matches[0])
+        else:
+            self.lineEdit().setText(self.current_type())
 
 
 class DmxPreviewWidget(QWidget):
@@ -202,13 +440,20 @@ class DmxPreviewWidget(QWidget):
 
 
 class ChannelRowWidget(QWidget):
-    """Conservé pour compatibilité admin_pack_editor."""
+    """Une ligne de canal : n° coloré, type cherchable, et actions ▲ ▼ ✕.
+
+    `show_default` ajoute la case de valeur fixe DMX. Elle descend à -1, affiché
+    « — » : c'est l'état « aucune valeur imposée », qu'un simple 0-255 ne saurait
+    pas dire — or 0 sur un Dim, c'est un projecteur éteint, pas une absence de
+    consigne.
+    """
     remove_requested  = Signal(object)
     move_up_requested = Signal(object)
     move_dn_requested = Signal(object)
     changed           = Signal()
 
-    def __init__(self, ch_num, ch_type, parent=None):
+    def __init__(self, ch_num, ch_type, parent=None,
+                 default_val=None, show_default=False):
         super().__init__(parent)
         self.setFixedHeight(38)
         self.setStyleSheet("background:#1e1e1e;border-radius:3px;")
@@ -222,7 +467,7 @@ class ChannelRowWidget(QWidget):
         self._num_lbl.setAlignment(Qt.AlignCenter)
         self._set_num_style(color)
         layout.addWidget(self._num_lbl)
-        self._combo = _NoScrollCombo()
+        self._combo = ChannelTypeCombo(ch_type)
         self._combo.setFixedHeight(26)
         self._combo.setStyleSheet(
             "QComboBox{background:#2a2a2a;color:#e0e0e0;border:1px solid #3a3a3a;"
@@ -230,13 +475,25 @@ class ChannelRowWidget(QWidget):
             "QComboBox::drop-down{border:none;width:16px;}"
             "QComboBox QAbstractItemView{background:#222;color:#e0e0e0;}"
         )
-        for ct in ALL_CHANNEL_TYPES:
-            self._combo.addItem(ct)
-        self._combo.setCurrentIndex(
-            ALL_CHANNEL_TYPES.index(ch_type) if ch_type in ALL_CHANNEL_TYPES else 0
-        )
-        self._combo.currentTextChanged.connect(self._on_type_changed)
+        self._combo.type_changed.connect(self._on_type_changed)
         layout.addWidget(self._combo, 1)
+
+        self._default_spin = None
+        if show_default:
+            self._default_spin = QSpinBox()
+            self._default_spin.setRange(-1, 255)
+            self._default_spin.setSpecialValueText("—")
+            self._default_spin.setValue(-1 if default_val is None else int(default_val))
+            self._default_spin.setFixedSize(58, 26)
+            self._default_spin.setAlignment(Qt.AlignCenter)
+            self._default_spin.setToolTip(tr("fe2_fixed_value_hint"))
+            self._default_spin.setStyleSheet(
+                "QSpinBox{background:#2a2a2a;color:#e0e0e0;border:1px solid #3a3a3a;"
+                "border-radius:3px;padding:0 2px;font-size:11px;}"
+                "QSpinBox::up-button,QSpinBox::down-button{width:12px;}")
+            self._default_spin.valueChanged.connect(lambda _: self.changed.emit())
+            layout.addWidget(self._default_spin)
+
         _bs = ("QPushButton{background:#2a2a2a;color:#999;border:1px solid #3a3a3a;"
                "border-radius:3px;font-size:10px;min-width:0;padding:0;}"
                "QPushButton:hover{background:#3a3a3a;color:#fff;border-color:#555;}")
@@ -264,11 +521,8 @@ class ChannelRowWidget(QWidget):
             f"border-radius:3px;color:{color};font-weight:bold;font-size:11px;}}")
 
     def set_type(self, t):
-        self._combo.blockSignals(True)
-        self._combo.setCurrentIndex(
-            ALL_CHANNEL_TYPES.index(t) if t in ALL_CHANNEL_TYPES else 0)
+        self._combo.set_type(t)   # n'émet pas type_changed
         self._set_num_style(CHANNEL_COLORS.get(t, "#666"))
-        self._combo.blockSignals(False)
         self._prev_type = t
 
     def set_read_only(self, ro):
@@ -284,322 +538,21 @@ class ChannelRowWidget(QWidget):
     def _on_dn(self): self.move_dn_requested.emit(self)
     def _on_rm(self): self.remove_requested.emit(self)
     def set_num(self, n): self._num_lbl.setText(f"{n:02d}")
-    def get_type(self): return self._combo.currentText()
+    def get_type(self): return self._combo.current_type()
 
+    def get_default(self):
+        """Valeur fixe DMX, ou None si la case est sur « — »."""
+        if self._default_spin is None:
+            return None
+        v = self._default_spin.value()
+        return None if v < 0 else v
 
-# ──────────────────────────────────────────────────────────────────────────────
-# _ProfileBlockDelegate — blocs carrés colorés pour la ligne de profil
-# ──────────────────────────────────────────────────────────────────────────────
-
-_BLOCK_W = 68
-_BLOCK_H = 44
-
-# Rôles de données pour les items du profil
-_ROLE_CH  = Qt.UserRole        # str  : nom du canal ("R", "Mode"…)
-_ROLE_VAL = Qt.UserRole + 1    # int  : valeur fixe 0-255, ou -1 si non définie
-
-
-class _ProfileBlockDelegate(QStyledItemDelegate):
-    def sizeHint(self, option, index):
-        return QSize(_BLOCK_W, _BLOCK_H)
-
-    def paint(self, painter, option, index):
-        from PySide6.QtWidgets import QStyle
-        from PySide6.QtCore import QRect
-        ch  = index.data(_ROLE_CH) or ""
-        raw = index.data(_ROLE_VAL)
-        val = int(raw) if isinstance(raw, int) and raw >= 0 else None
-        num = index.row() + 1
-        col = QColor(CHANNEL_COLORS.get(ch, "#444"))
-        sel = bool(option.state & QStyle.State_Selected)
-
-        # Calcul luminosité pour contraste texte
-        r_int = col.red(); g_int = col.green(); b_int = col.blue()
-        lum = r_int * 0.299 + g_int * 0.587 + b_int * 0.114
-        text_col = QColor("#ffffff") if lum < 145 else QColor("#111111")
-
-        painter.save()
-        r = option.rect.adjusted(3, 3, -3, -3)
-
-        # Fond plein coloré (chip style)
-        border_col = col.lighter(130) if sel else col.darker(140)
-        painter.setPen(QPen(border_col, 1.5 if sel else 1))
-        painter.setBrush(col.lighter(120) if sel else col)
-        painter.drawRoundedRect(QRectF(r), 6, 6)
-
-        # Numéro (petit, semi-transparent, en haut à gauche)
-        num_col = QColor(text_col)
-        num_col.setAlphaF(0.45)
-        painter.setPen(num_col)
-        painter.setFont(QFont("Segoe UI", 7))
-        painter.drawText(r.adjusted(5, 3, 0, 0), Qt.AlignTop | Qt.AlignLeft, f"{num:02d}")
-
-        # Nom du canal (centré, bold, texte contrasté)
-        painter.setPen(text_col)
-        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        painter.drawText(r, Qt.AlignCenter, channel_label(ch))
-
-        # Badge valeur fixe — fond semi-transparent, texte contrasté
-        if val is not None:
-            badge_txt = str(val)
-            painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
-            fm = painter.fontMetrics()
-            tw = fm.horizontalAdvance(badge_txt) + 6
-            th = fm.height() + 2
-            badge_r = QRect(r.right() - tw - 3, r.top() + 3, tw, th)
-            badge_bg = QColor("#000000"); badge_bg.setAlphaF(0.35)
-            painter.setBrush(badge_bg)
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(QRectF(badge_r), 3, 3)
-            painter.setPen(QColor("#ffffff"))
-            painter.drawText(badge_r, Qt.AlignCenter, badge_txt)
-
-        painter.restore()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# _ProfileStrip — ligne horizontale de blocs drag & drop
-# ──────────────────────────────────────────────────────────────────────────────
-
-class _ProfileStrip(QListWidget):
-    """Ligne horizontale de blocs colorés représentant le profil DMX.
-    Drag & drop interne pour réordonner. Accepte aussi le drop depuis la palette.
-    """
-    order_changed = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFlow(QListWidget.LeftToRight)
-        self.setWrapping(False)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setDragDropMode(QAbstractItemView.DragDrop)
-        self.setDefaultDropAction(Qt.MoveAction)
-        self.setAcceptDrops(True)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.setItemDelegate(_ProfileBlockDelegate(self))
-        self.setSpacing(4)
-        self.setFixedHeight(_BLOCK_H + 18)
-        self.setStyleSheet(
-            "QListWidget{background:#111;border:1px solid #222;border-radius:10px;outline:none;"
-            "padding:4px;}"
-            "QListWidget::item{border-radius:8px;}"
-            "QScrollBar:horizontal{background:#111;height:5px;border-radius:2px;}"
-            "QScrollBar::handle:horizontal{background:#333;border-radius:2px;}"
-            "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;}"
-        )
-        self.model().rowsMoved.connect(lambda: self.order_changed.emit())
-
-    def keyPressEvent(self, event):
-        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
-            row = self.currentRow()
-            if row >= 0:
-                self.takeItem(row)
-                self.order_changed.emit()
-        else:
-            super().keyPressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        """Double-clic pour retirer un canal."""
-        item = self.itemAt(event.pos())
-        if item:
-            self.takeItem(self.row(item))
-            self.order_changed.emit()
-
-    # ── Accepter les drops depuis la palette ──────────────────────────────────
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event):
-        if event.mimeData().hasText() and event.source() is not self:
-            ch = event.mimeData().text()
-            # Vérifier doublon (sauf Mode)
-            if ch != "Mode":
-                for i in range(self.count()):
-                    if self.item(i).data(_ROLE_CH) == ch:
-                        event.acceptProposedAction()
-                        return
-            # Insérer à la position du drop
-            target = self.indexAt(event.pos())
-            insert_row = target.row() if target.isValid() else self.count()
-            self.insertItem(insert_row, self._make_item(ch, -1))
-            self.scrollToItem(self.item(insert_row))
-            self.order_changed.emit()
-            event.acceptProposedAction()
-        else:
-            super().dropEvent(event)
-            self.order_changed.emit()
-
-    # ── Clic droit → valeur fixe ──────────────────────────────────────────────
-
-    def contextMenuEvent(self, event):
-        from PySide6.QtWidgets import QInputDialog
-        item = self.itemAt(event.pos())
-        if not item:
+    def set_default(self, val):
+        if self._default_spin is None:
             return
-        ch  = item.data(_ROLE_CH) or ""
-        raw = item.data(_ROLE_VAL)
-        val = int(raw) if isinstance(raw, int) and raw >= 0 else None
-
-        menu = QMenu(self)
-        menu.setStyleSheet(
-            "QMenu{background:#1e1e1e;color:#ccc;border:1px solid #2a2a2a;font-size:12px;}"
-            "QMenu::item{padding:7px 20px;}"
-            "QMenu::item:selected{background:#00d4ff18;color:#00d4ff;}"
-            "QMenu::item:disabled{color:#444;}"
-        )
-        lbl = f"Valeur fixe : {val}" if val is not None else "Définir valeur fixe…"
-        act_set   = menu.addAction(lbl)
-        act_clear = menu.addAction(tr("fe_clear_fixed"))
-        act_clear.setEnabled(val is not None)
-        menu.addSeparator()
-        act_del = menu.addAction(tr("fe_del_channel"))
-
-        chosen = menu.exec(self.mapToGlobal(event.pos()))
-        if chosen == act_set:
-            v, ok = QInputDialog.getInt(
-                self, tr("fe_fixed_dmx"),
-                tr("fe_f_dmx_value", ch=ch),
-                val if val is not None else 0, 0, 255
-            )
-            if ok:
-                item.setData(_ROLE_VAL, v)
-                self.order_changed.emit()
-        elif chosen == act_clear:
-            item.setData(_ROLE_VAL, -1)
-            self.order_changed.emit()
-        elif chosen == act_del:
-            self.takeItem(self.row(item))
-            self.order_changed.emit()
-
-    # ── API ───────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _make_item(ch: str, val: int = -1) -> QListWidgetItem:
-        """Crée un item correctement typé (val = -1 → pas de valeur fixe)."""
-        item = QListWidgetItem()
-        item.setData(_ROLE_CH, ch)
-        item.setData(_ROLE_VAL, val)
-        item.setSizeHint(QSize(_BLOCK_W, _BLOCK_H))
-        item.setFlags(item.flags() | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)
-        return item
-
-    def get_channels(self):
-        return [self.item(i).data(_ROLE_CH) or "" for i in range(self.count())]
-
-    def get_defaults(self):
-        result = []
-        for i in range(self.count()):
-            raw = self.item(i).data(_ROLE_VAL)
-            result.append(int(raw) if isinstance(raw, int) and raw >= 0 else None)
-        return result
-
-    def add_channel(self, ch_type) -> bool:
-        # Les doublons sont autorisés : un appareil à pixels répète son motif
-        # (R V B R V B…), et le moteur DMX écrit chaque canal par son INDEX,
-        # pas par son type — toutes les barres OFL en contiennent déjà.
-        self.addItem(self._make_item(ch_type))
-        self.scrollToItem(self.item(self.count() - 1))
-        self.order_changed.emit()
-        return True
-
-    def set_channels(self, channels, defaults=None):
-        self.blockSignals(True)
-        self.clear()
-        for i, ch in enumerate(channels):
-            d = defaults[i] if defaults and i < len(defaults) else None
-            val = int(d) if d is not None and int(d) >= 0 else -1
-            self.addItem(self._make_item(ch, val))
-        self.blockSignals(False)
-        self.order_changed.emit()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# _PaletteBlock — bloc de canal glissable depuis la palette
-# ──────────────────────────────────────────────────────────────────────────────
-
-class _PaletteBlock(QWidget):
-    """Bloc coloré représentant un type de canal. Clic ou drag pour ajouter."""
-    clicked_channel = Signal(str)
-
-    _W, _H = 68, 36
-
-    def __init__(self, ch_type, parent=None):
-        super().__init__(parent)
-        self._ch = ch_type
-        col = CHANNEL_COLORS.get(ch_type, "#444")
-        self._col = QColor(col)
-        # Couleur du texte : blanc si fond sombre, noir si fond clair
-        br = col[1:3]; bg = col[3:5]; bb = col[5:7]
-        lum = int(br, 16) * 0.299 + int(bg, 16) * 0.587 + int(bb, 16) * 0.114
-        self._text_col = QColor("#ffffff") if lum < 145 else QColor("#111111")
-        self.setFixedSize(self._W, self._H)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(tr("fe_f_add_channel", ch_type=ch_type))
-        self._drag_start: QPoint | None = None
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        r = self.rect().adjusted(2, 2, -2, -2)
-        c = self._col
-        # Fond plein coloré (style chips du patch)
-        painter.setPen(QPen(c.darker(140), 1))
-        painter.setBrush(c)
-        painter.drawRoundedRect(QRectF(r), 6, 6)
-        # Nom centré, texte contrasté
-        painter.setPen(self._text_col)
-        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        painter.drawText(r, Qt.AlignCenter, channel_label(self._ch))
-        painter.end()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_start = event.pos()
-
-    def mouseMoveEvent(self, event):
-        if not (event.buttons() & Qt.LeftButton):
-            return
-        if self._drag_start is None:
-            return
-        if (event.pos() - self._drag_start).manhattanLength() < 8:
-            return
-        # Lancer le drag
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setText(self._ch)
-        drag.setMimeData(mime)
-        # Pixmap de prévisualisation identique au bloc
-        pix = QPixmap(self._W, self._H)
-        pix.fill(Qt.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(self._col.darker(140), 1))
-        p.setBrush(self._col)
-        p.drawRoundedRect(QRectF(2, 2, self._W - 4, self._H - 4), 6, 6)
-        p.setPen(self._text_col)
-        p.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        p.drawText(pix.rect(), Qt.AlignCenter, self._ch)
-        p.end()
-        drag.setPixmap(pix)
-        drag.setHotSpot(QPoint(self._W // 2, self._H // 2))
-        drag.exec(Qt.CopyAction)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._drag_start is not None:
-            if (event.pos() - self._drag_start).manhattanLength() < 8:
-                self.clicked_channel.emit(self._ch)
-        self._drag_start = None
+        self._default_spin.blockSignals(True)
+        self._default_spin.setValue(-1 if val is None else int(val))
+        self._default_spin.blockSignals(False)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -644,9 +597,17 @@ class FixtureEditorDialog(QDialog):
         self._pack_check_thread = None
         self._pack_check_worker = None
 
+        # Modes DMX de la fixture en cours d'édition. `_modes_data[_cur_mode]`
+        # n'est à jour qu'après _commit_current_mode() : entre deux, la vérité
+        # est dans les lignes affichées (`_rows`).
+        self._modes_data  = []
+        self._cur_mode    = -1
+        self._mode_tabs   = []
+        self._rows        = []
+        self._pixel_matrix = None
+
         self._load_fixtures()
         self._build_ui()
-        self._rebuild_presets(FIXTURE_TYPES[0])
         self._rebuild_list()
 
         if self._fixtures:
@@ -921,17 +882,16 @@ class FixtureEditorDialog(QDialog):
         self._type_combo.setFixedHeight(38)
         for ft in FIXTURE_TYPES:
             self._type_combo.addItem(ft)
-        self._type_combo.currentTextChanged.connect(self._on_type_changed)
         tc.addWidget(self._type_combo)
         type_mode_row.addLayout(tc, 1)
 
         mc = QVBoxLayout()
         mc.setSpacing(5)
-        mc.addWidget(self._lbl("NOM DU MODE / PROTOCOLE"))
-        self._mode_name_edit = QLineEdit()
-        self._mode_name_edit.setPlaceholderText(tr("fe_ex_mode"))
-        self._mode_name_edit.setFixedHeight(38)
-        mc.addWidget(self._mode_name_edit)
+        mc.addWidget(self._lbl("MARQUE (FABRICANT)"))
+        self._mfr_edit = QLineEdit()
+        self._mfr_edit.setPlaceholderText(tr("fe2_mfr_ph"))
+        self._mfr_edit.setFixedHeight(38)
+        mc.addWidget(self._mfr_edit)
         type_mode_row.addLayout(mc, 1)
 
         rv.addLayout(type_mode_row)
@@ -951,74 +911,97 @@ class FixtureEditorDialog(QDialog):
         rv.addLayout(ch_hdr)
         rv.addSpacing(6)
 
-        # Profils rapides — grille dynamique selon le type
-        rv.addWidget(self._lbl("DÉMARRER AVEC UN PROFIL"))
+        # ── Onglets de modes DMX ──────────────────────────────────────────────
+        # Un même appareil expose plusieurs protocoles (8CH, 13CH…). Les tenir
+        # dans UNE fixture à plusieurs modes, plutôt qu'une fixture par mode,
+        # c'est ce que sait déjà lire le sélecteur de mode de la bibliothèque.
+        rv.addWidget(self._lbl("MODES DMX"))
         rv.addSpacing(6)
-        self._presets_wrap = QWidget()
-        self._presets_wrap.setStyleSheet("QWidget{background:transparent;}")
-        self._presets_grid = QGridLayout(self._presets_wrap)
-        self._presets_grid.setContentsMargins(0, 0, 0, 0)
-        self._presets_grid.setSpacing(5)
-        rv.addWidget(self._presets_wrap)
-        rv.addSpacing(14)
 
-        # ── Générateur barre / matrice à pixels ───────────────────────────────
-        # Une barre 16 px RGB fait 48 canaux : les poser un par un est
-        # impraticable, et surtout le résultat ne serait qu'un gros projecteur.
-        # Ce générateur écrit le profil ET la géométrie qui en fait une barre.
-        px_row = QHBoxLayout()
-        px_row.setSpacing(6)
-        btn_px = QPushButton(tr("fe2_gen_matrix"))
-        btn_px.setFixedHeight(28)
-        btn_px.setCursor(Qt.PointingHandCursor)
-        btn_px.setToolTip(
-            tr("fe_pixel_gen_hint"))
-        btn_px.setStyleSheet(
-            "QPushButton{background:#1a1024;color:#cc77dd;border:1px solid #3a2a4a;"
-            "border-radius:5px;font-size:11px;font-weight:bold;padding:0 12px;}"
-            "QPushButton:hover{background:#241634;border-color:#cc77dd;}")
-        btn_px.clicked.connect(self._gen_pixel_profile)
-        px_row.addWidget(btn_px)
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(4)
+        self._mode_tab_host = QWidget()
+        self._mode_tab_host.setStyleSheet("QWidget{background:transparent;}")
+        self._mode_tab_layout = QHBoxLayout(self._mode_tab_host)
+        self._mode_tab_layout.setContentsMargins(0, 0, 0, 0)
+        self._mode_tab_layout.setSpacing(4)
+        tab_row.addWidget(self._mode_tab_host, 1)
 
-        self._px_info = QLabel("")
-        self._px_info.setStyleSheet("font-size:10px;color:#cc77dd;background:transparent;")
-        px_row.addWidget(self._px_info)
-        px_row.addStretch()
-        rv.addLayout(px_row)
-        rv.addSpacing(10)
+        btn_add_mode = QPushButton(tr("fe2_add_mode"))
+        btn_add_mode.setFixedHeight(28)
+        btn_add_mode.setCursor(Qt.PointingHandCursor)
+        btn_add_mode.setStyleSheet(self._MODE_TAB_IDLE)
+        btn_add_mode.clicked.connect(self._add_mode)
+        tab_row.addWidget(btn_add_mode)
 
-        # Ligne de profil (blocs drag & drop)
-        profile_hint = QLabel(
-            tr("fe2_profile_hint")
-        )
-        profile_hint.setStyleSheet("font-size:10px;color:#444;")
-        rv.addWidget(profile_hint)
-        rv.addSpacing(5)
-
-        self._ch_list = _ProfileStrip()
-        self._ch_list.order_changed.connect(self._on_channels_changed)
-        rv.addWidget(self._ch_list)
-        rv.addSpacing(18)
-
-        # Palette — tous les canaux disponibles
-        palette_lbl = QLabel(tr("fe2_channels_avail"))
-        palette_lbl.setStyleSheet("font-size:10px;color:#444;")
-        rv.addWidget(palette_lbl)
+        self._btn_del_mode = QPushButton("✕")
+        self._btn_del_mode.setFixedSize(28, 28)
+        self._btn_del_mode.setToolTip(tr("fe2_del_mode"))
+        self._btn_del_mode.setStyleSheet(
+            "QPushButton{background:#2a0000;color:#cc4444;border:1px solid #3a1111;"
+            "border-radius:5px;font-size:11px;font-weight:bold;padding:0;}"
+            "QPushButton:hover{background:#440000;color:#ff6666;}"
+            "QPushButton:disabled{background:#181818;color:#333;border-color:#222;}")
+        self._btn_del_mode.clicked.connect(self._del_mode)
+        tab_row.addWidget(self._btn_del_mode)
+        rv.addLayout(tab_row)
         rv.addSpacing(8)
 
-        palette_wrap = QWidget()
-        palette_wrap.setStyleSheet("QWidget{background:transparent;}")
-        pg = QGridLayout(palette_wrap)
-        pg.setContentsMargins(0, 0, 0, 0)
-        pg.setSpacing(5)
-        cols = 10
-        for idx, ct in enumerate(ALL_CHANNEL_TYPES):
-            ri, ci = divmod(idx, cols)
-            block = _PaletteBlock(ct)
-            block.clicked_channel.connect(self._ch_list.add_channel)
-            pg.addWidget(block, ri, ci)
-        rv.addWidget(palette_wrap)
-        rv.addSpacing(16)
+        # Nom du mode courant
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+        lbl_mn = QLabel(tr("fe2_mode_name"))
+        lbl_mn.setStyleSheet("font-size:11px;color:#777;")
+        name_row.addWidget(lbl_mn)
+        self._mode_name_edit = QLineEdit()
+        self._mode_name_edit.setPlaceholderText(tr("fe_ex_mode"))
+        self._mode_name_edit.setFixedHeight(30)
+        self._mode_name_edit.textChanged.connect(self._on_mode_name_changed)
+        name_row.addWidget(self._mode_name_edit, 1)
+        rv.addLayout(name_row)
+        rv.addSpacing(14)
+
+        # Aperçu DMX du mode courant
+        self._preview = DmxPreviewWidget()
+        rv.addWidget(self._preview)
+        rv.addSpacing(8)
+
+        # Lignes de canaux
+        rows_hint = QLabel(tr("fe2_rows_hint"))
+        rows_hint.setStyleSheet("font-size:10px;color:#444;")
+        rv.addWidget(rows_hint)
+        rv.addSpacing(5)
+
+        self._ch_scroll = QScrollArea()
+        self._ch_scroll.setWidgetResizable(True)
+        self._ch_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._ch_scroll.setMinimumHeight(190)
+        self._ch_scroll.setMaximumHeight(430)
+        self._ch_scroll.setStyleSheet(
+            "QScrollArea{background:#111;border:1px solid #222;border-radius:8px;}")
+        self._ch_host = QWidget()
+        self._ch_host.setStyleSheet("QWidget{background:#111;}")
+        self._ch_vbox = QVBoxLayout(self._ch_host)
+        self._ch_vbox.setContentsMargins(6, 6, 6, 6)
+        self._ch_vbox.setSpacing(3)
+        self._ch_vbox.addStretch()
+        self._ch_scroll.setWidget(self._ch_host)
+        rv.addWidget(self._ch_scroll)
+        rv.addSpacing(8)
+
+        add_row = QHBoxLayout()
+        btn_add_ch = QPushButton(tr("fe2_add_channel"))
+        btn_add_ch.setFixedHeight(28)
+        btn_add_ch.setCursor(Qt.PointingHandCursor)
+        btn_add_ch.setStyleSheet(
+            "QPushButton{background:#0d2630;color:#00d4ff;border:1px solid #14404f;"
+            "border-radius:5px;font-size:11px;font-weight:bold;padding:0 14px;}"
+            "QPushButton:hover{background:#12323f;border-color:#00d4ff;}")
+        btn_add_ch.clicked.connect(lambda: self._append_channel("Dim"))
+        add_row.addWidget(btn_add_ch)
+        add_row.addStretch()
+        rv.addLayout(add_row)
+        rv.addSpacing(18)
 
         rv.addSpacing(28)
         rv.addWidget(self._sep())
@@ -1045,12 +1028,199 @@ class FixtureEditorDialog(QDialog):
     def _show_empty_state(self):
         self._current_idx = -1
         self._name_edit.setText("")
+        self._mfr_edit.setText("")
         self._editor_title.setText(tr("fe_new_fixture_title"))
         self._type_combo.setCurrentIndex(0)
-        self._rebuild_presets(FIXTURE_TYPES[0])
-        self._mode_name_edit.setText("")
-        self._ch_list.set_channels(["R", "G", "B"])
+        self._pixel_matrix = None
+        self._load_modes([{"name": "", "profile": ["R", "G", "B"], "defaults": []}])
         self._btn_delete.setEnabled(False)
+
+    # ── Modes DMX ─────────────────────────────────────────────────────────────
+
+    _MODE_TAB_IDLE = (
+        "QPushButton{background:#1a1a1a;color:#888;border:1px solid #2a2a2a;"
+        "border-radius:5px;font-size:11px;padding:0 12px;}"
+        "QPushButton:hover{background:#222;color:#ccc;border-color:#3a3a3a;}")
+    _MODE_TAB_ACTIVE = (
+        "QPushButton{background:#00d4ff22;color:#00d4ff;border:1px solid #00d4ff66;"
+        "border-radius:5px;font-size:11px;font-weight:bold;padding:0 12px;}")
+
+    def _load_modes(self, modes: list):
+        """Remplace la pile de modes et affiche le premier."""
+        self._modes_data = []
+        for m in modes or []:
+            self._modes_data.append({
+                "name":     m.get("name", ""),
+                "profile":  list(m.get("profile", []) or []),
+                "defaults": list(m.get("defaults", []) or []),
+                "matrix":   dict(m["matrix"]) if isinstance(m.get("matrix"), dict) else None,
+            })
+        if not self._modes_data:
+            self._modes_data.append({"name": "", "profile": [], "defaults": [], "matrix": None})
+        self._cur_mode = -1
+        self._rebuild_mode_tabs()
+        self._select_mode(0)
+
+    def _commit_current_mode(self):
+        """Recopie les lignes affichées dans le mode courant."""
+        if 0 <= self._cur_mode < len(self._modes_data):
+            m = self._modes_data[self._cur_mode]
+            m["profile"]  = self._get_profile()
+            m["defaults"] = self._get_defaults()
+            m["matrix"]   = getattr(self, "_pixel_matrix", None)
+
+    def _rebuild_mode_tabs(self):
+        while self._mode_tab_layout.count():
+            it = self._mode_tab_layout.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self._mode_tabs = []
+        for i, m in enumerate(self._modes_data):
+            n = len(m.get("profile", []))
+            btn = QPushButton(f"{m['name'] or f'Mode {i + 1}'}  ·  {n}ch")
+            btn.setFixedHeight(28)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setChecked(i == self._cur_mode)
+            btn.setStyleSheet(self._MODE_TAB_ACTIVE if i == self._cur_mode
+                              else self._MODE_TAB_IDLE)
+            btn.clicked.connect(lambda _=False, x=i: self._select_mode(x))
+            self._mode_tab_layout.addWidget(btn)
+            self._mode_tabs.append(btn)
+        self._mode_tab_layout.addStretch()
+        self._btn_del_mode.setEnabled(len(self._modes_data) > 1)
+
+    def _refresh_mode_tab_label(self):
+        """Met à jour l'onglet courant (nom + nombre de canaux) sans tout rebâtir."""
+        if not (0 <= self._cur_mode < len(self._mode_tabs)):
+            return
+        m = self._modes_data[self._cur_mode]
+        self._mode_tabs[self._cur_mode].setText(
+            f"{m['name'] or f'Mode {self._cur_mode + 1}'}  ·  {len(self._get_profile())}ch")
+
+    def _select_mode(self, idx: int):
+        self._commit_current_mode()
+        self._cur_mode = max(0, min(idx, len(self._modes_data) - 1))
+        for i, btn in enumerate(self._mode_tabs):
+            active = (i == self._cur_mode)
+            btn.setChecked(active)
+            btn.setStyleSheet(self._MODE_TAB_ACTIVE if active else self._MODE_TAB_IDLE)
+        m = self._modes_data[self._cur_mode]
+        self._mode_name_edit.blockSignals(True)
+        self._mode_name_edit.setText(m.get("name", ""))
+        self._mode_name_edit.blockSignals(False)
+        # La géométrie pixel appartient au mode : un 8CH « Look » et un 48CH
+        # « Pixel » de la même barre n'ont pas la même matrice.
+        self._pixel_matrix = m.get("matrix")
+        self._set_profile(m.get("profile", []), m.get("defaults", []))
+
+    def _on_mode_name_changed(self, text: str):
+        if 0 <= self._cur_mode < len(self._modes_data):
+            self._modes_data[self._cur_mode]["name"] = text
+            self._refresh_mode_tab_label()
+
+    def _add_mode(self):
+        self._commit_current_mode()
+        self._modes_data.append({
+            "name": f"Mode {len(self._modes_data) + 1}",
+            "profile": [], "defaults": [], "matrix": None,
+        })
+        self._cur_mode = -1          # rien à recopier : la pile vient de changer
+        self._rebuild_mode_tabs()
+        self._select_mode(len(self._modes_data) - 1)
+        self._mode_name_edit.setFocus()
+
+    def _del_mode(self):
+        if len(self._modes_data) <= 1:
+            return
+        m = self._modes_data[self._cur_mode]
+        if m.get("profile") and QMessageBox.question(
+            self, tr("fe2_del_mode"),
+            tr("fe2_f_del_mode_q", name=m.get("name") or f"Mode {self._cur_mode + 1}"),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        self._modes_data.pop(self._cur_mode)
+        new_idx = max(0, self._cur_mode - 1)
+        self._cur_mode = -1          # rien à recopier : le mode vient d'être retiré
+        self._rebuild_mode_tabs()
+        self._select_mode(new_idx)
+
+    # ── Lignes de canaux ──────────────────────────────────────────────────────
+
+    def _get_profile(self) -> list:
+        return [r.get_type() for r in self._rows]
+
+    def _get_defaults(self) -> list:
+        return [r.get_default() for r in self._rows]
+
+    def _set_profile(self, profile: list, defaults: list | None = None):
+        """Reconstruit les lignes de canaux affichées."""
+        defaults = defaults or []
+        for r in self._rows:
+            r.setParent(None)
+            r.deleteLater()
+        self._rows = []
+        while self._ch_vbox.count():
+            self._ch_vbox.takeAt(0)
+        for i, ch in enumerate(profile):
+            d = defaults[i] if i < len(defaults) else None
+            self._rows.append(self._make_row(i + 1, ch, d))
+            self._ch_vbox.addWidget(self._rows[-1])
+        self._ch_vbox.addStretch()
+        self._on_channels_changed()
+
+    def _make_row(self, num: int, ch_type: str, default_val=None) -> ChannelRowWidget:
+        row = ChannelRowWidget(num, ch_type, default_val=default_val, show_default=True)
+        row.remove_requested.connect(self._remove_row)
+        row.move_up_requested.connect(self._move_row_up)
+        row.move_dn_requested.connect(self._move_row_dn)
+        row.changed.connect(self._on_channels_changed)
+        return row
+
+    def _append_channel(self, ch_type: str):
+        """Ajoute un canal en fin de profil (bouton + Canal, ou clic palette)."""
+        row = self._make_row(len(self._rows) + 1, ch_type)
+        self._ch_vbox.insertWidget(max(0, self._ch_vbox.count() - 1), row)
+        self._rows.append(row)
+        self._on_channels_changed()
+        self._ch_scroll.verticalScrollBar().setValue(
+            self._ch_scroll.verticalScrollBar().maximum())
+
+    def _remove_row(self, row):
+        if row not in self._rows:
+            return
+        self._rows.remove(row)
+        self._ch_vbox.removeWidget(row)
+        row.setParent(None)
+        row.deleteLater()
+        self._renumber()
+        self._on_channels_changed()
+
+    def _move_row_up(self, row):
+        i = self._rows.index(row) if row in self._rows else -1
+        if i > 0:
+            self._rows[i], self._rows[i - 1] = self._rows[i - 1], self._rows[i]
+            self._reinsert_rows()
+
+    def _move_row_dn(self, row):
+        i = self._rows.index(row) if row in self._rows else -1
+        if 0 <= i < len(self._rows) - 1:
+            self._rows[i], self._rows[i + 1] = self._rows[i + 1], self._rows[i]
+            self._reinsert_rows()
+
+    def _reinsert_rows(self):
+        while self._ch_vbox.count():
+            self._ch_vbox.takeAt(0)
+        for r in self._rows:
+            self._ch_vbox.addWidget(r)
+        self._ch_vbox.addStretch()
+        self._renumber()
+        self._on_channels_changed()
+
+    def _renumber(self):
+        for i, r in enumerate(self._rows):
+            r.set_num(i + 1)
 
     # ── Gestion liste ─────────────────────────────────────────────────────────
 
@@ -1096,23 +1266,16 @@ class FixtureEditorDialog(QDialog):
         self._name_edit.blockSignals(True)
         self._name_edit.setText(fx.get("name", ""))
         self._name_edit.blockSignals(False)
+        self._mfr_edit.setText(fx.get("manufacturer", ""))
         self._editor_title.setText(fx.get("name", "Projecteur"))
         self._type_combo.blockSignals(True)
         ti = self._type_combo.findText(fx.get("fixture_type", "PAR LED"))
         if ti >= 0:
             self._type_combo.setCurrentIndex(ti)
         self._type_combo.blockSignals(False)
-        self._rebuild_presets(fx.get("fixture_type", "PAR LED"))
-        self._mode_name_edit.setText(fx.get("mode_name", ""))
-        max_ch = fx.get("max_channels", 512)
         # Repartir de la géométrie de CETTE fixture (ou aucune) : sans ça,
         # celle générée pour la précédente serait recollée à la suivante.
-        self._pixel_matrix = dict(fx["matrix"]) if isinstance(fx.get("matrix"), dict) else None
-        if hasattr(self, "_px_info"):
-            _m = self._pixel_matrix
-            self._px_info.setText(
-                f"▦ {_m['rows']}×{_m['cols']} = {_m['pixel_count']} pixels" if _m else "")
-        self._ch_list.set_channels(fx.get("profile", []), fx.get("defaults"))
+        self._load_modes(_fixture_modes(fx))
         self._btn_delete.setEnabled(True)
         self._my_list.blockSignals(True)
         self._my_list.setCurrentRow(idx)
@@ -1127,13 +1290,13 @@ class FixtureEditorDialog(QDialog):
         self._name_edit.blockSignals(True)
         self._name_edit.setText("")
         self._name_edit.blockSignals(False)
+        self._mfr_edit.setText("")
         self._editor_title.setText(tr("fe_new_fixture_title"))
         self._type_combo.blockSignals(True)
         self._type_combo.setCurrentIndex(0)
         self._type_combo.blockSignals(False)
-        self._rebuild_presets(FIXTURE_TYPES[0])
-        self._mode_name_edit.setText("")
-        self._ch_list.set_channels(["R", "G", "B"])
+        self._pixel_matrix = None
+        self._load_modes([{"name": "", "profile": ["R", "G", "B"], "defaults": []}])
         self._btn_delete.setEnabled(False)
         self._my_list.blockSignals(True)
         self._my_list.clearSelection()
@@ -1262,191 +1425,78 @@ class FixtureEditorDialog(QDialog):
         if ti >= 0:
             self._type_combo.setCurrentIndex(ti)
         self._type_combo.blockSignals(False)
-        self._rebuild_presets(fx.get("fixture_type", "PAR LED"))
-        if fx.get("mode_name"):
-            self._mode_name_edit.setText(fx["mode_name"])
-        max_ch = fx.get("max_channels", 512)
-        # Repartir de la géométrie de CETTE fixture (ou aucune) : sans ça,
-        # celle générée pour la précédente serait recollée à la suivante.
-        self._pixel_matrix = dict(fx["matrix"]) if isinstance(fx.get("matrix"), dict) else None
-        if hasattr(self, "_px_info"):
-            _m = self._pixel_matrix
-            self._px_info.setText(
-                f"▦ {_m['rows']}×{_m['cols']} = {_m['pixel_count']} pixels" if _m else "")
-        self._ch_list.set_channels(fx.get("profile", []), fx.get("defaults"))
-
-    # ── Presets dynamiques ────────────────────────────────────────────────────
-
-    def _on_type_changed(self, fixture_type: str):
-        self._rebuild_presets(fixture_type)
-
-    def _rebuild_presets(self, fixture_type: str | None = None):
-        if fixture_type is None:
-            fixture_type = self._type_combo.currentText()
-        # Vider la grille
-        while self._presets_grid.count():
-            item = self._presets_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        presets = _PRESETS_BY_TYPE.get(fixture_type, [])
-        _pcols = 7
-        for pi, (label, profile) in enumerate(presets):
-            pr, pc = divmod(pi, _pcols)
-            btn = QPushButton(label)
-            btn.setFixedHeight(26)
-            btn.setStyleSheet(
-                "QPushButton{background:#1a1a1a;color:#777;border:1px solid #2a2a2a;"
-                "border-radius:5px;font-size:10px;padding:0 10px;}"
-                "QPushButton:hover{background:#222;color:#bbb;border-color:#3a3a3a;}"
-            )
-            btn.clicked.connect(lambda _=False, p=profile: self._ch_list.set_channels(p))
-            self._presets_grid.addWidget(btn, pr, pc)
+        if fx.get("manufacturer") and not self._mfr_edit.text().strip():
+            self._mfr_edit.setText(fx["manufacturer"])
+        # TOUS les modes de la source sont repris : une lyre OFL en expose
+        # souvent 3 ou 4, et n'en copier qu'un obligeait à refaire l'opération
+        # (puis à patcher deux fixtures distinctes) pour changer de protocole.
+        self._load_modes(_fixture_modes(fx))
 
     # ── Canaux ────────────────────────────────────────────────────────────────
 
     def _on_channels_changed(self):
-        channels = self._ch_list.get_channels()
+        channels = self._get_profile()
         n = len(channels)
         self._ch_count_lbl.setText(tr("fe_f_n_channels", n=n, a0='x' if n > 1 else ''))
-        self._check_pixel_hint(channels)
-
-    def _check_pixel_hint(self, channels):
-        """
-        Prévient quand un motif de couleur se répète sans géométrie déclarée.
-
-        Poser R V B R V B à la main donne un profil DMX juste, mais MyStrow n'y
-        verra qu'UN projecteur : sans la métadonnée `matrix`, pas de bloc sur le
-        plan de feu ni d'effet par pixel. L'utilisateur ne peut pas deviner que
-        son travail correct produira un résultat décevant — autant le lui dire
-        pendant qu'il compose, pas après.
-        """
-        if not hasattr(self, '_px_info'):
-            return
-        _mx = getattr(self, '_pixel_matrix', None)
-        if _mx:
-            self._px_info.setText(
-                f"▦ {_mx['rows']}×{_mx['cols']} = {_mx['pixel_count']} pixels")
-            self._px_info.setStyleSheet(
-                "font-size:10px;color:#cc77dd;background:transparent;")
-            return
-
-        # Un canal de couleur répété = motif par pixel très probable
-        _reps = max((channels.count(c) for c in ("R", "G", "B", "W")), default=0)
-        if _reps >= 2:
-            self._px_info.setText(
-                tr("fe_f_pattern_repeat", _reps=_reps))
-            self._px_info.setStyleSheet(
-                "font-size:10px;color:#ffaa33;font-weight:bold;background:transparent;")
-            self._px_info.setToolTip(
-                tr("fe_pixel_warning"))
-        else:
-            self._px_info.setText("")
-            self._px_info.setToolTip("")
+        self._preview.set_channels(channels)
+        self._refresh_mode_tab_label()
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
 
-    def _gen_pixel_profile(self):
-        """Compose le profil d'un appareil à pixels et retient sa géométrie."""
-        from PySide6.QtWidgets import QDialogButtonBox, QFormLayout
+    @staticmethod
+    def _kept_matrix(matrix, profile):
+        """Géométrie pixel, conservée seulement si le profil lui correspond encore.
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("fe2_pixel_bar"))
-        dlg.setStyleSheet(self.styleSheet())
-        form = QFormLayout(dlg)
-        form.setContentsMargins(18, 16, 18, 12)
-        form.setSpacing(10)
-
-        sp_rows = QSpinBox(); sp_rows.setRange(1, 64); sp_rows.setValue(1)
-        sp_cols = QSpinBox(); sp_cols.setRange(1, 128); sp_cols.setValue(8)
-        cb_cell = ComboSansMolette()
-        _CELLS = [("RVB", ["R", "G", "B"]),
-                  ("RVB + Blanc", ["R", "G", "B", "W"]),
-                  ("RVB + Blanc + Ambre", ["R", "G", "B", "W", "Ambre"]),
-                  ("RVB + Dim", ["Dim", "R", "G", "B"]),
-                  ("Blanc seul", ["W"])]
-        for lbl, _c in _CELLS:
-            cb_cell.addItem(lbl)
-        chk_dim = QCheckBox(tr("fe2_master_dim")); chk_dim.setChecked(True)
-        chk_str = QCheckBox(tr("fe2_master_strobe")); chk_str.setChecked(True)
-
-        form.addRow("Lignes :", sp_rows)
-        form.addRow("Colonnes (pixels) :", sp_cols)
-        form.addRow("Canaux par pixel :", cb_cell)
-        form.addRow("Canaux globaux :", chk_dim)
-        form.addRow("", chk_str)
-
-        _tot = QLabel("")
-        _tot.setStyleSheet("color:#cc77dd;font-size:11px;font-weight:bold;")
-        form.addRow("Total :", _tot)
-
-        def _recount():
-            cell = _CELLS[cb_cell.currentIndex()][1]
-            head = (1 if chk_dim.isChecked() else 0) + (1 if chk_str.isChecked() else 0)
-            n = sp_rows.value() * sp_cols.value()
-            _tot.setText(tr("fe_f_channels_px", a0=head + n * len(cell), n=n, a1=len(cell), a2=f' + {head} globaux' if head else ''))
-        for w in (sp_rows, sp_cols):
-            w.valueChanged.connect(lambda _: _recount())
-        cb_cell.currentIndexChanged.connect(lambda _: _recount())
-        chk_dim.toggled.connect(lambda _: _recount())
-        chk_str.toggled.connect(lambda _: _recount())
-        _recount()
-
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
-        form.addRow(bb)
-
-        if dlg.exec() != QDialog.Accepted:
-            return
-
-        cell = _CELLS[cb_cell.currentIndex()][1]
-        head = (["Dim"] if chk_dim.isChecked() else []) + \
-               (["Strobe"] if chk_str.isChecked() else [])
-        rows, cols = sp_rows.value(), sp_cols.value()
-        n_px = rows * cols
-        profile = list(head) + cell * n_px
-
-        self._ch_list.set_channels(profile, None)
-        # Géométrie retenue pour _get_form_data — c'est elle qui distingue une
-        # barre d'un simple projecteur à 48 canaux.
-        self._pixel_matrix = {
-            "rows": rows, "cols": cols,
-            "pixel_count": n_px, "pixel_channels": list(cell),
-            "head": list(head), "tail": [],
-            "offset": len(head), "order": "perPixel",
-        }
-        self._px_info.setText(
-            tr("fe_f_matrix", rows=rows, cols=cols, n_px=n_px, a0=len(profile)))
-        if not self._type_combo.currentText().startswith(("Barre", "Matrice")):
-            _want = "Barre LED" if rows <= 1 else "Matrice LED"
-            _i = self._type_combo.findText(_want)
-            if _i >= 0:
-                self._type_combo.setCurrentIndex(_i)
-        self._on_channels_changed()
+        L'utilisateur a pu retirer des canaux à la main après génération : une
+        matrice qui ne compte plus ses canaux ferait éclater la fixture en
+        pixels fantômes sur le plan de feu.
+        """
+        if not matrix:
+            return None
+        expected = (len(matrix.get("head") or []) +
+                    matrix.get("pixel_count", 0) * len(matrix.get("pixel_channels") or []))
+        return dict(matrix) if len(profile) == expected else None
 
     def _get_form_data(self):
-        profile  = self._ch_list.get_channels()
-        defaults = self._ch_list.get_defaults()
+        self._commit_current_mode()
+        # Les modes vides sont écartés : ils ne décrivent aucun protocole et le
+        # sélecteur de mode de la bibliothèque les ignorerait de toute façon.
+        modes = [m for m in self._modes_data if m.get("profile")]
+
+        out_modes = []
+        for i, m in enumerate(modes):
+            entry = {
+                "name":         m.get("name") or f"Mode {i + 1}",
+                "channelCount": len(m["profile"]),
+                "profile":      list(m["profile"]),
+            }
+            if any(v is not None for v in m.get("defaults") or []):
+                entry["defaults"] = list(m["defaults"])
+            mx = self._kept_matrix(m.get("matrix"), m["profile"])
+            if mx:
+                entry["matrix"] = mx
+            out_modes.append(entry)
+
+        # La racine décrit le PREMIER mode : c'est ce que lisent le patch, les
+        # exports et les fixtures d'avant les modes. Le reste vit dans `modes`,
+        # que le sélecteur de la bibliothèque sait proposer.
+        first = out_modes[0] if out_modes else {"name": "", "profile": []}
         data = {
             "name":         self._name_edit.text().strip(),
-            "manufacturer": "Générique",
+            "manufacturer": self._mfr_edit.text().strip() or "Générique",
             "fixture_type": self._type_combo.currentText(),
-            "mode_name":    self._mode_name_edit.text().strip(),
+            "mode_name":    first.get("name", ""),
             "max_channels": 512,
             "group":        "face",
-            "profile":      profile,
+            "profile":      list(first.get("profile") or []),
             "source":       "user",
         }
-        if any(v is not None for v in defaults):
-            data["defaults"] = defaults
-        # Géométrie pixel : conservée seulement si le profil correspond encore
-        # (l'utilisateur a pu retirer des canaux à la main après génération).
-        _mx = getattr(self, '_pixel_matrix', None)
-        if _mx:
-            _expected = (len(_mx["head"]) +
-                         _mx["pixel_count"] * len(_mx["pixel_channels"]))
-            if len(profile) == _expected:
-                data["matrix"] = dict(_mx)
+        if first.get("defaults"):
+            data["defaults"] = list(first["defaults"])
+        if first.get("matrix"):
+            data["matrix"] = dict(first["matrix"])
+        if out_modes:
+            data["modes"] = out_modes
         return data
 
     def _save_current(self):
@@ -1478,7 +1528,12 @@ class FixtureEditorDialog(QDialog):
 
         self._save_fixtures()
         self._rebuild_list()
+        # Signaux bloqués : laisser partir currentRowChanged rechargerait la
+        # fixture qu'on vient d'écrire et ramènerait l'affichage au mode 1 —
+        # on repartirait du mauvais onglet après chaque enregistrement.
+        self._my_list.blockSignals(True)
         self._my_list.setCurrentRow(self._current_idx)
+        self._my_list.blockSignals(False)
         self._btn_delete.setEnabled(True)
         self._editor_title.setText(data["name"])
 

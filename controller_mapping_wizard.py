@@ -3,18 +3,21 @@ Assistant de mapping de contrôleur MIDI.
 Permet de créer un profil pour n'importe quel contrôleur non supporté nativement.
 """
 import json
+import threading
 import urllib.parse
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QSpinBox, QStackedWidget, QWidget, QLineEdit,
-    QFrame, QGridLayout, QScrollArea, QSizePolicy, QTextEdit, QSlider
+    QFrame, QGridLayout, QScrollArea, QSizePolicy, QTextEdit, QSlider,
+    QFileDialog, QMessageBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QColor, QDesktopServices
 from PySide6.QtCore import QUrl
 
-from controller_profile import list_profiles, save_profile
-from core import MIDI_AVAILABLE, ComboSansMolette
+from controller_profile import (list_profiles, save_profile, load_profile,
+                                export_profile, unique_profile_path)
+from core import MIDI_AVAILABLE, ComboSansMolette
 from i18n import tr
 
 # ─── Style cohérent avec le thème MyStrow ────────────────────────────────────
@@ -92,27 +95,54 @@ _COLOR_DEFAULT_VEL = {
 }
 
 
-def _get_midi_ports():
-    """Retourne la liste des ports MIDI IN disponibles."""
+def _rtmidi_module():
+    """Module rtmidi utilisable (python-rtmidi ou rtmidi2), None si aucun."""
     if not MIDI_AVAILABLE:
-        return []
+        return None
     try:
         import rtmidi
-        m = rtmidi.MidiIn()
-        ports = m.get_ports()
+        return rtmidi
+    except ImportError:
         try:
-            m.close_port()
-        except Exception:
-            pass
-        return ports
+            import rtmidi2
+            return rtmidi2
+        except ImportError:
+            return None
+
+
+def _get_midi_ports():
+    """Retourne la liste des ports MIDI IN disponibles."""
+    mod = _rtmidi_module()
+    if not mod:
+        return []
+    try:
+        return list(mod.MidiIn().get_ports())
     except Exception:
-        try:
-            import rtmidi2 as rtmidi
-            m = rtmidi.MidiIn()
-            ports = m.get_ports()
-            return ports
-        except Exception:
-            return []
+        return []
+
+
+def _get_midi_out_ports():
+    """Retourne la liste des ports MIDI OUT disponibles."""
+    mod = _rtmidi_module()
+    if not mod:
+        return []
+    try:
+        return list(mod.MidiOut().get_ports())
+    except Exception:
+        return []
+
+
+def _port_keyword(port_name: str) -> str:
+    """Mot-clé de détection déduit d'un nom de port.
+
+    Windows suffixe le nom par l'index du port (« DDJ-400 0 »). Ce numéro
+    change d'une machine — ou d'un rebranchement — à l'autre : un mot-clé qui
+    le contient ne retrouverait plus le contrôleur au démarrage suivant.
+    """
+    parts = port_name.upper().split()
+    while len(parts) > 1 and parts[-1].isdigit():
+        parts.pop()
+    return " ".join(parts[:3])
 
 
 # ─── Widget grille de pads ────────────────────────────────────────────────────
@@ -232,6 +262,29 @@ class MidiMappingWizard(QDialog):
         # Mode édition (profil existant chargé)
         self._edit_file = None
 
+        # ── Écoute MIDI propre à l'assistant ──────────────────────────────────
+        # L'assistant ne peut PAS se reposer sur le MIDIHandler : celui-ci
+        # n'ouvre un port que pour un contrôleur qu'il reconnaît déjà (natif ou
+        # profil custom existant). Pour un contrôleur inconnu — le seul cas où
+        # cet assistant sert à quelque chose — `midi_in` reste None, `poll_midi`
+        # sort immédiatement et AUCUN message n'arrive jamais : l'utilisateur
+        # appuie sur ses pads devant une fenêtre qui « écoute » dans le vide.
+        # On ouvre donc nous-mêmes le port choisi dans le menu déroulant.
+        self._own_in     = None
+        self._own_out    = None
+        self._own_port   = ""     # port réellement écouté (le nôtre ou celui du handler)
+        self._capture_cb = None
+        self._port_error = ""
+        self._rx_count   = 0
+        self._last_raw   = None
+        self._rx_queue   = []
+        self._rx_lock    = threading.Lock()
+        # Les callbacks rtmidi arrivent sur le thread MIDI et les étapes du
+        # wizard touchent l'UI : on passe par une file vidée sur le thread Qt.
+        self._rx_timer = QTimer(self)
+        self._rx_timer.timeout.connect(self._drain_rx)
+        self._rx_timer.start(10)
+
         self._build_ui()
         self._reset_all_leds()
         self._show_page(self.PAGE_WELCOME)
@@ -240,14 +293,11 @@ class MidiMappingWizard(QDialog):
 
     def _reset_all_leds(self):
         """Éteint tous les LEDs du contrôleur (notes 0-127, canaux 0-8)."""
-        if not (self.midi_handler and self.midi_handler.midi_out):
+        if not self._out_port():
             return
-        try:
-            for ch in range(9):
-                for note in range(128):
-                    self.midi_handler.midi_out.send_message([0x90 | ch, note, 0])
-        except Exception:
-            pass
+        for ch in range(9):
+            for note in range(128):
+                self._send_raw([0x90 | ch, note, 0])
 
     # ─── Construction UI principale ──────────────────────────────────────────
 
@@ -362,6 +412,14 @@ class MidiMappingWizard(QDialog):
         lbl_hint = QLabel(tr("cmw_keyword_hint"))
         lbl_hint.setObjectName("warn")
         v.addWidget(lbl_hint)
+
+        # État du port : ouvert, déjà pris par un autre logiciel, messages reçus.
+        # Sans ce retour, un port indisponible est indiscernable d'un contrôleur
+        # muet — c'est exactement le symptôme « rien n'y fait ».
+        self._port_status = QLabel("")
+        self._port_status.setWordWrap(True)
+        self._port_status.setStyleSheet("color:#888888; font-size:9pt;")
+        v.addWidget(self._port_status)
 
         v.addStretch()
         h = QHBoxLayout()
@@ -733,36 +791,58 @@ class MidiMappingWizard(QDialog):
 
         v.addSpacing(6)
 
-        # Bloc principal : envoyer à MyStrow
-        frame_send = QFrame(); frame_send.setObjectName("card")
-        fs = QVBoxLayout(frame_send); fs.setContentsMargins(16, 14, 16, 14); fs.setSpacing(10)
+        # ── Action principale : installer le profil et s'en servir tout de suite ──
+        # L'utilisateur vient de mapper son contrôleur ; ce qu'il veut d'abord,
+        # c'est le voir marcher — pas envoyer un mail et attendre une réponse.
+        frame_use = QFrame(); frame_use.setObjectName("card")
+        fu = QVBoxLayout(frame_use); fu.setContentsMargins(16, 14, 16, 14); fu.setSpacing(10)
 
-        lbl_send_title = QLabel(tr("cmw_send_team"))
-        lbl_send_title.setStyleSheet("color: #00aaff; font-weight: bold; font-size: 11pt;")
-        fs.addWidget(lbl_send_title)
+        lbl_use_title = QLabel(tr("cmw_use_title"))
+        lbl_use_title.setStyleSheet("color: #00cc44; font-weight: bold; font-size: 11pt;")
+        fu.addWidget(lbl_use_title)
 
-        lbl_send_sub = QLabel(
-            tr("cmw_send_hint")
+        lbl_use_sub = QLabel(tr("cmw_use_hint"))
+        lbl_use_sub.setObjectName("sub"); lbl_use_sub.setWordWrap(True)
+        fu.addWidget(lbl_use_sub)
+
+        self._btn_use = QPushButton(tr("cmw_use_btn"))
+        self._btn_use.setFixedHeight(48)
+        self._btn_use.setStyleSheet(
+            "QPushButton { background:#0a2a0a; border:2px solid #00aa33; color:#00ff66;"
+            " border-radius:6px; font-weight:bold; font-size:12pt; }"
+            "QPushButton:hover { background:#0e3a0e; border-color:#00cc44; }"
         )
-        lbl_send_sub.setObjectName("sub"); lbl_send_sub.setWordWrap(True)
-        fs.addWidget(lbl_send_sub)
+        self._btn_use.clicked.connect(self._do_save)
+        fu.addWidget(self._btn_use)
 
-        btn_send = QPushButton(tr("cmw_send_btn"))
-        btn_send.setObjectName("share"); btn_send.setFixedHeight(44)
-        btn_send.setStyleSheet(
-            "background:#0a2a0a; border:1px solid #005500; color:#00cc44;"
-            " border-radius:6px; font-weight:bold; font-size:11pt;"
-        )
+        self._save_confirm = QLabel("")
+        self._save_confirm.setObjectName("sub")
+        self._save_confirm.setWordWrap(True)
+        self._save_confirm.setVisible(False)
+        fu.addWidget(self._save_confirm)
+        v.addWidget(frame_use)
+
+        v.addSpacing(4)
+
+        # ── Actions secondaires : partager le profil ──────────────────────────
+        lbl_share = QLabel(tr("cmw_share_title"))
+        lbl_share.setObjectName("sub")
+        v.addWidget(lbl_share)
+
+        h_share = QHBoxLayout(); h_share.setSpacing(8)
+        btn_export = QPushButton(tr("cmw_export_btn")); btn_export.setObjectName("skip")
+        btn_export.setFixedHeight(34); btn_export.clicked.connect(self._export_profile)
+        h_share.addWidget(btn_export)
+        btn_send = QPushButton(tr("cmw_send_btn")); btn_send.setObjectName("skip")
+        btn_send.setFixedHeight(34); btn_send.setToolTip(tr("cmw_send_hint"))
         btn_send.clicked.connect(self._share_profile)
-        fs.addWidget(btn_send)
-        v.addWidget(frame_send)
+        h_share.addWidget(btn_send)
+        h_share.addStretch()
+        v.addLayout(h_share)
 
         v.addStretch()
 
-        h = QHBoxLayout(); h.setSpacing(10)
-        btn_save = QPushButton(tr("cmw_save_local")); btn_save.setObjectName("skip")
-        btn_save.setFixedHeight(36); btn_save.clicked.connect(self._do_save)
-        h.addWidget(btn_save)
+        h = QHBoxLayout()
         h.addStretch()
         btn_close = QPushButton(tr("cmw_close")); btn_close.setObjectName("skip")
         btn_close.clicked.connect(self.accept)
@@ -822,7 +902,10 @@ class MidiMappingWizard(QDialog):
         steps = ["Bienvenue", "Nom", "Dimensions", "Pads", "Mutes", "Faders", "Effets", "LEDs", "Sauvegarde"]
         self._step_label.setText(tr("cmw_f_step", a0=idx + 1, a1=steps[idx]))
 
-        if idx == self.PAGE_PADS:
+        if idx == self.PAGE_NAME:
+            # Le contrôleur a pu être branché APRÈS l'ouverture de l'assistant.
+            self._refresh_ports()
+        elif idx == self.PAGE_PADS:
             self._start_pad_phase()
         elif idx == self.PAGE_MUTES:
             self._start_generic_phase("mute", self._mute_map, self._fader_count, self._on_mute_midi, self._mutes_done)
@@ -833,6 +916,7 @@ class MidiMappingWizard(QDialog):
         elif idx == self.PAGE_LEDS:
             self._start_led_phase()
         elif idx == self.PAGE_SAVE:
+            self._release_ports_for_handler()
             self._populate_save_page()
 
     def _next_after_pads(self):
@@ -892,10 +976,131 @@ class MidiMappingWizard(QDialog):
     def _port_selected(self, idx):
         port = self._combo_ports.currentData()
         if port:
-            # Prendre les premiers mots du nom de port comme keyword
-            parts = port.upper().split()
-            kw = " ".join(parts[:3]) if len(parts) >= 3 else port.upper()
-            self._inp_keyword.setText(kw)
+            self._inp_keyword.setText(_port_keyword(port))
+        self._open_own_port(port)
+
+    def _refresh_ports(self):
+        """Relit la liste des ports MIDI et resélectionne le port courant."""
+        previous = self._combo_ports.currentData()
+        ports = _get_midi_ports()
+        self._combo_ports.blockSignals(True)
+        self._combo_ports.clear()
+        self._combo_ports.addItem(tr("cmw_no_port"), None)
+        for p in ports:
+            self._combo_ports.addItem(p, p)
+        self._combo_ports.blockSignals(False)
+
+        # Le port déjà choisi s'il est toujours là ; sinon, quand une seule
+        # entrée existe, c'est forcément celle du contrôleur à configurer.
+        target = previous if previous in ports else (ports[0] if len(ports) == 1 else None)
+        if target:
+            self._combo_ports.setCurrentIndex(ports.index(target) + 1)  # → _port_selected
+        else:
+            self._open_own_port(None)
+
+    def _open_own_port(self, port_name):
+        """Ouvre le port choisi pour y écouter les appuis (et piloter les LEDs)."""
+        self._close_own_ports()
+        self._port_error = ""
+        self._rx_count   = 0
+        self._last_raw   = None
+        self._own_port   = ""
+
+        if not port_name:
+            self._update_port_status('none')
+            return
+
+        # Port déjà ouvert par MyStrow (contrôleur reconnu) : la plupart des
+        # pilotes MIDI Windows n'acceptent qu'un seul client, inutile de lui
+        # disputer l'accès — on récupère ses messages via le handler.
+        try:
+            handler_ports = self.midi_handler.open_input_names() if self.midi_handler else []
+        except Exception:
+            handler_ports = []
+        if port_name in handler_ports:
+            self._own_port = port_name
+            self._update_port_status('handler')
+            return
+
+        mod = _rtmidi_module()
+        if not mod:
+            self._port_error = "python-rtmidi"
+            self._update_port_status('error')
+            return
+
+        try:
+            port_in = mod.MidiIn()
+            port_in.open_port(port_in.get_ports().index(port_name))
+            port_in.set_callback(self._on_raw_midi)
+            port_in.ignore_types(sysex=True, timing=True, active_sense=True)
+            self._own_in   = port_in
+            self._own_port = port_name
+        except Exception as e:
+            self._own_in = None
+            self._port_error = f"{type(e).__name__}: {e}"
+            self._update_port_status('error')
+            return
+
+        self._open_own_output(port_name)
+        self._update_port_status('own')
+
+    def _open_own_output(self, in_name):
+        """Ouvre la sortie du même appareil — sans elle, le test des LEDs est muet."""
+        mod = _rtmidi_module()
+        if not mod:
+            return
+        outs = _get_midi_out_ports()
+        target = in_name if in_name in outs else None
+        if target is None:
+            kw = _port_keyword(in_name)
+            target = next((p for p in outs if kw and kw in p.upper()), None)
+        if target is None:
+            return
+        try:
+            port_out = mod.MidiOut()
+            port_out.open_port(outs.index(target))
+            self._own_out = port_out
+        except Exception:
+            self._own_out = None
+
+    def _close_own_ports(self):
+        for port in (self._own_in, self._own_out):
+            if port is None:
+                continue
+            try:
+                port.cancel_callback()
+            except Exception:
+                pass
+            try:
+                port.close_port()
+            except Exception:
+                pass
+        self._own_in  = None
+        self._own_out = None
+
+    def _release_ports_for_handler(self):
+        """Rend le contrôleur au MIDIHandler avant la page de sauvegarde.
+
+        Enregistrer le profil déclenche `connect_controller()` : si l'assistant
+        tenait encore le port, la reconnexion échouerait sur tout appareil qui
+        n'accepte qu'un seul client.
+        """
+        self._turn_off_test_pad()
+        self._close_own_ports()
+
+    def _update_port_status(self, state):
+        if not hasattr(self, '_port_status'):
+            return
+        if state == 'own':
+            text, color = tr("cmw_port_open"), "#00cc44"
+        elif state == 'handler':
+            text, color = tr("cmw_port_shared"), "#00cc44"
+        elif state == 'error':
+            text, color = tr("cmw_port_busy", e=self._port_error), "#ff5555"
+        else:
+            text, color = tr("cmw_port_none"), "#888888"
+        self._port_status.setText(text)
+        self._port_status.setStyleSheet(f"color:{color}; font-size:9pt;")
 
     def _name_next(self):
         name = self._inp_name.text().strip()
@@ -1185,27 +1390,15 @@ class MidiMappingWizard(QDialog):
         self._bright_alt_channel_label.setText(tr("cmw_f_channel", a0=self._bright_alt_ch + 1))
         entry = self._bright_ref_entry
         if entry:
-            val = self._bright_slider.value()
-            if self.midi_handler and self.midi_handler.midi_out:
-                try:
-                    self.midi_handler.midi_out.send_message(
-                        [0x90 | self._bright_alt_ch, entry["note"], val]
-                    )
-                except Exception:
-                    pass
+            self._send_raw([0x90 | self._bright_alt_ch, entry["note"],
+                            self._bright_slider.value()])
 
     def _bright_test_noteoff(self):
         """Envoie Note Off (0x80) avec la vélocité du slider — certains contrôleurs allument la LED en mode dim."""
         entry = self._bright_ref_entry
         if entry:
-            val = self._bright_slider.value()
-            if self.midi_handler and self.midi_handler.midi_out:
-                try:
-                    self.midi_handler.midi_out.send_message(
-                        [0x80 | entry.get("channel", 0), entry["note"], val]
-                    )
-                except Exception:
-                    pass
+            self._send_raw([0x80 | entry.get("channel", 0), entry["note"],
+                            self._bright_slider.value()])
 
     def _bright_confirm(self):
         # Phase 2 active → prendre la dernière velocité précise cliquée, sinon le slider
@@ -1223,16 +1416,12 @@ class MidiMappingWizard(QDialog):
         self._start_color_phase()
 
     def _turn_off_test_pad(self):
-        entry = self._bright_ref_entry
-        if entry and self.midi_handler and self.midi_handler.midi_out:
+        entry = getattr(self, '_bright_ref_entry', None)
+        if entry:
             self._send_to_pad(entry.get("channel", 0), entry["note"], 0)
 
     def _send_to_pad(self, channel, note, vel):
-        if self.midi_handler and self.midi_handler.midi_out:
-            try:
-                self.midi_handler.midi_out.send_message([0x90 | channel, note, vel])
-            except Exception:
-                pass
+        self._send_raw([0x90 | channel, note, vel])
 
     def _start_color_phase(self):
         self._led_vel_idx = 0
@@ -1321,11 +1510,53 @@ class MidiMappingWizard(QDialog):
 
     def _do_save(self):
         data = self._build_profile_dict()
-        path = save_profile(data, self._edit_file)
+        # Sans chemin d'édition, ne jamais écraser un profil du même nom en
+        # silence : l'utilisateur perdrait un mapping qu'il croyait conservé.
+        path = self._edit_file or unique_profile_path(data["name"])
+        try:
+            path = save_profile(data, path)
+        except OSError as e:
+            self._save_confirm.setText(tr("cmw_save_failed", e=str(e)))
+            self._save_confirm.setStyleSheet("color:#ff5555; font-size:9pt;")
+            self._save_confirm.setVisible(True)
+            return
         self._edit_file = path
         self.profile_saved.emit(path)
-        # Feedback visuel
-        self._save_summary.append(f"\n✅  Profil enregistré :\n{path}")
+        self._btn_use.setText(tr("cmw_use_done"))
+        self._save_confirm.setText(tr("cmw_save_ok", path=path))
+        self._save_confirm.setStyleSheet("color:#00cc44; font-size:9pt;")
+        self._save_confirm.setVisible(True)
+
+    def _export_profile(self):
+        """Enregistre le profil dans un fichier choisi — pour l'échanger."""
+        data = self._build_profile_dict()
+        suggested = f"{data.get('id') or 'controleur'}.json"
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("cmw_export_btn"), suggested, "Profil MyStrow (*.json)")
+        if not path:
+            return
+        try:
+            export_profile(data, path)
+        except OSError as e:
+            QMessageBox.warning(self, tr("cmw_export_btn"), tr("cmw_save_failed", e=str(e)))
+            return
+        self._save_confirm.setText(tr("cmw_export_ok", path=path))
+        self._save_confirm.setStyleSheet("color:#00cc44; font-size:9pt;")
+        self._save_confirm.setVisible(True)
+
+    def load_for_edit(self, path: str):
+        """Ouvre l'assistant sur un profil existant : mêmes nom, mot-clé et
+        dimensions pré-remplis, et la sauvegarde réécrit CE fichier."""
+        data = load_profile(path)
+        self._edit_file = path
+        self._load_profile_into_state(data)
+        self._show_page(self.PAGE_NAME)
+        self._inp_name.setText(self._profile_name)
+        self._inp_keyword.setText(self._keywords[0] if self._keywords else "")
+        self._spin_rows.setValue(self._grid_rows)
+        self._spin_cols.setValue(self._grid_cols)
+        self._spin_faders.setValue(self._fader_count)
+        self._spin_effects.setValue(self._effect_count)
 
     def _share_profile(self):
         data = self._build_profile_dict()
@@ -1346,12 +1577,80 @@ class MidiMappingWizard(QDialog):
     # ─── MIDI capture ─────────────────────────────────────────────────────────
 
     def _start_capture(self, callback):
-        if self.midi_handler:
-            self.midi_handler.set_raw_capture(callback)
+        self._capture_cb = callback
+        # Pas de port à nous : le contrôleur est déjà reconnu par MyStrow, ses
+        # messages passent par le handler (qui les remonte sur le thread Qt).
+        if self.midi_handler and not self._own_in:
+            self.midi_handler.set_raw_capture(self._queue_from_handler)
 
     def _stop_capture(self):
+        self._capture_cb = None
         if self.midi_handler:
             self.midi_handler.clear_raw_capture()
+
+    def _queue_from_handler(self, msg):
+        with self._rx_lock:
+            self._rx_queue.append(list(msg))
+
+    def _on_raw_midi(self, event, data=None):
+        """Callback rtmidi — thread MIDI : on empile, rien d'autre."""
+        if (isinstance(event, tuple) and len(event) == 2
+                and isinstance(event[0], (list, tuple))):
+            msg = event[0]          # python-rtmidi : (message, delta)
+        else:
+            msg = event             # rtmidi2 : message seul
+        if not msg:
+            return
+        with self._rx_lock:
+            self._rx_queue.append(list(msg))
+
+    def _drain_rx(self):
+        """Vide la file sur le thread Qt et alimente l'étape en cours."""
+        if not self._rx_queue:
+            return
+        with self._rx_lock:
+            messages = self._rx_queue
+            self._rx_queue = []
+
+        page = self._stack.currentIndex()
+        for msg in messages:
+            self._rx_count += 1
+            self._last_raw = msg
+            callback = self._capture_cb
+            if callback:
+                try:
+                    callback(msg)
+                except Exception:
+                    pass
+            # Un callback peut faire changer de page (donc de cible) : on
+            # s'arrête là plutôt que de verser le reste du lot dans l'étape
+            # suivante, ce qui mapperait plusieurs cases d'un seul appui.
+            if self._stack.currentIndex() != page:
+                break
+
+        if page == self.PAGE_NAME:
+            raw = " ".join(f"{b:02X}" for b in (self._last_raw or []))
+            self._port_status.setText(tr("cmw_port_rx", n=self._rx_count, raw=raw))
+            self._port_status.setStyleSheet("color:#00cc44; font-size:9pt;")
+
+    # ─── Sortie MIDI ──────────────────────────────────────────────────────────
+
+    def _out_port(self):
+        """Sortie à utiliser : la nôtre, sinon celle du MIDIHandler."""
+        if self._own_out:
+            return self._own_out
+        if self.midi_handler and self.midi_handler.midi_out:
+            return self.midi_handler.midi_out
+        return None
+
+    def _send_raw(self, message):
+        out = self._out_port()
+        if not out:
+            return
+        try:
+            out.send_message(message)
+        except Exception:
+            pass
 
     # ─── Animation écoute ─────────────────────────────────────────────────────
 
@@ -1371,14 +1670,12 @@ class MidiMappingWizard(QDialog):
     def closeEvent(self, event):
         self._stop_capture()
         self._pulse_timer.stop()
+        self._rx_timer.stop()
         # Éteindre le pad de test LED si actif
         if self._led_vel_idx > 0 and self._pad_map:
-            for (r, c), entry in self._pad_map.items():
-                if self.midi_handler and self.midi_handler.midi_out:
-                    try:
-                        ch = entry.get("channel", 0)
-                        self.midi_handler.midi_out.send_message([0x90 | ch, entry["note"], 0])
-                    except Exception:
-                        pass
+            for _cell, entry in self._pad_map.items():
+                self._send_raw([0x90 | entry.get("channel", 0), entry["note"], 0])
                 break
+        # Libérer le contrôleur : le MIDIHandler doit pouvoir le rouvrir.
+        self._close_own_ports()
         super().closeEvent(event)

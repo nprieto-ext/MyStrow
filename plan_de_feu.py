@@ -1690,6 +1690,85 @@ class FixtureCanvas(QWidget):
         self._target_mode       = False   # Mode ciblage pan/tilt actif
         self._target_cursor_pos = None   # QPoint sous le curseur (pour dessin croix)
 
+        # ── Vue (zoom / déplacement) ────────────────────────────────
+        # Le zoom écarte les POSITIONS sans grossir les icônes : c'est ce qui
+        # sépare des fixtures serrées. Une loupe classique (painter.scale) les
+        # aurait grossies avec l'écart — aussi collées, juste plus grosses.
+        # Les positions du modèle (canvas_x/canvas_y, normalisées 0-1) ne sont
+        # jamais touchées : le zoom est purement une transformation d'affichage.
+        self._zoom      = 1.0
+        self._pan       = QPointF(0.0, 0.0)   # décalage en pixels écran
+        self._pan_start = None                # (QPoint souris, QPointF pan) pendant un déplacement
+
+    # ── Vue : zoom et déplacement ───────────────────────────────────
+
+    ZOOM_MIN = 1.0
+    ZOOM_MAX = 8.0
+
+    def _scene_size(self):
+        """Taille du plan à zoom 1, en pixels (repère des positions 0-1)."""
+        return max(self.width(), 1), max(self.height(), 1)
+
+    def _norm_to_px(self, nx, ny):
+        """Position normalisée 0-1 → pixels écran (zoom + déplacement appliqués)."""
+        w, h = self._scene_size()
+        return (nx * w * self._zoom + self._pan.x(),
+                ny * h * self._zoom + self._pan.y())
+
+    def _px_to_norm(self, px, py):
+        """Pixels écran → position normalisée 0-1 (inverse de _norm_to_px)."""
+        w, h = self._scene_size()
+        return ((px - self._pan.x()) / (w * self._zoom),
+                (py - self._pan.y()) / (h * self._zoom))
+
+    def _clamp_pan(self):
+        """Empêche de pousser le plan hors du widget (et force pan=0 à zoom 1)."""
+        w, h = self._scene_size()
+        self._pan.setX(min(0.0, max(w - w * self._zoom, self._pan.x())))
+        self._pan.setY(min(0.0, max(h - h * self._zoom, self._pan.y())))
+
+    def set_zoom(self, z, anchor=None):
+        """Règle le zoom en gardant fixe le point `anchor` (pixels écran)."""
+        z = max(self.ZOOM_MIN, min(self.ZOOM_MAX, float(z)))
+        if abs(z - self._zoom) < 1e-6:
+            return
+        w, h = self._scene_size()
+        if anchor is None:
+            anchor = QPointF(self.width() / 2.0, self.height() / 2.0)
+        nx, ny = self._px_to_norm(anchor.x(), anchor.y())
+        self._zoom = z
+        self._pan  = QPointF(anchor.x() - nx * w * z, anchor.y() - ny * h * z)
+        self._clamp_pan()
+        self.update()
+
+    def reset_view(self):
+        """Retour au plan entier (zoom 1, sans décalage)."""
+        if self._zoom == 1.0 and self._pan.isNull():
+            return
+        self._zoom = 1.0
+        self._pan  = QPointF(0.0, 0.0)
+        self.update()
+
+    def wheelEvent(self, event):
+        d = event.angleDelta().y()
+        if not d:
+            super().wheelEvent(event)
+            return
+        try:
+            anchor = QPointF(event.position())
+        except (AttributeError, TypeError):
+            anchor = QPointF(event.pos())
+        # ~1,2× par cran de molette, proportionnel pour un pavé tactile
+        self.set_zoom(self._zoom * (1.0015 ** d), anchor)
+        event.accept()
+
+    def resizeEvent(self, event):
+        # La scène change de taille avec le widget : un décalage valide avant
+        # l'agrandissement laisserait sinon une bande vide sur un bord.
+        super().resizeEvent(event)
+        if self._zoom != 1.0:
+            self._clamp_pan()
+
     # ── Localisation (cercle pulsé) ─────────────────────────────────
     def start_locate(self, group, local_idx):
         """Démarre l'animation de localisation autour d'une fixture (2,5 s)."""
@@ -1757,7 +1836,10 @@ class FixtureCanvas(QWidget):
             # ── Tilt ───────────────────────────────────────────────────
             # 32768 = neutre (droit vers le bas), valeurs > 32768 = incliné vers l'avant
             # Le 3D interprète tilt centré sur 32768 — ne pas envoyer 0/65535 (= vers le haut)
-            tilt_ratio = max(0.0, min(1.0, (dist - r * 2) / max(1, r * 7)))
+            # Distance ramenée à l'échelle du plan entier : sans ça, viser le même
+            # point du plan donnait un tilt différent selon le zoom (et à ×4 tout
+            # tombait au-delà de r*9, donc toujours tilt maxi).
+            tilt_ratio = max(0.0, min(1.0, (dist / self._zoom - r * 2) / max(1, r * 7)))
             tilt_val   = 32768 + int(tilt_ratio * 16384)   # 32768 → 49152 (~67° max)
             tilt_val   = max(32768, min(49152, tilt_val))
 
@@ -1779,26 +1861,27 @@ class FixtureCanvas(QWidget):
     # ── Helpers de position ─────────────────────────────────────────
 
     def _get_canvas_pos(self, i):
-        """Retourne (px, py) en pixels pour la fixture i"""
+        """Retourne (px, py) en pixels ECRAN pour la fixture i (zoom compris)"""
+        px, py = self._norm_to_px(*self._get_norm_pos(i))
+        return int(px), int(py)
+
+    def _get_norm_pos(self, i):
+        """Retourne la position normalisee (0-1) de la fixture i
+
+        Position stockée si elle existe, sinon la place par défaut du groupe.
+        Indépendante du zoom : c'est le repère du modèle.
+        """
         proj = self.pdf.projectors[i]
-        w, h = max(self.width(), 1), max(self.height(), 1)
         cx = getattr(proj, 'canvas_x', None)
         cy = getattr(proj, 'canvas_y', None)
         if cx is not None and cy is not None:
-            return int(cx * w), int(cy * h)
+            return cx, cy
         group = proj.group
         group_indices = [j for j, p in enumerate(self.pdf.projectors) if p.group == group]
         li = group_indices.index(i) if i in group_indices else 0
         n = len(group_indices)
         pos_fn = _DEFAULT_POSITIONS.get(group, lambda li, n: (0.5, 0.5))
-        fx, fy = pos_fn(li, n)
-        return int(fx * w), int(fy * h)
-
-    def _get_norm_pos(self, i):
-        """Retourne la position normalisee (0-1) de la fixture i"""
-        w, h = max(self.width(), 1), max(self.height(), 1)
-        px, py = self._get_canvas_pos(i)
-        return px / w, py / h
+        return pos_fn(li, n)
 
     def _local_idx(self, i):
         """Retourne (group, local_idx) pour la fixture i"""
@@ -2570,6 +2653,15 @@ class FixtureCanvas(QWidget):
         sh  = H - 2 * my - SB_H
         sx, sy = mx, my
 
+        # Le cadre de scène fait partie du plan : il suit le zoom et le
+        # déplacement comme les fixtures (calculé ci-dessus à zoom 1).
+        if self._zoom != 1.0 or not self._pan.isNull():
+            _z = self._zoom
+            sx = int(sx * _z + self._pan.x())
+            sy = int(sy * _z + self._pan.y())
+            sw = int(sw * _z)
+            sh = int(sh * _z)
+
         stage_path = QPainterPath()
         stage_path.addRoundedRect(QRectF(sx, sy, sw, sh), 14, 14)
         painter.fillPath(stage_path, QColor("#0d0d0d"))
@@ -2613,6 +2705,13 @@ class FixtureCanvas(QWidget):
         # Rang de sélection (1, 2, 3…) — vide si la numérotation est désactivée.
         _sel_rank = self._selection_rank_map()
 
+        # Étiquettes déjà posées (nom + adresse). Une étiquette qui tomberait sur
+        # une précédente n'est pas dessinée : empilées, elles ne formaient qu'une
+        # bouillie illisible. En zoomant, les fixtures s'écartent et les
+        # étiquettes réapparaissent une à une — au lieu de disparaître en bloc.
+        _label_rects = []
+        _label_todo  = []   # (cx, cy, proj, group, is_selected, is_hover)
+
         _matrix_members = {}   # matrix_id -> [indices]
         for i, proj in enumerate(self.pdf.projectors):
             # Les matrices/barres à pixels sont dessinées en bloc (voir plus bas)
@@ -2633,17 +2732,30 @@ class FixtureCanvas(QWidget):
                 self._draw_selection_badge(painter, cx, cy, _sel_rank[key])
 
             if not self.compact:
-                # Nom (en cyan si selectionne)
-                painter.setFont(font_name)
-                painter.setPen(QColor("#00d4ff" if is_selected else "#888888"))
-                painter.drawText(QRect(cx - 38, cy + 16, 76, 14), Qt.AlignCenter,
-                                 (proj.name[:11] if proj.name else group[:11]))
+                # Dessinées après la boucle, par priorité (voir plus bas)
+                _label_todo.append((cx, cy, proj, group, is_selected, is_hover))
 
-                # Adresse DMX discrete (assez claire pour rester lisible)
-                painter.setFont(font_ch)
-                painter.setPen(QColor("#5f5f5f"))
-                painter.drawText(QRect(cx - 26, cy + 28, 52, 12), Qt.AlignCenter,
-                                 f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
+        # ── Étiquettes (nom + adresse), les prioritaires d'abord ──
+        # Sélection et survol passent devant : ce sont les fixtures qu'on est en
+        # train de manipuler, ce sont elles qu'on a besoin d'identifier.
+        for cx, cy, proj, group, is_selected, _ in sorted(
+                _label_todo, key=lambda t: not (t[4] or t[5])):
+            _lbl_rect = QRect(cx - 38, cy + 16, 76, 24)
+            if any(_lbl_rect.intersects(r) for r in _label_rects):
+                continue              # place déjà prise : on n'empile pas
+            _label_rects.append(_lbl_rect)
+
+            # Nom (en cyan si selectionne)
+            painter.setFont(font_name)
+            painter.setPen(QColor("#00d4ff" if is_selected else "#888888"))
+            painter.drawText(QRect(cx - 38, cy + 16, 76, 14), Qt.AlignCenter,
+                             (proj.name[:11] if proj.name else group[:11]))
+
+            # Adresse DMX discrete (assez claire pour rester lisible)
+            painter.setFont(font_ch)
+            painter.setPen(QColor("#5f5f5f"))
+            painter.drawText(QRect(cx - 26, cy + 28, 52, 12), Qt.AlignCenter,
+                             f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
 
         # ── Matrices / barres à pixels (rendu en bloc) ───────────
         for _mid, _idxs in _matrix_members.items():
@@ -2681,6 +2793,26 @@ class FixtureCanvas(QWidget):
             hx, hy = self._get_canvas_pos(self._hover_index)
             self._draw_hover_card(painter, hx, hy, self.pdf.projectors[self._hover_index])
 
+        # ── Badge de zoom (coin haut droit) ──────────────────────
+        # Dessiné hors du repère du plan : c'est une indication d'interface.
+        # Présent même sans barre de statut (vue principale) — sinon, rien ne
+        # dirait qu'on ne voit qu'une partie du plan.
+        if self._zoom != 1.0:
+            _lbl = f"×{self._zoom:.1f}".replace(".0", "")
+            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            _fm = painter.fontMetrics()
+            _bw = _fm.horizontalAdvance(_lbl) + 16
+            _bh = 18
+            _bx, _by = W - _bw - 8, 8
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 190))
+            painter.drawRoundedRect(QRect(_bx, _by, _bw, _bh), 9, 9)
+            painter.setPen(QPen(QColor(0, 212, 255, 90), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(QRect(_bx, _by, _bw, _bh), 9, 9)
+            painter.setPen(QColor(0, 212, 255, 230))
+            painter.drawText(QRect(_bx, _by, _bw, _bh), Qt.AlignCenter, _lbl)
+
         # ── Barre de statut (bas du canvas) ──────────────────────
         if getattr(self, 'show_statusbar', True):
             n_fix = len(self.pdf.projectors)
@@ -2693,7 +2825,11 @@ class FixtureCanvas(QWidget):
             if n_sel:
                 sel_word = tr("pdf_status_selected_pl") if n_sel > 1 else tr("pdf_status_selected")
                 info_left += f"  /  {n_sel} {sel_word}{'s' if n_sel != 1 else ''}"
-            if self._editable:
+            if self._zoom != 1.0:
+                # Zoom actif : l'aide « comment en sortir » prime sur le rappel
+                # des raccourcis d'édition, sinon on reste coincé dans la vue.
+                info_right = tr("pdf_zoom_tooltip") + "   "
+            elif self._editable:
                 info_right = tr("pdf_status_hint_edit")
             else:
                 info_right = tr("pdf_status_hint_view")
@@ -2709,6 +2845,16 @@ class FixtureCanvas(QWidget):
     # ── Interactions souris ─────────────────────────────────────────
 
     def mousePressEvent(self, event):
+        # Déplacement de la vue : AVANT le garde read_only — regarder un plan
+        # zoomé n'est pas l'éditer, ça doit marcher aussi dans REC Lumière.
+        if self._zoom != 1.0 and (event.button() == Qt.MiddleButton
+                                  or (event.button() == Qt.LeftButton
+                                      and event.modifiers() & Qt.AltModifier)):
+            self._pan_start = (event.pos(), QPointF(self._pan))
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+
         if self._read_only:
             return
         pos = event.pos()
@@ -2835,7 +2981,12 @@ class FixtureCanvas(QWidget):
     def _resolve_overlaps(self, canvas_w, canvas_h, dragged_set):
         """Pousse les fixtures non-draguées qui chevauchent une fixture draguée."""
         r = 9 if self.compact else 13
-        min_sep = r * 2 + 6   # distance min centre à centre (pixels)
+        # Distance min centre à centre, en pixels du plan (zoom 1). Divisée par
+        # le zoom : les icônes gardent leur taille écran, donc à ×4 deux fixtures
+        # distantes de 8 px de plan sont déjà séparées de 32 px à l'écran. Sans
+        # ça, zoomer pour resserrer des projos ne servait à rien — l'anti-overlap
+        # les repoussait au même écart qu'à ×1.
+        min_sep = (r * 2 + 6) / max(self._zoom, 1e-6)
         SB_H = 22
         x_min, x_max = 0.05, 0.95
         y_min = 0.06
@@ -2896,12 +3047,16 @@ class FixtureCanvas(QWidget):
         """
         Calcule le snap et les guides visuels en O(n).
         Retourne (snapped_norm_x, snapped_norm_y, guides_list).
+
+        Tout le calcul se fait en pixels ÉCRAN (comme _fixture_bbox_px), donc
+        les seuils sont des seuils visuels : à ×4, snapper à 8 px écran revient
+        à 2 px de plan — c'est exactement la précision qu'on vient chercher.
+        `canvas_w`/`canvas_h` ne servent plus qu'aux appelants historiques.
         """
         SNAP_PX   = 8   # Seuil de snap en pixels
         ALIGN_THR = 8   # Tolérance d'alignement pour afficher la distance
 
-        px = raw_x * canvas_w
-        py = raw_y * canvas_h
+        px, py = self._norm_to_px(raw_x, raw_y)
 
         # Bbox de la fixture principale draguée
         drag_idx        = next(iter(dragged_set))
@@ -2912,8 +3067,7 @@ class FixtureCanvas(QWidget):
         guides          = []
 
         # Snap au centre du canvas
-        cx_mid = canvas_w * 0.5
-        cy_mid = canvas_h * 0.5
+        cx_mid, cy_mid = self._norm_to_px(0.5, 0.5)
         dx = abs(px - cx_mid)
         if dx < SNAP_PX and dx < best_dx:
             best_x, best_dx = cx_mid, dx
@@ -2947,8 +3101,7 @@ class FixtureCanvas(QWidget):
             if abs(px - ocx) <= ALIGN_THR:
                 aligned_v.append((ocx, ocy, ohw, ohh))
 
-        snapped_x = best_x / canvas_w
-        snapped_y = best_y / canvas_h
+        snapped_x, snapped_y = self._px_to_norm(best_x, best_y)
 
         # Guides d'alignement (lignes cyan pointillées)
         if best_dx <= SNAP_PX:
@@ -2972,10 +3125,12 @@ class FixtureCanvas(QWidget):
                 continue              # chevauchement : pas d'affichage
             guides.append({
                 'type': 'dist_h',
-                'x1':   min(e_drag, e_other) / canvas_w,
-                'x2':   max(e_drag, e_other) / canvas_w,
-                'y':    spy / canvas_h,
-                'gap':  gap,
+                'x1':   self._px_to_norm(min(e_drag, e_other), 0)[0],
+                'x2':   self._px_to_norm(max(e_drag, e_other), 0)[0],
+                'y':    self._px_to_norm(0, spy)[1],
+                # Mesure ramenée à l'échelle du plan : la cote affichée doit être
+                # la même quel que soit le zoom, sinon elle ne mesure rien.
+                'gap':  int(gap / self._zoom),
             })
 
         # ── Mesures de distance verticales (bord bas drag ↔ bord haut other) ──
@@ -2991,10 +3146,10 @@ class FixtureCanvas(QWidget):
                 continue
             guides.append({
                 'type': 'dist_v',
-                'y1':   min(e_drag, e_other) / canvas_h,
-                'y2':   max(e_drag, e_other) / canvas_h,
-                'x':    spx / canvas_w,
-                'gap':  gap,
+                'y1':   self._px_to_norm(0, min(e_drag, e_other))[1],
+                'y2':   self._px_to_norm(0, max(e_drag, e_other))[1],
+                'x':    self._px_to_norm(spx, 0)[0],
+                'gap':  int(gap / self._zoom),
             })
 
         return snapped_x, snapped_y, guides
@@ -3011,19 +3166,19 @@ class FixtureCanvas(QWidget):
             gtype = g.get('type')
 
             if gtype == 'v':
-                gx = int(g['x'] * canvas_w)
+                gx = int(self._norm_to_px(g['x'], 0)[0])
                 painter.setPen(pen_align)
                 painter.drawLine(gx, 0, gx, canvas_h)
 
             elif gtype == 'h':
-                gy = int(g['y'] * canvas_h)
+                gy = int(self._norm_to_px(0, g['y'])[1])
                 painter.setPen(pen_align)
                 painter.drawLine(0, gy, canvas_w, gy)
 
             elif gtype == 'dist_h':
-                x1_px = int(g['x1'] * canvas_w)
-                x2_px = int(g['x2'] * canvas_w)
-                y_px  = int(g['y']  * canvas_h)
+                x1_px = int(self._norm_to_px(g['x1'], 0)[0])
+                x2_px = int(self._norm_to_px(g['x2'], 0)[0])
+                y_px  = int(self._norm_to_px(0, g['y'])[1])
                 gap   = g['gap']
                 mid_x = (x1_px + x2_px) // 2
 
@@ -3048,9 +3203,9 @@ class FixtureCanvas(QWidget):
                 painter.drawText(QRect(lx, ly, lw, lh), Qt.AlignCenter, label)
 
             elif gtype == 'dist_v':
-                y1_px = int(g['y1'] * canvas_h)
-                y2_px = int(g['y2'] * canvas_h)
-                x_px  = int(g['x']  * canvas_w)
+                y1_px = int(self._norm_to_px(0, g['y1'])[1])
+                y2_px = int(self._norm_to_px(0, g['y2'])[1])
+                x_px  = int(self._norm_to_px(g['x'], 0)[0])
                 gap   = g['gap']
                 mid_y = (y1_px + y2_px) // 2
 
@@ -3086,6 +3241,15 @@ class FixtureCanvas(QWidget):
             painter.drawEllipse(QPoint(tx, ty), R // 2, R // 2)
 
     def mouseMoveEvent(self, event):
+        # Déplacement de la vue en cours (voir mousePressEvent)
+        if self._pan_start is not None:
+            _p0, _pan0 = self._pan_start
+            _d = event.pos() - _p0
+            self._pan = QPointF(_pan0.x() + _d.x(), _pan0.y() + _d.y())
+            self._clamp_pan()
+            self.update()
+            return
+
         if self._read_only:
             return
         pos = event.pos()
@@ -3129,7 +3293,9 @@ class FixtureCanvas(QWidget):
         if self._beam_drag_idx is not None and (event.buttons() & Qt.LeftButton):
             # 250 px de déplacement = plage complète (0-65535)
             # Droite → pan augmente | Haut → tilt augmente
-            _PX = 250.0
+            # Multiplié par le zoom : zoomer sert à travailler fin, la visée doit
+            # devenir aussi précise que le reste (250 px écran à ×4 = 1/4 de plage).
+            _PX = 250.0 * self._zoom
             ddx = pos.x() - self._beam_drag_start.x()
             ddy = pos.y() - self._beam_drag_start.y()
             mir = getattr(self, '_beam_drag_mirror', None) or set()
@@ -3159,8 +3325,9 @@ class FixtureCanvas(QWidget):
             y_min = my_f + 0.01; y_max = 1.0 - my_f - (SB_H / h) - 0.01
 
             new_raw = pos - self._drag_offset
-            new_x   = max(x_min, min(x_max, new_raw.x() / w))
-            new_y   = max(y_min, min(y_max, new_raw.y() / h))
+            _nx, _ny = self._px_to_norm(new_raw.x(), new_raw.y())
+            new_x   = max(x_min, min(x_max, _nx))
+            new_y   = max(y_min, min(y_max, _ny))
 
             if event.modifiers() & Qt.ShiftModifier:
                 snap  = 1.0 / 16.0
@@ -3222,6 +3389,10 @@ class FixtureCanvas(QWidget):
                 self.setCursor(Qt.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
+        if self._pan_start is not None:
+            self._pan_start = None
+            self.setCursor(Qt.ArrowCursor)
+            return
         if self._read_only:
             return
         if event.button() == Qt.LeftButton:
@@ -3271,6 +3442,11 @@ class FixtureCanvas(QWidget):
     # ── Clavier ─────────────────────────────────────────────────────
 
     def keyPressEvent(self, event):
+        # Sortie de zoom : avant le garde read_only, comme le déplacement de vue.
+        if event.key() in (Qt.Key_0, Qt.Key_Escape) and self._zoom != 1.0:
+            self.reset_view()
+            if event.key() == Qt.Key_0:
+                return          # Échap continue vers la désélection
         if self._read_only:
             # Laisser REMONTER : un `return` nu consommait la touche et le
             # Ctrl+Z de la fenêtre principale n'arrivait jamais dès qu'on avait
@@ -3292,8 +3468,10 @@ class FixtureCanvas(QWidget):
                 super().keyPressEvent(event)
                 return
             step_px = 10 if (event.modifiers() & Qt.ShiftModifier) else 1
-            cw = max(self.width(),  1)
-            ch = max(self.height(), 1)
+            # Le pas reste 1 pixel ÉCRAN : zoomé à ×4, une flèche avance donc de
+            # 1/4 de pixel de plan — le réglage fin suit le zoom.
+            cw = max(self.width(),  1) * self._zoom
+            ch = max(self.height(), 1) * self._zoom
             dx = dy = 0.0
             if event.key() == Qt.Key_Left:  dx = -step_px / cw
             if event.key() == Qt.Key_Right: dx =  step_px / cw
@@ -3525,7 +3703,7 @@ class PlanDeFeu(QFrame):
         "gobo", "gobo_rotation", "prism", "prism_rotation", "zoom", "effects",
         "focus", "gobo2", "speed", "mode_value",
         "amber_boost", "orange_boost", "white_boost", "uv",
-        "_manual_color", "_manual_move", "_special_master",
+        "_manual_color", "_manual_move", "_manual_beam", "_special_master",
     )
     _UNDO_COLOR_ATTRS = ("color", "base_color")   # QColor : à recopier
     _UNDO_DEEP_ATTRS  = ("channel_extras",)       # dict : à copier en profondeur
@@ -4206,6 +4384,7 @@ class PlanDeFeu(QFrame):
         for proj in self.projectors:
             proj._manual_color = False   # CLEAR rend la main aux mémoires
             proj._manual_move  = False
+            proj._manual_beam  = False
             proj.level = 0
             proj.base_color = QColor(0, 0, 0)
             proj.color = QColor(0, 0, 0)
@@ -4804,7 +4983,17 @@ class PlanDeFeu(QFrame):
             for w in (lbl, sli, val_lbl): row_h.addWidget(w)
             return row_w
 
-        def _flush(t=targets):
+        def _flush(t=targets, grab=True):
+            # Toucher un réglage de ce panneau (gobo, rotation, zoom, focus,
+            # prisme, canaux bruts…) = prise en main de la fixture. Sans ce
+            # drapeau, `_recompute_memory_mix` réimpose les canaux spéciaux de
+            # la mémoire active au MOINDRE mouvement de fader : on règle un
+            # gobo, on touche un fader, le gobo saute. Même mécanisme que
+            # `_manual_color` pour la couleur — libéré par CLEAR et par toute
+            # action mémoire volontaire (`_release_manual_grabs`).
+            if grab:
+                for p, g, i in t:
+                    p._manual_beam = True
             if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
                 self.main_window.dmx.update_from_projectors(self.projectors)
             self.canvas.update()
@@ -4822,6 +5011,7 @@ class PlanDeFeu(QFrame):
             for p, g, i in t:
                 p._manual_color  = False   # CLEAR rend la main aux mémoires
                 p._manual_move   = False
+                p._manual_beam   = False
                 p.level          = 0
                 p.base_color     = black
                 p.color          = black
@@ -4840,7 +5030,7 @@ class PlanDeFeu(QFrame):
                 p.effects        = 0
                 p.focus = p.gobo2 = p.speed = p.mode_value = 0
                 p.channel_extras = {}
-            _flush()
+            _flush(grab=False)   # CLEAR libère la fixture, il ne la prend pas en main
 
         # ── Titre + Clear en haut à droite ──────────────────────────────
         if len(targets) == 1:
@@ -5852,6 +6042,12 @@ class PlanDeFeu(QFrame):
     def _show_canvas_context_menu(self, global_pos, local_pos=None):
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
+
+        # Sortie de zoom : la vue principale n'a pas de barre de statut, ce menu
+        # est le seul endroit qui rende le retour au plan entier découvrable.
+        if getattr(self.canvas, '_zoom', 1.0) != 1.0:
+            menu.addAction(tr("pdf_zoom_reset"), self.canvas.reset_view)
+            menu.addSeparator()
 
         act_add = menu.addAction(tr("pdf_add_fixture"))
         def _goto_patch():
@@ -7019,13 +7215,23 @@ class _PatchCanvasProxy:
         # Calculer la position normalisée pour le placement à l'emplacement du clic
         norm_x, norm_y = 0.5, 0.5
         if local_pos is not None and self.canvas_widget:
-            w = max(1, self.canvas_widget.width())
-            h = max(1, self.canvas_widget.height())
-            norm_x = max(0.0, min(1.0, local_pos.x() / w))
-            norm_y = max(0.0, min(1.0, local_pos.y() / h))
+            # Passer par le canvas : lui seul connaît le zoom en cours. Sans ça,
+            # zoomé, la fixture ajoutée atterrissait loin du clic.
+            _n2p = getattr(self.canvas_widget, '_px_to_norm', None)
+            if callable(_n2p):
+                norm_x, norm_y = _n2p(local_pos.x(), local_pos.y())
+            else:
+                norm_x = local_pos.x() / max(1, self.canvas_widget.width())
+                norm_y = local_pos.y() / max(1, self.canvas_widget.height())
+            norm_x = max(0.0, min(1.0, norm_x))
+            norm_y = max(0.0, min(1.0, norm_y))
 
         menu = QMenu()
         menu.setStyleSheet(_MENU_STYLE)
+
+        if getattr(self.canvas_widget, '_zoom', 1.0) != 1.0:
+            menu.addAction(tr("pdf_zoom_reset"), self.canvas_widget.reset_view)
+            menu.addSeparator()
 
         if self._add_cb:
             menu.addAction(tr("pdf_add_fixture_m"),

@@ -32,6 +32,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from fixture_editor import (
     DmxPreviewWidget, ChannelRowWidget,
     ALL_CHANNEL_TYPES, CHANNEL_COLORS, FIXTURE_TYPES, GROUP_OPTIONS,
+    register_channel_search_aliases,
 )
 
 # ── Palette (reprise depuis admin_panel) ──────────────────────────────────────
@@ -294,6 +295,10 @@ _ALIAS_INDEX: dict[str, tuple[str, str]] = {}
 for _raw, _type, _conf in _ALIAS_TABLE:
     _key = re.sub(r"[\s_\-]", "", _raw.lower())
     _ALIAS_INDEX[_key] = (_type, _conf)
+
+# Même vocabulaire réutilisé par la recherche des combos de type de canal
+# (ChannelTypeCombo) : « amber » ou « obturateur » y trouvent leur canal.
+register_channel_search_aliases({k: v[0] for k, v in _ALIAS_INDEX.items()})
 
 # Types connus en majuscules pour fallback direct
 _KNOWN_UPPER: dict[str, str] = {t.upper(): t for t in ALL_CHANNEL_TYPES}
@@ -1461,7 +1466,9 @@ class AdminPackEditorWidget(QWidget):
             row_w._num_lbl.setText(f"{i + 1:02d}")
 
     def _current_profile(self) -> list:
-        return [rw._combo.currentText() for rw in self._channel_rows]
+        # get_type() et pas currentText() : le combo est éditable (recherche),
+        # son texte peut être un filtre en cours de frappe.
+        return [rw.get_type() for rw in self._channel_rows]
 
     def _update_preview(self):
         self._preview.set_channels(self._current_profile())

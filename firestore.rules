@@ -64,8 +64,17 @@ service cloud.firestore {
     }
 
     match /gdtf_fixtures/{doc} {
-      // Lecture pour tous les utilisateurs authentifies (bibliotheque OFL)
-      allow read: if request.auth != null;
+      // Lecture PUBLIQUE, comme fixture_packs plus bas : la bibliotheque doit
+      // pouvoir etre actualisee par n'importe qui, y compris sans compte.
+      //
+      // ⚠️ Elle exigeait `request.auth != null`, ce qui contredisait l'intention
+      // ET le code appelant (fetch_all_gdtf_fixtures part sans jeton des que le
+      // rafraichissement echoue). Consequence en clientele : un utilisateur
+      // derriere un antivirus a scan HTTPS n'obtenait plus de jeton, la requete
+      // partait anonyme, Firestore repondait 403 — et l'application affichait
+      // « Erreur Firestore », sans aucun rapport apparent avec la vraie cause
+      // (remontee du 12/08/2026).
+      allow read: if true;
       // Ecriture reservee a l'admin (via gdtf_upload Cloud Function)
       allow write: if request.auth != null
                    && request.auth.token.email == "nicop421@gmail.com";

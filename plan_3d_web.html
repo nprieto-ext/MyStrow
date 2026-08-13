@@ -1110,6 +1110,17 @@ function _getObj(i) {
     mhGrp.add(bolt);
   }
 
+  // ── Groupe yoke (pan — rotation Y) ───────────────────────────────────
+  // Tout ce qui suit TOURNE avec le pan ; tout ce qui précède (barre de
+  // montage, colliers omega, vis) reste solidaire du truss. Sur un vrai
+  // appareil, le pan pivote entre la BASE et le yoke : les colliers qui
+  // mordent la structure ne bougent évidemment pas. Sans ce groupe
+  // intermédiaire, `mhGrp.rotation.y = pan` faisait tourner l'accroche avec
+  // la tête — la lyre semblait dévisser son propre point de suspension.
+  // Origine à (0,0,0) : l'axe de pan passe bien par le point d'accroche.
+  const mhYoke = new THREE.Group();
+  mhGrp.add(mhYoke);
+
   // Bras du yoke ×2 (gauche & droite) — longueur divisée par 2
   for (const sx of [-0.252, 0.252]) {
     const arm = new THREE.Mesh(
@@ -1118,14 +1129,14 @@ function _getObj(i) {
     );
     arm.position.set(sx, -0.18, 0);
     arm.userData.projoIndex = i;
-    mhGrp.add(arm);
+    mhYoke.add(arm);
     // Arrondi en bout de bras
     const elbow = new THREE.Mesh(
       new THREE.SphereGeometry(0.053, 10, 8),
       _mhGoldMat.clone()
     );
     elbow.position.set(sx, -0.323, 0);
-    mhGrp.add(elbow);
+    mhYoke.add(elbow);
   }
 
   // ── Groupe tête (tilt — rotation X) ──────────────────────────────────
@@ -1178,7 +1189,7 @@ function _getObj(i) {
     mhHGrp.add(pin);
   }
 
-  mhGrp.add(mhHGrp);
+  mhYoke.add(mhHGrp);        // la tête suit le pan, pas l'accroche
   mhGrp.visible = false;
   _fixtureGrp.add(mhGrp);
 
@@ -1218,7 +1229,7 @@ function _getObj(i) {
 
   const obj = { cVol, lensGlow, pool, halo, ptLight,
                 body, lens, groupRing, parGrp,
-                mhGrp, mhHGrp, mhHead, mhLens,
+                mhGrp, mhYoke, mhHGrp, mhHead, mhLens,
                 prismBeams, prismPools,
                 pxCell, pxGlow, pxHalo, pxHousing, _fx: null };
   _objs.push(obj);
@@ -1332,41 +1343,58 @@ function beamFloor(p) {
     // 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
     // qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du
     // côté opposé, corps et faisceau compris.
-    const panA  = -(p.pan - 32768)  / 32768.0 * Math.PI;
+    const panDmx = -(p.pan - 32768)  / 32768.0 * Math.PI;
+    // RY (body_rotation) = lacet d'ACCROCHE du pied de la lyre. Sans lui, RY
+    // était purement décorative sur une lyre (corps ET faisceau), et il était
+    // impossible d'accrocher des lyres sur les faces d'une structure orientée
+    // (tour, praticable, portique biais) : elles regardaient toutes du même
+    // côté. Il appartient au SOCLE, pas au yoke — cf. la chaîne ci-dessous.
+    const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;
     const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
     const rx    = (p.rot3d_x || 0) * Math.PI / 180;
     const rz    = (p.rot3d_z || 0) * Math.PI / 180;
     // Direction correcte : tilt dévie le faisceau DANS la direction du pan.
     // Pan seul (tilt=0) → faisceau droit vers le bas. Tilt → déviation dans le plan pan.
     //
-    // L'ordre reproduit exactement la hiérarchie Three.js du corps :
-    // mhGrp porte (rx, pan, rz) en Euler XYZ, donc R = Rx·Ry·Rz, et la tête
-    // porte le tilt. Rz s'applique donc EN PREMIER, avant le pan.
-    // Il manquait ici : le corps pivotait avec rot3d_z, le faisceau non — d'où
-    // un projecteur retourné dont le faisceau partait dans une autre direction.
-    const vy0 = -Math.cos(theta), vz0 = Math.sin(theta);
-    const wx  =  -vy0 * Math.sin(rz);          // Rz autour de l'axe du corps
-    const wy  =   vy0 * Math.cos(rz);
-    const wz  =   vz0;
-    const bx_raw = wx * Math.cos(panA) + wz * Math.sin(panA);
-    const by_raw = wy;
-    const bz_raw = -wx * Math.sin(panA) + wz * Math.cos(panA);
-    // Rotation de corps (rx)
-    const bx = bx_raw;
-    const by = by_raw * Math.cos(rx) - bz_raw * Math.sin(rx);
-    const bz = by_raw * Math.sin(rx) + bz_raw * Math.cos(rx);
-    // Position réelle de la lentille (même ordre : Ry d'abord, puis Rx)
+    // L'ordre reproduit EXACTEMENT la hiérarchie Three.js :
+    //   mhGrp (accroche, Euler XYZ = Rx·Ry(RY)·Rz)
+    //     └ mhYoke (pan DMX, Ry)
+    //         └ mhHGrp (tilt DMX, Rx)
+    // soit, appliqué au vecteur : Ry(pan) → Rz → Ry(RY) → Rx.
+    //
+    // L'ancienne version mettait le pan DANS le slot Y de l'accroche
+    // (Rx·Ry(pan)·Rz) : le roulis RZ se retrouvait à l'INTÉRIEUR du pan et
+    // tournait donc avec le yoke au lieu d'appartenir au socle. Sur une lyre
+    // à RZ = 180°, panner faisait pivoter l'appareil autour d'un axe mirroité
+    // — la « rotation bizarre » constatée sur les lyres 2 et 4 d'un plan de
+    // feu en tour, seules à porter un roulis de 180°.
+    const _rig = (x, y, z) => {
+      // Ry(pan) — yoke
+      const x1 =  x * Math.cos(panDmx) + z * Math.sin(panDmx);
+      const z1 = -x * Math.sin(panDmx) + z * Math.cos(panDmx);
+      // Rz — roulis d'accroche
+      const x2 = x1 * Math.cos(rz) - y * Math.sin(rz);
+      const y2 = x1 * Math.sin(rz) + y * Math.cos(rz);
+      // Ry(RY) — lacet d'accroche
+      const x3 =  x2 * Math.cos(ry) + z1 * Math.sin(ry);
+      const z3 = -x2 * Math.sin(ry) + z1 * Math.cos(ry);
+      // Rx — inclinaison d'accroche
+      return { x: x3,
+               y: y2 * Math.cos(rx) - z3 * Math.sin(rx),
+               z: y2 * Math.sin(rx) + z3 * Math.cos(rx) };
+    };
+    const d = _rig(0, -Math.cos(theta), Math.sin(theta));
+    const bx = d.x, by = d.y, bz = d.z;
+    // Position réelle de la lentille — MÊME chaîne, sinon le faisceau démarre
+    // à côté de la lentille dès que l'appareil est pivoté.
     const ly_l  = (-0.35 - 0.248 * Math.cos(theta)) * fs;
     const lz_l  = (         0.248 * Math.sin(theta)) * fs;
-    // Même chaîne Rz → Ry → Rx que la direction : sans ça, sur un projecteur
-    // pivoté, le faisceau démarrait à côté de la lentille au lieu d'en sortir.
-    const qx = -ly_l * Math.sin(rz), qy = ly_l * Math.cos(rz), qz = lz_l;
-    const ax =  qx * Math.cos(panA) + qz * Math.sin(panA);
-    const ay =  qy;
-    const az = -qx * Math.sin(panA) + qz * Math.cos(panA);
+    const a = _rig(0, ly_l, lz_l);
+    const ax = a.x, ay = a.y, az = a.z;
+    // _rig() applique DÉJÀ le Rx d'accroche : ne pas le repasser ici.
     const lensX = p.x + ax;
-    const lensY = hy  + ay * Math.cos(rx) - az * Math.sin(rx);
-    const lensZ = p.z + ay * Math.sin(rx) + az * Math.cos(rx);
+    const lensY = hy  + ay;
+    const lensZ = p.z + az;
     const goingUp = by > 0.05;
     // Longueur du faisceau : jusqu'au sol s'il descend, jusqu'au plafond s'il
     // monte, bornée à BEAM_TMAX.
@@ -1540,7 +1568,7 @@ window.updateScene = function(projectors) {
     // 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
     // qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du
     // côté opposé, corps et faisceau compris.
-    const panA  = -(p.pan - 32768)  / 32768.0 * Math.PI;
+    const panDmx = -(p.pan - 32768)  / 32768.0 * Math.PI;
       const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
       const rx    = (p.rot3d_x || 0) * Math.PI / 180;
       obj.mhGrp.position.set(p.x, hy, p.z);
@@ -1549,9 +1577,18 @@ window.updateScene = function(projectors) {
       // il rapetisse vers le haut. Les décalages internes correspondants sont
       // repris dans beamFloor() (constante `fs`).
       obj.mhGrp.scale.setScalar(p.fixture_scale ?? 1.0);
+      // mhGrp = ACCROCHE (rig) : RX / RY / RZ, immobiles pendant le show.
+      // mhYoke = PAN DMX, mhHGrp = TILT DMX. La chaîne complète est donc
+      //   Rx·Ry(RY)·Rz  ·  Ry(pan)  ·  Rx(-tilt)
+      // et non plus Rx·Ry(pan)·Rz, qui plaçait le ROULIS À L'INTÉRIEUR du
+      // pan : le roulis tournait avec le yoke au lieu d'appartenir au socle.
+      // C'est ce qui rendait le pan aberrant sur toute lyre ayant RZ ≠ 0.
+      // beamFloor() reproduit cet ordre à l'identique — les deux doivent
+      // rester synchronisés.
       obj.mhGrp.rotation.x  = rx;
-      obj.mhGrp.rotation.y  = panA;
+      obj.mhGrp.rotation.y  = (p.rot3d_y ?? 0) * Math.PI / 180;
       obj.mhGrp.rotation.z  = (p.rot3d_z || 0) * Math.PI / 180;
+      obj.mhYoke.rotation.y = panDmx;
       obj.mhHGrp.rotation.x = -theta;
       obj.mhGrp.visible = _flags.fixtures;
 

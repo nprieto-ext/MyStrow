@@ -12,14 +12,13 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-try:
-    import certifi
-    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-except Exception:
-    _SSL_CTX = ssl.create_default_context()
-
 # Importé depuis core pour éviter la circularité
-from core import FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+from core import FIREBASE_API_KEY, FIREBASE_PROJECT_ID, make_ssl_context
+
+# Union magasin système + certifi. Le certifi SEUL qui était ici laissait les
+# écrans de licence en erreur SSL derrière un antivirus à scan HTTPS, alors même
+# que la mise à jour passait : elle, avait déjà son contexte en union.
+_SSL_CTX = make_ssl_context()
 
 # ---------------------------------------------------------------
 # URLs de base
@@ -291,8 +290,8 @@ def get_stripe_portal_url(id_token: str) -> str:
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         raise Exception(f"Erreur portail : {body}")
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
 
 def send_password_reset(email: str) -> bool:
@@ -485,8 +484,8 @@ def _post_json_opt_auth(url: str, payload: dict, id_token: str = None) -> object
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur Firestore : {_firebase_error(e)}")
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
 
 def write_fixture_pack(pack_id: str, pack_data: dict, id_token: str) -> dict:
@@ -544,8 +543,8 @@ def delete_fixture_pack(pack_id: str, id_token: str) -> bool:
             return True
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur suppression pack : {_firebase_error(e)}")
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
 
 def fetch_fixture_packs_index(id_token: str = None) -> list:
@@ -620,8 +619,8 @@ def fetch_fixture_pack(pack_id: str, id_token: str = None) -> dict:
         if e.code == 404:
             raise Exception(f"Pack '{pack_id}' introuvable.")
         raise Exception(f"Erreur téléchargement pack : {_firebase_error(e)}")
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
     d = _doc_to_dict(doc)
     d["id"] = pack_id
@@ -678,8 +677,8 @@ def submit_fixture_contribution(
         except Exception:
             pass
         raise Exception(detail or f"HTTP {e.code} — {e.reason}")
-    except (urllib.error.URLError, OSError):
-        raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
 
     if not result.get("ok"):
         raise Exception(result.get("error", "Soumission refusée."))
@@ -764,8 +763,13 @@ def fetch_all_gdtf_fixtures(id_token: str = None) -> list:
     """
     Charge TOUTES les fixtures de la collection gdtf_fixtures (pagination auto).
     Retourne une liste de dicts fixture standardisés.
-    Fonctionne sans authentification si les règles Firestore autorisent la lecture publique :
-        match /gdtf_fixtures/{id} { allow read: if true; }
+
+    Fonctionne SANS authentification : la bibliothèque est en lecture publique
+    (`firestore.rules` : `match /gdtf_fixtures/{doc} { allow read: if true; }`),
+    au même titre que `fixture_packs`. Le jeton reste envoyé quand on en a un,
+    mais il n'est pas requis — sinon un utilisateur dont le jeton ne peut pas
+    être rafraîchi (antivirus interceptant le TLS) se retrouve bloqué sur un 403
+    affiché en « Erreur Firestore ».
     """
     results = []
     page_token = None
@@ -781,10 +785,20 @@ def fetch_all_gdtf_fixtures(id_token: str = None) -> list:
         try:
             with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
                 data = json.loads(resp.read().decode())
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                # La bibliothèque est publique : un refus ici ne vient donc PAS
+                # d'un défaut de connexion de l'utilisateur. Ne pas lui dire de
+                # se reconnecter, ça l'enverrait sur une fausse piste.
+                raise Exception(
+                    "La bibliothèque a refusé la lecture (accès refusé).\n"
+                    "Elle est pourtant consultable sans compte : si le problème "
+                    "persiste, signalez-le au support.\nVérifiez aussi que votre "
+                    "antivirus n'intercepte pas les connexions sécurisées de "
+                    "MyStrow.")
             raise
-        except (urllib.error.URLError, OSError):
-            raise Exception("Pas de connexion internet. Vérifiez votre réseau et réessayez.")
+        except (urllib.error.URLError, OSError) as e:
+            raise Exception(_net_error_msg(e))
         docs = data.get("documents", [])
         for doc in docs:
             d = _doc_to_dict(doc)

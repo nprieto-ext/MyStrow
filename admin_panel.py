@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import secrets
+import socket
 import string
 import urllib.request
 from datetime import datetime, timezone, date
@@ -196,6 +197,11 @@ def _set_auth_password(uid: str, new_password: str) -> bool:
 
 ADMIN_CACHE = os.path.join(os.path.expanduser("~"), ".maestro_admin.json")
 
+# Brouillon de la dernière fixture soumise : écrit avant l'upload, effacé une
+# fois l'écriture confirmée. Permet de ne rien perdre si le réseau lâche (ou si
+# le panel se ferme) entre le clic « Enregistrer » et la réponse du serveur.
+FIXTURE_DRAFT = os.path.join(os.path.expanduser("~"), ".mystrow_admin_fixture_draft.json")
+
 SITE_DIR = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "mystrow_site"
 ))
@@ -234,6 +240,24 @@ ESIGNER_SIGS_PER_RELEASE = 2
 ESIGNER_EXTRA_SIG_COST   = 1.0          # $ par signature au-delà du quota
 ESIGNER_CYCLE_ANCHOR_DAY = 9            # jour de bascule du cycle
 ESIGNER_BILLING_START    = date(2026, 7, 9)  # 1er cycle facturé (30 j d'essai avant)
+
+# Tarifs publics, pour le calcul du chiffre d'affaires mensuel récurrent (MRR).
+#
+# ⚠️ TROISIÈME copie de ces prix. Les deux autres sont `license_ui.py` (cartes
+# de la fenêtre d'achat) et `tarifs.html` du site — elles divergent déjà d'une
+# génération de tarifs. Toute hausse doit passer par les trois.
+#
+# ⚠️ Ce sont les prix D'AUJOURD'HUI appliqués à TOUS les abonnés. Les anciens
+# tarifs (21,69 € / mois, 216,99 € / an) restent facturés à ceux qui s'y sont
+# abonnés : le MRR affiché est donc une ESTIMATION, pas un relevé Stripe. Le
+# panneau n'a aucun accès à l'API Stripe, seulement des liens vers le tableau
+# de bord — un chiffre exact demanderait de brancher cette API.
+PRICE_MONTHLY_TTC = 23.99       # € TTC / mois
+PRICE_ANNUAL_TTC  = 143.86      # € TTC / an  (soit 11,99 € / mois)
+# Même taux que `functions/main.py` (TVA_RATE), qui a déjà valu des factures
+# Axonaut majorées de 20 % en confondant TTC et HT. Le chiffre d'affaires se
+# compte HORS TAXES : c'est le montant HT qui est affiché.
+TVA_RATE_PCT      = 20.0
 
 STYLE_APP = f"""
     QMainWindow, QDialog {{ background: {BG_MAIN}; }}
@@ -299,6 +323,12 @@ _BTN_SECONDARY = f"""
     }}
     QPushButton:hover {{ background: #3a3a3a; color: white; }}
     QPushButton:disabled {{ color: #555; }}
+"""
+# Même feuille, sans le padding vertical : à utiliser dès que le bouton est
+# contraint par un setFixedHeight(). Les 8 px du haut et du bas y mangent la
+# place du texte et coupent les jambages (« profil » → « profii »).
+_BTN_SECONDARY_TIGHT = _BTN_SECONDARY + """
+    QPushButton { padding: 0 14px; }
 """
 _BTN_RED = f"""
     QPushButton {{
@@ -2161,6 +2191,23 @@ class PublishPackDialog(QDialog):
         return self._result
 
 
+def _is_timeout_error(exc: BaseException) -> bool:
+    """Vrai si l'exception est un dépassement de délai réseau (et pas une vraie
+    erreur serveur). urllib emballe parfois le timeout dans un URLError."""
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return True
+    if isinstance(getattr(exc, "reason", None), (socket.timeout, TimeoutError)):
+        return True
+    return "timed out" in str(exc).lower()
+
+
+# La Cloud Function gdtf_upload est déclarée avec timeout_sec=300 mais son
+# démarrage à froid (init firebase_admin + verify_id_token qui va chercher les
+# certificats Google) dépasse régulièrement 30 s. Le client doit être au moins
+# aussi patient, sinon on abandonne une requête que le serveur traite quand même.
+_FIXTURE_UPLOAD_TIMEOUT = 120
+
+
 def _do_upload_fixture_async(fixture_data: dict, id_token: str, refresh_token: str = "") -> str:
     """Upload d'une fixture vers Firestore via gdtf_upload (appelé dans un QThread).
     Retourne le id_token (potentiellement rafraîchi)."""
@@ -2177,8 +2224,23 @@ def _do_upload_fixture_async(fixture_data: dict, id_token: str, refresh_token: s
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
+        # Une seule relance en cas de timeout : l'écriture est idempotente
+        # (doc_id dérivé de l'uuid), un doublon est donc sans conséquence.
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(req, timeout=_FIXTURE_UPLOAD_TIMEOUT) as resp:
+                    return json.loads(resp.read().decode())
+            except urllib.error.HTTPError:
+                raise
+            except Exception as exc:
+                if not _is_timeout_error(exc):
+                    raise
+        raise Exception(
+            f"Le serveur n'a pas répondu dans le délai imparti "
+            f"({_FIXTURE_UPLOAD_TIMEOUT} s, 2 tentatives).\n"
+            "La fixture a peut-être quand même été écrite : rechargez la liste "
+            "avant de réessayer."
+        )
 
     try:
         r = _post(id_token)
@@ -2217,7 +2279,7 @@ class _AdminChannelRowWidget(QWidget):
 
     def __init__(self, ch_num: int, ch_type: str, default_val: int = 0, parent=None):
         super().__init__(parent)
-        from fixture_editor import ALL_CHANNEL_TYPES, CHANNEL_COLORS, _NoScrollCombo
+        from fixture_editor import ALL_CHANNEL_TYPES, CHANNEL_COLORS, ChannelTypeCombo
         self._ALL_CHANNEL_TYPES = ALL_CHANNEL_TYPES
         self._CHANNEL_COLORS    = CHANNEL_COLORS
 
@@ -2236,8 +2298,8 @@ class _AdminChannelRowWidget(QWidget):
         self._set_num_style(color)
         layout.addWidget(self._num_lbl)
 
-        # ── Combo type ────────────────────────────────────────────────────────
-        self._combo = _NoScrollCombo()
+        # ── Combo type (recherche : « pa » → Pan, PanFine) ────────────────────
+        self._combo = ChannelTypeCombo(ch_type)
         self._combo.setFixedHeight(26)
         self._combo.setStyleSheet(
             "QComboBox{background:#2a2a2a;color:#e0e0e0;border:1px solid #3a3a3a;"
@@ -2245,11 +2307,7 @@ class _AdminChannelRowWidget(QWidget):
             "QComboBox::drop-down{border:none;width:16px;}"
             "QComboBox QAbstractItemView{background:#222;color:#e0e0e0;}"
         )
-        for ct in ALL_CHANNEL_TYPES:
-            self._combo.addItem(ct)
-        idx = ALL_CHANNEL_TYPES.index(ch_type) if ch_type in ALL_CHANNEL_TYPES else 0
-        self._combo.setCurrentIndex(idx)
-        self._combo.currentTextChanged.connect(self._on_type_changed)
+        self._combo.type_changed.connect(self._on_type_changed)
         layout.addWidget(self._combo, 1)
 
         # ── Valeur par défaut (0-255) ─────────────────────────────────────────
@@ -2307,7 +2365,7 @@ class _AdminChannelRowWidget(QWidget):
         self.changed.emit()
 
     def get_type(self) -> str:
-        return self._combo.currentText()
+        return self._combo.current_type()
 
     def get_default(self) -> int:
         return self._default_spin.value()
@@ -2319,6 +2377,12 @@ class _AdminChannelRowWidget(QWidget):
 
 class _FixtureEditDialog(QDialog):
     """Éditeur complet de fixture DMX avec édition des canaux par mode."""
+
+    # STYLE_APP donne 8 px de padding à tout QLineEdit, ce qui suppose un champ
+    # libre de grandir. Ici ils sont à hauteur fixe (28-32 px) : les 16 px de
+    # padding vertical ne laissent pas la place d'une ligne de texte et rognent
+    # les jambages (« généré » → « qénéré »). On garde le retrait horizontal.
+    _EDIT_TIGHT = "QLineEdit { padding: 0 8px; }"
 
     # Profils prédéfinis communs
     _COMMON_PROFILES = {
@@ -2351,6 +2415,12 @@ class _FixtureEditDialog(QDialog):
             DmxPreviewWidget,
             ALL_CHANNEL_TYPES, GROUP_OPTIONS, FIXTURE_TYPES,
         )
+        # Enregistre au passage les alias de recherche des types de canaux
+        # (« amber » → Ambre) : ils vivent dans la table du pack editor.
+        try:
+            import admin_pack_editor  # noqa: F401
+        except Exception:
+            pass
         self._DmxPreviewWidget  = DmxPreviewWidget
         self._ALL_CHANNEL_TYPES = ALL_CHANNEL_TYPES
         self._GROUP_OPTIONS     = GROUP_OPTIONS
@@ -2416,12 +2486,14 @@ class _FixtureEditDialog(QDialog):
         self._e_name = QLineEdit(self._fixture.get("name", ""))
         self._e_name.setPlaceholderText("ex : Par 64 LED RGB")
         self._e_name.setFixedHeight(32)
+        self._e_name.setStyleSheet(self._EDIT_TIGHT)
         meta_lay.addWidget(self._e_name)
 
         meta_lay.addWidget(_lbl("Fabricant *"))
         self._e_mfr = QLineEdit(self._fixture.get("manufacturer", ""))
         self._e_mfr.setPlaceholderText("ex : Eurolite")
         self._e_mfr.setFixedHeight(32)
+        self._e_mfr.setStyleSheet(self._EDIT_TIGHT)
         meta_lay.addWidget(self._e_mfr)
 
         meta_lay.addWidget(_lbl("Type de fixture"))
@@ -2448,12 +2520,14 @@ class _FixtureEditDialog(QDialog):
         self._e_src = QLineEdit(self._fixture.get("source", ""))
         self._e_src.setPlaceholderText("ex : OFL, ma")
         self._e_src.setFixedHeight(32)
+        self._e_src.setStyleSheet(self._EDIT_TIGHT)
         meta_lay.addWidget(self._e_src)
 
         meta_lay.addWidget(_lbl("UUID"))
         self._e_uuid = QLineEdit(self._fixture.get("uuid", ""))
         self._e_uuid.setPlaceholderText("(généré automatiquement)")
         self._e_uuid.setFixedHeight(32)
+        self._e_uuid.setStyleSheet(self._EDIT_TIGHT)
         if self._is_new:
             import uuid as _uuid
             self._e_uuid.setText(str(_uuid.uuid4()))
@@ -2484,7 +2558,7 @@ class _FixtureEditDialog(QDialog):
 
         btn_add_mode = QPushButton("+ Mode")
         btn_add_mode.setFixedHeight(28)
-        btn_add_mode.setStyleSheet(_BTN_SECONDARY)
+        btn_add_mode.setStyleSheet(_BTN_SECONDARY_TIGHT)
         btn_add_mode.clicked.connect(self._add_mode)
         tab_row.addWidget(btn_add_mode)
 
@@ -2505,6 +2579,7 @@ class _FixtureEditDialog(QDialog):
         name_row.addWidget(lbl_mode_name)
         self._mode_name_edit = QLineEdit()
         self._mode_name_edit.setFixedHeight(28)
+        self._mode_name_edit.setStyleSheet(self._EDIT_TIGHT)
         self._mode_name_edit.setPlaceholderText("ex : 5CH RGB+Dim+Strobe")
         self._mode_name_edit.textChanged.connect(self._on_mode_name_changed)
         name_row.addWidget(self._mode_name_edit, 1)
@@ -2534,13 +2609,13 @@ class _FixtureEditDialog(QDialog):
         ch_bar = QHBoxLayout()
         btn_add_ch = QPushButton("+ Canal")
         btn_add_ch.setFixedHeight(28)
-        btn_add_ch.setStyleSheet(_BTN_SECONDARY)
+        btn_add_ch.setStyleSheet(_BTN_SECONDARY_TIGHT)
         btn_add_ch.clicked.connect(self._add_channel)
         ch_bar.addWidget(btn_add_ch)
 
         btn_profile = QPushButton("Charger un profil…")
         btn_profile.setFixedHeight(28)
-        btn_profile.setStyleSheet(_BTN_SECONDARY)
+        btn_profile.setStyleSheet(_BTN_SECONDARY_TIGHT)
         btn_profile.clicked.connect(self._load_profile)
         ch_bar.addWidget(btn_profile)
 
@@ -2605,7 +2680,7 @@ class _FixtureEditDialog(QDialog):
             btn.clicked.connect(lambda _checked, x=idx: self._select_mode(x))
             btn.setStyleSheet(
                 self._mode_tab_active_style() if i == self._current_mode_idx
-                else _BTN_SECONDARY
+                else _BTN_SECONDARY_TIGHT
             )
             self._mode_btn_group.append(btn)
             self._mode_tab_layout.addWidget(btn)
@@ -2622,7 +2697,7 @@ class _FixtureEditDialog(QDialog):
 
         for i, btn in enumerate(self._mode_btn_group):
             active = (i == self._current_mode_idx)
-            btn.setStyleSheet(self._mode_tab_active_style() if active else _BTN_SECONDARY)
+            btn.setStyleSheet(self._mode_tab_active_style() if active else _BTN_SECONDARY_TIGHT)
             btn.setChecked(active)
 
         mode = self._modes_data[self._current_mode_idx]
@@ -3583,19 +3658,32 @@ class AdminPanel(QMainWindow):
         kpi_row.addWidget(card)
         card, self._stat_active   = _kpi("✔", "Actives", "#2ecc71")
         kpi_row.addWidget(card)
-        card, self._stat_expiring = _kpi("⚠", "Expirent < 30j", "#f39c12")
-        kpi_row.addWidget(card)
-        card, self._stat_expired  = _kpi("✕", "Expirées", "#e74c3c")
-        kpi_row.addWidget(card)
-        card, self._stat_machines = _kpi("⬛", "Machines enregistrées", TEXT_DIM)
-        kpi_row.addWidget(card)
         inner_lay.addLayout(kpi_row)
+
+        # ── Ligne 1a : les abonnements, total puis détail ─────────────────────
+        # Le total et son détail tiennent sur UNE ligne pour que le
+        # rapprochement « actifs = mensuels + annuels » se lise sans quitter des
+        # yeux la rangée. Les licences à vie restent volontairement HORS de ce
+        # total (elles ne se renouvellent pas) : d'où leur place en fin de
+        # ligne, après le MRR, séparées de l'addition qui précède.
+        kpi_row_subs = QHBoxLayout()
+        kpi_row_subs.setSpacing(12)
+        card, self._stat_subs         = _kpi("⟳", "Abonnements actifs", "#2ecc71")
+        kpi_row_subs.addWidget(card)
+        card, self._stat_subs_monthly = _kpi("↻", "Mensuels", "#2ecc71")
+        kpi_row_subs.addWidget(card)
+        card, self._stat_subs_annual  = _kpi("◆", "Annuels", "#1abc9c")
+        kpi_row_subs.addWidget(card)
+        card, self._stat_mrr          = _kpi("€", "CA mensuel (HT est.)", "#f1c40f")
+        self._stat_mrr_card = card
+        kpi_row_subs.addWidget(card)
+        card, self._stat_lifetime     = _kpi("∞", "À vie", "#635bff")
+        kpi_row_subs.addWidget(card)
+        inner_lay.addLayout(kpi_row_subs)
 
         # ── Ligne 1b : KPI secondaires ────────────────────────────────────────
         kpi_row2 = QHBoxLayout()
         kpi_row2.setSpacing(12)
-        card, self._stat_rate       = _kpi("%",  "Taux d'activité",      ACCENT)
-        kpi_row2.addWidget(card)
         card, self._stat_new_month  = _kpi("★",  "Nouveaux ce mois",     "#3498db")
         kpi_row2.addWidget(card)
         card, self._stat_growth     = _kpi("↑",  "Croissance MoM",       "#2ecc71")
@@ -3733,6 +3821,8 @@ class AdminPanel(QMainWindow):
 
         total = len(self._clients)
         active = expiring = expired = machines = 0
+        active_subs = 0          # abonnements récurrents en cours (hors manuel / à vie)
+        subs_monthly = subs_annual = subs_lifetime = 0   # répartition affichée sous le KPI
         stripe_count = newsletter_count = 0
         plan_counts: dict = {"lifetime": 0, "annual": 0, "monthly": 0,
                              "stripe": 0, "manuel": 0}
@@ -3756,6 +3846,27 @@ class AdminPanel(QMainWindow):
             else:                expired   += 1
             machines += len(c.get("machines", []))
             pt = c.get("plan_type", "")
+            # Abonnement actif = forfait récurrent + client Stripe + non résilié
+            # + non expiré.
+            #
+            # Le critère est `stripe_customer_id` et NON `stripe_subscription_id`
+            # comme avant : ce dernier était effacé à chaque renouvellement (14
+            # abonnés actifs manquaient au compteur le 12/08/2026), et il reste
+            # vidé volontairement par `_revoke_license` à la résiliation — d'où
+            # la lecture de `plan`, qui est le vrai marqueur d'un abonnement
+            # résilié. L'identifiant client, lui, survit à tout.
+            if pt in ("monthly", "annual") and c.get("stripe_customer_id") \
+                    and c.get("plan") != "expired" and days_left >= 0:
+                active_subs += 1
+                if pt == "monthly":
+                    subs_monthly += 1
+                else:
+                    subs_annual += 1
+            # Les licences à vie ne sont PAS des abonnements (aucun
+            # renouvellement) : hors compteur, mais rappelées sous la carte car
+            # elles font partie des clients payants actifs.
+            elif pt == "lifetime" and c.get("plan") != "expired" and days_left >= 0:
+                subs_lifetime += 1
             if pt in plan_counts:
                 plan_counts[pt] += 1
             if c.get("stripe_customer_id"):
@@ -3783,16 +3894,39 @@ class AdminPanel(QMainWindow):
                     pass
 
         # ── KPI ligne 1 ──────────────────────────────────────────────────────
+        self._stat_subs.setText(str(active_subs))
+        self._stat_subs_monthly.setText(str(subs_monthly))
+        self._stat_subs_annual.setText(str(subs_annual))
+        self._stat_lifetime.setText(str(subs_lifetime))
+
+        # ── Chiffre d'affaires mensuel récurrent (MRR) ───────────────────────
+        # Un annuel est lissé sur 12 mois : c'est la convention du MRR, sinon
+        # le chiffre bondirait le mois de l'encaissement et retomberait à zéro
+        # les onze suivants. Les licences à vie en sont EXCLUES — un paiement
+        # unique n'est pas récurrent, l'inclure gonflerait un indicateur censé
+        # dire « combien rentre le mois prochain sans rien vendre de neuf ».
+        _mrr_ttc = (subs_monthly * PRICE_MONTHLY_TTC
+                    + subs_annual * PRICE_ANNUAL_TTC / 12.0)
+        _mrr_ht  = _mrr_ttc / (1.0 + TVA_RATE_PCT / 100.0)
+        self._stat_mrr.setText(f"{_mrr_ht:,.0f} €".replace(",", " "))
+        self._stat_mrr_card.setToolTip(
+            f"Chiffre d'affaires mensuel récurrent — ESTIMATION.\n\n"
+            f"  {subs_monthly} mensuels  × {PRICE_MONTHLY_TTC:.2f} €\n"
+            f"  {subs_annual} annuels   × {PRICE_ANNUAL_TTC:.2f} € / 12"
+            f"  = {PRICE_ANNUAL_TTC / 12.0:.2f} € / mois\n"
+            f"  ─────────────────────────────\n"
+            f"  {_mrr_ttc:,.2f} € TTC   →   {_mrr_ht:,.2f} € HT"
+            f"  (TVA {TVA_RATE_PCT:.0f} %)\n\n"
+            f"Annuels lissés sur 12 mois. Licences à vie exclues : un paiement\n"
+            f"unique n'est pas récurrent.\n\n"
+            f"⚠️ Calculé aux tarifs D'AUJOURD'HUI. Les abonnés entrés sur un\n"
+            f"ancien tarif sont comptés au prix actuel — le panneau n'a pas\n"
+            f"accès à l'API Stripe. Le chiffre exact est sur le tableau de bord."
+            .replace(",", " "))
         self._stat_total.setText(str(total))
         self._stat_active.setText(str(active))
-        self._stat_expiring.setText(str(expiring))
-        self._stat_expired.setText(str(expired))
-        self._stat_machines.setText(str(machines))
 
         # ── KPI ligne 2 ──────────────────────────────────────────────────────
-        rate = int(active / total * 100) if total else 0
-        self._stat_rate.setText(f"{rate}%")
-
         self._stat_new_month.setText(str(new_this_month))
 
         if new_last_month > 0:
@@ -5976,7 +6110,22 @@ class AdminPanel(QMainWindow):
                 self._upload_fixture(result)
 
     def _on_add_fixture(self):
-        dlg = _FixtureEditDialog(self)
+        draft = self._load_fixture_draft()
+        if draft:
+            rep = QMessageBox.question(
+                self, "Brouillon retrouvé",
+                f"La fixture « {draft.get('name', '?')} » n'a jamais été confirmée "
+                "par le serveur lors de la dernière tentative.\n\n"
+                "Reprendre ce brouillon ?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if rep == QMessageBox.Yes:
+                dlg = _FixtureEditDialog(self, fixture=draft)
+            else:
+                self._clear_fixture_draft()
+                dlg = _FixtureEditDialog(self)
+        else:
+            dlg = _FixtureEditDialog(self)
         if dlg.exec() == QDialog.Accepted:
             result = dlg.get_result()
             if result:
@@ -6005,8 +6154,35 @@ class AdminPanel(QMainWindow):
             }
             self._upload_fixture(fixture_data)
 
+    # ── Brouillon local (anti-perte de réglages) ─────────────────────────────
+
+    def _save_fixture_draft(self, fixture_data: dict):
+        try:
+            with open(FIXTURE_DRAFT, "w", encoding="utf-8") as f:
+                json.dump(fixture_data, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass   # le brouillon est un filet de sécurité, jamais un bloquant
+
+    def _load_fixture_draft(self) -> dict | None:
+        try:
+            with open(FIXTURE_DRAFT, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) and data.get("name") else None
+        except Exception:
+            return None
+
+    def _clear_fixture_draft(self):
+        try:
+            os.remove(FIXTURE_DRAFT)
+        except Exception:
+            pass
+
     def _upload_fixture(self, fixture_data: dict):
         self._pending_fixture_name = fixture_data.get("name", "")
+        # Conservé en mémoire ET sur disque : en cas d'échec réseau, l'utilisateur
+        # récupère sa saisie au lieu de tout ressaisir.
+        self._pending_fixture_data = dict(fixture_data)
+        self._save_fixture_draft(fixture_data)
         _run_async(
             self, _do_upload_fixture_async, fixture_data, self._id_token, self._refresh_token,
             on_success=self._on_fixture_saved,
@@ -6016,12 +6192,42 @@ class AdminPanel(QMainWindow):
     def _on_fixture_saved(self, new_token: str):
         if new_token and new_token != self._id_token:
             self._id_token = new_token  # token rafraîchi silencieusement
+        self._clear_fixture_draft()
+        self._pending_fixture_data = None
         self._load_fixtures()
         QMessageBox.information(self, "Fixture enregistrée",
                                 f"« {self._pending_fixture_name} » a été sauvegardée.")
 
     def _on_fixture_save_error(self, msg: str):
-        QMessageBox.critical(self, "Erreur sauvegarde", msg)
+        data = getattr(self, "_pending_fixture_data", None)
+        if not data:
+            QMessageBox.critical(self, "Erreur sauvegarde", msg)
+            return
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle("Erreur sauvegarde")
+        box.setText(f"« {self._pending_fixture_name} » n'a pas pu être enregistrée.")
+        box.setInformativeText(
+            f"{msg}\n\nVos réglages sont conservés : vous pouvez réessayer ou "
+            "rouvrir l'éditeur pour les modifier."
+        )
+        btn_retry = box.addButton("Réessayer", QMessageBox.AcceptRole)
+        btn_edit  = box.addButton("Rouvrir l'éditeur", QMessageBox.ActionRole)
+        box.addButton("Plus tard", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is btn_retry:
+            self._upload_fixture(dict(data))
+        elif clicked is btn_edit:
+            dlg = _FixtureEditDialog(self, fixture=dict(data))
+            if dlg.exec() == QDialog.Accepted:
+                result = dlg.get_result()
+                if result:
+                    self._upload_fixture(result)
+        # « Plus tard » : le brouillon reste sur disque, proposé au prochain
+        # clic sur « Ajouter une fixture ».
 
     def _on_delete_fixture(self):
         row = self._fix_table.currentRow()

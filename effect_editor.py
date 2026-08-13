@@ -20,7 +20,8 @@ from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
 from core import (projector_selection_keys, layer_selection_ranks,
-                  block_index, chase_slot, position_preset_values,
+                  block_index, chase_slot, layer_frequency,
+                  effect_dim_base_color, position_preset_values,
                   find_position_preset, ComboSansMolette)
 from i18n import tr
 
@@ -924,7 +925,7 @@ class WaveformCanvas(QWidget):
 
         layer  = self._layer
         N      = w - 2 * mg
-        freq   = 0.05 + layer.speed / 100.0 * 7.0
+        freq   = layer_frequency(layer.speed)
         fade_f = getattr(layer, 'fade', 0) / 100.0
         attr   = layer.attribute
 
@@ -2069,12 +2070,16 @@ class LayerRow(QFrame):
         self._cells["max"].setEnabled(dead_level != "max")
 
         # GROUPER ne fait que regrouper le DÉCALAGE : sans décalage, tout part
-        # déjà ensemble et la valeur ne changerait rien. On la grise plutôt que
-        # de laisser régler un paquet qui resterait sans effet visible.
-        # Exception « Un par un » : il ignore le décalage mais respecte les
-        # paquets (un paquet allumé à la fois), donc GROUPER y reste utile.
+        # déjà ensemble et la valeur ne change rien pour l'instant. Le tooltip
+        # le dit, mais la cellule reste RÉGLABLE : la griser créait un
+        # œuf-et-poule (« je ne peux pas grouper mes lyres ») où il fallait
+        # deviner qu'on doit ouvrir DÉC d'abord pour pouvoir grouper ensuite —
+        # or grouper est le geste que l'utilisateur a en tête, le décalage n'en
+        # est que le corollaire.
+        # « Un par un » est le cas où GROUPER agit même à DÉC 0 : il ignore le
+        # décalage mais respecte les paquets (un paquet allumé à la fois).
         _sans_dec = not gele and not un_par_un and not getattr(self.layer, 'spread', 0)
-        self._cells["group"].setEnabled(not gele and not _sans_dec)
+        self._cells["group"].setEnabled(not gele)
 
         tip = ("Sans effet sur une forme constante : ouvrez le FONDU pour "
                "réanimer la couche.")
@@ -2092,8 +2097,9 @@ class LayerRow(QFrame):
             if un_par_un else self._tip["fondu"])
         self._cells["group"].setToolTip(
             tip if gele else
-            "Sans effet tant que DÉC vaut 0 : les fixtures partent déjà toutes "
-            "ensemble." if _sans_dec else self._tip["group"])
+            "Paquets réglables, mais sans effet tant que DÉC vaut 0 : les "
+            "fixtures partent déjà toutes ensemble. Ouvrez DÉC pour que les "
+            "paquets se décalent." if _sans_dec else self._tip["group"])
         self._cells["min"].setToolTip(tip if dead_level == "min" else self._tip["min"])
         self._cells["max"].setToolTip(tip if dead_level == "max" else self._tip["max"])
 
@@ -2927,6 +2933,93 @@ def _ask_name(parent, title: str, label: str, default: str = "") -> tuple[str, b
     return result[0]
 
 
+def _ask_add_effect_mode(parent, has_layers: bool) -> str:
+    """Demande comment ajouter un effet : "import", "create", ou "" si annulé.
+
+    L'import existait deja, mais son seul acces etait un bouton de 16 px colle
+    a l'en-tete "Mes Effets" : personne ne le trouvait. Il est desormais offert
+    a egalite avec la creation, des le bouton "Ajouter un effet".
+    """
+    from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                   QLabel, QPushButton)
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(tr("ee2_add_title"))
+    dlg.setModal(True)
+    dlg.setMinimumWidth(470)
+    dlg.setStyleSheet("""
+        QDialog { background: #1a1a1a; }
+        QLabel  { color: #cccccc; font-size: 13px; background: transparent; }
+        QLabel#opt_t { color: #ffffff; font-size: 13px; font-weight: bold; }
+        QLabel#opt_d { color: #888888; font-size: 11px; }
+        QPushButton#opt {
+            background: #222222; border: 1px solid #383838;
+            border-radius: 6px; text-align: left;
+        }
+        QPushButton#opt:hover { background: #1e2e33; border-color: #00d4ff; }
+        QPushButton#cancel {
+            background: #2a2a2a; color: #cccccc;
+            border: 1px solid #444; border-radius: 4px;
+            padding: 6px 18px; font-size: 12px; min-width: 70px;
+        }
+        QPushButton#cancel:hover { background: #333; color: #fff; }
+    """)
+
+    lay = QVBoxLayout(dlg)
+    lay.setContentsMargins(20, 18, 20, 16)
+    lay.setSpacing(10)
+    lay.addWidget(QLabel(tr("ee2_add_q")))
+
+    choice = [""]
+
+    def _mk_option(icon, title, desc, value):
+        btn = QPushButton()
+        btn.setObjectName("opt")
+        btn.setCursor(Qt.PointingHandCursor)
+        # QPushButton dimensionne sur son propre texte, pas sur le layout qu'on
+        # lui pose dedans : sans cette reserve, la description sur deux lignes
+        # (allemand, ou « enregistre les couches... » en francais) est rognee.
+        btn.setMinimumHeight(84)
+        row = QHBoxLayout(btn)
+        row.setContentsMargins(14, 10, 14, 10)
+        row.setSpacing(12)
+        ic = QLabel(icon)
+        ic.setStyleSheet("font-size: 22px; background: transparent;")
+        row.addWidget(ic)
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+        lt = QLabel(title); lt.setObjectName("opt_t")
+        ld = QLabel(desc);  ld.setObjectName("opt_d")
+        ld.setWordWrap(True)
+        col.addWidget(lt)
+        col.addWidget(ld)
+        row.addLayout(col, 1)
+        # Sans ce drapeau, les QLabel avalent le clic et le bouton ne part pas.
+        for w in (ic, lt, ld):
+            w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        btn.clicked.connect(
+            lambda: (choice.__setitem__(0, value), dlg.accept()))
+        return btn
+
+    lay.addWidget(_mk_option(
+        "✏️", tr("ee2_add_create_t"),
+        tr("ee2_add_create_d_cur") if has_layers else tr("ee2_add_create_d_new"),
+        "create"))
+    lay.addWidget(_mk_option(
+        "📂", tr("ee2_add_import_t"), tr("ee2_add_import_d"), "import"))
+
+    btn_row = QHBoxLayout()
+    btn_row.addStretch()
+    cancel = QPushButton(tr("fx_cancel"))
+    cancel.setObjectName("cancel")
+    cancel.clicked.connect(dlg.reject)
+    btn_row.addWidget(cancel)
+    lay.addLayout(btn_row)
+
+    dlg.exec()
+    return choice[0]
+
+
 class EffectEditorDialog(QDialog):
     """
     Editeur d'effets — 3 colonnes :
@@ -3069,7 +3162,7 @@ class EffectEditorDialog(QDialog):
         save_btn = QPushButton(tr("ee2_add_effect"))
         save_btn.setFixedHeight(26)
         save_btn.setCursor(Qt.PointingHandCursor)
-        save_btn.setToolTip(tr("ee2_save_effect"))
+        save_btn.setToolTip(tr("ee2_add_tip"))
         save_btn.setStyleSheet("""
             QPushButton {
                 background: #0a1a0a; color: #285028;
@@ -3078,7 +3171,7 @@ class EffectEditorDialog(QDialog):
             }
             QPushButton:hover { background: #0d220d; color: #55aa55; border-color: #2a5a2a; }
         """)
-        save_btn.clicked.connect(self._save_current_as_custom)
+        save_btn.clicked.connect(self._on_add_effect)
         hh.addWidget(save_btn)
         self._lib_save_btn = save_btn
 
@@ -3355,6 +3448,14 @@ class EffectEditorDialog(QDialog):
             if isinstance(cfg, dict) and cfg.get("name") == name:
                 return f"E{int(idx) + 1}"
         return ""
+
+    def _on_add_effect(self):
+        """Bouton « Ajouter un effet » : laisse choisir importer ou créer."""
+        mode = _ask_add_effect_mode(self, bool(self._layers))
+        if mode == "import":
+            self._import_custom_effect()
+        elif mode == "create":
+            self._save_current_as_custom()
 
     def _save_current_as_custom(self):
         """Sauvegarde l'effet actuellement chargé dans Mes Effets."""
@@ -3985,13 +4086,32 @@ class EffectEditorDialog(QDialog):
                 self._preview_timer.start(40)
         else:
             # Rendre la main immédiatement, sans attendre le prochain tick
-            mw._editor_live_overrides = None
+            self._release_live_dmx()
+
+    def _push_overrides_to_3d(self, overrides):
+        """Miroir de la sortie live dans la fenêtre 3D, si elle est ouverte.
+
+        La 3D lit l'état persistant des projecteurs : sans ce relais elle reste
+        sur l'état d'avant l'effet, la boucle DMX restaurant les projecteurs
+        aussitôt la trame envoyée.
+        """
+        mw   = self._main_window
+        p3d  = getattr(mw, '_plan3d', None) if mw is not None else None
+        if p3d is None:
+            return
+        try:
+            if overrides is not None and not p3d.isVisible():
+                overrides = None
+            p3d.set_fx_overrides(overrides)
+        except RuntimeError:
+            pass    # fenêtre 3D déjà détruite côté C++
 
     def _release_live_dmx(self):
         """Coupe la sortie live — à appeler sur toute sortie de l'éditeur."""
         mw = self._main_window
         if mw is not None:
             mw._editor_live_overrides = None
+        self._push_overrides_to_3d(None)
 
     def closeEvent(self, event):
         self._release_live_dmx()
@@ -4020,9 +4140,11 @@ class EffectEditorDialog(QDialog):
             if plan is not None:
                 plan.set_htp_overrides(overrides)
             # Sortie live : la boucle DMX les applique puis les restaure
+            _live = self._btn_live_dmx.isChecked()
             if self._main_window is not None:
-                self._main_window._editor_live_overrides = (
-                    overrides if self._btn_live_dmx.isChecked() else None)
+                self._main_window._editor_live_overrides = overrides if _live else None
+            # La 3D reflète ce qui part sur le DMX, donc armée par le même bouton
+            self._push_overrides_to_3d(overrides if _live else None)
             # Alimenter la mini strip (même filtre anti-fumée que _compute_preview)
             all_proj = getattr(self._main_window, 'projectors', [])
             strip_proj = [p for p in all_proj if getattr(p, 'group', '') != 'fumee'][:16]
@@ -4155,7 +4277,7 @@ class EffectEditorDialog(QDialog):
                 # même paquet partagent la phase, donc partent ensemble.
                 i_fx, n_fx = block_index(i_fx, n_fx, getattr(layer, 'block', 1))
 
-                freq      = (0.05 + layer.speed / 100.0 * 7.0) * fader_mult
+                freq      = layer_frequency(layer.speed, fader_mult=fader_mult)
                 spread    = layer.spread / 100.0
                 # Mouvement (Pan/Tilt) : plafonner a 1.0 = etalement parfait, pas de
                 # re-enroulement des lyres au-dela (idem moteur live).
@@ -4259,13 +4381,13 @@ class EffectEditorDialog(QDialog):
                     c_tilt = _ctr[1] if _ctr is not None else 32768
                     p_forme, p_ph, p_mult = pan_cfg
                     if p_forme and p_forme != "Fixe":
-                        p_freq = (0.05 + layer.speed * p_mult / 100.0 * 7.0) * fader_mult
+                        p_freq = layer_frequency(layer.speed, p_mult, fader_mult)
                         p_x    = (_pt_time(p_freq) + i_fx / max(n_fx, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
                         pan_v  = int(max(0, min(65535, c_pan + pan_sign * (p_raw - 0.5) * 2 * pt_amp * PAN_ANGULAR_RATIO)))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
-                        t_freq = (0.05 + layer.speed * t_mult / 100.0 * 7.0) * fader_mult
+                        t_freq = layer_frequency(layer.speed, t_mult, fader_mult)
                         t_x    = (_pt_time(t_freq) + i_fx / max(n_fx, 1) * spread + phase + t_ph / 100.0) % 1.0
                         t_raw  = self._wave(t_forme, t_x)
                         tilt_v = int(max(0, min(65535, c_tilt + (t_raw - 0.5) * 2 * pt_amp)))
@@ -4288,7 +4410,9 @@ class EffectEditorDialog(QDialog):
             elif has_dim:
                 # Dimmer seul : oscille la couleur existante du projecteur
                 # level est déjà appliqué par _get_fill_color, on passe la couleur brute
-                color = QColor(proj.color)
+                # (blanc sur un spot à roue, qui n'a pas de RGB à moduler —
+                #  même règle que le moteur, cf. core.effect_dim_base_color)
+                color = effect_dim_base_color(proj, QColor(proj.color))
             elif has_movement:
                 # Pan/Tilt seul : NE force PAS de couleur/intensité (parité avec la
                 # restitution réelle, qui laisse la lyre dans son état). L'effet ne

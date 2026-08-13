@@ -9,13 +9,11 @@ import ssl
 import urllib.request
 import urllib.error
 
-try:
-    import certifi
-    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-except Exception:
-    _SSL_CTX = ssl.create_default_context()
+from core import (BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME,
+                  BREVO_LIST_ID, make_ssl_context)
 
-from core import BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME, BREVO_LIST_ID
+# Union magasin système + certifi (cf. core.make_ssl_context)
+_SSL_CTX = make_ssl_context()
 
 _API_BASE = "https://api.brevo.com/v3"
 _TIMEOUT  = 8

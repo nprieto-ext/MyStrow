@@ -1597,29 +1597,41 @@ class DmxSetupDialog(QDialog):
         dev = None
         opened_here = False
 
-        # Si MyStrow tient déjà la puce en D2XX (connexion live active), on NE
-        # PEUT PAS rouvrir un 2e handle (DEVICE_NOT_OPENED) : on suspend le thread
-        # live et on réutilise SON handle. Décision basée sur connected (le handle
-        # peut être transitoirement nul pendant une reconnexion).
-        live_active = (getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC_D2XX
-                       and getattr(self._dmx, 'connected', False))
-        if live_active:
+        # Une puce FTDI ne s'ouvre que dans un handle à la fois : il faut donc
+        # écarter le thread live AVANT toute tentative d'ouverture.
+        #
+        # Le critère est la PRÉSENCE DU THREAD, surtout pas `connected`. Quand
+        # le thread perd la puce (5 erreurs d'écriture), il passe `connected` à
+        # False mais continue de tourner et retente `ftd2xx.open()` une fois par
+        # seconde (artnet_dmx._d2xx_loop). Se fier à `connected` menait donc le
+        # diagnostic à ouvrir un 2e handle pendant que le thread se battait pour
+        # le même — « deux writers » — d'où un DEVICE_NOT_OPENED intermittent et
+        # le conseil trompeur « fermez QLC+ » alors que le concurrent était
+        # MyStrow lui-même (rapport utilisateur du 12/08/2026).
+        _thr = getattr(self._dmx, '_d2xx_thread', None)
+        live_thread = (getattr(self._dmx, 'transport', '') == TRANSPORT_ENTTEC_D2XX
+                       and _thr is not None and _thr.is_alive())
+        pause_ack = False
+        if live_thread:
             self._dmx._d2xx_pause = True
             paused_live = True
-            _wait = _time.monotonic() + 0.6
+            # Jusqu'à 2 s : le thread peut être au milieu de son sleep(1 s) de
+            # reconnexion, il n'acquitte qu'au tour suivant.
+            _wait = _time.monotonic() + 2.0
             while (_time.monotonic() < _wait
                    and not getattr(self._dmx, '_d2xx_paused', False)):
                 QApplication.processEvents()
                 _time.sleep(0.01)
+            pause_ack = bool(getattr(self._dmx, '_d2xx_paused', False))
             dev = getattr(self._dmx, '_d2xx', None)   # relire après la pause
-            if dev is not None:
-                self._log_line("  ⚠  Puce déjà ouverte par MyStrow — réutilisation (D2XX)", warn)
-            else:
-                self._log_line("  –  Connexion live active mais handle indisponible", warn)
-                self._log_line("      → La sortie live MyStrow gère l'envoi (voir étape 7)", dim)
-                self._dmx._d2xx_pause = False
-                return
+
+        if dev is not None:
+            # Le thread live détient la puce : on réutilise SON handle.
+            self._log_line("  ⚠  Puce déjà ouverte par MyStrow — réutilisation (D2XX)", warn)
         else:
+            if live_thread and not pause_ack:
+                self._log_line("  ⚠  La sortie live n'a pas rendu la main en 2 s", warn)
+                self._log_line("      → L'ouverture ci-dessous peut échouer pour cette raison", dim)
             try:
                 index = self._dmx._resolve_d2xx_index()
                 dev = ftd2xx.open(index)
@@ -1631,9 +1643,25 @@ class DmxSetupDialog(QDialog):
                 dev.purge(_ftd.PURGE_TX | _ftd.PURGE_RX)
                 opened_here = True
                 self._log_line("  ✓  Puce FTDI ouverte (250 kbaud, latency 1 ms)", ok)
+                if live_thread:
+                    self._log_line("      (sortie live suspendue le temps du test)", dim)
             except Exception as e:
                 self._log_line(f"  ✗  Ouverture D2XX impossible : {e}", err)
-                self._log_line("      → Fermez QLC+/autre logiciel DMX puis réessayez", warn)
+                # Le thread live est suspendu et acquitté : le concurrent est
+                # forcément un AUTRE processus. On peut donc l'affirmer, au lieu
+                # de renvoyer l'utilisateur vers une hypothèse.
+                if pause_ack or not live_thread:
+                    self._log_line("      La puce est tenue par un AUTRE programme "
+                                   "(la sortie live MyStrow est hors de cause).", warn)
+                    self._log_line("      → Fermez QLC+/Daslight/Freestyler… même réduits "
+                                   "dans la barre des tâches,", warn)
+                    self._log_line("        vérifiez qu'un seul MyStrow tourne, puis "
+                                   "débranchez/rebranchez le boîtier.", warn)
+                else:
+                    self._log_line("      → Redémarrez MyStrow puis relancez le diagnostic "
+                                   "sans rien connecter d'autre", warn)
+                if paused_live:
+                    self._dmx._d2xx_pause = False
                 return
 
         frame = b'\x00' + bytes([255, 255, 255, 255] + [0] * 508)
@@ -1670,6 +1698,16 @@ class DmxSetupDialog(QDialog):
             except Exception: pass
         if paused_live:
             self._dmx._d2xx_pause = False
+            # Le thread reprend la puce en ~1 s (branche de reconnexion). Sans
+            # cette attente, l'étape 7 qui suit immédiatement afficherait encore
+            # « Connecté : NON » juste après une ouverture réussie — un rapport
+            # qui se contredit tout seul.
+            if opened_here:
+                _wait = _time.monotonic() + 2.0
+                while (_time.monotonic() < _wait
+                       and not getattr(self._dmx, 'connected', False)):
+                    QApplication.processEvents()
+                    _time.sleep(0.05)
 
     def closeEvent(self, event):
         # Garde-fou : ne jamais laisser le thread ENTTEC en pause si le

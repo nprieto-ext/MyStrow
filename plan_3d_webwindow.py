@@ -1023,6 +1023,8 @@ class Plan3DWebWindow(QMainWindow):
         self._last_projectors = []
         self._pending         = None
         self._ready           = False
+        # Sortie live de l'éditeur d'effets — cf. set_fx_overrides()
+        self._fx_overrides    = None
         self._placement_dlg   = None
         self._truss_editor    = None
         self._highlighted_row = -1
@@ -2354,8 +2356,10 @@ class Plan3DWebWindow(QMainWindow):
         bloqué ». On ne bride pas la commande (régler RY avant d'incliner reste
         légitime), on dit juste pourquoi il ne se passe rien.
 
-        Cas de la lyre : son orientation vient du Pan/Tilt DMX, qui écrase
-        mhGrp.rotation.y — là, RY est inerte pour de bon, corps compris.
+        Cas de la lyre : RY oriente le PIED (l'accroche), et le Pan DMX balaie
+        par-dessus — les deux angles s'additionnent sur mhGrp.rotation.y. Elle
+        n'est donc plus inerte. Seule subsiste la réserve du faisceau vertical :
+        tilt au nadir, la tache ne bouge pas même si le corps pivote.
         """
         if not getattr(self, '_jog_ry_row', None):
             return
@@ -2366,10 +2370,14 @@ class Plan3DWebWindow(QMainWindow):
         if p is None:
             inerte, court, long_ = False, "", ""
         elif getattr(p, 'fixture_type', '') == 'Moving Head':
-            inerte = True
-            court  = "Lyre : orientation pilotée par le Pan/Tilt DMX."
-            long_  = ("Sur une lyre, l'orientation vient du Pan/Tilt DMX.\n"
-                      "RY n'a aucun effet ici, ni sur le corps ni sur le faisceau.")
+            inerte = False
+            court  = ""
+            long_  = ("RY oriente le PIED de la lyre (son accroche).\n"
+                      "Le Pan DMX balaie ensuite à partir de cette orientation :\n"
+                      "les deux angles s'additionnent, comme sur le vrai appareil.\n\n"
+                      "Utile pour accrocher des lyres sur les faces d'une structure\n"
+                      "orientée (tour, portique biais) sans qu'elles regardent\n"
+                      "toutes dans la même direction.")
         elif abs(float(getattr(p, 'rot3d_x', 0.0) or 0.0)) < 0.05:
             inerte = True
             court  = "Faisceau à la verticale : inclinez avec RX pour que RY le déplace."
@@ -2783,8 +2791,12 @@ class Plan3DWebWindow(QMainWindow):
     def _to_data(self, projectors):
         out = []
         now = _time.time()
+        fx  = self._fx_overrides or {}
         for i, p in enumerate(projectors):
-            col  = getattr(p, 'color', None)
+            # Sortie live de l'éditeur d'effets : elle prime sur l'état du
+            # projecteur, que le moteur DMX a déjà restauré à ce stade.
+            ov   = fx.get(id(p))
+            col  = QColor(ov[1]) if ov is not None else getattr(p, 'color', None)
             r = col.red()   if col else 0
             g = col.green() if col else 0
             b = col.blue()  if col else 0
@@ -2808,13 +2820,26 @@ class Plan3DWebWindow(QMainWindow):
             _dx, _dz = _pos3d_from_canvas(cx, cy)
             x_w = p3x if p3x is not None else _dx
             z_w = p3z if p3z is not None else _dz
+            # L'éditeur d'effets travaille en niveau 0..1 (convention du plan de
+            # feu 2D), la 3D attend l'échelle du projecteur, 0..100.
+            if ov is not None:
+                lvl = int(round(max(0.0, min(1.0, ov[0])) * 100))
+            else:
+                lvl = int(getattr(p, 'level', 0))
+            pan_v  = getattr(p, 'pan',  32768)
+            tilt_v = getattr(p, 'tilt', 32768)
+            if ov is not None and len(ov) > 3:
+                if ov[2] is not None:
+                    pan_v = ov[2]
+                if ov[3] is not None:
+                    tilt_v = ov[3]
             out.append({
-                'level':          int(getattr(p, 'level', 0)),
+                'level':          lvl,
                 'r': r, 'g': g, 'b': b,
                 'x':              x_w,
                 'z':              z_w,
-                'pan':            getattr(p, 'pan',  32768),
-                'tilt':           getattr(p, 'tilt', 32768),
+                'pan':            pan_v,
+                'tilt':           tilt_v,
                 'fixture_type':   getattr(p, 'fixture_type', 'PAR LED'),
                 'fixture_height': fh if fh is not None else self._rig_height(),
                 'body_rotation':  getattr(p, 'body_rotation', 0.0),
@@ -2940,6 +2965,23 @@ class Plan3DWebWindow(QMainWindow):
         self._update_strobe_timer(projectors)
         if not self._push_timer.isActive():
             self._push_timer.start()
+
+    def set_fx_overrides(self, overrides):
+        """Sortie live de l'éditeur d'effets : {id(proj): (level 0-1, QColor, pan, tilt)}.
+
+        Passée en DONNÉE, et surtout pas en appliquant les valeurs sur les
+        projecteurs : `refresh()` ne fait qu'armer un timer de 40 ms, et
+        `_to_data()` relit les objets à l'expiration — bien après que la boucle
+        DMX ait restauré leur état. Une frame appliquée puis restaurée autour de
+        `refresh()` n'arriverait donc jamais jusqu'ici.
+
+        None coupe le miroir et redonne la main à l'état réel des projecteurs.
+        """
+        if overrides is None and self._fx_overrides is None:
+            return
+        self._fx_overrides = overrides
+        if self._last_projectors:
+            self.refresh(self._last_projectors)
 
     def set_trusses(self, trusses):
         """Met à jour la configuration des trusses."""
