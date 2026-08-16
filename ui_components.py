@@ -166,7 +166,10 @@ class EffectButton(QPushButton):
         if _mw and hasattr(_mw, '_button_effect_configs'):
             _lyr0 = _mw._button_effect_configs.get(self.index, {}).get("layers", [])
             _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else list(self._target_groups)
-            _init_speed  = int(_lyr0[0].get("speed", self._speed)) if _lyr0 else self._speed
+            # `round` et non `int` : la VITESSE se règle au dixième dans
+            # l'éditeur d'effets, ce curseur d'accès rapide est entier.
+            # Tronquer afficherait 29 pour une couche à 29,8.
+            _init_speed  = round(_lyr0[0].get("speed", self._speed)) if _lyr0 else self._speed
         else:
             _init_groups = list(self._target_groups)
             _init_speed  = self._speed

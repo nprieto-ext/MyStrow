@@ -80,7 +80,13 @@
       "PowerShell($c = Get-NetTCPConnection -LocalPort 8777 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { Stop-Process -Id $c.OwningProcess -Force; \"serveur de test arrete \\(PID $\\($c.OwningProcess\\)\\)\" } else { \"aucun serveur sur 8777\" })",
       "Artifact",
       "mcp__claude_ai_Gmail__search_threads",
-      "mcp__claude_ai_Gmail__get_thread"
+      "mcp__claude_ai_Gmail__get_thread",
+      "Bash(cp demo-video-poster.png demo-capture-3d.png \"C:/Users/nikop/Desktop/Mystrow2/newsletter/images/\")",
+      "Read(//c/Users/nikop/Desktop/Mystrow2/newsletter/images/**)",
+      "Read(//c/Users/nikop/Desktop/Mystrow2/newsletter/**)",
+      "Bash(python faire_poster_video.py \"C:/Users/nikop/Desktop/Mystrow2/Visualiseur3D.mp4\" --seconde 5 --sortie images/test-poster.png)",
+      "Bash(rm -f images/test-poster.png)",
+      "Bash(cd *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

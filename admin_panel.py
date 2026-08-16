@@ -2277,7 +2277,8 @@ class _AdminChannelRowWidget(QWidget):
     move_dn_requested = Signal(object)
     changed           = Signal()
 
-    def __init__(self, ch_num: int, ch_type: str, default_val: int = 0, parent=None):
+    def __init__(self, ch_num: int, ch_type: str, default_val: int = 0, parent=None,
+                 label: str = ""):
         super().__init__(parent)
         from fixture_editor import ALL_CHANNEL_TYPES, CHANNEL_COLORS, ChannelTypeCombo
         self._ALL_CHANNEL_TYPES = ALL_CHANNEL_TYPES
@@ -2309,6 +2310,26 @@ class _AdminChannelRowWidget(QWidget):
         )
         self._combo.type_changed.connect(self._on_type_changed)
         layout.addWidget(self._combo, 1)
+
+        # ── Nom du canal ──────────────────────────────────────────────────────
+        # Même champ que dans l'éditeur de fixtures de l'application, et pour la
+        # même raison : sur un laser ou une machine à effets, la moitié des
+        # canaux n'a aucun type connu et la colonne de gauche n'affiche qu'une
+        # suite de « Unused » indiscernables. Une fixture publiée depuis ici doit
+        # arriver nommée chez l'utilisateur.
+        from PySide6.QtWidgets import QLineEdit as _QLE
+        self._label_edit = _QLE(label or "")
+        self._label_edit.setPlaceholderText("Nom du canal…")
+        self._label_edit.setFixedHeight(26)
+        self._label_edit.setToolTip(
+            "Nom lisible de ce canal (ex. « Groupe de motifs »).\n"
+            "Rempli à l'import depuis le fichier constructeur.")
+        self._label_edit.setStyleSheet(
+            "QLineEdit{background:#242424;color:#bbb;border:1px solid #333;"
+            "border-radius:3px;padding:1px 6px;font-size:11px;}"
+            "QLineEdit:focus{border-color:#00d4ff;color:#e0e0e0;}")
+        self._label_edit.textChanged.connect(lambda _: self.changed.emit())
+        layout.addWidget(self._label_edit, 1)
 
         # ── Valeur par défaut (0-255) ─────────────────────────────────────────
         lbl_def = QLabel("Déf :")
@@ -2369,6 +2390,9 @@ class _AdminChannelRowWidget(QWidget):
 
     def get_default(self) -> int:
         return self._default_spin.value()
+
+    def get_label(self) -> str:
+        return self._label_edit.text().strip()
 
 
 # ---------------------------------------------------------------
@@ -2433,13 +2457,19 @@ class _FixtureEditDialog(QDialog):
             defaults = list(m.get("default_values", []))
             # Aligner la longueur des defaults sur le profil
             defaults = (defaults + [0] * len(profile))[:len(profile)]
+            # Noms de canaux, alignés eux aussi : une liste plus courte ou plus
+            # longue décalerait les noms d'un canal sur l'autre.
+            labels = list(m.get("labels", []) or [])
+            labels = (labels + [""] * len(profile))[:len(profile)]
             self._modes_data.append({
                 "name":           m.get("name", ""),
                 "profile":        profile,
                 "default_values": defaults,
+                "labels":         labels,
             })
         if not self._modes_data:
-            self._modes_data.append({"name": "Mode 1", "profile": [], "default_values": []})
+            self._modes_data.append({"name": "Mode 1", "profile": [],
+                                     "default_values": [], "labels": []})
 
         self._current_mode_idx = -1
         self._channel_rows: list = []
@@ -2692,6 +2722,7 @@ class _FixtureEditDialog(QDialog):
         if 0 <= self._current_mode_idx < len(self._modes_data):
             self._modes_data[self._current_mode_idx]["profile"]        = self._get_current_profile()
             self._modes_data[self._current_mode_idx]["default_values"] = self._get_current_defaults()
+            self._modes_data[self._current_mode_idx]["labels"]         = self._get_current_labels()
 
         self._current_mode_idx = max(0, min(idx, len(self._modes_data) - 1))
 
@@ -2704,7 +2735,8 @@ class _FixtureEditDialog(QDialog):
         self._mode_name_edit.blockSignals(True)
         self._mode_name_edit.setText(mode["name"])
         self._mode_name_edit.blockSignals(False)
-        self._rebuild_channels(mode["profile"], mode.get("default_values", []))
+        self._rebuild_channels(mode["profile"], mode.get("default_values", []),
+                               mode.get("labels", []))
 
     def _on_mode_name_changed(self, text: str):
         if 0 <= self._current_mode_idx < len(self._modes_data):
@@ -2718,8 +2750,10 @@ class _FixtureEditDialog(QDialog):
         if 0 <= self._current_mode_idx < len(self._modes_data):
             self._modes_data[self._current_mode_idx]["profile"]        = self._get_current_profile()
             self._modes_data[self._current_mode_idx]["default_values"] = self._get_current_defaults()
+            self._modes_data[self._current_mode_idx]["labels"]         = self._get_current_labels()
         n = len(self._modes_data) + 1
-        self._modes_data.append({"name": f"Mode {n}", "profile": [], "default_values": []})
+        self._modes_data.append({"name": f"Mode {n}", "profile": [],
+                                 "default_values": [], "labels": []})
         self._rebuild_mode_tabs()
         self._select_mode(len(self._modes_data) - 1)
 
@@ -2740,9 +2774,15 @@ class _FixtureEditDialog(QDialog):
     def _get_current_defaults(self) -> list:
         return [row.get_default() for row in self._channel_rows]
 
-    def _rebuild_channels(self, profile: list, default_values: list = None):
+    def _get_current_labels(self) -> list:
+        return [row.get_label() for row in self._channel_rows]
+
+    def _rebuild_channels(self, profile: list, default_values: list = None,
+                          labels: list = None):
         if default_values is None:
             default_values = []
+        if labels is None:
+            labels = []
         for row in self._channel_rows:
             row.setParent(None)
             row.deleteLater()
@@ -2752,7 +2792,8 @@ class _FixtureEditDialog(QDialog):
 
         for i, ch_type in enumerate(profile):
             def_val = default_values[i] if i < len(default_values) else 0
-            row = _AdminChannelRowWidget(i + 1, ch_type, def_val)
+            lb      = labels[i] if i < len(labels) else ""
+            row = _AdminChannelRowWidget(i + 1, ch_type, def_val, label=lb)
             row.remove_requested.connect(self._on_remove_channel)
             row.move_up_requested.connect(self._on_move_up)
             row.move_dn_requested.connect(self._on_move_dn)
@@ -2886,17 +2927,25 @@ class _FixtureEditDialog(QDialog):
         if 0 <= self._current_mode_idx < len(self._modes_data):
             self._modes_data[self._current_mode_idx]["profile"]        = self._get_current_profile()
             self._modes_data[self._current_mode_idx]["default_values"] = self._get_current_defaults()
+            self._modes_data[self._current_mode_idx]["labels"]         = self._get_current_labels()
 
         modes = []
         for m in self._modes_data:
             profile  = m.get("profile", [])
             defaults = m.get("default_values", [0] * len(profile))
-            modes.append({
+            entree = {
                 "name":           m["name"],
                 "channelCount":   len(profile),
                 "profile":        profile,
                 "default_values": defaults,
-            })
+            }
+            # Écrits seulement s'ils cadrent avec le profil ET qu'au moins un est
+            # renseigné : une liste vide ou désalignée n'apporte rien et ferait
+            # décaler les noms côté application.
+            _lb = list(m.get("labels") or [])
+            if len(_lb) == len(profile) and any(x for x in _lb):
+                entree["labels"] = _lb
+            modes.append(entree)
 
         self._result = {
             "name":         name,
@@ -4304,6 +4353,9 @@ class AdminPanel(QMainWindow):
             self._load_fixtures()
         if idx == 3 and hasattr(self, "_rel_quota_label"):
             self._update_esigner_quota()
+            # Relu à chaque ouverture : une release faite dans cette session a
+            # pu mettre Discord à jour — ou pas — depuis le dernier affichage.
+            self._update_discord_state()
         if idx == 5 and not getattr(self, "_ga4_insights_loaded", False):
             self._ga4_insights_loaded = True
             self._load_ga4_insights()
@@ -5372,6 +5424,83 @@ class AdminPanel(QMainWindow):
             f"QProgressBar::chunk {{ background:{color}; border-radius:3px; }}"
         )
 
+    # ── Rattrapage Discord ────────────────────────────────────────────────────
+    def _discord_announced_version(self):
+        """Version que le canal Discord annonce, d'après le fichier d'état.
+
+        Rend None si l'état est absent ou illisible : on ne sait alors rien du
+        canal, ce qui n'est pas la même chose que « il est à jour ». L'appelant
+        se tait dans ce cas plutôt que d'alarmer à tort.
+        """
+        if not _RELEASE_OK:
+            return None
+        try:
+            from release import DISCORD_STATE_FILE
+            return json.loads(
+                DISCORD_STATE_FILE.read_text(encoding="utf-8")
+            ).get("latest_version")
+        except Exception:
+            return None
+
+    def _update_discord_state(self):
+        """Compare la version annoncée sur Discord et celle de core.py."""
+        if not hasattr(self, "_rel_discord_row"):
+            return
+        annoncee = self._discord_announced_version()
+        actuelle = get_current_version() if _RELEASE_OK else None
+
+        if not annoncee or not actuelle:
+            self._rel_discord_row.setVisible(False)
+            return
+
+        self._rel_discord_row.setVisible(True)
+        if annoncee == actuelle:
+            self._rel_discord_label.setText(
+                f"<span style='color:{TEXT_DIM};'>Discord annonce bien "
+                f"<b>{annoncee}</b></span>"
+            )
+            self._rel_discord_btn.setVisible(False)
+        else:
+            self._rel_discord_label.setText(
+                f"<span style='color:#e0a030;'>⚠️  Discord annonce encore "
+                f"<b>{annoncee}</b> — l'application est en <b>{actuelle}</b></span>"
+            )
+            self._rel_discord_btn.setVisible(True)
+
+    def _on_fix_discord(self):
+        """Réédite le message « dernière version » sur la version courante.
+
+        Le travail part dans un thread : c'est une requête réseau, et la geler
+        dans le thread GUI figerait la fenêtre. Le résultat revient par
+        `_run_async`, qui rebranche les rappels sur le thread principal — y
+        toucher un widget depuis le worker planterait.
+        """
+        version = get_current_version()
+        if not version:
+            return
+        self._rel_discord_btn.setEnabled(False)
+        self._rel_discord_btn.setText("Envoi…")
+
+        def _envoyer():
+            from release import notify_discord_latest
+            return notify_discord_latest(version)
+
+        def _fini(res):
+            ok, msg = res
+            self._rel_discord_btn.setEnabled(True)
+            self._rel_discord_btn.setText("Mettre Discord à jour")
+            self._update_discord_state()
+            (QMessageBox.information if ok else QMessageBox.warning)(
+                self, "Discord", msg
+            )
+
+        def _rate(err):
+            self._rel_discord_btn.setEnabled(True)
+            self._rel_discord_btn.setText("Mettre Discord à jour")
+            QMessageBox.warning(self, "Discord", f"Échec : {err}")
+
+        _run_async(self, _envoyer, on_success=_fini, on_error=_rate)
+
         if over:
             cost = over * ESIGNER_EXTRA_SIG_COST
             self._rel_quota_hint.setText(
@@ -5437,7 +5566,32 @@ class AdminPanel(QMainWindow):
         self._rel_quota_hint.setStyleSheet("color: #555; font-size: 10px;")
         lay.addWidget(self._rel_quota_hint)
 
+        # ── Rattrapage Discord ────────────────────────────────────────────────
+        # Filet de sécurité, indépendant du déroulé d'une release : l'annonce
+        # Discord n'part que si la fenêtre est restée ouverte pendant toute la
+        # CI (une dizaine de minutes). Fermée avant, le canal reste en arrière
+        # sans que rien ne le signale — c'est ainsi qu'il a annoncé 3.1.81
+        # pendant que l'application en était à 3.1.83. Ici on compare, à chaque
+        # ouverture de l'onglet, ce que dit le canal et ce que dit core.py.
+        self._rel_discord_row = QWidget()
+        _dsc_h = QHBoxLayout(self._rel_discord_row)
+        _dsc_h.setContentsMargins(0, 6, 0, 0)
+        _dsc_h.setSpacing(10)
+
+        self._rel_discord_label = QLabel()
+        self._rel_discord_label.setTextFormat(Qt.RichText)
+        _dsc_h.addWidget(self._rel_discord_label)
+
+        self._rel_discord_btn = QPushButton("Mettre Discord à jour")
+        self._rel_discord_btn.setFixedHeight(28)
+        self._rel_discord_btn.setStyleSheet(_BTN_SECONDARY)
+        self._rel_discord_btn.clicked.connect(self._on_fix_discord)
+        _dsc_h.addWidget(self._rel_discord_btn)
+        _dsc_h.addStretch()
+        lay.addWidget(self._rel_discord_row)
+
         self._update_esigner_quota()
+        self._update_discord_state()
 
         # ── Action + bouton Lancer ────────────────────────────────────────────
         a_row = QHBoxLayout()
@@ -6451,9 +6605,26 @@ class ReleaseWorker(QObject):
         self._version = version
         self._action  = action   # "local" | "github" | "both"
         self._m: dict = {}
+        # Avertissements de fin : ce qui a échoué SANS faire échouer la release.
+        # Sans eux, le suivi CI pouvait abandonner et l'annonce Discord ne
+        # jamais partir, pendant que la fenêtre concluait « terminée avec
+        # succès » — le décalage Discord 3.1.81 → 3.1.83 a duré deux versions
+        # et sept jours avant d'être remarqué à l'œil.
+        self._warnings: list = []
+        self._discord_done   = False
 
     def _p(self, msg: str):
         self.log.emit(msg)
+
+    def _warn(self, msg: str):
+        """Signale un raté non bloquant, à la fois dans le log et à la fin.
+
+        Le log défile pendant plusieurs minutes de build : une ligne isolée y
+        passe inaperçue. Le même texte est donc repris dans le message final,
+        seul endroit que l'on regarde à coup sûr.
+        """
+        self._warnings.append(msg)
+        self._p(f"⚠️  {msg}")
 
     def _prog(self, pct: int):
         self.progress.emit(pct)
@@ -6517,9 +6688,21 @@ class ReleaseWorker(QObject):
             if a in ("github", "both"):
                 self._push_github(v)
                 self._watch_actions(v)
+                if not self._discord_done:
+                    self._warn("Discord n'a PAS été mis à jour — le canal "
+                               "annonce encore la version précédente.\n"
+                               "    Rattrapage : bouton « Mettre Discord à jour » "
+                               "de l'onglet Release.")
 
             self._prog(100)
-            self.finished.emit(True, f"Release v{v} terminée avec succès !")
+            # La release reste un succès — le tag est poussé, la CI a tourné.
+            # Mais un « terminée avec succès » nu a laissé passer deux fois une
+            # annonce Discord jamais partie : les ratés remontent ici.
+            resume = f"Release v{v} terminée avec succès !"
+            if self._warnings:
+                resume += "\n\n⚠️  " + str(len(self._warnings)) + " point(s) à vérifier :\n"
+                resume += "\n".join(f"  • {w}" for w in self._warnings)
+            self.finished.emit(True, resume)
         except Exception as exc:
             self.finished.emit(False, str(exc))
 
@@ -6655,7 +6838,8 @@ class ReleaseWorker(QObject):
             self._p("  ...")
 
         if not run_id:
-            self._p(f"⚠️  Workflow introuvable. Suivi manuel :\n  https://github.com/{GITHUB_REPO}/actions")
+            self._warn(f"Workflow GitHub introuvable après 60 s — suivi abandonné.\n"
+                       f"    Suivi manuel : https://github.com/{GITHUB_REPO}/actions")
             return
 
         self._p(f"  Workflow : https://github.com/{GITHUB_REPO}/actions/runs/{run_id}")
@@ -6710,16 +6894,27 @@ class ReleaseWorker(QObject):
 
         Uniquement apres un build reussi : les liens visent releases/latest,
         qui ne contiendrait pas cette version si la CI avait echoue.
+
+        ⚠️ Aucune sortie muette ici. Les trois échappatoires de cette fonction
+        (module release absent, import raté, envoi refusé) rendaient la main
+        sans un mot, et la release se terminait sur un « succès » qui ne disait
+        rien du canal resté en arrière.
         """
+        self._p("\n---------- DISCORD ----------")
         if not _RELEASE_OK:
+            self._warn("release.py non importable — annonce Discord impossible.")
             return
         try:
             from release import notify_discord_latest
-        except Exception:
+        except Exception as exc:
+            self._warn(f"notify_discord_latest introuvable ({exc}) — canal inchangé.")
             return
-        self._p("\n---------- DISCORD ----------")
         ok, msg = notify_discord_latest(version)
-        self._p(("✅  " if ok else "⚠️  ") + msg)
+        if ok:
+            self._discord_done = True
+            self._p("✅  " + msg)
+        else:
+            self._warn(msg + "\n    Rattrapage : python tools/discord_release.py --latest")
 
 
 # ---------------------------------------------------------------

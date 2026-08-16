@@ -5347,13 +5347,17 @@ class Sequencer(QFrame):
         # Parité obligatoire avec l'aperçu REC Lumière : la roue de couleurs
         # avait déjà été oubliée ici et ne sortait qu'en REC, pas en show.
         gobo_clip = active_clips.get('Gobo')
+        _gobo_locked_idxs = set()   # gobos pilotés par la piste Gobo
         if gobo_clip and gobo_clip.get('gobo_dmx') is not None:
             _g_val = max(0, min(255, int(gobo_clip['gobo_dmx'])))
             _g_rot = max(0, min(255, int(gobo_clip.get('gobo_rotation', 0) or 0)))
-            for proj in main_win.projectors:
+            for _gi, proj in enumerate(main_win.projectors):
                 if 'Gobo1' in (getattr(proj, 'dmx_profile', None) or []):
                     proj.gobo = _g_val
                     proj.gobo_rotation = _g_rot
+                    # Verrou explicite, même principe que la piste Position :
+                    # les mémoires jouées juste après ne réécrivent pas ce gobo.
+                    _gobo_locked_idxs.add(_gi)
 
         # --- Appliquer Pan/Tilt pour les Lyres ---
         # La piste position s'appelle "Position" dans la timeline; fallback sur "Lyres" pour anciens .tui
@@ -5497,7 +5501,8 @@ class Sequencer(QFrame):
         ]
         apply_seq_memories_htp(_seq_entries, getattr(main_win, 'memories', None),
                                main_win.projectors, main_win,
-                               lock_pantilt_idxs=_pos_locked_idxs)
+                               lock_pantilt_idxs=_pos_locked_idxs,
+                               lock_gobo_idxs=_gobo_locked_idxs)
 
         # ── Appliquer l'effet de la piste Effet par-dessus tout ─────────────
         # (le effect_timer n'est pas actif en mode timeline — on gère ici)

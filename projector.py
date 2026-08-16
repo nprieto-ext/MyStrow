@@ -43,7 +43,23 @@ class Projector:
         # seul, ces plages declenchent reset, extinction de lampe, calibrations.
         self.mode_value       = 0
         self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
-        self.channel_extras   = {}    # {ch_type: 0-255} contrôle brut prioritaire (Reset, Mode…)
+        # Contrôle brut prioritaire, à DEUX formes de clé :
+        #   - str non numérique : un TYPE de canal ("Mode", "Reset"…). Tous les
+        #     canaux de ce type reçoivent la valeur — c'est la forme historique.
+        #   - int (ou son écriture décimale, après un aller-retour JSON) : le
+        #     NUMÉRO du canal dans la fixture, 1 = son premier canal. Une seule
+        #     sortie visée, donc des canaux réglables indépendamment même quand
+        #     MyStrow ne sait pas les nommer (lasers, machines à effets…).
+        # Le numéro l'emporte sur le type. Voir `ArtNetDMX.update_from_projectors`.
+        self.channel_extras   = {}    # {ch_type | n° de canal: 0-255}
+        # Nom lisible de chaque canal, aligné sur `dmx_profile`. Vient du
+        # fichier constructeur à l'import (« LaserGroupSelect », « Rotation Z »)
+        # et se règle à la main dans l'éditeur de fixtures. C'est souvent la
+        # SEULE chose qui distingue deux canaux ramenés au même type — et sur un
+        # laser, la seule information tout court, la moitié des canaux n'ayant
+        # aucun type connu. Purement informatif : n'entre jamais dans le calcul
+        # de la trame DMX.
+        self.channel_labels   = []    # [str] parallèle à dmx_profile
         # Canaux spéciaux — contrôle manuel indépendant
         self.uv           = 0   # UV (0-255, direct)
         self.white_boost  = 0   # Blanc extra au-dessus du RGB-dérivé (0-255)

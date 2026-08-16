@@ -81,6 +81,9 @@ CHANNEL_TYPES = [
     # LED a emetteurs cyan/magenta/jaune (25 modes : ETC Lustr, ADJ Starburst).
     # Le moteur tranche sur la presence de R/G/B dans le profil.
     "C", "M", "Y", "Lime",
+    # Canal du protocole que MyStrow ne pilote pas : sort 0 et garde sa place
+    # dans la numérotation. Repli des attributs inconnus à l'import.
+    "Unused",
 ]
 
 # Noms courts pour l'affichage dans les combos
@@ -95,6 +98,7 @@ CHANNEL_DISPLAY = {
     "ColorWheel": "CWheel", "Shutter": "Shut", "Speed": "Speed", "Mode": "Mode",
     "Effects": "FX", "CTO": "CTO", "CTB": "CTB",
     "C": "C", "M": "M", "Y": "Y", "Lime": "Lime",
+    "Unused": "—", "Reset": "Reset",
 }
 
 
@@ -1271,7 +1275,30 @@ class ArtNetDMX:
                 if ch <= 0:
                     continue
 
-                # Contrôle brut prioritaire (curseurs avancés du menu contextuel)
+                # Contrôle brut par NUMÉRO DE CANAL, prioritaire sur tout le
+                # reste — y compris sur le contrôle par type juste en dessous.
+                #
+                # C'est la seule façon d'atteindre un canal que MyStrow ne sait
+                # pas nommer. Le modèle « une valeur par TYPE » suffit pour une
+                # lyre, pas pour un laser : sur un UKing ZQ02622 (28 canaux),
+                # 18 canaux ne correspondent à aucun type et sortaient 0, et il
+                # n'existait aucun moyen de leur donner une valeur — deux canaux
+                # posés sur « Mode » auraient de toute façon reçu la MÊME.
+                #
+                # Le numéro est celui du canal DANS la fixture (1 = son premier
+                # canal), pas l'adresse DMX absolue : un profil reste valable
+                # quelle que soit l'adresse de patch.
+                #
+                # ⚠️ Les deux formes de clé sont acceptées : un aller-retour par
+                # le JSON d'un show transforme les clés entières en chaînes.
+                _raw = _ch_extras.get(idx + 1)
+                if _raw is None:
+                    _raw = _ch_extras.get(str(idx + 1))
+                if _raw is not None:
+                    self.set_channel(ch, max(0, min(255, int(_raw))), universe)
+                    continue
+
+                # Contrôle brut par TYPE (curseurs avancés du menu contextuel)
                 if ch_type in _ch_extras:
                     self.set_channel(ch, _ch_extras[ch_type], universe)
                     continue
@@ -1315,6 +1342,13 @@ class ArtNetDMX:
                             ch_val = 0
                 elif ch_type == "Reset":
                     ch_val = 0  # repos : ne pas déclencher le reset
+                elif ch_type == "Unused":
+                    # Canal présent dans le protocole mais que MyStrow ne pilote
+                    # pas : il occupe sa place pour que les canaux suivants
+                    # gardent leur numéro, et sort 0. Branche explicite plutôt
+                    # que de compter sur le `else` final : c'est le repli des
+                    # canaux inconnus à l'import, on veut que ce soit lisible.
+                    ch_val = 0
                 elif ch_type == "Strobe":
                     spd = getattr(proj, 'strobe_speed', 0)
                     if spd > 0:

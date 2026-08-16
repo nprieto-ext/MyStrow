@@ -467,14 +467,22 @@ def _chip_text_color(hex_col):
     return "#ffffff" if (r * 0.299 + g * 0.587 + b * 0.114) < 145 else "#111111"
 
 
-def build_channel_chips(profile, start_index=1, numbered=True):
+def build_channel_chips(profile, start_index=1, numbered=True, labels=None):
     """
     Profil DMX en pastilles rectangulaires colorées, comme dans le Patch DMX.
 
     Retourne un QWidget : une rangée de rectangles arrondis (nom du canal) avec
     le numéro de canal dessous. Purement décoratif — aucune interaction, à la
     différence des pastilles du patch qui éditent les valeurs par défaut.
+
+    `labels` : noms lisibles du fichier constructeur, alignés sur `profile`.
+    Affichés à la place du type quand ils existent — une rangée de « UNUSED » ne
+    dit rien de la fixture qu'on s'apprête à ajouter. Ignorés s'ils ne cadrent
+    pas avec le profil : un nom décalé désignerait le mauvais canal.
     """
+    labels = list(labels or [])
+    if len(labels) != len(profile or []):
+        labels = []
     host = QWidget()
     host.setStyleSheet("background:transparent;")
     hl = QHBoxLayout(host)
@@ -489,7 +497,11 @@ def build_channel_chips(profile, start_index=1, numbered=True):
         return host
 
     for i, ch in enumerate(profile):
-        lbl_txt = CH_LABELS.get(ch, str(ch).upper())
+        _nom = labels[i] if i < len(labels) else ""
+        # Abrégé à 14 signes comme les pastilles du patch : au-delà, la rangée
+        # devient illisible. Le nom entier reste dans l'infobulle.
+        lbl_txt = ((_nom if len(_nom) <= 14 else _nom[:13] + "…")
+                   or CH_LABELS.get(ch, str(ch).upper()))
         col = CH_COLORS.get(ch, "#444455")
         cw = max(36, len(lbl_txt) * 7 + 14)
 
@@ -506,7 +518,8 @@ def build_channel_chips(profile, start_index=1, numbered=True):
             f"background:{col}; color:{_chip_text_color(col)}; border:none;"
             f" border-radius:5px; font-size:10px; font-weight:bold;"
         )
-        chip.setToolTip(tr("mw_f_channel", a0=start_index + i, ch=ch))
+        chip.setToolTip(tr("mw_f_channel", a0=start_index + i, ch=ch)
+                        + (f"\n{_nom}" if _nom else ""))
         cv.addWidget(chip)
 
         if numbered:
@@ -6050,6 +6063,20 @@ class MainWindow(QMainWindow):
                 p.gobo2         = int(proj_state.get("gobo2",        0))
                 p.speed         = int(proj_state.get("speed",        0))
                 p.mode_value    = int(proj_state.get("mode_value",   0))
+                # Roue, prisme, iris, shutter, macro : mêmes règles que ci-dessus.
+                # Une mémoire définit l'état complet du faisceau ; la clé absente
+                # (mémoire enregistrée avant leur capture) vaut repos — 255 pour
+                # le shutter, qui est ouvert au repos et non fermé.
+                p.prism          = int(proj_state.get("prism",          0))
+                p.prism_rotation = int(proj_state.get("prism_rotation", 0))
+                p.effects        = int(proj_state.get("effects",        0))
+                p.iris           = int(proj_state.get("iris",           0))
+                p.fan_speed      = int(proj_state.get("fan_speed",      0))
+                p.shutter        = int(proj_state.get("shutter",      255))
+                # La roue de couleur est REDÉRIVÉE de la couleur juste après
+                # (`_update_color_wheel`) quand le projecteur s'allume : on ne la
+                # pose ici que pour les mémoires qui ne rallument pas la fixture.
+                p.color_wheel    = int(proj_state.get("color_wheel",    0))
                 # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
                 p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
             # Couleur prise en main depuis le plan 2D → le cue n'y touche pas
@@ -6180,6 +6207,15 @@ class MainWindow(QMainWindow):
                 p.gobo2         = int(ds.get("gobo2",         0))
                 p.speed         = int(ds.get("speed",         0))
                 p.mode_value    = int(ds.get("mode_value",    0))
+                # Idem : roue, prisme, iris, shutter, macro. Shutter au repos =
+                # 255 (ouvert), sinon une vieille mémoire fermerait le faisceau.
+                p.prism          = int(ds.get("prism",          0))
+                p.prism_rotation = int(ds.get("prism_rotation", 0))
+                p.effects        = int(ds.get("effects",        0))
+                p.iris           = int(ds.get("iris",           0))
+                p.fan_speed      = int(ds.get("fan_speed",      0))
+                p.shutter        = int(ds.get("shutter",      255))
+                p.color_wheel    = int(ds.get("color_wheel",    0))
                 # Canaux bruts (Mode…) : pilotés par la mémoire au fader dominant
                 p.channel_extras = dict(ds.get("channel_extras", {}) or {})
             # Pan/tilt pris en main depuis le plan 2D → la mémoire n'y touche plus
@@ -6498,6 +6534,20 @@ class MainWindow(QMainWindow):
                 "gobo2":        getattr(p, 'gobo2',        0),
                 "speed":        getattr(p, 'speed',        0),
                 "mode_value":   getattr(p, 'mode_value',   0),
+                # Même raison, deuxième vague : ces canaux se règlent depuis le
+                # menu du plan 2D (roue, prisme, iris, shutter) et depuis les
+                # curseurs bruts, qui écrivent la propriété du projecteur pour
+                # rester d'accord avec ce menu. Sans capture, une mémoire les
+                # perdait en silence — le prisme revenait ouvert au rappel.
+                "color_wheel":     getattr(p, 'color_wheel',     0),
+                "prism":           getattr(p, 'prism',           0),
+                "prism_rotation":  getattr(p, 'prism_rotation',  0),
+                "effects":         getattr(p, 'effects',         0),
+                "iris":            getattr(p, 'iris',            0),
+                "fan_speed":       getattr(p, 'fan_speed',       0),
+                # ⚠️ Repos du shutter = 255 (ouvert), pas 0 : capturer 0 par
+                # défaut fermerait le faisceau au rappel.
+                "shutter":         getattr(p, 'shutter',       255),
                 # Canaux bruts prioritaires posés à la main (Mode, Effects, Reset…)
                 "channel_extras": dict(getattr(p, 'channel_extras', {}) or {}),
             })
@@ -7684,7 +7734,11 @@ class MainWindow(QMainWindow):
         # ── Section 1 : GROUPES + VITESSE ────────────────────────────────────
         _lyr0 = (current_cfg or {}).get("layers", [])
         _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else ["A","B","C","D","E","F","G","H"]
-        _init_speed  = int(_lyr0[0].get("speed", 50)) if _lyr0 else 50
+        # `round` et non `int` : la VITESSE d'une couche se règle au dixième
+        # dans l'éditeur, et ce curseur d'accès rapide est entier. Tronquer
+        # afficherait 29 pour une couche à 29,8 — une valeur que l'utilisateur
+        # n'a jamais posée. Il n'écrit dans la couche que s'il est déplacé.
+        _init_speed  = round(_lyr0[0].get("speed", 50)) if _lyr0 else 50
         _sel_groups  = list(_init_groups)
 
         _spd_slider = QSlider(Qt.Horizontal)
@@ -17513,6 +17567,7 @@ class MainWindow(QMainWindow):
                     'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                     'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
+                    'channel_labels':     list(getattr(proj, 'channel_labels', [])),
                     **_matrix_meta(proj),
                 })
 
@@ -17628,6 +17683,7 @@ class MainWindow(QMainWindow):
                 proj.shutter_inverted  = bool(fd.get('shutter_inverted', False))
                 proj.color_wheel_slots = list(fd.get('color_wheel_slots', []))
                 proj.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
+                proj.channel_labels    = list(fd.get('channel_labels', []))
                 uni = fd.get('universe', 0)
                 proj.universe = uni
                 channels = [fd['start_address'] + c for c in range(len(profile))]
@@ -17689,6 +17745,7 @@ class MainWindow(QMainWindow):
                 p.channel_defaults  = dict(fd_s.get('channel_defaults', {}))
                 p.color_wheel_slots = list(fd_s.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(fd_s.get('gobo_wheel_slots', []))
+                p.channel_labels    = list(fd_s.get('channel_labels', []))
                 if p.fixture_type == "Machine a fumee":
                     p.fan_speed = 0
                 _apply_pantilt_meta(p, fd_s)
@@ -17704,6 +17761,7 @@ class MainWindow(QMainWindow):
                     'channel_defaults':   dict(fd_s.get('channel_defaults', {})),
                     'color_wheel_slots':  list(fd_s.get('color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(fd_s.get('gobo_wheel_slots', [])),
+                    'channel_labels':     list(fd_s.get('channel_labels', [])),
                     **{k: fd_s[k] for k in _PANTILT_META_FIELDS if k in fd_s},
                     **{k: fd_s[k] for k in _MATRIX_META_FIELDS if k in fd_s},
                 })
@@ -18003,9 +18061,23 @@ class MainWindow(QMainWindow):
             flow_w.setStyleSheet("background:transparent;")
             flow = FlowLayout(flow_w, margin=0, spacing=4)
 
+            # Noms lisibles du fichier constructeur. Écartés sur une matrice :
+            # `owners` y renvoie vers d'autres entrées de fixture_data, et les
+            # libellés du fixture affiché ne seraient plus alignés sur `profile`.
+            _chip_labels = []
+            if not owners and cur_idx is not None and cur_idx < len(fixture_data):
+                _l = fixture_data[cur_idx].get('channel_labels') or []
+                if len(_l) == len(profile):
+                    _chip_labels = list(_l)
+
             for ci, ch in enumerate(profile):
                 col = CH_COLORS.get(ch, "#444455")
-                _disp = channel_label(ch)     # « Ambre » s'affiche « A »
+                # Le nom du constructeur d'abord : sur un laser, dix-huit
+                # pastilles disaient « Unused » sans qu'on puisse les
+                # distinguer. Abrégé pour que la pastille reste une pastille —
+                # le nom entier est dans l'infobulle.
+                _lb = _chip_labels[ci] if ci < len(_chip_labels) else ""
+                _disp = (_lb if len(_lb) <= 14 else _lb[:13] + "…") or channel_label(ch)
                 cw = max(36, len(_disp) * 7 + 14)
                 _r = int(col[1:3], 16); _g = int(col[3:5], 16); _b = int(col[5:7], 16)
                 text_col = "#ffffff" if (_r * 0.299 + _g * 0.587 + _b * 0.114) < 145 else "#111111"
@@ -18031,6 +18103,7 @@ class MainWindow(QMainWindow):
                 )
                 chip.setToolTip(
                     f"Canal {ci + 1}: {ch}"
+                    + (f"\n{_lb}" if _lb else "")
                     + (f"  ({own_tag})" if own_tag else "")
                     + (f"\nDéfaut : {pct_val}%" if pct_val > 0
                        else "\nClic droit → régler valeur par défaut")
@@ -19015,6 +19088,13 @@ class MainWindow(QMainWindow):
                 # Copier les slots roue couleur/gobo depuis le preset OFL
                 p.color_wheel_slots = list(preset.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(preset.get('gobo_wheel_slots', []))
+                # …et les noms de canaux, sinon la fixture ajoutée depuis la
+                # bibliothèque arrive avec une rangée de « Unused » anonymes
+                # alors que son fichier d'origine les nommait.
+                _plb = preset.get('labels') or preset.get('channel_labels') or []
+                p.channel_labels = (list(_plb)
+                                    if len(_plb) == len(getattr(p, 'dmx_profile', []) or [])
+                                    else [])
                 # Le type "Moving Head" ne garantit pas une roue : une lyre RGBW
                 # n'en a pas. Sans ce test, on propose de calibrer dans le vide.
                 _prof = getattr(p, 'dmx_profile', None)
@@ -20502,6 +20582,11 @@ class MainWindow(QMainWindow):
                             "fixture_type": ftype,
                             "group":        _GROUP.get(ftype, "face"),
                             "profile":      m["profile"],
+                            # Noms lisibles du fichier constructeur : sans eux,
+                            # une fixture importée arrive avec des canaux
+                            # « Unused » impossibles à distinguer les uns des
+                            # autres. Absents des vieux fichiers → liste vide.
+                            "channel_labels": list(m.get("labels") or []),
                             "source":       ofl_fx.get("source", "ma"),
                         } for m in modes]
                         if len(candidates) > 1:
@@ -20561,6 +20646,30 @@ class MainWindow(QMainWindow):
             FIXTURE_LIBRARY.update(_sorted2)
             _rebuild_cat_list()
             _refresh_results()
+
+            # Se placer sur la fixture qu'on vient d'importer. Sans ça, elle
+            # atterrissait quelque part dans une liste de plusieurs milliers
+            # d'entrées et il fallait la rechercher à la main juste après
+            # l'avoir ajoutée. On passe par le champ de recherche plutôt que par
+            # un défilement : la liste est alors réduite à ce qu'on cherche, et
+            # le fabricant repart sur « tous » — sinon un import rangé sous un
+            # autre fabricant que celui sélectionné resterait invisible.
+            if newly_imported:
+                _cible = newly_imported[0].get("name", "")
+                if _cible:
+                    search_edit.blockSignals(True)
+                    search_edit.setText(_cible)
+                    search_edit.blockSignals(False)
+                    _rebuild_cat_list()
+                    _refresh_results()
+                    for _r in range(preset_list.count()):
+                        _it = preset_list.item(_r)
+                        _d  = _it.data(Qt.UserRole) or {}
+                        if _d.get("name") == _cible:
+                            preset_list.setCurrentItem(_it)
+                            preset_list.scrollToItem(_it)
+                            break
+
             msg = f"{imported} fixture{'s' if imported > 1 else ''} importée{'s' if imported > 1 else ''}."
             if errors:
                 msg += f"\n\n{len(errors)} fichier(s) ignoré(s) :\n" + "\n".join(errors)
@@ -20836,6 +20945,13 @@ class MainWindow(QMainWindow):
             out = dict(preset)
             out["profile"] = list(m.get("profile") or [])
             out["mode_name"] = m.get("name", "")
+            # Les noms de canaux appartiennent au MODE : ceux de la racine
+            # décrivent le mode 0 et seraient faux dès qu'on en choisit un autre.
+            _lb = list(m.get("labels") or [])
+            if len(_lb) == len(out["profile"]):
+                out["labels"] = _lb
+            else:
+                out.pop("labels", None)
             if m.get("matrix"):
                 out["matrix"] = m["matrix"]
             else:
@@ -21008,7 +21124,10 @@ class MainWindow(QMainWindow):
                 prof_scroll.setFixedHeight(104)
                 prof_vl.addWidget(_prof_caption(
                     f"{len(profile)} {'canal' if len(profile) == 1 else 'canaux'}"))
-                prof_vl.addWidget(build_channel_chips(profile, 1))
+                # Le mode résolu porte ses propres noms de canaux ; la racine du
+                # preset décrit, elle, le premier mode.
+                _lb = (preset.get("labels") or preset.get("channel_labels") or [])
+                prof_vl.addWidget(build_channel_chips(profile, 1, labels=_lb))
 
             prof_vl.addStretch()
 
@@ -21326,6 +21445,7 @@ class MainWindow(QMainWindow):
                 'universe':      getattr(proj, 'universe', 0),
                 'start_address': proj.start_address,
                 'profile': self.dmx._get_profile(proj_key),
+                'channel_labels': list(getattr(proj, 'channel_labels', [])),
                 'pos_x': getattr(proj, 'canvas_x', None),
                 'pos_y': getattr(proj, 'canvas_y', None),
                 'pos_3d_x': getattr(proj, 'pos_3d_x', None),

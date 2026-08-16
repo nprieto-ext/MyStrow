@@ -482,7 +482,21 @@ class SequenceInfoDialog(QDialog):
         return True
 
 
-def apply_seq_memories_htp(entries, memories, projectors, main_win, lock_pantilt_idxs=None):
+# Canaux de faisceau restitués par une mémoire en piste Séquence, avec leur
+# valeur de REPOS. Le repos sert de test « la mémoire a-t-elle vraiment réglé ce
+# canal ? » — voir le raisonnement dans `apply_seq_memories_htp`.
+# ⚠️ Le shutter est ouvert à 255 : son repos n'est pas 0.
+_REPOS_FAISCEAU = {
+    "gobo": 0, "gobo_rotation": 0, "gobo2": 0,
+    "zoom": 0, "focus": 0, "iris": 0,
+    "prism": 0, "prism_rotation": 0,
+    "color_wheel": 0, "effects": 0, "speed": 0, "mode_value": 0,
+    "shutter": 255,
+}
+
+
+def apply_seq_memories_htp(entries, memories, projectors, main_win,
+                           lock_pantilt_idxs=None, lock_gobo_idxs=None):
     """
     Applique une ou plusieurs mémoires de séquence en HTP sur les projecteurs.
 
@@ -538,6 +552,33 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win, lock_pantilt
                 proj.tilt = ps["tilt"]
         proj.strobe_speed = int(ps.get("strobe_speed", 0))
         proj.channel_extras = dict(ps.get("channel_extras", {}) or {})
+
+        # Canaux de faisceau : une mémoire POSE ce qu'elle a enregistré, elle
+        # n'EFFACE pas ce qu'une autre piste a posé.
+        #
+        # C'est la règle du pan/tilt juste au-dessus, et NON celle du rappel par
+        # pad AKAI, qui réimpose l'état complet, valeurs au repos comprises. La
+        # différence tient au contexte : un pad DÉFINIT le look du moment, alors
+        # qu'un clip Séquence n'est qu'une piste parmi d'autres, empilée sur les
+        # pistes Couleur, Gobo et Position — lesquelles tournent juste avant
+        # nous. Or une mémoire capture TOUT le rig, y compris les projecteurs
+        # qu'elle ne vise pas, avec leurs canaux au repos : appliquée telle
+        # quelle, elle remettrait le gobo de la piste Gobo à zéro. C'est
+        # exactement la régression 3.1.79 sur l'UV et l'ambre.
+        #
+        # Contrepartie assumée, la même que pour le pan/tilt : en piste
+        # Séquence, une mémoire ne peut pas RETIRER un gobo, seulement en poser
+        # un. Pour effacer, on utilise la piste dédiée.
+        _gobo_verrou = bool(lock_gobo_idxs and i in lock_gobo_idxs)
+        for _attr, _repos in _REPOS_FAISCEAU.items():
+            if _gobo_verrou and _attr in ("gobo", "gobo_rotation"):
+                continue    # un clip de la piste Gobo actif prime (verrou explicite)
+            _v = ps.get(_attr, _repos)
+            if _v is None:
+                continue
+            _v = int(_v)
+            if _v != _repos:
+                setattr(proj, _attr, _v)
         if ps.get("level", 0) > 0:
             lvl = int(ps["level"] * brightness)
             base = QColor(ps["base_color"])

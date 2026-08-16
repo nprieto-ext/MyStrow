@@ -85,9 +85,24 @@ GROUP_OPTIONS = [
 
 ALL_CHANNEL_TYPES = [
     "R", "G", "B", "W", "Dim", "Dim2", "Strobe", "UV", "Ambre", "Orange", "Zoom",
+    # Ces sept-là étaient déjà entièrement traités par le moteur mais ne
+    # figuraient dans AUCUNE liste de l'éditeur : impossible de les choisir, et
+    # les canaux concernés finissaient en « Mode » ou en « Unused ».
+    #   C/M/Y  : trichromie — soustractive sur un spot à drapeaux, additive sur
+    #            une LED à émetteurs. Le moteur tranche sur la présence de R/G/B.
+    #   Lime   : émetteur additif supplémentaire (curseur manuel).
+    #   CTO/CTB: correcteurs de température de couleur, canaux à part entière —
+    #            les confondre avec la roue de couleurs la faisait tourner.
+    #   Iris   : diaphragme.
+    "C", "M", "Y", "Lime", "CTO", "CTB", "Iris",
     "Smoke", "Fan", "Pan", "PanFine", "Tilt", "TiltFine",
     "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
-    "Effects", "Reset",
+    # « Unused » : le canal existe dans le protocole mais MyStrow n'y touche
+    # pas — il sort 0, toujours. C'est ce que reçoit un canal dont on ne sait
+    # rien à l'import, et il occupe sa place pour que les canaux SUIVANTS
+    # gardent le bon numéro. Sans lui, le repli était « Mode », qui pilote les
+    # programmes internes de l'appareil.
+    "Effects", "Reset", "Unused",
 ]
 
 CHANNEL_COLORS = {
@@ -100,6 +115,13 @@ CHANNEL_COLORS = {
     "Prism": "#dd00dd", "PrismRot": "#bb00bb",
     "Focus": "#00aa88", "ColorWheel": "#ff8800", "Shutter": "#ff2266",
     "Speed": "#66ff66", "Mode": "#88aaff", "Effects": "#cc44ff", "Reset": "#ff3333",
+    # Trichromie, émetteur lime, correcteurs de température, diaphragme.
+    "C": "#00cccc", "M": "#cc00cc", "Y": "#cccc00", "Lime": "#aaee00",
+    "CTO": "#ffbb66", "CTB": "#88bbff", "Iris": "#8899aa",
+    # Gris éteint : un canal que MyStrow ne pilote pas ne doit pas attirer
+    # l'œil comme les autres, mais rester visible pour qu'on puisse lui donner
+    # son vrai type si on connaît l'appareil.
+    "Unused": "#3a3a3a",
 }
 
 # Profils rapides proposés à l'utilisateur
@@ -180,6 +202,11 @@ def _fixture_modes(fx: dict) -> list:
             "profile":  list(m.get("profile") or []),
             "defaults": _mode_defaults(m),
             "matrix":   m["matrix"] if isinstance(m.get("matrix"), dict) else None,
+            # Noms lisibles venus du fichier constructeur. L'éditeur ne les
+            # modifie pas encore, mais il doit les FAIRE SUIVRE : sans ça,
+            # rouvrir une fixture importée pour changer un seul canal effacerait
+            # tous ses noms, et on retomberait sur une liste de « Unused ».
+            "labels":   list(m.get("labels") or []),
         })
     if out:
         return out
@@ -402,11 +429,19 @@ class DmxPreviewWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._channels = []
+        self._labels   = []
         self.setFixedHeight(44)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-    def set_channels(self, channels):
+    def set_channels(self, channels, labels=None):
+        """Canaux affichés, et leur nom lisible quand la fixture en porte un.
+
+        Les noms ne sont retenus que s'ils cadrent avec la liste de canaux : un
+        nom décalé d'un cran désignerait le mauvais canal.
+        """
         self._channels = list(channels)
+        lb = list(labels or [])
+        self._labels = lb if len(lb) == len(self._channels) else []
         self.update()
 
     def paintEvent(self, event):
@@ -433,9 +468,15 @@ class DmxPreviewWidget(QWidget):
             painter.drawText(x, 3, bw, 11, Qt.AlignCenter, str(i + 1))
             painter.setPen(c.lighter(170))
             painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-            _lbl = channel_label(ch)
+            # Le nom du constructeur d'abord : une rangée de « UNUSED » ne dit
+            # rien de la fixture qu'on s'apprête à ajouter.
+            _nom = self._labels[i] if i < len(self._labels) else ""
+            _lbl = _nom or channel_label(ch)
+            # La case est étroite (20 à 70 px) : on tronque plutôt que de laisser
+            # le texte déborder sur le canal voisin.
+            _max = max(4, bw // 7)
             painter.drawText(x, 14, bw, h - 17, Qt.AlignCenter,
-                             _lbl if len(_lbl) <= 5 else _lbl[:4] + ".")
+                             _lbl if len(_lbl) <= _max else _lbl[:_max - 1] + ".")
         painter.end()
 
 
@@ -453,7 +494,7 @@ class ChannelRowWidget(QWidget):
     changed           = Signal()
 
     def __init__(self, ch_num, ch_type, parent=None,
-                 default_val=None, show_default=False):
+                 default_val=None, show_default=False, label=""):
         super().__init__(parent)
         self.setFixedHeight(38)
         self.setStyleSheet("background:#1e1e1e;border-radius:3px;")
@@ -477,6 +518,24 @@ class ChannelRowWidget(QWidget):
         )
         self._combo.type_changed.connect(self._on_type_changed)
         layout.addWidget(self._combo, 1)
+
+        # Nom du canal. Rempli à l'import depuis le fichier constructeur
+        # (« LaserGroupSelect », « Rotation Z »), et modifiable : c'est souvent
+        # la SEULE chose qui distingue deux canaux ramenés au même type, et sur
+        # un laser la seule information tout court — la moitié des canaux
+        # n'ayant pas de type connu, la colonne de gauche n'affiche qu'une
+        # colonne de « Unused » indiscernables.
+        self._label_edit = QLineEdit(label or "")
+        self._label_edit.setPlaceholderText(tr("fe2_channel_name_ph"))
+        self._label_edit.setFixedHeight(26)
+        self._label_edit.setToolTip(tr("fe2_channel_name_hint"))
+        self._label_edit.setStyleSheet(
+            "QLineEdit{background:#242424;color:#bbb;border:1px solid #333;"
+            "border-radius:3px;padding:1px 6px;font-size:11px;}"
+            "QLineEdit:focus{border-color:#00d4ff;color:#e0e0e0;}"
+        )
+        self._label_edit.textChanged.connect(lambda _: self.changed.emit())
+        layout.addWidget(self._label_edit, 1)
 
         self._default_spin = None
         if show_default:
@@ -539,6 +598,8 @@ class ChannelRowWidget(QWidget):
     def _on_rm(self): self.remove_requested.emit(self)
     def set_num(self, n): self._num_lbl.setText(f"{n:02d}")
     def get_type(self): return self._combo.current_type()
+
+    def get_label(self): return self._label_edit.text().strip()
 
     def get_default(self):
         """Valeur fixe DMX, ou None si la case est sur « — »."""
@@ -857,18 +918,36 @@ class FixtureEditorDialog(QDialog):
         rv.addLayout(hdr)
         rv.addSpacing(28)
 
-        # Nom
-        rv.addWidget(self._lbl("MARQUE ET MODÈLE"))
-        rv.addSpacing(5)
+        # Identité : marque et modèle sur une ligne, type et nom du mode sur la
+        # suivante. Deux colonnes de même largeur d'une ligne à l'autre : les
+        # quatre champs s'alignent en grille au lieu de s'empiler.
+        id_row = QHBoxLayout()
+        id_row.setSpacing(16)
+
+        bc = QVBoxLayout()
+        bc.setSpacing(5)
+        bc.addWidget(self._lbl(tr("fe_lbl_brand")))
+        self._mfr_edit = QLineEdit()
+        self._mfr_edit.setPlaceholderText(tr("fe2_mfr_ph"))
+        self._mfr_edit.setFixedHeight(38)
+        bc.addWidget(self._mfr_edit)
+        id_row.addLayout(bc, 1)
+
+        nc = QVBoxLayout()
+        nc.setSpacing(5)
+        nc.addWidget(self._lbl(tr("fe_lbl_model")))
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText(
             tr("fe_ex_name")
         )
-        self._name_edit.setFixedHeight(40)
+        self._name_edit.setFixedHeight(38)
         self._name_edit.textChanged.connect(
-            lambda t: self._editor_title.setText(t or "Nouveau projecteur")
+            lambda t: self._editor_title.setText(t or tr("fe_new_fixture_title"))
         )
-        rv.addWidget(self._name_edit)
+        nc.addWidget(self._name_edit)
+        id_row.addLayout(nc, 1)
+
+        rv.addLayout(id_row)
         rv.addSpacing(16)
 
         # Type + Nom du mode sur la même ligne
@@ -877,7 +956,7 @@ class FixtureEditorDialog(QDialog):
 
         tc = QVBoxLayout()
         tc.setSpacing(5)
-        tc.addWidget(self._lbl("TYPE"))
+        tc.addWidget(self._lbl(tr("fe_lbl_type")))
         self._type_combo = _NoScrollCombo()
         self._type_combo.setFixedHeight(38)
         for ft in FIXTURE_TYPES:
@@ -885,13 +964,16 @@ class FixtureEditorDialog(QDialog):
         tc.addWidget(self._type_combo)
         type_mode_row.addLayout(tc, 1)
 
+        # Le nom du mode courant : c'est un champ du formulaire comme les
+        # autres, pas une ligne isolée sous les onglets.
         mc = QVBoxLayout()
         mc.setSpacing(5)
-        mc.addWidget(self._lbl("MARQUE (FABRICANT)"))
-        self._mfr_edit = QLineEdit()
-        self._mfr_edit.setPlaceholderText(tr("fe2_mfr_ph"))
-        self._mfr_edit.setFixedHeight(38)
-        mc.addWidget(self._mfr_edit)
+        mc.addWidget(self._lbl(tr("fe_lbl_mode_name")))
+        self._mode_name_edit = QLineEdit()
+        self._mode_name_edit.setPlaceholderText(tr("fe_ex_mode"))
+        self._mode_name_edit.setFixedHeight(38)
+        self._mode_name_edit.textChanged.connect(self._on_mode_name_changed)
+        mc.addWidget(self._mode_name_edit)
         type_mode_row.addLayout(mc, 1)
 
         rv.addLayout(type_mode_row)
@@ -902,8 +984,12 @@ class FixtureEditorDialog(QDialog):
         rv.addSpacing(22)
 
         # ── Section canaux ────────────────────────────────────────────────────
+        # Ni titre « PROFIL DMX » ni titre « MODES DMX » : les onglets de modes
+        # et la rangée de canaux se désignent d'eux-mêmes, et deux intertitres
+        # de plus ne faisaient que pousser la zone utile vers le bas. Le
+        # compteur de canaux, lui, reste — c'est la seule information de la
+        # ligne qu'on ne peut pas lire ailleurs.
         ch_hdr = QHBoxLayout()
-        ch_hdr.addWidget(self._lbl("PROFIL DMX"))
         self._ch_count_lbl = QLabel(tr("fe_zero_channel"))
         self._ch_count_lbl.setStyleSheet("font-size:11px;color:#444;")
         ch_hdr.addStretch()
@@ -915,8 +1001,6 @@ class FixtureEditorDialog(QDialog):
         # Un même appareil expose plusieurs protocoles (8CH, 13CH…). Les tenir
         # dans UNE fixture à plusieurs modes, plutôt qu'une fixture par mode,
         # c'est ce que sait déjà lire le sélecteur de mode de la bibliothèque.
-        rv.addWidget(self._lbl("MODES DMX"))
-        rv.addSpacing(6)
 
         tab_row = QHBoxLayout()
         tab_row.setSpacing(4)
@@ -947,24 +1031,9 @@ class FixtureEditorDialog(QDialog):
         rv.addLayout(tab_row)
         rv.addSpacing(8)
 
-        # Nom du mode courant
-        name_row = QHBoxLayout()
-        name_row.setSpacing(8)
-        lbl_mn = QLabel(tr("fe2_mode_name"))
-        lbl_mn.setStyleSheet("font-size:11px;color:#777;")
-        name_row.addWidget(lbl_mn)
-        self._mode_name_edit = QLineEdit()
-        self._mode_name_edit.setPlaceholderText(tr("fe_ex_mode"))
-        self._mode_name_edit.setFixedHeight(30)
-        self._mode_name_edit.textChanged.connect(self._on_mode_name_changed)
-        name_row.addWidget(self._mode_name_edit, 1)
-        rv.addLayout(name_row)
-        rv.addSpacing(14)
-
-        # Aperçu DMX du mode courant
-        self._preview = DmxPreviewWidget()
-        rv.addWidget(self._preview)
-        rv.addSpacing(8)
+        # Le nom du mode est remonté dans le formulaire, et la bande d'aperçu
+        # DMX retirée : elle répétait en carrés illisibles ce que la liste de
+        # canaux dit déjà en toutes lettres, juste en dessous.
 
         # Lignes de canaux
         rows_hint = QLabel(tr("fe2_rows_hint"))
@@ -1054,9 +1123,11 @@ class FixtureEditorDialog(QDialog):
                 "profile":  list(m.get("profile", []) or []),
                 "defaults": list(m.get("defaults", []) or []),
                 "matrix":   dict(m["matrix"]) if isinstance(m.get("matrix"), dict) else None,
+                "labels":   list(m.get("labels", []) or []),
             })
         if not self._modes_data:
-            self._modes_data.append({"name": "", "profile": [], "defaults": [], "matrix": None})
+            self._modes_data.append({"name": "", "profile": [], "defaults": [],
+                                     "matrix": None, "labels": []})
         self._cur_mode = -1
         self._rebuild_mode_tabs()
         self._select_mode(0)
@@ -1068,6 +1139,10 @@ class FixtureEditorDialog(QDialog):
             m["profile"]  = self._get_profile()
             m["defaults"] = self._get_defaults()
             m["matrix"]   = getattr(self, "_pixel_matrix", None)
+            # Les noms viennent des lignes affichées, comme le profil et les
+            # défauts : ils sont donc alignés par construction, y compris après
+            # un ajout, une suppression ou un déplacement de canal.
+            m["labels"]   = self._get_labels()
 
     def _rebuild_mode_tabs(self):
         while self._mode_tab_layout.count():
@@ -1112,7 +1187,8 @@ class FixtureEditorDialog(QDialog):
         # La géométrie pixel appartient au mode : un 8CH « Look » et un 48CH
         # « Pixel » de la même barre n'ont pas la même matrice.
         self._pixel_matrix = m.get("matrix")
-        self._set_profile(m.get("profile", []), m.get("defaults", []))
+        self._set_profile(m.get("profile", []), m.get("defaults", []),
+                          m.get("labels", []))
 
     def _on_mode_name_changed(self, text: str):
         if 0 <= self._cur_mode < len(self._modes_data):
@@ -1123,7 +1199,7 @@ class FixtureEditorDialog(QDialog):
         self._commit_current_mode()
         self._modes_data.append({
             "name": f"Mode {len(self._modes_data) + 1}",
-            "profile": [], "defaults": [], "matrix": None,
+            "profile": [], "defaults": [], "matrix": None, "labels": [],
         })
         self._cur_mode = -1          # rien à recopier : la pile vient de changer
         self._rebuild_mode_tabs()
@@ -1154,9 +1230,14 @@ class FixtureEditorDialog(QDialog):
     def _get_defaults(self) -> list:
         return [r.get_default() for r in self._rows]
 
-    def _set_profile(self, profile: list, defaults: list | None = None):
+    def _get_labels(self) -> list:
+        return [r.get_label() for r in self._rows]
+
+    def _set_profile(self, profile: list, defaults: list | None = None,
+                     labels: list | None = None):
         """Reconstruit les lignes de canaux affichées."""
         defaults = defaults or []
+        labels   = labels or []
         for r in self._rows:
             r.setParent(None)
             r.deleteLater()
@@ -1165,13 +1246,16 @@ class FixtureEditorDialog(QDialog):
             self._ch_vbox.takeAt(0)
         for i, ch in enumerate(profile):
             d = defaults[i] if i < len(defaults) else None
-            self._rows.append(self._make_row(i + 1, ch, d))
+            lb = labels[i] if i < len(labels) else ""
+            self._rows.append(self._make_row(i + 1, ch, d, lb))
             self._ch_vbox.addWidget(self._rows[-1])
         self._ch_vbox.addStretch()
         self._on_channels_changed()
 
-    def _make_row(self, num: int, ch_type: str, default_val=None) -> ChannelRowWidget:
-        row = ChannelRowWidget(num, ch_type, default_val=default_val, show_default=True)
+    def _make_row(self, num: int, ch_type: str, default_val=None,
+                  label: str = "") -> ChannelRowWidget:
+        row = ChannelRowWidget(num, ch_type, default_val=default_val,
+                               show_default=True, label=label)
         row.remove_requested.connect(self._remove_row)
         row.move_up_requested.connect(self._move_row_up)
         row.move_dn_requested.connect(self._move_row_dn)
@@ -1438,7 +1522,6 @@ class FixtureEditorDialog(QDialog):
         channels = self._get_profile()
         n = len(channels)
         self._ch_count_lbl.setText(tr("fe_f_n_channels", n=n, a0='x' if n > 1 else ''))
-        self._preview.set_channels(channels)
         self._refresh_mode_tab_label()
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
@@ -1472,6 +1555,12 @@ class FixtureEditorDialog(QDialog):
             }
             if any(v is not None for v in m.get("defaults") or []):
                 entry["defaults"] = list(m["defaults"])
+            # Noms de canaux : écrits seulement s'ils cadrent avec le profil et
+            # qu'au moins un est renseigné. Une liste désalignée décalerait les
+            # noms d'un canal sur l'autre — mieux vaut ne rien écrire.
+            _lb = list(m.get("labels") or [])
+            if len(_lb) == len(m["profile"]) and any(x for x in _lb):
+                entry["labels"] = _lb
             mx = self._kept_matrix(m.get("matrix"), m["profile"])
             if mx:
                 entry["matrix"] = mx
@@ -1493,6 +1582,12 @@ class FixtureEditorDialog(QDialog):
         }
         if first.get("defaults"):
             data["defaults"] = list(first["defaults"])
+        # La racine décrit le premier mode : c'est elle que lit le patch quand
+        # on ajoute la fixture depuis la bibliothèque. Sans les noms ici, ils
+        # n'existeraient que dans `modes` et la fixture patchée resterait
+        # anonyme.
+        if first.get("labels"):
+            data["labels"] = list(first["labels"])
         if first.get("matrix"):
             data["matrix"] = dict(first["matrix"])
         if out_modes:
@@ -1652,6 +1747,9 @@ class FixtureEditorDialog(QDialog):
                         "fixture_type": ftype,
                         "group": _GROUP.get(ftype, "face"),
                         "profile": m["profile"],
+                        # Noms lisibles du fichier : sans eux, la fixture arrive
+                        # avec une rangée de pastilles « Unused » indiscernables.
+                        "labels": list(m.get("labels") or []),
                         "color_wheel_slots": ofl_fx.get("color_wheel_slots", []),
                         "gobo_wheel_slots":  ofl_fx.get("gobo_wheel_slots", []),
                         "channel_defaults":  ofl_fx.get("channel_defaults", {}),

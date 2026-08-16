@@ -2531,6 +2531,7 @@ class LightTimelineEditor(QDialog):
         # émetteur (mémoire, effet) peut avoir repositionné la roue entre-temps,
         # et le gobo resterait alors figé sur la mauvaise valeur.
         gobo_track = self.track_map.get("Gobo")
+        _gobo_locked_idxs = set()   # gobos pilotés par la piste Gobo (cf. show)
         if gobo_track:
             g_clip = None
             for clip in gobo_track.clips:
@@ -2540,10 +2541,11 @@ class LightTimelineEditor(QDialog):
             if g_clip is not None and getattr(g_clip, 'gobo_dmx', None) is not None:
                 g_val = max(0, min(255, int(g_clip.gobo_dmx)))
                 g_rot = max(0, min(255, int(getattr(g_clip, 'gobo_rotation', 0) or 0)))
-                for p in self.main_window.projectors:
+                for _gi, p in enumerate(self.main_window.projectors):
                     if 'Gobo1' in (getattr(p, 'dmx_profile', None) or []):
                         p.gobo = g_val
                         p.gobo_rotation = g_rot
+                        _gobo_locked_idxs.add(_gi)
 
         # ── 1) Appliquer les clips de couleur par groupe (priorité basse) ─────
         for track in self.tracks:
@@ -2665,7 +2667,8 @@ class LightTimelineEditor(QDialog):
                                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
             apply_seq_memories_htp(
                 _seq_entries, getattr(self.main_window, 'memories', None),
-                projectors, self.main_window, lock_pantilt_idxs=_pos_locked_idxs)
+                projectors, self.main_window, lock_pantilt_idxs=_pos_locked_idxs,
+                lock_gobo_idxs=_gobo_locked_idxs)
 
         # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
         # La preview pilote l'effet elle-même, frame par frame, au rythme du
@@ -3674,8 +3677,79 @@ class LightTimelineEditor(QDialog):
         if self._pdf_show_action:
             self._pdf_show_action.setChecked(checked)
 
+    # Touches couleur que l'éditeur se RÉSERVE : C = mode Coupe, P = mode
+    # Pinceau, tous deux antérieurs et utilisés en survolant justement une
+    # piste. Les détourner en cyan/rose casserait un geste installé. Ces deux
+    # couleurs restent accessibles par la palette.
+    _COULEURS_RESERVEES = (Qt.Key_C, Qt.Key_P)
+
+    def _piste_couleur_survolee(self):
+        """(piste de groupe sous la souris, x local) — ou (None, 0).
+
+        « Piste de groupe » = une piste A-G, à l'exclusion d'Audio et des pistes
+        spécialisées (Effet, Séquence, Position, Gobo) : y déposer un bloc de
+        couleur n'aurait aucun sens.
+        """
+        from PySide6.QtGui import QCursor
+        from light_timeline import LightTrack
+        for piste in getattr(self, 'tracks', []) or []:
+            if not isinstance(piste, LightTrack) or not piste.isVisible():
+                continue
+            if (piste.name == "Audio"
+                    or getattr(piste, 'is_effect_track', False)
+                    or getattr(piste, 'is_sequence_track', False)
+                    or getattr(piste, 'is_position_track', False)
+                    or getattr(piste, 'is_gobo_track', False)):
+                continue
+            local = piste.mapFromGlobal(QCursor.pos())
+            if piste.rect().contains(local):
+                return piste, local.x()
+        return None, 0
+
+    def _poser_bloc_couleur(self, key):
+        """Touche couleur sur une piste survolée → un bloc à cet endroit.
+
+        Le mapping vient de `MainWindow.COLOR_SHORTCUTS` : c'est le même que
+        dans la fenêtre principale, et le dupliquer ici les ferait diverger.
+        La durée vient du champ « taille des blocs » de l'en-tête, via
+        `_default_block_dur_ms()` — le même que tous les autres chemins de dépôt.
+
+        Rend True si un bloc a été posé (la touche est alors consommée).
+        """
+        if key in self._COULEURS_RESERVEES:
+            return False
+        couleurs = getattr(self.main_window, 'COLOR_SHORTCUTS', None) if self.main_window else None
+        if not couleurs or key not in couleurs:
+            return False
+        piste, x = self._piste_couleur_survolee()
+        if piste is None:
+            return False
+
+        # 145 px = largeur de l'étiquette de piste, comme dans le mode Pinceau.
+        debut = max(0, (x - 145) / piste.pixels_per_ms)
+        # Ne pas empiler : si un bloc couvre déjà cet instant, on ne fait rien
+        # plutôt que d'en superposer un invisible sous le premier.
+        if any(c.start_time <= debut <= c.start_time + c.duration
+               for c in piste.clips):
+            return False
+
+        piste.add_clip(debut, piste._default_block_dur_ms(),
+                       QColor(couleurs[key]), 100)
+        piste.update()
+        if hasattr(self, 'save_state'):
+            self.save_state()
+        return True
+
     def keyPressEvent(self, event):
         """Raccourcis clavier"""
+        # Raccourcis couleur : uniquement en survolant une piste de groupe, et
+        # sans modificateur — Ctrl+C reste « copier », Ctrl+V « coller ».
+        if not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier
+                                     | Qt.ShiftModifier)):
+            if self._poser_bloc_couleur(event.key()):
+                event.accept()
+                return
+
         if event.key() == Qt.Key_Space:
             self.toggle_play_pause()
             event.accept()

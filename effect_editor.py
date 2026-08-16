@@ -1085,7 +1085,9 @@ LAYER_COLS = [
      "La courbe que suit le canal.\n"
      "Sur une couche Pan/Tilt : la trajectoire de la lyre."),
     ("vit",    "VIT",          42,
-     "Vitesse du cycle.\n0 = très lent, 100 = très rapide."),
+     "Vitesse du cycle.\n0 = très lent, 100 = très rapide.\n"
+     "Molette = réglage au dixième (29,8 ≈ 128 BPM).\n"
+     "Maj+molette = pas entier."),
     ("amp",    "AMP",          42,
      "Amplitude : intensité maximale atteinte par l'effet."),
     ("min",    "MIN",          42,
@@ -1355,17 +1357,26 @@ class _NumCell(QWidget):
     coup d'œil, sans prendre la place d'un curseur.
     """
 
-    valueChanged = Signal(int)
+    # Signal(object) et non Signal(int) : la cellule pilote aussi des grandeurs
+    # décimales (cf. `decimals`). En mode entier — tous les usages historiques,
+    # dont le tableau du plan 3D — elle émet toujours un int, les branchements
+    # en place ne voient donc aucune différence.
+    valueChanged = Signal(object)
 
     def __init__(self, value=0, maximum=100, width=42, accent="#00d4ff", parent=None,
-                 minimum=0, height=None):
+                 minimum=0, height=None, decimals=0):
         super().__init__(parent)
         # `minimum` permet de réutiliser la cellule pour des grandeurs signées
         # (angles −180..180, coordonnées en cm). 0 par défaut : les couches
         # d'effet, seul usage historique, ne changent pas de comportement.
+        # `decimals` ouvre le réglage sous l'unité (0 = entier, comportement
+        # d'origine). Les bornes, elles, restent entières : aucune grandeur du
+        # tableau n'a besoin d'un minimum ou d'un maximum fractionnaire.
+        self._dec    = max(0, int(decimals))
+        self._step   = 10.0 ** -self._dec     # plus petit écart représentable
         self._min    = int(minimum)
         self._max    = max(self._min + 1, int(maximum))
-        self._value  = max(self._min, min(self._max, int(value)))
+        self._value  = self._clamp(value)
         self._accent = accent
         self._drag_y = None
         self._drag_v = None
@@ -1385,6 +1396,42 @@ class _NumCell(QWidget):
     def value(self):
         return self._value
 
+    def _clamp(self, v):
+        """Valeur ramenée dans les bornes ET sur la grille de la cellule.
+
+        Arrondir AVANT de comparer est ce qui rend `set_value` fiable en mode
+        décimal : sans cela, deux gestes équivalents donneraient 29.8 et
+        29.799999999999997 — deux flottants différents pour le même chiffre
+        affiché, donc un signal de changement à chaque passage, et une couche
+        marquée modifiée alors que rien n'a bougé à l'écran.
+
+        Rend un int dès que la valeur n'a pas de partie fractionnaire, même sur
+        une cellule décimale : sans cela, ouvrir l'éditeur suffirait à réécrire
+        « speed: 50 » en « speed: 50.0 » dans tous les shows enregistrés — même
+        valeur, mais un fichier qui change sans qu'on ait rien touché.
+        """
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            v = float(self._min)
+        v = max(float(self._min), min(float(self._max), v))
+        if not self._dec:
+            return int(round(v))
+        v = round(v, self._dec)
+        return int(v) if v == int(v) else v
+
+    def _fmt(self, v):
+        """Chiffre affiché. Une décimale nulle reste invisible.
+
+        « 50 » et non « 50,0 » : la colonne fait 32 à 42 px et la plupart des
+        valeurs tombent sur un entier. N'afficher la décimale que lorsqu'elle
+        existe garde le tableau lisible, tout en signalant d'un coup d'œil les
+        couches réglées finement. Virgule, comme la saisie l'accepte.
+        """
+        if not self._dec or float(v) == int(v):
+            return str(int(v))
+        return f"{float(v):.{self._dec}f}".replace(".", ",")
+
     def is_mixed(self):
         return self._mixed
 
@@ -1394,7 +1441,7 @@ class _NumCell(QWidget):
             self.update()
 
     def set_value(self, v, emit=True):
-        v = max(self._min, min(self._max, int(v)))
+        v = self._clamp(v)
         if v != self._value:
             self._value = v
             self.update()
@@ -1411,7 +1458,7 @@ class _NumCell(QWidget):
         etait_mixte = self._mixed
         self._mixed = False
         if etait_mixte:
-            self._value = max(self._min, min(self._max, int(v)))
+            self._value = self._clamp(v)
             self.update()
             self.valueChanged.emit(self._value)
         else:
@@ -1432,6 +1479,10 @@ class _NumCell(QWidget):
         if self._drag_y is not None:
             # 1 px = max/100 : la course complète tient dans ~100 px de geste,
             # que la plage aille jusqu'à 100 (niveaux) ou 360 (décalage).
+            # Le pas reste ENTIER même sur une cellule décimale : le glisser est
+            # le geste large, la molette le geste fin. Et comme le delta s'ajoute
+            # à la valeur de DÉPART, une fraction posée à la molette traverse le
+            # glissement intacte — 29,8 monte à 34,8 puis revient à 29,8.
             delta = int((self._drag_y - e.globalPosition().y())
                         * (self._max - self._min) / 100.0)
             self._user_set(self._drag_v + delta)
@@ -1440,8 +1491,16 @@ class _NumCell(QWidget):
         self._drag_y = None
 
     def wheelEvent(self, e):
-        step = max(1, self._max // 100)
-        self._user_set(self._value + (step if e.angleDelta().y() > 0 else -step))
+        """Molette : le réglage fin. Maj enfoncé : le pas large.
+
+        Sur une cellule décimale un cran vaut un dixième. C'est là que se gagne
+        la précision d'une vitesse lente, où le cran entier fait sauter la
+        période de plusieurs secondes. Maj+molette garde le pas d'origine pour
+        traverser la plage sans y passer quatre cents crans.
+        """
+        gros = max(1, self._max // 100)
+        pas  = gros if (not self._dec or (e.modifiers() & Qt.ShiftModifier)) else self._step
+        self._user_set(self._value + (pas if e.angleDelta().y() > 0 else -pas))
 
     def mouseDoubleClickEvent(self, _e):
         self._start_edit()
@@ -1457,7 +1516,7 @@ class _NumCell(QWidget):
     def _start_edit(self):
         if self._edit is not None:
             return
-        ed = QLineEdit(str(self._value), self)
+        ed = QLineEdit(self._fmt(self._value), self)
         ed.setGeometry(0, 0, self.width(), self.height())
         ed.setAlignment(Qt.AlignCenter)
         ed.setStyleSheet(
@@ -1478,7 +1537,11 @@ class _NumCell(QWidget):
             return          # éditeur déjà remplacé ou refermé : signal obsolète
         self._edit = None
         try:
-            self._user_set(int(ed.text().strip()))
+            # Virgule ET point : le pavé numérique d'un clavier français tape
+            # une virgule, la refuser rendrait la saisie décimale inutilisable.
+            # `_clamp` ramène ensuite sur la grille — une cellule entière à qui
+            # on tape « 29,8 » retient 30 plutôt que de rejeter la saisie.
+            self._user_set(float(ed.text().strip().replace(",", ".")))
         except ValueError:
             pass            # saisie non numérique : on garde la valeur en place
         ed.deleteLater()
@@ -1513,16 +1576,21 @@ class _NumCell(QWidget):
         p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 4, 4)
 
         if not live:
-            col, txt = QColor("#2b2b2b"), str(self._value)
+            col, txt = QColor("#2b2b2b"), self._fmt(self._value)
         elif self._mixed:
             # Valeurs différentes d'une ligne à l'autre : aucun chiffre ne serait
             # vrai, on affiche un tiret jusqu'au premier geste.
             col, txt = QColor("#555555"), "—"
         else:
             col = QColor("#dddddd") if self._value else QColor("#4a4a4a")
-            txt = str(self._value)
+            txt = self._fmt(self._value)
         p.setPen(col)
-        p.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        # « 29,8 » ne tient pas au corps 12 dans une colonne resserrée à 32 px :
+        # on descend d'un cran plutôt que de laisser le chiffre déborder de sa
+        # cellule. Réservé aux cellules décimales : les grandeurs entières
+        # longues (« −180 » dans le tableau 3D) gardent leur taille d'origine.
+        p.setFont(QFont("Segoe UI",
+                        10 if (self._dec and len(txt) > 3) else 12, QFont.Bold))
         p.drawText(QRect(0, 0, w, h), Qt.AlignCenter, txt)
         p.end()
 
@@ -1762,19 +1830,30 @@ class LayerRow(QFrame):
 
     _ATTR_COLORS = WaveformCanvas._ATTR_COLORS
 
-    # (clé de colonne, attribut de la couche, maximum, minimum)
+    # (clé de colonne, attribut de la couche, maximum, minimum, décimales)
     # GROUPER part de 1 : un paquet de 0 fixture ne veut rien dire, et la
     # cellule doit refuser de descendre en dessous plutôt que de laisser passer
     # une valeur que les moteurs devraient rattraper.
+    #
+    # VITESSE au dixième : la fréquence est LINÉAIRE (`core.layer_frequency`,
+    # 0,05 + vit/100 × 7 Hz), donc toute la résolution est du côté rapide. Un
+    # cran entier vaut 37 % de période à VIT 1 (8,3 s → 5,3 s) et 1 % à VIT 100
+    # (1,4 ms) : la finesse manquait exactement là où on règle les mouvements
+    # lents. Le dixième est aussi ce qui permet de tomber sur un tempo — 128 BPM
+    # = VIT 29,8, entre deux crans entiers (29 = 125 BPM, 30 = 129 BPM).
+    #
+    # Rien à migrer : `layer_frequency` travaille déjà en flottant et `to_dict`
+    # écrit `speed` tel quel. Les shows et les préréglages en place gardent
+    # leurs valeurs entières, donc exactement leur figure.
     _NUM_FIELDS = [
-        ("vit",    "speed",   100, 0),
-        ("amp",    "size",    100, 0),
-        ("min",    "min_val", 100, 0),
-        ("max",    "max_val", 100, 0),
-        ("dec",    "spread",  360, 0),
-        ("group",  "block",    64, 1),
-        ("fondu",  "fade",    100, 0),
-        ("depart", "phase",   100, 0),
+        ("vit",    "speed",   100, 0, 1),
+        ("amp",    "size",    100, 0, 0),
+        ("min",    "min_val", 100, 0, 0),
+        ("max",    "max_val", 100, 0, 0),
+        ("dec",    "spread",  360, 0, 0),
+        ("group",  "block",    64, 1, 0),
+        ("fondu",  "fade",    100, 0, 0),
+        ("depart", "phase",   100, 0, 0),
     ]
 
     def __init__(self, layer, parent=None):
@@ -1849,8 +1928,8 @@ class LayerRow(QFrame):
         self._boites["forme"] = self._mk_forme()
         for cle in ("cible", "canal", "forme"):
             h.addWidget(self._boites[cle])
-        for key, attr, maximum, mini in self._NUM_FIELDS:
-            self._boites[key] = self._mk_num(key, attr, maximum, mini)
+        for key, attr, maximum, mini, dec in self._NUM_FIELDS:
+            self._boites[key] = self._mk_num(key, attr, maximum, mini, dec)
             h.addWidget(self._boites[key])
         self._boites["sens"]   = self._mk_sens()
         self._boites["coul"]   = self._mk_coul()
@@ -2103,10 +2182,10 @@ class LayerRow(QFrame):
         self._cells["min"].setToolTip(tip if dead_level == "min" else self._tip["min"])
         self._cells["max"].setToolTip(tip if dead_level == "max" else self._tip["max"])
 
-    def _mk_num(self, key, attr, maximum, minimum=0):
+    def _mk_num(self, key, attr, maximum, minimum=0, decimals=0):
         cell = _NumCell(getattr(self.layer, attr, minimum), maximum,
                         width=self._w[key], accent=self._accent(),
-                        minimum=minimum)
+                        minimum=minimum, decimals=decimals)
         cell.setToolTip(self._tip[key])
         cell.valueChanged.connect(
             lambda v, a=attr, k=key: (setattr(self.layer, a, v),
@@ -2164,7 +2243,7 @@ class LayerRow(QFrame):
         for w in blocs:
             w.blockSignals(False)
 
-        for key, attr, _max, _min in self._NUM_FIELDS:
+        for key, attr, _max, _min, _dec in self._NUM_FIELDS:
             cell = self._cells[key]
             cell.blockSignals(True)
             cell.set_mixed(False)
@@ -3099,6 +3178,48 @@ class EffectEditorDialog(QDialog):
         except Exception:
             pass
 
+    def _scroll_library_to_bottom(self, tours=6):
+        """Amène la bibliothèque tout en bas, là où atterrit un effet neuf.
+
+        « Mes Effets » est la dernière catégorie de la liste et un effet créé,
+        dupliqué ou importé s'ajoute à sa fin : il naît donc hors écran, la
+        bibliothèque débordant toujours (90 effets intégrés). On créait un effet
+        et il ne se passait rien de visible.
+
+        ⚠️ Défiler une seule fois, même en différé, NE MARCHE PAS — et rallonger
+        le délai ne corrige rien. La géométrie se stabilise en DEUX passes : à la
+        première les cartes sont déjà placées, mais le conteneur porte encore sa
+        hauteur d'avant, donc la barre s'arrête à un maximum périmé, juste
+        au-dessus de la carte neuve. Ce n'est qu'à la passe suivante qu'il
+        grandit. C'est une course, pas une latence : un report de 50 ms tombe
+        dans la même fenêtre et échoue autant qu'un report d'un tour.
+
+        Piège suivant, pour qui voudrait s'arrêter dès que la carte est visible :
+        `mapTo` rend lui aussi une position périmée à la première passe, et la
+        carte a l'air en vue alors qu'elle ne l'est pas. Aucune lecture de
+        géométrie n'est fiable à cet instant.
+
+        D'où le parti pris : réaffirmer « en bas » sur quelques tours de boucle
+        au lieu d'interroger quoi que ce soit. Chaque tour utilise le maximum du
+        moment ; dès que la plage cesse de croître les tours suivants ne font
+        plus rien. Le tout dure quelques millisecondes, invisible à l'œil, et se
+        termine toujours — il n'y a pas de condition à satisfaire.
+        """
+        sc = getattr(self, '_lib_scroll', None)
+        if sc is None:
+            return
+        vsb = sc.verticalScrollBar()
+
+        def au_fond(reste):
+            try:
+                vsb.setValue(vsb.maximum())
+            except RuntimeError:
+                return          # fenêtre refermée entre-temps
+            if reste > 0:
+                QTimer.singleShot(0, lambda: au_fond(reste - 1))
+
+        QTimer.singleShot(0, lambda: au_fond(tours))
+
     # ── Construction ──────────────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -3484,6 +3605,7 @@ class EffectEditorDialog(QDialog):
             self._selected_card = name
             self._rebuild_library()
             self._apply_preset(custom)
+            self._scroll_library_to_bottom()
             return
 
         # Effet chargé : proposer de le sauvegarder sous un nom
@@ -3516,6 +3638,7 @@ class EffectEditorDialog(QDialog):
         self._selected_card = name
         self._rebuild_library()
         self._apply_preset(custom)
+        self._scroll_library_to_bottom()
 
     def _show_card_context_menu(self, card, pos, eff: dict, deletable: bool):
         menu = QMenu(self)
@@ -3562,6 +3685,7 @@ class EffectEditorDialog(QDialog):
         self._selected_card = candidate
         self._rebuild_library()
         self._apply_preset(copy_eff)
+        self._scroll_library_to_bottom()
 
     def _delete_custom_effect(self, eff: dict):
         name = eff.get("name", "")
@@ -3638,6 +3762,7 @@ class EffectEditorDialog(QDialog):
         self._selected_card = candidate
         self._rebuild_library()
         self._apply_preset(new_eff)
+        self._scroll_library_to_bottom()
 
     def _rename_custom_effect(self, eff: dict):
         old_name = eff.get("name", "")

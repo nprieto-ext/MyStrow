@@ -1310,6 +1310,8 @@ class _PersistentMenu(QMenu):
 
     def event(self, e):
         t = e.type()
+        if t == QEvent.Type.Wheel and self._faire_defiler(e):
+            return True
         if t in (QEvent.Type.MouseButtonPress,
                  QEvent.Type.MouseButtonRelease,
                  QEvent.Type.MouseMove):
@@ -1325,6 +1327,39 @@ class _PersistentMenu(QMenu):
                 self._dispatch_to_widget(e, action)
                 return True   # Consommé → menu reste ouvert
         return super().event(e)
+
+    def _faire_defiler(self, e):
+        """Molette dans la vue « Curseurs » : régler, ou faire défiler.
+
+        QMenu garde la molette pour son propre défilement et ne la transmet
+        jamais aux QWidgetAction : sans ça, ni les curseurs ni la liste ne
+        répondraient à la molette. Deux cibles, dans cet ordre :
+          • sur un curseur  → il règle sa valeur (le geste attendu quand on est
+                              dessus) ;
+          • ailleurs dans la liste → la liste défile.
+        On ne détourne l'événement que dans ces deux cas, pour ne rien changer
+        au reste du menu. Renvoie True si l'événement a été traité.
+        """
+        try:
+            gpos = e.globalPosition().toPoint()
+        except AttributeError:
+            return False
+        w = QApplication.widgetAt(gpos)
+        while w is not None and w is not self:
+            if isinstance(w, _CurseurCanal):
+                return w.appliquer_molette(e.angleDelta().y(), e.modifiers())
+            if isinstance(w, QScrollArea):
+                barre = w.verticalScrollBar()
+                # `maximum` plutôt que `isVisible` : rien à faire défiler = on
+                # laisse l'événement au menu, et le test ne dépend pas de
+                # l'instant où Qt décide d'afficher la barre.
+                if barre is None or barre.maximum() <= 0:
+                    return False
+                crans = e.angleDelta().y() / 120.0
+                barre.setValue(int(barre.value() - crans * 3 * max(1, barre.singleStep())))
+                return True
+            w = w.parentWidget()
+        return False
 
     def _dispatch_to_widget(self, event, action):
         """Achemine l'événement vers le bon widget enfant de la QWidgetAction."""
@@ -1360,6 +1395,248 @@ class _PersistentMenu(QMenu):
                 event.button(), event.buttons(), event.modifiers(),
             )
             QApplication.sendEvent(target, synthetic)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VUE « CURSEURS » (canaux bruts) — habillage
+# ─────────────────────────────────────────────────────────────────────────────
+# La couleur dit CE QUE fait le canal, l'intensité dit QUI le pilote :
+# terne = calculé par le moteur, vif = forcé à la main. Sur une barre de 165
+# canaux, c'est ce qui permet de retrouver « le rouge » ou « le pan » d'un coup
+# d'oeil sans lire les libellés un par un.
+_TEINTE_CANAL = {
+    "R": "#ff5252", "G": "#4ade80", "B": "#4d8dff", "W": "#f0f0f0",
+    "Ambre": "#ffb340", "Orange": "#ff8a3d", "UV": "#a06bff", "Lime": "#c6ff4d",
+    "C": "#4ddbff", "M": "#ff5ce0", "Y": "#ffe14d",
+    "Dim": "#ffd166", "Strobe": "#ff6b6b", "Shutter": "#ff6b6b",
+    "Pan": "#00d4ff", "PanFine": "#0e8fac", "Tilt": "#00d4ff", "TiltFine": "#0e8fac",
+    "Gobo1": "#b388ff", "Gobo2": "#b388ff", "Gobo1Rot": "#8c68d0",
+    "Prism": "#7fd7ff", "PrismRot": "#5fb0d8",
+    "Focus": "#8fa6c8", "Zoom": "#8fa6c8", "Iris": "#8fa6c8",
+    "ColorWheel": "#ff9de0", "CTO": "#ffcf9e", "CTB": "#9ecbff",
+    "Effects": "#c8a0ff", "Speed": "#9a9a9a", "Mode": "#9a9a9a",
+    "Smoke": "#bdbdbd", "Fan": "#bdbdbd", "Reset": "#ff7043",
+    # Gris franc et non anthracite : c'est justement sur ces canaux-là qu'on
+    # force à la main, et un liseré « forcé » en #4a4a4a ne se voyait pas.
+    "Unused": "#7f8891",
+}
+_TEINTE_DEFAUT = "#00d4ff"
+
+# Nom affiché d'un type de canal, quand la fixture n'a pas de libellé
+# constructeur (`channel_labels`). Volontairement dans le vocabulaire des
+# notices de fixtures — « Pan Fine », « Gobo Rot », « Color Wheel » — plutôt que
+# traduit : c'est écrit ainsi sur les appareils et dans leurs manuels, dans les
+# cinq langues de l'app. À ne pas confondre avec `CHANNEL_DISPLAY`, qui abrège
+# pour les listes serrées (« PanF ») ; ici on a la place de lire.
+_NOM_CANAL = {
+    "R": "Red", "G": "Green", "B": "Blue", "W": "White",
+    "Ambre": "Amber", "Orange": "Orange", "UV": "UV", "Lime": "Lime",
+    "C": "Cyan", "M": "Magenta", "Y": "Yellow",
+    "Dim": "Dimmer", "Dim2": "Dimmer 2", "Strobe": "Strobe", "Shutter": "Shutter",
+    "Pan": "Pan", "PanFine": "Pan Fine", "Tilt": "Tilt", "TiltFine": "Tilt Fine",
+    "Gobo1": "Gobo", "Gobo1Rot": "Gobo Rot", "Gobo2": "Gobo 2",
+    "Prism": "Prism", "PrismRot": "Prism Rot",
+    "Focus": "Focus", "Zoom": "Zoom", "Iris": "Iris",
+    "ColorWheel": "Color Wheel", "CTO": "CTO", "CTB": "CTB",
+    "Effects": "Effects", "Speed": "Speed", "Mode": "Mode", "Reset": "Reset",
+    "Smoke": "Smoke", "Fan": "Fan", "Unused": "—",
+}
+
+
+def _nom_lisible(ctype):
+    """« PanFine » → « Pan Fine ». Repli en coupant le chameau pour les types
+    qui arriveraient d'un import sans passer par la table."""
+    nom = _NOM_CANAL.get(ctype)
+    if nom:
+        return nom
+    coupe = ''.join(f" {c}" if (c.isupper() and i) else c
+                    for i, c in enumerate(str(ctype)))
+    return ' '.join(coupe.split())
+
+
+def _rgba_hex(hexcol, alpha):
+    """« #ff5252 » + 0.22 → « rgba(255,82,82,0.22) ».
+
+    ⚠️ Toujours passer par ici pour teinter : concaténer un suffixe alpha à une
+    couleur courte (« #555 » + « 55 ») produit « #55555 », que Qt refuse en
+    répétant `parseHexColor: Unknown color name` à chaque ligne de canal.
+    """
+    h = hexcol.lstrip('#')
+    if len(h) == 3:
+        h = ''.join(c * 2 for c in h)
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+_CANAL_ATTR_SIMPLE = {
+    "UV": "uv", "W": "white_boost", "Ambre": "amber_boost", "Orange": "orange_boost",
+    "Zoom": "zoom", "Iris": "iris", "Focus": "focus",
+    "Gobo1": "gobo", "Gobo1Rot": "gobo_rotation", "Gobo2": "gobo2",
+    "ColorWheel": "color_wheel", "Prism": "prism", "PrismRot": "prism_rotation",
+    "Effects": "effects", "Speed": "speed", "Mode": "mode_value",
+    "Fan": "fan_speed",
+}
+
+
+def _ecrire_canal_modele(proj, ctype, valeur):
+    """Écrit une valeur DMX brute (0-255) dans la propriété qui pilote ce canal.
+
+    C'est le chemin INVERSE de `ArtNetDMX._update_from_projectors_locked`, et
+    la raison d'être des curseurs bruts : sans lui, bouger « Pan » en vue
+    brute écrivait un forçage (`channel_extras`) qui court-circuite le modèle.
+    Le pad Pan du panneau normal restait alors sur l'ancienne position — et
+    réciproquement, le pad ne pouvait plus rien bouger puisque le forçage
+    gagne. Les deux vues montraient deux vérités différentes du même canal.
+
+    En passant par la propriété, il n'y a plus qu'un seul état : la vue brute
+    et la vue métier écrivent au même endroit et se suivent l'une l'autre.
+
+    Renvoie False si le type n'a aucune représentation dans le modèle (Unused,
+    CTO, Lime, roues additives…) : l'appelant retombe alors sur le forçage par
+    numéro de canal, qui reste le seul moyen d'atteindre ces canaux-là.
+    """
+    v = max(0, min(255, int(valeur)))
+
+    if ctype in _CANAL_ATTR_SIMPLE:
+        setattr(proj, _CANAL_ATTR_SIMPLE[ctype], v)
+        return True
+
+    if ctype in ("R", "G", "B"):
+        base = getattr(proj, 'base_color', None)
+        col  = QColor(base) if base else QColor(0, 0, 0)
+        (col.setRed if ctype == "R" else
+         col.setGreen if ctype == "G" else col.setBlue)(v)
+        proj.set_color(col)
+        proj._manual_color = True     # sinon la mémoire active la réécrit aussitôt
+        return True
+
+    if ctype in ("Dim", "Dim2", "Smoke"):
+        # Smoke : sur une machine à fumée, le débit EST le niveau (branche
+        # dédiée du moteur, qui ignore les forçages — d'où le passage obligé
+        # par le modèle ici).
+        proj.set_level(round(v / 255 * 100))
+        return True
+
+    if ctype == "Strobe":
+        # Le moteur étale 0-100 % sur 16-250 ; en dessous de 16, strobe éteint.
+        proj.strobe_speed = 0 if v < 16 else round((v - 16) / (250 - 16) * 100)
+        return True
+
+    if ctype == "Shutter":
+        proj.shutter = (255 - v) if getattr(proj, 'shutter_inverted', False) else v
+        return True
+
+    if ctype in ("Pan", "PanFine", "Tilt", "TiltFine"):
+        fin  = ctype.endswith("Fine")
+        # L'axe du CÂBLAGE n'est pas l'axe du MODÈLE quand le swap est actif,
+        # et l'inversion, elle, porte toujours sur l'axe du câblage (le moteur
+        # l'applique après le swap). Confondre les deux renvoyait la lyre à
+        # l'opposé dès qu'une des deux options était cochée.
+        axe_dmx = "pan" if ctype.startswith("Pan") else "tilt"
+        axe_mod = axe_dmx
+        if getattr(proj, 'pan_tilt_swap', False):
+            axe_mod = "tilt" if axe_dmx == "pan" else "pan"
+        inverse = getattr(proj, f"{axe_dmx}_invert", False)
+
+        sortie = int(getattr(proj, axe_mod, 32768))
+        if inverse:
+            sortie = 65535 - sortie
+        sortie = (sortie & 0xFF00) | v if fin else (sortie & 0x00FF) | (v << 8)
+        if inverse:
+            sortie = 65535 - sortie
+        setattr(proj, axe_mod, max(0, min(65535, sortie)))
+        proj._manual_move = True
+        return True
+
+    return False
+
+
+# Types dont `_ecrire_canal_modele` sait faire quelque chose. Sert à choisir la
+# voie d'écriture SANS tenter l'écriture pour voir : la vue brute doit savoir
+# dès l'affichage si une ligne pilote le modèle (les deux vues restent alors
+# d'accord) ou si elle force un canal (état « FORCÉ », rendu par ↺).
+_CANAUX_MODELE = set(_CANAL_ATTR_SIMPLE) | {
+    "R", "G", "B", "Dim", "Dim2", "Smoke", "Strobe", "Shutter",
+    "Pan", "PanFine", "Tilt", "TiltFine",
+}
+
+
+class _CurseurCanal(QSlider):
+    """Curseur d'un canal DMX, taillé pour une liste longue dans un QMenu.
+
+    Deux écarts volontaires avec QSlider :
+      • la molette règle par pas de 5 (Ctrl = 1, Maj = 25) au lieu du pas de
+        page, illisible sur 0-255. Elle ne fait défiler la liste que si le
+        curseur de souris est AILLEURS que sur un curseur — voir
+        `_PersistentMenu._faire_defiler`.
+      • un clic sur la barre saute à la valeur cliquée puis enchaîne sur le
+        glisser, comme sur un pupitre. Le comportement Qt par défaut (avancer
+        d'une page) demande dix clics pour traverser 0→255.
+    """
+
+    LARG_POIGNEE = 12
+    PAS_MOLETTE  = 5
+
+    def _marquer(self):
+        """Horodate le dernier geste : le suivi live laisse la ligne tranquille
+        juste après, sinon la valeur ressort sous les doigts entre deux crans."""
+        self._touche_a = _time.time()
+
+    def appliquer_molette(self, angle_y, modificateurs):
+        """Un cran = PAS_MOLETTE. Appelée aussi par le menu, qui capte la
+        molette avant nous (QMenu la traite dans son propre `event()`)."""
+        crans = angle_y / 120.0
+        if not crans:
+            return False
+        if modificateurs & Qt.ControlModifier:
+            pas = 1
+        elif modificateurs & Qt.ShiftModifier:
+            pas = 25
+        else:
+            pas = self.PAS_MOLETTE
+        self._marquer()
+        self.setValue(max(self.minimum(),
+                          min(self.maximum(), self.value() + round(crans * pas))))
+        return True
+
+    def wheelEvent(self, e):
+        if self.appliquer_molette(e.angleDelta().y(), e.modifiers()):
+            e.accept()
+        else:
+            e.ignore()
+
+    def _valeur_au_x(self, x):
+        util = max(1, self.width() - self.LARG_POIGNEE)
+        frac = (x - self.LARG_POIGNEE / 2) / util
+        frac = max(0.0, min(1.0, frac))
+        return self.minimum() + round((self.maximum() - self.minimum()) * frac)
+
+    def _x_de(self, e):
+        pos = e.position() if hasattr(e, 'position') else e.pos()
+        return pos.x()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.setSliderDown(True)
+            self._marquer()
+            self.setValue(int(self._valeur_au_x(self._x_de(e))))
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self.isSliderDown():
+            self._marquer()
+            self.setValue(int(self._valeur_au_x(self._x_de(e))))
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self.isSliderDown():
+            self.setSliderDown(False)
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
 
 
 _MENU_STYLE = """
@@ -4932,6 +5209,383 @@ class PlanDeFeu(QFrame):
         y = max(sr.top(),  min(global_pos.y(), sr.bottom() - sz.height()))
         return QPoint(x, y)
 
+    def _build_raw_channel_panel(self, menu, targets, _wa, _flush):
+        """Vue « Curseurs » : un curseur par canal DMX, suivant la sortie réelle.
+
+        Tous les curseurs suivent la sortie en direct ; ce qui change d'un canal
+        à l'autre, c'est OÙ part la valeur quand on les bouge (voir `_voie`) :
+          • LIÉ    — le canal a un équivalent dans Projector (Dim, Pan, Gobo,
+                     R/G/B…). Le curseur écrit la propriété : le panneau normal
+                     montre la même chose, et réciproquement. Rien à « rendre »,
+                     ↺ reste éteint.
+          • FORCÉ  — canal sans équivalent (CTO, Lime, Unused…). Le bouger pose
+                     une valeur brute qui prime sur le moteur ; la ligne prend
+                     son liseré coloré et ↺ rend le canal au moteur.
+
+        La lecture se fait sur la trame RÉELLEMENT émise (`dmx.dmx_data`) et
+        non sur l'état du projecteur : c'est la seule façon de voir ce que la
+        fixture reçoit vraiment, effets et mémoires compris.
+
+        Mise en page : les lignes vivent dans une QScrollArea de hauteur bornée,
+        et NON en QWidgetAction une par ligne. Une barre à 165 canaux dépassait
+        sinon l'écran, et le défilement propre à QMenu (flèches en haut/bas)
+        est inutilisable pour viser un curseur.
+        """
+        from PySide6.QtGui import QFontMetrics
+
+        proj    = targets[0][0]
+        profile = list(getattr(proj, 'dmx_profile', None) or [])
+        labels  = list(getattr(proj, 'channel_labels', []) or [])
+        if not profile:
+            info = QLabel(tr("pdf2_raw_no_profile"))
+            info.setStyleSheet("color:#666;font-size:11px;padding:10px;")
+            _wa(info)
+            return
+
+        base_addr = int(getattr(proj, 'start_address', 1) or 1)
+        universe  = int(getattr(proj, 'universe', 0) or 0)
+        dmx       = getattr(self.main_window, 'dmx', None) if self.main_window else None
+
+        # ── Où va la valeur d'un curseur ? Trois voies, décidées ici ──────
+        #
+        #   MODÈLE  — le canal a un équivalent dans Projector (Dim, Pan, Gobo,
+        #             R/G/B…). On écrit la PROPRIÉTÉ : le pad Pan et les
+        #             curseurs du panneau normal montrent alors la même chose,
+        #             dans les deux sens. Aucun forçage, donc rien à rendre.
+        #   TYPE    — pas d'équivalent (CTO, Lime, roue additive…), mais le type
+        #             n'apparaît qu'une fois : on écrit `channel_extras[type]`,
+        #             exactement là où lisent les « canaux avancés » du panneau
+        #             normal. Les deux vues restent d'accord là aussi.
+        #   NUMÉRO  — le type apparaît PLUSIEURS fois (Unused en tête) : une clé
+        #             par type piloterait tous ces canaux d'un coup, ce qui
+        #             ruinerait la promesse « un curseur = un canal ». On force
+        #             alors par numéro, seule clé prioritaire sur tout le reste.
+        def _voie(ctype):
+            if profile.count(ctype) > 1:
+                return 'num'
+            return 'modele' if ctype in _CANAUX_MODELE else 'type'
+
+        def _force_de(p, num, ctype, par_type):
+            ex = getattr(p, 'channel_extras', {}) or {}
+            if par_type and ctype in ex:
+                return ex[ctype]
+            v = ex.get(num)
+            return ex.get(str(num)) if v is None else v
+
+        def _ecrire(num, ctype, val, t=targets):
+            """Voie MODÈLE : la valeur passe par la propriété du projecteur."""
+            for p, _g, _i in t:
+                ex = dict(getattr(p, 'channel_extras', {}) or {})
+                # Un forçage résiduel sur ce canal masquerait ce qu'on écrit :
+                # `channel_extras` gagne toujours contre le modèle.
+                for cle in (num, str(num), ctype):
+                    ex.pop(cle, None)
+                p.channel_extras = ex
+                _ecrire_canal_modele(p, ctype, val)
+            _flush()
+
+        def _forcer(num, ctype, val, par_type, t=targets):
+            """Voies TYPE / NUMÉRO. `val=None` rend le canal au moteur."""
+            for p, _g, _i in t:
+                ex = dict(getattr(p, 'channel_extras', {}) or {})
+                ex.pop(num, None)
+                ex.pop(str(num), None)          # jamais deux clés pour un canal
+                if par_type:
+                    ex.pop(ctype, None)
+                if val is not None:
+                    ex[ctype if par_type else num] = int(val)
+                p.channel_extras = ex
+            _flush()
+
+        _MONO    = "font-family:'Consolas','DejaVu Sans Mono',monospace;"
+        _H_LIGNE = 32      # assez haut pour viser le curseur sans loucher
+        _LARG_NOM = 186    # « Strobe / shutter rapide » ou « Pan Fine » en entier
+        _LARG    = 560
+
+        # Le nom du canal est ce qu'on LIT dans cette vue : police posée sur le
+        # widget (et non en feuille de style) pour que la mesure d'élision porte
+        # sur la vraie police — sinon Qt tronque sans les « … », au ras du mot.
+        _POLICE_NOM = QFont()
+        _POLICE_NOM.setPixelSize(13)
+        _POLICE_NOM.setWeight(QFont.Weight.DemiBold)
+        _METRIQUE_NOM = QFontMetrics(_POLICE_NOM)
+
+        def _pct(v):
+            return f"{round(v / 255 * 100)} %"
+
+        def _style_ligne(force, pair, teinte):
+            """Fond de ligne. Le liseré gauche coloré est le repère de balayage :
+            sur 165 lignes, c'est lui qui montre d'un coup d'oeil ce qui est
+            forcé, bien avant qu'on lise une valeur."""
+            if force:
+                fond, liseré, survol = _rgba_hex(teinte, 0.10), teinte, _rgba_hex(teinte, 0.17)
+            else:
+                fond, liseré, survol = ("#212121" if pair else "transparent"), "transparent", "#2b2b2b"
+            return (f"QWidget#chrow{{background:{fond};border-left:2px solid {liseré};"
+                    "border-top-right-radius:4px;border-bottom-right-radius:4px;}"
+                    f"QWidget#chrow:hover{{background:{survol};}}")
+
+        def _style_curseur(force, teinte):
+            # La teinte est TOUJOURS là (elle dit quel canal on tient) ; ce qui
+            # change avec le forçage, c'est l'éclat et la poignée.
+            if force:
+                remplissage = ("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                               f"stop:0 {_rgba_hex(teinte, 0.45)},stop:1 {teinte})")
+                poignee, bord = teinte, "#0b0b0b"
+            else:
+                remplissage = ("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                               f"stop:0 {_rgba_hex(teinte, 0.18)},"
+                               f"stop:1 {_rgba_hex(teinte, 0.62)})")
+                poignee, bord = "#6e6e6e", "#0b0b0b"
+            return (
+                "QSlider{background:transparent;}"
+                "QSlider::groove:horizontal{background:#141414;height:9px;border-radius:4px;"
+                "border:1px solid #2a2a2a;}"
+                f"QSlider::sub-page:horizontal{{background:{remplissage};border-radius:4px;}}"
+                f"QSlider::handle:horizontal{{background:{poignee};width:12px;height:20px;"
+                f"margin:-7px 0;border-radius:3px;border:1px solid {bord};}}"
+                f"QSlider::handle:horizontal:hover{{background:{teinte};}}"
+            )
+
+        # ── Bandeau de titre : nom de la fixture + légende + « tout auto » ─
+        # Le titre du menu, tout en haut, est commun aux deux vues et se perd
+        # au-dessus d'une liste de 165 lignes. Ce bandeau-ci est le titre DE LA
+        # VUE : il redit sur quoi on travaille (nom + adresse) et se voit.
+        bandeau = QWidget(); bandeau.setObjectName("rawband")
+        bandeau.setStyleSheet(
+            "QWidget#rawband{background:#151b1f;border:1px solid #1f3540;"
+            "border-left:3px solid #00d4ff;border-radius:5px;}")
+        bh = QHBoxLayout(bandeau)
+        bh.setContentsMargins(11, 6, 10, 6); bh.setSpacing(8)
+
+        textes = QVBoxLayout(); textes.setContentsMargins(0, 0, 0, 0); textes.setSpacing(1)
+        nom_fix = (getattr(proj, 'name', '') or
+                   f"{targets[0][1].capitalize()} {targets[0][2] + 1}")
+        if len(targets) > 1:
+            nom_fix = tr("pdf_n_fixtures_selected", n=len(targets))
+        titre = QLabel(f"🎚  {tr('pdf2_raw_title')}   ·   {nom_fix}")
+        titre.setStyleSheet("color:#00d4ff;font-size:13px;font-weight:bold;"
+                            "letter-spacing:1px;background:transparent;")
+        # L'adresse est calculée, pas traduite : c'est le repère qu'on cherche
+        # en vue brute (« mon canal 7, c'est le 107 sur le pupitre »).
+        plage = f"CH {base_addr}–{base_addr + len(profile) - 1}"
+        sous = QLabel(f"{tr('pdf2_raw_header', n=len(profile))}   ·   {plage}"
+                      + (f" · U{universe}" if universe else ""))
+        sous.setStyleSheet("color:#6d7c84;font-size:10px;background:transparent;")
+        textes.addWidget(titre); textes.addWidget(sous)
+        bh.addLayout(textes, 1)
+
+        compteur = QLabel("")
+        compteur.setStyleSheet(
+            "color:#00d4ff;font-size:10px;font-weight:bold;padding:1px 8px;"
+            "border:1px solid rgba(0,212,255,0.45);border-radius:8px;"
+            "background:rgba(0,212,255,0.10);")
+        bh.addWidget(compteur)
+
+        tout_auto = QPushButton("↺  " + tr("pdf2_raw_all_auto"))
+        tout_auto.setToolTip(tr("pdf2_raw_all_auto_hint"))
+        tout_auto.setCursor(Qt.PointingHandCursor)
+        tout_auto.setStyleSheet(
+            "QPushButton{background:#1a1a1a;color:#7a7a7a;border:1px solid #333;"
+            "border-radius:4px;font-size:10px;padding:2px 9px;min-height:20px;}"
+            "QPushButton:hover{background:#0d2a33;color:#00d4ff;border-color:#00566a;}"
+            "QPushButton:disabled{background:transparent;color:#333;border-color:#262626;}")
+        bh.addWidget(tout_auto)
+        _wa(bandeau)
+
+        # ── Les lignes de canaux ─────────────────────────────────────────
+        box = QWidget(); bv = QVBoxLayout(box)
+        bv.setContentsMargins(0, 0, 0, 0); bv.setSpacing(1)
+
+        lignes = []   # dicts : sli, dl, pl, rb, reset
+
+        for num, ctype in enumerate(profile, start=1):
+            teinte   = _TEINTE_CANAL.get(ctype, _TEINTE_DEFAUT)
+            voie     = _voie(ctype)
+            par_type = (voie == 'type')
+            force    = (None if voie == 'modele'
+                        else _force_de(proj, num, ctype, par_type))
+            vue      = (dmx.get_channel(base_addr + num - 1, universe)
+                        if dmx else 0)
+            cur      = int(force if force is not None else vue)
+            pair     = (num % 2 == 0)
+
+            row = QWidget(); row.setObjectName("chrow"); row.setFixedHeight(_H_LIGNE)
+            rh = QHBoxLayout(row)
+            rh.setContentsMargins(8, 0, 10, 0); rh.setSpacing(9)
+
+            no = QLabel(f"{num:>3}")
+            no.setFixedWidth(28)
+            no.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            # Nom lisible du canal : celui du fichier constructeur si on l'a,
+            # sinon le type mis en toutes lettres (« PanFine » → « Pan Fine »).
+            nom = labels[num - 1] if num - 1 < len(labels) else ""
+            nom = nom or _nom_lisible(ctype)
+            nl = QLabel(); nl.setFixedWidth(_LARG_NOM)
+            nl.setFont(_POLICE_NOM)
+            nl.setText(_METRIQUE_NOM.elidedText(nom, Qt.ElideRight, _LARG_NOM - 4))
+            nl.setToolTip(f"CH {num} — {ctype}" + (f"\n{nom}" if nom else "")
+                          + "\n" + tr("pdf2_raw_linked" if voie == 'modele'
+                                      else "pdf2_raw_forcable"))
+
+            sli = _CurseurCanal(Qt.Horizontal)
+            sli.setRange(0, 255); sli.setValue(cur)
+            sli.setMinimumWidth(180); sli.setFixedHeight(24)
+            sli.setFocusPolicy(Qt.NoFocus)
+            sli.setCursor(Qt.PointingHandCursor)
+
+            dl = QLabel(f"{cur:>3}")
+            dl.setFixedWidth(33)
+            dl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            pl = QLabel(_pct(cur))
+            pl.setFixedWidth(38)
+            pl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            rb = QPushButton("↺")
+            rb.setFixedSize(26, 20)
+            rb.setToolTip(tr("pdf2_raw_auto") if voie != 'modele'
+                          else tr("pdf2_raw_linked"))
+            rb.setCursor(Qt.PointingHandCursor)
+            rb.setStyleSheet(
+                "QPushButton{background:#1a1a1a;color:#8a8a8a;border:1px solid #333;"
+                "border-radius:4px;font-size:11px;padding:0;}"
+                "QPushButton:hover{background:#0d2a33;color:#00d4ff;border-color:#00566a;}"
+                "QPushButton:disabled{background:transparent;color:#2a2a2a;border-color:#232323;}")
+
+            def _appliquer(actif, _row=row, _no=no, _nl=nl, _sli=sli,
+                           _dl=dl, _pl=pl, _rb=rb, _t=teinte, _p=pair):
+                """Habille TOUTE la ligne d'un seul appel : un seul endroit décide
+                à quoi ressemble « auto » et à quoi ressemble « forcé »."""
+                _row.setStyleSheet(_style_ligne(actif, _p, _t))
+                _sli.setStyleSheet(_style_curseur(actif, _t))
+                _no.setStyleSheet(_MONO + "background:transparent;font-size:11px;"
+                                  f"color:{'#9aa2a8' if actif else '#5b6165'};")
+                # Pas de `font-size` ici : la police du nom est posée sur le
+                # widget (voir `_POLICE_NOM`), et une taille en feuille de style
+                # la remplacerait — l'élision serait alors calculée à côté.
+                _nl.setStyleSheet("background:transparent;border:none;"
+                                  f"color:{'#ffffff' if actif else '#b6bec4'};")
+                _dl.setStyleSheet(_MONO + "background:transparent;font-size:14px;"
+                                  f"font-weight:bold;color:{_t if actif else '#8d949a'};")
+                _pl.setStyleSheet("background:transparent;font-size:11px;"
+                                  f"color:{'#7f878d' if actif else '#5b6165'};")
+                _rb.setEnabled(actif)
+
+            _appliquer(force is not None)
+
+            def _on_change(v, _n=num, _c=ctype, _v=voie, _pt=par_type,
+                           _dl=dl, _pl=pl, _rb=rb, _app=_appliquer):
+                if _v == 'modele':
+                    _ecrire(_n, _c, v)      # pas de forçage : la ligne reste « liée »
+                else:
+                    _forcer(_n, _c, v, _pt)
+                    if not _rb.isEnabled():   # 1er contact : le canal passe en forcé
+                        _app(True)
+                        _maj_compteur()
+                _dl.setText(f"{v:>3}")
+                _pl.setText(_pct(v))
+
+            def _on_reset(_n=num, _c=ctype, _pt=par_type, _app=_appliquer, _maj=True):
+                _forcer(_n, _c, None, _pt)
+                _app(False)
+                if _maj:
+                    _maj_compteur()
+
+            sli.valueChanged.connect(_on_change)
+            rb.clicked.connect(_on_reset)
+
+            for w in (no, nl, sli, dl, pl, rb):
+                rh.addWidget(w)
+            bv.addWidget(row)
+            lignes.append({'num': num, 'sli': sli, 'dl': dl, 'pl': pl,
+                           'rb': rb, 'reset': _on_reset})
+
+        bv.addStretch()
+
+        def _maj_compteur():
+            n = sum(1 for l in lignes if l['rb'].isEnabled())
+            compteur.setText(tr("pdf2_raw_forced", n=n))
+            compteur.setVisible(n > 0)
+            tout_auto.setEnabled(n > 0)
+
+        def _tout_auto():
+            for l in lignes:
+                if l['rb'].isEnabled():
+                    l['reset'](_maj=False)   # un seul recomptage, à la fin
+            _maj_compteur()
+
+        tout_auto.clicked.connect(_tout_auto)
+        _maj_compteur()
+
+        # Hauteur bornée : au-delà, on fait défiler la liste plutôt que de
+        # pousser le menu hors de l'écran (une barre pixel monte à 165 canaux).
+        ecran  = QApplication.primaryScreen()
+        haut_max = int((ecran.availableGeometry().height() if ecran else 900) * 0.55)
+        contenu  = len(profile) * (_H_LIGNE + 1) + 4
+
+        scroll = QScrollArea()
+        scroll.setWidget(box)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFixedWidth(_LARG)
+        scroll.setFixedHeight(min(contenu, haut_max))
+        scroll.verticalScrollBar().setSingleStep(_H_LIGNE)
+        scroll.viewport().setStyleSheet("background:transparent;")
+        scroll.setStyleSheet(
+            "QScrollArea{background:transparent;border:none;}"
+            "QScrollBar:vertical{background:transparent;width:9px;margin:2px 1px;}"
+            "QScrollBar::handle:vertical{background:#3a3a3a;border-radius:4px;min-height:30px;}"
+            "QScrollBar::handle:vertical:hover{background:#00d4ff;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}")
+        _wa(scroll)
+
+        # ── Suivi en direct ───────────────────────────────────────────────
+        # Les canaux laissés au moteur affichent ce qui SORT, rafraîchi 10×/s.
+        # On ne touche jamais un canal forcé : sa valeur vient de l'utilisateur,
+        # la réécrire ferait sauter le curseur sous ses doigts. Et `blockSignals`
+        # est indispensable — sans lui, la mise à jour d'affichage déclencherait
+        # `valueChanged`, donc une écriture, et le canal bougerait tout seul.
+        #
+        # Coût : une lecture de liste par ligne et par tick, et seulement tant
+        # que le menu est ouvert — la trame est lue d'un bloc plutôt que canal
+        # par canal, et les lignes inchangées ne touchent à aucun widget. Rien
+        # ici ne tourne pendant le spectacle, et le timer meurt avec le menu.
+        def _rafraichir():
+            if dmx is None:
+                return
+            try:
+                trame = dmx.dmx_data[max(0, min(3, universe))]
+            except (AttributeError, IndexError):
+                return
+            for l in lignes:
+                sli = l['sli']
+                if l['rb'].isEnabled():     # forcé : c'est l'utilisateur qui mène
+                    continue
+                if sli.isSliderDown():      # doigt sur le curseur : on se tait
+                    continue
+                # Idem juste après un geste : entre deux crans de molette, la
+                # sortie recalculée (arrondi 0-100 % du Dim, extraction du
+                # blanc…) reprendrait la main et le réglage semblerait sauter.
+                if _time.time() - getattr(sli, '_touche_a', 0) < 0.4:
+                    continue
+                adr = base_addr + l['num'] - 2      # -1 canal, -1 index 0
+                v = trame[adr] if 0 <= adr < len(trame) else 0
+                if v != sli.value():
+                    sli.blockSignals(True)
+                    sli.setValue(v)
+                    sli.blockSignals(False)
+                    l['dl'].setText(f"{v:>3}")
+                    l['pl'].setText(_pct(v))
+
+        suivi = QTimer(menu)
+        suivi.timeout.connect(_rafraichir)
+        suivi.start(100)
+        menu.destroyed.connect(suivi.stop)
+
     def _show_fixture_context_menu(self, global_pos, fixture_idx):
         proj = self.projectors[fixture_idx]
         group, local_idx = self.canvas._local_idx(fixture_idx)
@@ -5055,6 +5709,35 @@ class PlanDeFeu(QFrame):
         )
         clear_top_btn.clicked.connect(lambda: (_clear_targets(), menu.close()))
         title_h.addWidget(clear_top_btn)
+
+        # ── Bascule CURSEURS ──────────────────────────────────────────────
+        # Deux vues du même projecteur : la vue métier (couleur, gobo, pan…) et
+        # la vue brute, un curseur par canal DMX. Le choix est retenu sur le
+        # plan de feu, pas sur la fixture : on travaille rarement en brut sur un
+        # seul appareil, et rebasculer à chaque clic droit serait pénible.
+        _raw_on = bool(getattr(self, '_raw_mode', False))
+        raw_btn = QPushButton("🎚  Curseurs")
+        raw_btn.setCheckable(True)
+        raw_btn.setChecked(_raw_on)
+        raw_btn.setToolTip(tr("pdf2_raw_toggle_hint"))
+        raw_btn.setStyleSheet(
+            "QPushButton{background:#1a1a1a;color:#666;border:1px solid #333;border-radius:4px;"
+            "font-size:11px;padding:2px 8px;min-height:24px;}"
+            "QPushButton:hover{background:#0d1f2a;color:#00d4ff;border-color:#00566a;}"
+            "QPushButton:checked{background:#0d2a33;color:#00d4ff;border-color:#00d4ff;}"
+        )
+
+        def _toggle_raw():
+            # Rouvrir le menu au même endroit : la bascule doit donner
+            # l'impression d'un onglet, pas d'une fenêtre qui disparaît.
+            self._raw_mode = not bool(getattr(self, '_raw_mode', False))
+            menu.close()
+            QTimer.singleShot(0, lambda: self._show_fixture_context_menu(
+                global_pos, fixture_idx))
+
+        raw_btn.clicked.connect(_toggle_raw)
+        title_h.addWidget(raw_btn)
+
         close_menu_btn = QPushButton("✕")
         close_menu_btn.setStyleSheet(
             "QPushButton{background:transparent;color:#444;border:none;font-size:13px;"
@@ -5065,6 +5748,14 @@ class PlanDeFeu(QFrame):
         title_h.addWidget(close_menu_btn)
         _wa(title_w)
         menu.addSeparator()
+
+        # Vue brute : elle REMPLACE le panneau métier, elle ne s'y ajoute pas.
+        # Empiler les deux donnerait un menu de plusieurs écrans de haut sur une
+        # barre de 165 canaux.
+        if _raw_on:
+            self._build_raw_channel_panel(menu, targets, _wa, _flush)
+            menu.exec(self._menu_pos(menu, global_pos))
+            return
 
         # ── Dimmer (EN PREMIER) ──────────────────────────────────────────
         # Si un effet est actif, afficher le niveau de base sauvegardé (pas la valeur
@@ -5226,6 +5917,11 @@ class PlanDeFeu(QFrame):
 
             for w in (ch_lbl, ch_sli, ch_val_lbl): ch_h.addWidget(w)
             _wa(ch_w)
+        # Les curseurs ci-dessus adressent un TYPE de canal. Le pilotage
+        # canal par canal, lui, vit dans la vue « Curseurs » (bascule en
+        # haut du menu) : un curseur par canal DMX, qui suit la sortie en
+        # direct. Ne pas remettre ici un second jeu de curseurs bruts —
+        # deux chemins pour le même réglage finissent par diverger.
 
         # ── Moving Head : PanTilt + Presets + Roue Couleur + Gobo + Prisme ──
         if proj.fixture_type == "Moving Head":

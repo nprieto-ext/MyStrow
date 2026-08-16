@@ -153,11 +153,17 @@ _MA3_ATTR_MAP = {
     # Speed / control
     "POSITIONMSPEED":     "Speed",
     "SPEED":              "Speed",
+    # Vitesse de déplacement pan/tilt : exactement ce que pilote « Speed » chez
+    # MyStrow. Aucun préfixe de la table ne l'attrape (« SPEED » n'est pas au
+    # début), d'où l'entrée explicite.
+    "PT_SPEED":           "Speed",
+    "PTSPEED":            "Speed",
     "CONTROL":            "Mode",
     "FUNCTION":           "Mode",
     "MACRO":              "Mode",
     "RESET":              "Reset",
     "FIXTURERESET":       "Reset",
+    "FIXTUREGLOBALRESET": "Reset",
     "LAMPRESET":          "Reset",
 }
 
@@ -224,10 +230,28 @@ def _emitter_from_hex(raw: str):
 
 
 def _emitter_from_name(raw: str):
-    """'White' / 'W1' / 'Warm White' -> 'W'. None si non reconnu."""
+    """'White' / 'W1' / 'Warm White' / 'R-A' -> 'W' / 'W' / 'W' / 'R'.
+
+    None si non reconnu.
+
+    Le suffixe de SECTION est retiré en dernier recours : « R-A », « G-A »,
+    « B-Ring » désignent le même émetteur sur une AUTRE zone du projecteur
+    (couronne, halo, déco). Sans ça, la ring light RGB d'un wash n'était
+    reconnue comme aucune couleur et tombait dans le repli du parseur.
+
+    ⚠️ On ne retire ce suffixe QUE si ce qui reste est un nom d'émetteur connu :
+    couper aveuglément le dernier mot ferait de « warm white » un « warm »
+    inconnu, alors qu'il se résout très bien tel quel.
+    """
     txt = re.sub(r"[\s_\-]+", " ", (raw or "").strip().lower())
     txt = re.sub(r"\s*\d+$", "", txt)          # « W1 », « White 2 » -> « w », « white »
-    return _EMITTER_NAMES.get(txt)
+    mapped = _EMITTER_NAMES.get(txt)
+    if mapped:
+        return mapped
+    morceaux = txt.split()
+    if len(morceaux) > 1:
+        return _EMITTER_NAMES.get(" ".join(morceaux[:-1]))
+    return None
 
 
 def _resolve_emitter(ct) -> str | None:
@@ -366,6 +390,65 @@ def _try_generic_xml(root) -> dict | None:
     }
 
 
+# Noms « utilisateur » trop vagues pour servir de libellé : sur un laser, quatre
+# canaux différents s'appellent « Select » et trois « Speed ». Quand on tombe
+# dessus, l'attribut MA (LASERPATTERNSIZE…) est bien plus parlant.
+_NOMS_VAGUES = {"select", "speed", "time", "value", "no feature", "dummy",
+                "control", "function", "macro", "mode", "index", "", "-"}
+
+# Découpage des attributs MA collés en majuscules. Les jetons sont essayés du
+# plus long au plus court : sans ça « LASERPATTERNSIZE » donnerait
+# « LASER PATTERN SIZE » seulement si SIZE passe après PATTERNSIZE.
+_JETONS_MA = [
+    "LASER", "PATTERN", "POSITION", "APERTURE", "APERTRURE", "GRADUAL",
+    "DRAWING", "ROTATE", "EFFECT", "COLORMIX", "COLOR", "GROUP", "SPEED",
+    "SIZE", "WAVES", "MACRO", "RATE", "MIXER", "SELECT", "AUX", "GOBO",
+    "PRISM", "FOCUS", "ZOOM", "IRIS", "SHUTTER", "STROBE", "DIM", "PAN",
+    "TILT", "FIXTURE", "GLOBAL", "RESET", "BACKGROUND", "COLOUR", "MAIN",
+]
+
+
+def _joli_attribut(attr: str) -> str:
+    """« LASERPATTERNSIZE » -> « Laser Pattern Size ». Rend '' si illisible.
+
+    Les attributs MA de matériel exotique (lasers surtout) sont écrits collés en
+    majuscules. Recomposés en mots, ils font de très bons libellés — bien
+    meilleurs que le type MyStrow, qui vaut « Unused » pour la moitié d'entre eux.
+    """
+    reste = (attr or "").upper().strip()
+    if not reste:
+        return ""
+    mots, garde = [], 0
+    while reste and garde < 12:
+        garde += 1
+        for jeton in sorted(_JETONS_MA, key=len, reverse=True):
+            if reste.startswith(jeton):
+                mots.append(jeton.capitalize())
+                reste = reste[len(jeton):]
+                break
+        else:
+            # Reliquat non reconnu : un axe (X/Y/Z), un numéro, ou un mot
+            # inconnu. On le garde tel quel plutôt que de perdre l'information.
+            mots.append(reste.capitalize() if len(reste) > 1 else reste)
+            reste = ""
+    return " ".join(m for m in mots if m)
+
+
+def _libelle_canal(ct, attr: str) -> str:
+    """Nom lisible d'un canal, depuis ce que le fichier constructeur porte.
+
+    Priorité au nom écrit par l'auteur du fichier (`subattribute_user_name` et
+    consorts) — c'est lui qui parle la langue de la fiche technique. On ne
+    retombe sur l'attribut recomposé que lorsque ce nom est un mot passe-partout.
+    """
+    for src in (ct, *ct.findall("ChannelFunction")):
+        for cle in ("subattribute_user_name", "attribute_user_name", "name"):
+            v = (src.get(cle) or "").strip()
+            if v and v.lower() not in _NOMS_VAGUES:
+                return v
+    return _joli_attribut(attr)
+
+
 def _strip_namespaces(data: bytes) -> bytes:
     """Supprime les déclarations de namespace XML pour simplifier le parsing."""
     import re
@@ -467,12 +550,26 @@ def _parse_ma_modes(fixture_el) -> tuple:
     channel_types = fixture_el.findall(".//ChannelType")
     if channel_types:
         mode_name = (fixture_el.get("mode") or fixture_el.get("Mode") or "Mode 1")
-        profile, channel_defaults = _parse_ma3_channels(channel_types)
+        profile, channel_defaults, labels = _parse_ma3_channels(channel_types)
+        sections = detect_sections({
+            "modules":  fixture_el.findall(".//Module"),
+            "channels": channel_types,
+        })
         if profile:
             modes.append({
                 "name":         mode_name,
                 "channelCount": len(profile),
                 "profile":      profile,
+                # Sections de couleur détectées (couronne, LED déco, cellules).
+                # Absente quand l'appareil n'en a qu'une — c'est le cas courant,
+                # et une fixture à section unique ne doit surtout pas être
+                # dépliée en projecteurs enfants.
+                **({"sections": sections} if sections else {}),
+                # Noms lisibles portés par le fichier constructeur. C'est la
+                # seule information qui distingue deux canaux du même type — et
+                # sur un laser, la seule qui distingue tout court, la moitié des
+                # canaux n'ayant pas de type connu.
+                "labels":       labels,
             })
         return modes, channel_defaults
 
@@ -508,21 +605,37 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
     """
     Parse MA3 <ChannelType attribute='...' coarse='...'> elements.
     Retourne (profile_list, channel_defaults_dict).
-    Gère les canaux fine (PanFine/TiltFine) et les valeurs par défaut.
+    Gère les canaux fine (PanFine/TiltFine).
+
+    Le dict de défauts est TOUJOURS vide — voir la note dans la boucle. Il reste
+    au retour parce que les appelants le propagent, et qu'il est alimenté
+    ailleurs par des chemins où la notion a un sens.
     """
-    items = []       # [(ch_index, ch_type)]
-    defaults = {}    # {ch_type: dmx_8bit}
+    items = []       # [(ch_index, ch_type, libelle)]
+    defaults = {}    # {ch_type: dmx_8bit} — voir la note plus bas
 
     for ct in channel_type_elements:
         attr   = (ct.get("attribute") or ct.get("Attribute") or "").upper().strip()
-        coarse = ct.get("coarse") or ct.get("Coarse") or "0"
+        coarse = ct.get("coarse") or ct.get("Coarse")
         fine   = ct.get("fine")   or ct.get("Fine")
-        default_str = ct.get("default") or ct.get("Default")
+        libelle = _libelle_canal(ct, attr)
 
+        # ⚠️ Un ChannelType SANS `coarse` ne correspond à aucun canal DMX de ce
+        # mode : il est écarté, pas rangé au canal 0.
+        #
+        # Les fichiers de barres pixel déclarent un module par cellule et y
+        # laissent des ChannelType sans offset. Sur l'ACME PIXEL LINE IP
+        # (49 modules), 48 des 165 ChannelType sont dans ce cas : tous
+        # atterrissaient à l'index 0, s'entassaient en tête du profil et
+        # DÉCALAIENT les 117 vrais canaux. La fixture sortait à 165 canaux au
+        # lieu des 117 annoncés par son propre mode — donc un patch qui mord sur
+        # la fixture suivante et des sorties fausses d'un bout à l'autre.
+        if coarse is None:
+            continue
         try:
             ch_index = int(coarse)
         except ValueError:
-            ch_index = 0
+            continue
 
         # Résolution du type de canal — la couleur déclarée prime sur le
         # numéro d'emitter (cf. _resolve_emitter)
@@ -530,15 +643,36 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         if mapped is None:
             mapped = _MA3_ATTR_MAP.get(attr)
         if mapped is None:
-            # Repli par préfixe, sans avaler un numéro d'emitter voisin :
-            # COLORRGB15 ne doit PAS être reconnu comme COLORRGB1 (rouge).
+            # Repli par préfixe.
+            #
+            # ⚠️ Le chiffre qui suit le préfixe ne veut pas dire la même chose
+            # partout, et c'est tout l'enjeu :
+            #   - sur un ÉMETTEUR, il EST l'identité — COLORRGB15 est le 15e
+            #     émetteur, surtout pas COLORRGB1 (rouge). Il doit bloquer.
+            #   - partout ailleurs, c'est un simple numéro de section :
+            #     SHUTTER1/SHUTTER2 sont deux obturateurs, SPEED1 une vitesse.
+            #     Les bloquer les envoyait en « Unused », donc sans automatisme,
+            #     alors que leur fonction ne fait aucun doute.
+            # Le garde-fou est donc réservé aux familles d'émetteurs.
             for key, val in _MA3_ATTR_MAP.items():
-                if attr.startswith(key) and not attr[len(key):len(key)+1].isdigit():
-                    mapped = val
-                    break
-        ch_type = mapped if mapped else "Mode"
+                if not attr.startswith(key):
+                    continue
+                suite = attr[len(key):len(key) + 1]
+                if suite.isdigit() and key.startswith(("COLORRGB", "COLORADD")):
+                    continue
+                mapped = val
+                break
+        # ⚠️ Repli NEUTRE, surtout pas « Mode ». Un attribut inconnu tombait
+        # jusqu'ici sur « Mode », qui est tout sauf inoffensif : le moteur gange
+        # les canaux de même type sur `proj.mode_value`, et sur beaucoup de
+        # lyres ce canal porte les PROGRAMMES INTERNES. Une seule valeur de Mode
+        # non nulle lançait donc le programme automatique de l'appareil — vécu
+        # sur un Betopper LM1915R, dont la ring light RGB non reconnue se
+        # retrouvait mappée en Mode aux côtés de ses canaux MODEL / MODEL-A.
+        # « Unused » sort 0 en toutes circonstances, et se voit dans l'éditeur.
+        ch_type = mapped if mapped else "Unused"
 
-        items.append((ch_index, ch_type))
+        items.append((ch_index, ch_type, libelle))
 
         # Canal fine (PanFine / TiltFine)
         if fine is not None:
@@ -546,27 +680,34 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
             if fine_type:
                 try:
                     fine_idx = int(fine)
-                    items.append((fine_idx, fine_type))
+                    items.append((fine_idx, fine_type,
+                                  f"{libelle} (fin)" if libelle else ""))
                 except ValueError:
                     pass
 
-        # Valeur par défaut du canal
-        if default_str is not None:
-            try:
-                default_val = float(default_str)
-                # Channels avec fine = 16-bit (0-65535) → coarse 8-bit = val/256
-                # Channels sans fine = 8-bit (0-255) → utiliser directement
-                if fine is not None:
-                    dmx_8bit = min(255, max(0, int(round(default_val / 256))))
-                else:
-                    dmx_8bit = min(255, max(0, int(round(default_val))))
-                if dmx_8bit > 0:
-                    defaults[ch_type] = dmx_8bit
-            except ValueError:
-                pass
+        # ⚠️ Le `default=` du fichier constructeur n'est PAS moissonné, et c'est
+        # volontaire : les deux notions n'ont rien à voir.
+        #
+        #   - côté MA, `default=` est la valeur de REPOS de l'appareil, celle
+        #     qu'il prend à l'allumage ;
+        #   - côté MyStrow, `channel_defaults` est un PLANCHER, appliqué par le
+        #     moteur chaque fois que le canal sortirait 0
+        #     (`if ch_val == 0 and ch_type in _ch_defaults`).
+        #
+        # Confondre les deux cassait la couleur : le fichier Betopper porte
+        # `default="255"` sur R1/G1/B1, ce qui produisait
+        # {"R":255,"G":255,"B":255} — donc tout canal rouge/vert/bleu qui
+        # devait sortir 0 était remonté à 255. Un rouge pur virait au blanc et
+        # le noir devenait blanc plein : la fixture ne pouvait plus s'éteindre.
+        #
+        # Le dict est en plus indexé par TYPE et non par canal : une valeur lue
+        # sur R1 s'appliquerait de toute façon à R2, R3 et à la ring.
+        #
+        # `channel_defaults` reste alimenté explicitement là où il a un sens
+        # (éditeur de roue de couleurs, réglage manuel dans le patch).
 
     items.sort(key=lambda x: x[0])
-    return [ch for _, ch in items], defaults
+    return [ch for _, ch, _lb in items], defaults, [lb for _, _, lb in items]
 
 
 def _parse_ma_channels(parent_el) -> list:
@@ -692,14 +833,29 @@ def parse_mystrow(data: bytes) -> dict:
         if not isinstance(m, dict):
             continue
         profile = m.get("profile", [])
-        normalized.append({
+        entree = {
             "name":         m.get("name", f"Mode {len(normalized)+1}"),
             "channelCount": m.get("channelCount", len(profile)),
             "profile":      profile,
-        })
+        }
+        # Libellés : recopiés tels quels, et seulement s'ils cadrent avec le
+        # profil. Une liste plus courte ou plus longue décalerait les noms d'un
+        # canal sur l'autre, ce qui est pire que pas de nom du tout.
+        lb = m.get("labels")
+        if isinstance(lb, list) and len(lb) == len(profile):
+            entree["labels"] = list(lb)
+        normalized.append(entree)
 
     first_profile = normalized[0]["profile"] if normalized else []
     ftype = obj.get("fixture_type") or _detect_fixture_type(first_profile)
+
+    # Libellés posés à la racine par l'éditeur (ils décrivent le premier mode) :
+    # les redescendre dans ce mode s'il n'en portait pas, sinon un .mystrow écrit
+    # par l'éditeur reviendrait sans noms.
+    if normalized and not normalized[0].get("labels"):
+        _rl = obj.get("labels")
+        if isinstance(_rl, list) and len(_rl) == len(first_profile):
+            normalized[0]["labels"] = list(_rl)
 
     return {
         "name":              name,
@@ -711,6 +867,9 @@ def parse_mystrow(data: bytes) -> dict:
         "color_wheel_slots": obj.get("color_wheel_slots", []),
         "gobo_wheel_slots":  obj.get("gobo_wheel_slots", []),
         "channel_defaults":  obj.get("channel_defaults", {}),
+        "labels":            (obj.get("labels")
+                              if isinstance(obj.get("labels"), list)
+                              and len(obj["labels"]) == len(first_profile) else []),
     }
 
 
@@ -734,6 +893,11 @@ def export_mystrow(fixture: dict, path: str) -> None:
         "color_wheel_slots": fixture.get("color_wheel_slots", []),
         "gobo_wheel_slots":  fixture.get("gobo_wheel_slots", []),
         "channel_defaults":  fixture.get("channel_defaults", {}),
+        # Noms de canaux du premier mode, recopiés à la racine : c'est ce que
+        # lit le patch quand la fixture vient de la bibliothèque.
+        "labels":            (fixture.get("labels")
+                              or (fixture.get("modes") or [{}])[0].get("labels")
+                              or []),
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -888,16 +1052,23 @@ def parse_qlcplus_xml(data: bytes) -> dict:
                 num = len(ch_entries)
             ch_name = ch_ref.text or ""
             ch_type = channel_table.get(ch_name, "Mode")
-            ch_entries.append((num, ch_type))
+            # Le <Channel> QLC+ porte déjà un nom écrit pour un humain
+            # (« Pattern Group », « Laser Rotation »…) : on le garde comme
+            # libellé. C'est souvent la seule chose qui distingue deux canaux
+            # que MyStrow ramène au même type.
+            ch_entries.append((num, ch_type, ch_name))
         ch_entries.sort(key=lambda x: x[0])
-        profile = [ct for _, ct in ch_entries]
+        profile = [ct for _, ct, _n in ch_entries]
         if profile:
-            modes.append({"name": mode_name, "channelCount": len(profile), "profile": profile})
+            modes.append({"name": mode_name, "channelCount": len(profile),
+                          "profile": profile,
+                          "labels": [n for _, _t, n in ch_entries]})
 
     if not modes and channel_table:
         # Pas de mode déclaré : utiliser tous les canaux dans l'ordre de déclaration
         profile = list(channel_table.values())
-        modes = [{"name": "Mode 1", "channelCount": len(profile), "profile": profile}]
+        modes = [{"name": "Mode 1", "channelCount": len(profile), "profile": profile,
+                  "labels": list(channel_table.keys())}]
 
     if not modes:
         raise ValueError("Aucun canal DMX trouvé dans le fichier QLC+.")
@@ -979,12 +1150,140 @@ def _decompress_xmlp(data: bytes) -> bytes:
     return data
 
 
+# ---------------------------------------------------------------------------
+# Détection des SECTIONS d'un projecteur
+# ---------------------------------------------------------------------------
+#
+# Un appareil moderne n'a plus une seule couleur : couronne (« ring »), LED de
+# déco, cellules d'une barre pixel. Les fichiers constructeur le disent déjà,
+# de deux façons — relevées sur quatre fichiers réels :
+#
+#   A) attributs NUMÉROTÉS sur un module unique
+#      MX 19-rs      : RED, RED1, RED2, RED3…      (25 sections)
+#      Betopper LM1915R : R1 R2 R3 puis R-A        (3 sections + la ring)
+#   B) un MODULE par section, répétant les mêmes attributs
+#      ACME PIXEL LINE : 49 modules, chacun COLORRGB1/2/3   (48 cellules)
+#
+# ⚠️ Le chiffre de `COLORRGB<n>` n'est PAS un numéro de section : c'est le n-ième
+# ÉMETTEUR (1=R, 2=G, 3=B…). Confondre les deux ferait de R/G/B trois sections
+# d'une seule couleur. C'est exactement la distinction déjà appliquée au repli
+# par préfixe de `_parse_ma3_channels`.
+
+_BASES_COULEUR = {"RED", "GREEN", "BLUE", "WHITE", "AMBER", "AMBRE", "UV",
+                  "LIME", "CYAN", "MAGENTA", "YELLOW", "R", "G", "B", "W"}
+
+
+def _base_et_section(attr: str):
+    """« RED2 » → ('RED','2') ; « R-A » → ('R','A') ; « RED » → ('RED','').
+
+    Rend (None, None) si l'attribut ne désigne pas un émetteur de couleur, ou
+    s'il appartient à la famille COLORRGB — dont le suffixe est l'émetteur.
+    """
+    a = (attr or "").upper().strip()
+    if not a or a.startswith(("COLORRGB", "COLORADD")):
+        return None, None
+    # Bases essayées de la PLUS LONGUE à la plus courte : sans cet ordre,
+    # « RED » se ferait découper en « R » + « ED », et « WHITE1 » en « W » +
+    # « HITE1 ». Une regex non gourmande fait la même erreur à l'envers
+    # (« RED » → « RE » + « D »).
+    for base in sorted(_BASES_COULEUR, key=len, reverse=True):
+        if a == base:
+            return base, ""
+        if a.startswith(base):
+            m = re.fullmatch(r"[\-_ ]?(\d+|[A-Z])", a[len(base):])
+            if m:
+                return base, m.group(1)
+    return None, None
+
+
+def detect_sections(channel_type_elements) -> list:
+    """Sections de couleur déduites d'un fichier MA.
+
+    Retourne une liste de dicts `{"name": str, "channels": [n° de canal]}`,
+    triée par premier canal. Liste VIDE quand il n'y a qu'une section — le cas
+    de l'immense majorité des projecteurs, qu'il ne faut surtout pas déplier.
+
+    Deux indices, dans cet ordre :
+      1. le MODULE d'appartenance, dès qu'il y en a plusieurs à porter de la
+         couleur (école B) ;
+      2. sinon le SUFFIXE de l'attribut (école A).
+    """
+    # ── Indice 1 : les modules ────────────────────────────────────────────────
+    par_module = {}
+    for mod in channel_type_elements.get("modules", []):
+        nom = mod.get("name") or "?"
+        for ct in mod.iter("ChannelType"):
+            a = (ct.get("attribute") or "").upper()
+            co = ct.get("coarse")
+            if not co:
+                continue
+            if a.startswith(("COLORRGB", "COLORADD")) or _base_et_section(a)[0]:
+                par_module.setdefault(nom, []).append(int(co))
+    if len(par_module) > 1:
+        return sorted(
+            ({"name": n, "channels": sorted(c)} for n, c in par_module.items()),
+            key=lambda s: s["channels"][0])
+
+    # ── Indice 2 : le suffixe de l'attribut ───────────────────────────────────
+    par_suffixe = {}
+    for ct in channel_type_elements.get("channels", []):
+        a = (ct.get("attribute") or "").upper()
+        co = ct.get("coarse")
+        if not co:
+            continue
+        base, suf = _base_et_section(a)
+        if base is None:
+            continue
+        par_suffixe.setdefault(suf, []).append(int(co))
+    if len(par_suffixe) > 1:
+        sections = sorted(
+            ({"name": f"Section {s or '1'}", "channels": sorted(c)}
+             for s, c in par_suffixe.items()),
+            key=lambda s: s["channels"][0])
+        # ⚠️ Une section doit être un BLOC D'ADRESSES CONTIGU : c'est ce qu'un
+        # projecteur enfant occupe. Sur la MX 19-rs, les blancs sont numérotés
+        # indépendamment des RGB (WHITE1 est au canal 34, loin de RED1/GREEN1/
+        # BLUE1 en 18-20) — le suffixe les regroupe donc à tort. Plutôt que de
+        # découper de travers, on renonce : mieux vaut une fixture non découpée
+        # qu'un découpage faux, que l'utilisateur ne pourrait pas deviner.
+        for s in sections:
+            ch = s["channels"]
+            if ch[-1] - ch[0] + 1 != len(ch):
+                return []
+        return sections
+
+    return []
+
+
+def _remonter_labels(fx: dict) -> dict:
+    """Recopie à la racine les noms de canaux du premier mode.
+
+    Le patch lit la fixture à plat (`profile`, et maintenant `labels`) quand on
+    l'ajoute depuis la bibliothèque, alors que les parseurs les rangent dans
+    `modes`. Point unique, appliqué en sortie de tous les formats : sans lui, une
+    fixture importée gardait ses noms dans son fichier mais arrivait anonyme
+    dans le patch.
+    """
+    if not isinstance(fx, dict) or fx.get("labels"):
+        return fx
+    for m in (fx.get("modes") or []):
+        lb = m.get("labels")
+        if isinstance(lb, list) and lb and len(lb) == len(m.get("profile") or []):
+            fx["labels"] = list(lb)
+            break
+    return fx
+
+
 def parse_file(path: str) -> dict:
     """
     Parse automatiquement un fichier fixture selon son extension.
     Supporte : .xml, .mystrow
     Retourne le dict fixture standardise.
     """
+    return _remonter_labels(_parse_file_brut(path))
+
+
+def _parse_file_brut(path: str) -> dict:
     ext = os.path.splitext(path)[1].lower()
     with open(path, "rb") as f:
         data = f.read()
