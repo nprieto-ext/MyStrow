@@ -217,7 +217,7 @@ from core import (
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
     spread_rank, SPREAD_MODES, channel_label,
     projector_selection_keys, layer_selection_ranks, block_index, chase_slot,
-    layer_frequency, effect_dim_base_color,
+    layer_frequency, random_wave, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
     copy_report, send_report_email, DMX_FRAME_MS,
@@ -871,6 +871,37 @@ _N_BANK_PAGES = 20  # nombre FIXE de pages de layout APC (navigables ◀ ▶)
 _SMART_STROBE_CHANCE     = 0.25   # probabilité par kick, une fois la garde passée
 _SMART_STROBE_COOLDOWN_S = 2.0    # temps mort minimum entre deux strobes (s)
 _SMART_STROBE_MS         = 320    # durée d'un épisode de strobe (ms)
+
+# Plage utile d'un canal Strobe DMX, en Hz. Sert à convertir la période de
+# hachage du moteur LIVE en vitesse 0-100 (voir `_live_strobe_rate`).
+_HW_STROBE_HZ_MIN = 2.0
+_HW_STROBE_HZ_MAX = 25.0
+
+
+def _live_strobe_rate(period_ms) -> int:
+    """Période de hachage du moteur LIVE (ms) → vitesse de strobe 0-100.
+
+    Le LIVE strobe en coupant `level` une image sur deux : il n'atteint donc
+    QUE les canaux que le modèle pilote (Dim, Dim2, R/G/B/W). Sur une fixture
+    dont une partie est hors modèle — l'anneau d'une lyre BETOPPER, dont les
+    canaux sortent en « Mode »/« Unused » à l'import — cette partie-là ne
+    bronchait pas, et seule la tête clignotait. D'où « il ne prend qu'un des
+    deux strobes ».
+
+    Le canal Strobe matériel, lui, atteint TOUT ce que la fixture appelle
+    strobe, anneau compris. On le pilote donc EN PLUS du hachage, à la même
+    cadence — d'où cette conversion : le hachage bascule toutes les
+    `period_ms`, un cycle complet en vaut donc deux.
+    """
+    try:
+        p = max(1.0, float(period_ms))
+    except (TypeError, ValueError):
+        return 0
+    hz   = 1000.0 / (2.0 * p)
+    span = _HW_STROBE_HZ_MAX - _HW_STROBE_HZ_MIN
+    return max(0, min(100, int(round((hz - _HW_STROBE_HZ_MIN) / span * 100))))
+
+
 _AKAI_SLOT_OPTIONS = (
     ["A", "B", "C", "D", "E", "F", "G", "H"]
     + [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
@@ -3179,6 +3210,12 @@ class MainWindow(QMainWindow):
         self.audio = QAudioOutput()
         self.player = QMediaPlayer()
         self.player.setAudioOutput(self.audio)
+        # Fondus audio de la playlist (cf. start_audio_fade). `_armed` dit que le
+        # fondu de queue de la piste courante est déjà parti : c'est lui qui
+        # empêche de le relancer à chaque tick de position.
+        self._audio_fade_timer = None
+        self._audio_fade_cb    = None
+        self._audio_fade_armed = False
         self.player_ui = type('obj', (object,), {
             'player': self.player,
             'audio': self.audio,
@@ -5052,6 +5089,31 @@ class MainWindow(QMainWindow):
                 self.recording_waveform.set_position(position, duration)
         except:
             pass
+        # Hors du try : ce `except:` nu avale tout, et un fondu qui ne part pas
+        # sans le moindre message serait introuvable.
+        self._check_tail_fade(position)
+
+    def _check_tail_fade(self, position):
+        """Arme le fondu de sortie quand la fin du morceau approche."""
+        if getattr(self, '_audio_fade_armed', False):
+            return
+        row = self.seq.current_row
+        if row < 0 or self.seq.is_row_loop(row):
+            return          # une boucle n'a pas de fin : rien à faire descendre
+        _, fade_out = self.seq.get_row_fades(row)
+        if fade_out <= 0:
+            return
+        duration = self.player.duration()
+        if duration <= 0:
+            return
+        remaining = duration - position
+        if remaining > fade_out:
+            return
+        # Le fondu tient dans ce qui RESTE : arriver en retard (position sautée,
+        # fichier plus court que le fondu) le raccourcit au lieu de le couper
+        # net à la fin du morceau.
+        self.start_audio_fade(0.0, max(0, remaining))
+        self._audio_fade_armed = True   # après : start_ ne doit pas l'effacer
 
     def on_media_status_changed(self, status):
         """Passe automatiquement au suivant ou gere les pauses"""
@@ -5219,6 +5281,10 @@ class MainWindow(QMainWindow):
         fader_value = self.faders[col_idx].value if col_idx in self.faders else 0
         for p in self.projectors:
             if p.group in target_groups:
+                # Un pad couleur reprend la main sur les canaux couleur : un
+                # R/G/B/W posé au curseur brut (vue « Curseurs » du plan de feu)
+                # primerait sinon sur le pad, qui semblerait mort.
+                p.release_color_overrides()
                 p.base_color = color
                 if fader_value > 0:
                     brightness = fader_value / 100.0
@@ -5320,6 +5386,7 @@ class MainWindow(QMainWindow):
                 projs = [p for p in self.projectors if p.group == group]
                 for i, p in enumerate(projs):
                     if i < len(pattern):
+                        p.release_color_overrides()   # idem activate_pad
                         p.base_color = pattern[i]
                         if p.level > 0:
                             brightness = p.level / 100.0
@@ -8978,8 +9045,9 @@ class MainWindow(QMainWindow):
                     raw = 1.0 if chase_slot(freq * t + phase, n_rk,
                                             direction) == i_rk else 0.0
                 elif forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
-                    import random as _rand
-                    raw = _rand.random()
+                    # Une valeur par CYCLE (cf. core.random_wave) : avant, un
+                    # tirage par frame DMX rendait la VITESSE inopérante.
+                    raw = random_wave(freq, t, i_rk)
                 else:
                     raw = _wave(forme, x)
                 # Le FONDU rallumerait les voisins et ruinerait l'exclusivité :
@@ -10210,6 +10278,12 @@ class MainWindow(QMainWindow):
                 self.seq.live_panel.set_connection_status('off')
             _etape('panneau', _reset_panneau)
 
+            # Le moteur est arrêté : plus personne n'appellera
+            # `_live_set_hw_strobe(0)`, et les canaux Strobe resteraient
+            # latchés sur leur dernière vitesse — une salle qui continue de
+            # stroboscoper après la sortie du LIVE.
+            _etape('strobe', self._release_live_hw_strobe)
+
             # Purger les états persistants live
             for attr in ('_live_sec', '_live_lyre_e', '_live_lyre_phase',
                          '_live_lyre_speed', '_live_lyre_amp_pan', '_live_lyre_amp_tilt',
@@ -10218,7 +10292,7 @@ class MainWindow(QMainWindow):
                          '_live_transient_flash', '_live_beat_state',
                          '_live_auto_last_section', '_live_preset_state',
                          '_live_lyre_switch', '_live_lyre_color_switch', '_smart_fx',
-                         '_live_col_cur_prev'):
+                         '_live_col_cur_prev', '_live_hw_strobe'):
                 self.__dict__.pop(attr, None)
 
     def _log_live_error(self, where, exc):
@@ -10566,6 +10640,117 @@ class MainWindow(QMainWindow):
                 else:
                     p.gobo_rotation = 0
 
+    @property
+    def _fx_src(self):
+        """Source de réglages du moteur IA : panneau LIVE ou préréglage du média.
+
+        Le moteur (`_apply_live_state`) lisait ses couleurs, mouvements, gobos et
+        nervosité directement sur `self.seq.live_panel`. Il ne pouvait donc servir
+        qu'au mode LIVE, et la playlist restait sur l'ancien moteur IA (une seule
+        couleur dominante, un cercle codé en dur pour les lyres).
+
+        En interposant cette propriété, le même moteur sert les deux : en LIVE il
+        rend le panneau — comportement rigoureusement inchangé, c'est la même
+        expression qu'avant — et pendant la playlist il rend l'`IASettings` de la
+        ligne en cours, ce qui donne à chaque média son ambiance propre.
+
+        ⚠️ Le panneau LIVE n'est JAMAIS écrit depuis la playlist : le moteur
+        change la couleur et le mouvement en cours au fil des mesures
+        (`set_current_color_tile`, `set_current_movement`), et ces écritures
+        doivent atterrir sur le préréglage du média, pas sur les réglages que
+        l'utilisateur a posés pour son live.
+        """
+        # Test explicite à None, pas `or` : un objet de réglages jugé « faux »
+        # (si on lui ajoutait un jour __len__ ou __bool__) basculerait
+        # silencieusement le show sur le panneau LIVE.
+        src = getattr(self, '_ia_settings_src', None)
+        return self.seq.live_panel if src is None else src
+
+    @property
+    def _ia_audio_ai(self):
+        """Analyse audio dont le moteur tire sa palette et ses index de beat.
+
+        En LIVE, l'analyse est produite au fil de l'eau par le moteur audio :
+        elle vit dans `live_engine.audio_ai`. En playlist, elle est PRÉ-CALCULÉE
+        à l'ajout du média et vit dans `self.audio_ai` — `live_engine.audio_ai`
+        n'y est qu'une instance neuve, palette vide.
+
+        Le moteur lisant `live_engine.audio_ai` en dur, la playlist retombait
+        donc sur une palette vide : la tuile AUTO (« l'IA choisit ») ne rendait
+        que du blanc, et la rotation de couleur restait bloquée sur l'index 0.
+        """
+        if getattr(self, '_ia_settings_src', None) is not None:
+            return self.audio_ai
+        return self.live_engine.audio_ai
+
+    def _ia_engine_running(self) -> bool:
+        """Le moteur IA a-t-il le droit d'écrire sur les projecteurs ?
+
+        Ce moteur n'avait qu'un seul appelant, le mode LIVE : ses deux points
+        d'entrée s'ouvraient donc sur `if not live_mode_active: return`. Depuis
+        que la playlist l'utilise aussi, cette garde le rendait MUET pendant la
+        lecture d'un média — l'ancien moteur ayant disparu, plus personne
+        n'allumait quoi que ce soit et tout le plan restait noir.
+
+        Deux appelants légitimes, donc deux conditions : le mode LIVE, ou une
+        ligne de playlist qui a posé son préréglage dans `_ia_settings_src`.
+        Hors des deux, le moteur ne doit toujours rien écrire : les faders, les
+        pads mémoire et les effets gardent la main.
+        """
+        return (self.seq.live_mode_active
+                or getattr(self, '_ia_settings_src', None) is not None)
+
+    def _live_set_hw_strobe(self, rate, skip=("Machine a fumee",)):
+        """Pousse le strobe MATÉRIEL des fixtures qui ont un canal Strobe.
+
+        Vient EN PLUS du hachage de `level`, pas à sa place : le hachage garde
+        la main sur les fixtures sans canal Strobe (la majorité des PAR) et
+        continue de rythmer la couleur, pendant que le canal matériel va
+        chercher les strobes que le modèle ne sait pas atteindre — l'anneau
+        d'une lyre, dont les canaux sont typés « Mode »/« Unused ».
+
+        `strobe_speed` est un scalaire par projecteur, et le moteur DMX le
+        recopie sur TOUS les canaux typés Strobe du profil
+        (`artnet_dmx.py`, boucle `enumerate(profile)`) : une LM1915R reçoit
+        donc ses trois strobes d'un coup, anneau compris.
+
+        ⚠️ On ne remet à zéro que ce que le LIVE a lui-même allumé
+        (`_live_hw_strobe`). Sans ce registre, une fixture strobée à la main
+        hors du groupe éclairage se ferait couper 40 fois par seconde.
+        """
+        rate = max(0, min(100, int(rate or 0)))
+        latched = getattr(self, '_live_hw_strobe', None)
+        if latched is None:
+            latched = self._live_hw_strobe = set()
+        allowed = self._fx_src.allowed_groups
+        for p in self.projectors:
+            actif = (
+                rate > 0
+                and getattr(p, 'fixture_type', '') not in skip
+                and (not allowed or p.group in allowed)
+                and "Strobe" in (getattr(p, 'dmx_profile', None) or [])
+            )
+            if actif:
+                p.strobe_speed = rate
+                latched.add(id(p))
+            elif id(p) in latched:
+                p.strobe_speed = 0
+                latched.discard(id(p))
+
+    def _release_live_hw_strobe(self):
+        """Rend la main sur les strobes matériels allumés par le LIVE.
+
+        Appelée à la sortie du LIVE : le moteur ne tourne plus, donc plus rien
+        n'appelle `_live_set_hw_strobe(0)` et les canaux resteraient latchés.
+        """
+        latched = getattr(self, '_live_hw_strobe', None)
+        if not latched:
+            return
+        for p in self.projectors:
+            if id(p) in latched:
+                p.strobe_speed = 0
+        latched.clear()
+
     def _apply_live_state(self, state: dict):
         """Applique un état live, en GELANT les groupes non autorisés.
 
@@ -10574,15 +10759,19 @@ class MainWindow(QMainWindow):
         après. Sinon les blocs strobe/drop/dimmer (qui itèrent sur TOUS les
         projecteurs sans filtre de groupe) les font clignoter et volent la main.
         """
-        if not self.seq.live_mode_active:
+        if not self._ia_engine_running():
             return
-        _allowed = self.seq.live_panel.allowed_groups
+        _allowed = self._fx_src.allowed_groups
         _frozen = None
         if _allowed:
             _frozen = [
                 (p, p.level, QColor(p.color), QColor(p.base_color),
                  getattr(p, 'pan', None), getattr(p, 'tilt', None),
-                 getattr(p, 'gobo', None), getattr(p, 'gobo_rotation', None))
+                 getattr(p, 'gobo', None), getattr(p, 'gobo_rotation', None),
+                 # Le LIVE écrit maintenant `strobe_speed` (canal Strobe
+                 # matériel) : sans lui dans le gel, un groupe hors éclairage
+                 # se serait mis à strober tout seul.
+                 getattr(p, 'strobe_speed', None))
                 for p in self.projectors if p.group not in _allowed
             ]
         try:
@@ -10595,7 +10784,7 @@ class MainWindow(QMainWindow):
             self._log_live_error('apply_state', e)
         finally:
             if _frozen:
-                for (p, lv, col, base, pan, tilt, gobo, grot) in _frozen:
+                for (p, lv, col, base, pan, tilt, gobo, grot, strb) in _frozen:
                     p.level = lv
                     p.color = col
                     p.base_color = base
@@ -10603,10 +10792,11 @@ class MainWindow(QMainWindow):
                     if tilt is not None: p.tilt = tilt
                     if gobo is not None: p.gobo = gobo
                     if grot is not None: p.gobo_rotation = grot
+                    if strb is not None: p.strobe_speed = strb
 
     def _apply_live_state_inner(self, state: dict):
         """Applique un état lumière live aux projecteurs (remplace update_audio_ai en mode LIVE)."""
-        if not self.seq.live_mode_active:
+        if not self._ia_engine_running():
             return
 
         # ── Pause MIDI Clock : couper lumière + retour lyres au centre ──────────
@@ -10636,20 +10826,27 @@ class MainWindow(QMainWindow):
             # Réinitialiser le compteur de centrage quand la pause se termine
             self.__dict__.pop('_pause_center_start', None)
 
-        ia_mode_check = self.seq.live_panel.ia_mode
+        ia_mode_check = self._fx_src.ia_mode
         # En mode Musical IA ou Ambiance : l'IA garde toujours le contrôle
         # → les effets manuels et faders sont ignorés
         # En mode Manuel : active_effect et faders ont la main (déjà géré par le return plus bas)
         if ia_mode_check not in ('musical', 'ambiance'):
             if getattr(self, 'active_effect', None) is not None:
+                # Un effet manuel prend la main : on rend aussi le strobe
+                # matériel, sinon il resterait latché sous l'effet.
+                self._live_set_hw_strobe(0)
                 return
 
         # ── Effets SPÉCIAUX : priorité absolue, tous modes IA sauf Ambiance ────
-        _special_fx = getattr(self.seq.live_panel, 'active_special', None)
+        _special_fx = getattr(self._fx_src, 'active_special', None)
         if _special_fx and ia_mode_check != 'ambiance':
-            _nerv_sp = self.seq.live_panel.nervosity / 100.0
+            _nerv_sp = self._fx_src.nervosity / 100.0
             _pos_sp  = state.get('_ia_position', self.live_engine._elapsed_ms)
             _sms_sp  = max(18, int(40 - _nerv_sp * 14))
+            # Vitesse demandée au canal Strobe matériel. Reste à 0 pour les
+            # effets spéciaux qui ne strobent pas (blanc fixe, passage), ce qui
+            # relâche du même coup un strobe laissé par l'effet précédent.
+            _hw_sp   = 0
             if _special_fx == 'fixe_blanc':
                 for p in self.projectors:
                     if getattr(p, 'fixture_type', '') == "Machine a fumee":
@@ -10660,42 +10857,48 @@ class MainWindow(QMainWindow):
                 _sp_on = (int(_pos_sp / _sms_sp) % 2) == 0
                 for p in self.projectors:
                     _ft = getattr(p, 'fixture_type', '')
-                    if _ft in ("Machine a fumee", "Moving Head"):
-                        continue   # lyres : non affectées
+                    # Les lyres étaient écartées ici (et ici SEULEMENT, de tout
+                    # le moteur LIVE) : sur un plan de feu mixte, « Stroboscope »
+                    # n'allumait donc qu'une partie de la salle. Elles suivent
+                    # maintenant comme le reste.
+                    if _ft == "Machine a fumee":
+                        continue
                     if _sp_on:
                         p.level = 100; p.color = QColor(255, 255, 255)
                     else:
                         p.level = 0;   p.color = QColor("black")
+                _hw_sp = _live_strobe_rate(_sms_sp)
             elif _special_fx == 'strobe_couleur':
                 _sp_on = (int(_pos_sp / _sms_sp) % 2) == 0
-                _sc1, _ = self.seq.live_panel.get_color_data(
-                    self.seq.live_panel.current_color_tile)
+                _sc1, _ = self._fx_src.get_color_data(
+                    self._fx_src.current_color_tile)
                 if _sc1 is None:
-                    _pal_sp = (self.seq.live_panel.live_palette
-                               or getattr(self.live_engine.audio_ai, 'palette', None)
+                    _pal_sp = (self._fx_src.live_palette
+                               or getattr(self._ia_audio_ai, 'palette', None)
                                or [QColor('#ffffff')])
                     _sc1 = _pal_sp[0]
                 for p in self.projectors:
                     _ft = getattr(p, 'fixture_type', '')
-                    if _ft in ("Machine a fumee", "Moving Head"):
-                        continue   # lyres : non affectées
+                    if _ft == "Machine a fumee":
+                        continue   # lyres incluses, comme « Stroboscope »
                     if _sp_on:
                         p.level = 100; p.color = _sc1
                     else:
                         p.level = 0;   p.color = QColor("black")
+                _hw_sp = _live_strobe_rate(_sms_sp)
             elif _special_fx == 'passage_blanc':
                 # Passage séquentiel — couleurs du pool COULEURS, blanc par défaut
-                _spd_p = self.seq.live_panel.passage_speed / 100.0
+                _spd_p = self._fx_src.passage_speed / 100.0
                 _interval_ms = max(40, int(800 - _spd_p * 760))
                 _projs = [p for p in self.projectors
                           if getattr(p, 'fixture_type', '') != "Machine a fumee"]
                 _n = len(_projs)
                 if _n > 0:
                     # Construire la palette depuis le pool de couleurs actif
-                    _col_pool = self.seq.live_panel.color_tile_pool
+                    _col_pool = self._fx_src.color_tile_pool
                     _palette_sw = []
                     for _ck in _col_pool:
-                        _c1, _ = self.seq.live_panel.get_color_data(_ck)
+                        _c1, _ = self._fx_src.get_color_data(_ck)
                         if _c1:
                             _palette_sw.append(_c1)
                     if not _palette_sw:
@@ -10710,14 +10913,20 @@ class MainWindow(QMainWindow):
                         else:
                             p.level = 0
                             p.color = QColor(0, 0, 0)
+            self._live_set_hw_strobe(_hw_sp)
             return   # override total — pas besoin d'aller plus loin
 
-        ia_mode = self.seq.live_panel.ia_mode
+        ia_mode = self._fx_src.ia_mode
         if ia_mode == 'manuel':
             # Mode Manuel : le moteur live ne touche rien.
             # Les projecteurs conservent leur état courant (AKAI / plan de feu / clic droit).
+            # Seule exception : on relâche le strobe matériel que le LIVE avait
+            # allumé lui-même, sans quoi il resterait latché en passant en
+            # Manuel — la main serait rendue sur tout SAUF le strobe.
+            self._live_set_hw_strobe(0)
             return
         if ia_mode == 'ambiance':
+            self._live_set_hw_strobe(0)   # l'ambiance ne strobe pas
             self._apply_ambiance_live()
             return
 
@@ -10748,13 +10957,13 @@ class MainWindow(QMainWindow):
                 self._silence_fade_start = None
         else:
             self._silence_fade_start = None
-        nerv      = self.seq.live_panel.nervosity
+        nerv      = self._fx_src.nervosity
         position  = state.get('_ia_position', self.live_engine._elapsed_ms)
         now_ts    = _time.monotonic()
 
         # Filtres depuis les paramètres Live
-        _settings_pal = self.seq.live_panel.live_palette  # [] = palette auto
-        _allowed_eff  = self.seq.live_panel.allowed_effects  # set() = tous
+        _settings_pal = self._fx_src.live_palette  # [] = palette auto
+        _allowed_eff  = self._fx_src.allowed_effects  # set() = tous
         _eff_ok       = lambda e: not _allowed_eff or e in _allowed_eff
 
         contre_alt = state.get('contre_alt')
@@ -10776,7 +10985,7 @@ class MainWindow(QMainWindow):
                 p.color = QColor("black")
 
         # ── 1. État de base avec ia_max_dimmers ──────────────────────────────
-        _allowed_grps = self.seq.live_panel.allowed_groups
+        _allowed_grps = self._fx_src.allowed_groups
         contre_idx = lat_idx = 0
         for p in self.projectors:
             if p.group not in state:
@@ -10809,19 +11018,19 @@ class MainWindow(QMainWindow):
         # ── 2. Overrides de section ───────────────────────────────────────────
         white = QColor(255, 255, 255)
         # Palette depuis le pool de couleurs
-        _tile_pool = self.seq.live_panel.color_tile_pool
+        _tile_pool = self._fx_src.color_tile_pool
         _pool_colors = []
         for _ck in _tile_pool:
-            _c1, _ = self.seq.live_panel.get_color_data(_ck)
+            _c1, _ = self._fx_src.get_color_data(_ck)
             if _c1:
                 _pool_colors.append(_c1)
-        _max_c    = self.seq.live_panel.color_max
-        _restrict = self.seq.live_panel.color_restrict
+        _max_c    = self._fx_src.color_max
+        _restrict = self._fx_src.color_restrict
 
         if _pool_colors and (_restrict or _max_c < 4):
             if _max_c == 1:
-                _cur_c, _ = self.seq.live_panel.get_color_data(
-                    self.seq.live_panel.current_color_tile)
+                _cur_c, _ = self._fx_src.get_color_data(
+                    self._fx_src.current_color_tile)
                 pal = [_cur_c] if _cur_c else [_pool_colors[0]]
             else:
                 pal = _pool_colors[:_max_c]
@@ -10834,7 +11043,7 @@ class MainWindow(QMainWindow):
             # l'indice dans le pool : ça répartit les couleurs choisies entre
             # les groupes et les anime sur les beats (l'IA fait tourner les
             # indices contre/lat/face à chaque beat).
-            _ai_pal = getattr(self.live_engine.audio_ai, 'palette', None) or []
+            _ai_pal = getattr(self._ia_audio_ai, 'palette', None) or []
             def _map_to_pal(c):
                 if len(pal) == 1:
                     return pal[0]
@@ -10855,14 +11064,14 @@ class MainWindow(QMainWindow):
                     p.base_color = mapped
                     p.color = QColor(int(mapped.red()*f), int(mapped.green()*f), int(mapped.blue()*f))
         else:
-            pal = _settings_pal or self.live_engine.audio_ai.palette or [white]
+            pal = _settings_pal or self._ia_audio_ai.palette or [white]
         drop_fx          = self.ia_params.get('drop_effect', 'flash_blanc')
         strobe_ms_fast   = int(38 - nerv * 13)
         strobe_ms_medium = int(55 - nerv * 20)
         strobe_ms_slow   = int(75 - nerv * 25)
-        _allow_strob_fast = self.seq.live_panel.strob_fast
-        _allow_strob_slow = self.seq.live_panel.strob_slow
-        _allow_strob_none = self.seq.live_panel.strob_none
+        _allow_strob_fast = self._fx_src.strob_fast
+        _allow_strob_slow = self._fx_src.strob_slow
+        _allow_strob_none = self._fx_src.strob_none
 
         if section == 'drop':
             if ss['last'] != 'drop':
@@ -10930,10 +11139,10 @@ class MainWindow(QMainWindow):
 
             elif drop_fx == 'strobe_sync':
                 # Strobe tous les projecteurs à la même couleur active
-                _pool = self.seq.live_panel.color_tile_pool
+                _pool = self._fx_src.color_tile_pool
                 _sync_color = None
                 for _ck in _pool:
-                    _c1, _ = self.seq.live_panel.get_color_data(_ck)
+                    _c1, _ = self._fx_src.get_color_data(_ck)
                     if _c1:
                         _sync_color = _c1
                         break
@@ -11006,20 +11215,20 @@ class MainWindow(QMainWindow):
         if '_new_beat' in state:
             _new_beat = state['_new_beat']              # source IA fichier
         else:
-            cur_beat = getattr(self.live_engine.audio_ai, '_last_beat_idx', -1)
+            cur_beat = getattr(self._ia_audio_ai, '_last_beat_idx', -1)
             _new_beat = cur_beat >= 0 and cur_beat != bs['beat_idx']
             if _new_beat:
                 bs['beat_idx'] = cur_beat
         if _new_beat:
-            if self.seq.live_panel.is_tile_active('flash') and _eff_ok('flash'):
+            if self._fx_src.is_tile_active('flash') and _eff_ok('flash'):
                 bs['flash_until'] = position + 110
-            if self.seq.live_panel.is_tile_active('strobe') and _eff_ok('strobe'):
+            if self._fx_src.is_tile_active('strobe') and _eff_ok('strobe'):
                 bs['strobe_until'] = position + 450
-            if self.seq.live_panel.is_tile_active('gobo') and _eff_ok('gobo'):
+            if self._fx_src.is_tile_active('gobo') and _eff_ok('gobo'):
                 bs['gobo_idx'] = (bs['gobo_idx'] + 1) % 8
 
         # Couleur du flash — suit la tuile couleur sélectionnée (None = AUTO = blanc)
-        _fc1, _ = self.seq.live_panel.get_color_data(self.seq.live_panel.current_color_tile)
+        _fc1, _ = self._fx_src.get_color_data(self._fx_src.current_color_tile)
 
         # Flash coloré : éclat décroissant sur 110 ms
         if bs['flash_until'] > position and _eff_ok('flash'):
@@ -11044,10 +11253,10 @@ class MainWindow(QMainWindow):
         # Strobe beat : on/off rapide pendant 450 ms — filtré par onglet STROB
         _beat_strobe_on = (_allow_strob_fast
                            and ia_mode_check != 'ambiance'
-                           and self.seq.live_panel.is_tile_active('strobe')
+                           and self._fx_src.is_tile_active('strobe')
                            and bs['strobe_until'] > position
                            and _eff_ok('strobe'))
-        _beat_gobo_on   = self.seq.live_panel.is_tile_active('gobo') and _eff_ok('gobo')
+        _beat_gobo_on   = self._fx_src.is_tile_active('gobo') and _eff_ok('gobo')
         _beat_gobo_idx  = bs['gobo_idx']
 
         # ── Flash intelligent (occasionnel, décroissant sur 140 ms, teinté) ─
@@ -11096,7 +11305,7 @@ class MainWindow(QMainWindow):
             self._live_lyre_last_pos = position
 
             # Vitesse cible (rot/s) — slider VITESSE + section + énergie
-            _mspd_raw = self.seq.live_panel.movement_speed / 100.0
+            _mspd_raw = self._fx_src.movement_speed / 100.0
             _tgt_speed_section = {
                 'quiet': 0.04 + e * 0.02,
                 'verse': 0.12 + e * 0.08,
@@ -11135,7 +11344,7 @@ class MainWindow(QMainWindow):
 
             # Chop sur les beats
             cur_beat_idx = state.get('_ia_beat_idx',
-                           getattr(self.live_engine.audio_ai, '_last_beat_idx', -1))
+                           getattr(self._ia_audio_ai, '_last_beat_idx', -1))
             if cur_beat_idx >= 0 and cur_beat_idx != self._live_lyre_beat_idx:
                 self._live_lyre_beat_idx = cur_beat_idx
                 if e > 0.30 and section != 'quiet':
@@ -11150,12 +11359,12 @@ class MainWindow(QMainWindow):
                 )
 
             # ── Couleur lyre : pool de tuiles + cycle automatique ─────────
-            pal_l = _settings_pal or self.live_engine.audio_ai.palette or [QColor("#ffffff")]
-            c_idx = getattr(self.live_engine.audio_ai, '_contre_color_idx', 0)
+            pal_l = _settings_pal or self._ia_audio_ai.palette or [QColor("#ffffff")]
+            c_idx = getattr(self._ia_audio_ai, '_contre_color_idx', 0)
 
             # Cycle entre les tuiles couleur sélectionnées (même logique que mouvements)
-            _col_pool = self.seq.live_panel.color_tile_pool   # liste ordonnée
-            _col_cur  = self.seq.live_panel.current_color_tile
+            _col_pool = self._fx_src.color_tile_pool   # liste ordonnée
+            _col_cur  = self._fx_src.current_color_tile
 
             # Si l'utilisateur a changé manuellement la couleur → reset du timer de cycle
             if getattr(self, '_live_col_cur_prev', None) != _col_cur:
@@ -11163,10 +11372,13 @@ class MainWindow(QMainWindow):
                 if hasattr(self, '_live_lyre_color_switch'):
                     del self._live_lyre_color_switch   # repart du début avec la nouvelle couleur
 
-            if len(_col_pool) > 1:
+            # « Couleurs simultanées = 1 » veut dire UNE couleur, pas une couleur
+            # à la fois qui défile : le cycle est coupé et la couleur en cours
+            # reste en place. Au-dessus de 1, le pool tourne comme avant.
+            if len(_col_pool) > 1 and self._fx_src.color_max > 1:
                 if not hasattr(self, '_live_lyre_color_switch'):
                     _bpm0c = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n0c   = max(2, int(2 + (self.seq.live_panel.color_duration / 100.0) * 30))
+                    _n0c   = max(2, int(2 + (self._fx_src.color_duration / 100.0) * 30))
                     self._live_lyre_color_switch = {
                         'switch_at': position + int(_n0c * 60000.0 / _bpm0c),
                         'pool_snap': list(_col_pool),
@@ -11180,17 +11392,17 @@ class MainWindow(QMainWindow):
                         _ci = -1
                     _ni       = (_ci + 1) % len(_cswitch['pool_snap'])
                     _next_col = _cswitch['pool_snap'][_ni]
-                    self.seq.live_panel.set_current_color_tile(_next_col)
+                    self._fx_src.set_current_color_tile(_next_col)
                     _col_cur = _next_col
                     _bpm_c   = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n_c     = max(2, int(2 + (self.seq.live_panel.color_duration / 100.0) * 30))
+                    _n_c     = max(2, int(2 + (self._fx_src.color_duration / 100.0) * 30))
                     _cswitch['switch_at'] = position + int(_n_c * 60000.0 / _bpm_c)
             else:
                 if hasattr(self, '_live_lyre_color_switch'):
                     del self._live_lyre_color_switch
 
             # Résoudre la tuile courante → (color1, color2)
-            _lyr_c1, _lyr_c2 = self.seq.live_panel.get_color_data(_col_cur)
+            _lyr_c1, _lyr_c2 = self._fx_src.get_color_data(_col_cur)
             # color1=None → AUTO : suit la palette IA comme avant
             if _lyr_c1 is None:
                 if section == 'drop':
@@ -11233,7 +11445,7 @@ class MainWindow(QMainWindow):
                 lyre_level = int(45 + e * 45)
 
             # Gobo auto sur changement de section (tile AUTO)
-            _auto_on = self.seq.live_panel.is_tile_active('auto') and _eff_ok('auto')
+            _auto_on = self._fx_src.is_tile_active('auto') and _eff_ok('auto')
             if _auto_on:
                 if not hasattr(self, '_live_auto_last_section'):
                     self._live_auto_last_section = section
@@ -11245,18 +11457,18 @@ class MainWindow(QMainWindow):
 
             # Application pan/tilt — pattern depuis le panel Mouvements
             ph    = self._live_lyre_phase
-            _mspd = self.seq.live_panel.movement_speed    / 100.0  # 0–1
-            _msz  = self.seq.live_panel.movement_size     / 100.0  # 0–1
-            _mdur = self.seq.live_panel.movement_duration / 100.0  # 0–1
+            _mspd = self._fx_src.movement_speed    / 100.0  # 0–1
+            _msz  = self._fx_src.movement_size     / 100.0  # 0–1
+            _mdur = self._fx_src.movement_duration / 100.0  # 0–1
 
             # ── Cycle multi-mouvements ────────────────────────────────────────
-            _mov_pool = self.seq.live_panel.movement_patterns  # liste ordonnée
-            _mov      = self.seq.live_panel.movement_pattern   # courant
+            _mov_pool = self._fx_src.movement_patterns  # liste ordonnée
+            _mov      = self._fx_src.movement_pattern   # courant
 
             if len(_mov_pool) > 1:
                 if not hasattr(self, '_live_lyre_switch'):
                     _bpm0 = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n0   = max(2, int(2 + (self.seq.live_panel.movement_duration / 100.0) * 30))
+                    _n0   = max(2, int(2 + (self._fx_src.movement_duration / 100.0) * 30))
                     self._live_lyre_switch = {
                         'switch_at': position + int(_n0 * 60000.0 / _bpm0),
                         'pool_snap': list(_mov_pool),
@@ -11271,10 +11483,10 @@ class MainWindow(QMainWindow):
                         _cur_idx = -1
                     _next_idx = (_cur_idx + 1) % len(_sw['pool_snap'])
                     _next_key = _sw['pool_snap'][_next_idx]
-                    self.seq.live_panel.set_current_movement(_next_key)
+                    self._fx_src.set_current_movement(_next_key)
                     _mov = _next_key
                     _bpm_now = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n_beats = max(2, int(2 + (self.seq.live_panel.movement_duration / 100.0) * 30))
+                    _n_beats = max(2, int(2 + (self._fx_src.movement_duration / 100.0) * 30))
                     _sw['switch_at'] = position + int(_n_beats * 60000.0 / _bpm_now)
             else:
                 # Pool d'un seul élément → pas de cycle
@@ -11347,13 +11559,13 @@ class MainWindow(QMainWindow):
                         p.gobo = slots[_beat_gobo_idx % len(slots)].get('dmx', 0)
                     else:
                         p.gobo = (_beat_gobo_idx % 8) * 32
-                elif hasattr(self.seq.live_panel, 'current_gobo'):
+                elif hasattr(self._fx_src, 'current_gobo'):
                     # Gobo depuis l'onglet GOBO (pool + cycle)
-                    _gobo_pool = self.seq.live_panel.gobo_pool
+                    _gobo_pool = self._fx_src.gobo_pool
                     if len(_gobo_pool) > 1:
                         if not hasattr(self, '_live_gobo_switch'):
                             _bpm0g = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                            _n0g   = max(2, int(2 + (self.seq.live_panel.gobo_duration / 100.0) * 30))
+                            _n0g   = max(2, int(2 + (self._fx_src.gobo_duration / 100.0) * 30))
                             self._live_gobo_switch = {
                                 'switch_at': position + int(_n0g * 60000.0 / _bpm0g),
                                 'pool_snap': list(_gobo_pool),
@@ -11362,28 +11574,28 @@ class MainWindow(QMainWindow):
                         if position >= _gsw['switch_at']:
                             _gsw['pool_snap'] = list(_gobo_pool)
                             try:
-                                _gi = _gsw['pool_snap'].index(self.seq.live_panel.current_gobo)
+                                _gi = _gsw['pool_snap'].index(self._fx_src.current_gobo)
                             except ValueError:
                                 _gi = -1
                             _gni = (_gi + 1) % len(_gsw['pool_snap'])
-                            self.seq.live_panel._current_gobo = _gsw['pool_snap'][_gni]
-                            self.seq.live_panel._refresh_gobo_tiles()
+                            self._fx_src._current_gobo = _gsw['pool_snap'][_gni]
+                            self._fx_src._refresh_gobo_tiles()
                             _bpm_g = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                            _n_g   = max(2, int(2 + (self.seq.live_panel.gobo_duration / 100.0) * 30))
+                            _n_g   = max(2, int(2 + (self._fx_src.gobo_duration / 100.0) * 30))
                             _gsw['switch_at'] = position + int(_n_g * 60000.0 / _bpm_g)
                     else:
                         if hasattr(self, '_live_gobo_switch'):
                             del self._live_gobo_switch
 
-                    _gslot = self.seq.live_panel.current_gobo
+                    _gslot = self._fx_src.current_gobo
                     slots = getattr(p, 'gobo_wheel_slots', [])
                     if slots and _gslot < len(slots):
                         p.gobo = slots[_gslot].get('dmx', 0)
                     else:
                         p.gobo = _gslot * 32
                     # Rotation gobo
-                    if self.seq.live_panel.gobo_rotation:
-                        _rot_spd = self.seq.live_panel.gobo_rot_speed
+                    if self._fx_src.gobo_rotation:
+                        _rot_spd = self._fx_src.gobo_rot_speed
                         p.gobo_rotation = max(1, int(_rot_spd * 2.55))
                     else:
                         p.gobo_rotation = 0
@@ -11391,7 +11603,7 @@ class MainWindow(QMainWindow):
 
         # ── Positions lyres prédéfinies (override du mode rotation si actif) ───
         if moving_heads:
-            presets = self.seq.live_panel.lyre_presets
+            presets = self._fx_src.lyre_presets
             if presets:
                 if not hasattr(self, '_live_preset_state'):
                     self._live_preset_state = {
@@ -11417,29 +11629,45 @@ class MainWindow(QMainWindow):
                     p.tilt = max(0, min(65535, int(ps['tilt'][i] * 257)))
 
         # Lecture du flag "pas de strobe auto" (paramètres Live)
-        _no_auto_strobe = getattr(self.seq.live_panel, 'no_auto_strobe', False)
+        _no_auto_strobe = getattr(self._fx_src, 'no_auto_strobe', False)
+
+        # Vitesse à envoyer au canal Strobe MATÉRIEL cette image. Les quatre
+        # blocs ci-dessous la revendiquent (le plus rapide gagne), et un seul
+        # appel en fin de parcours l'applique — un `strobe_speed` par bloc se
+        # serait écrasé au fil des lignes.
+        #
+        # ⚠️ La demande se pose quand le bloc est ACTIF, pas seulement sur ses
+        # images OFF : le canal matériel porte une *fréquence*, pas un état.
+        # Le poser une image sur deux le remettrait à 0 en alternance et la
+        # fixture ne strobrait jamais.
+        _hw_strobe = 0
 
         # AUTO tile — comportement intelligent par section
-        _auto_on = self.seq.live_panel.is_tile_active('auto') and _eff_ok('auto')
+        _auto_on = self._fx_src.is_tile_active('auto') and _eff_ok('auto')
         if _auto_on and not _no_auto_strobe:
             if section == 'drop' and _allow_strob_fast:
                 auto_ms = max(22, int(48 - nerv * 18))
-                if _allow_strob_none and (int(position / auto_ms) % 2) == 1:
-                    for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') != "Machine a fumee":
-                            p.level = 0; p.color = QColor("black")
+                if _allow_strob_none:
+                    _hw_strobe = max(_hw_strobe, _live_strobe_rate(auto_ms))
+                    if (int(position / auto_ms) % 2) == 1:
+                        for p in self.projectors:
+                            if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                                p.level = 0; p.color = QColor("black")
             elif section == 'build' and _allow_strob_slow:
                 build_p = min(1.0, energy * 1.5)
                 if build_p > 0.65:
                     auto_ms = max(30, int(85 - build_p * 52))
-                    if _allow_strob_none and (int(position / auto_ms) % 2) == 1:
-                        for p in self.projectors:
-                            if getattr(p, 'fixture_type', '') != "Machine a fumee":
-                                p.level = 0; p.color = QColor("black")
+                    if _allow_strob_none:
+                        _hw_strobe = max(_hw_strobe, _live_strobe_rate(auto_ms))
+                        if (int(position / auto_ms) % 2) == 1:
+                            for p in self.projectors:
+                                if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                                    p.level = 0; p.color = QColor("black")
 
         # Strobe beat : override final (tue le niveau pendant les frames OFF)
         if _beat_strobe_on and not _no_auto_strobe:
             strobe_ms = max(20, int(42 - nerv * 18))
+            _hw_strobe = max(_hw_strobe, _live_strobe_rate(strobe_ms))
             if (int(position / strobe_ms) % 2) == 1:
                 for p in self.projectors:
                     if getattr(p, 'fixture_type', '') != "Machine a fumee":
@@ -11457,6 +11685,7 @@ class MainWindow(QMainWindow):
             _sms = max(22, int(45 - nerv * 12))  # 45 ms calme → 33 ms nerveux
             if _allow_strob_fast:
                 _sms = max(16, int(_sms * 0.7))  # RAPIDE : hachage plus serré
+            _hw_strobe = max(_hw_strobe, _live_strobe_rate(_sms))
             if (int(position / _sms) % 2) == 1:
                 for p in self.projectors:
                     if getattr(p, 'fixture_type', '') != "Machine a fumee":
@@ -11477,8 +11706,9 @@ class MainWindow(QMainWindow):
             if hasattr(self, '_smart_fx'):
                 self._smart_fx['drop_strobe_active'] = False
         if _drop_strobe_active and _allow_strob_fast and ia_mode_check != 'ambiance':
-            _nerv_d = self.seq.live_panel.nervosity
+            _nerv_d = self._fx_src.nervosity
             _sms_d  = max(25, int(55 - _nerv_d * 25))
+            _hw_strobe = max(_hw_strobe, _live_strobe_rate(_sms_d))
             _strobe_on_d = (int(position / _sms_d) % 2) == 0
             for p in self.projectors:
                 if getattr(p, 'fixture_type', '') == "Machine a fumee":
@@ -11491,8 +11721,13 @@ class MainWindow(QMainWindow):
                     p.level = 0
                     p.color = QColor(0, 0, 0)
 
+        # ── Strobe MATÉRIEL : la demande des quatre blocs ci-dessus ────────────
+        # Point d'application unique, après tous les blocs de hachage. À 0
+        # (aucun bloc actif), il relâche ce que le LIVE avait allumé.
+        self._live_set_hw_strobe(_hw_strobe)
+
         # ── Dimmers par groupe (onglet DIMMER) ───────────────────────────────────
-        _dimmer_vals = self.seq.live_panel.dimmer_values
+        _dimmer_vals = self._fx_src.dimmer_values
         if _dimmer_vals:
             for p in self.projectors:
                 if getattr(p, 'fixture_type', '') == "Machine a fumee":
@@ -11516,6 +11751,50 @@ class MainWindow(QMainWindow):
                     int(p.color.green() * _fade_mult),
                     int(p.color.blue()  * _fade_mult),
                 )
+
+    def _feed_smart_fx(self, pos: int, section: str):
+        """Arme les strobes depuis un beat PRÉ-ANALYSÉ (playlist et source 'ia_file').
+
+        Les strobes du moteur ne se déclenchent pas tout seuls : ils lisent
+        `_smart_fx['drop_strobe_active']` et `_live_beat_state['smart_strobe_until']`.
+        Or le seul endroit qui écrivait ces deux clés était `_on_live_transient_inner`,
+        branché sur le signal audio TEMPS RÉEL — et qui sort immédiatement si
+        `live_mode_active` est faux.
+
+        Résultat : en playlist, aucun strobe ne pouvait partir. Ni le strobe de
+        drop, ni le strobe intelligent, ni celui de la tuile AUTO (dont le
+        `is_tile_active` rend False sans condition depuis que les tuiles ont
+        disparu du panneau). Les réglages STROBE avaient beau être sur RAPIDE,
+        il n'y avait rien à autoriser — d'où « rien ne s'est activé ».
+
+        Cette méthode rejoue donc, sur un beat pré-analysé, ce que le kick
+        temps réel fait en LIVE. Les seuils (cooldown, probabilité, durées) sont
+        les mêmes constantes, pour que le même morceau rende pareil qu'on le
+        joue depuis la playlist ou qu'on l'écoute au micro.
+        """
+        import time as _t
+        import random as _r
+        if not hasattr(self, '_live_beat_state'):
+            self._live_beat_state = {'beat_idx': -1, 'flash_until': 0,
+                                     'strobe_until': 0, 'gobo_idx': 0}
+        if not hasattr(self, '_smart_fx'):
+            self._smart_fx = {'last_flash_ts': 0.0, 'last_strobe_ts': 0.0,
+                              'drop_strobe_active': False}
+        bs, sfx = self._live_beat_state, self._smart_fx
+        now = _t.monotonic()
+
+        # Le strobe de drop s'arme au premier beat du drop et se coupe dès qu'on
+        # en sort (le moteur le recoupe aussi de son côté, par sécurité).
+        sfx['drop_strobe_active'] = (section == 'drop')
+
+        if section in ('drop', 'high'):
+            if now - sfx['last_flash_ts'] > 1.8 and _r.random() < 0.22:
+                sfx['last_flash_ts'] = now
+                bs['smart_flash_until'] = pos + 140
+            if now - sfx['last_strobe_ts'] > _SMART_STROBE_COOLDOWN_S \
+                    and _r.random() < _SMART_STROBE_CHANCE:
+                sfx['last_strobe_ts'] = now
+                bs['smart_strobe_until'] = pos + _SMART_STROBE_MS
 
     def _drive_ia_live_tick(self):
         """Mode LIVE source 'ia_file' : pilote les effets live depuis la pré-analyse IA."""
@@ -11545,7 +11824,8 @@ class MainWindow(QMainWindow):
         new_beat = beat_idx > self._ia_live_last_beat and beat_idx >= 0
         if new_beat:
             self._ia_live_last_beat = beat_idx
-            self.seq.live_panel.flash_beat()
+            self._fx_src.flash_beat()
+            self._feed_smart_fx(pos, state.get('section', 'verse'))
 
         # BPM depuis les intervalles récents
         if beat_idx >= 3:
@@ -11556,7 +11836,7 @@ class MainWindow(QMainWindow):
                 avg_iv = sum(ivs) / len(ivs)
                 if avg_iv > 0:
                     bpm = 60.0 / avg_iv
-                    self.seq.live_panel.set_status(
+                    self._fx_src.set_status(
                         bpm=bpm, section=state.get('section', 'verse'))
 
         # Injecter position et infos beat pour _apply_live_state
@@ -11567,13 +11847,36 @@ class MainWindow(QMainWindow):
         self._apply_live_state(state)
 
     def update_audio_ai(self):
-        """IA Lumiere - Met a jour les projecteurs selon l'analyse audio avec effets creatifs"""
+        """IA Lumiere — pilote les projecteurs depuis la pre-analyse audio.
+
+        Cette methode portait autrefois son PROPRE moteur (~490 lignes) : une
+        couleur dominante dont on derivait 8 teintes, des effets tires au sort
+        dans un pool code en dur, et un cercle a vitesse fixe pour les lyres.
+        Le mode LIVE, lui, avait deja un pool de couleurs, un pool de mouvements
+        qui s'enchainent, des gobos et une nervosite reglable — mais rien de tout
+        cela n'etait atteignable depuis la playlist.
+
+        Les deux moteurs ont donc ete fusionnes sur celui du LIVE. La seule
+        difference entre les deux usages tient a la SOURCE des reglages
+        (`_fx_src`) : le panneau en LIVE, le prereglage de la ligne en playlist.
+        Les evenements musicaux, eux, viennent des memes `audio_ai.get_state_at`
+        et `audio_ai.beats` qu'avant — la pre-analyse est inchangee.
+        """
         try:
-            # Mode LIVE actif
+            # Mode LIVE actif : les reglages viennent du panneau.
             if self.seq.live_mode_active:
                 if getattr(self, '_live_ia_mode', False):
+                    self._ia_settings_src = None
                     self._drive_ia_live_tick()
                 return
+
+            # Hors ligne IA, la source DOIT retomber à None : c'est elle qui
+            # autorise le moteur à écrire (`_ia_engine_running`). Une source
+            # laissée en place par le média précédent lui donnerait le droit
+            # d'écrire en mode Manuel, et il volerait la main aux faders.
+            # D'où la remise à zéro AVANT tous les retours anticipés.
+            self._ia_settings_src = None
+
             # Ne pas interférer avec un effet en cours — l'effet a la priorité
             if getattr(self, 'active_effect', None) is not None:
                 return
@@ -11590,492 +11893,98 @@ class MainWindow(QMainWindow):
             if not self.audio_ai.analyzed:
                 return
 
-            import math
-
-            position = self.player.position()
-            duration = self.player.duration()
-
-            state = self.audio_ai.get_state_at(position, duration, max_dimmers=self.ia_max_dimmers)
-
-            section     = state.get('section', 'verse')
-            energy      = state.get('energy', 0.5)
-            global_fade = state.get('global_fade', 1.0)
-
-            contre_alt    = state.get('contre_alt')
-            lat_alt       = state.get('lat_alt')
-            contre_effect = state.get('contre_effect')
-            lat_effect    = state.get('lat_effect')
-
-            # Paramètres nervosité (0.0 → 1.0)
-            nerv = max(0.0, min(1.0, self.ia_params.get('nervosity', 50) / 100.0))
-
-            # ── 1. Appliquer l'état de base (couleurs + levels depuis l'IA) ──
-            contre_idx = 0
-            lat_idx    = 0
-
-            for p in self.projectors:
-                if p.group not in state:
-                    continue
-                color, level = state[p.group]
-
-                if p.group == 'contre':
-                    if contre_alt and contre_idx % 2 == 1:
-                        color = contre_alt
-                    contre_idx += 1
-                elif p.group == 'lat':
-                    if lat_alt and lat_idx % 2 == 1:
-                        color = lat_alt
-                    if lat_effect == "strobe":
-                        # Nervosité → strobe plus rapide
-                        strobe_ms = int(80 - nerv * 45)   # 80ms calm → 35ms nerveux
-                        strobe_on = (int(position / strobe_ms) % 2) == 0
-                        if not strobe_on:
-                            level = 0
-                    lat_idx += 1
-
-                p.level = level
-                p.base_color = color
-                if level > 0:
-                    brightness = level / 100.0
-                    p.color = QColor(
-                        int(color.red()   * brightness),
-                        int(color.green() * brightness),
-                        int(color.blue()  * brightness)
-                    )
-                else:
-                    p.color = QColor("black")
-
-            # ── 2. Overrides par section ──────────────────────────────────────
-
-            def _set_proj(p, color, level):
-                """Applique couleur+level à un projecteur (évite le code dupliqué)."""
-                p.level = max(0, min(100, level))
-                p.base_color = color
-                if p.level > 0:
-                    f = p.level / 100.0
-                    p.color = QColor(int(color.red()*f), int(color.green()*f), int(color.blue()*f))
-                else:
-                    p.color = QColor("black")
-
-            # Initialiser l'état de section persistant
-            if not hasattr(self, '_ia_sec'):
-                self._ia_sec = {'last': None, 'drop_start': -1, 'build_p': 0.0}
-            ss = self._ia_sec
-
-            # ── DROP : effet choisi par l'utilisateur ────────────────────────
-            if section == 'drop':
-                DROP_MS = 1200.0
-                if ss['last'] != 'drop':
-                    ss['drop_start'] = position
-                drop_p = min(1.0, (position - ss['drop_start']) / DROP_MS)
-                drop_fx = self.ia_params.get('drop_effect', 'flash_blanc')
-
-                # Fréquences de strobe adaptées à la nervosité
-                strobe_ms_fast   = int(38 - nerv * 13)   # 38ms calm → 25ms nerveux
-                strobe_ms_medium = int(55 - nerv * 20)   # 55ms → 35ms
-                strobe_ms_slow   = int(75 - nerv * 25)   # 75ms → 50ms
-
-                white = QColor(255, 255, 255)
-                _tile_pool2  = self.seq.live_panel.color_tile_pool
-                _pool_colors2 = [c for c in (_c1 for _ck in _tile_pool2
-                                   for _c1, _ in [self.seq.live_panel.get_color_data(_ck)]) if c]
-                _max_c2   = self.seq.live_panel.color_max
-                _restrict2 = self.seq.live_panel.color_restrict
-                if _pool_colors2 and (_restrict2 or _max_c2 < 4):
-                    if _max_c2 == 1:
-                        _cur_c2, _ = self.seq.live_panel.get_color_data(
-                            self.seq.live_panel.current_color_tile)
-                        pal = [_cur_c2] if _cur_c2 else [_pool_colors2[0]]
-                    else:
-                        pal = _pool_colors2[:_max_c2]
-                else:
-                    pal = (self.audio_ai.palette if self.audio_ai.palette else [white])
-
-                # ── Flash Blanc ──────────────────────────────────────────────
-                if drop_fx == 'flash_blanc':
-                    if drop_p < 0.30:
-                        punch = 1.0 - drop_p / 0.30
-                        for p in self.projectors:
-                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
-                            boost = int(100 * punch * global_fade)
-                            if boost > p.level:
-                                _set_proj(p, white, boost)
-                    strobe_on = (int(position / strobe_ms_fast) % 2) == 0
-                    for p in self.projectors:
-                        if p.group in ('lat', 'contre') and not strobe_on:
-                            p.level = 0; p.color = QColor("black")
-
-                # ── Color Explosion ──────────────────────────────────────────
-                elif drop_fx == 'color_explosion':
-                    strobe_on = (int(position / strobe_ms_fast) % 2) == 0
-                    for i, p in enumerate(self.projectors):
-                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
-                        if strobe_on:
-                            col = pal[i % len(pal)]
-                            _set_proj(p, col, int(100 * global_fade))
-                        else:
-                            p.level = 0; p.color = QColor("black")
-
-                # ── Blackout Punch ───────────────────────────────────────────
-                elif drop_fx == 'blackout_punch':
-                    if drop_p < 0.12:
-                        # Coupure noire
-                        for p in self.projectors:
-                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
-                            p.level = 0; p.color = QColor("black")
-                    else:
-                        # Bang blanc puis décroissance
-                        punch = max(0.0, 1.0 - (drop_p - 0.12) / 0.35)
-                        for p in self.projectors:
-                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
-                            _set_proj(p, white, int(100 * punch * global_fade))
-                        # Strobe sur tout après le bang initial
-                        if drop_p > 0.20:
-                            strobe_on = (int(position / strobe_ms_medium) % 2) == 0
-                            if not strobe_on:
-                                for p in self.projectors:
-                                    if getattr(p, 'fixture_type', '') != "Machine a fumee":
-                                        p.level = 0; p.color = QColor("black")
-
-                # ── Stroboscope Total ────────────────────────────────────────
-                elif drop_fx == 'stroboscope':
-                    strobe_ms = int(45 - nerv * 20)   # 45ms → 25ms
-                    strobe_on = (int(position / strobe_ms) % 2) == 0
-                    for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
-                        if strobe_on:
-                            _set_proj(p, white, int(100 * global_fade))
-                        else:
-                            p.level = 0; p.color = QColor("black")
-
-                # ── Laser Scan ───────────────────────────────────────────────
-                elif drop_fx == 'laser_scan':
-                    if drop_p < 0.20:
-                        punch = 1.0 - drop_p / 0.20
-                        for p in self.projectors:
-                            if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
-                            if getattr(p, 'fixture_type', '') != "Moving Head":
-                                _set_proj(p, white, int(100 * punch * global_fade))
-                    strobe_on = (int(position / strobe_ms_slow) % 2) == 0
-                    for p in self.projectors:
-                        if p.group == 'lat' and not strobe_on:
-                            p.level = 0; p.color = QColor("black")
-
-                # ── Strobe Sync ──────────────────────────────────────────────
-                elif drop_fx == 'strobe_sync':
-                    _pool = self.seq.live_panel.color_tile_pool
-                    _sync_color = None
-                    for _ck in _pool:
-                        _c1, _ = self.seq.live_panel.get_color_data(_ck)
-                        if _c1:
-                            _sync_color = _c1
-                            break
-                    if _sync_color is None:
-                        _sync_color = white
-                    strobe_ms = int(40 - nerv * 16)
-                    strobe_on = (int(position / strobe_ms) % 2) == 0
-                    for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') == "Machine a fumee":
-                            continue
-                        if strobe_on:
-                            _set_proj(p, _sync_color, int(100 * global_fade))
-                        else:
-                            p.level = 0
-                            p.color = QColor("black")
-
-                ss['last'] = 'drop'
-
-            # ── BUILD : montée en puissance + pulse + réchauffement ───────────
-            elif section == 'build':
-                # Progression vers le prochain drop (0=loin, 1=au drop)
-                next_drop = next((d for d in self.audio_ai.drops if d > position), None)
-                BUILD_MS = 3500.0
-                build_p = max(0.0, min(1.0, 1.0 - (next_drop - position) / BUILD_MS)) \
-                          if next_drop else 0.0
-                ss['build_p'] = build_p
-
-                # Pulse qui s'accélère sur les contres
-                pulse_hz  = 2.5 + build_p * 10.0
-                pulse_mod = math.sin(position / 1000.0 * pulse_hz * 2.0 * math.pi) * 0.5 + 0.5
-
-                for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
-                        continue
-                    if p.group == 'contre':
-                        # Couleur qui se réchauffe vers le rouge/blanc
-                        r = min(255, int(p.base_color.red() + build_p * (255 - p.base_color.red()) * 0.7))
-                        g = int(p.base_color.green() * (1.0 - build_p * 0.5))
-                        b = int(p.base_color.blue()  * (1.0 - build_p * 0.6))
-                        warm = QColor(r, g, b)
-                        lvl  = min(100, int(p.level * (1.0 + build_p * 0.35) * (0.35 + 0.65 * pulse_mod)))
-                        _set_proj(p, warm, lvl)
-                    elif p.group == 'face':
-                        # Face : monte progressivement
-                        lvl = min(100, int(p.level * (1.0 + build_p * 0.2)))
-                        _set_proj(p, p.base_color, lvl)
-
-                ss['last'] = 'build'
-
-            # ── HIGH : énergie soutenue, tout amplifié ────────────────────────
-            elif section == 'high':
-                for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
-                        continue
-                    lvl = min(100, int(p.level * 1.15))
-                    _set_proj(p, p.base_color, lvl)
-                ss['last'] = 'high'
-
-            # ── QUIET : intro/outro/pont, tout réduit ─────────────────────────
-            elif section == 'quiet':
-                for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
-                        continue
-                    cap = int(45 * global_fade)
-                    if p.group in ('contre', 'lat'):
-                        cap = int(20 * global_fade)
-                    lvl = min(p.level, cap)
-                    _set_proj(p, p.base_color, lvl)
-                ss['last'] = 'quiet'
-
-            else:  # verse
-                ss['last'] = 'verse'
-
-            # ── 2b. Effets aléatoires : chases, rainbow, wave… ───────────────
-            # Se déclenchent entre les sections (pas pendant un drop)
-            if not hasattr(self, '_ia_rnd_fx'):
-                self._ia_rnd_fx = {
-                    'active':     None,
-                    'start_beat': -1,
-                    'duration':   0,
-                    'last_beat':  -1,
-                    'trigger_at': 10,    # premier effet après 10 beats
-                    'color_idx':  0,
-                }
-            rfx = self._ia_rnd_fx
-
-            beat_count = getattr(self.audio_ai, '_beat_group_count', 0)
-            beat_idx   = getattr(self.audio_ai, '_last_beat_idx', -1)
-
-            # Progression dans le beat courant (0.0 → 1.0) pour les transitions smooth
-            beat_prog = 0.0
-            if 0 <= beat_idx < len(self.audio_ai.beats) - 1:
-                t0 = self.audio_ai.beats[beat_idx]
-                t1 = self.audio_ai.beats[beat_idx + 1]
-                beat_prog = max(0.0, min(1.0, (position - t0) / max(1, t1 - t0)))
-
-            # Suspendre l'effet pendant un drop
-            if section == 'drop' and rfx['active']:
-                rfx['active'] = None
-
-            # Déclenchement d'un nouvel effet (nouveau beat + hors drop/quiet)
-            new_beat = (beat_count != rfx['last_beat'])
-            if (rfx['active'] is None
-                    and new_beat
-                    and section not in ('drop', 'quiet')
-                    and beat_count >= rfx['trigger_at']):
-                import random as _rnd
-                # Effets disponibles selon la section
-                pool = ['chase_fwd', 'chase_bwd', 'rainbow', 'spotlight', 'wave', 'color_snap']
-                if section == 'high':
-                    pool += ['chase_fwd', 'rainbow', 'wave']   # plus fréquents
-                rfx['active']     = _rnd.choice(pool)
-                rfx['start_beat'] = beat_count
-                rfx['duration']   = _rnd.randint(4, 8)
-                rfx['color_idx']  = getattr(self.audio_ai, '_contre_color_idx', 0)
-                # Prochain déclenchement : nervosité réduit l'intervalle
-                lo = max(4, int(14 - nerv * 8))
-                hi = max(6, int(20 - nerv * 10))
-                rfx['trigger_at'] = beat_count + rfx['duration'] + _rnd.randint(lo, hi)
-
-            rfx['last_beat'] = beat_count
-
-            # Fin de l'effet
-            if rfx['active'] and beat_count >= rfx['start_beat'] + rfx['duration']:
-                rfx['active'] = None
-
-            # Application de l'effet actif (ne pas toucher aux machines à fumée)
-            if rfx['active'] and section != 'drop':
-                pal_fx   = self.audio_ai.palette if self.audio_ai.palette else [QColor("#ffffff")]
-                GRP_ORD  = ['face', 'lat', 'contre', 'douche1', 'douche2', 'douche3']
-                n_grps   = len(GRP_ORD)
-                beats_el = max(0, beat_count - rfx['start_beat'])
-                fx_name  = rfx['active']
-                t_s      = position / 1000.0
-
-                # Regrouper les projecteurs par groupe (hors fumée)
-                by_grp = {}
-                for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') != "Machine a fumee":
-                        by_grp.setdefault(p.group, []).append(p)
-
-                # ── Chase avant / arrière ──────────────────────────────────
-                if fx_name in ('chase_fwd', 'chase_bwd'):
-                    order = GRP_ORD if fx_name == 'chase_fwd' else list(reversed(GRP_ORD))
-                    active_gi = beats_el % n_grps
-                    # Transition smooth : active_gi → next_gi avec beat_prog
-                    next_gi   = (active_gi + 1) % n_grps
-                    for gi, grp in enumerate(order):
-                        if grp not in by_grp:
-                            continue
-                        chase_col = pal_fx[(rfx['color_idx'] + beats_el) % len(pal_fx)]
-                        if gi == active_gi:
-                            # Descend avec beat_prog
-                            lvl = int((100 - beat_prog * 65) * global_fade)
-                        elif gi == next_gi:
-                            # Monte avec beat_prog (anticipation)
-                            lvl = int(beat_prog * 100 * global_fade)
-                        else:
-                            lvl = int(15 * global_fade)
-                        for p in by_grp[grp]:
-                            _set_proj(p, chase_col, lvl)
-
-                # ── Rainbow wash ───────────────────────────────────────────
-                elif fx_name == 'rainbow':
-                    spd = 40.0 + nerv * 40.0   # 40°/s → 80°/s
-                    for gi, grp in enumerate(GRP_ORD):
-                        if grp not in by_grp:
-                            continue
-                        hue = int((t_s * spd + gi * (360.0 / n_grps)) % 360)
-                        col = QColor.fromHsv(hue, 240, 255)
-                        lvl = int((65 + energy * 30) * global_fade)
-                        for p in by_grp[grp]:
-                            _set_proj(p, col, lvl)
-
-                # ── Spotlight ──────────────────────────────────────────────
-                elif fx_name == 'spotlight':
-                    spot_grp = GRP_ORD[beats_el % n_grps]
-                    # Transition : le spot entrant monte, le sortant descend
-                    prev_grp = GRP_ORD[(beats_el - 1) % n_grps]
-                    spot_col = pal_fx[(rfx['color_idx'] + beats_el) % len(pal_fx)]
-                    for grp, projs in by_grp.items():
-                        if grp == spot_grp:
-                            lvl = int((beat_prog * 100) * global_fade)
-                        elif grp == prev_grp:
-                            lvl = int(((1.0 - beat_prog) * 100) * global_fade)
-                        else:
-                            lvl = int(12 * global_fade)
-                        for p in projs:
-                            _set_proj(p, spot_col if grp in (spot_grp, prev_grp) else p.base_color, lvl)
-
-                # ── Wave de luminosité ─────────────────────────────────────
-                elif fx_name == 'wave':
-                    wave_spd = 1.2 + nerv * 1.8   # 1.2 → 3 Hz
-                    for gi, grp in enumerate(GRP_ORD):
-                        if grp not in by_grp:
-                            continue
-                        phase = gi / n_grps * 2.0 * math.pi
-                        val   = math.sin(t_s * wave_spd * 2.0 * math.pi + phase)
-                        lvl   = int((45 + val * 50) * global_fade)
-                        col   = pal_fx[(rfx['color_idx'] + gi) % len(pal_fx)]
-                        for p in by_grp[grp]:
-                            _set_proj(p, col, max(0, lvl))
-
-                # ── Color Snap (snap de couleur au beat) ───────────────────
-                elif fx_name == 'color_snap':
-                    snap_col = pal_fx[(rfx['color_idx'] + beats_el) % len(pal_fx)]
-                    # Fondu rapide entre l'ancienne couleur et la nouvelle
-                    mix = min(1.0, beat_prog * 3.0)   # atteint 1.0 en 1/3 de beat
-                    for grp, projs in by_grp.items():
-                        for p in projs:
-                            r = int(p.base_color.red()   * (1-mix) + snap_col.red()   * mix)
-                            g_c = int(p.base_color.green() * (1-mix) + snap_col.green() * mix)
-                            b_c = int(p.base_color.blue()  * (1-mix) + snap_col.blue()  * mix)
-                            blended = QColor(r, g_c, b_c)
-                            lvl = int((70 + energy * 30) * global_fade)
-                            _set_proj(p, blended, lvl)
-
-            # ── 3. Mouvement + couleur + chop dimmer lyres (Moving Head) ────────
-            moving_heads = [p for p in self.projectors
-                            if getattr(p, 'fixture_type', '') == "Moving Head"]
-            if moving_heads:
-                energy_raw = energy
-
-                # Lissage EWMA énergie
-                if not hasattr(self, '_ia_lyre_e'):
-                    self._ia_lyre_e          = energy_raw
-                    self._ia_lyre_phase      = 0.0
-                    self._ia_lyre_last_pos   = position
-                    self._ia_lyre_chop_until = 0
-                    self._ia_lyre_beat_idx   = -1
-                self._ia_lyre_e = 0.07 * energy_raw + 0.93 * self._ia_lyre_e
-                e = self._ia_lyre_e
-
-                # Phase accumulée à vitesse CONSTANTE (indépendante du rythme)
-                dt = max(0.0, min(0.10, (position - self._ia_lyre_last_pos) / 1000.0))
-                self._ia_lyre_last_pos = position
-                self._ia_lyre_phase += dt * 0.30 * 2.0 * math.pi  # ~0.30 tour/s, fixe
-                ph = self._ia_lyre_phase
-
-                # Amplitude constante (ne varie pas selon l'énergie ni la section)
-                amp = 38.0
-
-                # Couleur cible
-                pal   = self.audio_ai.palette if self.audio_ai.palette else [QColor("#ffffff")]
-                c_idx = getattr(self.audio_ai, '_contre_color_idx', 0)
-                if section == 'drop':
-                    drop_p_now = min(1.0, (position - ss.get('drop_start', position)) / 1200.0)
-                    lyre_color_tgt = QColor(255, 255, 255) if drop_p_now < 0.35 \
-                                     else pal[int(position / 80) % len(pal)]
-                else:
-                    lyre_color_tgt = pal[c_idx % len(pal)]
-
-                # Interpolation couleur (évite les snaps brutaux au changement de beat)
-                if not hasattr(self, '_ia_lyre_color_smooth'):
-                    self._ia_lyre_color_smooth = lyre_color_tgt
-                _ac = 0.55 if section == 'drop' else 0.18
-                _cc = self._ia_lyre_color_smooth
-                self._ia_lyre_color_smooth = QColor(
-                    int(_cc.red()   + _ac * (lyre_color_tgt.red()   - _cc.red())),
-                    int(_cc.green() + _ac * (lyre_color_tgt.green() - _cc.green())),
-                    int(_cc.blue()  + _ac * (lyre_color_tgt.blue()  - _cc.blue())),
-                )
-                lyre_color = self._ia_lyre_color_smooth
-
-                # Chop dimmer sur chaque beat (55 ms de noir)
-                cur_beat_idx = getattr(self.audio_ai, '_last_beat_idx', -1)
-                if cur_beat_idx >= 0 and cur_beat_idx != self._ia_lyre_beat_idx:
-                    self._ia_lyre_beat_idx = cur_beat_idx
-                    if e > 0.25:
-                        self._ia_lyre_chop_until = position + 55
-
-                if position < self._ia_lyre_chop_until:
-                    lyre_level = 0
-                elif section == 'quiet':
-                    lyre_level = int(30 + e * 20)
-                elif section == 'drop':
-                    lyre_level = int(60 + e * 40)
-                else:
-                    lyre_level = int(50 + e * 50)
-
-                for i, p in enumerate(moving_heads):
-                    phi = i * (2.0 * math.pi / max(len(moving_heads), 1))
-
-                    # Mouvement cercle — vitesse et amplitude fixes, indépendantes
-                    # de la musique, mais recentré/borné sur la zone du profil de
-                    # la lyre au lieu du milieu de course (`_pantilt_in_limits`).
-                    p.pan  = self._pantilt_in_limits(
-                        p, 'pan',  math.cos(ph + phi), amp * 256)
-                    p.tilt = self._pantilt_in_limits(
-                        p, 'tilt', math.sin(ph + phi), amp * 200)
-
-                    # Couleur : appliquée seulement si l'IA principale ne gère pas ce groupe
-                    if p.group not in state:
-                        p.level = max(0, min(100, lyre_level))
-                        p.base_color = lyre_color
-                        brightness = p.level / 100.0
-                        p.color = QColor(
-                            int(lyre_color.red()   * brightness),
-                            int(lyre_color.green() * brightness),
-                            int(lyre_color.blue()  * brightness),
-                        )
-                    # ColorWheel : toujours mis à jour, quelle que soit la source de la couleur
-                    self._update_color_wheel(p, getattr(p, 'base_color', None) or lyre_color)
+            # Prereglage de CETTE ligne. Le panneau LIVE n'est ni lu ni ecrit :
+            # le moteur fait tourner couleurs et mouvements en ecrivant la
+            # couleur/le mouvement « en cours » sur la source, et ces ecritures
+            # doivent rester dans le prereglage du media.
+            self._ia_settings_src = self.seq.get_ia_settings(self.seq.current_row)
+            self._drive_ia_live_tick()
 
             if hasattr(self, 'plan_de_feu'):
                 self.plan_de_feu.update()
 
         except Exception as e:
             print(f"Erreur IA Lumiere: {e}")
+
+    # ── Fondus audio de la playlist ───────────────────────────────────────────
+    # Le fondu de SORTIE ne peut pas être accroché à EndOfMedia : ce signal
+    # arrive quand le morceau est déjà fini, donc trop tard pour descendre. Il
+    # est armé sur la POSITION de lecture (`on_timeline_update`), dès qu'il
+    # reste moins que la durée du fondu.
+    #
+    # Un seul QAudioOutput pour toute la playlist : le fondu est donc séquentiel
+    # (le morceau descend, puis le suivant démarre), jamais un fondu enchaîné —
+    # celui-ci demanderait un deuxième lecteur.
+
+    _AUDIO_FADE_MS = 40          # ~25 pas/s, la cadence du reste de l'app
+
+    def _audio_fade_cancel(self):
+        """Coupe le fondu en cours, sans toucher à l'armement de la ligne.
+
+        Séparé de `_audio_fade_reset` à dessein : `start_audio_fade` appelle
+        celui-ci, et effacer l'armement au passage relancerait le fondu de queue
+        à chaque tick de position — il s'arme, se lance, se désarme, se réarme.
+        """
+        t = getattr(self, '_audio_fade_timer', None)
+        if t is not None and t.isActive():
+            t.stop()
+        self._audio_fade_cb = None
+
+    def _audio_fade_reset(self):
+        """Coupe le fondu ET oublie l'armement — au démarrage d'un nouveau média."""
+        self._audio_fade_cancel()
+        self._audio_fade_armed = False
+
+    def start_audio_fade(self, target, duration_ms, callback=None):
+        """Rampe le volume vers `target` (0.0-1.0) en `duration_ms`, puis callback.
+
+        Durée nulle = on pose la valeur et on appelle le callback tout de suite,
+        pour que l'appelant n'ait pas à distinguer les deux cas.
+        """
+        self._audio_fade_cancel()
+        target = max(0.0, min(1.0, float(target)))
+        if duration_ms <= 0:
+            self.audio.setVolume(target)
+            if callback:
+                callback()
+            return
+
+        self._audio_fade_from  = self.audio.volume()
+        self._audio_fade_to    = target
+        self._audio_fade_total = max(1, int(duration_ms / self._AUDIO_FADE_MS))
+        self._audio_fade_step  = 0
+        self._audio_fade_cb    = callback
+
+        if getattr(self, '_audio_fade_timer', None) is None:
+            self._audio_fade_timer = QTimer(self)
+            self._audio_fade_timer.timeout.connect(self._audio_fade_tick)
+        self._audio_fade_timer.start(self._AUDIO_FADE_MS)
+
+    def _audio_fade_tick(self):
+        self._audio_fade_step += 1
+        p = min(1.0, self._audio_fade_step / self._audio_fade_total)
+        self.audio.setVolume(self._audio_fade_from
+                             + (self._audio_fade_to - self._audio_fade_from) * p)
+        if p < 1.0:
+            return
+        self._audio_fade_timer.stop()
+        self.audio.setVolume(self._audio_fade_to)
+        # Callback détaché AVANT l'appel : il relance souvent une lecture, qui
+        # rappelle start_audio_fade — sans ça le fondu d'entrée du morceau
+        # suivant serait écrasé au retour.
+        cb = self._audio_fade_cb
+        self._audio_fade_cb = None
+        if cb:
+            cb()
+
+    def row_target_volume(self, row) -> float:
+        """Volume 0.0-1.0 de la ligne, tel qu'écrit dans la colonne VOL."""
+        try:
+            item = self.seq.table.item(row, 3)
+            txt = item.text() if item else ""
+            return max(0.0, min(1.0, int(txt) / 100.0)) if txt not in ("--", "") else 1.0
+        except (ValueError, AttributeError):
+            return 1.0
 
     def _ia_start_fadeout(self, callback=None):
         """Démarre un fade-out IA (~1.5 s) puis appelle callback."""
@@ -12410,8 +12319,22 @@ class MainWindow(QMainWindow):
                     }
                     if self.seq.is_row_loop(r):
                         row_data['loop'] = True
+                    # Fondus en ms. Écrits seulement s'ils existent : une version
+                    # antérieure de MyStrow ignore les clés qu'elle ne connaît
+                    # pas, le show reste donc lisible des deux côtés.
+                    _fi, _fo = self.seq.get_row_fades(r)
+                    if _fi:
+                        row_data['fade_in'] = _fi
+                    if _fo:
+                        row_data['fade_out'] = _fo
                     if dmx_mode == "IA Lumiere" and r in self.seq.ia_colors:
                         row_data['ia_color'] = self.seq.ia_colors[r].name()
+                    # Préréglage IA de la ligne (couleurs, mouvements, gobos,
+                    # nervosité). `ia_color` reste écrit à côté : il sert encore
+                    # à l'indicateur de la colonne DMX, et il permet à une
+                    # version antérieure de rouvrir le show sans le casser.
+                    if dmx_mode == "IA Lumiere" and r in self.seq.ia_settings:
+                        row_data['ia_preset'] = self.seq.ia_settings[r].to_dict()
                     if r in self.seq.ia_analysis:
                         row_data['ia_analysis'] = self.seq.ia_analysis[r]
                     if r in self.seq.sequences:
@@ -12453,7 +12376,10 @@ class MainWindow(QMainWindow):
                 active_color_pads[str(col_idx)] = bc.name()
 
         return {
-            "version": 6,
+            # v7 = préréglages IA par média (`ia_preset`). Purement additif :
+            # rien ne lit ce numéro au chargement, et une version antérieure
+            # rouvre le show en ignorant la clé (elle retombe sur `ia_color`).
+            "version": 7,
             "sequence": data,
             "cartouches": cart_data,
             "memories": self.memories,
@@ -12631,6 +12557,10 @@ class MainWindow(QMainWindow):
                             # Restaurer la couleur IA avant d'appliquer le mode
                             if 'ia_color' in item:
                                 self.seq.ia_colors[row] = QColor(item['ia_color'])
+                            if 'ia_preset' in item:
+                                from ia_settings import IASettings
+                                self.seq.ia_settings[row] = IASettings.from_dict(
+                                    item['ia_preset'])
                             if 'ia_analysis' in item:
                                 self.seq.ia_analysis[row] = item['ia_analysis']
                             combo = self.seq._get_dmx_combo(row)
@@ -12658,6 +12588,10 @@ class MainWindow(QMainWindow):
                             self.seq.image_durations[row] = int(item['image_duration'])
                         if item.get('loop'):
                             self.seq.set_row_loop(row, True)
+                        if item.get('fade_in') or item.get('fade_out'):
+                            self.seq.set_row_fades(row,
+                                                   int(item.get('fade_in') or 0),
+                                                   int(item.get('fade_out') or 0))
             finally:
                 self.seq._loading = False
 
@@ -21658,14 +21592,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(_sep())
 
         # ── Nervosité ─────────────────────────────────────────────────────────
+        # Elle se règle désormais PAR MÉDIA (clic sur le carré de couleur de la
+        # ligne), en même temps que les couleurs et les mouvements de lyres :
+        # une ballade et un morceau club de la même playlist n'ont pas la même
+        # nervosité. Le curseur global qui vivait ici n'était plus lu par le
+        # moteur — mieux vaut pas de réglage qu'un réglage qui ment.
+        nerv_sl = None
         layout.addWidget(_section_title("⚡  Nervosité"))
-        nerv_row, nerv_sl = _slider_row(
-            "Nervosité générale", 'nervosity', self.ia_params, 0, 100, "%"
-        )
-        nerv_info = QLabel(tr("mw_ia_nerv_tip"))
+        nerv_info = QLabel(
+            "La nervosité, les couleurs et les mouvements de lyres se règlent "
+            "média par média : cliquez sur le carré de couleur de la ligne dans "
+            "la playlist.")
         nerv_info.setStyleSheet("color:#666; font-size:11px; padding-left:4px;")
         nerv_info.setWordWrap(True)
-        layout.addLayout(nerv_row)
         layout.addWidget(nerv_info)
         layout.addSpacing(6)
         layout.addWidget(_sep())

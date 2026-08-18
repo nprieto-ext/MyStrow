@@ -2796,7 +2796,23 @@ class Plan3DWebWindow(QMainWindow):
             # Sortie live de l'éditeur d'effets : elle prime sur l'état du
             # projecteur, que le moteur DMX a déjà restauré à ce stade.
             ov   = fx.get(id(p))
-            col  = QColor(ov[1]) if ov is not None else getattr(p, 'color', None)
+            # Canaux couleur repris à la main dans la vue « Curseurs » du plan
+            # de feu : ils ne passent plus par `p.color`, et sur un PAR sans
+            # canal Dim le niveau du modèle reste à 0 — la fixture serait restée
+            # noire ici alors qu'elle éclaire. Même recomposition qu'en 2D
+            # (`PlanDeFeuCanvas._get_fill_color`). La sortie live de l'éditeur
+            # d'effets garde la priorité, et une fixture mutée ne sort rien.
+            _repris = None
+            if ov is None and not getattr(p, 'muted', False) \
+                    and hasattr(p, 'display_color_override'):
+                _repris = p.display_color_override()
+                if _repris is not None and not (_repris.red() or _repris.green()
+                                                or _repris.blue()):
+                    _repris = None
+            if _repris is not None:
+                col = _repris
+            else:
+                col = QColor(ov[1]) if ov is not None else getattr(p, 'color', None)
             r = col.red()   if col else 0
             g = col.green() if col else 0
             b = col.blue()  if col else 0
@@ -2824,6 +2840,11 @@ class Plan3DWebWindow(QMainWindow):
             # feu 2D), la 3D attend l'échelle du projecteur, 0..100.
             if ov is not None:
                 lvl = int(round(max(0.0, min(1.0, ov[0])) * 100))
+            elif _repris is not None and int(getattr(p, 'level', 0)) == 0:
+                # Fixture pilotée uniquement par des canaux repris : sans canal
+                # Dim, son niveau vaut 0 en permanence et le faisceau serait
+                # resté éteint. C'est la couleur qui porte l'intensité.
+                lvl = int(round(max(r, g, b) / 255 * 100))
             else:
                 lvl = int(getattr(p, 'level', 0))
             pan_v  = getattr(p, 'pan',  32768)

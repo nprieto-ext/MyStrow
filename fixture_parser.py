@@ -58,8 +58,13 @@ _MA_MAP = {
     "Gobo Rotation":   "Gobo1Rot",
     "Gobo 2":          "Gobo2",
     "Gobo2":           "Gobo2",
+    "Gobo 2 Rotation": "Gobo2Rot",
     "Prism":           "Prism",
     "Prism Rotation":  "PrismRot",
+    "Frost":           "Frost",
+    "Animation":       "Anim",
+    "Animation Wheel": "Anim",
+    "Animation Rotation": "AnimRot",
     "Color Wheel":     "ColorWheel",
     "Color":           "ColorWheel",
     # CTO/CTB : canaux propres, PAS la roue de couleurs. Les confondre les
@@ -142,8 +147,22 @@ _MA3_ATTR_MAP = {
     "ZOOM":               "Zoom",
     "FOCUS":              "Focus",
     "IRIS":               "Iris",
+    # Frost / roue d'animation. Ces attributs existent en toutes lettres dans
+    # les fichiers constructeur (l'ACME PIXEL LINE porte FROST sur son CH5) et
+    # tombaient sur « Unused » faute de type d'accueil — donc muets à jamais.
+    "FROST":              "Frost",
+    "FROST1":             "Frost",
+    "ANIMATIONWHEEL":     "Anim",
+    "ANIMATIONINDEXROTATE": "AnimRot",
+    "ANIMATIONWHEELPOS":  "AnimRot",
+    "GOBO2_POS":          "Gobo2Rot",
+    "GOBO2INDEXROTATE":   "Gobo2Rot",
     # Color wheel
     "COLOR1":             "ColorWheel",
+    # ⚠️ COLOR2 reste sur ColorWheel et NON sur ColorWheel2 : les fixtures déjà
+    # importées le pilotent par `proj.color_wheel`, le basculer sur un canal
+    # manuel rendrait leur deuxième roue muette. ColorWheel2 est là pour qui le
+    # choisit dans l'éditeur.
     "COLOR2":             "ColorWheel",
     "COLORWHEEL":         "ColorWheel",
     "CTOMIXER":           "CTO",

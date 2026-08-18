@@ -12,11 +12,12 @@ from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
     QMenu, QComboBox, QFileDialog, QMessageBox, QDialog, QSlider, QSpinBox,
-    QStackedWidget, QProgressBar, QColorDialog, QScrollArea
+    QStackedWidget, QProgressBar, QColorDialog, QScrollArea,
+    QFormLayout, QDoubleSpinBox, QDialogButtonBox
 )
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QMimeData
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QMimeData, QSize
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtGui import QColor, QFont, QBrush, QCursor, QDrag
+from PySide6.QtGui import QColor, QFont, QBrush, QCursor, QDrag, QActionGroup
 try:
     from PySide6.QtMultimedia import QMediaPlayer
 except ImportError:
@@ -3041,6 +3042,41 @@ class LiveModePanel(QWidget):
             self.settings_applied.emit(cfg)
 
 
+# Feuille de style UNIQUE des menus du séquenceur.
+#
+# Il y en avait quatre différentes — clic droit sur une ligne, clic droit sur un
+# média, menu de la ligne PAUSE et menu du bouton DMX — avec des bordures, des
+# rayons et des couleurs de survol qui ne se ressemblaient pas. Le menu changeait
+# donc d'allure selon l'endroit exact du clic, ce qui donnait l'impression que
+# ce n'était pas le même logiciel. Un seul style ici, utilisé partout.
+#
+# `QMenu::item:disabled` sert aux TITRES de section : une action désactivée est
+# le seul moyen d'obtenir un intitulé non cliquable dans un QMenu Qt.
+_SEQ_MENU_SS = """
+    QMenu {
+        background: #161616;
+        border: 1px solid #2a2a2a;
+        border-radius: 6px;
+        padding: 6px;
+    }
+    QMenu::item {
+        padding: 7px 26px 7px 24px;
+        border-radius: 4px;
+        color: #ddd;
+        font-size: 12px;
+    }
+    QMenu::item:selected { background: #2a4a5a; color: #fff; }
+    QMenu::item:disabled {
+        color: #5a5a5a;
+        font-size: 9px;
+        font-weight: bold;
+        padding: 8px 10px 3px 10px;
+    }
+    QMenu::separator { height: 1px; background: #2a2a2a; margin: 5px 8px; }
+    QMenu::indicator { width: 14px; height: 14px; left: 6px; }
+"""
+
+
 class Sequencer(QFrame):
     """Sequenceur de medias avec gestion des sequences lumiere"""
 
@@ -3048,6 +3084,12 @@ class Sequencer(QFrame):
     # Stocké sur l'item → suit la ligne lors d'un swap et survit à un renommage.
     LOOP_ROLE = Qt.UserRole + 1
     _LOOP_PREFIX = "\U0001f501 "   # « 🔁 » affiché devant le nom dans la playlist
+
+    # Fondus audio de la ligne, en MILLISECONDES, portés par le même item que
+    # LOOP_ROLE — donc suivis lors d'un déplacement de ligne et conservés au
+    # renommage. 0 = pas de fondu.
+    FADE_IN_ROLE  = Qt.UserRole + 2
+    FADE_OUT_ROLE = Qt.UserRole + 3
 
     def __init__(self, player_ui):
         super().__init__()
@@ -3076,6 +3118,11 @@ class Sequencer(QFrame):
         # Couleurs IA Lumiere par ligne
         self.ia_colors = {}  # {row: QColor}
         self.ia_analysis = {}  # {row: {"energy_map": [...], "beats": [...]}}
+        # Prereglages IA Lumiere par ligne — couleurs, mouvements de lyres,
+        # gobos et nervosite propres a CE media. `ia_colors` ne portait qu'une
+        # couleur dominante ; il est conserve pour l'indicateur de la colonne et
+        # pour relire les shows enregistres avant les prereglages.
+        self.ia_settings = {}  # {row: IASettings}
         self.image_durations = {}  # {row: seconds} - duree d'affichage des images
         self._loading = False  # Flag pour eviter dialog pendant load_show
         self._temp_players = []  # QMediaPlayer temporaires pour detection duree
@@ -3208,6 +3255,10 @@ class Sequencer(QFrame):
         self.table.customContextMenuRequested.connect(self.show_row_context_menu)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(55)
+        # Deux cases de marqueurs devant le titre (fondu, boucle) : sans taille
+        # explicite, Qt réduit l'image au carré du style et la moitié droite
+        # sort du cadre. Voir `_row_marks_icon`.
+        self.table.setIconSize(QSize(*self.MARK_ICON_SIZE))
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setColumnWidth(0, 50)
         self.table.setColumnWidth(2, 90)
@@ -3282,21 +3333,7 @@ class Sequencer(QFrame):
     def show_add_menu(self):
         """Menu contextuel pour ajouter media, pause ou tempo"""
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background: #1a1a1a;
-                border: 1px solid #2a2a2a;
-                padding: 8px;
-            }
-            QMenu::item {
-                padding: 8px 20px;
-                border-radius: 4px;
-                color: #ddd;
-            }
-            QMenu::item:selected {
-                background: #2a4a5a;
-            }
-        """)
+        menu.setStyleSheet(_SEQ_MENU_SS)
         menu.addAction(tr("seq_menu_add_media"), self.add_files_dialog)
         menu.addAction(tr("seq_menu_add_pause"), self.add_pause)
         menu.exec(QCursor.pos())
@@ -3565,29 +3602,23 @@ class Sequencer(QFrame):
         self._style_dmx_btn(btn, "Manuel")
 
         def _show_mode_menu(_, c=combo, b=btn, r=row):
+            # Même section de modes que le clic droit (`_add_dmx_mode_section`) :
+            # les deux menus listaient les modes différemment, et celui-ci
+            # affichait les codes bruts (« IA Lumiere ») au lieu de libellés.
             menu = QMenu(b)
-            menu.setStyleSheet("""
-                QMenu { background:#1a1a1a; border:1px solid #2a2a2a; padding:4px; }
-                QMenu::item { padding:6px 18px; color:#ddd; border-radius:3px; }
-                QMenu::item:selected { background:#2a4a5a; }
-                QMenu::separator { height:1px; background:#2a2a2a; margin:3px 8px; }
-            """)
-            for i in range(c.count()):
-                txt = c.itemText(i)
-                act = menu.addAction(txt)
-                act.setCheckable(True)
-                act.setChecked(c.currentText() == txt)
+            menu.setStyleSheet(_SEQ_MENU_SS)
+            self._add_dmx_mode_section(menu, r, avec_titre=False)
             menu.addSeparator()
             rec_act = menu.addAction(tr("seq_rec_light"))
-            rec_act.setData("__rec__")
+            rec_act.setData(("__rec__", r))
             chosen = menu.exec(b.mapToGlobal(b.rect().bottomLeft()))
             if not chosen:
                 return
-            if chosen.data() == "__rec__":
+            donnee = chosen.data()
+            if isinstance(donnee, (tuple, list)) and donnee and donnee[0] == "__rec__":
                 QTimer.singleShot(0, lambda: self.open_light_editor_for_row(r))
             else:
-                mode = chosen.text()
-                QTimer.singleShot(0, lambda m=mode: c.setCurrentText(m))
+                self._handle_dmx_mode_action(chosen, r)
 
         btn.clicked.connect(_show_mode_menu)
         layout.addWidget(btn)
@@ -3672,6 +3703,8 @@ class Sequencer(QFrame):
                     color2 = self.ia_colors.get(r2)
                     analysis1 = self.ia_analysis.get(r1)
                     analysis2 = self.ia_analysis.get(r2)
+                    settings1 = self.ia_settings.get(r1)
+                    settings2 = self.ia_settings.get(r2)
 
                     self.table.removeCellWidget(r1, col)
                     self.table.removeCellWidget(r2, col)
@@ -3702,6 +3735,10 @@ class Sequencer(QFrame):
                             self.ia_analysis[r1] = analysis2
                         elif r1 in self.ia_analysis:
                             del self.ia_analysis[r1]
+                        if settings2 is not None:
+                            self.ia_settings[r1] = settings2
+                        elif r1 in self.ia_settings:
+                            del self.ia_settings[r1]
                     elif w2:
                         self.table.setCellWidget(r1, col, QWidget())
 
@@ -3727,6 +3764,10 @@ class Sequencer(QFrame):
                             self.ia_analysis[r2] = analysis1
                         elif r2 in self.ia_analysis:
                             del self.ia_analysis[r2]
+                        if settings1 is not None:
+                            self.ia_settings[r2] = settings1
+                        elif r2 in self.ia_settings:
+                            del self.ia_settings[r2]
                     elif w1:
                         self.table.setCellWidget(r2, col, QWidget())
                 else:
@@ -3791,7 +3832,13 @@ class Sequencer(QFrame):
         self.is_dirty = True
 
     def _reindex_ia_colors(self, deleted_row):
-        """Reindexe ia_colors, ia_analysis et image_durations apres suppression d'une ligne"""
+        """Reindexe ia_colors, ia_settings, ia_analysis et image_durations apres
+        suppression d'une ligne"""
+        if deleted_row in self.ia_settings:
+            del self.ia_settings[deleted_row]
+        self.ia_settings = {(r - 1 if r > deleted_row else r): v
+                            for r, v in self.ia_settings.items()}
+
         if deleted_row in self.ia_colors:
             del self.ia_colors[deleted_row]
         new_colors = {}
@@ -3843,6 +3890,7 @@ class Sequencer(QFrame):
             return {(old + 1 if old >= inserted_row else old): v for old, v in d.items()}
         self.sequences       = _shift(self.sequences)
         self.ia_colors       = _shift(self.ia_colors)
+        self.ia_settings     = _shift(self.ia_settings)
         self.ia_analysis     = _shift(self.ia_analysis)
         self.image_durations = _shift(self.image_durations)
 
@@ -3850,6 +3898,7 @@ class Sequencer(QFrame):
         self.table.setRowCount(0)
         self.current_row = -1
         self.ia_colors = {}
+        self.ia_settings = {}
         self.ia_analysis = {}
         self.image_durations = {}
         self.is_dirty = False
@@ -3860,6 +3909,97 @@ class Sequencer(QFrame):
             self.table.item(row, 3).setText(str(vol))
             self.is_dirty = True
 
+    # Noms des modes DMX dans les menus. Volontairement COURTS : une phrase
+    # d'explication en face de chaque ligne (« Manuel — faders et pads ») allonge
+    # le menu, le rend bavard, et n'apprend rien à quelqu'un qui s'en sert tous
+    # les jours. Le nom seul suffit ; le pictogramme reprend celui du badge de la
+    # colonne, pour qu'on retrouve la même chose au même endroit.
+    #
+    # Les CODES restent ceux du combo — voir `_SS_BTN` et la note du chargement de
+    # show : on manipule le code, jamais le libellé, sinon `setCurrentText` échoue
+    # et le mode retombe silencieusement sur Manuel.
+    # Clé i18n de chaque mode. Les libellés étaient écrits en dur en français :
+    # le menu restait en français quelle que soit la langue de l'app, alors que
+    # tout ce qui l'entoure était traduit. L'emoji vit dans `i18n.py` avec le
+    # texte, comme pour les autres entrées de ce menu.
+    _MODE_MENU_KEYS = {
+        "Manuel":       "seq_mode_manual",
+        "IA Lumiere":   "seq_mode_ai",
+        "Play Lumiere": "seq_mode_lightseq",
+        "Programme":    "seq_mode_program",
+    }
+
+    @classmethod
+    def _mode_menu_label(cls, code: str) -> str:
+        """Libellé affiché d'un mode DMX. Le CODE reste la valeur stockée.
+
+        ⚠️ Ne jamais renvoyer ce libellé à `combo.setCurrentText()` : le combo
+        contient les codes (« IA Lumiere »), et les fichiers de show aussi.
+        """
+        key = cls._MODE_MENU_KEYS.get(code)
+        return tr(key) if key else code
+
+    def _add_dmx_mode_section(self, menu, row, avec_titre=True):
+        """Ajoute la section « MODE DMX » à un menu, avec le mode courant coché.
+
+        Partagée entre le clic droit sur la ligne et le bouton de la colonne DMX :
+        les deux proposaient des choses différentes (le bouton listait les modes,
+        le clic droit non), donc l'utilisateur devait deviner lequel des deux
+        ouvrir selon ce qu'il voulait faire.
+
+        Rend la liste des actions créées, à passer à `_handle_dmx_mode_action`.
+        """
+        combo = self._get_dmx_combo(row)
+        if combo is None:
+            return []
+        if avec_titre:
+            menu.addAction("MODE DMX").setEnabled(False)
+
+        groupe = QActionGroup(menu)
+        groupe.setExclusive(True)
+        actions = []
+        courant = combo.currentText()
+        for i in range(combo.count()):
+            code = combo.itemText(i)
+            act = menu.addAction(self._mode_menu_label(code))
+            act.setCheckable(True)
+            act.setChecked(code == courant)
+            act.setData(("__mode__", code))
+            groupe.addAction(act)
+            actions.append(act)
+
+        # Réglages IA : seulement quand la ligne est en IA — ailleurs, l'entrée
+        # ouvrirait une fenêtre qui ne piloterait rien.
+        if courant == "IA Lumiere":
+            act = menu.addAction(tr("seq_mode_ai_settings"))
+            act.setData(("__ia_settings__", row))
+            actions.append(act)
+        return actions
+
+    def _handle_dmx_mode_action(self, action, row) -> bool:
+        """Exécute une action produite par `_add_dmx_mode_section`. Rend True si traitée."""
+        # ⚠️ Qt fait transiter `setData` par un QVariant, qui rend un tuple sous
+        # forme de LISTE. Tester `isinstance(..., tuple)` seul ne matche jamais,
+        # et le changement de mode passait silencieusement à la trappe.
+        donnee = action.data() if action else None
+        if not isinstance(donnee, (tuple, list)) or not donnee:
+            return False
+        genre = donnee[0]
+        if genre == "__mode__":
+            code = donnee[1]
+            combo = self._get_dmx_combo(row)
+            if combo is not None and combo.currentText() != code:
+                # Signaux NON bloqués : c'est `on_dmx_changed` qui ouvre les
+                # réglages IA et lance l'analyse audio. Le différer d'un tour de
+                # boucle laisse le menu se fermer avant qu'une fenêtre modale
+                # s'ouvre par-dessus.
+                QTimer.singleShot(0, lambda c=combo, m=code: c.setCurrentText(m))
+            return True
+        if genre == "__ia_settings__":
+            QTimer.singleShot(0, lambda r=donnee[1]: self._on_color_indicator_clicked(r))
+            return True
+        return False
+
     def show_row_context_menu(self, pos):
         """Menu contextuel sur une ligne du sequenceur"""
         item = self.table.itemAt(pos)
@@ -3869,19 +4009,7 @@ class Sequencer(QFrame):
         selected_rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
         row = item.row()
 
-        _MENU_SS = """
-            QMenu {
-                background: #1a1a1a;
-                border: 1px solid #2a2a2a;
-                padding: 8px;
-            }
-            QMenu::item {
-                padding: 8px 20px;
-                border-radius: 4px;
-                color: #ddd;
-            }
-            QMenu::item:selected { background: #2a4a5a; }
-        """
+        _MENU_SS = _SEQ_MENU_SS   # style commun à tous les menus du séquenceur
 
         # ── Multi-sélection ────────────────────────────────────────────────
         if len(selected_rows) > 1:
@@ -3889,10 +4017,30 @@ class Sequencer(QFrame):
             menu.setStyleSheet(_MENU_SS)
             menu.addAction(tr("seq_f_tracks_sel", a0=len(selected_rows))).setEnabled(False)
             menu.addSeparator()
-            ia_act  = menu.addAction(tr("seq_switch_to_ai"))
-            man_act = menu.addAction(tr("seq_switch_to_manual"))
+            menu.addAction("MODE DMX").setEnabled(False)
+            ia_act  = menu.addAction(self._mode_menu_label("IA Lumiere"))
+            man_act = menu.addAction(self._mode_menu_label("Manuel"))
+
+            # Fondus de toute la sélection. C'est CE menu qui s'ouvre dès qu'il
+            # y a plus d'une ligne — l'entrée posée dans le menu à une seule
+            # ligne n'y apparaissait jamais, donc régler vingt morceaux d'un
+            # coup était impossible alors même que le code savait le faire.
+            fade_rows = self.fade_target_rows(row)
+            fade_act = fade_off_act = None
+            if fade_rows:
+                menu.addSeparator()
+                menu.addAction("MÉDIA").setEnabled(False)
+                fade_act = menu.addAction(
+                    tr("seq_menu_fade") + f"  ({len(fade_rows)})")
+                if any(any(self.get_row_fades(r)) for r in fade_rows):
+                    fade_off_act = menu.addAction(
+                        tr("seq_menu_fade_off") + f"  ({len(fade_rows)})")
+
             menu.addSeparator()
-            del_act = menu.addAction(tr("seq_f_delete", a0=len(selected_rows)))
+            menu.addAction("ACTION").setEnabled(False)
+            # `seq_f_delete` est l'un des rares libellés SANS emoji dans i18n.py
+            # (contrairement à `seq_menu_delete`) : celui-ci est donc à sa place.
+            del_act = menu.addAction("🗑️  " + tr("seq_f_delete", a0=len(selected_rows)))
 
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
 
@@ -3915,6 +4063,14 @@ class Sequencer(QFrame):
                         else:
                             self._apply_default_style(combo)
                 self.is_dirty = True
+            elif fade_act is not None and action == fade_act:
+                # Différé d'un tour : le menu doit s'être fermé avant qu'une
+                # boîte modale s'ouvre par-dessus (même raison qu'au changement
+                # de mode DMX plus haut).
+                QTimer.singleShot(0, lambda r=fade_rows[0]: self.edit_row_fades(r))
+            elif fade_off_act is not None and action == fade_off_act:
+                for r in fade_rows:
+                    self.set_row_fades(r, 0, 0)
             elif action == del_act:
                 self.delete_selected()
             return
@@ -3928,8 +4084,13 @@ class Sequencer(QFrame):
         if data and (str(data) == "PAUSE" or str(data).startswith("PAUSE:")):
             menu = QMenu(self)
             menu.setStyleSheet(_MENU_SS)
+            menu.addAction("PAUSE").setEnabled(False)
             edit_action   = menu.addAction(tr("seq_menu_set_duration"))
+            menu.addSeparator()
+            menu.addAction("LUMIÈRE").setEnabled(False)
             rec_action    = menu.addAction(tr("seq_menu_rec_light"))
+            menu.addSeparator()
+            menu.addAction("ACTION").setEnabled(False)
             duplicate_action = menu.addAction(tr("seq_duplicate_with_rec"))
             delete_action = menu.addAction(tr("seq_menu_delete"))
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
@@ -4248,8 +4409,8 @@ class Sequencer(QFrame):
             self._apply_ia_style(combo)
 
             if not self._loading:
-                # Demander la couleur dominante
-                color = self.player_ui.show_ia_color_dialog()
+                # Réglages IA de CETTE ligne (couleurs, mouvements, nervosité).
+                color = self._open_ia_settings(row)
                 if color:
                     self.ia_colors[row] = color
                     self._update_color_indicator(row, color)
@@ -4273,6 +4434,32 @@ class Sequencer(QFrame):
         else:
             self._apply_default_style(combo)
             self._update_color_indicator(row, None)
+
+    def get_ia_settings(self, row):
+        """Prereglage IA de cette ligne, cree a la demande.
+
+        Trois provenances, dans cet ordre :
+          1. deja en memoire (ou relu du .tui) ;
+          2. show enregistre avant les prereglages : on repart de la couleur
+             dominante (`ia_colors`) pour rester proche du rendu d'origine ;
+          3. ligne neuve : on copie l'etat courant du panneau LIVE, pour que
+             l'utilisateur retrouve l'ambiance qu'il vient de regler en live.
+
+        La copie du panneau est faite UNE fois, a la creation : ensuite le
+        prereglage vit sa vie et le panneau LIVE peut changer sans toucher au
+        show. C'est tout l'interet du reglage par media.
+        """
+        s = self.ia_settings.get(row)
+        if s is not None:
+            return s
+        from ia_settings import IASettings
+        col = self.ia_colors.get(row)
+        if col is not None:
+            s = IASettings.from_dominant_color(col)
+        else:
+            s = IASettings.from_panel(getattr(self, 'live_panel', None))
+        self.ia_settings[row] = s
+        return s
 
     def _analyze_ia_for_row(self, row, color):
         """Analyse audio pour une ligne IA Lumiere (au moment de la selection)"""
@@ -4329,13 +4516,40 @@ class Sequencer(QFrame):
         print(f"IA Lumiere: analyse pre-calculee pour ligne {row}")
 
     def _on_color_indicator_clicked(self, row):
-        """Clic sur le carre couleur - permet de changer la couleur sans re-analyser"""
-        color = self.player_ui.show_ia_color_dialog()
+        """Clic sur le carre couleur — rouvre les reglages IA sans re-analyser."""
+        color = self._open_ia_settings(row)
         if color:
             self.ia_colors[row] = color
             self._update_color_indicator(row, color)
             self.player_ui.audio_ai.set_dominant_color(color)
             self.is_dirty = True
+
+    def _open_ia_settings(self, row):
+        """Ouvre les reglages IA de la ligne. Rend la couleur d'indicateur, ou None si annule.
+
+        La couleur rendue sert a deux choses : le carre de la colonne DMX, et la
+        `dominant_color` de l'analyse audio — dont l'IA derive encore sa palette
+        pour la tuile AUTO et pour les fixtures qu'aucune tuile ne couvre. On la
+        prend sur la premiere couleur UNIE du pool : c'est celle que
+        l'utilisateur voit jouer en premier, donc celle qui represente le mieux
+        l'ambiance qu'il vient de regler.
+        """
+        from ia_settings_dialog import IASettingsDialog
+        titre_item = self.table.item(row, 1)
+        titre = titre_item.text() if titre_item else ""
+        dlg = IASettingsDialog(self.get_ia_settings(row), titre, self)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        reglages = dlg.resultat()
+        self.ia_settings[row] = reglages
+        self.is_dirty = True
+
+        for key in [reglages.current_color_tile] + list(reglages.color_tile_pool):
+            c1, _ = reglages.get_color_data(key)
+            if c1 is not None:
+                return c1
+        # Pool ne contenant que AUTO : l'IA choisit seule, on garde un repere neutre.
+        return QColor("#ffffff")
 
     def update_ui_state(self):
         for r in range(self.table.rowCount()):
@@ -4372,6 +4586,8 @@ class Sequencer(QFrame):
 
     def play_row(self, row):
         if 0 <= row < self.table.rowCount():
+            if self._fade_out_before(row):
+                return          # on repassera ici une fois le fondu terminé
             try:
                 self.update_playing_indicator(row)
 
@@ -4551,13 +4767,21 @@ class Sequencer(QFrame):
                     if hasattr(self.player_ui, 'hide_image'):
                         self.player_ui.hide_image()
 
-                    self.player_ui.audio.setVolume(vol / 100)
+                    # Nouveau média : le fondu de queue de la piste précédente
+                    # est terminé, on réarme pour celle-ci.
+                    self.player_ui._audio_fade_reset()
+                    fade_in, _ = self.get_row_fades(row)
+                    # Volume posé AVANT play() dans les deux cas : démarrer au
+                    # volume plein puis descendre laisserait passer un éclat.
+                    self.player_ui.audio.setVolume(0.0 if fade_in > 0 else vol / 100)
                     # Arreter proprement l'ancien media avant de changer de source
                     # (evite les signaux Qt parasites EndOfMedia lors du changement)
                     self.player_ui.player.stop()
                     self.player_ui._media_source_row = row
                     self.player_ui.player.setSource(QUrl.fromLocalFile(path))
                     self.player_ui.player.play()
+                    if fade_in > 0:
+                        self.player_ui.start_audio_fade(vol / 100, fade_in)
 
                     # Mettre a jour la sortie video externe
                     if hasattr(self.player_ui, '_update_video_output_state'):
@@ -5641,31 +5865,8 @@ class Sequencer(QFrame):
         item = self.table.item(row, 1)
         return bool(item and item.data(self.LOOP_ROLE))
 
-    def _loop_icon(self):
-        """Icône « répéter » nette (SVG → QIcon, même style que le REC Lumière). Mise en cache."""
-        ic = getattr(self, '_loop_icon_cache', None)
-        if ic is not None:
-            return ic
-        from PySide6.QtGui import QIcon, QPixmap, QPainter
-        from PySide6.QtSvg import QSvgRenderer
-        from PySide6.QtCore import QByteArray, QRectF
-        col = "#00d4ff"
-        inner = (f'<path fill="{col}" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4'
-                 f'v-3h12v-6h-2v4z"/>')
-        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">{inner}</svg>'
-        pix = QPixmap(32, 32)
-        pix.fill(Qt.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.Antialiasing)
-        QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(p, QRectF(0, 0, 32, 32))
-        p.end()
-        ic = QIcon(pix)
-        self._loop_icon_cache = ic
-        return ic
-
     def set_row_loop(self, row, enabled: bool):
         """Active/désactive la lecture en boucle d'un média + met à jour le visuel."""
-        from PySide6.QtGui import QIcon
         item = self.table.item(row, 1)
         if not item:
             return
@@ -5674,77 +5875,404 @@ class Sequencer(QFrame):
         txt = item.text()
         if txt.startswith(self._LOOP_PREFIX):
             item.setText(txt[len(self._LOOP_PREFIX):])
-        # Icône « répéter » devant le nom + teinte cyan pour bien voir la ligne
-        item.setIcon(self._loop_icon() if enabled else QIcon())
-        item.setForeground(QBrush(QColor("#00d4ff")) if enabled else QBrush(QColor("#e0e0e0")))
+        self._refresh_row_marks(row)
         self.is_dirty = True
 
     def toggle_row_loop(self, row):
         """Bascule l'état boucle depuis le menu contextuel."""
         self.set_row_loop(row, not self.is_row_loop(row))
 
+    # ── Marqueurs visuels de la ligne (boucle + fondus) ───────────────────────
+    # Boucle et fondus se signalent sur la MÊME case — l'item titre n'a qu'un
+    # emplacement d'icône et une infobulle. D'où ce point unique : quand chacun
+    # posait la sienne, activer la boucle effaçait le marqueur de fondu.
+
+    _FADE_COLOR = "#ffb300"     # ambre : ne se confond pas avec le cyan boucle
+
+    # Canevas à DEUX cases fixes : fondu à gauche, boucle à droite. Toutes les
+    # icônes de la colonne ont donc le même format, donc la même réduction — et
+    # la boucle reste à la même abscisse d'une ligne à l'autre. Une image dont
+    # la largeur suivrait le nombre de symboles serait écrasée par Qt, qui la
+    # met à l'échelle de `iconSize` en gardant ses proportions : trois symboles
+    # dans une case prévue pour un carré, et il ne reste qu'un trait.
+    _MARK_SLOT = 32                       # rendu 2× pour rester net une fois réduit
+    MARK_ICON_SIZE = (32, 16)             # taille d'affichage dans la table
+
+    def _row_marks_icon(self, loop: bool, fade_in: int, fade_out: int):
+        """Icône d'état de la ligne : rampe(s) de fondu + symbole de boucle."""
+        from PySide6.QtGui import QIcon, QPixmap, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray, QRectF
+        cle = (loop, bool(fade_in), bool(fade_out))
+        cache = getattr(self, '_row_icon_cache', None)
+        if cache is None:
+            cache = self._row_icon_cache = {}
+        if cle in cache:
+            return cache[cle]
+        if cle == (False, False, False):
+            cache[cle] = QIcon()
+            return cache[cle]
+
+        f = self._FADE_COLOR
+        if fade_in and fade_out:
+            # Un seul symbole pour les deux : la montée puis la descente,
+            # exactement la forme du volume sur la durée du morceau.
+            fondu = (f'<path fill="{f}" d="M2 21 L11 6 L11 21 Z"/>'
+                     f'<path fill="{f}" d="M22 21 L13 6 L13 21 Z"/>')
+        elif fade_in:
+            fondu = f'<path fill="{f}" d="M3 21 L21 5 L21 21 Z"/>'
+        elif fade_out:
+            fondu = f'<path fill="{f}" d="M3 5 L21 21 L3 21 Z"/>'
+        else:
+            fondu = ""
+        boucle = ('<path fill="#00d4ff" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3'
+                  'l-4 4 4 4v-3h12v-6h-2v4z"/>') if loop else ""
+
+        s = self._MARK_SLOT
+        pix = QPixmap(s * 2, s)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        for i, g in enumerate((fondu, boucle)):
+            if not g:
+                continue
+            svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">{g}</svg>'
+            QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(
+                p, QRectF(s * i, 0, s, s))
+        p.end()
+        cache[cle] = QIcon(pix)
+        return cache[cle]
+
+    def _fade_short(self, fade_in: int, fade_out: int) -> str:
+        """« ↗ 2 s », « ↘ 3 s », « ↗ 2 s ↘ 3 s » — forme compacte pour un menu.
+
+        Seul ce qui est posé apparaît : « 2 s / — » forçait à décoder un tiret
+        qui ne veut rien dire d'autre que « rien ici ».
+        """
+        bouts = []
+        if fade_in:
+            bouts.append(f"↗ {self._fmt_fade(fade_in)}")
+        if fade_out:
+            bouts.append(f"↘ {self._fmt_fade(fade_out)}")
+        return "  ".join(bouts)
+
+    def _fade_summary(self, fade_in: int, fade_out: int) -> str:
+        """« Fondu d'entrée 2 s » · « … · de sortie 4 s ». Vide si aucun fondu.
+
+        Seuls les fondus RÉELLEMENT posés sont cités : « de sortie — » disait au
+        lecteur d'aller vérifier quelque chose qui n'existe pas.
+        """
+        bouts = []
+        if fade_in:
+            bouts.append(f"{tr('seq_fade_in')} {self._fmt_fade(fade_in)}")
+        if fade_out:
+            bouts.append(f"{tr('seq_fade_out')} {self._fmt_fade(fade_out)}")
+        return "  ·  ".join(bouts)
+
+    def _refresh_row_marks(self, row):
+        """Repose icône, infobulle et teinte d'une ligne d'après son état."""
+        item = self.table.item(row, 1)
+        if not item:
+            return
+        loop = bool(item.data(self.LOOP_ROLE))
+        fi, fo = self.get_row_fades(row)
+        item.setIcon(self._row_marks_icon(loop, fi, fo))
+        # Teinte cyan réservée à la boucle : c'est elle qui change ce que fait
+        # la playlist (elle ne passe plus au suivant). Un fondu, lui, ne se
+        # signale que par son icône ambre — sinon toute la liste serait colorée.
+        item.setForeground(QBrush(QColor("#00d4ff") if loop else QColor("#e0e0e0")))
+        bulles = []
+        if loop:
+            bulles.append(tr("seq_menu_loop"))
+        resume = self._fade_summary(fi, fo)
+        if resume:
+            bulles.append(resume)
+        item.setToolTip("\n".join(bulles))
+
+    # ── Fondus audio de ligne ─────────────────────────────────────────────────
+
+    def _fade_out_before(self, row) -> bool:
+        """Descend le morceau en cours avant de passer à `row`. True = différé.
+
+        Point d'interception UNIQUE, en tête de `play_row` : tous les chemins qui
+        changent de piste y passent (fin de morceau, bouton Suivant, double-clic
+        dans la liste, pad de l'APC). En brancher un par un en aurait laissé.
+
+        Trois cas rendent la main tout de suite :
+          - rien ne joue, ou on relance la ligne courante (une boucle) ;
+          - la ligne quittée n'a pas de fondu de sortie ;
+          - un fondu est DÉJÀ en cours — c'est le deuxième appel, celui qu'on a
+            soi-même programmé, ou l'utilisateur qui reclique pour couper court.
+        """
+        pu = self.player_ui
+        if getattr(pu, '_audio_fade_cb', None) is not None:
+            # Fondu en cours : deuxième sollicitation = coupure immédiate.
+            pu._audio_fade_reset()
+            return False
+        cur = self.current_row
+        if cur < 0 or cur == row:
+            return False
+        if pu.player.playbackState() != QMediaPlayer.PlayingState:
+            return False
+        _, fade_out = self.get_row_fades(cur)
+        if fade_out <= 0:
+            return False
+        # Ne pas rejouer le fondu de queue : le morceau est déjà descendu tout
+        # seul en approchant de sa fin, repartir de 0 ne ferait qu'attendre.
+        if getattr(pu, '_audio_fade_armed', False):
+            return False
+        pu.start_audio_fade(0.0, fade_out, lambda: self.play_row(row))
+        # Armé APRÈS l'appel (start_ le remet à zéro) : au retour du callback,
+        # play_row repasse ici et ce drapeau est ce qui l'empêche de relancer un
+        # fondu — sinon la piste ne partirait jamais.
+        pu._audio_fade_armed = True
+        return True
+
+    def get_row_fades(self, row) -> tuple:
+        """(fondu d'entrée, fondu de sortie) en millisecondes. (0, 0) si aucun."""
+        item = self.table.item(row, 1)
+        if not item:
+            return (0, 0)
+        return (int(item.data(self.FADE_IN_ROLE) or 0),
+                int(item.data(self.FADE_OUT_ROLE) or 0))
+
+    def set_row_fades(self, row, fade_in_ms: int, fade_out_ms: int):
+        """Pose les fondus d'une ligne et met à jour son infobulle."""
+        item = self.table.item(row, 1)
+        if not item:
+            return
+        fi = max(0, int(fade_in_ms or 0))
+        fo = max(0, int(fade_out_ms or 0))
+        # None et non 0 : un rôle absent ne pèse rien dans le fichier de show,
+        # et `get_row_fades` lit les deux formes de la même façon.
+        item.setData(self.FADE_IN_ROLE, fi or None)
+        item.setData(self.FADE_OUT_ROLE, fo or None)
+        self._refresh_row_marks(row)
+        self.is_dirty = True
+
+    @staticmethod
+    def _fmt_fade(ms: int) -> str:
+        """0 → « — » ; 2500 → « 2,5 s » ; 4000 → « 4 s ».
+
+        Séparateur décimal selon la langue : l'anglais est le seul des cinq à
+        écrire « 4.5 s ». Un « 4,5 s » anglais se lit comme deux nombres.
+        """
+        if not ms:
+            return "—"
+        from i18n import get_language
+        txt = f"{ms / 1000.0:.1f}".rstrip("0").rstrip(".")
+        if get_language() != "en":
+            txt = txt.replace(".", ",")
+        return f"{txt} s"
+
+    def fade_target_rows(self, row) -> list:
+        """Lignes visées par un réglage de fondu : la sélection, ou la ligne visée.
+
+        Un clic droit HORS sélection ne doit pas retomber sur vingt lignes
+        sélectionnées ailleurs — dans ce cas la ligne cliquée gagne. Les lignes
+        sans média (PAUSE, TEMPO) sont écartées : elles n'ont pas de son.
+        """
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        if row not in rows:
+            rows = [row]
+        gardees = []
+        for r in rows:
+            it = self.table.item(r, 1)
+            p = it.data(Qt.UserRole) if it else None
+            if p and media_icon(p) in ("audio", "video"):
+                gardees.append(r)
+        return gardees or ([row] if row >= 0 else [])
+
+    def clear_row_fades(self, row):
+        """Retire les fondus de la sélection (ou de la ligne visée)."""
+        for r in self.fade_target_rows(row):
+            self.set_row_fades(r, 0, 0)
+
+    def edit_row_fades(self, row):
+        """Boîte de réglage des fondus — curseurs identiques à la vue « Curseurs »."""
+        # Style de curseur emprunté au menu du plan de feu : c'est le même geste
+        # (clic = saut à la valeur, molette par crans), autant que ce soit aussi
+        # le même objet. Import local : `sequencer` n'a pas besoin du plan de feu
+        # pour tout le reste, et le charger au niveau module fixerait un ordre
+        # d'import entre deux gros modules pour un seul dialogue.
+        from plan_de_feu import _CurseurCanal, _feuille_curseur
+
+        rows = self.fade_target_rows(row)
+        fi, fo = self.get_row_fades(row)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("seq_fade_title"))
+        dlg.setMinimumWidth(430)
+        dlg.setStyleSheet(
+            "QDialog{background:#0d0d0d;}"
+            "QLabel{color:#e0e0e0;background:transparent;}"
+            "QPushButton{background:#1a1a1a;color:#ccc;border:1px solid #2a2a2a;"
+            "border-radius:5px;padding:7px 16px;font-size:12px;}"
+            "QPushButton:hover{background:#242424;border-color:#3a3a3a;color:#fff;}"
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(14)
+
+        cible = QLabel(tr("seq_fade_rows", n=len(rows)) if len(rows) > 1
+                       else Path(self.table.item(row, 1).data(Qt.UserRole) or "").name)
+        cible.setStyleSheet("color:#00d4ff;font-size:12px;font-weight:bold;"
+                            "background:transparent;")
+        lay.addWidget(cible)
+
+        curseurs = {}
+
+        def ligne(cle, libelle, valeur_ms, teinte):
+            """Étiquette + curseur + valeur, alignées comme dans le menu 2D."""
+            w = QWidget()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(10)
+
+            lbl = QLabel(libelle)
+            lbl.setFixedWidth(120)
+            lbl.setStyleSheet("color:#999;font-size:12px;font-weight:bold;"
+                              "background:transparent;")
+
+            sli = _CurseurCanal(Qt.Horizontal)
+            # Unité = le DIXIÈME de seconde : la molette de _CurseurCanal avance
+            # de 5 crans, soit un demi-pas de seconde — le pas de réglage d'un
+            # fondu en régie. Ctrl donne le dixième, Maj deux secondes et demie.
+            sli.setRange(0, 600)
+            sli.setValue(int(round(valeur_ms / 100.0)))
+            sli.setStyleSheet(_feuille_curseur(True, teinte))
+            sli.setFixedHeight(22)
+            sli.setCursor(Qt.PointingHandCursor)
+
+            val = QLabel()
+            val.setFixedWidth(58)
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            val.setStyleSheet(f"color:{teinte};font-size:12px;font-weight:bold;"
+                              "background:transparent;")
+
+            def montrer(v):
+                val.setText(self._fmt_fade(v * 100))
+            sli.valueChanged.connect(montrer)
+            montrer(sli.value())
+
+            h.addWidget(lbl)
+            h.addWidget(sli, 1)
+            h.addWidget(val)
+            curseurs[cle] = sli
+            lay.addWidget(w)
+
+        ligne("in", tr("seq_fade_in"), fi, "#00d4ff")
+        ligne("out", tr("seq_fade_out"), fo, self._FADE_COLOR)
+
+        hint = QLabel(tr("seq_fade_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#666;font-size:11px;background:transparent;")
+        lay.addWidget(hint)
+
+        barre = QHBoxLayout()
+        btn_clear = QPushButton(tr("seq_fade_clear"))
+        btn_clear.setStyleSheet(
+            "QPushButton{background:#2a0000;color:#cc4444;border:1px solid #3a1111;"
+            "border-radius:5px;padding:7px 16px;font-size:12px;}"
+            "QPushButton:hover{background:#440000;color:#ff6666;}")
+        # Remet les deux curseurs à zéro plutôt que de fermer : on voit ce qu'on
+        # va valider, et on peut se raviser par Annuler.
+        btn_clear.clicked.connect(lambda: [c.setValue(0) for c in curseurs.values()])
+        barre.addWidget(btn_clear)
+        barre.addStretch()
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        # Libellés posés à la main : les traductions natives de Qt ne sont pas
+        # chargées ici, un « Cancel » anglais s'affichait dans une boîte française.
+        btns.button(QDialogButtonBox.Cancel).setText(tr("btn_cancel"))
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        barre.addWidget(btns)
+        lay.addLayout(barre)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        for r in rows:
+            self.set_row_fades(r, curseurs["in"].value() * 100,
+                               curseurs["out"].value() * 100)
+
     def show_media_context_menu(self, pos):
-        """Menu contextuel sur media"""
+        """Menu contextuel sur media — sections MODE DMX / LUMIÈRE / MÉDIA / LIGNE."""
         row = self.table.rowAt(pos.y())
         if row < 0:
             return
 
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background: #1a1a1a;
-                color: white;
-                border: 2px solid #4a4a4a;
-                padding: 5px;
-            }
-            QMenu::item {
-                padding: 8px 30px;
-            }
-            QMenu::item:selected {
-                background: #4a8aaa;
-            }
-        """)
+        menu.setStyleSheet(_SEQ_MENU_SS)
 
         title_item = self.table.item(row, 1)
         path = title_item.data(Qt.UserRole) if title_item else None
         media_type = media_icon(path) if path else None
 
-        # Volume uniquement pour audio et video
+        # ⚠️ Ne JAMAIS préfixer une entrée d'un emoji ici : les libellés de
+        # `i18n.py` en portent déjà un (🔊 Volume, 🔁 Jouer en boucle, 🗑
+        # Supprimer…). En rajouter un affichait deux pictogrammes côte à côte,
+        # souvent les deux mêmes. L'emoji appartient à la traduction, pas au menu.
+
+        # ── Média ────────────────────────────────────────────────────────────
+        entrees_media = []
         if media_type in ("audio", "video"):
-            volume_action = menu.addAction(tr("seq_menu_volume"))
-            volume_action.triggered.connect(lambda: self.edit_media_volume(row))
-
-        # Definir la duree uniquement pour les images
+            entrees_media.append((tr("seq_menu_volume"),
+                                  lambda: self.edit_media_volume(row)))
         if media_type == "image":
-            duration_action = menu.addAction(tr("seq_menu_set_duration"))
-            duration_action.triggered.connect(lambda: self.edit_image_duration(row))
-
-        # Jouer en boucle (audio / video / image — pas les pauses)
+            entrees_media.append((tr("seq_menu_set_duration"),
+                                  lambda: self.edit_image_duration(row)))
+        if media_type in ("audio", "video"):
+            # Valeurs en clair dans le libellé : le seul autre repère est
+            # l'infobulle de la ligne, qu'il faut survoler pour voir.
+            _fi, _fo = self.get_row_fades(row)
+            _cibles = self.fade_target_rows(row)
+            _suffixe = f"  ({len(_cibles)})" if len(_cibles) > 1 else ""
+            entrees_media.append((
+                (tr("seq_menu_fade_set", v=self._fade_short(_fi, _fo))
+                 if (_fi or _fo) else tr("seq_menu_fade")) + _suffixe,
+                lambda: self.edit_row_fades(row)))
+            # Retrait direct, sans passer par la boîte : c'est le geste qu'on
+            # fait le plus souvent après coup, et sur toute une sélection.
+            if any(any(self.get_row_fades(r)) for r in _cibles):
+                entrees_media.append((tr("seq_menu_fade_off") + _suffixe,
+                                      lambda: self.clear_row_fades(row)))
         if media_type in ("audio", "video", "image"):
             loop_label = tr("seq_menu_loop_off") if self.is_row_loop(row) else tr("seq_menu_loop")
-            loop_action = menu.addAction(loop_label)
-            loop_action.triggered.connect(lambda: self.toggle_row_loop(row))
-
-        # Localiser le fichier dans l'explorateur système (fichiers réels)
+            entrees_media.append((loop_label, lambda: self.toggle_row_loop(row)))
         if path and media_type in ("audio", "video", "image"):
-            locate_action = menu.addAction(tr("seq_locate_file_m"))
             # NB : triggered émet un bool `checked` → on l'absorbe pour ne pas
             # écraser p (sinon _reveal_in_explorer reçoit False au lieu du chemin).
-            locate_action.triggered.connect(lambda checked=False, p=path: self._reveal_in_explorer(p))
+            entrees_media.append((tr("seq_locate_file_m"),
+                                  lambda checked=False, p=path: self._reveal_in_explorer(p)))
+        if entrees_media:
+            menu.addAction("MÉDIA").setEnabled(False)
+            for libelle, slot in entrees_media:
+                menu.addAction(libelle).triggered.connect(slot)
+            menu.addSeparator()
 
-        menu.addSeparator()
-
+        # ── Lumière ──────────────────────────────────────────────────────────
+        menu.addAction("LUMIÈRE").setEnabled(False)
         rec_action = menu.addAction(tr("seq_menu_rec_light"))
         rec_action.triggered.connect(lambda: self.open_light_editor_for_row(row))
 
+        # ── Mode DMX ─────────────────────────────────────────────────────────
+        menu.addSeparator()
+        mode_actions = self._add_dmx_mode_section(menu, row)
+
+        # ── Action ───────────────────────────────────────────────────────────
+        menu.addSeparator()
+        menu.addAction("ACTION").setEnabled(False)
         duplicate_action = menu.addAction(tr("seq_duplicate_with_rec"))
         duplicate_action.triggered.connect(lambda: self.duplicate_media_row(row))
-
-        menu.addSeparator()
         delete_action = menu.addAction(tr("seq_menu_delete"))
         delete_action.triggered.connect(lambda: self.delete_media_row(row))
 
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        choisie = menu.exec(self.table.viewport().mapToGlobal(pos))
+        # Les modes DMX passent par `data()`, pas par un `triggered` : le mode
+        # courant est coché, donc le re-cliquer ne doit rien déclencher.
+        if choisie in mode_actions:
+            self._handle_dmx_mode_action(choisie, row)
 
     def _reveal_in_explorer(self, path):
         """Ouvre l'explorateur (Windows/macOS/Linux) sur l'emplacement du média.
@@ -5933,6 +6461,11 @@ class Sequencer(QFrame):
             self.sequences[dst] = copy.deepcopy(self.sequences[row])
         if row in self.ia_colors:
             self.ia_colors[dst] = self.ia_colors[row]
+        if row in self.ia_settings:
+            # `copy()` et non deepcopy : le prereglage doit etre INDEPENDANT
+            # (le moteur y ecrit la couleur/le mouvement en cours pendant la
+            # lecture), mais deepcopy tenterait de cloner des QColor.
+            self.ia_settings[dst] = self.ia_settings[row].copy()
         if row in self.ia_analysis:
             self.ia_analysis[dst] = copy.deepcopy(self.ia_analysis[row])
         if row in self.image_durations:

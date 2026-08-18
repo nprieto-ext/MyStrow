@@ -6,6 +6,7 @@ import json
 import os
 import copy
 import time as _time
+from collections import Counter
 from i18n import tr
 from core import projector_selection_keys, ComboSansMolette
 from PySide6.QtWidgets import (
@@ -1070,6 +1071,7 @@ class ColorPickerBlock(QFrame):
             # ~40 fois par seconde et efface aussitôt la couleur choisie —
             # le curseur semblait alors sans effet. Libéré par CLEAR.
             proj._manual_color = True
+            proj.release_color_overrides()   # la couleur reprend la main sur R/G/B/W
             if self._is_cw_only(proj):
                 # Color Wheel : mapper la couleur choisie vers le slot le plus proche
                 slots = getattr(proj, 'color_wheel_slots', [])
@@ -1503,6 +1505,25 @@ def _ecrire_canal_modele(proj, ctype, valeur):
     if ctype in ("R", "G", "B"):
         base = getattr(proj, 'base_color', None)
         col  = QColor(base) if base else QColor(0, 0, 0)
+
+        # Sans canal Dim, le moteur n'émet PAS la couleur pure : il émet
+        # `base_color x level`, car ce sont les canaux couleur qui portent
+        # l'intensité (`_update_from_projectors_locked`, branche « pas de canal
+        # Dim »). Écrire seulement la couleur ne ressortait donc jamais telle
+        # quelle : à niveau 0 le canal restait à 0 quoi qu'on pousse, à 50 % on
+        # n'obtenait que la moitié — et le suivi live ramenait le curseur sous
+        # les doigts 0,4 s plus tard (remontée utilisateur, 17/08/2026).
+        #
+        # L'inverse exact du moteur est ici de replier le niveau dans la
+        # couleur : les deux autres composantes gardent EXACTEMENT la valeur
+        # qu'elles émettaient, celle qu'on tient sort telle quelle. Rien ne
+        # change sur scène, et le curseur tient.
+        niveau = int(getattr(proj, 'level', 100) or 0)
+        if niveau != 100 and "Dim" not in (getattr(proj, 'dmx_profile', None) or []):
+            f = niveau / 100.0
+            col = QColor(int(col.red() * f), int(col.green() * f), int(col.blue() * f))
+            proj.level = 100
+
         (col.setRed if ctype == "R" else
          col.setGreen if ctype == "G" else col.setBlue)(v)
         proj.set_color(col)
@@ -1558,6 +1579,38 @@ _CANAUX_MODELE = set(_CANAL_ATTR_SIMPLE) | {
     "R", "G", "B", "Dim", "Dim2", "Smoke", "Strobe", "Shutter",
     "Pan", "PanFine", "Tilt", "TiltFine",
 }
+
+
+def _feuille_curseur(plein, teinte):
+    """Feuille de style d'un curseur de canal, teintée.
+
+    Partagée par les DEUX vues du menu contextuel — la vue « Curseurs » et le
+    panneau métier (Dim, Strobe, UV/Blanc/Ambre, gobo, prisme, réglages
+    d'effet) : deux jeux de curseurs côte à côte dans le même menu n'ont aucune
+    raison de se ressembler « à peu près ».
+
+    `plein` = valeur menée par l'utilisateur (poignée teintée, remplissage
+    franc) ; sinon la variante sourde, que la vue brute donne aux canaux
+    qu'elle laisse au moteur.
+    """
+    if plein:
+        remplissage = ("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                       f"stop:0 {_rgba_hex(teinte, 0.45)},stop:1 {teinte})")
+        poignee, bord = teinte, "#0b0b0b"
+    else:
+        remplissage = ("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                       f"stop:0 {_rgba_hex(teinte, 0.18)},"
+                       f"stop:1 {_rgba_hex(teinte, 0.62)})")
+        poignee, bord = "#6e6e6e", "#0b0b0b"
+    return (
+        "QSlider{background:transparent;}"
+        "QSlider::groove:horizontal{background:#141414;height:9px;border-radius:4px;"
+        "border:1px solid #2a2a2a;}"
+        f"QSlider::sub-page:horizontal{{background:{remplissage};border-radius:4px;}}"
+        f"QSlider::handle:horizontal{{background:{poignee};width:12px;height:20px;"
+        f"margin:-7px 0;border-radius:3px;border:1px solid {bord};}}"
+        f"QSlider::handle:horizontal:hover{{background:{teinte};}}"
+    )
 
 
 class _CurseurCanal(QSlider):
@@ -2304,7 +2357,20 @@ class FixtureCanvas(QWidget):
                 b = int(c.blue()  * level)
                 return QColor(r, g, b)
             return QColor("#1a1a1a")
-        if proj.muted or proj.level == 0:
+        if proj.muted:
+            return QColor("#1a1a1a")
+        # Canaux couleur repris à la main (vue « Curseurs ») : ils ne passent
+        # plus par `color`/`level`, la fixture restait donc noire à l'écran
+        # alors qu'elle sortait du rouge — et sur un PAR sans canal Dim, son
+        # niveau vaut 0 en permanence, si bien que le test juste en dessous la
+        # déclarait éteinte quoi qu'on règle. À placer AVANT ce test, mais après
+        # le mute, qui lui coupe vraiment tout (le moteur zérote alors la
+        # fixture entière, forçages compris).
+        _forcee = (proj.display_color_override()
+                   if hasattr(proj, 'display_color_override') else None)
+        if _forcee is not None and (_forcee.red() or _forcee.green() or _forcee.blue()):
+            return _forcee
+        if proj.level == 0:
             return QColor("#1a1a1a")
         # Strobe visuel : clignotement selon strobe_speed
         strobe_spd = getattr(proj, 'strobe_speed', 0)
@@ -2352,7 +2418,16 @@ class FixtureCanvas(QWidget):
         r          = 9 if self.compact else 13
         _htp       = self.pdf._htp_overrides
         _htp_e     = _htp.get(id(proj)) if _htp else None
-        is_lit     = not proj.muted and (proj.level > 0 or (_htp_e is not None and _htp_e[0] > 0))
+        # `fill_color` vaut déjà la couleur émise, canaux repris à la main
+        # compris : une fixture pilotée uniquement par ces canaux-là a un niveau
+        # de 0 et s'affichait éteinte. On l'allume sur la couleur, pas sur le
+        # niveau, dès qu'elle sort autre chose que du noir.
+        is_lit     = not proj.muted and (
+            proj.level > 0
+            or (_htp_e is not None and _htp_e[0] > 0)
+            or (hasattr(proj, 'display_color_override')
+                and proj.display_color_override() is not None
+                and (fill_color.red() or fill_color.green() or fill_color.blue())))
         gc         = QColor(_GROUP_COLORS.get(proj.group, "#555555"))
 
         # Dimensions dérivées de r pour barre et fumee
@@ -3914,7 +3989,7 @@ class PlanDeFeu(QFrame):
             self.dmx_toggle_btn.setStyleSheet(
                 _BTN_SS.format(fg="#00cc66", bd="#00cc66", fgh="#00ff88", bdh="#00ff88")
             )
-            self.dmx_toggle_btn.clicked.connect(self._toggle_dmx_output)
+            self.dmx_toggle_btn.clicked.connect(self._on_dmx_toggle_clicked)
             toolbar.addWidget(self.dmx_toggle_btn)
 
             root.addLayout(toolbar)
@@ -4566,6 +4641,30 @@ class PlanDeFeu(QFrame):
 
     # ── DMX toggle ──────────────────────────────────────────────────
 
+    def _on_dmx_toggle_clicked(self, _checked=False):
+        """Clic sur le bouton DMX. Couper demande confirmation.
+
+        Seul CE chemin demande : couper le DMX à la main en pleine prestation
+        éteint toute la salle, et le bouton est petit, collé à ses voisins, dans
+        une barre qu'on manipule à tâtons dans le noir. Les autres chemins
+        passent par `_toggle_dmx_output` et ne demandent rien — une coupure
+        déclenchée depuis la tablette ou le Stream Deck est déjà un geste
+        délibéré, et personne n'est devant l'écran pour répondre.
+
+        ⚠️ Le bouton est `checkable` : son état a DÉJÀ basculé quand ce slot
+        s'exécute. Refuser veut donc dire le remettre comme il était.
+        """
+        if not self.dmx_toggle_btn.isChecked():        # on vient de passer OFF
+            rep = QMessageBox.question(
+                self, tr("pdf_dmx_off_title"), tr("pdf_dmx_off_msg"),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if rep != QMessageBox.Yes:
+                # `setChecked` n'émet pas `clicked` (réservé au geste utilisateur) :
+                # pas de récursion à craindre ici.
+                self.dmx_toggle_btn.setChecked(True)
+                return
+        self._toggle_dmx_output()
+
     def _toggle_dmx_output(self):
         if self.main_window and hasattr(self.main_window, '_license'):
             if not self.main_window._license.dmx_allowed:
@@ -5098,6 +5197,10 @@ class PlanDeFeu(QFrame):
             # couleur de cette fixture (sinon send_dmx_update la réapplique en
             # HTP 40 fois par seconde). Libérée par CLEAR.
             proj._manual_color = True
+            # Choisir une couleur reprend la main sur les canaux couleur : un
+            # R/G/B/W réglé au curseur brut primerait sinon sur elle, et la
+            # fixture resterait sur la teinte des curseurs.
+            proj.release_color_overrides()
             proj.base_color = color
             if proj.level == 0:
                 proj.level = 100
@@ -5260,9 +5363,28 @@ class PlanDeFeu(QFrame):
         #             par type piloterait tous ces canaux d'un coup, ce qui
         #             ruinerait la promesse « un curseur = un canal ». On force
         #             alors par numéro, seule clé prioritaire sur tout le reste.
+        #
+        # ⚠️ R/G/B/W d'une fixture à LED blanche ne sont PAS dans le modèle,
+        # malgré les propriétés qui portent leur nom. Le moteur y extrait le
+        # blanc commun (W = min(R,G,B)) et le SOUSTRAIT des trois autres :
+        # écrire « R = 200 » dans `base_color` ressortait donc ailleurs — le
+        # rouge restait à 0, le vert et le bleu baissaient et le blanc montait
+        # (remonté sur un PAR R/G/B/Blanc/Ambre/UV, 17/08/2026). Le blanc a le
+        # défaut symétrique : sa propriété est un BOOST qui s'AJOUTE au blanc
+        # extrait, jamais la valeur du canal.
+        #
+        # Et ce n'est pas rattrapable par un meilleur calcul : l'extraction
+        # impose min(R,G,B) = 0 en sortie, donc aucune couleur de base ne peut
+        # demander « du rouge à 200 avec du vert à 255 ». Ces quatre canaux-là
+        # sont hors modèle au même titre qu'un CTO ou un Lime, et se reprennent
+        # à la main — le liseré et le ↺ disent que le moteur ne les calcule plus.
+        _extraction_blanc = "W" in profile and {"R", "G", "B"} <= set(profile)
+
         def _voie(ctype):
             if profile.count(ctype) > 1:
                 return 'num'
+            if _extraction_blanc and ctype in ("R", "G", "B", "W"):
+                return 'type'
             return 'modele' if ctype in _CANAUX_MODELE else 'type'
 
         def _force_de(p, num, ctype, par_type):
@@ -5325,27 +5447,7 @@ class PlanDeFeu(QFrame):
                     "border-top-right-radius:4px;border-bottom-right-radius:4px;}"
                     f"QWidget#chrow:hover{{background:{survol};}}")
 
-        def _style_curseur(force, teinte):
-            # La teinte est TOUJOURS là (elle dit quel canal on tient) ; ce qui
-            # change avec le forçage, c'est l'éclat et la poignée.
-            if force:
-                remplissage = ("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                               f"stop:0 {_rgba_hex(teinte, 0.45)},stop:1 {teinte})")
-                poignee, bord = teinte, "#0b0b0b"
-            else:
-                remplissage = ("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                               f"stop:0 {_rgba_hex(teinte, 0.18)},"
-                               f"stop:1 {_rgba_hex(teinte, 0.62)})")
-                poignee, bord = "#6e6e6e", "#0b0b0b"
-            return (
-                "QSlider{background:transparent;}"
-                "QSlider::groove:horizontal{background:#141414;height:9px;border-radius:4px;"
-                "border:1px solid #2a2a2a;}"
-                f"QSlider::sub-page:horizontal{{background:{remplissage};border-radius:4px;}}"
-                f"QSlider::handle:horizontal{{background:{poignee};width:12px;height:20px;"
-                f"margin:-7px 0;border-radius:3px;border:1px solid {bord};}}"
-                f"QSlider::handle:horizontal:hover{{background:{teinte};}}"
-            )
+        _style_curseur = _feuille_curseur
 
         # ── Bandeau de titre : nom de la fixture + légende + « tout auto » ─
         # Le titre du menu, tout en haut, est commun aux deux vues et se perd
@@ -5375,22 +5477,12 @@ class PlanDeFeu(QFrame):
         textes.addWidget(titre); textes.addWidget(sous)
         bh.addLayout(textes, 1)
 
-        compteur = QLabel("")
-        compteur.setStyleSheet(
-            "color:#00d4ff;font-size:10px;font-weight:bold;padding:1px 8px;"
-            "border:1px solid rgba(0,212,255,0.45);border-radius:8px;"
-            "background:rgba(0,212,255,0.10);")
-        bh.addWidget(compteur)
-
-        tout_auto = QPushButton("↺  " + tr("pdf2_raw_all_auto"))
-        tout_auto.setToolTip(tr("pdf2_raw_all_auto_hint"))
-        tout_auto.setCursor(Qt.PointingHandCursor)
-        tout_auto.setStyleSheet(
-            "QPushButton{background:#1a1a1a;color:#7a7a7a;border:1px solid #333;"
-            "border-radius:4px;font-size:10px;padding:2px 9px;min-height:20px;}"
-            "QPushButton:hover{background:#0d2a33;color:#00d4ff;border-color:#00566a;}"
-            "QPushButton:disabled{background:transparent;color:#333;border-color:#262626;}")
-        bh.addWidget(tout_auto)
+        # Pas de compteur « N forcé » ni de « tout auto » ici : sur une fixture
+        # à LED blanche, R/G/B/W SONT repris à la main en permanence (voir
+        # `_extraction_blanc`), et annoncer « 4 forcés » à l'ouverture donnait
+        # l'impression d'un état anormal à réparer alors que c'est le
+        # fonctionnement normal de ces canaux. Le ↺ de chaque ligne reste le
+        # moyen de rendre un canal au moteur.
         _wa(bandeau)
 
         # ── Les lignes de canaux ─────────────────────────────────────────
@@ -5443,21 +5535,19 @@ class PlanDeFeu(QFrame):
             pl.setFixedWidth(38)
             pl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-            rb = QPushButton("↺")
-            rb.setFixedSize(26, 20)
-            rb.setToolTip(tr("pdf2_raw_auto") if voie != 'modele'
-                          else tr("pdf2_raw_linked"))
-            rb.setCursor(Qt.PointingHandCursor)
-            rb.setStyleSheet(
-                "QPushButton{background:#1a1a1a;color:#8a8a8a;border:1px solid #333;"
-                "border-radius:4px;font-size:11px;padding:0;}"
-                "QPushButton:hover{background:#0d2a33;color:#00d4ff;border-color:#00566a;}"
-                "QPushButton:disabled{background:transparent;color:#2a2a2a;border-color:#232323;}")
+            # Plus de bouton ↺ par ligne : un canal repris se rend au moteur en
+            # reprenant la main dessus (choisir une couleur libère R/G/B/W —
+            # `Projector.release_color_overrides`) ou par le Clear du menu. Mais
+            # l'état « cette ligne est reprise » reste nécessaire au suivi live,
+            # qui doit laisser tranquille un curseur que l'utilisateur mène : il
+            # est porté par ce dict, que `_appliquer` tient à jour.
+            etat = {'force': force is not None}
 
             def _appliquer(actif, _row=row, _no=no, _nl=nl, _sli=sli,
-                           _dl=dl, _pl=pl, _rb=rb, _t=teinte, _p=pair):
+                           _dl=dl, _pl=pl, _e=etat, _t=teinte, _p=pair):
                 """Habille TOUTE la ligne d'un seul appel : un seul endroit décide
                 à quoi ressemble « auto » et à quoi ressemble « forcé »."""
+                _e['force'] = actif
                 _row.setStyleSheet(_style_ligne(actif, _p, _t))
                 _sli.setStyleSheet(_style_curseur(actif, _t))
                 _no.setStyleSheet(_MONO + "background:transparent;font-size:11px;"
@@ -5471,53 +5561,30 @@ class PlanDeFeu(QFrame):
                                   f"font-weight:bold;color:{_t if actif else '#8d949a'};")
                 _pl.setStyleSheet("background:transparent;font-size:11px;"
                                   f"color:{'#7f878d' if actif else '#5b6165'};")
-                _rb.setEnabled(actif)
 
             _appliquer(force is not None)
 
             def _on_change(v, _n=num, _c=ctype, _v=voie, _pt=par_type,
-                           _dl=dl, _pl=pl, _rb=rb, _app=_appliquer):
+                           _dl=dl, _pl=pl, _e=etat, _app=_appliquer):
                 if _v == 'modele':
                     _ecrire(_n, _c, v)      # pas de forçage : la ligne reste « liée »
                 else:
                     _forcer(_n, _c, v, _pt)
-                    if not _rb.isEnabled():   # 1er contact : le canal passe en forcé
+                    if not _e['force']:       # 1er contact : le canal passe en forcé
                         _app(True)
-                        _maj_compteur()
                 _dl.setText(f"{v:>3}")
                 _pl.setText(_pct(v))
 
-            def _on_reset(_n=num, _c=ctype, _pt=par_type, _app=_appliquer, _maj=True):
-                _forcer(_n, _c, None, _pt)
-                _app(False)
-                if _maj:
-                    _maj_compteur()
-
             sli.valueChanged.connect(_on_change)
-            rb.clicked.connect(_on_reset)
 
-            for w in (no, nl, sli, dl, pl, rb):
+            for w in (no, nl, sli, dl, pl):
                 rh.addWidget(w)
             bv.addWidget(row)
-            lignes.append({'num': num, 'sli': sli, 'dl': dl, 'pl': pl,
-                           'rb': rb, 'reset': _on_reset})
+            lignes.append({'num': num, 'ctype': ctype, 'par_type': par_type,
+                           'sli': sli, 'dl': dl, 'pl': pl,
+                           'etat': etat, 'appliquer': _appliquer})
 
         bv.addStretch()
-
-        def _maj_compteur():
-            n = sum(1 for l in lignes if l['rb'].isEnabled())
-            compteur.setText(tr("pdf2_raw_forced", n=n))
-            compteur.setVisible(n > 0)
-            tout_auto.setEnabled(n > 0)
-
-        def _tout_auto():
-            for l in lignes:
-                if l['rb'].isEnabled():
-                    l['reset'](_maj=False)   # un seul recomptage, à la fin
-            _maj_compteur()
-
-        tout_auto.clicked.connect(_tout_auto)
-        _maj_compteur()
 
         # Hauteur bornée : au-delà, on fait défiler la liste plutôt que de
         # pousser le menu hors de l'écran (une barre pixel monte à 165 canaux).
@@ -5563,8 +5630,16 @@ class PlanDeFeu(QFrame):
                 return
             for l in lignes:
                 sli = l['sli']
-                if l['rb'].isEnabled():     # forcé : c'est l'utilisateur qui mène
-                    continue
+                if l['etat']['force']:
+                    # Reprise à la main : on n'écrase pas, SAUF si le forçage a
+                    # disparu du modèle entre-temps — un pad couleur, la palette
+                    # ou le Clear rendent ces canaux au moteur (voir
+                    # `Projector.release_color_overrides`). Sans ce test, la
+                    # ligne restait figée sur son ancienne valeur et le menu
+                    # affichait le contraire de ce qui sort.
+                    if _force_de(proj, l['num'], l['ctype'], l['par_type']) is not None:
+                        continue
+                    l['appliquer'](False)
                 if sli.isSliderDown():      # doigt sur le curseur : on se tait
                     continue
                 # Idem juste après un geste : entre deux crans de molette, la
@@ -5604,14 +5679,80 @@ class PlanDeFeu(QFrame):
         menu.setStyleSheet(_MENU_STYLE)
 
         _SS  = "color:#888; font-size:11px; font-weight:bold; border:none; background:transparent;"
-        _SLI = """
-            QSlider::groove:horizontal { background:#333; height:6px; border-radius:3px; }
-            QSlider::handle:horizontal { background:#00d4ff; width:14px; height:14px;
-                                         margin:-4px 0; border-radius:7px; }
-            QSlider::sub-page:horizontal {
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #005577,stop:1 #00d4ff);
-                border-radius:3px; }
-        """
+        # Mêmes curseurs que la vue « Curseurs » : même feuille de style
+        # (`_feuille_curseur`) et même classe (`_CurseurCanal`, qui saute à la
+        # valeur cliquée et se règle à la molette). Les deux vues du menu se
+        # manipulent donc pareil — viser 40 % se faisait ici en dix clics de
+        # page, là en un seul.
+        _SLI = _feuille_curseur(True, _TEINTE_DEFAUT)
+
+        # ── Grille commune des lignes « étiquette + curseur + valeur » ────
+        # Quatre sections construisaient chacune la sienne : Dim et Strobe avec
+        # une étiquette LIBRE (qui récupérait tout l'espace en trop et poussait
+        # son curseur au milieu du menu), les canaux spéciaux avec 52 px
+        # d'étiquette et un curseur figé à 140, les réglages d'effet avec 74 px
+        # et un curseur extensible, les canaux avancés avec une largeur calculée
+        # sur la longueur des noms. D'où quatre départs de curseur différents
+        # dans le même menu (capture utilisateur du 17/08/2026).
+        #
+        # Une seule grille ici : étiquette de largeur FIXE, curseur qui prend
+        # toute la place restante, valeur de largeur fixe collée à droite. Les
+        # trois colonnes tombent alors au même x d'une ligne à l'autre, quelle
+        # que soit la section — et quelle que soit la largeur du menu.
+        _LARG_ETIQ    = 96     # « DÉPHASAGE », « Effects », « Gobo 2 »…
+        _LARG_VAL     = 48     # « +100% », « Off », « 255 »
+        _MIN_CURSEUR  = 180    # comme la vue « Curseurs »
+        _HAUT_CURSEUR = 24     # idem : la poignée de 20 px doit tenir en entier
+
+        # Lignes dont la valeur vient du PROJECTEUR (et non d'un réglage de
+        # l'app comme la vitesse des effets rapides) : le Clear les remet à zéro
+        # sans fermer le menu, il faut donc pouvoir les rafraîchir.
+        _lignes_projo = []
+
+        def _grille(layout, lbl, sli, val, avant=(), formate=None):
+            """Pose la grille commune sur une ligne, et y range les 3 colonnes.
+
+            Le curseur reçoit TOUT l'étirement (`addWidget(sli, 1)`) : sans ça
+            l'espace en trop part dans l'étiquette ou dans la valeur, et le
+            curseur se retrouve décalé d'une ligne à l'autre.
+
+            `avant` glisse des boutons propres à la ligne entre l'étiquette et
+            le curseur (le ON/OFF du prisme) : ils décalent le DÉBUT de ce
+            curseur-là, mais sa fin et sa valeur restent dans les colonnes.
+            """
+            layout.setContentsMargins(12, 4, 12, 4); layout.setSpacing(10)
+            lbl.setFixedWidth(_LARG_ETIQ)
+            sli.setMinimumWidth(_MIN_CURSEUR)
+            sli.setMaximumWidth(16777215)      # défait un setFixedWidth hérité
+            # Réglages de la vue « Curseurs », sans lesquels le curseur ne LUI
+            # ressemble pas malgré la même feuille de style : la poignée fait
+            # 20 px de haut avec une marge négative, et le layout du menu ne
+            # donnait que 15 px à la barre — elle sortait rognée et aplatie.
+            sli.setFixedHeight(_HAUT_CURSEUR)
+            sli.setFocusPolicy(Qt.NoFocus)     # pas de rectangle de focus dans un menu
+            sli.setCursor(Qt.PointingHandCursor)
+            val.setFixedWidth(_LARG_VAL)
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            layout.addWidget(lbl)
+            for w in avant:
+                layout.addWidget(w)
+            layout.addWidget(sli, 1); layout.addWidget(val)
+            if formate is not None:
+                _lignes_projo.append((sli, val, formate))
+
+        def _remettre_lignes_a_zero():
+            """Remet les lignes du projecteur à 0 après un Clear.
+
+            Signaux bloqués : les rejouer réécrirait la valeur dans le
+            projecteur — inoffensif en soi (tout vient d'être mis à zéro), mais
+            `_flush` y repose `_manual_beam`, et le Clear vient justement de le
+            libérer pour rendre la fixture aux mémoires.
+            """
+            for sli, val, formate in _lignes_projo:
+                sli.blockSignals(True)
+                sli.setValue(0)
+                sli.blockSignals(False)
+                val.setText(formate(0))
 
         def _mk_slider_row(label_text, cur_val, max_val, on_change, label_w=None):
             """
@@ -5620,21 +5761,20 @@ class PlanDeFeu(QFrame):
             Constructeur unique pour TOUTES les sections (Pan/Tilt, roue, prisme,
             canaux avancés…) : sans ça chaque section refaisait sa ligne avec ses
             propres dimensions et couleurs, et le menu partait en patchwork.
+
+            `label_w` n'est plus honoré : la largeur d'étiquette est celle de la
+            grille commune, sinon la ligne ne s'alignerait plus sur les autres.
             """
             row_w = QWidget(); row_h = QHBoxLayout(row_w)
-            row_h.setContentsMargins(10, 4, 10, 4); row_h.setSpacing(8)
             lbl = QLabel(label_text); lbl.setStyleSheet(_SS)
-            if label_w:
-                lbl.setFixedWidth(label_w)
-            sli = QSlider(Qt.Horizontal)
+            sli = _CurseurCanal(Qt.Horizontal)
             sli.setRange(0, max_val); sli.setValue(cur_val)
-            sli.setFixedWidth(140); sli.setStyleSheet(_SLI)
+            sli.setStyleSheet(_SLI)
             val_lbl = QLabel(str(cur_val))
-            val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:28px;")
-            val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;")
             sli.valueChanged.connect(lambda v: val_lbl.setText(str(v)))
             sli.valueChanged.connect(on_change)
-            for w in (lbl, sli, val_lbl): row_h.addWidget(w)
+            _grille(row_h, lbl, sli, val_lbl, formate=str)
             return row_w
 
         def _flush(t=targets, grab=True):
@@ -5685,6 +5825,9 @@ class PlanDeFeu(QFrame):
                 p.focus = p.gobo2 = p.speed = p.mode_value = 0
                 p.channel_extras = {}
             _flush(grab=False)   # CLEAR libère la fixture, il ne la prend pas en main
+            # Le menu reste ouvert : ses curseurs afficheraient sinon les
+            # valeurs d'avant, sur une fixture qui vient d'être éteinte.
+            _remettre_lignes_a_zero()
 
         # ── Titre + Clear en haut à droite ──────────────────────────────
         if len(targets) == 1:
@@ -5707,7 +5850,12 @@ class PlanDeFeu(QFrame):
             "font-size:11px;padding:2px 8px;min-height:24px;}"
             "QPushButton:hover{background:#2a1a1a;color:#f44;border-color:#622;}"
         )
-        clear_top_btn.clicked.connect(lambda: (_clear_targets(), menu.close()))
+        # Le menu RESTE ouvert : on éteint souvent pour repartir d'une fixture
+        # propre et continuer à régler dans la foulée, et rouvrir le menu à
+        # chaque fois faisait perdre la sélection et la vue en cours.
+        # `lambda` obligatoire : `clicked(bool)` passerait son état coché en
+        # premier argument, qui atterrirait dans le `t=targets` de la closure.
+        clear_top_btn.clicked.connect(lambda: _clear_targets())
         title_h.addWidget(clear_top_btn)
 
         # ── Bascule CURSEURS ──────────────────────────────────────────────
@@ -5765,37 +5913,32 @@ class PlanDeFeu(QFrame):
         _dim_init = _dim_sv[2] if (_dim_sv and len(_dim_sv) > 2) else targets[0][0].level
 
         dim_w = QWidget(); dim_h = QHBoxLayout(dim_w)
-        dim_h.setContentsMargins(10, 5, 10, 5); dim_h.setSpacing(8)
         dim_lbl = QLabel(tr("pdf_dim_label")); dim_lbl.setStyleSheet(_SS)
-        dim_sli = QSlider(Qt.Horizontal)
+        dim_sli = _CurseurCanal(Qt.Horizontal)
         dim_sli.setRange(0, 100); dim_sli.setValue(_dim_init)
-        dim_sli.setFixedWidth(150); dim_sli.setStyleSheet(_SLI)
+        dim_sli.setStyleSheet(_SLI)
         dim_val = QLabel(f"{_dim_init}%")
-        dim_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; min-width:34px;")
-        dim_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        dim_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold;")
         dim_sli.valueChanged.connect(lambda v, t=targets: self._set_dimmer_for_targets(t, v))
         dim_sli.valueChanged.connect(lambda v: dim_val.setText(f"{v}%"))
-        for w in (dim_lbl, dim_sli, dim_val): dim_h.addWidget(w)
+        _grille(dim_h, dim_lbl, dim_sli, dim_val, formate=lambda v: f"{v}%")
         _wa(dim_w)
 
         # ── Strobe (tout sauf Machine à fumée) ───────────────────────────
         if proj.fixture_type != "Machine a fumee":
             menu.addSeparator()
             strobe_w = QWidget(); strobe_h = QHBoxLayout(strobe_w)
-            strobe_h.setContentsMargins(10, 5, 10, 5); strobe_h.setSpacing(8)
 
             strobe_lbl = QLabel(tr("pdf_strobe_label")); strobe_lbl.setStyleSheet(_SS)
             current_spd = getattr(targets[0][0], 'strobe_speed', 0)
 
-            strobe_sli = QSlider(Qt.Horizontal)
+            strobe_sli = _CurseurCanal(Qt.Horizontal)
             strobe_sli.setRange(0, 100)
             strobe_sli.setValue(current_spd)
-            strobe_sli.setFixedWidth(150)
             strobe_sli.setStyleSheet(_SLI)
 
             strobe_val = QLabel(f"{current_spd}%" if current_spd > 0 else tr("pdf_strobe_off"))
-            strobe_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; min-width:34px;")
-            strobe_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            strobe_val.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold;")
 
             def _on_strobe_speed(v, t=targets):
                 for p, g, i in t:
@@ -5805,8 +5948,8 @@ class PlanDeFeu(QFrame):
 
             strobe_sli.valueChanged.connect(_on_strobe_speed)
 
-            for w in (strobe_lbl, strobe_sli, strobe_val):
-                strobe_h.addWidget(w)
+            _grille(strobe_h, strobe_lbl, strobe_sli, strobe_val,
+                    formate=lambda v: f"{v}%" if v > 0 else tr("pdf_strobe_off"))
             _wa(strobe_w)
 
         # ── Canaux spéciaux : UV / Blanc / Ambre / Orange ────────────────────
@@ -5847,25 +5990,20 @@ class PlanDeFeu(QFrame):
 
             cur_val = getattr(targets[0][0], attr_name, 0)
 
-            # Barre de style adaptée à la couleur du canal
-            _sli_extra = (
-                "QSlider::groove:horizontal { background:#333; height:6px; border-radius:3px; }"
-                f"QSlider::handle:horizontal {{ background:{ch_color}; width:14px; height:14px;"
-                "margin:-4px 0; border-radius:7px; }"
-                f"QSlider::sub-page:horizontal {{ background:{ch_color}44; border-radius:3px; }}"
-            )
+            # Même curseur que partout ailleurs, teinté par la couleur du canal
+            # (violet UV, blanc, ambre…) : c'est la teinte qui distingue ces
+            # lignes, pas une autre forme de barre.
+            _sli_extra = _feuille_curseur(True, ch_color)
 
             ch_w = QWidget(); ch_h = QHBoxLayout(ch_w)
-            ch_h.setContentsMargins(10, 4, 10, 4); ch_h.setSpacing(8)
 
             ch_lbl = QLabel(ch_label)
             ch_lbl.setStyleSheet(f"color:{ch_color};font-size:11px;font-weight:bold;border:none;"
                                   "background:transparent;")
-            ch_lbl.setFixedWidth(52)
 
-            ch_sli = QSlider(Qt.Horizontal)
+            ch_sli = _CurseurCanal(Qt.Horizontal)
             ch_sli.setRange(vmin, vmax); ch_sli.setValue(cur_val)
-            ch_sli.setFixedWidth(140); ch_sli.setStyleSheet(_sli_extra)
+            ch_sli.setStyleSheet(_sli_extra)
 
             # Pourcent pour UV direct, "+" pour les boosts
             _is_boost = attr_name != "uv"
@@ -5874,8 +6012,7 @@ class PlanDeFeu(QFrame):
                 f"{_pct}%" if not _is_boost or cur_val == 0
                 else f"+{_pct}%"
             )
-            ch_val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:36px;")
-            ch_val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            ch_val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;")
 
             def _apply_special_master(p):
                 """Ouvre (ou referme) le master Dim pour les canaux dédiés.
@@ -5915,7 +6052,8 @@ class PlanDeFeu(QFrame):
 
             ch_sli.valueChanged.connect(_make_ch_cb(attr_name, ch_val_lbl, _is_boost))
 
-            for w in (ch_lbl, ch_sli, ch_val_lbl): ch_h.addWidget(w)
+            _grille(ch_h, ch_lbl, ch_sli, ch_val_lbl,
+                    formate=lambda v: f"{int(v / 255 * 100)}%")
             _wa(ch_w)
         # Les curseurs ci-dessus adressent un TYPE de canal. Le pilotage
         # canal par canal, lui, vit dans la vue « Curseurs » (bascule en
@@ -6270,7 +6408,6 @@ class PlanDeFeu(QFrame):
                     _flush()
 
                 prism_row_w = QWidget(); prism_row_h = QHBoxLayout(prism_row_w)
-                prism_row_h.setContentsMargins(10, 4, 10, 4); prism_row_h.setSpacing(8)
                 prism_lbl = QLabel(tr("pdf_prism")); prism_lbl.setStyleSheet(_SS)
 
                 prism_off_btn = QPushButton("OFF")
@@ -6278,13 +6415,12 @@ class PlanDeFeu(QFrame):
                 prism_on_btn  = QPushButton("ON")
                 prism_on_btn.setFixedSize(42, 26)
 
-                prism_sli = QSlider(Qt.Horizontal)
+                prism_sli = _CurseurCanal(Qt.Horizontal)
                 prism_sli.setRange(0, 255); prism_sli.setValue(cur_prism)
-                prism_sli.setFixedWidth(100); prism_sli.setStyleSheet(_SLI)
+                prism_sli.setStyleSheet(_SLI)
 
                 prism_val_lbl = QLabel(str(cur_prism))
-                prism_val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:28px;")
-                prism_val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                prism_val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;")
 
                 def _prism_update(v):
                     prism_sli.setValue(v)
@@ -6303,8 +6439,15 @@ class PlanDeFeu(QFrame):
                 prism_off_btn.setStyleSheet(_SS_BTN_ON if cur_prism == 0 else _SS_BTN_OFF)
                 prism_on_btn.setStyleSheet(_SS_BTN_ON if cur_prism > 0 else _SS_BTN_OFF)
 
-                for w in (prism_lbl, prism_off_btn, prism_on_btn, prism_sli, prism_val_lbl):
-                    prism_row_h.addWidget(w)
+                def _prism_formate(v, _off=prism_off_btn, _on=prism_on_btn):
+                    # Le prisme a deux boutons d'état à remettre d'aplomb : les
+                    # laisser sur « ON » après un Clear ferait mentir la ligne.
+                    _off.setStyleSheet(_SS_BTN_ON if v == 0 else _SS_BTN_OFF)
+                    _on.setStyleSheet(_SS_BTN_ON if v > 0 else _SS_BTN_OFF)
+                    return str(v)
+
+                _grille(prism_row_h, prism_lbl, prism_sli, prism_val_lbl,
+                        avant=(prism_off_btn, prism_on_btn), formate=_prism_formate)
                 _wa(prism_row_w)
 
             # ── Rotation Prisme ──────────────────────────────────────────
@@ -6359,11 +6502,35 @@ class PlanDeFeu(QFrame):
             "Gobo1", "Gobo1Rot", "ColorWheel", "Shutter", "Prism", "PrismRot",
             "Focus", "Gobo2", "Speed", "Mode",
         }
-        _seen_adv = set()
-        _adv_channels = [
-            ch for ch in (_proj_profile or [])
-            if ch not in _HANDLED_IN_MENU and ch not in _seen_adv and not _seen_adv.add(ch)
-        ]
+        # Une ligne par CANAL, et non plus par type.
+        #
+        # Le dédoublonnage par type cachait tout ce qu'aucun type ne nomme : sur
+        # un UKing ZQ02622, 17 canaux tombent sur « Unused » à l'import (le
+        # fichier ne dit que LASERROTATEZ, LASERPATTERNSIZE…) et ne donnaient
+        # qu'UN curseur pour les 17. Même chose pour les 9 « Generic » d'une
+        # MX 19-rs. C'est le « fourre-tout » : les canaux existaient, portaient
+        # même leur nom constructeur, mais restaient hors d'atteinte ici.
+        #
+        # La clé d'écriture suit la même règle que la vue « Curseurs » :
+        #   type unique dans le profil  → clé = le TYPE (forme historique, et
+        #       ce que contiennent déjà les mémoires enregistrées) ;
+        #   type répété                 → clé = le NUMÉRO de canal, seule clé
+        #       qui désigne UN canal — une clé de type les piloterait tous
+        #       ensemble, ce qui remettrait les 17 canaux du laser en commun.
+        _prof_counts = Counter(_proj_profile or [])
+        _labels_adv = getattr(targets[0][0], 'channel_labels', None) or []
+        _adv_channels = []
+        for _n, _ct in enumerate(_proj_profile or [], start=1):
+            if _ct in _HANDLED_IN_MENU:
+                continue
+            _nom = _labels_adv[_n - 1] if _n - 1 < len(_labels_adv) else ""
+            if _prof_counts[_ct] > 1:
+                # Numéro affiché : sans lui, neuf lignes « Generic » seraient
+                # indiscernables — et le nom constructeur manque parfois.
+                _adv_channels.append((_n, f"{_n:02d} · {_nom or _ct}"))
+            else:
+                _adv_channels.append((_ct, _nom or _ct))
+
         if _adv_channels:
             menu.addSeparator()
             _adv_sec = QLabel(tr("pdf2_advanced_ch"))
@@ -6371,27 +6538,37 @@ class PlanDeFeu(QFrame):
                                    "padding:2px 10px;border:none;background:transparent;")
             _wa(_adv_sec)
 
-            _cur_extras = getattr(targets[0][0], 'channel_extras', {})
+            _cur_extras = getattr(targets[0][0], 'channel_extras', {}) or {}
 
-            def _make_adv_cb(ctype):
+            def _val_adv(cle, ex=_cur_extras):
+                """Valeur courante, les deux formes de clé — un aller-retour par
+                le JSON d'un show transforme les clés entières en chaînes."""
+                v = ex.get(cle)
+                if v is None and isinstance(cle, int):
+                    v = ex.get(str(cle))
+                return int(v or 0)
+
+            def _make_adv_cb(cle):
                 def _cb(v, t=targets):
                     for p, _g, _i in t:
                         if not hasattr(p, 'channel_extras'):
                             p.channel_extras = {}
                         if v == 0:
-                            p.channel_extras.pop(ctype, None)
+                            # Les deux formes, sinon un forçage venu d'un show
+                            # rechargé survivrait au retour à zéro.
+                            p.channel_extras.pop(cle, None)
+                            if isinstance(cle, int):
+                                p.channel_extras.pop(str(cle), None)
                         else:
-                            p.channel_extras[ctype] = v
+                            p.channel_extras[cle] = v
                     _flush()
                 return _cb
 
-            # Libellés alignés : les noms de canaux bruts sont de longueurs très
-            # variables (Mode, Reset, Effects…), contrairement aux autres sections.
-            _adv_lw = min(96, max(52, max(len(c) for c in _adv_channels) * 7 + 10))
-            for _ch_type in _adv_channels:
+            # Plus de largeur calculée sur la longueur des noms : ces lignes
+            # suivent la grille commune du menu (`_grille`), comme les autres.
+            for _cle, _txt in _adv_channels:
                 _wa(_mk_slider_row(
-                    _ch_type, _cur_extras.get(_ch_type, 0), 255,
-                    _make_adv_cb(_ch_type), label_w=_adv_lw))
+                    _txt, _val_adv(_cle), 255, _make_adv_cb(_cle)))
 
         # ── Bas de menu ──────────────────────────────────────────────────
         menu.addSeparator()
@@ -6693,29 +6870,22 @@ class PlanDeFeu(QFrame):
 
             def _add_qe_slider(label, init_value, tooltip, setter):
                 w = QWidget(); h = QHBoxLayout(w)
-                h.setContentsMargins(8, 0, 10, 4); h.setSpacing(6)
-                lbl = QLabel(label); lbl.setFixedWidth(74)
+                lbl = QLabel(label)
                 lbl.setStyleSheet("color:#666;font-size:9px;font-weight:bold;"
                                   "letter-spacing:1px;border:none;background:transparent;")
-                h.addWidget(lbl)
-                sli = QSlider(Qt.Horizontal)
+                sli = _CurseurCanal(Qt.Horizontal)
                 sli.setRange(0, 100); sli.setValue(init_value)
                 sli.setToolTip(tooltip)
-                sli.setStyleSheet(
-                    "QSlider::groove:horizontal{background:#333;height:4px;border-radius:2px;}"
-                    "QSlider::handle:horizontal{background:#00d4ff;width:12px;height:12px;"
-                    "margin:-5px 0;border-radius:6px;}"
-                )
+                sli.setStyleSheet(_SLI)
                 val = QLabel(str(init_value))
                 val.setStyleSheet("color:#ddd;font-size:11px;font-weight:bold;"
-                                  "min-width:26px;border:none;background:transparent;")
-                val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                                  "border:none;background:transparent;")
                 def _on_change(v, _l=val, _set=setter):
                     _l.setText(str(v))
                     _set(_qe_projs, v)
                     _flush()
                 sli.valueChanged.connect(_on_change)
-                h.addWidget(sli, 1); h.addWidget(val)
+                _grille(h, lbl, sli, val)
                 _wa(w)
 
             _add_qe_slider("VITESSE", self._qe_speed,

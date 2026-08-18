@@ -86,7 +86,12 @@
       "Read(//c/Users/nikop/Desktop/Mystrow2/newsletter/**)",
       "Bash(python faire_poster_video.py \"C:/Users/nikop/Desktop/Mystrow2/Visualiseur3D.mp4\" --seconde 5 --sortie images/test-poster.png)",
       "Bash(rm -f images/test-poster.png)",
-      "Bash(cd *)"
+      "Bash(cd *)",
+      "PowerShell(gh release view --json tagName,publishedAt,assets --jq '{tag:.tagName, date:.publishedAt, assets:[.assets[]|{name:.name,size:.size,downloads:.downloadCount}]}')",
+      "PowerShell(New-Item *)",
+      "PowerShell($d=\"$env:TEMP\\\\claude\\\\C--Users-nikop-Desktop-MyStrow\\\\1882935e-1c4c-453e-b0af-5df4c9dffcb0\\\\scratchpad\\\\rel\"; gh release download v3.1.84 -p \"MyStrow_Setup.exe\" -D $d --clobber; $s = Get-AuthenticodeSignature \"$d\\\\MyStrow_Setup.exe\"; [PSCustomObject]@{Status=$s.Status; Message=$s.StatusMessage; Signer=$s.SignerCertificate.Subject; Timestamp=$s.TimeStamperCertificate.Subject} | Format-List)",
+      "PowerShell($r = Invoke-WebRequest -Uri \"https://us-central1-mystrow-907be.cloudfunctions.net/download_redirect?p=win\" -MaximumRedirection 0 -ErrorAction SilentlyContinue -Method Head; \"Status: $\\($r.StatusCode\\)\"; \"Location: $\\($r.Headers.Location\\)\")",
+      "PowerShell($n = Get-AuthenticodeSignature \"$env:USERPROFILE\\\\Downloads\\\\MyStrow_soumission_MS\\\\MyStrow.exe\"; $o = Get-AuthenticodeSignature \"$env:USERPROFILE\\\\Downloads\\\\MyStrow.exe\"; [PSCustomObject]@{Fichier=\"NOUVEAU \\(a soumettre\\)\"; Statut=$n.Status; Signataire=$n.SignerCertificate.Subject}; [PSCustomObject]@{Fichier=\"ANCIEN \\(11 juillet\\)\"; Statut=$o.Status; Signataire=$o.SignerCertificate.Subject})"
     ],
     "additionalDirectories": [
       "C:\\Users\\nikop\\Desktop\\mystrow_site"

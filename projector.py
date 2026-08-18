@@ -143,6 +143,82 @@ class Projector:
         self.level = max(0, min(100, level))
         self.set_color(self.base_color)
 
+    # Canaux qu'un choix de couleur pilote. Le blanc en fait partie : sur une
+    # fixture a LED blanche, le moteur le FABRIQUE en extrayant min(R,G,B) de
+    # la couleur — il n'est pas un canal a part.
+    COLOR_CHANNEL_TYPES = ("R", "G", "B", "W")
+
+    def forced_channel_value(self, ctype):
+        """Valeur reprise a la main pour ce type de canal, ou None.
+
+        Cherche les DEUX formes de cle de `channel_extras` : le type, et le
+        NUMERO du canal dans le profil (entier ou chaine apres un aller-retour
+        JSON), le numero l'emportant comme dans le moteur DMX.
+        """
+        extras = getattr(self, 'channel_extras', None)
+        if not extras:
+            return None
+        for num, t in enumerate(self.dmx_profile or [], start=1):
+            if t != ctype:
+                continue
+            for cle in (num, str(num)):
+                if cle in extras:
+                    return int(extras[cle])
+        return int(extras[ctype]) if ctype in extras else None
+
+    def display_color_override(self):
+        """Couleur a AFFICHER quand les canaux couleur sont repris a la main.
+
+        La 2D et la 3D dessinent depuis `color`/`level` — c'est le modele, et
+        un canal repris ne passe justement plus par lui : la fixture sortait du
+        rouge en restant noire a l'ecran. On recompose donc ici ce que la rampe
+        emet vraiment : les canaux repris pour ceux qui le sont, la couleur du
+        modele pour les autres, plus la LED blanche qui delave le tout.
+
+        Renvoie None si aucun canal couleur n'est repris — l'affichage suit
+        alors le modele, comme avant.
+        """
+        forces = {t: self.forced_channel_value(t) for t in self.COLOR_CHANNEL_TYPES}
+        if all(v is None for v in forces.values()):
+            return None
+        base = getattr(self, 'color', None) or QColor(0, 0, 0)
+        modele = {"R": base.red(), "G": base.green(), "B": base.blue(), "W": 0}
+        v = {t: (forces[t] if forces[t] is not None else modele[t])
+             for t in ("R", "G", "B", "W")}
+        return QColor(min(255, v["R"] + v["W"]),
+                      min(255, v["G"] + v["W"]),
+                      min(255, v["B"] + v["W"]))
+
+    def release_color_overrides(self):
+        """Rend au moteur les canaux couleur repris a la main.
+
+        Les curseurs bruts de la vue « Curseurs » ecrivent R/G/B/W dans
+        `channel_extras` sur les fixtures a LED blanche : le moteur y recompose
+        ces canaux (extraction du blanc) et aucune couleur de base ne peut les
+        demander un par un. Or `channel_extras` gagne TOUJOURS contre le
+        modele — sans cette purge, choisir une couleur ensuite n'aurait plus
+        aucun effet sur ces canaux et la fixture resterait sur la teinte reglee
+        au curseur, sans que rien ne le dise.
+
+        Ne touche qu'aux canaux couleur : un CTO, un gobo ou un canal sans nom
+        regle a la main n'a aucune raison de sauter parce qu'on change de
+        couleur. Renvoie True si quelque chose a ete libere.
+        """
+        extras = getattr(self, 'channel_extras', None)
+        if not extras:
+            return False
+        # Les deux formes de cle du moteur : le TYPE, et le NUMERO du canal
+        # (entier, ou son ecriture decimale apres un aller-retour JSON).
+        cles = set(self.COLOR_CHANNEL_TYPES)
+        for num, ctype in enumerate(self.dmx_profile or [], start=1):
+            if ctype in self.COLOR_CHANNEL_TYPES:
+                cles.update((num, str(num)))
+        restant = {k: v for k, v in extras.items() if k not in cles}
+        if len(restant) == len(extras):
+            return False
+        self.channel_extras = restant
+        return True
+
     def toggle_mute(self):
         """Bascule l'etat mute"""
         self.muted = not self.muted

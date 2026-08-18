@@ -97,6 +97,28 @@ ALL_CHANNEL_TYPES = [
     "C", "M", "Y", "Lime", "CTO", "CTB", "Iris",
     "Smoke", "Fan", "Pan", "PanFine", "Tilt", "TiltFine",
     "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
+    # ── Couronne LED (« ring ») ───────────────────────────────────────────────
+    # Une deuxième source, indépendante du faisceau, présente sur la plupart des
+    # wash et beam récents. Elle n'avait AUCUN type : ses canaux tombaient sur
+    # « Mode » ou « Unused », donc sortaient 0 quoi qu'on fasse.
+    #
+    # Ces canaux sont manuels : ils sortent 0 au repos et ne prennent une valeur
+    # que par le curseur du menu « Canaux avancés » (ou une valeur fixe de mode).
+    # Le ring ne suit donc PAS encore la couleur du projecteur ni les effets —
+    # il faudrait pour ça en faire une vraie section de couleur.
+    "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
+    "RingFX", "RingSpeed",
+    # ── Optique ───────────────────────────────────────────────────────────────
+    # Même histoire : présents sur les fiches constructeur, absents d'ici.
+    #   Frost       : diffuseur / adoucisseur de faisceau
+    #   Anim/AnimRot: roue d'animation et sa rotation (≠ gobo, ≠ prisme)
+    #   Gobo2Rot    : Gobo2 existait, pas sa rotation
+    #   ColorWheel2 : deuxième roue de couleurs
+    "Frost", "Anim", "AnimRot", "Gobo2Rot", "ColorWheel2",
+    # ── Contrôle ──────────────────────────────────────────────────────────────
+    #   DimCurve : courbe / vitesse de gradation
+    #   Sound    : sensibilité du micro intégré
+    "DimCurve", "Sound",
     # « Unused » : le canal existe dans le protocole mais MyStrow n'y touche
     # pas — il sort 0, toujours. C'est ce que reçoit un canal dont on ne sait
     # rien à l'import, et il occupe sa place pour que les canaux SUIVANTS
@@ -118,6 +140,17 @@ CHANNEL_COLORS = {
     # Trichromie, émetteur lime, correcteurs de température, diaphragme.
     "C": "#00cccc", "M": "#cc00cc", "Y": "#cccc00", "Lime": "#aaee00",
     "CTO": "#ffbb66", "CTB": "#88bbff", "Iris": "#8899aa",
+    # Couronne : la teinte de l'émetteur correspondant, éclaircie. On lit d'un
+    # coup d'œil qu'un RingR est un rouge, sans le confondre avec le R du
+    # faisceau — ce sont deux sources différentes sur le même appareil.
+    "RingDim": "#ccbb44", "RingR": "#ff6655", "RingG": "#66dd66",
+    "RingB": "#6699ff", "RingW": "#dddddd", "RingStrobe": "#ffcc66",
+    "RingFX": "#dd88ff", "RingSpeed": "#99ffaa",
+    # Optique : chacun voisin du canal dont il est le parent (Gobo2Rot près de
+    # Gobo2, ColorWheel2 près de ColorWheel).
+    "Frost": "#aaccdd", "Anim": "#bb7744", "AnimRot": "#cc8855",
+    "Gobo2Rot": "#997700", "ColorWheel2": "#ffaa44",
+    "DimCurve": "#777722", "Sound": "#44cc99",
     # Gris éteint : un canal que MyStrow ne pilote pas ne doit pas attirer
     # l'œil comme les autres, mais rester visible pour qu'on puisse lui donner
     # son vrai type si on connaît l'appareil.
@@ -255,6 +288,28 @@ def register_channel_search_aliases(mapping: dict):
     _CH_ALIAS_INDEX.update({_ch_norm(k): v for k, v in mapping.items()})
 
 
+# Le nom du type suffit à retrouver la plupart des canaux (« gob » → Gobo1…),
+# mais pas quand le mot français ou le mot du constructeur n'a rien du nom
+# anglais : personne ne tape « Ring » pour chercher une couronne. Ces alias-là
+# sont livrés avec l'app — la grosse table de vocabulaire, elle, reste côté
+# admin et s'ajoute par register_channel_search_aliases.
+register_channel_search_aliases({
+    "couronne": "RingDim", "couronne dim": "RingDim", "anneau": "RingDim",
+    "halo": "RingDim", "ring dimmer": "RingDim",
+    "couronne rouge": "RingR", "couronne vert": "RingG",
+    "couronne bleu": "RingB", "couronne blanc": "RingW",
+    "couronne strobe": "RingStrobe", "couronne effet": "RingFX",
+    "smd": "RingFX", "couronne vitesse": "RingSpeed",
+    "diffuseur": "Frost", "adoucisseur": "Frost",
+    "animation": "Anim", "roue animation": "Anim",
+    "rotation animation": "AnimRot",
+    "rotation gobo 2": "Gobo2Rot",
+    "roue couleur 2": "ColorWheel2", "roue 2": "ColorWheel2",
+    "courbe": "DimCurve", "courbe gradation": "DimCurve",
+    "micro": "Sound", "sensibilite": "Sound", "son": "Sound",
+})
+
+
 def channel_type_matches(text: str) -> list[str]:
     """Types de canaux correspondant à une saisie libre, du plus pertinent au moins.
 
@@ -363,6 +418,11 @@ class ChannelTypeCombo(_NoScrollCombo):
     def current_type(self) -> str:
         """Type retenu — jamais le texte de recherche en cours de frappe."""
         return self._type
+
+    def open_search(self):
+        """Prend le focus et déroule la liste complète, sans clic préalable."""
+        self.lineEdit().setFocus(Qt.OtherFocusReason)
+        self._show_all()
 
     def set_type(self, ch_type: str):
         """Positionne le type sans émettre type_changed (chargement d'un profil)."""
@@ -588,6 +648,10 @@ class ChannelRowWidget(QWidget):
         self._combo.setEnabled(not ro)
         for b in self._action_btns:
             b.setVisible(not ro)
+
+    def open_type_search(self):
+        """Déroule la liste des types, texte sélectionné (canal fraîchement ajouté)."""
+        self._combo.open_search()
 
     def _on_type_changed(self, t):
         self._set_num_style(CHANNEL_COLORS.get(t, "#666"))
@@ -1001,8 +1065,13 @@ class FixtureEditorDialog(QDialog):
         # Un même appareil expose plusieurs protocoles (8CH, 13CH…). Les tenir
         # dans UNE fixture à plusieurs modes, plutôt qu'une fixture par mode,
         # c'est ce que sait déjà lire le sélecteur de mode de la bibliothèque.
-
-        tab_row = QHBoxLayout()
+        # La rangée ne sert qu'à CHOISIR entre eux : tant qu'il n'y en a qu'un,
+        # elle reste cachée — son onglet ne ferait que répéter le nom du mode
+        # saisi juste au-dessus et le compteur de canaux affiché à droite.
+        self._mode_tab_row = QWidget()
+        self._mode_tab_row.setStyleSheet("QWidget{background:transparent;}")
+        tab_row = QHBoxLayout(self._mode_tab_row)
+        tab_row.setContentsMargins(0, 0, 0, 8)
         tab_row.setSpacing(4)
         self._mode_tab_host = QWidget()
         self._mode_tab_host.setStyleSheet("QWidget{background:transparent;}")
@@ -1010,13 +1079,6 @@ class FixtureEditorDialog(QDialog):
         self._mode_tab_layout.setContentsMargins(0, 0, 0, 0)
         self._mode_tab_layout.setSpacing(4)
         tab_row.addWidget(self._mode_tab_host, 1)
-
-        btn_add_mode = QPushButton(tr("fe2_add_mode"))
-        btn_add_mode.setFixedHeight(28)
-        btn_add_mode.setCursor(Qt.PointingHandCursor)
-        btn_add_mode.setStyleSheet(self._MODE_TAB_IDLE)
-        btn_add_mode.clicked.connect(self._add_mode)
-        tab_row.addWidget(btn_add_mode)
 
         self._btn_del_mode = QPushButton("✕")
         self._btn_del_mode.setFixedSize(28, 28)
@@ -1028,19 +1090,14 @@ class FixtureEditorDialog(QDialog):
             "QPushButton:disabled{background:#181818;color:#333;border-color:#222;}")
         self._btn_del_mode.clicked.connect(self._del_mode)
         tab_row.addWidget(self._btn_del_mode)
-        rv.addLayout(tab_row)
-        rv.addSpacing(8)
+        rv.addWidget(self._mode_tab_row)
 
         # Le nom du mode est remonté dans le formulaire, et la bande d'aperçu
         # DMX retirée : elle répétait en carrés illisibles ce que la liste de
         # canaux dit déjà en toutes lettres, juste en dessous.
 
-        # Lignes de canaux
-        rows_hint = QLabel(tr("fe2_rows_hint"))
-        rows_hint.setStyleSheet("font-size:10px;color:#444;")
-        rv.addWidget(rows_hint)
-        rv.addSpacing(5)
-
+        # Lignes de canaux — sans intertitre : la liste se désigne d'elle-même,
+        # et la recherche s'explique par le champ (« Rechercher un canal… »).
         self._ch_scroll = QScrollArea()
         self._ch_scroll.setWidgetResizable(True)
         self._ch_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1066,7 +1123,8 @@ class FixtureEditorDialog(QDialog):
             "QPushButton{background:#0d2630;color:#00d4ff;border:1px solid #14404f;"
             "border-radius:5px;font-size:11px;font-weight:bold;padding:0 14px;}"
             "QPushButton:hover{background:#12323f;border-color:#00d4ff;}")
-        btn_add_ch.clicked.connect(lambda: self._append_channel("Dim"))
+        btn_add_ch.clicked.connect(
+            lambda: self._append_channel("Dim", open_search=True))
         add_row.addWidget(btn_add_ch)
         add_row.addStretch()
         rv.addLayout(add_row)
@@ -1164,6 +1222,7 @@ class FixtureEditorDialog(QDialog):
             self._mode_tabs.append(btn)
         self._mode_tab_layout.addStretch()
         self._btn_del_mode.setEnabled(len(self._modes_data) > 1)
+        self._mode_tab_row.setVisible(len(self._modes_data) > 1)
 
     def _refresh_mode_tab_label(self):
         """Met à jour l'onglet courant (nom + nombre de canaux) sans tout rebâtir."""
@@ -1195,16 +1254,9 @@ class FixtureEditorDialog(QDialog):
             self._modes_data[self._cur_mode]["name"] = text
             self._refresh_mode_tab_label()
 
-    def _add_mode(self):
-        self._commit_current_mode()
-        self._modes_data.append({
-            "name": f"Mode {len(self._modes_data) + 1}",
-            "profile": [], "defaults": [], "matrix": None, "labels": [],
-        })
-        self._cur_mode = -1          # rien à recopier : la pile vient de changer
-        self._rebuild_mode_tabs()
-        self._select_mode(len(self._modes_data) - 1)
-        self._mode_name_edit.setFocus()
+    # Pas de « + Mode » : on crée une fixture par protocole. Les modes multiples
+    # restent lisibles et modifiables — ils arrivent de l'import (OFL, QLC+, MA)
+    # et la rangée d'onglets s'affiche alors d'elle-même.
 
     def _del_mode(self):
         if len(self._modes_data) <= 1:
@@ -1262,14 +1314,36 @@ class FixtureEditorDialog(QDialog):
         row.changed.connect(self._on_channels_changed)
         return row
 
-    def _append_channel(self, ch_type: str):
-        """Ajoute un canal en fin de profil (bouton + Canal, ou clic palette)."""
+    def _append_channel(self, ch_type: str, open_search: bool = False):
+        """Ajoute un canal en fin de profil (bouton + Canal, ou clic palette).
+
+        `open_search` déroule la liste des types sur la ligne créée : au bouton
+        + Canal, le geste attendu est de choisir le canal, pas de partir d'un
+        « Dim » qu'il faudrait ensuite aller rouvrir.
+        """
         row = self._make_row(len(self._rows) + 1, ch_type)
         self._ch_vbox.insertWidget(max(0, self._ch_vbox.count() - 1), row)
         self._rows.append(row)
         self._on_channels_changed()
-        self._ch_scroll.verticalScrollBar().setValue(
-            self._ch_scroll.verticalScrollBar().maximum())
+        # Le maximum de la barre ne tient compte de la nouvelle ligne qu'une
+        # fois le layout repassé : en deux temps différés, sinon on descend au
+        # bas d'AVANT l'ajout et le canal créé reste hors champ — et le popup
+        # de recherche s'ouvrirait à la position qu'occupait alors la ligne.
+        QTimer.singleShot(0, lambda: self._scroll_to_new_row(row, open_search))
+
+    def _scroll_to_new_row(self, row, open_search: bool):
+        sb = self._ch_scroll.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+        def _settle():
+            try:
+                sb.setValue(sb.maximum())
+                if open_search and row in self._rows:
+                    row.open_type_search()
+            except RuntimeError:
+                pass     # ligne supprimée entre-temps
+
+        QTimer.singleShot(0, _settle)
 
     def _remove_row(self, row):
         if row not in self._rows:

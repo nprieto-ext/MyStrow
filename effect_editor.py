@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
 from core import (projector_selection_keys, layer_selection_ranks,
-                  block_index, chase_slot, layer_frequency,
+                  block_index, chase_slot, layer_frequency, random_wave,
                   effect_dim_base_color, position_preset_values,
                   find_position_preset, ComboSansMolette)
 from i18n import tr
@@ -941,8 +941,7 @@ class WaveformCanvas(QWidget):
             xn = xi / max(N - 1, 1)
             x  = (freq * self._t + xn * 2) % 1.0
             if layer.forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
-                rng = _rnd.Random(int(self._t * 12) * 100 + xi)
-                raw = max(0.0, min(1.0, 0.5 + rng.uniform(-0.4, 0.4)))
+                raw = random_wave(freq, self._t, xi)
             else:
                 raw = _layer_wave(layer.forme, x)
             if fade_f > 0:
@@ -4425,8 +4424,10 @@ class EffectEditorDialog(QDialog):
                     raw = 1.0 if chase_slot(freq * t + phase, n_fx,
                                             direction) == i_fx else 0.0
                 elif layer.forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
-                    rng = _rnd.Random(int(t * 15) * 100 + i)
-                    raw = max(0.0, min(1.0, 0.5 + rng.uniform(-0.4, 0.4)))
+                    # Même tirage que le live (core.random_wave) : la cadence
+                    # 15 Hz codée en dur ignorait VIT et ne montrait qu'une
+                    # plage 0,1-0,9 là où le show allait de 0 à 1.
+                    raw = random_wave(freq, t, i_fx)
                 else:
                     raw = self._wave(layer.forme, x)
 

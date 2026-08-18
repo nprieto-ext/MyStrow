@@ -66,7 +66,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.84"
+VERSION = "3.1.85"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -520,6 +520,33 @@ def layer_frequency(speed, mult=1.0, fader_mult=1.0):
     if s <= 0.0:
         return 0.0
     return (0.05 + s / 100.0 * 7.0) * float(fader_mult if fader_mult is not None else 1.0)
+
+
+def random_wave(freq, t, index):
+    """Valeur 0-1 de la forme « Aléatoire », renouvelée une fois par cycle.
+
+    « Aléatoire » était la seule forme dont la VITESSE ne servait à rien : les
+    trois moteurs tiraient un nombre au hasard à une cadence codée en dur —
+    à chaque frame DMX en live (25 Hz), 15 Hz dans l'aperçu, 12 Hz dans la
+    vignette de courbe. VIT restait réglable dans le tableau mais n'agissait
+    sur rien, VIT 0 ne figeait pas, et le show scintillait plus vite et plus
+    dur que son propre aperçu.
+
+    La graine est ici le NUMÉRO DE CYCLE (`int(freq*t)`) : la couche tire une
+    nouvelle valeur une fois par cycle, exactement comme les autres formes
+    parcourent leur courbe une fois par cycle. VIT reprend donc son sens
+    habituel, et freq=0 (VIT 0, ou fader FX à 0) fige le motif au lieu de le
+    laisser grésiller.
+
+    `index` est le rang de la fixture (ou le pixel, dans la vignette) : les
+    fixtures changent ensemble mais chacune vers sa propre valeur — c'est ce
+    qui fait le scintillement plutôt qu'un flash commun.
+
+    ⚠️ Point UNIQUE, au même titre que `layer_frequency` : le live, l'aperçu de
+    l'éditeur et la vignette doivent tirer le MÊME nombre, sinon on rejoue
+    « l'aperçu ne ressemble pas au show ».
+    """
+    return random.Random(int(float(freq) * float(t)) * 1000 + int(index)).random()
 
 
 def effect_dim_base_color(proj, current):

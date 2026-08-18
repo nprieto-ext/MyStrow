@@ -68,7 +68,10 @@ DMX_PROFILES = {
 
 # Types de canaux disponibles pour les profils custom
 CHANNEL_TYPES = [
-    "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Iris",
+    # Dim2 et Reset sont pilotes par le moteur depuis longtemps mais manquaient
+    # ici : l'ecart n'a jamais gene (cette liste n'a aucun lecteur aujourd'hui),
+    # il fausse en revanche l'audit qui compare les trois listes entre elles.
+    "R", "G", "B", "W", "Dim", "Dim2", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Iris",
     "Smoke", "Fan",
     "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo1Rot", "Gobo2",
     "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode", "Effects",
@@ -81,6 +84,15 @@ CHANNEL_TYPES = [
     # LED a emetteurs cyan/magenta/jaune (25 modes : ETC Lustr, ADJ Starburst).
     # Le moteur tranche sur la presence de R/G/B dans le profil.
     "C", "M", "Y", "Lime",
+    # Couronne LED (« ring »), optique et controle. Canaux MANUELS : ils sortent
+    # 0 au repos et ne prennent une valeur que par channel_extras (curseur des
+    # « canaux avances ») ou channel_defaults. Sans eux, ces canaux tombaient sur
+    # « Mode » ou « Unused » a la creation de la fixture — donc muets pour de bon.
+    "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
+    "RingFX", "RingSpeed",
+    "Frost", "Anim", "AnimRot", "Gobo2Rot", "ColorWheel2",
+    "DimCurve", "Sound",
+    "Reset",
     # Canal du protocole que MyStrow ne pilote pas : sort 0 et garde sa place
     # dans la numérotation. Repli des attributs inconnus à l'import.
     "Unused",
@@ -89,7 +101,7 @@ CHANNEL_TYPES = [
 # Noms courts pour l'affichage dans les combos
 CHANNEL_DISPLAY = {
     "R": "R", "G": "G", "B": "B", "W": "W",
-    "Dim": "Dim", "Strobe": "Strob", "UV": "UV",
+    "Dim": "Dim", "Dim2": "Dim2", "Strobe": "Strob", "UV": "UV",
     "Ambre": "Ambre", "Orange": "Orange", "Zoom": "Zoom", "Iris": "Iris",
     "Smoke": "Smoke", "Fan": "Fan",
     "Pan": "Pan", "PanFine": "PanF", "Tilt": "Tilt", "TiltFine": "TiltF",
@@ -98,8 +110,25 @@ CHANNEL_DISPLAY = {
     "ColorWheel": "CWheel", "Shutter": "Shut", "Speed": "Speed", "Mode": "Mode",
     "Effects": "FX", "CTO": "CTO", "CTB": "CTB",
     "C": "C", "M": "M", "Y": "Y", "Lime": "Lime",
+    "RingDim": "RngD", "RingR": "RngR", "RingG": "RngG", "RingB": "RngB",
+    "RingW": "RngW", "RingStrobe": "RngS", "RingFX": "RngFX",
+    "RingSpeed": "RngSp",
+    "Frost": "Frost", "Anim": "Anim", "AnimRot": "AnimR",
+    "Gobo2Rot": "Gob2R", "ColorWheel2": "CWhl2",
+    "DimCurve": "Curve", "Sound": "Son",
     "Unused": "—", "Reset": "Reset",
 }
+
+
+# Canaux sans etat dans Projector : pilotes uniquement a la main (curseur des
+# « canaux avances ») ou par la valeur fixe du mode. Sortis d'une liste plutot
+# que d'un long `elif ch_type in (...)` : c'est la meme regle pour les quinze.
+_MANUAL_ONLY = frozenset({
+    "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
+    "RingFX", "RingSpeed",
+    "Frost", "Anim", "AnimRot", "Gobo2Rot", "ColorWheel2",
+    "DimCurve", "Sound",
+})
 
 
 def profile_display_text(channels):
@@ -1401,6 +1430,17 @@ class ArtNetDMX:
                 elif ch_type == "Lime":
                     # Emetteur additif supplementaire, manuel uniquement (meme
                     # regle que Ambre/Orange).
+                    ch_val = 0
+                elif ch_type in _MANUAL_ONLY:
+                    # Couronne, frost, roue d'animation, courbe, micro… Aucun
+                    # etat dans Projector : leur valeur vient du curseur des
+                    # « canaux avances » (channel_extras, traite plus haut) ou
+                    # de la valeur fixe du mode. 0 au repos, et c'est voulu —
+                    # une couronne ne doit pas s'allumer toute seule.
+                    #
+                    # Branche explicite plutot que de laisser faire le `else`
+                    # final : elle documente que ces canaux sont pilotables, a
+                    # la difference d'« Unused » qui, lui, ne l'est pas.
                     ch_val = 0
                 elif ch_type in ("CTO", "CTB"):
                     # 0 = aucune correction, et c'est le repos voulu : une lyre
