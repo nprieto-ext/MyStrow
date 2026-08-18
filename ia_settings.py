@@ -158,6 +158,17 @@ class IASettings:
         return self._color_max
 
     @property
+    def color_cycle(self) -> bool:
+        """Le moteur doit-il faire défiler le pool de couleurs ?
+
+        Non à 1 couleur : le dialogue annonce « une seule couleur, tenue tout
+        le morceau — cliquez celle qui joue ». Le panneau LIVE donne l'autre
+        sens à son « 1 » (une couleur à la fois, qui défile au rythme du
+        curseur DURÉE) et rend donc toujours `True`.
+        """
+        return self._color_max > 1
+
+    @property
     def color_tile_pool(self) -> list:
         return [k for k in COLOR_TILE_ORDER if k in self._color_tile_pool]
 

@@ -247,6 +247,12 @@ _PAYLOAD_FIELDS = (
     "name", "manufacturer", "fixture_type", "group",
     "color_wheel_slots", "gobo_wheel_slots", "channel_defaults",
     "physical", "matrix",
+    # Noms de canaux du constructeur. Ils manquaient : la fixture partie d'ici
+    # avec « Light strip strobe », « Colour Macro »… arrivait chez l'autre
+    # utilisateur en colonne de « UNUSED » anonymes. Non seulement il ne
+    # comprenait pas ce que fait le canal, mais il ne pouvait même pas le typer
+    # à la main — c'est la seule information qui reste quand le type manque.
+    "channel_labels", "labels",
 )
 
 
@@ -257,26 +263,46 @@ def build_submission_payload(fixture: dict) -> dict:
     out["manufacturer"] = str(fixture.get("manufacturer", "")).strip()
     out["fixture_type"] = fixture.get("fixture_type", "PAR LED")
 
+    def _labels(src, profile):
+        """Libellés d'un mode, seulement s'ils correspondent au profil.
+
+        Une liste de longueur différente décalerait tous les noms d'un canal :
+        mieux vaut aucun nom qu'un nom faux.
+        """
+        lb = src.get("labels") or src.get("channel_labels") or []
+        return list(lb) if isinstance(lb, list) and len(lb) == len(profile) else []
+
     modes = fixture.get("modes")
     if isinstance(modes, list) and modes:
         clean_modes = []
         for m in modes:
             if not isinstance(m, dict) or not m.get("profile"):
                 continue
+            profile = list(m.get("profile") or [])
+            lb = _labels(m, profile) or _labels(fixture, profile)
             clean_modes.append({
                 "name":         m.get("name", "Mode 1"),
-                "channelCount": len(m.get("profile") or []),
-                "profile":      list(m.get("profile") or []),
+                "channelCount": len(profile),
+                "profile":      profile,
+                **({"labels": lb} if lb else {}),
             })
         if clean_modes:
             out["modes"] = clean_modes
     if "modes" not in out:
         profile = list(fixture.get("profile") or [])
+        lb = _labels(fixture, profile)
         out["modes"] = [{
             "name":         "Mode 1",
             "channelCount": len(profile),
             "profile":      profile,
+            **({"labels": lb} if lb else {}),
         }]
+    # Ne pas laisser remonter une liste racine qui ne colle pas au premier mode :
+    # `_PAYLOAD_FIELDS` la recopie telle quelle, sans rien vérifier.
+    _p0 = out["modes"][0]["profile"]
+    for _cle in ("channel_labels", "labels"):
+        if _cle in out and len(out[_cle] or []) != len(_p0):
+            del out[_cle]
     return out
 
 

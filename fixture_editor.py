@@ -102,10 +102,12 @@ ALL_CHANNEL_TYPES = [
     # wash et beam récents. Elle n'avait AUCUN type : ses canaux tombaient sur
     # « Mode » ou « Unused », donc sortaient 0 quoi qu'on fasse.
     #
-    # Ces canaux sont manuels : ils sortent 0 au repos et ne prennent une valeur
-    # que par le curseur du menu « Canaux avancés » (ou une valeur fixe de mode).
-    # Le ring ne suit donc PAS encore la couleur du projecteur ni les effets —
-    # il faudrait pour ça en faire une vraie section de couleur.
+    # Couleur, niveau et strobe de la couronne SUIVENT le projecteur : une lyre
+    # à couronne s'allume d'un bloc, effets compris (`artnet_dmx`, bloc
+    # « Couronne LED »). Réglable par projecteur — bouton « Couronne : suit le
+    # show » sur n'importe lequel de ses canaux, dans l'éditeur de patch.
+    # RingFX et RingSpeed restent manuels dans tous les cas : ce sont les
+    # programmes internes de l'appareil, pas du rendu.
     "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
     "RingFX", "RingSpeed",
     # ── Optique ───────────────────────────────────────────────────────────────

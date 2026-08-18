@@ -75,6 +75,15 @@ class Projector:
         self.pan_invert    = False  # Inverser le sens du pan (65535 - valeur)
         self.tilt_invert   = False  # Inverser le sens du tilt (65535 - valeur)
         self.pan_tilt_swap = False  # Permuter pan ↔ tilt
+        # ── Couronne LED (« ring ») ──────────────────────────────────────────
+        # True : la couronne suit le show — même couleur, même niveau et même
+        # strobe que le faisceau (voir `artnet_dmx`, bloc « Couronne »). C'est
+        # la deuxième source de l'appareil, et la laisser noire pendant que la
+        # tête joue n'a de sens pour personne.
+        # False : elle redevient manuelle, à piloter au curseur des « canaux
+        # avancés ». Les canaux RingFX / RingSpeed (programmes internes de la
+        # couronne) restent manuels dans les DEUX cas.
+        self.ring_follow   = True
         # ── Fixture à pixels (matrice / barre LED) ───────────────────────────
         # Un fixture "matrice" est patché comme N projecteurs enfants (1 par
         # pixel) + éventuellement 1 projecteur "master" pour les canaux globaux

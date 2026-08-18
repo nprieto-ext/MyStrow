@@ -1124,6 +1124,19 @@ class LiveModePanel(QWidget):
         return self._color_max
 
     @property
+    def color_cycle(self) -> bool:
+        """Le moteur doit-il faire défiler le pool de couleurs ?
+
+        Toujours oui côté panneau LIVE : « Couleurs simultanées » y compte les
+        couleurs présentes EN MÊME TEMPS sur le plan, pas le nombre de couleurs
+        que le morceau a le droit de traverser — c'est le curseur DURÉE qui
+        règle le défilement. À 1, on veut donc une couleur à la fois, qui
+        défile ; le préréglage d'un média (`IASettings`), lui, entend « 1 » au
+        sens d'une couleur tenue, et rend `False`.
+        """
+        return True
+
+    @property
     def color_tile_pool(self) -> list:
         """Tuiles couleur sélectionnées, dans l'ordre de _COLOR_TILES."""
         order = [row[0] for row in self._COLOR_TILES]

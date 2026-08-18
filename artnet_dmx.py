@@ -130,6 +130,19 @@ _MANUAL_ONLY = frozenset({
     "DimCurve", "Sound",
 })
 
+# Couronne LED : les canaux que le show sait alimenter tout seul quand
+# `proj.ring_follow` est vrai — couleur, niveau, strobe. Ils restent dans
+# `_MANUAL_ONLY` : c'est ce qui les ramene a 0 des que la couronne repasse en
+# manuel, sans autre test.
+#
+# RingFX et RingSpeed n'y sont PAS, volontairement : ce sont les programmes
+# internes de la couronne (chenillards, arc-en-ciel, sound-active). Les piloter
+# depuis le show lancerait un automatisme de l'appareil par-dessus le rendu,
+# exactement le piege du canal « Mode ». Ils restent au curseur.
+_RING_DRIVEN = frozenset({
+    "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
+})
+
 
 def profile_display_text(channels):
     """Formate une liste de canaux en texte lisible (R G B Dim Strob)"""
@@ -1297,6 +1310,52 @@ class ArtNetDMX:
             _has_white = "W" in profile
             _w_extract = min(r, g, b) if (_has_rgb and _has_white) else 0
 
+            # ── Couronne LED : la deuxieme source vit dans le show ───────────
+            # Elle sortait 0 en toutes circonstances : sur une lyre a couronne,
+            # la moitie de l'appareil restait noire pendant que la tete jouait,
+            # et il fallait pousser un curseur a la main pour chaque projecteur.
+            # Elle prend maintenant la couleur, le niveau et le strobe du
+            # faisceau — la lyre s'allume d'un bloc.
+            #
+            # `_ring_vals` vide (pas de couronne, ou couronne repassee en
+            # manuel) = comportement d'avant, a l'octet pres : les types
+            # tombent alors dans `_MANUAL_ONLY` et sortent 0.
+            _ring_types = _RING_DRIVEN.intersection(profile)
+            _ring_vals  = {}
+            if _ring_types and getattr(proj, 'ring_follow', True):
+                # Ramener le faisceau a un couple (teinte PURE, intensite),
+                # quelle que soit la facon dont il les porte : avec un canal Dim
+                # r/g/b sont deja purs, sans lui ils portent deja le niveau.
+                if has_dimmer:
+                    _rc, _rint = [r, g, b], dimmer
+                else:
+                    _m = max(r, g, b)
+                    _rc = ([int(r * 255 / _m), int(g * 255 / _m), int(b * 255 / _m)]
+                           if _m else [0, 0, 0])
+                    _rint = _m
+                if "RingDim" not in _ring_types:
+                    # Pas de gradateur de couronne : le niveau doit passer dans
+                    # la couleur, sinon la couronne resterait a fond quoi qu'il
+                    # arrive au reste de la lyre.
+                    _rc = [int(c * _rint / 255) for c in _rc]
+                _r_has_rgb = {"RingR", "RingG", "RingB"} <= _ring_types
+                # Meme extraction du blanc que sur le faisceau : sans elle, une
+                # couronne RGBW recoit deux fois la composante commune et vire
+                # au blanc laiteux.
+                _r_w = min(_rc) if (_r_has_rgb and "RingW" in _ring_types) else 0
+                _ring_vals = {
+                    "RingDim": _rint,
+                    "RingR":   max(0, _rc[0] - _r_w),
+                    "RingG":   max(0, _rc[1] - _r_w),
+                    "RingB":   max(0, _rc[2] - _r_w),
+                    # Couronne blanche seule : pas de couleur a rendre, on lui
+                    # donne la luminance de la teinte du faisceau.
+                    "RingW":   _r_w if _r_has_rgb else
+                               min(255, int(_rc[0] * 0.30 + _rc[1] * 0.59 + _rc[2] * 0.11)),
+                    "RingStrobe": (int(16 + (getattr(proj, 'strobe_speed', 0) / 100.0) * (250 - 16))
+                                   if getattr(proj, 'strobe_speed', 0) > 0 else 0),
+                }
+
             for idx, ch_type in enumerate(profile):
                 if idx >= len(channels):
                     break
@@ -1431,8 +1490,12 @@ class ArtNetDMX:
                     # Emetteur additif supplementaire, manuel uniquement (meme
                     # regle que Ambre/Orange).
                     ch_val = 0
+                elif ch_type in _ring_vals:
+                    # Couronne qui suit le show (cf. bloc « Couronne LED »).
+                    ch_val = max(0, min(255, int(_ring_vals[ch_type])))
                 elif ch_type in _MANUAL_ONLY:
-                    # Couronne, frost, roue d'animation, courbe, micro… Aucun
+                    # Couronne repassee en manuel, frost, roue d'animation,
+                    # courbe, micro… Aucun
                     # etat dans Projector : leur valeur vient du curseur des
                     # « canaux avances » (channel_extras, traite plus haut) ou
                     # de la valeur fixe du mode. 0 au repos, et c'est voulu —

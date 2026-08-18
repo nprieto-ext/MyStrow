@@ -468,6 +468,102 @@ def _libelle_canal(ct, attr: str) -> str:
     return _joli_attribut(attr)
 
 
+# ---------------------------------------------------------------------------
+# Repli par LIBELLÉ — quand l'attribut du fichier ne dit rien
+# ---------------------------------------------------------------------------
+# Les tables ci-dessus traduisent l'ATTRIBUT du fichier constructeur. Quand le
+# fabricant sort du vocabulaire GrandMA — ce que font tous les chinois sur leur
+# couronne LED — l'attribut n'est mappé nulle part et le canal tombe en
+# « Unused », donc muet à jamais. Le NOM du canal, lui, dit tout : sur un
+# BETOPPER LM120, les dix canaux inconnus s'appellent « Light strip »,
+# « Light strip strobe », « Light reddish », « Strip Speed »… c'est la couronne
+# en toutes lettres, et MyStrow a les types qu'il faut depuis `RingDim` & co.
+#
+# Ce repli n'intervient QU'APRÈS l'attribut : il ne peut donc jamais dégrader un
+# canal correctement typé, seulement rattraper un « Unused ».
+_MOTS_RING    = ("strip", "ring", "halo", "aura", "corona", "couronne", "crown")
+_MOTS_VITESSE = ("speed", "rate", "vitesse")
+_MOTS_STROBE  = ("strobe", "strob", "flash")
+_MOTS_EFFET   = ("effect", "effects", "effet", "fx", "program", "programme",
+                 "prog", "auto", "macro", "show")
+_MOTS_DIM     = ("dimmer", "dim", "intensity", "intensite", "brightness",
+                 "master", "luminosite")
+_MOTS_COULEUR = (
+    (("red", "reddish", "rouge"), "R"),
+    (("green", "vert"),           "G"),
+    (("blue", "bleu"),            "B"),
+    (("white", "blanc"),          "W"),
+)
+_RING_EQUIV = {
+    "R": "RingR", "G": "RingG", "B": "RingB", "W": "RingW",
+    "Dim": "RingDim", "Strobe": "RingStrobe", "Speed": "RingSpeed",
+    "Effects": "RingFX", "ColorWheel": "RingFX",
+}
+
+
+def _type_depuis_libelle(libelle: str, deja: set) -> str | None:
+    """Type de canal déduit du NOM du canal. `None` = on ne devine rien.
+
+    `deja` : les types déjà posés dans ce mode. Il sert au seul cas ambigu —
+    un mot de couleur sans mot de couronne (« Light reddish ») — pour trancher
+    entre le faisceau et la deuxième source.
+
+    Règle de conduite : dans le doute, rendre `None`. Un canal « Unused » ne
+    sort que des zéros et se voit dans l'éditeur ; un canal MAL typé, lui, part
+    en sortie et fait n'importe quoi sans qu'on sache pourquoi.
+    """
+    jeu = set(re.sub(r"[^a-z0-9]+", " ", (libelle or "").lower()).split())
+    if not jeu:
+        return None
+    a = lambda *cles: any(c in jeu for c in cles)
+
+    ring = a(*_MOTS_RING)
+
+    # Ordre imposé par les noms composés : « Effect Speed » est une VITESSE,
+    # « Light strip strobe » un STROBE. Le mot le plus spécifique gagne, sinon
+    # le premier mot du libellé déciderait de tout.
+    if a(*_MOTS_VITESSE):
+        base = "Speed"
+    elif a(*_MOTS_STROBE):
+        base = "Strobe"
+    elif not ring and a("macro") and a("colour", "color", "couleur"):
+        base = "ColorWheel"      # « Colour Macro » = roue/macro de couleurs
+    elif a(*_MOTS_EFFET):
+        base = "Effects"
+    else:
+        base = None
+        for cles, t in _MOTS_COULEUR:
+            if a(*cles):
+                base = t
+                break
+        if base is None and a(*_MOTS_DIM):
+            base = "Dim"
+
+    if ring:
+        # « Light strip » tout court = le dimmer de la couronne.
+        return _RING_EQUIV.get(base) or "RingDim"
+
+    if base in ("R", "G", "B", "W"):
+        # Couleur SANS mot de couronne. On ne l'accepte que si le faisceau a
+        # déjà sa couleur (donc celle-ci est une AUTRE source) ET qu'un canal de
+        # couronne a déjà été reconnu dans ce mode. Sans ces deux garde-fous on
+        # écrirait un rouge de faisceau par-dessus un canal quelconque.
+        if base in deja and any(t.startswith("Ring") for t in deja):
+            return _RING_EQUIV[base]
+        return None
+
+    if base in deja:
+        # Ce type est déjà pris dans ce mode. Le moteur GANGE les canaux de même
+        # type sur un scalaire unique (`proj.speed`, `proj.mode_value`…) : poser
+        # un second « Speed » ferait bouger la vitesse des effets en réglant
+        # celle du pan/tilt. On laisse « Unused » — le libellé, lui, est
+        # conservé, et le canal reste joignable par son NUMÉRO dans les canaux
+        # avancés. Une déduction n'est pas assez sûre pour valoir un gangage.
+        return None
+
+    return base
+
+
 def _strip_namespaces(data: bytes) -> bytes:
     """Supprime les déclarations de namespace XML pour simplifier le parsing."""
     import re
@@ -602,20 +698,22 @@ def _parse_ma_modes(fixture_el) -> tuple:
     for mode_el in mode_elements:
         mode_name = (mode_el.get("name") or mode_el.get("Name")
                      or f"Mode {len(modes)+1}")
-        profile = _parse_ma_channels(mode_el)
+        profile, labels = _parse_ma_channels(mode_el)
         modes.append({
             "name":         mode_name,
             "channelCount": len(profile),
             "profile":      profile,
+            "labels":       labels,
         })
 
     if not modes:
-        profile = _parse_ma_channels(fixture_el)
+        profile, labels = _parse_ma_channels(fixture_el)
         if profile:
             modes.append({
                 "name":         "Mode 1",
                 "channelCount": len(profile),
                 "profile":      profile,
+                "labels":       labels,
             })
     return modes, channel_defaults
 
@@ -632,6 +730,10 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
     """
     items = []       # [(ch_index, ch_type, libelle)]
     defaults = {}    # {ch_type: dmx_8bit} — voir la note plus bas
+    # Types déjà posés dans ce mode — lu par le repli sur le libellé, qui a
+    # besoin de savoir si le faisceau a déjà sa couleur pour trancher entre
+    # « le rouge du projecteur » et « le rouge de la couronne ».
+    deja_poses = set()
 
     for ct in channel_type_elements:
         attr   = (ct.get("attribute") or ct.get("Attribute") or "").upper().strip()
@@ -681,6 +783,12 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
                     continue
                 mapped = val
                 break
+        # Dernière chance avant l'abandon : le NOM du canal. Voir
+        # `_type_depuis_libelle` — c'est ce qui récupère les couronnes LED, dont
+        # l'attribut ne ressemble à rien mais dont le nom dit « Light strip ».
+        if mapped is None:
+            mapped = _type_depuis_libelle(libelle, deja_poses)
+
         # ⚠️ Repli NEUTRE, surtout pas « Mode ». Un attribut inconnu tombait
         # jusqu'ici sur « Mode », qui est tout sauf inoffensif : le moteur gange
         # les canaux de même type sur `proj.mode_value`, et sur beaucoup de
@@ -690,6 +798,7 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         # retrouvait mappée en Mode aux côtés de ses canaux MODEL / MODEL-A.
         # « Unused » sort 0 en toutes circonstances, et se voit dans l'éditeur.
         ch_type = mapped if mapped else "Unused"
+        deja_poses.add(ch_type)
 
         items.append((ch_index, ch_type, libelle))
 
@@ -729,8 +838,16 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
     return [ch for _, ch, _lb in items], defaults, [lb for _, _, lb in items]
 
 
-def _parse_ma_channels(parent_el) -> list:
-    profile = []
+def _parse_ma_channels(parent_el) -> tuple:
+    """Canaux d'un mode MA2. Retourne (profile, labels).
+
+    Les `labels` sont les noms écrits par le constructeur. C'est la seule chose
+    qui distingue deux canaux du même type, et la seule qui reste quand on n'a
+    pas su typer : sans eux, l'utilisateur voit une colonne de « Unused » muets
+    et ne peut même pas les corriger à la main. Le chemin MA3 les portait déjà.
+    """
+    profile, labels = [], []
+    deja_poses = set()
     for ch_el in parent_el.findall("Channel"):
         ch_name = (ch_el.get("name") or ch_el.get("Name") or "")
         mapped  = _MA_MAP.get(ch_name)
@@ -740,8 +857,17 @@ def _parse_ma_channels(parent_el) -> list:
                 if key.lower() == ch_lower:
                     mapped = val
                     break
-        profile.append(mapped if mapped else "Mode")
-    return profile
+        if mapped is None:
+            mapped = _type_depuis_libelle(ch_name, deja_poses)
+        # Repli « Unused » et non « Mode », pour la raison expliquée dans
+        # `_parse_ma3_channels` : « Mode » porte les PROGRAMMES INTERNES de
+        # l'appareil, et tous les canaux inconnus se retrouvaient gangés dessus.
+        # Un LM120-23CH sortait ainsi avec seize canaux « Mode » d'affilée.
+        mapped = mapped or "Unused"
+        deja_poses.add(mapped)
+        profile.append(mapped)
+        labels.append(ch_name)
+    return profile, labels
 
 
 # ---------------------------------------------------------------------------

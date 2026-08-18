@@ -85,32 +85,60 @@ def _save_user_fixtures(fixtures: list):
     )
 
 
+def vient_de_la_bibliotheque(fx: dict) -> bool:
+    """La fixture a-t-elle été TÉLÉCHARGÉE, par opposition à créée par l'utilisateur ?
+
+    C'est ce qui décide si une mise à jour a le droit de l'écraser. Une fixture
+    corrigée puis republiée ne redescendait jamais : partout — packs, bouton
+    Actualiser — un doublon (même nom + fabricant) était simplement ignoré. Le
+    client « actualisait » sans rien recevoir, et gardait indéfiniment le profil
+    fautif.
+
+    Deux indices, parce que les installations d'avant ce marquage n'ont que le
+    second :
+      - `_from_library` / `_pack_id` : posés à la réception ;
+      - `source` : celle du document distant (`firestore`, `ofl`, `community`).
+
+    Une fixture passée par l'éditeur en ressort avec `source: "user"`
+    (`fixture_editor._get_form_data`) : les retouches locales sont donc
+    protégées, y compris sur une fixture d'origine distante.
+    """
+    if not isinstance(fx, dict):
+        return False
+    return bool(fx.get("_from_library") or fx.get("_pack_id")) \
+        or fx.get("source") in ("firestore", "ofl", "community")
+
+
 def merge_pack_fixtures(pack_fixtures: list, pack_id: str) -> int:
     """
     Fusionne les fixtures d'un pack dans ~/.mystrow_fixtures.json.
-    Les doublons (même nom + fabricant) sont ignorés.
-    Retourne le nombre de nouvelles fixtures effectivement ajoutées.
+    Une fixture déjà présente est MISE À JOUR si elle vient de la bibliothèque,
+    et laissée intacte si elle appartient à l'utilisateur.
+    Retourne le nombre de fixtures ajoutées ou mises à jour.
     """
     existing = _load_user_fixtures()
-    existing_keys = {
-        (f.get("name", "").strip(), f.get("manufacturer", "").strip())
-        for f in existing
-    }
+    index = {}
+    for i, f in enumerate(existing):
+        index[(f.get("name", "").strip(), f.get("manufacturer", "").strip())] = i
 
-    added = 0
+    touched = 0
     for fx in pack_fixtures:
         key = (fx.get("name", "").strip(), fx.get("manufacturer", "").strip())
-        if key in existing_keys:
-            continue
         fx_copy = {k: v for k, v in fx.items() if k != "builtin"}
         fx_copy["_pack_id"] = pack_id
-        existing.append(fx_copy)
-        existing_keys.add(key)
-        added += 1
+        pos = index.get(key)
+        if pos is not None:
+            if not vient_de_la_bibliotheque(existing[pos]):
+                continue          # fixture de l'utilisateur : intouchable
+            existing[pos] = fx_copy
+        else:
+            index[key] = len(existing)
+            existing.append(fx_copy)
+        touched += 1
 
-    if added > 0:
+    if touched > 0:
         _save_user_fixtures(existing)
-    return added
+    return touched
 
 
 # ──────────────────────────────────────────────────────────────────────────────

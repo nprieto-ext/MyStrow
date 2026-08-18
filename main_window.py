@@ -10700,14 +10700,40 @@ class MainWindow(QMainWindow):
         return (self.seq.live_mode_active
                 or getattr(self, '_ia_settings_src', None) is not None)
 
+    def _live_hw_strobe_ids(self, skip=("Machine a fumee",)) -> set:
+        """`id()` des fixtures dont le canal Strobe MATÉRIEL porte le strobe.
+
+        Sert deux fois par image, et c'est le même jeu de fixtures dans les deux
+        cas — sans quoi les deux mécanismes se marcheraient dessus :
+
+        1. `_live_set_hw_strobe` y pose la vitesse ;
+        2. les blocs de hachage laissent ces fixtures TRANQUILLES.
+
+        Le point 2 est le correctif de 3.1.85 : le hachage coupe `level` une
+        image sur deux, ce qui éteint le dimmer pendant la moitié des éclats
+        que la fixture produit toute seule. Les deux cadences n'étant pas en
+        phase (celle de la fixture est libre), l'un mange l'autre au hasard —
+        d'où un strobe « très léger, de temps en temps » là où le hachage seul
+        donnait des éclairs francs. Sur ces fixtures, le canal matériel fait le
+        travail en entier ; on garde donc le niveau plein.
+        """
+        allowed = self._fx_src.allowed_groups
+        return {
+            id(p) for p in self.projectors
+            if getattr(p, 'fixture_type', '') not in skip
+            and (not allowed or p.group in allowed)
+            and "Strobe" in (getattr(p, 'dmx_profile', None) or [])
+        }
+
     def _live_set_hw_strobe(self, rate, skip=("Machine a fumee",)):
         """Pousse le strobe MATÉRIEL des fixtures qui ont un canal Strobe.
 
-        Vient EN PLUS du hachage de `level`, pas à sa place : le hachage garde
-        la main sur les fixtures sans canal Strobe (la majorité des PAR) et
-        continue de rythmer la couleur, pendant que le canal matériel va
-        chercher les strobes que le modèle ne sait pas atteindre — l'anneau
-        d'une lyre, dont les canaux sont typés « Mode »/« Unused ».
+        Se substitue au hachage de `level` sur les fixtures concernées, il ne
+        s'y ajoute pas — voir `_live_hw_strobe_ids`. Le hachage garde la main
+        sur les fixtures sans canal Strobe (la majorité des PAR), pendant que
+        le canal matériel va chercher les strobes que le modèle ne sait pas
+        atteindre — l'anneau d'une lyre, dont les canaux sont typés
+        « Mode »/« Unused ».
 
         `strobe_speed` est un scalaire par projecteur, et le moteur DMX le
         recopie sur TOUS les canaux typés Strobe du profil
@@ -10722,14 +10748,9 @@ class MainWindow(QMainWindow):
         latched = getattr(self, '_live_hw_strobe', None)
         if latched is None:
             latched = self._live_hw_strobe = set()
-        allowed = self._fx_src.allowed_groups
+        cibles = self._live_hw_strobe_ids(skip) if rate > 0 else set()
         for p in self.projectors:
-            actif = (
-                rate > 0
-                and getattr(p, 'fixture_type', '') not in skip
-                and (not allowed or p.group in allowed)
-                and "Strobe" in (getattr(p, 'dmx_profile', None) or [])
-            )
+            actif = id(p) in cibles
             if actif:
                 p.strobe_speed = rate
                 latched.add(id(p))
@@ -10855,6 +10876,7 @@ class MainWindow(QMainWindow):
                     p.color = QColor(255, 255, 255)
             elif _special_fx == 'strobe':
                 _sp_on = (int(_pos_sp / _sms_sp) % 2) == 0
+                _hw_ids = self._live_hw_strobe_ids()
                 for p in self.projectors:
                     _ft = getattr(p, 'fixture_type', '')
                     # Les lyres étaient écartées ici (et ici SEULEMENT, de tout
@@ -10863,7 +10885,10 @@ class MainWindow(QMainWindow):
                     # maintenant comme le reste.
                     if _ft == "Machine a fumee":
                         continue
-                    if _sp_on:
+                    # `id(p) in _hw_ids` → le canal Strobe matériel fait le
+                    # clignotement : niveau plein en permanence, sinon on lui
+                    # coupe un éclat sur deux (voir `_live_hw_strobe_ids`).
+                    if _sp_on or id(p) in _hw_ids:
                         p.level = 100; p.color = QColor(255, 255, 255)
                     else:
                         p.level = 0;   p.color = QColor("black")
@@ -10877,11 +10902,12 @@ class MainWindow(QMainWindow):
                                or getattr(self._ia_audio_ai, 'palette', None)
                                or [QColor('#ffffff')])
                     _sc1 = _pal_sp[0]
+                _hw_ids = self._live_hw_strobe_ids()
                 for p in self.projectors:
                     _ft = getattr(p, 'fixture_type', '')
                     if _ft == "Machine a fumee":
                         continue   # lyres incluses, comme « Stroboscope »
-                    if _sp_on:
+                    if _sp_on or id(p) in _hw_ids:   # cf. « Stroboscope »
                         p.level = 100; p.color = _sc1
                     else:
                         p.level = 0;   p.color = QColor("black")
@@ -11014,6 +11040,58 @@ class MainWindow(QMainWindow):
                 lat_idx += 1
 
             _set_proj(p, color, level)
+
+        # ── Cycle des tuiles COULEUR ──────────────────────────────────────────
+        # Fait tourner `current_color_tile` dans le pool au fil des mesures.
+        #
+        # Ce compteur est lu par la palette de la section suivante (`pal`) ET
+        # par la couleur des lyres : il pilote la couleur de TOUT le plan de
+        # feu. Il vivait pourtant dans le bloc `if moving_heads:` — sur un plan
+        # sans lyre, aucune couleur ne défilait et une seule teinte tenait tout
+        # le morceau. Il est remonté ici, avant que `pal` ne le lise, pour que
+        # le changement prenne effet sur la même image.
+        _col_pool = self._fx_src.color_tile_pool   # liste ordonnée
+        _col_cur  = self._fx_src.current_color_tile
+
+        # Si l'utilisateur a changé manuellement la couleur → reset du timer de cycle
+        if getattr(self, '_live_col_cur_prev', None) != _col_cur:
+            self._live_col_cur_prev = _col_cur
+            if hasattr(self, '_live_lyre_color_switch'):
+                del self._live_lyre_color_switch   # repart du début avec la nouvelle couleur
+
+        # `color_cycle` — et non `color_max > 1`. Les deux sources de réglages
+        # ne donnent pas le même sens au nombre de couleurs simultanées :
+        # dans le panneau LIVE, « 1 » veut dire une couleur À LA FOIS, qui
+        # défile au rythme du curseur DURÉE ; dans le préréglage d'un média,
+        # « 1 » veut dire une couleur tenue tout le morceau. Tester `color_max`
+        # ici imposait la seconde lecture au LIVE : les couleurs y restaient
+        # figées sur la tuile courante (3.1.85).
+        if len(_col_pool) > 1 and self._fx_src.color_cycle:
+            if not hasattr(self, '_live_lyre_color_switch'):
+                _bpm0c = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
+                _n0c   = max(2, int(2 + (self._fx_src.color_duration / 100.0) * 30))
+                self._live_lyre_color_switch = {
+                    'switch_at': position + int(_n0c * 60000.0 / _bpm0c),
+                    'pool_snap': list(_col_pool),
+                }
+            _cswitch = self._live_lyre_color_switch
+            if position >= _cswitch['switch_at']:
+                _cswitch['pool_snap'] = list(_col_pool)
+                try:
+                    _ci = _cswitch['pool_snap'].index(_col_cur)
+                except ValueError:
+                    _ci = -1
+                _ni       = (_ci + 1) % len(_cswitch['pool_snap'])
+                _next_col = _cswitch['pool_snap'][_ni]
+                self._fx_src.set_current_color_tile(_next_col)
+                _col_cur  = _next_col
+                self._live_col_cur_prev = _next_col   # ce n'est pas un changement MANUEL
+                _bpm_c    = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
+                _n_c      = max(2, int(2 + (self._fx_src.color_duration / 100.0) * 30))
+                _cswitch['switch_at'] = position + int(_n_c * 60000.0 / _bpm_c)
+        else:
+            if hasattr(self, '_live_lyre_color_switch'):
+                del self._live_lyre_color_switch
 
         # ── 2. Overrides de section ───────────────────────────────────────────
         white = QColor(255, 255, 255)
@@ -11358,48 +11436,13 @@ class MainWindow(QMainWindow):
                     self._live_transient_flash['lyre_chop_until'],
                 )
 
-            # ── Couleur lyre : pool de tuiles + cycle automatique ─────────
+            # ── Couleur lyre : suit la tuile courante ─────────────────────
             pal_l = _settings_pal or self._ia_audio_ai.palette or [QColor("#ffffff")]
             c_idx = getattr(self._ia_audio_ai, '_contre_color_idx', 0)
 
-            # Cycle entre les tuiles couleur sélectionnées (même logique que mouvements)
-            _col_pool = self._fx_src.color_tile_pool   # liste ordonnée
-            _col_cur  = self._fx_src.current_color_tile
-
-            # Si l'utilisateur a changé manuellement la couleur → reset du timer de cycle
-            if getattr(self, '_live_col_cur_prev', None) != _col_cur:
-                self._live_col_cur_prev = _col_cur
-                if hasattr(self, '_live_lyre_color_switch'):
-                    del self._live_lyre_color_switch   # repart du début avec la nouvelle couleur
-
-            # « Couleurs simultanées = 1 » veut dire UNE couleur, pas une couleur
-            # à la fois qui défile : le cycle est coupé et la couleur en cours
-            # reste en place. Au-dessus de 1, le pool tourne comme avant.
-            if len(_col_pool) > 1 and self._fx_src.color_max > 1:
-                if not hasattr(self, '_live_lyre_color_switch'):
-                    _bpm0c = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n0c   = max(2, int(2 + (self._fx_src.color_duration / 100.0) * 30))
-                    self._live_lyre_color_switch = {
-                        'switch_at': position + int(_n0c * 60000.0 / _bpm0c),
-                        'pool_snap': list(_col_pool),
-                    }
-                _cswitch = self._live_lyre_color_switch
-                if position >= _cswitch['switch_at']:
-                    _cswitch['pool_snap'] = list(_col_pool)
-                    try:
-                        _ci = _cswitch['pool_snap'].index(_col_cur)
-                    except ValueError:
-                        _ci = -1
-                    _ni       = (_ci + 1) % len(_cswitch['pool_snap'])
-                    _next_col = _cswitch['pool_snap'][_ni]
-                    self._fx_src.set_current_color_tile(_next_col)
-                    _col_cur = _next_col
-                    _bpm_c   = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n_c     = max(2, int(2 + (self._fx_src.color_duration / 100.0) * 30))
-                    _cswitch['switch_at'] = position + int(_n_c * 60000.0 / _bpm_c)
-            else:
-                if hasattr(self, '_live_lyre_color_switch'):
-                    del self._live_lyre_color_switch
+            # Le cycle du pool tourne plus haut (« Cycle des tuiles COULEUR »),
+            # hors de ce bloc : il pilote TOUT le plan, pas les seules lyres.
+            _col_cur = self._fx_src.current_color_tile
 
             # Résoudre la tuile courante → (color1, color2)
             _lyr_c1, _lyr_c2 = self._fx_src.get_color_data(_col_cur)
@@ -11641,6 +11684,11 @@ class MainWindow(QMainWindow):
         # Le poser une image sur deux le remettrait à 0 en alternance et la
         # fixture ne strobrait jamais.
         _hw_strobe = 0
+        # Fixtures dont le canal Strobe porte déjà le clignotement : les blocs
+        # ci-dessous ne doivent PAS leur couper le niveau en plus, sinon la
+        # moitié des éclats de la fixture tombe dans un dimmer à zéro et le
+        # strobe paraît « très léger ». Voir `_live_hw_strobe_ids`.
+        _hw_ids = self._live_hw_strobe_ids()
 
         # AUTO tile — comportement intelligent par section
         _auto_on = self._fx_src.is_tile_active('auto') and _eff_ok('auto')
@@ -11651,7 +11699,8 @@ class MainWindow(QMainWindow):
                     _hw_strobe = max(_hw_strobe, _live_strobe_rate(auto_ms))
                     if (int(position / auto_ms) % 2) == 1:
                         for p in self.projectors:
-                            if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                            if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                                    and id(p) not in _hw_ids):
                                 p.level = 0; p.color = QColor("black")
             elif section == 'build' and _allow_strob_slow:
                 build_p = min(1.0, energy * 1.5)
@@ -11661,7 +11710,8 @@ class MainWindow(QMainWindow):
                         _hw_strobe = max(_hw_strobe, _live_strobe_rate(auto_ms))
                         if (int(position / auto_ms) % 2) == 1:
                             for p in self.projectors:
-                                if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                                if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                                        and id(p) not in _hw_ids):
                                     p.level = 0; p.color = QColor("black")
 
         # Strobe beat : override final (tue le niveau pendant les frames OFF)
@@ -11670,7 +11720,8 @@ class MainWindow(QMainWindow):
             _hw_strobe = max(_hw_strobe, _live_strobe_rate(strobe_ms))
             if (int(position / strobe_ms) % 2) == 1:
                 for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                    if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                            and id(p) not in _hw_ids):
                         p.level = 0
                         p.color = QColor("black")
 
@@ -11688,7 +11739,8 @@ class MainWindow(QMainWindow):
             _hw_strobe = max(_hw_strobe, _live_strobe_rate(_sms))
             if (int(position / _sms) % 2) == 1:
                 for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                    if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                            and id(p) not in _hw_ids):
                         p.level = 0
                         p.color = QColor("black")
 
@@ -11713,7 +11765,7 @@ class MainWindow(QMainWindow):
             for p in self.projectors:
                 if getattr(p, 'fixture_type', '') == "Machine a fumee":
                     continue
-                if _strobe_on_d:
+                if _strobe_on_d or id(p) in _hw_ids:   # cf. `_live_hw_strobe_ids`
                     p.level = 100
                     p.color = QColor(255, 255, 255)
                     p.base_color = QColor(255, 255, 255)
@@ -17502,6 +17554,7 @@ class MainWindow(QMainWindow):
                     'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
                     'channel_labels':     list(getattr(proj, 'channel_labels', [])),
+                    'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
                     **_matrix_meta(proj),
                 })
 
@@ -17680,6 +17733,7 @@ class MainWindow(QMainWindow):
                 p.color_wheel_slots = list(fd_s.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(fd_s.get('gobo_wheel_slots', []))
                 p.channel_labels    = list(fd_s.get('channel_labels', []))
+                p.ring_follow       = bool(fd_s.get('ring_follow', True))
                 if p.fixture_type == "Machine a fumee":
                     p.fan_speed = 0
                 _apply_pantilt_meta(p, fd_s)
@@ -17696,6 +17750,7 @@ class MainWindow(QMainWindow):
                     'color_wheel_slots':  list(fd_s.get('color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(fd_s.get('gobo_wheel_slots', [])),
                     'channel_labels':     list(fd_s.get('channel_labels', [])),
+                    'ring_follow':        bool(fd_s.get('ring_follow', True)),
                     **{k: fd_s[k] for k in _PANTILT_META_FIELDS if k in fd_s},
                     **{k: fd_s[k] for k in _MATRIX_META_FIELDS if k in fd_s},
                 })
@@ -17910,6 +17965,45 @@ class MainWindow(QMainWindow):
                     tog_row.addWidget(btn_swap)
 
                     wl.addLayout(tog_row)
+
+                # ── Couronne LED : suit le show / manuelle ───────────────────
+                # Le réglage vaut pour TOUTE la couronne, pas pour ce canal :
+                # séparer le rouge du vert n'aurait aucun sens. On l'affiche
+                # donc sur n'importe lequel de ses canaux, celui que
+                # l'utilisateur aura ouvert.
+                if ch_type.startswith("Ring") and snap_idx is not None \
+                        and snap_idx < len(self.projectors):
+                    proj_rg = self.projectors[snap_idx]
+                    _SEPR = QFrame(); _SEPR.setFrameShape(QFrame.HLine)
+                    _SEPR.setStyleSheet("QFrame{color:#1e1e1e;margin:4px 0;}")
+                    wl.addWidget(_SEPR)
+
+                    _pilotable = ch_type in ("RingDim", "RingR", "RingG",
+                                             "RingB", "RingW", "RingStrobe")
+                    btn_ring = QPushButton(tr("mw_ring_follow"))
+                    btn_ring.setCheckable(True)
+                    btn_ring.setChecked(getattr(proj_rg, 'ring_follow', True))
+                    btn_ring.setStyleSheet(
+                        "QPushButton{background:#1a1a1a;color:#555;border:1px solid #252525;"
+                        "border-radius:5px;padding:4px 10px;font-size:10px;}"
+                        "QPushButton:checked{background:#0d2030;color:#00d4ff;"
+                        "border-color:#00d4ff55;}"
+                        "QPushButton:hover{border-color:#333;color:#aaa;}"
+                    )
+                    btn_ring.setToolTip(tr("mw_ring_follow_tip"))
+                    btn_ring.toggled.connect(
+                        lambda v, p=proj_rg: setattr(p, 'ring_follow', v) or _mark_dirty()
+                    )
+                    wl.addWidget(btn_ring)
+                    if not _pilotable:
+                        # RingFX / RingSpeed : programmes internes de la
+                        # couronne, jamais pilotés par le show (cf. `_RING_DRIVEN`
+                        # dans artnet_dmx). Le dire, sinon on croit le bouton
+                        # cassé sur ces deux canaux-là.
+                        _hint = QLabel(tr("mw_ring_manual_only"))
+                        _hint.setWordWrap(True)
+                        _hint.setStyleSheet("color:#5e5e5e;font-size:9px;")
+                        wl.addWidget(_hint)
 
                 # ── Calibration ColorWheel / Gobo ────────────────────────────
                 _WHEEL_CH = {"ColorWheel", "Gobo1", "Gobo2"}
@@ -18859,11 +18953,21 @@ class MainWindow(QMainWindow):
             fd['name']         = new_fx.get("name", fd['name'])
             fd['fixture_type'] = new_fx.get("fixture_type", fd['fixture_type'])
             fd['profile']      = list(new_fx.get("profile", fd['profile']))
+            # Les noms de canaux appartiennent au NOUVEAU profil. Sans cette
+            # ligne, remplacer une fixture par sa version corrigée gardait les
+            # libellés de l'ancienne — donc des noms décalés, ou aucun, juste
+            # là où on vient de les rétablir. La racine décrit le premier mode ;
+            # une fixture venue de la bibliothèque ne les porte que dans `modes`.
+            _nlb = (new_fx.get("labels") or new_fx.get("channel_labels")
+                    or (new_fx.get("modes") or [{}])[0].get("labels") or [])
+            fd['channel_labels'] = (list(_nlb) if len(_nlb) == len(fd['profile'])
+                                    else [])
             # start_address et group sont conservés
 
-            proj.name         = fd['name']
-            proj.fixture_type = fd['fixture_type']
-            proj.dmx_profile  = fd['profile']
+            proj.name           = fd['name']
+            proj.fixture_type   = fd['fixture_type']
+            proj.dmx_profile    = fd['profile']
+            proj.channel_labels = list(fd['channel_labels'])
 
             _apply_fd_to_dmx()
             _mark_dirty()
@@ -20730,6 +20834,11 @@ class MainWindow(QMainWindow):
                     if not _f.get("profile") and _f.get("modes"):
                         _f["profile"] = _f["modes"][0].get("profile", [])
                     _f.setdefault("source", "firestore")
+                    # Marque de provenance : c'est elle qui autorisera le
+                    # prochain Actualiser à remplacer cette copie. `source` ne
+                    # suffit pas — un document distant peut très bien porter
+                    # « ma3 », exactement comme un fichier importé à la main.
+                    _f["_from_library"] = True
                 # Fusionner : conserver les fixtures user locales, remplacer les firestore
                 _fx_file2 = Path.home() / ".mystrow_fixtures.json"
                 try:
@@ -20738,7 +20847,16 @@ class MainWindow(QMainWindow):
                         existing = []
                 except Exception:
                     existing = []
-                local_only = [f for f in existing if f.get("source", "user") not in ("firestore", "ofl")]
+                # Une fixture VENUE de la bibliothèque repart : sa version
+                # distante la remplace, corrections comprises. C'est tout l'objet
+                # du bouton — il ne faisait jusqu'ici qu'AJOUTER ce qui manquait,
+                # si bien qu'un profil corrigé puis republié ne redescendait
+                # jamais chez qui l'avait déjà. Voir `vient_de_la_bibliotheque`.
+                try:
+                    from fixture_packs import vient_de_la_bibliotheque as _vdb
+                except Exception:
+                    _vdb = lambda f: f.get("source") in ("firestore", "ofl")
+                local_only = [f for f in existing if not _vdb(f)]
                 # Dédoublonner : ne pas ré-ajouter une fixture distante qui existe
                 # déjà en copie locale "user" (même nom + fabricant). Sinon les
                 # projecteurs ajoutés par l'utilisateur/admin (présents à la fois en
@@ -21402,6 +21520,8 @@ class MainWindow(QMainWindow):
                 # elle n'était PAS sauvegardée : le réglage était perdu au
                 # redémarrage et la lyre repartait noire.
                 'shutter_inverted':   bool(getattr(proj, 'shutter_inverted', False)),
+                # Couronne LED : suit le show (défaut) ou reste manuelle.
+                'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                 'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
                 **_pantilt_meta(proj),
@@ -21497,6 +21617,9 @@ class MainWindow(QMainWindow):
                             p.dmx_profile = list(profile)
                         p.channel_defaults  = dict(fd.get('channel_defaults', {}))
                         p.shutter_inverted  = bool(fd.get('shutter_inverted', False))
+                        # Absent des shows antérieurs à la couronne pilotée :
+                        # True, c'est-à-dire le comportement voulu par défaut.
+                        p.ring_follow       = bool(fd.get('ring_follow', True))
                         p.color_wheel_slots = list(fd.get('color_wheel_slots', []))
                         p.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
                         _apply_pantilt_meta(p, fd)
