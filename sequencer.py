@@ -4993,6 +4993,44 @@ class Sequencer(QFrame):
 
         self.recording_start_time += 500
 
+    def ensure_light_playback_armed(self):
+        """Arme la restitution lumière de la ligne courante si elle ne l'est pas.
+
+        `play_row()` était le SEUL endroit qui armait la lumière : appuyer sur
+        Play sur un média DÉJÀ chargé (bouton, barre d'espace, pad PLAY de
+        l'APC, tablette, fenêtre EXT — tout passe par `MainWindow.toggle_play`)
+        se contentait de `player.play()`, donc le son repartait sans la lumière.
+
+        Le cas typique remonté : on enregistre un REC Lumière, on sauvegarde —
+        ce qui bascule la ligne en « Play Lumiere » et referme l'éditeur, en
+        laissant le lecteur en pause —, on revient à l'écran principal et on
+        fait Play. Sans re-double-cliquer le média, la séquence ne partait
+        jamais. Elle n'existait même pas encore au moment du dernier `play_row`.
+
+        Sans effet si la restitution tourne déjà (reprise après pause) : la
+        garde évite de repartir du début de la séquence. Armer en cours de
+        morceau est sûr, la restitution est pilotée par `player.position()` et
+        rattrape l'état des clips à la position courante dès le premier tick.
+        """
+        row = getattr(self, 'current_row', -1)
+        if row is None or row < 0 or row not in self.sequences:
+            return
+        if self.get_dmx_mode(row) not in ("Programme", "Play Lumiere"):
+            return
+        sequence = self.sequences[row] or {}
+        if "clips" in sequence:
+            deja_arme = (getattr(self, 'timeline_playback_row', None) == row
+                         and self.timeline_playback_timer is not None
+                         and self.timeline_playback_timer.isActive())
+        elif "keyframes" in sequence:
+            deja_arme = (getattr(self, 'playback_row', -1) == row
+                         and self.playback_timer is not None
+                         and self.playback_timer.isActive())
+        else:
+            return
+        if not deja_arme:
+            self.play_sequence(row)
+
     def play_sequence(self, row):
         """Joue une sequence"""
         if row not in self.sequences:
@@ -6188,9 +6226,15 @@ class Sequencer(QFrame):
             "QPushButton{background:#2a0000;color:#cc4444;border:1px solid #3a1111;"
             "border-radius:5px;padding:7px 16px;font-size:12px;}"
             "QPushButton:hover{background:#440000;color:#ff6666;}")
-        # Remet les deux curseurs à zéro plutôt que de fermer : on voit ce qu'on
-        # va valider, et on peut se raviser par Annuler.
-        btn_clear.clicked.connect(lambda: [c.setValue(0) for c in curseurs.values()])
+        # Remet les curseurs à zéro PUIS valide : « Retirer le fondu » est une
+        # décision, pas un réglage. Laisser la boîte ouverte obligeait à cliquer
+        # OK derrière, et un clic sur Annuler à ce moment-là annulait le retrait
+        # qu'on venait de demander — exactement l'inverse de l'intention.
+        def _retirer():
+            for c in curseurs.values():
+                c.setValue(0)
+            dlg.accept()
+        btn_clear.clicked.connect(_retirer)
         barre.addWidget(btn_clear)
         barre.addStretch()
 

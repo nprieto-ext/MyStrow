@@ -66,7 +66,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.86"
+VERSION = "3.1.87"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -577,6 +577,49 @@ def effect_dim_base_color(proj, current):
     if not profile or 'R' in profile or 'G' in profile or 'B' in profile:
         return current
     return QColor(255, 255, 255)
+
+
+def cw_full_value(r, g, b):
+    """Ramene une couleur a pleine valeur (composante max = 255).
+
+    Une roue de couleurs ne porte qu'une TEINTE : l'intensite est portee par le
+    dimmer/shutter, jamais par la position de la roue. Toute comparaison de
+    couleur destinee a choisir un slot doit donc se faire a pleine valeur des
+    deux cotes, sinon la distance RVB est dominee par la luminosite et le choix
+    part sur le slot le plus SOMBRE des que la couleur baisse.
+    """
+    m = max(r, g, b)
+    if m == 0:
+        return (r, g, b)
+    return (r * 255 // m, g * 255 // m, b * 255 // m)
+
+
+def cw_slot_for_color(slots, color):
+    """Slot de roue dont la TEINTE est la plus proche de `color`.
+
+    Renvoie None si la couleur est noire : le noir n'a pas de teinte, il n'y a
+    donc rien a choisir et la roue doit rester ou elle est. C'est ce cas qui
+    faisait osciller une lyre a roue entre vert et blanc : les moteurs d'effets
+    rappellent le mapping a chaque frame avec `proj.color`, noir une frame sur
+    deux en Strobe/Flash, et le noir « ressemblait » au slot vert de la table
+    generique (distance a #00cc44 plus courte qu'a #ffffff).
+
+    Metrique unique de l'app : `MainWindow._update_color_wheel` (pads, memoires,
+    timeline, tablette) et le selecteur de couleur du plan 2D passent tous ici.
+    """
+    if not slots:
+        return None
+    cr, cg, cb = color.red(), color.green(), color.blue()
+    if max(cr, cg, cb) == 0:
+        return None
+    cr, cg, cb = cw_full_value(cr, cg, cb)
+
+    def _dist(s):
+        sc = QColor(s.get('color', '#ffffff'))
+        sr, sg, sb = cw_full_value(sc.red(), sc.green(), sc.blue())
+        return (sr - cr) ** 2 + (sg - cg) ** 2 + (sb - cb) ** 2
+
+    return min(slots, key=_dist)
 
 
 def projector_selection_keys(projectors):

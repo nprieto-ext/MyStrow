@@ -125,22 +125,23 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "forgot_pwd_title":      {"en": "🔑  Forgot password?",         "fr": "🔑  Mot de passe oublié ?",   "es": "🔑  ¿Olvidaste tu contraseña?", "de": "🔑  Passwort vergessen?", "pt": "🔑  Esqueceu a senha?"},
     "forgot_pwd_desc":       {
         "en": "Enter your account email address.\n"
-              "You will receive a link to reset your password.\n\n"
+              "You will receive your login credentials.\n\n"
               "For any issue: nicolas@mystrow.fr",
         "fr": "Entrez votre adresse email de compte.\n"
-              "Vous recevrez un lien pour réinitialiser votre mot de passe.\n\n"
+              "Vous recevrez vos identifiants de connexion.\n\n"
               "Pour tout problème : nicolas@mystrow.fr",
         "es": "Introduce el email de tu cuenta.\n"
-              "Recibirás un enlace para restablecer tu contraseña.\n\n"
+              "Recibirás tus datos de acceso.\n\n"
               "Para cualquier problema: nicolas@mystrow.fr",
-     "de": "Geben Sie die E-Mail-Adresse Ihres Kontos ein.\nSie erhalten einen Link zum Zurücksetzen Ihres Passworts.\n\nBei Problemen: nicolas@mystrow.fr", "pt": "Digite o e-mail da sua conta.\nVocê receberá um link para redefinir sua senha.\n\nEm caso de problema: nicolas@mystrow.fr"},
+     "de": "Geben Sie die E-Mail-Adresse Ihres Kontos ein.\nSie erhalten Ihre Zugangsdaten.\n\nBei Problemen: nicolas@mystrow.fr", "pt": "Digite o e-mail da sua conta.\nVocê receberá suas credenciais de acesso.\n\nEm caso de problema: nicolas@mystrow.fr"},
+    "forgot_pwd_check_spam": {"en": "Check your spam folder if nothing arrives.", "fr": "Pensez à regarder dans vos spams.", "es": "Revisa tu carpeta de spam si no llega nada.", "de": "Schauen Sie ggf. im Spam-Ordner nach.", "pt": "Verifique a pasta de spam se nada chegar."},
     "email_placeholder":     {"en": "your@email.com",               "fr": "votre@email.com",             "es": "tu@email.com", "de": "ihre@email.com", "pt": "seu@email.com"},
     "btn_cancel":            {"en": "Cancel",                        "fr": "Annuler",                    "es": "Cancelar", "de": "Abbrechen", "pt": "Cancelar"},
-    "btn_send_password":     {"en": "📧  Send reset link",           "fr": "📧  Envoyer le lien",         "es": "📧  Enviar enlace", "de": "📧  Link senden", "pt": "📧  Enviar o link"},
+    "btn_send_password":     {"en": "📧  Send my credentials",       "fr": "📧  Envoyer mes identifiants", "es": "📧  Enviar mis datos", "de": "📧  Zugangsdaten senden", "pt": "📧  Enviar credenciais"},
     "err_invalid_email":     {"en": "⚠  Invalid email address.",     "fr": "⚠  Adresse email invalide.", "es": "⚠  Dirección de email inválida.", "de": "⚠  Ungültige E-Mail-Adresse.", "pt": "⚠  Endereço de e-mail inválido."},
     "sending":               {"en": "Sending…",                      "fr": "Envoi en cours…",            "es": "Enviando…", "de": "Wird gesendet …", "pt": "Enviando…"},
     "connecting":            {"en": "Connecting to server…",         "fr": "Connexion au serveur…",      "es": "Conectando al servidor…", "de": "Verbindung zum Server …", "pt": "Conectando ao servidor…"},
-    "email_sent":            {"en": "✅  Reset link sent to {email}", "fr": "✅  Lien envoyé à {email}",  "es": "✅  Enlace enviado a {email}", "de": "✅  Link an {email} gesendet", "pt": "✅  Link enviado para {email}"},
+    "email_sent":            {"en": "✅  Credentials sent to {email}", "fr": "✅  Identifiants envoyés à {email}",  "es": "✅  Datos enviados a {email}", "de": "✅  Zugangsdaten an {email} gesendet", "pt": "✅  Credenciais enviadas para {email}"},
     "btn_sent":              {"en": "✔  Sent!",                      "fr": "✔  Envoyé !",                "es": "✔  ¡Enviado!", "de": "✔  Gesendet!", "pt": "✔  Enviado!"},
     "btn_send_short":        {"en": "📧  Send",                      "fr": "📧  Envoyer",                "es": "📧  Enviar", "de": "📧  Senden", "pt": "📧  Enviar"},
 
@@ -820,8 +821,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "seq_menu_volume":           {"en": "🔊 Volume",                "fr": "🔊 Volume",                     "es": "🔊 Volumen", "de": "🔊 Lautstärke", "pt": "🔊 Volume"},
     "seq_menu_loop":             {"en": "🔁 Play in a loop",        "fr": "🔁 Jouer en boucle",            "es": "🔁 Reproducir en bucle", "de": "🔁 In Schleife abspielen", "pt": "🔁 Tocar em loop"},
     "seq_menu_loop_off":         {"en": "🔁 Remove loop",           "fr": "🔁 Enlever la boucle",          "es": "🔁 Quitar bucle", "de": "🔁 Schleife entfernen", "pt": "🔁 Remover o loop"},
-    "seq_menu_fade":             {"en": "🎚 Fade in / out…",        "fr": "🎚 Fondu d'entrée / sortie…",   "es": "🎚 Fundido de entrada / salida…", "de": "🎚 Ein-/Ausblenden…", "pt": "🎚 Fade de entrada / saída…"},
-    "seq_menu_fade_set":         {"en": "🎚 Fade  {v}…",            "fr": "🎚 Fondu  {v}…",                "es": "🎚 Fundido  {v}…", "de": "🎚 Blende  {v}…", "pt": "🎚 Fade  {v}…"},
+    "seq_menu_fade":             {"en": "🎚 Fade in / out",         "fr": "🎚 Fondu d'entrée / sortie",    "es": "🎚 Fundido de entrada / salida", "de": "🎚 Ein-/Ausblenden", "pt": "🎚 Fade de entrada / saída"},
+    "seq_menu_fade_set":         {"en": "🎚 Fade  {v}",             "fr": "🎚 Fondu  {v}",                 "es": "🎚 Fundido  {v}", "de": "🎚 Blende  {v}", "pt": "🎚 Fade  {v}"},
     "seq_fade_title":            {"en": "Track fades",              "fr": "Fondus de la piste",            "es": "Fundidos de la pista", "de": "Blenden der Spur", "pt": "Fades da faixa"},
     "seq_fade_hint":             {"en": "The fade-out runs over the last seconds of the track, then the next one starts. It also runs when you skip manually — click again during the fade to cut through.",
                                   "fr": "Le fondu de sortie se joue sur les dernières secondes de la piste, puis la suivante démarre. Il joue aussi quand vous passez à la suite à la main — recliquez pendant le fondu pour couper court.",
@@ -2390,7 +2391,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "cmw_f_press_fx_btn": {"en": "Press effect button {a0}\n(right-hand column)", "fr": "Appuyez sur le bouton effet {a0}\n(colonne de droite)", "es": "Pulse el botón de efecto {a0}\n(columna de la derecha)", "de": "Drücken Sie die Effekttaste {a0}\n(rechte Spalte)", "pt": "Aperte o botão de efeito {a0}\n(coluna da direita)"},
     "cmw_f_press_pad": {"en": "Press the pad\nColumn {a0}, Row {a1}\non your controller", "fr": "Appuyez sur le pad\nColonne {a0}, Ligne {a1}\nsur votre contrôleur", "es": "Pulse el pad\nColumna {a0}, Fila {a1}\nen su controlador", "de": "Drücken Sie das Pad\nSpalte {a0}, Zeile {a1}\nauf Ihrem Controller", "pt": "Aperte o pad\nColuna {a0}, Linha {a1}\nno seu controlador"},
     "cmw_f_press_strip_btn": {"en": "Press the button on strip {a0}\n(the button that cuts the sound / mute / solo)", "fr": "Appuyez sur le bouton de la tranche {a0}\n(le bouton qui coupe le son / mute / solo)", "es": "Pulse el botón del canal {a0}\n(el botón que corta el sonido / mute / solo)", "de": "Drücken Sie die Taste des Kanalzugs {a0}\n(die Taste, die den Ton abschaltet / Mute / Solo)", "pt": "Aperte o botão do canal {a0}\n(o botão que corta o som / mute / solo)"},
-    "cmw_f_step": {"en": "Step {a0}/9  —  {a1}", "fr": "Étape {a0}/9  —  {a1}", "es": "Paso {a0}/9  —  {a1}", "de": "Schritt {a0}/9  —  {a1}", "pt": "Etapa {a0}/9  —  {a1}"},
+    "cmw_refresh_ports": {"en": "🔄  Refresh", "fr": "🔄  Actualiser", "es": "🔄  Actualizar", "de": "🔄  Aktualisieren", "pt": "🔄  Atualizar"},
+    "cmw_no_port_block": {"en": "No MIDI port detected. Plug in your controller, then click Refresh.", "fr": "Aucun port MIDI détecté. Branchez votre contrôleur, puis cliquez sur Actualiser.", "es": "No se detectó ningún puerto MIDI. Conecta tu controlador y haz clic en Actualizar.", "de": "Kein MIDI-Port erkannt. Schließen Sie Ihren Controller an und klicken Sie auf Aktualisieren.", "pt": "Nenhuma porta MIDI detectada. Conecte seu controlador e clique em Atualizar."},
+    "cmw_pick_port_first": {"en": "Choose the MIDI port of your controller to continue.", "fr": "Choisissez le port MIDI de votre contrôleur pour continuer.", "es": "Elige el puerto MIDI de tu controlador para continuar.", "de": "Wählen Sie den MIDI-Port Ihres Controllers, um fortzufahren.", "pt": "Escolha a porta MIDI do seu controlador para continuar."},
+    "cmw_dj_ctrl": {"en": "My controller is a DJ controller", "fr": "Mon contrôleur est un contrôleur DJ", "es": "Mi controlador es un controlador DJ", "de": "Mein Controller ist ein DJ-Controller", "pt": "Meu controlador é um controlador DJ"},
+    "cmw_dj_hint": {"en": "Pads only: faders, effect buttons and the colour test are skipped. Grid preset to 2 rows × 4 columns.", "fr": "Pads uniquement : faders, boutons d'effet et test des couleurs sont ignorés. Grille pré-réglée sur 2 lignes × 4 colonnes.", "es": "Solo pads: faders, botones de efecto y prueba de color se omiten. Cuadrícula preajustada a 2 filas × 4 columnas.", "de": "Nur Pads: Fader, Effekttasten und Farbtest werden übersprungen. Raster auf 2 Zeilen × 4 Spalten voreingestellt.", "pt": "Apenas pads: faders, botões de efeito e teste de cor são ignorados. Grade predefinida em 2 linhas × 4 colunas."},
+    "cmw_dim_live": {"en": "Press a pad on your controller: it lights up below. Adjust the size until every pad has its cell.", "fr": "Appuyez sur un pad de votre contrôleur : il s'allume ci-dessous. Ajustez la taille jusqu'à ce que chaque pad ait sa case.", "es": "Pulsa un pad de tu controlador: se ilumina abajo. Ajusta el tamaño hasta que cada pad tenga su celda.", "de": "Drücken Sie ein Pad auf Ihrem Controller: Es leuchtet unten auf. Passen Sie die Größe an, bis jedes Pad seine Zelle hat.", "pt": "Pressione um pad do seu controlador: ele acende abaixo. Ajuste o tamanho até que cada pad tenha sua célula."},
+    "cmw_f_step": {"en": "Step {a0}/{a2}  —  {a1}", "fr": "Étape {a0}/{a2}  —  {a1}", "es": "Paso {a0}/{a2}  —  {a1}", "de": "Schritt {a0}/{a2}  —  {a1}", "pt": "Etapa {a0}/{a2}  —  {a1}"},
     "cmw_f_strip": {"en": "Strip {a0} / {total}", "fr": "Tranche {a0} / {total}", "es": "Canal {a0} / {total}", "de": "Kanalzug {a0} / {total}", "pt": "Canal {a0} / {total}"},
     "cmw_f_velocity": {"en": "Velocity: {val}  /  127", "fr": "Velocité : {val}  /  127", "es": "Velocidad: {val}  /  127", "de": "Velocity: {val}  /  127", "pt": "Velocity: {val}  /  127"},
     "cmw_f_velocity_test": {"en": "Velocity tested: {vel}   (sent to pad 1)", "fr": "Velocité testée : {vel}   (envoyée au pad 1)", "es": "Velocidad probada: {vel}   (enviada al pad 1)", "de": "Getestete Velocity: {vel}   (an Pad 1 gesendet)", "pt": "Velocity testada: {vel}   (enviada ao pad 1)"},

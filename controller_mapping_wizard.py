@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QSpinBox, QStackedWidget, QWidget, QLineEdit,
     QFrame, QGridLayout, QScrollArea, QSizePolicy, QTextEdit, QSlider,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QCheckBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QColor, QDesktopServices
@@ -210,15 +210,16 @@ class MidiMappingWizard(QDialog):
     profile_saved = Signal(str)  # émet le chemin du profil sauvegardé
 
     # Indices des pages dans le QStackedWidget
-    PAGE_WELCOME    = 0
-    PAGE_NAME       = 1
-    PAGE_DIMENSIONS = 2
-    PAGE_PADS       = 3
-    PAGE_MUTES      = 4
-    PAGE_FADERS     = 5
-    PAGE_EFFECTS    = 6
-    PAGE_LEDS       = 7
-    PAGE_SAVE       = 8
+    # Page d'accueil retiree le 20/08/2026 : elle n'annoncait rien que la page
+    # « Nom » ne dise mieux, et faisait payer un clic pour lire un texte.
+    PAGE_NAME       = 0
+    PAGE_DIMENSIONS = 1
+    PAGE_PADS       = 2
+    PAGE_MUTES      = 3
+    PAGE_FADERS     = 4
+    PAGE_EFFECTS    = 5
+    PAGE_LEDS       = 6
+    PAGE_SAVE       = 7
 
     def __init__(self, midi_handler, parent=None):
         super().__init__(parent)
@@ -240,6 +241,16 @@ class MidiMappingWizard(QDialog):
         self._fader_map  = {}   # {idx: {'channel': int, 'cc': int}}
         self._effect_map = {}   # {idx: {'channel': int, 'note': int}}
         self._led_colors = {}   # {vel: 'Couleur'} velocity → label couleur
+
+        # Contrôleur DJ : pads seulement, ni faders, ni effets, ni test des LED.
+        self._dj_mode = False
+
+        # Aperçu en direct de la page Dimensions : pads distincts déjà reçus.
+        # Initialisés ICI et pas dans la page : cocher « contrôleur DJ » écrit
+        # dans les compteurs, ce qui déclenche un redessin de la grille avant
+        # même que la page ait été affichée une première fois.
+        self._dim_seen = []
+        self._dim_grid_widget = None
 
         # État mapping pads
         self._pad_row = 0
@@ -287,7 +298,7 @@ class MidiMappingWizard(QDialog):
 
         self._build_ui()
         self._reset_all_leds()
-        self._show_page(self.PAGE_WELCOME)
+        self._show_page(self.PAGE_NAME)
 
     # ─── Reset LEDs ──────────────────────────────────────────────────────────
 
@@ -317,7 +328,6 @@ class MidiMappingWizard(QDialog):
         # Stack de pages
         self._stack = QStackedWidget()
         self._pages = [
-            self._build_welcome(),
             self._build_name(),
             self._build_dimensions(),
             self._build_pads(),
@@ -332,47 +342,6 @@ class MidiMappingWizard(QDialog):
         root.addWidget(self._stack, 1)
 
     # ─── Pages ───────────────────────────────────────────────────────────────
-
-    def _build_welcome(self):
-        w = QWidget()
-        v = QVBoxLayout(w)
-        v.setContentsMargins(40, 32, 40, 32)
-        v.setSpacing(16)
-
-        lbl_title = QLabel(tr("cmw_title"))
-        lbl_title.setObjectName("title")
-        v.addWidget(lbl_title)
-
-        sep = QFrame(); sep.setObjectName("sep"); sep.setFixedHeight(1)
-        v.addWidget(sep)
-
-        # Bloc communauté
-        card = QFrame(); card.setObjectName("card")
-        card_v = QVBoxLayout(card); card_v.setContentsMargins(20, 16, 20, 16); card_v.setSpacing(10)
-
-        lbl_community = QLabel(tr("cmw_community"))
-        lbl_community.setStyleSheet("color: #00aaff; font-size: 12pt; font-weight: bold;")
-        card_v.addWidget(lbl_community)
-
-        lbl_explain = QLabel(
-            tr("cmw_intro")
-        )
-        lbl_explain.setObjectName("sub")
-        lbl_explain.setWordWrap(True)
-        card_v.addWidget(lbl_explain)
-
-        lbl_promise = QLabel(tr("cmw_mail_notice"))
-        lbl_promise.setStyleSheet("color: #00cc44; font-size: 9pt;")
-        card_v.addWidget(lbl_promise)
-        v.addWidget(card)
-
-        v.addStretch()
-        btn = QPushButton(tr("cmw_start_test"))
-        btn.setObjectName("primary")
-        btn.setFixedHeight(48)
-        btn.clicked.connect(self._welcome_next)
-        v.addWidget(btn)
-        return w
 
     def _build_name(self):
         w = QWidget()
@@ -401,7 +370,15 @@ class MidiMappingWizard(QDialog):
         for p in _get_midi_ports():
             self._combo_ports.addItem(p, p)
         self._combo_ports.currentIndexChanged.connect(self._port_selected)
-        v.addWidget(self._combo_ports)
+        # Le contrôleur est souvent branché APRÈS l'ouverture de l'assistant :
+        # sans bouton d'actualisation il fallait tout fermer et recommencer.
+        h_port = QHBoxLayout(); h_port.setSpacing(8)
+        h_port.addWidget(self._combo_ports, 1)
+        btn_refresh = QPushButton(tr("cmw_refresh_ports")); btn_refresh.setObjectName("skip")
+        btn_refresh.setFixedHeight(32)
+        btn_refresh.clicked.connect(self._refresh_ports)
+        h_port.addWidget(btn_refresh)
+        v.addLayout(h_port)
 
         v.addSpacing(4)
         v.addWidget(QLabel(tr("cmw_keyword")))
@@ -412,6 +389,14 @@ class MidiMappingWizard(QDialog):
         lbl_hint = QLabel(tr("cmw_keyword_hint"))
         lbl_hint.setObjectName("warn")
         v.addWidget(lbl_hint)
+
+        v.addSpacing(6)
+        self._chk_dj = QCheckBox(tr("cmw_dj_ctrl"))
+        self._chk_dj.setStyleSheet("color:#88bbff; font-weight:bold;")
+        v.addWidget(self._chk_dj)
+        lbl_dj = QLabel(tr("cmw_dj_hint"))
+        lbl_dj.setObjectName("sub"); lbl_dj.setWordWrap(True)
+        v.addWidget(lbl_dj)
 
         # État du port : ouvert, déjà pris par un autre logiciel, messages reçus.
         # Sans ce retour, un port indisponible est indiscernable d'un contrôleur
@@ -424,15 +409,39 @@ class MidiMappingWizard(QDialog):
         v.addStretch()
         h = QHBoxLayout()
         btn_back = QPushButton(tr("cmw_back")); btn_back.setObjectName("skip")
-        btn_back.clicked.connect(lambda: self._show_page(self.PAGE_WELCOME))
+        # Premiere page de l'assistant : « Retour » ne peut que sortir.
+        btn_back.clicked.connect(self.reject)
         h.addWidget(btn_back)
         h.addStretch()
         btn_next = QPushButton(tr("cmw_continue")); btn_next.setObjectName("primary")
         btn_next.setFixedHeight(42)
         btn_next.clicked.connect(self._name_next)
+        self._btn_name_next = btn_next
         h.addWidget(btn_next)
         v.addLayout(h)
+        self._update_name_next_state()
         return w
+
+    def _update_name_next_state(self):
+        """« Continuer » reste bloqué tant qu'aucun port MIDI n'est choisi.
+
+        Sans port, l'assistant ne peut RIEN capturer : on avancerait jusqu'aux
+        pads pour y attendre indéfiniment un message qui n'arrivera jamais.
+        Autant le dire ici, où l'utilisateur peut encore brancher son
+        contrôleur et cliquer sur Actualiser.
+        """
+        btn = getattr(self, "_btn_name_next", None)
+        if btn is None:
+            return
+        ports = _get_midi_ports()
+        choisi = bool(self._combo_ports.currentData())
+        btn.setEnabled(choisi)
+        if not ports:
+            self._port_status.setText(tr("cmw_no_port_block"))
+            self._port_status.setStyleSheet("color:#e6a817; font-size:9pt;")
+        elif not choisi:
+            self._port_status.setText(tr("cmw_pick_port_first"))
+            self._port_status.setStyleSheet("color:#e6a817; font-size:9pt;")
 
     def _build_dimensions(self):
         w = QWidget()
@@ -473,6 +482,30 @@ class MidiMappingWizard(QDialog):
         grid.addWidget(self._spin_effects, 3, 1)
 
         v.addLayout(grid)
+
+        # Contrôle en direct : on appuie sur ses pads, ils s'allument ici.
+        # Sans ça, on devinait les dimensions et on ne s'apercevait de l'erreur
+        # qu'à l'étape suivante, une fois le mappage commencé.
+        v.addSpacing(6)
+        lbl_live = QLabel(tr("cmw_dim_live"))
+        lbl_live.setObjectName("sub"); lbl_live.setWordWrap(True)
+        v.addWidget(lbl_live)
+
+        self._dim_grid_area = QFrame(); self._dim_grid_area.setObjectName("card")
+        self._dim_grid_layout = QVBoxLayout(self._dim_grid_area)
+        self._dim_grid_layout.setAlignment(Qt.AlignCenter)
+        v.addWidget(self._dim_grid_area, 0, Qt.AlignHCenter)
+
+        self._dim_count = QLabel("")
+        self._dim_count.setObjectName("sub")
+        self._dim_count.setAlignment(Qt.AlignCenter)
+        v.addWidget(self._dim_count)
+
+        # Redessiner dès qu'on change une dimension : la grille doit refléter
+        # ce qui est saisi, pas ce qui l'était en arrivant sur la page.
+        self._spin_rows.valueChanged.connect(self._rebuild_dim_grid)
+        self._spin_cols.valueChanged.connect(self._rebuild_dim_grid)
+
         v.addStretch()
 
         h = QHBoxLayout()
@@ -824,10 +857,27 @@ class MidiMappingWizard(QDialog):
 
         v.addSpacing(4)
 
-        # ── Actions secondaires : partager le profil ──────────────────────────
+        # ── Partager son profil à la communauté ───────────────────────────────
+        #
+        # Cet argumentaire ouvrait l'assistant. Il y était au mauvais endroit :
+        # on demandait d'adhérer à une communauté avant d'avoir rien obtenu.
+        # Ici, l'utilisateur vient de faire marcher son contrôleur — c'est le
+        # moment où rendre service à son tour a du sens.
+        frame_share = QFrame(); frame_share.setObjectName("card")
+        fs = QVBoxLayout(frame_share); fs.setContentsMargins(16, 14, 16, 14); fs.setSpacing(8)
+
+        lbl_community = QLabel(tr("cmw_community"))
+        lbl_community.setStyleSheet("color: #00aaff; font-size: 11pt; font-weight: bold;")
+        fs.addWidget(lbl_community)
+
         lbl_share = QLabel(tr("cmw_share_title"))
-        lbl_share.setObjectName("sub")
-        v.addWidget(lbl_share)
+        lbl_share.setObjectName("sub"); lbl_share.setWordWrap(True)
+        fs.addWidget(lbl_share)
+
+        lbl_promise = QLabel(tr("cmw_mail_notice"))
+        lbl_promise.setStyleSheet("color: #00cc44; font-size: 9pt;")
+        lbl_promise.setWordWrap(True)
+        fs.addWidget(lbl_promise)
 
         h_share = QHBoxLayout(); h_share.setSpacing(8)
         btn_export = QPushButton(tr("cmw_export_btn")); btn_export.setObjectName("skip")
@@ -838,7 +888,8 @@ class MidiMappingWizard(QDialog):
         btn_send.clicked.connect(self._share_profile)
         h_share.addWidget(btn_send)
         h_share.addStretch()
-        v.addLayout(h_share)
+        fs.addLayout(h_share)
+        v.addWidget(frame_share)
 
         v.addStretch()
 
@@ -899,12 +950,19 @@ class MidiMappingWizard(QDialog):
         self._stop_capture()
         self._pulse_timer.stop()
         self._stack.setCurrentIndex(idx)
-        steps = ["Bienvenue", "Nom", "Dimensions", "Pads", "Mutes", "Faders", "Effets", "LEDs", "Sauvegarde"]
-        self._step_label.setText(tr("cmw_f_step", a0=idx + 1, a1=steps[idx]))
+        steps = ["Nom", "Dimensions", "Pads", "Mutes", "Faders", "Effets", "LEDs", "Sauvegarde"]
+        # Total lu sur la pile, jamais ecrit en dur : la phrase traduite annoncait
+        # « /9 » dans les cinq langues alors que l'assistant n'a plus que 8 pages.
+        self._step_label.setText(
+            tr("cmw_f_step", a0=idx + 1, a1=steps[idx], a2=self._stack.count()))
 
         if idx == self.PAGE_NAME:
             # Le contrôleur a pu être branché APRÈS l'ouverture de l'assistant.
             self._refresh_ports()
+        elif idx == self.PAGE_DIMENSIONS:
+            self._dim_seen = []
+            self._rebuild_dim_grid()
+            self._start_capture(self._on_dim_midi)
         elif idx == self.PAGE_PADS:
             self._start_pad_phase()
         elif idx == self.PAGE_MUTES:
@@ -919,44 +977,45 @@ class MidiMappingWizard(QDialog):
             self._release_ports_for_handler()
             self._populate_save_page()
 
+    def _goto_leds_or_save(self):
+        """Étape LED si elle a un sens, sinon la page finale.
+
+        Point unique : quatre transitions y menaient, la règle DJ aurait dérivé
+        à la première modification de l'une d'elles.
+
+        Sur un contrôleur DJ, les LED des pads sont pilotées par le logiciel DJ.
+        Les tester ne prouverait rien et les ferait clignoter en plein set —
+        deux écrivains sur la même LED, exactement ce qu'on évite ailleurs.
+        """
+        if self._pad_map and not getattr(self, "_dj_mode", False):
+            self._show_page(self.PAGE_LEDS)
+        else:
+            self._show_page(self.PAGE_SAVE)
+
     def _next_after_pads(self):
         if self._fader_count > 0:
             self._show_page(self.PAGE_MUTES)
         elif self._effect_count > 0:
             self._show_page(self.PAGE_EFFECTS)
-        elif self._pad_map:
-            self._show_page(self.PAGE_LEDS)
         else:
-            self._show_page(self.PAGE_SAVE)
+            self._goto_leds_or_save()
 
     def _next_after_mutes(self):
         if self._fader_count > 0:
             self._show_page(self.PAGE_FADERS)
         elif self._effect_count > 0:
             self._show_page(self.PAGE_EFFECTS)
-        elif self._pad_map:
-            self._show_page(self.PAGE_LEDS)
         else:
-            self._show_page(self.PAGE_SAVE)
+            self._goto_leds_or_save()
 
     def _next_after_faders(self):
         if self._effect_count > 0:
             self._show_page(self.PAGE_EFFECTS)
-        elif self._pad_map:
-            self._show_page(self.PAGE_LEDS)
         else:
-            self._show_page(self.PAGE_SAVE)
+            self._goto_leds_or_save()
 
     def _next_after_effects(self):
-        if self._pad_map:
-            self._show_page(self.PAGE_LEDS)
-        else:
-            self._show_page(self.PAGE_SAVE)
-
-    # ─── Logique page Welcome ─────────────────────────────────────────────────
-
-    def _welcome_next(self):
-        self._show_page(self.PAGE_NAME)
+        self._goto_leds_or_save()
 
     def _load_profile_into_state(self, data):
         self._profile_name  = data.get("name", "")
@@ -974,6 +1033,7 @@ class MidiMappingWizard(QDialog):
     # ─── Logique page Name ────────────────────────────────────────────────────
 
     def _port_selected(self, idx):
+        self._update_name_next_state()
         port = self._combo_ports.currentData()
         if port:
             self._inp_keyword.setText(_port_keyword(port))
@@ -1110,9 +1170,64 @@ class MidiMappingWizard(QDialog):
         self._profile_name = name
         kw = self._inp_keyword.text().strip().upper()
         self._keywords = [kw] if kw else []
+
+        # Contrôleur DJ : pads seulement. Les faders et les boutons d'effet
+        # tombent à 0, ce qui suffit à faire sauter leurs étapes — toute la
+        # navigation de l'assistant est déjà pilotée par ces compteurs.
+        self._dj_mode = self._chk_dj.isChecked()
+        if self._dj_mode:
+            self._spin_rows.setValue(2)
+            self._spin_cols.setValue(4)
+            self._spin_faders.setValue(0)
+            self._spin_effects.setValue(0)
         self._show_page(self.PAGE_DIMENSIONS)
 
     # ─── Logique page Dimensions ──────────────────────────────────────────────
+
+    def _rebuild_dim_grid(self):
+        """Redessine la grille d'aperçu et rejoue les pads déjà reçus."""
+        for child in self._dim_grid_area.findChildren(_PadGrid):
+            child.setParent(None)
+            child.deleteLater()
+        rows = max(1, self._spin_rows.value())
+        cols = max(1, self._spin_cols.value())
+        self._dim_grid_widget = _PadGrid(rows, cols)
+        self._dim_grid_layout.addWidget(self._dim_grid_widget)
+        # Les pads deja pressés restent allumés : changer une dimension ne doit
+        # pas obliger a tout re-presser pour comparer deux tailles.
+        for i, _ in enumerate(self._dim_seen):
+            if i >= rows * cols:
+                break
+            self._dim_grid_widget.set_mapped(i // cols, i % cols)
+        self._update_dim_count()
+
+    def _update_dim_count(self):
+        n = len(self._dim_seen)
+        total = max(1, self._spin_rows.value()) * max(1, self._spin_cols.value())
+        couleur = "#00cc44" if 0 < n <= total else ("#e6a817" if n > total else "#666")
+        self._dim_count.setText(f"{n} / {total}")
+        self._dim_count.setStyleSheet(f"color:{couleur}; font-weight:bold;")
+
+    def _on_dim_midi(self, msg):
+        """Note reçue pendant la page Dimensions : allume la case suivante.
+
+        On ne mappe RIEN ici — c'est un simple comptage de pads distincts, pour
+        que l'utilisateur vérifie sa grille avant de se lancer dans le mappage.
+        """
+        if len(msg) < 3:
+            return
+        status, note, vel = msg[0], msg[1], msg[2]
+        if (status & 0xF0) != 0x90 or vel <= 0:
+            return
+        cle = (status & 0x0F, note)
+        if cle in self._dim_seen:
+            return
+        self._dim_seen.append(cle)
+        cols = max(1, self._spin_cols.value())
+        i = len(self._dim_seen) - 1
+        if self._dim_grid_widget is not None and i < self._dim_grid_widget.rows * cols:
+            self._dim_grid_widget.set_mapped(i // cols, i % cols)
+        self._update_dim_count()
 
     def _dimensions_next(self):
         self._grid_rows   = self._spin_rows.value()

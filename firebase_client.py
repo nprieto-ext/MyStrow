@@ -37,6 +37,20 @@ _FIXTURE_SUBMIT_URL = (
     f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/fixture_submit"
 )
 
+# Cloud Function qui RENVOIE les identifiants (email + mot de passe) au client.
+_RESET_EMAIL_URL = (
+    f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/send_reset_email"
+)
+
+
+class CloudFunctionUnreachable(Exception):
+    """La Cloud Function n'a pas répondu du tout (réseau, DNS, TLS, déploiement).
+
+    Type dédié et non un test sur le texte du message : l'appelant doit pouvoir
+    distinguer « je n'ai pas pu poser la question » — où un repli est légitime —
+    de « le serveur a répondu non », qu'il faut montrer à l'utilisateur tel quel.
+    """
+
 
 def has_internet(timeout: float = 3.0) -> bool:
     """Test rapide de connectivité HTTPS vers les serveurs Firebase (port 443)."""
@@ -294,10 +308,51 @@ def get_stripe_portal_url(id_token: str) -> str:
         raise Exception(_net_error_msg(e))
 
 
+def send_credentials_email(email: str) -> bool:
+    """
+    Demande à la Cloud Function `send_reset_email` de RENVOYER les identifiants.
+
+    Préféré à `send_password_reset` (Firebase natif) pour deux raisons :
+      • le client reçoit directement son email + son mot de passe, au lieu d'un
+        lien à cliquer — c'est ce qu'il a perdu, pas un moyen d'en choisir un ;
+      • surtout, cette fonction REMONTE les échecs. Firebase natif répond 200
+        quoi qu'il arrive (protection anti-énumération activée sur le projet),
+        donc l'app annonçait « email envoyé » même quand rien ne partait — un
+        client sans identifiants ET sans le moindre message d'erreur.
+
+    Lève une Exception avec le message du serveur si l'envoi échoue (rejet SMTP,
+    quota de 3 envois/heure atteint…). Retourne True si la demande est passée.
+
+    ⚠️ Un `True` ne prouve pas qu'un email a été envoyé : pour une adresse sans
+    compte, la fonction répond volontairement « ok » sans rien envoyer. Ne pas
+    chercher à distinguer les deux, ce serait un oracle d'existence de compte.
+    """
+    payload = json.dumps({"email": email}).encode()
+    req = urllib.request.Request(_RESET_EMAIL_URL, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=_SSL_CTX) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            data = json.loads(e.read().decode() or "{}")
+        except Exception:
+            data = {}
+        raise Exception(data.get("error") or f"Erreur serveur ({e.code})")
+    except Exception as e:
+        raise CloudFunctionUnreachable(_net_error_msg(e))
+    if not data.get("ok"):
+        raise Exception(data.get("error") or "Envoi impossible")
+    return True
+
+
 def send_password_reset(email: str) -> bool:
     """
     Envoie un email de réinitialisation via l'API Firebase Auth native (sendOobCode).
     Firebase génère un lien sécurisé — aucun mot de passe n'est envoyé en clair.
+
+    ⚠️ Ne remonte JAMAIS d'échec d'acheminement : conservée comme repli de
+    `send_credentials_email` (Cloud Function injoignable). Voir sa docstring.
     """
     url = f"{_AUTH_BASE}/accounts:sendOobCode?key={FIREBASE_API_KEY}"
     payload = {"requestType": "PASSWORD_RESET", "email": email}

@@ -37,6 +37,7 @@ import urllib.request
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import parseaddr
 
 import firebase_admin
 from firebase_admin import auth, firestore
@@ -75,15 +76,137 @@ def _smtp_password() -> str: return _cfg("SMTP_PASSWORD")
 def _smtp_from()     -> str: return _cfg("SMTP_FROM")
 def _axonaut_key()   -> str: return _cfg("AXONAUT_API_KEY")
 def _brevo_key()     -> str: return _cfg("BREVO_API_KEY").strip()
+def _sender_token()  -> str: return _cfg("SENDER_API_TOKEN").strip()
+
+# Groupe Sender.net qui recevait les inscrits de la newsletter (« MYSTROW »).
+# Conserve pour la reprise des contacts historiques ; l'inscription passe
+# desormais par Brevo (cf. _brevo_list_newsletter).
+SENDER_GROUP_NEWSLETTER = "bkgJBE"
+
+# Liste Brevo qui recoit les inscrits de la newsletter. En variable et non en
+# constante : l'identifiant est cree dans l'interface Brevo, il n'a aucune
+# raison d'etre fige dans le code.
+def _brevo_list_newsletter() -> int:
+    try:
+        return int(_cfg("BREVO_LIST_NEWSLETTER", "0"))
+    except ValueError:
+        return 0
+
+
+# Liste Brevo des CLIENTS, volontairement distincte de la newsletter.
+#
+# Acheter une licence n'est pas consentir a recevoir du marketing : cette liste
+# ne sert qu'aux messages de service (relance d'expiration, information produit
+# liee au contrat). Le passage vers la newsletter reste soumis au consentement
+# explicite (`newsletter_consent`), et ne se fait jamais ici.
+def _brevo_list_clients() -> int:
+    try:
+        return int(_cfg("BREVO_LIST_CLIENTS", "0"))
+    except ValueError:
+        return 0
+
+
+# Domaines exclus de toute synchronisation Brevo (cf. _brevo_sync_client).
+_BREVO_DOMAINES_EXCLUS = {"tuifrance.com"}
+
+
+def _brevo_statut(plan_type: str, sub_id: str) -> str:
+    """Categorie commerciale envoyee a Brevo. C'est elle qui autorise ou non une relance.
+
+    ⚠️ `expiry_utc` n'est PAS une expiration pour un abonne Stripe : c'est la fin
+    de la periode courante, repoussee a chaque paiement par `_on_invoice_paid`.
+    Un « votre licence expire dans 15 jours » envoye a un abonne dont tout se
+    renouvelle seul est le message qui declenche une resiliation.
+
+    Meme regle que `license_manager._is_auto_renew` : recurrent ET identifiant
+    d'abonnement present. La condition sur l'identifiant compte — une activation
+    manuelle (`admin_activate_user.py`) pose `plan_type="monthly"` sans
+    abonnement Stripe et a, elle, une vraie echeance.
+    """
+    if plan_type == "lifetime":
+        return "a_vie"
+    if plan_type in ("monthly", "annual") and (sub_id or "").strip():
+        return "abonne"
+    return "echeance_fixe"
+
+
+def _brevo_sync_client(email: str, uid: str, plan_type: str, expiry_ts: float,
+                       lang: str = "fr", sub_id: str = "") -> None:
+    """Cree ou met a jour le contact client dans Brevo. N'echoue JAMAIS bruyamment.
+
+    Appele depuis les gestionnaires de webhook Stripe : une erreur Brevo ne doit
+    pas faire echouer le webhook. Stripe rejouerait alors la notification, et on
+    reglerait deux fois une licence deja reglee pour un simple probleme de
+    synchronisation marketing. On journalise et on continue.
+    """
+    key, list_id = _brevo_key(), _brevo_list_clients()
+    if not key or not list_id:
+        print("[Brevo] BREVO_LIST_CLIENTS non configure — synchro client ignoree")
+        return
+
+    # Domaines qui n'entrent JAMAIS dans Brevo. tuifrance.com est un contrat
+    # B2B : une soixantaine de boites d'hotels a la meme echeance, gerees par un
+    # interlocuteur unique. Les relancer une par une n'a aucun sens — au pire
+    # soixante messages arrivent le meme jour chez le meme groupe. Le
+    # renouvellement se traite comme un marche, pas comme un cycle de vie client.
+    if (email or "").strip().lower().rsplit("@", 1)[-1] in _BREVO_DOMAINES_EXCLUS:
+        print(f"[Brevo] {email} — domaine exclu, synchro ignoree")
+        return
+    payload = json.dumps({
+        "email":      email,
+        "listIds":    [list_id],
+        "attributes": {
+            "PLAN":   plan_type or "",
+            # Brevo attend une date, pas un horodatage.
+            "EXPIRY": _fmt_date_iso(expiry_ts),
+            "LANG":   (lang or "fr").upper(),
+            "UID":    uid or "",
+            "STATUT": _brevo_statut(plan_type, sub_id),
+        },
+        # Un renouvellement doit METTRE A JOUR l'expiration, pas echouer sur un
+        # « duplicate_parameter » parce que le client existe deja.
+        "updateEnabled": True,
+    }).encode()
+    req = urllib.request.Request("https://api.brevo.com/v3/contacts",
+                                 data=payload, method="POST")
+    req.add_header("api-key", key)
+    req.add_header("content-type", "application/json")
+    req.add_header("accept", "application/json")
+    # Cf. _send_email_brevo_api : sans User-Agent de navigateur, Cloudflare
+    # repond « Error 1010: Access denied » en 403.
+    req.add_header("User-Agent", "Mozilla/5.0 (compatible; MyStrow/1.0; "
+                                 "+https://mystrow.fr)")
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        print(f"[Brevo] client synchronise → {email} ({plan_type}, "
+              f"expire {_fmt_date_iso(expiry_ts)})")
+    except Exception as e:
+        detail = e.read().decode("utf-8", "replace")[:200] if hasattr(e, "read") else e
+        print(f"[Brevo] synchro client echouee → {email} : {detail}")
 
 AXONAUT_BASE = "https://axonaut.com/api/v2"
 
-# Taux de TVA des factures Axonaut, en pourcentage.
+# Taux de TVA de REPLI, en pourcentage.
 # Les montants Stripe sont des montants TTC (prix affiché au client) ; Axonaut
 # attend un prix unitaire HT et rajoute la TVA. Ce taux sert donc DEUX fois —
 # pour déduire le HT et pour le champ `tax_rate` — et les deux doivent rester
 # cohérents, d'où la constante unique.
+#
+# ⚠️ Ce taux n'est utilisé QUE lorsque Stripe ne calcule pas la TVA lui-même
+# (`automatic_tax.enabled` faux). Dès que Stripe Tax est activé dans le
+# Dashboard, la TVA réelle vient de Stripe : 21 % en Belgique, 19 % en
+# Allemagne, 0 % en autoliquidation B2B intra-UE ou hors UE. Appliquer 20 %
+# en dur à ces cas produirait des factures Axonaut fausses.
 TVA_RATE = 20
+
+# Nom du champ « numéro de TVA intracommunautaire » sur une société Axonaut.
+# ⚠️ Axonaut ignore SILENCIEUSEMENT les champs qu'il ne connaît pas — c'est ce
+# qui avait fait disparaître l'adresse client pendant des mois (cf.
+# _axonaut_get_or_create_company). Le nom exact n'étant pas documenté
+# publiquement, `_axonaut_verify_vat()` relit la fiche après écriture et log le
+# vrai nom du champ si celui-ci est faux. Corriger ici le cas échéant.
+AXONAUT_VAT_FIELD = "vat_number"
 
 # Durée des plans en jours
 _PLAN_DAYS = {
@@ -207,6 +330,29 @@ def _fmt_date(ts: float, lang: str = "fr") -> str:
     if lang == "en":
         return dt.strftime("%B %d, %Y")
     return dt.strftime("%d/%m/%Y")
+
+
+def _fmt_date_iso(ts: float) -> str:
+    """AAAA-MM-JJ — format des attributs de type date chez Brevo.
+
+    Distinct de `_fmt_date`, qui est destine a l'oeil du client et depend de sa
+    langue. Envoyer un « 20/08/2026 » francais dans un attribut date de Brevo le
+    fait rejeter en silence : l'attribut reste vide, la relance d'expiration ne
+    part jamais et rien ne signale l'erreur.
+
+    Rend "" au-dela de 2099, borne haute de Brevo. C'est le cas des licences A
+    VIE, dont `expiry_utc` tombe vers 2126 : Brevo ecrete la valeur a
+    2099-12-31 sur une mise a jour, mais l'ABANDONNE a la creation — deux
+    comportements pour la meme donnee, aucun message. Une licence a vie n'ayant
+    pas d'echeance, l'attribut vide est la bonne reponse : la relance
+    d'expiration ne doit jamais viser ces clients, et `PLAN=lifetime` reste la
+    pour les segmenter.
+    """
+    try:
+        dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return ""
+    return "" if dt.year > 2099 else dt.strftime("%Y-%m-%d")
 
 
 # Locales du navigateur / pays considérés francophones (sinon → anglais).
@@ -362,6 +508,109 @@ def _generate_password(length: int = 12) -> str:
 # AXONAUT HELPERS
 # ===========================================================================
 
+# Taux de TVA normaux des États membres, pour recaler un taux déduit.
+# Une facture doit porter un taux LÉGAL : déduire le taux en divisant la TVA
+# par le HT donne 20,01 % ou 18,95 % à cause des arrondis au centime, ce qui
+# n'existe dans aucun barème. On recale donc sur le taux normal le plus proche
+# (ils sont espacés d'au moins 1 point, la tolérance de 0,5 est sans risque).
+_TAUX_TVA_UE = (0.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 27.0)
+
+
+def _stripe_tax_details(obj: dict) -> tuple[float | None, bool]:
+    """(taux de TVA en %, Stripe calcule-t-il la TVA ?) pour une session
+    Checkout ou une facture Stripe.
+
+    Le booléen est la clé : il distingue « 0 % parce que c'est une
+    autoliquidation B2B » de « 0 % parce que Stripe Tax n'est pas activé ».
+    Sans lui, on ne saurait pas s'il faut croire le taux ou retomber sur
+    TVA_RATE — et on facturerait 0 % de TVA à toute la France.
+
+    On renvoie un TAUX et non un montant : c'est lui qui doit figurer sur la
+    facture, et le HT s'en déduit exactement. L'inverse (HT = TTC − TVA, puis
+    taux = TVA / HT) fabrique des taux illégaux.
+    """
+    enabled = bool((obj.get("automatic_tax") or {}).get("enabled"))
+
+    # 1) Taux annoncé par Stripe, quand la ventilation est présente dans le
+    #    payload. C'est la source de vérité : aucun arrondi à recaler.
+    for taxes in (((obj.get("total_details") or {}).get("breakdown") or {}).get("taxes"),
+                  obj.get("total_taxes"),
+                  obj.get("total_tax_amounts")):
+        if not isinstance(taxes, list):
+            continue
+        for entry in taxes:
+            if not isinstance(entry, dict):
+                continue
+            rate = entry.get("rate") or entry.get("tax_rate") or entry.get("tax_rate_details")
+            if isinstance(rate, dict):
+                pct = rate.get("percentage")
+                if pct is None:
+                    pct = rate.get("percentage_decimal")
+                if pct is not None:
+                    try:
+                        return round(float(pct), 2), enabled
+                    except (TypeError, ValueError):
+                        pass
+
+    # 2) Sinon, déduire des montants puis recaler sur un taux normal connu.
+    amount_tax = None
+    total_details = obj.get("total_details")
+    if isinstance(total_details, dict) and total_details.get("amount_tax") is not None:
+        amount_tax = total_details["amount_tax"] / 100.0         # Checkout Session
+    elif obj.get("tax") is not None:
+        amount_tax = obj["tax"] / 100.0                          # Facture, API historique
+    elif isinstance(obj.get("total_taxes"), list):               # Facture, API récente
+        amount_tax = sum((t.get("amount") or 0) for t in obj["total_taxes"]) / 100.0
+
+    if amount_tax is None:
+        return None, enabled
+
+    total = obj.get("amount_total")
+    if total is None:
+        total = obj.get("amount_paid")
+    if total is None:
+        return None, enabled
+    ttc = total / 100.0
+    ht = ttc - amount_tax
+    if ht <= 0:
+        # TTC nul (promo 100 %) ou entièrement taxé : rien à déduire.
+        return (0.0 if amount_tax == 0 else None), enabled
+
+    brut = amount_tax / ht * 100.0
+    proche = min(_TAUX_TVA_UE, key=lambda t: abs(t - brut))
+    return (proche if abs(proche - brut) <= 0.5 else round(brut, 2)), enabled
+
+
+def _stripe_vat_number(obj: dict) -> str:
+    """Numéro de TVA intracommunautaire saisi par le client au paiement.
+
+    Vide tant que la collecte des identifiants fiscaux n'est pas activée sur le
+    Payment Link dans le Dashboard Stripe, ou si l'acheteur est un particulier.
+    """
+    tax_ids = ((obj.get("customer_details") or {}).get("tax_ids")
+               or obj.get("customer_tax_ids") or [])
+    if not isinstance(tax_ids, list):
+        return ""
+    for entry in tax_ids:
+        if isinstance(entry, dict) and entry.get("value"):
+            return str(entry["value"]).replace(" ", "").upper()
+    return ""
+
+
+def _siren_from_vat(vat_number: str) -> str:
+    """SIREN déduit d'un numéro de TVA français (`FR` + 2 car. de clé + SIREN).
+
+    Utile pour la facturation électronique : l'annuaire du Portail Public route
+    les factures par SIREN, et le SIREN du client devient une mention
+    obligatoire. Le collecter séparément est donc inutile pour les clients
+    français — il est déjà dans le numéro de TVA.
+    """
+    value = (vat_number or "").replace(" ", "").upper()
+    if value.startswith("FR") and len(value) == 13 and value[4:].isdigit():
+        return value[4:]
+    return ""
+
+
 def _axonaut(method: str, path: str, payload: dict | None = None):
     """Appel générique API Axonaut."""
     key = _axonaut_key()
@@ -384,8 +633,35 @@ def _axonaut(method: str, path: str, payload: dict | None = None):
         return None
 
 
+def _axonaut_verify_vat(company_id: int, expected: str) -> None:
+    """Relit la société et vérifie que le numéro de TVA a bien été enregistré.
+
+    Axonaut répond « 200 OK » même quand il ignore un champ inconnu : un POST
+    réussi ne prouve donc RIEN. On relit la fiche, et si la valeur n'en ressort
+    pas on log les champs réellement disponibles, pour corriger
+    AXONAUT_VAT_FIELD sans avoir à deviner.
+    """
+    if not company_id or not expected:
+        return
+    fresh = _axonaut("GET", f"/companies/{company_id}")
+    if not isinstance(fresh, dict):
+        return
+    for key, value in fresh.items():
+        if isinstance(value, str) and value.replace(" ", "").upper() == expected:
+            if key != AXONAUT_VAT_FIELD:
+                print(f"[Axonaut] TVA enregistree dans le champ « {key} » et non "
+                      f"« {AXONAUT_VAT_FIELD} » — corriger AXONAUT_VAT_FIELD")
+            else:
+                print(f"[Axonaut] TVA client enregistree : {expected}")
+            return
+    print(f"[Axonaut] ⚠️ Numero de TVA « {expected} » NON enregistre : le champ "
+          f"« {AXONAUT_VAT_FIELD} » est probablement inconnu d'Axonaut. "
+          f"Champs disponibles : {sorted(fresh.keys())}")
+
+
 def _axonaut_get_or_create_company(email: str, name: str, address: dict | None = None,
-                                   uid: str | None = None) -> int | None:
+                                   uid: str | None = None,
+                                   vat_number: str = "") -> int | None:
     """Retourne l'ID Axonaut de la société, la crée si inexistante.
 
     L'ID est mémorisé dans /licenses/{uid}.axonaut_company_id et réutilisé
@@ -402,11 +678,27 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
         if address.get("postal_code"): addr["address_zip_code"] = address["postal_code"]
         if address.get("city"):        addr["address_city"]     = address["city"]
         if address.get("country"):     addr["address_country"]  = address["country"]
+    if vat_number:
+        addr[AXONAUT_VAT_FIELD] = vat_number
+
+    # Le numéro de TVA (et le SIREN qu'il contient) est conservé côté licence :
+    # il servira de mention obligatoire à l'émission des factures électroniques,
+    # y compris pour les clients déjà en base au moment de la bascule.
+    if uid and vat_number:
+        try:
+            _get_db().collection("licenses").document(uid).set(
+                {"vat_number": vat_number, "siren": _siren_from_vat(vat_number)},
+                merge=True,
+            )
+        except Exception as e:
+            print(f"[Firebase] Sauvegarde du numero de TVA ignoree : {e}")
 
     def _patch_addr(cid) -> None:
-        """Met à jour l'adresse d'une société existante (backfill clients anciens)."""
+        """Met à jour l'adresse (et la TVA) d'une société existante — backfill
+        des clients créés avant la collecte du numéro."""
         if addr and cid:
             _axonaut("PATCH", f"/companies/{cid}", addr)
+            _axonaut_verify_vat(cid, vat_number)
 
     # 1) ID déjà mémorisé pour cet utilisateur → réutilisation directe
     lic_ref = None
@@ -453,6 +745,7 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
         if created:
             company_id = created.get("id")
             print(f"[Axonaut] Societe creee : id={company_id}")
+            _axonaut_verify_vat(company_id, vat_number)
 
     # 4) Mémoriser l'ID pour les prochaines factures de cet utilisateur
     if company_id and lic_ref is not None:
@@ -498,6 +791,8 @@ def _axonaut_create_invoice(
     amount_ttc: float | None,
     stripe_ref: str,
     uid: str = "",
+    tax_rate_stripe: float | None = None,
+    stripe_tax: bool = False,
 ) -> None:
     """Crée une facture dans Axonaut et stocke le lien dans Firestore.
 
@@ -514,11 +809,39 @@ def _axonaut_create_invoice(
     # plan facturerait le prix fort une commande offerte.
     if amount_ttc is None:
         amount_ttc = _get_plan_price_ttc(plan_type)
+        # Le tarif de repli est un TTC catalogue français : le taux lu sur
+        # Stripe se rapportait à un AUTRE encaissement. On repasse en TVA_RATE.
+        tax_rate_stripe, stripe_tax = None, False
         print(f"[Axonaut] montant absent → fallback Stripe price : {amount_ttc} € TTC")
-    price_ht = round(amount_ttc / (1 + TVA_RATE / 100.0), 2)
+
+    if stripe_tax and tax_rate_stripe is not None:
+        # Stripe Tax actif : le taux est celui du pays du client — 0 % en
+        # autoliquidation B2B intra-UE ou hors UE.
+        tax_rate = tax_rate_stripe
+        tax_origin = "Stripe Tax"
+    else:
+        # Stripe ne calcule pas la TVA : comportement historique, tout est
+        # réputé français et le prix affiché est TTC.
+        tax_rate = float(TVA_RATE)
+        tax_origin = f"defaut {TVA_RATE} %"
+
+    # Le HT se DÉDUIT du taux, jamais l'inverse : c'est ce qui garantit que le
+    # taux imprimé sur la facture est un taux légal et que le TTC retombe au
+    # centime sur le montant encaissé.
+    price_ht = round(amount_ttc / (1 + tax_rate / 100.0), 2)
+
+    # Axonaut recalcule le TTC à partir de `price` et `tax_rate`. Si l'arrondi
+    # le fait diverger du montant réellement encaissé, le paiement enregistré
+    # ne solde pas la facture et elle reste « partiellement payée ».
+    rebuilt_ttc = round(price_ht * (1 + tax_rate / 100.0), 2)
+    if abs(rebuilt_ttc - round(amount_ttc, 2)) > 0.01:
+        print(f"[Axonaut] ⚠️ Ecart d'arrondi TVA : facture reconstituee "
+              f"{rebuilt_ttc} € vs encaisse {round(amount_ttc, 2)} €")
+
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     print(f"[Axonaut] Création facture — plan={plan_type} "
-          f"{price_ht} € HT / {round(amount_ttc, 2)} € TTC company_id={company_id}")
+          f"{price_ht} € HT + {tax_rate} % TVA ({tax_origin}) "
+          f"= {round(amount_ttc, 2)} € TTC company_id={company_id}")
     result = _axonaut("POST", "/invoices", {
         "company_id":     company_id,
         "reference":      (stripe_ref or "")[:30],
@@ -528,7 +851,7 @@ def _axonaut_create_invoice(
             "name":     _plan_label(plan_type),
             "quantity": 1,
             "price":    price_ht,
-            "tax_rate": TVA_RATE,
+            "tax_rate": tax_rate,
         }],
     })
     if not result:
@@ -554,6 +877,8 @@ def _axonaut_create_invoice(
                     "date":        today,
                     "amount_eur":  round(amount_ttc, 2),   # TTC payé (inchangé)
                     "amount_ht":   price_ht,
+                    "amount_tax":  round(round(amount_ttc, 2) - price_ht, 2),
+                    "tax_rate":    tax_rate,
                     "plan":        plan_type,
                     "invoice_url": invoice_url,
                     "axonaut_id":  invoice_id,
@@ -597,17 +922,70 @@ _EMAIL_FOOTER = {
 }
 
 
+def _send_email_brevo_api(to: str, subject: str, html: str,
+                          raise_on_error: bool = False) -> None:
+    """Envoi par l'API HTTP de Brevo (`POST /v3/smtp/email`).
+
+    C'est la voie a privilegier depuis une Cloud Function. Le relais SMTP de
+    Brevo refuse l'authentification depuis une IP non declaree — `525 5.7.1
+    Unauthorized IP address` — et une Cloud Function n'a pas d'IP de sortie
+    fixe : la liste blanche est donc intenable. L'API, elle, n'authentifie que
+    sur la cle.
+
+    Elle rend en prime un `messageId`, tracable dans les journaux de Brevo. Sans
+    lui, un mail non recu ne laissait aucune trace exploitable — c'est ce qui a
+    rendu le cas gg@ouiensemble.eu indiagnosticable.
+    """
+    nom, adresse = parseaddr(_smtp_from())
+    payload = json.dumps({
+        "sender":      {"email": adresse, "name": nom or "MyStrow"},
+        "to":          [{"email": to}],
+        "subject":     subject,
+        "htmlContent": html,
+    }).encode("utf-8")
+    req = urllib.request.Request("https://api.brevo.com/v3/smtp/email",
+                                 data=payload, method="POST")
+    req.add_header("api-key", _brevo_key())
+    req.add_header("content-type", "application/json")
+    req.add_header("accept", "application/json")
+    # Sans User-Agent de navigateur, Cloudflare protege l'API de Brevo et repond
+    # « Error 1010: Access denied » en 403 : ca ressemble a une cle invalide.
+    req.add_header("User-Agent", "Mozilla/5.0 (compatible; MyStrow/1.0; "
+                                 "+https://mystrow.fr)")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            rep = json.loads(r.read() or b"{}")
+        print(f"[Email] Envoyé → {to} ({subject}) id={rep.get('messageId','?')}")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:300]
+        print(f"[Email] Erreur Brevo → {to} : HTTP {e.code} {detail}")
+        if raise_on_error:
+            raise Exception(f"Brevo HTTP {e.code} : {detail}")
+    except Exception as e:
+        print(f"[Email] Erreur envoi → {to} : {e}")
+        if raise_on_error:
+            raise
+
+
 def _send_email(to: str, subject: str, content: str,
                 lang: str = "fr", raise_on_error: bool = False) -> None:
-    host = _smtp_host()
-    if not host:
-        print(f"[Email] SMTP_HOST non configuré — email ignoré ({to})")
-        return
     html = _EMAIL_BASE.format(
         lang=lang,
         content=content,
         footer=_EMAIL_FOOTER.get(lang, _EMAIL_FOOTER["fr"]),
     )
+
+    # Aiguillage explicite plutot que devine : `MAIL_TRANSPORT=brevo_api` bascule
+    # sur l'API, tout le reste (defaut) garde le SMTP. Une variable a changer
+    # pour revenir en arriere, sans redeploiement de code.
+    if _cfg("MAIL_TRANSPORT", "smtp").strip().lower() == "brevo_api":
+        _send_email_brevo_api(to, subject, html, raise_on_error)
+        return
+
+    host = _smtp_host()
+    if not host:
+        print(f"[Email] SMTP_HOST non configuré — email ignoré ({to})")
+        return
     msg  = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = _smtp_from()
@@ -615,10 +993,29 @@ def _send_email(to: str, subject: str, content: str,
     msg.attach(MIMEText(html, "html", "utf-8"))
     try:
         user = _smtp_user()
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, _smtp_port(), context=ctx) as smtp:
+        port = _smtp_port()
+        ctx  = ssl.create_default_context()
+
+        # Expéditeur d'ENVELOPPE = l'adresse de `SMTP_FROM`, jamais le login.
+        # Chez Hostinger les deux étaient la même chaîne, l'amalgame passait
+        # inaperçu. Chez Brevo le login est un identifiant technique
+        # (…@smtp-brevo.com) qui n'est pas une adresse validée du domaine :
+        # l'utiliser comme enveloppe casse l'alignement SPF/DMARC et fait
+        # refuser le message par le relais lui-même.
+        envelope = parseaddr(_smtp_from())[1] or user
+
+        # 465 = TLS d'emblée (Hostinger) ; 587 = STARTTLS (port recommandé par
+        # Brevo). Les deux marchent, on choisit sur le port pour que le
+        # changement de prestataire reste un changement de `.env`.
+        if port == 465:
+            conn = smtplib.SMTP_SSL(host, port, context=ctx, timeout=20)
+        else:
+            conn = smtplib.SMTP(host, port, timeout=20)
+        with conn as smtp:
+            if port != 465:
+                smtp.starttls(context=ctx)
             smtp.login(user, _smtp_password())
-            smtp.sendmail(user, to, msg.as_string())
+            smtp.sendmail(envelope, to, msg.as_string())
         print(f"[Email] Envoyé → {to} ({subject})")
     except Exception as e:
         print(f"[Email] Erreur envoi → {to} : {e}")
@@ -752,6 +1149,10 @@ def _on_checkout_completed(session: dict) -> None:
     amount_ttc  = (_amt / 100.0) if _amt is not None else None
     cust_name   = cust_details.get("name") or ""
     cust_address = cust_details.get("address") or {}
+    # Taux de TVA réellement appliqué par Stripe + numéro de TVA du client,
+    # quand la collecte est activée sur le Payment Link.
+    tax_rate, stripe_tax = _stripe_tax_details(session)
+    vat_number = _stripe_vat_number(session)
 
     # Langue des emails : locale du Checkout (langue navigateur), sinon pays.
     sess_locale = (session.get("locale") or "").strip()
@@ -772,6 +1173,9 @@ def _on_checkout_completed(session: dict) -> None:
             if not amount_ttc and sub.get("latest_invoice"):
                 inv = _stripe_get(f"/invoices/{sub['latest_invoice']}")
                 amount_ttc = (inv.get("amount_paid") or inv.get("amount_due") or 0) / 100.0
+                # Le taux doit venir de la MÊME source que le montant encaissé.
+                tax_rate, stripe_tax = _stripe_tax_details(inv)
+                vat_number = vat_number or _stripe_vat_number(inv)
         except Exception as e:
             print(f"[Handler] Impossible de lire le plan Stripe : {e}")
 
@@ -797,11 +1201,15 @@ def _on_checkout_completed(session: dict) -> None:
     else:
         _email_renewal(email, expiry_ts, lang)
 
+    # Brevo — liste Clients (messages de service, jamais la newsletter)
+    _brevo_sync_client(email, uid, plan_type, expiry_ts, lang, sub_id or "")
+
     # Axonaut
-    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address, uid=uid)
+    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address,
+                                                uid=uid, vat_number=vat_number)
     _axonaut_create_invoice(company_id, plan_type, amount_ttc,
                             stripe_ref=session.get("payment_intent", ""),
-                            uid=uid)
+                            uid=uid, tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
 
     print(f"[checkout.completed] {email} — {plan_type} — expire {_fmt_date(expiry_ts)}")
 
@@ -890,6 +1298,8 @@ def _on_invoice_paid(invoice: dict) -> None:
     stripe_ref  = invoice.get("id", "")
     cust_name   = invoice.get("customer_name") or ""
     cust_address = invoice.get("customer_address") or {}
+    tax_rate, stripe_tax = _stripe_tax_details(invoice)
+    vat_number = _stripe_vat_number(invoice)
 
     uid = _find_uid_by_customer(customer_id)
     if not uid:
@@ -931,8 +1341,14 @@ def _on_invoice_paid(invoice: dict) -> None:
 
     _email_renewal(email, expiry_ts, lang)
 
-    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address, uid=uid)
-    _axonaut_create_invoice(company_id, plan_type, amount_ttc, stripe_ref=stripe_ref, uid=uid)
+    # Brevo — la nouvelle date d'expiration doit suivre, sinon la relance
+    # partirait sur une echeance deja repoussee.
+    _brevo_sync_client(email, uid, plan_type, expiry_ts, lang, sub_id or "")
+
+    company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address,
+                                                uid=uid, vat_number=vat_number)
+    _axonaut_create_invoice(company_id, plan_type, amount_ttc, stripe_ref=stripe_ref,
+                            uid=uid, tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
 
     print(f"[invoice.paid] {email} — expire {_fmt_date(expiry_ts)}")
 
@@ -1036,33 +1452,47 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
     """
     Endpoint HTTPS : POST /send_reset_email
     Body: {"email": "user@example.com"}
-    Génère un lien Firebase password reset et envoie un email stylisé.
+    Renvoie au client les identifiants stockés (email + mot de passe).
+
+    ⚠️ CORS obligatoire : l'espace client du site (compte.html) appelle cet
+    endpoint depuis le navigateur. Sans les en-têtes, le préflight OPTIONS
+    tombait sur le 405 « Method not allowed » et l'appel n'atteignait jamais la
+    fonction — c'est pour ça que le site est resté sur le lien Firebase natif.
     """
+    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+
+    if req.method == "OPTIONS":
+        return _cors_preflight()
     if req.method != "POST":
-        return https_fn.Response("Method not allowed", status=405)
+        return https_fn.Response("Method not allowed", status=405,
+                                 headers=_CORS_HEADERS)
 
     try:
         body  = json.loads(req.get_data() or b"{}")
         email = (body.get("email") or "").strip().lower()
     except Exception:
-        return https_fn.Response("JSON invalide", status=400)
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "JSON invalide"}),
+            status=400, headers=_H,
+        )
 
     if not email or "@" not in email:
         return https_fn.Response(
             json.dumps({"ok": False, "error": "Email invalide"}),
-            status=400, headers={"Content-Type": "application/json"},
+            status=400, headers=_H,
         )
 
     try:
         db = _get_db()
 
-        # Vérifie que l'utilisateur existe
+        # Vérifie que l'utilisateur existe. On répond `ok` sans rien envoyer :
+        # ne jamais révéler si une adresse a un compte (anti-énumération).
         try:
             user = auth.get_user_by_email(email)
         except auth.UserNotFoundError:
             return https_fn.Response(
                 json.dumps({"ok": True}),
-                status=200, headers={"Content-Type": "application/json"},
+                status=200, headers=_H,
             )
 
         uid = user.uid
@@ -1082,7 +1512,7 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
                         "Si vous avez toujours un problème, contactez le support : nicolas@mystrow.fr"
                     ),
                 }),
-                status=200, headers={"Content-Type": "application/json"},
+                status=200, headers=_H,
             )
 
         # ── Récupère le mot de passe stocké, ou en génère un nouveau ─────
@@ -1139,17 +1569,25 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
         resets.append(now)
         lic_ref.set({"reset_timestamps": resets}, merge=True)
 
+        # Réponse volontairement IDENTIQUE à celle du compte inconnu : y
+        # ajouter un « sent: true » donnerait un oracle pour savoir quelles
+        # adresses ont un compte MyStrow.
         print(f"[send_reset_email] Email envoyé → {email}")
         return https_fn.Response(
             json.dumps({"ok": True}),
-            status=200, headers={"Content-Type": "application/json"},
+            status=200, headers=_H,
         )
 
     except Exception as e:
+        # `_send_email` est appelé avec raise_on_error=True : un rejet SMTP
+        # (destinataire qui bloque, boîte pleine, expéditeur en liste noire)
+        # arrive ICI. On le remonte à l'appelant au lieu de le taire — c'est
+        # exactement le cas qui laissait un client sans identifiants ET sans
+        # aucun message d'erreur.
         print(f"[send_reset_email] Erreur : {e}")
         return https_fn.Response(
             json.dumps({"ok": False, "error": str(e)}),
-            status=500, headers={"Content-Type": "application/json"},
+            status=500, headers=_H,
         )
 
 
@@ -1807,13 +2245,45 @@ _NL_CORS = {
 }
 
 
+def _garder_en_attente(email: str, lang: str, motif: str) -> bool:
+    """Filet de sécurité : conserve une inscription que Sender a refusée.
+
+    Quand le compte Sender est en revue anti-spam, l'API rend 401 sur les
+    abonnés. Sans ce filet, chaque personne qui s'inscrit pendant ce temps est
+    perdue pour de bon : elle voit une erreur, ne recommence pas, et son adresse
+    n'existe nulle part. Ici elle est ecrite dans Firestore, et on lui repond
+    que tout va bien — ce qui est vrai de son point de vue, elle est inscrite.
+
+    Les adresses en attente se rejouent ensuite avec :
+        collection « newsletter_pending », champ `synced` a False.
+
+    Rend True si l'adresse a bien ete conservee.
+    """
+    try:
+        _get_db().collection("newsletter_pending").document(email).set({
+            "email":   email,
+            "lang":    lang,
+            "motif":   motif,
+            "synced":  False,
+            "created": datetime.now(timezone.utc).isoformat(),
+        })
+        print(f"[subscribe_newsletter] {email} garde en attente ({motif})")
+        return True
+    except Exception as exc:
+        print(f"[subscribe_newsletter] echec du filet Firestore: {exc}")
+        return False
+
+
 @https_fn.on_request(max_instances=5)
 def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
     """
     Endpoint HTTPS : POST /subscribe_newsletter
     Body: {"email": "user@example.com", "lang": "fr"}
-    Abonne le contact à la newsletter Brevo (liste 3).
-    Variable d'env : BREVO_API_KEY (firebase functions:secrets:set BREVO_API_KEY)
+    Abonne le contact au groupe newsletter de Sender.net.
+    Secret : SENDER_API_TOKEN (firebase functions:secrets:set SENDER_API_TOKEN)
+
+    Le jeton reste ICI, cote serveur : le site est statique, une cle posee
+    dans son JavaScript serait lisible par n'importe quel visiteur.
     """
     if req.method == "OPTIONS":
         return https_fn.Response("", status=204, headers=_NL_CORS)
@@ -1825,7 +2295,14 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
         body  = json.loads(req.get_data() or b"{}")
         email = (body.get("email") or "").strip().lower()
         lang  = (body.get("lang") or "fr").strip().lower()
-        if lang not in ("fr", "en"):
+        # Les CINQ langues de MyStrow, alignees sur i18n.py et sur les dossiers
+        # du site (/de, /en, /es, /pt + la racine en francais).
+        #
+        # La liste s'arretait a ("fr", "en") : les 30 pages espagnoles,
+        # allemandes et portugaises envoyaient bien leur langue, et elle etait
+        # silencieusement ecrasee en « fr » ici. Tous ces inscrits etaient donc
+        # enregistres comme francophones — invisible, puisque rien n'echoue.
+        if lang not in ("fr", "en", "es", "de", "pt"):
             lang = "fr"
     except Exception:
         return https_fn.Response(
@@ -1839,9 +2316,50 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
             status=400, headers={"Content-Type": "application/json", **_NL_CORS},
         )
 
-    brevo_key = _brevo_key()
-    if not brevo_key:
-        print("[subscribe_newsletter] BREVO_API_KEY non configurée")
+    # ── Choix du prestataire ─────────────────────────────────────────────────
+    # Brevo dès qu'il est configuré, Sender tant qu'il ne l'est pas. Cette
+    # bascule automatique est ce qui rend le déploiement SANS ORDRE IMPOSÉ :
+    # on peut livrer cette fonction avant d'avoir créé la liste Brevo sans que
+    # la moindre inscription tombe dans le filet Firestore. Le jour où
+    # BREVO_LIST_NEWSLETTER est renseigné, la bascule se fait toute seule.
+    # À nettoyer — avec `_sender_token` et `SENDER_GROUP_NEWSLETTER` — une fois
+    # les contacts historiques repris dans Brevo.
+    brevo_token = _brevo_key()
+    list_id     = _brevo_list_newsletter()
+    sender_tok  = _sender_token()
+
+    if brevo_token and list_id:
+        fournisseur = "brevo"
+        url = "https://api.brevo.com/v3/contacts"
+        payload = json.dumps({
+            "email":      email,
+            "listIds":    [list_id],
+            "attributes": {"LANG": lang.upper()},
+            # Une adresse déjà connue est mise à jour et rattachée à la liste
+            # au lieu de renvoyer une erreur « duplicate_parameter ». Se
+            # réinscrire depuis une autre page du site est un geste normal, ce
+            # n'est pas un échec à afficher au visiteur.
+            "updateEnabled": True,
+        }).encode()
+        entetes = {"api-key": brevo_token}
+    elif sender_tok:
+        fournisseur = "sender"
+        url = "https://api.sender.net/v2/subscribers"
+        payload = json.dumps({
+            "email":  email,
+            "groups": [SENDER_GROUP_NEWSLETTER],
+            "fields": {"lang": lang},
+        }).encode()
+        entetes = {"Authorization": "Bearer " + sender_tok}
+    else:
+        print("[subscribe_newsletter] aucun prestataire configuré")
+        # Filet Firestore plutôt qu'une erreur sèche : une inscription perdue
+        # ne se rattrape pas, le visiteur ne revient pas une deuxième fois.
+        if _garder_en_attente(email, lang, "config-absente"):
+            return https_fn.Response(
+                json.dumps({"ok": True}),
+                status=200, headers={"Content-Type": "application/json", **_NL_CORS},
+            )
         return https_fn.Response(
             json.dumps({"ok": False, "error": "Service indisponible."}),
             status=503, headers={"Content-Type": "application/json", **_NL_CORS},
@@ -1849,19 +2367,17 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
 
     try:
         import ssl as _ssl
-        payload = json.dumps({
-            "email":         email,
-            "updateEnabled": True,
-            "attributes":    {"LANGUAGE": lang},
-            "listIds":       [3],
-        }).encode()
         req_brevo = urllib.request.Request(
-            "https://api.brevo.com/v3/contacts",
+            url,
             data=payload,
             headers={
-                "accept":       "application/json",
-                "content-type": "application/json",
-                "api-key":      brevo_key,
+                "Accept":       "application/json",
+                "Content-Type": "application/json",
+                # Indispensable pour Sender : sans User-Agent explicite, son
+                # pare-feu répond une page HTML « Access blocked » en 403, ce
+                # qui se lit à tort comme un jeton invalide.
+                "User-Agent":   "MyStrow-Site/1.0 (+https://mystrow.fr)",
+                **entetes,
             },
             method="POST",
         )
@@ -1869,25 +2385,35 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
         with urllib.request.urlopen(req_brevo, timeout=8, context=ctx):
             pass
 
-        print(f"[subscribe_newsletter] {email} ({lang}) ajouté à Brevo")
+        print(f"[subscribe_newsletter] {email} ({lang}) ajouté à {fournisseur}")
         return https_fn.Response(
             json.dumps({"ok": True}),
             status=200, headers={"Content-Type": "application/json", **_NL_CORS},
         )
 
     except urllib.error.HTTPError as e:
-        if e.code == 204:
+        if e.code in (204, 201):
             return https_fn.Response(
                 json.dumps({"ok": True}),
                 status=200, headers={"Content-Type": "application/json", **_NL_CORS},
             )
-        print(f"[subscribe_newsletter] Brevo error {e.code}: {e.read().decode()}")
+        print(f"[subscribe_newsletter] {fournisseur} error {e.code}: {e.read().decode()[:500]}")
+        if _garder_en_attente(email, lang, f"{fournisseur}-{e.code}"):
+            return https_fn.Response(
+                json.dumps({"ok": True}),
+                status=200, headers={"Content-Type": "application/json", **_NL_CORS},
+            )
         return https_fn.Response(
             json.dumps({"ok": False, "error": "Erreur lors de l'abonnement."}),
             status=502, headers={"Content-Type": "application/json", **_NL_CORS},
         )
     except Exception as exc:
         print(f"[subscribe_newsletter] Exception: {exc}")
+        if _garder_en_attente(email, lang, "exception"):
+            return https_fn.Response(
+                json.dumps({"ok": True}),
+                status=200, headers={"Content-Type": "application/json", **_NL_CORS},
+            )
         return https_fn.Response(
             json.dumps({"ok": False, "error": "Erreur serveur."}),
             status=500, headers={"Content-Type": "application/json", **_NL_CORS},

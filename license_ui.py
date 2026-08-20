@@ -150,19 +150,26 @@ class ForgotPasswordDialog(QDialog):
 
         try:
             import firebase_client as fc
-            fc.send_password_reset(email)
+            # Cloud Function d'abord : elle renvoie les identifiants ET remonte
+            # les échecs d'envoi. Le `sendOobCode` natif de Firebase répond 200
+            # quoi qu'il arrive, on annonçait donc « email envoyé » même quand
+            # rien ne partait. Repli sur le natif seulement si la CF est
+            # injoignable (réseau/déploiement), jamais si elle répond une erreur
+            # — cette erreur-là est justement ce qu'on veut montrer.
+            try:
+                fc.send_credentials_email(email)
+            except fc.CloudFunctionUnreachable:
+                fc.send_password_reset(email)
             self._status.setStyleSheet("color: #27ae60;")
-            self._status.setText(
-                tr("email_sent", email=email) + "\n" +
-                ("Cliquez sur le lien dans l'email pour choisir un nouveau mot de passe."
-                 if self._email.text().find("@") > 0 else "")
-            )
+            self._status.setText(tr("email_sent", email=email) + "\n"
+                                 + tr("forgot_pwd_check_spam"))
             self._status.setFixedHeight(52)
             self._btn_send.setText(tr("btn_sent"))
-            QTimer.singleShot(4000, self.accept)
+            QTimer.singleShot(6000, self.accept)
         except Exception as e:
             self._status.setStyleSheet("color: #e74c3c;")
             self._status.setText(f"❌  {e}")
+            self._status.setFixedHeight(52)
             self._btn_send.setEnabled(True)
             self._btn_send.setText(tr("btn_send_short"))
 

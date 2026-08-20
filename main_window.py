@@ -220,6 +220,7 @@ from core import (
     layer_frequency, random_wave, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
+    cw_slot_for_color,
     copy_report, send_report_email, DMX_FRAME_MS,
     fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
 )
@@ -983,7 +984,7 @@ class AkaiDiagnosticDialog(QDialog):
         ctrl_name = getattr(midi_handler, 'controller_name', '') or "Contrôleur MIDI"
         self.setWindowTitle(tr("mw_f_midi_ctrl", ctrl_name=ctrl_name))
         _is_apc_mini = getattr(midi_handler, 'controller_type', '') == 'apc_mini'
-        self.setFixedSize(470, 700 if _is_apc_mini else 660)
+        self.setFixedSize(500, 760 if _is_apc_mini else 720)
         self.setModal(True)
         self._midi = midi_handler
         self._activity_count = 0
@@ -1189,9 +1190,21 @@ class AkaiDiagnosticDialog(QDialog):
             "QPushButton:hover { background:#222233; color:#aabbee; border-color:#4444aa; }"
         )
         import_btn.clicked.connect(self._import_profile)
-        btn_row.addWidget(import_btn)
 
-        btn_row.addStretch()
+        # Rangee 2 : les deux boutons secondaires.
+        #
+        # Trois rangees et non une seule : mesure faite le 20/08/2026, les
+        # quatre boutons reclament 794 px en francais et 904 px en allemand
+        # pour ~430 px disponibles dans cette fenetre a largeur fixe. Trois
+        # boutons sur quatre etaient tronques dans toutes les langues.
+        # « Ajouter » occupe donc sa propre rangee (400 px au pire, en
+        # allemand), « Importer » et « Rescanner » partagent la deuxieme
+        # (434 px au pire, en portugais), « Fermer » ferme la marche.
+        root.addLayout(btn_row)
+
+        btn_row2 = QHBoxLayout()
+        btn_row2.addWidget(import_btn)
+        btn_row2.addStretch()
 
         rescan_btn = QPushButton(tr("mw_rescan"))
         rescan_btn.setToolTip(tr("mw_rescan_hint"))
@@ -1201,14 +1214,15 @@ class AkaiDiagnosticDialog(QDialog):
             "QPushButton:hover { background:#252525; color:#eee; border-color:#555; }"
         )
         rescan_btn.clicked.connect(self._do_rescan)
-        btn_row.addWidget(rescan_btn)
-        btn_row.addSpacing(8)
+        btn_row2.addWidget(rescan_btn)
+        root.addLayout(btn_row2)
 
+        btn_row3 = QHBoxLayout()
+        btn_row3.addStretch()
         close_btn = QPushButton(tr("mw_close"))
         close_btn.clicked.connect(self.accept)
-        btn_row.addWidget(close_btn)
-
-        root.addLayout(btn_row)
+        btn_row3.addWidget(close_btn)
+        root.addLayout(btn_row3)
 
     def _toggle_bright_mode(self, checked):
         self._midi.set_apc_bright_mode(checked)
@@ -4682,10 +4696,40 @@ class MainWindow(QMainWindow):
         wizard.exec()
 
     def _on_custom_profile_saved(self, profile_path: str):
-        """Appelé quand le wizard enregistre un profil — reconnecte le contrôleur."""
-        if self.midi_handler:
+        """Appelé quand le wizard enregistre un profil — connecte le contrôleur.
+
+        Sortir de l'assistant doit suffire à se servir du contrôleur. Une simple
+        reconnexion ne le garantit pas : si un autre contrôleur était épinglé
+        (ou si un profil plus ancien répond au même port), la sélection ne bouge
+        pas et le mapping tout juste créé reste inerte jusqu'à un clic dans la
+        fenêtre « Contrôleur MIDI ». On l'épingle donc, comme le ferait ce clic,
+        dès lors que son matériel est bien branché.
+        """
+        if not self.midi_handler:
+            return
+        from controller_profile import load_profile
+        name, keywords = "", []
+        try:
+            data = load_profile(profile_path)
+            name = (data.get("name") or "").strip()
+            keywords = [k.upper() for k in data.get("keywords", []) if isinstance(k, str)]
+        except Exception:
+            pass
+        plugged = False
+        if keywords:
+            try:
+                ports = [p.upper() for p in self.midi_handler.scan_ports()]
+                plugged = any(k in p for p in ports for k in keywords)
+            except Exception:
+                plugged = False
+        if name and plugged:
+            # Épingle ET reconnecte. Épingler un contrôleur absent le rendrait
+            # seul éligible : le matériel réellement branché serait lâché.
+            self.midi_handler.set_pinned_controller("custom:" + name)
+            self._save_akai_config_auto()
+        else:
             self.midi_handler.connect_controller()
-            QTimer.singleShot(300, self.activate_default_white_pads)
+        QTimer.singleShot(300, self.activate_default_white_pads)
 
     def _open_akai_diagnostic(self):
         """Ouvre la fenêtre de diagnostic AKAI."""
@@ -5047,6 +5091,9 @@ class MainWindow(QMainWindow):
             # Repasser sur le widget video (peut être masqué si pause après PAUSE + precharge)
             self.hide_image()
             self.player.play()
+            # Le REC Lumière de la ligne peut avoir été créé/rechargé pendant la
+            # pause : c'est ici qu'on l'arme, `play_row()` n'étant pas repassé.
+            self.seq.ensure_light_playback_armed()
             self._update_video_output_state()
         elif self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
@@ -5061,6 +5108,11 @@ class MainWindow(QMainWindow):
                 self.seq.play_row(target)
             else:
                 self.player.play()
+                # Média déjà chargé : `play_row()` — seul endroit qui armait la
+                # lumière — n'est pas rejoué. Sans ça, un REC Lumière enregistré
+                # puis sauvegardé ne partait qu'après un nouveau double-clic sur
+                # le média, alors que le son, lui, repartait normalement.
+                self.seq.ensure_light_playback_armed()
 
     def update_play_icon(self, s):
         """Met a jour l'icone play/pause"""
@@ -5348,14 +5400,19 @@ class MainWindow(QMainWindow):
             return
         slots = getattr(p, 'color_wheel_slots', []) or self._GENERIC_WHEEL_SLOTS
 
-        def _dist(s):
-            sc = QColor(s.get('color', '#ffffff'))
-            dr = sc.red()   - color.red()
-            dg = sc.green() - color.green()
-            db = sc.blue()  - color.blue()
-            return dr*dr + dg*dg + db*db
-
-        p.color_wheel = min(slots, key=_dist).get('dmx', 0)
+        # Métrique unique : `core.cw_slot_for_color` — comparaison de TEINTE à
+        # pleine valeur, et refus du noir. Sans ça, la distance RVB brute était
+        # dominée par la luminosité : la roue partait sur le slot le plus SOMBRE
+        # dès que la couleur baissait (un rouge à 5 % sortait vert), et une frame
+        # noire d'effet Strobe/Flash — cette fonction est rappelée à CHAQUE frame
+        # avec `p.color` — envoyait la roue sur le vert avant de revenir au blanc.
+        best = cw_slot_for_color(slots, color)
+        if best is None:
+            # Noir : pas de teinte à choisir. La roue reste où elle est, le noir
+            # se fait au dimmer/shutter — et une roue physique n'a rien à faire
+            # tourner pendant un noir.
+            return
+        p.color_wheel = best.get('dmx', 0)
 
     def activate_pad_dual(self, btn, col_idx):
         """Active un pad bicolore"""
@@ -6143,7 +6200,20 @@ class MainWindow(QMainWindow):
                 # La roue de couleur est REDÉRIVÉE de la couleur juste après
                 # (`_update_color_wheel`) quand le projecteur s'allume : on ne la
                 # pose ici que pour les mémoires qui ne rallument pas la fixture.
-                p.color_wheel    = int(proj_state.get("color_wheel",    0))
+                #
+                # ⚠️ Sur une lyre à roue SANS RVB, ce canal EST la couleur : il
+                # doit donc suivre `_manual_color` comme `base_color`, et pas
+                # seulement `_manual_beam`. Sans cette garde, une lyre mise au
+                # vert à la main (sélecteur de couleur du plan 2D / tablette :
+                # ils posent `_manual_color`, jamais `_manual_beam`) repassait
+                # sur le slot 0 — Open, donc BLANC — au moindre rappel de cue,
+                # pendant que le plan 2D et la 3D la montraient toujours verte.
+                # Le `continue` de `_manual_color` est plus bas : la couleur RVB
+                # était protégée, la roue non. « Ma lyre passe du vert au blanc ».
+                _pf_cw = getattr(p, 'dmx_profile', []) or []
+                if not (('ColorWheel' in _pf_cw and 'R' not in _pf_cw)
+                        and getattr(p, '_manual_color', False)):
+                    p.color_wheel = int(proj_state.get("color_wheel",    0))
                 # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
                 p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
             # Couleur prise en main depuis le plan 2D → le cue n'y touche pas
@@ -10820,6 +10890,11 @@ class MainWindow(QMainWindow):
         if not self._ia_engine_running():
             return
 
+        # Poser/consommer dans le MÊME tick : une exception en cours de route
+        # laisserait sinon la reprise du spécial armée pour le tick suivant, où
+        # elle rejouerait un strobe qu'on vient peut-être de couper.
+        self.__dict__.pop('_live_special_hold', None)
+
         # ── Pause MIDI Clock : couper lumière + retour lyres au centre ──────────
         if getattr(self.live_engine, 'midi_paused', False):
             import time as _t_pause
@@ -10940,7 +11015,22 @@ class MainWindow(QMainWindow):
                             p.level = 0
                             p.color = QColor(0, 0, 0)
             self._live_set_hw_strobe(_hw_sp)
-            return   # override total — pas besoin d'aller plus loin
+            # Le spécial garde la priorité absolue sur le NIVEAU et la COULEUR,
+            # mais plus sur le MOUVEMENT : ce `return` coupait la fin du tick,
+            # donc la rotation des lyres, les gobos, les positions et la roue —
+            # « quand tu mets les strobes, les mouvements de lyre s'arrêtent ».
+            # En Musical IA on laisse maintenant le tick aller au bout, et on
+            # REJOUE le spécial tout à la fin pour reprendre la main sur la
+            # lumière (cf. « reprise du spécial » en bas de cette méthode).
+            if ia_mode_check != 'musical':
+                # Manuel : le moteur ne pilote rien d'autre de toute façon.
+                return
+            self._live_special_hold = (
+                {id(p): (p.level, QColor(p.color), p.base_color,
+                         getattr(p, 'color_wheel', 0))
+                 for p in self.projectors},
+                _hw_sp,
+            )
 
         ia_mode = self._fx_src.ia_mode
         if ia_mode == 'manuel':
@@ -11803,6 +11893,23 @@ class MainWindow(QMainWindow):
                     int(p.color.green() * _fade_mult),
                     int(p.color.blue()  * _fade_mult),
                 )
+
+        # ── Reprise du spécial (Stroboscope, Strobe couleur, Passage…) ────────
+        # Le bloc « Effets SPÉCIAUX » a laissé filer le tick pour que les lyres
+        # continuent de bouger ; il reprend ici la main sur ce qu'il pilote
+        # vraiment — niveau, couleur, roue de couleur, canal Strobe matériel.
+        # Pan/tilt, gobo et positions ne sont VOLONTAIREMENT pas restaurés :
+        # c'est exactement le mouvement qu'on vient de laisser tourner.
+        _hold = self.__dict__.pop('_live_special_hold', None)
+        if _hold:
+            _vals_sp, _hw_hold = _hold
+            for p in self.projectors:
+                v = _vals_sp.get(id(p))
+                if v is None:
+                    continue
+                p.level, p.color, p.base_color, p.color_wheel = (
+                    v[0], QColor(v[1]), v[2], v[3])
+            self._live_set_hw_strobe(_hw_hold)
 
     def _feed_smart_fx(self, pos: int, section: str):
         """Arme les strobes depuis un beat PRÉ-ANALYSÉ (playlist et source 'ia_file').

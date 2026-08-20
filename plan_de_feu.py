@@ -8,7 +8,7 @@ import copy
 import time as _time
 from collections import Counter
 from i18n import tr
-from core import projector_selection_keys, ComboSansMolette
+from core import projector_selection_keys, ComboSansMolette, cw_slot_for_color
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
     QLabel, QMenu, QWidgetAction, QPushButton, QSlider,
@@ -1083,14 +1083,16 @@ class ColorPickerBlock(QFrame):
                 proj.level = max(0, min(100, int(self._v * 100)))
                 if proj.level == 0:
                     proj.level = 100
-                if slots:
-                    def _dist(s):
-                        sc = QColor(s.get('color', '#ffffff'))
-                        dr = sc.red()   - color.red()
-                        dg = sc.green() - color.green()
-                        db = sc.blue()  - color.blue()
-                        return dr*dr + dg*dg + db*db
-                    best = min(slots, key=_dist)
+                # Métrique unique de l'app (`core.cw_slot_for_color`), et on lui
+                # donne la TEINTE PURE du sélecteur, pas `color` : `color` est
+                # déjà atténuée par le curseur de luminosité, et la distance RVB
+                # brute qui servait ici était dominée par cette luminosité — la
+                # roue sautait sur le slot le plus SOMBRE (le vert de la table)
+                # quelle que soit la teinte choisie, jusqu'au vert plein à
+                # luminosité 0. La position d'une roue ne dépend que de la teinte.
+                _teinte = QColor.fromHsvF(self._h, self._s, 1.0)
+                best = cw_slot_for_color(slots, _teinte)
+                if best is not None:
                     proj.color_wheel = int(best.get('dmx', 0))
                     # Feedback visuel : base_color = couleur réelle du slot
                     slot_color = QColor(best.get('color', '#ffffff'))
