@@ -1183,6 +1183,21 @@ class AkaiDiagnosticDialog(QDialog):
         add_btn.clicked.connect(self._open_add_controller)
         btn_row.addWidget(add_btn)
 
+        # Rangée à part : la mesure du 20/08/2026 donne déjà 400 px pour le seul
+        # « Ajouter » en allemand, contre ~430 px disponibles. Un second bouton
+        # sur cette ligne serait tronqué dans toutes les langues.
+        lib_row = QHBoxLayout()
+        lib_btn = QPushButton(tr("mw_ctrl_community"))
+        lib_btn.setToolTip(tr("mw_ctrl_community_hint"))
+        lib_btn.setStyleSheet(
+            "QPushButton { background:#0d2530; color:#66c6dd; border:1px solid #1e4655; "
+            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 14px; } "
+            "QPushButton:hover { background:#123240; color:#9fe4f5; border-color:#3399bb; }"
+        )
+        lib_btn.clicked.connect(self._open_community_controllers)
+        lib_row.addWidget(lib_btn)
+        lib_row.addStretch()
+
         import_btn = QPushButton(tr("mw_ctrl_import"))
         import_btn.setToolTip(tr("mw_ctrl_import_hint"))
         import_btn.setStyleSheet(
@@ -1202,6 +1217,7 @@ class AkaiDiagnosticDialog(QDialog):
         # allemand), « Importer » et « Rescanner » partagent la deuxieme
         # (434 px au pire, en portugais), « Fermer » ferme la marche.
         root.addLayout(btn_row)
+        root.addLayout(lib_row)
 
         btn_row2 = QHBoxLayout()
         btn_row2.addWidget(import_btn)
@@ -1298,6 +1314,28 @@ class AkaiDiagnosticDialog(QDialog):
             return
         self._refresh_status()
         self._refresh_controller_rows()
+
+    def _open_community_controllers(self):
+        """Bibliothèque communautaire de profils de contrôleurs.
+
+        Le nom du port branché est passé au dialogue : c'est lui qui permet de
+        remonter en tête les profils qui reconnaissent l'appareil, plutôt que
+        de laisser l'utilisateur deviner lequel de la liste est le sien.
+        """
+        from controller_share import CommunityControllerDialog
+        # Port réellement ouvert si MyStrow reconnaît déjà le contrôleur ; sinon
+        # tous les ports branchés concaténés — c'est justement le cas d'un
+        # contrôleur inconnu, celui où cette bibliothèque sert à quelque chose.
+        port = getattr(self._midi, '_in_name', "") or ""
+        if not port:
+            try:
+                from controller_mapping_wizard import _get_midi_ports
+                port = "  ".join(_get_midi_ports())
+            except Exception as e:
+                print(f"[contrôleurs] ports MIDI illisibles : {e}")
+        dlg = CommunityControllerDialog(self, port_name=port)
+        if dlg.exec() and dlg.installed_path:
+            self._populate_controller_rows()
 
     def _open_add_controller(self):
         """Ferme le hub et ouvre le wizard d'ajout de contrôleur MIDI custom."""

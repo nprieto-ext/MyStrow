@@ -508,6 +508,111 @@ def _set_submission_status(doc_id: str, status: str, id_token: str,
     return True
 
 
+def _query_controller_submissions(id_token: str, status: str = "") -> list:
+    """
+    File de modération des profils de contrôleurs MIDI : `controller_submissions`.
+
+    Déposés par la Cloud Function controller_submit quand un utilisateur partage
+    le mapping sorti de l'assistant. Une entrée par MODÈLE de contrôleur :
+    l'empreinte porte sur les mots-clés de détection et la géométrie, donc un
+    second mapping du même appareil est écarté avant d'arriver ici.
+    """
+    results = []
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/controller_submissions?pageSize=300"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            # Collection encore inexistante : file vide, pas une erreur.
+            if e.code == 404:
+                return []
+            raise
+        for doc in data.get("documents", []):
+            fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+            fields["_doc_id"] = doc["name"].split("/")[-1]
+            if status and fields.get("status") != status:
+                continue
+            results.append(fields)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    results.sort(key=lambda d: d.get("created_at", 0), reverse=True)
+    return results
+
+
+def _set_controller_submission_status(doc_id: str, status: str, id_token: str,
+                                      reviewer: str = "", reason: str = "") -> bool:
+    """Marque un profil comme approuvé ou refusé (trace de la décision)."""
+    fields = {
+        "status":      {"stringValue": status},
+        "reviewed_by": {"stringValue": reviewer},
+        "reviewed_at": {"doubleValue": datetime.now(timezone.utc).timestamp()},
+    }
+    mask = ["status", "reviewed_by", "reviewed_at"]
+    if reason:
+        fields["review_reason"] = {"stringValue": reason}
+        mask.append("review_reason")
+    _patch_firestore(f"controller_submissions/{doc_id}", fields, id_token, mask=mask)
+    return True
+
+
+def _publish_controller_profile(sub: dict, id_token: str, reviewer: str = "") -> bool:
+    """Publie le profil dans `controller_profiles`, puis marque la soumission.
+
+    Le mapping voyage dans un unique champ texte `profile_json` : les clés de
+    `pad_map` sont des « r,c » et un profil complet compte 200 entrées. Une
+    chaîne évite d'imbriquer 200 maps Firestore et se relit sans conversion.
+
+    `version` est incrémentée à chaque republication : c'est ce qui permettra
+    à un client d'apprendre qu'un mapping installé chez lui a été corrigé —
+    sans ce compteur, une erreur publiée reste figée chez tous ceux qui l'ont
+    téléchargée.
+    """
+    doc_id = sub.get("fingerprint") or sub.get("_doc_id", "")
+    if not doc_id:
+        raise Exception("Soumission sans empreinte : publication impossible.")
+
+    current_version = 0
+    try:
+        req = urllib.request.Request(
+            f"{_FS_BASE}/controller_profiles/{doc_id}",
+            headers={"Authorization": f"Bearer {id_token}"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            existing = json.loads(resp.read().decode())
+        current_version = int(
+            fc._from_firestore(existing.get("fields", {}).get("version", {"integerValue": "0"}))
+            or 0)
+    except urllib.error.HTTPError as e:
+        # 404 = première publication de ce modèle.
+        if e.code != 404:
+            raise
+
+    fields = fc._dict_to_fields({
+        "fingerprint":     doc_id,
+        "name":            sub.get("name", ""),
+        "keywords":        list(sub.get("keywords") or []),
+        "grid_rows":       int(sub.get("grid_rows") or 0),
+        "grid_cols":       int(sub.get("grid_cols") or 0),
+        "fader_count":     int(sub.get("fader_count") or 0),
+        "effect_count":    int(sub.get("effect_count") or 0),
+        "profile_json":    sub.get("profile_json", ""),
+        "version":         current_version + 1,
+        "contributed_by":  sub.get("contributed_by", ""),
+        "contributor_uid": sub.get("contributor_uid", ""),
+        "published_by":    reviewer,
+        "published_at":    datetime.now(timezone.utc).timestamp(),
+    })
+    _patch_firestore(f"controller_profiles/{doc_id}", fields, id_token)
+    _set_controller_submission_status(sub.get("_doc_id", ""), "approved",
+                                      id_token, reviewer=reviewer)
+    return True
+
+
 GA4_VISITS_URL   = "https://us-central1-mystrow-907be.cloudfunctions.net/ga4_visits"
 GA4_INSIGHTS_URL = "https://us-central1-mystrow-907be.cloudfunctions.net/ga4_insights"
 
@@ -4620,6 +4725,27 @@ class AdminPanel(QMainWindow):
         mt_lay.setContentsMargins(16, 0, 16, 0)
         mt_lay.setSpacing(8)
 
+        # Deux files distinctes dans la même page : les fixtures et les profils
+        # de contrôleurs MIDI. Colonnes, fiche et cible de publication changent,
+        # le reste (filtre par statut, sélection, refus) est commun.
+        self._mod_kind = QComboBox()
+        self._mod_kind.addItem("Fixtures", "fixture")
+        self._mod_kind.addItem("Contrôleurs MIDI", "controller")
+        self._mod_kind.setFixedHeight(30)
+        self._mod_kind.setStyleSheet(f"""
+            QComboBox {{
+                background: {BG_INPUT}; color: {ACCENT};
+                border: 1px solid #3a3a3a; border-radius: 5px;
+                padding: 0 10px; font-size: 12px; font-weight: bold;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {BG_INPUT}; color: {TEXT};
+                selection-background-color: {ACCENT}; selection-color: #000;
+            }}
+        """)
+        self._mod_kind.currentIndexChanged.connect(lambda *_: self._on_mod_kind_changed())
+        mt_lay.addWidget(self._mod_kind)
+
         self._mod_filter = QComboBox()
         self._mod_filter.addItem("En attente", "pending")
         self._mod_filter.addItem("Approuvées", "approved")
@@ -4728,22 +4854,71 @@ class AdminPanel(QMainWindow):
         self._submissions_loaded = False
         self._all_submissions: list = []
         self._filtered_submissions: list = []
+        # Les deux files sont gardées côte à côte : basculer d'un type à
+        # l'autre ne doit pas relancer une requête ni perdre le décompte de
+        # l'autre badge.
+        self._submissions_by_kind: dict = {}
+
+    def _mod_kind_now(self) -> str:
+        return self._mod_kind.currentData() or "fixture"
+
+    def _on_mod_kind_changed(self):
+        kind = self._mod_kind_now()
+        cached = self._submissions_by_kind.get(kind)
+        if cached is None:
+            self._load_submissions()
+            return
+        self._all_submissions = cached
+        self._refresh_mod_table()
 
     def _load_submissions(self):
+        kind = self._mod_kind_now()
         self._mod_loading.show()
         self._mod_table.hide()
+        query = (_query_controller_submissions if kind == "controller"
+                 else _query_fixture_submissions)
         _run_async(
-            self, _query_fixture_submissions, self._token(),
-            on_success=self._on_submissions_loaded,
+            self, query, self._token(),
+            on_success=lambda rows, k=kind: self._on_submissions_loaded(rows, k),
             on_error=self._on_submissions_error,
         )
 
-    def _on_submissions_loaded(self, submissions: list):
+    def _on_submissions_loaded(self, submissions: list, kind: str = ""):
         self._submissions_loaded = True
-        self._all_submissions = submissions or []
+        kind = kind or self._mod_kind_now()
+        self._submissions_by_kind[kind] = submissions or []
         self._mod_loading.hide()
         self._mod_table.show()
-        self._refresh_mod_table()
+        # Une réponse qui arrive après que l'utilisateur a changé de file ne
+        # doit pas écraser le tableau affiché.
+        if kind == self._mod_kind_now():
+            self._all_submissions = submissions or []
+            self._refresh_mod_table()
+        self._update_mod_badge()
+        self._prefetch_other_queue(kind)
+
+    def _prefetch_other_queue(self, loaded_kind: str):
+        """Charge l'autre file en tâche de fond, juste pour le badge.
+
+        Sans ça, un profil de contrôleur en attente resterait invisible tant que
+        l'admin n'aurait pas pensé à basculer le sélecteur — c'est-à-dire jamais,
+        puisque rien ne lui signalerait qu'il y a quelque chose à voir.
+        """
+        other = "controller" if loaded_kind == "fixture" else "fixture"
+        if other in self._submissions_by_kind:
+            return
+        query = (_query_controller_submissions if other == "controller"
+                 else _query_fixture_submissions)
+        _run_async(
+            self, query, self._token(),
+            on_success=lambda rows, k=other: self._on_other_queue_loaded(rows, k),
+            # Silencieux : un échec ici ne doit pas ouvrir une modale par-dessus
+            # la file que l'admin est en train de lire.
+            on_error=lambda msg: print(f"[modération] file « {other} » illisible : {msg}"),
+        )
+
+    def _on_other_queue_loaded(self, rows: list, kind: str):
+        self._submissions_by_kind[kind] = rows or []
         self._update_mod_badge()
 
     def _on_submissions_error(self, msg: str):
@@ -4759,15 +4934,29 @@ class AdminPanel(QMainWindow):
                             f"Impossible de charger la file de modération :\n{msg}")
 
     def _update_mod_badge(self):
-        n = sum(1 for s in self._all_submissions if s.get("status") == "pending")
+        # Compte les deux files : un profil de contrôleur en attente doit se
+        # voir même quand l'admin regarde les fixtures.
+        n = sum(
+            1
+            for rows in self._submissions_by_kind.values()
+            for s in rows
+            if s.get("status") == "pending"
+        )
         self._btn_nav_mod.setText(f"Modération ({n})" if n else "Modération")
 
     def _refresh_mod_table(self):
+        if self._mod_kind_now() == "controller":
+            self._refresh_mod_table_controllers()
+            return
         wanted = self._mod_filter.currentData()
         rows = [s for s in self._all_submissions
                 if not wanted or s.get("status") == wanted]
         self._filtered_submissions = rows
 
+        self._mod_table.setColumnCount(8)
+        self._mod_table.setHorizontalHeaderLabels(
+            ["Nom", "Fabricant", "Type", "Canaux", "Provenance", "Licence",
+             "Contributeur", "Reçue le"])
         self._mod_table.setRowCount(len(rows))
         for r, sub in enumerate(rows):
             modes = sub.get("modes") or []
@@ -4800,6 +4989,49 @@ class AdminPanel(QMainWindow):
         self._mod_count.setText(f"{len(rows)} contribution(s)")
         self._on_mod_selection_changed()
 
+    def _refresh_mod_table_controllers(self):
+        wanted = self._mod_filter.currentData()
+        rows = [s for s in self._all_submissions
+                if not wanted or s.get("status") == wanted]
+        self._filtered_submissions = rows
+
+        self._mod_table.setColumnCount(7)
+        self._mod_table.setHorizontalHeaderLabels(
+            ["Contrôleur", "Détection", "Grille", "Faders", "Pads mappés",
+             "Contributeur", "Reçu le"])
+        mhdr = self._mod_table.horizontalHeader()
+        mhdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        for _c in range(1, 7):
+            mhdr.setSectionResizeMode(_c, QHeaderView.ResizeToContents)
+
+        self._mod_table.setRowCount(len(rows))
+        for r, sub in enumerate(rows):
+            ts = sub.get("created_at") or 0
+            try:
+                when = datetime.fromtimestamp(float(ts), timezone.utc).strftime("%d/%m/%Y")
+            except Exception:
+                when = "—"
+            values = [
+                sub.get("name", ""),
+                ", ".join(sub.get("keywords") or []) or "—",
+                f"{sub.get('grid_rows', 0)} × {sub.get('grid_cols', 0)}",
+                str(sub.get("fader_count", 0)),
+                str(sub.get("pad_count", 0)),
+                sub.get("contributed_by", ""),
+                when,
+            ]
+            for c, val in enumerate(values):
+                item = QTableWidgetItem(str(val))
+                status = sub.get("status")
+                if status == "rejected":
+                    item.setForeground(QColor("#8a5a5a"))
+                elif status == "approved":
+                    item.setForeground(QColor("#5aa86f"))
+                self._mod_table.setItem(r, c, item)
+
+        self._mod_count.setText(f"{len(rows)} profil(s)")
+        self._on_mod_selection_changed()
+
     def _selected_submission(self) -> dict | None:
         rows = self._mod_table.selectionModel().selectedRows()
         if not rows:
@@ -4816,11 +5048,108 @@ class AdminPanel(QMainWindow):
         self._btn_mod_approve.setEnabled(pending)
         self._btn_mod_reject.setEnabled(pending)
 
+    def _controller_report(self, sub: dict) -> list:
+        """Fiche d'un profil de contrôleur : le mapping, lisiblement.
+
+        Un admin ne peut PAS juger un mapping sans posséder l'appareil — c'est
+        la différence de fond avec une fixture, dont on relit le patch DMX. Ce
+        rapport sert donc à repérer ce qui se voit sans matériel : un profil
+        vide, une géométrie incohérente, des notes toutes identiques, un nom
+        qui contient des données personnelles.
+        """
+        import json as _json
+        try:
+            prof = _json.loads(sub.get("profile_json") or "{}")
+        except (ValueError, TypeError):
+            prof = {}
+
+        pads   = prof.get("pad_map") or {}
+        faders = prof.get("fader_map") or {}
+        mutes  = prof.get("mute_map") or {}
+        effets = prof.get("effect_map") or {}
+        rows   = int(sub.get("grid_rows") or 0)
+        cols   = int(sub.get("grid_cols") or 0)
+        attendus = rows * cols
+
+        lines = [
+            f"Contrôleur     : {sub.get('name', '')}",
+            f"Mots-clés      : {', '.join(sub.get('keywords') or []) or '—'}",
+            f"Géométrie      : {rows} × {cols} pads, "
+            f"{sub.get('fader_count', 0)} faders, {sub.get('effect_count', 0)} effets",
+            f"Contributeur   : {sub.get('contributed_by', '')}",
+            f"Statut         : {sub.get('status', '')}",
+            f"Empreinte      : {sub.get('fingerprint', '')}",
+            "",
+            "── Contrôles automatiques ─────────────────────────────",
+            f"  pads mappés     : {len(pads)} / {attendus}"
+            + ("  ⚠ grille incomplète" if attendus and len(pads) < attendus else ""),
+            f"  faders mappés   : {len(faders)} / {sub.get('fader_count', 0)}",
+            f"  mutes mappés    : {len(mutes)}",
+            f"  effets mappés   : {len(effets)}",
+        ]
+
+        notes = [e.get("note") for e in pads.values() if isinstance(e, dict)]
+        if notes and len(set(notes)) < len(notes):
+            lines.append(f"  ⚠ {len(notes) - len(set(notes))} note(s) de pad en double "
+                         f"— deux pads déclencheraient la même cellule")
+        if notes and len(set(notes)) == 1:
+            lines.append("  ⚠ tous les pads sur la MÊME note — mapping inutilisable")
+        ccs = [e.get("cc") for e in faders.values() if isinstance(e, dict)]
+        if ccs and len(set(ccs)) < len(ccs):
+            lines.append(f"  ⚠ {len(ccs) - len(set(ccs))} CC de fader en double")
+        if not prof.get("led_colors"):
+            lines.append("  · aucune couleur de LED testée (le contrôleur n'en a "
+                         "peut-être pas)")
+
+        lines += ["", "── Mapping ────────────────────────────────────────────", "", "Pads :"]
+        for key in sorted(pads, key=lambda k: [int(x) for x in k.split(",")]
+                          if k.replace(",", "").isdigit() else [0, 0]):
+            e = pads[key] or {}
+            lines.append(f"    [{key:>5}]  note {e.get('note')}  canal {e.get('channel', 0)}")
+        for label, section, field in (("Faders", faders, "cc"),
+                                      ("Mutes", mutes, "note"),
+                                      ("Effets", effets, "note")):
+            if not section:
+                continue
+            lines += ["", f"{label} :"]
+            for key in sorted(section, key=lambda k: int(k) if str(k).isdigit() else 0):
+                e = section[key] or {}
+                lines.append(f"    [{key:>5}]  {field} {e.get(field)}  "
+                             f"canal {e.get('channel', 0)}")
+        if prof.get("led_colors"):
+            lines += ["", "Couleurs de LED (couleur → vélocité) :"]
+            for colour, vel in (prof.get("led_colors") or {}).items():
+                lines.append(f"    {colour:<12} {vel}")
+        return lines
+
     def _on_mod_inspect(self):
         """Affiche la fiche complète : provenance déclarée + patch DMX proposé."""
         sub = self._selected_submission()
         if not sub:
             return
+        if self._mod_kind_now() == "controller":
+            lines = self._controller_report(sub)
+        else:
+            lines = self._fixture_report(sub)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Contribution — {sub.get('name', '')}")
+        dlg.resize(560, 660)
+        dlg.setStyleSheet(f"QDialog {{ background: {BG_MAIN}; }}")
+        lay = QVBoxLayout(dlg)
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setPlainText("\n".join(lines))
+        txt.setStyleSheet(f"background:{BG_INPUT}; color:{TEXT}; border:1px solid #3a3a3a;"
+                          " font-family: Consolas, monospace; font-size: 12px;")
+        lay.addWidget(txt)
+        btn = QPushButton("Fermer")
+        btn.setStyleSheet(_BTN_SECONDARY)
+        btn.clicked.connect(dlg.accept)
+        lay.addWidget(btn)
+        dlg.exec()
+
+    def _fixture_report(self, sub: dict) -> list:
         lines = [
             f"Nom            : {sub.get('name', '')}",
             f"Fabricant      : {sub.get('manufacturer', '')}",
@@ -4842,28 +5171,15 @@ class AdminPanel(QMainWindow):
             lines.append(f"\n  ▸ {m.get('name', 'Mode')} — {len(profile)} canaux")
             for i, ch in enumerate(profile, 1):
                 lines.append(f"      {i:>3}. {ch}")
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Contribution — {sub.get('name', '')}")
-        dlg.resize(520, 620)
-        dlg.setStyleSheet(f"QDialog {{ background: {BG_MAIN}; }}")
-        lay = QVBoxLayout(dlg)
-        txt = QTextEdit()
-        txt.setReadOnly(True)
-        txt.setPlainText("\n".join(lines))
-        txt.setStyleSheet(f"background:{BG_INPUT}; color:{TEXT}; border:1px solid #3a3a3a;"
-                          " font-family: Consolas, monospace; font-size: 12px;")
-        lay.addWidget(txt)
-        btn = QPushButton("Fermer")
-        btn.setStyleSheet(_BTN_SECONDARY)
-        btn.clicked.connect(dlg.accept)
-        lay.addWidget(btn)
-        dlg.exec()
+        return lines
 
     def _on_mod_approve(self):
         """Publie la fixture dans gdtf_fixtures, licence et attribution incluses."""
         sub = self._selected_submission()
         if not sub or sub.get("status") != "pending":
+            return
+        if self._mod_kind_now() == "controller":
+            self._approve_controller(sub)
             return
         name = sub.get("name", "")
         if QMessageBox.question(
@@ -4904,6 +5220,30 @@ class AdminPanel(QMainWindow):
             on_error=self._on_mod_action_error,
         )
 
+    def _approve_controller(self, sub: dict):
+        """Publie le profil de contrôleur dans controller_profiles."""
+        name = sub.get("name", "")
+        if QMessageBox.question(
+            self, "Publier le profil de contrôleur",
+            f"Publier « {name} » dans la bibliothèque commune ?\n\n"
+            f"Détection : {', '.join(sub.get('keywords') or []) or '—'}\n"
+            f"Grille : {sub.get('grid_rows', 0)} × {sub.get('grid_cols', 0)}, "
+            f"{sub.get('fader_count', 0)} faders\n"
+            f"Contributeur : {sub.get('contributed_by', '')}\n\n"
+            "Il sera proposé automatiquement à quiconque branche un contrôleur "
+            "dont le nom de port contient l'un de ces mots-clés.\n\n"
+            "Rappel : un mapping ne se vérifie pas sans l'appareil. Passez par "
+            "« Détail » pour au moins écarter un profil vide ou incohérent.",
+        ) != QMessageBox.Yes:
+            return
+
+        self._btn_mod_approve.setEnabled(False)
+        _run_async(
+            self, _publish_controller_profile, dict(sub), self._token(), self._admin_email,
+            on_success=lambda *_: self._on_mod_approved(""),
+            on_error=self._on_mod_action_error,
+        )
+
     def _on_mod_approved(self, token: str):
         if token:
             self._id_token = token
@@ -4913,6 +5253,9 @@ class AdminPanel(QMainWindow):
     def _on_mod_reject(self):
         sub = self._selected_submission()
         if not sub or sub.get("status") != "pending":
+            return
+        if self._mod_kind_now() == "controller":
+            self._reject_controller(sub)
             return
         from PySide6.QtWidgets import QInputDialog
         reason, ok = QInputDialog.getText(
@@ -4925,6 +5268,23 @@ class AdminPanel(QMainWindow):
         self._btn_mod_reject.setEnabled(False)
         _run_async(
             self, _set_submission_status, sub.get("_doc_id", ""), "rejected",
+            self._token(), self._admin_email, reason.strip(),
+            on_success=lambda *_: self._on_mod_rejected(),
+            on_error=self._on_mod_action_error,
+        )
+
+    def _reject_controller(self, sub: dict):
+        from PySide6.QtWidgets import QInputDialog
+        reason, ok = QInputDialog.getText(
+            self, "Refuser le profil",
+            f"Motif du refus pour « {sub.get('name', '')} » :\n"
+            "(profil incomplet, mots-clés trop larges, nom inapproprié…)",
+        )
+        if not ok:
+            return
+        self._btn_mod_reject.setEnabled(False)
+        _run_async(
+            self, _set_controller_submission_status, sub.get("_doc_id", ""), "rejected",
             self._token(), self._admin_email, reason.strip(),
             on_success=lambda *_: self._on_mod_rejected(),
             on_error=self._on_mod_action_error,

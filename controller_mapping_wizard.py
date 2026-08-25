@@ -4,7 +4,6 @@ Permet de créer un profil pour n'importe quel contrôleur non supporté nativem
 """
 import json
 import threading
-import urllib.parse
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QSpinBox, QStackedWidget, QWidget, QLineEdit,
@@ -12,8 +11,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QCheckBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QColor, QDesktopServices
-from PySide6.QtCore import QUrl
+from PySide6.QtGui import QFont, QColor
 
 from controller_profile import (list_profiles, save_profile, load_profile,
                                 export_profile, unique_profile_path)
@@ -272,6 +270,9 @@ class MidiMappingWizard(QDialog):
 
         # Mode édition (profil existant chargé)
         self._edit_file = None
+
+        # Envoi du profil à la bibliothèque commune (thread, créé à la demande)
+        self._submitter = None
 
         # ── Écoute MIDI propre à l'assistant ──────────────────────────────────
         # L'assistant ne peut PAS se reposer sur le MIDIHandler : celui-ci
@@ -886,6 +887,7 @@ class MidiMappingWizard(QDialog):
         btn_send = QPushButton(tr("cmw_send_btn")); btn_send.setObjectName("skip")
         btn_send.setFixedHeight(34); btn_send.setToolTip(tr("cmw_send_hint"))
         btn_send.clicked.connect(self._share_profile)
+        self._btn_send = btn_send
         h_share.addWidget(btn_send)
         h_share.addStretch()
         fs.addLayout(h_share)
@@ -1674,20 +1676,60 @@ class MidiMappingWizard(QDialog):
         self._spin_effects.setValue(self._effect_count)
 
     def _share_profile(self):
+        """Verse le profil à la bibliothèque commune (file de modération).
+
+        Passait auparavant par un `mailto:` où le JSON était collé dans le corps
+        du message. Un profil 8x8 complet donne une URL de ~14 000 caractères,
+        contre les ~2 000 admis par ShellExecute et les clients mail sous
+        Windows : le mail partait tronqué en plein milieu du `pad_map`, et ni
+        l'expéditeur ni le destinataire ne pouvaient s'en apercevoir.
+        """
         data = self._build_profile_dict()
-        json_str = json.dumps(data, indent=2, ensure_ascii=False)
-        subject = urllib.parse.quote(f"[MyStrow] Contrôleur non reconnu : {self._profile_name}")
-        body = urllib.parse.quote(
-            f"Bonjour,\n\n"
-            f"Mon contrôleur MIDI n'est pas reconnu par MyStrow. "
-            f"Je viens de faire le test de mapping — voici les résultats.\n\n"
-            f"Contrôleur : {self._profile_name}\n\n"
-            f"--- Données de test (ne pas modifier) ---\n\n"
-            f"{json_str}\n\n"
-            f"Merci de revenir vers moi rapidement !"
-        )
-        url = QUrl(f"mailto:Nicolas@mystrow.fr?subject={subject}&body={body}")
-        QDesktopServices.openUrl(url)
+
+        from controller_share import local_check, ProfileSubmitter
+        ok, reason = local_check(data)
+        if not ok:
+            QMessageBox.warning(self, tr("cmw_send_btn"),
+                                tr("cmw_share_invalid", reason=reason))
+            return
+
+        # Le nom saisi devient public : le dire AVANT l'envoi, pas après.
+        if QMessageBox.question(
+            self, tr("cmw_send_btn"),
+            tr("cmw_share_confirm", name=data.get("name", "")),
+        ) != QMessageBox.Yes:
+            return
+
+        if self._submitter is None:
+            self._submitter = ProfileSubmitter(self)
+            self._submitter.done.connect(self._on_share_done)
+            self._submitter.error.connect(self._on_share_error)
+        if self._submitter.busy():
+            return
+
+        self._btn_send.setEnabled(False)
+        self._save_confirm.setText(tr("cmw_share_sending"))
+        self._save_confirm.setStyleSheet("color:#44aaee; font-size:9pt;")
+        self._save_confirm.setVisible(True)
+        self._submitter.submit(data)
+
+    def _on_share_done(self, result: dict):
+        self._btn_send.setEnabled(True)
+        if result.get("status") == "duplicate":
+            # Pas un échec : quelqu'un a déjà couvert ce modèle. Le dire comme
+            # une bonne nouvelle, sinon l'utilisateur croit que son envoi a raté.
+            self._save_confirm.setText(tr("cmw_share_duplicate"))
+            self._save_confirm.setStyleSheet("color:#cccc44; font-size:9pt;")
+        else:
+            self._save_confirm.setText(tr("cmw_share_ok"))
+            self._save_confirm.setStyleSheet("color:#00cc44; font-size:9pt;")
+        self._save_confirm.setVisible(True)
+
+    def _on_share_error(self, msg: str):
+        self._btn_send.setEnabled(True)
+        self._save_confirm.setText(tr("cmw_share_failed", e=msg))
+        self._save_confirm.setStyleSheet("color:#ff5555; font-size:9pt;")
+        self._save_confirm.setVisible(True)
 
     # ─── MIDI capture ─────────────────────────────────────────────────────────
 
@@ -1786,6 +1828,10 @@ class MidiMappingWizard(QDialog):
         self._stop_capture()
         self._pulse_timer.stop()
         self._rx_timer.stop()
+        # Un envoi en vol tient un QThread : le laisser derrière soi ferait
+        # crasher Qt à la destruction du dialogue.
+        if self._submitter is not None:
+            self._submitter.stop()
         # Éteindre le pad de test LED si actif
         if self._led_vel_idx > 0 and self._pad_map:
             for _cell, entry in self._pad_map.items():

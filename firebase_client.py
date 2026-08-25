@@ -37,6 +37,11 @@ _FIXTURE_SUBMIT_URL = (
     f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/fixture_submit"
 )
 
+# Cloud Function de contribution d'un profil de contrôleur MIDI (file de modération)
+_CONTROLLER_SUBMIT_URL = (
+    f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/controller_submit"
+)
+
 # Cloud Function qui RENVOIE les identifiants (email + mot de passe) au client.
 _RESET_EMAIL_URL = (
     f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/send_reset_email"
@@ -741,6 +746,100 @@ def submit_fixture_contribution(
     if not result.get("ok"):
         raise Exception(result.get("error", "Soumission refusée."))
     return result
+
+
+# ---------------------------------------------------------------
+# Contrôleurs MIDI : contribution et bibliothèque communautaire
+# ---------------------------------------------------------------
+
+def submit_controller_profile(fingerprint: str, profile: dict, id_token: str) -> dict:
+    """
+    Propose un profil de contrôleur MIDI à la bibliothèque commune.
+
+    N'écrit PAS dans controller_profiles : la Cloud Function dépose la
+    soumission dans `controller_submissions` au statut "pending". Un
+    administrateur valide ensuite depuis l'admin panel.
+
+    Retourne : {"ok", "status", "quota_left"} — `status` vaut "pending" pour un
+    profil accepté dans la file, "duplicate" si ce modèle est déjà couvert.
+    Lève une Exception si le serveur refuse (profil invalide, quota, jeton).
+    """
+    payload = json.dumps({
+        "fingerprint": fingerprint,
+        "profile":     profile,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        _CONTROLLER_SUBMIT_URL,
+        data=payload,
+        headers={
+            "Content-Type":  "application/json",
+            "Authorization": f"Bearer {id_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
+            result = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = json.loads(e.read().decode()).get("error", "")
+        except Exception:
+            pass
+        raise Exception(detail or f"HTTP {e.code} — {e.reason}")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
+
+    if not result.get("ok"):
+        raise Exception(result.get("error", "Partage refusé."))
+    return result
+
+
+def fetch_controller_profiles(id_token: str = None) -> list:
+    """
+    Charge la bibliothèque communautaire de profils de contrôleurs MIDI
+    (collection `controller_profiles`, pagination automatique).
+
+    Comme `gdtf_fixtures`, la collection est en lecture publique : c'est ce qui
+    permet de proposer un profil pour un contrôleur inconnu dès qu'on le
+    branche, y compris à un utilisateur dont le jeton ne peut pas être
+    rafraîchi. Le jeton est envoyé quand on en a un, jamais exigé.
+    """
+    results = []
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/controller_profiles?pageSize=200"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        headers = {}
+        if id_token:
+            headers["Authorization"] = f"Bearer {id_token}"
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            # Collection encore inexistante : bibliothèque vide, pas une erreur.
+            if e.code == 404:
+                return results
+            if e.code in (401, 403):
+                raise Exception(
+                    "La bibliothèque de contrôleurs a refusé la lecture (accès refusé).\n"
+                    "Elle est pourtant consultable sans compte : si le problème "
+                    "persiste, signalez-le au support.\nVérifiez aussi que votre "
+                    "antivirus n'intercepte pas les connexions sécurisées de MyStrow.")
+            raise
+        except (urllib.error.URLError, OSError) as e:
+            raise Exception(_net_error_msg(e))
+        for doc in data.get("documents", []):
+            d = _doc_to_dict(doc)
+            d["_doc_id"] = doc["name"].split("/")[-1]
+            if d.get("profile_json"):
+                results.append(d)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return results
 
 
 # ---------------------------------------------------------------

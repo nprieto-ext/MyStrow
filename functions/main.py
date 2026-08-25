@@ -2287,6 +2287,249 @@ def fixture_submit(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
+# CLOUD FUNCTION: controller_submit (profil de controleur MIDI -> moderation)
+# ===========================================================================
+
+# Quota journalier. Bien plus bas que celui des fixtures : un regisseur possede
+# deux ou trois controleurs, pas vingt. Un compte qui en propose dix dans la
+# journee n'alimente pas une bibliotheque, il la pollue.
+_DAILY_CONTROLLER_QUOTA = 5
+
+# Un profil 8x8 complet pese ~6 Ko. Au-dela de 64 Ko ce n'est plus un mapping.
+_MAX_PROFILE_BYTES = 64 * 1024
+
+_JSON = {"Content-Type": "application/json"}
+
+
+def _controller_fingerprint(profile: dict) -> str:
+    """
+    Empreinte deterministe d'un MODELE de controleur : mots-cles de detection
+    normalises + geometrie. Aveugle au contenu du mapping, pour que deux
+    mappings differents du meme appareil entrent en collision.
+
+    Doit rester identique a controller_share.controller_fingerprint cote app.
+    """
+    kws = sorted({
+        str(k).strip().upper()
+        for k in (profile.get("keywords") or [])
+        if str(k).strip()
+    })
+
+    def _int(field):
+        try:
+            return int(profile.get(field) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    geom = "{}x{}:{}:{}".format(
+        _int("grid_rows"), _int("grid_cols"),
+        _int("fader_count"), _int("effect_count"),
+    )
+    key = ("|".join(kws) + "::" + geom).encode("utf-8", "replace")
+    return hashlib.sha1(key).hexdigest()[:32]
+
+
+def _validate_controller_profile(data) -> tuple:
+    """
+    (ok, raison) — portage de controller_profile.validate_profile.
+
+    Un profil accepte ici sera installe chez d'autres utilisateurs : un JSON
+    malforme ne casserait pas l'installation mais la connexion du controleur,
+    bien plus tard et sans rapport visible avec le fichier fautif.
+    """
+    if not isinstance(data, dict):
+        return False, "le profil n'est pas un objet JSON"
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return False, "champ « name » absent ou vide"
+    if len(name) > 80:
+        return False, "nom de profil trop long"
+    keywords = data.get("keywords", [])
+    if not isinstance(keywords, list) or not all(isinstance(k, str) for k in keywords):
+        return False, "champ « keywords » invalide (liste de textes attendue)"
+    if not keywords or not any(k.strip() for k in keywords):
+        return False, "aucun mot-cle de detection : le controleur ne serait jamais reconnu"
+    for section, field in (("pad_map", "note"), ("mute_map", "note"),
+                           ("effect_map", "note"), ("fader_map", "cc")):
+        entries = data.get(section, {})
+        if not isinstance(entries, dict):
+            return False, f"section « {section} » invalide"
+        for key, entry in entries.items():
+            if not isinstance(entry, dict) or not isinstance(entry.get(field), int):
+                return False, f"section « {section} », entree « {key} » : « {field} » manquant"
+            channel = entry.get("channel", 0)
+            if not isinstance(channel, int) or not 0 <= channel <= 15:
+                return False, f"section « {section} », entree « {key} » : canal hors 0-15"
+    if not any(data.get(s) for s in ("pad_map", "mute_map", "effect_map", "fader_map")):
+        return False, "profil vide : aucun pad, fader ni bouton mappe"
+    return True, ""
+
+
+def _consume_controller_quota(db, uid: str) -> bool:
+    """Reserve une unite du quota journalier. False si le quota est epuise."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ref   = db.collection("controller_quota").document(uid)
+
+    @firestore.transactional
+    def _txn(transaction):
+        snap = ref.get(transaction=transaction)
+        data = snap.to_dict() if snap.exists else {}
+        used = int(data.get("count", 0) or 0) if data.get("day") == today else 0
+        if used >= _DAILY_CONTROLLER_QUOTA:
+            return False
+        transaction.set(ref, {
+            "day":       today,
+            "count":     used + 1,
+            "updatedAt": time.time(),
+        }, merge=True)
+        return True
+
+    return _txn(db.transaction())
+
+
+def _refund_controller_quota(db, uid: str) -> None:
+    """Rend l'unite reservee quand rien n'a ete depose (doublon)."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ref   = db.collection("controller_quota").document(uid)
+
+    @firestore.transactional
+    def _txn(transaction):
+        snap = ref.get(transaction=transaction)
+        data = snap.to_dict() if snap.exists else {}
+        if data.get("day") != today:
+            return
+        used = int(data.get("count", 0) or 0)
+        transaction.set(ref, {
+            "day":       today,
+            "count":     max(0, used - 1),
+            "updatedAt": time.time(),
+        }, merge=True)
+
+    _txn(db.transaction())
+
+
+@https_fn.on_request(max_instances=5, timeout_sec=60)
+def controller_submit(req: https_fn.Request) -> https_fn.Response:
+    """
+    Endpoint HTTPS : POST /controller_submit
+
+    Recoit un profil de controleur MIDI mappe par un utilisateur et le depose
+    dans `controller_submissions` au statut "pending". Rien n'est publie ici :
+    seule la validation d'un administrateur ecrit dans `controller_profiles`.
+
+    Remplace l'ancien envoi par mailto:, qui tronquait le profil au-dela de
+    ~2000 caracteres d'URL sous Windows.
+
+    Body : {"fingerprint": str, "profile": {...}}
+    Reponse : {"ok", "status": "pending"|"duplicate", "quota_left"}
+    """
+    _get_db()
+
+    auth_header = req.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return https_fn.Response(
+            json.dumps({"ok": False,
+                        "error": "Connectez-vous pour partager un profil."}),
+            status=403, headers=_JSON)
+    try:
+        decoded = auth.verify_id_token(auth_header[len("Bearer "):])
+        uid   = decoded.get("uid", "")
+        email = decoded.get("email", "")
+    except Exception as e:
+        print(f"[controller_submit] Token invalide : {e}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Session expiree - reconnectez-vous."}),
+            status=403, headers=_JSON)
+
+    raw = req.get_data() or b"{}"
+    if len(raw) > _MAX_PROFILE_BYTES * 2:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Profil trop volumineux."}),
+            status=413, headers=_JSON)
+    try:
+        body = json.loads(raw)
+    except Exception as e:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": f"JSON invalide : {e}"}),
+            status=400, headers=_JSON)
+
+    profile = body.get("profile") or {}
+    ok, reason = _validate_controller_profile(profile)
+    if not ok:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": f"Profil refuse : {reason}"}),
+            status=400, headers=_JSON)
+
+    profile_json = json.dumps(profile, ensure_ascii=False)
+    if len(profile_json.encode("utf-8")) > _MAX_PROFILE_BYTES:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Profil trop volumineux."}),
+            status=413, headers=_JSON)
+
+    # L'empreinte est TOUJOURS recalculee : celle du client ne sert qu'a lui
+    # permettre d'anticiper un doublon, elle ne decide pas de l'ID du document.
+    fingerprint = _controller_fingerprint(profile)
+
+    try:
+        db = _get_db()
+
+        if not _consume_controller_quota(db, uid):
+            return https_fn.Response(
+                json.dumps({"ok": False, "quota_left": 0,
+                            "error": f"Quota atteint : {_DAILY_CONTROLLER_QUOTA} profils "
+                                     f"par jour. Reessayez demain."}),
+                status=429, headers=_JSON)
+
+        ref  = db.collection("controller_submissions").document(fingerprint)
+        snap = ref.get()
+        if snap.exists and (snap.to_dict() or {}).get("status") in (
+                "pending", "approved", "rejected"):
+            # Ce modele est deja couvert : ne pas ecraser la decision prise, ni
+            # le contributeur d'origine. Une entree canonique par modele.
+            _refund_controller_quota(db, uid)
+            print(f"[controller_submit] {email} : doublon {fingerprint}")
+            return https_fn.Response(
+                json.dumps({"ok": True, "status": "duplicate"}),
+                status=200, headers=_JSON)
+
+        ref.set({
+            "status":          "pending",
+            "fingerprint":     fingerprint,
+            "name":            str(profile.get("name", "")).strip(),
+            "keywords":        [str(k).strip() for k in profile.get("keywords", []) if str(k).strip()],
+            "grid_rows":       int(profile.get("grid_rows") or 0),
+            "grid_cols":       int(profile.get("grid_cols") or 0),
+            "fader_count":     int(profile.get("fader_count") or 0),
+            "effect_count":    int(profile.get("effect_count") or 0),
+            "pad_count":       len(profile.get("pad_map") or {}),
+            "profile_json":    profile_json,
+            "contributor_uid": uid,
+            "contributed_by":  email,
+            "created_at":      time.time(),
+        })
+        print(f"[controller_submit] {email} : {profile.get('name')} en attente ({fingerprint})")
+
+        try:
+            snap_q = db.collection("controller_quota").document(uid).get()
+            data_q = snap_q.to_dict() if snap_q.exists else {}
+            today  = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            used   = int(data_q.get("count", 0) or 0) if data_q.get("day") == today else 0
+            quota_left = max(0, _DAILY_CONTROLLER_QUOTA - used)
+        except Exception:
+            quota_left = 0
+
+        return https_fn.Response(
+            json.dumps({"ok": True, "status": "pending", "quota_left": quota_left}),
+            status=200, headers=_JSON)
+
+    except Exception as exc:
+        print(f"[controller_submit] ERREUR: {exc}")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": str(exc)}),
+            status=500, headers=_JSON)
+
+
+# ===========================================================================
 # STRIPE CLOUD FUNCTION ENTRY POINT
 # ===========================================================================
 

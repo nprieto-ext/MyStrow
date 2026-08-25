@@ -144,6 +144,79 @@ def rename_profile(path: str, new_name: str) -> dict:
     return data
 
 
+def find_community_profile(fingerprint: str) -> str | None:
+    """Chemin du profil installé depuis la bibliothèque commune sous cette empreinte."""
+    if not fingerprint:
+        return None
+    for entry in list_profiles():
+        meta = entry["data"].get("community") or {}
+        if meta.get("fingerprint") == fingerprint:
+            return entry["file"]
+    return None
+
+
+def installed_community_version(fingerprint: str) -> int:
+    """Version communautaire installée localement, 0 si absente."""
+    path = find_community_profile(fingerprint)
+    if not path:
+        return 0
+    try:
+        meta = load_profile(path).get("community") or {}
+        return int(meta.get("version", 0) or 0)
+    except Exception:
+        return 0
+
+
+def conflicting_local_profiles(keywords: list, fingerprint: str = "") -> list:
+    """Noms des profils déjà installés qui répondraient aux mêmes mots-clés.
+
+    `find_profile_for_port` rend le PREMIER profil dont un mot-clé apparaît dans
+    le nom du port, dans l'ordre alphabétique des fichiers. Installer un profil
+    communautaire qui partage un mot-clé avec un mapping fait maison peut donc
+    détourner la détection sans rien afficher — et l'utilisateur croit que son
+    propre mapping a été écrasé.
+    """
+    wanted = {str(k).strip().upper() for k in (keywords or []) if str(k).strip()}
+    if not wanted:
+        return []
+    out = []
+    for entry in list_profiles():
+        data = entry["data"]
+        meta = data.get("community") or {}
+        if fingerprint and meta.get("fingerprint") == fingerprint:
+            continue   # c'est la version déjà installée du même profil
+        mine = {str(k).strip().upper() for k in (data.get("keywords") or [])}
+        if wanted & mine:
+            out.append(data.get("name", Path(entry["file"]).stem))
+    return out
+
+
+def install_community_profile(data: dict, fingerprint: str, version: int) -> tuple[str, bool]:
+    """Installe (ou met à jour) un profil venu de la bibliothèque commune.
+
+    Retourne (chemin, mise_a_jour). L'empreinte et la version sont estampillées
+    dans le fichier : sans elles, un mapping corrigé après coup ne pourrait
+    jamais redescendre chez ceux qui l'ont déjà installé — ils resteraient sur
+    la version fautive sans moyen de le savoir.
+
+    Une réinstallation écrase le fichier d'origine plutôt que d'en créer un
+    second : deux profils portant les mêmes mots-clés se disputeraient la
+    détection, et lequel gagne dépendrait de l'ordre alphabétique des fichiers.
+    """
+    ok, reason = validate_profile(data)
+    if not ok:
+        raise ValueError(reason)
+    data = dict(data)
+    data["community"] = {"fingerprint": fingerprint, "version": int(version or 0)}
+
+    existing = find_community_profile(fingerprint)
+    if existing:
+        return save_profile(data, existing), True
+    # Pas encore installé sous cette empreinte, mais un profil local peut déjà
+    # porter ce nom : ne jamais écraser le travail de l'utilisateur.
+    return save_profile(data, unique_profile_path(data["name"])), False
+
+
 def find_profile_for_port(port_name: str) -> dict | None:
     """Cherche un profil dont les keywords matchent le nom du port MIDI."""
     upper = port_name.upper()

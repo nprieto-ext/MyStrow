@@ -129,5 +129,43 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ── Profils de controleurs MIDI partages par les utilisateurs ───────────
+
+    // File de moderation, alimentee UNIQUEMENT par la Cloud Function
+    // controller_submit (SDK Admin, non soumis a ces regles) : c'est le seul
+    // endroit ou la structure du profil et le quota journalier sont verifies.
+    // Meme raisonnement que fixture_submissions — laisser le client ecrire ici
+    // contournerait les deux garde-fous d'un coup.
+    //
+    // Lecture admin seule : la file porte l'email du contributeur. L'admin
+    // panel lit cette collection et y ecrit le statut (approved / rejected)
+    // via l'API REST, donc en passant par ces regles.
+    match /controller_submissions/{submissionId} {
+      allow read, write: if request.auth != null
+                         && request.auth.token.email == "nicop421@gmail.com";
+    }
+
+    // Bibliotheque publiee. Lecture PUBLIQUE, comme gdtf_fixtures : elle est
+    // consultee pour proposer un profil des qu'on branche un controleur
+    // inconnu, y compris par un utilisateur dont le jeton n'a pas pu etre
+    // rafraichi (antivirus a scan HTTPS). Exiger request.auth ici rejouerait
+    // exactement la panne du 12/08/2026 sur gdtf_fixtures.
+    //
+    // Ecriture admin uniquement : c'est l'approbation depuis l'admin panel.
+    match /controller_profiles/{profileId} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.auth.token.email == "nicop421@gmail.com";
+    }
+
+    // Compteur de quota journalier, tenu par controller_submit. Illisible et
+    // non modifiable cote client : un quota que son proprietaire peut remettre
+    // a zero n'est pas un quota.
+    match /controller_quota/{uid} {
+      allow read: if request.auth != null
+                  && request.auth.token.email == "nicop421@gmail.com";
+      allow write: if false;
+    }
+
   }
 }
