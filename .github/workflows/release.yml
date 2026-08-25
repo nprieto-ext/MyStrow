@@ -137,7 +137,7 @@ jobs:
           Write-Host "  $v"
 
       - name: Build EXE
-        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "vendor/three;vendor/three" --add-data "scenes3d;scenes3d" --add-data "AKAIAPCMINI.png;." --add-data "Novation.png;." --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --collect-all=pygame --hidden-import=pygame._sdl2.controller --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow
+        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "vendor/three;vendor/three" --add-data "scenes3d;scenes3d" --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --collect-all=pygame --hidden-import=pygame._sdl2.controller --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow
 
       # ─────────────────────────────────────────────
       # SIGNATURE DE CODE WINDOWS — SSL.com eSigner (cloud, CSC)
@@ -375,6 +375,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Necessaire pour l'annonce Discord : le texte de l'embed vit dans
+      # release.py (stdlib uniquement), jamais duplique dans ce workflow.
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
@@ -397,7 +402,7 @@ jobs:
             echo ""
             echo "**Téléchargements :**"
             echo "- 🪟 Windows : \`MyStrow_Setup.exe\`"
-            [ -f "mac-dmg/MyStrow_arm64.dmg" ] && echo "- 🍎 Mac Apple Silicon (M1/M2/M3/M4) : \`MyStrow_arm64.dmg\`"
+            [ -f "mac-dmg/MyStrow_arm64.dmg" ] && echo "- 🍎 Mac Apple Silicon (M1/M2/M3/M4/M5) : \`MyStrow_arm64.dmg\`"
             echo "- 🍎 Mac Intel (x86_64) : \`MyStrow_intel.dmg\` _(upload manuel)_"
             echo 'NOTES_EOF'
           } >> "$GITHUB_OUTPUT"
@@ -415,6 +420,28 @@ jobs:
             windows-installer/MyStrow.exe.sig
             windows-installer/sha256.txt
             mac-dmg/MyStrow_arm64.dmg
+
+      # L'annonce part d'ici, et non du poste de travail : la boucle de suivi de
+      # l'admin panel ne tourne que tant que la fenetre est ouverte (une dizaine
+      # de minutes de CI), et le canal est reste deux versions en arriere sans
+      # que rien ne le signale. Ici c'est la CI qui parle, apres le build.
+      - name: Annonce Discord (message "derniere version")
+        if: needs.build-windows.result == 'success'
+        env:
+          MYSTROW_DISCORD_WEBHOOK_RELEASE: ${{ secrets.DISCORD_WEBHOOK_RELEASE }}
+          MYSTROW_DISCORD_LATEST_MSG_ID: ${{ vars.DISCORD_LATEST_MSG_ID }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, os.getcwd())
+          from release import notify_discord_latest
+          version = os.environ["RELEASE_TAG"].lstrip("v")
+          ok, msg = notify_discord_latest(version)
+          # Jamais bloquant : la release est deja publiee. Mais jamais muet non
+          # plus, sinon un canal fige repasse inapercu.
+          print(("OK  " if ok else "::warning::Discord — ") + msg)
+          PY
 
       - name: Supprimer les anciennes releases (garder les 3 dernières)
         env:

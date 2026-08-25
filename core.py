@@ -66,7 +66,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.87"
+VERSION = "3.1.88"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -565,9 +565,16 @@ def effect_dim_base_color(proj, current):
     vrai projecteur pulsait. D'où le réflexe d'ajouter une couche RGB blanche
     qui ne servait qu'à réparer l'image.
 
-    Rend donc BLANC pour ces fixtures, et `current` inchangé partout ailleurs :
-    un profil vide (fixture non patchée) compte comme « ailleurs », faute de
-    quoi on repeindrait en blanc des projecteurs dont on ne sait rien.
+    Rend donc la couleur de la ROUE quand la fixture en a une — jamais noire,
+    une roue étant toujours posée sur un slot (position 0 = « Open », blanc) :
+    le problème d'origine reste réglé, et la lyre garde à l'écran la couleur
+    qu'elle sort VRAIMENT. Rendre du blanc en dur affichait une lyre blanche
+    alors qu'elle était sur le rouge, en 3D comme dans l'aperçu de l'éditeur.
+
+    Rend du BLANC pour les autres profils sans R/G/B (barre UV, gradateur…),
+    et `current` inchangé partout ailleurs : un profil vide (fixture non
+    patchée) compte comme « ailleurs », faute de quoi on repeindrait en blanc
+    des projecteurs dont on ne sait rien.
 
     ⚠️ Point UNIQUE : le moteur de restitution et l'aperçu de l'éditeur ont
     chacun leur branche « Dimmer seul ». Les faire diverger ici, c'est rejouer
@@ -576,6 +583,9 @@ def effect_dim_base_color(proj, current):
     profile = getattr(proj, 'dmx_profile', None) or []
     if not profile or 'R' in profile or 'G' in profile or 'B' in profile:
         return current
+    roue = color_wheel_display_color(proj)
+    if roue is not None:
+        return roue
     return QColor(255, 255, 255)
 
 
@@ -620,6 +630,71 @@ def cw_slot_for_color(slots, color):
         return (sr - cr) ** 2 + (sg - cg) ** 2 + (sb - cb) ** 2
 
     return min(slots, key=_dist)
+
+
+# Roue de couleurs generique, utilisee quand la fixture ne declare pas ses slots
+# (c'est le cas de toutes les fixtures de builtin_fixtures.py : elles ont le
+# canal ColorWheel dans leur profil, mais pas de table de slots — celle-ci ne
+# vient que d'un import OFL/QLC+ ou de l'assistant de calibration).
+# Position 0 = « Open » : une roue est toujours sur un slot, elle ne peut pas
+# etre noire.
+CW_DEFAULT_SLOTS = [
+    {"dmx": 0,   "color": "#ffffff", "name": "Open"},
+    {"dmx": 20,  "color": "#ff3300", "name": "Rouge"},
+    {"dmx": 42,  "color": "#ff8800", "name": "Orange"},
+    {"dmx": 64,  "color": "#ffff00", "name": "Jaune"},
+    {"dmx": 85,  "color": "#00cc44", "name": "Vert"},
+    {"dmx": 106, "color": "#00ccff", "name": "Cyan"},
+    {"dmx": 128, "color": "#0044ff", "name": "Bleu"},
+    {"dmx": 149, "color": "#cc00ff", "name": "Magenta"},
+    {"dmx": 170, "color": "#ff99cc", "name": "Rose"},
+    {"dmx": 192, "color": "#ffee88", "name": "CTO"},
+]
+
+
+def cw_slot_at(slots, dmx):
+    """Slot de roue actif pour une valeur DMX.
+
+    On prend le DERNIER slot franchi (`dmx <= v`), pas le plus proche : sur une
+    roue reelle les positions occupent des plages contigues, et la couleur ne
+    change qu'une fois la position atteinte. Le « plus proche » faisait basculer
+    l'affichage sur la couleur suivante a mi-chemin, avant que la roue ait
+    tourne.
+    """
+    slots = slots or CW_DEFAULT_SLOTS
+    passed = [s for s in slots if int(s.get("dmx", 0)) <= dmx]
+    return (max(passed, key=lambda s: int(s.get("dmx", 0))) if passed
+            else min(slots, key=lambda s: int(s.get("dmx", 0))))
+
+
+def color_wheel_display_color(proj, brightness=None):
+    """Couleur a AFFICHER d'une fixture dont la teinte vient de sa ROUE.
+
+    Sur un profil sans R/G/B, `proj.color` est une FICTION : le faisceau sort de
+    la couleur ou est posee la roue (`proj.color_wheel`), quoi que vaille le RVB
+    garde cote application. Et ce RVB part reellement au blanc des qu'un effet
+    Dimmer seul module la fixture (cf. `effect_dim_base_color`) : s'y fier
+    affichait une lyre BLANCHE alors qu'elle sort du rouge.
+
+    Renvoie None si la fixture n'est pas concernee — l'affichage suit alors le
+    modele `color`/`level`, comme avant.
+
+    ⚠️ Point UNIQUE : le plan de feu 2D (`PlanDeFeuCanvas._get_fill_color`) et la
+    3D (`Plan3DWebWindow._to_data`) passent tous les deux ici. Les faire diverger,
+    c'est rejouer « la 3D n'a pas la meme couleur que la 2D ».
+    """
+    prof = getattr(proj, 'dmx_profile', None) or []
+    if 'ColorWheel' not in prof:
+        return None
+    if 'R' in prof and 'G' in prof and 'B' in prof:
+        return None
+    slot = cw_slot_at(getattr(proj, 'color_wheel_slots', None),
+                      int(getattr(proj, 'color_wheel', 0) or 0))
+    c = QColor(slot.get('color', '#ffffff'))
+    if brightness is None:
+        return c
+    br = max(0.0, min(1.0, brightness))
+    return QColor(int(c.red() * br), int(c.green() * br), int(c.blue() * br))
 
 
 def projector_selection_keys(projectors):
@@ -783,6 +858,43 @@ SITE_URL = "https://mystrow.fr/"
 # Mac, précisément au moment où l'application refuse de démarrer.
 _DOWNLOAD_REDIRECT = ("https://us-central1-mystrow-907be.cloudfunctions.net"
                       "/download_redirect?p=")
+
+
+def message_erreur_reseau(exc) -> str:
+    """Traduit une exception réseau en phrase que l'utilisateur peut agir.
+
+    Ce qu'on remplace : `<urlopen error [Errno 11001] getaddrinfo failed>`,
+    affiché tel quel à un utilisateur en plein show. C'est de l'anglais, c'est
+    un numéro, et surtout ça ne dit pas quoi faire — alors que ce cas précis a
+    une cause très concrète et très fréquente en salle : **le nom de domaine ne
+    se résout pas**, typiquement un portail Wi-Fi qu'il faut encore valider.
+
+    Les cas sont reconnus sur le TEXTE de l'exception, pas seulement sur son
+    type : selon la couche qui échoue, la même panne DNS arrive tantôt en
+    `socket.gaierror`, tantôt emballée dans une `URLError` dont le `reason`
+    porte le message. Ne tester que le type laisserait passer la moitié des cas.
+    """
+    import socket as _socket
+
+    # `URLError` range la vraie cause dans `.reason` ; c'est elle qui porte le
+    # type utile, l'enveloppe ne dit rien.
+    cause = getattr(exc, "reason", None) or exc
+    texte = f"{exc} {cause}".lower()
+
+    dns = (isinstance(cause, _socket.gaierror)
+           or "getaddrinfo" in texte
+           or "11001" in texte              # WSAHOST_NOT_FOUND (Windows)
+           or "name or service not known" in texte
+           or "nodename nor servname" in texte)   # macOS
+    if dns:
+        return tr("net_err_dns")
+    if "ssl" in texte or "certificat" in texte or "handshake" in texte:
+        return tr("net_err_ssl")
+    if "timed out" in texte or "timeout" in texte:
+        return tr("net_err_timeout")
+    if "refused" in texte or "unreachable" in texte or "10061" in texte:
+        return tr("net_err_unreachable")
+    return tr("net_err_generic")
 
 
 def download_url() -> str:

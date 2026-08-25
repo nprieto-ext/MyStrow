@@ -4414,6 +4414,7 @@ class Sequencer(QFrame):
                     self.timeline_playback_timer and self.timeline_playback_timer.isActive()):
                 self._stop_timeline_effect()
                 self.timeline_playback_timer.stop()
+                self._clear_timeline_leftovers()
                 if hasattr(self, 'timeline_playback_row'):
                     del self.timeline_playback_row
                 self.timeline_tracks_data = {}
@@ -4608,6 +4609,9 @@ class Sequencer(QFrame):
                 if self.timeline_playback_timer and self.timeline_playback_timer.isActive():
                     self._stop_timeline_effect()
                     self.timeline_playback_timer.stop()
+                    # Sinon le REC Lumiere du media precedent laissait ses canaux
+                    # bruts / gobo / strobe colles sur le media suivant.
+                    self._clear_timeline_leftovers()
                 if hasattr(self, 'timeline_playback_row'):
                     del self.timeline_playback_row
 
@@ -4881,6 +4885,7 @@ class Sequencer(QFrame):
         if self.timeline_playback_timer and self.timeline_playback_timer.isActive():
             self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
+            self._clear_timeline_leftovers()
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row
         self.timeline_tracks_data = {}
@@ -5141,6 +5146,7 @@ class Sequencer(QFrame):
         if self.timeline_playback_row != getattr(self, 'current_row', -1):
             self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
+            self._clear_timeline_leftovers()
             del self.timeline_playback_row
             self.timeline_tracks_data = {}
             return
@@ -5150,6 +5156,7 @@ class Sequencer(QFrame):
         if current_dmx_mode != "Play Lumiere":
             self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
+            self._clear_timeline_leftovers()
             if hasattr(self, 'timeline_playback_row'):
                 del self.timeline_playback_row
             self.timeline_tracks_data = {}
@@ -5185,13 +5192,10 @@ class Sequencer(QFrame):
                     self._timeline_pause_blackout = True
                     if getattr(self, '_timeline_effect_name', None) is not None:
                         self._stop_timeline_effect()
-                    for _proj in self.player_ui.projectors:
-                        _proj.level      = 0
-                        _proj.base_color = QColor("black")
-                        _proj.color      = QColor("black")
-                    if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
-                        self.player_ui.artnet.update_from_projectors(
-                            self.player_ui.projectors)
+                    # Noircir ne suffit pas : un « jeu de lumiere » dont le mode
+                    # auto/son est un canal brut ignore le dimmer et continuait
+                    # de tourner en pause. On ramene tout le faisceau au repos.
+                    self._clear_timeline_leftovers(blackout=True)
             return
 
         self.timeline_last_update = current_time
@@ -5294,13 +5298,11 @@ class Sequencer(QFrame):
                 del self.timeline_playback_row
             self.timeline_tracks_data = {}
             # Eteindre les projecteurs : sans ca, ils restent figes sur la
-            # derniere valeur posee par le dernier clip (groupe qui ne s'eteint plus)
-            for _proj in self.player_ui.projectors:
-                _proj.level      = 0
-                _proj.base_color = QColor("black")
-                _proj.color      = QColor("black")
-            if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
-                self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)
+            # derniere valeur posee par le dernier clip (groupe qui ne s'eteint
+            # plus). Le niveau ne suffit pas — les canaux bruts (mode auto/son
+            # d'un jeu de lumiere), le strobe, le gobo et la roue survivaient a
+            # la fin du morceau et ne s'arretaient qu'au CLEAR.
+            self._clear_timeline_leftovers(blackout=True)
             return
 
         # ── Gérer les pistes Effet (Effet + Effet 2/3/4… → superposition) ──
@@ -5443,6 +5445,30 @@ class Sequencer(QFrame):
         main_win._snapshot_effect_state()
         import time as _time
         main_win.effect_t0 = _time.monotonic()
+
+    def _clear_timeline_leftovers(self, blackout=False):
+        """Nettoie les canaux laissés posés par la timeline qu'on vient d'arrêter.
+
+        `_stop_timeline_effect()` ne coupe que l'EFFET. Tout ce que les clips
+        écrivaient directement sur les projecteurs (canaux bruts, strobe, gobo,
+        roue, prisme, UV/ambre…) restait, lui, gravé sur les `Projector` — et le
+        moteur DMX continuait de l'émettre en boucle. D'où « les modes restent
+        actifs sans fin, faut faire clear partout pour stopper ».
+
+        Pendant la lecture, ce nettoyage est fait à chaque image par
+        `apply_timeline_to_dmx` ; il ne manquait qu'au moment de l'arrêt.
+        """
+        main_win = self.player_ui
+        projs = getattr(main_win, 'projectors', None)
+        if not projs:
+            return
+        try:
+            from light_timeline import reset_beam_channels
+            reset_beam_channels(projs, blackout=blackout)
+            if getattr(main_win, 'artnet', None):
+                main_win.artnet.update_from_projectors(projs)
+        except Exception as e:
+            print(f"[TIMELINE] nettoyage de fin impossible : {e}")
 
     def _stop_timeline_effect(self):
         """Arrête l'effet lancé par la timeline (si c'est bien lui qui tourne)."""
@@ -6553,8 +6579,14 @@ class Sequencer(QFrame):
         self.playback_index = 0
 
         if self.timeline_playback_timer:
+            _etait_actif = self.timeline_playback_timer.isActive()
             self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
+            # Uniquement si une timeline tournait vraiment : hors Play Lumiere,
+            # les canaux bruts appartiennent a l'utilisateur (curseurs du plan de
+            # feu, rappel memoire) et un STOP n'a pas a les effacer.
+            if _etait_actif:
+                self._clear_timeline_leftovers()
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row
         self.timeline_tracks_data = {}

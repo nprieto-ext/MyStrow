@@ -2424,22 +2424,60 @@ class LayerRow(QFrame):
         btn.setChecked(bool(getattr(self.layer, 'sym_pan', False)))
         btn.blockSignals(False)
 
-    def _position_presets(self):
-        """Positions enregistrées de l'application, ou [] si introuvables.
+    def _find_main_window(self):
+        """Fenêtre principale, par remontée de parents.
 
-        Même remontée de parents que le plan de feu : la ligne ne connaît pas
-        la fenêtre principale, seul le dialogue d'édition la porte.
+        Même remontée que le plan de feu : la ligne ne connaît pas la fenêtre
+        principale, seul le dialogue d'édition la porte.
         """
         w = self.parent()
         while w is not None:
             mw = getattr(w, '_main_window', None)
             if mw is not None:
-                return list(getattr(mw, 'position_presets', []) or [])
+                return mw
             w = w.parent()
-        return []
+        return None
+
+    def _position_presets(self):
+        """Positions AKAI enregistrées de l'application, ou [] si introuvables."""
+        mw = self._find_main_window()
+        return list(getattr(mw, 'position_presets', []) or []) if mw else []
+
+    def _pdf_position_presets(self, mw, deja_pris):
+        """Positions du PLAN DE FEU absentes de la liste AKAI, par nom.
+
+        Les positions vivent dans DEUX fichiers : celles créées depuis le plan
+        de feu 2D (`~/.mystrow_moving_presets.json`) et les positions AKAI
+        (`~/.maestro_akai_config.json`). Ce menu ne listait que les secondes —
+        une position tout juste créée sur le plan de feu était donc
+        introuvable ici, alors qu'elle existait bel et bien.
+
+        Le rapprochement se fait par NOM, comme dans la bibliothèque de REC
+        Lumière : deux positions homonymes sont considérées identiques et c'est
+        la copie AKAI qui est affichée (pas de doublon dans le menu).
+        """
+        if mw is None or not hasattr(mw, '_load_pdf_presets'):
+            return []
+        try:
+            return [p for p in (mw._load_pdf_presets() or [])
+                    if p.get("name") and p.get("name") not in deja_pris]
+        except Exception as e:
+            print(f"[FX] lecture des positions Plan de Feu impossible : {e}")
+            return []
 
     def _open_pos_menu(self):
+        mw = self._find_main_window()
+        # Une position AKAI qui a un jumeau côté plan de feu est une COPIE, qui
+        # peut dater : on la remet à jour avant d'ouvrir le menu, comme le fait
+        # la bibliothèque de REC Lumière. Idempotent, n'ajoute jamais rien.
+        if mw is not None and hasattr(mw, 'sync_pdf_positions_into_akai'):
+            try:
+                mw.sync_pdf_positions_into_akai()
+            except Exception:
+                pass
         presets = self._position_presets()
+        pdf_presets = self._pdf_position_presets(
+            mw, {p.get("name") for p in presets})
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
         cur = getattr(self.layer, 'pos_preset_idx', None)
@@ -2453,11 +2491,37 @@ class LayerRow(QFrame):
                 nom = p.get("name", f"Position {i + 1}")
                 a = menu.addAction(("✓ " if cur == i else "    ") + nom)
                 a.triggered.connect(lambda _=False, k=i, n=nom: self._set_pos(k, n))
-        else:
+
+        if pdf_presets:
+            menu.addSeparator()
+            titre = menu.addAction(tr("fx_pos_from_pdf"))
+            titre.setEnabled(False)
+            for p in pdf_presets:
+                nom = p.get("name", "")
+                a = menu.addAction("    " + nom)
+                a.triggered.connect(
+                    lambda _=False, pdf=p: self._set_pos_from_pdf(pdf))
+
+        if not presets and not pdf_presets:
             a = menu.addAction(tr("fx_no_position"))
             a.setEnabled(False)
 
         menu.exec(self._pos_btn.mapToGlobal(QPoint(0, self._pos_btn.height() + 2)))
+
+    def _set_pos_from_pdf(self, pdf_preset):
+        """Choisit une position du plan de feu : la couche vise un INDEX dans
+        `position_presets`, il faut donc d'abord y fabriquer la copie.
+
+        Conversion à la SÉLECTION et pas à l'affichage : sinon ouvrir ce menu
+        recopierait toutes les positions du plan de feu dans la config AKAI.
+        """
+        mw = self._find_main_window()
+        if mw is None or not hasattr(mw, 'pdf_position_to_akai_index'):
+            return
+        idx = mw.pdf_position_to_akai_index(pdf_preset)
+        if idx is None:
+            return
+        self._set_pos(idx, pdf_preset.get("name", ""))
 
     def _set_pos(self, idx, nom):
         self.layer.pos_preset_idx  = idx
@@ -3553,7 +3617,7 @@ class EffectEditorDialog(QDialog):
             if _e.button() == Qt.RightButton:
                 _e.accept()
             else:
-                self._apply_preset(e)
+                self._switch_to_effect(e)
 
         card.mousePressEvent = _card_mouse_press
         card.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -3687,7 +3751,21 @@ class EffectEditorDialog(QDialog):
         self._scroll_library_to_bottom()
 
     def _delete_custom_effect(self, eff: dict):
+        """Supprime un effet de « Mes Effets », sur confirmation.
+
+        Le ✕ de la carte fait 14 px et vit juste à côté du ✎ de renommage : un
+        clic de travers effaçait un effet pour de bon, sans retour possible.
+        Point de passage unique du ✕ ET du menu contextuel — la confirmation
+        est donc ici, pas dans les deux appelants.
+        """
+        from PySide6.QtWidgets import QMessageBox
         name = eff.get("name", "")
+        if QMessageBox.question(
+                self, tr("fx_delete_title"),
+                tr("fx_f_delete_confirm", name=name),
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel) != QMessageBox.Yes:
+            return
         self._custom_effects = [e for e in self._custom_effects if e.get("name") != name]
         _save_custom_effects(self._custom_effects)
         if self._selected_card == name:
@@ -4132,6 +4210,27 @@ class EffectEditorDialog(QDialog):
             return lib[name]
         return {}
 
+    def _switch_to_effect(self, eff: dict):
+        """Changement d'effet depuis la bibliothèque — garde d'abord le travail
+        en cours.
+
+        `_apply_preset` vide `self._layers` : sans ce passage, cliquer sur une
+        autre carte pour la regarder JETAIT toutes les couches éditées de
+        l'effet précédent. La machinerie pour les garder existait déjà et était
+        complète (`_autosave_on_close` : boutons E1-E8, pads FX, bibliothèque
+        d'effets, fichier custom_effects) — elle n'était simplement branchée
+        que sur la fermeture de l'éditeur. Même contrat ici : on ne perd rien
+        en naviguant, et revenir sur l'effet le retrouve tel qu'on l'a laissé.
+
+        Volontairement PAS dans `_apply_preset` : la duplication, l'import et
+        la sauvegarde sous un nouveau nom passent aussi par lui, mais après
+        avoir déjà déplacé `_selected_card` sur le nouvel effet — l'autosave y
+        écrirait les couches courantes sous le nom du nouveau.
+        """
+        if eff.get("name", "") != self._selected_card:
+            self._autosave_on_close()
+        self._apply_preset(eff)
+
     def _apply_preset(self, eff: dict):
         """Remplace les couches par le preset et met à jour le panneau central."""
         self._selected_card = eff.get("name", "")
@@ -4536,8 +4635,9 @@ class EffectEditorDialog(QDialog):
             elif has_dim:
                 # Dimmer seul : oscille la couleur existante du projecteur
                 # level est déjà appliqué par _get_fill_color, on passe la couleur brute
-                # (blanc sur un spot à roue, qui n'a pas de RGB à moduler —
-                #  même règle que le moteur, cf. core.effect_dim_base_color)
+                # (la couleur de sa ROUE sur un spot sans RGB, qui n'a pas de
+                #  RGB à moduler — même règle que le moteur, et c'est bien la
+                #  roue et non du blanc en dur : cf. core.effect_dim_base_color)
                 color = effect_dim_base_color(proj, QColor(proj.color))
             elif has_movement:
                 # Pan/Tilt seul : NE force PAS de couleur/intensité (parité avec la

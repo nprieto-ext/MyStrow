@@ -32,7 +32,11 @@ STATE_FILE = os.path.expanduser("~/.mystrow_discord_materiel.json")
 
 SHOP = "https://mystrow.fr/shop"
 DL = "https://mystrow.fr/telecharger"
-IMG = "https://mystrow.fr/shop/"
+# PAS "https://mystrow.fr/shop/" : /shop est l'URL de la PAGE boutique (une
+# réécriture), pas un dossier. La page répond bien en 200, mais /shop/<fichier>
+# renvoie 500 — les quatre vignettes des annonces matériel Discord étaient donc
+# toutes cassées. Les images sont servies depuis /img-shop/.
+IMG = "https://mystrow.fr/img-shop/"
 YELLOW = 0xE2CE16
 
 USERNAME = "MyStrow"
@@ -173,7 +177,7 @@ MESSAGES = [
         "url": DL,
         "color": YELLOW,
         "description": (
-            "Gratuit pour démarrer, aucune carte bancaire. **14 jours d'accès complet** : "
+            "Gratuit pour démarrer, aucune carte bancaire. **15 jours d'accès complet** : "
             "contrôle temps réel, IA Lumière, timeline et player audio/vidéo.\n\n"
             "🪟 **Windows 10 / 11**  ·  🍎 **macOS 11+**\n\n"
             f"→ Télécharger : {DL}\n"

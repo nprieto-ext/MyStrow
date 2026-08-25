@@ -48,6 +48,46 @@ POLL_MS = 20
 # Plage renvoyee par SDL pour un axe (entier 16 bits signe).
 _AXE_MAX = 32767.0
 
+# Boutons exposes, avec le nom de la constante SDL correspondante.
+#
+# L'IDENTIFIANT EST NEUTRE, PAS « LA CROIX » : SDL nomme « A » le bouton du bas,
+# qui est la croix sur PlayStation et A sur Xbox — meme bouton physique, seul
+# son dessin change. Garder l'identifiant SDL evite qu'un mapping enregistre
+# avec une manette parte de travers avec une autre ; c'est l'affichage qui
+# s'adapte (cf. gamepad_boutons.py).
+_BOUTONS = (
+    ("a",      "CONTROLLER_BUTTON_A"),
+    ("b",      "CONTROLLER_BUTTON_B"),
+    ("x",      "CONTROLLER_BUTTON_X"),
+    ("y",      "CONTROLLER_BUTTON_Y"),
+    ("up",     "CONTROLLER_BUTTON_DPAD_UP"),
+    ("down",   "CONTROLLER_BUTTON_DPAD_DOWN"),
+    ("left",   "CONTROLLER_BUTTON_DPAD_LEFT"),
+    ("right",  "CONTROLLER_BUTTON_DPAD_RIGHT"),
+    ("l1",     "CONTROLLER_BUTTON_LEFTSHOULDER"),
+    ("r1",     "CONTROLLER_BUTTON_RIGHTSHOULDER"),
+    ("l3",     "CONTROLLER_BUTTON_LEFTSTICK"),
+    ("r3",     "CONTROLLER_BUTTON_RIGHTSTICK"),
+    ("select", "CONTROLLER_BUTTON_BACK"),
+    ("start",  "CONTROLLER_BUTTON_START"),
+)
+
+# Le bouton PS / Xbox (GUIDE) est volontairement absent : Windows l'intercepte
+# (barre de jeu), on ne peut pas compter dessus.
+
+# Les deux gachettes ne sont PAS des boutons pour SDL mais des axes 0..32767.
+_GACHETTES = (
+    ("l2", "CONTROLLER_AXIS_TRIGGERLEFT"),
+    ("r2", "CONTROLLER_AXIS_TRIGGERRIGHT"),
+)
+
+# Deux seuils, pas un seul : une gachette relachee ne retombe pas franchement a
+# zero sur une manette usee. Avec un seuil unique, une gachette qui flotte
+# autour de la valeur de bascule enverrait une rafale d'appuis — et si elle
+# porte le modificateur, la page changerait dix fois par seconde.
+SEUIL_GACHETTE_ON  = 0.60
+SEUIL_GACHETTE_OFF = 0.40
+
 
 class GamepadClient(QObject):
     """Sonde la premiere manette branchee et publie ses axes normalises."""
@@ -58,6 +98,9 @@ class GamepadClient(QObject):
     avertissement      = Signal(str)
     # lx, ly, rx, ry — normalises entre -1.0 et 1.0, bruts (sans zone morte)
     axes_changed       = Signal(float, float, float, float)
+    # Fronts d'un bouton (identifiants de `_BOUTONS` / `_GACHETTES`)
+    bouton_presse      = Signal(str)
+    bouton_relache     = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,6 +108,9 @@ class GamepadClient(QObject):
         self._nom = ""
         self._connecte = False
         self._sdl_pret = False
+        self._enfonces = set()   # identifiants des boutons actuellement tenus
+        self._codes = None       # table {identifiant: code SDL}, resolue au 1er sondage
+        self._codes_gachettes = {}
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_MS)
         self._timer.timeout.connect(self._sonder)
@@ -152,6 +198,76 @@ class GamepadClient(QObject):
         f = lambda v: max(-1.0, min(1.0, v))
         self.axes_changed.emit(f(lx), f(ly), f(rx), f(ry))
 
+        self._sonder_boutons(pygame)
+
+    # ── boutons ─────────────────────────────────────────────────────────────
+
+    def est_enfonce(self, bouton: str) -> bool:
+        """Etat courant d'un bouton — sert au modificateur, qui se lit au
+        moment ou un AUTRE bouton est presse, pas au moment ou lui-meme l'est."""
+        return bouton in self._enfonces
+
+    def _table_codes(self, pygame) -> dict:
+        """{identifiant: code SDL}. Resolue une fois, puis gardee.
+
+        Passe par `getattr` : une version de pygame qui n'exposerait pas l'une
+        des constantes doit faire disparaitre CE bouton, pas la lecture entiere
+        de la manette.
+        """
+        if self._codes is None:
+            self._codes = {}
+            for bid, const in _BOUTONS:
+                code = getattr(pygame, const, None)
+                if code is not None:
+                    self._codes[bid] = code
+            self._codes_gachettes = {}
+            for bid, const in _GACHETTES:
+                code = getattr(pygame, const, None)
+                if code is not None:
+                    self._codes_gachettes[bid] = code
+        return self._codes
+
+    def _sonder_boutons(self, pygame):
+        """Compare l'etat courant au precedent et publie les fronts.
+
+        On ne peut pas ecouter les evenements SDL : `_init_sdl` les a coupes
+        justement pour qu'une file que personne ne vide ne grossisse pas
+        pendant les six heures d'un show. Comparer deux etats donne la meme
+        information sans file d'attente.
+        """
+        codes = self._table_codes(pygame)
+        actifs = set()
+
+        for bid, code in codes.items():
+            try:
+                if self._ctrl.get_button(code):
+                    actifs.add(bid)
+            except Exception:
+                pass
+
+        for bid, code in self._codes_gachettes.items():
+            try:
+                v = self._ctrl.get_axis(code) / _AXE_MAX
+            except Exception:
+                continue
+            # Hysteresis : au-dessus du seuil haut on enfonce, au-dessous du
+            # seuil bas on relache, et entre les deux on garde l'etat courant.
+            if v >= SEUIL_GACHETTE_ON:
+                actifs.add(bid)
+            elif v > SEUIL_GACHETTE_OFF and bid in self._enfonces:
+                actifs.add(bid)
+
+        if actifs == self._enfonces:
+            return
+        # Les relachements d'abord : si une action reassigne quoi que ce soit,
+        # l'etat des modificateurs doit deja etre a jour quand elle part.
+        for bid in sorted(self._enfonces - actifs):
+            self._enfonces.discard(bid)
+            self.bouton_relache.emit(bid)
+        for bid in sorted(actifs - self._enfonces):
+            self._enfonces.add(bid)
+            self.bouton_presse.emit(bid)
+
     def _tenter_attache(self, controller):
         for i in range(controller.get_count()):
             if not controller.is_controller(i):
@@ -167,6 +283,17 @@ class GamepadClient(QObject):
             return
 
     def _detacher(self):
+        # Relacher tout ce qui etait tenu. Sans ca, debrancher la manette alors
+        # qu'on tient la gachette du modificateur la laisserait « enfoncee »
+        # pour toujours : au rebranchement, tous les boutons tomberaient sur la
+        # 2e page sans que rien ne l'explique.
+        for bid in sorted(self._enfonces):
+            self._enfonces.discard(bid)
+            try:
+                self.bouton_relache.emit(bid)
+            except Exception:
+                pass
+
         c, self._ctrl = self._ctrl, None
         if c is not None:
             try:

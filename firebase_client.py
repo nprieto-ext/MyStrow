@@ -76,13 +76,16 @@ def has_internet(timeout: float = 3.0) -> bool:
 # ---------------------------------------------------------------
 
 def _net_error_msg(e: Exception) -> str:
-    """Traduit une URLError/OSError en message lisible."""
-    msg = str(e).lower()
-    if "ssl" in msg or "certificate" in msg or "handshake" in msg:
-        return "Erreur de sécurité SSL. Vérifiez que votre antivirus ne bloque pas MyStrow."
-    if "timed out" in msg or "timeout" in msg:
-        return "Délai de connexion dépassé. Vérifiez votre connexion internet."
-    return "Pas de connexion internet. Vérifiez votre réseau et réessayez."
+    """Traduit une URLError/OSError en message lisible.
+
+    Delegue a `core` pour que TOUS les modules reseau (Firebase, Brevo, boite a
+    idees...) disent la meme chose : ces messages etaient ecrits en dur en
+    francais ici, donc affiches en francais a un utilisateur allemand ou
+    espagnol, et la panne DNS — de loin la plus frequente en salle — tombait
+    dans le cas generique « pas de connexion » sans dire quoi verifier.
+    """
+    from core import message_erreur_reseau
+    return message_erreur_reseau(e)
 
 
 def _post_json(url, payload: dict, id_token: str = None) -> dict:

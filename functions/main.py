@@ -7,6 +7,7 @@ Gère :
   - customer.subscription.deleted → révoque la licence
   - customer.subscription.updated → révoque si statut 'unpaid'/'canceled' (filet)
   - invoice.payment_failed        → email d'avertissement + grâce de 7 jours
+  - charge.refunded               → avoir Axonaut du montant remboursé
 
 Déploiement :
   firebase deploy --only functions
@@ -757,7 +758,8 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
     return company_id
 
 
-def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str) -> None:
+def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str,
+                              nature: int = 4) -> None:
     """Enregistre un paiement sur une facture Axonaut → la passe en « payée ».
 
     Endpoint : POST /payments (schéma invoicePayment.post).
@@ -776,7 +778,7 @@ def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str
         "invoice_id": invoice_id,
         "amount":     round(amount_ttc, 2),
         "date":       now_iso,
-        "nature":     4,                       # Carte bancaire (Stripe)
+        "nature":     nature,                  # 4 = CB (Stripe), 6 = Autre (avoir)
         "reference":  (reference or "Stripe")[:30],
     })
     if result:
@@ -882,10 +884,273 @@ def _axonaut_create_invoice(
                     "plan":        plan_type,
                     "invoice_url": invoice_url,
                     "axonaut_id":  invoice_id,
+                    # Refs Stripe + numero lisible : sans elles, un
+                    # remboursement ne saurait PAS quelle facture crediter.
+                    "stripe_ref":     stripe_ref or "",
+                    "axonaut_number": (result or {}).get("number") or "",
+                    "type":           "invoice",
                 })
             print(f"[Firebase] Facture stockée pour uid={uid}")
         except Exception as e:
             print(f"[Firebase] Erreur stockage facture : {e}")
+
+
+def _axonaut_invoice_number(invoice_id: int) -> str:
+    """Numero lisible d'une facture Axonaut (« F20260824-10888 »)."""
+    if not invoice_id:
+        return ""
+    data = _axonaut("GET", f"/invoices/{invoice_id}")
+    return (data or {}).get("number") or ""
+
+
+def _find_invoice_to_credit(uid: str, refs: set) -> dict:
+    """Retrouve, parmi les factures du client, celle que le remboursement solde.
+
+    On matche d'abord sur la reference Stripe (`stripe_ref`) : c'est le seul
+    lien certain entre un encaissement et sa facture. Les factures emises avant
+    l'ajout de ce champ n'en ont pas — on retombe alors sur la plus recente, de
+    loin le cas le plus frequent (on rembourse ce qu'on vient de prelever),
+    mais on le DIT dans les logs : un avoir adosse a la mauvaise facture se
+    rattrape a la main, encore faut-il savoir qu'il faut le rattraper.
+    """
+    docs = list(_get_db().collection("licenses").document(uid)
+                .collection("invoices").get())
+    rows = []
+    for d in docs:
+        data = d.to_dict() or {}
+        if (data.get("type") or "invoice") != "invoice":
+            continue          # ne jamais crediter un avoir
+        rows.append(data)
+        if refs and (data.get("stripe_ref") or "") in refs:
+            return data
+    if not rows:
+        return {}
+    rows.sort(key=lambda r: (r.get("date") or ""), reverse=True)
+    print(f"[Avoir] Aucune facture ne porte {sorted(refs)} — repli sur la plus "
+          f"recente ({rows[0].get('axonaut_number') or rows[0].get('axonaut_id')})")
+    return rows[0]
+
+
+def _axonaut_create_credit_note(
+    company_id: int,
+    plan_type: str,
+    amount_ttc: float,
+    tax_rate: float,
+    origin_number: str = "",
+    uid: str = "",
+    stripe_ref: str = "",
+) -> dict:
+    """Emet un AVOIR Axonaut apres un remboursement Stripe.
+
+    L'API v2 n'expose AUCUN endpoint « avoir ». Dans ce compte, un avoir est
+    une facture dont les lignes portent une quantite NEGATIVE, avec la mention
+    « Avoir sur facture : #<numero> » et un paiement negatif qui la solde :
+    c'est exactement ce que produit le bouton « Creer un avoir » de l'interface
+    (releve sur les avoirs deja au dossier). On reproduit ce schema a
+    l'identique pour que l'export comptable reste homogene.
+
+    `amount_ttc` est le montant REMBOURSE — donc du TTC, remboursement partiel
+    compris. Le HT se deduit du taux, jamais l'inverse, pour que le TTC
+    reconstitue retombe au centime sur ce que Stripe a rendu au client.
+    """
+    if not company_id:
+        print("[Avoir] company_id manquant — avoir non cree")
+        return {}
+    if not amount_ttc:
+        print("[Avoir] montant nul — avoir non cree")
+        return {}
+
+    tax_rate = float(TVA_RATE if tax_rate is None else tax_rate)
+    price_ht = round(abs(amount_ttc) / (1 + tax_rate / 100.0), 2)
+    today    = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    mention  = (f"Avoir sur facture : #{origin_number}" if origin_number
+                else "Avoir — remboursement Stripe")
+
+    print(f"[Avoir] Creation — {price_ht} EUR HT + {tax_rate} % TVA "
+          f"= -{round(abs(amount_ttc), 2)} EUR TTC "
+          f"company_id={company_id} origine={origin_number or '?'}")
+
+    result = _axonaut("POST", "/invoices", {
+        "company_id":         company_id,
+        "reference":          (stripe_ref or "")[:30],
+        "reference_date":     today,
+        "theme_id":           339036,   # MYSTROW
+        "mandatory_mentions": mention,
+        "products": [{
+            "name":     _plan_label(plan_type),
+            # La quantite est negative, PAS le prix : c'est la forme qu'ont les
+            # avoirs deja au dossier, et celle que l'export compta attend.
+            "quantity": -1,
+            "price":    price_ht,
+            "tax_rate": tax_rate,
+        }],
+    })
+    if not result or not result.get("id"):
+        print("[Avoir] Echec creation (voir erreur ci-dessus)")
+        return {}
+
+    credit_id  = result.get("id")
+    credit_num = result.get("number") or _axonaut_invoice_number(credit_id)
+    credit_url = (result.get("public_path") or result.get("pdf_url")
+                  or result.get("customer_portal_url")
+                  or f"https://axonaut.com/invoice/{credit_id}")
+    print(f"[Avoir] Cree : id={credit_id} numero={credit_num}")
+
+    # Paiement NEGATIF : sans lui l'avoir reste « a payer » et le solde du
+    # client ne revient jamais a zero.
+    _axonaut_register_payment(
+        credit_id, -round(abs(amount_ttc), 2),
+        (f"Annule #{origin_number}" if origin_number else "Remboursement Stripe"),
+        nature=6,                      # Autre — ce n'est pas un encaissement CB
+    )
+
+    if uid:
+        try:
+            _get_db().collection("licenses").document(uid) \
+                .collection("invoices").add({
+                    "date":        today,
+                    # Negatif : la page « Mon compte » liste l'avoir sous la
+                    # facture d'origine, montant en moins. Le client voit ce
+                    # qu'on lui a rendu sans avoir a le demander.
+                    "amount_eur":  -round(abs(amount_ttc), 2),
+                    "amount_ht":   -price_ht,
+                    "amount_tax":  -round(round(abs(amount_ttc), 2) - price_ht, 2),
+                    "tax_rate":    tax_rate,
+                    "plan":        plan_type,
+                    "invoice_url": credit_url,
+                    "axonaut_id":  credit_id,
+                    "axonaut_number": credit_num,
+                    "stripe_ref":  stripe_ref or "",
+                    "type":        "credit_note",
+                    "origin_number": origin_number or "",
+                })
+        except Exception as e:
+            print(f"[Avoir] Erreur stockage Firestore : {e}")
+
+    return {"id": credit_id, "number": credit_num, "url": credit_url}
+
+
+def _already_credited(uid: str, charge_id: str) -> float:
+    """Somme des remboursements deja passes en avoir pour cette charge Stripe.
+
+    Les avoirs en echec (`status == "error"`) ne comptent PAS : ils n'existent
+    dans aucune compta, et le prochain evenement Stripe doit pouvoir les
+    rattraper.
+    """
+    if not charge_id:
+        return 0.0
+    total = 0.0
+    for d in (_get_db().collection("licenses").document(uid)
+              .collection("refunds").get()):
+        data = d.to_dict() or {}
+        if data.get("stripe_charge_id") != charge_id:
+            continue
+        if data.get("status") == "error":
+            continue
+        total += float(data.get("amount_eur") or 0)
+    return round(total, 2)
+
+
+def _on_charge_refunded(charge: dict) -> None:
+    """Remboursement Stripe — emet l'avoir Axonaut correspondant.
+
+    Ne touche PAS a la licence : un remboursement suit presque toujours une
+    annulation deja traitee par _on_subscription_deleted, et couper l'acces sur
+    un simple geste commercial (remboursement partiel, dedommagement) serait
+    une mauvaise surprise pour un client qui paie toujours.
+
+    Idempotent par remboursement : Stripe peut rejouer l'evenement, et deux
+    avoirs pour un seul remboursement, ca se repare a la main dans la compta.
+    Chaque `re_...` traite laisse une trace dans licenses/{uid}/refunds.
+    """
+    customer_id = _id_of(charge.get("customer"))
+    uid = _find_uid_by_customer(customer_id)
+    if not uid:
+        print(f"[charge.refunded] UID introuvable pour customer {customer_id} "
+              f"— AVOIR A CREER A LA MAIN")
+        return
+
+    db = _get_db()
+
+    refunds = ((charge.get("refunds") or {}).get("data")) or []
+    if not refunds:
+        # `refunds` est « expandable » : sur les versions recentes de l'API,
+        # l'objet Charge du webhook ne la contient PLUS (c'est ce que dit la
+        # doc quand elle renvoie vers refund.created « for information about
+        # the refund »). Il ne reste que le CUMUL rembourse — on credite donc
+        # la difference avec ce qui est deja passe en avoir sur cette charge :
+        # sans ca, un 2e remboursement partiel serait avale par la cle
+        # d'idempotence, et un rejeu du meme evenement ferait un doublon.
+        cumul = (charge.get("amount_refunded") or 0) / 100.0
+        delta = round(cumul - _already_credited(uid, charge.get("id", "")), 2)
+        if delta <= 0:
+            print(f"[charge.refunded] {charge.get('id','')} — {cumul} EUR deja "
+                  f"credites, rien a faire")
+            return
+        # La cle porte le cumul : deux remboursements partiels successifs sur
+        # la meme charge donnent deux cles differentes, un rejeu la meme.
+        refunds = [{"id": f"chg_{charge.get('id', '')}_"
+                          f"{charge.get('amount_refunded') or 0}",
+                    "amount": int(round(delta * 100))}]
+
+    lic = (db.collection("licenses").document(uid).get().to_dict()) or {}
+    company_id = int(lic.get("axonaut_company_id") or 0)
+
+    refs = {r for r in (_id_of(charge.get("invoice")),
+                        _id_of(charge.get("payment_intent"))) if r}
+    inv  = _find_invoice_to_credit(uid, refs)
+    origin_number = (inv.get("axonaut_number")
+                     or _axonaut_invoice_number(int(inv.get("axonaut_id") or 0)))
+
+    for r in refunds:
+        rid    = r.get("id") or ""
+        amount = (r.get("amount") or 0) / 100.0
+        if not rid or not amount:
+            continue
+        if (r.get("status") or "succeeded") != "succeeded":
+            print(f"[charge.refunded] {rid} statut={r.get('status')} — ignore")
+            continue
+
+        marker = (db.collection("licenses").document(uid)
+                    .collection("refunds").document(rid))
+        seen = marker.get()
+        if seen.exists and (seen.to_dict() or {}).get("status") != "error":
+            print(f"[charge.refunded] {rid} deja traite — pas de second avoir")
+            continue
+        # Marqueur pose AVANT l'appel Axonaut : en cas de rejeu simultane,
+        # mieux vaut un avoir manquant (hurlant dans les logs) qu'un doublon
+        # dans la comptabilite.
+        marker.set({
+            "stripe_refund_id": rid,
+            "stripe_charge_id": charge.get("id", ""),
+            "amount_eur":       round(amount, 2),
+            "date":             datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "created_utc":      time.time(),
+            "status":           "pending",
+        })
+
+        credit = _axonaut_create_credit_note(
+            company_id,
+            inv.get("plan") or lic.get("plan_type") or "monthly",
+            amount,
+            inv.get("tax_rate"),
+            origin_number=origin_number,
+            uid=uid,
+            stripe_ref=(_id_of(charge.get("payment_intent"))
+                        or _id_of(charge.get("invoice")) or ""),
+        )
+        marker.set({
+            "status":         "done" if credit else "error",
+            "axonaut_id":     credit.get("id") or 0,
+            "axonaut_number": credit.get("number") or "",
+            "origin_number":  origin_number or "",
+        }, merge=True)
+        if credit:
+            print(f"[charge.refunded] {rid} — avoir {credit.get('number')} "
+                  f"de -{round(amount, 2)} EUR sur #{origin_number or '?'}")
+        else:
+            print(f"[charge.refunded] {rid} — AVOIR NON CREE, a faire a la main "
+                  f"(client {lic.get('email', '')}, {round(amount, 2)} EUR)")
 
 
 # ===========================================================================
@@ -1208,7 +1473,11 @@ def _on_checkout_completed(session: dict) -> None:
     company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address,
                                                 uid=uid, vat_number=vat_number)
     _axonaut_create_invoice(company_id, plan_type, amount_ttc,
-                            stripe_ref=session.get("payment_intent", ""),
+                            # Un Checkout d'abonnement n'a PAS de payment_intent :
+                            # la ref utile est la 1re facture, celle que
+                            # portera charge.refunded en cas de remboursement.
+                            stripe_ref=(session.get("payment_intent")
+                                        or _id_of(session.get("invoice")) or ""),
                             uid=uid, tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
 
     print(f"[checkout.completed] {email} — {plan_type} — expire {_fmt_date(expiry_ts)}")
@@ -1601,6 +1870,7 @@ _HANDLERS = {
     "customer.subscription.deleted": _on_subscription_deleted,
     "customer.subscription.updated": _on_subscription_updated,
     "invoice.payment_failed":        _on_payment_failed,
+    "charge.refunded":               _on_charge_refunded,
 }
 
 

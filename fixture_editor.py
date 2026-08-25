@@ -721,6 +721,13 @@ class FixtureEditorDialog(QDialog):
         self._current_idx = -1
         self._btn_add_to_patch = None   # compatibilité externe
         self.last_saved   = None        # dernière fixture enregistrée
+
+        # Provenance de ce qui remplit ACTUELLEMENT le formulaire. Seul "perso"
+        # — un profil tapé de zéro ici — part automatiquement à la bibliothèque
+        # commune. Tout le reste garde le dialogue de partage à l'import, où la
+        # provenance est déclarée par l'utilisateur et non devinée.
+        self._form_origin = "perso"
+        self._share_toast = None
         self._pack_check_thread = None
         self._pack_check_worker = None
 
@@ -1423,6 +1430,11 @@ class FixtureEditorDialog(QDialog):
             return
         self._current_idx = idx
         fx = self._fixtures[idx]
+        # Une fixture sans marqueur vient d'avant cette mécanique (ou d'un
+        # import) : provenance inconnue, donc pas d'envoi automatique. On ne
+        # devine pas à partir de `source`, qui vaut "user" pour TOUT ce qui est
+        # importé et blanchirait un fichier tiers en création personnelle.
+        self._form_origin = str(fx.get("origin_source") or "")
         self._name_edit.blockSignals(True)
         self._name_edit.setText(fx.get("name", ""))
         self._name_edit.blockSignals(False)
@@ -1447,6 +1459,9 @@ class FixtureEditorDialog(QDialog):
 
     def _new_fixture(self):
         self._current_idx = -1
+        # Formulaire vierge : tout ce qui sera tapé ici est une création de
+        # l'utilisateur, la seule provenance dont on soit certain.
+        self._form_origin = "perso"
         self._name_edit.blockSignals(True)
         self._name_edit.setText("")
         self._name_edit.blockSignals(False)
@@ -1591,6 +1606,9 @@ class FixtureEditorDialog(QDialog):
         # souvent 3 ou 4, et n'en copier qu'un obligeait à refaire l'opération
         # (puis à patcher deux fixtures distinctes) pour changer de protocole.
         self._load_modes(_fixture_modes(fx))
+        # Copie d'un profil de la bibliothèque : ce n'est pas une création, et
+        # le renvoyer à la bibliothèque commune n'y ajouterait qu'un doublon.
+        self._form_origin = "builtin"
 
     # ── Canaux ────────────────────────────────────────────────────────────────
 
@@ -1656,6 +1674,12 @@ class FixtureEditorDialog(QDialog):
             "profile":      list(first.get("profile") or []),
             "source":       "user",
         }
+        # `source` vaut "user" pour tout ce qui vit dans la bibliothèque locale,
+        # importé compris : c'est `origin_source` qui porte la vraie provenance,
+        # et il doit survivre à une réouverture-réenregistrement, sans quoi un
+        # fichier tiers ressortirait d'ici en « création personnelle ».
+        if self._form_origin:
+            data["origin_source"] = self._form_origin
         if first.get("defaults"):
             data["defaults"] = list(first["defaults"])
         # La racine décrit le premier mode : c'est elle que lit le patch quand
@@ -1712,6 +1736,8 @@ class FixtureEditorDialog(QDialog):
         if is_new:
             self.fixture_added.emit(data)
 
+        self._offer_auto_share(data)
+
         orig = self._btn_save.text()
         self._btn_save.setText(tr("fe2_saved"))
         self._btn_save.setEnabled(False)
@@ -1719,6 +1745,32 @@ class FixtureEditorDialog(QDialog):
             self._btn_save.setText(orig),
             self._btn_save.setEnabled(True),
         ))
+
+    def _offer_auto_share(self, data: dict):
+        """
+        Verse une fixture fabriquée ici à la bibliothèque commune, sans rien
+        demander : le contributeur atteste de son propre travail, l'attestation
+        n'a donc rien à valider. Un bandeau non bloquant le prévient et lui
+        laisse 8 secondes pour annuler — le dialogue complet reste réservé aux
+        fichiers importés, dont la provenance est déclarative.
+
+        Rien n'est publié pour autant : la soumission attend la modération.
+        """
+        if data.get("origin_source") != "perso":
+            return
+        try:
+            from fixture_share import auto_share
+            # Un bandeau déjà en attente porte la version d'avant : l'utilisateur
+            # qui enregistre trois fois de suite en peaufinant ne doit pas
+            # envoyer les états intermédiaires, seulement le dernier.
+            if self._share_toast is not None:
+                try:
+                    self._share_toast.close()
+                except Exception:
+                    pass
+            self._share_toast = auto_share(self, [data])
+        except Exception as e:
+            print(f"[fixture_editor] partage automatique ignoré : {e}")
 
     def _delete_fixture(self):
         self._delete_at(self._current_idx)

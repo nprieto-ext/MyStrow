@@ -12,7 +12,7 @@ def _get_version():
     except Exception:
         return '0.0.0'
 
-datas = [('logo.png', '.'), ('mystrow.ico', '.'), ('plan_3d_web.html', '.'), ('AKAIAPCMINI.png', '.'), ('Novation.png', '.')]
+datas = [('logo.png', '.'), ('mystrow.ico', '.'), ('plan_3d_web.html', '.')]
 # Three.js vendorisé (vendor/three) : la 3D l'importe par chemin RELATIF au
 # HTML, donc l'arbre doit être reproduit tel quel à côté de plan_3d_web.html.
 # SANS ces fichiers, la fenêtre 3D reste bloquée sur « Chargement Three.js… »

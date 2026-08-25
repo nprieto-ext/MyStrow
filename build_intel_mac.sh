@@ -162,11 +162,11 @@ else
     # Decors 3D des scenes par defaut : sans eux les presets a modele retombent
     # sur une scene vide, sans message visible.
     --add-data "scenes3d:scenes3d"
-    --add-data "AKAIAPCMINI.png:." --add-data "Novation.png:."
     "--name=$APP_NAME" "--paths=$SCRIPT_DIR"
     --hidden-import=rtmidi --hidden-import=rtmidi._rtmidi --collect-all rtmidi
     --hidden-import=node_connection --hidden-import=brad_diagnostic
     --hidden-import=streamdeck_api --hidden-import=artnet_dmx --hidden-import=firebase_config
+    --hidden-import=patch_import --hidden-import=patch_import_ui
     --collect-all certifi --collect-all cryptography --collect-all serial
     --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py
   )

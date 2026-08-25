@@ -13,6 +13,8 @@ import hashlib
 import tempfile
 import subprocess
 import ssl
+import time
+import threading
 import urllib.request
 import random
 from datetime import datetime, timedelta
@@ -23,10 +25,10 @@ from PySide6.QtWidgets import (
     QPushButton, QProgressBar, QDialog, QMessageBox, QApplication, QFrame,
     QScrollArea,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRect, QPointF
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QRect, QPointF, QSize
 from PySide6.QtGui import (
     QFont, QFontMetricsF, QScreen, QPixmap, QDesktopServices,
-    QColor, QPainter, QRadialGradient, QBrush, QPen
+    QColor, QPainter, QRadialGradient, QBrush, QPen, QIcon, QPainterPath
 )
 
 from core import VERSION, resource_path
@@ -868,9 +870,17 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
         QMessageBox.information(parent, tr("dev_mode_title"), tr("dev_mode_msg", path=new_file))
         return
 
-    # Petite pause pour que l'utilisateur voit l'etape installation
-    QTimer.singleShot(800, _fermer)
-    QTimer.singleShot(800, QApplication.quit)
+    _fermer()
+
+    # MyStrow doit etre SORTI avant que l'installeur ne touche a MyStrow.exe.
+    # On le demande donc franchement, au lieu de laisser Setup buter dessus et
+    # afficher sa propre page « applications ouvertes » : celle-la, on ne
+    # controle ni son moment, ni son texte, et l'utilisateur y voit une erreur
+    # alors qu'il vient juste de demander une mise a jour.
+    if not _confirmer_fermeture(parent, version):
+        QMessageBox.information(parent, tr("upd_later_title"),
+                                tr("upd_later_msg", path=str(new_file)))
+        return
 
     is_dmg = exe_url.lower().endswith(".dmg")
 
@@ -878,19 +888,20 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
         # Mac DMG : script shell qui monte le DMG, remplace le .app, relance
         current_app = _get_mac_app_path()
         shell_path = _create_updater_shell(str(new_file), current_app)
-        QTimer.singleShot(400, lambda: subprocess.Popen(
+        subprocess.Popen(
             ["bash", str(shell_path)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ))
+        )
     elif is_installer:
         # L'installeur deploie MyStrow.exe ET MyStrow.exe.sig, mais il ne doit
         # surtout PAS demarrer avant que MyStrow soit sorti — voir
         # _create_installer_batch pour ce que ca cassait.
-        _bat = _create_installer_batch(str(new_file), os.getpid())
-        QTimer.singleShot(400, lambda: subprocess.Popen(
+        _bat = _create_installer_batch(str(new_file), os.getpid(),
+                                       _langue_installeur())
+        subprocess.Popen(
             ["cmd.exe", "/c", str(_bat)],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        ))
+        )
     else:
         # Fallback : batch replace (exe brut)
         # Télécharger aussi le .sig pour que check_exe_integrity() passe au redémarrage
@@ -905,15 +916,147 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
         batch_path = _create_updater_batch(str(new_file), sys.executable,
                                            str(new_sig) if new_sig else "",
                                            current_sig)
-        QTimer.singleShot(400, lambda: subprocess.Popen(
+        subprocess.Popen(
             ["cmd.exe", "/c", str(batch_path)],
             creationflags=subprocess.CREATE_NEW_CONSOLE
-        ))
+        )
+
+    _quitter_pour_installer(parent)
+
+
+# ============================================================
+# FERMETURE POUR INSTALLATION
+# ============================================================
+
+def _langue_installeur() -> str:
+    """Nom de langue Inno correspondant a la langue de MyStrow.
+
+    Doit correspondre EXACTEMENT a un `Name:` de la section [Languages] de
+    maestro.iss : un nom inconnu fait echouer Setup au demarrage.
+    """
+    return {"fr": "french", "es": "spanish", "de": "german",
+            "pt": "brazilianportuguese"}.get(get_language(), "english")
+
+
+def _confirmer_fermeture(parent, version) -> bool:
+    """Demande a fermer MyStrow, et propose d'enregistrer le show au passage.
+
+    Deux choses se jouent ici. D'abord l'accord : quelqu'un peut avoir lance la
+    verification en plein show sans imaginer que l'installation ferme la
+    console. Ensuite le show en cours — la question « enregistrer avant de
+    quitter ? » de `closeEvent` ne peut PAS servir a ce moment-la : elle
+    arriverait pendant que l'installeur attend derriere, et une fenetre modale
+    oubliee suffit a bloquer toute la mise a jour. On la pose donc maintenant,
+    tant que rien n'attend.
+    """
+    fenetre = parent.window() if parent is not None else None
+    seq = getattr(fenetre, "seq", None)
+    show_modifie = bool(getattr(seq, "is_dirty", False))
+
+    boite = QMessageBox(parent)
+    boite.setIcon(QMessageBox.Question)
+    boite.setWindowTitle(tr("upd_quit_title"))
+    boite.setText(tr("upd_quit_msg", ver=version))
+    b_save = None
+    if show_modifie:
+        boite.setInformativeText(tr("upd_quit_dirty"))
+        b_save = boite.addButton(tr("upd_quit_save"), QMessageBox.AcceptRole)
+    b_go = boite.addButton(tr("upd_quit_go"), QMessageBox.AcceptRole)
+    b_non = boite.addButton(tr("upd_quit_cancel"), QMessageBox.RejectRole)
+    boite.setDefaultButton(b_save or b_go)
+    boite.exec()
+
+    clique = boite.clickedButton()
+    if clique is b_non or clique is None:
+        return False
+    if clique is b_save:
+        try:
+            # save_show() rend faux si l'utilisateur annule le selecteur de
+            # fichier : on ne ferme pas derriere son dos.
+            if not fenetre.save_show():
+                return False
+        except Exception as exc:
+            print(f"[MAJ] enregistrement du show impossible : {exc}")
+            return False
+    return True
+
+
+def _quitter_pour_installer(parent):
+    """Fait REELLEMENT sortir MyStrow, pour que l'installeur trouve la place.
+
+    `QApplication.quit()` seul ne suffit pas : il sort de la boucle
+    d'evenements sans jamais appeler le moindre `closeEvent`. Ni la config AKAI
+    (donc les mappings, les memoires renommees...) n'etait sauvee, ni le MIDI
+    ferme, ni les serveurs tablette / Stream Deck arretes. `closeAllWindows()`
+    fait tout cela avant.
+    """
+    app = QApplication.instance()
+    fenetre = parent.window() if parent is not None else None
+    if fenetre is not None:
+        # Dit a closeEvent que la question du show a deja ete posee juste
+        # au-dessus. La reposer ici ouvrirait une modale pendant que
+        # l'installeur attend : c'est exactement le blocage qu'on corrige.
+        setattr(fenetre, "_fermeture_pour_maj", True)
+
+    # Le filet est arme AVANT de fermer quoi que ce soit : si une fenetre
+    # refuse de partir ou qu'une bibliotheque native retient le processus,
+    # l'installeur trouverait MyStrow encore vivant et s'arreterait sur sa
+    # propre page d'applications ouvertes. A cet instant tout est deja
+    # enregistre, sortir en force ne coute rien. Thread demon : il disparait
+    # avec le processus si la fermeture normale aboutit d'abord.
+    filet = threading.Timer(8.0, lambda: os._exit(0))
+    filet.daemon = True
+    filet.start()
+
+    app.closeAllWindows()
+    app.quit()
 
 
 # ============================================================
 # ABOUT DIALOG
 # ============================================================
+def _download_cloud_icon(color: str = "#8fc6ff", size: int = 18) -> QIcon:
+    """Icone « nuage + fleche descendante » dessinee au QPainter.
+
+    Pas d'emoji ni de fichier PNG : les emoji ne se rendent pas de la meme
+    facon d'un Windows a l'autre, et un PNG de plus a embarquer dans le build
+    est un fichier de plus a oublier dans le .spec. Ici l'icone suit la
+    resolution de l'ecran (devicePixelRatio) et reste nette en HiDPI.
+    """
+    app = QApplication.instance()
+    dpr = app.devicePixelRatio() if app else 1.0
+    px = QPixmap(int(size * dpr), int(size * dpr))
+    px.setDevicePixelRatio(dpr)
+    px.fill(Qt.transparent)
+
+    p = QPainter(px)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.5)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+
+    u = size / 18.0  # tout est dessine dans une grille de reference 18x18
+
+    # Nuage (trois bosses posees sur une base plate)
+    cloud = QPainterPath()
+    cloud.moveTo(4.5 * u, 11.5 * u)
+    cloud.arcTo(2.0 * u, 6.5 * u, 5.0 * u, 5.0 * u, 270.0, -180.0)
+    cloud.arcTo(4.5 * u, 3.25 * u, 6.5 * u, 6.5 * u, 180.0, -169.9)
+    cloud.arcTo(9.5 * u, 5.5 * u, 6.0 * u, 6.0 * u, 121.1, -211.1)
+    cloud.closeSubpath()
+    p.drawPath(cloud)
+
+    # Fleche vers le bas
+    p.drawLine(QPointF(9.0 * u, 9.0 * u), QPointF(9.0 * u, 15.5 * u))
+    p.drawLine(QPointF(6.3 * u, 12.8 * u), QPointF(9.0 * u, 15.5 * u))
+    p.drawLine(QPointF(11.7 * u, 12.8 * u), QPointF(9.0 * u, 15.5 * u))
+    p.end()
+
+    return QIcon(px)
+
+
 class AboutDialog(QDialog):
     """Dialogue A propos : version actuelle + vérification des mises à jour."""
 
@@ -1024,24 +1167,46 @@ class AboutDialog(QDialog):
         # l'utilisateur vient chercher sa version, donc celui ou il doit
         # trouver de quoi reinstaller. Un lien en 10 px se remarquait a peine.
         from core import SITE_URL
-        btn_site = QPushButton(tr("about_download_site"))
-        btn_site.setFixedHeight(34)
+        btn_site = QPushButton("  " + tr("about_download_site"))
+        btn_site.setFixedHeight(38)
         btn_site.setCursor(Qt.PointingHandCursor)
+        btn_site.setIcon(_download_cloud_icon("#8fc6ff"))
+        btn_site.setIconSize(QSize(18, 18))
         btn_site.setStyleSheet("""
-            QPushButton       { background: #16232e; color: #4a90d9; border: 1px solid #2c4a63;
-                                border-radius: 4px; font-size: 11px; }
-            QPushButton:hover { background: #1d3242; color: #7fb6ef; border-color: #4a90d9; }
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                            stop:0 #1e3a52, stop:1 #16232e);
+                color: #8fc6ff;
+                border: 1px solid #34597a;
+                border-radius: 6px;
+                font-size: 11px; font-weight: 600;
+                padding-left: 6px; padding-right: 6px;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                            stop:0 #24506f, stop:1 #2a5f85);
+                color: #d6ecff;
+                border-color: #6fb0ea;
+            }
+            QPushButton:pressed {
+                background: #14212c;
+                color: #8fc6ff;
+                border-color: #4a90d9;
+            }
         """)
         btn_site.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(SITE_URL)))
-        btns_lay.addWidget(btn_site, 2)
+        btns_lay.addWidget(btn_site, 3)
 
         btn_close = QPushButton(tr("btn_close"))
-        btn_close.setFixedHeight(34)
+        btn_close.setFixedHeight(38)
+        btn_close.setCursor(Qt.PointingHandCursor)
         btn_close.setStyleSheet("""
             QPushButton       { background: #2a2a2a; color: #888; border: 1px solid #3a3a3a;
-                                border-radius: 4px; font-size: 11px; }
-            QPushButton:hover { background: #333; color: #ccc; }
+                                border-radius: 6px; font-size: 11px; }
+            QPushButton:hover { background: #333; color: #ccc; border-color: #4a4a4a; }
+            QPushButton:pressed { background: #242424; }
         """)
         btn_close.clicked.connect(self.accept)
         btns_lay.addWidget(btn_close, 1)
@@ -1118,72 +1283,183 @@ class AboutDialog(QDialog):
 # ============================================================
 # GEAR DIALOG — Matériel recommandé
 # ============================================================
+# Fiche produit de la fenêtre « Matériel recommandé ».
+#
+# `img_url` : la photo telle qu'elle est déjà servie par mystrow.fr. C'est par
+#             là que passent TOUTES les photos de cette fenêtre : rien à
+#             commiter, rien à déclarer dans les builds, et remplacer une photo
+#             sur le site la remplace dans le logiciel sans publier de version.
+#             Téléchargée une fois, puis gardée en cache disque.
+# `img`      : fichier embarqué dans l'exe. Le chemin existe encore mais plus
+#             personne ne l'emprunte, et c'est voulu : un fichier embarqué doit
+#             être déclaré dans les QUATRE configurations de build
+#             (MyStrow.spec, release.py, .github/workflows/release.yml,
+#             build_intel_mac.sh) — en oublier une donne une photo absente sur
+#             cette plateforme-là uniquement — et il fallait publier une
+#             version pour changer une image. Les deux photos de contrôleurs
+#             qui passaient par là pesaient 1,07 Mo dans l'installeur.
+# `bandeau` : la ligne de positionnement, reprise de boutique.html pour que le
+#             site et le logiciel racontent la même chose. C'est aussi là que
+#             va le prix — et SEULEMENT quand il est stable. Les liens Amazon
+#             bougent en permanence : un tarif figé dans un exe installé serait
+#             faux la semaine suivante. Les ordres de grandeur des autres
+#             modèles vivent dans les tableaux de compatibilité, plus bas.
+_GEAR_IMG  = "https://mystrow.fr/img-interfaces/"
+# ⚠️ /img-shop/ et NON /shop/ : /shop est l'URL de la page boutique (une
+# réécriture), pas un dossier — /shop/<fichier> répond 500.
+_GEAR_SHOP = "https://mystrow.fr/img-shop/"
+
+# Cache des photos produit. Une photo téléchargée une fois n'est plus jamais
+# redemandée : la fenêtre s'ouvre instantanément aux visites suivantes, et elle
+# reste illustrée hors ligne. Le nom du fichier est un hachage de l'URL —
+# changer la photo sur le site change l'URL de fait (nouveau contenu, même nom)
+# … donc on garde AUSSI la date : au-delà d'une semaine on revalide.
+_GEAR_CACHE_DIR = Path.home() / ".mystrow_cache" / "materiel"
+_GEAR_CACHE_JOURS = 7
+
+
+def _gear_cache_path(url: str) -> Path:
+    suffixe = os.path.splitext(url.split("?")[0])[1] or ".img"
+    return _GEAR_CACHE_DIR / (hashlib.sha256(url.encode()).hexdigest()[:20] + suffixe)
+
+
+def _gear_cache_perime(chemin: Path) -> bool:
+    try:
+        age = time.time() - chemin.stat().st_mtime
+        return age > _GEAR_CACHE_JOURS * 86400
+    except Exception:
+        return True
+
+
+# Téléchargements en vol. Le thread n'est PAS rattaché à la fenêtre et n'est
+# pas attendu à la fermeture : fermer pendant le téléchargement détruisait un
+# QThread encore en train de tourner — « QThread: Destroyed while thread is
+# still running », c'est-à-dire un process qui tombe. Attendre à la place
+# figeait la fermeture le temps de rapatrier un mégaoctet. Le thread vit donc
+# sa vie ici, écrit le cache pour la prochaine fois, et se retire de la liste
+# en finissant. Si la fenêtre est partie entre-temps, Qt a déjà coupé la
+# connexion vers son slot — il n'y a personne à prévenir, et c'est très bien.
+_GEAR_LOADERS = []
+
+
+class _GearImageLoader(QThread):
+    """Télécharge les photos produit hors du fil graphique.
+
+    Le signal ne porte que l'URL : c'est le thread qui écrit le fichier de
+    cache, et la fenêtre le relit. Ainsi un téléchargement terminé après la
+    fermeture profite quand même à la prochaine ouverture — et on ne fabrique
+    aucun QPixmap hors du fil graphique, ce qui n'est pas permis.
+    """
+
+    charge = Signal(str)
+
+    def __init__(self, urls):
+        super().__init__(None)
+        self._urls = list(urls)
+        self.finished.connect(lambda: _GEAR_LOADERS.remove(self)
+                              if self in _GEAR_LOADERS else None)
+
+    def run(self):
+        for u in self._urls:
+            try:
+                req = urllib.request.Request(u, headers={"User-Agent": "MyStrow"})
+                with urllib.request.urlopen(req, timeout=8,
+                                            context=_make_ssl_context()) as r:
+                    data = r.read(4 * 1024 * 1024)
+                if not data:
+                    continue
+                # Écrit d'abord à côté puis renommé : une fenêtre fermée ou un
+                # réseau coupé en plein écrit ne doit pas laisser un fichier de
+                # cache tronqué, que la prochaine ouverture afficherait comme
+                # une image cassée sans jamais la retélécharger.
+                chemin = _gear_cache_path(u)
+                chemin.parent.mkdir(parents=True, exist_ok=True)
+                tmp = chemin.with_suffix(chemin.suffix + ".part")
+                tmp.write_bytes(data)
+                os.replace(str(tmp), str(chemin))
+                self.charge.emit(u)
+            except Exception:
+                # Fenêtre illustrée = confort, pas fonction vitale : hors ligne
+                # ou site injoignable, l'emoji reste et on n'embête personne.
+                pass
+
 _GEAR = [
-    (
-        "🎹",
-        "AKAI APC mini mk2",
-        "Le contrôleur natif MyStrow.\nGrille 8×8 LED, 9 faders, plug & play.",
-        "https://amzn.to/3PhCmBO",
-        "#E2CE16", "#141100",
-    ),
-    (
-        "🔌",
-        "Node ArtNet / DMX",
-        "Interface réseau RJ45 → DMX512.\nIdéal clubs et installations fixes.",
-        "https://amzn.to/4tQKRCM",
-        "#00d4ff", "#1a1a1a",
-    ),
-    (
-        "🔌",
-        "USB Node ArtNet",
-        "Vrai node ArtNet en USB, sans carte réseau.\nPlug & play, RDM, opto-isolé. Pour PC à port USB seul.",
-        "https://amzn.to/4w3sY4A",
-        "#a064ff", "#1a1a1a",
-    ),
+    {
+        "emoji": "🎹", "nom": "AKAI APC mini mk2",
+        "desc": "gear_d_akai",
+        "url": "https://amzn.to/3PhCmBO",
+        "couleur": "#E2CE16", "fond": "#141100",
+        "img_url": _GEAR_SHOP + "AKAIAPCMINI.png",
+        "bandeau": "gear_b_principal", "prix": "~89 €",
+    },
+    {
+        "emoji": "🔌", "nom": "Node ArtNet / DMX",
+        "desc": "gear_d_node",
+        "url": "https://amzn.to/4tQKRCM",
+        "couleur": "#00d4ff", "fond": "#1a1a1a",
+        "img_url": _GEAR_IMG + "ec-node.webp",
+        # Les trois bandeaux disent désormais la même chose — le nombre
+        # d'univers — pour que la rangée se compare d'un coup d'œil. Ils
+        # parlaient chacun d'un axe différent (usage, recommandation,
+        # capacité), donc de rien de comparable.
+        "bandeau": "gear_b_1univ", "prix": "~59 €",
+    },
+    {
+        "emoji": "🔌", "nom": "USB Node ArtNet",
+        # « Vrai node ArtNet en USB, sans carte réseau » ne voulait rien dire, et
+        # était même faux : branché, ce boîtier SE PRÉSENTE à Windows comme une
+        # carte réseau — c'est tout l'objet de la branche USB de l'assistant de
+        # connexion. Ce qu'il faut dire, c'est ce qu'il remplace.
+        "desc": "gear_d_usbnode",
+        "url": "https://amzn.to/4w3sY4A",
+        "couleur": "#a064ff", "fond": "#1a1a1a",
+        "img_url": _GEAR_IMG + "ec-usb-node.webp",
+        "bandeau": "gear_b_1univ", "prix": "~59 €",
+    },
+    {
+        "emoji": "🔌", "nom": "Node ArtNet 4 univers",
+        "desc": "gear_d_node4",
+        "url": "https://amzn.to/4yLlyFo",
+        "couleur": "#4ade80", "fond": "#1a1a1a",
+        "img_url": _GEAR_IMG + "ec-node4.webp",
+        "bandeau": "gear_b_4univ", "prix": "~129 €",
+    },
 ]
 
 # Contrôleurs recommandés — à choisir en mode "OU" (un seul suffit)
-# Tuple : (emoji_fallback, nom, desc, url, couleur, fond, image)
 _GEAR_CONTROLLERS = [
-    (
-        "🎹",
-        "AKAI APC mini mk2",
-        "Le contrôleur natif MyStrow.\nGrille 8×8 LED, 9 faders, plug & play.",
-        "https://amzn.to/3PhCmBO",
-        "#E2CE16", "#141100",
-        "AKAIAPCMINI.png",
-    ),
-    (
-        "🎹",
-        "Novation Launchpad Mini MK3",
-        "Alternative compacte, grille 8×8 LED RGB.\nPas de faders physiques — simulés par les pads.",
-        "https://amzn.to/43j8Y1B",
-        "#E2CE16", "#141100",
-        "Novation.png",
-    ),
+    _GEAR[0],
+    {
+        "emoji": "🎹", "nom": "Novation Launchpad Mini MK3",
+        "desc": "gear_d_novation",
+        "url": "https://amzn.to/43j8Y1B",
+        "couleur": "#E2CE16", "fond": "#141100",
+        "img_url": _GEAR_SHOP + "Novation.png",
+        "bandeau": "gear_b_alt_apc", "prix": "~89 €",
+    },
 ]
 
 _GEAR_ARTNET_COMPAT = [
-    ("ENTTEC ODE Mk2",           "~200€",  "Node ArtNet 1 univers, référence"),
-    ("ENTTEC EtherGate",         "~150€",  "Node compact, ArtNet/sACN"),
-    ("DMXking eDMX1 PRO",        "~130€",  "Compact, ArtNet/sACN — recommandé"),
-    ("DMXking eDMX2 PRO",        "~200€",  "2 univers ArtNet/sACN"),
-    ("Node ArtNet 4 univers",    "129€",   "4 univers, XLR + RJ45 — recommandé multi-scène"),
-    ("Luminex Ethernet-DMX",     "~300€+", "Pro, multi-univers"),
-    ("Node générique (Alibaba)", "20–60€", "Fonctionne, qualité variable"),
-    ("ESP32 DIY + lib ArtNet",   "~10€",   "Solution DIY, très répandue"),
+    ("ENTTEC ODE Mk2",           "~200€",  "gear_c_ode"),
+    ("ENTTEC EtherGate",         "~150€",  "gear_c_ethergate"),
+    ("DMXking eDMX1 PRO",        "~130€",  "gear_c_edmx1"),
+    ("DMXking eDMX2 PRO",        "~200€",  "gear_c_edmx2"),
+    ("Node ArtNet 4 univers",    "129€",   "gear_c_node4"),
+    ("Luminex Ethernet-DMX",     "~300€+", "gear_c_luminex"),
+    ("Node générique (Alibaba)", "20–60€", "gear_c_generique"),
+    ("ESP32 DIY + lib ArtNet",   "~10€",   "gear_c_esp32"),
 ]
 
 _GEAR_USB_COMPAT = [
-    ("ENTTEC DMX USB PRO",      "Référence absolue, drivers stables"),
-    ("DMXking ultraDMX Micro",  "Compact, plug-and-play"),
-    ("Eurolite USB-DMX512 PRO", "Bon rapport qualité/prix"),
-    ("ENTTEC Open DMX USB",     "Nécessite lib spéciale (pyenttec)"),
+    ("ENTTEC DMX USB PRO",      "gear_c_usbpro"),
+    ("DMXking ultraDMX Micro",  "gear_c_ultradmx"),
+    ("Eurolite USB-DMX512 PRO", "gear_c_eurolite"),
+    ("ENTTEC Open DMX USB",     "gear_c_opendmx"),
 ]
 
 _GEAR_CONTROLLERS_COMPAT = [
-    ("AKAI APC Mini MK1 & MK2",      "Support original, inchangé"),
-    ("Novation Launchpad Mini MK3",  "Alternative recommandée"),
+    ("AKAI APC Mini MK1 & MK2",      "gear_c_apc_orig"),
+    ("Novation Launchpad Mini MK3",  "gear_c_lp_reco"),
     ("Novation Launchpad Mini MK1",  "2012"),
     ("Novation Launchpad Mini MK2",  "2014"),
     ("AKAI APC40",                   ""),
@@ -1214,7 +1490,197 @@ class GearDialog(QDialog):
                                font-family: 'Segoe UI', sans-serif; }
             QLabel  { border: none; background: transparent; }
         """)
+        # {url: [QLabel, …]} — les vignettes qui attendent leur téléchargement.
+        self._img_attente = {}
+        self._img_loader = None
         self._build_ui()
+        self._lancer_telechargements()
+
+    # ── photos produit ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _poser_photo(label, chemin) -> bool:
+        """Charge un fichier dans une vignette. False si l'image est illisible."""
+        pm = QPixmap(str(chemin))
+        if pm.isNull():
+            return False
+        label.setPixmap(pm.scaledToHeight(96, Qt.SmoothTransformation))
+        return True
+
+    def _lancer_telechargements(self):
+        """Va chercher les photos manquantes, une fois la fenêtre construite."""
+        if not self._img_attente:
+            return
+        # Sans parent, et gardé par la liste de module : la fenêtre peut être
+        # fermée sans emporter un thread en cours d'exécution.
+        self._img_loader = _GearImageLoader(self._img_attente.keys())
+        _GEAR_LOADERS.append(self._img_loader)
+        # Slot d'un QObject du fil graphique, PAS un lambda : la connexion est
+        # alors automatiquement mise en file d'attente au passage de fil. Un
+        # lambda nu se serait exécuté en connexion directe, donc dans le thread
+        # de téléchargement, et aurait touché des widgets depuis là.
+        self._img_loader.charge.connect(self._on_photo_recue)
+        self._img_loader.start()
+
+    def _on_photo_recue(self, url):
+        """Pose la photo fraîchement mise en cache dans les vignettes en attente."""
+        chemin = _gear_cache_path(url)
+        for label in self._img_attente.get(url, []):
+            try:
+                if self._poser_photo(label, chemin):
+                    label.setText("")
+            except RuntimeError:
+                # Vignette déjà détruite : le fichier est en cache, ça suffit.
+                pass
+
+    def _carte_produit(self, produit):
+        """Une carte de la fenêtre matériel : bandeau, photo, nom, desc, CTA.
+
+        Les deux rangées — contrôleurs et sortie DMX — en construisaient chacune
+        une version, à cinquante lignes près identiques. Elles avaient déjà
+        divergé : seule celle des contrôleurs affichait la photo, celle du DMX
+        se contentait d'un emoji alors que les photos des boîtiers existaient.
+        Un seul constructeur, donc, et les deux rangées ne peuvent plus dériver.
+        """
+        # `desc` et `bandeau` sont des CLÉS i18n, traduites ici et pas à
+        # l'import : les listes `_GEAR*` sont construites au chargement du
+        # module, donc un tr() posé là-bas figerait la langue du démarrage et
+        # la fenêtre resterait dans l'ancienne langue après un changement.
+        # Le nom du produit, lui, ne se traduit pas — « AKAI APC mini mk2 »
+        # s'écrit pareil partout, c'est ce qui est imprimé sur le boîtier.
+        emoji   = produit["emoji"]
+        name    = produit["nom"]
+        desc    = tr(produit["desc"])
+        url     = produit["url"]
+        color   = produit["couleur"]
+        bg      = produit["fond"]
+        img     = produit.get("img")
+        bandeau = produit.get("bandeau")
+        bandeau = tr(bandeau) if bandeau else None
+
+        # Bordure teintée en rgba() et non en « #RRGGBB + 55 » : Qt ne lit pas
+        # le canal alpha collé derrière un hexa à six chiffres, il relit les
+        # huit comme du #AARRGGBB — d'où les liserés ROUGES qu'affichaient les
+        # cartes contrôleur (#E2CE16 + 55 se relisait en CE1655).
+        _c = QColor(color)
+        _bord = f"rgba({_c.red()},{_c.green()},{_c.blue()},0.34)"
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame {{ background: {bg}; border: 1px solid {_bord};"
+            f" border-radius: 10px; }}"
+        )
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(16, 12, 16, 14)
+        card_lay.setSpacing(8)
+
+        # Bandeau de positionnement, comme sur boutique.html — le prix s'y
+        # accroche derrière un point médian, même forme que « 4 univers · 129 € »
+        # sur le site. Le tilde n'est pas décoratif : ce sont des liens
+        # affiliés Amazon, dont le tarif bouge d'une semaine à l'autre alors
+        # que l'exe installé, lui, ne bouge pas. Un montant sans tilde
+        # passerait pour un engagement.
+        prix = produit.get("prix")
+        if bandeau:
+            bd = QLabel(bandeau.upper())
+            bd.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            bd.setStyleSheet(
+                f"color: {color}; background: transparent; border: none;"
+                " letter-spacing: 1px;"
+            )
+            bd.setAlignment(Qt.AlignCenter)
+            bd.setWordWrap(True)
+            # Hauteur de DEUX lignes, toujours : les bandeaux n'ont pas la même
+            # longueur, et sans hauteur fixe les photos des trois cartes d'une
+            # rangée ne démarraient pas au même niveau.
+            bd.setFixedHeight(26)
+            card_lay.addWidget(bd)
+
+        # Nom AVANT la photo : bandeau, nom et prix forment l'en-tête de la
+        # carte, et on sait ce qu'on regarde avant de regarder. Placé sous
+        # l'image, le nom obligeait à redescendre les yeux pour identifier le
+        # produit qu'on venait de voir.
+        nm = QLabel(name)
+        nm.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        nm.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+        nm.setAlignment(Qt.AlignCenter)
+        nm.setWordWrap(True)
+        card_lay.addWidget(nm)
+        if prix:
+            # Espace insécable avant le symbole, sinon « ~59 » et « € » se
+            # séparaient en fin de ligne.
+            px = QLabel(prix.replace(" €", " €"))
+            px.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            px.setStyleSheet("color: #e8e8e8; background: transparent; border: none;")
+            px.setAlignment(Qt.AlignCenter)
+            card_lay.addWidget(px)
+
+        # Photo, dans cet ordre : fichier embarqué → cache disque → réseau.
+        # L'emoji ne s'affiche que le temps du téléchargement, et reste s'il
+        # échoue. Rien ne bloque : la fenêtre s'ouvre tout de suite, les photos
+        # se posent quand elles arrivent.
+        em = QLabel()
+        em.setAlignment(Qt.AlignCenter)
+        em.setStyleSheet("background: transparent; border: none;")
+        em.setMinimumHeight(96)
+        _img_path = resource_path(img) if img else None
+        if not (_img_path and os.path.exists(_img_path)):
+            _img_path = None
+            _u = produit.get("img_url")
+            if _u:
+                _cache = _gear_cache_path(_u)
+                if _cache.exists():
+                    # On affiche la version en cache TOUT DE SUITE, et si elle
+                    # a plus d'une semaine on la rafraîchit derrière : une photo
+                    # remplacée sur le site finit par arriver, sans jamais faire
+                    # attendre l'utilisateur devant une vignette vide.
+                    _img_path = str(_cache)
+                    if _gear_cache_perime(_cache):
+                        self._img_attente.setdefault(_u, []).append(em)
+                else:
+                    self._img_attente.setdefault(_u, []).append(em)
+        if _img_path and not self._poser_photo(em, _img_path):
+            _img_path = None
+        if not _img_path:
+            em.setText(emoji)
+            em.setFont(QFont("Segoe UI", 22))
+        card_lay.addWidget(em)
+
+        ds = QLabel(desc.replace("\n", " — "))
+        ds.setFont(QFont("Segoe UI", 7))
+        ds.setStyleSheet("color: #666; background: transparent; border: none;")
+        ds.setAlignment(Qt.AlignCenter)
+        ds.setWordWrap(True)
+        card_lay.addWidget(ds)
+
+        card_lay.addStretch()
+
+        btn = QPushButton(tr("up2_see_amazon"))
+        btn.setFixedHeight(24)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(
+            f"QPushButton {{ background: {color}; color: #000; border: none;"
+            f" border-radius: 4px; font-size: 9px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background: white; }}"
+        )
+        btn.clicked.connect(lambda _, u=url: __import__('webbrowser').open(u))
+        card_lay.addWidget(btn)
+        return card
+
+    def _chip_ou(self):
+        """Le « OU » entre deux cartes qui s'excluent."""
+        ou = QLabel(tr("upd_or"))
+        ou.setFont(QFont("Segoe UI", 12, QFont.Black))
+        ou.setStyleSheet(
+            "color: #E2CE16; background: rgba(226,206,22,0.10);"
+            " border: 1px solid rgba(226,206,22,0.45); border-radius: 8px;"
+            " letter-spacing: 1px;"
+        )
+        ou.setAlignment(Qt.AlignCenter)
+        # Largeur MESURÉE : 46 px codés en dur convenaient à « OU », mais
+        # l'allemand écrit « ODER » et le texte touchait les deux bords.
+        ou.setFixedWidth(max(46, round(
+            QFontMetricsF(ou.font()).horizontalAdvance(ou.text())) + 22))
+        return ou
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -1276,82 +1742,11 @@ class GearDialog(QDialog):
         lay.addWidget(sub)
         lay.addSpacing(26)
 
-        # ── Ligne Contrôleur : AKAI | OU | Novation Launchpad ──────────────────
-        ctrl_lbl = QLabel(tr("up2_for_control"))
-        ctrl_lbl.setFont(QFont("Segoe UI", 8))
-        ctrl_lbl.setStyleSheet("color: #444;")
-        ctrl_lbl.setAlignment(Qt.AlignCenter)
-        lay.addWidget(ctrl_lbl)
-        lay.addSpacing(6)
-
-        ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(16)
-
-        for idx, (emoji, name, desc, url, color, bg, img) in enumerate(_GEAR_CONTROLLERS):
-            card = QFrame()
-            card.setStyleSheet(
-                f"QFrame {{ background: {bg}; border: 1px solid {color}55; border-radius: 10px; }}"
-            )
-            card_lay = QVBoxLayout(card)
-            card_lay.setContentsMargins(18, 18, 18, 16)
-            card_lay.setSpacing(10)
-
-            # Photo du contrôleur (fallback emoji si l'image est introuvable)
-            _img_path = resource_path(img) if img else None
-            em = QLabel()
-            em.setAlignment(Qt.AlignCenter)
-            em.setStyleSheet("background: transparent; border: none;")
-            if _img_path and os.path.exists(_img_path):
-                em.setPixmap(QPixmap(_img_path).scaledToHeight(96, Qt.SmoothTransformation))
-            else:
-                em.setText(emoji)
-                em.setFont(QFont("Segoe UI", 22))
-            card_lay.addWidget(em)
-
-            nm = QLabel(name)
-            nm.setFont(QFont("Segoe UI", 9, QFont.Bold))
-            nm.setStyleSheet(f"color: {color}; background: transparent; border: none;")
-            nm.setAlignment(Qt.AlignCenter)
-            nm.setWordWrap(True)
-            card_lay.addWidget(nm)
-
-            ds = QLabel(desc.replace("\n", " — "))
-            ds.setFont(QFont("Segoe UI", 7))
-            ds.setStyleSheet("color: #666; background: transparent; border: none;")
-            ds.setAlignment(Qt.AlignCenter)
-            ds.setWordWrap(True)
-            card_lay.addWidget(ds)
-
-            card_lay.addStretch()
-
-            btn = QPushButton(tr("up2_see_amazon"))
-            btn.setFixedHeight(24)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(
-                f"QPushButton {{ background: {color}; color: #000; border: none;"
-                f" border-radius: 4px; font-size: 9px; font-weight: bold; }}"
-                f"QPushButton:hover {{ background: white; }}"
-            )
-            btn.clicked.connect(lambda _, u=url: __import__('webbrowser').open(u))
-            card_lay.addWidget(btn)
-            ctrl_row.addWidget(card)
-
-            if idx == 0:
-                ou = QLabel(tr("upd_or"))
-                ou.setFont(QFont("Segoe UI", 12, QFont.Black))
-                ou.setStyleSheet(
-                    "color: #E2CE16; background: rgba(226,206,22,0.10);"
-                    " border: 1px solid rgba(226,206,22,0.45); border-radius: 8px;"
-                    " letter-spacing: 1px;"
-                )
-                ou.setAlignment(Qt.AlignCenter)
-                ou.setFixedWidth(46)
-                ctrl_row.addWidget(ou)
-
-        lay.addLayout(ctrl_row)
-        lay.addSpacing(26)
-
-        # ── Ligne DMX : Node ArtNet | OU | Interface USB/DMX ─────────────────
+        # ── Ligne DMX, EN PREMIER ────────────────────────────────────────────
+        # L'interface passe avant le contrôleur, et pas par goût de l'ordre :
+        # sans sortie DMX, MyStrow ne peut allumer aucun projecteur. Le
+        # contrôleur, lui, ne fait que remplacer la souris. Ouvrir sur les
+        # contrôleurs laissait croire que l'AKAI était le premier achat à faire.
         dmx_lbl = QLabel(tr("up2_for_dmx_out"))
         dmx_lbl.setFont(QFont("Segoe UI", 8))
         dmx_lbl.setStyleSheet("color: #444;")
@@ -1360,64 +1755,34 @@ class GearDialog(QDialog):
         lay.addSpacing(6)
 
         dmx_row = QHBoxLayout()
-        dmx_row.setSpacing(16)
-
-        for idx, (emoji, name, desc, url, color, bg) in enumerate(_GEAR[1:]):
-            card = QFrame()
-            card.setStyleSheet(
-                "QFrame { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; }"
-            )
-            card_lay = QVBoxLayout(card)
-            card_lay.setContentsMargins(18, 18, 18, 16)
-            card_lay.setSpacing(10)
-
-            em = QLabel(emoji)
-            em.setFont(QFont("Segoe UI", 22))
-            em.setAlignment(Qt.AlignCenter)
-            em.setStyleSheet("background: transparent; border: none;")
-            card_lay.addWidget(em)
-
-            nm = QLabel(name)
-            nm.setFont(QFont("Segoe UI", 9, QFont.Bold))
-            nm.setStyleSheet(f"color: {color}; background: transparent; border: none;")
-            nm.setAlignment(Qt.AlignCenter)
-            nm.setWordWrap(True)
-            card_lay.addWidget(nm)
-
-            ds = QLabel(desc)
-            ds.setFont(QFont("Segoe UI", 7))
-            ds.setStyleSheet("color: #555; background: transparent; border: none;")
-            ds.setAlignment(Qt.AlignCenter)
-            ds.setWordWrap(True)
-            card_lay.addWidget(ds)
-
-            card_lay.addStretch()
-
-            btn = QPushButton(tr("up2_see_amazon"))
-            btn.setFixedHeight(24)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(
-                "QPushButton { background: #E2CE16; color: #000; border: none;"
-                " border-radius: 4px; font-size: 9px; font-weight: bold; }"
-                "QPushButton:hover { background: white; }"
-            )
-            btn.clicked.connect(lambda _, u=url: __import__('webbrowser').open(u))
-            card_lay.addWidget(btn)
-            dmx_row.addWidget(card)
-
-            if idx == 0:
-                ou = QLabel(tr("upd_or"))
-                ou.setFont(QFont("Segoe UI", 12, QFont.Black))
-                ou.setStyleSheet(
-                    "color: #E2CE16; background: rgba(226,206,22,0.10);"
-                    " border: 1px solid rgba(226,206,22,0.45); border-radius: 8px;"
-                    " letter-spacing: 1px;"
-                )
-                ou.setAlignment(Qt.AlignCenter)
-                ou.setFixedWidth(46)
-                dmx_row.addWidget(ou)
+        dmx_row.setSpacing(12)
+        for produit in _GEAR[1:]:
+            dmx_row.addWidget(self._carte_produit(produit))
 
         lay.addLayout(dmx_row)
+        lay.addSpacing(26)
+
+        # ── Ligne Contrôleur : AKAI | OU | Novation Launchpad ──────────────────
+        # En jaune et non en gris : c'est la seule ligne de la fenêtre qui
+        # évite un achat inutile, elle ne peut pas être plus discrète que les
+        # produits qu'elle rend facultatifs.
+        ctrl_lbl = QLabel(tr("up2_for_control_opt"))
+        ctrl_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        ctrl_lbl.setStyleSheet("color: #E2CE16; letter-spacing: 1px;")
+        ctrl_lbl.setAlignment(Qt.AlignCenter)
+        ctrl_lbl.setWordWrap(True)
+        lay.addWidget(ctrl_lbl)
+        lay.addSpacing(6)
+
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(16)
+
+        for idx, produit in enumerate(_GEAR_CONTROLLERS):
+            ctrl_row.addWidget(self._carte_produit(produit))
+            if idx == 0:
+                ctrl_row.addWidget(self._chip_ou())
+
+        lay.addLayout(ctrl_row)
         lay.addSpacing(14)
 
         # ── Séparateur ────────────────────────────────────────────────────────
@@ -1455,7 +1820,10 @@ class GearDialog(QDialog):
             section_col.addWidget(sec_lbl)
 
             for item in items:
-                name, price, note = (item[0], item[1], "") if show_price else (item[0], "", item[1])
+                # Les tables à prix portent (nom, prix, note) ; les autres
+                # (nom, note). La note est une CLÉ i18n, traduite à l'affichage.
+                name, price, note = ((item[0], item[1], item[2]) if show_price
+                                     else (item[0], "", item[1]))
                 row_w = QFrame()
                 row_w.setStyleSheet("QFrame { background: #1a1a1a; border-radius: 4px; border: none; }")
                 row_h = QHBoxLayout(row_w)
@@ -1465,10 +1833,22 @@ class GearDialog(QDialog):
                 nm_lbl.setFont(QFont("Segoe UI", 8))
                 nm_lbl.setStyleSheet("color: #999; background: transparent;")
                 row_h.addWidget(nm_lbl, stretch=1)
+                # La note était extraite de la ligne… puis jetée : personne ne
+                # l'a jamais vue. La mettre en infobulle la rend lisible sans
+                # ajouter une deuxième ligne à chacune des dix-huit entrées,
+                # ce qui doublerait la hauteur de la fenêtre.
+                if note:
+                    row_w.setToolTip(tr(note))
                 if show_price:
                     price_lbl = QLabel(price)
                     price_lbl.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                    price_lbl.setStyleSheet(f"color: {color}99; background: transparent;")
+                    # rgba() et non « {color}99 » : Qt relit un hexa à huit
+                    # chiffres comme du #AARRGGBB, donc la couleur changeait au
+                    # lieu de s'atténuer — même piège que la bordure des cartes.
+                    _pc = QColor(color)
+                    price_lbl.setStyleSheet(
+                        f"color: rgba({_pc.red()},{_pc.green()},{_pc.blue()},0.60);"
+                        " background: transparent;")
                     price_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     row_h.addWidget(price_lbl)
                 section_col.addWidget(row_w)
@@ -1489,16 +1869,11 @@ class GearDialog(QDialog):
         lay.addWidget(scroll_widget)
         lay.addSpacing(8)
 
-        # ── Note technique ────────────────────────────────────────────────────
-        note_tech = QLabel(
-            tr("upd_artnet_hint")
-        )
-        note_tech.setFont(QFont("Segoe UI", 7))
-        note_tech.setStyleSheet("color: #333;")
-        note_tech.setAlignment(Qt.AlignCenter)
-        note_tech.setWordWrap(True)
-        lay.addWidget(note_tech)
-        lay.addSpacing(4)
+        # La note « MyStrow envoie en ArtNet UDP vers 2.0.0.15:6454 » a été
+        # retirée : c'est un détail de configuration réseau, et sa place est
+        # dans l'assistant de connexion du boîtier, pas au bas d'une page qui
+        # sert à choisir quoi acheter. La clé `upd_artnet_hint` reste dans
+        # i18n.py, d'autres écrans peuvent s'en servir.
 
         # ── Disclaimer affilié ────────────────────────────────────────────────
         aff = QLabel(tr("up2_affiliate"))
@@ -1680,7 +2055,7 @@ rm -f "$0"
     return script_path
 
 
-def _create_installer_batch(installer_path, pid):
+def _create_installer_batch(installer_path, pid, langue="english"):
     """Batch qui ATTEND la sortie de MyStrow avant de lancer l'installeur.
 
     L'installeur etait lance a 400 ms alors que l'application ne quittait qu'a
@@ -1699,6 +2074,10 @@ def _create_installer_batch(installer_path, pid):
 
     L'attente est bornee (~30 s) : si le processus s'eternise on lance quand
     meme l'installeur, /CLOSEAPPLICATIONS servant alors de dernier recours.
+
+    `/LANG` est indispensable : sans lui, Setup choisit sa langue tout seul et
+    un francais se retrouvait avec les messages d'Inno en anglais — a commencer
+    par celui, justement, des applications encore ouvertes.
     """
     batch_path = Path(tempfile.gettempdir()) / "mystrow_update" / "run_installer.bat"
     # Wait-Process plutot que tasklist : `tasklist` s'est revele muet dans
@@ -1709,7 +2088,7 @@ def _create_installer_batch(installer_path, pid):
     batch_content = f'''@echo off
 powershell -NoProfile -NonInteractive -Command "Wait-Process -Id {pid} -Timeout 30 -ErrorAction SilentlyContinue"
 ping -n 3 127.0.0.1 >nul
-start "" "{installer_path}" /SILENT /CLOSEAPPLICATIONS
+start "" "{installer_path}" /SILENT /CLOSEAPPLICATIONS /LANG={langue}
 del "%~f0"
 '''
     batch_path.parent.mkdir(parents=True, exist_ok=True)

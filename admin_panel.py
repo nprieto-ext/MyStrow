@@ -241,6 +241,9 @@ ESIGNER_EXTRA_SIG_COST   = 1.0          # $ par signature au-delà du quota
 ESIGNER_CYCLE_ANCHOR_DAY = 9            # jour de bascule du cycle
 ESIGNER_BILLING_START    = date(2026, 7, 9)  # 1er cycle facturé (30 j d'essai avant)
 
+# Sentinelle de cache : distingue « jamais calculé » de « calculé, résultat None ».
+_UNSET = object()
+
 # Tarifs publics, pour le calcul du chiffre d'affaires mensuel récurrent (MRR).
 #
 # ⚠️ TROISIÈME copie de ces prix. Les deux autres sont `license_ui.py` (cartes
@@ -590,6 +593,41 @@ def _clear_admin_cache():
         os.remove(ADMIN_CACHE)
     except Exception:
         pass
+
+
+def _token_seconds_left(id_token: str) -> float:
+    """
+    Secondes restant avant l'expiration d'un ID token Firebase (JWT non vérifié :
+    on lit juste la charge utile, la validation est l'affaire du serveur).
+
+    Renvoie 0 si le jeton est vide ou illisible — mieux vaut renouveler pour rien
+    que d'envoyer un jeton mort et récolter un « HTTP Error 401: Unauthorized ».
+    """
+    if not id_token:
+        return 0.0
+    try:
+        import base64
+        payload = id_token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload))["exp"]
+        return float(exp) - time.time()
+    except Exception:
+        return 0.0
+
+
+def _token_is_wellformed(id_token: str) -> bool:
+    """
+    Le jeton a-t-il seulement la forme d'un JWT (3 segments, charge utile
+    lisible) ? Distinction utile car Firestore ne répond pas la même chose :
+
+      * jeton absent / tronqué / « None »  -> 401 UNAUTHENTICATED
+      * jeton bien formé mais périmé       -> 403 PERMISSION_DENIED
+
+    Autrement dit un « HTTP Error 401 » ne veut PAS dire « session expirée » :
+    il veut dire qu'on a envoyé autre chose qu'un jeton.
+    """
+    return bool(id_token) and isinstance(id_token, str) \
+        and id_token.count(".") == 2 and _token_seconds_left(id_token) != 0.0
 
 
 # ---------------------------------------------------------------
@@ -3307,8 +3345,62 @@ class AdminPanel(QMainWindow):
             from firebase_client import refresh_id_token
             return refresh_id_token(self._refresh_token)
         _run_async(self, _do,
-                   on_success=lambda r: setattr(self, '_id_token', r['id_token']),
+                   on_success=self._on_token_refreshed,
                    on_error=lambda e: print(f"[Admin] Refresh token silencieux échoué : {e}"))
+
+    def _on_token_refreshed(self, auth: dict):
+        self._id_token = auth["id_token"]
+        self._refresh_token = auth.get("refresh_token", self._refresh_token)
+        _save_admin_cache(self._admin_email, self._refresh_token)
+
+    def _token(self) -> str:
+        """
+        Jeton d'accès garanti frais, à utiliser à CHAQUE appel réseau plutôt que
+        `self._id_token` capturé au démarrage.
+
+        Le QTimer de 50 min ne suffit pas : il ne tourne pas pendant la mise en
+        veille du PC, et un échec de renouvellement n'était que journalisé. Les
+        pages chargées à la demande — la Modération en tête, seule page qui n'est
+        peuplée qu'au clic sur son onglet — repartaient donc avec le jeton du
+        démarrage, et affichaient une erreur HTTP brute là où les autres pages,
+        chargées au démarrage, passaient sans souci.
+
+        Appelé depuis le thread GUI ; le renouvellement (une requête vers
+        securetoken.googleapis.com) n'a lieu que dans les 5 dernières minutes de
+        validité, donc quasiment jamais pendant une session active.
+        """
+        if self._refresh_token and _token_seconds_left(self._id_token) < 300:
+            try:
+                from firebase_client import refresh_id_token
+                self._on_token_refreshed(refresh_id_token(self._refresh_token))
+            except Exception as exc:
+                # On rend quand même le jeton courant : si la panne est réseau,
+                # l'appel suivant produira une erreur bien plus parlante que
+                # « impossible de renouveler le jeton ».
+                print(f"[Admin] Renouvellement du jeton impossible : {exc}")
+
+        if not _token_is_wellformed(self._id_token):
+            # Ne JAMAIS partir avec un jeton absent ou tronqué : l'en-tête
+            # devient « Bearer None » et Firestore répond 401 UNAUTHENTICATED,
+            # une erreur qui ne ressemble en rien à sa cause (un jeton
+            # simplement périmé, lui, donne 403 PERMISSION_DENIED — les deux
+            # codes ont été vérifiés contre l'API réelle).
+            self._warn_session_dead()
+        return self._id_token or ""
+
+    def _warn_session_dead(self):
+        """Avertit une seule fois par session : sinon chaque page en échec
+        empilerait sa propre boîte de dialogue."""
+        if getattr(self, "_session_dead_warned", False):
+            return
+        self._session_dead_warned = True
+        print(f"[Admin] Jeton inutilisable : {self._id_token!r}")
+        QMessageBox.warning(
+            self, "Session expirée",
+            "Votre session administrateur n'est plus valide et n'a pas pu être "
+            "renouvelée.\n\nFermez puis rouvrez l'admin panel pour vous "
+            "reconnecter.",
+        )
 
     def _build_ui(self):
         central = QWidget()
@@ -4135,7 +4227,7 @@ class AdminPanel(QMainWindow):
         def _fetch():
             req = urllib.request.Request(
                 GA4_VISITS_URL + "?days=90&metric=sessions",
-                headers={"Authorization": f"Bearer {self._id_token}"},
+                headers={"Authorization": f"Bearer {self._token()}"},
             )
             with urllib.request.urlopen(req, timeout=25) as resp:
                 return json.loads(resp.read().decode())
@@ -4183,7 +4275,7 @@ class AdminPanel(QMainWindow):
         def _fetch():
             req = urllib.request.Request(
                 GA4_INSIGHTS_URL + "?days=90",
-                headers={"Authorization": f"Bearer {self._id_token}"},
+                headers={"Authorization": f"Bearer {self._token()}"},
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode())
@@ -4219,7 +4311,7 @@ class AdminPanel(QMainWindow):
         self._dl_stats_lbl.setText("…")
 
         def _fetch():
-            return _query_downloads(self._id_token)
+            return _query_downloads(self._token())
 
         def _on_data(rows: list):
             total = len(rows)
@@ -4641,7 +4733,7 @@ class AdminPanel(QMainWindow):
         self._mod_loading.show()
         self._mod_table.hide()
         _run_async(
-            self, _query_fixture_submissions, self._id_token,
+            self, _query_fixture_submissions, self._token(),
             on_success=self._on_submissions_loaded,
             on_error=self._on_submissions_error,
         )
@@ -4657,6 +4749,12 @@ class AdminPanel(QMainWindow):
     def _on_submissions_error(self, msg: str):
         self._mod_loading.hide()
         self._mod_table.show()
+        if "401" in msg:
+            # Ne peut plus arriver que si le refresh token lui-même est mort
+            # (mot de passe changé, session révoquée) : le jeton d'accès, lui,
+            # est renouvelé à la volée par _token().
+            msg += ("\n\nSession expirée et non renouvelable : fermez puis "
+                    "rouvrez l'admin panel pour vous reconnecter.")
         QMessageBox.warning(self, "Modération",
                             f"Impossible de charger la file de modération :\n{msg}")
 
@@ -4801,7 +4899,7 @@ class AdminPanel(QMainWindow):
 
         self._btn_mod_approve.setEnabled(False)
         _run_async(
-            self, _publish, fixture_data, doc_id, self._id_token, self._refresh_token,
+            self, _publish, fixture_data, doc_id, self._token(), self._refresh_token,
             on_success=self._on_mod_approved,
             on_error=self._on_mod_action_error,
         )
@@ -4827,7 +4925,7 @@ class AdminPanel(QMainWindow):
         self._btn_mod_reject.setEnabled(False)
         _run_async(
             self, _set_submission_status, sub.get("_doc_id", ""), "rejected",
-            self._id_token, self._admin_email, reason.strip(),
+            self._token(), self._admin_email, reason.strip(),
             on_success=lambda *_: self._on_mod_rejected(),
             on_error=self._on_mod_action_error,
         )
@@ -5332,17 +5430,29 @@ class AdminPanel(QMainWindow):
         Le workflow ne signe que sur push d'un tag v* (`on: push: tags`), donc
         1 tag = 1 build = 2 signatures. Retourne None si git est inutilisable
         (exe packagé, dépôt absent...).
+
+        Le résultat est mémorisé : la liste des tags ne bouge qu'à la release
+        suivante, alors que cette fonction était rappelée — git compris — à
+        chaque clic sur l'onglet Release, dans le thread GUI.
         """
+        if getattr(self, "_esigner_dates_cache", _UNSET) is not _UNSET:
+            return self._esigner_dates_cache
+
+        # Sans ce drapeau, l'exe packagé (sans console) fait clignoter une
+        # fenêtre noire à chaque appel.
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             r = subprocess.run(
                 ["git", "for-each-ref", "--format=%(creatordate:short)", "refs/tags/v*"],
                 cwd=str(Path(__file__).resolve().parent),
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=10,
+                timeout=10, creationflags=flags,
             )
         except Exception:
+            self._esigner_dates_cache = None
             return None
         if r.returncode != 0:
+            self._esigner_dates_cache = None
             return None
         out = []
         for line in (r.stdout or "").splitlines():
@@ -5350,6 +5460,7 @@ class AdminPanel(QMainWindow):
                 out.append(date.fromisoformat(line.strip()))
             except ValueError:
                 continue
+        self._esigner_dates_cache = out
         return out
 
     @staticmethod
@@ -5460,12 +5571,62 @@ class AdminPanel(QMainWindow):
                 f"<b>{annoncee}</b></span>"
             )
             self._rel_discord_btn.setVisible(False)
-        else:
+            return
+
+        # L'annonce part maintenant de GitHub Actions, qui ne peut pas écrire le
+        # fichier d'état de ce poste : « en retard » d'après le disque local ne
+        # veut plus dire « en retard » dans le canal. On le vérifie chez Discord
+        # avant d'alarmer — un GET sur le message, qui ne poste rien.
+        self._rel_discord_label.setText(
+            f"<span style='color:{TEXT_DIM};'>Vérification du canal Discord…</span>"
+        )
+        self._rel_discord_btn.setVisible(False)
+
+        def _lire():
+            from release import discord_live_version
+            return discord_live_version()
+
+        def _repondre(live):
+            if live == actuelle:
+                # Le canal est bon : on recale l'état local pour ne pas
+                # reposer la question à chaque ouverture de l'onglet.
+                self._discord_state_sync(actuelle)
+                self._rel_discord_label.setText(
+                    f"<span style='color:{TEXT_DIM};'>Discord annonce bien "
+                    f"<b>{actuelle}</b></span>"
+                )
+                self._rel_discord_btn.setVisible(False)
+                return
+            vu = live or annoncee
             self._rel_discord_label.setText(
                 f"<span style='color:#e0a030;'>⚠️  Discord annonce encore "
-                f"<b>{annoncee}</b> — l'application est en <b>{actuelle}</b></span>"
+                f"<b>{vu}</b> — l'application est en <b>{actuelle}</b></span>"
             )
             self._rel_discord_btn.setVisible(True)
+
+        def _rate(_err):
+            # Injoignable : on affiche l'état local, sans prétendre le vérifier.
+            _repondre(None)
+
+        _run_async(self, _lire, on_success=_repondre, on_error=_rate)
+
+    def _discord_state_sync(self, version: str):
+        """Recale `latest_version` du fichier d'état sur ce qu'affiche le canal.
+
+        Sans ça, une annonce faite par la CI laisserait le bandeau réclamer un
+        rattrapage à chaque ouverture de l'onglet.
+        """
+        try:
+            from release import DISCORD_STATE_FILE
+            try:
+                state = json.loads(DISCORD_STATE_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                state = {}
+            state["latest_version"] = version
+            DISCORD_STATE_FILE.write_text(json.dumps(state, indent=2),
+                                          encoding="utf-8")
+        except Exception:
+            pass
 
     def _on_fix_discord(self):
         """Réédite le message « dernière version » sur la version courante.
@@ -5777,6 +5938,11 @@ class AdminPanel(QMainWindow):
             self._rel_step_lbl.setText("Terminé ✓")
             self._rel_step_lbl.setStyleSheet("color:#4CAF50; font-size:10px;")
             self._rel_append_log(f"\n{msg}")
+            # Un tag de plus : le quota de signatures et le bandeau Discord
+            # viennent de changer.
+            self._esigner_dates_cache = _UNSET
+            self._update_esigner_quota()
+            self._update_discord_state()
             try:
                 import winsound
                 winsound.MessageBeep(winsound.MB_ICONASTERISK)
@@ -5822,7 +5988,7 @@ class AdminPanel(QMainWindow):
         self.loading_lbl.show()
         self.table.hide()
         _run_async(
-            self, _query_all_licenses, self._id_token,
+            self, _query_all_licenses, self._token(),
             on_success=self._on_clients_loaded,
             on_error=self._on_load_error,
         )
@@ -5970,7 +6136,7 @@ class AdminPanel(QMainWindow):
                 url,
                 data=_json.dumps({"subscription_id": sub_id}).encode(),
                 method="POST",
-                headers={"Authorization": f"Bearer {self._id_token}",
+                headers={"Authorization": f"Bearer {self._token()}",
                          "Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 result = _json.loads(resp.read().decode())
@@ -5993,7 +6159,7 @@ class AdminPanel(QMainWindow):
             QMessageBox.critical(self, "Erreur", str(e))
 
     def _on_new_client(self):
-        dlg = CreateClientDialog(self._id_token, self)
+        dlg = CreateClientDialog(self._token(), self)
         dlg.client_created.connect(self._load_clients)
         dlg.exec()
 
@@ -6003,7 +6169,7 @@ class AdminPanel(QMainWindow):
         if client is None:
             return
         if col == COL_EXPIRY:
-            dlg = RenewDialog(client, self._id_token, self)
+            dlg = RenewDialog(client, self._token(), self)
             dlg.renewed.connect(self._load_clients)
             dlg.exec()
 
@@ -6011,7 +6177,7 @@ class AdminPanel(QMainWindow):
         client = self._get_selected_client()
         if client is None:
             return
-        dlg = RenewDialog(client, self._id_token, self)
+        dlg = RenewDialog(client, self._token(), self)
         dlg.renewed.connect(self._load_clients)
         dlg.exec()
 
@@ -6113,7 +6279,7 @@ class AdminPanel(QMainWindow):
         client = self._get_selected_client()
         if client is None:
             return
-        dlg = MachinesDialog(client, self._id_token, self)
+        dlg = MachinesDialog(client, self._token(), self)
         dlg.revoked.connect(self._load_clients)
         dlg.exec()
 
@@ -6145,7 +6311,7 @@ class AdminPanel(QMainWindow):
 
     def _do_delete(self, uid: str):
         """Supprime le doc Firestore puis le compte Auth (si SDK disponible)."""
-        _delete_firestore_doc(f"licenses/{uid}", self._id_token)
+        _delete_firestore_doc(f"licenses/{uid}", self._token())
         if _init_firebase_admin():
             _delete_auth_user(uid)
 
@@ -6167,7 +6333,7 @@ class AdminPanel(QMainWindow):
         self._fix_table.hide()
         self._fixtures_loaded = False
         _run_async(
-            self, _query_all_fixtures, self._id_token,
+            self, _query_all_fixtures, self._token(),
             on_success=self._on_fixtures_loaded,
             on_error=self._on_fixtures_load_error,
         )
@@ -6338,7 +6504,7 @@ class AdminPanel(QMainWindow):
         self._pending_fixture_data = dict(fixture_data)
         self._save_fixture_draft(fixture_data)
         _run_async(
-            self, _do_upload_fixture_async, fixture_data, self._id_token, self._refresh_token,
+            self, _do_upload_fixture_async, fixture_data, self._token(), self._refresh_token,
             on_success=self._on_fixture_saved,
             on_error=self._on_fixture_save_error,
         )
@@ -6402,7 +6568,7 @@ class AdminPanel(QMainWindow):
             return
         self._btn_del_fix.setEnabled(False)
         _run_async(
-            self, _delete_fixture_doc, doc_id, self._id_token,
+            self, _delete_fixture_doc, doc_id, self._token(),
             on_success=lambda _: self._on_fixture_deleted(name),
             on_error=self._on_fixture_delete_error,
         )
@@ -6438,7 +6604,7 @@ class AdminPanel(QMainWindow):
             "fixtures":    pack_fixtures,
         }
         _run_async(
-            self, _publish_pack_async, pack_id, pack_data, self._id_token,
+            self, _publish_pack_async, pack_id, pack_data, self._token(),
             on_success=lambda _: QMessageBox.information(
                 self, "Pack publié",
                 f"Pack « {meta['name']} » publié avec succès ({len(pack_fixtures)} fixtures).\n"
@@ -6466,11 +6632,11 @@ class AdminPanel(QMainWindow):
         dlg.exec()
 
     def _on_gdtf_enrich(self):
-        dlg = OflSyncDialog(self, id_token=self._id_token)
+        dlg = OflSyncDialog(self, id_token=self._token())
         dlg.exec()
 
     def _on_gdtf_upload(self):
-        dlg = GdtfUploadDialog(self, id_token=self._id_token)
+        dlg = GdtfUploadDialog(self, id_token=self._token())
         dlg.exec()
 
     def _browse_backup_dest(self):

@@ -534,8 +534,9 @@ class CueListPanel(QWidget):
         signalait : l'utilisateur voyait bouger un réglage auquel il n'avait
         pas touché.
 
-        Ces contraintes ne protégeaient de rien. `_apply_cue_with_fade` prend
-        un instantané de l'état COURANT des projecteurs au lancement du fondu :
+        Ces contraintes ne protégeaient de rien. Le moteur de fondu
+        (`_recompute_memory_mix_faded`) prend un instantané de l'état COURANT
+        des projecteurs au lancement du fondu :
         un cue qui enchaîne au milieu du fondu précédent repart proprement de
         là où les lampes en sont. Un fondu plus long que la durée est donc
         parfaitement jouable — il est désormais simplement signalé à l'œil.

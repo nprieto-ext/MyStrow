@@ -316,10 +316,18 @@ def detecter_regie(port: int, delai_scan: float = 0.35) -> str:
 STYLE_DIALOGUE = """
 QDialog { background: #0f0f0f; }
 QLabel { color: #ddd; background: transparent; border: none; }
-QLineEdit, QSpinBox, QComboBox {
+/* `QAbstractSpinBox` et pas `QSpinBox` : un selecteur Qt couvre la classe et
+   ses SOUS-classes, jamais ses cousines. `QDoubleSpinBox` descend de
+   QAbstractSpinBox, pas de QSpinBox — le champ « course complète en » de la
+   manette restait donc blanc sur noir au milieu d'un dialogue sombre. */
+QLineEdit, QAbstractSpinBox, QComboBox {
     background: #1a1a1a; color: #ddd; border: 1px solid #2a2a2a;
     border-radius: 4px; padding: 5px;
 }
+/* On ne touche PAS a ::up-button / ::down-button : les habiller fait perdre a
+   Qt ses fleches (il n'accepte qu'une image, pas un triangle CSS), et les deux
+   boutons deviennent alors des rectangles vides sur lesquels personne ne pense
+   a cliquer. Le fond sombre du champ suffit a raccorder au theme. */
 QPushButton {
     background: #1f1f1f; color: #ddd; border: 1px solid #2f2f2f;
     border-radius: 5px; padding: 7px 16px;
@@ -334,6 +342,32 @@ QTableWidget {
 QHeaderView::section {
     background: #1a1a1a; color: #999; border: none; padding: 6px;
 }
+/* Cases a cocher : sans regle explicite, Qt dessine une case CLAIRE, presque
+   blanche, qui creve l'oeil sur un fond #0f0f0f et se lit mal cochee ou non.
+   Meme convention que le reste de MyStrow : creux sombre, remplissage cyan
+   quand c'est coche — l'etat se lit d'un coup d'oeil a un metre. */
+QCheckBox { color: #ddd; background: transparent; spacing: 7px; }
+QCheckBox::indicator {
+    width: 15px; height: 15px; border-radius: 3px;
+    border: 1px solid #444; background: #141414;
+}
+QCheckBox::indicator:hover { border-color: #00d4ff; background: #1c1c1c; }
+QCheckBox::indicator:checked { background: #00d4ff; border-color: #00d4ff; }
+QCheckBox::indicator:disabled { border-color: #262626; background: #101010; }
+/* Onglets : par defaut ils sortent en gris sur gris et on ne voit meme pas
+   qu'il y en a un deuxieme. Le selectionne est souligne en cyan, comme les
+   onglets du plan de feu. */
+QTabWidget::pane { border: 1px solid #2a2a2a; border-radius: 4px; top: -1px; }
+QTabBar::tab {
+    background: #181818; color: #999; padding: 8px 22px; margin-right: 3px;
+    border: 1px solid #2a2a2a; border-bottom: none;
+    border-top-left-radius: 5px; border-top-right-radius: 5px;
+}
+QTabBar::tab:selected {
+    background: #0f0f0f; color: #00d4ff; font-weight: bold;
+    border-bottom: 2px solid #00d4ff;
+}
+QTabBar::tab:hover:!selected { background: #1f1f1f; color: #ddd; }
 """
 
 

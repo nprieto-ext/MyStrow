@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QCheckBox, QListWidget, QListWidgetItem, QMessageBox, QWidget,
 )
-from PySide6.QtCore import Qt, QObject, QThread, Signal
+from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal
 
 from i18n import tr
 
@@ -161,15 +161,22 @@ def _today() -> str:
 
 def load_share_state() -> dict:
     """
-    {"day": "YYYY-MM-DD", "count": int, "sent": {fingerprint: timestamp}}
+    {"day": "YYYY-MM-DD", "count": int, "sent": {fingerprint: timestamp},
+     "declined": {fingerprint: timestamp}}
     Le compteur est remis à zéro dès que le jour change.
+
+    `declined` retient les envois automatiques que l'utilisateur a annulés au
+    bandeau : sans lui, le prochain enregistrement de la même fixture
+    reproposerait exactement ce qu'il vient de refuser.
     """
-    state = {"day": _today(), "count": 0, "sent": {}}
+    state = {"day": _today(), "count": 0, "sent": {}, "declined": {}}
     try:
         if SHARE_STATE_FILE.exists():
             loaded = json.loads(SHARE_STATE_FILE.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
-                state.update({k: loaded[k] for k in ("day", "count", "sent") if k in loaded})
+                state.update({k: loaded[k]
+                              for k in ("day", "count", "sent", "declined")
+                              if k in loaded})
     except Exception:
         pass
     if state.get("day") != _today():
@@ -177,6 +184,8 @@ def load_share_state() -> dict:
         state["count"] = 0
     if not isinstance(state.get("sent"), dict):
         state["sent"] = {}
+    if not isinstance(state.get("declined"), dict):
+        state["declined"] = {}
     try:
         state["count"] = int(state.get("count") or 0)
     except (TypeError, ValueError):
@@ -214,6 +223,15 @@ def _record_submission(fingerprints: list, used: int = None,
         state["count"] = max(0, DAILY_SHARE_QUOTA - int(quota_left))
     else:
         state["count"] += len(fingerprints) if used is None else int(used)
+    save_share_state(state)
+
+
+def _record_declined(fingerprints: list) -> None:
+    """Mémorise un refus au bandeau : la fixture ne sera plus reproposée."""
+    state = load_share_state()
+    now   = int(time.time())
+    for fp in fingerprints:
+        state["declined"][fp] = now
     save_share_state(state)
 
 
@@ -611,9 +629,11 @@ def offer_share(parent, fixtures: list) -> None:
         if not candidates:
             return
 
-        # Ne pas reproposer une fixture déjà envoyée depuis cette machine.
-        already = set(load_share_state().get("sent", {}))
-        candidates = [f for f in candidates if fixture_fingerprint(f) not in already]
+        # Ne pas reproposer une fixture déjà envoyée depuis cette machine, ni
+        # une fixture dont l'utilisateur a annulé l'envoi automatique.
+        state = load_share_state()
+        seen  = set(state.get("sent", {})) | set(state.get("declined", {}))
+        candidates = [f for f in candidates if fixture_fingerprint(f) not in seen]
         if not candidates:
             return
 
@@ -625,3 +645,207 @@ def offer_share(parent, fixtures: list) -> None:
         FixtureShareDialog(candidates, parent).exec()
     except Exception as e:
         print(f"[fixture_share] proposition de partage ignorée : {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Envoi automatique des fixtures fabriquées dans l'éditeur
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Délai avant envoi effectif. C'est ce qui rend le bouton « Annuler » honnête :
+# tant que le compte à rebours tourne, RIEN n'est parti sur le réseau, donc
+# annuler annule vraiment, au lieu de réclamer un retrait côté serveur.
+AUTO_SHARE_DELAY_S = 8
+
+_TOAST_SS = """
+#shareToast { background:#0a1f28; border:1px solid #00d4ff55; border-radius:8px; }
+#shareToast QLabel { color:#00d4ff; font-size:12px; background:transparent; border:none; }
+#shareToast QPushButton {
+    background:#00d4ff22; color:#00d4ff; border:1px solid #00d4ff55;
+    border-radius:4px; font-size:11px; font-weight:bold; padding:0 12px;
+}
+#shareToast QPushButton:hover { background:#00d4ff44; border-color:#00d4ff; }
+"""
+
+
+class ShareToast(QWidget):
+    """
+    Bandeau discret en bas à droite de la fenêtre parente : prévient que la
+    fixture part à la bibliothèque commune et laisse une porte de sortie.
+
+    Volontairement NON modal. L'utilisateur qui vient d'enregistrer sa fixture
+    enchaîne sur autre chose ; lui coller une boîte de dialogue en travers du
+    chemin, c'est précisément ce qu'on cherche à supprimer.
+    """
+
+    def __init__(self, fixtures: list, source_key: str = "perso", parent=None):
+        super().__init__(parent)
+        self._fixtures = list(fixtures)
+        self._source   = source_key
+        self._left     = AUTO_SHARE_DELAY_S
+        self._thread   = None
+        self._worker   = None
+
+        self.setObjectName("shareToast")
+        self.setStyleSheet(_TOAST_SS)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedHeight(46)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 0, 10, 0)
+        lay.setSpacing(10)
+
+        icon = QLabel("↑")
+        icon.setStyleSheet("color:#00d4ff; font-size:15px; font-weight:bold;")
+        lay.addWidget(icon)
+
+        self._lbl = QLabel("")
+        lay.addWidget(self._lbl, 1)
+
+        self._btn_cancel = QPushButton(tr("fs_auto_cancel"))
+        self._btn_cancel.setFixedHeight(26)
+        self._btn_cancel.setCursor(Qt.PointingHandCursor)
+        self._btn_cancel.clicked.connect(self._cancel)
+        lay.addWidget(self._btn_cancel)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+
+    # ── Affichage ─────────────────────────────────────────────────────────────
+
+    def _name(self) -> str:
+        n = len(self._fixtures)
+        first = self._fixtures[0].get("name", "") if self._fixtures else ""
+        return first if n <= 1 else f"{first} +{n - 1}"
+
+    def _reposition(self):
+        """Ancrage bas-droite, recalculé à chaque tick : couvre le
+        redimensionnement de la fenêtre sans installer de filtre d'événements."""
+        p = self.parentWidget()
+        if p is None:
+            return
+        w = max(320, min(460, p.width() - 40))
+        self.setFixedWidth(w)
+        self.move(max(20, p.width() - w - 20), max(20, p.height() - self.height() - 20))
+        self.raise_()
+
+    def start(self):
+        self._lbl.setText(tr("fs_auto_pending", name=self._name(), s=self._left))
+        self._reposition()
+        self.show()
+        self._timer.start()
+
+    def _tick(self):
+        self._left -= 1
+        self._reposition()
+        if self._left > 0:
+            self._lbl.setText(tr("fs_auto_pending", name=self._name(), s=self._left))
+            return
+        self._timer.stop()
+        self._send()
+
+    def _close_in(self, ms: int):
+        QTimer.singleShot(ms, self.deleteLater)
+
+    # ── Actions ───────────────────────────────────────────────────────────────
+
+    def _cancel(self):
+        self._timer.stop()
+        _record_declined([fixture_fingerprint(f) for f in self._fixtures])
+        self._btn_cancel.hide()
+        self._lbl.setText(tr("fs_auto_cancelled"))
+        self._close_in(2500)
+
+    def _send(self):
+        self._btn_cancel.hide()
+        self._lbl.setText(tr("fs_auto_sending", name=self._name()))
+
+        thread = QThread(self)
+        worker = _SubmitWorker(self._fixtures, self._source)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(self._on_done)
+        worker.error.connect(self._on_error)
+        # Références fortes : sans elles le GC Python détruit le thread en vol.
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+
+    def _stop_thread(self):
+        if self._thread is not None:
+            self._thread.quit()
+            self._thread.wait(3000)
+        self._thread = None
+        self._worker = None
+
+    def _on_done(self, result: dict):
+        self._stop_thread()
+        quota_left = result.get("quota_left")
+        _record_submission(
+            [fixture_fingerprint(f) for f in self._fixtures],
+            used=int(result.get("submitted", 0) or 0),
+            quota_left=None if quota_left is None else int(quota_left),
+        )
+        self._lbl.setText(tr("fs_auto_sent", name=self._name()))
+        self._close_in(3500)
+
+    def _on_error(self, msg: str):
+        self._stop_thread()
+        # Échec sans conséquence pour l'utilisateur : il n'a rien demandé, il
+        # n'a donc pas à gérer une erreur de partage. Le bandeau le dit et s'en va.
+        self.setStyleSheet(_TOAST_SS.replace("#00d4ff", "#eebb66"))
+        self._lbl.setText(msg)
+        self._close_in(4000)
+        print(f"[fixture_share] envoi automatique échoué : {msg}")
+
+    def closeEvent(self, event):
+        self._timer.stop()
+        self._stop_thread()
+        super().closeEvent(event)
+
+
+def auto_share(parent, fixtures: list, source_key: str = "perso"):
+    """
+    Propose SANS RIEN DEMANDER les fixtures fabriquées dans l'éditeur.
+
+    Réservé aux profils tapés à la main dans MyStrow (`origin_source == "perso"`) :
+    la provenance y est certaine, donc l'attestation de droit de partage
+    n'apporte rien — l'utilisateur attesterait de son propre travail. Pour un
+    fichier importé, la provenance reste déclarative et le dialogue complet
+    (`offer_share`) garde tout son sens.
+
+    Rend le bandeau, ou None si rien ne part (pas connecté, déjà proposé, déjà
+    refusé, quota épuisé). Ne lève jamais : enregistrer sa fixture ne doit pas
+    pouvoir échouer à cause du partage.
+    """
+    try:
+        candidates = [f for f in (fixtures or [])
+                      if isinstance(f, dict) and f.get("name") and f.get("profile")]
+        if not candidates:
+            return None
+
+        if not is_shareable(source_key):
+            return None
+
+        state = load_share_state()
+        seen  = set(state.get("sent", {})) | set(state.get("declined", {}))
+        candidates = [f for f in candidates if fixture_fingerprint(f) not in seen]
+        if not candidates:
+            return None
+
+        # Le quota s'applique aussi à l'envoi automatique : sinon il suffirait
+        # d'enregistrer en boucle pour le contourner.
+        if len(candidates) > remaining_quota():
+            return None
+
+        # Sans compte connecté, il n'y a personne à qui attribuer la contribution.
+        from license_manager import get_machine_id, _load_account
+        if not _load_account(get_machine_id()):
+            return None
+
+        toast = ShareToast(candidates, source_key, parent)
+        toast.start()
+        return toast
+    except Exception as e:
+        print(f"[fixture_share] envoi automatique ignoré : {e}")
+        return None

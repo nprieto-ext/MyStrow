@@ -255,8 +255,6 @@ def build_local_installer(version):
         # scène vide : _push_scene_glb n'ecrit que sur stdout, invisible en
         # --windowed. Ne vit que dans MyStrow.spec sinon.
         f"--add-data \"scenes3d;scenes3d\" "
-        f"--add-data \"AKAIAPCMINI.png;.\" "
-        f"--add-data \"Novation.png;.\" "
         # Interface tablette (PWA statique servie par tablet_server.py). SANS ces
         # fichiers dans l'exe, le serveur renvoie « Not found: tablet/index.html » (404).
         f"--add-data \"tablet/index.html;tablet\" "
@@ -282,6 +280,10 @@ def build_local_installer(version):
         f"--hidden-import=node_connection "
         f"--hidden-import=brad_diagnostic "
         f"--hidden-import=streamdeck_api "
+        # Import d'un patch QLC+/CSV : les deux modules ne sont importes
+        # qu'a la demande, dans le corps de _import_foreign.
+        f"--hidden-import=patch_import "
+        f"--hidden-import=patch_import_ui "
         f"--hidden-import=artnet_dmx "
         f"--hidden-import=firebase_config "
         f"--collect-all certifi "
@@ -570,7 +572,7 @@ def discord_embed_latest(version):
     d = date.today()
     liens = (
         f"🪟  **Windows 10 / 11** — [télécharger l'installeur]({_DL_CF}win)\n"
-        f"🍎  **macOS Apple Silicon** (M1 → M4) — [télécharger le .dmg]({_DL_CF}mac)\n"
+        f"🍎  **macOS Apple Silicon** (M1 → M5) — [télécharger le .dmg]({_DL_CF}mac)\n"
         f"🍏  **macOS Intel** — [télécharger le .dmg]({_DL_CF}mac_intel)"
     )
     return {
@@ -617,21 +619,36 @@ def notify_discord_latest(version):
                "avatar_url": "https://mystrow.fr/og-image.webp",
                "embeds": [discord_embed_latest(version)]}
 
+    import os
+
     state = {}
     try:
         state = json.loads(DISCORD_STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         pass
-    mid = state.get("latest_message_id")
+    # Le runner GitHub n'a pas le fichier d'etat : sans l'ID du message, chaque
+    # build reposterait un message neuf au lieu de re-editer celui qui est
+    # epingle. La CI le fournit donc par variable de depot.
+    mid = (state.get("latest_message_id")
+           or os.environ.get("MYSTROW_DISCORD_LATEST_MSG_ID", "").strip())
+
+    def _save():
+        """Persiste l'etat. Un disque en lecture seule (CI) ne doit jamais
+        transformer un envoi reussi en echec : l'ecriture est best-effort."""
+        try:
+            DISCORD_STATE_FILE.write_text(json.dumps(state, indent=2),
+                                          encoding="utf-8")
+        except Exception:
+            pass
 
     try:
         if mid:
             try:
                 _discord_send(f"{webhook}/messages/{mid}",
                               {"embeds": payload["embeds"]}, method="PATCH")
+                state["latest_message_id"] = mid
                 state["latest_version"] = version
-                DISCORD_STATE_FILE.write_text(json.dumps(state, indent=2),
-                                              encoding="utf-8")
+                _save()
                 return True, f"message Discord mis à jour → {version}"
             except urllib.error.HTTPError as e:
                 if e.code != 404:
@@ -640,10 +657,50 @@ def notify_discord_latest(version):
         res = _discord_send(f"{webhook}?wait=true", payload)
         state["latest_message_id"] = res.get("id")
         state["latest_version"] = version
-        DISCORD_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        return True, f"message Discord publié → {version} (pense à l'épingler)"
+        _save()
+        # L'ID est repris dans le message : en CI c'est la seule trace, et il
+        # faut le recopier dans la variable DISCORD_LATEST_MSG_ID du depot,
+        # sinon la release suivante reposte encore un message neuf.
+        return True, (f"message Discord publié → {version} "
+                      f"(pense à l'épingler ; ID {res.get('id')})")
     except Exception as e:
         return False, f"échec Discord : {e}"
+
+
+def discord_live_version():
+    """Version reellement affichee par le message du canal, lue chez Discord.
+
+    Depuis que l'annonce part de GitHub Actions, le fichier d'etat local n'est
+    plus le temoin fiable : la CI met le canal a jour sans rien ecrire sur ce
+    poste. Seul un GET sur le message dit la verite. Ne poste rien, ne modifie
+    rien. Renvoie None si la question ne peut pas etre tranchee.
+    """
+    import os
+
+    webhook = discord_load_webhook()
+    if not webhook:
+        return None
+    try:
+        state = json.loads(DISCORD_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        state = {}
+    mid = (state.get("latest_message_id")
+           or os.environ.get("MYSTROW_DISCORD_LATEST_MSG_ID", "").strip())
+    if not mid:
+        return None
+    try:
+        req = urllib.request.Request(
+            f"{webhook}/messages/{mid}",
+            headers={"User-Agent": "MyStrow/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            msg = json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+    for embed in msg.get("embeds", []):
+        for field in embed.get("fields", []):
+            if field.get("name", "").lower() == "version":
+                return (field.get("value") or "").strip() or None
+    return None
 
 
 def _notify_discord(version):

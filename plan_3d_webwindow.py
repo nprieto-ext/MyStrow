@@ -23,7 +23,7 @@ from PySide6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent, QRectF
 from PySide6.QtGui import QColor, QBrush, QPainter, QPen
-from core import ComboSansMolette
+from core import ComboSansMolette, color_wheel_display_color
 from i18n import tr
 
 TRUSS_Y   = 7.0
@@ -2816,6 +2816,21 @@ class Plan3DWebWindow(QMainWindow):
             r = col.red()   if col else 0
             g = col.green() if col else 0
             b = col.blue()  if col else 0
+            # Lyre à roue de couleurs : la teinte vient de la POSITION DE LA
+            # ROUE, pas de `p.color` — qui n'est qu'une fiction sur un profil
+            # sans R/G/B, et que le moteur pousse au BLANC dès qu'un effet
+            # Dimmer seul module la fixture (cf. `core.effect_dim_base_color`).
+            # La 3D affichait donc une lyre blanche là où la 2D, qui passe par
+            # le même helper, montrait bien le rouge de la roue. Même rang de
+            # priorité qu'en 2D : après les overrides (mémoires HTP / sortie
+            # live de l'éditeur) et les canaux repris à la main, avant le
+            # strobe — diverger de cet ordre, c'est refaire diverger les deux
+            # plans. L'intensité n'est PAS multipliée ici : la 3D la reçoit à
+            # part, dans `level`.
+            if ov is None and _repris is None:
+                _cwc = color_wheel_display_color(p)
+                if _cwc is not None:
+                    r, g, b = _cwc.red(), _cwc.green(), _cwc.blue()
             # Strobe : bascule r/g/b à 0 sur la phase off
             spd = getattr(p, 'strobe_speed', 0)
             if spd > 0:

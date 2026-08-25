@@ -43,6 +43,13 @@ def _request(method: str, endpoint: str, payload: dict = None) -> dict:
         except Exception:
             msg = body
         raise Exception(f"Brevo {e.code}: {msg}")
+    except (urllib.error.URLError, OSError) as e:
+        # Sans cette branche, seule une reponse HTTP etait traduite : une panne
+        # DNS ou de reseau remontait telle quelle jusqu'a l'ecran, sous la forme
+        # « <urlopen error [Errno 11001] getaddrinfo failed> ». De l'anglais, un
+        # numero, et rien a faire avec.
+        from core import message_erreur_reseau
+        raise Exception(message_erreur_reseau(e))
 
 
 # ---------------------------------------------------------------

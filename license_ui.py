@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QCursor
 
 from license_manager import (
-    LicenseState, LicenseResult,
+    LicenseState, LicenseResult, TRIAL_DAYS,
     login_account, verify_license,
     deactivate_machine, get_license_info,
 )
@@ -908,8 +908,8 @@ class ActivationDialog(QDialog):
 
         # ── Assembler les 3 cartes ────────────────────────────────────────
         cards_row.addWidget(_plan_card(
-            "🎨", "Gratuit", "0 €", "Essai 14 jours",
-            ["Accès complet 14 jours", "Sans carte bancaire", "Toutes les fonctions"],
+            "🎨", tr("plan_free_name"), "0 €", tr("plan_free_billing", days=TRIAL_DAYS),
+            [tr("plan_free_f1", days=TRIAL_DAYS), tr("plan_free_f2"), tr("plan_free_f3")],
             link_key=None, accent="#6b7280",
         ))
         cards_row.addWidget(_pro_card_widget())

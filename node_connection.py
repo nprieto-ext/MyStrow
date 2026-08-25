@@ -15,9 +15,12 @@ from PySide6.QtWidgets import (
     QWidget, QStackedWidget, QScrollArea, QLineEdit, QComboBox, QCheckBox,
     QGridLayout,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QFont, QCursor
-from core import ComboSansMolette, guide_banner
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QRectF, QPointF, QRect
+from PySide6.QtGui import (
+    QFont, QCursor, QPainter, QPen, QBrush, QColor, QLinearGradient,
+    QPainterPath, QFontMetrics,
+)
+from core import ComboSansMolette, guide_banner
 from i18n import tr
 
 # ============================================================
@@ -396,7 +399,9 @@ class _DiagWorker(QThread):
         eth_ok = any(ip.startswith("2.") for n, ip, d, c in adapters)
         eth_name = next((n for n, ip, d, c in adapters if ip.startswith("2.")), None)
         if not adapters:
-            eth_detail = "Aucune carte Ethernet détectée — vérifiez le câble RJ45"
+            # Pas « vérifiez le câble RJ45 » : sur un USB NODE DMX il n'y en a
+            # pas, et c'est le câble USB qui porte la carte réseau.
+            eth_detail = "Aucune carte réseau détectée — vérifiez le câble entre le PC et le boîtier"
             eth_fix = "fix_cable"
         elif not eth_ok:
             eth_name = adapters[0][0]
@@ -806,6 +811,410 @@ class _QuickDetector(QThread):
             self.finished.emit(False)
 
 
+class NodeWiringAnim(QWidget):
+    """Le branchement du boîtier, joué en boucle — dessiné, pas filmé.
+
+    La page « Branchons le boîtier » décrivait DEUX câbles : un RJ45 pour les
+    données, un USB pour l'alimentation. C'est vrai du NODE 1 (face `NET` +
+    `POWER`), c'est FAUX du USB NODE DMX, qui n'a qu'une seule prise USB-C par
+    laquelle passent à la fois le courant ET l'Art-Net. Le client qui a acheté
+    ce modèle-là cherchait un câble réseau qui n'existe pas sur son boîtier.
+
+    D'où deux variantes, choisies par l'utilisateur d'après ce qu'il voit sur
+    la face de son boîtier — la seule question à laquelle il peut répondre sans
+    rien connaître :
+      • `rj45` : deux prises, deux câbles, deux rôles ;
+      • `usb`  : une prise, un câble, les deux rôles à la fois.
+
+    Dessiné au QPainter et non filmé : une vidéo voudrait dire embarquer un
+    média et QtMultimedia dans les quatre configurations de build, pour une
+    boucle de trois secondes qui ne montrerait qu'UN des deux boîtiers. Ici les
+    deux variantes coûtent quelques coordonnées, restent nettes en 4K et
+    suivent le thème sombre. Même technique que le dessin de la manette.
+    """
+
+    # Repères de la scène, en coordonnées logiques (le painter met à l'échelle).
+    _W, _H = 296.0, 146.0
+
+    _CYAN   = "#00d4ff"   # données (Art-Net)
+    _AMBRE  = "#f0a030"   # courant
+    _VERT   = "#4ade80"   # LED alimentée
+    _CORPS  = "#242424"
+    _TRAIT  = "#3a3a3a"
+
+    def __init__(self, variant="rj45", parent=None):
+        super().__init__(parent)
+        self._variant = variant
+        self._t = 0.0
+        # 220 et non 190 : la légende supprimée sous le dessin a rendu sa
+        # hauteur à la page, et c'est la hauteur qui bride l'échelle ici (la
+        # largeur est déjà saturée). Autant la donner au boîtier.
+        self.setMinimumHeight(220)
+        self.setStyleSheet("background: transparent;")
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._avancer)
+
+    def set_variant(self, variant):
+        if variant != self._variant:
+            self._variant = variant
+            self._t = 0.0
+            self.update()
+
+    # Le dialogue reste ouvert pendant tout l'assistant : une animation qui
+    # continue de tourner sur une page qu'on ne voit plus, c'est 25 repaints par
+    # seconde pour rien.
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._timer.start(40)
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    def _avancer(self):
+        self._t = (self._t + 0.04 / 4.2) % 1.0   # boucle de 4,2 s
+        self.update()
+
+    @staticmethod
+    def _amorti(x):
+        """Ease-out : le câble ralentit en arrivant sur la prise."""
+        x = max(0.0, min(1.0, x))
+        return 1.0 - (1.0 - x) ** 3
+
+    # ── géométrie du boîtier ──────────────────────────────────
+    # Vue de trois quarts, comme les photos du guide : la plaque de face est
+    # de front (c'est elle qu'on doit lire), le corps fuit vers l'arrière-droit.
+    _FACE = (100.0, 26.0, 116.0, 108.0)      # x, y, largeur, hauteur
+    _PROF = (74.0, -18.0)                    # vecteur de fuite
+
+    def _face_pts(self):
+        x, y, w, h = self._FACE
+        return (QPointF(x, y), QPointF(x + w, y),
+                QPointF(x + w, y + h), QPointF(x, y + h))
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        # Scène dessinée en repère fixe puis mise à l'échelle : les coordonnées
+        # ci-dessous ne bougent pas si le dialogue change de taille.
+        ech = min(self.width() / self._W, self.height() / self._H)
+        p.translate((self.width() - self._W * ech) / 2.0,
+                    (self.height() - self._H * ech) / 2.0)
+        p.scale(ech, ech)
+
+        t = self._t
+        # Deux temps seulement : le câble entre (0 → 35 %), puis il est en place
+        # et le boîtier est alimenté (35 % → fin). Il y avait un troisième temps
+        # `vie`, qui ne démarrait qu'à 50 % — l'alimentation semblait arriver un
+        # instant APRÈS le branchement, alors que c'est le branchement qui la
+        # donne. Le voyant part maintenant à la seconde où la fiche s'engage.
+        avance  = self._amorti(t / 0.35) if t < 0.35 else 1.0
+        branche = 1.0 if t >= 0.35 else 0.0
+
+        self._dessiner_corps(p)
+        self._dessiner_face(p, branche)
+        self._dessiner_cables(p, avance, branche)
+        p.end()
+
+    def _clignote(self, depuis, battements):
+        """Créneau 0/1 pour un voyant qui clignote, depuis l'instant `depuis`.
+
+        Un sinus donnait une respiration, pas un clignotement : l'œil y lit
+        « ça pulse ». Il faut un créneau — allumé net, éteint net — avec juste
+        assez d'adoucissement sur les fronts pour ne pas scintiller.
+        """
+        u = self._t - depuis
+        if u <= 0:
+            return 0.0
+        ph = (u * battements) % 1.0
+        m = 0.07                       # durée des fronts, en fraction de cycle
+        if ph < m:        return ph / m
+        if ph < 0.5 - m:  return 1.0
+        if ph < 0.5:      return (0.5 - ph) / m
+        return 0.0
+
+    # ── le boîtier ────────────────────────────────────────────
+
+    def _dessiner_corps(self, p):
+        """Corps alu extrudé, dessus nervuré — la signature des ElectroConcept.
+
+        C'est aux nervures qu'on reconnaît ces boîtiers sur les photos du
+        guide, avant même de lire la sérigraphie. Sans elles on dessine « une
+        boîte noire », ce que le client ne rapproche de rien.
+        """
+        a, b, c, d = self._face_pts()
+        dx, dy = self._PROF
+        ap = QPointF(a.x() + dx, a.y() + dy)
+        bp = QPointF(b.x() + dx, b.y() + dy)
+        cp = QPointF(c.x() + dx, c.y() + dy)
+
+        # Flanc droit
+        flanc = QPainterPath(b)
+        flanc.lineTo(bp); flanc.lineTo(cp); flanc.lineTo(c); flanc.closeSubpath()
+        deg = QLinearGradient(b.x(), 0, bp.x(), 0)
+        deg.setColorAt(0.0, QColor("#26262a"))
+        deg.setColorAt(1.0, QColor("#171719"))
+        p.setPen(Qt.NoPen); p.setBrush(QBrush(deg)); p.drawPath(flanc)
+
+        # Dessus
+        dessus = QPainterPath(a)
+        dessus.lineTo(b); dessus.lineTo(bp); dessus.lineTo(ap); dessus.closeSubpath()
+        degt = QLinearGradient(0, a.y(), 0, ap.y())
+        degt.setColorAt(0.0, QColor("#3c3c42"))
+        degt.setColorAt(1.0, QColor("#2a2a30"))
+        p.setBrush(QBrush(degt)); p.drawPath(dessus)
+
+        # Nervures : des lignes qui suivent la fuite, du bord avant au bord
+        # arrière. Écrêtées au dessus pour ne pas baver sur la face.
+        p.save()
+        p.setClipPath(dessus)
+        n = 22
+        for i in range(1, n):
+            u = i / n
+            p1 = QPointF(a.x() + (b.x() - a.x()) * u, a.y())
+            p2 = QPointF(ap.x() + (bp.x() - ap.x()) * u, ap.y())
+            # Creux puis crête : c'est le couple ombre/lumière qui fait lire une
+            # nervure. Un seul trait sombre passait pour une rayure.
+            p.setPen(QPen(QColor(0, 0, 0, 190), 1.5))
+            p.drawLine(p1, p2)
+            p.setPen(QPen(QColor(255, 255, 255, 40), 1.1))
+            p.drawLine(QPointF(p1.x() + 1.9, p1.y()), QPointF(p2.x() + 1.9, p2.y()))
+        p.restore()
+
+        # Arêtes vives : l'alu anodisé accroche la lumière sur les angles.
+        p.setPen(QPen(QColor("#55555c"), 1.2))
+        p.drawLine(a, b); p.drawLine(b, bp); p.drawLine(a, ap)
+        p.setPen(QPen(QColor("#000000"), 1.2))
+        p.drawLine(c, cp)
+
+    def _dessiner_face(self, p, branche):
+        """Plaque de face : vis aux quatre coins, sérigraphie blanche, prises."""
+        a, b, c, d = self._face_pts()
+        x, y, w, h = self._FACE
+        plaque = QRectF(x, y, w, h)
+
+        deg = QLinearGradient(0, y, 0, y + h)
+        deg.setColorAt(0.0, QColor("#242428"))
+        deg.setColorAt(1.0, QColor("#141416"))
+        p.setPen(QPen(QColor("#050505"), 1.4))
+        p.setBrush(QBrush(deg))
+        p.drawRect(plaque)
+
+        for sx, sy in ((x + 9, y + 9), (x + w - 9, y + 9),
+                       (x + 9, y + h - 9), (x + w - 9, y + h - 9)):
+            self._vis(p, sx, sy)
+
+        # La plaque n'est siglée que dans la variante USB. Là c'est justifié :
+        # le USB NODE DMX est un boîtier ElectroConcept précis, sans équivalent
+        # chez les autres marques, et le reconnaître à sa sérigraphie est
+        # exactement ce qu'on demande à l'utilisateur. La variante RJ45, elle,
+        # vaut pour des dizaines de nodes (ODE, eDMX, générique…) : un nom de
+        # modèle y aurait dit au propriétaire d'un autre boîtier que le dessin
+        # ne parlait pas du sien.
+        # POWER clignote en vert dès que la fiche est engagée : c'est le retour
+        # que l'utilisateur doit aller chercher des yeux sur son propre boîtier
+        # pour savoir que le branchement a pris. CPU reste fixe à côté — deux
+        # voyants qui clignotent ensemble ne signalent plus rien.
+        power = self._clignote(0.35, 7.0) if branche else 0.0
+        if self._variant == "usb":
+            p.setPen(QColor("#d0d0d0"))
+            p.setFont(QFont("Segoe UI", 6, QFont.Bold))
+            p.drawText(QRectF(x, y + 9, w, 11), Qt.AlignCenter, "USB NODE DMX")
+            self._marque_ce(p, x + 6, y + 22)
+            self._led(p, x + 32, y + 44, branche, self._CYAN, "CPU")
+            self._led(p, x + w - 32, y + 44, power, self._VERT, "POWER")
+            # Prise unique, au centre de la plaque : tout passe par elle.
+            self._prise_usb(p, x + 44, y + 72, branche, self._CYAN)
+            p.setPen(QColor("#c8c8c8"))
+            p.setFont(QFont("Segoe UI", 5, QFont.Bold))
+            p.drawText(QRectF(x + 30, y + 83, 56, 9), Qt.AlignCenter, "USB")
+            # La marque, sérigraphiée en bas et espacée comme sur le boîtier.
+            # Plus petite que le nom du modèle : c'est le modèle qu'on cherche
+            # à reconnaître, la marque n'est qu'une mention.
+            _marque = QFont("Segoe UI", 3, QFont.Bold)
+            _marque.setLetterSpacing(QFont.PercentageSpacing, 130)
+            p.setFont(_marque)
+            p.setPen(QColor("#8a8a92"))
+            p.drawText(QRectF(x, y + h - 16, w, 9), Qt.AlignCenter, "ELECTROCONCEPT")
+        else:
+            # Les deux prises CÔTE À CÔTE, comme sur la face du vrai boîtier —
+            # empilées l'une sur l'autre, elles suggéraient un agencement qui
+            # n'existe pas.
+            self._marque_ce(p, x + 12, y + 12)
+            # Décalé de la vis d'angle : allumé, le halo du voyant mordait
+            # dessus.
+            self._led(p, x + w - 28, y + 20, power, self._VERT, "")
+            p.setPen(QColor("#c8c8c8"))
+            p.setFont(QFont("Segoe UI", 5, QFont.Bold))
+            p.drawText(QRectF(x + 2, y + 34, 50, 10), Qt.AlignCenter, "ETHERNET")
+            p.drawText(QRectF(x + 58, y + 34, 52, 10), Qt.AlignCenter, "USB")
+            self._prise_rj45(p, x + 12, y + 60, branche)
+            self._prise_usb(p, x + 70, y + 60, branche, self._AMBRE)
+
+    def _vis(self, p, cx, cy):
+        """Vis à six pans creux, comme aux coins des plaques ElectroConcept."""
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor("#3e3e44")))
+        p.drawEllipse(QPointF(cx, cy), 4.0, 4.0)
+        p.setBrush(QBrush(QColor("#111113")))
+        p.drawEllipse(QPointF(cx, cy), 2.0, 2.0)
+        p.setPen(QPen(QColor("#5a5a62"), 0.7))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), 4.0, 4.0)
+
+    def _marque_ce(self, p, x, y):
+        p.setPen(QColor("#9a9a9a"))
+        p.setFont(QFont("Segoe UI", 5, QFont.Bold))
+        p.drawText(QRectF(x, y, 18, 10), Qt.AlignCenter, "CE")
+
+    def _led(self, p, cx, cy, intensite, teinte, libelle):
+        """Voyant de la plaque. `intensite` : 0 éteint, 1 allumé à fond.
+
+        L'appelant décide du régime — fixe ou clignotant — plutôt que le voyant
+        d'imposer sa propre pulsation à tout le monde : sur la plaque du USB
+        NODE DMX, CPU doit rester fixe pendant que POWER clignote.
+        """
+        p.setPen(QPen(QColor("#0a0a0a"), 0.8))
+        p.setBrush(QBrush(QColor("#0e0e10")))
+        p.drawEllipse(QPointF(cx, cy), 3.2, 3.2)
+        i = max(0.0, min(1.0, float(intensite)))
+        # Halo : c'est lui qui fait « s'allumer » plutôt que « changer de
+        # couleur », et il rend le clignotement lisible même à 6 px.
+        if i > 0.02:
+            halo = QColor(teinte)
+            halo.setAlphaF(0.30 * i)
+            p.setPen(Qt.NoPen); p.setBrush(QBrush(halo))
+            p.drawEllipse(QPointF(cx, cy), 3.2 + 2.6 * i, 3.2 + 2.6 * i)
+        c = QColor(teinte)
+        c.setAlphaF(max(0.10, i))
+        p.setPen(Qt.NoPen); p.setBrush(QBrush(c))
+        p.drawEllipse(QPointF(cx, cy), 2.4, 2.4)
+        if libelle:
+            p.setPen(QColor("#8e8e8e"))
+            p.setFont(QFont("Segoe UI", 4))
+            p.drawText(QRectF(cx - 16, cy + 5, 32, 8), Qt.AlignCenter, libelle)
+
+    # ── prises ────────────────────────────────────────────────
+
+    def _prise_rj45(self, p, x, cy, branche):
+        """Embase Ethernet, dessinée comme on la voit sur un boîtier.
+
+        La version précédente était un carré noir avec huit barres jaunes —
+        « une prise », sans plus. Ce qui fait reconnaître une RJ45 tient en
+        trois choses, et les trois y sont maintenant : le **blindage métal**
+        qui encadre l'ouverture, l'**encoche de l'ergot** en bas au centre (le
+        cran où vient claquer la languette de la fiche), et les **huit contacts
+        dorés suspendus au plafond** de la cavité — pas posés au fond.
+        """
+        glow = QColor(self._CYAN); glow.setAlphaF(0.16 * branche)
+        p.setPen(QPen(glow, 5)); p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(x - 4, cy - 16, 38, 34), 4, 4)
+
+        # Blindage : cadre métal légèrement bombé.
+        cadre = QLinearGradient(0, cy - 14, 0, cy + 15)
+        cadre.setColorAt(0.0, QColor("#6e6e78"))
+        cadre.setColorAt(0.45, QColor("#4a4a53"))
+        cadre.setColorAt(1.0, QColor("#31313a"))
+        p.setPen(QPen(QColor("#22222a"), 1.0))
+        p.setBrush(QBrush(cadre))
+        p.drawRoundedRect(QRectF(x, cy - 14, 30, 29), 2.5, 2.5)
+
+        # Cavité + encoche de l'ergot, d'un seul tenant.
+        cav = QPainterPath()
+        cav.addRect(QRectF(x + 3.5, cy - 11, 23, 17))
+        cav.addRect(QRectF(x + 11, cy + 4, 8, 7))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor("#08080a")))
+        p.drawPath(cav.simplified())
+
+        # Contacts dorés, accrochés en haut et descendant dans l'ouverture.
+        p.setBrush(QBrush(QColor("#d8b03c")))
+        for i in range(8):
+            p.drawRect(QRectF(x + 5.4 + i * 2.6, cy - 10.5, 1.5, 8.5))
+
+        # Filet de lumière sur l'arête haute du blindage.
+        p.setPen(QPen(QColor("#9a9aa6"), 0.9)); p.setBrush(Qt.NoBrush)
+        p.drawLine(QPointF(x + 2, cy - 13), QPointF(x + 28, cy - 13))
+
+    def _prise_usb(self, p, x, cy, branche, teinte):
+        """Embase USB-C : ovale très plat, languette centrale."""
+        glow = QColor(teinte); glow.setAlphaF(0.16 * branche)
+        p.setPen(QPen(glow, 5)); p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(x - 4, cy - 11, 36, 22), 11, 11)
+
+        p.setPen(QPen(QColor("#3a3a3e"), 1.2))
+        p.setBrush(QBrush(QColor("#0c0c0e")))
+        p.drawRoundedRect(QRectF(x, cy - 6.5, 28, 13), 6.5, 6.5)
+        p.setPen(Qt.NoPen); p.setBrush(QBrush(QColor("#2e2e34")))
+        p.drawRoundedRect(QRectF(x + 4, cy - 2.2, 20, 4.4), 2.2, 2.2)
+
+    # ── câbles ────────────────────────────────────────────────
+
+    def _dessiner_cables(self, p, avance, branche):
+        """Les câbles glissent du PC vers leur prise, puis y restent."""
+        x, y, w, h = self._FACE
+        if self._variant == "usb":
+            # Dégradé ambre → cyan : un seul câble, les DEUX rôles. C'est
+            # l'image que la page doit laisser, et le dégradé la dit sans
+            # phrase.
+            deg = QLinearGradient(2.0, 0.0, x + 44, 0.0)
+            deg.setColorAt(0.0, QColor(self._AMBRE))
+            deg.setColorAt(1.0, QColor(self._CYAN))
+            self._cable(p, 2, 126, x + 44, y + 72, avance, QBrush(deg))
+            self._fiche_usb(p, x + 44, y + 72, branche, self._CYAN)
+        else:
+            self._cable(p, 2, 44, x + 12, y + 60, avance, QBrush(QColor(self._CYAN)))
+            self._fiche_rj45(p, x + 12, y + 60, branche)
+            # Le câble d'alimentation part légèrement après : deux traits qui
+            # avancent au même instant se lisent comme un seul objet. Il monte
+            # par le BAS et démarre à droite de l'embase Ethernet : parti du
+            # bord gauche comme l'autre, il lui passait en travers.
+            av2 = self._amorti((avance - 0.15) / 0.85)
+            self._cable(p, 86, 146, x + 70, y + 60, av2, QBrush(QColor(self._AMBRE)))
+            self._fiche_usb(p, x + 70, y + 60, branche, self._AMBRE)
+
+    def _cable(self, p, x0, y0, x1, y1, avance, brosse):
+        """Un câble en courbe douce, tracé sur `avance` de sa longueur."""
+        avance = max(0.0, min(1.0, avance))
+        if avance <= 0.01:
+            return
+        xa = x0 + (x1 - x0) * avance
+        ya = y0 + (y1 - y0) * avance
+        chemin = QPainterPath(QPointF(x0, y0))
+        chemin.cubicTo(QPointF(x0 + (xa - x0) * 0.55, y0),
+                       QPointF(x0 + (xa - x0) * 0.55, ya),
+                       QPointF(xa, ya))
+        stylo = QPen(brosse, 4.0)
+        stylo.setCapStyle(Qt.RoundCap)
+        p.setPen(stylo); p.setBrush(Qt.NoBrush)
+        p.drawPath(chemin)
+
+    def _fiche_rj45(self, p, x, cy, branche):
+        """La fiche engagée dans l'embase : c'est elle qui dit « branché »."""
+        if branche <= 0.01:
+            return
+        # Fiche grise translucide, sa languette VERS LE BAS — elle doit tomber
+        # dans l'encoche de l'embase, qui est en bas — et la gaine derrière.
+        p.setPen(QPen(QColor("#15151a"), 1.0))
+        p.setBrush(QBrush(QColor("#a2a2ac")))
+        p.drawRoundedRect(QRectF(x - 2, cy - 12, 28, 24), 2, 2)
+        p.setBrush(QBrush(QColor("#8a8a94")))
+        p.drawRoundedRect(QRectF(x + 9, cy + 9, 9, 7), 1.5, 1.5)
+        p.setBrush(QBrush(QColor("#65656d")))
+        p.drawRoundedRect(QRectF(x - 15, cy - 7, 13, 14), 3, 3)
+
+    def _fiche_usb(self, p, x, cy, branche, teinte):
+        if branche <= 0.01:
+            return
+        p.setPen(QPen(QColor("#1a1a1c"), 1.0))
+        p.setBrush(QBrush(QColor("#3a3a40")))
+        p.drawRoundedRect(QRectF(x - 2, cy - 6, 18, 12), 5, 5)
+        p.setBrush(QBrush(QColor(teinte)))
+        p.drawRoundedRect(QRectF(x - 14, cy - 5, 13, 10), 3, 3)
+
+    # ── décor ─────────────────────────────────────────────────
+
+
 class NodeSetupWizard(QDialog):
     """Wizard de configuration réseau pas à pas pour le Node DMX."""
 
@@ -822,6 +1231,10 @@ class NodeSetupWizard(QDialog):
         self._selected_adapter_name = ""
         self._selected_adapter_ip = ""
         self._adapter_buttons = []
+        # Modèle de boîtier déclaré sur la page câbles. Sur un USB NODE DMX la
+        # carte réseau est PORTÉE par le boîtier lui-même — ce n'est pas une
+        # prise RJ45 qu'il faut chercher dans la liste.
+        self._cable_variant = "rj45"
         self._net_came_from_method = False
         self._threads = []
         self._spin_frames = ["◐", "◓", "◑", "◒"]
@@ -965,25 +1378,92 @@ class NodeSetupWizard(QDialog):
         lay.addStretch(); return w
 
     def _pg_cables(self):
+        """Branchement — le boîtier d'abord, les câbles ensuite.
+
+        L'ancienne page réclamait toujours « les 2 connexions » : un RJ45 pour
+        les données, un USB pour l'alimentation. Le USB NODE DMX n'a qu'une
+        prise USB-C, qui porte le courant ET l'Art-Net : son propriétaire
+        cherchait un câble réseau absent de son boîtier, à la première étape de
+        l'assistant. On demande donc d'abord ce qu'on voit sur la face — la
+        seule question à laquelle on peut répondre sans rien connaître — et
+        l'animation et le bouton suivent.
+        """
         w, lay = self._make_page()
-        lay.addWidget(self._big_icon("🔌")); lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Branchons le boîtier")); lay.addSpacing(4)
-        lay.addWidget(self._sub_lbl("Vérifiez que les 2 connexions sont bien faites"))
+        lay.addWidget(self._title_lbl("Branchons le boîtier"))
         lay.addSpacing(14)
-        lay.addWidget(self._card("🔵", "Câble RJ45 (Ethernet)",
-            "Entre le boîtier et l'ordinateur  —  données DMX", accent="#00d4ff"))
-        lay.addSpacing(8)
-        lay.addWidget(self._card("🔴", "Alimentation",
-            "Port USB carré (USB-B) ou USB Type-C selon le modèle", accent="#f87171"))
-        lay.addSpacing(16); lay.addWidget(self._step_indicator(0)); lay.addSpacing(14)
-        lay.addWidget(self._primary_btn("Les 2 sont branchés  →", self._start_adapter_scan))
+
+        # Choix du modèle
+        choix = QWidget(); choix.setStyleSheet("background: transparent;")
+        crow = QHBoxLayout(choix); crow.setContentsMargins(0, 0, 0, 0); crow.setSpacing(8)
+        self._cable_btns = {}
+        # Hauteur MESURÉE, pas devinée : les trois lignes plus la marge de la
+        # feuille de style ne tenaient pas dans les 58 px codés en dur et le bas
+        # du libellé était rogné.
+        _police = QFont("Segoe UI", 8)
+        _fm = QFontMetrics(_police)
+        _haut = 0
+        for cle, titre in (("rj45", "Une prise réseau\n+ une prise USB"),
+                           ("usb",  "Une seule\nprise USB")):
+            _haut = max(_haut, _fm.boundingRect(
+                QRect(0, 0, 190, 400), Qt.TextWordWrap | Qt.AlignCenter, titre).height())
+        _haut += 22   # les 6 px de padding haut et bas, plus une marge de sûreté
+
+        for cle, titre in (
+            ("rj45", "Une prise réseau\n+ une prise USB"),
+            ("usb",  "Une seule\nprise USB"),
+        ):
+            b = QPushButton(titre)
+            b.setCheckable(True); b.setFixedHeight(_haut)
+            b.setCursor(QCursor(Qt.PointingHandCursor))
+            b.setFont(_police)
+            b.clicked.connect(lambda _c=False, k=cle: self._set_cable_variant(k))
+            self._cable_btns[cle] = b
+            crow.addWidget(b, 1)
+        lay.addWidget(choix)
+        # Le dessin est à sa taille maximale (il occupe déjà toute la largeur
+        # utile) : le vide restant se répartit au-dessus ET au-dessous, sinon
+        # il s'accumule en bas et le bloc semble collé en haut.
+        lay.addStretch()
+
+        # Plus de légende sous le dessin : les étiquettes ETHERNET et USB sont
+        # sur la plaque, à côté de leur prise. Les redire en dessous en trois
+        # lignes de texte n'apprenait rien de plus et noyait l'image.
+        self._cables_anim = NodeWiringAnim("rj45")
+        lay.addWidget(self._cables_anim)
+
+        lay.addStretch()
+        lay.addWidget(self._step_indicator(0)); lay.addSpacing(12)
+        self._btn_cables_next = self._primary_btn("C'est branché  →", self._start_adapter_scan)
+        lay.addWidget(self._btn_cables_next)
+        self._set_cable_variant("rj45")
         return w
+
+    def _set_cable_variant(self, cle):
+        """Applique le modèle choisi à l'animation et au bouton."""
+        self._cable_variant = cle
+        for k, b in self._cable_btns.items():
+            actif = (k == cle)
+            b.setChecked(actif)
+            b.setStyleSheet(
+                "QPushButton { background: %s; color: %s; border: 1px solid %s; "
+                "border-radius: 8px; padding: 6px; text-align: center; }"
+                % (("#0d2a33", "#e0e0e0", "#00d4ff") if actif
+                   else ("#1e1e1e", "#8a8a8a", "#2e2e2e"))
+            )
+        self._cables_anim.set_variant(cle)
+        self._btn_cables_next.setText("Le câble USB est branché  →" if cle == "usb"
+                                      else "Les 2 câbles sont branchés  →")
 
     def _pg_adapters(self):
         w, lay = self._make_page()
         lay.addWidget(self._big_icon("🌐")); lay.addSpacing(8)
         lay.addWidget(self._title_lbl("Quelle carte réseau ?")); lay.addSpacing(4)
-        lay.addWidget(self._sub_lbl("Choisissez la carte RJ45 reliée au boîtier\n(pas la Wi-Fi)"))
+        # Le libellé dépend du boîtier : sur un USB NODE DMX, la carte à choisir
+        # n'est reliée à rien — c'est le boîtier lui-même, qui se présente à
+        # Windows comme une carte réseau (« Electroconcept USB Node »).
+        self._adapters_hint = self._sub_lbl(
+            "Choisissez la carte réseau reliée au boîtier\n(pas la Wi-Fi)")
+        lay.addWidget(self._adapters_hint)
         lay.addSpacing(12)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }"
@@ -1127,6 +1607,16 @@ class NodeSetupWizard(QDialog):
     # ── adapter scan ─────────────────────────────────────────
 
     def _start_adapter_scan(self):
+        if getattr(self, "_adapters_hint", None) is not None:
+            # Sur un USB NODE DMX le boîtier EST la carte : Windows le nomme
+            # selon le pilote qui le prend en charge — « Electroconcept USB
+            # Node » ou « UsbNcm Host Device » selon la source. On ne promet
+            # donc pas un nom exact, on dit où regarder.
+            self._adapters_hint.setText(
+                "Le boîtier EST la carte réseau : prenez celle\n"
+                "qui apparaît quand vous le branchez"
+                if self._cable_variant == "usb"
+                else "Choisissez la carte réseau reliée au boîtier\n(pas la Wi-Fi)")
         self._set_working("Scan des cartes réseau...", "Recherche des adaptateurs Ethernet")
         t = _AdapterScanner(); t.done.connect(self._on_adapters_scanned)
         self._threads.append(t); t.start()
@@ -1309,7 +1799,7 @@ from PySide6.QtCore import Signal as _Signal
 try:
     from artnet_dmx import (
         TRANSPORT_ARTNET, TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_PRO,
-        TRANSPORT_ENTTEC_D2XX, OUTPUT_OFF,
+        TRANSPORT_ENTTEC_D2XX, OUTPUT_OFF, OUTPUT_INPUT,
     )
 except ImportError:
     TRANSPORT_ARTNET    = "artnet"
@@ -1317,6 +1807,7 @@ except ImportError:
     TRANSPORT_ENTTEC_PRO = "enttec_pro"
     TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"
     OUTPUT_OFF = -1
+    OUTPUT_INPUT = -2
 
 _SS_DIALOG = """
     QDialog  { background: #131313; }
@@ -1655,9 +2146,13 @@ class DmxOutputDialog(QDialog):
                 for u in range(4):
                     combo.addItem(tr("nc_f_universe", a0=u + 1), userData=u)
                 combo.addItem(tr("nc_disabled"), userData=OUTPUT_OFF)
+                # Port bascule en ENTREE : MyStrow se TAIT dessus, au lieu
+                # d'y emettre des zeros comme pour une sortie desactivee.
+                combo.addItem(tr("nc_out_input"), userData=OUTPUT_INPUT)
                 courant = (self._dmx.output_map[n]
                            if n < len(getattr(self._dmx, 'output_map', [])) else n)
-                combo.setCurrentIndex(4 if courant == OUTPUT_OFF else max(0, min(3, courant)))
+                combo.setCurrentIndex({OUTPUT_OFF: 4, OUTPUT_INPUT: 5}.get(
+                    courant, max(0, min(3, courant))))
                 combo.setFont(QFont("Segoe UI", 9))
                 combo.setStyleSheet(
                     "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
@@ -1967,20 +2462,27 @@ class DmxOutputDialog(QDialog):
         mapping = self._out_map_from_ui()
 
         for n, (_c, art) in enumerate(self._out_combos):
-            art.setText("— noir —" if mapping[n] == OUTPUT_OFF else f"Art-Net {base + n}")
+            if mapping[n] == OUTPUT_OFF:
+                art.setText("— noir —")
+            elif mapping[n] == OUTPUT_INPUT:
+                art.setText(f"← Art-Net {base + n}")
+            else:
+                art.setText(f"Art-Net {base + n}")
 
-        # Un univers qui ne part sur AUCUNE sortie est invisible sur scène alors
-        # que les projecteurs y sont patchés — c'est l'erreur qui coûte le plus
-        # cher en production, elle mérite d'être dite avant de cliquer Connecter.
-        orphelins = [u + 1 for u in range(4) if u not in mapping]
+        # Pas d'alerte « univers non diffusé » ici : un patch n'occupe presque
+        # jamais les 4 univers, et signaler les 3 vides à chaque ouverture ne
+        # décrivait qu'une situation normale.
         doublons  = sorted({u + 1 for u in mapping
-                            if u != OUTPUT_OFF and mapping.count(u) > 1})
+                            if u not in (OUTPUT_OFF, OUTPUT_INPUT)
+                            and mapping.count(u) > 1})
         eteintes  = [n + 1 for n, u in enumerate(mapping) if u == OUTPUT_OFF]
+        entrees   = [n + 1 for n, u in enumerate(mapping) if u == OUTPUT_INPUT]
         msgs = []
+        if entrees:
+            msgs.append(tr("nc_out_input_hint", a0=", DMX ".join(map(str, entrees)),
+                           a1=", ".join(str(base + n - 1) for n in entrees)))
         if eteintes:
             msgs.append("Sortie désactivée : DMX " + ", DMX ".join(map(str, eteintes)))
-        if orphelins:
-            msgs.append("Univers non diffusé : " + ", ".join(map(str, orphelins)))
         if doublons:
             msgs.append("Dupliqué (miroir) : " + ", ".join(map(str, doublons)))
         self._out_hint.setText("   ·   ".join(msgs))
@@ -2010,7 +2512,7 @@ class DmxOutputDialog(QDialog):
             mapping = self._out_map_from_ui()
             if mapping:
                 self._dmx.set_output_map(mapping)
-            actifs = [u for u in mapping if u != OUTPUT_OFF]
+            actifs = [u for u in mapping if u not in (OUTPUT_OFF, OUTPUT_INPUT)]
             mirror_on = len(set(actifs)) < len(actifs)
             u2 = self._dmx.universe + 1
             self._dmx.connect(
@@ -2025,7 +2527,7 @@ class DmxOutputDialog(QDialog):
             )
             # Résumé lisible de l'aiguillage : « DMX1←U1  DMX2←U1  DMX3←U3… »
             routage = "  ".join(
-                f"DMX{n+1}←{'OFF' if u == OUTPUT_OFF else f'U{u+1}'}"
+                f"DMX{n+1}←{ {OUTPUT_OFF: 'OFF', OUTPUT_INPUT: 'IN'}.get(u, f'U{u+1}') }"
                 for n, u in enumerate(mapping)) if mapping else ""
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(

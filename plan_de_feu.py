@@ -8,7 +8,9 @@ import copy
 import time as _time
 from collections import Counter
 from i18n import tr
-from core import projector_selection_keys, ComboSansMolette, cw_slot_for_color
+from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
+                  CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
+                  color_wheel_display_color)
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
     QLabel, QMenu, QWidgetAction, QPushButton, QSlider,
@@ -95,40 +97,14 @@ class _EffectState:
 
 _PRESETS_FILE = os.path.expanduser("~/.mystrow_moving_presets.json")
 
-# Roue de couleurs générique, utilisée quand la fixture ne déclare pas ses slots
-# (c'est le cas de toutes les fixtures de builtin_fixtures.py : elles ont le
-# canal ColorWheel dans leur profil, mais pas de table de slots — celle-ci ne
-# vient que d'un import OFL/QLC+ ou de l'assistant de calibration).
+# Roue de couleurs générique et lecture du slot actif : définies dans `core`,
+# point unique partagé avec la 3D (cf. `core.color_wheel_display_color`). Les
+# noms restent exposés ici, le reste du module les utilise sous cette forme.
 # Position 0 = « Open » : une roue est toujours sur un slot, elle ne peut pas
 # être noire. Sans ce repli, la lyre s'affichait éteinte sur le plan 2D tant
 # qu'aucune couleur n'avait été posée à la main.
-_CW_DEFAULT_SLOTS = [
-    {"dmx": 0,   "color": "#ffffff", "name": "Open"},
-    {"dmx": 20,  "color": "#ff3300", "name": "Rouge"},
-    {"dmx": 42,  "color": "#ff8800", "name": "Orange"},
-    {"dmx": 64,  "color": "#ffff00", "name": "Jaune"},
-    {"dmx": 85,  "color": "#00cc44", "name": "Vert"},
-    {"dmx": 106, "color": "#00ccff", "name": "Cyan"},
-    {"dmx": 128, "color": "#0044ff", "name": "Bleu"},
-    {"dmx": 149, "color": "#cc00ff", "name": "Magenta"},
-    {"dmx": 170, "color": "#ff99cc", "name": "Rose"},
-    {"dmx": 192, "color": "#ffee88", "name": "CTO"},
-]
-
-
-def cw_slot_at(slots, dmx):
-    """Slot de roue actif pour une valeur DMX.
-
-    On prend le DERNIER slot franchi (`dmx <= v`), pas le plus proche : sur une
-    roue réelle les positions occupent des plages contiguës, et la couleur ne
-    change qu'une fois la position atteinte. Le « plus proche » faisait basculer
-    l'affichage sur la couleur suivante à mi-chemin, avant que la roue ait
-    tourné.
-    """
-    slots = slots or _CW_DEFAULT_SLOTS
-    passed = [s for s in slots if int(s.get("dmx", 0)) <= dmx]
-    return (max(passed, key=lambda s: int(s.get("dmx", 0))) if passed
-            else min(slots, key=lambda s: int(s.get("dmx", 0))))
+_CW_DEFAULT_SLOTS = CW_DEFAULT_SLOTS
+cw_slot_at = _cw_slot_at
 
 
 _DEFAULT_PRESETS = [
@@ -2390,18 +2366,12 @@ class FixtureCanvas(QWidget):
         # ne peut pas être noire. Se fier à base_color affichait la fixture
         # éteinte tant qu'aucune couleur n'avait été posée à la main, alors
         # qu'elle sort bel et bien du blanc.
-        _prof = getattr(proj, 'dmx_profile', None) or []
-        if _prof and 'ColorWheel' in _prof and not (
-                'R' in _prof and 'G' in _prof and 'B' in _prof):
-            # Repli sur la roue générique si la fixture ne déclare pas ses slots
-            # (bibliothèque intégrée) : sinon on retombait sur proj.color, noir
-            # tant qu'aucune couleur n'avait été posée à la main.
-            _cw = int(getattr(proj, 'color_wheel', 0) or 0)
-            _best = cw_slot_at(getattr(proj, 'color_wheel_slots', None), _cw)
-            _c = QColor(_best.get('color', '#ffffff'))
-            _br = proj.level / 100.0
-            return QColor(int(_c.red() * _br), int(_c.green() * _br),
-                          int(_c.blue() * _br))
+        # Repli sur la roue générique si la fixture ne déclare pas ses slots
+        # (bibliothèque intégrée) : sinon on retombait sur proj.color, noir
+        # tant qu'aucune couleur n'avait été posée à la main.
+        _cwc = color_wheel_display_color(proj, proj.level / 100.0)
+        if _cwc is not None:
+            return _cwc
 
         _c = QColor(proj.color)
         # Fixture allumée uniquement sur un canal dédié (bloc UV / Ambre du REC

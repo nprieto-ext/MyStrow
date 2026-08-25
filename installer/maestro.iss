@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=3.1.87
+AppVersion=3.1.88
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow
@@ -10,6 +10,30 @@ OutputBaseFilename=MyStrow_Setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+
+; --- Applications ouvertes -------------------------------------------------
+; L'updater ferme MyStrow lui-meme et attend sa sortie avant de lancer Setup.
+; Restart Manager reste le filet de secours si le processus tarde a mourir :
+; il demande a MyStrow de se fermer au lieu d'afficher une page d'erreur.
+CloseApplications=yes
+; Ne PAS relancer nous-memes ce que Restart Manager a ferme : l'entree [Run]
+; en fin de script relance deja MyStrow, on aurait deux instances.
+RestartApplications=no
+
+; --- Langues ---------------------------------------------------------------
+; Sans section [Languages], Inno n'embarque que l'anglais : un utilisateur
+; francais voyait donc les messages de Setup — dont celui des applications
+; ouvertes — en anglais. L'updater passe /LANG= pour choisir la meme langue
+; que l'application ; ShowLanguageDialog=no evite de la demander a quelqu'un
+; qui lance l'installeur a la main.
+ShowLanguageDialog=no
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "french"; MessagesFile: "compiler:Languages\French.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+Name: "german"; MessagesFile: "compiler:Languages\German.isl"
+Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Files]
 Source: "..\dist\MyStrow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

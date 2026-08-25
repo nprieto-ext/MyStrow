@@ -495,6 +495,44 @@ _REPOS_FAISCEAU = {
 }
 
 
+def reset_beam_channels(projectors, blackout=False):
+    """Ramène au repos TOUT ce qu'une restitution a pu poser sur le faisceau.
+
+    À l'arrêt d'une timeline (fin du dernier clip, fin du média, pause,
+    changement de ligne, sortie du mode « Play Lumiere », STOP), le moteur DMX
+    continue d'émettre l'état des `Projector` 25 fois par seconde. Or les seuls
+    arrêts qui nettoyaient quoi que ce soit remettaient `level`/`color` à zéro —
+    et rien d'autre. Tous les canaux de faisceau posés par le dernier clip
+    restaient donc collés jusqu'au prochain CLEAR :
+
+    - `channel_extras` (canaux bruts) : c'est LE symptôme client. Un « jeu de
+      lumière » dont le mode auto/son est un canal brut posé par une mémoire de
+      la piste Séquence continuait de tourner indéfiniment après la fin du
+      morceau — le niveau à 0 n'y change rien, ces machines ignorent le dimmer
+      dans leurs modes internes. « Faut faire clear partout pour stopper. »
+    - `strobe_speed`, `gobo`, `prism`, `color_wheel`, `shutter`, `uv`/blanc/
+      ambre/orange : même mécanique, symptômes plus discrets (gobo qui reste,
+      strobe qui déborde sur le média suivant).
+
+    Le pan/tilt est volontairement EXCLU : recentrer les lyres à chaque arrêt de
+    séquence les ferait sauter au milieu de la course entre deux morceaux
+    (cf. la plainte « la lyre part au centre en fin d'effet »).
+
+    `blackout=True` éteint en plus le projecteur — réservé aux arrêts qui
+    noircissaient déjà (fin de timeline, pause).
+    """
+    for p in projectors:
+        for _attr, _repos in _REPOS_FAISCEAU.items():
+            setattr(p, _attr, _repos)
+        p.strobe_speed = 0
+        p.uv = p.white_boost = p.amber_boost = p.orange_boost = 0
+        p.channel_extras = {}
+        if blackout:
+            p.level      = 0
+            p.base_color = QColor("black")
+            p.color      = QColor("black")
+
+
 def apply_seq_memories_htp(entries, memories, projectors, main_win,
                            lock_pantilt_idxs=None, lock_gobo_idxs=None):
     """
@@ -1646,35 +1684,23 @@ class _LibraryPositionItem(_LibraryItem):
         p.end()
 
     def _resolve_idx(self):
-        """Index dans position_presets, en convertissant le preset Plan de Feu au besoin."""
+        """Index dans position_presets, en convertissant le preset Plan de Feu au besoin.
+
+        La conversion elle-même vit dans `MainWindow.pdf_position_to_akai_index`
+        — point unique partagé avec le menu POSITION de l'éditeur d'effets. Elle
+        RAFRAÎCHIT une copie de même nom au lieu de simplement la retrouver :
+        celle-ci date du premier glisser-déposer, et une lyre ajoutée au rig
+        depuis puis fusionnée dans la position côté plan de feu n'y figurait
+        pas — « le merge ne s'applique pas dans REC Lumière ».
+        """
         if self._preset_idx is not None or not self._pdf:
             return self._preset_idx
         panel = getattr(self, '_panel', None)
         mw = getattr(getattr(panel, 'parent_editor', None), 'main_window', None)
-        if mw is None or not hasattr(mw, '_pdf_preset_to_akai'):
+        if mw is None or not hasattr(mw, 'pdf_position_to_akai_index'):
             return None
-        try:
-            akai = mw._pdf_preset_to_akai(self._pdf)
-            for ei, ep in enumerate(getattr(mw, 'position_presets', [])):
-                if ep.get("name") == akai.get("name"):
-                    # RAFRAÎCHIR la copie, ne pas se contenter de la retrouver.
-                    # Elle date du premier glisser-déposer : une lyre ajoutée au
-                    # rig depuis, puis fusionnée dans la position côté plan de
-                    # feu, n'y figure pas — le REC Lumière rejouait l'ancienne
-                    # version et « le merge ne s'appliquait pas ». Le chemin des
-                    # pads AKAI (`_import_pdf_preset_to_pad`) écrase déjà de la
-                    # même façon : le plan de feu fait foi pour un nom donné.
-                    mw.position_presets[ei] = akai
-                    mw._save_akai_config_auto()
-                    self._preset_idx = ei
-                    return ei
-            mw.position_presets.append(akai)
-            self._preset_idx = len(mw.position_presets) - 1
-            mw._save_akai_config_auto()
-            return self._preset_idx
-        except Exception as e:
-            print(f"[REC] conversion position Plan de Feu impossible: {e}")
-            return None
+        self._preset_idx = mw.pdf_position_to_akai_index(self._pdf)
+        return self._preset_idx
 
     def _do_single_drag(self):
         import json as _json

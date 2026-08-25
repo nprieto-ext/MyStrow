@@ -189,6 +189,14 @@ TRANSPORT_ARTNET      = "artnet"       # Boitier reseau Art-Net (ElectroConcept.
 # des nodes rejouer la derniere trame recue — projecteurs figes allumes.
 OUTPUT_OFF = -1
 
+# Port du Node bascule en ENTREE (DMX -> Art-Net), pour y brancher un pupitre.
+# Ici, au contraire d'OUTPUT_OFF, il faut se TAIRE completement : ce port n'est
+# plus un consommateur mais une SOURCE. Continuer a lui envoyer nos 512 zeros
+# mettrait deux emetteurs sur le meme univers — selon le boitier, il merge, il
+# ignore, ou il alterne entre les deux trames. C'est toute la difference entre
+# « cette sortie n'eclaire rien » et « cette sortie ne m'appartient pas ».
+OUTPUT_INPUT = -2
+
 # Break DMX genere par « baud-rate trick » : un octet 0x00 emis a BREAK_BAUD
 # tient la ligne a LOW pendant 1 bit de start + 8 bits de donnees = 9 bits.
 # C'est le repli quand send_break n'est pas exploitable — cas de macOS, ou il
@@ -368,7 +376,9 @@ class ArtNetDMX:
     def set_output_map(self, mapping):
         """Fixe la correspondance sortie du Node -> univers interne.
 
-        Valeurs acceptees : 0-3 (index d'univers) ou OUTPUT_OFF pour desactiver.
+        Valeurs acceptees : 0-3 (index d'univers), OUTPUT_OFF pour desactiver
+        (on emet des zeros), ou OUTPUT_INPUT si ce port du Node est bascule en
+        entree DMX (on n'emet rien du tout — cf. la constante).
 
         Tolerant a dessein : une config absente, tronquee ou corrompue ne doit
         jamais empecher la sortie DMX de fonctionner. Toute entree invalide
@@ -387,8 +397,21 @@ class ArtNetDMX:
             except Exception:
                 out.append(n)
                 continue
-            out.append(OUTPUT_OFF if v == OUTPUT_OFF else max(0, min(3, v)))
+            if v in (OUTPUT_OFF, OUTPUT_INPUT):
+                out.append(v)
+            else:
+                out.append(max(0, min(3, v)))
         self.output_map = out
+
+    def input_universes(self):
+        """Univers Art-Net des ports du Node bascules en ENTREE.
+
+        Sert a l'entree DMX (dmx_in_link.py) : c'est sur ces univers-la que le
+        pupitre branche sur le boitier va emettre, et donc ceux qu'il faut
+        ecouter. Evite a l'utilisateur de deviner le numero.
+        """
+        return [self.universe + n for n, v in enumerate(self.output_map)
+                if v == OUTPUT_INPUT]
 
     def _save_config(self):
         try:
@@ -1106,8 +1129,12 @@ class ArtNetDMX:
                 # L'univers Art-Net reste base + n : c'est le cablage physique du
                 # Node, qu'on ne change pas. Ce qui est reglable, c'est QUELLES
                 # donnees partent sur cette sortie.
-                art_uni = self.universe + sortie
                 src = self.output_map[sortie] if sortie < len(self.output_map) else sortie
+                if src == OUTPUT_INPUT:
+                    # Ce port est une ENTREE : on se tait. Emettre ici mettrait
+                    # deux sources sur le meme univers (cf. OUTPUT_INPUT).
+                    continue
+                art_uni = self.universe + sortie
                 pkt = self._build_artnet_packet(art_uni, self._artnet_seq, data_universe=src)
                 self._socket.sendto(pkt, (self.target_ip, self.target_port))
             self._last_artnet_error = None

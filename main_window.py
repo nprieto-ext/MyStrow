@@ -223,6 +223,7 @@ from core import (
     cw_slot_for_color,
     copy_report, send_report_email, DMX_FRAME_MS,
     fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
+    message_erreur_reseau,
 )
 from i18n import get_language, set_language, tr
 from projector import Projector
@@ -3197,6 +3198,10 @@ class MainWindow(QMainWindow):
         self.midi_handler.pad_pressed.connect(self.on_midi_pad)
         self.midi_handler.pad_released.connect(self.on_midi_pad_released)
 
+        # Entrée DMX (pupitre) : différée comme la manette, le temps que les
+        # faders et les pads existent — c'est eux qu'elle pilote.
+        QTimer.singleShot(1500, self._start_dmx_in_if_enabled)
+
         # Dimmers max IA Lumiere par groupe
         self.ia_max_dimmers = {
             'face': 50, 'lat': 100, 'contre': 100,
@@ -3502,6 +3507,11 @@ class MainWindow(QMainWindow):
         # trackball d'une console. C'est bien une source de controle entrante,
         # d'ou sa place dans ce menu.
         ctrl_menu.addAction(tr("mw_menu_gamepad"), self._open_gamepad_dialog)
+
+        # Pupitre lumiere branche sur une entree DMX du Node : c'est encore une
+        # source de controle ENTRANTE, au meme titre que la manette ou la regie
+        # video. Rien a voir avec le menu « Sortie DMX », qui parle du parc.
+        ctrl_menu.addAction(tr("mw_menu_dmx_in"), self._open_dmx_in_dialog)
         # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
         # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
 
@@ -5543,7 +5553,8 @@ class MainWindow(QMainWindow):
                     self._release_manual_grabs()   # action volontaire → on repeint
                     self._mem_advance_cue(mem_col, row)
                     fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
-                    self._recompute_memory_mix()
+                    # Fondu du cue d'ARRIVÉE (donc après l'avance).
+                    self._recompute_memory_mix(self._cue_fade_secs(mem_col, row))
                     cue_idx = self._mem_cue_idx.get((mem_col, row), 0)
                     n_cues = len(mem["cues"])
                     cue_lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx + 1}")
@@ -5557,6 +5568,10 @@ class MainWindow(QMainWindow):
         # Activation impossible si aucune memoire stockee
         if self.memories[mem_col][row] is None:
             return
+
+        # Photo AVANT extinction du pad précédent : c'est de ce look-là que doit
+        # partir un éventuel fondu, pas du noir laissé par le nettoyage.
+        _look_avant = self._etat_couleur_courant()
 
         # Desactiver le pad precedent DANS CETTE COLONNE SEULEMENT
         prev_row = self.active_memory_pads.pop(col_akai, None)
@@ -5585,7 +5600,13 @@ class MainWindow(QMainWindow):
         self._style_memory_pad(mem_col, row, active=True)
         self._update_memory_pad_led(mem_col, row, active=True)
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
-        self._recompute_memory_mix()
+        # Poser un pad, c'est ARRIVER SUR LA SÉQUENCE : c'est son fondu à elle
+        # qui mène, pas celui du cue 1. Les deux sont indépendants — une
+        # mémoire dont les cues s'enchaînent en 3 s peut très bien devoir
+        # s'installer sec, et l'inverse. Fondu à 0 par défaut → un show sans
+        # fondu ne bouge pas.
+        self._recompute_memory_mix(self._mem_fade_secs(mem_col, row),
+                                   fade_from=_look_avant)
 
         mem = self.memories[mem_col][row]
         self._mem_ensure_cues(mem)
@@ -5792,11 +5813,19 @@ class MainWindow(QMainWindow):
         mc, r = self._cue_panel.mem_col, self._cue_panel.row
         if mc < 0 or self.memories[mc][r] is None:
             return
+        # Le panneau PILOTE une mémoire posée, il ne la pose pas — même doctrine
+        # que le bouton ▶ (`_on_cue_play_pause`). Avant, ce clic écrivait
+        # directement sur les projecteurs alors que le mix, lui, ignore une
+        # mémoire dont le pad est éteint : le look obtenu disparaissait au
+        # premier mouvement de fader. Mieux vaut le dire que le faire à moitié.
+        col_akai = self._mem_col_to_fader(mc)
+        if self.active_memory_pads.get(col_akai) != r:
+            self._log_message(f"MEM {mc+1}.{r+1} — posez d'abord la mémoire "
+                              f"pour jouer ses cues", "warn")
+            return
         self._release_manual_grabs()   # clic sur un cue = action volontaire
         self._mem_cue_idx[(mc, r)] = cue_idx
-        col_akai = self._mem_col_to_fader(mc)
-        fader_val = self.faders[col_akai].value if col_akai in self.faders else 100
-        self._apply_cue_with_fade(mc, r, fader_val)
+        self._recompute_memory_mix(self._cue_fade_secs(mc, r))
         mem = self.memories[mc][r]
         cue_lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
         n = len(mem["cues"])
@@ -5872,63 +5901,6 @@ class MainWindow(QMainWindow):
         else:
             pos = self._cue_panel.mapToGlobal(self._cue_panel.rect().center())
         menu.exec(pos)
-
-    def _apply_cue_with_fade(self, mem_col: int, row: int, fader_val: int):
-        """Applique le cue actif avec fondu si fade > 0."""
-        cue = self._mem_active_cue(mem_col, row)
-        fade_secs = float(cue.get("fade", 0))
-        if fade_secs <= 0:
-            self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
-            return
-        # Snapshot de l'état courant
-        self._fade_from = [(p.level, QColor(p.base_color)) for p in self.projectors]
-        # Calcul de l'état cible
-        brightness = fader_val / 100.0
-        to_state = []
-        for ps in cue.get("projectors", []):
-            if ps["level"] <= 0:
-                to_state.append((0, QColor("black")))
-            else:
-                to_state.append((int(ps["level"] * brightness), QColor(ps["base_color"])))
-        while len(to_state) < len(self.projectors):
-            to_state.append((0, QColor("black")))
-        self._fade_to    = to_state
-        self._fade_start = time.time()
-        self._fade_dur   = fade_secs
-        self._fade_timer.start()
-        # Pan/tilt : _fade_tick n'interpole QUE level/couleur. Sans ça, un cue
-        # avec fondu n'envoie jamais sa position (le cue sans fondu, lui, passe
-        # par _apply_memory_to_projectors qui la gère). On anime sur la durée du
-        # fondu pour que la lyre arrive en même temps que la couleur.
-        for i, ps in enumerate(cue.get("projectors", [])):
-            if i >= len(self.projectors):
-                break
-            p = self.projectors[i]
-            if ("pan" not in ps and "tilt" not in ps) or getattr(p, '_manual_move', False):
-                continue
-            new_pan  = ps.get("pan",  getattr(p, 'pan',  32768))
-            new_tilt = ps.get("tilt", getattr(p, 'tilt', 32768))
-            new_pan  = new_pan  * 256 if new_pan  <= 255 else new_pan
-            new_tilt = new_tilt * 256 if new_tilt <= 255 else new_tilt
-            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                self._start_pan_tilt_transition(p, new_pan, new_tilt,
-                                                int(fade_secs * 1000))
-            else:
-                p.pan, p.tilt = new_pan, new_tilt
-        # Déclencher/arrêter l'effet du cue
-        mem_raw = self.memories[mem_col][row] or {}
-        eff_cfg = cue.get("effect") or mem_raw.get("effect") or {}
-        new_eff = eff_cfg.get("name", "") if eff_cfg.get("layers") else ""
-        cur_eff = getattr(self, "active_effect", None) or ""
-        if new_eff != cur_eff:
-            if cur_eff:
-                self.stop_effect()
-                self.active_effect = None
-                self.active_effect_config = {}
-            if new_eff:
-                self.active_effect = new_eff
-                self.active_effect_config = eff_cfg
-                self.start_effect(new_eff)
 
     def _fade_tick(self):
         elapsed = time.time() - self._fade_start
@@ -6105,9 +6077,10 @@ class MainWindow(QMainWindow):
             return
         self._release_manual_grabs()   # avance auto du minutage → on repeint
         cue_idx = self._mem_cue_idx.get((mc, r), 0)
-        col_akai = self._mem_col_to_fader(mc)
-        fader_val = self.faders[col_akai].value if col_akai in self.faders else 100
-        self._apply_cue_with_fade(mc, r, fader_val)
+        # Même moteur que le pad et le GO : le mix composite TOUTES les mémoires
+        # levées. L'ancien chemin était mono-mémoire et effaçait la contribution
+        # des autres faders à chaque avance du minutage.
+        self._recompute_memory_mix(self._cue_fade_secs(mc, r))
         n = len(mem["cues"])
         lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
         self._log_message(f"MEM {mc+1}.{r+1} → {lbl} ({cue_idx+1}/{n})", "mem")
@@ -6253,7 +6226,7 @@ class MainWindow(QMainWindow):
                     self.active_effect_config = eff_cfg
                     self.start_effect(new_eff)
 
-    def _recompute_memory_mix(self):
+    def _recompute_memory_mix(self, fade_secs: float = 0.0, fade_from=None):
         """Composite TOUTES les mémoires actives (faders > 0) sur les projecteurs.
 
         - Fixtures RGB : mélange ADDITIF des couleurs pondéré par (niveau × fader)
@@ -6261,7 +6234,22 @@ class MainWindow(QMainWindow):
         - Roue de couleur (sans RGB) : mélange impossible → mémoire DOMINANTE
           (niveau effectif le plus élevé).
         - Pan/Tilt/Gobo/canaux spéciaux : mémoire dominante.
+
+        `fade_secs > 0` → on arrive sur un cue qui porte un fondu : le mix
+        calcule la cible, et on y glisse au lieu d'y sauter (cf.
+        `_recompute_memory_mix_faded`). Tous les autres appelants — mouvement de
+        fader, mute, master — gardent la valeur par défaut et donc, au bit près,
+        le comportement d'avant. `fade_from` sert aux appelants qui ont modifié
+        l'état AVANT d'appeler (cf. `_activate_memory_pad`).
         """
+        if fade_secs > 0:
+            return self._recompute_memory_mix_faded(fade_secs, fade_from)
+
+        # Un geste direct (fader, mute) reprend la main sur un fondu en cours :
+        # sinon le tick suivant de `_fade_tick` réécraserait ce qu'on vient
+        # d'écrire, et le fader semblerait sans effet pendant toute la rampe.
+        self._fade_timer.stop()
+
         # 1. Collecter les mémoires actives (fader > 0, non mutée)
         active = []   # (bright 0-1, cue, mem_raw)
         for fader_idx, row in list(self.active_memory_pads.items()):
@@ -6409,6 +6397,304 @@ class MainWindow(QMainWindow):
                 self.active_effect_config = eff_cfg
                 self.start_effect(new_eff)
 
+    def _cue_fade_secs(self, mem_col: int, row: int) -> float:
+        """Fondu (s) du cue ACTIF de cette mémoire — celui sur lequel on arrive.
+
+        Même règle que l'enchaînement minuté : le fondu appartient au cue
+        d'arrivée, jamais à celui qu'on quitte. À appeler APRÈS
+        `_mem_advance_cue`.
+        """
+        try:
+            return max(0.0, float(self._mem_active_cue(mem_col, row).get("fade", 0)))
+        except Exception:
+            return 0.0
+
+    # ── Fondu d'une mémoire (réglage global au pad) ────────────────────────
+    # Le fondu se règle depuis toujours dans le panneau 📋 Cues, cue par cue.
+    # Personne ne l'y trouvait : sur une mémoire MONO-cue — le cas courant — on
+    # n'ouvre jamais ce panneau, il n'a l'air utile qu'à partir de deux cues.
+    # D'où un réglage direct au clic droit du pad, qui pose la MÊME valeur sur
+    # tous les cues. Pas de nouveau moteur ni de nouveau champ : on écrit le
+    # `fade` que `_cue_fade_secs` lit déjà, et le panneau Cues reste l'outil
+    # fin pour dissocier les cues entre eux.
+
+    _MEM_FADE_COLOR = "#ffb300"   # ambre : le même que les fondus de médias
+
+    def _mem_ensure_fade(self, mem: dict):
+        """Donne son `fade` de séquence à une mémoire qui n'en a pas encore.
+
+        Reprise de `cues[0]["fade"]` **uniquement si la mémoire n'a qu'un cue**.
+        Là, aucune ambiguïté : sans cue suivant, ce fondu ne pouvait vouloir
+        dire qu'une chose — le temps d'installation à la pose du pad — et c'est
+        bien ce qu'il jouait avant que le fondu de séquence existe. Le reprendre
+        garde à ces shows le comportement qu'ils avaient.
+
+        Dès DEUX cues, on part de zéro. Le fondu du cue 1 y désigne l'arrivée
+        sur le cue 1 depuis le cue précédent, c'est-à-dire une étape de
+        l'enchaînement interne : le recopier en fondu de séquence afficherait
+        sur le pad un temps que personne n'a réglé pour lui.
+        """
+        if mem is None or "fade" in mem:
+            return
+        self._mem_ensure_cues(mem)
+        cues = mem.get("cues") or []
+        try:
+            mem["fade"] = (max(0.0, float(cues[0].get("fade", 0)))
+                           if len(cues) == 1 else 0.0)
+        except Exception:
+            mem["fade"] = 0.0
+
+    def _mem_fade_secs(self, mem_col, row) -> float:
+        """Fondu de SÉQUENCE : le temps que met le pad à s'installer quand on
+        le pose.
+
+        À ne pas confondre avec `_cue_fade_secs`, qui est le fondu d'un cue
+        vers le suivant À L'INTÉRIEUR de la mémoire. Les deux sont
+        indépendants : un enchaînement de cues réglé finement dans 📋 Cues ne
+        doit rien dire du temps d'arrivée sur la séquence, et régler ce
+        temps-là ne doit rien réécrire dans les cues.
+        """
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return 0.0
+        self._mem_ensure_fade(mem)
+        try:
+            return max(0.0, float(mem.get("fade", 0)))
+        except Exception:
+            return 0.0
+
+    def _set_mem_fade(self, mem_col, row, secs: float):
+        """Pose le fondu de séquence. Ne touche AUCUN cue."""
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return
+        mem["fade"] = max(0.0, float(secs))
+        col_akai = self._mem_col_to_fader(mem_col)
+        self._style_memory_pad(mem_col, row, active=self.active_memory_pads.get(col_akai) == row)
+        self._save_akai_config_auto()
+
+    @staticmethod
+    def _fmt_mem_fade(secs: float) -> str:
+        """« — » / « 2 s » / « 2,5 s » — formateur des fondus de médias.
+
+        Emprunté et non recopié : deux formateurs de fondu finiraient par ne
+        plus arrondir pareil, et l'utilisateur verrait « 2,5 s » sur un média
+        et « 2.5 s » sur un pad.
+
+        Au-delà de la minute on repasse à celui du panneau Cues (« 2m30s ») :
+        c'est le MÊME fondu qui s'affiche aux deux endroits, il ne peut pas se
+        lire « 150 s » ici et « 2m30s » là.
+        """
+        secs = max(0.0, float(secs or 0))
+        if secs > 60:
+            from cue_list import _fmt_time
+            return _fmt_time(secs)
+        return Sequencer._fmt_fade(int(round(secs * 1000)))
+
+    def _mem_fade_icon(self, petite: bool = False):
+        """Rampe ambre du fondu — même symbole que sur une ligne de playlist."""
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray, QRectF
+        cache = getattr(self, "_mem_fade_icon_cache", None)
+        if cache is None:
+            cache = self._mem_fade_icon_cache = {}
+        if petite in cache:
+            return cache[petite]
+        s = 16 if petite else 22
+        pix = QPixmap(s, s)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+               f'<path fill="{self._MEM_FADE_COLOR}" d="M3 21 L21 5 L21 21 Z"/></svg>')
+        QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(p, QRectF(0, 0, s, s))
+        p.end()
+        cache[petite] = QIcon(pix)
+        return cache[petite]
+
+    def _edit_memory_fade(self, mem_col, row):
+        """Boîte de réglage du fondu d'une mémoire — jumelle de celle des médias.
+
+        Un seul curseur : une mémoire n'a pas de fondu de SORTIE. Le seul
+        moment où elle s'éteint est le passage à un autre pad de la même
+        colonne, et là c'est le fondu du pad d'ARRIVÉE qui mène la transition
+        (cf. `_recompute_memory_mix_faded`, argument `fade_from`).
+        """
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return
+        from plan_de_feu import _CurseurCanal, _feuille_curseur
+
+        self._mem_ensure_cues(mem)
+        n_cues = len(mem.get("cues", []) or [])
+        courant = self._mem_fade_secs(mem_col, row)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("mw_mem_fade_title"))
+        dlg.setMinimumWidth(430)
+        dlg.setStyleSheet(
+            "QDialog{background:#0d0d0d;}"
+            "QLabel{color:#e0e0e0;background:transparent;}"
+            "QPushButton{background:#1a1a1a;color:#ccc;border:1px solid #2a2a2a;"
+            "border-radius:5px;padding:7px 16px;font-size:12px;}"
+            "QPushButton:hover{background:#242424;border-color:#3a3a3a;color:#fff;}"
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(14)
+
+        titre = f"MEM {mem_col + 1}.{row + 1}"
+        if mem.get("name"):
+            titre += f"  ·  {mem['name']}"
+        cible = QLabel(titre)
+        cible.setStyleSheet("color:#00d4ff;font-size:12px;font-weight:bold;"
+                            "background:transparent;")
+        lay.addWidget(cible)
+
+        ligne = QWidget()
+        h = QHBoxLayout(ligne)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(10)
+
+        lbl = QLabel(tr("mw_mem_fade_lbl"))
+        lbl.setFixedWidth(120)
+        lbl.setStyleSheet("color:#999;font-size:12px;font-weight:bold;"
+                          "background:transparent;")
+
+        sli = _CurseurCanal(Qt.Horizontal)
+        # Unité = le dixième de seconde, comme les fondus de médias : la molette
+        # de _CurseurCanal avance de 5 crans, soit un demi-pas de seconde.
+        # Plafond 60 s : au-delà on est dans le cue minuté, réglé dans 📋 Cues.
+        # SAUF si le pad porte déjà plus long — le panneau Cues monte à 600 s, et
+        # un curseur qui s'arrête à 60 ramènerait ce fondu à 60 s en silence au
+        # premier clic sur OK. On élargit plutôt l'échelle pour l'accueillir.
+        _debut = int(round(courant * 10)) if courant is not None else 0
+        sli.setRange(0, max(600, _debut))
+        # Cues divergents : on part de 0 mais on n'écrase rien tant qu'OK n'est
+        # pas cliqué — valider est une décision d'uniformiser le pad.
+        sli.setValue(_debut)
+        sli.setStyleSheet(_feuille_curseur(True, self._MEM_FADE_COLOR))
+        sli.setFixedHeight(22)
+        sli.setCursor(Qt.PointingHandCursor)
+
+        val = QLabel()
+        val.setFixedWidth(58)
+        val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        val.setStyleSheet(f"color:{self._MEM_FADE_COLOR};font-size:12px;"
+                          "font-weight:bold;background:transparent;")
+
+        def montrer(v):
+            val.setText(self._fmt_mem_fade(v / 10.0))
+        sli.valueChanged.connect(montrer)
+        montrer(sli.value())
+
+        h.addWidget(lbl)
+        h.addWidget(sli, 1)
+        h.addWidget(val)
+        lay.addWidget(ligne)
+
+        hint = QLabel(tr("mw_mem_fade_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#666;font-size:11px;background:transparent;")
+        lay.addWidget(hint)
+
+        # Sur une mémoire multi-cue, dire explicitement que ce réglage ne touche
+        # pas les cues : c'est la confusion que cette boîte doit éviter, pas
+        # entretenir.
+        if n_cues > 1:
+            note = QLabel(tr("mw_mem_fade_vs_cues", n=n_cues))
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#7a6a3a;font-size:11px;background:transparent;")
+            lay.addWidget(note)
+
+        barre = QHBoxLayout()
+        btn_clear = QPushButton(tr("mw_mem_fade_clear"))
+        btn_clear.setStyleSheet(
+            "QPushButton{background:#2a0000;color:#cc4444;border:1px solid #3a1111;"
+            "border-radius:5px;padding:7px 16px;font-size:12px;}"
+            "QPushButton:hover{background:#440000;color:#ff6666;}")
+
+        # Curseur à zéro PUIS validation : « Retirer le fondu » est une
+        # décision, pas un réglage — même geste que côté médias.
+        def _retirer():
+            sli.setValue(0)
+            dlg.accept()
+        btn_clear.clicked.connect(_retirer)
+        barre.addWidget(btn_clear)
+        barre.addStretch()
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Cancel).setText(tr("btn_cancel"))
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        barre.addWidget(btns)
+        lay.addLayout(barre)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._set_mem_fade(mem_col, row, sli.value() / 10.0)
+
+    def _etat_couleur_courant(self):
+        """Photo (niveau, teinte pure, couleur) du rig — point de départ d'un fondu."""
+        return [(p.level, QColor(p.base_color), QColor(p.color)) for p in self.projectors]
+
+    def _recompute_memory_mix_faded(self, fade_secs: float, fade_from=None):
+        """Glisse vers le mix des mémoires au lieu d'y sauter.
+
+        Le fondu n'était honoré que par un second moteur, `_apply_cue_with_fade`
+        (supprimé) : MONO-mémoire, et réservé à l'enchaînement minuté et au
+        panneau Cues. Les deux chemins live — appui sur le pad (UI et AKAI) et
+        bouton GO — passaient, eux, par le mix, qui écrivait sec : « si je ne
+        suis pas en cue timé je n'arrive pas à avoir de fade » (remontée Julien
+        Blondeau, 08/2026). Et symétriquement, l'enchaînement minuté effaçait la
+        contribution des autres faders mémoire levés.
+
+        Les QUATRE chemins passent désormais ici. On ne duplique pas le calcul :
+        le mix reste l'unique writer de la CIBLE, on se contente de l'intercaler
+        derrière une interpolation. Pas de second moteur à maintenir en parité,
+        et le mélange additif de plusieurs mémoires levées est préservé.
+
+        Comme `_fade_tick`, on n'interpole que niveau + couleur ; le pan/tilt
+        glisse via l'animation dédiée et le reste (gobo, roue, canaux bruts) est
+        posé net par le mix. C'est déjà le comportement du fondu existant.
+
+        `fade_from` : photo prise plus tôt par l'appelant. Indispensable au
+        changement de pad dans une même colonne — `_activate_memory_pad` éteint
+        le pad précédent AVANT d'appeler, donc une photo prise ici verrait du
+        noir et le fondu ferait un trou avant de remonter.
+        """
+        avant_col = fade_from if fade_from is not None else self._etat_couleur_courant()
+        if len(avant_col) < len(self.projectors):
+            avant_col = list(avant_col) + [(0, QColor("black"), QColor("black"))] * (
+                len(self.projectors) - len(avant_col))
+        avant_pt  = [(getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768))
+                     for p in self.projectors]
+
+        # Cible = ce que le mix aurait écrit (il coupe aussi le fondu en cours).
+        self._recompute_memory_mix()
+
+        self._fade_to = [(p.level, QColor(p.base_color)) for p in self.projectors]
+
+        # Rendre les couleurs de départ : c'est le fondu qui mène jusqu'à la cible.
+        for i, p in enumerate(self.projectors):
+            lvl, base, col = avant_col[i]
+            p.level, p.base_color, p.color = lvl, base, col
+        self._fade_from  = [(lvl, base) for lvl, base, _c in avant_col]
+        self._fade_start = time.time()
+        self._fade_dur   = fade_secs
+        self._fade_timer.start()
+
+        # Pan/tilt : la lyre arrive en même temps que la couleur.
+        for i, p in enumerate(self.projectors):
+            if getattr(p, '_manual_move', False):
+                continue
+            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre'):
+                continue    # sans moteur, rien à animer : la valeur du mix reste
+            cible_pan, cible_tilt = getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)
+            p.pan, p.tilt = avant_pt[i]
+            self._start_pan_tilt_transition(p, cible_pan, cible_tilt,
+                                            int(fade_secs * 1000))
+
     def _style_memory_pad(self, mem_col, row, active):
         """Style visuel d'un pad mémoire — met à jour toutes les colonnes mappées sur ce MEM."""
         for col_akai in self._mem_col_to_faders(mem_col):
@@ -6435,6 +6721,21 @@ class MainWindow(QMainWindow):
             pad.setText("⚡")
         else:
             pad.setText("")
+
+        # Marqueur de fondu : la rampe ambre des lignes de playlist. Un pad de
+        # 28 px n'a pas la place d'un libellé de plus — l'icône se cale à
+        # gauche du « 2/5 » ou du « ⚡ », et prend le centre quand le pad est nu
+        # (elle est alors dessinée plus grande, c'est le seul contenu).
+        # Fondu de SÉQUENCE uniquement : les fondus entre cues appartiennent à
+        # l'enchaînement interne, ils n'ont rien à dire sur la face du pad.
+        _fade_c = self._mem_fade_secs(mem_col, row) if mem_d else 0.0
+        if mem_d and _fade_c > 0:
+            _serre = bool(pad.text())
+            pad.setIcon(self._mem_fade_icon(petite=_serre))
+            pad.setIconSize(QSize(8, 8) if _serre else QSize(11, 11))
+        else:
+            pad.setIcon(QIcon())
+
         if color == QColor("black") or self.memories[mem_col][row] is None:
             pad.setProperty("base_color", QColor("black"))
             pad.setStyleSheet("""
@@ -6544,6 +6845,15 @@ class MainWindow(QMainWindow):
             if eff.get("layers") and eff.get("name"):
                 lines.append(f"<span style='color:#00d4ff'>⚡ "
                              f"{tr('mem_tt_effect', name=eff['name'])}</span>")
+
+            # Le fondu se lit ici comme la boucle et les fondus se lisent dans
+            # l'infobulle d'une ligne de playlist : la rampe sur le pad dit
+            # qu'il y en a un, l'infobulle dit combien. Fondu de séquence
+            # seulement — les fondus entre cues se lisent dans 📋 Cues.
+            _fade_c = self._mem_fade_secs(mem_col, row)
+            if _fade_c > 0:
+                lines.append(f"<span style='color:{self._MEM_FADE_COLOR}'>"
+                             f"↗ {tr('mem_tt_fade', v=self._fmt_mem_fade(_fade_c))}</span>")
             return "<br>".join(lines)
         except Exception:
             # Le tooltip est reconstruit à chaque restyle de pad : une mémoire
@@ -6862,6 +7172,19 @@ class MainWindow(QMainWindow):
             cues_lbl = f"📋  Cues  ({n_cues})" if n_cues > 1 else "📋  Cues"
             cues_action = menu.addAction(cues_lbl)
             cues_action.triggered.connect(lambda: self._open_cue_editor(mem_col, row))
+
+            # Fondu de SÉQUENCE, valeur en clair dans le libellé comme pour les
+            # médias. Rien à voir avec la colonne « Fondu » du panneau Cues, qui
+            # règle l'enchaînement d'un cue au suivant : une mémoire multi-cue
+            # aux fondus soignés affiche « Fondu » tout court tant que personne
+            # n'a réglé son temps d'arrivée.
+            _fade = self._mem_fade_secs(mem_col, row)
+            if _fade > 0:
+                fade_lbl = tr("mw_mem_fade_set", v=self._fmt_mem_fade(_fade))
+            else:
+                fade_lbl = tr("mw_mem_fade")
+            fade_action = menu.addAction(fade_lbl)
+            fade_action.triggered.connect(lambda: self._edit_memory_fade(mem_col, row))
 
             # Le sous-menu Effet est construit plus bas (il a besoin de la
             # bibliothèque d'effets) mais s'insère ICI : c'est du contenu.
@@ -7225,6 +7548,82 @@ class MainWindow(QMainWindow):
         # Envoi DMX immediat sans attendre le prochain tick
         self.send_dmx_update()
 
+    def apply_slot_level_offpage(self, slot, value):
+        """Applique un niveau a une tranche qui n'est PAS sur la page affichee.
+
+        Sert a l'entree DMX (dmx_in_link.py) : un pupitre adresse les 20 pages
+        de layout d'un coup, alors qu'une seule est a l'ecran. C'est possible
+        parce que la CIBLE d'une tranche — un groupe, une colonne FX, le volume
+        du lecteur — ne depend pas de la page ; seuls les WIDGETS (le fader, le
+        pad actif) sont lies a la colonne visible. On applique donc l'effet sans
+        toucher a la surface de controle, exactement dans l'esprit de
+        `_sync_controls_to_state` : le rig est la source de verite, l'AKAI n'en
+        est qu'une vue.
+
+        Renvoie False pour les tranches MEM et POS : le mix des memoires est
+        indexe par colonne VISIBLE (`active_memory_pads`, puis
+        `_fader_to_mem_col` qui relit `_fader_map`), et le fader de position
+        porte son axe dans le slot de la colonne. Hors de la page affichee, ces
+        deux-la n'ont pas de cible definie — mieux vaut ne rien faire que
+        piloter la mauvaise memoire.
+        """
+        stype = slot.get("type")
+        value = max(0, min(100, int(value)))
+
+        if stype == "play":
+            try:
+                self.audio.setVolume(value / 100.0)
+            except Exception:
+                pass
+            return True
+
+        if stype == "fx":
+            fx_col = slot.get("fx_col", 0)
+            if not (0 <= fx_col < _FX_COL_MAX):
+                return False
+            prev_amp = self.fx_amplitudes[fx_col]
+            self.fx_amplitudes[fx_col] = value
+            # Meme precaution que dans set_proj_level : un fader FX qui retombe
+            # a 0 doit eteindre une fois, sinon update_effect garde la main.
+            if value == 0 and prev_amp > 0:
+                for p in self.projectors:
+                    p.color = QColor("black")
+                self.send_dmx_update()
+            return True
+
+        if stype != "group":
+            return False
+
+        groups = self._slot_groups(slot)
+        if not groups:
+            return False
+
+        brightness = value / 100.0 if value > 0 else 0
+        for p in self.projectors:
+            if p.group not in groups:
+                continue
+            p.level = value
+            if value <= 0:
+                p.color = QColor("black")
+                continue
+            # Equivalent hors page de « l'auto-activation du pad blanc » : sur
+            # la page affichee, monter un fader sans pad actif allume en blanc.
+            # Ici il n'y a pas de pad a interroger, donc c'est `base_color` qui
+            # fait foi — et si elle n'a jamais ete posee, on retombe sur blanc.
+            # Sans ca, un groupe jamais touche resterait noir a fond de fader.
+            base = p.base_color
+            if not base.isValid() or (base.red() == 0 and base.green() == 0
+                                      and base.blue() == 0):
+                base = QColor("white")
+                p.base_color = base
+            p.color = QColor(int(base.red() * brightness),
+                             int(base.green() * brightness),
+                             int(base.blue() * brightness))
+            self._update_color_wheel(p, base)
+
+        self.send_dmx_update()
+        return True
+
     def toggle_mute(self, index, active):
         """Gere les mutes - chaque fader est independant"""
         if index >= len(self._fader_map):
@@ -7403,6 +7802,63 @@ class MainWindow(QMainWindow):
         if MIDI_AVAILABLE and self.midi_handler.midi_out and effect_idx < 8:
             velocity = 1 if btn.active else 0
             self.midi_handler.set_pad_led(effect_idx, 8, velocity, brightness_percent=100)
+
+    def toggle_effect_by_name(self, effect_name: str) -> bool:
+        """Allume/éteint un effet de la bibliothèque par son NOM.
+
+        Point d'entrée des surfaces qui n'ont pas de pad dédié — la manette
+        aujourd'hui. Les 8 boutons FX et les 64 pads FX ne couvrent que les
+        effets qu'on y a posés ; la bibliothèque en compte plus de cent.
+
+        C'est une BASCULE, là où vMix et OBS ne font que déclencher. La nuance
+        n'est pas cosmétique : une scène qui passe à l'antenne est un
+        évènement, la suivante remplace l'effet et personne n'attend qu'une
+        scène « éteigne ». Une touche de manette, elle, se rappuie — sans
+        bascule, l'effet lancé depuis la manette ne pourrait plus s'arrêter
+        qu'en allant cliquer dans l'interface, au milieu du show.
+
+        Renvoie False si le nom n'existe plus (effet renommé ou supprimé).
+        """
+        try:
+            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
+            tous = list(BUILTIN_EFFECTS) + _load_custom_effects()
+        except Exception as e:
+            print(f"[effet par nom] bibliothèque illisible : {e}")
+            return False
+        cfg = next((e for e in tous if e.get("name") == effect_name), None)
+        if cfg is None:
+            self._log_message(f"Effet introuvable : {effect_name}", "warn")
+            return False
+
+        # Déjà en cours : deuxième appui = extinction.
+        if getattr(self, 'active_effect', None) == effect_name:
+            self.active_effect = None
+            self.active_effect_config = {}
+            self.stop_effect()
+            self._log_message(f"Effet OFF : {effect_name}", "effect")
+            return True
+
+        # Un seul effet à la fois, comme pour les pads FX : sans ça, le pad ou
+        # le bouton qui portait l'effet précédent resterait allumé alors que
+        # son effet ne tourne plus — l'utilisateur cherche ensuite pourquoi
+        # « le pad est vert mais il ne se passe rien ».
+        for k in list(self.active_fx_pads.keys()):
+            self.active_fx_pads.pop(k, None)
+            self._style_fx_pad(k[0], k[1])
+            self._update_fx_pad_led(k[0], k[1])
+        for i, btn in enumerate(self.effect_buttons):
+            if btn.active:
+                btn.active = False
+                btn.update_style()
+                if MIDI_AVAILABLE and self.midi_handler.midi_out and i < 8:
+                    self.midi_handler.set_pad_led(i, 8, 0)
+
+        self.active_effect = effect_name
+        self.active_effect_config = cfg
+        self.start_effect(effect_name)
+        self._log_message(f"Effet ON : {effect_name}", "effect")
+        self._warn_effect_no_targets(cfg)
+        return True
 
     # ── FX pad columns (standalone, right of AKAI) ───────────────────────────
 
@@ -7675,6 +8131,46 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[POS] resynchro des positions Plan de Feu impossible : {e}")
             return 0
+
+    def pdf_position_to_akai_index(self, pdf_preset):
+        """Index d'un preset Plan de Feu dans `position_presets`, en le
+        convertissant si besoin. Renvoie None si la conversion échoue.
+
+        Les positions vivent dans DEUX fichiers (cf. `_load_pdf_presets`), et
+        tout ce qui les consomme par INDEX — REC Lumière, l'éditeur d'effets —
+        ne sait lire que la liste AKAI. On y fabrique donc une copie à la
+        demande, au moment où l'utilisateur choisit la position, jamais à
+        l'affichage : convertir pour afficher recopierait les 30 presets du
+        plan de feu dans la config à chaque ouverture de fenêtre.
+
+        Une copie de même nom est RAFRAÎCHIE, pas seulement retrouvée : elle
+        date du premier usage, et une lyre ajoutée au rig depuis puis fusionnée
+        dans la position côté plan de feu n'y figurerait pas. Le plan de feu
+        fait foi pour un nom donné — même sémantique que
+        `_import_pdf_preset_to_pad` et `sync_pdf_positions_into_akai`.
+
+        ⚠️ Point UNIQUE de cette conversion : `light_timeline._resolve_idx`
+        (glisser-déposer REC Lumière) et le menu POSITION de l'éditeur d'effets
+        passent tous les deux ici.
+        """
+        if not pdf_preset:
+            return None
+        try:
+            akai = self._pdf_preset_to_akai(pdf_preset)
+            presets = getattr(self, 'position_presets', None)
+            if presets is None:
+                return None
+            for i, existant in enumerate(presets):
+                if existant.get("name") == akai.get("name"):
+                    presets[i] = akai
+                    self._save_akai_config_auto()
+                    return i
+            presets.append(akai)
+            self._save_akai_config_auto()
+            return len(presets) - 1
+        except Exception as e:
+            print(f"[POS] conversion position Plan de Feu impossible : {e}")
+            return None
 
     def _pdf_preset_to_akai(self, pdf_preset):
         """Convertit un preset Plan de Feu → format AKAI position (multi-lyre)."""
@@ -9583,7 +10079,9 @@ class MainWindow(QMainWindow):
                 if len(mem.get("cues", [])) > 1:
                     self._mem_advance_cue(mem_col, row)
                     fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
-                    self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
+                    # GO passait par le moteur mono-mémoire, sans fondu et en
+                    # ignorant les autres faders levés. Même chemin que le pad.
+                    self._recompute_memory_mix(self._cue_fade_secs(mem_col, row))
                     cue_idx = self._mem_cue_idx.get((mem_col, row), 0)
                     n = len(mem["cues"])
                     lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
@@ -13197,13 +13695,20 @@ class MainWindow(QMainWindow):
             if _obs.get("enabled") and OBS_ENABLED:
                 QTimer.singleShot(1500, self._start_obs_if_enabled)
 
-        # Manette : même création paresseuse. Le démarrage différé importe moins
-        # ici (aucune action n'est déclenchée, seul le pan/tilt bouge), mais les
-        # projecteurs doivent exister avant que le premier mouvement n'arrive.
+        # Manette : même création paresseuse. Le démarrage est différé pour que
+        # projecteurs et mémoires existent avant le premier mouvement — et, pour
+        # les raccourcis boutons, avant qu'un appui ne puisse rappeler une
+        # mémoire qui ne serait pas encore chargée.
         _gp = config.get("gamepad")
         if isinstance(_gp, dict):
             self._gamepad_config_pending = dict(_gp)
-            if _gp.get("enabled"):
+            # Deux usages indépendants : le pan/tilt au stick, et les raccourcis
+            # boutons. Ne tester que « enabled » laisserait muette la manette de
+            # quelqu'un qui n'a assigné que des touches.
+            _pages = (_gp.get("buttons") or {}).values()
+            _a_des_boutons = _gp.get("buttons_enabled", True) and any(
+                isinstance(p, dict) and p for p in _pages)
+            if _gp.get("enabled") or _a_des_boutons:
                 QTimer.singleShot(1500, self._start_gamepad_if_enabled)
 
         # Contrôleur épinglé (sélection manuelle) — reconnecte sur le bon si défini
@@ -14208,7 +14713,10 @@ class MainWindow(QMainWindow):
                         ok = 200 <= resp.status < 300
                 except Exception as e:
                     ok = False
-                    _err_detail[0] = str(e)
+                    # Le détail est lu par quelqu'un qui vient d'écrire un
+                    # message, pas par un développeur : `str(e)` lui donnait
+                    # « <urlopen error [Errno 11001] getaddrinfo failed> ».
+                    _err_detail[0] = message_erreur_reseau(e)
                     print(f"[IdeaForm] erreur envoi : {e}")
                 try:
                     notifier.result.emit(ok)
@@ -14418,6 +14926,38 @@ class MainWindow(QMainWindow):
     def _open_gamepad_dialog(self):
         from gamepad_link import GamepadDialog
         GamepadDialog(self, self._get_gamepad_link()).exec()
+
+    def _get_dmx_in_link(self):
+        """Crée la liaison entrée DMX à la demande.
+
+        Import différé et réglages dans leur propre fichier
+        (~/.mystrow_dmxin.json) : un utilisateur sans pupitre ne paie ni le
+        thread d'écoute ni la socket, et l'entrée survit au changement de show.
+        """
+        link = getattr(self, '_dmx_in_link', None)
+        if link is None:
+            from dmx_in_link import DmxInLink
+            link = DmxInLink(self).load()
+            self._dmx_in_link = link
+        return link
+
+    def _open_dmx_in_dialog(self):
+        from dmx_in_link import DmxInDialog
+        DmxInDialog(self, self._get_dmx_in_link()).exec()
+
+    def _start_dmx_in_if_enabled(self):
+        """Réouvre l'écoute au lancement si l'entrée DMX était active.
+
+        Protégé : port 6454 déjà pris ou carte réseau absente ne doivent pas
+        empêcher MyStrow de démarrer — l'utilisateur verra pourquoi dans le
+        dialogue, qui affiche l'erreur d'ouverture telle quelle.
+        """
+        try:
+            link = self._get_dmx_in_link()
+            if link.enabled:
+                link.apply()
+        except Exception as exc:
+            print(f"Entrée DMX indisponible : {exc}")
 
     def _start_gamepad_if_enabled(self):
         """Redémarre la manette au lancement si elle était active.
@@ -16377,7 +16917,7 @@ class MainWindow(QMainWindow):
         # Liaisons régie vidéo : le thread réseau est en recv() bloquant, c'est
         # stop() qui ferme la socket sous lui pour le débloquer. Sans ça, la
         # fermeture de MyStrow attendrait le prochain événement de la régie.
-        for _attr in ('_vmix_link', '_obs_link', '_gamepad_link'):
+        for _attr in ('_vmix_link', '_obs_link', '_gamepad_link', '_dmx_in_link'):
             _lien = getattr(self, _attr, None)
             if _lien is not None:
                 try:
@@ -16385,7 +16925,12 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-        if self.seq.is_dirty:
+        # Fermeture demandée par la mise à jour : la question du show a déjà été
+        # posée par l'updater, juste avant de lancer l'installeur. La reposer
+        # ici ouvrirait une modale pendant que l'installeur attend la sortie du
+        # processus — c'est ainsi que la mise à jour restait bloquée sur
+        # « MyStrow est ouvert ».
+        if self.seq.is_dirty and not getattr(self, '_fermeture_pour_maj', False):
             res = QMessageBox.question(self, tr("mw_quit"),
                 tr("mw_save_before_quit"),
                 QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
@@ -16593,7 +17138,13 @@ class MainWindow(QMainWindow):
             "public": "Public",
             "fumee": "Fumée", "lyre": "Lyres", "barre": "Barres", "strobe": "Strobos",
         }
-        FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee"]
+        # « Gradateur » manquait ici alors qu'il existe partout ailleurs
+        # (fixture_editor, dix profils integres, l'import d'un patch QLC+ qui
+        # deplie les blocs de puissance). Un appareil de ce type selectionne
+        # laissait le combo sur le type de l'appareil PRECEDENT — donc un type
+        # faux, reecrit sur la fixture au premier changement de valeur.
+        FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
+                         "Machine a fumee", "Gradateur"]
         # Palette partagée avec la bibliothèque de fixtures (niveau module)
         CH_COLORS = globals()["CH_COLORS"]
 
@@ -16630,6 +17181,9 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         act_dflt = m_file.addAction(tr("mw_default_patch"))
         m_file.addSeparator()
+        # « Importer le patch » accepte aussi bien un .msp MyStrow qu'un patch
+        # venu d'un autre logiciel (voir _import_patch) : une seule entree de
+        # menu, le format se deduit de l'extension.
         act_import = m_file.addAction(tr("mw_import_patch"))
         act_export = m_file.addAction(tr("mw_export_patch"))
         m_file.addSeparator()
@@ -19531,14 +20085,20 @@ class MainWindow(QMainWindow):
             _mark_dirty()
 
         # ── Importer le patch ─────────────────────────────────────────────────
+        # Une seule porte d'entree, quel que soit le logiciel d'origine : c'est
+        # l'extension qui decide. Un .msp/.json MyStrow porte ses profils DMX et
+        # se recharge tel quel ; tout autre fichier ne fait que CITER des
+        # appareils par leur nom et passe donc par l'ecran de relecture avant
+        # d'atteindre les projecteurs.
         def _import_patch():
             path, _ = QFileDialog.getOpenFileName(
-                dialog, "Importer le patch", "",
-                "Patch MyStrow (*.msp);;JSON (*.json);;Tous les fichiers (*)"
-            )
+                dialog, tr("import_patch_title"), "", tr("patch_filter"))
             if not path:
                 return
             print(f"[ImportPatch] Fichier sélectionné : {path}")
+            if not path.lower().endswith(('.msp', '.json')):
+                _import_foreign(path)
+                return
             try:
                 # utf-8-sig : tolère un éventuel BOM en tête de fichier
                 with open(path, 'r', encoding='utf-8-sig') as f:
@@ -19598,6 +20158,57 @@ class MainWindow(QMainWindow):
                 box = QMessageBox(QMessageBox.Critical, "Erreur d'import",
                     f"Impossible de lire le fichier :\n{e}", QMessageBox.Ok, dialog)
                 box.raise_(); box.activateWindow(); box.exec()
+
+        # ── Suite de _import_patch : fichier venu d'un AUTRE logiciel ─────────
+        # Contrairement au .msp ci-dessus, le fichier ne contient pas les profils
+        # DMX : il ne fait que CITER les appareils par leur nom. patch_import les
+        # retrouve dans la bibliotheque, patch_import_ui les fait relire, et
+        # seules les lignes cochees arrivent ici. Rien n'est patche avant ce point.
+        def _import_foreign(path):
+            try:
+                import patch_import_ui
+                res = patch_import_ui.review_file(
+                    dialog, path, current_count=len(self.projectors))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                QMessageBox(QMessageBox.Critical, tr("pimp_read_error"),
+                            f"{e}", QMessageBox.Ok, dialog).exec()
+                return
+            if not res:
+                return
+            rows, replace = res
+            if replace and self.projectors:
+                confirm = QMessageBox(
+                    QMessageBox.Question, tr("pimp_title"),
+                    tr("pimp_confirm_replace", n=len(self.projectors)),
+                    QMessageBox.Yes | QMessageBox.No, dialog)
+                confirm.setDefaultButton(QMessageBox.Yes)
+                confirm.raise_(); confirm.activateWindow()
+                if confirm.exec() != QMessageBox.Yes:
+                    return
+            _push_history()
+            if replace:
+                self.projectors.clear()
+            for r in rows:
+                p = Projector(r["group"], name=r.get("name", ""),
+                              fixture_type=r.get("fixture_type", "PAR LED"))
+                p.start_address = int(r["address"])
+                p.universe = int(r["universe"])
+                if r.get("profile"):
+                    p.dmx_profile = list(r["profile"])
+                if r.get("fixture_type") == "Machine a fumee":
+                    p.fan_speed = 0
+                self.projectors.append(p)
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _sel[0] = None
+            _build_cards()
+            det_stack.setCurrentIndex(0)
+            _mark_dirty()
+            box = QMessageBox(QMessageBox.Information, tr("mw_import_ok"),
+                              tr("pimp_done", n=len(rows)), QMessageBox.Ok, dialog)
+            box.raise_(); box.activateWindow(); box.exec()
 
         # ── Exporter le patch ─────────────────────────────────────────────────
         def _export_patch():
@@ -23461,6 +24072,14 @@ class MainWindow(QMainWindow):
         `(level, color, pan, tilt)` — il pilote aussi le mouvement des lyres,
         ce que les mémoires ne font pas. Retourne l'état sauvegardé, à restaurer
         après l'envoi comme pour les autres sources temporaires.
+
+        La ROUE de couleurs suit la couleur, comme dans le moteur du show
+        (`_update_effect_from_layers`) : sur une lyre sans canal R/G/B, le fil
+        ne porte QUE `color_wheel` — sans ce mappage, une couche couleur en
+        sortie live faisait défiler les couleurs à l'écran pendant que la vraie
+        lyre restait sur son slot d'avant. Sauvegardée et restaurée comme le
+        reste : ces overrides ne durent qu'une frame, une roue laissée sur la
+        dernière image resterait figée en quittant l'éditeur.
         """
         ov = getattr(self, '_editor_live_overrides', None)
         if not ov:
@@ -23471,11 +24090,13 @@ class MainWindow(QMainWindow):
             if entry is None:
                 continue
             saved.append((proj, proj.level, QColor(proj.color),
-                          QColor(proj.base_color), proj.pan, proj.tilt))
+                          QColor(proj.base_color), proj.pan, proj.tilt,
+                          getattr(proj, 'color_wheel', 0)))
             level, color = entry[0], entry[1]
             proj.level = level
             proj.color = QColor(color)
             proj.base_color = QColor(color)
+            self._update_color_wheel(proj, proj.color)
             if len(entry) > 3:
                 if entry[2] is not None:
                     proj.pan = entry[2]
@@ -23487,12 +24108,13 @@ class MainWindow(QMainWindow):
     def _restore_editor_live_overrides(saved):
         if not saved:
             return
-        for proj, lvl, col, base, pan, tilt in saved:
+        for proj, lvl, col, base, pan, tilt, cw in saved:
             proj.level = lvl
             proj.color = col
             proj.base_color = base
             proj.pan = pan
             proj.tilt = tilt
+            proj.color_wheel = cw
 
     def _apply_pad_overrides_htp(self):
         """Applique les pads AKAI actifs en HTP par-dessus l'etat courant des projecteurs.

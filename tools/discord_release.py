@@ -80,7 +80,7 @@ def today_fr():
 def links_block():
     return (
         f"🪟  **Windows 10 / 11** — [télécharger l'installeur]({DL_WIN})\n"
-        f"🍎  **macOS Apple Silicon** (M1 → M4) — [télécharger le .dmg]({DL_MAC})\n"
+        f"🍎  **macOS Apple Silicon** (M1 → M5) — [télécharger le .dmg]({DL_MAC})\n"
         f"🍏  **macOS Intel** — [télécharger le .dmg]({DL_MAC_INTEL})"
     )
 
