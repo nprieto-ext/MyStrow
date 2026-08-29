@@ -184,6 +184,79 @@ _MA3_ATTR_MAP = {
     "FIXTURERESET":       "Reset",
     "FIXTUREGLOBALRESET": "Reset",
     "LAMPRESET":          "Reset",
+
+    # ── Lasers et media servers : la famille « objet vidéo » ────────────────
+    #
+    # GrandMA ne modélise pas un laser comme un projecteur mais comme un OBJET
+    # VIDÉO : son dessin est une image (V_OIMAGE) qu'on fait tourner
+    # (V_OR_x = Object Rotation), qu'on déplace (V_OP_x = Object Position) et
+    # qu'on redimensionne (V_OS_x = Object Scale). Aucun de ces attributs
+    # n'était dans la table : sur un Laserworld CS-12000 (14 canaux), 13 canaux
+    # sortaient « Unused » — donc le laser était totalement muet, y compris son
+    # canal de mode. Et ce n'est pas un fichier exotique : c'est ainsi que MA
+    # exporte TOUS les lasers.
+    #
+    # Choix de correspondance, en visant ce qui rend l'appareil pilotable par
+    # les mécaniques que MyStrow a déjà :
+    "FIXTUREMODE":        "Mode",      # Off / Audio / Stand-alone / DMX control
+    "V_OIMAGE":           "Gobo1",     # sélection du motif = une roue de gobos
+    "V_OR_Z":             "Gobo1Rot",  # rotation du motif dans son plan
+    "V_OP_X":             "Pan",       # déplacement du dessin = pan/tilt : les
+    "V_OP_Y":             "Tilt",      #   presets de position, la piste
+                                       #   Position, les effets pan/tilt et le
+                                       #   stick de la manette pilotent alors
+                                       #   le laser sans rien de spécifique.
+    "V_OS_X":             "Zoom",      # échelle du dessin
+    "V_VSPEED":           "Speed",
+    "V_EFF1_T":           "Effects",
+    #
+    # ⚠️ V_OR_X, V_OR_Y et V_OS_Y sont volontairement ABSENTS. Le moteur gange
+    # les canaux de même type : les poser sur le type de leur jumeau (V_OR_Z,
+    # V_OS_X) leur donnerait la MÊME valeur, ce qui est pire que muet. Ils
+    # restent « Unused » et s'adressent par NUMÉRO dans la vue Curseurs, ce qui
+    # est exactement le mécanisme prévu pour ça. Idem V_PLAYMODE.
+
+    # ── Sélection de couleur générique ─────────────────────────────────────
+    # Attribut « couleur » global. Chez MA c'est souvent un attribut virtuel
+    # (donc sans `coarse`, écarté plus haut) ; quand il porte un vrai canal,
+    # comme sur ce laser, c'est bien la sélection de couleur physique.
+    "COLORCOLOR":         "ColorWheel",
+
+    # ⚠️ Entrées « Unused » DÉLIBÉRÉES : leur rôle est de BLOQUER le repli par
+    # préfixe. `COLOR1WHEELSELECTBLINK` commence par `COLOR1` et se faisait donc
+    # mapper sur « ColorWheel » — alors que c'est une vitesse de CLIGNOTEMENT.
+    # Sur le CS-12000 c'était le seul canal « reconnu » du fichier, et il l'était
+    # à tort : MyStrow pilotait le clignotement en croyant tourner une roue,
+    # pendant que la vraie sélection de couleur restait muette. Un faux positif
+    # est pire qu'un « Unused », qui lui reste réglable à la main.
+    "COLOR1WHEELSELECTBLINK": "Unused",
+    "COLOR2WHEELSELECTBLINK": "Unused",
+}
+
+# ---------------------------------------------------------------------------
+# Libellés lisibles pour les attributs dont le nom « utilisateur » ne distingue
+# rien. Consulté AVANT le nom écrit dans le fichier, et c'est voulu : sur le
+# CS-12000, les canaux 6 et 7 s'appellent tous les deux « Position », et les
+# canaux 3/4/5 puis 8/9 forment deux paires « X »/« Y ». Impossible de savoir
+# lequel on règle dans la vue Curseurs. `_joli_attribut()` ne sauve pas la mise
+# non plus : il ne sait pas découper « V_OP_X » et rendrait « V_op_x ».
+# ---------------------------------------------------------------------------
+_LIBELLES_MA = {
+    "FIXTUREMODE":            "Fixture Mode",
+    "V_OIMAGE":               "Pattern Select",
+    "V_OR_X":                 "Rotation X",
+    "V_OR_Y":                 "Rotation Y",
+    "V_OR_Z":                 "Rotation Z",
+    "V_OP_X":                 "Position X",
+    "V_OP_Y":                 "Position Y",
+    "V_OS_X":                 "Scale X",
+    "V_OS_Y":                 "Scale Y",
+    "V_VSPEED":               "Playback Speed",
+    "V_PLAYMODE":             "Play Mode",
+    "V_EFF1_T":               "Effect Type",
+    "COLORCOLOR":             "Color Select",
+    "COLOR1WHEELSELECTBLINK": "Color Blink Speed",
+    "COLOR2WHEELSELECTBLINK": "Color 2 Blink Speed",
 }
 
 # ---------------------------------------------------------------------------
@@ -413,7 +486,15 @@ def _try_generic_xml(root) -> dict | None:
 # canaux différents s'appellent « Select » et trois « Speed ». Quand on tombe
 # dessus, l'attribut MA (LASERPATTERNSIZE…) est bien plus parlant.
 _NOMS_VAGUES = {"select", "speed", "time", "value", "no feature", "dummy",
-                "control", "function", "macro", "mode", "index", "", "-"}
+                "control", "function", "macro", "mode", "index", "", "-",
+                # Ajoutés pour les lasers : un canal nommé « X », « Position »
+                # ou « Type » ne se distingue pas de son voisin. Ceux de la
+                # famille V_* sont récupérés par `_LIBELLES_MA` avant d'arriver
+                # ici ; pour les autres fichiers, `_joli_attribut()` recompose
+                # l'attribut (POSITIONX → « Position X »), ce qui est plus
+                # parlant que le mot seul.
+                "x", "y", "z", "type", "position", "images", "transition",
+                "original", "default"}
 
 # Découpage des attributs MA collés en majuscules. Les jetons sont essayés du
 # plus long au plus court : sans ça « LASERPATTERNSIZE » donnerait
@@ -459,7 +540,16 @@ def _libelle_canal(ct, attr: str) -> str:
     Priorité au nom écrit par l'auteur du fichier (`subattribute_user_name` et
     consorts) — c'est lui qui parle la langue de la fiche technique. On ne
     retombe sur l'attribut recomposé que lorsque ce nom est un mot passe-partout.
+
+    Exception : les attributs de `_LIBELLES_MA` passent AVANT le nom du fichier.
+    Ce sont ceux dont le nom « utilisateur » ne distingue rien — deux canaux
+    « Position », deux paires « X »/« Y » sur un même laser. Un nom ambigu vaut
+    à peine mieux que pas de nom quand il s'agit de savoir quel curseur on tire.
     """
+    fixe = _LIBELLES_MA.get((attr or "").upper().strip())
+    if fixe:
+        return fixe
+
     for src in (ct, *ct.findall("ChannelFunction")):
         for cle in ("subattribute_user_name", "attribute_user_name", "name"):
             v = (src.get(cle) or "").strip()
@@ -724,9 +814,9 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
     Retourne (profile_list, channel_defaults_dict).
     Gère les canaux fine (PanFine/TiltFine).
 
-    Le dict de défauts est TOUJOURS vide — voir la note dans la boucle. Il reste
-    au retour parce que les appelants le propagent, et qu'il est alimenté
-    ailleurs par des chemins où la notion a un sens.
+    Le dict de défauts ne reçoit QUE les canaux de type « Mode » — voir la note
+    dans la boucle. Pour tous les autres types il reste vide, et c'est ce qui
+    empêche un `default="255"` sur R/G/B de rendre le noir impossible.
     """
     items = []       # [(ch_index, ch_type, libelle)]
     defaults = {}    # {ch_type: dmx_8bit} — voir la note plus bas
@@ -813,8 +903,41 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
                 except ValueError:
                     pass
 
-        # ⚠️ Le `default=` du fichier constructeur n'est PAS moissonné, et c'est
-        # volontaire : les deux notions n'ont rien à voir.
+        # ── `default=` : moissonné pour le SEUL type « Mode » ───────────────
+        #
+        # Un canal de mode à 0 rend l'appareil inerte. Le Laserworld CS-12000
+        # porte son mode sur le canal 1 : 0-49 Blackout, 59-99 Audio, 100-149
+        # Stand-alone, 150-255 DMX control. Sorti à 0, le laser est en blackout
+        # et IGNORE ses treize autres canaux — la fixture s'importait sans
+        # erreur et ne faisait rien. Le fichier porte pourtant
+        # `default="149.756"`, soit exactement le début de « DMX control ».
+        #
+        # C'est le seul type où la valeur de repos du constructeur et le
+        # PLANCHER de MyStrow veulent dire la même chose : « si personne ne
+        # pilote ce canal, mets l'appareil en mode DMX ». Restreindre à « Mode »
+        # est essentiel — voir juste en dessous pourquoi le moissonnage général
+        # a été retiré.
+        #
+        # `round` et non `int` : 149.756 tronqué donne 149, qui retombe dans la
+        # plage « Stand alone ». Un canal de mode se joue à l'unité près.
+        # ⚠️ Sur l'ATTRIBUT, pas seulement sur le type résolu : `MACRO` retombe
+        # lui aussi sur « Mode », or c'est le canal qui lance les PROGRAMMES
+        # INTERNES de l'appareil (cf. la mise en garde d'`artnet_dmx` sur
+        # `mode_value`). Lui poser un plancher démarrerait un automatisme tout
+        # seul. FIXTUREMODE / CONTROL / FUNCTION choisissent un mode de
+        # fonctionnement ; MACRO exécute quelque chose. La nuance décide ici.
+        if ch_type == "Mode" and attr in ("FIXTUREMODE", "CONTROL", "FUNCTION"):
+            _dft = ct.get("default") or ct.get("Default")
+            if _dft:
+                try:
+                    _v = int(round(float(_dft)))
+                except (TypeError, ValueError):
+                    _v = 0
+                if 0 < _v <= 255:
+                    defaults.setdefault(ch_type, _v)
+
+        # ⚠️ Pour TOUT LE RESTE, le `default=` du fichier constructeur n'est PAS
+        # moissonné, et c'est volontaire : les deux notions n'ont rien à voir.
         #
         #   - côté MA, `default=` est la valeur de REPOS de l'appareil, celle
         #     qu'il prend à l'allumage ;

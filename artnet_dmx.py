@@ -92,6 +92,25 @@ CHANNEL_TYPES = [
     "RingFX", "RingSpeed",
     "Frost", "Anim", "AnimRot", "Gobo2Rot", "ColorWheel2",
     "DimCurve", "Sound",
+    # ── Presets / programmes internes ────────────────────────────────────────
+    # Canaux de MACRO : « Auto 1 », « Sound active », « Fondu »… L'appareil y
+    # attend une valeur qui declenche un de ses programmes. Ils ont un etat
+    # dedie (`proj.preset1..4`), une liste de blocs nommes et calibrables
+    # (`proj.preset_slots`) et leur propre section dans le clic droit du plan.
+    #
+    # Pourquoi QUATRE et non un seul : les canaux de meme type sont GANGES, ils
+    # recoivent tous la meme valeur. Un unique « Preset » rejouerait le piege du
+    # « Mode fourre-tout » sur un appareil qui a plusieurs canaux de programme
+    # (un laser aligne FIXTUREMODE + MACRO + CONTROL). Meme convention que
+    # Dim/Dim2, Gobo1/Gobo2, ColorWheel/ColorWheel2.
+    #
+    # Pourquoi un type A PART et non un `Gobo1` renomme : `Gobo1` et
+    # `ColorWheel` etaient les deux SEULS types a offrir des presets nommes, et
+    # les deux ont une signification VISUELLE. Les detourner plaquait des gobos
+    # sur des PAR LED (cf. `core.fixture_projects_gobo`). Un type de preset
+    # n'affiche rien, par construction : le detournement n'a plus de raison
+    # d'etre, et ne peut plus rien salir.
+    "Preset1", "Preset2", "Preset3", "Preset4",
     "Reset",
     # Canal du protocole que MyStrow ne pilote pas : sort 0 et garde sa place
     # dans la numérotation. Repli des attributs inconnus à l'import.
@@ -116,6 +135,7 @@ CHANNEL_DISPLAY = {
     "Frost": "Frost", "Anim": "Anim", "AnimRot": "AnimR",
     "Gobo2Rot": "Gob2R", "ColorWheel2": "CWhl2",
     "DimCurve": "Curve", "Sound": "Son",
+    "Preset1": "Pst1", "Preset2": "Pst2", "Preset3": "Pst3", "Preset4": "Pst4",
     "Unused": "—", "Reset": "Reset",
 }
 
@@ -123,6 +143,14 @@ CHANNEL_DISPLAY = {
 # Canaux sans etat dans Projector : pilotes uniquement a la main (curseur des
 # « canaux avances ») ou par la valeur fixe du mode. Sortis d'une liste plutot
 # que d'un long `elif ch_type in (...)` : c'est la meme regle pour les quinze.
+# Canaux de preset → attribut portant leur valeur sur le Projector. Table
+# unique : le moteur, le menu du plan de feu, la capture de memoire et le
+# reset de fin de bloc la relisent tous, plutot que d'ecrire quatre fois la
+# meme correspondance et de la laisser deriver.
+PRESET_TYPES = ("Preset1", "Preset2", "Preset3", "Preset4")
+_PRESET_ATTR = {t: f"preset{i}" for i, t in enumerate(PRESET_TYPES, start=1)}
+
+
 _MANUAL_ONLY = frozenset({
     "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
     "RingFX", "RingSpeed",
@@ -1496,6 +1524,16 @@ class ArtNetDMX:
                     ch_val = getattr(proj, 'prism_rotation', 0)
                 elif ch_type == "Effects":
                     ch_val = getattr(proj, 'effects', 0)
+                elif ch_type in _PRESET_ATTR:
+                    # Canal de programme interne. Etat dedie, comme `Mode` — et
+                    # NON `_MANUAL_ONLY` : c'est ce qui le rend capturable dans
+                    # une memoire et restituable en sequence.
+                    #
+                    # 0 au repos, toujours : un canal de macro qui prendrait une
+                    # valeur tout seul lancerait un programme de l'appareil
+                    # par-dessus le show. Choisir un preset est un geste
+                    # EXPLICITE de l'utilisateur.
+                    ch_val = getattr(proj, _PRESET_ATTR[ch_type], 0)
                 elif ch_type in ("C", "M", "Y"):
                     if _has_rgb:
                         # LED a emetteurs cyan/magenta/jaune : ADDITIF. Comme

@@ -782,6 +782,39 @@ class MIDIHandler(QObject):
         except Exception as e:
             print(f"❌ Erreur traitement MIDI: {e}")
 
+    # ─── Bouton bas-droite (TAP / GO / FLASH) ────────────────────────────────
+
+    def _tap_button_pressed(self, note, led_velocity):
+        """Appui sur le bouton bas-droite + retour LED.
+
+        En mode FLASH la LED reste allumée tant que le bouton est tenu : c'est
+        le seul repère sur le contrôleur qu'un momentané est en cours. Dans les
+        autres modes (TAP BPM, GO), simple clignotement comme avant.
+        """
+        ow = self.owner_window
+        hold = ow is not None and getattr(ow, 'tap_button_mode', 'bpm') in ('flash', 'flash_kill')
+        if ow is not None:
+            ow._tap_tempo()
+        if not self.midi_out:
+            return
+        try:
+            self.midi_out.send_message([0x90, note, led_velocity])
+            if not hold:
+                QTimer.singleShot(150, lambda: self.midi_out.send_message([0x90, note, 0])
+                                  if self.midi_out else None)
+        except Exception:
+            pass
+
+    def _tap_button_released(self, note):
+        """Relâchement du bouton bas-droite — termine un flash en cours."""
+        if self.owner_window is not None:
+            self.owner_window._tap_tempo_released()
+        if self.midi_out:
+            try:
+                self.midi_out.send_message([0x90, note, 0])
+            except Exception:
+                pass
+
     # ─── Handlers par contrôleur ─────────────────────────────────────────────
 
     def _handle_apc_mini(self, message):
@@ -797,10 +830,16 @@ class MIDIHandler(QObject):
         if status == 0xB0:
             return
 
-        # Note Off — boutons EFFETS uniquement (colonne 8, notes 112-119)
+        # Note Off — boutons EFFETS (colonne 8, notes 112-119), bouton TAP, et
+        # grille 8x8. Le relache de la grille etait jete : sans lui, un pad
+        # couleur ne peut pas etre momentane (mode FLASH).
         if status == 0x80 or (status == 0x90 and data2 == 0):
             if 112 <= data1 <= 119:
                 self.pad_released.emit(data1 - 112, 8)
+            elif data1 == 122:
+                self._tap_button_released(122)
+            elif 0 <= data1 <= 63:
+                self.pad_released.emit(7 - (data1 // 8), data1 % 8)
             return
 
         if status != 0x90 or data2 == 0:
@@ -818,16 +857,13 @@ class MIDIHandler(QObject):
                 self.owner_window.toggle_fader_mute_from_midi(note - 100)
 
         elif note == 122:
-            # TAP TEMPO
-            if self.owner_window:
-                self.owner_window._tap_tempo()
-            if self.midi_out:
-                try:
-                    self.midi_out.send_message([0x90, 122, 3])
-                    QTimer.singleShot(150, lambda: self.midi_out.send_message([0x90, 122, 0])
-                                      if self.midi_out else None)
-                except Exception:
-                    pass
+            # Bouton bas-droite : TAP BPM / GO / FLASH selon la configuration.
+            # Velocite 1 et non 3 : les boutons ronds de l'APC mini sont
+            # monochromes et n'acceptent que 0 (eteint) / 1 (allume) / 2
+            # (clignotant) — 3 est une valeur de la GRILLE (rouge), hors plage
+            # ici, donc rien ne s'allumait. C'est deja 1 que le reste du code
+            # envoie sur la colonne des effets.
+            self._tap_button_pressed(122, 1)
 
         elif 0 <= note <= 63:
             # Grille 8×8
@@ -866,6 +902,9 @@ class MIDIHandler(QObject):
         if status_type == 0x80 or (status_type == 0x90 and data2 == 0):
             if channel == 0 and _APC40_SCENE_BASE_NOTE <= data1 <= _APC40_SCENE_BASE_NOTE + 4:
                 self.pad_released.emit(data1 - _APC40_SCENE_BASE_NOTE, 8)
+            elif _APC40_CLIP_BASE_NOTE <= data1 <= _APC40_CLIP_BASE_NOTE + 4 and 0 <= channel <= 7:
+                # Grille : necessaire aux pads couleur momentanes (mode FLASH).
+                self.pad_released.emit(data1 - _APC40_CLIP_BASE_NOTE, channel)
             return
 
         if status_type != 0x90 or data2 == 0:
@@ -888,17 +927,9 @@ class MIDIHandler(QObject):
             if self.owner_window:
                 self.owner_window.toggle_fader_mute_from_midi(channel)
 
-        # Tap Tempo
+        # Bouton bas-droite : TAP BPM / GO / FLASH selon la configuration
         elif channel == 0 and note == _APC40_TAP_TEMPO_NOTE:
-            if self.owner_window:
-                self.owner_window._tap_tempo()
-            if self.midi_out:
-                try:
-                    self.midi_out.send_message([0x90, _APC40_TAP_TEMPO_NOTE, 2])
-                    QTimer.singleShot(150, lambda: self.midi_out.send_message(
-                        [0x90, _APC40_TAP_TEMPO_NOTE, 0]) if self.midi_out else None)
-                except Exception:
-                    pass
+            self._tap_button_pressed(_APC40_TAP_TEMPO_NOTE, 2)
 
         elif self.debug_mode:
             print(f"   ⚠️  ch={channel} note={note} non mappé (APC40)")
@@ -926,6 +957,9 @@ class MIDIHandler(QObject):
         if status_type == 0x80 or (status_type == 0x90 and data2 == 0):
             if channel == 0 and _APC40_SCENE_BASE_NOTE <= data1 <= _APC40_SCENE_BASE_NOTE + 4:
                 self.pad_released.emit(data1 - _APC40_SCENE_BASE_NOTE, 8)
+            elif _APC40_CLIP_BASE_NOTE <= data1 <= _APC40_CLIP_BASE_NOTE + 4 and 0 <= channel <= 7:
+                # Grille : necessaire aux pads couleur momentanes (mode FLASH).
+                self.pad_released.emit(data1 - _APC40_CLIP_BASE_NOTE, channel)
             return
 
         if status_type != 0x90 or data2 == 0:
@@ -944,15 +978,7 @@ class MIDIHandler(QObject):
                 self.owner_window.toggle_fader_mute_from_midi(channel)
 
         elif channel == 0 and note == _APC20_TAP_TEMPO_NOTE:
-            if self.owner_window:
-                self.owner_window._tap_tempo()
-            if self.midi_out:
-                try:
-                    self.midi_out.send_message([0x90, _APC20_TAP_TEMPO_NOTE, 2])
-                    QTimer.singleShot(150, lambda: self.midi_out.send_message(
-                        [0x90, _APC20_TAP_TEMPO_NOTE, 0]) if self.midi_out else None)
-                except Exception:
-                    pass
+            self._tap_button_pressed(_APC20_TAP_TEMPO_NOTE, 2)
 
         elif self.debug_mode:
             print(f"   ⚠️  ch={channel} note={note} non mappé (APC20)")
@@ -994,7 +1020,9 @@ class MIDIHandler(QObject):
 
         if status == 0x90 and data2 > 0:
             self.pad_pressed.emit(ms_row, ms_col)
-        elif (status == 0x80 or (status == 0x90 and data2 == 0)) and ms_col == 8:
+        elif status == 0x80 or (status == 0x90 and data2 == 0):
+            # Grille comprise : sans le relache, un pad couleur ne peut pas
+            # etre momentane (mode FLASH).
             self.pad_released.emit(ms_row, ms_col)
 
     def _handle_launchpad_mini_mk3(self, message):
@@ -1046,7 +1074,9 @@ class MIDIHandler(QObject):
 
         if status == 0x90 and data2 > 0:
             self.pad_pressed.emit(ms_row, ms_col)
-        elif (status == 0x80 or (status == 0x90 and data2 == 0)) and ms_col == 8:
+        elif status == 0x80 or (status == 0x90 and data2 == 0):
+            # Grille comprise : sans le relache, un pad couleur ne peut pas
+            # etre momentane (mode FLASH).
             self.pad_released.emit(ms_row, ms_col)
 
     def _handle_launchpad_mk2(self, message):
@@ -1085,7 +1115,9 @@ class MIDIHandler(QObject):
 
         if status == 0x90 and data2 > 0:
             self.pad_pressed.emit(ms_row, ms_col)
-        elif (status == 0x80 or (status == 0x90 and data2 == 0)) and ms_col == 8:
+        elif status == 0x80 or (status == 0x90 and data2 == 0):
+            # Grille comprise : sans le relache, un pad couleur ne peut pas
+            # etre momentane (mode FLASH).
             self.pad_released.emit(ms_row, ms_col)
 
     def _handle_midimix(self, message):
@@ -1122,8 +1154,12 @@ class MIDIHandler(QObject):
                         pass
 
             elif data1 == _MIDIMIX_BANK_LEFT:
-                if self.owner_window:
-                    self.owner_window._tap_tempo()
+                # Bouton bas-droite : TAP BPM / GO / FLASH selon la configuration
+                self._tap_button_pressed(_MIDIMIX_BANK_LEFT, 127)
+
+        elif status == 0x80 or (status == 0x90 and data2 == 0):
+            if data1 == _MIDIMIX_BANK_LEFT:
+                self._tap_button_released(_MIDIMIX_BANK_LEFT)
 
     def _handle_custom(self, message):
         """Dispatch pour contrôleurs chargés depuis un profil JSON custom."""
@@ -1150,6 +1186,9 @@ class MIDIHandler(QObject):
             k = (channel, data1)
             if k in self._rev_effect:
                 self.pad_released.emit(self._rev_effect[k], 8)
+            elif k in self._rev_pad:
+                row, col = self._rev_pad[k]
+                self.pad_released.emit(row, col)
 
     # ─── LEDs ────────────────────────────────────────────────────────────────
 

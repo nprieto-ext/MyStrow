@@ -89,12 +89,19 @@ def _luminance(hex_c: str) -> bool:
 
 
 class _SlotRow(QWidget):
-    """Une ligne dans l'éditeur de roue : couleur + nom + DMX + move + delete."""
+    """Une ligne d'éditeur de blocs : couleur + nom + DMX + move + delete.
 
-    def __init__(self, slot: dict, parent=None):
+    `show_color=False` masque la pastille : un bloc de PRESET (« Auto 1 »,
+    « Sound active ») n'a pas de couleur — c'est une valeur de macro. Le champ
+    reste dans le modèle, à zéro coût, pour que `get_slot()` rende toujours la
+    même forme de dictionnaire quel que soit l'éditeur qui l'utilise.
+    """
+
+    def __init__(self, slot: dict, parent=None, show_color: bool = True):
         super().__init__(parent)
         self._color = slot.get("color", "#ffffff")
         self._changed_cb = None  # appelé à chaque modif
+        self._show_color = show_color
 
         self.setFixedHeight(42)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -110,7 +117,12 @@ class _SlotRow(QWidget):
         self._apply_color_style()
         self._color_btn.setToolTip(tr("cwe2_click_colour"))
         self._color_btn.clicked.connect(self._pick_color)
-        row.addWidget(self._color_btn)
+        # Créé dans tous les cas — `_apply_color_style()` et `get_slot()` s'en
+        # servent — mais posé dans la ligne seulement quand la couleur a un sens.
+        if show_color:
+            row.addWidget(self._color_btn)
+        else:
+            self._color_btn.hide()
 
         # ── Nom ───────────────────────────────────────────────────────────
         self._name = QLineEdit(slot.get("name", ""))
@@ -190,7 +202,9 @@ class _SlotRow(QWidget):
         if c.isValid():
             self._color = c.name()
             self._apply_color_style()
-            self._update_bar(self._dmx.value())
+            # `_update_bar()` n'a jamais existé sur cette classe : l'appel levait
+            # un AttributeError qui avalait le `_notify()` suivant — la couleur
+            # changeait, mais l'aperçu en direct ne suivait pas.
             self._notify()
 
     def set_active(self, active: bool):

@@ -121,6 +121,20 @@ ALL_CHANNEL_TYPES = [
     #   DimCurve : courbe / vitesse de gradation
     #   Sound    : sensibilité du micro intégré
     "DimCurve", "Sound",
+    # ── Presets / programmes internes ─────────────────────────────────────────
+    # LE canal ou declarer une fonction a valeurs pre-enregistrees : « Auto 1 »,
+    # « Sound active », « Fondu »… Blocs nommes et calibrables depuis le clic
+    # droit du plan de feu, sans AUCUN effet sur le rendu 2D/3D.
+    #
+    # C'est ce qui manquait : `Gobo1` et `ColorWheel` etaient les deux seuls
+    # types a offrir des presets, et tous deux dessinent quelque chose. Qui
+    # voulait des presets sur un canal de programme declarait donc son canal en
+    # « Gobo » puis le renommait — et son PAR LED se couvrait de motifs.
+    #
+    # Quatre canaux distincts parce que les canaux de meme type sont GANGES : un
+    # appareil qui a plusieurs canaux de programme (laser : FIXTUREMODE + MACRO
+    # + CONTROL) doit pouvoir les regler separement.
+    "Preset1", "Preset2", "Preset3", "Preset4",
     # « Unused » : le canal existe dans le protocole mais MyStrow n'y touche
     # pas — il sort 0, toujours. C'est ce que reçoit un canal dont on ne sait
     # rien à l'import, et il occupe sa place pour que les canaux SUIVANTS
@@ -153,6 +167,10 @@ CHANNEL_COLORS = {
     "Frost": "#aaccdd", "Anim": "#bb7744", "AnimRot": "#cc8855",
     "Gobo2Rot": "#997700", "ColorWheel2": "#ffaa44",
     "DimCurve": "#777722", "Sound": "#44cc99",
+    # Presets : un vert-cyan franc, d'une famille qu'aucun autre canal n'occupe.
+    # Nuances descendantes pour que Preset 1..4 se lisent comme une serie.
+    "Preset1": "#00cc99", "Preset2": "#00b389",
+    "Preset3": "#009a78", "Preset4": "#008168",
     # Gris éteint : un canal que MyStrow ne pilote pas ne doit pas attirer
     # l'œil comme les autres, mais rester visible pour qu'on puisse lui donner
     # son vrai type si on connaît l'appareil.

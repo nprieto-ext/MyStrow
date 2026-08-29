@@ -19,10 +19,12 @@ from PySide6.QtWidgets import (
     QComboBox, QTableWidget, QTableWidgetItem, QWidgetAction, QSpinBox,
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
     QHeaderView, QCheckBox, QTextEdit, QToolTip, QDialogButtonBox,
-    QLayout, QSizePolicy
+    QLayout, QSizePolicy, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
+    QDoubleSpinBox
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QUrl, QSize, QPoint, QRect, QDateTime, QEvent, Signal, QThread
+    Qt, QTimer, QUrl, QSize, QPoint, QRect, QRectF, QSizeF, QPointF,
+    QDateTime, QEvent, Signal, QThread
 )
 import datetime as _dt
 try:
@@ -208,15 +210,16 @@ except ImportError:
         audioOutputsChanged = type('S', (), {'connect': lambda *a: None})()
 
 try:
-    from PySide6.QtMultimediaWidgets import QVideoWidget
+    from PySide6.QtMultimediaWidgets import QVideoWidget, QGraphicsVideoItem
 except ImportError:
-    QVideoWidget = None
+    QVideoWidget = QGraphicsVideoItem = None
 
 from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
     spread_rank, SPREAD_MODES, channel_label,
     projector_selection_keys, layer_selection_ranks, block_index, chase_slot,
+    projector_track_key,
     layer_frequency, random_wave, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
@@ -235,7 +238,7 @@ from controller_mapping_wizard import MidiMappingWizard
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton, PositionPadButton
 from plan_de_feu import (PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy,
                          _find_free_canvas_pos, sym_mirror_ids)
-from plan_3d_webwindow import Plan3DWebWindow as Plan3DWindow
+from plan_3d_webwindow import Plan3DWebWindow as Plan3DWindow, repartir_canvas
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
@@ -863,6 +866,10 @@ class MessageLogWidget(QWidget):
 _MEM_COL_MAX = 99
 _FX_COL_MAX  = 8
 _POS_COL_MAX = 5   # 5 colonnes POS × 8 pads = 40 positions max
+# Une SEULE colonne VFX, pas une famille indexée comme les colonnes FX : il
+# n'y a jamais qu'un effet vidéo actif à la fois, et l'amplitude est globale.
+# Quatre colonnes auraient été quatre rangements du même unique jeu de pads,
+# pilotant le même état — de la place de surface perdue pour rien.
 _N_BANK_PAGES = 20  # nombre FIXE de pages de layout APC (navigables ◀ ▶)
 
 # ── Mode LIVE : strobe blanc « intelligent » ─────────────────────────────────
@@ -909,7 +916,7 @@ _AKAI_SLOT_OPTIONS = (
     + [f"MEM {i}" for i in range(1, _MEM_COL_MAX + 1)]
     + [f"FX {i}"  for i in range(1, _FX_COL_MAX + 1)]
     + [f"POS {i}" for i in range(1, _POS_COL_MAX + 1)]
-    + ["PLAY", "SANS SLOT"]
+    + ["PLAY", "SANS SLOT", "VIDEO", "VFX"]
 )
 
 
@@ -921,11 +928,15 @@ def _fader_label_text(label: str) -> str:
     reste nommé « SANS SLOT » dans le sélecteur de slot.
 
     « MEM 1 » est abrégé en « M01 » (idem « MEM 12 » → « M12 ») : avec 99
-    colonnes possibles, le libellé complet déborde sous la colonne. Les noms
-    longs restent utilisés partout ailleurs (sélecteur, journal, tooltips).
+    colonnes possibles, le libellé complet déborde sous la colonne. « VIDEO »
+    est abrégé en « VID » pour la même raison — 28 px de large, 9 px de fonte.
+    Les noms longs restent utilisés partout ailleurs (sélecteur, journal,
+    tooltips).
     """
     if label == "SANS SLOT":
         return "PLAY"
+    if label == "VIDEO":
+        return "VID"
     if label.startswith("MEM "):
         try:
             return f"M{int(label.split()[1]):02d}"
@@ -941,6 +952,10 @@ def _fader_label_tooltip(slot: dict) -> str:
         return f"{slot['label']} — fader {slot['fader_axis'].upper()} · groupe {grp}"
     if slot.get("type") == "memory":
         return slot.get("label", "")   # « M01 » abrégé → nom complet en tooltip
+    if slot.get("type") == "video":
+        return tr("vfx_column_tooltip")
+    if slot.get("type") == "vfx":
+        return tr("vfx_col_tooltip")
     return ""
 
 # Colonne PLAY : rôle de chaque pad (haut → bas) = (action, glyphe, couleur).
@@ -1791,8 +1806,14 @@ class _SlotPickerPopup(QFrame):
         self._add_section("Mémoires", mems, self._MEM_COLOR, current, cols=10)
         # POS — colonnes position lyre
         self._add_section(tr("pos_slot_section"), pos, "#2255ee", current)
-        # PLAY — transport lecteur (avec slots) + SANS SLOT (transport seul)
-        self._add_section("Lecteur", ["PLAY", "SANS SLOT"], "#2f8f57", current, cols=2, btn_w=78)
+        # Lecteur — transport (avec ou sans slots), sortie vidéo, effets vidéo.
+        # ⚠️ Cette liste est écrite EN DUR : ajouter une entrée à
+        # `_AKAI_SLOT_OPTIONS` ne suffit PAS à la faire apparaître ici. Le gros
+        # éditeur de layout, lui, lit bien `_AKAI_SLOT_OPTIONS` — d'où une
+        # colonne assignable dans l'éditeur mais introuvable dans ce popup,
+        # qui est pourtant le chemin normal (clic sur l'étiquette du fader).
+        self._add_section("Lecteur", ["PLAY", "SANS SLOT", "VIDEO", "VFX"],
+                          "#2f8f57", current, cols=4, btn_w=78)
 
         self._inner_lay.addStretch()
 
@@ -2063,6 +2084,80 @@ class _DecorativeFader(QWidget):
         p.drawLine(hx + 4, mid, hx + hw - 4, mid)
 
 
+# Fonctions du bouton en bas à droite du contrôleur (TAP tempo sur l'APC mini).
+#   bpm        : tap tempo — règle la vitesse des effets
+#   go         : avance à la mémoire / au cue suivant
+#   flash      : momentané — toutes les mémoires actives à 100 % tant qu'il est tenu
+#   flash_kill : momentané — toutes les mémoires actives coupées tant qu'il est tenu
+#   page       : page de layout suivante (+1, retour à la 1 après la dernière)
+TAP_BUTTON_MODES = ("bpm", "go", "flash", "flash_kill", "page")
+_TAP_MODE_KEYS = {
+    "bpm":        "tap_btn_mode_bpm",
+    "go":         "tap_btn_mode_go",
+    "flash":      "tap_btn_mode_flash",
+    "flash_kill": "tap_btn_mode_kill",
+    "page":       "tap_btn_mode_page",
+}
+
+
+# Couleur d'accent par mode — la même dans le menu, sur le bouton de la fenêtre
+# de configuration et sur le bouton du contrôleur à l'écran.
+_TAP_MODE_COLORS = {
+    "bpm":        "#8a8a8a",
+    "go":         "#00cc66",
+    "flash":      "#ffaa00",
+    "flash_kill": "#ff4444",
+    "page":       "#3399ff",
+}
+# Reprend trait pour trait la feuille de style du menu des effets
+# (`ui_components.EffectButton.show_effects_menu`) : mêmes fonds, même en-tête
+# de section, et surtout la même marque de sélection — fond vert et liseré à
+# gauche. Deux menus qui font le même geste doivent se ressembler.
+_TAP_MENU_SS = (
+    "QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:2px; font-size:11px; }"
+    "QMenu::item { padding:4px 10px; border-radius:3px; color:#e0e0e0; }"
+    "QMenu::item:selected { background:#2a3a3a; color:#fff; }"
+    "QMenu::item:disabled { color:#555; font-size:9px; letter-spacing:1px; }"
+    "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
+    "QMenu::indicator { width:0px; height:0px; image:none; }"
+    "QMenu::item:checked { background:#004400; color:#44ff44;"
+    " font-weight:bold; border-left:3px solid #44ff44; }"
+    "QMenu::item:checked:selected { background:#005500; color:#55ff55; }"
+)
+
+
+def build_tap_mode_menu(parent, current, on_pick):
+    """Menu des fonctions du bouton bas-droite.
+
+    Une seule construction pour les deux accès : la fenêtre de configuration et
+    le clic droit sur le bouton lui-même. `on_pick` reçoit le mode choisi.
+    """
+    menu = QMenu(parent)
+    menu.setStyleSheet(_TAP_MENU_SS)
+    titre = menu.addAction("  " + tr("tap_btn_mode_lbl").upper())
+    titre.setEnabled(False)
+    menu.addSeparator()
+    cur = normalize_tap_button_mode(current)
+    for m in TAP_BUTTON_MODES:
+        a = menu.addAction("  " + tr(_TAP_MODE_KEYS[m]))
+        a.setData(m)
+        a.setCheckable(True)
+        a.setChecked(m == cur)
+        a.triggered.connect(lambda _checked=False, mm=m: on_pick(mm))
+    return menu
+
+
+def normalize_tap_button_mode(value) -> str:
+    """Ramène n'importe quelle valeur lue en config à un mode connu.
+
+    Accepte aussi l'ancien booléen `go_mode` des configs d'avant les modes flash.
+    """
+    if isinstance(value, bool):
+        return "go" if value else "bpm"
+    v = str(value or "").strip().lower()
+    return v if v in TAP_BUTTON_MODES else "bpm"
+
+
 class AkaiLayoutEditorDialog(QDialog):
     """Fenetre d'edition des 8 colonnes AKAI — représentation visuelle du contrôleur."""
 
@@ -2075,7 +2170,7 @@ class AkaiLayoutEditorDialog(QDialog):
     _FX_COLOR    = "#7722aa"
     _EMPTY_COLOR = "#2a2a2a"
 
-    def __init__(self, slots, last_fader_mode="FX", superposition=False, go_mode=False,
+    def __init__(self, slots, last_fader_mode="FX", superposition=False, tap_button_mode="bpm",
                  active_brightness=100, inactive_brightness=20, parent=None,
                  pages=None, page_idx=0):
         super().__init__(parent)
@@ -2241,10 +2336,28 @@ class AkaiLayoutEditorDialog(QDialog):
         self._superposition_check.setChecked(superposition)
         self._superposition_check.setToolTip(tr("fx_superposition_tip"))
         opts_lay.addWidget(self._superposition_check)
-        self._go_mode_check = QCheckBox(tr("go_mode_lbl"))
-        self._go_mode_check.setChecked(go_mode)
-        self._go_mode_check.setToolTip(tr("go_mode_tip"))
-        opts_lay.addWidget(self._go_mode_check)
+        # Fonction du bouton bas-droite : TAP BPM / GO / FLASH / FLASH KILL
+        tap_row = QWidget()
+        tap_row.setStyleSheet("background:transparent; border:none;")
+        tap_lay = QVBoxLayout(tap_row)
+        tap_lay.setContentsMargins(0, 0, 0, 0)
+        tap_lay.setSpacing(3)
+        tap_lbl = QLabel(tr("tap_btn_mode_lbl"))
+        tap_lbl.setStyleSheet("color:#aaa; font-size:10px;")
+        tap_lay.addWidget(tap_lbl)
+        # Un bouton qui ouvre le menu, pas un QComboBox : la liste déroulante
+        # native jure avec le reste de la fenêtre, et c'est le même menu qu'au
+        # clic droit sur le bouton du contrôleur.
+        self._tap_mode = normalize_tap_button_mode(tap_button_mode)
+        self._tap_mode_btn = QPushButton()
+        self._tap_mode_btn.setFixedHeight(24)
+        self._tap_mode_btn.setCursor(Qt.PointingHandCursor)
+        self._tap_mode_btn.setToolTip(tr("tap_btn_mode_tip"))
+        self._tap_mode_btn.clicked.connect(self._open_tap_mode_menu)
+        self._refresh_tap_mode_btn()
+        tap_lay.addWidget(self._tap_mode_btn)
+        tap_row.setToolTip(tr("tap_btn_mode_tip"))
+        opts_lay.addWidget(tap_row)
         opts_lay.addStretch()
         bottom_row.addWidget(opts_card, 2)
 
@@ -2437,14 +2550,46 @@ class AkaiLayoutEditorDialog(QDialog):
             return f"FX {slot.get('fx_col', 0) + 1}"
         if slot.get("type") == "pos":
             return f"POS {slot.get('pos_col', 0) + 1}"
+        if slot.get("type") == "vfx":
+            return "VFX"
+        if slot.get("type") == "video":
+            return "VIDEO"
         return slot.get("group", slot.get("label", "A"))
 
     # ── Résultat ─────────────────────────────────────────────────────────────
     def get_superposition(self):
         return self._superposition_check.isChecked()
 
-    def get_go_mode(self):
-        return self._go_mode_check.isChecked()
+    # ── Fonction du bouton bas-droite ─────────────────────────────────────────
+    def _refresh_tap_mode_btn(self):
+        mode  = self._tap_mode
+        color = _TAP_MODE_COLORS[mode]
+        c     = QColor(color)
+        # rgba() et non « {color}55 » : Qt lit un hex de 8 chiffres comme
+        # #AARRGGBB, ce qui donnait une bordure rose au lieu d'un accent attenue.
+        faible = f"rgba({c.red()},{c.green()},{c.blue()},110)"
+        self._tap_mode_btn.setText(f"{tr(_TAP_MODE_KEYS[mode])}      ▾")
+        self._tap_mode_btn.setStyleSheet(f"""
+            QPushButton {{
+                background:#1a1a1a; color:{color};
+                border:1px solid {faible}; border-radius:5px;
+                padding:2px 8px; font-size:10px; font-weight:bold;
+            }}
+            QPushButton:hover {{ background:#222; border-color:{color}; }}
+            QPushButton:pressed {{ background:#111; }}
+        """)
+
+    def _open_tap_mode_menu(self):
+        menu = build_tap_mode_menu(self._tap_mode_btn, self._tap_mode, self._set_tap_mode)
+        menu.exec(self._tap_mode_btn.mapToGlobal(
+            self._tap_mode_btn.rect().bottomLeft()))
+
+    def _set_tap_mode(self, mode):
+        self._tap_mode = normalize_tap_button_mode(mode)
+        self._refresh_tap_mode_btn()
+
+    def get_tap_button_mode(self):
+        return self._tap_mode
 
     def get_active_brightness(self):
         return self._active_brightness_slider.value()
@@ -2477,6 +2622,10 @@ class AkaiLayoutEditorDialog(QDialog):
                 slots.append({"type": "play", "label": "PLAY"})
             elif val == "SANS SLOT":
                 slots.append({"type": "play", "slots": False, "label": "SANS SLOT"})
+            elif val == "VFX":
+                slots.append({"type": "vfx", "label": "VFX"})
+            elif val == "VIDEO":
+                slots.append({"type": "video", "label": "VIDEO"})
             else:
                 slots.append({"type": "group", "group": val, "label": val})
         return slots
@@ -2505,6 +2654,320 @@ class AkaiLayoutEditorDialog(QDialog):
         return "FX"
 
 
+# ── Effets vidéo ──────────────────────────────────────────────────────────────
+# Tous les effets sont de la même famille : un calque de couleur uni posé
+# par-dessus la sortie, dont seule l'OPACITÉ varie dans le temps. Aucun
+# traitement par image — pas de `frame.toImage()` par frame, donc rien qui
+# vienne disputer le thread GUI au timer DMX 25 fps (voir
+# `Plan3DWebWindow._on_video_frame`, où la conversion est justement ce qui
+# coûte). C'est ce qui exclut d'office le flou et la pixellisation : eux
+# demandent de toucher aux pixels.
+#
+# Mélanger vers du noir à l'opacité a donne c×(1-a) : le dimmer est un vrai
+# dimmer multiplicatif, pas une approximation.
+#
+# Chaque entrée : (clé i18n, couleur du calque, glyphe du pad, couleur du pad).
+_VIDEO_FX = {
+    "strobe":       ("vfx_strobe",       "#000000", "⚡", "#8888ff"),
+    "strobe_white": ("vfx_strobe_white", "#ffffff", "✳", "#ffffaa"),
+    "strobe_rand":  ("vfx_strobe_rand",  "#000000", "⁂", "#cc66ff"),
+    "pulse":        ("vfx_pulse",        "#000000", "◐", "#22aacc"),
+    "strobe_bpm":   ("vfx_strobe_bpm",   "#000000", "♪", "#66ddaa"),
+    "burst":        ("vfx_burst",        "#000000", "▮", "#ff8844"),
+    "hit_white":    ("vfx_hit_white",    "#ffffff", "●", "#ffffff"),
+    "hit_black":    ("vfx_hit_black",    "#000000", "○", "#33445c"),
+}
+# Huit effets : de quoi remplir exactement une colonne VFX.
+_VIDEO_FX_ORDER = ("strobe", "strobe_bpm", "strobe_white", "strobe_rand",
+                   "burst", "pulse", "hit_white", "hit_black")
+
+# Effets à UN COUP : ils se désarment tout seuls une fois retombés, et un
+# nouvel appui les REDÉCLENCHE au lieu de les éteindre. Un coup se tape sur un
+# temps fort — si le pad devait aussi servir à l'éteindre, deux appuis
+# rapprochés annuleraient le second coup, ce qui est exactement l'inverse de
+# l'usage.
+_VFX_ONESHOT = ("hit_white", "hit_black")
+
+# Colonne VIDÉO : rôle de chaque pad (haut → bas) = (action, glyphe, couleur).
+# action : "cut" | "none" | "fx:<clé>" | None (pad vide, comme _PLAY_ROWS_NOSLOT).
+# Le fader de cette colonne est le DIMMER de la sortie vidéo (défaut 100 %,
+# exclu des remises à zéro startup/clear — voir _sync_video_fader).
+#
+# Elle ne porte plus que les deux commandes qu'on cherche en urgence — couper,
+# et tout éteindre. Les EFFETS vivent sur les colonnes VFX, où ils sont
+# assignables pad par pad : les figer ici plafonnait leur nombre à six.
+# `action="fx:<clé>"` reste accepté, pour qui voudrait en réattacher un.
+_VIDEO_ROWS = (
+    ("cut",              "⏻", "#cc3333"),
+    ("none",             "∅", "#888888"),
+    (None,               "",       "#101010"),
+    (None,               "",       "#101010"),
+    (None,               "",       "#101010"),
+    (None,               "",       "#101010"),
+    (None,               "",       "#101010"),
+    (None,               "",       "#101010"),
+)
+
+# Réglages temporels, en ms. Volontairement fixes : l'effet vidéo est un
+# accessoire de show, pas un second éditeur d'effets.
+_VFX_STROBE_MS  = 125      # période du strobe (8 Hz), rapport cyclique 1/2
+_VFX_PULSE_MS   = 2000     # période de la respiration
+_VFX_PULSE_MAX  = 0.75     # opacité haute de la respiration (0 en bas)
+_VFX_HIT_MS     = 260      # durée de retombée d'un coup (blanc ou noir)
+_VFX_BPM_DUTY   = 0.35     # part allumée d'un temps, pour le strobe au BPM
+_VFX_BPM_DEFAUT = 120.0    # BPM de repli quand rien n'en donne un
+_VFX_BURST_MS   = 1200     # cycle d'une rafale
+_VFX_BURST_N    = 3        # nombre de coups dans la rafale
+_VFX_BURST_GAP  = 110      # ms entre deux coups de la rafale
+_VFX_BURST_ON   = 55       # ms allumé par coup
+_VFX_RAND_MS    = 45       # durée d'un pas du strobe aléatoire
+_VFX_RAND_DUTY  = 42       # % de pas allumés
+
+# Cadence de repaint des effets animés. 25 ms (40 fps) : en dessous, le strobe
+# à 8 Hz n'a plus assez de pas pour que les deux demi-périodes soient égales.
+_VFX_TICK_MS = 25
+
+# Bouton EFFET : clignotement et largeur. 420 ms est la cadence déjà utilisée
+# par le clignotement des pads mémoire (`_auto_blink_timer`) — deux rythmes
+# différents à l'écran se remarqueraient.
+_VFX_BLINK_MS  = 420
+_VFX_BTN_W_MIN = 52    # largeur au repos, celle du libellé « EFFET »
+_VFX_BTN_W_MAX = 108   # au-delà, le titre est élidé plutôt que de pousser
+                       # le bouton VIDEO hors du cadre
+
+
+def _video_fx_alpha(fx, elapsed_ms, bpm=_VFX_BPM_DEFAUT):
+    """Opacité 0..1 du calque de l'effet `fx`, `elapsed_ms` après son armement.
+
+    `bpm` ne sert qu'au strobe calé sur le tempo. Il est passé en paramètre
+    plutôt que lu dans `self` pour que la courbe reste une fonction PURE : la
+    sortie et la dalle LED 3D l'interrogent séparément, et une fonction pure est
+    la seule garantie qu'elles répondent pareil.
+
+    Rend `(alpha, anime)`. `anime` dit si l'opacité bougera encore : le timer de
+    repaint n'a aucune raison de tourner pour un calque immobile, qui n'a pas
+    besoin d'être redessiné 40 fois par seconde par-dessus une vidéo. Aucun des
+    effets actuels n'est figé une fois lancé, mais un effet à opacité constante
+    (une teinte) doit rendre `False` — c'est ce qui rend le mécanisme sûr quand
+    on en rajoute un.
+    """
+    import math
+    t = max(0, int(elapsed_ms))
+    if fx in ("strobe", "strobe_white"):
+        phase = (t % _VFX_STROBE_MS) / float(_VFX_STROBE_MS)
+        return (1.0 if phase < 0.5 else 0.0), True
+    if fx == "strobe_bpm":
+        # Un éclat par TEMPS, pas un carré 50/50 : à 128 BPM une demi-période
+        # ferait 234 ms allumées, ce qui se lit comme un clignotement lent et
+        # non comme un coup sur le temps.
+        periode = 60000.0 / max(40.0, min(300.0, float(bpm)))
+        return (1.0 if (t % periode) / periode < _VFX_BPM_DUTY else 0.0), True
+    if fx == "burst":
+        # Rafale : N coups serrés, puis le silence jusqu'au prochain cycle.
+        # « ta-ta-ta … ta-ta-ta … » tombe bien plus juste sur une musique qu'un
+        # strobe régulier, qui ne s'aligne sur rien.
+        phase = t % _VFX_BURST_MS
+        for i in range(_VFX_BURST_N):
+            debut = i * _VFX_BURST_GAP
+            if debut <= phase < debut + _VFX_BURST_ON:
+                return 1.0, True
+        return 0.0, True
+    if fx == "strobe_rand":
+        # Pseudo-aléatoire DÉTERMINISTE, et non `random.random()` : cette
+        # fonction est appelée séparément par la sortie et par la dalle LED 3D.
+        # Un tirage par appel les ferait clignoter chacune de son côté, alors
+        # qu'elles doivent montrer la même image. Le hachage du numéro de pas
+        # (Knuth) donne la même réponse partout, et reste testable.
+        pas = t // _VFX_RAND_MS
+        h = (pas * 2654435761) % 4294967296
+        return (1.0 if h % 100 < _VFX_RAND_DUTY else 0.0), True
+    if fx == "pulse":
+        phase = (t % _VFX_PULSE_MS) / float(_VFX_PULSE_MS)
+        return _VFX_PULSE_MAX * (1.0 - math.cos(2 * math.pi * phase)) / 2.0, True
+    if fx in ("hit_white", "hit_black"):
+        # Un coup : opacité pleine d'emblée, puis retombée. Le carré fait chuter
+        # vite au début — une décroissance linéaire donne un coup mou. Seule la
+        # COULEUR du calque distingue le coup de blanc du coup de noir.
+        x = t / float(_VFX_HIT_MS)
+        if x >= 1.0:
+            return 0.0, False
+        return (1.0 - x) ** 2, True
+    return 0.0, False
+
+
+def _compose_video_layers(layers):
+    """Réduit plusieurs mélanges successifs vers une couleur en UN seul calque.
+
+    `layers` = [(QColor, alpha 0..1), …], du plus bas au plus haut. Empiler deux
+    widgets translucides donnerait le même rendu à l'écran, mais on a besoin de
+    la couleur résultante EN CLAIR pour la repiquer sur la dalle LED du plan 3D
+    (`_push_video_image`), qui ne compose rien du tout.
+
+    Mélanger c vers C1 à a1 puis vers C2 à a2 vaut exactement un mélange unique
+    vers C à A, avec A = a1 + a2 − a1·a2 et C·A = C1·a1·(1−a2) + C2·a2.
+
+    Rend un QColor dont le canal alpha porte A (0 = calque inutile).
+    """
+    acc_a = 0.0
+    acc_r = acc_g = acc_b = 0.0        # composantes déjà pondérées par leur alpha
+    for color, alpha in layers:
+        a = max(0.0, min(1.0, float(alpha)))
+        if a <= 0.0:
+            continue
+        c = QColor(color)
+        acc_r = acc_r * (1.0 - a) + c.red() * a
+        acc_g = acc_g * (1.0 - a) + c.green() * a
+        acc_b = acc_b * (1.0 - a) + c.blue() * a
+        acc_a = acc_a + a - acc_a * a
+    if acc_a <= 0.0:
+        return QColor(0, 0, 0, 0)
+    # Dépondérer : acc_* porte C·A, le QColor veut C et A séparés.
+    return QColor(int(round(acc_r / acc_a)), int(round(acc_g / acc_a)),
+                  int(round(acc_b / acc_a)), int(round(acc_a * 255)))
+
+
+class VideoFxOverlay(QWidget):
+    """Calque de couleur translucide posé sur les pages NON vidéo d'une sortie.
+
+    Transparent aux clics, sans fond propre : il ne fait que remplir son
+    rectangle d'une couleur à alpha, Qt compose sur ce qui est peint en dessous.
+
+    ⚠️ **Ne fonctionne PAS par-dessus une vidéo qui joue** — mesuré, pas
+    supposé : voir `VideoSurface`, qui existe précisément pour ça. Ce calque-ci
+    ne sert qu'aux pages « image » et « noir », et les deux porteurs sont
+    EXCLUSIFS (sinon la couleur est mélangée deux fois).
+
+    Se cache tout seul quand la couleur est totalement transparente : un calque
+    invisible ne doit pas rester dans le chemin de repaint.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self._color = QColor(0, 0, 0, 0)
+        self.hide()
+
+    def color(self):
+        return QColor(self._color)
+
+    def set_color(self, color):
+        c = QColor(color)
+        if c == self._color:
+            return
+        visible_avant = self._color.alpha() > 0
+        self._color = c
+        visible = c.alpha() > 0
+        self.setVisible(visible)
+        if visible and not visible_avant:
+            # Remonter à CHAQUE réapparition, pas seulement à la construction :
+            # les pages du QStackedWidget en dessous (vidéo, image, noir) sont
+            # montrées et cachées au fil du show, et un calque passé dessous ne
+            # se verrait plus.
+            self.raise_()
+        self.update()
+
+    def paintEvent(self, event):
+        if self._color.alpha() <= 0:
+            return
+        p = QPainter(self)
+        p.fillRect(self.rect(), self._color)
+        p.end()
+
+
+class VideoSurface(QGraphicsView):
+    """Surface de rendu vidéo sur laquelle un calque d'effet se voit vraiment.
+
+    Pourquoi pas un `QVideoWidget` avec un widget translucide par-dessus, qui
+    serait bien plus simple : **sous Windows, `QVideoWidget` rend l'image dans
+    une surface GPU qui passe AU-DESSUS du backing store de la fenêtre.** Un
+    calque enfant se peint correctement — mais DERRIÈRE la vidéo. Mesuré sur une
+    vidéo bleue unie : calque blanc OPAQUE posé dessus, la capture d'écran
+    lisait toujours le bleu, inchangé. Aucun `raise_()` n'y change rien : ce
+    n'est pas un problème d'ordre entre widgets.
+
+    Dans une scène graphique, c'est Qt qui compose : l'item vidéo et le
+    rectangle de calque sont deux items de la MÊME scène, ordonnés par leur
+    `zValue`. Même mesure, même vidéo : le blanc opaque donne bien du blanc, et
+    un rouge à 50 % donne exactement le mélange attendu.
+
+    ⚠️ Ça vaut aussi pour le watermark de licence : posé sur un `QVideoWidget`,
+    il était invisible dès qu'une vidéo jouait.
+
+    Expose `videoSink()` pour rester interchangeable avec l'ancien
+    `QVideoWidget` — c'est là que se branche le relais de la dalle LED du plan
+    3D (`Plan3DWebWindow._attach_video`).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QGraphicsView.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setInteractive(False)
+        self.setBackgroundBrush(QColor("#000000"))
+
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+
+        self.item = QGraphicsVideoItem()
+        self._scene.addItem(self.item)
+
+        # Le calque couvre TOUTE la vue, bandes noires comprises : une coupure
+        # doit noircir la surface entière, pas seulement la zone d'image.
+        self._fx = QGraphicsRectItem()
+        self._fx.setPen(QPen(Qt.NoPen))
+        self._fx.setBrush(QBrush(QColor(0, 0, 0, 0)))
+        self._fx.setZValue(10)
+        self._fx.setVisible(False)
+        self._scene.addItem(self._fx)
+
+        self._fx_color = QColor(0, 0, 0, 0)
+        # La taille native n'est connue qu'une fois le premier média chargé :
+        # sans ce signal, la vidéo garderait le cadrage de la précédente.
+        self.item.nativeSizeChanged.connect(lambda _s: self._relayout())
+
+    def videoSink(self):
+        return self.item.videoSink()
+
+    def fx_color(self):
+        return QColor(self._fx_color)
+
+    def set_fx_color(self, color):
+        c = QColor(color)
+        if c == self._fx_color:
+            return
+        self._fx_color = c
+        self._fx.setBrush(QBrush(c))
+        self._fx.setVisible(c.alpha() > 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self):
+        """Recadre l'item vidéo dans la vue, à ratio conservé et centré."""
+        w = max(1, self.viewport().width())
+        h = max(1, self.viewport().height())
+        # sceneRect calé sur le viewport : pas de scroll, pas de zoom implicite.
+        self._scene.setSceneRect(0, 0, w, h)
+        self._fx.setRect(QRectF(0, 0, w, h))
+
+        native = self.item.nativeSize()
+        if native.isValid() and native.width() > 0 and native.height() > 0:
+            ratio = native.width() / native.height()
+            if w / h > ratio:          # vue plus large que l'image
+                ih = h
+                iw = h * ratio
+            else:
+                iw = w
+                ih = w / ratio
+        else:
+            iw, ih = w, h              # taille inconnue : on remplit
+        self.item.setSize(QSizeF(iw, ih))
+        self.item.setPos(QPointF((w - iw) / 2.0, (h - ih) / 2.0))
+
+
 class VideoOutputWindow(QWidget):
     """Fenetre de sortie video plein ecran sur un second moniteur"""
 
@@ -2524,9 +2987,8 @@ class VideoOutputWindow(QWidget):
         layout.addWidget(self.stack)
 
         # Page 0 : Video
-        if QVideoWidget is not None:
-            self.video_widget = QVideoWidget()
-            self.video_widget.setStyleSheet("background: black;")
+        if QGraphicsVideoItem is not None:
+            self.video_widget = VideoSurface()
             self.stack.addWidget(self.video_widget)
         else:
             self.video_widget = None
@@ -2547,8 +3009,36 @@ class VideoOutputWindow(QWidget):
 
         self.stack.setCurrentIndex(self.PAGE_BLACK)
 
+        # Calque d'effet + dimmer des pages « image » et « noir ». La page vidéo
+        # a le sien, DANS sa scène graphique (VideoSurface) : c'est le seul
+        # endroit d'où l'on peut peindre par-dessus une vidéo qui joue.
+        self.fx_overlay = VideoFxOverlay(self)
+        self._fx_color = QColor(0, 0, 0, 0)
+        self.stack.currentChanged.connect(
+            lambda _i: self.set_fx_overlay(self._fx_color))
+
         # Watermark overlay (licence)
         self._watermark = None
+
+    def set_fx_overlay(self, color):
+        """Pose la couleur composée (effet + dimmer) sur la sortie.
+
+        Les deux porteurs sont EXCLUSIFS : la scène de `VideoSurface` sur la
+        page vidéo, le widget translucide sur les pages « image » et « noir ».
+        Les laisser agir tous les deux mélangerait la couleur deux fois.
+        """
+        self._fx_color = QColor(color)
+        sur_video = (isinstance(self.video_widget, VideoSurface)
+                     and self.stack.currentIndex() == self.PAGE_VIDEO)
+        if isinstance(self.video_widget, VideoSurface):
+            self.video_widget.set_fx_color(color)
+        self.fx_overlay.setGeometry(self.rect())
+        self.fx_overlay.set_color(QColor(0, 0, 0, 0) if sur_video else color)
+        self.fx_overlay.raise_()
+        # Le watermark repasse AU-DESSUS : un calque noir opaque (coupure, dimmer
+        # à 0) le ferait disparaître, ce qui rendrait la licence contournable.
+        if self._watermark:
+            self._watermark.raise_()
 
     def set_watermark(self, visible):
         """Affiche ou masque le watermark de licence"""
@@ -2587,6 +3077,8 @@ class VideoOutputWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.fx_overlay.setGeometry(self.rect())
+        self.fx_overlay.raise_()
         if self._watermark:
             self._create_watermark_pixmap()
             # Centrer le watermark
@@ -2594,6 +3086,7 @@ class VideoOutputWindow(QWidget):
             x = (self.width() - wm_size.width()) // 2
             y = (self.height() - wm_size.height()) // 2
             self._watermark.setGeometry(x, y, wm_size.width(), wm_size.height())
+            self._watermark.raise_()
 
     def show_black(self):
         """Affiche un ecran noir"""
@@ -3113,13 +3606,37 @@ class MainWindow(QMainWindow):
         self.active_effect = None
         self.effect_superposition = False   # True = plusieurs effets simultanés
         self._stacked_effects = []          # liste de dicts d'état par effet (mode superposition)
-        self.go_mode = False                # True = bouton TAP devient GO (avance mémoires)
+        # Fonction du bouton bas-droite du contrôleur : bpm | go | flash | flash_kill
+        self.tap_button_mode = "bpm"
         self._go_col = -1                   # colonne mémoire courante en mode GO (-1 = pas démarré)
         self._go_row = -1                   # rangée mémoire courante en mode GO
+        self._flash_kind = None             # None | "full" | "kill" — flash momentané en cours
+        # {colonne: état de la colonne} le temps d'un appui momentané sur un pad
+        # couleur (mode FLASH). Une entrée par colonne : deux doigts sur deux
+        # colonnes différentes sont deux momentanés indépendants.
+        self._pad_flash_snaps = {}
+        self._flash_had_memories = False    # une mémoire était-elle tenue à l'appui ?
+        # {colonne: groupes} des pads couleur tenus sous FLASH KILL : tout ce
+        # qui n'est pas dans l'union part au noir le temps de la frame.
+        self._kill_solo_cols = {}
+        # Garde-fou : un contrôleur qui n'enverrait pas de Note Off laisserait le
+        # flash collé (salle au noir ou plein feu). Au-delà de ce délai on relâche.
+        self._flash_watchdog = QTimer(self)
+        self._flash_watchdog.setSingleShot(True)
+        self._flash_watchdog.setInterval(30000)
+        self._flash_watchdog.timeout.connect(self._flash_end)
         self.effect_speed = 0
         self.effect_amplitude = 100   # amplitude globale effets (fader 9), 0-100
         self.effect_state = 0
         self.effect_saved_colors = {}
+        # Témoin de la dernière frame écrite par le moteur d'effets, pour
+        # distinguer ses écritures de celles des autres (cf. _sync_effect_baseline)
+        self._effect_engine_frame = None
+        # Horloge de PHASE des effets à couches : temps déformé par la vitesse
+        # générale, pour que bouger le fader FX change la CADENCE sans faire
+        # sauter la position dans le cycle (cf. _update_effect_from_layers).
+        self._effect_clock    = 0.0
+        self._effect_clock_ts = None
         self._button_effect_configs = self._load_effect_assignments()  # {btn_idx: config_dict from editor}
         self._effect_library_configs = self._load_effect_library()    # {effect_name: config_dict}
         self.active_effect_config = {}     # config en cours d'exécution
@@ -3145,6 +3662,12 @@ class MainWindow(QMainWindow):
         self.memory_custom_colors = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.active_memory_pads = {}  # {fader_idx: row} pad actif par colonne memoire
         self._mem_cue_idx = {}        # {(col, row): int} index cue courant par pad
+        # Les deux registres qui rendent une MEM pilotable HORS de la page
+        # affichée (entrée DMX). active_memory_pads est indexé par colonne
+        # VISIBLE : hors page, il ne dit plus quelle mémoire est active. Ceux-ci
+        # sont indexés par mem_col, donc indépendants de la page.
+        self._mem_rows = {}           # {mem_col: row} pad actif, quelle que soit la page
+        self._mem_ext_levels = {}     # {mem_col: 0-100} niveau venu du pupitre DMX
 
         # Positions lyre (pan/tilt presets)
         self.position_presets = []                                          # [{"name": str, "projectors": [{group, pan, tilt}]}]
@@ -3198,6 +3721,32 @@ class MainWindow(QMainWindow):
         self.active_fx_pads = {}       # {(fx_col, row): True}
         self.fx_amplitudes = [100] * _FX_COL_MAX
 
+        # — Effets vidéo (voir _VIDEO_FX). Un seul effet à la fois : ils ne se
+        #   superposent pas, un pad armé désarme le précédent.
+        self.video_fx        = None            # clé de _VIDEO_FX, ou None
+        # Garde de réentrance : _apply_video_fx désarme un effet à un coup via
+        # set_video_fx(), qui rappelle _apply_video_fx.
+        self._video_fx_oneshot_guard = False
+        self.video_fx_start  = 0.0             # time.time() de l'armement
+        self.video_dimmer    = 100             # 0-100, fader de la colonne VIDÉO
+        self.video_fx_amplitude = 100          # 0-100, fader d'une colonne VFX
+        self._tap_bpm        = 0.0             # dernier tempo tapé (0 = jamais)
+        # Colonnes VFX : [colonne][ligne] = clé de _VIDEO_FX, ou None (pad vide)
+        self.vfx_pads = [None] * 8
+        self.video_cut       = False           # coupure franche de la sortie
+        # Comme `fx_amplitudes`, le dimmer n'est PAS persisté : il repart à 100
+        # à chaque lancement. Un show qui rouvrirait avec la vidéo à 0 sans que
+        # rien ne l'explique serait pire que la commodité de le retenir.
+        self._video_fx_timer = QTimer(self)
+        self._video_fx_timer.setInterval(_VFX_TICK_MS)
+        self._video_fx_timer.timeout.connect(self._apply_video_fx)
+        # Clignotement du bouton EFFET (indépendant du rendu du calque : il
+        # doit battre lentement même quand l'effet, lui, bat à 8 Hz).
+        self._video_fx_blink_on = False
+        self._video_fx_blink_timer = QTimer(self)
+        self._video_fx_blink_timer.setInterval(_VFX_BLINK_MS)
+        self._video_fx_blink_timer.timeout.connect(self._video_fx_blink_tick)
+
         # Configuration AKAI
         self.akai_active_brightness = 100
         self.akai_inactive_brightness = 20
@@ -3205,6 +3754,15 @@ class MainWindow(QMainWindow):
         # pour compenser la latence du pipeline vidéo (position() qui devance le
         # son audible). Global, réglable, persistant. Défaut 0 = aucun effet.
         self.light_sync_offset_ms = 0
+        # Preferences d'affichage du REC Lumiere (menu Affichage de l'editeur) :
+        # plan de feu 2D visible, densite des lignes de la timeline.
+        self.rec_view_pdf = True
+        # Lignes un peu plus fines par défaut : l'en-tête de piste tient
+        # maintenant sur une ligne (cadenas, nom, oeil), il n'a plus besoin des
+        # 60 px que réclamait l'ancienne étiquette encadrée.
+        self.rec_view_row_scale = 0.75
+        self.rec_view_projectors = True
+        self.rec_view_hidden_rows = []
         # Dernier mode DMX choisi par fixture (clé = uuid ou fabricant/nom)
         self._fixture_mode_prefs = {}
         # Sortie live de l'éditeur d'effets : {id(proj): (level, color, pan, tilt)}
@@ -3320,6 +3878,8 @@ class MainWindow(QMainWindow):
         self.seq.live_panel.dimmers_changed.connect(self.live_engine.update_dimmers)
         self.seq.live_panel.luminosity_changed.connect(self._on_live_luminosity_changed)
         self.seq.live_panel.set_lyre_position_getter(self._get_live_lyre_positions)
+        self.seq.live_panel.sequences_changed.connect(self._on_live_sequences_changed)
+        self.seq.live_panel.set_sequences_getter(self._get_live_sequences)
         self.seq.live_panel.settings_applied.connect(self._on_live_settings_applied)
         self.seq.live_panel.ia_mode_changed.connect(self._on_live_ia_mode_changed)
         self.seq.live_panel.source_changed.connect(self._on_live_source_changed)
@@ -3474,11 +4034,31 @@ class MainWindow(QMainWindow):
             self.projectors.append(p)
 
     def get_track_to_indices(self):
-        """Retourne le mapping nom_affichage_groupe -> [indices projecteurs]"""
+        """Retourne le mapping nom_de_piste -> [indices projecteurs].
+
+        UNIQUE traduction piste -> projecteurs du REC Lumiere : la restitution
+        (`Sequencer.apply_timeline_to_dmx`) et l'apercu de l'editeur
+        (`LightTimelineEditor._apply_preview_to_projectors`) s'en servent tous
+        les deux. Deux familles de cles y cohabitent :
+
+          - le nom d'affichage d'un GROUPE (« A », « Lyres »…) -> tous ses
+            projecteurs, dans l'ordre du patch ;
+          - la cle d'un PROJECTEUR seul (« @A2 », cf. `core.projector_track_key`)
+            -> un unique index.
+
+        Les deux peuvent viser le meme projecteur : c'est voulu. L'ordre des
+        pistes dans l'editeur tranche (les pistes projecteur sont placees APRES
+        les groupes, et la timeline est un writer absolu -> la derniere ecriture
+        gagne, donc un bloc pose sur « Face 2 » l'emporte sur celui du groupe A).
+        """
         mapping = {}
+        counters = {}
         for i, proj in enumerate(self.projectors):
             group_name = self.GROUP_DISPLAY.get(proj.group, proj.group.capitalize())
             mapping.setdefault(group_name, []).append(i)
+            local = counters.get(proj.group, 0)
+            counters[proj.group] = local + 1
+            mapping[projector_track_key(group_name, local)] = [i]
         return mapping
 
     def _create_menu(self):
@@ -3511,6 +4091,7 @@ class MainWindow(QMainWindow):
         edit_menu = bar.addMenu(tr("menu_edit"))
         edit_menu.addAction(tr("menu_dmx_patch"), self.show_dmx_patch_config)
         edit_menu.addAction(tr("menu_dmx_tester"), self.open_dmx_tester)
+        edit_menu.addAction(tr("menu_dmx_monitor"), self.open_dmx_monitor)
         edit_menu.addSeparator()
         edit_menu.addAction(tr("menu_effect_editor"), self.open_effect_editor)
         edit_menu.addSeparator()
@@ -3555,8 +4136,11 @@ class MainWindow(QMainWindow):
 
         conn_menu.addSeparator()
 
-        self.node_menu = conn_menu.addMenu(tr("menu_dmx_output"))
-        self.node_menu.addAction(tr("menu_config_output"), self.open_node_connection)
+        # Entree directe, pas un sous-menu : il ne contenait qu'une seule
+        # action, donc un clic supplementaire pour rien. L'ellipse annonce
+        # qu'une fenetre s'ouvre, ce qui la distingue des sous-menus voisins.
+        self.node_action = conn_menu.addAction(
+            tr("menu_dmx_output") + "…", self.open_node_connection)
         self._refresh_dmx_menu_title()
         # Sortie DMX réservée aux licences/essais actifs. Le menu reste volontairement
         # cliquable même sans droit DMX : un menu grisé n'explique rien à l'utilisateur.
@@ -3733,6 +4317,14 @@ class MainWindow(QMainWindow):
                 x = (obj.width() - lbl.width()) // 2
                 y = (obj.height() - lbl.height()) // 2
                 lbl.move(x, y)
+        # Le calque d'effet du preview n'est pas géré par le QStackedLayout
+        # (il doit couvrir la page affichée, quelle qu'elle soit) : c'est donc à
+        # nous de le recoller sur toute la surface à chaque redimensionnement.
+        elif obj is getattr(self, 'video_stack', None) and event.type() == QEvent.Resize:
+            ov = getattr(self, 'video_fx_preview', None)
+            if ov:
+                ov.setGeometry(obj.rect())
+                ov.raise_()
         return super().eventFilter(obj, event)
 
     def _create_video_frame(self):
@@ -3744,6 +4336,17 @@ class MainWindow(QMainWindow):
         # Bouton toggle sortie video
         title_layout = QHBoxLayout()
         title_layout.addStretch()
+
+        # Un SEUL bouton pour les six effets : le choix se fait dans son menu.
+        # Vert = un effet est armé, gris = aucun. Aligner sept boutons ici ne
+        # tenait pas dans la largeur du cadre vidéo.
+        self.video_fx_btn = QPushButton(tr("vfx_button"))
+        self.video_fx_btn.setFixedHeight(26)
+        self.video_fx_btn.setFixedWidth(_VFX_BTN_W_MIN)
+        self.video_fx_btn.setToolTip(tr("vfx_tooltip"))
+        self.video_fx_btn.clicked.connect(self._open_video_fx_menu)
+        title_layout.addWidget(self.video_fx_btn)
+        self._refresh_video_fx_btn()
 
         # Toujours "VIDEO" : vert = sortie ON, rouge = sortie OFF.
         self.video_output_btn = QPushButton("VIDEO")
@@ -3768,11 +4371,10 @@ class MainWindow(QMainWindow):
         self.video_stack = QStackedWidget()
         self.video_stack.setStyleSheet("background: #000; border: 1px solid #2a2a2a; border-radius: 6px;")
 
-        # Page 0 : QVideoWidget
-        if QVideoWidget is not None:
-            self.video_widget = QVideoWidget()
-            self.video_widget.setStyleSheet("background: #000;")
-            self.player.setVideoOutput(self.video_widget)
+        # Page 0 : surface vidéo (scène graphique, cf. VideoSurface)
+        if QGraphicsVideoItem is not None:
+            self.video_widget = VideoSurface()
+            self.player.setVideoOutput(self.video_widget.item)
         else:
             self.video_widget = QWidget()
             self.video_widget.setStyleSheet("background: #000;")
@@ -3786,6 +4388,17 @@ class MainWindow(QMainWindow):
 
         self.video_stack.setCurrentIndex(0)
         vv.addWidget(self.video_stack)
+
+        # Le preview porte le MÊME calque que la sortie : un pupitre où
+        # l'opérateur ne voit pas ce que voit la salle est un pupitre aveugle.
+        # Celui-ci ne couvre que les pages « image » et « noir » du stack ; la
+        # page vidéo est peinte par la scène de VideoSurface, seul endroit d'où
+        # l'on passe par-dessus une vidéo qui joue.
+        self.video_fx_preview = VideoFxOverlay(self.video_stack)
+        self.video_stack.installEventFilter(self)
+        # Changer de page change QUI porte le calque (scène ou widget) : sans
+        # ça, passer sur une photo laissait l'effet derrière soi.
+        self.video_stack.currentChanged.connect(lambda _i: self._apply_video_fx())
 
     def _enforce_video_ratio(self):
         """Ajuste la hauteur video pour maintenir un ratio 16:9"""
@@ -3857,15 +4470,21 @@ class MainWindow(QMainWindow):
                 self.video_output_window.show()
 
             # Forwarder les frames video vers la fenetre externe via le sink
-            sink = self.video_widget.videoSink() if QVideoWidget is not None else None
+            sink = (self.video_widget.videoSink()
+                    if hasattr(self.video_widget, 'videoSink') else None)
             if sink:
                 sink.videoFrameChanged.connect(self._forward_video_frame)
+            # La fenêtre vient d'apparaître : elle doit s'ouvrir DÉJÀ au niveau
+            # et avec l'effet en cours, pas en pleine lumière le temps du
+            # prochain tick.
+            self._apply_video_fx()
             self._update_video_output_state()
         else:
             # OFF - cacher la fenetre
             self.video_output_btn.setStyleSheet(_SS_OFF)
             # Deconnecter le forward de frames
-            sink = self.video_widget.videoSink() if QVideoWidget is not None else None
+            sink = (self.video_widget.videoSink()
+                    if hasattr(self.video_widget, 'videoSink') else None)
             if sink:
                 try:
                     sink.videoFrameChanged.disconnect(self._forward_video_frame)
@@ -3875,12 +4494,486 @@ class MainWindow(QMainWindow):
                 self.video_output_window.hide()
             self._log_message("Sortie vidéo désactivée", "info")
 
+    def _video_out(self):
+        """Cible de `setVideoOutput` : l'ITEM de la scène, pas la vue.
+
+        `QMediaPlayer` ne sait pas rendre dans un `QGraphicsView` — c'est le
+        `QGraphicsVideoItem` qu'il alimente. Rend None si Qt Multimedia Widgets
+        est absent, auquel cas le preview n'est qu'un carré noir.
+        """
+        surf = getattr(self, 'video_widget', None)
+        return surf.item if isinstance(surf, VideoSurface) else None
+
     def _forward_video_frame(self, frame):
         """Forward une frame video vers la fenetre de sortie externe"""
         if self.video_output_window and self.video_output_window.isVisible():
-            ext_sink = self.video_output_window.video_widget.videoSink()
+            vw = self.video_output_window.video_widget
+            ext_sink = vw.videoSink() if hasattr(vw, 'videoSink') else None
             if ext_sink:
                 ext_sink.setVideoFrame(frame)
+
+    # ── Effets vidéo ─────────────────────────────────────────────────────────
+
+    def video_bpm(self):
+        """Tempo pour les effets calés dessus, avec repli.
+
+        Deux sources, dans cet ordre : le tempo détecté par le moteur audio LIVE
+        (le plus juste quand il tourne), puis le dernier TAP manuel. Hors bornes
+        ou absent, on retombe sur 120 — un strobe qui s'arrête parce qu'aucun
+        tempo n'est connu serait pire qu'un strobe légèrement à côté.
+        """
+        b = 0.0
+        moteur = getattr(self, 'live_engine', None)
+        if moteur is not None:
+            try:
+                b = float(getattr(moteur, '_bpm', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                b = 0.0
+        if b <= 0.0:
+            try:
+                b = float(getattr(self, '_tap_bpm', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                b = 0.0
+        return b if 40.0 <= b <= 300.0 else _VFX_BPM_DEFAUT
+
+    def video_fx_overlay_color(self):
+        """Couleur composée (coupure + effet + dimmer) à poser sur la sortie.
+
+        Point unique : le preview, la fenêtre de sortie et la dalle LED du plan
+        3D lisent tous celle-ci. Alpha 0 = rien à poser.
+
+        L'ordre compte. Le dimmer passe EN DERNIER, donc par-dessus l'effet :
+        baisser le fader doit assombrir un flash blanc, pas se faire recouvrir
+        par lui. Et la coupure court-circuite tout : c'est un noir franc, pas un
+        mélange à 100 % qu'un effet suivant viendrait éclaircir.
+        """
+        if self.video_cut:
+            return QColor(0, 0, 0, 255)
+        layers = []
+        fx = self.video_fx
+        if fx in _VIDEO_FX:
+            alpha, _anime = _video_fx_alpha(
+                fx, (time.time() - self.video_fx_start) * 1000.0, self.video_bpm())
+            # Amplitude de la colonne VFX : même rôle que pour un effet lumière,
+            # « à quel point l'effet tape ». Elle n'agit QUE sur l'effet, jamais
+            # sur le dimmer — baisser l'amplitude adoucit le strobe, ça n'éteint
+            # pas la vidéo.
+            alpha *= max(0, min(100, int(self.video_fx_amplitude))) / 100.0
+            _key, hexcol, _glyph, _pad = _VIDEO_FX[fx]
+            layers.append((QColor(hexcol), alpha))
+        dim = max(0, min(100, int(self.video_dimmer)))
+        if dim < 100:
+            layers.append((QColor(0, 0, 0), 1.0 - dim / 100.0))
+        return _compose_video_layers(layers)
+
+    def _apply_video_fx(self):
+        """Recalcule le calque et le pose partout. Arrête le timer si c'est figé."""
+        color = self.video_fx_overlay_color()
+        surf = getattr(self, 'video_widget', None)
+        sur_video = (isinstance(surf, VideoSurface)
+                     and self.video_stack.currentIndex() == 0)
+        if isinstance(surf, VideoSurface):
+            surf.set_fx_color(color)
+        ov = getattr(self, 'video_fx_preview', None)
+        if ov is not None:
+            if ov.size() != self.video_stack.size():
+                ov.setGeometry(self.video_stack.rect())
+                ov.raise_()
+            # ⚠️ EXCLUSIFS. Les deux calques se recouvrent : sur la page vidéo,
+            # la scène a déjà posé la couleur, et laisser le widget la poser
+            # aussi mélangeait DEUX FOIS. Mesuré : un dimmer à 30 % rendait 9 %
+            # (0,3 × 0,3) — visuellement, un fader qui plonge d'un coup.
+            ov.set_color(QColor(0, 0, 0, 0) if sur_video else color)
+        if self.video_output_window is not None:
+            self.video_output_window.set_fx_overlay(color)
+
+        # Un effet dont l'opacité ne bouge plus n'a plus besoin d'être redessiné
+        # 40 fois par seconde par-dessus une vidéo qui joue : on rend la main au
+        # chemin de rendu normal.
+        anime = False
+        if self.video_fx in _VIDEO_FX and not self.video_cut:
+            _a, anime = _video_fx_alpha(
+                self.video_fx, (time.time() - self.video_fx_start) * 1000.0,
+                self.video_bpm())
+        if anime and not self._video_fx_timer.isActive():
+            self._video_fx_timer.start()
+        elif not anime and self._video_fx_timer.isActive():
+            self._video_fx_timer.stop()
+
+        # Un effet à un coup retombé se désarme : sans ça, le pad resterait
+        # allumé sur un effet qui ne fait plus rien, et le rappuyer l'aurait
+        # « éteint » au lieu de le retirer.
+        if (not anime and self.video_fx in _VFX_ONESHOT
+                and not self._video_fx_oneshot_guard):
+            self._video_fx_oneshot_guard = True   # set_video_fx rappelle ici
+            try:
+                self.set_video_fx(None)
+            finally:
+                self._video_fx_oneshot_guard = False
+
+    def set_video_fx(self, fx):
+        """Arme un effet vidéo (clé de _VIDEO_FX), ou None pour « pas d'effet ».
+
+        Les effets ne se superposent pas : armer le second désarme le premier.
+        Réarmer celui déjà en place le RELANCE depuis le début.
+        """
+        if fx is not None and fx not in _VIDEO_FX:
+            fx = None
+        self.video_fx = fx
+        self.video_fx_start = time.time()
+        if fx is not None:
+            self._video_fx_timer.start()   # _apply_video_fx l'arrêtera si figé
+        self._apply_video_fx()
+        self._refresh_video_fx_btn()
+        self._rebuild_video_pads_style()
+        self._refresh_video_leds()
+        self._style_vfx_pads()
+        self._refresh_vfx_leds()
+
+    def toggle_video_fx(self, fx):
+        """Bascule un effet : le même pad rappuyé l'éteint.
+
+        Sauf pour un effet à UN COUP, qu'un nouvel appui REDÉCLENCHE : un coup
+        se tape sur un temps fort, et deux appuis rapprochés doivent donner deux
+        coups, pas un coup puis une annulation.
+        """
+        if fx in _VFX_ONESHOT:
+            self.set_video_fx(fx)
+            return
+        self.set_video_fx(None if self.video_fx == fx else fx)
+
+    def set_video_cut(self, cut):
+        """Coupe (noir franc) ou rétablit la sortie vidéo."""
+        cut = bool(cut)
+        if cut == self.video_cut:
+            return
+        self.video_cut = cut
+        self._apply_video_fx()
+        self._rebuild_video_pads_style()
+        self._refresh_video_leds()
+        self._log_message(
+            tr("vfx_log_cut") if cut else tr("vfx_log_uncut"),
+            "warning" if cut else "info")
+
+    def toggle_video_cut(self):
+        self.set_video_cut(not self.video_cut)
+
+    def set_video_dimmer(self, value):
+        """Niveau de sortie vidéo 0-100 (fader de la colonne VIDÉO)."""
+        value = max(0, min(100, int(value)))
+        if value == self.video_dimmer:
+            return
+        self.video_dimmer = value
+        self._apply_video_fx()
+
+    def _video_columns(self):
+        """Indices des colonnes assignées au type 'video'."""
+        return [c for c, s in enumerate(self._fader_map) if s.get("type") == "video"]
+
+    def _video_fx_btn_font(self):
+        """Fonte réelle du bouton EFFET, pour mesurer son texte.
+
+        La feuille de style fixe `font-size: 10px`, ce que `btn.font()` ne
+        reflète pas : mesurer avec la fonte du widget donnerait une largeur
+        fausse (trop large), et le bouton déborderait du cadre vidéo.
+        """
+        f = QFont(self.video_fx_btn.font())
+        f.setPixelSize(10)
+        f.setBold(True)
+        return f
+
+    def _refresh_video_fx_btn(self):
+        """Bouton EFFET : gris au repos, vert CLIGNOTANT au titre de l'effet.
+
+        Le clignotement n'est pas décoratif : un effet vidéo armé pendant qu'on
+        regarde ailleurs (la 3D, le séquenceur) ne se signale par rien d'autre
+        sur cet écran. Un vert fixe se confond avec le bouton VIDEO juste à
+        côté, qui est vert lui aussi quand la sortie est active.
+        """
+        btn = getattr(self, 'video_fx_btn', None)
+        if btn is None:
+            return
+        on = self.video_fx in _VIDEO_FX
+
+        # Le timer ne tourne QUE tant qu'un effet est armé.
+        if on and not self._video_fx_blink_timer.isActive():
+            self._video_fx_blink_on = True
+            self._video_fx_blink_timer.start()
+        elif not on and self._video_fx_blink_timer.isActive():
+            self._video_fx_blink_timer.stop()
+
+        if not on:
+            btn.setText(tr("vfx_button"))
+            btn.setFixedWidth(_VFX_BTN_W_MIN)
+            btn.setStyleSheet(
+                "QPushButton { background: #1e1e1e; color: #777777; "
+                "border: 1px solid #444444; border-radius: 4px; font-size: 10px; "
+                "font-weight: bold; } "
+                "QPushButton:hover { background: #2a2a2a; color: #aaaaaa; "
+                "border-color: #666666; } "
+                "QPushButton:pressed { background: #333; }")
+            btn.setToolTip(tr("vfx_tooltip"))
+            return
+
+        titre = tr(_VIDEO_FX[self.video_fx][0])
+        fm = QFontMetrics(self._video_fx_btn_font())
+        # Borné des deux côtés : « Strobe aléatoire » ne doit pas pousser le
+        # bouton VIDEO hors du cadre quand le splitter est resserré.
+        largeur = max(_VFX_BTN_W_MIN,
+                      min(_VFX_BTN_W_MAX, fm.horizontalAdvance(titre) + 14))
+        btn.setFixedWidth(largeur)
+        btn.setText(fm.elidedText(titre, Qt.ElideRight, largeur - 10))
+        btn.setToolTip(titre)
+
+        vif = self._video_fx_blink_on
+        coul = "#00ff88" if vif else "#14663d"
+        bord = "#00ff88" if vif else "#1d4d35"
+        fond = "#12301f" if vif else "#1e1e1e"
+        btn.setStyleSheet(
+            f"QPushButton {{ background: {fond}; color: {coul}; "
+            f"border: 1px solid {bord}; border-radius: 4px; font-size: 10px; "
+            f"font-weight: bold; }} "
+            f"QPushButton:hover {{ background: #2a2a2a; }} "
+            f"QPushButton:pressed {{ background: #333; }}")
+
+    def _video_fx_blink_tick(self):
+        if self.video_fx not in _VIDEO_FX:
+            self._video_fx_blink_timer.stop()
+            self._refresh_video_fx_btn()
+            return
+        self._video_fx_blink_on = not self._video_fx_blink_on
+        self._refresh_video_fx_btn()
+
+    def _open_video_fx_menu(self):
+        """Menu du bouton EFFET : les effets disponibles + « pas d'effet »."""
+        menu = QMenu(self)
+        act_none = menu.addAction(tr("vfx_none"))
+        act_none.setCheckable(True)
+        act_none.setChecked(self.video_fx is None)
+        act_none.triggered.connect(lambda: self.set_video_fx(None))
+        menu.addSeparator()
+        for key in _VIDEO_FX_ORDER:
+            act = menu.addAction(tr(_VIDEO_FX[key][0]))
+            act.setCheckable(True)
+            act.setChecked(self.video_fx == key)
+            act.triggered.connect(lambda _=False, k=key: self.set_video_fx(k))
+        btn = self.video_fx_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    # — Colonne VIDÉO de la grille de pads —
+
+    def _video_pad_color(self, action):
+        """Couleur d'un pad de la colonne VIDÉO."""
+        for act, _glyph, color in _VIDEO_ROWS:
+            if act == action:
+                return QColor(color)
+        return QColor("#888888")
+
+    def _video_pad_active(self, action):
+        """Un pad de la colonne VIDÉO est-il allumé ?"""
+        if action == "cut":
+            return self.video_cut
+        if action == "none":
+            return self.video_fx is None
+        if action and action.startswith("fx:"):
+            return self.video_fx == action[3:]
+        return False
+
+    def _activate_video_pad(self, action):
+        """Déclenche l'action d'un pad de la colonne VIDÉO."""
+        if action == "cut":
+            self.toggle_video_cut()
+        elif action == "none":
+            self.set_video_fx(None)
+        elif action and action.startswith("fx:"):
+            self.toggle_video_fx(action[3:])
+
+    def _rebuild_video_pads_style(self):
+        """Restyle les pads VIDÉO à l'écran (armé = plein, sinon assombri)."""
+        for c in self._video_columns():
+            for r, (action, _glyph, _col) in enumerate(_VIDEO_ROWS):
+                pad = self.pads.get((r, c))
+                if pad is None or action is None:
+                    continue          # ligne libre : posée une fois, jamais retouchée
+                qc = self._video_pad_color(action)
+                pad.setProperty("base_color", qc)
+                if self._video_pad_active(action):
+                    pad.setStyleSheet(
+                        f"QPushButton {{ background: {qc.name()}; "
+                        f"color: {'#000000' if qc.lightness() > 140 else '#ffffff'}; "
+                        f"border: 2px solid {qc.lighter(140).name()}; "
+                        f"border-radius: 4px; font-size: 12px; font-weight: bold; }}")
+                else:
+                    pad.setStyleSheet(
+                        f"QPushButton {{ background: {qc.darker(300).name()}; "
+                        f"color: {qc.name()}; border: 1px solid {qc.darker(230).name()}; "
+                        f"border-radius: 4px; font-size: 12px; font-weight: bold; }}")
+
+    def _refresh_video_leds(self):
+        """LEDs physiques des colonnes VIDÉO sur le contrôleur."""
+        if not (MIDI_AVAILABLE and hasattr(self, 'midi_handler')
+                and self.midi_handler.midi_out):
+            return
+        for c in self._video_columns():
+            for r, (action, _glyph, _col) in enumerate(_VIDEO_ROWS):
+                if action is None:
+                    # Ligne libre : LED éteinte, sinon le contrôleur affiche un
+                    # pad qui ne répond à rien.
+                    self.midi_handler.set_pad_led(r, c, 0, brightness_percent=0)
+                    continue
+                qc = self._video_pad_color(action)
+                bri = (self.akai_active_brightness if self._video_pad_active(action)
+                       else self.akai_inactive_brightness)
+                # Passer le VRAI RGB : les LEDs natives (Launchpad MK3) affichent
+                # la couleur exacte au lieu de la velocity approximée.
+                self.midi_handler.set_pad_led(
+                    r, c, rgb_to_akai_velocity(qc), brightness_percent=bri,
+                    rgb=(qc.red(), qc.green(), qc.blue()))
+
+    # — Colonnes VFX : pads d'effets vidéo assignables —
+
+    def _vfx_columns(self):
+        """Indices des colonnes assignées au type 'vfx'."""
+        return [c for c, s in enumerate(self._fader_map) if s.get("type") == "vfx"]
+
+    def _vfx_pad_key(self, row):
+        """Effet assigné au pad VFX de cette ligne, ou None."""
+        if not (0 <= row < 8):
+            return None
+        cle = self.vfx_pads[row]
+        return cle if cle in _VIDEO_FX else None
+
+    def _activate_vfx_pad(self, row):
+        """Clic sur un pad VFX : arme (ou relance) l'effet qu'il porte."""
+        cle = self._vfx_pad_key(row)
+        if cle is not None:
+            self.toggle_video_fx(cle)
+
+    def _style_vfx_pads(self):
+        """Restyle les pads VFX à l'écran (armé = plein, assigné = sombre)."""
+        for c in self._vfx_columns():
+            for r in range(8):
+                pad = self.pads.get((r, c))
+                if pad is None:
+                    continue
+                cle = self._vfx_pad_key(r)
+                if cle is None:
+                    pad.setText("")
+                    pad.setToolTip("")
+                    pad.setProperty("base_color", QColor("#101018"))
+                    pad.setStyleSheet(
+                        "QPushButton { background: #0a0a12; border: 1px solid #1a1a24; "
+                        "border-radius: 4px; }")
+                    continue
+                qc = QColor(_VIDEO_FX[cle][3])
+                pad.setText(_VIDEO_FX[cle][2])
+                pad.setToolTip(tr(_VIDEO_FX[cle][0]))
+                pad.setProperty("base_color", qc)
+                if self.video_fx == cle:
+                    pad.setStyleSheet(
+                        f"QPushButton {{ background: {qc.name()}; "
+                        f"color: {'#000000' if qc.lightness() > 140 else '#ffffff'}; "
+                        f"border: 2px solid {qc.lighter(140).name()}; "
+                        f"border-radius: 4px; font-size: 12px; font-weight: bold; }}")
+                else:
+                    pad.setStyleSheet(
+                        f"QPushButton {{ background: {qc.darker(300).name()}; "
+                        f"color: {qc.name()}; border: 1px solid {qc.darker(230).name()}; "
+                        f"border-radius: 4px; font-size: 12px; font-weight: bold; }}")
+
+    def _refresh_vfx_leds(self):
+        """LEDs physiques des colonnes VFX sur le contrôleur."""
+        if not (MIDI_AVAILABLE and hasattr(self, 'midi_handler')
+                and self.midi_handler.midi_out):
+            return
+        for c in self._vfx_columns():
+            for r in range(8):
+                cle = self._vfx_pad_key(r)
+                if cle is None:
+                    self.midi_handler.set_pad_led(r, c, 0, brightness_percent=0)
+                    continue
+                qc = QColor(_VIDEO_FX[cle][3])
+                bri = (self.akai_active_brightness if self.video_fx == cle
+                       else self.akai_inactive_brightness)
+                self.midi_handler.set_pad_led(
+                    r, c, rgb_to_akai_velocity(qc), brightness_percent=bri,
+                    rgb=(qc.red(), qc.green(), qc.blue()))
+
+    def _show_vfx_context_menu(self, pos, row, btn):
+        """Clic droit sur un pad VFX : choisir l'effet, ou vider le pad."""
+        menu = QMenu(self)
+        courant = self._vfx_pad_key(row)
+        for cle in _VIDEO_FX_ORDER:
+            act = menu.addAction(f"{_VIDEO_FX[cle][2]}  {tr(_VIDEO_FX[cle][0])}")
+            act.setCheckable(True)
+            act.setChecked(courant == cle)
+            act.triggered.connect(
+                lambda _=False, k=cle: self._assign_vfx_pad(row, k))
+        menu.addSeparator()
+        vider = menu.addAction(tr("vfx_pad_clear"))
+        vider.setEnabled(courant is not None)
+        vider.triggered.connect(lambda: self._assign_vfx_pad(row, None))
+        menu.exec(btn.mapToGlobal(pos))
+
+    def _assign_vfx_pad(self, row, cle):
+        """Pose (ou retire) un effet sur un pad VFX, et le retient."""
+        if not (0 <= row < 8):
+            return
+        self.vfx_pads[row] = cle if cle in _VIDEO_FX else None
+        # Vider le pad de l'effet EN COURS laisserait celui-ci tourner sans plus
+        # aucun pad pour l'éteindre : on le désarme.
+        if (cle is None and self.video_fx is not None
+                and not self._video_fx_pad_exists(self.video_fx)):
+            self.set_video_fx(None)
+        else:
+            self._style_vfx_pads()
+            self._refresh_vfx_leds()
+        self._save_akai_config_auto()
+
+    def _video_fx_pad_exists(self, cle):
+        """Un pad visible permet-il encore d'éteindre cet effet ?"""
+        if self._vfx_columns() and any(self._vfx_pad_key(r) == cle
+                                       for r in range(8)):
+            return True
+        # Toute colonne VIDÉO porte « pas d'effet », qui éteint n'importe quoi.
+        return bool(self._video_columns())
+
+    def _sync_vfx_fader(self, index, slot):
+        """Aligne le fader d'une colonne VFX sur l'amplitude — sans la baisser.
+
+        Troisième occurrence du même piège que les colonnes FX et VIDÉO : ce
+        fader n'est pas un niveau de projecteur mais l'AMPLITUDE de l'effet
+        vidéo. Le mettre à 0 au démarrage rendrait la colonne muette — les pads
+        s'allumeraient, l'effet tournerait, et rien ne se verrait à l'écran.
+        Rend la valeur affichée.
+        """
+        val = max(0, min(100, int(self.video_fx_amplitude)))
+        if index in self.faders:
+            self.faders[index].value = val
+            self.faders[index].update()
+        return val
+
+    def set_video_fx_amplitude(self, value):
+        """Amplitude 0-100 de l'effet vidéo (fader d'une colonne VFX)."""
+        value = max(0, min(100, int(value)))
+        if value == self.video_fx_amplitude:
+            return
+        self.video_fx_amplitude = value
+        self._apply_video_fx()
+
+    def _sync_video_fader(self, index, slot):
+        """Aligne le fader d'une colonne VIDÉO sur le dimmer — sans le baisser.
+
+        Même piège que la colonne FX : ce fader n'est PAS un niveau de
+        projecteur mais le niveau de sortie de la vidéo. Le mettre à 0 comme une
+        colonne de groupe, c'est un écran NOIR au démarrage et à chaque CLEAR,
+        sans que rien à l'écran ne l'explique. Rend la valeur affichée.
+        """
+        val = max(0, min(100, int(self.video_dimmer)))
+        if index in self.faders:
+            self.faders[index].value = val
+            self.faders[index].update()
+        return val
 
     def _update_video_output_state(self):
         """Met a jour l'affichage de la fenetre video externe selon le media courant"""
@@ -4333,7 +5426,7 @@ class MainWindow(QMainWindow):
             QToolButton {
                 background: #4a4a4a;
                 border: 2px solid #6a6a6a;
-                border-radius: 8px;
+                border-radius: 3px;
             }
             QToolButton:hover {
                 background: #5a5a5a;
@@ -4344,7 +5437,13 @@ class MainWindow(QMainWindow):
                 border: 2px solid #fff;
             }
         """)
-        tap_btn.clicked.connect(self._tap_tempo)
+        # pressed/released et non clicked : les modes FLASH sont des momentanés,
+        # ils ont besoin de savoir quand le bouton est relâché.
+        tap_btn.pressed.connect(self._tap_tempo)
+        tap_btn.released.connect(self._tap_tempo_released)
+        # Clic droit = choisir sa fonction, comme sur les boutons d'effets.
+        tap_btn.setContextMenuPolicy(Qt.CustomContextMenu)
+        tap_btn.customContextMenuRequested.connect(self._show_tap_mode_menu)
         self._tap_btn = tap_btn
         effect_col.addWidget(tap_btn, alignment=Qt.AlignCenter)
 
@@ -4510,7 +5609,12 @@ class MainWindow(QMainWindow):
                     b.setProperty("color2", None)
                     b.setProperty("dim_color", dim_color)
                     b.setProperty("cw_dmx_val", cw_dmx)  # None si RGB, int si roue de couleurs
-                    b.clicked.connect(lambda _, btn=b, fc=c: self.activate_pad(btn, fc))
+                    # `pressed`/`released` et non `clicked` : en mode FLASH le pad
+                    # couleur est un MOMENTANE, il lui faut les deux bords. Hors
+                    # FLASH le comportement est identique, simplement joue a
+                    # l'appui plutot qu'au relache (comme le pad physique).
+                    b.pressed.connect(lambda btn=b, fc=c: self._on_color_pad_pressed(btn, fc))
+                    b.released.connect(lambda fc=c: self._on_color_pad_released(fc))
                 elif slot["type"] == "fx":
                     fx_col = slot.get("fx_col", 0)
                     b = QPushButton()
@@ -4576,6 +5680,42 @@ class MainWindow(QMainWindow):
                         }.get(action, action))
                         b.clicked.connect(lambda _, a=action: self._activate_play_pad(a))
                     b.setProperty("color2", None)
+                elif slot["type"] == "vfx":
+                    b = QPushButton()
+                    b.setFixedSize(28, 28)
+                    b.setProperty("color2", None)
+                    b.setProperty("vfx_row", r)
+                    b.setProperty("base_color", QColor("#101018"))
+                    b.clicked.connect(
+                        lambda _, vr=r: self._activate_vfx_pad(vr))
+                    b.setContextMenuPolicy(Qt.CustomContextMenu)
+                    b.customContextMenuRequested.connect(
+                        lambda pos, vr=r, btn=b:
+                            self._show_vfx_context_menu(pos, vr, btn))
+                    # Texte et style dépendent de l'effet assigné : posés plus
+                    # bas en un seul passage par _style_vfx_pads().
+                elif slot["type"] == "video":
+                    action, glyph, _color = _VIDEO_ROWS[r]
+                    b = QPushButton(glyph)
+                    b.setFixedSize(28, 28)
+                    b.setProperty("color2", None)
+                    b.setProperty("video_action", action)
+                    if action is None:
+                        # Ligne libre (même traitement que _PLAY_ROWS_NOSLOT)
+                        b.setStyleSheet(
+                            "QPushButton { background: #0e0e0e; border: 1px solid #1a1a1a; "
+                            "border-radius: 4px; }"
+                        )
+                        b.setEnabled(False)
+                        b.setProperty("base_color", QColor("#101010"))
+                    else:
+                        b.setProperty("base_color", self._video_pad_color(action))
+                        b.setToolTip(tr(_VIDEO_FX[action[3:]][0]) if action.startswith("fx:")
+                                     else tr("vfx_pad_cut") if action == "cut"
+                                     else tr("vfx_none"))
+                        b.clicked.connect(lambda _, a=action: self._activate_video_pad(a))
+                        # Le style dépend de l'effet armé : posé plus bas en un
+                        # seul passage par _rebuild_video_pads_style().
                 else:  # memory
                     mem_col = slot["mem_col"]
                     b = QPushButton()
@@ -4628,6 +5768,18 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
         self._refresh_play_leds()
+
+        # Colonnes VIDÉO : style des pads + LEDs + fader sur le dimmer courant
+        for c in self._video_columns():
+            self._sync_video_fader(c, self._fader_map[c])
+        self._rebuild_video_pads_style()
+        self._refresh_video_leds()
+
+        # Colonnes VFX : idem, sur l'amplitude d'effet
+        for c in self._vfx_columns():
+            self._sync_vfx_fader(c, self._fader_map[c])
+        self._style_vfx_pads()
+        self._refresh_vfx_leds()
 
     def _play_columns(self):
         """Indices des colonnes assignées au type 'play'."""
@@ -4687,6 +5839,20 @@ class MainWindow(QMainWindow):
 
         def _apply_slot(value, slot):
             self._custom_bank_slots[fader_idx] = slot
+            # Colonne devenue FX : le fader affiche désormais l'amplitude de
+            # l'effet, pas le niveau de l'ancienne cible (voir _sync_fx_fader).
+            if slot.get("type") == "fx":
+                self._sync_fx_fader(fader_idx, slot)
+            # Idem pour VIDÉO : le fader devient le dimmer de la sortie vidéo,
+            # et doit afficher 100 % et non le niveau de l'ancienne cible.
+            elif slot.get("type") == "video":
+                self._sync_video_fader(fader_idx, slot)
+            # Colonne devenue VFX : le fader devient l'amplitude d'effet. Les
+            # pads restent VIDES, à garnir au clic droit — comme une colonne FX,
+            # mémoire ou groupe. Pas de pré-remplissage : la colonne appartient
+            # à l'utilisateur, pas à un rangement décidé pour lui.
+            elif slot.get("type") == "vfx":
+                self._sync_vfx_fader(fader_idx, slot)
             # Mettre à jour l'étiquette + tooltip
             if fader_idx < len(self._fader_label_widgets):
                 lbl = self._fader_label_widgets[fader_idx]
@@ -4695,6 +5861,7 @@ class MainWindow(QMainWindow):
             # Reconstruire les pads et syncer
             self.active_pads.clear()
             self.active_memory_pads.clear()
+            self._mem_rows.clear()
             self._rebuild_akai_pads()
             self.activate_default_white_pads()
             self._save_akai_config_auto()
@@ -4713,6 +5880,10 @@ class MainWindow(QMainWindow):
                 slot = {"type": "play", "label": "PLAY"}
             elif value == "SANS SLOT":
                 slot = {"type": "play", "slots": False, "label": "SANS SLOT"}
+            elif value == "VFX":
+                slot = {"type": "vfx", "label": "VFX"}
+            elif value == "VIDEO":
+                slot = {"type": "video", "label": "VIDEO"}
             else:
                 slot = {"type": "group", "group": value, "label": value}
             _apply_slot(value, slot)
@@ -4790,7 +5961,7 @@ class MainWindow(QMainWindow):
             self._custom_bank_slots,
             last_fader_mode=getattr(self, '_last_fader_mode', 'FX'),
             superposition=self.effect_superposition,
-            go_mode=self.go_mode,
+            tap_button_mode=self.tap_button_mode,
             active_brightness=self.akai_active_brightness,
             inactive_brightness=self.akai_inactive_brightness,
             parent=self,
@@ -4804,12 +5975,15 @@ class MainWindow(QMainWindow):
         self._bank_page_idx = max(0, min(dlg.get_current_index(), len(self._bank_pages) - 1))
         self._custom_bank_slots = self._bank_pages[self._bank_page_idx]
         self.effect_superposition = dlg.get_superposition()
-        self.go_mode = dlg.get_go_mode()
+        self.tap_button_mode = dlg.get_tap_button_mode()
+        if self.tap_button_mode not in ("flash", "flash_kill"):
+            self._flash_end()   # changer de mode ne doit pas laisser un flash collé
         self.akai_active_brightness   = dlg.get_active_brightness()
         self.akai_inactive_brightness = dlg.get_inactive_brightness()
         self._update_tap_go_btn_style()
         self.active_pads.clear()
         self.active_memory_pads.clear()
+        self._mem_rows.clear()
         self._rebuild_akai_pads()
         try:
             import tablet_server as _ts
@@ -4922,6 +6096,12 @@ class MainWindow(QMainWindow):
                     val = int(round(self.audio.volume() * 100))
                 except Exception:
                     val = 100
+            elif stype == "video":
+                # Colonne VIDÉO : le fader reflète le dimmer de la sortie vidéo
+                val = int(self.video_dimmer)
+            elif stype == "vfx":
+                # Colonne VFX : le fader reflète l'amplitude de l'effet vidéo
+                val = int(self.video_fx_amplitude)
             else:
                 # mémoire / position : surface neutre, on ne pilote rien
                 val = 0
@@ -4931,8 +6111,27 @@ class MainWindow(QMainWindow):
             if ts_on:
                 _ts.push_fader(i, val)
 
+    def _sync_fx_fader(self, index, slot):
+        """Aligne le fader d'une colonne FX sur son amplitude — sans la baisser.
+
+        Le fader d'une colonne FX n'est PAS un niveau de projecteur : c'est
+        l'amplitude de l'effet, et `update_effect` sort en tête quand elle vaut
+        0. Le remettre à zéro comme une colonne de groupe rendait donc muet tout
+        pad FX de la colonne — le pad s'allumait, l'effet tournait, mais plus
+        rien n'atteignait les projecteurs, ni sur le fil DMX ni dans la 3D. Et il
+        n'y a rien à éteindre en échange : un effet ne tourne que si un pad
+        l'arme. Rend la valeur affichée.
+        """
+        fx_col = slot.get("fx_col", 0)
+        val = int(self.fx_amplitudes[fx_col]) if 0 <= fx_col < _FX_COL_MAX else 100
+        val = max(0, min(100, val))
+        if index in self.faders:
+            self.faders[index].value = val
+            self.faders[index].update()
+        return val
+
     def _startup_faders_down(self):
-        """Démarrage : force TOUS les faders colonnes (0-7) à 0 ET éteint leur cible,
+        """Démarrage : force les faders colonnes (0-7) à 0 ET éteint leur cible,
         pour que rien ne soit allumé au lancement. Exécuté tardivement (après les syncs
         de connexion) afin de ne pas se faire remonter."""
         try:
@@ -4941,9 +6140,30 @@ class MainWindow(QMainWindow):
         except Exception:
             _ts, ts_on = None, False
         for i in range(8):
+            slot = self._fader_map[i] if i < len(self._fader_map) else {}
+            stype = slot.get("type")
             # La colonne PLAY = volume : ne JAMAIS la baisser au démarrage
             # (sinon le son est coupé au lancement — piège ergonomique).
-            if i < len(self._fader_map) and self._fader_map[i].get("type") == "play":
+            if stype == "play":
+                continue
+            # La colonne FX = amplitude d'effet : voir _sync_fx_fader.
+            if stype == "fx":
+                val = self._sync_fx_fader(i, slot)
+                if ts_on:
+                    _ts.push_fader(i, val)
+                continue
+            # La colonne VIDÉO = dimmer de sortie : la baisser, c'est un écran
+            # NOIR au lancement sans que rien ne l'explique (voir _sync_video_fader).
+            if stype == "video":
+                val = self._sync_video_fader(i, slot)
+                if ts_on:
+                    _ts.push_fader(i, val)
+                continue
+            # La colonne VFX = amplitude de l'effet vidéo : voir _sync_vfx_fader.
+            if stype == "vfx":
+                val = self._sync_vfx_fader(i, slot)
+                if ts_on:
+                    _ts.push_fader(i, val)
                 continue
             if i in self.faders:
                 self.faders[i].value = 0
@@ -5275,10 +6495,14 @@ class MainWindow(QMainWindow):
 
             if next_row < self.seq.table.rowCount():
                 next_mode = self.seq.get_dmx_mode(next_row)
+                # `transition_blackout` et non `full_blackout` : on éteint le
+                # look du média qui se termine, mais on laisse vivre la couche
+                # HTP (faders + pads mémoire) qui porte l'éclairage d'ambiance.
+                # Sinon l'ambiance s'éteint à chaque changement de média.
                 if current_mode == "Play Lumiere":
-                    self.full_blackout()
+                    self.transition_blackout()
                 elif current_mode == "Programme" and next_mode == "Manuel":
-                    self.full_blackout()
+                    self.transition_blackout()
 
                 # Différer l'avance : play_row() fait stop()/setSource()/play()
                 # sur le QMediaPlayer. Appelé DIRECTEMENT ici, on muterait le
@@ -5287,24 +6511,34 @@ class MainWindow(QMainWindow):
                 # média en playlist. singleShot(0) exécute au tour de boucle suivant.
                 QTimer.singleShot(0, lambda r=next_row: self.seq.play_row(r))
             else:
+                # Fin de playlist : même raisonnement. Le show est terminé, mais
+                # l'ambiance tenue à la main n'a aucune raison de s'éteindre —
+                # plonger la salle dans le noir n'est pas ce qu'on attend ici.
                 if current_mode == "Play Lumiere":
-                    self.full_blackout()
+                    self.transition_blackout()
                 print("Fin de la sequence")
                 self.update_play_icon(QMediaPlayer.StoppedState)
                 self._update_video_output_state()
 
     def dmx_blackout(self):
-        """Blackout DMX uniquement (projecteurs) - conserve l'eclairage AKAI"""
-        for idx in range(9):
-            if idx in self.faders:
-                self.faders[idx].value = 0
-                self.faders[idx].update()
+        """Blackout DMX des projecteurs — l'éclairage tenu sur l'APC survit.
 
+        La fonction promettait déjà de « conserver l'éclairage AKAI » et faisait
+        exactement l'inverse : elle descendait les 9 faders à 0. Or un fader à 0
+        est ce qui coupe les DEUX couches HTP de `send_dmx_update()` (mémoires et
+        pads couleur, toutes deux conditionnées à `fader_value > 0`). Appelée au
+        lancement d'une ligne PAUSE de la playlist, elle éteignait donc pour de
+        bon l'ambiance montée à la main — pads + faders — sans rien pour la
+        rallumer. On ne touche plus qu'aux projecteurs, et on repose ensuite ce
+        que l'APC tient (cf. `restore_manual_look`).
+        """
         for p in self.projectors:
             p.level = 0
             p.color = QColor("black")
             p.base_color = QColor("black")
             p.strobe_speed = 0   # le strobe est de la lumière : il s'éteint au blackout
+
+        self.restore_manual_look()
 
     def full_blackout(self):
         """Blackout complet"""
@@ -5343,6 +6577,199 @@ class MainWindow(QMainWindow):
             for row in range(8):
                 for col in range(8):
                     self.midi_handler.set_pad_led(row, col, 0, 0)
+
+    def transition_blackout(self):
+        """Blackout de FIN DE MÉDIA — éteint le look, épargne l'ambiance.
+
+        Les transitions de playlist appelaient `full_blackout()`, qui n'est pas
+        un noir mais une démolition complète : les 9 faders à 0, `active_pads`
+        vidé, les LED de l'AKAI éteintes. Or c'est précisément ce trio qui porte
+        la couche HTP appliquée dans `send_dmx_update()` — celle qui se pose
+        par-dessus les projecteurs juste avant l'envoi DMX, puis se retire.
+        Cette couche exige `fader_value > 0` (cf. `_compute_htp_overrides` et
+        `_apply_pad_overrides_htp`) : descendre les faders la tue.
+
+        Conséquence remontée par un client : un éclairage d'ambiance (ou un
+        éclairage principal) tenu sur un fader + pad mémoire s'éteignait à
+        CHAQUE changement de média — « entre chaque changement dans la liste ça
+        fait une légère coupure », « au moment de passer au son suivant il y a
+        un temps mort ». Il demandait « un mode mix » pour que ça reste actif.
+
+        Le mode mix existait déjà, en fait : la couche HTP se moque que
+        `projectors` soit à zéro, puisqu'elle est posée APRÈS tout le monde. Il
+        suffisait d'arrêter de la casser. Donc ici on éteint le look — les
+        projecteurs et l'effet en cours, sinon un strobe de fin de REC bave sur
+        le média suivant — mais on ne touche NI aux faders, NI aux pads, NI aux
+        LED. L'ambiance traverse la transition sans broncher.
+
+        `full_blackout()` reste la bonne fonction pour un blackout demandé
+        explicitement par l'utilisateur (bouton Blackout de la fenêtre externe) :
+        là, tout couper est bien l'intention.
+        """
+        for p in self.projectors:
+            p.level = 0
+            p.color = QColor("black")
+            p.base_color = QColor("black")
+            p.strobe_speed = 0
+
+        # Couper l'effet en cours : c'était `full_blackout()` qui s'en chargeait
+        # à la fin d'un média (`on_media_status_changed` arrête le timer de la
+        # timeline sans appeler `_stop_timeline_effect`). Sans ça, l'effet du
+        # dernier clip continuerait de tourner sur le média suivant.
+        for btn in self.effect_buttons:
+            if btn.active:
+                btn.active = False
+                btn.update_style()
+
+        if self.active_effect is not None:
+            self.stop_effect()
+            self.active_effect = None
+
+        self.restore_manual_look()
+
+    def restore_manual_look(self):
+        """Repose sur les projecteurs le look que l'APC tient à la main.
+
+        À appeler après toute extinction AUTOMATIQUE (fin de média, lancement
+        d'un média en Manuel, ligne PAUSE). Ces extinctions écrivent du noir sur
+        les `Projector` pour effacer le look du moteur qui vient de s'arrêter —
+        mais elles effaçaient du même coup l'éclairage monté à la main sur les
+        colonnes groupe, pad couleur + fader.
+
+        Sur le fil DMX, ce look-là revenait quand même : `_apply_pad_overrides_htp`
+        le repose à chaque image, juste avant l'envoi. Mais il le repose puis le
+        RETIRE — le modèle, lui, restait noir. D'où un plan de feu 2D (et la 3D,
+        et la tablette) entièrement éteints alors que la salle est allumée, et
+        surtout la perte de tout ce que cette couche HTP ne porte pas : la roue
+        de couleurs du pad (`cw_dmx_val`), la `base_color` du groupe, donc la
+        couleur qu'un mouvement de fader ou un rappel de mémoire relira ensuite.
+
+        On ne rallume QUE ce qui est réellement tenu : colonne de type groupe,
+        non mutée, avec un pad actif et un fader levé. Un groupe que personne ne
+        tient reste noir — « Manuel = pas de lumière » vaut toujours pour lui.
+        `set_proj_level` reste l'unique writer de ce chemin (couleur, niveau,
+        roue de couleurs) : on ne recopie pas sa logique ici.
+        """
+        for col, slot in enumerate(self._fader_map):
+            if col > 7 or slot.get("type") != "group":
+                continue
+            if col in self._muted_faders or col not in self.active_pads:
+                continue
+            value = self.faders[col].value if col in self.faders else 0
+            if value > 0:
+                self.set_proj_level(col, value)
+
+    # ── Pads couleur momentanes (mode FLASH) ─────────────────────────────────
+    def _pads_are_momentary(self) -> bool:
+        """Les pads couleur sont-ils momentanes ?
+
+        Vrai tant que le bouton FLASH est TENU (`_flash_kind`), pas parce que le
+        bouton bas-droite est regle sur FLASH : c'est l'appui qui fait basculer
+        l'app en « tout ce que je pose se defait au relache ». Un seul geste,
+        deux effets coherents — les memoires montent a 100 %, et les pads
+        couleur poses pendant ce temps sont rendus au relache.
+
+        Ce qui compte est l'etat AU MOMENT DE L'APPUI sur le pad : lacher le
+        bouton FLASH avant le pad ne colle pas la couleur, l'instantane pris a
+        l'appui est rendu quoi qu'il arrive.
+        """
+        return getattr(self, '_flash_kind', None) is not None
+
+    def _repaint_color_column(self, col_idx):
+        """Repeint les 8 pads couleur d'une colonne (UI + LEDs) d'apres `active_pads`.
+
+        Un momentane rend le pad precedent : le repeindre a partir de l'etat, et
+        non de l'evenement, evite d'avoir a memoriser des feuilles de style — et
+        c'est le seul moyen de rallumer la LED physique du pad d'origine.
+        """
+        active = self.active_pads.get(col_idx)
+        for row in range(8):
+            pad = self.pads.get((row, col_idx))
+            if pad is None:
+                continue
+            color = pad.property("base_color")
+            if color is None:
+                continue
+            if pad is active:
+                pad.setStyleSheet(
+                    f"QPushButton {{ background: {color.name()}; "
+                    f"border: 2px solid {color.lighter(130).name()}; border-radius: 4px; }}")
+            else:
+                dim = pad.property("dim_color") or QColor(
+                    int(color.red() * 0.5), int(color.green() * 0.5), int(color.blue() * 0.5))
+                pad.setStyleSheet(
+                    f"QPushButton {{ background: {dim.name()}; "
+                    f"border: 1px solid #2a2a2a; border-radius: 4px; }}")
+            if MIDI_AVAILABLE and self.midi_handler.midi_out:
+                self.midi_handler.set_pad_led(
+                    row, col_idx, rgb_to_akai_velocity(color),
+                    brightness_percent=(self.akai_active_brightness if pad is active
+                                        else self.akai_inactive_brightness))
+
+    def _column_groups(self, col_idx):
+        """Groupes pilotés par une colonne de pads couleur ([] si ce n'en est pas une)."""
+        if col_idx >= len(self._fader_map):
+            return []
+        slot = self._fader_map[col_idx]
+        if slot["type"] != "group":
+            return []
+        return list(self._slot_groups(slot))
+
+    def _snapshot_color_column(self, col_idx):
+        """Etat d'une colonne de pads couleur, avant un appui momentane.
+
+        Capture exactement ce qu'`activate_pad` va ecrire : le pad latche de la
+        colonne, et pour chaque projecteur du groupe sa couleur de base, sa
+        couleur courante et sa roue.
+        """
+        if col_idx >= len(self._fader_map):
+            return None
+        slot = self._fader_map[col_idx]
+        if slot["type"] != "group":
+            return None
+        groups = self._slot_groups(slot)
+        return {
+            "pad": self.active_pads.get(col_idx),
+            "projs": [(p, QColor(p.base_color), QColor(p.color), p.color_wheel)
+                      for p in self.projectors if p.group in groups],
+        }
+
+    def _restore_color_column(self, col_idx, snap):
+        """Rend une colonne a l'etat capture par `_snapshot_color_column`."""
+        if not snap:
+            return
+        pad = snap.get("pad")
+        if pad is None:
+            self.active_pads.pop(col_idx, None)
+        else:
+            self.active_pads[col_idx] = pad
+        for p, base, col, wheel in snap.get("projs", []):
+            p.base_color = QColor(base)
+            p.color = QColor(col)
+            p.color_wheel = wheel
+        self._repaint_color_column(col_idx)
+        self.send_dmx_update()
+
+    def _on_color_pad_pressed(self, btn, col_idx):
+        """Appui sur un pad couleur (UI ou AKAI)."""
+        if self._pads_are_momentary():
+            self._pad_flash_snaps[col_idx] = self._snapshot_color_column(col_idx)
+            # FLASH KILL : c'est CET appui qui coupe, pas le bouton. Le groupe
+            # du pad est épargné, tout le reste part au noir tant qu'on tient.
+            if self._flash_kind == "kill":
+                groupes = self._column_groups(col_idx)
+                if groupes:
+                    self._kill_solo_cols[col_idx] = set(groupes)
+        self.activate_pad(btn, col_idx)
+        if self._pad_flash_snaps.get(col_idx) is not None:
+            self._repaint_color_column(col_idx)
+
+    def _on_color_pad_released(self, col_idx):
+        """Relache d'un pad couleur : seul un appui momentane a quelque chose a rendre."""
+        self._kill_solo_cols.pop(col_idx, None)
+        snap = self._pad_flash_snaps.pop(col_idx, None)
+        if snap is not None:
+            self._restore_color_column(col_idx, snap)
 
     def activate_pad(self, btn, col_idx):
         """Active un pad dans sa colonne (independant par colonne)"""
@@ -5614,27 +7041,40 @@ class MainWindow(QMainWindow):
         # Desactiver le pad precedent DANS CETTE COLONNE SEULEMENT
         prev_row = self.active_memory_pads.pop(col_akai, None)
         if prev_row is not None:
-            self._clear_memory_from_projectors(mem_col, prev_row)
-            self._style_memory_pad(mem_col, prev_row, active=False)
-            self._update_memory_pad_led(mem_col, prev_row, active=False)
-            self._mem_cue_idx.pop((mem_col, prev_row), None)  # reset cue index
             prev_mem = self.memories[mem_col][prev_row]
             if prev_mem:
                 self._mem_ensure_cues(prev_mem)
                 prev_eff_name = (prev_mem["cues"][0].get("effect") or {}).get("name") if prev_mem.get("cues") else None
             else:
                 prev_eff_name = None
+            # Couper l'effet porté par la mémoire qu'on quitte — et le RESTITUER.
+            # `effect_saved_colors` était simplement VIDÉ ici : arrêter le timer
+            # sans rendre l'état d'avant laisse les projecteurs figés sur la
+            # dernière image de l'effet (un « passage au blanc » laissait la
+            # salle en blanc), et il fallait renvoyer les couleurs au pad AKAI
+            # pour s'en sortir. Vider la capture, c'est l'effet sans son annulation.
+            # Avant `_clear_memory_from_projectors` : la restitution rend l'état
+            # d'AVANT l'effet — mémoire allumée comprise — c'est donc au nettoyage
+            # de la mémoire de passer en dernier, sinon il est écrasé.
             if prev_eff_name:
                 if hasattr(self, 'effect_timer'):
                     self.effect_timer.stop()
                 self.active_effect = None
                 self.active_effect_config = {}
-                self.effect_saved_colors = {}
+                self._restore_effect_state()
+            self._clear_memory_from_projectors(mem_col, prev_row)
+            self._style_memory_pad(mem_col, prev_row, active=False)
+            self._update_memory_pad_led(mem_col, prev_row, active=False)
+            self._mem_cue_idx.pop((mem_col, prev_row), None)  # reset cue index
 
         # Activer le nouveau pad (cue 0 par défaut)
         self._release_manual_grabs()   # action volontaire → on repeint
         self._mem_cue_idx[(mem_col, row)] = 0
         self.active_memory_pads[col_akai] = row
+        # Registre indexe par mem_col : c'est lui qui survit au changement de
+        # page, donc le seul a pouvoir dire a l'entree DMX quelle memoire elle
+        # pilote quand la colonne n'est pas a l'ecran.
+        self._mem_rows[mem_col] = row
         self._style_memory_pad(mem_col, row, active=True)
         self._update_memory_pad_led(mem_col, row, active=True)
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
@@ -6198,6 +7638,8 @@ class MainWindow(QMainWindow):
                 p.gobo2         = int(proj_state.get("gobo2",        0))
                 p.speed         = int(proj_state.get("speed",        0))
                 p.mode_value    = int(proj_state.get("mode_value",   0))
+                for _i in (1, 2, 3, 4):
+                    setattr(p, f"preset{_i}", int(proj_state.get(f"preset{_i}", 0)))
                 # Roue, prisme, iris, shutter, macro : mêmes règles que ci-dessus.
                 # Une mémoire définit l'état complet du faisceau ; la clé absente
                 # (mémoire enregistrée avant leur capture) vaut repos — 255 pour
@@ -6299,11 +7741,33 @@ class MainWindow(QMainWindow):
             mem = self.memories[mem_col][row]
             if not mem:
                 continue
-            fv = self.faders[fader_idx].value if fader_idx in self.faders else 0
+            fv = self._flash_level(
+                self.faders[fader_idx].value if fader_idx in self.faders else 0)
             if fv <= 0:
                 continue
             self._mem_ensure_cues(mem)
             active.append((fv / 100.0, self._mem_active_cue(mem_col, row), mem))
+
+        # 1 bis. Mémoires tenues par l'entrée DMX alors qu'elles ne sont PAS sur
+        # la page affichée : elles n'ont pas de fader à l'écran où lire un
+        # niveau, il vient donc du pupitre (voir apply_memory_level). Les
+        # colonnes visibles sont exclues — leur fader vient de les compter.
+        if self._mem_ext_levels:
+            visibles = {s.get("mem_col") for s in self._fader_map
+                        if s.get("type") == "memory"}
+            for mem_col, niveau in list(self._mem_ext_levels.items()):
+                niveau = self._flash_level(niveau)
+                if niveau <= 0 or mem_col in visibles:
+                    continue
+                row = self._mem_rows.get(mem_col)
+                if row is None or not (0 <= mem_col < len(self.memories)):
+                    continue
+                mem = self.memories[mem_col][row]
+                if not mem:
+                    continue
+                self._mem_ensure_cues(mem)
+                active.append((niveau / 100.0,
+                               self._mem_active_cue(mem_col, row), mem))
 
         # 2. Compositer chaque projecteur
         for i, p in enumerate(self.projectors):
@@ -6370,6 +7834,8 @@ class MainWindow(QMainWindow):
                 p.gobo2         = int(ds.get("gobo2",         0))
                 p.speed         = int(ds.get("speed",         0))
                 p.mode_value    = int(ds.get("mode_value",    0))
+                for _i in (1, 2, 3, 4):
+                    setattr(p, f"preset{_i}", int(ds.get(f"preset{_i}", 0)))
                 # Idem : roue, prisme, iris, shutter, macro. Shutter au repos =
                 # 255 (ouvert), sinon une vieille mémoire fermerait le faisceau.
                 p.prism          = int(ds.get("prism",          0))
@@ -6418,6 +7884,12 @@ class MainWindow(QMainWindow):
                     self._update_color_wheel(p, hue)
 
         # 3. Effet : piloté par la mémoire dominante (fader le plus haut)
+        # Pendant un momentané FLASH / FLASH KILL, on n'y touche pas : sous KILL
+        # plus aucune mémoire n'est retenue, l'effet en cours se serait donc fait
+        # arrêter à l'appui — et le relâcher ne l'aurait pas relancé (la mémoire
+        # revenue ne porte pas forcément d'effet). L'effet mourait pour de bon.
+        if getattr(self, '_flash_kind', None) is not None:
+            return
         if active:
             dom_bright, dom_cue, dom_mem = max(active, key=lambda t: t[0])
             eff_cfg = dom_cue.get("effect") or (dom_mem or {}).get("effect") or {}
@@ -7019,6 +8491,13 @@ class MainWindow(QMainWindow):
                 "gobo2":        getattr(p, 'gobo2',        0),
                 "speed":        getattr(p, 'speed',        0),
                 "mode_value":   getattr(p, 'mode_value',   0),
+                # Programmes internes. Capturés au même titre que `mode_value` :
+                # une mémoire qui perdrait le preset rappellerait un look sans
+                # le programme qui en fait partie.
+                "preset1":      getattr(p, 'preset1',      0),
+                "preset2":      getattr(p, 'preset2',      0),
+                "preset3":      getattr(p, 'preset3',      0),
+                "preset4":      getattr(p, 'preset4',      0),
                 # Même raison, deuxième vague : ces canaux se règlent depuis le
                 # menu du plan 2D (roue, prisme, iris, shutter) et depuis les
                 # curseurs bruts, qui écrivent la propriété du projecteur pour
@@ -7347,6 +8826,8 @@ class MainWindow(QMainWindow):
         col_akai = self._mem_col_to_fader(mem_col)
         if self.active_memory_pads.get(col_akai) == row:
             del self.active_memory_pads[col_akai]
+        if self._mem_rows.get(mem_col) == row:
+            del self._mem_rows[mem_col]
         self._style_memory_pad(mem_col, row, active=False)
         self._update_memory_pad_led(mem_col, row, active=False)
         # Sauvegarde auto immediate
@@ -7420,6 +8901,8 @@ class MainWindow(QMainWindow):
         src_akai = self._mem_col_to_fader(src_col)
         if self.active_memory_pads.get(src_akai) == src_row:
             del self.active_memory_pads[src_akai]
+        if self._mem_rows.get(src_col) == src_row:
+            del self._mem_rows[src_col]
         self._refresh_memory_pad(src_col, src_row)
         self._refresh_memory_pad(dst_col, dst_row)
         self._save_akai_config_auto()
@@ -7501,6 +8984,20 @@ class MainWindow(QMainWindow):
                 pass
             return
 
+        if slot["type"] == "video":
+            # Fader de la colonne VIDÉO = dimmer de la sortie vidéo (0-100 %).
+            if index in self.faders:
+                self.faders[index].value = value
+            self.set_video_dimmer(value)
+            return
+
+        if slot["type"] == "vfx":
+            # Fader de la colonne VFX = amplitude de l'effet vidéo (0-100 %).
+            if index in self.faders:
+                self.faders[index].value = value
+            self.set_video_fx_amplitude(value)
+            return
+
         if slot["type"] == "memory":
             mem_col = slot["mem_col"]
             # S'assurer que le niveau de ce fader est à jour avant le mix
@@ -7510,6 +9007,7 @@ class MainWindow(QMainWindow):
             # Auto-activation pad du haut si aucun pad actif dans cette colonne MEM
             if active_row is None and value > 0 and self.memories[mem_col][0] is not None:
                 self.active_memory_pads[index] = 0
+                self._mem_rows[mem_col] = 0
                 self._style_memory_pad(mem_col, 0, active=True)
             # Mélange de TOUTES les mémoires actives (additif RGB ; dominante pour roue de couleur)
             self._recompute_memory_mix()
@@ -7586,6 +9084,62 @@ class MainWindow(QMainWindow):
         # Envoi DMX immediat sans attendre le prochain tick
         self.send_dmx_update()
 
+    def apply_memory_level(self, mem_col, value):
+        """Niveau d'une colonne MEM piloté par l'entrée DMX — page affichée ou non.
+
+        Une tranche MEM était le seul point aveugle du pilotage par pupitre :
+        `apply_slot_level_offpage` renvoie False pour elle, parce que le mix des
+        mémoires est indexé par colonne VISIBLE (`active_memory_pads`, puis
+        `_fader_to_mem_col` qui relit `_fader_map`). Hors page, on ne savait donc
+        ni quelle ligne est active, ni où lire un niveau.
+
+        Les deux manquent ici : `_mem_rows` donne la ligne active par mem_col
+        (indépendante de la page) et `_mem_ext_levels` porte le niveau venu du
+        pupitre, que `_recompute_memory_mix` mélange comme n'importe quel fader.
+
+        UN SEUL writer, quelle que soit la page (cf. l'anti-pattern des deux
+        writers) : quand la colonne est à l'écran, on met sa surface d'accord
+        ici même plutôt que de repasser par `on_midi_fader`.
+        """
+        if not (0 <= int(mem_col) < len(self.memories)):
+            return False
+        mem_col = int(mem_col)
+        value = max(0, min(100, int(value)))
+        self._mem_ext_levels[mem_col] = value
+
+        # Auto-activation du pad du haut, exactement comme un fader qu'on monte
+        # sans pad actif (voir set_proj_level) : sinon monter la tranche depuis
+        # le pupitre ne ferait rien de visible.
+        if (self._mem_rows.get(mem_col) is None and value > 0
+                and self.memories[mem_col][0] is not None):
+            self._mem_rows[mem_col] = 0
+            self._style_memory_pad(mem_col, 0, active=True)
+            self._update_memory_pad_led(mem_col, 0, active=True)
+        row = self._mem_rows.get(mem_col)
+
+        # Colonnes de la page AFFICHÉE branchées sur cette mémoire : le fader et
+        # le pad suivent, sinon l'écran mentirait sur ce que fait le pupitre.
+        for i, slot in enumerate(self._fader_map):
+            if slot.get("type") != "memory" or slot.get("mem_col") != mem_col:
+                continue
+            if i in self.faders:
+                self.faders[i].value = value
+                self.faders[i].update()
+            if row is None:
+                self.active_memory_pads.pop(i, None)
+            else:
+                self.active_memory_pads[i] = row
+            try:
+                import tablet_server as _ts
+                if _ts.is_running():
+                    _ts.push_fader(i, value)
+            except Exception:
+                pass
+
+        self._recompute_memory_mix()
+        self.send_dmx_update()
+        return True
+
     def apply_slot_level_offpage(self, slot, value):
         """Applique un niveau a une tranche qui n'est PAS sur la page affichee.
 
@@ -7613,6 +9167,17 @@ class MainWindow(QMainWindow):
                 self.audio.setVolume(value / 100.0)
             except Exception:
                 pass
+            return True
+
+        if stype == "video":
+            # Le dimmer video est global, pas indexe par colonne : il se pilote
+            # aussi bien depuis une page non affichee.
+            self.set_video_dimmer(value)
+            return True
+
+        if stype == "vfx":
+            # L'amplitude est globale elle aussi.
+            self.set_video_fx_amplitude(value)
             return True
 
         if stype == "fx":
@@ -7727,6 +9292,9 @@ class MainWindow(QMainWindow):
                     'config': self._button_effect_configs.get(effect_idx, {}),
                     'state': 0, 'hue': 0, 'brightness': 0, 'direction': 1,
                     't0': _time.monotonic(),
+                    # Horloge de phase propre à cet effet : empilés, ils peuvent
+                    # tourner à des vitesses différentes.
+                    'clock': 0.0, 'clock_ts': None,
                 }
                 if not self._stacked_effects:
                     # Premier effet : sauvegarder les couleurs et démarrer le timer
@@ -8081,6 +9649,11 @@ class MainWindow(QMainWindow):
                 self.position_pads[pos_col][row] = len(self.position_presets) - 1
 
         self._style_position_akai_pad(pos_col, row)
+        # La LED physique aussi, pas seulement le pad à l'écran : sans ça, une
+        # position fraîchement enregistrée laissait le pad de l'AKAI éteint
+        # jusqu'au premier rappel — impossible de voir, sur le contrôleur, ce
+        # qu'on venait d'enregistrer.
+        self._update_pos_pad_led(pos_col, row)
         self._save_akai_config_auto()
         self._log_message(f"Position « {name} » enregistrée", "success")
 
@@ -8251,6 +9824,9 @@ class MainWindow(QMainWindow):
         if pos_col < _POS_COL_MAX:
             self.position_pads[pos_col][row] = preset_idx
         self._style_position_akai_pad(pos_col, row)
+        # Idem qu'à l'enregistrement : le pad passe d'« éteint » à « occupé »,
+        # la LED du contrôleur doit le montrer tout de suite.
+        self._update_pos_pad_led(pos_col, row)
         self._save_akai_config_auto()
 
     def _rename_position_akai(self, pos_col, row):
@@ -8644,16 +10220,84 @@ class MainWindow(QMainWindow):
     # plan 2D et sur le vrai DMX (qui lisent la position de la roue).
     # Le tuple ne peut que S'ALLONGER : plan_de_feu lit sv[0..4] par index.
 
+    @staticmethod
+    def _effect_state_tuple(p):
+        """L'état d'un projecteur, dans l'ordre du tuple de capture."""
+        return (p.base_color, p.color, p.level,
+                getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768),
+                getattr(p, 'white_boost', 0), getattr(p, 'amber_boost', 0),
+                getattr(p, 'uv', 0), getattr(p, 'color_wheel', 0),
+                getattr(p, 'gobo', 0), getattr(p, 'zoom', 0))
+
+    @staticmethod
+    def _effect_state_key(state):
+        """Version comparable du tuple : les QColor deviennent des entiers."""
+        return tuple(v.rgb() if isinstance(v, QColor) else v for v in state)
+
     def _snapshot_effect_state(self):
         """Capture l'état des projecteurs avant application d'un effet."""
         self.effect_saved_colors = {
-            id(p): (p.base_color, p.color, p.level,
-                    getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768),
-                    getattr(p, 'white_boost', 0), getattr(p, 'amber_boost', 0),
-                    getattr(p, 'uv', 0), getattr(p, 'color_wheel', 0),
-                    getattr(p, 'gobo', 0), getattr(p, 'zoom', 0))
+            id(p): self._effect_state_tuple(p) for p in self.projectors
+        }
+        self._effect_engine_frame = None
+
+    def _record_effect_frame(self):
+        """Relève ce que le moteur d'effets vient d'écrire, en fin de frame.
+
+        Sert de témoin à `_sync_effect_baseline` : tout ce qui diffère de ce
+        relevé à la frame suivante n'a PAS été écrit par l'effet.
+        """
+        if not self.effect_saved_colors:
+            self._effect_engine_frame = None
+            return
+        self._effect_engine_frame = {
+            id(p): self._effect_state_key(self._effect_state_tuple(p))
             for p in self.projectors
         }
+
+    def _sync_effect_baseline(self):
+        """Fait suivre la capture d'avant-effet aux écritures VENUES D'AILLEURS.
+
+        `effect_saved_colors` était un instantané mort, pris au démarrage de
+        l'effet et rendu tel quel à l'arrêt. Tout ce que l'utilisateur posait
+        PENDANT l'effet — un pad couleur de l'AKAI, une mémoire, une couleur
+        depuis le plan 2D — était donc jeté à la coupure : bleu au pad, effet de
+        mouvement, rouge au pad, relâché → retour au bleu. Le rouge n'avait
+        jamais eu de chance : il n'était pas dans la photo.
+
+        Le moteur d'effets est le seul à écrire pendant qu'un effet tourne. On
+        compare donc l'état courant à ce que le moteur a écrit à la frame
+        précédente (`_record_effect_frame`) : tout écart vient forcément d'un
+        AUTRE écrivain, et devient le nouvel état « d'avant ». Attribut par
+        attribut — un pad couleur ne doit pas déplacer le centre pan/tilt autour
+        duquel l'effet tourne (`saved[3]`/`saved[4]`).
+
+        Neutralisé en restitution (timeline / aperçu REC) : là, les clips
+        réécrivent les projecteurs à chaque frame et passeraient tous pour des
+        écritures étrangères.
+        """
+        last = getattr(self, '_effect_engine_frame', None)
+        if not last or not self.effect_saved_colors:
+            return
+        _seq = getattr(self, 'seq', None)
+        if _seq is not None and hasattr(_seq, 'timeline_playback_row'):
+            return
+        if getattr(self, '_rec_preview_active', False):
+            return
+        for p in self.projectors:
+            prev  = last.get(id(p))
+            saved = self.effect_saved_colors.get(id(p))
+            if prev is None or saved is None:
+                continue
+            cur = self._effect_state_tuple(p)
+            key = self._effect_state_key(cur)
+            if key == prev:
+                continue
+            self.effect_saved_colors[id(p)] = tuple(
+                (QColor(cur[i]) if isinstance(cur[i], QColor) else cur[i])
+                if key[i] != prev[i] else saved[i]
+                for i in range(len(cur))
+            )
 
     def _restore_effect_state(self):
         """Rend aux projecteurs leur état d'avant l'effet, puis vide la capture.
@@ -8678,6 +10322,7 @@ class MainWindow(QMainWindow):
             if len(saved) > 10:
                 p.gobo, p.zoom = saved[9], saved[10]
         self.effect_saved_colors = {}
+        self._effect_engine_frame = None
 
     def start_effect(self, effect_name):
         """Demarre l'effet selectionne par nom"""
@@ -8707,6 +10352,11 @@ class MainWindow(QMainWindow):
         if cfg and cfg.get("layers"):
             import time as _time
             self.effect_t0 = _time.monotonic()
+            # Horloge de phase remise à zéro, et son horodatage à None pour que
+            # la 1re frame compte un dt nul : sinon l'effet démarrerait au temps
+            # écoulé depuis le dernier effet.
+            self._effect_clock    = 0.0
+            self._effect_clock_ts = None
             self.effect_timer.start(40)  # 25 fps pour les effets à couches
             return
 
@@ -8893,6 +10543,21 @@ class MainWindow(QMainWindow):
             )
 
     def update_effect(self):
+        """Une frame d'effet, encadrée par l'entretien de la capture d'avant-effet.
+
+        Avant : réconcilier la capture avec ce que d'autres ont posé depuis la
+        frame précédente (pad couleur, mémoire, plan 2D). Après : relever ce que
+        le moteur vient d'écrire, témoin de la comparaison suivante. Le `finally`
+        compte — une frame qui sort en exception laisserait sinon un témoin
+        périmé, et tout l'état passerait pour une écriture étrangère.
+        """
+        self._sync_effect_baseline()
+        try:
+            self._run_effect_frame()
+        finally:
+            self._record_effect_frame()
+
+    def _run_effect_frame(self):
         """Met a jour l'effet en cours"""
         # Si amplitude totale = 0, ne pas toucher aux projecteurs pour laisser
         # les colonnes MEM (ou autres sources) agir librement.
@@ -9137,6 +10802,8 @@ class MainWindow(QMainWindow):
         saved_bri  = getattr(self, 'effect_brightness', 0)
         saved_dir  = getattr(self, 'effect_direction', 1)
         saved_t0   = getattr(self, 'effect_t0', 0)
+        saved_clk  = getattr(self, '_effect_clock', 0.0)
+        saved_cts  = getattr(self, '_effect_clock_ts', None)
 
         # ── Charger l'état de cet effet ──────────────────────────────────
         self.active_effect        = eff_data['name']
@@ -9146,6 +10813,8 @@ class MainWindow(QMainWindow):
         self.effect_brightness    = eff_data.get('brightness', 0)
         self.effect_direction     = eff_data.get('direction', 1)
         self.effect_t0            = eff_data.get('t0', 0)
+        self._effect_clock        = eff_data.get('clock', 0.0)
+        self._effect_clock_ts     = eff_data.get('clock_ts')
 
         # ── Exécuter un tick ─────────────────────────────────────────────
         cfg = self.active_effect_config
@@ -9163,6 +10832,8 @@ class MainWindow(QMainWindow):
         eff_data['brightness']= self.effect_brightness
         eff_data['direction'] = self.effect_direction
         eff_data['t0']        = self.effect_t0
+        eff_data['clock']     = self._effect_clock
+        eff_data['clock_ts']  = self._effect_clock_ts
 
         # ── Restaurer les variables d'instance ────────────────────────────
         self.active_effect        = saved_eff
@@ -9172,6 +10843,8 @@ class MainWindow(QMainWindow):
         self.effect_brightness    = saved_bri
         self.effect_direction     = saved_dir
         self.effect_t0            = saved_t0
+        self._effect_clock        = saved_clk
+        self._effect_clock_ts     = saved_cts
 
     # ------------------------------------------------------------------ #
     #  EDITEUR D'EFFETS                                                    #
@@ -9289,13 +10962,35 @@ class MainWindow(QMainWindow):
         else:
             self._button_effect_configs.pop(btn_idx, None)
         self._save_effect_assignments()
-        if btn_idx < len(self.effect_buttons):
-            name = cfg.get("name", "") if cfg else ""
-            self.effect_buttons[btn_idx].setToolTip(name or "Aucun effet")
-            self.effect_buttons[btn_idx].current_effect = name or None
+        if btn_idx >= len(self.effect_buttons):
+            return
+        btn = self.effect_buttons[btn_idx]
+
+        if not cfg:
+            # Désassignation : un bouton vidé ne doit pas rester allumé avec un
+            # effet qui tourne encore derrière. On bascule OFF par le chemin
+            # normal (pile de superposition, restauration, LED) AVANT de couper
+            # le lien vers l'effet, sinon toggle_effect ne sait plus quoi
+            # éteindre. _ensure_effect_off, pas _on_effect_press : ce dernier
+            # ignore l'appui sur un bouton déjà actif en mode flash/timer.
+            try:
+                self._ensure_effect_off(btn_idx)
+            except Exception as e:
+                print(f"[FX] arrêt de l'effet désassigné impossible : {e}")
+            btn.active = False
+            btn.current_effect = None
+            btn.setToolTip("Aucun effet")
+            btn.update_style()
+            if MIDI_AVAILABLE and self.midi_handler.midi_out and btn_idx < 8:
+                self.midi_handler.set_pad_led(btn_idx, 8, 0)
+            return
+
+        name = cfg.get("name", "")
+        btn.setToolTip(name or "Aucun effet")
+        btn.current_effect = name or None
 
         # Si cet effet est actuellement actif, appliquer la nouvelle config immédiatement
-        if cfg and self.effect_buttons[btn_idx].active:
+        if btn.active:
             self.active_effect_config = cfg
             self.active_effect = cfg.get("name", self.active_effect)
             self.start_effect(self.active_effect)
@@ -9437,7 +11132,31 @@ class MainWindow(QMainWindow):
         if not layers_dicts:
             return
 
-        t = _time.monotonic() - getattr(self, 'effect_t0', 0)
+        # Vitesse générale : le fader FX de l'AKAI, ou l'override de vitesse du
+        # clip en restitution. Constante sur toute la frame.
+        _eff_speed  = cfg.get("speed_override", self.effect_speed)
+        _fader_mult = max(0.01, _eff_speed / 100.0)
+
+        _now   = _time.monotonic()
+        t_reel = _now - getattr(self, 'effect_t0', 0)
+        # ── Horloge de PHASE ────────────────────────────────────────────────
+        # La position dans le cycle valait `freq x temps écoulé`, avec la vitesse
+        # générale ENFERMÉE dans `freq`. Bouger le fader FX changeait donc `freq`
+        # sous un `t` déjà grand : la phase sautait de `Δfreq x t` d'un coup —
+        # 3 tours entiers pour un dixième de Hz après 30 s. En balayant le fader,
+        # une salve de sauts : « ça part très vite avant de se caler ».
+        # On accumule donc le temps DÉFORMÉ par la vitesse (`dt x fader_mult`) et
+        # `freq` n'en dépend plus. À vitesse constante c'est exactement l'ancien
+        # calcul (`fader_mult x t`) — parité totale avec l'aperçu de l'éditeur —
+        # mais la phase reste CONTINUE quand la vitesse bouge : seule sa dérivée
+        # change, comme sur un vrai pupitre.
+        # dt plafonné : une frame en retard (freeze UI, veille) ne doit pas
+        # propulser l'effet d'une seconde d'un coup.
+        _last = getattr(self, '_effect_clock_ts', None)
+        _dt   = 0.0 if _last is None else min(0.25, max(0.0, _now - _last))
+        self._effect_clock_ts = _now
+        self._effect_clock    = getattr(self, '_effect_clock', 0.0) + _dt * _fader_mult
+        t = self._effect_clock
 
         # Mode "une fois" : stoppe l'effet après la durée configurée
         play_mode = cfg.get("play_mode", "loop")
@@ -9445,7 +11164,10 @@ class MainWindow(QMainWindow):
             duration = cfg.get("duration", 0)
             if duration <= 0:
                 duration = 2.0  # durée par défaut d'un cycle : 2 secondes
-            if t >= duration:
+            # Durée en secondes RÉELLES, pas en temps déformé : à mi-vitesse
+            # l'effet fait deux fois moins de tours mais dure toujours autant.
+            # C'est le comportement d'origine.
+            if t_reel >= duration:
                 self.effect_timer.stop()  # stopper immédiatement pour éviter les appels multiples
                 QTimer.singleShot(0, self._stop_once_effect)
                 return
@@ -9615,9 +11337,11 @@ class MainWindow(QMainWindow):
                 forme     = ld.get("forme", "Sinus")
                 attr      = ld.get("attribute", "Dimmer")
 
-                effective_speed = cfg.get("speed_override", self.effect_speed)
-                fader_mult = max(0.01, effective_speed / 100.0)
-                freq = layer_frequency(speed, fader_mult=fader_mult)
+                # Plus de `fader_mult` ici : la vitesse générale est portée par
+                # l'horloge de phase (`_effect_clock`, en tête de fonction). L'y
+                # remettre l'appliquerait DEUX fois — et rendrait le saut de
+                # phase qu'elle sert justement à supprimer.
+                freq = layer_frequency(speed)
                 # 180° = distribution parfaite sur 1 cycle (permanent N/2 allumés avec Flash)
                 # 0° = sync, 360° = double-tour (sous-groupes)
                 sp   = spread / 180.0
@@ -9786,7 +11510,7 @@ class MainWindow(QMainWindow):
 
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
-                        pan_freq = layer_frequency(speed, pan_mult, fader_mult)
+                        pan_freq = layer_frequency(speed, pan_mult)
                         pan_x = (_pt_time(pan_freq) + _mh_i / _mh_n_pt * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = (_ctr[0] if _ctr is not None else
@@ -9795,7 +11519,7 @@ class MainWindow(QMainWindow):
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
-                        tilt_freq = layer_frequency(speed, tilt_mult, fader_mult)
+                        tilt_freq = layer_frequency(speed, tilt_mult)
                         tilt_x = (_pt_time(tilt_freq) + _mh_i / _mh_n_pt * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = (_ctr[1] if _ctr is not None else
@@ -10060,41 +11784,34 @@ class MainWindow(QMainWindow):
         """Definit la vitesse de l'effet (conservé pour compatibilité)"""
         self.effect_speed = value
 
+    _TAP_BTN_LOOK = {
+        # mode        : (texte, fond, bordure, couleur texte, survol, bordure survol)
+        "go":         ("▶", "#006633", "#00aa55", "#00ff88", "#008844", "#00ff88"),
+        "flash":      ("F", "#7a5500", "#ffaa00", "#ffdd66", "#996a00", "#ffdd66"),
+        "flash_kill": ("K", "#7a1010", "#dd3333", "#ff9999", "#992020", "#ff6666"),
+        "page":       ("P", "#123a66", "#3399ff", "#99ccff", "#1c5599", "#bbddff"),
+    }
+
     def _update_tap_go_btn_style(self):
-        """Met à jour l'apparence du bouton TAP/GO selon le mode actif."""
+        """Met à jour l'apparence du bouton bas-droite selon son mode.
+
+        Pendant un flash, le bouton est peint « allumé » : c'est le seul repère
+        à l'écran qu'un momentané est en cours (les faders, eux, ne bougent pas).
+        """
         btn = getattr(self, '_tap_btn', None)
         if btn is None:
             return
-        if self.go_mode:
-            btn.setText("▶")
-            btn.setFont(QFont("Segoe UI", 7, QFont.Bold))
-            btn.setToolTip(tr("mw_go_next_mem"))
-            btn.setStyleSheet("""
-                QToolButton {
-                    background: #006633;
-                    border: 2px solid #00aa55;
-                    border-radius: 8px;
-                    color: #00ff88;
-                    font-size: 8px;
-                    font-weight: bold;
-                }
-                QToolButton:hover {
-                    background: #008844;
-                    border: 2px solid #00ff88;
-                }
-                QToolButton:pressed {
-                    background: #004422;
-                    border: 2px solid #00ff88;
-                }
-            """)
-        else:
+        mode = getattr(self, 'tap_button_mode', 'bpm')
+        look = self._TAP_BTN_LOOK.get(mode)
+        if look is None:
+            # TAP BPM — pastille grise sans libellé, apparence d'origine
             btn.setText("")
-            btn.setToolTip(tr("tooltip_tap_tempo"))
+            btn.setToolTip(tr("tooltip_tap_tempo") + "\n" + tr("tap_btn_mode_hint"))
             btn.setStyleSheet("""
                 QToolButton {
                     background: #4a4a4a;
                     border: 2px solid #6a6a6a;
-                    border-radius: 8px;
+                    border-radius: 3px;
                 }
                 QToolButton:hover {
                     background: #5a5a5a;
@@ -10105,6 +11822,38 @@ class MainWindow(QMainWindow):
                     border: 2px solid #fff;
                 }
             """)
+            return
+
+        text, bg, border, fg, hover_bg, hover_border = look
+        if getattr(self, '_flash_kind', None) is not None and mode in ("flash", "flash_kill"):
+            bg, hover_bg = hover_border, hover_border
+            fg = "#ffffff"
+        btn.setText(text)
+        btn.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        btn.setToolTip({
+            "go":         tr("mw_go_next_mem"),
+            "flash":      tr("tooltip_flash_btn"),
+            "flash_kill": tr("tooltip_flash_kill_btn"),
+            "page":       tr("tooltip_page_btn"),
+        }[mode] + "\n" + tr("tap_btn_mode_hint"))
+        btn.setStyleSheet(f"""
+            QToolButton {{
+                background: {bg};
+                border: 2px solid {border};
+                border-radius: 3px;
+                color: {fg};
+                font-size: 8px;
+                font-weight: bold;
+            }}
+            QToolButton:hover {{
+                background: {hover_bg};
+                border: 2px solid {hover_border};
+            }}
+            QToolButton:pressed {{
+                background: {hover_border};
+                border: 2px solid #fff;
+            }}
+        """)
 
     def _go_advance(self):
         """Mode GO : avance au cue suivant si multi-cue, sinon à la prochaine mémoire."""
@@ -10152,7 +11901,7 @@ class MainWindow(QMainWindow):
                 QToolButton {
                     background: #00aa55;
                     border: 2px solid #00ff88;
-                    border-radius: 8px;
+                    border-radius: 3px;
                     color: #fff;
                     font-size: 8px;
                     font-weight: bold;
@@ -10210,10 +11959,158 @@ class MainWindow(QMainWindow):
 
         self._show_mem_toast(f"◀  MEM {next_col + 1}.{next_row + 1}")
 
+    # ── Bouton bas-droite : GO / FLASH / TAP BPM ─────────────────────────────
+
+    @property
+    def go_mode(self) -> bool:
+        """Compat : le mode GO n'est plus qu'une des fonctions du bouton bas-droite."""
+        return self.tap_button_mode == "go"
+
+    @go_mode.setter
+    def go_mode(self, value):
+        self.tap_button_mode = "go" if value else "bpm"
+
+    def _show_tap_mode_menu(self, pos):
+        """Clic droit sur le bouton bas-droite → choisir sa fonction.
+
+        Même liste que dans « Configuration du contrôleur », mais sans avoir à
+        ouvrir la fenêtre — c'est le geste des boutons d'effets.
+        """
+        btn = getattr(self, '_tap_btn', None)
+        if btn is None:
+            return
+        menu = build_tap_mode_menu(btn, self.tap_button_mode, self._set_tap_button_mode)
+        menu.exec(btn.mapToGlobal(pos))
+
+    def _set_tap_button_mode(self, mode):
+        """Change la fonction du bouton bas-droite et la retient."""
+        mode = normalize_tap_button_mode(mode)
+        if mode == self.tap_button_mode:
+            return
+        self._flash_end()          # changer de fonction ne laisse pas un flash collé
+        self.tap_button_mode = mode
+        self._update_tap_go_btn_style()
+        self._save_akai_config_auto()
+        self._log_message(f"{tr('tap_btn_mode_lbl')} : {tr(_TAP_MODE_KEYS[mode])}", "info")
+
+    def _flash_level(self, value: int) -> int:
+        """Niveau d'une colonne mémoire, flash momentané appliqué.
+
+        Le flash ne touche AUCUN fader : il se contente de forcer le niveau lu
+        par le mix. Le relâcher n'a donc rien à restaurer — un simple recalcul
+        rend exactement l'état d'avant.
+
+        FLASH KILL n'apparaît plus ici : tenu seul il ne coupe rien, et sa
+        coupure est un SOLO décidé à l'appui d'un pad couleur — donc par
+        PROJECTEUR (`_apply_flash_kill_gate`), pas par colonne de mémoire.
+        """
+        if self._flash_kind == "full":
+            return 100
+        return value
+
+    def _tap_next_page(self):
+        """Mode PAGE : le bouton bas-droite fait +1 sur les pages de layout.
+
+        Même chemin que la flèche ▶ de l'écran (`_next_bank_page`) — pads,
+        faders et LED suivent donc exactement comme un changement de page à la
+        souris. Après la dernière page on revient à la première : un seul bouton
+        suffit à faire le tour.
+        """
+        pages = getattr(self, "_bank_pages", None)
+        if not pages or len(pages) < 2:
+            self._log_message(tr("tap_page_single"), "warn")
+            return
+        self._next_bank_page()
+        self._show_mem_toast(f"PAGE {self._bank_page_idx + 1}/{len(pages)}")
+        self._log_message(f"{tr('tap_btn_mode_page')} {self._bank_page_idx + 1}", "go")
+
+    def _flash_has_memories(self) -> bool:
+        """Y a-t-il au moins une mémoire à flasher ?
+
+        FLASH monte les mémoires TENUES à 100 %, fader baissé compris : ce qui
+        compte est le pad latché, pas le niveau lu.
+        """
+        for fader_idx, row in list(self.active_memory_pads.items()):
+            if row is None or fader_idx in self._muted_faders:
+                continue
+            mem_col = self._fader_to_mem_col(fader_idx)
+            if mem_col is None or not (0 <= mem_col < len(self.memories)):
+                continue
+            if self.memories[mem_col][row]:
+                return True
+        # Mémoires tenues par l'entrée DMX hors de la page affichée
+        for mem_col in list(getattr(self, '_mem_ext_levels', None) or {}):
+            row = self._mem_rows.get(mem_col)
+            if row is None or not (0 <= mem_col < len(self.memories)):
+                continue
+            if self.memories[mem_col][row]:
+                return True
+        return False
+
+    def _flash_begin(self):
+        """Début du flash momentané (bouton bas-droite maintenu)."""
+        if self._flash_kind is not None:
+            return
+        self._flash_kind = "kill" if self.tap_button_mode == "flash_kill" else "full"
+        self._flash_watchdog.start()
+        # `_recompute_memory_mix` compose le rig À PARTIR des mémoires : tout
+        # projecteur qu'aucune mémoire active ne touche tombe dans « éteint »,
+        # couleur comprise. L'appeler pour un momentané détruit donc le look
+        # manuel (pads couleur, plan 2D) — et le relâcher ne le rend pas.
+        #
+        #  • KILL  : rien à composer, JAMAIS. Sous KILL toutes les mémoires sont
+        #    ramenées à 0 par `_flash_level`, le mix serait vide et noircirait
+        #    tout le modèle. La coupure se fait ailleurs et ne touche aucun état
+        #    (porte par frame avant l'envoi + drapeau d'affichage du plan 2D).
+        #  • FLASH : composer seulement s'il y a une mémoire à monter à 100 %.
+        self._flash_had_memories = (self._flash_kind == "full"
+                                    and self._flash_has_memories())
+        if self._flash_had_memories:
+            self._recompute_memory_mix()
+        self.send_dmx_update()
+        self._update_tap_go_btn_style()
+        self._log_message(tr("tap_flash_kill_on") if self._flash_kind == "kill"
+                          else tr("tap_flash_on"), "go")
+
+    def _flash_end(self):
+        """Fin du flash : retour à l'état précédent."""
+        if self._flash_kind is None:
+            return
+        kind = self._flash_kind
+        self._flash_kind = None
+        self._flash_watchdog.stop()
+        # Symétrique de l'appui : on ne recompose que si l'appui l'a fait, plus
+        # le cas d'une mémoire posée PENDANT un FLASH (montée à 100 %, elle doit
+        # redescendre à son fader). Sous KILL le modèle n'a jamais été touché :
+        # il n'y a rien à rendre, et recomposer ici effacerait le look manuel au
+        # relâché au lieu de l'effacer à l'appui.
+        if getattr(self, '_flash_had_memories', False) or                 (kind == "full" and self._flash_has_memories()):
+            self._recompute_memory_mix()
+        self._flash_had_memories = False
+        self.send_dmx_update()
+        self._update_tap_go_btn_style()
+        self._log_message(tr("tap_flash_off"), "info")
+
+    def _tap_tempo_released(self):
+        """Relâchement du bouton bas-droite — seul le flash s'en sert."""
+        self._flash_end()
+
     def _tap_tempo(self):
-        """Calcule le BPM à partir des taps et règle le fader vitesse FX."""
-        if self.go_mode:
+        """Appui sur le bouton bas-droite — dispatch selon le mode configuré."""
+        mode = self.tap_button_mode
+        if mode == "go":
             self._go_advance()
+            return
+        if mode == "page":
+            self._tap_next_page()
+            return
+        if mode in ("flash", "flash_kill"):
+            # Un second appui termine le flash : filet de sécurité si le
+            # contrôleur (ou un bouton logiciel) n'envoie jamais de relâchement.
+            if self._flash_kind is not None:
+                self._flash_end()
+            else:
+                self._flash_begin()
             return
 
         now = time.monotonic()
@@ -10242,6 +12139,10 @@ class MainWindow(QMainWindow):
         intervals = [taps[i+1] - taps[i] for i in range(len(taps) - 1)]
         avg_interval_s = sum(intervals) / len(intervals)
         bpm = 60.0 / avg_interval_s
+        # Retenu tel quel : le TAP ne gardait que sa conversion en vitesse
+        # d'effet (0-100), d'où l'on ne peut pas revenir au tempo. Le strobe
+        # vidéo calé sur le tempo a besoin du BPM, pas de sa projection.
+        self._tap_bpm = bpm
 
         # BPM → fader 0-100 (60 BPM = 0, 300 BPM = 100)
         speed = int(max(0, min(100, (bpm - 60) / (300 - 60) * 100)))
@@ -10359,12 +12260,28 @@ class MainWindow(QMainWindow):
 
     def _clear_akai_state(self):
         """Remet l'AKAI à zéro : faders 0-7 à 0 + pads blancs activés."""
-        def _is_play(idx):
-            return idx < len(self._fader_map) and self._fader_map[idx].get("type") == "play"
+        def _stype(idx):
+            return (self._fader_map[idx].get("type")
+                    if idx < len(self._fader_map) else None)
         # Faders à 0 — SAUF la colonne PLAY (volume) : le clear ne doit jamais
-        # couper le son (piège ergonomique).
+        # couper le son (piège ergonomique). Et SAUF les colonnes FX, dont le
+        # fader est une amplitude d'effet et non un niveau (voir _sync_fx_fader) :
+        # le clear coupe déjà les effets plus bas, la mettre à 0 ne ferait que
+        # rendre la colonne muette pour le prochain pad déclenché. Et SAUF les
+        # colonnes VIDÉO, dont le fader est le niveau de sortie vidéo : CLEAR
+        # remet la lumière à zéro, pas l'écran de la salle au noir.
         for idx in range(8):
-            if _is_play(idx):
+            stype = _stype(idx)
+            if stype == "play":
+                continue
+            if stype == "fx":
+                self._sync_fx_fader(idx, self._fader_map[idx])
+                continue
+            if stype == "video":
+                self._sync_video_fader(idx, self._fader_map[idx])
+                continue
+            if stype == "vfx":
+                self._sync_vfx_fader(idx, self._fader_map[idx])
                 continue
             if idx in self.faders:
                 self.faders[idx].value = 0
@@ -10374,7 +12291,7 @@ class MainWindow(QMainWindow):
         # MIDI faders à 0
         if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
             for idx in range(8):
-                if _is_play(idx):
+                if _stype(idx) in ("play", "fx", "video", "vfx"):
                     continue
                 self.midi_handler.midi_out.send_message([0xB0, idx, 0])
 
@@ -10389,6 +12306,12 @@ class MainWindow(QMainWindow):
 
         # Activer les pads blancs (row 0)
         self.activate_default_white_pads()
+
+        # Effet vidéo : CLEAR le désarme, mais ne touche NI au dimmer NI à la
+        # coupure. Désarmer un effet ne peut jamais assombrir la sortie plus que
+        # l'image nue, alors que remettre le dimmer ou rétablir une coupure
+        # enverrait sans prévenir de la vidéo sur l'écran de la salle.
+        self.set_video_fx(None)
 
         # Couper tous les effets (y compris empilés)
         if hasattr(self, 'effect_timer'):
@@ -10454,6 +12377,7 @@ class MainWindow(QMainWindow):
             p.prism_rotation = 0
             p.effects      = 0
             p.focus = p.gobo2 = p.speed = p.mode_value = 0
+            p.preset1 = p.preset2 = p.preset3 = p.preset4 = 0
             p.channel_extras = {}
 
         # Remettre tous les mutes à zéro + éteindre LEDs physiques
@@ -10499,6 +12423,12 @@ class MainWindow(QMainWindow):
             self.effect_timer.stop()
         self.active_effect = None
         self.active_effect_config = {}
+        # Rendre l'état d'avant l'effet. Arrêter le timer ne défait rien : les
+        # projecteurs restent sur la dernière image écrite (un effet blanc
+        # laisse tout en blanc). Sans objet au démarrage — la capture est vide —
+        # mais c'est aussi ce chemin qu'emprunte « Arrêter les effets » de la
+        # fenêtre externe (`_ext_stop_effects`) et le bouton STOP du contrôleur.
+        self._restore_effect_state()
 
         # Désactiver les pads FX + LEDs physiques
         self.active_fx_pads.clear()
@@ -10588,6 +12518,350 @@ class MainWindow(QMainWindow):
         return [(p.pan // 257, p.tilt // 257)
                 for p in self.projectors
                 if getattr(p, 'fixture_type', '') == "Moving Head"]
+
+    def _get_live_sequences(self):
+        """Mémoires enregistrées sur les pads, pour l'onglet SÉQUENCE du LIVE.
+
+        Ce sont bien les mémoires de PADS — celles que l'utilisateur pose avec
+        Rec MEM et rappelle d'un pad AKAI. Les captures « REC séquence » de REC
+        Lumière (colonnes réservées, tag `_rec`) en sont écartées : elles ne
+        vivent pas sur les pads, elles appartiennent à la piste Séquence d'un
+        show, et les mélanger ici rendrait la grille illisible.
+
+        Même nom et même couleur dominante que la vignette du pad et que la
+        bibliothèque de REC Lumière (`PalettePanel._dominant_color`) : une tuile
+        et son pad doivent désigner la même chose à l'œil. `cues` sert à
+        distinguer un LOOK (1 cue) d'une vraie SÉQUENCE (plusieurs cues qui
+        s'enchaînent sur leurs durées).
+        """
+        from light_timeline import PalettePanel, _is_rec_memory
+        out = []
+        for mem_col, col_mems in enumerate(getattr(self, 'memories', None) or []):
+            for row, mem in enumerate(col_mems or []):
+                if not isinstance(mem, dict) or _is_rec_memory(mem):
+                    continue
+                cues = mem.get("cues") or []
+                cue0 = cues[0] if cues else mem
+                out.append({
+                    'ref':   (mem_col, row),
+                    'name':  (mem.get("name") or f"MEM {mem_col + 1}.{row + 1}"),
+                    'color': PalettePanel._dominant_color(cue0, self, mem_col, row),
+                    'cues':  max(1, len(cues)),
+                })
+        return out
+
+    def _on_live_sequences_changed(self, refs):
+        """Le pool de mémoires de l'onglet SÉQUENCE a changé."""
+        avant = list(getattr(self, '_live_seq_pool', []))
+        self._live_seq_pool = [tuple(r) for r in (refs or [])]
+        # ⚠️ Un `Signal(list)` PySide convertit les tuples imbriqués en LISTES à
+        # la traversée : `emit([(0, 1)])` arrive en `[[0, 1]]`. Sans le
+        # re-tuplage ci-dessus, toute recherche par clé (`_mem_cue_idx`)
+        # échouerait sans lever la moindre erreur.
+        if not avant and self._live_seq_pool:
+            # Arriver sur une mémoire est une action VOLONTAIRE : elle repeint,
+            # exactement comme poser un pad (cf. `_activate_memory_pad`). Sans
+            # ça, une fixture prise en main depuis le plan 2D resterait
+            # verrouillée et la tuile paraîtrait morte sur une partie du rig.
+            self._release_manual_grabs()
+        if avant and not self._live_seq_pool:
+            self._clear_live_seq_leftovers()
+        # Le pool a changé : le cycle repart d'une base saine plutôt que de
+        # viser une position calculée sur l'ancien pool.
+        self.__dict__.pop('_live_seq_switch', None)
+
+    # Tout ce qu'une séquence REC peut écrire sur un projecteur. Sert au gel des
+    # groupes hors périmètre LIVE, et lui seul : le gel de `_apply_live_state`
+    # ne couvre que ce que le MOTEUR IA écrit (niveau, couleur, pan/tilt, gobo,
+    # strobe), ce qui suffisait tant qu'il était le seul writer. Une mémoire
+    # pose bien davantage — prisme, roue, zoom, shutter, canaux bruts, UV et
+    # boosts — et déborderait donc sur des groupes que l'utilisateur a
+    # explicitement sortis du LIVE.
+    # Tout ce qu'une mémoire peut écrire sur un projecteur. Sert au gel des
+    # groupes hors périmètre LIVE, et lui seul : le gel de `_apply_live_state`
+    # ne couvre que ce que le MOTEUR IA écrit (niveau, couleur, pan/tilt, gobo,
+    # strobe), ce qui suffisait tant qu'il était le seul writer. Une mémoire
+    # pose bien davantage — prisme, roue, zoom, shutter, canaux bruts, UV et
+    # boosts — et déborderait donc sur des groupes que l'utilisateur a
+    # explicitement sortis du LIVE.
+    _LIVE_SEQ_FROZEN_ATTRS = (
+        'level', 'color', 'base_color', 'pan', 'tilt', 'strobe_speed',
+        'gobo', 'gobo_rotation', 'gobo2', 'zoom', 'focus', 'iris',
+        'prism', 'prism_rotation', 'color_wheel', 'effects', 'speed',
+        'mode_value', 'preset1', 'preset2', 'preset3', 'preset4',
+        'shutter', 'channel_extras',
+        'uv', 'white_boost', 'amber_boost', 'orange_boost',
+    )
+
+    def _live_special_actif(self) -> bool:
+        """Un effet SPÉCIAL est-il en train de piloter le rig ?
+
+        Condition recopiée telle quelle de `_apply_live_state_inner` (« effets
+        SPÉCIAUX : priorité absolue, tous modes IA sauf Ambiance ») : les deux
+        doivent rester d'accord, sinon la séquence se croirait bloquée alors que
+        le spécial n'écrit rien, ou l'inverse.
+        """
+        return bool(getattr(self._fx_src, 'active_special', None)) \
+            and self._fx_src.ia_mode != 'ambiance'
+
+    def _live_seq_scope(self):
+        """(projecteurs dans le périmètre LIVE, projecteurs hors périmètre)."""
+        allowed = self._fx_src.allowed_groups
+        if not allowed:
+            return list(self.projectors), []
+        dedans, dehors = [], []
+        for p in self.projectors:
+            (dedans if p.group in allowed else dehors).append(p)
+        return dedans, dehors
+
+    def _clear_live_seq_leftovers(self):
+        """Relâche ce que le pool avait posé, quand la dernière mémoire tombe.
+
+        `apply_seq_memories_htp` POSE sans jamais effacer (c'est ce qui lui permet
+        de s'empiler sur les autres pistes) : gobo, prisme, roue, canaux bruts
+        resteraient donc collés après extinction — le symptôme « faut faire clear
+        partout pour stopper » déjà corrigé côté timeline. On réutilise le même
+        nettoyage qu'à l'arrêt d'une timeline, puis on laisse le mix des mémoires
+        repeindre l'état manuel réel (en mode IA, le moteur repeint de toute
+        façon à l'image suivante).
+
+        Nettoyage borné au périmètre LIVE, comme l'application : un groupe exclu
+        n'a jamais rien reçu, il n'y a rien à lui relâcher — et lui remettre le
+        faisceau au repos lui volerait le gobo posé à la main.
+        """
+        try:
+            from light_timeline import reset_beam_channels
+            self.__dict__.pop('_live_seq_switch', None)
+            self.__dict__.pop('_live_seq_marque', None)
+            self.seq.live_panel.set_sequence_overrides(())
+            dedans, _ = self._live_seq_scope()
+            reset_beam_channels(dedans, blackout=False)
+            self._recompute_memory_mix()
+        except Exception as e:
+            self._log_live_error('seq_cleanup', e)
+
+    # ── Cycle du pool de mémoires ────────────────────────────────────────────
+
+    def _live_seq_cues(self, ref):
+        """Liste des cues d'une mémoire du pool ([] si elle n'existe plus)."""
+        col, row = ref
+        mems = getattr(self, 'memories', None) or []
+        if col >= len(mems) or row >= len(mems[col]):
+            return []
+        mem = mems[col][row]
+        if not isinstance(mem, dict):
+            return []
+        return mem.get("cues") or [mem]
+
+    def _live_seq_len(self, ref, cue_idx):
+        """Combien de temps (ms) ce cue doit tenir à l'écran.
+
+        La durée ENREGISTRÉE dans le cue mène : une mémoire à plusieurs cues est
+        une séquence qu'on a minutée, elle doit se dérouler au tempo qu'on lui a
+        donné. Le curseur DURÉE n'intervient que pour les cues sans minutage —
+        c'est-à-dire pour un simple look, qui n'a aucune durée propre.
+
+        Ce curseur compte en SECONDES, là où le cycle des mouvements compte en
+        mesures. La raison tient à l'horloge : celle du LIVE avance même dans le
+        silence (`live_audio._process_chunk` ajoute 50 ms par bloc, RMS nul ou
+        non), le pool tourne donc sans musique — mais le BPM, lui, retombe à son
+        plancher de 60. En mesures, le même réglage aurait valu 20 s en silence
+        et 9 s sur un morceau à 128 BPM. Pour un changement de look, une durée
+        qu'on lit sur le curseur vaut mieux qu'une durée qui dépend de la
+        détection.
+        """
+        cues = self._live_seq_cues(ref)
+        if 0 <= cue_idx < len(cues):
+            dur = float(cues[cue_idx].get("duration", 0) or 0)
+            if dur > 0:
+                return int(dur * 1000)
+        return max(1, int(self.seq.live_panel.sequence_duration)) * 1000
+
+    # Canaux de faisceau qui appartiennent à l'onglet GOBO. Le reste du faisceau
+    # (prisme, zoom, iris…) n'a pas d'onglet dédié : rien à marquer pour lui.
+    _SEQ_GOBO_ATTRS = ('gobo', 'gobo_rotation', 'gobo2')
+
+    def _live_seq_overrides(self, ref, cue_idx) -> set:
+        """Onglets dont cette mémoire reprend réellement les réglages.
+
+        Déduit du CONTENU de la mémoire, pas d'une règle figée : une mémoire qui
+        n'a enregistré ni gobo ni strobe laisse ces onglets vivants, et le
+        marquage doit le dire. Marquer les six onglets à chaque séquence serait
+        plus simple et faux — l'utilisateur croirait avoir perdu la main sur des
+        réglages qui répondent encore.
+
+        Calculé au CHANGEMENT de mémoire ou de cue, jamais par image.
+        """
+        from light_timeline import resolve_memory_projectors
+        etats = resolve_memory_projectors(ref, cue_idx, self.memories) or []
+        allowed = self._fx_src.allowed_groups
+        cles = set()
+        for i, ps in enumerate(etats):
+            if i >= len(self.projectors):
+                break
+            if allowed and self.projectors[i].group not in allowed:
+                continue    # hors périmètre LIVE : la mémoire n'y touche pas
+            if (ps.get('level', 0) or 0) > 0:
+                # Elle allume : elle impose couleur ET niveau sur ce projecteur.
+                cles.update(('couleurs', 'dimmer'))
+            if any(int(ps.get(a, 0) or 0) for a in self._SEQ_GOBO_ATTRS):
+                cles.add('gobo')
+            if int(ps.get('strobe_speed', 0) or 0):
+                cles.add('strob')
+            # Le pan/tilt n'est repris que si l'interrupteur POSITIONS l'autorise.
+            if self.seq.live_panel.sequence_positions and (
+                    ps.get('pan', 32768) != 32768 or ps.get('tilt', 32768) != 32768):
+                cles.add('mouvement')
+        return cles
+
+    def _live_seq_state(self, position):
+        """Fait avancer le pool et rend (ref, cue_index) à jouer, ou None.
+
+        Deux niveaux d'enchaînement, dans cet ordre :
+          1. les CUES d'une mémoire, sur leurs durées enregistrées ;
+          2. les MÉMOIRES du pool, quand la précédente a fini de se dérouler.
+        Un pool d'une seule mémoire ne cycle pas : elle boucle sur ses cues.
+        """
+        pool = [tuple(r) for r in self.seq.live_panel.sequence_pool]
+        if not pool:
+            self.__dict__.pop('_live_seq_switch', None)
+            self.__dict__.pop('_live_seq_marque', None)
+            self.seq.live_panel.set_sequence_overrides(())
+            return None
+
+        st = self.__dict__.get('_live_seq_switch')
+        if st is None or st['ref'] not in pool:
+            st = {'ref': pool[0], 'cue': 0,
+                  'until': position + self._live_seq_len(pool[0], 0)}
+
+        if position >= st['until']:
+            cues  = self._live_seq_cues(st['ref'])
+            suite = st['cue'] + 1
+            if suite < len(cues):
+                st = {'ref': st['ref'], 'cue': suite,
+                      'until': position + self._live_seq_len(st['ref'], suite)}
+            else:
+                # Mémoire déroulée jusqu'au bout → la suivante du pool. Seule
+                # dans le pool, elle repart sur son premier cue.
+                i = pool.index(st['ref'])
+                suivante = pool[(i + 1) % len(pool)]
+                st = {'ref': suivante, 'cue': 0,
+                      'until': position + self._live_seq_len(suivante, 0)}
+
+        self._live_seq_switch = st
+        # Le panneau allume la tuile en cours (état « playing » de `_SeqTile`).
+        self.seq.live_panel.set_current_sequence(st['ref'])
+        # Marquage des onglets repris : recalculé au changement de mémoire ou de
+        # cue seulement. Le faire par image coûterait un balayage du rig 40 fois
+        # par seconde pour un résultat identique.
+        _cle = (st['ref'], st['cue'])
+        if _cle != self.__dict__.get('_live_seq_marque'):
+            self._live_seq_marque = _cle
+            self.seq.live_panel.set_sequence_overrides(
+                self._live_seq_overrides(st['ref'], st['cue']))
+        return st['ref'], st['cue']
+
+    def _apply_live_sequences(self, position):
+        """Pose la mémoire en cours du pool par-dessus l'image LIVE courante.
+
+        Même fonction que la piste Séquence du show (`apply_seq_memories_htp`) :
+        une mémoire jouée ici rend exactement ce qu'elle rend en restitution —
+        c'est tout l'intérêt de passer par elle plutôt que de réécrire un
+        applicateur.
+
+        ── Ce qui prime sur quoi ────────────────────────────────────────────
+        Une mémoire ne s'empare QUE de ce qu'elle a réellement enregistré :
+        elle POSE, elle n'EFFACE pas. Sur un projecteur qu'elle allume, sa
+        couleur et son niveau priment sur ce que les onglets COULEURS et DIMMER
+        viennent d'écrire. Sur un projecteur qu'elle laisse noir, le moteur
+        garde la main. Les canaux de faisceau (gobo, prisme, zoom, roue…)
+        suivent la même règle : posés s'ils sont réglés dans la mémoire,
+        intacts sinon — l'onglet GOBO continue donc de vivre.
+
+        DEUX canaux échappaient à cette règle, et c'est un vrai défaut :
+        `apply_seq_memories_htp` écrit `strobe_speed` et `channel_extras` SANS
+        CONDITION, sur tout le rig. Dans le show c'est sans conséquence — la
+        timeline remet tout au repos avant chaque image, elle est writer absolu.
+        En LIVE, non : le strobe matériel que l'onglet STROB vient de poser
+        était remis à 0 quarante fois par seconde, et les canaux bruts vidés.
+        L'onglet STROB devenait muet dès qu'une séquence tournait. On restaure
+        donc ces deux canaux partout où la mémoire, elle, les a laissés AU
+        REPOS — ce qui aligne leur comportement sur celui des canaux de
+        faisceau, juste au-dessus.
+
+        ⚠️ « Au repos » et non « projecteur éteint » : un laser se pilote par
+        ses canaux bruts avec le canal 1 à 0. Tester le niveau écarterait à
+        tort les mémoires qui ne s'expriment QUE par des canaux bruts.
+
+        Une mémoire capture par ailleurs le rig ENTIER, y compris les
+        projecteurs qu'elle ne vise pas. Elle ne peut donc pas être appliquée
+        telle quelle quand le LIVE est restreint à certains groupes : on gèle
+        les autres autour de l'appel (`_LIVE_SEQ_FROZEN_ATTRS`), plutôt que de
+        filtrer les entrées — `apply_seq_memories_htp` s'aligne sur les INDEX
+        de `projectors`, une liste filtrée décalerait toute la correspondance.
+
+        ⚠️ L'index de cue reste DANS l'état LIVE, il n'est jamais écrit dans
+        `_mem_cue_idx` : ce registre appartient aux pads, et le faire avancer
+        d'ici déplacerait le cue du pad sous les doigts de l'utilisateur.
+        """
+        etat = self._live_seq_state(position)
+        if etat is None:
+            return
+        ref, cue_idx = etat
+        from light_timeline import apply_seq_memories_htp, resolve_memory_projectors
+
+        allowed = self._fx_src.allowed_groups
+        # Sentinelle plutôt que None pour l'attribut ABSENT : plusieurs canaux
+        # (`strobe_speed` en tête) ne sont pas déclarés sur `Projector`, ils
+        # n'existent que si quelqu'un les a écrits. Avec un `None`, la mémoire
+        # pouvait donc les CRÉER sur un projecteur hors périmètre et le dégel
+        # les y laissait — un groupe exclu du LIVE qui se met à strober.
+        _ABSENT = object()
+
+        gel = []        # groupes hors périmètre LIVE : tout est restauré
+        garde = []      # dans le périmètre : strobe et canaux bruts au repos
+        etats = resolve_memory_projectors(ref, cue_idx, self.memories) or []
+        for i, p in enumerate(self.projectors):
+            if allowed and p.group not in allowed:
+                gel.append((p, {a: getattr(p, a, _ABSENT)
+                                for a in self._LIVE_SEQ_FROZEN_ATTRS}))
+                continue
+            ps = etats[i] if i < len(etats) else {}
+            a_rendre = {}
+            if not int(ps.get('strobe_speed', 0) or 0):
+                a_rendre['strobe_speed'] = getattr(p, 'strobe_speed', _ABSENT)
+            if not (ps.get('channel_extras') or {}):
+                a_rendre['channel_extras'] = getattr(p, 'channel_extras', _ABSENT)
+            if a_rendre:
+                garde.append((p, a_rendre))
+
+        entries = [{'memory_ref': ref, 'cue_index': cue_idx,
+                    'brightness': self.seq.live_panel.sequence_intensity / 100.0}]
+
+        # Interrupteur POSITIONS décoché → le moteur garde le pan/tilt. On passe
+        # par `lock_pantilt_idxs`, le verrou que la fonction expose DÉJÀ pour la
+        # piste Position du show : là-bas, un clip de position prime sur la
+        # mémoire de la piste Séquence. En LIVE, c'est l'onglet MOUVEMENT qui
+        # tient ce rôle — et il le tient en permanence, puisqu'il refuse de
+        # rester vide. Sans ce verrou, toute mémoire enregistrée hors du centre
+        # figeait les lyres tant qu'elle tournait.
+        verrou_pt = (None if self.seq.live_panel.sequence_positions
+                     else set(range(len(self.projectors))))
+
+        def _rendre(couples):
+            for p, avant in couples:
+                for a, v in avant.items():
+                    if v is _ABSENT:
+                        p.__dict__.pop(a, None)
+                    else:
+                        setattr(p, a, v)
+
+        try:
+            apply_seq_memories_htp(entries, self.memories, self.projectors, self,
+                                   lock_pantilt_idxs=verrou_pt)
+        finally:
+            _rendre(garde)
+            _rendre(gel)
 
     def _on_live_luminosity_changed(self, value: int):
         """Applique la luminosité globale aux projecteurs autorisés par le live panel."""
@@ -10890,6 +13164,16 @@ class MainWindow(QMainWindow):
             # stroboscoper après la sortie du LIVE.
             _etape('strobe', self._release_live_hw_strobe)
 
+            # Le pool de mémoires est un geste de LIVE : il ne survit pas à la
+            # sortie, sinon le look de la dernière mémoire jouée resterait collé
+            # sur le rig sans aucune tuile à l'écran pour le relâcher.
+            def _relacher_sequences():
+                self.seq.live_panel._vider_pool_sequences()
+                if getattr(self, '_live_seq_pool', None):
+                    self._live_seq_pool = []
+                    self._clear_live_seq_leftovers()
+            _etape('sequences', _relacher_sequences)
+
             # Purger les états persistants live
             for attr in ('_live_sec', '_live_lyre_e', '_live_lyre_phase',
                          '_live_lyre_speed', '_live_lyre_amp_pan', '_live_lyre_amp_tilt',
@@ -10898,6 +13182,7 @@ class MainWindow(QMainWindow):
                          '_live_transient_flash', '_live_beat_state',
                          '_live_auto_last_section', '_live_preset_state',
                          '_live_lyre_switch', '_live_lyre_color_switch', '_smart_fx',
+                         '_live_seq_switch', '_live_seq_marque',
                          '_live_col_cur_prev', '_live_hw_strobe'):
                 self.__dict__.pop(attr, None)
 
@@ -11403,6 +13688,21 @@ class MainWindow(QMainWindow):
             ]
         try:
             self._apply_live_state_inner(state)
+            # Onglet SÉQUENCE : APRÈS le moteur (la mémoire doit primer sur ce
+            # qu'il vient d'écrire) mais AVANT la restauration des groupes gelés
+            # ci-dessous (elle ne déborde donc pas hors du périmètre LIVE).
+            # Réservé au mode LIVE : `_apply_live_state` sert aussi la playlist,
+            # où la piste Séquence du REC Lumière fait déjà ce travail.
+            #
+            # Un effet SPÉCIAL en cours passe devant, lui. Le moteur le déclare
+            # « priorité absolue » et c'est le bouton panique du live :
+            # Stroboscope, Strobe couleur, Fixe blanc. Sans cette garde, la
+            # mémoire réécrivait par-dessus les projecteurs qu'elle allume — on
+            # appuyait sur STROBE et une partie de la salle ne strobait pas.
+            # Même condition que le moteur : l'Ambiance n'a pas de spécial.
+            if self.seq.live_mode_active and not self._live_special_actif():
+                self._apply_live_sequences(
+                    state.get('_ia_position', self.live_engine._elapsed_ms))
         except Exception as e:
             # Slot appelé via un signal émis depuis le thread audio du moteur
             # LIVE : une exception non rattrapée ici fait crasher tout MyStrow
@@ -12796,7 +15096,7 @@ class MainWindow(QMainWindow):
                                 other_velocity = rgb_to_akai_velocity(other_color)
                                 self.midi_handler.set_pad_led(r, col, other_velocity, brightness_percent=self.akai_inactive_brightness)
 
-                    self.activate_pad(pad, col)
+                    self._on_color_pad_pressed(pad, col)
                     if MIDI_AVAILABLE and self.midi_handler.midi_out:
                         base_color = pad.property("base_color")
                         velocity = rgb_to_akai_velocity(base_color)
@@ -12815,6 +15115,15 @@ class MainWindow(QMainWindow):
                     action = rows[row][0] if row < len(rows) else None
                     if action:
                         self._activate_play_pad(action)
+                elif slot["type"] == "vfx":
+                    # Colonne VFX — le pad porte l'effet qu'on lui a assigné.
+                    # _activate_vfx_pad rafraîchit lui-même styles et LEDs.
+                    self._activate_vfx_pad(row)
+                elif slot["type"] == "video":
+                    # Colonne VIDÉO — coupure, effets, extinction (voir _VIDEO_ROWS).
+                    # _activate_video_pad rafraîchit lui-même styles et LEDs.
+                    if row < len(_VIDEO_ROWS):
+                        self._activate_video_pad(_VIDEO_ROWS[row][0])
                 else:
                     # Memory pads individuels
                     mem_col = slot["mem_col"]
@@ -12832,6 +15141,11 @@ class MainWindow(QMainWindow):
             if MIDI_AVAILABLE and self.midi_handler.midi_out:
                 velocity = 1 if self.effect_buttons[row].active else 0
                 self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
+            return
+        # Grille 8x8 : seul un pad couleur pris en momentane (mode FLASH) a
+        # quelque chose a rendre — les autres colonnes ignorent le relache,
+        # exactement comme avant.
+        self._on_color_pad_released(col)
 
     def new_show(self):
         """Cree un nouveau show"""
@@ -13525,8 +15839,10 @@ class MainWindow(QMainWindow):
             "bank_page_idx":     self._bank_page_idx,
             "last_fader_mode": "FX",
             "fx_pads": self.fx_pads,
+            "vfx_pads": self.vfx_pads,
             "effect_superposition": self.effect_superposition,
-            "go_mode": self.go_mode,
+            "tap_button_mode": self.tap_button_mode,
+            "go_mode": self.go_mode,   # compat descendante (anciennes versions)
             "position_presets": self.position_presets,
             "position_pads": self.position_pads,
             "lyre_positions": {
@@ -13538,6 +15854,11 @@ class MainWindow(QMainWindow):
             "akai_active_brightness": self.akai_active_brightness,
             "akai_inactive_brightness": self.akai_inactive_brightness,
             "light_sync_offset_ms": int(getattr(self, 'light_sync_offset_ms', 0) or 0),
+            # REC Lumiere -> menu Affichage
+            "rec_view_pdf": bool(getattr(self, 'rec_view_pdf', True)),
+            "rec_view_row_scale": float(getattr(self, 'rec_view_row_scale', 1.0) or 1.0),
+            "rec_view_projectors": bool(getattr(self, 'rec_view_projectors', True)),
+            "rec_view_hidden_rows": list(getattr(self, 'rec_view_hidden_rows', []) or []),
             "pinned_controller": getattr(self.midi_handler, 'pinned_id', None),
             # Colonne centrale (menu Affichage) : media / live / pads / none
             "center_view": getattr(self, '_center_view_key', 'media'),
@@ -13641,14 +15962,29 @@ class MainWindow(QMainWindow):
                     for fr in range(min(8, len(fx_pads_data[fc]))):
                         self.fx_pads[fc][fr] = fx_pads_data[fc][fr]
 
+        # Restore VFX pads assignments (effets vidéo)
+        vfx_pads_data = config.get("vfx_pads")
+        if isinstance(vfx_pads_data, list) and vfx_pads_data:
+            # Une config écrite quand VFX était encore une famille de colonnes
+            # porte une liste de listes : on ne garde que la première.
+            if isinstance(vfx_pads_data[0], list):
+                vfx_pads_data = vfx_pads_data[0]
+            for vr in range(min(8, len(vfx_pads_data))):
+                cle = vfx_pads_data[vr]
+                # Un effet retiré d'une version à l'autre ne doit pas laisser un
+                # pad qui pointe dans le vide.
+                self.vfx_pads[vr] = cle if cle in _VIDEO_FX else None
+
         # Fader 9 toujours en mode FX
         self._last_fader_mode = "FX"
 
         # Superposition d'effets
         self.effect_superposition = config.get("effect_superposition", False)
 
-        # Mode GO
-        self.go_mode = config.get("go_mode", False)
+        # Fonction du bouton bas-droite (anciennes configs : booléen `go_mode`)
+        self.tap_button_mode = normalize_tap_button_mode(
+            config.get("tap_button_mode", config.get("go_mode", False)))
+        self._flash_kind = None
         self._update_tap_go_btn_style()
 
         # active_memory_pads non restaure : toujours demarrer sans pad actif
@@ -13699,6 +16035,18 @@ class MainWindow(QMainWindow):
             self.akai_inactive_brightness = int(config["akai_inactive_brightness"])
         if "light_sync_offset_ms" in config:
             self.light_sync_offset_ms = int(config.get("light_sync_offset_ms", 0) or 0)
+        if "rec_view_pdf" in config:
+            self.rec_view_pdf = bool(config.get("rec_view_pdf", True))
+        if "rec_view_projectors" in config:
+            self.rec_view_projectors = bool(config.get("rec_view_projectors", True))
+        if "rec_view_hidden_rows" in config:
+            _hr = config.get("rec_view_hidden_rows") or []
+            self.rec_view_hidden_rows = [str(x) for x in _hr] if isinstance(_hr, list) else []
+        if "rec_view_row_scale" in config:
+            try:
+                self.rec_view_row_scale = float(config.get("rec_view_row_scale", 0.75) or 0.75)
+            except (TypeError, ValueError):
+                self.rec_view_row_scale = 0.75
 
         # Colonne centrale (menu Affichage) : retrouver la vue quittée.
         # Différé : _set_center_view touche le séquenceur et la surface Pads,
@@ -14177,6 +16525,8 @@ class MainWindow(QMainWindow):
                     self.memories[mc][mr] = None
                     self.memory_custom_colors[mc][mr] = None
             self.active_memory_pads.clear()
+            self._mem_rows.clear()
+            self._mem_ext_levels.clear()
             self._mem_cue_idx.clear()
             # Éteindre les LEDs physiques de tous les pads mémoire sur l'AKAI
             if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
@@ -16252,6 +18602,14 @@ class MainWindow(QMainWindow):
                 if fx_index < len(self.effect_buttons):
                     self._on_effect_press(fx_index)
             event.accept()
+        elif key == Qt.Key_F and not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)):
+            # F tenue = bouton FLASH tenu. Meme momentane, meme sortie : les
+            # memoires montent (ou tombent en KILL) et les pads couleur presses
+            # pendant ce temps sont rendus au relache. Marche quelle que soit la
+            # fonction du bouton bas-droite — c'est un raccourci a part entiere.
+            if not event.isAutoRepeat():
+                self._flash_begin()
+            event.accept()
         elif key == Qt.Key_S and not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)):
             self._apply_strobe_shortcut()
             event.accept()
@@ -16272,6 +18630,10 @@ class MainWindow(QMainWindow):
     def keyReleaseEvent(self, event):
         """Relâchement F5-F12 : coupe les effets en mode 'flash' (maintien)."""
         key = event.key()
+        if key == Qt.Key_F and not event.isAutoRepeat():
+            self._flash_end()          # relacher F sort du mode flash
+            event.accept()
+            return
         if key in (Qt.Key_F5, Qt.Key_F6, Qt.Key_F7, Qt.Key_F8,
                    Qt.Key_F9, Qt.Key_F10, Qt.Key_F11, Qt.Key_F12) and not event.isAutoRepeat():
             fx_index = key - Qt.Key_F5
@@ -16498,17 +18860,30 @@ class MainWindow(QMainWindow):
         gset = set(groups)
         return [p for p in self.projectors if p.group in gset]
 
+    # Canaux hors RVB qu'un bouton couleur de la fenêtre EXT peut bouger.
+    # Un flash doit les rendre EXACTEMENT tels qu'il les a trouvés : sans eux,
+    # `clear_special_blocks` avait éteint l'UV/l'ambre sans que rien ne les
+    # rallume, et la roue de couleurs restait sur le slot du flash — la lampe
+    # « revenait au blanc » dans le modèle mais sortait encore rouge sur le fil.
+    _EXT_SNAP_CHANNELS = ("uv", "white_boost", "amber_boost", "orange_boost",
+                          "strobe_speed", "color_wheel")
+
     def _ext_snapshot_groups(self, groups):
         """Capture l'état couleur/niveau des projecteurs ciblés (pour flash couleur)."""
-        return [(p, QColor(p.base_color), QColor(p.color), p.level)
+        return [(p, QColor(p.base_color), QColor(p.color), p.level,
+                 [getattr(p, c, 0) for c in self._EXT_SNAP_CHANNELS])
                 for p in self._ext_targets_for_groups(groups)]
 
     def _ext_restore_snapshot(self, snap):
         """Restaure un instantané capturé par _ext_snapshot_groups."""
-        for p, base, col, lvl in snap or []:
+        for entry in snap or []:
+            p, base, col, lvl = entry[:4]
             p.base_color = QColor(base)
             p.color = QColor(col)
             p.level = lvl
+            for c, v in zip(self._EXT_SNAP_CHANNELS, entry[4] if len(entry) > 4 else ()):
+                if hasattr(p, c):
+                    setattr(p, c, v)
         if self.dmx:
             self.dmx.update_from_projectors(self.projectors)
         if getattr(self, "plan_de_feu", None):
@@ -16755,8 +19130,8 @@ class MainWindow(QMainWindow):
 
         # Video: rediriger vers le video_widget
         ext = os.path.splitext(cart.media_path)[1].lower()
-        if ext in CartoucheButton.VIDEO_EXTS and QVideoWidget is not None:
-            self.cart_player.setVideoOutput(self.video_widget)
+        if ext in CartoucheButton.VIDEO_EXTS and self._video_out() is not None:
+            self.cart_player.setVideoOutput(self._video_out())
         else:
             self.cart_player.setVideoOutput(None)
 
@@ -16772,7 +19147,7 @@ class MainWindow(QMainWindow):
         self.cartouches[index].set_stopped()
         self.cart_playing_index = -1
         # Restaurer le video output du player principal
-        self.player.setVideoOutput(self.video_widget if QVideoWidget is not None else None)
+        self.player.setVideoOutput(self._video_out())
 
     def _stop_all_cartouches(self):
         """Arrete toutes les cartouches et restaure l'etat"""
@@ -16781,7 +19156,7 @@ class MainWindow(QMainWindow):
             self.cart_playing_index = -1
         for cart in self.cartouches:
             cart.set_idle()
-        self.player.setVideoOutput(self.video_widget if QVideoWidget is not None else None)
+        self.player.setVideoOutput(self._video_out())
 
     def on_cart_media_status(self, status):
         """Gere la fin de lecture d'une cartouche"""
@@ -16918,7 +19293,7 @@ class MainWindow(QMainWindow):
         if self.cart_playing_index == index:
             self.cart_player.stop()
             self.cart_playing_index = -1
-            self.player.setVideoOutput(self.video_widget if QVideoWidget is not None else None)
+            self.player.setVideoOutput(self._video_out())
         cart = self.cartouches[index]
         cart.media_path = None
         cart.media_title = None
@@ -18205,6 +20580,82 @@ class MainWindow(QMainWindow):
 
         es.addWidget(_vsep())
 
+        # ── Répartir entre deux bornes (« -5 m thru 5 m ») ─────────────
+        # Même fonction que la bande du tableau de la fenêtre 3D, ramenée sur le
+        # plan 2D et réduite à ses deux axes : X (jardin ↔ cour) et Y (avant ↔
+        # fond de scène). « Répartir H/V » ci-contre étale la sélection sur le
+        # plan entier, sans jamais dire OÙ ; ici on donne les deux bouts, comme
+        # sur un pupitre, et le reste tombe à intervalle constant.
+        _rep_lbl_ss = "QLabel{color:#4a4a4a;font-size:11px;background:transparent;}"
+        _rep_lbl = QLabel(tr("mw_spread_range"))
+        _rep_lbl.setStyleSheet(_rep_lbl_ss)
+        es.addWidget(_rep_lbl)
+
+        rep_axe = QComboBox()
+        # X / Y restent des symboles d'axes : les traduire les rendrait
+        # méconnaissables, et ce sont ceux du tableau de la fenêtre 3D.
+        rep_axe.addItems(['X', 'Y'])
+        rep_axe.setToolTip(tr("mw_spread_range_tip"))
+        rep_axe.setFixedSize(52, 28)
+        rep_axe.setStyleSheet(
+            "QComboBox{background:#111111;color:#888888;border:1px solid #1c1c1c;"
+            "border-radius:5px;font-size:11px;padding:2px 6px;}"
+            "QComboBox:hover{color:#66aadd;border-color:#2a5070;}"
+            "QComboBox::drop-down{border:none;width:14px;}"
+            "QComboBox QAbstractItemView{background:#111111;color:#888888;"
+            "border:1px solid #1c1c1c;selection-background-color:#142030;"
+            "selection-color:#66aadd;}")
+        es.addWidget(rep_axe)
+
+        def _rep_spin(val):
+            sp = QDoubleSpinBox()
+            # En CENTIMÈTRES, comme le tableau de la fenêtre 3D : c'est le même
+            # plateau qu'on décrit des deux côtés, une seconde unité ne ferait
+            # qu'inviter à placer un rig cent fois trop loin.
+            sp.setDecimals(0)
+            sp.setSingleStep(10)
+            sp.setRange(-900, 900)
+            sp.setValue(val)
+            sp.setFixedSize(64, 28)
+            sp.setButtonSymbols(QDoubleSpinBox.NoButtons)
+            sp.setAlignment(Qt.AlignCenter)
+            sp.setStyleSheet(
+                "QDoubleSpinBox{background:#111111;color:#888888;"
+                "border:1px solid #1c1c1c;border-radius:5px;font-size:11px;}"
+                "QDoubleSpinBox:focus{color:#66aadd;border-color:#2a5070;}")
+            return sp
+
+        rep_de = _rep_spin(-500)
+        rep_a  = _rep_spin(500)
+        _rep_thru = QLabel(tr("mw_spread_thru"))
+        _rep_thru.setStyleSheet(_rep_lbl_ss)
+        _rep_cm = QLabel("cm")
+        _rep_cm.setStyleSheet(_rep_lbl_ss)
+        es.addWidget(rep_de)
+        es.addWidget(_rep_thru)
+        es.addWidget(rep_a)
+        es.addWidget(_rep_cm)
+
+        btn_rep_range = QPushButton(tr("mw_spread_apply"))
+        btn_rep_range.setToolTip(tr("mw_spread_range_tip"))
+        btn_rep_range.setStyleSheet(_EA)
+        btn_rep_range.setFixedHeight(28)
+        es.addWidget(btn_rep_range)
+
+        def _rep_axe_changed(_i=0):
+            """Les bornes suivent l'emprise RÉELLE de l'axe choisi.
+
+            Le plan ne couvre que 18 m en X et 10 m en Y : au-delà, la position
+            n'est plus représentable et l'appareil s'écraserait en silence sur
+            le bord. Mieux vaut que le champ refuse la valeur que le plan.
+            """
+            lim = 900 if rep_axe.currentIndex() == 0 else 500
+            for sp in (rep_de, rep_a):
+                sp.setRange(-lim, lim)
+        rep_axe.currentIndexChanged.connect(_rep_axe_changed)
+
+        es.addWidget(_vsep())
+
         # ── Sélection ─────────────────────────────────────────────────
         btn_sel_all_c = QPushButton(tr("mw_select_all_short"))
         btn_desel_c   = QPushButton(tr("mw_deselect_short"))
@@ -18252,6 +20703,7 @@ class MainWindow(QMainWindow):
                     'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
                     'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
+                    'preset_slots':       dict(getattr(proj, 'preset_slots', {}) or {}),
                     'channel_labels':     list(getattr(proj, 'channel_labels', [])),
                     'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
                     **_matrix_meta(proj),
@@ -18353,6 +20805,7 @@ class MainWindow(QMainWindow):
                     break
                 fixture_data[i]['color_wheel_slots'] = list(getattr(proj, 'color_wheel_slots', []))
                 fixture_data[i]['gobo_wheel_slots']  = list(getattr(proj, 'gobo_wheel_slots', []))
+                fixture_data[i]['preset_slots']      = dict(getattr(proj, 'preset_slots', {}) or {})
 
         def _apply_fd_to_dmx():
             """Applique fixture_data au DMX en respectant les profils choisis par l'utilisateur."""
@@ -18369,6 +20822,7 @@ class MainWindow(QMainWindow):
                 proj.shutter_inverted  = bool(fd.get('shutter_inverted', False))
                 proj.color_wheel_slots = list(fd.get('color_wheel_slots', []))
                 proj.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
+                proj.preset_slots      = dict(fd.get('preset_slots', {}) or {})
                 proj.channel_labels    = list(fd.get('channel_labels', []))
                 uni = fd.get('universe', 0)
                 proj.universe = uni
@@ -18431,6 +20885,7 @@ class MainWindow(QMainWindow):
                 p.channel_defaults  = dict(fd_s.get('channel_defaults', {}))
                 p.color_wheel_slots = list(fd_s.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(fd_s.get('gobo_wheel_slots', []))
+                p.preset_slots      = dict(fd_s.get('preset_slots', {}) or {})
                 p.channel_labels    = list(fd_s.get('channel_labels', []))
                 p.ring_follow       = bool(fd_s.get('ring_follow', True))
                 if p.fixture_type == "Machine a fumee":
@@ -18448,6 +20903,7 @@ class MainWindow(QMainWindow):
                     'channel_defaults':   dict(fd_s.get('channel_defaults', {})),
                     'color_wheel_slots':  list(fd_s.get('color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(fd_s.get('gobo_wheel_slots', [])),
+                    'preset_slots':       dict(fd_s.get('preset_slots', {}) or {}),
                     'channel_labels':     list(fd_s.get('channel_labels', [])),
                     'ring_follow':        bool(fd_s.get('ring_follow', True)),
                     **{k: fd_s[k] for k in _PANTILT_META_FIELDS if k in fd_s},
@@ -19825,6 +22281,7 @@ class MainWindow(QMainWindow):
                 # Copier les slots roue couleur/gobo depuis le preset OFL
                 p.color_wheel_slots = list(preset.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(preset.get('gobo_wheel_slots', []))
+                p.preset_slots      = dict(preset.get('preset_slots', {}) or {})
                 # …et les noms de canaux, sinon la fixture ajoutée depuis la
                 # bibliothèque arrive avec une rangée de « Unused » anonymes
                 # alors que son fichier d'origine les nommait.
@@ -20494,10 +22951,29 @@ class MainWindow(QMainWindow):
                     p.canvas_y = max(0.07, min(0.93, mg + i * (1.0 - 2 * mg) / (n - 1)))
             canvas.update(); _mark_dirty()
 
+        def _repartir_plage():
+            """Étaler la sélection entre deux bornes données, sur X ou sur Y.
+
+            Le calcul vit dans `repartir_canvas` (plan_3d_webwindow) : c'est là
+            que se trouve la conversion mètres ↔ plan de feu, et les deux vues
+            doivent rester dans le même repère. « Répartir H/V » ci-contre
+            couvre l'autre besoin — conserver l'ordre visuel en n'égalisant que
+            les écarts, sans dire où.
+            """
+            projs = _get_selected_projs()
+            if len(projs) < 2:
+                return
+            _push_history()
+            repartir_canvas(projs, rep_axe.currentIndex() == 0,
+                            float(rep_de.value()) / 100.0,   # cm → m
+                            float(rep_a.value())  / 100.0)
+            canvas.update(); _mark_dirty()
+
         btn_align_row.clicked.connect(_align_row)
         btn_distribute.clicked.connect(_distribute)
         btn_align_col.clicked.connect(_align_col)
         btn_distribute_v.clicked.connect(_distribute_v)
+        btn_rep_range.clicked.connect(_repartir_plage)
         def _select_all_canvas():
             g_cnt = {}
             for p in self.projectors:
@@ -22262,7 +24738,16 @@ class MainWindow(QMainWindow):
                 # elle, toute position déduite du plan 2D repasserait pour un
                 # placement manuel au rechargement, et le plan de feu serait de
                 # nouveau débranché de la 3D.
-                'pos_3d_src': list(getattr(proj, '_pos3d_src', None) or ()) or None,
+                #
+                # ⚠️ TROIS états, pas deux : un tuple (déduite du plan 2D), None
+                # (posée à la main, le 2D ne la pilote plus) et ABSENT (jamais
+                # passée par la 3D, à migrer au premier affichage). Écrire la
+                # clé à `null` quand l'attribut n'existe pas confondait le
+                # troisième avec le deuxième : au rechargement, TOUTE fixture
+                # jamais affichée en 3D était prise pour un placement manuel et
+                # ne suivait plus jamais le plan de feu.
+                **({'pos_3d_src': list(proj._pos3d_src) if proj._pos3d_src else None}
+                   if hasattr(proj, '_pos3d_src') else {}),
                 'fixture_height':  getattr(proj, 'fixture_height', None),
                 'body_rotation':   getattr(proj, 'body_rotation', 0.0),
                 'rot3d_x':         getattr(proj, 'rot3d_x',       0.0),
@@ -22280,6 +24765,7 @@ class MainWindow(QMainWindow):
                 'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                 'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
+                'preset_slots':       dict(getattr(proj, 'preset_slots', {}) or {}),
                 **_pantilt_meta(proj),
                 **_matrix_meta(proj),
             })
@@ -22347,7 +24833,15 @@ class MainWindow(QMainWindow):
                         # fichier : un show antérieur est alors migré au premier
                         # affichage 3D (cf. `_sync_pos3d_with_canvas`), au lieu
                         # d'être pris à tort pour un placement manuel.
-                        if 'pos_3d_src' in fd:
+                        # `pos_3d_src: null` AVEC `pos_3d_x: null` n'est pas un
+                        # placement manuel : un placement manuel a forcément une
+                        # position 3D. C'est la trace des patchs écrits par la
+                        # version qui sérialisait l'attribut absent en `null` —
+                        # on laisse l'attribut absent pour que la migration
+                        # reprenne, sinon ces fixtures restaient débranchées du
+                        # plan de feu 2D pour toujours.
+                        if 'pos_3d_src' in fd and not (
+                                fd.get('pos_3d_src') is None and p3x is None):
                             _src = fd.get('pos_3d_src')
                             p._pos3d_src = ((float(_src[0]), float(_src[1]))
                                             if _src and len(_src) == 2 else None)
@@ -22378,6 +24872,7 @@ class MainWindow(QMainWindow):
                         p.ring_follow       = bool(fd.get('ring_follow', True))
                         p.color_wheel_slots = list(fd.get('color_wheel_slots', []))
                         p.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
+                        p.preset_slots      = dict(fd.get('preset_slots', {}) or {})
                         _apply_pantilt_meta(p, fd)
                         p.manufacturer  = fd.get('manufacturer', '')
                         _apply_matrix_meta(p, fd)
@@ -23084,6 +25579,32 @@ class MainWindow(QMainWindow):
             # fermeture du logiciel — d'où « le DMX rame, un redémarrage règle ».
             self.dmx_send_timer.start(DMX_FRAME_MS)
 
+    def open_dmx_monitor(self):
+        """Ouvre le moniteur DMX : une fenetre de LECTURE des valeurs emises.
+
+        Contrairement au testeur, elle n'ecrit rien et ne touche pas au timer
+        d'envoi : elle reste ouverte pendant le spectacle, sur un second ecran.
+        La fenetre est conservee entre deux ouvertures pour garder sa taille et
+        sa position — on la place une fois sur le bon ecran, pas a chaque show.
+        """
+        win = getattr(self, '_dmx_monitor', None)
+        if win is None:
+            from dmx_monitor import DmxMonitorWindow
+            # Le moniteur a besoin de savoir si la sortie alimente vraiment le
+            # tampon : `send_dmx_update()` ne le remplit que sous ces deux
+            # conditions. Sans elles il resterait a zero, et la fenetre
+            # afficherait un parc eteint alors que le show tourne.
+            win = DmxMonitorWindow(
+                self.dmx,
+                lambda: self.projectors,
+                lambda: self.plan_de_feu.is_dmx_enabled() and self.dmx.connected,
+                lambda: self.effect_speed,
+                self)
+            self._dmx_monitor = win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
     def open_node_connection(self):
         """Ouvre le dialogue de paramétrage de la sortie DMX (Node ou USB)."""
         # Garde licence : impossible d'activer la sortie DMX si l'essai est terminé
@@ -23113,10 +25634,10 @@ class MainWindow(QMainWindow):
         dès qu'un boîtier série était actif, ce qui laissait croire à un menu
         différent. C'est la même sortie, quel que soit le câble derrière.
         """
-        if not hasattr(self, 'node_menu'):
+        if not hasattr(self, 'node_action'):
             return
         try:
-            self.node_menu.setTitle(tr("menu_dmx_output"))
+            self.node_action.setText(tr("menu_dmx_output") + "…")
         except Exception:
             pass
 
@@ -24059,7 +26580,13 @@ class MainWindow(QMainWindow):
             col_akai = fi
             if col_akai in self._muted_faders:
                 continue
-            fv = self.faders[col_akai].value if col_akai in self.faders else 0
+            # `_flash_level` et non le fader brut : cette fonction tourne à
+            # CHAQUE frame DMX et repose les mémoires en HTP par-dessus le
+            # modèle. Sans elle, le FLASH KILL avait beau noircir les
+            # projecteurs dans `_recompute_memory_mix`, la frame suivante les
+            # rallumait au niveau du fader — le momentané ne se voyait jamais.
+            fv = self._flash_level(
+                self.faders[col_akai].value if col_akai in self.faders else 0)
             active_row = self.active_memory_pads.get(col_akai)
             if fv > 0 and active_row is not None and self.memories[mem_col][active_row]:
                 mem = self.memories[mem_col][active_row]
@@ -24154,6 +26681,65 @@ class MainWindow(QMainWindow):
             proj.tilt = tilt
             proj.color_wheel = cw
 
+    # Canaux qui émettent de la lumière hors du RGB : un KILL qui ne baisse que
+    # `level` laisserait l'UV et les boosts allumés — la salle ne serait pas au
+    # noir. Le strobe est coupé aussi : un éclair sur un dimmer à 0 ne se voit
+    # pas, mais une lyre à shutter mécanique, si.
+    _KILL_EXTRA_CHANNELS = ("uv", "white_boost", "amber_boost", "orange_boost",
+                            "strobe_speed")
+
+    def _kill_solo_groups(self):
+        """Groupes ÉPARGNÉS par le solo FLASH KILL en cours, ou None si aucun.
+
+        FLASH KILL tenu ne coupe rien tout seul : c'est l'appui sur un pad
+        couleur qui déclenche la coupure, et il épargne le groupe de ce pad.
+        Plusieurs pads tenus en même temps épargnent l'union de leurs groupes.
+        """
+        cols = getattr(self, '_kill_solo_cols', None)
+        if not cols:
+            return None
+        gardes = set()
+        for groupes in cols.values():
+            gardes.update(groupes)
+        return gardes
+
+    def _apply_flash_kill_gate(self):
+        """Solo le temps d'une frame : noir partout SAUF sur les groupes tenus.
+
+        Retourne l'état sauvegardé (ou None hors solo) à repasser à
+        `_restore_flash_kill_gate` juste après l'envoi. Comme le FLASH, la
+        coupure ne modifie aucun état du show : elle est posée juste avant
+        l'envoi et défaite aussitôt après.
+        """
+        gardes = self._kill_solo_groups()
+        if gardes is None:
+            return None
+        saved = []
+        noir = QColor("black")
+        for proj in self.projectors:
+            if proj.group in gardes:
+                continue          # le groupe soloté sort normalement
+            saved.append((proj, proj.level, QColor(proj.color), QColor(proj.base_color),
+                          [getattr(proj, c, 0) for c in self._KILL_EXTRA_CHANNELS]))
+            proj.level = 0
+            proj.color = QColor(noir)
+            proj.base_color = QColor(noir)
+            for c in self._KILL_EXTRA_CHANNELS:
+                if hasattr(proj, c):
+                    setattr(proj, c, 0)
+        return saved
+
+    def _restore_flash_kill_gate(self, saved):
+        if not saved:
+            return
+        for proj, level, color, base, extras in saved:
+            proj.level = level
+            proj.color = color
+            proj.base_color = base
+            for c, v in zip(self._KILL_EXTRA_CHANNELS, extras):
+                if hasattr(proj, c):
+                    setattr(proj, c, v)
+
     def _apply_pad_overrides_htp(self):
         """Applique les pads AKAI actifs en HTP par-dessus l'etat courant des projecteurs.
         Retourne la liste des etats sauvegardes pour restauration apres envoi DMX."""
@@ -24166,7 +26752,12 @@ class MainWindow(QMainWindow):
             color = btn.property("base_color")
             if color is None:
                 continue
-            fader_value = self.faders[col_idx].value if col_idx in self.faders else 0
+            # Momentané FLASH / FLASH KILL : les pads manuels font partie du
+            # « reste » que le KILL doit couper, et du plein feu que le FLASH
+            # doit monter. Comme pour les mémoires, on ne touche pas au fader —
+            # on ne fait que remplacer la valeur LUE le temps de l'appui.
+            fader_value = self._flash_level(
+                self.faders[col_idx].value if col_idx in self.faders else 0)
             if fader_value <= 0:
                 continue
             brightness = fader_value / 100.0
@@ -24232,6 +26823,12 @@ class MainWindow(QMainWindow):
 
         # Stocker les overrides sur le plan de feu
         self.plan_de_feu.set_htp_overrides(overrides if overrides else None)
+        # Solo FLASH KILL : le montrer a l'ecran. La coupure elle-meme se fait
+        # juste avant l'envoi et se defait aussitot (aucun etat du show n'est
+        # touche), donc le plan 2D restait allume alors que les lampes etaient
+        # noires — le solo avait l'air de ne rien faire.
+        if hasattr(self.plan_de_feu, 'set_kill_display'):
+            self.plan_de_feu.set_kill_display(self._kill_solo_groups())
 
         if self.plan_de_feu.is_dmx_enabled() and self.dmx.connected:
             # Appliquer temporairement HTP memoires
@@ -24246,11 +26843,20 @@ class MainWindow(QMainWindow):
             # son effet et veut voir CE qu'il règle sur ses lampes.
             saved_editor = self._apply_editor_live_overrides()
 
+            # FLASH KILL : dernier mot sur la frame. Le noir doit couper « le
+            # reste » sans exception — mémoires, pads, effet en cours, IA,
+            # timeline, sortie live de l'éditeur. Le filtrer source par source
+            # revenait à en oublier une (l'effet rallumait tout au tick
+            # suivant) : la coupure se fait donc ICI, juste avant l'envoi, et se
+            # défait aussitôt après. Aucun état du show n'est modifié.
+            saved_kill = self._apply_flash_kill_gate()
+
             # Envoyer DMX
             self.dmx.update_from_projectors(self.projectors, self.effect_speed)
             self.dmx.send_dmx()
 
             # Restaurer dans l'ordre inverse de l'application
+            self._restore_flash_kill_gate(saved_kill)
             self._restore_editor_live_overrides(saved_editor)
 
             # Restaurer etat pads

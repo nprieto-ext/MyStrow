@@ -13,11 +13,12 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
     QMenu, QComboBox, QFileDialog, QMessageBox, QDialog, QSlider, QSpinBox,
     QStackedWidget, QProgressBar, QColorDialog, QScrollArea,
-    QFormLayout, QDoubleSpinBox, QDialogButtonBox
+    QFormLayout, QDoubleSpinBox, QDialogButtonBox, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QMimeData, QSize
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtGui import QColor, QFont, QBrush, QCursor, QDrag, QActionGroup
+from PySide6.QtGui import (QColor, QFont, QBrush, QCursor, QDrag, QActionGroup,
+                           QFontMetrics)
 try:
     from PySide6.QtMultimedia import QMediaPlayer
 except ImportError:
@@ -847,6 +848,125 @@ class _SpecialTile(_MovTile):
         self.set_state(selected=active, playing=active)
 
 
+class _SeqTile(QFrame):
+    """Tuile d'une mémoire de pad, dans l'onglet SÉQUENCE du panneau LIVE.
+
+    Trois états, exactement comme `_MovTile` — c'est le même geste : on
+    constitue un POOL, et le moteur en joue une à la fois.
+      - idle     : hors pool
+      - selected : dans le pool (sera jouée)
+      - playing  : en cours
+
+    La pastille reprend la couleur dominante de la mémoire, comme la vignette
+    du pad et la bibliothèque de REC Lumière : on retrouve son look à l'œil.
+    """
+    clicked = Signal(object)   # (mem_col, row)
+
+    _CSS_IDLE     = ("_SeqTile { background:#141414; border:1px solid #252525;"
+                     " border-radius:6px; }")
+    _CSS_SELECTED = ("_SeqTile { background:#0e0720; border:1px solid #4411aa;"
+                     " border-radius:6px; }")
+    _CSS_PLAYING  = ("_SeqTile { background:#1e0a42; border:2px solid #bb77ff;"
+                     " border-radius:6px; }")
+
+    def __init__(self, ref, name: str, color: QColor, cues: int = 1, parent=None):
+        super().__init__(parent)
+        self._ref      = ref
+        self._color    = QColor(color)
+        self._selected = False
+        self._playing  = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(54)
+        self.setToolTip(name if cues <= 1
+                        else tr("live_seq_cues_tip", a0=name, a1=cues))
+
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(4, 6, 4, 6)
+        vbox.setSpacing(3)
+
+        dot_row = QHBoxLayout()
+        dot_row.setContentsMargins(0, 0, 0, 0)
+        dot_row.addStretch()
+        self._dot = QLabel()
+        self._dot.setFixedSize(12, 12)
+        self._dot.setStyleSheet(
+            f"background:{self._color.name()}; border-radius:6px;"
+            " border:1px solid #666;")
+        dot_row.addWidget(self._dot)
+        # Une mémoire à plusieurs cues n'est pas un look, c'est une séquence qui
+        # se déroule : le compteur le dit sur la tuile, sinon rien ne distingue
+        # les deux avant de l'avoir déclenchée.
+        self._cues_lbl = QLabel(f"×{cues}" if cues > 1 else "")
+        self._cues_lbl.setStyleSheet(
+            "color:#5533aa; font-size:8px; font-weight:bold;"
+            " background:transparent; border:none;")
+        dot_row.addWidget(self._cues_lbl)
+        dot_row.addStretch()
+        vbox.addLayout(dot_row)
+
+        self._name = name
+        self._lbl = QLabel(name)
+        self._lbl.setAlignment(Qt.AlignCenter)
+        self._lbl.setWordWrap(False)
+        # Un nom de mémoire est libre (« Refrain chaud contre-jour ») : sans ces
+        # deux lignes, la largeur mini du LABEL remonte jusqu'au panneau, qui
+        # exigeait alors 1026 px au lieu de 624 — le panneau LIVE déborde et le
+        # séquenceur avec. La politique `Ignored` coupe cette remontée, et
+        # `resizeEvent` écourte le texte à la largeur réellement disponible.
+        # Le nom complet reste lisible en infobulle (posée ci-dessus).
+        self._lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        vbox.addWidget(self._lbl)
+
+        self._refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Largeur mesurée sur la TUILE, pas sur le label : quand cet événement
+        # arrive, la mise en page interne n'a pas encore redimensionné le label,
+        # qui rend donc encore son ancienne largeur — et rien n'était écourté.
+        dispo = max(10, self.width() - 12)   # marges du QVBoxLayout (4 + 4) + air
+        self._lbl.setText(
+            QFontMetrics(self._lbl.font()).elidedText(
+                self._name, Qt.ElideRight, dispo))
+
+    @property
+    def ref(self):
+        return self._ref
+
+    @property
+    def is_selected(self) -> bool:
+        return self._selected
+
+    @property
+    def is_playing(self) -> bool:
+        return self._playing
+
+    def set_state(self, selected: bool, playing: bool):
+        if (self._selected, self._playing) == (selected, playing):
+            return
+        self._selected, self._playing = selected, playing
+        self._refresh()
+
+    def _refresh(self):
+        if self._playing:
+            css, fg, dim = self._CSS_PLAYING, "#dd99ff", "#aa77ff"
+        elif self._selected:
+            css, fg, dim = self._CSS_SELECTED, "#5533aa", "#5533aa"
+        else:
+            css, fg, dim = self._CSS_IDLE, "#666", "#2d2d2d"
+        self.setStyleSheet(css)
+        self._lbl.setStyleSheet(
+            f"color:{fg}; font-size:8px; font-weight:bold; letter-spacing:0.5px;"
+            " background:transparent; border:none;")
+        self._cues_lbl.setStyleSheet(
+            f"color:{dim}; font-size:8px; font-weight:bold;"
+            " background:transparent; border:none;")
+
+    def mousePressEvent(self, event):
+        self.clicked.emit(self._ref)
+        super().mousePressEvent(event)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _VuSensWidget(QWidget):
@@ -959,6 +1079,7 @@ class LiveModePanel(QWidget):
     source_changed      = Signal(str)     # nouvelle source_key
     movement_changed    = Signal(str)     # pattern mouvement lyre
     dimmers_changed     = Signal(dict)    # {groupe: 0–100} dimmer max par groupe
+    sequences_changed   = Signal(list)    # [(mem_col, row), ...] pool de mémoires
 
     # Sources fixes + périphériques dynamiques (ajoutés à l'init)
     _SOURCES_STATIC = [
@@ -1050,6 +1171,22 @@ class LiveModePanel(QWidget):
             'no_auto_strobe':  False,
         }
         self._pos_getter = None
+        # ── Onglet SÉQUENCE : pool de mémoires de pads ────────────────────
+        # Même mécanique que le pool de mouvements : plusieurs mémoires cochées,
+        # le moteur en joue UNE à la fois et passe à la suivante selon DURÉE.
+        # Le panneau ne connaît pas `main_window` : il reçoit la liste des
+        # mémoires par un getter injecté (même patron que `_pos_getter`) et
+        # renvoie son pool par signal. La grille est reconstruite à chaque
+        # entrée en LIVE — une mémoire enregistrée entre-temps y apparaît sans
+        # redémarrage.
+        self._seq_getter    = None
+        self._seq_tiles     = {}     # (mem_col, row) -> _SeqTile
+        self._seq_pool      = []     # refs cochées, dans l'ordre d'appui
+        self._current_seq   = None   # ref en cours de lecture
+        self._seq_duration  = 10     # durée par mémoire en SECONDES (1-60)
+        self._seq_intensity = 100    # % appliqué aux mémoires jouées ici
+        self._seq_positions = False  # la mémoire impose-t-elle le pan/tilt ?
+        self._seq_overrides = set()  # onglets repris par la mémoire en cours
         # Charger la config sauvegardée AVANT _setup_ui (les valeurs sont lues à la construction)
         self._load_live_panel_config()
 
@@ -1206,6 +1343,9 @@ class LiveModePanel(QWidget):
                 'source':           self._live_config.get('source', 'loopback'),
                 'allowed_groups':   list(self._live_config.get('allowed_groups', set())),
                 'luminosity':       self.lumi_slider.value() if hasattr(self, 'lumi_slider') else 100,
+                'seq_duration':     self._seq_duration,
+                'seq_intensity':    self._seq_intensity,
+                'seq_positions':    self._seq_positions,
             }
             with open(self._LIVE_PANEL_CFG, 'w', encoding='utf-8') as f:
                 _json.dump(cfg, f, indent=2)
@@ -1243,6 +1383,10 @@ class LiveModePanel(QWidget):
                 self._live_config['source'] = cfg['source']
             if 'allowed_groups' in cfg:
                 self._live_config['allowed_groups'] = set(cfg['allowed_groups'])
+            self._seq_duration      = max(1, min(60, int(
+                cfg.get('seq_duration', self._seq_duration))))
+            self._seq_intensity     = int(cfg.get('seq_intensity', self._seq_intensity))
+            self._seq_positions     = bool(cfg.get('seq_positions', self._seq_positions))
             self._saved_sensitivity = int(cfg.get('sensitivity', 80))
             self._saved_luminosity  = int(cfg.get('luminosity', 100))
         except Exception as e:
@@ -1810,6 +1954,18 @@ class LiveModePanel(QWidget):
         ('bi_bv',        '#0055ff', '#00ff55', 'B+V',      'bi'),
     ]
 
+    # Onglets du panneau d'effets. Source UNIQUE : la barre de boutons et la
+    # pile de pages étaient deux listes recopiées à la main, qui divergeaient au
+    # premier onglet ajouté (bouton présent, page absente — ou l'inverse).
+    _EFFECT_TABS = ("MOUVEMENT", "DIMMER", "COULEURS", "GOBO",
+                    "STROB", "SPÉCIAL", "SÉQUENCE")
+
+    # Clés stables des mêmes onglets. Le moteur désigne par elles les onglets
+    # qu'une mémoire reprend : il n'a pas à connaître des libellés d'interface,
+    # qui sont du texte affiché et changeront le jour où ils seront traduits.
+    _EFFECT_TAB_KEYS = ("mouvement", "dimmer", "couleurs", "gobo",
+                        "strob", "special", "sequence")
+
     _MOVEMENTS = [
         ('vague',     '〜', 'VAGUE'),
         ('cercle',    '○',  'CERCLE'),
@@ -1847,37 +2003,73 @@ class LiveModePanel(QWidget):
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.setSpacing(8)
 
-        # ── En-tête + onglets ─────────────────────────────────────────────
-        hdr = QHBoxLayout()
-        hdr.setSpacing(8)
-
-        mov_lbl = QLabel(tr("seq_effects"))
-        mov_lbl.setStyleSheet(
-            "color:#888; font-size:10px; font-weight:bold; letter-spacing:1.5px;")
-        hdr.addWidget(mov_lbl)
-        hdr.addStretch()
+        # ── Barre d'onglets ───────────────────────────────────────────────
+        # Les sept onglets sur UNE ligne, sans titre à gauche.
+        #
+        # Le titre « EFFETS » a sauté : il ne nommait rien que les onglets ne
+        # disent déjà, et il coûtait 68 px de largeur minimale — de quoi faire
+        # basculer la barre sur deux lignes une fois le 7e onglet ajouté. Le
+        # padding passe de 8 à 6 px dans la foulée. Ces deux gestes ramènent la
+        # largeur minimale du panneau à 617 px, soit MOINS que les 624 px qu'il
+        # exigeait à six onglets et avec le titre.
+        #
+        # Ce n'est pas cosmétique : le panneau LIVE vit dans un QScrollArea dont
+        # la barre horizontale est désactivée (cf. `_live_scroll`). Ce qui
+        # dépasse est COUPÉ, pas atteignable — un onglet hors champ serait un
+        # onglet mort. Toute modification de cette barre doit donc se mesurer,
+        # pas s'estimer.
+        # Un vrai bandeau d'onglets, pas sept boutons côte à côte : segments
+        # jointifs (espacement nul), soulignés d'un trait continu que seul
+        # l'onglet actif allume en violet. On lit d'un coup d'œil où on est, et
+        # le bandeau se rattache visuellement à la page qu'il commande.
+        bande = QWidget()
+        bande.setObjectName("effectTabBar")
+        bande.setStyleSheet(
+            "#effectTabBar { background:#101010; border:1px solid #1e1e1e;"
+            " border-radius:5px; }")
+        hdr = QHBoxLayout(bande)
+        hdr.setContentsMargins(2, 2, 2, 2)
+        hdr.setSpacing(0)
 
         self._effect_tab_on  = (
-            "QPushButton { background:#1a0a3a; color:#aa77ff;"
-            " border:1px solid #6622ee; border-radius:4px;"
-            " font-size:9px; font-weight:bold; padding:3px 8px; }"
+            "QPushButton { background:#1a0a3a; color:#bb88ff;"
+            " border:none; border-bottom:2px solid #8844ff; border-radius:3px;"
+            " font-size:9px; font-weight:bold; padding:4px 5px; }"
         )
         self._effect_tab_off = (
-            "QPushButton { background:#141414; color:#555;"
-            " border:1px solid #252525; border-radius:4px;"
-            " font-size:9px; font-weight:bold; padding:3px 8px; }"
-            "QPushButton:hover { color:#888; }"
+            "QPushButton { background:transparent; color:#555;"
+            " border:none; border-bottom:2px solid #1e1e1e; border-radius:3px;"
+            " font-size:9px; font-weight:bold; padding:4px 5px; }"
+            "QPushButton:hover { color:#9977cc; background:#161616; }"
+        )
+        # « Repris par la mémoire en cours » : ambre, pour ne pas se confondre
+        # avec le violet qui dit « tu es ici ». Un onglet peut être les deux.
+        self._effect_tab_over = (
+            "QPushButton { background:transparent; color:#aa7733;"
+            " border:none; border-bottom:2px solid #6a4416; border-radius:3px;"
+            " font-size:9px; font-weight:bold; padding:4px 5px; }"
+            "QPushButton:hover { color:#ddaa55; background:#161616; }"
+        )
+        self._effect_tab_on_over = (
+            "QPushButton { background:#1a0a3a; color:#ddaa55;"
+            " border:none; border-bottom:2px solid #cc8833; border-radius:3px;"
+            " font-size:9px; font-weight:bold; padding:4px 5px; }"
         )
         self._effect_tab_btns: dict[str, QPushButton] = {}
-        for i, tab_label in enumerate(("MOUVEMENT", "DIMMER", "COULEURS", "GOBO", "STROB", "SPÉCIAL")):
+        for i, tab_label in enumerate(self._EFFECT_TABS):
             btn = QPushButton(tab_label)
-            btn.setFixedHeight(22)
+            btn.setFixedHeight(24)
+            btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(self._effect_tab_on if i == 0 else self._effect_tab_off)
             btn.clicked.connect(lambda _=False, idx=i: self._switch_effect_tab(idx))
             self._effect_tab_btns[tab_label] = btn
-            hdr.addWidget(btn)
+            # Facteur d'étirement identique : les onglets se partagent la largeur
+            # à parts égales au lieu de se tasser à gauche en laissant un trou.
+            hdr.addWidget(btn, 1)
 
-        vbox.addLayout(hdr)
+        self._effect_tab_idx = 0
+        self._maj_tab_styles()
+        vbox.addWidget(bande)
 
         # ── Pages (QStackedWidget) ────────────────────────────────────────
         self._effect_stack = QStackedWidget()
@@ -1887,17 +2079,303 @@ class LiveModePanel(QWidget):
         self._effect_stack.addWidget(self._build_gobo_content())      # 3
         self._effect_stack.addWidget(self._build_strob_content())     # 4
         self._effect_stack.addWidget(self._build_special_content())   # 5
+        self._effect_stack.addWidget(self._build_sequence_content())  # 6
         self._effect_stack.setCurrentIndex(0)
         vbox.addWidget(self._effect_stack)
 
         return container
 
     def _switch_effect_tab(self, idx: int):
-        """Bascule entre les onglets MOUVEMENT / DIMMER / COULEURS / GOBO / STROB / SPÉCIAL."""
+        """Bascule d'un onglet d'effets à l'autre (cf. `_EFFECT_TABS`)."""
         self._effect_stack.setCurrentIndex(idx)
-        for i, label in enumerate(("MOUVEMENT", "DIMMER", "COULEURS", "GOBO", "STROB", "SPÉCIAL")):
-            self._effect_tab_btns[label].setStyleSheet(
-                self._effect_tab_on if i == idx else self._effect_tab_off)
+        self._effect_tab_idx = idx
+        self._maj_tab_styles()
+
+    def set_sequence_overrides(self, cles):
+        """Onglets dont la mémoire en cours reprend les réglages (clés stables).
+
+        Appelée par le moteur à chaque changement de mémoire ou de cue — jamais
+        par image. Purement informatif : les onglets restent cliquables et
+        continuent d'agir là où la mémoire ne va pas (elle ne s'empare que des
+        projecteurs qu'elle allume et des canaux qu'elle a réglés).
+        """
+        cles = set(cles or ())
+        if cles == self._seq_overrides:
+            return
+        self._seq_overrides = cles
+        self._maj_tab_styles()
+
+    def _maj_tab_styles(self):
+        """Applique à chaque onglet son style : actif, repris, ou les deux.
+
+        Le marquage passe par la COULEUR (texte + soulignement), jamais par un
+        caractère ajouté au libellé : la barre doit tenir sur une ligne dans un
+        QScrollArea sans défilement horizontal, un libellé qui s'allonge la
+        ferait déborder — et ce qui déborde est coupé, pas atteignable.
+        """
+        if not hasattr(self, '_effect_tab_btns'):
+            return
+        for i, label in enumerate(self._EFFECT_TABS):
+            btn = self._effect_tab_btns.get(label)
+            if btn is None:
+                continue
+            actif  = (i == self._effect_tab_idx)
+            repris = self._EFFECT_TAB_KEYS[i] in self._seq_overrides
+            if actif:
+                css = self._effect_tab_on_over if repris else self._effect_tab_on
+            else:
+                css = self._effect_tab_over if repris else self._effect_tab_off
+            btn.setStyleSheet(css)
+            btn.setToolTip(tr("live_seq_overridden") if repris else "")
+
+    # ── Séquences REC ─────────────────────────────────────────────────────────
+
+    # ── Page 6 : Séquences (mémoires des pads) ────────────────────────────────
+
+    def set_sequences_getter(self, fn):
+        """Injecte la source des mémoires de pads affichées dans l'onglet.
+
+        `fn()` doit rendre une liste de dicts {ref: (mem_col, row), name: str,
+        color: QColor|str, cues: int}. Le panneau vit dans `sequencer.py` et n'a
+        pas accès à `main_window.memories` : même patron d'injection que le
+        getter de positions de lyres.
+        """
+        self._seq_getter = fn
+        self.refresh_sequences()
+
+    @property
+    def sequence_pool(self) -> list:
+        """Mémoires du pool, dans l'ordre de la grille."""
+        return list(self._seq_pool)
+
+    @property
+    def current_sequence(self):
+        """Mémoire en cours de lecture (None si le pool est vide)."""
+        return self._current_seq
+
+    @property
+    def sequence_duration(self) -> int:
+        """Tenue d'une mémoire sans minutage propre, en SECONDES.
+
+        En secondes et non en mesures — contrairement au pool de mouvements —
+        parce que l'horloge du LIVE avance même dans le silence (cf.
+        `live_audio._process_chunk`, +50 ms par bloc que le RMS soit nul ou
+        non) alors que le BPM, lui, retombe à son plancher de 60. Compté en
+        mesures, le même réglage aurait donné 20 s sans musique et 9 s sur un
+        morceau à 128 — pour un simple changement de look, c'est déroutant
+        sans rien apporter.
+        """
+        return self._seq_duration
+
+    @property
+    def sequence_intensity(self) -> int:
+        return self._seq_intensity
+
+    @property
+    def sequence_positions(self) -> bool:
+        """La mémoire jouée impose-t-elle sa position de lyres ?
+
+        Décoché (défaut) : le moteur garde la main sur le pan/tilt, les lyres
+        continuent le mouvement de l'onglet MOUVEMENT. Coché : la mémoire
+        pointe les lyres là où elle a été enregistrée.
+        """
+        return self._seq_positions
+
+    def set_current_sequence(self, ref):
+        """Appelée par le moteur quand il passe à la mémoire suivante du pool.
+
+        ⚠️ Écrit par le moteur, pas par l'utilisateur : mêmes précautions que
+        `set_current_movement`. On ne touche qu'à l'état visuel, jamais au pool.
+        """
+        ref = tuple(ref) if ref else None
+        if ref == self._current_seq:
+            return
+        self._current_seq = ref
+        self._sync_seq_tiles()
+
+    def _build_sequence_content(self) -> QWidget:
+        """Grille des mémoires de pads + curseurs DURÉE et INTENSITÉ.
+
+        Même geste que l'onglet MOUVEMENT : on coche plusieurs mémoires pour
+        constituer un POOL, le moteur en joue UNE à la fois et passe à la
+        suivante toutes les N mesures (curseur DURÉE). Un pool d'une seule
+        mémoire = ce look, tenu, sans cycle.
+        """
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(0, 4, 0, 0)
+        vbox.setSpacing(8)
+
+        self._seq_grid_host = QWidget()
+        self._seq_grid = QGridLayout(self._seq_grid_host)
+        self._seq_grid.setContentsMargins(0, 0, 0, 0)
+        self._seq_grid.setSpacing(6)
+        vbox.addWidget(self._seq_grid_host)
+
+        sliders = QHBoxLayout()
+        sliders.setSpacing(10)
+
+        def _curseur(txt, valeur, attr, mini, maxi, suffixe):
+            h = QHBoxLayout()
+            h.setSpacing(5)
+            lbl = QLabel(txt)
+            lbl.setStyleSheet(
+                "color:#666; font-size:9px; font-weight:bold; letter-spacing:0.5px;")
+            lbl.setFixedWidth(48)
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(mini, maxi)
+            sl.setValue(valeur)
+            sl.setStyleSheet(self._MOV_SLIDER_STYLE)
+            vl = QLabel(f"{valeur}{suffixe}")
+            vl.setFixedWidth(30)
+            vl.setStyleSheet("color:#aa77ff; font-size:9px; font-weight:bold;")
+            sl.valueChanged.connect(lambda v, a=attr, _vl=vl: (
+                setattr(self, a, v), _vl.setText(f"{v}{suffixe}"),
+                self._request_save()))
+            h.addWidget(lbl); h.addWidget(sl); h.addWidget(vl)
+            return h
+
+        sliders.addLayout(_curseur(tr("live_seq_duration"),
+                                   self._seq_duration, '_seq_duration', 1, 60, " s"))
+        sliders.addLayout(_curseur(tr("live_seq_intensity"),
+                                   self._seq_intensity, '_seq_intensity', 0, 100, "%"))
+        vbox.addLayout(sliders)
+
+        # ── Interrupteur POSITIONS ────────────────────────────────────────
+        # Une mémoire capture aussi le pan/tilt des lyres. Appliqué tel quel en
+        # LIVE, il les FIGE tant que la mémoire tourne — et comme l'onglet
+        # MOUVEMENT refuse de rester vide (`_on_movement_selected` interdit de
+        # retirer le dernier motif), un mouvement tourne toujours : la mémoire
+        # l'écraserait systématiquement. D'où cet interrupteur, décoché par
+        # défaut : la mémoire apporte couleur, gobo et faisceau, les lyres
+        # continuent de danser. On le coche quand les mémoires servent
+        # justement à POINTER (contre-jour sur le batteur, face au chanteur).
+        pos_row = QHBoxLayout()
+        pos_row.setSpacing(6)
+        self._seq_pos_btn = QPushButton(tr("live_seq_positions"))
+        self._seq_pos_btn.setFixedHeight(22)
+        self._seq_pos_btn.setCheckable(True)
+        self._seq_pos_btn.setChecked(self._seq_positions)
+        self._seq_pos_btn.setCursor(Qt.PointingHandCursor)
+        self._seq_pos_btn.setToolTip(tr("live_seq_positions_tip"))
+        self._seq_pos_btn.toggled.connect(self._on_seq_positions_toggled)
+        self._maj_seq_pos_btn()
+        pos_row.addWidget(self._seq_pos_btn)
+        pos_hint = QLabel(tr("live_seq_positions_hint"))
+        pos_hint.setStyleSheet(
+            "color:#3a3a3a; font-size:9px; font-style:italic;"
+            " background:transparent;")
+        pos_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        pos_row.addWidget(pos_hint, 1)
+        vbox.addLayout(pos_row)
+
+        self.refresh_sequences()
+        return w
+
+    def _on_seq_positions_toggled(self, coche: bool):
+        self._seq_positions = coche
+        self._maj_seq_pos_btn()
+        self._request_save()
+
+    # Style propre à l'interrupteur POSITIONS. Il empruntait celui des onglets ;
+    # depuis que ceux-ci forment un bandeau souligné, un bouton isolé qui en
+    # reprend l'apparence se lit comme un onglet égaré. Il garde donc les
+    # couleurs de la famille, mais la forme d'un interrupteur.
+    _SEQ_POS_ON = (
+        "QPushButton { background:#1a0a3a; color:#bb88ff;"
+        " border:1px solid #8844ff; border-radius:11px;"
+        " font-size:9px; font-weight:bold; padding:3px 12px; }"
+    )
+    _SEQ_POS_OFF = (
+        "QPushButton { background:#141414; color:#555;"
+        " border:1px solid #252525; border-radius:11px;"
+        " font-size:9px; font-weight:bold; padding:3px 12px; }"
+        "QPushButton:hover { color:#9977cc; border-color:#3a3a3a; }"
+    )
+
+    def _maj_seq_pos_btn(self):
+        self._seq_pos_btn.setStyleSheet(
+            self._SEQ_POS_ON if self._seq_positions else self._SEQ_POS_OFF)
+
+    def refresh_sequences(self):
+        """Reconstruit la grille depuis le getter, en gardant le pool courant.
+
+        Une mémoire effacée du pad disparaît donc du pool au lieu d'y rester
+        comme une référence morte que le moteur résoudrait dans le vide à
+        chaque image.
+        """
+        if not hasattr(self, '_seq_grid'):
+            return   # appelé avant _setup_ui (set_sequences_getter précoce)
+        while self._seq_grid.count():
+            item = self._seq_grid.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        self._seq_tiles.clear()
+
+        try:
+            entrees = list(self._seq_getter()) if self._seq_getter else []
+        except Exception as e:
+            print(f"[Live] lecture des mémoires de pads échouée : {e}")
+            entrees = []
+
+        if not entrees:
+            self._vider_pool_sequences()
+            vide = QLabel(tr("live_seq_none"))
+            vide.setStyleSheet(
+                "color:#2a2a2a; font-size:10px; font-style:italic;"
+                " background:transparent; padding:6px 2px;")
+            self._seq_grid.addWidget(vide, 0, 0, 1, 4)
+            return
+
+        cols = 4
+        for i, e in enumerate(entrees):
+            ref = tuple(e.get('ref') or ())
+            if len(ref) != 2:
+                continue
+            tuile = _SeqTile(ref, e.get('name') or "MEM",
+                             QColor(e.get('color') or "#444444"),
+                             int(e.get('cues') or 1), self._seq_grid_host)
+            tuile.clicked.connect(self._on_seq_tile_clicked)
+            self._seq_tiles[ref] = tuile
+            self._seq_grid.addWidget(tuile, i // cols, i % cols)
+
+        # Purger le pool des mémoires qui n'existent plus.
+        vivantes = [r for r in self._seq_pool if r in self._seq_tiles]
+        if vivantes != self._seq_pool:
+            self._seq_pool = vivantes
+            self._normaliser_courante()
+            self.sequences_changed.emit(list(self._seq_pool))
+        self._sync_seq_tiles()
+
+    def _on_seq_tile_clicked(self, ref):
+        ref = tuple(ref)
+        if ref in self._seq_pool:
+            self._seq_pool.remove(ref)
+        else:
+            self._seq_pool.append(ref)
+        self._normaliser_courante()
+        self._sync_seq_tiles()
+        self.sequences_changed.emit(list(self._seq_pool))
+
+    def _vider_pool_sequences(self):
+        """Vide le pool et prévient le moteur, s'il ne l'était pas déjà."""
+        if not self._seq_pool and self._current_seq is None:
+            return
+        self._seq_pool = []
+        self._current_seq = None
+        for t in self._seq_tiles.values():
+            t.set_state(False, False)
+        self.sequences_changed.emit([])
+
+    def _normaliser_courante(self):
+        """La mémoire en cours doit toujours être dans le pool (ou None)."""
+        if self._current_seq not in self._seq_pool:
+            self._current_seq = self._seq_pool[0] if self._seq_pool else None
+
+    def _sync_seq_tiles(self):
+        for ref, tuile in self._seq_tiles.items():
+            tuile.set_state(selected=ref in self._seq_pool,
+                            playing=ref == self._current_seq)
 
     # ── Page 0 : Mouvements ───────────────────────────────────────────────────
 
@@ -2320,6 +2798,15 @@ class LiveModePanel(QWidget):
         manuel, en séquenceur ou en REC Lumière.
         """
         super().showEvent(event)
+        # Les séquences REC vivent dans les mémoires du show : elles changent
+        # entre deux passages en LIVE (nouveau REC, renommage, suppression).
+        # On les relit à chaque entrée dans le panneau plutôt qu'une seule fois.
+        #
+        # AVANT l'énumération audio, volontairement : celle-ci charge PortAudio,
+        # dont l'initialisation peut tuer le process sur certaines machines (cf.
+        # le commentaire de `live_audio.ensure_sounddevice`). Ce qui ne dépend
+        # pas d'elle doit être fait pendant qu'on est encore vivant.
+        self.refresh_sequences()
         if not getattr(self, '_audio_sources_loaded', False):
             self._audio_sources_loaded = True
             self._refresh_audio_sources()
@@ -4772,10 +5259,14 @@ class Sequencer(QFrame):
                             self.player_ui.update_play_icon(QMediaPlayer.PausedState)
 
                         if dmx_mode == "Manuel":
+                            # Manuel = aucun MOTEUR de lumiere. On efface le look
+                            # laisse par le media precedent, puis on repose ce que
+                            # l'APC tient a la main (cf. restore_manual_look).
                             for p in self.player_ui.projectors:
                                 p.level = 0
                                 p.color = QColor("black")
                                 p.base_color = QColor("black")
+                            self.player_ui.restore_manual_look()
                         elif dmx_mode in ["Programme", "Play Lumiere"] and row in self.sequences:
                             self.play_sequence(row)
                         return
@@ -4805,11 +5296,16 @@ class Sequencer(QFrame):
                         self.player_ui._update_video_output_state()
 
                     if dmx_mode == "Manuel":
-                        # Manuel = pas de lumiere
+                        # Manuel = pas de lumiere AUTOMATIQUE. On efface le look du
+                        # media precedent, mais l'eclairage monte a la main sur
+                        # l'APC (pad couleur + fader) n'a aucune raison de s'eteindre
+                        # parce qu'on lance une piste : c'est justement lui qui tient
+                        # la salle entre deux morceaux. Voir restore_manual_look().
                         for p in self.player_ui.projectors:
                             p.level = 0
                             p.color = QColor("black")
                             p.base_color = QColor("black")
+                        self.player_ui.restore_manual_look()
                         self.player_ui.recording_waveform.hide()
                     elif dmx_mode in ["Programme", "Play Lumiere"]:
                         self.play_sequence(row)
@@ -5089,7 +5585,15 @@ class Sequencer(QFrame):
         # balayage par tick saturait le thread UI.
         self._timeline_sorted = {}
         _max_end = 0
-        for _tname, _clips in tracks_clips.items():
+        # Ordre d'insertion = ordre d'application (`apply_timeline_to_dmx` parcourt
+        # `active_clips` dans cet ordre, sur un rig remis à blanc chaque frame :
+        # la dernière piste écrite gagne). Les pistes « un projecteur seul »
+        # passent donc TOUJOURS en dernier, pour primer sur celle de leur groupe.
+        # L'éditeur les range déjà en fin de timeline, mais on ne veut pas que la
+        # règle de priorité repose sur l'ordre des lignes d'un fichier .tui.
+        from core import is_projector_track as _is_proj_track
+        _ordre = sorted(tracks_clips.items(), key=lambda kv: _is_proj_track(kv[0]))
+        for _tname, _clips in _ordre:
             _sc = sorted(_clips, key=lambda c: c.get('start', 0))
             self._timeline_sorted[_tname] = (_sc, [c.get('start', 0) for c in _sc])
             for _c in _sc:
@@ -5445,6 +5949,10 @@ class Sequencer(QFrame):
         main_win._snapshot_effect_state()
         import time as _time
         main_win.effect_t0 = _time.monotonic()
+        # Horloge de phase de l'effet, remise a zero comme en live (sans elle,
+        # le clip repartirait a la position laissee par l'effet precedent).
+        main_win._effect_clock    = 0.0
+        main_win._effect_clock_ts = None
 
     def _clear_timeline_leftovers(self, blackout=False):
         """Nettoie les canaux laissés posés par la timeline qu'on vient d'arrêter.
@@ -5542,26 +6050,29 @@ class Sequencer(QFrame):
         # (appliqué plus bas via update_effect) suivra leur couleur + leur fade.
         main_win._fx_clip_ids = set()
 
-        for proj in self.player_ui.projectors:
-            proj.level = 0
-            proj.base_color = QColor("black")
-            proj.color = QColor("black")
-            # Sinon un strobe posé avant la lecture (live, quick effect, recall
-            # mémoire…) restait collé sur tout le show — "les couleurs strobent
-            # alors qu'aucun effet n'est lancé". Aligné sur la preview éditeur.
-            proj.strobe_speed = 0
-            # Idem roue de couleurs : sans reset, la roue restait figée sur le
-            # dernier slot posé (manuel/mémoire) → "la roue se décale" en
-            # restitution sur les lyres ColorWheel. Aligné sur la preview (l.1615).
-            proj.color_wheel = 0
-            # Idem canaux bruts (Mode, Effects…) : sans reset, le Mode posé par
-            # un clip-mémoire resterait collé après la fin du clip. Aligné preview.
-            proj.channel_extras = {}
-            # Idem canaux dédiés (UV, Blanc, Ambre, Orange) : sans reset, une
-            # valeur posée avant la lecture (curseur plan de feu, rappel mémoire,
-            # effet) restait collée tout le show, et un bloc UV ne s'éteignait
-            # jamais à sa fin. Aligné preview.
-            proj.uv = proj.white_boost = proj.amber_boost = proj.orange_boost = 0
+        # Remise à zéro complète du rig AVANT de réappliquer les clips actifs :
+        # la timeline est un writer ABSOLU, chaque frame repart d'une page
+        # blanche. C'est ce qui fait qu'un bloc « s'éteint tout seul » à sa fin.
+        #
+        # La liste était recopiée à la main ici (level/couleur, strobe, roue,
+        # canaux bruts, UV/blanc/ambre/orange) et il y MANQUAIT tout le reste du
+        # faisceau : gobo, gobo2, rotation de gobo, zoom, focus, prisme, rotation
+        # de prisme, shutter, effects/speed/mode_value. Ces canaux-là n'étaient
+        # jamais remis au repos en cours de lecture : une mémoire qui posait un
+        # gobo ou un prisme le laissait collé APRÈS la fin de son bloc, jusqu'au
+        # prochain CLEAR. Symptôme client : « problème de fin de REC, il faut
+        # ajouter un bloc noir pour que ça s'arrête ».
+        #
+        # `reset_beam_channels()` fait déjà exactement ce nettoyage (elle servait
+        # uniquement à l'ARRÊT de la timeline) : on l'appelle ici pour n'avoir
+        # qu'UNE seule définition du repos, partagée avec l'aperçu de l'éditeur.
+        # Le pan/tilt en est volontairement exclu — recentrer les lyres à chaque
+        # frame les figerait au milieu de la course.
+        #
+        # Sûr vis-à-vis des mémoires : `apply_seq_memories_htp` REPOSE ces mêmes
+        # canaux à chaque frame depuis le snapshot tant que le bloc est actif.
+        from light_timeline import reset_beam_channels
+        reset_beam_channels(self.player_ui.projectors, blackout=True)
 
         for track_name, clip_info in active_clips.items():
             indices = track_to_indices.get(track_name, [])

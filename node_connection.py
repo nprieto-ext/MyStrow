@@ -4,6 +4,7 @@ Détecte et corrige automatiquement les problèmes de connexion Art-Net.
 Tous les boîtiers ElectroConcept sont sur 2.0.0.15.
 """
 
+import os
 import re
 import time
 import socket
@@ -75,20 +76,167 @@ def _get_all_local_ips() -> set:
     return local
 
 
+# Trace du dernier scan, pour que « aucune carte » puisse DIRE ce qu'il a vu.
+# Un message d'échec sans détail envoie le client vérifier au hasard ; savoir
+# laquelle des deux sources a répondu, et quoi, désigne la panne du premier coup.
+_DERNIER_SCAN = {"ipconfig": None, "pilote": None, "socket": None,
+                 "err_ipconfig": None, "err_pilote": None}
+
+
+def _resume_dernier_scan() -> str:
+    def _fmt(cartes, err):
+        # L'erreur passe AVANT la liste : « aucune » et « la commande a
+        # échoué » se ressemblent à l'écran et ne se réparent pas pareil.
+        if err:
+            return err
+        if cartes is None:
+            return "non consulté"
+        return ", ".join(cartes) if cartes else "aucune"
+    txt = (f"ipconfig : {_fmt(_DERNIER_SCAN['ipconfig'], _DERNIER_SCAN['err_ipconfig'])}"
+           f"  ·  pilote : {_fmt(_DERNIER_SCAN['pilote'], _DERNIER_SCAN['err_pilote'])}")
+    if _DERNIER_SCAN["socket"] is not None:
+        txt += f"  ·  socket : {_fmt(_DERNIER_SCAN['socket'], None)}"
+    return txt
+
+
+_JOURNAL_SCAN = os.path.join(os.path.expanduser("~"), ".mystrow_node_scan.log")
+
+
+def _journaliser_scan(adapters):
+    """Trace disque des scans de cartes.
+
+    Un client au téléphone ne recopie pas fidèlement un message d'erreur, et
+    le symptôme (« aucune carte ») est le même pour quatre causes opposées.
+    Une ligne horodatée sur disque permet de trancher après coup, sans lui
+    demander de relire son écran.
+    """
+    try:
+        ligne = (f"{time.strftime('%Y-%m-%d %H:%M:%S')}  "
+                 f"{len(adapters)} carte(s)  |  {_resume_dernier_scan()}\n")
+        # Purge grossière : ce journal doit rester lisible, pas grandir sans fin.
+        if os.path.exists(_JOURNAL_SCAN) and os.path.getsize(_JOURNAL_SCAN) > 60000:
+            os.remove(_JOURNAL_SCAN)
+        with open(_JOURNAL_SCAN, "a", encoding="utf-8") as f:
+            f.write(ligne)
+    except Exception:
+        pass        # un journal qui échoue ne doit jamais casser une détection
+
+
 def _get_ethernet_adapters():
     """Retourne [(nom, ip, description, connected)] — Windows et Mac."""
+    for k in _DERNIER_SCAN:
+        _DERNIER_SCAN[k] = None
     if platform.system() == "Darwin":
-        return _get_ethernet_adapters_mac()
-    return _get_ethernet_adapters_windows()
+        adapters = _get_ethernet_adapters_mac()
+        _DERNIER_SCAN["ipconfig"] = [a[0] for a in adapters]
+        if not adapters:
+            # Le repli vaut aussi pour le Mac : `ifconfig` peut manquer, être
+            # bridé, ou l'interface venir tout juste d'apparaître. Rien ici
+            # n'est propre à Windows.
+            adapters = _get_adapters_via_socket()
+            _DERNIER_SCAN["socket"] = [a[1] for a in adapters]
+        _journaliser_scan(adapters)
+        return adapters
+    adapters = _get_ethernet_adapters_windows()
+    _DERNIER_SCAN["ipconfig"] = [a[0] for a in adapters]
+    if not adapters:
+        # `ipconfig` ne montre que les interfaces qui ont une pile IP : une
+        # carte dont TCP/IPv4 est décoché, ou qui vient d'énumérer et n'a pas
+        # encore d'adresse, en est absente. Or « aucune carte » envoie le
+        # client vérifier un câble qui n'a rien — et sur un USB NODE il n'y a
+        # même pas de câble réseau à vérifier. La couche pilote, elle, la voit.
+        adapters = _get_adapters_via_driver()
+        _DERNIER_SCAN["pilote"] = [a[0] for a in adapters]
+    if not adapters:
+        # Les deux premières voies lancent un programme externe ; quand le
+        # processus n'a plus le droit d'en lancer (WinError 50 observé sur
+        # `ipconfig` ET PowerShell), elles échouent ENSEMBLE et le client se
+        # retrouve bloqué alors que sa carte fonctionne. Cette troisième voie
+        # n'utilise que des sockets : rien à lancer, rien à interdire.
+        adapters = _get_adapters_via_socket()
+        _DERNIER_SCAN["socket"] = [a[1] for a in adapters]
+    _journaliser_scan(adapters)
+    return adapters
+
+
+def _get_adapters_via_socket():
+    """Cartes déduites des seules adresses locales, sans sous-processus.
+
+    On ne peut pas connaître le NOM Windows des interfaces par ce biais — mais
+    ce n'est pas ce qui compte ici : ce que le parcours doit savoir, c'est
+    qu'une carte porte une adresse en 2.x, et laquelle. Le nom ne sert qu'à
+    poser une IP statique, étape inutile quand l'adresse est déjà bonne.
+    """
+    ips = set()
+    try:
+        # UDP « connecté » : aucun paquet n'est émis, le noyau se contente de
+        # choisir la route vers le node et nous rend l'IP locale correspondante.
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((TARGET_IP, 6454))
+            ips.add(s.getsockname()[0])
+        finally:
+            s.close()
+    except Exception:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                ips.add(ip)
+    except Exception:
+        pass
+    ips.discard("0.0.0.0")
+    # Les cartes en 2.x d'abord : c'est celle du boîtier qu'on cherche.
+    ordre = sorted(ips, key=lambda i: (not i.startswith("2."), i))
+    return [(tr("nc_adapter_by_ip").format(ip=ip), ip, "", True) for ip in ordre]
+
+
+def _get_adapters_via_driver():
+    """Cartes vues au niveau PILOTE, sans passer par la configuration IP.
+
+    Repli de `ipconfig` : renvoie la même forme, avec une IP vide — ce qui
+    permet de dire « carte trouvée, mais sans adresse IPv4 » au lieu de nier
+    son existence.
+    """
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-NetAdapter | ForEach-Object "
+             "{ $_.Name + '|' + $_.InterfaceDescription + '|' + $_.Status }"],
+            capture_output=True, text=True, encoding="cp1252", errors="replace",
+            timeout=8, creationflags=CREATE_NO_WINDOW)
+    except Exception as e:
+        _DERNIER_SCAN["err_pilote"] = f"{type(e).__name__} {e}"[:120]
+        return []
+    if r.returncode != 0 and not (r.stdout or "").strip():
+        _DERNIER_SCAN["err_pilote"] = f"code {r.returncode} {(r.stderr or '').strip()[:80]}"
+        return []
+    adapters = []
+    for line in (r.stdout or "").splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 3 or not parts[0]:
+            continue
+        nom, desc, statut = (p.strip() for p in parts)
+        if any(kw in nom.lower() for kw in _SKIP_ADAPTERS):
+            continue
+        adapters.append((nom, "", desc, statut.lower() == "up"))
+    return adapters
 
 
 def _get_ethernet_adapters_windows():
     """Détecte les adaptateurs réseau sur Windows via ipconfig /all."""
     try:
+        # Timeout obligatoire : sans lui, un `ipconfig` qui traîne fige le scan
+        # du wizard, thread compris, sans jamais rendre la main.
         r = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True,
-                           encoding="cp1252", errors="replace",
+                           encoding="cp1252", errors="replace", timeout=8,
                            creationflags=CREATE_NO_WINDOW)
-    except Exception:
+    except Exception as e:
+        # Ne PAS avaler la cause : « aucune carte » est indiscernable de
+        # « la commande n'a pas pu s'exécuter », et les deux mènent à des
+        # dépannages opposés.
+        _DERNIER_SCAN["err_ipconfig"] = f"{type(e).__name__} {e}"[:120]
         return []
 
     adapters = []
@@ -134,6 +282,12 @@ def _get_ethernet_adapters_windows():
 
     if current_name and not skip_current:
         adapters.append((current_name, current_ip, current_desc, current_connected))
+    if not adapters and (r.stdout or "").strip():
+        # La commande a répondu, mais le parseur n'y a rien reconnu : locale
+        # inattendue, ou sortie tronquée. C'est un bug chez nous, pas un câble
+        # chez le client — encore faut-il pouvoir le dire.
+        _DERNIER_SCAN["err_ipconfig"] = (
+            f"sortie non reconnue ({len(r.stdout.splitlines())} lignes)")
     return adapters
 
 
@@ -230,8 +384,12 @@ def _get_ethernet_adapters_mac():
 def _ping(ip: str, timeout_ms: int = 1000) -> bool:
     try:
         if platform.system() == "Darwin":
+            # ⚠️ Sur macOS, `-W` s'exprime en MILLISECONDES (contrairement à
+            # Linux, où ce sont des secondes). Convertir en secondes donnait
+            # « -W 1 » = un délai d'UNE milliseconde : le node n'avait
+            # matériellement pas le temps de répondre, et tout ping échouait.
             r = subprocess.run(
-                ["ping", "-c", "1", "-W", str(max(1, timeout_ms // 1000)), ip],
+                ["ping", "-c", "1", "-W", str(max(1, int(timeout_ms))), ip],
                 capture_output=True
             )
         else:
@@ -244,66 +402,157 @@ def _ping(ip: str, timeout_ms: int = 1000) -> bool:
         return False
 
 
-def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
-    """ArtPoll vers target_ip, filtre les réponses du PC lui-même.
+def _ips_locales_pour_emettre():
+    """IPs locales d'où émettre, celles du réseau du boîtier en tête."""
+    ips = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip != "0.0.0.0":
+                ips.add(ip)
+    except Exception:
+        pass
+    for _n, ip, _d, _c in _get_ethernet_adapters():
+        if ip and not ip.startswith("127."):
+            ips.add(ip)
+    ordre = sorted(ips, key=lambda i: (not i.startswith("2."), i))
+    ordre.append("")        # INADDR_ANY en dernier recours
+    return ordre
 
-    On écoute sur le port 6454, PAS sur un port éphémère : la spec Art-Net veut
-    que l'ArtPollReply soit émis vers le port 6454, pas vers le port source. Un
-    node qui respecte la spec répondait donc dans le vide, et l'assistant
-    concluait « le boîtier n'a pas répondu » alors qu'il répondait très bien
-    (reproduit sur Mac : le même ArtPoll lancé depuis le Terminal, socket liée
-    à 6454, recevait la réponse immédiatement).
 
-    Le port éphémère servait à ne pas recevoir notre propre broadcast en
-    loopback sous Windows ; le filtre sur l'opcode ArtPollReply (0x2100) et sur
-    les IP locales couvre déjà ce cas, sans sacrifier les réponses réelles.
-    """
-    # Si aucune carte réseau n'a d'IP en 2.x, le boitier est forcément inaccessible
-    adapters = _get_ethernet_adapters()
-    if not any(ip.startswith("2.") for _, ip, _, _ in adapters):
-        return False
+def _artpoll_sur(source: str, timeout: float, cibles):
+    """Un tour d'ArtPoll depuis UNE interface. Renvoie (nodes, ecoute_fiable)."""
+    nodes, vus = [], set()
     local_ips = _get_all_local_ips()
+    fiable = True
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if hasattr(socket, "SO_REUSEPORT"):
-            # macOS/BSD : sans ça, cohabiter avec une autre appli DMX sur 6454
-            # échoue même avec SO_REUSEADDR.
             try:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             except OSError:
                 pass
         try:
-            s.bind(("", 6454))
+            s.bind((source, 6454))
         except OSError:
-            # Port déjà pris (QLC+, Chataigne…) : on retombe sur un port
-            # éphémère, qui ne verra que les nodes répondant au port source.
-            s.bind(("", 0))
+            try:
+                s.bind((source, 0))
+            except OSError:
+                return [], False
+            fiable = False
         s.settimeout(timeout)
-        for dst in ("2.255.255.255", "255.255.255.255", target_ip):
+        # Émettre depuis CE socket, celui qui écoute : deux sockets distincts et
+        # le pare-feu Windows jette la réponse, faute de trafic sortant à lui
+        # apparier.
+        for dst in cibles:
             try:
                 s.sendto(_artpoll_packet(), (dst, 6454))
             except Exception:
                 pass
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        fin = time.time() + timeout
+        while time.time() < fin:
             try:
-                s.settimeout(max(0.05, deadline - time.time()))
-                data, (sender, _) = s.recvfrom(512)
-                # Accepter uniquement ArtPollReply (opcode 0x2100),
-                # en ignorant notre propre ArtPoll (0x2000) et le PC lui-même
-                if (data[:8] == b'Art-Net\x00'
-                        and data[8:10] == b'\x00\x21'
-                        and sender not in local_ips):
-                    s.close()
-                    return True
+                s.settimeout(max(0.05, fin - time.time()))
+                data, (sender, _) = s.recvfrom(1024)
             except Exception:
                 break
+            # Opcode ArtPollReply (0x2100) obligatoire : notre propre ArtPoll
+            # (0x2000) nous revient par la boucle locale et passerait sinon.
+            if (len(data) < 108 or data[:8] != b'Art-Net\x00'
+                    or data[8:10] != b'\x00!'
+                    or sender in local_ips or sender.startswith("127.")):
+                continue
+            if sender in vus:
+                continue
+            vus.add(sender)
+            nodes.append({
+                "ip":    sender,
+                "court": data[26:44].split(b'\x00')[0].decode('latin-1', 'replace').strip(),
+                "long":  data[44:108].split(b'\x00')[0].decode('latin-1', 'replace').strip(),
+            })
         s.close()
     except Exception:
-        pass
-    return False
+        return [], False
+    return nodes, fiable
+
+
+def _artpoll_discover(timeout: float = 1.5, candidats=()):
+    """Découvre TOUS les nodes Art-Net joignables.
+
+    Renvoie `(nodes, fiable)` où `nodes` est une liste de dicts
+    `{"ip", "court", "long"}` et `fiable` dit si l'écoute était valide.
+
+    ⚠️ On émet depuis CHAQUE interface, pas seulement `INADDR_ANY` : sous
+    Windows un broadcast issu d'un socket lié à `0.0.0.0` ne sort que par la
+    carte de la route par défaut. Sur un PC qui a aussi une carte Internet, le
+    node du spectacle ne recevait donc jamais l'ArtPoll.
+
+    ⚠️ Et on émet en broadcast ET en unicast. Les deux sont nécessaires : le
+    USB NODE ignore l'ArtPoll unicast, tandis que le NODE RJ45 n'était joint
+    que par lui (l'unicast suit la table de routage, donc part par la bonne
+    carte quoi qu'il arrive). N'en retirer aucun.
+
+    ⚠️ `fiable=False` quand le port 6454 est déjà pris : la spec veut que le
+    node réponde VERS 6454, pas vers le port source, donc un repli sur un port
+    éphémère n'entend plus rien. Et le premier à prendre 6454, c'est MyStrow
+    lui-même dès qu'il est connecté en Art-Net. Une liste vide ne prouve alors
+    aucune absence, et l'annoncer comme telle envoie le client démonter un
+    câble qui marche.
+    """
+    cibles = ["2.255.255.255", "255.255.255.255", "2.0.0.255", TARGET_IP]
+    for c in candidats:
+        if c and c not in cibles:
+            cibles.append(c)
+
+    sources = _ips_locales_pour_emettre()
+    par_source = max(0.5, timeout / max(1, len(sources)))
+    tous, vus, fiable = [], set(), False
+    for src in sources:
+        nodes, ok = _artpoll_sur(src, par_source, cibles)
+        fiable = fiable or ok
+        for n in nodes:
+            if n["ip"] not in vus:
+                vus.add(n["ip"])
+                tous.append(n)
+        # Trouvé sur le réseau du boîtier : inutile de balayer le reste.
+        if tous and src.startswith("2."):
+            break
+    return tous, fiable
+
+
+def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
+    """Un node répond-il À L'ADRESSE target_ip ? (et pas « quelque part »)
+
+    Ne dit PAS « un node existe » mais « un node est à CETTE adresse ». La
+    nuance a coûté cher : l'ArtPoll étant diffusé, accepter la première réponse
+    venue faisait valider `2.0.0.15` par un boîtier resté sur `2.0.0.1` — donc
+    « boîtier configuré ✓ » suivi d'un silence total sur la ligne DMX, MyStrow
+    envoyant ses trames en unicast vers une adresse où personne n'écoute.
+
+    Quand l'écoute n'est pas fiable (port 6454 déjà pris), on retombe sur le
+    ping : il ne prouve pas que c'est un node Art-Net, mais il prouve que
+    QUELQUE CHOSE répond à cette adresse, ce qui vaut mieux qu'un « absent »
+    inventé. Voir `_artpoll_discover`.
+    """
+    # Raccourci : si des cartes sont connues et qu'AUCUNE n'est en 2.x, le
+    # boîtier est hors d'atteinte, inutile d'attendre un timeout réseau.
+    #
+    # ⚠️ Mais seulement si l'énumération a réussi. Une liste vide signifie
+    # souvent « on n'a pas su regarder », pas « il n'y a rien » : conditionner
+    # la recherche du boîtier à la détection des cartes rendait un échec
+    # d'énumération fatal à TOUT le parcours, alors que trouver le node prouve
+    # à lui seul que la carte existe. On cherche donc quand même.
+    adapters = _get_ethernet_adapters()
+    if adapters and not any(ip.startswith("2.") for _, ip, _, _ in adapters):
+        return False
+    nodes, fiable = _artpoll_discover(timeout)
+    if not fiable:
+        # Aveugle : on ne SAIT pas. Repondre False ferait accuser le cable,
+        # alors que le port 6454 est simplement deja pris par nous-memes.
+        return _ping(target_ip, timeout_ms=1200)
+    return any(n["ip"] == target_ip for n in nodes)
 
 
 def _set_static_ip(adapter_name: str) -> bool:
@@ -415,17 +664,35 @@ class _DiagWorker(QThread):
         self.step.emit(1, results[-1][0], results[-1][1], results[-1][2])
 
         # ── 3. Boîtier 2.0.0.15 joignable ──────────────────────────────
-        if eth_ok:
+        autre_ip = None
+        # On cherche le boîtier même sans carte reconnue : l'énumération peut
+        # échouer pour ses propres raisons, et une réponse du node vaut mille
+        # fois mieux qu'un « en attente de la carte réseau » définitif.
+        if eth_ok or not adapters:
             box_ok = _ping(TARGET_IP, timeout_ms=1200)
             if not box_ok:
                 box_ok = _artpoll_probe(TARGET_IP, timeout=1.5)
-            box_detail = f"Boîtier {TARGET_IP} répond ✓" if box_ok else f"Boîtier {TARGET_IP} ne répond pas — allumé ? câble branché ?"
+            if box_ok:
+                box_detail = f"Boîtier {TARGET_IP} répond ✓"
+            else:
+                # Le boîtier n'est pas forcément absent : il peut simplement
+                # être resté à son adresse d'usine. Le dire vaut mieux que
+                # « vérifiez le câble » sur un câble qui marche.
+                trouves, _fiable = _artpoll_discover(timeout=1.5)
+                if trouves:
+                    autre_ip = trouves[0]["ip"]
+                    nom = trouves[0]["long"] or trouves[0]["court"] or "boîtier"
+                    box_detail = (f"Boîtier trouvé en {autre_ip} ({nom}) — "
+                                  f"MyStrow cherche {TARGET_IP}")
+                else:
+                    box_detail = f"Boîtier {TARGET_IP} ne répond pas — allumé ? câble branché ?"
         else:
             box_ok = False
             box_detail = "En attente de la carte réseau"
 
         results.append(("ok" if box_ok else "err", f"Boîtier {TARGET_IP}", box_detail,
-                        None if box_ok else "fix_box"))
+                        None if box_ok else
+                        (f"fix_use_found_ip:{autre_ip}" if autre_ip else "fix_box")))
         self.step.emit(2, results[-1][0], results[-1][1], results[-1][2])
 
         # ── 4. IP cible dans MyStrow ─────────────────────────────────────
@@ -616,9 +883,19 @@ class NodeConnectionDialog(QDialog):
         self._manual_btn.setVisible(False)
         self._manual_btn.clicked.connect(_open_network_connections)
 
+        # Le boîtier a répondu, mais depuis une autre adresse que celle visée.
+        # Rien à réparer dans le réseau : c'est MyStrow qui regarde au mauvais
+        # endroit. Un clic suffit, sans passer par l'utilitaire du fabricant.
+        self._use_ip_btn = QPushButton("")
+        self._use_ip_btn.setVisible(False)
+        self._use_ip_btn.setStyleSheet(_BTN_PRIMARY + "QPushButton { padding: 10px 20px; }")
+        self._use_ip_btn.clicked.connect(self._use_found_ip)
+        self._found_ip = None
+
         close_btn = QPushButton(tr("nc_close"))
         close_btn.clicked.connect(self.accept)
 
+        btn_row.addWidget(self._use_ip_btn)
         btn_row.addWidget(self._fix_btn)
         btn_row.addWidget(self._manual_btn)
         btn_row.addStretch()
@@ -633,6 +910,8 @@ class NodeConnectionDialog(QDialog):
     def _run(self):
         self._fix_btn.setVisible(False)
         self._manual_btn.setVisible(False)
+        self._use_ip_btn.setVisible(False)
+        self._found_ip = None
         self._refresh_inline_btn.setVisible(False)
         self._retry_btn.setEnabled(False)
         self._msg_lbl.setText(tr("nc_analysing"))
@@ -671,9 +950,30 @@ class NodeConnectionDialog(QDialog):
     def _on_done(self, results: list):
         self._results = results
         errors = [r for r in results if r[0] == "err"]
-        fixable = [r for r in errors if r[3] and r[3] != "fix_cable" and r[3] != "fix_box"]
+
+        # Boîtier trouvé, mais pas à l'adresse visée : ce n'est pas une panne
+        # réseau, et l'assistant de configuration n'y peut rien. On propose
+        # l'adresse réelle plutôt que d'envoyer le client dans les réglages.
+        self._found_ip = next(
+            (r[3].split(":", 1)[1] for r in errors
+             if r[3] and r[3].startswith("fix_use_found_ip:")), None)
+        if self._found_ip:
+            self._use_ip_btn.setText(tr("nc_use_found_ip").format(ip=self._found_ip))
+            self._use_ip_btn.setVisible(True)
+
+        fixable = [r for r in errors
+                   if r[3] and r[3] not in ("fix_cable", "fix_box")
+                   and not r[3].startswith("fix_use_found_ip:")]
         cable_issue = any(r[3] == "fix_cable" for r in errors)
         box_issue = any(r[3] == "fix_box" for r in errors)
+
+        if self._found_ip:
+            self._msg_lbl.setText(tr("nc_found_elsewhere").format(
+                ip=self._found_ip, cible=TARGET_IP))
+            self._msg_lbl.setStyleSheet(f"color: {_C_WARN};")
+            self._fix_btn.setVisible(bool(fixable))
+            self._retry_btn.setEnabled(True)
+            return
 
         if not errors:
             self._msg_lbl.setText(tr("nc_all_ok"))
@@ -696,6 +996,20 @@ class NodeConnectionDialog(QDialog):
     # ──────────────────────────────────────────────────────
     # AUTO-FIX
     # ──────────────────────────────────────────────────────
+
+    def _use_found_ip(self):
+        """Pointer MyStrow sur l'adresse où le boîtier se trouve vraiment."""
+        ip = self._found_ip
+        if not ip:
+            return
+        dmx = getattr(self._main_win, "dmx", None) if self._main_win else None
+        if not _pointer_mystrow_sur(ip, dmx):
+            self._msg_lbl.setText(tr("nc_use_found_ip_fail"))
+            self._msg_lbl.setStyleSheet(f"color: {_C_ERR};")
+            return
+        self._use_ip_btn.setVisible(False)
+        self._msg_lbl.setText(tr("nc_use_found_ip_done").format(ip=ip))
+        self._msg_lbl.setStyleSheet(f"color: {_C_OK}; font-weight: bold;")
 
     def _open_wizard(self):
         self.accept()
@@ -784,29 +1098,115 @@ class _NetworkSetup(QThread):
             self.done.emit("manual", self.adapter_name)
 
 
+def _ip_node_a_viser(dmx=None, timeout: float = 1.2) -> str:
+    """L'adresse à laquelle parler au boîtier — DÉCOUVERTE, pas supposée.
+
+    `TARGET_IP` n'est qu'un défaut historique : les boîtiers ne sortent pas
+    tous d'usine à cette adresse, et rien n'oblige à les y déplacer. Viser une
+    constante quand le node est ailleurs, c'est émettre dans le vide — voyant
+    DMX éteint, projecteurs muets, et aucun message d'erreur puisque l'UDP ne
+    se plaint jamais.
+
+    Priorité : le node réellement trouvé > l'adresse déjà retenue si elle est
+    dans le bon réseau > le défaut.
+    """
+    try:
+        trouves, _fiable = _artpoll_discover(timeout)
+    except Exception:
+        trouves = []
+    if trouves:
+        return trouves[0]["ip"]
+    actuelle = getattr(dmx, "target_ip", "") or ""
+    if actuelle.startswith("2.") and _ping(actuelle, timeout_ms=800):
+        return actuelle
+    return TARGET_IP
+
+
+def _pointer_mystrow_sur(ip: str, dmx=None) -> bool:
+    """Fait émettre MyStrow vers `ip` en Art-Net.
+
+    On règle l'ÉMETTEUR, jamais le boîtier : ce modèle n'expose aucun moyen
+    standard de se laisser reprogrammer, et rien ne l'exige — l'Art-Net n'a
+    pas de notion d'adresse autorisée, le node exécute ce qu'il reçoit.
+
+    ⚠️ `dmx` doit être passé explicitement. Le repli par `sys.modules` cherche
+    un attribut `_dmx_instance` que SEUL le diagnostic injecte : appelé depuis
+    l'assistant, il ne trouvait rien et renvoyait False sans bruit. L'écran
+    affichait « Connexion établie » pendant que la sortie restait sur l'USB —
+    un faux succès, le pire des retours.
+    """
+    from artnet_dmx import TRANSPORT_ARTNET
+    if dmx is None:
+        import sys
+        for mod in sys.modules.values():
+            if hasattr(mod, '_dmx_instance'):
+                dmx = mod._dmx_instance
+                break
+    if dmx is None:
+        return False
+    try:
+        dmx.connect(transport=TRANSPORT_ARTNET, product_id="artnet",
+                    product_name="Art-Net (réseau)",
+                    target_ip=ip, target_port=6454)
+    except Exception:
+        return False
+    # `connect()` peut échouer sans lever : c'est `connected` qui fait foi.
+    return bool(getattr(dmx, "connected", False))
+
+
 class _NodeSearcher(QThread):
     finished = Signal(bool)
+
     def run(self):
         time.sleep(0.5)
+        self.found_ip = ""
         try:
             adapters = _get_ethernet_adapters()
-            if not any(ip.startswith("2.") for n, ip, d, c in adapters):
+            # ⚠️ Une énumération vide veut dire « on n'a pas su regarder » :
+            # y voir une absence de carte condamnait tout le parcours.
+            if adapters and not any(ip.startswith("2.") for n, ip, d, c in adapters):
                 self.finished.emit(False); return
-            if _artpoll_probe(TARGET_IP, timeout=2.0):
+            if _artpoll_probe(TARGET_IP, timeout=2.0) or _ping(TARGET_IP, timeout_ms=1500):
+                self.found_ip = TARGET_IP
                 self.finished.emit(True); return
-            self.finished.emit(_ping(TARGET_IP, timeout_ms=1500))
+            # Absent de l'adresse attendue ne veut pas dire absent : la plupart
+            # des boîtiers sortent d'usine sur une AUTRE adresse, et c'est
+            # précisément ce que l'utilisateur allait configurer à la main.
+            trouves, _fiable = _artpoll_discover(timeout=2.0)
+            if trouves:
+                self.found_ip = trouves[0]["ip"]
+                self.finished.emit(True); return
+            self.finished.emit(False)
         except Exception:
             self.finished.emit(False)
 
 
 class _QuickDetector(QThread):
+    """Le boîtier est-il là ? — et surtout : à QUELLE adresse.
+
+    ⚠️ Sondait `TARGET_IP` uniquement. Un boîtier resté à son adresse d'usine
+    était donc annoncé « non connecté » alors qu'il pilotait le spectacle,
+    juste sous la fenêtre. On cherche là où MyStrow émet vraiment, puis
+    partout ; `found_ip` porte l'adresse retenue.
+    """
     finished = Signal(bool)
+
+    def __init__(self, dmx=None, parent=None):
+        super().__init__(parent)
+        self._dmx = dmx
+        self.found_ip = ""
+
     def run(self):
         try:
-            if not _get_ethernet_adapters():
-                self.finished.emit(False); return
-            self.finished.emit(_artpoll_probe(TARGET_IP, timeout=1.0)
-                               or _ping(TARGET_IP, timeout_ms=800))
+            visee = getattr(self._dmx, "target_ip", "") or TARGET_IP
+            if _artpoll_probe(visee, timeout=1.0) or _ping(visee, timeout_ms=800):
+                self.found_ip = visee
+                self.finished.emit(True); return
+            trouves, _fiable = _artpoll_discover(timeout=1.0)
+            if trouves:
+                self.found_ip = trouves[0]["ip"]
+                self.finished.emit(True); return
+            self.finished.emit(False)
         except Exception:
             self.finished.emit(False)
 
@@ -1220,6 +1620,9 @@ class NodeSetupWizard(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Gardé pour atteindre `parent.dmx` : sans lui, l'assistant ne pouvait
+        # pas basculer la sortie et se contentait d'annoncer un succès.
+        self._main_win = parent
         self.setWindowTitle(tr("nc_node_config"))
         self.setFixedSize(500, 560)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -1552,7 +1955,10 @@ class NodeSetupWizard(QDialog):
         w, lay = self._make_page(); lay.addStretch()
         lay.addWidget(self._big_icon("🎉", "#4ade80")); lay.addSpacing(12)
         lay.addWidget(self._title_lbl("Connexion établie !")); lay.addSpacing(8)
-        lay.addWidget(self._sub_lbl("Votre boîtier est prêt à recevoir les données DMX."))
+        # Gardé sous la main : quand le boîtier a été trouvé à une autre adresse
+        # que celle attendue, la page doit dire laquelle a été retenue.
+        self._success_lbl = self._sub_lbl("Votre boîtier est prêt à recevoir les données DMX.")
+        lay.addWidget(self._success_lbl)
         lay.addSpacing(20); lay.addWidget(self._step_indicator(3)); lay.addSpacing(20)
         lay.addWidget(self._primary_btn("Super, fermer  ✓", self.accept))
         lay.addStretch(); return w
@@ -1596,7 +2002,8 @@ class NodeSetupWizard(QDialog):
 
     def _start_quick_detection(self):
         self._go_to(P_W_DETECTING); self._spin_timer.start(180)
-        t = _QuickDetector(); t.finished.connect(self._on_quick_done)
+        t = _QuickDetector(getattr(self._main_win, "dmx", None) if self._main_win else None)
+        t.finished.connect(self._on_quick_done)
         self._threads.append(t); t.start()
 
     def _on_quick_done(self, found):
@@ -1606,7 +2013,17 @@ class NodeSetupWizard(QDialog):
 
     # ── adapter scan ─────────────────────────────────────────
 
-    def _start_adapter_scan(self):
+    # Un USB NODE n'apparaît pas à l'instant où on le branche : Windows doit
+    # énumérer le périphérique, charger le pilote NCM, puis le bail DHCP arrive
+    # (c'est le boîtier qui sert l'adresse). Cela prend couramment plus de cinq
+    # secondes. Scanner UNE fois et conclure « aucune carte » accuse un boîtier
+    # parfaitement branché — on réessaie donc avant de rendre un verdict.
+    _SCAN_ESSAIS = 6
+    _SCAN_PAUSE_MS = 2000
+
+    def _start_adapter_scan(self, *_args, retry=False):
+        if not retry:
+            self._scan_tries = 0
         if getattr(self, "_adapters_hint", None) is not None:
             # Sur un USB NODE DMX le boîtier EST la carte : Windows le nomme
             # selon le pilote qui le prend en charge — « Electroconcept USB
@@ -1617,11 +2034,25 @@ class NodeSetupWizard(QDialog):
                 "qui apparaît quand vous le branchez"
                 if self._cable_variant == "usb"
                 else "Choisissez la carte réseau reliée au boîtier\n(pas la Wi-Fi)")
-        self._set_working("Scan des cartes réseau...", "Recherche des adaptateurs Ethernet")
+        if retry and self._cable_variant == "usb":
+            self._set_working(
+                "Attente du boîtier...",
+                f"Windows installe la carte réseau du boîtier "
+                f"({self._scan_tries}/{self._SCAN_ESSAIS})")
+        else:
+            self._set_working("Scan des cartes réseau...", "Recherche des adaptateurs Ethernet")
         t = _AdapterScanner(); t.done.connect(self._on_adapters_scanned)
         self._threads.append(t); t.start()
 
     def _on_adapters_scanned(self, adapters):
+        if not adapters and getattr(self, "_scan_tries", 0) < self._SCAN_ESSAIS:
+            # Rien encore : on laisse au boîtier le temps d'apparaître plutôt
+            # que d'annoncer une absence qui serait démentie deux secondes plus tard.
+            self._scan_tries += 1
+            QTimer.singleShot(self._SCAN_PAUSE_MS,
+                              lambda: self._start_adapter_scan(retry=True))
+            return
+
         while self._adapters_layout.count() > 1:
             item = self._adapters_layout.takeAt(0)
             if item.widget(): item.widget().setParent(None)
@@ -1631,11 +2062,26 @@ class NodeSetupWizard(QDialog):
         self._btn_net_suivant.setEnabled(False)
 
         if not adapters:
-            lbl = QLabel(tr("nc_no_ethernet"))
+            # Le client vient de répondre « une seule prise USB » : lui réclamer
+            # un câble RJ45 qui n'existe pas sur ce boîtier le renvoie chercher
+            # une panne imaginaire. Sur un USB NODE, la carte réseau EST le
+            # boîtier, et elle met quelques secondes à apparaître après le
+            # branchement — c'est ce qu'il faut dire.
+            lbl = QLabel(tr("nc_no_ethernet_usb")
+                         if self._cable_variant == "usb" else tr("nc_no_ethernet"))
             lbl.setStyleSheet("color: #fbbf24; background: #2a2000; border: 1px solid #554400; "
                 "border-radius: 6px; padding: 12px;")
             lbl.setWordWrap(True); lbl.setAlignment(Qt.AlignCenter)
             self._adapters_layout.insertWidget(0, lbl)
+
+            # Ce que les deux sources ont réellement répondu. Sans cette ligne,
+            # « aucune carte » est un cul-de-sac : impossible de distinguer un
+            # boîtier débranché d'une carte que Windows expose mais qu'on filtre.
+            trace = QLabel(_resume_dernier_scan())
+            trace.setStyleSheet("color: #777; font-size: 10px;")
+            trace.setWordWrap(True); trace.setAlignment(Qt.AlignCenter)
+            self._adapters_layout.insertWidget(1, trace)
+
             btn_scan_again = QPushButton(tr("nc_refresh"))
             btn_scan_again.setFixedHeight(34)
             btn_scan_again.setCursor(Qt.PointingHandCursor)
@@ -1645,7 +2091,7 @@ class NodeSetupWizard(QDialog):
                 "QPushButton:hover { background: #223322; color: #88ee88; border-color: #448844; }"
             )
             btn_scan_again.clicked.connect(self._start_adapter_scan)
-            self._adapters_layout.insertWidget(1, btn_scan_again)
+            self._adapters_layout.insertWidget(2, btn_scan_again)
         else:
             # Auto-sélection : déjà ok > câble branché > premier
             recommended = next((name for name, ip, d, c in adapters if ip.startswith("2.0.0.")), None)
@@ -1751,7 +2197,23 @@ class NodeSetupWizard(QDialog):
     def _on_search_done(self, found):
         self._stop_spinner()
         if found:
-            self._go_to(P_W_SUCCESS)
+            # Le boîtier peut avoir répondu depuis son adresse d'usine plutôt
+            # que depuis TARGET_IP. Dans ce cas on aligne MyStrow dessus : le
+            # client n'a plus rien à configurer, ni ici ni chez le fabricant.
+            # Trouver le boîtier ne suffit pas : tant que la sortie DMX pointe
+            # ailleurs (l'USB, ou une adresse où personne n'écoute), rien ne
+            # part sur la ligne. C'est ce qui donnait « Connexion établie » et
+            # un voyant DMX éteint. La bascule fait partie du succès.
+            ip = getattr(self.sender(), "found_ip", "") or TARGET_IP
+            dmx = getattr(self._main_win, "dmx", None) if self._main_win else None
+            if _pointer_mystrow_sur(ip, dmx):
+                self._success_lbl.setText(tr("nc_use_found_ip_done").format(ip=ip))
+                self._go_to(P_W_SUCCESS)
+            else:
+                self._manual_ctx_lbl.setText(tr("nc_found_but_not_switched").format(ip=ip))
+                self._manual_steps_lbl.setText(tr("nc_switch_steps").format(ip=ip))
+                self._net_came_from_method = True
+                self._go_to(P_W_IP_MANUAL)
         else:
             label = f"« {self._adapter_name} »" if self._adapter_name else "votre carte Ethernet"
             self._manual_ctx_lbl.setText(
@@ -2188,7 +2650,7 @@ class DmxOutputDialog(QDialog):
     # ── détection Node asynchrone ────────────────────────────────────────
 
     def _check_node_status(self):
-        self._node_qt = _QuickDetector()
+        self._node_qt = _QuickDetector(self._dmx)
         self._node_qt.finished.connect(self._on_node_checked)
         self._node_scanner = _AdapterScanner()
         self._node_scanner.done.connect(self._on_adapters_for_status)
@@ -2199,7 +2661,12 @@ class DmxOutputDialog(QDialog):
         if found:
             self._node_status_dot.setStyleSheet(
                 "color: #4ade80; font-size: 20px; background: transparent; border: none;")
-            self._node_status_lbl.setText(tr("nc_device_connected"))
+            # Afficher l'adresse retenue : « connecte » tout court laissait
+            # croire que le boitier etait sur TARGET_IP, alors qu'il repond
+            # souvent depuis son adresse d'usine.
+            ip = getattr(self.sender(), "found_ip", "")
+            self._node_status_lbl.setText(
+                tr("nc_device_connected") + (f"  —  {ip}" if ip else ""))
             self._node_status_lbl.setStyleSheet(
                 "color: #4ade80; font-weight: 700; background: transparent; border: none;")
         else:
@@ -2212,7 +2679,12 @@ class DmxOutputDialog(QDialog):
     def _on_adapters_for_status(self, adapters: list):
         for name, ip, desc, connected in adapters:
             if ip.startswith("2."):
-                self._node_net_lbl.setText(name)
+                # Deux adresses en 2.x se côtoient dans cette fenêtre : celle du
+                # PC et celle du boîtier. Sans dire laquelle est laquelle, on
+                # lit « 2.0.0.2 » en croyant voir le node.
+                etiquette = "" if (not name or ip in name) else f"{name} — "
+                self._node_net_lbl.setText(
+                    tr("nc_adapter_this_pc").format(carte=f"{etiquette}{ip}"))
                 self._node_net_lbl.setStyleSheet(
                     "color: #aaa; background: transparent; border: none;")
                 self._set_net_hint(False)
@@ -2472,9 +2944,9 @@ class DmxOutputDialog(QDialog):
         # Pas d'alerte « univers non diffusé » ici : un patch n'occupe presque
         # jamais les 4 univers, et signaler les 3 vides à chaque ouverture ne
         # décrivait qu'une situation normale.
-        doublons  = sorted({u + 1 for u in mapping
-                            if u not in (OUTPUT_OFF, OUTPUT_INPUT)
-                            and mapping.count(u) > 1})
+        # Pas d'alerte « dupliqué (miroir) » non plus : envoyer le même univers
+        # sur deux sorties est un usage courant et volontaire, pas un piège. Le
+        # tableau juste au-dessus le montre déjà, ligne par ligne.
         eteintes  = [n + 1 for n, u in enumerate(mapping) if u == OUTPUT_OFF]
         entrees   = [n + 1 for n, u in enumerate(mapping) if u == OUTPUT_INPUT]
         msgs = []
@@ -2483,8 +2955,6 @@ class DmxOutputDialog(QDialog):
                            a1=", ".join(str(base + n - 1) for n in entrees)))
         if eteintes:
             msgs.append("Sortie désactivée : DMX " + ", DMX ".join(map(str, eteintes)))
-        if doublons:
-            msgs.append("Dupliqué (miroir) : " + ", ".join(map(str, doublons)))
         self._out_hint.setText("   ·   ".join(msgs))
 
     def _journal(self, text: str, level: str = "info"):
@@ -2515,9 +2985,13 @@ class DmxOutputDialog(QDialog):
             actifs = [u for u in mapping if u not in (OUTPUT_OFF, OUTPUT_INPUT)]
             mirror_on = len(set(actifs)) < len(actifs)
             u2 = self._dmx.universe + 1
+            # L'IP du node est DECOUVERTE, jamais supposee : l'interface n'offre
+            # aucun champ pour la saisir, donc une constante fausse enfermait
+            # l'utilisateur sans recours.
+            ip_node = _ip_node_a_viser(self._dmx)
             self._dmx.connect(
                 transport=TRANSPORT_ARTNET,
-                target_ip=TARGET_IP,
+                target_ip=ip_node,
                 target_port=TARGET_PORT,
                 universe=0,
                 universe2=u2,
@@ -2531,10 +3005,10 @@ class DmxOutputDialog(QDialog):
                 for n, u in enumerate(mapping)) if mapping else ""
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(
-                f"Sortie Node appliquée — {TARGET_IP}:{TARGET_PORT}"
+                f"Sortie Node appliquée — {ip_node}:{TARGET_PORT}"
                 + (f"  •  {routage}" if routage else ""))
             self._journal(
-                f"Sortie DMX : Art-Net connecté — {TARGET_IP}:{TARGET_PORT}"
+                f"Sortie DMX : Art-Net connecté — {ip_node}:{TARGET_PORT}"
                 + (f"  ({routage})" if routage else ""),
                 "success",
             )

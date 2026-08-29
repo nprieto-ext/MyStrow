@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter
 )
 from PySide6.QtCore import Qt, QSize, QTimer, QUrl, QPoint, QRect, QMimeData
-from PySide6.QtGui import QColor, QPainter, QPen, QPolygon, QPalette, QBrush, QCursor, QKeySequence, QShortcut, QDrag, QPixmap
+from PySide6.QtGui import (QColor, QPainter, QPen, QPolygon, QPalette, QBrush, QCursor,
+                           QKeySequence, QShortcut, QDrag, QPixmap, QActionGroup)
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 except ImportError:
@@ -51,7 +52,8 @@ from light_timeline import (LightTrack, LightClip, PalettePanel, LibraryPanel,
                             xfade_resolve, xfade_obj_get as _clip_obj_get,
                             scope_layers_to_groups,
                             REC_MEM_COL_START, REC_MEM_COL_END)
-from core import media_icon, create_icon, apply_special_block, ComboSansMolette
+from core import (media_icon, create_icon, apply_special_block, ComboSansMolette,
+                  projector_track_key, is_projector_track)
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
 
@@ -230,6 +232,13 @@ class LightTimelineEditor(QDialog):
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # Préférences d'affichage (menu Affichage) — lues avant la barre de
+        # menus, qui coche les entrées à partir d'elles.
+        self._pdf_show_action  = None
+        self._proj_show_action = None
+        self._row_scale_group  = None
+        self._load_view_prefs()
+
         # Menu bar
         menubar = self._create_menu_bar()
         layout.addWidget(menubar)
@@ -241,7 +250,6 @@ class LightTimelineEditor(QDialog):
         # ── Layout principal : [Gauche: bibliothèque] | [Droite: plan de feu / timeline] ──
         self._pdf_window = None
         self._live_pdf = None
-        self._pdf_show_action = None
 
         _splitter_ss = "QSplitter::handle { background: #1e1e1e; }"
 
@@ -324,6 +332,9 @@ class LightTimelineEditor(QDialog):
         # Piste waveform en haut (masquee pour images et pauses)
         self.track_waveform = LightTrack("Audio", self.media_duration, self, "#00d4ff")
         self.track_waveform.setAcceptDrops(False)
+        # Pas de cadenas sur l'Audio : elle ne porte aucun bloc, il n'y aurait
+        # rien à protéger. L'oeil, lui, sert (masquer la forme d'onde).
+        self.track_waveform.lockable = False
         self.track_waveform.setMinimumHeight(80)
 
         is_image = self.media_path and media_icon(self.media_path) == "image"
@@ -433,6 +444,9 @@ class LightTimelineEditor(QDialog):
         # Charger sequence existante
         self.load_existing_sequence()
 
+        # Plan de feu masqué / densité des lignes retenus de la session précédente.
+        self._apply_view_prefs()
+
         # Forcer affichage du curseur
         QTimer.singleShot(100, lambda: self.ruler.update())
 
@@ -519,6 +533,11 @@ class LightTimelineEditor(QDialog):
         TRACK_ORDER = ["A", "B", "C", "D", "E", "F",
                        "Lyres", "Barres", "Strobos", "Fumee"]
 
+        # Gardés pour les pistes projecteur, créées à la demande bien après
+        # cette méthode (bouton « ＋ Projecteur »).
+        self._group_display = GROUP_DISPLAY
+        self._track_colors  = TRACK_COLORS
+
         seen_groups = []
         for proj in projectors:
             gname = GROUP_DISPLAY.get(proj.group, proj.group.capitalize())
@@ -535,64 +554,27 @@ class LightTimelineEditor(QDialog):
         # ── Piste Effet (tout en haut — priorité absolue sur les groupes) ─
         eff_track = LightTrack("Effet", self.media_duration, self, "#cc44ff")
         eff_track.is_effect_track = True
-        eff_track.setMinimumHeight(50)
+        eff_track.set_base_height(50)
         self.tracks.append(eff_track)
         self.track_map["Effet"] = eff_track
         self._effect_tracks = [eff_track]
         tracks_layout.addWidget(eff_track)
 
-        # ── Bouton + Piste Effet (max 4) ──────────────────────────────────
-        self._add_eff_btn_row = QWidget()
-        self._add_eff_btn_row.setFixedHeight(24)
-        self._add_eff_btn_row.setStyleSheet("background: #0a0a0a;")
-        _aer_lay = QHBoxLayout(self._add_eff_btn_row)
-        _aer_lay.setContentsMargins(11, 2, 11, 2)
-        _aer_lay.setSpacing(0)
-        self._add_eff_btn = QPushButton(tr("tle_add_effect"))
-        self._add_eff_btn.setFixedHeight(20)
-        self._add_eff_btn.setCursor(Qt.PointingHandCursor)
-        self._add_eff_btn.setStyleSheet(self._add_track_btn_style("#cc44ff"))
-        self._add_eff_btn.clicked.connect(self._add_effect_track)
-        _aer_lay.addWidget(self._add_eff_btn)
-        _aer_lay.addStretch()
-        tracks_layout.addWidget(self._add_eff_btn_row)
-        # Gardé pour épingler le bouton au bord gauche du viewport (on_scroll_changed).
-        self._add_eff_btn_lay = _aer_lay
-
         # ── Piste Séquence (avant les groupes) ────────────────────────────
         seq_track = LightTrack("Séquence", self.media_duration, self, "#aa77ff")
         seq_track.is_sequence_track = True
-        seq_track.setMinimumHeight(50)
+        seq_track.set_base_height(50)
         self.tracks.append(seq_track)
         self.track_map["Séquence"] = seq_track
         self._sequence_tracks = [seq_track]
         tracks_layout.addWidget(seq_track)
-
-        # ── Bouton + Piste Séquence (superposition HTP de plusieurs mémoires) ─
-        self._add_seq_btn_row = QWidget()
-        self._add_seq_btn_row.setFixedHeight(24)
-        self._add_seq_btn_row.setStyleSheet("background: #0a0a0a;")
-        _asr_lay = QHBoxLayout(self._add_seq_btn_row)
-        _asr_lay.setContentsMargins(11, 2, 11, 2)
-        _asr_lay.setSpacing(0)
-        self._add_seq_btn = QPushButton(tr("te2_add_sequence"))
-        self._add_seq_btn.setFixedHeight(20)
-        self._add_seq_btn.setCursor(Qt.PointingHandCursor)
-        self._add_seq_btn.setStyleSheet(self._add_track_btn_style("#aa77ff"))
-        self._add_seq_btn.setToolTip(
-            tr("tle_add_seq_hint"))
-        self._add_seq_btn.clicked.connect(self._add_sequence_track)
-        _asr_lay.addWidget(self._add_seq_btn)
-        _asr_lay.addStretch()
-        tracks_layout.addWidget(self._add_seq_btn_row)
-        self._add_seq_btn_lay = _asr_lay
 
         # ── Piste Position Lyre (si au moins une lyre dans le patch) ──────────
         has_lyres = any(getattr(p, 'fixture_type', '') == 'Moving Head' for p in projectors)
         if has_lyres:
             pos_track = LightTrack("Position", self.media_duration, self, "#2255ee")
             pos_track.is_position_track = True
-            pos_track.setMinimumHeight(50)
+            pos_track.set_base_height(50)
             self.tracks.append(pos_track)
             self.track_map["Position"] = pos_track
             tracks_layout.addWidget(pos_track)
@@ -603,10 +585,37 @@ class LightTimelineEditor(QDialog):
         if has_gobo:
             gobo_track = LightTrack("Gobo", self.media_duration, self, "#e6c060")
             gobo_track.is_gobo_track = True
-            gobo_track.setMinimumHeight(50)
+            gobo_track.set_base_height(50)
             self.tracks.append(gobo_track)
             self.track_map["Gobo"] = gobo_track
             tracks_layout.addWidget(gobo_track)
+
+        # ── Groupes, chacun suivi de SES projecteurs ──────────────────────
+        # Une piste par fixture du patch, créée d'emblée : on n'a pas à
+        # « ajouter » un projecteur qui est déjà dans le rig, il est là, on
+        # dépose un bloc dessus quand on en a besoin. Affichage → Pistes par
+        # projecteur replie tout le paquet, et Hauteur des lignes tasse la
+        # timeline quand le patch est gros.
+        #
+        # Elles sont rangées SOUS leur groupe, décalées vers la droite, plutôt
+        # qu'entassées en fin de timeline : « Face 2 » se lit alors comme une
+        # dérivation du groupe A, et on ne traverse plus tout l'écran pour aller
+        # d'un groupe à l'un de ses projecteurs.
+        #
+        # Cet ordre n'est pas que cosmétique, c'est la règle de PRIORITÉ : la
+        # sauvegarde sérialise les clips piste par piste dans cet ordre, la
+        # restitution les rejoue dans cet ordre, et la timeline est un writer
+        # ABSOLU (chaque image repart d'une page blanche, cf.
+        # `apply_timeline_to_dmx`) — la dernière piste écrite gagne. Ce qui
+        # compte, c'est que chaque projecteur passe après SON groupe ; ils ne se
+        # marchent jamais dessus d'un groupe à l'autre, `get_track_to_indices`
+        # ne faisant jamais viser à un groupe les fixtures d'un autre.
+        self._projector_tracks = []
+        par_groupe = {}
+        for (key, _lbl, _col), proj in zip(self._projector_track_entries(),
+                                           projectors):
+            gdisp = GROUP_DISPLAY.get(proj.group, proj.group.capitalize())
+            par_groupe.setdefault(gdisp, []).append(key)
 
         for gname in seen_groups:
             color = TRACK_COLORS.get(gname, "#4488ff")
@@ -614,6 +623,15 @@ class LightTimelineEditor(QDialog):
             self.tracks.append(track)
             self.track_map[gname] = track
             tracks_layout.addWidget(track)
+            for key in par_groupe.pop(gname, []):
+                self._add_projector_track_named(key)
+
+        # Fixtures dont le groupe n'a PAS de piste (machines à fumée, groupe
+        # inconnu) : elles gardent la leur, à la fin, sinon elles seraient
+        # simplement injoignables depuis la timeline.
+        for restantes in par_groupe.values():
+            for key in restantes:
+                self._add_projector_track_named(key)
 
         # Alias de compatibilite pour le code existant
         self.track_face = self.track_map.get("A")
@@ -669,26 +687,16 @@ class LightTimelineEditor(QDialog):
             return
         new_track = LightTrack(name, self.media_duration, self, "#cc44ff")
         new_track.is_effect_track = True
-        new_track.setMinimumHeight(50)
-        # Insérer dans le layout juste avant le bouton +
-        idx = self._tracks_layout.indexOf(self._add_eff_btn_row)
-        self._tracks_layout.insertWidget(idx, new_track)
+        new_track.set_base_height(50)
+        new_track.apply_height_scale(getattr(self, '_view_row_scale', 0.75))
+        # Juste après la dernière piste Effet (elles restent groupées en tête).
+        idx = self._tracks_layout.indexOf(self._effect_tracks[-1])
+        self._tracks_layout.insertWidget(idx + 1, new_track)
         # Insérer dans self.tracks juste après le dernier effet track
         last_idx = self.tracks.index(self._effect_tracks[-1])
         self.tracks.insert(last_idx + 1, new_track)
         self.track_map[name] = new_track
         self._effect_tracks.append(new_track)
-        # Bouton × de suppression
-        rm_btn = QPushButton("×", new_track)
-        rm_btn.setFixedSize(16, 16)
-        rm_btn.move(118, 2)
-        rm_btn.setCursor(Qt.PointingHandCursor)
-        rm_btn.setToolTip(tr("te2_del_track"))
-        rm_btn.setStyleSheet(self._remove_track_btn_style("#cc44ff"))
-        rm_btn.clicked.connect(lambda checked=False, t=new_track: self._remove_effect_track(t))
-        rm_btn.show()
-        if len(self._effect_tracks) >= self._MAX_EFFECT_TRACKS:
-            self._add_eff_btn.setEnabled(False)
         if self.track_waveform.waveform_data:
             new_track.waveform_data = self.track_waveform.waveform_data
         new_track.update()
@@ -705,7 +713,6 @@ class LightTimelineEditor(QDialog):
             self.tracks.remove(track)
         self._tracks_layout.removeWidget(track)
         track.deleteLater()
-        self._add_eff_btn.setEnabled(True)
 
     # ── REC séquence (poussoir) ────────────────────────────────────────────────
 
@@ -947,23 +954,14 @@ class LightTimelineEditor(QDialog):
             return
         new_track = LightTrack(name, self.media_duration, self, "#aa77ff")
         new_track.is_sequence_track = True
-        new_track.setMinimumHeight(50)
-        idx = self._tracks_layout.indexOf(self._add_seq_btn_row)
-        self._tracks_layout.insertWidget(idx, new_track)
+        new_track.set_base_height(50)
+        new_track.apply_height_scale(getattr(self, '_view_row_scale', 0.75))
+        idx = self._tracks_layout.indexOf(self._sequence_tracks[-1])
+        self._tracks_layout.insertWidget(idx + 1, new_track)
         last_idx = self.tracks.index(self._sequence_tracks[-1])
         self.tracks.insert(last_idx + 1, new_track)
         self.track_map[name] = new_track
         self._sequence_tracks.append(new_track)
-        rm_btn = QPushButton("×", new_track)
-        rm_btn.setFixedSize(16, 16)
-        rm_btn.move(118, 2)
-        rm_btn.setCursor(Qt.PointingHandCursor)
-        rm_btn.setToolTip(tr("te2_del_track"))
-        rm_btn.setStyleSheet(self._remove_track_btn_style("#aa77ff"))
-        rm_btn.clicked.connect(lambda checked=False, t=new_track: self._remove_sequence_track(t))
-        rm_btn.show()
-        if len(self._sequence_tracks) >= self._MAX_SEQUENCE_TRACKS:
-            self._add_seq_btn.setEnabled(False)
         if self.track_waveform.waveform_data:
             new_track.waveform_data = self.track_waveform.waveform_data
         new_track.update()
@@ -978,7 +976,143 @@ class LightTimelineEditor(QDialog):
             self.tracks.remove(track)
         self._tracks_layout.removeWidget(track)
         track.deleteLater()
-        self._add_seq_btn.setEnabled(True)
+
+    # ── Pistes « un projecteur seul » ────────────────────────────────────────
+
+    def _layout_append_track(self, widget):
+        """Ajoute une piste à la fin de la zone des pistes.
+
+        Le ressort final (`addStretch`) n'existe qu'une fois la construction
+        terminée : pendant celle-ci on ajoute à la suite, après on insère AVANT
+        lui — sans quoi la piste atterrirait sous l'espace vide.
+        """
+        lay = self._tracks_layout
+        n = lay.count()
+        if n and lay.itemAt(n - 1).spacerItem() is not None:
+            lay.insertWidget(n - 1, widget)
+        else:
+            lay.addWidget(widget)
+
+    def _projector_track_entries(self):
+        """[(clé, libellé, couleur)] pour chaque projecteur du patch, dans l'ordre.
+
+        La CLÉ (`core.projector_track_key`) est ce qui part dans le .tui : elle
+        ne tient qu'au groupe et au rang du projo DANS son groupe, jamais à son
+        nom — renommer « Face 2 » ne doit pas orpheliner les blocs déjà posés.
+        Le LIBELLÉ, lui, suit le nom du patch et n'est qu'affiché.
+        """
+        entries = []
+        counters = {}
+        gd = getattr(self, '_group_display', None) or             getattr(self.main_window, 'GROUP_DISPLAY', {}) or {}
+        colors = getattr(self, '_track_colors', {}) or {}
+        for proj in self.main_window.projectors:
+            gdisp = gd.get(proj.group, proj.group.capitalize())
+            local = counters.get(proj.group, 0)
+            counters[proj.group] = local + 1
+            label = (getattr(proj, 'name', '') or '').strip() or f"{gdisp}{local + 1}"
+            entries.append((projector_track_key(gdisp, local), label,
+                            colors.get(gdisp, "#4488ff")))
+        return entries
+
+    def _add_projector_track_named(self, key):
+        """Crée la piste dédiée au projecteur `key`, à la fin du paquet.
+
+        Appelée pour CHAQUE fixture du patch à l'ouverture, et à nouveau depuis
+        `load_existing_sequence` / l'undo pour une clé qui ne correspond à aucun
+        projecteur actuel. Ce cas-là — fixture supprimée du patch depuis
+        l'enregistrement — crée quand même la piste, en gris et marquée
+        « projecteur retiré du patch » : sans ça, ouvrir un vieux REC ferait
+        disparaître ses blocs en silence, et ils ne reviendraient jamais.
+        """
+        if key in self.track_map:
+            return self.track_map[key]
+
+        label, color = None, "#66ddaa"
+        for k, lbl, col in self._projector_track_entries():
+            if k == key:
+                label, color = lbl, col
+                break
+        orphelin = label is None
+        if orphelin:
+            label = f"{key[1:]} ?"
+            color = "#7a7a7a"
+
+        new_track = LightTrack(key, self.media_duration, self, color)
+        new_track.is_projector_track = True
+        # Décalées vers la droite : avec un rig de 40 fixtures, c'est ce retrait
+        # qui distingue d'un coup d'oeil la piste d'un projecteur de celle de
+        # son groupe. La barre de couleur à gauche dit déjà de quel groupe.
+        new_track.label_indent = 12
+        new_track.set_base_height(50)
+        new_track.apply_height_scale(getattr(self, '_view_row_scale', 0.75))
+        # `name` reste la clé (c'est elle qui est sérialisée) ; seul l'affichage
+        # suit le nom de la fixture.
+        new_track.display_label = label
+        new_track.setToolTip(tr("tle_proj_track_orphan") if orphelin else f"{key[1:]} — {label}")
+
+        self._layout_append_track(new_track)
+        # En FIN de self.tracks : cet ordre EST la règle de priorité (cf.
+        # _create_tracks_from_fixtures). Les pistes projecteur restent donc
+        # toujours après les groupes.
+        self.tracks.append(new_track)
+        self.track_map[key] = new_track
+        self._projector_tracks.append(new_track)
+
+        # Seule une piste orpheline se supprime : les autres décrivent le rig,
+        # les retirer n'aurait pas de sens (le projecteur, lui, existe). Le
+        # drapeau est lu par `LightTrack.show_header_menu`.
+        new_track._orphelin = orphelin
+    
+        if self.track_waveform.waveform_data:
+            new_track.waveform_data = self.track_waveform.waveform_data
+        # Aligner la piste neuve sur le zoom ET le défilement courants : créée à
+        # 0.05 px/ms avec son libellé collé à gauche, elle apparaissait à une
+        # autre échelle que ses voisines et son libellé hors de l'écran dès
+        # qu'on avait scrollé (les libellés sont épinglés à la main).
+        new_track.update_zoom(0.05 * getattr(self, 'current_zoom', 1.0))
+        self._sync_track_visibility(new_track)
+        new_track.update()
+        return new_track
+
+    def _remove_projector_track(self, track):
+        """Retire une piste projecteur ORPHELINE (fixture absente du patch)."""
+        if track not in self._projector_tracks:
+            return
+        if track.clips:
+            rep = QMessageBox.question(
+                self, tr("tle_del_proj_track"),
+                tr("tle_del_proj_track_confirm",
+                   name=track.display_name(), n=len(track.clips)),
+                QMessageBox.Yes | QMessageBox.No)
+            if rep != QMessageBox.Yes:
+                return
+        self._projector_tracks.remove(track)
+        self.track_map.pop(track.name, None)
+        if track in self.tracks:
+            self.tracks.remove(track)
+        self._tracks_layout.removeWidget(track)
+        track.deleteLater()
+        self._rebuild_rows_menu()
+        self.save_state()
+        self._save_sequence_no_close()
+
+
+    def set_projector_section_open(self, ouvert, save=True):
+        """Déplie ou replie d'un coup toutes les pistes « un projecteur seul ».
+
+        Les pistes EXISTENT dans les deux cas — on ne joue que sur leur
+        visibilité. C'est ce qui permet de replier le paquet sans perdre les
+        blocs qu'on y a posés, et de rouvrir un show sur un poste où le paquet
+        était replié sans que sa lumière change d'un iota.
+        """
+        self._view_proj_open = bool(ouvert)
+        for track in getattr(self, '_projector_tracks', []) or []:
+            self._sync_track_visibility(track)
+        act = getattr(self, '_proj_show_action', None)
+        if act is not None and act.isChecked() != self._view_proj_open:
+            act.setChecked(self._view_proj_open)
+        if save:
+            self._save_view_prefs()
 
     def _get_waveform_cache_path(self):
         """Retourne le chemin du fichier cache pour la forme d'onde"""
@@ -1353,6 +1487,15 @@ class LightTimelineEditor(QDialog):
         dup_track_action = edit_menu.addAction(tr("tle_dup_track"))
         dup_track_action.triggered.connect(self.duplicate_group_track)
 
+        # Anciennement deux boutons « ＋ » posés sous les pistes. Ils meublaient
+        # la timeline en permanence pour une action qu'on fait deux fois par an :
+        # ils vivent ici, et dans le clic droit sur l'en-tête d'une piste.
+        edit_menu.addSeparator()
+        edit_menu.addAction(tr("tle_add_effect_track")).triggered.connect(
+            self._add_effect_track)
+        edit_menu.addAction(tr("te2_add_sequence_track")).triggered.connect(
+            self._add_sequence_track)
+
         # === TOOLS ===
         effect_menu = menubar.addMenu(tr("te_menu_effect"))
         fade_in_action = effect_menu.addAction(tr("tle_fade_in"))
@@ -1366,6 +1509,43 @@ class LightTimelineEditor(QDialog):
         speed_action.triggered.connect(self.edit_effect_speed_selection)
         fx_editor_action = effect_menu.addAction(tr("te_menu_fx_editor"))
         fx_editor_action.triggered.connect(self.open_effect_editor)
+
+        # ── Affichage ─────────────────────────────────────────────────────
+        # Deux réglages de confort, mémorisés d'une ouverture à l'autre dans la
+        # config AKAI (cf. `_load_view_prefs` / `_save_view_prefs`).
+        view_menu = menubar.addMenu(tr("menu_view"))
+
+        self._pdf_show_action = view_menu.addAction(tr("tle_view_plan2d"))
+        self._pdf_show_action.setCheckable(True)
+        self._pdf_show_action.setChecked(self._view_pdf_visible)
+        self._pdf_show_action.toggled.connect(self._toggle_pdf_panel)
+
+        self._proj_show_action = view_menu.addAction(tr("tle_view_projectors"))
+        self._proj_show_action.setCheckable(True)
+        self._proj_show_action.setChecked(self._view_proj_open)
+        self._proj_show_action.toggled.connect(self.set_projector_section_open)
+
+        view_menu.addSeparator()
+
+        self._rows_menu = view_menu.addMenu(tr("tle_view_rows"))
+        self._rebuild_rows_menu()
+
+        view_menu.addSeparator()
+
+        rows_menu = view_menu.addMenu(tr("tle_view_row_height"))
+        self._row_scale_group = QActionGroup(self)
+        self._row_scale_group.setExclusive(True)
+        for label, facteur in ((tr("tle_view_rows_100"), 1.0),
+                               (tr("tle_view_rows_75"),  0.75),
+                               (tr("tle_view_rows_50"),  0.5),
+                               (tr("tle_view_rows_25"),  0.25)):
+            act = rows_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(abs(facteur - self._view_row_scale) < 0.01)
+            act.setData(facteur)
+            self._row_scale_group.addAction(act)
+            act.triggered.connect(
+                lambda checked=False, f=facteur: self.set_row_height_scale(f))
 
         tools_menu = menubar.addMenu(tr("te_menu_tools"))
 
@@ -1587,6 +1767,9 @@ class LightTimelineEditor(QDialog):
             return
         if enabled:
             self._video_preview_container.show()
+            # Le bandeau du haut peut avoir été escamoté avec le plan de feu :
+            # sans ce rappel, activer l'aperçu vidéo n'affichait rien.
+            self._sync_top_band()
             self._top_splitter.setSizes([
                 self._top_splitter.width() * 2 // 3,
                 self._top_splitter.width() // 3,
@@ -1596,6 +1779,7 @@ class LightTimelineEditor(QDialog):
                 self.preview_player.setVideoOutput(self.preview_video_widget)
         else:
             self._video_preview_container.hide()
+            self._sync_top_band()
             if self.preview_player is not None:
                 self.preview_player.setVideoOutput(None)
 
@@ -2091,33 +2275,12 @@ class LightTimelineEditor(QDialog):
         """Met a jour le ruler quand on scroll et gele la colonne label gauche"""
         self.ruler.update()
         # Maintenir les labels de piste collés au bord gauche du viewport
+        # Les en-têtes sont PEINTS à `value` (cf. LightTrack._paint_header) :
+        # un simple repaint suffit, il n'y a plus de widget à replacer.
         for track in self.tracks + [self.track_waveform]:
-            if hasattr(track, 'label'):
-                track.label.move(value + 11, track.label.y())
-            if hasattr(track, '_collapse_btn'):
-                track._collapse_btn.move(value + 119, track._collapse_btn.y())
             track.update()
-        self._pin_add_track_buttons(value)
 
-    def _pin_add_track_buttons(self, value=None):
-        """Colle les boutons « ＋ Effet » / « ＋ Séquence » au bord gauche du viewport.
 
-        Ils vivent dans le conteneur qui défile horizontalement : sans ça, ajouter
-        une piste obligeait à revenir tout au début de la timeline pour retrouver
-        le bouton. Les libellés de piste étaient déjà épinglés, pas eux.
-
-        On décale la MARGE du layout plutôt que de déplacer le bouton : un
-        simple move() serait annulé au premier recalcul de layout.
-        """
-        if value is None:
-            value = self.tracks_scroll.horizontalScrollBar().value()
-        for lay in (getattr(self, '_add_eff_btn_lay', None),
-                    getattr(self, '_add_seq_btn_lay', None)):
-            if lay is None:
-                continue
-            m = lay.contentsMargins()
-            if m.left() != value + 11:
-                lay.setContentsMargins(value + 11, m.top(), m.right(), m.bottom())
 
     def update_cursor_from_ruler(self, event):
         """Met a jour curseur depuis position souris (avec auto-scroll aux bords)"""
@@ -2343,20 +2506,15 @@ class LightTimelineEditor(QDialog):
         track_to_indices = self.main_window.get_track_to_indices()
         projectors = self.main_window.projectors
 
-        # Éteindre tous les projecteurs
-        for p in projectors:
-            p.level = 0
-            p.base_color = QColor("black")
-            p.color = QColor("black")
-            p.strobe_speed = 0
-            p.color_wheel = 0
-            # Canaux bruts (Mode…) remis à zéro chaque frame — parité restitution
-            p.channel_extras = {}
-            # Canaux dédiés (UV, Blanc, Ambre, Orange) : sans ce reset, une valeur
-            # posée avant la lecture (curseur du plan de feu, rappel mémoire,
-            # effet) restait collée toute la séquence, et un bloc UV ne
-            # s'éteignait jamais à sa fin.
-            p.uv = p.white_boost = p.amber_boost = p.orange_boost = 0
+        # Éteindre tous les projecteurs — page blanche avant de réappliquer les
+        # clips actifs. MÊME fonction que la restitution (`sequencer.py`,
+        # `apply_timeline_to_dmx`) : la liste était recopiée à la main des deux
+        # côtés et oubliait tout le faisceau (gobo, zoom, focus, prisme, shutter,
+        # effects/speed/mode_value), qui restait donc collé après la fin d'un
+        # bloc mémoire. Une seule définition du repos = aperçu et show identiques.
+        # Pan/tilt volontairement exclu (sinon les lyres se recentrent en boucle).
+        from light_timeline import reset_beam_channels
+        reset_beam_channels(projectors, blackout=True)
 
         # Projecteurs sous un clip couleur/séquence actif ce frame : l'effet
         # (qui s'applique après) devra suivre leur couleur + leur fade in/out
@@ -2719,6 +2877,11 @@ class LightTimelineEditor(QDialog):
                     self._add_effect_track_named(tname)
                 elif tname.startswith('Séquence') and tname != 'Séquence' and tname not in self.track_map:
                     self._add_sequence_track_named(tname)
+                elif is_projector_track(tname) and tname not in self.track_map:
+                    # Pistes « un projecteur seul » : recréées à l'identique
+                    # depuis la sauvegarde, y compris quand la fixture a disparu
+                    # du patch — sinon ses blocs seraient jetés en silence.
+                    self._add_projector_track_named(tname)
 
             for clip_data in clips_data:
                 track_name = clip_data.get('track')
@@ -2990,6 +3153,10 @@ class LightTimelineEditor(QDialog):
         # Charger les nouveaux clips
         for clip_data in clips_data:
             track_name = clip_data.get('track')
+            # Un .lrec venu d'un autre show peut porter des pistes projecteur
+            # absentes ici : on les recrée, comme à l'ouverture d'un REC.
+            if is_projector_track(track_name) and track_name not in self.track_map:
+                self._add_projector_track_named(track_name)
             track = self.track_map.get(track_name)
             if not track:
                 continue
@@ -3037,8 +3204,10 @@ class LightTimelineEditor(QDialog):
                                 or getattr(t, 'is_position_track', False)
                                 or getattr(t, 'is_gobo_track', False)
                                 or t.name == "Audio")]
-        names = [t.name for t in group_tracks]
-        if len(names) < 2:
+        # Libellé affiché ≠ nom interne pour les pistes projecteur (« @A2 ») :
+        # on montre le nom de la fixture et on garde la clé en itemData.
+        entries = [(t.display_name(), t.name) for t in group_tracks]
+        if len(entries) < 2:
             QMessageBox.information(self, tr("tle_duplicate"),
                 tr("tle_need_two_tracks"))
             return
@@ -3054,9 +3223,14 @@ class LightTimelineEditor(QDialog):
         v = QVBoxLayout(dlg)
         v.setContentsMargins(22, 20, 22, 18); v.setSpacing(10)
         v.addWidget(QLabel(tr("te2_copy_from")))
-        src_cb = ComboSansMolette(); src_cb.addItems(names); v.addWidget(src_cb)
+        src_cb = ComboSansMolette()
+        for _lbl, _key in entries:
+            src_cb.addItem(_lbl, _key)
+        v.addWidget(src_cb)
         v.addWidget(QLabel(tr("te2_copy_to")))
-        dst_cb = ComboSansMolette(); dst_cb.addItems(names)
+        dst_cb = ComboSansMolette()
+        for _lbl, _key in entries:
+            dst_cb.addItem(_lbl, _key)
         dst_cb.setCurrentIndex(1)
         v.addWidget(dst_cb)
         row = QHBoxLayout(); row.addStretch()
@@ -3066,7 +3240,7 @@ class LightTimelineEditor(QDialog):
 
         if dlg.exec() != QDialog.Accepted:
             return
-        self._do_duplicate_track(src_cb.currentText(), dst_cb.currentText())
+        self._do_duplicate_track(src_cb.currentData(), dst_cb.currentData())
 
     def _do_duplicate_track(self, src_name, dst_name):
         """Copie tous les clips de la piste src_name vers dst_name (remplace)."""
@@ -3077,9 +3251,15 @@ class LightTimelineEditor(QDialog):
         dst = self.track_map.get(dst_name)
         if not src or not dst:
             return
+        if not self._editable(dst):
+            QMessageBox.information(self, tr("tle_duplicate"),
+                                    tr("tle_track_locked", name=dst.display_name()))
+            return
+        # Messages : libellé lisible, pas la clé interne d'une piste projecteur.
+        src_disp, dst_disp = src.display_name(), dst.display_name()
         if dst.clips:
             if QMessageBox.question(self, tr("tle_replace_q"),
-                    tr("tle_f_track_not_empty", dst_name=dst_name, a0=len(dst.clips), src_name=src_name),
+                    tr("tle_f_track_not_empty", dst_name=dst_disp, a0=len(dst.clips), src_name=src_disp),
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
         self.save_state()
@@ -3260,6 +3440,32 @@ class LightTimelineEditor(QDialog):
         _scope = "sélection" if selected else "global"
         print(f"↔️ Décalage {_scope} de {delta_ms} ms ({len(target_clips)} clips)")
 
+    def _ai_generable_tracks(self):
+        """Pistes que la génération IA peut remplir — elle n'écrit QUE des blocs
+        de couleur, donc uniquement les pistes de groupe non verrouillées.
+
+        Séquence / Position / Gobo / Effet portent des blocs d'une autre nature
+        (mémoire, preset de position, gobo, effet) : un bloc de couleur posé là
+        ne déclenche rien. La piste Effet était la seule à manquer à cette
+        liste — ses blocs générés s'affichaient « ✨ Effet », sans `effect_name`
+        ni couches, alors que l'aperçu comme la restitution exigent un nom
+        résolu dans le catalogue pour armer quoi que ce soit. Et comme la case
+        était cochée d'office, générer commençait par EFFACER les vrais effets
+        déjà posés (`perform_ai_generation` vide les pistes sélectionnées).
+
+        Les pistes projecteur sont exclues pour une autre raison : la génération
+        écrit un show par GROUPES, et un rig de 40 fixtures remplirait la boîte
+        de 40 cases inutiles. Elles priment de toute façon sur leur groupe — les
+        remplir d'office masquerait le show généré.
+        """
+        return [t for t in self.tracks
+                if not (getattr(t, 'is_sequence_track', False)
+                        or getattr(t, 'is_position_track', False)
+                        or getattr(t, 'is_gobo_track', False)
+                        or getattr(t, 'is_effect_track', False)
+                        or getattr(t, 'is_projector_track', False)
+                        or not self._editable(t))]
+
     def generate_ai_sequence(self):
         """Genere une sequence avec IA"""
         dialog = QDialog(self)
@@ -3311,12 +3517,9 @@ class LightTimelineEditor(QDialog):
         layout.addWidget(tracks_label)
 
         tracks_checks = {}
-        for track in self.tracks:
-            if (getattr(track, 'is_sequence_track', False) or getattr(track, 'is_position_track', False)
-                    or getattr(track, 'is_gobo_track', False)):
-                continue
+        for track in self._ai_generable_tracks():
             clip_count = len(track.clips)
-            checkbox = QCheckBox(f"{track.name} {'(' + str(clip_count) + ' clips)' if clip_count > 0 else ''}")
+            checkbox = QCheckBox(f"{track.display_name()} {'(' + str(clip_count) + ' clips)' if clip_count > 0 else ''}")
             checkbox.setChecked(True)
             checkbox.setStyleSheet("""
                 QCheckBox { color: white; font-size: 13px; spacing: 10px; }
@@ -3667,21 +3870,198 @@ class LightTimelineEditor(QDialog):
         h.addWidget(right)
         return panel
 
-    def _toggle_pdf_window(self, checked):
-        """Toggle visibilité du panneau Plan de Feu (colonne droite du panneau bas)."""
-        if not self._live_pdf:
+    # ── Menu Affichage ───────────────────────────────────────────────────────
+
+    _ROW_SCALES = (1.0, 0.75, 0.5, 0.25)
+
+    def _load_view_prefs(self):
+        """Lit les préférences d'affichage. Appelé AVANT de bâtir le menu."""
+        mw = self.main_window
+        self._view_pdf_visible = bool(getattr(mw, 'rec_view_pdf', True))
+        self._view_proj_open   = bool(getattr(mw, 'rec_view_projectors', True))
+        try:
+            self._view_hidden_rows = set(getattr(mw, 'rec_view_hidden_rows', []) or [])
+        except TypeError:
+            self._view_hidden_rows = set()
+        try:
+            scale = float(getattr(mw, 'rec_view_row_scale', 0.75) or 0.75)
+        except (TypeError, ValueError):
+            scale = 0.75
+        self._view_row_scale = scale if scale in self._ROW_SCALES else 0.75
+
+    def _save_view_prefs(self):
+        """Mémorise les réglages dans la config AKAI (~/.maestro_akai_config.json).
+
+        Ce sont des réglages de confort qu'on choisit une fois : les redemander
+        à chaque ouverture du REC Lumière n'aurait aucun sens. Un échec d'écriture
+        ne doit surtout pas empêcher de travailler — on logge et on continue.
+        """
+        mw = self.main_window
+        mw.rec_view_pdf = bool(self._view_pdf_visible)
+        mw.rec_view_projectors = bool(self._view_proj_open)
+        mw.rec_view_hidden_rows = self._hidden_rows_key()
+        mw.rec_view_row_scale = float(self._view_row_scale)
+        try:
+            if hasattr(mw, '_save_akai_config_auto'):
+                mw._save_akai_config_auto()
+        except Exception as e:
+            print(f"[REC] preferences d'affichage non enregistrees : {e}")
+
+    def _apply_view_prefs(self):
+        """Applique les préférences une fois toute la fenêtre construite."""
+        self._toggle_pdf_panel(self._view_pdf_visible, save=False)
+        caches = getattr(self, '_view_hidden_rows', set())
+        for track in self._all_rows():
+            track.row_hidden = track.name in caches
+        self.set_projector_section_open(self._view_proj_open, save=False)
+        for track in self._all_rows():
+            self._sync_track_visibility(track)
+        self._rebuild_rows_menu()
+        self.set_row_height_scale(self._view_row_scale, save=False)
+
+    def _sync_top_band(self):
+        """Montre/masque le bandeau du haut selon ce qu'il lui reste à afficher.
+
+        Il porte DEUX choses : le plan de feu 2D et l'aperçu vidéo. Masquer le
+        plan ne doit donc pas emporter la vidéo — on n'escamote la bande (au
+        profit de la timeline) que lorsqu'elle serait vide.
+        """
+        band = getattr(self, '_top_splitter', None)
+        if band is None:
             return
-        parent = self._live_pdf.parent()
-        if parent:
-            parent.setVisible(checked)
-        if self._pdf_show_action:
-            self._pdf_show_action.setChecked(checked)
+        video_on = not self._video_preview_container.isHidden()
+        band.setVisible(bool(self._view_pdf_visible) or video_on)
+
+    def _toggle_pdf_panel(self, visible, save=True):
+        """Affiche ou masque le plan de feu 2D embarqué.
+
+        On MASQUE le widget, on ne le détruit pas et on ne remet pas `_live_pdf`
+        à None : c'est `_apply_preview_to_projectors` qui sort en tête quand il
+        vaut None, et c'est cette même méthode qui pousse le DMX pendant la
+        lecture de l'éditeur. Le mettre à None couperait la lumière en même
+        temps que l'affichage.
+        """
+        self._view_pdf_visible = bool(visible)
+        if self._live_pdf is not None:
+            self._live_pdf.setVisible(self._view_pdf_visible)
+        self._sync_top_band()
+        if self._pdf_show_action is not None and \
+                self._pdf_show_action.isChecked() != self._view_pdf_visible:
+            self._pdf_show_action.setChecked(self._view_pdf_visible)
+        if save:
+            self._save_view_prefs()
+
+    def _all_rows(self):
+        """Toutes les lignes que le menu Affichage pilote, Audio comprise.
+
+        `track_waveform` ne vit PAS dans `self.tracks` (elle ne porte aucun
+        bloc). Elle a pourtant un oeil comme les autres : l'oublier ici la
+        rendait masquable sans aucun moyen de la faire revenir.
+        """
+        rows = list(getattr(self, 'tracks', []) or [])
+        wf = getattr(self, 'track_waveform', None)
+        if wf is not None and getattr(self, '_has_audio_track', False):
+            rows.insert(0, wf)
+        return rows
+
+    def _hidden_rows_key(self):
+        """Noms des pistes masquées, tels qu'ils partent dans la config."""
+        return sorted(t.name for t in self._all_rows()
+                      if getattr(t, 'row_hidden', False))
+
+    def _sync_track_visibility(self, track):
+        """Une ligne s'affiche si elle n'est ni masquée ni dans un paquet replié."""
+        visible = not getattr(track, 'row_hidden', False)
+        if getattr(track, 'is_projector_track', False):
+            visible = visible and getattr(self, '_view_proj_open', True)
+        track.setVisible(visible)
+
+    def set_track_row_visible(self, track, visible, save=True):
+        """Masque ou réaffiche UNE ligne (l'oeil de l'en-tête, ou le menu).
+
+        Purement visuel : les blocs restent en place, partent dans la
+        sauvegarde et sortent en show exactement pareil. C'est du rangement
+        d'écran, pas un mute — masquer une piste ne change aucune lumière.
+        """
+        track.row_hidden = not bool(visible)
+        self._sync_track_visibility(track)
+        self._rebuild_rows_menu()
+        if save:
+            self._save_view_prefs()
+
+    def show_all_rows(self):
+        """Réaffiche toutes les lignes masquées."""
+        for track in self._all_rows():
+            track.row_hidden = False
+            self._sync_track_visibility(track)
+        self._rebuild_rows_menu()
+        self._save_view_prefs()
+
+    def _rebuild_rows_menu(self):
+        """Reconstruit Affichage → Affichage des lignes.
+
+        Une entrée cochable par piste. Les pistes projecteur passent dans un
+        sous-menu : sur un rig de 50 fixtures, elles noieraient sinon les
+        quelques lignes qu'on masque vraiment (Gobo, Position, un groupe inutilisé).
+        """
+        menu = getattr(self, '_rows_menu', None)
+        if menu is None:
+            return
+        menu.clear()
+        projos = []
+        for track in self._all_rows():
+            if getattr(track, 'is_projector_track', False):
+                projos.append(track)
+            else:
+                self._add_row_action(menu, track)
+        if projos:
+            menu.addSeparator()
+            sous = menu.addMenu(tr("tle_view_projectors"))
+            for track in projos:
+                self._add_row_action(sous, track)
+        menu.addSeparator()
+        menu.addAction(tr("tle_view_rows_all")).triggered.connect(self.show_all_rows)
+
+    def _add_row_action(self, menu, track):
+        act = menu.addAction(track.display_name())
+        act.setCheckable(True)
+        act.setChecked(not getattr(track, 'row_hidden', False))
+        act.toggled.connect(lambda vu, t=track: self.set_track_row_visible(t, vu))
+
+    def set_row_height_scale(self, factor, save=True):
+        """Densité de la timeline : 1 = taille d'origine, 0.5 = moitié, 0.25 = quart.
+
+        S'applique aux pistes lumière uniquement. La piste Audio garde sa
+        hauteur : c'est la forme d'onde qui sert de repère pour caler les blocs,
+        la rétrécir irait contre le but recherché (voir PLUS de pistes d'un coup
+        sans perdre la référence temporelle).
+        """
+        self._view_row_scale = float(factor)
+        for track in getattr(self, 'tracks', []) or []:
+            track.apply_height_scale(self._view_row_scale)
+        self.tracks_container.updateGeometry()
+        self.tracks_scroll.viewport().update()
+        if save:
+            self._save_view_prefs()
+
 
     # Touches couleur que l'éditeur se RÉSERVE : C = mode Coupe, P = mode
     # Pinceau, tous deux antérieurs et utilisés en survolant justement une
     # piste. Les détourner en cyan/rose casserait un geste installé. Ces deux
     # couleurs restent accessibles par la palette.
     _COULEURS_RESERVEES = (Qt.Key_C, Qt.Key_P)
+
+    @staticmethod
+    def _editable(track):
+        """False si la piste est verrouillée (cadenas de l'en-tête).
+
+        Le verrou est posé sur la PISTE (`LightTrack.set_locked`), qui garde
+        déjà la souris et les dépôts. Mais l'éditeur écrit aussi par-dessus sa
+        tête — coller, supprimer la sélection, dupliquer une piste, générer un
+        show, poser un bloc à la touche couleur. Chacun de ces chemins passe
+        par ici, sinon le cadenas ne protégerait que la moitié des gestes.
+        """
+        return not getattr(track, 'locked', False)
 
     def _piste_couleur_survolee(self):
         """(piste de groupe sous la souris, x local) — ou (None, 0).
@@ -3696,6 +4076,7 @@ class LightTimelineEditor(QDialog):
             if not isinstance(piste, LightTrack) or not piste.isVisible():
                 continue
             if (piste.name == "Audio"
+                    or not self._editable(piste)
                     or getattr(piste, 'is_effect_track', False)
                     or getattr(piste, 'is_sequence_track', False)
                     or getattr(piste, 'is_position_track', False)
@@ -3843,7 +4224,7 @@ class LightTimelineEditor(QDialog):
 
         total_deleted = 0
         for track in self.tracks:
-            if track.selected_clips:
+            if track.selected_clips and self._editable(track):
                 count = len(track.selected_clips)
                 for clip in track.selected_clips[:]:
                     track.clips.remove(clip)
@@ -3892,7 +4273,7 @@ class LightTimelineEditor(QDialog):
         count = 0
         for item in self.clipboard:
             track = track_map.get(item['track'])
-            if not track:
+            if not track or not self._editable(track):
                 continue
             start = paste_time + item.get('offset', 0)
             clip = track.add_clip(start, item.get('duration', 1000),
@@ -3933,7 +4314,13 @@ class LightTimelineEditor(QDialog):
             track.selected_clips.clear()
 
         for clip_data in state:
-            track = self.track_map.get(clip_data.get('track'))
+            _tname = clip_data.get('track')
+            # Annuler la suppression d'une piste projecteur doit la RECRÉER :
+            # sans ça l'undo restaurait un état dont la piste manque et les blocs
+            # étaient jetés en silence — l'action apparaissait comme non annulable.
+            if is_projector_track(_tname) and _tname not in self.track_map:
+                self._add_projector_track_named(_tname)
+            track = self.track_map.get(_tname)
             if track:
                 color = QColor(clip_data.get('color', '#ffffff'))
                 clip = track.add_clip_direct(
@@ -4205,7 +4592,8 @@ class LightTimelineEditor(QDialog):
                 clip_width = int(clip.duration * pixels_per_ms)
 
                 # Rectangle du clip dans le viewport
-                clip_rect = QRect(clip_x, track_y_in_viewport + 10, clip_width, 40)
+                clip_rect = QRect(clip_x, track_y_in_viewport + track.clip_top(),
+                                  clip_width, track.clip_h())
 
                 if self.rubber_band_rect.intersects(clip_rect):
                     track.selected_clips.append(clip)

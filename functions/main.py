@@ -43,6 +43,13 @@ from email.utils import parseaddr
 import firebase_admin
 from firebase_admin import auth, firestore
 from firebase_functions import https_fn
+# « Le document existait déjà » : réponse NORMALE du verrou anti-rejeu
+# (_claim_stripe_event), pas une panne. On attrape `Conflict` et non
+# `AlreadyExists` : la doc de `DocumentReference.create()` promet
+# `google.cloud.exceptions.Conflict`, dont `AlreadyExists` n'est qu'une
+# sous-classe — attraper la fille seule laisserait passer l'autre cas.
+# google-api-core est une dépendance déclarée dans requirements.txt.
+from google.api_core.exceptions import Conflict
 
 _db = None
 
@@ -207,7 +214,14 @@ TVA_RATE = 20
 # _axonaut_get_or_create_company). Le nom exact n'étant pas documenté
 # publiquement, `_axonaut_verify_vat()` relit la fiche après écriture et log le
 # vrai nom du champ si celui-ci est faux. Corriger ici le cas échéant.
-AXONAUT_VAT_FIELD = "vat_number"
+#
+# Valeur vérifiée sur l'API le 26/08/2026 (GET /companies, 176 fiches) : le
+# champ s'appelle bien `intracommunity_number`. `vat_number`, la valeur posée
+# ici jusque-là, n'existe dans AUCUNE fiche — tout numéro de TVA envoyé sous ce
+# nom était accepté « 200 OK » puis jeté. Le garde-fou `_axonaut_verify_vat()`
+# ne l'a jamais signalé parce qu'aucun acheteur ne fournissait de numéro : la
+# collecte des identifiants fiscaux n'était pas activée sur les Payment Links.
+AXONAUT_VAT_FIELD = "intracommunity_number"
 
 # Durée des plans en jours
 _PLAN_DAYS = {
@@ -679,8 +693,22 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
         if address.get("postal_code"): addr["address_zip_code"] = address["postal_code"]
         if address.get("city"):        addr["address_city"]     = address["city"]
         if address.get("country"):     addr["address_country"]  = address["country"]
+    # Identifiants fiscaux — mentions obligatoires à l'émission des factures
+    # électroniques (01/09/2027). L'annuaire du Portail Public route par
+    # SIREN/SIRET : sans lui, une facture à un pro français n'est pas routable.
+    # Axonaut accepte indifféremment un SIREN (9 chiffres) ou un SIRET (14)
+    # dans `siret` — les deux formats coexistent déjà en base.
     if vat_number:
         addr[AXONAUT_VAT_FIELD] = vat_number
+        siren = _siren_from_vat(vat_number)
+        if siren:
+            addr["siret"] = siren
+    # ⚠️ Ne PAS tenter d'écrire `isB2C` ici : le champ apparaît en lecture sur
+    # `GET /companies` mais l'API l'ignore en écriture, sous ce nom comme sous
+    # `is_b2c`, `isb2c`, `b2c` ou `is_B2C` (testé le 26/08/2026 en POST et en
+    # PATCH : la fiche revient toujours à `null`). C'est pourtant lui qui, en
+    # 2027, sépare la facture électronique de l'e-reporting — il devra donc
+    # être posé depuis l'interface Axonaut ou via un futur endpoint.
 
     # Le numéro de TVA (et le SIREN qu'il contient) est conservé côté licence :
     # il servira de mention obligatoire à l'émission des factures électroniques,
@@ -787,6 +815,25 @@ def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str
         print(f"[Axonaut] Échec enregistrement paiement (invoice_id={invoice_id})")
 
 
+def _axonaut_invoice_exists(uid: str, stripe_ref: str) -> bool:
+    """Une facture porte-t-elle déjà cette référence Stripe ?
+
+    On ne regarde que les factures (`type == "invoice"`) : un avoir porte la
+    référence de la charge remboursée et ne doit pas empêcher une refacturation.
+    En cas d'erreur de lecture on répond False — bloquer une facture légitime
+    coûte plus cher qu'un doublon, qui se voit et se corrige.
+    """
+    try:
+        docs = (_get_db().collection("licenses").document(uid)
+                .collection("invoices")
+                .where("stripe_ref", "==", stripe_ref).limit(1).get())
+        return any((d.to_dict() or {}).get("type", "invoice") == "invoice"
+                   for d in docs)
+    except Exception as e:
+        print(f"[Axonaut] Controle anti-doublon impossible ({e}) — on continue")
+        return False
+
+
 def _axonaut_create_invoice(
     company_id: int,
     plan_type: str,
@@ -803,6 +850,14 @@ def _axonaut_create_invoice(
     unitaire HORS TAXES et rajoute la TVA par-dessus. Passer le TTC tel quel
     dans `price` produisait « 23,99 € HT / 28,79 € TTC » — le client payait
     23,99 € et la facture en annonçait 28,79 €."""
+    # Deuxième ligne de défense derrière `_claim_stripe_event` : une même
+    # référence Stripe ne doit jamais produire deux factures. Le verrou
+    # d'événement couvre le rejeu de webhook ; celui-ci couvre tout le reste
+    # (renvoi manuel depuis le Dashboard, deux événements distincts portant le
+    # même encaissement) et protège directement l'argent.
+    if uid and stripe_ref and _axonaut_invoice_exists(uid, stripe_ref):
+        print(f"[Axonaut] Facture deja emise pour {stripe_ref} — creation ignoree")
+        return
     if not company_id:
         print("[Axonaut] company_id manquant — facture non creee")
         return
@@ -2533,6 +2588,37 @@ def controller_submit(req: https_fn.Request) -> https_fn.Response:
 # STRIPE CLOUD FUNCTION ENTRY POINT
 # ===========================================================================
 
+def _claim_stripe_event(event_id: str, event_type: str) -> bool:
+    """Réserve un événement Stripe. Retourne False si on l'a déjà traité.
+
+    Stripe REJOUE un événement quand l'endpoint ne répond pas 200 assez vite,
+    et `_on_checkout_completed` enchaîne compte Firebase + email SMTP + Brevo +
+    trois appels Axonaut (dont un `GET /companies` qui rapatrie toute la base) :
+    dépasser le délai n'a rien d'exceptionnel. Sans verrou, le rejeu refait
+    TOUT — deux sociétés Axonaut et deux factures pour un seul encaissement.
+    Constaté 4 fois entre mai et août 2026 : ANTHONY MACOINE (14/05), billoux
+    (02/06), SCHMIT Amaury (20/06), martial bulard (24/08, rattrapé par un
+    avoir).
+
+    `create()` échoue si le document existe déjà, et cet échec est atomique
+    côté Firestore : deux exécutions simultanées ne peuvent pas passer toutes
+    les deux. Si Firestore est indisponible on laisse passer — un doublon se
+    rattrape avec un avoir, un paiement jamais traité laisse un client sans
+    licence.
+    """
+    try:
+        _get_db().collection("stripe_events").document(event_id).create({
+            "type":          event_type,
+            "processed_utc": time.time(),
+        })
+        return True
+    except Conflict:
+        return False
+    except Exception as e:
+        print(f"[Webhook] Verrou anti-rejeu indisponible ({e}) — traitement poursuivi")
+        return True
+
+
 @https_fn.on_request(max_instances=10)
 def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
     """
@@ -2556,6 +2642,12 @@ def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
 
     handler = _HANDLERS.get(event_type)
     if handler:
+        # Verrou AVANT le handler : c'est le traitement lui-même qui n'est pas
+        # rejouable (il crée société, facture et encaissement côté Axonaut).
+        event_id = event.get("id", "")
+        if event_id and not _claim_stripe_event(event_id, event_type):
+            print(f"[Webhook] Événement {event_id} déjà traité — rejeu ignoré")
+            return https_fn.Response("OK (rejeu ignore)", status=200)
         try:
             handler(data_obj)
         except Exception as exc:

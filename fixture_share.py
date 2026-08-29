@@ -264,6 +264,10 @@ def fixture_fingerprint(fixture: dict) -> str:
 _PAYLOAD_FIELDS = (
     "name", "manufacturer", "fixture_type", "group",
     "color_wheel_slots", "gobo_wheel_slots", "channel_defaults",
+    # Blocs de preset : c'est la CALIBRATION du partageur — les valeurs de macro
+    # qu'il a relevées sur l'appareil, notice en main. Sans elles, celui qui
+    # reçoit la fixture retrouve un canal de programme nu et doit tout refaire.
+    "preset_slots",
     "physical", "matrix",
     # Noms de canaux du constructeur. Ils manquaient : la fixture partie d'ici
     # avec « Light strip strobe », « Colour Macro »… arrivait chez l'autre

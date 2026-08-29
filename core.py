@@ -66,7 +66,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.88"
+VERSION = "3.1.89"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -697,6 +697,80 @@ def color_wheel_display_color(proj, brightness=None):
     return QColor(int(c.red() * br), int(c.green() * br), int(c.blue() * br))
 
 
+def emitted_brightness(proj) -> float:
+    """Luminosite REELLEMENT emise par la fixture, 0..1.
+
+    `Projector.level` ne suffit pas : les moteurs d'effets encodent toute la
+    brillance dans `proj.color` et forcent `level = 100` pour ouvrir le dimmer
+    (cf. `MainWindow._update_effect_from_layers`). Sur une fixture RVB ca se
+    voit quand meme, l'affichage lisant `proj.color`. Sur une fixture a ROUE de
+    couleurs, non : sa teinte vient de `color_wheel`, et la brillance cachee
+    dans `proj.color` etait purement et simplement jetee — une couche RVB (ou
+    Permut) faisait sauter la roue de slot en slot a intensite CONSTANTE, alors
+    que le vrai projecteur, lui, pulsait.
+
+    Meme regle que le moteur DMX (`ArtNetDMX.update_from_projectors`, branche
+    `effect_active`) : si `color` s'ecarte de `base_color x level`, c'est un
+    effet qui pilote, et l'intensite est la composante max de `color`.
+
+    ⚠️ Point UNIQUE : le plan 2D et la 3D passent tous les deux ici pour les
+    fixtures a roue. Les faire diverger, c'est rejouer « la 3D n'a pas la meme
+    couleur que la 2D ».
+    """
+    level = float(getattr(proj, 'level', 0) or 0)
+    col   = getattr(proj, 'color', None)
+    if col is None:
+        return max(0.0, min(1.0, level / 100.0))
+    max_c = max(col.red(), col.green(), col.blue())
+    base  = getattr(proj, 'base_color', None) or col
+    if level > 0:
+        effect_active = (abs(col.red()   - int(base.red()   * level / 100)) > 4 or
+                         abs(col.green() - int(base.green() * level / 100)) > 4 or
+                         abs(col.blue()  - int(base.blue()  * level / 100)) > 4)
+    else:
+        # level=0 mais couleur non noire → un effet tient la fixture allumee
+        # (frame ON d'un strobe, par exemple).
+        effect_active = bool(max_c)
+    if effect_active:
+        return max_c / 255.0
+    return max(0.0, min(1.0, level / 100.0))
+
+
+def fixture_projects_gobo(proj) -> bool:
+    """Cette fixture peut-elle projeter un GOBO a l'ecran (plan 2D et 3D) ?
+
+    Le rendu se decidait sur la seule valeur du canal (`proj.gobo > 0`), donc en
+    fait sur le TYPE `Gobo1` pose dans le profil. Or ce type est le seul, avec
+    `ColorWheel`, a ouvrir un editeur de presets nommes : qui veut des presets
+    sur un canal de MODE / PROGRAMME declare son canal en `Gobo1` puis le
+    renomme. Resultat : un PAR LED se couvrait de motifs de gobo des le premier
+    preset clique, et le renommage n'y changeait rien — l'affichage lit le type,
+    jamais le nom.
+
+    Un PAR LED, une barre, un strobe n'ont pas d'optique de projection : ils ne
+    PEUVENT pas faire de gobo, quelle que soit la valeur du canal. Le motif est
+    donc rendu aux seules fixtures qui en portent une :
+
+    - `Moving Head` — le type de toutes les lyres spot / beam ;
+    - toute fixture dont le profil contient `Gobo1Rot` ou `Gobo2`. Ces canaux
+      n'existent QUE sur un appareil a vraie roue de gobos, et ils rattrapent le
+      projecteur de gobos FIXE (sans Pan/Tilt), que `_detect_fixture_type`
+      classe en « PAR LED » faute de type dedie.
+
+    ⚠️ `gobo_wheel_slots` ne peut PAS servir de preuve : l'editeur de roue les
+    ecrit, et c'est precisement ce que remplit l'utilisateur detourne.
+
+    ⚠️ Point UNIQUE : le plan de feu 2D (`PlanDeFeuCanvas.paintEvent`) et la 3D
+    (`Plan3DWebWindow._to_data`, drapeau `has_gobo`) passent tous les deux ici.
+    Les faire diverger, c'est rejouer « la 3D ne montre pas la meme chose que la
+    2D ».
+    """
+    if getattr(proj, 'fixture_type', '') == "Moving Head":
+        return True
+    prof = getattr(proj, 'dmx_profile', None) or []
+    return 'Gobo1Rot' in prof or 'Gobo2' in prof
+
+
 def projector_selection_keys(projectors):
     """Clé (groupe, index_local) de chaque projecteur, dans l'ordre de la liste.
 
@@ -714,6 +788,30 @@ def projector_selection_keys(projectors):
         counters[g] = li + 1
         keys.append((g, li))
     return keys
+
+
+def projector_track_key(group_display, local_index):
+    """Cle stable de la piste dediee a UN projecteur dans le REC Lumiere.
+
+    Volontairement construite sur (groupe, index LOCAL au groupe) — la meme
+    convention que le plan de feu et que la cible « Selection » d'un effet
+    (`projector_selection_keys`) — et NON sur l'index global du patch : ajouter
+    une fixture a un autre groupe ne doit pas deplacer les blocs deja poses.
+
+    Le prefixe « @ » garantit qu'aucune cle ne peut entrer en collision avec un
+    nom de piste de groupe (« A », « Lyres », « Public »…) ni avec les pistes
+    speciales (« Effet », « Sequence », « Position », « Gobo », « Audio »).
+
+    Cette cle est le `name` de la piste, donc ce qui part dans le .tui — elle ne
+    doit jamais dependre du NOM de la fixture, qui se renomme librement dans le
+    patch. Le libelle affiche, lui, suit le nom (cf. `_projector_track_entries`).
+    """
+    return f"@{group_display}{local_index + 1}"
+
+
+def is_projector_track(name) -> bool:
+    """True si `name` est la cle d'une piste projecteur (cf. projector_track_key)."""
+    return isinstance(name, str) and name.startswith("@")
 
 
 def layer_selection_ranks(layer):

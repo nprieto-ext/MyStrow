@@ -128,6 +128,8 @@ class ExtBlock(QPushButton):
         self.span_c = self.span_r = 1
         self.active = False          # True = bloc « allumé » (latché)
         self._flashing = False       # True pendant un appui en mode flash
+        self._flash_snap = None      # état des projecteurs avant le flash
+        self._flash_latches = None   # blocs couleur éteints le temps du flash
         self._mode = None            # None | "move" | "resize"
         self._press_pos = QPoint()
         self._orig_geo = None
@@ -569,6 +571,14 @@ class GridCanvas(QWidget):
     # — grille —
     def set_edit_mode(self, on: bool):
         self.edit_mode = bool(on)
+        # Filet : passer en Édition pendant un appui tenu laissait le flash
+        # collé (le relâché n'arrive jamais sur le bloc) — on le termine ici.
+        for b in self.blocks:
+            if getattr(b, "_flashing", False):
+                b._flashing = False
+                cb = getattr(self, "flash_off_cb", None)
+                if cb:
+                    cb(b.spec.get("action", {}), b)
         for b in self.blocks:
             b.setCursor(Qt.OpenHandCursor if self.edit_mode else Qt.PointingHandCursor)
             b.update()
@@ -1357,6 +1367,13 @@ class ExtWindow(QMainWindow):
             r, g, b = action.get("rgb", [255, 255, 255])
             # Instantané de l'état avant flash → restauré au relâché
             block._flash_snap = owner._ext_snapshot_groups(groups)
+            # …et instantané des LATCHES : les pads couleur qui tiennent déjà
+            # les mêmes groupes s'éteignent le temps de l'appui, puis se
+            # rallument au relâché. Sans ça, le pad BLANC de D restait allumé
+            # sous le rouge, et ne se « réactivait » jamais.
+            block._flash_latches = self._color_latches_on(block)
+            for lb in block._flash_latches:
+                lb._set_active(False)
             if groups == "selection":
                 owner._apply_color_shortcut(QColor(r, g, b))
             else:
@@ -1386,15 +1403,54 @@ class ExtWindow(QMainWindow):
                 block._flash_snap = None
             if block is not None:
                 block._set_active(False)
+            for lb in getattr(block, "_flash_latches", None) or []:
+                lb._set_active(True)
+            if block is not None:
+                block._flash_latches = None
 
     # ── Latch visuel des blocs (état « allumé ») ───────────────────────
+    def _color_block_target(self, block):
+        """Cible d'un bloc couleur : "all", "selection" ou un set de groupes."""
+        g = (block.spec.get("action", {}) or {}).get("groups", "all")
+        if g in (None, "all"):
+            return "all"
+        if g == "selection":
+            return "selection"
+        return set(g)
+
+    def _color_targets_overlap(self, a, b):
+        """Deux cibles de blocs couleur touchent-elles les mêmes projecteurs ?
+
+        « Tous » et « Sélection » peuvent tomber n'importe où : on les considère
+        en conflit avec tout le monde.
+        """
+        if a in ("all", "selection") or b in ("all", "selection"):
+            return True
+        return bool(a & b)
+
+    def _color_latches_on(self, block):
+        """Blocs couleur allumés qui visent (au moins en partie) la même cible."""
+        if block is None:
+            return []
+        tgt = self._color_block_target(block)
+        return [b for b in self.canvas.blocks
+                if b is not block
+                and (b.spec.get("action", {}) or {}).get("type") == "color"
+                and getattr(b, "active", False)
+                and self._color_targets_overlap(tgt, self._color_block_target(b))]
+
     def _latch_color(self, block):
-        """Allume le bloc couleur cliqué et éteint les autres blocs couleur."""
-        for b in self.canvas.blocks:
-            if b.spec.get("action", {}).get("type") == "color" and b is not block:
-                b._set_active(False)
-        if block is not None:
-            block._set_active(True)
+        """Allume le bloc couleur cliqué et éteint ceux qui visent les MÊMES groupes.
+
+        Avant, tout autre bloc couleur s'éteignait : impossible de garder A, B et
+        C en blanc en posant du rouge sur D — les trois autres pads s'éteignaient
+        alors que leurs projecteurs, eux, restaient bel et bien blancs.
+        """
+        if block is None:
+            return
+        for b in self._color_latches_on(block):
+            b._set_active(False)
+        block._set_active(True)
 
     def _latch_effect(self, block):
         for b in self.canvas.blocks:

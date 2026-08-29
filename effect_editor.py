@@ -2799,7 +2799,10 @@ class SimpleEffectPanel(QWidget):
         self._assign_btns = {}
         assign_row = QHBoxLayout()
         assign_row.setSpacing(3)
-        for i in range(9):
+        # 8 boutons, pas 9 : la colonne d'effets de la fenêtre principale en
+        # compte 8. Un « E9 » stockait sa config sur un index qu'aucun bouton
+        # ne relit — assignation sans effet visible.
+        for i in range(8):
             btn = QPushButton(f"E{i + 1}")
             btn.setCheckable(True)
             btn.setFixedSize(26, 22)
@@ -3190,6 +3193,12 @@ class EffectEditorDialog(QDialog):
         self._play_mode       = 'loop'
         self._effect_duration = getattr(self._clips[0], 'effect_duration', 0) if self._clips else 0
         self._preview_t0      = 0.0
+        # Horloge de PHASE de l'aperçu : temps déformé par la vitesse, pour que
+        # bouger le fader FX (ou la VITESSE d'une couche) change la cadence sans
+        # faire sauter la position dans le cycle. Miroir de
+        # `MainWindow._effect_clock` — parité aperçu/show.
+        self._preview_clock    = 0.0
+        self._preview_clock_ts = None
         # Pré-sélectionner : 1) initial_effect passé en param, 2) effet du clip, 3) premier builtin
         saved_name = getattr(self._clips[0], 'effect_name', '') if self._clips else ''
         raw_name = initial_effect or saved_name or (BUILTIN_EFFECTS[0]['name'] if BUILTIN_EFFECTS else None)
@@ -4100,6 +4109,17 @@ class EffectEditorDialog(QDialog):
             self._assign_btns[btn_idx].setChecked(False)
             return
         cur_name = self._selected_card
+        # Second clic sur un bouton déjà assigné à CET effet = désassignation.
+        # Sans ça le bouton se décochait visuellement puis _refresh_assign_btns
+        # le recochait aussitôt : impossible de libérer un E1-E8.
+        cfg_map  = getattr(self._main_window, '_button_effect_configs', {})
+        existing = cfg_map.get(btn_idx)
+        if isinstance(existing, dict) and existing.get("name") == cur_name:
+            if hasattr(self._main_window, '_on_effect_assigned'):
+                self._main_window._on_effect_assigned(btn_idx, None)
+            self._refresh_assign_btns()
+            self._rebuild_library()   # retire le badge « E1 » de la carte
+            return
         eff_dict = next(
             (e for e in BUILTIN_EFFECTS + self._custom_effects if e.get("name") == cur_name),
             None
@@ -4114,6 +4134,7 @@ class EffectEditorDialog(QDialog):
         if hasattr(self._main_window, '_on_effect_assigned'):
             self._main_window._on_effect_assigned(btn_idx, cfg)
         self._refresh_assign_btns()
+        self._rebuild_library()   # affiche le badge « E1 » sur la carte
 
     # ── Header / Footer ───────────────────────────────────────────────────────
 
@@ -4265,6 +4286,7 @@ class EffectEditorDialog(QDialog):
 
     def _start_preview(self):
         self._preview_t0 = _time.monotonic()
+        self._preview_clock, self._preview_clock_ts = 0.0, None
         if not self._preview_timer.isActive():
             self._preview_timer.start(40)   # ~25 fps
 
@@ -4355,9 +4377,22 @@ class EffectEditorDialog(QDialog):
         # affiché dans la 3D corresponde exactement à ce qui tourne sur le DMX
         mw = self._main_window
         if mw and getattr(mw, 'active_effect', None) == self._selected_card:
-            t = _time.monotonic() - getattr(mw, 'effect_t0', self._preview_t0)
+            # L'effet tourne pour de vrai : on lit SON horloge de phase, sinon
+            # l'aperçu et la 3D dérivent du DMX dès que le fader FX n'est pas à
+            # 100 % (le temps déformé n'avance pas à la seconde).
+            t = getattr(mw, '_effect_clock', None)
+            if t is None:
+                t = _time.monotonic() - getattr(mw, 'effect_t0', self._preview_t0)
         else:
-            t = _time.monotonic() - self._preview_t0
+            # Aperçu seul : même horloge déformée, entretenue ici. Bouger la
+            # VITESSE ne doit pas faire sauter l'aperçu non plus.
+            _now  = _time.monotonic()
+            _mult = max(0.01, getattr(mw, 'effect_speed', 80) / 100.0) if mw else 0.8
+            _last = self._preview_clock_ts
+            _dt   = 0.0 if _last is None else min(0.25, max(0.0, _now - _last))
+            self._preview_clock_ts = _now
+            self._preview_clock   += _dt * _mult
+            t = self._preview_clock
         try:
             overrides = self._compute_preview(t)
             if plan is not None:
@@ -4410,8 +4445,10 @@ class EffectEditorDialog(QDialog):
         if not projectors or not self._layers:
             return {}
 
-        # Fix A : appliquer le fader FX pour que la vitesse preview = vitesse live
-        fader_mult = max(0.01, getattr(self._main_window, 'effect_speed', 80) / 100.0)
+        # Le fader FX ne multiplie plus la fréquence : il déforme l'HORLOGE
+        # (`_preview_clock` / `MainWindow._effect_clock`), pour que le bouger
+        # change la cadence sans faire sauter la phase. L'appliquer ici aussi le
+        # compterait deux fois. Vitesse aperçu = vitesse live, comme avant.
 
         n      = len(projectors)
         result = {}
@@ -4500,7 +4537,7 @@ class EffectEditorDialog(QDialog):
                 # même paquet partagent la phase, donc partent ensemble.
                 i_fx, n_fx = block_index(i_fx, n_fx, getattr(layer, 'block', 1))
 
-                freq      = layer_frequency(layer.speed, fader_mult=fader_mult)
+                freq      = layer_frequency(layer.speed)
                 spread    = layer.spread / 100.0
                 # Mouvement (Pan/Tilt) : plafonner a 1.0 = etalement parfait, pas de
                 # re-enroulement des lyres au-dela (idem moteur live).
@@ -4606,13 +4643,13 @@ class EffectEditorDialog(QDialog):
                     c_tilt = _ctr[1] if _ctr is not None else 32768
                     p_forme, p_ph, p_mult = pan_cfg
                     if p_forme and p_forme != "Fixe":
-                        p_freq = layer_frequency(layer.speed, p_mult, fader_mult)
+                        p_freq = layer_frequency(layer.speed, p_mult)
                         p_x    = (_pt_time(p_freq) + i_fx / max(n_fx, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
                         pan_v  = int(max(0, min(65535, c_pan + pan_sign * (p_raw - 0.5) * 2 * pt_amp * PAN_ANGULAR_RATIO)))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
-                        t_freq = layer_frequency(layer.speed, t_mult, fader_mult)
+                        t_freq = layer_frequency(layer.speed, t_mult)
                         t_x    = (_pt_time(t_freq) + i_fx / max(n_fx, 1) * spread + phase + t_ph / 100.0) % 1.0
                         t_raw  = self._wave(t_forme, t_x)
                         tilt_v = int(max(0, min(65535, c_tilt + (t_raw - 0.5) * 2 * pt_amp)))

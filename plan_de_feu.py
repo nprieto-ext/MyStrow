@@ -10,7 +10,9 @@ from collections import Counter
 from i18n import tr
 from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
-                  color_wheel_display_color)
+                  color_wheel_display_color, fixture_projects_gobo,
+                  emitted_brightness)
+from artnet_dmx import PRESET_TYPES
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
     QLabel, QMenu, QWidgetAction, QPushButton, QSlider,
@@ -1396,6 +1398,8 @@ _TEINTE_CANAL = {
     "ColorWheel": "#ff9de0", "CTO": "#ffcf9e", "CTB": "#9ecbff",
     "Effects": "#c8a0ff", "Speed": "#9a9a9a", "Mode": "#9a9a9a",
     "Smoke": "#bdbdbd", "Fan": "#bdbdbd", "Reset": "#ff7043",
+    "Preset1": "#00cc99", "Preset2": "#00b389",
+    "Preset3": "#009a78", "Preset4": "#008168",
     # Gris franc et non anthracite : c'est justement sur ces canaux-là qu'on
     # force à la main, et un liseré « forcé » en #4a4a4a ne se voyait pas.
     "Unused": "#7f8891",
@@ -1420,6 +1424,8 @@ _NOM_CANAL = {
     "ColorWheel": "Color Wheel", "CTO": "CTO", "CTB": "CTB",
     "Effects": "Effects", "Speed": "Speed", "Mode": "Mode", "Reset": "Reset",
     "Smoke": "Smoke", "Fan": "Fan", "Unused": "—",
+    "Preset1": "Preset 1", "Preset2": "Preset 2",
+    "Preset3": "Preset 3", "Preset4": "Preset 4",
 }
 
 
@@ -1454,6 +1460,11 @@ _CANAL_ATTR_SIMPLE = {
     "ColorWheel": "color_wheel", "Prism": "prism", "PrismRot": "prism_rotation",
     "Effects": "effects", "Speed": "speed", "Mode": "mode_value",
     "Fan": "fan_speed",
+    # Presets : la vue « Curseurs » ecrit donc le MEME attribut que la section
+    # Presets du menu. Un seul writer par canal — sans cette entree, le curseur
+    # brut passerait par `channel_extras` et les deux chemins divergeraient.
+    "Preset1": "preset1", "Preset2": "preset2",
+    "Preset3": "preset3", "Preset4": "preset4",
 }
 
 
@@ -1974,6 +1985,24 @@ class FixtureCanvas(QWidget):
 
         self._guides      = []   # Smart Guides temporaires pendant le drag
 
+        # ── Piles (totems) ───────────────────────────────────────────
+        # Plusieurs appareils sur le MÊME point du plan : un pied, un totem,
+        # deux ponts superposés. Rien n'est stocké — une pile, c'est simplement
+        # des fixtures qui partagent la même position. Aucun champ nouveau,
+        # donc aucune migration des shows ni du patch.
+        # Pastilles « nombre d'appareils » posées au dernier paintEvent :
+        # [(QRect, [indices])]. Cliquer dessus ouvre la liste des membres.
+        self._stack_badges = []
+        # Cible d'aimantation pendant un glisser (index), ou None. Déposer un
+        # appareil sur un autre les empile au lieu de les écarter.
+        self._stack_snap   = None
+        # Appareil VISÉ, plus large que l'aimantation : il cesse d'être repoussé
+        # par l'anti-chevauchement et s'entoure d'un cercle « lâchez ici ».
+        # Sans lui, empiler était impossible — la cible reculait à 32 px alors
+        # que l'aimantation n'opère qu'à 13, elle fuyait donc toujours avant
+        # d'être atteinte.
+        self._stack_hint   = None
+
         self._drag_index  = None
         self._drag_offset = QPoint()
 
@@ -2199,6 +2228,107 @@ class FixtureCanvas(QWidget):
         li = group_indices.index(i) if i in group_indices else 0
         return group, li
 
+    # ── Piles (totems) ──────────────────────────────────────────────
+    # Un totem, c'est N appareils sur UN point du plateau, à des hauteurs
+    # différentes. Le plan de feu est vu de dessus : ils se superposent, et la
+    # hauteur (`fixture_height`) se règle dans la fenêtre 3D, où elle est de
+    # toute façon le seul endroit qui la montre.
+    #
+    # Une pile n'est PAS un objet : c'est une position partagée. Rien à
+    # enregistrer, rien à migrer, et défaire une pile revient simplement à en
+    # sortir un appareil.
+
+    # Tolérance de regroupement, en unités de plan (0-1). Deux positions à
+    # moins de ça sont le même point. Volontairement minuscule — 0,02 % de
+    # plan, soit 3 mm en X : l'empilement se fait par AIMANTATION au dépôt
+    # (cf. `_stack_snap_target`), qui recopie la position à l'identique. Cette
+    # marge n'est là que pour absorber les arrondis d'un aller-retour par la
+    # 3D, jamais pour attraper deux appareils simplement voisins.
+    _STACK_EPS = 2e-4
+
+    def _stacks(self):
+        """{clé de position: [indices]} pour les points portant ≥ 2 appareils.
+
+        Les membres de barre/matrice en sont exclus : leur position est celle
+        du bloc, ils se traitent déjà comme un appareil unique ailleurs.
+        """
+        buckets = {}
+        for i, p in enumerate(self.pdf.projectors):
+            if getattr(p, 'matrix_id', None) is not None:
+                continue
+            # Position NON stockée = fixture placée d'office par le canvas :
+            # ce n'est pas un empilement voulu. L'écarter ferme aussi la porte
+            # au coût quadratique — `_get_norm_pos` reparcourt toute la liste
+            # pour retrouver le rang d'une fixture dans son groupe, et cette
+            # méthode est appelée à chaque mouvement de souris.
+            nx, ny = p.canvas_x, p.canvas_y
+            if nx is None or ny is None:
+                continue
+            buckets.setdefault((round(nx / self._STACK_EPS),
+                                round(ny / self._STACK_EPS)), []).append(i)
+        return {k: v for k, v in buckets.items() if len(v) > 1}
+
+    def _stack_members(self, i):
+        """Les indices empilés avec `i` (lui compris), du plus haut au plus bas.
+
+        Liste vide si `i` est seul sur son point : l'appelant distingue ainsi
+        « pas une pile » de « une pile d'un seul appareil », qui n'existe pas.
+        """
+        p = self.pdf.projectors[i]
+        if getattr(p, 'matrix_id', None) is not None:
+            return []
+        nx, ny = p.canvas_x, p.canvas_y
+        if nx is None or ny is None:
+            return []
+        key = (round(nx / self._STACK_EPS), round(ny / self._STACK_EPS))
+        membres = self._stacks().get(key, [])
+        if len(membres) < 2:
+            return []
+        # Du haut vers le bas : c'est l'ordre où on les voit sur le totem, donc
+        # celui qu'on attend dans la liste déroulante. Hauteur absente = au sol.
+        return sorted(membres,
+                      key=lambda j: -float(
+                          getattr(self.pdf.projectors[j], 'fixture_height', None) or 0.0))
+
+    def _stack_rep(self, membres):
+        """Le membre qui porte le dessin et la pastille. Le plus petit index,
+        pour que l'icône ne saute pas d'un appareil à l'autre quand on change
+        une hauteur."""
+        return min(membres)
+
+    # Rayon de VISÉE, en pixels écran. Volontairement plus grand que l'écart
+    # minimum de l'anti-chevauchement (32 px écran, quel que soit le zoom) :
+    # c'est ce qui empêche la cible de reculer quand on s'en approche. En
+    # dessous de ce rayon, elle est figée et signalée ; sous le rayon d'icône,
+    # elle aimante pour de bon.
+    _STACK_HINT_PX = 34
+
+    def _stack_snap_target(self, idx, px, py, radius=None):
+        """Index de l'appareil sur lequel `idx` s'aimanterait s'il était lâché
+        en (px, py), ou None.
+
+        C'est le seul geste qui crée une pile : déposer un appareil sur un
+        autre. Sans lui, l'anti-chevauchement écarte les deux et un totem est
+        impossible à composer à la souris.
+        """
+        r = radius if radius is not None else (9 if self.compact else 13)
+        best, best_d2 = None, (r * r)
+        for j, pj in enumerate(self.pdf.projectors):
+            if j == idx or j in self._drag_starts:
+                continue
+            if getattr(pj, 'matrix_id', None) is not None:
+                continue
+            # Fixture jamais placée : sa position est recalculée à partir de la
+            # composition de son groupe. S'aimanter dessus donnerait une pile
+            # qui se déferait toute seule au prochain ajout de projecteur.
+            if pj.canvas_x is None or pj.canvas_y is None:
+                continue
+            jx, jy = self._get_canvas_pos(j)
+            d2 = (px - jx) ** 2 + (py - jy) ** 2
+            if d2 < best_d2:
+                best, best_d2 = j, d2
+        return best
+
     def _matrix_hit(self, px, py):
         """
         Index d'un pixel si (px, py) tombe dans le cadre d'une barre/matrice.
@@ -2254,7 +2384,12 @@ class FixtureCanvas(QWidget):
                     return i
             else:
                 if (px - cx) ** 2 + (py - cy) ** 2 <= 13 * 13:
-                    return i
+                    # Pile : renvoyer le membre qui PORTE le dessin. Les autres
+                    # sont exactement dessous et ne sont jamais peints — sans
+                    # ça, le survol et l'étiquette annonceraient un appareil
+                    # que rien à l'écran ne représente.
+                    _membres = self._stack_members(i)
+                    return self._stack_rep(_membres) if _membres else i
         # Les fixtures classiques priment ; sinon on teste les blocs pixel
         return self._matrix_hit(px, py)
 
@@ -2325,6 +2460,9 @@ class FixtureCanvas(QWidget):
     # ── Dessin ─────────────────────────────────────────────────────
 
     def _get_fill_color(self, proj):
+        _solo = getattr(self.pdf, '_kill_display', None)
+        if _solo is not None and proj.group not in _solo:
+            return QColor("#1a1a1a")   # solo FLASH KILL : coupe hors du groupe tenu
         htp = self.pdf._htp_overrides
         if htp and id(proj) in htp:
             level, color = htp[id(proj)][:2]
@@ -2369,7 +2507,11 @@ class FixtureCanvas(QWidget):
         # Repli sur la roue générique si la fixture ne déclare pas ses slots
         # (bibliothèque intégrée) : sinon on retombait sur proj.color, noir
         # tant qu'aucune couleur n'avait été posée à la main.
-        _cwc = color_wheel_display_color(proj, proj.level / 100.0)
+        # Intensité : `emitted_brightness` et non `proj.level`, qui vaut 100 en
+        # permanence dès qu'un effet couleur tourne (toute la brillance est
+        # alors encodée dans `proj.color`) — une couche RVB sur une lyre à roue
+        # s'affichait donc à intensité fixe pendant que la vraie lyre pulsait.
+        _cwc = color_wheel_display_color(proj, emitted_brightness(proj))
         if _cwc is not None:
             return _cwc
 
@@ -2394,7 +2536,8 @@ class FixtureCanvas(QWidget):
         # compris : une fixture pilotée uniquement par ces canaux-là a un niveau
         # de 0 et s'affichait éteinte. On l'allume sur la couleur, pas sur le
         # niveau, dès qu'elle sort autre chose que du noir.
-        is_lit     = not proj.muted and (
+        _solo      = getattr(self.pdf, '_kill_display', None)
+        is_lit     = not proj.muted and (_solo is None or proj.group in _solo) and (
             proj.level > 0
             or (_htp_e is not None and _htp_e[0] > 0)
             or (hasattr(proj, 'display_color_override')
@@ -2447,8 +2590,15 @@ class FixtureCanvas(QWidget):
 
             # Cone de faisceau orienté — gradient lumineux à la source
             if is_lit:
+                # 0 = ouvert, 1-7 = motif. `fixture_projects_gobo` ferme la
+                # porte aux fixtures SANS optique de projection : sur un PAR LED
+                # dont le canal `Gobo1` sert en realite de canal de programme,
+                # la valeur ne doit ni dessiner de motif ni assombrir le cone
+                # (`haze_alpha`/`alpha_src` ci-dessous en dependent aussi).
+                # Meme porte qu'en 3D — cf. `core.fixture_projects_gobo`.
                 gobo_val = getattr(proj, 'gobo', 0)
-                gobo_idx = int(gobo_val // 32) if gobo_val > 0 else 0  # 0=open, 1-7=gobos
+                gobo_idx = (int(gobo_val // 32)
+                            if gobo_val > 0 and fixture_projects_gobo(proj) else 0)
 
                 painter.save()
                 painter.translate(cx, cy)
@@ -2823,6 +2973,164 @@ class FixtureCanvas(QWidget):
         painter.drawText(QRectF(bx - rad, by - rad, rad * 2, rad * 2),
                          Qt.AlignCenter, txt)
 
+    def _draw_stack_badge(self, painter, cx, cy, n):
+        """Pastille « N appareils ici », en HAUT À DROITE de l'icône.
+
+        Pas en bas : c'est la place de la pastille de rang de sélection, et les
+        deux peuvent s'afficher en même temps. Elle est aussi le bouton qui
+        ouvre la liste des membres (cf. `_stack_badge_at`) — d'où le retour du
+        rectangle cliquable, mémorisé par le paintEvent.
+        """
+        r    = 9 if self.compact else 13
+        txt  = str(n)
+        rad  = 7.0 if len(txt) < 2 else 9.0
+        bx   = float(cx) + r * 0.78
+        by   = float(cy) - r * 0.78
+        # Rester dans le canvas : sur une fixture collée en haut ou à droite du
+        # plan, la pastille sortait du widget et devenait incliquable.
+        bx = max(rad + 1, min(self.width()  - rad - 1, bx))
+        by = max(rad + 1, min(self.height() - rad - 1, by))
+        # Blanc cerné de noir, et surtout PAS une couleur : la pastille se pose
+        # sur une fixture allumée, dont la teinte est arbitraire. En ambre elle
+        # devenait invisible sur un projecteur en ambre — le cas le plus banal
+        # d'un plan de feu. Le liseré sombre la détache aussi d'une fixture
+        # blanche. Le cyan est réservé au rang de sélection, en bas de l'icône :
+        # deux pastilles peuvent coexister, elles doivent rester distinctes.
+        painter.setPen(QPen(QColor("#04141a"), 1.6))
+        painter.setBrush(QColor(246, 246, 250, 248))
+        painter.drawEllipse(QPointF(bx, by), rad, rad)
+        painter.setPen(QColor("#04141a"))
+        painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        painter.drawText(QRectF(bx - rad, by - rad, rad * 2, rad * 2),
+                         Qt.AlignCenter, txt)
+        # Zone cliquable un peu plus large que le dessin : la pastille est
+        # petite et c'est le seul accès aux appareils du dessous.
+        _m = 3
+        return QRect(int(bx - rad - _m), int(by - rad - _m),
+                     int((rad + _m) * 2), int((rad + _m) * 2))
+
+    def _stack_badge_at(self, pos):
+        """[indices] de la pile dont la pastille est sous `pos`, ou None."""
+        for rect, membres in self._stack_badges:
+            if rect.contains(pos):
+                return membres
+        return None
+
+    def _show_stack_menu(self, global_pos, membres, edit=False):
+        self._build_stack_menu(membres, edit_pos=global_pos if edit else None).exec(global_pos)
+
+    def _build_stack_menu(self, membres, edit_pos=None):
+        """Liste déroulante des appareils d'une pile.
+
+        Le plan de feu est vu de dessus : les membres d'un totem sont l'un sur
+        l'autre et un seul est atteignable à la souris. C'est ce menu qui donne
+        accès aux autres — sans lui, empiler reviendrait à rendre des
+        projecteurs impossibles à sélectionner.
+
+        Deux usages, selon le bouton qui l'ouvre :
+        - clic gauche (`edit_pos=None`) : choisir un appareil le SÉLECTIONNE ;
+        - clic droit (`edit_pos` = position d'ouverture) : choisir un appareil
+          le sélectionne PUIS ouvre son menu de réglages. Sans ça, le clic droit
+          sur un totem tombait droit sur le gros menu de l'appareil qui porte le
+          dessin — les autres n'étaient réglables qu'en passant d'abord par la
+          pastille, et rien ne le disait.
+
+        Construit à part de son affichage : c'est ce qui permet d'en vérifier
+        le contenu sans ouvrir une boucle d'événements modale.
+        """
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+
+        _titre = menu.addAction(tr("pdf_stack_title", n=len(membres)))
+        _titre.setEnabled(False)
+        menu.addSeparator()
+
+        _tout = menu.addAction(tr("pdf_stack_all_edit" if edit_pos is not None
+                                  else "pdf_stack_all", n=len(membres)))
+        _tout.triggered.connect(
+            lambda _=False: self._pick_stack(membres, edit_pos))
+        menu.addSeparator()
+
+        for j in membres:
+            p = self.pdf.projectors[j]
+            h = getattr(p, 'fixture_height', None)
+            nom = getattr(p, 'name', '') or getattr(p, 'group', '') or f'#{j + 1}'
+            # Hauteur ET adresse : c'est ce qui permet de reconnaître lequel est
+            # lequel quand quatre appareils portent le même nom.
+            det = f"{h:.2f} m" if h is not None else tr("pdf_stack_no_height")
+            act = menu.addAction(f"{nom}   ·   {det}   ·   CH {p.start_address}")
+            act.triggered.connect(
+                lambda _=False, k=j: self._pick_stack([k], edit_pos))
+
+        # Défaire une pile. Le glisser suffit — on choisit un appareil dans la
+        # liste, puis on le tire à l'écart — mais rien ne l'annonce, et c'est la
+        # première question qui vient une fois le totem composé. L'entrée
+        # explicite évite d'avoir à connaître le geste.
+        if self._editable:
+            menu.addSeparator()
+            # Construit avec `menu` pour parent, et non via `addMenu(titre)` :
+            # le sous-menu créé par la seconde forme n'est retenu par personne
+            # côté Python et se fait ramasser avant l'affichage — l'entrée
+            # apparaissait vide.
+            sous = QMenu(tr("pdf_stack_unstack"), menu)
+            sous.setStyleSheet(_MENU_STYLE)
+            menu.addMenu(sous)
+            for j in membres:
+                p = self.pdf.projectors[j]
+                nom = getattr(p, 'name', '') or getattr(p, 'group', '') or f'#{j + 1}'
+                sous.addAction(nom).triggered.connect(
+                    lambda _=False, k=j: self._unstack(k))
+
+        return menu
+
+    def _unstack(self, idx):
+        """Sort un appareil de sa pile et le pose juste à côté.
+
+        À côté, et pas n'importe où : ce qu'on veut voir, c'est qu'il n'est plus
+        sur le totem — pas le chercher à l'autre bout du plan. L'écart demandé
+        vaut à peu près une largeur d'appareil sur le plateau.
+        """
+        _ph = getattr(self.pdf, '_push_history_cb', None)
+        if callable(_ph):
+            _ph()                       # Ctrl+Z doit pouvoir annuler la sortie
+        p = self.pdf.projectors[idx]
+        px = p.canvas_x if p.canvas_x is not None else 0.5
+        py = p.canvas_y if p.canvas_y is not None else 0.5
+        p.canvas_x, p.canvas_y = _find_free_canvas_pos(
+            self.pdf.projectors, px, py, min_dist=0.035)
+        self._select_stack([idx])
+        mw = getattr(self.pdf, 'main_window', None)
+        if mw and hasattr(mw, 'save_dmx_patch_config'):
+            mw.save_dmx_patch_config()
+        _rc = getattr(self.pdf, '_refresh_cb', None)
+        if callable(_rc):
+            _rc()
+
+    def _select_stack(self, membres):
+        """Remplace la sélection par ces appareils."""
+        keys = [self._local_idx(j) for j in membres]
+        self.pdf.selected_lamps = set(keys)
+        self.pdf.selected_lamps_ordered = list(keys)
+        self.update()
+        self._notify_cpb()
+
+    def _pick_stack(self, membres, edit_pos=None):
+        """Choix d'un appareil (ou du totem entier) dans la liste d'une pile.
+
+        Sélection seule au clic gauche ; au clic droit, on enchaîne sur le menu
+        de réglages, qui vise la sélection qu'on vient de poser.
+        """
+        self._select_stack(membres)
+        if edit_pos is None:
+            return
+        # Différé : on est dans le `triggered` du menu de la pile, encore en
+        # train de se fermer. Ouvrir un second menu modal dans cette pile
+        # d'événements le fait apparaître sous celui qui disparaît — même
+        # raison que la bascule « canaux bruts » du menu de fixture.
+        _idx = self._stack_rep(membres) if len(membres) > 1 else membres[0]
+        QTimer.singleShot(
+            0, lambda: self.pdf._show_fixture_context_menu(edit_pos, _idx))
+
     def _draw_matrix_block(self, painter, indices, sel_rank=None):
         """Dessine une matrice/barre comme un bloc cohérent (cadre + nom + cellules)."""
         pixels = []   # (proj, px, py, key)
@@ -2885,6 +3193,7 @@ class FixtureCanvas(QWidget):
             fills.append(self._get_fill_color(proj))
             _e = _htp.get(id(proj)) if _htp else None
             lit.append(not proj.muted
+                       and (_solo is None or proj.group in _solo)
                        and (proj.level > 0 or (_e is not None and _e[0] > 0)))
 
         # Halo quand au moins un pixel est allumé (comme _draw_fixture)
@@ -3036,12 +3345,29 @@ class FixtureCanvas(QWidget):
         _label_rects = []
         _label_todo  = []   # (cx, cy, proj, group, is_selected, is_hover)
 
+        # Piles : N appareils sur un point. On en dessine UN — les autres sont
+        # rigoureusement dessous, les empiler ne ferait qu'épaissir le trait —
+        # et une pastille annonce le compte. `_stack_skip` retient les membres
+        # qui ne portent pas le dessin.
+        _stacks = self._stacks()
+        _stack_of = {}          # index -> [membres de sa pile]
+        _stack_skip = set()
+        for _membres in _stacks.values():
+            _rep = self._stack_rep(_membres)
+            for _j in _membres:
+                _stack_of[_j] = _membres
+                if _j != _rep:
+                    _stack_skip.add(_j)
+        self._stack_badges = []
+
         _matrix_members = {}   # matrix_id -> [indices]
         for i, proj in enumerate(self.pdf.projectors):
             # Les matrices/barres à pixels sont dessinées en bloc (voir plus bas)
             _mid = getattr(proj, 'matrix_id', None)
             if _mid is not None:
                 _matrix_members.setdefault(_mid, []).append(i)
+                continue
+            if i in _stack_skip:
                 continue
 
             cx, cy = self._get_canvas_pos(i)
@@ -3050,7 +3376,19 @@ class FixtureCanvas(QWidget):
             is_selected = key in self.pdf.selected_lamps
             is_hover    = (i == self._hover_index)
 
+            # Une pile compte comme sélectionnée dès qu'un de ses membres l'est :
+            # l'icône représente tout le totem, la montrer éteinte alors qu'on
+            # vient d'en choisir un appareil ferait croire à un clic manqué.
+            _membres = _stack_of.get(i)
+            if _membres and not is_selected:
+                is_selected = any(self._local_idx(j) in self.pdf.selected_lamps
+                                  for j in _membres)
+
             self._draw_fixture(painter, cx, cy, proj, is_selected, is_hover)
+
+            if _membres:
+                self._stack_badges.append(
+                    (self._draw_stack_badge(painter, cx, cy, len(_membres)), _membres))
 
             if is_selected and key in _sel_rank:
                 self._draw_selection_badge(painter, cx, cy, _sel_rank[key])
@@ -3111,6 +3449,21 @@ class FixtureCanvas(QWidget):
         # ── Smart Guides ──────────────────────────────────────────
         if self._guides:
             self._draw_guides(painter, W, H)
+
+        # ── Cible d'empilement ────────────────────────────────────
+        # Le geste « déposer un appareil sur un autre pour empiler » n'a rien
+        # qui l'annonce : sans ce cercle, il faut le connaître pour l'utiliser.
+        # Pointillé = visé (la cible ne reculera plus), plein = lâchez, ça
+        # empile.
+        if self._stack_hint is not None and self._drag_index is not None:
+            _hx, _hy = self._get_canvas_pos(self._stack_hint)
+            _hr = (9 if self.compact else 13) + 7
+            _verrou = self._stack_snap is not None
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#ffb020") if _verrou else QColor(255, 255, 255, 150),
+                                2.4 if _verrou else 1.4,
+                                Qt.SolidLine if _verrou else Qt.DashLine))
+            painter.drawEllipse(QPointF(_hx, _hy), _hr, _hr)
 
         # ── Tooltip survol (masque pendant drag) ─────────────────
         if self._hover_index is not None and self._drag_index is None:
@@ -3188,6 +3541,21 @@ class FixtureCanvas(QWidget):
             self._apply_target(pos)
             return
 
+        # Pastille d'une pile : c'est le bouton qui donne accès aux appareils
+        # du dessous. Testée AVANT les fixtures — elle déborde de l'icône, et
+        # sans cette priorité le clic retomberait sur celle du dessus, seule
+        # atteignable, ce qui est précisément le problème qu'elle résout.
+        if event.button() in (Qt.LeftButton, Qt.RightButton) and not self._target_mode:
+            _pile = self._stack_badge_at(pos)
+            if _pile:
+                # Clic droit sur la pastille : même liste, mais elle débouche
+                # sur les réglages de l'appareil choisi — le clic droit doit
+                # rester le chemin des réglages, pile ou pas.
+                self._show_stack_menu(
+                    event.globalPos(), _pile,
+                    edit=(event.button() == Qt.RightButton and not self._select_only))
+                return
+
         idx = self._fixture_at(pos)
 
         if event.button() == Qt.LeftButton:
@@ -3230,6 +3598,16 @@ class FixtureCanvas(QWidget):
                         _keys = self._matrix_keys_for(_mid)
                         self.pdf.selected_lamps = set(_keys)
                         self.pdf.selected_lamps_ordered = list(_keys)
+                elif self._stack_members(idx):
+                    # Clic sur une pile → tout le totem, comme une matrice :
+                    # l'icône représente l'ensemble, et déplacer le pied doit
+                    # emmener ce qui est dessus. Pour n'en viser qu'un, on passe
+                    # par la pastille — après quoi la sélection ne contient plus
+                    # que lui et le glisser suivant l'extrait de la pile.
+                    _keys = [self._local_idx(j) for j in self._stack_members(idx)]
+                    if not any(k in self.pdf.selected_lamps for k in _keys):
+                        self.pdf.selected_lamps = set(_keys)
+                        self.pdf.selected_lamps_ordered = list(_keys)
                 elif key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.pdf.selected_lamps_ordered = [key]
@@ -3248,6 +3626,14 @@ class FixtureCanvas(QWidget):
                         if (p.group, li) in self.pdf.selected_lamps:
                             self._drag_starts[j] = self._get_norm_pos(j)
                         g_cnt[p.group] = li + 1
+                    # Le meneur du déplacement doit faire partie de ce qu'on
+                    # déplace : tout le calcul de delta part de SA position de
+                    # départ. Sur une pile, la fixture cliquée est celle qui
+                    # porte le dessin, et elle n'est pas forcément celle qu'on a
+                    # choisie dans la liste — sans ce recalage, extraire un
+                    # appareil d'un totem déplaçait celui du dessus à sa place.
+                    if self._drag_starts and self._drag_index not in self._drag_starts:
+                        self._drag_index = next(iter(self._drag_starts))
                 elif (BEAM_MOUSE_AIM
                         and getattr(self.pdf.projectors[idx], 'fixture_type', '') == 'Moving Head'
                         and not self._select_only):
@@ -3278,6 +3664,18 @@ class FixtureCanvas(QWidget):
             if idx is not None:
                 group, local_idx = self._local_idx(idx)
                 key = (group, local_idx)
+                # Totem : passer par la liste avant les réglages. Sur un point
+                # empilé, `idx` est l'appareil qui PORTE le dessin — ouvrir son
+                # menu directement rendait les autres inatteignables au clic
+                # droit. Sauf si la sélection déborde de la pile (rectangle de
+                # sélection sur plusieurs projecteurs) : là le clic droit vise
+                # ce lot, et l'interposer le réduirait au seul totem.
+                _membres = self._stack_members(idx)
+                if _membres:
+                    _keys_pile = {self._local_idx(j) for j in _membres}
+                    if not (set(self.pdf.selected_lamps) - _keys_pile):
+                        self._show_stack_menu(event.globalPos(), _membres, edit=True)
+                        return
                 if key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.update()
@@ -3300,6 +3698,11 @@ class FixtureCanvas(QWidget):
                     self._notify_cpb()
                 # Double-clic : menu contextuel de la fixture pour TOUS les types,
                 # y compris les Moving Head (même comportement qu'un projecteur).
+                # Sur un totem, il ouvre la liste — même raison qu'au clic droit.
+                _membres = self._stack_members(idx)
+                if _membres:
+                    self._show_stack_menu(event.globalPos(), _membres, edit=True)
+                    return
                 self.pdf._show_fixture_context_menu(event.globalPos(), idx)
 
     def _resolve_overlaps(self, canvas_w, canvas_h, dragged_set):
@@ -3316,8 +3719,24 @@ class FixtureCanvas(QWidget):
         y_min = 0.06
         y_max = 1.0 - 0.05 - SB_H / max(canvas_h, 1)
 
+        # Membres d'une pile (totem) : leur position est celle du PIED, pas la
+        # leur. Les pousser un par un disloquerait le totem — exactement la
+        # raison pour laquelle les membres de matrice sont déjà épargnés
+        # ci-dessous. Sans cette exception, extraire un appareil d'une pile
+        # faisait exploser les autres au premier pixel de glissement, la pile
+        # étant encore sous le curseur.
+        _en_pile = {j for membres in self._stacks().values() for j in membres}
+
         for i, pi in enumerate(self.pdf.projectors):
             if i in dragged_set:
+                continue
+            if i in _en_pile:
+                continue
+            if i == self._stack_hint:
+                # Appareil visé pour un empilement : il doit rester en place.
+                # C'est lui qu'on cherche à atteindre — le repousser rendait le
+                # geste impossible, la cible s'éloignant toujours plus vite que
+                # le curseur n'approchait.
                 continue
             if getattr(pi, 'matrix_id', None) is not None:
                 # Membre de barre/matrice : sa position est celle du bloc. Le
@@ -3685,10 +4104,34 @@ class FixtureCanvas(QWidget):
                 proj.canvas_x = new_x
                 proj.canvas_y = new_y
 
+            # Aimantation sur un appareil déjà posé → on EMPILE (totem). C'est
+            # le seul geste qui crée une pile, et il doit passer avant
+            # l'anti-chevauchement : celui-ci écarterait justement les deux
+            # appareils qu'on cherche à réunir. On ne l'arme que pour un
+            # déplacement d'UN seul appareil — traîner une sélection entière
+            # sur une fixture voudrait empiler tout le rig sur un point.
+            self._stack_snap = None
+            self._stack_hint = None
+            if len(self._drag_starts) <= 1:
+                _px, _py = self._norm_to_px(*self._get_norm_pos(self._drag_index))
+                # Deux rayons : la VISÉE fige la cible et l'annonce, puis
+                # l'AIMANTATION recopie sa position. Avec un seul rayon, la
+                # cible reculait avant qu'on l'atteigne (cf. `_STACK_HINT_PX`).
+                self._stack_hint = self._stack_snap_target(
+                    self._drag_index, _px, _py, self._STACK_HINT_PX)
+                if self._stack_hint is not None:
+                    _cible = self._stack_snap_target(self._drag_index, _px, _py)
+                    if _cible is not None:
+                        self._stack_snap = _cible
+                        _tx, _ty = self._get_norm_pos(_cible)
+                        _p = self.pdf.projectors[self._drag_index]
+                        _p.canvas_x, _p.canvas_y = _tx, _ty
+                        self._guides = []
+
             # Anti-overlap : pousser les fixtures non-draguées qui chevauchent.
             # Désactivé quand des Smart Guides snappent : l'anti-overlap fighterait
             # la fixture cible de l'alignement en la poussant au loin à chaque frame.
-            if not self._guides:
+            if not self._guides and self._stack_snap is None:
                 self._resolve_overlaps(w, h, set(self._drag_starts.keys()) or {self._drag_index})
             self.update()
 
@@ -3701,6 +4144,16 @@ class FixtureCanvas(QWidget):
             if new_hover != self._hover_index:
                 self._hover_index = new_hover
                 self.update()
+            # Pastille d'une pile : c'est un bouton, il doit s'annoncer comme
+            # tel — sinon rien ne laisse deviner qu'on peut cliquer le chiffre
+            # pour atteindre les appareils du dessous.
+            _pile = self._stack_badge_at(pos)
+            if _pile:
+                self.setCursor(Qt.PointingHandCursor)
+                self.setToolTip(tr("pdf_stack_tip", n=len(_pile)))
+                return
+            if self.toolTip():
+                self.setToolTip("")
             # Curseur contextuel (priorité : faisceau > fixture)
             on_beam = self._beam_at(pos) is not None and new_hover is None
             if on_beam:
@@ -3736,6 +4189,8 @@ class FixtureCanvas(QWidget):
                 self._drag_index  = None
                 self._drag_starts = {}
                 self._guides      = []   # Effacer les smart guides au release
+                self._stack_snap  = None
+                self._stack_hint  = None
                 if self.pdf.main_window and hasattr(self.pdf.main_window, 'save_dmx_patch_config'):
                     self.pdf.main_window.save_dmx_patch_config()
             elif self._rubber_rect and self._rubber_origin is not None:
@@ -3835,6 +4290,11 @@ class PlanDeFeu(QFrame):
         self.selected_lamps_ordered = []      # même contenu, en ordre de sélection
         self.sym_mode = False                 # symétrie Pan active
         self._htp_overrides = None    # dict {id(proj): (level, QColor)} ou None
+        # Solo FLASH KILL : groupes EPARGNES (set) pendant la coupure, None hors
+        # solo. Purement de l'AFFICHAGE — la coupure reelle est une porte par
+        # frame juste avant l'envoi DMX, elle ne touche pas au modele, donc rien
+        # ne pouvait le montrer a l'ecran.
+        self._kill_display = None
         self._canvas_editable = False  # Vue principale : lecture seule (edition dans Patch DMX)
         self._effects = {}            # id(proj) -> _EffectState  (pan/tilt)
         self._led_effects = {}        # id(proj) -> {"type","phase","speed","saved_level","saved_color"}
@@ -4581,6 +5041,21 @@ class PlanDeFeu(QFrame):
             self._htp_overrides = overrides
             self._dirty = True
 
+    def set_kill_display(self, gardes):
+        """Solo FLASH KILL : afficher eteint tout ce qui est HORS `gardes`.
+
+        `gardes` = set des groupes epargnes, ou None hors solo.
+
+        Le KILL ne modifie AUCUN etat du show (c'est une porte appliquee et
+        defaite le temps d'une frame, juste avant l'envoi DMX) : le modele reste
+        allume, et le repaint etant differe il ne verrait de toute facon jamais
+        la coupure. D'ou ce drapeau d'affichage, seul moyen de montrer a l'ecran
+        ce qui part vraiment sur les lampes.
+        """
+        if gardes != getattr(self, '_kill_display', None):
+            self._kill_display = gardes
+            self._dirty = True
+
     def set_dmx_blocked(self):
         self.dmx_toggle_btn.setChecked(False)
         self.dmx_toggle_btn.setStyleSheet(
@@ -4753,6 +5228,7 @@ class PlanDeFeu(QFrame):
             proj.prism_rotation = 0
             proj.effects      = 0
             proj.focus = proj.gobo2 = proj.speed = proj.mode_value = 0
+            proj.preset1 = proj.preset2 = proj.preset3 = proj.preset4 = 0
             proj.strobe_speed = 0
             # Vider les contrôles bruts (curseurs avancés) : sinon un canal
             # « Mode »/« Effects »/Reset posé à la main reste actif (channel_extras
@@ -5726,6 +6202,26 @@ class PlanDeFeu(QFrame):
                 sli.blockSignals(False)
                 val.setText(formate(0))
 
+        def _slot_actif(v, valeurs):
+            """Valeur du bloc réellement atteint, ou None si on est en deçà.
+
+            Une position de roue — et un programme d'appareil — occupe une
+            PLAGE, pas un point : à DMX 150 entre un bloc à 137 et un bloc à
+            200, la fixture exécute bien celui de 137. C'est la règle de
+            `core.cw_slot_at` (« le dernier bloc franchi »), et le surlignage
+            doit la suivre, sinon le menu prétend qu'aucun programme ne tourne
+            alors que l'appareil en exécute un.
+
+            Le seuil de tolérance qu'utilisaient le gobo (±16) et la roue (±8)
+            n'avait pas ce sens : il n'allumait rien au milieu d'une plage, et
+            pouvait allumer un bloc qu'on n'avait pas encore atteint.
+
+            En DEÇÀ du plus petit bloc, on ne rend rien : allumer le premier
+            reviendrait à annoncer un programme qui ne tourne pas.
+            """
+            franchis = [d for d in valeurs if d <= v]
+            return max(franchis) if franchis else None
+
         def _mk_slider_row(label_text, cur_val, max_val, on_change, label_w=None):
             """
             Ligne « label + slider + valeur » du menu contextuel.
@@ -5768,6 +6264,10 @@ class PlanDeFeu(QFrame):
             wa = QWidgetAction(menu)
             wa.setDefaultWidget(widget)
             menu.addAction(wa)
+            # Rendue pour les sections repliables : masquer une ligne, c'est
+            # masquer son ACTION (`setVisible`), pas son widget — QMenu pose
+            # sinon un rectangle vide à la place.
+            return wa
 
         def _clear_targets(t=targets):
             black = QColor(0, 0, 0)
@@ -5795,6 +6295,7 @@ class PlanDeFeu(QFrame):
                 p.prism          = 0
                 p.effects        = 0
                 p.focus = p.gobo2 = p.speed = p.mode_value = 0
+                p.preset1 = p.preset2 = p.preset3 = p.preset4 = 0
                 p.channel_extras = {}
             _flush(grab=False)   # CLEAR libère la fixture, il ne la prend pas en main
             # Le menu reste ouvert : ses curseurs afficheraient sinon les
@@ -5932,34 +6433,44 @@ class PlanDeFeu(QFrame):
             'R' in _proj_profile and 'G' in _proj_profile and 'B' in _proj_profile
         )
 
+        # Canaux de COULEUR à état dédié : ils restent ici, au milieu des
+        # réglages de couleur auxquels ils appartiennent.
         _EXTRA_CHANNELS = [
             ("UV",      "UV",           "#8844ff", "uv",           0,   255),
             ("W",       "Blanc",        "#ffffff", "white_boost",  0,   255),
             ("Ambre",   "Ambre",        "#ff9900", "amber_boost",  0,   255),
             ("Orange",  "Orange",       "#ff6600", "orange_boost", 0,   255),
             ("Effects", "Effects",      "#cc44ff", "effects",      0,   255),
-            # Ces quatre-la sortaient 0 en dur et n'existaient qu'en curseur brut.
-            # Ils ont maintenant un etat propre, donc un curseur dedie — et ils
-            # sont retires de la liste des canaux avances (_HANDLED_IN_MENU) pour
-            # ne pas se retrouver avec DEUX curseurs qui ecrivent le meme canal.
+        ]
+        # Ces quatre-la sortaient 0 en dur et n'existaient qu'en curseur brut.
+        # Ils ont maintenant un etat propre, donc un curseur dedie — et ils
+        # sont retires de la liste des canaux avances (_HANDLED_IN_MENU) pour
+        # ne pas se retrouver avec DEUX curseurs qui ecrivent le meme canal.
+        #
+        # Mais ce sont des canaux TECHNIQUES, pas des canaux de couleur : les
+        # laisser ici les séparait du reste des canaux techniques par tout le
+        # bloc Moving Head (pad, roue, gobo, prisme, couleurs). Sur une Maverick
+        # Force S Spot, Focus/Gobo 2/Vitesse/Mode se retrouvaient en haut et
+        # Zoom/Iris/Frost/CTO tout en bas — deux endroits pour la même famille
+        # de réglages. Ils sont donc rendus AVEC les « Canaux avancés », en tête
+        # de section : même emplacement, mais toujours leur état dédié (et non
+        # `channel_extras`, qui court-circuiterait le modèle).
+        _ADV_DEDICATED = [
             ("Focus",   "Focus",        "#776622", "focus",        0,   255),
             ("Gobo2",   "Gobo 2",       "#888888", "gobo2",        0,   255),
             ("Speed",   "Vitesse",      "#4488aa", "speed",        0,   255),
             ("Mode",    "Mode",         "#aa4444", "mode_value",   0,   255),
         ]
 
-        _extra_shown = False
-        for ch_key, ch_label, ch_color, attr_name, vmin, vmax in _EXTRA_CHANNELS:
-            if ch_key not in _proj_profile:
-                continue
-            if not _extra_shown:
-                menu.addSeparator()
-                _sec_lbl = QLabel(tr("pdf2_special_ch"))
-                _sec_lbl.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
-                                       "padding:2px 10px;border:none;background:transparent;")
-                _wa(_sec_lbl)
-                _extra_shown = True
+        def _build_special_row(ch_key, ch_label, ch_color, attr_name,
+                               vmin, vmax, pourcent=True):
+            """Ligne d'un canal à état dédié (UV, Ambre, Focus, Mode…).
 
+            `pourcent=False` affiche la valeur DMX brute : les lignes rendues
+            dans « Canaux avancés » voisinent avec des canaux bruts en 0-255, et
+            un « 38 % » au milieu d'eux ne se compare à rien — un Mode ou un
+            Gobo 2 se règle sur une valeur de macro, pas sur un pourcentage.
+            """
             cur_val = getattr(targets[0][0], attr_name, 0)
 
             # Même curseur que partout ailleurs, teinté par la couleur du canal
@@ -5977,56 +6488,69 @@ class PlanDeFeu(QFrame):
             ch_sli.setRange(vmin, vmax); ch_sli.setValue(cur_val)
             ch_sli.setStyleSheet(_sli_extra)
 
-            # Pourcent pour UV direct, "+" pour les boosts
-            _is_boost = attr_name != "uv"
-            _pct = int(cur_val / 255 * 100)
-            ch_val_lbl = QLabel(
-                f"{_pct}%" if not _is_boost or cur_val == 0
-                else f"+{_pct}%"
-            )
+            # « + » pour les seuls boosts (blanc, ambre, orange) : c'est un
+            # renfort ajouté à la couleur. UV, Effects, Focus… sont des valeurs
+            # directes, le « + » n'y voulait rien dire.
+            _is_boost = attr_name.endswith("_boost")
+
+            def _fmt(v, _pc=pourcent, _b=_is_boost):
+                if not _pc:
+                    return str(int(v))
+                pct = int(v / 255 * 100)
+                return f"+{pct}%" if _b and v > 0 else f"{pct}%"
+
+            ch_val_lbl = QLabel(_fmt(cur_val))
             ch_val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;")
 
-            def _apply_special_master(p):
-                """Ouvre (ou referme) le master Dim pour les canaux dédiés.
+            def _cb(v, t=targets, aname=attr_name, lbl_ref=ch_val_lbl, f=_fmt):
+                for p, g, i in t:
+                    setattr(p, aname, v)
+                    _apply_special_master(p)
+                lbl_ref.setText(f(v))
+                _flush()
 
-                La LED dédiée passe DERRIÈRE le dimmer de la fixture : curseur UV
-                à fond sur un projecteur à 0 %, rien ne sort. Avant, on trichait
-                en peignant le violet dans `p.color` — ce qui allumait aussi les
-                LED ROUGE et BLEUE (le moteur DMX reconstitue le RVB depuis
-                `p.color`) : l'« UV » sortait en violet RVB. On n'ouvre donc plus
-                que le master, RVB à zéro, et la teinte violette n'existe plus
-                qu'à l'AFFICHAGE (`core.special_tint_color`).
-                """
-                on = any(int(getattr(p, a, 0) or 0) > 0
-                         for a in ('uv', 'amber_boost', 'white_boost', 'orange_boost'))
-                if on and p.level == 0:
-                    p._special_master = True
-                    p.level      = 100
-                    p.base_color = QColor(0, 0, 0)
-                    p.color      = QColor(0, 0, 0)
-                elif not on and getattr(p, '_special_master', False):
-                    p._special_master = False
-                    # Ne refermer que si rien d'autre n'a été posé entre-temps
-                    # (une couleur choisie depuis a repris la main sur le niveau).
-                    if not (p.base_color.red() or p.base_color.green() or p.base_color.blue()):
-                        p.level = 0
-                        p.color = QColor(0, 0, 0)
+            ch_sli.valueChanged.connect(_cb)
+            _grille(ch_h, ch_lbl, ch_sli, ch_val_lbl, formate=_fmt)
+            return ch_w
 
-            def _make_ch_cb(aname, lbl_ref, is_boost):
-                def _cb(v, t=targets):
-                    for p, g, i in t:
-                        setattr(p, aname, v)
-                        _apply_special_master(p)
-                    pct = int(v / 255 * 100)
-                    lbl_ref.setText(f"+{pct}%" if is_boost and v > 0 else f"{pct}%")
-                    _flush()
-                return _cb
+        def _apply_special_master(p):
+            """Ouvre (ou referme) le master Dim pour les canaux dédiés.
 
-            ch_sli.valueChanged.connect(_make_ch_cb(attr_name, ch_val_lbl, _is_boost))
+            La LED dédiée passe DERRIÈRE le dimmer de la fixture : curseur UV
+            à fond sur un projecteur à 0 %, rien ne sort. Avant, on trichait
+            en peignant le violet dans `p.color` — ce qui allumait aussi les
+            LED ROUGE et BLEUE (le moteur DMX reconstitue le RVB depuis
+            `p.color`) : l'« UV » sortait en violet RVB. On n'ouvre donc plus
+            que le master, RVB à zéro, et la teinte violette n'existe plus
+            qu'à l'AFFICHAGE (`core.special_tint_color`).
+            """
+            on = any(int(getattr(p, a, 0) or 0) > 0
+                     for a in ('uv', 'amber_boost', 'white_boost', 'orange_boost'))
+            if on and p.level == 0:
+                p._special_master = True
+                p.level      = 100
+                p.base_color = QColor(0, 0, 0)
+                p.color      = QColor(0, 0, 0)
+            elif not on and getattr(p, '_special_master', False):
+                p._special_master = False
+                # Ne refermer que si rien d'autre n'a été posé entre-temps
+                # (une couleur choisie depuis a repris la main sur le niveau).
+                if not (p.base_color.red() or p.base_color.green() or p.base_color.blue()):
+                    p.level = 0
+                    p.color = QColor(0, 0, 0)
 
-            _grille(ch_h, ch_lbl, ch_sli, ch_val_lbl,
-                    formate=lambda v: f"{int(v / 255 * 100)}%")
-            _wa(ch_w)
+        _extra_shown = False
+        for _sp in _EXTRA_CHANNELS:
+            if _sp[0] not in _proj_profile:
+                continue
+            if not _extra_shown:
+                menu.addSeparator()
+                _sec_lbl = QLabel(tr("pdf2_special_ch"))
+                _sec_lbl.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                       "padding:2px 10px;border:none;background:transparent;")
+                _wa(_sec_lbl)
+                _extra_shown = True
+            _wa(_build_special_row(*_sp))
         # Les curseurs ci-dessus adressent un TYPE de canal. Le pilotage
         # canal par canal, lui, vit dans la vue « Curseurs » (bascule en
         # haut du menu) : un curseur par canal DMX, qui suit la sortie en
@@ -6169,7 +6693,9 @@ class PlanDeFeu(QFrame):
                         )
                     _flush()
 
-                _wa(_slider_row("Roue couleur", cur_cw, 255, _on_cw))
+                _cw_row = _slider_row("Roue couleur", cur_cw, 255, _on_cw)
+                _cw_sli = _cw_row.findChild(QSlider)
+                _wa(_cw_row)
 
                 # Préférences OFL si disponibles, sinon génériques
                 _ofl_cw = getattr(proj, 'color_wheel_slots', []) or _CW_DEFAULT_SLOTS
@@ -6199,9 +6725,18 @@ class PlanDeFeu(QFrame):
                 _cw_btn_refs = []
 
                 def _restyle_cw_btns(selected_dmx):
+                    # Règle de `core.cw_slot_at` — le dernier slot FRANCHI — et
+                    # non « le plus proche à ±8 ». C'est la même fonction qui
+                    # décide de la couleur affichée en 2D et en 3D : diverger
+                    # ici, c'est allumer un bouton pendant que le plan montre la
+                    # couleur du slot voisin. Au milieu d'une plage, l'ancien
+                    # seuil n'allumait d'ailleurs rien du tout.
+                    _slot = _cw_slot_at(getattr(proj, 'color_wheel_slots', None),
+                                        selected_dmx)
+                    _sel = int(_slot.get('dmx', 0))
                     for _b, _dv, _hc in _cw_btn_refs:
                         _tc = "#000" if _luminance(_hc) else "#fff"
-                        _active = abs(_dv - selected_dmx) < 8
+                        _active = (_dv == _sel)
                         _border = "#00d4ff" if _active else "#555"
                         _bw = "3px" if _active else "2px"
                         _b.setStyleSheet(
@@ -6210,12 +6745,14 @@ class PlanDeFeu(QFrame):
                             f"QPushButton:hover{{border-color:#00d4ff;}}"
                         )
 
+                _cw_act = int(_cw_slot_at(getattr(proj, 'color_wheel_slots', None),
+                                          cur_cw).get('dmx', 0))
                 for dmx_v, hex_c, tip in _CW_PRESETS:
                     cb = QPushButton()
                     cb.setFixedSize(22, 22)
                     cb.setToolTip(tr("pdf_f_tip_dmx", tip=tip, dmx_v=dmx_v))
                     tc = "#000" if _luminance(hex_c) else "#fff"
-                    active = abs(dmx_v - cur_cw) < 8
+                    active = (dmx_v == _cw_act)
                     border = "#00d4ff" if active else "#555"
                     bw = "3px" if active else "2px"
                     cb.setStyleSheet(
@@ -6224,25 +6761,26 @@ class PlanDeFeu(QFrame):
                         f"QPushButton:hover{{border-color:#00d4ff;}}"
                     )
                     _cw_btn_refs.append((cb, dmx_v, hex_c))
-                    def _on_cw_preset(chk, v=dmx_v, hc=hex_c, t=targets):
-                        qc = QColor(hc)
-                        for p, g, i in t:
-                            p.color_wheel = v
-                            if p.level == 0:
-                                p.level = 100
-                            brightness = p.level / 100.0
-                            p.base_color = qc
-                            p.color = QColor(
-                                int(qc.red() * brightness),
-                                int(qc.green() * brightness),
-                                int(qc.blue() * brightness)
-                            )
-                        _restyle_cw_btns(v)
-                        _flush()
+                    # Le bouton POSE le curseur, il n'écrit plus la lyre
+                    # lui-même : `_on_cw` fait déjà exactement ce travail (même
+                    # couleur, via `cw_slot_at`), et le dupliquer ici laissait le
+                    # curseur figé pendant que la roue tournait — deux écritures
+                    # pour un seul canal, dont une invisible dans le menu.
+                    def _on_cw_preset(chk, v=dmx_v, s=_cw_sli, t=targets):
+                        if s is not None:
+                            s.setValue(v)
+                        else:
+                            _on_cw(v, t)
                     cb.clicked.connect(_on_cw_preset)
                     cw_br.addWidget(cb)
                 cw_br.addStretch()
                 cw_tr.addWidget(cw_btns_row, 1)
+
+                # Surlignage branché sur le CURSEUR : tirer le curseur allume la
+                # pastille de la couleur réellement atteinte, celle-là même que
+                # le plan de feu affiche.
+                if _cw_sli is not None:
+                    _cw_sli.valueChanged.connect(_restyle_cw_btns)
 
                 # Bouton éditeur de roue
                 _edit_cw_btn = QPushButton(tr("pdf2_edit"))
@@ -6299,7 +6837,13 @@ class PlanDeFeu(QFrame):
                         p.gobo = v
                     _flush()
 
-                _wa(_slider_row("Gobo", cur_gobo, 255, _on_gobo))
+                # Le curseur est gardé : ce sont les boutons qui le poussent, et
+                # non l'inverse. Cliquer un gobo laissait sinon le curseur là où
+                # il était — la lyre changeait de gobo, le menu montrait encore
+                # l'ancien.
+                _gobo_row = _slider_row("Gobo", cur_gobo, 255, _on_gobo)
+                _gobo_sli = _gobo_row.findChild(QSlider)
+                _wa(_gobo_row)
 
                 # Boutons presets gobo — OFL si disponible, sinon génériques
                 _ofl_gobo = getattr(proj, 'gobo_wheel_slots', [])
@@ -6317,21 +6861,36 @@ class PlanDeFeu(QFrame):
                 gobo_w = QWidget(); gobo_h = QHBoxLayout(gobo_w)
                 gobo_h.setContentsMargins(10, 0, 10, 6); gobo_h.setSpacing(3)
 
-                def _set_gobo_btn(val, t=targets, gw=gobo_w):
-                    _on_gobo(val, t)
+                # Un bouton POSE le curseur ; le curseur écrit la lyre, met à
+                # jour sa valeur affichée et rallume le bon bouton. Un seul
+                # chemin — et tirer le curseur allume désormais le gobo atteint.
+                def _set_gobo_btn(val, s=_gobo_sli, t=targets):
+                    if s is not None:
+                        s.setValue(val)
+                    else:
+                        _on_gobo(val, t)
+
+                def _sync_gobo(v, gw=gobo_w):
+                    _act = _slot_actif(v, [d for d, _i, _t in _GOBO_SLOTS])
                     for b in gw.findChildren(QPushButton):
                         bv = b.property("gobo_val")
                         if bv is not None:
-                            b.setStyleSheet(_SS_BTN_ON if bv == val else _SS_BTN_OFF)
+                            b.setStyleSheet(_SS_BTN_ON if bv == _act else _SS_BTN_OFF)
 
+                _gobo_act = _slot_actif(cur_gobo, [d for d, _i, _t in _GOBO_SLOTS])
                 for dmx_val, icon, tip in _GOBO_SLOTS:
                     btn = QPushButton(icon)
                     btn.setFixedSize(30, 28); btn.setToolTip(tr("pdf_f_tip_dmx2", tip=tip, dmx_val=dmx_val))
                     btn.setProperty("gobo_val", dmx_val)
-                    btn.setStyleSheet(_SS_BTN_ON if abs(dmx_val - cur_gobo) < 16 else _SS_BTN_OFF)
+                    btn.setStyleSheet(_SS_BTN_ON if dmx_val == _gobo_act else _SS_BTN_OFF)
                     btn.clicked.connect(lambda chk, v=dmx_val: _set_gobo_btn(v))
                     gobo_h.addWidget(btn)
                 gobo_h.addStretch()
+
+                # Le surlignage suit le CURSEUR, pas le clic : tirer le curseur
+                # allume le gobo réellement atteint.
+                if _gobo_sli is not None:
+                    _gobo_sli.valueChanged.connect(_sync_gobo)
 
                 # Bouton éditeur de gobo
                 _edit_gobo_btn = QPushButton(tr("pdf2_edit"))
@@ -6466,6 +7025,136 @@ class PlanDeFeu(QFrame):
             _wa(colors_w)
 
 
+        # ── Presets (programmes internes de l'appareil) ───────────────────
+        #
+        # ⚠️ Rendue ICI, à l'indentation 8, et NON dans le bloc
+        # `if proj.fixture_type == "Moving Head":` qui porte la roue, le gobo et
+        # le prisme. C'est tout l'objet de la section : les canaux de programme
+        # sont majoritairement sur des PAR LED, des barres et des machines à
+        # effets. Les mettre avec les réglages de lyre les aurait rendus
+        # invisibles précisément aux appareils qui en ont besoin — c'est déjà ce
+        # qui arrive aux presets de roue de couleurs, inatteignables sur un PAR.
+        _preset_types = [t for t in PRESET_TYPES if t in (_proj_profile or [])]
+        if _preset_types:
+            # Styles redéfinis ici : les `_SS_BTN_*` de la section roue/gobo sont
+            # affectés DANS le bloc Moving Head. Python les laisserait visibles
+            # ensuite, mais seulement si ce bloc s'est exécuté — sur un PAR LED
+            # ils n'existent pas, et la section plantait en NameError.
+            _SS_PST_ON  = ("QPushButton{background:#00cc99;color:#000;border:none;"
+                           "border-radius:4px;font-size:12px;font-weight:bold;padding:0 4px;}")
+            _SS_PST_OFF = ("QPushButton{background:#1e1e1e;color:#aaa;border:1px solid #333;"
+                           "border-radius:4px;font-size:12px;padding:0 4px;}"
+                           "QPushButton:hover{background:#2a2a2a;color:#fff;border-color:#555;}")
+            menu.addSeparator()
+            _pst_sec = QLabel(tr("pst_section"))
+            _pst_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                   "padding:2px 10px;border:none;background:transparent;")
+            _wa(_pst_sec)
+
+            _pst_labels = list(getattr(proj, 'channel_labels', None) or [])
+            _pst_valid  = len(_pst_labels) == len(_proj_profile or [])
+
+            for _pt in _preset_types:
+                _attr = f"preset{_pt[-1]}"
+                # Étiquette : le nom constructeur quand il est fiable, sinon
+                # « Preset N ». Sur un appareil à plusieurs canaux de programme,
+                # « Preset 2 » tout seul ne dit pas lequel on règle.
+                _nom = ""
+                if _pst_valid:
+                    _nom = (_pst_labels[_proj_profile.index(_pt)] or "").strip()
+                _lbl_txt = _nom[:18] if _nom else _nom_lisible(_pt)
+
+                _cur = getattr(targets[0][0], _attr, 0)
+
+                def _on_pst(v, t=targets, a=_attr):
+                    for p, g, i in t:
+                        setattr(p, a, v)
+                    _flush()
+
+                # Le curseur est gardé sous la main : c'est LUI que les boutons
+                # de blocs vont pousser, et non le projecteur en direct. Cliquer
+                # « Programme 1 » laissait sinon le curseur là où il était — la
+                # valeur partait bien en DMX, mais le menu affichait autre chose
+                # que ce que la fixture recevait.
+                _pst_row = _mk_slider_row(_lbl_txt, _cur, 255, _on_pst)
+                _pst_sli = _pst_row.findChild(QSlider)
+                _wa(_pst_row)
+
+                # Blocs nommés. Rien tant que l'utilisateur n'a rien calibré :
+                # une rangée de boutons inventés enverrait des valeurs de macro
+                # au hasard, donc déclencherait des programmes non voulus.
+                _slots = list((getattr(proj, 'preset_slots', None) or {}).get(_pt, []))
+
+                _pst_w = QWidget(); _pst_h = QHBoxLayout(_pst_w)
+                _pst_h.setContentsMargins(10, 0, 10, 6); _pst_h.setSpacing(3)
+
+                # Un bloc POSE le curseur ; le curseur écrit le projecteur,
+                # rafraîchit sa valeur affichée et rallume le bon bouton. Un
+                # seul chemin, donc rien qui puisse se désynchroniser — et le
+                # repli direct si la ligne n'a pas pu être construite.
+                def _set_pst(val, s=_pst_sli, t=targets, a=_attr):
+                    if s is not None:
+                        s.setValue(val)
+                    else:
+                        _on_pst(val, t, a)
+
+                # Branché sur le CURSEUR et non sur le clic : tirer le curseur
+                # jusqu'à la valeur d'un bloc allume ce bloc, exactement comme
+                # le test en direct de l'éditeur. C'est ce qui rend la
+                # calibration lisible — on voit quel programme on a atteint.
+                def _sync_pst(v, w=_pst_w, vals=[int(s.get('dmx', 0)) for s in _slots]):
+                    # Même règle que la roue et le gobo : un programme occupe une
+                    # PLAGE. À DMX 150 entre un bloc à 137 et un à 200, c'est
+                    # bien celui de 137 qui tourne dans l'appareil.
+                    _act = _slot_actif(v, vals)
+                    for b in w.findChildren(QPushButton):
+                        bv = b.property("pst_val")
+                        if bv is not None:
+                            b.setStyleSheet(_SS_PST_ON if bv == _act else _SS_PST_OFF)
+
+                if _pst_sli is not None:
+                    _pst_sli.valueChanged.connect(_sync_pst)
+
+                _pst_act = _slot_actif(_cur, [int(s.get('dmx', 0)) for s in _slots])
+                for _s in _slots:
+                    _dv  = int(_s.get('dmx', 0))
+                    _nm  = (_s.get('name', '') or '?')
+                    _btn = QPushButton(_nm[:8])
+                    _btn.setFixedHeight(22)
+                    _btn.setToolTip(f"{_nm} — DMX {_dv}")
+                    _btn.setProperty("pst_val", _dv)
+                    _btn.setStyleSheet(_SS_PST_ON if _dv == _pst_act else _SS_PST_OFF)
+                    _btn.clicked.connect(lambda chk, v=_dv, f=_set_pst: f(v))
+                    _pst_h.addWidget(_btn)
+                _pst_h.addStretch()
+
+                _edit_pst = QPushButton(tr("pdf2_edit"))
+                _edit_pst.setFixedHeight(22)
+                _edit_pst.setToolTip(tr("pst_edit_tip"))
+                _edit_pst.setStyleSheet(
+                    "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
+                    "border-radius:4px;font-size:11px;padding:0 6px;}"
+                    "QPushButton:hover{border-color:#00cc99;color:#00cc99;background:#1a2a24;}"
+                )
+
+                def _open_pst_editor(chk=False, _p=proj, _t=_pt):
+                    from preset_editor import PresetEditorDialog
+                    menu.close()
+                    dlg = PresetEditorDialog(
+                        _p, _t, self.projectors if hasattr(self, 'projectors') else [],
+                        main_window=self.main_window if hasattr(self, 'main_window') else None,
+                        parent=self,
+                    )
+                    dlg.exec()
+                    # Rafraîchir dans tous les cas : le curseur de test a écrit
+                    # en direct, et Annuler a rendu la valeur d'origine.
+                    if hasattr(self, 'refresh'):
+                        self.refresh()
+
+                _edit_pst.clicked.connect(_open_pst_editor)
+                _pst_h.addWidget(_edit_pst)
+                _wa(_pst_w)
+
         # ── Canaux avancés (Reset, Mode, Speed, Focus…) ──────────────────
         _HANDLED_IN_MENU = {
             "R", "G", "B", "W", "Ambre", "Orange", "UV",
@@ -6473,6 +7162,10 @@ class PlanDeFeu(QFrame):
             "Pan", "PanFine", "Tilt", "TiltFine",
             "Gobo1", "Gobo1Rot", "ColorWheel", "Shutter", "Prism", "PrismRot",
             "Focus", "Gobo2", "Speed", "Mode",
+            # Les canaux de preset ont leur propre section, juste au-dessus.
+            # Sans cette exclusion ils auraient DEUX curseurs qui écrivent le
+            # même canal — l'un ici, l'autre dans « Canaux avancés ».
+            *PRESET_TYPES,
         }
         # Une ligne par CANAL, et non plus par type.
         #
@@ -6503,12 +7196,13 @@ class PlanDeFeu(QFrame):
             else:
                 _adv_channels.append((_ct, _nom or _ct))
 
-        if _adv_channels:
+        # Les canaux techniques à état dédié (Focus, Gobo 2, Vitesse, Mode)
+        # ouvrent la section : même famille de réglages, donc même endroit —
+        # ils restent pilotés par leur attribut, pas par `channel_extras`.
+        _adv_dedicated = [_d for _d in _ADV_DEDICATED if _d[0] in _proj_profile]
+
+        if _adv_channels or _adv_dedicated:
             menu.addSeparator()
-            _adv_sec = QLabel(tr("pdf2_advanced_ch"))
-            _adv_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
-                                   "padding:2px 10px;border:none;background:transparent;")
-            _wa(_adv_sec)
 
             _cur_extras = getattr(targets[0][0], 'channel_extras', {}) or {}
 
@@ -6519,6 +7213,82 @@ class PlanDeFeu(QFrame):
                 if v is None and isinstance(cle, int):
                     v = ex.get(str(cle))
                 return int(v or 0)
+
+            # ── Section repliable ────────────────────────────────────────
+            # Sur une lyre à 21 canaux ces lignes font à elles seules la moitié
+            # du menu, et on n'y touche qu'au patch : la section est donc
+            # REPLIÉE par défaut. Le choix est retenu sur `self._adv_expanded`
+            # (même mécanique que le mode « Curseurs ») et vaut donc d'un
+            # projecteur à l'autre : on l'ouvre une fois, elle reste ouverte.
+            #
+            # Sauf UN cas : si un canal avancé porte déjà une valeur, la section
+            # s'ouvre d'office tant que l'utilisateur ne l'a pas repliée
+            # lui-même. Replier par défaut ne doit jamais escamoter un réglage
+            # actif — un Zoom coincé à 200 qu'on ne voit plus est exactement le
+            # genre de panne qu'on passe une soirée à chercher.
+            _adv_total  = len(_adv_dedicated) + len(_adv_channels)
+            _adv_actifs = (
+                sum(1 for _d in _adv_dedicated
+                    if int(getattr(targets[0][0], _d[3], 0) or 0) > 0)
+                + sum(1 for _cle, _txt in _adv_channels if _val_adv(_cle) > 0)
+            )
+            _choix = getattr(self, '_adv_expanded', None)
+            _etat_adv = {"ouvert": _adv_actifs > 0 if _choix is None else _choix}
+
+            _adv_sec = QPushButton()
+            _adv_sec.setFlat(True)
+            _adv_sec.setCursor(Qt.PointingHandCursor)
+            _adv_sec.setFocusPolicy(Qt.NoFocus)
+            _tip = tr("pdf2_adv_fold_tip")
+            if _adv_actifs:
+                _tip += " — " + tr("pdf2_adv_active", n=_adv_actifs)
+            _adv_sec.setToolTip(_tip)
+            # Un titre de section reste un titre : même graisse et même taille
+            # que les autres, juste assez éclairci pour se voir cliquable.
+            _adv_sec.setStyleSheet(
+                "QPushButton{color:#666;font-size:9px;font-weight:bold;text-align:left;"
+                "padding:3px 10px;border:none;background:transparent;}"
+                "QPushButton:hover{color:#00d4ff;}"
+            )
+
+            def _texte_entete(ouvert):
+                fleche = "▾" if ouvert else "▸"
+                txt = f"{fleche}  {tr('pdf2_advanced_ch')}  ·  {_adv_total}"
+                # Pastille du nombre de canaux réglés : le seul moyen de savoir,
+                # section repliée, qu'il y a quelque chose dedans.
+                return txt + (f"   ● {_adv_actifs}" if _adv_actifs else "")
+
+            _wa(_adv_sec)
+
+            # Les lignes sont construites dans TOUS les cas et seulement
+            # masquées : les bâtir à la volée au dépliage obligerait à insérer
+            # des actions au milieu d'un menu déjà affiché.
+            _adv_rows = []
+
+            for _d in _adv_dedicated:
+                # Valeur DMX brute : ces lignes voisinent maintenant avec des
+                # canaux bruts en 0-255.
+                _adv_rows.append(_wa(_build_special_row(*_d, pourcent=False)))
+
+            def _appliquer_pli(memoriser=True):
+                ouvert = _etat_adv["ouvert"]
+                for _a in _adv_rows:
+                    _a.setVisible(ouvert)
+                _adv_sec.setText(_texte_entete(ouvert))
+                if memoriser:
+                    self._adv_expanded = ouvert
+                if menu.isVisible():
+                    # Le menu a changé de hauteur : le redimensionner ET le
+                    # repositionner par le même chemin qu'à l'ouverture, sinon
+                    # une section dépliée en bas d'écran sort de l'écran.
+                    menu.resize(menu.sizeHint())
+                    menu.move(self._menu_pos(menu, global_pos))
+
+            def _basculer_pli(_=False):
+                _etat_adv["ouvert"] = not _etat_adv["ouvert"]
+                _appliquer_pli()
+
+            _adv_sec.clicked.connect(_basculer_pli)
 
             def _make_adv_cb(cle):
                 def _cb(v, t=targets):
@@ -6539,8 +7309,11 @@ class PlanDeFeu(QFrame):
             # Plus de largeur calculée sur la longueur des noms : ces lignes
             # suivent la grille commune du menu (`_grille`), comme les autres.
             for _cle, _txt in _adv_channels:
-                _wa(_mk_slider_row(
-                    _txt, _val_adv(_cle), 255, _make_adv_cb(_cle)))
+                _adv_rows.append(_wa(_mk_slider_row(
+                    _txt, _val_adv(_cle), 255, _make_adv_cb(_cle))))
+
+            # État initial : pas un choix de l'utilisateur, on ne le mémorise pas.
+            _appliquer_pli(memoriser=False)
 
         # ── Bas de menu ──────────────────────────────────────────────────
         menu.addSeparator()
@@ -7957,6 +8730,7 @@ class _PatchCanvasProxy:
         self.selected_lamps = set()
         self.selected_lamps_ordered = []
         self._htp_overrides = None
+        self._kill_display = None
         self.canvas_widget = None           # Référence au FixtureCanvas (pour calcul de position)
         # Callbacks injectés par le dialog
         self._add_cb               = None

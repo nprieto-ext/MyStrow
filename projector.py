@@ -67,6 +67,20 @@ class Projector:
         self.orange_boost = 0   # Orange extra (0-255)
         self.color_wheel_slots = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
         self.gobo_wheel_slots  = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
+        # ── Presets / programmes internes ────────────────────────────────────
+        # Valeur courante des canaux `Preset1..4` (macros de l'appareil : « Auto
+        # 1 », « Sound active »…). Etat dedie, comme `mode_value` : c'est ce qui
+        # les rend capturables dans une memoire. 0 = repos, l'appareil ne lance
+        # rien tant que l'utilisateur n'a pas choisi un bloc.
+        self.preset1 = 0
+        self.preset2 = 0
+        self.preset3 = 0
+        self.preset4 = 0
+        # Blocs nommes de chaque canal de preset, calibres par l'utilisateur :
+        # {"Preset1": [{"name": str, "dmx": int}, ...], ...}
+        # Un dict et non quatre listes : une seule chose a sauvegarder, a
+        # partager et a recopier au patch.
+        self.preset_slots = {}
         # Limites de mouvement pan/tilt (16-bit, 0–65535 ; 0/65535 = aucune limite)
         self.pan_min  = 0
         self.pan_max  = 65535

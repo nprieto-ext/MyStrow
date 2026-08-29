@@ -491,6 +491,10 @@ _REPOS_FAISCEAU = {
     "zoom": 0, "focus": 0, "iris": 0,
     "prism": 0, "prism_rotation": 0,
     "color_wheel": 0, "effects": 0, "speed": 0, "mode_value": 0,
+    # Programmes internes : repos = 0, comme `mode_value`. Un canal de macro
+    # laissé collé en fin de bloc continuerait à faire tourner un automatisme de
+    # l'appareil par-dessus la suite du show.
+    "preset1": 0, "preset2": 0, "preset3": 0, "preset4": 0,
     "shutter": 255,
 }
 
@@ -2478,6 +2482,17 @@ class PalettePanel(QWidget):
 class LightTrack(QWidget):
     """Une piste de lumiere (une ligne dans la timeline)"""
 
+    # ── Géométrie verticale d'un bloc — SOURCE UNIQUE ────────────────────────
+    # Ces trois valeurs étaient recopiées en dur dans le rendu (y=10, h=40), le
+    # test de survol (10 < y < 50), les marqueurs de fondu enchaîné (30 → 50) et
+    # les fantômes de copie. Toute densité de lignes autre que 100 % les faisait
+    # diverger : le bloc dessiné n'était plus celui qu'on pouvait attraper.
+    # Elles passent maintenant par clip_top() / clip_h() / clip_bottom(), qui
+    # appliquent l'échelle choisie dans le menu Affichage.
+    _CLIP_TOP_BASE = 10    # marge au-dessus du bloc, à l'échelle 1
+    _CLIP_H_BASE   = 40    # hauteur du bloc, à l'échelle 1
+    _CLIP_H_MIN    = 8     # en dessous, un bloc n'est plus attrapable
+
     def __init__(self, name, total_duration, parent_editor, color="#4488ff"):
         super().__init__()
         self.name = name
@@ -2490,9 +2505,27 @@ class LightTrack(QWidget):
         self.is_effect_track    = False   # piste dédiée aux effets lumière
         self.is_position_track  = False   # piste dédiée aux positions lyre
         self.is_gobo_track      = False   # piste dédiée aux gobos
+        # Piste dédiée à UN projecteur : `name` est alors une clé « @A2 »
+        # (core.projector_track_key) et non un nom de groupe, et le libellé
+        # affiché est réécrit après coup avec le nom de la fixture.
+        self.is_projector_track = False
+        # ── En-tête de piste (colonne gelée de 145 px) ───────────────────
+        # Dessinée dans paintEvent, et non plus par des widgets enfants : un
+        # QLabel encadré plus deux QPushButton par piste, c'était ~180 widgets à
+        # replacer à la main à chaque défilement sur un rig de 50 fixtures, et un
+        # pavé gris qui écrasait la timeline. Ici : cadenas, nom, oeil, à plat.
+        self.display_label = name    # texte affiché (≠ `name` pour un projecteur)
+        self.label_indent  = 0       # retrait : rattache un projo à son groupe
+        self.locked        = False   # cadenas : la piste refuse toute édition
+        self.lockable      = True    # faux pour l'Audio (rien à protéger)
+        self._hdr_hover    = None    # 'lock' quand la souris est dessus
+        self.row_hidden    = False   # oeil : masquée de la timeline (vue seule)
 
-        self._collapsed = False
         self._normal_min_height = 100 if name == "Audio" else 60
+        # Densité de la timeline (menu Affichage → Hauteur des lignes) : 1.0 =
+        # taille d'origine, 0.5 = moitié, 0.25 = quart. Multiplie à la fois la
+        # hauteur de la ligne, celle du bloc et la taille des textes.
+        self._h_scale = 1.0
         self.setMinimumHeight(self._normal_min_height)
         # Fixer la largeur minimale dès l'init pour que le scrollbar horizontal apparaisse
         self.setMinimumWidth(145 + int(self.total_duration * self.pixels_per_ms) + 50)
@@ -2503,37 +2536,6 @@ class LightTrack(QWidget):
                 border-bottom: 1px solid #2a2a2a;
             }
         """)
-
-        self.label = QLabel(name, self)
-        self.label.setStyleSheet(f"""
-            QLabel {{
-                color: white;
-                font-weight: bold;
-                background: #1e1e1e;
-                padding: 8px 10px;
-                border-radius: 5px;
-                border: 1px solid #333;
-            }}
-        """)
-        self.label.setFixedWidth(104)
-        self.label.move(11, 12)
-
-        # Bouton collapse ▼/▶
-        self._collapse_btn = QPushButton("▼", self)
-        self._collapse_btn.setFixedSize(20, 20)
-        self._collapse_btn.move(119, 18)
-        self._collapse_btn.setStyleSheet("""
-            QPushButton {
-                background: #2a2a2a;
-                color: #aaa;
-                border: none;
-                border-radius: 3px;
-                font-size: 9px;
-                padding: 0;
-            }
-            QPushButton:hover { background: #3a3a3a; color: white; }
-        """)
-        self._collapse_btn.clicked.connect(self._toggle_collapse)
 
         # Variables pour interaction souris
         self.dragging_clip = None
@@ -2576,25 +2578,266 @@ class LightTrack(QWidget):
 
         self.setMouseTracking(True)
 
-    def _toggle_collapse(self):
-        self._collapsed = not self._collapsed
-        scroll_off = 0
-        if hasattr(self.parent_editor, 'tracks_scroll'):
-            scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
-        if self._collapsed:
-            self._collapse_btn.setText("▶")
-            self._collapse_btn.move(scroll_off + 119, 3)
-            self.setFixedHeight(26)
-            self.label.hide()
+    # ── Géométrie verticale à l'échelle courante ─────────────────────────────
+
+    def clip_top(self):
+        """Ordonnée du haut d'un bloc dans la piste."""
+        return max(1, int(round(self._CLIP_TOP_BASE * self._h_scale)))
+
+    def clip_h(self):
+        """Hauteur d'un bloc."""
+        return max(self._CLIP_H_MIN, int(round(self._CLIP_H_BASE * self._h_scale)))
+
+    def clip_bottom(self):
+        return self.clip_top() + self.clip_h()
+
+    def font_px(self, base):
+        """Taille de police mise à l'échelle, ou 0 si le texte ne rentre plus.
+
+        Rendre 0 est un signal : à densité forte, les libellés à l'intérieur des
+        blocs sont illisibles et brouillent la couleur — mieux vaut ne rien
+        écrire que d'empiler des pixels. Les appelants testent `if px:`.
+        """
+        h = self.clip_h()
+        if h < 16:
+            return 0
+        return max(8, min(int(base), h - 6))
+
+    # ── En-tête de piste : géométrie et rendu ────────────────────────────────
+    #
+    # Trois zones dans la colonne gelée de 145 px, calquées sur un en-tête de
+    # piste de montage : cadenas, nom, oeil. Tout est peint — le clic tape dans
+    # les MÊMES rectangles que le rendu (`_header_rects`), donc aucune dérive
+    # possible entre ce qu'on voit et ce qu'on touche, à n'importe quelle densité.
+    HEADER_W = 145
+
+    def _header_rects(self, offset):
+        """{'lock': QRect} en coordonnées widget.
+
+        `offset` = défilement horizontal : la colonne est gelée au bord gauche
+        du viewport, elle suit donc la barre de défilement. La case du cadenas
+        est réservée même quand la piste n'en porte pas (l'Audio), pour que TOUS
+        les noms s'alignent sur la même verticale.
+        """
+        h = self.height()
+        side = 15 if h >= 26 else max(9, h - 6)
+        cy = max(0, (h - side) // 2)
+        return {'lock': QRect(offset + 11 + self.label_indent, cy, side, side)}
+
+    def _paint_header(self, painter, offset):
+        """Peint la colonne gelée : fond, accent de groupe, cadenas, nom."""
+        h = self.height()
+        painter.fillRect(offset, 0, self.HEADER_W, h, self.HEADER_BG)
+        bar = QColor(self.track_color)
+        bar.setAlpha(220)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(bar))
+        painter.drawRect(offset, 0, 5, h)
+        painter.setPen(QPen(QColor("#242428"), 1))
+        painter.drawLine(offset + self.HEADER_W, 0, offset + self.HEADER_W, h)
+
+        r = self._header_rects(offset)['lock']
+        # Sous ~18 px de ligne, un pictogramme devient une tache : on ne garde
+        # que le nom. Le clic droit reste la porte d'entrée des réglages.
+        icone = h >= 18 and self.lockable
+        if icone:
+            self._paint_lock(painter, r)
+
+        px = self.header_font_px()
+        if not px:
+            return
+        # Même typo que la bibliothèque de gauche : Segoe UI 11 px, sans gras.
+        # Un en-tête de piste est un repère, pas un titre — le gras et les 12 px
+        # d'avant alourdissaient une colonne qu'on lit soixante fois par écran.
+        f = painter.font()
+        f.setFamilies(self.NAME_FAMILIES)
+        f.setBold(False)
+        f.setPixelSize(px)
+        painter.setFont(f)
+        painter.setPen(self.NAME_LOCKED if self.locked else self.NAME_COLOR)
+        x0 = r.right() + 9
+        larg = offset + self.HEADER_W - 10 - x0
+        if larg > 12:
+            fm = painter.fontMetrics()
+            painter.drawText(QRect(x0, 0, larg, h), Qt.AlignVCenter | Qt.AlignLeft,
+                             fm.elidedText(self.display_name(), Qt.ElideRight, larg))
+
+    # Palette et typo de l'en-tête, alignées sur la bibliothèque de gauche
+    # (`_LibraryItem` : Segoe UI, 11 px, #999, sans gras). L'en-tête est PEINT,
+    # il ne récupère donc pas la feuille de style de la fenêtre comme le ferait
+    # un QLabel : la famille est posée explicitement, sans quoi il retomberait
+    # sur la police par défaut de Qt et jurerait avec le reste de l'éditeur.
+    NAME_FAMILIES = ["Segoe UI", "Arial", "Helvetica", "sans-serif"]
+    HEADER_BG   = QColor("#0d0d0d")
+    NAME_COLOR  = QColor("#999999")
+    NAME_LOCKED = QColor("#6d6d73")
+    LOCK_IDLE   = QColor("#78787f")
+    LOCK_HOVER  = QColor("#c9c9d0")
+    LOCK_ON     = QColor("#e0c060")
+
+    def header_font_px(self):
+        """Taille du nom dans l'en-tête, ou 0 si la ligne est trop basse."""
+        h = self.height()
+        if h < 11:
+            return 0
+        return max(8, min(11, h - 6))
+
+    def _paint_lock(self, painter, r):
+        """Cadenas plein, anse en crochet — le dessin d'un pupitre de montage.
+
+        Corps plein avec sa serrure ajourée, anse tracée par-dessus : fermée et
+        centrée quand la piste est verrouillée, ouverte en crochet vers la
+        gauche sinon. Tout est proportionnel au côté `w`, donc l'icône reste
+        juste de 9 px (densité 25 %) à 15 px (densité 100 %).
+        """
+        from PySide6.QtCore import QRectF
+        w = r.width()
+        col = (self.LOCK_ON if self.locked else
+               self.LOCK_HOVER if self._hdr_hover == 'lock' else self.LOCK_IDLE)
+
+        # ── Corps ────────────────────────────────────────────────────────
+        bx0 = r.left() + 0.14 * w
+        bx1 = r.left() + 0.90 * w
+        by0 = r.top() + 0.44 * w
+        by1 = r.top() + 0.95 * w
+        bcx = (bx0 + bx1) / 2.0
+        corps = QRectF(bx0, by0, bx1 - bx0, by1 - by0)
+
+        # ── Anse ─────────────────────────────────────────────────────────
+        # Tracée AVANT le corps : le corps la recouvre proprement là où elle
+        # s'y enfonce, sans avoir à calculer la jonction.
+        ep = max(1.4, 0.17 * w)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(col, ep, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        anse = QPainterPath()
+        if self.locked:
+            R = 0.24 * w
+            cy = by0 - 0.10 * w
+            anse.moveTo(bcx + R, by0)
+            anse.lineTo(bcx + R, cy)
+            anse.arcTo(QRectF(bcx - R, cy - R, 2 * R, 2 * R), 0, 180)
+            anse.lineTo(bcx - R, by0)
         else:
-            self._collapse_btn.setText("▼")
-            self._collapse_btn.move(scroll_off + 119, 18)
-            self.setMinimumHeight(self._normal_min_height)
-            self.setMaximumHeight(16777215)
-            self.label.move(scroll_off + 11, self.label.y())
-            self.label.show()
+            # Crochet : la branche droite plonge dans le corps, la gauche reste
+            # libre EN L'AIR — c'est ce déséquilibre qui se lit « ouvert » d'un
+            # coup d'oeil. Le bout libre doit s'arrêter franchement au-dessus du
+            # corps : posé dessus, il repassait sous le remplissage du corps et
+            # les deux états devenaient impossibles à distinguer.
+            R = 0.22 * w
+            ax = bcx + 0.06 * w
+            cy = by0 - 0.24 * w
+            anse.moveTo(ax, by0)
+            anse.lineTo(ax, cy)
+            anse.arcTo(QRectF(ax - 2 * R, cy - R, 2 * R, 2 * R), 0, 180)
+            anse.lineTo(ax - 2 * R, by0 - 0.13 * w)
+        painter.drawPath(anse)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(col))
+        painter.drawRoundedRect(corps, 0.08 * w, 0.08 * w)
+
+        # ── Serrure ajourée ──────────────────────────────────────────────
+        # Sous 13 px, le trou de serrure n'est plus qu'un pixel sale : on laisse
+        # le corps plein, la silhouette suffit à reconnaître un cadenas.
+        if w >= 13:
+            painter.setBrush(QBrush(self.HEADER_BG))
+            tr = 0.11 * w
+            tcy = by0 + 0.34 * (by1 - by0)
+            painter.drawEllipse(QRectF(bcx - tr, tcy - tr, 2 * tr, 2 * tr))
+            fente = QPainterPath()
+            fente.moveTo(bcx - tr * 0.62, tcy)
+            fente.lineTo(bcx + tr * 0.62, tcy)
+            fente.lineTo(bcx + tr * 0.34, by1 - 0.17 * (by1 - by0))
+            fente.lineTo(bcx - tr * 0.34, by1 - 0.17 * (by1 - by0))
+            fente.closeSubpath()
+            painter.drawPath(fente)
+
+    def header_hit(self, x, y):
+        """'lock' si le point touche le cadenas, sinon None."""
+        offset = self._scroll_offset()
+        if not (offset <= x < offset + self.HEADER_W) or self.height() < 18:
+            return None
+        if not self.lockable:
+            return None
+        # Cible élargie : à 9 px de côté, viser au pixel près est intenable.
+        r = self._header_rects(offset)['lock']
+        return 'lock' if r.adjusted(-5, -4, 5, 4).contains(int(x), int(y)) else None
+
+    def update_header_hover(self, x, y):
+        """Survol du cadenas : ne repeint que la colonne, et que si ça change."""
+        zone = self.header_hit(x, y)
+        if zone == self._hdr_hover:
+            return
+        self._hdr_hover = zone
+        off = self._scroll_offset()
+        self.update(QRect(off, 0, self.HEADER_W, self.height()))
+
+    def _scroll_offset(self):
+        """Décalage horizontal courant du viewport (0 si l'éditeur n'en a pas)."""
+        sc = getattr(self.parent_editor, 'tracks_scroll', None)
+        return sc.horizontalScrollBar().value() if sc is not None else 0
+
+    def leaveEvent(self, event):
+        """Sortie de la piste : le cadenas ne doit pas rester allumé."""
+        if self._hdr_hover is not None:
+            self._hdr_hover = None
+            self.update()
+        super().leaveEvent(event)
+
+    def set_locked(self, locked):
+        """Cadenas.
+
+        Une piste verrouillée refuse tout ce qui modifie ses blocs — glisser,
+        redimensionner, déposer, peindre, couper, supprimer — mais continue de
+        s'afficher ET de jouer normalement. C'est une protection d'édition, pas
+        un mute : le show sort exactement pareil.
+        """
+        self.locked = bool(locked)
+        if self.locked:
+            self.selected_clips.clear()
+        self.update()
+
+    def set_base_height(self, px):
+        """Hauteur de référence de la ligne à l'échelle 1 (50 px pour les pistes
+        spécialisées, 60 pour un groupe, 100 pour l'Audio)."""
+        self._normal_min_height = px
+        self.apply_height_scale(self._h_scale)
+
+    def apply_height_scale(self, scale):
+        """Applique une densité (1.0 / 0.75 / 0.5 / 0.25) à toute la ligne."""
+        self._h_scale = max(0.2, min(1.0, float(scale)))
+        row = max(1, int(round(self._normal_min_height * self._h_scale)))
+        self.setMinimumHeight(row)
+        self.setMaximumHeight(row)
+        self.update_clips()
         self.updateGeometry()
         self.update()
+
+    def display_name(self):
+        """Libellé lisible de la piste.
+
+        Pour une piste projecteur, `name` est une clé interne (« @A2 », cf.
+        `core.projector_track_key`) qu'on ne montre JAMAIS : le libellé porte le
+        nom de la fixture. Partout ailleurs, les deux sont identiques.
+        """
+        return self.display_label or self.name
+
+    def targets_moving_head(self):
+        """True si la piste pilote au moins une lyre.
+
+        C'est ce qui ouvre le menu « Mouvement » d'un bloc. Le test portait
+        auparavant sur le seul nom « Lyres » : une piste dédiée à UNE lyre
+        (clé « @Lyres2 ») n'y avait donc pas droit, alors que le moteur d'aperçu
+        comme la restitution appliquent déjà le pan/tilt d'un bloc quelle que
+        soit sa piste.
+        """
+        try:
+            mw = self.parent_editor.main_window
+            idxs = mw.get_track_to_indices().get(self.name, [])
+            return any(getattr(mw.projectors[i], 'fixture_type', '') == 'Moving Head'
+                       for i in idxs if i < len(mw.projectors))
+        except Exception:
+            return self.name == "Lyres"
 
     def generate_waveform(self, audio_path, max_samples=5000, progress_callback=None, cancel_check=None):
         """Genere des donnees de forme d'onde a partir d'un fichier audio ou video"""
@@ -3050,7 +3293,7 @@ print(json.dumps(waveform))
 
     def get_clip_at_pos(self, x, y):
         """Trouve le clip sous la position de la souris"""
-        if y < 10 or y > 50:
+        if y < self.clip_top() or y > self.clip_bottom():
             return None
 
         for clip in self.clips:
@@ -3179,6 +3422,22 @@ print(json.dumps(waveform))
         x = event.position().x()
         y = event.position().y()
 
+        # ── En-tête (colonne gelée) : cadenas / oeil ─────────────────────
+        # Testé AVANT tout le reste, verrou compris : c'est le seul moyen de
+        # déverrouiller une piste, il ne doit jamais être bloqué par le verrou.
+        if event.button() == Qt.LeftButton:
+            if self.header_hit(x, y) == 'lock':
+                self.set_locked(not self.locked)
+                event.accept()
+                return
+
+        # Piste verrouillée : rien de ce qui suit ne doit pouvoir la modifier.
+        # On laisse passer le clic droit (menu, donc « Déverrouiller ») et le
+        # clic molette (déplacement dans la timeline, qui ne modifie rien).
+        if self.locked and event.button() == Qt.LeftButton:
+            event.accept()
+            return
+
         # Pan (clic molette) : se déplacer sur la timeline sans attraper de bloc.
         # (Au trackpad, utiliser le défilement à deux doigts — vertical/horizontal.)
         if event.button() == Qt.MiddleButton:
@@ -3221,6 +3480,7 @@ print(json.dumps(waveform))
                                 getattr(track, 'is_sequence_track', False) or
                                 getattr(track, 'is_position_track', False) or
                                 getattr(track, 'is_gobo_track', False) or
+                                getattr(track, 'is_projector_track', False) or
                                 track.name == "Audio"):
                             continue
                         # ne pas superposer si un clip couvre déjà ce temps
@@ -3316,11 +3576,13 @@ print(json.dumps(waveform))
                 self.resizing_clip = clip
                 self.resize_edge = 'right'
                 self._save_resize_positions(clip)
-            elif fade_in_px > 0 and x < clip_x + fade_in_px and y >= 10 and y <= 50:
+            elif (fade_in_px > 0 and x < clip_x + fade_in_px
+                  and self.clip_top() <= y <= self.clip_bottom()):
                 self.resizing_clip = clip
                 self.resize_edge = 'fade_in'
                 self.saved_positions = {clip: (clip.start_time, clip.duration)}
-            elif fade_out_px > 0 and x > clip_x + clip_width - fade_out_px and y >= 10 and y <= 50:
+            elif (fade_out_px > 0 and x > clip_x + clip_width - fade_out_px
+                  and self.clip_top() <= y <= self.clip_bottom()):
                 self.resizing_clip = clip
                 self.resize_edge = 'fade_out'
                 self.saved_positions = {clip: (clip.start_time, clip.duration)}
@@ -3407,6 +3669,11 @@ print(json.dumps(waveform))
 
     def mouseMoveEvent(self, event):
         """Gere drag et resize + ANTI-COLLISION + DRAG MULTI-CLIPS"""
+        # Survol du cadenas : hors glisser/redimensionnement, pour ne pas
+        # payer un test de plus dans le chemin chaud du déplacement de blocs.
+        if not (self.dragging_clip or self.resizing_clip or self.resizing_xfade):
+            self.update_header_hover(event.position().x(), event.position().y())
+
         x = event.position().x()
 
         # Pan en cours (clic molette) → défiler la vue, ne rien attraper
@@ -3803,8 +4070,20 @@ print(json.dumps(waveform))
         track.update()
 
     def contextMenuEvent(self, event):
-        """Menu contextuel sur clip OU zone vide"""
+        """Menu contextuel sur l'en-tête, sur un clip, ou sur la zone vide"""
         if hasattr(self.parent_editor, 'cut_mode') and self.parent_editor.cut_mode:
+            return
+
+        offset = self._scroll_offset()
+        if offset <= event.pos().x() < offset + self.HEADER_W:
+            self.show_header_menu(event.globalPos())
+            return
+
+        # Verrouillée : un seul choix possible, la déverrouiller. Sans ça les
+        # menus de bloc offriraient couper/supprimer/recolorer sur une piste
+        # qu'on vient justement de protéger.
+        if self.locked:
+            self.show_header_menu(event.globalPos())
             return
 
         # Sauvegarder la position du clic pour "Couper ici"
@@ -3829,6 +4108,11 @@ print(json.dumps(waveform))
             if result:
                 clip, clip_x, _ = result
                 self.show_gobo_clip_menu(clip, event.globalPos())
+            else:
+                # Pas de menu de création dans le vide sur la piste Gobo (les
+                # gobos se déposent depuis la bibliothèque) : le clic droit n'y
+                # ouvrait rien du tout. Il donne au moins de quoi la vider.
+                self.show_clear_only_menu(event.globalPos())
         elif self.is_position_track:
             if result:
                 clip, clip_x, _ = result
@@ -3858,6 +4142,83 @@ print(json.dumps(waveform))
         super().contextMenuEvent(event)
 
     # ── Menus piste Effet ─────────────────────────────────────────────────────
+
+    def show_header_menu(self, global_pos):
+        """Menu de l'en-tête : verrou, masquage, ajout de piste.
+
+        Il remplace les boutons « ＋ Effet » / « ＋ Séquence » qui traînaient
+        sous les pistes : les actions restent à portée de clic droit là où on
+        travaille, sans meubler la timeline en permanence.
+        """
+        from PySide6.QtWidgets import QMenu
+        ed = self.parent_editor
+        menu = QMenu(self)
+
+        if self.lockable:
+            act_lock = menu.addAction(
+                tr("lt_hdr_unlock") if self.locked else tr("lt_hdr_lock"))
+            act_lock.triggered.connect(lambda: self.set_locked(not self.locked))
+
+        if hasattr(ed, 'set_track_row_visible'):
+            act_hide = menu.addAction(tr("lt_hdr_hide"))
+            act_hide.triggered.connect(lambda: ed.set_track_row_visible(self, False))
+
+        # Vider : ici aussi, pas seulement dans le vide de la piste — une piste
+        # remplie de bout en bout n'offre plus un pixel où faire ce clic droit.
+        self._add_clear_track_action(menu)
+
+        if hasattr(ed, '_add_effect_track') or hasattr(ed, '_add_sequence_track'):
+            menu.addSeparator()
+        if hasattr(ed, '_add_effect_track'):
+            menu.addAction(tr("tle_add_effect_track")).triggered.connect(ed._add_effect_track)
+        if hasattr(ed, '_add_sequence_track'):
+            menu.addAction(tr("te2_add_sequence_track")).triggered.connect(ed._add_sequence_track)
+
+        # Piste orpheline (fixture retirée du patch) : la seule qu'on supprime.
+        if (getattr(self, 'is_projector_track', False)
+                and getattr(self, '_orphelin', False)
+                and hasattr(ed, '_remove_projector_track')):
+            menu.addSeparator()
+            menu.addAction(tr("tle_del_proj_track")).triggered.connect(
+                lambda: ed._remove_projector_track(self))
+
+        menu.exec(global_pos)
+
+    def show_clear_only_menu(self, global_pos):
+        """Menu réduit à « Vider la piste » — pistes sans menu de création."""
+        menu = QMenu(self)
+        menu.setStyleSheet(self._EFFECT_MENU_STYLE)
+        if self._add_clear_track_action(menu):
+            menu.exec(global_pos)
+
+    def _add_clear_track_action(self, menu, top=False):
+        """Ajoute « Vider la piste (n blocs) » à un menu contextuel.
+
+        Branchée sur les menus de zone vide de TOUTES les pistes (couleur,
+        Effet, Séquence, Position, Gobo) et sur le menu de l'en-tête — ce
+        dernier est le seul accessible quand la piste est pleine de bout en
+        bout : il n'y a alors plus un pixel de vide où faire un clic droit.
+
+        `top=True` pour les menus de sélection (effets, mémoires) : ils listent
+        des dizaines d'entrées, l'action serait injoignable en bas.
+
+        Rien n'est ajouté sur une piste vide (pas de faux bouton) ni sur une
+        piste verrouillée — le cadenas garde tous les autres chemins d'écriture.
+        """
+        from PySide6.QtGui import QAction
+        if self.locked or not self.clips:
+            return False
+        act = QAction(tr("lt_f_clear_track", n=len(self.clips)), menu)
+        act.triggered.connect(self.clear_all_clips)
+        actions = menu.actions()
+        if top and actions:
+            menu.insertAction(actions[0], act)
+            menu.insertSeparator(actions[0])
+        else:
+            if actions:
+                menu.addSeparator()
+            menu.addAction(act)
+        return True
 
     @staticmethod
     def _auto_target_groups(layers):
@@ -3979,6 +4340,7 @@ print(json.dumps(waveform))
             self._fill_effect_at_pos(eff, local_pos)
 
         menu = self._build_effect_picker_menu(_select)
+        self._add_clear_track_action(menu, top=True)
         menu.exec(global_pos)
 
     def show_effect_clip_menu(self, clip, global_pos, click_pos_in_clip):
@@ -4137,6 +4499,7 @@ print(json.dumps(waveform))
                 self.parent_editor.save_state()
 
         menu = self._build_memory_picker_menu(_select)
+        self._add_clear_track_action(menu, top=True)
         menu.exec(global_pos)
 
     def show_sequence_clip_menu(self, clip, global_pos):
@@ -4438,6 +4801,7 @@ print(json.dumps(waveform))
             no_act = menu.addAction(tr("lt_no_pos_preset"))
             no_act.setEnabled(False)
 
+        self._add_clear_track_action(menu)
         menu.exec(global_pos)
 
     def _delete_clip(self, clip):
@@ -4548,6 +4912,7 @@ print(json.dumps(waveform))
         act_del_gap = menu.addAction(tr("lt_remove_gap"))
         act_del_gap.triggered.connect(lambda checked=False, p=local_pos: self.delete_gap_at_pos(p))
 
+        self._add_clear_track_action(menu)
         menu.exec(global_pos)
 
     def fill_gap_at_pos(self, color, pos):
@@ -4786,8 +5151,8 @@ print(json.dumps(waveform))
             action = color_menu.addAction(icon, name)
             action.triggered.connect(lambda checked=False, c1=col1, c2=col2, cl=clip: self.set_clip_bicolor(cl, c1, c2))
 
-        # === MOUVEMENT (piste Lyres) ===
-        if self.name == "Lyres":
+        # === MOUVEMENT (toute piste qui vise une lyre) ===
+        if self.targets_moving_head():
             menu.addSeparator()
             move_label = tr("lt_menu_movement")
             if clip.move_effect:
@@ -4823,17 +5188,39 @@ print(json.dumps(waveform))
             copy_menu = menu.addMenu(tr("lt_menu_copy_to"))
             for track in self.parent_editor.tracks:
                 if track != self and not track.is_sequence_track and not track.is_effect_track:
-                    action = copy_menu.addAction(track.name)
+                    action = copy_menu.addAction(track.display_name())
                     action.triggered.connect(lambda checked=False, cl=clip, t=track: self.copy_clip_to_track(cl, t))
 
-        # === COUPER ICI ===
+        # === COUPER ICI / BASCULER ===
         menu.addSeparator()
-        if click_pos_in_clip is not None and click_pos_in_clip > 200 and click_pos_in_clip < clip.duration - 200:
+        coupable = (click_pos_in_clip is not None
+                    and 200 < click_pos_in_clip < clip.duration - 200)
+        if coupable:
             cut_here_action = menu.addAction(tr("lt_menu_cut_here"))
             cut_here_action.triggered.connect(lambda: self.cut_clip_at_position(clip, click_pos_in_clip))
         else:
             cut_action = menu.addAction(tr("lt_menu_cut_in_two"))
             cut_action.triggered.connect(lambda: self.cut_clip_in_two(clip))
+
+        # Couper ici PUIS pousser la suite d'une ligne : le geste de montage.
+        # Proposé seulement s'il existe vraiment une voisine où poser le bloc.
+        dessous = self.voisine(1)
+        dessus  = self.voisine(-1)
+        if coupable and dessous is not None:
+            a = menu.addAction(tr("lt_menu_cut_push_down", name=dessous.display_name()))
+            a.triggered.connect(
+                lambda checked=False, c=clip, pos=click_pos_in_clip:
+                self.cut_and_push(c, pos, 1))
+        if dessous is not None or dessus is not None:
+            menu.addSeparator()
+        if dessous is not None:
+            a = menu.addAction(tr("lt_menu_push_down", name=dessous.display_name()))
+            a.triggered.connect(
+                lambda checked=False, c=clip: self.push_clip(c, 1))
+        if dessus is not None:
+            a = menu.addAction(tr("lt_menu_push_up", name=dessus.display_name()))
+            a.triggered.connect(
+                lambda checked=False, c=clip: self.push_clip(c, -1))
 
         # === SUPPRIMER ===
         delete_action = menu.addAction(tr("lt_menu_delete_clip"))
@@ -4927,7 +5314,8 @@ print(json.dumps(waveform))
     def _xfade_marker_at(self, x, y, tol=6):
         """Si (x, y) est SUR un marqueur de fondu enchaîné existant (moitié BASSE
         du bloc), retourne le bloc de DROITE porteur du xfade. Sinon None."""
-        if y < 30 or y > 50:   # marqueur = demi-hauteur basse (y ∈ [30, 50])
+        # Moitié basse du bloc, quelle que soit la densité de la timeline.
+        if y < self.clip_top() + self.clip_h() // 2 or y > self.clip_bottom():
             return None
         for c in self.clips:
             xf = getattr(c, 'xfade', 0)
@@ -5013,8 +5401,8 @@ print(json.dumps(waveform))
         l'ordre de dessin des clips."""
         # Marqueur sur la MOITIÉ BASSE du bloc : le fondu classique occupe la
         # moitié haute, le fondu enchaîné la moitié basse (zones distinctes).
-        top = 30
-        bot = 50   # demi-hauteur basse (bloc = y ∈ [10, 50])
+        top = self.clip_top() + self.clip_h() // 2
+        bot = self.clip_bottom()
         for clip in self.clips:
             xf = getattr(clip, 'xfade', 0)
             if xf <= 0:
@@ -5304,6 +5692,31 @@ print(json.dumps(waveform))
         if hasattr(self.parent_editor, 'save_state'):
             self.parent_editor.save_state()
 
+    def clear_all_clips(self):
+        """Vide la piste de TOUS ses blocs (clic droit dans le vide / en-tête).
+
+        Le lasso + Suppr faisait déjà le travail, mais seulement sur ce qui est
+        à l'écran : sur un show généré ou importé, il fallait dézoomer et
+        recommencer. Ici la piste entière part d'un coup — et elle seule.
+
+        Annulable : `save_state()` empile l'état APRÈS coup (même convention que
+        `delete_clip`), donc Ctrl+Z ramène les blocs.
+        """
+        n = len(self.clips)
+        if not n or self.locked:
+            return
+        if QMessageBox.question(
+                self, tr("lt_clear_track_title"),
+                tr("lt_f_clear_track_confirm", n=n, name=self.display_name()),
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel) != QMessageBox.Yes:
+            return
+        self.clips.clear()
+        self.selected_clips.clear()
+        self.update()
+        if hasattr(self.parent_editor, 'save_state'):
+            self.parent_editor.save_state()
+
     def cut_clip_in_two(self, clip):
         """Coupe un clip en deux parties egales"""
         if clip not in self.clips:
@@ -5346,6 +5759,97 @@ print(json.dumps(waveform))
         # Sauvegarder APRES la coupe
         if hasattr(self.parent_editor, 'save_state'):
             self.parent_editor.save_state()
+
+    def voisine(self, sens=1):
+        """Piste où pousser un bloc : la suivante (sens=1) ou la précédente.
+
+        « En dessous » au sens de ce qu'on VOIT : on saute les lignes masquées,
+        les pistes spécialisées (Effet, Séquence, Position, Gobo) et celles
+        qu'un cadenas protège. Y pousser un bloc échouerait en silence, et le
+        menu ne doit proposer que ce qui va marcher.
+        """
+        pistes = getattr(self.parent_editor, 'tracks', []) or []
+        if self not in pistes:
+            return None
+        i = pistes.index(self) + sens
+        while 0 <= i < len(pistes):
+            t = pistes[i]
+            if (self._cross_compatible(t) and not t.isHidden()
+                    and not getattr(t, 'locked', False)):
+                return t
+            i += sens
+        return None
+
+    def _poser_sur(self, clip, cible, depart):
+        """Pose une COPIE de `clip` sur `cible` à `depart`, sans chevauchement.
+
+        La copie passe par `_clone_clip`, seul cloneur de l'éditeur : couleur,
+        fondus, effet, mouvement, mémoire, gobo — tout suit. Le placement passe
+        par `_resolve_overlap`, la même résolution qu'un glisser cross-piste :
+        si la place est prise, le bloc se range dans le trou le plus proche
+        plutôt que de se superposer en silence.
+        """
+        neuf = self._clone_clip(clip, cible)
+        neuf.start_time = depart
+        cible.clips.append(neuf)
+        self._resolve_overlap(cible, neuf)
+        cible.update()
+        return neuf
+
+    def cut_and_push(self, clip, position_in_clip, sens=1):
+        """Coupe le bloc à `position_in_clip` et bascule la SUITE sur la voisine.
+
+        Le geste de montage classique : la tête reste en place, la queue part
+        sur la ligne d'à côté. Sur une piste de groupe suivie de ses
+        projecteurs, cela revient à détacher la fin d'un bloc pour ne la garder
+        que sur un projecteur — d'où l'intérêt de l'avoir sous le clic droit.
+        """
+        if clip not in self.clips:
+            return
+        mini = 200
+        if not (mini <= position_in_clip <= clip.duration - mini):
+            return
+        cible = self.voisine(sens)
+        if cible is None:
+            return
+
+        coupe = clip.start_time + position_in_clip
+        reste = clip.duration - position_in_clip
+        queue = self._clone_clip(clip, self)
+        queue.start_time       = coupe
+        queue.duration         = reste
+        queue.fade_in_duration = 0     # pas de refondu au point de coupe
+        queue.xfade            = 0
+
+        clip.duration          = position_in_clip
+        clip.fade_out_duration = 0
+
+        self._poser_sur(queue, cible, coupe)
+        self.selected_clips.clear()
+        self.update()
+        self._apres_edition()
+
+    def push_clip(self, clip, sens=1):
+        """Bascule le bloc ENTIER sur la piste voisine (il quitte celle-ci)."""
+        if clip not in self.clips:
+            return
+        cible = self.voisine(sens)
+        if cible is None:
+            return
+        self._poser_sur(clip, cible, clip.start_time)
+        self.clips.remove(clip)
+        if clip in self.selected_clips:
+            self.selected_clips.remove(clip)
+        self.update()
+        self._apres_edition()
+
+    def _apres_edition(self):
+        """Historique d'annulation + écriture dans seq.sequences (restitution)."""
+        ed = self.parent_editor
+        if hasattr(ed, 'save_state'):
+            ed.save_state()
+        if hasattr(ed, '_save_sequence_no_close'):
+            ed._save_sequence_no_close()
 
     def copy_clip_to_track(self, clip, target_track):
         """Copie le(s) clip(s) vers une autre piste"""
@@ -5506,6 +6010,12 @@ print(json.dumps(waveform))
             self.update()
             return
 
+        if self.locked:
+            event.ignore()
+            self._drag_active = False
+            self.update()
+            return
+
         is_seq = mime.hasFormat('application/x-sequence')
         is_eff = mime.hasFormat('application/x-effect')
         is_pos = mime.hasFormat('application/x-position')
@@ -5557,6 +6067,10 @@ print(json.dumps(waveform))
         """Drop d'une couleur, séquence ou effet sur la piste"""
         self._drag_active = False
         self.update()
+
+        if self.locked:
+            event.ignore()
+            return
 
         # ── Multi-drop depuis la bibliothèque ─────────────────────────────
         if event.mimeData().hasFormat('application/x-multi-library'):
@@ -6068,25 +6582,6 @@ print(json.dumps(waveform))
         painter.setPen(QPen(QColor("#3a3a3a"), 1))
         painter.drawLine(0, 0, self.width(), 0)
 
-        if self._collapsed:
-            # Afficher juste le nom en mode reduit (dans la zone gelée)
-            scroll_off = 0
-            if hasattr(self.parent_editor, 'tracks_scroll'):
-                scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
-            painter.fillRect(scroll_off, 0, 145, self.height(), QColor("#000000"))
-            painter.setBrush(QBrush(bar_color))
-            painter.setPen(Qt.NoPen)
-            painter.drawRect(scroll_off, 0, 5, self.height())
-            painter.setPen(QPen(QColor("#2a2a2a"), 1))
-            painter.drawLine(scroll_off + 145, 0, scroll_off + 145, self.height())
-            painter.setPen(QColor("#888"))
-            font = painter.font()
-            font.setBold(True)
-            font.setPixelSize(11)
-            painter.setFont(font)
-            painter.drawText(scroll_off + 11, 0, 130, 26, Qt.AlignVCenter, self.name)
-            return
-
         # === FORME D'ONDE (avec cache pixmap) ===
         # La waveform est une couche statique coûteuse : on la rend une fois dans
         # un QPixmap (par zoom/taille), puis on blitte uniquement la zone exposée.
@@ -6148,8 +6643,8 @@ print(json.dumps(waveform))
             # Ignorer les clips entièrement hors de la zone visible
             if x + max(20, width) < _ev_left or x > _ev_right:
                 continue
-            y = 10
-            height = 40
+            y = self.clip_top()
+            height = self.clip_h()
 
             clip_rect = QRect(x, y, max(20, width), height)
 
@@ -6169,10 +6664,10 @@ print(json.dumps(waveform))
                 painter.setBrush(Qt.NoBrush)
                 painter.setPen(QPen(QColor(180, 150, 70, 160), 1))
                 painter.drawRoundedRect(clip_rect, 5, 5)
-                if width > 30:
+                if width > 30 and self.font_px(13):
                     font = painter.font()
                     font.setBold(True)
-                    font.setPixelSize(13)
+                    font.setPixelSize(self.font_px(13))
                     painter.setFont(font)
                     painter.setPen(QColor(240, 220, 160, 235))
                     nom = getattr(clip, 'gobo_name', '') or 'Gobo'
@@ -6199,10 +6694,10 @@ print(json.dumps(waveform))
                 painter.setBrush(Qt.NoBrush)
                 painter.setPen(QPen(QColor(40, 100, 200, 160), 1))
                 painter.drawRoundedRect(clip_rect, 5, 5)
-                if width > 30:
+                if width > 30 and self.font_px(13):
                     font = painter.font()
                     font.setBold(True)
-                    font.setPixelSize(13)
+                    font.setPixelSize(self.font_px(13))
                     painter.setFont(font)
                     painter.setPen(QColor(160, 200, 255, 230))
                     pos_name = getattr(clip, 'position_preset_name', '') or 'Position'
@@ -6232,7 +6727,7 @@ print(json.dumps(waveform))
                 painter.setPen(QPen(QColor(150, 30, 200, 180), 1))
                 painter.drawRoundedRect(clip_rect, 5, 5)
 
-                if width > 30:
+                if width > 30 and self.font_px(13):
                     # Retrouver l'emoji depuis BUILTIN_EFFECTS (cache module-level)
                     eff_name = getattr(clip, 'effect_name', '') or ''
                     eff_emoji = '✨'
@@ -6245,7 +6740,7 @@ print(json.dumps(waveform))
                         pass
                     font = painter.font()
                     font.setBold(True)
-                    font.setPixelSize(13)
+                    font.setPixelSize(self.font_px(13))
                     painter.setFont(font)
                     tgt = getattr(clip, 'effect_target_groups', [])
                     grp_str = (" [" + ",".join(tgt) + "]") if tgt else ""
@@ -6280,10 +6775,10 @@ print(json.dumps(waveform))
                 painter.setPen(QPen(accent.darker(150), 1))
                 painter.drawRoundedRect(clip_rect, 5, 5)
 
-                if width > 30:
+                if width > 30 and self.font_px(13):
                     font = painter.font()
                     font.setBold(True)
-                    font.setPixelSize(13)
+                    font.setPixelSize(self.font_px(13))
                     painter.setFont(font)
                     painter.setPen(QColor(255, 255, 255, 220))
                     lbl = getattr(clip, 'memory_label', '') or '⚡'
@@ -6369,14 +6864,15 @@ print(json.dumps(waveform))
             if (not getattr(self, 'is_effect_track', False) and
                     not getattr(self, 'is_position_track', False) and
                     not getattr(self, 'is_gobo_track', False) and
-                    not getattr(clip, 'memory_ref', None) and width > 40):
+                    not getattr(clip, 'memory_ref', None) and width > 40
+                    and self.font_px(13)):
                 luminance = (clip.color.red() * 0.299 + clip.color.green() * 0.587 + clip.color.blue() * 0.114)
                 txt_color = QColor(0, 0, 0, 200) if luminance > 140 else QColor(255, 255, 255, 220)
                 painter.setPen(txt_color)
 
                 font = painter.font()
                 font.setBold(True)
-                font.setPixelSize(13)
+                font.setPixelSize(self.font_px(13))
                 painter.setFont(font)
                 text = f"{clip.intensity}%"
                 if clip.effect:
@@ -6395,10 +6891,12 @@ print(json.dumps(waveform))
                     icons = {"cercle":"⭕","figure8":"∞","balayage_h":"↔",
                              "balayage_v":"↕","aleatoire":"✦"}
                     icon_txt = icons.get(clip.move_effect, "↺")
-                    f2 = painter.font(); f2.setPixelSize(11); painter.setFont(f2)
-                    painter.setPen(QColor(255, 220, 100, 200))
-                    painter.drawText(clip_rect.adjusted(3, 0, -3, -2),
-                                     Qt.AlignBottom | Qt.AlignLeft, icon_txt)
+                    _px = self.font_px(11)
+                    if _px:
+                        f2 = painter.font(); f2.setPixelSize(_px); painter.setFont(f2)
+                        painter.setPen(QColor(255, 220, 100, 200))
+                        painter.drawText(clip_rect.adjusted(3, 0, -3, -2),
+                                         Qt.AlignBottom | Qt.AlignLeft, icon_txt)
                 else:
                     # Flèche de trajectoire
                     sx = clip_rect.left()  + 4
@@ -6433,8 +6931,8 @@ print(json.dumps(waveform))
             # (aperçu de la montée d'intensité) + diagonale d'enveloppe + poignée
             # de bord. Les fondus in/out sont aux extrémités, le fondu enchaîné à
             # la couture → ils ne se chevauchent pas en pratique.
-            _fh_top = clip_rect.top() + 20
-            _fh_bot = clip_rect.top() + 40   # demi-hauteur basse
+            _fh_top = clip_rect.top() + clip_rect.height() // 2
+            _fh_bot = clip_rect.bottom()     # demi-hauteur basse
             _fh_h   = _fh_bot - _fh_top
             if fade_in_px > 3:
                 grad = QLinearGradient(float(clip_rect.left()), 0.0,
@@ -6485,7 +6983,7 @@ print(json.dumps(waveform))
             gw = max(20, int(_g_dur * self.pixels_per_ms))
             if gx + gw < _ev_left or gx > _ev_right:
                 continue
-            g_rect = QRect(gx, 10, gw, 40)
+            g_rect = QRect(gx, self.clip_top(), gw, self.clip_h())
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(QColor(_g_col.red(), _g_col.green(), _g_col.blue(), 70)))
             painter.drawRoundedRect(g_rect, 6, 6)
@@ -6517,16 +7015,8 @@ print(json.dumps(waveform))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
 
-        # Colonne label gelée — peinte EN DERNIER pour couvrir tous les clips
-        scroll_off = 0
-        if hasattr(self.parent_editor, 'tracks_scroll'):
-            scroll_off = self.parent_editor.tracks_scroll.horizontalScrollBar().value()
-        painter.fillRect(scroll_off, 0, 145, self.height(), QColor("#000000"))
-        painter.setBrush(QBrush(bar_color))
-        painter.setPen(Qt.NoPen)
-        painter.drawRect(scroll_off, 0, 5, self.height())
-        painter.setPen(QPen(QColor("#2a2a2a"), 1))
-        painter.drawLine(scroll_off + 145, 0, scroll_off + 145, self.height())
+        # En-tête gelé — peint EN DERNIER pour couvrir tous les clips
+        self._paint_header(painter, self._scroll_offset())
 
         # Surlignage cible cross-track drag
         if self._cross_target_active:

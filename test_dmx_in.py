@@ -20,8 +20,6 @@ import dmx_in_link as dil
 
 _app = QApplication.instance() or QApplication(sys.argv)
 
-NB_PAGES_TEST = 3
-
 
 def artdmx(universe=0, values=None, seq=1, length=512):
     """Fabrique une trame ArtDmx, octet pour octet comme un vrai pupitre."""
@@ -53,19 +51,27 @@ def _page(prefixe):
 
 
 class FausseFenetre:
-    """Mouchard : enregistre ce que la liaison appelle, sans rien faire."""
+    """Mouchard : enregistre ce que la liaison appelle, sans rien faire.
+
+    Page 1 : les groupes A a H. Page 2 : MEM 1, FX 1, PLAY, puis D a H. C'est ce
+    qui permet de verifier les deux chemins — la cible est a l'ecran, ou pas.
+    """
 
     def __init__(self, page_active=0):
         self.faders = {i: FauxFader(0) for i in range(9)}
         self._bank_pages = [_page("P1-"), _page("P2-"), _page("P3-")]
-        # La page 2 porte une tranche MEM et une tranche FX, pour verifier
-        # qu'on route bien vers apply_slot_level_offpage sans les interpreter.
         self._bank_pages[1][0] = {"type": "memory", "mem_col": 0, "label": "MEM 1"}
         self._bank_pages[1][1] = {"type": "fx", "fx_col": 0, "label": "FX 1"}
+        self._bank_pages[1][2] = {"type": "play", "label": "PLAY"}
         self._bank_page_idx = page_active
 
         self.faders_recus = []      # (index, velocite 0-127)
         self.offpage_recus = []     # (label du slot, niveau 0-100)
+        self.mem_recus = []         # (mem_col, niveau 0-100)
+
+    @property
+    def _fader_map(self):
+        return self._bank_pages[self._bank_page_idx]
 
     def on_midi_fader(self, index, velocite):
         self.faders_recus.append((index, velocite))
@@ -75,6 +81,10 @@ class FausseFenetre:
     def apply_slot_level_offpage(self, slot, value):
         self.offpage_recus.append((slot.get("label"), value))
         return slot.get("type") in ("group", "fx", "play")
+
+    def apply_memory_level(self, mem_col, value):
+        self.mem_recus.append((mem_col, value))
+        return True
 
 
 # ── protocole ───────────────────────────────────────────────────────────────
@@ -177,38 +187,156 @@ class TestReceiver(unittest.TestCase):
         self.assertTrue(self.rx.is_receiving())
 
 
-# ── adressage : 8 canaux par page ───────────────────────────────────────────
+# ── le vocabulaire des cibles ───────────────────────────────────────────────
 
-class TestAdressage(unittest.TestCase):
+class TestCibles(unittest.TestCase):
 
-    def test_une_page_fait_huit_canaux(self):
-        self.assertEqual(dil.TRANCHES_PAR_PAGE, 8)
-        self.assertEqual(dil.offset_for(0, 0), 0)
-        self.assertEqual(dil.offset_for(0, 7), 7)
-        self.assertEqual(dil.offset_for(1, 0), 8, "la page 2 commence au 9e canal")
-        self.assertEqual(dil.offset_for(19, 7), 159)
+    def test_toutes_les_cibles(self):
+        toutes = dil.cibles()
+        self.assertEqual(toutes[:8], list("ABCDEFGH"))
+        self.assertIn("MEM 1", toutes)
+        self.assertIn("MEM 99", toutes)
+        self.assertNotIn("MEM 100", toutes)
+        self.assertIn("FX 8", toutes)
+        self.assertEqual(toutes[-2:], [dil.CIBLE_PLAY, dil.CIBLE_VITESSE])
+        self.assertEqual(len(toutes), 8 + 99 + 8 + 2)
 
-    def test_page_tranche_est_l_inverse(self):
-        for page in range(20):
-            for tranche in range(8):
-                offset = dil.offset_for(page, tranche)
-                self.assertEqual(dil.page_tranche_for(offset, 20), (page, tranche))
+    def test_est_une_cible(self):
+        self.assertTrue(dil.is_cible("A"))
+        self.assertTrue(dil.is_cible("MEM 99"))
+        self.assertFalse(dil.is_cible("MEM 0"))
+        self.assertFalse(dil.is_cible("POS 1"), "une position n'est pas pilotable")
+        self.assertFalse(dil.is_cible(""))
 
-    def test_le_dernier_canal_est_la_vitesse(self):
-        """Le fader 9 est en DERNIER, pas en 9e : c'est ce qui garde les pages
-        sur des multiples de 8."""
-        self.assertIsNone(dil.page_tranche_for(160, 20))
-        self.assertIsNotNone(dil.page_tranche_for(159, 20))
+    def test_colonne_memoire(self):
+        self.assertEqual(dil.mem_col_for("MEM 1"), 0)
+        self.assertEqual(dil.mem_col_for("MEM 99"), 98)
+        self.assertIsNone(dil.mem_col_for("MEM 0"))
+        self.assertIsNone(dil.mem_col_for("A"))
+        self.assertIsNone(dil.mem_col_for(dil.CIBLE_VITESSE))
+        self.assertIsNone(dil.mem_col_for("MEM x"))
 
-    def test_taille_du_patch(self):
-        self.assertEqual(dil.patch_size(20), 161)   # 20 x 8 + vitesse
-        self.assertEqual(dil.patch_size(3), 25)
+    def test_cible_d_un_slot_de_layout(self):
+        self.assertEqual(dil.option_for_slot({"type": "group", "group": "C"}), "C")
+        self.assertEqual(dil.option_for_slot({"type": "memory", "mem_col": 11}), "MEM 12")
+        self.assertEqual(dil.option_for_slot({"type": "fx", "fx_col": 0}), "FX 1")
+        self.assertEqual(dil.option_for_slot({"type": "play"}), "PLAY")
+        self.assertEqual(dil.option_for_slot({"type": "pos", "pos_col": 0}), "")
+        self.assertEqual(dil.option_for_slot(None), "")
 
-    def test_adresse_bornee_pour_que_le_patch_tienne(self):
-        self.assertEqual(dil.max_start(20), 512 - 161 + 1)
-        self.assertEqual(dil.clamp_start(9999, 20), dil.max_start(20))
-        self.assertEqual(dil.clamp_start(0, 20), 1)
-        self.assertEqual(dil.clamp_start("bof", 20), 1)
+    def test_cible_d_un_vieux_slot_par_nom_de_groupe(self):
+        """Ancien format {"groups": ["face"]} : la lettre doit se retrouver."""
+        self.assertEqual(dil.option_for_slot({"type": "group", "groups": ["face"]}), "A")
+        self.assertEqual(dil.option_for_slot({"type": "group", "groups": ["douche2"]}), "E")
+
+    def test_slot_synthetique_pour_le_hors_page(self):
+        self.assertEqual(dil.slot_for_option("B"),
+                         {"type": "group", "group": "B", "label": "B"})
+        self.assertEqual(dil.slot_for_option("FX 3")["fx_col"], 2)
+        self.assertEqual(dil.slot_for_option("PLAY")["type"], "play")
+        self.assertIsNone(dil.slot_for_option("MEM 1"), "les memoires ont leur porte")
+        self.assertIsNone(dil.slot_for_option(dil.CIBLE_VITESSE))
+
+
+class TestNormalisationDuPatch(unittest.TestCase):
+
+    def test_jette_l_invalide(self):
+        patch = dil.normalize_patch([
+            {"channel": 1, "slot": "A"},
+            {"channel": 0, "slot": "B"},            # canal hors univers
+            {"channel": 513, "slot": "C"},          # idem
+            {"channel": 4, "slot": "POS 1"},        # cible non pilotable
+            {"channel": 5, "slot": "n'importe quoi"},
+            {"channel": "x", "slot": "A"},
+            "pas un dictionnaire",
+        ])
+        self.assertEqual(patch, {1: "A"})
+
+    def test_accepte_les_minuscules(self):
+        self.assertEqual(dil.normalize_patch([{"channel": 3, "slot": "mem 2"}]),
+                         {3: "MEM 2"})
+
+    def test_un_canal_ne_pilote_qu_une_cible(self):
+        patch = dil.normalize_patch([{"channel": 7, "slot": "A"},
+                                     {"channel": 7, "slot": "MEM 4"}])
+        self.assertEqual(patch, {7: "MEM 4"})
+
+    def test_accepte_un_dictionnaire(self):
+        self.assertEqual(dil.normalize_patch({"12": "A"}), {12: "A"})
+
+    def test_config_absente_ou_abimee(self):
+        self.assertEqual(dil.normalize_patch(None), {})
+        self.assertEqual(dil.normalize_patch("abime"), {})
+
+
+class TestMigrationDepuisLesPages(unittest.TestCase):
+    """Un reglage de la version a pages doit se retrouver dans la table plate."""
+
+    def setUp(self):
+        self.fenetre = FausseFenetre()
+
+    def test_mode_libre_resout_la_tranche_en_cible(self):
+        cfg = {"mode": "libre", "assignments": [
+            {"channel": 5, "type": "tranche", "page": 1, "tranche": 0},   # MEM 1
+            {"channel": 6, "type": "tranche", "page": 0, "tranche": 2},   # groupe C
+            {"channel": 7, "type": "speed"},
+        ]}
+        self.assertEqual(dil.patch_from_legacy(cfg, self.fenetre),
+                         {5: "MEM 1", 6: "C", 7: dil.CIBLE_VITESSE})
+
+    def test_mode_patch_reprend_la_premiere_page(self):
+        patch = dil.patch_from_legacy({"mode": "patch", "start_channel": 10},
+                                      self.fenetre)
+        self.assertEqual(patch[10], "A")
+        self.assertEqual(patch[17], "H")
+        self.assertEqual(patch[10 + 8 * 3], dil.CIBLE_VITESSE,
+                         "la vitesse etait le dernier canal du patch")
+        self.assertEqual(len(patch), 9)
+
+    def test_reglage_illisible(self):
+        self.assertEqual(dil.patch_from_legacy(None, self.fenetre), {})
+        self.assertEqual(dil.patch_from_legacy({"mode": "patch"}, self.fenetre), {})
+
+
+class TestPatchParDefaut(unittest.TestCase):
+    """Un pupitre branche pour la premiere fois doit faire quelque chose."""
+
+    def test_les_groupes_d_abord_puis_les_memoires(self):
+        patch = dil.default_patch()
+        self.assertEqual(patch[1], "A")
+        self.assertEqual(patch[7], "G")
+        self.assertNotIn("H", patch.values(), "le 8e groupe reste libre")
+        self.assertEqual(patch[8], "MEM 1")
+        self.assertEqual(patch[106], "MEM 99")
+        self.assertEqual(len(patch), 7 + 99)
+        self.assertNotIn(107, patch)
+
+    def test_une_liaison_neuve_est_deja_patchee(self):
+        link = dil.DmxInLink(FausseFenetre())
+        self.assertEqual(link.patch, dil.default_patch())
+        link.stop()
+
+    def test_le_disque_gagne_toujours_meme_vide(self):
+        """« Tout effacer » doit tenir apres fermeture : sinon le patch d'usine
+        reviendrait a chaque ouverture, et le bouton ne servirait a rien."""
+        link = dil.DmxInLink(FausseFenetre())
+        link.from_config({"enabled": False, "patch": []})
+        self.assertEqual(link.patch, {})
+        link.stop()
+
+    def test_retour_au_patch_d_usine(self):
+        link = dil.DmxInLink(FausseFenetre())
+        link.clear_patch()
+        link.reset_patch()
+        self.assertEqual(link.patch, dil.default_patch())
+        link.stop()
+
+    def test_vieille_config_sans_rien_a_recuperer(self):
+        link = dil.DmxInLink(FausseFenetre())
+        link.from_config({"mode": "patch"})      # pas d'adresse de depart
+        self.assertEqual(link.patch, dil.default_patch(),
+                         "mieux vaut le patch d'usine qu'une table vide")
+        link.stop()
 
 
 class TestFonctionsPures(unittest.TestCase):
@@ -217,48 +345,19 @@ class TestFonctionsPures(unittest.TestCase):
         self.assertEqual(dil.dmx_to_level(0), 0)
         self.assertEqual(dil.dmx_to_level(255), 100)
         self.assertEqual(dil.dmx_to_level(128), 50)
+        self.assertEqual(dil.dmx_to_level(999), 100)
 
     def test_aller_retour_niveau_velocite_sans_perte(self):
-        """C'est ce qui autorise a passer par la porte du MIDI."""
+        """`on_midi_fader` retronque avec int() : l'arrondi doit etre AU-DESSUS."""
         for niveau in range(101):
             velocite = dil.level_to_velocity(niveau)
-            self.assertEqual(int((velocite / 127.0) * 100), niveau,
-                             f"niveau {niveau} abime par l'aller-retour")
-
-    def test_merge(self):
-        self.assertEqual(dil.merge_level(dil.MERGE_LTP, 20, 90), 20)
-        self.assertEqual(dil.merge_level(dil.MERGE_HTP, 20, 90), 90)
-        self.assertEqual(dil.merge_level(dil.MERGE_HTP, 95, 90), 95)
-
-    def test_libelles_pris_sur_la_bonne_page(self):
-        fenetre = FausseFenetre()
-        self.assertEqual(dil.tranche_labels(fenetre, 0)[0], "P1-1")
-        self.assertEqual(dil.tranche_labels(fenetre, 1)[0], "MEM 1")
-        self.assertEqual(dil.tranche_labels(fenetre, 2)[7], "P3-8")
-
-    def test_libelles_tolerants_a_une_fenetre_sans_layout(self):
-        self.assertEqual(dil.tranche_labels(None, 0), [str(i + 1) for i in range(8)])
-
-    def test_nb_pages_par_defaut(self):
-        self.assertEqual(dil.nb_pages(None), dil.PAGES_DEFAUT)
-        self.assertEqual(dil.nb_pages(FausseFenetre()), NB_PAGES_TEST)
-
-    def test_apprentissage_prend_le_canal_qui_bouge_le_plus(self):
-        base = bytearray(512)
-        frame = bytearray(512)
-        frame[9] = 3       # bruit analogique
-        frame[20] = 200    # le vrai fader
-        frame[30] = 40     # diaphonie
-        self.assertEqual(dil.find_moved_channel(base, frame), 21)
-
-    def test_apprentissage_ignore_le_bruit(self):
-        base = bytearray(512)
-        frame = bytearray(512)
-        frame[5] = 4
-        self.assertIsNone(dil.find_moved_channel(base, frame))
+            self.assertLessEqual(velocite, 127)
+            self.assertGreaterEqual(int(velocite / 127 * 100), niveau - 1)
+        self.assertGreater(dil.level_to_velocity(1), 1,
+                           "1 % ne doit pas retomber a 0 apres troncature")
 
 
-# ── liaison ─────────────────────────────────────────────────────────────────
+# ── la liaison ──────────────────────────────────────────────────────────────
 
 class TestLink(unittest.TestCase):
 
@@ -266,7 +365,9 @@ class TestLink(unittest.TestCase):
         self.fenetre = FausseFenetre(page_active=0)
         self.link = dil.DmxInLink(self.fenetre)
         self.link.enabled = True
-        self.link.start_channel = 10
+        self.link.universe = 0        # les trames de test partent sur 0
+        # Table vide : le patch d'usine (canal N -> MEM N) a sa classe a lui.
+        self.link.clear_patch()
 
     def tearDown(self):
         self.link.stop()
@@ -277,166 +378,193 @@ class TestLink(unittest.TestCase):
 
     # ── patch ───────────────────────────────────────────────────────────────
 
-    def test_canaux_du_patch(self):
-        self.assertEqual(self.link.channel_for(0, 0), 10)
-        self.assertEqual(self.link.channel_for(0, 7), 17)
-        self.assertEqual(self.link.channel_for(1, 0), 18, "page 2 = adresse + 8")
-        self.assertEqual(self.link.channel_for(2, 7), 33)
-        self.assertEqual(self.link.speed_channel(), 34)
-        self.assertEqual(self.link.last_channel, 34)
+    def test_patcher_et_depatcher(self):
+        self.link.set_target(3, "MEM 4")
+        self.assertEqual(self.link.target_for(3), "MEM 4")
+        self.link.set_target(3, "")
+        self.assertEqual(self.link.target_for(3), "")
+        self.assertEqual(self.link.patch, {})
 
-    def test_resume_du_patch(self):
-        self.assertEqual(self.link.pages, NB_PAGES_TEST)
-        self.assertEqual(self.link.patch_size, 25)
+    def test_canal_hors_univers_refuse(self):
+        self.link.set_target(0, "A")
+        self.link.set_target(513, "A")
+        self.assertEqual(self.link.patch, {})
 
-    def test_lignes_de_patch_affichables(self):
-        lignes = self.link.patch_rows(1)
-        self.assertEqual(len(lignes), 9, "8 tranches + la vitesse")
-        self.assertEqual(lignes[0][0], 18)
-        self.assertEqual(lignes[0][1], "MEM 1")
-        self.assertEqual(lignes[8][0], self.link.speed_channel())
+    def test_watched_est_trie_par_canal(self):
+        self.link.set_target(12, "B")
+        self.link.set_target(3, "A")
+        self.assertEqual(list(self.link.watched()), [(3, "A"), (12, "B")])
+
+    def test_tout_effacer(self):
+        self.link.set_target(3, "A")
+        self.link.clear_patch()
+        self.assertEqual(self.link.patch, {})
+
+    # ── ou est la cible ─────────────────────────────────────────────────────
+
+    def test_cible_de_la_page_affichee(self):
+        self.assertEqual(self.link.visible_fader_for("A"), 0)
+        self.assertEqual(self.link.visible_fader_for("H"), 7)
+        self.assertIsNone(self.link.visible_fader_for("MEM 1"),
+                          "MEM 1 est sur la page 2")
+
+    def test_la_vitesse_n_appartient_a_aucune_page(self):
+        self.assertEqual(self.link.visible_fader_for(dil.CIBLE_VITESSE),
+                         dil.FADER_VITESSE)
 
     # ── premiere trame ──────────────────────────────────────────────────────
 
     def test_premiere_trame_ne_pilote_rien(self):
-        """Cocher « activer » en plein show ne doit RIEN changer au parc."""
-        self.pousser({10: 255, 18: 255}, seq=1)
-        self.assertEqual(self.fenetre.faders_recus, [])
-        self.assertEqual(self.fenetre.offpage_recus, [])
+        self.link.set_target(1, "A")
+        self.pousser({1: 255})
+        self.assertEqual(self.fenetre.faders_recus, [],
+                         "la premiere trame sert de reference")
+        self.pousser({1: 128}, seq=2)
+        self.assertEqual(self.fenetre.faders_recus, [(0, 64)])
 
-    # ── page affichee ───────────────────────────────────────────────────────
+    # ── routage ─────────────────────────────────────────────────────────────
 
-    def test_tranche_de_la_page_affichee_passe_par_le_midi(self):
-        self.pousser({10: 0}, seq=1)
-        self.pousser({10: 255}, seq=2)
+    def test_groupe_de_la_page_affichee_passe_par_le_midi(self):
+        self.link.set_target(1, "A")
+        self.pousser({1: 0})
+        self.pousser({1: 255}, seq=2)
         self.assertEqual(self.fenetre.faders_recus, [(0, 127)])
         self.assertEqual(self.fenetre.offpage_recus, [])
 
-    def test_huitieme_tranche_de_la_page_affichee(self):
-        self.pousser({17: 0}, seq=1)
-        self.pousser({17: 128}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [(7, dil.level_to_velocity(50))])
+    def test_groupe_absent_de_la_page_passe_hors_page(self):
+        self.fenetre._bank_page_idx = 1      # page 2 : A, B, C n'y sont plus
+        self.link.set_target(1, "A")
+        self.pousser({1: 0})
+        self.pousser({1: 255}, seq=2)
+        self.assertEqual(self.fenetre.faders_recus, [])
+        self.assertEqual(self.fenetre.offpage_recus, [("A", 100)])
+
+    def test_memoire_toujours_par_sa_propre_porte(self):
+        """Visible ou non, une MEM passe par `apply_memory_level` : un seul writer."""
+        self.link.set_target(1, "MEM 1")
+        self.pousser({1: 0})
+        self.pousser({1: 255}, seq=2)
+        self.assertEqual(self.fenetre.mem_recus, [(0, 100)])
+        self.assertEqual(self.fenetre.faders_recus, [])
+
+        self.fenetre._bank_page_idx = 1      # MEM 1 est maintenant a l'ecran
+        self.link._reset_state()
+        self.fenetre.mem_recus.clear()
+        self.pousser({1: 0}, seq=3)
+        self.pousser({1: 128}, seq=4)
+        self.assertEqual(self.fenetre.mem_recus, [(0, 50)])
+        self.assertEqual(self.fenetre.faders_recus, [],
+                         "meme a l'ecran, pas de second chemin")
+
+    def test_memoire_hors_des_99_colonnes_ignoree(self):
+        self.link.set_target(1, "MEM 99")
+        self.pousser({1: 0})
+        self.pousser({1: 255}, seq=2)
+        self.assertEqual(self.fenetre.mem_recus, [(98, 100)])
+
+    def test_colonne_fx(self):
+        self.link.set_target(2, "FX 1")
+        self.pousser({2: 0})
+        self.pousser({2: 255}, seq=2)
+        self.assertEqual(self.fenetre.offpage_recus, [("FX 1", 100)],
+                         "FX 1 est sur la page 2")
+
+    def test_volume_du_lecteur(self):
+        self.link.set_target(2, dil.CIBLE_PLAY)
+        self.pousser({2: 0})
+        self.pousser({2: 128}, seq=2)
+        self.assertEqual(self.fenetre.offpage_recus, [("PLAY", 50)])
 
     def test_canal_de_vitesse_pilote_le_fader_9(self):
-        self.pousser({34: 0}, seq=1)
-        self.pousser({34: 255}, seq=2)
+        self.link.set_target(30, dil.CIBLE_VITESSE)
+        self.pousser({30: 0})
+        self.pousser({30: 255}, seq=2)
         self.assertEqual(self.fenetre.faders_recus, [(dil.FADER_VITESSE, 127)])
 
-    # ── autres pages ────────────────────────────────────────────────────────
-
-    def test_tranche_d_une_autre_page_passe_par_le_chemin_hors_page(self):
-        """Tout l'interet : le pupitre pilote les pages non affichees."""
-        self.pousser({19: 0}, seq=1)          # page 2, tranche 2 (FX 1)
-        self.pousser({19: 255}, seq=2)
-        self.assertEqual(self.fenetre.offpage_recus, [("FX 1", 100)])
-        self.assertEqual(self.fenetre.faders_recus, [],
-                         "une tranche hors page ne doit PAS toucher les faders visibles")
-
-    def test_troisieme_page(self):
-        self.pousser({26: 0}, seq=1)          # page 3, tranche 1
-        self.pousser({26: 128}, seq=2)
-        self.assertEqual(self.fenetre.offpage_recus, [("P3-1", 50)])
-
-    def test_changer_de_page_affichee_change_le_routage(self):
-        """La page 2 devient la page affichee : ses canaux passent au MIDI."""
-        self.fenetre._bank_page_idx = 1
-        self.pousser({19: 0}, seq=1)
-        self.pousser({19: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [(1, 127)])
-        self.assertEqual(self.fenetre.offpage_recus, [])
-
     def test_les_deux_chemins_coexistent_dans_la_meme_trame(self):
-        self.pousser({10: 0, 26: 0}, seq=1)
-        self.pousser({10: 255, 26: 255}, seq=2)
+        self.link.set_target(1, "A")          # a l'ecran
+        self.link.set_target(2, "MEM 3")      # pas a l'ecran
+        self.pousser({1: 0, 2: 0})
+        self.pousser({1: 255, 2: 255}, seq=2)
         self.assertEqual(self.fenetre.faders_recus, [(0, 127)])
-        self.assertEqual(self.fenetre.offpage_recus, [("P3-1", 100)])
+        self.assertEqual(self.fenetre.mem_recus, [(2, 100)])
 
-    # ── economie de trafic ──────────────────────────────────────────────────
+    def test_changer_de_page_change_le_routage(self):
+        self.link.set_target(1, "A")
+        self.pousser({1: 0})
+        self.pousser({1: 255}, seq=2)
+        self.assertEqual(self.fenetre.faders_recus, [(0, 127)])
+        self.fenetre._bank_page_idx = 1
+        self.pousser({1: 128}, seq=3)
+        self.assertEqual(self.fenetre.offpage_recus, [("A", 50)],
+                         "la meme cible, par l'autre chemin")
 
     def test_canal_immobile_ne_renvoie_rien(self):
-        """40 trames/s : sans ce filtre, le pupitre ecraserait tout en continu."""
-        self.pousser({10: 100}, seq=1)
-        self.pousser({10: 200}, seq=2)
-        self.fenetre.faders_recus.clear()
-        for seq in range(3, 10):
-            self.pousser({10: 200}, seq=seq)
-        self.assertEqual(self.fenetre.faders_recus, [])
+        """40 trames/s : sans ce filtre le pupitre ecraserait l'AKAI en permanence."""
+        self.link.set_target(1, "A")
+        self.pousser({1: 0})
+        self.pousser({1: 255}, seq=2)
+        self.pousser({1: 255}, seq=3)
+        self.assertEqual(self.fenetre.faders_recus, [(0, 127)])
 
-    def test_canal_hors_du_patch_ignore(self):
-        self.pousser({200: 0}, seq=1)
-        self.pousser({200: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [])
-        self.assertEqual(self.fenetre.offpage_recus, [])
-
-    # ── melange ─────────────────────────────────────────────────────────────
-
-    def test_htp_le_niveau_local_gagne(self):
-        self.link.merge = dil.MERGE_HTP
-        self.fenetre.faders[0].value = 80      # l'AKAI est a 80
-        self.pousser({10: 0}, seq=1)
-        self.pousser({10: 26}, seq=2)          # le pupitre monte a ~10
-        self.assertEqual(self.fenetre.faders_recus, [(0, dil.level_to_velocity(80))])
-
-    def test_ltp_le_pupitre_gagne_toujours(self):
-        self.fenetre.faders[0].value = 80
-        self.pousser({10: 0}, seq=1)
-        self.pousser({10: 26}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [(0, dil.level_to_velocity(10))])
-
-    # ── adresse ─────────────────────────────────────────────────────────────
-
-    def test_changer_d_adresse_oublie_l_etat(self):
-        """Sinon les anciennes valeurs designeraient les mauvaises tranches."""
-        self.pousser({10: 100}, seq=1)
-        self.link.set_start_channel(50)
-        self.assertEqual(self.link._last_counter, -1)
-        self.assertEqual(self.link._last_raw, {})
-
-    def test_apprentissage_fixe_l_adresse_de_depart(self):
-        """En mode Patch, le canal appris EST l'adresse de depart."""
-        self.pousser({10: 0, 77: 0}, seq=1)
-        self.link.start_learn()
-        appris = []
-        self.link.channel_learned.connect(appris.append)
-        self.pousser({77: 255}, seq=2)
-        self.assertEqual(appris, [77])
-        self.assertEqual(self.link.start_channel, 77)
-        self.assertFalse(self.link.is_learning())
-
-    def test_apprentissage_ne_pilote_rien(self):
-        """Designer l'adresse ne doit pas faire bouger le parc en plein reglage."""
-        self.pousser({10: 0}, seq=1)
-        self.link.start_learn()
-        self.pousser({10: 255}, seq=2)
+    def test_canal_non_patche_ignore(self):
+        self.link.set_target(1, "A")
+        self.pousser({1: 0, 2: 0})
+        self.pousser({1: 0, 2: 255}, seq=2)
         self.assertEqual(self.fenetre.faders_recus, [])
         self.assertEqual(self.fenetre.offpage_recus, [])
+
+    def test_canal_512_sans_debordement(self):
+        self.link.set_target(512, "A")
+        self.pousser({512: 0})
+        self.pousser({512: 255}, seq=2)      # ne doit pas lever IndexError
+        self.assertEqual(self.fenetre.faders_recus, [(0, 127)])
+
+    def test_changer_le_patch_oublie_l_etat(self):
+        self.link.set_target(1, "A")
+        self.pousser({1: 0})
+        self.link.set_target(2, "B")         # le patch a change
+        self.pousser({1: 255}, seq=2)
+        self.assertEqual(self.fenetre.faders_recus, [],
+                         "la trame suivante redevient une reference")
+
+    # ── LTP ─────────────────────────────────────────────────────────────────
+
+    def test_le_pupitre_gagne_toujours(self):
+        """LTP, sans reglage : le dernier qui bouge gagne, meme vers le bas."""
+        self.link.set_target(1, "A")
+        self.fenetre.faders[0].value = 60      # l'AKAI etait a 60 %
+        self.pousser({1: 0})
+        self.pousser({1: 64}, seq=2)           # 25 % cote pupitre
+        self.assertEqual(self.fenetre.faders_recus,
+                         [(0, dil.level_to_velocity(25))])
+
+    def test_le_pupitre_gagne_aussi_sur_une_memoire(self):
+        self.fenetre._bank_page_idx = 1        # MEM 1 sur le fader 1
+        self.link.set_target(1, "MEM 1")
+        self.fenetre.faders[0].value = 60
+        self.pousser({1: 0})
+        self.pousser({1: 64}, seq=2)
+        self.assertEqual(self.fenetre.mem_recus, [(0, 25)])
+
+    # ── reception ───────────────────────────────────────────────────────────
 
     def test_mauvais_univers_ignore(self):
-        self.link.universe = 2
-        self.link.receiver.feed(artdmx(universe=0, values={10: 255}), "2.0.0.20")
+        self.link.set_target(1, "A")
+        self.link.receiver.feed(artdmx(universe=7, values={1: 0}), "2.0.0.20")
+        self.link._tick()
+        self.link.receiver.feed(artdmx(universe=7, values={1: 255}, seq=2), "2.0.0.20")
         self.link._tick()
         self.assertEqual(self.fenetre.faders_recus, [])
 
-    # ── config ──────────────────────────────────────────────────────────────
-
-    def test_config_aller_retour(self):
-        self.link.start_channel = 33
-        self.link.merge = dil.MERGE_HTP
-        autre = dil.DmxInLink(self.fenetre)
-        autre.from_config(self.link.to_config())
-        self.assertEqual(autre.start_channel, 33)
-        self.assertEqual(autre.merge, dil.MERGE_HTP)
-        autre.stop()
-
-    def test_config_abimee_ne_plante_pas(self):
-        autre = dil.DmxInLink(None)
-        autre.from_config({"port": "bof", "universe": None, "merge": "n'importe",
-                           "start_channel": -5})
-        self.assertEqual(autre.port, ai.DEFAULT_PORT)
-        self.assertEqual(autre.universe, 0)
-        self.assertEqual(autre.merge, dil.MERGE_LTP)
-        self.assertEqual(autre.start_channel, 1)
-        autre.stop()
+    def test_univers_vu_ailleurs(self):
+        """Remplace le reglage d'univers : on constate, et on propose de basculer."""
+        self.link.universe = 5
+        self.assertIsNone(self.link.other_universe_seen())
+        self.link.receiver.feed(artdmx(universe=0, values={1: 10}), "2.0.0.20")
+        self.assertEqual(self.link.other_universe_seen(), 0)
+        self.link.universe = 0
+        self.assertIsNone(self.link.other_universe_seen())
 
     def test_etat_lisible_sans_reception(self):
         recoit, message = self.link.status()
@@ -445,173 +573,44 @@ class TestLink(unittest.TestCase):
 
     def test_etat_signale_le_mauvais_univers(self):
         self.link.universe = 5
-        self.link.receiver.feed(artdmx(universe=0), "2.0.0.20")
+        self.link.receiver.feed(artdmx(universe=0, values={1: 10}), "2.0.0.20")
         recoit, message = self.link.status()
         self.assertFalse(recoit)
         self.assertIn("0", message)
 
-
-class TestNormalisationAssignations(unittest.TestCase):
-
-    def test_jette_l_invalide(self):
-        propre = dil.normalize_assignments([
-            {"channel": 1, "type": "tranche", "page": 0, "tranche": 0},
-            {"channel": 0, "type": "tranche", "page": 0, "tranche": 0},    # canal hors bornes
-            {"channel": 999, "type": "tranche", "page": 0, "tranche": 0},  # canal hors bornes
-            {"channel": 5, "type": "tranche", "page": 0, "tranche": 9},    # tranche inexistante
-            {"channel": 6, "type": "tranche", "page": 99, "tranche": 0},   # page inexistante
-            {"channel": 7, "type": "speed"},
-            "pas un dictionnaire",
-        ], pages=NB_PAGES_TEST)
-        self.assertEqual([a["channel"] for a in propre], [1, 7])
-        self.assertEqual(propre[1]["type"], dil.CIBLE_VITESSE)
-
-    def test_un_canal_ne_pilote_qu_une_cible(self):
-        propre = dil.normalize_assignments([
-            {"channel": 3, "type": "tranche", "page": 0, "tranche": 1},
-            {"channel": 3, "type": "tranche", "page": 1, "tranche": 4},
-        ], pages=NB_PAGES_TEST)
-        self.assertEqual(len(propre), 1)
-        self.assertEqual(propre[0]["tranche"], 1, "la premiere gagne")
-
-    def test_config_absente_ou_abimee(self):
-        self.assertEqual(dil.normalize_assignments(None), [])
-        self.assertEqual(dil.normalize_assignments("bof"), [])
-
-
-class TestModeLibre(unittest.TestCase):
-
-    def setUp(self):
-        self.fenetre = FausseFenetre(page_active=0)
-        self.link = dil.DmxInLink(self.fenetre)
-        self.link.enabled = True
-        self.link.set_mode(dil.MODE_LIBRE)
-
-    def tearDown(self):
-        self.link.stop()
-
-    def pousser(self, values, seq=1):
-        self.link.receiver.feed(artdmx(values=values, seq=seq), "2.0.0.20")
-        self.link._tick()
-
-    def test_sans_assignation_rien_ne_bouge(self):
-        self.pousser({1: 0}, seq=1)
-        self.pousser({1: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [])
-        self.assertEqual(self.fenetre.offpage_recus, [])
-
-    def test_n_importe_quel_canal_vers_n_importe_quelle_tranche(self):
-        """Tout l'interet du mode : aucun ordre impose."""
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.pousser({40: 0}, seq=1)
-        self.pousser({40: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [(2, 127)])
-
-    def test_ordre_inverse_accepte(self):
-        self.link.add_assignment(1, page=0, tranche=7)
-        self.link.add_assignment(2, page=0, tranche=0)
-        self.pousser({1: 0, 2: 0}, seq=1)
-        self.pousser({1: 255, 2: 128}, seq=2)
-        self.assertEqual(sorted(self.fenetre.faders_recus),
-                         sorted([(7, 127), (0, dil.level_to_velocity(50))]))
-
-    def test_cible_hors_page(self):
-        self.link.add_assignment(100, page=2, tranche=0)
-        self.pousser({100: 0}, seq=1)
-        self.pousser({100: 255}, seq=2)
-        self.assertEqual(self.fenetre.offpage_recus, [("P3-1", 100)])
-        self.assertEqual(self.fenetre.faders_recus, [])
-
-    def test_cible_vitesse(self):
-        self.link.add_assignment(200, vitesse=True)
-        self.pousser({200: 0}, seq=1)
-        self.pousser({200: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [(dil.FADER_VITESSE, 127)])
-
-    def test_canal_non_assigne_ignore(self):
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.pousser({41: 0}, seq=1)
-        self.pousser({41: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [])
-
-    def test_reassigner_un_canal_remplace_sans_doublon(self):
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.link.add_assignment(40, page=0, tranche=5)
-        self.assertEqual(len(self.link.assignments), 1)
-        self.pousser({40: 0}, seq=1)
-        self.pousser({40: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [(5, 127)])
-
-    def test_supprimer_une_assignation(self):
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.link.remove_assignment(40)
-        self.assertEqual(self.link.assignments, [])
-        self.pousser({40: 0}, seq=1)
-        self.pousser({40: 255}, seq=2)
-        self.assertEqual(self.fenetre.faders_recus, [])
-
-    def test_premiere_trame_ne_pilote_rien(self):
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.pousser({40: 255}, seq=1)
-        self.assertEqual(self.fenetre.faders_recus, [])
-
-    def test_apprentissage_donne_le_canal_brut(self):
-        """En mode Libre, apprendre ne touche PAS a l'adresse de depart."""
-        self.link.start_channel = 1
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.pousser({40: 0, 88: 0}, seq=1)
-        self.link.start_learn()
-        appris = []
-        self.link.channel_learned.connect(appris.append)
-        self.pousser({88: 255}, seq=2)
-        self.assertEqual(appris, [88])
-        self.assertEqual(self.link.start_channel, 1, "l'adresse ne bouge pas ici")
-
-    def test_libelle_d_assignation(self):
-        self.link.add_assignment(40, page=1, tranche=0)
-        lignes = self.link.assignment_rows()
-        self.assertEqual(lignes[0][0], 40)
-        self.assertIn("MEM 1", lignes[0][1])
-
-    def test_changer_de_mode_oublie_l_etat(self):
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.pousser({40: 100}, seq=1)
-        self.link.set_mode(dil.MODE_PATCH)
-        self.assertEqual(self.link._last_counter, -1)
-        self.assertEqual(self.link._last_raw, {})
+    # ── persistance ─────────────────────────────────────────────────────────
 
     def test_config_aller_retour(self):
-        self.link.add_assignment(40, page=1, tranche=3)
-        self.link.add_assignment(41, vitesse=True)
+        self.link.set_target(4, "MEM 7")
+        self.link.set_target(9, dil.CIBLE_VITESSE)
+        cfg = self.link.to_config()
+
         autre = dil.DmxInLink(self.fenetre)
-        autre.from_config(self.link.to_config())
-        self.assertEqual(autre.mode, dil.MODE_LIBRE)
-        self.assertEqual(autre.assignments, self.link.assignments)
+        autre.from_config(cfg)
+        self.assertEqual(autre.patch, {4: "MEM 7", 9: dil.CIBLE_VITESSE})
         autre.stop()
 
-    def test_watched_reflete_le_mode(self):
-        self.link.add_assignment(40, page=0, tranche=2)
-        self.assertEqual(list(self.link.watched()),
-                         [(40, dil.CIBLE_TRANCHE, 0, 2)])
-        self.link.set_mode(dil.MODE_PATCH)
-        self.assertEqual(len(list(self.link.watched())), self.link.patch_size)
+    def test_univers_par_defaut_si_absent_de_la_config(self):
+        autre = dil.DmxInLink(self.fenetre)
+        autre.from_config({"enabled": True, "patch": []})
+        self.assertEqual(autre.universe, dil.DEFAULT_UNIVERSE)
+        autre.stop()
 
+    def test_config_abimee_ne_plante_pas(self):
+        autre = dil.DmxInLink(self.fenetre)
+        autre.from_config({"universe": "x", "port": None, "merge": 42,
+                           "patch": "abime"})
+        self.assertEqual(autre.patch, {})
+        self.assertEqual(autre.universe, dil.DEFAULT_UNIVERSE)
+        autre.stop()
 
-class TestPatchEnBoutDUnivers(unittest.TestCase):
-    """Une adresse haute ne doit pas lire au-dela du 512e canal."""
+    def test_vieille_config_migree_a_la_relecture(self):
+        autre = dil.DmxInLink(self.fenetre)
+        autre.from_config({"mode": "libre", "start_channel": 1, "assignments": [
+            {"channel": 2, "type": "tranche", "page": 0, "tranche": 1}]})
+        self.assertEqual(autre.patch, {2: "B"})
+        autre.stop()
 
-    def test_pas_de_debordement(self):
-        fenetre = FausseFenetre()
-        link = dil.DmxInLink(fenetre)
-        link.enabled = True
-        link.start_channel = dil.max_start(NB_PAGES_TEST)
-        self.assertEqual(link.last_channel, 512)
-        link.receiver.feed(artdmx(values={512: 0}, seq=1), "2.0.0.20")
-        link._tick()
-        link.receiver.feed(artdmx(values={512: 255}, seq=2), "2.0.0.20")
-        link._tick()   # ne doit pas lever IndexError
-        self.assertEqual(fenetre.faders_recus, [(dil.FADER_VITESSE, 127)])
-        link.stop()
 
 
 class TestAiguillageEntree(unittest.TestCase):
@@ -683,17 +682,21 @@ class TestAiguillageEntree(unittest.TestCase):
 class TestRisqueDeLarsen(unittest.TestCase):
 
     def _fenetre(self, transport, universe=0, output_map=None):
-        class FauxDmx:
-            def input_universes(self):
-                return [self.universe + n for n, v in enumerate(self.output_map)
-                        if v == dil.OUTPUT_INPUT]
-        dmx = FauxDmx()
+        dmx = type("FauxDmx", (), {})()
         dmx.transport = transport
         dmx.universe = universe
         dmx.output_map = list(output_map if output_map is not None else [0, 1, 2, 3])
         fenetre = FausseFenetre()
         fenetre.dmx = dmx
         return fenetre
+
+    def test_l_univers_par_defaut_est_hors_de_notre_sortie(self):
+        """La raison d'etre du 5e univers : MyStrow en emet quatre (0 a 3)."""
+        link = dil.DmxInLink(self._fenetre("artnet"))
+        self.assertEqual(link.universe, 5)
+        self.assertNotIn(link.universe, link.emitted_universes())
+        self.assertFalse(link.echo_risk())
+        link.stop()
 
     def test_alerte_si_l_univers_ecoute_est_emis(self):
         link = dil.DmxInLink(self._fenetre("artnet"))
@@ -704,36 +707,18 @@ class TestRisqueDeLarsen(unittest.TestCase):
         link.stop()
 
     def test_pas_d_alerte_si_le_port_est_declare_en_entree(self):
-        """Tout l'interet du reglage : on ne s'y bat plus avec nous-memes."""
+        """Un port bascule en entree ne compte plus comme une sortie."""
         fenetre = self._fenetre("artnet", output_map=[0, 1, dil.OUTPUT_INPUT, 3])
         link = dil.DmxInLink(fenetre)
         link.universe = 2
         self.assertNotIn(2, link.emitted_universes())
         self.assertFalse(link.echo_risk())
-        self.assertIsNone(link.routing_hint(), "univers coherent : rien a signaler")
-        link.stop()
-
-    def test_rappel_si_aucun_port_n_est_en_entree(self):
-        link = dil.DmxInLink(self._fenetre("artnet"))
-        link.universe = 2
-        self.assertTrue(link.routing_hint())
-        link.stop()
-
-    def test_rappel_si_on_ecoute_le_mauvais_univers(self):
-        fenetre = self._fenetre("artnet", output_map=[0, 1, dil.OUTPUT_INPUT, 3])
-        link = dil.DmxInLink(fenetre)
-        link.universe = 0
-        message = link.routing_hint()
-        self.assertTrue(message)
-        self.assertIn("2", message)
         link.stop()
 
     def test_pas_d_alerte_en_usb(self):
         link = dil.DmxInLink(self._fenetre("enttec"))
         link.universe = 0
         self.assertFalse(link.echo_risk())
-        self.assertIsNone(link.routing_hint(),
-                          "l'aiguillage du Node ne s'applique pas en USB")
         link.stop()
 
 

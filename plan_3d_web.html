@@ -66,6 +66,7 @@ import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js
 import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass }       from 'three/addons/postprocessing/ShaderPass.js';
 import { GLTFLoader }       from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries }  from 'three/addons/utils/BufferGeometryUtils.js';
 
 document.getElementById('loading').remove();
 
@@ -906,6 +907,73 @@ const GEO_LENS_PAR     = new THREE.CircleGeometry(0.13, 20);
 const GEO_LENS_MH      = new THREE.CircleGeometry(0.10, 20);
 const GEO_BAR_MH       = new THREE.BoxGeometry(0.80, 0.10, 0.14);  // mounting bar lyre
 
+// ── Galette de LED d'un PAR ────────────────────────────────────────────────
+// Un PAR LED n'est pas un projecteur à lampe : sa face n'est pas UN disque
+// lumineux mais une grappe de petites lentilles, et c'est à ça qu'on le
+// reconnaît d'un coup d'œil sur un plan de feu. On garde malgré tout UN SEUL
+// maillage — les cercles sont fusionnés en une géométrie unique — pour que
+// dessiner 14 LED coûte exactement le même draw call que l'ancien disque.
+// Sans cette fusion, un rig de 40 PAR ajoutait 560 objets à la scène.
+const PAR_LED_COUNT = 14;
+
+// Répartition en anneaux concentriques : 1 au centre, puis autant de LED que
+// la circonférence en accepte à pas régulier (6, 12, 18…). C'est le pavage
+// hexagonal des vraies galettes, et il reste correct pour un compte partiel —
+// le dernier anneau se répartit alors sur 2π/k au lieu de se tasser d'un côté.
+function _ledLayout(n, R) {
+  const rings = [];          // [nb de LED par anneau]
+  let left = n, ring = 0;
+  while (left > 0) {
+    const cap = ring === 0 ? 1 : Math.floor(2 * Math.PI * ring);
+    rings.push(Math.min(left, cap));
+    left -= rings[ring];
+    ring++;
+  }
+  // Pas radial : le dernier anneau doit tenir DANS le rayon utile, lentille
+  // comprise — d'où le demi-pas de marge, sinon les LED du bord mordent la
+  // bague chrome.
+  const step = R / (rings.length - 0.5 + 0.0001);
+  const rad  = step * 0.42;
+  const pts  = [];
+  for (let k = 0; k < rings.length; k++) {
+    const cnt = rings[k];
+    if (k === 0) { pts.push([0, 0, rad]); continue; }
+    // Décalage d'un demi-pas d'un anneau à l'autre : les LED se logent dans
+    // les creux de l'anneau précédent au lieu de s'aligner en rayons.
+    const off = (k % 2) * (Math.PI / cnt);
+    for (let j = 0; j < cnt; j++) {
+      const a = off + j * (2 * Math.PI / cnt);
+      pts.push([Math.cos(a) * k * step, Math.sin(a) * k * step, rad]);
+    }
+  }
+  return pts;
+}
+
+const _LED_GEO_CACHE = new Map();
+function _ledClusterGeo(n, R) {
+  const key = n + '|' + R.toFixed(4);
+  let g = _LED_GEO_CACHE.get(key);
+  if (g) return g;
+  const parts = [];
+  for (const [px, py, rad] of _ledLayout(n, R)) {
+    // Un dôme très aplati, pas un disque plat : c'est ce qui accroche la
+    // lumière de la salle et donne le relief des lentilles quand le PAR est
+    // ÉTEINT. Un cercle plat rend une galette de gommettes.
+    const c = new THREE.SphereGeometry(rad, 10, 5, 0, Math.PI * 2, 0, Math.PI * 0.34);
+    // Vers -Z, et non +Z : la lentille est portée par un mesh tourné de -90°
+    // sur X, qui envoie -Z vers le BAS — le sens de sortie du PAR. Bombée dans
+    // l'autre sens, la calotte rentrait dans le boîtier et le plateau noir
+    // passait devant : la face redevenait un disque uni.
+    c.rotateX(-Math.PI / 2);
+    c.scale(1, 1, 0.55);
+    c.translate(px, py, -rad * 0.18);
+    parts.push(c);
+  }
+  g = mergeGeometries(parts);
+  _LED_GEO_CACHE.set(key, g);
+  return g;
+}
+
 const MAT_BODY = new THREE.MeshStandardMaterial({ color:0x3a3a5a, roughness:0.28, metalness:0.72 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -980,6 +1048,14 @@ function _getObj(i) {
 
   // ── PAR LED — modèle compact réaliste ────────────────────────────────
   const parGrp = new THREE.Group();
+  // 'YXZ' et non l'ordre par défaut 'XYZ' : sur un PAR, RY est le lacet de
+  // l'ÉTRIER (axe vertical d'accroche) et RX l'inclinaison DANS cet étrier.
+  // En 'XYZ', le lacet est appliqué en premier, donc à l'intérieur du tilt :
+  // pivoter un PAR déjà incliné le faisait tourner autour d'un axe basculé, et
+  // surtout la direction de la lentille ne dépendait plus du tout de RY —
+  // alors que `beamFloor()`, elle, en tenait compte. Les deux doivent décrire
+  // la MÊME chaîne, sinon corps et faisceau divergent.
+  parGrp.rotation.order = 'YXZ';
 
   const _parBodyMat = new THREE.MeshStandardMaterial({ color:0x1c1c28, roughness:0.50, metalness:0.62 });
   const _parChrMat2 = new THREE.MeshStandardMaterial({ color:0x404858, roughness:0.38, metalness:0.78 });
@@ -1041,10 +1117,16 @@ function _getObj(i) {
   groupRing.position.set(0, -0.094, 0);
   parGrp.add(groupRing);
 
-  // Bague chrome avant (autour de la lentille)
+  // Bague chrome avant (autour de la lentille). OUVERTE aux deux bouts — une
+  // bague est un anneau, pas un jeton : en cylindre plein, son fond faisait
+  // écran et masquait entièrement la galette de LED enchâssée derrière.
+  // DoubleSide parce qu'on regarde un PAR par en dessous, donc par l'INTÉRIEUR
+  // de l'anneau : ses faces avant sont tournées à l'opposé.
+  const _parRingMat = _parChrMat2.clone();
+  _parRingMat.side = THREE.DoubleSide;
   const parFrontRing = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.182, 0.182, 0.030, 28),
-    _parChrMat2.clone()
+    new THREE.CylinderGeometry(0.182, 0.182, 0.030, 28, 1, true),
+    _parRingMat
   );
   parFrontRing.position.set(0, -0.317, 0);
   parGrp.add(parFrontRing);
@@ -1060,13 +1142,33 @@ function _getObj(i) {
     parGrp.add(pPin);
   }
 
-  // Lentille émissive (face -Y = bas)
+  // Plateau noir de la face avant : c'est le fond sur lequel les LED sont
+  // montées. Il est indispensable — la galette de LED laisse du vide entre les
+  // lentilles, et sans lui on voyait à travers le PAR jusqu'à l'intérieur du
+  // corps.
+  const lensBack = new THREE.Mesh(
+    new THREE.CircleGeometry(0.180, 32),
+    new THREE.MeshStandardMaterial({ color:0x0a0a12, roughness:0.72, metalness:0.18 })
+  );
+  // Enchâssé DANS la bague chrome avant (qui court de -0,302 à -0,332), et
+  // non posé sur son bord : les dômes des LED avancent de 19 mm, à -0,331 ils
+  // débordaient du boîtier et le PAR ressemblait à une galette de billes
+  // collées sur le devant. Le plateau ferme aussi le fond de la bague, qui est
+  // creuse — d'où son rayon calé sur elle (0,180) et non sur la galette.
+  lensBack.position.set(0, -0.309, 0);
+  lensBack.rotation.x = -Math.PI / 2;
+  lensBack.userData.projoIndex = i;
+  parGrp.add(lensBack);
+
+  // Galette de LED émissive (face -Y = bas). Une seule géométrie fusionnée,
+  // donc `obj.lens` reste UN maillage à un matériau : toute la logique
+  // d'allumage (emissive / emissiveIntensity) est inchangée.
   const lensMat = new THREE.MeshStandardMaterial({
-    color:0x060614, emissive:new THREE.Color(0,0,0),
-    emissiveIntensity:0, roughness:0.02, metalness:0.12,
+    color:0x111122, emissive:new THREE.Color(0,0,0),
+    emissiveIntensity:0, roughness:0.10, metalness:0.06,
   });
-  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.158, 32), lensMat);
-  lens.position.set(0, -0.333, 0);
+  const lens = new THREE.Mesh(_ledClusterGeo(PAR_LED_COUNT, 0.152), lensMat);
+  lens.position.set(0, -0.310, 0);
   lens.rotation.x = -Math.PI / 2;
   lens.userData.projoIndex = i;
   parGrp.add(lens);
@@ -1421,12 +1523,32 @@ function beamFloor(p) {
       hitsFloor: by < -1e-6 && (lensY / -by) <= BEAM_TMAX,
     };
   } else {
-    const lensY = hy - 0.333 * fs;
     const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;  // pan — pivot horizontal
     const rx    = (p.rot3d_x ?? 0) * Math.PI / 180;  // tilt — inclinaison depuis nadir
-    const bx    = Math.sin(ry) * Math.sin(rx);
-    const by    = -Math.cos(rx);
-    const bz    = Math.cos(ry) * Math.sin(rx);
+    // La galette de LED d'un PAR est montée SOUS le corps : sa direction
+    // d'émission est le nadir local (0, -1, 0), auquel on applique la même
+    // chaîne que le maillage — `parGrp`, en ordre d'Euler 'YXZ', soit
+    // Ry(pan) · Rx(tilt). Le lacet appartient à l'étrier (axe vertical
+    // d'accroche), l'inclinaison bascule à l'intérieur de l'étrier ainsi
+    // orienté : c'est un yoke, pas un cardan.
+    //
+    // ⚠️ Les signes de X et Z étaient INVERSÉS : le calcul appliquait Rx(-tilt)
+    // là où le maillage applique Rx(+tilt). Le corps s'inclinait donc d'un côté
+    // et le faisceau partait de l'autre — « je retourne mes PAR et ils éclairent
+    // à l'opposé » (remontée du 27/08/2026, capture `Bug_affichage3D.png` : des
+    // PAR galette vers le public lavant de rouge la structure DERRIÈRE eux).
+    // Toute modification ici doit être répercutée sur `parGrp` dans
+    // updateScene(), et réciproquement.
+    const bx = -Math.sin(ry) * Math.sin(rx);
+    const by = -Math.cos(rx);
+    const bz = -Math.cos(ry) * Math.sin(rx);
+    // La lentille SUIT le corps : elle est à 33 cm de l'accroche le long de
+    // l'axe d'émission, et non bêtement à la verticale en dessous. Sans ça, un
+    // PAR retourné vers le haut gardait sa lueur de lentille et le départ de
+    // son cône SOUS lui. Même traitement que la lyre, qui fait déjà passer la
+    // position de lentille par sa propre chaîne de rotations.
+    const L = 0.333 * fs;
+    const lensX = p.x + bx * L, lensY = hy + by * L, lensZ = p.z + bz * L;
     const goingUp = by > 0.05;
     // Même borne unique que pour les lyres — voir le commentaire plus haut :
     // trois bornes différentes (12 / 15 / 12) faisaient sauter la longueur au
@@ -1435,10 +1557,10 @@ function beamFloor(p) {
             : by > 0 ? Math.min((15.0 - lensY) / by, BEAM_TMAX)
             :          BEAM_TMAX;
     return {
-      fx: Math.max(-11, Math.min(11, p.x + bx * t)),
+      fx: Math.max(-11, Math.min(11, lensX + bx * t)),
       fy: Math.max(0.03, Math.min(14.5, lensY + by * t)),
-      fz: Math.max(-8,  Math.min(13, p.z + bz * t)),
-      lensX: p.x, lensY, lensZ: p.z, bx, by, bz, isMH: false, goingUp,
+      fz: Math.max(-8,  Math.min(13, lensZ + bz * t)),
+      lensX, lensY, lensZ, bx, by, bz, isMH: false, goingUp,
       hitsFloor: by < -1e-6 && (lensY / -by) <= BEAM_TMAX,
     };
   }
@@ -1608,6 +1730,8 @@ window.updateScene = function(projectors) {
       // ── Groupe PAR LED ───────────────────────────────────────────
       obj.parGrp.position.set(p.x, hy, p.z);
       obj.parGrp.scale.setScalar(p.fixture_scale ?? 1.0);   // cf. mhGrp
+      // Ordre d'Euler 'YXZ', posé à la construction du groupe : Ry(pan) puis
+      // Rx(tilt), la chaîne que `beamFloor()` reproduit à l'identique.
       obj.parGrp.rotation.x = (p.rot3d_x ?? 0) * Math.PI / 180;
       obj.parGrp.rotation.y = (p.rot3d_y ?? 0) * Math.PI / 180;
       obj.parGrp.visible = _flags.fixtures;
@@ -1620,11 +1744,14 @@ window.updateScene = function(projectors) {
         obj.groupRing.material.emissiveIntensity = 0.6;
       }
 
-      // Lentille émissive
+      // Galette de LED émissive. Dosage plus sage que la lyre juste au-dessus :
+      // en ACESFilmic, tout ce qui dépasse ~2 vire au blanc, et sur quatorze
+      // petites lentilles ça se voyait — un PAR rouge à fond rendait une
+      // constellation de billes BLANCHES dans un halo rouge. La couleur n'est
+      // plus amplifiée (elle porte la teinte), seule l'intensité monte.
       if (lvl > 0) {
-        _briBuf.copy(_colBuf).multiplyScalar(1.0 + lvl * 1.5);
-        obj.lens.material.emissive.copy(_briBuf);
-        obj.lens.material.emissiveIntensity = 0.8 + lvl * 3.5;
+        obj.lens.material.emissive.copy(_colBuf);
+        obj.lens.material.emissiveIntensity = 0.55 + lvl * 1.55;
       } else {
         obj.lens.material.emissive.set(0, 0, 0);
         obj.lens.material.emissiveIntensity = 0;
@@ -1697,9 +1824,23 @@ window.updateScene = function(projectors) {
       // Gobo : calculé ici et non dans le bloc « tache au sol », car il
       // découpe AUSSI le faisceau — y compris quand la lyre pointe vers le
       // haut, cas où il n'y a pas de tache au sol du tout.
-      const goboSlot  = Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8));
+      //
+      // `has_gobo` : la fixture porte-t-elle une optique de PROJECTION ? Un PAR
+      // LED, une barre, un strobe n'en ont pas — ils ne peuvent pas faire de
+      // gobo, quelle que soit la valeur du canal. Décider ici sur `p.gobo > 0`
+      // plaquait des motifs sur les PAR dont le canal `Gobo1` sert en réalité
+      // de canal de PROGRAMME (seul `Gobo1` ouvre un éditeur de presets, d'où
+      // le détournement). Le drapeau vient de `core.fixture_projects_gobo`,
+      // partagé avec le plan 2D.
+      const goboSlot  = p.has_gobo
+        ? Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8))
+        : 0;
       const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
-      const goboRot   = ((p.gobo_rotation || 0) / 255.0) * Math.PI * 2;
+      // Même porte sur la rotation : sans motif, faire tourner le faisceau
+      // n'aurait rien à quoi s'accrocher — et animate() le ferait pivoter dans
+      // le vide.
+      const goboRotV  = p.has_gobo ? (p.gobo_rotation || 0) : 0;
+      const goboRot   = (goboRotV / 255.0) * Math.PI * 2;
       // Netteté du gobo.
       //
       // Sans canal Focus, l'appareil est mis au point à la main sur le plateau
@@ -1718,7 +1859,7 @@ window.updateScene = function(projectors) {
       // par image. L'écraser ici — 25 fois par seconde, à la cadence des envois
       // Python — ramenait sans cesse le motif à son angle de départ : le gobo
       // tressautait au lieu de tourner.
-      if (!((p.gobo_rotation || 0) > 0)) _bu.uGoboRot.value = goboRot;
+      if (!(goboRotV > 0)) _bu.uGoboRot.value = goboRot;
 
       if (hitsFloor) {
         // Tache principale au sol (avec gobo)
@@ -1736,7 +1877,7 @@ window.updateScene = function(projectors) {
         obj.pool.material.uniforms.uGoboTex.value   = _goboTextures[goboSlot];
         obj.pool.material.uniforms.uGoboBlend.value = goboBlend;
         obj.pool.material.uniforms.uGoboBlur.value  = goboBlur;
-        if (!((p.gobo_rotation || 0) > 0))
+        if (!(goboRotV > 0))
           obj.pool.material.uniforms.uGoboRot.value = goboRot;
         obj.pool.visible = true;
 
@@ -1776,7 +1917,7 @@ window.updateScene = function(projectors) {
         hitsFloor,
         prism:    (p.prism || 0) > 0,
         prismV:   (p.prism_rotation || 0),
-        goboRotV: (p.gobo_rotation || 0),
+        goboRotV,
         col:      [r, g, b],
         lvl,
       };
@@ -1873,7 +2014,8 @@ window.snapshot = function () {
 // ─────────────────────────────────────────────────────────────────────────────
 // Flags d'affichage
 // ─────────────────────────────────────────────────────────────────────────────
-const _flags = { bloom:true,  fixtures:true, trusses:true, floor:true, grid:true, fog:true };
+const _flags = { bloom:true,  fixtures:true, trusses:true, floor:true, grid:true, fog:true,
+                 screen:true };
 // Souhait de l'utilisateur pour le bloom, indépendant de ce que la qualité
 // impose : en qualité basse le bloom est coupé, mais on doit le retrouver
 // allumé en remontant la qualité si l'utilisateur ne l'avait pas éteint.
@@ -1894,6 +2036,7 @@ window.toggleFlag = function(what) {
                              floorTint.visible      = _flags.floor;   }
   if (what === 'grid')     { gridHelper.visible   = _flags.grid;     }
   if (what === 'fog')      { scene.fog = _flags.fog ? fog : null;    }
+  if (what === 'screen')   { _screenGrp.visible  = _flags.screen;  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2719,25 +2862,102 @@ function _makeLEDScreen(x, z, w, h) {
   const panel = new THREE.Mesh(new THREE.BoxGeometry(w,h,0.04),
     new THREE.MeshStandardMaterial({color:0x000820, emissive:new THREE.Color(0.03,0.06,0.16),
       emissiveIntensity:1.4, roughness:0.04, metalness:0.10}));
-  panel.position.set(0,h/2,0.02); g.add(panel);
-  const nH = Math.floor(h*5);
-  for (let i=0;i<nH;i++) {
-    const line = new THREE.Mesh(new THREE.BoxGeometry(w-0.04,0.005,0.05),
-      new THREE.MeshStandardMaterial({color:0x001040,roughness:0.15}));
-    line.position.set(0, 0.06+i*(h/nH), 0.04); g.add(line);
-  }
-  const nV = Math.floor(w*3);
-  for (let i=0;i<nV;i++) {
-    const col = new THREE.Mesh(new THREE.BoxGeometry(0.005,h-0.04,0.05),
-      new THREE.MeshStandardMaterial({color:0x001040,roughness:0.15}));
-    col.position.set(-w/2+0.06+i*(w/nV), h/2, 0.04); g.add(col);
-  }
+  panel.position.set(0,h/2,0.03); g.add(panel);
+  // La dalle est le seul élément que la vidéo doit habiller : on la sort par
+  // nom pour que `setVideoScreen` puisse lui poser une texture sans avoir à
+  // deviner sa place dans les enfants du groupe.
+  g.userData.panel = panel;
+  // La trame de la dalle (une grille de fines réglettes posées SUR le panneau)
+  // a été retirée : elle affleurait exactement la face avant, hachurait
+  // l'image d'un quadrillage clignotant et délavait les couleurs. Une trame de
+  // pixels ne se voit de toute façon pas à dix mètres, et ici c'est l'image
+  // qui doit être lisible.
   for (const cx of [-w*0.3,0,w*0.3]) {
     const cable = new THREE.Mesh(new THREE.BoxGeometry(0.018,0.24,0.018), mat(0x1a1a1a,0.90,0.05));
     cable.position.set(cx,-0.12,-0.02); g.add(cable);
   }
   g.position.set(x,0,z); return g;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retour vidéo — l'écran LED du fond de scène affiche le média du séquenceur
+// ─────────────────────────────────────────────────────────────────────────────
+// Les images arrivent DÉJÀ DÉCODÉES par Python (frames du QVideoSink du
+// lecteur, réduites et encodées en JPEG). On ne rouvre donc jamais le fichier
+// ici : un second décodeur sur le même média doublerait la charge CPU et
+// dériverait du son. Ce qu'on affiche est, à la frame près, ce qui part sur la
+// sortie vidéo — c'est ce qui rend la synchro gratuite.
+const _screenGrp = new THREE.Group();
+scene.add(_screenGrp);
+let _screenCfg   = null;   // {x,y,z,w,h,rotY} du preset en cours, null = pas d'écran
+let _screenPanel = null;   // dalle du groupe courant
+let _screenTex   = null;   // CanvasTexture nourrie par setVideoFrame()
+let _screenCanvas = null, _screenCtx = null;
+const _screenImg = new Image();   // UN seul décodeur JPEG, réutilisé
+_screenImg.onload = () => {
+  if (!_screenCtx) return;
+  const cw = _screenCanvas.width, ch = _screenCanvas.height;
+  // « contain » : une vidéo 4:3 sur une dalle 16:9 garde ses proportions et
+  // pose des bandes noires, comme sur un vrai processeur d'écran. L'étirer
+  // ferait mentir l'aperçu sur le cadrage.
+  const s = Math.min(cw / _screenImg.width, ch / _screenImg.height);
+  const dw = _screenImg.width * s, dh = _screenImg.height * s;
+  _screenCtx.fillStyle = '#000';
+  _screenCtx.fillRect(0, 0, cw, ch);
+  _screenCtx.drawImage(_screenImg, (cw-dw)/2, (ch-dh)/2, dw, dh);
+  if (_screenTex) _screenTex.needsUpdate = true;
+};
+
+function _screenBlack() {
+  if (!_screenCtx) return;
+  _screenCtx.fillStyle = '#000';
+  _screenCtx.fillRect(0, 0, _screenCanvas.width, _screenCanvas.height);
+  if (_screenTex) _screenTex.needsUpdate = true;
+}
+
+// Pose (ou retire) l'écran. Appelée par le preset de décor : la position n'est
+// pas réglable à la main, chaque scène sait où son écran doit tomber.
+window.setVideoScreen = function(cfg) {
+  _screenGrp.clear();
+  _screenPanel = null;
+  _screenCfg = cfg || null;
+  if (!cfg) return;
+  const g = _makeLEDScreen(cfg.x ?? 0, cfg.z ?? 5.0, cfg.w ?? 6.0, cfg.h ?? 3.4);
+  g.position.y = cfg.y ?? 0;
+  // 180° par défaut : le fond de scène est du côté des Z POSITIFS (le backline
+  // du décor y est planté à z = +2,5), le public est donc en Z négatif — et
+  // `_makeLEDScreen` construit sa dalle tournée vers +Z. Sans ce demi-tour,
+  // l'écran jouait pour le mur du fond, dos à la salle.
+  g.rotation.y = (cfg.rotY ?? 180) * Math.PI / 180;
+  _screenPanel = g.userData.panel;
+
+  if (!_screenCanvas) {
+    _screenCanvas = document.createElement('canvas');
+    _screenCanvas.width = 512; _screenCanvas.height = 288;
+    _screenCtx = _screenCanvas.getContext('2d');
+    _screenTex = new THREE.CanvasTexture(_screenCanvas);
+    _screenTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  _screenBlack();
+  // `emissiveMap` et non `map` : une dalle LED ÉMET, elle ne réfléchit pas.
+  // En `map` seul, l'image s'assombrissait avec l'ambiance de la salle et
+  // disparaissait dès qu'on baissait la lumière — l'inverse d'un écran.
+  _screenPanel.material.map = _screenTex;
+  _screenPanel.material.emissiveMap = _screenTex;
+  _screenPanel.material.emissive.setRGB(1, 1, 1);
+  _screenPanel.material.emissiveIntensity = 1.15;
+  _screenPanel.material.needsUpdate = true;
+
+  _screenGrp.visible = _flags.screen;
+  _screenGrp.add(g);
+};
+
+// Une frame poussée par Python : data URL JPEG, ou '' pour éteindre la dalle.
+window.setVideoFrame = function(dataUrl) {
+  if (!_screenCtx) return;
+  if (!dataUrl) { _screenBlack(); return; }
+  _screenImg.src = dataUrl;
+};
 
 // Portique truss (goalpost)
 function _makeGoalpost(x, z, h, spread=2.0, rotY=0) {
@@ -3023,6 +3243,8 @@ const SCENE_PRESETS = {
   // Scène nue : aucun truss, aucun accessoire. Pour les décors importés (GLB),
   // sinon le rig du preset reste visible sous le modèle.
   vide: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: null,
     trusses: [],
     buildProps() {}
   },
@@ -3030,14 +3252,25 @@ const SCENE_PRESETS = {
   // truss dessiné ici — sinon un second rig flotterait dans le modèle. Le
   // fichier est poussé par Python via loadSceneGLB().
   concert_glb: {
+    // Écran vidéo — cf. setVideoScreen(). Ici il RECOUVRE le fond de scène du
+    // modèle : la nappe tendue du décor (mesurée : 14,6 m × 9,2 m, plantée à
+    // z ≈ 4,25 et légèrement incurvée) ne peut pas être masquée, le GLB n'est
+    // qu'un seul maillage à un seul matériau — structure, plateau et fond
+    // partagent la même géométrie. On la couvre donc, en se plaçant assez en
+    // avant (z = 3,85) pour passer devant son point le plus proche (3,93).
+    screen: { x:0, y:0.15, z:3.85, w:14.6, h:8.6 },
     trusses: [],
     buildProps() {}
   },
   truss_glb: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:1.2, z:5.0, w:7.0,  h:4.0 },
     trusses: [],
     buildProps() {}
   },
   live: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:1.0, z:5.0, w:6.0,  h:3.4 },
     trusses: [
       { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9.0, x_r:9.0 },
       { label:'Truss arrière', enabled:true, height:7.0, z: 4.0, x_l:-9.0, x_r:9.0 },
@@ -3048,6 +3281,8 @@ const SCENE_PRESETS = {
     }
   },
   dj: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:0.8, z:2.2, w:4.5,  h:2.6 },
     trusses: [
       { label:'Truss avant', enabled:true, height:6.0, z:-3.5, x_l:-7.0, x_r:7.0 },
       { label:'Overhead',    enabled:true, height:5.0, z: 0.0, x_l:-4.0, x_r:4.0 },
@@ -3058,6 +3293,8 @@ const SCENE_PRESETS = {
     }
   },
   concert: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:1.2, z:5.2, w:8.0,  h:4.5 },
     trusses: [
       { label:'Truss avant',   enabled:true, height:8.0, z:-4.5, x_l:-10.0, x_r:10.0 },
       { label:'Truss milieu',  enabled:true, height:7.5, z: 0.0, x_l: -9.0, x_r: 9.0 },
@@ -3070,6 +3307,8 @@ const SCENE_PRESETS = {
     }
   },
   club: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:0.9, z:2.5, w:4.0,  h:2.3 },
     trusses: [
       { label:'Rig central', enabled:true, height:4.5, z: 0.0, x_l:-5.0, x_r:5.0 },
       { label:'Truss avant', enabled:true, height:4.0, z:-3.0, x_l:-7.0, x_r:7.0 },
@@ -3080,6 +3319,8 @@ const SCENE_PRESETS = {
     }
   },
   festival: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:1.3, z:5.0, w:10.0, h:5.6 },
     trusses: [
       { label:'Face',    enabled:true, height:9.0, z:-4.5, x_l:-11.0, x_r:11.0 },
       { label:'Mid',     enabled:true, height:8.5, z: 0.5, x_l:-10.0, x_r:10.0 },
@@ -3097,6 +3338,8 @@ const SCENE_PRESETS = {
     }
   },
   arena: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:1.4, z:5.4, w:11.0, h:6.0 },
     trusses: [
       { label:'Avant',   enabled:true, height:10.0, z:-5.0, x_l:-11.0, x_r:11.0 },
       { label:'Milieu',  enabled:true, height: 9.5, z: 0.5, x_l:-10.0, x_r:10.0 },
@@ -3113,6 +3356,8 @@ const SCENE_PRESETS = {
     }
   },
   totem: {
+    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    screen: { x:0, y:0.9, z:1.8, w:4.5,  h:2.6 },
     trusses: [
       { label:'Rig central', enabled:true, height:5.5, z:-1.0, x_l:-2.5, x_r:2.5 },
     ],
@@ -3245,7 +3490,7 @@ window.setScenePreset = function(name) {
   // était « ça n'efface pas les autres quand on clique dessus ». On nettoie
   // donc quoi qu'il arrive, et on se rabat sur une scène nue : un décor GLB
   // n'a de toute façon ni truss ni accessoire à dessiner.
-  const preset = SCENE_PRESETS[name] || { trusses: [], buildProps() {} };
+  const preset = SCENE_PRESETS[name] || { trusses: [], screen: null, buildProps() {} };
   if (!SCENE_PRESETS[name]) {
     console.warn(`[decor] preset « ${name} » absent de SCENE_PRESETS (html) — `
                  + `scène nue. À déclarer si ce décor doit dessiner des trusses.`);
@@ -3253,6 +3498,10 @@ window.setScenePreset = function(name) {
   _propsGrp.clear();
   buildTrusses(preset.trusses);
   preset.buildProps();
+  // L'écran suit le décor : chaque scène sait où le sien tombe (fond de scène
+  // pour un concert, derrière la régie pour un club). Un preset qui n'en
+  // déclare pas — « Aucun décor » — n'en a tout simplement pas.
+  window.setVideoScreen(preset.screen || null);
   window.currentTrusses = JSON.parse(JSON.stringify(preset.trusses));
 };
 
