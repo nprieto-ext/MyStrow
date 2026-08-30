@@ -3261,7 +3261,37 @@ class FixtureCanvas(QWidget):
         # séparé donnait un repère orphelin à côté de la barre.
 
     def paintEvent(self, event):
+        """Garde-fou autour du dessin du plan.
+
+        Le corps est dans `_paint` pour que le `QPainter` soit cree ET ferme
+        ICI, quoi qu'il arrive. Une exception qui remonte d'un `paintEvent`
+        PySide6 est simplement imprimee, mais la traceback retient la frame,
+        donc le `QPainter` local reste VIVANT et actif sur le backing store du
+        widget : le repaint suivant peint par-dessus un painter jamais ferme et
+        le processus finit en segfault. C'est exactement ce qui est arrive en
+        3.1.89 (`canvas_x` absent des fixtures par defaut, cf.
+        `Projector.__init__`) : quatre AttributeError, puis mort de l'appli.
+        Avec le `finally`, le meme bug ne coute plus qu'un plan non dessine et
+        une trace dans la console.
+        """
         painter = QPainter(self)
+        try:
+            self._paint(painter, event)
+        except Exception as e:
+            # Une trace par erreur DISTINCTE : le plan se redessine des dizaines
+            # de fois par seconde, la meme panne noierait la console (et le
+            # fichier de log) en quelques secondes.
+            import traceback
+            sig = f"{type(e).__name__}: {e}"
+            if sig != getattr(self, '_paint_err_sig', None):
+                self._paint_err_sig = sig
+                print("[PlanDeFeu] Erreur de dessin du plan :")
+                traceback.print_exc()
+        finally:
+            if painter.isActive():
+                painter.end()
+
+    def _paint(self, painter, event):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.TextAntialiasing)
 
@@ -3516,8 +3546,6 @@ class FixtureCanvas(QWidget):
             painter.drawText(QRect(0, H - SB_H, W,   SB_H), Qt.AlignVCenter | Qt.AlignLeft,  info_left)
             painter.setPen(QColor("#1e1e1e"))
             painter.drawText(QRect(0, H - SB_H, W-4, SB_H), Qt.AlignVCenter | Qt.AlignRight, info_right)
-
-        painter.end()
 
     # ── Interactions souris ─────────────────────────────────────────
 
@@ -8335,7 +8363,7 @@ class NewPlanWizard(QDialog):
             color="#ee44ff", default=0, max=10,
         ),
         dict(
-            group="fumee",  label="Machine à fumée",
+            group="face",   label="Machine à fumée",
             subtitle="Combien de machines à fumée / hazers ?\n(laisser à 0 si aucune)",
             ftype="Machine a fumee", profile="2CH_FUMEE", prefix="Fumée",
             color="#aaaaaa", default=0, max=4,

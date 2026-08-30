@@ -870,7 +870,7 @@ class FixtureEditorDialog(QDialog):
         left = QWidget()
         left.setStyleSheet("QWidget{background:#0d0d0d;}")
         left.setMinimumWidth(180)
-        left.setMaximumWidth(260)
+        left.setMaximumWidth(600)
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(0)
@@ -950,7 +950,11 @@ class FixtureEditorDialog(QDialog):
         self._right_vbox.setSpacing(0)
         scroll.setWidget(self._right_inner)
         splitter.addWidget(scroll)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setChildrenCollapsible(False)
         splitter.setSizes([220, 800])
+        self._splitter = splitter
 
         self._build_editor_panel()
 
@@ -1416,7 +1420,7 @@ class FixtureEditorDialog(QDialog):
             name = fx.get("name", "Sans nom")
             n_ch = len(fx.get("profile", []))
             item = QListWidgetItem(name)
-            item.setToolTip(f"{fx.get('fixture_type', '')}  ·  {n_ch} ch")
+            item.setToolTip(f"{name}\n{fx.get('fixture_type', '')}  ·  {n_ch} ch")
             self._my_list.addItem(item)
         self._my_list.blockSignals(False)
 
@@ -1870,9 +1874,10 @@ class FixtureEditorDialog(QDialog):
         if not paths:
             return
 
-        _GROUP = {
-            "Machine a fumee": "fumee",
-        }
+        # Tout nouveau projecteur arrive dans le groupe A (« face »), quel que
+        # soit son type — lyre, barre, strobo ou machine a fumee. Un groupe qui
+        # n'a ni fader ni pad A-H rendait la machine impilotable a l'arrivee.
+        DEFAULT_GROUP = "face"
         existing = {f["name"] for f in self._fixtures}
         imported, errors = 0, []
         newly_imported = []   # proposées ensuite au partage communautaire
@@ -1891,7 +1896,7 @@ class FixtureEditorDialog(QDialog):
                                 + (f" — {m['name']}" if len(modes) > 1 else ""),
                         "manufacturer": ofl_fx.get("manufacturer", "Générique"),
                         "fixture_type": ftype,
-                        "group": _GROUP.get(ftype, "face"),
+                        "group": DEFAULT_GROUP,
                         "profile": m["profile"],
                         # Noms lisibles du fichier : sans eux, la fixture arrive
                         # avec une rangée de pastilles « Unused » indiscernables.

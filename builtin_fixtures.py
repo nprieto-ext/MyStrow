@@ -47,15 +47,15 @@ BUILTIN_FIXTURES = [
     {"name": "Lyre Beam · Pan/Tilt (7ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","ColorWheel","Gobo1","Shutter","Dim","Speed"], "builtin": _B},
     {"name": "Lyre Spot · Complet (12ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Focus","Mode"], "builtin": _B},
     # ── Barres LED ────────────────────────────────────────────────────────────
-    {"name": "Barre LED · R, G, B (3ch)",            "manufacturer": "Générique", "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
-    {"name": "Barre LED · R, G, B, Dim, Strobe (5ch)","manufacturer": "Générique", "fixture_type": "Barre LED",      "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
-    {"name": "Barre LED · R, G, B, Blanc (4ch)",     "manufacturer": "Générique", "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","W"],                                       "builtin": _B},
-    {"name": "Barre LED · R, G, B, Blanc, Dim, Strobe (6ch)", "manufacturer": "Générique", "fixture_type": "Barre LED", "group": "barre", "profile": ["R","G","B","W","Dim","Strobe"],                     "builtin": _B},
+    {"name": "Barre LED · R, G, B (3ch)",            "manufacturer": "Générique", "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
+    {"name": "Barre LED · R, G, B, Dim, Strobe (5ch)","manufacturer": "Générique", "fixture_type": "Barre LED",      "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
+    {"name": "Barre LED · R, G, B, Blanc (4ch)",     "manufacturer": "Générique", "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
+    {"name": "Barre LED · R, G, B, Blanc, Dim, Strobe (6ch)", "manufacturer": "Générique", "fixture_type": "Barre LED", "group": "face",  "profile": ["R","G","B","W","Dim","Strobe"],                     "builtin": _B},
     # ── Stroboscopes ─────────────────────────────────────────────────────────
-    {"name": "Stroboscope · Intensité + Vitesse (2ch)", "manufacturer": "Générique", "fixture_type": "Stroboscope",  "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
+    {"name": "Stroboscope · Intensité + Vitesse (2ch)", "manufacturer": "Générique", "fixture_type": "Stroboscope",  "group": "face",   "profile": ["Shutter","Dim"],                                       "builtin": _B},
     # ── Machines à effets ────────────────────────────────────────────────────
-    {"name": "Machine à fumée · 2 canaux",           "manufacturer": "Générique", "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Hazer · 2 canaux",                     "manufacturer": "Générique", "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Machine à fumée · 2 canaux",           "manufacturer": "Générique", "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Hazer · 2 canaux",                     "manufacturer": "Générique", "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # ADJ (American DJ)
@@ -73,9 +73,9 @@ BUILTIN_FIXTURES = [
     {"name": "Vizi Wash Z37 9ch",           "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim"], "builtin": _B},
     {"name": "Inno Pocket Beam 4ch",        "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel"],                      "builtin": _B},
     {"name": "Nucleus Pro 8ch",             "manufacturer": "ADJ",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","R","G","B","W","Shutter","Speed"],         "builtin": _B},
-    {"name": "Jolt 300 2ch",                "manufacturer": "ADJ",       "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
-    {"name": "Dotz Bar 20 5ch",             "manufacturer": "ADJ",       "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
-    {"name": "Fog Fury Jett 2ch",           "manufacturer": "ADJ",       "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Jolt 300 2ch",                "manufacturer": "ADJ",       "fixture_type": "Stroboscope",     "group": "face",   "profile": ["Shutter","Dim"],                                       "builtin": _B},
+    {"name": "Dotz Bar 20 5ch",             "manufacturer": "ADJ",       "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
+    {"name": "Fog Fury Jett 2ch",           "manufacturer": "ADJ",       "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Cameo
@@ -92,9 +92,9 @@ BUILTIN_FIXTURES = [
     {"name": "HYDRASPOT 300 10ch",          "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Shutter","Dim","Zoom"], "builtin": _B},
     {"name": "HYDRABEAM 4000 RGBW 9ch",     "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
     {"name": "HYDRABEAM 400 RGBW 9ch",      "manufacturer": "Cameo",     "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
-    {"name": "PIXBAR 600 PRO 8ch",          "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe"],            "builtin": _B},
-    {"name": "PIXBAR 650 CPRO 8ch",         "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe"],            "builtin": _B},
-    {"name": "HYDRABAR 10 IP 9ch",          "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe","Mode"],     "builtin": _B},
+    {"name": "PIXBAR 600 PRO 8ch",          "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "face",   "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe"],            "builtin": _B},
+    {"name": "PIXBAR 650 CPRO 8ch",         "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "face",   "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe"],            "builtin": _B},
+    {"name": "HYDRABAR 10 IP 9ch",          "manufacturer": "Cameo",     "fixture_type": "Barre LED",       "group": "face",   "profile": ["Dim","R","G","B","W","Ambre","UV","Strobe","Mode"],     "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Chauvet DJ
@@ -111,8 +111,8 @@ BUILTIN_FIXTURES = [
     {"name": "Intimidator Beam 140SR 9ch",  "manufacturer": "Chauvet DJ","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","Gobo1","ColorWheel","Shutter","Dim"], "builtin": _B},
     {"name": "Intimidator Hybrid 140SR 17ch","manufacturer": "Chauvet DJ","fixture_type": "Moving Head",    "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","W","Mode"], "builtin": _B},
     {"name": "Swarm 5 FX 4ch",              "manufacturer": "Chauvet DJ","fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Strobe"],                                   "builtin": _B},
-    {"name": "Hurricane 1000 2ch",          "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Amhaze II 2ch",               "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Hurricane 1000 2ch",          "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Amhaze II 2ch",               "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Chauvet Professional
@@ -123,9 +123,9 @@ BUILTIN_FIXTURES = [
     {"name": "Rogue R2 Spot 16ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "face", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","Mode"], "builtin": _B},
     {"name": "Rogue R2 Wash 14ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "face", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim","Shutter","Zoom","Mode","Mode"], "builtin": _B},
     {"name": "Rogue R3 Beam 16ch",          "manufacturer": "Chauvet Professional","fixture_type": "Moving Head","group": "face", "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Focus","Shutter","Dim","R","G","B","W","Mode"], "builtin": _B},
-    {"name": "Nexus 4x4 3ch",               "manufacturer": "Chauvet Professional","fixture_type": "Barre LED","group": "barre", "profile": ["R","G","B"],                                        "builtin": _B},
-    {"name": "Nexus 4x4 7ch",               "manufacturer": "Chauvet Professional","fixture_type": "Barre LED","group": "barre", "profile": ["Dim","R","G","B","W","Strobe","Mode"],              "builtin": _B},
-    {"name": "Strike 4 4ch",                "manufacturer": "Chauvet Professional","fixture_type": "Stroboscope","group": "strobe","profile": ["Shutter","Dim","Mode","Strobe"],                  "builtin": _B},
+    {"name": "Nexus 4x4 3ch",               "manufacturer": "Chauvet Professional","fixture_type": "Barre LED","group": "face",  "profile": ["R","G","B"],                                        "builtin": _B},
+    {"name": "Nexus 4x4 7ch",               "manufacturer": "Chauvet Professional","fixture_type": "Barre LED","group": "face",  "profile": ["Dim","R","G","B","W","Strobe","Mode"],              "builtin": _B},
+    {"name": "Strike 4 4ch",                "manufacturer": "Chauvet Professional","fixture_type": "Stroboscope","group": "face",  "profile": ["Shutter","Dim","Mode","Strobe"],                  "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Eurolite
@@ -135,22 +135,22 @@ BUILTIN_FIXTURES = [
     {"name": "LED PAR-56 QCL 6ch",          "manufacturer": "Eurolite",  "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Strobe","Mode"],                       "builtin": _B},
     {"name": "LED PAR-64 RGBW 4ch",         "manufacturer": "Eurolite",  "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
     {"name": "LED PAR-64 RGBW 8ch",         "manufacturer": "Eurolite",  "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","W","Strobe","ColorWheel","Mode"],     "builtin": _B},
-    {"name": "LED T-36 RGB 3ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
-    {"name": "LED T-36 RGB 6ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","Strobe","Mode"],                     "builtin": _B},
-    {"name": "LED T-36 QCL 6ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Strobe"],                        "builtin": _B},
+    {"name": "LED T-36 RGB 3ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
+    {"name": "LED T-36 RGB 6ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "face",   "profile": ["Dim","R","G","B","Strobe","Mode"],                     "builtin": _B},
+    {"name": "LED T-36 QCL 6ch",            "manufacturer": "Eurolite",  "fixture_type": "Barre LED",       "group": "face",   "profile": ["Dim","R","G","B","W","Strobe"],                        "builtin": _B},
     {"name": "TMH-X12 Moving Wash 10ch",    "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Dim"], "builtin": _B},
     {"name": "TMH-300 Spot 9ch",            "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Shutter","Dim"], "builtin": _B},
     {"name": "TMH-H90 Hybrid 16ch",         "manufacturer": "Eurolite",  "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","Mode"], "builtin": _B},
-    {"name": "NSF-250 Smoke 2ch",           "manufacturer": "Eurolite",  "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "LED Strobe 2ch",              "manufacturer": "Eurolite",  "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
+    {"name": "NSF-250 Smoke 2ch",           "manufacturer": "Eurolite",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "LED Strobe 2ch",              "manufacturer": "Eurolite",  "fixture_type": "Stroboscope",     "group": "face",   "profile": ["Shutter","Dim"],                                       "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # GLP (German Light Products)
     # ──────────────────────────────────────────────────────────────────────────
     {"name": "impression X4 14ch",          "manufacturer": "GLP",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode","Mode"], "builtin": _B},
     {"name": "impression X4 S 14ch",        "manufacturer": "GLP",       "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim","Strobe","Zoom","Speed","Mode","Mode"], "builtin": _B},
-    {"name": "impression FR10 Bar 8ch",     "manufacturer": "GLP",       "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","W","Dim","Strobe","Mode","Mode"],           "builtin": _B},
-    {"name": "JDC1 16ch",                   "manufacturer": "GLP",       "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Dim","Strobe","R","G","B","W","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
+    {"name": "impression FR10 Bar 8ch",     "manufacturer": "GLP",       "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B","W","Dim","Strobe","Mode","Mode"],           "builtin": _B},
+    {"name": "JDC1 16ch",                   "manufacturer": "GLP",       "fixture_type": "Stroboscope",     "group": "face",   "profile": ["Dim","Strobe","R","G","B","W","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode","Mode"], "builtin": _B},
     {"name": "X4 atom 5ch",                 "manufacturer": "GLP",       "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Dim"],                                 "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -172,7 +172,7 @@ BUILTIN_FIXTURES = [
     {"name": "RUSH PAR 2 CT 3ch",           "manufacturer": "Martin",    "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "RUSH PAR 2 CT 5ch",           "manufacturer": "Martin",    "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","R","G","B","Strobe"],                            "builtin": _B},
     {"name": "RUSH MH 3 Beam 8ch",          "manufacturer": "Martin",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Gobo1","Mode"],      "builtin": _B},
-    {"name": "Atomic 3000 LED 3ch",         "manufacturer": "Martin",    "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim","Mode"],                                "builtin": _B},
+    {"name": "Atomic 3000 LED 3ch",         "manufacturer": "Martin",    "fixture_type": "Stroboscope",     "group": "face",   "profile": ["Shutter","Dim","Mode"],                                "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Robe
@@ -192,8 +192,8 @@ BUILTIN_FIXTURES = [
     {"name": "Rayzor 760 18ch",             "manufacturer": "Elation",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W","Ambre","UV","Dim","Shutter","Zoom","Mode","Mode","Mode","Mode"],        "builtin": _B},
     {"name": "SixPar 200 7ch",              "manufacturer": "Elation",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
     {"name": "SixPar 300 7ch",              "manufacturer": "Elation",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
-    {"name": "Cuepix Panel WW3 8ch",        "manufacturer": "Elation",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["Dim","R","G","B","W","Strobe","Mode","Mode"],           "builtin": _B},
-    {"name": "Protron 3K LED 2ch",          "manufacturer": "Elation",   "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
+    {"name": "Cuepix Panel WW3 8ch",        "manufacturer": "Elation",   "fixture_type": "Barre LED",       "group": "face",   "profile": ["Dim","R","G","B","W","Strobe","Mode","Mode"],           "builtin": _B},
+    {"name": "Protron 3K LED 2ch",          "manufacturer": "Elation",   "fixture_type": "Stroboscope",     "group": "face",   "profile": ["Shutter","Dim"],                                       "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Showtec
@@ -206,10 +206,10 @@ BUILTIN_FIXTURES = [
     {"name": "Phantom 25 Spot 11ch",        "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Prism","Shutter","Dim","Mode"], "builtin": _B},
     {"name": "Phantom 65 Wash 9ch",         "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","R","G","B","W"], "builtin": _B},
     {"name": "Phantom 120 Spot 16ch",       "manufacturer": "Showtec",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B"], "builtin": _B},
-    {"name": "LED Bar 4 RGB 3ch",           "manufacturer": "Showtec",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
-    {"name": "LED Bar 8 RGB 3ch",           "manufacturer": "Showtec",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B"],                                           "builtin": _B},
-    {"name": "LED Strobe SQ 2ch",           "manufacturer": "Showtec",   "fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
-    {"name": "Stageflow Smoke 2ch",         "manufacturer": "Showtec",   "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "LED Bar 4 RGB 3ch",           "manufacturer": "Showtec",   "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
+    {"name": "LED Bar 8 RGB 3ch",           "manufacturer": "Showtec",   "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
+    {"name": "LED Strobe SQ 2ch",           "manufacturer": "Showtec",   "fixture_type": "Stroboscope",     "group": "face",   "profile": ["Shutter","Dim"],                                       "builtin": _B},
+    {"name": "Stageflow Smoke 2ch",         "manufacturer": "Showtec",   "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Stairville (Thomann)
@@ -221,8 +221,8 @@ BUILTIN_FIXTURES = [
     {"name": "LED Par 64 HEX 6ch",          "manufacturer": "Stairville","fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV"],                          "builtin": _B},
     {"name": "MH-x25 Beam 7ch",             "manufacturer": "Stairville","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Mode"], "builtin": _B},
     {"name": "MH-x200 Beam 8ch",            "manufacturer": "Stairville","fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim","Mode"], "builtin": _B},
-    {"name": "Strobe SMD PRO 2ch",          "manufacturer": "Stairville","fixture_type": "Stroboscope",     "group": "strobe", "profile": ["Shutter","Dim"],                                       "builtin": _B},
-    {"name": "Smoke Fog 1500 2ch",          "manufacturer": "Stairville","fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Strobe SMD PRO 2ch",          "manufacturer": "Stairville","fixture_type": "Stroboscope",     "group": "face",   "profile": ["Shutter","Dim"],                                       "builtin": _B},
+    {"name": "Smoke Fog 1500 2ch",          "manufacturer": "Stairville","fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Varytec (Thomann)
@@ -231,7 +231,7 @@ BUILTIN_FIXTURES = [
     {"name": "Hero Wash 100 9ch",           "manufacturer": "Varytec",  "fixture_type": "Moving Head",      "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","R","G","B","W","Dim"], "builtin": _B},
     {"name": "LED PAR 64 RGBW 5ch",         "manufacturer": "Varytec",  "fixture_type": "PAR LED",          "group": "face",   "profile": ["R","G","B","W","Dim"],                                 "builtin": _B},
     {"name": "LED PAR 64 HEX 7ch",          "manufacturer": "Varytec",  "fixture_type": "PAR LED",          "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
-    {"name": "Giga Bar 2 RGBW 6ch",         "manufacturer": "Varytec",  "fixture_type": "Barre LED",        "group": "barre",  "profile": ["R","G","B","W","Dim","Strobe"],                        "builtin": _B},
+    {"name": "Giga Bar 2 RGBW 6ch",         "manufacturer": "Varytec",  "fixture_type": "Barre LED",        "group": "face",   "profile": ["R","G","B","W","Dim","Strobe"],                        "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Contest (marque française)
@@ -239,7 +239,7 @@ BUILTIN_FIXTURES = [
     {"name": "iColor-Par 6ch",              "manufacturer": "Contest",   "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Dim","Strobe"],                        "builtin": _B},
     {"name": "iMoveP 7ch",                  "manufacturer": "Contest",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Shutter","Dim","Mode"], "builtin": _B},
     {"name": "iMoveW 9ch",                  "manufacturer": "Contest",   "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","R","G","B","W","Dim","Shutter"],   "builtin": _B},
-    {"name": "iPixel-Bar4 5ch",             "manufacturer": "Contest",   "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
+    {"name": "iPixel-Bar4 5ch",             "manufacturer": "Contest",   "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Prolights
@@ -256,21 +256,21 @@ BUILTIN_FIXTURES = [
     {"name": "BT-DYNAX 18ch",               "manufacturer": "Briteq",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","Zoom","R","G","B","W","Mode"], "builtin": _B},
     {"name": "BT-MOVING HEAD BEAM 7ch",     "manufacturer": "Briteq",    "fixture_type": "Moving Head",     "group": "face",   "profile": ["Pan","Tilt","Speed","ColorWheel","Gobo1","Shutter","Dim"], "builtin": _B},
     {"name": "BT-PIXEL PAR 7ch",            "manufacturer": "Briteq",    "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W","Ambre","UV","Dim"],                     "builtin": _B},
-    {"name": "BT-LED BAR6 5ch",             "manufacturer": "Briteq",    "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
+    {"name": "BT-LED BAR6 5ch",             "manufacturer": "Briteq",    "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Antari (machines fumée / haze)
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "X-310 Hazer 2ch",             "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Z-1500 Fog 2ch",              "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Z-3000 Fog 2ch",              "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "HZ-500 Hazer 2ch",            "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "X-310 Hazer 2ch",             "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Z-1500 Fog 2ch",              "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Z-3000 Fog 2ch",              "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "HZ-500 Hazer 2ch",            "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Look Solutions
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "Unique 2.1 Hazer 2ch",        "manufacturer": "Look Solutions","fixture_type": "Machine a fumee","group": "fumee", "profile": ["Smoke","Fan"],                                      "builtin": _B},
-    {"name": "Viper S Fog 2ch",             "manufacturer": "Look Solutions","fixture_type": "Machine a fumee","group": "fumee", "profile": ["Smoke","Fan"],                                      "builtin": _B},
+    {"name": "Unique 2.1 Hazer 2ch",        "manufacturer": "Look Solutions","fixture_type": "Machine a fumee","group": "face",  "profile": ["Smoke","Fan"],                                      "builtin": _B},
+    {"name": "Viper S Fog 2ch",             "manufacturer": "Look Solutions","fixture_type": "Machine a fumee","group": "face",  "profile": ["Smoke","Fan"],                                      "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # JB-Lighting
@@ -296,14 +296,14 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     {"name": "LED PAR 56 RGB 3ch",          "manufacturer": "Fun Generation","fixture_type": "PAR LED",     "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "LED PAR 56 RGBW 4ch",         "manufacturer": "Fun Generation","fixture_type": "PAR LED",     "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
-    {"name": "LED Cameleon Bar 4 6ch",       "manufacturer": "Fun Generation","fixture_type": "Barre LED",  "group": "barre",  "profile": ["R","G","B","W","Dim","Strobe"],                        "builtin": _B},
+    {"name": "LED Cameleon Bar 4 6ch",       "manufacturer": "Fun Generation","fixture_type": "Barre LED",  "group": "face",   "profile": ["R","G","B","W","Dim","Strobe"],                        "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Astera
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "AX1 PixelTube 8ch",           "manufacturer": "Astera",    "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","W","Dim","Strobe","Mode","Mode"],           "builtin": _B},
+    {"name": "AX1 PixelTube 8ch",           "manufacturer": "Astera",    "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B","W","Dim","Strobe","Mode","Mode"],           "builtin": _B},
     {"name": "AX3 LightDrop 4ch",           "manufacturer": "Astera",    "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","W"],                                       "builtin": _B},
-    {"name": "Titan Tube 8ch",              "manufacturer": "Astera",    "fixture_type": "Barre LED",       "group": "barre",  "profile": ["R","G","B","W","Dim","Strobe","Mode","Mode"],           "builtin": _B},
+    {"name": "Titan Tube 8ch",              "manufacturer": "Astera",    "fixture_type": "Barre LED",       "group": "face",   "profile": ["R","G","B","W","Dim","Strobe","Mode","Mode"],           "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Sagitter
@@ -315,8 +315,8 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # LeMaitre
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "G300 Fog 2ch",                "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Glaciator X Stream Hazer 2ch","manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "MVS Hazer 2ch",               "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "fumee",  "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "G300 Fog 2ch",                "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Glaciator X Stream Hazer 2ch","manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "MVS Hazer 2ch",               "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
 ]

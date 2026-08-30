@@ -21,6 +21,15 @@ class Projector:
         self.pan = 32768              # Pan  16-bit (0-65535, centre=32768)
         self.tilt = 32768             # Tilt 16-bit (0-65535, centre=32768)
         self.fixture_height = None    # Hauteur de suspension (m), None = auto (7m truss)
+        # Position sur le plan de feu 2D, normalisee 0-1. None = jamais placee :
+        # le canvas la posera d'office a l'affichage. Initialisee ICI et pas
+        # seulement par `load_dmx_patch_config` : au tout premier lancement il
+        # n'y a aucun `.maestro_dmx_patch.json`, les fixtures par defaut
+        # arrivaient donc sans l'attribut et le premier `paintEvent` du plan de
+        # feu levait un AttributeError a chaque rafraichissement — jusqu'au
+        # segfault, le QPainter du paint interrompu restant actif.
+        self.canvas_x = None
+        self.canvas_y = None
         self.pos_3d_x = None          # Position 3D indépendante X (m), None = dérivé du plan 2D
         self.pos_3d_z = None          # Position 3D indépendante Z (m), None = dérivé du plan 2D
         self.body_rotation = 0.0     # Rotation du corps sur la truss (degrés, 0-360)

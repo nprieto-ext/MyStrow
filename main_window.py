@@ -22385,7 +22385,12 @@ class MainWindow(QMainWindow):
             uni  = 0
             for name, ftype, group in self._DEFAULT_FIXTURES:
                 p = Projector(group, name=name, fixture_type=ftype)
-                profile = list(DMX_PROFILES["2CH_FUMEE"] if group == "fumee" else DMX_PROFILES["RGBDS"])
+                # Le profil suit le TYPE, jamais le groupe : depuis que tout
+                # arrive dans le groupe A, un test sur le groupe donnerait
+                # un RGBDS 5 canaux a une machine a fumee 2 canaux.
+                profile = list(DMX_PROFILES["2CH_FUMEE"]
+                               if ftype == "Machine a fumee"
+                               else DMX_PROFILES["RGBDS"])
                 if addr + len(profile) - 1 > 512:
                     uni = min(uni + 1, 3)
                     addr = 1
@@ -23821,8 +23826,8 @@ class MainWindow(QMainWindow):
             )
             if not paths:
                 return
-            _GROUP = {"Moving Head": "face", "Barre LED": "face",
-                      "Stroboscope": "face", "Machine a fumee": "fumee"}
+            # Groupe A par defaut pour TOUS les types importes (cf. fixture_editor).
+            DEFAULT_GROUP = "face"
             _fx_file = Path.home() / ".mystrow_fixtures.json"
             try:
                 existing_user = _json.loads(_fx_file.read_text(encoding="utf-8")) if _fx_file.exists() else []
@@ -23850,7 +23855,7 @@ class MainWindow(QMainWindow):
                                             + (f" — {m['name']}" if len(modes) > 1 else ""),
                             "manufacturer": ofl_fx.get("manufacturer", ""),
                             "fixture_type": ftype,
-                            "group":        _GROUP.get(ftype, "face"),
+                            "group":        DEFAULT_GROUP,
                             "profile":      m["profile"],
                             # Noms lisibles du fichier constructeur : sans eux,
                             # une fixture importée arrive avec des canaux

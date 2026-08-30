@@ -462,3 +462,46 @@ def test_clic_gauche_sur_la_pastille_selectionne_sans_ouvrir_les_reglages():
 
     assert c.pdf.selected_lamps == {c._local_idx(0)}
     assert c.pdf.reglages == []
+
+
+# ── Regression 3.1.89 : plantage au tout premier lancement ───────────────────
+
+def _peindre(c):
+    """Force un vrai `paintEvent` hors ecran et rend ce que la console a craché."""
+    from PySide6.QtGui import QPixmap
+    px = QPixmap(c.size())
+    c.render(px)
+    _app.processEvents()
+
+
+def test_fixture_jamais_placee_ne_casse_pas_le_dessin():
+    """Une fixture sortie de `Projector()` n'a AUCUNE position : c'est le cas
+    de toutes les fixtures par defaut, au premier lancement, tant qu'aucun
+    `.maestro_dmx_patch.json` n'existe. En 3.1.89 `_stacks` lisait `canvas_x`
+    en direct : AttributeError a chaque repaint, puis segfault."""
+    p = Projector('face', name='Face 1')          # brut, comme _load_default_fixtures
+    assert p.canvas_x is None and p.canvas_y is None
+    c = _canvas([p, _Proj("place", .5, .35)])
+    assert c._stacks() == {}
+    assert c._stack_members(0) == []
+    _peindre(c)                                    # ne doit rien lever
+
+
+def test_une_erreur_de_dessin_ne_tue_pas_le_widget():
+    """Le garde-fou : meme si `_paint` explose, le QPainter est ferme et le
+    repaint suivant repart proprement. Sans le `finally`, le painter reste
+    actif sur le backing store et Qt finit par tomber."""
+    c = _canvas([_Proj("A", .5, .35)])
+    boom = {'n': 0}
+
+    def _explose(painter, event):
+        boom['n'] += 1
+        raise RuntimeError("panne simulee")
+
+    c._paint = _explose
+    _peindre(c)
+    _peindre(c)
+    assert boom['n'] == 2, "le widget doit continuer a recevoir des repaints"
+
+    del c._paint                                   # le vrai dessin revient
+    _peindre(c)
