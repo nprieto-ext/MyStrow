@@ -319,4 +319,95 @@ BUILTIN_FIXTURES = [
     {"name": "Glaciator X Stream Hazer 2ch","manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
     {"name": "MVS Hazer 2ch",               "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Mac Mah
+    # ──────────────────────────────────────────────────────────────────────────
+    # LASER — un laser ne se decrit PAS comme un projecteur : il ne melange pas
+    # de couleur, il DESSINE. Le motif est rendu par `Gobo1` (d'ou le
+    # `fixture_type` « Moving Head », seul type que `core.fixture_projects_gobo`
+    # autorise a projeter un motif) et se deplace par `Pan`/`Tilt` — ce qui
+    # branche d'un coup les presets de position, la piste Position, les effets
+    # pan/tilt et le stick de la manette sur l'appareil, sans une ligne de code
+    # specifique. Choix opinione, cf. le Laserworld CS-12000.
+    #
+    # ⚠️ AUCUN canal n'est double : le moteur GANGE les canaux de meme type
+    # (ils recoivent tous la meme valeur). Les fonctions secondaires prennent
+    # donc des types MANUELS distincts (`Anim`, `AnimRot`, `Frost`, `Iris`) —
+    # ils sortent 0 au repos, ce qui vaut « aucune rotation / aucune onde » sur
+    # cet appareil, et se poussent au curseur des « canaux avances ».
+    # Les canaux restants sont `Unused` mais NOMMES : ils restent joignables par
+    # leur NUMERO dans la vue Curseurs.
+    {"name": "MAC 1000 RGB · Laser 16ch", "manufacturer": "Mac Mah", "fixture_type": "Moving Head", "group": "face",
+     "profile": ["Dim", "Speed", "Preset1", "Gobo1", "ColorWheel", "Preset2", "Preset3", "Zoom",
+                 "Gobo1Rot", "Anim", "AnimRot", "Pan", "Tilt", "Iris", "Preset4", "Frost"],
+     "channel_labels": ["Intensité", "Vitesse auto / sensibilité micro", "Bibliothèque de motifs",
+                        "Choix du motif", "Couleur", "Vitesse de changement de couleur",
+                        "Doublure / motif à pois", "Taille du motif", "Rotation du motif",
+                        "Rotation horizontale", "Rotation verticale", "Mouvement horizontal",
+                        "Mouvement vertical", "Zoom du motif", "Dessin progressif", "Onde X / Onde Y"],
+     "preset_slots": {
+         "Preset1": [{"name": "Motifs statiques", "color": "#00cc99", "dmx": 0},
+                     {"name": "Motifs dynamiques", "color": "#00cc99", "dmx": 64}],
+         "Preset2": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Horaire, lent", "color": "#00b389", "dmx": 4},
+                     {"name": "Horaire, rapide", "color": "#00b389", "dmx": 127},
+                     {"name": "Antihoraire, lent", "color": "#00b389", "dmx": 128},
+                     {"name": "Antihoraire, rapide", "color": "#00b389", "dmx": 255}],
+         "Preset3": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Doublure du motif", "color": "#009a78", "dmx": 64},
+                     {"name": "Motif à pois", "color": "#009a78", "dmx": 128}],
+         "Preset4": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Dessin lent", "color": "#008168", "dmx": 1},
+                     {"name": "Dessin rapide", "color": "#008168", "dmx": 255}],
+     },
+     "builtin": _B},
+
+    # 36 canaux : DEUX dessins independants (motif A, canaux 1-19 ; motif B,
+    # canaux 20-36) sur un seul appareil. Il n'existe pas 36 types distincts, et
+    # doubler un type les gangerait : le motif A est entierement type, le motif B
+    # garde `Gobo2` / `ColorWheel2` / `Gobo2Rot` et laisse le reste en `Unused`
+    # NOMME, a pousser par numero de canal.
+    # ⚠️ Le motif B ne s'affiche que si ses canaux 23 et 24 (position grossiere)
+    # sont a 128 = milieu : c'est ce que dit la notice, et 0 fait sortir le
+    # dessin du cadre. A monter a 50 % dans les canaux bruts avant de s'etonner
+    # que B reste noir.
+    {"name": "MAC 1000 RGB · Laser 36ch (motifs A+B)", "manufacturer": "Mac Mah", "fixture_type": "Moving Head", "group": "face",
+     "profile": ["Dim", "Speed", "Preset1", "Gobo1", "Zoom", "Pan", "Tilt", "ColorWheel", "Preset2",
+                 "Preset3", "Strobe", "Gobo1Rot", "Anim", "AnimRot", "Unused", "Unused", "Iris",
+                 "Preset4", "Frost",
+                 "Unused", "Gobo2", "Unused", "Unused", "Unused", "ColorWheel2", "Unused", "Unused",
+                 "Unused", "Gobo2Rot", "Unused", "Unused", "Unused", "Unused", "Unused", "Unused",
+                 "Unused"],
+     "channel_labels": ["Intensité", "Vitesse auto / sensibilité micro",
+                        "A · Bibliothèque de motifs", "A · Choix du motif", "A · Taille du motif",
+                        "A · Position horizontale (128 = milieu)", "A · Position verticale (128 = milieu)",
+                        "A · Couleur", "A · Vitesse de changement de couleur",
+                        "A · Doublure / motif à pois", "A · Stroboscope", "A · Rotation du motif",
+                        "A · Rotation horizontale", "A · Rotation verticale",
+                        "A · Mouvement horizontal", "A · Mouvement vertical", "A · Zoom du motif",
+                        "A · Dessin progressif", "A · Onde X / Onde Y",
+                        "B · Bibliothèque de motifs", "B · Choix du motif", "B · Taille du motif",
+                        "B · Position horizontale (128 = milieu)", "B · Position verticale (128 = milieu)",
+                        "B · Couleur", "B · Vitesse de changement de couleur",
+                        "B · Doublure / motif à pois", "B · Stroboscope", "B · Rotation du motif",
+                        "B · Rotation horizontale", "B · Rotation verticale",
+                        "B · Mouvement horizontal", "B · Mouvement vertical", "B · Zoom du motif",
+                        "B · Dessin progressif", "B · Onde X / Onde Y"],
+     "preset_slots": {
+         "Preset1": [{"name": "Motifs statiques", "color": "#00cc99", "dmx": 0},
+                     {"name": "Motifs dynamiques", "color": "#00cc99", "dmx": 64}],
+         "Preset2": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Horaire, lent", "color": "#00b389", "dmx": 4},
+                     {"name": "Horaire, rapide", "color": "#00b389", "dmx": 127},
+                     {"name": "Antihoraire, lent", "color": "#00b389", "dmx": 128},
+                     {"name": "Antihoraire, rapide", "color": "#00b389", "dmx": 255}],
+         "Preset3": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Doublure du motif", "color": "#009a78", "dmx": 64},
+                     {"name": "Motif à pois", "color": "#009a78", "dmx": 128}],
+         "Preset4": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Dessin lent", "color": "#008168", "dmx": 1},
+                     {"name": "Dessin rapide", "color": "#008168", "dmx": 255}],
+     },
+     "builtin": _B},
+
 ]
