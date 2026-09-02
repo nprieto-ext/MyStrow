@@ -239,14 +239,35 @@ _GRACE_DAYS = 7
 # STRIPE HELPERS
 # ===========================================================================
 
+def _stripe_call(req: urllib.request.Request) -> dict:
+    """Exécute un appel Stripe en remontant le message d'erreur de l'API.
+
+    urllib n'expose que « HTTP Error 403: Forbidden » et jette le corps de la
+    réponse — or c'est lui qui nomme la permission manquante sur la clé
+    restreinte ou l'objet introuvable. Sans ce corps, les logs des Cloud
+    Functions ne permettent pas de diagnostiquer une panne côté Stripe.
+    """
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            err = (json.loads(e.read().decode("utf-8", "replace")) or {}).get("error") or {}
+            detail = err.get("message") or err.get("code") or ""
+        except Exception:
+            pass
+        path = req.full_url.split("/v1", 1)[-1]
+        raise RuntimeError(f"HTTP {e.code} sur {path}" + (f" — {detail}" if detail else "")) from None
+
+
 def _stripe_get(path: str) -> dict:
     """GET vers l'API Stripe."""
     import base64
     url = f"https://api.stripe.com/v1{path}"
     token = base64.b64encode(f"{_stripe_secret_key()}:".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode())
+    return _stripe_call(req)
 
 
 def _stripe_post(path: str, params: dict) -> dict:
@@ -259,8 +280,7 @@ def _stripe_post(path: str, params: dict) -> dict:
         url, data=data,
         headers={"Authorization": f"Basic {token}", "Content-Type": "application/x-www-form-urlencoded"}
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode())
+    return _stripe_call(req)
 
 
 def _verify_stripe_signature(payload: bytes, sig_header: str) -> bool:
