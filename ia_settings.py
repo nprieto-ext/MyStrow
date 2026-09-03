@@ -81,7 +81,8 @@ class IASettings:
         self._movement_duration = 40
 
         # Couleurs
-        self._color_tile_pool   = {'rouge', 'orange', 'jaune', 'ambre'}
+        # Meme defaut contraste que le panneau LIVE (cf. `sequencer.py`).
+        self._color_tile_pool   = {'rouge', 'vert', 'bleu', 'rose'}
         self._current_color     = 'rouge'
         self._color_duration    = 40
         self._color_restrict    = True

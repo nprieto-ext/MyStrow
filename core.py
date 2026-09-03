@@ -9,6 +9,8 @@ import socket
 import struct
 import wave
 import array
+import re
+import unicodedata
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -66,7 +68,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.90"
+VERSION = "3.1.91"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -736,6 +738,34 @@ def emitted_brightness(proj) -> float:
     return max(0.0, min(1.0, level / 100.0))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Roue de gobos symbolique — 8 slots
+# ─────────────────────────────────────────────────────────────────────────────
+# Faute de connaître les motifs réels de chaque appareil, les deux plans
+# représentent le canal Gobo par 8 motifs conventionnels : le slot vaut
+# `gobo // 32` (soit `floor(gobo / 256 * 8)`, même découpage des deux côtés).
+#
+# ⚠️ CET ORDRE FAIT FOI. Il est dessiné DEUX fois, avec des moyens différents —
+# `plan_de_feu._draw_fixture` au QPainter dans la tache au sol, et
+# `_createGoboTexture` au canvas dans `plan_3d_web.html`. Les deux listes
+# étaient DIVERGENTES (le slot 3 montrait une croix × en 2D et trois cercles en
+# 3D) : le même show ne se lisait pas pareil selon le plan ouvert. Toute
+# modification ici doit être reportée dans les deux dessins.
+#
+# La couche « Gobo » de l'éditeur d'effets produit `int(niveau * 7) * 32`, donc
+# elle balaie exactement ces huit slots.
+GOBO_SLOT_NAMES = (
+    "Ouvert",              # 0 — pas de motif
+    "Anneau",              # 1
+    "Étoile 4 branches",   # 2
+    "Trois cercles",       # 3
+    "Trois palmes",        # 4
+    "Breakup",             # 5
+    "Six rayons",          # 6
+    "Bull's-eye",          # 7
+)
+
+
 def fixture_projects_gobo(proj) -> bool:
     """Cette fixture peut-elle projeter un GOBO a l'ecran (plan 2D et 3D) ?
 
@@ -895,6 +925,101 @@ def canonical_profile(profile):
     if not profile:
         return []
     return [canonical_channel(c) for c in profile]
+
+
+# ─── Noms de fabricants : un seul vocabulaire ─────────────────────────────────
+# Même histoire que les canaux, un cran plus haut. Quatre bibliothèques
+# alimentent la liste — 196 fixtures natives, la collection locale de
+# l'utilisateur (perso + Firestore), 627 fixtures OFL, 1710 fixtures QLC+ — et
+# aucune ne s'accorde sur l'orthographe du fabricant. `FIXTURE_LIBRARY` groupe
+# sur la chaîne BRUTE : « cameo » (88 fixtures) et « Cameo » (87) formaient donc
+# deux rubriques distinctes, et le tri étant sensible à la casse, elles se
+# retrouvaient aux deux BOUTS de la liste — « cameo » et « beamZ » après
+# « lightmaXX », loin de leurs jumelles. 23 fabricants étaient ainsi éclatés en
+# 2 à 4 rubriques, dont American DJ (274 fixtures) et Eurolite (223).
+#
+# ⚠️ La normalisation est faite à L'AFFICHAGE, jamais dans les données. Réécrire
+# le champ `manufacturer` de ~/.mystrow_fixtures.json serait pire que le mal :
+# le bouton Actualiser déduplique sur la clé `(nom, fabricant)` et remplace en
+# bloc ce qui vient de la bibliothèque — un renommage local serait écrasé pour
+# les fixtures Firestore, et ferait REVENIR la copie distante en double pour les
+# fixtures perso (cf. `fixture_packs.vient_de_la_bibliotheque`).
+
+# Orthographe retenue pour l'affichage. La clé de rapprochement ignore casse,
+# accents, espaces et ponctuation : « MacMah », « Mac Mah », « MEGA-Lite » ou
+# « U`King » tombent d'eux-mêmes sur la bonne entrée, sans alias à écrire.
+_MFR_CANONIQUES = (
+    "AFX Light", "American DJ", "BeamZ", "Betopper", "Blizzard", "BoomTone DJ",
+    "Cameo", "Chauvet", "Eurolite", "Fun Generation", "Générique", "GLX",
+    "Ibiza Light", "IMG Stage Line", "Kam", "LEDJ", "Mac Mah", "Martin",
+    "Mega Lite", "Philips", "PR Lighting", "Prolights", "UKing",
+)
+
+# Variantes que la seule normalisation ne rattrape pas : abréviation, faute de
+# frappe, ou nom de gamme accolé à la marque.
+_MFR_ALIAS = {
+    "ADJ":                  "American DJ",
+    "AFX":                  "AFX Light",
+    "BETOPER":              "Betopper",          # faute de frappe, 3 fixtures
+    "Blizzard Lighting":    "Blizzard",
+    "BoomTone":             "BoomTone DJ",
+    # Chauvet DJ et Chauvet Professional sont deux gammes RÉELLES du même
+    # fabricant. Les garder séparées, c'était surtout garder une troisième
+    # rubrique « Chauvet » (219 fixtures QLC+) qui, elle, ne veut rien dire.
+    "Chauvet DJ":           "Chauvet",
+    "Chauvet Professional": "Chauvet",
+    "Generic":              "Générique",
+    "GLX Lighting":         "GLX",
+    "Ibiza":                "Ibiza Light",
+    "Martin Professional":  "Martin",
+    "Philips Selecon":      "Philips",
+}
+
+
+def _mfr_key(nom):
+    """Clé de rapprochement d'un nom de fabricant : casse, accents et
+    ponctuation retirés. « Mac Mah », « MacMah » et « MAC-MAH » ont la même."""
+    s = unicodedata.normalize("NFKD", str(nom or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+_MFR_MAP = {_mfr_key(n): n for n in _MFR_CANONIQUES}
+_MFR_MAP.update({_mfr_key(k): v for k, v in _MFR_ALIAS.items()})
+
+
+def canonical_manufacturer(nom):
+    """Fabricant ramené à une orthographe unique, pour l'AFFICHAGE.
+
+    Un fabricant absent de la table garde son orthographe exacte : on ne
+    fusionne que ce qui a été vérifié à la main. Ajouter une marque, c'est
+    ajouter une ligne à `_MFR_CANONIQUES` — ou à `_MFR_ALIAS` si la variante
+    n'est pas une simple question de casse.
+    """
+    nom = (nom or "").strip()
+    return _MFR_MAP.get(_mfr_key(nom), nom) if nom else "Générique"
+
+
+def build_fixture_library(all_fixtures):
+    """{fabricant: [fixtures]} — « Générique » en tête, puis l'ordre alphabétique.
+
+    Ce bloc était recopié à L'IDENTIQUE en trois endroits de `main_window`
+    (construction initiale, retour d'import, retour d'Actualiser). C'est
+    exactement par là que les rubriques divergeaient.
+
+    ⚠️ Le tri est insensible à la casse : `sorted()` brut range toutes les
+    majuscules avant toutes les minuscules, ce qui expédiait « beamZ » et
+    « cameo » à la fin de la liste, après « lightmaXX ».
+    """
+    lib = {}
+    for fx in all_fixtures:
+        lib.setdefault(canonical_manufacturer(fx.get("manufacturer")), []).append(fx)
+    ordre = {}
+    if "Générique" in lib:
+        ordre["Générique"] = lib.pop("Générique")
+    for cle in sorted(lib, key=lambda s: (s.lower(), s)):
+        ordre[cle] = lib[cle]
+    return ordre
 
 
 # ─── TLS : un seul contexte pour tout le réseau sortant ───────────────────────

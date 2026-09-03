@@ -49,6 +49,11 @@ class _TimerMuet:
     def stop(self):
         pass
 
+    def isActive(self):
+        # `_compute_htp_overrides` interroge le timer de fondu : hors fondu, la
+        # couche HTP repose les memoires comme avant (cf. test_fondu_memoire_lyre).
+        return False
+
 
 class FauxProjecteur:
     def __init__(self, group="face"):

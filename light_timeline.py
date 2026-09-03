@@ -220,272 +220,13 @@ def resolve_memory_projectors(mem_ref, cue_index, memories):
     return mem.get("projectors", [])
 
 
-class SequenceInfoDialog(QDialog):
-    """Fenêtre « Info » d'une mémoire : ce qu'elle impose, projecteur par projecteur.
-
-    UNE seule implémentation pour les deux portes d'entrée — le clic droit sur
-    un clip Séquence de REC Lumière, et le clic droit sur un pad mémoire de
-    l'AKAI. C'est la même mémoire qu'on regarde : deux tableaux séparés
-    finiraient par diverger sur les critères de filtrage ou sur ce que
-    « supprimer un projecteur » veut dire.
-
-    Volontairement limitée à CE QUE LA MÉMOIRE IMPOSE — pas au résultat final
-    sur le câble, qui dépend de ce qui est posé en même temps ailleurs (fusion
-    HTP). Le rappel est écrit en pied de fenêtre.
-
-    `intensity` module les niveaux affichés (colonne « 85 % → 68 % ») : c'est
-    l'intensité du clip côté REC Lumière, le fader de la colonne côté pad AKAI.
-    `intensity_key` nomme correctement cette modulation dans l'en-tête.
-    """
-
-    def __init__(self, parent, main_window, memory_ref, cue_index=0, label="",
-                 intensity=100, fades=(0, 0),
-                 intensity_key="lt_seq_info_intensity", on_change=None):
-        super().__init__(parent)
-        from PySide6.QtWidgets import QTextBrowser, QDialogButtonBox
-
-        self._mw    = main_window
-        self._ref   = memory_ref
-        self._cue   = cue_index or 0
-        self._label = label or (f"MEM {memory_ref[0] + 1}.{memory_ref[1] + 1}"
-                                if memory_ref else tr("lt_seq_info_no_mem"))
-        self._inten = intensity
-        self._fades = fades
-        self._inten_key = intensity_key
-        self._on_change = on_change     # rafraîchir l'appelant après suppression
-
-        self.setWindowTitle(tr("lt_seq_info_title", mem=self._label))
-        self.setMinimumSize(760, 440)
-        lay = QVBoxLayout(self)
-
-        self._view = QTextBrowser()
-        self._view.setStyleSheet("QTextBrowser { background:#141414; border:1px solid #333; }")
-        # Les « ✖ » du tableau ne sont pas des URL à ouvrir : on les intercepte
-        # pour retirer le projecteur de la mémoire.
-        self._view.setOpenLinks(False)
-        self._view.anchorClicked.connect(self._on_anchor)
-        self._view.setHtml(self._html())
-        lay.addWidget(self._view)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Close)
-        btns.rejected.connect(self.reject)
-        btns.accepted.connect(self.accept)
-        lay.addWidget(btns)
-
-    # ── Données ───────────────────────────────────────────────────────────
-
-    def _memories(self):
-        return getattr(self._mw, 'memories', None)
-
-    def _cue_count(self) -> int:
-        mems = self._memories()
-        if not self._ref or not mems:
-            return 0
-        col, row = self._ref[0], self._ref[1]
-        if col >= len(mems) or row >= len(mems[col]):
-            return 0
-        mem = mems[col][row]
-        return len(mem.get("cues", [])) if mem else 0
-
-    def _rows(self):
-        """Projecteurs réellement concernés par la mémoire.
-
-        Une mémoire capture l'état de TOUT le rig, y compris les projecteurs
-        qu'elle ne vise pas (niveau 0, pan/tilt au centre) : les lister tous
-        noierait l'information. Les critères sont exactement ceux
-        qu'applique `apply_seq_memories_htp` — niveau > 0 (couleur et canaux
-        dédiés), ou pan/tilt hors centre, ou strobe, ou canaux bruts, ces
-        trois derniers partant MÊME à niveau 0.
-        """
-        ps_list = resolve_memory_projectors(self._ref, self._cue, self._memories())
-        if not ps_list:
-            return []
-        projectors = getattr(self._mw, 'projectors', None) or []
-        group_display = getattr(self._mw, 'GROUP_DISPLAY', {}) or {}
-        inten = self._inten or 0
-        rows = []
-        for i, ps in enumerate(ps_list):
-            if i >= len(projectors):
-                break
-            lvl    = int(ps.get("level", 0) or 0)
-            pan    = int(ps.get("pan", 32768) or 32768)
-            tilt   = int(ps.get("tilt", 32768) or 32768)
-            strobe = int(ps.get("strobe_speed", 0) or 0)
-            extras = dict(ps.get("channel_extras", {}) or {})
-            if not (lvl > 0 or pan != 32768 or tilt != 32768 or strobe or extras):
-                continue
-
-            p = projectors[i]
-            misc = []
-            if lvl > 0:
-                for attr, lb in (("uv", "UV"), ("white_boost", "Blanc"),
-                                 ("amber_boost", "Ambre"), ("orange_boost", "Orange")):
-                    v = int(ps.get(attr, 0) or 0)
-                    if v:
-                        misc.append(f"{lb} {int(v * inten / 100)}")
-            if strobe:
-                misc.append(f"Strobe {strobe}")
-            misc += [f"{k} {v}" for k, v in extras.items()]
-
-            pos = []
-            if pan != 32768:
-                pos.append(f"Pan {round(pan * 100 / 65535)} %")
-            if tilt != 32768:
-                pos.append(f"Tilt {round(tilt * 100 / 65535)} %")
-
-            rows.append({
-                "idx":   i,
-                "name":  getattr(p, 'name', '') or f"#{i + 1}",
-                "group": group_display.get(getattr(p, 'group', ''), getattr(p, 'group', '')),
-                "addr":  (f"U{getattr(p, 'universe', 0) + 1}·{getattr(p, 'start_address', 1)}"
-                          if getattr(p, 'universe', 0) else str(getattr(p, 'start_address', 1))),
-                "level": lvl,
-                "eff":   int(lvl * inten / 100),
-                "color": QColor(ps.get("base_color", "#ffffff")).name() if lvl > 0 else "",
-                "pos":   " · ".join(pos),
-                "misc":  " · ".join(misc),
-            })
-        return rows
-
-    # ── Rendu ─────────────────────────────────────────────────────────────
-
-    def _html(self):
-        rows = self._rows()
-
-        # En-tête : ce qui module les niveaux (cue joué, intensité/fader,
-        # fondus) — sinon on lit des pourcentages sans savoir d'où ils sortent.
-        head = [f"<b style='font-size:15px'>{self._label}</b>"]
-        cues = self._cue_count()
-        if cues > 1:
-            head.append(tr("lt_seq_info_cue", n=self._cue + 1, total=cues))
-        head.append(tr(self._inten_key, v=self._inten))
-        fi, fo = int(self._fades[0] or 0), int(self._fades[1] or 0)
-        if fi or fo:
-            head.append(tr("lt_seq_info_fades", fi=fi, fo=fo))
-
-        html = [
-            "<style>"
-            "body { color:#e0e0e0; font-family:'Segoe UI',sans-serif; font-size:12px; }"
-            "table { border-collapse:collapse; width:100%; }"
-            "th { text-align:left; padding:5px 8px; color:#00d4ff; font-size:11px;"
-            "     border-bottom:1px solid #333; }"
-            "td { padding:4px 8px; border-bottom:1px solid #222; }"
-            ".dim { color:#888; }"
-            "</style>",
-            "<div>" + "&nbsp;&nbsp;·&nbsp;&nbsp;".join(head) + "</div><br>",
-        ]
-        if not rows:
-            html.append(f"<p class='dim'>{tr('lt_seq_info_empty')}</p>")
-            return "".join(html)
-
-        html.append(
-            "<table><tr>"
-            f"<th>{tr('lt_seq_info_col_proj')}</th>"
-            f"<th>{tr('lt_seq_info_col_group')}</th>"
-            f"<th>{tr('lt_seq_info_col_addr')}</th>"
-            f"<th>{tr('lt_seq_info_col_level')}</th>"
-            f"<th>{tr('lt_seq_info_col_color')}</th>"
-            f"<th>{tr('lt_seq_info_col_pos')}</th>"
-            f"<th>{tr('lt_seq_info_col_misc')}</th>"
-            "<th></th>"
-            "</tr>")
-        _dash = "<span class='dim'>—</span>"
-        for r in rows:
-            if r["level"] <= 0:
-                lvl_txt = "<span class='dim'>0 %</span>"
-            elif r["eff"] != r["level"]:
-                lvl_txt = f"{r['level']} % <span class='dim'>&rarr; {r['eff']} %</span>"
-            else:
-                lvl_txt = f"{r['level']} %"
-            if r["color"]:
-                swatch = (f"<span style='background:{r['color']}'>&nbsp;&nbsp;&nbsp;</span> "
-                          f"<span class='dim'>{r['color']}</span>")
-            else:
-                swatch = "<span class='dim'>—</span>"
-            html.append(
-                f"<tr><td>{r['name']}</td><td>{r['group']}</td>"
-                f"<td class='dim'>{r['addr']}</td><td>{lvl_txt}</td><td>{swatch}</td>"
-                f"<td>{r['pos'] or _dash}</td>"
-                f"<td>{r['misc'] or _dash}</td>"
-                f"<td><a href='del:{r['idx']}' style='color:#f44336;"
-                f"text-decoration:none' title='{tr('lt_seq_info_del_tip')}'>&#10006;</a></td>"
-                "</tr>")
-        html.append("</table>")
-        html.append(f"<p class='dim'>{tr('lt_seq_info_count', n=len(rows))} · "
-                    f"{tr('lt_seq_info_del_hint')}</p>")
-        return "".join(html)
-
-    # ── Suppression d'un projecteur ───────────────────────────────────────
-
-    def _on_anchor(self, url):
-        s = url.toString() if hasattr(url, 'toString') else str(url)
-        if not s.startswith("del:"):
-            return
-        try:
-            idx = int(s[4:])
-        except ValueError:
-            return
-        if self._delete_projector(idx):
-            self._view.setHtml(self._html())
-            if callable(self._on_change):
-                self._on_change()
-
-    def _delete_projector(self, idx):
-        """Retire un projecteur de la mémoire. Retourne True si c'est fait.
-
-        « Retirer » = NEUTRALISER l'entrée, jamais la sortir de la liste :
-        celle-ci est indexée par NUMÉRO DE PROJECTEUR (`enumerate` →
-        `projectors[i]`), un `pop()` décalerait tout le rig d'un cran.
-
-        Les clés `pan`/`tilt` sont SUPPRIMÉES et non remises à 32768 : le
-        rappel par pad AKAI (`_apply_memory_to_projectors`) applique le
-        pan/tilt dès que la clé existe, même au centre — il recentrerait donc
-        la lyre au lieu de la laisser tranquille. Absente, les deux moteurs
-        l'ignorent.
-
-        L'édition porte sur la mémoire elle-même : elle vaut pour TOUS les
-        clips qui la rappellent ET pour le pad AKAI, d'où la confirmation.
-        """
-        ps_list = resolve_memory_projectors(self._ref, self._cue, self._memories())
-        if not ps_list or idx < 0 or idx >= len(ps_list):
-            return False
-
-        projs = getattr(self._mw, 'projectors', None) or []
-        name = (getattr(projs[idx], 'name', '') or f"#{idx + 1}") if idx < len(projs) else f"#{idx + 1}"
-
-        if QMessageBox.question(
-                self, tr("lt_seq_info_del_title"),
-                tr("lt_seq_info_del_confirm", proj=name, mem=self._label),
-                QMessageBox.Yes | QMessageBox.Cancel,
-                QMessageBox.Cancel) != QMessageBox.Yes:
-            return False
-
-        ps = ps_list[idx]
-        ps["level"]          = 0
-        ps["base_color"]     = "#000000"
-        ps["strobe_speed"]   = 0
-        ps["channel_extras"] = {}
-        for k in ("uv", "white_boost", "amber_boost", "orange_boost",
-                  "gobo", "gobo_rotation", "zoom"):
-            if k in ps:
-                ps[k] = 0
-        ps.pop("pan", None)
-        ps.pop("tilt", None)
-
-        # Persistance immédiate : les mémoires ne vivent QUE dans
-        # ~/.maestro_akai_config.json, et le Ctrl+Z de REC Lumière ne les couvre pas.
-        if self._mw is not None and self._ref:
-            if hasattr(self._mw, '_save_akai_config_auto'):
-                self._mw._save_akai_config_auto()
-            if hasattr(self._mw, '_refresh_memory_pad'):
-                self._mw._refresh_memory_pad(self._ref[0], self._ref[1])
-        return True
-
-
 # Canaux de faisceau restitués par une mémoire en piste Séquence, avec leur
 # valeur de REPOS. Le repos sert de test « la mémoire a-t-elle vraiment réglé ce
 # canal ? » — voir le raisonnement dans `apply_seq_memories_htp`.
 # ⚠️ Le shutter est ouvert à 255 : son repos n'est pas 0.
+# ⚠️ Défini AVANT `SequenceInfoDialog` : le tableau « Contenu séquence » s'en
+# sert pour décider si une mémoire règle vraiment un canal. Deux listes de repos
+# finiraient par diverger — la fenêtre mentirait sur ce que la restitution fait.
 _REPOS_FAISCEAU = {
     "gobo": 0, "gobo_rotation": 0, "gobo2": 0,
     "zoom": 0, "focus": 0, "iris": 0,
@@ -497,6 +238,715 @@ _REPOS_FAISCEAU = {
     "preset1": 0, "preset2": 0, "preset3": 0, "preset4": 0,
     "shutter": 255,
 }
+
+# Canaux de faisceau d'une mémoire, dans l'ordre d'affichage du tableau
+# « Contenu séquence ». Le libellé est volontairement court : c'est une colonne,
+# pas une fiche technique.
+_MEM_BEAM_CH = (
+    ("gobo",           "Gobo"),
+    ("gobo_rotation",  "Rot. gobo"),
+    ("gobo2",          "Gobo 2"),
+    ("color_wheel",    "Roue"),
+    ("prism",          "Prisme"),
+    ("prism_rotation", "Rot. prisme"),
+    ("zoom",           "Zoom"),
+    ("focus",          "Focus"),
+    ("iris",           "Iris"),
+    ("shutter",        "Shutter"),
+    ("strobe_speed",   "Strobe"),
+    ("effects",        "Effets"),
+    ("speed",          "Vitesse"),
+    ("mode_value",     "Mode"),
+    ("preset1",        "Preset 1"),
+    ("preset2",        "Preset 2"),
+    ("preset3",        "Preset 3"),
+    ("preset4",        "Preset 4"),
+    ("fan_speed",      "Ventilation"),
+)
+
+# Canaux de couleur dédiés. À part des précédents parce qu'ils ne partent QUE si
+# la mémoire allume le projecteur (cf. `apply_seq_memories_htp`) : les mélanger
+# au faisceau laisserait croire qu'un ambre à niveau 0 fait quelque chose.
+_MEM_MISC_CH = (
+    ("uv",           "UV"),
+    ("white_boost",  "Blanc"),
+    ("amber_boost",  "Ambre"),
+    ("orange_boost", "Orange"),
+)
+
+
+def mem_ch_repos(key):
+    """Valeur de repos d'un canal de mémoire (0 sauf le shutter, ouvert à 255)."""
+    return _REPOS_FAISCEAU.get(key, 0)
+
+
+def memory_state_is_set(ps):
+    """La mémoire impose-t-elle quelque chose à CE projecteur ?
+
+    Une mémoire capture l'état de TOUT le rig, y compris les projecteurs qu'elle
+    ne vise pas (niveau 0, pan/tilt au centre, canaux au repos) : les lister tous
+    noierait l'information. Le test suit exactement ce que la restitution
+    applique — niveau, pan/tilt hors centre, canaux bruts, et tout canal de
+    faisceau hors repos.
+
+    ⚠️ Les canaux de faisceau font partie du test. Sans eux, une mémoire « juste
+    un gobo » (rig éteint, `level` 0 partout) était déclarée vide et la fenêtre
+    affichait « n'allume ni ne bouge aucun projecteur » — on en concluait que le
+    REC n'avait rien enregistré, alors que le gobo était bien là et bien rejoué
+    par un clip Séquence.
+    """
+    if int(ps.get("level", 0) or 0) > 0:
+        return True
+    if int(ps.get("pan", 32768) or 32768) != 32768:
+        return True
+    if int(ps.get("tilt", 32768) or 32768) != 32768:
+        return True
+    if ps.get("channel_extras"):
+        return True
+    for _k, _lbl in _MEM_BEAM_CH:
+        if _k in ps and int(ps.get(_k) or 0) != mem_ch_repos(_k):
+            return True
+    return False
+
+
+class MemoryChannelsDialog(QDialog):
+    """Édition canal par canal de ce qu'une mémoire impose à UN projecteur.
+
+    Deuxième étage du tableau « Contenu séquence » : ses colonnes Faisceau et
+    Divers résument des dizaines de canaux, impossible de les éditer en ligne.
+    Ici chaque canal a son curseur, y compris ceux que la mémoire laisse au
+    repos — c'est aussi comme ça qu'on AJOUTE un gobo à un projecteur que la
+    mémoire ne réglait pas.
+
+    Les canaux bruts (`channel_extras`) sont éditables et supprimables : ils
+    priment sur tout le reste au moment de la trame DMX, et un canal brut oublié
+    dans une mémoire est exactement ce qui fait tourner l'automatisme d'une
+    machine pendant tout le show.
+    """
+
+    def __init__(self, parent, ps, proj_name):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QDialogButtonBox, QFormLayout, QGroupBox
+
+        self._spins      = {}     # clé canal -> QSpinBox
+        self._extra_rows = []     # [clé, QSpinBox|None, QWidget]  (None = retiré)
+
+        self.setWindowTitle(tr("lt_seq_info_ch_title", proj=proj_name))
+        self.setMinimumSize(420, 560)
+        self.setStyleSheet(
+            "QDialog { background:#141414; } QLabel { color:#ddd; }"
+            "QGroupBox { color:#00d4ff; border:1px solid #2a2a2a; border-radius:4px;"
+            "            margin-top:8px; padding-top:8px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left:8px; }"
+            "QSpinBox, QLineEdit { background:#1e1e1e; color:#e0e0e0;"
+            "            border:1px solid #333; padding:2px 4px; }"
+        )
+        lay = QVBoxLayout(self)
+
+        hint = QLabel(tr("lt_seq_info_ch_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#777; font-size:10px;")
+        lay.addWidget(hint)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border:none; background:transparent; }")
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 6, 0)
+
+        for titre, table in ((tr("lt_seq_info_col_beam"), _MEM_BEAM_CH),
+                             (tr("lt_seq_info_col_misc"), _MEM_MISC_CH)):
+            box = QGroupBox(titre)
+            form = QFormLayout(box)
+            form.setContentsMargins(8, 6, 8, 6)
+            form.setSpacing(4)
+            for key, label in table:
+                spin = QSpinBox()
+                spin.setRange(0, 255)
+                spin.setValue(int(ps.get(key, mem_ch_repos(key)) or 0))
+                spin.setToolTip(tr("lt_seq_info_ch_repos", v=mem_ch_repos(key)))
+                self._spins[key] = spin
+                form.addRow(QLabel(label), spin)
+            body_lay.addWidget(box)
+
+        # ── Canaux bruts ──────────────────────────────────────────────────
+        self._extras_box = QGroupBox(tr("lt_seq_info_ch_raw"))
+        self._extras_lay = QVBoxLayout(self._extras_box)
+        self._extras_lay.setContentsMargins(8, 6, 8, 6)
+        self._extras_lay.setSpacing(4)
+        for key in sorted((ps.get("channel_extras") or {}).keys(), key=str):
+            self._add_extra_row(key, ps["channel_extras"][key])
+        add_row = QHBoxLayout()
+        self._new_key = QLineEdit()
+        self._new_key.setPlaceholderText(tr("lt_seq_info_ch_raw_key"))
+        self._new_val = QSpinBox()
+        self._new_val.setRange(0, 255)
+        btn_add = QPushButton("+")
+        btn_add.setFixedWidth(28)
+        btn_add.clicked.connect(self._add_new_extra)
+        add_row.addWidget(self._new_key, 1)
+        add_row.addWidget(self._new_val)
+        add_row.addWidget(btn_add)
+        self._extras_lay.addLayout(add_row)
+        body_lay.addWidget(self._extras_box)
+
+        body_lay.addStretch()
+        scroll.setWidget(body)
+        lay.addWidget(scroll, 1)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def _add_extra_row(self, key, value):
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        spin = QSpinBox()
+        spin.setRange(0, 255)
+        try:
+            spin.setValue(int(value))
+        except (TypeError, ValueError):
+            spin.setValue(0)
+        btn = QPushButton("✖")
+        btn.setFixedWidth(26)
+        btn.setStyleSheet("QPushButton { background:transparent; color:#f44336; border:0; }")
+        btn.setToolTip(tr("lt_seq_info_ch_raw_del"))
+        h.addWidget(QLabel(tr("lt_seq_info_ch_raw_lbl", k=key)), 1)
+        h.addWidget(spin)
+        h.addWidget(btn)
+
+        entry = [key, spin, row]
+        self._extra_rows.append(entry)
+
+        def _drop():
+            entry[1] = None          # marqué retiré, purgé à la validation
+            row.setParent(None)
+        btn.clicked.connect(_drop)
+
+        self._extras_lay.insertWidget(len(self._extra_rows) - 1, row)
+
+    def _add_new_extra(self):
+        # Un numéro de canal reste écrit en décimal : c'est la forme que prend
+        # une clé entière après un aller-retour JSON, et celle que
+        # `ArtNetDMX.update_from_projectors` sait relire.
+        key = self._new_key.text().strip()
+        if not key or any(k == key for k, s, _w in self._extra_rows if s is not None):
+            return
+        self._add_extra_row(key, self._new_val.value())
+        self._new_key.clear()
+        self._new_val.setValue(0)
+
+    def apply_to(self, ps):
+        """Écrit l'édition dans l'état de mémoire. Retourne True si ça a bougé."""
+        change = False
+        for key, spin in self._spins.items():
+            v = int(spin.value())
+            if int(ps.get(key, mem_ch_repos(key)) or 0) != v:
+                change = True
+            ps[key] = v
+        extras = {k: int(s.value()) for k, s, _w in self._extra_rows if s is not None}
+        if dict(ps.get("channel_extras") or {}) != extras:
+            change = True
+        ps["channel_extras"] = extras
+        return change
+
+
+class SequenceInfoDialog(QDialog):
+    """Fenêtre « Contenu séquence » d'une mémoire : ce qu'elle impose,
+    projecteur par projecteur — et son ÉDITION.
+
+    UNE seule implémentation pour les deux portes d'entrée — le clic droit sur
+    un clip Séquence de REC Lumière, et le clic droit sur un pad mémoire de
+    l'AKAI. C'est la même mémoire qu'on regarde : deux tableaux séparés
+    finiraient par diverger sur les critères de filtrage ou sur ce que
+    « supprimer un projecteur » veut dire.
+
+    Volontairement limitée à CE QUE LA MÉMOIRE IMPOSE — pas au résultat final
+    sur le câble, qui dépend de ce qui est posé en même temps ailleurs (fusion
+    HTP).
+
+    **Toute édition porte sur la mémoire elle-même**, donc sur TOUS les clips
+    qui la rappellent ET sur le pad AKAI, et elle part sur disque immédiatement :
+    les mémoires ne vivent que dans `~/.maestro_akai_config.json` et le Ctrl+Z de
+    REC Lumière ne les couvre pas. D'où la confirmation sur la suppression, seule
+    opération qu'on ne rattrape pas à l'œil.
+
+    `intensity` module les niveaux affichés (colonne « Effectif ») : c'est
+    l'intensité du clip côté REC Lumière, le fader de la colonne côté pad AKAI.
+    `intensity_key` nomme correctement cette modulation dans l'en-tête. Elle ne
+    s'édite pas ici — elle n'appartient pas à la mémoire.
+    """
+
+    C_PROJ, C_GROUP, C_ADDR, C_LEVEL, C_EFF, C_COLOR, \
+        C_PAN, C_TILT, C_BEAM, C_MISC, C_DEL = range(11)
+
+    def __init__(self, parent, main_window, memory_ref, cue_index=0, label="",
+                 intensity=100, fades=(0, 0),
+                 intensity_key="lt_seq_info_intensity", on_change=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import (QDialogButtonBox, QTableWidget,
+                                       QHeaderView, QAbstractItemView)
+
+        self._mw    = main_window
+        self._ref   = memory_ref
+        self._cue   = cue_index or 0
+        self._label = label or (f"MEM {memory_ref[0] + 1}.{memory_ref[1] + 1}"
+                                if memory_ref else tr("lt_seq_info_no_mem"))
+        self._inten = intensity
+        self._fades = fades
+        self._inten_key = intensity_key
+        self._on_change = on_change     # rafraîchir l'appelant après édition
+        self._loading   = False         # garde-fou anti-réentrance sur itemChanged
+        self._idxs      = []            # n° de projecteur affiché, par ligne
+
+        self.setWindowTitle(tr("lt_seq_info_title", mem=self._label))
+        self.setMinimumSize(1000, 480)
+        self.setStyleSheet(
+            "QDialog { background:#141414; }"
+            "QLabel { color:#e0e0e0; }"
+            "QCheckBox { color:#bbb; }"
+            "QTableWidget { background:#141414; alternate-background-color:#181818;"
+            "               color:#e0e0e0; gridline-color:#242424;"
+            "               selection-background-color:#1a3a4a; border:1px solid #333; }"
+            "QHeaderView::section { background:#1a1a1a; color:#00d4ff; border:0;"
+            "               border-bottom:1px solid #333; padding:4px 6px;"
+            "               font-size:11px; }"
+        )
+        lay = QVBoxLayout(self)
+
+        self._head = QLabel()
+        self._head.setTextFormat(Qt.RichText)
+        lay.addWidget(self._head)
+
+        bar = QHBoxLayout()
+        self._chk_all = QCheckBox(tr("lt_seq_info_all_rig"))
+        self._chk_all.setToolTip(tr("lt_seq_info_all_rig_tip"))
+        self._chk_all.toggled.connect(lambda _: self._rebuild())
+        bar.addWidget(self._chk_all)
+        bar.addStretch()
+        self._btn_del = QPushButton(tr("lt_seq_info_del_sel"))
+        self._btn_del.setStyleSheet(
+            "QPushButton { background:#2a1a1a; color:#f44336; border:1px solid #4a2a2a;"
+            "              border-radius:3px; padding:3px 10px; }"
+            "QPushButton:disabled { color:#555; border-color:#282828; }")
+        self._btn_del.clicked.connect(self._delete_selection)
+        bar.addWidget(self._btn_del)
+        lay.addLayout(bar)
+
+        self._table = QTableWidget(0, 11)
+        self._table.setHorizontalHeaderLabels([
+            tr("lt_seq_info_col_proj"), tr("lt_seq_info_col_group"),
+            tr("lt_seq_info_col_addr"), tr("lt_seq_info_col_level"),
+            tr("lt_seq_info_col_eff"),  tr("lt_seq_info_col_color"),
+            "Pan %", "Tilt %",
+            tr("lt_seq_info_col_beam"), tr("lt_seq_info_col_misc"), "",
+        ])
+        self._table.verticalHeader().setVisible(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._table.setEditTriggers(QAbstractItemView.DoubleClicked |
+                                    QAbstractItemView.EditKeyPressed |
+                                    QAbstractItemView.AnyKeyPressed)
+        hh = self._table.horizontalHeader()
+        for c in range(11):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        # Seule la colonne Faisceau s'etire : c'est la plus bavarde (gobo,
+        # roue, prisme, canaux bruts), et « Divers » est vide la plupart du
+        # temps — les etirer toutes les deux donnait une moitie de tableau vide.
+        hh.setSectionResizeMode(self.C_BEAM, QHeaderView.Stretch)
+        self._table.setWordWrap(False)
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._table.cellDoubleClicked.connect(self._on_double_click)
+        self._table.itemSelectionChanged.connect(self._sync_del_button)
+        lay.addWidget(self._table, 1)
+
+        self._foot = QLabel()
+        self._foot.setWordWrap(True)
+        self._foot.setStyleSheet("color:#888; font-size:10px;")
+        lay.addWidget(self._foot)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.reject)
+        btns.accepted.connect(self.accept)
+        lay.addWidget(btns)
+
+        self._rebuild()
+
+    # ── Données ───────────────────────────────────────────────────────────
+
+    def _memories(self):
+        return getattr(self._mw, 'memories', None)
+
+    def _states(self):
+        """États projecteurs du cue regardé — référence VIVE sur la mémoire."""
+        return resolve_memory_projectors(self._ref, self._cue, self._memories()) or []
+
+    def _cue_count(self) -> int:
+        mems = self._memories()
+        if not self._ref or not mems:
+            return 0
+        col, row = self._ref[0], self._ref[1]
+        if col >= len(mems) or row >= len(mems[col]):
+            return 0
+        mem = mems[col][row]
+        return len(mem.get("cues", [])) if mem else 0
+
+    def _set_idxs(self):
+        """N° des projecteurs que la mémoire règle réellement."""
+        states = self._states()
+        projectors = getattr(self._mw, 'projectors', None) or []
+        n = min(len(states), len(projectors))
+        return [i for i in range(n) if memory_state_is_set(states[i])]
+
+    def _visible_idxs(self):
+        """N° des projecteurs affichés — ceux que la mémoire règle, ou tous."""
+        if not self._chk_all.isChecked():
+            return self._set_idxs()
+        states = self._states()
+        projectors = getattr(self._mw, 'projectors', None) or []
+        return list(range(min(len(states), len(projectors))))
+
+    def _proj_name(self, idx):
+        projs = getattr(self._mw, 'projectors', None) or []
+        if idx < len(projs):
+            return getattr(projs[idx], 'name', '') or f"#{idx + 1}"
+        return f"#{idx + 1}"
+
+    def _gobo_names(self):
+        """{valeur DMX: nom} des gobos du patch — pour lire « Gobo 64 (Étoile) »."""
+        if not hasattr(self, '_gobo_cache'):
+            try:
+                self._gobo_cache = {d: n for d, n, _c
+                                    in LibraryPanel._available_gobos(self._mw)}
+            except Exception:
+                self._gobo_cache = {}
+        return self._gobo_cache
+
+    def _beam_text(self, ps):
+        """Résumé des canaux de faisceau hors repos, gobo nommé si on le connaît."""
+        out = []
+        for key, label in _MEM_BEAM_CH:
+            if key not in ps:
+                continue
+            v = int(ps.get(key) or 0)
+            if v == mem_ch_repos(key):
+                continue
+            if key == "gobo":
+                nom = self._gobo_names().get(v)
+                out.append(f"{label} {v} ({nom})" if nom else f"{label} {v}")
+            else:
+                out.append(f"{label} {v}")
+        for k, v in (ps.get("channel_extras") or {}).items():
+            out.append(tr("lt_seq_info_ch_raw_lbl", k=k) + f" {v}")
+        return " · ".join(out)
+
+    def _misc_text(self, ps):
+        inten = self._inten or 0
+        out = []
+        for key, label in _MEM_MISC_CH:
+            v = int(ps.get(key, 0) or 0)
+            if not v:
+                continue
+            eff = int(v * inten / 100)
+            out.append(f"{label} {v}" if eff == v else f"{label} {v} → {eff}")
+        return " · ".join(out)
+
+    # ── Construction du tableau ───────────────────────────────────────────
+
+    def _item(self, text, editable=False, dim=False):
+        from PySide6.QtWidgets import QTableWidgetItem
+        it = QTableWidgetItem(text)
+        flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
+        if editable:
+            flags |= Qt.ItemIsEditable
+        it.setFlags(flags)
+        it.setForeground(QColor("#888") if dim else QColor("#e0e0e0"))
+        return it
+
+    def _rebuild(self):
+        """Rejoue le filtre, reconstruit les lignes puis leur contenu."""
+        self._idxs = self._visible_idxs()
+        self._loading = True
+        try:
+            self._table.setRowCount(0)
+            self._table.setRowCount(len(self._idxs))
+            for r, idx in enumerate(self._idxs):
+                self._fill_row(r, idx, create=True)
+        finally:
+            self._loading = False
+        self._refresh_header()
+        self._sync_del_button()
+
+    def _refresh(self):
+        """Réécrit les cellules SANS toucher au jeu de lignes.
+
+        Une édition qui vide une ligne (niveau à 0, gobo remis au repos) ne doit
+        pas la faire disparaître sous le curseur au milieu d'une saisie : le
+        filtre n'est rejoué qu'au prochain `_rebuild` — case « tout le rig »,
+        suppression, réouverture de la fenêtre.
+        """
+        self._loading = True
+        try:
+            for r, idx in enumerate(self._idxs):
+                self._fill_row(r, idx, create=False)
+        finally:
+            self._loading = False
+        self._refresh_header()
+
+    def _fill_row(self, r, idx, create=False):
+        states = self._states()
+        if idx >= len(states):
+            return
+        ps = states[idx]
+        projs = getattr(self._mw, 'projectors', None) or []
+        p = projs[idx] if idx < len(projs) else None
+        group_display = getattr(self._mw, 'GROUP_DISPLAY', {}) or {}
+
+        lvl   = int(ps.get("level", 0) or 0)
+        inten = self._inten or 0
+        eff   = int(lvl * inten / 100)
+        pan   = int(ps.get("pan")  or 32768) if "pan"  in ps else None
+        tilt  = int(ps.get("tilt") or 32768) if "tilt" in ps else None
+
+        if p is None:
+            addr = "—"
+        elif getattr(p, 'universe', 0):
+            addr = f"U{getattr(p, 'universe', 0) + 1}·{getattr(p, 'start_address', 1)}"
+        else:
+            addr = str(getattr(p, 'start_address', 1))
+        grp = getattr(p, 'group', '') if p is not None else ''
+
+        cells = {
+            self.C_PROJ:  (self._proj_name(idx), False, False),
+            self.C_GROUP: (group_display.get(grp, grp), False, False),
+            self.C_ADDR:  (addr, False, True),
+            self.C_LEVEL: (str(lvl), True, lvl <= 0),
+            self.C_EFF:   (f"{eff} %" if inten != 100 else "", False, True),
+            self.C_COLOR: ("", False, False),
+            self.C_PAN:   ("" if pan  is None else str(round(pan  * 100 / 65535)), True, pan  is None),
+            self.C_TILT:  ("" if tilt is None else str(round(tilt * 100 / 65535)), True, tilt is None),
+            self.C_BEAM:  (self._beam_text(ps), False, False),
+            self.C_MISC:  (self._misc_text(ps), False, False),
+        }
+        for col, (txt, editable, dim) in cells.items():
+            it = None if create else self._table.item(r, col)
+            if it is None:
+                self._table.setItem(r, col, self._item(txt, editable=editable, dim=dim))
+            else:
+                it.setText(txt)
+                it.setForeground(QColor("#888") if dim else QColor("#e0e0e0"))
+
+        self._table.item(r, self.C_PROJ).setData(Qt.UserRole, idx)
+        self._table.item(r, self.C_LEVEL).setToolTip(tr("lt_seq_info_tip_level"))
+        self._table.item(r, self.C_PAN).setToolTip(tr("lt_seq_info_tip_pos"))
+        self._table.item(r, self.C_TILT).setToolTip(tr("lt_seq_info_tip_pos"))
+        self._table.item(r, self.C_BEAM).setToolTip(tr("lt_seq_info_tip_beam"))
+        self._table.item(r, self.C_MISC).setToolTip(tr("lt_seq_info_tip_beam"))
+
+        # Couleur : pastille + code hexa, éditée au double-clic (pas au clavier).
+        col_it = self._table.item(r, self.C_COLOR)
+        col_it.setToolTip(tr("lt_seq_info_tip_color"))
+        if lvl > 0:
+            qc = QColor(ps.get("base_color", "#ffffff"))
+            col_it.setText(qc.name())
+            col_it.setBackground(qc)
+            col_it.setForeground(QColor("#000") if qc.lightness() > 128 else QColor("#fff"))
+        else:
+            col_it.setText("—")
+            col_it.setBackground(QBrush())
+            col_it.setForeground(QColor("#666"))
+
+        if create:
+            btn = QPushButton("✖")
+            btn.setFixedWidth(28)
+            btn.setToolTip(tr("lt_seq_info_del_tip"))
+            btn.setStyleSheet(
+                "QPushButton { background:transparent; color:#f44336; border:0; }"
+                "QPushButton:hover { color:#ff7b72; }")
+            btn.clicked.connect(lambda _=False, i=idx: self._delete_projectors([i]))
+            self._table.setCellWidget(r, self.C_DEL, btn)
+
+    def _refresh_header(self):
+        head = [f"<b style='font-size:15px'>{self._label}</b>"]
+        cues = self._cue_count()
+        if cues > 1:
+            head.append(tr("lt_seq_info_cue", n=self._cue + 1, total=cues))
+        head.append(tr(self._inten_key, v=self._inten))
+        fi, fo = int(self._fades[0] or 0), int(self._fades[1] or 0)
+        if fi or fo:
+            head.append(tr("lt_seq_info_fades", fi=fi, fo=fo))
+        self._head.setText("&nbsp;&nbsp;·&nbsp;&nbsp;".join(head))
+
+        n_set = len(self._set_idxs())
+        if n_set:
+            self._foot.setText(f"{tr('lt_seq_info_count', n=n_set)} · "
+                               f"{tr('lt_seq_info_edit_hint')} · "
+                               f"{tr('lt_seq_info_del_hint')}")
+        else:
+            self._foot.setText(f"{tr('lt_seq_info_empty')} · "
+                               f"{tr('lt_seq_info_all_rig_tip')}")
+
+    def _sync_del_button(self):
+        self._btn_del.setEnabled(bool(self._selected_idxs()))
+
+    def _selected_idxs(self):
+        out = []
+        for r in sorted({i.row() for i in self._table.selectedIndexes()}):
+            it = self._table.item(r, self.C_PROJ)
+            if it is not None and it.data(Qt.UserRole) is not None:
+                out.append(int(it.data(Qt.UserRole)))
+        return out
+
+    # ── Édition ───────────────────────────────────────────────────────────
+
+    def _on_item_changed(self, item):
+        if self._loading:
+            return
+        r, col = item.row(), item.column()
+        if r >= len(self._idxs):
+            return
+        idx    = self._idxs[r]
+        states = self._states()
+        if idx >= len(states):
+            return
+        ps  = states[idx]
+        txt = item.text().strip().replace("%", "").replace(",", ".").strip()
+
+        if col == self.C_LEVEL:
+            try:
+                ps["level"] = max(0, min(100, int(round(float(txt or 0)))))
+            except ValueError:
+                self._refresh()
+                return
+            # Rallumer un projecteur laissé à 0 le rendrait noir : la capture
+            # écrit `base_color` = #000000 dès que le niveau est à 0
+            # (cf. `_build_snapshot`). On repart du blanc — la pastille est juste
+            # à côté pour choisir mieux.
+            if ps["level"] > 0 and QColor(ps.get("base_color", "#000000")) == QColor("#000000"):
+                ps["base_color"] = "#ffffff"
+        elif col in (self.C_PAN, self.C_TILT):
+            key = "pan" if col == self.C_PAN else "tilt"
+            if txt == "":
+                # ⚠️ La clé est SUPPRIMÉE, pas remise à 32768 : le rappel par pad
+                # AKAI (`_apply_memory_to_projectors`) applique le pan/tilt dès
+                # que la clé existe, même au centre — il recentrerait la lyre au
+                # lieu de la laisser tranquille. Absente, les deux moteurs
+                # l'ignorent.
+                ps.pop(key, None)
+            else:
+                try:
+                    pct = max(0.0, min(100.0, float(txt)))
+                except ValueError:
+                    self._refresh()
+                    return
+                ps[key] = int(round(pct * 65535 / 100))
+        else:
+            return
+        self._save()
+        self._refresh()
+
+    def _on_double_click(self, r, col):
+        if r >= len(self._idxs):
+            return
+        idx    = self._idxs[r]
+        states = self._states()
+        if idx >= len(states):
+            return
+        ps = states[idx]
+
+        if col == self.C_COLOR:
+            from PySide6.QtWidgets import QColorDialog
+            depart = QColor(ps.get("base_color", "#ffffff"))
+            if not depart.isValid() or depart == QColor("#000000"):
+                depart = QColor("#ffffff")
+            c = QColorDialog.getColor(depart, self, tr("lt_seq_info_col_color"))
+            if not c.isValid():
+                return
+            ps["base_color"] = c.name()
+            # Une couleur sur un projecteur éteint ne sort pas : la mémoire ne
+            # pose couleur et canaux dédiés que si elle l'allume.
+            if int(ps.get("level", 0) or 0) <= 0:
+                ps["level"] = 100
+            self._save()
+            self._refresh()
+        elif col in (self.C_BEAM, self.C_MISC):
+            dlg = MemoryChannelsDialog(self, ps, self._proj_name(idx))
+            if dlg.exec() == QDialog.Accepted and dlg.apply_to(ps):
+                self._save()
+                self._refresh()
+
+    def _save(self):
+        """Écrit la mémoire sur disque et prévient l'appelant.
+
+        Immédiat et sans filet : les mémoires ne vivent QUE dans
+        `~/.maestro_akai_config.json`, et le Ctrl+Z de REC Lumière ne les couvre
+        pas.
+        """
+        if self._mw is not None and self._ref:
+            if hasattr(self._mw, '_save_akai_config_auto'):
+                self._mw._save_akai_config_auto()
+            if hasattr(self._mw, '_refresh_memory_pad'):
+                self._mw._refresh_memory_pad(self._ref[0], self._ref[1])
+        if callable(self._on_change):
+            self._on_change()
+
+    # ── Suppression d'un ou plusieurs projecteurs ─────────────────────────
+
+    def _delete_selection(self):
+        idxs = self._selected_idxs()
+        if idxs:
+            self._delete_projectors(idxs)
+
+    def _delete_projectors(self, idxs):
+        """Retire des projecteurs de la mémoire. True si c'est fait.
+
+        « Retirer » = NEUTRALISER l'entrée, jamais la sortir de la liste :
+        celle-ci est indexée par NUMÉRO DE PROJECTEUR (`enumerate` →
+        `projectors[i]`), un `pop()` décalerait tout le rig d'un cran.
+
+        L'édition porte sur la mémoire elle-même : elle vaut pour TOUS les clips
+        qui la rappellent ET pour le pad AKAI, d'où la confirmation.
+        """
+        states = self._states()
+        idxs = [i for i in idxs if 0 <= i < len(states)]
+        if not idxs:
+            return False
+
+        quoi = (self._proj_name(idxs[0]) if len(idxs) == 1
+                else tr("lt_seq_info_del_n", n=len(idxs)))
+        if QMessageBox.question(
+                self, tr("lt_seq_info_del_title"),
+                tr("lt_seq_info_del_confirm", proj=quoi, mem=self._label),
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel) != QMessageBox.Yes:
+            return False
+
+        for i in idxs:
+            ps = states[i]
+            ps["level"]          = 0
+            ps["base_color"]     = "#000000"
+            ps["strobe_speed"]   = 0
+            ps["channel_extras"] = {}
+            for key, _lbl in _MEM_BEAM_CH:
+                if key in ps:
+                    ps[key] = mem_ch_repos(key)
+            for key, _lbl in _MEM_MISC_CH:
+                if key in ps:
+                    ps[key] = 0
+            # ⚠️ Les clés `pan`/`tilt` sont SUPPRIMÉES et non remises à 32768 :
+            # le rappel par pad AKAI applique le pan/tilt dès que la clé existe,
+            # même au centre — il recentrerait la lyre au lieu de la laisser
+            # tranquille. Absente, les deux moteurs l'ignorent.
+            ps.pop("pan", None)
+            ps.pop("tilt", None)
+
+        self._save()
+        self._rebuild()
+        return True
 
 
 def reset_beam_channels(projectors, blackout=False):
@@ -2611,18 +3061,64 @@ class LightTrack(QWidget):
     # possible entre ce qu'on voit et ce qu'on touche, à n'importe quelle densité.
     HEADER_W = 145
 
+    def _multi_family(self):
+        """('effect'|'sequence', pistes de la famille) si cette piste appartient
+        à une famille multi-lignes, sinon (None, []).
+
+        Seules les pistes Effet et Séquence s'empilent : ce sont les deux qui
+        fusionnent (superposition d'effets, HTP de mémoires). Les autres —
+        Position, Gobo, groupes, projecteurs — sont uniques par conception, une
+        deuxième ligne n'y voudrait rien dire.
+        """
+        ed = self.parent_editor
+        if getattr(self, 'is_effect_track', False):
+            return 'effect', list(getattr(ed, '_effect_tracks', None) or [])
+        if getattr(self, 'is_sequence_track', False):
+            return 'sequence', list(getattr(ed, '_sequence_tracks', None) or [])
+        return None, []
+
+    def _header_actions(self):
+        """Icônes d'action de l'en-tête, de droite à gauche.
+
+        Le « ＋ » ne s'affiche que sur la DERNIÈRE piste de la famille — une
+        ligne par piste meublerait la colonne pour rien — et le « × » que sur
+        les pistes ajoutées, jamais sur la première : c'est elle que chargent
+        les montages existants et que vise le code par son nom.
+        """
+        fam, pistes = self._multi_family()
+        if not fam or self not in pistes:
+            return []
+        maxi = getattr(self.parent_editor,
+                       '_MAX_EFFECT_TRACKS' if fam == 'effect'
+                       else '_MAX_SEQUENCE_TRACKS', 8)
+        actions = []
+        if pistes[-1] is self and len(pistes) < maxi:
+            actions.append('add')
+        if pistes.index(self) > 0:
+            actions.append('del')
+        return actions
+
     def _header_rects(self, offset):
-        """{'lock': QRect} en coordonnées widget.
+        """{'lock': QRect, 'add'/'del': QRect} en coordonnées widget.
 
         `offset` = défilement horizontal : la colonne est gelée au bord gauche
         du viewport, elle suit donc la barre de défilement. La case du cadenas
         est réservée même quand la piste n'en porte pas (l'Audio), pour que TOUS
         les noms s'alignent sur la même verticale.
+
+        Les actions se rangent à DROITE, en partant du bord : le nom leur cède
+        la place (cf. `_paint_header`), il n'est jamais recouvert.
         """
         h = self.height()
         side = 15 if h >= 26 else max(9, h - 6)
         cy = max(0, (h - side) // 2)
-        return {'lock': QRect(offset + 11 + self.label_indent, cy, side, side)}
+        rects = {'lock': QRect(offset + 11 + self.label_indent, cy, side, side)}
+        if h >= 18:
+            x = offset + self.HEADER_W - 8 - side
+            for key in self._header_actions():
+                rects[key] = QRect(x, cy, side, side)
+                x -= side + 4
+        return rects
 
     def _paint_header(self, painter, offset):
         """Peint la colonne gelée : fond, accent de groupe, cadenas, nom."""
@@ -2636,12 +3132,18 @@ class LightTrack(QWidget):
         painter.setPen(QPen(QColor("#242428"), 1))
         painter.drawLine(offset + self.HEADER_W, 0, offset + self.HEADER_W, h)
 
-        r = self._header_rects(offset)['lock']
+        rects = self._header_rects(offset)
+        r = rects['lock']
         # Sous ~18 px de ligne, un pictogramme devient une tache : on ne garde
         # que le nom. Le clic droit reste la porte d'entrée des réglages.
         icone = h >= 18 and self.lockable
         if icone:
             self._paint_lock(painter, r)
+        gauche_actions = offset + self.HEADER_W - 10
+        for key in ('add', 'del'):
+            if key in rects:
+                self._paint_header_action(painter, rects[key], key)
+                gauche_actions = min(gauche_actions, rects[key].left())
 
         px = self.header_font_px()
         if not px:
@@ -2656,7 +3158,7 @@ class LightTrack(QWidget):
         painter.setFont(f)
         painter.setPen(self.NAME_LOCKED if self.locked else self.NAME_COLOR)
         x0 = r.right() + 9
-        larg = offset + self.HEADER_W - 10 - x0
+        larg = gauche_actions - 6 - x0
         if larg > 12:
             fm = painter.fontMetrics()
             painter.drawText(QRect(x0, 0, larg, h), Qt.AlignVCenter | Qt.AlignLeft,
@@ -2752,16 +3254,94 @@ class LightTrack(QWidget):
             fente.closeSubpath()
             painter.drawPath(fente)
 
+    ADD_IDLE  = QColor("#5e6a5e")
+    ADD_HOVER = QColor("#8bd88b")
+    DEL_IDLE  = QColor("#6a5252")
+    DEL_HOVER = QColor("#e07070")
+
+    def _paint_header_action(self, painter, r, key):
+        """« ＋ » (ajouter une piste de la famille) ou « × » (retirer celle-ci).
+
+        Peints au trait comme le cadenas, et dans les MÊMES rectangles que le
+        test de clic : à aucune densité de ligne l'icône ne peut se décaler de
+        sa cible.
+        """
+        survol = (self._hdr_hover == key)
+        col = ((self.ADD_HOVER if survol else self.ADD_IDLE) if key == 'add'
+               else (self.DEL_HOVER if survol else self.DEL_IDLE))
+        if survol:
+            painter.setPen(Qt.NoPen)
+            fond = QColor(col)
+            fond.setAlpha(38)
+            painter.setBrush(QBrush(fond))
+            painter.drawRoundedRect(r.adjusted(-1, -1, 1, 1), 3, 3)
+        m = max(3, int(r.width() * 0.28))
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(col, max(1.4, r.width() * 0.11),
+                            Qt.SolidLine, Qt.RoundCap))
+        cx, cy = r.center().x(), r.center().y()
+        if key == 'add':
+            painter.drawLine(cx - m, cy, cx + m, cy)
+            painter.drawLine(cx, cy - m, cx, cy + m)
+        else:
+            painter.drawLine(cx - m, cy - m, cx + m, cy + m)
+            painter.drawLine(cx + m, cy - m, cx - m, cy + m)
+
     def header_hit(self, x, y):
-        """'lock' si le point touche le cadenas, sinon None."""
+        """'lock', 'add', 'del' si le point touche l'icône, sinon None."""
         offset = self._scroll_offset()
         if not (offset <= x < offset + self.HEADER_W) or self.height() < 18:
             return None
+        rects = self._header_rects(offset)
+        for key in ('add', 'del'):
+            if key in rects and rects[key].adjusted(-3, -3, 3, 3).contains(int(x), int(y)):
+                return key
         if not self.lockable:
             return None
         # Cible élargie : à 9 px de côté, viser au pixel près est intenable.
-        r = self._header_rects(offset)['lock']
+        r = rects['lock']
         return 'lock' if r.adjusted(-5, -4, 5, 4).contains(int(x), int(y)) else None
+
+    def run_header_action(self, key):
+        """Exécute « ＋ » / « × ». Retourne True si la piste vient d'être retirée.
+
+        ⚠️ Le « × » supprime une piste ET ses blocs, et REC Lumière n'a pas de
+        Ctrl+Z sur la structure des pistes : on demande confirmation dès qu'il y
+        a quelque chose dessus.
+        """
+        fam, _pistes = self._multi_family()
+        ed = self.parent_editor
+        if fam == 'effect':
+            ajouter, retirer = ed._add_effect_track, ed._remove_effect_track
+        elif fam == 'sequence':
+            ajouter, retirer = ed._add_sequence_track, ed._remove_sequence_track
+        else:
+            return False
+
+        if key == 'add':
+            ajouter()
+        elif key == 'del':
+            if self.clips and QMessageBox.question(
+                    self, tr("lt_hdr_del_track_title"),
+                    tr("lt_hdr_del_track_confirm",
+                       track=self.display_name(), n=len(self.clips)),
+                    QMessageBox.Yes | QMessageBox.Cancel,
+                    QMessageBox.Cancel) != QMessageBox.Yes:
+                return False
+            retirer(self)
+        else:
+            return False
+
+        # Le « ＋ » change de ligne (nouvelle dernière piste) : toutes les
+        # en-têtes de la famille doivent être repeintes, pas seulement celle-ci
+        # — qui, sur un « × », n'existe déjà plus.
+        for t in list(getattr(ed, 'tracks', None) or []):
+            if t is not self:
+                t.update()
+        if key == 'del':
+            return True
+        self.update()
+        return False
 
     def update_header_hover(self, x, y):
         """Survol du cadenas : ne repeint que la colonne, et que si ça change."""
@@ -2769,6 +3349,13 @@ class LightTrack(QWidget):
         if zone == self._hdr_hover:
             return
         self._hdr_hover = zone
+        # L'en-tête est PEINT : sans widget dessous, il n'y a pas de tooltip
+        # automatique — c'est le survol qui la pose.
+        if zone in ('add', 'del'):
+            fam, _ = self._multi_family()
+            cle = ('lt_hdr_add_effect' if fam == 'effect' else 'lt_hdr_add_sequence') \
+                if zone == 'add' else 'lt_hdr_del_track'
+            QToolTip.showText(QCursor.pos(), tr(cle), self)
         off = self._scroll_offset()
         self.update(QRect(off, 0, self.HEADER_W, self.height()))
 
@@ -3426,8 +4013,13 @@ print(json.dumps(waveform))
         # Testé AVANT tout le reste, verrou compris : c'est le seul moyen de
         # déverrouiller une piste, il ne doit jamais être bloqué par le verrou.
         if event.button() == Qt.LeftButton:
-            if self.header_hit(x, y) == 'lock':
+            zone = self.header_hit(x, y)
+            if zone == 'lock':
                 self.set_locked(not self.locked)
+                event.accept()
+                return
+            if zone in ('add', 'del'):
+                self.run_header_action(zone)
                 event.accept()
                 return
 
@@ -4173,6 +4765,11 @@ print(json.dumps(waveform))
             menu.addAction(tr("tle_add_effect_track")).triggered.connect(ed._add_effect_track)
         if hasattr(ed, '_add_sequence_track'):
             menu.addAction(tr("te2_add_sequence_track")).triggered.connect(ed._add_sequence_track)
+        # Retirer une piste ajoutée : le « × » de l'en-tête disparaissait avec
+        # elle en 3.1.89, on pouvait empiler des pistes sans jamais en enlever.
+        if 'del' in self._header_actions():
+            menu.addAction(tr("lt_hdr_del_track")).triggered.connect(
+                lambda: self.run_header_action('del'))
 
         # Piste orpheline (fixture retirée du patch) : la seule qu'on supprime.
         if (getattr(self, 'is_projector_track', False)

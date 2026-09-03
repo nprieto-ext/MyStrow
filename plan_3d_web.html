@@ -781,6 +781,11 @@ function makePoolMat() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Textures gobo (8 slots, dessinées en canvas)
 // ─────────────────────────────────────────────────────────────────────────────
+// ⚠️ L'ordre de ces huit motifs fait foi et vit dans `core.GOBO_SLOT_NAMES` :
+// le plan 2D les redessine au QPainter dans la tache au sol
+// (`plan_de_feu._draw_fixture`). Les deux listes ont DIVERGÉ — le slot 3
+// montrait trois cercles ici et une croix × en 2D — et le même show ne se
+// lisait pas pareil selon le plan ouvert. Modifier l'un = modifier l'autre.
 function _createGoboTexture(slot) {
   const size = 256, cx = 128, cy = 128, r = 124;
   const cv  = document.createElement('canvas');
@@ -1593,12 +1598,63 @@ function orientCone(mesh, tipX, tipY, tipZ, baseX, baseY, baseZ, rScale) {
 const _colBuf = new THREE.Color();
 const _briBuf = new THREE.Color();
 
-window.updateScene = function(projectors) {
+// ─────────────────────────────────────────────────────────────────────────────
+// Inertie pan/tilt
+// ─────────────────────────────────────────────────────────────────────────────
+// Python ne pousse une trame que toutes les ~50 ms (le débounce de
+// `Plan3DWebWindow.refresh()`), alors que la scène est rendue à 60 images/s.
+// Une lyre pilotée par un effet de MOUVEMENT sautait donc de palier en palier,
+// et dès que l'oscillation approche la moitié de cette cadence les paliers se
+// replient sur deux poses : la tête a l'air de basculer d'une position à
+// l'autre au lieu de balayer (« ça bouge, mais c'est tout ou rien »).
+//
+// La trame reçue porte donc désormais la CIBLE ; l'affichage la rattrape image
+// par image. C'est aussi ce que fait un vrai appareil : une tête mobile a de
+// l'inertie, elle ne se téléporte pas d'un pas de DMX au suivant.
+//
+// ⚠️ La cible vit dans l'objet de scène (`_panT`/`_tiltT`), JAMAIS dans la
+// trame : `updateScene` écrase `p.pan`/`p.tilt` par la valeur lissée pour que
+// TOUT l'aval (corps, `beamFloor`, tache au sol) reste cohérent, et la passe
+// d'animation relit la même trame.
+const PT_TAU = 0.055;     // constante de temps du rattrapage, en secondes
+const PT_EPS = 30;        // seuil d'arrêt sur 65535 (≈ 0,12° de course)
+let _lastScene = null;    // dernière trame reçue de Python
+let _ptPrev    = 0;       // horodatage de la dernière avance (ms)
+
+function _tickPanTilt(dt) {
+  // Avance toutes les positions lissées ; rend true s'il en reste une en route.
+  const k = 1 - Math.exp(-dt / PT_TAU);
+  let moving = false;
+  for (let i = 0; i < _objs.length; i++) {
+    const o = _objs[i];
+    if (o._panS === undefined) continue;   // slot jamais alimenté (ou pixel)
+    const dp = o._panT - o._panS;
+    const dq = o._tiltT - o._tiltS;
+    if (Math.abs(dp) < PT_EPS && Math.abs(dq) < PT_EPS) {
+      o._panS = o._panT; o._tiltS = o._tiltT;
+      o._ptMoving = false;
+      continue;
+    }
+    o._panS  += dp * k;
+    o._tiltS += dq * k;
+    o._ptMoving = true;
+    moving = true;
+  }
+  return moving;
+}
+
+// `_anim` : passe d'animation déclenchée par la boucle de rendu. Elle rejoue la
+// DERNIÈRE trame pour les seuls appareils encore en mouvement — les autres ne
+// coûtent rien, et la scène n'est pas reconstruite 60 fois par seconde.
+window.updateScene = function(projectors, _anim) {
   const bs = window.beamScale;
+  if (!_anim) _lastScene = projectors;
 
   for (let i = 0; i < projectors.length; i++) {
     const p   = projectors[i];
     const obj = _getObj(i);
+    // Passe d'animation : seuls les appareils dont la tête bouge encore.
+    if (_anim && !obj._ptMoving) continue;
 
     // ── Barre/matrice : rendu per-pixel (cellule légère, pas de corps/faisceau) ──
     if (p.is_pixel || p.is_master) {
@@ -1663,6 +1719,13 @@ window.updateScene = function(projectors) {
     obj.pxGlow.visible = false;
     obj.pxHalo.visible = false;
     obj.pxHousing.visible = false;
+
+    // Position lissée : la trame porte la cible, l'affichage la rattrape
+    // (cf. _tickPanTilt). Écrit dans `p` pour que le corps, `beamFloor()` et
+    // la tache au sol partent tous de la même valeur.
+    if (obj._panS === undefined) { obj._panS = p.pan; obj._tiltS = p.tilt; }
+    if (!_anim) { obj._panT = p.pan; obj._tiltT = p.tilt; }
+    p.pan = obj._panS; p.tilt = obj._tiltS;
 
     // Projecteur sélectionné dans le tableau : on le force allumé en blanc,
     // à pleine puissance. C'est ce qui permet de le repérer d'un coup d'œil
@@ -1931,6 +1994,7 @@ window.updateScene = function(projectors) {
   }
 
   // Masquer les slots inutilisés
+  if (_anim) return;
   for (let i = projectors.length; i < _objs.length; i++) {
     const o = _objs[i];
     o.cVol.visible  = o.lensGlow.visible =
@@ -2557,6 +2621,14 @@ renderer.info.autoReset = false;
     for (let i = 0; i < _beamMats.length; i++) {
       _beamMats[i].uniforms.uFogDrift.value.set(dx, dy, dz);
     }
+  }
+  // Inertie pan/tilt : rattrapage à la cadence d'AFFICHAGE, pas à celle des
+  // trames Python. dt plafonné — un onglet masqué puis réaffiché ne doit pas
+  // faire sauter les têtes d'un coup (rAF est suspendu pendant ce temps).
+  const _ptDt = _ptPrev ? Math.min(0.1, (_now - _ptPrev) / 1000) : 0;
+  _ptPrev = _now;
+  if (_ptDt > 0 && _lastScene && _tickPanTilt(_ptDt)) {
+    window.updateScene(_lastScene, true);
   }
   for (let i = 0; i < _objs.length; i++) _orientPrism(_objs[i], _t);
   _selBlink(_t);

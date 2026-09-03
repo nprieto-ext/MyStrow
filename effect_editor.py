@@ -4607,7 +4607,9 @@ class EffectEditorDialog(QDialog):
                     g += (c1.greenF() * raw + c2.greenF() * r2) * amp
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr == "Pan":
-                    amp = (layer.size / 100.0) * 8192 * PAN_ANGULAR_RATIO
+                    # Course PLEINE : parite avec le moteur du show, qui ne
+                    # plafonne plus ces couches a +/-12,5% (cf. _update_effect_from_layers).
+                    amp = (layer.size / 100.0) * 32768 * PAN_ANGULAR_RATIO
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
@@ -4615,7 +4617,7 @@ class EffectEditorDialog(QDialog):
                     pan_v = int(max(0, min(65535, c_pan + pan_sign * (raw - 0.5) * 2 * amp)))
                     has_movement = True
                 elif attr == "Tilt":
-                    amp = (layer.size / 100.0) * 8192
+                    amp = (layer.size / 100.0) * 32768
                     _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
                     c_tilt = _ctr[1] if _ctr is not None else 32768
                     tilt_v = int(max(0, min(65535, c_tilt + (raw - 0.5) * 2 * amp)))
@@ -4625,7 +4627,10 @@ class EffectEditorDialog(QDialog):
                     sdef     = PAN_TILT_SHAPES.get(sid, PAN_TILT_SHAPES.get('cercle', {}))
                     pan_cfg  = sdef.get('pan',  ('Sinus',  0, 1.0))
                     tilt_cfg = sdef.get('tilt', ('Sinus', 25, 1.0))
-                    pt_amp   = (layer.size / 100.0) * 8192
+                    # L'apercu etait reste a 8192 alors que le show utilise la
+                    # course pleine depuis le passage de la trajectoire couplee :
+                    # il montrait un QUART du mouvement reel.
+                    pt_amp   = (layer.size / 100.0) * 32768
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     # SENS de la trajectoire : → avant · ← inverse (la lyre tourne

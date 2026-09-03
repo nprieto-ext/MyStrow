@@ -1954,6 +1954,64 @@ class _PanTiltFloater(QFrame):
         self.closed.emit()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Géométrie du faisceau 2D d'une lyre
+# ─────────────────────────────────────────────────────────────────────────────
+# Point UNIQUE de la relation (pan, tilt) → cône dessiné. Trois consommateurs en
+# dépendent — le rendu (`_draw_fixture`), la prise du faisceau à la souris
+# (`_beam_at`) et le ciblage inverse (`_apply_target`) — et ils en avaient
+# chacun une version DIFFÉRENTE : on attrapait un faisceau là où rien n'était
+# dessiné, et viser un point posait un tilt qui n'y menait pas.
+#
+# ⚠️ La pointe du cône doit être une fonction CONTINUE de (pan, tilt).
+# `beam_len` portait un plancher de 2r : sur un effet de Tilt seul, l'angle ne
+# prend que deux valeurs (0° ou 180°, la composante Pan étant nulle) et la
+# pointe sautait de +2r à −2r au franchissement du centre, sans jamais passer
+# par les positions intermédiaires — « ça bouge, mais c'est tout ou rien ».
+# Le biais +0,015 qui traînait sur `fdy` était un pansement sur ce symptôme
+# (« évite le battement visuel quand tilt est neutre »).
+#
+# La longueur part donc de zéro : la pointe vaut `(−fdx, fdy) × k`, fonction
+# linéaire de la déflexion, continue par construction. C'est aussi la géométrie
+# juste — vue de dessus, une lyre qui vise droit en bas n'a pas de faisceau
+# latéral. Le facteur passe de 6 à 10 pour conserver l'amplitude que le plancher
+# apportait. Même famille de bug que le faisceau 3D qui sautait à l'horizontale :
+# la discontinuité vit dans une BORNE, pas dans la trigonométrie.
+_BEAM_K = 10.0          # longueur du cône, en rayons d'icône, à déflexion max
+_BEAM_TILT_SPAN = 0.75  # course de tilt représentée : ±0,75·π (= 270°)
+
+
+def beam_geometry(pan_val, tilt_val, r):
+    """(angle en degrés, longueur, demi-largeur) du cône d'une lyre.
+
+    Modèle linéaire indépendant : Pan → X, Tilt → profondeur scène — un cercle
+    en pan/tilt donne un cercle à l'écran, un huit donne un huit.
+    """
+    fdx  = math.sin((pan_val  - 32768) / 32768.0 * math.pi)
+    fdy  = math.sin((tilt_val - 32768) / 32768.0 * math.pi * _BEAM_TILT_SPAN)
+    defl = math.sqrt(fdx * fdx + fdy * fdy)          # 0..√2
+    angle = math.degrees(math.atan2(fdx, fdy)) if defl > 1e-4 else 0.0
+    return (angle,
+            int(defl / math.sqrt(2) * r * _BEAM_K),
+            int(r * 0.5 + defl / math.sqrt(2) * r * 2.0))
+
+
+def beam_aim(dx, dy, r):
+    """Inverse de `beam_geometry` : (pan, tilt) pour poser la pointe sur (dx, dy).
+
+    `dx`/`dy` sont en pixels canvas depuis la lyre, dézoomés. Qt tourne dans le
+    sens horaire sur un axe Y vers le bas : la pointe d'un cône de longueur L
+    tombe en (−L·sin θ, L·cos θ), d'où le signe sur X. Hors de portée, l'asin
+    est borné : la lyre part à sa déflexion maximale dans la bonne direction.
+    """
+    k = r * _BEAM_K / math.sqrt(2)
+    fdx = max(-1.0, min(1.0, -dx / k))
+    fdy = max(-1.0, min(1.0,  dy / k))
+    pan  = 32768 + int(math.asin(fdx) / math.pi * 32768)
+    tilt = 32768 + int(math.asin(fdy) / (math.pi * _BEAM_TILT_SPAN) * 32768)
+    return max(0, min(65535, pan)), max(0, min(65535, tilt))
+
+
 class FixtureCanvas(QWidget):
     """Canvas 2D libre - toutes les fixtures sont dessinees via paintEvent"""
 
@@ -2135,9 +2193,9 @@ class FixtureCanvas(QWidget):
     def _apply_target(self, pos):
         """Oriente les lyres sélectionnées vers le point pos (pixels canvas).
 
-        Travaille en pixels — même repère que le rendu visuel du faisceau.
-        Pan  : atan2 depuis la lyre vers la cible dans le plan 2D.
-        Tilt : la pointe du faisceau visuel doit atteindre la cible (beam_len ≈ dist).
+        Travaille en pixels — même repère que le rendu visuel du faisceau :
+        `beam_aim` est l'inverse exact de `beam_geometry`, donc la pointe du
+        cône dessiné tombe sur le point cliqué.
         """
         if not self.pdf.selected_lamps:
             return
@@ -2164,21 +2222,19 @@ class FixtureCanvas(QWidget):
             if proj.level == 0:
                 proj.set_color(QColor("white"), brightness=100)
 
-            # ── Pan ────────────────────────────────────────────────────
-            # 0° = "en avant" (vers le bas canvas) — même repère que le rendu
-            pan_angle = math.degrees(math.atan2(dx, dy))
-            pan_val   = 32768 - int(pan_angle / 135.0 * 32768)
-            pan_val   = max(0, min(65535, pan_val))
-
-            # ── Tilt ───────────────────────────────────────────────────
-            # 32768 = neutre (droit vers le bas), valeurs > 32768 = incliné vers l'avant
-            # Le 3D interprète tilt centré sur 32768 — ne pas envoyer 0/65535 (= vers le haut)
-            # Distance ramenée à l'échelle du plan entier : sans ça, viser le même
-            # point du plan donnait un tilt différent selon le zoom (et à ×4 tout
-            # tombait au-delà de r*9, donc toujours tilt maxi).
-            tilt_ratio = max(0.0, min(1.0, (dist / self._zoom - r * 2) / max(1, r * 7)))
-            tilt_val   = 32768 + int(tilt_ratio * 16384)   # 32768 → 49152 (~67° max)
-            tilt_val   = max(32768, min(49152, tilt_val))
+            # Inverse EXACT de la géométrie du dessin : la pointe du cône
+            # tombe sur le point cliqué. Les deux formules d'avant étaient
+            # approchées et divergentes (pan sur une course de 135°, tilt sur
+            # une rampe linéaire de la distance) : viser le bord du plan
+            # posait un tilt dont le faisceau s'arrêtait 40 px trop court.
+            #
+            # Coordonnées dézoomées : sans ça, viser le même point du plan
+            # donnait un tilt différent selon le zoom.
+            pan_val, tilt_val = beam_aim(dx / self._zoom, dy / self._zoom, r)
+            # Le mode cible ne vise que l'avant-scène : on ne renvoie jamais
+            # la lyre vers l'arrière (tilt < 32768 = vers le fond, et 0/65535
+            # pointent vers le haut).
+            tilt_val = max(32768, min(49152, tilt_val))
 
             # Appliquer le swap si actif : artnet_dmx va re-swapper, donc on
             # pre-swap ici pour que les bons axes arrivent sur les bons canaux.
@@ -2404,12 +2460,12 @@ class FixtureCanvas(QWidget):
             if getattr(proj, 'fixture_type', '') != 'Moving Head':
                 continue
             cx, cy = self._get_canvas_pos(i)
-            pan_val    = getattr(proj, 'pan',  32768)
-            tilt_val   = getattr(proj, 'tilt', 32768)
-            pan_angle  = (pan_val - 32768) / 32768.0 * 135.0
-            tilt_ratio = tilt_val / 65535.0
-            beam_len   = int(r * 2 + tilt_ratio * r * 7)
-            beam_hw    = int(r * 0.6 + tilt_ratio * r * 2.5)
+            # Même géométrie que le dessin : sans ça on attrape le faisceau
+            # là où il n'est pas (l'ancien calcul avait sa propre formule,
+            # avec un tilt ramené sur 0..1 au lieu d'un écart au centre —
+            # une lyre au repos se voyait attribuer un cône de 71 px).
+            pan_angle, beam_len, beam_hw = beam_geometry(
+                getattr(proj, 'pan', 32768), getattr(proj, 'tilt', 32768), r)
 
             # Transformer dans le repère local (centré + rotation inverse)
             rad = _m.radians(-pan_angle)
@@ -2575,18 +2631,13 @@ class FixtureCanvas(QWidget):
         if ftype == "Moving Head":
             pan_val  = _htp_e[2] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'pan',  32768)
             tilt_val = _htp_e[3] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'tilt', 32768)
-            # Modèle linéaire indépendant : Pan → X, Tilt → profondeur scène
-            # → cercle (sin+cos 90°) = cercle, huit = 8, carré = □, etc.
-            _pan_rad  = (pan_val  - 32768) / 32768.0 * math.pi
-            _tilt_rad = (tilt_val - 32768) / 32768.0 * math.pi * 0.75
-            _fdx = math.sin(_pan_rad)
-            _fdy = math.sin(_tilt_rad)
-            _defl = math.sqrt(_fdx * _fdx + _fdy * _fdy)  # 0..√2
-            # Angle du cône depuis l'axe "profondeur" (= pan=0, tilt=max)
-            # Biais +0.015 sur _fdy : évite atan2(x,0)=±90° quand tilt est neutre (battement visuel)
-            pan_angle  = math.degrees(math.atan2(_fdx, _fdy + 0.015)) if _defl > 0.001 else 0.0
-            beam_len   = int(r * 2 + _defl / math.sqrt(2) * r * 6)
-            beam_hw    = int(r * 0.5 + _defl / math.sqrt(2) * r * 2.0)
+            pan_angle, beam_len, beam_hw = beam_geometry(pan_val, tilt_val, r)
+            # Base du cône : au bord de l'icône quand le faisceau est franc,
+            # ramenée vers le centre quand il se rétracte — sans quoi un cône
+            # plus court que `r` se dessinerait à l'envers (base au-delà de la
+            # pointe). Le corps de la lyre, dessiné par-dessus, masque ce qui
+            # reste sous l'icône.
+            _beam_y0   = min(r, max(1, beam_len // 2))
 
             # Cone de faisceau orienté — gradient lumineux à la source
             if is_lit:
@@ -2609,27 +2660,27 @@ class FixtureCanvas(QWidget):
 
                 # Halo extérieur (large et très doux)
                 haze_alpha = 55 if gobo_idx > 0 else 100
-                haze_grad = QLinearGradient(0, float(r), 0, float(beam_len))
+                haze_grad = QLinearGradient(0, float(_beam_y0), 0, float(beam_len))
                 haze_grad.setColorAt(0.0, QColor(fr, fg, fb, haze_alpha))
                 haze_grad.setColorAt(1.0, QColor(fr, fg, fb, 0))
                 painter.setBrush(QBrush(haze_grad))
                 painter.drawPolygon(QPolygon([
-                    QPoint(-beam_hw,          r),
-                    QPoint( beam_hw,          r),
+                    QPoint(-beam_hw,          _beam_y0),
+                    QPoint( beam_hw,          _beam_y0),
                     QPoint( int(beam_hw * 2.2), beam_len),
                     QPoint(-int(beam_hw * 2.2), beam_len),
                 ]))
 
                 # Cône principal
                 alpha_src = 90 if gobo_idx > 0 else 195
-                beam_grad = QLinearGradient(0, float(r), 0, float(beam_len))
+                beam_grad = QLinearGradient(0, float(_beam_y0), 0, float(beam_len))
                 beam_grad.setColorAt(0.0, QColor(fr, fg, fb, alpha_src))
                 beam_grad.setColorAt(0.65, QColor(fr, fg, fb, alpha_src // 5))
                 beam_grad.setColorAt(1.0, QColor(fr, fg, fb, 0))
                 painter.setBrush(QBrush(beam_grad))
                 painter.drawPolygon(QPolygon([
-                    QPoint(-r // 2, r),
-                    QPoint( r // 2, r),
+                    QPoint(-r // 2, _beam_y0),
+                    QPoint( r // 2, _beam_y0),
                     QPoint( beam_hw, beam_len),
                     QPoint(-beam_hw, beam_len),
                 ]))
@@ -2638,13 +2689,13 @@ class FixtureCanvas(QWidget):
                 cr, cg, cb = min(255, fr + 90), min(255, fg + 90), min(255, fb + 90)
                 core_hw   = max(1, r // 6)
                 core_stop = int(beam_len * 0.65)
-                core_grad = QLinearGradient(0, float(r), 0, float(core_stop))
+                core_grad = QLinearGradient(0, float(_beam_y0), 0, float(core_stop))
                 core_grad.setColorAt(0.0, QColor(cr, cg, cb, 240))
                 core_grad.setColorAt(1.0, QColor(cr, cg, cb, 0))
                 painter.setBrush(QBrush(core_grad))
                 painter.drawPolygon(QPolygon([
-                    QPoint(-core_hw, r),
-                    QPoint( core_hw, r),
+                    QPoint(-core_hw, _beam_y0),
+                    QPoint( core_hw, _beam_y0),
                     QPoint( core_hw, core_stop),
                     QPoint(-core_hw, core_stop),
                 ]))
@@ -2657,39 +2708,71 @@ class FixtureCanvas(QWidget):
                 painter.drawEllipse(QPoint(0, beam_len), iw, ih)
 
                 # Motif gobo dans l'impact
+                #
+                # ⚠️ L'ordre des slots est celui de `core.GOBO_SLOT_NAMES`, et il
+                # est aussi dessiné par `_createGoboTexture` dans
+                # `plan_3d_web.html` : les deux listes étaient divergentes (slot 3
+                # = croix × ici, trois cercles en 3D), donc le même show ne se
+                # lisait pas pareil selon le plan ouvert. Modifier l'un = modifier
+                # l'autre.
+                #
+                # La tache est vue de dessus, donc très aplatie : les motifs sont
+                # tracés en coordonnées normalisées (× iw en x, × ih en y) pour
+                # suivre cet écrasement au lieu d'être dessinés ronds.
                 if gobo_idx > 0:
                     pat_col = QColor(fill_color)
                     pat_col.setAlpha(160)
-                    pat_pen = QPen(pat_col, max(1, iw // 6))
-                    painter.setPen(pat_pen)
+                    painter.setPen(QPen(pat_col, max(1, iw // 6)))
                     painter.setBrush(Qt.NoBrush)
                     import math as _gm
-                    if gobo_idx == 1:   # lignes horizontales
-                        for dy in (-ih // 2, 0, ih // 2):
-                            painter.drawLine(-iw + 2, beam_len + dy, iw - 2, beam_len + dy)
-                    elif gobo_idx == 2:  # croix +
-                        painter.drawLine(-iw + 2, beam_len, iw - 2, beam_len)
-                        painter.drawLine(0, beam_len - ih + 1, 0, beam_len + ih - 1)
-                    elif gobo_idx == 3:  # croix ×
-                        painter.drawLine(-iw + 2, beam_len - ih + 1, iw - 2, beam_len + ih - 1)
-                        painter.drawLine(-iw + 2, beam_len + ih - 1, iw - 2, beam_len - ih + 1)
-                    elif gobo_idx == 4:  # étoile 6 branches
-                        for angle_deg in range(0, 180, 30):
-                            rad = _gm.radians(angle_deg)
-                            dx = int(_gm.cos(rad) * iw)
-                            dy = int(_gm.sin(rad) * ih)
-                            painter.drawLine(-dx, beam_len - dy, dx, beam_len + dy)
-                    elif gobo_idx == 5:  # cercle inscrit
-                        painter.drawEllipse(QPoint(0, beam_len), iw * 2 // 3, ih * 2 // 3)
-                    elif gobo_idx == 6:  # triangle
-                        painter.drawPolygon(QPolygon([
-                            QPoint(0,       beam_len - ih + 1),
-                            QPoint(iw - 2,  beam_len + ih - 1),
-                            QPoint(-iw + 2, beam_len + ih - 1),
-                        ]))
-                    elif gobo_idx == 7:  # deux cercles concentriques
-                        painter.drawEllipse(QPoint(0, beam_len), iw * 2 // 3, ih * 2 // 3)
-                        painter.drawEllipse(QPoint(0, beam_len), iw // 3, ih // 3)
+
+                    def _pt(ux, uy):
+                        """Point du motif en coordonnées normalisées (-1..1)."""
+                        return QPoint(int(ux * iw), int(beam_len + uy * ih))
+
+                    if gobo_idx == 1:      # Anneau
+                        painter.drawEllipse(QPoint(0, beam_len),
+                                            iw * 3 // 4, max(1, ih * 3 // 4))
+                    elif gobo_idx == 2:    # Étoile 4 branches
+                        for a in (45, 135, 225, 315):
+                            rad = _gm.radians(a)
+                            painter.drawLine(QPoint(0, beam_len),
+                                             _pt(_gm.cos(rad), _gm.sin(rad)))
+                    elif gobo_idx == 3:    # Trois cercles
+                        _rr = max(1, iw // 4)
+                        for i in range(3):
+                            rad = _gm.radians(90 + i * 120)
+                            painter.drawEllipse(_pt(_gm.cos(rad) * 0.5,
+                                                    _gm.sin(rad) * 0.5),
+                                                _rr, max(1, ih // 3))
+                    elif gobo_idx == 4:    # Trois palmes (hélice)
+                        for i in range(3):
+                            rad = _gm.radians(90 + i * 120)
+                            painter.drawLine(QPoint(0, beam_len),
+                                             _pt(_gm.cos(rad) * 0.85,
+                                                 _gm.sin(rad) * 0.85))
+                            painter.drawLine(_pt(_gm.cos(rad) * 0.85,
+                                                 _gm.sin(rad) * 0.85),
+                                             _pt(_gm.cos(rad + 0.9) * 0.55,
+                                                 _gm.sin(rad + 0.9) * 0.55))
+                    elif gobo_idx == 5:    # Breakup (éclats dispersés)
+                        for a, d in ((20, 0.8), (95, 0.55), (165, 0.85),
+                                     (240, 0.6), (310, 0.75)):
+                            rad = _gm.radians(a)
+                            painter.drawLine(_pt(_gm.cos(rad) * d * 0.45,
+                                                 _gm.sin(rad) * d * 0.45),
+                                             _pt(_gm.cos(rad) * d,
+                                                 _gm.sin(rad) * d))
+                    elif gobo_idx == 6:    # Six rayons
+                        for i in range(6):
+                            rad = _gm.radians(i * 60)
+                            painter.drawLine(QPoint(0, beam_len),
+                                             _pt(_gm.cos(rad), _gm.sin(rad)))
+                    elif gobo_idx == 7:    # Bull's-eye
+                        painter.drawEllipse(QPoint(0, beam_len),
+                                            iw * 3 // 4, max(1, ih * 3 // 4))
+                        painter.drawEllipse(QPoint(0, beam_len),
+                                            max(1, iw // 3), max(1, ih // 3))
 
                 painter.restore()
             # ── Lyre / Moving Head ───────────────────────────────────────────────

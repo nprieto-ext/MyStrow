@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
     QHeaderView, QCheckBox, QTextEdit, QToolTip, QDialogButtonBox,
     QLayout, QSizePolicy, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
+    QGraphicsItem, QGroupBox,
     QDoubleSpinBox
 )
 from PySide6.QtCore import (
@@ -33,8 +34,8 @@ except ImportError:
     _psutil = None
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
-    QPalette, QPolygon, QAction, QActionGroup, QDesktopServices,
-    QFontMetrics, QCursor
+    QPalette, QPolygon, QPolygonF, QTransform, QAction, QActionGroup,
+    QDesktopServices, QFontMetrics, QCursor
 )
 
 
@@ -227,6 +228,7 @@ from core import (
     copy_report, send_report_email, DMX_FRAME_MS,
     fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
     message_erreur_reseau,
+    canonical_manufacturer, build_fixture_library,
 )
 from i18n import get_language, set_language, tr
 from projector import Projector
@@ -2875,6 +2877,201 @@ class VideoFxOverlay(QWidget):
         p.end()
 
 
+def _quad_is_convex(poly):
+    """Vrai si le quadrilatère est convexe et non croisé.
+
+    Test du signe des produits vectoriels aux quatre sommets : tous de même
+    signe ⇒ le contour tourne toujours dans le même sens, donc ni nœud
+    papillon ni sommet rentrant. Un produit nul signale trois points alignés,
+    quadrilatère aplati que l'homographie ne sait pas inverser proprement.
+    """
+    n = poly.count()
+    if n != 4:
+        return False
+    signs = []
+    for i in range(4):
+        a, b, c = poly.at(i), poly.at((i + 1) % 4), poly.at((i + 2) % 4)
+        cross = ((b.x() - a.x()) * (c.y() - b.y())
+                 - (b.y() - a.y()) * (c.x() - b.x()))
+        if abs(cross) < 1e-9:
+            return False
+        signs.append(cross > 0)
+    return all(signs) or not any(signs)
+
+
+class VideoGeometry:
+    """Cadrage, etirement et deformation 4 coins de la sortie video.
+
+    Trois etages, appliques dans cet ordre par `VideoSurface._relayout()` :
+
+      1. `fit`      — comment l'image occupe la dalle : « fit » garde le ratio
+                      (bandes noires), « fill » remplit en rognant, « stretch »
+                      etire sans se soucier du ratio.
+      2. `scale_*` / `offset_*` — retouche manuelle, en fraction de la vue. De
+                      quoi rattraper une dalle LED au ratio exotique (une 3:1,
+                      une 5:2) sans passer par les coins.
+      3. `corners`  — quatre deltas (HG, HD, BD, BG), eux aussi en fraction de
+                      la vue, qui deplacent chaque coin independamment. Qt en
+                      tire une HOMOGRAPHIE (`QTransform.quadToQuad`), donc un
+                      vrai keystone perspectif, pas un simple cisaillement.
+
+    Les coins sont des DELTAS et non des positions absolues : changer le
+    cadrage ou l'etirement conserve alors le reglage de coins, au lieu de le
+    rendre absurde.
+
+    Tout est normalise (fraction de la vue) : le meme reglage vaut donc pour la
+    meme dalle branchee en 1920x1080 ou en 3840x2160.
+    """
+
+    FIT_MODES = ("fit", "fill", "stretch")
+
+    def __init__(self):
+        self.fit      = "fit"
+        self.scale_x  = 1.0
+        self.scale_y  = 1.0
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+        self.corners  = [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
+
+    # ── Etat ──────────────────────────────────────────────────────────────
+    def is_identity(self):
+        """Vrai si la geometrie ne change rien — on garde alors le chemin rapide.
+
+        Mesure en 1080p : 0,32 ms/frame sans transformation contre 4,43 ms avec
+        homographie. Inutile de payer ca quand l'utilisateur n'a rien regle.
+        """
+        return (self.fit == "fit"
+                and abs(self.scale_x - 1.0) < 1e-6 and abs(self.scale_y - 1.0) < 1e-6
+                and abs(self.offset_x) < 1e-6 and abs(self.offset_y) < 1e-6
+                and not self.has_warp())
+
+    def has_warp(self):
+        return any(abs(v) > 1e-6 for c in self.corners for v in c)
+
+    def reset(self):
+        self.__init__()
+
+    def reset_corners(self):
+        self.corners = [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
+
+    # ── Serialisation ─────────────────────────────────────────────────────
+    def to_dict(self):
+        return {
+            "fit": self.fit,
+            "scale_x": round(self.scale_x, 6), "scale_y": round(self.scale_y, 6),
+            "offset_x": round(self.offset_x, 6), "offset_y": round(self.offset_y, 6),
+            "corners": [[round(x, 6), round(y, 6)] for x, y in self.corners],
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        g = cls()
+        if not isinstance(d, dict):
+            return g
+        fit = d.get("fit")
+        if fit in cls.FIT_MODES:
+            g.fit = fit
+
+        def _f(key, default, lo, hi):
+            try:
+                return max(lo, min(hi, float(d.get(key, default))))
+            except (TypeError, ValueError):
+                return default
+
+        g.scale_x  = _f("scale_x", 1.0, 0.05, 4.0)
+        g.scale_y  = _f("scale_y", 1.0, 0.05, 4.0)
+        g.offset_x = _f("offset_x", 0.0, -2.0, 2.0)
+        g.offset_y = _f("offset_y", 0.0, -2.0, 2.0)
+        # Un fichier tronque ou bricole a la main ne doit pas casser la sortie :
+        # tout coin illisible retombe a zero, les autres sont conserves.
+        raw = d.get("corners")
+        if isinstance(raw, list):
+            for i in range(min(4, len(raw))):
+                try:
+                    x, y = raw[i]
+                    g.corners[i] = [max(-2.0, min(2.0, float(x))),
+                                    max(-2.0, min(2.0, float(y)))]
+                except (TypeError, ValueError):
+                    pass
+        return g
+
+    def copy(self):
+        return VideoGeometry.from_dict(self.to_dict())
+
+
+class _GeometryAdjustItem(QGraphicsItem):
+    """Mire de reglage : grille deformee, contour et poignees des 4 coins.
+
+    Pourquoi un item de la scene et non un widget pose par-dessus : c'est la
+    meme raison qui a fait naitre `VideoSurface`. Sous Windows, un calque
+    enfant se peint DERRIERE une video qui joue. Dans la scene, Qt compose, et
+    la mire reste visible quoi qu'il arrive.
+
+    La grille est passee par la MEME homographie que l'image : elle montre donc
+    la deformation reellement appliquee, ce qui est tout l'interet quand on
+    cale une dalle de travers.
+    """
+
+    HANDLE_R = 13          # rayon de la poignee, en pixels de sortie
+    _LABELS  = ("HG", "HD", "BD", "BG")
+
+    def __init__(self, surface):
+        super().__init__()
+        self._surface = surface
+        self.setZValue(20)          # au-dessus du calque d'effet (zValue 10)
+        self.setAcceptedMouseButtons(Qt.NoButton)   # la vue gere la souris
+
+    def boundingRect(self):
+        v = self._surface.viewport()
+        # Large : les poignees peuvent sortir du cadre de l'image.
+        return QRectF(-2000, -2000, v.width() + 4000, v.height() + 4000)
+
+    def paint(self, p, option, widget=None):
+        pts = self._surface.corner_points()
+        if not pts:
+            return
+        p.setRenderHint(QPainter.Antialiasing, True)
+
+        # ── Grille projetee ───────────────────────────────────────────────
+        # Interpolation bilineaire sur le quadrilatere de destination : c'est
+        # exactement ce que fait l'homographie sur les bords, et l'ecart au
+        # centre reste invisible a l'oeil pour un reglage manuel.
+        def q(u, v):
+            top    = pts[0] + (pts[1] - pts[0]) * u
+            bottom = pts[3] + (pts[2] - pts[3]) * u
+            return top + (bottom - top) * v
+
+        N = 8
+        p.setPen(QPen(QColor(0, 212, 255, 90), 1))
+        for i in range(1, N):
+            t = i / N
+            p.drawLine(q(t, 0.0), q(t, 1.0))
+            p.drawLine(q(0.0, t), q(1.0, t))
+        # Diagonales : le seul repere qui trahit un trapeze mal centre.
+        p.setPen(QPen(QColor(255, 255, 255, 55), 1, Qt.DashLine))
+        p.drawLine(pts[0], pts[2])
+        p.drawLine(pts[1], pts[3])
+
+        # ── Contour ───────────────────────────────────────────────────────
+        p.setPen(QPen(QColor(0, 212, 255, 230), 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawPolygon(QPolygonF(pts))
+
+        # ── Poignees ──────────────────────────────────────────────────────
+        active = self._surface.active_corner()
+        f = QFont(); f.setPixelSize(11); f.setBold(True)
+        p.setFont(f)
+        for i, pt in enumerate(pts):
+            on = (i == active)
+            p.setBrush(QBrush(QColor(0, 212, 255) if on else QColor(20, 20, 20, 210)))
+            p.setPen(QPen(QColor(0, 212, 255), 2))
+            p.drawEllipse(pt, self.HANDLE_R, self.HANDLE_R)
+            p.setPen(QPen(QColor(0, 0, 0) if on else QColor(0, 212, 255)))
+            p.drawText(QRectF(pt.x() - self.HANDLE_R, pt.y() - self.HANDLE_R,
+                              self.HANDLE_R * 2, self.HANDLE_R * 2),
+                       Qt.AlignCenter, self._LABELS[i])
+
+
 class VideoSurface(QGraphicsView):
     """Surface de rendu vidéo sur laquelle un calque d'effet se voit vraiment.
 
@@ -2898,6 +3095,11 @@ class VideoSurface(QGraphicsView):
     `QVideoWidget` — c'est là que se branche le relais de la dalle LED du plan
     3D (`Plan3DWebWindow._attach_video`).
     """
+
+    # Emis a chaque retouche depuis la mire, pour que le panneau de reglage
+    # reste en phase avec ce que l'utilisateur tire a la souris.
+    geometry_changed = Signal()
+    adjust_finished  = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2923,6 +3125,10 @@ class VideoSurface(QGraphicsView):
         self._scene.addItem(self._fx)
 
         self._fx_color = QColor(0, 0, 0, 0)
+        self._geom = VideoGeometry()
+        self._adjust_item   = None
+        self._active_corner = None
+        self._drag_corner   = None
         # La taille native n'est connue qu'une fois le premier média chargé :
         # sans ce signal, la vidéo garderait le cadrage de la précédente.
         self.item.nativeSizeChanged.connect(lambda _s: self._relayout())
@@ -2945,27 +3151,428 @@ class VideoSurface(QGraphicsView):
         super().resizeEvent(event)
         self._relayout()
 
+    def geometry_settings(self):
+        return self._geom
+
+    def set_geometry_settings(self, geom):
+        """Applique un réglage de géométrie (cadrage / étirement / 4 coins)."""
+        self._geom = geom if geom is not None else VideoGeometry()
+        self._relayout()
+
+    def base_rect(self):
+        """Rectangle de l'image AVANT déformation des coins, en pixels de vue.
+
+        L'éditeur de coins s'en sert pour poser ses poignées : sans lui, il
+        devrait refaire le calcul de cadrage et les deux divergeraient.
+        """
+        return QRectF(*self._base_rect())
+
+    def _base_rect(self):
+        """(x, y, w, h) de l'image : cadrage, puis étirement, puis décalage."""
+        w = max(1, self.viewport().width())
+        h = max(1, self.viewport().height())
+        g = self._geom
+
+        native = self.item.nativeSize()
+        has_native = (native.isValid() and native.width() > 0
+                      and native.height() > 0)
+
+        if g.fit == "stretch" or not has_native:
+            # Taille native inconnue (aucun média chargé) : on remplit, sinon
+            # l'image apparaîtrait dans un coin au premier chargement.
+            iw, ih = float(w), float(h)
+        else:
+            ratio = native.width() / native.height()
+            wide = (w / h) > ratio
+            if (g.fit == "fill") == wide:
+                # « fit » sur vue large, ou « fill » sur vue étroite : la
+                # largeur commande.
+                iw = float(w)
+                ih = w / ratio
+            else:
+                ih = float(h)
+                iw = h * ratio
+
+        iw *= g.scale_x
+        ih *= g.scale_y
+        x = (w - iw) / 2.0 + g.offset_x * w
+        y = (h - ih) / 2.0 + g.offset_y * h
+        return x, y, max(1.0, iw), max(1.0, ih)
+
     def _relayout(self):
-        """Recadre l'item vidéo dans la vue, à ratio conservé et centré."""
+        """Pose l'item vidéo : cadrage, étirement, puis déformation 4 coins."""
         w = max(1, self.viewport().width())
         h = max(1, self.viewport().height())
         # sceneRect calé sur le viewport : pas de scroll, pas de zoom implicite.
         self._scene.setSceneRect(0, 0, w, h)
+        # Le calque d'effet couvre TOUTE la vue et ne suit JAMAIS la
+        # déformation : une coupure doit noircir la dalle entière, y compris ce
+        # que le warp laisse en dehors de l'image.
         self._fx.setRect(QRectF(0, 0, w, h))
 
-        native = self.item.nativeSize()
-        if native.isValid() and native.width() > 0 and native.height() > 0:
-            ratio = native.width() / native.height()
-            if w / h > ratio:          # vue plus large que l'image
-                ih = h
-                iw = h * ratio
-            else:
-                iw = w
-                ih = w / ratio
-        else:
-            iw, ih = w, h              # taille inconnue : on remplit
+        x, y, iw, ih = self._base_rect()
+        g = self._geom
         self.item.setSize(QSizeF(iw, ih))
-        self.item.setPos(QPointF((w - iw) / 2.0, (h - ih) / 2.0))
+
+        if not g.has_warp():
+            # Chemin rapide : pas d'homographie à payer (0,32 ms/frame en 1080p
+            # contre 4,43 ms avec).
+            self.item.setTransform(QTransform())
+            self.item.setPos(QPointF(x, y))
+            return
+
+        # Avec warp, l'item est posé à l'origine et TOUT passe par la
+        # transformation : ses coordonnées locales valent alors celles de la
+        # scène, ce qui rend le quadrilatère de destination directement
+        # exprimable en pixels de vue.
+        self.item.setPos(QPointF(0, 0))
+        src = QPolygonF([QPointF(0, 0), QPointF(iw, 0),
+                         QPointF(iw, ih), QPointF(0, ih)])
+        base = [(x, y), (x + iw, y), (x + iw, y + ih), (x, y + ih)]
+        dst = QPolygonF([QPointF(px + g.corners[i][0] * w,
+                                 py + g.corners[i][1] * h)
+                         for i, (px, py) in enumerate(base)])
+        t = QTransform()
+        if _quad_is_convex(dst) and QTransform.quadToQuad(src, dst, t):
+            self.item.setTransform(t)
+        else:
+            # Quadrilatère inutilisable. Deux cas, un seul repli :
+            #   · surface nulle ou coins alignés → `quadToQuad` rend False ;
+            #   · coins CROISÉS (nœud papillon) → il rend True et une image en
+            #     vrac, retournée sur elle-même. D'où le test de convexité
+            #     AVANT : sans lui, un coin tiré trop loin donnait une sortie
+            #     illisible en plein show, sans le moindre message.
+            self.item.setTransform(QTransform())
+            self.item.setPos(QPointF(x, y))
+
+    # ── Mode reglage (mire + poignees) ────────────────────────────────────
+
+    def corner_points(self):
+        """Les 4 coins de l'image APRES deformation, en pixels de vue."""
+        x, y, iw, ih = self._base_rect()
+        w = max(1, self.viewport().width())
+        h = max(1, self.viewport().height())
+        g = self._geom
+        base = [(x, y), (x + iw, y), (x + iw, y + ih), (x, y + ih)]
+        return [QPointF(px + g.corners[i][0] * w, py + g.corners[i][1] * h)
+                for i, (px, py) in enumerate(base)]
+
+    def active_corner(self):
+        return self._active_corner
+
+    def set_active_corner(self, idx):
+        self._active_corner = idx if idx in (0, 1, 2, 3) else None
+        if self._adjust_item is not None:
+            self._adjust_item.update()
+
+    def adjust_mode(self):
+        return self._adjust_item is not None
+
+    def set_adjust_mode(self, on):
+        """Affiche ou retire la mire de reglage sur la sortie."""
+        if on and self._adjust_item is None:
+            self._adjust_item = _GeometryAdjustItem(self)
+            self._scene.addItem(self._adjust_item)
+            self._active_corner = 0
+            self.setMouseTracking(True)
+            self.setFocusPolicy(Qt.StrongFocus)
+            self.setFocus()
+        elif not on and self._adjust_item is not None:
+            self._scene.removeItem(self._adjust_item)
+            self._adjust_item = None
+            self._active_corner = None
+            self._drag_corner = None
+            self.setFocusPolicy(Qt.NoFocus)
+        self.viewport().update()
+
+    def _refresh_adjust(self):
+        if self._adjust_item is not None:
+            self._adjust_item.update()
+
+    def _nudge_corner(self, idx, dx_px, dy_px):
+        """Deplace un coin de dx/dy PIXELS, converti en fraction de la vue."""
+        w = max(1, self.viewport().width())
+        h = max(1, self.viewport().height())
+        c = self._geom.corners[idx]
+        c[0] = max(-2.0, min(2.0, c[0] + dx_px / w))
+        c[1] = max(-2.0, min(2.0, c[1] + dy_px / h))
+        self._relayout()
+        self._refresh_adjust()
+        self.geometry_changed.emit()
+
+    # ── Souris / clavier, actifs UNIQUEMENT en mode reglage ───────────────
+    # Hors reglage, la sortie doit rester totalement inerte : un clic egare sur
+    # l'ecran de facade ne doit surtout pas decaler l'image en plein show.
+
+    def mousePressEvent(self, ev):
+        if self._adjust_item is None:
+            return super().mousePressEvent(ev)
+        pos = QPointF(ev.position()) if hasattr(ev, "position") else QPointF(ev.pos())
+        best, bd = None, None
+        for i, pt in enumerate(self.corner_points()):
+            d = (pt.x() - pos.x()) ** 2 + (pt.y() - pos.y()) ** 2
+            if bd is None or d < bd:
+                best, bd = i, d
+        # Rayon de prise genereux (2x la poignee) : viser un cercle de 13 px a
+        # la souris sur un ecran distant est deja assez penible.
+        if best is not None and bd <= (_GeometryAdjustItem.HANDLE_R * 2.5) ** 2:
+            self._drag_corner = best
+            self.set_active_corner(best)
+        ev.accept()
+
+    def mouseMoveEvent(self, ev):
+        if self._adjust_item is None or self._drag_corner is None:
+            return super().mouseMoveEvent(ev)
+        pos = QPointF(ev.position()) if hasattr(ev, "position") else QPointF(ev.pos())
+        x, y, iw, ih = self._base_rect()
+        base = [(x, y), (x + iw, y), (x + iw, y + ih), (x, y + ih)]
+        bx, by = base[self._drag_corner]
+        w = max(1, self.viewport().width())
+        h = max(1, self.viewport().height())
+        c = self._geom.corners[self._drag_corner]
+        c[0] = max(-2.0, min(2.0, (pos.x() - bx) / w))
+        c[1] = max(-2.0, min(2.0, (pos.y() - by) / h))
+        self._relayout()
+        self._refresh_adjust()
+        self.geometry_changed.emit()
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        if self._adjust_item is None:
+            return super().mouseReleaseEvent(ev)
+        self._drag_corner = None
+        ev.accept()
+
+    def keyPressEvent(self, ev):
+        """Fleches : reglage au pixel. Tab : coin suivant. Echap : sortie."""
+        if self._adjust_item is None:
+            return super().keyPressEvent(ev)
+        k = ev.key()
+        if k == Qt.Key_Escape:
+            self.adjust_finished.emit()
+            ev.accept(); return
+        if k in (Qt.Key_Tab, Qt.Key_Space):
+            self.set_active_corner(((self._active_corner or 0) + 1) % 4)
+            ev.accept(); return
+        if k in (Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4):
+            self.set_active_corner(k - Qt.Key_1)
+            ev.accept(); return
+        deltas = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0),
+                  Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}
+        if k in deltas and self._active_corner is not None:
+            # Maj = pas de 10 px, pour degrossir sans user la fleche.
+            step = 10 if (ev.modifiers() & Qt.ShiftModifier) else 1
+            dx, dy = deltas[k]
+            self._nudge_corner(self._active_corner, dx * step, dy * step)
+            ev.accept(); return
+        super().keyPressEvent(ev)
+
+
+class VideoGeometryDialog(QDialog):
+    """Panneau de reglage de la geometrie de sortie video.
+
+    Il s'ouvre sur l'ecran de commande pendant que la mire, elle, s'affiche sur
+    la dalle : on regle en regardant le resultat, pas un apercu.
+
+    Le reglage s'applique EN DIRECT, sans validation. C'est voulu — sur une
+    dalle LED on cale a l'oeil, un aller-retour par « Appliquer » rendrait
+    l'exercice impraticable. « Tout reinitialiser » sert de rattrapage.
+    """
+
+    _SS = """
+        QDialog { background:#141414; color:#ddd; }
+        QLabel { color:#bbb; font-size:12px; }
+        QGroupBox { color:#00d4ff; font-size:12px; font-weight:bold;
+                    border:1px solid #262626; border-radius:8px;
+                    margin-top:10px; padding:12px 10px 8px 10px; }
+        QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 5px; }
+        QSlider::groove:horizontal { height:3px; background:#2a2a2a; border-radius:2px; }
+        QSlider::handle:horizontal { width:13px; height:13px; margin:-6px 0;
+                                     background:#00d4ff; border-radius:6px; }
+        QSlider::sub-page:horizontal { background:#005a99; border-radius:2px; }
+        QPushButton { background:#1e1e1e; color:#ccc; border:1px solid #2e2e2e;
+                      border-radius:6px; padding:7px 12px; font-size:12px; }
+        QPushButton:hover { background:#262626; color:#fff; }
+        QPushButton:checked { background:#00d4ff; color:#000; font-weight:bold;
+                              border-color:#00d4ff; }
+        QComboBox { background:#1a1a1a; color:#ddd; border:1px solid #2e2e2e;
+                    border-radius:6px; padding:5px 8px; font-size:12px; }
+    """
+
+    def __init__(self, surface, on_changed=None, parent=None):
+        super().__init__(parent)
+        self._surface    = surface
+        self._on_changed = on_changed
+        self._loading    = False         # garde anti-boucle pendant _reload()
+
+        self.setWindowTitle(tr("vg_title"))
+        self.setStyleSheet(self._SS)
+        self.setMinimumWidth(430)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(10)
+
+        # ── Cadrage ───────────────────────────────────────────────────────
+        box_fit = QGroupBox(tr("vg_fit_group"))
+        fl = QVBoxLayout(box_fit)
+        self._fit = QComboBox()
+        for key, label in (("fit", tr("vg_fit_fit")), ("fill", tr("vg_fit_fill")),
+                           ("stretch", tr("vg_fit_stretch"))):
+            self._fit.addItem(label, key)
+        self._fit.currentIndexChanged.connect(self._apply)
+        fl.addWidget(self._fit)
+        root.addWidget(box_fit)
+
+        # ── Etirement ─────────────────────────────────────────────────────
+        box_str = QGroupBox(tr("vg_stretch_group"))
+        sl = QVBoxLayout(box_str)
+        sl.setSpacing(6)
+        self._sx = self._add_slider(sl, tr("vg_width"),    5, 400, 100, "%")
+        self._sy = self._add_slider(sl, tr("vg_height"),   5, 400, 100, "%")
+        self._ox = self._add_slider(sl, tr("vg_offset_x"), -100, 100, 0, "%")
+        self._oy = self._add_slider(sl, tr("vg_offset_y"), -100, 100, 0, "%")
+        root.addWidget(box_str)
+
+        # ── 4 coins ───────────────────────────────────────────────────────
+        box_cor = QGroupBox(tr("vg_corners_group"))
+        cl = QVBoxLayout(box_cor)
+        cl.setSpacing(7)
+        self._btn_adjust = QPushButton(tr("vg_adjust_on"))
+        self._btn_adjust.setCheckable(True)
+        self._btn_adjust.setFixedHeight(34)
+        self._btn_adjust.toggled.connect(self._toggle_adjust)
+        cl.addWidget(self._btn_adjust)
+        hint = QLabel(tr("vg_adjust_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#777; font-size:11px;")
+        cl.addWidget(hint)
+        root.addWidget(box_cor)
+
+        # ── Pied ──────────────────────────────────────────────────────────
+        foot = QHBoxLayout()
+        foot.setSpacing(7)
+        b_rc = QPushButton(tr("vg_reset_corners"))
+        b_rc.clicked.connect(self._reset_corners)
+        b_ra = QPushButton(tr("vg_reset_all"))
+        b_ra.clicked.connect(self._reset_all)
+        foot.addWidget(b_rc)
+        foot.addWidget(b_ra)
+        foot.addStretch(1)
+        b_ok = QPushButton(tr("vg_close"))
+        b_ok.setDefault(True)
+        b_ok.clicked.connect(self.accept)
+        foot.addWidget(b_ok)
+        root.addLayout(foot)
+
+        # La mire modifie la geometrie a la souris : les curseurs doivent
+        # suivre, sinon le panneau afficherait un etat perime.
+        self._surface.geometry_changed.connect(self._reload)
+        # Echap sur la sortie releve le bouton ici : les deux etats ne doivent
+        # jamais diverger, sinon un second clic ne rallumerait plus la mire.
+        self._surface.adjust_finished.connect(self._on_adjust_finished)
+
+        self._reload()
+
+    # ── Construction ──────────────────────────────────────────────────────
+    def _add_slider(self, layout, label, lo, hi, val, suffix):
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        lbl = QLabel(label)
+        lbl.setFixedWidth(92)
+        row.addWidget(lbl)
+        sld = QSlider(Qt.Horizontal)
+        sld.setRange(lo, hi)
+        sld.setValue(val)
+        row.addWidget(sld, 1)
+        val_lbl = QLabel(f"{val}{suffix}")
+        val_lbl.setFixedWidth(46)
+        val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        val_lbl.setStyleSheet("color:#00d4ff; font-size:11px; font-weight:bold;")
+        row.addWidget(val_lbl)
+        sld.valueChanged.connect(
+            lambda v: (val_lbl.setText(f"{v}{suffix}"), self._apply()))
+        layout.addLayout(row)
+        return sld
+
+    # ── Etat ──────────────────────────────────────────────────────────────
+    def _reload(self):
+        """Recopie la geometrie vers les controles, sans re-declencher _apply."""
+        self._loading = True
+        try:
+            g = self._surface.geometry_settings()
+            i = self._fit.findData(g.fit)
+            self._fit.setCurrentIndex(i if i >= 0 else 0)
+            self._sx.setValue(int(round(g.scale_x * 100)))
+            self._sy.setValue(int(round(g.scale_y * 100)))
+            self._ox.setValue(int(round(g.offset_x * 100)))
+            self._oy.setValue(int(round(g.offset_y * 100)))
+        finally:
+            self._loading = False
+
+    def _apply(self):
+        if self._loading:
+            return
+        g = self._surface.geometry_settings()
+        g.fit      = self._fit.currentData() or "fit"
+        g.scale_x  = self._sx.value() / 100.0
+        g.scale_y  = self._sy.value() / 100.0
+        g.offset_x = self._ox.value() / 100.0
+        g.offset_y = self._oy.value() / 100.0
+        self._surface.set_geometry_settings(g)
+        self._surface._refresh_adjust()
+        self._notify()
+
+    def _notify(self):
+        if self._on_changed:
+            self._on_changed()
+
+    def _toggle_adjust(self, on):
+        self._surface.set_adjust_mode(on)
+
+    def _on_adjust_finished(self):
+        self._btn_adjust.setChecked(False)
+
+    def _reset_corners(self):
+        g = self._surface.geometry_settings()
+        g.reset_corners()
+        self._surface.set_geometry_settings(g)
+        self._surface._refresh_adjust()
+        self._notify()
+
+    def _reset_all(self):
+        self._surface.set_geometry_settings(VideoGeometry())
+        self._surface._refresh_adjust()
+        self._reload()
+        self._notify()
+
+    # ── Fermeture ─────────────────────────────────────────────────────────
+    def _teardown(self):
+        """La mire ne doit JAMAIS survivre au panneau.
+
+        Sans ca elle resterait affichee sur la dalle en plein show, grille et
+        poignees comprises, sans plus aucun moyen de l'enlever puisque le seul
+        interrupteur venait de disparaitre.
+        """
+        self._surface.set_adjust_mode(False)
+        for sig, slot in ((self._surface.geometry_changed, self._reload),
+                          (self._surface.adjust_finished, self._on_adjust_finished)):
+            try:
+                sig.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+
+    def closeEvent(self, ev):
+        self._teardown()
+        super().closeEvent(ev)
+
+    def accept(self):
+        self._teardown()
+        super().accept()
+
+    def reject(self):
+        self._teardown()
+        super().reject()
 
 
 class VideoOutputWindow(QWidget):
@@ -3815,6 +4422,15 @@ class MainWindow(QMainWindow):
         self.recent_files = self.load_recent_files()
         self.current_show_path = None  # Chemin du show actuellement ouvert
 
+        # Depart programme : appartient au SHOW (serialise dans le .tui), pas a
+        # la machine — deux shows differents n'ont pas la meme heure de depart.
+        # Initialise AVANT _create_menu(), qui affiche l'heure armee dans le
+        # libelle de l'action.
+        self.schedule_enabled  = False
+        self.schedule_time     = "20:00"   # "HH:MM", heure locale — chaque jour
+        self._schedule_timer      = None
+        self._schedule_fired_date = None   # "YYYY-MM-DD" de la derniere salve
+
         # Creation du menu
         self._create_menu()
 
@@ -4076,6 +4692,9 @@ class MainWindow(QMainWindow):
         save_as_action = file_menu.addAction(tr("menu_save_as"), self.save_show_as)
         save_as_action.setShortcut("Ctrl+Shift+S")
         file_menu.addSeparator()
+        self.act_schedule = file_menu.addAction(tr("menu_schedule"), self._open_schedule_dialog)
+        self._update_schedule_action_label()   # pose l'emoji et l'heure armée
+        file_menu.addSeparator()
         self.recent_menu = file_menu.addMenu(tr("menu_recent"))
         self.update_recent_menu()
         file_menu.addSeparator()
@@ -4137,10 +4756,9 @@ class MainWindow(QMainWindow):
         conn_menu.addSeparator()
 
         # Entree directe, pas un sous-menu : il ne contenait qu'une seule
-        # action, donc un clic supplementaire pour rien. L'ellipse annonce
-        # qu'une fenetre s'ouvre, ce qui la distingue des sous-menus voisins.
+        # action, donc un clic supplementaire pour rien.
         self.node_action = conn_menu.addAction(
-            tr("menu_dmx_output") + "…", self.open_node_connection)
+            tr("menu_dmx_output"), self.open_node_connection)
         self._refresh_dmx_menu_title()
         # Sortie DMX réservée aux licences/essais actifs. Le menu reste volontairement
         # cliquable même sans droit DMX : un menu grisé n'explique rien à l'utilisateur.
@@ -4156,6 +4774,7 @@ class MainWindow(QMainWindow):
         self.video_test_action = video_menu.addAction(tr("menu_test_logo"), self.show_test_logo)
         self.video_screen_menu = video_menu.addMenu(tr("menu_broadcast_on"))
         self.video_screen_menu.aboutToShow.connect(self._populate_screen_menu)
+        video_menu.addAction(tr("menu_video_geometry"), self.open_video_geometry)
         self.video_target_screen = 1  # Ecran cible par defaut (second ecran)
 
         conn_menu.addSeparator()
@@ -4366,6 +4985,7 @@ class MainWindow(QMainWindow):
 
         # Fenetre de sortie video (creee a la demande)
         self.video_output_window = None
+        self._video_geoms = None   # geometries par dalle, chargees au 1er besoin
 
         # QStackedWidget pour basculer entre video et image
         self.video_stack = QStackedWidget()
@@ -4457,6 +5077,9 @@ class MainWindow(QMainWindow):
                 self.video_output_window = VideoOutputWindow()
                 # Appliquer watermark si licence non active
                 self.video_output_window.set_watermark(self._license.watermark_required)
+            # Avant le showFullScreen : la dalle ne doit jamais montrer une
+            # image droite le temps d'une frame avant de se recaler.
+            self._apply_video_geometry()
 
             # Placer sur l'ecran cible choisi
             screens = QApplication.screens()
@@ -5974,7 +6597,13 @@ class MainWindow(QMainWindow):
         self._bank_pages = dlg.get_pages()
         self._bank_page_idx = max(0, min(dlg.get_current_index(), len(self._bank_pages) - 1))
         self._custom_bank_slots = self._bank_pages[self._bank_page_idx]
+        was_superposition = self.effect_superposition
         self.effect_superposition = dlg.get_superposition()
+        if was_superposition != self.effect_superposition:
+            # Changer de mode laisse les effets en cours orphelins : on les coupe.
+            self._stop_button_effects(
+                "Superposition d'effets " + ("activée" if self.effect_superposition else "désactivée")
+                + " — effets en cours coupés")
         self.tap_button_mode = dlg.get_tap_button_mode()
         if self.tap_button_mode not in ("flash", "flash_kill"):
             self._flash_end()   # changer de mode ne doit pas laisser un flash collé
@@ -8298,10 +8927,11 @@ class MainWindow(QMainWindow):
         - une mémoire au format « cues » n'a plus de clé `projectors` à la
           racine — lire `mem["projectors"]` directement ne renvoyait rien ;
         - une mémoire capture TOUT le rig, y compris les projecteurs qu'elle ne
-          vise pas (niveau 0, pan/tilt au centre) : on ne compte donc que ceux
-          réellement touchés, avec les mêmes critères que
-          `light_timeline.apply_seq_memories_htp`.
+          vise pas (niveau 0, pan/tilt au centre, canaux au repos) : on ne
+          compte donc que ceux réellement touchés, via le prédicat partagé
+          `light_timeline.memory_state_is_set`.
         """
+        from light_timeline import memory_state_is_set
         label = f"MEM {mem_col + 1}.{row + 1}"
         mem = self.memories[mem_col][row]
         if not mem:
@@ -8335,9 +8965,13 @@ class MainWindow(QMainWindow):
                         cur[0] += 1
                         if lvl > cur[1]:
                             cur[1], cur[2] = lvl, ps.get("base_color", "#ffffff")
-                elif (ps.get("pan", 32768) != 32768 or ps.get("tilt", 32768) != 32768
-                        or int(ps.get("strobe_speed", 0) or 0)
-                        or (ps.get("channel_extras") or {})):
+                elif memory_state_is_set(ps):
+                    # Meme predicat que la fenetre « Contenu sequence » : il
+                    # compte AUSSI les canaux de faisceau (gobo, roue, prisme,
+                    # shutter...). Sans eux, une memoire « juste un gobo » —
+                    # capturee rig eteint, donc niveau 0 partout — s'affichait
+                    # vide dans le tooltip comme dans la fenetre, et on en
+                    # concluait que le REC n'avait rien pris.
                     moved[gname] = moved.get(gname, 0) + 1
 
             for gname, (n, lvl, chex) in lit.items():
@@ -8531,9 +9165,55 @@ class MainWindow(QMainWindow):
             effect.setdefault("name", self.active_effect)
         return {"projectors": snapshot, "effect": effect, "duration": 0}
 
+    # Canaux qui, seuls, ne font RIEN sortir : ils reglent le faisceau mais ne
+    # l'allument pas. Une capture qui ne porte qu'eux est une capture faite rig
+    # eteint. `shutter` est exclu : son repos vaut 255, pas 0.
+    _SNAP_BEAM_ONLY = (
+        "strobe_speed", "gobo", "gobo_rotation", "gobo2", "zoom", "focus",
+        "iris", "prism", "prism_rotation", "color_wheel", "effects",
+        "uv", "white_boost", "amber_boost", "orange_boost",
+    )
+
+    def _confirm_dark_snapshot(self, cue, mem_col, row):
+        """Prevenir quand la capture n'allume RIEN mais porte des reglages.
+
+        Une memoire enregistre `level` tel quel. Regler le strobe (ou un gobo,
+        un canal brut) sur un rig eteint donne donc une memoire a level 0
+        PARTOUT : rappelee d'un pad, elle repose noir sur toutes les fixtures et
+        eteint le plateau au lieu de faire ce qu'on croyait y avoir mis.
+
+        Retourne False si l'utilisateur annule.
+        """
+        try:
+            states = cue.get("projectors") or []
+            if any(int(ps.get("level", 0) or 0) > 0 for ps in states):
+                return True
+            porte = any(
+                int(ps.get(_k, 0) or 0) > 0
+                for ps in states for _k in self._SNAP_BEAM_ONLY
+            ) or any(ps.get("channel_extras") for ps in states)
+            if not porte:
+                return True   # capture vide assumee (un « noir » se memorise)
+            from PySide6.QtWidgets import QMessageBox
+            msg = QMessageBox(self)
+            msg.setWindowTitle(f"MEM {mem_col + 1}.{row + 1}")
+            msg.setText(tr("mw_mem_dark_snapshot"))
+            msg.setInformativeText(tr("mw_mem_dark_snapshot_tip"))
+            msg.setStyleSheet("background:#1e1e1e; color:white;")
+            b_ok     = msg.addButton(tr("mw_mem_dark_record"), QMessageBox.AcceptRole)
+            msg.addButton(tr("mw_cancel"), QMessageBox.RejectRole)
+            msg.exec()
+            return msg.clickedButton() == b_ok
+        except Exception as e:
+            # Un garde-fou ne doit jamais empecher un REC.
+            print(f"[MEM] controle capture eteinte ignore: {e}")
+            return True
+
     def _record_memory(self, mem_col, row):
         """Capture l'état courant. Si la mémoire existe, propose Remplacer / Ajouter cue."""
         cue = self._build_snapshot()
+        if not self._confirm_dark_snapshot(cue, mem_col, row):
+            return
         mem = self.memories[mem_col][row]
 
         if mem is not None:
@@ -10444,6 +11124,37 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_plan3d') and self._plan3d.isVisible():
             self._plan3d.refresh(self.projectors)
 
+    def _stop_button_effects(self, log_label=None):
+        """Coupe TOUS les effets lancés depuis les boutons d'effet (empilés ou non).
+
+        Appelé quand on bascule le mode « superposition » : le moteur de
+        restitution change de branche sous les effets en cours
+        (`update_effect` ne lit la pile QUE si `effect_superposition`), donc
+        sans ça les effets restaient armés — pads AKAI allumés, projecteurs
+        figés sur la dernière image — sans plus personne pour les animer.
+        Les pads FX ne sont PAS touchés : ils ont leur propre mécanique et ne
+        dépendent pas de la superposition.
+        """
+        actifs = bool(self._stacked_effects) or any(
+            getattr(b, 'active', False) for b in getattr(self, 'effect_buttons', []))
+        if not actifs:
+            return
+        self._stacked_effects = []
+        self._prev_effect_state = None
+        for i, btn in enumerate(getattr(self, 'effect_buttons', [])):
+            if getattr(btn, 'active', False):
+                btn.active = False
+                btn.update_style()
+            if MIDI_AVAILABLE and self.midi_handler.midi_out and i < 8:
+                self.midi_handler.set_pad_led(i, 8, 0)
+        self.active_effect = None
+        self.active_effect_config = {}
+        # Arrête le timer, restitue les couleurs d'avant l'effet et recentre les
+        # lyres (les boutons sont déjà désarmés : `stop_effect` recentre bien).
+        self.stop_effect()
+        if log_label:
+            self._log_message(log_label, "effect")
+
     def stop_effect(self):
         """Arrete l'effet en cours"""
         if hasattr(self, 'effect_timer'):
@@ -11422,7 +12133,14 @@ class MainWindow(QMainWindow):
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr in ("Pan", "Tilt"):
                     saved = self.effect_saved_colors.get(id(proj))
-                    amplitude = (size / 100.0) * 8192
+                    # TAILLE 100 = course PLEINE (+/-32768), comme la trajectoire
+                    # Pan/Tilt couplee. Le *8192 d'origine plafonnait ces deux
+                    # couches a +/-12,5% de course : une couche Tilt a fond ne
+                    # balayait qu'un huitieme de ce que la lyre sait faire, et
+                    # rien dans l'UI ne le disait. Les limites physiques de
+                    # chaque lyre (pan_min/pan_max, tilt_min/tilt_max) restent
+                    # appliquees en aval par artnet_dmx.
+                    amplitude = (size / 100.0) * 32768
                     # Recalcul du dephasage sur l'index lyre + echelle /100 plafonnee
                     # (comme le Pan/Tilt couple) : le `x` global utilise l'index de
                     # tous les projos et /180, trop faible pour les lyres.
@@ -13920,6 +14638,15 @@ class MainWindow(QMainWindow):
 
         contre_alt = state.get('contre_alt')
         lat_alt    = state.get('lat_alt')
+        # `face_alt` etait CALCULE par `audio_ai.get_state_at` et emis dans
+        # l'etat a chaque image, mais aucun lecteur ne le consommait : contres
+        # et lateraux alternaient une couleur sur deux en mode bicolore, la
+        # face non. Sur une facade ou tous les PAR sont dans le meme groupe
+        # (le cas par defaut depuis que toute fixture importee arrive en A),
+        # cela donnait UNE seule teinte plate pour toute la rampe — « les PAR
+        # LED ne changeaient pas enormement de couleurs » (retour client,
+        # 02/09/2026).
+        face_alt   = state.get('face_alt')
         lat_effect = state.get('lat_effect')
 
         # État persistant de section (wall-clock pour drop_start — résistant au trim)
@@ -13938,7 +14665,7 @@ class MainWindow(QMainWindow):
 
         # ── 1. État de base avec ia_max_dimmers ──────────────────────────────
         _allowed_grps = self._fx_src.allowed_groups
-        contre_idx = lat_idx = 0
+        contre_idx = lat_idx = face_idx = 0
         for p in self.projectors:
             if p.group not in state:
                 continue
@@ -13952,7 +14679,11 @@ class MainWindow(QMainWindow):
             # Plafonner selon les dimmers IA configurés
             level = int(level * self.ia_max_dimmers.get(p.group, 100) / 100)
 
-            if p.group == 'contre':
+            if p.group == 'face':
+                if face_alt and face_idx % 2 == 1:
+                    color = face_alt
+                face_idx += 1
+            elif p.group == 'contre':
                 if contre_alt and contre_idx % 2 == 1:
                     color = contre_alt
                 contre_idx += 1
@@ -15191,6 +15922,10 @@ class MainWindow(QMainWindow):
 
         self.seq.clear_sequence()
         self.current_show_path = None
+        # Un show neuf ne part pas tout seul à l'heure du show précédent.
+        self.schedule_enabled = False
+        self._schedule_fired_date = None
+        self._arm_schedule()
         self.setWindowTitle(APP_NAME)
 
     def save_show(self):
@@ -15385,10 +16120,12 @@ class MainWindow(QMainWindow):
                 active_color_pads[str(col_idx)] = bc.name()
 
         return {
-            # v7 = préréglages IA par média (`ia_preset`). Purement additif :
-            # rien ne lit ce numéro au chargement, et une version antérieure
-            # rouvre le show en ignorant la clé (elle retombe sur `ia_color`).
-            "version": 7,
+            # v8 = départ programmé (`schedule`). v7 = préréglages IA par média
+            # (`ia_preset`). Purement additif : rien ne lit ce numéro au
+            # chargement, et une version antérieure rouvre le show en ignorant
+            # la clé (elle retombe sur `ia_color`).
+            "version": 8,
+            "schedule": self._schedule_state(),
             "sequence": data,
             "cartouches": cart_data,
             "memories": self.memories,
@@ -15640,6 +16377,10 @@ class MainWindow(QMainWindow):
             if isinstance(raw, dict):
                 self._apply_show_positions_fx(raw)
 
+            # Départ programmé embarqué dans le show (v8+)
+            if isinstance(raw, dict):
+                self._apply_show_schedule(raw)
+
             # Restaurer l'etat du plan de feu (v5+)
             if isinstance(raw, dict):
                 plan_de_feu_data = raw.get("plan_de_feu")
@@ -15753,6 +16494,220 @@ class MainWindow(QMainWindow):
     # ==================== CONFIG AKAI (sauvegarde/chargement memoires) ====================
 
     _AKAI_CONFIG_PATH = str(Path.home() / '.maestro_akai_config.json')
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Départ programmé
+    #
+    # Lance le show à une heure précise, l'application ouverte et le show
+    # chargé. L'heure appartient au SHOW (sérialisée dans le .tui) : deux
+    # spectacles n'ont pas le même horaire.
+    #
+    # L'heure est comparée à l'HORLOGE MURALE à chaque seconde, jamais à un
+    # compteur de ticks accumulés : un tick manqué (freeze, changement d'heure,
+    # machine chargée) décalerait un compteur, alors qu'une comparaison
+    # d'horloge se recale toute seule. La veille de Windows est déjà bloquée
+    # tant que l'app tourne (`_prevent_sleep`, appelé au démarrage).
+    # ──────────────────────────────────────────────────────────────────────
+
+    # Le départ vaut pour CHAQUE JOUR : c'est le seul comportement, il n'y a
+    # rien à décocher. Une occurrence manquée est perdue — pas de rattrapage,
+    # un show ne part pas avec vingt minutes de retard sur son horaire.
+    _SCHEDULE_WINDOW_S = 60     # simple garde anti-freeze autour de l'heure
+
+    def _schedule_target_today(self):
+        """QDateTime du départ programmé pour AUJOURD'HUI, ou None si l'heure
+        stockée est illisible (fichier bricolé à la main)."""
+        from PySide6.QtCore import QDate, QDateTime, QTime
+        t = QTime.fromString(str(self.schedule_time or ""), "HH:mm")
+        if not t.isValid():
+            return None
+        return QDateTime(QDate.currentDate(), t)
+
+    def _schedule_state(self):
+        """État sérialisable (ce qui part dans le .tui)."""
+        return {
+            "enabled": bool(self.schedule_enabled),
+            "time":    str(self.schedule_time or "20:00"),
+        }
+
+    def _arm_schedule(self, consume_today: bool = False):
+        """(Dés)arme le timer d'horloge et rafraîchit le libellé du menu.
+
+        `consume_today` : marque l'occurrence du jour comme déjà passée si
+        l'heure est écoulée. C'est le cas quand l'utilisateur règle lui-même
+        l'horaire — il est devant l'écran, il ne veut pas que le show parte
+        dans la seconde parce qu'il a saisi une heure déjà dépassée. Au
+        CHARGEMENT d'un show, au contraire, le rattrapage doit pouvoir jouer.
+        """
+        if consume_today and self.schedule_enabled:
+            target = self._schedule_target_today()
+            if target is not None:
+                from PySide6.QtCore import QDate, QDateTime
+                if target.secsTo(QDateTime.currentDateTime()) >= 0:
+                    self._schedule_fired_date = QDate.currentDate().toString("yyyy-MM-dd")
+
+        if self.schedule_enabled:
+            if self._schedule_timer is None:
+                self._schedule_timer = QTimer(self)
+                self._schedule_timer.timeout.connect(self._schedule_tick)
+            if not self._schedule_timer.isActive():
+                self._schedule_timer.start(1000)
+        elif self._schedule_timer is not None and self._schedule_timer.isActive():
+            self._schedule_timer.stop()
+
+        self._update_schedule_action_label()
+
+    def _update_schedule_action_label(self):
+        """Libellé du menu : l'heure armée s'y lit sans ouvrir la fenêtre.
+
+        L'emoji vit ICI et pas dans `i18n` : c'est de la décoration d'interface,
+        identique dans les cinq langues (même choix que 🪟 sur la fenêtre
+        externe). Un seul endroit écrit ce libellé, dans les deux états.
+        """
+        act = getattr(self, 'act_schedule', None)
+        if act is None:
+            return
+        if self.schedule_enabled:
+            act.setText(f"⏰  {tr('menu_schedule_on', t=self.schedule_time)}")
+        else:
+            act.setText(f"⏰  {tr('menu_schedule')}")
+
+    def _schedule_tick(self):
+        # Timer protégé : une exception ici tuerait le tick à la première
+        # anomalie et le départ ne partirait jamais, sans un mot à l'écran.
+        try:
+            self._do_schedule_tick()
+        except Exception as e:
+            print(f"[Départ programmé] tick : {e}")
+
+    def _do_schedule_tick(self):
+        from PySide6.QtCore import QDate, QDateTime
+        if not self.schedule_enabled:
+            return
+        target = self._schedule_target_today()
+        if target is None:
+            return
+        late = target.secsTo(QDateTime.currentDateTime())
+        if late < 0:
+            return                      # pas encore l'heure
+        today = QDate.currentDate().toString("yyyy-MM-dd")
+        if self._schedule_fired_date == today:
+            return                      # occurrence du jour déjà consommée
+        # Consommer l'occurrence dans TOUS les cas : trop tard pour aujourd'hui
+        # ne doit pas se traduire par un départ surprise demain à 00:00.
+        self._schedule_fired_date = today
+        if late > self._SCHEDULE_WINDOW_S:
+            self._log_message(tr("sched_log_too_late", t=self.schedule_time), "warn")
+            return
+        self._schedule_fire()
+
+    def _show_is_running(self) -> bool:
+        """Un média ou un TEMPO est-il en cours ?"""
+        try:
+            if self.player.playbackState() == QMediaPlayer.PlayingState:
+                return True
+        except Exception:
+            pass
+        return bool(getattr(getattr(self, 'seq', None), 'tempo_running', False))
+
+    def _schedule_fire(self):
+        """L'heure est arrivée : lancer le show depuis le début."""
+        seq = getattr(self, 'seq', None)
+        if seq is None or seq.table.rowCount() == 0:
+            self._log_message(tr("sched_log_empty"), "warn")
+            return
+        # Ne JAMAIS couper ce qui tourne déjà : si quelqu'un a lancé le show à
+        # la main deux minutes avant l'heure, le repartir de zéro serait pire
+        # que de ne rien faire.
+        if self._show_is_running():
+            self._log_message(tr("sched_log_busy"), "warn")
+            return
+        self._log_message(tr("sched_log_fired", t=self.schedule_time), "go")
+        seq.play_row(0)
+
+    def _apply_show_schedule(self, raw):
+        """Applique le départ programmé porté par un show (.tui v8+)."""
+        sc = raw.get("schedule") if isinstance(raw, dict) else None
+        if isinstance(sc, dict):
+            self.schedule_enabled = bool(sc.get("enabled", False))
+            self.schedule_time    = str(sc.get("time", "20:00"))
+        else:
+            # Un .tui antérieur à la v8 n'a pas la clé. Désarmer : garder
+            # l'heure du show précédent la ferait partir sur un show qui ne la
+            # demande pas.
+            self.schedule_enabled = False
+        self._schedule_fired_date = None
+        # Pas de `consume_today` : ouvrir un show à 20 h 03 pour un départ à
+        # 20 h 00 est exactement le cas que le rattrapage doit couvrir.
+        self._arm_schedule()
+
+    def _open_schedule_dialog(self):
+        """Règle l'heure de départ automatique du show."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                       QLabel, QPushButton, QCheckBox, QTimeEdit)
+        from PySide6.QtCore import QTime
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("sched_title"))
+        dlg.setStyleSheet(
+            "QDialog { background:#161616; }"
+            "QLabel { color:#ddd; font-size:12px; }"
+            "QCheckBox { color:#ddd; font-size:12px; }"
+            "QTimeEdit { background:#111; color:#00d4ff; border:1px solid #333;"
+            " border-radius:4px; padding:4px 10px; font-size:20px;"
+            " font-weight:bold; min-width:110px; }"
+            "QPushButton { background:#222; color:#eee; border:1px solid #333;"
+            " border-radius:5px; padding:6px 16px; }"
+            "QPushButton:hover { border-color:#00d4ff; }"
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(12)
+
+        cb_on = QCheckBox(tr("sched_enable"))
+        cb_on.setChecked(bool(self.schedule_enabled))
+        lay.addWidget(cb_on)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel(tr("sched_at")))
+        te = QTimeEdit()
+        te.setDisplayFormat("HH:mm")
+        _t = QTime.fromString(str(self.schedule_time or ""), "HH:mm")
+        te.setTime(_t if _t.isValid() else QTime(20, 0))
+        row.addWidget(te)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+        hint = QLabel(tr("sched_help"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#888; font-size:11px;")
+        lay.addWidget(hint)
+
+        cb_on.toggled.connect(te.setEnabled)
+        te.setEnabled(cb_on.isChecked())
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        b_cancel = QPushButton(tr("mw_cancel"))
+        b_ok = QPushButton(tr("mw_apply"))
+        b_ok.setStyleSheet("background:#0a5; color:#fff; border:none;")
+        b_cancel.clicked.connect(dlg.reject)
+        b_ok.clicked.connect(dlg.accept)
+        btns.addWidget(b_cancel)
+        btns.addWidget(b_ok)
+        lay.addLayout(btns)
+
+        if not dlg.exec():
+            return
+        self.schedule_enabled = cb_on.isChecked()
+        self.schedule_time    = te.time().toString("HH:mm")
+        self._schedule_fired_date = None
+        self._arm_schedule(consume_today=True)
+        self.seq.is_dirty = True
+        if self.schedule_enabled:
+            self._log_message(tr("sched_log_armed", t=self.schedule_time), "success")
+        else:
+            self._log_message(tr("sched_log_off"), "info")
 
     def _open_light_sync_dialog(self):
         """Réglage global de l'offset de synchro lumière/vidéo (ms).
@@ -19382,6 +20337,19 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+        # Rafraîchissement de la bibliothèque de fixtures encore en vol : sur
+        # une connexion faible il peut durer une quinzaine de secondes. Quitter
+        # maintenant détruirait un QThread en cours d'exécution — Qt abandonne
+        # alors le processus. On le laisse finir (borné), le socket ayant de
+        # toute façon son propre timeout.
+        for _t, _w in list(getattr(self, '_fixture_refresh_jobs', [])):
+            try:
+                if _t.isRunning():
+                    _t.quit()
+                    _t.wait(3000)
+            except Exception:
+                pass
+
     def apply_styles(self):
         """Applique les styles CSS"""
         self.setStyleSheet("""
@@ -20706,6 +21674,15 @@ class MainWindow(QMainWindow):
                     'preset_slots':       dict(getattr(proj, 'preset_slots', {}) or {}),
                     'channel_labels':     list(getattr(proj, 'channel_labels', [])),
                     'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
+                    # Bande DMX du strobe porte par le canal Shutter, et
+                    # convention d'obturateur. `_apply_fd_to_dmx` RELIT
+                    # `shutter_inverted` depuis fixture_data : tant que
+                    # personne ne l'y ecrivait, chaque enregistrement du patch
+                    # remettait a False le reglage pose par la calibration de
+                    # roue (« ma lyre ne s'allume pas »).
+                    'shutter_inverted':   bool(getattr(proj, 'shutter_inverted', False)),
+                    'shutter_strobe_min': int(getattr(proj, 'shutter_strobe_min', 64)),
+                    'shutter_strobe_max': int(getattr(proj, 'shutter_strobe_max', 95)),
                     **_matrix_meta(proj),
                 })
 
@@ -20820,6 +21797,8 @@ class MainWindow(QMainWindow):
                     proj.dmx_profile = list(profile)
                 proj.channel_defaults  = dict(fd.get('channel_defaults', {}))
                 proj.shutter_inverted  = bool(fd.get('shutter_inverted', False))
+                proj.shutter_strobe_min = int(fd.get('shutter_strobe_min', 64))
+                proj.shutter_strobe_max = int(fd.get('shutter_strobe_max', 95))
                 proj.color_wheel_slots = list(fd.get('color_wheel_slots', []))
                 proj.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
                 proj.preset_slots      = dict(fd.get('preset_slots', {}) or {})
@@ -20888,6 +21867,9 @@ class MainWindow(QMainWindow):
                 p.preset_slots      = dict(fd_s.get('preset_slots', {}) or {})
                 p.channel_labels    = list(fd_s.get('channel_labels', []))
                 p.ring_follow       = bool(fd_s.get('ring_follow', True))
+                p.shutter_inverted  = bool(fd_s.get('shutter_inverted', False))
+                p.shutter_strobe_min = int(fd_s.get('shutter_strobe_min', 64))
+                p.shutter_strobe_max = int(fd_s.get('shutter_strobe_max', 95))
                 if p.fixture_type == "Machine a fumee":
                     p.fan_speed = 0
                 _apply_pantilt_meta(p, fd_s)
@@ -20906,6 +21888,9 @@ class MainWindow(QMainWindow):
                     'preset_slots':       dict(fd_s.get('preset_slots', {}) or {}),
                     'channel_labels':     list(fd_s.get('channel_labels', [])),
                     'ring_follow':        bool(fd_s.get('ring_follow', True)),
+                    'shutter_inverted':   bool(fd_s.get('shutter_inverted', False)),
+                    'shutter_strobe_min': int(fd_s.get('shutter_strobe_min', 64)),
+                    'shutter_strobe_max': int(fd_s.get('shutter_strobe_max', 95)),
                     **{k: fd_s[k] for k in _PANTILT_META_FIELDS if k in fd_s},
                     **{k: fd_s[k] for k in _MATRIX_META_FIELDS if k in fd_s},
                 })
@@ -21120,6 +22105,116 @@ class MainWindow(QMainWindow):
                     tog_row.addWidget(btn_swap)
 
                     wl.addLayout(tog_row)
+
+                # ── Shutter : bande DMX du strobe ────────────────────────────
+                # Uniquement quand la fixture n'a PAS de canal Strobe dedie —
+                # sinon c'est lui qui porte le strobe et ce reglage ne servirait
+                # a rien. Sur les autres, `strobe_speed` n'atteignait le fil
+                # nulle part : le plan 2D faisait clignoter la pastille pendant
+                # que la lyre restait fixe (« je ne peux pas faire strober mes
+                # projecteurs »). Le moteur envoie maintenant la vitesse dans
+                # cette bande, cf. le bloc `Shutter` de `artnet_dmx`.
+                if (ch_type == "Shutter"
+                        and snap_idx is not None
+                        and snap_idx < len(self.projectors)
+                        and "Strobe" not in (getattr(self.projectors[snap_idx],
+                                                     'dmx_profile', None) or [])):
+                    proj_sh = self.projectors[snap_idx]
+                    _SEPS = QFrame(); _SEPS.setFrameShape(QFrame.HLine)
+                    _SEPS.setStyleSheet("QFrame{color:#1e1e1e;margin:4px 0;}")
+                    wl.addWidget(_SEPS)
+
+                    _sh_title = QLabel(tr("mw_shutter_strobe_band"))
+                    _sh_title.setAlignment(Qt.AlignCenter)
+                    _sh_title.setStyleSheet(
+                        f"color:{col}; font-size:10px; font-weight:bold;"
+                        f" background:transparent; border:none; letter-spacing:1px;"
+                    )
+                    wl.addWidget(_sh_title)
+
+                    _SPIN_SS = (
+                        "QSpinBox{background:#1a1a1a;color:#e0e0e0;"
+                        "border:1px solid #252525;border-radius:5px;"
+                        "padding:3px 4px;font-size:11px;}"
+                        "QSpinBox:hover{border-color:#333;}"
+                    )
+                    sh_row = QHBoxLayout()
+                    sh_row.setSpacing(6)
+                    sp_min = QSpinBox(); sp_min.setRange(0, 255); sp_min.setStyleSheet(_SPIN_SS)
+                    sp_max = QSpinBox(); sp_max.setRange(0, 255); sp_max.setStyleSheet(_SPIN_SS)
+                    sp_min.setValue(int(getattr(proj_sh, 'shutter_strobe_min', 64)))
+                    sp_max.setValue(int(getattr(proj_sh, 'shutter_strobe_max', 95)))
+                    _arrow = QLabel("→")
+                    _arrow.setStyleSheet("color:#5e5e5e;font-size:11px;background:transparent;border:none;")
+                    sh_row.addWidget(sp_min)
+                    sh_row.addWidget(_arrow)
+                    sh_row.addWidget(sp_max)
+                    wl.addLayout(sh_row)
+
+                    def _set_sh_min(v, _p=proj_sh):
+                        _p.shutter_strobe_min = int(v)
+                        self.send_dmx_update()
+                        _mark_dirty()
+
+                    def _set_sh_max(v, _p=proj_sh):
+                        _p.shutter_strobe_max = int(v)
+                        self.send_dmx_update()
+                        _mark_dirty()
+
+                    sp_min.valueChanged.connect(_set_sh_min)
+                    sp_max.valueChanged.connect(_set_sh_max)
+
+                    # Test en direct : c'est le SEUL moyen honnete de trouver la
+                    # bande, elle n'est ecrite dans aucun fichier constructeur
+                    # que MyStrow sache lire. L'etat complet du projecteur est
+                    # remis en place a l'extinction ET a la fermeture du menu —
+                    # un test laisse allume, c'est une lyre blanche pleine
+                    # lumiere en pleine balance.
+                    _sh_saved = {}
+
+                    def _sh_test(on, _p=proj_sh):
+                        if on:
+                            _sh_saved.clear()
+                            _sh_saved.update(
+                                level=getattr(_p, 'level', 0),
+                                base_color=QColor(getattr(_p, 'base_color', QColor("white"))),
+                                color=QColor(getattr(_p, 'color', QColor("black"))),
+                                strobe_speed=getattr(_p, 'strobe_speed', 0),
+                                shutter=getattr(_p, 'shutter', 255),
+                            )
+                            _p.level = 100
+                            _p.base_color = QColor(255, 255, 255)
+                            _p.color = QColor(255, 255, 255)
+                            _p.shutter = 255
+                            _p.strobe_speed = 60
+                        elif _sh_saved:
+                            _p.level        = _sh_saved["level"]
+                            _p.base_color   = _sh_saved["base_color"]
+                            _p.color        = _sh_saved["color"]
+                            _p.strobe_speed = _sh_saved["strobe_speed"]
+                            _p.shutter      = _sh_saved["shutter"]
+                            _sh_saved.clear()
+                        self.send_dmx_update()
+
+                    btn_sh_test = QPushButton(tr("mw_shutter_strobe_test"))
+                    btn_sh_test.setCheckable(True)
+                    btn_sh_test.setToolTip(tr("mw_shutter_strobe_test_tip"))
+                    btn_sh_test.setStyleSheet(
+                        "QPushButton{background:#1a1a1a;color:#555;border:1px solid #252525;"
+                        "border-radius:5px;padding:4px 10px;font-size:10px;}"
+                        "QPushButton:checked{background:#0d2030;color:#00d4ff;"
+                        "border-color:#00d4ff55;}"
+                        "QPushButton:hover{border-color:#333;color:#aaa;}"
+                    )
+                    btn_sh_test.toggled.connect(_sh_test)
+                    wl.addWidget(btn_sh_test)
+                    m.aboutToHide.connect(lambda: _sh_test(False))
+
+                    _sh_hint = QLabel(tr("mw_shutter_strobe_tip"))
+                    _sh_hint.setWordWrap(True)
+                    _sh_hint.setFixedWidth(200)
+                    _sh_hint.setStyleSheet("color:#5e5e5e;font-size:9px;")
+                    wl.addWidget(_sh_hint)
 
                 # ── Couronne LED : suit le show / manuelle ───────────────────
                 # Le réglage vaut pour TOUTE la couronne, pas pour ce canal :
@@ -23467,16 +24562,12 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        FIXTURE_LIBRARY = {}
-        for _fx in ALL_FIXTURES:
-            _cat = _fx.get("manufacturer", "Générique")
-            FIXTURE_LIBRARY.setdefault(_cat, []).append(_fx)
-        _sorted = {}
-        if "Générique" in FIXTURE_LIBRARY:
-            _sorted["Générique"] = FIXTURE_LIBRARY.pop("Générique")
-        for _k in sorted(FIXTURE_LIBRARY):
-            _sorted[_k] = FIXTURE_LIBRARY[_k]
-        FIXTURE_LIBRARY = _sorted
+        # Groupement par fabricant CANONIQUE : les quatre bibliothèques
+        # n'écrivaient pas les marques pareil (« cameo » / « Cameo »,
+        # « MacMah » / « Mac Mah », « ADJ » / « American DJ »…), ce qui donnait
+        # deux à quatre rubriques pour un même fabricant — 23 marques
+        # concernées. Voir `core.canonical_manufacturer`.
+        FIXTURE_LIBRARY = build_fixture_library(ALL_FIXTURES)
         _TOTAL_FIXTURES = len(ALL_FIXTURES)
 
         # ── Dialog ────────────────────────────────────────────────────────────
@@ -23715,10 +24806,14 @@ class MainWindow(QMainWindow):
         _ALL_MFR = "Tous les fabricants"
 
         def _search_matches(q):
+            # La marque CANONIQUE compte autant que celle écrite dans le
+            # fichier : la rubrique affiche « Mac Mah », taper ces deux mots ne
+            # devait pas rater les 56 fixtures qui disent « MacMah ».
             return [
                 fx for fx in ALL_FIXTURES
                 if q in fx.get("name", "").lower()
                 or q in fx.get("manufacturer", "").lower()
+                or q in canonical_manufacturer(fx.get("manufacturer")).lower()
                 or q in fx.get("fixture_type", "").lower()
             ]
 
@@ -23726,7 +24821,7 @@ class MainWindow(QMainWindow):
             preset_list.clear()
             for preset in fixtures:
                 name  = preset.get("name", "?")
-                mfr   = preset.get("manufacturer", "")
+                mfr   = canonical_manufacturer(preset.get("manufacturer"))
                 # Le libellé décrit la FIXTURE, pas son mode 0 : afficher
                 # « 1ch » pour une barre de 121 modes parce que son premier
                 # mode est un « Look » 1 canal était trompeur.
@@ -23766,7 +24861,7 @@ class MainWindow(QMainWindow):
                 if cat_name and cat_name != _ALL_MFR:
                     fixtures = [
                         fx for fx in fixtures
-                        if fx.get("manufacturer", "Générique") == cat_name
+                        if canonical_manufacturer(fx.get("manufacturer")) == cat_name
                     ]
             elif cat_name:
                 fixtures = FIXTURE_LIBRARY.get(cat_name, [])
@@ -23791,9 +24886,10 @@ class MainWindow(QMainWindow):
             cat_list.blockSignals(True)
             cat_list.clear()
             if q:
-                mfrs = {fx.get("manufacturer", "Générique") for fx in _search_matches(q)}
+                mfrs = {canonical_manufacturer(fx.get("manufacturer"))
+                        for fx in _search_matches(q)}
                 cat_list.addItem(_ALL_MFR)
-                for _m in sorted(mfrs):
+                for _m in sorted(mfrs, key=lambda s: (s.lower(), s)):
                     cat_list.addItem(_m)
             else:
                 for cat in FIXTURE_LIBRARY.keys():
@@ -23910,15 +25006,7 @@ class MainWindow(QMainWindow):
             ALL_FIXTURES.clear()
             ALL_FIXTURES.extend(list(BUILTIN_FIXTURES) + new_user)
             FIXTURE_LIBRARY.clear()
-            for _fx in ALL_FIXTURES:
-                FIXTURE_LIBRARY.setdefault(_fx.get("manufacturer", "Générique"), []).append(_fx)
-            _sorted2 = {}
-            if "Générique" in FIXTURE_LIBRARY:
-                _sorted2["Générique"] = FIXTURE_LIBRARY.pop("Générique")
-            for _k in sorted(FIXTURE_LIBRARY):
-                _sorted2[_k] = FIXTURE_LIBRARY[_k]
-            FIXTURE_LIBRARY.clear()
-            FIXTURE_LIBRARY.update(_sorted2)
+            FIXTURE_LIBRARY.update(build_fixture_library(ALL_FIXTURES))
             _rebuild_cat_list()
             _refresh_results()
 
@@ -24009,29 +25097,20 @@ class MainWindow(QMainWindow):
             ALL_FIXTURES.clear()
             ALL_FIXTURES.extend(list(BUILTIN_FIXTURES) + new_user_fixtures + new_custom)
             FIXTURE_LIBRARY.clear()
-            for _fx in ALL_FIXTURES:
-                FIXTURE_LIBRARY.setdefault(_fx.get("manufacturer", "Générique"), []).append(_fx)
-            _sorted3 = {}
-            if "Générique" in FIXTURE_LIBRARY:
-                _sorted3["Générique"] = FIXTURE_LIBRARY.pop("Générique")
-            for _k3 in sorted(FIXTURE_LIBRARY):
-                _sorted3[_k3] = FIXTURE_LIBRARY[_k3]
-            FIXTURE_LIBRARY.clear()
-            FIXTURE_LIBRARY.update(_sorted3)
+            FIXTURE_LIBRARY.update(build_fixture_library(ALL_FIXTURES))
             _rebuild_cat_list()
             _refresh_results()
 
         def _do_refresh(silent: bool = False):
-            from PySide6.QtCore import QObject as _QObject, Signal as _Signal, QThread as _QThread
+            from PySide6.QtCore import (QObject as _QObject, Signal as _Signal,
+                                        QThread as _QThread, Slot as _Slot)
 
-            # Essayer d'obtenir un token si l'utilisateur est connecté, mais
-            # procéder sans token si les règles Firestore autorisent la lecture publique.
-            id_token = None
-            try:
-                from license_manager import _get_fresh_token
-                id_token = _get_fresh_token()
-            except Exception:
-                pass
+            # Un seul rafraîchissement à la fois. Sur une connexion faible le
+            # premier dure plusieurs secondes ; deux threads qui réécrivent le
+            # même ~/.mystrow_fixtures.json se marchent dessus.
+            if getattr(dialog, "_refresh_busy", False):
+                return
+            dialog._refresh_busy = True
 
             btn_refresh.setEnabled(False)
             btn_refresh.setText(tr("mw_loading_m"))
@@ -24039,33 +25118,53 @@ class MainWindow(QMainWindow):
                 count_lbl.setText(tr("mw_firestore_conn"))
 
             class _FetchWorker(_QObject):
-                done  = _Signal(list)
+                # Signal(object) et non Signal(list) : une liste émise par un
+                # Signal(list) est détuplée à la livraison.
+                done  = _Signal(object)
                 error = _Signal(str)
-
-                def __init__(self, token):
-                    super().__init__()
-                    self._token = token
 
                 def run(self):
                     try:
+                        # Le renouvellement du jeton est un appel RÉSEAU (8 s de
+                        # timeout). Il était fait dans le thread GUI : sur une
+                        # connexion faible l'appli restait figée « ne répond
+                        # pas » tout le temps du timeout — et l'utilisateur la
+                        # tuait. Il appartient donc au worker, comme la lecture
+                        # Firestore. La bibliothèque est publique : ne pas
+                        # avoir de jeton n'est pas une erreur.
+                        token = None
+                        try:
+                            from license_manager import _get_fresh_token
+                            token = _get_fresh_token()
+                        except Exception:
+                            token = None
                         import firebase_client as _fc
-                        fixtures = _fc.fetch_all_gdtf_fixtures(self._token)
-                        self.done.emit(fixtures)
+                        self.done.emit(_fc.fetch_all_gdtf_fixtures(token))
                     except Exception as e:
                         self.error.emit(str(e))
 
-            thread = _QThread(dialog)
-            worker = _FetchWorker(id_token)
-            worker.moveToThread(thread)
-            thread.started.connect(worker.run)
-            # Garder des refs fortes pour éviter le GC Python avant la fin du thread
-            dialog._refresh_thread = thread
-            dialog._refresh_worker = worker
+            class _GuiRelay(_QObject):
+                """Relais d'affinité thread GUI.
+
+                Un signal connecté à une fonction NUE (sans QObject de
+                contexte) est délivré en connexion directe : le slot tourne
+                dans le thread worker, et y toucher un widget Qt — a fortiori
+                y ouvrir un QMessageBox, ce que fait le chemin d'erreur — fait
+                planter l'appli. Parenté au dialogue, ce relais force la
+                connexion queued vers le thread principal ; et si la fenêtre a
+                été fermée entre-temps il est détruit avec elle, si bien que le
+                callback est abandonné au lieu d'écrire dans des widgets morts.
+                """
+                def __init__(self, parent, cb):
+                    super().__init__(parent)
+                    self._cb = cb
+
+                @_Slot(object)
+                def invoke(self, arg):
+                    self._cb(arg)
 
             def _on_done(remote_fixtures: list):
-                thread.quit()
-                dialog._refresh_thread = None
-                dialog._refresh_worker = None
+                dialog._refresh_busy = False
                 # Normaliser les modes
                 for _f in remote_fixtures:
                     if not _f.get("profile") and _f.get("modes"):
@@ -24130,17 +25229,43 @@ class MainWindow(QMainWindow):
                 btn_refresh.setText(tr("mw_refresh_m"))
 
             def _on_error(msg: str):
-                thread.quit()
-                dialog._refresh_thread = None
-                dialog._refresh_worker = None
+                dialog._refresh_busy = False
                 btn_refresh.setEnabled(True)
                 btn_refresh.setText(tr("mw_refresh_m"))
                 if not silent:
                     count_lbl.setText(tr("mw_firestore_error"))
                     QMessageBox.warning(dialog, tr("mw_firestore_error"), tr("mw_f_load_fixtures_err", msg=msg))
 
-            worker.done.connect(_on_done)
-            worker.error.connect(_on_error)
+            # Le thread n'est PAS parenté au dialogue : fermer la fenêtre
+            # pendant un rafraîchissement détruirait un QThread encore en cours
+            # d'exécution — crash immédiat, exactement le cas d'une connexion
+            # lente où l'attente est assez longue pour qu'on referme. Les
+            # références vivent donc sur la fenêtre principale, jusqu'à la fin
+            # RÉELLE du thread.
+            thread = _QThread()
+            worker = _FetchWorker()
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+
+            relays = (_GuiRelay(dialog, _on_done), _GuiRelay(dialog, _on_error))
+            dialog._refresh_relays = relays
+            worker.done.connect(relays[0].invoke)
+            worker.error.connect(relays[1].invoke)
+            worker.done.connect(thread.quit)
+            worker.error.connect(thread.quit)
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+
+            if not hasattr(self, "_fixture_refresh_jobs"):
+                self._fixture_refresh_jobs = []
+            self._fixture_refresh_jobs.append((thread, worker))
+
+            def _gc_refresh_job():
+                jobs = getattr(self, "_fixture_refresh_jobs", None)
+                if jobs is not None:
+                    self._fixture_refresh_jobs = [j for j in jobs if j[0] is not thread]
+
+            thread.finished.connect(_gc_refresh_job)
             thread.start()
 
         btn_import.clicked.connect(_do_import)
@@ -24766,6 +25891,13 @@ class MainWindow(QMainWindow):
                 # elle n'était PAS sauvegardée : le réglage était perdu au
                 # redémarrage et la lyre repartait noire.
                 'shutter_inverted':   bool(getattr(proj, 'shutter_inverted', False)),
+                # Bande DMX brute du strobe quand c'est le canal Shutter qui le
+                # porte (lyre sans canal Strobe dedie). Elle varie d'un
+                # constructeur a l'autre : sans sauvegarde, chaque redemarrage
+                # renvoyait la vitesse dans la bande par defaut, donc parfois
+                # dans une plage de macros de la fixture.
+                'shutter_strobe_min': int(getattr(proj, 'shutter_strobe_min', 64)),
+                'shutter_strobe_max': int(getattr(proj, 'shutter_strobe_max', 95)),
                 # Couronne LED : suit le show (défaut) ou reste manuelle.
                 'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
                 'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
@@ -24872,6 +26004,10 @@ class MainWindow(QMainWindow):
                             p.dmx_profile = list(profile)
                         p.channel_defaults  = dict(fd.get('channel_defaults', {}))
                         p.shutter_inverted  = bool(fd.get('shutter_inverted', False))
+                        # Patch anterieur au strobe sur canal Shutter : cles
+                        # absentes => bande standard des lyres (64-95).
+                        p.shutter_strobe_min = int(fd.get('shutter_strobe_min', 64))
+                        p.shutter_strobe_max = int(fd.get('shutter_strobe_max', 95))
                         # Absent des shows antérieurs à la couronne pilotée :
                         # True, c'est-à-dire le comportement voulu par défaut.
                         p.ring_follow       = bool(fd.get('ring_follow', True))
@@ -25642,7 +26778,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'node_action'):
             return
         try:
-            self.node_action.setText(tr("menu_dmx_output") + "…")
+            self.node_action.setText(tr("menu_dmx_output"))
         except Exception:
             pass
 
@@ -26539,6 +27675,92 @@ class MainWindow(QMainWindow):
                 screen = screens[screen_index]
                 self.video_output_window.setGeometry(screen.geometry())
                 self.video_output_window.showFullScreen()
+                # Nouvelle dalle = nouveau reglage : sans ca, le keystone de
+                # l'ecran precedent restait applique sur celui-ci.
+                self._apply_video_geometry()
+
+    # ── Géométrie de la sortie vidéo ─────────────────────────────────────
+    # Le réglage est mémorisé PAR DALLE (nom d'écran + résolution) : un même
+    # PC sert souvent une régie fixe et un écran de secours, et un keystone
+    # calé sur l'un n'a aucun sens sur l'autre. Sans cette clé, brancher un
+    # deuxième écran appliquerait silencieusement la déformation du premier.
+
+    _VIDEO_GEOM_FILE = Path.home() / '.maestro_video_geometry.json'
+
+    def _video_geom_key(self, screen_index=None):
+        screens = QApplication.screens()
+        i = self.video_target_screen if screen_index is None else screen_index
+        if 0 <= i < len(screens):
+            geo = screens[i].geometry()
+            return f"{screens[i].name()}|{geo.width()}x{geo.height()}"
+        return "default"
+
+    def _ensure_video_geometries(self):
+        """Charge le fichier au premier besoin, jamais au démarrage.
+
+        Rien ici n'est utile tant que la sortie vidéo n'est pas allumée : un
+        chargement dans `__init__` allongerait le lancement pour un réglage
+        que la plupart des shows n'utilisent pas.
+        """
+        if getattr(self, '_video_geoms', None) is not None:
+            return
+        self._video_geoms = {}
+        try:
+            if self._VIDEO_GEOM_FILE.exists():
+                data = json.loads(self._VIDEO_GEOM_FILE.read_text(encoding='utf-8'))
+                for key, raw in (data.get('screens') or {}).items():
+                    self._video_geoms[key] = VideoGeometry.from_dict(raw)
+        except Exception as e:
+            # Un fichier illisible ne doit pas empêcher la sortie vidéo : on
+            # repart d'une géométrie neutre.
+            print(f"[Video] Géométrie illisible, réglage neutre : {e}")
+            self._video_geoms = {}
+
+    def video_geometry(self, screen_index=None):
+        """La géométrie de la dalle visée, créée à la volée si inconnue."""
+        self._ensure_video_geometries()
+        key = self._video_geom_key(screen_index)
+        if key not in self._video_geoms:
+            self._video_geoms[key] = VideoGeometry()
+        return self._video_geoms[key]
+
+    def save_video_geometry(self):
+        """Écrit tous les réglages connus, y compris ceux des autres dalles.
+
+        On ne réécrit pas seulement l'écran courant : le fichier sert de
+        mémoire de toutes les salles où la machine est passée.
+        """
+        self._ensure_video_geometries()
+        try:
+            payload = {'screens': {k: g.to_dict()
+                                   for k, g in self._video_geoms.items()
+                                   if not g.is_identity()}}
+            self._VIDEO_GEOM_FILE.write_text(
+                json.dumps(payload, indent=2), encoding='utf-8')
+        except Exception as e:
+            print(f"[Video] Sauvegarde géométrie impossible : {e}")
+
+    def _apply_video_geometry(self):
+        """Pose la géométrie de la dalle courante sur la fenêtre de sortie."""
+        win = self.video_output_window
+        if not win or not isinstance(win.video_widget, VideoSurface):
+            return
+        win.video_widget.set_geometry_settings(self.video_geometry())
+
+    def open_video_geometry(self):
+        """Ouvre le panneau de réglage (cadrage, étirement, 4 coins)."""
+        win = self.video_output_window
+        if not win or not win.isVisible() or not isinstance(win.video_widget, VideoSurface):
+            # Régler à l'aveugle n'aurait aucun sens : toute la méthode consiste
+            # à regarder la dalle pendant qu'on tire les coins.
+            QMessageBox.information(self, tr("vg_title"), tr("vg_no_output"))
+            return
+        self._apply_video_geometry()
+        dlg = VideoGeometryDialog(win.video_widget,
+                                  on_changed=self.save_video_geometry,
+                                  parent=self)
+        dlg.exec()
+        self.save_video_geometry()
 
     def show_test_logo(self):
         """Affiche le logo de test pendant 3 secondes (preview + externe si active)"""
@@ -26580,6 +27802,23 @@ class MainWindow(QMainWindow):
         """Calcule les valeurs HTP des memoires SANS modifier les projecteurs.
         Retourne un dict {id(proj): (level, QColor_display, QColor_base)} pour l'affichage."""
         overrides = {}
+
+        # Fondu de mémoire en cours → c'est LUI l'autorité sur niveau et couleur.
+        # `_recompute_memory_mix` a déjà composité toutes les mémoires levées
+        # dans la cible du fondu (`_fade_to`) : repasser ici par-dessus, frame
+        # après frame, n'ajoute rien — sauf que la comparaison HTP se fait
+        # contre le niveau INSTANTANÉ de la rampe, jamais contre sa cible. Dès
+        # que la mémoire d'arrivée est ne serait-ce qu'un cran plus haute que le
+        # look de départ (une lyre à 24 % qui passe à 25 %), `mem_level >
+        # proj.level` est vrai pendant TOUTE la rampe : la couleur cible était
+        # reposée sèche dès la première frame, et le fondu ne se voyait pas —
+        # ni sur le plan 2D (qui affiche ces overrides) ni sur les lampes. Les
+        # fixtures dont le niveau ne bouge pas entre les deux looks (PAR à
+        # 100 % des deux côtés) passaient au travers, d'où « le fondu marche
+        # sur les PAR, pas sur les lyres » alors que le mouvement, lui,
+        # glissait bien (l'HTP ne touche pas au pan/tilt).
+        if getattr(self, '_fade_timer', None) is not None and self._fade_timer.isActive():
+            return overrides
 
         for fi, mem_col in self._bank_memory_slots():
             col_akai = fi

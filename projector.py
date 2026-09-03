@@ -37,6 +37,15 @@ class Projector:
         self.zoom = 0                 # Zoom (0-255)
         self.shutter = 255            # Shutter/Iris (0-255)
         self.shutter_inverted = False  # True si convention inversée (0=ouvert, 255=fermé)
+        # Plage DMX BRUTE du strobe quand c'est le canal `Shutter` qui le porte
+        # — cas de la quasi-totalite des lyres, qui n'ont pas de canal `Strobe`
+        # separe. Convention la plus repandue : 0-31 ferme, 32-63 ouvert,
+        # 64-95 strobe lent->rapide, au-dela pulse/macros. Reglable par fixture
+        # (clic droit sur la pastille Shutter du patch) : la bande varie d'un
+        # constructeur a l'autre, et une valeur au hasard declencherait une
+        # macro au lieu d'un strobe.
+        self.shutter_strobe_min = 64
+        self.shutter_strobe_max = 95
         self.color_wheel = 0          # Color wheel (0-255)
         self.prism = 0                # Prism (0=off, >0=actif)
         self.gobo_rotation = 0        # Rotation gobo (0-255)

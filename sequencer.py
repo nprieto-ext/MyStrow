@@ -1137,7 +1137,12 @@ class LiveModePanel(QWidget):
         self._movement_size      = 70
         self._movement_duration  = 40         # durée en % (0-100)
         # ── Couleurs lyres (pool + cycle, même principe que mouvements) ────
-        self._color_tile_pool  = {'rouge', 'orange', 'jaune', 'ambre'}
+        # Quatre teintes OPPOSEES (0/120/240/300 deg), pas quatre chaudes.
+        # L'ancien defaut rouge/orange/jaune/ambre tient dans 60 deg de
+        # teinte : sur un PAR LED le cycle se lisait comme une couleur
+        # fixe, et c'est le tout premier reglage que voit un nouvel
+        # utilisateur de l'IA (retour client, 02/09/2026).
+        self._color_tile_pool  = {'rouge', 'vert', 'bleu', 'rose'}
         self._current_color    = 'rouge'
         self._color_duration   = 40         # durée en % (0-100)
         self._color_restrict   = True       # toujours restreindre à la sélection

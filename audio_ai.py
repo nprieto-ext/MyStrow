@@ -440,6 +440,23 @@ print(json.dumps(energy))
             return self.energy_map[idx]
         return 0.5
 
+    def _alt_distincte(self, idx, principale):
+        """Couleur alternative a `idx`, garantie differente de `principale`.
+
+        Repli : on avance dans la palette jusqu'a trouver une teinte qui
+        differe. Si la palette entiere est monochrome (cas degenere), on rend
+        la couleur d'origine — l'alternance est alors invisible, mais rien ne
+        casse.
+        """
+        if not self.palette:
+            return None
+        n = len(self.palette)
+        for saut in range(n):
+            c = self.palette[(idx + saut) % n]
+            if c.name() != principale.name():
+                return c
+        return self.palette[idx % n]
+
     def get_state_at(self, time_ms, duration_ms, max_dimmers=None):
         """Retourne l'etat lumiere pour chaque groupe de projecteurs
 
@@ -612,13 +629,22 @@ print(json.dumps(energy))
         def_color = def_color_d  # compat retour
 
         # Couleurs alternatives pour mode bicolore
+        #
+        # Les index `_*_alt_color_idx` sont figes au beat qui ouvre le mode
+        # bicolore, alors que les couleurs principales continuent d'avancer
+        # pendant les ~4 beats qui suivent. Les deux se rejoignaient donc en
+        # cours de route : mesure sur 30 s de beats reguliers, 33 images
+        # bicolores sur 74 sortaient une alternative IDENTIQUE a la couleur
+        # principale — l'alternance un-sur-deux disparaissait pres d'une fois
+        # sur deux, sans que rien ne le signale. On garantit ici que l'autre
+        # teinte en est bien une.
         contre_alt = None
         lat_alt = None
         face_alt = None
         if self._bicolor_active and self.palette:
-            contre_alt = self.palette[self._contre_alt_color_idx]
-            lat_alt = self.palette[self._lat_alt_color_idx]
-            face_alt = self.palette[self._face_alt_color_idx]
+            contre_alt = self._alt_distincte(self._contre_alt_color_idx, contre_color)
+            lat_alt = self._alt_distincte(self._lat_alt_color_idx, lat_color)
+            face_alt = self._alt_distincte(self._face_alt_color_idx, face_color)
 
         return {
             'face': (face_color, max(0, min(100, face_level))),

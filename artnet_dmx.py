@@ -1518,6 +1518,26 @@ class ArtNetDMX:
                     shutter = getattr(proj, 'shutter', 255)
                     raw = shutter if not proj.muted else 0
                     ch_val = (255 - raw) if getattr(proj, 'shutter_inverted', False) else raw
+                    # Le strobe n'a pas de canal a lui sur la plupart des lyres :
+                    # c'est le SHUTTER qui le porte, dans une bande dediee. Sans
+                    # ce bloc, `strobe_speed` n'atteignait JAMAIS le fil des que
+                    # le profil disait `Shutter` sans dire `Strobe` — 57 profils
+                    # integres, stroboscopes 2CH compris — alors que le plan 2D,
+                    # lui, faisait bien clignoter la pastille : l'interface
+                    # affirmait un strobe que le DMX ne portait pas.
+                    #
+                    # La bande est en DMX BRUT et ne repasse donc PAS par
+                    # `shutter_inverted` : cette bascule ne decrit que la
+                    # convention ouvert/ferme, la miroiter ici enverrait la
+                    # vitesse dans une plage de macros.
+                    _spd = getattr(proj, 'strobe_speed', 0)
+                    if _spd > 0 and not has_strobe:
+                        _lo = int(getattr(proj, 'shutter_strobe_min', 64))
+                        _hi = int(getattr(proj, 'shutter_strobe_max', 95))
+                        if _hi < _lo:
+                            _lo, _hi = _hi, _lo
+                        ch_val = max(0, min(255,
+                                            int(_lo + (_spd / 100.0) * (_hi - _lo))))
                 elif ch_type == "Prism":
                     ch_val = getattr(proj, 'prism', 0)
                 elif ch_type == "PrismRot":

@@ -4087,6 +4087,38 @@ class LightTimelineEditor(QDialog):
                 return piste, local.x()
         return None, 0
 
+    def _fin_de_suite(self, piste, debut):
+        """Fin de la file de blocs collés qu'on survole — None si on survole du vide.
+
+        C'est ce qui permet d'enchaîner R, B, V sans lâcher la souris : après le
+        premier bloc, le curseur est DANS ce bloc, et la touche suivante pose son
+        bloc AU BOUT de lui. Aucun état retenu entre deux touches — un undo, un
+        déplacement de bloc ou une piste reconstruite n'ont donc rien à invalider,
+        et pointer un bloc déjà là marche pareil.
+
+        La marche saute aussi les blocs collés au suivant, sinon le 3e maillon
+        retomberait sur le 2e. Elle est bornée par le nombre de blocs : un bloc de
+        durée nulle ne peut pas la faire tourner en rond.
+        """
+        def _sous(t):
+            """Le bloc qui couvre l'instant t, ou celui qui démarre pile dessus."""
+            for c in piste.clips:
+                if (c.start_time <= t < c.start_time + c.duration
+                        or abs(c.start_time - t) < 1):
+                    return c
+            return None
+
+        bloc = _sous(debut)
+        if bloc is None:
+            return None
+        fin = bloc.start_time + bloc.duration
+        for _ in range(len(piste.clips)):
+            voisin = _sous(fin)
+            if voisin is None:
+                break
+            fin = voisin.start_time + voisin.duration
+        return fin
+
     def _poser_bloc_couleur(self, key):
         """Touche couleur sur une piste survolée → un bloc à cet endroit.
 
@@ -4094,6 +4126,10 @@ class LightTimelineEditor(QDialog):
         dans la fenêtre principale, et le dupliquer ici les ferait diverger.
         La durée vient du champ « taille des blocs » de l'en-tête, via
         `_default_block_dur_ms()` — le même que tous les autres chemins de dépôt.
+
+        Les touches s'enchaînent : en survolant un bloc, la couleur se pose au
+        bout de lui plutôt que de ne rien faire. C'est le geste « R puis B puis
+        V » sans déplacer la souris.
 
         Rend True si un bloc a été posé (la touche est alors consommée).
         """
@@ -4108,14 +4144,17 @@ class LightTimelineEditor(QDialog):
 
         # 145 px = largeur de l'étiquette de piste, comme dans le mode Pinceau.
         debut = max(0, (x - 145) / piste.pixels_per_ms)
-        # Ne pas empiler : si un bloc couvre déjà cet instant, on ne fait rien
-        # plutôt que d'en superposer un invisible sous le premier.
-        if any(c.start_time <= debut <= c.start_time + c.duration
-               for c in piste.clips):
-            return False
+        duree = piste._default_block_dur_ms()
+        suite = self._fin_de_suite(piste, debut)
+        if suite is not None:
+            # `place_dropped_block` est la règle commune à tous les dépôts : la
+            # durée cède quand la place manque, plutôt que de faire sauter le
+            # bloc ailleurs.
+            debut, duree = piste.place_dropped_block(suite, duree)
+            if duree <= 0:
+                return False   # bout de la timeline : la file s'arrête là
 
-        piste.add_clip(debut, piste._default_block_dur_ms(),
-                       QColor(couleurs[key]), 100)
+        piste.add_clip(debut, duree, QColor(couleurs[key]), 100)
         piste.update()
         if hasattr(self, 'save_state'):
             self.save_state()
