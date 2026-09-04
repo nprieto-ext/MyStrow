@@ -320,6 +320,68 @@ BUILTIN_FIXTURES = [
     {"name": "MVS Hazer 2ch",               "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Laserworld
+    # ──────────────────────────────────────────────────────────────────────────
+    # LASER — meme recette que le MAC 1000 RGB : `fixture_type` « Moving Head »
+    # (seul type que `core.fixture_projects_gobo` autorise a projeter un motif),
+    # le dessin sur `Gobo1`, la position sur `Pan`/`Tilt`. Presets de position,
+    # piste Position, effets pan/tilt et stick de la manette marchent d'emblee.
+    #
+    # ⚠️ Le canal 1 porte a la fois l'EXTINCTION et le choix du mode
+    # (0-62 laser eteint, 63-129 son, 130-189 automatique, 190-255 DMX). C'est
+    # le SEUL canal capable de noircir l'appareil : il n'y a ni dimmer ni
+    # shutter sur ce laser. Il est donc en `Preset1` — un menu de blocs nommes,
+    # pas un `Dim` : un fader a mi-course tomberait dans « mode son » et le
+    # laser partirait en autonome au milieu du show. Repos = 0 = laser eteint,
+    # ce qui est le bon etat de repos pour un laser ; il faut cliquer « DMX »
+    # dans le clic droit du plan pour le rendre pilotable.
+    # ⚠️ Volontairement AUCUN `channel_defaults` (qui aurait pu poser 190 tout
+    # seul) : il n'est pas recopie a l'ajout depuis la bibliotheque, la fixture
+    # arriverait donc sans lui chez l'utilisateur. Le bloc nomme, lui, suit.
+    #
+    # Les fonctions secondaires prennent des types MANUELS distincts (`Anim`,
+    # `AnimRot`) : le moteur GANGE les canaux de meme type. Ils sortent 0 au
+    # repos = « positionnement manuel, aucune rotation » sur cet appareil.
+    #
+    # La notice FRANCAISE inverse les canaux 6 et 7 (les deux disent « mouvement
+    # vers le bas ») : l'anglaise et l'allemande concordent, 6 = horizontal,
+    # 7 = vertical. C'est cette lecture qui est retenue.
+    {"name": "CS-1000RGB MKII · Laser 11ch", "manufacturer": "Laserworld", "fixture_type": "Moving Head", "group": "face",
+     "profile": ["Preset1", "Gobo1", "Gobo1Rot", "Anim", "AnimRot", "Pan", "Tilt",
+                 "Zoom", "Preset2", "Strobe", "ColorWheel"],
+     "channel_labels": ["Mode de fonctionnement", "Choix du motif",
+                        "Rotation circulaire du motif", "Rotation sur l'axe Y",
+                        "Rotation sur l'axe X", "Mouvement horizontal",
+                        "Mouvement vertical", "Taille du motif (zoom)",
+                        "Dessin progressif", "Effet pointillé / stroboscope",
+                        "Couleur (0 = multicolore, 255 = changement auto)"],
+     "preset_slots": {
+         "Preset1": [{"name": "Éteint", "color": "#888888", "dmx": 0},
+                     {"name": "Son", "color": "#00b389", "dmx": 63},
+                     {"name": "Auto", "color": "#00b389", "dmx": 130},
+                     {"name": "DMX", "color": "#00cc99", "dmx": 190}],
+         "Preset2": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Lent", "color": "#008168", "dmx": 1},
+                     {"name": "Rapide", "color": "#008168", "dmx": 255}],
+     },
+     # Blanc AVANT « Multi » et « Chgt auto », qui portent la meme teinte :
+     # `cw_slot_for_color` departage deux distances egales par l'ORDRE de la
+     # liste, une demande de blanc doit donc tomber sur le blanc fixe et pas
+     # sur l'effet multicouleur. Les deux effets restent atteignables au clic.
+     "color_wheel_slots": [
+         {"name": "Blanc",     "color": "#ffffff", "dmx": 31},
+         {"name": "Rouge",     "color": "#ff0000", "dmx": 63},
+         {"name": "Jaune",     "color": "#ffff00", "dmx": 95},
+         {"name": "Vert",      "color": "#00ff00", "dmx": 127},
+         {"name": "Cyan",      "color": "#00ffff", "dmx": 157},
+         {"name": "Bleu",      "color": "#0000ff", "dmx": 191},
+         {"name": "Violet",    "color": "#cc00ff", "dmx": 220},
+         {"name": "Multi",     "color": "#ffffff", "dmx": 0},
+         {"name": "Chgt auto", "color": "#ffffff", "dmx": 255},
+     ],
+     "builtin": _B},
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Mac Mah
     # ──────────────────────────────────────────────────────────────────────────
     # LASER — un laser ne se decrit PAS comme un projecteur : il ne melange pas
