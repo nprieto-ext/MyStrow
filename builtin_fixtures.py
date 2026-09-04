@@ -320,6 +320,133 @@ BUILTIN_FIXTURES = [
     {"name": "MVS Hazer 2ch",               "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Shehds
+    # ──────────────────────────────────────────────────────────────────────────
+    # Notice « LED Spot 60W Lighting » / 60W图案灯说明书 — deux modes DMX, 9 et
+    # 11 canaux. Les DEUX tableaux de la notice donnent les MEMES plages de
+    # couleur et de gobo : une seule paire de roues sert aux deux modes, seul le
+    # 16 bits Pan/Tilt change.
+    #
+    # ⚠️ Les trois derniers canaux (vitesse, programmes auto, reset) sortaient
+    # tous en `Mode` dans l'entree OFL de la bibliotheque — donc GANGES sur
+    # `proj.mode_value` : l'unique curseur « Mode » des canaux avances les
+    # poussait tous les trois d'un coup, et un reset partait avec. Ici
+    # `Speed` / `Preset1` / `Reset`, trois types distincts. `Reset` sort 0 en
+    # toutes circonstances : il ne peut pas se declencher tout seul.
+    #
+    # Le canal « Auto » est un canal de MACRO (programmes internes + pilotage au
+    # son), d'ou `Preset1` et surtout pas `Mode`.
+    #
+    # Roue de couleurs : 8 positions pleines PUIS 6 demi-positions (la roue
+    # repart en arriere, cf. l'ordre de la notice). « Blanc » est premier de la
+    # liste et gagne donc l'egalite de teinte contre « Défilement auto », qui
+    # porte le meme blanc — `core.cw_slot_for_color` departage par l'ORDRE.
+    # Roue de gobos : 8 motifs, les memes 8 secoues (prefixe `~`), puis le
+    # defilement. Les libelles sont tronques a 6 caracteres sur les boutons du
+    # plan de feu, d'ou les noms courts ; l'infobulle donne le nom complet.
+    {"name": "LED Spot 60W · 9ch", "manufacturer": "Shehds", "fixture_type": "Moving Head", "group": "face",
+     "profile": ["Pan", "Tilt", "ColorWheel", "Gobo1", "Strobe", "Dim",
+                 "Speed", "Preset1", "Reset"],
+     "channel_labels": ["Pan (axe X)", "Tilt (axe Y)", "Couleur",
+                        "Gobo (~ = gobo secoué)", "Stroboscope", "Intensité",
+                        "Vitesse Pan/Tilt", "Programmes auto / pilotage au son",
+                        "Reset (250-255)"],
+     "color_wheel_slots": [
+         {"name": "Blanc",            "color": "#ffffff", "dmx": 0},
+         {"name": "Rouge",            "color": "#ff0000", "dmx": 10},
+         {"name": "Orange",           "color": "#ff8800", "dmx": 20},
+         {"name": "Jaune citron",     "color": "#eeff00", "dmx": 30},
+         {"name": "Vert",             "color": "#00ff00", "dmx": 40},
+         {"name": "Bleu",             "color": "#0000ff", "dmx": 50},
+         {"name": "Rose",             "color": "#ff44aa", "dmx": 60},
+         {"name": "Bleu ciel",        "color": "#00ccff", "dmx": 70},
+         {"name": "Bleu ciel + rose", "color": "#7f88d4", "dmx": 80},
+         {"name": "Rose + bleu",      "color": "#7f22d4", "dmx": 90},
+         {"name": "Bleu + vert",      "color": "#007f7f", "dmx": 100},
+         {"name": "Vert + citron",    "color": "#77ff00", "dmx": 110},
+         {"name": "Citron + orange",  "color": "#f6c400", "dmx": 120},
+         {"name": "Orange + rouge",   "color": "#ff4400", "dmx": 130},
+         {"name": "Défilement auto",  "color": "#ffffff", "dmx": 140},
+     ],
+     "gobo_wheel_slots": [
+         {"name": "Ouvert", "color": "#ffffff", "dmx": 0},
+         {"name": "Rosace", "color": "#aaaaaa", "dmx": 8},
+         {"name": "Points", "color": "#aaaaaa", "dmx": 16},
+         {"name": "Triang", "color": "#aaaaaa", "dmx": 24},
+         {"name": "Hexago", "color": "#aaaaaa", "dmx": 32},
+         {"name": "Spir.1", "color": "#aaaaaa", "dmx": 40},
+         {"name": "Spir.2", "color": "#aaaaaa", "dmx": 48},
+         {"name": "Puzzle", "color": "#aaaaaa", "dmx": 56},
+         {"name": "Ouv. 2", "color": "#ffffff", "dmx": 64},
+         {"name": "~Rosac", "color": "#888888", "dmx": 72},
+         {"name": "~Point", "color": "#888888", "dmx": 80},
+         {"name": "~Trian", "color": "#888888", "dmx": 88},
+         {"name": "~Hexag", "color": "#888888", "dmx": 96},
+         {"name": "~Spir1", "color": "#888888", "dmx": 104},
+         {"name": "~Spir2", "color": "#888888", "dmx": 112},
+         {"name": "~Puzzl", "color": "#888888", "dmx": 120},
+         {"name": "Défil.", "color": "#888888", "dmx": 128},
+     ],
+     "preset_slots": {
+         "Preset1": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Auto 1", "color": "#00cc99", "dmx": 49},
+                     {"name": "Auto 2", "color": "#00cc99", "dmx": 100},
+                     {"name": "Son", "color": "#00b389", "dmx": 200}],
+     },
+     "builtin": _B},
+
+    {"name": "LED Spot 60W · 11ch", "manufacturer": "Shehds", "fixture_type": "Moving Head", "group": "face",
+     "profile": ["Pan", "PanFine", "Tilt", "TiltFine", "ColorWheel", "Gobo1",
+                 "Strobe", "Dim", "Speed", "Preset1", "Reset"],
+     "channel_labels": ["Pan (axe X)", "Pan fin", "Tilt (axe Y)", "Tilt fin",
+                        "Couleur", "Gobo (~ = gobo secoué)", "Stroboscope",
+                        "Intensité", "Vitesse Pan/Tilt",
+                        "Programmes auto / pilotage au son", "Reset (250-255)"],
+     "color_wheel_slots": [
+         {"name": "Blanc",            "color": "#ffffff", "dmx": 0},
+         {"name": "Rouge",            "color": "#ff0000", "dmx": 10},
+         {"name": "Orange",           "color": "#ff8800", "dmx": 20},
+         {"name": "Jaune citron",     "color": "#eeff00", "dmx": 30},
+         {"name": "Vert",             "color": "#00ff00", "dmx": 40},
+         {"name": "Bleu",             "color": "#0000ff", "dmx": 50},
+         {"name": "Rose",             "color": "#ff44aa", "dmx": 60},
+         {"name": "Bleu ciel",        "color": "#00ccff", "dmx": 70},
+         {"name": "Bleu ciel + rose", "color": "#7f88d4", "dmx": 80},
+         {"name": "Rose + bleu",      "color": "#7f22d4", "dmx": 90},
+         {"name": "Bleu + vert",      "color": "#007f7f", "dmx": 100},
+         {"name": "Vert + citron",    "color": "#77ff00", "dmx": 110},
+         {"name": "Citron + orange",  "color": "#f6c400", "dmx": 120},
+         {"name": "Orange + rouge",   "color": "#ff4400", "dmx": 130},
+         {"name": "Défilement auto",  "color": "#ffffff", "dmx": 140},
+     ],
+     "gobo_wheel_slots": [
+         {"name": "Ouvert", "color": "#ffffff", "dmx": 0},
+         {"name": "Rosace", "color": "#aaaaaa", "dmx": 8},
+         {"name": "Points", "color": "#aaaaaa", "dmx": 16},
+         {"name": "Triang", "color": "#aaaaaa", "dmx": 24},
+         {"name": "Hexago", "color": "#aaaaaa", "dmx": 32},
+         {"name": "Spir.1", "color": "#aaaaaa", "dmx": 40},
+         {"name": "Spir.2", "color": "#aaaaaa", "dmx": 48},
+         {"name": "Puzzle", "color": "#aaaaaa", "dmx": 56},
+         {"name": "Ouv. 2", "color": "#ffffff", "dmx": 64},
+         {"name": "~Rosac", "color": "#888888", "dmx": 72},
+         {"name": "~Point", "color": "#888888", "dmx": 80},
+         {"name": "~Trian", "color": "#888888", "dmx": 88},
+         {"name": "~Hexag", "color": "#888888", "dmx": 96},
+         {"name": "~Spir1", "color": "#888888", "dmx": 104},
+         {"name": "~Spir2", "color": "#888888", "dmx": 112},
+         {"name": "~Puzzl", "color": "#888888", "dmx": 120},
+         {"name": "Défil.", "color": "#888888", "dmx": 128},
+     ],
+     "preset_slots": {
+         "Preset1": [{"name": "Arrêt", "color": "#888888", "dmx": 0},
+                     {"name": "Auto 1", "color": "#00cc99", "dmx": 49},
+                     {"name": "Auto 2", "color": "#00cc99", "dmx": 100},
+                     {"name": "Son", "color": "#00b389", "dmx": 200}],
+     },
+     "builtin": _B},
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Laserworld
     # ──────────────────────────────────────────────────────────────────────────
     # LASER — meme recette que le MAC 1000 RGB : `fixture_type` « Moving Head »
