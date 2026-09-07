@@ -599,4 +599,102 @@ BUILTIN_FIXTURES = [
      },
      "builtin": _B},
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Electroconcept
+    # ──────────────────────────────────────────────────────────────────────────
+    # Notice « LYRE BEAM 12X10W FULL RGBW 5° — MODELE B200-1 » (Electroconcept,
+    # 7 pages, FR). 12 LED RGBW 4-en-1 de 10 W, 150 W, Pan 630° / Tilt 200°.
+    # Deux modes DMX, 11 et 15 canaux : le mode 15 est le mode 11 auquel on
+    # ajoute strobe, programmes internes et ID d'appareil.
+    #
+    # ⚠️ Pan/Tilt fin ne sont PAS entrelaces avec Pan/Tilt : la notice donne
+    # 7 Pan, 8 Tilt, 9 Pan Fine, 10 Tilt Fine. Le profil est positionnel, il
+    # recopie donc cet ordre — recopier l'habituel Pan/PanFine/Tilt/TiltFine
+    # ferait sortir le Tilt sur le canal du Pan fin.
+    #
+    # ⚠️ Canal 6 « Dimmer couleur personnalisee en mode test » : c'est un
+    # SECOND gradateur, mais pose sur une couleur fixe reglee au menu (Test
+    # Mode) de l'appareil — pas sur la couleur du show. En `Dim2` il aurait
+    # suivi le fader master (cf. `artnet_dmx.py`, `ch_type in ("Dim","Dim2")`)
+    # et aurait plaque cette couleur figee par-dessus le RGBW a chaque montee
+    # de niveau. Il est donc `Unused` : il sort 0 et garde sa place dans la
+    # numerotation, tout en restant joignable par son NUMERO dans les canaux
+    # avances pour qui veut s'en servir.
+    #
+    # Meme raison pour le canal 15 (ID de l'appareil, 10-255 = ID 1~25) : une
+    # valeur posee au hasard reconfigurerait la lyre en plein show.
+    #
+    # Canal 13 = programmes internes (macro) → `Preset1`, surtout pas `Mode` :
+    # les canaux `Mode` sont GANGES sur `proj.mode_value`. Ses deux premiers
+    # blocs pilotent un RELAIS : « Relais off » coupe l'appareil, d'ou le nom
+    # explicite dans les blocs.
+    #
+    # Canal 14 est CONTEXTUEL, la notice le dit en deux tableaux : quand le
+    # canal 13 est sur « Couleurs preprogrammees » (51-90) il choisit la
+    # couleur, quand il est sur pulse/aleatoire/fondu (91-210) il donne la
+    # VITESSE du programme. Un seul canal, deux significations — il est en
+    # `Preset2` (blocs nommes, aucun rendu visuel), pas en `ColorWheel` : la
+    # lyre est une RGBW, la couleur du show sort deja par R/G/B/W et un
+    # deuxieme ecrivain de couleur rejouerait l'anti-pattern des deux writers.
+    #
+    # ⚠️ Le tableau du canal 14 de la notice est FAUTIF : il aligne 22 plages
+    # sur 21 fonctions, ecrit « 141-170 » juste apres « 141-160 » (161-170), et
+    # il manque une ligne dans la colonne des fonctions entre « No function »
+    # et le dernier degrade. Arbitrage : les plages >= 141-170 sont sur la MEME
+    # ligne que leur fonction dans le PDF, elles font foi ; en dessous, tout
+    # 1-170 est un fondu spectral continu, decoupe sans consequence pratique —
+    # d'ou un seul bloc « Degrade » plutot que huit paliers inventes.
+    #
+    # Les couleurs fixes (206-255) sont donnees en RGBW dans la notice avec
+    # W a 227/255 : la pastille montre la part RGB, celle qui les distingue,
+    # le blanc s'ajoute par-dessus sur l'appareil.
+    {"name": "Lyre Beam 12x10W RGBW 5° B200-1 · 11ch", "manufacturer": "Electroconcept",
+     "fixture_type": "Moving Head", "group": "face",
+     "profile": ["Dim", "R", "G", "B", "W", "Unused",
+                 "Pan", "Tilt", "PanFine", "TiltFine", "Speed"],
+     "channel_labels": ["Intensité générale", "Rouge", "Vert", "Bleu", "Blanc",
+                        "Dimmer de la couleur perso du menu Test (non piloté)",
+                        "Pan (axe X)", "Tilt (axe Y)", "Pan fin", "Tilt fin",
+                        "Vitesse Pan/Tilt"],
+     "builtin": _B},
+
+    {"name": "Lyre Beam 12x10W RGBW 5° B200-1 · 15ch", "manufacturer": "Electroconcept",
+     "fixture_type": "Moving Head", "group": "face",
+     "profile": ["Dim", "R", "G", "B", "W", "Unused",
+                 "Pan", "Tilt", "PanFine", "TiltFine", "Speed",
+                 "Strobe", "Preset1", "Preset2", "Unused"],
+     "channel_labels": ["Intensité générale", "Rouge", "Vert", "Bleu", "Blanc",
+                        "Dimmer de la couleur perso du menu Test (non piloté)",
+                        "Pan (axe X)", "Tilt (axe Y)", "Pan fin", "Tilt fin",
+                        "Vitesse Pan/Tilt", "Stroboscope (lent → rapide)",
+                        "Programmes internes",
+                        "Couleur préprogrammée, ou vitesse du programme",
+                        "ID de l'appareil (10-255 = ID 1~25, non piloté)"],
+     "preset_slots": {
+         "Preset1": [{"name": "Aucun",            "color": "#888888", "dmx": 0},
+                     {"name": "Relais ON",        "color": "#c47b00", "dmx": 1},
+                     {"name": "Relais OFF",       "color": "#a04040", "dmx": 26},
+                     {"name": "Couleurs (ch.14)", "color": "#00cc99", "dmx": 51},
+                     {"name": "Changement pulsé", "color": "#00cc99", "dmx": 91},
+                     {"name": "Changement aléatoire", "color": "#00cc99", "dmx": 131},
+                     {"name": "Changement fondu", "color": "#00cc99", "dmx": 171},
+                     {"name": "Mode auto",        "color": "#00b389", "dmx": 211},
+                     {"name": "Mode son",         "color": "#00b389", "dmx": 251}],
+         "Preset2": [{"name": "Aucun",   "color": "#888888", "dmx": 0},
+                     {"name": "Dégradé", "color": "#00cc99", "dmx": 1},
+                     {"name": "Blanc",   "color": "#ffffff", "dmx": 171},
+                     {"name": "Noir",    "color": "#000000", "dmx": 201},
+                     {"name": "Ambre 1", "color": "#f2cc05", "dmx": 206},
+                     {"name": "Ambre 2", "color": "#f2d705", "dmx": 211},
+                     {"name": "Blanc 1", "color": "#ffff32", "dmx": 216},
+                     {"name": "Blanc 2", "color": "#ffff5a", "dmx": 221},
+                     {"name": "Blanc 3", "color": "#ffff76", "dmx": 226},
+                     {"name": "Blanc 4", "color": "#ffff84", "dmx": 231},
+                     {"name": "Blanc 5", "color": "#ffff97", "dmx": 236},
+                     {"name": "Blanc 6", "color": "#ffffab", "dmx": 241},
+                     {"name": "Blanc 7", "color": "#ffffb9", "dmx": 246},
+                     {"name": "Blanc 8", "color": "#ffffc5", "dmx": 251}],
+     },
+     "builtin": _B},
+
 ]
