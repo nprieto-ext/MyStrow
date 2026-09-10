@@ -3768,6 +3768,21 @@ class AdminPanel(QMainWindow):
         self.btn_cancel_sub.clicked.connect(self._on_cancel_subscription)
         a_lay.addWidget(self.btn_cancel_sub)
 
+        # Retour d'un boitier (Amazon, retractation) : ne s'active que pour un
+        # client dont la licence vient effectivement d'une activation boitier.
+        self.btn_boitier_return = QPushButton("Retour boîtier")
+        self.btn_boitier_return.setStyleSheet(f"""
+            QPushButton {{ background:transparent; color:{ORANGE}; border:1px solid #7a5210;
+                          border-radius:4px; font-size:12px; font-weight:bold;
+                          padding: 0 12px; }}
+            QPushButton:hover {{ background:#7a5210; color:white; }}
+            QPushButton:disabled {{ color:#444; border-color:#333; }}
+        """)
+        self.btn_boitier_return.setFixedHeight(36)
+        self.btn_boitier_return.setEnabled(False)
+        self.btn_boitier_return.clicked.connect(self._on_boitier_return)
+        a_lay.addWidget(self.btn_boitier_return)
+
         a_lay.addStretch()
 
         # Supprimer — danger, isolé à droite
@@ -6334,6 +6349,8 @@ class AdminPanel(QMainWindow):
         self.btn_stripe_open.setEnabled(is_stripe)
         has_sub = bool(client and client.get("stripe_subscription_id", ""))
         self.btn_cancel_sub.setEnabled(has_sub)
+        self.btn_boitier_return.setEnabled(
+            bool(client and client.get("boitier_serial", "")))
 
     def _get_selected_client(self) -> dict | None:
         row = self.table.currentRow()
@@ -6388,7 +6405,12 @@ class AdminPanel(QMainWindow):
                 statut = f"expire {days_left}j"
             else:
                 statut = "expiré"
-            haystack = f"{email} {plan} {forfait} {source} {statut}"
+            # Le numero de serie est cherchable tel qu'il est imprime sous le
+            # boitier ET sans ses tirets : un retour Amazon arrive avec le
+            # boitier en main, pas avec l'email du client.
+            serial   = (c.get("boitier_serial", "") or "").lower()
+            boitier  = f"{serial} {serial.replace('-', '')} boitier boîtier" if serial else ""
+            haystack = f"{email} {plan} {forfait} {source} {statut} {boitier}"
             if q in haystack:
                 filtered.append(c)
         self._populate_table(filtered)
@@ -6409,7 +6431,18 @@ class AdminPanel(QMainWindow):
             plan        = c.get("plan", "?")
             forfait     = _forfait_labels.get(c.get("plan_type", ""), "—")
             is_stripe   = bool(c.get("stripe_customer_id", ""))
-            source_str  = "🟣 Stripe" if is_stripe else "✏️ Manuel"
+            # Une licence venue d'un boitier n'est ni Stripe ni "manuelle" :
+            # sans ce cas, elle s'affichait "✏️ Manuel" et rien ne signalait
+            # qu'un retour produit devait la reprendre.
+            serial      = c.get("boitier_serial", "")
+            if serial and is_stripe:
+                source_str = "🟣📦 Stripe + boîtier"
+            elif serial:
+                source_str = f"📦 {serial}"
+            elif is_stripe:
+                source_str = "🟣 Stripe"
+            else:
+                source_str = "✏️ Manuel"
             expiry      = c.get("expiry_utc", 0)
             machines    = c.get("machines", [])
 
@@ -6441,7 +6474,8 @@ class AdminPanel(QMainWindow):
                 if col == 5:
                     item.setForeground(QColor(statut_color))
                 if col == 3:
-                    item.setForeground(QColor("#635bff" if is_stripe else "#888888"))
+                    item.setForeground(QColor(
+                        ACCENT if serial else ("#635bff" if is_stripe else "#888888")))
                 self.table.setItem(row, col, item)
 
         self.table.resizeRowsToContents()
@@ -6515,6 +6549,108 @@ class AdminPanel(QMainWindow):
             except Exception:
                 msg = str(e)
             QMessageBox.critical(self, "Erreur", msg)
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", str(e))
+
+    def _on_boitier_return(self):
+        """Retour d'un boîtier : reprend l'année de licence qu'il portait.
+
+        Un boîtier renvoyé (retour Amazon, rétractation) est remboursé : le
+        client ne doit pas garder les 12 mois qui venaient avec. On remet la
+        licence exactement dans l'état d'avant l'activation — d'où les champs
+        `boitier_prev_*` posés par la Cloud Function.
+
+        Le code, lui, n'est PAS remis au stock : le client l'a vu. Il passe à
+        `revoked` et le boîtier repart avec une carte neuve.
+        """
+        client = self._get_selected_client()
+        if not client:
+            return
+        serial = client.get("boitier_serial", "")
+        code   = client.get("boitier_code", "")
+        email  = client.get("email", "?")
+        uid    = client.get("_uid") or client.get("uid", "")
+        if not serial:
+            QMessageBox.information(self, "Retour boîtier",
+                                    "Cette licence ne vient pas d'un boîtier.")
+            return
+
+        prev_exp  = float(client.get("boitier_prev_expiry_utc", 0) or 0)
+        prev_plan = client.get("boitier_prev_plan", "") or ""
+        prev_type = client.get("boitier_prev_plan_type", "") or ""
+        now       = datetime.now(timezone.utc).timestamp()
+
+        # Activation anterieure au suivi de l'etat precedent : on retire la
+        # duree offerte au lieu de restaurer, et on le dit clairement.
+        approx = "boitier_prev_expiry_utc" not in client
+        if approx:
+            prev_exp = max(0.0, float(client.get("expiry_utc", 0) or 0) - 366 * 86400)
+
+        if prev_exp > now:
+            new_plan = prev_plan or "license"
+            apres    = f"licence rétablie jusqu'au {_fmt_date(prev_exp)}"
+        else:
+            new_plan = "expired"
+            apres    = "licence expirée (elle l'était déjà avant l'activation)"
+
+        confirm = QMessageBox.question(
+            self, "Confirmer le retour",
+            f"Reprendre l'année de licence du boîtier :\n\n"
+            f"Client   : {email}\n"
+            f"Boîtier  : {serial}\n"
+            f"Code     : {code or '?'}\n\n"
+            f"Après l'opération : {apres}.\n"
+            f"Le code passe à « révoqué » — il ne pourra plus servir.\n"
+            f"Le boîtier devra repartir avec une carte neuve."
+            + ("\n\n⚠ Activation antérieure au suivi de l'état précédent :\n"
+               "la date restaurée est une soustraction de 12 mois, à vérifier."
+               if approx else ""),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            # 1. La licence revient a son etat d'avant. Les champs boitier_*
+            #    sont listes dans le masque mais absents du corps : Firestore
+            #    les supprime, la ligne ne portera donc plus le marqueur 📦.
+            fields = {
+                "expiry_utc": {"doubleValue": prev_exp},
+                "plan":       {"stringValue": new_plan},
+            }
+            mask = ["expiry_utc", "plan",
+                    "boitier_until_utc", "boitier_serial", "boitier_code",
+                    "boitier_utc", "boitier_prev_expiry_utc",
+                    "boitier_prev_plan", "boitier_prev_plan_type"]
+            if prev_type:
+                fields["plan_type"] = {"stringValue": prev_type}
+                mask.append("plan_type")
+            _patch_firestore(f"licenses/{uid}", fields, self._token(), mask=mask)
+
+            # 2. /boitiers et /activation_codes n'ont aucune regle Firestore :
+            #    elles sont refusees au jeton client, y compris admin. On passe
+            #    donc par le jeton de compte de service, qui ne traverse pas
+            #    les regles — comme le fait la Cloud Function.
+            sa_token = _get_service_account_token()
+            _patch_firestore(f"boitiers/{serial}", {
+                "returned_utc":   {"doubleValue": now},
+                "returned_email": {"stringValue": email},
+                "activated_uid":  {"stringValue": ""},
+            }, sa_token, mask=["returned_utc", "returned_email", "activated_uid"])
+
+            if code:
+                _patch_firestore(f"activation_codes/{code}", {
+                    "status":       {"stringValue": "revoked"},
+                    "revoked_utc":  {"doubleValue": now},
+                    "revoked_email": {"stringValue": email},
+                }, sa_token, mask=["status", "revoked_utc", "revoked_email"])
+
+            QMessageBox.information(
+                self, "Retour enregistré",
+                f"Boîtier {serial} repris.\n{apres.capitalize()}.\n"
+                f"Code {code or '?'} révoqué.")
+            self._load_clients()
+
         except Exception as e:
             QMessageBox.critical(self, "Erreur", str(e))
 

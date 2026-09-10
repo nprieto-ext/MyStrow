@@ -494,11 +494,35 @@ def _set_license(
         })
 
 
+def _boitier_floor(uid: str) -> float:
+    """Fin de l'année de licence livrée avec un boîtier USB-DMX (0 si aucune).
+
+    Cette année-là n'est PAS un abonnement : elle est payée une fois, avec le
+    matériel. Elle doit donc survivre à tout ce que raconte Stripe ensuite —
+    un renouvellement mensuel qui recalculerait `expiry_utc` à J+31, une
+    résiliation qui le ramènerait à maintenant. D'où ce plancher, appliqué
+    partout où l'échéance est réécrite.
+    """
+    try:
+        doc = _get_db().collection("licenses").document(uid).get()
+        if not doc.exists:
+            return 0.0
+        return float((doc.to_dict() or {}).get("boitier_until_utc", 0) or 0)
+    except Exception:
+        return 0.0
+
+
 def _revoke_license(uid: str) -> None:
-    """Passe le plan à 'expired' et vide l'ID abonnement."""
+    """Passe le plan à 'expired' et vide l'ID abonnement.
+
+    Sauf si une année « boîtier » court encore : le client a payé ce matériel,
+    résilier son abonnement ne la lui reprend pas.
+    """
+    floor = _boitier_floor(uid)
+    now   = time.time()
     _get_db().collection("licenses").document(uid).update({
-        "plan":                   "expired",
-        "expiry_utc":             time.time(),
+        "plan":                   "license" if floor > now else "expired",
+        "expiry_utc":             max(now, floor),
         "stripe_subscription_id": "",
     })
 
@@ -1677,7 +1701,10 @@ def _on_invoice_paid(invoice: dict) -> None:
         print(f"[invoice.paid] plan indéterminable pour {email} — defaut 'monthly'")
 
     lang      = _lang_for_uid(uid)
-    expiry_ts = _compute_expiry(plan_type)
+    # Une facture payée ne doit jamais RACCOURCIR une licence : un client qui a
+    # activé un boîtier (12 mois d'un coup) et paie aussi 31 jours d'abonnement
+    # verrait sinon son année remplacée par un mois au prochain prélèvement.
+    expiry_ts = max(_compute_expiry(plan_type), _boitier_floor(uid))
     _set_license(uid, email, plan_type, expiry_ts,
                  stripe_customer_id=customer_id,
                  stripe_subscription_id=sub_id,
@@ -3267,3 +3294,265 @@ def ga4_insights(req: https_fn.Request) -> https_fn.Response:
         return https_fn.Response(
             json.dumps({"error": str(e)}),
             status=500, headers={"Content-Type": "application/json", **_GA4_CORS})
+
+
+# ===========================================================================
+# ACTIVATION BOÎTIER USB-DMX — mystrow.fr/activate
+# ===========================================================================
+#
+# Deux secrets, deux endroits, et il faut les deux :
+#   - le CODE est sur l'étiquette collée au dos de la carte, dans la boîte ;
+#   - le NUMÉRO DE SÉRIE est sur l'autocollant sous le boîtier.
+# Une carte photographiée dans un déballage filmé ne suffit donc pas, et un
+# numéro de série lu sur un boîtier en vitrine non plus.
+#
+# Le code n'est jamais déduit du numéro de série : les deux listes sont tirées
+# au sort séparément (tools/generate_activation_codes.py) et poussées ici.
+
+_ACT_ALPHABET  = "023456789ABCDEFGHJKMNPQRSTVWXYZ"   # sans 1 I L O U
+_ACT_BODY_LEN  = 11                                   # + 1 caractère de contrôle
+_ACT_MAX_TRIES = 8                                    # tentatives par IP...
+_ACT_WINDOW    = 900                                  # ...par quart d'heure
+
+
+def _act_check_char(body: str) -> str:
+    """Même calcul que le générateur : somme pondérée des positions, mod 31."""
+    total = sum((i + 1) * _ACT_ALPHABET.index(c) for i, c in enumerate(body))
+    return _ACT_ALPHABET[total % len(_ACT_ALPHABET)]
+
+
+def _act_normalize_code(raw: str) -> str:
+    """Saisie humaine -> code canonique.
+
+    Tirets, espaces et minuscules sont sans importance. Un O tapé est
+    forcément un 0 mal lu : aucun code n'en contient.
+    """
+    up = (raw or "").strip().upper().replace("O", "0")
+    return "".join(c for c in up if c in _ACT_ALPHABET)
+
+
+def _act_code_wellformed(code: str) -> bool:
+    """Contrôle hors-ligne : longueur, alphabet, caractère de contrôle.
+
+    Écarte les fautes de frappe sans consulter la base — donc sans qu'une
+    erreur de saisie consomme une tentative de la limite de débit.
+    """
+    return (len(code) == _ACT_BODY_LEN + 1
+            and all(c in _ACT_ALPHABET for c in code)
+            and code[-1] == _act_check_char(code[:-1]))
+
+
+def _act_normalize_serial(raw: str) -> str:
+    """'0001 b9er', 'msdmx0001b9er', 'MS-DMX-0001-B9ER' -> 'MS-DMX-0001-B9ER'."""
+    up = "".join(c for c in (raw or "").upper() if c.isalnum())
+    if up.startswith("MSDMX"):
+        up = up[5:]
+    if len(up) != 8 or not up[:4].isdigit() or not up[4:].isalnum():
+        return ""
+    return f"MS-DMX-{up[:4]}-{up[4:]}"
+
+
+def _act_throttle_ok(ip: str) -> bool:
+    """Limite de débit par IP.
+
+    En cas de panne Firestore on laisse passer : bloquer une activation
+    légitime coûte plus cher qu'un essai de trop.
+    """
+    if not ip:
+        return True
+    key = hashlib.sha256(ip.encode()).hexdigest()[:32]
+    ref = _get_db().collection("activation_throttle").document(key)
+    now = time.time()
+    try:
+        doc   = ref.get()
+        data  = (doc.to_dict() or {}) if doc.exists else {}
+        start = float(data.get("start", 0) or 0)
+        count = int(data.get("count", 0) or 0)
+        if now - start > _ACT_WINDOW:
+            ref.set({"start": now, "count": 1})
+            return True
+        if count >= _ACT_MAX_TRIES:
+            return False
+        ref.set({"start": start, "count": count + 1})
+        return True
+    except Exception as e:
+        print(f"[activate] limite de débit indisponible : {e}")
+        return True
+
+
+@https_fn.on_request(max_instances=5)
+def activate_code(req: https_fn.Request) -> https_fn.Response:
+    """Active 12 mois de licence depuis un code carte + un numéro de série."""
+    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+    if req.method != "POST":
+        return https_fn.Response("Method not allowed", status=405,
+                                 headers=_CORS_HEADERS)
+
+    def _ko(code: str, message: str, status: int = 400) -> https_fn.Response:
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": code, "message": message}),
+            status=status, headers=_H)
+
+    ip = (req.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+    if not _act_throttle_ok(ip):
+        return _ko("throttled",
+                   "Trop de tentatives. Réessayez dans un quart d'heure.", 429)
+
+    try:
+        body = json.loads(req.get_data() or b"{}")
+    except Exception:
+        return _ko("bad_json", "Requête invalide.")
+
+    email  = (body.get("email") or "").strip().lower()
+    code   = _act_normalize_code(body.get("code"))
+    serial = _act_normalize_serial(body.get("serial"))
+    lang   = _detect_lang(locales=[body.get("lang") or ""])
+
+    if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+        return _ko("bad_email", "Cette adresse email n'est pas valide.")
+    if not _act_code_wellformed(code):
+        return _ko("bad_code", "Ce code d'activation est incorrect. "
+                               "Vérifiez la saisie sur votre carte.")
+    if not serial:
+        return _ko("bad_serial", "Ce numéro de série est incorrect. Il est "
+                                 "sous le boîtier, au format MS-DMX-0000-XXXX.")
+
+    try:
+        db = _get_db()
+
+        ser_ref = db.collection("boitiers").document(serial)
+        if not ser_ref.get().exists:
+            return _ko("unknown_serial",
+                       "Ce numéro de série ne correspond à aucun boîtier "
+                       "MyStrow.", 404)
+
+        code_ref  = db.collection("activation_codes").document(code)
+        code_snap = code_ref.get()
+        if not code_snap.exists:
+            return _ko("unknown_code", "Ce code d'activation n'existe pas.", 404)
+        code_data = code_snap.to_dict() or {}
+        if code_data.get("status") != "unused":
+            quand = (f" le {_fmt_date(float(code_data['used_utc']), lang)}"
+                     if code_data.get("used_utc") else "")
+            return _ko("code_used",
+                       f"Ce code a déjà été utilisé{quand}. "
+                       "Si ce n'est pas vous, contactez-nous.", 409)
+
+        # Licence à vie déjà en place : on refuse AVANT de consommer le code,
+        # sinon le client perdrait son année pour rien.
+        try:
+            known_uid = auth.get_user_by_email(email).uid
+        except auth.UserNotFoundError:
+            known_uid = None
+        if known_uid:
+            lic = db.collection("licenses").document(known_uid).get()
+            if lic.exists and (lic.to_dict() or {}).get("plan_type") == "lifetime":
+                return _ko("already_lifetime",
+                           "Ce compte dispose déjà d'une licence à vie. "
+                           "Votre code n'a pas été consommé — gardez-le.", 409)
+
+        # Consommation atomique : deux envois simultanés du même code ne
+        # peuvent pas donner deux licences.
+        months = int(code_data.get("months") or 12)
+        now    = time.time()
+
+        @firestore.transactional
+        def _consume(tx) -> bool:
+            snap = code_ref.get(transaction=tx)
+            if (snap.to_dict() or {}).get("status") != "unused":
+                return False
+            tx.update(code_ref, {
+                "status":      "used",
+                "used_email":  email,
+                "used_serial": serial,
+                "used_utc":    now,
+                "used_ip":     ip,
+            })
+            return True
+
+        if not _consume(db.transaction()):
+            return _ko("code_used", "Ce code vient d'être utilisé.", 409)
+
+        try:
+            temp_pwd    = _generate_password()
+            uid, is_new = _get_or_create_user(email, temp_pwd)
+
+            lic_ref  = db.collection("licenses").document(uid)
+            lic_doc  = lic_ref.get()
+            lic_data = (lic_doc.to_dict() or {}) if lic_doc.exists else {}
+            current  = float(lic_data.get("expiry_utc", 0) or 0)
+
+            # On PROLONGE, on ne remplace pas : un client déjà abonné qui
+            # active son boîtier gagne 12 mois par-dessus son échéance.
+            expiry = max(current, now) + int(months * 30.5) * 86400
+
+            # Un abonné Stripe garde son plan (et son renouvellement auto) :
+            # écrire "annual" par-dessus un "monthly" mentirait à la fenêtre
+            # de licence de l'app. Sans abonnement, le plan devient annuel.
+            plan_type = lic_data.get("plan_type") or "annual"
+            _set_license(uid, email, plan_type, expiry, lang=lang)
+            # L'etat d'AVANT est conserve pour qu'un retour produit (Amazon,
+            # retractation) puisse etre annule exactement, et non reconstitue
+            # a la louche : un client deja abonne doit retrouver son echeance
+            # au jour pres, pas une soustraction de 12 mois.
+            lic_ref.set({
+                "boitier_until_utc":       expiry,
+                "boitier_serial":          serial,
+                "boitier_code":            code,
+                "boitier_utc":             now,
+                "boitier_prev_expiry_utc": current,
+                "boitier_prev_plan":       lic_data.get("plan", ""),
+                "boitier_prev_plan_type":  lic_data.get("plan_type", ""),
+            }, merge=True)
+
+            code_ref.update({"used_by": uid})
+            ser_ref.set({
+                "activated_uid":   uid,
+                "activated_email": email,
+                "activated_utc":   now,
+                "activation_code": code,
+            }, merge=True)
+        except Exception:
+            # Le code est déjà marqué consommé : on le rend, sinon un incident
+            # côté Firebase brûle définitivement la carte d'un client.
+            try:
+                code_ref.update({"status": "unused", "used_email": "",
+                                 "used_serial": "", "used_utc": 0, "used_ip": ""})
+            except Exception:
+                print(f"[activate] IMPOSSIBLE de rendre le code {code}")
+            raise
+
+        # À partir d'ici la licence est acquise : un email ou un Brevo en
+        # panne ne doit plus faire échouer l'activation.
+        try:
+            if is_new:
+                lic_ref.set({"password": temp_pwd}, merge=True)
+                _email_welcome(email, temp_pwd, expiry, "annual", lang)
+            else:
+                _email_renewal(email, expiry, lang)
+        except Exception as e:
+            print(f"[activate] email non parti pour {email} : {e}")
+        try:
+            _brevo_sync_client(email, uid, plan_type, expiry, lang, "")
+        except Exception as e:
+            print(f"[activate] Brevo : {e}")
+
+        print(f"[activate] {email} — {serial} — code {code} — "
+              f"expire {_fmt_date(expiry)}")
+
+        return https_fn.Response(json.dumps({
+            "ok":           True,
+            "email":        email,
+            "is_new":       is_new,
+            "expiry":       expiry,
+            "expiry_label": _fmt_date(expiry, lang),
+        }), status=200, headers=_H)
+
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[activate] erreur : {e}")
+        return _ko("server", "Une erreur est survenue. Votre code n'a pas été "
+                             "consommé, réessayez dans un instant.", 500)
