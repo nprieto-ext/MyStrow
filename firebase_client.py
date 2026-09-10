@@ -265,6 +265,16 @@ def sign_in(email: str, password: str) -> dict:
             raise Exception("Mot de passe incorrect.")
         if "USER_DISABLED" in msg:
             raise Exception("Ce compte a été désactivé.")
+        # Firebase verrouille le compte après quelques échecs rapprochés. Sans
+        # ce cas, l'app affichait le message Google brut, en anglais.
+        # ⚠️ Formulation volontairement sans « incorrect », « invalid »,
+        # « password » ni « mot de passe » : license_ui._do_login cherche ces
+        # mots pour proposer le renvoi des identifiants par mail, ce qui ne
+        # débloquerait rien ici et enverrait l'utilisateur dans le mur.
+        if "TOO_MANY_ATTEMPTS_TRY_LATER" in msg:
+            raise Exception("Trop de tentatives échouées : la connexion est "
+                            "temporairement bloquée. Patientez quelques minutes "
+                            "avant de réessayer.")
         raise Exception(f"Erreur connexion : {msg}")
 
 

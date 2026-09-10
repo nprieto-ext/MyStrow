@@ -25,7 +25,9 @@ from PySide6.QtCore import (Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent,
                             QRectF, QBuffer, QIODevice)
 from PySide6.QtGui import QColor, QBrush, QPainter, QPen, QImage
 from core import (ComboSansMolette, color_wheel_display_color,
-                  emitted_brightness, fixture_projects_gobo, media_icon)
+                  fixture_machine_kind,
+                  emitted_brightness, fixture_projects_gobo, media_icon,
+                  pan_tilt_ranges)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer
@@ -3171,6 +3173,8 @@ class Plan3DWebWindow(QMainWindow):
                     pan_v = ov[2]
                 if ov[3] is not None:
                     tilt_v = ov[3]
+            _pt_ranges = pan_tilt_ranges(p)
+            _mach = fixture_machine_kind(p)
             out.append({
                 'level':          lvl,
                 'r': r, 'g': g, 'b': b,
@@ -3179,10 +3183,26 @@ class Plan3DWebWindow(QMainWindow):
                 'pan':            pan_v,
                 'tilt':           tilt_v,
                 'fixture_type':   getattr(p, 'fixture_type', 'PAR LED'),
-                'fixture_height': fh if fh is not None else self._rig_height(),
+                # Genre de machine a effet ('fog', 'haze', 'spark', 'flame'),
+                # None pour un projecteur. C'est ce mot-cle qui declenche le
+                # rendu particulaire dans la scene.
+                'machine':        _mach,
+                # Hauteur AUTO (`fixture_height` a None) : le pied de truss pour
+                # un projecteur... mais le SOL pour une machine. Une machine a
+                # fumee accrochee a 7 m, c'est un plan de feu qui ment : ces
+                # appareils se posent au sol dans l'immense majorite des cas.
+                # La colonne « H » du tableau reste maitresse si elle est reglee.
+                'fixture_height': (fh if fh is not None else
+                                   (0.12 if _mach else self._rig_height())),
                 'body_rotation':  getattr(p, 'body_rotation', 0.0),
                 'rot3d_x':        getattr(p, 'rot3d_x', 0.0),
                 'rot3d_y':        getattr(p, 'body_rotation', 0.0),
+                # Débattement mécanique (°) sur toute la course DMX. Passé par
+                # `core.pan_tilt_ranges`, qui borne et retombe sur 540/270 :
+                # la 3D ne doit jamais recevoir un débattement nul, qui
+                # replierait tous les faisceaux sur la verticale.
+                'pan_range':      _pt_ranges[0],
+                'tilt_range':     _pt_ranges[1],
                 # Puissance de faisceau par projecteur (%) → facteur 0..2
                 'beam_gain':      float(getattr(p, 'beam_gain', 100.0) or 0.0) / 100.0,
                 # Ouverture de faisceau par projecteur (%) → facteur 0,1..2.

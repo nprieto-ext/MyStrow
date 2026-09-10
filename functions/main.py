@@ -1401,10 +1401,19 @@ def _email_welcome(email: str, password: str, expiry_ts: float,
 <p>Your <b>{plan}</b> license has just been activated.
 Here are your credentials:</p>
 <div class="box">
-  ✉️ &nbsp;<b>Email:</b> {email}<br>
-  🔑 &nbsp;<b>Temporary password:</b>
-  <span style="font-family:monospace;font-size:14px;">{password}</span><br>
-  📅 &nbsp;<b>License valid until:</b> {date}
+  <div style="margin-bottom:10px;">
+    ✉️ &nbsp;<b>Email:</b> <span style="color:#aaa;">{email}</span>
+  </div>
+  <div style="margin-bottom:10px;">
+    🔑 &nbsp;<b>Temporary password:</b><br>
+    <span style="display:inline-block;margin-top:8px;padding:10px 20px;background:#0d0d0d;
+      border:1px solid rgba(0,212,255,0.35);border-radius:8px;
+      font-family:Consolas,monospace;font-size:20px;letter-spacing:5px;color:#00d4ff;
+      box-shadow:0 0 12px rgba(0,212,255,0.15);">{password}</span>
+  </div>
+  <div>
+    📅 &nbsp;<b>License valid until:</b> {date}
+  </div>
 </div>
 <p>Launch MyStrow, click <b>Log in</b> and enter these credentials.</p>
 <p>You can change your password from your account area.</p>
@@ -1417,10 +1426,19 @@ Here are your credentials:</p>
 <p>Votre licence <b>{plan}</b> vient d'être activée.
 Voici vos identifiants :</p>
 <div class="box">
-  ✉️ &nbsp;<b>Email :</b> {email}<br>
-  🔑 &nbsp;<b>Mot de passe temporaire :</b>
-  <span style="font-family:monospace;font-size:14px;">{password}</span><br>
-  📅 &nbsp;<b>Licence valide jusqu'au :</b> {date}
+  <div style="margin-bottom:10px;">
+    ✉️ &nbsp;<b>Email :</b> <span style="color:#aaa;">{email}</span>
+  </div>
+  <div style="margin-bottom:10px;">
+    🔑 &nbsp;<b>Mot de passe temporaire :</b><br>
+    <span style="display:inline-block;margin-top:8px;padding:10px 20px;background:#0d0d0d;
+      border:1px solid rgba(0,212,255,0.35);border-radius:8px;
+      font-family:Consolas,monospace;font-size:20px;letter-spacing:5px;color:#00d4ff;
+      box-shadow:0 0 12px rgba(0,212,255,0.15);">{password}</span>
+  </div>
+  <div>
+    📅 &nbsp;<b>Licence valide jusqu'au :</b> {date}
+  </div>
 </div>
 <p>Lancez MyStrow, cliquez sur <b>Se connecter</b> et entrez ces identifiants.</p>
 <p>Vous pourrez changer votre mot de passe depuis votre espace compte.</p>

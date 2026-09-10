@@ -224,11 +224,13 @@ from core import (
     layer_frequency, random_wave, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
-    cw_slot_for_color,
-    copy_report, send_report_email, DMX_FRAME_MS,
+    cw_slot_for_color, pan_angular_ratio, pan_tilt_ranges,
+    PAN_TILT_RANGE_MIN, PAN_TILT_RANGE_MAX,
+    copy_report, send_report_email, DMX_FRAME_MS, make_precise_timer,
     fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
     message_erreur_reseau,
     canonical_manufacturer, build_fixture_library,
+    fixture_is_fx_machine, fixture_is_pyro, FX_MACHINE_TYPES,
 )
 from i18n import get_language, set_language, tr
 from projector import Projector
@@ -321,6 +323,8 @@ CH_COLORS = {
     "Tilt":       "#11ccaa",
     "Smoke":      "#5588aa",
     "Fan":        "#336677",
+    "Spark":      "#ffcc33",
+    "Flame":      "#ff5511",
     "Gobo1":      "#993355",
     "Gobo2":      "#774455",
     "Shutter":    "#999911",
@@ -345,6 +349,7 @@ CH_LABELS = {
     "Gobo1": "GOBO1", "Gobo2": "GOBO2", "Gobo1Rot": "GOBO↻",
     "ColorWheel": "ROUE", "Speed": "VITESSE",
     "Smoke": "FUMÉE", "Fan": "VENTIL", "Shutter": "SHUTTER",
+    "Spark": "ÉTINC.", "Flame": "FLAMME",
     "Effects": "EFFETS", "Mode": "MODE",
     "CTO": "CTO", "CTB": "CTB",
     "C": "CYAN", "M": "MAGENTA", "Y": "JAUNE", "Lime": "LIME",
@@ -571,6 +576,10 @@ def _apply_matrix_meta(proj, src):
 _PANTILT_META_FIELDS = (
     "pan_min", "pan_max", "tilt_min", "tilt_max",
     "pan_invert", "tilt_invert", "pan_tilt_swap",
+    # Débattement mécanique en degrés (cf. `core.pan_tilt_ranges`). Absent d'un
+    # patch antérieur : `_apply_pantilt_meta` ignore les clés à None, la lyre
+    # garde donc les 540/270 par défaut de `Projector`.
+    "pan_range", "tilt_range",
 )
 
 
@@ -1382,18 +1391,29 @@ class AkaiDiagnosticDialog(QDialog):
         veut le corriger ou le supprimer.
         """
         from midi_handler import SUPPORTED_CONTROLLERS
-        from controller_profile import list_profiles
+        from controller_profile import all_profiles
         cat = [(None, "Auto (détection automatique)")]
         for c in SUPPORTED_CONTROLLERS:
             cat.append((c['id'], c['name']))
         self._custom_files = {}
+        self._bundled_cids = set()
         try:
-            for entry in list_profiles():
+            # `all_profiles()` ajoute les profils approuvés en modération et
+            # livrés avec la release : ils doivent apparaître ici même débranchés,
+            # sinon ils restent invisibles tant que le matériel n'est pas là.
+            # Leur `file` est None — aucun fichier à renommer ni à supprimer.
+            seen = set()
+            for entry in all_profiles():
                 name = entry["data"].get("name", "Custom")
                 cid  = 'custom:' + name
-                if cid not in self._custom_files:
+                if cid in seen:
+                    continue
+                seen.add(cid)
+                if entry.get("file"):
                     self._custom_files[cid] = entry["file"]
-                    cat.append((cid, name))
+                else:
+                    self._bundled_cids.add(cid)
+                cat.append((cid, name))
         except Exception:
             pass
         return cat
@@ -1449,7 +1469,10 @@ class AkaiDiagnosticDialog(QDialog):
                 w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
             # Profils utilisateur : menu de gestion. Le bouton doit rester
             # cliquable, donc pas de WA_TransparentForMouseEvents dessus.
-            if cid is not None and str(cid).startswith('custom:'):
+            # Un profil livré avec l'app n'a pas de fichier à gérer : pas de menu
+            # plutôt qu'un menu dont chaque entrée échouerait.
+            if (cid is not None and str(cid).startswith('custom:')
+                    and cid in getattr(self, '_custom_files', {})):
                 menu_btn = QToolButton()
                 menu_btn.setText("⋯")
                 menu_btn.setCursor(Qt.PointingHandCursor)
@@ -4384,7 +4407,9 @@ class MainWindow(QMainWindow):
         self._saved_custom_profiles = {}
         self.auto_patch_at_startup()
 
-        self.dmx_send_timer = QTimer()
+        # PreciseTimer obligatoire : en type Coarse (défaut), Windows arrondit
+        # 25 ms à 31,2 ms — 32 fps au lieu des 40 annoncés (mesuré 08/09/2026).
+        self.dmx_send_timer = make_precise_timer()
         self.dmx_send_timer.timeout.connect(self.send_dmx_update)
         self.dmx_send_timer.timeout.connect(self._update_status_corner)
         self.dmx_send_timer.start(DMX_FRAME_MS)  # 40 FPS — meilleure compatibilité modules sans fil
@@ -4503,7 +4528,7 @@ class MainWindow(QMainWindow):
         self.software_detector = None
 
         # Timer IA
-        self.ai_timer = QTimer(self)
+        self.ai_timer = make_precise_timer(self)
         self.ai_timer.timeout.connect(self.update_audio_ai)
         self.ai_timer.start(40)
 
@@ -4637,6 +4662,8 @@ class MainWindow(QMainWindow):
     _FIXTURE_CH = {
         "PAR LED": 5, "Moving Head": 8, "Barre LED": 5,
         "Stroboscope": 2, "Machine a fumee": 2,
+        "Machine a brouillard": 2, "Machine a etincelles": 2,
+        "Lance-flamme": 2,
     }
 
     def _load_default_fixtures(self):
@@ -9980,7 +10007,7 @@ class MainWindow(QMainWindow):
                     # Premier effet : sauvegarder les couleurs et démarrer le timer
                     self._snapshot_effect_state()
                     if not hasattr(self, 'effect_timer'):
-                        self.effect_timer = QTimer()
+                        self.effect_timer = make_precise_timer()
                         self.effect_timer.timeout.connect(self.update_effect)
                     self.effect_timer.start(40)
                 self._stacked_effects.append(eff_state)
@@ -11016,7 +11043,7 @@ class MainWindow(QMainWindow):
         self._snapshot_effect_state()
 
         if not hasattr(self, 'effect_timer'):
-            self.effect_timer = QTimer()
+            self.effect_timer = make_precise_timer()
             self.effect_timer.timeout.connect(self.update_effect)
 
         if effect_name == "Bascule":
@@ -11193,7 +11220,8 @@ class MainWindow(QMainWindow):
         """Effet Bascule : echange les couleurs entre les deux groupes ou alterne un/deux."""
         from collections import Counter
 
-        active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+        active = [p for p in self.projectors
+                  if not fixture_is_fx_machine(p) and p.level > 0]
         if not active:
             return
 
@@ -11315,7 +11343,7 @@ class MainWindow(QMainWindow):
             interval = max(25, int(500 - (self.effect_speed / 100.0) * 475))
             self.effect_timer.setInterval(interval)
             for p in self.projectors:
-                if p.group == "fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.level > 0:
                     p.color = QColor(255, 255, 255) if self.effect_state % 2 == 0 else QColor("black")
@@ -11326,7 +11354,7 @@ class MainWindow(QMainWindow):
             interval = max(25, int(500 - (self.effect_speed / 100.0) * 475))
             self.effect_timer.setInterval(interval)
             for p in self.projectors:
-                if p.group == "fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.level > 0:
                     if self.effect_state % 2 == 0:
@@ -11343,7 +11371,7 @@ class MainWindow(QMainWindow):
         elif eff == "Pulse":
             # Respiration douce (fade in/out)
             for p in self.projectors:
-                if p.group == "fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.level > 0:
                     brightness = (p.level / 127.0) * (self.effect_brightness / 100.0)
@@ -11365,7 +11393,7 @@ class MainWindow(QMainWindow):
             # Vague de couleur qui se deplace d'un projo a l'autre
             self.effect_timer.setInterval(int(50 * speed_factor))
             for i, p in enumerate(self.projectors):
-                if p.group == "fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.level > 0:
                     phase = (self.effect_state + i * 15) % 100
@@ -11380,7 +11408,8 @@ class MainWindow(QMainWindow):
         elif eff == "Comete":
             # Comète : tête blanche vive + traînée qui fondue vers la couleur de base
             self.effect_timer.setInterval(max(30, int(300 * speed_factor)))
-            active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+            active = [p for p in self.projectors
+                  if not fixture_is_fx_machine(p) and p.level > 0]
             n = len(active)
             if n == 0:
                 return
@@ -11412,7 +11441,7 @@ class MainWindow(QMainWindow):
         elif eff == "Rainbow":
             # Rotation arc-en-ciel sur tous les projos
             for i, p in enumerate(self.projectors):
-                if p.group == "fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.level > 0:
                     hue = (self.effect_hue + i * 30) % 360
@@ -11429,7 +11458,8 @@ class MainWindow(QMainWindow):
             # Etoile filante : passage sinusoïdal au blanc avec traînée
             import math
             self.effect_timer.setInterval(max(25, int(70 * speed_factor)))
-            active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+            active = [p for p in self.projectors
+                  if not fixture_is_fx_machine(p) and p.level > 0]
             n = len(active)
             if n == 0:
                 return
@@ -11465,7 +11495,8 @@ class MainWindow(QMainWindow):
         elif eff == "Chase":
             # Passage au blanc : chaque projecteur passe au blanc un par un
             self.effect_timer.setInterval(max(40, int(400 * speed_factor)))
-            active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+            active = [p for p in self.projectors
+                  if not fixture_is_fx_machine(p) and p.level > 0]
             n = len(active)
             if n == 0:
                 return
@@ -11490,7 +11521,7 @@ class MainWindow(QMainWindow):
                 QColor(255, 200, 0), QColor(200, 30, 0), QColor(255, 80, 0),
             ]
             for p in self.projectors:
-                if p.group == "fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.level > 0:
                     base = random.choice(fire_colors)
@@ -11789,7 +11820,7 @@ class MainWindow(QMainWindow):
             "D": "douche1", "E": "douche2", "F": "douche3",
             "G": "groupe_g", "H": "groupe_h",
         }
-        active_projs = [p for p in self.projectors if p.group != "fumee"]
+        active_projs = [p for p in self.projectors if not fixture_is_fx_machine(p)]
         if not active_projs:
             self._log_message("Aucun projecteur patché — l'effet ne produira rien", "warn")
             return
@@ -11896,7 +11927,8 @@ class MainWindow(QMainWindow):
         if _has_selection:
             allowed_groups = set()
         projectors = [p for p in self.projectors
-                      if p.group != "fumee" and (not allowed_groups or p.group in allowed_groups)]
+                      if not fixture_is_fx_machine(p)
+                      and (not allowed_groups or p.group in allowed_groups)]
         n = len(projectors)
         if n == 0:
             return
@@ -11988,12 +12020,11 @@ class MainWindow(QMainWindow):
         _no_color = bool(cfg.get("no_color", False))
         _clip_ids = getattr(self, '_fx_clip_ids', None)
 
-        # Compensation ratio pan/tilt (~540°/270°) → pan à demi-amplitude pour un
-        # vrai cercle. Même valeur que l'aperçu de l'éditeur d'effets (parité).
-        try:
-            from effect_editor import PAN_ANGULAR_RATIO as _PAN_RATIO
-        except Exception:
-            _PAN_RATIO = 0.5
+        # Compensation du ratio pan/tilt : le pan couvre plus d'angle que le
+        # tilt, il faut donc réduire son amplitude pour qu'un cercle soit rond.
+        # Lu SUR CHAQUE FIXTURE (`core.pan_angular_ratio`) et non plus figé à
+        # 0,5 : une lyre 360°/270° a besoin de 0,75. Même appel que l'aperçu de
+        # l'éditeur d'effets — parité obligatoire.
 
         # Amplitude min/max PAR GROUPE (répliquée sur les couches). Si un groupe a
         # une entrée, l'intensité de ses projos est remappée dans [min, max] au
@@ -12005,6 +12036,9 @@ class MainWindow(QMainWindow):
                 _group_amp.update(_gd)
 
         for i, proj in enumerate(projectors):
+            # Hissé hors de la boucle des couches : on est dans le chemin DMX,
+            # appelé 40 fois par seconde pour chaque projecteur.
+            _pan_ratio  = pan_angular_ratio(proj)
             _base_level = proj.level   # niveau posé par les clips, avant l'effet
             _base_color = proj.color   # couleur posée par les clips, avant l'effet
             _base_pure  = getattr(proj, 'base_color', None)  # couleur pure assignée (sans dim)
@@ -12133,14 +12167,17 @@ class MainWindow(QMainWindow):
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr in ("Pan", "Tilt"):
                     saved = self.effect_saved_colors.get(id(proj))
-                    # TAILLE 100 = course PLEINE (+/-32768), comme la trajectoire
-                    # Pan/Tilt couplee. Le *8192 d'origine plafonnait ces deux
-                    # couches a +/-12,5% de course : une couche Tilt a fond ne
-                    # balayait qu'un huitieme de ce que la lyre sait faire, et
-                    # rien dans l'UI ne le disait. Les limites physiques de
-                    # chaque lyre (pan_min/pan_max, tilt_min/tilt_max) restent
-                    # appliquees en aval par artnet_dmx.
-                    amplitude = (size / 100.0) * 32768
+                    # TAILLE 100 = +/-8192, soit +/-12,5% de course.
+                    # 3.1.91 avait porte ce facteur a 32768 (course pleine), au
+                    # motif que rien dans l'UI n'annoncait le plafond. Annule :
+                    # tout show monte avant 3.1.91 a ete regle a cette echelle,
+                    # et la lecture le rejouait donc avec un mouvement 4x plus
+                    # large que ce qui avait ete valide (retour client, 09/2026).
+                    # Ne PAS remonter cette valeur sans migrer en meme temps la
+                    # TAILLE des couches deja enregistrees dans les .lrec.
+                    # Les limites physiques de chaque lyre (pan_min/pan_max,
+                    # tilt_min/tilt_max) restent appliquees en aval par artnet_dmx.
+                    amplitude = (size / 100.0) * 8192
                     # Recalcul du dephasage sur l'index lyre + echelle /100 plafonnee
                     # (comme le Pan/Tilt couple) : le `x` global utilise l'index de
                     # tous les projos et /180, trop faible pour les lyres.
@@ -12175,7 +12212,7 @@ class MainWindow(QMainWindow):
                                   saved[3] if saved and len(saved) > 3 else 32768)
                         sym_pan  = ld.get("sym_pan", False)
                         pan_sign = -1 if (sym_pan and id(proj) in _sym_mir) else 1
-                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude * _PAN_RATIO)))
+                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude * _pan_ratio)))
                     else:
                         center = (_ctr[1] if _ctr is not None else
                                   saved[4] if saved and len(saved) > 4 else 32768)
@@ -12193,10 +12230,13 @@ class MainWindow(QMainWindow):
                     tilt_cfg  = shape_def.get("tilt", ("Sinus",   25, 1.0))
                     pan_forme,  pan_phase_pct,  pan_mult  = pan_cfg
                     tilt_forme, tilt_phase_pct, tilt_mult = tilt_cfg
-                    # size=100 -> course pleine (+/-32768). Les limites physiques de
-                    # chaque lyre sont appliquees en aval via pan_min/pan_max et
-                    # tilt_min/tilt_max (artnet_dmx). Avant : *8192 (plafonnait a +/-12,5%).
-                    amplitude = (size / 100.0) * 32768
+                    # size=100 -> +/-8192 (+/-12,5% de course), meme echelle que
+                    # la couche Pan/Tilt simple ci-dessus : voir le commentaire
+                    # la-haut, 3.1.91 avait mis 32768 et quadruplait le mouvement
+                    # de tous les shows existants. Les limites physiques de chaque
+                    # lyre sont appliquees en aval via pan_min/pan_max et
+                    # tilt_min/tilt_max (artnet_dmx).
+                    amplitude = (size / 100.0) * 8192
                     saved = self.effect_saved_colors.get(id(proj))
 
                     # Utiliser l'index relatif parmi les lyres pour le spread + symétrie
@@ -12233,7 +12273,7 @@ class MainWindow(QMainWindow):
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = (_ctr[0] if _ctr is not None else
                                  saved[3] if saved and len(saved) > 3 else 32768)
-                        proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude * _PAN_RATIO)))
+                        proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude * _pan_ratio)))
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
@@ -12353,7 +12393,8 @@ class MainWindow(QMainWindow):
                             "G": "groupe_g", "H": "groupe_h"}
         _allowed = {_LETTER_TO_GROUP[l] for l in cfg.get("target_groups", []) if l in _LETTER_TO_GROUP}
         base_all = [p for p in self.projectors
-                    if p.group != "fumee" and p.level > 0 and (not _allowed or p.group in _allowed)]
+                    if not fixture_is_fx_machine(p) and p.level > 0
+                    and (not _allowed or p.group in _allowed)]
         if target == "even":
             active = [p for i, p in enumerate(base_all) if i % 2 == 0]
         elif target == "odd":
@@ -13059,7 +13100,11 @@ class MainWindow(QMainWindow):
 
         # Éteindre complètement tous les projecteurs
         for p in self.projectors:
-            if p.group != "fumee":
+            # Le noir general epargne l'ATMOSPHERE (fumee, brume) : la couper a
+            # chaque blackout viderait la salle de ce qui rend les faisceaux
+            # visibles. Il coupe en revanche le PYRO — laisser une gerbe
+            # d'etincelles ou une flamme tourner pendant un noir n'a aucun sens.
+            if not fixture_is_fx_machine(p) or fixture_is_pyro(p):
                 p.level      = 0
                 p.color      = QColor(0, 0, 0)
                 p.base_color = QColor(0, 0, 0)
@@ -14136,7 +14181,7 @@ class MainWindow(QMainWindow):
         _dv = self.seq.live_panel.dimmer_values
         if _dv:
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 cap = _dv.get(p.group, 100)
                 if cap != 100:
@@ -14187,7 +14232,7 @@ class MainWindow(QMainWindow):
                 self._live_color_smooth = _amb_cs
             _amb_alpha = 0.06   # transition ~400 ms à 25 fps (plus lent en ambiance)
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 _pid = id(p)
                 cur = _amb_cs.get(_pid)
@@ -14309,7 +14354,7 @@ class MainWindow(QMainWindow):
         return (self.seq.live_mode_active
                 or getattr(self, '_ia_settings_src', None) is not None)
 
-    def _live_hw_strobe_ids(self, skip=("Machine a fumee",)) -> set:
+    def _live_hw_strobe_ids(self, skip=tuple(FX_MACHINE_TYPES)) -> set:
         """`id()` des fixtures dont le canal Strobe MATÉRIEL porte le strobe.
 
         Sert deux fois par image, et c'est le même jeu de fixtures dans les deux
@@ -14334,7 +14379,7 @@ class MainWindow(QMainWindow):
             and "Strobe" in (getattr(p, 'dmx_profile', None) or [])
         }
 
-    def _live_set_hw_strobe(self, rate, skip=("Machine a fumee",)):
+    def _live_set_hw_strobe(self, rate, skip=tuple(FX_MACHINE_TYPES)):
         """Pousse le strobe MATÉRIEL des fixtures qui ont un canal Strobe.
 
         Se substitue au hachage de `level` sur les fixtures concernées, il ne
@@ -14381,6 +14426,33 @@ class MainWindow(QMainWindow):
                 p.strobe_speed = 0
         latched.clear()
 
+    # Groupes dont la COULEUR est posée par la boucle de base de
+    # `_apply_live_state_inner`. Ne sert qu'au bloc lyres, et il faut que ça
+    # reste ainsi.
+    #
+    # Ce bloc testait `p.group not in state` pour savoir s'il devait poser
+    # lui-même la couleur per-lyre (bicolore pair/impair + lissage). C'était
+    # exact tant que `state` contenait exactement ces six clés. Le jour où G et
+    # H y sont entrés (10/09/2026), le test aurait basculé tout seul et les
+    # lyres de ces deux groupes auraient troqué leur couleur per-lyre contre la
+    # couleur plate du groupe — une régression invisible, sur un point que
+    # personne n'avait demandé de changer. La liste est donc figée ici.
+    _IA_BASE_COLOR_GROUPS = frozenset((
+        'face', 'lat', 'contre', 'douche1', 'douche2', 'douche3',
+    ))
+
+    def _ia_accent_groups(self):
+        """Groupes d'accent (D→H) qui portent réellement un projecteur.
+
+        `audio_ai` fait tourner son chenillard dessus. Un groupe vide en est
+        exclu, sinon l'accent s'arrêterait dans le vide : un plan de feu sans
+        rien en G/H perdrait deux temps sur cinq.
+        """
+        from audio_ai import ACCENT_GROUPS
+        occupes = {p.group for p in self.projectors
+                   if not fixture_is_fx_machine(p)}
+        return [g for g in ACCENT_GROUPS if g in occupes]
+
     def _apply_live_state(self, state: dict):
         """Applique un état live, en GELANT les groupes non autorisés.
 
@@ -14391,6 +14463,14 @@ class MainWindow(QMainWindow):
         """
         if not self._ia_engine_running():
             return
+        # Le moteur LIVE construit l'état sans connaître le plan de feu : on lui
+        # rafraîchit son pool d'accent ici, seul endroit traversé à chaque image
+        # ET qui a la liste des projecteurs. L'image de retard est sans effet
+        # visible (le pool ne bouge qu'à une modification de patch).
+        try:
+            self.live_engine.update_accent_groups(self._ia_accent_groups())
+        except Exception:
+            pass
         _allowed = self._fx_src.allowed_groups
         _frozen = None
         if _allowed:
@@ -14457,7 +14537,7 @@ class MainWindow(QMainWindow):
                 self._pause_center_start = _now_pause
             _pause_center_progress = min(1.0, (_now_pause - self._pause_center_start) / 2.0)
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 p.level = 0
                 p.color = QColor(0, 0, 0)
@@ -14499,7 +14579,7 @@ class MainWindow(QMainWindow):
             _hw_sp   = 0
             if _special_fx == 'fixe_blanc':
                 for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                    if fixture_is_fx_machine(p):
                         continue
                     p.level = 100
                     p.color = QColor(255, 255, 255)
@@ -14512,7 +14592,7 @@ class MainWindow(QMainWindow):
                     # le moteur LIVE) : sur un plan de feu mixte, « Stroboscope »
                     # n'allumait donc qu'une partie de la salle. Elles suivent
                     # maintenant comme le reste.
-                    if _ft == "Machine a fumee":
+                    if _ft in FX_MACHINE_TYPES:
                         continue
                     # `id(p) in _hw_ids` → le canal Strobe matériel fait le
                     # clignotement : niveau plein en permanence, sinon on lui
@@ -14534,7 +14614,7 @@ class MainWindow(QMainWindow):
                 _hw_ids = self._live_hw_strobe_ids()
                 for p in self.projectors:
                     _ft = getattr(p, 'fixture_type', '')
-                    if _ft == "Machine a fumee":
+                    if _ft in FX_MACHINE_TYPES:
                         continue   # lyres incluses, comme « Stroboscope »
                     if _sp_on or id(p) in _hw_ids:   # cf. « Stroboscope »
                         p.level = 100; p.color = _sc1
@@ -14546,7 +14626,7 @@ class MainWindow(QMainWindow):
                 _spd_p = self._fx_src.passage_speed / 100.0
                 _interval_ms = max(40, int(800 - _spd_p * 760))
                 _projs = [p for p in self.projectors
-                          if getattr(p, 'fixture_type', '') != "Machine a fumee"]
+                          if not fixture_is_fx_machine(p)]
                 _n = len(_projs)
                 if _n > 0:
                     # Construire la palette depuis le pool de couleurs actif
@@ -14791,7 +14871,7 @@ class MainWindow(QMainWindow):
                     return pal[best_i % len(pal)]
                 return pal[0]
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.level > 0 and p.base_color:
                     mapped = _map_to_pal(p.base_color)
@@ -14817,7 +14897,7 @@ class MainWindow(QMainWindow):
                 if drop_p < 0.30:
                     punch = 1.0 - drop_p / 0.30
                     for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        if fixture_is_fx_machine(p): continue
                         if int(100 * punch) > p.level:
                             _set_proj(p, white, int(100 * punch))
                 strobe_on = (int(position / strobe_ms_fast) % 2) == 0
@@ -14828,7 +14908,7 @@ class MainWindow(QMainWindow):
             elif drop_fx == 'color_explosion':
                 strobe_on = (int(position / strobe_ms_fast) % 2) == 0
                 for i, p in enumerate(self.projectors):
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                    if fixture_is_fx_machine(p): continue
                     if strobe_on:
                         _set_proj(p, pal[i % len(pal)], 100)
                     else:
@@ -14837,25 +14917,25 @@ class MainWindow(QMainWindow):
             elif drop_fx == 'blackout_punch':
                 if drop_p < 0.12:
                     for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        if fixture_is_fx_machine(p): continue
                         p.level = 0; p.color = QColor("black")
                 else:
                     punch = max(0.0, 1.0 - (drop_p - 0.12) / 0.35)
                     for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                        if fixture_is_fx_machine(p): continue
                         _set_proj(p, white, int(100 * punch))
                     if drop_p > 0.20:
                         strobe_on = (int(position / strobe_ms_medium) % 2) == 0
                         if not strobe_on:
                             for p in self.projectors:
-                                if getattr(p, 'fixture_type', '') != "Machine a fumee":
+                                if not fixture_is_fx_machine(p):
                                     p.level = 0; p.color = QColor("black")
 
             elif drop_fx == 'stroboscope':
                 strobe_ms = int(45 - nerv * 20)
                 strobe_on = (int(position / strobe_ms) % 2) == 0
                 for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee": continue
+                    if fixture_is_fx_machine(p): continue
                     if strobe_on:
                         _set_proj(p, white, 100)
                     else:
@@ -14865,7 +14945,8 @@ class MainWindow(QMainWindow):
                 if drop_p < 0.20:
                     punch = 1.0 - drop_p / 0.20
                     for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') in ("Machine a fumee", "Moving Head"): continue
+                        if (fixture_is_fx_machine(p)
+                                or getattr(p, 'fixture_type', '') == "Moving Head"): continue
                         _set_proj(p, white, int(100 * punch))
                 strobe_on = (int(position / strobe_ms_slow) % 2) == 0
                 for p in self.projectors:
@@ -14886,7 +14967,7 @@ class MainWindow(QMainWindow):
                 strobe_ms = int(40 - nerv * 16)
                 strobe_on = (int(position / strobe_ms) % 2) == 0
                 for p in self.projectors:
-                    if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                    if fixture_is_fx_machine(p):
                         continue
                     if strobe_on:
                         _set_proj(p, _sync_color, 100)
@@ -14903,7 +14984,7 @@ class MainWindow(QMainWindow):
             pulse_mod = _math.sin(position / 1000.0 * pulse_hz * 2.0 * _math.pi) * 0.5 + 0.5
 
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if p.group == 'contre':
                     r = min(255, int(p.base_color.red()   + build_p * (255 - p.base_color.red())   * 0.7))
@@ -14923,7 +15004,7 @@ class MainWindow(QMainWindow):
             tf = self._live_transient_flash
             if tf.get('contre_until', 0) > position:
                 for p in self.projectors:
-                    if p.group == 'contre' and getattr(p, 'fixture_type', '') != "Machine a fumee":
+                    if p.group == 'contre' and not fixture_is_fx_machine(p):
                         p.level = min(100, p.level + 30)
                         if p.level > 0:
                             f = p.level / 100.0
@@ -14932,7 +15013,7 @@ class MainWindow(QMainWindow):
                                              int(p.base_color.blue()*f))
             if tf.get('face_until', 0) > position:
                 for p in self.projectors:
-                    if p.group == 'face' and getattr(p, 'fixture_type', '') != "Machine a fumee":
+                    if p.group == 'face' and not fixture_is_fx_machine(p):
                         p.level = min(100, p.level + 20)
                         if p.level > 0:
                             f = p.level / 100.0
@@ -14970,7 +15051,7 @@ class MainWindow(QMainWindow):
             age   = position - (bs['flash_until'] - 110)
             punch = max(0.0, 1.0 - age / 110.0)
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 flash_lvl = int(100 * punch)
                 if flash_lvl > p.level:
@@ -15000,7 +15081,7 @@ class MainWindow(QMainWindow):
             _age   = position - (_smart_flash_until - 140)
             _punch = max(0.0, 1.0 - _age / 140.0)
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 _fl = int(100 * _punch)
                 if _fl > p.level:
@@ -15237,7 +15318,7 @@ class MainWindow(QMainWindow):
                 # `_pantilt_in_limits`) au lieu du milieu de course.
                 p.pan  = self._pantilt_in_limits(p, 'pan',  pan_v,  _amp_pan)
                 p.tilt = self._pantilt_in_limits(p, 'tilt', tilt_v, _amp_tilt)
-                if p.group not in state:
+                if p.group not in self._IA_BASE_COLOR_GROUPS:
                     p.level = max(0, min(100, lyre_level))
 
                     # ── Couleur per-lyre ──────────────────────────────────────
@@ -15356,7 +15437,7 @@ class MainWindow(QMainWindow):
                     _hw_strobe = max(_hw_strobe, _live_strobe_rate(auto_ms))
                     if (int(position / auto_ms) % 2) == 1:
                         for p in self.projectors:
-                            if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                            if (not fixture_is_fx_machine(p)
                                     and id(p) not in _hw_ids):
                                 p.level = 0; p.color = QColor("black")
             elif section == 'build' and _allow_strob_slow:
@@ -15367,7 +15448,7 @@ class MainWindow(QMainWindow):
                         _hw_strobe = max(_hw_strobe, _live_strobe_rate(auto_ms))
                         if (int(position / auto_ms) % 2) == 1:
                             for p in self.projectors:
-                                if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                                if (not fixture_is_fx_machine(p)
                                         and id(p) not in _hw_ids):
                                     p.level = 0; p.color = QColor("black")
 
@@ -15377,7 +15458,7 @@ class MainWindow(QMainWindow):
             _hw_strobe = max(_hw_strobe, _live_strobe_rate(strobe_ms))
             if (int(position / strobe_ms) % 2) == 1:
                 for p in self.projectors:
-                    if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                    if (not fixture_is_fx_machine(p)
                             and id(p) not in _hw_ids):
                         p.level = 0
                         p.color = QColor("black")
@@ -15396,7 +15477,7 @@ class MainWindow(QMainWindow):
             _hw_strobe = max(_hw_strobe, _live_strobe_rate(_sms))
             if (int(position / _sms) % 2) == 1:
                 for p in self.projectors:
-                    if (getattr(p, 'fixture_type', '') != "Machine a fumee"
+                    if (not fixture_is_fx_machine(p)
                             and id(p) not in _hw_ids):
                         p.level = 0
                         p.color = QColor("black")
@@ -15420,7 +15501,7 @@ class MainWindow(QMainWindow):
             _hw_strobe = max(_hw_strobe, _live_strobe_rate(_sms_d))
             _strobe_on_d = (int(position / _sms_d) % 2) == 0
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 if _strobe_on_d or id(p) in _hw_ids:   # cf. `_live_hw_strobe_ids`
                     p.level = 100
@@ -15439,7 +15520,7 @@ class MainWindow(QMainWindow):
         _dimmer_vals = self._fx_src.dimmer_values
         if _dimmer_vals:
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 g = p.group
                 cap = _dimmer_vals.get(g, 100)
@@ -15452,7 +15533,7 @@ class MainWindow(QMainWindow):
             _fade_t    = min(1.0, (now_ts - _fade_start) / 2.0)
             _fade_mult = 1.0 - _fade_t
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') == "Machine a fumee":
+                if fixture_is_fx_machine(p):
                     continue
                 p.level = int(p.level * _fade_mult)
                 p.color = QColor(
@@ -15538,7 +15619,9 @@ class MainWindow(QMainWindow):
         dur = self.player.duration()
 
         # État lumière depuis la pré-analyse
-        state = self.audio_ai.get_state_at(pos, dur, max_dimmers=self.ia_max_dimmers)
+        state = self.audio_ai.get_state_at(
+            pos, dur, max_dimmers=self.ia_max_dimmers,
+            accent_groups=self._ia_accent_groups())
 
         # Détection de beat sur les timestamps pré-calculés
         beats = self.audio_ai.beats
@@ -16652,10 +16735,19 @@ class MainWindow(QMainWindow):
         dlg.setStyleSheet(
             "QDialog { background:#161616; }"
             "QLabel { color:#ddd; font-size:12px; }"
-            "QCheckBox { color:#ddd; font-size:12px; }"
+            "QCheckBox { color:#ddd; font-size:13px; spacing:8px; }"
+            "QCheckBox::indicator { width:18px; height:18px; border-radius:4px;"
+            " border:1px solid #555; background:#1b1b1b; }"
+            "QCheckBox::indicator:hover { border-color:#00d4ff; }"
+            "QCheckBox::indicator:checked { background:#00d4ff;"
+            " border-color:#00d4ff; }"
             "QTimeEdit { background:#111; color:#00d4ff; border:1px solid #333;"
             " border-radius:4px; padding:4px 10px; font-size:20px;"
             " font-weight:bold; min-width:110px; }"
+            "QTimeEdit::up-button, QTimeEdit::down-button { width:20px;"
+            " background:#242424; border-left:1px solid #333; }"
+            "QTimeEdit::up-button:hover, QTimeEdit::down-button:hover"
+            " { background:#00516a; }"
             "QPushButton { background:#222; color:#eee; border:1px solid #333;"
             " border-radius:5px; padding:6px 16px; }"
             "QPushButton:hover { border-color:#00d4ff; }"
@@ -16683,8 +16775,12 @@ class MainWindow(QMainWindow):
         hint.setStyleSheet("color:#888; font-size:11px;")
         lay.addWidget(hint)
 
-        cb_on.toggled.connect(te.setEnabled)
-        te.setEnabled(cb_on.isChecked())
+        # Le champ d'heure reste TOUJOURS actif. Grisé, il gardait exactement le
+        # même fond et le même bleu vif qu'à l'état normal : rien ne disait
+        # qu'il fallait cocher la case d'abord, on cliquait sur l'heure et la
+        # fenêtre passait pour morte. Régler l'heure arme la case : c'est le
+        # seul geste qui ait du sens quand on vient ici.
+        te.timeChanged.connect(lambda _v: cb_on.setChecked(True))
 
         btns = QHBoxLayout()
         btns.addStretch(1)
@@ -20394,6 +20490,12 @@ class MainWindow(QMainWindow):
             explicit = getattr(proj, 'dmx_profile', None)
             if isinstance(explicit, list) and explicit:
                 profile = list(explicit)
+            elif proj.fixture_type == "Machine a etincelles":
+                profile = list(DMX_PROFILES["1CH_ETINCELLE"])
+            elif proj.fixture_type == "Lance-flamme":
+                profile = list(DMX_PROFILES["1CH_FLAMME"])
+            elif proj.fixture_type == "Machine a brouillard":
+                profile = list(DMX_PROFILES["2CH_BROUILLARD"])
             elif proj.group == "fumee" or proj.fixture_type == "Machine a fumee":
                 profile = list(DMX_PROFILES["2CH_FUMEE"])
             elif proj.fixture_type == "Moving Head":
@@ -20525,7 +20627,8 @@ class MainWindow(QMainWindow):
         # laissait le combo sur le type de l'appareil PRECEDENT — donc un type
         # faux, reecrit sur la fixture au premier changement de valeur.
         FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
-                         "Machine a fumee", "Gradateur"]
+                         "Machine a fumee", "Machine a brouillard",
+                         "Machine a etincelles", "Lance-flamme", "Gradateur"]
         # Palette partagée avec la bibliothèque de fixtures (niveau module)
         CH_COLORS = globals()["CH_COLORS"]
 
@@ -20957,7 +21060,10 @@ class MainWindow(QMainWindow):
             "Moving Head":      ["MOVING_5CH", "MOVING_8CH", "MOVING_RGB", "MOVING_RGBW"],
             "Barre LED":        ["LED_BAR_RGB", "RGB", "RGBD", "RGBDS"],
             "Stroboscope":      ["STROBE_2CH"],
-            "Machine a fumee":  ["2CH_FUMEE"],
+            "Machine a fumee":  ["2CH_FUMEE", "1CH_FUMEE"],
+            "Machine a brouillard": ["2CH_BROUILLARD", "1CH_BROUILLARD"],
+            "Machine a etincelles": ["1CH_ETINCELLE", "2CH_ETINCELLE", "3CH_ETINCELLE"],
+            "Lance-flamme":         ["1CH_FLAMME", "2CH_FLAMME", "3CH_FLAMME"],
         }
         _selected_group = [None]
 
@@ -21153,6 +21259,65 @@ class MainWindow(QMainWindow):
             "color:#333; font-size:10px; border:none; background:transparent;"
         )
         pt_vl.addWidget(pt_hint)
+
+        # ── Débattement mécanique ───────────────────────────────────────
+        # Ce que l'appareil SAIT faire, en degrés — à ne pas confondre avec la
+        # zone de mouvement ci-dessus, qui est ce qu'on l'AUTORISE à faire.
+        # Sert à convertir DMX → angle : sans lui, la 3D supposait 360° de pan
+        # pour tout le monde et une lyre 540° n'y tournait qu'à moitié.
+        pt_vl.addSpacing(6)
+        pt_vl.addWidget(_sec(tr("mw_pt_range_title")))
+
+        _RANGE_SPIN_SS = (
+            "QSpinBox { background:#141414; color:#bbb; border:1px solid #262626;"
+            " border-radius:5px; padding:3px 6px; font-size:11px; }"
+            "QSpinBox:hover { border-color:#2a5070; }"
+        )
+        rng_row = QHBoxLayout()
+        rng_row.setSpacing(8)
+        _rng_spins = {}
+        for _attr, _lbl in (('pan_range', 'Pan'), ('tilt_range', 'Tilt')):
+            _l = QLabel(_lbl)
+            _l.setStyleSheet(
+                "color:#666; font-size:11px; border:none; background:transparent;")
+            _sp = QSpinBox()
+            _sp.setRange(int(PAN_TILT_RANGE_MIN), int(PAN_TILT_RANGE_MAX))
+            _sp.setSingleStep(10)
+            _sp.setSuffix(" °")
+            _sp.setFixedWidth(88)
+            _sp.setStyleSheet(_RANGE_SPIN_SS)
+            _sp.setToolTip(tr("mw_pt_range_tip"))
+            rng_row.addWidget(_l)
+            rng_row.addWidget(_sp)
+            _rng_spins[_attr] = _sp
+        rng_row.addStretch()
+        pt_vl.addLayout(rng_row)
+
+        rng_hint = QLabel(tr("mw_pt_range_hint"))
+        rng_hint.setStyleSheet(
+            "color:#333; font-size:10px; border:none; background:transparent;")
+        rng_hint.setWordWrap(True)
+        pt_vl.addWidget(rng_hint)
+
+        def _load_pt_ranges(proj):
+            """Recharge les deux champs depuis la fixture, sans émettre."""
+            vals = pan_tilt_ranges(proj)
+            for _sp, _v in zip((_rng_spins['pan_range'], _rng_spins['tilt_range']),
+                               vals):
+                _sp.blockSignals(True)
+                _sp.setValue(int(round(_v)))
+                _sp.blockSignals(False)
+
+        def _on_pt_range(attr, value):
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors):
+                return
+            setattr(self.projectors[idx], attr, float(value))
+            _mark_dirty()
+
+        for _attr, _sp in _rng_spins.items():
+            _sp.valueChanged.connect(
+                lambda v, a=_attr: _on_pt_range(a, v))
 
         fv.addWidget(pt_section)
         pt_section.setVisible(False)
@@ -21429,6 +21594,16 @@ class MainWindow(QMainWindow):
         btn_px_grid.clicked.connect(_on_px_regrid)
         cb_wiring.currentIndexChanged.connect(_on_px_wiring)
 
+        # ⚠️ Tout ce qui écrit un `_PANTILT_META_FIELDS` doit appeler
+        # `_mark_dirty()`, comme le font déjà les bascules pan_invert /
+        # tilt_invert / pan_tilt_swap plus bas. Les limites, elles, ne le
+        # faisaient pas : le bouton « Sauvegarder » restait GRISÉ après avoir
+        # dessiné une zone de mouvement, et la seule façon d'écrire le fichier
+        # était Fichier → Enregistrer Patch. Qui fermait la fenêtre perdait ses
+        # limites sans le moindre avertissement — le bouton grisé lui disant
+        # même, à tort, qu'il n'y avait rien à enregistrer.
+        # Seul `_on_pt_position_changed` reste volontairement propre : le point
+        # jaune teste le mouvement en direct, il ne règle rien de sauvegardable.
         def _on_pt_limits_changed(pm, px, tm, tx):
             idx = _sel[0]
             if idx is None or idx >= len(self.projectors): return
@@ -21437,6 +21612,7 @@ class MainWindow(QMainWindow):
             proj.pan_max  = (px * 256) + 255 if px < 255 else 65535
             proj.tilt_min = tm * 256
             proj.tilt_max = (tx * 256) + 255 if tx < 255 else 65535
+            _mark_dirty()
 
         def _on_pt_position_changed(pan_c, tilt_c):
             idx = _sel[0]
@@ -21455,6 +21631,7 @@ class MainWindow(QMainWindow):
             proj.pan_min = 0; proj.pan_max = 65535
             proj.tilt_min = 0; proj.tilt_max = 65535
             pt_widget.set_limits(0, 255, 0, 255)
+            _mark_dirty()
 
         def _pt_apply(same_name_only):
             idx = _sel[0]
@@ -21467,6 +21644,12 @@ class MainWindow(QMainWindow):
                 if same_name_only and p.name != ref_name: continue
                 p.pan_min  = src.pan_min;  p.pan_max  = src.pan_max
                 p.tilt_min = src.tilt_min; p.tilt_max = src.tilt_max
+                # Le débattement est une caractéristique du MODÈLE : il voyage
+                # avec les limites, sinon « appliquer à toutes les lyres »
+                # laisserait la moitié du réglage derrière lui.
+                p.pan_range  = src.pan_range
+                p.tilt_range = src.tilt_range
+            _mark_dirty()
 
         btn_pt_reset.clicked.connect(_pt_reset)
         btn_pt_apply_model.clicked.connect(lambda: _pt_apply(True))
@@ -21870,7 +22053,7 @@ class MainWindow(QMainWindow):
                 p.shutter_inverted  = bool(fd_s.get('shutter_inverted', False))
                 p.shutter_strobe_min = int(fd_s.get('shutter_strobe_min', 64))
                 p.shutter_strobe_max = int(fd_s.get('shutter_strobe_max', 95))
-                if p.fixture_type == "Machine a fumee":
+                if p.fixture_type in FX_MACHINE_TYPES:
                     p.fan_speed = 0
                 _apply_pantilt_meta(p, fd_s)
                 _apply_matrix_meta(p, fd_s)
@@ -22804,6 +22987,7 @@ class MainWindow(QMainWindow):
                     proj.tilt_min >> 8, proj.tilt_max >> 8
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
+                _load_pt_ranges(proj)
                 _ref = fd.get('name') or fd.get('group', '')
                 btn_pt_apply_model.setText(f"« {_ref} »")
 
@@ -22951,6 +23135,7 @@ class MainWindow(QMainWindow):
                     proj.tilt_min >> 8, proj.tilt_max >> 8
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
+                _load_pt_ranges(proj)
                 _ref = fixture_data[idx].get('name') or fixture_data[idx].get('group', '')
                 btn_pt_apply_model.setText(f"« {_ref} »")
 
@@ -23275,7 +23460,9 @@ class MainWindow(QMainWindow):
             preset, qty, custom_name = res
             _push_history()
             _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5,
-                   "Stroboscope": 2, "Machine a fumee": 2}
+                   "Stroboscope": 2, "Machine a fumee": 2,
+                   "Machine a brouillard": 2, "Machine a etincelles": 1,
+                   "Lance-flamme": 1}
             base_name = custom_name or preset.get('name', 'Fixture')
 
             # Calculer les positions canvas pour le batch
@@ -23371,7 +23558,7 @@ class MainWindow(QMainWindow):
                 if _preset_profile:
                     p.dmx_profile = list(_preset_profile)
                 p.canvas_x, p.canvas_y = canvas_positions[n]
-                if p.fixture_type == "Machine a fumee":
+                if p.fixture_type in FX_MACHINE_TYPES:
                     p.fan_speed = 0
                 # Copier les slots roue couleur/gobo depuis le preset OFL
                 p.color_wheel_slots = list(preset.get('color_wheel_slots', []))
@@ -23483,9 +23670,12 @@ class MainWindow(QMainWindow):
                 # Le profil suit le TYPE, jamais le groupe : depuis que tout
                 # arrive dans le groupe A, un test sur le groupe donnerait
                 # un RGBDS 5 canaux a une machine a fumee 2 canaux.
-                profile = list(DMX_PROFILES["2CH_FUMEE"]
-                               if ftype == "Machine a fumee"
-                               else DMX_PROFILES["RGBDS"])
+                profile = list(DMX_PROFILES[
+                    "1CH_ETINCELLE"  if ftype == "Machine a etincelles" else
+                    "1CH_FLAMME"     if ftype == "Lance-flamme"         else
+                    "2CH_BROUILLARD" if ftype == "Machine a brouillard" else
+                    "2CH_FUMEE"      if ftype == "Machine a fumee"      else
+                    "RGBDS"])
                 if addr + len(profile) - 1 > 512:
                     uni = min(uni + 1, 3)
                     addr = 1
@@ -23589,7 +23779,7 @@ class MainWindow(QMainWindow):
                 _fdd_profile = fdd.get('profile')
                 if isinstance(_fdd_profile, list) and _fdd_profile:
                     p.dmx_profile = list(_fdd_profile)
-                if fdd['fixture_type'] == "Machine a fumee":
+                if fdd['fixture_type'] in FX_MACHINE_TYPES:
                     p.fan_speed = 0
                 self.projectors.append(p)
             self._rebuild_dmx_patch()
@@ -23729,7 +23919,7 @@ class MainWindow(QMainWindow):
                     _imp_profile = fd.get('profile')
                     if isinstance(_imp_profile, list) and _imp_profile:
                         p.dmx_profile = list(_imp_profile)
-                    if fd.get('fixture_type') == "Machine a fumee":
+                    if fd.get('fixture_type') in FX_MACHINE_TYPES:
                         p.fan_speed = 0
                     _apply_matrix_meta(p, fd)
                     self.projectors.append(p)
@@ -23792,7 +23982,7 @@ class MainWindow(QMainWindow):
                 p.universe = int(r["universe"])
                 if r.get("profile"):
                     p.dmx_profile = list(r["profile"])
-                if r.get("fixture_type") == "Machine a fumee":
+                if r.get("fixture_type") in FX_MACHINE_TYPES:
                     p.fan_speed = 0
                 self.projectors.append(p)
             self._rebuild_dmx_patch()
@@ -24682,6 +24872,33 @@ class MainWindow(QMainWindow):
         splitter.addWidget(preset_list)
         splitter.setStretchFactor(1, 1)
 
+        # ── État vide : la fixture cherchée n'est dans aucune bibliothèque ────
+        # Un cadre noir sans un mot laissait croire à un bug ; on renvoie vers
+        # le guide d'import, qui est la vraie réponse à « elle n'y est pas ».
+        empty_hint = QLabel(tr("mw_f_empty_hint"), preset_list.viewport())
+        empty_hint.setAlignment(Qt.AlignCenter)
+        empty_hint.setWordWrap(True)
+        empty_hint.setOpenExternalLinks(True)
+        empty_hint.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        empty_hint.setStyleSheet(
+            "color:#888; font-size:12px; background:transparent; border:none;"
+        )
+        empty_hint.hide()
+
+        def _place_empty_hint():
+            vp = preset_list.viewport()
+            m = 24
+            empty_hint.setGeometry(m, 0, max(80, vp.width() - 2 * m), vp.height())
+
+        _preset_list_resize = preset_list.resizeEvent
+
+        def _preset_list_resize_ev(ev):
+            _preset_list_resize(ev)
+            if empty_hint.isVisible():
+                _place_empty_hint()
+
+        preset_list.resizeEvent = _preset_list_resize_ev
+
         tab1_layout.addWidget(splitter, 1)
 
         # ── Compteur résultats ────────────────────────────────────────────────
@@ -24848,6 +25065,10 @@ class MainWindow(QMainWindow):
             word = "résultat" if searching else "fixture"
             count_lbl.setText(
                 tr("mw_f_n_total", n=n, word=word, a0='s' if n > 1 else '', _TOTAL_FIXTURES=_TOTAL_FIXTURES))
+            empty_hint.setVisible(n == 0)
+            if n == 0:
+                _place_empty_hint()
+                empty_hint.raise_()
             if searching and n:
                 preset_list.setCurrentRow(0)
 
@@ -25784,7 +26005,7 @@ class MainWindow(QMainWindow):
         for fd in fixture_data:
             p = Projector(fd['group'], name=fd['name'], fixture_type=fd['fixture_type'])
             p.start_address = fd['start_address']
-            if fd['fixture_type'] == "Machine a fumee":
+            if fd['fixture_type'] in FX_MACHINE_TYPES:
                 p.fan_speed = 0
             # Restaurer la position si la lyre existait déjà (même nom)
             if p.fixture_type in ('Moving Head', 'Lyre') and p.name in _saved_pt:
@@ -25816,7 +26037,13 @@ class MainWindow(QMainWindow):
                 profile = explicit
             else:
                 ftype = getattr(proj, 'fixture_type', 'PAR LED')
-                if ftype == "Machine a fumee" or proj.group == "fumee":
+                if ftype == "Machine a etincelles":
+                    profile = list(DMX_PROFILES["1CH_ETINCELLE"])
+                elif ftype == "Lance-flamme":
+                    profile = list(DMX_PROFILES["1CH_FLAMME"])
+                elif ftype == "Machine a brouillard":
+                    profile = list(DMX_PROFILES["2CH_BROUILLARD"])
+                elif ftype == "Machine a fumee" or proj.group == "fumee":
                     profile = list(DMX_PROFILES["2CH_FUMEE"])
                 elif ftype == "Moving Head":
                     profile = list(DMX_PROFILES["MOVING_8CH"])
@@ -25997,7 +26224,7 @@ class MainWindow(QMainWindow):
                         # à la colonne « Taille » n'a pas la clé, et 0 ferait
                         # disparaître le corps de l'appareil.
                         p.fixture_scale = float(fd.get('fixture_scale', 100.0) or 100.0)
-                        if fd.get('fixture_type') == "Machine a fumee":
+                        if fd.get('fixture_type') in FX_MACHINE_TYPES:
                             p.fan_speed = 0
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
                         if isinstance(profile, list) and profile:

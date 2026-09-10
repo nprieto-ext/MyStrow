@@ -3,6 +3,8 @@ Classe Projector pour la gestion des projecteurs DMX
 """
 from PySide6.QtGui import QColor
 
+import core
+
 
 class Projector:
     """Represente un projecteur avec son etat (niveau, couleur, mute)"""
@@ -107,6 +109,15 @@ class Projector:
         self.pan_invert    = False  # Inverser le sens du pan (65535 - valeur)
         self.tilt_invert   = False  # Inverser le sens du tilt (65535 - valeur)
         self.pan_tilt_swap = False  # Permuter pan ↔ tilt
+        # Debattement MECANIQUE : degres balayes sur toute la course DMX.
+        # A ne pas confondre avec pan_min/pan_max ci-dessus, qui bornent la
+        # course UTILE (ne pas eclairer le bar). Ici c'est ce que l'appareil
+        # sait faire, une caracteristique du modele : 540/270 pour la plupart,
+        # mais on trouve du 630, du 360 et du tilt 180.
+        # Sert a convertir DMX -> angle : plan de feu 3D (corps et faisceau) et
+        # amplitude pan des effets. Voir `core.pan_tilt_angles`.
+        self.pan_range  = core.PAN_RANGE_DEFAULT
+        self.tilt_range = core.TILT_RANGE_DEFAULT
         # ── Couronne LED (« ring ») ──────────────────────────────────────────
         # True : la couronne suit le show — même couleur, même niveau et même
         # strobe que le faisceau (voir `artnet_dmx`, bloc « Couronne »). C'est

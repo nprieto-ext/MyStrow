@@ -27,38 +27,16 @@ jobs:
           pip install pyinstaller
 
       - name: Fetch fixtures Firestore
-        env:
-          FIREBASE_ADMIN_EMAIL: ${{ secrets.FIREBASE_ADMIN_EMAIL }}
-          FIREBASE_ADMIN_PASSWORD: ${{ secrets.FIREBASE_ADMIN_PASSWORD }}
-        shell: pwsh
-        run: |
-          @'
-          import os, gzip, json, sys
-          sys.path.insert(0, ".")
-          email = os.environ.get("FIREBASE_ADMIN_EMAIL", "")
-          password = os.environ.get("FIREBASE_ADMIN_PASSWORD", "")
-          out = "fixtures_bundle_custom.json.gz"
-          def write_bundle(data):
-              with gzip.open(out, "wb") as f:
-                  f.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
-          if not email or not password:
-              print("Secrets Firebase absents - bundle vide")
-              write_bundle([])
-          else:
-              try:
-                  import firebase_client as fc
-                  result = fc.sign_in(email, password)
-                  token = result["id_token"]
-                  fixtures = fc.fetch_all_gdtf_fixtures(token)
-                  clean = [{k:v for k,v in fx.items() if not k.startswith("_")} for fx in fixtures]
-                  write_bundle(clean)
-                  print(str(len(clean)) + " fixtures embarquees")
-              except Exception as e:
-                  print("Erreur fetch fixtures: " + str(e) + " - bundle vide")
-                  write_bundle([])
-          '@ | Out-File -FilePath _fetch_fixtures.py -Encoding utf8
-          python _fetch_fixtures.py
-          Remove-Item _fetch_fixtures.py
+        # `gdtf_fixtures` est en lecture PUBLIQUE : aucun secret requis.
+        # L'ancienne version exigeait FIREBASE_ADMIN_EMAIL/PASSWORD et, s'ils
+        # manquaient, embarquait un bundle VIDE sans faire echouer le build.
+        run: python generate_custom_fixtures_bundle.py
+
+      - name: Profils de controleurs approuves
+        # Collection `controller_profiles` en lecture PUBLIQUE : pas de secret.
+        # Sans ce catalogue, un controleur valide en moderation n'atteint que
+        # les utilisateurs qui ouvrent eux-memes la bibliotheque communautaire.
+        run: python generate_controllers_bundle.py
 
       - name: Bundle ffmpeg (build statique autonome)
         shell: pwsh
@@ -137,7 +115,7 @@ jobs:
           Write-Host "  $v"
 
       - name: Build EXE
-        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "vendor/three;vendor/three" --add-data "scenes3d;scenes3d" --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --collect-all=pygame --hidden-import=pygame._sdl2.controller --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow
+        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "controllers_bundle.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "vendor/three;vendor/three" --add-data "scenes3d;scenes3d" --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --collect-all=pygame --hidden-import=pygame._sdl2.controller --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --noupx --noconfirm main.py --name MyStrow
 
       # ─────────────────────────────────────────────
       # SIGNATURE DE CODE WINDOWS — SSL.com eSigner (cloud, CSC)
@@ -261,6 +239,15 @@ jobs:
             sips -z $((size*2)) $((size*2)) logo.png --out "mystrow.iconset/icon_${size}x${size}@2x.png" > /dev/null
           done
           iconutil -c icns mystrow.iconset -o mystrow.icns
+
+      - name: Fetch fixtures Firestore
+        # Absente jusqu'au 09/09/2026 : AUCUN build Mac n'embarquait les
+        # fixtures ajoutees depuis l'admin panel, le .spec sautant en
+        # silence un fichier absent.
+        run: python3.12 generate_custom_fixtures_bundle.py
+
+      - name: Profils de controleurs approuves
+        run: python3.12 generate_controllers_bundle.py
 
       - name: Build .app (arm64)
         run: python3.12 -m PyInstaller --noconfirm MyStrow.spec

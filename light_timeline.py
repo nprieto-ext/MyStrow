@@ -949,6 +949,68 @@ class SequenceInfoDialog(QDialog):
         return True
 
 
+def movement_pan_tilt(get, elapsed_s, progress):
+    """Pan/tilt 16 bits d'un clip de mouvement — DÉFINITION UNIQUE.
+
+    `get(cle, defaut)` lit le clip, qu'il soit un dict (restitution) ou un objet
+    Clip (aperçu de l'éditeur) : les deux moteurs appellent donc exactement le
+    même calcul. Ils avaient chacun le leur, et l'aperçu ne connaissait tout
+    simplement pas `move_effect` — cercle, figure8, balayage et aléatoire ne
+    bougeaient pas du tout en montage et bougeaient en show.
+
+    `elapsed_s` = secondes écoulées depuis le début du clip (mouvements auto),
+    `progress`  = 0..1 dans le clip (trajectoire linéaire).
+    """
+    move_effect = get('move_effect', None)
+    move_speed  = get('move_speed', 0.5)
+    move_amp    = get('move_amplitude', 60)
+    pan_start   = get('pan_start', 128)
+    tilt_start  = get('tilt_start', 128)
+    pan_end     = get('pan_end', 128)
+    tilt_end    = get('tilt_end', 128)
+
+    if move_effect:
+        # Effets auto — centre 0-255 (spinbox du dialogue), amplitude 5-120,
+        # convertis en 16 bits.
+        t        = elapsed_s * move_speed * 2 * math.pi
+        ctr_pan  = pan_start  * 257   # 0-255 → 0-65535
+        ctr_tilt = tilt_start * 257
+        amp_16   = move_amp   * 256   # 5-120 → 1280-30720
+        if move_effect == 'cercle':
+            pan_val  = ctr_pan  + int(amp_16 * math.cos(t))
+            tilt_val = ctr_tilt + int(amp_16 * math.sin(t))
+        elif move_effect == 'figure8':
+            pan_val  = ctr_pan  + int(amp_16 * math.sin(t))
+            tilt_val = ctr_tilt + int(amp_16 * math.sin(2 * t) / 2)
+        elif move_effect == 'balayage_h':
+            pan_val  = ctr_pan  + int(amp_16 * math.sin(t))
+            tilt_val = ctr_tilt
+        elif move_effect == 'balayage_v':
+            pan_val  = ctr_pan
+            tilt_val = ctr_tilt + int(amp_16 * math.sin(t))
+        elif move_effect == 'aleatoire':
+            pan_val  = ctr_pan  + int(amp_16 * 0.6 * math.sin(t * 1.0) +
+                                      amp_16 * 0.4 * math.sin(t * 1.7 + 1.3))
+            tilt_val = ctr_tilt + int(amp_16 * 0.6 * math.cos(t * 0.8 + 0.7) +
+                                      amp_16 * 0.4 * math.cos(t * 2.1 + 2.5))
+        else:
+            pan_val, tilt_val = ctr_pan, ctr_tilt
+    else:
+        # Trajectoire linéaire — valeurs 16 bits (PanTiltPad, 0-65535)
+        p = max(0.0, min(1.0, progress))
+        pan_val  = int(pan_start  + (pan_end  - pan_start)  * p)
+        tilt_val = int(tilt_start + (tilt_end - tilt_start) * p)
+
+    return (max(0, min(65535, int(pan_val))),
+            max(0, min(65535, int(tilt_val))))
+
+
+def clip_has_movement(get):
+    """Vrai si le clip porte un mouvement pan/tilt (auto ou trajectoire)."""
+    return bool(get('move_effect', None)) or any(
+        get(k, 128) != 128 for k in ('pan_start', 'pan_end', 'tilt_start', 'tilt_end'))
+
+
 def reset_beam_channels(projectors, blackout=False):
     """Ramène au repos TOUT ce qu'une restitution a pu poser sur le faisceau.
 

@@ -53,7 +53,8 @@ from light_timeline import (LightTrack, LightClip, PalettePanel, LibraryPanel,
                             scope_layers_to_groups,
                             REC_MEM_COL_START, REC_MEM_COL_END)
 from core import (media_icon, create_icon, apply_special_block, ComboSansMolette,
-                  projector_track_key, is_projector_track)
+                  projector_track_key, is_projector_track,
+                  MediaClock, make_precise_timer, TIMELINE_FRAME_MS)
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
 
@@ -192,14 +193,21 @@ class LightTimelineEditor(QDialog):
 
         self._seq_clip_active  = None   # clip de séquence actuellement actif (pour effets)
         self._eff_clips_active = {}     # {track_name: clip} — clips d'effet actifs par piste
+        self._eff_speed_active = None   # VIT appliquée au dernier effet monté (garde)
         self._pos_clip_active  = None   # clip de position lyre actuellement actif
 
-        self.playback_timer = QTimer()
+        # Même cadence et même type de timer que la restitution
+        # (`sequencer.timeline_playback_timer`) : l'aperçu doit montrer ce
+        # que jouera le show, pas une autre image du même montage.
+        self.playback_timer = make_precise_timer()
         self.playback_timer.timeout.connect(self.update_playhead)
+        # Horloge lissée, cf. core.MediaClock — mêmes bonds de position()
+        # qu'en restitution, donc mêmes saccades à l'aperçu sans elle.
+        self._media_clock = MediaClock()
 
         # Demarrer le timer si le player principal joue deja
         if main_window.player.playbackState() == QMediaPlayer.PlayingState:
-            self.playback_timer.start(40)
+            self.playback_timer.start(TIMELINE_FRAME_MS)
 
         # Démarrer/arrêter le timer quand le player principal change d'état
         main_window.player.playbackStateChanged.connect(self._on_main_player_state_changed)
@@ -513,8 +521,11 @@ class LightTimelineEditor(QDialog):
             "public": "Public", "fumee": "Fumee", "lyre": "Lyres",
             "barre": "Barres", "strobe": "Strobos",
         })
-        # Groupes sans piste lumiere
-        SKIP_GROUPS = {"fumee"}
+        # Machines a effet : aucune piste lumiere. Le test portait sur le seul
+        # groupe « fumee » ; il porte maintenant sur le TYPE, sinon un
+        # lance-flamme range dans le groupe « face » heritait d'une piste de
+        # couleur — et donc d'un fondu enchaine sur la flamme.
+        from core import fixture_is_fx_machine
 
         # Couleurs associees a chaque groupe (identiques au patch DMX)
         TRACK_COLORS = {
@@ -541,7 +552,7 @@ class LightTimelineEditor(QDialog):
         seen_groups = []
         for proj in projectors:
             gname = GROUP_DISPLAY.get(proj.group, proj.group.capitalize())
-            if gname not in seen_groups and proj.group not in SKIP_GROUPS:
+            if gname not in seen_groups and not fixture_is_fx_machine(proj):
                 seen_groups.append(gname)
 
         # Trier selon l'ordre canonique (groupes inconnus a la fin)
@@ -2172,7 +2183,7 @@ class LightTimelineEditor(QDialog):
                     self.preview_player.setPosition(pos)
                 self.preview_player.play()
             self.play_pause_btn.setIcon(create_icon("pause", "#ffffff"))
-            self.playback_timer.start(40)
+            self.playback_timer.start(TIMELINE_FRAME_MS)
 
     def seek_relative(self, delta_ms):
         """Seek relatif avec recentrage de la vue sur le curseur."""
@@ -2435,7 +2446,7 @@ class LightTimelineEditor(QDialog):
         """Démarre/arrête le timer playhead selon l'état du player principal."""
         if state == QMediaPlayer.PlayingState:
             if not self.playback_timer.isActive():
-                self.playback_timer.start(40)
+                self.playback_timer.start(TIMELINE_FRAME_MS)
         else:
             preview_playing = (self.preview_player is not None and
                                self.preview_player.playbackState() == QMediaPlayer.PlayingState)
@@ -2456,11 +2467,18 @@ class LightTimelineEditor(QDialog):
                 tempo_end = True
             playing = True
         elif self.preview_player is not None and self.preview_player.playbackState() == QMediaPlayer.PlayingState:
-            self.playback_position = self.preview_player.position()
+            # Horloge lissée : `position()` avance par bonds (0 à 116 ms mesurés
+            # sur une image de 46,9 ms). Sans elle, les mouvements pan/tilt de
+            # l'aperçu saccadent exactement comme ceux du show.
+            self.playback_position = self._media_clock.update(
+                self.preview_player.position())
             playing = True
         elif self.main_window.player.playbackState() == QMediaPlayer.PlayingState:
-            self.playback_position = self.main_window.player.position()
+            self.playback_position = self._media_clock.update(
+                self.main_window.player.position())
             playing = True
+        else:
+            self._media_clock.reset()
 
         if playing:
             # Auto-scroll pour suivre le curseur pendant la lecture
@@ -2570,8 +2588,19 @@ class LightTimelineEditor(QDialog):
                     new_eff_clips[et.name] = clip
                     break
 
-        if new_eff_clips != self._eff_clips_active:
+        # VIT du premier clip d'effet actif (cf. plus bas) : elle entre dans la
+        # garde, sinon regler la vitesse pendant que l'apercu tourne ne change
+        # rien — le dict de clips, lui, n'a pas bouge. La restitution fait pareil
+        # (`same_speed` dans `sequencer._handle_timeline_effect`).
+        _first_eff_clip = next(iter(new_eff_clips.values()), None)
+        _speed_override = getattr(_first_eff_clip, 'effect_speed', 50)
+        if _speed_override is None:
+            _speed_override = 50
+
+        if (new_eff_clips != self._eff_clips_active
+                or _speed_override != getattr(self, '_eff_speed_active', None)):
             self._eff_clips_active = new_eff_clips
+            self._eff_speed_active = _speed_override
             if not new_eff_clips:
                 self.main_window.active_effect        = None
                 self.main_window.active_effect_config = {}
@@ -2625,11 +2654,31 @@ class LightTimelineEditor(QDialog):
                             if g not in merged_target_groups:
                                 merged_target_groups.append(g)
                 combined_name = " + ".join(merged_names) if merged_names else ''
+                # VIT du clip : `50` etait ecrit EN DUR ici alors que la
+                # restitution lit la vraie valeur (`sequencer.py`,
+                # `_handle_timeline_effect`). Un clip regle a 20 ou a 80 tournait
+                # donc a 50 pendant tout le montage et a sa vraie vitesse le soir
+                # du show : le reglage de vitesse par clip (clic droit sur le
+                # clip, ou menu Effet > Vitesse) semblait sans effet, et le
+                # montage ne pouvait pas servir de reference. On lit la meme
+                # source que le show.
+                #
+                # Meme regle que la restitution, y compris sa limite : en
+                # superposition, c'est la vitesse du PREMIER clip d'effet actif
+                # qui s'applique a toutes les pistes Effet fusionnees. Le moteur
+                # n'a qu'une horloge de phase (`_effect_clock`) pour l'effet
+                # combine, il ne sait pas encore faire tourner deux pistes a des
+                # vitesses differentes. L'ordre est celui des pistes Effet, le
+                # meme des deux cotes.
+                # (`_speed_override` est calcule plus haut, avec la garde.)
+                # Pas de `or 50` : VIT 0 est une valeur legitime (effet quasi
+                # fige, cf. le plancher `max(0.01, ...)` du moteur) et doit
+                # passer telle quelle, comme dans la restitution.
                 cfg = {
                     'name': combined_name, 'type': merged_type,
                     'layers': merged_layers, 'play_mode': 'loop',
                     'target_groups': [] if _has_all_groups else merged_target_groups,
-                    'speed_override': 50,
+                    'speed_override': _speed_override,
                     'no_color': merged_no_color,
                 }
                 self.main_window.active_effect        = combined_name
@@ -2684,6 +2733,31 @@ class LightTimelineEditor(QDialog):
                         if pt is not None:
                             self.main_window._start_pan_tilt_transition(p, pt[0], pt[1], 500)
 
+        # ── Mouvement de la piste Position (parité show) ─────────────────────
+        # L'aperçu ne jouait AUCUN mouvement automatique : cercle, figure8,
+        # balayage et aléatoire ne bougeaient qu'en restitution
+        # (`sequencer.apply_timeline_to_dmx`, cas 2). Un bloc de mouvement
+        # paraissait donc immobile en montage puis balayait en show. Même
+        # fonction de calcul des deux côtés — cf. light_timeline.movement_pan_tilt.
+        if (new_pos_clip is not None
+                and getattr(new_pos_clip, 'position_preset_idx', None) is None):
+            from light_timeline import movement_pan_tilt, clip_has_movement
+            _pget = lambda k, d=None: getattr(new_pos_clip, k, d)
+            if clip_has_movement(_pget):
+                _dur = max(1, new_pos_clip.duration)
+                _el  = (current_time - new_pos_clip.start_time) / 1000.0
+                _pan_v, _tilt_v = movement_pan_tilt(
+                    _pget, _el, (current_time - new_pos_clip.start_time) / _dur)
+                # Mêmes lyres que la restitution : le groupe « Lyres » s'il
+                # existe, sinon toutes les têtes mobiles du parc.
+                _lyre_idx = track_to_indices.get('Lyres', []) or [
+                    i for i, p in enumerate(projectors)
+                    if getattr(p, 'fixture_type', '') == 'Moving Head']
+                for _i in _lyre_idx:
+                    if _i < len(projectors):
+                        projectors[_i].pan  = _pan_v
+                        projectors[_i].tilt = _tilt_v
+
         # ── Piste Gobo ────────────────────────────────────────────────────────
         # Appliqué à CHAQUE passage et non au seul changement de clip : un autre
         # émetteur (mémoire, effet) peut avoir repositionné la roue entre-temps,
@@ -2706,7 +2780,17 @@ class LightTimelineEditor(QDialog):
                         _gobo_locked_idxs.add(_gi)
 
         # ── 1) Appliquer les clips de couleur par groupe (priorité basse) ─────
-        for track in self.tracks:
+        # Les pistes « un projecteur seul » passent en DERNIER, pour primer sur
+        # la piste de leur groupe : le rig est remis à blanc à chaque frame, donc
+        # la dernière piste écrite gagne. La restitution applique déjà cette
+        # règle (`sequencer.py`, tri par `is_projector_track` à la préparation de
+        # la timeline) ; l'aperçu, lui, itérait `self.tracks` dans l'ordre
+        # d'affichage. Les deux coïncidaient tant que les pistes projecteur
+        # étaient créées en dernier — et divergeaient dès qu'une piste de groupe
+        # était ajoutée après elles : le projecteur seul se faisait alors écraser
+        # par son groupe au montage, mais pas en lecture.
+        for track in sorted(self.tracks,
+                            key=lambda _tr: is_projector_track(getattr(_tr, 'name', ''))):
             if (getattr(track, 'is_sequence_track', False) or
                     getattr(track, 'is_effect_track', False) or
                     getattr(track, 'is_position_track', False) or

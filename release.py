@@ -89,117 +89,49 @@ def generate_sig_file(exe_path):
 
 def _fetch_custom_fixtures_bundle():
     """
-    Récupère toutes les fixtures Firestore (gdtf_fixtures) et génère
-    fixtures_bundle_custom.json.gz à côté de release.py.
-    Non-bloquant : en cas d'erreur, un avertissement est affiché et le build continue.
+    Recupere les fixtures Firestore (`gdtf_fixtures`) et genere
+    fixtures_bundle_custom.json.gz a cote de release.py.
+
+    Delegue a generate_custom_fixtures_bundle.py : le meme script tourne dans
+    les jobs CI Windows et macOS, ou il n a besoin d aucun identifiant (la
+    collection est en lecture publique). Le jeton local est passe quand on en
+    a un, sans etre requis. Non bloquant : un bundle vide, jamais un build
+    interrompu.
     """
-    import gzip as _gzip
-    import sys as _sys
-    _sys.path.insert(0, str(BASE_DIR))
-
-    out_path = BASE_DIR / "fixtures_bundle_custom.json.gz"
-    print("\n--- Fetch fixtures Firestore → fixtures_bundle_custom.json.gz ---")
-
-    def _write_bundle(fixtures_list):
-        data = json.dumps(fixtures_list, ensure_ascii=False, indent=None).encode("utf-8")
-        with _gzip.open(out_path, "wb") as gz:
-            gz.write(data)
-
+    print("")
+    print("--- Fetch fixtures Firestore -> fixtures_bundle_custom.json.gz ---")
+    token = None
     try:
-        from license_manager import get_current_id_token
-        import firebase_client as fc
-
-        token = get_current_id_token()
-        if not token:
-            print("AVERTISSEMENT: pas de token Firebase — bundle vide généré.")
-            _write_bundle([])
-            return
-
-        fixtures = fc.fetch_all_gdtf_fixtures(token)
-
-        # Nettoyer les champs internes et normaliser profile
-        clean = []
-        for fx in fixtures:
-            f = {k: v for k, v in fx.items() if not k.startswith("_")}
-            if not f.get("profile") and f.get("modes"):
-                f["profile"] = f["modes"][0].get("profile", [])
-            clean.append(f)
-
-        _write_bundle(clean)
-        print(f"✓ {len(clean)} fixture(s) embarquée(s) dans {out_path.name}")
-    except Exception as e:
-        print(f"AVERTISSEMENT: fetch fixtures Firestore échoué ({e}) — bundle vide généré.")
+        import sys as _sys
+        _sys.path.insert(0, str(BASE_DIR))
         try:
-            _write_bundle([])
+            from license_manager import get_current_id_token
+            token = get_current_id_token()
         except Exception:
-            pass
+            token = None
+        import generate_custom_fixtures_bundle as _gcf
+        _gcf.build(BASE_DIR / "fixtures_bundle_custom.json.gz", token)
+    except Exception as e:
+        print(f"AVERTISSEMENT: bundle fixtures non genere ({e}).")
 
 
-# ------------------------------------------------------------------
-# SIGNATURE DE CODE (Windows Code Signing)
-# ------------------------------------------------------------------
-
-# Nom du certificat tel qu'il apparaît dans le store Windows.
-# Laisser None pour que signtool auto-sélectionne (/a).
-CODESIGN_CERT_NAME = None  # ex: "Nicolas Prieto" ou "MyStrow SAS"
-
-# URL du serveur de timestamp (RFC 3161)
-CODESIGN_TIMESTAMP_URL = "http://time.certum.pl"  # Certum TSA
-
-
-def _find_signtool():
-    """Cherche signtool.exe dans les emplacements Windows SDK classiques."""
-    import glob
-    candidates = [
-        r"C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe",
-        r"C:\Program Files\Windows Kits\10\bin\*\x64\signtool.exe",
-        r"C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe",
-        r"C:\Program Files\Windows Kits\10\bin\x64\signtool.exe",
-        "signtool",  # si dans le PATH
-    ]
-    for pattern in candidates:
-        if "*" in pattern:
-            matches = sorted(glob.glob(pattern), reverse=True)  # version la plus récente en premier
-            if matches:
-                return matches[0]
-        elif Path(pattern).exists() or pattern == "signtool":
-            return pattern
-    return None
-
-
-def sign_exe(path: Path, description: str = "MyStrow"):
-    """Signe un exécutable avec le certificat OV présent dans le store Windows.
-
-    Nécessite : token USB branché + drivers installés + signtool.exe (Windows SDK).
-    Non bloquant si signtool introuvable (avertissement seulement).
+def _fetch_controller_bundle():
     """
-    signtool = _find_signtool()
-    if not signtool:
-        print(f"⚠️  signtool.exe introuvable — {path.name} non signé. Installe Windows SDK.")
-        return False
+    Récupère les profils de contrôleurs MIDI approuvés (`controller_profiles`)
+    et génère controllers_bundle.json.gz à côté de release.py.
 
-    cmd_parts = [
-        f'"{signtool}"', "sign",
-        "/fd", "sha256",
-        "/tr", CODESIGN_TIMESTAMP_URL,
-        "/td", "sha256",
-        "/d", f'"{description}"',
-    ]
-    if CODESIGN_CERT_NAME:
-        cmd_parts += ["/n", f'"{CODESIGN_CERT_NAME}"']
-    else:
-        cmd_parts += ["/a"]  # auto-sélection du certificat
-    cmd_parts.append(f'"{path}"')
-
-    cmd = " ".join(cmd_parts)
-    print(f"\n--- Signature : {path.name} ---")
-    print(f">>> {cmd}")
-    result = subprocess.run(cmd, shell=True)
-    if result.returncode != 0:
-        print(f"⚠️  Signature échouée pour {path.name} (token branché ?)")
-        return False
-    print(f"✅ {path.name} signé avec succès")
-    return True
+    Délégué à generate_controllers_bundle.py : le même script tourne dans les
+    jobs CI, où il n'a besoin d'aucun identifiant (la collection est en lecture
+    publique). Non bloquant, comme son jumeau des fixtures.
+    """
+    print("\n--- Fetch profils de contrôleurs Firestore → controllers_bundle.json.gz ---")
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(BASE_DIR))
+        import generate_controllers_bundle as _gcb
+        _gcb.build(BASE_DIR / "controllers_bundle.json.gz")
+    except Exception as e:
+        print(f"AVERTISSEMENT: catalogue de contrôleurs non généré ({e}).")
 
 
 def build_local_installer(version):
@@ -209,6 +141,7 @@ def build_local_installer(version):
 
     # 1) Fetch fixtures Firestore → bundle embarqué dans l'exe
     _fetch_custom_fixtures_bundle()
+    _fetch_controller_bundle()
 
     # 3) Nettoyage des anciens builds
     for d in ["dist", "build"]:
@@ -225,6 +158,14 @@ def build_local_installer(version):
     _custom_bundle_flag = (
         f"--add-data \"fixtures_bundle_custom.json.gz;.\" "
         if _custom_bundle.exists() else ""
+    )
+
+    # Profils de contrôleurs approuvés en modération. Absent, l'exe se construit
+    # quand même : la bibliothèque communautaire reste accessible à la demande.
+    _ctrl_bundle = BASE_DIR / "controllers_bundle.json.gz"
+    _ctrl_bundle_flag = (
+        f"--add-data \"controllers_bundle.json.gz;.\" "
+        if _ctrl_bundle.exists() else ""
     )
 
     # ffmpeg embarqué (décodage audio robuste sans dépendance PATH côté client).
@@ -263,6 +204,7 @@ def build_local_installer(version):
         f"--add-binary \"ftd2xx.dll;.\" "
         f"{_ffmpeg_flag}"
         f"{_custom_bundle_flag}"
+        f"{_ctrl_bundle_flag}"
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "
         f"--hidden-import=rtmidi "

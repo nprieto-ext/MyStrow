@@ -1014,6 +1014,317 @@ window.beamGain = 0.62;
 // baisser franchement sans perdre en lisibilité.
 window.glowGain = 0.55;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Machines à effet : fumée, brouillard, étincelles, flamme
+// ─────────────────────────────────────────────────────────────────────────────
+// Ces appareils ne projettent PAS de lumière : ils crachent de la matière. Un
+// cône volumétrique ne sait rien en dire — d'où un système de PARTICULES par
+// machine.
+//
+// Simulé en repère MONDE et non dans celui de la machine : la gravité doit
+// rester verticale même quand l'appareil est incliné. Une gerbe d'étincelles
+// sur une machine penchée à 30° part en biais PUIS retombe droit ; simulée en
+// local, elle serait retombée de travers.
+//
+// Le budget est volontairement modeste : ces machines sont peu nombreuses sur
+// un plan (une à quatre en général) et la scène tourne déjà avec ses faisceaux
+// volumétriques. Un plan chargé ne doit pas perdre d'images parce qu'un hazer
+// tourne dans un coin.
+const PYRO_JET_SCALE = 3.0;
+const MACHINE_PARAMS = {
+  // n      particules allouées (plafond, jamais dépassé)
+  // rate   émissions par seconde à 100 %
+  // life   durée de vie [min, max] en secondes
+  // spd    vitesse initiale [min, max] en m/s
+  // spread demi-ouverture du jet, en radians
+  // grav   accélération verticale (m/s²) — NÉGATIVE pour ce qui retombe,
+  //        POSITIVE pour ce qui monte (poussée d'un gaz plus chaud que l'air)
+  // size   taille du point, en pixels à 1 m
+  // drag   frottement de l'air (1/s)
+  // add    rendu additif (feu, étincelles) ou alpha classique (fumée)
+  //
+  // Gerbe et flamme : jet agrandi ×PYRO_JET_SCALE (10/09/26, « 3× plus
+  // grand »). Vitesse ET gravité multipliées ENSEMBLE, drag et durée de vie
+  // inchangés : la trajectoire est une homothétie exacte de l'ancienne — même
+  // rythme, même ouverture, simplement 3× plus haute et plus large. Toucher la
+  // vitesse seule aurait monté la gerbe de ×9 (h = v²/2g) et étiré son temps
+  // de vol.
+  // La flamme grossit aussi ses bouffées du même facteur (3× plus de place à
+  // couvrir, sinon elle devenait un nuage de points) et double son débit à
+  // opacité moitié (_machShade) : même éclat, colonne continue.
+  // Les étincelles, elles, restent des POINTS (×1,5 seulement, sinon ce sont
+  // des pastilles) : on double plutôt leur débit pour garder une gerbe dense.
+  spark: { n:480, rate:300, life:[0.70,1.30],
+           spd:[3.4 * PYRO_JET_SCALE, 6.0 * PYRO_JET_SCALE], spread:0.17,
+           grav:-7.0 * PYRO_JET_SCALE, size:[3.6, 6.3], drag:0.10,
+           add:true,  bounce:true },
+  flame: { n:440, rate:420, life:[0.26,0.60],
+           spd:[3.8 * PYRO_JET_SCALE, 6.8 * PYRO_JET_SCALE], spread:0.11,
+           grav: 2.4 * PYRO_JET_SCALE,
+           size:[7.0 * PYRO_JET_SCALE, 13.0 * PYRO_JET_SCALE], drag:2.0,
+           add:true,  bounce:false },
+  // ⚠️ Fumée et brume se règlent BAS. Premier jet : taille 26-72 px et alpha
+  // 0,17 — les bouffées se recouvraient par dizaines, saturaient à blanc puis
+  // passaient dans le bloom : deux ampoules géantes au milieu du plateau au
+  // lieu de deux machines. Une volute réelle est presque transparente ; c'est
+  // leur ACCUMULATION qui fait la matière, pas l'opacité de chacune.
+  fog:   { n:170, rate: 30, life:[2.6, 4.6],   spd:[0.9,1.8],   spread:0.80,
+           grav: 0.26, size:[14.0,30.0], drag:0.95, add:false, bounce:false },
+  haze:  { n:170, rate: 22, life:[4.0, 7.5],   spd:[0.30,0.75], spread:1.25,
+           grav: 0.05, size:[20.0,44.0], drag:0.90, add:false, bounce:false },
+};
+const MACH_MAX = 480;
+
+const _machPtsGrp = new THREE.Group();
+scene.add(_machPtsGrp);
+
+// Scratch partagés : une allocation par image tuerait le ramasse-miettes.
+const _machQ = new THREE.Quaternion();
+const _machE = new THREE.Euler();
+const _machV = new THREE.Vector3();
+const _machRGB = [0, 0, 0];
+
+function _makeMachinePointsMat(additive) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uPix: { value: Math.min(2, window.devicePixelRatio || 1) } },
+    vertexShader: [
+      'attribute float aSize;',
+      'attribute float aAlpha;',
+      'attribute vec3  aColor;',
+      'varying   vec3  vCol;',
+      'varying   float vA;',
+      'uniform   float uPix;',
+      'void main() {',
+      '  vCol = aColor; vA = aAlpha;',
+      '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+      // Taille ramenée à la distance : une étincelle à 20 m doit être un point,
+      // pas la même tache qu'à 2 m.
+      '  gl_PointSize = aSize * uPix * (26.0 / max(0.05, -mv.z));',
+      '  gl_Position  = projectionMatrix * mv;',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'varying vec3 vCol; varying float vA;',
+      'void main() {',
+      '  vec2  d = gl_PointCoord - vec2(0.5);',
+      '  float r = length(d);',
+      '  if (r > 0.5 || vA <= 0.001) discard;',
+      '  gl_FragColor = vec4(vCol, vA * smoothstep(0.5, 0.0, r));',
+      '}'
+    ].join('\n'),
+    transparent: true,
+    depthWrite:  false,
+    blending:    additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+  });
+}
+
+function _makeMachinePoints() {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MACH_MAX * 3), 3));
+  g.setAttribute('aColor',   new THREE.BufferAttribute(new Float32Array(MACH_MAX * 3), 3));
+  g.setAttribute('aSize',    new THREE.BufferAttribute(new Float32Array(MACH_MAX), 1));
+  g.setAttribute('aAlpha',   new THREE.BufferAttribute(new Float32Array(MACH_MAX), 1));
+  const pts = new THREE.Points(g, _makeMachinePointsMat(true));
+  // Les particules quittent la boîte englobante d'origine dès la première
+  // seconde : sans ça, le frustum culling escamote toute la gerbe dès que la
+  // caméra bouge un peu.
+  pts.frustumCulled = false;
+  pts.renderOrder   = 3;
+  pts.visible       = false;
+  return pts;
+}
+
+// Corps des machines. Volontairement sobres : ce sont des caisses posées au
+// sol, ce qui doit sauter aux yeux c'est la MATIÈRE qui en sort.
+function _makeMachineBody(kind) {
+  const g   = new THREE.Group();
+  const mat = (c, r, m) => new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m });
+  if (kind === 'spark') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.34, 0.26), mat(0x24262c, 0.50, 0.62));
+    body.position.y = 0.17; g.add(body);
+    const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.06, 0.09, 12), mat(0x6a6a72, 0.30, 0.85));
+    cone.position.y = 0.38; g.add(cone);
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.011, 6, 5),
+      new THREE.MeshStandardMaterial({ emissive:0xffaa22, emissiveIntensity:2.5, color:0 }));
+    led.position.set(0.10, 0.30, 0.135); g.add(led);
+  } else if (kind === 'flame') {
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.44, 12), mat(0x3a2c28, 0.40, 0.70));
+    tank.position.y = 0.22; g.add(tank);
+    const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.052, 0.13, 10), mat(0x8a8a90, 0.25, 0.90));
+    noz.position.y = 0.50; g.add(noz);
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.045, 0.26), mat(0x1b1b20, 0.60, 0.45));
+    base.position.y = 0.022; g.add(base);
+  } else {
+    // Fumée / brume : même caisse, la brume un peu plus plate.
+    const h = (kind === 'haze') ? 0.20 : 0.26;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.46, h, 0.32), mat(0x1a1a2e, 0.55, 0.38));
+    body.position.y = h / 2; g.add(body);
+    const grill = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.10, 0.018), mat(0x303050, 0.50, 0.60));
+    grill.position.set(0, h / 2, 0.168); g.add(grill);
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.010, 6, 5),
+      new THREE.MeshStandardMaterial({ emissive:0x00ff55, emissiveIntensity:2.2, color:0 }));
+    led.position.set(-0.16, h * 0.75, 0.168); g.add(led);
+  }
+  return g;
+}
+
+// Hauteur de la buse au-dessus du pied de la machine (m).
+const MACHINE_NOZZLE_Y = { spark:0.42, flame:0.56, fog:0.28, haze:0.22 };
+
+// Couleur et alpha d'une particule selon son ÂGE RELATIF u (0 neuve, 1 morte).
+function _machShade(kind, u, out) {
+  if (kind === 'spark') {
+    // Blanc-jaune incandescent qui refroidit vers l'orange puis le rouge.
+    out[0] = 1.0;
+    out[1] = Math.max(0.06, 0.95 - 0.70 * u);
+    out[2] = Math.max(0.01, 0.60 - 0.62 * u);
+    return 1.0 - u * u;
+  }
+  if (kind === 'flame') {
+    out[0] = 1.0;
+    out[1] = Math.max(0.05, 0.82 - 0.70 * u);
+    out[2] = Math.max(0.01, 0.32 - 0.34 * u);
+    // Extinction franche en fin de course : une flamme ne s'efface pas en
+    // douceur, elle se disloque.
+    // 0,42 et non 0,85 : depuis le jet ×3, les bouffées sont 3× plus grosses
+    // et le débit a doublé pour lier la colonne. À 0,85 elle se lisait comme
+    // une pile de boules blanches, brûlées par le bloom.
+    return 0.42 * (1.0 - u) * (1.0 - u);
+  }
+  // Fumée / brume : gris légèrement bleuté, opacité en cloche — la bouffée
+  // apparaît, s'épaissit, se dilue.
+  out[0] = 0.55; out[1] = 0.58; out[2] = 0.65;
+  return (kind === 'haze' ? 0.028 : 0.055) * Math.sin(Math.PI * u);
+}
+
+// Prépare (ou reconfigure) l'état particulaire d'un slot pour un genre donné.
+function _machEnsure(obj, kind) {
+  let m = obj._mach;
+  if (m && m.kind === kind) return m;
+  if (!obj.machPts) {
+    obj.machPts = _makeMachinePoints();
+    _machPtsGrp.add(obj.machPts);
+  }
+  const P = MACHINE_PARAMS[kind];
+  obj.machPts.material.blending    = P.add ? THREE.AdditiveBlending : THREE.NormalBlending;
+  obj.machPts.material.needsUpdate = true;
+  m = {
+    kind: kind, acc: 0, level: 0,
+    ox: 0, oy: 0, oz: 0,
+    qx: 0, qy: 0, qz: 0, qw: 1,
+    geo: obj.machPts.geometry,
+    vx:  new Float32Array(MACH_MAX),
+    vy:  new Float32Array(MACH_MAX),
+    vz:  new Float32Array(MACH_MAX),
+    age: new Float32Array(MACH_MAX),
+    ttl: new Float32Array(MACH_MAX),
+  };
+  // Toutes mortes au départ : age >= ttl.
+  m.age.fill(1); m.ttl.fill(0);
+  obj.machPts.geometry.attributes.aAlpha.array.fill(0);
+  obj._mach = m;
+  return m;
+}
+
+// Coupe une machine : particules éteintes, corps caché.
+function _machStop(obj) {
+  if (obj.machPts) obj.machPts.visible = false;
+  if (obj.machGrp) obj.machGrp.visible = false;
+  obj._mach = null;
+}
+
+function _tickMachines(dt) {
+  if (dt <= 0) return;
+  for (let i = 0; i < _objs.length; i++) {
+    const o = _objs[i];
+    const m = o._mach;
+    if (!m) continue;
+    const P = MACHINE_PARAMS[m.kind];
+    if (!P) continue;
+
+    const at  = m.geo.attributes;
+    const pos = at.position.array, col = at.aColor.array;
+    const siz = at.aSize.array,    alp = at.aAlpha.array;
+
+    // Émissions dues sur cette image. L'accumulateur garde la fraction : à
+    // faible débit, une particule tous les trois dixièmes de seconde, sans
+    // à-coup lié à la cadence d'affichage.
+    m.acc += P.rate * m.level * dt;
+    let born = Math.floor(m.acc);
+    m.acc -= born;
+    if (born > P.n) born = P.n;
+
+    const damp = Math.max(0, 1 - P.drag * dt);
+    let anyAlive = false;
+
+    for (let k = 0; k < P.n; k++) {
+      const k3 = k * 3;
+      if (m.age[k] >= m.ttl[k]) {
+        if (born <= 0) { alp[k] = 0; continue; }
+        born--;
+        // ── Naissance ──────────────────────────────────────────────────
+        const th = P.spread * Math.sqrt(Math.random());
+        const ph = Math.random() * Math.PI * 2;
+        const st = Math.sin(th);
+        _machV.set(st * Math.cos(ph), Math.cos(th), st * Math.sin(ph));
+        _machQ.set(m.qx, m.qy, m.qz, m.qw);
+        _machV.applyQuaternion(_machQ);
+        // Le niveau OUVRE la machine, il ne fait pas qu'émettre plus souvent :
+        // à 20 % la gerbe est basse, à 100 % elle monte. Sans ça, le curseur
+        // ne changeait que la densité et la hauteur mentait.
+        const sp = (P.spd[0] + Math.random() * (P.spd[1] - P.spd[0]))
+                 * (0.42 + 0.58 * m.level);
+        m.vx[k] = _machV.x * sp;
+        m.vy[k] = _machV.y * sp;
+        m.vz[k] = _machV.z * sp;
+        pos[k3] = m.ox; pos[k3 + 1] = m.oy; pos[k3 + 2] = m.oz;
+        m.age[k] = 0;
+        m.ttl[k] = P.life[0] + Math.random() * (P.life[1] - P.life[0]);
+        siz[k]   = P.size[0] + Math.random() * (P.size[1] - P.size[0]);
+      }
+
+      // ── Intégration ──────────────────────────────────────────────────
+      m.vx[k] *= damp;
+      m.vz[k] *= damp;
+      m.vy[k]  = m.vy[k] * damp + P.grav * dt;
+      pos[k3]     += m.vx[k] * dt;
+      pos[k3 + 1] += m.vy[k] * dt;
+      pos[k3 + 2] += m.vz[k] * dt;
+
+      if (pos[k3 + 1] < 0.02) {
+        pos[k3 + 1] = 0.02;
+        if (P.bounce) {
+          // Les étincelles froides REBONDISSENT au sol et roulent : c'est ce
+          // tapis de points au pied de la machine qui fait « machine à
+          // étincelles » et non « feu d'artifice ».
+          m.vy[k] = Math.abs(m.vy[k]) * 0.28;
+          m.vx[k] *= 0.55; m.vz[k] *= 0.55;
+        } else {
+          // La fumée rampe au lieu de traverser le plateau.
+          m.vy[k] = Math.max(0, m.vy[k]);
+        }
+      }
+
+      m.age[k] += dt;
+      const u = m.age[k] / m.ttl[k];
+      if (u >= 1) { alp[k] = 0; continue; }
+      anyAlive = true;
+      alp[k] = _machShade(m.kind, u, _machRGB);
+      col[k3] = _machRGB[0]; col[k3 + 1] = _machRGB[1]; col[k3 + 2] = _machRGB[2];
+    }
+
+    // Au-delà de P.n, les emplacements ne servent pas pour ce genre : on borne
+    // le tirage plutôt que d'allouer un tampon par genre.
+    for (let k = P.n; k < MACH_MAX; k++) alp[k] = 0;
+
+    at.position.needsUpdate = true;
+    at.aColor.needsUpdate   = true;
+    at.aSize.needsUpdate    = true;
+    at.aAlpha.needsUpdate   = true;
+    o.machPts.visible = anyAlive;
+  }
+}
+
 function _getObj(i) {
   if (i < _objs.length) return _objs[i];
 
@@ -1334,11 +1645,22 @@ function _getObj(i) {
   pxHousing.visible = false;
   _fixtureGrp.add(pxHousing);
 
+  // ── Machine à effet : corps posé au sol ──────────────────────────────
+  // Le corps vit dans `_fixtureGrp` (il suit donc le bouton « Fixtures ») ;
+  // les particules, elles, vivent dans `_machPtsGrp`, à part : ce sont l'effet,
+  // pas l'appareil — comme les faisceaux, qui ne sont pas non plus dans le
+  // groupe des corps.
+  const machGrp = new THREE.Group();
+  machGrp.visible = false;
+  _fixtureGrp.add(machGrp);
+
   const obj = { cVol, lensGlow, pool, halo, ptLight,
                 body, lens, groupRing, parGrp,
                 mhGrp, mhYoke, mhHGrp, mhHead, mhLens,
                 prismBeams, prismPools,
-                pxCell, pxGlow, pxHalo, pxHousing, _fx: null };
+                pxCell, pxGlow, pxHalo, pxHousing, _fx: null,
+                machGrp, machBody: null, machKind: null,
+                machPts: null, _mach: null };
   _objs.push(obj);
   return obj;
 }
@@ -1434,6 +1756,38 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 // que le cône s'arrêtait encore à 2 m du sol.
 const BEAM_TMAX = 22.0;
 
+// ─── Débattement mécanique pan / tilt ────────────────────────────────────────
+// Combien de degrés la lyre balaie sur toute sa course DMX. Réglable par
+// fixture dans la fenêtre Patch, transmis ici en `pan_range` / `tilt_range`.
+//
+// ⚠️ Ces deux angles étaient écrits EN DUR (π pour le pan, 0,75·π pour le tilt)
+// et à DEUX endroits — beamFloor() pour le faisceau, updateScene() pour le
+// corps. UN SEUL point de conversion désormais : les laisser diverger fait
+// partir le cône à côté de la lentille.
+//
+// Le pan valait donc 360° pour tout le monde, alors que le moteur d'effets,
+// lui, supposait déjà 540° (PAN_ANGULAR_RATIO). Sur une lyre 540° la 3D ne
+// montrait qu'un demi-tour : « la 3D ne correspond pas à la réalité ».
+//
+// 32768 = milieu de course = 0 rad, le point neutre d'une lyre ; 0 et 65535
+// sont ses deux butées.
+//
+// Signe négatif sur le pan : le repère a jardin du côté des X POSITIFS (cf. la
+// conversion depuis le plan 2D), alors qu'un pan « gauche » vaut moins de
+// 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
+// qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du côté
+// opposé, corps et faisceau compris.
+const PAN_RANGE_DEFAULT  = 540.0;
+const TILT_RANGE_DEFAULT = 270.0;
+
+function ptAngles(p) {
+  const panDeg  = (p.pan_range  > 0) ? p.pan_range  : PAN_RANGE_DEFAULT;
+  const tiltDeg = (p.tilt_range > 0) ? p.tilt_range : TILT_RANGE_DEFAULT;
+  return {
+    pan:  -(p.pan  - 32768) / 32768.0 * (panDeg  / 2.0) * Math.PI / 180.0,
+    tilt:  (32768 - p.tilt) / 32768.0 * (tiltDeg / 2.0) * Math.PI / 180.0,
+  };
+}
 function beamFloor(p) {
   const hy  = p.fixture_height ?? 7.0;
   const isMH = p.fixture_type === 'Moving Head';
@@ -1445,19 +1799,15 @@ function beamFloor(p) {
   // lentille qui, elle, était remontée.
   const fs = p.fixture_scale ?? 1.0;
   if (isMH) {
-    // Signe négatif : le repère a jardin du côté des X POSITIFS (cf. la
-    // conversion depuis le plan 2D), alors qu'un pan « gauche » vaut moins de
-    // 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
-    // qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du
-    // côté opposé, corps et faisceau compris.
-    const panDmx = -(p.pan - 32768)  / 32768.0 * Math.PI;
+    const _pt = ptAngles(p);   // DMX → angles, cf. ptAngles()
+    const panDmx = _pt.pan;
     // RY (body_rotation) = lacet d'ACCROCHE du pied de la lyre. Sans lui, RY
     // était purement décorative sur une lyre (corps ET faisceau), et il était
     // impossible d'accrocher des lyres sur les faces d'une structure orientée
     // (tour, praticable, portique biais) : elles regardaient toutes du même
     // côté. Il appartient au SOCLE, pas au yoke — cf. la chaîne ci-dessous.
     const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;
-    const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
+    const theta = _pt.tilt;
     const rx    = (p.rot3d_x || 0) * Math.PI / 180;
     const rz    = (p.rot3d_z || 0) * Math.PI / 180;
     // Direction correcte : tilt dévie le faisceau DANS la direction du pan.
@@ -1664,6 +2014,7 @@ window.updateScene = function(projectors, _anim) {
       obj.pool.visible  = obj.halo.visible  = false;
       obj.ptLight.visible = false;
       obj._fx = null;
+      if (obj._mach) _machStop(obj);
 
       if (p.is_master) {                 // canaux globaux : aucune forme
         obj.pxCell.visible = false;
@@ -1720,6 +2071,78 @@ window.updateScene = function(projectors, _anim) {
     obj.pxHalo.visible = false;
     obj.pxHousing.visible = false;
 
+    // ── Machine à effet : de la matière, jamais un faisceau ──────────────
+    // `p.machine` vaut 'fog', 'haze', 'spark' ou 'flame' — le genre est décidé
+    // côté Python (core.FX_MACHINE_KIND), la scène n'a pas à connaître le
+    // vocabulaire des types de fixtures.
+    if (p.machine) {
+      obj.parGrp.visible = obj.mhGrp.visible = false;
+      obj.cVol.visible   = obj.lensGlow.visible = false;
+      obj.pool.visible   = obj.halo.visible = false;
+      for (let k = 0; k < obj.prismBeams.length; k++) {
+        obj.prismBeams[k].visible = false;
+        obj.prismPools[k].visible = false;
+      }
+      obj._fx = null;
+
+      const mk = _machEnsure(obj, p.machine);
+      const my = p.fixture_height ?? 0.12;
+      const fs = p.fixture_scale ?? 1.0;
+      const mrx = (p.rot3d_x || 0) * Math.PI / 180;
+      const mry = (p.rot3d_y ?? 0) * Math.PI / 180;
+      const mrz = (p.rot3d_z || 0) * Math.PI / 180;
+
+      if (!obj.machBody || obj.machKind !== p.machine) {
+        if (obj.machBody) obj.machGrp.remove(obj.machBody);
+        obj.machBody = _makeMachineBody(p.machine);
+        // Cliquable dans la scène, comme n'importe quelle fixture.
+        obj.machBody.traverse(function (o2) {
+          if (o2.isMesh) o2.userData.projoIndex = i;
+        });
+        obj.machGrp.add(obj.machBody);
+        obj.machKind = p.machine;
+      }
+      obj.machGrp.position.set(p.x, my, p.z);
+      obj.machGrp.rotation.set(mrx, mry, mrz, 'YXZ');
+      obj.machGrp.scale.setScalar(fs);
+      obj.machGrp.visible = _flags.fixtures;
+
+      // Buse et axe du jet, en repère MONDE : c'est de là que partent les
+      // particules, et c'est l'inclinaison de la machine qui donne la
+      // direction. La gravité, elle, reste verticale (cf. _tickMachines).
+      _machE.set(mrx, mry, mrz, 'YXZ');
+      _machQ.setFromEuler(_machE);
+      mk.qx = _machQ.x; mk.qy = _machQ.y; mk.qz = _machQ.z; mk.qw = _machQ.w;
+      _machV.set(0, (MACHINE_NOZZLE_Y[p.machine] ?? 0.30) * fs, 0)
+            .applyQuaternion(_machQ);
+      mk.ox = p.x + _machV.x;
+      mk.oy = my  + _machV.y;
+      mk.oz = p.z + _machV.z;
+      mk.level = Math.max(0, Math.min(1, p.level / 100.0));
+
+      // Une gerbe et une flamme ÉCLAIRENT : c'est même souvent leur vraie
+      // fonction sur un plateau. Sans cette lumière, la 3D montrait une gerbe
+      // qui brille toute seule au milieu du noir, sans un reflet au sol. La
+      // fumée, elle, n'émet rien — elle ne fait que révéler les faisceaux.
+      const _emit = (p.machine === 'spark' || p.machine === 'flame');
+      obj.ptLight.visible = _emit && mk.level > 0.02;
+      if (obj.ptLight.visible) {
+        // Source au cœur du jet (le jet a grandi de ×PYRO_JET_SCALE) : restée
+        // à 35 cm de la buse, elle éclairait le pied d'une flamme de 5 m.
+        obj.ptLight.position.set(mk.ox, mk.oy + 0.35 * PYRO_JET_SCALE, mk.oz);
+        obj.ptLight.color.setRGB(1.0,
+                                 p.machine === 'spark' ? 0.72 : 0.48,
+                                 p.machine === 'spark' ? 0.34 : 0.14);
+        obj.ptLight.intensity = 4.5 * mk.level;
+        obj.ptLight.distance  = 14.0;
+      } else {
+        obj.ptLight.intensity = 0;
+      }
+      continue;
+    }
+    // Slot redevenu un projecteur : couper la machine du slot précédent.
+    if (obj._mach) _machStop(obj);
+
     // Position lissée : la trame porte la cible, l'affichage la rattrape
     // (cf. _tickPanTilt). Écrit dans `p` pour que le corps, `beamFloor()` et
     // la tache au sol partent tous de la même valeur.
@@ -1748,13 +2171,12 @@ window.updateScene = function(projectors, _anim) {
       obj.parGrp.visible = false;
 
       // Positionne + oriente le Moving Head
-      // Signe négatif : le repère a jardin du côté des X POSITIFS (cf. la
-    // conversion depuis le plan 2D), alors qu'un pan « gauche » vaut moins de
-    // 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
-    // qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du
-    // côté opposé, corps et faisceau compris.
-    const panDmx = -(p.pan - 32768)  / 32768.0 * Math.PI;
-      const theta = (32768 - p.tilt) / 32768.0 * Math.PI * 0.75;
+      // MÊME conversion que beamFloor() — cf. ptAngles(). Corps et
+      // faisceau DOIVENT sortir du même calcul, sinon le cône part à côté
+      // de la lentille.
+      const _pt2   = ptAngles(p);
+      const panDmx = _pt2.pan;
+      const theta  = _pt2.tilt;
       const rx    = (p.rot3d_x || 0) * Math.PI / 180;
       obj.mhGrp.position.set(p.x, hy, p.z);
       // Le groupe est mis à l'échelle depuis son ORIGINE, qui est le point
@@ -2006,6 +2428,10 @@ window.updateScene = function(projectors, _anim) {
     o.pxHalo.visible = false;
     o.pxHousing.visible = false;
     o._fx = null;
+    // Sans ça, retirer une machine du patch laissait sa gerbe tourner dans le
+    // vide : les particules ne vivent pas dans le groupe des corps, masquer
+    // `machGrp` ne les aurait pas éteintes.
+    if (o._mach) _machStop(o);
   }
 };
 
@@ -2630,6 +3056,9 @@ renderer.info.autoReset = false;
   if (_ptDt > 0 && _lastScene && _tickPanTilt(_ptDt)) {
     window.updateScene(_lastScene, true);
   }
+  // Particules des machines à effet : à la cadence d'AFFICHAGE, pas à celle
+  // des trames Python. Une gerbe d'étincelles simulée à 25 Hz saccade.
+  _tickMachines(_ptDt);
   for (let i = 0; i < _objs.length; i++) _orientPrism(_objs[i], _t);
   _selBlink(_t);
   if (_flags.bloom) {

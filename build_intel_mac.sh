@@ -150,6 +150,15 @@ step "PyInstaller — génération de l'app"
 cd "$SCRIPT_DIR"
 rm -rf "$DIST_DIR" "$SCRIPT_DIR/build"
 
+# Fixtures de la bibliothèque MyStrow (`gdtf_fixtures`, lecture publique).
+# Sans cette ligne, le .spec saute un fichier absent SANS RIEN DIRE : le DMG
+# Intel partait sans aucune des fixtures ajoutées depuis l'admin panel.
+python3 "$SCRIPT_DIR/generate_custom_fixtures_bundle.py" || warn "Bundle fixtures non généré"
+
+# Profils de contrôleurs MIDI approuvés en modération (lecture publique aussi).
+# Échec = catalogue vide, jamais un build interrompu.
+python3 "$SCRIPT_DIR/generate_controllers_bundle.py" || warn "Catalogue de contrôleurs non généré"
+
 # Utiliser le .spec si disponible (identique au CI), sinon fallback ligne de commande
 if [ -f "$SCRIPT_DIR/MyStrow.spec" ]; then
   echo "Utilisation de MyStrow.spec"
@@ -173,6 +182,8 @@ else
   [ -f "$SCRIPT_DIR/mystrow.icns" ] && ARGS=("--icon=$SCRIPT_DIR/mystrow.icns" "${ARGS[@]}")
   [ -f "$SCRIPT_DIR/fixtures_bundle_custom.json.gz" ] && \
     ARGS=("--add-data" "fixtures_bundle_custom.json.gz:." "${ARGS[@]}")
+  [ -f "$SCRIPT_DIR/controllers_bundle.json.gz" ] && \
+    ARGS=("--add-data" "controllers_bundle.json.gz:." "${ARGS[@]}")
   python3 -m PyInstaller "${ARGS[@]}"
 fi
 

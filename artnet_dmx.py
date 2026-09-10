@@ -55,6 +55,24 @@ DMX_PROFILES = {
     "RGBWAD":      ["R", "G", "B", "W", "Ambre", "Dim"],
     "RGBWOUV":     ["R", "G", "B", "W", "Orange", "UV"],
     "2CH_FUMEE":   ["Smoke", "Fan"],
+    # Machines à effet. Profils GÉNÉRIQUES : aucune machine réelle n'est
+    # nommée ici, les fabricants n'ont pas de convention commune (une machine
+    # à étincelles va de 1 à 3 canaux selon le modèle). Un appareil précis se
+    # décrit dans l'éditeur de fixtures, ou s'importe en GDTF / QLC+.
+    "1CH_FUMEE":       ["Smoke"],
+    # Meme cablage que la fumee (un canal de debit, un ventilateur) : ce
+    # sont les NOMS qui different, pour que le combo de profil dise la
+    # meme chose que le type choisi. `profile_name()` peut rendre l'un
+    # pour l'autre — sans consequence, les deux se relisent en canaux
+    # identiques.
+    "1CH_BROUILLARD":  ["Smoke"],
+    "2CH_BROUILLARD":  ["Smoke", "Fan"],
+    "1CH_ETINCELLE":   ["Spark"],
+    "2CH_ETINCELLE":   ["Spark", "Speed"],
+    "3CH_ETINCELLE":   ["Spark", "Speed", "Mode"],
+    "1CH_FLAMME":      ["Flame"],
+    "2CH_FLAMME":      ["Flame", "Speed"],
+    "3CH_FLAMME":      ["Flame", "Speed", "Mode"],
     # Moving Head
     "MOVING_5CH":  ["Shutter", "Dim", "ColorWheel", "Gobo1", "Speed"],
     "MOVING_8CH":  ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1", "Speed", "Mode"],
@@ -73,6 +91,10 @@ CHANNEL_TYPES = [
     # il fausse en revanche l'audit qui compare les trois listes entre elles.
     "R", "G", "B", "W", "Dim", "Dim2", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Iris",
     "Smoke", "Fan",
+    # Débit d'une machine à étincelles / hauteur d'une flamme. Ce sont des
+    # canaux de DÉBIT, pas des dimmers : `proj.level` les pilote directement,
+    # dans la même branche que « Smoke » (cf. _update_from_projectors_locked).
+    "Spark", "Flame",
     "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo1Rot", "Gobo2",
     "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode", "Effects",
     # Correcteurs de temperature de couleur. Ce sont des canaux a part entiere :
@@ -122,7 +144,7 @@ CHANNEL_DISPLAY = {
     "R": "R", "G": "G", "B": "B", "W": "W",
     "Dim": "Dim", "Dim2": "Dim2", "Strobe": "Strob", "UV": "UV",
     "Ambre": "Ambre", "Orange": "Orange", "Zoom": "Zoom", "Iris": "Iris",
-    "Smoke": "Smoke", "Fan": "Fan",
+    "Smoke": "Smoke", "Fan": "Fan", "Spark": "Spark", "Flame": "Flame",
     "Pan": "Pan", "PanFine": "PanF", "Tilt": "Tilt", "TiltFine": "TiltF",
     "Gobo1": "Gobo1", "Gobo1Rot": "GoboR", "Gobo2": "Gobo2",
     "Prism": "Prism", "PrismRot": "PrsmR", "Focus": "Focus",
@@ -170,6 +192,11 @@ _MANUAL_ONLY = frozenset({
 _RING_DRIVEN = frozenset({
     "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
 })
+
+
+# Canaux de sortie des machines a effet — point unique dans `core`, partage
+# avec le plan 2D, la 3D et les exclusions d'effets.
+from core import FX_MACHINE_OUTPUT_CHANNELS
 
 
 def profile_display_text(channels):
@@ -1253,17 +1280,54 @@ class ArtNetDMX:
             profile  = self._get_profile(proj_key)
             universe = self.projector_universes.get(proj_key, 0)
 
-            # Fumee
-            if "Smoke" in profile:
-                is_muted  = hasattr(proj, 'muted') and proj.muted
-                smoke_idx = self._channel_index(profile, "Smoke")
-                fan_idx   = self._channel_index(profile, "Fan")
-                if smoke_idx >= 0 and smoke_idx < len(channels):
-                    smoke = int((proj.level / 100.0) * 255) if not is_muted else 0
-                    self.set_channel(channels[smoke_idx], smoke, universe)
-                if fan_idx >= 0 and fan_idx < len(channels):
+            # ── Machines a effet : fumee, brouillard, etincelles, flamme ────
+            #
+            # Un SEUL canal de sortie, pilote par le niveau du projecteur :
+            # `Smoke` (debit de fumee ou de brume), `Spark` (debit
+            # d'etincelles), `Flame` (hauteur de flamme). Ce n'est pas un
+            # dimmer, d'ou cette branche a part qui court-circuite toute la
+            # mecanique de couleur : sur une machine, « eteint » veut dire
+            # « ne crache rien », pas « noir ».
+            _out_ch = next((c for c in FX_MACHINE_OUTPUT_CHANNELS
+                            if c in profile), None)
+            if _out_ch is not None:
+                is_muted = hasattr(proj, 'muted') and proj.muted
+                out_idx  = self._channel_index(profile, _out_ch)
+                fan_idx  = self._channel_index(profile, "Fan")
+                if 0 <= out_idx < len(channels):
+                    out_val = int((proj.level / 100.0) * 255) if not is_muted else 0
+                    self.set_channel(channels[out_idx], out_val, universe)
+                if 0 <= fan_idx < len(channels):
                     fan = getattr(proj, 'fan_speed', 0) if not is_muted else 0
                     self.set_channel(channels[fan_idx], fan, universe)
+
+                # Les AUTRES canaux — duree, intervalle, mode, sensibilite.
+                # Ils sortaient 0 quoi qu'on fasse : la branche s'arretait au
+                # debit et au ventilateur. Sur une machine a etincelles
+                # 2 canaux, la duree etait donc morte, et le curseur des
+                # « canaux avances » mentait. Memes priorites que le chemin
+                # generique : numero de canal, puis type, puis valeur fixe du
+                # profil.
+                #
+                # ⚠️ Ces canaux gardent leur valeur meme en MUTE. Sur beaucoup
+                # de machines, « Mode » a 0 vaut « automatique / sound-active »
+                # — c'est-a-dire exactement ce qu'un mute doit empecher.
+                _ch_extras   = getattr(proj, 'channel_extras',   None) or {}
+                _ch_defaults = getattr(proj, 'channel_defaults', None) or {}
+                for idx, ch_type in enumerate(profile):
+                    if idx >= len(channels) or idx in (out_idx, fan_idx):
+                        continue
+                    ch = channels[idx]
+                    if ch <= 0:
+                        continue
+                    _raw = _ch_extras.get(idx + 1)
+                    if _raw is None:
+                        _raw = _ch_extras.get(str(idx + 1))
+                    if _raw is None:
+                        _raw = _ch_extras.get(ch_type)
+                    if _raw is None:
+                        _raw = _ch_defaults.get(ch_type, 0)
+                    self.set_channel(ch, max(0, min(255, int(_raw))), universe)
                 continue
 
             # Mute

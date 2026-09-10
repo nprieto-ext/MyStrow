@@ -286,6 +286,18 @@ _ALIAS_TABLE: list[tuple[str, str, str]] = [
     ("haze",           "Smoke",      "approx"),
     ("brouillard",     "Smoke",      "approx"),
     ("fan",            "Fan",        "exact"),
+    # ── Machines à effet ─────────────────────────────────────────────────────
+    ("spark",          "Spark",      "exact"),
+    ("sparks",         "Spark",      "approx"),
+    ("sparkular",      "Spark",      "approx"),
+    ("coldspark",      "Spark",      "approx"),
+    ("etincelle",      "Spark",      "approx"),
+    ("etincelles",     "Spark",      "approx"),
+    ("flame",          "Flame",      "exact"),
+    ("flames",         "Flame",      "approx"),
+    ("flamme",         "Flame",      "approx"),
+    ("fire",           "Flame",      "approx"),
+    ("lanceflamme",    "Flame",      "approx"),
     ("ventilateur",    "Fan",        "approx"),
     ("vent",           "Fan",        "approx"),
 ]

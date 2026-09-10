@@ -2569,6 +2569,11 @@ class _FixtureEditDialog(QDialog):
                                   "ColorWheel", "Gobo1", "Prism", "Shutter", "Dim", "Focus", "Mode"],
         "Stroboscope (2ch)":    ["Strobe", "Dim"],
         "Fumée (2ch)":          ["Smoke", "Fan"],
+        "Brouillard (2ch)":     ["Smoke", "Fan"],
+        "Étincelles (1ch)":     ["Spark"],
+        "Étincelles (2ch)":     ["Spark", "Speed"],
+        "Flamme (1ch)":         ["Flame"],
+        "Flamme (2ch)":         ["Flame", "Speed"],
         "Gradateur 1ch":        ["Dim"],
     }
 
@@ -5115,6 +5120,22 @@ class AdminPanel(QMainWindow):
         if not prof.get("led_colors"):
             lines.append("  · aucune couleur de LED testée (le contrôleur n'en a "
                          "peut-être pas)")
+
+        # Contrôleur déjà géré nativement : le profil ne doit PAS être publié.
+        # En Auto, MIDIHandler consulte les profils AVANT SUPPORTED_CONTROLLERS
+        # (midi_handler.connect_controller) — approuver remplacerait la gestion
+        # native, LED et particularités comprises, chez tous les utilisateurs.
+        # Même contrôle que generate_controllers_bundle._collides_with_native,
+        # qui écarte le profil du catalogue embarqué en dernier recours.
+        try:
+            from generate_controllers_bundle import (_native_keywords,
+                                                     _collides_with_native)
+            clash = _collides_with_native(sub.get("keywords"), _native_keywords())
+            if clash:
+                lines.append(f"  ⚠ modèle DÉJÀ SUPPORTÉ NATIVEMENT (mot-clé « {clash} ») "
+                             f"— à rejeter : un profil publié passerait devant")
+        except Exception as e:
+            lines.append(f"  · contrôle « déjà natif » indisponible ({e})")
 
         lines += ["", "── Mapping ────────────────────────────────────────────", "", "Pads :"]
         for key in sorted(pads, key=lambda k: [int(x) for x in k.split(",")]

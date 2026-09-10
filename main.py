@@ -324,7 +324,14 @@ def main():
     print(tr("modular_mode"))
     print("-" * 40)
 
+    # Granularité d'horloge à 1 ms AVANT de créer le moindre QTimer : sans elle,
+    # Windows arrondit chaque timer à un multiple de 15,625 ms et l'envoi DMX
+    # tourne à 32 fps au lieu de 40 (cf. core.enable_high_res_timers).
+    from core import enable_high_res_timers, restore_timer_resolution
+    enable_high_res_timers()
+
     app = QApplication(sys.argv)
+    app.aboutToQuit.connect(restore_timer_resolution)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
     icon_path = resource_path("mystrow.ico")

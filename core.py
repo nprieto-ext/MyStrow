@@ -4,12 +4,14 @@ Configuration globale et constantes pour MyStrow - Controleur Lumiere DMX
 import sys
 import os
 import json
+import math
 import random
 import socket
 import struct
 import wave
 import array
 import re
+import time
 import unicodedata
 from pathlib import Path
 
@@ -68,13 +70,130 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.91"
+VERSION = "3.1.92"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
 # après un passage dans le testeur DMX, et le parc restait à 25 fps pour tout
 # le reste de la session — « le DMX rame, un redémarrage corrige ».
 DMX_FRAME_MS = 25
+
+
+# === RÉSOLUTION DE L'HORLOGE SYSTÈME (Windows) ===============================
+# Mesuré le 08/09/2026 : sous Windows, la granularité par défaut du planificateur
+# est de 15,625 ms, et Qt arrondit CHAQUE QTimer au multiple supérieur. Aucun
+# timer de MyStrow ne tournait donc à la cadence demandée :
+#     DMX          25 ms  ->  31,2 ms  (32 fps au lieu de 40)
+#     effets       40 ms  ->  46,9 ms  (21 fps au lieu de 25)
+#     restitution  50 ms  ->  62,5 ms  (16 fps au lieu de 20)
+# `timeBeginPeriod(1)` ramène la granularité à 1 ms pour tout le processus.
+# À ne PAS confondre avec une optimisation de charge : sans lui, demander 25 ms
+# ne peut pas donner 25 ms, quelle que soit la puissance de la machine.
+_TIMER_PERIOD_MS = 1
+_timer_period_set = False
+
+
+def enable_high_res_timers():
+    """Passe la granularité des timers à 1 ms (Windows). No-op ailleurs.
+
+    Rendu : True si la résolution a bien été relevée. Idempotent — chaque
+    `timeBeginPeriod` réussi doit être équilibré par un `timeEndPeriod`, on ne
+    l'appelle donc qu'une fois.
+    """
+    global _timer_period_set
+    if _timer_period_set or sys.platform != "win32":
+        return _timer_period_set
+    try:
+        import ctypes
+        if ctypes.windll.winmm.timeBeginPeriod(_TIMER_PERIOD_MS) == 0:  # TIMERR_NOERROR
+            _timer_period_set = True
+    except Exception as e:
+        print(f"[TIMER] resolution 1 ms indisponible : {e}")
+    return _timer_period_set
+
+
+# Période du timer de restitution de la timeline REC Lumière (aperçu ET show).
+# Constante partagée : l'aperçu tournait à 40 ms et la restitution à 50, donc
+# deux rendus différents du même montage.
+TIMELINE_FRAME_MS = 40
+
+
+class MediaClock:
+    """Horloge lumière lissée, dérivée de la position d'un lecteur média.
+
+    `QMediaPlayer.position()` n'avance pas régulièrement. Mesuré le 08/09/2026
+    sur une vidéo 1080p/25 fps : le temps réel avançait d'un pas constant de
+    46,9 ms pendant que `position()` faisait des bonds de 0 à 116 ms (en audio
+    seul, par paquets de 26 ms). Tout ce qui se calcule DIRECTEMENT dessus —
+    trajectoires pan/tilt, mouvements automatiques, fondus, fondus enchaînés —
+    avance donc tantôt à 0x, tantôt à 2,5x la vitesse réelle. C'est exactement
+    ça, une lyre qui saccade.
+
+    Le remède est celui déjà retenu pour l'horloge de phase des effets : avancer
+    au temps RÉEL, et ne se recaler sur le lecteur que quand l'écart cesse
+    d'être de la gigue (seek, boucle, décrochage). Entre deux recalages, une
+    correction proportionnelle douce absorbe la dérive sans à-coup, de sorte que
+    l'horloge ne s'éloigne jamais du son.
+    """
+
+    RESYNC_MS  = 250.0   # au-delà, ce n'est plus de la gigue : on saute
+    TRIM       = 0.05    # rattrapage doux : 5 % de l'écart par image
+    MAX_STEP_S = 0.5     # image en retard (freeze UI, veille) : ne pas propulser
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        """Oublie l'estimation — au démarrage d'un média, après une pause, un seek."""
+        self._est  = None
+        self._wall = None
+
+    def update(self, raw_ms):
+        """Rend la position lissée (ms) pour la position brute du lecteur."""
+        now = time.monotonic()
+        if self._est is None:
+            self._est, self._wall = float(raw_ms), now
+            return int(self._est)
+        dt = min(self.MAX_STEP_S, max(0.0, now - self._wall))
+        self._wall = now
+        self._est += dt * 1000.0
+        drift = float(raw_ms) - self._est
+        if abs(drift) > self.RESYNC_MS:
+            self._est = float(raw_ms)      # seek / boucle / décrochage : on suit
+        else:
+            self._est += drift * self.TRIM
+        return int(self._est)
+
+
+def make_precise_timer(parent=None):
+    """QTimer en `Qt.PreciseTimer` — à utiliser pour toute cadence temps réel.
+
+    Le type par défaut de QTimer est `Qt.CoarseTimer`, que Qt arrondit sur
+    Windows au multiple supérieur de 15,625 ms : demander 25 ms donnait 31,2 ms
+    (mesuré), soit 32 fps là où le code croyait en produire 40. C'est
+    systématique, pas de la charge — la machine la plus rapide du monde n'y
+    changerait rien. `PreciseTimer` ramène la moyenne sur la valeur demandée
+    (25,0 / 40,0 / 50,0 ms mesurés).
+
+    Réservé aux timers de cadence (DMX, effets, restitution, aperçu) : un timer
+    précis coûte plus cher au système, inutile pour un rafraîchissement d'UI.
+    """
+    t = QTimer(parent) if parent is not None else QTimer()
+    t.setTimerType(Qt.PreciseTimer)
+    return t
+
+
+def restore_timer_resolution():
+    """Rend la résolution d'horloge au système, à la fermeture."""
+    global _timer_period_set
+    if not _timer_period_set:
+        return
+    try:
+        import ctypes
+        ctypes.windll.winmm.timeEndPeriod(_TIMER_PERIOD_MS)
+    except Exception:
+        pass
+    _timer_period_set = False
 
 # === FIREBASE (clé publique Web — identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
@@ -294,6 +413,76 @@ def create_icon(icon_type, color="#ffffff"):
 
     painter.end()
     return QIcon(pixmap)
+
+
+# ─── Débattement mécanique pan / tilt ─────────────────────────────────────────
+# Combien de DEGRÉS une lyre balaie sur toute sa course DMX. Le chiffre varie
+# d'un modèle à l'autre : 540°/270° est le plus répandu, mais on trouve du
+# 630°, du 360° et des lyres à tilt 180°.
+#
+# ⚠️ Il était écrit EN DUR à trois endroits, et pas avec la même valeur :
+#   - la 3D supposait 360° de pan  (`plan_3d_web.html`, deux sites)
+#   - le moteur d'effets supposait 540°, via `PAN_ANGULAR_RATIO = 0.5`
+# Sur une lyre 540° la 3D montrait donc une lyre qui ne tournait qu'à moitié —
+# d'où « la 3D ne correspond pas à la réalité », sans que rien ne l'explique.
+# Les défauts ci-dessous reprennent EXACTEMENT ce que le moteur d'effets
+# supposait déjà : la sortie DMX ne bouge pas, c'est l'affichage qui vient
+# s'aligner sur elle.
+
+PAN_RANGE_DEFAULT  = 540.0
+TILT_RANGE_DEFAULT = 270.0
+
+# Bornes de saisie : en dessous de 90° l'appareil n'est plus une lyre, au-delà
+# de 720° aucun constructeur ne va.
+PAN_TILT_RANGE_MIN = 90.0
+PAN_TILT_RANGE_MAX = 720.0
+
+
+def pan_tilt_ranges(proj):
+    """(pan°, tilt°) balayés par la course DMX complète de cette lyre.
+
+    Tolère l'attribut absent (patch antérieur), None et 0 : un débattement nul
+    replierait tous les faisceaux sur la verticale.
+    """
+    def _lire(nom, defaut):
+        try:
+            v = float(getattr(proj, nom, None) or defaut)
+        except (TypeError, ValueError):
+            return defaut
+        return v if PAN_TILT_RANGE_MIN <= v <= PAN_TILT_RANGE_MAX else defaut
+
+    return (_lire('pan_range',  PAN_RANGE_DEFAULT),
+            _lire('tilt_range', TILT_RANGE_DEFAULT))
+
+
+def pan_tilt_angles(proj, pan_dmx, tilt_dmx):
+    """(pan, tilt) en RADIANS depuis le milieu de course, pour cette lyre.
+
+    32768 = milieu de course = 0 rad. C'est le point neutre d'une lyre : 0 et
+    65535 sont ses deux butées, pas un « éteint ».
+
+    Source UNIQUE du passage DMX → angle. La 3D (corps ET faisceau) doit s'en
+    servir : ce sont deux calculs séparés dans `plan_3d_web.html`, et les
+    laisser diverger fait pointer le faisceau à côté de la lentille.
+    """
+    pan_deg, tilt_deg = pan_tilt_ranges(proj)
+    return ((pan_dmx  - 32768) / 32768.0 * math.radians(pan_deg  / 2.0),
+            (tilt_dmx - 32768) / 32768.0 * math.radians(tilt_deg / 2.0))
+
+
+def pan_angular_ratio(proj):
+    """Facteur d'amplitude PAN d'un effet, pour que le cercle soit rond.
+
+    À amplitude DMX égale, le pan couvre `pan_range / tilt_range` fois plus
+    d'angle que le tilt : un « cercle » se projetterait en « 8 » aplati. On
+    réduit donc l'amplitude pan d'autant.
+
+    Vaut 0,5 sur une 540°/270° — exactement l'ancienne constante en dur
+    `PAN_ANGULAR_RATIO`, d'où une sortie DMX inchangée pour les lyres qui
+    gardent les valeurs par défaut.
+    """
+    pan_deg, tilt_deg = pan_tilt_ranges(proj)
+    return tilt_deg / pan_deg if pan_deg else 0.5
 
 
 # ─── Répartition des effets entre fixtures ────────────────────────────────────
@@ -799,6 +988,90 @@ def fixture_projects_gobo(proj) -> bool:
         return True
     prof = getattr(proj, 'dmx_profile', None) or []
     return 'Gobo1Rot' in prof or 'Gobo2' in prof
+
+
+# ── Machines à effet (fumée, brouillard, étincelles, flamme) ────────────────
+#
+# Ces appareils ne font pas de LUMIÈRE. Leur « niveau » ne commande pas un
+# dimmer mais un DÉBIT (fumée, brume) ou un DÉCLENCHEMENT (étincelles, flamme) :
+# les envoyer dans un chenillard ou dans l'IA reviendrait à faire cracher une
+# machine au rythme de la musique — spectaculaire sur une machine à fumée,
+# inacceptable sur un lance-flamme.
+#
+# La fumée s'était déjà gagné cette exclusion, mais écrite SEIZE fois en dur
+# sous la forme `p.group != "fumee"`. Le groupe n'est pas une preuve : rien
+# n'empêche de ranger un lance-flamme dans le groupe « face », et une flamme
+# partie sur un effet de couleur ne se rattrape pas. On tranche donc sur le
+# TYPE, en gardant le groupe comme second filet pour les plans existants.
+FX_MACHINE_TYPES = frozenset({
+    "Machine a fumee",
+    "Machine a brouillard",
+    "Machine a etincelles",
+    "Lance-flamme",
+})
+
+# Canal de SORTIE de chaque machine : celui que pilote `proj.level`. Ils sont
+# mutuellement exclusifs — une machine a un débit, pas trois.
+FX_MACHINE_OUTPUT_CHANNELS = ("Smoke", "Spark", "Flame")
+
+
+def fixture_is_fx_machine(proj) -> bool:
+    """Cette fixture est-elle une machine à effet plutôt qu'une lumière ?
+
+    ⚠️ Point UNIQUE : effets, IA, aperçus et sélections passent tous par ici.
+    Ajouter un type de machine sans l'inscrire dans `FX_MACHINE_TYPES`, c'est
+    le laisser entrer dans le premier chenillard venu.
+    """
+    if getattr(proj, 'fixture_type', '') in FX_MACHINE_TYPES:
+        return True
+    # Second filet : un plan d'avant ces types range ses machines dans « fumee ».
+    return getattr(proj, 'group', '') == "fumee"
+
+
+# Machines PYROTECHNIQUES : celles dont la sortie est un DÉCLENCHEMENT bref et
+# visible, pas une atmosphère qui s'installe. La distinction sert au noir
+# général : couper la brume à chaque blackout viderait la salle de son
+# atmosphère (c'est pour ça que la fumée en était exemptée), mais laisser une
+# gerbe d'étincelles ou une flamme tourner pendant un noir n'a aucun sens.
+FX_MACHINE_PYRO_TYPES = frozenset({
+    "Machine a etincelles",
+    "Lance-flamme",
+})
+
+
+# Genre de machine, pour le rendu 3D. Les noms de type restent du côté Python :
+# la scène Three.js reçoit un mot-clé stable ('fog', 'haze', 'spark', 'flame')
+# et n'a jamais à connaître le vocabulaire français des types de fixtures.
+FX_MACHINE_KIND = {
+    "Machine a fumee":      "fog",
+    "Machine a brouillard": "haze",
+    "Machine a etincelles": "spark",
+    "Lance-flamme":         "flame",
+}
+
+
+def fixture_machine_kind(proj):
+    """'fog' | 'haze' | 'spark' | 'flame' pour une machine, sinon None."""
+    return FX_MACHINE_KIND.get(getattr(proj, 'fixture_type', ''))
+
+
+def fixture_is_pyro(proj) -> bool:
+    """Machine à déclenchement (étincelles, flamme) plutôt qu'à atmosphère ?"""
+    return getattr(proj, 'fixture_type', '') in FX_MACHINE_PYRO_TYPES
+
+
+def fixture_output_channel(proj):
+    """Canal de débit/déclenchement d'une machine à effet, ou None.
+
+    Lu depuis le PROFIL et non depuis le type : c'est le profil qui décide de
+    ce qui part sur le fil, et un appareil importé (GDTF, QLC+) peut porter un
+    canal `Spark` sans avoir été classé comme machine à étincelles.
+    """
+    prof = getattr(proj, 'dmx_profile', None) or []
+    for ch in FX_MACHINE_OUTPUT_CHANNELS:
+        if ch in prof:
+            return ch
+    return None
 
 
 def projector_selection_keys(projectors):

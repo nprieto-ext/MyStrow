@@ -80,7 +80,7 @@ _TYPE_MAP = {
     "LED Bar (Pixels)":"Barre LED",
     "Strobe":         "Stroboscope",
     "Smoke":          "Machine a fumee",
-    "Hazer":          "Machine a fumee",
+    "Hazer":          "Machine a brouillard",
     "Dimmer":         "Gradateur",
     "Flower":         "Effet",
     "Effect":         "Effet",

@@ -19,6 +19,9 @@ gdtf_config.py
 # Build
 dist/
 build/
+# Catalogues generes au moment de la release (fetch Firestore)
+fixtures_bundle_custom.json.gz
+controllers_bundle.json.gz
 *.spec
 !MyStrow.spec
 

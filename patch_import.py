@@ -55,7 +55,8 @@ GROUPS = ["face", "lat", "contre", "douche1", "douche2", "douche3",
 # rabattues, sinon le combo du dialogue les remettrait a « PAR LED » au premier
 # clic, en silence.
 FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
-                 "Machine a fumee", "Gradateur"]
+                 "Machine a fumee", "Machine a brouillard",
+                 "Machine a etincelles", "Lance-flamme", "Gradateur"]
 
 _TYPE_ALIASES = {
     "effet": "PAR LED", "effect": "PAR LED", "laser": "PAR LED",
@@ -63,8 +64,20 @@ _TYPE_ALIASES = {
     "dimmer": "Gradateur", "gradateur": "Gradateur",
     "movinghead": "Moving Head", "scanner": "Moving Head", "lyre": "Moving Head",
     "smoke": "Machine a fumee", "fumee": "Machine a fumee",
-    "hazer": "Machine a fumee", "fog": "Machine a fumee",
+    "fog": "Machine a fumee",
     "machineafumee": "Machine a fumee",
+    # Le hazer n'est plus rabattu sur la machine à fumée : brume et fumée
+    # ne se pilotent pas pareil sur un plateau, et le plan de feu doit dire
+    # laquelle est accrochée.
+    "hazer": "Machine a brouillard", "haze": "Machine a brouillard",
+    "brouillard": "Machine a brouillard", "brume": "Machine a brouillard",
+    "machineabrouillard": "Machine a brouillard",
+    "spark": "Machine a etincelles", "sparkular": "Machine a etincelles",
+    "etincelle": "Machine a etincelles", "etincelles": "Machine a etincelles",
+    "coldspark": "Machine a etincelles",
+    "machineaetincelles": "Machine a etincelles",
+    "flame": "Lance-flamme", "flamme": "Lance-flamme",
+    "lanceflamme": "Lance-flamme", "flamethrower": "Lance-flamme",
     "strobe": "Stroboscope", "stroboscope": "Stroboscope",
     "ledbar": "Barre LED", "barreled": "Barre LED", "bar": "Barre LED",
     "parled": "PAR LED", "par": "PAR LED",
@@ -156,6 +169,10 @@ def type_from_profile(profile) -> str:
     s = set(profile or [])
     if {"Pan", "Tilt"} & s:
         return "Moving Head"
+    if "Spark" in s:
+        return "Machine a etincelles"
+    if "Flame" in s:
+        return "Lance-flamme"
     if {"Smoke", "Fan"} & s:
         return "Machine a fumee"
     if s and s <= {"Dim", "Dim2", "Unused"}:

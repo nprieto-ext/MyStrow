@@ -36,6 +36,12 @@ for _tf in ('index.html', 'manifest.json', 'sw.js'):
         datas += [(os.path.join('tablet', _tf), 'tablet')]
 if os.path.exists('fixtures_bundle_custom.json.gz'):
     datas += [('fixtures_bundle_custom.json.gz', '.')]
+# Profils de controleurs MIDI approuves en moderation
+# (generate_controllers_bundle.py). SANS ce fichier, controller_profile ne voit
+# que %APPDATA%/MyStrow/controllers : un controleur valide n'est reconnu que par
+# ceux qui ouvrent eux-memes la bibliotheque communautaire.
+if os.path.exists('controllers_bundle.json.gz'):
+    datas += [('controllers_bundle.json.gz', '.')]
 if os.path.exists('fixtures_qlcplus.json'):
     datas += [('fixtures_qlcplus.json', '.')]
 binaries = []

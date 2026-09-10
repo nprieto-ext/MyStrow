@@ -532,6 +532,45 @@ def _draw_picto(painter, cx, cy, r, ftype, color):
                            (0.55, -0.85, 0.36)):
             painter.drawEllipse(QPointF(cx + ox * r, cy + oy * r), sr * r, sr * r)
 
+    elif ftype == "Machine a brouillard":
+        # Même corps que la fumée, nappe aplatie : la brume s'étale, elle ne
+        # monte pas en volutes (même distinction que sur le plan à l'écran).
+        hw, hh = r * 0.95, r * 0.50
+        painter.drawEllipse(QRectF(cx - hw, cy - hh, hw * 2, hh * 2))
+        painter.setBrush(QColor(color).lighter(130))
+        painter.setPen(Qt.NoPen)
+        for oy, ow in ((-0.75, 1.05), (-1.10, 1.35)):
+            painter.drawEllipse(QRectF(cx - ow * r, cy + oy * r - 0.16 * r,
+                                       ow * 2 * r, 0.32 * r))
+
+    elif ftype == "Machine a etincelles":
+        hw, hh = r * 0.78, r * 0.52
+        painter.drawRoundedRect(QRectF(cx - hw, cy - hh, hw * 2, hh * 2),
+                                r * 0.18, r * 0.18)
+        painter.setBrush(QColor("#ffcc33"))
+        painter.setPen(Qt.NoPen)
+        for ox, oy, sr in ((0.0, -1.95, 0.15), (-0.30, -1.60, 0.15),
+                           (0.30, -1.60, 0.15), (-0.58, -1.15, 0.13),
+                           (0.58, -1.15, 0.13), (0.0, -1.20, 0.13)):
+            painter.drawEllipse(QPointF(cx + ox * r, cy + oy * r), sr * r, sr * r)
+
+    elif ftype == "Lance-flamme":
+        hw, hh = r * 0.60, r * 0.48
+        painter.drawRoundedRect(QRectF(cx - hw, cy - hh, hw * 2, hh * 2),
+                                r * 0.18, r * 0.18)
+        painter.setPen(Qt.NoPen)
+        _base = cy - hh
+        for _fw, _fh, _col in ((0.52, 1.85, "#ff4610"),
+                               (0.32, 1.35, "#ff9614"),
+                               (0.15, 0.80, "#ffeb8c")):
+            _p = QPainterPath()
+            _p.moveTo(cx - _fw * r, _base)
+            _p.quadTo(cx - _fw * r, _base - _fh * r * 0.6, cx, _base - _fh * r)
+            _p.quadTo(cx + _fw * r, _base - _fh * r * 0.6, cx + _fw * r, _base)
+            _p.closeSubpath()
+            painter.setBrush(QColor(_col))
+            painter.drawPath(_p)
+
     elif ftype == "Gradateur":
         painter.drawEllipse(QPointF(cx, cy), r, r)
         painter.setPen(QPen(QColor(color).darker(160), 1))

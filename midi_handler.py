@@ -116,7 +116,27 @@ _APC40_ACTIVATOR_NOTE   = 50
 # Tap Tempo : Note 99 (bouton dédié), channel 0
 _APC40_TAP_TEMPO_NOTE   = 99
 
-# ─── APC20: même layout que APC40 MK1, tap tempo sur note 98 (Shift) ────────
+# ─── APC40 MkII : la grille de clips a un layout DIFFERENT du MK1 ───────────
+# Grille clip : notes 0x00-0x27 (0-39), note = (4 - row) * 8 + track
+#               (note 0 = piste 1 / ligne du BAS, comme l'APC Mini)
+# Le canal du Note On SORTANT ne designe PAS la piste mais le COMPORTEMENT LED :
+#   0x90 = 10%  0x91 = 25%  0x92 = 50%  0x93 = 65%  0x94 = 75%  0x95 = 90%
+#   0x96 = 100% fixe        0x97-0x9B = pulsation   0x9C-0x9F = clignotement
+_APC40_MK2_LED_FULL = 0x96   # 100 %, fixe
+_APC40_MK2_LED_DIM  = 0x92   # 50 %, fixe
+
+# ─── APC20 ──────────────────────────────────────────────────────────────────
+# Meme grille de clips que l'APC40 MK1 (ch=piste, notes 53-57, note 53 = ligne
+# du HAUT) et memes Scene Launch (ch0, notes 82-86).
+# Sous la grille, 4 rangees de 8 boutons de piste (canal = piste), de haut en bas :
+#     CLIP STOP = 52, ACTIVATOR = 50, SOLO/CUE = 49, REC ARM = 48
+# Les 3 premieres prolongent la grille MyStrow (lignes 5, 6, 7) — sans elles
+# l'APC20 n'exposerait que 5 des 8 lignes de pads. La derniere (REC ARM), collee
+# aux faders, sert de bouton mute, exactement comme sous l'APC Mini.
+_APC20_ROW_NOTES = {5: 52, 6: 50, 7: 49}
+_APC20_NOTE_ROWS = {note: row for row, note in _APC20_ROW_NOTES.items()}
+_APC20_MUTE_NOTE = 48
+# Tap tempo : note 98 (bouton Shift), ch0
 _APC20_TAP_TEMPO_NOTE = 98
 
 # ─── MIDImix: CCs faders et notes boutons ────────────────────────────────────
@@ -170,16 +190,46 @@ _LP_MK3_VEL_TO_RGB = {
 }
 
 
+# Palette de l'APC40 MK1 / APC20 :
+#     0 = eteint
+#     1 = vert    2 = vert CLIGNOTANT
+#     3 = rouge   4 = rouge CLIGNOTANT
+#     5 = jaune   6 = jaune CLIGNOTANT
+# Les valeurs PAIRES font clignoter le pad : on ne renvoie jamais que 1/3/5.
+_APC40_VERT, _APC40_ROUGE, _APC40_JAUNE = 1, 3, 5
+
+# Velocity MyStrow -> couleur la plus proche parmi ces trois.
+# ATTENTION : dans MyStrow (HEX_COLOR_MAP de core.py) la velocity 3 est le BLANC
+# et la 5 le ROUGE, et non l'inverse. Un simple seuil numerique sortait donc du
+# rouge pour un pad blanc et de l'orange pour un pad rouge : d'ou cette table
+# explicite, calquee sur HEX_COLOR_MAP.
+_APC40_VEL_MAP = {
+    3:  _APC40_JAUNE,   # blanc   -> jaune, la plus claire des trois
+    5:  _APC40_ROUGE,   # rouge
+    9:  _APC40_JAUNE,   # orange
+    13: _APC40_JAUNE,   # jaune
+    21: _APC40_VERT,    # vert
+    25: _APC40_VERT,    # vert
+    37: _APC40_VERT,    # cyan
+    45: _APC40_VERT,    # bleu
+    49: _APC40_ROUGE,   # magenta
+    53: _APC40_ROUGE,   # magenta / violet
+}
+
+
 def _to_apc40_vel(apc_vel: int) -> int:
-    """Convertit une velocity APC Mini vers APC40 (palette limitée : vert/jaune/rouge)."""
-    # APC40: 0=off 1=green blink 2=green 3=red blink 4=red 5=yellow blink 6=yellow
-    if apc_vel == 0:
+    """Convertit une velocity MyStrow vers APC40 MK1 / APC20 (3 couleurs fixes)."""
+    if apc_vel <= 0:
         return 0
-    if apc_vel <= 10:   # rouge
-        return 4
-    if apc_vel <= 20:   # orange/jaune
-        return 6
-    return 2            # vert (vert, cyan, bleu, violet → vert par défaut)
+    vel = _APC40_VEL_MAP.get(apc_vel)
+    if vel is not None:
+        return vel
+    # Hors palette MyStrow : repli sur la dominante la plus proche.
+    if apc_vel <= 10:
+        return _APC40_ROUGE
+    if apc_vel <= 20:
+        return _APC40_JAUNE
+    return _APC40_VERT
 
 
 def _port_matches(ctrl: dict, port_name: str, require_prefer: bool = True) -> bool:
@@ -890,6 +940,7 @@ class MIDIHandler(QObject):
 
         status_type = status & 0xF0
         channel     = status & 0x0F
+        is_mk2      = (self.controller_type == 'apc40_mk2')
 
         if self.debug_mode:
             print(f"🔍 APC40: type={hex(status_type)} ch={channel} note={data1} vel={data2}")
@@ -902,8 +953,11 @@ class MIDIHandler(QObject):
         if status_type == 0x80 or (status_type == 0x90 and data2 == 0):
             if channel == 0 and _APC40_SCENE_BASE_NOTE <= data1 <= _APC40_SCENE_BASE_NOTE + 4:
                 self.pad_released.emit(data1 - _APC40_SCENE_BASE_NOTE, 8)
-            elif _APC40_CLIP_BASE_NOTE <= data1 <= _APC40_CLIP_BASE_NOTE + 4 and 0 <= channel <= 7:
+            elif is_mk2 and 0 <= data1 <= 39:
                 # Grille : necessaire aux pads couleur momentanes (mode FLASH).
+                self.pad_released.emit(4 - data1 // 8, data1 % 8)
+            elif (not is_mk2) and 0 <= channel <= 7 and (
+                    _APC40_CLIP_BASE_NOTE <= data1 <= _APC40_CLIP_BASE_NOTE + 4):
                 self.pad_released.emit(data1 - _APC40_CLIP_BASE_NOTE, channel)
             return
 
@@ -912,8 +966,12 @@ class MIDIHandler(QObject):
 
         note = data1
 
-        # Clip slots (grille 5×8)
-        if _APC40_CLIP_BASE_NOTE <= note <= _APC40_CLIP_BASE_NOTE + 4 and 0 <= channel <= 7:
+        # Clip slots (grille 5×8) — MkII : note 0-39, note 0 = bas-gauche
+        if is_mk2 and 0 <= note <= 39:
+            self.pad_pressed.emit(4 - note // 8, note % 8)
+
+        elif (not is_mk2) and 0 <= channel <= 7 and (
+                _APC40_CLIP_BASE_NOTE <= note <= _APC40_CLIP_BASE_NOTE + 4):
             row = note - _APC40_CLIP_BASE_NOTE
             self.pad_pressed.emit(row, channel)
 
@@ -934,11 +992,26 @@ class MIDIHandler(QObject):
         elif self.debug_mode:
             print(f"   ⚠️  ch={channel} note={note} non mappé (APC40)")
 
+    def _apc20_grid_row(self, note, channel):
+        """Ligne MyStrow (0-7) pour un bouton de grille APC20, sinon None.
+
+        Lignes 0-4 = clips (notes 53-57), lignes 5-7 = CLIP STOP / ACTIVATOR /
+        SOLO. Toutes sur le canal de la piste (= colonne).
+        """
+        if not 0 <= channel <= 7:
+            return None
+        if _APC40_CLIP_BASE_NOTE <= note <= _APC40_CLIP_BASE_NOTE + 4:
+            return note - _APC40_CLIP_BASE_NOTE
+        return _APC20_NOTE_ROWS.get(note)
+
     def _handle_apc20(self, message):
         """Messages AKAI APC20.
 
-        Même layout que l'APC40 MK1 : clips ch=track note=53+row, scenes ch=0 note=82+row,
-        faders CC7/CC14 (déjà traités dans _fader_index).
+        Grille    : ch=piste — lignes 0-4 = clips (notes 53-57),
+                    lignes 5-7 = CLIP STOP (52) / ACTIVATOR (50) / SOLO (49).
+        Colonne 8 : Scene Launch, ch=0, notes 82-86 (5 boutons, lignes 0-4).
+        Mute      : REC ARM (note 48), ch=piste — la rangee collee aux faders.
+        Faders    : CC7 ch0-7 + master CC14 ch0 (deja traites dans _fader_index).
         Tap Tempo : note 98 (bouton Shift), ch=0.
         """
         status = message[0]
@@ -957,23 +1030,27 @@ class MIDIHandler(QObject):
         if status_type == 0x80 or (status_type == 0x90 and data2 == 0):
             if channel == 0 and _APC40_SCENE_BASE_NOTE <= data1 <= _APC40_SCENE_BASE_NOTE + 4:
                 self.pad_released.emit(data1 - _APC40_SCENE_BASE_NOTE, 8)
-            elif _APC40_CLIP_BASE_NOTE <= data1 <= _APC40_CLIP_BASE_NOTE + 4 and 0 <= channel <= 7:
+            else:
                 # Grille : necessaire aux pads couleur momentanes (mode FLASH).
-                self.pad_released.emit(data1 - _APC40_CLIP_BASE_NOTE, channel)
+                row = self._apc20_grid_row(data1, channel)
+                if row is not None:
+                    self.pad_released.emit(row, channel)
             return
 
         if status_type != 0x90 or data2 == 0:
             return
 
         note = data1
+        row  = self._apc20_grid_row(note, channel)
 
-        if _APC40_CLIP_BASE_NOTE <= note <= _APC40_CLIP_BASE_NOTE + 4 and 0 <= channel <= 7:
-            self.pad_pressed.emit(note - _APC40_CLIP_BASE_NOTE, channel)
+        if row is not None:
+            self.pad_pressed.emit(row, channel)
 
         elif channel == 0 and _APC40_SCENE_BASE_NOTE <= note <= _APC40_SCENE_BASE_NOTE + 4:
             self.pad_pressed.emit(note - _APC40_SCENE_BASE_NOTE, 8)
 
-        elif note == _APC40_ACTIVATOR_NOTE and 0 <= channel <= 7:
+        # REC ARM : rangee du bas, collee aux faders → mute de la piste
+        elif note == _APC20_MUTE_NOTE and 0 <= channel <= 7:
             if self.owner_window:
                 self.owner_window.toggle_fader_mute_from_midi(channel)
 
@@ -1216,17 +1293,29 @@ class MIDIHandler(QObject):
                 import time as _t; _t.sleep(0.05)
 
                 # Éteindre les 5 lignes × 8 pistes de clips + 5 scènes
-                for track in range(8):
+                if ct == 'apc40_mk2':
+                    # MkII : grille en notes 0-39, canal = comportement LED
+                    for note in range(40):
+                        self.midi_out.send_message([_APC40_MK2_LED_FULL, note, 0])
                     for row in range(5):
-                        self.midi_out.send_message([0x90 | track, _APC40_CLIP_BASE_NOTE + row, 0])
-                for row in range(5):
-                    self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
+                        self.midi_out.send_message(
+                            [_APC40_MK2_LED_FULL, _APC40_SCENE_BASE_NOTE + row, 0])
+                else:
+                    for track in range(8):
+                        for row in range(5):
+                            self.midi_out.send_message(
+                                [0x90 | track, _APC40_CLIP_BASE_NOTE + row, 0])
+                    for row in range(5):
+                        self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
 
             elif ct == 'apc20':
                 # L'APC20 répond directement aux Note On sans SysEx
                 for track in range(8):
                     for row in range(5):
                         self.midi_out.send_message([0x90 | track, _APC40_CLIP_BASE_NOTE + row, 0])
+                    for note in _APC20_ROW_NOTES.values():
+                        self.midi_out.send_message([0x90 | track, note, 0])
+                    self.midi_out.send_message([0x90 | track, _APC20_MUTE_NOTE, 0])
                 for row in range(5):
                     self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
 
@@ -1277,9 +1366,9 @@ class MIDIHandler(QObject):
             if ct == 'apc_mini':
                 self._set_led_apc(row, col, color_velocity, brightness_percent)
             elif ct in ('apc40', 'apc40_mk2'):
-                self._set_led_apc40(row, col, color_velocity)
+                self._set_led_apc40(row, col, color_velocity, brightness_percent)
             elif ct == 'apc20':
-                self._set_led_apc20(row, col, color_velocity)
+                self._set_led_apc20(row, col, color_velocity, brightness_percent)
             elif ct == 'launchpad_mini_mk3':
                 self._set_led_lp_mk3(row, col, color_velocity, brightness_percent, rgb)
             elif ct == 'launchpad_mk2':
@@ -1297,6 +1386,29 @@ class MIDIHandler(QObject):
                 self.led_observer(row, col, color_velocity, brightness_percent)
             except Exception:
                 pass
+
+    def _binary_led_on(self, color_velocity, brightness_percent) -> bool:
+        """Un pad doit-il s'allumer sur un controleur SANS gradation de LED ?
+
+        L'APC20 (comme l'APC40 MK1) n'a que 3 couleurs et aucun niveau de
+        luminosite : impossible d'y distinguer un pad actif d'un pad inactif
+        comme sur l'APC Mini. Le seul equivalent est donc d'ETEINDRE le pad des
+        que MyStrow demande la luminosite « inactive ».
+
+        On compare au reglage reel de la fenetre (curseurs ON/OFF, 0-100) plutot
+        qu'a un seuil en dur : regler ON a 50 % ne doit pas eteindre la grille.
+        Si ON <= OFF (reglage degenere), on n'eteint rien.
+        """
+        if color_velocity <= 0:
+            return False
+        ow = self.owner_window
+        active   = getattr(ow, 'akai_active_brightness', 100)
+        inactive = getattr(ow, 'akai_inactive_brightness', 20)
+        if not isinstance(active, (int, float)) or not isinstance(inactive, (int, float)):
+            return True
+        if active <= inactive:
+            return True
+        return brightness_percent > inactive
 
     def set_apc_bright_mode(self, enabled: bool):
         """Active/désactive le mode pleine luminosité (0x96) de l'APC Mini.
@@ -1367,40 +1479,62 @@ class MIDIHandler(QObject):
         note = lp_row1 * 10 + lp_col1
         self.midi_out.send_message([0x90, note, color_velocity])
 
-    def _set_led_apc40(self, row, col, color_velocity):
+    def _set_led_apc40(self, row, col, color_velocity, brightness_percent=100):
         """LED AKAI APC40 / APC40 MkII.
 
-        MK1 : palette 3 couleurs (velocity 0-6 : off/vert/rouge/jaune).
-        MK2 : palette 128 couleurs — même indexation que l'APC Mini, velocity passée directement.
+        MK1 : grille ch=piste, note 53+row, palette 3 couleurs FIXES (1/3/5).
+              Scene launch mono-couleur : 0=eteint 1=allume 2=clignotant.
+        MkII: grille note 0-39 (0 = bas-gauche) et le CANAL du Note On code le
+              comportement de la LED — d'ou 0x96 (100 % fixe) et jamais 0x90|col,
+              qui ferait pulser/clignoter les colonnes 7 et 8.
         """
         if not self.midi_out:
             return
+        if row > 4:
+            return  # APC40 n'a que 5 lignes de clips / scenes
+
         if self.controller_type == 'apc40_mk2':
-            vel = color_velocity  # palette 128 couleurs compatible APC Mini
-        else:
-            vel = _to_apc40_vel(color_velocity)
+            ch = _APC40_MK2_LED_FULL if brightness_percent >= 80 else _APC40_MK2_LED_DIM
+            if col < 8:
+                note = (4 - row) * 8 + col   # note 0 = piste 1, ligne du bas
+                self.midi_out.send_message([ch, note, color_velocity])
+            elif col == 8:
+                self.midi_out.send_message([ch, _APC40_SCENE_BASE_NOTE + row, color_velocity])
+            return
+
         if col < 8:
             # Clip slot : channel = track, note = base + row
-            if row > 4:
-                return  # APC40 n'a que 5 lignes de clips
-            self.midi_out.send_message([0x90 | col, _APC40_CLIP_BASE_NOTE + row, vel])
+            self.midi_out.send_message(
+                [0x90 | col, _APC40_CLIP_BASE_NOTE + row, _to_apc40_vel(color_velocity)])
         elif col == 8:
-            # Scene launch (colonne droite)
-            if row > 4:
-                return
-            self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, vel])
+            # Scene launch (colonne droite) : LED mono-couleur, pas la palette clip
+            self.midi_out.send_message(
+                [0x90, _APC40_SCENE_BASE_NOTE + row, 1 if color_velocity > 0 else 0])
 
-    def _set_led_apc20(self, row, col, color_velocity):
-        """LED AKAI APC20 — palette 3 couleurs identique à l'APC40 MK1."""
+    def _set_led_apc20(self, row, col, color_velocity, brightness_percent=100):
+        """LED AKAI APC20.
+
+        Lignes 0-4 de la grille : palette 3 couleurs de l'APC40 MK1 (1/3/5, fixes).
+        Lignes 5-7 (boutons de piste) et Scene Launch : LED mono-couleur, la
+        palette clip n'a aucun sens dessus (0=eteint 1=allume 2=clignotant) —
+        ces pads s'allument donc sans couleur.
+
+        Faute de gradation sur ce materiel, un pad demande en luminosite
+        « inactive » est simplement ETEINT : c'est le seul moyen de voir d'un
+        coup d'oeil quels pads sont enclenches (cf. _binary_led_on).
+        """
         if not self.midi_out:
             return
-        if row > 4:
-            return  # APC20 : 5 lignes max (rows 0-4)
-        vel = _to_apc40_vel(color_velocity)
+        on = self._binary_led_on(color_velocity, brightness_percent)
         if col < 8:
-            self.midi_out.send_message([0x90 | col, _APC40_CLIP_BASE_NOTE + row, vel])
-        elif col == 8:
-            self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, vel])
+            if row <= 4:
+                vel = _to_apc40_vel(color_velocity) if on else 0
+                self.midi_out.send_message([0x90 | col, _APC40_CLIP_BASE_NOTE + row, vel])
+            elif row in _APC20_ROW_NOTES:
+                self.midi_out.send_message([0x90 | col, _APC20_ROW_NOTES[row], 1 if on else 0])
+        elif col == 8 and row <= 4:
+            # Scene Launch : 5 boutons seulement, les lignes 5-7 n'existent pas
+            self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 1 if on else 0])
 
     # ─── Divers ──────────────────────────────────────────────────────────────
 

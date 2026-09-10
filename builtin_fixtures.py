@@ -5,7 +5,10 @@ Organisées par fabricant pour un accès rapide sans requête réseau.
 Format de chaque entrée :
     name          : str   — nom affiché
     manufacturer  : str   — marque / fabricant
-    fixture_type  : str   — "PAR LED" | "Moving Head" | "Barre LED" | "Stroboscope" | "Machine a fumee" | "Gradateur"
+    fixture_type  : str   — "PAR LED" | "Moving Head" | "Barre LED"
+                            | "Stroboscope" | "Gradateur"
+                            | "Machine a fumee" | "Machine a brouillard"
+                            | "Machine a etincelles" | "Lance-flamme"
     group         : str   — groupe DMX par défaut
     profile       : list  — séquence de types de canaux MyStrow
     builtin       : True  — flag indiquant un template intégré (non supprimable)
@@ -55,7 +58,19 @@ BUILTIN_FIXTURES = [
     {"name": "Stroboscope · Intensité + Vitesse (2ch)", "manufacturer": "Générique", "fixture_type": "Stroboscope",  "group": "face",   "profile": ["Shutter","Dim"],                                       "builtin": _B},
     # ── Machines à effets ────────────────────────────────────────────────────
     {"name": "Machine à fumée · 2 canaux",           "manufacturer": "Générique", "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Hazer · 2 canaux",                     "manufacturer": "Générique", "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Hazer · 2 canaux",                     "manufacturer": "Générique", "fixture_type": "Machine a brouillard", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Machine à brouillard · 1 canal", "manufacturer": "Générique", "fixture_type": "Machine a brouillard", "group": "face",   "profile": ["Smoke"], "builtin": _B},
+    # Étincelles et flammes. Profils GÉNÉRIQUES et rien d'autre : les
+    # fabricants n'ont aucune convention commune (1 à 3 canaux selon le
+    # modèle, sécurité parfois en tête), et une fixture nommée dont les
+    # canaux sont faux est pire que pas de fixture du tout. Un appareil
+    # précis se décrit dans l'éditeur, ou s'importe en GDTF / QLC+.
+    {"name": "Machine à étincelles · 1 canal", "manufacturer": "Générique", "fixture_type": "Machine a etincelles", "group": "face",   "profile": ["Spark"], "builtin": _B},
+    {"name": "Machine à étincelles · 2 canaux (débit, durée)", "manufacturer": "Générique", "fixture_type": "Machine a etincelles", "group": "face",   "profile": ["Spark","Speed"], "builtin": _B},
+    {"name": "Machine à étincelles · 3 canaux (débit, durée, mode)", "manufacturer": "Générique", "fixture_type": "Machine a etincelles", "group": "face",   "profile": ["Spark","Speed","Mode"], "builtin": _B},
+    {"name": "Lance-flamme · 1 canal", "manufacturer": "Générique", "fixture_type": "Lance-flamme", "group": "face",   "profile": ["Flame"], "builtin": _B},
+    {"name": "Lance-flamme · 2 canaux (flamme, durée)", "manufacturer": "Générique", "fixture_type": "Lance-flamme", "group": "face",   "profile": ["Flame","Speed"], "builtin": _B},
+    {"name": "Lance-flamme · 3 canaux (flamme, durée, mode)", "manufacturer": "Générique", "fixture_type": "Lance-flamme", "group": "face",   "profile": ["Flame","Speed","Mode"], "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # ADJ (American DJ)
@@ -112,7 +127,7 @@ BUILTIN_FIXTURES = [
     {"name": "Intimidator Hybrid 140SR 17ch","manufacturer": "Chauvet DJ","fixture_type": "Moving Head",    "group": "face",   "profile": ["Pan","PanFine","Tilt","TiltFine","Speed","ColorWheel","Gobo1","Gobo2","Prism","Focus","Shutter","Dim","R","G","B","W","Mode"], "builtin": _B},
     {"name": "Swarm 5 FX 4ch",              "manufacturer": "Chauvet DJ","fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Strobe"],                                   "builtin": _B},
     {"name": "Hurricane 1000 2ch",          "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Amhaze II 2ch",               "manufacturer": "Chauvet DJ","fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Amhaze II 2ch",               "manufacturer": "Chauvet DJ","fixture_type": "Machine a brouillard", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Chauvet Professional
@@ -261,15 +276,15 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # Antari (machines fumée / haze)
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "X-310 Hazer 2ch",             "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "X-310 Hazer 2ch",             "manufacturer": "Antari",    "fixture_type": "Machine a brouillard", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
     {"name": "Z-1500 Fog 2ch",              "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
     {"name": "Z-3000 Fog 2ch",              "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "HZ-500 Hazer 2ch",            "manufacturer": "Antari",    "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "HZ-500 Hazer 2ch",            "manufacturer": "Antari",    "fixture_type": "Machine a brouillard", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Look Solutions
     # ──────────────────────────────────────────────────────────────────────────
-    {"name": "Unique 2.1 Hazer 2ch",        "manufacturer": "Look Solutions","fixture_type": "Machine a fumee","group": "face",  "profile": ["Smoke","Fan"],                                      "builtin": _B},
+    {"name": "Unique 2.1 Hazer 2ch",        "manufacturer": "Look Solutions","fixture_type": "Machine a brouillard","group": "face",  "profile": ["Smoke","Fan"],                                      "builtin": _B},
     {"name": "Viper S Fog 2ch",             "manufacturer": "Look Solutions","fixture_type": "Machine a fumee","group": "face",  "profile": ["Smoke","Fan"],                                      "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -316,8 +331,8 @@ BUILTIN_FIXTURES = [
     # LeMaitre
     # ──────────────────────────────────────────────────────────────────────────
     {"name": "G300 Fog 2ch",                "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "Glaciator X Stream Hazer 2ch","manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
-    {"name": "MVS Hazer 2ch",               "manufacturer": "LeMaitre",  "fixture_type": "Machine a fumee", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "Glaciator X Stream Hazer 2ch","manufacturer": "LeMaitre",  "fixture_type": "Machine a brouillard", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
+    {"name": "MVS Hazer 2ch",               "manufacturer": "LeMaitre",  "fixture_type": "Machine a brouillard", "group": "face",   "profile": ["Smoke","Fan"],                                         "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Shehds

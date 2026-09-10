@@ -19,6 +19,14 @@ except ImportError:
     HAS_MINIAUDIO = False
 
 
+# Groupes que le chenillard d'accent fait tourner. D/E/F depuis toujours ;
+# G et H les ont rejoints le 10/09/2026. Avant, `get_state_at` ne renvoyait
+# AUCUNE cle pour eux : `_apply_live_state_inner` sautait leurs projecteurs
+# (`if p.group not in state: continue`), donc un PAR pose en G ou H restait
+# FIGE sur sa derniere couleur en mode LIVE — meme pas eteint.
+ACCENT_GROUPS = ('douche1', 'douche2', 'douche3', 'groupe_g', 'groupe_h')
+
+
 class AudioColorAI:
     """IA reactive au son - analyse l'audio et genere des etats lumiere"""
 
@@ -55,8 +63,12 @@ class AudioColorAI:
         self._face_color_idx = 0
         self._face_alt_color_idx = 0
 
-        # Douches — chase sequentiel (D/E/F)
-        self._def_chase_idx = 0  # 0,1,2 = douche1,2,3
+        # Douches — chase sequentiel (D→H)
+        # Index DANS le pool d'accent effectif, pas dans ACCENT_GROUPS :
+        # le pool ne retient que les groupes reellement peuples (cf.
+        # `accent_groups` de `get_state_at`), sinon l'accent s'arreterait
+        # sur des groupes vides et le chenillard paraitrait boiteux.
+        self._def_chase_idx = 0
 
     def set_dominant_color(self, color):
         """Definit la couleur dominante et genere la palette"""
@@ -457,17 +469,26 @@ print(json.dumps(energy))
                 return c
         return self.palette[idx % n]
 
-    def get_state_at(self, time_ms, duration_ms, max_dimmers=None):
+    def get_state_at(self, time_ms, duration_ms, max_dimmers=None,
+                     accent_groups=None):
         """Retourne l'etat lumiere pour chaque groupe de projecteurs
 
-        L'IA joue uniquement sur face, lat et contre (pas les douches).
-        Effets creatifs: pulse/strobe ponctuels, bicolore, flash sur beats forts.
+        Trois roles : face (couleur dominante), lat (lateraux + strobe) et
+        contre. Les groupes d'ACCENT_GROUPS (D→H) se partagent le chenillard.
 
         Args:
             max_dimmers: dict optionnel {group: 0-100} pour plafonner les niveaux
+            accent_groups: groupes d'accent REELLEMENT peuples, dans l'ordre.
+                Filtre sur ACCENT_GROUPS. None = tous. Un plan de feu sans rien
+                en G/H garde ainsi son chenillard a trois temps : sans ce
+                filtre, l'accent s'arreterait deux beats sur cinq dans le vide.
 
         Returns: dict avec (QColor, level) par groupe + cles d'effets creatifs
         """
+        if accent_groups is None:
+            accent_pool = list(ACCENT_GROUPS)
+        else:
+            accent_pool = [g for g in ACCENT_GROUPS if g in set(accent_groups)]
         if not self.palette:
             self._generate_palette()
 
@@ -508,7 +529,7 @@ print(json.dumps(energy))
                 self._face_color_idx = (self._contre_color_idx + 3) % len(self.palette)
 
             # Chase douches : avancer d'une douche a chaque beat
-            self._def_chase_idx = beat_idx % 3
+            self._def_chase_idx = beat_idx % max(1, len(accent_pool))
 
             # Flash sur beats forts (energie > 0.75) toutes les 4 mesures
             if energy > 0.75 and self._beat_group_count % 4 == 0:
@@ -605,28 +626,24 @@ print(json.dumps(energy))
             if not strobe_on:
                 lat_level = 0
 
-        # === GROUPES D/E/F : tous actifs — accent qui tourne sur les beats ===
-        grp_d_max = max_dimmers.get('douche1', 100) / 100.0
-        grp_e_max = max_dimmers.get('douche2', 100) / 100.0
-        grp_f_max = max_dimmers.get('douche3', 100) / 100.0
+        # === GROUPES D→H : tous actifs — accent qui tourne sur les beats ===
         def_base_level = int((70 + energy * 30) * global_fade)
         pal = self.palette if self.palette else [self.dominant_color]
-        if is_flashing:
-            # Flash : tous à blanc max
-            grp_d_level = grp_e_level = grp_f_level = 100
-            def_color_d = def_color_e = def_color_f = QColor(255, 255, 255)
-        else:
-            # Tous actifs : groupe accentué à plein niveau, les autres à ~45 %
-            accent = def_base_level
-            base   = max(20, int(def_base_level * 0.45))
-            grp_d_level = accent if self._def_chase_idx == 0 else base
-            grp_e_level = accent if self._def_chase_idx == 1 else base
-            grp_f_level = accent if self._def_chase_idx == 2 else base
-            # Couleurs décalées dans la palette pour chaque groupe
-            def_color_d = pal[self._contre_color_idx % len(pal)]
-            def_color_e = pal[(self._contre_color_idx + 2) % len(pal)]
-            def_color_f = pal[(self._contre_color_idx + 4) % len(pal)]
-        def_color = def_color_d  # compat retour
+        accent_level = def_base_level
+        base_level   = max(20, int(def_base_level * 0.45))
+        accent_state = {}
+        for _i, _g in enumerate(accent_pool):
+            _g_max = max_dimmers.get(_g, 100) / 100.0
+            if is_flashing:
+                # Flash : tous à blanc max
+                _g_color, _g_level = QColor(255, 255, 255), 100
+            else:
+                # Tous actifs : groupe accentué à plein niveau, les autres à ~45 %
+                _g_level = accent_level if self._def_chase_idx == _i else base_level
+                # Couleurs décalées dans la palette pour chaque groupe
+                _g_color = pal[(self._contre_color_idx + 2 * _i) % len(pal)]
+            accent_state[_g] = (_g_color,
+                                max(0, min(100, int(_g_level * _g_max))))
 
         # Couleurs alternatives pour mode bicolore
         #
@@ -650,9 +667,7 @@ print(json.dumps(energy))
             'face': (face_color, max(0, min(100, face_level))),
             'contre': (contre_color, max(0, min(100, contre_level))),
             'lat': (lat_color, max(0, min(100, lat_level))),
-            'douche1': (def_color_d, max(0, min(100, int(grp_d_level * grp_d_max)))),
-            'douche2': (def_color_e, max(0, min(100, int(grp_e_level * grp_e_max)))),
-            'douche3': (def_color_f, max(0, min(100, int(grp_f_level * grp_f_max)))),
+            **accent_state,
             'contre_alt': contre_alt,
             'lat_alt': lat_alt,
             'face_alt': face_alt,

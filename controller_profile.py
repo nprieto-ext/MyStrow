@@ -1,10 +1,31 @@
 """
 Gestion des profils de contrôleurs MIDI personnalisés.
 Format JSON — stockés dans %APPDATA%/MyStrow/controllers/ (Windows) ou ~/.mystrow/controllers/.
+
+Deux sources, jamais mélangées en écriture :
+
+  * le dossier utilisateur — mappings faits maison ou installés depuis la
+    bibliothèque communautaire, seuls modifiables (`save_profile`, `rename_`,
+    `delete_profile`) ;
+  * `controllers_bundle.json.gz`, embarqué dans l'exe — les profils approuvés
+    en modération, figés à la date de la release. C'est lui qui fait qu'un
+    contrôleur validé est reconnu AU BRANCHEMENT, sans compte ni réseau, au
+    lieu d'attendre que l'utilisateur trouve la bibliothèque communautaire.
+
+`list_profiles()` ne rend QUE le premier lot : tout le code de gestion s'appuie
+sur `entry["file"]` pour renommer ou supprimer, et un profil embarqué n'a pas de
+fichier inscriptible. La détection, elle, passe par `all_profiles()`.
 """
+import gzip
 import json
 import os
+import sys
 from pathlib import Path
+
+# Catalogue embarqué, produit au moment de la release par
+# generate_controllers_bundle.py (collection Firestore `controller_profiles`).
+_BUNDLE_NAME = "controllers_bundle.json.gz"
+_bundled_cache = None
 
 
 def get_profiles_dir() -> Path:
@@ -29,6 +50,70 @@ def list_profiles() -> list:
         except Exception:
             pass
     return result
+
+
+def _bundle_path() -> Path:
+    """Emplacement du catalogue embarqué (`sys._MEIPASS` une fois gelé)."""
+    base = getattr(sys, "_MEIPASS", None)
+    return (Path(base) if base else Path(__file__).parent) / _BUNDLE_NAME
+
+
+def list_bundled_profiles() -> list:
+    """Profils livrés AVEC l'application — lecture seule, `file` à None.
+
+    Un catalogue absent n'est pas une erreur : c'est l'état d'un build fait
+    avant la première approbation, et d'une exécution depuis les sources.
+    """
+    global _bundled_cache
+    if _bundled_cache is not None:
+        return _bundled_cache
+    out = []
+    path = _bundle_path()
+    try:
+        if path.exists():
+            with gzip.open(path, "rb") as gz:
+                rows = json.loads(gz.read().decode("utf-8"))
+            if isinstance(rows, list):
+                for data in rows:
+                    ok, _ = validate_profile(data)
+                    if ok:
+                        out.append({"file": None, "data": data, "bundled": True})
+    except (OSError, ValueError) as e:
+        print(f"[controleurs] catalogue embarque illisible : {e}")
+    _bundled_cache = out
+    return out
+
+
+def _profile_keywords(data: dict) -> set:
+    return {str(k).strip().upper() for k in (data.get("keywords") or []) if str(k).strip()}
+
+
+def all_profiles() -> list:
+    """Profils utilisateur, PUIS profils embarqués qu'aucun d'eux ne masque.
+
+    Le local passe toujours devant. Un profil livré avec l'app qui partage un
+    mot-clé avec un mapping fait maison détournerait la détection sans rien
+    afficher, et l'utilisateur croirait son propre travail écrasé — c'est le cas
+    que `conflicting_local_profiles` fait remonter à l'installation, tranché ici
+    en silence puisqu'il n'y a personne à prévenir au branchement.
+    """
+    user = list_profiles()
+    taken_kw, taken_fp = set(), set()
+    for entry in user:
+        taken_kw |= _profile_keywords(entry["data"])
+        fp = (entry["data"].get("community") or {}).get("fingerprint")
+        if fp:
+            taken_fp.add(fp)
+    out = list(user)
+    for entry in list_bundled_profiles():
+        data = entry["data"]
+        fp = (data.get("community") or {}).get("fingerprint")
+        if fp and fp in taken_fp:
+            continue          # déjà installé (et peut-être plus récent) côté utilisateur
+        if _profile_keywords(data) & taken_kw:
+            continue          # le mapping de l'utilisateur vise le même appareil
+        out.append(entry)
+    return out
 
 
 def load_profile(path: str) -> dict:
@@ -155,11 +240,26 @@ def find_community_profile(fingerprint: str) -> str | None:
     return None
 
 
+def _bundled_community_version(fingerprint: str) -> int:
+    """Version de ce modèle dans le catalogue embarqué, 0 s'il n'y est pas."""
+    if not fingerprint:
+        return 0
+    for entry in list_bundled_profiles():
+        meta = entry["data"].get("community") or {}
+        if meta.get("fingerprint") == fingerprint:
+            return int(meta.get("version", 0) or 0)
+    return 0
+
+
 def installed_community_version(fingerprint: str) -> int:
-    """Version communautaire installée localement, 0 si absente."""
+    """Version communautaire déjà disponible localement, 0 si absente.
+
+    Le catalogue embarqué compte : sans lui, la bibliothèque communautaire
+    proposerait « Installer » pour un profil que l'application sait déjà lire.
+    """
     path = find_community_profile(fingerprint)
     if not path:
-        return 0
+        return _bundled_community_version(fingerprint)
     try:
         meta = load_profile(path).get("community") or {}
         return int(meta.get("version", 0) or 0)
@@ -218,9 +318,14 @@ def install_community_profile(data: dict, fingerprint: str, version: int) -> tup
 
 
 def find_profile_for_port(port_name: str) -> dict | None:
-    """Cherche un profil dont les keywords matchent le nom du port MIDI."""
+    """Cherche un profil dont les keywords matchent le nom du port MIDI.
+
+    Balaie `all_profiles()` : un contrôleur approuvé en modération et embarqué
+    dans la release est donc reconnu au branchement exactement comme un profil
+    que l'utilisateur aurait mappé lui-même.
+    """
     upper = port_name.upper()
-    for entry in list_profiles():
+    for entry in all_profiles():
         data = entry["data"]
         for kw in data.get("keywords", []):
             if kw.upper() in upper:

@@ -11,7 +11,8 @@ from i18n import tr
 from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
                   color_wheel_display_color, fixture_projects_gobo,
-                  emitted_brightness)
+                  emitted_brightness,
+                  FX_MACHINE_TYPES, fixture_is_fx_machine, fixture_is_pyro)
 from artnet_dmx import PRESET_TYPES
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
@@ -1135,6 +1136,18 @@ FIXTURE_LIBRARY = {
     "Machine a fumee": [
         {"name": "Machine a fumee 2CH", "fixture_type": "Machine a fumee", "group": "face", "profile": "2CH_FUMEE"},
     ],
+    "Machine a brouillard": [
+        {"name": "Machine a brouillard 1CH", "fixture_type": "Machine a brouillard", "group": "face", "profile": "1CH_BROUILLARD"},
+        {"name": "Machine a brouillard 2CH", "fixture_type": "Machine a brouillard", "group": "face", "profile": "2CH_BROUILLARD"},
+    ],
+    "Machine a etincelles": [
+        {"name": "Machine a etincelles 1CH", "fixture_type": "Machine a etincelles", "group": "face", "profile": "1CH_ETINCELLE"},
+        {"name": "Machine a etincelles 2CH", "fixture_type": "Machine a etincelles", "group": "face", "profile": "2CH_ETINCELLE"},
+    ],
+    "Lance-flamme": [
+        {"name": "Lance-flamme 1CH", "fixture_type": "Lance-flamme", "group": "face", "profile": "1CH_FLAMME"},
+        {"name": "Lance-flamme 2CH", "fixture_type": "Lance-flamme", "group": "face", "profile": "2CH_FLAMME"},
+    ],
     "Gradateur": [
         {"name": "Gradateur 1CH", "fixture_type": "Gradateur", "group": "face", "profile": "DIM"},
     ],
@@ -1398,6 +1411,7 @@ _TEINTE_CANAL = {
     "ColorWheel": "#ff9de0", "CTO": "#ffcf9e", "CTB": "#9ecbff",
     "Effects": "#c8a0ff", "Speed": "#9a9a9a", "Mode": "#9a9a9a",
     "Smoke": "#bdbdbd", "Fan": "#bdbdbd", "Reset": "#ff7043",
+    "Spark": "#ffcc33", "Flame": "#ff5511",
     "Preset1": "#00cc99", "Preset2": "#00b389",
     "Preset3": "#009a78", "Preset4": "#008168",
     # Gris franc et non anthracite : c'est justement sur ces canaux-là qu'on
@@ -1423,7 +1437,8 @@ _NOM_CANAL = {
     "Focus": "Focus", "Zoom": "Zoom", "Iris": "Iris",
     "ColorWheel": "Color Wheel", "CTO": "CTO", "CTB": "CTB",
     "Effects": "Effects", "Speed": "Speed", "Mode": "Mode", "Reset": "Reset",
-    "Smoke": "Smoke", "Fan": "Fan", "Unused": "—",
+    "Smoke": "Smoke", "Fan": "Fan",
+    "Spark": "Spark", "Flame": "Flame", "Unused": "—",
     "Preset1": "Preset 1", "Preset2": "Preset 2",
     "Preset3": "Preset 3", "Preset4": "Preset 4",
 }
@@ -1519,10 +1534,10 @@ def _ecrire_canal_modele(proj, ctype, valeur):
         proj._manual_color = True     # sinon la mémoire active la réécrit aussitôt
         return True
 
-    if ctype in ("Dim", "Dim2", "Smoke"):
-        # Smoke : sur une machine à fumée, le débit EST le niveau (branche
-        # dédiée du moteur, qui ignore les forçages — d'où le passage obligé
-        # par le modèle ici).
+    if ctype in ("Dim", "Dim2", "Smoke", "Spark", "Flame"):
+        # Smoke / Spark / Flame : sur une machine à effet, le débit EST le
+        # niveau (branche dédiée du moteur, qui ignore les forçages — d'où le
+        # passage obligé par le modèle ici).
         proj.set_level(round(v / 255 * 100))
         return True
 
@@ -1565,7 +1580,7 @@ def _ecrire_canal_modele(proj, ctype, valeur):
 # dès l'affichage si une ligne pilote le modèle (les deux vues restent alors
 # d'accord) ou si elle force un canal (état « FORCÉ », rendu par ↺).
 _CANAUX_MODELE = set(_CANAL_ATTR_SIMPLE) | {
-    "R", "G", "B", "Dim", "Dim2", "Smoke", "Strobe", "Shutter",
+    "R", "G", "B", "Dim", "Dim2", "Smoke", "Spark", "Flame", "Strobe", "Shutter",
     "Pan", "PanFine", "Tilt", "TiltFine",
 }
 
@@ -2431,8 +2446,11 @@ class FixtureCanvas(QWidget):
             if ftype == "Barre LED":
                 if abs(px - cx) <= 16 and abs(py - cy) <= 6:
                     return i
-            elif ftype == "Machine a fumee":
+            elif ftype in ("Machine a fumee", "Machine a brouillard"):
                 if abs(px - cx) <= 13 and abs(py - cy) <= 7:
+                    return i
+            elif ftype in ("Machine a etincelles", "Lance-flamme"):
+                if abs(px - cx) <= 11 and abs(py - cy) <= 8:
                     return i
             elif ftype == "Stroboscope":
                 _sr = 9 if self.compact else 13
@@ -2944,6 +2962,71 @@ class FixtureCanvas(QWidget):
                 painter.setBrush(QBrush(smoke_col))
                 for ox, oy, sr in [(-7, -10, 5), (0, -12, 6), (7, -10, 5), (-4, -16, 4), (4, -16, 4)]:
                     painter.drawEllipse(QPoint(cx + ox, cy + oy), sr, sr)
+
+        elif ftype == "Machine a brouillard":
+            # Même corps que la fumée, nappe différente : une brume ne fait pas
+            # de volutes, elle NOIE l'espace. D'où des bandes larges et basses
+            # au lieu des petits nuages qui montent — c'est ce qui distingue
+            # les deux machines d'un coup d'œil sur le plan.
+            painter.drawEllipse(QRect(cx - fumee_hw, cy - fumee_hh, fumee_hw * 2, fumee_hh * 2))
+            if is_lit:
+                painter.setPen(Qt.NoPen)
+                for oy, hw, a in ((-6, 13, 38), (-10, 17, 26), (-14, 21, 16)):
+                    painter.setBrush(QBrush(QColor(214, 226, 236, a)))
+                    painter.drawEllipse(QRect(cx - hw, cy + oy - 3, hw * 2, 7))
+
+        elif ftype == "Machine a etincelles":
+            # Boîtier trapu + gerbe. La gerbe MONTE avec le niveau : à 20 % c'est
+            # une étincelle de confort, à 100 % une colonne de plusieurs mètres.
+            # La différence doit se voir sur le plan, sinon le plan ment sur ce
+            # qui va se passer sur le plateau.
+            #
+            # ⚠️ Motif FIXE, jamais tiré au hasard : `paintEvent` est rappelé à
+            # chaque rafraîchissement, un aléa scintillerait sans rapport avec
+            # la machine.
+            _sw = max(4, int(r * 0.78)); _sh = max(3, int(r * 0.52))
+            painter.setBrush(QBrush(QColor(42, 39, 30)))
+            painter.drawRoundedRect(QRect(cx - _sw, cy - _sh, _sw * 2, _sh * 2), 3, 3)
+            if is_lit:
+                _lvl = max(0.0, min(1.0, getattr(proj, 'level', 0) / 100.0))
+                _h   = int(6 + 26 * _lvl)
+                painter.setPen(Qt.NoPen)
+                for _dx, _f, _rad in ((0, 1.00, 2), (-3, 0.86, 2), (3, 0.86, 2),
+                                      (-6, 0.62, 2), (6, 0.62, 2),
+                                      (-2, 0.46, 1), (2, 0.46, 1),
+                                      (-8, 0.30, 1), (8, 0.30, 1)):
+                    _y = cy - _sh - int(_h * _f)
+                    painter.setBrush(QBrush(QColor(
+                        255, 235 - int(70 * _f), 90, int(70 + 150 * (1.0 - _f)))))
+                    painter.drawEllipse(QPoint(cx + int(_dx * (0.5 + _lvl)), _y),
+                                        _rad, _rad)
+
+        elif ftype == "Lance-flamme":
+            # Trois langues emboîtées, de la plus large et rouge à la plus fine
+            # et jaune : c'est ce dégradé qui fait lire « flamme » et non
+            # « cône de lumière orange ». Hauteur pilotée par le niveau, comme
+            # la gerbe d'étincelles.
+            _sw = max(3, int(r * 0.60)); _sh = max(3, int(r * 0.48))
+            painter.setBrush(QBrush(QColor(48, 33, 28)))
+            painter.drawRoundedRect(QRect(cx - _sw, cy - _sh, _sw * 2, _sh * 2), 3, 3)
+            if is_lit:
+                _lvl  = max(0.0, min(1.0, getattr(proj, 'level', 0) / 100.0))
+                _h    = int(8 + 30 * _lvl)
+                _w    = max(3, int(4 + 6 * _lvl))
+                _base = cy - _sh
+                painter.setPen(Qt.NoPen)
+                for _fw, _fh, _col in ((_w, _h, QColor(255, 70, 10, 150)),
+                                       (max(2, int(_w * 0.62)), int(_h * 0.72),
+                                        QColor(255, 150, 20, 190)),
+                                       (max(1, int(_w * 0.30)), int(_h * 0.42),
+                                        QColor(255, 235, 140, 220))):
+                    _pth = QPainterPath()
+                    _pth.moveTo(cx - _fw, _base)
+                    _pth.quadTo(cx - _fw, _base - _fh * 0.6, cx, _base - _fh)
+                    _pth.quadTo(cx + _fw, _base - _fh * 0.6, cx + _fw, _base)
+                    _pth.closeSubpath()
+                    painter.setBrush(QBrush(_col))
+                    painter.drawPath(_pth)
 
         elif ftype == "Gradateur":
             painter.drawEllipse(QPoint(cx, cy), r, r)
@@ -3887,9 +3970,12 @@ class FixtureCanvas(QWidget):
         if ftype == "Barre LED":
             hw = int(r * 1.23)
             hh = max(3, int(r * 0.38))
-        elif ftype == "Machine a fumee":
+        elif ftype in ("Machine a fumee", "Machine a brouillard"):
             hw = int(r * 0.92)
             hh = max(3, int(r * 0.46))
+        elif ftype in ("Machine a etincelles", "Lance-flamme"):
+            hw = max(4, int(r * 0.78))
+            hh = max(3, int(r * 0.52))
         elif ftype == "Stroboscope":
             hw = int(r * 1.18)
             hh = max(3, int(r * 0.62))
@@ -6508,8 +6594,11 @@ class PlanDeFeu(QFrame):
         _grille(dim_h, dim_lbl, dim_sli, dim_val, formate=lambda v: f"{v}%")
         _wa(dim_w)
 
-        # ── Strobe (tout sauf Machine à fumée) ───────────────────────────
-        if proj.fixture_type != "Machine a fumee":
+        # ── Strobe (tout sauf les machines à effet) ──────────────────────
+        # Un curseur de strobe sur un lance-flamme ou une machine à étincelles
+        # n'a aucun sens : ces appareils n'ont pas de shutter, et le curseur
+        # écrirait sur un canal qui ne l'attend pas.
+        if not fixture_is_fx_machine(proj):
             menu.addSeparator()
             strobe_w = QWidget(); strobe_h = QHBoxLayout(strobe_w)
 
@@ -7108,7 +7197,7 @@ class PlanDeFeu(QFrame):
         # (lyre RGB → sélecteur couleur LED ; lyre roue → section ColorWheel ci-dessus)
         _has_cw_in_profile = 'ColorWheel' in (_proj_profile or [])
         _is_cw_mh = (proj.fixture_type == "Moving Head" and _has_cw_in_profile and not _has_rgb_mh)
-        NO_COLOR_TYPES = {"Machine a fumee", "Gradateur"}
+        NO_COLOR_TYPES = FX_MACHINE_TYPES | {"Gradateur"}
         if proj.fixture_type not in NO_COLOR_TYPES and not _is_cw_mh:
             menu.addSeparator()
             _col_sec = QLabel(tr("pdf_color"))
@@ -7431,11 +7520,13 @@ class PlanDeFeu(QFrame):
 
         # ── Effets rapides (tout en bas) ─────────────────────────────────
         _is_mh    = proj.fixture_type == "Moving Head"
-        _is_smoke = proj.fixture_type == "Machine a fumee"
+        # Machine à effet (fumée, brume, étincelles, flamme) : aucun effet
+        # rapide. Un chenillard sur un lance-flamme n'est pas un effet.
+        _is_smoke = fixture_is_fx_machine(proj)
         # Types de tous les projecteurs sélectionnés
         _all_types = {p.fixture_type for p, _g, _i in targets}
         _has_mh    = "Moving Head" in _all_types
-        _has_led   = bool(_all_types - {"Moving Head", "Machine a fumee"})
+        _has_led   = bool(_all_types - {"Moving Head"} - FX_MACHINE_TYPES)
         _mixed     = _has_mh and _has_led  # sélection hétérogène → pas d'effets rapides
         # Sélection 100 % barre/matrice : seuls les effets pixel ont du sens.
         # Les effets LED classiques piloteraient les 8 pixels à l'identique
@@ -7836,7 +7927,7 @@ class PlanDeFeu(QFrame):
             p.start_address = fd['start_address']
             p.canvas_x = None  # Position par defaut (calculee par le canvas)
             p.canvas_y = None
-            if fd['fixture_type'] == "Machine a fumee":
+            if fd['fixture_type'] in FX_MACHINE_TYPES:
                 p.fan_speed = 0
             self.projectors.append(p)
 
@@ -8017,7 +8108,9 @@ class _FixtureFormWidget(QWidget):
         layout.addRow("Nom :", self.name_edit)
 
         self.type_combo = ComboSansMolette()
-        for t in ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee", "Gradateur"]:
+        for t in ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
+                  "Machine a fumee", "Machine a brouillard",
+                  "Machine a etincelles", "Lance-flamme", "Gradateur"]:
             self.type_combo.addItem(t)
         if preset:
             idx = self.type_combo.findText(preset.get('fixture_type', 'PAR LED'))
@@ -8074,7 +8167,9 @@ class _FixtureFormWidget(QWidget):
         """Retourne (universe, addr) pour la prochaine fixture en autopatch intelligent."""
         if not self._projectors:
             return 0, 1
-        _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2, "Gradateur": 1}
+        _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2,
+                   "Machine a fumee": 2, "Machine a brouillard": 2,
+                   "Machine a etincelles": 1, "Lance-flamme": 1, "Gradateur": 1}
         max_uni = max(getattr(p, 'universe', 0) for p in self._projectors)
         projs_on_uni = [p for p in self._projectors if getattr(p, 'universe', 0) == max_uni]
         next_addr = max(p.start_address + _CH.get(getattr(p, 'fixture_type', 'PAR LED'), 5)
@@ -8099,7 +8194,10 @@ class _FixtureFormWidget(QWidget):
             "Moving Head":    ["MOVING_5CH", "MOVING_8CH", "MOVING_RGB", "MOVING_RGBW"],
             "Barre LED":      ["LED_BAR_RGB", "RGB", "RGBD", "RGBDS"],
             "Stroboscope":    ["STROBE_2CH"],
-            "Machine a fumee": ["2CH_FUMEE"],
+            "Machine a fumee": ["2CH_FUMEE", "1CH_FUMEE"],
+            "Machine a brouillard":  ["2CH_BROUILLARD", "1CH_BROUILLARD"],
+            "Machine a etincelles":  ["1CH_ETINCELLE", "2CH_ETINCELLE", "3CH_ETINCELLE"],
+            "Lance-flamme":          ["1CH_FLAMME", "2CH_FLAMME", "3CH_FLAMME"],
             "Gradateur":      ["DIM"],
         }
         allowed = TYPE_PROFILES.get(fixture_type, list(DMX_PROFILES.keys()))
@@ -8211,7 +8309,9 @@ class AddFixtureDialog(QDialog):
             item = self.preset_list.currentItem()
             if item:
                 self._result_data = item.data(Qt.UserRole)
-                _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2, "Machine a fumee": 2, "Gradateur": 1}
+                _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2,
+                   "Machine a fumee": 2, "Machine a brouillard": 2,
+                   "Machine a etincelles": 1, "Lance-flamme": 1, "Gradateur": 1}
                 if self._projectors:
                     next_addr = max(
                         p.start_address + _CH.get(getattr(p, 'fixture_type', 'PAR LED'), 5)
@@ -8450,6 +8550,24 @@ class NewPlanWizard(QDialog):
             subtitle="Combien de machines à fumée / hazers ?\n(laisser à 0 si aucune)",
             ftype="Machine a fumee", profile="2CH_FUMEE", prefix="Fumée",
             color="#aaaaaa", default=0, max=4,
+        ),
+        dict(
+            group="face",   label="Machine à brouillard",
+            subtitle="Combien de hazers / machines à brume ?\n(laisser à 0 si aucune)",
+            ftype="Machine a brouillard", profile="2CH_BROUILLARD", prefix="Brouillard",
+            color="#c8d8e8", default=0, max=4,
+        ),
+        dict(
+            group="face",   label="Machine à étincelles",
+            subtitle="Combien de machines à étincelles ?\n(laisser à 0 si aucune)",
+            ftype="Machine a etincelles", profile="1CH_ETINCELLE", prefix="Étincelles",
+            color="#ffcc33", default=0, max=8,
+        ),
+        dict(
+            group="face",   label="Lance-flamme",
+            subtitle="Combien de lance-flammes ?\n(laisser à 0 si aucun)",
+            ftype="Lance-flamme", profile="1CH_FLAMME", prefix="Flamme",
+            color="#ff5511", default=0, max=8,
         ),
     ]
 

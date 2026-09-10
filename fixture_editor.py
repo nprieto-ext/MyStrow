@@ -76,7 +76,9 @@ def _load_ofl_bundle() -> list:
 
 FIXTURE_FILE = Path.home() / ".mystrow_fixtures.json"
 
-FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee", "Gradateur"]
+FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
+                 "Machine a fumee", "Machine a brouillard",
+                 "Machine a etincelles", "Lance-flamme", "Gradateur"]
 
 GROUP_OPTIONS = [
     "face", "douche1", "douche2", "douche3", "lat", "contre",
@@ -95,7 +97,7 @@ ALL_CHANNEL_TYPES = [
     #            les confondre avec la roue de couleurs la faisait tourner.
     #   Iris   : diaphragme.
     "C", "M", "Y", "Lime", "CTO", "CTB", "Iris",
-    "Smoke", "Fan", "Pan", "PanFine", "Tilt", "TiltFine",
+    "Smoke", "Fan", "Spark", "Flame", "Pan", "PanFine", "Tilt", "TiltFine",
     "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
     # ── Couronne LED (« ring ») ───────────────────────────────────────────────
     # Une deuxième source, indépendante du faisceau, présente sur la plupart des
@@ -147,7 +149,9 @@ CHANNEL_COLORS = {
     "R": "#cc2200", "G": "#00aa00", "B": "#0055ff", "W": "#bbbbbb",
     "Dim": "#888800", "Dim2": "#aaaa00", "Strobe": "#ffaa00", "UV": "#8800cc",
     "Ambre": "#ee6600", "Orange": "#ff4400", "Zoom": "#00ccaa",
-    "Smoke": "#555555", "Fan": "#336699", "Pan": "#ff55aa",
+    "Smoke": "#555555", "Fan": "#336699",
+    "Spark": "#ffcc33", "Flame": "#ff5511",
+    "Pan": "#ff55aa",
     "PanFine": "#cc4488", "Tilt": "#00ddff", "TiltFine": "#00aacc",
     "Gobo1": "#aa8800", "Gobo1Rot": "#cc9900", "Gobo2": "#886600",
     "Prism": "#dd00dd", "PrismRot": "#bb00bb",
@@ -220,7 +224,25 @@ _PRESETS_BY_TYPE = {
     "Machine a fumee": [
         ("Fumée 1ch", ["Smoke"]),
         ("Fumée 2ch", ["Smoke", "Fan"]),
-        ("Hazer 2ch", ["Smoke", "Fan"]),
+    ],
+    "Machine a brouillard": [
+        ("Brouillard 1ch", ["Smoke"]),
+        ("Brouillard 2ch", ["Smoke", "Fan"]),
+    ],
+    # Machines à effet : profils GÉNÉRIQUES. Les fabricants n'ont aucune
+    # convention commune — une machine à étincelles va de 1 à 3 canaux selon le
+    # modèle, un lance-flamme place parfois une sécurité en tête. Un appareil
+    # précis se décrit canal par canal ici même, ou s'importe en GDTF / QLC+.
+    # Une sécurité à valeur fixe se pose en `channel_defaults`.
+    "Machine a etincelles": [
+        ("Étincelles 1ch", ["Spark"]),
+        ("Étincelles 2ch", ["Spark", "Speed"]),
+        ("Étincelles 3ch", ["Spark", "Speed", "Mode"]),
+    ],
+    "Lance-flamme": [
+        ("Flamme 1ch", ["Flame"]),
+        ("Flamme 2ch", ["Flame", "Speed"]),
+        ("Flamme 3ch", ["Flame", "Speed", "Mode"]),
     ],
     "Gradateur": [
         ("Dim 1ch",       ["Dim"]),

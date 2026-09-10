@@ -44,7 +44,8 @@ except ImportError:
         errorOccurred        = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
 
 from core import (fmt_time, media_icon, MIDI_AVAILABLE, rgb_to_akai_velocity,
-                  MEDIA_EXTENSIONS_FILTER, apply_special_block, ComboSansMolette)
+                  MEDIA_EXTENSIONS_FILTER, apply_special_block, ComboSansMolette,
+                  MediaClock, make_precise_timer, TIMELINE_FRAME_MS)
 from i18n import tr
 
 
@@ -3614,6 +3615,9 @@ class Sequencer(QFrame):
         self.playback_row = -1
         self.playback_index = 0
         self.timeline_playback_timer = None
+        # Horloge lumière lissée : `player.position()` avance par bonds
+        # (0 à 116 ms mesurés sur une image de 46,9 ms). Voir core.MediaClock.
+        self._media_clock = MediaClock()
         self.tempo_timer = None
         self.tempo_elapsed = 0
         self.tempo_duration = 0
@@ -5608,10 +5612,16 @@ class Sequencer(QFrame):
         self._timeline_last_end = _max_end
 
         if not self.timeline_playback_timer:
-            self.timeline_playback_timer = QTimer()
+            # 40 ms et PreciseTimer, à parité avec l'aperçu de l'éditeur
+            # (`timeline_editor.playback_timer`). Le timer était à 50 ms en type
+            # Coarse, que Windows arrondit à 62,5 ms : la restitution tournait à
+            # 16 images/s quand l'aperçu en faisait 21 — d'où « fluide en
+            # montage, saccadé en show » (mesuré le 08/09/2026).
+            self.timeline_playback_timer = make_precise_timer()
             self.timeline_playback_timer.timeout.connect(self.update_timeline_playback)
 
-        self.timeline_playback_timer.start(50)
+        self._media_clock.reset()
+        self.timeline_playback_timer.start(TIMELINE_FRAME_MS)
 
     def update_timeline_playback(self):
         """Callback QTimer (50 ms) — protégé : une exception non rattrapée dans
@@ -5673,17 +5683,19 @@ class Sequencer(QFrame):
 
         # Source du temps: tempo_elapsed pour TEMPO, player.position pour media
         if self.tempo_running:
-            current_time = self.tempo_elapsed
+            raw_time = self.tempo_elapsed
         else:
-            current_time = self._media_light_time()
+            raw_time = self._media_light_time()
 
-        # Debounce: ignorer uniquement si la position n'a pas change du tout
-        if current_time == self.timeline_last_update:
+        # La position BRUTE sert uniquement à détecter l'arrêt : elle est le seul
+        # signal fiable de « le média ne défile plus ». Tout le reste du calcul
+        # utilise l'horloge lissée plus bas.
+        if raw_time == self.timeline_last_update:
             # Cas image/pause minutee : l'horloge est le TEMPO (timer 100 ms) alors
-            # que la timeline tique a 50 ms. Un tick sur deux lit donc la meme valeur
-            # de tempo_elapsed : la position "fige" sans que ce soit une pause. Comme
-            # le QMediaPlayer reste Stopped pour une image, ne PAS retomber dans le
-            # blackout ci-dessous (sinon strobe ON/OFF a ~10 Hz). On attend le tick
+            # que la timeline tique a 40 ms. Deux ticks sur cinq lisent donc la meme
+            # valeur de tempo_elapsed : la position "fige" sans que ce soit une pause.
+            # Comme le QMediaPlayer reste Stopped pour une image, ne PAS retomber dans
+            # le blackout ci-dessous (sinon strobe ON/OFF a ~10 Hz). On attend le tick
             # suivant en conservant l'etat courant des projecteurs.
             if self.tempo_running and not self.tempo_paused:
                 return
@@ -5692,25 +5704,40 @@ class Sequencer(QFrame):
             # couleur simple resterait allume tant qu'on est en pause.
             _player = getattr(self.player_ui, 'player', None)
             _state  = _player.playbackState() if _player else None
-            if _state is not None and _state != QMediaPlayer.PlayingState:
-                # Noircir UNE SEULE FOIS. Répété à chaque tick (50 ms), ce bloc
-                # réécrasait les projecteurs 20 fois par seconde : après un stop,
+            if _state != QMediaPlayer.PlayingState:
+                # Noircir UNE SEULE FOIS. Répété à chaque tick (40 ms), ce bloc
+                # réécrasait les projecteurs 25 fois par seconde : après un stop,
                 # toute reprise en main manuelle (plan de feu 2D, AKAI, pads)
                 # était effacée dans la foulée et paraissait sans effet.
                 if not getattr(self, '_timeline_pause_blackout', False):
                     self._timeline_pause_blackout = True
+                    self._media_clock.reset()   # ne pas rattraper la pause au retour
                     if getattr(self, '_timeline_effect_name', None) is not None:
                         self._stop_timeline_effect()
                     # Noircir ne suffit pas : un « jeu de lumiere » dont le mode
                     # auto/son est un canal brut ignore le dimmer et continuait
                     # de tourner en pause. On ramene tout le faisceau au repos.
                     self._clear_timeline_leftovers(blackout=True)
-            return
+                return
+            # Position identique MAIS le lecteur joue : c'est la granularité du
+            # média, pas une pause. On rend quand même l'image — l'horloge lissée
+            # ci-dessous, elle, a avancé. C'était le cas de 6 à 38 % des images
+            # sur une vidéo (mesuré), autant d'images de mouvement perdues.
 
-        self.timeline_last_update = current_time
+        self.timeline_last_update = raw_time
         # La position a bougé : on est bien en lecture. Réarmer le blackout de
         # pause, sinon la prochaine pause laisserait les lumières allumées.
         self._timeline_pause_blackout = False
+
+        # Horloge lissée : `position()` avance par bonds de 0 à 116 ms alors que
+        # le temps réel avance d'un pas constant. Les trajectoires pan/tilt, les
+        # mouvements automatiques et les fondus se calculent tous dessus — pris
+        # bruts, ils vont tantôt à 0x, tantôt à 2,5x la vitesse réelle, et la
+        # lyre saccade. Le TEMPO, lui, est déjà une horloge régulière.
+        if self.tempo_running:
+            current_time = raw_time
+        else:
+            current_time = self._media_clock.update(raw_time)
 
         # Compteur pour les effets
         if not hasattr(self, '_timeline_tick'):
@@ -6252,51 +6279,15 @@ class Sequencer(QFrame):
             # --- Cas 2 : trajectoire ou effet automatique (16-bit) ---
             elif lyres_clip.get('move_effect') or 'pan_start' in lyres_clip:
                 self._pos_anim_target_idx = None  # pas de preset actif
-                move_effect  = lyres_clip.get('move_effect')
-                move_speed   = lyres_clip.get('move_speed', 0.5)
-                move_amp     = lyres_clip.get('move_amplitude', 60)
-                progress     = lyres_clip.get('move_progress', 0.0)
-                elapsed      = lyres_clip.get('move_elapsed', 0.0)
-
-                pan_start    = lyres_clip.get('pan_start', 128)
-                tilt_start   = lyres_clip.get('tilt_start', 128)
-                pan_end      = lyres_clip.get('pan_end', 128)
-                tilt_end     = lyres_clip.get('tilt_end', 128)
-
-                if move_effect:
-                    # Effets auto — centre 0-255 (spinbox dialog), amplitude 5-120, converti en 16-bit
-                    t        = elapsed * move_speed * 2 * math.pi
-                    ctr_pan  = pan_start  * 257   # 0-255 → 0-65535
-                    ctr_tilt = tilt_start * 257
-                    amp_16   = move_amp   * 256   # 5-120 → 1280-30720
-                    if move_effect == 'cercle':
-                        pan_val  = ctr_pan  + int(amp_16 * math.cos(t))
-                        tilt_val = ctr_tilt + int(amp_16 * math.sin(t))
-                    elif move_effect == 'figure8':
-                        pan_val  = ctr_pan  + int(amp_16 * math.sin(t))
-                        tilt_val = ctr_tilt + int(amp_16 * math.sin(2 * t) / 2)
-                    elif move_effect == 'balayage_h':
-                        pan_val  = ctr_pan  + int(amp_16 * math.sin(t))
-                        tilt_val = ctr_tilt
-                    elif move_effect == 'balayage_v':
-                        pan_val  = ctr_pan
-                        tilt_val = ctr_tilt + int(amp_16 * math.sin(t))
-                    elif move_effect == 'aleatoire':
-                        pan_val  = ctr_pan  + int(amp_16 * 0.6 * math.sin(t * 1.0) +
-                                                  amp_16 * 0.4 * math.sin(t * 1.7 + 1.3))
-                        tilt_val = ctr_tilt + int(amp_16 * 0.6 * math.cos(t * 0.8 + 0.7) +
-                                                  amp_16 * 0.4 * math.cos(t * 2.1 + 2.5))
-                    else:
-                        pan_val  = ctr_pan
-                        tilt_val = ctr_tilt
-                else:
-                    # Trajectoire linéaire — valeurs 16-bit (PanTiltPad, 0-65535)
-                    p = max(0.0, min(1.0, progress))
-                    pan_val  = int(pan_start  + (pan_end  - pan_start)  * p)
-                    tilt_val = int(tilt_start + (tilt_end - tilt_start) * p)
-
-                pan_val  = max(0, min(65535, pan_val))
-                tilt_val = max(0, min(65535, tilt_val))
+                # Calcul partagé avec l'aperçu de l'éditeur — cf.
+                # light_timeline.movement_pan_tilt. Les deux moteurs avaient
+                # chacun leur version, et celle de l'aperçu ignorait purement et
+                # simplement `move_effect`.
+                from light_timeline import movement_pan_tilt
+                pan_val, tilt_val = movement_pan_tilt(
+                    lyres_clip.get,
+                    lyres_clip.get('move_elapsed', 0.0),
+                    lyres_clip.get('move_progress', 0.0))
 
                 for idx in lyres_indices:
                     if idx < len(self.player_ui.projectors):

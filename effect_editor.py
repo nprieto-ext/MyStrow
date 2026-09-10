@@ -19,10 +19,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
-from core import (projector_selection_keys, layer_selection_ranks,
+from core import (fixture_is_fx_machine,
+                  projector_selection_keys, layer_selection_ranks,
                   block_index, chase_slot, layer_frequency, random_wave,
                   effect_dim_base_color, position_preset_values,
-                  find_position_preset, ComboSansMolette)
+                  find_position_preset, ComboSansMolette,
+                  pan_angular_ratio)
 from i18n import tr
 
 
@@ -451,12 +453,20 @@ FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Un par un",
 # Formes de trajectoire pour les lyres (Pan/Tilt couplés mathématiquement)
 # Chaque forme : {"pan": (forme, phase 0-100, speed_mult), "tilt": (forme, phase, speed_mult)}
 # phase 25 = décalage de 90°, speed_mult 2.0 = vitesse double
-# Compensation physique du ratio pan/tilt : le PAN d'une lyre couvre ~540° pour
-# ~270° de TILT. À amplitude DMX égale, le pan balaie 2× plus d'angle → un
-# « cercle » se projette en « 8 » (et le pan qui fait 1,5 tour repasse au centre).
-# On réduit donc l'amplitude PAN de moitié pour que pan et tilt couvrent le même
-# angle → vrai cercle à amplitude max. (Ajustable si vos lyres ont un autre ratio.)
-PAN_ANGULAR_RATIO = 0.5
+# Compensation physique du ratio pan/tilt : le PAN d'une lyre couvre plus
+# d'angle que le TILT (540°/270° sur la plupart). À amplitude DMX égale, un
+# « cercle » se projetterait donc en « 8 » aplati. On réduit l'amplitude PAN
+# d'autant pour que les deux axes couvrent le même angle.
+#
+# Le ratio se lit maintenant SUR LA FIXTURE (`core.pan_angular_ratio`), qui
+# rend `tilt_range / pan_range` : une lyre 360°/270° obtient 0,75 au lieu des
+# 0,5 figés d'avant, et son cercle devient enfin rond. Sur une 540°/270° — le
+# défaut — la valeur reste 0,5, donc la sortie DMX ne bouge pas.
+#
+# ⚠️ Point UNIQUE : l'aperçu de l'éditeur et le moteur du show appellent tous
+# deux `core.pan_angular_ratio(proj)`. Les laisser diverger, c'est rejouer
+# « l'aperçu ne ressemble pas au show ».
+PAN_ANGULAR_RATIO = 0.5   # repli seulement (fixture inconnue)
 
 PAN_TILT_SHAPES = {
     "cercle":    {"label": "○  Cercle",     "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",    25, 1.0)},
@@ -4405,7 +4415,7 @@ class EffectEditorDialog(QDialog):
             self._push_overrides_to_3d(overrides if _live else None)
             # Alimenter la mini strip (même filtre anti-fumée que _compute_preview)
             all_proj = getattr(self._main_window, 'projectors', [])
-            strip_proj = [p for p in all_proj if getattr(p, 'group', '') != 'fumee'][:16]
+            strip_proj = [p for p in all_proj if not fixture_is_fx_machine(p)][:16]
             if strip_proj and overrides:
                 levels = [overrides[id(p)][0] if id(p) in overrides else 0.0 for p in strip_proj]
                 colors = [overrides[id(p)][1] if id(p) in overrides else QColor(0, 0, 0) for p in strip_proj]
@@ -4441,7 +4451,7 @@ class EffectEditorDialog(QDialog):
         """Calcule {id(proj): (level, QColor)} depuis self._layers."""
         # Fix F : exclure la fumée (identique à l'exécution live)
         projectors = [p for p in getattr(self._main_window, 'projectors', [])
-                      if getattr(p, 'group', '') != 'fumee']
+                      if not fixture_is_fx_machine(p)]
         if not projectors or not self._layers:
             return {}
 
@@ -4607,9 +4617,11 @@ class EffectEditorDialog(QDialog):
                     g += (c1.greenF() * raw + c2.greenF() * r2) * amp
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr == "Pan":
-                    # Course PLEINE : parite avec le moteur du show, qui ne
-                    # plafonne plus ces couches a +/-12,5% (cf. _update_effect_from_layers).
-                    amp = (layer.size / 100.0) * 32768 * PAN_ANGULAR_RATIO
+                    # +/-8192 (+/-12,5% de course) : parite avec le moteur du
+                    # show (cf. _update_effect_from_layers). Ces 3 sites et les 2
+                    # de main_window doivent TOUJOURS porter le meme facteur,
+                    # sinon l'apercu de l'editeur ment sur l'amplitude reelle.
+                    amp = (layer.size / 100.0) * 8192 * pan_angular_ratio(proj)
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
@@ -4617,7 +4629,7 @@ class EffectEditorDialog(QDialog):
                     pan_v = int(max(0, min(65535, c_pan + pan_sign * (raw - 0.5) * 2 * amp)))
                     has_movement = True
                 elif attr == "Tilt":
-                    amp = (layer.size / 100.0) * 32768
+                    amp = (layer.size / 100.0) * 8192
                     _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
                     c_tilt = _ctr[1] if _ctr is not None else 32768
                     tilt_v = int(max(0, min(65535, c_tilt + (raw - 0.5) * 2 * amp)))
@@ -4627,10 +4639,9 @@ class EffectEditorDialog(QDialog):
                     sdef     = PAN_TILT_SHAPES.get(sid, PAN_TILT_SHAPES.get('cercle', {}))
                     pan_cfg  = sdef.get('pan',  ('Sinus',  0, 1.0))
                     tilt_cfg = sdef.get('tilt', ('Sinus', 25, 1.0))
-                    # L'apercu etait reste a 8192 alors que le show utilise la
-                    # course pleine depuis le passage de la trajectoire couplee :
-                    # il montrait un QUART du mouvement reel.
-                    pt_amp   = (layer.size / 100.0) * 32768
+                    # Meme facteur que le show (main_window, couche "Pan/Tilt") :
+                    # les deux ont ete ramenes de 32768 a 8192.
+                    pt_amp   = (layer.size / 100.0) * 8192
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     # SENS de la trajectoire : → avant · ← inverse (la lyre tourne
@@ -4651,7 +4662,7 @@ class EffectEditorDialog(QDialog):
                         p_freq = layer_frequency(layer.speed, p_mult)
                         p_x    = (_pt_time(p_freq) + i_fx / max(n_fx, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
-                        pan_v  = int(max(0, min(65535, c_pan + pan_sign * (p_raw - 0.5) * 2 * pt_amp * PAN_ANGULAR_RATIO)))
+                        pan_v  = int(max(0, min(65535, c_pan + pan_sign * (p_raw - 0.5) * 2 * pt_amp * pan_angular_ratio(proj))))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
                         t_freq = layer_frequency(layer.speed, t_mult)

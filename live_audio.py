@@ -347,6 +347,7 @@ class LiveAudioEngine(QObject):
         self._nervosity      = 0.5
         self._sensitivity    = 0.7
         self._max_dimmers    = {}            # {groupe: 0–100} plafond de niveau par groupe
+        self._accent_groups  = None          # groupes D→H peuplés (None = tous)
 
         # Historiques (~4 s = 80 chunks × 50 ms)
         self._rms_history    = deque(maxlen=80)
@@ -472,6 +473,15 @@ class LiveAudioEngine(QObject):
     def update_dimmers(self, dimmers: dict):
         """Plafond de niveau par groupe (0–100) appliqué en temps réel au mode LIVE."""
         self._max_dimmers = dict(dimmers or {})
+
+    def update_accent_groups(self, groups):
+        """Groupes d'accent (D→H) qui portent un projecteur.
+
+        Le moteur n'a pas le plan de feu : `main_window` le lui pousse à chaque
+        image. Sans ça, le chenillard s'arrêterait sur des groupes vides.
+        None = pas d'info, tous les groupes d'accent tournent.
+        """
+        self._accent_groups = list(groups) if groups is not None else None
 
     def set_manual_bpm(self, bpm: float):
         """Active le BPM manuel et remplace la détection automatique."""
@@ -1406,7 +1416,9 @@ class LiveAudioEngine(QObject):
     def _emit_state(self):
         if not self._running or self._elapsed_ms == 0:
             return
-        state = self.audio_ai.get_state_at(self._elapsed_ms, 0, max_dimmers=self._max_dimmers)
+        state = self.audio_ai.get_state_at(
+            self._elapsed_ms, 0, max_dimmers=self._max_dimmers,
+            accent_groups=self._accent_groups)
         state['section'] = self._section_state
         state['bands']   = dict(self._band_norm)
         self.state_ready.emit(state)
