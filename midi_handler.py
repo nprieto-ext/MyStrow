@@ -136,6 +136,11 @@ _APC40_MK2_LED_DIM  = 0x92   # 50 %, fixe
 _APC20_ROW_NOTES = {5: 52, 6: 50, 7: 49}
 _APC20_NOTE_ROWS = {note: row for row, note in _APC20_ROW_NOTES.items()}
 _APC20_MUTE_NOTE = 48
+# Colonne 8 (effets), ch0 : les 5 SCENE LAUNCH + le bouton STOP ALL CLIPS juste
+# en dessous, dans la meme colonne physique — soit 6 des 8 boutons d'effet.
+# Les effets 7 et 8 n'ont aucun bouton libre sur ce materiel (souris uniquement).
+_APC20_EFFECT_NOTES = {0: 82, 1: 83, 2: 84, 3: 85, 4: 86, 5: 81}
+_APC20_NOTE_EFFECTS = {note: row for row, note in _APC20_EFFECT_NOTES.items()}
 # Tap tempo : note 98 (bouton Shift), ch0
 _APC20_TAP_TEMPO_NOTE = 98
 
@@ -1009,7 +1014,8 @@ class MIDIHandler(QObject):
 
         Grille    : ch=piste — lignes 0-4 = clips (notes 53-57),
                     lignes 5-7 = CLIP STOP (52) / ACTIVATOR (50) / SOLO (49).
-        Colonne 8 : Scene Launch, ch=0, notes 82-86 (5 boutons, lignes 0-4).
+        Colonne 8 : effets, ch=0 — Scene Launch 82-86 (lignes 0-4) et
+                    STOP ALL CLIPS 81 (ligne 5). Lignes 6-7 : aucun bouton.
         Mute      : REC ARM (note 48), ch=piste — la rangee collee aux faders.
         Faders    : CC7 ch0-7 + master CC14 ch0 (deja traites dans _fader_index).
         Tap Tempo : note 98 (bouton Shift), ch=0.
@@ -1028,8 +1034,8 @@ class MIDIHandler(QObject):
             return
 
         if status_type == 0x80 or (status_type == 0x90 and data2 == 0):
-            if channel == 0 and _APC40_SCENE_BASE_NOTE <= data1 <= _APC40_SCENE_BASE_NOTE + 4:
-                self.pad_released.emit(data1 - _APC40_SCENE_BASE_NOTE, 8)
+            if channel == 0 and data1 in _APC20_NOTE_EFFECTS:
+                self.pad_released.emit(_APC20_NOTE_EFFECTS[data1], 8)
             else:
                 # Grille : necessaire aux pads couleur momentanes (mode FLASH).
                 row = self._apc20_grid_row(data1, channel)
@@ -1046,8 +1052,8 @@ class MIDIHandler(QObject):
         if row is not None:
             self.pad_pressed.emit(row, channel)
 
-        elif channel == 0 and _APC40_SCENE_BASE_NOTE <= note <= _APC40_SCENE_BASE_NOTE + 4:
-            self.pad_pressed.emit(note - _APC40_SCENE_BASE_NOTE, 8)
+        elif channel == 0 and note in _APC20_NOTE_EFFECTS:
+            self.pad_pressed.emit(_APC20_NOTE_EFFECTS[note], 8)
 
         # REC ARM : rangee du bas, collee aux faders → mute de la piste
         elif note == _APC20_MUTE_NOTE and 0 <= channel <= 7:
@@ -1269,6 +1275,36 @@ class MIDIHandler(QObject):
 
     # ─── LEDs ────────────────────────────────────────────────────────────────
 
+    def _restore_controller_mode(self):
+        """Rend son mode d'usine au controleur avant de lacher le port.
+
+        L'APC20 a ete bascule en Ableton Live Mode (0x41) a la connexion : ses
+        LEDs sont alors pilotees par l'hote et PLUS par le boitier. Le laisser
+        ainsi en quittant MyStrow donnerait un APC20 qui ne s'allume plus du
+        tout sous les doigts (ni pour une autre application). On eteint donc
+        tout puis on renvoie le Generic Mode (0x40), l'etat de mise sous tension.
+        """
+        if not self.midi_out or self.controller_type != 'apc20':
+            return
+        try:
+            for track in range(8):
+                for row in range(5):
+                    self.midi_out.send_message([0x90 | track, _APC40_CLIP_BASE_NOTE + row, 0])
+                for note in _APC20_ROW_NOTES.values():
+                    self.midi_out.send_message([0x90 | track, note, 0])
+                self.midi_out.send_message([0x90 | track, _APC20_MUTE_NOTE, 0])
+            for note in _APC20_EFFECT_NOTES.values():
+                self.midi_out.send_message([0x90, note, 0])
+            self.midi_out.send_message([
+                0xF0, 0x47, 0x7F, 0x7B,
+                0x60, 0x00, 0x04,
+                0x40, 0x00, 0x00, 0x00,
+                0xF7
+            ])
+            import time as _t; _t.sleep(0.05)   # laisser partir le SysEx
+        except Exception:
+            pass
+
     def initialize_leds(self):
         """Éteint toutes les LEDs selon le contrôleur actif."""
         if not self.midi_out:
@@ -1309,15 +1345,30 @@ class MIDIHandler(QObject):
                         self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
 
             elif ct == 'apc20':
-                # L'APC20 répond directement aux Note On sans SysEx
+                # SysEx d'init OBLIGATOIRE (product ID 0x7B) : a la mise sous
+                # tension l'APC20 demarre en « Generic Mode » (0x40) ou il
+                # allume SES PROPRES LEDs de clips et IGNORE les Note On de
+                # l'hote — d'ou une grille qui ne s'allumait jamais alors que
+                # les rangees de boutons de piste (elles, pilotables des le
+                # depart) repondaient. 0x41 = Ableton Live Mode : toutes les
+                # LEDs passent sous controle de l'hote et tous les boutons
+                # deviennent momentanes.
+                self.midi_out.send_message([
+                    0xF0, 0x47, 0x7F, 0x7B,
+                    0x60, 0x00, 0x04,
+                    0x41, 0x00, 0x00, 0x00,
+                    0xF7
+                ])
+                import time as _t; _t.sleep(0.05)
+
                 for track in range(8):
                     for row in range(5):
                         self.midi_out.send_message([0x90 | track, _APC40_CLIP_BASE_NOTE + row, 0])
                     for note in _APC20_ROW_NOTES.values():
                         self.midi_out.send_message([0x90 | track, note, 0])
                     self.midi_out.send_message([0x90 | track, _APC20_MUTE_NOTE, 0])
-                for row in range(5):
-                    self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 0])
+                for note in _APC20_EFFECT_NOTES.values():
+                    self.midi_out.send_message([0x90, note, 0])
 
             elif ct == 'launchpad_mini_mk3':
                 # Passage en Programmer mode (sinon le MK3 ignore les LED note 11-88)
@@ -1387,7 +1438,25 @@ class MIDIHandler(QObject):
             except Exception:
                 pass
 
-    def _binary_led_on(self, color_velocity, brightness_percent) -> bool:
+    def _is_exclusive_color_column(self, col) -> bool:
+        """La colonne presente-t-elle 8 choix EXCLUSIFS (colonne de couleurs) ?
+
+        Seules les colonnes de type « group » fonctionnent ainsi : un seul pad
+        de la colonne est pris a la fois. Les colonnes PLAY / VIDEO / VFX / FX /
+        POS / MEMOIRE, elles, affichent des pads INDEPENDANTS dont la couleur
+        EST l'etiquette (▶ ⏮ ⏭ ⏹, effets, positions, memoires enregistrees).
+        """
+        if col is None:
+            return True     # appelant qui ne precise rien : ancien comportement
+        fm = getattr(self.owner_window, '_fader_map', None)
+        if not fm or not (0 <= col < len(fm)):
+            return False    # colonne 8 (effets) et hors-bornes : jamais exclusive
+        try:
+            return fm[col].get('type') == 'group'
+        except Exception:
+            return False
+
+    def _binary_led_on(self, color_velocity, brightness_percent, col=None) -> bool:
         """Un pad doit-il s'allumer sur un controleur SANS gradation de LED ?
 
         L'APC20 (comme l'APC40 MK1) n'a que 3 couleurs et aucun niveau de
@@ -1395,12 +1464,21 @@ class MIDIHandler(QObject):
         comme sur l'APC Mini. Le seul equivalent est donc d'ETEINDRE le pad des
         que MyStrow demande la luminosite « inactive ».
 
+        ⚠ Mais UNIQUEMENT sur une colonne de couleurs (cf.
+        _is_exclusive_color_column) : la, eteindre les 7 autres pads est le seul
+        moyen de voir lequel est pris. Sur une colonne PLAY / VIDEO / VFX / FX /
+        POS / MEMOIRE, les pads sont dessines en luminosite « inactive » tant
+        qu'ils ne sont pas declenches — les eteindre rendait toute la colonne
+        NOIRE sur le boitier alors qu'elle repondait parfaitement aux appuis.
+
         On compare au reglage reel de la fenetre (curseurs ON/OFF, 0-100) plutot
         qu'a un seuil en dur : regler ON a 50 % ne doit pas eteindre la grille.
         Si ON <= OFF (reglage degenere), on n'eteint rien.
         """
         if color_velocity <= 0:
             return False
+        if not self._is_exclusive_color_column(col):
+            return True
         ow = self.owner_window
         active   = getattr(ow, 'akai_active_brightness', 100)
         inactive = getattr(ow, 'akai_inactive_brightness', 20)
@@ -1525,16 +1603,16 @@ class MIDIHandler(QObject):
         """
         if not self.midi_out:
             return
-        on = self._binary_led_on(color_velocity, brightness_percent)
+        on = self._binary_led_on(color_velocity, brightness_percent, col)
         if col < 8:
             if row <= 4:
                 vel = _to_apc40_vel(color_velocity) if on else 0
                 self.midi_out.send_message([0x90 | col, _APC40_CLIP_BASE_NOTE + row, vel])
             elif row in _APC20_ROW_NOTES:
                 self.midi_out.send_message([0x90 | col, _APC20_ROW_NOTES[row], 1 if on else 0])
-        elif col == 8 and row <= 4:
-            # Scene Launch : 5 boutons seulement, les lignes 5-7 n'existent pas
-            self.midi_out.send_message([0x90, _APC40_SCENE_BASE_NOTE + row, 1 if on else 0])
+        elif col == 8 and row in _APC20_EFFECT_NOTES:
+            # 5 Scene Launch + STOP ALL CLIPS : les lignes 6-7 n'existent pas
+            self.midi_out.send_message([0x90, _APC20_EFFECT_NOTES[row], 1 if on else 0])
 
     # ─── Divers ──────────────────────────────────────────────────────────────
 
@@ -1558,6 +1636,7 @@ class MIDIHandler(QObject):
         if hasattr(self, 'connection_check_timer') and self.connection_check_timer:
             self.connection_check_timer.stop()
         self._close_extra_inputs()
+        self._restore_controller_mode()
         if self.midi_in:
             try: self.midi_in.close_port()
             except Exception: pass

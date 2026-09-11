@@ -620,7 +620,9 @@ class EffectLayer:
         # target_preset == "Selection". Prime sur le groupe d'un clip en REC.
         self.target_selection = []
         self.speed     = 50    # vitesse du cycle 0-100
-        self.size      = 100   # amplitude 0-100
+        self.size      = 100   # amplitude 0-100 (0-400 sur Pan/Tilt : cf.
+                               # LayerRow._AMP_MAX_PT — là, AMP est une largeur
+                               # de mouvement et 100 ne vaut que 12,5 % de course)
         self.spread    = 0     # décalage de phase entre fixtures 0-100
         self.phase     = 0     # décalage global de phase 0-100 (0=no shift, 50=½ cycle, 100=full cycle)
         self.fade      = 0     # adoucissement de la forme 0=dur 100=doux
@@ -1098,7 +1100,10 @@ LAYER_COLS = [
      "Molette = réglage au dixième (29,8 ≈ 128 BPM).\n"
      "Maj+molette = pas entier."),
     ("amp",    "AMP",          42,
-     "Amplitude : intensité maximale atteinte par l'effet."),
+     "Amplitude : intensité maximale atteinte par l'effet.\n"
+     "Sur Pan / Tilt c'est la largeur du mouvement, et la colonne monte\n"
+     "alors jusqu'à 400 : 100 ne balaie que 12,5 % de la course (l'échelle\n"
+     "de tous les shows existants), 400 donne le mouvement maximal."),
     ("min",    "MIN",          42,
      "Niveau plancher : l'effet ne descend jamais en dessous.\n"
      "Au-dessus de 0, les projecteurs ne s'éteignent plus complètement."),
@@ -1404,6 +1409,27 @@ class _NumCell(QWidget):
 
     def value(self):
         return self._value
+
+    def maximum(self):
+        return self._max
+
+    def set_maximum(self, maximum):
+        """Change la borne haute à chaud, sans émettre.
+
+        La jauge de fond, la sensibilité du glisser et le pas de molette se
+        lisent tous sur `_max` à chaque événement : il n'y a donc que la valeur
+        courante à ramener dans les nouvelles bornes. **Aucun signal** n'est
+        émis — l'appelant vient de changer la plage, c'est à lui de répercuter
+        la valeur rabattue sur son modèle ; émettre ici rentrerait dans le
+        `valueChanged` → `_sync_enabled_state` → plafond → `valueChanged` de
+        l'éditeur d'effets.
+        """
+        m = max(self._min + 1, int(maximum))
+        if m == self._max:
+            return
+        self._max   = m
+        self._value = self._clamp(self._value)
+        self.update()
 
     def _clamp(self, v):
         """Valeur ramenée dans les bornes ET sur la grille de la cellule.
@@ -1854,6 +1880,24 @@ class LayerRow(QFrame):
     # Rien à migrer : `layer_frequency` travaille déjà en flottant et `to_dict`
     # écrit `speed` tel quel. Les shows et les préréglages en place gardent
     # leurs valeurs entières, donc exactement leur figure.
+
+    # Canaux de mouvement : AMP y veut dire « largeur du mouvement », pas
+    # « intensité ». Le moteur convertit AMP 100 en ±8192, soit 12,5 % de la
+    # course DMX seulement (cf. main_window, ligne `(size / 100.0) * 8192`) :
+    # sur une lyre 540°, AMP 100 ne balaie que 67,5° là où l'appareil sait
+    # faire 540. Le plafond de la colonne est donc porté à 400 sur ces canaux —
+    # AMP 400 sature la course de tilt (et le pan suit, réduit par
+    # `pan_angular_ratio` pour qu'un cercle reste rond : 270° sur une 540/270),
+    # soit exactement ce que la 3.1.91 donnait à AMP 100 et que Christo avait
+    # trouvé juste — AU LIEU de toucher le facteur 8192 : toutes
+    # les couches déjà enregistrées (effets custom, configs de boutons, .lrec,
+    # .tui) gardent ainsi exactement le rendu auquel elles ont été réglées.
+    # Retour Christo, 11/09/2026 : « tu peux mettre à 100, ça va pas plus que
+    # je dirai 30 40 » — c'est ce plafond, mesuré à l'œil et juste.
+    _PT_ATTRS   = ("Pan", "Tilt", "Pan/Tilt")
+    _AMP_MAX    = 100
+    _AMP_MAX_PT = 400
+
     _NUM_FIELDS = [
         ("vit",    "speed",   100, 0, 1),
         ("amp",    "size",    100, 0, 0),
@@ -2135,6 +2179,8 @@ class LayerRow(QFrame):
         Les couches Pan/Tilt sont hors sujet : leur mouvement vient de la
         trajectoire, pas de `forme`.
         """
+        self._sync_amp_ceiling()
+
         gele = (self.layer.attribute != "Pan/Tilt"
                 and self.layer.forme in self._FORMES_CONSTANTES
                 and not getattr(self.layer, 'fade', 0))
@@ -2191,7 +2237,49 @@ class LayerRow(QFrame):
         self._cells["min"].setToolTip(tip if dead_level == "min" else self._tip["min"])
         self._cells["max"].setToolTip(tip if dead_level == "max" else self._tip["max"])
 
+    def _sync_amp_ceiling(self):
+        """Accorde le plafond de la colonne AMP sur le canal de la couche.
+
+        400 sur Pan / Tilt / Pan-Tilt (400 = course mécanique complète), 100
+        partout ailleurs, où AMP est bien un pourcentage d'intensité. Appelé
+        par `_sync_enabled_state`, donc à chaque changement de canal.
+
+        Quand le plafond REDESCEND (l'utilisateur repasse une couche de Pan à
+        Dimmer), la valeur est rabattue sur le modèle aussi : un `size` de 400
+        laissé sur un Dimmer multiplierait son intensité par quatre
+        (`(min + forme × (max − min)) × size / 100`).
+        """
+        cell = self._cells.get("amp")
+        if cell is None:
+            return
+        _pt      = self.layer.attribute in self._PT_ATTRS
+        plafond  = self._AMP_MAX_PT if _pt else self._AMP_MAX
+        cell.set_maximum(plafond)
+        if getattr(self.layer, 'size', 0) > plafond:
+            self.layer.size = plafond
+        # Remettre la cellule d'accord avec le modèle : en montant le plafond on
+        # libère une valeur que la cellule avait pu rabattre (AMP 400 relu dans
+        # une cellule encore bornée à 100), en le baissant on vient de rabattre
+        # le modèle. Sans signal : on ne fait que refléter, pas modifier.
+        cell.blockSignals(True)
+        cell.set_value(getattr(self.layer, 'size', 0), emit=False)
+        cell.blockSignals(False)
+        cell.setToolTip(
+            "Amplitude : largeur du mouvement, pas une intensité.\n"
+            "100 = 12,5 % de la course seulement — l'échelle de tous les\n"
+            "shows déjà enregistrés, qu'on ne touche pas.\n"
+            "400 = mouvement maximal : course de tilt complète, et le pan\n"
+            "accordé dessus pour qu'un cercle reste rond.\n"
+            "L'angle que cela fait dépend de la lyre (fenêtre Patch,\n"
+            "« Débattement mécanique » — 270° sur une 540°/270°)."
+            if _pt else self._tip["amp"])
+
     def _mk_num(self, key, attr, maximum, minimum=0, decimals=0):
+        # AMP naît déjà au bon plafond sur une couche de mouvement : la créer à
+        # 100 rabattrait un `size` de 400 relu d'un show avant même que
+        # `_sync_amp_ceiling` ne puisse relever la borne.
+        if key == "amp" and self.layer.attribute in self._PT_ATTRS:
+            maximum = self._AMP_MAX_PT
         cell = _NumCell(getattr(self.layer, attr, minimum), maximum,
                         width=self._w[key], accent=self._accent(),
                         minimum=minimum, decimals=decimals)
@@ -2252,6 +2340,9 @@ class LayerRow(QFrame):
         for w in blocs:
             w.blockSignals(False)
 
+        # Le plafond AMP d'ABORD : sur une couche Pan/Tilt a 400, le reposer
+        # apres aurait rabattu la valeur sur les 100 encore en place.
+        self._sync_amp_ceiling()
         for key, attr, _max, _min, _dec in self._NUM_FIELDS:
             cell = self._cells[key]
             cell.blockSignals(True)
@@ -4617,10 +4708,17 @@ class EffectEditorDialog(QDialog):
                     g += (c1.greenF() * raw + c2.greenF() * r2) * amp
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr == "Pan":
-                    # +/-8192 (+/-12,5% de course) : parite avec le moteur du
-                    # show (cf. _update_effect_from_layers). Ces 3 sites et les 2
-                    # de main_window doivent TOUJOURS porter le meme facteur,
-                    # sinon l'apercu de l'editeur ment sur l'amplitude reelle.
+                    # AMP 100 = +/-8192 (+/-12,5% de course) : parite avec le
+                    # moteur du show (cf. _update_effect_from_layers). Ces 3
+                    # sites et les 2 de main_window doivent TOUJOURS porter le
+                    # meme facteur, sinon l'apercu de l'editeur ment sur
+                    # l'amplitude reelle.
+                    # Ce facteur ne bouge PLUS : c'est le plafond de la colonne
+                    # AMP qui a ete porte a 400 pour ces canaux (LayerRow.
+                    # _AMP_MAX_PT, 400 = course complete). Le relever ici
+                    # changerait le rendu de tous les shows deja enregistres —
+                    # c'est precisement ce que la 3.1.91 avait fait (x4) et que
+                    # la 3.1.92 a du annuler.
                     amp = (layer.size / 100.0) * 8192 * pan_angular_ratio(proj)
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1

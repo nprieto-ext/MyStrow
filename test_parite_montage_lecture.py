@@ -32,7 +32,16 @@ class AmplitudePanTilt(unittest.TestCase):
     MOTIF = re.compile(r'(?:size / 100\.0\) \* )(\d+)')
 
     def _facteurs(self, nom):
-        return [int(m) for m in self.MOTIF.findall(src(nom))]
+        """Les facteurs du CODE, commentaires exclus.
+
+        Les commentaires citent l'expression exacte — c'est voulu, ils
+        expliquent pourquoi elle ne bouge pas et renvoient d'un moteur a
+        l'autre — et les compter faisait echouer ce test a la premiere phrase
+        ajoutee (vu le 11/09/2026, en documentant le plafond AMP a 400).
+        """
+        code = '\n'.join(l for l in src(nom).splitlines()
+                         if not l.lstrip().startswith('#'))
+        return [int(m) for m in self.MOTIF.findall(code)]
 
     def test_les_cinq_sites_existent_toujours(self):
         self.assertEqual(len(self._facteurs('main_window.py')), 2)

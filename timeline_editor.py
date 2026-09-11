@@ -59,6 +59,46 @@ from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
 
 
+# Couleurs associees a chaque groupe (identiques au patch DMX)
+_TRACK_COLORS = {
+    "A":      "#ff8844",
+    "B":      "#4488ff",
+    "C":      "#44cc88",
+    "D":      "#ff6655",
+    "E":      "#cc44ff",
+    "F":      "#ffcc22",
+    "G":      "#22ddcc",
+    "H":      "#ff7722",
+    "Fumee":  "#88aaaa",
+    "Lyres":  "#ff44cc",
+    "Barres": "#44aaff",
+    "Strobos":"#ffee44",
+}
+
+# Ordre canonique des pistes de la timeline : les groupes dans l'ordre
+# alphabetique, puis les pistes speciales.
+#
+# G et H manquaient. Absents de cette liste ils prenaient la cle des groupes
+# INCONNUS et atterrissaient tout en bas, APRES Lyres / Barres / Strobos /
+# Fumee, sans couleur propre non plus (ils heritaient du bleu de B). Retour
+# Christo, 11/09/2026 : « les groupes sont plus ordonnes ». C'etait le seul
+# endroit du code tronque a F ; partout ailleurs la liste va bien de A a H.
+#
+# Au niveau module, et non dans `_create_tracks_from_fixtures`, pour que l'ordre
+# soit verifiable sans construire la fenetre (test_pistes_ordre_groupes.py).
+_TRACK_ORDER = ["A", "B", "C", "D", "E", "F", "G", "H",
+                "Lyres", "Barres", "Strobos", "Fumee"]
+
+
+def track_sort_key(nom):
+    """Rang d'une piste de groupe dans l'ordre canonique.
+
+    Les noms inconnus vont a la fin, sans se melanger entre eux : le tri est
+    stable, ils gardent donc leur ordre d'apparition dans le patch.
+    """
+    return _TRACK_ORDER.index(nom) if nom in _TRACK_ORDER else len(_TRACK_ORDER)
+
+
 class _AnalysisCancelled(Exception):
     """Exception interne pour interrompre l'analyse audio"""
     pass
@@ -527,27 +567,10 @@ class LightTimelineEditor(QDialog):
         # couleur — et donc d'un fondu enchaine sur la flamme.
         from core import fixture_is_fx_machine
 
-        # Couleurs associees a chaque groupe (identiques au patch DMX)
-        TRACK_COLORS = {
-            "A":      "#ff8844",
-            "B":      "#4488ff",
-            "C":      "#44cc88",
-            "D":      "#ff6655",
-            "E":      "#cc44ff",
-            "F":      "#ffcc22",
-            "Fumee":  "#88aaaa",
-            "Lyres":  "#ff44cc",
-            "Barres": "#44aaff",
-            "Strobos":"#ffee44",
-        }
-        # Ordre canonique des pistes dans la timeline (A→F alphabetique, puis specials)
-        TRACK_ORDER = ["A", "B", "C", "D", "E", "F",
-                       "Lyres", "Barres", "Strobos", "Fumee"]
-
         # Gardés pour les pistes projecteur, créées à la demande bien après
         # cette méthode (bouton « ＋ Projecteur »).
         self._group_display = GROUP_DISPLAY
-        self._track_colors  = TRACK_COLORS
+        self._track_colors  = _TRACK_COLORS
 
         seen_groups = []
         for proj in projectors:
@@ -556,7 +579,7 @@ class LightTimelineEditor(QDialog):
                 seen_groups.append(gname)
 
         # Trier selon l'ordre canonique (groupes inconnus a la fin)
-        seen_groups.sort(key=lambda g: TRACK_ORDER.index(g) if g in TRACK_ORDER else len(TRACK_ORDER))
+        seen_groups.sort(key=track_sort_key)
 
         self.tracks = []
         self.track_map = {}
@@ -629,7 +652,7 @@ class LightTimelineEditor(QDialog):
             par_groupe.setdefault(gdisp, []).append(key)
 
         for gname in seen_groups:
-            color = TRACK_COLORS.get(gname, "#4488ff")
+            color = _TRACK_COLORS.get(gname, "#4488ff")
             track = LightTrack(gname, self.media_duration, self, color)
             self.tracks.append(track)
             self.track_map[gname] = track

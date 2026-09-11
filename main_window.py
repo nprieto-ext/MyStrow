@@ -12167,7 +12167,11 @@ class MainWindow(QMainWindow):
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
                 elif attr in ("Pan", "Tilt"):
                     saved = self.effect_saved_colors.get(id(proj))
-                    # TAILLE 100 = +/-8192, soit +/-12,5% de course.
+                    # AMP 100 = +/-8192, soit +/-12,5% de course. Pour aller
+                    # plus loin c'est le PLAFOND de la colonne AMP qui monte
+                    # (400 sur les canaux de mouvement = course complete, cf.
+                    # effect_editor.LayerRow._AMP_MAX_PT), pas ce facteur :
+                    # ainsi une couche deja enregistree garde son rendu.
                     # 3.1.91 avait porte ce facteur a 32768 (course pleine), au
                     # motif que rien dans l'UI n'annoncait le plafond. Annule :
                     # tout show monte avant 3.1.91 a ete regle a cette echelle,
