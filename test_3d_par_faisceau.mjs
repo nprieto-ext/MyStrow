@@ -15,7 +15,12 @@ import { readFileSync } from 'node:fs';
 const html = readFileSync('./plan_3d_web.html', 'utf8');
 const src  = html.slice(html.indexOf('const BEAM_TMAX'),
                         html.indexOf('// Positionner / orienter un cône unit'));
-const beamFloor = new Function(`${src}; return beamFloor;`)();
+// `beamFloor()` borne son point d'arrivée sur l'emprise du SOL, déclarée avec
+// le maillage du plancher (source unique). Ces constantes sont donc hors de la
+// tranche ci-dessus : on les reprend à part plutôt que d'en dupliquer les
+// valeurs ici, sinon le test validerait une salle que la scène n'a plus.
+const floorSrc = (html.match(/^const FLOOR_[A-Z0-9_]+ .*$/gm) || []).join('\n');
+const beamFloor = new Function(`${floorSrc}\n${src}; return beamFloor;`)();
 
 // ── Direction réelle du maillage ─────────────────────────────────────────────
 // La galette de LED est montée sous le corps : l'émission suit le nadir local.

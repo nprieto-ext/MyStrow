@@ -29,3 +29,7 @@ controllers_bundle.json.gz
 __pycache__/
 *.pyc
 ffmpeg.exe
+
+# App mobile (Capacitor) : dépendances et copie générée de tablet/
+mobile/node_modules/
+mobile/www/

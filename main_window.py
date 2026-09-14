@@ -218,7 +218,7 @@ except ImportError:
 from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
-    spread_rank, SPREAD_MODES, channel_label,
+    spread_rank, SPREAD_MODES, channel_label, clear_effect_channels,
     projector_selection_keys, layer_selection_ranks, block_index, chase_slot,
     projector_track_key,
     layer_frequency, random_wave, effect_dim_base_color,
@@ -4398,6 +4398,7 @@ class MainWindow(QMainWindow):
         # Sortie live de l'éditeur d'effets : {id(proj): (level, color, pan, tilt)}
         # Alimenté par l'éditeur quand « Sortie live » est armé, None sinon.
         self._editor_live_overrides = None
+        self._editor_live_channels  = None   # couches « Canal » de la sortie live
         self.blackout_active = False
         self._last_fader_mode = "FX"   # "FX" ou "MASTER" pour le fader 9
         self.master_level = 100        # 0-100, appliqué en sortie DMX
@@ -10023,17 +10024,10 @@ class MainWindow(QMainWindow):
                     # Dernier effet : arrêter le timer et restaurer les couleurs
                     if hasattr(self, 'effect_timer'):
                         self.effect_timer.stop()
-                    self._restore_effect_state()
-                    # Ramener les Moving Heads au centre (transition fluide) —
-                    # centre de la ZONE autorisée, pas le milieu de course, qui
-                    # peut tomber hors des limites du profil (`_pantilt_in_limits`).
-                    for p in self.projectors:
-                        if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                            self._start_pan_tilt_transition(
-                                p,
-                                self._pantilt_in_limits(p, 'pan',  0.0, 0),
-                                self._pantilt_in_limits(p, 'tilt', 0.0, 0),
-                                500)
+                    aims = self._restore_effect_state()
+                    # Même règle qu'à `stop_effect` : la lyre revient là où elle
+                    # visait avant l'effet (pad POS compris), pas au centre.
+                    self._return_lyres_after_effect(aims)
                     self.active_effect = None
                     self.active_effect_config = {}
                 else:
@@ -11012,7 +11006,14 @@ class MainWindow(QMainWindow):
         Le vidage compte autant que la restitution : tant que la capture reste
         en place, le plan 2D croit qu'un effet tourne et redirige ses réglages
         (pan/tilt, dimmer) vers ce dictionnaire mort au lieu des projecteurs.
+
+        Renvoie `{id(projecteur): (pan, tilt)}` pour les lyres dont la visée
+        vient d'être rendue : c'est la position d'AVANT l'effet (rappel de pad
+        POS compris), et donc celle vers laquelle `stop_effect` doit ramener la
+        lyre — surtout pas le centre de la zone.
         """
+        clear_effect_channels(self.projectors)
+        aims = {}
         for p in self.projectors:
             saved = self.effect_saved_colors.get(id(p))
             if not saved:
@@ -11020,6 +11021,7 @@ class MainWindow(QMainWindow):
             p.base_color, p.color, p.level = saved[0], saved[1], saved[2]
             if len(saved) > 4:
                 p.pan, p.tilt = saved[3], saved[4]
+                aims[id(p)] = (saved[3], saved[4])
             if len(saved) > 6:
                 p.white_boost, p.amber_boost = saved[5], saved[6]
             if len(saved) > 7:
@@ -11030,6 +11032,7 @@ class MainWindow(QMainWindow):
                 p.gobo, p.zoom = saved[9], saved[10]
         self.effect_saved_colors = {}
         self._effect_engine_frame = None
+        return aims
 
     def start_effect(self, effect_name):
         """Demarre l'effet selectionne par nom"""
@@ -11093,16 +11096,38 @@ class MainWindow(QMainWindow):
 
     def _stop_once_effect(self):
         """Arrête un effet lancé en mode 'une fois' et désactive le bouton correspondant."""
-        self.stop_effect()
-        # Désactiver le bouton AKAI actif
+        # Boutons éteints AVANT stop_effect : il ne ramène les lyres à leur
+        # visée que si plus aucun bouton n'est actif.
         for i, btn in enumerate(self.effect_buttons):
             if btn.active:
                 btn.active = False
                 btn.update_style()
                 if MIDI_AVAILABLE and self.midi_handler.midi_out and i < 8:
                     self.midi_handler.set_pad_led(i, 8, 0)
+        # Pad FX : même extinction, sinon il reste allumé sur un effet terminé
+        # et le prochain appui l'« éteint » au lieu de le rejouer.
+        if self.active_fx_pads:
+            self.active_fx_pads.clear()
+            for fc in range(_FX_COL_MAX):
+                for r in range(8):
+                    self._style_fx_pad(fc, r)
+                    self._update_fx_pad_led(fc, r)
         self.active_effect = None
         self.active_effect_config = {}
+        self.stop_effect()
+
+    def _finish_stacked_once(self, effect_idx):
+        """Fin d'un effet « Une fois » empilé (superposition) : retiré comme un
+        appui OFF sur son bouton — les autres effets continuent, et le dernier
+        retiré restitue l'état d'avant-effet."""
+        if not any(e.get('idx') == effect_idx for e in self._stacked_effects):
+            return
+        btn = self.effect_buttons[effect_idx]
+        if self.effect_superposition and btn.active:
+            self.toggle_effect(effect_idx)
+        else:
+            self._stacked_effects = [e for e in self._stacked_effects
+                                     if e.get('idx') != effect_idx]
 
     def _start_pan_tilt_transition(self, proj, new_pan: int, new_tilt: int, duration_ms: int = 500):
         """Lance une animation fluide pan/tilt vers (new_pan, new_tilt)."""
@@ -11182,6 +11207,37 @@ class MainWindow(QMainWindow):
         if log_label:
             self._log_message(log_label, "effect")
 
+    def _return_lyres_after_effect(self, aims=None):
+        """Ramene les lyres a leur visee quand plus AUCUN effet ne tourne.
+
+        Ordre de priorite, du plus imperatif au dernier recours :
+        1. `_timeline_pos_centers` — un clip Position de la timeline impose
+           encore une visee, elle prime sur tout le reste ;
+        2. `aims` — la position rendue par `_restore_effect_state`, c'est-a-dire
+           celle d'AVANT l'effet : le preset rappele au pad POS, le pan/tilt
+           pose au plan de feu, ou ce que l'utilisateur a envoye PENDANT l'effet
+           (`_sync_effect_baseline` fait suivre la capture) ;
+        3. le centre de la ZONE autorisee, et non le milieu de course, qui peut
+           tomber HORS des limites du profil (`_pantilt_in_limits`, norm=0).
+
+        Le point 2 manquait : la boucle sautait de la timeline au centre de
+        zone, donc en live AKAI la lyre quittait le preset POS rappele juste
+        avant pour aller se planter au milieu — « les lyres reprennent leur
+        position de base ». Une transition deja en vol est laissee tranquille :
+        elle vise plus juste que nous (un pad POS rappele il y a 200 ms).
+        """
+        centers = getattr(self, '_timeline_pos_centers', None) or {}
+        aims = aims or {}
+        for p in self.projectors:
+            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre'):
+                continue
+            if id(p) in getattr(self, '_pan_tilt_transitions', {}):
+                continue
+            pan, tilt = centers.get(id(p)) or aims.get(id(p)) or (
+                self._pantilt_in_limits(p, 'pan',  0.0, 0),
+                self._pantilt_in_limits(p, 'tilt', 0.0, 0))
+            self._start_pan_tilt_transition(p, pan, tilt, 500)
+
     def stop_effect(self):
         """Arrete l'effet en cours"""
         if hasattr(self, 'effect_timer'):
@@ -11190,31 +11246,17 @@ class MainWindow(QMainWindow):
         for p in self.projectors:
             p.dmx_mode = "Manuel"
 
-        self._restore_effect_state()
+        aims = self._restore_effect_state()
 
-        # Ramener les Moving Heads au centre quand plus aucun effet n'est actif
-        # (transition fluide) — SAUF si un clip Position de la timeline impose
-        # encore une visée : la lyre doit y revenir, pas partir au milieu de
-        # course. Sans cette exception, un effet Pan/Tilt posé PAR-DESSUS un clip
-        # Position laissait la lyre au centre à sa dernière image, et rien ne la
-        # ramenait (l'aperçu REC n'applique le clip Position qu'à son début).
+        # Ramener les Moving Heads à leur visée quand plus aucun effet n'est
+        # actif (transition fluide) — clip Position de la timeline, sinon la
+        # position rendue par la restitution, sinon le centre de zone.
         any_active = any(
             getattr(btn, 'active', False)
             for btn in getattr(self, 'effect_buttons', [])
         )
         if not any_active:
-            centers = getattr(self, '_timeline_pos_centers', None) or {}
-            for p in self.projectors:
-                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
-                    # À défaut de visée imposée : centre de la ZONE autorisée et
-                    # non le milieu de course, qui peut tomber HORS des limites du
-                    # profil — la lyre partait alors vers un point interdit et
-                    # finissait plaquée sur la butée de sa zone (cf.
-                    # `_pantilt_in_limits`, norm=0 → centre).
-                    pan, tilt = centers.get(id(p)) or (
-                        self._pantilt_in_limits(p, 'pan',  0.0, 0),
-                        self._pantilt_in_limits(p, 'tilt', 0.0, 0))
-                    self._start_pan_tilt_transition(p, pan, tilt, 500)
+            self._return_lyres_after_effect(aims)
 
     def _bascule(self):
         """Effet Bascule : echange les couleurs entre les deux groupes ou alterne un/deux."""
@@ -11291,6 +11333,10 @@ class MainWindow(QMainWindow):
         périmé, et tout l'état passerait pour une écriture étrangère.
         """
         self._sync_effect_baseline()
+        # Couches « Canal » : repartir d'une table vide à chaque frame, les
+        # effets (empilés compris) la remplissent en HTP. Sans ça, un canal
+        # qu'aucune couche ne vise plus garderait sa dernière valeur.
+        clear_effect_channels(self.projectors)
         try:
             self._run_effect_frame()
         finally:
@@ -11536,6 +11582,8 @@ class MainWindow(QMainWindow):
     def _apply_one_stacked_effect(self, eff_data):
         """Applique un tick d'un effet empilé (mode superposition).
         Sauvegarde/restaure les variables d'instance autour de l'appel."""
+        if eff_data.get('once_done'):
+            return  # « Une fois » terminé : retrait déjà programmé
         # ── Sauvegarder l'état actuel ─────────────────────────────────────
         saved_eff  = self.active_effect
         saved_cfg  = self.active_effect_config
@@ -11560,13 +11608,19 @@ class MainWindow(QMainWindow):
 
         # ── Exécuter un tick ─────────────────────────────────────────────
         cfg = self.active_effect_config
-        if cfg:
-            if cfg.get("layers"):
-                self._update_effect_from_layers(cfg)
+        self._stacked_tick = eff_data   # repère lu par le mode « Une fois »
+        try:
+            if cfg:
+                if cfg.get("layers"):
+                    self._update_effect_from_layers(cfg)
+                else:
+                    self._update_effect_from_config(cfg)
             else:
-                self._update_effect_from_config(cfg)
-        else:
-            self._run_named_effect()
+                self._run_named_effect()
+        finally:
+            self._stacked_tick = None
+        if eff_data.get('once_done'):
+            QTimer.singleShot(0, lambda idx=eff_data['idx']: self._finish_stacked_once(idx))
 
         # ── Sauvegarder le nouvel état dans le dict ───────────────────────
         eff_data['state']     = self.effect_state
@@ -11900,19 +11954,6 @@ class MainWindow(QMainWindow):
         self._effect_clock    = getattr(self, '_effect_clock', 0.0) + _dt * _fader_mult
         t = self._effect_clock
 
-        # Mode "une fois" : stoppe l'effet après la durée configurée
-        play_mode = cfg.get("play_mode", "loop")
-        if play_mode == "once":
-            duration = cfg.get("duration", 0)
-            if duration <= 0:
-                duration = 2.0  # durée par défaut d'un cycle : 2 secondes
-            # Durée en secondes RÉELLES, pas en temps déformé : à mi-vitesse
-            # l'effet fait deux fois moins de tours mais dure toujours autant.
-            # C'est le comportement d'origine.
-            if t_reel >= duration:
-                self.effect_timer.stop()  # stopper immédiatement pour éviter les appels multiples
-                QTimer.singleShot(0, self._stop_once_effect)
-                return
         _LETTER_TO_GROUP = {"A": "face", "B": "lat", "C": "contre",
                             "D": "douche1", "E": "douche2", "F": "douche3",
                             "G": "groupe_g", "H": "groupe_h"}
@@ -11930,6 +11971,53 @@ class MainWindow(QMainWindow):
                       if not fixture_is_fx_machine(p)
                       and (not allowed_groups or p.group in allowed_groups)]
         n = len(projectors)
+
+        # Mode « Une fois » : l'effet fait UN passage puis rend la main.
+        # - `duration` > 0 (anciennes configs) : durée en secondes RÉELLES,
+        #   comportement d'origine conservé ;
+        # - sinon : un tour complet de la couche la plus lente, mesuré sur
+        #   l'horloge de PHASE (`core.effect_cycle_seconds`) — à mi-vitesse
+        #   l'effet dure deux fois plus mais fait bien un tour entier. Rien
+        #   d'animé → repli historique de 2 s.
+        # Placé après le filtre des projecteurs : un chenillard aller-retour a
+        # besoin du nombre de fixtures ciblées pour savoir quand il est revenu.
+        if cfg.get("play_mode", "loop") == "once":
+            from core import effect_cycle_seconds
+            duration = float(cfg.get("duration", 0) or 0)
+            if duration > 0:
+                fini = t_reel >= duration
+            else:
+                cycle = effect_cycle_seconds(layers_dicts, n)
+                fini = (t >= cycle) if cycle > 0 else (t_reel >= 2.0)
+            if fini:
+                if getattr(self, '_stacked_tick', None) is not None:
+                    # Effet empilé (superposition) : ne couper QUE lui, le timer
+                    # anime encore les autres. `_apply_one_stacked_effect` le
+                    # retire de la pile après la frame.
+                    self._stacked_tick['once_done'] = True
+                    return
+                self.effect_timer.stop()  # stopper immédiatement pour éviter les appels multiples
+                QTimer.singleShot(0, self._stop_once_effect)
+                return
+        # Couches « Canal » : calculées à part, sur TOUS les appareils —
+        # machines comprises, mais limitées à leur canal de sortie (cf.
+        # core.channel_layer_indices). Même fonction que l'aperçu de l'éditeur.
+        # Avant le `n == 0` : un effet qui ne vise qu'une machine à étincelles
+        # n'a aucun projecteur « lumière » et doit tourner quand même.
+        if any(ld.get("attribute") == "Canal" for ld in layers_dicts):
+            from core import channel_layer_outputs
+            _chan_out = channel_layer_outputs(layers_dicts, self.projectors, t,
+                                              allowed_groups=allowed_groups)
+            for _p in self.projectors:
+                _vals = _chan_out.get(id(_p))
+                if not _vals:
+                    continue
+                _d = getattr(_p, 'effect_channels', None)
+                if _d is None:
+                    _d = _p.effect_channels = {}
+                for _num, _v in _vals.items():
+                    if _v > _d.get(_num, -1):
+                        _d[_num] = _v
         if n == 0:
             return
 
@@ -12049,6 +12137,8 @@ class MainWindow(QMainWindow):
             _explicitly_targeted = _cfg_explicit  # ciblage explicite par groupe/pair/impair
 
             for ld in layers_dicts:
+                if ld.get("attribute") == "Canal":
+                    continue   # traitée plus haut (channel_layer_outputs)
                 preset = ld.get("target_preset", "Tous")
                 groups = ld.get("target_groups", [])
                 # Index d'étalement : par défaut la place dans le patch, mais sur
@@ -13083,6 +13173,7 @@ class MainWindow(QMainWindow):
         self.active_effect = None
         self.active_effect_config = {}
         self.effect_saved_colors = {}
+        clear_effect_channels(self.projectors)   # sinon un prisme ou une gerbe resterait posé
         for btn in self.effect_buttons:
             if btn.active:
                 btn.active = False
@@ -15895,9 +15986,10 @@ class MainWindow(QMainWindow):
         """Reception d'un appui de pad MIDI"""
         if col == 8:
             self._on_effect_press(row)
-            if MIDI_AVAILABLE and self.midi_handler.midi_out:
-                velocity = 1 if self.effect_buttons[row].active else 0
-                self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
+            # Sans condition sur midi_out : set_pad_led ne touche au matériel que
+            # s'il y en a un, mais notifie TOUJOURS la tablette (led_observer).
+            velocity = 1 if self.effect_buttons[row].active else 0
+            self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
             return
 
         pad = self.pads.get((row, col))
@@ -15915,10 +16007,13 @@ class MainWindow(QMainWindow):
                                 self.midi_handler.set_pad_led(r, col, other_velocity, brightness_percent=self.akai_inactive_brightness)
 
                     self._on_color_pad_pressed(pad, col)
-                    if MIDI_AVAILABLE and self.midi_handler.midi_out:
-                        base_color = pad.property("base_color")
-                        velocity = rgb_to_akai_velocity(base_color)
-                        self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=self.akai_active_brightness)
+                    # Pas de garde midi_out (les autres pads n'en ont pas) : sans
+                    # AKAI branché, la tablette recevait le « inactif » des autres
+                    # pads mais jamais le « actif » du pad appuyé → colonne entière
+                    # sombre, pad appuyé compris.
+                    base_color = pad.property("base_color")
+                    velocity = rgb_to_akai_velocity(base_color)
+                    self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=self.akai_active_brightness)
                 elif slot["type"] == "fx":
                     # Pads FX — toggle l'effet mappé sur ce pad
                     fx_col = slot.get("fx_col", 0)
@@ -18436,6 +18531,9 @@ class MainWindow(QMainWindow):
         if running:
             ip  = _ts.get_local_ip()
             url = f"http://{ip}:{_ts.TABLET_PORT}"
+            # Le QR code embarque le code d'appairage : scanner = appairer.
+            pair_code = _ts.pairing_code() if hasattr(_ts, "pairing_code") else ""
+            qr_url = f"{url}/?pair={pair_code}" if pair_code else url
             print(f"[Tablet] IP={ip}  URL={url}")
             try:
                 try:
@@ -18451,7 +18549,7 @@ class MainWindow(QMainWindow):
                 from PySide6.QtGui import QPainter, QColor as _QColor
                 qr = _qr.QRCode(error_correction=_qr.constants.ERROR_CORRECT_L,
                                  box_size=1, border=4)
-                qr.add_data(url)
+                qr.add_data(qr_url)
                 qr.make(fit=True)
                 matrix = qr.modules
                 n = len(matrix)
@@ -18525,6 +18623,44 @@ class MainWindow(QMainWindow):
                             "border:1px solid #00d4ff44;border-radius:7px;")
             root.addWidget(u)
 
+            # Code d'appairage (déjà inclus dans le QR code)
+            if pair_code:
+                lp = QLabel(tr("tablet_pair_code").upper())
+                lp.setAlignment(Qt.AlignCenter)
+                lp.setStyleSheet("color:#7a7570;font-size:10px;letter-spacing:2px;background:transparent;")
+                root.addWidget(lp)
+                code_lbl = QLabel(f"{pair_code[:3]} {pair_code[3:]}")
+                code_lbl.setAlignment(Qt.AlignCenter)
+                code_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                code_lbl.setStyleSheet("color:#E2CE16;font-size:30px;font-weight:bold;"
+                                       "letter-spacing:4px;background:transparent;")
+                root.addWidget(code_lbl)
+                hint = QLabel(tr("tablet_pair_hint"))
+                hint.setAlignment(Qt.AlignCenter)
+                hint.setWordWrap(True)
+                hint.setStyleSheet("color:#888;font-size:10px;background:transparent;")
+                root.addWidget(hint)
+                n_dev = len(_ts.paired_devices())
+                if n_dev:
+                    btn_forget = QPushButton(tr("tablet_forget_devices").replace("{n}", str(n_dev)))
+                    btn_forget.setFixedHeight(30)
+                    btn_forget.setCursor(Qt.PointingHandCursor)
+                    btn_forget.setStyleSheet("QPushButton{background:#1a1a1a;color:#aaa;font-size:10px;"
+                                             "border:1px solid #2a2a2a;border-radius:7px;}"
+                                             "QPushButton:hover{color:#ff7777;border-color:#553333;}")
+
+                    def _forget():
+                        from PySide6.QtWidgets import QMessageBox
+                        if QMessageBox.question(dlg, tr("tablet_title"),
+                                                tr("tablet_forget_confirm")) != QMessageBox.Yes:
+                            return
+                        _ts.forget_devices()
+                        # Nouveau code → nouveau QR : on reconstruit la fenêtre.
+                        dlg.accept()
+                        self._open_tablet_dialog(_ts)
+                    btn_forget.clicked.connect(_forget)
+                    root.addWidget(btn_forget)
+
             # Avertissement réseau
             w = QLabel(tr("tablet_same_network"))
             w.setAlignment(Qt.AlignCenter)
@@ -18578,7 +18714,11 @@ class MainWindow(QMainWindow):
 
         def _toggle():
             if _ts.is_running():
-                _ts._running = False
+                # stop() coupe aussi l'annonce Bonjour (le PC disparaît de l'app).
+                if hasattr(_ts, "stop"):
+                    _ts.stop()
+                else:
+                    _ts._running = False
                 self.midi_handler.led_observer = None
             else:
                 if not _ts.is_available():
@@ -18649,7 +18789,12 @@ class MainWindow(QMainWindow):
         for (row, col), pad in self.pads.items():
             qc = pad.property("base_color")
             color = qc.name() if (qc and isinstance(qc, QColor)) else "#000000"
-            bright = pad.property("bright_pct") or 100
+            # « bright_pct » n'est posé nulle part → tout partait à 100 %. Colonne
+            # couleur : même règle que l'AKAI (pad actif / pads inactifs).
+            bright = 100
+            if col < len(self._fader_map) and self._fader_map[col]["type"] == "group":
+                bright = (self.akai_active_brightness if self.active_pads.get(col) is pad
+                          else self.akai_inactive_brightness)
             _ts.push_pad(row, col, color, bright)
         # Effets
         for row, btn in enumerate(self.effect_buttons):
@@ -27338,6 +27483,40 @@ class MainWindow(QMainWindow):
             add(f"Port {_ts.TABLET_PORT} en écoute", port_ok,
                 "répond" if port_ok else "ne répond pas — port occupé ou serveur planté")
 
+        # 4 bis. Celui qui répond, est-ce bien NOUS ?
+        #    « Le port répond » ne veut pas dire « MyStrow répond ». Sur Mac, le
+        #    Récepteur AirPlay occupe le port 5000 en permanence et renvoie 403
+        #    (ou 401 « JWT Token not found ») à tout le monde : diagnostic vert
+        #    sur le port, tablette murée dehors. La route /whoami est la seule
+        #    signature qui tranche.
+        squatte = False
+        if running and port_ok:
+            import urllib.request as _u0
+            mine = False
+            detail = ""
+            try:
+                with _u0.urlopen(
+                        f"http://{ip or '127.0.0.1'}:{_ts.TABLET_PORT}/whoami",
+                        timeout=2.0) as r:
+                    body = r.read(200).decode("utf-8", "replace")
+                    mine = '"MyStrow"' in body
+                    if not mine:
+                        detail = body.strip()[:80]
+            except Exception as e:
+                code = getattr(e, 'code', None)
+                detail = f"HTTP {code}" if code else type(e).__name__
+            squatte = not mine
+            qui = ""
+            if squatte:
+                try:
+                    qui = _ts.who_holds_port(_ts.TABLET_PORT)
+                except Exception:
+                    qui = ""
+            add("Le logiciel qui répond est bien MyStrow", mine,
+                "oui" if mine else
+                ("NON — port pris par : " + qui if qui else
+                 f"NON — un autre logiciel occupe le port ({detail})"))
+
         # 5. Le socket est-il ouvert sur l'IP du réseau (et pas seulement en local) ?
         #    ⚠️ Ce test NE PROUVE PAS qu'une tablette peut joindre le serveur.
         #    Une connexion partie de CE PC vers sa PROPRE adresse réseau ne
@@ -27396,7 +27575,26 @@ class MainWindow(QMainWindow):
         n_clients = n_clients_avant
         lines.append(f"{'✓' if n_clients else '·'}  Tablettes connectées : {n_clients}")
 
-        if running and lan_ok and not n_clients:
+        if squatte:
+            lines.append("")
+            lines.append(f"Le port {_ts.TABLET_PORT} est occupé par un AUTRE logiciel.")
+            lines.append("C'est lui que la tablette joint : d'où les HTTP 403 / 401")
+            lines.append("(« JWT Token not found ») et le fichier texte téléchargé")
+            lines.append("au lieu de la page MyStrow.")
+            lines.append("")
+            if sys.platform == "darwin":
+                lines.append("Sur Mac, le coupable habituel est le Récepteur AirPlay :")
+                lines.append("  Réglages Système ▸ Général ▸ AirDrop et Handoff")
+                lines.append("  → désactiver « Récepteur AirPlay », puis relancer MyStrow.")
+                lines.append("Pour savoir qui tient le port, dans le Terminal :")
+                lines.append(f"  lsof -nP -iTCP:{_ts.TABLET_PORT} -sTCP:LISTEN")
+            else:
+                lines.append("Fermer ce logiciel, puis désactiver et réactiver")
+                lines.append("Connexion ▸ Contrôle externe : MyStrow prendra le port suivant.")
+            lines.append("")
+            lines.append("MyStrow se replie automatiquement sur 5001, 5002... au démarrage ;")
+            lines.append("l'adresse à saisir sur la tablette est celle affichée ci-dessus.")
+        elif running and lan_ok and not n_clients:
             lines.append("")
             lines.append("Le serveur écoute, mais aucune tablette n'est connectée.")
             lines.append("Rien ci-dessus ne prouve qu'un AUTRE appareil peut entrer :")
@@ -28121,10 +28319,21 @@ class MainWindow(QMainWindow):
         reste : ces overrides ne durent qu'une frame, une roue laissée sur la
         dernière image resterait figée en quittant l'éditeur.
         """
-        ov = getattr(self, '_editor_live_overrides', None)
-        if not ov:
+        ov    = getattr(self, '_editor_live_overrides', None)
+        chans = getattr(self, '_editor_live_channels', None)
+        if not ov and not chans:
             return None
         saved = []
+        # Couches « Canal » de l'éditeur : posées dans `effect_channels` le temps
+        # de la frame, par-dessus ce que l'effet du show y a mis.
+        saved_ch = []
+        for proj in self.projectors:
+            vals = chans.get(id(proj)) if chans else None
+            if vals:
+                avant = getattr(proj, 'effect_channels', None)
+                saved_ch.append((proj, avant))
+                proj.effect_channels = {**(avant or {}), **vals}
+        ov = ov or {}
         for proj in self.projectors:
             entry = ov.get(id(proj))
             if entry is None:
@@ -28142,12 +28351,15 @@ class MainWindow(QMainWindow):
                     proj.pan = entry[2]
                 if entry[3] is not None:
                     proj.tilt = entry[3]
-        return saved
+        return saved, saved_ch
 
     @staticmethod
     def _restore_editor_live_overrides(saved):
         if not saved:
             return
+        saved, saved_ch = saved
+        for proj, avant in saved_ch:
+            proj.effect_channels = avant if avant is not None else {}
         for proj, lvl, col, base, pan, tilt, cw in saved:
             proj.level = lvl
             proj.color = col
@@ -28195,7 +28407,11 @@ class MainWindow(QMainWindow):
             if proj.group in gardes:
                 continue          # le groupe soloté sort normalement
             saved.append((proj, proj.level, QColor(proj.color), QColor(proj.base_color),
-                          [getattr(proj, c, 0) for c in self._KILL_EXTRA_CHANNELS]))
+                          [getattr(proj, c, 0) for c in self._KILL_EXTRA_CHANNELS],
+                          getattr(proj, 'effect_channels', None)))
+            # Couches « Canal » coupées aussi : un prisme passe, mais une gerbe
+            # d'étincelles pendant un KILL, non.
+            proj.effect_channels = {}
             proj.level = 0
             proj.color = QColor(noir)
             proj.base_color = QColor(noir)
@@ -28207,7 +28423,8 @@ class MainWindow(QMainWindow):
     def _restore_flash_kill_gate(self, saved):
         if not saved:
             return
-        for proj, level, color, base, extras in saved:
+        for proj, level, color, base, extras, fx in saved:
+            proj.effect_channels = fx if fx is not None else {}
             proj.level = level
             proj.color = color
             proj.base_color = base

@@ -1294,11 +1294,19 @@ class ArtNetDMX:
                 is_muted = hasattr(proj, 'muted') and proj.muted
                 out_idx  = self._channel_index(profile, _out_ch)
                 fan_idx  = self._channel_index(profile, "Fan")
+                # Couche d'effet « Canal » : ignorée en mute — un tir
+                # d'étincelles ne doit jamais passer à travers.
+                _fx_ch = ({} if is_muted else
+                          (getattr(proj, 'effect_channels', None) or {}))
                 if 0 <= out_idx < len(channels):
                     out_val = int((proj.level / 100.0) * 255) if not is_muted else 0
+                    if (out_idx + 1) in _fx_ch:
+                        out_val = max(0, min(255, int(_fx_ch[out_idx + 1])))
                     self.set_channel(channels[out_idx], out_val, universe)
                 if 0 <= fan_idx < len(channels):
                     fan = getattr(proj, 'fan_speed', 0) if not is_muted else 0
+                    if (fan_idx + 1) in _fx_ch:
+                        fan = max(0, min(255, int(_fx_ch[fan_idx + 1])))
                     self.set_channel(channels[fan_idx], fan, universe)
 
                 # Les AUTRES canaux — duree, intervalle, mode, sensibilite.
@@ -1320,7 +1328,9 @@ class ArtNetDMX:
                     ch = channels[idx]
                     if ch <= 0:
                         continue
-                    _raw = _ch_extras.get(idx + 1)
+                    _raw = _fx_ch.get(idx + 1)
+                    if _raw is None:
+                        _raw = _ch_extras.get(idx + 1)
                     if _raw is None:
                         _raw = _ch_extras.get(str(idx + 1))
                     if _raw is None:
@@ -1399,6 +1409,7 @@ class ArtNetDMX:
 
             _ch_defaults = getattr(proj, 'channel_defaults', {})
             _ch_extras   = getattr(proj, 'channel_extras',   {})
+            _fx_ch       = getattr(proj, 'effect_channels',  None) or {}
 
             # Pan/Tilt effectifs : LIMITES d'abord, puis swap et inversion.
             #
@@ -1480,6 +1491,15 @@ class ArtNetDMX:
                     break
                 ch = channels[idx]
                 if ch <= 0:
+                    continue
+
+                # Couche d'effet « Canal » (éditeur d'effets) : prioritaire le
+                # temps de l'effet, y compris sur un canal forcé à la main —
+                # c'est l'utilisateur qui a choisi d'animer CE canal. Le mute
+                # passe avant (branche plus haut), et la table est vidée à
+                # l'arrêt de l'effet : le canal forcé reprend alors la main.
+                if _fx_ch and (idx + 1) in _fx_ch:
+                    self.set_channel(ch, max(0, min(255, int(_fx_ch[idx + 1]))), universe)
                     continue
 
                 # Contrôle brut par NUMÉRO DE CANAL, prioritaire sur tout le

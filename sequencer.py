@@ -3669,13 +3669,36 @@ class Sequencer(QFrame):
         self.live_btn.setFixedHeight(32)
         self.live_btn.setCheckable(True)
         self.live_btn.setChecked(False)
-        self._live_btn_style_off = btn_style
+        # Au repos, LIVE est gris et porte la meme police que SELEC/CLEAR/3D de
+        # la barre du plan de feu (9px gras) : c'est un bouton de barre d'outils,
+        # pas un appel a l'action. Le style allume garde la meme police pour que
+        # le texte ne change pas de taille en basculant.
+        self._live_btn_style_off = """
+            QPushButton {
+                background: #2a2a2a;
+                border: 1px solid #3a3a3a;
+                border-radius: 4px;
+                color: #888;
+                font-size: 9px;
+                font-weight: bold;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: #3a3a3a;
+                border: 1px solid #555;
+                color: #fff;
+            }
+            QPushButton:pressed {
+                background: #1a1a1a;
+            }
+        """
         self._live_btn_style_on = """
             QPushButton {
                 background: #3a0000;
                 border: 1px solid #ff3300;
                 border-radius: 4px;
                 color: #ff3300;
+                font-size: 9px;
                 font-weight: bold;
                 padding: 6px 14px;
             }

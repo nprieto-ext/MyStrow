@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>MyStrow</title>
+  <style>
+    @font-face { font-family: 'Bebas Neue'; font-weight: 400; font-display: swap; src: url('fonts/bebas-neue.woff2') format('woff2'); }
+    @font-face { font-family: 'Barlow Condensed'; font-weight: 600; font-display: swap; src: url('fonts/barlow-condensed-600.woff2') format('woff2'); }
+    @font-face { font-family: 'Barlow Condensed'; font-weight: 700; font-display: swap; src: url('fonts/barlow-condensed-700.woff2') format('woff2'); }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Sinon le display:flex des .panel l'emporte et les cadres vides restent affichés. */
+    [hidden] { display: none !important; }
+    :root {
+      --bg: #080807; --bg2: #0e0d09; --bg3: #141310;
+      --accent: #E2CE16; --accent-dim: rgba(226, 206, 22, 0.10); --accent-border: rgba(226, 206, 22, 0.32);
+      --border: rgba(226, 206, 22, 0.14); --line: rgba(255, 255, 255, 0.07); --line2: rgba(255, 255, 255, 0.12);
+      --text: #f4f1e8; --muted: #7a7570; --muted2: #4a4640; --green: #22c55e; --red: #f87171;
+      --f-title: 'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
+      --f-label: 'Barlow Condensed', 'Roboto Condensed', 'Arial Narrow', sans-serif;
+    }
+    html { height: 100%; background: var(--bg); }
+    body {
+      min-height: 100%; color: var(--text); -webkit-tap-highlight-color: transparent;
+      font: 400 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(110% 60% at 15% -15%, rgba(226, 206, 22, 0.09), transparent 60%), var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+    }
+    main { width: min(460px, 100%); display: flex; flex-direction: column; gap: 22px; }
+
+    .brand { font-family: var(--f-title); font-size: 40px; line-height: 1; letter-spacing: 1px; }
+    .brand span { color: var(--accent); }
+    h1 { font-family: var(--f-title); font-weight: 400; font-size: 34px; line-height: 1; letter-spacing: 0.5px; margin-top: 6px; }
+    .lede { color: #cfcabd; margin-top: 8px; }
+
+    .panel { background: linear-gradient(180deg, #12110d, #0b0a08); border: 1px solid var(--border); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .eyebrow { font-family: var(--f-label); font-weight: 700; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); }
+
+    .pc-list { display: flex; flex-direction: column; gap: 8px; }
+    .pc { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px 14px; border-radius: 12px;
+      background: var(--bg3); border: 1px solid var(--line2); color: var(--text); cursor: pointer; font: inherit; }
+    .pc:active { border-color: var(--accent-border); background: var(--accent-dim); }
+    .pc .led { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(34, 197, 94, 0.8); flex-shrink: 0; }
+    .pc .led.off { background: var(--muted2); box-shadow: none; }
+    .pc b { display: block; font-family: var(--f-label); font-weight: 700; font-size: 19px; letter-spacing: 0.3px; line-height: 1.2; }
+    .pc small { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .pc .go { margin-left: auto; font-family: var(--f-label); font-weight: 700; letter-spacing: 1.2px; color: var(--accent); }
+    .empty { color: var(--muted); font-size: 14px; }
+
+    label { font-family: var(--f-label); font-weight: 700; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
+    .field { display: flex; gap: 8px; }
+    input { flex: 1; min-width: 0; height: 50px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line2); background: var(--bg2);
+      color: var(--text); font: 600 20px/1 var(--f-label); letter-spacing: 0.5px; outline: none; }
+    input::placeholder { color: var(--muted2); }
+    input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px rgba(226, 206, 22, 0.15); }
+    .btn { height: 50px; padding: 0 20px; border: none; border-radius: 12px; background: var(--accent); color: #0c0b00;
+      font: 700 16px/1 var(--f-label); letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+    .btn:disabled { opacity: 0.5; }
+    .btn-ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent-border); }
+    .btn-ghost:active { background: var(--accent-dim); }
+    .hint { color: var(--muted); font-size: 13px; }
+    .hint b { color: #cfcabd; font-weight: 600; }
+    #status { min-height: 1.5em; font-size: 14px; color: #cfcabd; }
+    #status.err { color: var(--red); }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">MY<span>STROW</span></div>
+    <h1>Connexion au PC</h1>
+    <p class="lede">La tablette pilote MyStrow ouvert sur votre ordinateur, sur le même Wi-Fi.</p>
+  </header>
+
+  <section class="panel" id="found-panel" hidden>
+    <div class="eyebrow">PC trouvés sur le réseau</div>
+    <div class="pc-list" id="found-list"></div>
+  </section>
+
+  <section class="panel" id="last-panel" hidden>
+    <div class="eyebrow">Dernier PC utilisé</div>
+    <div class="pc-list" id="last-list"></div>
+  </section>
+
+  <form class="panel" id="manual-form" autocomplete="off">
+    <label for="host">Adresse du PC</label>
+    <div class="field">
+      <input id="host" type="text" inputmode="decimal" placeholder="192.168.1.20" autocapitalize="off" spellcheck="false">
+      <button class="btn" id="connect-btn" type="submit">Connecter</button>
+    </div>
+    <p class="hint">Dans MyStrow sur le PC : <b>Connexion › Entrée externe</b>, l'adresse s'affiche sous le QR code.</p>
+  </form>
+
+  <p id="status" role="status" aria-live="polite"></p>
+
+  <section class="panel">
+    <div class="eyebrow">Pas de PC sous la main ?</div>
+    <p class="hint">Découvrez l'interface avec un show d'exemple : pads, faders, playlist et plan de feu réagissent, sans piloter aucune lumière.</p>
+    <button class="btn btn-ghost" id="demo-btn" type="button">Essayer la démo</button>
+  </section>
+</main>
+
+<script>
+  "use strict";
+  // Version du protocole comprise par cette app (cf. PROTOCOL_VERSION de tablet_server.py).
+  const APP_PROTO = 1;
+  const PORTS = [5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009];
+  const statusEl = document.getElementById("status");
+  const hostInput = document.getElementById("host");
+  const connectBtn = document.getElementById("connect-btn");
+
+  function setStatus(msg, isErr) { statusEl.textContent = msg || ""; statusEl.className = isErr ? "err" : ""; }
+  function loadLast() { try { return JSON.parse(localStorage.getItem("mystrow.pc") || "null"); } catch (e) { return null; } }
+
+  async function whoami(base, timeoutMs) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs || 1500);
+    try {
+      const r = await fetch(base + "/whoami", { signal: ctl.signal, cache: "no-store" });
+      const j = await r.json();
+      return j && j.app === "MyStrow" ? j : null;
+    } catch (e) { return null; } finally { clearTimeout(timer); }
+  }
+
+  // « 192.168.1.20 », « 192.168.1.20:5001 » ou « http://… » → première adresse où MyStrow répond.
+  async function findMyStrow(raw) {
+    const host = String(raw || "").trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+    if (!host) return null;
+    const candidates = /:\d+$/.test(host) ? ["http://" + host] : PORTS.map(p => "http://" + host + ":" + p);
+    for (const base of candidates) {
+      const info = await whoami(base, 1500);
+      if (info) return { base, info };
+    }
+    return null;
+  }
+
+  function open(found) {
+    const info = found.info || {};
+    if (!info.proto) { setStatus("MyStrow sur ce PC est trop ancien pour l'app. Mettez-le à jour, puis réessayez.", true); return; }
+    if (info.proto > APP_PROTO) { setStatus("MyStrow sur ce PC est plus récent que l'app. Mettez l'app à jour depuis le store.", true); return; }
+    const last = loadLast();
+    // Autre PC : l'appairage du précédent ne vaut rien ici.
+    if (!last || last.base !== found.base) { try { localStorage.removeItem("mystrow.token"); } catch (e) {} }
+    try { localStorage.setItem("mystrow.pc", JSON.stringify({ base: found.base, name: info.name || "", at: Date.now() })); } catch (e) {}
+    location.href = "remote.html";
+  }
+
+  function pcButton(name, base, online) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "pc";
+    const led = document.createElement("span"); led.className = "led" + (online ? "" : " off");
+    const txt = document.createElement("span");
+    const t = document.createElement("b"); t.textContent = name || "MyStrow";
+    const s = document.createElement("small"); s.textContent = base.replace(/^http:\/\//, "");
+    txt.append(t, s);
+    const go = document.createElement("span"); go.className = "go"; go.textContent = "Connecter ›";
+    b.append(led, txt, go);
+    return b;
+  }
+
+  async function connectTo(raw) {
+    connectBtn.disabled = true;
+    setStatus("Recherche de MyStrow sur " + String(raw).trim() + "…");
+    const found = await findMyStrow(raw);
+    connectBtn.disabled = false;
+    if (found) { setStatus("MyStrow trouvé, connexion…"); open(found); }
+    else setStatus("MyStrow ne répond pas à cette adresse. Vérifiez que l'Entrée externe est activée sur le PC et que la tablette est sur le même Wi-Fi.", true);
+  }
+
+  document.getElementById("manual-form").addEventListener("submit", e => { e.preventDefault(); connectTo(hostInput.value); });
+  document.getElementById("demo-btn").addEventListener("click", () => { location.href = "remote.html?demo=1"; });
+
+  // Découverte Bonjour : fournie par le module natif de l'app quand il est présent.
+  function startDiscovery() {
+    const D = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MystrowDiscovery;
+    if (!D) return;
+    const panel = document.getElementById("found-panel"), list = document.getElementById("found-list");
+    const seen = new Map();
+    D.addListener("pcFound", pc => {
+      const base = "http://" + pc.host + ":" + pc.port;
+      if (seen.has(base)) return;
+      const btn = pcButton(pc.name, base, true);
+      btn.addEventListener("click", async () => {
+        setStatus("Connexion à " + (pc.name || base) + "…");
+        const info = await whoami(base, 2500);
+        if (info) open({ base, info }); else setStatus("Ce PC ne répond plus. Réessayez dans un instant.", true);
+      });
+      seen.set(base, btn); list.append(btn); panel.hidden = false;
+    });
+    D.start().catch(() => {});
+  }
+
+  (async function boot() {
+    const choose = new URLSearchParams(location.search).has("choose");
+    const last = loadLast();
+    if (last && last.base) {
+      hostInput.value = last.base.replace(/^http:\/\//, "");
+      const panel = document.getElementById("last-panel"), list = document.getElementById("last-list");
+      const btn = pcButton(last.name, last.base, false);
+      btn.addEventListener("click", () => connectTo(last.base.replace(/^http:\/\//, "")));
+      list.append(btn); panel.hidden = false;
+      if (!choose) {
+        setStatus("Reconnexion à " + (last.name || last.base) + "…");
+        const info = await whoami(last.base, 2000);
+        if (info) { btn.querySelector(".led").classList.remove("off"); open({ base: last.base, info }); return; }
+        setStatus("Le dernier PC ne répond pas. Choisissez un PC ou saisissez son adresse.", true);
+      }
+    }
+    startDiscovery();
+  })();
+</script>
+</body>
+</html>

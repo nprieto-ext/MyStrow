@@ -70,7 +70,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.93"
+VERSION = "3.1.94"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -711,6 +711,324 @@ def layer_frequency(speed, mult=1.0, fader_mult=1.0):
     if s <= 0.0:
         return 0.0
     return (0.05 + s / 100.0 * 7.0) * float(fader_mult if fader_mult is not None else 1.0)
+
+
+def effect_cycle_seconds(layers, n_fixtures=1):
+    """Durée d'UN passage complet d'un effet à couches, en temps de PHASE.
+
+    Sert au mode « Une fois » : l'effet s'arrête quand sa couche la plus lente
+    a fait un tour entier. Temps de phase (l'horloge déformée par le fader FX,
+    cf. `MainWindow._effect_clock`) et non secondes réelles : à mi-vitesse
+    l'effet dure deux fois plus longtemps mais fait bien un tour, pas un demi.
+
+    Couches ignorées : Fixe/Off (rien ne bouge) et VITESSE 0 (figée, cf.
+    `layer_frequency`). Une trajectoire Pan/Tilt tourne à la vitesse de sa
+    couche ou plus vite (multiplicateurs >= 1 de PAN_TILT_SHAPES) : son tour
+    complet est celui de la couche, quelle que soit sa forme. Un « Un par un »
+    en aller-retour doit revenir à son départ : (2n-2)/n cycles, n = nombre de
+    paquets (GROUPER).
+
+    `layers` = dicts sérialisés (`EffectLayer.to_dict`). Rend 0.0 si rien
+    n'est animé — l'appelant choisit alors son repli.
+    """
+    longest = 0.0
+    n = max(1, int(n_fixtures or 1))
+    for ld in layers or []:
+        if not isinstance(ld, dict):
+            continue
+        forme = ld.get("forme")
+        if forme in ("Fixe", "Off") and ld.get("attribute") != "Pan/Tilt":
+            continue
+        freq = layer_frequency(ld.get("speed", 50))
+        if freq <= 0.0:
+            continue
+        cycles = 1.0
+        if forme == "Un par un" and ld.get("direction", 1) == 0:
+            paquets = -(-n // max(1, int(ld.get("block", 1) or 1)))
+            if paquets > 1:
+                cycles = (2 * paquets - 2) / paquets
+        longest = max(longest, cycles / freq)
+    return longest
+
+
+# ─── Couche « Canal » : n'importe quel canal du patch ─────────────────────────
+# Les couches historiques (Dimmer, R/V/B, Pan/Tilt…) pilotent des NOTIONS que le
+# moteur traduit ensuite en canaux. Une couche « Canal » vise directement un
+# canal du profil : le prisme d'une lyre, la rotation Z d'un laser, le débit
+# d'une machine à étincelles. Sa valeur 0-255 part dans `proj.effect_channels`
+# ({n° de canal, 1 = premier : valeur}), que la sortie DMX lit AVANT tout le
+# reste le temps de l'effet — le mute excepté.
+#
+# Deux façons de désigner le canal :
+#  · par TYPE (`channel_type`) : tous les appareils qui ont ce type, sur tous
+#    les canaux de ce type (ils sont gangés partout ailleurs, pareil ici) ;
+#  · par NUMÉRO (`channel_num` + `channel_sig`) : un canal précis d'UN modèle,
+#    reconnu à la signature de son profil. Seule façon d'atteindre les canaux
+#    « Unused » d'un laser, ou le 3e de quatre canaux « Prism ».
+
+def profile_signature(profile):
+    """Empreinte courte et stable d'un profil DMX (liste de types de canaux)."""
+    import zlib
+    txt = "|".join(str(c) for c in (profile or []))
+    return f"{zlib.crc32(txt.encode('utf-8')) & 0xFFFFFFFF:08x}"
+
+
+def _layer_get(layer, key, default=None):
+    """Lecture d'un réglage de couche, qu'elle soit un dict (moteur) ou un
+    objet EffectLayer (éditeur)."""
+    if isinstance(layer, dict):
+        return layer.get(key, default)
+    return getattr(layer, key, default)
+
+
+def channel_layer_key(layer):
+    """Identité du canal visé par une couche : "T:<type>", "N:<sig>:<n°>" ou ""."""
+    num = _layer_get(layer, 'channel_num')
+    if num:
+        try:
+            return f"N:{_layer_get(layer, 'channel_sig', '') or ''}:{int(num)}"
+        except (TypeError, ValueError):
+            return ""
+    ch_type = _layer_get(layer, 'channel_type', '') or ''
+    return f"T:{ch_type}" if ch_type else ""
+
+
+def channel_layer_indices(layer, proj):
+    """Index (0 = premier canal) visés par une couche « Canal » sur un appareil.
+
+    Vide si l'appareil n'a pas ce canal. ⚠️ Les machines à effet ne sont
+    atteintes que par leur canal de SORTIE (Spark, Flame, Smoke) ou par un
+    canal désigné par numéro sur leur propre modèle : une couche « Speed »
+    réglée pour des lyres ne doit pas toucher la durée d'une machine à
+    étincelles, et une couche « Dim » ne doit jamais rien déclencher.
+    """
+    profile = getattr(proj, 'dmx_profile', None) or []
+    if not profile:
+        return []
+    num = _layer_get(layer, 'channel_num')
+    if num:
+        try:
+            num = int(num)
+        except (TypeError, ValueError):
+            return []
+        sig = _layer_get(layer, 'channel_sig', '') or ''
+        if 1 <= num <= len(profile) and sig == profile_signature(profile):
+            return [num - 1]
+        return []
+    ch_type = _layer_get(layer, 'channel_type', '') or ''
+    if not ch_type or ch_type == "Unused":
+        return []
+    if fixture_is_fx_machine(proj) and ch_type not in FX_MACHINE_OUTPUT_CHANNELS:
+        return []
+    return [i for i, c in enumerate(profile) if c == ch_type]
+
+
+def _channel_wave(forme, x):
+    """Formes d'onde des couches — mêmes courbes que le moteur du show."""
+    import math as _math
+    if forme == "Sinus":
+        return (_math.sin(2 * _math.pi * x) + 1) / 2
+    if forme == "Flash":
+        return 1.0 if x < 0.5 else 0.0
+    if forme == "Triangle":
+        return 1.0 - abs(2 * x - 1)
+    if forme == "Montée":
+        return x
+    if forme == "Descente":
+        return 1.0 - x
+    if forme == "Fixe":
+        return 1.0
+    return 0.0
+
+
+_CHANNEL_TARGET_GROUPS = {"A": "face", "B": "lat", "C": "contre",
+                          "D": "douche1", "E": "douche2", "F": "douche3",
+                          "G": "groupe_g", "H": "groupe_h"}
+
+
+def channel_layer_outputs(layers, projectors, t, allowed_groups=None):
+    """Valeurs des couches « Canal » à l'instant de phase `t`.
+
+    Retourne {id(proj): {n° de canal (1 = premier): 0-255}}.
+
+    ⚠️ Point UNIQUE : le moteur du show (`MainWindow._update_effect_from_layers`)
+    et l'aperçu de l'éditeur appellent tous deux cette fonction — l'aperçu ne
+    peut donc pas diverger du show sur ces couches.
+
+    Mêmes réglages que les autres couches : cible (Tous, Pair/Impair, groupe,
+    Sélection), VITESSE, DÉCALAGE et RÉPARTITION, GROUPER, FONDU, MIN/MAX/AMP.
+    Une différence voulue : le rang d'étalement se compte parmi les appareils
+    qui ONT le canal. Un chenillard de prisme court de lyre en lyre, sans temps
+    mort sur les PAR du même groupe.
+    Plusieurs couches sur un même canal : la plus haute l'emporte (HTP).
+    `allowed_groups` = groupes du clip en restitution ; une couche « Sélection »
+    les ignore, comme dans le moteur.
+    """
+    out = {}
+    layers = [l for l in (layers or []) if _layer_get(l, 'attribute') == "Canal"]
+    if not layers or not projectors:
+        return out
+    key_by_id = {id(p): k for p, k in zip(projectors, projector_selection_keys(projectors))}
+    allowed = set(allowed_groups or ())
+
+    for layer in layers:
+        preset = _layer_get(layer, 'target_preset', 'Tous') or 'Tous'
+        groups = [_CHANNEL_TARGET_GROUPS.get(g, g)
+                  for g in (_layer_get(layer, 'target_groups', []) or [])]
+        ranks = layer_selection_ranks(layer) if preset == "Selection" else None
+
+        cibles = []
+        for p in projectors:
+            idx = channel_layer_indices(layer, p)
+            if not idx:
+                continue
+            grp = getattr(p, 'group', '')
+            if ranks is not None:
+                if key_by_id.get(id(p)) not in ranks:
+                    continue
+            else:
+                if allowed and grp not in allowed:
+                    continue
+                if preset in _CHANNEL_TARGET_GROUPS and grp != _CHANNEL_TARGET_GROUPS[preset]:
+                    continue
+            if groups and grp not in groups:
+                continue
+            cibles.append((p, idx))
+        if preset in ("Pair", "Impair"):
+            garde = 0 if preset == "Pair" else 1
+            cibles = [c for j, c in enumerate(cibles) if j % 2 == garde]
+        if ranks is not None:
+            cibles.sort(key=lambda c: ranks[key_by_id[id(c[0])]])
+        n = len(cibles)
+        if n == 0:
+            continue
+
+        freq      = layer_frequency(_layer_get(layer, 'speed', 50))
+        size      = float(_layer_get(layer, 'size', 100) or 0)
+        spread    = float(_layer_get(layer, 'spread', 0) or 0)
+        phase     = float(_layer_get(layer, 'phase', 0) or 0) / 100.0
+        fade      = float(_layer_get(layer, 'fade', 0) or 0) / 100.0
+        direction = _layer_get(layer, 'direction', 1)
+        forme     = _layer_get(layer, 'forme', 'Sinus') or 'Sinus'
+        block     = _layer_get(layer, 'block', 1)
+        mode      = _layer_get(layer, 'spread_mode', 'lineaire') or 'lineaire'
+        group_amp = _layer_get(layer, 'group_amp', None) or {}
+        sp        = spread / 180.0   # même échelle que le moteur
+
+        for j, (p, idx) in enumerate(cibles):
+            i_rk, n_rk = block_index(j, n, block)
+            rk = spread_rank(i_rk, n_rk, mode)
+            if direction == 0:
+                x = (abs(2 * ((freq * t) % 1.0) - 1) + rk * sp + phase) % 1.0
+            elif direction == -1:
+                x = (freq * t - rk * sp + phase) % 1.0
+            else:
+                x = (freq * t + rk * sp + phase) % 1.0
+            if forme == "Un par un":
+                raw = 1.0 if chase_slot(freq * t + phase, n_rk, direction) == i_rk else 0.0
+            elif forme in ("Audio", "Aléatoire"):
+                raw = random_wave(freq, t, i_rk)
+            else:
+                raw = _channel_wave(forme, x)
+            if fade > 0 and forme != "Un par un":
+                raw = raw * (1 - fade) + _channel_wave("Sinus", x) * fade
+            grp = getattr(p, 'group', '')
+            if grp in group_amp:
+                min_v, max_v = group_amp[grp][0] / 100.0, group_amp[grp][1] / 100.0
+            else:
+                min_v = float(_layer_get(layer, 'min_val', 0) or 0) / 100.0
+                max_v = float(_layer_get(layer, 'max_val', 100) or 0) / 100.0
+            scaled = (min_v + raw * (max_v - min_v)) * size / 100.0
+            val = int(round(max(0.0, min(1.0, scaled)) * 255))
+            d = out.setdefault(id(p), {})
+            for k in idx:
+                if val > d.get(k + 1, -1):
+                    d[k + 1] = val
+    return out
+
+
+def effect_channel_value(proj, ch_type, default=0):
+    """Valeur posée par une couche « Canal » sur le premier canal `ch_type`,
+    sinon `default`. Sert aux affichages (3D) qui lisent l'état par type."""
+    fx = getattr(proj, 'effect_channels', None)
+    if fx:
+        for i, c in enumerate(getattr(proj, 'dmx_profile', None) or []):
+            if c == ch_type and (i + 1) in fx:
+                return fx[i + 1]
+    return default
+
+
+def clear_effect_channels(projectors):
+    """Vide la sortie des couches « Canal » sur tous les appareils.
+
+    Fonction et non méthode : les moteurs l'appellent depuis des méthodes
+    empruntées par des fenêtres factices (tests), qui n'ont que `projectors`.
+    """
+    for p in projectors or []:
+        if getattr(p, 'effect_channels', None):
+            p.effect_channels = {}
+
+
+# Canaux dont une valeur déclenche une ACTION de l'appareil — reset, extinction
+# de lampe, programme interne, blackout d'un laser dont le canal de mode sort de
+# sa plage « DMX » — plutôt qu'un réglage visible. Proposés quand même à la
+# couche « Canal » (c'est parfois le seul moyen d'animer un laser), mais signalés.
+SENSITIVE_CHANNEL_TYPES = frozenset({
+    "Mode", "Reset", "Preset1", "Preset2", "Preset3", "Preset4",
+})
+
+
+def patch_channel_choices(projectors):
+    """Canaux proposés à une couche « Canal », construits depuis le patch.
+
+    Liste de dicts {key, channel_type, channel_num, channel_sig, label, count,
+    pyro} :
+      · un choix par TYPE présent dans le patch (hors Unused), qui vise tous les
+        appareils ayant ce type — sur une machine, seul son canal de sortie ;
+      · un choix par NUMÉRO pour ce qu'un type ne suffit pas à désigner :
+        « Unused » (un laser en aligne 18), type répété dans un même profil
+        (quatre « Prism »), et les réglages d'une machine (durée, mode).
+        Libellé = modèle · n° · nom constructeur.
+    Types d'abord, puis canaux par modèle dans l'ordre du profil.
+    """
+    import re as _re
+    par_type, par_num = {}, {}
+    for p in projectors or []:
+        prof = list(getattr(p, 'dmx_profile', None) or [])
+        if not prof:
+            continue
+        labels = list(getattr(p, 'channel_labels', None) or [])
+        if len(labels) != len(prof):
+            labels = []
+        sig = profile_signature(prof)
+        machine = fixture_is_fx_machine(p)
+        modele = (_re.sub(r"\s*\d+$", "", getattr(p, 'name', '') or '')
+                  or getattr(p, 'fixture_type', '') or "?")
+        for i, c in enumerate(prof):
+            sortie = c in FX_MACHINE_OUTPUT_CHANNELS
+            if c != "Unused" and (not machine or sortie):
+                e = par_type.setdefault(c, {
+                    "key": f"T:{c}", "channel_type": c, "channel_num": None,
+                    "channel_sig": "", "label": channel_label(c),
+                    "pyro": c in ("Spark", "Flame"),
+                    "sensible": c in SENSITIVE_CHANNEL_TYPES, "_ids": set(),
+                    "_tri": (0, channel_label(c).lower(), 0)})
+                e["_ids"].add(id(p))
+            if c == "Unused" or prof.count(c) > 1 or (machine and not sortie):
+                nom = labels[i] if labels and labels[i] else channel_label(c)
+                key = f"N:{sig}:{i + 1}"
+                e = par_num.setdefault(key, {
+                    "key": key, "channel_type": c, "channel_num": i + 1,
+                    "channel_sig": sig, "label": f"{modele} · {i + 1} {nom}",
+                    "pyro": False, "sensible": c in SENSITIVE_CHANNEL_TYPES, "_ids": set(),
+                    "_tri": (1, modele.lower(), i + 1)})
+                e["_ids"].add(id(p))
+    choix = sorted(list(par_type.values()) + list(par_num.values()),
+                   key=lambda e: e["_tri"])
+    for e in choix:
+        e["count"] = len(e.pop("_ids"))
+        e.pop("_tri")
+    return choix
 
 
 def random_wave(freq, t, index):

@@ -16,10 +16,11 @@ from PySide6.QtWidgets import (
     QPushButton, QComboBox, QScrollArea, QFrame, QSizePolicy, QSlider,
     QGridLayout, QMenu, QLineEdit,
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QRectF, Signal, QEvent
+from PySide6.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QRectF, Signal, QEvent
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
-from core import (fixture_is_fx_machine,
+from core import (fixture_is_fx_machine, effect_cycle_seconds,
+                  channel_layer_outputs, channel_layer_key, patch_channel_choices,
                   projector_selection_keys, layer_selection_ranks,
                   block_index, chase_slot, layer_frequency, random_wave,
                   effect_dim_base_color, position_preset_values,
@@ -656,6 +657,12 @@ class EffectLayer:
         # par projo. Le paquet suit l'ordre de répartition, donc l'ordre de la
         # sélection quand la cible est « Sélection ».
         self.block = 1
+        # Couche « Canal » (attribute == "Canal") : canal visé, par TYPE ou par
+        # NUMÉRO sur un modèle précis (cf. core.channel_layer_outputs).
+        self.channel_type  = ""
+        self.channel_num   = None
+        self.channel_sig   = ""
+        self.channel_label = ""
 
     def to_dict(self):
         return {
@@ -681,6 +688,10 @@ class EffectLayer:
             "block": self.block,
             "pos_preset_idx":  self.pos_preset_idx,
             "pos_preset_name": self.pos_preset_name,
+            "channel_type":  self.channel_type,
+            "channel_num":   self.channel_num,
+            "channel_sig":   self.channel_sig,
+            "channel_label": self.channel_label,
         }
 
     @classmethod
@@ -712,6 +723,13 @@ class EffectLayer:
         layer.block = _norm_block(d.get("block"))
         layer.pos_preset_idx  = _norm_pos_idx(d.get("pos_preset_idx"))
         layer.pos_preset_name = d.get("pos_preset_name", "") or ""
+        layer.channel_type  = d.get("channel_type", "") or ""
+        try:
+            layer.channel_num = int(d["channel_num"]) if d.get("channel_num") else None
+        except (TypeError, ValueError):
+            layer.channel_num = None
+        layer.channel_sig   = d.get("channel_sig", "") or ""
+        layer.channel_label = d.get("channel_label", "") or ""
         return layer
 
     @classmethod
@@ -748,6 +766,84 @@ class EffectLayer:
 
 
 # ─── Roue de couleurs ─────────────────────────────────────────────────────────
+
+class _PanelFoldButton(QPushButton):
+    """Bouton de repli d'une colonne de l'éditeur, dessiné à la main.
+
+    Un « ◀ » seul ne disait pas ce qu'il repliait. On dessine le pictogramme
+    habituel des applis (VS Code, Figma…) : un cadre de fenêtre dont la colonne
+    concernée est allumée, et un chevron qui donne le sens du geste.
+    Déplié : colonne pleine, chevron vers le bord (« replier »).
+    Replié  : colonne vide, chevron vers l'intérieur (« déplier »).
+    `side` = côté de la colonne dans la fenêtre : "left" (effets) ou "right"
+    (plan de feu).
+    """
+
+    def __init__(self, side="left", parent=None):
+        super().__init__(parent)
+        self._side      = side
+        self._collapsed = False
+        self.setFixedSize(26, 26)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_collapsed(self, collapsed: bool):
+        self._collapsed = bool(collapsed)
+        self.update()
+
+    def enterEvent(self, e):
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self.update()
+        super().leaveEvent(e)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        hover  = self.underMouse()
+        accent = QColor("#00d4ff") if hover else QColor("#8a8a8a")
+
+        # Fond et bordure du bouton (mêmes teintes que les autres en-têtes)
+        p.setPen(QPen(QColor("#1e3a44" if hover else "#242424"), 1))
+        p.setBrush(QColor("#0a1a1f") if hover else Qt.NoBrush)
+        p.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 4, 4)
+
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        cadre  = QRectF(cx - 7.5, cy - 6, 15, 12)
+        col_w  = 5.0
+        if self._side == "left":
+            col = QRectF(cadre.left(), cadre.top(), col_w, cadre.height())
+            x_div, zone_g, zone_d = col.right(), col.right(), cadre.right()
+        else:
+            col = QRectF(cadre.right() - col_w, cadre.top(), col_w, cadre.height())
+            x_div, zone_g, zone_d = col.left(), cadre.left(), col.left()
+
+        # Colonne remplie tant qu'elle est affichée
+        if not self._collapsed:
+            plein = QColor(accent)
+            plein.setAlpha(140)
+            p.setPen(Qt.NoPen)
+            p.setBrush(plein)
+            p.drawRoundedRect(col, 1.5, 1.5)
+
+        trait = QPen(accent, 1.3)
+        trait.setCapStyle(Qt.RoundCap)
+        trait.setJoinStyle(Qt.RoundJoin)
+        p.setPen(trait)
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(cadre, 2, 2)
+        p.drawLine(QPointF(x_div, cadre.top()), QPointF(x_div, cadre.bottom()))
+
+        # Chevron dans la zone principale : vers le bord de la colonne pour la
+        # replier, vers l'intérieur pour la rouvrir.
+        vers_gauche = (self._side == "left") != self._collapsed
+        mx = (zone_g + zone_d) / 2.0
+        d  = 1.4 if vers_gauche else -1.4
+        p.drawPolyline([QPointF(mx + d, cy - 2.6), QPointF(mx - d, cy),
+                        QPointF(mx + d, cy + 2.6)])
+        p.end()
+
 
 class ColorWheel(QWidget):
     """Roue de couleurs compacte (Hue + Saturation). Valeur fixée à 1.0."""
@@ -895,6 +991,7 @@ class WaveformCanvas(QWidget):
         "RGB": "#ffaa44",    "Permut": "#ff44ff",
         "Pan": "#ffaa00",    "Tilt": "#ff8800",  "Gobo": "#aa44ff",
         "Pan/Tilt": "#ff9900",
+        "Canal": "#ffd166",
     }
 
     def __init__(self, layer, parent=None, w=110, h=30):
@@ -1226,7 +1323,8 @@ _LAYER_COL_MIN = {c[0]: c[2] for c in LAYER_COLS}
 # incohérentes.
 LAYER_COL_ATTRS = {
     "cible":  ("target_preset", "target_groups", "target_selection"),
-    "canal":  ("attribute",),
+    "canal":  ("attribute", "channel_type", "channel_num", "channel_sig",
+               "channel_label"),
     "forme":  ("forme", "mouvement_shape"),
     "vit":    ("speed",),
     "amp":    ("size",),
@@ -1909,9 +2007,12 @@ class LayerRow(QFrame):
         ("depart", "phase",   100, 0, 0),
     ]
 
-    def __init__(self, layer, parent=None):
+    def __init__(self, layer, parent=None, projectors=None):
         super().__init__(parent)
         self.layer   = layer
+        # Appareils du patch, pour la liste des canaux : la ligne est construite
+        # avant d'avoir un parent, `_find_main_window` ne trouverait rien.
+        self._projectors = projectors
         self._sel_col = None     # colonne sélectionnée dans l'en-tête
         self._cells  = {}
         self._w      = {c[0]: c[2] for c in LAYER_COLS}
@@ -2102,13 +2203,75 @@ class LayerRow(QFrame):
     def _mk_canal(self):
         cb = ComboSansMolette()
         cb.addItems(self._ATTRS)
-        cb.setCurrentText(self.layer.attribute)
+        # Canaux du PATCH à la suite (couche « Canal ») : prisme, gobo, canaux
+        # d'un laser, débit d'une machine à étincelles… La liste vient des
+        # appareils réellement patchés : un canal que personne n'a n'y figure
+        # pas. Le canal enregistré sur la couche est gardé s'il a quitté le
+        # patch, pour ne pas le perdre en silence en rouvrant l'effet.
+        choix = patch_channel_choices(self._patch_projectors())
+        cle = channel_layer_key(self.layer) if self.layer.attribute == "Canal" else ""
+        if cle and not any(c["key"] == cle for c in choix):
+            choix.append({
+                "key": cle, "channel_type": self.layer.channel_type,
+                "channel_num": self.layer.channel_num,
+                "channel_sig": self.layer.channel_sig,
+                "label": f"{self.layer.channel_label or self.layer.channel_type or '?'}"
+                         f" ({tr('fx_chan_absent')})",
+                "count": 0, "pyro": self.layer.channel_type in ("Spark", "Flame")})
+        if choix:
+            cb.insertSeparator(cb.count())
+            for c in choix:
+                cb.addItem(("🔥 " if c["pyro"] else
+                            "⚠ " if c.get("sensible") else "◆ ") + c["label"], c)
+                tip = tr("fx_chan_tip", n=c["count"])
+                if c["pyro"]:
+                    tip += "\n\n" + tr("fx_chan_pyro_tip")
+                elif c.get("sensible"):
+                    tip += "\n\n" + tr("fx_chan_sensible_tip")
+                cb.setItemData(cb.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
+            fm = cb.fontMetrics()
+            cb.view().setMinimumWidth(
+                max(fm.horizontalAdvance(cb.itemText(i)) for i in range(cb.count())) + 48)
         cb.setFixedSize(self._w["canal"], LAYER_CELL_H)
         cb.setStyleSheet(_COMBO_STYLE_COMPACT)
         cb.setToolTip(self._tip["canal"])
-        cb.currentTextChanged.connect(self._on_attr)
         self._attr_cb = cb
+        self._select_canal_item()
+        cb.currentIndexChanged.connect(self._on_canal_index)
         return cb
+
+    def _patch_projectors(self):
+        if self._projectors is not None:
+            return self._projectors
+        return getattr(self._find_main_window(), 'projectors', None) or []
+
+    def _select_canal_item(self):
+        """Pose le combo CANAL sur le réglage de la couche, sans rien émettre."""
+        cb, idx = self._attr_cb, -1
+        if self.layer.attribute == "Canal":
+            cle = channel_layer_key(self.layer)
+            for i in range(cb.count()):
+                d = cb.itemData(i)
+                if isinstance(d, dict) and d.get("key") == cle:
+                    idx = i
+                    break
+        else:
+            idx = cb.findText(self.layer.attribute)
+        if idx >= 0:
+            cb.blockSignals(True)
+            cb.setCurrentIndex(idx)
+            cb.blockSignals(False)
+
+    def _on_canal_index(self, i):
+        d = self._attr_cb.itemData(i)
+        if isinstance(d, dict):
+            self.layer.channel_type  = d.get("channel_type") or ""
+            self.layer.channel_num   = d.get("channel_num")
+            self.layer.channel_sig   = d.get("channel_sig") or ""
+            self.layer.channel_label = d.get("label") or ""
+            self._on_attr("Canal")
+        else:
+            self._on_attr(self._attr_cb.itemText(i))
 
     def _mk_forme(self):
         box = QWidget()
@@ -2327,7 +2490,7 @@ class LayerRow(QFrame):
             w.blockSignals(True)
 
         self._cible_btn.setText(cible_text(self.layer))
-        self._attr_cb.setCurrentText(self.layer.attribute)
+        self._select_canal_item()
 
         forme = self.layer.forme if self.layer.forme in self._FORMES else "Sinus"
         self._forme_cb.setCurrentText(forme)
@@ -2894,6 +3057,27 @@ class SimpleEffectPanel(QWidget):
         cv.setContentsMargins(14, 4, 14, 10)
         cv.setSpacing(0)
 
+        # LECTURE : en boucle (défaut) ou une seule fois. Le moteur savait déjà
+        # jouer « once » (MainWindow._update_effect_from_layers) mais ces deux
+        # boutons étaient restés orphelins, jamais posés dans un layout.
+        cv.addWidget(self._mk_sep(tr("fx_play_sep")))
+        cv.addSpacing(6)
+        play_row = QHBoxLayout()
+        play_row.setSpacing(4)
+        self._btn_loop = QPushButton(tr("fx_play_loop"))
+        self._btn_once = QPushButton(tr("fx_play_once"))
+        for _b, _hint in ((self._btn_loop, "fx_play_loop_hint"),
+                          (self._btn_once, "fx_play_once_hint")):
+            _b.setCheckable(True)
+            _b.setFixedHeight(22)
+            _b.setCursor(Qt.PointingHandCursor)
+            _b.setToolTip(tr(_hint))
+            play_row.addWidget(_b)
+        self._btn_loop.setChecked(True)
+        play_row.addStretch()
+        cv.addLayout(play_row)
+        cv.addSpacing(10)
+
         cv.addWidget(self._mk_sep("ASSIGNER"))
         cv.addSpacing(6)
 
@@ -2922,13 +3106,6 @@ class SimpleEffectPanel(QWidget):
         assign_row.addStretch()
         cv.addLayout(assign_row)
         cv.addSpacing(10)
-
-        # Boutons lecture conservés comme objets orphelins (référencés par EffectEditorDialog)
-        self._btn_loop = QPushButton()
-        self._btn_loop.setCheckable(True)
-        self._btn_loop.setChecked(True)
-        self._btn_once = QPushButton()
-        self._btn_once.setCheckable(True)
 
         self._assign_widget = cont
 
@@ -3004,7 +3181,7 @@ class SimpleEffectPanel(QWidget):
                 item.widget().deleteLater()
 
         for layer in self._layers:
-            row = LayerRow(layer)
+            row = LayerRow(layer, projectors=getattr(self._main_window, 'projectors', None))
             row.deleted.connect(lambda _w, l=layer: self._on_delete_layer(l))
             row.changed.connect(self.changed)
             row.cell_changed.connect(self._on_cell_changed)
@@ -3471,18 +3648,8 @@ class EffectEditorDialog(QDialog):
 
         # Repli de la bibliothèque : rend ses 260 px au tableau des couches,
         # utile dès que la fenêtre est trop étroite pour toutes les colonnes.
-        collapse = QPushButton("◀")
-        collapse.setFixedSize(20, 26)
-        collapse.setCursor(Qt.PointingHandCursor)
+        collapse = _PanelFoldButton("left")
         collapse.setToolTip(tr("ee2_fold_list"))
-        collapse.setStyleSheet("""
-            QPushButton {
-                background: #101010; color: #444;
-                border: 1px solid #1e1e1e; border-radius: 5px;
-                font-size: 9px; font-weight: bold; padding: 0;
-            }
-            QPushButton:hover { color: #00d4ff; border-color: #00d4ff; }
-        """)
         collapse.clicked.connect(self._toggle_library)
         hh.addWidget(collapse)
         self._lib_collapse_btn = collapse
@@ -3527,10 +3694,9 @@ class EffectEditorDialog(QDialog):
         self._lib_scroll.setVisible(not collapsed)
         self._lib_hdr_layout.setContentsMargins(
             *((6, 0, 6, 0) if collapsed else (14, 0, 10, 0)))
-        self._lib_collapse_btn.setText("▶" if collapsed else "◀")
+        self._lib_collapse_btn.set_collapsed(collapsed)
         self._lib_collapse_btn.setToolTip(
-            tr("ee2_show_list") if collapsed
-            else "Replier la liste des effets")
+            tr("ee2_show_list") if collapsed else tr("ee2_fold_list"))
 
     def _rebuild_library(self):
         while self._list_vl.count() > 1:
@@ -3998,6 +4164,7 @@ class EffectEditorDialog(QDialog):
         # Connexions
         self._btn_loop.clicked.connect(lambda: self._set_play_mode("loop"))
         self._btn_once.clicked.connect(lambda: self._set_play_mode("once"))
+        self._refresh_mode_btns()
         for _i, _btn in self._assign_btns.items():
             _btn.clicked.connect(lambda _=False, idx=_i: self._on_assign(idx))
 
@@ -4042,18 +4209,8 @@ class EffectEditorDialog(QDialog):
         hh.setContentsMargins(10, 0, 14, 0)
         self._plan_hdr_layout = hh
 
-        collapse = QPushButton("▶")
-        collapse.setFixedSize(20, 26)
-        collapse.setCursor(Qt.PointingHandCursor)
+        collapse = _PanelFoldButton("right")
         collapse.setToolTip(tr("ee2_fold_plan"))
-        collapse.setStyleSheet("""
-            QPushButton {
-                background: transparent; color: #3a3a3a;
-                border: 1px solid #1e1e1e; border-radius: 4px;
-                font-size: 10px; font-weight: bold;
-            }
-            QPushButton:hover { color: #00d4ff; border-color: #1e3a44; background: #0a1a1f; }
-        """)
         collapse.clicked.connect(self._toggle_plan)
         hh.addWidget(collapse)
         self._plan_collapse_btn = collapse
@@ -4129,9 +4286,9 @@ class EffectEditorDialog(QDialog):
             w.setVisible(not replie)
         self._plan_hdr_layout.setContentsMargins(
             *((6, 0, 6, 0) if replie else (10, 0, 14, 0)))
-        self._plan_collapse_btn.setText("◀" if replie else "▶")
+        self._plan_collapse_btn.set_collapsed(replie)
         self._plan_collapse_btn.setToolTip(
-            tr("ee2_show_plan") if replie else "Replier le plan de feu")
+            tr("ee2_show_plan") if replie else tr("ee2_fold_plan"))
 
     def _refresh_assign_btns(self):
         if not self._main_window:
@@ -4377,7 +4534,11 @@ class EffectEditorDialog(QDialog):
         if saved_cfg:
             self._play_mode       = saved_cfg.get("play_mode", self._play_mode)
             self._effect_duration = saved_cfg.get("duration",   self._effect_duration)
-            self._refresh_mode_btns()
+        elif not self._clips:
+            # Pas de config : retour aux défauts, sinon « Une fois » choisi sur
+            # l'effet précédent collait à celui qu'on vient d'ouvrir.
+            self._play_mode, self._effect_duration = "loop", 0
+        self._refresh_mode_btns()
         self._simple_panel.set_effect(eff, self._layers)
         self._rebuild_library()
         self._refresh_assign_btns()
@@ -4388,6 +4549,7 @@ class EffectEditorDialog(QDialog):
     def _start_preview(self):
         self._preview_t0 = _time.monotonic()
         self._preview_clock, self._preview_clock_ts = 0.0, None
+        self._preview_once_rest = None
         if not self._preview_timer.isActive():
             self._preview_timer.start(40)   # ~25 fps
 
@@ -4457,6 +4619,7 @@ class EffectEditorDialog(QDialog):
         mw = self._main_window
         if mw is not None:
             mw._editor_live_overrides = None
+            mw._editor_live_channels  = None
         self._push_overrides_to_3d(None)
 
     def closeEvent(self, event):
@@ -4469,8 +4632,12 @@ class EffectEditorDialog(QDialog):
         self._release_live_dmx()
         super().done(r)
 
+    # Repos (secondes réelles) entre deux passages de l'aperçu en « Une fois ».
+    _ONCE_PREVIEW_REST = 0.8
+
     def _preview_tick(self):
         plan = getattr(self, '_plan_widget', None)
+        resting = False
         if not self._layers:
             self._stop_preview()
             return
@@ -4494,14 +4661,32 @@ class EffectEditorDialog(QDialog):
             self._preview_clock_ts = _now
             self._preview_clock   += _dt * _mult
             t = self._preview_clock
+            # « Une fois » : un passage, un court temps de repos (l'état d'avant
+            # l'effet, comme au show), puis on rejoue. Sans ça l'aperçu bouclait
+            # et rien ne montrait où l'effet s'arrête.
+            if self._play_mode == "once":
+                _projs = [p for p in getattr(mw, 'projectors', [])
+                          if not fixture_is_fx_machine(p)]
+                _cycle = effect_cycle_seconds([l.to_dict() for l in self._layers],
+                                              len(_projs))
+                if _cycle > 0 and t >= _cycle:
+                    if getattr(self, '_preview_once_rest', None) is None:
+                        self._preview_once_rest = _now + self._ONCE_PREVIEW_REST
+                    if _now < self._preview_once_rest:
+                        resting = True
+                    else:
+                        self._preview_once_rest = None
+                        self._preview_clock = t = 0.0
         try:
-            overrides = self._compute_preview(t)
+            overrides = {} if resting else self._compute_preview(t)
+            chans     = {} if resting else self._compute_channel_preview(t)
             if plan is not None:
                 plan.set_htp_overrides(overrides)
             # Sortie live : la boucle DMX les applique puis les restaure
             _live = self._btn_live_dmx.isChecked()
             if self._main_window is not None:
                 self._main_window._editor_live_overrides = overrides if _live else None
+                self._main_window._editor_live_channels  = chans if _live else None
             # La 3D reflète ce qui part sur le DMX, donc armée par le même bouton
             self._push_overrides_to_3d(overrides if _live else None)
             # Alimenter la mini strip (même filtre anti-fumée que _compute_preview)
@@ -4806,9 +4991,23 @@ class EffectEditorDialog(QDialog):
 
     # ── Mode de lecture ───────────────────────────────────────────────────────
 
+    def _compute_channel_preview(self, t: float) -> dict:
+        """Couches « Canal » de l'aperçu — même calcul que le show."""
+        if not any(l.attribute == "Canal" for l in self._layers):
+            return {}
+        return channel_layer_outputs(
+            self._layers, getattr(self._main_window, 'projectors', None) or [], t)
+
     def _set_play_mode(self, mode: str):
         self._play_mode = mode
         self._refresh_mode_btns()
+        # Effet en cours en live : le mode suit tout de suite, comme les couches
+        # (`_push_layers_to_live`).
+        mw  = self._main_window
+        cfg = getattr(mw, 'active_effect_config', None) if mw else None
+        if isinstance(cfg, dict) and cfg.get('name') == self._selected_card:
+            cfg['play_mode'] = mode
+        self._start_preview()   # rejouer depuis le début pour voir la différence
 
     def _refresh_mode_btns(self):
         _on  = "background:#00d4ff;color:#000;border-color:#00d4ff;"

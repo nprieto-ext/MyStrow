@@ -67,6 +67,7 @@ class FauxWin:
     stop_effect           = mw.MainWindow.stop_effect
     _restore_effect_state = mw.MainWindow._restore_effect_state
     _stop_button_effects  = mw.MainWindow._stop_button_effects
+    _return_lyres_after_effect = mw.MainWindow._return_lyres_after_effect
 
     def __init__(self):
         self.effect_superposition = True
@@ -80,6 +81,7 @@ class FauxWin:
         self._effect_engine_frame = None
         self.effect_timer = FauxTimer()
         self.projectors = [FauxProjecteur()]
+        self._pan_tilt_transitions = {}
         self.leds = []
         self.logs = []
         self.midi_handler = self

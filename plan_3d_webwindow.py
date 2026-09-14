@@ -3,6 +3,7 @@ Plan de feu 3D — rendu Three.js via QWebEngineView.
 Remplace Plan3DWindow avec une API identique : init_scene(), refresh().
 """
 import base64
+from core import effect_channel_value, fixture_output_channel
 import datetime
 import json
 import os
@@ -3175,6 +3176,12 @@ class Plan3DWebWindow(QMainWindow):
                     tilt_v = ov[3]
             _pt_ranges = pan_tilt_ranges(p)
             _mach = fixture_machine_kind(p)
+            if _mach:
+                # Couche « Canal » sur le canal de sortie : la gerbe se voit.
+                _sortie = fixture_output_channel(p)
+                _fxv = effect_channel_value(p, _sortie, None) if _sortie else None
+                if _fxv is not None:
+                    lvl = int(round(_fxv / 255 * 100))
             out.append({
                 'level':          lvl,
                 'r': r, 'g': g, 'b': b,
@@ -3217,15 +3224,15 @@ class Plan3DWebWindow(QMainWindow):
                 'rot3d_z':        getattr(p, 'rot3d_z', 0.0),
                 'name':           getattr(p, 'name', ''),
                 'group':          getattr(p, 'group', ''),
-                'gobo':           int(getattr(p, 'gobo', 0) or 0),
-                'gobo_rotation':  int(getattr(p, 'gobo_rotation', 0) or 0),
+                'gobo':           int(effect_channel_value(p, 'Gobo1', getattr(p, 'gobo', 0)) or 0),
+                'gobo_rotation':  int(effect_channel_value(p, 'Gobo1Rot', getattr(p, 'gobo_rotation', 0)) or 0),
                 # Optique de projection : sans elle, pas de motif. Même logique
                 # que `has_zoom`/`has_focus` — la valeur du canal ne suffit pas
                 # à décider du rendu. Cf. `core.fixture_projects_gobo` pour le
                 # pourquoi (canal `Gobo1` détourné en canal de programme).
                 'has_gobo':       fixture_projects_gobo(p),
-                'prism':          int(getattr(p, 'prism', 0) or 0),
-                'prism_rotation': int(getattr(p, 'prism_rotation', 0) or 0),
+                'prism':          int(effect_channel_value(p, 'Prism', getattr(p, 'prism', 0)) or 0),
+                'prism_rotation': int(effect_channel_value(p, 'PrismRot', getattr(p, 'prism_rotation', 0)) or 0),
                 'matrix_id':      getattr(p, 'matrix_id', None),
                 'matrix_role':    getattr(p, 'matrix_role', None),
                 # Zoom : largeur de faisceau pilotée par DMX. `has_zoom` évite
@@ -3233,8 +3240,8 @@ class Plan3DWebWindow(QMainWindow):
                 # permanence). Le zoom manuel passe par channel_extras['Zoom']
                 # (canal avancé), pas proj.zoom — mêmes priorités que l'Art-Net,
                 # sinon un changement de zoom manuel ne se voyait pas en 3D.
-                'zoom':           int((getattr(p, 'channel_extras', None) or {}).get(
-                                       'Zoom', getattr(p, 'zoom', 0)) or 0),
+                'zoom':           int(effect_channel_value(p, 'Zoom', (getattr(p, 'channel_extras', None) or {}).get(
+                                       'Zoom', getattr(p, 'zoom', 0))) or 0),
                 'has_zoom':       'Zoom' in (getattr(p, 'dmx_profile', None) or []),
                 # Focus : même logique que le zoom, la valeur vit dans les
                 # canaux bruts (curseur « Focus » des canaux avancés).
@@ -3242,8 +3249,8 @@ class Plan3DWebWindow(QMainWindow):
                 # toutes sur le plateau → la 3D le rend net, plutôt que de
                 # laisser un gobo flou que rien ne permettrait de régler.
                 'has_focus':      'Focus' in (getattr(p, 'dmx_profile', None) or []),
-                'focus':          int((getattr(p, 'channel_extras', None) or {}).get(
-                                       'Focus', getattr(p, 'focus', 0)) or 0),
+                'focus':          int(effect_channel_value(p, 'Focus', (getattr(p, 'channel_extras', None) or {}).get(
+                                       'Focus', getattr(p, 'focus', 0))) or 0),
             })
         # Barres/matrices : rendu PER-PIXEL. Chaque pixel garde sa couleur, son
         # niveau et sa position → un chase se VOIT courir le long de la barre.

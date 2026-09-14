@@ -1,0 +1,11 @@
+{
+  "appId": "fr.mystrow.app",
+  "appName": "MyStrow",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

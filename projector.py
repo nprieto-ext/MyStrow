@@ -79,6 +79,10 @@ class Projector:
         # laser, la seule information tout court, la moitié des canaux n'ayant
         # aucun type connu. Purement informatif : n'entre jamais dans le calcul
         # de la trame DMX.
+        # Sortie des couches d'effet « Canal » : {n° de canal (1 = premier):
+        # 0-255}. Transitoire, jamais sauvegardée — vidée à chaque frame
+        # d'effet et à l'arrêt. Lue par artnet_dmx AVANT channel_extras.
+        self.effect_channels  = {}
         self.channel_labels   = []    # [str] parallèle à dmx_profile
         # Canaux spéciaux — contrôle manuel indépendant
         self.uv           = 0   # UV (0-255, direct)

@@ -201,6 +201,7 @@ def build_local_installer(version):
         f"--add-data \"tablet/index.html;tablet\" "
         f"--add-data \"tablet/manifest.json;tablet\" "
         f"--add-data \"tablet/sw.js;tablet\" "
+        f"--add-data \"tablet/fonts;tablet/fonts\" "
         f"--add-binary \"ftd2xx.dll;.\" "
         f"{_ffmpeg_flag}"
         f"{_custom_bundle_flag}"
@@ -231,6 +232,9 @@ def build_local_installer(version):
         f"--collect-all certifi "
         f"--collect-all cryptography "
         f"--collect-all serial "
+        # Annonce Bonjour du serveur tablette (découverte par l'app des stores).
+        f"--collect-all zeroconf "
+        f"--collect-all ifaddr "
         f"--hidden-import=serial.tools.list_ports "
         f"--collect-all ftd2xx "
         f"--hidden-import=ftd2xx "

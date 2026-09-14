@@ -218,27 +218,45 @@ window.setRoomAmbience = function (x) {
 // `floorReflector` reste le nom exposé : c'est lui que manipulent le bouton
 // « Sol », le niveau de qualité et window.setFloorVisible(). Il désigne
 // désormais ce plan mat, et tous ces réglages continuent de fonctionner.
+//
+// ⚠️ L'EMPRISE du sol est déclarée ici et NULLE PART AILLEURS : c'est la même
+// qui borne le point d'arrivée des faisceaux dans `beamFloor()`. Les deux
+// avaient divergé — plancher 18 × 10 (x ±9, z ±5) contre une arrivée bornée à
+// x ±11 et z ∈ [−8, 13]. Un faisceau incliné vers le public atterrissait donc
+// jusqu'à 3 m DEVANT le bord du plancher : le cône traversait la scène et sa
+// tache flottait sur le noir (capture `depasse.png`, 11/09/2026). Le public
+// étant côté −z (caméra en z = −20), c'est vers l'avant que ça se voyait.
+// Z0 vaut -9 et non -8 (la borne d'origine) : la grille de scène fait 18 × 18,
+// donc z ∈ [-9, 9]. À -8 il restait un mètre de grille tracée sur le vide, côté
+// public. Le plancher doit contenir la grille, jamais l'inverse.
+const FLOOR_X0 = -11.0, FLOOR_X1 = 11.0;
+const FLOOR_Z0 =  -9.0, FLOOR_Z1 = 13.0;
+const FLOOR_W  = FLOOR_X1 - FLOOR_X0, FLOOR_D  = FLOOR_Z1 - FLOOR_Z0;
+const FLOOR_CX = (FLOOR_X0 + FLOOR_X1) / 2, FLOOR_CZ = (FLOOR_Z0 + FLOOR_Z1) / 2;
+
 const floorReflector = new THREE.Mesh(
-  new THREE.PlaneGeometry(18, 10),
+  new THREE.PlaneGeometry(FLOOR_W, FLOOR_D),
   new THREE.MeshStandardMaterial({ color:0x0d0b16, roughness:0.94, metalness:0.04 })
 );
 floorReflector.rotation.x = -Math.PI / 2;
-floorReflector.position.y = 0.0;
+floorReflector.position.set(FLOOR_CX, 0.0, FLOOR_CZ);
 scene.add(floorReflector);
 window.floorReflector = floorReflector;
 
 // Voile sombre conservé : il donnait sa couleur au sol en plus d'atténuer le
 // reflet. Opaque maintenant qu'il n'y a plus de miroir dessous.
 const floorTint = new THREE.Mesh(
-  new THREE.PlaneGeometry(18, 10),
+  new THREE.PlaneGeometry(FLOOR_W, FLOOR_D),
   new THREE.MeshBasicMaterial({ color:0x090710, transparent:true, opacity:0.55 })
 );
 floorTint.rotation.x = -Math.PI / 2;
-floorTint.position.y = 0.004;
+floorTint.position.set(FLOOR_CX, 0.004, FLOOR_CZ);
 scene.add(floorTint);
 window.floorTint = floorTint;
 
-// Grille de scène
+// Grille de scène — volontairement PLUS PETITE que le plancher : c'est elle
+// qui marque le plateau (18 × 18 m), le plancher débordant jusque sous les
+// taches des faisceaux qui partent au-delà du bord de scène.
 const gridHelper = new THREE.GridHelper(18, 18, 0x141018, 0x0d0a12);
 gridHelper.position.y = 0.008;
 scene.add(gridHelper);
@@ -1756,6 +1774,42 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 // que le cône s'arrêtait encore à 2 m du sol.
 const BEAM_TMAX = 22.0;
 
+// Raccourcir `t` pour que le point d'arrivée reste DANS la salle — sans jamais
+// le sortir du rayon.
+//
+// ⚠️ Les trois coordonnées étaient rabotées SÉPARÉMENT :
+//     fx: clamp(lensX + bx*t, -11, 11)
+//     fy: clamp(lensY + by*t, 0.03, 14.5)
+//     fz: clamp(lensZ + bz*t,  -8, 13)
+// Dès qu'une seule borne mordait, le sommet du cône n'était plus sur l'axe du
+// faisceau : le cône partait de travers, s'allongeait, et ne rejoignait plus sa
+// tache au sol. En bornant `t`, le point reste sur le rayon par construction.
+function _clampT(o, d, lo, hi, t) {
+  if (d >  1e-9) t = Math.min(t, (hi - o) / d);
+  if (d < -1e-9) t = Math.min(t, (lo - o) / d);
+  return t;
+}
+
+// Point d'arrivée du faisceau + « ce rayon touche-t-il le plancher DESSINÉ ? ».
+//
+// `hitsFloor` est une question de SURFACE, pas seulement de hauteur : un rayon
+// qui sort par le côté de la salle avant d'atteindre le sol ne doit pas laisser
+// une tache orpheline sur le plancher, loin du cône. C'est la même famille de
+// piège que le `!goingUp` d'origine (cf. l'historique de `fy`).
+function _beamEnd(lensX, lensY, lensZ, bx, by, bz, t) {
+  t = Math.max(0, _clampT(lensX, bx, FLOOR_X0, FLOOR_X1,
+               _clampT(lensY, by, 0.03, 14.5,
+               _clampT(lensZ, bz, FLOOR_Z0, FLOOR_Z1, t))));
+  const tf = by < -1e-6 ? lensY / -by : Infinity;
+  const hx = lensX + bx * tf, hz = lensZ + bz * tf;
+  return {
+    fx: lensX + bx * t, fy: lensY + by * t, fz: lensZ + bz * t,
+    hitsFloor: tf <= BEAM_TMAX
+            && hx >= FLOOR_X0 && hx <= FLOOR_X1
+            && hz >= FLOOR_Z0 && hz <= FLOOR_Z1,
+  };
+}
+
 // ─── Débattement mécanique pan / tilt ────────────────────────────────────────
 // Combien de degrés la lyre balaie sur toute sa course DMX. Réglable par
 // fixture dans la fenêtre Patch, transmis ici en `pan_range` / `tilt_range`.
@@ -1867,16 +1921,11 @@ function beamFloor(p) {
     if      (by < 0) t = Math.min(lensY / (-by), BEAM_TMAX);
     else if (by > 0) t = Math.min((15.0 - lensY) / by, BEAM_TMAX);
     else             t = BEAM_TMAX;
-    return {
-      fx: Math.max(-11, Math.min(11, lensX + bx*t)),
-      // Altitude d'arrivée calculée comme fx/fz, et NON forcée au sol ou au
-      // plafond selon `goingUp`. C'est ce forçage qui téléportait le faisceau :
-      // au franchissement du seuil, l'extrémité sautait de 0.03 à 14.5 m.
-      fy: Math.max(0.03, Math.min(14.5, lensY + by*t)),
-      fz: Math.max(-8,  Math.min(13, lensZ + bz*t)),
-      lensX, lensY, lensZ, bx, by, bz, isMH, goingUp,
-      hitsFloor: by < -1e-6 && (lensY / -by) <= BEAM_TMAX,
-    };
+    // Altitude d'arrivée calculée, et NON forcée au sol ou au plafond selon
+    // `goingUp`. C'est ce forçage qui téléportait le faisceau : au
+    // franchissement du seuil, l'extrémité sautait de 0.03 à 14.5 m.
+    return Object.assign(_beamEnd(lensX, lensY, lensZ, bx, by, bz, t),
+                         { lensX, lensY, lensZ, bx, by, bz, isMH, goingUp });
   } else {
     const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;  // pan — pivot horizontal
     const rx    = (p.rot3d_x ?? 0) * Math.PI / 180;  // tilt — inclinaison depuis nadir
@@ -1911,13 +1960,8 @@ function beamFloor(p) {
     const t = by < 0 ? Math.min(lensY / (-by), BEAM_TMAX)
             : by > 0 ? Math.min((15.0 - lensY) / by, BEAM_TMAX)
             :          BEAM_TMAX;
-    return {
-      fx: Math.max(-11, Math.min(11, lensX + bx * t)),
-      fy: Math.max(0.03, Math.min(14.5, lensY + by * t)),
-      fz: Math.max(-8,  Math.min(13, lensZ + bz * t)),
-      lensX, lensY, lensZ, bx, by, bz, isMH: false, goingUp,
-      hitsFloor: by < -1e-6 && (lensY / -by) <= BEAM_TMAX,
-    };
+    return Object.assign(_beamEnd(lensX, lensY, lensZ, bx, by, bz, t),
+                         { lensX, lensY, lensZ, bx, by, bz, isMH: false, goingUp });
   }
 }
 
@@ -2351,9 +2395,20 @@ window.updateScene = function(projectors, _anim) {
         // Wash : nappe au sol plus large et plus douce qu'un spot de lyre
         // La tache suit l'ouverture : un faisceau resserré qui garderait une
         // tache pleine largeur se lit tout de suite comme un bug.
-        // (Le zoom DMX, lui, n'a jamais agi sur la tache — comportement
-        // d'origine laissé tel quel, ce n'est pas l'objet de ce réglage.)
-        const poolR = (0.35 + 2.2*lvl) * bs * (isWash ? 1.6 : 1.0) * _angF;
+        //
+        // Rayon de la tache DÉRIVÉ du cône, et non calculé par une formule
+        // parallèle. L'ancienne — (0.35 + 2.2*lvl) * bs * (wash ? 1.6 : 1) *
+        // _angF — ignorait complètement `_zoomF` et retenait 1.6 là où le cône
+        // prend 1.9 pour un wash. Mesuré : tache 2,2× trop LARGE zoom serré,
+        // 3,4× trop ÉTROITE zoom large, et systématiquement trop étroite sur
+        // un wash. Le facteur 1.15 reproduit à 0,2 % près l'ancienne taille
+        // dans le cas calibré (spot, zoom 1) : rien ne bouge là où c'était
+        // juste, tout suit ailleurs.
+        //
+        // √_zoomF en plus : l'enveloppe suit `_zoomF`, mais `uSharp` est AUSSI
+        // divisé par `_zoomF` (cf. plus haut), si bien que la largeur VISIBLE
+        // du faisceau varie en _zoomF^1,5. La tache doit suivre la même loi.
+        const poolR = base_r * 1.15 * Math.sqrt(Math.max(0.35, _zoomF));
         obj.pool.position.set(fx2, 0.02, fz2);
         obj.pool.scale.setScalar(poolR);
         obj.pool.material.uniforms.uColor.value.copy(_colBuf);
@@ -2366,9 +2421,15 @@ window.updateScene = function(projectors, _anim) {
           obj.pool.material.uniforms.uGoboRot.value = goboRot;
         obj.pool.visible = true;
 
-        // Halo diffus au sol (plus large)
+        // Halo diffus au sol. 1.7 et non 2.8 : à 2,8 un simple spot à 7 m
+        // posait un disque de 14 m de diamètre sur un plateau de 18 m — deux
+        // projecteurs suffisaient à noyer toute la scène de blanc, très loin
+        // devant un faisceau qui, lui, fait 4,4 m. C'est ce halo, et non la
+        // tache principale, qui faisait « la tache est plus large que le
+        // faisceau » (capture `depasse.png`). À 1.7 il redevient ce qu'il doit
+        // être : la pénombre juste autour de la tache.
         obj.halo.position.set(fx2, 0.015, fz2);
-        obj.halo.scale.setScalar(poolR * 2.8);
+        obj.halo.scale.setScalar(poolR * 1.7);
         obj.halo.material.uniforms.uColor.value.copy(_colBuf);
         obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl * window.glowGain;
         obj.halo.visible = true;
@@ -2394,10 +2455,12 @@ window.updateScene = function(projectors, _anim) {
         lensX, lensY, lensZ,
         fx: fx2, fz: fz2, baseY,
         base_r,
-        // Rayon EXACT de la tache principale, facteurs wash et ouverture
-        // compris : les taches du prisme sont des copies, elles doivent avoir
-        // la même taille — et leur écartement en dépend aussi.
-        poolR:    (0.35 + 2.2 * lvl) * bs * (isWash ? 1.6 : 1.0) * _angF,
+        // Rayon EXACT de la tache principale, facteurs wash, ouverture et
+        // zoom compris : les taches du prisme sont des copies, elles doivent
+        // avoir la même taille — et leur écartement en dépend aussi. Recopier
+        // la formule ici la faisait diverger de celle du bloc `hitsFloor`,
+        // d'où une seule expression, identique des deux côtés.
+        poolR:    base_r * 1.15 * Math.sqrt(Math.max(0.35, _zoomF)),
         goingUp,
         hitsFloor,
         prism:    (p.prism || 0) > 0,
