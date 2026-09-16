@@ -70,7 +70,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.94"
+VERSION = "3.1.95"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -956,6 +956,27 @@ def effect_channel_value(proj, ch_type, default=0):
             if c == ch_type and (i + 1) in fx:
                 return fx[i + 1]
     return default
+
+
+def strobe_speed_from_dmx(v):
+    """Valeur DMX d'un canal Strobe -> vitesse 0-100 (inverse d'artnet_dmx,
+    qui étale 0-100 % sur 16-250 ; en dessous de 16, strobe éteint)."""
+    if v < 16:
+        return 0
+    return min(100, round((v - 16) / (250 - 16) * 100))
+
+
+def displayed_strobe_speed(proj):
+    """Vitesse de strobe à AFFICHER (plans 2D et 3D).
+
+    Une couche « Canal » visant le type Strobe écrit la valeur brute dans
+    `effect_channels`, sans toucher `strobe_speed` : le rig strobait, les
+    plans restaient fixes. Cette valeur passe devant `strobe_speed` sur le
+    fil — même ordre ici."""
+    v = effect_channel_value(proj, "Strobe", None)
+    if v is not None:
+        return strobe_speed_from_dmx(v)
+    return getattr(proj, 'strobe_speed', 0) or 0
 
 
 def clear_effect_channels(projectors):

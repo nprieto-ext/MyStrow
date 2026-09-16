@@ -3,9 +3,10 @@ Plan de feu 3D — rendu Three.js via QWebEngineView.
 Remplace Plan3DWindow avec une API identique : init_scene(), refresh().
 """
 import base64
-from core import effect_channel_value, fixture_output_channel
+from core import effect_channel_value, fixture_output_channel, displayed_strobe_speed
 import datetime
 import json
+import math
 import os
 import sys
 import time as _time
@@ -13,7 +14,7 @@ from pathlib import Path
 from effect_editor import _NumCell
 
 from PySide6.QtWidgets import (
-    QMainWindow, QToolBar, QLabel, QSlider, QPushButton,
+    QMainWindow, QToolBar, QLabel, QSlider, QPushButton, QAbstractButton,
     QDialog, QVBoxLayout, QHBoxLayout, QScrollArea, QWidget,
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QLineEdit,
     QDoubleSpinBox, QFrame, QGridLayout, QSizePolicy, QSplitter, QTabWidget,
@@ -23,8 +24,8 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtCore import (Qt, QTimer, QUrl, Signal, QObject, Slot, QEvent,
-                            QRectF, QBuffer, QIODevice)
-from PySide6.QtGui import QColor, QBrush, QPainter, QPen, QImage
+                            QRectF, QBuffer, QIODevice, QPointF, QSize)
+from PySide6.QtGui import QColor, QBrush, QPainter, QPen, QImage, QPolygonF, QFont
 from core import (ComboSansMolette, color_wheel_display_color,
                   fixture_machine_kind,
                   emitted_brightness, fixture_projects_gobo, media_icon,
@@ -178,84 +179,455 @@ _SCENE_PRESETS = {
         # après réduction) rentre dans les ±4,1/4,4 m atteignables en profondeur.
         'span': 16.2,
     },
-    'truss_glb': {
-        'label': 'Structure truss',
+    'festival_plein_air': {
+        'label': 'Festival plein air',
+        # Décor dessiné par la page (`_makeFestivalStage`) : le gril du toit en
+        # fait partie, il n'est pas dans la liste de trusses éditable.
         'trusses': [],
-        'glb': 'truss_structure.glb',
-        # Portique : 3 arches reliées par des poutres longitudinales.
-        # Symétrique en Z (mesuré : 15,3 m² de structure à z=-9 contre 16,3 à
-        # z=+9) → pas de demi-tour à appliquer.
-        # 20 m au lieu de 18 : la largeur passe à ±8,08 m, soit exactement
-        # l'emprise atteignable depuis le plan de feu 2D (±8,1 m). Le rig tient
-        # alors sous le portique au lieu de déborder sur les côtés.
-        'span': 20.0,
-        # La poutre haute court de 6,50 à 7,27 m (l'arche est cintrée, elle
-        # n'est pas plate) : on accroche SOUS son point le plus bas, sinon les
-        # projecteurs des extrémités traverseraient la structure.
-        'rig_height': 6.3,
-        # Ce portique est profond de ±10 m alors que le cyclorama est planté à
-        # z = +5,6 : tout ce qui le dépasse passait derrière et se faisait
-        # trancher net, la structure apparaissait coupée par un écran noir.
+        # Gril centré à 8,2 m, section 0,40 m : on accroche SOUS la membrure basse.
+        # ⚠️ Gabarit partagé avec `_makeFestivalStage` : retoucher les deux.
+        'rig_height': 8.0,
+        # Plein air : pas de mur derrière la scène, le fond est un écran du décor.
         'cyc': False,
     },
-    # « Scène couverte » (warehouse_construction.glb) retirée le 10/08/2026 :
-    # le modèle porte des éléments de structure qui flottent au milieu de l'aire
-    # de jeu, impossibles à isoler proprement (géométrie partagée entre nœuds).
-    # Le .glb a été sorti de `scenes3d/` — le dossier part en entier dans les 4
-    # chemins de build, il aurait pesé pour rien dans l'installeur.
-    'live': {
-        'label': 'Live',
-        'trusses': [
-            {'label': 'Truss avant',   'enabled': True, 'height': 7.0, 'z': -3.8, 'x_l': -9.0, 'x_r': 9.0},
-            {'label': 'Truss arrière', 'enabled': True, 'height': 7.0, 'z':  4.0, 'x_l': -9.0, 'x_r': 9.0},
-        ],
+    'discotheque': {
+        'label': 'Discothèque',
+        # Décor dessiné par la page (`_makeDiscotheque`) : salle, estrade DJ,
+        # cadre de scène, cercle de truss au-dessus de la piste, trusses latéraux.
+        'trusses': [],
+        # Trusses centrés à 5,0 m, section 0,30 m : on accroche SOUS la membrure basse.
+        # ⚠️ Gabarit partagé avec `_makeDiscotheque` : retoucher les deux.
+        'rig_height': 4.8,
+        # La salle a son propre mur du fond (z = 6,5) : le cyclorama, planté à
+        # z = 5,6, tomberait en travers de l'estrade.
+        'cyc': False,
     },
-    'dj': {
-        'label': 'DJ',
-        'trusses': [
-            {'label': 'Truss avant', 'enabled': True, 'height': 6.0, 'z': -3.5, 'x_l': -7.0, 'x_r': 7.0},
-            {'label': 'Overhead',    'enabled': True, 'height': 5.0, 'z':  0.0, 'x_l': -4.0, 'x_r': 4.0},
-        ],
+    'dj_mobile': {
+        'label': 'DJ mobile',
+        # Décor dessiné par la page (`_makeDJMobile`) : cabine blanche à néon
+        # MyStrow, grands et petits totems lycra blancs, colonnes PA. Sans murs.
+        'trusses': [],
+        # Plateau des totems : les lyres d'une presta mobile sont posées dessus.
+        # ⚠️ Gabarit partagé avec `_makeDJMobile` : retoucher les deux.
+        'rig_height': 2.05,
+        'cyc': False,
     },
-    'concert': {
-        'label': 'Concert',
-        'trusses': [
-            {'label': 'Truss avant',   'enabled': True, 'height': 8.0, 'z': -4.5, 'x_l': -10.0, 'x_r': 10.0},
-            {'label': 'Truss milieu',  'enabled': True, 'height': 7.5, 'z':  0.0, 'x_l':  -9.0, 'x_r':  9.0},
-            {'label': 'Truss arrière', 'enabled': True, 'height': 7.0, 'z':  5.0, 'x_l':  -9.0, 'x_r':  9.0},
-        ],
+    'conference': {
+        'label': 'Conférence',
+        # Décor dessiné par la page (`_makeConference`) : amphithéâtre circulaire
+        # en gradins, grand écran au mur du fond, baies vitrées, anneau de plafond.
+        'trusses': [],
+        # Rails de plafond à 5,0 m : on accroche dessous.
+        # ⚠️ Gabarit partagé avec `_makeConference` : retoucher les deux.
+        'rig_height': 4.9,
+        # Mur du fond propre (z = 6,8) : le cyclorama, planté à z = 5,6,
+        # tomberait devant l'écran.
+        'cyc': False,
     },
-    'club': {
-        'label': 'Club',
-        'trusses': [
-            {'label': 'Rig central', 'enabled': True, 'height': 4.5, 'z':  0.0, 'x_l': -5.0, 'x_r': 5.0},
-            {'label': 'Truss avant', 'enabled': True, 'height': 4.0, 'z': -3.0, 'x_l': -7.0, 'x_r': 7.0},
-        ],
-    },
-    'festival': {
-        'label': 'Festival',
-        'trusses': [
-            {'label': 'Face',    'enabled': True, 'height': 9.0, 'z': -4.5, 'x_l': -11.0, 'x_r': 11.0},
-            {'label': 'Mid',     'enabled': True, 'height': 8.5, 'z':  0.5, 'x_l': -10.0, 'x_r': 10.0},
-            {'label': 'Arrière', 'enabled': True, 'height': 8.0, 'z':  5.5, 'x_l': -10.0, 'x_r': 10.0},
-            {'label': 'Overhead','enabled': True, 'height': 9.5, 'z': -1.0, 'x_l':  -3.5, 'x_r':  3.5},
-        ],
-    },
-    'arena': {
-        'label': 'Grande scène',
-        'trusses': [
-            {'label': 'Avant',   'enabled': True, 'height': 10.0, 'z': -5.0, 'x_l': -11.0, 'x_r': 11.0},
-            {'label': 'Milieu',  'enabled': True, 'height':  9.5, 'z':  0.5, 'x_l': -10.0, 'x_r': 10.0},
-            {'label': 'Arrière', 'enabled': True, 'height':  9.0, 'z':  6.0, 'x_l': -10.0, 'x_r': 10.0},
-        ],
-    },
-    'totem': {
-        'label': 'Totems',
-        'trusses': [
-            {'label': 'Rig central', 'enabled': True, 'height': 5.5, 'z': -1.0, 'x_l': -2.5, 'x_r': 2.5},
-        ],
+    'sapin_noel': {
+        'label': 'Sapin de Noël',
+        # Décor dessiné par la page (`_makeSapinNoel`) : grand sapin stylisé
+        # vert foncé (pointe à 6,6 m). Sans boules, cadeaux ni structure.
+        'trusses': [],
+        # Pas de gril : le rig flotte au-dessus de la pointe du sapin.
+        # ⚠️ Gabarit partagé avec `_makeSapinNoel` : retoucher les deux.
+        'rig_height': 7.0,
+        'cyc': False,
     },
 }
+
+# Scène d'un patch neuf, et de repli quand la scène enregistrée a été retirée
+_SCENE_PAR_DEFAUT = 'festival_plein_air'
+
+# ── Vignettes des cartes Vue / Scène ─────────────────────────────────────────
+# Dessinées au QPainter depuis les trusses du preset, et non livrées en images :
+# un preset retouché ou ajouté a sa vignette juste sans rien régénérer.
+
+# Boîte monde commune à toutes les vignettes : même échelle partout, si bien
+# qu'une « Grande scène » paraît bel et bien plus grande qu'un « Club ».
+_VIGN_X, _VIGN_Y, _VIGN_Z = (-11.0, 11.0), (-0.8, 10.2), (-6.3, 6.3)
+_VIGN_PLANCHER = (-9.0, 9.0, -5.0, 5.0)     # x gauche, x droite, z avant, z arrière
+_VIGN_CYC_Z = 5.6
+
+
+def _vignette_structure(code: str) -> dict:
+    """Charpente schématique d'une scène : poutres, pieds, points d'accroche."""
+    poutres, pieds, sources, ecrans = [], [], [], []
+    if code == 'festival_plein_air':
+        # Gabarit de `_makeFestivalStage` : toit à 4 tours (±6 × ±4 m, gril à
+        # 8,2 m), bâche en croupe, ailes. Tour extérieure ramenée de 12,6 à
+        # 11 m : elle sortirait de la boîte commune des vignettes.
+        rx, rz, gy, fy, fx = 6.0, 4.0, 8.2, 10.6, 2.8
+        for z in (-rz, 0.0, rz):
+            poutres.append([(-rx, gy, z), (rx, gy, z)])
+        for x in (-rx, rx):
+            poutres.append([(x, gy, -rz), (x, gy, rz)])
+        poutres.append([(-fx, fy, 0.0), (fx, fy, 0.0)])
+        for x in (-rx, rx):
+            for z in (-rz, rz):
+                poutres.append([(x, gy, z), (fx if x > 0 else -fx, fy, 0.0)])
+                pieds.append([(x, 0.0, z), (x, gy, z)])
+        for sg in (-1, 1):
+            for x in (7.2, 8.8, 11.0):
+                pieds.append([(sg * x, 0.0, -rz), (sg * x, 9.0, -rz)])
+            poutres.append([(sg * rx, gy, -rz), (sg * 11.0, gy, -rz)])
+            ecrans.append([(sg * 9.1, 1.9, -rz), (sg * 10.7, 1.9, -rz),
+                           (sg * 10.7, 7.7, -rz), (sg * 9.1, 7.7, -rz)])
+        # Fond de scène : un seul écran sur toute la largeur entre les tours
+        ecrans.append([(-5.7, 0.12, 4.3), (5.7, 0.12, 4.3), (5.7, 7.87, 4.3), (-5.7, 7.87, 4.3)])
+        sources = [(x, gy, z) for z in (-rz, 0.0) for x in (-3.6, -1.2, 1.2, 3.6)]
+    elif code == 'discotheque':
+        # Gabarit de `_makeDiscotheque` : cadre de scène (tours ±6,2 m à
+        # z = 3,2), cercle de truss au-dessus de la piste, trusses latéraux,
+        # écrans du mur du fond. Cercle et latéraux ramenés dans la boîte
+        # commune des vignettes (la salle descend à −9 m).
+        ty, sx, rz = 5.0, 6.2, 3.2
+        poutres.append([(-sx, ty, rz), (sx, ty, rz)])
+        for sg in (-1, 1):
+            poutres.append([(sg * sx, ty, rz), (sg * sx, ty, 6.0)])
+            pieds.append([(sg * sx, 0.0, rz), (sg * sx, ty, rz)])
+            poutres.append([(sg * 8.5, ty, -6.0), (sg * 8.5, ty, 2.0)])
+        cercle = [(3.2 * math.cos(a), ty, -2.8 + 3.2 * math.sin(a))
+                  for a in (i * math.pi / 10 for i in range(21))]
+        poutres.append(cercle)
+        for x0, y0, w, h in ((-3.2, 1.9, 6.4, 3.4), (-6.05, 1.9, 2.4, 1.35), (3.65, 1.9, 2.4, 1.35),
+                             (-6.05, 3.6, 2.4, 1.35), (3.65, 3.6, 2.4, 1.35)):
+            ecrans.append([(x0, y0, 6.3), (x0 + w, y0, 6.3), (x0 + w, y0 + h, 6.3), (x0, y0 + h, 6.3)])
+        sources = cercle[:-1:4] + [(x, ty, rz) for x in (-3.0, 3.0)]
+    elif code == 'dj_mobile':
+        # Gabarit de `_makeDJMobile` (pas de salle) : façade de la cabine,
+        # totems, colonnes PA.
+        poutres.append([(-0.95, 0.08, 2.85), (0.95, 0.08, 2.85), (0.95, 1.25, 2.85),
+                        (-0.95, 1.25, 2.85), (-0.95, 0.08, 2.85)])
+        for sg in (-1, 1):
+            pieds.append([(sg * 1.55, 0.0, 3.35), (sg * 1.55, 2.0, 3.35)])
+            pieds.append([(sg * 4.25, 0.0, 3.1), (sg * 4.25, 1.2, 3.1)])
+            pieds.append([(sg * 2.75, 0.0, 3.1), (sg * 2.75, 2.5, 3.1)])
+        sources = [(sg * 1.55, 2.05, 3.35) for sg in (-1, 1)]
+    elif code == 'conference':
+        # Gabarit de `_makeConference` : arcs des gradins (dès 4,2 m, pas de
+        # 0,8 m, ouverts côté écran), rails de plafond, grand écran du fond.
+        # Croquis de secours : la carte affiche d'ordinaire la miniature rendue.
+        for sg in (-1, 1):
+            for k in range(4):
+                r, h = 4.2 + 0.8 * k, 0.45 * min(k + 1, 3)
+                poutres.append([(sg * r * math.sin(a), h, -r * math.cos(a))
+                                for a in (math.radians(12 + i * 133 / 12) for i in range(13))])
+        for x in (-5.4, -2.0, 2.0, 5.4):
+            poutres.append([(x, 5.0, -5.45), (x, 5.0, 6.05)])
+        ecrans.append([(-3.2, 0.8, 6.7), (3.2, 0.8, 6.7), (3.2, 4.4, 6.7), (-3.2, 4.4, 6.7)])
+        sources = [(x, 5.0, z) for x in (-2.0, 2.0) for z in (-2.0, 1.5)]
+    elif code == 'sapin_noel':
+        # Gabarit de `_makeSapinNoel` : silhouette du sapin (pointe à 6,6 m,
+        # rayon 2,7 m au pied, centré à z = 0,8) et son tronc.
+        # Croquis de secours : la carte affiche d'ordinaire la miniature rendue.
+        h, r, z = 6.6, 2.7, 0.8
+        poutres.append([(-r, 0.4, z), (0.0, h, z), (r, 0.4, z), (-r, 0.4, z)])
+        poutres.append([(0.0, 0.4, z - r), (0.0, h, z), (0.0, 0.4, z + r)])
+        pieds.append([(0.0, 0.0, z), (0.0, 0.4, z)])
+    elif code == 'concert_glb':
+        # Le modèle n'a pas de trusses : on esquisse son grill (rig_height 8,7 m,
+        # ±8,1 × ±4,1 m une fois ramené par `span`) et sa toiture.
+        h, dx, dz, faite = 8.7, 8.1, 4.1, 10.0
+        for z in (dz, -dz):
+            poutres.append([(-dx, h, z), (dx, h, z)])
+        for x in (-dx, 0.0, dx):
+            poutres.append([(x, h, -dz), (x, faite, 0.0), (x, h, dz)])
+        poutres.append([(-dx, faite, 0.0), (dx, faite, 0.0)])
+        pieds = [[(x, 0.0, z), (x, h, z)] for x in (-dx, dx) for z in (dz, -dz)]
+        sources = [(x, h, -dz) for x in (-5.4, -1.8, 1.8, 5.4)]
+    else:
+        for t in (_SCENE_PRESETS.get(code) or {}).get('trusses', []):
+            if not t.get('enabled', True):
+                continue
+            h, z, xl, xr = t['height'], t['z'], t['x_l'], t['x_r']
+            poutres.append([(xl, h, z), (xr, h, z)])
+            pieds += [[(xl, 0.0, z), (xl, h, z)], [(xr, 0.0, z), (xr, h, z)]]
+            n = 3 if xr - xl < 12 else 4
+            sources += [(xl + (xr - xl) * (i + 1) / (n + 1), h, z) for i in range(n)]
+    return {'poutres': poutres, 'pieds': pieds, 'sources': sources, 'ecrans': ecrans}
+
+
+def _vignette_proj(vue: str, x: float, y: float, z: float):
+    """Monde → plan de la vignette (v vers le bas).
+
+    Mêmes points de vue que `CAM_PRESETS` (plan_3d_web.html), vus du PUBLIC
+    (z négatif) : les X croissants — jardin — tombent donc à GAUCHE.
+    """
+    if vue == 'front':
+        return -x, -y
+    if vue == 'top':
+        return -x, -z                        # public en bas
+    if vue == 'side':
+        return -z, -y                        # caméra à x > 0 : public à droite
+    return -x - 0.55 * z, -y - 0.32 * z      # iso : trois-quarts depuis la salle
+
+
+def _dessiner_vignette(p: QPainter, rect: QRectF, code: str, vue: str, actif: bool):
+    """Dessine la scène `code` vue sous l'angle `vue` dans `rect`."""
+    coins = [_vignette_proj(vue, x, y, z)
+             for x in _VIGN_X for y in _VIGN_Y for z in _VIGN_Z]
+    u0, u1 = min(c[0] for c in coins), max(c[0] for c in coins)
+    v0, v1 = min(c[1] for c in coins), max(c[1] for c in coins)
+    s = min(rect.width() / (u1 - u0), rect.height() / (v1 - v0))
+    ox = rect.center().x() - (u0 + u1) / 2 * s
+    oy = rect.center().y() - (v0 + v1) / 2 * s
+
+    def pt(x, y, z):
+        u, v = _vignette_proj(vue, x, y, z)
+        return QPointF(ox + u * s, oy + v * s)
+
+    def poly(pts):
+        return QPolygonF([pt(*q) for q in pts])
+
+    preset = _SCENE_PRESETS.get(code) or {}
+    vide = code == 'vide'
+    xl, xr, za, zr = _VIGN_PLANCHER
+
+    # Fond de scène (cyclorama), mêmes règles que `_push_cyclorama`
+    if not vide and preset.get('cyc', True):
+        c = QColor('#15151c')
+        p.setPen(QPen(c, 2))
+        p.setBrush(c)
+        p.drawPolygon(poly([(xl, 0, _VIGN_CYC_Z), (xr, 0, _VIGN_CYC_Z),
+                            (xr, 7.5, _VIGN_CYC_Z), (xl, 7.5, _VIGN_CYC_Z)]))
+
+    # Plancher : absent sur « Aucun décor », d'où le simple contour pointillé
+    bord = QColor('#1d5566' if actif else '#2c2c36')
+    dessus = [(xl, 0, za), (xr, 0, za), (xr, 0, zr), (xl, 0, zr)]
+    if vide:
+        p.setPen(QPen(bord, 1, Qt.DashLine))
+        p.setBrush(Qt.NoBrush)
+        p.drawPolygon(poly(dessus))
+    else:
+        e = -0.8
+        p.setPen(QPen(bord, 1))
+        p.setBrush(QColor('#0c1c22' if actif else '#141418'))
+        # Faces verticales d'abord : le dessus, peint ensuite, recouvre le reste
+        p.drawPolygon(poly([(xl, e, za), (xr, e, za), (xr, 0, za), (xl, 0, za)]))
+        p.drawPolygon(poly([(xr, e, za), (xr, e, zr), (xr, 0, zr), (xr, 0, za)]))
+        p.setBrush(QColor('#10262e' if actif else '#1b1b21'))
+        p.drawPolygon(poly(dessus))
+
+    st = _vignette_structure(code)
+
+    # Écrans LED du décor
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(255, 60, 150, 210 if actif else 150))
+    for ecran in st['ecrans']:
+        p.drawPolygon(poly(ecran))
+
+    # Faisceaux (cônes) ; vus de dessus, des taches au sol
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(0, 212, 255, 75 if actif else 40))
+    for x, y, z in st['sources']:
+        if vue == 'top':
+            p.drawEllipse(pt(x, 0, z - 0.6), 1.0 * s, 1.0 * s)
+        else:
+            p.drawPolygon(poly([(x, y, z), (x - 1.1, 0, z - 0.6), (x + 1.1, 0, z - 0.6)]))
+
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(QColor('#35505a' if actif else '#34343c'), max(1.0, s * 0.12)))
+    for seg in st['pieds']:
+        p.drawPolyline(poly(seg))
+
+    pen = QPen(QColor('#bfeaf5' if actif else '#7a7a86'), max(1.6, s * 0.3))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    for ligne in st['poutres']:
+        pl = poly(ligne)
+        r = pl.boundingRect()
+        if r.width() < 2 and r.height() < 2:
+            # Poutre vue en bout (vue de côté) : on dessine sa section
+            p.setPen(Qt.NoPen)
+            p.setBrush(pen.color())
+            d = max(2.2, s * 0.45)
+            p.drawRect(QRectF(r.center().x() - d / 2, r.center().y() - d / 2, d, d))
+            p.setBrush(Qt.NoBrush)
+            p.setPen(pen)
+        else:
+            p.drawPolyline(pl)
+
+
+# Miniatures rendues par le vrai moteur 3D, une par scène et par angle de vue :
+# scenes3d/vignettes/<scène>_<vue>.png, produites par `generer_vignettes_3d.py`.
+# Le dossier scenes3d part déjà en entier dans les 4 builds. Une image absente
+# (scène ajoutée sans relancer le script) retombe sur le croquis QPainter.
+_DOSSIER_VIGNETTES = _DOSSIER_SCENES / 'vignettes'
+_miniatures: dict = {}
+
+
+def _miniature(code: str, vue: str):
+    cle = (code, vue)
+    if cle not in _miniatures:
+        from PySide6.QtGui import QPixmap
+        pm = QPixmap(str(_DOSSIER_VIGNETTES / f'{code}_{vue}.png'))
+        _miniatures[cle] = None if pm.isNull() else pm
+    return _miniatures[cle]
+
+
+def _peindre_carte(p: QPainter, rect: QRectF, code: str, vue: str, actif: bool):
+    """Miniature rendue de la scène sous cet angle, croquis à défaut."""
+    pm = _miniature(code, vue)
+    if pm is None:
+        _dessiner_vignette(p, rect, code, vue, actif)
+        return
+    from PySide6.QtGui import QPainterPath
+    s = max(rect.width() / pm.width(), rect.height() / pm.height())   # remplit la zone
+    w, h = pm.width() * s, pm.height() * s
+    cible = QRectF(rect.center().x() - w / 2, rect.center().y() - h / 2, w, h)
+    bord = QPainterPath()
+    bord.addRoundedRect(rect, 3, 3)
+    p.save()
+    p.setClipPath(bord, Qt.IntersectClip)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    if not actif:
+        p.setOpacity(0.82)          # la carte choisie ressort, les autres s'effacent un peu
+    p.drawPixmap(cible, pm, QRectF(pm.rect()))
+    p.restore()
+
+
+# Icônes du sélecteur d'onglets (viewBox 24 × 24). `{c}` reçoit la couleur de
+# l'état du bouton au moment du rendu.
+_ICONES_ONGLETS = {
+    'cam': '<path fill="{c}" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12'
+           'c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>',
+    'plan': '<path fill="{c}" d="M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8z'
+            'm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z"/>',
+    'scene': '<path fill="{c}" d="M2 3h20v2.5H2zM3.5 5.5h2V21h-2zM18.5 5.5h2V21h-2z"/>'
+             '<rect fill="{c}" x="10.3" y="5.5" width="3.4" height="2.3" rx="0.5"/>'
+             '<path fill="{c}" opacity="0.5" d="M12 7.8 7.2 19.5h9.6z"/>',
+}
+
+
+class _OngletSegment(QAbstractButton):
+    """Un segment du sélecteur d'onglets du panneau : icône, nom dessous.
+
+    Volontairement NEUTRE (pastille grise, seule l'icône est cyan) : le fond
+    #00303d à liseré cyan est réservé aux cartes. Avec le même état « choisi »
+    sur les deux, on ne distinguait plus la navigation du contenu.
+    """
+
+    HAUTEUR = 46
+
+    def __init__(self, icone: str, libelle: str, parent=None):
+        super().__init__(parent)
+        self.setText(libelle)
+        self._icone = icone
+        self.setCheckable(True)
+        self.setAutoExclusive(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)        # les touches restent à la vue 3D
+        self.setFixedHeight(self.HAUTEUR)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def sizeHint(self):
+        return QSize(76, self.HAUTEUR)
+
+    def minimumSizeHint(self):
+        return QSize(44, self.HAUTEUR)
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event):
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        actif, survol = self.isChecked(), self.underMouse()
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor('#2a2a2c') if actif else (QColor('#1a1a1a') if survol else Qt.NoBrush))
+        p.drawRoundedRect(r, 6, 6)
+
+        couleur = '#00d4ff' if actif else ('#d0d0d0' if survol else '#6b6b6b')
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+               + _ICONES_ONGLETS[self._icone].replace('{c}', couleur) + '</svg>')
+        t = 17
+        QSvgRenderer(QByteArray(svg.encode('utf-8'))).render(
+            p, QRectF(r.center().x() - t / 2, r.top() + 7, t, t))
+
+        f = QFont('Segoe UI')
+        f.setPixelSize(10)
+        f.setBold(True)
+        f.setLetterSpacing(QFont.AbsoluteSpacing, 0.6)
+        p.setFont(f)
+        p.setPen(QColor('#f2f2f2' if actif else ('#e6e6e6' if survol else '#8a8a8a')))
+        zt = QRectF(r.left() + 3, r.top() + 27, r.width() - 6, 15)
+        p.drawText(zt, Qt.AlignCenter, p.fontMetrics().elidedText(
+            self.text().upper(), Qt.ElideRight, int(zt.width())))
+        p.end()
+
+
+class _CarteVignette(QAbstractButton):
+    """Carte cliquable du panneau 3D : vignette dessinée, libellé dessous.
+
+    `dessin(painter, rect, actif)` est rappelé à chaque peinture : la vignette
+    suit donc l'état courant (les cartes Vue montrent la scène choisie).
+    """
+
+    HAUTEUR = 84
+
+    def __init__(self, libelle: str, dessin, parent=None):
+        super().__init__(parent)
+        self.setText(libelle)
+        self._dessin = dessin
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        # Pas de focus clavier : Espace & co doivent rester à la vue 3D
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setFixedHeight(self.HAUTEUR)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def sizeHint(self):
+        return QSize(110, self.HAUTEUR)
+
+    def minimumSizeHint(self):
+        return QSize(60, self.HAUTEUR)
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        actif, survol = self.isChecked(), self.underMouse()
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QPen(QColor('#00d4ff' if (actif or survol) else '#252525'), 1))
+        p.setBrush(QColor('#00303d' if actif else ('#1e1e1e' if survol else '#151515')))
+        p.drawRoundedRect(r, 6, 6)
+
+        zone = r.adjusted(5, 5, -5, -21)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor('#0a0a0a'))
+        p.drawRoundedRect(zone, 4, 4)
+        p.save()
+        p.setClipRect(zone)
+        self._dessin(p, zone.adjusted(2, 2, -2, -2), actif)
+        p.restore()
+
+        f = QFont('Segoe UI')
+        f.setPixelSize(10)
+        f.setBold(True)
+        f.setLetterSpacing(QFont.AbsoluteSpacing, 0.5)
+        p.setFont(f)
+        p.setPen(QColor('#00d4ff' if (actif or survol) else '#999999'))
+        zt = QRectF(r.left() + 4, r.bottom() - 19, r.width() - 8, 16)
+        p.drawText(zt, Qt.AlignCenter,
+                   p.fontMetrics().elidedText(self.text(), Qt.ElideRight, int(zt.width())))
+        p.end()
 
 _DARK  = "background:#0c0c20; color:#999999;"
 _STYLE_DLG = """
@@ -1078,11 +1450,8 @@ class Plan3DWebWindow(QMainWindow):
         self._highlighted_row = -1
         self._selected_rows: set = set()
         self._undo_stack: list = []
-        self._trusses     = [
-            {'label': 'Truss avant',   'enabled': True, 'height': TRUSS_Y, 'z': -3.8, 'x_l': -9.0, 'x_r': 9.0},
-            {'label': 'Truss arrière', 'enabled': True, 'height': TRUSS_Y, 'z':  4.0, 'x_l': -9.0, 'x_r': 9.0},
-        ]
-        self._scene_preset_code = 'live'
+        self._scene_preset_code = _SCENE_PAR_DEFAUT
+        self._trusses = [t.copy() for t in _SCENE_PRESETS[_SCENE_PAR_DEFAUT]['trusses']]
         self._imported_path = ''
         self._pinned = False   # « toujours au-dessus » demandé par l'utilisateur
         # Points de vue mémorisés : nom → dict {pos, tgt, fov}
@@ -1097,11 +1466,14 @@ class Plan3DWebWindow(QMainWindow):
         # jugée plus juste à l'usage que le 100 % d'origine, et surtout
         # mémorisée : c'était un réglage à refaire à chaque ouverture.
         self._ambience = 160
-        # Brouillard dans les faisceaux : 0 % par défaut, donc rendu inchangé
-        # pour qui ne va pas le chercher — et aucun coût GPU tant qu'il est nul.
+        # Brouillard dans les faisceaux : ses réglages ont été retirés du panneau
+        # (15/09/2026). Forcé à 0 et plus relu du patch — une valeur enregistrée
+        # serait restée active sans plus aucun moyen de la couper.
         self._fog = 0
-        self._fog_scale = 55        # 0,55 m⁻¹ ≈ une volute tous les 1,8 m
-        self._fog_speed = 35        # ≈ 10 cm/s : la fumée flotte, elle ne file pas
+        self._fog_scale = 55
+        self._fog_speed = 35
+        # Retour vidéo sur les écrans du décor (case de l'onglet Scène)
+        self._video_retour = True
 
         # Charger la scène sauvegardée depuis le patch, avant que la page HTML charge
         try:
@@ -1116,7 +1488,11 @@ class Plan3DWebWindow(QMainWindow):
                 # — le patch enregistrait bien [], mais au chargement on gardait
                 # les deux trusses par défaut. D'où un décor qui réapparaissait
                 # à chaque démarrage sans qu'on puisse s'en débarrasser.
-                if isinstance(_s3d.get('trusses'), list):
+                # Scène retirée depuis (Live, Club, Totems… le 14/09/2026) : ses
+                # trusses enregistrés ne sont PAS repris, ils se dessineraient
+                # par-dessus le décor de remplacement.
+                if (_s3d.get('preset') in _SCENE_PRESETS
+                        and isinstance(_s3d.get('trusses'), list)):
                     self._trusses = _s3d['trusses']
                 self._imported_path = _s3d.get('imported_model', '') or ''
                 if isinstance(_s3d.get('views'), dict):
@@ -1126,12 +1502,8 @@ class Plan3DWebWindow(QMainWindow):
                 self._auto_quality = bool(_s3d.get('auto_quality', True))
                 if isinstance(_s3d.get('ambience'), (int, float)):
                     self._ambience = max(0, min(4000, int(_s3d['ambience'])))
-                if isinstance(_s3d.get('fog'), (int, float)):
-                    self._fog = max(0, min(100, int(_s3d['fog'])))
-                if isinstance(_s3d.get('fog_scale'), (int, float)):
-                    self._fog_scale = max(15, min(200, int(_s3d['fog_scale'])))
-                if isinstance(_s3d.get('fog_speed'), (int, float)):
-                    self._fog_speed = max(0, min(100, int(_s3d['fog_speed'])))
+                if isinstance(_s3d.get('video_return'), bool):
+                    self._video_retour = _s3d['video_return']
         except Exception:
             pass
 
@@ -1392,11 +1764,43 @@ class Plan3DWebWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
+        # ── Sélecteur d'onglets ───────────────────────────────────────────
+        # La barre native du QTabWidget est masquée et remplacée par un
+        # sélecteur segmenté dans le langage des cartes. Le QTabWidget reste le
+        # conteneur, et `_right_tabs` le point d'entrée : du code ailleurs
+        # l'appelle par setCurrentIndex, le sélecteur suit (_on_right_tab_changed).
+        entete = QWidget()
+        entete.setObjectName("enteteOnglets")
+        # Filet sous le sélecteur : la navigation s'arrête là, le contenu commence.
+        entete.setStyleSheet("QWidget#enteteOnglets{background:#0d0d0d;border:none;"
+                             "border-bottom:1px solid #1e1e1e;}")
+        el = QVBoxLayout(entete)
+        el.setContentsMargins(8, 8, 8, 8)
+        barre = QFrame()
+        barre.setObjectName("barreOnglets")
+        barre.setStyleSheet(
+            "QFrame#barreOnglets{background:#121212;border:1px solid #222222;border-radius:9px;}")
+        bl = QHBoxLayout(barre)
+        bl.setContentsMargins(3, 3, 3, 3)
+        bl.setSpacing(3)
+        el.addWidget(barre)
+        lay.addWidget(entete)
+
         tabs = QTabWidget()
         tabs.setStyleSheet(self._TAB_STYLE)
-        tabs.addTab(self._build_cam_tab(),       tr("p3w_cam"))
-        tabs.addTab(self._build_placement_tab(), tr("p3w_plan"))
-        tabs.addTab(self._build_scene_tab(),     tr("p3w_stage"))
+        tabs.tabBar().hide()
+        self._onglets_btns = []
+        pages = ((self._build_cam_tab(),       'cam',   "p3w_cam"),
+                 (self._build_placement_tab(), 'plan',  "p3w_plan"),
+                 (self._build_scene_tab(),     'scene', "p3w_stage"))
+        for i, (page, icone, cle) in enumerate(pages):
+            tabs.addTab(page, tr(cle))
+            btn = _OngletSegment(icone, tr(cle))
+            btn.setChecked(i == 0)
+            btn.clicked.connect(lambda _, n=i: tabs.setCurrentIndex(n))
+            bl.addWidget(btn)
+            self._onglets_btns.append(btn)
+        self._idx_onglet_plan = 1
         lay.addWidget(tabs)
         self._right_tabs = tabs
         tabs.currentChanged.connect(self._on_right_tab_changed)
@@ -1412,14 +1816,17 @@ class Plan3DWebWindow(QMainWindow):
         lay.setSpacing(4)
 
         self._cam_btns_py = {}
+        cartes = []
         for code, label in [('iso','ISO'), ('front','FACE'), ('top','DESSUS'), ('side','CÔTÉ')]:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setChecked(code == 'iso')
-            btn.setStyleSheet(self._PANEL_BTN)
-            btn.clicked.connect(lambda _, c=code: self._set_cam_py(c))
-            lay.addWidget(btn)
-            self._cam_btns_py[code] = btn
+            # La vignette montre la scène choisie sous cet angle
+            carte = _CarteVignette(label, lambda p, r, actif, c=code: _peindre_carte(
+                p, r, getattr(self, '_scene_preset_code', _SCENE_PAR_DEFAUT), c, actif))
+            carte.setChecked(code == 'iso')
+            carte.clicked.connect(lambda _, c=code: self._set_cam_py(c))
+            cartes.append(carte)
+            self._cam_btns_py[code] = carte
+        lay.addWidget(self._titre_section(tr("p3w_views_title")))
+        lay.addLayout(self._grille_cartes(cartes))
 
         lay.addSpacing(10)
 
@@ -1464,17 +1871,6 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(sl_amb)
         self._sl_amb = sl_amb
 
-        lay.addSpacing(10)
-
-
-        lay.addSpacing(12)
-
-        btn_snap = QPushButton(tr("p3w_export_img"))
-        btn_snap.setStyleSheet(self._PANEL_BTN)
-        btn_snap.setToolTip(tr("p3w_save_png"))
-        btn_snap.clicked.connect(self._export_image)
-        lay.addWidget(btn_snap)
-
         lay.addSpacing(12)
 
         # ── Qualité de rendu ──────────────────────────────────────────────
@@ -1491,19 +1887,6 @@ class Plan3DWebWindow(QMainWindow):
         self._cb_quality.activated.connect(self._on_quality_changed)
         lay.addWidget(self._cb_quality)
 
-        self._chk_auto_q = QCheckBox(tr("p3w_auto_lower"))
-        self._chk_auto_q.setChecked(self._auto_quality)
-        self._chk_auto_q.setStyleSheet(self._PANEL_CHK)
-        self._chk_auto_q.toggled.connect(self._on_auto_quality)
-        lay.addWidget(self._chk_auto_q)
-
-        self._chk_fps = QCheckBox(tr("p3w_show_fps"))
-        self._chk_fps.setChecked(False)
-        self._chk_fps.setStyleSheet(self._PANEL_CHK)
-        self._chk_fps.toggled.connect(
-            lambda on: self._js(f'window.showFps && window.showFps({str(bool(on)).lower()})'))
-        lay.addWidget(self._chk_fps)
-
         lay.addStretch()
 
         hint = QLabel(tr("p3w_cam_hint"))
@@ -1513,51 +1896,36 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(hint)
         return w
 
+    @staticmethod
+    def _titre_section(texte: str) -> QLabel:
+        """Titre de bloc du panneau, même style que « IMPORTER SCÈNE »."""
+        lbl = QLabel(texte)
+        lbl.setStyleSheet("color:#4a4a4a;font-size:8px;letter-spacing:1.2px;font-weight:700;"
+                          "border:none;padding:2px 0 4px 0;")
+        return lbl
+
+    @staticmethod
+    def _grille_cartes(cartes) -> QGridLayout:
+        """Range des `_CarteVignette` sur deux colonnes de même largeur."""
+        g = QGridLayout()
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setSpacing(6)
+        for i, carte in enumerate(cartes):
+            g.addWidget(carte, i // 2, i % 2)
+        g.setColumnStretch(0, 1)
+        g.setColumnStretch(1, 1)
+        return g
+
     def _set_cam_py(self, code: str):
         for k, b in self._cam_btns_py.items():
             b.setChecked(k == code)
         self._js(f"window.setCam('{code}')")
-
-    # ── Export image ─────────────────────────────────────────────────────────
-
-    def _export_image(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter le plan 3D", "plan_3d.png", "Image PNG (*.png)")
-        if not path:
-            return
-        if not path.lower().endswith('.png'):
-            path += '.png'
-
-        def _got(data_url):
-            if not data_url or not isinstance(data_url, str):
-                self._snap_failed("aucune donnée renvoyée par le rendu")
-                return
-            if data_url.startswith('ERR:'):
-                self._snap_failed(data_url[4:])
-                return
-            try:
-                b64 = data_url.split(',', 1)[1]
-                Path(path).write_bytes(base64.b64decode(b64))
-            except Exception as e:
-                self._snap_failed(str(e))
-
-        self._view.page().runJavaScript("window.snapshot && window.snapshot()", _got)
-
-    def _snap_failed(self, why: str):
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.warning(self, tr("p3w_export_failed"),
-                            tr("p3w_export_failed_why", why=why))
 
     # ── Qualité de rendu ─────────────────────────────────────────────────────
 
     def _on_quality_changed(self, idx: int):
         self._quality = max(0, min(3, int(idx)))
         self._js(f"window.setQuality && window.setQuality({self._quality})")
-        self._save_patch()
-
-    def _on_auto_quality(self, on: bool):
-        self._auto_quality = bool(on)
-        self._js(f"window.autoQuality = {str(bool(on)).lower()}")
         self._save_patch()
 
     # ── Onglet Placement (mini-table) ─────────────────────────────────────────
@@ -2538,7 +2906,14 @@ class Plan3DWebWindow(QMainWindow):
         Le tableau est le seul pilote de cette sélection : le laisser actif
         alors qu'il n'est plus à l'écran laisse un faisceau marqué que plus rien
         ne commande."""
-        if self._right_tabs is not None and self._right_tabs.tabText(index) != "Plan":
+        # Le sélecteur suit aussi les changements venus du code (setCurrentIndex)
+        btns = getattr(self, '_onglets_btns', [])
+        if 0 <= index < len(btns) and not btns[index].isChecked():
+            btns[index].setChecked(True)
+        # Par INDEX et non par texte : le nom de l'onglet est traduit (« Plano »
+        # en espagnol et en portugais). Comparé à "Plan", il coupait la
+        # sélection jusque sur l'onglet Plan dans ces langues.
+        if self._right_tabs is not None and index != getattr(self, '_idx_onglet_plan', 1):
             self.clear_selection()
 
     def _select_all_rows(self):
@@ -2720,97 +3095,29 @@ class Plan3DWebWindow(QMainWindow):
         # Liste construite depuis _SCENE_PRESETS, et non recopiee a la main :
         # les deux etaient tenues separement, si bien qu'une scene ajoutee au
         # dictionnaire n'apparaissait nulle part dans le panneau.
+        cartes = []
         for code, label in [(c, p['label']) for c, p in _SCENE_PRESETS.items()]:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setChecked(code == 'live')
-            btn.setStyleSheet(self._PANEL_BTN)
-            btn.setToolTip(tr("p3w_stage_preset", a0=_SCENE_PRESETS[code]['label']))
-            btn.clicked.connect(lambda _, c=code: self._apply_preset(c))
-            lay.addWidget(btn)
-            self._scene_btns[code] = btn
+            carte = _CarteVignette(label, lambda p, r, actif, c=code: _peindre_carte(
+                p, r, c, 'iso', actif))
+            carte.setChecked(code == getattr(self, '_scene_preset_code', _SCENE_PAR_DEFAUT))
+            carte.setToolTip(tr("p3w_stage_preset", a0=_SCENE_PRESETS[code]['label']))
+            carte.clicked.connect(lambda _, c=code: self._apply_preset(c))
+            cartes.append(carte)
+            self._scene_btns[code] = carte
+        lay.addWidget(self._titre_section(tr("p3w_decor_title")))
+        lay.addLayout(self._grille_cartes(cartes))
+        lay.addSpacing(10)
 
-        # ── Brouillard ────────────────────────────────────────────────────
-        # Module la densité de fumée DANS les faisceaux (bruit 3D animé en
-        # coordonnées monde). À 0 %, la branche du shader n'est jamais prise :
-        # aucun surcoût pour qui n'en veut pas.
-        lbl_fog = QLabel(tr("p3w_fog"))
-        lbl_fog.setStyleSheet("color:#4444aa;font-size:9px;letter-spacing:0.5px;")
-        lay.addWidget(lbl_fog)
-
-        self._fog_val_lbl = QLabel("0%")
-        self._fog_val_lbl.setStyleSheet("color:#7777cc;font-size:9px;")
-        self._fog_val_lbl.setAlignment(Qt.AlignRight)
-        lay.addWidget(self._fog_val_lbl)
-
-        sl_fog = QSlider(Qt.Horizontal)
-        sl_fog.setRange(0, 100)
-        sl_fog.setValue(getattr(self, '_fog', 0))
-        sl_fog.setPageStep(10)
-        sl_fog.setToolTip(tr("p3w_fog_amount_hint"))
-        sl_fog.setStyleSheet(self._SLIDER_QSS)
-        self._sl_fog = sl_fog
-
-        sl_gr = QSlider(Qt.Horizontal)      # finesse des volutes
-
-        def _on_fog(v):
-            self._fog_val_lbl.setText(f"{v}%")
-            self._fog = int(v)
-            self._js(f'window.setFog && window.setFog({v})')
-            # Finesse et vitesse ne se règlent que s'il y a de la fumée à régler.
-            # (définis plus bas : _on_fog n'est appelé qu'en fin de construction)
-            for _w in (sl_gr, lbl_gr, sl_vit, lbl_vit):
-                _w.setEnabled(v > 0)
-
-        sl_fog.valueChanged.connect(_on_fog)
-        sl_fog.sliderReleased.connect(self._save_patch)
-        lay.addWidget(sl_fog)
-
-        lbl_gr = QLabel(tr("p3w_fog_detail"))
-        lbl_gr.setStyleSheet("color:#3a3a88;font-size:9px;letter-spacing:0.5px;")
-        lay.addWidget(lbl_gr)
-
-        # 15..200 → 0,15..2,0 m⁻¹ : nappes larges à gauche, fumée nerveuse à droite
-        sl_gr.setRange(15, 200)
-        sl_gr.setValue(getattr(self, '_fog_scale', 55))
-        sl_gr.setPageStep(20)
-        sl_gr.setToolTip(tr("p3w_fog_hint"))
-        sl_gr.setStyleSheet(self._SLIDER_QSS)
-
-        def _on_fog_scale(v):
-            self._fog_scale = int(v)
-            self._js(f'window.setFogScale && window.setFogScale({v/100:.2f})')
-
-        sl_gr.valueChanged.connect(_on_fog_scale)
-        sl_gr.sliderReleased.connect(self._save_patch)
-        lay.addWidget(sl_gr)
-        self._sl_fog_scale = sl_gr
-
-        lbl_vit = QLabel(tr("p3w_fog_speed"))
-        lbl_vit.setStyleSheet("color:#3a3a88;font-size:9px;letter-spacing:0.5px;")
-        lay.addWidget(lbl_vit)
-
-        sl_vit = QSlider(Qt.Horizontal)
-        sl_vit.setRange(0, 100)
-        sl_vit.setValue(getattr(self, '_fog_speed', 35))
-        sl_vit.setPageStep(10)
-        sl_vit.setToolTip(
-            tr("p3w_fog_speed_hint")
-        )
-        sl_vit.setStyleSheet(self._SLIDER_QSS)
-
-        def _on_fog_speed(v):
-            self._fog_speed = int(v)
-            self._js(f'window.setFogSpeed && window.setFogSpeed({v})')
-
-        sl_vit.valueChanged.connect(_on_fog_speed)
-        sl_vit.sliderReleased.connect(self._save_patch)
-        lay.addWidget(sl_vit)
-        self._sl_fog_speed = sl_vit
-
-        _on_fog_scale(sl_gr.value())
-        _on_fog_speed(sl_vit.value())
-        _on_fog(sl_fog.value())          # applique l'état mémorisé (et grise si 0)
+        # ── Retour vidéo ──────────────────────────────────────────────────
+        # Décoché : plus aucune image n'est encodée ni envoyée à la page, les
+        # dalles du décor passent au noir, et celles qui n'existent QUE pour la
+        # vidéo (écran de la cabine DJ mobile) rendent la place au décor d'origine.
+        self._chk_video = QCheckBox(tr("p3w_video_return"))
+        self._chk_video.setChecked(self._video_retour)
+        self._chk_video.setStyleSheet(self._PANEL_CHK)
+        self._chk_video.setToolTip(tr("p3w_video_return_hint"))
+        self._chk_video.toggled.connect(self._on_video_retour)
+        lay.addWidget(self._chk_video)
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         self._btn_trusses = QPushButton()  # kept for _apply_preset compat, not displayed
@@ -2835,7 +3142,28 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(btn_clear)
 
         lay.addStretch()
-        return w
+        # Les cartes de scène ne tiennent plus en hauteur dans une fenêtre de
+        # 700 px : l'onglet défile au lieu d'écraser brouillard et import.
+        defil = QScrollArea()
+        defil.setWidgetResizable(True)
+        defil.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        defil.setStyleSheet(
+            "QScrollArea{border:none;background:#0d0d0d;}"
+            "QScrollBar:vertical{background:#0d0d0d;width:6px;border:none;}"
+            "QScrollBar::handle:vertical{background:#252525;border-radius:3px;min-height:20px;}"
+            "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
+        )
+        defil.setWidget(w)
+        return defil
+
+    def _on_video_retour(self, on: bool):
+        self._video_retour = bool(on)
+        self._js('window.setVideoReturn && '
+                 f'window.setVideoReturn({str(self._video_retour).lower()})')
+        # Réactivé : l'image fixe éventuelle doit être reposée — le relais la
+        # croyait encore à l'écran et ne l'aurait jamais renvoyée.
+        self._video_still = None
+        self._save_patch()
 
     def _import_scene(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -2936,6 +3264,9 @@ class Plan3DWebWindow(QMainWindow):
         self._push_scene_glb(preset)
         for k, btn in getattr(self, '_scene_btns', {}).items():
             btn.setChecked(k == code)
+        # Les vignettes des vues dessinent la scène courante
+        for carte in getattr(self, '_cam_btns_py', {}).values():
+            carte.update()
         self._btn_trusses.setChecked(False)
         if self._truss_editor and self._truss_editor.isVisible():
             self._truss_editor.close()
@@ -3002,6 +3333,10 @@ class Plan3DWebWindow(QMainWindow):
     def _on_load_finished(self, ok: bool):
         self._ready = ok
         if ok:
+            # Retour vidéo AVANT le preset : le décor s'y conforme en se
+            # construisant (écran de cabine ou néon, dalles allumées ou noires).
+            self._js('window.setVideoReturn && '
+                     f'window.setVideoReturn({str(bool(self._video_retour)).lower()})')
             # Restaurer le preset de scène (décors 3D + trusses du preset)
             self._js(f"window.setScenePreset('{self._scene_preset_code}')")
             self._js('if(window.setStageFloor)window.setStageFloor('
@@ -3030,21 +3365,13 @@ class Plan3DWebWindow(QMainWindow):
                 # d'ambiance retombait donc silencieusement à sa version faible.
                 self._js('window.setRoomAmbience && '
                          f'window.setRoomAmbience({amb.value()/200:.3f})')
-            # Même piège que l'ambiance juste au-dessus : sans ce rappel, le
-            # brouillard retombe à 0 au moindre rechargement de page
-            # (changement de preset, import de décor…), sans rien dire.
-            self._js('window.setFogScale && '
-                     f'window.setFogScale({getattr(self, "_fog_scale", 55)/100:.2f})')
-            self._js('window.setFogSpeed && '
-                     f'window.setFogSpeed({int(getattr(self, "_fog_speed", 35))})')
-            self._js(f'window.setFog && window.setFog({int(getattr(self, "_fog", 0))})')
+            # Brouillard : réglage retiré du panneau, toujours éteint
+            self._js('window.setFog && window.setFog(0)')
             self._js('if(window.setBloom)window.setBloom(0.0)')
             self._js('window.beamScale=0.5')
             # Qualité de rendu des faisceaux volumétriques
             self._js(f'window.autoQuality = {str(bool(self._auto_quality)).lower()}')
             self._js(f'if(window.setQuality)window.setQuality({int(self._quality)})')
-            if getattr(self, '_chk_fps', None) and self._chk_fps.isChecked():
-                self._js('window.showFps && window.showFps(true)')
             # Retour vidéo : page neuve = dalle noire, l'image fixe éventuelle
             # doit être repoussée. Sans cette remise à zéro, un rechargement en
             # cours de photo laissait l'écran éteint jusqu'au média suivant.
@@ -3129,7 +3456,7 @@ class Plan3DWebWindow(QMainWindow):
                     r, g, b = _cwc.red(), _cwc.green(), _cwc.blue()
                     _roue = True
             # Strobe : bascule r/g/b à 0 sur la phase off
-            spd = getattr(p, 'strobe_speed', 0)
+            spd = displayed_strobe_speed(p)
             if spd > 0:
                 freq = 1.0 + (spd / 100.0) * 19.0
                 if int(now * freq * 2) % 2 == 0:
@@ -3335,7 +3662,7 @@ class Plan3DWebWindow(QMainWindow):
         pas la réception. Décimer après, c'est payer les 60 images/s d'une
         vidéo fluide pour n'en afficher que 12.
         """
-        if not self._ready or not self.isVisible():
+        if not self._ready or not self.isVisible() or not self._video_retour:
             return
         now = _time.time()
         if now - self._video_last < 1.0 / self.VIDEO_FPS:
@@ -3388,7 +3715,7 @@ class Plan3DWebWindow(QMainWindow):
         pendant tout le morceau audio suivant — un écran resté allumé sur un
         show fini.
         """
-        if not self._ready or not self.isVisible():
+        if not self._ready or not self.isVisible() or not self._video_retour:
             return
         path = self._current_media_path()
         kind = media_icon(path) if path else None
@@ -3473,7 +3800,7 @@ class Plan3DWebWindow(QMainWindow):
 
     def _update_strobe_timer(self, projectors):
         has_strobe = any(
-            getattr(p, 'strobe_speed', 0) > 0 or getattr(p, 'dmx_mode', '') == 'Strobe'
+            displayed_strobe_speed(p) > 0 or getattr(p, 'dmx_mode', '') == 'Strobe'
             for p in projectors
         )
         if has_strobe and not self._strobe_timer.isActive():

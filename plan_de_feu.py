@@ -12,7 +12,8 @@ from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
                   color_wheel_display_color, fixture_projects_gobo,
                   emitted_brightness,
-                  FX_MACHINE_TYPES, fixture_is_fx_machine, fixture_is_pyro)
+                  FX_MACHINE_TYPES, fixture_is_fx_machine, fixture_is_pyro,
+                  strobe_speed_from_dmx, displayed_strobe_speed)
 from artnet_dmx import PRESET_TYPES
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
@@ -1543,7 +1544,7 @@ def _ecrire_canal_modele(proj, ctype, valeur):
 
     if ctype == "Strobe":
         # Le moteur étale 0-100 % sur 16-250 ; en dessous de 16, strobe éteint.
-        proj.strobe_speed = 0 if v < 16 else round((v - 16) / (250 - 16) * 100)
+        proj.strobe_speed = strobe_speed_from_dmx(v)
         return True
 
     if ctype == "Shutter":
@@ -2562,8 +2563,8 @@ class FixtureCanvas(QWidget):
             return _forcee
         if proj.level == 0:
             return QColor("#1a1a1a")
-        # Strobe visuel : clignotement selon strobe_speed
-        strobe_spd = getattr(proj, 'strobe_speed', 0)
+        # Strobe visuel : clignotement selon strobe_speed (ou couche « Canal »)
+        strobe_spd = displayed_strobe_speed(proj)
         if strobe_spd > 0:
             freq = 1.0 + (strobe_spd / 100.0) * 14.0  # 1 Hz → 15 Hz
             if int(_time.time() * freq * 2) % 2 == 1:
@@ -4871,7 +4872,7 @@ class PlanDeFeu(QFrame):
         self.canvas.update()
 
     def _timer_tick(self):
-        has_strobe = any(getattr(p, 'strobe_speed', 0) > 0 for p in self.projectors)
+        has_strobe = any(displayed_strobe_speed(p) > 0 for p in self.projectors)
         interval = 40 if has_strobe else 100
         if self.timer.interval() != interval:
             self.timer.setInterval(interval)
@@ -5496,35 +5497,65 @@ class PlanDeFeu(QFrame):
         menu.addAction(tr("pdf_deselect_all"),  self._deselect_all)
         menu.addSeparator()
 
+        # Trouver le bouton SELEC pour positionner le menu
+        sender = self.sender()
+        if sender:
+            pos = sender.mapToGlobal(sender.rect().bottomLeft())
+        else:
+            pos = self.mapToGlobal(self.rect().topRight())
+
+        # Choisir un groupe ici sert à le RÉGLER : on enchaîne sur le menu de
+        # réglages (celui du clic droit), qui vise toute la sélection.
+        def _selec_puis_regler(selectionner):
+            selectionner()
+            self._open_selection_settings(pos)
+
         # Groupes présents dans les projecteurs, dans l'ordre du mapping
         present_groups = {p.group for p in self.projectors}
         for internal, label in self._GROUP_LABEL.items():
             if internal in present_groups:
-                menu.addAction(label, lambda g=internal: self._select_group(g))
+                menu.addAction(label, lambda g=internal: _selec_puis_regler(
+                    lambda: self._select_group(g)))
 
         # Groupes non répertoriés dans le mapping
         unlisted = present_groups - set(self._GROUP_LABEL)
         for g in sorted(unlisted):
-            menu.addAction(g.capitalize(), lambda grp=g: self._select_group(grp))
+            menu.addAction(g.capitalize(), lambda grp=g: _selec_puis_regler(
+                lambda: self._select_group(grp)))
 
         # Groupes de sélection rapide personnalisés — 1 clic direct
         if self._custom_groups:
             menu.addSeparator()
             for gname, members in self._custom_groups.items():
                 act = menu.addAction(f"★  {gname}  ({len(members)})")
-                act.triggered.connect(lambda checked, m=members: self._select_custom_group(m))
+                act.triggered.connect(lambda checked, m=members: _selec_puis_regler(
+                    lambda: self._select_custom_group(m)))
 
         menu.addSeparator()
         menu.addAction(tr("pdf_add_group_from_sel"), self._open_add_group_dialog)
         if self._custom_groups:
             menu.addAction(tr("pdf_manage_groups"), self._open_group_manager)
 
-        # Trouver le bouton SELEC pour positionner le menu
-        sender = self.sender()
-        if sender:
-            menu.exec(sender.mapToGlobal(sender.rect().bottomLeft()))
-        else:
-            menu.exec(self.mapToGlobal(self.rect().topRight()))
+        menu.exec(pos)
+
+    def _open_selection_settings(self, global_pos):
+        """Ouvre le menu de réglages sur la sélection courante.
+
+        Différé d'un tour de boucle : on est appelé depuis une action du menu
+        SELEC, qui n'a pas encore fini de se refermer — ouvrir un second menu
+        modal pendant ce temps le ferait disparaître aussitôt.
+        """
+        self.canvas._notify_cpb()
+        if not self.selected_lamps:
+            return
+        # Appareil « porteur » du menu : le premier sélectionné dans l'ordre du
+        # plan. Les réglages s'appliquent ensuite à toute la sélection
+        # (_get_target_projectors).
+        keys = projector_selection_keys(self.projectors)
+        idx = next((i for i, k in enumerate(keys) if k in self.selected_lamps), None)
+        if idx is None:
+            return
+        QTimer.singleShot(0, lambda: self._show_fixture_context_menu(global_pos, idx))
 
     def _open_add_group_dialog(self):
         """Sauvegarde la sélection courante comme groupe de sélection rapide."""

@@ -253,6 +253,195 @@ def test_reinitialisations():
     assert g.is_identity()
 
 
+def test_cadre_noir():
+    """Le cadre masque les bords de l'image, pas son centre."""
+    s = _surface()
+    g = s.geometry_settings()
+    g.fit = "stretch"
+    s.set_geometry_settings(g)
+    assert s.frame_mask_path() is None and not s._frame.isVisible()
+
+    g.border = 0.1            # 10 % du petit cote (500 px) = 50 px
+    s.set_geometry_settings(g)
+    m = s.frame_mask_path()
+    assert m is not None and s._frame.isVisible()
+    assert m.contains(QPointF(20, 250)) and m.contains(QPointF(980, 250))
+    assert m.contains(QPointF(500, 20)) and m.contains(QPointF(500, 480))
+    assert not m.contains(QPointF(500, 250)), "le centre doit rester visible"
+    assert not m.contains(QPointF(60, 60)), "juste apres 50 px, l'image se voit"
+    assert not g.is_identity()
+
+    g.border = 0.0
+    s.set_geometry_settings(g)
+    assert s.frame_mask_path() is None
+
+
+def test_cadre_noir_serialise():
+    g = VideoGeometry()
+    g.border = 0.05
+    assert VideoGeometry.from_dict(g.to_dict()).border == 0.05
+    assert VideoGeometry.from_dict({"border": 9}).border == 0.5
+
+
+def _canvas():
+    from main_window import _GeometryCanvas
+    s = _surface()
+    g = s.geometry_settings()
+    g.fit = "stretch"
+    s.set_geometry_settings(g)
+    c = _GeometryCanvas(s)
+    c.resize(520, 300)
+    c.show()
+    _app.processEvents()
+    return s, c
+
+
+def _drag(c, start_view, end_view, mods=Qt.NoModifier):
+    t = c._mapping()
+    a, b = t.map(start_view), t.map(end_view)
+    c.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, a,
+                                  Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    c.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, b,
+                                 Qt.NoButton, Qt.LeftButton, mods))
+    c.mouseReleaseEvent(QMouseEvent(QEvent.MouseButtonRelease, b,
+                                    Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+
+
+def test_miniature_bord_droit_largeur_seule():
+    """Tirer le bord droit : largeur seule, bord gauche immobile."""
+    s, c = _canvas()
+    _drag(c, QPointF(1000, 250), QPointF(800, 250))
+    g = s.geometry_settings()
+    x, y, w, h = s._base_rect()
+    assert abs(g.scale_y - 1.0) < 1e-6, "la hauteur ne doit pas bouger"
+    assert abs(w - 800) < 1.5 and abs(x) < 1.5, (x, w)
+    assert h == 500
+
+
+def test_miniature_bord_bas_symetrique():
+    s, c = _canvas()
+    _drag(c, QPointF(500, 500), QPointF(500, 450), Qt.ShiftModifier)
+    x, y, w, h = s._base_rect()
+    assert abs(h - 400) < 1.5 and abs(y - 50) < 1.5, (y, h)
+    assert w == 1000
+
+
+def test_miniature_deplacer_et_coin():
+    s, c = _canvas()
+    _drag(c, QPointF(500, 250), QPointF(600, 300))
+    g = s.geometry_settings()
+    assert abs(g.offset_x - 0.1) < 0.003 and abs(g.offset_y - 0.1) < 0.006
+    assert not g.has_warp()
+
+    hg = s.corner_points()[0]
+    _drag(c, hg, QPointF(hg.x() + 40, hg.y() + 20))
+    got = s.corner_points()[0]
+    assert abs(got.x() - (hg.x() + 40)) < 2 and abs(got.y() - (hg.y() + 20)) < 2
+    assert c._active_corner == 0
+
+
+def test_luminosite_serialisee():
+    g = VideoGeometry()
+    assert g.brightness == 1.0 and g.is_identity()
+    g.brightness = 0.6
+    assert not g.is_identity()
+    assert VideoGeometry.from_dict(g.to_dict()).brightness == 0.6
+    assert VideoGeometry.from_dict({"brightness": 3}).brightness == 1.0
+    assert VideoGeometry.from_dict({"brightness": -1}).brightness == 0.0
+
+
+def test_luminosite_sur_la_sortie():
+    """La luminosite de la dalle se fond dans le calque, sur toutes les pages."""
+    from main_window import VideoOutputWindow
+    win = VideoOutputWindow()
+    win.setGeometry(0, 0, 640, 360)
+    win.show()
+    _app.processEvents()
+    surf = win.video_widget
+    if not isinstance(surf, VideoSurface):
+        return
+    win.show_video()
+    win.set_fx_overlay(QColor(0, 0, 0, 0))
+    g = surf.geometry_settings()
+    g.brightness = 0.5
+    surf.set_geometry_settings(g)          # doit recomposer tout seul
+    assert abs(surf.fx_color().alpha() - 128) <= 1, surf.fx_color().alpha()
+
+    # Effet noir a 180 + dalle a 50 % : 1 - (1 - 180/255) * 0.5 ≈ 0.853
+    win.set_fx_overlay(QColor(0, 0, 0, 180))
+    assert abs(surf.fx_color().alpha() - 217) <= 1, surf.fx_color().alpha()
+
+    g.brightness = 1.0
+    surf.set_geometry_settings(g)
+    assert surf.fx_color().alpha() == 180, "a 100 % le calque d'effet est intact"
+    win.close()
+
+
+class _FakeHost:
+    def __init__(self, surface):
+        self.surface, self.on, self.screen = surface, False, 0
+        self.calls = []
+
+    def video_output_is_on(self):
+        return self.on
+
+    def set_video_output_on(self, on):
+        self.calls.append(("on", on))
+        self.on = on
+
+    def video_output_surface(self):
+        return self.surface
+
+    def video_output_screens(self):
+        return ["Ecran 1", "Ecran 2"]
+
+    def video_output_screen(self):
+        return self.screen
+
+    def set_video_output_screen(self, i):
+        self.calls.append(("screen", i))
+        self.screen = i
+
+
+def test_panneau_allume_la_sortie_lui_meme():
+    """Sortie eteinte : le panneau s'ouvre grise et propose de l'allumer."""
+    from main_window import VideoGeometryDialog
+    s = _surface()
+    host = _FakeHost(s)
+    d = VideoGeometryDialog(None, parent=None, output=host)
+    assert d._surface is None and not d._sx.parentWidget().isEnabled()
+    assert not s.adjust_mode()
+
+    d._power.setChecked(True)
+    assert ("on", True) in host.calls
+    assert d._surface is s and d._sx.parentWidget().isEnabled()
+    assert s.adjust_mode(), "la mire doit s'allumer avec la sortie"
+
+    d._screen.setCurrentIndex(1)
+    assert ("screen", 1) in host.calls
+
+    d._bright.setValue(40)
+    assert abs(s.geometry_settings().brightness - 0.4) < 1e-6
+
+    d._power.setChecked(False)
+    assert d._surface is None and not s.adjust_mode(), \
+        "sortie eteinte : plus de mire, reglages grises"
+    d.accept()
+
+
+def test_tout_reinitialiser_en_place():
+    """L'hote garde l'objet : la remise a zero doit le modifier, pas le remplacer."""
+    from main_window import VideoGeometryDialog
+    s = _surface()
+    g = s.geometry_settings()
+    g.scale_x, g.brightness = 1.5, 0.3
+    s.set_geometry_settings(g)
+    d = VideoGeometryDialog(s)
+    d._reset_all()
+    assert s.geometry_settings() is g and g.is_identity()
+    d.accept()
+
+
 if __name__ == "__main__":
     import sys
     tests = [(n, f) for n, f in sorted(globals().items())

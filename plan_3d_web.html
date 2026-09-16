@@ -338,10 +338,6 @@ function buildTrusses(defs) {
   }
 }
 
-buildTrusses([
-  { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9, x_r:9 },
-  { label:'Truss arrière', enabled:true, height:7.0, z:4.0,  x_l:-9, x_r:9 },
-]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shaders — faisceau conique volumétrique
@@ -2508,18 +2504,35 @@ window.setTrusses = function(defs) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Presets caméra
 // ─────────────────────────────────────────────────────────────────────────────
+// La vue du PUBLIC fait foi : le public est en Z négatif (cf. la caméra de
+// départ à z = −20). Ces presets étaient restés à z > 0, du côté du fond de
+// scène : FACE montrait l'arrière du rig et DESSUS mettait le public en haut.
 const CAM_PRESETS = {
-  iso:   { pos:[14,11,20], tgt:[0,3,0] },
-  front: { pos:[0,5,24],   tgt:[0,4,0] },
-  top:   { pos:[0,30,0.1], tgt:[0,0,0] },
-  side:  { pos:[24,7,0],   tgt:[0,4,0] },
+  iso:   { pos:[14,11,-20], tgt:[0,3,0] },
+  front: { pos:[0,5,-24],   tgt:[0,4,0] },
+  top:   { pos:[0,30,-0.1], tgt:[0,0,0] },
+  side:  { pos:[24,7,0],    tgt:[0,4,0] },
 };
 const CAM_BTNS = { iso:'b-iso', front:'b-front', top:'b-top', side:'b-side' };
 
+// Cadrage propre à la scène, posé par `setScenePreset` (clé `cam` du preset) :
+// les presets ci-dessus visent un plateau de 20 m, où une installation DJ
+// mobile de 2 m n'occupait qu'un coin de l'image. `zoom` rapproche la caméra
+// de sa cible, `cibleY` / `cibleZ` déplacent la cible (DESSUS garde sa hauteur).
+let _camActuelle = 'iso';
+let _camCadrage  = {};
+
 window.setCam = function(name) {
   const p = CAM_PRESETS[name]; if (!p) return;
-  camera.position.set(...p.pos);
-  controls.target.set(...p.tgt);
+  _camActuelle = name;
+  const { zoom = 1, cibleY = null, cibleZ = null } = _camCadrage;
+  const tgt = new THREE.Vector3(...p.tgt);
+  if (cibleY != null && name !== 'top') tgt.y = cibleY;
+  if (cibleZ != null) tgt.z = cibleZ;
+  const pos = new THREE.Vector3(...p.pos).sub(new THREE.Vector3(...p.tgt))
+                                         .multiplyScalar(zoom).add(tgt);
+  camera.position.copy(pos);
+  controls.target.copy(tgt);
   controls.update();
   Object.keys(CAM_BTNS).forEach(k => {
     const el = document.getElementById(CAM_BTNS[k]);
@@ -3200,223 +3213,6 @@ renderer.info.autoReset = false;
 const _propsGrp = new THREE.Group();
 scene.add(_propsGrp);
 
-const _SILO_MAT = new THREE.MeshStandardMaterial({ color:0x0d0d1a, roughness:0.95, metalness:0.0 });
-
-function _makePersonSilhouette(x, z, hScale = 1.0) {
-  const g = new THREE.Group();
-  const h = 1.75 * hScale;
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.20, h * 0.55, 4, 8), _SILO_MAT);
-  body.position.set(0, h * 0.55, 0);
-  g.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17 * hScale, 10, 7), _SILO_MAT);
-  head.position.set(0, h * 1.02, 0);
-  g.add(head);
-  g.position.set(x, 0, z);
-  return g;
-}
-
-function _makeDJBooth(x, z) {
-  const g = new THREE.Group();
-  const matBody = new THREE.MeshStandardMaterial({ color:0x1a1a2e, roughness:0.6, metalness:0.3 });
-  const matTop  = new THREE.MeshStandardMaterial({ color:0x2a2a3e, roughness:0.3, metalness:0.6 });
-  const matCDJ  = new THREE.MeshStandardMaterial({ color:0x0a0a14, roughness:0.2, metalness:0.85 });
-  const facade  = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.85, 0.55), matBody);
-  facade.position.set(0, 0.42, 0); g.add(facade);
-  const top = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.06, 0.55), matTop);
-  top.position.set(0, 0.88, 0); g.add(top);
-  for (const dx of [-0.60, 0.60]) {
-    const cdj = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.05, 20), matCDJ);
-    cdj.position.set(dx, 0.93, 0); g.add(cdj);
-    const platter = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.14, 0.14, 0.01, 20),
-      new THREE.MeshStandardMaterial({ color:0x222233, emissive:0x001133, emissiveIntensity:0.5, roughness:0.1 })
-    );
-    platter.position.set(dx, 0.96, 0); g.add(platter);
-  }
-  const mixer = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.07, 0.45), matCDJ);
-  mixer.position.set(0, 0.94, 0); g.add(mixer);
-  for (const [dx, col] of [[-0.15, 0x00ff88], [0, 0xff2200], [0.15, 0x0088ff]]) {
-    const led = new THREE.Mesh(
-      new THREE.BoxGeometry(0.06, 0.01, 0.02),
-      new THREE.MeshStandardMaterial({ emissive:col, emissiveIntensity:1.5, color:col })
-    );
-    led.position.set(dx, 0.985, -0.05); g.add(led);
-  }
-  g.position.set(x, 0, z);
-  return g;
-}
-
-function _makeBackline() {
-  const g = new THREE.Group();
-  const matAmp = new THREE.MeshStandardMaterial({ color:0x111111, roughness:0.9, metalness:0.1 });
-  for (const [x, w, h] of [[-5.0, 0.8, 1.30], [-5.8, 0.8, 0.70], [5.0, 0.8, 1.30], [5.8, 0.8, 0.70]]) {
-    const amp = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.5), matAmp);
-    amp.position.set(x, h / 2, 2.5); g.add(amp);
-  }
-  return g;
-}
-
-// Colonnes de haut-parleurs (sono mobile, festival…)
-function _makeSpeakerColumn(x, z, nSats=4) {
-  const g   = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color:0x0a0a0a, roughness:0.95, metalness:0.06 });
-  for (let i = 0; i < 2; i++) {
-    const sub = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.54, 0.50), mat);
-    sub.position.set(0, 0.27 + i * 0.54, 0);
-    g.add(sub);
-  }
-  for (let i = 0; i < nSats; i++) {
-    const sat = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.20, 0.26), mat);
-    sat.position.set(0, 1.08 + 0.10 + i * 0.21, 0);
-    g.add(sat);
-  }
-  g.position.set(x, 0, z);
-  return g;
-}
-
-// Sono mobile — inspiré du GLB sonomobile_scene.glb
-// Remorque 6×4m marron, 4 pieds de truss, 2 colonnes speaker suspendues, 6 satellites, 4 roues
-function _makeSonomobile(x, z) {
-  const g = new THREE.Group();
-  const mat = (c, r, m) => new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m });
-  const add = (geo, col, r, m, px, py, pz) => {
-    const mesh = new THREE.Mesh(geo, mat(col, r, m));
-    mesh.position.set(px, py, pz);
-    g.add(mesh);
-    return mesh;
-  };
-
-  // Plateau remorque (GLB: 6×4×0.2m, marron RGB 120,70,30)
-  add(new THREE.BoxGeometry(6.0, 0.20, 4.0), 0x7a4618, 0.75, 0.08,  0, 0.10, 0);
-  // Rails latéraux châssis
-  for (const sx of [-3.0, 3.0])
-    add(new THREE.BoxGeometry(0.08, 0.28, 4.0), 0xb4b4b4, 0.30, 0.80, sx, 0.24, 0);
-  // Flèche de remorque (côté -Z = derrière)
-  add(new THREE.BoxGeometry(0.10, 0.10, 1.2), 0xb4b4b4, 0.35, 0.75, 0, 0.25, -2.6);
-
-  // Console DJ
-  add(new THREE.BoxGeometry(2.2, 1.0, 1.0), 0x1a1a28, 0.55, 0.35,  0, 0.70, -0.3);
-  add(new THREE.BoxGeometry(2.2, 0.05, 1.0), 0x2a2a3e, 0.25, 0.65, 0, 1.225,-0.3);
-  for (const bx of [-0.55, 0.55])
-    add(new THREE.CylinderGeometry(0.18,0.18,0.04,18), 0x0a0a14, 0.15, 0.85, bx, 1.27, -0.3);
-  add(new THREE.BoxGeometry(0.55, 0.06, 0.42), 0x0a0a14, 0.15, 0.85, 0, 1.255, -0.3);
-
-  // Barres latérales de truss (gauche/droite — les barres avant/arrière viennent de buildTrusses)
-  const trussY = 3.40;
-  for (const bx of [-2.5, 2.5])
-    add(new THREE.BoxGeometry(0.09, 0.09, 3.0), 0xc8c8c8, 0.25, 0.85, bx, trussY, 0);
-
-  // Speaker stacks suspendus (GLB: ±3.2m X, face +Z = vers piste)
-  for (const sx of [-3.2, 3.2]) {
-    const spkH = 1.50, spkY = trussY - 0.18 - spkH/2;
-    add(new THREE.BoxGeometry(0.60, spkH, 0.55), 0x090909, 0.95, 0.06, sx, spkY, 1.5);
-    add(new THREE.BoxGeometry(0.56, spkH-0.06, 0.02), 0x0e0e0e, 1.0, 0.0, sx, spkY, 1.785);
-    add(new THREE.BoxGeometry(0.04, 0.30, 0.04), 0xb4b4b4, 0.28, 0.82, sx, trussY-0.10, 1.5);
-  }
-
-  // 6 satellites sur la barre avant (GLB: X=±2,±1.2,±0.4, face +Z)
-  for (const sx of [-2.0,-1.2,-0.4,0.4,1.2,2.0]) {
-    add(new THREE.BoxGeometry(0.22, 0.22, 0.24), 0x5a5a5a, 0.60, 0.40, sx, trussY-0.14, 1.5);
-    add(new THREE.BoxGeometry(0.02, 0.12, 0.02), 0xb4b4b4, 0.30, 0.80, sx, trussY-0.06, 1.5);
-  }
-
-  // Roues (4 roues, 2 essieux)
-  for (const wz of [-1.5, 1.5]) {
-    for (const wx of [-2.3, 2.3]) {
-      const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.30,0.30,0.22,16),
-        mat(0x1a1a1a,0.90,0.10));
-      tire.rotation.z = Math.PI/2;
-      tire.position.set(wx, 0.28, wz);
-      g.add(tire);
-      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,0.24,12),
-        mat(0x6a6a7a,0.40,0.70));
-      rim.rotation.z = Math.PI/2;
-      rim.position.set(wx, 0.28, wz);
-      g.add(rim);
-    }
-  }
-
-  g.position.set(x, 0, z);
-  return g;
-}
-
-// Totem — tour autoportante truss + colonne de haut-parleurs + lyre au sommet
-function _makeTotem(x, z, height=4.5, nSpk=5) {
-  const g   = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-
-  // Lestage (béton/acier)
-  const base = new THREE.Mesh(new THREE.BoxGeometry(0.65,0.46,0.65), mat(0x232323,0.85,0.18));
-  base.position.set(0,0.23,0); g.add(base);
-  const bride = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.05,0.42), mat(0x606070,0.40,0.70));
-  bride.position.set(0,0.48,0); g.add(bride);
-
-  // 2 tubes verticaux
-  const colH   = height - 0.46;
-  const tubeY  = 0.48 + colH/2;
-  for (const tx of [-0.09, 0.09]) {
-    const tb = new THREE.Mesh(new THREE.CylinderGeometry(0.026,0.026,colH,10), mat(0xb0b8c8,0.28,0.85));
-    tb.position.set(tx, tubeY, 0); g.add(tb);
-  }
-  // Barres horizontales de truss
-  const nBars = Math.ceil(colH / 0.42);
-  const bStep = colH / nBars;
-  for (let i=0; i<=nBars; i++) {
-    const hb = new THREE.Mesh(new THREE.BoxGeometry(0.18,0.024,0.024), mat(0x8898a8,0.35,0.75));
-    hb.position.set(0, 0.48+i*bStep, 0); g.add(hb);
-  }
-
-  // Colonne de haut-parleurs (face +Z = vers la piste)
-  const spkStart = 0.48 + colH*0.10;
-  const totalSpkH = colH * 0.78;
-  const unitH     = totalSpkH / nSpk;
-  for (let i=0; i<nSpk; i++) {
-    const sy  = spkStart + i*unitH + unitH/2;
-    const spk = new THREE.Mesh(new THREE.BoxGeometry(0.28, unitH*0.91, 0.22), mat(0x080808,0.95,0.05));
-    spk.position.set(0, sy, 0.14); g.add(spk);
-    if (i < nSpk-1) {
-      const sep = new THREE.Mesh(new THREE.BoxGeometry(0.28,0.008,0.22), mat(0x181818,0.95,0.05));
-      sep.position.set(0, spkStart+(i+1)*unitH, 0.14); g.add(sep);
-    }
-  }
-
-  // Pas de lyre décorative au sommet des totems : ces 4 maillages dorés
-  // (yoke + 2 bras + tête) imitaient un projecteur qui n'existe pas dans le
-  // patch. On voyait donc 6 lyres orange allumées en permanence, impossibles à
-  // piloter et faciles à confondre avec de vrais projecteurs. Le décor ne doit
-  // représenter que ce qui n'est pas un projecteur ; les projecteurs, eux,
-  // viennent du patch.
-
-  g.position.set(x, 0, z);
-  return g;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Nouveaux props de scène
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Praticable / stage riser
-function _makeStageRiser(x, z, w, d, h) {
-  const g = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat(0x0f0f18,0.84,0.12));
-  deck.position.set(0,h/2,0); g.add(deck);
-  const top = new THREE.Mesh(new THREE.BoxGeometry(w+0.02,0.016,d+0.02), mat(0x2a2a3e,0.28,0.72));
-  top.position.set(0,h+0.008,0); g.add(top);
-  for (const [cx,cz] of [[-w/2+0.04,-d/2+0.04],[w/2-0.04,-d/2+0.04],[-w/2+0.04,d/2-0.04],[w/2-0.04,d/2-0.04]]) {
-    const col = new THREE.Mesh(new THREE.BoxGeometry(0.05,h,0.05), mat(0x484858,0.32,0.80));
-    col.position.set(cx,h/2,cz); g.add(col);
-  }
-  const nS = Math.max(1, Math.round(h/0.20));
-  for (let s=0;s<nS;s++) {
-    const sh=h/nS;
-    const step = new THREE.Mesh(new THREE.BoxGeometry(0.65,sh,0.28), mat(0x0c0c16,0.88,0.10));
-    step.position.set(w/2+0.325, sh*0.5+s*sh, -d/2+0.14+s*0.24);
-    g.add(step);
-  }
-  g.position.set(x,0,z); return g;
-}
-
 // Écran LED fond de scène
 function _makeLEDScreen(x, z, w, h) {
   const g = new THREE.Group();
@@ -3453,8 +3249,22 @@ function _makeLEDScreen(x, z, w, h) {
 // sortie vidéo — c'est ce qui rend la synchro gratuite.
 const _screenGrp = new THREE.Group();
 scene.add(_screenGrp);
-let _screenCfg   = null;   // {x,y,z,w,h,rotY} du preset en cours, null = pas d'écran
-let _screenPanel = null;   // dalle du groupe courant
+
+// Retour vidéo coupé (case de l'onglet Scène) : les dalles du décor passent au
+// noir, celles qui n'existent QUE pour la vidéo (`siVideo` dans le preset)
+// disparaissent, et ce qu'elles remplaçaient (`userData.siPasVideo` sur un
+// accessoire — le néon de la cabine DJ mobile) revient à sa place.
+let _videoRetour = true;
+function _appliquerRetourVideo() {
+  _screenGrp.children.forEach(gr => { if (gr.userData.siVideo) gr.visible = _videoRetour; });
+  _propsGrp.traverse(o => { if (o.userData.siPasVideo) o.visible = !_videoRetour; });
+}
+window.setVideoReturn = function (on) {
+  _videoRetour = !!on;
+  if (!_videoRetour) _screenBlack();
+  _appliquerRetourVideo();
+};
+let _screenCfg   = null;   // [{x,y,z,w,h,rotY,fit}] du preset en cours, null = pas d'écran
 let _screenTex   = null;   // CanvasTexture nourrie par setVideoFrame()
 let _screenCanvas = null, _screenCtx = null;
 const _screenImg = new Image();   // UN seul décodeur JPEG, réutilisé
@@ -3479,21 +3289,31 @@ function _screenBlack() {
   if (_screenTex) _screenTex.needsUpdate = true;
 }
 
-// Pose (ou retire) l'écran. Appelée par le preset de décor : la position n'est
-// pas réglable à la main, chaque scène sait où son écran doit tomber.
+// Format du canvas vidéo (512 × 288) : sert au recadrage des dalles d'un autre format.
+const _SCREEN_ASPECT = 512 / 288;
+
+// Recadre une dalle « au plus serré » : l'image 16:9 remplit un écran d'un
+// autre format (portrait des ailes de festival) en perdant ses bords, au lieu
+// d'être étirée. Réservé aux dalles qui le demandent (`fit: 'cover'`) : les
+// écrans existants gardent l'image entière.
+function _uvCover(geo, aspect) {
+  const su = Math.min(1, aspect / _SCREEN_ASPECT), sv = Math.min(1, _SCREEN_ASPECT / aspect);
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++)
+    uv.setXY(i, 0.5 + (uv.getX(i) - 0.5) * su, 0.5 + (uv.getY(i) - 0.5) * sv);
+  uv.needsUpdate = true;
+}
+
+// Pose (ou retire) les écrans. Appelée par le preset de décor : la position
+// n'est pas réglable à la main, chaque scène sait où ses écrans tombent.
+// `cfg` : un objet, ou une LISTE (festival : fond de scène + écrans des
+// ailes). Toutes les dalles partagent la même texture — une seule image
+// décodée par frame, quel que soit le nombre d'écrans.
 window.setVideoScreen = function(cfg) {
   _screenGrp.clear();
-  _screenPanel = null;
-  _screenCfg = cfg || null;
-  if (!cfg) return;
-  const g = _makeLEDScreen(cfg.x ?? 0, cfg.z ?? 5.0, cfg.w ?? 6.0, cfg.h ?? 3.4);
-  g.position.y = cfg.y ?? 0;
-  // 180° par défaut : le fond de scène est du côté des Z POSITIFS (le backline
-  // du décor y est planté à z = +2,5), le public est donc en Z négatif — et
-  // `_makeLEDScreen` construit sa dalle tournée vers +Z. Sans ce demi-tour,
-  // l'écran jouait pour le mur du fond, dos à la salle.
-  g.rotation.y = (cfg.rotY ?? 180) * Math.PI / 180;
-  _screenPanel = g.userData.panel;
+  const cfgs = !cfg ? [] : (Array.isArray(cfg) ? cfg : [cfg]);
+  _screenCfg = cfgs.length ? cfgs : null;
+  if (!cfgs.length) return;
 
   if (!_screenCanvas) {
     _screenCanvas = document.createElement('canvas');
@@ -3503,301 +3323,680 @@ window.setVideoScreen = function(cfg) {
     _screenTex.colorSpace = THREE.SRGBColorSpace;
   }
   _screenBlack();
-  // `emissiveMap` et non `map` : une dalle LED ÉMET, elle ne réfléchit pas.
-  // En `map` seul, l'image s'assombrissait avec l'ambiance de la salle et
-  // disparaissait dès qu'on baissait la lumière — l'inverse d'un écran.
-  _screenPanel.material.map = _screenTex;
-  _screenPanel.material.emissiveMap = _screenTex;
-  _screenPanel.material.emissive.setRGB(1, 1, 1);
-  _screenPanel.material.emissiveIntensity = 1.15;
-  _screenPanel.material.needsUpdate = true;
 
+  for (const c of cfgs) {
+    const w = c.w ?? 6.0, h = c.h ?? 3.4;
+    const g = _makeLEDScreen(0, 0, w, h);
+    g.userData.siVideo = !!c.siVideo;
+    g.position.set(c.x ?? 0, c.y ?? 0, c.z ?? 5.0);
+    // 180° par défaut : le fond de scène est du côté des Z POSITIFS (le backline
+    // du décor y est planté à z = +2,5), le public est donc en Z négatif — et
+    // les dalles sont construites tournées vers +Z. Sans ce demi-tour, l'écran
+    // jouait pour le mur du fond, dos à la salle.
+    g.rotation.y = (c.rotY ?? 180) * Math.PI / 180;
+    const panel = g.userData.panel;
+    if (c.fit === 'cover') _uvCover(panel.geometry, w / h);
+    // `emissiveMap` et non `map` : une dalle LED ÉMET, elle ne réfléchit pas.
+    // En `map` seul, l'image s'assombrissait avec l'ambiance de la salle et
+    // disparaissait dès qu'on baissait la lumière — l'inverse d'un écran.
+    panel.material.map = _screenTex;
+    panel.material.emissiveMap = _screenTex;
+    panel.material.emissive.setRGB(1, 1, 1);
+    panel.material.emissiveIntensity = 1.15;
+    panel.material.needsUpdate = true;
+    _screenGrp.add(g);
+  }
   _screenGrp.visible = _flags.screen;
-  _screenGrp.add(g);
+  _appliquerRetourVideo();
 };
 
 // Une frame poussée par Python : data URL JPEG, ou '' pour éteindre la dalle.
 window.setVideoFrame = function(dataUrl) {
-  if (!_screenCtx) return;
+  if (!_screenCtx || !_videoRetour) return;
+  // Même image que la précédente (photo fixe reposée après un noir, ou retour
+  // vidéo recoché) : le navigateur ne redécode pas une source inchangée,
+  // `onload` ne part pas, et la dalle restait noire. On redessine à la main.
+  if (dataUrl && _screenImg.src === dataUrl && _screenImg.complete) {
+    _screenImg.onload();
+    return;
+  }
   if (!dataUrl) { _screenBlack(); return; }
   _screenImg.src = dataUrl;
 };
 
-// Portique truss (goalpost)
-function _makeGoalpost(x, z, h, spread=2.0, rotY=0) {
-  const g = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-  const bar = new THREE.Mesh(new THREE.BoxGeometry(spread*2+0.24,0.20,0.26), mat(0x8898b8,0.30,0.88));
-  bar.position.set(0,h,0); g.add(bar);
-  for (const dy of [0.09,-0.09]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(spread*2+0.24,0.030,0.030),
-      new THREE.MeshStandardMaterial({color:0xc0d0e8,roughness:0.32,metalness:0.90}));
-    rail.position.set(0,h+dy,0); g.add(rail);
-  }
-  for (const lx of [-spread,spread]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.09,h,0.09), mat(0x7888a8,0.38,0.82));
-    leg.position.set(lx,h/2,0); g.add(leg);
-    const base = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.05,0.50), mat(0x3a4055,0.55,0.65));
-    base.position.set(lx,0.025,0); g.add(base);
-    const dSign = lx>0?1:-1, diagLen = Math.sqrt((spread*0.55)**2+(h*0.50)**2);
-    const diag = new THREE.Mesh(new THREE.BoxGeometry(0.036,diagLen,0.036), mat(0x607090,0.42,0.72));
-    diag.position.set(lx-dSign*spread*0.275, h*0.50/2, 0);
-    diag.rotation.z = Math.atan2(spread*0.55, h*0.50)*dSign; g.add(diag);
-  }
-  g.position.set(x,0,z); g.rotation.y=rotY; return g;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Festival plein air — toit à 4 tours, ailes PA et grands écrans latéraux
+// ─────────────────────────────────────────────────────────────────────────────
+// Le treillis passe par des InstancedMesh : ~1 500 barres pour 3 draw calls.
+// Un Mesh par barre, comme `buildTrusses`, en aurait coûté autant que de
+// barres — de quoi faire ramer le plan 3D pour un simple décor.
 
-// Monitor wedge (retour de scène)
-function _makeMonitorWedge(x, z, rotY=0) {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.48,0.22,0.36),
-    new THREE.MeshStandardMaterial({color:0x0a0a0a,roughness:0.92,metalness:0.06}));
-  body.position.set(0,0.11,0); body.rotation.x=0.42; g.add(body);
-  const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.16,0.008),
-    new THREE.MeshStandardMaterial({color:0x0d0d0d,roughness:0.96}));
-  cloth.position.set(0,0.15,0.14); cloth.rotation.x=0.42; g.add(cloth);
-  const spk = new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.075,0.006,14),
-    new THREE.MeshStandardMaterial({color:0x151515,roughness:0.80,metalness:0.15}));
-  spk.position.set(0,0.155,0.148); spk.rotation.x=Math.PI/2+0.42; g.add(spk);
-  g.position.set(x,0,z); g.rotation.y=rotY; return g;
-}
-
-// Stack guitare (ampli + baffle 4×12)
-function _makeGuitarStack(x, z, rotY=0) {
-  const g = new THREE.Group();
-  const mC  = new THREE.MeshStandardMaterial({color:0x0c0c0f,roughness:0.92,metalness:0.04});
-  const mHW = new THREE.MeshStandardMaterial({color:0x5a5a6a,roughness:0.35,metalness:0.75});
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(0.76,0.72,0.38),mC);
-  cab.position.set(0,0.36,0); g.add(cab);
-  for (let r=0;r<2;r++) for (let c=0;c<2;c++) {
-    const spk = new THREE.Mesh(new THREE.CircleGeometry(0.135,14),
-      new THREE.MeshStandardMaterial({color:0x080808,roughness:0.85,side:THREE.FrontSide}));
-    spk.position.set(-0.19+c*0.38, 0.18+r*0.38, 0.195); g.add(spk);
-    const rim = new THREE.Mesh(new THREE.RingGeometry(0.130,0.148,14),
-      new THREE.MeshStandardMaterial({color:0x707080,roughness:0.35,metalness:0.75,side:THREE.FrontSide}));
-    rim.position.set(-0.19+c*0.38, 0.18+r*0.38, 0.197); g.add(rim);
-  }
-  const amp = new THREE.Mesh(new THREE.BoxGeometry(0.68,0.36,0.34),mC);
-  amp.position.set(0,0.90,0); g.add(amp);
-  const grille = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.20,0.01),
-    new THREE.MeshStandardMaterial({color:0x0e0e12,roughness:0.95}));
-  grille.position.set(0,0.90,0.175); g.add(grille);
-  for (let i=0;i<4;i++) {
-    const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.022,0.016,8),mHW);
-    knob.position.set(-0.22+i*0.15,1.04,0.175); g.add(knob);
-  }
-  const vu = new THREE.Mesh(new THREE.BoxGeometry(0.095,0.025,0.008),
-    new THREE.MeshStandardMaterial({emissive:0x00cc44,emissiveIntensity:2.0,color:0x000000}));
-  vu.position.set(0.22,1.04,0.178); g.add(vu);
-  const pwr = new THREE.Mesh(new THREE.SphereGeometry(0.009,6,5),
-    new THREE.MeshStandardMaterial({emissive:0xff2200,emissiveIntensity:3.0,color:0x000000}));
-  pwr.position.set(-0.28,1.05,0.178); g.add(pwr);
-  g.position.set(x,0,z); g.rotation.y=rotY; return g;
-}
-
-// Batterie (drum kit)
-function _makeDrumKit(x, z) {
-  const g = new THREE.Group();
-  const mD  = (c) => new THREE.MeshStandardMaterial({color:c,roughness:0.35,metalness:0.50});
-  const mHW = new THREE.MeshStandardMaterial({color:0x9898aa,roughness:0.22,metalness:0.85});
-  const mSk = new THREE.MeshStandardMaterial({color:0xd0c8a0,roughness:0.75,metalness:0.02});
-  // Grosse caisse
-  const kick = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,0.40,18),mD(0x18082a));
-  kick.rotation.z=Math.PI/2; kick.position.set(0,0.28,0); g.add(kick);
-  for (const s of [-1,1]) {
-    const sk=new THREE.Mesh(new THREE.CircleGeometry(0.27,18),mSk);
-    sk.rotation.y=s*Math.PI/2; sk.position.set(s*0.205,0.28,0); g.add(sk);
-    const h=new THREE.Mesh(new THREE.TorusGeometry(0.28,0.013,6,20),mHW);
-    h.rotation.y=Math.PI/2; h.position.set(s*0.20,0.28,0); g.add(h);
-  }
-  for (const fz of [-0.18,0.18]) {
-    const ft=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.22,5),mHW);
-    ft.position.set(0.20,0.11,fz); g.add(ft);
-  }
-  // Caisse claire
-  const snare=new THREE.Mesh(new THREE.CylinderGeometry(0.145,0.145,0.14,16),mD(0x101020));
-  snare.position.set(-0.40,0.78,0.12); g.add(snare);
-  const snSk=new THREE.Mesh(new THREE.CircleGeometry(0.140,16),mSk);
-  snSk.position.set(-0.40,0.855,0.12); g.add(snSk);
-  const snL=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.78,5),mHW);
-  snL.position.set(-0.40,0.39,0.12); g.add(snL);
-  // Floor tom
-  const ftom=new THREE.Mesh(new THREE.CylinderGeometry(0.170,0.170,0.38,16),mD(0x0e0e22));
-  ftom.position.set(0.48,0.55,0.12); g.add(ftom);
-  const ftSk=new THREE.Mesh(new THREE.CircleGeometry(0.166,16),mSk);
-  ftSk.position.set(0.48,0.745,0.12); g.add(ftSk);
-  for (let i=0;i<3;i++) {
-    const a=(i/3)*Math.PI*2;
-    const fl=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.55,5),mHW);
-    fl.position.set(0.48+Math.cos(a)*0.16, 0.275, 0.12+Math.sin(a)*0.16); g.add(fl);
-  }
-  // Rack tom
-  const rtom=new THREE.Mesh(new THREE.CylinderGeometry(0.122,0.122,0.22,14),mD(0x0e1022));
-  rtom.position.set(0.10,1.00,-0.18); g.add(rtom);
-  const rtSk=new THREE.Mesh(new THREE.CircleGeometry(0.118,14),mSk);
-  rtSk.position.set(0.10,1.115,-0.18); g.add(rtSk);
-  const rtL=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.30,6),mHW);
-  rtL.position.set(0.10,0.82,-0.18); rtL.rotation.x=0.30; g.add(rtL);
-  // Hi-hat
-  for (let i=0;i<2;i++) {
-    const hat=new THREE.Mesh(new THREE.CylinderGeometry(0.200,0.200,0.010,20),mHW);
-    hat.position.set(-0.44,0.95+i*0.055,-0.28); g.add(hat);
-  }
-  const hhSt=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.95,6),mHW);
-  hhSt.position.set(-0.44,0.475,-0.28); g.add(hhSt);
-  // Ride + crash
-  const ride=new THREE.Mesh(new THREE.CylinderGeometry(0.255,0.255,0.010,20),mHW);
-  ride.position.set(0.55,1.12,-0.30); ride.rotation.x=0.20; g.add(ride);
-  const rideSt=new THREE.Mesh(new THREE.CylinderGeometry(0.007,0.007,1.12,6),mHW);
-  rideSt.position.set(0.55,0.56,-0.30); g.add(rideSt);
-  const crash=new THREE.Mesh(new THREE.CylinderGeometry(0.205,0.205,0.008,18),mHW);
-  crash.position.set(-0.14,1.18,-0.34); crash.rotation.x=-0.25; g.add(crash);
-  const crSt=new THREE.Mesh(new THREE.CylinderGeometry(0.007,0.007,1.18,6),mHW);
-  crSt.position.set(-0.14,0.59,-0.34); g.add(crSt);
-  // Pédale + tabouret
-  const pedal=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.018,0.38),
-    new THREE.MeshStandardMaterial({color:0x282832,roughness:0.45,metalness:0.65}));
-  pedal.position.set(0,0.009,0.30); g.add(pedal);
-  const stP=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.68,6),mHW);
-  stP.position.set(0.05,0.34,0.58); g.add(stP);
-  const stS=new THREE.Mesh(new THREE.CylinderGeometry(0.155,0.155,0.032,14),
-    new THREE.MeshStandardMaterial({color:0x1a1a22,roughness:0.75,metalness:0.15}));
-  stS.position.set(0.05,0.70,0.58); g.add(stS);
-  for (let i=0;i<3;i++) {
-    const a=(i/3)*Math.PI*2;
-    const sf=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.68,5),mHW);
-    sf.position.set(0.05+Math.cos(a)*0.14,0.34,0.58+Math.sin(a)*0.14); g.add(sf);
-  }
-  g.position.set(x,0,z); return g;
-}
-
-// Machine à brouillard (hazer)
-function _makeHazer(x, z) {
-  const g = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-  const body=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.24,0.46),mat(0x1a1a2e,0.55,0.38));
-  body.position.set(0,0.12,0); g.add(body);
-  const grill=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.10,0.016),mat(0x303050,0.50,0.60));
-  grill.position.set(0,0.13,0.24); g.add(grill);
-  const hndl=new THREE.Mesh(new THREE.CylinderGeometry(0.008,0.008,0.22,6),mat(0x505060,0.40,0.60));
-  hndl.rotation.z=Math.PI/2; hndl.position.set(0,0.27,0); g.add(hndl);
-  for (let i=0;i<2;i++) {
-    const led=new THREE.Mesh(new THREE.SphereGeometry(0.009,6,5),
-      new THREE.MeshStandardMaterial({emissive:[0x0088ff,0x00ff44][i],emissiveIntensity:2.5,color:0}));
-    led.position.set(-0.05+i*0.10,0.22,0.245); g.add(led);
-  }
-  g.position.set(x,0,z); return g;
-}
-
-// Canon CO2
-function _makeCanon(x, z, rotY=0) {
-  const g = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-  const tank=new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.075,0.66,12),mat(0x4a5668,0.30,0.78));
-  tank.position.set(0,0.33,0); g.add(tank);
-  const label=new THREE.Mesh(new THREE.CylinderGeometry(0.077,0.077,0.20,12,1,true),
-    new THREE.MeshStandardMaterial({color:0x1a44aa,roughness:0.50,side:THREE.FrontSide}));
-  label.position.set(0,0.40,0); g.add(label);
-  const valve=new THREE.Mesh(new THREE.CylinderGeometry(0.033,0.033,0.065,8),mat(0xd0d0d0,0.22,0.88));
-  valve.position.set(0,0.70,0); g.add(valve);
-  const hose=new THREE.Mesh(new THREE.BoxGeometry(0.014,0.014,0.28),mat(0x303030,0.55,0.40));
-  hose.position.set(0,0.58,0.14); g.add(hose);
-  const nozzle=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.022,0.09,10),mat(0xb0b0b0,0.28,0.82));
-  nozzle.rotation.x=Math.PI/2; nozzle.position.set(0,0.58,0.32); g.add(nozzle);
-  g.position.set(x,0,z); g.rotation.y=rotY; return g;
-}
-
-// Table ronde avec nappe, bougie, verre
-function _makeRoundTable(x, z) {
-  const g = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-  const top=new THREE.Mesh(new THREE.CylinderGeometry(0.75,0.75,0.028,24),mat(0x1a1814,0.35,0.12));
-  top.position.set(0,0.748,0); g.add(top);
-  const cloth=new THREE.Mesh(new THREE.CylinderGeometry(0.80,0.80,0.74,24,1,true),
-    new THREE.MeshStandardMaterial({color:0xf5f3ef,roughness:0.82,side:THREE.DoubleSide}));
-  cloth.position.set(0,0.37,0); g.add(cloth);
-  const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.036,0.055,0.72,10),mat(0x686878,0.36,0.65));
-  leg.position.set(0,0.36,0); g.add(leg);
-  for (let i=0;i<3;i++) {
-    const a=(i/3)*Math.PI*2;
-    const b=new THREE.Mesh(new THREE.BoxGeometry(0.50,0.022,0.048),mat(0x585868,0.40,0.68));
-    b.position.set(0,0.011,0); b.rotation.y=a; g.add(b);
-  }
-  // Bougie
-  const cndl=new THREE.Mesh(new THREE.CylinderGeometry(0.020,0.020,0.130,8),
-    new THREE.MeshStandardMaterial({color:0xf0e8da,roughness:0.80}));
-  cndl.position.set(0,0.841,0); g.add(cndl);
-  const fl=new THREE.Mesh(new THREE.SphereGeometry(0.016,6,5),
-    new THREE.MeshStandardMaterial({emissive:0xff9922,emissiveIntensity:4.0,color:0xffcc44}));
-  fl.position.set(0,0.982,0); g.add(fl);
-  // Verre
-  const gls=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.028,0.175,8),
-    new THREE.MeshStandardMaterial({color:0xbbddee,roughness:0.04,transparent:true,opacity:0.55}));
-  gls.position.set(0.26,0.838,0); g.add(gls);
-  // Assiette
-  const pl=new THREE.Mesh(new THREE.CylinderGeometry(0.135,0.135,0.010,16),
-    new THREE.MeshStandardMaterial({color:0xfafafa,roughness:0.20,metalness:0.05}));
-  pl.position.set(-0.20,0.763,0.25); g.add(pl);
-  g.position.set(x,0,z); return g;
-}
-
-// Arche décorative avec guirlande lumineuse
-function _makeArch(x, z, h=2.8, w=2.2, rotY=0) {
-  const g = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-  const postH=h*0.72, arcR=w*0.50+0.04, arcCY=postH;
-  for (const lx of [-w/2,w/2]) {
-    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.042,0.042,postH,10),mat(0xeeeee8,0.28,0.18));
-    post.position.set(lx,postH/2,0); g.add(post);
-  }
-  const nSeg=16;
-  for (let i=0;i<nSeg;i++) {
-    const a0=Math.PI+i*(Math.PI/nSeg), a1=Math.PI+(i+1)*(Math.PI/nSeg);
-    const mx=arcR*Math.cos((a0+a1)/2), my=arcCY+arcR*Math.sin((a0+a1)/2);
-    const dx=arcR*(Math.cos(a1)-Math.cos(a0)), dy=arcR*(Math.sin(a1)-Math.sin(a0));
-    const sLen=Math.sqrt(dx*dx+dy*dy)*1.02;
-    const seg=new THREE.Mesh(new THREE.CylinderGeometry(0.036,0.036,sLen,7),mat(0xeeeee8,0.28,0.18));
-    seg.position.set(mx,my,0); seg.rotation.z=Math.atan2(dx,dy)-Math.PI; g.add(seg);
-  }
-  // Guirlande lumineuse
-  const nL=32, LCOLS=[0xffee88,0xffffff,0xffcc44,0xffffff];
-  for (let i=0;i<=nL;i++) {
-    const t=i/nL, pF=0.22;
-    let lx,ly;
-    if (t<pF) { lx=-w/2; ly=(t/pF)*postH; }
-    else if (t>1-pF) { lx=w/2; ly=((1-t)/pF)*postH; }
-    else { const tA=(t-pF)/(1-2*pF), a=Math.PI+tA*Math.PI; lx=arcR*Math.cos(a); ly=arcCY+arcR*Math.sin(a); }
-    const dot=new THREE.Mesh(new THREE.SphereGeometry(0.024,5,4),
-      new THREE.MeshStandardMaterial({emissive:new THREE.Color(LCOLS[i%LCOLS.length]),emissiveIntensity:2.2,color:0xffffff}));
-    dot.position.set(lx,ly,0.06); g.add(dot);
-  }
-  g.position.set(x,0,z); g.rotation.y=rotY; return g;
-}
-
-// Catwalk / passerelle de scène
-function _makeCatwalk(x, z, length, w=1.0) {
-  const g = new THREE.Group();
-  const mat = (c,r,m) => new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
-  const deck=new THREE.Mesh(new THREE.BoxGeometry(w,0.055,length),mat(0x0f0f1a,0.82,0.14));
-  deck.position.set(0,0.0275,0); g.add(deck);
-  const edgeMat=mat(0x505868,0.34,0.78);
-  for (const lx of [-w/2+0.02,w/2-0.02]) {
-    const topR=new THREE.Mesh(new THREE.BoxGeometry(0.030,0.030,length+0.06),edgeMat);
-    topR.position.set(lx,0.92,0); g.add(topR);
-    const nLegs=Math.max(2,Math.ceil(length/1.5));
-    for (let j=0;j<=nLegs;j++) {
-      const legZ=-length/2+j*(length/nLegs);
-      const leg=new THREE.Mesh(new THREE.BoxGeometry(0.024,0.90,0.024),edgeMat);
-      leg.position.set(lx,0.478,legZ); g.add(leg);
+// Truss carré de section `w`, de A à B : 4 membrures et un treillis en zigzag
+// sur chaque face, un pas tous les 50 cm. Remplit les listes, ne crée rien.
+function _trussBars(chords, lace, a, b, w = 0.40) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  const dir = new THREE.Vector3().subVectors(B, A);
+  const L = dir.length();
+  dir.normalize();
+  const ref = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const u = new THREE.Vector3().crossVectors(dir, ref).normalize();
+  const v = new THREE.Vector3().crossVectors(u, dir).normalize();
+  const h = w / 2;
+  const coins = [[-h, -h], [h, -h], [h, h], [-h, h]].map(
+    ([cu, cv]) => u.clone().multiplyScalar(cu).addScaledVector(v, cv));
+  for (const c of coins) chords.push([A.clone().add(c), B.clone().add(c), 0.05]);
+  const n = Math.max(1, Math.round(L / 0.5));
+  for (let f = 0; f < 4; f++) {
+    const c0 = coins[f], c1 = coins[(f + 1) % 4];
+    for (let i = 0; i < n; i++) {
+      const [s0, s1] = i % 2 ? [c1, c0] : [c0, c1];
+      lace.push([A.clone().addScaledVector(dir, L * i / n).add(s0),
+                 A.clone().addScaledVector(dir, L * (i + 1) / n).add(s1), 0.024]);
     }
   }
-  // Strip LED latéral (ambiance piste)
-  for (const lx of [-w/2+0.01,w/2-0.01]) {
-    const strip=new THREE.Mesh(new THREE.BoxGeometry(0.010,0.008,length),
-      new THREE.MeshStandardMaterial({emissive:0x003366,emissiveIntensity:1.5,color:0x000033}));
-    strip.position.set(lx,0.05,0); g.add(strip);
+}
+
+// Une liste de barres [A, B, épaisseur] → un seul InstancedMesh.
+function _barsMesh(bars, mat) {
+  const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, bars.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const c = new THREE.Vector3(), d = new THREE.Vector3(), s = new THREE.Vector3();
+  const Y = new THREE.Vector3(0, 1, 0);
+  bars.forEach(([a, b, t], i) => {
+    d.subVectors(b, a);
+    const L = d.length() || 1e-3;
+    q.setFromUnitVectors(Y, d.divideScalar(L));
+    c.addVectors(a, b).multiplyScalar(0.5);
+    s.set(t, L, t);
+    im.setMatrixAt(i, m.compose(c, q, s));
+  });
+  im.instanceMatrix.needsUpdate = true;
+  // La sphère englobante d'un InstancedMesh est celle du cube unité : le décor
+  // entier disparaissait dès que l'origine sortait du champ.
+  im.frustumCulled = false;
+  return im;
+}
+
+function _makeFestivalStage() {
+  const g = new THREE.Group();
+  const mat = (c, r, m, extra = {}) =>
+    new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m, ...extra });
+  const box = (w, h, d, mt, x, y, z) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mt);
+    o.position.set(x, y, z); g.add(o); return o;
+  };
+  const chords = [], lace = [], grille = [];
+  const truss = (a, b, w) => _trussBars(chords, lace, a, b, w);
+
+  // Gabarit. ⚠ Repris côté Python par `_SCENE_PRESETS['festival_plein_air']`
+  // (rig_height), par sa vignette et par les écrans du preset ci-dessous :
+  // retoucher l'un sans les autres désaligne le rig ou les dalles.
+  const RX = 6.0, RZ = 4.0;       // tours du toit (±6 m × ±4 m)
+  const GY = 8.2;                 // centre du gril, section 0,40 → dessous à 8,0 m
+  const FY = 10.6, FX = 2.8;      // faîtage de la bâche
+  const DY = 0.12;                // épaisseur du plateau
+  const WZ = -RZ;                 // plan des ailes, aligné sur la face du toit
+  const WT = [7.2, 8.8, 12.6];    // tours d'une aile (|x|)
+
+  box(2*RX + 0.8, DY, 2*RZ + 0.8, mat(0x131316, 0.9, 0.05), 0, DY/2, 0);
+
+  // ── Toit : 4 tours, gril (périmètre + ligne du milieu), bâche en croupe ──
+  for (const x of [-RX, RX]) for (const z of [-RZ, RZ]) truss([x, 0, z], [x, GY + 0.4, z]);
+  for (const z of [-RZ, 0, RZ]) truss([-RX, GY, z], [RX, GY, z]);
+  for (const x of [-RX, RX]) truss([x, GY, -RZ], [x, GY, RZ]);
+
+  const EX = RX + 0.5, EZ = RZ + 0.5, BY = GY + 0.25;
+  const roofGeo = new THREE.BufferGeometry();
+  roofGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+    -EX,BY,-EZ,  EX,BY,-EZ,  FX,FY,0,   -EX,BY,-EZ,  FX,FY,0, -FX,FY,0,   // pan avant
+     EX,BY, EZ, -EX,BY, EZ, -FX,FY,0,    EX,BY, EZ, -FX,FY,0,  FX,FY,0,   // pan arrière
+    -EX,BY, EZ, -EX,BY,-EZ, -FX,FY,0,    EX,BY,-EZ,  EX,BY,EZ, FX,FY,0,   // croupes
+  ], 3));
+  roofGeo.computeVertexNormals();
+  const roofMat = mat(0xd6d9df, 0.8, 0.0, { side:THREE.DoubleSide, transparent:true });
+  const roof = new THREE.Mesh(roofGeo, roofMat);
+  // Caméra au-dessus du faîtage : la bâche s'efface, sinon la vue DESSUS ne
+  // montre qu'elle et cache tout le rig accroché dessous. Jusqu'à ZÉRO : un
+  // reste de 15 % d'opacité, poussé par l'ambiance de salle et le bloom,
+  // redevenait un aplat blanc opaque. (Pas `visible = false` : un objet
+  // invisible n'est plus rendu, `onBeforeRender` ne serait plus jamais rappelé.)
+  roof.onBeforeRender = (_r, _s, cam) => {
+    const k = THREE.MathUtils.clamp((cam.position.y - FY) / 6, 0, 1);
+    roofMat.opacity = 1 - k;
+    roofMat.depthWrite = k < 0.05;
+  };
+  g.add(roof);
+
+  // Fond de scène : c'est un écran vidéo sur toute la largeur, posé par le
+  // preset (`screen`) — noir tant qu'aucun média ne joue. Plateau laissé nu.
+
+  // ── Ailes : 3 tours, poutre haute, line array en J, subs ──
+  // Les grands écrans portrait, entre les deux tours extérieures, sont des
+  // dalles VIDÉO posées par le preset.
+  const ballast = mat(0x6d6f73, 0.95, 0.0);
+  const noir = mat(0x0f1012, 0.85, 0.12), accroche = mat(0x2b2d31, 0.5, 0.7);
+  const cabGeo = new THREE.BoxGeometry(1.0, 0.32, 0.62);
+  for (const s of [-1, 1]) {
+    for (const x of WT) {
+      truss([s*x, 0, WZ], [s*x, GY + 0.8, WZ]);
+      // Pied : poutre au sol dans la profondeur, lestée aux deux bouts
+      truss([s*x, 0.15, WZ - 1.4], [s*x, 0.15, WZ + 1.4], 0.30);
+      for (const dz of [-1.4, 1.4]) box(0.6, 0.35, 0.6, ballast, s*x, 0.175, WZ + dz);
+    }
+    truss([s*RX, GY, WZ], [s*WT[2], GY, WZ]);
+
+    const lx = s * (WT[0] + WT[1]) / 2;
+    box(0.03, 0.38, 0.03, accroche, lx, GY - 0.39, WZ);       // palan
+    box(1.1, 0.10, 0.75, accroche, lx, GY - 0.63, WZ);        // bumper
+    // J : chaque boîte plonge un peu plus vers le public et recule d'autant
+    let y = GY - 0.68, z = WZ, ang = 0;
+    for (let i = 0; i < 9; i++) {
+      ang += i < 3 ? 0.015 : 0.05;
+      const cab = new THREE.Mesh(cabGeo, noir);
+      cab.rotation.x = -ang;
+      cab.position.set(lx, y - 0.16 * Math.cos(ang), z + 0.16 * Math.sin(ang));
+      g.add(cab);
+      y -= 0.32 * Math.cos(ang);
+      z += 0.32 * Math.sin(ang);
+    }
+    for (const sy of [0.3, 0.9]) box(1.0, 0.6, 0.85, noir, lx, sy, WZ - 1.0);   // subs
   }
-  g.position.set(x,0,z); return g;
+
+  // ── Barrière crowd devant la scène ──
+  const BZ = -6.8, V = (x, y, z) => new THREE.Vector3(x, y, z);
+  for (let x = -13; x <= 13.001; x += 0.14) grille.push([V(x, 0.08, BZ), V(x, 1.08, BZ), 0.02]);
+  for (const y of [0.1, 1.05]) grille.push([V(-13, y, BZ), V(13, y, BZ), 0.045]);
+  for (let x = -13; x <= 13.001; x += 2) grille.push([V(x, 0.02, BZ - 0.4), V(x, 0.02, BZ + 0.4), 0.06]);
+
+  g.add(_barsMesh(chords, mat(0x9aa2ad, 0.35, 0.85)),
+        _barsMesh(lace,   mat(0x6b7380, 0.45, 0.75)),
+        _barsMesh(grille, mat(0x0b0b0d, 0.6, 0.4)));
+  return g;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discothèque — salle noire, estrade DJ, cercle de truss au-dessus de la piste
+// ─────────────────────────────────────────────────────────────────────────────
+// Murs et plafond sont des faces SIMPLES tournées vers l'intérieur : vues de
+// dehors, elles ne sont pas rendues. Les caméras ISO, DESSUS et CÔTÉ regardent
+// donc dans la salle comme dans une maquette coupée, sans rien masquer à la
+// main — et en orbitant dedans, la salle redevient fermée.
+function _makeDiscotheque() {
+  const g = new THREE.Group();
+  const mat = (c, r, m, extra = {}) =>
+    new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m, ...extra });
+  const box = (w, h, d, mt, x, y, z) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mt);
+    o.position.set(x, y, z); g.add(o); return o;
+  };
+  const chords = [], lace = [], cables = [];
+  const truss = (a, b) => _trussBars(chords, lace, a, b, 0.30);
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const cable = (x, z, y0) => cables.push([V(x, y0, z), V(x, HP, z), 0.012]);
+
+  // Gabarit. ⚠ Repris par `_SCENE_PRESETS['discotheque']` (rig_height 4,8),
+  // par sa vignette et par les écrans du preset : retoucher ensemble.
+  const LX = 10, ZB = 6.5, ZF = -9, HP = 6.5;   // salle : murs ±10 m, fond, ouverture, plafond
+  const TY = 5.0;                               // centre des trusses (section 0,30 → dessous à 4,85)
+  const RZ = 3.2, RH = 0.6;                     // bord avant et hauteur de l'estrade
+  const SX = 6.2;                               // tours du cadre de scène
+  const LED = (c) => mat(0x000000, 0.5, 0.0, { emissive:c, emissiveIntensity:2.2 });
+
+  // ── Salle ──
+  const murMat = mat(0x0b0b0e, 0.95, 0.0);
+  const paroi = (w, h, x, y, z, rx, ry) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), murMat);
+    m.position.set(x, y, z); m.rotation.set(rx, ry, 0); g.add(m);
+  };
+  paroi(2*LX, HP, 0, HP/2, ZB, 0, Math.PI);                    // fond
+  paroi(ZB - ZF, HP, -LX, HP/2, (ZB + ZF)/2, 0,  Math.PI/2);   // murs latéraux
+  paroi(ZB - ZF, HP,  LX, HP/2, (ZB + ZF)/2, 0, -Math.PI/2);
+  paroi(2*LX, ZB - ZF, 0, HP, (ZB + ZF)/2, Math.PI/2, 0);      // plafond
+
+  // ── Estrade + cabine DJ ──
+  box(2*SX, RH, ZB - RZ, mat(0x141417, 0.8, 0.1), 0, RH/2, (RZ + ZB)/2);
+  box(2*SX, 0.03, 0.03, LED(0xffa040), 0, RH - 0.015, RZ - 0.01);     // nez d'estrade
+  const CZ = 4.2;
+  box(3.4, 1.15, 0.9, mat(0x0c0c10, 0.6, 0.3), 0, RH + 0.575, CZ);
+  const liser = LED(0xdfe8ff), fz = CZ - 0.46;                        // liseré en façade
+  box(3.1, 0.035, 0.02, liser, 0, RH + 0.15, fz);
+  box(3.1, 0.035, 0.02, liser, 0, RH + 1.00, fz);
+  box(0.035, 0.85, 0.02, liser, -1.55, RH + 0.575, fz);
+  box(0.035, 0.85, 0.02, liser,  1.55, RH + 0.575, fz);
+  for (const x of [-0.9, 0, 0.9])                                     // platines + mixage
+    box(x ? 0.45 : 0.55, 0.08, 0.45, mat(0x050507, 0.3, 0.7), x, RH + 1.19, CZ);
+  const bois = mat(0x221a14, 0.85, 0.05), flight = mat(0x2c2c30, 0.5, 0.6);
+  for (const s of [-1, 1]) {                                          // enceintes + flight-cases
+    box(0.9, 0.9, 0.7, bois, s * 2.6, RH + 0.45, CZ + 0.2);
+    box(0.9, 0.9, 0.7, bois, s * 2.6, RH + 1.35, CZ + 0.2);
+    box(0.8, 0.6, 0.6, flight, s * 3.7, RH + 0.3, CZ + 0.4);
+  }
+
+  // ── Trusses : cadre de scène, cercle au-dessus de la piste, latéraux ──
+  truss([-SX, TY, RZ], [SX, TY, RZ]);
+  for (const s of [-1, 1]) {
+    truss([s*SX, 0, RZ], [s*SX, TY + 0.3, RZ]);
+    truss([s*SX, TY, RZ], [s*SX, TY, ZB - 0.5]);
+    truss([s*8.5, TY, -8.0], [s*8.5, TY, 2.0]);
+    for (const z of [-8.0, -3.0, 2.0]) cable(s*8.5, z, TY + 0.15);
+  }
+  const CR = 3.6, CC = -3.0, N = 20;
+  for (let i = 0; i < N; i++) {
+    const a0 = i / N * 2 * Math.PI, a1 = (i + 1) / N * 2 * Math.PI;
+    truss([CR*Math.cos(a0), TY, CC + CR*Math.sin(a0)], [CR*Math.cos(a1), TY, CC + CR*Math.sin(a1)]);
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = Math.PI / 4 + i * Math.PI / 2;
+    cable(CR*Math.cos(a), CC + CR*Math.sin(a), TY + 0.15);
+  }
+
+  // ── Gradins côté cour, nez de marche LED ──
+  const zs0 = -8.0, zs1 = 1.5;
+  for (let i = 0; i < 3; i++) {
+    const h = 0.25 * (i + 1), xb = -6.8 - i * 1.0;
+    box(xb + LX, h, zs1 - zs0, mat(0x151518, 0.85, 0.05), (xb - LX) / 2, h / 2, (zs0 + zs1) / 2);
+    box(0.04, 0.03, zs1 - zs0, LED(0xffa040), xb + 0.02, h - 0.02, (zs0 + zs1) / 2);
+  }
+
+  // ── Arceaux inox ──
+  const inox = mat(0xc9ccd2, 0.25, 0.95);
+  const pied = new THREE.CylinderGeometry(0.025, 0.025, 1.0, 8);
+  const barre = new THREE.CylinderGeometry(0.025, 0.025, 0.9, 8);
+  const arceau = (x, z, ry) => {
+    const a = new THREE.Group();
+    for (const dx of [-0.45, 0.45]) {
+      const p = new THREE.Mesh(pied, inox); p.position.set(dx, 0.5, 0); a.add(p);
+    }
+    const t = new THREE.Mesh(barre, inox); t.rotation.z = Math.PI / 2; t.position.y = 1.0; a.add(t);
+    a.position.set(x, 0, z); a.rotation.y = ry; g.add(a);
+  };
+  for (const x of [-4.8, -3.2, 3.2, 4.8]) arceau(x, RZ - 0.5, 0);
+  for (const z of [-6.5, -3.5, -0.5]) arceau(-6.4, z, Math.PI / 2);
+
+  g.add(_barsMesh(chords, mat(0x9aa2ad, 0.35, 0.85)),
+        _barsMesh(lace,   mat(0x6b7380, 0.45, 0.75)),
+        _barsMesh(cables, mat(0x1a1a1c, 0.6, 0.5)));
+  return g;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DJ mobile — cabine blanche à néon MyStrow, totems lycra blancs, colonnes PA
+// ─────────────────────────────────────────────────────────────────────────────
+// D'après une photo de presta de mariage fournie par l'utilisateur. Pas de
+// salle : l'installation est posée seule sur le sol du plan.
+// ⚠ Teintes volontairement SOMBRES et saturées (sauf la cabine, blanche à la
+// demande) : l'ambiance de salle monte jusqu'à ×20 et brûle en blanc tout ce
+// qui est clair. Ce qui doit se lire de loin ÉMET sa propre lumière : néon
+// (sur plaque noire, sinon noyé dans le blanc), tubes LED, pads du contrôleur.
+
+// Néon manuscrit : texte dessiné sur un canvas, halo compris. Deux passes, un
+// halo bleu large puis un cœur presque blanc — un tube néon est plus clair au
+// centre que sa lueur. La taille s'ajuste pour que le texte tienne en largeur.
+function _neonTexture(texte) {
+  const cv = document.createElement('canvas');
+  cv.width = 1024; cv.height = 360;
+  const ctx = cv.getContext('2d');
+  const police = (px) => "italic " + px + "px 'Segoe Script', 'Snell Roundhand', 'Brush Script MT', cursive";
+  let px = 150;
+  ctx.font = police(px);
+  const w = ctx.measureText(texte).width;
+  if (w > 940) { px = Math.floor(px * 940 / w); ctx.font = police(px); }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = '#2aa8ff';
+  ctx.shadowBlur = 40;
+  ctx.fillStyle = '#39b4ff';
+  ctx.fillText(texte, 512, 180);
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = '#d8f1ff';
+  ctx.fillText(texte, 512, 180);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function _makeDJMobile() {
+  const g = new THREE.Group();
+  const mat = (c, r, m, extra = {}) =>
+    new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m, ...extra });
+  const box = (w, h, d, mt, x, y, z) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mt);
+    o.position.set(x, y, z); g.add(o); return o;
+  };
+
+  // Gabarit. ⚠ Repris par `_SCENE_PRESETS['dj_mobile']` (rig_height 2,05 =
+  // plateau des totems) et par sa vignette : retoucher ensemble.
+  const CZ = 3.2, CW = 1.9, CH = 1.1, CD = 0.7;    // cabine : centre, largeur, hauteur, profondeur
+  const TX = 1.55, TZ = 3.35, TH = 2.0;            // totems
+  const PX = 2.75;                                 // colonnes PA
+  const FY = 0.08;                                 // épaisseur du tapis sous la cabine
+
+  const lycra     = mat(0xeeeeec, 0.9,  0.0);   // chaussettes des totems
+  const laque     = mat(0xf0f0ee, 0.6,  0.0);   // cabine blanche
+  const laqueJoint = mat(0x3a3a3e, 0.8, 0.0);   // rainures : gardent le relief des planches
+  const noir      = mat(0x0e0e10, 0.8,  0.15);
+  const grille    = mat(0x1a1a1d, 0.95, 0.0);
+
+  // ── Tapis bleu sous la cabine ──
+  box(3.6, FY, 1.7, mat(0x0b1430, 0.55, 0.2), 0, FY / 2, CZ + 0.05);
+  box(3.7, 0.05, 0.08, noir, 0, 0.025, CZ + 0.05 - 0.89);
+
+  // ── Cabine blanche en planches ──
+  box(CW, CH, CD, laque, 0, FY + CH / 2, CZ);
+  box(CW + 0.1, 0.07, CD + 0.1, laque, 0, FY + CH + 0.035, CZ);      // plateau débordant
+  const zf = CZ - CD / 2 - 0.004;
+  for (let x = -CW / 2 + 0.13; x < CW / 2 - 0.05; x += 0.13)            // rainures des planches
+    box(0.012, CH - 0.02, 0.01, laqueJoint, x, FY + CH / 2, zf);
+  box(CW, 0.1, 0.02, laque, 0, FY + CH - 0.08, zf - 0.006);             // ceinture haute
+  box(CW, 0.01, 0.022, laqueJoint, 0, FY + CH - 0.135, zf - 0.006);     // son joint bas
+  const neon = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 0.47),
+    new THREE.MeshBasicMaterial({ map:_neonTexture('MyStrow'), transparent:true, depthWrite:false }));
+  // Plaque sombre derrière le néon : posé à même le bois, que l'ambiance de
+  // salle éclaircit, le néon n'avait plus aucun contraste et disparaissait.
+  // Néon et plaque ne s'affichent que retour vidéo COUPÉ : sinon l'écran de la
+  // cabine (preset `screen`, `siVideo`) prend leur place.
+  box(1.45, 0.55, 0.012, mat(0x050608, 0.4, 0.2), 0, FY + 0.5, CZ - CD / 2 - 0.015)
+    .userData.siPasVideo = true;
+  neon.userData.siPasVideo = true;
+  neon.position.set(0, FY + 0.5, CZ - CD / 2 - 0.03);
+  neon.rotation.y = Math.PI;                  // PlaneGeometry regarde +Z : demi-tour vers le public
+  g.add(neon);
+
+  // ── Dessus de la cabine : contrôleur DJ + portable sur support ──
+  // Le DJ se tient derrière la cabine, côté +Z : pads, crossfader et écran du
+  // portable sont tournés vers lui, pas vers le public.
+  const TY = FY + CH + 0.07;
+  const sous = (grp, geo, mt, x, y, z) => {
+    const o = new THREE.Mesh(geo, mt); o.position.set(x, y, z); grp.add(o); return o;
+  };
+  const lueur = (c) => new THREE.MeshBasicMaterial({ color:c });
+
+  // Contrôleur : deux jogs, pads 2 × 4 par deck, mixeur 2 voies, crossfader
+  const ctl = new THREE.Group();
+  ctl.position.set(0.12, TY, CZ + 0.06);
+  g.add(ctl);
+  const corpsCtl = mat(0x131316, 0.45, 0.5), metal = mat(0x8c9099, 0.3, 0.85), mat0 = mat(0x050506, 0.6, 0.2);
+  sous(ctl, new THREE.BoxGeometry(0.72, 0.045, 0.36), corpsCtl, 0, 0.0225, 0);
+  sous(ctl, new THREE.BoxGeometry(0.19, 0.004, 0.33), mat0, 0, 0.047, 0);        // plaque du mixeur
+  const padGeo = new THREE.BoxGeometry(0.032, 0.006, 0.032);
+  const padCouleurs = [lueur(0xff3366), lueur(0x2a7bff)];
+  for (const s of [-1, 1]) {
+    const jx = s * 0.22;
+    sous(ctl, new THREE.CylinderGeometry(0.094, 0.094, 0.01, 40), metal, jx, 0.05, -0.03);   // bague
+    sous(ctl, new THREE.CylinderGeometry(0.082, 0.082, 0.016, 40), mat0, jx, 0.054, -0.03);  // plateau
+    sous(ctl, new THREE.CylinderGeometry(0.026, 0.026, 0.018, 24), lueur(0x3aa0ff), jx, 0.056, -0.03);
+    for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++)
+      sous(ctl, padGeo, padCouleurs[r], jx - 0.063 + c * 0.042, 0.049, 0.105 + r * 0.042);
+    sous(ctl, new THREE.CylinderGeometry(0.012, 0.012, 0.008, 16), lueur(0x33dd77), jx - s * 0.13, 0.049, 0.15); // play
+    sous(ctl, new THREE.CylinderGeometry(0.012, 0.012, 0.008, 16), lueur(0xffaa22), jx - s * 0.13, 0.049, 0.115); // cue
+  }
+  const potGeo = new THREE.CylinderGeometry(0.009, 0.009, 0.014, 12);
+  for (const dx of [-0.04, 0.04]) {
+    for (const z of [-0.13, -0.095, -0.06]) sous(ctl, potGeo, metal, dx, 0.055, z);         // potards
+    sous(ctl, new THREE.BoxGeometry(0.005, 0.002, 0.09), lueur(0x000000), dx, 0.0495, 0.04); // fente du fader
+    sous(ctl, new THREE.BoxGeometry(0.022, 0.014, 0.012), metal, dx, 0.056, 0.03);           // bouton du fader
+    for (let i = 0; i < 5; i++)                                                              // VU-mètre
+      sous(ctl, new THREE.BoxGeometry(0.008, 0.003, 0.008), lueur(i < 3 ? 0x33dd77 : i < 4 ? 0xffcc22 : 0xff3344),
+           dx * 0.45, 0.05, 0.075 - i * 0.012);
+  }
+  sous(ctl, new THREE.BoxGeometry(0.08, 0.002, 0.005), lueur(0x000000), 0, 0.0495, 0.15);     // fente du crossfader
+  sous(ctl, new THREE.BoxGeometry(0.012, 0.014, 0.022), metal, 0, 0.056, 0.15);               // crossfader
+
+  // Portable sur son support, pivoté vers le DJ
+  const pcGrp = new THREE.Group();
+  pcGrp.position.set(-0.62, TY, CZ + 0.02);
+  pcGrp.rotation.y = 0.35;                         // tourné vers le centre, où se tient le DJ
+  g.add(pcGrp);
+  const HS = 0.16, INCL = 0.25;                    // hauteur du support, inclinaison du plateau
+  for (const dx of [-0.13, 0.13]) sous(pcGrp, new THREE.BoxGeometry(0.015, HS, 0.22), noir, dx, HS / 2, 0);
+  const plat = sous(pcGrp, new THREE.BoxGeometry(0.3, 0.012, 0.27), noir, 0, HS + 0.006, 0);
+  plat.rotation.x = INCL;                          // bord côté public plus haut : clavier vers le DJ
+  const lap = new THREE.Group();
+  lap.position.set(0, HS + 0.013, 0);
+  lap.rotation.x = INCL;
+  pcGrp.add(lap);
+  const alu = mat(0x9ea3aa, 0.35, 0.8);
+  sous(lap, new THREE.BoxGeometry(0.34, 0.018, 0.24), alu, 0, 0.009, 0);                     // base
+  sous(lap, new THREE.BoxGeometry(0.29, 0.002, 0.1), mat(0x1a1b1f, 0.8, 0.1), 0, 0.019, -0.01); // clavier
+  const charn = new THREE.Group();                 // charnière côté public, écran penché en arrière
+  charn.position.set(0, 0.018, -0.12);
+  charn.rotation.x = -0.4;
+  lap.add(charn);
+  sous(charn, new THREE.BoxGeometry(0.34, 0.23, 0.01), alu, 0, 0.115, 0);                    // capot
+  sous(charn, new THREE.BoxGeometry(0.31, 0.19, 0.002), lueur(0x2b4f86), 0, 0.12, 0.006);    // écran allumé, côté DJ
+
+  // ── Grands totems lycra blancs, tube LED côté cabine ──
+  const tube = new THREE.MeshBasicMaterial({ color:0xfff6e8 });
+  for (const s of [-1, 1]) {
+    const x = s * TX;
+    box(0.5, 0.03, 0.46, noir, x, 0.015, TZ);                        // embase
+    box(0.46, TH, 0.42, lycra, x, TH / 2, TZ);
+    box(0.5, 0.04, 0.46, mat(0x111114, 0.5, 0.6), x, TH + 0.02, TZ);   // plateau pour la lyre
+    box(0.06, 1.45, 0.06, tube, x - s * 0.21, 1.15, TZ - 0.24);
+  }
+
+  // ── Petits totems lycra blancs, à l'extérieur des colonnes PA ──
+  // 1,2 m : une lyre ou un PAR s'y pose (hauteur à régler dans le tableau 3D,
+  // l'accroche par défaut de la scène est celle des grands totems).
+  for (const s of [-1, 1]) {
+    const x = s * (PX + 1.5), z = 3.1, h = 1.2;          // sur la ligne des colonnes, 1 m au-delà
+    box(0.42, 0.03, 0.42, noir, x, 0.015, z);            // embase
+    box(0.36, h - 0.06, 0.36, lycra, x, h / 2, z);       // chaussette lycra
+    box(0.42, 0.03, 0.42, noir, x, h - 0.015, z);        // plateau
+  }
+
+  // ── Colonnes PA sur leur sub ──
+  for (const s of [-1, 1]) {
+    const x = s * PX, z = 3.1;
+    box(0.5, 0.66, 0.62, noir, x, 0.33, z);
+    box(0.44, 0.5, 0.01, grille, x, 0.36, z - 0.315);
+    box(0.13, 1.85, 0.13, noir, x, 0.66 + 0.925, z);
+    box(0.1, 1.75, 0.01, grille, x, 0.66 + 0.925, z - 0.07);
+  }
+  return g;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conférence — amphithéâtre circulaire en gradins, grand écran au mur du fond
+// ─────────────────────────────────────────────────────────────────────────────
+// D'après une image fournie par l'utilisateur. Sans arbres (la verdure a été
+// retirée des décors à sa demande) ni faux spots sur les rails : ce sont les
+// projecteurs du patch qui s'y accrochent.
+
+// Bloc courbe plein : secteur d'anneau de r0 à r1, entre les angles a0 < a1, de
+// y = 0 à h. Angle compté depuis l'AVANT de la salle (−Z, côté public), positif
+// vers +X ; ±π = le fond, côté écran. Dessus et côtés ont chacun leur matériau
+// (bois sur béton pour un gradin). Faces doubles : pas d'enroulement à soigner.
+function _blocArc(r0, r1, a0, a1, h, matDessus, matCote, n = 24) {
+  const P = (r, a, y) => [r * Math.sin(a), y, -r * Math.cos(a)];
+  const quad = (arr, A, B, C, D) => arr.push(...A, ...B, ...C, ...A, ...C, ...D);
+  const dessus = [], cotes = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = a0 + (a1 - a0) * i / n, t1 = a0 + (a1 - a0) * (i + 1) / n;
+    quad(dessus, P(r0, t0, h), P(r1, t0, h), P(r1, t1, h), P(r0, t1, h));
+    quad(cotes,  P(r0, t0, 0), P(r0, t0, h), P(r0, t1, h), P(r0, t1, 0));   // face intérieure
+    quad(cotes,  P(r1, t0, 0), P(r1, t0, h), P(r1, t1, h), P(r1, t1, 0));   // face extérieure
+  }
+  for (const a of [a0, a1]) quad(cotes, P(r0, a, 0), P(r1, a, 0), P(r1, a, h), P(r0, a, h));
+  const g = new THREE.Group();
+  for (const [pts, mt] of [[dessus, matDessus], [cotes, matCote]]) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    geo.computeVertexNormals();
+    g.add(new THREE.Mesh(geo, mt));
+  }
+  return g;
+}
+
+function _makeConference() {
+  const g = new THREE.Group();
+  const mat = (c, r, m, extra = {}) =>
+    new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m, ...extra });
+  const box = (w, h, d, mt, x, y, z) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mt);
+    o.position.set(x, y, z); g.add(o); return o;
+  };
+  const DS = { side:THREE.DoubleSide };
+  // Teintes sombres : l'ambiance de salle (jusqu'à ×20) éclaircit tout.
+  const bois   = mat(0x3e2814, 0.8,  0.0, DS);
+  const beton  = mat(0x2a2a28, 0.95, 0.0, DS);
+  const pierre = mat(0x3a3a37, 0.9,  0.0, DS);
+
+  // Gabarit. ⚠ Repris par `_SCENE_PRESETS['conference']` (rig_height 4,9), par
+  // sa vignette et par l'écran du preset : retoucher ensemble.
+  const R0 = 4.2, PAS = 0.8, HT = 0.45;   // gradins : rayon intérieur, profondeur et hauteur d'un rang
+  const OUV = 12  * Math.PI / 180;        // demi-allée à l'avant
+  const FIN = 145 * Math.PI / 180;        // fin des gradins côté écran
+  const ESC = 8   * Math.PI / 180;        // largeur des escaliers
+  const RP  = R0 + 3 * PAS;               // 6,6 m : pied du parapet
+  const ZB = 6.8, LX = 7.6, HP = 6.0;     // salle : mur du fond, baies vitrées, hauteur
+  const HC = 5.3;                         // sous-face de l'anneau du plafond
+
+  // ── Gradins, escaliers, parapet (deux ailes symétriques) ──
+  for (const s of [-1, 1]) {
+    const [a0, a1] = s > 0 ? [OUV, FIN] : [-FIN, -OUV];
+    for (let k = 0; k < 3; k++)
+      g.add(_blocArc(R0 + k * PAS, R0 + (k + 1) * PAS, a0, a1, HT * (k + 1), bois, beton));
+    // Escalier au bout côté écran : 6 marches qui montent vers l'extérieur
+    const [e0, e1] = s > 0 ? [FIN, FIN + ESC] : [-FIN - ESC, -FIN];
+    for (let j = 0; j < 6; j++)
+      g.add(_blocArc(R0 + j * PAS / 2, R0 + (j + 1) * PAS / 2, e0, e1, HT / 2 * (j + 1), pierre, pierre, 4));
+    const [p0, p1] = s > 0 ? [OUV, FIN + ESC] : [-FIN - ESC, -OUV];
+    g.add(_blocArc(RP, RP + 0.35, p0, p1, 1.5, bois, beton));
+  }
+  box(2.6, 0.8, 0.5, beton, 0, 0.4, -7.3);           // muret à l'entrée de l'allée
+
+  // ── Poufs au centre ──
+  const poufGeo = new THREE.SphereGeometry(0.5, 20, 14), pouf = mat(0x2a2636, 0.95, 0.0);
+  for (const [x, z] of [[-1.9, -2.6], [-2.8, -1.4], [-2.1, -0.1], [1.9, -2.6], [2.8, -1.4], [2.1, -0.1]]) {
+    const m = new THREE.Mesh(poufGeo, pouf);
+    m.scale.set(0.9, 0.5, 0.8);
+    m.position.set(x, 0.24, z);
+    g.add(m);
+  }
+
+  // ── Mur du fond (l'écran est une dalle vidéo du preset) et piliers ──
+  const fond = new THREE.Mesh(new THREE.PlaneGeometry(2 * LX, HP), mat(0x1e150d, 0.95, 0.0));
+  fond.position.set(0, HP / 2, ZB);
+  fond.rotation.y = Math.PI;                        // face au public
+  g.add(fond);
+  const pilierGeo = new THREE.CylinderGeometry(0.35, 0.35, HP, 20), pilier = mat(0x2e2e2c, 0.9, 0.0);
+  for (const s of [-1, 1]) {
+    const c = new THREE.Mesh(pilierGeo, pilier);
+    c.position.set(s * 5.6, HP / 2, 6.2);
+    g.add(c);
+  }
+
+  // ── Baies vitrées : faces simples vers l'INTÉRIEUR (invisibles de dehors) ──
+  const vitre = new THREE.MeshBasicMaterial({ color:0x8e9aa4 });
+  const montant = new THREE.MeshBasicMaterial({ color:0x111214 });
+  const ZA = -8.0, LB = ZB - ZA, ZC = (ZB + ZA) / 2;
+  for (const s of [-1, 1]) {
+    const plaque = (w, h, y, z, mt, dx) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mt);
+      m.position.set(s * (LX - dx), y, z);
+      m.rotation.y = -s * Math.PI / 2;
+      g.add(m);
+    };
+    plaque(LB, HP, HP / 2, ZC, vitre, 0);
+    for (let z = ZA; z <= ZB + 0.01; z += 2.4) plaque(0.12, HP, HP / 2, z, montant, 0.02);
+    plaque(LB, 0.12, 0.6, ZC, montant, 0.02);
+    plaque(LB, 0.12, HP - 0.3, ZC, montant, 0.02);
+  }
+
+  // ── Rails de plafond : c'est là que s'accroche le rig (rig_height 4,9) ──
+  const rail = mat(0x0c0c0e, 0.5, 0.4);
+  for (const x of [-5.4, -2.0, 2.0, 5.4]) box(0.08, 0.08, 11.5, rail, x, 5.0, 0.3);
+
+  // ── Anneau de plafond et puits de lumière ──
+  // Ils s'effacent quand la caméra passe au-dessus : sinon la vue DESSUS ne
+  // montrerait qu'un disque blanc posé sur toute la salle.
+  const plafond = mat(0x2e2e2c, 0.95, 0.0, { side:THREE.DoubleSide, transparent:true });
+  const anneau = _blocArc(4.6, 6.4, -Math.PI, Math.PI, 0.6, plafond, plafond, 64);
+  anneau.position.y = HC;
+  g.add(anneau);
+  const ciel = new THREE.Mesh(new THREE.CircleGeometry(4.6, 64),
+    new THREE.MeshBasicMaterial({ color:0xf4f1ea, transparent:true }));
+  ciel.rotation.x = Math.PI / 2;                    // face vers le bas : invisible d'en haut
+  ciel.position.y = HC + 0.55;
+  g.add(ciel);
+  // Fondu court (1 m) : sur 3 m, la vue ISO (caméra vers 7 m) tombait en plein
+  // milieu et montrait un anneau fantôme à moitié transparent.
+  const fondu = (_r, _s, cam) => {
+    const k = THREE.MathUtils.clamp((cam.position.y - (HC + 0.6)) / 1.0, 0, 1);
+    plafond.opacity = 1 - k;
+    plafond.depthWrite = k < 0.05;
+    ciel.material.opacity = 1 - k;
+  };
+  anneau.children.forEach(m => { m.onBeforeRender = fondu; });
+  return g;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sapin de Noël — grand sapin stylisé vert foncé
+// ─────────────────────────────────────────────────────────────────────────────
+// D'après `sapin de noel.png` fourni par l'utilisateur : branches en lames
+// plates rayonnant du tronc par étages. Sans boules ni cadeaux (retirés à la
+// demande). Aucune structure : le rig est celui du patch.
+function _makeSapinNoel() {
+  const g = new THREE.Group();
+  const mat = (c, r, m, extra = {}) =>
+    new THREE.MeshStandardMaterial({ color:c, roughness:r, metalness:m, ...extra });
+  // Tirage pseudo-aléatoire À GRAINE FIXE : le sapin est le même à chaque
+  // chargement, et les miniatures rendues restent fidèles à la scène.
+  let graine = 0x5a91;
+  const rnd = () => {
+    graine = (graine + 0x6D2B79F5) | 0;
+    let t = Math.imul(graine ^ (graine >>> 15), 1 | graine);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const obj = new THREE.Object3D();
+
+  // Gabarit. ⚠ Repris par `_SCENE_PRESETS['sapin_noel']` et par sa vignette :
+  // retoucher ensemble.
+  const SZ = 0.8;                        // centre du sapin (un peu en fond de plateau)
+  const H = 6.6, Y0 = 0.55, R = 2.7;     // pointe, première couronne de branches, rayon au pied
+  const rayon = (y) => 0.08 + R * Math.pow(Math.max(0, 1 - (y - Y0) / (H - Y0)), 0.95);
+
+  // ── Tronc ──
+  const tronc = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.2, H - 0.2, 10), mat(0x120a05, 0.9, 0.0));
+  tronc.position.set(0, (H - 0.2) / 2, SZ);
+  g.add(tronc);
+
+  // ── Branches : lames plates par étages, légèrement tombantes ──
+  // Une seule InstancedMesh (~1 000 lames, 1 draw call). Teintes SOMBRES : l'ambiance
+  // de salle (jusqu'à ×20) les éclaircit.
+  const lameGeo = new THREE.BoxGeometry(1, 0.02, 0.15);
+  lameGeo.translate(0.5, 0, 0);                    // part du tronc, s'étend vers +X
+  const lames = [];
+  for (let y = Y0; y < H - 0.15; y += 0.11) {
+    const r = rayon(y);
+    const n = Math.max(5, Math.round(7 + 20 * r / R));
+    const a0 = rnd() * Math.PI * 2;
+    for (let i = 0; i < n; i++) {
+      lames.push({
+        y: y + (rnd() - 0.5) * 0.06,
+        a: a0 + (i + (rnd() - 0.5) * 0.6) * Math.PI * 2 / n,
+        l: r * (0.85 + rnd() * 0.3),
+        p: -0.12 - rnd() * 0.22,                   // tombant (rad)
+      });
+    }
+  }
+  const branches = new THREE.InstancedMesh(lameGeo, mat(0xffffff, 0.8, 0.0), lames.length);
+  const vert = new THREE.Color();
+  lames.forEach((b, i) => {
+    obj.position.set(0, b.y, SZ);
+    obj.rotation.set(0, b.a, b.p, 'YZX');         // tombant d'abord, puis orienté autour du tronc
+    obj.scale.set(b.l, 1, 1);
+    obj.updateMatrix();
+    branches.setMatrixAt(i, obj.matrix);
+    branches.setColorAt(i, vert.setHSL(0.33 + rnd() * 0.02, 0.85, 0.003 + rnd() * 0.0025));
+  });
+  branches.frustumCulled = false;                  // sphère englobante = celle d'une seule lame
+  g.add(branches);
+
+  return g;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3826,119 +4025,58 @@ const SCENE_PRESETS = {
     trusses: [],
     buildProps() {}
   },
-  truss_glb: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:1.2, z:5.0, w:7.0,  h:4.0 },
+  festival_plein_air: {
+    // Trois dalles vidéo : tout le fond de scène (entre les tours du toit, sous
+    // le gril) et les grands écrans portrait des ailes, recadrés sans
+    // déformation. Positions calées sur le gabarit du décor.
+    screen: [
+      { x:0, y:0.12, z:4.3, w:11.4, h:7.75, fit:'cover' },
+      { x:-10.7, y:1.9, z:-3.95, w:3.3, h:5.8, fit:'cover' },
+      { x: 10.7, y:1.9, z:-3.95, w:3.3, h:5.8, fit:'cover' },
+    ],
     trusses: [],
-    buildProps() {}
+    buildProps() { _propsGrp.add(_makeFestivalStage()); }
   },
-  live: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:1.0, z:5.0, w:6.0,  h:3.4 },
-    trusses: [
-      { label:'Truss avant',   enabled:true, height:7.0, z:-3.8, x_l:-9.0, x_r:9.0 },
-      { label:'Truss arrière', enabled:true, height:7.0, z: 4.0, x_l:-9.0, x_r:9.0 },
+  discotheque: {
+    // Cinq dalles vidéo sur le mur du fond : une grande derrière la cabine,
+    // deux petites empilées de chaque côté. Calées sur `_makeDiscotheque`.
+    screen: [
+      { x: 0,     y:1.9, z:6.35, w:6.4, h:3.4,  fit:'cover' },
+      { x:-4.85,  y:1.9, z:6.35, w:2.4, h:1.35, fit:'cover' },
+      { x: 4.85,  y:1.9, z:6.35, w:2.4, h:1.35, fit:'cover' },
+      { x:-4.85,  y:3.6, z:6.35, w:2.4, h:1.35, fit:'cover' },
+      { x: 4.85,  y:3.6, z:6.35, w:2.4, h:1.35, fit:'cover' },
     ],
-    buildProps() {
-      for (const [x, z] of [[-2.5, 0], [0, -0.5], [2.5, 0]])
-        _propsGrp.add(_makePersonSilhouette(x, z));
-    }
+    trusses: [],
+    buildProps() { _propsGrp.add(_makeDiscotheque()); }
   },
-  dj: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:0.8, z:2.2, w:4.5,  h:2.6 },
-    trusses: [
-      { label:'Truss avant', enabled:true, height:6.0, z:-3.5, x_l:-7.0, x_r:7.0 },
-      { label:'Overhead',    enabled:true, height:5.0, z: 0.0, x_l:-4.0, x_r:4.0 },
-    ],
-    buildProps() {
-      _propsGrp.add(_makeDJBooth(0, -1.2));
-      _propsGrp.add(_makePersonSilhouette(0, -0.2));
-    }
+  dj_mobile: {
+    // Écran 16:9 dans la façade de la cabine, à la place du néon MyStrow :
+    // `siVideo` le retire quand le retour vidéo est coupé, et le néon revient.
+    // Calé sur `_makeDJMobile` (façade à z = 2,85, cabine de 0,08 à 1,18 m).
+    screen: [ { x:0, y:0.23, z:2.83, w:1.24, h:0.7, siVideo:true } ],
+    // Installation de 6 m de large au fond d'une salle : caméras rapprochées
+    // et braquées sur la cabine (cf. setCam).
+    cam: { zoom:0.45, cibleY:1.1, cibleZ:1.5 },
+    trusses: [],
+    buildProps() { _propsGrp.add(_makeDJMobile()); }
   },
-  concert: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:1.2, z:5.2, w:8.0,  h:4.5 },
-    trusses: [
-      { label:'Truss avant',   enabled:true, height:8.0, z:-4.5, x_l:-10.0, x_r:10.0 },
-      { label:'Truss milieu',  enabled:true, height:7.5, z: 0.0, x_l: -9.0, x_r: 9.0 },
-      { label:'Truss arrière', enabled:true, height:7.0, z: 5.0, x_l: -9.0, x_r: 9.0 },
-    ],
-    buildProps() {
-      for (const [x, z] of [[-3.5, 0], [-1.5, -0.5], [0, 0.5], [1.5, -0.5], [3.5, 0]])
-        _propsGrp.add(_makePersonSilhouette(x, z));
-      _propsGrp.add(_makeBackline());
-    }
+  conference: {
+    // Grand écran 16:9 au mur du fond (z = 6,8), calé sur `_makeConference`.
+    screen: [ { x:0, y:0.8, z:6.7, w:6.4, h:3.6, fit:'cover' } ],
+    // Salle de 15 m : caméras un peu rapprochées, visée à hauteur d'écran.
+    // Visée haute (2,6 m) : plus bas, le parapet et le muret de l'allée
+    // masquaient les gradins en vue FACE.
+    cam: { zoom:0.7, cibleY:2.6, cibleZ:1.5 },
+    trusses: [],
+    buildProps() { _propsGrp.add(_makeConference()); }
   },
-  club: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:0.9, z:2.5, w:4.0,  h:2.3 },
-    trusses: [
-      { label:'Rig central', enabled:true, height:4.5, z: 0.0, x_l:-5.0, x_r:5.0 },
-      { label:'Truss avant', enabled:true, height:4.0, z:-3.0, x_l:-7.0, x_r:7.0 },
-    ],
-    buildProps() {
-      _propsGrp.add(_makeDJBooth(0, -1.5));
-      _propsGrp.add(_makePersonSilhouette(0, -0.5));
-    }
-  },
-  festival: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:1.3, z:5.0, w:10.0, h:5.6 },
-    trusses: [
-      { label:'Face',    enabled:true, height:9.0, z:-4.5, x_l:-11.0, x_r:11.0 },
-      { label:'Mid',     enabled:true, height:8.5, z: 0.5, x_l:-10.0, x_r:10.0 },
-      { label:'Arrière', enabled:true, height:8.0, z: 5.5, x_l:-10.0, x_r:10.0 },
-      { label:'Overhead',enabled:true, height:9.5, z:-1.0, x_l: -3.5, x_r: 3.5 },
-    ],
-    buildProps() {
-      for (const [x,z] of [
-        [-4.5,2.0],[-3.0,0.8],[-1.5,1.5],[ 0.0,0.5],[ 1.5,1.5],[3.0,0.8],[4.5,2.0],
-        [-3.5,3.5],[-1.5,3.0],[ 1.0,3.0],[3.5,3.5],
-      ]) _propsGrp.add(_makePersonSilhouette(x,z));
-      _propsGrp.add(_makeBackline());
-      _propsGrp.add(_makeSpeakerColumn(-7.2,-0.5,5));
-      _propsGrp.add(_makeSpeakerColumn( 7.2,-0.5,5));
-    }
-  },
-  arena: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:1.4, z:5.4, w:11.0, h:6.0 },
-    trusses: [
-      { label:'Avant',   enabled:true, height:10.0, z:-5.0, x_l:-11.0, x_r:11.0 },
-      { label:'Milieu',  enabled:true, height: 9.5, z: 0.5, x_l:-10.0, x_r:10.0 },
-      { label:'Arrière', enabled:true, height: 9.0, z: 6.0, x_l:-10.0, x_r:10.0 },
-    ],
-    buildProps() {
-      _propsGrp.add(_makeBackline());
-      for (const [x,z] of [
-        [-5.0,0.5],[-3.5,0.0],[-2.0,0.5],[ 0.0,0.0],[ 1.5,0.5],[3.0,0.0],[4.5,0.5],
-        [-4.0,2.0],[-2.0,1.5],[ 0.0,2.0],[ 2.0,1.5],[4.0,2.0],
-      ]) _propsGrp.add(_makePersonSilhouette(x,z));
-      _propsGrp.add(_makeSpeakerColumn(-8.5, 0.0, 6));
-      _propsGrp.add(_makeSpeakerColumn( 8.5, 0.0, 6));
-    }
-  },
-  totem: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
-    screen: { x:0, y:0.9, z:1.8, w:4.5,  h:2.6 },
-    trusses: [
-      { label:'Rig central', enabled:true, height:5.5, z:-1.0, x_l:-2.5, x_r:2.5 },
-    ],
-    buildProps() {
-      // 6 totems en U autour de la piste de danse
-      for (const [tx,tz,h] of [
-        [-4.5,-2.2,4.5], [ 4.5,-2.2,4.5],   // arrière
-        [-5.2, 0.2,5.0], [ 5.2, 0.2,5.0],   // milieu (plus hauts)
-        [-4.5, 2.8,4.5], [ 4.5, 2.8,4.5],   // avant
-      ]) _propsGrp.add(_makeTotem(tx, tz, h, 5));
-      _propsGrp.add(_makeDJBooth(0, -1.5));
-      for (const [x,z] of [
-        [-2.5,0.2],[-1.5,0.9],[-0.5,-0.2],
-        [ 0.5, 0.6],[ 1.5,0.0],[ 2.5,0.8],
-        [-2.0,-1.0],[0.0,-0.8],[2.0,-1.0],
-      ]) _propsGrp.add(_makePersonSilhouette(x,z,0.95));
-    }
+  sapin_noel: {
+    screen: null,
+    // Sapin de 6,6 m au centre : caméras rapprochées, visée à mi-hauteur.
+    cam: { zoom:0.6, cibleY:3.0, cibleZ:0.2 },
+    trusses: [],
+    buildProps() { _propsGrp.add(_makeSapinNoel()); }
   },
 };
 
@@ -4067,10 +4205,14 @@ window.setScenePreset = function(name) {
   // déclare pas — « Aucun décor » — n'en a tout simplement pas.
   window.setVideoScreen(preset.screen || null);
   window.currentTrusses = JSON.parse(JSON.stringify(preset.trusses));
+  // Chaque scène a son cadrage : on réapplique la vue en cours avec celui-ci,
+  // sinon passer au DJ mobile laissait la caméra à 25 m d'une cabine de 2 m.
+  _camCadrage = preset.cam || {};
+  window.setCam(_camActuelle);
 };
 
 // ── Activer preset live par défaut ──
-window.setScenePreset('live');
+window.setScenePreset('festival_plein_air');   // = _SCENE_PAR_DEFAUT (Python)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // QWebChannel — communication JS → Python

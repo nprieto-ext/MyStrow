@@ -265,5 +265,32 @@ class ComboEditeur(unittest.TestCase):
         self.assertEqual(d["key"], "T:Prism")
 
 
+class StrobeAffichePlans(unittest.TestCase):
+    """Couche « Canal » sur Strobe : le rig strobait, les plans 2D/3D non."""
+
+    def test_couche_strobe_visible_par_les_plans(self):
+        from core import displayed_strobe_speed
+        par = _appareil(["R", "G", "B", "Dim", "Strobe"])
+        lyre = _appareil(["Pan", "Tilt", "Dim", "Shutter"], name="Lyre")
+        # le « Strobe Rapide » de la bibliotheque : Canal / Fixe / Strobe / 93 %
+        out = channel_layer_outputs([_couche(channel_type="Strobe", size=93)],
+                                    [par, lyre], 0.0)
+        par.effect_channels = out[id(par)]
+        self.assertNotIn(id(lyre), out)          # pas de canal Strobe : rien
+        self.assertEqual(displayed_strobe_speed(lyre), 0)
+        vitesse = displayed_strobe_speed(par)
+        self.assertGreater(vitesse, 85)
+        # meme valeur que ce qui part sur le fil, relue a l'envers
+        self.assertAlmostEqual(16 + vitesse / 100 * 234, par.effect_channels[5], delta=2)
+
+    def test_couche_prime_sur_strobe_manuel(self):
+        from core import displayed_strobe_speed
+        par = _appareil(["R", "G", "B", "Dim", "Strobe"])
+        par.strobe_speed = 40
+        self.assertEqual(displayed_strobe_speed(par), 40)
+        par.effect_channels = {5: 0}             # la couche ferme le strobe
+        self.assertEqual(displayed_strobe_speed(par), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

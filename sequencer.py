@@ -5134,8 +5134,9 @@ class Sequencer(QFrame):
                 if hasattr(self, 'timeline_playback_row'):
                     del self.timeline_playback_row
 
-                # Arreter les cartouches
-                if hasattr(self.player_ui, '_stop_all_cartouches'):
+                # Arreter les cartouches — sauf si elles jouent par-dessus la playlist
+                if (hasattr(self.player_ui, '_stop_all_cartouches')
+                        and not getattr(self.player_ui, 'cart_superposer', False)):
                     self.player_ui._stop_all_cartouches()
 
                 # Arreter tout playback precedent (timeline, keyframes, TEMPO)

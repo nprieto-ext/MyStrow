@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
     QHeaderView, QCheckBox, QTextEdit, QToolTip, QDialogButtonBox,
     QLayout, QSizePolicy, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
-    QGraphicsItem, QGroupBox,
+    QGraphicsItem, QGraphicsPathItem, QGroupBox,
     QDoubleSpinBox
 )
 from PySide6.QtCore import (
@@ -35,7 +35,7 @@ except ImportError:
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
     QPalette, QPolygon, QPolygonF, QTransform, QAction, QActionGroup,
-    QDesktopServices, QFontMetrics, QCursor
+    QDesktopServices, QFontMetrics, QCursor, QPainterPath
 )
 
 
@@ -2938,6 +2938,13 @@ class VideoGeometry:
                       tire une HOMOGRAPHIE (`QTransform.quadToQuad`), donc un
                       vrai keystone perspectif, pas un simple cisaillement.
 
+    Et un masque, pose par-dessus :
+
+      4. `border`   — cadre noir, epaisseur en fraction du petit cote de la
+                      dalle. Il rogne les bords de l'image (en suivant sa
+                      deformation) ET ceux de la dalle : l'image n'apparait
+                      que dans l'intersection des deux zones retrecies.
+
     Les coins sont des DELTAS et non des positions absolues : changer le
     cadrage ou l'etirement conserve alors le reglage de coins, au lieu de le
     rendre absurde.
@@ -2955,6 +2962,11 @@ class VideoGeometry:
         self.offset_x = 0.0
         self.offset_y = 0.0
         self.corners  = [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
+        self.border   = 0.0
+        # Pas de la geometrie a proprement parler, mais un etalonnage de la
+        # dalle au meme titre : un mur LED trop fort en salle se regle une fois
+        # pour cet ecran, independamment du dimmer de show.
+        self.brightness = 1.0
 
     # ── Etat ──────────────────────────────────────────────────────────────
     def is_identity(self):
@@ -2966,6 +2978,8 @@ class VideoGeometry:
         return (self.fit == "fit"
                 and abs(self.scale_x - 1.0) < 1e-6 and abs(self.scale_y - 1.0) < 1e-6
                 and abs(self.offset_x) < 1e-6 and abs(self.offset_y) < 1e-6
+                and self.border < 1e-6
+                and self.brightness > 1.0 - 1e-6
                 and not self.has_warp())
 
     def has_warp(self):
@@ -2984,6 +2998,8 @@ class VideoGeometry:
             "scale_x": round(self.scale_x, 6), "scale_y": round(self.scale_y, 6),
             "offset_x": round(self.offset_x, 6), "offset_y": round(self.offset_y, 6),
             "corners": [[round(x, 6), round(y, 6)] for x, y in self.corners],
+            "border": round(self.border, 6),
+            "brightness": round(self.brightness, 6),
         }
 
     @classmethod
@@ -3005,6 +3021,8 @@ class VideoGeometry:
         g.scale_y  = _f("scale_y", 1.0, 0.05, 4.0)
         g.offset_x = _f("offset_x", 0.0, -2.0, 2.0)
         g.offset_y = _f("offset_y", 0.0, -2.0, 2.0)
+        g.border   = _f("border", 0.0, 0.0, 0.5)
+        g.brightness = _f("brightness", 1.0, 0.0, 1.0)
         # Un fichier tronque ou bricole a la main ne doit pas casser la sortie :
         # tout coin illisible retombe a zero, les autres sont conserves.
         raw = d.get("corners")
@@ -3123,6 +3141,9 @@ class VideoSurface(QGraphicsView):
     # reste en phase avec ce que l'utilisateur tire a la souris.
     geometry_changed = Signal()
     adjust_finished  = Signal()
+    # Emis a CHAQUE pose de reglage, d'ou qu'elle vienne : la fenetre de sortie
+    # s'en sert pour recomposer la luminosite dans son calque.
+    settings_applied = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3146,6 +3167,16 @@ class VideoSurface(QGraphicsView):
         self._fx.setZValue(10)
         self._fx.setVisible(False)
         self._scene.addItem(self._fx)
+
+        # Cadre noir : entre l'image et le calque d'effet, qui doit continuer
+        # a tout couvrir.
+        self._frame = QGraphicsPathItem()
+        self._frame.setPen(QPen(Qt.NoPen))
+        self._frame.setBrush(QBrush(QColor(0, 0, 0)))
+        self._frame.setZValue(5)
+        self._frame.setVisible(False)
+        self._scene.addItem(self._frame)
+        self._frame_mask = None
 
         self._fx_color = QColor(0, 0, 0, 0)
         self._geom = VideoGeometry()
@@ -3181,6 +3212,7 @@ class VideoSurface(QGraphicsView):
         """Applique un réglage de géométrie (cadrage / étirement / 4 coins)."""
         self._geom = geom if geom is not None else VideoGeometry()
         self._relayout()
+        self.settings_applied.emit()
 
     def base_rect(self):
         """Rectangle de l'image AVANT déformation des coins, en pixels de vue.
@@ -3242,6 +3274,7 @@ class VideoSurface(QGraphicsView):
             # contre 4,43 ms avec).
             self.item.setTransform(QTransform())
             self.item.setPos(QPointF(x, y))
+            self._update_frame(w, h, iw, ih, lambda poly: poly.translated(x, y))
             return
 
         # Avec warp, l'item est posé à l'origine et TOUT passe par la
@@ -3258,6 +3291,7 @@ class VideoSurface(QGraphicsView):
         t = QTransform()
         if _quad_is_convex(dst) and QTransform.quadToQuad(src, dst, t):
             self.item.setTransform(t)
+            self._update_frame(w, h, iw, ih, t.map)
         else:
             # Quadrilatère inutilisable. Deux cas, un seul repli :
             #   · surface nulle ou coins alignés → `quadToQuad` rend False ;
@@ -3267,6 +3301,36 @@ class VideoSurface(QGraphicsView):
             #     illisible en plein show, sans le moindre message.
             self.item.setTransform(QTransform())
             self.item.setPos(QPointF(x, y))
+            self._update_frame(w, h, iw, ih, lambda poly: poly.translated(x, y))
+
+    def _update_frame(self, w, h, iw, ih, to_view):
+        """Pose le cadre noir : masque tout sauf image retrecie ∩ dalle retrecie.
+
+        `to_view` envoie un polygone du repere de l'image vers la vue — le
+        meme chemin que l'image elle-meme, donc le cadre suit le keystone.
+        """
+        g = self._geom
+        if g.border <= 1e-6:
+            self._frame.setVisible(False)
+            self._frame_mask = None
+            return
+        th = g.border * min(w, h)
+        mask = QPainterPath()
+        mask.addRect(QRectF(-w, -h, 3 * w, 3 * h))
+        if iw > 2 * th and ih > 2 * th and w > 2 * th and h > 2 * th:
+            img = QPainterPath()
+            img.addPolygon(to_view(QPolygonF(QRectF(th, th, iw - 2 * th, ih - 2 * th))))
+            img.closeSubpath()
+            dalle = QPainterPath()
+            dalle.addRect(QRectF(th, th, w - 2 * th, h - 2 * th))
+            mask = mask.subtracted(img.intersected(dalle))
+        self._frame.setPath(mask)
+        self._frame.setVisible(True)
+        self._frame_mask = mask
+
+    def frame_mask_path(self):
+        """Zone noircie par le cadre, en pixels de vue (None sans cadre)."""
+        return self._frame_mask
 
     # ── Mode reglage (mire + poignees) ────────────────────────────────────
 
@@ -3391,15 +3455,361 @@ class VideoSurface(QGraphicsView):
         super().keyPressEvent(ev)
 
 
+class _GeometryCanvas(QWidget):
+    """Reglage a la souris, dans le panneau, sur l'ecran de commande.
+
+    Pourquoi ne pas se contenter des poignees de la mire : le panneau est
+    MODAL (`exec()`), et une fenetre modale confisque souris et clavier a
+    toutes les autres — fenetre de sortie comprise. Les poignees dessinees sur
+    la dalle etaient donc impossibles a attraper. Et meme sans ca, viser un
+    coin sur un ecran de facade a trois metres est penible.
+
+    Ici on manipule une miniature de la dalle :
+      · glisser l'image          → decalage X/Y ;
+      · glisser un bord          → largeur OU hauteur, independamment
+                                   (Maj = symetrique, le centre ne bouge pas) ;
+      · glisser un coin          → deformation 4 coins (keystone) ;
+      · molette                  → agrandit / reduit en gardant les proportions ;
+      · double-clic coin / image → remet le coin / recentre ;
+      · fleches                  → coin actif au pixel (Maj = 10 px).
+
+    Tout est calcule en pixels de la VRAIE sortie puis reconverti : la
+    miniature n'est qu'une loupe, elle ne porte aucun etat.
+    """
+
+    edited   = Signal()     # a chaque mouvement : le panneau resynchronise
+    released = Signal()     # fin de geste : on sauvegarde
+
+    HIT = 10                # rayon de prise, en pixels de miniature
+
+    def __init__(self, surface, parent=None):
+        super().__init__(parent)
+        self._s = surface
+        self._drag = None
+        self._active_corner = 0
+        self.setMinimumSize(380, 230)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def set_surface(self, surface):
+        """Surface a regler, ou None (sortie eteinte : la miniature se tait)."""
+        self._s = surface
+        self._drag = None
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    # ── Reperes ───────────────────────────────────────────────────────────
+    def _view_size(self):
+        v = self._s.viewport()
+        return max(1, v.width()), max(1, v.height())
+
+    def _mapping(self):
+        """Transformation pixels de sortie → pixels de miniature.
+
+        Cadree sur la dalle ET sur l'image, pour qu'une poignee sortie de
+        l'ecran reste attrapable. Figee pendant un glisser : sinon la loupe
+        se recadrerait sous la souris et le geste s'emballerait.
+        """
+        if self._drag is not None:
+            return self._drag["map"]
+        vw, vh = self._view_size()
+        xs, ys = [0.0, float(vw)], [0.0, float(vh)]
+        for p in self._s.corner_points():
+            xs.append(p.x())
+            ys.append(p.y())
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        m = 16
+        k = min(max(1, self.width() - 2 * m) / max(1e-6, x1 - x0),
+                max(1, self.height() - 2 * m) / max(1e-6, y1 - y0))
+        ox = (self.width() - (x1 - x0) * k) / 2 - x0 * k
+        oy = (self.height() - (y1 - y0) * k) / 2 - y0 * k
+        return QTransform(k, 0, 0, k, ox, oy)
+
+    def _handles(self):
+        """(coins, milieux des bords haut/droite/bas/gauche), en pixels de sortie."""
+        c = self._s.corner_points()
+        mids = [(c[i] + c[(i + 1) % 4]) * 0.5 for i in range(4)]
+        return c, mids
+
+    def _hit(self, pos):
+        t = self._mapping()
+        corners, mids = self._handles()
+        r2 = self.HIT ** 2
+
+        def near(pt):
+            q = t.map(pt)
+            return (q.x() - pos.x()) ** 2 + (q.y() - pos.y()) ** 2 <= r2
+
+        for i, pt in enumerate(corners):
+            if near(pt):
+                return ("corner", i)
+        for i, pt in enumerate(mids):
+            if near(pt):
+                return ("edge", i)
+        if t.map(QPolygonF(corners)).containsPoint(pos, Qt.OddEvenFill):
+            return ("move", None)
+        return None
+
+    # ── Souris ────────────────────────────────────────────────────────────
+    @staticmethod
+    def _pos(ev):
+        return QPointF(ev.position()) if hasattr(ev, "position") else QPointF(ev.pos())
+
+    def mousePressEvent(self, ev):
+        if self._s is None or ev.button() != Qt.LeftButton:
+            return super().mousePressEvent(ev)
+        pos = self._pos(ev)
+        hit = self._hit(pos)
+        if hit is None:
+            return
+        kind, idx = hit
+        if kind == "corner":
+            self._set_active_corner(idx)
+        t = self._mapping()
+        self._drag = {
+            "kind": kind, "idx": idx, "map": t,
+            "start": t.inverted()[0].map(pos),
+            "snap": self._s.geometry_settings().to_dict(),
+            "base": self._s._base_rect(),
+        }
+        self.setFocus()
+        ev.accept()
+
+    def mouseMoveEvent(self, ev):
+        if self._s is None:
+            return super().mouseMoveEvent(ev)
+        pos = self._pos(ev)
+        if self._drag is None:
+            self._update_cursor(pos)
+            return
+        d = self._drag
+        cur = d["map"].inverted()[0].map(pos)
+        dx, dy = cur.x() - d["start"].x(), cur.y() - d["start"].y()
+        self._apply_drag(d, dx, dy, bool(ev.modifiers() & Qt.ShiftModifier))
+        ev.accept()
+
+    def _apply_drag(self, d, dx, dy, symmetric=False):
+        vw, vh = self._view_size()
+        snap = d["snap"]
+        g = self._s.geometry_settings()
+        clamp = lambda v, lo, hi: max(lo, min(hi, v))
+
+        if d["kind"] == "move":
+            g.offset_x = clamp(snap["offset_x"] + dx / vw, -2.0, 2.0)
+            g.offset_y = clamp(snap["offset_y"] + dy / vh, -2.0, 2.0)
+        elif d["kind"] == "corner":
+            cx, cy = snap["corners"][d["idx"]]
+            g.corners[d["idx"]] = [clamp(cx + dx / vw, -2.0, 2.0),
+                                   clamp(cy + dy / vh, -2.0, 2.0)]
+        else:
+            # Bords : 0 = haut, 1 = droite, 2 = bas, 3 = gauche. Le bord oppose
+            # reste en place, donc le centre suit de la moitie de l'ecart.
+            _, _, iw0, ih0 = d["base"]
+            horiz = d["idx"] in (1, 3)
+            sgn = 1 if d["idx"] in (1, 2) else -1
+            delta = dx if horiz else dy
+            size0, key, off, span = ((iw0, "scale_x", "offset_x", vw) if horiz
+                                     else (ih0, "scale_y", "offset_y", vh))
+            grow = sgn * delta * (2 if symmetric else 1)
+            s0 = snap[key]
+            s1 = clamp(s0 * (size0 + grow) / size0, 0.05, 4.0)
+            applied = size0 * s1 / s0 - size0
+            setattr(g, key, s1)
+            shift = 0.0 if symmetric else sgn * applied / 2.0 / span
+            setattr(g, off, clamp(snap[off] + shift, -2.0, 2.0))
+        self._commit()
+
+    def mouseReleaseEvent(self, ev):
+        if self._drag is None:
+            return super().mouseReleaseEvent(ev)
+        self._drag = None
+        self.update()
+        self.released.emit()
+        ev.accept()
+
+    def mouseDoubleClickEvent(self, ev):
+        if self._s is None:
+            return
+        hit = self._hit(self._pos(ev))
+        if hit is None:
+            return
+        g = self._s.geometry_settings()
+        if hit[0] == "corner":
+            g.corners[hit[1]] = [0.0, 0.0]
+        elif hit[0] == "move":
+            g.offset_x = g.offset_y = 0.0
+        else:
+            return
+        self._commit()
+        self.released.emit()
+        ev.accept()
+
+    def wheelEvent(self, ev):
+        if self._s is None:
+            return
+        steps = ev.angleDelta().y() / 120.0
+        if not steps:
+            return
+        g = self._s.geometry_settings()
+        f = 1.02 ** steps
+        # Meme facteur sur les deux axes : la molette garde les proportions,
+        # les bords servent a les casser.
+        if f > 1:
+            f = min(f, 4.0 / max(g.scale_x, g.scale_y))
+        else:
+            f = max(f, 0.05 / min(g.scale_x, g.scale_y))
+        g.scale_x *= f
+        g.scale_y *= f
+        self._commit()
+        self.released.emit()
+        ev.accept()
+
+    def _update_cursor(self, pos):
+        hit = self._hit(pos)
+        if hit is None:
+            self.setCursor(Qt.ArrowCursor)
+        elif hit[0] == "corner":
+            self.setCursor(Qt.CrossCursor)
+        elif hit[0] == "edge":
+            self.setCursor(Qt.SizeHorCursor if hit[1] in (1, 3) else Qt.SizeVerCursor)
+        else:
+            self.setCursor(Qt.SizeAllCursor)
+
+    # ── Clavier ───────────────────────────────────────────────────────────
+    def keyPressEvent(self, ev):
+        if self._s is None:
+            return super().keyPressEvent(ev)
+        k = ev.key()
+        if k in (Qt.Key_Tab, Qt.Key_Space):
+            self._set_active_corner((self._active_corner + 1) % 4)
+        elif k in (Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4):
+            self._set_active_corner(k - Qt.Key_1)
+        elif k in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            dx, dy = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0),
+                      Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}[k]
+            step = 10 if (ev.modifiers() & Qt.ShiftModifier) else 1
+            self._s._nudge_corner(self._active_corner, dx * step, dy * step)
+            self.update()
+            self.released.emit()
+        else:
+            return super().keyPressEvent(ev)
+        ev.accept()
+
+    def focusNextPrevChild(self, nxt):
+        # Tab sert a changer de coin : il ne doit pas faire sortir le focus.
+        return False
+
+    def _set_active_corner(self, idx):
+        self._active_corner = idx
+        if self._s is not None:
+            self._s.set_active_corner(idx)
+        self.update()
+
+    def _commit(self):
+        self._s.set_geometry_settings(self._s.geometry_settings())
+        self._s._refresh_adjust()
+        self.update()
+        self.edited.emit()
+
+    # ── Rendu ─────────────────────────────────────────────────────────────
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QColor("#0b0b0b"))
+        if self._s is None:
+            p.setPen(QColor(120, 120, 120))
+            p.drawText(self.rect().adjusted(12, 12, -12, -12),
+                       Qt.AlignCenter | Qt.TextWordWrap, tr("vg_no_output"))
+            p.end()
+            return
+        t = self._mapping()
+        vw, vh = self._view_size()
+        corners, mids = self._handles()
+
+        dalle = t.mapRect(QRectF(0, 0, vw, vh))
+        p.fillRect(dalle, QColor("#000000"))
+
+        quad = t.map(QPolygonF(corners))
+        pts = [quad.at(i) for i in range(4)]
+
+        # Image : aplat + grille projetee, comme la mire de la sortie.
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 212, 255, 38))
+        p.drawPolygon(quad)
+
+        def q(u, v):
+            top = pts[0] + (pts[1] - pts[0]) * u
+            bottom = pts[3] + (pts[2] - pts[3]) * u
+            return top + (bottom - top) * v
+
+        p.setPen(QPen(QColor(0, 212, 255, 70), 1))
+        for i in range(1, 8):
+            u = i / 8
+            p.drawLine(q(u, 0.0), q(u, 1.0))
+            p.drawLine(q(0.0, u), q(1.0, u))
+
+        # Cadre noir : hachure, limitee a ce qui serait vraiment masque.
+        mask = self._s.frame_mask_path()
+        if mask is not None:
+            clip = QPainterPath()
+            clip.addPolygon(QPolygonF(corners))
+            clip.closeSubpath()
+            box = QPainterPath()
+            box.addRect(QRectF(0, 0, vw, vh))
+            p.save()
+            p.setClipPath(t.map(clip.intersected(box)))
+            p.fillPath(t.map(mask), QColor(0, 0, 0, 230))
+            p.fillPath(t.map(mask), QBrush(QColor(110, 110, 110), Qt.BDiagPattern))
+            p.restore()
+
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(0, 212, 255, 230), 2))
+        p.drawPolygon(quad)
+
+        # Dalle par-dessus : on voit ce qui deborde, donc ce qui est rogne.
+        p.setPen(QPen(QColor(255, 255, 255, 140), 1, Qt.DashLine))
+        p.drawRect(dalle)
+        f = QFont()
+        f.setPixelSize(10)
+        p.setFont(f)
+        p.setPen(QColor(255, 255, 255, 110))
+        p.drawText(dalle.adjusted(5, 3, -5, -3), Qt.AlignLeft | Qt.AlignTop,
+                   f"{vw} × {vh}")
+
+        # Poignees : ronds aux coins, carres au milieu des bords.
+        for i, pt in enumerate(corners):
+            c = t.map(pt)
+            on = (i == self._active_corner)
+            p.setPen(QPen(QColor(0, 212, 255), 2))
+            p.setBrush(QColor(0, 212, 255) if on else QColor(15, 15, 15))
+            p.drawEllipse(c, 6, 6)
+        p.setPen(QPen(QColor(255, 255, 255), 1.5))
+        p.setBrush(QColor(15, 15, 15))
+        for pt in mids:
+            c = t.map(pt)
+            p.drawRect(QRectF(c.x() - 4.5, c.y() - 4.5, 9, 9))
+        p.end()
+
+
 class VideoGeometryDialog(QDialog):
-    """Panneau de reglage de la geometrie de sortie video.
+    """Panneau « Paramétrer la sortie vidéo ».
 
-    Il s'ouvre sur l'ecran de commande pendant que la mire, elle, s'affiche sur
-    la dalle : on regle en regardant le resultat, pas un apercu.
+    Point d'entrée UNIQUE de la sortie : choix de l'écran, marche/arrêt, puis
+    cadrage, taille, luminosité et cadre noir. Il s'ouvre donc toujours, même
+    sortie éteinte — les réglages d'image restent grisés tant qu'il n'y a pas
+    de dalle à regarder, puisque toute la méthode consiste à caler à l'oeil.
 
-    Le reglage s'applique EN DIRECT, sans validation. C'est voulu — sur une
-    dalle LED on cale a l'oeil, un aller-retour par « Appliquer » rendrait
-    l'exercice impraticable. « Tout reinitialiser » sert de rattrapage.
+    `output` est l'hôte (la fenêtre principale) ; il doit exposer
+    `video_output_is_on()`, `set_video_output_on(on)`,
+    `video_output_surface()`, `video_output_screens()`,
+    `video_output_screen()` et `set_video_output_screen(i)`. Sans hôte, le
+    panneau règle simplement la surface qu'on lui donne.
+
+    Le reglage se fait a la souris sur la miniature (`_GeometryCanvas`), la
+    mire affichee sur la dalle servant de retour visuel. Il s'applique EN
+    DIRECT, sans validation : sur une dalle LED on cale a l'oeil, un
+    aller-retour par « Appliquer » rendrait l'exercice impraticable.
     """
 
     _SS = """
@@ -3408,33 +3818,87 @@ class VideoGeometryDialog(QDialog):
         QGroupBox { color:#00d4ff; font-size:12px; font-weight:bold;
                     border:1px solid #262626; border-radius:8px;
                     margin-top:10px; padding:12px 10px 8px 10px; }
+        QGroupBox:disabled { color:#3f5f66; }
         QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 5px; }
         QSlider::groove:horizontal { height:3px; background:#2a2a2a; border-radius:2px; }
         QSlider::handle:horizontal { width:13px; height:13px; margin:-6px 0;
                                      background:#00d4ff; border-radius:6px; }
+        QSlider::handle:horizontal:disabled { background:#2f4a50; }
         QSlider::sub-page:horizontal { background:#005a99; border-radius:2px; }
         QPushButton { background:#1e1e1e; color:#ccc; border:1px solid #2e2e2e;
                       border-radius:6px; padding:7px 12px; font-size:12px; }
         QPushButton:hover { background:#262626; color:#fff; }
         QPushButton:checked { background:#00d4ff; color:#000; font-weight:bold;
                               border-color:#00d4ff; }
+        QPushButton:disabled { color:#555; }
+        QPushButton:checked:disabled { background:#1a2a2e; color:#4a6a70;
+                                       border-color:#23393e; }
         QComboBox { background:#1a1a1a; color:#ddd; border:1px solid #2e2e2e;
                     border-radius:6px; padding:5px 8px; font-size:12px; }
     """
 
-    def __init__(self, surface, on_changed=None, parent=None):
+    _SS_POWER = (
+        "QPushButton { background:#10251a; color:#00e070; border:1px solid #00a050;"
+        " border-radius:6px; padding:9px 12px; font-size:13px; font-weight:bold; }"
+        "QPushButton:hover { background:#14301f; color:#33ff99; }"
+        "QPushButton:checked { background:#2a1212; color:#ff5555;"
+        " border:1px solid #cc3333; }"
+        "QPushButton:checked:hover { background:#361616; color:#ff7777; }"
+    )
+
+    def __init__(self, surface, on_changed=None, parent=None, output=None):
         super().__init__(parent)
-        self._surface    = surface
+        self._surface    = None
+        self._bound      = False
+        self._output     = output
         self._on_changed = on_changed
         self._loading    = False         # garde anti-boucle pendant _reload()
 
         self.setWindowTitle(tr("vg_title"))
         self.setStyleSheet(self._SS)
-        self.setMinimumWidth(430)
+        self.setMinimumWidth(880)
 
+        # Deux colonnes : empilé, le panneau dépassait 950 px de haut et ne
+        # tenait plus sur un portable (le texte d'aide mordait la miniature).
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(10)
+        cols = QHBoxLayout()
+        cols.setSpacing(12)
+        left = QVBoxLayout()
+        left.setSpacing(10)
+        right = QVBoxLayout()
+        right.setSpacing(10)
+        cols.addLayout(left, 5)
+        cols.addLayout(right, 4)
+
+        # ── Sortie : écran + marche/arrêt ─────────────────────────────────
+        self._screen = None
+        self._power = None
+        self._no_output = None
+        if output is not None:
+            box_out = QGroupBox(tr("vg_output_group"))
+            ol = QVBoxLayout(box_out)
+            ol.setSpacing(7)
+            row = QHBoxLayout()
+            lbl = QLabel(tr("vg_screen"))
+            lbl.setFixedWidth(92)
+            row.addWidget(lbl)
+            self._screen = QComboBox()
+            self._screen.setPlaceholderText(tr("vg_screen_none"))
+            self._screen.currentIndexChanged.connect(self._on_screen_changed)
+            row.addWidget(self._screen, 1)
+            ol.addLayout(row)
+            self._power = QPushButton(tr("vg_output_on"))
+            self._power.setCheckable(True)
+            self._power.setStyleSheet(self._SS_POWER)
+            self._power.toggled.connect(self._on_power_toggled)
+            ol.addWidget(self._power)
+            self._no_output = QLabel(tr("vg_no_output"))
+            self._no_output.setAlignment(Qt.AlignCenter)
+            self._no_output.setStyleSheet("color:#888; font-size:11px;")
+            ol.addWidget(self._no_output)
+            left.addWidget(box_out)
 
         # ── Cadrage ───────────────────────────────────────────────────────
         box_fit = QGroupBox(tr("vg_fit_group"))
@@ -3443,44 +3907,68 @@ class VideoGeometryDialog(QDialog):
         for key, label in (("fit", tr("vg_fit_fit")), ("fill", tr("vg_fit_fill")),
                            ("stretch", tr("vg_fit_stretch"))):
             self._fit.addItem(label, key)
-        self._fit.currentIndexChanged.connect(self._apply)
+        self._fit.currentIndexChanged.connect(self._apply_fit)
         fl.addWidget(self._fit)
-        root.addWidget(box_fit)
+        left.addWidget(box_fit)
 
-        # ── Etirement ─────────────────────────────────────────────────────
+        # ── A la souris ───────────────────────────────────────────────────
+        box_mouse = QGroupBox(tr("vg_mouse_group"))
+        ml = QVBoxLayout(box_mouse)
+        ml.setSpacing(6)
+        self._canvas = _GeometryCanvas(None)
+        self._canvas.edited.connect(self._reload)
+        self._canvas.released.connect(self._notify)
+        ml.addWidget(self._canvas, 1)
+        self._btn_adjust = QPushButton(tr("vg_adjust_on"))
+        self._btn_adjust.setCheckable(True)
+        # Mire allumee d'office : on ouvre ce panneau pour caler la dalle, et
+        # la grille sur la sortie est le seul moyen de juger du resultat.
+        self._btn_adjust.setChecked(True)
+        self._btn_adjust.toggled.connect(self._toggle_adjust)
+        ml.addWidget(self._btn_adjust)
+        left.addWidget(box_mouse, 1)
+
+        # ── Taille et position ────────────────────────────────────────────
         box_str = QGroupBox(tr("vg_stretch_group"))
         sl = QVBoxLayout(box_str)
         sl.setSpacing(6)
-        self._sx = self._add_slider(sl, tr("vg_width"),    5, 400, 100, "%")
-        self._sy = self._add_slider(sl, tr("vg_height"),   5, 400, 100, "%")
-        self._ox = self._add_slider(sl, tr("vg_offset_x"), -100, 100, 0, "%")
-        self._oy = self._add_slider(sl, tr("vg_offset_y"), -100, 100, 0, "%")
-        root.addWidget(box_str)
+        pct = lambda v: f"{v}%"
+        self._sx = self._add_slider(sl, tr("vg_width"),    5, 400, 100, pct, "scale_x")
+        self._sy = self._add_slider(sl, tr("vg_height"),   5, 400, 100, pct, "scale_y")
+        self._ox = self._add_slider(sl, tr("vg_offset_x"), -200, 200, 0, pct, "offset_x")
+        self._oy = self._add_slider(sl, tr("vg_offset_y"), -200, 200, 0, pct, "offset_y")
+        right.addWidget(box_str)
 
-        # ── 4 coins ───────────────────────────────────────────────────────
-        box_cor = QGroupBox(tr("vg_corners_group"))
-        cl = QVBoxLayout(box_cor)
-        cl.setSpacing(7)
-        self._btn_adjust = QPushButton(tr("vg_adjust_on"))
-        self._btn_adjust.setCheckable(True)
-        self._btn_adjust.setFixedHeight(34)
-        self._btn_adjust.toggled.connect(self._toggle_adjust)
-        cl.addWidget(self._btn_adjust)
-        hint = QLabel(tr("vg_adjust_hint"))
+        # ── Image : luminosité + cadre noir ───────────────────────────────
+        # Cadre : epaisseur stockee en fraction du petit cote de la dalle (meme
+        # reglage en 1080p et en 4K), affichee en pixels de sortie : c'est ce
+        # qu'on compte sur un mur LED.
+        box_img = QGroupBox(tr("vg_image_group"))
+        il = QVBoxLayout(box_img)
+        il.setSpacing(6)
+        self._bright = self._add_slider(il, tr("vg_brightness"), 0, 100, 100, pct,
+                                        "brightness")
+        self._border = self._add_slider(il, tr("vg_border"), 0, 250, 0,
+                                        self._border_text, "border",
+                                        scale=1000.0)
+        right.addWidget(box_img)
+
+        hint = QLabel(tr("vg_mouse_hint"))
         hint.setWordWrap(True)
-        hint.setStyleSheet("color:#777; font-size:11px;")
-        cl.addWidget(hint)
-        root.addWidget(box_cor)
+        hint.setStyleSheet("color:#777; font-size:11px; padding:2px 4px;")
+        right.addWidget(hint)
+        right.addStretch(1)
+        root.addLayout(cols, 1)
 
         # ── Pied ──────────────────────────────────────────────────────────
         foot = QHBoxLayout()
         foot.setSpacing(7)
-        b_rc = QPushButton(tr("vg_reset_corners"))
-        b_rc.clicked.connect(self._reset_corners)
-        b_ra = QPushButton(tr("vg_reset_all"))
-        b_ra.clicked.connect(self._reset_all)
-        foot.addWidget(b_rc)
-        foot.addWidget(b_ra)
+        self._b_rc = QPushButton(tr("vg_reset_corners"))
+        self._b_rc.clicked.connect(self._reset_corners)
+        self._b_ra = QPushButton(tr("vg_reset_all"))
+        self._b_ra.clicked.connect(self._reset_all)
+        foot.addWidget(self._b_rc)
+        foot.addWidget(self._b_ra)
         foot.addStretch(1)
         b_ok = QPushButton(tr("vg_close"))
         b_ok.setDefault(True)
@@ -3488,17 +3976,17 @@ class VideoGeometryDialog(QDialog):
         foot.addWidget(b_ok)
         root.addLayout(foot)
 
-        # La mire modifie la geometrie a la souris : les curseurs doivent
-        # suivre, sinon le panneau afficherait un etat perime.
-        self._surface.geometry_changed.connect(self._reload)
-        # Echap sur la sortie releve le bouton ici : les deux etats ne doivent
-        # jamais diverger, sinon un second clic ne rallumerait plus la mire.
-        self._surface.adjust_finished.connect(self._on_adjust_finished)
+        self._geom_widgets = (box_fit, box_mouse, box_str, box_img,
+                              self._b_rc, self._b_ra)
 
-        self._reload()
+        if output is not None:
+            self._sync_output()
+        else:
+            self._bind(surface)
+        self._canvas.setFocus()
 
     # ── Construction ──────────────────────────────────────────────────────
-    def _add_slider(self, layout, label, lo, hi, val, suffix):
+    def _add_slider(self, layout, label, lo, hi, val, fmt, attr, scale=100.0):
         row = QHBoxLayout()
         row.setSpacing(8)
         lbl = QLabel(label)
@@ -3508,19 +3996,120 @@ class VideoGeometryDialog(QDialog):
         sld.setRange(lo, hi)
         sld.setValue(val)
         row.addWidget(sld, 1)
-        val_lbl = QLabel(f"{val}{suffix}")
-        val_lbl.setFixedWidth(46)
+        val_lbl = QLabel(fmt(val))
+        val_lbl.setFixedWidth(52)
         val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         val_lbl.setStyleSheet("color:#00d4ff; font-size:11px; font-weight:bold;")
         row.addWidget(val_lbl)
         sld.valueChanged.connect(
-            lambda v: (val_lbl.setText(f"{v}{suffix}"), self._apply()))
+            lambda v: (val_lbl.setText(fmt(v)), self._apply_field(attr, v / scale)))
         layout.addLayout(row)
         return sld
 
+    def _border_text(self, v):
+        canvas = getattr(self, "_canvas", None)
+        if canvas is None or canvas._s is None:
+            return f"{v / 10:.1f}%"
+        vw, vh = canvas._view_size()
+        return f"{int(round(v / 1000.0 * min(vw, vh)))} px"
+
+    # ── Sortie ────────────────────────────────────────────────────────────
+    def _sync_output(self):
+        """Recopie l'etat de la sortie (ecran, marche) puis (de)branche la surface."""
+        out = self._output
+        on = bool(out.video_output_is_on())
+        self._loading = True
+        try:
+            self._screen.clear()
+            labels = out.video_output_screens()
+            self._screen.addItems(labels)
+            idx = out.video_output_screen()
+            self._screen.setCurrentIndex(idx if 0 <= idx < len(labels) else -1)
+            self._power.setChecked(on)
+            self._power.setText(tr("vg_output_off") if on else tr("vg_output_on"))
+        finally:
+            self._loading = False
+        self._bind(out.video_output_surface() if on else None)
+
+    def _on_power_toggled(self, on):
+        if self._loading:
+            return
+        self._output.set_video_output_on(on)
+        self._sync_output()
+        self._keep_on_top()
+
+    def _on_screen_changed(self, idx):
+        if self._loading or idx < 0 or self._output is None:
+            return
+        # Nouvelle dalle = nouveau reglage : l'hote pose celui de cet ecran sur
+        # la surface, on n'a plus qu'a le relire.
+        self._output.set_video_output_screen(idx)
+        if self._surface is not None:
+            self._reload()
+            self._surface._refresh_adjust()
+        self._keep_on_top()
+
+    def _keep_on_top(self):
+        # La sortie qui s'ouvre (en fenetre, faute de second ecran) peut passer
+        # devant : le panneau etant modal, on ne pourrait plus ni la deplacer
+        # ni revenir ici.
+        self.raise_()
+        self.activateWindow()
+
+    def _bind(self, surface):
+        """Branche le panneau sur une surface de sortie (ou le grise si None)."""
+        if surface is self._surface and (self._bound or surface is None):
+            self._set_enabled(surface is not None)
+            return
+        self._unbind()
+        self._surface = surface
+        self._canvas.set_surface(surface)
+        self._set_enabled(surface is not None)
+        if surface is None:
+            return
+        # Les fleches de la miniature passent par la surface : les curseurs
+        # doivent suivre, sinon le panneau afficherait un etat perime.
+        surface.geometry_changed.connect(self._reload)
+        surface.adjust_finished.connect(self._on_adjust_finished)
+        self._bound = True
+        self._reload()
+        self._toggle_adjust(self._btn_adjust.isChecked())
+
+    def _unbind(self):
+        """La mire ne doit JAMAIS survivre au panneau (ni a la sortie eteinte).
+
+        Sans ca elle resterait affichee sur la dalle en plein show, grille et
+        poignees comprises, sans plus aucun moyen de l'enlever puisque le seul
+        interrupteur venait de disparaitre.
+        """
+        s = self._surface
+        if s is not None and self._bound:
+            try:
+                s.set_adjust_mode(False)
+            except RuntimeError:
+                pass
+            for sig, slot in ((s.geometry_changed, self._reload),
+                              (s.adjust_finished, self._on_adjust_finished)):
+                try:
+                    sig.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
+        self._bound = False
+        self._surface = None
+        self._canvas.set_surface(None)
+
+    def _set_enabled(self, on):
+        for w in self._geom_widgets:
+            w.setEnabled(on)
+        if self._no_output is not None:
+            self._no_output.setVisible(not on)
+
     # ── Etat ──────────────────────────────────────────────────────────────
     def _reload(self):
-        """Recopie la geometrie vers les controles, sans re-declencher _apply."""
+        """Recopie la geometrie vers les controles, sans rien re-appliquer."""
+        if self._surface is None:
+            self._canvas.update()
+            return
         self._loading = True
         try:
             g = self._surface.geometry_settings()
@@ -3530,20 +4119,35 @@ class VideoGeometryDialog(QDialog):
             self._sy.setValue(int(round(g.scale_y * 100)))
             self._ox.setValue(int(round(g.offset_x * 100)))
             self._oy.setValue(int(round(g.offset_y * 100)))
+            self._bright.setValue(int(round(g.brightness * 100)))
+            self._border.setValue(int(round(g.border * 1000)))
         finally:
             self._loading = False
+        self._canvas.update()
 
-    def _apply(self):
-        if self._loading:
+    def _apply_field(self, attr, value):
+        """Un curseur n'ecrit QUE son champ.
+
+        Recopier les cinq a chaque mouvement ecraserait, par exemple, un
+        decalage pose a la souris au-dela de la course du curseur.
+        """
+        if self._loading or self._surface is None:
             return
         g = self._surface.geometry_settings()
-        g.fit      = self._fit.currentData() or "fit"
-        g.scale_x  = self._sx.value() / 100.0
-        g.scale_y  = self._sy.value() / 100.0
-        g.offset_x = self._ox.value() / 100.0
-        g.offset_y = self._oy.value() / 100.0
+        setattr(g, attr, value)
+        self._push(g)
+
+    def _apply_fit(self):
+        if self._loading or self._surface is None:
+            return
+        g = self._surface.geometry_settings()
+        g.fit = self._fit.currentData() or "fit"
+        self._push(g)
+
+    def _push(self, g):
         self._surface.set_geometry_settings(g)
         self._surface._refresh_adjust()
+        self._canvas.update()
         self._notify()
 
     def _notify(self):
@@ -3551,39 +4155,41 @@ class VideoGeometryDialog(QDialog):
             self._on_changed()
 
     def _toggle_adjust(self, on):
+        if self._surface is None:
+            return
         self._surface.set_adjust_mode(on)
+        if on:
+            self._surface.set_active_corner(self._canvas._active_corner)
+        # La surface prend le focus en s'armant : on le rend a la miniature,
+        # seule a pouvoir recevoir les fleches tant que le panneau est modal.
+        self._canvas.setFocus()
 
     def _on_adjust_finished(self):
         self._btn_adjust.setChecked(False)
 
     def _reset_corners(self):
+        if self._surface is None:
+            return
         g = self._surface.geometry_settings()
         g.reset_corners()
-        self._surface.set_geometry_settings(g)
-        self._surface._refresh_adjust()
-        self._notify()
+        self._push(g)
 
     def _reset_all(self):
-        self._surface.set_geometry_settings(VideoGeometry())
+        if self._surface is None:
+            return
+        # EN PLACE : l'hote garde une reference sur cet objet (reglage par
+        # dalle). Poser un VideoGeometry() neuf sur la surface laissait l'ancien
+        # dans l'hote, et la remise a zero n'etait jamais sauvegardee.
+        g = self._surface.geometry_settings()
+        g.reset()
+        self._surface.set_geometry_settings(g)
         self._surface._refresh_adjust()
         self._reload()
         self._notify()
 
     # ── Fermeture ─────────────────────────────────────────────────────────
     def _teardown(self):
-        """La mire ne doit JAMAIS survivre au panneau.
-
-        Sans ca elle resterait affichee sur la dalle en plein show, grille et
-        poignees comprises, sans plus aucun moyen de l'enlever puisque le seul
-        interrupteur venait de disparaitre.
-        """
-        self._surface.set_adjust_mode(False)
-        for sig, slot in ((self._surface.geometry_changed, self._reload),
-                          (self._surface.adjust_finished, self._on_adjust_finished)):
-            try:
-                sig.disconnect(slot)
-            except (RuntimeError, TypeError):
-                pass
+        self._unbind()
 
     def closeEvent(self, ev):
         self._teardown()
@@ -3646,6 +4252,9 @@ class VideoOutputWindow(QWidget):
         self._fx_color = QColor(0, 0, 0, 0)
         self.stack.currentChanged.connect(
             lambda _i: self.set_fx_overlay(self._fx_color))
+        if isinstance(self.video_widget, VideoSurface):
+            self.video_widget.settings_applied.connect(
+                lambda: self.set_fx_overlay(self._fx_color))
 
         # Watermark overlay (licence)
         self._watermark = None
@@ -3658,6 +4267,7 @@ class VideoOutputWindow(QWidget):
         Les laisser agir tous les deux mélangerait la couleur deux fois.
         """
         self._fx_color = QColor(color)
+        color = self._with_brightness(self._fx_color)
         sur_video = (isinstance(self.video_widget, VideoSurface)
                      and self.stack.currentIndex() == self.PAGE_VIDEO)
         if isinstance(self.video_widget, VideoSurface):
@@ -3669,6 +4279,29 @@ class VideoOutputWindow(QWidget):
         # à 0) le ferait disparaître, ce qui rendrait la licence contournable.
         if self._watermark:
             self._watermark.raise_()
+
+    def _with_brightness(self, color):
+        """Fond la luminosite de la dalle dans la couleur du calque.
+
+        Un voile noir d'opacite k = 1 - luminosite, pose PAR-DESSUS le calque
+        d'effet (alpha a), equivaut a un calque unique :
+            A = 1 - (1 - a)(1 - k)      C' = C · a(1 - k) / A
+        Un seul calque, donc aucun double melange (cf. `_apply_video_fx`), et
+        la luminosite vaut pour les trois pages : video, photo et noir.
+        """
+        surf = self.video_widget
+        b = (surf.geometry_settings().brightness
+             if isinstance(surf, VideoSurface) else 1.0)
+        if b >= 1.0 - 1e-6:
+            return QColor(color)
+        k = 1.0 - max(0.0, b)
+        a = color.alphaF()
+        out_a = 1.0 - (1.0 - a) * (1.0 - k)
+        if out_a <= 0.0:
+            return QColor(0, 0, 0, 0)
+        f = a * (1.0 - k) / out_a
+        return QColor.fromRgbF(color.redF() * f, color.greenF() * f,
+                               color.blueF() * f, out_a)
 
     def set_watermark(self, visible):
         """Affiche ou masque le watermark de licence"""
@@ -4489,6 +5122,13 @@ class MainWindow(QMainWindow):
         self.cart_player.setAudioOutput(self.cart_audio)
         self.cart_player.mediaStatusChanged.connect(self.on_cart_media_status)
         self.cart_playing_index = -1
+        # Option du show, commune aux 4 slots : une cartouche joue PAR-DESSUS la
+        # playlist au lieu de la couper (et la playlist ne la coupe plus). Entre
+        # slots, rien ne change : le dernier lancé prend la main.
+        self.cart_superposer = False
+        # Vrai tant qu'une cartouche vidéo superposée a pris l'image : la
+        # playlist continue en dessous mais ne doit pas reprendre l'aperçu.
+        self._cart_video_lead = False
 
         # Sequenceur
         self.seq = Sequencer(self)
@@ -4982,6 +5622,18 @@ class MainWindow(QMainWindow):
 
         # Bouton toggle sortie video
         title_layout = QHBoxLayout()
+
+        # ⚙ Paramétrer la sortie vidéo — à gauche, comme au-dessus du plan de feu
+        video_settings_btn = QPushButton("⚙")
+        video_settings_btn.setFixedSize(26, 26)
+        video_settings_btn.setToolTip(tr("vg_title"))
+        video_settings_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #aaa; border: 1px solid #3a3a3a; "
+            "border-radius: 4px; font-size: 13px; } "
+            "QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #0077bb; }"
+        )
+        video_settings_btn.clicked.connect(self.open_video_geometry)
+        title_layout.addWidget(video_settings_btn)
         title_layout.addStretch()
 
         # Un SEUL bouton pour les six effets : le choix se fait dans son menu.
@@ -5063,6 +5715,8 @@ class MainWindow(QMainWindow):
 
     def show_image(self, path):
         """Affiche une image dans le preview integre"""
+        if self._cart_video_lead:
+            return      # une cartouche vidéo superposée a l'image
         pixmap = QPixmap(path)
         if pixmap.isNull():
             return
@@ -5082,6 +5736,8 @@ class MainWindow(QMainWindow):
 
     def show_black_preview(self):
         """Affiche le noir dans le preview (masque la 1re frame d'un media precharge)"""
+        if self._cart_video_lead:
+            return      # une cartouche vidéo superposée a l'image
         self.image_label.clear()
         self.video_stack.setCurrentIndex(1)
         if self.video_output_window and self.video_output_window.isVisible():
@@ -5628,6 +6284,8 @@ class MainWindow(QMainWindow):
 
     def _update_video_output_state(self):
         """Met a jour l'affichage de la fenetre video externe selon le media courant"""
+        if self._cart_video_lead:
+            return      # une cartouche vidéo superposée a l'image
         if not self.video_output_window or not self.video_output_window.isVisible():
             return
 
@@ -7673,7 +8331,8 @@ class MainWindow(QMainWindow):
                 self._mem_ensure_cues(mem)
                 if len(mem.get("cues", [])) > 1:
                     self._release_manual_grabs()   # action volontaire → on repeint
-                    self._mem_advance_cue(mem_col, row)
+                    if not self._mem_advance_cue(mem_col, row):
+                        return   # fin de liste sans boucle : rien ne bouge
                     fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
                     # Fondu du cue d'ARRIVÉE (donc après l'avance).
                     self._recompute_memory_mix(self._cue_fade_secs(mem_col, row))
@@ -7685,6 +8344,12 @@ class MainWindow(QMainWindow):
                     # Rafraîchir le panel Cues si ouvert sur ce pad
                     if hasattr(self, '_cue_panel') and self._cue_panel.mem_col == mem_col and self._cue_panel.row == row:
                         self._cue_panel.highlight_cue(cue_idx)
+                    # Le minutage repart du cue d'arrivée. Sans ça, un pad déjà
+                    # allumé (au démarrage, par la montée du fader, ou posé avant
+                    # qu'on règle les durées) avançait d'un cue puis s'arrêtait :
+                    # l'enchaînement auto ne démarrait qu'en posant le pad « à
+                    # froid » ou avec le ▶ du panneau.
+                    self._start_cue_duration(mem_col, row)
             return
 
         # Activation impossible si aucune memoire stockee
@@ -12717,7 +13382,8 @@ class MainWindow(QMainWindow):
             if mem:
                 self._mem_ensure_cues(mem)
                 if len(mem.get("cues", [])) > 1:
-                    self._mem_advance_cue(mem_col, row)
+                    if not self._mem_advance_cue(mem_col, row):
+                        return   # fin de liste sans boucle
                     fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
                     # GO passait par le moteur mono-mémoire, sans fondu et en
                     # ignorant les autres faders levés. Même chemin que le pad.
@@ -12727,6 +13393,10 @@ class MainWindow(QMainWindow):
                     lbl = mem["cues"][cue_idx].get("label", f"Cue {cue_idx+1}")
                     self._log_message(f"▶  {lbl}  ({cue_idx+1}/{n})", "mem")
                     self._style_memory_pad(mem_col, row, active=True)
+                    if (hasattr(self, '_cue_panel') and self._cue_panel.mem_col == mem_col
+                            and self._cue_panel.row == row):
+                        self._cue_panel.highlight_cue(cue_idx)
+                    self._start_cue_duration(mem_col, row)   # même raison que le pad
                     return
         if self._go_col == -1:
             next_col, next_row = 0, 0
@@ -15938,7 +16608,8 @@ class MainWindow(QMainWindow):
 
     def play_path(self, path):
         """Joue un fichier media"""
-        self._stop_all_cartouches()
+        if not self.cart_superposer:
+            self._stop_all_cartouches()
         try:
             self.player.setSource(QUrl.fromLocalFile(path))
             try:
@@ -16069,7 +16740,7 @@ class MainWindow(QMainWindow):
         # Couper le son si un media est en cours
         try:
             self.player.stop()
-            self.cart_player.stop()
+            self._stop_all_cartouches()
             self.pause_mode = False
             if hasattr(self.seq, 'tempo_timer') and self.seq.tempo_timer and self.seq.tempo_timer.isActive():
                 self.seq.tempo_timer.stop()
@@ -16310,6 +16981,8 @@ class MainWindow(QMainWindow):
             "schedule": self._schedule_state(),
             "sequence": data,
             "cartouches": cart_data,
+            # Absent d'un ancien show = False : les cartouches coupent la playlist.
+            "cartouches_superposer": self.cart_superposer,
             "memories": self.memories,
             "memory_custom_colors": custom_colors_serial,
             "active_memory_pads": active_pads_serial,
@@ -16381,7 +17054,7 @@ class MainWindow(QMainWindow):
         # Stopper la lecture en cours avant de charger
         try:
             self.player.stop()
-            self.cart_player.stop()
+            self._stop_all_cartouches()
             self.pause_mode = False
             if hasattr(self.seq, 'tempo_timer') and self.seq.tempo_timer.isActive():
                 self.seq.tempo_timer.stop()
@@ -16398,12 +17071,14 @@ class MainWindow(QMainWindow):
             if isinstance(raw, list):
                 data = raw
                 cart_data = []
+                self.cart_superposer = False
                 mem_data = None
                 custom_colors_data = None
                 active_pads_data = None
             else:
                 data = raw.get("sequence", [])
                 cart_data = raw.get("cartouches", [])
+                self.cart_superposer = bool(raw.get("cartouches_superposer", False))
                 mem_data = raw.get("memories")
                 custom_colors_data = raw.get("memory_custom_colors")
                 active_pads_data = raw.get("active_memory_pads")
@@ -20324,16 +20999,30 @@ class MainWindow(QMainWindow):
             if i != index and c.state == CartoucheButton.PLAYING:
                 c.set_idle()
 
-        # Stopper le player principal si en lecture
-        if self.player.playbackState() == QMediaPlayer.PlayingState:
-            self.player.stop()
-
-        # Video: rediriger vers le video_widget
         ext = os.path.splitext(cart.media_path)[1].lower()
-        if ext in CartoucheButton.VIDEO_EXTS and self._video_out() is not None:
-            self.cart_player.setVideoOutput(self._video_out())
+        is_video = ext in CartoucheButton.VIDEO_EXTS and self._video_out() is not None
+
+        if self.cart_superposer:
+            # La playlist continue en dessous. Une vidéo prend l'image, un son
+            # la rend à la playlist si une vidéo précédente l'avait prise.
+            if is_video:
+                self._cart_take_video()
+            else:
+                self._cart_release_video()
+                self.cart_player.setVideoOutput(None)
         else:
-            self.cart_player.setVideoOutput(None)
+            # Option cochée puis décochée pendant qu'une vidéo avait l'image
+            self._cart_release_video()
+
+            # Stopper le player principal si en lecture
+            if self.player.playbackState() == QMediaPlayer.PlayingState:
+                self.player.stop()
+
+            # Video: rediriger vers le video_widget
+            if is_video:
+                self.cart_player.setVideoOutput(self._video_out())
+            else:
+                self.cart_player.setVideoOutput(None)
 
         self.cart_audio.setVolume(cart.volume / 100.0)
         self.cart_player.setSource(QUrl.fromLocalFile(cart.media_path))
@@ -20347,7 +21036,8 @@ class MainWindow(QMainWindow):
         self.cartouches[index].set_stopped()
         self.cart_playing_index = -1
         # Restaurer le video output du player principal
-        self.player.setVideoOutput(self._video_out())
+        if not self._cart_release_video():
+            self.player.setVideoOutput(self._video_out())
 
     def _stop_all_cartouches(self):
         """Arrete toutes les cartouches et restaure l'etat"""
@@ -20356,7 +21046,8 @@ class MainWindow(QMainWindow):
             self.cart_playing_index = -1
         for cart in self.cartouches:
             cart.set_idle()
-        self.player.setVideoOutput(self._video_out())
+        if not self._cart_release_video():
+            self.player.setVideoOutput(self._video_out())
 
     def on_cart_media_status(self, status):
         """Gere la fin de lecture d'une cartouche"""
@@ -20364,6 +21055,53 @@ class MainWindow(QMainWindow):
             if 0 <= self.cart_playing_index < len(self.cartouches):
                 self.cartouches[self.cart_playing_index].set_stopped()
                 self.cart_playing_index = -1
+            self._cart_release_video()
+
+    def _cart_take_video(self):
+        """Une cartouche vidéo superposée prend l'image (aperçu, sortie
+        externe, écran LED 3D : tous lisent le sink du même item).
+
+        Le player principal est détaché plutôt que laissé sur l'item : deux
+        players sur un même sink y entrelacent leurs frames.
+        """
+        if self._cart_video_lead:
+            return
+        out = self._video_out()
+        self.player.setVideoOutput(None)
+        self.cart_player.setVideoOutput(out)
+        self.hide_image()
+        if self.video_output_window and self.video_output_window.isVisible():
+            self.video_output_window.show_video()
+        self._cart_video_lead = True
+
+    def _cart_release_video(self):
+        """Rend l'image à la playlist si une cartouche vidéo l'avait prise.
+
+        Rend True si l'image a été rendue. À appeler sur CHAQUE arrêt du
+        cart_player : tant que le drapeau reste levé, la playlist ne peut plus
+        afficher ses images ni piloter la sortie externe.
+        """
+        if not self._cart_video_lead:
+            return False
+        self._cart_video_lead = False
+        self.cart_player.setVideoOutput(None)
+        self.player.setVideoOutput(self._video_out())
+
+        # La playlist a pu changer de ligne pendant la vidéo : on réaffiche ce
+        # qu'elle montrerait maintenant, pas ce qu'elle montrait avant.
+        row = self.seq.current_row
+        item = self.seq.table.item(row, 1) if row >= 0 else None
+        path = item.data(Qt.UserRole) if item else None
+        kind = media_icon(path) if path else None
+        if kind == "image":
+            self.show_image(path)
+        elif kind == "video" and not self.pause_mode:
+            self.hide_image()
+        else:
+            self.show_black_preview()
+            return True
+        self._update_video_output_state()
+        return True
 
     def load_cartouche_media(self, index):
         """Menu contextuel sur une cartouche (clic droit)"""
@@ -20442,6 +21180,13 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        # Réglage commun aux 4 slots, pas propre à celui qu'on a cliqué
+        superpose_action = menu.addAction(tr("mw_cart_superpose"))
+        superpose_action.setCheckable(True)
+        superpose_action.setChecked(self.cart_superposer)
+
+        menu.addSeparator()
+
         load_action = menu.addAction(tr("mw_load_media"))
         clear_action = None
         if cart.media_path:
@@ -20449,7 +21194,12 @@ class MainWindow(QMainWindow):
 
         action = menu.exec(cart.mapToGlobal(cart.rect().bottomLeft()))
 
-        if action == load_action:
+        if action == superpose_action:
+            self.cart_superposer = superpose_action.isChecked()
+            self._log_message(
+                "Cartouches : par-dessus la playlist" if self.cart_superposer
+                else "Cartouches : coupent la playlist", "info")
+        elif action == load_action:
             self._load_cartouche_file(index)
         elif action == clear_action:
             self._clear_cartouche(index)
@@ -20493,7 +21243,8 @@ class MainWindow(QMainWindow):
         if self.cart_playing_index == index:
             self.cart_player.stop()
             self.cart_playing_index = -1
-            self.player.setVideoOutput(self._video_out())
+            if not self._cart_release_video():
+                self.player.setVideoOutput(self._video_out())
         cart = self.cartouches[index]
         cart.media_path = None
         cart.media_title = None
@@ -20679,7 +21430,7 @@ class MainWindow(QMainWindow):
                 from PySide6.QtCore import QUrl
                 self._plan3d._view.load(QUrl.fromLocalFile(str(_HTML)))
             # Synchroniser les boutons de scène avec le preset chargé
-            code = getattr(self._plan3d, '_scene_preset_code', 'live')
+            code = getattr(self._plan3d, '_scene_preset_code', 'festival_plein_air')
             for k, btn in getattr(self._plan3d, '_scene_btns', {}).items():
                 btn.setChecked(k == code)
             self._plan3d.show()
@@ -26284,7 +27035,7 @@ class MainWindow(QMainWindow):
             })
         scene_3d = {}
         if hasattr(self, '_plan3d'):
-            scene_3d['preset'] = getattr(self._plan3d, '_scene_preset_code', 'live')
+            scene_3d['preset'] = getattr(self._plan3d, '_scene_preset_code', 'festival_plein_air')
             scene_3d['trusses'] = list(getattr(self._plan3d, '_trusses', []))
             # Décor importé : on garde le CHEMIN, pas le contenu — un GLB fait
             # plusieurs Mo et ce fichier de config doit rester léger.
@@ -26298,9 +27049,7 @@ class MainWindow(QMainWindow):
             scene_3d['quality'] = getattr(self._plan3d, '_quality', 2)
             scene_3d['auto_quality'] = getattr(self._plan3d, '_auto_quality', True)
             scene_3d['ambience'] = getattr(self._plan3d, '_ambience', 160)
-            scene_3d['fog']       = getattr(self._plan3d, '_fog', 0)
-            scene_3d['fog_scale'] = getattr(self._plan3d, '_fog_scale', 55)
-            scene_3d['fog_speed'] = getattr(self._plan3d, '_fog_speed', 35)
+            scene_3d['video_return'] = bool(getattr(self._plan3d, '_video_retour', True))
         config = {
             'fixtures': fixtures_list,
             'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
@@ -28059,6 +28808,7 @@ class MainWindow(QMainWindow):
                     sample = amplitude * math.sin(2.0 * math.pi * frequency * i / sample_rate)
                     wf.writeframes(struct.pack('<h', int(sample * 32767)))
 
+            self._cart_release_video()
             self.cart_player.setSource(QUrl.fromLocalFile(filepath))
             self.cart_player.play()
             QMessageBox.information(self, "AUDIO", tr("mw_test_sound_sent"))
@@ -28177,19 +28927,55 @@ class MainWindow(QMainWindow):
         win.video_widget.set_geometry_settings(self.video_geometry())
 
     def open_video_geometry(self):
-        """Ouvre le panneau de réglage (cadrage, étirement, 4 coins)."""
-        win = self.video_output_window
-        if not win or not win.isVisible() or not isinstance(win.video_widget, VideoSurface):
-            # Régler à l'aveugle n'aurait aucun sens : toute la méthode consiste
-            # à regarder la dalle pendant qu'on tire les coins.
-            QMessageBox.information(self, tr("vg_title"), tr("vg_no_output"))
-            return
-        self._apply_video_geometry()
-        dlg = VideoGeometryDialog(win.video_widget,
-                                  on_changed=self.save_video_geometry,
-                                  parent=self)
+        """Ouvre « Paramétrer la sortie vidéo », sortie allumée ou non.
+
+        Le panneau porte lui-même le choix d'écran et la marche/arrêt : plus de
+        message « activez d'abord la sortie » qui renvoyait l'utilisateur
+        chercher le bouton ailleurs.
+        """
+        if self.video_output_is_on():
+            self._apply_video_geometry()
+        dlg = VideoGeometryDialog(None, on_changed=self.save_video_geometry,
+                                  parent=self, output=self)
         dlg.exec()
         self.save_video_geometry()
+
+    # ── Hôte du panneau de sortie (cf. VideoGeometryDialog) ──────────────
+    def video_output_is_on(self):
+        return bool(self.video_output_btn.isChecked()
+                    and self.video_output_window is not None)
+
+    def set_video_output_on(self, on):
+        """Même chemin que le bouton VIDEO : bouton, fenêtre et log restent d'accord."""
+        if self.video_output_btn.isChecked() == bool(on):
+            return
+        self.video_output_btn.setChecked(bool(on))
+        self.toggle_video_output()
+
+    def video_output_surface(self):
+        win = self.video_output_window
+        if win is not None and isinstance(win.video_widget, VideoSurface):
+            return win.video_widget
+        return None
+
+    def video_output_screens(self):
+        """Libellés des écrans, celui de MyStrow signalé (le couvrir masque la régie)."""
+        here = self.screen()
+        here_name = here.name() if here is not None else None
+        labels = []
+        for i, sc in enumerate(QApplication.screens()):
+            geo = sc.geometry()
+            label = f"{tr('vg_screen')} {i + 1} — {sc.name()} ({geo.width()}×{geo.height()})"
+            if sc.name() == here_name:
+                label += f"  · {tr('vg_screen_main')}"
+            labels.append(label)
+        return labels
+
+    def video_output_screen(self):
+        return self.video_target_screen
+
+    def set_video_output_screen(self, index):
+        self._set_video_screen(index)
 
     def show_test_logo(self):
         """Affiche le logo de test pendant 3 secondes (preview + externe si active)"""

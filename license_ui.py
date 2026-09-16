@@ -28,7 +28,7 @@ from license_manager import (
 # Doivent rester alignés avec mystrow.fr/tarifs (mêmes produits, mêmes prix).
 STRIPE_LINKS = {
     "monthly":  "https://buy.stripe.com/5kQcMXeNn7FeaxabN208g03",
-    "lifetime": "https://buy.stripe.com/dRm8wH7kV7Fe5cQ2cs08g06",
+    "lifetime": "https://buy.stripe.com/9B6dR19t38JieNqaIY08g09",
     "annual":   "https://buy.stripe.com/dRm4greNn0cM48MbN208g05",
 }
 
@@ -918,12 +918,12 @@ class ActivationDialog(QDialog):
             cl.addSpacing(14)
 
             # Prix dynamique
-            price_lbl = QLabel("23,99 \u20ac")
+            price_lbl = QLabel("19,99 \u20ac")
             price_lbl.setFont(QFont("Segoe UI", 28, QFont.Bold))
             price_lbl.setStyleSheet(f"color:{ACCENT};background:transparent;border:none;")
             cl.addWidget(price_lbl)
 
-            billing_lbl = QLabel(tr("lu_incl_tax_month"))
+            billing_lbl = QLabel(tr("lu_excl_tax_month", ttc="23,99 \u20ac"))
             billing_lbl.setFont(QFont("Segoe UI", 9))
             billing_lbl.setStyleSheet("color:#6a6a6a;background:transparent;border:none;")
             billing_lbl.setWordWrap(True)
@@ -950,17 +950,19 @@ class ActivationDialog(QDialog):
             def _toggle(annual):
                 _annual[0] = annual
                 if annual:
-                    price_lbl.setText("11,99 \u20ac")
+                    price_lbl.setText("9,99 \u20ac")
                     # Le prix reste un litteral UNIQUE ici : le recopier dans les
                     # 3 langues du dictionnaire ferait 3 endroits de plus a tenir
                     # a jour a chaque changement de tarif.
-                    billing_lbl.setText(tr("lu_billed_yearly", price="143,86 \u20ac"))
+                    # Montants HT (prix Stripe hors taxes), TTC = particulier en France.
+                    billing_lbl.setText(tr("lu_billed_yearly", price="119,88 \u20ac",
+                                           ttc="11,99 \u20ac"))
                     saving_badge.show()
                     btn_m.setStyleSheet(_S_OFF("5px 0 0 5px"))
                     btn_a.setStyleSheet(_S_ON("0 5px 5px 0"))
                 else:
-                    price_lbl.setText("23,99 \u20ac")
-                    billing_lbl.setText(tr("lu_incl_tax_month"))
+                    price_lbl.setText("19,99 \u20ac")
+                    billing_lbl.setText(tr("lu_excl_tax_month", ttc="23,99 \u20ac"))
                     saving_badge.hide()
                     btn_m.setStyleSheet(_S_ON("5px 0 0 5px"))
                     btn_a.setStyleSheet(_S_OFF("0 5px 5px 0"))
@@ -977,7 +979,7 @@ class ActivationDialog(QDialog):
         ), 1)
         cards_row.addWidget(_pro_card_widget(), 1)
         cards_row.addWidget(_plan_card(
-            "\u267e\ufe0f", tr("plan_lifetime_name"), "287,99 \u20ac", tr("plan_lifetime_billing"),
+            "\u267e\ufe0f", tr("plan_lifetime_name"), "299,99 \u20ac", tr("plan_lifetime_billing", ttc="359,99 \u20ac"),
             [tr("plan_monthly_f1"), tr("plan_lifetime_f2"), tr("plan_lifetime_f3")],
             "lifetime", accent="#a78bfa", badge=tr("lu_best_price"),
         ), 1)
