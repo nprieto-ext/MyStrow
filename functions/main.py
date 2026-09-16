@@ -42,7 +42,7 @@ from email.utils import parseaddr
 
 import firebase_admin
 from firebase_admin import auth, firestore
-from firebase_functions import https_fn
+from firebase_functions import https_fn, scheduler_fn
 # « Le document existait déjà » : réponse NORMALE du verrou anti-rejeu
 # (_claim_stripe_event), pas une panne. On attrape `Conflict` et non
 # `AlreadyExists` : la doc de `DocumentReference.create()` promet
@@ -1391,8 +1391,8 @@ _DOWNLOAD_URL = "https://github.com/nprieto-ext/MAESTRO/releases/latest/download
 
 
 def _email_welcome(email: str, password: str, expiry_ts: float,
-                   plan_type: str, lang: str = "fr") -> None:
-    plan = _plan_label(plan_type, lang)
+                   plan_type: str, lang: str = "fr", plan_label: str = "") -> None:
+    plan = plan_label or _plan_label(plan_type, lang)
     date = _fmt_date(expiry_ts, lang)
     if lang == "en":
         subject = "Welcome to MyStrow — Your login credentials"
@@ -3400,7 +3400,10 @@ def _act_throttle_ok(ip: str) -> bool:
 
 @https_fn.on_request(max_instances=5)
 def activate_code(req: https_fn.Request) -> https_fn.Response:
-    """Active 12 mois de licence depuis un code carte + un numéro de série."""
+    """Active la licence d'un code carte + un numéro de série.
+
+    La durée est portée par le code (`months` : 12 pour le lot B1, 2 pour
+    l'offre Amazon à 99 €), jamais supposée ici."""
     _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
 
     if req.method == "OPTIONS":
@@ -3518,6 +3521,7 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
             # au jour pres, pas une soustraction de 12 mois.
             lic_ref.set({
                 "boitier_until_utc":       expiry,
+                "boitier_months":          months,
                 "boitier_serial":          serial,
                 "boitier_code":            code,
                 "boitier_utc":             now,
@@ -3548,7 +3552,8 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
         try:
             if is_new:
                 lic_ref.set({"password": temp_pwd}, merge=True)
-                _email_welcome(email, temp_pwd, expiry, "annual", lang)
+                _email_welcome(email, temp_pwd, expiry, "annual", lang,
+                               plan_label=_boitier_label(months, lang))
             else:
                 _email_renewal(email, expiry, lang)
         except Exception as e:
@@ -3574,3 +3579,199 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
         print(f"[activate] erreur : {e}")
         return _ko("server", "Une erreur est survenue. Votre code n'a pas été "
                              "consommé, réessayez dans un instant.", 500)
+
+
+# ===========================================================================
+# RELANCE DE FIN DE LICENCE BOÎTIER — tâche planifiée quotidienne
+# ===========================================================================
+#
+# La licence livrée avec un boîtier (12 mois, ou 2 mois pour l'offre Amazon à
+# 99 €) a une VRAIE fin : aucun prélèvement ne la prolonge. Sans relance, le
+# client la découvre le soir où l'app se bloque — souvent en pleine presta.
+#
+# Ne sont relancés que les clients dont c'est encore l'échéance réelle :
+#   - pas d'abonnement Stripe actif ni de licence à vie (même règle que
+#     `_brevo_statut` et `license_manager._is_auto_renew` : relancer un abonné
+#     dont tout se renouvelle seul est le message qui déclenche une résiliation) ;
+#   - `expiry_utc` toujours calée sur `boitier_until_utc` : une licence
+#     prolongée par un autre biais n'a plus rien à voir avec ce message.
+# Un retour produit efface les champs `boitier_*` : plus aucune relance.
+
+# Paliers de relance, en jours avant la fin. Un seul mail par palier, et un
+# palier manqué (tâche en panne, activation tardive) n'envoie que le plus urgent.
+_BOITIER_RELANCES_COURTE = (10, 2)     # licence de 2 mois
+_BOITIER_RELANCES_LONGUE = (30, 7)     # licence de 12 mois
+
+_TARIFS_URL = {
+    "fr": "https://mystrow.fr/tarifs",
+    "en": "https://mystrow.fr/en/#pricing",
+}
+
+
+def _boitier_label(months: int, lang: str = "fr") -> str:
+    if lang == "en":
+        return f"MyStrow License — {months} months (USB-DMX interface)"
+    return f"Licence MyStrow — {months} mois (boîtier USB-DMX)"
+
+
+def _boitier_paliers(months: int) -> tuple:
+    return _BOITIER_RELANCES_COURTE if months <= 3 else _BOITIER_RELANCES_LONGUE
+
+
+def _boitier_months_of(lic: dict) -> int:
+    """Durée de la licence boîtier. Les activations d'avant le lot à 2 mois
+    n'ont pas `boitier_months` : on relit alors le code consommé."""
+    months = lic.get("boitier_months")
+    if not months and lic.get("boitier_code"):
+        try:
+            snap = (_get_db().collection("activation_codes")
+                    .document(lic["boitier_code"]).get())
+            months = (snap.to_dict() or {}).get("months") if snap.exists else None
+        except Exception as e:
+            print(f"[relance] code {lic.get('boitier_code')} illisible : {e}")
+    return int(months or 12)
+
+
+def _boitier_relance_due(lic: dict, months: int, now: float) -> tuple[int, int] | None:
+    """(palier à envoyer, jours restants), ou None si rien à envoyer."""
+    until  = float(lic.get("boitier_until_utc") or 0)
+    expiry = float(lic.get("expiry_utc") or 0)
+    if not lic.get("boitier_serial") or not lic.get("email") or until <= now:
+        return None
+    if lic.get("plan") == "expired":
+        return None
+    if _brevo_statut(lic.get("plan_type") or "",
+                     lic.get("stripe_subscription_id") or "") != "echeance_fixe":
+        return None
+    if abs(expiry - until) > 86400:
+        return None
+
+    days_left = -int(-(until - now) // 86400)          # arrondi supérieur
+    atteints = [p for p in _boitier_paliers(months) if days_left <= p]
+    if not atteints:
+        return None
+    palier = min(atteints)
+
+    # Le suivi est rattaché à l'échéance : un deuxième boîtier activé plus tard
+    # repart d'une ardoise vierge.
+    envoyes = {}
+    if float(lic.get("boitier_relances_until") or 0) == until:
+        envoyes = lic.get("boitier_relances") or {}
+    if str(palier) in envoyes:
+        return None
+    return palier, days_left
+
+
+def _email_boitier_relance(email: str, expiry_ts: float, days_left: int,
+                           months: int, dernier: bool, lang: str = "fr") -> None:
+    date = _fmt_date(expiry_ts, lang)
+    url  = (f"{_TARIFS_URL.get(lang, _TARIFS_URL['fr'])}"
+            f"?utm_source=mystrow&utm_medium=email"
+            f"&utm_campaign=relance_boitier_{months}m")
+    if lang == "en":
+        quand = "tomorrow" if days_left <= 1 else f"in {days_left} days"
+        subject = (f"MyStrow — Your license ends {quand}" if dernier
+                   else f"MyStrow — Your license ends on {date}")
+        if dernier:
+            titre = f"Last reminder: your license ends {quand}"
+        elif months > 3:
+            titre = "Your year of MyStrow is coming to an end"
+        else:
+            titre = f"{days_left} days left on your MyStrow license"
+        intro = ("It has been almost a year since you started using MyStrow with "
+                 "your USB-DMX interface. " if months > 3 else "")
+        content = f"""
+<h2>{titre}</h2>
+<p>{intro}The license included with your interface ends on <b>{date}</b>.</p>
+<p>To keep going without interruption, pick a plan before that date:
+monthly, yearly or lifetime. It takes two minutes online and your license is
+extended automatically.</p>
+<div class="box">⚠️ &nbsp;Pay with the <b>same email address</b>: <b>{email}</b><br>
+That is what links your payment to your account. With another address, a new
+account would be created.</div>
+<a class="btn" href="{url}">Choose my plan</a>
+<p>Your shows stay on your computer and your interface keeps working: nothing
+is lost when the license ends.</p>
+"""
+    else:
+        quand = "demain" if days_left <= 1 else f"dans {days_left} jours"
+        subject = (f"MyStrow — Votre licence se termine {quand}" if dernier
+                   else f"MyStrow — Votre licence se termine le {date}")
+        if dernier:
+            titre = f"Dernier rappel : votre licence se termine {quand}"
+        elif months > 3:
+            titre = "Votre année MyStrow touche à sa fin"
+        else:
+            titre = f"Plus que {days_left} jours de licence MyStrow"
+        intro = ("Voilà bientôt un an que vous utilisez MyStrow avec votre "
+                 "boîtier USB-DMX. " if months > 3 else "")
+        content = f"""
+<h2>{titre}</h2>
+<p>{intro}La licence livrée avec votre boîtier se termine le <b>{date}</b>.</p>
+<p>Pour continuer sans coupure, choisissez une formule avant cette date :
+mensuelle, annuelle ou à vie. Cela se règle en ligne en deux minutes et votre
+licence est prolongée automatiquement.</p>
+<div class="box">⚠️ &nbsp;Payez avec la <b>même adresse email</b> : <b>{email}</b><br>
+C'est elle qui relie le paiement à votre compte. Avec une autre adresse, un
+nouveau compte serait créé.</div>
+<a class="btn" href="{url}">Choisir ma formule</a>
+<p>Vos shows restent sur votre ordinateur et votre boîtier continue de
+fonctionner : rien n'est perdu à la fin de la licence.</p>
+"""
+    _send_email(email, subject, content, lang=lang, raise_on_error=True)
+
+
+def _run_boitier_relances(now: float | None = None, dry_run: bool = False) -> list[dict]:
+    """Envoie les relances dues. `dry_run` liste sans rien envoyer ni écrire."""
+    now = time.time() if now is None else now
+    horizon = now + (max(_BOITIER_RELANCES_LONGUE) + 1) * 86400
+    docs = (_get_db().collection("licenses")
+            .where("boitier_until_utc", ">", now)
+            .where("boitier_until_utc", "<=", horizon)
+            .stream())
+
+    faits = []
+    for doc in docs:
+        lic = doc.to_dict() or {}
+        months = _boitier_months_of(lic)
+        due = _boitier_relance_due(lic, months, now)
+        if not due:
+            continue
+        palier, days_left = due
+        paliers = _boitier_paliers(months)
+        email, lang = lic["email"], (lic.get("lang") or "fr")
+        until = float(lic["boitier_until_utc"])
+        ligne = {"uid": doc.id, "email": email, "months": months,
+                 "palier": palier, "days_left": days_left}
+        faits.append(ligne)
+        if dry_run:
+            continue
+        try:
+            _email_boitier_relance(email, until, days_left, months,
+                                   palier == min(paliers), lang)
+        except Exception as e:
+            print(f"[relance] ÉCHEC {email} (J-{palier}) : {e}")
+            ligne["erreur"] = str(e)
+            continue
+        envoyes = {}
+        if float(lic.get("boitier_relances_until") or 0) == until:
+            envoyes = dict(lic.get("boitier_relances") or {})
+        # Un palier envoyé solde aussi les paliers plus lointains : pas de
+        # « J-30 » qui arriverait après le « J-7 ».
+        for p in paliers:
+            if p >= palier:
+                envoyes.setdefault(str(p), now)
+        doc.reference.update({"boitier_relances": envoyes,
+                              "boitier_relances_until": until})
+        print(f"[relance] {email} — {months} mois — J-{palier} "
+              f"({days_left} j restants)")
+    return faits
+
+
+# Tous les jours à 8 h UTC (9 h ou 10 h à Paris). Pas de `timezone=` : il
+# exige la base tzdata, absente de Python sous Windows — là où tourne
+# `firebase deploy`, qui charge ce module pour lire la liste des fonctions.
+@scheduler_fn.on_schedule(schedule="0 8 * * *", max_instances=1)
+def boitier_relances(event: scheduler_fn.ScheduledEvent) -> None:
+    faits = _run_boitier_relances()
+    print(f"[relance] {len(faits)} relance(s) traitée(s)")

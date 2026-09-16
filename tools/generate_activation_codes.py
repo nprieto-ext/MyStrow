@@ -83,8 +83,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--count", type=int, default=200, help="nombre de codes")
     ap.add_argument("--batch", default="B1", help="identifiant du lot")
-    ap.add_argument("--months", type=int, default=12,
-                    help="duree de licence offerte par le code, en mois")
+    ap.add_argument("--months", type=int, default=None,
+                    help="duree de licence offerte par le code, en mois "
+                         "(12 par defaut ; un lot existant garde celle de son CSV)")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT,
                     help="dossier de sortie des fichiers")
     ap.add_argument("--push", action="store_true",
@@ -104,11 +105,23 @@ def main() -> None:
     # pour repartir de zero.
     if csv_path.exists() and not args.regenerate:
         with csv_path.open(encoding="utf-8-sig") as f:
-            codes = [row["Code_Brut"] for row in csv.DictReader(f, delimiter=";")]
+            rows = list(csv.DictReader(f, delimiter=";"))
+        codes = [row["Code_Brut"] for row in rows]
         bad = [c for c in codes if not is_valid(c)]
         if bad:
             raise SystemExit(f"CSV corrompu, codes invalides : {bad[:3]}")
-        print(f"lot {args.batch} relu depuis {csv_path.name} — {len(codes)} codes")
+        # La duree fait partie du lot, comme les codes : c'est celle du CSV qui
+        # part en base. Sinon un --push oublieux mettrait 12 mois sur un lot a 2.
+        csv_months = {int(row["Mois"]) for row in rows}
+        if len(csv_months) != 1:
+            raise SystemExit(f"CSV incoherent, plusieurs durees : {sorted(csv_months)}")
+        csv_months = csv_months.pop()
+        if args.months is not None and args.months != csv_months:
+            raise SystemExit(f"--months {args.months} contredit le lot "
+                             f"{args.batch}, ecrit a {csv_months} mois")
+        args.months = csv_months
+        print(f"lot {args.batch} relu depuis {csv_path.name} — "
+              f"{len(codes)} codes, {args.months} mois")
         if not args.push:
             print("\nCe lot existe deja. Options :")
             print("  --push        l'envoyer dans Firestore (le rend activable)")
@@ -116,6 +129,8 @@ def main() -> None:
             print("                imprimees deviendraient invalides")
             return
     else:
+        if args.months is None:
+            args.months = 12
         if csv_path.exists():
             print(f"!! {csv_path.name} ECRASE — les etiquettes deja imprimees "
                   "avec l'ancien lot ne fonctionneront plus")
