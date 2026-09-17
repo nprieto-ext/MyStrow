@@ -55,6 +55,11 @@ python release.py
 
 Pipeline: version bump -> build exe -> build installer -> git tag -> GitHub Release
 
+Le DMG Mac Intel n'est pas construit par le CI : le Mac Intel s'en charge seul.
+`intel_watch.sh` (tache launchd, installee une fois par `install_intel_watch.sh`)
+verifie GitHub toutes les 10 min et lance `build_intel_mac.sh` sur le tag de la
+release des que `MyStrow_intel.dmg` y manque.
+
 ## Concepts importants
 
 ### Projecteurs

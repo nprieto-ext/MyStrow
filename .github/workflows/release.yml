@@ -390,7 +390,7 @@ jobs:
             echo "**Téléchargements :**"
             echo "- 🪟 Windows : \`MyStrow_Setup.exe\`"
             [ -f "mac-dmg/MyStrow_arm64.dmg" ] && echo "- 🍎 Mac Apple Silicon (M1/M2/M3/M4/M5) : \`MyStrow_arm64.dmg\`"
-            echo "- 🍎 Mac Intel (x86_64) : \`MyStrow_intel.dmg\` _(upload manuel)_"
+            echo "- 🍎 Mac Intel (x86_64) : \`MyStrow_intel.dmg\` _(ajouté par le Mac Intel, quelques minutes après)_"
             echo 'NOTES_EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -436,8 +436,9 @@ jobs:
         run: |
           KEEP=3
           # Trie par version décroissante, garde les KEEP plus récentes, supprime le reste.
-          # Garder plusieurs releases préserve le DMG Intel (upload manuel) le temps
-          # qu'il soit publié sur la dernière → l'updater Intel peut y retomber.
+          # Garder plusieurs releases préserve le DMG Intel (construit à part par
+          # le Mac Intel, voir intel_watch.sh) le temps qu'il soit publié sur la
+          # dernière → l'updater Intel peut y retomber.
           gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' \
             | sed 's/^v//' | sort -V -r | tail -n +$((KEEP+1)) \
             | while read ver; do

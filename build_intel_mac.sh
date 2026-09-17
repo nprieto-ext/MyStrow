@@ -79,24 +79,32 @@ else
 fi
 
 # ── 1) Synchronisation Git — GARANTIT la dernière version ─────────────────────
-# On force le working tree à correspondre EXACTEMENT à origin/main (reset --hard).
-# → impossible de builder une vieille version, et plus besoin de `git pull` ni de
-#   `git checkout MyStrow.spec` avant : toute modif locale (spec, etc.) est écrasée.
-#   Ce Mac est une machine de build dédiée, l'écrasement est voulu.
-step "Synchronisation sur origin/main (dernière version)"
+# On force le working tree à correspondre EXACTEMENT à la référence demandée
+# (reset --hard). → impossible de builder une vieille version, et plus besoin de
+#   `git pull` ni de `git checkout MyStrow.spec` avant : toute modif locale
+#   (spec, etc.) est écrasée. Ce Mac est une machine de build dédiée, l'écrasement
+#   est voulu.
+#
+# Par défaut : origin/main (lancement à la main).
+# MYSTROW_BUILD_REF=v3.1.96 → build ce tag précis. C'est ce qu'utilise le
+# veilleur `intel_watch.sh` : si main a déjà avancé (version suivante en cours),
+# builder main produirait un DMG dont la version ne correspond à AUCUNE release,
+# et l'upload partirait vers un tag inexistant.
+BUILD_REF="${MYSTROW_BUILD_REF:-origin/main}"
+step "Synchronisation sur $BUILD_REF"
 cd "$SCRIPT_DIR"
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || die "Ce dossier n'est pas un dépôt git : $SCRIPT_DIR"
 
-git fetch origin 2>&1 | sed 's/^/    /'
-REMOTE=$(git rev-parse origin/main 2>/dev/null || echo "")
+git fetch origin --tags --force 2>&1 | sed 's/^/    /'
+REMOTE=$(git rev-parse "$BUILD_REF" 2>/dev/null || echo "")
 
 if [ -z "$REMOTE" ]; then
-  warn "Impossible de joindre origin/main — build avec la version locale."
+  warn "Référence $BUILD_REF introuvable — build avec la version locale."
 else
-  git reset --hard origin/main 2>&1 | sed 's/^/    /'
-  ok "Synchronisé sur origin/main → $(git log -1 --pretty='%h — %s')"
+  git reset --hard "$REMOTE" 2>&1 | sed 's/^/    /'
+  ok "Synchronisé sur $BUILD_REF → $(git log -1 --pretty='%h — %s')"
 fi
 
 VERSION=$(python3 -c "
@@ -334,4 +342,6 @@ echo "  Version  : $VERSION  |  Arch : $ARCH"
 [ "$UPLOAD_OK" = true ] && echo "  Upload   : ✓ release $TAG" || echo "  Upload   : ✗ (à faire à la main)"
 echo ""
 
-open "$DESKTOP"
+# En mode automatique (veilleur launchd), personne n'est devant l'écran : ouvrir
+# le Finder ferait surgir une fenêtre au milieu d'autre chose.
+[ "${MYSTROW_AUTO:-0}" = "1" ] || open "$DESKTOP"
