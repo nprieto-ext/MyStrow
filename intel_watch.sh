@@ -111,17 +111,19 @@ if [ ! -f "$REPO_DIR/build_intel_mac.sh" ]; then
   exit 1
 fi
 
-# Auto-mise à jour : quand une release contiendra une version plus récente de ce
-# veilleur, le dépôt l'aura après le prochain build — on la reprend pour le
-# passage suivant, sans rien réinstaller.
-if [ -f "$REPO_DIR/intel_watch.sh" ] && [ "$REPO_DIR/intel_watch.sh" != "${BASH_SOURCE[0]}" ] \
-   && ! cmp -s "$REPO_DIR/intel_watch.sh" "${BASH_SOURCE[0]}"; then
+# Auto-mise à jour : la copie lancée par launchd suit le dépôt, sans
+# réinstallation. On vise toujours $STATE_DIR/intel_watch.sh, même quand c'est la
+# copie du dépôt qui tourne (lancement à la main) : sinon une correction
+# n'atteindrait jamais la copie automatique.
+INSTALLED="$STATE_DIR/intel_watch.sh"
+if [ -f "$REPO_DIR/intel_watch.sh" ] && ! cmp -s "$REPO_DIR/intel_watch.sh" "$INSTALLED"; then
   # Via un fichier temporaire + mv : bash lit son script au fur et à mesure de
   # l'exécution. Écrire par-dessus le fichier en cours (cp) le couperait en
   # plein milieu ; `mv` ne fait que remplacer le nom, le script qui tourne garde
   # son contenu d'origine jusqu'à la fin.
-  if cp "$REPO_DIR/intel_watch.sh" "${BASH_SOURCE[0]}.new" 2>/dev/null \
-     && mv "${BASH_SOURCE[0]}.new" "${BASH_SOURCE[0]}" 2>/dev/null; then
+  if cp "$REPO_DIR/intel_watch.sh" "$INSTALLED.new" 2>/dev/null \
+     && mv "$INSTALLED.new" "$INSTALLED" 2>/dev/null; then
+    chmod +x "$INSTALLED" 2>/dev/null || true
     log "veilleur mis à jour depuis le dépôt (actif au prochain passage)"
   fi
 fi
@@ -170,6 +172,25 @@ fi
 ATTEMPTS=$((ATTEMPTS + 1))
 echo "$TAG $ATTEMPTS" > "$STATE_FILE"
 
+# ── main doit bien être la version de cette release ───────────────────────────
+# On build origin/main, pas le tag : `git reset --hard <tag>` remettrait le dépôt
+# du Mac sur une version ANCIENNE des scripts de build, relancée telle quelle au
+# passage suivant — toute correction serait perdue à chaque build. En échange, il
+# faut vérifier que main est bien resté sur cette version : si la suivante est
+# déjà en préparation, le DMG produit ne correspondrait à aucune release.
+MAIN_VERSION=$(gh api "repos/$GITHUB_REPO/contents/core.py?ref=main" --jq '.content' 2>/dev/null \
+  | python3 -c "import sys, base64, re
+src = base64.b64decode(sys.stdin.read()).decode('utf-8', 'replace')
+m = re.search(r'VERSION\s*=\s*.(.*?).\s*$', src, re.M)
+print(m.group(1) if m else '')" 2>/dev/null || echo "")
+
+if [ -n "$MAIN_VERSION" ] && [ "v$MAIN_VERSION" != "$TAG" ]; then
+  log "$TAG : main est déjà en $MAIN_VERSION — DMG Intel de $TAG à faire à la main, on n'insiste pas"
+  notify "$TAG" "main est en $MAIN_VERSION : DMG Intel à construire à la main"
+  echo "$TAG $MAX_ATTEMPTS" > "$STATE_FILE"
+  exit 0
+fi
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 BUILD_LOG="$LOG_DIR/$TAG.log"
 log "$TAG : DMG Intel absent → build (essai $ATTEMPTS/$MAX_ATTEMPTS), journal : $BUILD_LOG"
@@ -177,7 +198,11 @@ notify "$TAG" "Build du DMG Intel démarré (essai $ATTEMPTS/$MAX_ATTEMPTS)"
 
 # `caffeinate -i` empêche la mise en veille pendant le build : un Mac qui
 # s'endort au milieu de la notarisation laisse un verrou et un DMG à moitié fait.
-MYSTROW_AUTO=1 MYSTROW_BUILD_REF="$TAG" \
+# MYSTROW_OUT_DIR : surtout PAS le Bureau. macOS interdit Bureau/Documents/
+# Téléchargements aux processus lancés par launchd — le build allait jusqu'au
+# bout puis mourait sur « rm: ~/Desktop/MyStrow_intel.dmg: Operation not
+# permitted », alors qu'il passait très bien depuis le Terminal.
+MYSTROW_AUTO=1 MYSTROW_OUT_DIR="$STATE_DIR/out" \
   caffeinate -i bash "$REPO_DIR/build_intel_mac.sh" > "$BUILD_LOG" 2>&1
 RC=$?
 

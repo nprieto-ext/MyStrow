@@ -25,6 +25,7 @@
 #   → ensuite, taper simplement :  mystrow-release
 #
 # Résultat : ~/Desktop/MyStrow_intel.dmg  (signé + notarisé + uploadé)
+#            ou le dossier indiqué par MYSTROW_OUT_DIR
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -32,7 +33,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="MyStrow"
 DMG_NAME="MyStrow_intel.dmg"
 DIST_DIR="$SCRIPT_DIR/dist"
-DESKTOP="$HOME/Desktop"
+# Où déposer le DMG. Par défaut le Bureau (lancement à la main).
+# MYSTROW_OUT_DIR impose un autre dossier : indispensable en automatique, car
+# macOS protège Bureau/Documents/Téléchargements et un processus lancé par
+# launchd n'y a AUCUN accès — `rm` y répond « Operation not permitted » et le
+# build s'arrête juste avant la création du DMG, alors que tout le reste a
+# réussi. Le Terminal, lui, a cette autorisation : d'où un build qui marche à la
+# main et échoue tout seul.
+OUT_DIR="${MYSTROW_OUT_DIR:-$HOME/Desktop}"
 NOTARY_PROFILE="mystrow-notarize"   # nom du profil créé avec notarytool store-credentials
 GITHUB_REPO="nprieto-ext/MyStrow"   # repo des releases (upload automatique du DMG)
                                     # Renomme depuis MAESTRO : l'ancien nom ne marche que par redirection.
@@ -245,7 +253,8 @@ fi
 
 # ── 7) Création du DMG ────────────────────────────────────────────────────────
 step "Création du DMG"
-DMG_OUT="$DESKTOP/$DMG_NAME"
+mkdir -p "$OUT_DIR" 2>/dev/null || die "Dossier de sortie inaccessible : $OUT_DIR"
+DMG_OUT="$OUT_DIR/$DMG_NAME"
 rm -f "$DMG_OUT"
 
 if command -v create-dmg >/dev/null 2>&1; then
@@ -345,4 +354,4 @@ echo ""
 
 # En mode automatique (veilleur launchd), personne n'est devant l'écran : ouvrir
 # le Finder ferait surgir une fenêtre au milieu d'autre chose.
-[ "${MYSTROW_AUTO:-0}" = "1" ] || open "$DESKTOP"
+[ "${MYSTROW_AUTO:-0}" = "1" ] || open "$OUT_DIR"
