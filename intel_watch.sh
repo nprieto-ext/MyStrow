@@ -7,8 +7,11 @@
 #
 #   1. demande à GitHub la dernière release publiée ;
 #   2. si elle contient déjà MyStrow_intel.dmg → ne fait RIEN ;
-#   3. sinon → lance build_intel_mac.sh sur le tag de cette release.
-#      Le build compile, signe, notarise et uploade le DMG lui-même.
+#   3. sinon → lance build_intel_mac.sh, qui compile, signe, notarise et
+#      uploade le DMG lui-même.
+#
+# Mail de début et de fin si ~/.mystrow_intel_watch/mail.conf existe
+# (voir intel_watch_mail.py).
 #
 # Tu n'as donc plus rien à faire sur ce Mac : tu sors la version depuis le PC,
 # et le DMG Intel apparaît sur la release quelques dizaines de minutes après.
@@ -22,6 +25,7 @@
 #   repo_dir           chemin du dépôt MyStrow, écrit à l'installation
 #   state              dernière version tentée + nombre d'essais
 #   lock/              verrou anti-double-build (contient le PID)
+#   mail.conf          identifiants SMTP, à créer soi-même (facultatif)
 #
 # Pour le lancer une fois à la main (utile pour tester) :
 #   bash ~/.mystrow_intel_watch/intel_watch.sh
@@ -46,10 +50,10 @@ MAX_ATTEMPTS=3                       # au-delà, on arrête d'insister sur ce ta
 STATE_DIR="$HOME/.mystrow_intel_watch"
 
 # Où vit le dépôt MyStrow. Le veilleur, lui, tourne depuis une COPIE dans
-# $STATE_DIR : `build_intel_mac.sh` fait `git reset --hard` sur le tag de la
-# release, ce qui efface du dossier tout fichier absent de cette version — le
-# veilleur se supprimerait lui-même en plein build, et launchd ne trouverait
-# plus rien au passage suivant.
+# $STATE_DIR : `build_intel_mac.sh` fait `git reset --hard`, qui efface du
+# dossier tout fichier absent de la référence visée — le veilleur pourrait se
+# supprimer lui-même en plein build, et launchd ne trouverait plus rien au
+# passage suivant.
 REPO_DIR="${MYSTROW_REPO_DIR:-}"
 [ -n "$REPO_DIR" ] || REPO_DIR=$(cat "$STATE_DIR/repo_dir" 2>/dev/null || echo "")
 [ -n "$REPO_DIR" ] || REPO_DIR="$SCRIPT_DIR"
@@ -67,6 +71,17 @@ notify() {
   # n'est qu'un confort, jamais une raison d'échouer.
   osascript -e "display notification \"$2\" with title \"MyStrow — build Intel\" subtitle \"$1\"" \
     >/dev/null 2>&1 || true
+}
+
+mail_suivi() {
+  # Mail de début / fin de build. Tout est optionnel : sans mail.conf, sans
+  # réseau ou sans le script, on écrit une ligne dans le journal et on continue.
+  # Un mail ne doit jamais décider du sort d'un build.
+  [ -f "$REPO_DIR/intel_watch_mail.py" ] || return 0
+  local sortie
+  sortie=$(python3 "$REPO_DIR/intel_watch_mail.py" "$@" 2>&1) || sortie="mail : échec de l'envoi"
+  [ -n "$sortie" ] && log "$sortie"
+  return 0
 }
 
 # Journal court : on le tronque au-delà de 1 Mo pour qu'il reste lisible.
@@ -195,6 +210,7 @@ fi
 BUILD_LOG="$LOG_DIR/$TAG.log"
 log "$TAG : DMG Intel absent → build (essai $ATTEMPTS/$MAX_ATTEMPTS), journal : $BUILD_LOG"
 notify "$TAG" "Build du DMG Intel démarré (essai $ATTEMPTS/$MAX_ATTEMPTS)"
+mail_suivi debut "$TAG" --essai "$ATTEMPTS/$MAX_ATTEMPTS"
 
 # `caffeinate -i` empêche la mise en veille pendant le build : un Mac qui
 # s'endort au milieu de la notarisation laisse un verrou et un DMG à moitié fait.
@@ -214,15 +230,19 @@ UPLOADED=$(gh api "repos/$GITHUB_REPO/releases/tags/$TAG" 2>/dev/null | python3 
   2>/dev/null || echo "non")
 
 if [ "$RC" -eq 0 ] && [ "$UPLOADED" = "oui" ]; then
+  TAILLE=$(du -m "$STATE_DIR/out/$ASSET_NAME" 2>/dev/null | cut -f1)
   log "$TAG : ✅ DMG Intel construit et publié"
   notify "$TAG" "DMG Intel publié sur la release ✅"
+  mail_suivi ok "$TAG" --taille "${TAILLE:-}"
   echo "$TAG 0" > "$STATE_FILE"
 elif [ "$RC" -eq 0 ]; then
   log "$TAG : build OK mais DMG absent de la release — upload à vérifier ($BUILD_LOG)"
   notify "$TAG" "Build OK, upload échoué — à vérifier"
+  mail_suivi echec "$TAG" --essai "$ATTEMPTS/$MAX_ATTEMPTS" --log "$BUILD_LOG"
 else
   log "$TAG : ❌ build en échec (code $RC) — voir $BUILD_LOG"
   notify "$TAG" "Build en échec (essai $ATTEMPTS/$MAX_ATTEMPTS)"
+  mail_suivi echec "$TAG" --essai "$ATTEMPTS/$MAX_ATTEMPTS" --log "$BUILD_LOG"
 fi
 
 # Ne garder que les 20 derniers journaux de build.
