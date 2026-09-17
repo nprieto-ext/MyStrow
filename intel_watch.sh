@@ -39,7 +39,7 @@ set -uo pipefail
 export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GITHUB_REPO="nprieto-ext/MAESTRO"
+GITHUB_REPO="nprieto-ext/MyStrow"   # nom actuel du depot (l'ancien, MAESTRO, ne marche que par redirection)
 ASSET_NAME="MyStrow_intel.dmg"
 MAX_ATTEMPTS=3                       # au-delà, on arrête d'insister sur ce tag
 

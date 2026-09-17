@@ -3,7 +3,7 @@
 # build_intel_mac.sh  —  Build MyStrow_intel.dmg sur Mac Intel (signé + notarisé)
 #
 # PREMIÈRE FOIS :
-#   1. Cloner le dépôt :  git clone https://github.com/nprieto-ext/MAESTRO.git MyStrow
+#   1. Cloner le dépôt :  git clone https://github.com/nprieto-ext/MyStrow.git MyStrow
 #   2. Stocker les credentials de notarisation dans le trousseau (une seule fois) :
 #        xcrun notarytool store-credentials "mystrow-notarize" \
 #          --apple-id "ton@apple.id" \
@@ -14,9 +14,9 @@
 #
 # FOIS SUIVANTES : bash build_intel_mac.sh
 #
-# Le script se SYNCHRONISE d'abord sur origin/main (git reset --hard) : il est
-# donc IMPOSSIBLE de builder une vieille version, et inutile de faire git pull
-# avant. Il s'auto-localise (peut être lancé par chemin absolu depuis n'importe
+# Le script se SYNCHRONISE d'abord sur origin/main (git reset --hard), ou sur le
+# tag demandé via MYSTROW_BUILD_REF : il est donc IMPOSSIBLE de builder une
+# vieille version par accident, et inutile de faire git pull avant. Il s'auto-localise (peut être lancé par chemin absolu depuis n'importe
 # où) et UPLOADE automatiquement le DMG sur la GitHub Release (via gh).
 #
 # Astuce (une seule fois, pour le lancer de partout sans se tromper de dossier) :
@@ -34,7 +34,8 @@ DMG_NAME="MyStrow_intel.dmg"
 DIST_DIR="$SCRIPT_DIR/dist"
 DESKTOP="$HOME/Desktop"
 NOTARY_PROFILE="mystrow-notarize"   # nom du profil créé avec notarytool store-credentials
-GITHUB_REPO="nprieto-ext/MAESTRO"   # repo des releases (upload automatique du DMG)
+GITHUB_REPO="nprieto-ext/MyStrow"   # repo des releases (upload automatique du DMG)
+                                    # Renomme depuis MAESTRO : l'ancien nom ne marche que par redirection.
 
 # ── Couleurs terminales ───────────────────────────────────────────────────────
 GRN="\033[0;32m"; YLW="\033[1;33m"; RED="\033[0;31m"; BLD="\033[1m"; NC="\033[0m"
