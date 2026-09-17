@@ -70,7 +70,7 @@ AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.95"
+VERSION = "3.1.96"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms

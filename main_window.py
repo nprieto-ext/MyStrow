@@ -6543,6 +6543,11 @@ class MainWindow(QMainWindow):
         edit_layout_btn.setToolTip(tr("tooltip_akai_layout"))
         edit_layout_btn.setStyleSheet(_PARAM_BTN_SS)
         edit_layout_btn.clicked.connect(self._open_akai_layout_editor)
+        # Ctrl + clic LONG sur ce ⚙ : outil caché « Amplitudes Pan/Tilt de la
+        # 3.1.91 » (aucune entrée de menu, le support donne le geste aux clients
+        # concernés). Un clic normal ouvre toujours les paramètres AKAI.
+        from amp_migration import armer_declencheur_cache
+        armer_declencheur_cache(edit_layout_btn, self._open_amp_x4_tool)
         title_row.addWidget(edit_layout_btn)
 
         # PADS — surface d'exécuteurs configurable (à droite du ⚙)
@@ -17578,6 +17583,12 @@ class MainWindow(QMainWindow):
             self._log_message(tr("sched_log_armed", t=self.schedule_time), "success")
         else:
             self._log_message(tr("sched_log_off"), "info")
+
+    def _open_amp_x4_tool(self):
+        """Outil « Amplitudes 3.1.91 » : AMP Pan/Tilt × 4 des effets réglés sous
+        la 3.1.91, partout où leurs couches sont copiées (cf. amp_migration)."""
+        from amp_migration import AmpX4Dialog
+        AmpX4Dialog(self).exec()
 
     def _open_light_sync_dialog(self):
         """Réglage global de l'offset de synchro lumière/vidéo (ms).

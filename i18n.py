@@ -3014,6 +3014,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
                               "pt": "não enviado: uma interface USB só transporta o universo 1"},
     "dmxmon_channel":        {"en": "Channel", "fr": "Canal", "es": "Canal", "de": "Kanal", "pt": "Canal"},
     "dmxmon_free":           {"en": "free (no fixture patched)", "fr": "libre (aucun appareil patché)", "es": "libre (ningún aparato patcheado)", "de": "frei (kein Gerät gepatcht)", "pt": "livre (nenhum aparelho patcheado)"},
+    # ── Outil « Amplitudes 3.1.91 » (amp_migration.py) ──
+    "ampx4_title":        {"en": "Pan/Tilt amplitudes from 3.1.91", "fr": "Amplitudes Pan/Tilt de la 3.1.91", "es": "Amplitudes Pan/Tilt de la 3.1.91", "de": "Pan/Tilt-Amplituden aus 3.1.91", "pt": "Amplitudes Pan/Tilt da 3.1.91"},
+    "ampx4_help": {"en": "Multiplies by 4 the Pan/Tilt AMP of the ticked effects, everywhere.\nTick only effects set with version 3.1.91.", "fr": "Multiplie par 4 l'AMP Pan/Tilt des effets cochés, partout.\nNe cochez que les effets réglés avec la version 3.1.91.", "es": "Multiplica por 4 la AMP Pan/Tilt de los efectos marcados, en todas partes.\nMarque solo los efectos ajustados con la versión 3.1.91.", "de": "Multipliziert die Pan/Tilt-AMP der markierten Effekte überall mit 4.\nNur mit Version 3.1.91 eingestellte Effekte markieren.", "pt": "Multiplica por 4 a AMP Pan/Tilt dos efeitos marcados, em todo lugar.\nMarque só os efeitos ajustados com a versão 3.1.91."},
+    "ampx4_files_label": {"en": "Shows to convert (the open show is included):", "fr": "Shows à convertir (le show ouvert est inclus) :", "es": "Shows a convertir (el show abierto está incluido):", "de": "Zu konvertierende Shows (die geöffnete Show ist dabei):", "pt": "Shows a converter (o show aberto está incluído):"},
+    "ampx4_add_files":    {"en": "Add files…", "fr": "Ajouter des fichiers…", "es": "Añadir archivos…", "de": "Dateien hinzufügen…", "pt": "Adicionar arquivos…"},
+    "ampx4_add_folder":   {"en": "Add a folder…", "fr": "Ajouter un dossier…", "es": "Añadir una carpeta…", "de": "Ordner hinzufügen…", "pt": "Adicionar uma pasta…"},
+    "ampx4_files_filter": {"en": "Shows and REC Light (*.tui *.lrec)", "fr": "Shows et REC Lumière (*.tui *.lrec)", "es": "Shows y REC Luz (*.tui *.lrec)", "de": "Shows und REC Licht (*.tui *.lrec)", "pt": "Shows e REC Luz (*.tui *.lrec)"},
+    "ampx4_open_show_note": {"en": "Add all your shows.", "fr": "Ajoutez tous vos shows.", "es": "Añada todos sus shows.", "de": "Fügen Sie alle Ihre Shows hinzu.", "pt": "Adicione todos os seus shows."},
+    "ampx4_effects_label": {"en": "Effects:", "fr": "Effets :", "es": "Efectos:", "de": "Effekte:", "pt": "Efeitos:"},
+    "ampx4_item": {"en": "{name}   ·   AMP {amps}", "fr": "{name}   ·   AMP {amps}", "es": "{name}   ·   AMP {amps}", "de": "{name}   ·   AMP {amps}", "pt": "{name}   ·   AMP {amps}"},
+    "ampx4_none":         {"en": "No effect to convert.", "fr": "Aucun effet à convertir.", "es": "Ningún efecto que convertir.", "de": "Kein Effekt zu konvertieren.", "pt": "Nenhum efeito a converter."},
+    "ampx4_check_all":    {"en": "Check all", "fr": "Tout cocher", "es": "Marcar todo", "de": "Alle markieren", "pt": "Marcar tudo"},
+    "ampx4_uncheck_all":  {"en": "Uncheck all", "fr": "Tout décocher", "es": "Desmarcar todo", "de": "Alle abwählen", "pt": "Desmarcar tudo"},
+    "ampx4_close":        {"en": "Close", "fr": "Fermer", "es": "Cerrar", "de": "Schließen", "pt": "Fechar"},
+    "ampx4_convert":      {"en": "Convert ×4", "fr": "Convertir ×4", "es": "Convertir ×4", "de": "×4 konvertieren", "pt": "Converter ×4"},
+    "ampx4_confirm": {"en": "Multiply by 4 the Pan/Tilt AMP of {n} effect(s)?", "fr": "Multiplier par 4 l'AMP Pan/Tilt de {n} effet(s) ?", "es": "¿Multiplicar por 4 la AMP Pan/Tilt de {n} efecto(s)?", "de": "Pan/Tilt-AMP von {n} Effekt(en) mit 4 multiplizieren?", "pt": "Multiplicar por 4 a AMP Pan/Tilt de {n} efeito(s)?"},
+    "ampx4_done": {"en": "{layers} layer(s) converted, {files} file(s) modified (.bak copy kept).", "fr": "{layers} couche(s) convertie(s), {files} fichier(s) modifié(s) (copie .bak gardée).", "es": "{layers} capa(s) convertida(s), {files} archivo(s) modificado(s) (copia .bak guardada).", "de": "{layers} Ebene(n) konvertiert, {files} Datei(en) geändert (.bak-Kopie behalten).", "pt": "{layers} camada(s) convertida(s), {files} arquivo(s) modificado(s) (cópia .bak mantida)."},
+    "ampx4_save_show": {"en": "Save the open show to keep the conversion.", "fr": "Enregistrez le show ouvert pour garder la conversion.", "es": "Guarde el show abierto para conservar la conversión.", "de": "Speichern Sie die geöffnete Show, um die Konvertierung zu behalten.", "pt": "Salve o show aberto para manter a conversão."},
+    "ampx4_errors":       {"en": "Files not converted:", "fr": "Fichiers non convertis :", "es": "Archivos no convertidos:", "de": "Nicht konvertierte Dateien:", "pt": "Arquivos não convertidos:"},
 }
 
 

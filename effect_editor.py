@@ -663,9 +663,14 @@ class EffectLayer:
         self.channel_num   = None
         self.channel_sig   = ""
         self.channel_label = ""
+        # Marque posée par l'outil « Amplitudes 3.1.91 » (amp_migration.py) : cette
+        # couche Pan/Tilt a déjà eu son AMP multipliée par 4. Elle doit SURVIVRE à
+        # l'éditeur (relu → réécrit), sinon relancer l'outil la multiplierait
+        # une seconde fois.
+        self.amp_x4 = False
 
     def to_dict(self):
-        return {
+        d = {
             "attribute":     self.attribute,
             "forme":         self.forme,
             "target_preset": self.target_preset,
@@ -693,6 +698,9 @@ class EffectLayer:
             "channel_sig":   self.channel_sig,
             "channel_label": self.channel_label,
         }
+        if self.amp_x4:
+            d["amp_x4"] = True
+        return d
 
     @classmethod
     def from_dict(cls, d):
@@ -730,6 +738,7 @@ class EffectLayer:
             layer.channel_num = None
         layer.channel_sig   = d.get("channel_sig", "") or ""
         layer.channel_label = d.get("channel_label", "") or ""
+        layer.amp_x4 = bool(d.get("amp_x4", False))
         return layer
 
     @classmethod
