@@ -90,9 +90,10 @@ dlg = SequenceInfoDialog(None, mw, memory_ref=(1, 0), cue_index=0,
                          label="MEM 2.1", intensity=100)
 check("les 16 lyres reglees sont listees (et pas les 8 autres)",
       dlg._table.rowCount() == 16)
-beam = dlg._table.item(0, dlg.C_BEAM).text()
-check("la colonne Faisceau montre le gobo : " + repr(beam), "Gobo 64" in beam)
-check("elle montre aussi la roue", "Roue 64" in beam)
+gobo = dlg._table.item(0, dlg._col("gobo")).text()
+check("la colonne Gobo montre le gobo : " + repr(gobo), gobo.startswith("64"))
+check("la colonne Roue montre la roue",
+      dlg._table.item(0, dlg._col("color_wheel")).text() == "64")
 check("le pied de fenetre ne dit plus « aucun projecteur »",
       "16" in dlg._foot.text())
 

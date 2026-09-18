@@ -494,6 +494,16 @@ class LiveAudioEngine(QObject):
 
     # ── Routage source ─────────────────────────────────────────────────────
 
+    def _is_audio_source(self) -> bool:
+        """La source est-elle un signal audio (et non un tempo MIDI / VDJ) ?
+
+        Seule une source audio doit détecter ses beats dans le signal. Le test
+        valait `in ('loopback', 'mic')` : il ignorait les entrées choisies
+        par périphérique (`dev_in:N`, `dev_out:N`) — VU-mètre vivant mais zéro
+        beat, BPM à 0, et le plan de feu figé en Musical IA.
+        """
+        return self._source_key not in ('midi_clock', 'rekordbox', 'virtualdj')
+
     def _open_stream(self):
         if self._source_key == "midi_clock":
             self._open_midi_clock()
@@ -1248,7 +1258,7 @@ class LiveAudioEngine(QObject):
         if _spike('sub',   'kick',  threshold=1.9, refract=0.35):
             self._last_transient['kick'] = now
             self._pending_transients.append('kick')
-            if self._source_key in ('loopback', 'mic') and not self._manual_bpm:
+            if self._is_audio_source() and not self._manual_bpm:
                 self._last_beat_ts = now
                 self.audio_ai.beats.append(self._elapsed_ms)
                 self._beat_times.append(now)
@@ -1313,7 +1323,7 @@ class LiveAudioEngine(QObject):
                 self._section_state = dominant
 
         # ── Détection de beat (audio seulement — MIDI/VDJ ont leur propre) ─
-        if self._source_key in ("loopback", "mic") and len(self._rms_history) >= 12:
+        if self._is_audio_source() and len(self._rms_history) >= 12:
             now = time.monotonic()
             # Si numpy dispo, le kick FFT (_detect_transients) pilote le BPM.
             # La détection RMS full-spectre (snare/hihat/voix) reste en fallback

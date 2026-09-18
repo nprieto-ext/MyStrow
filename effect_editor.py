@@ -639,6 +639,7 @@ class EffectLayer:
         self.color2 = "#0000ff"
         self.mouvement_shape = "cercle"  # forme de trajectoire Pan/Tilt (défaut)
         self.sym_pan = False            # miroir pan sur la 2e moitié des fixtures
+        self.sym_tilt = False           # miroir tilt, même partage que sym_pan
         # POSITION : point AUTOUR duquel tourne un mouvement Pan/Tilt. Sans elle,
         # la trajectoire est centrée au milieu de la course (32768) — un cercle
         # « au centre du plateau ». Un preset de position donne à CHAQUE lyre son
@@ -689,6 +690,7 @@ class EffectLayer:
             "color2": self.color2,
             "mouvement_shape": self.mouvement_shape,
             "sym_pan": self.sym_pan,
+            "sym_tilt": self.sym_tilt,
             "spread_mode": self.spread_mode,
             "block": self.block,
             "pos_preset_idx":  self.pos_preset_idx,
@@ -727,6 +729,7 @@ class EffectLayer:
         layer.color2 = d.get("color2", "#0000ff")
         layer.mouvement_shape = d.get("mouvement_shape", "libre")
         layer.sym_pan = d.get("sym_pan", False)
+        layer.sym_tilt = d.get("sym_tilt", False)
         layer.spread_mode = d.get("spread_mode", "lineaire")
         layer.block = _norm_block(d.get("block"))
         layer.pos_preset_idx  = _norm_pos_idx(d.get("pos_preset_idx"))
@@ -766,6 +769,7 @@ class EffectLayer:
             layer.color2 = ld.get("color2", "#0000ff")
             layer.mouvement_shape = ld.get("mouvement_shape", "libre")
             layer.sym_pan = ld.get("sym_pan", False)
+            layer.sym_tilt = ld.get("sym_tilt", False)
             layer.spread_mode = ld.get("spread_mode", "lineaire")
             layer.block = _norm_block(ld.get("block"))
             layer.pos_preset_idx  = _norm_pos_idx(ld.get("pos_preset_idx"))
@@ -1245,10 +1249,12 @@ LAYER_COLS = [
      "Avec une position enregistrée, chaque lyre tourne autour de SON point\n"
      "de visée — le même que celui du rappel de position."),
     ("sym",    "SYM",          44,
-     "Symétrie Pan — canaux Pan et Pan/Tilt.\n"
-     "Les lyres situées à droite de l'axe partent en Pan INVERSÉ, celles de\n"
-     "gauche en Pan normal : les trajectoires se répondent en miroir.\n"
+     "Symétrie — canaux Pan, Tilt et Pan/Tilt.\n"
+     "Les lyres situées à droite de l'axe partent en mouvement INVERSÉ, celles\n"
+     "de gauche en mouvement normal : les trajectoires se répondent en miroir.\n"
      "C'est ce qui fait les ailes du « Lyre Papillon ».\n"
+     "Sur Pan/Tilt, un menu laisse choisir l'axe inversé :\n"
+     "⇄ Pan, ⇅ Tilt ou ⇄⇅ les deux.\n"
      "Le partage suit la POSITION sur le plan de feu, pas l'ordre du patch —\n"
      "même règle que le bouton SYM du plan 2D."),
     ("del",    "",             32, ""),
@@ -1348,7 +1354,7 @@ LAYER_COL_ATTRS = {
     # Index ET nom : recopier le seul index sur une autre couche laisserait un
     # libellé faux dans sa cellule.
     "pos":    ("pos_preset_idx", "pos_preset_name"),
-    "sym":    ("sym_pan",),
+    "sym":    ("sym_pan", "sym_tilt"),
 }
 
 
@@ -2656,9 +2662,11 @@ class LayerRow(QFrame):
         self._pos_btn = b
         return b
 
-    # ── Symétrie Pan (canaux Pan et Pan/Tilt) ─────────────────────────────────
-    # Tilt est exclu : sym_pan n'inverse que le Pan, la case n'y produirait rien.
-    _ATTRS_SYM = ("Pan", "Pan/Tilt")
+    # ── Symétrie Pan / Tilt (canaux Pan, Tilt et Pan/Tilt) ────────────────────
+    # sym_pan inverse le Pan, sym_tilt le Tilt. Sur une couche Pan ou Tilt seule
+    # la case bascule l'axe de la couche ; sur Pan/Tilt elle ouvre un menu
+    # (aucune / Pan / Tilt / les deux).
+    _ATTRS_SYM = ("Pan", "Tilt", "Pan/Tilt")
 
     def _mk_sym(self):
         b = QPushButton("⇄")
@@ -2672,7 +2680,7 @@ class LayerRow(QFrame):
             "QPushButton:hover{border-color:#00d4ff;}"
             "QPushButton:checked{background:#0d1f2a;color:#00d4ff;"
             "border-color:#00d4ff;}")
-        b.toggled.connect(self._on_sym_toggled)
+        b.clicked.connect(self._on_sym_clicked)
         # Même raison que POSITION : garder la place quand la cellule est
         # masquée, sinon toutes les colonnes suivantes glissent.
         _sp = b.sizePolicy()
@@ -2681,8 +2689,31 @@ class LayerRow(QFrame):
         self._sym_btn = b
         return b
 
-    def _on_sym_toggled(self, on):
-        self.layer.sym_pan = bool(on)
+    def _on_sym_clicked(self):
+        lay = self.layer
+        pan = bool(getattr(lay, 'sym_pan', False))
+        tilt = bool(getattr(lay, 'sym_tilt', False))
+        if lay.attribute == "Pan":
+            self._set_sym(not pan, tilt)
+        elif lay.attribute == "Tilt":
+            self._set_sym(pan, not tilt)
+        else:
+            # Pan/Tilt : l'utilisateur CHOISIT l'axe inversé dans un menu.
+            self._refresh_sym()   # le clic a basculé l'état coché, on le rétablit
+            menu = QMenu(self)
+            menu.setStyleSheet(_MENU_STYLE)
+            for nom, p, t in (("Aucune symétrie", False, False),
+                              ("⇄  Pan inversé", True, False),
+                              ("⇅  Tilt inversé", False, True),
+                              ("⇄⇅  Pan + Tilt inversés", True, True)):
+                cur = (pan, tilt) == (p, t)
+                a = menu.addAction(("✓ " if cur else "    ") + nom)
+                a.triggered.connect(lambda _=False, p=p, t=t: self._set_sym(p, t))
+            menu.exec(self._sym_btn.mapToGlobal(QPoint(0, self._sym_btn.height() + 2)))
+
+    def _set_sym(self, pan, tilt):
+        self.layer.sym_pan, self.layer.sym_tilt = bool(pan), bool(tilt)
+        self._refresh_sym()
         self._emit("sym")
 
     def _refresh_sym(self):
@@ -2693,8 +2724,17 @@ class LayerRow(QFrame):
         btn.setVisible(actif)
         if not actif:
             return
+        attr = self.layer.attribute
+        pan  = bool(getattr(self.layer, 'sym_pan', False)) and attr != "Tilt"
+        tilt = bool(getattr(self.layer, 'sym_tilt', False)) and attr != "Pan"
+        if pan and tilt:
+            btn.setText("⇄⇅")
+        elif tilt or attr == "Tilt":
+            btn.setText("⇅")
+        else:
+            btn.setText("⇄")
         btn.blockSignals(True)
-        btn.setChecked(bool(getattr(self.layer, 'sym_pan', False)))
+        btn.setChecked(pan or tilt)
         btn.blockSignals(False)
 
     def _find_main_window(self):
@@ -4788,13 +4828,14 @@ class EffectEditorDialog(QDialog):
         # le même mot, c'était intenable. Import différé — effect_editor est
         # importé par plan_de_feu en amont.
         _sym_ids = {}
-        if any(getattr(_l, 'sym_pan', False) for _l in self._layers):
+        if any(getattr(_l, 'sym_pan', False) or getattr(_l, 'sym_tilt', False)
+               for _l in self._layers):
             from plan_de_feu import sym_mirror_ids as _sym_mirror_ids
             _lyres_fx = [p for p in projectors
                          if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
             _mir = _sym_mirror_ids(_lyres_fx, _all_proj)
             for _l in self._layers:
-                if getattr(_l, 'sym_pan', False):
+                if getattr(_l, 'sym_pan', False) or getattr(_l, 'sym_tilt', False):
                     _sym_ids[id(_l)] = _mir
 
         for i, proj in enumerate(projectors):
@@ -4922,9 +4963,11 @@ class EffectEditorDialog(QDialog):
                     has_movement = True
                 elif attr == "Tilt":
                     amp = (layer.size / 100.0) * 8192
+                    sym_tilt  = getattr(layer, 'sym_tilt', False)
+                    tilt_sign = -1 if (sym_tilt and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     _ctr = _pos_centers.get(id(layer), {}).get(id(proj))
                     c_tilt = _ctr[1] if _ctr is not None else 32768
-                    tilt_v = int(max(0, min(65535, c_tilt + (raw - 0.5) * 2 * amp)))
+                    tilt_v = int(max(0, min(65535, c_tilt + tilt_sign * (raw - 0.5) * 2 * amp)))
                     has_movement = True
                 elif attr == "Pan/Tilt":
                     sid      = getattr(layer, 'mouvement_shape', 'cercle')
@@ -4936,6 +4979,8 @@ class EffectEditorDialog(QDialog):
                     pt_amp   = (layer.size / 100.0) * 8192
                     sym_pan  = getattr(layer, 'sym_pan', False)
                     pan_sign = -1 if (sym_pan and id(proj) in _sym_ids.get(id(layer), ())) else 1
+                    sym_tilt  = getattr(layer, 'sym_tilt', False)
+                    tilt_sign = -1 if (sym_tilt and id(proj) in _sym_ids.get(id(layer), ())) else 1
                     # SENS de la trajectoire : → avant · ← inverse (la lyre tourne
                     # dans l'autre sens) · ↔ aller-retour. On agit sur le TEMPS,
                     # pas sur l'étalement (c'est le sens de MOUVEMENT de chaque lyre).
@@ -4960,7 +5005,7 @@ class EffectEditorDialog(QDialog):
                         t_freq = layer_frequency(layer.speed, t_mult)
                         t_x    = (_pt_time(t_freq) + i_fx / max(n_fx, 1) * spread + phase + t_ph / 100.0) % 1.0
                         t_raw  = self._wave(t_forme, t_x)
-                        tilt_v = int(max(0, min(65535, c_tilt + (t_raw - 0.5) * 2 * pt_amp)))
+                        tilt_v = int(max(0, min(65535, c_tilt + tilt_sign * (t_raw - 0.5) * 2 * pt_amp)))
                     has_movement = True
                 # Gobo ignoré pour la prévisualisation
 

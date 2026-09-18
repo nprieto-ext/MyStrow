@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""REC MEM : prevenir quand la capture ne porte que des reglages, rien d'allume.
+"""REC MEM : une capture sans niveau est une SURCOUCHE, pas une erreur.
 
-Contexte (02/09/2026) : mem 2.1 de Niko contenait `strobe_speed 58` sur ses
-16 lyres et `level 0` PARTOUT. `_build_snapshot` capture `level` tel quel :
-regler le strobe sur un rig eteint donne donc une memoire qui, rappelee d'un
-pad, repose noir sur tout le plateau (« mes projecteurs s'eteignent ») au lieu
-de faire ce qu'on croyait y avoir mis.
+Historique : le 02/09/2026, mem 2.1 de Niko contenait `strobe_speed 58` sur
+ses 16 lyres et `level 0` PARTOUT. Rappelee d'un pad, elle imposait tout son
+faisceau et eteignait le plateau : on avait donc ajoute une alerte au REC.
 
-On teste le PREDICAT, pas la fenetre : les deux chemins silencieux doivent
-laisser passer, le troisieme doit ouvrir un dialogue.
+18/09/2026 : « je ne peux toujours pas enregistrer juste un strobe », puis
+« l'idee c'est que je puisse enregistrer n'importe quel parametre ». Une
+memoire n'impose plus que ce qu'elle porte hors repos (cf.
+test_memoire_parametres_seuls.py) : plus d'alerte, juste une ligne au journal.
 """
 import os, sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -21,9 +21,13 @@ import main_window as MW
 
 
 class FauxMW:
-    """Emprunte la methode a MainWindow sans instancier la fenetre."""
-    _SNAP_BEAM_ONLY = MW.MainWindow._SNAP_BEAM_ONLY
-    _confirm_dark_snapshot = MW.MainWindow._confirm_dark_snapshot
+    _note_snapshot_sans_niveau = MW.MainWindow._note_snapshot_sans_niveau
+
+    def __init__(self):
+        self.logs = []
+
+    def _log_message(self, text, level="info"):
+        self.logs.append((level, text))
 
 
 def cue(*etats):
@@ -32,84 +36,41 @@ def cue(*etats):
 
 def etat(**kw):
     base = {"level": 0, "base_color": "#000000", "strobe_speed": 0,
-            "channel_extras": {}}
+            "pan": 32768, "tilt": 32768, "shutter": 255, "channel_extras": {}}
     base.update(kw)
     return base
 
 
-mw = FauxMW()
-_dialogues = []
-
-
-class FauxBox:
-    """QMessageBox de remplacement : compte les ouvertures, repond ce qu'on veut."""
-    AcceptRole = 0
-    RejectRole = 1
-    _reponse = "ok"
-
-    def __init__(self, parent=None):
-        _dialogues.append(self)
-        self._ok = object()
-        self._cancel = object()
-        self._n = 0
-
-    def setWindowTitle(self, *_): pass
-    def setText(self, *_): pass
-    def setInformativeText(self, *_): pass
-    def setStyleSheet(self, *_): pass
-
-    def addButton(self, _label, role):
-        return self._ok if role == self.AcceptRole else self._cancel
-
-    def exec(self): pass
-
-    def clickedButton(self):
-        return self._ok if FauxBox._reponse == "ok" else self._cancel
-
-
 import PySide6.QtWidgets as _QtW
 _vrai_box = _QtW.QMessageBox
-_QtW.QMessageBox = FauxBox
 
+
+class InterditBox:
+    def __init__(self, *a, **k):
+        raise AssertionError("le REC ne doit plus poser de question")
+
+
+_QtW.QMessageBox = InterditBox
 try:
-    # ── 1) Au moins une fixture allumee : aucun avertissement ────────────────
-    assert mw._confirm_dark_snapshot(
-        cue(etat(level=80, base_color="#ffffff"), etat()), 1, 0) is True
-    assert not _dialogues, "une capture qui allume ne doit rien demander"
+    mw = FauxMW()
+    # Look allume : rien a dire.
+    mw._note_snapshot_sans_niveau(cue(etat(level=80, base_color="#fff"), etat()))
+    # Noir complet : un noir se memorise, rien a dire.
+    mw._note_snapshot_sans_niveau(cue(etat(), etat()))
+    mw._note_snapshot_sans_niveau(cue())
+    assert not mw.logs, mw.logs
 
-    # ── 2) Capture entierement vide : c'est un NOIR, geste legitime ──────────
-    assert mw._confirm_dark_snapshot(cue(etat(), etat()), 1, 0) is True
-    assert not _dialogues, "memoriser un noir ne doit rien demander"
-    assert mw._confirm_dark_snapshot(cue(), 1, 0) is True
+    # Juste un strobe / un gobo / de l'UV / une position / un canal brut.
+    for reglage in (dict(strobe_speed=58), dict(gobo=77), dict(uv=200),
+                    dict(pan=10000), dict(channel_extras={5: 210})):
+        mw.logs.clear()
+        mw._note_snapshot_sans_niveau(cue(etat(**reglage), etat()))
+        assert mw.logs and mw.logs[-1][0] == "rec", f"pas de note pour {reglage}"
 
-    # `shutter` au repos vaut 255 : il ne doit pas compter comme un reglage.
-    assert mw._confirm_dark_snapshot(cue(etat(shutter=255)), 1, 0) is True
-    assert not _dialogues, "le shutter ouvert n'est pas un reglage"
-
-    # ── 3) Le cas mem 2.1 : du strobe, rien d'allume -> on previent ──────────
-    FauxBox._reponse = "ok"
-    assert mw._confirm_dark_snapshot(
-        cue(etat(strobe_speed=58), etat(strobe_speed=58)), 1, 0) is True
-    assert len(_dialogues) == 1, "un strobe sans niveau doit alerter"
-
-    # Annuler doit vraiment annuler le REC.
-    FauxBox._reponse = "cancel"
-    assert mw._confirm_dark_snapshot(cue(etat(strobe_speed=58)), 1, 0) is False
-    assert len(_dialogues) == 2
-
-    # Meme regle pour un gobo, un canal special et un canal brut.
-    FauxBox._reponse = "ok"
-    for reglage in (dict(gobo=77), dict(uv=200), dict(prism=180),
-                    dict(channel_extras={5: 210})):
-        _dialogues.clear()
-        assert mw._confirm_dark_snapshot(cue(etat(**reglage)), 1, 0) is True
-        assert len(_dialogues) == 1, f"pas d'alerte pour {reglage}"
-
-    # ── 4) Un garde-fou ne doit JAMAIS bloquer un REC ────────────────────────
-    _dialogues.clear()
-    assert mw._confirm_dark_snapshot({"projectors": "casse"}, 1, 0) is True
-    assert mw._confirm_dark_snapshot(None, 1, 0) is True
+    # Une note ne doit JAMAIS casser un REC.
+    mw._note_snapshot_sans_niveau({"projectors": "casse"})
+    mw._note_snapshot_sans_niveau(None)
 finally:
     _QtW.QMessageBox = _vrai_box
 
-print("OK - le REC previent quand la capture ne porte que des reglages.")
+print("OK - le REC enregistre une capture sans niveau sans poser de question.")

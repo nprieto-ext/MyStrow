@@ -63,32 +63,52 @@ _TABLE = f"""
     }}
 """
 
-# ── Échelle 3 segments : 0–10 s / 10 s–1 min / 1 min–10 min ───────────────
-# ticks 0     : 0 s
-# ticks 1–100 : 0.1 s → 10 s  (pas 0.1 s)
-# ticks 101–200 : 10 s → 60 s  (pas 0.5 s)
-# ticks 201–300 : 60 s → 600 s (pas 5.4 s)
-_MAX_TICKS = 300
+# ── Échelle 4 segments : 0–10 s / 10 s–1 min / 1 min–10 min / 10 min–1 h ──
+# Chaque segment : (seconde de départ, pas en secondes, nombre de crans).
+# Le cran 0 vaut 0 s (« — ») ; le segment n couvre les crans qui suivent.
+_SEGMENTS = (
+    (0.0,   0.1, 100),   # 0.1 s → 10 s
+    (10.0,  0.5, 100),   # 10 s  → 1 min
+    (60.0,  5.0, 108),   # 1 min → 10 min
+    (600.0, 30.0, 100),  # 10 min → 1 h
+)
+_MAX_TICKS = sum(n for _, _, n in _SEGMENTS)
+# Crans des repères affichés sous le curseur (début de chaque segment + fin).
+_MARK_TICKS = [0]
+for _seg in _SEGMENTS:
+    _MARK_TICKS.append(_MARK_TICKS[-1] + _seg[2])
 
 def _ticks_to_secs(t: int) -> float:
-    if t <= 0:   return 0.0
-    if t <= 100: return t * 0.1
-    if t <= 200: return 10.0 + (t - 100) * 0.5
-    return 60.0 + (t - 200) * 5.4
+    if t <= 0:
+        return 0.0
+    base = 0
+    for start, step, n in _SEGMENTS:
+        if t <= base + n:
+            return round(start + (t - base) * step, 1)
+        base += n
+    start, step, n = _SEGMENTS[-1]
+    return start + step * n
 
 def _secs_to_ticks(s: float) -> int:
-    if s <= 0:   return 0
-    if s <= 10:  return min(100, round(s / 0.1))
-    if s <= 60:  return min(200, 100 + round((s - 10) / 0.5))
-    return min(300, 200 + round((s - 60) / 5.4))
+    if s <= 0:
+        return 0
+    base = 0
+    for start, step, n in _SEGMENTS:
+        if s <= start + step * n:
+            return base + min(n, round((s - start) / step))
+        base += n
+    return _MAX_TICKS
 
 def _fmt_ticks(t: int) -> str:
     if t == 0: return "—"
     s = _ticks_to_secs(t)
     if s < 10:  return f"{s:.1f}s"
-    if s < 60:  return f"{s:.0f}s"
-    m, r = divmod(int(s), 60)
-    return f"{m}m{r:02d}s"
+    if s < 60:  return f"{s:.1f}".rstrip("0").rstrip(".") + "s"
+    if s < 3600:
+        m, r = divmod(int(round(s)), 60)
+        return f"{m}m{r:02d}s"
+    h, r = divmod(int(round(s)), 3600)
+    return f"{h}h{r // 60:02d}"
 
 def _fmt_time(val) -> str:
     return _fmt_ticks(_secs_to_ticks(float(val)))
@@ -168,6 +188,34 @@ class _ProgressStrip(QWidget):
 
 
 # ── Popup curseur amélioré ─────────────────────────────────────────────────
+class _SliderMarks(QWidget):
+    """Repères sous le curseur, placés au cran exact où commence chaque segment."""
+
+    _LABELS = ("0", "10s", "1min", "10min", "1h")
+
+    def __init__(self, slider: QSlider, parent=None):
+        super().__init__(parent)
+        self._slider = slider
+        self.setFixedHeight(12)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        f = QFont(self.font())
+        f.setPixelSize(9)
+        p.setFont(f)
+        p.setPen(QColor("#444"))
+        fm = p.fontMetrics()
+        # Le centre de la poignée (18 px) parcourt [9, largeur - 9] du curseur.
+        x0 = self._slider.x() - self.x() + 9
+        span = self._slider.width() - 18
+        for tick, txt in zip(_MARK_TICKS, self._LABELS):
+            w = fm.horizontalAdvance(txt)
+            x = x0 + span * tick / _MAX_TICKS - w / 2
+            x = max(0, min(self.width() - w, x))
+            p.drawText(int(x), fm.ascent(), txt)
+        p.end()
+
+
 class _SliderPopup(QWidget):
     committed = Signal(float)
 
@@ -183,11 +231,22 @@ class _SliderPopup(QWidget):
             background:#fff; border-radius:9px;
         }
     """
+    _BTN_SS = """
+        QPushButton {
+            background:#222; color:#ccc; border:1px solid #333;
+            border-radius:4px; font-size:14px; font-weight:bold;
+        }
+        QPushButton:hover { background:#2e2e2e; color:#00d4ff; }
+    """
+
+    _W, _H = 440, 104
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(320, 100)
+        self.setFixedSize(self._W, self._H)
+        self._start_ticks = 0
+        self._done = True   # déjà validé/annulé : la fermeture ne revalide pas
 
         outer = QWidget(self)
         outer.setObjectName("sp_outer")
@@ -196,7 +255,7 @@ class _SliderPopup(QWidget):
                 background:#161616; border:1px solid #2a2a2a; border-radius:10px;
             }
         """)
-        outer.setGeometry(0, 0, 320, 100)
+        outer.setGeometry(0, 0, self._W, self._H)
 
         vl = QVBoxLayout(outer)
         vl.setContentsMargins(14, 10, 14, 8)
@@ -213,32 +272,42 @@ class _SliderPopup(QWidget):
         top.addWidget(self._val_lbl)
         vl.addLayout(top)
 
-        # Slider
+        # − curseur +  : les boutons, la molette et les flèches avancent d'un
+        # cran, pour viser une valeur exacte que la souris seule rate.
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        minus = QPushButton("−")
+        plus  = QPushButton("+")
+        for b in (minus, plus):
+            b.setFixedSize(26, 22)
+            b.setStyleSheet(self._BTN_SS)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setAutoRepeat(True)
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setRange(0, _MAX_TICKS)
+        self._slider.setSingleStep(1)
+        self._slider.setPageStep(10)
         self._slider.setStyleSheet(self._SS)
         self._slider.valueChanged.connect(lambda v: self._val_lbl.setText(_fmt_ticks(v)))
         self._slider.sliderReleased.connect(self._on_release)
-        vl.addWidget(self._slider)
+        minus.clicked.connect(lambda: self._slider.setValue(self._slider.value() - 1))
+        plus.clicked.connect(lambda: self._slider.setValue(self._slider.value() + 1))
+        row.addWidget(minus)
+        row.addWidget(self._slider, 1)
+        row.addWidget(plus)
+        vl.addLayout(row)
 
-        # Repères de segments
-        marks = QHBoxLayout()
-        marks.setContentsMargins(0, 0, 0, 0)
-        for txt in ("0", "10s", "1min", "10min"):
-            lbl = QLabel(txt)
-            lbl.setStyleSheet("color:#444; font-size:9px; background:transparent;")
-            if txt == "0":
-                lbl.setAlignment(Qt.AlignLeft)
-            elif txt == "10min":
-                lbl.setAlignment(Qt.AlignRight)
-            else:
-                lbl.setAlignment(Qt.AlignCenter)
-            marks.addWidget(lbl, 1)
-        vl.addLayout(marks)
+        # Repères de segments, alignés sur leur cran réel
+        marks_row = QHBoxLayout()
+        marks_row.setContentsMargins(34, 0, 34, 0)
+        marks_row.addWidget(_SliderMarks(self._slider))
+        vl.addLayout(marks_row)
 
     def show_for(self, key: str, current_secs: float, global_pos):
         self._key_lbl.setText(key)
         t = _secs_to_ticks(current_secs)
+        self._start_ticks = t
+        self._done = False
         self._slider.blockSignals(True)
         self._slider.setValue(t)
         self._slider.blockSignals(False)
@@ -247,11 +316,35 @@ class _SliderPopup(QWidget):
         y = global_pos.y() - self.height() - 8
         self.move(x, y)
         self.show()
+        self._slider.setFocus()
+
+    def _commit(self):
+        if self._done:
+            return
+        self._done = True
+        if self._slider.value() != self._start_ticks:
+            self.committed.emit(_ticks_to_secs(self._slider.value()))
 
     def _on_release(self):
-        self.committed.emit(_ticks_to_secs(self._slider.value()))
+        # Glisser puis lâcher : on valide et on ferme, comme avant.
+        self._commit()
         self.hide()
 
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self._done = True          # Échap : on abandonne le réglage
+            self.hide()
+        elif e.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self._commit()
+            self.hide()
+        else:
+            super().keyPressEvent(e)
+
+    def hideEvent(self, e):
+        # Clic en dehors après un réglage aux boutons / molette / flèches :
+        # la valeur affichée est celle qui est gardée.
+        self._commit()
+        super().hideEvent(e)
 
 
 # ── Panel principal ────────────────────────────────────────────────────────

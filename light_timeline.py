@@ -275,6 +275,9 @@ _MEM_MISC_CH = (
 )
 
 
+_MEM_MISC_KEYS = frozenset(k for k, _l in _MEM_MISC_CH)
+
+
 def mem_ch_repos(key):
     """Valeur de repos d'un canal de mémoire (0 sauf le shutter, ouvert à 255)."""
     return _REPOS_FAISCEAU.get(key, 0)
@@ -303,11 +306,119 @@ def memory_state_is_set(ps):
         return True
     if ps.get("channel_extras"):
         return True
-    for _k, _lbl in _MEM_BEAM_CH:
+    # Canaux dédiés (UV, Blanc, Ambre, Orange) aussi : une mémoire « juste de
+    # l'UV » est une surcouche comme une autre (cf. `compose_memory_params`).
+    for _k, _lbl in _MEM_BEAM_CH + _MEM_MISC_CH:
         if _k in ps and int(ps.get(_k) or 0) != mem_ch_repos(_k):
             return True
     return False
 
+
+def mem_param_repos(key):
+    """Repos d'un paramètre de mémoire : centre pour pan/tilt, sinon le canal."""
+    if key in ("pan", "tilt"):
+        return 32768
+    return mem_ch_repos(key)
+
+
+# Paramètres qu'une mémoire peut porter seule, un par un.
+MEM_PARAMS = (("pan", "tilt")
+              + tuple(k for k, _l in _MEM_BEAM_CH)
+              + tuple(k for k, _l in _MEM_MISC_CH))
+
+
+def compose_memory_params(states):
+    """Ce que plusieurs mémoires levées imposent ensemble à UN projecteur.
+
+    Une mémoire n'impose que ce qu'elle a enregistré HORS REPOS : juste un
+    strobe, juste un gobo, juste une position… Les paramètres restés au repos
+    ne sont pas « enregistrés » : ils laissent la main aux autres mémoires.
+    C'est ce qui permet de lever une mémoire « strobe » par-dessus un look sans
+    recentrer ses lyres, refermer son gobo ou couper son UV.
+
+    `states` : états du projecteur, du plus prioritaire au moins prioritaire.
+    Retourne `(params, extras)` :
+      - params : {clé: (valeur, rang de la mémoire qui l'impose)} ;
+      - extras : canaux bruts fusionnés, canal par canal, même priorité.
+    Un paramètre absent de `params` n'est imposé par personne : repos.
+    Contrepartie assumée : une mémoire ne peut pas imposer une valeur de
+    REPOS par-dessus une autre (lyre pile au centre, gobo ouvert).
+    """
+    params, extras = {}, {}
+    for rang, ps in enumerate(states):
+        if not isinstance(ps, dict):
+            continue
+        for k in MEM_PARAMS:
+            if k in params or ps.get(k) is None:
+                continue
+            v = int(ps[k])
+            if v != mem_param_repos(k):
+                params[k] = (v, rang)
+        for ch, v in (ps.get("channel_extras") or {}).items():
+            extras.setdefault(ch, v)
+    return params, extras
+
+
+# Familles de paramètres qu'on retire d'un bloc dans « Contenu séquence » :
+# « light » = niveau + couleur, « position » = pan ET tilt, « raw » = canaux
+# bruts, sinon la clé du canal elle-même (strobe_speed, gobo, uv…).
+def memory_param_families(ps):
+    """Ce qu'un état de mémoire impose VRAIMENT, famille par famille, dans
+    l'ordre d'affichage. Même critère « hors repos » que `memory_state_is_set`."""
+    out = []
+    if int(ps.get("level", 0) or 0) > 0:
+        out.append("light")
+    if any(ps.get(k) is not None and int(ps[k]) != 32768 for k in ("pan", "tilt")):
+        out.append("position")
+    for k, _l in _MEM_BEAM_CH + _MEM_MISC_CH:
+        if k in ps and int(ps.get(k) or 0) != mem_ch_repos(k):
+            out.append(k)
+    if ps.get("channel_extras"):
+        out.append("raw")
+    return out
+
+
+def strip_memory_param(ps, fam):
+    """Retire une famille de paramètres d'un état de mémoire (cf. ci-dessus)."""
+    if fam == "light":
+        ps["level"] = 0
+        ps["base_color"] = "#000000"
+    elif fam == "position":
+        # ⚠️ Clés SUPPRIMÉES, pas remises à 32768 : le rappel par pad AKAI
+        # (`_apply_memory_to_projectors`) recentrerait la lyre dès que la clé
+        # existe. Absente, aucun moteur n'y touche.
+        ps.pop("pan", None)
+        ps.pop("tilt", None)
+    elif fam == "raw":
+        ps["channel_extras"] = {}
+    elif fam in ps:
+        ps[fam] = mem_ch_repos(fam)
+
+
+# Canal du profil DMX → paramètre de mémoire qui l'alimente. Sert au tableau
+# « Contenu séquence » : une colonne par canal que la lyre possède VRAIMENT.
+# ⚠️ Un profil sans « Strobe » mais avec « Shutter » strobe quand même : le
+# moteur DMX pousse `strobe_speed` dans la bande strobe du shutter.
+_PROFILE_TO_MEM = {
+    "Strobe": ("strobe_speed",), "Shutter": ("shutter", "strobe_speed"),
+    "Gobo1": ("gobo",), "Gobo1Rot": ("gobo_rotation",), "Gobo2": ("gobo2",),
+    "ColorWheel": ("color_wheel",), "Prism": ("prism",),
+    "PrismRot": ("prism_rotation",), "Zoom": ("zoom",), "Focus": ("focus",),
+    "Iris": ("iris",), "Effects": ("effects",), "Speed": ("speed",),
+    "Mode": ("mode_value",), "Fan": ("fan_speed",),
+    "Preset1": ("preset1",), "Preset2": ("preset2",),
+    "Preset3": ("preset3",), "Preset4": ("preset4",),
+    "UV": ("uv",), "W": ("white_boost",), "Ambre": ("amber_boost",),
+    "Orange": ("orange_boost",),
+}
+
+
+def memory_supported_keys(proj):
+    """Paramètres de mémoire que ce projecteur sait sortir, d'après son profil."""
+    out = set()
+    for ch in (getattr(proj, "dmx_profile", None) or []):
+        out.update(_PROFILE_TO_MEM.get(ch, ()))
+    return out
 
 class MemoryChannelsDialog(QDialog):
     """Édition canal par canal de ce qu'une mémoire impose à UN projecteur.
@@ -480,15 +591,18 @@ class SequenceInfoDialog(QDialog):
     s'édite pas ici — elle n'appartient pas à la mémoire.
     """
 
-    C_PROJ, C_GROUP, C_ADDR, C_LEVEL, C_EFF, C_COLOR, \
-        C_PAN, C_TILT, C_BEAM, C_MISC, C_DEL = range(11)
+    # Colonnes fixes ; viennent ensuite une colonne PAR CANAL (celles que les
+    # lyres affichées possèdent, plus celles que la mémoire règle), puis les
+    # canaux bruts et le ✖. Tout ce qui suit C_TILT se lit dans `self._cols`.
+    C_PROJ, C_GROUP, C_ADDR, C_LEVEL, C_EFF, C_COLOR, C_PAN, C_TILT = range(8)
+    _FIXED_COLS = ("proj", "group", "addr", "level", "eff", "color", "pan", "tilt")
 
     def __init__(self, parent, main_window, memory_ref, cue_index=0, label="",
                  intensity=100, fades=(0, 0),
                  intensity_key="lt_seq_info_intensity", on_change=None):
         super().__init__(parent)
         from PySide6.QtWidgets import (QDialogButtonBox, QTableWidget,
-                                       QHeaderView, QAbstractItemView)
+                                       QAbstractItemView)
 
         self._mw    = main_window
         self._ref   = memory_ref
@@ -501,9 +615,11 @@ class SequenceInfoDialog(QDialog):
         self._on_change = on_change     # rafraîchir l'appelant après édition
         self._loading   = False         # garde-fou anti-réentrance sur itemChanged
         self._idxs      = []            # n° de projecteur affiché, par ligne
+        self._cols      = list(self._FIXED_COLS)   # clé de chaque colonne
+        self._undo      = []            # instantanés des états avant chaque retrait
 
         self.setWindowTitle(tr("lt_seq_info_title", mem=self._label))
-        self.setMinimumSize(1000, 480)
+        self.setMinimumSize(1100, 480)
         self.setStyleSheet(
             "QDialog { background:#141414; }"
             "QLabel { color:#e0e0e0; }"
@@ -521,47 +637,73 @@ class SequenceInfoDialog(QDialog):
         self._head.setTextFormat(Qt.RichText)
         lay.addWidget(self._head)
 
+        # « Cette mémoire envoie : » — une pastille par paramètre réellement
+        # imposé, ✖ pour le retirer de TOUS les projecteurs d'un coup (mémoire
+        # « que du strobe » : retirer Position et Niveau + couleur).
+        self._chips_scroll = QScrollArea()
+        self._chips_scroll.setWidgetResizable(True)
+        self._chips_scroll.setFixedHeight(40)
+        self._chips_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._chips_scroll.setStyleSheet(
+            "QScrollArea { border:none; background:transparent; }")
+        self._chips_host = QWidget()
+        self._chips_host.setObjectName("seq_chips")
+        self._chips_host.setStyleSheet("#seq_chips { background:#141414; }")
+        self._chips_lay = QHBoxLayout(self._chips_host)
+        self._chips_lay.setContentsMargins(0, 2, 0, 2)
+        self._chips_lay.setSpacing(6)
+        self._chips_scroll.setWidget(self._chips_host)
+        lay.addWidget(self._chips_scroll)
+
         bar = QHBoxLayout()
         self._chk_all = QCheckBox(tr("lt_seq_info_all_rig"))
         self._chk_all.setToolTip(tr("lt_seq_info_all_rig_tip"))
         self._chk_all.toggled.connect(lambda _: self._rebuild())
         bar.addWidget(self._chk_all)
         bar.addStretch()
-        self._btn_del = QPushButton(tr("lt_seq_info_del_sel"))
+        self._btn_undo = QPushButton(tr("lt_seq_info_undo"))
+        self._btn_undo.setStyleSheet(
+            "QPushButton { background:#1e1e1e; color:#ddd; border:1px solid #333;"
+            "              border-radius:3px; padding:3px 10px; }"
+            "QPushButton:disabled { color:#555; border-color:#282828; }")
+        self._btn_undo.setEnabled(False)
+        self._btn_undo.clicked.connect(self._undo_last)
+        self._btn_undo.setToolTip("Ctrl+Z")
+        bar.addWidget(self._btn_undo)
+        # Ctrl+Z = « Annuler » de la fenêtre. Elle est modale : le Ctrl+Z de
+        # REC Lumière ne l'atteint pas. Pendant la saisie dans une case, c'est
+        # l'éditeur de texte qui garde son propre Ctrl+Z (ShortcutOverride).
+        from PySide6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence.Undo, self, activated=self._undo_last)
+        self._btn_del = QPushButton(tr("lt_seq_info_clear_sel"))
+        self._btn_del.setToolTip(tr("lt_seq_info_sheet_hint"))
         self._btn_del.setStyleSheet(
             "QPushButton { background:#2a1a1a; color:#f44336; border:1px solid #4a2a2a;"
             "              border-radius:3px; padding:3px 10px; }"
             "QPushButton:disabled { color:#555; border-color:#282828; }")
-        self._btn_del.clicked.connect(self._delete_selection)
+        self._btn_del.clicked.connect(self._clear_selected_cells)
         bar.addWidget(self._btn_del)
         lay.addLayout(bar)
 
-        self._table = QTableWidget(0, 11)
-        self._table.setHorizontalHeaderLabels([
-            tr("lt_seq_info_col_proj"), tr("lt_seq_info_col_group"),
-            tr("lt_seq_info_col_addr"), tr("lt_seq_info_col_level"),
-            tr("lt_seq_info_col_eff"),  tr("lt_seq_info_col_color"),
-            "Pan %", "Tilt %",
-            tr("lt_seq_info_col_beam"), tr("lt_seq_info_col_misc"), "",
-        ])
+        self._table = QTableWidget(0, 0)
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        # Sélection par CELLULE : un clic sur un titre de colonne prend toute
+        # la colonne (« tout le Pan »), Suppr la vide.
+        self._table.setSelectionBehavior(QAbstractItemView.SelectItems)
         self._table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.DoubleClicked |
                                     QAbstractItemView.EditKeyPressed |
                                     QAbstractItemView.AnyKeyPressed)
-        hh = self._table.horizontalHeader()
-        for c in range(11):
-            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
-        # Seule la colonne Faisceau s'etire : c'est la plus bavarde (gobo,
-        # roue, prisme, canaux bruts), et « Divers » est vide la plupart du
-        # temps — les etirer toutes les deux donnait une moitie de tableau vide.
-        hh.setSectionResizeMode(self.C_BEAM, QHeaderView.Stretch)
         self._table.setWordWrap(False)
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellDoubleClicked.connect(self._on_double_click)
         self._table.itemSelectionChanged.connect(self._sync_del_button)
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
+        # Suppr / Retour arrière interceptés AVANT la vue : avec AnyKeyPressed,
+        # la touche ouvrirait sinon l'éditeur de la cellule.
+        self._table.installEventFilter(self)
         lay.addWidget(self._table, 1)
 
         self._foot = QLabel()
@@ -575,6 +717,15 @@ class SequenceInfoDialog(QDialog):
         lay.addWidget(btns)
 
         self._rebuild()
+
+    def eventFilter(self, obj, ev):
+        from PySide6.QtCore import QEvent
+        if (obj is self._table and ev.type() == QEvent.KeyPress
+                and ev.key() in (Qt.Key_Delete, Qt.Key_Backspace)
+                and self._table.state() != self._table.State.EditingState):
+            self._clear_selected_cells()
+            return True
+        return super().eventFilter(obj, ev)
 
     # ── Données ───────────────────────────────────────────────────────────
 
@@ -610,14 +761,16 @@ class SequenceInfoDialog(QDialog):
         projectors = getattr(self._mw, 'projectors', None) or []
         return list(range(min(len(states), len(projectors))))
 
-    def _proj_name(self, idx):
+    def _proj(self, idx):
         projs = getattr(self._mw, 'projectors', None) or []
-        if idx < len(projs):
-            return getattr(projs[idx], 'name', '') or f"#{idx + 1}"
-        return f"#{idx + 1}"
+        return projs[idx] if idx < len(projs) else None
+
+    def _proj_name(self, idx):
+        p = self._proj(idx)
+        return (getattr(p, 'name', '') if p is not None else '') or f"#{idx + 1}"
 
     def _gobo_names(self):
-        """{valeur DMX: nom} des gobos du patch — pour lire « Gobo 64 (Étoile) »."""
+        """{valeur DMX: nom} des gobos du patch — pour lire « 64 Étoile »."""
         if not hasattr(self, '_gobo_cache'):
             try:
                 self._gobo_cache = {d: n for d, n, _c
@@ -626,68 +779,79 @@ class SequenceInfoDialog(QDialog):
                 self._gobo_cache = {}
         return self._gobo_cache
 
-    def _beam_text(self, ps):
-        """Résumé des canaux de faisceau hors repos, gobo nommé si on le connaît."""
-        out = []
-        for key, label in _MEM_BEAM_CH:
-            if key not in ps:
-                continue
-            v = int(ps.get(key) or 0)
-            if v == mem_ch_repos(key):
-                continue
-            if key == "gobo":
-                nom = self._gobo_names().get(v)
-                out.append(f"{label} {v} ({nom})" if nom else f"{label} {v}")
-            else:
-                out.append(f"{label} {v}")
-        for k, v in (ps.get("channel_extras") or {}).items():
-            out.append(tr("lt_seq_info_ch_raw_lbl", k=k) + f" {v}")
-        return " · ".join(out)
-
-    def _misc_text(self, ps):
-        inten = self._inten or 0
-        out = []
-        for key, label in _MEM_MISC_CH:
-            v = int(ps.get(key, 0) or 0)
-            if not v:
-                continue
-            eff = int(v * inten / 100)
-            out.append(f"{label} {v}" if eff == v else f"{label} {v} → {eff}")
-        return " · ".join(out)
+    def _channel_cols(self):
+        """Canaux à afficher en colonnes : ceux des lyres listées + ceux que la
+        mémoire règle (même sur un projecteur sans le canal : la valeur est là,
+        il faut pouvoir la voir et la retirer)."""
+        states = self._states()
+        wanted = set()
+        for i in self._idxs:
+            wanted |= memory_supported_keys(self._proj(i))
+            if i < len(states):
+                wanted |= set(memory_param_families(states[i]))
+        return [k for k, _l in _MEM_BEAM_CH + _MEM_MISC_CH if k in wanted]
 
     # ── Construction du tableau ───────────────────────────────────────────
 
-    def _item(self, text, editable=False, dim=False):
+    def _col(self, key):
+        return self._cols.index(key) if key in self._cols else -1
+
+    def _set_cell(self, r, c, text, editable=False, dim=False, bg=None, tip=""):
         from PySide6.QtWidgets import QTableWidgetItem
-        it = QTableWidgetItem(text)
+        it = self._table.item(r, c)
+        if it is None:
+            it = QTableWidgetItem()
+            self._table.setItem(r, c, it)
+        it.setText(text)
         flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
         if editable:
             flags |= Qt.ItemIsEditable
         it.setFlags(flags)
-        it.setForeground(QColor("#888") if dim else QColor("#e0e0e0"))
+        it.setForeground(QColor("#666") if dim else QColor("#e0e0e0"))
+        it.setBackground(QBrush(QColor(bg)) if bg else QBrush())
+        if c >= len(self._FIXED_COLS) or c in (self.C_LEVEL, self.C_PAN, self.C_TILT):
+            it.setTextAlignment(Qt.AlignCenter)
+        if tip:
+            it.setToolTip(tip)
         return it
 
     def _rebuild(self):
-        """Rejoue le filtre, reconstruit les lignes puis leur contenu."""
+        """Rejoue le filtre, reconstruit colonnes, lignes puis contenu."""
+        from PySide6.QtWidgets import QHeaderView
         self._idxs = self._visible_idxs()
+        self._cols = list(self._FIXED_COLS) + self._channel_cols() + ["raw", "del"]
+        labels = [tr("lt_seq_info_col_proj"), tr("lt_seq_info_col_group"),
+                  tr("lt_seq_info_col_addr"), tr("lt_seq_info_col_level") + " %",
+                  tr("lt_seq_info_col_eff"), tr("lt_seq_info_col_color"),
+                  "Pan %", "Tilt %"]
+        names = dict(_MEM_BEAM_CH + _MEM_MISC_CH)
+        labels += [names[k] for k in self._cols[len(self._FIXED_COLS):-2]]
+        labels += [tr("lt_seq_info_ch_raw"), ""]
         self._loading = True
         try:
-            self._table.setRowCount(0)
+            self._table.clear()
+            self._table.setColumnCount(len(self._cols))
+            self._table.setHorizontalHeaderLabels(labels)
             self._table.setRowCount(len(self._idxs))
             for r, idx in enumerate(self._idxs):
                 self._fill_row(r, idx, create=True)
         finally:
             self._loading = False
+        hh = self._table.horizontalHeader()
+        for c in range(len(self._cols)):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(self._col("raw"), QHeaderView.Stretch)
+        self._table.setColumnHidden(self.C_EFF, (self._inten or 0) == 100)
         self._refresh_header()
         self._sync_del_button()
 
     def _refresh(self):
-        """Réécrit les cellules SANS toucher au jeu de lignes.
+        """Réécrit les cellules SANS toucher au jeu de lignes ni de colonnes.
 
         Une édition qui vide une ligne (niveau à 0, gobo remis au repos) ne doit
         pas la faire disparaître sous le curseur au milieu d'une saisie : le
         filtre n'est rejoué qu'au prochain `_rebuild` — case « tout le rig »,
-        suppression, réouverture de la fenêtre.
+        pastille, suppression, annulation, réouverture de la fenêtre.
         """
         self._loading = True
         try:
@@ -702,15 +866,17 @@ class SequenceInfoDialog(QDialog):
         if idx >= len(states):
             return
         ps = states[idx]
-        projs = getattr(self._mw, 'projectors', None) or []
-        p = projs[idx] if idx < len(projs) else None
+        p = self._proj(idx)
         group_display = getattr(self._mw, 'GROUP_DISPLAY', {}) or {}
+        supported = memory_supported_keys(p)
+        # Pas de profil connu (projecteur sans patch détaillé) : on ne grise
+        # rien, faute de savoir.
+        unknown_profile = not getattr(p, 'dmx_profile', None)
 
         lvl   = int(ps.get("level", 0) or 0)
         inten = self._inten or 0
-        eff   = int(lvl * inten / 100)
-        pan   = int(ps.get("pan")  or 32768) if "pan"  in ps else None
-        tilt  = int(ps.get("tilt") or 32768) if "tilt" in ps else None
+        pan   = ps.get("pan")
+        tilt  = ps.get("tilt")
 
         if p is None:
             addr = "—"
@@ -720,45 +886,54 @@ class SequenceInfoDialog(QDialog):
             addr = str(getattr(p, 'start_address', 1))
         grp = getattr(p, 'group', '') if p is not None else ''
 
-        cells = {
-            self.C_PROJ:  (self._proj_name(idx), False, False),
-            self.C_GROUP: (group_display.get(grp, grp), False, False),
-            self.C_ADDR:  (addr, False, True),
-            self.C_LEVEL: (str(lvl), True, lvl <= 0),
-            self.C_EFF:   (f"{eff} %" if inten != 100 else "", False, True),
-            self.C_COLOR: ("", False, False),
-            self.C_PAN:   ("" if pan  is None else str(round(pan  * 100 / 65535)), True, pan  is None),
-            self.C_TILT:  ("" if tilt is None else str(round(tilt * 100 / 65535)), True, tilt is None),
-            self.C_BEAM:  (self._beam_text(ps), False, False),
-            self.C_MISC:  (self._misc_text(ps), False, False),
-        }
-        for col, (txt, editable, dim) in cells.items():
-            it = None if create else self._table.item(r, col)
-            if it is None:
-                self._table.setItem(r, col, self._item(txt, editable=editable, dim=dim))
-            else:
-                it.setText(txt)
-                it.setForeground(QColor("#888") if dim else QColor("#e0e0e0"))
+        it = self._set_cell(r, self.C_PROJ, self._proj_name(idx))
+        it.setData(Qt.UserRole, idx)
+        self._set_cell(r, self.C_GROUP, group_display.get(grp, grp))
+        self._set_cell(r, self.C_ADDR, addr, dim=True)
+        self._set_cell(r, self.C_LEVEL, str(lvl), editable=True, dim=lvl <= 0,
+                       bg="#1a2a33" if lvl > 0 else None,
+                       tip=tr("lt_seq_info_tip_level"))
+        self._set_cell(r, self.C_EFF, f"{int(lvl * inten / 100)} %", dim=True)
 
-        self._table.item(r, self.C_PROJ).setData(Qt.UserRole, idx)
-        self._table.item(r, self.C_LEVEL).setToolTip(tr("lt_seq_info_tip_level"))
-        self._table.item(r, self.C_PAN).setToolTip(tr("lt_seq_info_tip_pos"))
-        self._table.item(r, self.C_TILT).setToolTip(tr("lt_seq_info_tip_pos"))
-        self._table.item(r, self.C_BEAM).setToolTip(tr("lt_seq_info_tip_beam"))
-        self._table.item(r, self.C_MISC).setToolTip(tr("lt_seq_info_tip_beam"))
-
-        # Couleur : pastille + code hexa, éditée au double-clic (pas au clavier).
-        col_it = self._table.item(r, self.C_COLOR)
-        col_it.setToolTip(tr("lt_seq_info_tip_color"))
+        col_it = self._set_cell(r, self.C_COLOR, "—", dim=True,
+                                tip=tr("lt_seq_info_tip_color"))
         if lvl > 0:
             qc = QColor(ps.get("base_color", "#ffffff"))
             col_it.setText(qc.name())
             col_it.setBackground(qc)
             col_it.setForeground(QColor("#000") if qc.lightness() > 128 else QColor("#fff"))
-        else:
-            col_it.setText("—")
-            col_it.setBackground(QBrush())
-            col_it.setForeground(QColor("#666"))
+
+        for c, v in ((self.C_PAN, pan), (self.C_TILT, tilt)):
+            on = v is not None and int(v) != 32768
+            self._set_cell(r, c, "" if v is None else str(round(int(v) * 100 / 65535)),
+                           editable=True, dim=not on, bg="#1a2a33" if on else None,
+                           tip=tr("lt_seq_info_tip_pos"))
+
+        for c in range(len(self._FIXED_COLS), len(self._cols) - 2):
+            key = self._cols[c]
+            v = int(ps.get(key, mem_ch_repos(key)) or 0)
+            repos = mem_ch_repos(key)
+            a_le_canal = unknown_profile or key in supported
+            if v != repos:
+                txt = str(v)
+                if key == "gobo" and self._gobo_names().get(v):
+                    txt = f"{v} {self._gobo_names()[v]}"
+                # Valeur posée sur un projecteur qui n'a pas ce canal : rouge
+                # sombre, elle ne sort nulle part — autant la voir et la retirer.
+                self._set_cell(r, c, txt, editable=True,
+                               bg="#1a2a33" if a_le_canal else "#3a1c1c",
+                               tip=tr("lt_seq_info_tip_cell", v=repos))
+            elif a_le_canal:
+                self._set_cell(r, c, "·", editable=True, dim=True,
+                               tip=tr("lt_seq_info_tip_cell", v=repos))
+            else:
+                self._set_cell(r, c, "", bg="#101010")
+
+        extras = ps.get("channel_extras") or {}
+        self._set_cell(r, self._col("raw"),
+                       " · ".join(f"{k}={v}" for k, v in extras.items()),
+                       bg="#1a2a33" if extras else None,
+                       tip=tr("lt_seq_info_tip_beam"))
 
         if create:
             btn = QPushButton("✖")
@@ -768,7 +943,7 @@ class SequenceInfoDialog(QDialog):
                 "QPushButton { background:transparent; color:#f44336; border:0; }"
                 "QPushButton:hover { color:#ff7b72; }")
             btn.clicked.connect(lambda _=False, i=idx: self._delete_projectors([i]))
-            self._table.setCellWidget(r, self.C_DEL, btn)
+            self._table.setCellWidget(r, self._col("del"), btn)
 
     def _refresh_header(self):
         head = [f"<b style='font-size:15px'>{self._label}</b>"]
@@ -781,24 +956,160 @@ class SequenceInfoDialog(QDialog):
             head.append(tr("lt_seq_info_fades", fi=fi, fo=fo))
         self._head.setText("&nbsp;&nbsp;·&nbsp;&nbsp;".join(head))
 
+        self._rebuild_chips()
         n_set = len(self._set_idxs())
         if n_set:
             self._foot.setText(f"{tr('lt_seq_info_count', n=n_set)} · "
-                               f"{tr('lt_seq_info_edit_hint')} · "
-                               f"{tr('lt_seq_info_del_hint')}")
+                               f"{tr('lt_seq_info_sheet_hint')}")
         else:
             self._foot.setText(f"{tr('lt_seq_info_empty')} · "
                                f"{tr('lt_seq_info_all_rig_tip')}")
 
+    # ── Paramètres imposés : pastilles, retrait, annulation ──────────────
+
+    def _fam_label(self, fam):
+        if fam == "light":
+            return tr("lt_seq_info_fam_light")
+        if fam == "position":
+            return tr("lt_seq_info_col_pos")
+        if fam == "raw":
+            return tr("lt_seq_info_ch_raw")
+        return dict(_MEM_BEAM_CH + _MEM_MISC_CH).get(fam, fam)
+
+    def _families_count(self, idxs=None):
+        """{famille: nb de projecteurs qui l'imposent}, dans l'ordre d'affichage."""
+        states = self._states()
+        idxs = self._set_idxs() if idxs is None else idxs
+        count = {}
+        for i in idxs:
+            if i < len(states):
+                for fam in memory_param_families(states[i]):
+                    count[fam] = count.get(fam, 0) + 1
+        return count
+
+    def _rebuild_chips(self):
+        while self._chips_lay.count():
+            it = self._chips_lay.takeAt(0)
+            if it.widget() is not None:
+                it.widget().deleteLater()
+        count = self._families_count()
+        lbl = QLabel(tr("lt_seq_info_sends") if count else tr("lt_seq_info_sends_none"))
+        lbl.setStyleSheet("color:#888; font-size:11px;")
+        self._chips_lay.addWidget(lbl)
+        for fam, n in count.items():
+            btn = QPushButton(f"{self._fam_label(fam)} · {n}   ✖")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(tr("lt_seq_info_fam_del_tip", p=self._fam_label(fam)))
+            btn.setStyleSheet(
+                "QPushButton { background:#1a2a33; color:#cfeefa; border:1px solid #2c4a58;"
+                "              border-radius:11px; padding:3px 10px; font-size:11px; }"
+                "QPushButton:hover { background:#3a1c1c; color:#ff8a80;"
+                "                    border-color:#6a2c2c; }")
+            btn.clicked.connect(lambda _=False, f=fam: self._strip(f))
+            self._chips_lay.addWidget(btn)
+        self._chips_lay.addStretch()
+
+    def _push_undo(self):
+        self._undo.append([copy.deepcopy(ps) for ps in self._states()])
+        self._btn_undo.setEnabled(True)
+
+    def _undo_last(self):
+        if not self._undo:
+            return
+        snap = self._undo.pop()
+        # Restauration EN PLACE : les dicts sont des références vives sur la
+        # mémoire (clips, pad AKAI) — les remplacer couperait le lien.
+        for ps, old in zip(self._states(), snap):
+            ps.clear()
+            ps.update(old)
+        self._btn_undo.setEnabled(bool(self._undo))
+        self._save()
+        self._rebuild()
+
+    def _strip(self, fam, idxs=None):
+        """Retire une famille de paramètres — de TOUT le rig de la mémoire
+        par défaut (y compris les projecteurs masqués), sinon de `idxs`."""
+        states = self._states()
+        idxs = range(len(states)) if idxs is None else idxs
+        cibles = [states[i] for i in idxs
+                  if i < len(states) and fam in memory_param_families(states[i])]
+        if not cibles:
+            return
+        self._push_undo()
+        for ps in cibles:
+            strip_memory_param(ps, fam)
+        self._save()
+        self._rebuild()
+
+    def _cell_family(self, col):
+        """Ce que vider une cellule de cette colonne retire (None = rien)."""
+        key = self._cols[col] if 0 <= col < len(self._cols) else None
+        if key in ("level", "eff", "color"):
+            return "light"
+        if key in ("pan", "tilt", "raw"):
+            return key
+        if key in dict(_MEM_BEAM_CH + _MEM_MISC_CH):
+            return key
+        return None
+
+    def _clear_selected_cells(self):
+        """Suppr : remet au repos chaque valeur sélectionnée. La ligne et la
+        colonne restent en place (pas de saut sous la souris)."""
+        states = self._states()
+        todo = []
+        for mi in self._table.selectedIndexes():
+            r, fam = mi.row(), self._cell_family(mi.column())
+            if fam is None or r >= len(self._idxs) or self._idxs[r] >= len(states):
+                continue
+            ps = states[self._idxs[r]]
+            if fam in ("pan", "tilt"):
+                if fam in ps:
+                    todo.append((ps, fam))
+            elif fam in memory_param_families(ps):
+                todo.append((ps, fam))
+        if not todo:
+            return
+        self._push_undo()
+        for ps, fam in todo:
+            if fam in ("pan", "tilt"):
+                ps.pop(fam, None)   # cf. `strip_memory_param` : jamais 32768
+            else:
+                strip_memory_param(ps, fam)
+        self._save()
+        self._refresh()
+
+    def _on_context_menu(self, pos):
+        r = self._table.rowAt(pos.y())
+        if r < 0 or r >= len(self._idxs):
+            return
+        idxs = self._selected_idxs()
+        if self._idxs[r] not in idxs:
+            idxs = [self._idxs[r]]
+        menu = QMenu(self)
+        if any(self._cell_family(mi.column()) for mi in self._table.selectedIndexes()):
+            menu.addAction(tr("lt_seq_info_clear_sel") + "   (Suppr)",
+                           self._clear_selected_cells)
+            menu.addSeparator()
+        for fam, n in self._families_count(idxs).items():
+            txt = tr("lt_seq_info_fam_del", p=self._fam_label(fam))
+            if len(idxs) > 1:
+                txt += f"  ({n}/{len(idxs)})"
+            menu.addAction(txt, lambda f=fam: self._strip(f, idxs))
+        if not menu.isEmpty():
+            menu.addSeparator()
+        menu.addAction(tr("lt_seq_info_del_tip"),
+                       lambda: self._delete_projectors(idxs))
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
     def _sync_del_button(self):
-        self._btn_del.setEnabled(bool(self._selected_idxs()))
+        self._btn_del.setEnabled(any(self._cell_family(mi.column())
+                                     for mi in self._table.selectedIndexes()))
 
     def _selected_idxs(self):
         out = []
         for r in sorted({i.row() for i in self._table.selectedIndexes()}):
-            it = self._table.item(r, self.C_PROJ)
-            if it is not None and it.data(Qt.UserRole) is not None:
-                out.append(int(it.data(Qt.UserRole)))
+            if r < len(self._idxs):
+                out.append(self._idxs[r])
         return out
 
     # ── Édition ───────────────────────────────────────────────────────────
@@ -807,35 +1118,40 @@ class SequenceInfoDialog(QDialog):
         if self._loading:
             return
         r, col = item.row(), item.column()
-        if r >= len(self._idxs):
+        if r >= len(self._idxs) or col >= len(self._cols):
             return
         idx    = self._idxs[r]
         states = self._states()
         if idx >= len(states):
             return
         ps  = states[idx]
+        key = self._cols[col]
         txt = item.text().strip().replace("%", "").replace(",", ".").strip()
+        if key == "gobo":
+            txt = txt.split(" ")[0]         # « 64 Étoile » → 64
 
-        if col == self.C_LEVEL:
+        if key == "level":
             try:
-                ps["level"] = max(0, min(100, int(round(float(txt or 0)))))
+                v = max(0, min(100, int(round(float(txt or 0)))))
             except ValueError:
                 self._refresh()
                 return
+            self._push_undo()
+            ps["level"] = v
             # Rallumer un projecteur laissé à 0 le rendrait noir : la capture
             # écrit `base_color` = #000000 dès que le niveau est à 0
             # (cf. `_build_snapshot`). On repart du blanc — la pastille est juste
             # à côté pour choisir mieux.
-            if ps["level"] > 0 and QColor(ps.get("base_color", "#000000")) == QColor("#000000"):
+            if v > 0 and QColor(ps.get("base_color", "#000000")) == QColor("#000000"):
                 ps["base_color"] = "#ffffff"
-        elif col in (self.C_PAN, self.C_TILT):
-            key = "pan" if col == self.C_PAN else "tilt"
+        elif key in ("pan", "tilt"):
             if txt == "":
                 # ⚠️ La clé est SUPPRIMÉE, pas remise à 32768 : le rappel par pad
                 # AKAI (`_apply_memory_to_projectors`) applique le pan/tilt dès
                 # que la clé existe, même au centre — il recentrerait la lyre au
                 # lieu de la laisser tranquille. Absente, les deux moteurs
                 # l'ignorent.
+                self._push_undo()
                 ps.pop(key, None)
             else:
                 try:
@@ -843,22 +1159,35 @@ class SequenceInfoDialog(QDialog):
                 except ValueError:
                     self._refresh()
                     return
+                self._push_undo()
                 ps[key] = int(round(pct * 65535 / 100))
+        elif key in dict(_MEM_BEAM_CH + _MEM_MISC_CH):
+            if txt in ("", "·"):
+                v = mem_ch_repos(key)
+            else:
+                try:
+                    v = max(0, min(255, int(round(float(txt)))))
+                except ValueError:
+                    self._refresh()
+                    return
+            self._push_undo()
+            ps[key] = v
         else:
             return
         self._save()
         self._refresh()
 
     def _on_double_click(self, r, col):
-        if r >= len(self._idxs):
+        if r >= len(self._idxs) or col >= len(self._cols):
             return
         idx    = self._idxs[r]
         states = self._states()
         if idx >= len(states):
             return
-        ps = states[idx]
+        ps  = states[idx]
+        key = self._cols[col]
 
-        if col == self.C_COLOR:
+        if key == "color":
             from PySide6.QtWidgets import QColorDialog
             depart = QColor(ps.get("base_color", "#ffffff"))
             if not depart.isValid() or depart == QColor("#000000"):
@@ -866,6 +1195,7 @@ class SequenceInfoDialog(QDialog):
             c = QColorDialog.getColor(depart, self, tr("lt_seq_info_col_color"))
             if not c.isValid():
                 return
+            self._push_undo()
             ps["base_color"] = c.name()
             # Une couleur sur un projecteur éteint ne sort pas : la mémoire ne
             # pose couleur et canaux dédiés que si elle l'allume.
@@ -873,18 +1203,21 @@ class SequenceInfoDialog(QDialog):
                 ps["level"] = 100
             self._save()
             self._refresh()
-        elif col in (self.C_BEAM, self.C_MISC):
+        elif key == "raw":
+            snap = [copy.deepcopy(s) for s in states]
             dlg = MemoryChannelsDialog(self, ps, self._proj_name(idx))
             if dlg.exec() == QDialog.Accepted and dlg.apply_to(ps):
+                self._undo.append(snap)
+                self._btn_undo.setEnabled(True)
                 self._save()
-                self._refresh()
+                self._rebuild()
 
     def _save(self):
         """Écrit la mémoire sur disque et prévient l'appelant.
 
-        Immédiat et sans filet : les mémoires ne vivent QUE dans
-        `~/.maestro_akai_config.json`, et le Ctrl+Z de REC Lumière ne les couvre
-        pas.
+        Immédiat : les mémoires ne vivent QUE dans `~/.maestro_akai_config.json`
+        et le Ctrl+Z de REC Lumière ne les couvre pas — le filet, c'est le
+        bouton « Annuler » de la fenêtre, tant qu'elle est ouverte.
         """
         if self._mw is not None and self._ref:
             if hasattr(self._mw, '_save_akai_config_auto'):
@@ -895,11 +1228,6 @@ class SequenceInfoDialog(QDialog):
             self._on_change()
 
     # ── Suppression d'un ou plusieurs projecteurs ─────────────────────────
-
-    def _delete_selection(self):
-        idxs = self._selected_idxs()
-        if idxs:
-            self._delete_projectors(idxs)
 
     def _delete_projectors(self, idxs):
         """Retire des projecteurs de la mémoire. True si c'est fait.
@@ -925,6 +1253,7 @@ class SequenceInfoDialog(QDialog):
                 QMessageBox.Cancel) != QMessageBox.Yes:
             return False
 
+        self._push_undo()
         for i in idxs:
             ps = states[i]
             ps["level"]          = 0
@@ -947,7 +1276,6 @@ class SequenceInfoDialog(QDialog):
         self._save()
         self._rebuild()
         return True
-
 
 def movement_pan_tilt(get, elapsed_s, progress):
     """Pan/tilt 16 bits d'un clip de mouvement — DÉFINITION UNIQUE.
@@ -1078,11 +1406,13 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win,
 
     # 2) Fusion HTP : par projecteur, garder la contribution la plus lumineuse
     merged = {}   # idx -> (niveau_effectif, ps, brightness)
+    couches = {}  # idx -> [(niveau_effectif, brightness, ps)] toutes mémoires
     for ps_list, brightness in resolved:
         for i, ps in enumerate(ps_list):
             if i >= len(projectors):
                 continue
             eff = ps.get("level", 0) * brightness
+            couches.setdefault(i, []).append((eff, brightness, ps))
             cur = merged.get(i)
             if cur is None or eff > cur[0]:
                 merged[i] = (eff, ps, brightness)
@@ -1091,53 +1421,48 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win,
     fx_ids = getattr(main_win, '_fx_clip_ids', None)
     for i, (_eff, ps, brightness) in merged.items():
         proj = projectors[i]
-        # Pan/Tilt/Strobe/canaux bruts suivent la mémoire gagnante — avec DEUX
-        # garde-fous sur le pan/tilt (sinon poser une séquence téléportait les
-        # lyres à la position capturée dans la mémoire) :
-        #  1) un clip de la piste Position actif PRIME (verrou explicite) ;
-        #  2) une mémoire capture le pan/tilt de TOUTES les lyres, même non
-        #     visées → on ne relaie que si la valeur n'est PAS au centre (32768).
-        #     Centre = « lyre non aimée dans la séquence » → on garde la position
-        #     posée dessous (piste Position / manuel). Par axe, indépendamment.
-        if not (lock_pantilt_idxs and i in lock_pantilt_idxs):
-            if ps.get("pan", 32768) != 32768:
-                proj.pan = ps["pan"]
-            if ps.get("tilt", 32768) != 32768:
-                proj.tilt = ps["tilt"]
-        proj.strobe_speed = int(ps.get("strobe_speed", 0))
-        proj.channel_extras = dict(ps.get("channel_extras", {}) or {})
-
-        # Canaux de faisceau : une mémoire POSE ce qu'elle a enregistré, elle
-        # n'EFFACE pas ce qu'une autre piste a posé.
+        # Pan/tilt, strobe, faisceau, canaux bruts : paramètre par paramètre,
+        # chaque mémoire ne pose que ce qu'elle a enregistré HORS REPOS (cf.
+        # `compose_memory_params`, même règle que les pads en live). Priorité à
+        # la plus lumineuse, puis au fader le plus haut. Une mémoire « juste un
+        # strobe » posée sur un look le fait donc stroboscoper ; avant, la
+        # mémoire qui allumait le plus fort imposait SON strobe (0) et ses
+        # canaux bruts à tout le monde.
         #
-        # C'est la règle du pan/tilt juste au-dessus, et NON celle du rappel par
-        # pad AKAI, qui réimpose l'état complet, valeurs au repos comprises. La
-        # différence tient au contexte : un pad DÉFINIT le look du moment, alors
-        # qu'un clip Séquence n'est qu'une piste parmi d'autres, empilée sur les
-        # pistes Couleur, Gobo et Position — lesquelles tournent juste avant
-        # nous. Or une mémoire capture TOUT le rig, y compris les projecteurs
-        # qu'elle ne vise pas, avec leurs canaux au repos : appliquée telle
-        # quelle, elle remettrait le gobo de la piste Gobo à zéro. C'est
-        # exactement la régression 3.1.79 sur l'UV et l'ambre.
+        # Une mémoire POSE, elle n'EFFACE pas ce qu'une autre piste a posé :
+        # un clip Séquence n'est qu'une piste parmi d'autres, empilée sur les
+        # pistes Couleur, Gobo et Position qui tournent juste avant nous. Une
+        # mémoire capture TOUT le rig, canaux au repos compris : appliquée
+        # telle quelle, elle remettrait le gobo de la piste Gobo à zéro
+        # (régression 3.1.79 sur l'UV et l'ambre). Contrepartie assumée : en
+        # piste Séquence, une mémoire ne peut pas RETIRER un gobo ni recentrer
+        # une lyre, seulement en poser. Pour effacer, la piste dédiée.
         #
-        # Contrepartie assumée, la même que pour le pan/tilt : en piste
-        # Séquence, une mémoire ne peut pas RETIRER un gobo, seulement en poser
-        # un. Pour effacer, on utilise la piste dédiée.
+        # Deux verrous explicites priment : un clip de la piste Position actif
+        # (pan/tilt), un clip de la piste Gobo actif (gobo + rotation).
+        ordre = sorted(couches.get(i, []), key=lambda t: (t[0], t[1]), reverse=True)
+        params, extras = compose_memory_params([c[2] for c in ordre])
+        _pt_verrou = bool(lock_pantilt_idxs and i in lock_pantilt_idxs)
         _gobo_verrou = bool(lock_gobo_idxs and i in lock_gobo_idxs)
-        for _attr, _repos in _REPOS_FAISCEAU.items():
-            if _gobo_verrou and _attr in ("gobo", "gobo_rotation"):
-                continue    # un clip de la piste Gobo actif prime (verrou explicite)
-            _v = ps.get(_attr, _repos)
-            if _v is None:
+        for _attr, (_v, _rang) in params.items():
+            if _attr in _MEM_MISC_KEYS:
+                _v = int(_v * ordre[_rang][1])   # scalés par la luminosité du clip
+            if _pt_verrou and _attr in ("pan", "tilt"):
                 continue
-            _v = int(_v)
-            if _v != _repos:
-                setattr(proj, _attr, _v)
+            if _gobo_verrou and _attr in ("gobo", "gobo_rotation"):
+                continue
+            setattr(proj, _attr, _v)
+        # Le strobe, lui, s'éteint quand plus personne ne le pose : c'est de la
+        # lumière, pas un réglage de faisceau qu'une autre piste aurait posé.
+        if "strobe_speed" not in params:
+            proj.strobe_speed = 0
+        proj.channel_extras = extras
         if ps.get("level", 0) > 0:
             lvl = int(ps["level"] * brightness)
             base = QColor(ps["base_color"])
-            # Canaux dédiés (UV, Blanc, Ambre, Orange) : DANS ce bloc, jamais
-            # au-dessus.
+            # Canaux dédiés (UV, Blanc, Ambre, Orange) : leur REMISE À ZÉRO se
+            # fait DANS ce bloc, jamais au-dessus (au-dessus, on ne pose que
+            # des valeurs hors repos).
             #
             # Une mémoire capture l'état de TOUS les projecteurs, y compris ceux
             # qu'elle ne vise pas — ils y figurent avec level 0 et sans clé
@@ -1150,7 +1475,10 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win,
             # projecteur éteint. Ici, une mémoire ne peut effacer ces canaux que
             # lorsqu'elle allume réellement le projecteur, donc qu'elle en
             # définit l'état complet — ce que fait déjà la couleur RVB.
+            # Sauf si une mémoire levée avec elle les pose (posés plus haut).
             for _attr in ("uv", "white_boost", "amber_boost", "orange_boost"):
+                if _attr in params:
+                    continue
                 setattr(proj, _attr, int(ps.get(_attr, 0) * brightness))
             proj.level = lvl
             proj.base_color = base

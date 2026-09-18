@@ -9096,6 +9096,16 @@ class MainWindow(QMainWindow):
                 active.append((niveau / 100.0,
                                self._mem_active_cue(mem_col, row), mem))
 
+        # 1 ter. Ordre de priorité des paramètres : fader le plus haut d'abord.
+        # Chaque mémoire n'impose que ce qu'elle a enregistré hors repos (cf.
+        # `compose_memory_params`) : une mémoire « juste un strobe », « juste
+        # un gobo » ou « juste une position » se lève par-dessus un look sans
+        # lui reprendre le reste. Avant, la mémoire au fader le plus haut
+        # imposait TOUT son faisceau, valeurs au repos comprises : lever un
+        # strobe recentrait les lyres, refermait le gobo, coupait l'UV.
+        from light_timeline import compose_memory_params, mem_param_repos, MEM_PARAMS
+        par_prio = sorted(active, key=lambda t: t[0], reverse=True)
+
         # 2. Compositer chaque projecteur
         for i, p in enumerate(self.projectors):
             # Prise en main depuis le plan 2D : ne pas réécrire cette fixture, sinon
@@ -9109,16 +9119,13 @@ class MainWindow(QMainWindow):
             r_acc = g_acc = b_acc = 0.0
             best_eff = -1.0          # plus forte contribution lumineuse (level × fader)
             best_state = None        # → couleur dominante / roue de couleur
-            best_bright = -1.0       # fader le plus haut touchant ce projo
-            spec_state = None        # → canaux spéciaux (pan/tilt/gobo/UV/boosts)
-            for bright, cue, _mem in active:
+            touches = []             # (fader, état) des mémoires qui couvrent ce projo
+            for bright, cue, _mem in par_prio:
                 states = cue.get("projectors", [])
                 if i >= len(states):
                     continue
                 st  = states[i]
-                # Mémoire au fader le plus haut → pilote les canaux spéciaux
-                if bright > best_bright:
-                    best_bright, spec_state = bright, st
+                touches.append((bright, st))
                 lvl = st.get("level", 0) or 0
                 eff = lvl * bright
                 if eff <= 0:
@@ -9131,54 +9138,46 @@ class MainWindow(QMainWindow):
                 g_acc += bc.green() * f
                 b_acc += bc.blue()  * f
 
-            if spec_state is None:
+            if not touches:
                 # Aucune mémoire active ne touche ce projecteur → éteint
                 p.level = 0
                 p.base_color = QColor("black")
                 p.color = QColor("black")
                 continue
 
-            # Canaux spéciaux + pan/tilt : mémoire au fader le plus haut
-            ds    = spec_state
-            scale = best_bright          # luminosité du fader dominant (0-1)
+            params, extras = compose_memory_params([st for _b, st in touches])
+
+            def _param(key, scaled=False):
+                if key not in params:
+                    return mem_param_repos(key)
+                v, rang = params[key]
+                return int(v * touches[rang][0]) if scaled else v
+
             # Gobo/rotation/zoom/focus réglés à la main depuis le plan 2D → la
             # mémoire ne les réimpose plus. Cette fonction tourne à CHAQUE
             # mouvement de fader : sans la garde, un gobo posé à la main sautait
             # dès qu'on effleurait un fader. La couleur, elle, reste pilotée par
             # la mémoire (garde séparée `_manual_color`). Libéré par CLEAR.
             if not getattr(p, '_manual_beam', False):
-                p.uv           = int(ds.get("uv",           0) * scale)
-                p.amber_boost  = int(ds.get("amber_boost",  0) * scale)
-                p.white_boost  = int(ds.get("white_boost",  0) * scale)
-                p.orange_boost = int(ds.get("orange_boost", 0) * scale)
-                p.gobo          = int(ds.get("gobo",          0))
-                p.gobo_rotation = int(ds.get("gobo_rotation", 0))
-                p.zoom          = int(ds.get("zoom",          0))
-                p.strobe_speed  = int(ds.get("strobe_speed",  0))
-                # Non scalés par `scale` : la mise au point, la 2e roue de gobos, la
-                # vitesse et le canal Mode ne sont pas des grandeurs lumineuses.
-                p.focus         = int(ds.get("focus",         0))
-                p.gobo2         = int(ds.get("gobo2",         0))
-                p.speed         = int(ds.get("speed",         0))
-                p.mode_value    = int(ds.get("mode_value",    0))
-                for _i in (1, 2, 3, 4):
-                    setattr(p, f"preset{_i}", int(ds.get(f"preset{_i}", 0)))
-                # Idem : roue, prisme, iris, shutter, macro. Shutter au repos =
-                # 255 (ouvert), sinon une vieille mémoire fermerait le faisceau.
-                p.prism          = int(ds.get("prism",          0))
-                p.prism_rotation = int(ds.get("prism_rotation", 0))
-                p.effects        = int(ds.get("effects",        0))
-                p.iris           = int(ds.get("iris",           0))
-                p.fan_speed      = int(ds.get("fan_speed",      0))
-                p.shutter        = int(ds.get("shutter",      255))
-                p.color_wheel    = int(ds.get("color_wheel",    0))
-                # Canaux bruts (Mode…) : pilotés par la mémoire au fader dominant
-                p.channel_extras = dict(ds.get("channel_extras", {}) or {})
+                # Canaux de couleur dédiés : scalés par le fader de la mémoire
+                # qui les pose. Tout le reste (gobo, focus, vitesse, Mode…)
+                # n'est pas une grandeur lumineuse : valeur brute. Le shutter
+                # revient à 255 (ouvert) quand personne ne l'impose.
+                for _k in ("uv", "amber_boost", "white_boost", "orange_boost"):
+                    setattr(p, _k, _param(_k, scaled=True))
+                for _k in MEM_PARAMS:
+                    if _k in ("pan", "tilt", "uv", "amber_boost",
+                              "white_boost", "orange_boost"):
+                        continue
+                    setattr(p, _k, _param(_k))
+                p.channel_extras = extras
             # Pan/tilt pris en main depuis le plan 2D → la mémoire n'y touche plus
             # (elle continue de piloter couleur/intensité). Libéré par CLEAR.
-            if ("pan" in ds or "tilt" in ds) and not getattr(p, '_manual_move', False):
-                np_ = ds.get("pan",  getattr(p, 'pan',  32768))
-                nt_ = ds.get("tilt", getattr(p, 'tilt', 32768))
+            # Par axe, comme le reste : une mémoire « juste un tilt » ne
+            # recentre pas le pan d'une autre.
+            if any("pan" in st or "tilt" in st for _b, st in touches)                     and not getattr(p, '_manual_move', False):
+                np_ = _param("pan")
+                nt_ = _param("tilt")
                 p.pan  = np_ * 256 if np_ <= 255 else np_
                 p.tilt = nt_ * 256 if nt_ <= 255 else nt_
 
@@ -9210,15 +9209,20 @@ class MainWindow(QMainWindow):
                     p.color = QColor(R, G, B)
                     self._update_color_wheel(p, hue)
 
-        # 3. Effet : piloté par la mémoire dominante (fader le plus haut)
+        # 3. Effet : piloté par la mémoire la plus haute qui en porte un
         # Pendant un momentané FLASH / FLASH KILL, on n'y touche pas : sous KILL
         # plus aucune mémoire n'est retenue, l'effet en cours se serait donc fait
         # arrêter à l'appui — et le relâcher ne l'aurait pas relancé (la mémoire
         # revenue ne porte pas forcément d'effet). L'effet mourait pour de bon.
         if getattr(self, '_flash_kind', None) is not None:
             return
-        if active:
-            dom_bright, dom_cue, dom_mem = max(active, key=lambda t: t[0])
+        # Même règle que les paramètres : l'effet vient de la mémoire la plus
+        # haute QUI EN PORTE UN. Une mémoire sans effet (juste un strobe, juste
+        # une position) ne coupe pas celui du look levé avec elle.
+        avec_effet = [t for t in active
+                      if (t[1].get("effect") or (t[2] or {}).get("effect") or {}).get("layers")]
+        if avec_effet:
+            dom_bright, dom_cue, dom_mem = max(avec_effet, key=lambda t: t[0])
             eff_cfg = dom_cue.get("effect") or (dom_mem or {}).get("effect") or {}
             new_eff = eff_cfg.get("name", "") if (eff_cfg.get("layers") and dom_bright > 0) else ""
         else:
@@ -9863,55 +9867,29 @@ class MainWindow(QMainWindow):
             effect.setdefault("name", self.active_effect)
         return {"projectors": snapshot, "effect": effect, "duration": 0}
 
-    # Canaux qui, seuls, ne font RIEN sortir : ils reglent le faisceau mais ne
-    # l'allument pas. Une capture qui ne porte qu'eux est une capture faite rig
-    # eteint. `shutter` est exclu : son repos vaut 255, pas 0.
-    _SNAP_BEAM_ONLY = (
-        "strobe_speed", "gobo", "gobo_rotation", "gobo2", "zoom", "focus",
-        "iris", "prism", "prism_rotation", "color_wheel", "effects",
-        "uv", "white_boost", "amber_boost", "orange_boost",
-    )
+    def _note_snapshot_sans_niveau(self, cue):
+        """Dire au REC qu'une capture sans niveau est une SURCOUCHE.
 
-    def _confirm_dark_snapshot(self, cue, mem_col, row):
-        """Prevenir quand la capture n'allume RIEN mais porte des reglages.
-
-        Une memoire enregistre `level` tel quel. Regler le strobe (ou un gobo,
-        un canal brut) sur un rig eteint donne donc une memoire a level 0
-        PARTOUT : rappelee d'un pad, elle repose noir sur toutes les fixtures et
-        eteint le plateau au lieu de faire ce qu'on croyait y avoir mis.
-
-        Retourne False si l'utilisateur annule.
+        Rig éteint, juste un strobe (ou un gobo, une position, un canal brut)
+        monté, REC : la mémoire ne porte que ce réglage. Ce n'est plus une
+        erreur — elle se lève par-dessus un look (cf. `compose_memory_params`).
+        On le dit dans le journal, sans bloquer le REC par une question.
         """
         try:
+            from light_timeline import memory_state_is_set
             states = cue.get("projectors") or []
             if any(int(ps.get("level", 0) or 0) > 0 for ps in states):
-                return True
-            porte = any(
-                int(ps.get(_k, 0) or 0) > 0
-                for ps in states for _k in self._SNAP_BEAM_ONLY
-            ) or any(ps.get("channel_extras") for ps in states)
-            if not porte:
-                return True   # capture vide assumee (un « noir » se memorise)
-            from PySide6.QtWidgets import QMessageBox
-            msg = QMessageBox(self)
-            msg.setWindowTitle(f"MEM {mem_col + 1}.{row + 1}")
-            msg.setText(tr("mw_mem_dark_snapshot"))
-            msg.setInformativeText(tr("mw_mem_dark_snapshot_tip"))
-            msg.setStyleSheet("background:#1e1e1e; color:white;")
-            b_ok     = msg.addButton(tr("mw_mem_dark_record"), QMessageBox.AcceptRole)
-            msg.addButton(tr("mw_cancel"), QMessageBox.RejectRole)
-            msg.exec()
-            return msg.clickedButton() == b_ok
+                return
+            if any(memory_state_is_set(ps) for ps in states):
+                self._log_message(tr("mw_mem_overlay"), "rec")
         except Exception as e:
-            # Un garde-fou ne doit jamais empecher un REC.
-            print(f"[MEM] controle capture eteinte ignore: {e}")
-            return True
+            # Une note ne doit jamais empêcher un REC.
+            print(f"[MEM] note capture sans niveau ignorée: {e}")
 
     def _record_memory(self, mem_col, row):
         """Capture l'état courant. Si la mémoire existe, propose Remplacer / Ajouter cue."""
         cue = self._build_snapshot()
-        if not self._confirm_dark_snapshot(cue, mem_col, row):
-            return
+        self._note_snapshot_sans_niveau(cue)
         mem = self.memories[mem_col][row]
 
         if mem is not None:
@@ -12709,7 +12687,8 @@ class MainWindow(QMainWindow):
         # l'éditeur d'effets. Auparavant c'était l'index dans l'effet, ce qui
         # donnait un miroir différent selon l'ordre du patch.
         _sym_mir = (sym_mirror_ids(_mh_projs, self.projectors)
-                    if any(ld.get("sym_pan") for ld in layers_dicts) else set())
+                    if any(ld.get("sym_pan") or ld.get("sym_tilt") for ld in layers_dicts)
+                    else set())
 
         # Même chose pour le mouvement : les lyres d'une sélection sont classées
         # entre elles dans l'ordre choisi, sinon le Pan/Tilt d'un chenillard
@@ -12980,7 +12959,9 @@ class MainWindow(QMainWindow):
                     else:
                         center = (_ctr[1] if _ctr is not None else
                                   saved[4] if saved and len(saved) > 4 else 32768)
-                        proj.tilt = int(max(0, min(65535, center + (raw_mv - 0.5) * 2 * amplitude)))
+                        sym_tilt  = ld.get("sym_tilt", False)
+                        tilt_sign = -1 if (sym_tilt and id(proj) in _sym_mir) else 1
+                        proj.tilt = int(max(0, min(65535, center + tilt_sign * (raw_mv - 0.5) * 2 * amplitude)))
 
                 elif attr == "Pan/Tilt":
                     # Forme de trajectoire couplée Pan+Tilt
@@ -13010,6 +12991,8 @@ class MainWindow(QMainWindow):
                     _mh_i, _mh_n_pt = block_index(_mh_i, _mh_n_pt, _blk)
                     sym_pan  = ld.get("sym_pan", False)
                     pan_sign = -1 if (sym_pan and id(proj) in _sym_mir) else 1
+                    sym_tilt  = ld.get("sym_tilt", False)
+                    tilt_sign = -1 if (sym_tilt and id(proj) in _sym_mir) else 1
 
                     # Dephasage mouvement : echelle /100 (alignee sur la preview de
                     # l'editeur), plafonnee a 1.0 = etalement parfait. Au-dela le
@@ -13046,7 +13029,7 @@ class MainWindow(QMainWindow):
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = (_ctr[1] if _ctr is not None else
                                   saved[4] if saved and len(saved) > 4 else 32768)
-                        proj.tilt = int(max(0, min(65535, c_tilt + (tilt_raw - 0.5) * 2 * amplitude)))
+                        proj.tilt = int(max(0, min(65535, c_tilt + tilt_sign * (tilt_raw - 0.5) * 2 * amplitude)))
 
                 elif attr == "Zoom":
                     proj.zoom = int(max(0, min(255, scaled * 255)))

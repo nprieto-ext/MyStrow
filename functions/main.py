@@ -3398,6 +3398,152 @@ def _act_throttle_ok(ip: str) -> bool:
         return True
 
 
+# Boîte qui change de mains. Le couple n° de série + code n'existe que dans la
+# boîte : quelqu'un qui arrive avec les deux, sur un autre compte, a la boîte
+# en main. Cas type : retour Amazon remis en vente par le FBA, où la boîte
+# repart vers un nouvel acheteur avec la carte déjà utilisée. La licence suit
+# alors la boîte, et l'ancien détenteur perd la sienne.
+#
+# Un seul transfert par code : celui qui a renvoyé la boîte connaît toujours
+# les deux secrets, il ne doit pas pouvoir la reprendre au nouvel acheteur.
+# Au-delà, c'est le support qui tranche.
+_ACT_MAX_TRANSFERS = 1
+
+
+def _stripe_period_end(sub_id: str) -> float:
+    """Fin de la période payée d'un abonnement encore vivant (0 sinon).
+
+    Depuis l'API Stripe 2025-03-31, `current_period_end` a quitté la racine
+    de l'abonnement pour ses lignes : on lit les deux."""
+    try:
+        sub = _stripe_get(f"/subscriptions/{sub_id}")
+    except Exception as e:
+        print(f"[boitier] abonnement {sub_id} illisible : {e}")
+        return -1.0     # inconnu : l'appelant ne doit rien couper
+    if sub.get("status") not in ("active", "trialing", "past_due"):
+        return 0.0
+    ends = [sub.get("current_period_end")]
+    ends += [it.get("current_period_end")
+             for it in ((sub.get("items") or {}).get("data") or [])]
+    ends = [float(e) for e in ends if e]
+    return max(ends) if ends else -1.0
+
+
+def _boitier_reprendre(uid: str, serial: str, new_email: str) -> bool:
+    """Retire à `uid` la licence apportée par le boîtier `serial`.
+
+    Même résultat que le bouton « Retour boîtier » d'admin_panel.py : la
+    licence revient exactement à son état d'avant l'activation, grâce aux
+    champs `boitier_prev_*`. Deux garde-fous en plus, faute d'un humain pour
+    juger :
+      - un abonné Stripe garde au moins la période qu'il a payée ;
+      - une licence à vie n'est pas touchée.
+    Renvoie False si la licence ne porte plus ce boîtier (déjà reprise, ou
+    remplacée par un autre boîtier) : rien à faire.
+    """
+    ref  = _get_db().collection("licenses").document(uid)
+    snap = ref.get()
+    lic  = (snap.to_dict() or {}) if snap.exists else {}
+    if lic.get("boitier_serial") != serial:
+        return False
+
+    now       = time.time()
+    email     = lic.get("email", "")
+    plan_type = lic.get("boitier_prev_plan_type") or lic.get("plan_type", "")
+    sub_id    = lic.get("stripe_subscription_id", "")
+    lang      = lic.get("lang") or "fr"
+
+    if lic.get("plan_type") == "lifetime":
+        new_exp  = float(lic.get("expiry_utc", 0) or 0)
+        new_plan = lic.get("plan", "license")
+        plan_type = "lifetime"
+    else:
+        if "boitier_prev_expiry_utc" in lic:
+            new_exp = float(lic.get("boitier_prev_expiry_utc") or 0)
+        else:
+            # Activation antérieure au suivi de l'état précédent.
+            months  = int(lic.get("boitier_months") or 12)
+            new_exp = float(lic.get("expiry_utc", 0) or 0) - int(months * 30.5) * 86400
+        if sub_id:
+            paid = _stripe_period_end(sub_id)
+            if paid < 0:
+                # Stripe muet : on ne coupe pas un abonné sur un doute, sa
+                # prochaine facture recalera l'échéance.
+                paid = float(lic.get("expiry_utc", 0) or 0)
+            new_exp = max(new_exp, paid)
+        new_plan = (lic.get("boitier_prev_plan") or "license") if new_exp > now else "expired"
+        if new_plan == "expired":
+            new_exp = max(new_exp, 0.0)
+
+    update = {
+        "expiry_utc":            new_exp,
+        "plan":                  new_plan,
+        "boitier_repris_utc":    now,
+        "boitier_repris_serial": serial,
+        "boitier_repris_par":    new_email,
+    }
+    if plan_type:
+        update["plan_type"] = plan_type
+    for f in ("boitier_until_utc", "boitier_months", "boitier_serial",
+              "boitier_code", "boitier_utc", "boitier_prev_expiry_utc",
+              "boitier_prev_plan", "boitier_prev_plan_type",
+              "boitier_relances", "boitier_relances_until"):
+        update[f] = firestore.DELETE_FIELD
+    ref.update(update)
+
+    print(f"[boitier] {serial} repris à {email or uid} "
+          f"(nouveau détenteur {new_email}) — {new_plan}, {_fmt_date(new_exp)}")
+
+    try:
+        _brevo_sync_client(email, uid, plan_type, new_exp, lang, sub_id)
+    except Exception as e:
+        print(f"[boitier] Brevo : {e}")
+    try:
+        if email:
+            _email_boitier_transfere(email, serial, new_exp, new_plan, lang)
+    except Exception as e:
+        print(f"[boitier] email de transfert non parti pour {email} : {e}")
+    return True
+
+
+def _email_boitier_transfere(email: str, serial: str, expiry_ts: float,
+                             plan: str, lang: str = "fr") -> None:
+    date = _fmt_date(expiry_ts, lang)
+    if lang == "en":
+        subject = "MyStrow — Your interface license has been transferred"
+        reste = (f"Your license remains active until <b>{date}</b>."
+                 if plan != "expired" else
+                 "Your account no longer has an active license.")
+        content = f"""
+<h2>Your interface license has been transferred</h2>
+<p>The license included with the MyStrow USB-DMX interface <b>{serial}</b> has
+just been activated on another account, using the serial number and the code
+from the card in the box.</p>
+<p>This usually means the interface was returned or resold. The license
+follows the interface, so it has been removed from your account.</p>
+<div class="box">{reste}</div>
+<p>If you still have this interface and did not give it away, reply to this
+email: we will sort it out.</p>
+"""
+    else:
+        subject = "MyStrow — La licence de votre boîtier a été transférée"
+        reste = (f"Votre licence reste active jusqu'au <b>{date}</b>."
+                 if plan != "expired" else
+                 "Votre compte n'a plus de licence active.")
+        content = f"""
+<h2>La licence de votre boîtier a été transférée</h2>
+<p>La licence livrée avec le boîtier USB-DMX MyStrow <b>{serial}</b> vient
+d'être activée sur un autre compte, avec le numéro de série et le code de la
+carte fournie dans la boîte.</p>
+<p>C'est en général le signe que le boîtier a été retourné ou revendu. La
+licence suit le boîtier : elle a donc été retirée de votre compte.</p>
+<div class="box">{reste}</div>
+<p>Si vous avez toujours ce boîtier et ne l'avez cédé à personne, répondez à
+ce mail : nous réglerons la situation.</p>
+"""
+    _send_email(email, subject, content, lang=lang)
+
+
 @https_fn.on_request(max_instances=5)
 def activate_code(req: https_fn.Request) -> https_fn.Response:
     """Active la licence d'un code carte + un numéro de série.
@@ -3444,18 +3590,43 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
     try:
         db = _get_db()
 
-        ser_ref = db.collection("boitiers").document(serial)
-        if not ser_ref.get().exists:
+        ser_ref  = db.collection("boitiers").document(serial)
+        ser_snap = ser_ref.get()
+        if not ser_snap.exists:
             return _ko("unknown_serial",
                        "Ce numéro de série ne correspond à aucun boîtier "
                        "MyStrow.", 404)
+        # Détenteur actuel du boîtier ("" après un retour saisi à l'admin).
+        holder = (ser_snap.to_dict() or {}).get("activated_uid") or ""
 
         code_ref  = db.collection("activation_codes").document(code)
         code_snap = code_ref.get()
         if not code_snap.exists:
             return _ko("unknown_code", "Ce code d'activation n'existe pas.", 404)
         code_data = code_snap.to_dict() or {}
-        if code_data.get("status") != "unused":
+
+        try:
+            known_uid = auth.get_user_by_email(email).uid
+        except auth.UserNotFoundError:
+            known_uid = None
+
+        # Code déjà utilisé AVEC CE BOÎTIER, par un autre compte : la boîte a
+        # changé de mains (cf. _ACT_MAX_TRANSFERS), la licence la suit.
+        transfer_from = ""
+        prev_by       = code_data.get("used_by") or ""
+        if (code_data.get("status") == "used"
+                and code_data.get("used_serial") == serial and prev_by):
+            if known_uid == prev_by:
+                return _ko("already_yours",
+                           "Ce boîtier est déjà activé sur ce compte : votre "
+                           "licence est en place, rien à refaire.", 409)
+            if int(code_data.get("transfers") or 0) >= _ACT_MAX_TRANSFERS:
+                return _ko("code_used",
+                           "Ce code a déjà été utilisé. Contactez-nous avec "
+                           "le numéro de série de votre boîtier : nous "
+                           "activerons votre licence.", 409)
+            transfer_from = prev_by
+        elif code_data.get("status") != "unused":
             quand = (f" le {_fmt_date(float(code_data['used_utc']), lang)}"
                      if code_data.get("used_utc") else "")
             return _ko("code_used",
@@ -3464,10 +3635,6 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
 
         # Licence à vie déjà en place : on refuse AVANT de consommer le code,
         # sinon le client perdrait son année pour rien.
-        try:
-            known_uid = auth.get_user_by_email(email).uid
-        except auth.UserNotFoundError:
-            known_uid = None
         if known_uid:
             lic = db.collection("licenses").document(known_uid).get()
             if lic.exists and (lic.to_dict() or {}).get("plan_type") == "lifetime":
@@ -3480,10 +3647,34 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
         months = int(code_data.get("months") or 12)
         now    = time.time()
 
+        # Ce qu'il faut remettre si la suite échoue : le code neuf redevient
+        # neuf, le code transféré retrouve son ancien détenteur.
+        if transfer_from:
+            rollback = {k: code_data.get(k, "") for k in
+                        ("used_email", "used_utc", "used_ip", "used_by")}
+            rollback["transfers"] = int(code_data.get("transfers") or 0)
+        else:
+            rollback = {"status": "unused", "used_email": "", "used_serial": "",
+                        "used_utc": 0, "used_ip": ""}
+
         @firestore.transactional
         def _consume(tx) -> bool:
             snap = code_ref.get(transaction=tx)
-            if (snap.to_dict() or {}).get("status") != "unused":
+            cur  = snap.to_dict() or {}
+            if transfer_from:
+                # Deux nouveaux acheteurs simultanés : un seul transfert passe.
+                if (cur.get("status") != "used"
+                        or cur.get("used_by") != transfer_from
+                        or int(cur.get("transfers") or 0) >= _ACT_MAX_TRANSFERS):
+                    return False
+                tx.update(code_ref, {
+                    "used_email": email,
+                    "used_utc":   now,
+                    "used_ip":    ip,
+                    "transfers":  int(cur.get("transfers") or 0) + 1,
+                })
+                return True
+            if cur.get("status") != "unused":
                 return False
             tx.update(code_ref, {
                 "status":      "used",
@@ -3530,7 +3721,14 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
                 "boitier_prev_plan_type":  lic_data.get("plan_type", ""),
             }, merge=True)
 
-            code_ref.update({"used_by": uid})
+            code_upd = {"used_by": uid}
+            if transfer_from:
+                code_upd["transfer_history"] = firestore.ArrayUnion([{
+                    "from_uid":   transfer_from,
+                    "from_email": code_data.get("used_email", ""),
+                    "utc":        now,
+                }])
+            code_ref.update(code_upd)
             ser_ref.set({
                 "activated_uid":   uid,
                 "activated_email": email,
@@ -3541,11 +3739,21 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
             # Le code est déjà marqué consommé : on le rend, sinon un incident
             # côté Firebase brûle définitivement la carte d'un client.
             try:
-                code_ref.update({"status": "unused", "used_email": "",
-                                 "used_serial": "", "used_utc": 0, "used_ip": ""})
+                code_ref.update(rollback)
             except Exception:
                 print(f"[activate] IMPOSSIBLE de rendre le code {code}")
             raise
+
+        # Le nouveau détenteur a sa licence : on la retire à l'ancien. Un
+        # boîtier re-carté (code neuf sur un boîtier déjà activé ailleurs)
+        # change de mains lui aussi. Après coup, et sans faire échouer
+        # l'activation : un échec ici laisse deux licences, pas zéro.
+        for old_uid in {transfer_from, holder} - {"", uid}:
+            try:
+                _boitier_reprendre(old_uid, serial, email)
+            except Exception as e:
+                traceback.print_exc()
+                print(f"[activate] ⚠ REPRISE ÉCHOUÉE {serial} chez {old_uid} : {e}")
 
         # À partir d'ici la licence est acquise : un email ou un Brevo en
         # panne ne doit plus faire échouer l'activation.
@@ -3564,7 +3772,9 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
             print(f"[activate] Brevo : {e}")
 
         print(f"[activate] {email} — {serial} — code {code} — "
-              f"expire {_fmt_date(expiry)}")
+              f"expire {_fmt_date(expiry)}"
+              + (f" — TRANSFERT depuis {code_data.get('used_email', '?')}"
+                 if transfer_from else ""))
 
         return https_fn.Response(json.dumps({
             "ok":           True,
