@@ -24804,19 +24804,9 @@ class MainWindow(QMainWindow):
                 _push_history()
                 self.projectors.clear()
                 for i, fd in enumerate(config['fixtures']):
-                    p = Projector(fd['group'], name=fd.get('name', ''),
-                                  fixture_type=fd.get('fixture_type', 'PAR LED'))
-                    p.start_address = fd.get('start_address', (i * 10) + 1)
-                    p.universe = fd.get('universe', 0)
-                    p.canvas_x = fd.get('pos_x', None)
-                    p.canvas_y = fd.get('pos_y', None)
-                    _imp_profile = fd.get('profile')
-                    if isinstance(_imp_profile, list) and _imp_profile:
-                        p.dmx_profile = list(_imp_profile)
-                    if fd.get('fixture_type') in FX_MACHINE_TYPES:
-                        p.fan_speed = 0
-                    _apply_matrix_meta(p, fd)
-                    self.projectors.append(p)
+                    # Même lecture que le patch sauvegardé : inclinaison 3D,
+                    # zone et inversions pan/tilt, roues… (cf. _fixture_to_config)
+                    self.projectors.append(self._projector_from_config(fd, i))
                 if 'custom_profiles' in config:
                     self._saved_custom_profiles = config['custom_profiles']
                 self._rebuild_dmx_patch()
@@ -24898,20 +24888,8 @@ class MainWindow(QMainWindow):
             if not path:
                 return
             try:
-                fixtures_list = []
-                for i, proj in enumerate(self.projectors):
-                    proj_key = f"{proj.group}_{i}"
-                    fixtures_list.append({
-                        'name': proj.name,
-                        'fixture_type': proj.fixture_type,
-                        'group': proj.group,
-                        'universe': getattr(proj, 'universe', 0),
-                        'start_address': proj.start_address,
-                        'profile': self.dmx._get_profile(proj_key),
-                        'pos_x': getattr(proj, 'canvas_x', None),
-                        'pos_y': getattr(proj, 'canvas_y', None),
-                        **_matrix_meta(proj),
-                    })
+                fixtures_list = [self._fixture_to_config(i, proj)
+                                 for i, proj in enumerate(self.projectors)]
                 config = {
                     'fixtures': fixtures_list,
                     'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
@@ -26969,64 +26947,8 @@ class MainWindow(QMainWindow):
 
     def save_dmx_patch_config(self):
         """Sauvegarde la configuration du patch DMX (nouveau format avec fixtures)"""
-        fixtures_list = []
-        for i, proj in enumerate(self.projectors):
-            proj_key = f"{proj.group}_{i}"
-            fixtures_list.append({
-                'name': proj.name,
-                'manufacturer': getattr(proj, 'manufacturer', ''),
-                'fixture_type': proj.fixture_type,
-                'group': proj.group,
-                'universe':      getattr(proj, 'universe', 0),
-                'start_address': proj.start_address,
-                'profile': self.dmx._get_profile(proj_key),
-                'channel_labels': list(getattr(proj, 'channel_labels', [])),
-                'pos_x': getattr(proj, 'canvas_x', None),
-                'pos_y': getattr(proj, 'canvas_y', None),
-                'pos_3d_x': getattr(proj, 'pos_3d_x', None),
-                'pos_3d_z': getattr(proj, 'pos_3d_z', None),
-                # Provenance de la position 3D (cf. `_set_pos3d_auto`) : sans
-                # elle, toute position déduite du plan 2D repasserait pour un
-                # placement manuel au rechargement, et le plan de feu serait de
-                # nouveau débranché de la 3D.
-                #
-                # ⚠️ TROIS états, pas deux : un tuple (déduite du plan 2D), None
-                # (posée à la main, le 2D ne la pilote plus) et ABSENT (jamais
-                # passée par la 3D, à migrer au premier affichage). Écrire la
-                # clé à `null` quand l'attribut n'existe pas confondait le
-                # troisième avec le deuxième : au rechargement, TOUTE fixture
-                # jamais affichée en 3D était prise pour un placement manuel et
-                # ne suivait plus jamais le plan de feu.
-                **({'pos_3d_src': list(proj._pos3d_src) if proj._pos3d_src else None}
-                   if hasattr(proj, '_pos3d_src') else {}),
-                'fixture_height':  getattr(proj, 'fixture_height', None),
-                'body_rotation':   getattr(proj, 'body_rotation', 0.0),
-                'rot3d_x':         getattr(proj, 'rot3d_x',       0.0),
-                'rot3d_z':         getattr(proj, 'rot3d_z',       0.0),
-                'beam_gain':       getattr(proj, 'beam_gain',   100.0),
-                'beam_angle':      getattr(proj, 'beam_angle',  100.0),
-                'fixture_scale':   getattr(proj, 'fixture_scale', 100.0),
-                'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
-                # Convention d'obturateur inversée (0 = ouvert). Réglée par
-                # « Ma lyre ne s'allume pas » dans la calibration de roue —
-                # elle n'était PAS sauvegardée : le réglage était perdu au
-                # redémarrage et la lyre repartait noire.
-                'shutter_inverted':   bool(getattr(proj, 'shutter_inverted', False)),
-                # Bande DMX brute du strobe quand c'est le canal Shutter qui le
-                # porte (lyre sans canal Strobe dedie). Elle varie d'un
-                # constructeur a l'autre : sans sauvegarde, chaque redemarrage
-                # renvoyait la vitesse dans la bande par defaut, donc parfois
-                # dans une plage de macros de la fixture.
-                'shutter_strobe_min': int(getattr(proj, 'shutter_strobe_min', 64)),
-                'shutter_strobe_max': int(getattr(proj, 'shutter_strobe_max', 95)),
-                # Couronne LED : suit le show (défaut) ou reste manuelle.
-                'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
-                'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
-                'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
-                'preset_slots':       dict(getattr(proj, 'preset_slots', {}) or {}),
-                **_pantilt_meta(proj),
-                **_matrix_meta(proj),
-            })
+        fixtures_list = [self._fixture_to_config(i, proj)
+                         for i, proj in enumerate(self.projectors)]
         scene_3d = {}
         if hasattr(self, '_plan3d'):
             scene_3d['preset'] = getattr(self._plan3d, '_scene_preset_code', 'festival_plein_air')
@@ -27060,6 +26982,139 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'plan_de_feu'):
             self.plan_de_feu.refresh_target_btn()
 
+    # ── Une fixture <-> son dict de sauvegarde ────────────────────────────────
+    # Point UNIQUE pour la sauvegarde du patch ET l'export/import .msp.
+    # L'export .msp avait sa propre liste de champs, qui s'était arrêtée à la
+    # position 2D : un plan de feu réimporté perdait l'inclinaison 3D (lyres
+    # retournées), la hauteur, la rotation, l'inversion et le débattement du
+    # tilt, les roues, etc. — « l'inclinaison des projecteurs n'est plus la
+    # bonne ». Tout champ ajouté ici voyage désormais dans les deux sens.
+    def _fixture_to_config(self, i, proj):
+        proj_key = f"{proj.group}_{i}"
+        return {
+            'name': proj.name,
+            'manufacturer': getattr(proj, 'manufacturer', ''),
+            'fixture_type': proj.fixture_type,
+            'group': proj.group,
+            'universe':      getattr(proj, 'universe', 0),
+            'start_address': proj.start_address,
+            'profile': self.dmx._get_profile(proj_key),
+            'channel_labels': list(getattr(proj, 'channel_labels', [])),
+            'pos_x': getattr(proj, 'canvas_x', None),
+            'pos_y': getattr(proj, 'canvas_y', None),
+            'pos_3d_x': getattr(proj, 'pos_3d_x', None),
+            'pos_3d_z': getattr(proj, 'pos_3d_z', None),
+            # Provenance de la position 3D (cf. `_set_pos3d_auto`) : sans
+            # elle, toute position déduite du plan 2D repasserait pour un
+            # placement manuel au rechargement, et le plan de feu serait de
+            # nouveau débranché de la 3D.
+            #
+            # ⚠️ TROIS états, pas deux : un tuple (déduite du plan 2D), None
+            # (posée à la main, le 2D ne la pilote plus) et ABSENT (jamais
+            # passée par la 3D, à migrer au premier affichage). Écrire la
+            # clé à `null` quand l'attribut n'existe pas confondait le
+            # troisième avec le deuxième : au rechargement, TOUTE fixture
+            # jamais affichée en 3D était prise pour un placement manuel et
+            # ne suivait plus jamais le plan de feu.
+            **({'pos_3d_src': list(proj._pos3d_src) if proj._pos3d_src else None}
+               if hasattr(proj, '_pos3d_src') else {}),
+            'fixture_height':  getattr(proj, 'fixture_height', None),
+            'body_rotation':   getattr(proj, 'body_rotation', 0.0),
+            'rot3d_x':         getattr(proj, 'rot3d_x',       0.0),
+            'rot3d_z':         getattr(proj, 'rot3d_z',       0.0),
+            'beam_gain':       getattr(proj, 'beam_gain',   100.0),
+            'beam_angle':      getattr(proj, 'beam_angle',  100.0),
+            'fixture_scale':   getattr(proj, 'fixture_scale', 100.0),
+            'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
+            # Convention d'obturateur inversée (0 = ouvert). Réglée par
+            # « Ma lyre ne s'allume pas » dans la calibration de roue —
+            # elle n'était PAS sauvegardée : le réglage était perdu au
+            # redémarrage et la lyre repartait noire.
+            'shutter_inverted':   bool(getattr(proj, 'shutter_inverted', False)),
+            # Bande DMX brute du strobe quand c'est le canal Shutter qui le
+            # porte (lyre sans canal Strobe dedie). Elle varie d'un
+            # constructeur a l'autre : sans sauvegarde, chaque redemarrage
+            # renvoyait la vitesse dans la bande par defaut, donc parfois
+            # dans une plage de macros de la fixture.
+            'shutter_strobe_min': int(getattr(proj, 'shutter_strobe_min', 64)),
+            'shutter_strobe_max': int(getattr(proj, 'shutter_strobe_max', 95)),
+            # Couronne LED : suit le show (défaut) ou reste manuelle.
+            'ring_follow':        bool(getattr(proj, 'ring_follow', True)),
+            'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
+            'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
+            'preset_slots':       dict(getattr(proj, 'preset_slots', {}) or {}),
+            **_pantilt_meta(proj),
+            **_matrix_meta(proj),
+        }
+
+    def _projector_from_config(self, fd, i):
+        """Réciproque de `_fixture_to_config`."""
+        p = Projector(
+            fd['group'],
+            name=fd.get('name', ''),
+            fixture_type=fd.get('fixture_type', 'PAR LED')
+        )
+        p.universe      = fd.get('universe', 0)
+        p.start_address = fd.get('start_address', (i * 10) + 1)
+        p.canvas_x = fd.get('pos_x', None)
+        p.canvas_y = fd.get('pos_y', None)
+        p3x = fd.get('pos_3d_x')
+        p3z = fd.get('pos_3d_z')
+        if p3x is not None: p.pos_3d_x = float(p3x)
+        if p3z is not None: p.pos_3d_z = float(p3z)
+        # Attribut laissé ABSENT quand la clé n'est pas dans le
+        # fichier : un show antérieur est alors migré au premier
+        # affichage 3D (cf. `_sync_pos3d_with_canvas`), au lieu
+        # d'être pris à tort pour un placement manuel.
+        # `pos_3d_src: null` AVEC `pos_3d_x: null` n'est pas un
+        # placement manuel : un placement manuel a forcément une
+        # position 3D. C'est la trace des patchs écrits par la
+        # version qui sérialisait l'attribut absent en `null` —
+        # on laisse l'attribut absent pour que la migration
+        # reprenne, sinon ces fixtures restaient débranchées du
+        # plan de feu 2D pour toujours.
+        if 'pos_3d_src' in fd and not (
+                fd.get('pos_3d_src') is None and p3x is None):
+            _src = fd.get('pos_3d_src')
+            p._pos3d_src = ((float(_src[0]), float(_src[1]))
+                            if _src and len(_src) == 2 else None)
+        fh = fd.get('fixture_height')
+        if fh is not None:
+            p.fixture_height = float(fh)
+        p.body_rotation = float(fd.get('body_rotation', 0.0))
+        p.rot3d_x       = float(fd.get('rot3d_x',       0.0))
+        p.rot3d_z       = float(fd.get('rot3d_z',       0.0))
+        p.beam_gain     = float(fd.get('beam_gain', 100.0))
+        # Patch antérieur à la colonne « Angle » : absente du
+        # fichier, la clé doit retomber sur 100 (rendu d'origine)
+        # et surtout pas sur 0, qui donnerait un faisceau nul.
+        p.beam_angle    = float(fd.get('beam_angle', 100.0) or 100.0)
+        # Même précaution que pour l'angle : un patch antérieur
+        # à la colonne « Taille » n'a pas la clé, et 0 ferait
+        # disparaître le corps de l'appareil.
+        p.fixture_scale = float(fd.get('fixture_scale', 100.0) or 100.0)
+        if fd.get('fixture_type') in FX_MACHINE_TYPES:
+            p.fan_speed = 0
+        profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
+        if isinstance(profile, list) and profile:
+            p.dmx_profile = list(profile)
+        p.channel_defaults  = dict(fd.get('channel_defaults', {}))
+        p.shutter_inverted  = bool(fd.get('shutter_inverted', False))
+        # Patch anterieur au strobe sur canal Shutter : cles
+        # absentes => bande standard des lyres (64-95).
+        p.shutter_strobe_min = int(fd.get('shutter_strobe_min', 64))
+        p.shutter_strobe_max = int(fd.get('shutter_strobe_max', 95))
+        # Absent des shows antérieurs à la couronne pilotée :
+        # True, c'est-à-dire le comportement voulu par défaut.
+        p.ring_follow       = bool(fd.get('ring_follow', True))
+        p.color_wheel_slots = list(fd.get('color_wheel_slots', []))
+        p.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
+        p.preset_slots      = dict(fd.get('preset_slots', {}) or {})
+        _apply_pantilt_meta(p, fd)
+        p.manufacturer  = fd.get('manufacturer', '')
+        _apply_matrix_meta(p, fd)
+        return p
+
     def load_dmx_patch_config(self):
         """Charge la configuration du patch DMX"""
         try:
@@ -27072,70 +27127,8 @@ class MainWindow(QMainWindow):
                 if 'fixtures' in config:
                     self.projectors = []
                     for i, fd in enumerate(config['fixtures']):
-                        p = Projector(
-                            fd['group'],
-                            name=fd.get('name', ''),
-                            fixture_type=fd.get('fixture_type', 'PAR LED')
-                        )
-                        p.universe      = fd.get('universe', 0)
-                        p.start_address = fd.get('start_address', (i * 10) + 1)
-                        p.canvas_x = fd.get('pos_x', None)
-                        p.canvas_y = fd.get('pos_y', None)
-                        p3x = fd.get('pos_3d_x')
-                        p3z = fd.get('pos_3d_z')
-                        if p3x is not None: p.pos_3d_x = float(p3x)
-                        if p3z is not None: p.pos_3d_z = float(p3z)
-                        # Attribut laissé ABSENT quand la clé n'est pas dans le
-                        # fichier : un show antérieur est alors migré au premier
-                        # affichage 3D (cf. `_sync_pos3d_with_canvas`), au lieu
-                        # d'être pris à tort pour un placement manuel.
-                        # `pos_3d_src: null` AVEC `pos_3d_x: null` n'est pas un
-                        # placement manuel : un placement manuel a forcément une
-                        # position 3D. C'est la trace des patchs écrits par la
-                        # version qui sérialisait l'attribut absent en `null` —
-                        # on laisse l'attribut absent pour que la migration
-                        # reprenne, sinon ces fixtures restaient débranchées du
-                        # plan de feu 2D pour toujours.
-                        if 'pos_3d_src' in fd and not (
-                                fd.get('pos_3d_src') is None and p3x is None):
-                            _src = fd.get('pos_3d_src')
-                            p._pos3d_src = ((float(_src[0]), float(_src[1]))
-                                            if _src and len(_src) == 2 else None)
-                        fh = fd.get('fixture_height')
-                        if fh is not None:
-                            p.fixture_height = float(fh)
-                        p.body_rotation = float(fd.get('body_rotation', 0.0))
-                        p.rot3d_x       = float(fd.get('rot3d_x',       0.0))
-                        p.rot3d_z       = float(fd.get('rot3d_z',       0.0))
-                        p.beam_gain     = float(fd.get('beam_gain', 100.0))
-                        # Patch antérieur à la colonne « Angle » : absente du
-                        # fichier, la clé doit retomber sur 100 (rendu d'origine)
-                        # et surtout pas sur 0, qui donnerait un faisceau nul.
-                        p.beam_angle    = float(fd.get('beam_angle', 100.0) or 100.0)
-                        # Même précaution que pour l'angle : un patch antérieur
-                        # à la colonne « Taille » n'a pas la clé, et 0 ferait
-                        # disparaître le corps de l'appareil.
-                        p.fixture_scale = float(fd.get('fixture_scale', 100.0) or 100.0)
-                        if fd.get('fixture_type') in FX_MACHINE_TYPES:
-                            p.fan_speed = 0
+                        p = self._projector_from_config(fd, i)
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
-                        if isinstance(profile, list) and profile:
-                            p.dmx_profile = list(profile)
-                        p.channel_defaults  = dict(fd.get('channel_defaults', {}))
-                        p.shutter_inverted  = bool(fd.get('shutter_inverted', False))
-                        # Patch anterieur au strobe sur canal Shutter : cles
-                        # absentes => bande standard des lyres (64-95).
-                        p.shutter_strobe_min = int(fd.get('shutter_strobe_min', 64))
-                        p.shutter_strobe_max = int(fd.get('shutter_strobe_max', 95))
-                        # Absent des shows antérieurs à la couronne pilotée :
-                        # True, c'est-à-dire le comportement voulu par défaut.
-                        p.ring_follow       = bool(fd.get('ring_follow', True))
-                        p.color_wheel_slots = list(fd.get('color_wheel_slots', []))
-                        p.gobo_wheel_slots  = list(fd.get('gobo_wheel_slots', []))
-                        p.preset_slots      = dict(fd.get('preset_slots', {}) or {})
-                        _apply_pantilt_meta(p, fd)
-                        p.manufacturer  = fd.get('manufacturer', '')
-                        _apply_matrix_meta(p, fd)
                         self.projectors.append(p)
                         proj_key = f"{p.group}_{i}"
                         nb_ch = len(profile)
