@@ -308,7 +308,7 @@ class DmxTesterDialog(QDialog):
         self.lbl_sel_info.setStyleSheet("color:#555; min-width:220px;")
         cl.addWidget(self.lbl_sel_info)
 
-        cl.addWidget(self._small_lbl("Valeur fine"))
+        cl.addWidget(self._small_lbl(tr("dmt3_068")))
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 255)
         self.slider.setValue(255)
@@ -354,7 +354,7 @@ class DmxTesterDialog(QDialog):
         fl.addWidget(self.btn_off)
         fl.addStretch()
 
-        btn_close = self._btn("Fermer", "#1a2a3a", "#00d4ff")
+        btn_close = self._btn(tr("dmt3_069"), "#1a2a3a", "#00d4ff")
         btn_close.clicked.connect(self.close)
         fl.addWidget(btn_close)
         root.addWidget(foot)
@@ -483,7 +483,7 @@ class DmxTesterDialog(QDialog):
         self._dmx.dmx_data[self._uni][ch] = val
         # Pas de send_dmx() ici — le timer 25 Hz gère l'envoi sans surcharger
         n = len(self.grid.selected())
-        txt = f"Canal {ch+1}" if n <= 1 else f"{n} canaux"
+        txt = tr("dmt3_072", a=ch+1) if n <= 1 else tr("dmt3_073", n=n)
         self.lbl_sel_info.setText(f"{txt}  —  {val} / 255")
         self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:220px;")
         self._set_slider(val)
@@ -523,7 +523,7 @@ class DmxTesterDialog(QDialog):
         self._dmx.send_dmx()
         self.lbl_val.setText(str(val))
         n   = len(sel)
-        txt = f"Canal {sel[0]+1}" if n == 1 else f"{n} canaux"
+        txt = tr("dmt3_072", a=sel[0]+1) if n == 1 else tr("dmt3_073", n=n)
         self.lbl_sel_info.setText(f"{txt}  —  {val} / 255")
         self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:220px;")
 

@@ -197,6 +197,7 @@ _RING_DRIVEN = frozenset({
 # Canaux de sortie des machines a effet — point unique dans `core`, partage
 # avec le plan 2D, la 3D et les exclusions d'effets.
 from core import FX_MACHINE_OUTPUT_CHANNELS
+from i18n import tr
 
 
 def profile_display_text(channels):
@@ -288,8 +289,8 @@ SERIAL_LINES_MODES = {
     "dtr":    (False, True),
 }
 SERIAL_LINES_LABELS = {
-    "clear":  "RTS ✗ / DTR ✗ (défaut)",
-    "legacy": "RTS ✓ / DTR ✓ (ancien)",
+    "clear":  tr("art4_002"),
+    "legacy": tr("art4_004"),
     "rts":    "RTS ✓ / DTR ✗",
     "dtr":    "RTS ✗ / DTR ✓",
 }
@@ -307,7 +308,7 @@ class ArtNetDMX:
 
         # --- Produit selectionne ---
         self.product_id   = "artnet"
-        self.product_name = "Art-Net (réseau)"
+        self.product_name = tr("art4_005")
 
         # Verrou partagé : protège dmx_data contre les race conditions
         # entre le thread Qt (écriture via update_from_projectors) et les

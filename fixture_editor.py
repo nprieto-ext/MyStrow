@@ -24,7 +24,7 @@ from PySide6.QtGui import QColor, QPainter, QPen, QFont
 import gzip
 
 from builtin_fixtures import BUILTIN_FIXTURES
-from i18n import tr
+from i18n import tr, tr_name
 from fixture_packs import (
     FixturePackBanner, FixturePackDownloadDialog,
     FixturePackCheckWorker, load_packs_state, should_check_now,
@@ -402,8 +402,8 @@ class ChannelTypeCombo(_NoScrollCombo):
         self.addItems(ALL_CHANNEL_TYPES)
         self.setEditable(True)
         self.setInsertPolicy(QComboBox.NoInsert)
-        self.setToolTip("Tapez pour rechercher : « pan » → Pan, PanFine")
-        self.lineEdit().setPlaceholderText("Rechercher un canal…")
+        self.setToolTip(tr("fe3_001"))
+        self.lineEdit().setPlaceholderText(tr("fe3_002"))
         # padding/margin remis à zéro explicitement : une feuille de style
         # d'application (STYLE_APP de l'admin : « QLineEdit{padding:8px} ») vise
         # aussi ce QLineEdit interne, et ce qu'on ne redéfinit pas ici en est
@@ -555,7 +555,7 @@ class DmxPreviewWidget(QWidget):
         if n == 0:
             painter.setPen(QColor("#444"))
             painter.setFont(QFont("Segoe UI", 10))
-            painter.drawText(0, 0, w, h, Qt.AlignCenter, "Aucun canal")
+            painter.drawText(0, 0, w, h, Qt.AlignCenter, tr("fe3_003"))
             return
         bw = max(20, min(70, w // n))
         x0 = max(0, (w - bw * n) // 2)
@@ -1077,7 +1077,7 @@ class FixtureEditorDialog(QDialog):
         self._type_combo = _NoScrollCombo()
         self._type_combo.setFixedHeight(38)
         for ft in FIXTURE_TYPES:
-            self._type_combo.addItem(ft)
+            self._type_combo.addItem(tr_name(ft), ft)
         tc.addWidget(self._type_combo)
         type_mode_row.addLayout(tc, 1)
 
@@ -1485,7 +1485,7 @@ class FixtureEditorDialog(QDialog):
         self._mfr_edit.setText(fx.get("manufacturer", ""))
         self._editor_title.setText(fx.get("name", "Projecteur"))
         self._type_combo.blockSignals(True)
-        ti = self._type_combo.findText(fx.get("fixture_type", "PAR LED"))
+        ti = self._type_combo.findData(fx.get("fixture_type", "PAR LED"))
         if ti >= 0:
             self._type_combo.setCurrentIndex(ti)
         self._type_combo.blockSignals(False)
@@ -1640,7 +1640,7 @@ class FixtureEditorDialog(QDialog):
 
         # Remplir le formulaire avec les données copiées (sans écraser le nom)
         self._type_combo.blockSignals(True)
-        ti = self._type_combo.findText(fx.get("fixture_type", "PAR LED"))
+        ti = self._type_combo.findData(fx.get("fixture_type", "PAR LED"))
         if ti >= 0:
             self._type_combo.setCurrentIndex(ti)
         self._type_combo.blockSignals(False)
@@ -1711,7 +1711,7 @@ class FixtureEditorDialog(QDialog):
         data = {
             "name":         self._name_edit.text().strip(),
             "manufacturer": self._mfr_edit.text().strip() or "Générique",
-            "fixture_type": self._type_combo.currentText(),
+            "fixture_type": self._type_combo.currentData() or self._type_combo.currentText(),
             "mode_name":    first.get("name", ""),
             "max_channels": 512,
             "group":        "face",
@@ -1867,8 +1867,8 @@ class FixtureEditorDialog(QDialog):
             return
         safe = "".join(c for c in data["name"] if c.isalnum() or c in " -_").strip() or "fixture"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter la fixture", str(Path.home() / f"{safe}.mft"),
-            "Fixture MyStrow (*.mft);;JSON (*.json)"
+            self, tr("fe3_004"), str(Path.home() / f"{safe}.mft"),
+            tr("fe3_006")
         )
         if not path:
             return
@@ -1888,10 +1888,8 @@ class FixtureEditorDialog(QDialog):
         from PySide6.QtWidgets import QInputDialog
 
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Importer des fixtures", str(Path.home()),
-            "Tous les formats (*.mft *.json *.xml *.mystrow);;"
-            "Fixture MyStrow (*.mft *.json *.mystrow);;"
-            "XML QLC+ (*.xml)"
+            self, tr("mwy_270"), str(Path.home()),
+            tr("fe3_008")
         )
         if not paths:
             return
@@ -1968,7 +1966,7 @@ class FixtureEditorDialog(QDialog):
                 errors.append(f"• {Path(path).name} : {e}")
 
         if imported == 0:
-            msg = "Aucune fixture importée."
+            msg = tr("mwy_272")
             if errors:
                 msg += "\n\n" + "\n".join(errors)
             QMessageBox.warning(self, tr("fe_import_failed"), msg)
@@ -1977,9 +1975,9 @@ class FixtureEditorDialog(QDialog):
         self._save_fixtures()
         self._rebuild_list()
         self._select_fixture(len(self._fixtures) - 1)
-        msg = f"{imported} fixture{'s' if imported > 1 else ''} importée{'s' if imported > 1 else ''}."
+        msg = tr("mwy_273", imported=imported, a='s' if imported > 1 else '')
         if errors:
-            msg += f"\n\n{len(errors)} ignoré(s) :\n" + "\n".join(errors)
+            msg += tr("fe3_015", n=len(errors)) + "\n".join(errors)
             QMessageBox.warning(self, tr("fe_import_partial"), msg)
         else:
             QMessageBox.information(self, tr("fe_import_ok"), msg)

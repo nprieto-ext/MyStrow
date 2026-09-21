@@ -20,6 +20,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QColor
 
 from audio_ai import AudioColorAI
+from i18n import tr
 
 # sounddevice est chargé À LA DEMANDE, jamais à l'import de ce module.
 #
@@ -523,9 +524,9 @@ class LiveAudioEngine(QObject):
             import sys
             if getattr(sys, 'frozen', False):
                 # EXE PyInstaller : sounddevice absent du bundle → rebuild nécessaire
-                self.device_info.emit("Capture audio indisponible (build incomplet)")
+                self.device_info.emit(tr("la3_002"))
             else:
-                self.device_info.emit("sounddevice manquant — pip install sounddevice")
+                self.device_info.emit(tr("la3_003"))
             self.connection_status.emit('off')
             self._start_audio_fallback()
             return
@@ -547,19 +548,19 @@ class LiveAudioEngine(QObject):
                 return
         except Exception as e:
             print(f"LiveAudio: erreur stream ({e})")
-            self.device_info.emit(f"Erreur audio : {e}")
+            self.device_info.emit(tr("la3_012", e=e))
             self.connection_status.emit('off')
             self._start_audio_fallback()
             return
         # stream is None
         if self._source_key.startswith("dev_out:"):
             self.device_info.emit(
-                "Aucun signal capté — voir le guide de configuration ( ? )")
+                tr("la3_015"))
         elif self._source_key == "loopback":
             self.device_info.emit(
-                "Aucune capture audio — voir le guide de configuration ( ? )")
+                tr("la3_017"))
         else:
-            self.device_info.emit("Aucun micro / entrée ligne détecté")
+            self.device_info.emit(tr("la3_018"))
         self.connection_status.emit('off')
         self._start_audio_fallback()
 
@@ -573,7 +574,7 @@ class LiveAudioEngine(QObject):
             # (device USB/HDMI pas encore prêt juste après le démarrage Windows)
             if self._fallback_tmr is None:  # pas déjà en fallback
                 print("LiveAudio: pyaudiowpatch échoué — retry dans 3 s")
-                self.device_info.emit("Loopback WASAPI : initialisation… (retry dans 3 s)")
+                self.device_info.emit(tr("la3_019"))
                 self.connection_status.emit('waiting')
                 self._loopback_retry_count = getattr(self, '_loopback_retry_count', 0) + 1
                 if self._loopback_retry_count <= 3:
@@ -628,9 +629,9 @@ class LiveAudioEngine(QObject):
                             out_words and any(w in dev_name_lower for w in out_words)
                         )
                         if not same_card and out_is_external:
-                            warn = " ⚠ pas de signal (sortie USB/HDMI, utilisez WASAPI)"
+                            warn = tr("la3_020")
                         elif not same_card:
-                            warn = " ⚠ sortie défaut sur une autre carte"
+                            warn = tr("la3_021")
                         else:
                             warn = ""
                         self.device_info.emit(f"Loopback : {dev['name']}{warn}")
@@ -669,7 +670,7 @@ class LiveAudioEngine(QObject):
             self._log_audio("retry pyaudiowpatch épuisé → fallback sounddevice")
             print("LiveAudio: retries pyaudiowpatch épuisés → fallback sounddevice")
             self.device_info.emit(
-                "WASAPI indisponible — vérifiez votre périphérique audio par défaut")
+                tr("la3_026"))
             self.connection_status.emit('off')
             self._loopback_retry_count = 0
 
@@ -796,7 +797,7 @@ class LiveAudioEngine(QObject):
             sr  = int(dev.get('default_samplerate', 44100))
             ch  = max(1, min(2, int(dev.get('max_input_channels', 2))))
             self._band_sr = sr
-            self.device_info.emit(f"Micro : {dev['name']}")
+            self.device_info.emit(tr("la3_031", a=dev['name']))
             self.connection_status.emit('connected')
             print(f"LiveAudio: micro → {dev['name']}")
             return sd.InputStream(
@@ -815,14 +816,14 @@ class LiveAudioEngine(QObject):
             name = dev.get('name', '').lower()
             # Rejeter les ports MIDI qui se glissent dans la liste audio
             if any(kw in name for kw in ('loopmidi', 'loop midi', 'midi', 'iac driver')):
-                self.device_info.emit(f"'{dev['name']}' est un port MIDI, pas une carte son")
+                self.device_info.emit(tr("la3_033", a=dev['name']))
                 self.connection_status.emit('off')
                 self._start_audio_fallback()
                 return None
             sr  = int(dev.get('default_samplerate', 44100))
             ch  = max(1, min(2, int(dev.get('max_input_channels', 1))))
             self._band_sr = sr
-            self.device_info.emit(f"Entrée : {dev['name']}")
+            self.device_info.emit(tr("la3_035", a=dev['name']))
             self.connection_status.emit('connected')
             print(f"LiveAudio: entrée → {dev['name']} (idx {dev_idx})")
             return sd.InputStream(
@@ -925,7 +926,7 @@ class LiveAudioEngine(QObject):
             except Exception as e:
                 print(f"LiveAudio: capture sd erreur ({e})")
 
-        self.device_info.emit(f"Loopback introuvable pour : {sd_name}")
+        self.device_info.emit(tr("la3_039", sd_name=sd_name))
         self.connection_status.emit('off')
         return None
 
@@ -943,7 +944,7 @@ class LiveAudioEngine(QObject):
 
     def _open_midi_clock(self, hint: str = ""):
         if _rtmidi is None:
-            self.device_info.emit("MIDI Clock : rtmidi manquant")
+            self.device_info.emit(tr("la3_040"))
             self._start_beat_timer()
             return
         self._midi_clock_logged = False
@@ -953,7 +954,7 @@ class LiveAudioEngine(QObject):
             self._log_audio(f"MIDI Clock : ports détectés = {ports}")
 
             if not ports:
-                self.device_info.emit("MIDI Clock : aucun port MIDI trouvé")
+                self.device_info.emit(tr("la3_041"))
                 self._log_audio("MIDI Clock : AUCUN port MIDI (IAC en ligne ?)")
                 self._start_beat_timer()
                 return
@@ -1012,8 +1013,7 @@ class LiveAudioEngine(QObject):
                         break
             if last_err:
                 self.device_info.emit(
-                    f"MIDI Clock : port « {target_name} » indisponible — "
-                    "voir le guide de configuration ( ? )")
+                    tr("la3_042", target_name=target_name))
                 self._start_beat_timer()
                 return
             # timing=False = recevoir les 0xF8 (MIDI Clock)
@@ -1028,7 +1028,7 @@ class LiveAudioEngine(QObject):
             print(f"LiveAudio: {label}")
 
         except Exception as e:
-            self.device_info.emit(f"MIDI Clock : erreur ({e})")
+            self.device_info.emit(tr("la3_046", e=e))
             print(f"LiveAudio: MIDI Clock erreur ({e})")
 
         # Timer 50ms pour faire avancer le temps entre les beats MIDI
@@ -1157,7 +1157,7 @@ class LiveAudioEngine(QObject):
 
         if self._vdj_last_bpm == 0.0:
             self.device_info.emit(
-                f"VDJ Network Control : en attente (port {self.VDJ_HTTP_PORT})")
+                tr("la3_051", VDJ_HTTP_PORT=self.VDJ_HTTP_PORT))
             self.connection_status.emit('waiting')
 
     def _vdj_tick(self):

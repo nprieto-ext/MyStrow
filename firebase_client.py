@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 # Importé depuis core pour éviter la circularité
 from core import FIREBASE_API_KEY, FIREBASE_PROJECT_ID, make_ssl_context
+from i18n import tr
 
 # Union magasin système + certifi. Le certifi SEUL qui était ici laissait les
 # écrans de licence en erreur SSL derrière un antivirus à scan HTTPS, alors même
@@ -231,12 +232,12 @@ def sign_up(email: str, password: str) -> dict:
     except urllib.error.HTTPError as e:
         msg = _firebase_error(e)
         if "EMAIL_EXISTS" in msg:
-            raise Exception("Un compte existe déjà avec cet email.")
+            raise Exception(tr("fbc3_036"))
         if "WEAK_PASSWORD" in msg:
-            raise Exception("Mot de passe trop faible (6 caractères minimum).")
+            raise Exception(tr("fbc3_037"))
         if "INVALID_EMAIL" in msg:
             raise Exception("Adresse email invalide.")
-        raise Exception(f"Erreur création compte : {msg}")
+        raise Exception(tr("fbc3_038", msg=msg))
 
 
 def sign_in(email: str, password: str) -> dict:
@@ -264,7 +265,7 @@ def sign_in(email: str, password: str) -> dict:
         if "INVALID_PASSWORD" in msg:
             raise Exception("Mot de passe incorrect.")
         if "USER_DISABLED" in msg:
-            raise Exception("Ce compte a été désactivé.")
+            raise Exception(tr("fbc3_039"))
         # Firebase verrouille le compte après quelques échecs rapprochés. Sans
         # ce cas, l'app affichait le message Google brut, en anglais.
         # ⚠️ Formulation volontairement sans « incorrect », « invalid »,
@@ -272,9 +273,7 @@ def sign_in(email: str, password: str) -> dict:
         # mots pour proposer le renvoi des identifiants par mail, ce qui ne
         # débloquerait rien ici et enverrait l'utilisateur dans le mur.
         if "TOO_MANY_ATTEMPTS_TRY_LATER" in msg:
-            raise Exception("Trop de tentatives échouées : la connexion est "
-                            "temporairement bloquée. Patientez quelques minutes "
-                            "avant de réessayer.")
+            raise Exception(tr("fbc3_040"))
         raise Exception(f"Erreur connexion : {msg}")
 
 
@@ -297,7 +296,7 @@ def refresh_id_token(refresh_token: str) -> dict:
     except urllib.error.HTTPError as e:
         msg = _firebase_error(e)
         if "TOKEN_EXPIRED" in msg or "INVALID_REFRESH_TOKEN" in msg:
-            raise Exception("Session expirée")
+            raise Exception(tr("fbc3_041"))
         raise Exception(f"Erreur renouvellement token : {msg}")
 
 
@@ -386,7 +385,7 @@ def send_password_reset(email: str) -> bool:
         # EMAIL_NOT_FOUND : ne pas révéler l'existence du compte (sécurité)
         if "EMAIL_NOT_FOUND" in err:
             return True
-        raise Exception(f"Erreur réinitialisation : {err}")
+        raise Exception(tr("fbc3_042", err=err))
 
 
 # ---------------------------------------------------------------
@@ -429,7 +428,7 @@ def create_license_doc(uid: str, id_token: str, email: str) -> bool:
         _patch_json(url, payload, id_token)
         return True
     except urllib.error.HTTPError as e:
-        raise Exception(f"Erreur création document : {_firebase_error(e)}")
+        raise Exception(tr("fbc3_043", a=_firebase_error(e)))
 
 
 def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bool:
@@ -453,8 +452,7 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
     # Limite atteinte ?
     if len(machines) >= 2:
         raise Exception(
-            "2 appareils maximum autorisés pour ce compte.\n"
-            "Déconnectez-vous d'un autre appareil pour continuer."
+            tr("fbc3_044")
         )
 
     # Ajouter la machine
@@ -475,7 +473,7 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
         _patch_json(url, payload, id_token)
         return True
     except urllib.error.HTTPError as e:
-        raise Exception(f"Erreur mise à jour machines : {_firebase_error(e)}")
+        raise Exception(tr("fbc3_045", a=_firebase_error(e)))
 
 
 def update_newsletter_consent(uid: str, id_token: str, consent: bool, lang: str = "") -> bool:
@@ -495,7 +493,7 @@ def update_newsletter_consent(uid: str, id_token: str, consent: bool, lang: str 
         _patch_json(url, {"fields": fields}, id_token)
         return True
     except urllib.error.HTTPError as e:
-        raise Exception(f"Erreur mise à jour newsletter : {_firebase_error(e)}")
+        raise Exception(tr("fbc3_046", a=_firebase_error(e)))
 
 
 def remove_machine(uid: str, id_token: str, machine_id: str) -> bool:
@@ -691,7 +689,7 @@ def fetch_fixture_pack(pack_id: str, id_token: str = None) -> dict:
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise Exception(f"Pack '{pack_id}' introuvable.")
-        raise Exception(f"Erreur téléchargement pack : {_firebase_error(e)}")
+        raise Exception(tr("fbc3_047", a=_firebase_error(e)))
     except (urllib.error.URLError, OSError) as e:
         raise Exception(_net_error_msg(e))
 
@@ -834,10 +832,7 @@ def fetch_controller_profiles(id_token: str = None) -> list:
                 return results
             if e.code in (401, 403):
                 raise Exception(
-                    "La bibliothèque de contrôleurs a refusé la lecture (accès refusé).\n"
-                    "Elle est pourtant consultable sans compte : si le problème "
-                    "persiste, signalez-le au support.\nVérifiez aussi que votre "
-                    "antivirus n'intercepte pas les connexions sécurisées de MyStrow.")
+                    tr("fbc3_048"))
             raise
         except (urllib.error.URLError, OSError) as e:
             raise Exception(_net_error_msg(e))
@@ -958,11 +953,7 @@ def fetch_all_gdtf_fixtures(id_token: str = None) -> list:
                 # d'un défaut de connexion de l'utilisateur. Ne pas lui dire de
                 # se reconnecter, ça l'enverrait sur une fausse piste.
                 raise Exception(
-                    "La bibliothèque a refusé la lecture (accès refusé).\n"
-                    "Elle est pourtant consultable sans compte : si le problème "
-                    "persiste, signalez-le au support.\nVérifiez aussi que votre "
-                    "antivirus n'intercepte pas les connexions sécurisées de "
-                    "MyStrow.")
+                    tr("fbc3_049"))
             raise
         except (urllib.error.URLError, OSError) as e:
             raise Exception(_net_error_msg(e))

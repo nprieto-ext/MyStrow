@@ -51,10 +51,10 @@ ACTION_EFFECT    = "effect"
 ACTION_CARTOUCHE = "cartouche"
 
 ACTION_LABELS = [
-    (ACTION_NONE,      "— Rien —"),
-    (ACTION_MEMORY,    "Memoire"),
-    (ACTION_EFFECT,    "Effet"),
-    (ACTION_CARTOUCHE, "Cartouche"),
+    (ACTION_NONE,      tr("vl3_001")),
+    (ACTION_MEMORY,    tr("vl3_002")),
+    (ACTION_EFFECT,    tr("vl3_003")),
+    (ACTION_CARTOUCHE, tr("vl3_004")),
 ]
 
 
@@ -475,7 +475,7 @@ class VideoDialog(QDialog):
         self._etat.setWordWrap(True)
         root.addWidget(self._etat)
         connecte = link.client.is_connected()
-        self._maj_etat(connecte, "Connecte" if connecte else "Non connecte")
+        self._maj_etat(connecte, tr("vl3_005") if connecte else tr("vl3_006"))
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("color:#222;")

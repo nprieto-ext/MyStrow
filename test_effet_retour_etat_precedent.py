@@ -210,18 +210,26 @@ class TestCoupureSansRestitution(unittest.TestCase):
         self.assertEqual(p.level, 80)
 
     def test_changement_de_pad_memoire_restitue_avant_de_nettoyer(self):
-        """`_activate_memory_pad` : la restitution passe AVANT le nettoyage.
+        """`_deactivate_memory_pad` : la restitution passe AVANT le nettoyage.
 
         Ordre inverse, la restitution rendrait l'etat d'avant l'effet — memoire
         allumee comprise — et ecraserait l'extinction de la memoire quittee.
+
+        Ce bloc vivait dans `_activate_memory_pad` ; il est devenu le corps de
+        `_deactivate_memory_pad`, partage avec les pads solo et les momentanes
+        (qui coupent des memoires eux aussi). L'invariant, lui, est le meme.
         """
         import inspect
-        src = inspect.getsource(mw.MainWindow._activate_memory_pad)
+        src = inspect.getsource(mw.MainWindow._deactivate_memory_pad)
         i_restore = src.index("self._restore_effect_state()")
-        i_clear = src.index("self._clear_memory_from_projectors(mem_col, prev_row)")
+        i_clear = src.index("self._clear_memory_from_projectors(mem_col, row)")
         self.assertLess(i_restore, i_clear)
         self.assertNotIn("self.effect_saved_colors = {}", src,
                          "la capture est de nouveau videe sans restitution")
+        # Et le chemin d'origine passe bien par la, plutot que d'en garder une
+        # copie qui divergerait en silence.
+        self.assertIn("self._deactivate_memory_pad(mem_col, prev_row, col_akai)",
+                      inspect.getsource(mw.MainWindow._activate_memory_pad))
 
 
 class TestRoueSousCoucheRVB(unittest.TestCase):

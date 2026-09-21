@@ -21,6 +21,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from i18n import tr
 
 # Catalogue embarqué, produit au moment de la release par
 # generate_controllers_bundle.py (collection Firestore `controller_profiles`).
@@ -144,28 +145,28 @@ def validate_profile(data) -> tuple[bool, str]:
     contrôleur, bien plus tard et sans rapport visible avec le fichier fautif.
     """
     if not isinstance(data, dict):
-        return False, "le fichier ne contient pas un profil (objet JSON attendu)"
+        return False, tr("cp3_015")
     name = data.get("name")
     if not isinstance(name, str) or not name.strip():
-        return False, "champ « name » absent ou vide"
+        return False, tr("cp3_016")
     keywords = data.get("keywords", [])
     if not isinstance(keywords, list) or not all(isinstance(k, str) for k in keywords):
-        return False, "champ « keywords » invalide (liste de textes attendue)"
+        return False, tr("cp3_017")
     if not keywords:
-        return False, "aucun mot-clé de détection : le contrôleur ne serait jamais reconnu"
+        return False, tr("cp3_018")
     for section, field in (("pad_map", "note"), ("mute_map", "note"),
                            ("effect_map", "note"), ("fader_map", "cc")):
         entries = data.get(section, {})
         if not isinstance(entries, dict):
-            return False, f"section « {section} » invalide"
+            return False, tr("cp3_019", section=section)
         for key, entry in entries.items():
             if not isinstance(entry, dict) or not isinstance(entry.get(field), int):
-                return False, f"section « {section} », entrée « {key} » : « {field} » manquant"
+                return False, tr("cp3_020", section=section, key=key, field=field)
             channel = entry.get("channel", 0)
             if not isinstance(channel, int) or not 0 <= channel <= 15:
-                return False, f"section « {section} », entrée « {key} » : canal hors 0-15"
+                return False, tr("cp3_021", section=section, key=key)
     if not any(data.get(s) for s in ("pad_map", "mute_map", "effect_map", "fader_map")):
-        return False, "profil vide : aucun pad, fader ni bouton mappé"
+        return False, tr("cp3_022")
     return True, ""
 
 

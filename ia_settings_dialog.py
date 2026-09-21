@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QSlider, QFrame, QWidget,
 )
 
+from i18n import tr
+
 
 # ── Palette ──────────────────────────────────────────────────────────────────
 # Un seul accent, repris du badge « IA » de la colonne DMX. Tout le reste est
@@ -202,6 +204,9 @@ class IASettingsDialog(QDialog):
         ("Continu",         False, 'strobe'),
         ("Continu couleur", False, 'strobe_couleur'),
     )
+    # Les libellés ci-dessus servent d'identifiants : on ne traduit que l'affichage.
+    _STROBE_TR = {"Aucun": "iad_strobe_none", "Auto": "iad_strobe_auto",
+                  "Continu": "iad_strobe_cont", "Continu couleur": "iad_strobe_cont_col"}
 
     def __init__(self, settings, titre_media="", parent=None):
         super().__init__(parent)
@@ -209,7 +214,7 @@ class IASettingsDialog(QDialog):
         # « Appliquer » : le moteur lit le préréglage en direct pendant la
         # lecture, donc une modification annulée s'entendrait quand même.
         self._s = settings.copy()
-        self.setWindowTitle("IA Lumière — réglages du média")
+        self.setWindowTitle(tr("iad_title"))
         self.setMinimumSize(720, 470)
         self.setStyleSheet(_DIALOG_CSS)
 
@@ -221,11 +226,11 @@ class IASettingsDialog(QDialog):
         racine.setContentsMargins(22, 16, 22, 16)
         racine.setSpacing(0)
 
-        entete = QLabel(titre_media or "Réglages IA de ce média")
+        entete = QLabel(titre_media or tr("iad_header"))
         entete.setStyleSheet(f"font-size:13px; font-weight:bold; color:{_TEXTE};")
         entete.setWordWrap(True)
         racine.addWidget(entete)
-        sous = QLabel("Ne vaut que pour ce média.")
+        sous = QLabel(tr("iad_only_this"))
         sous.setStyleSheet(f"color:{_TEXTE_DIM}; font-size:10px; padding-bottom:12px;")
         racine.addWidget(sous)
 
@@ -297,7 +302,7 @@ class IASettingsDialog(QDialog):
     # ── Couleurs ─────────────────────────────────────────────────────────────
 
     def _couleurs(self, boite):
-        boite.addWidget(self._titre("COULEURS"))
+        boite.addWidget(self._titre(tr("iad_colors")))
         self._pastilles = {}
         grille = QGridLayout(); grille.setSpacing(2)
         for i, tdef in enumerate(self._COULEURS):
@@ -311,7 +316,7 @@ class IASettingsDialog(QDialog):
         boite.addSpacing(10)
 
         ligne = QHBoxLayout(); ligne.setSpacing(4)
-        lbl = QLabel("À la fois")
+        lbl = QLabel(tr("iad_at_once"))
         lbl.setStyleSheet(f"font-size:11px; color:{_TEXTE};")
         ligne.addWidget(lbl); ligne.addStretch()
         self._btn_max = {}
@@ -373,14 +378,14 @@ class IASettingsDialog(QDialog):
 
     def _maj_aide_max(self):
         self._aide_max.setText(
-            "Une seule couleur, tenue tout le morceau — cliquez celle qui joue."
+            tr("iad_one_color")
             if self._s._color_max == 1 else
-            "L'IA pioche dans la palette et change au fil du morceau.")
+            tr("iad_palette"))
 
     # ── Lyres ────────────────────────────────────────────────────────────────
 
     def _lyres(self, boite):
-        boite.addWidget(self._titre("LYRES"))
+        boite.addWidget(self._titre(tr("iad_lyres")))
         self._figures = {}
         grille = QGridLayout(); grille.setSpacing(4)
         for i, (cle, glyphe, lib) in enumerate(self._FIGURES):
@@ -390,8 +395,8 @@ class IASettingsDialog(QDialog):
             grille.addWidget(t, i // 3, i % 3)
         boite.addLayout(grille)
         boite.addSpacing(10)
-        self._curseur(boite, "Vitesse",   '_movement_speed', "lent", "rapide")
-        self._curseur(boite, "Amplitude", '_movement_size',  "serré", "large")
+        self._curseur(boite, tr("iad_speed"), '_movement_speed', tr("iad_slow"), tr("iad_fast"))
+        self._curseur(boite, tr("iad_amplitude"), '_movement_size', tr("iad_tight"), tr("iad_wide"))
 
     def _clic_figure(self, cle):
         pool = self._s._movement_patterns
@@ -411,26 +416,26 @@ class IASettingsDialog(QDialog):
     # ── Ambiance ─────────────────────────────────────────────────────────────
 
     def _ambiance(self, boite):
-        boite.addWidget(self._titre("AMBIANCE"))
-        self._curseur(boite, "Nervosité", '_nervosity', "posé", "nerveux")
+        boite.addWidget(self._titre(tr("iad_ambiance")))
+        self._curseur(boite, tr("iad_nervosity"), '_nervosity', tr("iad_calm"), tr("iad_nervous"))
         # Un seul CHANGEMENT pour les couleurs ET les figures : deux curseurs
         # nommés « Tenue » dans la même fenêtre ne disaient pas lequel faisait quoi.
-        self._curseur(boite, "Changement", ('_color_duration', '_movement_duration'),
-                      "souvent", "rarement")
+        self._curseur(boite, tr("iad_change"), ('_color_duration', '_movement_duration'),
+                      tr("iad_often"), tr("iad_rarely"))
 
         ligne = QHBoxLayout(); ligne.setSpacing(4)
-        lbl = QLabel("Strobe"); lbl.setMinimumWidth(72)
+        lbl = QLabel(tr("iad_strobe")); lbl.setMinimumWidth(72)
         lbl.setStyleSheet(f"font-size:11px; color:{_TEXTE};")
         ligne.addWidget(lbl)
         self._btn_strobe = {}
         for libelle, _none, _spec in self._STROBES:
-            b = QPushButton(libelle); b.setFixedHeight(24)
+            b = QPushButton(tr(self._STROBE_TR.get(libelle, libelle))); b.setFixedHeight(24)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _, l=libelle: self._set_strobe(l))
             self._btn_strobe[libelle] = b
             ligne.addWidget(b, 1)
         boite.addLayout(ligne)
-        aide = QLabel("Auto : l'IA strobe sur les drops. Continu : toute la durée.")
+        aide = QLabel(tr("iad_strobe_help"))
         aide.setStyleSheet(f"color:#5e5e5e; font-size:9px; padding:3px 0 0 82px;")
         aide.setWordWrap(True)
         boite.addWidget(aide)
@@ -468,7 +473,7 @@ class IASettingsDialog(QDialog):
     def _boutons(self):
         ligne = QHBoxLayout(); ligne.setSpacing(8)
         ligne.addStretch()
-        annuler = QPushButton("Annuler")
+        annuler = QPushButton(tr("btn_cancel"))
         # ⚠️ Toutes les portions doivent être des f-strings : dans un morceau non
         # préfixé, `}}` reste littéralement `}}` et Qt rejette la feuille entière
         # (« Could not parse stylesheet ») — le bouton s'affiche alors sans style.
@@ -478,7 +483,7 @@ class IASettingsDialog(QDialog):
             f"QPushButton:hover {{ background:#2e2e2e; color:{_TEXTE}; }}")
         annuler.clicked.connect(self.reject)
         ligne.addWidget(annuler)
-        valider = QPushButton("Appliquer")
+        valider = QPushButton(tr("btn_apply_plain"))
         valider.setStyleSheet(
             f"QPushButton {{ background:{_ACCENT_BD}; color:#fff; border:none;"
             f" border-radius:5px; padding:8px 20px; font-size:12px; font-weight:bold; }}"

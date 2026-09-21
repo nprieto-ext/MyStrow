@@ -27,6 +27,7 @@ from PySide6.QtGui import (QColor, QFont, QPageLayout, QPageSize, QPainter,
                            QPainterPath, QPdfWriter, QPen, QPolygon)
 
 from core import APP_NAME, VERSION
+from i18n import tr
 
 # Couleurs de groupe — mêmes teintes que le plan de feu à l'écran.
 GROUP_COLORS = {
@@ -49,8 +50,8 @@ GROUP_LABELS = {
     "face": "A", "lat": "B", "contre": "C",
     "douche1": "D", "douche2": "E", "douche3": "F",
     "groupe_g": "G", "groupe_h": "H",
-    "public": "Public", "fumee": "Fumée",
-    "lyre": "Lyres", "barre": "Barres", "strobe": "Strobos",
+    "public": tr("nm_public"), "fumee": tr("nm_fumee"),
+    "lyre": tr("nm_lyres"), "barre": tr("nm_barres"), "strobe": tr("nm_strobos"),
 }
 
 # Positions par défaut quand une fixture n'a jamais été déplacée sur le plan
@@ -132,9 +133,8 @@ def build_patch_rows(projectors, profile_of):
                       for j, p in members)
             rmat = getattr(head, 'matrix_rows', 0) or 0
             cmat = getattr(head, 'matrix_cols', 0) or 0
-            note = (f"Matrice {rmat}×{cmat} — {len(pixels)} px × "
-                    f"{max(len(px_profile), 1)} ch") if (rmat or cmat) \
-                else f"{len(pixels)} pixels × {max(len(px_profile), 1)} ch"
+            note = (tr("pe3_011", rmat=rmat, cmat=cmat, n=len(pixels), a=max(len(px_profile), 1))) if (rmat or cmat) \
+                else tr("pe3_012", n=len(pixels), a=max(len(px_profile), 1))
             x, y = _norm_pos(projectors, pixels[0][0])
             rows.append({
                 'name': (head.name or "Matrice").split(" · ")[0],
@@ -225,14 +225,14 @@ def _group_color(group):
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SHEET1_COLS = [
-    ("N°", 6), ("Nom", 26), ("Type", 18), ("Groupe", 11), ("Univers", 9),
-    ("Adresse", 10), ("Fin", 8), ("Canaux", 9), ("Profil DMX", 52),
-    ("Remarque", 22), ("X %", 7), ("Y %", 7),
+    (tr("pe3_013"), 6), (tr("pe3_014"), 26), (tr("pe3_015"), 18), (tr("pe3_016"), 11), (tr("pe3_017"), 9),
+    (tr("pe3_018"), 10), (tr("pe3_019"), 8), (tr("pe3_020"), 9), (tr("pe3_021"), 52),
+    (tr("pe3_022"), 22), ("X %", 7), ("Y %", 7),
 ]
 
 _SHEET2_COLS = [
-    ("Univers", 9), ("Canal", 8), ("Repère", 12), ("Appareil", 30),
-    ("Fonction", 22),
+    (tr("pe3_017"), 9), (tr("pe3_026"), 8), (tr("pe3_027"), 12), (tr("pe3_028"), 30),
+    (tr("pe3_029"), 22),
 ]
 
 
@@ -615,7 +615,7 @@ def _footer(painter, W, H, page, total):
     painter.drawText(QRectF(0, H - 34, W, 30), Qt.AlignLeft | Qt.AlignVCenter,
                      f"{APP_NAME} {VERSION}")
     painter.drawText(QRectF(0, H - 34, W, 30), Qt.AlignRight | Qt.AlignVCenter,
-                     f"Page {page}/{total}")
+                     tr("pe3_033", page=page, total=total))
 
 
 def _draw_plan(painter, W, H, rows, projectors, multi_universe):
@@ -648,9 +648,9 @@ def _draw_plan(painter, W, H, rows, projectors, multi_universe):
     painter.setPen(QColor("#b0b0b0"))
     _fh = painter.fontMetrics().height()
     painter.drawText(QRectF(sx, sy + 12, sw, _fh),
-                     Qt.AlignHCenter | Qt.AlignVCenter, "LOINTAIN  ·  CONTRE")
+                     Qt.AlignHCenter | Qt.AlignVCenter, tr("pe3_034"))
     painter.drawText(QRectF(sx, sy + sh - 14 - _fh, sw, _fh),
-                     Qt.AlignHCenter | Qt.AlignVCenter, "FACE  ·  PUBLIC")
+                     Qt.AlignHCenter | Qt.AlignVCenter, tr("pe3_035"))
 
     # Échelle des pictos : lisible sans se chevaucher quand le rig est dense
     r = min(sw, sh) * 0.020
@@ -755,21 +755,21 @@ def _draw_plan(painter, W, H, rows, projectors, multi_universe):
     painter.drawText(
         QRectF(0, ly + lh + 12, W, painter.fontMetrics().height()),
         Qt.AlignLeft | Qt.AlignVCenter,
-        "Adresse indiquée sous chaque appareil"
-        + (" au format univers.adresse" if multi_universe else "")
-        + "  ·  vue de dessus, public en bas de page")
+        tr("pe3_036")
+        + (tr("pe3_037") if multi_universe else "")
+        + tr("pe3_039"))
 
 
 _TABLE_COLS = [
     ("N°", 0.035, Qt.AlignHCenter),
-    ("Nom", 0.185, Qt.AlignLeft),
-    ("Type", 0.125, Qt.AlignLeft),
-    ("Groupe", 0.075, Qt.AlignHCenter),
-    ("Univ.", 0.050, Qt.AlignHCenter),
-    ("Adresse", 0.070, Qt.AlignHCenter),
-    ("Fin", 0.050, Qt.AlignHCenter),
-    ("Can.", 0.050, Qt.AlignHCenter),
-    ("Profil DMX", 0.360, Qt.AlignLeft),
+    (tr("pe3_014"), 0.185, Qt.AlignLeft),
+    (tr("pe3_015"), 0.125, Qt.AlignLeft),
+    (tr("pe3_016"), 0.075, Qt.AlignHCenter),
+    (tr("pe3_043"), 0.050, Qt.AlignHCenter),
+    (tr("pe3_018"), 0.070, Qt.AlignHCenter),
+    (tr("pe3_019"), 0.050, Qt.AlignHCenter),
+    (tr("pe3_046"), 0.050, Qt.AlignHCenter),
+    (tr("pe3_021"), 0.360, Qt.AlignLeft),
 ]
 
 
@@ -880,9 +880,9 @@ def export_patch_pdf(path, projectors, profile_of, show_name=""):
     H = float(painter.viewport().height())
 
     date = datetime.datetime.now().strftime("%d/%m/%Y")
-    uni_txt = ("Univers " + ", ".join(str(u + 1) for u in universes)) if universes else "—"
-    subtitle = f"{len(rows)} appareils  ·  {len(ch_rows)} canaux  ·  {uni_txt}  ·  {date}"
-    title = "PLAN DE FEU" + (f" — {show_name}" if show_name else "")
+    uni_txt = (tr("pe3_052") + ", ".join(str(u + 1) for u in universes)) if universes else "—"
+    subtitle = tr("pe3_054", n=len(rows), n1=len(ch_rows), uni_txt=uni_txt, date=date)
+    title = tr("pe3_055") + (f" — {show_name}" if show_name else "")
 
     # Pagination : 1 (plan) + pages de tableau + 1 si des adresses se marchent
     # dessus (page de conflits).
@@ -909,20 +909,19 @@ def export_patch_pdf(path, projectors, profile_of, show_name=""):
     # ── Alerte chevauchements ────────────────────────────────────────────
     if conflicts:
         writer.newPage()
-        _header(painter, W, "CONFLITS D'ADRESSES", subtitle)
+        _header(painter, W, tr("pe3_061"), subtitle)
         _pt(painter, 9, True)
         lh = painter.fontMetrics().height()
         y = 130.0
         painter.setPen(QColor("#b03030"))
         painter.drawText(QRectF(0, y, W, lh), Qt.AlignLeft | Qt.AlignVCenter,
-                         f"{len(conflicts)} canal(aux) revendiqué(s) par plusieurs appareils")
+                         tr("pe3_062", n=len(conflicts)))
         y += lh * 1.4
         _pt(painter, 8)
         lh = painter.fontMetrics().height()
         painter.setPen(_INK_SOFT)
         painter.drawText(QRectF(0, y, W, lh), Qt.AlignLeft | Qt.AlignVCenter,
-                         "Deux appareils sur le même canal bougent ensemble sans raison. "
-                         "Édition ▸ ⚡ Auto-adressage réattribue tout le patch proprement.")
+                         tr("pe3_063"))
         y += lh * 2.0
         painter.setPen(_INK)
         step = lh * 1.25

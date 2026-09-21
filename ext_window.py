@@ -26,19 +26,19 @@ from PySide6.QtWidgets import (
     QDialog, QRadioButton, QCheckBox, QDialogButtonBox, QMessageBox, QFileDialog,
     QSpinBox, QDoubleSpinBox,
 )
-from i18n import tr
+from i18n import tr, tr_name
 from PySide6.QtCore import Qt, QTimer, QPoint, QMimeData
 from PySide6.QtGui import QPainter, QColor, QPen, QDrag, QFont
 
 
 # Banques de la colonne de gauche (comme la colonne du REC Lumière)
 EXT_CATEGORIES = [
-    ("color",     "🎨  Couleur"),
-    ("select",    "◉  Sélection"),
-    ("position",  "🎯  Position"),
+    ("color",     tr("ext3_cat_color")),
+    ("select",    tr("ext3_cat_select")),
+    ("position",  tr("ext3_cat_position")),
     ("mem",       "💾  MEM"),
-    ("effects",   "✨  Effets"),
-    ("special",   "⭐  Spécial"),
+    ("effects",   tr("ext3_cat_effects")),
+    ("special",   tr("ext3_cat_special")),
 ]
 
 # Catalogue de blocs STATIQUES (banques fixes).
@@ -148,26 +148,26 @@ class ExtBlock(QPushButton):
 
     def _refresh_caption(self):
         """Texte + infobulle du bloc ; la cible des couleurs est mise sur la ligne du dessous."""
-        label = self.spec.get("label", "?")
+        label = tr_name(self.spec.get("label", "?"))
         act = self.spec.get("action", {})
         target, tip = None, None
         if act.get("type") == "color":
             label = label.upper()
             g = act.get("groups", "all")   # défaut = tous les groupes
             if g == "selection":
-                target, tip = "Sél.", "Couleur → projecteurs sélectionnés"
+                target, tip = tr("ext3_001"), tr("ext3_002")
             elif g == "all":
-                target, tip = "Tous", "Couleur → tous les groupes"
+                target, tip = tr("ext3_003"), tr("ext3_004")
             elif g:
                 disp = getattr(self.canvas, "group_display", {}) or {}
                 letters = ",".join(disp.get(x, x) for x in g)
-                target, tip = letters, f"Couleur → groupes : {letters}"
+                target, tip = letters, tr("ext3_005", letters=letters)
         elif act.get("type") == "effect":
             g = act.get("groups", "all")
             if g and g != "all":
                 disp = getattr(self.canvas, "group_display", {}) or {}
                 letters = ",".join(disp.get(x, x) for x in g)
-                target, tip = letters, f"Effet → groupes : {letters}"
+                target, tip = letters, tr("ext3_006", letters=letters)
         elif act.get("type") == "master_nudge":
             step = abs(int(act.get("delta", 0)))
             fade = float(act.get("fade", 0) or 0)
@@ -798,7 +798,7 @@ class ExtWindow(QMainWindow):
         lv.setContentsMargins(8, 12, 8, 12)
         lv.setSpacing(6)
 
-        lv.addWidget(self._section_label("BANQUES"))
+        lv.addWidget(self._section_label(tr("ext3_007")))
 
         self._cat_group = QButtonGroup(self)
         self._cat_group.setExclusive(True)
@@ -815,7 +815,7 @@ class ExtWindow(QMainWindow):
             lv.addWidget(b)
 
         lv.addSpacing(8)
-        lv.addWidget(self._section_label("BLOCS"))
+        lv.addWidget(self._section_label(tr("ext3_008")))
 
         # Palette scrollable (mise à jour selon la banque sélectionnée)
         self._palette_scroll = QScrollArea()
@@ -1020,14 +1020,14 @@ class ExtWindow(QMainWindow):
     @staticmethod
     def _empty_hint(code: str) -> str:
         if code == "position":
-            return "Aucune position enregistrée.\nConfigure-les via les pads POS."
+            return tr("ext3_011")
         if code == "mem":
-            return "Aucune mémoire enregistrée.\nEnregistre via le bouton 🔴."
-        return "Aucun bloc."
+            return tr("ext3_012")
+        return tr("ext3_013")
 
     def _make_palette_item(self, spec: dict) -> QPushButton:
         accent = spec.get("color", "#0077bb")
-        b = _PaletteItem(spec, "➕  " + spec.get("label", "?"))
+        b = _PaletteItem(spec, "➕  " + tr_name(spec.get("label", "?")))
         b.setFixedHeight(34)
         b.setCursor(Qt.PointingHandCursor)
         b.setStyleSheet(
@@ -1054,7 +1054,7 @@ class ExtWindow(QMainWindow):
         self.resize(max(600, self.width() + delta), self.height())
 
     def _on_lock_toggled(self, edit_on: bool):
-        self._lock_btn.setText(tr("ext2_edit") if edit_on else "🔒  Live")
+        self._lock_btn.setText(tr("ext2_edit") if edit_on else tr("ext3_014"))
         self.canvas.set_edit_mode(edit_on)
         self._set_palette(edit_on)   # palette masquée en Live, largeur compensée
 
@@ -1063,7 +1063,7 @@ class ExtWindow(QMainWindow):
         self._lock_btn.blockSignals(True)
         self._lock_btn.setChecked(edit_on)
         self._lock_btn.blockSignals(False)
-        self._lock_btn.setText(tr("ext2_edit") if edit_on else "🔒  Live")
+        self._lock_btn.setText(tr("ext2_edit") if edit_on else tr("ext3_014"))
         self.canvas.set_edit_mode(edit_on)
         self._set_palette(edit_on)   # palette masquée en Live, largeur compensée
 
@@ -1078,7 +1078,7 @@ class ExtWindow(QMainWindow):
         if t == "strobe":
             pdf = getattr(owner, "plan_de_feu", None)
             if not getattr(pdf, "selected_lamps", None):
-                self._flash_status("⚠ Sélectionnez des projecteurs d'abord")
+                self._flash_status(tr("ext3_016"))
                 return
 
         if t == "color":
@@ -1087,51 +1087,51 @@ class ExtWindow(QMainWindow):
             if groups == "selection":
                 pdf = getattr(owner, "plan_de_feu", None)
                 if not getattr(pdf, "selected_lamps", None):
-                    self._flash_status("⚠ Sélectionnez des projecteurs d'abord")
+                    self._flash_status(tr("ext3_016"))
                     return
                 owner._apply_color_shortcut(QColor(r, g, b))
-                self._flash_status("Couleur → sélection")
+                self._flash_status(tr("ext3_018"))
             else:
                 n = owner._apply_color_to_groups(QColor(r, g, b), groups)
-                cible = "tous les groupes" if groups == "all" else "groupes ciblés"
-                self._flash_status(f"Couleur → {cible} ({n} proj.)")
+                cible = tr("ext3_019") if groups == "all" else tr("ext3_020")
+                self._flash_status(tr("ext3_022", cible=cible, n=n))
             self._latch_color(block)          # le bloc couleur reste allumé
         elif t == "strobe":
             owner._apply_strobe_shortcut()
-            self._flash_status("Strobe basculé")
+            self._flash_status(tr("ext3_023"))
         elif t == "position":
             owner._recall_position_akai(action.get("col", 0), action.get("row", 0))
             self._sync_pos_latches()
-            self._flash_status("Position rappelée")
+            self._flash_status(tr("ext3_024"))
         elif t == "mem":
             # Passe par trigger_memory (point d'entrée externe) : gère les
             # mémoires multi-cue (ré-appui = cue suivant), comme les pads AKAI.
             owner.trigger_memory(action.get("col", 0), action.get("row", 0))
             self._sync_mem_latches()
-            self._flash_status("Mémoire rappelée")
+            self._flash_status(tr("ext3_025"))
         elif t == "effect":
             name = action.get("name", "")
             res = owner._toggle_ext_effect(name, action.get("groups"))
             if res is None:
-                self._flash_status(f"⚠ Effet « {name} » introuvable")
+                self._flash_status(tr("ext3_026", name=name))
             else:
-                self._flash_status(f"Effet {'ON' if res else 'OFF'} : {name}")
+                self._flash_status(tr("ext3_027", a='ON' if res else 'OFF', name=name))
                 if res:
                     self._latch_effect(block)
                 elif block is not None:
                     block._set_active(False)
         elif t == "select_all":
             n = owner._ext_select_all()
-            self._flash_status(f"{n} projecteur(s) sélectionné(s)")
+            self._flash_status(tr("ext3_030", n=n))
         elif t == "clear_sel":
             owner._ext_clear_selection()
-            self._flash_status("Sélection vidée")
+            self._flash_status(tr("ext3_031"))
         elif t == "select_group":
             pdf = getattr(owner, "plan_de_feu", None)
             if pdf is not None and hasattr(pdf, "_select_group"):
                 pdf._select_group(action.get("group"))
             n = len(getattr(pdf, "selected_lamps", None) or [])
-            self._flash_status(f"{n} projecteur(s) sélectionné(s)")
+            self._flash_status(tr("ext3_030", n=n))
         elif t == "select_custom":
             pdf = getattr(owner, "plan_de_feu", None)
             members = (getattr(pdf, "_custom_groups", {}) or {}).get(action.get("name")) \
@@ -1146,7 +1146,7 @@ class ExtWindow(QMainWindow):
             self._clear_color_latches()
         elif t == "full":
             n = owner._ext_full_on()
-            self._flash_status(f"Plein feu ({n} proj.)")
+            self._flash_status(tr("ext3_033", n=n))
             self._clear_color_latches()       # les pastilles couleur ne reflètent plus l'état
         elif t == "blackout":
             owner._ext_blackout()
@@ -1154,26 +1154,26 @@ class ExtWindow(QMainWindow):
             self._clear_all_latches()
         elif t == "stop_fx":
             owner._ext_stop_effects()
-            self._flash_status("Effets arrêtés")
+            self._flash_status(tr("ext3_034"))
             self._clear_effect_latches()
         elif t == "play":
             owner.toggle_play()
             self._flash_status("Play / Pause")
         elif t == "next":
             owner.next_media()
-            self._flash_status("Média suivant")
+            self._flash_status(tr("ext3_035"))
         elif t == "video_toggle":
             state = owner._ext_toggle_video()
-            self._flash_status("Vidéo " + ("ON" if state else "OFF")
-                               if state is not None else "Vidéo indisponible")
+            self._flash_status(tr("ext3_036") + ("ON" if state else "OFF")
+                               if state is not None else tr("ext3_039"))
         elif t == "dmx_cut":
             state = owner._ext_cut_dmx()
-            self._flash_status(("DMX " + ("ON" if state else "coupé"))
-                               if state is not None else "DMX indisponible")
+            self._flash_status(("DMX " + ("ON" if state else tr("ext3_042")))
+                               if state is not None else tr("ext3_043"))
         elif t == "rec_mem":
             owner._toggle_mem_rec_mode()
             on = bool(getattr(owner, "_mem_rec_mode", False))
-            self._flash_status("REC " + ("armé — clique une mémoire" if on else "désactivé"))
+            self._flash_status("REC " + (tr("ext3_045") if on else tr("ext3_046")))
         elif t == "tap_tempo":
             owner._tap_tempo()
             self._flash_status("Tap tempo")
@@ -1197,7 +1197,7 @@ class ExtWindow(QMainWindow):
         elif t in ("fader", "clock"):
             pass   # fader = glissé (ExtFaderBlock) ; clock = affichage seul
         else:
-            self._flash_status(f"« {action.get('what', t)} » — à venir")
+            self._flash_status(tr("ext3_048", a=action.get('what', t)))
 
     def _dispatch_fader(self, action: dict, value: int):
         """Applique la valeur d'un bloc-fader (Master ou groupes)."""
@@ -1265,7 +1265,7 @@ class ExtWindow(QMainWindow):
         act = blk.spec.get("action", {})
         opener = getattr(owner, "_open_cue_editor", None)
         if opener is None:
-            self._flash_status("Éditeur de cues indisponible")
+            self._flash_status(tr("ext3_050"))
             return
         opener(act.get("col", 0), act.get("row", 0))
 
@@ -1346,23 +1346,23 @@ class ExtWindow(QMainWindow):
         if t == "strobe":
             pdf = getattr(owner, "plan_de_feu", None)
             if not getattr(pdf, "selected_lamps", None):
-                self._flash_status("⚠ Sélectionnez des projecteurs d'abord")
+                self._flash_status(tr("ext3_016"))
                 return
             owner._ext_set_strobe(True)
             if block is not None:
                 block._set_active(True)
-            self._flash_status("Flash strobe")
+            self._flash_status(tr("ext3_052"))
         elif t == "effect":
             if block is not None and not getattr(block, "active", False):
                 res = owner._toggle_ext_effect(action.get("name", ""), action.get("groups"))
                 if res:
                     block._set_active(True)
-            self._flash_status("Flash effet")
+            self._flash_status(tr("ext3_053"))
         elif t == "color":
             groups = action.get("groups", "all")
             if groups == "selection" and not getattr(
                     getattr(owner, "plan_de_feu", None), "selected_lamps", None):
-                self._flash_status("⚠ Sélectionnez des projecteurs d'abord")
+                self._flash_status(tr("ext3_016"))
                 return
             r, g, b = action.get("rgb", [255, 255, 255])
             # Instantané de l'état avant flash → restauré au relâché
@@ -1380,7 +1380,7 @@ class ExtWindow(QMainWindow):
                 owner._apply_color_to_groups(QColor(r, g, b), groups)
             if block is not None:
                 block._set_active(True)
-            self._flash_status("Flash couleur")
+            self._flash_status(tr("ext3_055"))
 
     def _dispatch_flash_off(self, action: dict, block: "ExtBlock"):
         """Relâché d'un bloc en mode flash : l'action s'arrête."""
@@ -1604,7 +1604,7 @@ class ExtWindow(QMainWindow):
         accent = blk.spec.get("color", "#00d4ff")
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("ext2_colour_target") if is_color
-                           else ("Cible du fader" if is_fader else "Cible de l'effet"))
+                           else (tr("ext3_056") if is_fader else tr("ext3_057")))
         dlg.setMinimumWidth(340)
         dlg.setStyleSheet(f"""
             QDialog {{ background:#161616; }}
@@ -1623,14 +1623,14 @@ class ExtWindow(QMainWindow):
         lay.setContentsMargins(22, 20, 22, 18)
         lay.setSpacing(3)
 
-        _kind = "Couleur" if is_color else ("Fader" if is_fader else "Effet")
+        _kind = tr("ext3_058") if is_color else ("Fader" if is_fader else tr("ext3_060"))
         hdr = QLabel(((_kind)
                       + f"  « {blk.spec.get('label', '?')} »"))
         hdr.setObjectName("hdr")
         lay.addWidget(hdr)
         sub = QLabel(tr("ext2_where_colour") if is_color
-                     else ("Quels projecteurs piloter ?" if is_fader
-                           else "Sur quels groupes jouer l'effet ?"))
+                     else (tr("ext3_061") if is_fader
+                           else tr("ext3_062")))
         sub.setObjectName("sub")
         lay.addWidget(sub)
         lay.addSpacing(10)
@@ -1881,7 +1881,7 @@ class ExtWindow(QMainWindow):
         for blk in list(self.canvas.blocks):
             self.canvas.remove_block(blk)
         self._load_layout()
-        self._flash_status("Disposition rechargée")
+        self._flash_status(tr("ext3_063"))
 
     def _reset_to_defaults(self):
         """Vide la surface et repose le layout par défaut (avec confirmation)."""
@@ -1896,12 +1896,12 @@ class ExtWindow(QMainWindow):
             self.canvas.remove_block(blk)
         self._place_blocks(self._default_layout_blocks())
         self._save_layout()
-        self._flash_status("Surface réinitialisée")
+        self._flash_status(tr("ext3_064"))
 
     def _clear_all_blocks(self):
         """Vide entièrement la surface (avec confirmation)."""
         if not self.canvas.blocks:
-            self._flash_status("Surface déjà vide")
+            self._flash_status(tr("ext3_065"))
             return
         resp = QMessageBox.question(
             self, tr("ext_clear_all"),
@@ -1913,7 +1913,7 @@ class ExtWindow(QMainWindow):
         for blk in list(self.canvas.blocks):
             self.canvas.remove_block(blk)
         self._save_layout()
-        self._flash_status("Surface vidée")
+        self._flash_status(tr("ext3_066"))
 
     # ── Menu ☰ (gestion de la disposition) ─────────────────────────────
     def _show_surface_menu(self):
@@ -1946,29 +1946,29 @@ class ExtWindow(QMainWindow):
     def _export_layout(self):
         """Enregistre la disposition courante dans un fichier .json choisi."""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter la disposition", "disposition_ext.json",
-            "Disposition EXT (*.json)")
+            self, tr("ext3_067"), "disposition_ext.json",
+            tr("ext3_069"))
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(self._layout_data(), f, ensure_ascii=False, indent=2)
-            self._flash_status("Disposition exportée")
+            self._flash_status(tr("ext3_070"))
         except Exception as e:
-            QMessageBox.warning(self, tr("ext_export"), f"Échec de l'export :\n{e}")
+            QMessageBox.warning(self, tr("ext_export"), tr("ext3_071", e=e))
 
     def _import_layout(self):
         """Remplace la surface par une disposition chargée depuis un fichier .json."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importer une disposition", "",
-            "Disposition EXT (*.json);;Tous les fichiers (*.*)")
+            self, tr("ext3_072"), "",
+            tr("ext3_074"))
         if not path:
             return
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
-            QMessageBox.warning(self, tr("ext_import"), f"Fichier illisible :\n{e}")
+            QMessageBox.warning(self, tr("ext_import"), tr("ext3_075", e=e))
             return
         blocks = data.get("blocks") if isinstance(data, dict) else None
         if not isinstance(blocks, list):
@@ -1979,7 +1979,7 @@ class ExtWindow(QMainWindow):
             self.canvas.remove_block(blk)
         self._place_blocks(blocks)
         self._save_layout()
-        self._flash_status("Disposition importée")
+        self._flash_status(tr("ext3_076"))
 
     def closeEvent(self, ev):
         self._save_layout()

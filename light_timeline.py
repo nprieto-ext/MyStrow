@@ -34,7 +34,7 @@ import time
 import re
 from pathlib import Path
 
-from i18n import tr
+from i18n import tr, tr_name
 
 
 def _ffmpeg_exe():
@@ -72,6 +72,8 @@ _COLOR_KEYS = {
 def _cn(name_fr: str) -> str:
     """Return *name_fr* translated to the current language."""
     key = _COLOR_KEYS.get(name_fr)
+    if key is None and "/" in name_fr:   # bicolore « Rouge/Bleu »
+        return "/".join(_cn(p) for p in name_fr.split("/"))
     return tr(key) if key else name_fr
 
 def _bicolor_name(a: str, b: str) -> str:
@@ -244,24 +246,24 @@ _REPOS_FAISCEAU = {
 # pas une fiche technique.
 _MEM_BEAM_CH = (
     ("gobo",           "Gobo"),
-    ("gobo_rotation",  "Rot. gobo"),
+    ("gobo_rotation",  tr("lt3_004")),
     ("gobo2",          "Gobo 2"),
-    ("color_wheel",    "Roue"),
-    ("prism",          "Prisme"),
-    ("prism_rotation", "Rot. prisme"),
+    ("color_wheel",    tr("lt3_008")),
+    ("prism",          tr("lt3_010")),
+    ("prism_rotation", tr("lt3_012")),
     ("zoom",           "Zoom"),
     ("focus",          "Focus"),
     ("iris",           "Iris"),
     ("shutter",        "Shutter"),
     ("strobe_speed",   "Strobe"),
-    ("effects",        "Effets"),
-    ("speed",          "Vitesse"),
+    ("effects",        tr("lt3_024")),
+    ("speed",          tr("lt3_026")),
     ("mode_value",     "Mode"),
     ("preset1",        "Preset 1"),
     ("preset2",        "Preset 2"),
     ("preset3",        "Preset 3"),
     ("preset4",        "Preset 4"),
-    ("fan_speed",      "Ventilation"),
+    ("fan_speed",      tr("lt3_038")),
 )
 
 # Canaux de couleur dédiés. À part des précédents parce qu'ils ne partent QUE si
@@ -269,9 +271,9 @@ _MEM_BEAM_CH = (
 # au faisceau laisserait croire qu'un ambre à niveau 0 fait quelque chose.
 _MEM_MISC_CH = (
     ("uv",           "UV"),
-    ("white_boost",  "Blanc"),
-    ("amber_boost",  "Ambre"),
-    ("orange_boost", "Orange"),
+    ("white_boost",  tr("lt3_040")),
+    ("amber_boost",  tr("lt3_042")),
+    ("orange_boost", tr("lt3_044")),
 )
 
 
@@ -1902,7 +1904,7 @@ class _EffectChip(QWidget):
     def __init__(self, eff_dict, parent=None):
         super().__init__(parent)
         self._eff = eff_dict
-        name  = eff_dict.get("name", "")
+        name  = tr_name(eff_dict.get("name", ""))
         emoji = eff_dict.get("emoji", "✨")
         self._label = f"{emoji}  {name}"
         self.setFixedHeight(self.H)
@@ -2016,7 +2018,7 @@ class _LibraryItem(QWidget):
     def _lock_labels(self):
         """(texte « Bloquer », texte « Débloquer ») du menu contextuel.
         Surchargé par type d'item (couleur / séquence / REC / effet)."""
-        return ("🔒  Bloquer cette couleur", "🔓  Débloquer cette couleur")
+        return (tr("lt3_045"), tr("lt3_046"))
 
     # ── Visuel ───────────────────────────────────────────────────────────────
 
@@ -2238,8 +2240,8 @@ class _LibraryMemItem(_LibraryItem):
 
     def _lock_labels(self):
         if self._is_rec:
-            return ("🔒  Bloquer ce REC", "🔓  Débloquer ce REC")
-        return ("🔒  Bloquer cette séquence", "🔓  Débloquer cette séquence")
+            return (tr("lt3_047"), tr("lt3_048"))
+        return (tr("lt3_049"), tr("lt3_050"))
 
     def _context_extra_actions(self, menu, ed):
         # Renommer / Supprimer réservés aux captures REC (pas aux mémoires AKAI,
@@ -2340,10 +2342,9 @@ class _LibraryMemItem(_LibraryItem):
                 for c in getattr(t, 'clips', []):
                     if getattr(c, 'memory_ref', None) == ref:
                         n_refs += 1
-        msg = f"Supprimer « {self._name} » ?"
+        msg = tr("lt3_051", name=self._name)
         if n_refs:
-            msg += (f"\n\n⚠ {n_refs} bloc(s) de séquence l'utilisent — "
-                    "ils seront supprimés aussi.")
+            msg += (tr("lt3_052", n_refs=n_refs))
         box = QMessageBox(self)
         box.setWindowTitle(tr("lt2_delete_rec"))
         box.setIcon(QMessageBox.Warning)
@@ -2411,7 +2412,7 @@ class _LibraryEffectItem(_LibraryItem):
     def __init__(self, eff_dict, panel=None, parent=None):
         self._eff = eff_dict
         emoji = eff_dict.get("emoji", "✨")
-        name  = eff_dict.get("name", "")
+        name  = tr_name(eff_dict.get("name", ""))
         super().__init__(f"{emoji}  {name}", panel, parent)
 
         # L'emoji de l'effet fait déjà office de pastille : le swatch violet
@@ -2424,7 +2425,7 @@ class _LibraryEffectItem(_LibraryItem):
         return {"type": "effect", "eff": self._eff}
 
     def _lock_labels(self):
-        return ("🔒  Bloquer cet effet", "🔓  Débloquer cet effet")
+        return (tr("lt3_053"), tr("lt3_054"))
 
     def _do_single_drag(self):
         import json as _json
@@ -2695,14 +2696,14 @@ class LibraryPanel(QWidget):
         sr_h.addWidget(self._search_input)
         header.addWidget(search_row)
 
-        self._sec_color      = _LibrarySection("COULEUR", v)
-        self._sec_bi         = _LibrarySection("BICOULEUR", v)
-        self._sec_mem        = _LibrarySection("MÉMOIRE", v)
+        self._sec_color      = _LibrarySection(tr("lt3_055"), v)
+        self._sec_bi         = _LibrarySection(tr("lt3_056"), v)
+        self._sec_mem        = _LibrarySection(tr("lt3_057"), v)
         self._sec_rec        = _LibrarySection("REC", v)
         self._sec_pos        = _LibrarySection(tr("lt_sec_positions"), v)
         self._sec_gobo       = _LibrarySection("GOBOS", v)
-        self._sec_eff        = _LibrarySection("EFFETS", v)
-        self._sec_custom_eff = _LibrarySection("MES EFFETS", v)
+        self._sec_eff        = _LibrarySection(tr("lt3_060"), v)
+        self._sec_custom_eff = _LibrarySection(tr("lt3_061"), v)
 
         v.addStretch()
         self._scroll.setWidget(content)
@@ -2783,7 +2784,7 @@ class LibraryPanel(QWidget):
             except RuntimeError: pass
 
         n = len(self._selection)
-        self._sel_lbl.setText(f"{n} sélect." if n > 1 else "")
+        self._sel_lbl.setText(tr("lt3_062", n=n) if n > 1 else "")
 
     def _clear_selection(self):
         for item in list(self._selection):
@@ -4878,7 +4879,7 @@ print(json.dumps(waveform))
                                 eff = mem.get("effect")
                                 if eff and eff.get("layers"):
                                     eff_name = eff.get("name") or tr("lt_custom_effect")
-                                    tip += f"<br><small>⚡ {eff_name}</small>"
+                                    tip += f"<br><small>⚡ {tr_name(eff_name)}</small>"
                                 else:
                                     tip += f"<br><small>{tr('lt_no_effect')}</small>"
                     QToolTip.showText(event.globalPosition().toPoint(), tip, self)
@@ -5303,10 +5304,10 @@ print(json.dumps(waveform))
         actions_by_name = {}  # name -> QAction
 
         for cat, effs in categories.items():
-            hdr = menu.addAction(cat.upper())
+            hdr = menu.addAction(tr_name(cat).upper())
             hdr.setEnabled(False)
             for eff in effs:
-                nm = eff.get("name", "")
+                nm = tr_name(eff.get("name", ""))
                 act = menu.addAction(f"   {eff.get('emoji', '✨')}  {nm}")
                 act.triggered.connect(lambda _, e=eff: on_select(e))
                 actions_by_name[nm.lower()] = act
@@ -5375,7 +5376,7 @@ print(json.dumps(waveform))
 
         # Groupe cible
         cur_groups = getattr(clip, 'effect_target_groups', [])
-        grp_label_str = ", ".join(cur_groups) if cur_groups else "Tous"
+        grp_label_str = ", ".join(cur_groups) if cur_groups else tr("lt3_064")
         act_grp = menu.addAction(tr("lt_f_groups", grp_label_str=grp_label_str))
         act_grp.triggered.connect(lambda: self._edit_effect_target_groups(clip))
 
@@ -5501,7 +5502,7 @@ print(json.dumps(waveform))
 
         # ── Changer la mémoire ─────────────────────────────────────────
         cur_label = getattr(clip, 'memory_label', '') or ''
-        changer_lbl = f"Changer ({cur_label})" if cur_label else "Changer de mémoire"
+        changer_lbl = tr("lt3_066", cur_label=cur_label) if cur_label else tr("lt3_067")
         act_change = menu.addAction(changer_lbl)
 
         def _open_mem_picker():
@@ -5887,13 +5888,13 @@ print(json.dumps(waveform))
         fill_gap_menu = menu.addMenu(tr("lt_menu_create_block"))
 
         for name, col in colors:
-            action = fill_gap_menu.addAction(f"■ {name}")
+            action = fill_gap_menu.addAction(f"■ {_cn(name)}")
             action.triggered.connect(lambda checked=False, c=col, p=local_pos: self.fill_gap_at_pos(c, p))
 
         fill_gap_menu.addSeparator()
 
         for name, col1, col2 in bicolors:
-            action = fill_gap_menu.addAction(f"■■ {name}")
+            action = fill_gap_menu.addAction(f"■■ {_cn(name)}")
             action.triggered.connect(lambda checked=False, c1=col1, c2=col2, p=local_pos: self.fill_gap_bicolor_at_pos(c1, c2, p))
 
         act_del_gap = menu.addAction(tr("lt_remove_gap"))
@@ -6044,7 +6045,7 @@ print(json.dumps(waveform))
                               ("Magenta", QColor(255, 0, 255)), ("Cyan", QColor(0, 255, 255)),
                               ("Blanc", QColor(255, 255, 255)), ("Black Light", QColor(100, 0, 255))]:
                 pix = QPixmap(16, 16); pix.fill(col)
-                a = sel_col.addAction(QIcon(pix), name)
+                a = sel_col.addAction(QIcon(pix), _cn(name))
                 a.triggered.connect(lambda checked=False, c=col: self.set_selection_color(c))
 
             sel_fi = menu.addMenu(tr("lt_f_fadein_n", n=n))
@@ -6112,7 +6113,7 @@ print(json.dumps(waveform))
             pixmap = QPixmap(16, 16)
             pixmap.fill(col)
             icon = QIcon(pixmap)
-            action = color_menu.addAction(icon, name)
+            action = color_menu.addAction(icon, _cn(name))
             action.triggered.connect(lambda checked=False, c=col, cl=clip: self.set_clip_color(cl, c))
 
         # Bicolores
@@ -6135,7 +6136,7 @@ print(json.dumps(waveform))
             p.fillRect(8, 0, 8, 16, col2)
             p.end()
             icon = QIcon(pixmap)
-            action = color_menu.addAction(icon, name)
+            action = color_menu.addAction(icon, _cn(name))
             action.triggered.connect(lambda checked=False, c1=col1, c2=col2, cl=clip: self.set_clip_bicolor(cl, c1, c2))
 
         # === MOUVEMENT (toute piste qui vise une lyre) ===
@@ -6328,8 +6329,8 @@ print(json.dumps(waveform))
         hdr.setEnabled(False)
         menu.addSeparator()
         cur = getattr(right_clip, 'xfade', 0)
-        for lbl, ms in [("Court  (250 ms)", 250), ("Moyen  (500 ms)", 500),
-                        ("Long  (1 s)", 1000), ("Très long  (2 s)", 2000)]:
+        for lbl, ms in [(tr("lt3_068"), 250), (tr("lt3_069"), 500),
+                        (tr("lt3_070"), 1000), (tr("lt3_071"), 2000)]:
             a = menu.addAction(("● " if cur == ms else "○  ") + lbl)
             a.triggered.connect(lambda checked=False, c=right_clip, m=ms: self.set_clip_xfade(c, m))
         a = menu.addAction(tr("lt_custom"))
@@ -6533,9 +6534,9 @@ print(json.dumps(waveform))
         from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                                        QCheckBox, QPushButton, QLabel, QFrame)
         from PySide6.QtCore import Qt
-        _LETTERS = [("A", "Face"), ("B", "Lat"), ("C", "Contre"),
-                    ("D", "Douche 1"), ("E", "Douche 2"), ("F", "Douche 3"),
-                    ("G", "Groupe G"), ("H", "Groupe H")]
+        _LETTERS = [("A", tr("lt3_073")), ("B", tr("lt3_075")), ("C", tr("lt3_077")),
+                    ("D", tr("lt3_079")), ("E", tr("lt3_081")), ("F", tr("lt3_083")),
+                    ("G", tr("lt3_085")), ("H", tr("lt3_087"))]
         cur = list(getattr(clip, 'effect_target_groups', []))
 
         dlg = QDialog(self)
@@ -7736,7 +7737,7 @@ print(json.dumps(waveform))
                     painter.setPen(QColor(230, 200, 255, 230))
                     painter.drawText(clip_rect.adjusted(10, 0, -4, 0),
                                      Qt.AlignVCenter | Qt.AlignLeft,
-                                     f"{eff_emoji}  {eff_name}{grp_str}{spd_str}" if eff_name else "✨  Effet")
+                                     f"{eff_emoji}  {tr_name(eff_name)}{grp_str}{spd_str}" if eff_name else tr("lt3_089"))
 
             elif getattr(clip, 'memory_ref', None):
                 # ── Clip de séquence AKAI ──────────────────────────────
@@ -8058,11 +8059,11 @@ class MovementEditorDialog(QDialog):
     """
 
     _EFFECTS = [
-        ("⭕", "cercle",     "Cercle"),
-        ("∞",  "figure8",   "Figure 8"),
-        ("↔",  "balayage_h","Balayage H"),
-        ("↕",  "balayage_v","Balayage V"),
-        ("✦",  "aleatoire", "Aléatoire"),
+        ("⭕", "cercle",     tr("lt3_092")),
+        ("∞",  "figure8",   tr("lt3_095")),
+        ("↔",  "balayage_h",tr("lt3_098")),
+        ("↕",  "balayage_v",tr("lt3_101")),
+        ("✦",  "aleatoire", tr("lt3_104")),
     ]
 
     def __init__(self, clip, parent=None):

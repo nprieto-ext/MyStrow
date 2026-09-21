@@ -146,7 +146,7 @@ _SCENE_PRESETS = {
     'vide': {
         # Scène nue : ni truss ni accessoires. Utile quand le décor vient d'un
         # modèle importé (GLTF/GLB) — sinon le rig du preset reste dessous.
-        'label': 'Aucun décor',
+        'label': tr("p3w3_002"),
         'trusses': [],
     },
     # ── Décors livrés en modèle 3D ────────────────────────────────────────
@@ -156,7 +156,7 @@ _SCENE_PRESETS = {
     # Les projecteurs qui accompagnaient le modele d'origine ont ete retires :
     # le rig, c'est le patch de l'utilisateur qui le pose, pas le decor.
     'concert_glb': {
-        'label': 'Scène de concert',
+        'label': tr("p3w3_004"),
         'trusses': [],
         'glb': 'concert_stage.glb',
         # Ce modèle est bâti fond de scène vers les Z NÉGATIFS, or ici les Z
@@ -180,7 +180,7 @@ _SCENE_PRESETS = {
         'span': 16.2,
     },
     'festival_plein_air': {
-        'label': 'Festival plein air',
+        'label': tr("p3w3_006"),
         # Décor dessiné par la page (`_makeFestivalStage`) : le gril du toit en
         # fait partie, il n'est pas dans la liste de trusses éditable.
         'trusses': [],
@@ -191,7 +191,7 @@ _SCENE_PRESETS = {
         'cyc': False,
     },
     'discotheque': {
-        'label': 'Discothèque',
+        'label': tr("p3w3_008"),
         # Décor dessiné par la page (`_makeDiscotheque`) : salle, estrade DJ,
         # cadre de scène, cercle de truss au-dessus de la piste, trusses latéraux.
         'trusses': [],
@@ -203,7 +203,7 @@ _SCENE_PRESETS = {
         'cyc': False,
     },
     'dj_mobile': {
-        'label': 'DJ mobile',
+        'label': tr("p3w3_010"),
         # Décor dessiné par la page (`_makeDJMobile`) : cabine blanche à néon
         # MyStrow, grands et petits totems lycra blancs, colonnes PA. Sans murs.
         'trusses': [],
@@ -213,7 +213,7 @@ _SCENE_PRESETS = {
         'cyc': False,
     },
     'conference': {
-        'label': 'Conférence',
+        'label': tr("p3w3_012"),
         # Décor dessiné par la page (`_makeConference`) : amphithéâtre circulaire
         # en gradins, grand écran au mur du fond, baies vitrées, anneau de plafond.
         'trusses': [],
@@ -225,7 +225,7 @@ _SCENE_PRESETS = {
         'cyc': False,
     },
     'sapin_noel': {
-        'label': 'Sapin de Noël',
+        'label': tr("p3w3_014"),
         # Décor dessiné par la page (`_makeSapinNoel`) : grand sapin stylisé
         # vert foncé (pointe à 6,6 m). Sans boules, cadeaux ni structure.
         'trusses': [],
@@ -749,14 +749,14 @@ class _TrussRow(QFrame):
             rw.addWidget(lbl); rw.addWidget(sp); rw.addStretch()
             return rw, sp
 
-        r1, self._h  = _row("Hauteur (m)",  1.0, 15.0, truss.get('height', TRUSS_Y),
-                             tip="Hauteur du truss au-dessus de la scène")
+        r1, self._h  = _row(tr("p3w3_015"),  1.0, 15.0, truss.get('height', TRUSS_Y),
+                             tip=tr("p3w3_017"))
         r2, self._z  = _row("Position Z",  -8.0, 10.0, truss.get('z', 0.0),
-                             tip="Avant (−) / Arrière (+) de la scène")
-        r3, self._xl = _row("Bord gauche", -15.0, 0.0,  truss.get('x_l', -9.0),
-                             tip="Position X gauche du truss")
-        r4, self._xr = _row("Bord droit",   0.0, 15.0,  truss.get('x_r',  9.0),
-                             tip="Position X droite du truss")
+                             tip=tr("p3w3_020"))
+        r3, self._xl = _row(tr("p3w3_021"), -15.0, 0.0,  truss.get('x_l', -9.0),
+                             tip=tr("p3w3_023"))
+        r4, self._xr = _row(tr("p3w3_024"),   0.0, 15.0,  truss.get('x_r',  9.0),
+                             tip=tr("p3w3_026"))
         for r in (r1, r2, r3, r4):
             root.addLayout(r)
 
@@ -1817,7 +1817,7 @@ class Plan3DWebWindow(QMainWindow):
 
         self._cam_btns_py = {}
         cartes = []
-        for code, label in [('iso','ISO'), ('front','FACE'), ('top','DESSUS'), ('side','CÔTÉ')]:
+        for code, label in [('iso','ISO'), ('front',tr("p3w3_041")), ('top',tr("p3w3_043")), ('side',tr("p3w3_045"))]:
             # La vignette montre la scène choisie sous cet angle
             carte = _CarteVignette(label, lambda p, r, actif, c=code: _peindre_carte(
                 p, r, getattr(self, '_scene_preset_code', _SCENE_PAR_DEFAUT), c, actif))
@@ -1880,7 +1880,7 @@ class Plan3DWebWindow(QMainWindow):
 
         self._cb_quality = ComboSansMolette()
         self._cb_quality.setStyleSheet(self._PANEL_COMBO)
-        self._cb_quality.addItems(["Bas", "Moyen", "Haut", "Ultra"])
+        self._cb_quality.addItems([tr("p3w3_046"), tr("p3w3_047"), tr("p3w3_048"), "Ultra"])
         self._cb_quality.setCurrentIndex(self._quality)
         self._cb_quality.setToolTip(
             tr("p3w_beam_quality"))
@@ -3034,18 +3034,11 @@ class Plan3DWebWindow(QMainWindow):
         elif getattr(p, 'fixture_type', '') == 'Moving Head':
             inerte = False
             court  = ""
-            long_  = ("RY oriente le PIED de la lyre (son accroche).\n"
-                      "Le Pan DMX balaie ensuite à partir de cette orientation :\n"
-                      "les deux angles s'additionnent, comme sur le vrai appareil.\n\n"
-                      "Utile pour accrocher des lyres sur les faces d'une structure\n"
-                      "orientée (tour, portique biais) sans qu'elles regardent\n"
-                      "toutes dans la même direction.")
+            long_  = (tr("p3w3_050"))
         elif abs(float(getattr(p, 'rot3d_x', 0.0) or 0.0)) < 0.05:
             inerte = True
-            court  = "Faisceau à la verticale : inclinez avec RX pour que RY le déplace."
-            long_  = ("Le faisceau vise le sol à la verticale : le faire pivoter\n"
-                      "autour de son propre axe ne déplace pas la tache.\n\n"
-                      "Inclinez d'abord avec RX — RY balaiera alors la salle.")
+            court  = tr("p3w3_051")
+            long_  = (tr("p3w3_052"))
         else:
             inerte, court, long_ = False, "", ""
 
@@ -3167,8 +3160,8 @@ class Plan3DWebWindow(QMainWindow):
 
     def _import_scene(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importer une scène 3D", "",
-            "Fichiers 3D (*.gltf *.glb);;glTF JSON (*.gltf);;GLB binaire (*.glb)"
+            self, tr("p3w3_053"), "",
+            tr("p3w3_055")
         )
         if not path:
             return

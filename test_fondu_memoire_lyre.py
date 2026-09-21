@@ -96,6 +96,9 @@ class FauxWin:
     def _flash_level(self, v):
         return v
 
+    def _mem_flash_level(self, col_akai, v):
+        return v
+
     def _mem_ensure_cues(self, mem):
         pass
 

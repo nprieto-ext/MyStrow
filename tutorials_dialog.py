@@ -53,7 +53,7 @@ class _RSSFetcher(QThread):
             videos = []
             for entry in root.findall(f"{{{_A}}}entry"):
                 vid_id = entry.findtext(f"{{{_YT}}}videoId") or ""
-                title  = entry.findtext(f"{{{_A}}}title") or "Sans titre"
+                title  = entry.findtext(f"{{{_A}}}title") or tr("tut3_024")
                 pub    = (entry.findtext(f"{{{_A}}}published") or "")[:10]
                 videos.append({
                     "id":    vid_id,

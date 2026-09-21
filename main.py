@@ -648,5 +648,5 @@ if __name__ == "__main__":
         main()
     except Exception as _e:
         _msg = traceback.format_exc()
-        _mac_fatal("MyStrow — Erreur fatale au démarrage", str(_e))
+        _mac_fatal(tr("main3_050"), str(_e))
         sys.exit(1)

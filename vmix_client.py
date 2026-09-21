@@ -32,6 +32,7 @@ import threading
 import xml.etree.ElementTree as ET
 
 from PySide6.QtCore import QObject, Signal
+from i18n import tr
 
 VMIX_TCP_PORT = 8099
 
@@ -61,7 +62,7 @@ class _Reader:
     def _fill(self):
         chunk = self._sock.recv(65536)
         if not chunk:
-            raise ConnectionError("connexion fermee par vMix")
+            raise ConnectionError(tr("vmx4_006"))
         self._buf += chunk
 
     def read_line(self) -> str:
@@ -275,5 +276,5 @@ def query_inputs(host: str, port: int = VMIX_TCP_PORT, timeout: float = 4.0) -> 
                 if bouts[0].upper() == "XML":
                     return _parse_inputs(charge)
             elif bouts[0].upper() == "XML" and len(bouts) > 1 and bouts[1] == "ER":
-                raise ConnectionError(bouts[2] if len(bouts) > 2 else "vMix a refuse la requete")
-        raise ConnectionError("vMix n'a pas renvoye son etat XML")
+                raise ConnectionError(bouts[2] if len(bouts) > 2 else tr("vmx4_007"))
+        raise ConnectionError(tr("vmx4_008"))

@@ -116,7 +116,7 @@ def local_check(profile: dict) -> tuple[bool, str]:
         return False, reason
     size = len(json.dumps(build_submission_payload(profile)).encode("utf-8"))
     if size > MAX_PROFILE_BYTES:
-        return False, f"profil trop volumineux ({size // 1024} Ko)"
+        return False, tr("cs3_023", a=size // 1024)
     return True, ""
 
 

@@ -793,13 +793,18 @@ function makePoolMat() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Textures gobo (8 slots, dessinées en canvas)
+// Textures gobo (16 slots, dessinées en canvas)
 // ─────────────────────────────────────────────────────────────────────────────
-// ⚠️ L'ordre de ces huit motifs fait foi et vit dans `core.GOBO_SLOT_NAMES` :
+// ⚠️ L'ordre de ces seize motifs fait foi et vit dans `core.GOBO_SLOT_NAMES` :
 // le plan 2D les redessine au QPainter dans la tache au sol
-// (`plan_de_feu._draw_fixture`). Les deux listes ont DIVERGÉ — le slot 3
-// montrait trois cercles ici et une croix × en 2D — et le même show ne se
-// lisait pas pareil selon le plan ouvert. Modifier l'un = modifier l'autre.
+// (`plan_de_feu._draw_gobo_pattern`). Les deux listes ont DIVERGÉ par le passé
+// — le slot 3 montrait trois cercles ici et une croix × en 2D — et le même show
+// ne se lisait pas pareil selon le plan ouvert. Modifier l'un = modifier
+// l'autre.
+//
+// Les motifs d'index PAIR sont les huit d'origine, à leur valeur DMX
+// historique ; les impairs sont les huit ajoutés. Cf. le commentaire de
+// `core.GOBO_SLOT_NAMES` pour la raison de cet entrelacement.
 function _createGoboTexture(slot) {
   const size = 256, cx = 128, cy = 128, r = 124;
   const cv  = document.createElement('canvas');
@@ -811,12 +816,35 @@ function _createGoboTexture(slot) {
     case 0: // Open — disque plein
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
       break;
-    case 1: // Anneau
+    case 1: // Barre — une seule fente en travers du faisceau
+      ctx.fillRect(0, cy - r*0.20, size, r*0.40);
+      break;
+    case 2: // Anneau
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = '#000';
       ctx.beginPath(); ctx.arc(cx, cy, r*0.52, 0, Math.PI*2); ctx.fill();
       break;
-    case 2: // Étoile 4 branches
+    case 3: // Logo MyStrow
+      // Relevé au pixel sur `logo.png` (512²) puis normalisé par le rayon
+      // extérieur : anneau plein 0,613 → 1,0 traversé de part en part par une
+      // encoche verticale de demi-largeur 0,196, et une hampe de même largeur
+      // qui remplit le disque intérieur, arrondie en bas, coupée en haut par
+      // l'arc intérieur de l'anneau. Redessiné en vectoriel plutôt qu'importé :
+      // le HTML 3D n'embarque aucune image, et un gobo n'est de toute façon
+      // qu'un masque à deux niveaux.
+      { const Ri = r*0.613, bw = r*0.196, sy = cy + r*0.011;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.beginPath(); ctx.arc(cx, cy, Ri, 0, Math.PI*2); ctx.fill();
+        ctx.fillRect(cx - bw, 0, bw*2, size);
+        ctx.fillStyle = '#fff';
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cx, cy, Ri, 0, Math.PI*2); ctx.clip();
+        ctx.fillRect(cx - bw, 0, bw*2, sy);
+        ctx.restore();
+        ctx.beginPath(); ctx.arc(cx, sy, bw, 0, Math.PI*2); ctx.fill(); }
+      break;
+    case 4: // Étoile 4 branches
       ctx.save(); ctx.translate(cx, cy);
       ctx.beginPath();
       for (let i = 0; i < 8; i++) {
@@ -827,19 +855,61 @@ function _createGoboTexture(slot) {
       }
       ctx.closePath(); ctx.fill(); ctx.restore();
       break;
-    case 3: // 3 cercles
+    case 5: // Gouttes — pastilles de tailles franchement différentes
+      // Positions figées (pas de random) : la texture n'est créée qu'une fois au
+      // chargement, mais un motif tiré au sort changerait d'une session à
+      // l'autre et le même show ne se rejouerait pas à l'identique.
+      [[-0.45,-0.44,0.21],[ 0.26,-0.55,0.13],[ 0.56,-0.12,0.23],
+       [-0.63, 0.16,0.15],[ 0.04, 0.10,0.29],[-0.17, 0.63,0.19],
+       [ 0.49, 0.54,0.14],[-0.72,-0.14,0.09],[ 0.22,-0.18,0.08]]
+        .forEach(([ux,uy,ur])=>{
+          ctx.beginPath(); ctx.arc(cx+ux*r, cy+uy*r, ur*r, 0, Math.PI*2); ctx.fill(); });
+      break;
+    case 6: // 3 cercles
       { const dr=r*0.28, of=r*0.52;
         for(let i=0;i<3;i++){const a=(i/3)*Math.PI*2-Math.PI/2;
           ctx.beginPath();ctx.arc(cx+Math.cos(a)*of,cy+Math.sin(a)*of,dr,0,Math.PI*2);ctx.fill();}}
       break;
-    case 4: // 3 palmes (hélice)
+    case 7: // Feuillage — lumière tachetée à travers des feuilles
+      // Polarité volontaire : disque plein PERCÉ d'ombres allongées. Un gobo de
+      // feuillage éclaire surtout les interstices ; dessiner les feuilles en
+      // clair donnerait le négatif, et un sol beaucoup trop sombre.
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000';
+      [[-0.35,-0.46,0.34,0.15, 0.6],[ 0.41,-0.36,0.30,0.14,-0.5],
+       [ 0.09, 0.04,0.38,0.15, 0.2],[-0.51, 0.26,0.26,0.12,-0.8],
+       [ 0.45, 0.41,0.32,0.14, 0.9],[-0.09, 0.63,0.28,0.12,-0.3],
+       [ 0.63, 0.01,0.20,0.09, 1.2],[-0.69,-0.13,0.18,0.08, 0.3]]
+        .forEach(([ux,uy,rx,ry,rot])=>{
+          ctx.beginPath();
+          ctx.ellipse(cx+ux*r, cy+uy*r, rx*r, ry*r, rot, 0, Math.PI*2);
+          ctx.fill(); });
+      break;
+    case 8: // 3 palmes (hélice)
       ctx.save(); ctx.translate(cx,cy);
       for(let i=0;i<3;i++){ctx.save();ctx.rotate((i/3)*Math.PI*2);
         ctx.beginPath();ctx.ellipse(0,-r*0.45,r*0.28,r*0.40,0,0,Math.PI*2);
         ctx.fill();ctx.restore();}
       ctx.restore();
       break;
-    case 5: // Breakup (découpes angulaires)
+    case 9: // Vitrail — facettes séparées par le plomb
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#000'; ctx.lineWidth = r*0.075;
+      // Deux cercles de plomb…
+      [0.38, 0.72].forEach(rr=>{
+        ctx.beginPath(); ctx.arc(cx, cy, rr*r, 0, Math.PI*2); ctx.stroke(); });
+      // …et des refends radiaux décalés d'un anneau à l'autre, sinon les
+      // facettes s'alignent en rayons et le motif redevient « Six rayons ».
+      [[0.00,0.38,5,0.00],[0.38,0.72,8,0.30],[0.72,1.02,11,0.55]]
+        .forEach(([r0,r1,n,off])=>{
+          for(let i=0;i<n;i++){
+            const a=((i+off)/n)*Math.PI*2;
+            ctx.beginPath();
+            ctx.moveTo(cx+Math.cos(a)*r0*r, cy+Math.sin(a)*r0*r);
+            ctx.lineTo(cx+Math.cos(a)*r1*r, cy+Math.sin(a)*r1*r);
+            ctx.stroke(); } });
+      break;
+    case 10: // Breakup (découpes angulaires)
       ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
       ctx.fillStyle='#000';
       [0.05,0.22,0.40,0.58,0.75,0.90].forEach(s=>{
@@ -847,18 +917,53 @@ function _createGoboTexture(slot) {
         ctx.arc(cx,cy,r,s*Math.PI*2,(s+0.06)*Math.PI*2);
         ctx.closePath();ctx.fill();});
       break;
-    case 6: // 6 secteurs rayonnants
+    case 11: // Spirale
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = r*0.15; ctx.lineCap = 'round';
+      ctx.beginPath();
+      { const tmax = 2.4*Math.PI*2;
+        for(let i=0;i<=180;i++){
+          const t  = (i/180)*tmax;
+          const rr = r*(0.10 + 0.82*(t/tmax));
+          const x  = cx + Math.cos(t)*rr, y = cy + Math.sin(t)*rr;
+          i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y); } }
+      ctx.stroke();
+      break;
+    case 12: // 6 secteurs rayonnants
       ctx.save(); ctx.translate(cx,cy);
       for(let i=0;i<6;i++){ctx.save();ctx.rotate((i/6)*Math.PI*2);
         ctx.fillRect(-r*0.075,-r,r*0.15,r);ctx.restore();}
       ctx.restore();
       break;
-    case 7: // Bull's-eye (anneau + point central)
+    case 13: // Triangles — pointe vers l'extérieur, base vers le centre
+      // ⚠️ La base est RENTRÉE (0,34 au lieu de 0,24) et resserrée : avec des
+      // bases plus larges, les coins de deux triangles voisins se touchaient et
+      // les trois se lisaient comme UN seul grand triangle évidé. Il faut un
+      // écart angulaire d'une vingtaine de degrés entre coins voisins.
+      ctx.save(); ctx.translate(cx,cy);
+      for(let i=0;i<3;i++){
+        ctx.save(); ctx.rotate((i/3)*Math.PI*2);
+        ctx.beginPath();
+        ctx.moveTo(0, -r*1.00);
+        ctx.lineTo( r*0.38, -r*0.34);
+        ctx.lineTo(-r*0.38, -r*0.34);
+        ctx.closePath(); ctx.fill(); ctx.restore(); }
+      ctx.restore();
+      break;
+    case 14: // Bull's-eye (anneau + point central)
       ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
       ctx.fillStyle='#000';
       ctx.beginPath(); ctx.arc(cx,cy,r*0.68,0,Math.PI*2); ctx.fill();
       ctx.fillStyle='#fff';
       ctx.beginPath(); ctx.arc(cx,cy,r*0.30,0,Math.PI*2); ctx.fill();
+      break;
+    case 15: // Nuages — amas de bulles qui se recouvrent
+      [[-0.44,-0.34,0.30],[-0.16,-0.46,0.24],[-0.62,-0.16,0.20],
+       [ 0.42,-0.40,0.26],[ 0.66,-0.18,0.19],[ 0.20,-0.30,0.17],
+       [-0.06, 0.32,0.32],[ 0.32, 0.46,0.25],[-0.40, 0.48,0.22],
+       [ 0.62, 0.30,0.16]]
+        .forEach(([ux,uy,ur])=>{
+          ctx.beginPath(); ctx.arc(cx+ux*r, cy+uy*r, ur*r, 0, Math.PI*2); ctx.fill(); });
       break;
   }
   ctx.globalCompositeOperation='destination-in';
@@ -866,7 +971,10 @@ function _createGoboTexture(slot) {
   ctx.globalCompositeOperation='source-over';
   return new THREE.CanvasTexture(cv);
 }
-const _goboTextures = Array.from({length:8}, (_,i) => _createGoboTexture(i));
+// ⚠️ miroir de `core.GOBO_SLOT_COUNT` — les deux découpages du canal Gobo
+// doivent rester identiques.
+const GOBO_SLOT_COUNT = 16;
+const _goboTextures = Array.from({length:GOBO_SLOT_COUNT}, (_,i) => _createGoboTexture(i));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Halo de lentille — le flare vu sur la source elle-même
@@ -2358,7 +2466,8 @@ window.updateScene = function(projectors, _anim) {
       // le détournement). Le drapeau vient de `core.fixture_projects_gobo`,
       // partagé avec le plan 2D.
       const goboSlot  = p.has_gobo
-        ? Math.min(7, Math.floor(((p.gobo || 0) / 256) * 8))
+        ? Math.min(GOBO_SLOT_COUNT - 1,
+                   Math.floor(((p.gobo || 0) / 256) * GOBO_SLOT_COUNT))
         : 0;
       const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
       // Même porte sur la rotation : sans motif, faire tourner le faisceau

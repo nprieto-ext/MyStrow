@@ -48,6 +48,7 @@ import struct
 import threading
 
 from PySide6.QtCore import QObject, Signal
+from i18n import tr
 
 OBS_WS_PORT = 4455
 
@@ -89,9 +90,9 @@ assert base64.b64encode(hashlib.sha1(
 # Codes de fermeture propres a obs-websocket, pour transformer un « connexion
 # fermee » opaque en message que l'utilisateur peut agir.
 _OBS_CLOSE_MESSAGES = {
-    4009: "mot de passe refuse par OBS",
-    4010: "version de protocole non supportee par OBS",
-    4011: "session invalidee par OBS",
+    4009: tr("obs3_007"),
+    4010: tr("obs3_008"),
+    4011: tr("obs3_009"),
 }
 
 
@@ -113,21 +114,18 @@ def _erreur_reseau(exc: OSError, host: str, port: int) -> Exception:
     """
     cible = f"{host}:{port}"
     if isinstance(exc, socket.gaierror):
-        return ConnectionError(f"hote « {host} » introuvable")
+        return ConnectionError(tr("obs3_010", host=host))
 
     code = getattr(exc, "winerror", None) or getattr(exc, "errno", None)
     if isinstance(exc, ConnectionRefusedError) or code in (10061, errno.ECONNREFUSED):
         return ConnectionError(
-            f"rien n'ecoute sur {cible}. Lancez OBS, puis Outils > Parametres "
-            f"du serveur WebSocket > cochez « Activer le serveur WebSocket » "
-            f"(port {OBS_WS_PORT}, OBS 28 minimum).")
+            tr("obs3_011", cible=cible, OBS_WS_PORT=OBS_WS_PORT))
     if isinstance(exc, (socket.timeout, TimeoutError)) or code in (10060, errno.ETIMEDOUT):
         return ConnectionError(
-            f"aucune reponse de {cible} — machine injoignable, ou pare-feu qui "
-            f"bloque le port.")
+            tr("obs3_012", cible=cible))
     if isinstance(exc, ConnectionResetError) or code in (10054, errno.ECONNRESET):
-        return ConnectionError(f"connexion coupee par {cible} en cours d'etablissement")
-    return ConnectionError(f"connexion a {cible} impossible : {exc}")
+        return ConnectionError(tr("obs3_013", cible=cible))
+    return ConnectionError(tr("obs3_014", cible=cible, exc=exc))
 
 
 class _WebSocket:

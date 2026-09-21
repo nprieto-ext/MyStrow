@@ -45,8 +45,9 @@ except ImportError:
 
 from core import (fmt_time, media_icon, MIDI_AVAILABLE, rgb_to_akai_velocity,
                   MEDIA_EXTENSIONS_FILTER, apply_special_block, ComboSansMolette,
-                  MediaClock, make_precise_timer, TIMELINE_FRAME_MS)
-from i18n import tr
+                  MediaClock, make_precise_timer, TIMELINE_FRAME_MS,
+                  GOBO_SLOT_NAMES, GOBO_SLOT_ICONS, GOBO_SLOT_COUNT)
+from i18n import tr, tr_name
 
 
 class LoopMidiHelper:
@@ -97,7 +98,7 @@ class LoopMidiHelper:
             existing = [app.getPort(i) for i in range(app.getPortCount())]
             if cls.PORT_NAME not in existing:
                 app.addPort(cls.PORT_NAME)
-            return True, f'Port "{cls.PORT_NAME}" créé via COM'
+            return True, tr("lv_port_created_com", port=cls.PORT_NAME)
         except Exception:
             pass
 
@@ -126,7 +127,7 @@ class LoopMidiHelper:
             exe = cls.install_path()
             if exe:
                 subprocess.Popen([exe], creationflags=0x08000000)
-            return True, f'Port "{cls.PORT_NAME}" configuré — loopMIDI démarré'
+            return True, tr("lv_port_configured", port=cls.PORT_NAME)
         except Exception as e:
             pass
 
@@ -134,8 +135,8 @@ class LoopMidiHelper:
         exe = cls.install_path()
         if exe:
             subprocess.Popen([exe], creationflags=0x08000000)
-            return False, f'loopMIDI ouvert — ajoutez un port "{cls.PORT_NAME}"'
-        return False, 'Impossible de créer le port automatiquement'
+            return False, tr("lv_port_add_manual", port=cls.PORT_NAME)
+        return False, tr("lv_port_failed")
 
     @classmethod
     def open_download(cls):
@@ -674,14 +675,29 @@ class _MovTile(QFrame):
         self._icon_lbl.setStyleSheet(
             "font-size:15px; background:transparent; border:none; color:#555;")
 
+        # ⚠️ Le titre est ÉLIDÉ, pas simplement pose dans le QLabel : les tuiles
+        # de gobo portent maintenant le nom du motif (« Étoile 4 branches »,
+        # « Logo MyStrow »…) et plus un « G4 » de deux caractères. Un QLabel
+        # tronque sans prévenir — on lisait « Étoile 4 bra » — alors qu'une
+        # élision met les points de suspension et garde le nom entier en
+        # infobulle.
+        self._title_full = label
         self._title_lbl = QLabel(label)
         self._title_lbl.setAlignment(Qt.AlignCenter)
         self._title_lbl.setStyleSheet(
             "color:#555; font-size:8px; font-weight:bold; letter-spacing:0.5px;"
             " background:transparent; border:none;")
+        self.setToolTip(label)
 
         vbox.addWidget(self._icon_lbl)
         vbox.addWidget(self._title_lbl)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        fm = QFontMetrics(self._title_lbl.font())
+        self._title_lbl.setText(
+            fm.elidedText(self._title_full, Qt.ElideRight,
+                          max(10, self._title_lbl.width())))
 
     def set_state(self, selected: bool, playing: bool):
         """Met à jour l'apparence selon l'état (idle / selected / playing)."""
@@ -1103,9 +1119,9 @@ class LiveModePanel(QWidget):
     }
 
     _SOURCE_INFO = {
-        "mic":        "Table de mixage, micro, entrée ligne, interface audio",
-        "midi_clock": "BPM + beats depuis votre logiciel DJ (Traktor, VirtualDJ…) — configuration : bouton ?",
-        "ia_file":    "Utilise la pré-analyse IA du fichier en cours — beats parfaitement calés",
+        "mic":        tr("lv_src_info_mic"),
+        "midi_clock": tr("lv_src_info_midi"),
+        "ia_file":    tr("lv_src_info_file"),
     }
 
     _SLIDER_STYLE = """
@@ -1336,6 +1352,10 @@ class LiveModePanel(QWidget):
                 'mov_size':         self._movement_size,
                 'mov_duration':     self._movement_duration,
                 'gobo_pool':        list(self._gobo_pool),
+                # Taille de la roue symbolique à l'écriture : les pools sont des
+                # INDICES, pas des valeurs DMX. Cf. la migration dans le
+                # chargement, et `core.GOBO_SLOT_NAMES`.
+                'gobo_slots':       GOBO_SLOT_COUNT,
                 'current_gobo':     self._current_gobo,
                 'gobo_duration':    self._gobo_duration,
                 'gobo_rotation':    self._gobo_rotation,
@@ -1375,8 +1395,19 @@ class LiveModePanel(QWidget):
             self._movement_speed    = int(cfg.get('mov_speed', self._movement_speed))
             self._movement_size     = int(cfg.get('mov_size', self._movement_size))
             self._movement_duration = int(cfg.get('mov_duration', self._movement_duration))
-            self._gobo_pool         = set(int(x) for x in cfg.get('gobo_pool', list(self._gobo_pool)))
-            self._current_gobo      = int(cfg.get('current_gobo', self._current_gobo))
+            # ⚠️ Migration 8 → 16 slots : un panneau enregistré avant
+            # l'élargissement gardait ses index tels quels et serait reparti sur
+            # la moitié basse de la roue — d'autres gobos qu'à l'enregistrement.
+            # Les huit motifs d'origine sont passés aux index PAIRS, d'où le
+            # doublement.
+            _n_slots  = int(cfg.get('gobo_slots', 8))
+            _g_factor = (GOBO_SLOT_COUNT // _n_slots) if 0 < _n_slots <= GOBO_SLOT_COUNT else 1
+
+            def _mig_gobo(i):
+                return min(GOBO_SLOT_COUNT - 1, int(i) * _g_factor)
+
+            self._gobo_pool         = set(_mig_gobo(x) for x in cfg.get('gobo_pool', list(self._gobo_pool)))
+            self._current_gobo      = _mig_gobo(cfg.get('current_gobo', self._current_gobo))
             self._gobo_duration     = int(cfg.get('gobo_duration', self._gobo_duration))
             self._gobo_rotation     = bool(cfg.get('gobo_rotation', self._gobo_rotation))
             self._gobo_rot_speed    = int(cfg.get('gobo_rot_speed', self._gobo_rot_speed))
@@ -1547,7 +1578,7 @@ class LiveModePanel(QWidget):
 
     # Noms courts affichés dans la carte INPUT
     _SOURCE_SHORT = {
-        'mic':        'ENTRÉE MICRO',
+        'mic':        tr("lv_mic_input"),
         'midi_clock': 'MIDI CLOCK',
     }
 
@@ -1607,7 +1638,7 @@ class LiveModePanel(QWidget):
         top_row.addWidget(self._midi_ctrl_combo, 1)
 
         # "MIDI VIRTUEL" compact
-        mv_lbl = QLabel("MIDI VIRTUEL")
+        mv_lbl = QLabel(tr("lv_virtual_midi"))
         mv_lbl.setStyleSheet(
             "color:#2a6a2a; font-size:8px; font-weight:bold; letter-spacing:1px; "
             "background:transparent; border:none;")
@@ -1752,25 +1783,25 @@ class LiveModePanel(QWidget):
         def update(idx=0):
             soft = combo.currentText()
             if is_mac:
-                s1 = "① Ouvrez <b>Audio MIDI Setup</b> (Applications → Utilitaires)"
-                s2 = "② Menu Fenêtre → <b>Afficher le studio MIDI</b>"
-                s3 = f'③ Double-clic sur <b>IAC Driver</b> → cocher <b>"Le périphérique est en ligne"</b> → + → nommer <b>"{port}"</b>'
+                s1 = tr("lv_g_mac1")
+                s2 = tr("lv_g_mac2")
+                s3 = tr("lv_g_mac3", port=port)
             else:
-                s1 = '① Téléchargez <b><a href="https://www.tobias-erichsen.de/software/loopmidi.html" style="color:#00aaff;">loopMIDI</a></b> (gratuit, Windows)'
-                s2 = f'② Lancez loopMIDI → champ en bas → tapez <b>"{port}"</b> → cliquez <b>"+"</b>'
-                s3 = "③ Laissez loopMIDI <b>actif en arrière-plan</b>"
+                s1 = tr("lv_g_win1")
+                s2 = tr("lv_g_win2", port=port)
+                s3 = tr("lv_g_win3")
 
             if soft == "Virtual DJ":
-                s4 = "④ VirtualDJ → <b>Paramètres → Contrôleurs</b>"
-                s5 = f'⑤ <b>Sortie horloge MIDI</b> → sélectionnez <b>"{port}"</b>'
+                s4 = tr("lv_g_vdj4")
+                s5 = tr("lv_g_vdj5", port=port)
             elif soft == "Rekordbox":
-                s4 = "④ Rekordbox → <b>Préférences → MIDI</b>"
-                s5 = f'⑤ Activer <b>MIDI Clock</b> → Sortie → <b>"{port}"</b>'
+                s4 = tr("lv_g_rb4")
+                s5 = tr("lv_g_rb5", port=port)
             else:
-                s4 = "④ Installez le plugin <b>MIDI Link</b> dans Serato (gratuit)"
-                s5 = f'⑤ MIDI Link → Sortie → <b>"{port}"</b>'
+                s4 = tr("lv_g_ser4")
+                s5 = tr("lv_g_ser5", port=port)
 
-            s6 = "⑥ Dans MyStrow → Source audio → <b>MIDI Clock</b> ✓"
+            s6 = tr("lv_g_6")
             guide_lbl.setText(f"{s1}<br>{s2}<br>{s3}<br><br>{s4}<br>{s5}<br><br>{s6}")
 
         combo.currentIndexChanged.connect(update)
@@ -1798,25 +1829,25 @@ class LiveModePanel(QWidget):
         port = LoopMidiHelper.PORT_NAME
 
         if is_mac:
-            step1 = "① Ouvrez Audio MIDI Setup → Utilitaires"
-            step2 = "② Fenêtre → Afficher le studio MIDI"
-            step3 = f'③ IAC Driver → Cocher "En ligne" → + → nommer "{port}"'
+            step1 = tr("lv_p_mac1")
+            step2 = tr("lv_p_mac2")
+            step3 = tr("lv_p_mac3", port=port)
         else:
-            step1 = "① Téléchargez loopMIDI (tobias-erichsen.de)"
-            step2 = f'② Lancez loopMIDI → cliquez "+" → nommez "{port}"'
-            step3 = "③ Laissez loopMIDI actif en arrière-plan"
+            step1 = tr("lv_p_win1")
+            step2 = tr("lv_p_win2", port=port)
+            step3 = tr("lv_p_win3")
 
         if soft == "Virtual DJ":
-            step4 = "④ VDJ → Paramètres → Contrôleurs → Sortie horloge MIDI"
-            step5 = f'⑤ Sélectionnez "{port}" → Valider'
+            step4 = tr("lv_p_vdj4")
+            step5 = tr("lv_p_vdj5", port=port)
         elif soft == "Rekordbox":
-            step4 = "④ Rekordbox → Préférences → MIDI"
-            step5 = f'⑤ Activer MIDI Clock → Sortie : "{port}"'
+            step4 = tr("lv_p_rb4")
+            step5 = tr("lv_p_rb5", port=port)
         else:  # Serato
-            step4 = "④ Installez MIDI Link (plugin Serato, gratuit)"
-            step5 = f'⑤ MIDI Link → Sortie : "{port}"'
+            step4 = tr("lv_p_ser4")
+            step5 = tr("lv_p_ser5", port=port)
 
-        step6 = "⑥ Dans MyStrow → Source : MIDI Clock ✓"
+        step6 = tr("lv_p_6")
 
         self._midi_guide_lbl.setText(
             f"{step1}\n{step2}\n{step3}\n{step4}\n{step5}\n{step6}"
@@ -1900,7 +1931,13 @@ class LiveModePanel(QWidget):
     def set_device_info(self, text: str):
         self.device_lbl.setText(text)
         t = text.lower()
-        if any(k in t for k in ('erreur', 'manquant', 'introuvable', 'aucun', 'échoué')):
+        # Mots-clés d'erreur dans les 5 langues : les messages de live_audio
+        # passent par tr(), la couleur ne doit pas dépendre de la langue.
+        if any(k in t for k in ('erreur', 'manquant', 'introuvable', 'aucun', 'échoué',
+                                'error', 'missing', 'not found', 'no signal', 'no audio', 'no microphone', 'no midi',
+                                'falta', 'no encontrado', 'ningún', 'ninguna',
+                                'fehler', 'fehlt', 'nicht gefunden', 'kein',
+                                'erro', 'ausente', 'não encontrad', 'nenhum')):
             color = "#cc4400"
         elif any(k in t for k in ('loopback', 'wasapi', 'micro', 'midi', 'rekordbox', 'virtual dj')):
             color = "#00aa55"
@@ -1935,29 +1972,29 @@ class LiveModePanel(QWidget):
     _COLOR_TILES = [
         # (key, c1, c2, label, category)
         # CHAUD
-        ('rouge',        '#ff1133', None,      'ROUGE',    'chaud'),
-        ('orange',       '#ff8800', None,      'ORANGE',   'chaud'),
-        ('jaune',        '#ffee00', None,      'JAUNE',    'chaud'),
-        ('ambre',        '#ffaa00', None,      'AMBRE',    'chaud'),
-        ('rose',         '#ff44aa', None,      'ROSE',     'chaud'),
-        ('rose_chaud',   '#ff2266', None,      'R.CHAUD',  'chaud'),
+        ('rouge',        '#ff1133', None,      tr("lv_col_rouge"),    'chaud'),
+        ('orange',       '#ff8800', None,      tr("lv_col_orange"),   'chaud'),
+        ('jaune',        '#ffee00', None,      tr("lv_col_jaune"),    'chaud'),
+        ('ambre',        '#ffaa00', None,      tr("lv_col_ambre"),    'chaud'),
+        ('rose',         '#ff44aa', None,      tr("lv_col_rose"),     'chaud'),
+        ('rose_chaud',   '#ff2266', None,      tr("lv_col_rose_chaud"),  'chaud'),
         # FROID
-        ('vert',         '#00ff55', None,      'VERT',     'froid'),
-        ('cyan',         '#00eeff', None,      'CYAN',     'froid'),
-        ('bleu',         '#0055ff', None,      'BLEU',     'froid'),
-        ('bleu_nuit',    '#001aff', None,      'B.NUIT',   'froid'),
-        ('violet',       '#aa22ff', None,      'VIOLET',   'froid'),
-        ('lavande',      '#cc88ff', None,      'LAVANDE',  'froid'),
+        ('vert',         '#00ff55', None,      tr("lv_col_vert"),     'froid'),
+        ('cyan',         '#00eeff', None,      tr("lv_col_cyan"),     'froid'),
+        ('bleu',         '#0055ff', None,      tr("lv_col_bleu"),     'froid'),
+        ('bleu_nuit',    '#001aff', None,      tr("lv_col_bleu_nuit"),   'froid'),
+        ('violet',       '#aa22ff', None,      tr("lv_col_violet"),   'froid'),
+        ('lavande',      '#cc88ff', None,      tr("lv_col_lavande"),  'froid'),
         # NEUTRE
-        ('blanc',        '#ffffff', None,      'BLANC',    'neutre'),
+        ('blanc',        '#ffffff', None,      tr("lv_col_blanc"),    'neutre'),
         ('auto',         None,      None,      'AUTO',     'neutre'),
         # BICOULEUR
-        ('bi_rb',        '#ff1133', '#0055ff', 'R+B',      'bi'),
-        ('bi_vo',        '#aa22ff', '#ff8800', 'V+O',      'bi'),
-        ('bi_vj',        '#00ff55', '#ffee00', 'V+J',      'bi'),
-        ('bi_rv',        '#ff1133', '#aa22ff', 'R+V',      'bi'),
-        ('bi_cc',        '#ff8800', '#00eeff', 'CH+FR',    'bi'),
-        ('bi_bv',        '#0055ff', '#00ff55', 'B+V',      'bi'),
+        ('bi_rb',        '#ff1133', '#0055ff', tr("lv_col_bi_rb"),      'bi'),
+        ('bi_vo',        '#aa22ff', '#ff8800', tr("lv_col_bi_vo"),      'bi'),
+        ('bi_vj',        '#00ff55', '#ffee00', tr("lv_col_bi_vj"),      'bi'),
+        ('bi_rv',        '#ff1133', '#aa22ff', tr("lv_col_bi_rv"),      'bi'),
+        ('bi_cc',        '#ff8800', '#00eeff', tr("lv_col_bi_cc"),    'bi'),
+        ('bi_bv',        '#0055ff', '#00ff55', tr("lv_col_bi_bv"),      'bi'),
     ]
 
     # Onglets du panneau d'effets. Source UNIQUE : la barre de boutons et la
@@ -1973,19 +2010,19 @@ class LiveModePanel(QWidget):
                         "strob", "special", "sequence")
 
     _MOVEMENTS = [
-        ('vague',     '〜', 'VAGUE'),
-        ('cercle',    '○',  'CERCLE'),
-        ('diagonale', '╱',  'DIAGONALE'),
-        ('spirale',   '⊛',  'SPIRALE'),
-        ('bounce',    '⇔',  'BOUNCE'),
-        ('huit',      '∞',  'HUIT'),
+        ('vague',     '〜', tr("lv_mov_vague")),
+        ('cercle',    '○',  tr("lv_mov_cercle")),
+        ('diagonale', '╱',  tr("lv_mov_diagonale")),
+        ('spirale',   '⊛',  tr("lv_mov_spirale")),
+        ('bounce',    '⇔',  tr("lv_mov_bounce")),
+        ('huit',      '∞',  tr("lv_mov_huit")),
     ]
 
     # (key, icon, label, description, accent_color)
     _SPECIAL_TILES = [
-        ('strobe',         '⚡', 'STROBE',         'Stroboscope blanc · suit le BPM',          '#e0e0e0'),
-        ('strobe_couleur', '⚡', 'STROBE COULEUR',  'Stroboscope coloré · couleur active',      '#ff8833'),
-        ('fixe_blanc',     '◻', 'FIXE BLANC',      'Plein blanc statique à 100 %',             '#ffffbb'),
+        ('strobe',         '⚡', tr("lv_sp_strobe"), tr("lv_sp_strobe_d"),          '#e0e0e0'),
+        ('strobe_couleur', '⚡', tr("lv_sp_strobe_col"), tr("lv_sp_strobe_col_d"),      '#ff8833'),
+        ('fixe_blanc',     '◻', tr("lv_sp_white"), tr("lv_sp_white_d"),             '#ffffbb'),
     ]
 
     _MOV_SLIDER_STYLE = """
@@ -2063,7 +2100,7 @@ class LiveModePanel(QWidget):
         )
         self._effect_tab_btns: dict[str, QPushButton] = {}
         for i, tab_label in enumerate(self._EFFECT_TABS):
-            btn = QPushButton(tab_label)
+            btn = QPushButton(tr("lv_tab_" + self._EFFECT_TAB_KEYS[i]))
             btn.setFixedHeight(24)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(self._effect_tab_on if i == 0 else self._effect_tab_off)
@@ -2438,8 +2475,8 @@ class LiveModePanel(QWidget):
             setattr(self, f"_mov_{attr.lstrip('_movement_')}_slider", sl)
             return h
 
-        sliders_row.addLayout(_make_slider("VITESSE", self._movement_speed,    '_movement_speed'))
-        sliders_row.addLayout(_make_slider("TAILLE",  self._movement_size,     '_movement_size'))
+        sliders_row.addLayout(_make_slider(tr("lv_speed"), self._movement_speed,    '_movement_speed'))
+        sliders_row.addLayout(_make_slider(tr("lv_size"),  self._movement_size,     '_movement_size'))
 
         # Slider DURÉE en secondes (1-30s)
         dur_h = QHBoxLayout()
@@ -2568,7 +2605,7 @@ class LiveModePanel(QWidget):
             self._color_tiles[key] = tile
 
         # ── Section Épinglés ──────────────────────────────────────────────
-        self._pinned_section_lbl = _sec_lbl("📌  ÉPINGLÉS")
+        self._pinned_section_lbl = _sec_lbl(tr("lv_pinned"))
         self._pinned_row_layout  = QHBoxLayout()
         self._pinned_row_layout.setSpacing(4)
         self._pinned_section_container = QWidget()
@@ -2748,9 +2785,9 @@ class LiveModePanel(QWidget):
         vbox.setSpacing(6)
 
         defs = [
-            ('fast', '⚡', 'RAPIDE',   '_strob_fast'),
-            ('slow', '〜', 'LENT',     '_strob_slow'),
-            ('none', '○', 'Pas de Strobe', '_strob_none'),
+            ('fast', '⚡', tr("lv_strob_fast"), '_strob_fast'),
+            ('slow', '〜', tr("lv_strob_slow"), '_strob_slow'),
+            ('none', '○', tr("lv_strob_none"), '_strob_none'),
         ]
 
         # Normalise : exactement UN actif (radio). Priorité fast > slow > none.
@@ -2826,7 +2863,7 @@ class LiveModePanel(QWidget):
             return
         sources = list(self._SOURCES_STATIC)
         if devices:
-            sources.append(("─── Périphériques ───", None))
+            sources.append((tr("lv_devices_sep"), None))
             for d in devices:
                 sources.append((d['label'], d['key']))
         # Mettre à jour la liste de classe pour ce panel
@@ -2918,18 +2955,22 @@ class LiveModePanel(QWidget):
         vbox.setContentsMargins(0, 4, 0, 4)
         vbox.setSpacing(6)
 
-        # Grille 2×4 : OUVERT + Gobo 1-7
+        # Grille 4×4 : les seize crans de la roue symbolique.
+        #
+        # ⚠️ Les tuiles étaient au nombre de HUIT, étiquetées « G1 » à « G7 » —
+        # des numéros qui n'apprenaient rien sur le motif projeté. Elles portent
+        # maintenant le pictogramme et le nom de `core.GOBO_SLOT_NAMES`, donc ce
+        # que les plans 2D et 3D vont réellement dessiner. La grille reste large
+        # de quatre tuiles (le panneau LIVE est étroit) et gagne deux rangées.
         self._gobo_tiles: list = []
-        slot_defs = [
-            ('○', 'OUVERT'), ('①', 'G1'), ('②', 'G2'), ('③', 'G3'),
-            ('④', 'G4'),     ('⑤', 'G5'), ('⑥', 'G6'), ('⑦', 'G7'),
-        ]
-        for row_idx in range(2):
+        _GOBO_ROWS, _GOBO_COLS = GOBO_SLOT_COUNT // 4, 4
+        for row_idx in range(_GOBO_ROWS):
             row = QHBoxLayout()
             row.setSpacing(5)
-            for col_idx in range(4):
-                i = row_idx * 4 + col_idx
-                icon, lbl = slot_defs[i]
+            for col_idx in range(_GOBO_COLS):
+                i = row_idx * _GOBO_COLS + col_idx
+                icon = GOBO_SLOT_ICONS[i]
+                lbl  = tr_name(GOBO_SLOT_NAMES[i])
                 tile = _MovTile(str(i), icon, lbl)
                 tile.set_state(selected=(i in self._gobo_pool),
                                playing=(i == self._current_gobo))
@@ -2941,7 +2982,7 @@ class LiveModePanel(QWidget):
         # Rotation — tuile _MovTile façon toggle
         rot_row = QHBoxLayout()
         rot_row.setSpacing(5)
-        self._gobo_rot_tile = _MovTile('rot', '↻', 'ROTATION')
+        self._gobo_rot_tile = _MovTile('rot', '↻', tr("seq_rotation"))
         self._gobo_rot_tile.set_state(selected=self._gobo_rotation,
                                       playing=self._gobo_rotation)
         self._gobo_rot_tile.clicked.connect(self._on_gobo_rot_toggle)
@@ -3133,9 +3174,9 @@ class LiveModePanel(QWidget):
     # ── Sélecteur de mode IA ──────────────────────────────────────────────────
 
     _MODES = [
-        ('musical', '♪', 'MUSICAL IA',  'Réagit à la musique'),
-        ('ambiance', '○', 'AMBIANCE IA', "Lumière d'ambiance"),
-        ('manuel',  '⊟', 'MANUEL',      'Reprenez le contrôle'),
+        ('musical', '♪', tr("lv_mode_musical"), tr("lv_mode_musical_d")),
+        ('ambiance', '○', tr("lv_mode_amb"), tr("lv_mode_amb_d")),
+        ('manuel',  '⊟', tr("lv_mode_manual"), tr("lv_mode_manual_d")),
     ]
 
     def _build_settings_bpm_row(self) -> QHBoxLayout:
@@ -4485,7 +4526,7 @@ class Sequencer(QFrame):
         if combo is None:
             return []
         if avec_titre:
-            menu.addAction("MODE DMX").setEnabled(False)
+            menu.addAction(tr("seqm_dmx_mode")).setEnabled(False)
 
         groupe = QActionGroup(menu)
         groupe.setExclusive(True)
@@ -4549,7 +4590,7 @@ class Sequencer(QFrame):
             menu.setStyleSheet(_MENU_SS)
             menu.addAction(tr("seq_f_tracks_sel", a0=len(selected_rows))).setEnabled(False)
             menu.addSeparator()
-            menu.addAction("MODE DMX").setEnabled(False)
+            menu.addAction(tr("seqm_dmx_mode")).setEnabled(False)
             ia_act  = menu.addAction(self._mode_menu_label("IA Lumiere"))
             man_act = menu.addAction(self._mode_menu_label("Manuel"))
 
@@ -4561,7 +4602,7 @@ class Sequencer(QFrame):
             fade_act = fade_off_act = None
             if fade_rows:
                 menu.addSeparator()
-                menu.addAction("MÉDIA").setEnabled(False)
+                menu.addAction(tr("seqm_media")).setEnabled(False)
                 fade_act = menu.addAction(
                     tr("seq_menu_fade") + f"  ({len(fade_rows)})")
                 if any(any(self.get_row_fades(r)) for r in fade_rows):
@@ -4569,7 +4610,7 @@ class Sequencer(QFrame):
                         tr("seq_menu_fade_off") + f"  ({len(fade_rows)})")
 
             menu.addSeparator()
-            menu.addAction("ACTION").setEnabled(False)
+            menu.addAction(tr("seqm_action")).setEnabled(False)
             # `seq_f_delete` est l'un des rares libellés SANS emoji dans i18n.py
             # (contrairement à `seq_menu_delete`) : celui-ci est donc à sa place.
             del_act = menu.addAction("🗑️  " + tr("seq_f_delete", a0=len(selected_rows)))
@@ -4616,13 +4657,13 @@ class Sequencer(QFrame):
         if data and (str(data) == "PAUSE" or str(data).startswith("PAUSE:")):
             menu = QMenu(self)
             menu.setStyleSheet(_MENU_SS)
-            menu.addAction("PAUSE").setEnabled(False)
+            menu.addAction(tr("seqm_pause")).setEnabled(False)
             edit_action   = menu.addAction(tr("seq_menu_set_duration"))
             menu.addSeparator()
-            menu.addAction("LUMIÈRE").setEnabled(False)
+            menu.addAction(tr("seqm_light")).setEnabled(False)
             rec_action    = menu.addAction(tr("seq_menu_rec_light"))
             menu.addSeparator()
-            menu.addAction("ACTION").setEnabled(False)
+            menu.addAction(tr("seqm_action")).setEnabled(False)
             duplicate_action = menu.addAction(tr("seq_duplicate_with_rec"))
             delete_action = menu.addAction(tr("seq_menu_delete"))
             action = menu.exec(self.table.viewport().mapToGlobal(pos))
@@ -4863,7 +4904,7 @@ class Sequencer(QFrame):
     # ── Styles des boutons DMX ────────────────────────────────────────────────
     _SS_BTN = {
         "Manuel": (
-            "Manuel",
+            tr("seqm_btn_manual"),
             "QPushButton{background:#1c1c1c;border:1px solid #2e2e2e;border-radius:8px;"
             "color:#555;font-size:11px;padding:3px 10px;}"
             "QPushButton:hover{border-color:#3a3a3a;color:#888;}"),
@@ -6860,13 +6901,13 @@ class Sequencer(QFrame):
             entrees_media.append((tr("seq_locate_file_m"),
                                   lambda checked=False, p=path: self._reveal_in_explorer(p)))
         if entrees_media:
-            menu.addAction("MÉDIA").setEnabled(False)
+            menu.addAction(tr("seqm_media")).setEnabled(False)
             for libelle, slot in entrees_media:
                 menu.addAction(libelle).triggered.connect(slot)
             menu.addSeparator()
 
         # ── Lumière ──────────────────────────────────────────────────────────
-        menu.addAction("LUMIÈRE").setEnabled(False)
+        menu.addAction(tr("seqm_light")).setEnabled(False)
         rec_action = menu.addAction(tr("seq_menu_rec_light"))
         rec_action.triggered.connect(lambda: self.open_light_editor_for_row(row))
 
@@ -6876,7 +6917,7 @@ class Sequencer(QFrame):
 
         # ── Action ───────────────────────────────────────────────────────────
         menu.addSeparator()
-        menu.addAction("ACTION").setEnabled(False)
+        menu.addAction(tr("seqm_action")).setEnabled(False)
         duplicate_action = menu.addAction(tr("seq_duplicate_with_rec"))
         duplicate_action.triggered.connect(lambda: self.duplicate_media_row(row))
         delete_action = menu.addAction(tr("seq_menu_delete"))
@@ -6909,7 +6950,7 @@ class Sequencer(QFrame):
 
         if not is_file and not has_dir:
             QMessageBox.warning(self, tr("seq_file_not_found"),
-                                "Emplacement introuvable :\n" + str(path))
+                                tr("seqm_loc_not_found") + str(path))
             return
         try:
             if sys.platform == "win32":
@@ -7000,7 +7041,7 @@ class Sequencer(QFrame):
             return
 
         item = self.table.item(row, 1)
-        media_name = item.text() if item else f"Ligne {row + 1}"
+        media_name = item.text() if item else tr("seqm_row_n", n=row + 1)
 
         reply = QMessageBox.question(
             self,

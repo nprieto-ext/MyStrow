@@ -134,43 +134,43 @@ PRODUCTS = [
         "id":        "eurolite_usb",
         "name":      "Eurolite USB-DMX512 PRO (MK2)",
         "transport": TRANSPORT_ENTTEC_PRO,
-        "info":      "Interface USB-DMX — la LED passe au vert quand la sortie est active.",
-        "step1":     "Branchez l'interface sur un port USB.",
+        "info":      tr("ent3_002"),
+        "step1":     tr("ent3_004"),
     },
     {
         "id":        "enttec_pro",
         "name":      "ENTTEC DMX USB Pro",
         "transport": TRANSPORT_ENTTEC_PRO,
-        "info":      "Interface USB-DMX professionnelle.",
-        "step1":     "Branchez l'interface sur un port USB.",
+        "info":      tr("ent3_006"),
+        "step1":     tr("ent3_004"),
     },
     {
         "id":        "enttec_open",
         "name":      "ENTTEC Open DMX USB",
         "transport": TRANSPORT_ENTTEC,
-        "info":      "Adaptateur USB-DMX simple.",
-        "step1":     "Branchez le boîtier sur un port USB.",
+        "info":      tr("ent3_010"),
+        "step1":     tr("ent3_012"),
     },
     {
         "id":        "electroconcept_opto",
         "name":      "OPTO OPEN DMX (ElectroConcept)",
         "transport": TRANSPORT_ENTTEC,
-        "info":      "Open DMX USB opto-isolé — puce FTDI, piloté en D2XX si dispo.",
-        "step1":     "Branchez le boîtier sur un port USB.",
+        "info":      tr("ent3_014"),
+        "step1":     tr("ent3_012"),
     },
     {
         "id":        "dmxking_micro",
         "name":      "DMXKing UltraDMX Micro",
         "transport": TRANSPORT_ENTTEC,
-        "info":      "Adaptateur USB-DMX compact.",
-        "step1":     "Branchez le boîtier sur un port USB.",
+        "info":      tr("ent3_018"),
+        "step1":     tr("ent3_012"),
     },
     {
         "id":        "generic_usb",
-        "name":      "Autre interface USB-DMX",
+        "name":      tr("ent3_022"),
         "transport": TRANSPORT_ENTTEC,
-        "info":      "Adaptateur USB-DMX générique (FTDI ou clone).",
-        "step1":     "Branchez votre interface sur un port USB.",
+        "info":      tr("ent3_024"),
+        "step1":     tr("ent3_026"),
     },
 ]
 
@@ -356,7 +356,7 @@ class DmxSetupDialog(QDialog):
             self.product_list.addItem(item)
             self._id_to_item[prod["id"]] = item
 
-        _header("  Choisissez votre interface USB-DMX")
+        _header(tr("ent3_027"))
         for p in PRODUCTS:
             _item(p)
 
@@ -395,7 +395,7 @@ class DmxSetupDialog(QDialog):
         lay.addSpacing(10)
 
         # ── Étape 1 ──────────────────────────────────────────────────────────
-        lay.addLayout(self._step_hdr("1", "Connectez le matériel"))
+        lay.addLayout(self._step_hdr("1", tr("ent3_029")))
         lay.addSpacing(4)
 
         self.lbl_step1 = QLabel("")
@@ -409,7 +409,7 @@ class DmxSetupDialog(QDialog):
         lay.addSpacing(12)
 
         # ── Étape 2 : DIAGNOSTIC ─────────────────────────────────────────────
-        hdr2 = self._step_hdr("2", "DIAGNOSTIC")
+        hdr2 = self._step_hdr("2", tr("ent3_031"))
         lay.addLayout(hdr2)
         lay.addSpacing(6)
 
@@ -494,7 +494,7 @@ class DmxSetupDialog(QDialog):
         lay.addSpacing(12)
 
         # ── Étape 3 ──────────────────────────────────────────────────────────
-        lay.addLayout(self._step_hdr("3", "Utiliser cette interface DMX"))
+        lay.addLayout(self._step_hdr("3", tr("ent3_033")))
         lay.addSpacing(6)
 
         row3 = QHBoxLayout()
@@ -1766,7 +1766,7 @@ class DmxSetupDialog(QDialog):
 
         port = self.port_combo.currentData()
         if not port:
-            self._set_connect("Sélectionnez un port COM valide", error=True)
+            self._set_connect(tr("ent3_034"), error=True)
             return
 
         # Une interface « Pro » parle un protocole à paquets sur son port série :
@@ -1774,12 +1774,11 @@ class DmxSetupDialog(QDialog):
         # qui n'existe que pour les boîtiers passifs type Open DMX.
         if (str(port).startswith(D2XX_PREFIX)
                 and prod.get("transport") == TRANSPORT_ENTTEC_PRO):
-            self._set_connect("Interface « Pro » : activez le pilote VCP et "
-                              "choisissez son port COM", error=True)
+            self._set_connect(tr("ent3_035"), error=True)
             return
 
         self.btn_connect.setEnabled(False)
-        self._set_connect("Connexion en cours…")
+        self._set_connect(tr("ent3_036"))
         self._connect_timed_out = False
         self._connect_name = prod["name"]
 
@@ -1808,9 +1807,9 @@ class DmxSetupDialog(QDialog):
         double writer qu'on cherche à éviter.
         """
         self._connect_timed_out = True
-        self._set_connect("✗  Délai dépassé — le boîtier ne répond pas", error=True)
+        self._set_connect(tr("ent3_037"), error=True)
         self._journal(
-            f"Sortie DMX : {self._connect_name} ne répond pas — délai dépassé", "error")
+            tr("ent3_038", connect_name=self._connect_name), "error")
 
     def _on_connect_result(self, ok, transport):
         """Résultat du thread — peut arriver après le délai (connexion lente)."""
@@ -1819,15 +1818,14 @@ class DmxSetupDialog(QDialog):
         if ok:
             mode = {TRANSPORT_ENTTEC_D2XX: "D2XX",
                     TRANSPORT_ENTTEC_PRO:  "ENTTEC Pro"}.get(transport, "série")
-            self._set_connect(f"✓  {self._connect_name} connecté ({mode})", ok=True)
+            self._set_connect(tr("ent3_040", connect_name=self._connect_name, mode=mode), ok=True)
             self._journal(
-                f"Sortie DMX : {self._connect_name} connecté "
-                f"({mode}) — {self._dmx.com_port}", "success")
+                tr("ent3_041", connect_name=self._connect_name, mode=mode, com_port=self._dmx.com_port), "success")
         elif not self._connect_timed_out:
             # Après un timeout on garde le message de délai dépassé, plus parlant.
-            self._set_connect("✗  Échec de la connexion", error=True)
+            self._set_connect(tr("ent3_043"), error=True)
             self._journal(
-                f"Sortie DMX : échec de connexion — {self._connect_name}", "error")
+                tr("ent3_044", connect_name=self._connect_name), "error")
 
     def _on_connect_finished(self):
         """Le thread est terminé : on relâche le verrou et le bouton."""

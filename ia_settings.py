@@ -28,6 +28,8 @@ un `print`, et le show partirait en silence sur un rendu dégradé.
 
 from PySide6.QtGui import QColor
 
+from core import GOBO_SLOT_COUNT
+
 
 # Ordre de référence des tuiles couleur et des mouvements. Dupliqué depuis
 # `sequencer.LiveModePanel` À DESSEIN : importer `sequencer` ici créerait un
@@ -308,6 +310,11 @@ class IASettings:
             'color_restrict':   self._color_restrict,
             'color_max':        self._color_max,
             'gobo_pool':        sorted(self._gobo_pool),
+            # Nombre de crans de la roue symbolique au moment de l'écriture.
+            # Sans ce témoin, impossible de distinguer un pool {0,1,2} écrit à
+            # l'époque des 8 slots — où 1 valait DMX 32 — d'un pool {0,1,2}
+            # écrit depuis les 16 — où 1 vaut DMX 16. Cf. `from_dict`.
+            'gobo_slots':       GOBO_SLOT_COUNT,
             'gobo_duration':    self._gobo_duration,
             'gobo_rotation':    self._gobo_rotation,
             'gobo_rot_speed':   self._gobo_rot_speed,
@@ -339,7 +346,18 @@ class IASettings:
         s._color_duration    = int(d.get('color_duration', s._color_duration))
         s._color_restrict    = bool(d.get('color_restrict', s._color_restrict))
         s._color_max         = int(d.get('color_max', s._color_max))
-        s._gobo_pool         = set(d.get('gobo_pool', s._gobo_pool)) or {0}
+        # ⚠️ Migration 8 → 16 slots. Les pools sont enregistrés en INDICES de
+        # roue, pas en valeurs DMX : tels quels, un préréglage d'avant
+        # l'élargissement aurait glissé sur la moitié basse de la roue et le
+        # LIVE serait sorti avec d'autres gobos qu'à l'enregistrement. Les huit
+        # motifs d'origine occupent désormais les index PAIRS (cf.
+        # `core.GOBO_SLOT_NAMES`), d'où le simple doublement.
+        _n_slots = int(d.get('gobo_slots', 8))
+        _pool    = set(d.get('gobo_pool', s._gobo_pool))
+        if _n_slots != GOBO_SLOT_COUNT and _n_slots > 0:
+            _f    = GOBO_SLOT_COUNT // _n_slots
+            _pool = {min(GOBO_SLOT_COUNT - 1, int(i) * _f) for i in _pool}
+        s._gobo_pool         = _pool or {0}
         s._gobo_duration     = int(d.get('gobo_duration', s._gobo_duration))
         s._gobo_rotation     = bool(d.get('gobo_rotation', s._gobo_rotation))
         s._gobo_rot_speed    = int(d.get('gobo_rot_speed', s._gobo_rot_speed))

@@ -231,8 +231,9 @@ from core import (
     message_erreur_reseau,
     canonical_manufacturer, build_fixture_library,
     fixture_is_fx_machine, fixture_is_pyro, FX_MACHINE_TYPES,
+    GOBO_SLOT_COUNT, GOBO_SLOT_NAMES, gobo_slot_dmx,
 )
-from i18n import get_language, set_language, tr
+from i18n import get_language, set_language, tr, tr_name
 from projector import Projector
 from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode, profile_name, profile_display_text
 from audio_ai import AudioColorAI
@@ -339,20 +340,20 @@ CH_COLORS = {
 
 # Libellé court et francisé d'un canal, pour l'aperçu de profil
 CH_LABELS = {
-    "R": "R", "G": "V", "B": "B", "W": "W",
+    "R": "R", "G": tr("chl_g"), "B": "B", "W": "W",
     "Dim": "DIM", "Strobe": "STROBE", "UV": "UV",
-    "Ambre": "A", "Orange": "ORANGE",
+    "Ambre": tr("chl_ambre"), "Orange": "ORANGE",
     "Pan": "PAN", "Tilt": "TILT",
     "PanFine": "PAN+", "TiltFine": "TILT+",
     "Zoom": "ZOOM", "Focus": "FOCUS", "Iris": "IRIS",
-    "Prism": "PRISME", "PrismRot": "PRISME↻",
+    "Prism": tr("chl_prism"), "PrismRot": tr("chl_prismrot"),
     "Gobo1": "GOBO1", "Gobo2": "GOBO2", "Gobo1Rot": "GOBO↻",
-    "ColorWheel": "ROUE", "Speed": "VITESSE",
-    "Smoke": "FUMÉE", "Fan": "VENTIL", "Shutter": "SHUTTER",
-    "Spark": "ÉTINC.", "Flame": "FLAMME",
-    "Effects": "EFFETS", "Mode": "MODE",
+    "ColorWheel": tr("chl_wheel"), "Speed": tr("chl_speed"),
+    "Smoke": tr("chl_smoke"), "Fan": tr("chl_fan"), "Shutter": "SHUTTER",
+    "Spark": tr("chl_spark"), "Flame": tr("chl_flame"),
+    "Effects": tr("chl_effects"), "Mode": "MODE",
     "CTO": "CTO", "CTB": "CTB",
-    "C": "CYAN", "M": "MAGENTA", "Y": "JAUNE", "Lime": "LIME",
+    "C": "CYAN", "M": "MAGENTA", "Y": tr("chl_yellow"), "Lime": "LIME",
 }
 
 
@@ -1008,7 +1009,7 @@ class AkaiDiagnosticDialog(QDialog):
 
     def __init__(self, midi_handler, parent=None):
         super().__init__(parent)
-        ctrl_name = getattr(midi_handler, 'controller_name', '') or "Contrôleur MIDI"
+        ctrl_name = getattr(midi_handler, 'controller_name', '') or tr("mwz_001")
         self.setWindowTitle(tr("mw_f_midi_ctrl", ctrl_name=ctrl_name))
         _is_apc_mini = getattr(midi_handler, 'controller_type', '') == 'apc_mini'
         self.setFixedSize(500, 760 if _is_apc_mini else 720)
@@ -1102,10 +1103,10 @@ class AkaiDiagnosticDialog(QDialog):
         self._out_lbl.setStyleSheet("color:#888; font-size:9px;")
         self._out_lbl.setWordWrap(True)
 
-        _row, self._in_dot, self._in_status = _port_row("Entrée MIDI  (contrôleur → logiciel)", False)
+        _row, self._in_dot, self._in_status = _port_row(tr("mwz_004"), False)
         root.addLayout(_row)
         root.addWidget(self._in_lbl)
-        _row, self._out_dot, self._out_status = _port_row("Sortie MIDI  (logiciel → LEDs contrôleur)", False)
+        _row, self._out_dot, self._out_status = _port_row(tr("mwz_005"), False)
         root.addLayout(_row)
         root.addWidget(self._out_lbl)
 
@@ -1128,7 +1129,7 @@ class AkaiDiagnosticDialog(QDialog):
             except Exception:
                 ports = []
 
-        ports_lbl = QLabel("Ports MIDI détectés : " + (", ".join(ports) if ports else "aucun"))
+        ports_lbl = QLabel(tr("mwz_006") + (", ".join(ports) if ports else tr("mwz_007")))
         ports_lbl.setStyleSheet("color:#555; font-size:9px;")
         ports_lbl.setWordWrap(True)
         root.addWidget(ports_lbl)
@@ -1292,7 +1293,7 @@ class AkaiDiagnosticDialog(QDialog):
                                 (self._out_dot, self._out_status, out_ok)):
             color = '#4CAF50' if ok else '#f44336'
             dot.setStyleSheet(f"color:{color}; font-size:11px;")
-            status.setText(tr("mw_connected") if ok else "Non détecté")
+            status.setText(tr("mw_connected") if ok else tr("mwz_009"))
             status.setStyleSheet(f"color:{color}; font-size:10px; font-weight:bold;")
 
         try:
@@ -1305,9 +1306,9 @@ class AkaiDiagnosticDialog(QDialog):
 
         n = getattr(m, 'rx_count', 0)
         raw = getattr(m, 'last_raw', None)
-        txt = f"Messages bruts reçus : {n}"
+        txt = tr("mwz_010", n=n)
         if raw:
-            txt += "   —   dernier : " + " ".join(f"{b:02X}" for b in raw)
+            txt += tr("mwz_011") + " ".join(f"{b:02X}" for b in raw)
         self._raw_lbl.setText(txt)
         self._raw_lbl.setStyleSheet(
             f"color:{'#888' if n else '#555'}; font-size:9px;")
@@ -1392,7 +1393,7 @@ class AkaiDiagnosticDialog(QDialog):
         """
         from midi_handler import SUPPORTED_CONTROLLERS
         from controller_profile import all_profiles
-        cat = [(None, "Auto (détection automatique)")]
+        cat = [(None, tr("mwz_015"))]
         for c in SUPPORTED_CONTROLLERS:
             cat.append((c['id'], c['name']))
         self._custom_files = {}
@@ -1824,11 +1825,11 @@ class _SlotPickerPopup(QFrame):
         pos    = [f"POS {i}" for i in range(1, _POS_COL_MAX + 1)]
 
         # Groupes
-        self._add_section("Groupes", groups, self._GROUP_COLOR, current)
+        self._add_section(tr("mwy_001"), groups, self._GROUP_COLOR, current)
         # FX
         self._add_section("FX", fx, self._FX_COLOR, current)
         # MEM — grille 10 colonnes
-        self._add_section("Mémoires", mems, self._MEM_COLOR, current, cols=10)
+        self._add_section(tr("mwy_002"), mems, self._MEM_COLOR, current, cols=10)
         # POS — colonnes position lyre
         self._add_section(tr("pos_slot_section"), pos, "#2255ee", current)
         # Lecteur — transport (avec ou sans slots), sortie vidéo, effets vidéo.
@@ -1837,7 +1838,7 @@ class _SlotPickerPopup(QFrame):
         # éditeur de layout, lui, lit bien `_AKAI_SLOT_OPTIONS` — d'où une
         # colonne assignable dans l'éditeur mais introuvable dans ce popup,
         # qui est pourtant le chemin normal (clic sur l'étiquette du fader).
-        self._add_section("Lecteur", ["PLAY", "SANS SLOT", "VIDEO", "VFX"],
+        self._add_section(tr("mwy_003"), ["PLAY", "SANS SLOT", "VIDEO", "VFX"],
                           "#2f8f57", current, cols=4, btn_w=78)
 
         self._inner_lay.addStretch()
@@ -1854,7 +1855,7 @@ class _SlotPickerPopup(QFrame):
         grid.setSpacing(3)
 
         for i, item in enumerate(items):
-            btn = QPushButton(item)
+            btn = QPushButton(tr_name(item))
             btn.setFixedSize(btn_w, 22)
             active = (item == current)
             btn.setStyleSheet(self._btn_style(color, active))
@@ -1944,7 +1945,7 @@ class _SlotPickerPopup(QFrame):
         grp_row.setSpacing(4)
         self._group_btns = {}
         # "Toutes" (group=None) + A..H
-        for key, label in [(None, "Toutes")] + [(g, g) for g in ["A", "B", "C", "D", "E", "F", "G", "H"]]:
+        for key, label in [(None, tr("mwy_008"))] + [(g, g) for g in ["A", "B", "C", "D", "E", "F", "G", "H"]]:
             b = QPushButton(label)
             b.setFixedSize(48 if key is None else 26, 22)
             b.clicked.connect(lambda _, k=key: self._set_pos_group(k))
@@ -4728,7 +4729,7 @@ class MissingMediaDialog(QDialog):
         lay.addWidget(info)
 
         self.tbl = QTableWidget(n, 4)
-        self.tbl.setHorizontalHeaderLabels(["Ligne", "Fichier", "Statut", ""])
+        self.tbl.setHorizontalHeaderLabels([tr("mwy_017"), tr("mwy_018"), tr("mwy_019"), ""])
         self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.tbl.setColumnWidth(0, 55)
@@ -4749,7 +4750,7 @@ class MissingMediaDialog(QDialog):
             name_item.setToolTip(orig_path)
             self.tbl.setItem(i, 1, name_item)
 
-            status = QTableWidgetItem("⚠️  Introuvable")
+            status = QTableWidgetItem(tr("mwy_021"))
             status.setForeground(QColor("#ff5555"))
             self.tbl.setItem(i, 2, status)
 
@@ -4781,7 +4782,7 @@ class MissingMediaDialog(QDialog):
             start_dir = os.path.expanduser("~")
 
         new_path, _ = QFileDialog.getOpenFileName(
-            self, f"Localiser : {name}", start_dir,
+            self, tr("mwy_022", name=name), start_dir,
             f"{MEDIA_EXTENSIONS_FILTER};;Tous (*.*)"
         )
         if not new_path:
@@ -4888,6 +4889,15 @@ class MainWindow(QMainWindow):
         self._flash_watchdog.setSingleShot(True)
         self._flash_watchdog.setInterval(30000)
         self._flash_watchdog.timeout.connect(self._flash_end)
+        # Momentané d'un PAD mémoire (clic droit > Comportement > Flash).
+        # Rien à voir avec le bouton bas-droite ci-dessus : là c'est tout le
+        # pupitre qui flashe, ici c'est UNE mémoire qu'on tient au doigt.
+        # `None` hors appui ; pendant l'appui, tout ce qu'il faudra rendre.
+        self._mem_flash = None
+        self._mem_flash_watchdog = QTimer(self)
+        self._mem_flash_watchdog.setSingleShot(True)
+        self._mem_flash_watchdog.setInterval(30000)
+        self._mem_flash_watchdog.timeout.connect(self._mem_flash_end)
         self.effect_speed = 0
         self.effect_amplitude = 100   # amplitude globale effets (fader 9), 0-100
         self.effect_state = 0
@@ -5756,7 +5766,7 @@ class MainWindow(QMainWindow):
         if self.video_output_btn.isChecked():
             # ON - creer/montrer la fenetre
             self.video_output_btn.setStyleSheet(_SS_ON)
-            self._log_message("Sortie vidéo activée", "success")
+            self._log_message(tr("mwx_001"), "success")
             if not self.video_output_window:
                 self.video_output_window = VideoOutputWindow()
                 # Appliquer watermark si licence non active
@@ -5799,7 +5809,7 @@ class MainWindow(QMainWindow):
                     pass
             if self.video_output_window:
                 self.video_output_window.hide()
-            self._log_message("Sortie vidéo désactivée", "info")
+            self._log_message(tr("mwx_003"), "info")
 
     def _video_out(self):
         """Cible de `setVideoOutput` : l'ITEM de la scène, pas la vue.
@@ -7039,7 +7049,13 @@ class MainWindow(QMainWindow):
                     b.setProperty("color2", None)
                     b.setProperty("memory_col", mem_col)
                     b.setProperty("memory_row", r)
-                    b.clicked.connect(lambda _, btn=b, mc=mem_col, mr=r, ca=c: self._activate_memory_pad(btn, mc, mr, col_akai=ca))
+                    # `pressed` / `released` et non `clicked` : un pad réglé en
+                    # flash doit tomber au relâché, et `clicked` ne se déclenche
+                    # qu'au relâché. Effet de bord assumé pour les autres modes :
+                    # la mémoire part à l'ENFONCEMENT, comme sur l'AKAI (qui a
+                    # toujours déclenché sur le Note On).
+                    b.pressed.connect(lambda btn=b, mc=mem_col, mr=r, ca=c: self._on_memory_pad_pressed(btn, mc, mr, ca))
+                    b.released.connect(lambda mc=mem_col, mr=r, ca=c: self._on_memory_pad_released(mc, mr, ca))
                     b.setContextMenuPolicy(Qt.CustomContextMenu)
                     b.customContextMenuRequested.connect(
                         lambda pos, mc=mem_col, mr=r, btn=b: self._show_memory_context_menu(pos, mc, mr, btn)
@@ -7293,8 +7309,8 @@ class MainWindow(QMainWindow):
         if was_superposition != self.effect_superposition:
             # Changer de mode laisse les effets en cours orphelins : on les coupe.
             self._stop_button_effects(
-                "Superposition d'effets " + ("activée" if self.effect_superposition else "désactivée")
-                + " — effets en cours coupés")
+                tr("mwx_005") + (tr("mwx_006") if self.effect_superposition else tr("mwx_007"))
+                + tr("mwx_008"))
         self.tap_button_mode = dlg.get_tap_button_mode()
         if self.tap_button_mode not in ("flash", "flash_kill"):
             self._flash_end()   # changer de mode ne doit pas laisser un flash collé
@@ -7352,6 +7368,12 @@ class MainWindow(QMainWindow):
         pages = getattr(self, "_bank_pages", None)
         if not pages:
             return
+        # Un pad momentané tenu pendant la bascule rendrait sa scène à des
+        # colonnes qui n'existent plus : `active_memory_pads` est indexé par
+        # colonne VISIBLE, et la page suivante n'a pas les mêmes. On le rend
+        # maintenant, tant que les index veulent encore dire quelque chose.
+        if getattr(self, "_mem_flash", None):
+            self._mem_flash_end()
         idx = max(0, min(int(idx), len(pages) - 1))
         if idx == self._bank_page_idx and self._custom_bank_slots is pages[idx]:
             self._update_bank_page_indicator()
@@ -8110,7 +8132,7 @@ class MainWindow(QMainWindow):
                     "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
                 )
                 self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
-            self._show_error_toast("✖ Impossible d'enregistrer sur un Groupe — Sélectionnez une mémoire")
+            self._show_error_toast(tr("mwx_009"))
             return
         target_groups = self._slot_groups(slot)
 
@@ -8305,6 +8327,298 @@ class MainWindow(QMainWindow):
         """Log le BPM détecté dans le journal."""
         self._log_message(f"TAP tempo : {bpm} BPM", "bpm")
 
+    # ── Comportement d'un pad mémoire ────────────────────────────────
+    # Un pad mémoire est depuis toujours un INTERRUPTEUR, indépendant par
+    # colonne : on le pose, il reste, et les autres colonnes continuent leur
+    # vie. Trois autres façons de le jouer se règlent maintenant pad par pad
+    # (clic droit > Comportement) :
+    #   • flash       — momentané : la mémoire n'est là que tant qu'on appuie ;
+    #   • flash_solo  — momentané ET seule en scène (les autres mémoires
+    #                   tenues se taisent pendant l'appui, et reviennent après).
+    # C'est le geste du bouton bas-droite (FLASH / FLASH KILL), mais attaché à
+    # UNE mémoire : on choisit au pad ce qu'on jouait au bouton, et plusieurs
+    # pads peuvent avoir chacun le leur.
+    #
+    # Le réglage vit dans la mémoire (`mem["pad_mode"]`) : il est donc
+    # sauvegardé avec le show et voyage avec un cue exporté. « normal » n'écrit
+    # aucune clé — un show qui n'y a jamais touché reste au format d'avant.
+    # Un mode « solo » latché a existé une demi-journée (20/09/2026) : l'appui
+    # coupait les autres mémoires ET restait. Retiré à la demande — le geste
+    # utile, c'est le momentané. Une mémoire réglée dessus entre-temps retombe
+    # sur « normal » (`_mem_pad_mode` ignore les valeurs inconnues).
+    MEM_PAD_MODES = ("normal", "flash", "flash_solo")
+    _MEM_MODE_KEYS = {"normal":     "mw_mem_beh_normal",
+                      "flash":      "mw_mem_beh_flash",
+                      "flash_solo": "mw_mem_beh_flash_solo"}
+    _MEM_MODE_HINTS = {"normal":     "mw_mem_beh_normal_h",
+                       "flash":      "mw_mem_beh_flash_h",
+                       "flash_solo": "mw_mem_beh_flash_solo_h"}
+    # Ce qu'une photo de rig doit emporter pour qu'un momentané puisse rendre
+    # la scène telle qu'elle était. Mêmes canaux que `_build_snapshot` : une
+    # mémoire flashée peut poser un strobe, un gobo, un prisme ou un canal brut.
+    _MEM_FLASH_ATTRS = ("level", "pan", "tilt", "uv", "amber_boost", "white_boost",
+                        "orange_boost", "gobo", "gobo_rotation", "zoom",
+                        "strobe_speed", "focus", "gobo2", "speed", "mode_value",
+                        "preset1", "preset2", "preset3", "preset4", "color_wheel",
+                        "prism", "prism_rotation", "effects", "iris", "fan_speed",
+                        "shutter")
+
+    def _mem_pad_mode(self, mem_col, row) -> str:
+        """Façon dont ce pad se joue (cf. MEM_PAD_MODES)."""
+        try:
+            mem = self.memories[mem_col][row]
+        except (IndexError, TypeError):
+            return "normal"
+        if not mem:
+            return "normal"
+        mode = mem.get("pad_mode", "normal")
+        return mode if mode in self.MEM_PAD_MODES else "normal"
+
+    def _set_mem_pad_mode(self, mem_col, row, mode):
+        """Change le comportement du pad depuis le menu contextuel."""
+        mem = self.memories[mem_col][row]
+        if not mem or mode not in self.MEM_PAD_MODES:
+            return
+        # Changer de mode pendant que ce pad est tenu laisserait le momentané
+        # sans personne pour le relâcher : on le rend d'abord.
+        if self._mem_flash_holds(mem_col, row):
+            self._mem_flash_end()
+        if mode == "normal":
+            mem.pop("pad_mode", None)
+        else:
+            mem["pad_mode"] = mode
+        self._refresh_memory_pad(mem_col, row)
+        self._log_message(f"MEM {mem_col + 1}.{row + 1} · {tr(self._MEM_MODE_KEYS[mode])}", "mem")
+        self._save_akai_config_auto()
+
+    def _deactivate_memory_pad(self, mem_col, row, col_akai=None):
+        """Retire une mémoire de la scène : effet rendu, projecteurs nettoyés,
+        pad éteint, enchaînement minuté arrêté.
+
+        NE recompose PAS le mix : l'appelant coupe souvent plusieurs pads d'un
+        coup et n'appelle `_recompute_memory_mix` qu'une fois, à la fin.
+        """
+        if col_akai is None:
+            col_akai = self._mem_col_to_fader(mem_col)
+        if self.active_memory_pads.get(col_akai) == row:
+            self.active_memory_pads.pop(col_akai, None)
+        try:
+            mem = self.memories[mem_col][row]
+        except (IndexError, TypeError):
+            mem = None
+        if mem:
+            self._mem_ensure_cues(mem)
+            cues = mem.get("cues") or []
+            eff_name = (cues[0].get("effect") or {}).get("name") if cues else None
+            # Couper l'effet porté par la mémoire qu'on quitte — et le RESTITUER.
+            # Arrêter le timer sans rendre l'état d'avant laisse les projecteurs
+            # figés sur la dernière image de l'effet.
+            if eff_name:
+                if hasattr(self, 'effect_timer'):
+                    self.effect_timer.stop()
+                self.active_effect = None
+                self.active_effect_config = {}
+                self._restore_effect_state()
+        self._clear_memory_from_projectors(mem_col, row)
+        self._style_memory_pad(mem_col, row, active=False)
+        self._update_memory_pad_led(mem_col, row, active=False)
+        self._mem_cue_idx.pop((mem_col, row), None)
+        # L'enchaînement minuté appartenait à CE pad : sans cet arrêt, le timer
+        # continuait à courir et faisait avancer le cue d'une mémoire qui n'est
+        # plus en scène (et le pad clignotait dans le vide).
+        if (getattr(self, '_dur_mem_col', -1) == mem_col
+                and getattr(self, '_dur_row', -1) == row):
+            self._dur_timer.stop()
+            self._dur_progress_timer.stop()
+            self._dur_mem_col = -1
+            self._dur_row = -1
+            self._auto_blink_stop()
+            self._sync_cue_play_button()
+
+    def _mem_cut_others(self, keep_mem_col=None):
+        """Éteint toutes les mémoires tenues, sauf celles de `keep_mem_col`.
+
+        Renvoie la liste des (mem_col, row) coupés — vide si rien n'était levé.
+        ⚠️ Ne voit que les colonnes de la page affichée : une mémoire tenue par
+        l'entrée DMX hors page (`_mem_ext_levels`) n'a pas de pad à éteindre,
+        c'est le pupitre qui la tient.
+        """
+        coupes = []
+        for fader_idx, row in list(self.active_memory_pads.items()):
+            if row is None:
+                continue
+            mc = self._fader_to_mem_col(fader_idx)
+            if mc is None or mc == keep_mem_col:
+                continue
+            self._deactivate_memory_pad(mc, row, fader_idx)
+            coupes.append((mc, row))
+        return coupes
+
+    # ── Momentané d'un pad mémoire (modes flash / flash_solo) ─────────────
+
+    def _mem_flash_snapshot(self):
+        """Photo complète du rig — ce à quoi le relâché devra revenir."""
+        photo = []
+        for p in self.projectors:
+            vals = {a: getattr(p, a) for a in self._MEM_FLASH_ATTRS if hasattr(p, a)}
+            photo.append((QColor(p.base_color), QColor(p.color), vals,
+                          dict(getattr(p, 'channel_extras', {}) or {})))
+        return photo
+
+    def _mem_flash_restore(self, photo):
+        """Repose la photo prise à l'appui."""
+        for p, (base, col, vals, extras) in zip(self.projectors, photo):
+            p.base_color = QColor(base)
+            p.color = QColor(col)
+            for a, v in vals.items():
+                setattr(p, a, v)
+            if hasattr(p, 'channel_extras'):
+                p.channel_extras = dict(extras)
+
+    def _mem_flash_begin(self, mem_col, row, col_akai):
+        """Appui sur un pad momentané : la mémoire monte, et ne tiendra que
+        tant que le doigt reste dessus."""
+        if self._mem_flash is not None:
+            return
+        try:
+            mem = self.memories[mem_col][row]
+        except (IndexError, TypeError):
+            mem = None
+        if not mem:
+            return
+        solo = self._mem_pad_mode(mem_col, row) == "flash_solo"
+        # Tout ce qu'il faudra rendre au relâché. La PHOTO du rig compte autant
+        # que la liste des pads : `_recompute_memory_mix` compose la scène à
+        # partir des seules mémoires, donc un look posé aux pads couleur ou au
+        # plan 2D — porté par AUCUNE mémoire — serait noirci à l'appui et jamais
+        # rendu. C'est exactement le blackout destructeur qu'avait le bouton
+        # FLASH ; ici la photo le répare d'avance.
+        self._mem_flash = {
+            "key":      (mem_col, row),
+            "col_akai": col_akai,
+            "solo":     solo,
+            "pads":     dict(self.active_memory_pads),
+            "cues":     dict(self._mem_cue_idx),
+            "rows":     dict(self._mem_rows),
+            "photo":    self._mem_flash_snapshot(),
+        }
+        # Garde-fou : un contrôleur qui n'enverrait pas de Note Off laisserait
+        # le pad collé. Même délai que le bouton bas-droite.
+        self._mem_flash_watchdog.start()
+
+        if solo:
+            self._mem_cut_others(keep_mem_col=mem_col)
+        prev_row = self.active_memory_pads.get(col_akai)
+        if prev_row is not None and prev_row != row:
+            self._deactivate_memory_pad(mem_col, prev_row, col_akai)
+
+        self._mem_cue_idx[(mem_col, row)] = 0
+        self.active_memory_pads[col_akai] = row
+        self._mem_rows[mem_col] = row
+        self._style_memory_pad(mem_col, row, active=True)
+        self._update_memory_pad_led(mem_col, row, active=True)
+        # Momentané : pas de fondu (personne ne le verrait), pas de reprise des
+        # prises en main du plan 2D (elles ne reviendraient pas au relâché), pas
+        # d'enchaînement minuté et rien d'écrit dans la config du show.
+        self._recompute_memory_mix()
+        self.send_dmx_update()
+
+    def _mem_flash_end(self):
+        """Relâché : on rend exactement ce qui était en scène avant l'appui."""
+        etat, self._mem_flash = self._mem_flash, None
+        if etat is None:
+            return
+        self._mem_flash_watchdog.stop()
+        mem_col, row = etat["key"]
+        col_akai = etat["col_akai"]
+        self._deactivate_memory_pad(mem_col, row, col_akai)
+
+        # Le pad qu'on vient de tenir ne revient JAMAIS, même s'il était déjà
+        # posé avant l'appui : un momentané ne laisse rien derrière lui. Le
+        # relâcher sur une mémoire allumée l'ÉTEINT donc — c'est le seul point
+        # où un flash change l'état d'avant, et c'est voulu.
+        pads = {k: v for k, v in etat["pads"].items()
+                if not (k == col_akai and v == row)}
+        etait_pose = len(pads) != len(etat["pads"])
+
+        # Rendre les registres tels quels : le flash a pu couper des pads, en
+        # remplacer un dans sa colonne, et repartir au cue 1 d'une mémoire qui
+        # en était au cue 3.
+        self._mem_cue_idx.clear()
+        self._mem_cue_idx.update(etat["cues"])
+        self._mem_rows.clear()
+        self._mem_rows.update(etat["rows"])
+        self.active_memory_pads.clear()
+        self.active_memory_pads.update(pads)
+
+        # La photo d'abord — elle seule sait rendre un look manuel. Le mix
+        # repasse ensuite SI des mémoires étaient tenues : c'est lui qui relance
+        # leur effet, et il ne touche pas aux fixtures prises en main.
+        self._mem_flash_restore(etat["photo"])
+        if etait_pose:
+            # La photo vient de le rallumer (il était en scène avant l'appui) :
+            # on le retire, sur le cue où il en était, et le mix recompose
+            # ensuite ce qui reste par-dessus.
+            self._clear_memory_from_projectors(mem_col, row)
+        self._mem_cue_idx.pop((mem_col, row), None)
+        if pads:
+            self._recompute_memory_mix()
+
+        for fi, r in pads.items():
+            mc = self._fader_to_mem_col(fi)
+            if mc is not None:
+                self._style_memory_pad(mc, r, active=True)
+                self._update_memory_pad_led(mc, r, active=True)
+        self._refresh_memory_pad(mem_col, row)
+        self.send_dmx_update()
+
+    def _mem_flash_level(self, col_akai, valeur):
+        """Niveau LU pour une colonne mémoire, momentané du pad compris.
+
+        Un pad tenu en flash doit s'entendre **fader baissé** : c'est un geste,
+        pas un réglage, et personne ne monte un fader avant de flasher. Il part
+        donc à 100 %, exactement comme le bouton FLASH monte les mémoires
+        tenues sans toucher à leur fader. Le fader retrouve son mot à dire au
+        relâché — et comme il est le plus souvent à zéro sur un pad de flash,
+        la mémoire disparaît d'elle-même.
+
+        À lire à CHAQUE frame et dans le mix : ces deux couches reposent les
+        mémoires depuis le fader BRUT, une valeur forcée qui n'est pas dans les
+        deux se fait effacer à la frame suivante.
+        """
+        f = getattr(self, '_mem_flash', None)
+        if f and f.get("col_akai") == col_akai:
+            return 100
+        return self._flash_level(valeur)
+
+    def _mem_flash_holds(self, mem_col, row) -> bool:
+        """Ce pad est-il celui qu'on tient en ce moment ?"""
+        return bool(self._mem_flash) and self._mem_flash.get("key") == (mem_col, row)
+
+    # ── Appui / relâché d'un pad mémoire (écran comme AKAI) ──────────────
+
+    def _on_memory_pad_pressed(self, btn, mem_col, row, col_akai=None):
+        """Point d'entrée unique de l'appui : c'est le comportement du pad qui
+        décide si on POSE la mémoire ou si on la TIENT."""
+        if col_akai is None:
+            col_akai = self._mem_col_to_fader(mem_col)
+        try:
+            remplie = bool(self.memories[mem_col][row])
+        except (IndexError, TypeError):
+            remplie = False
+        # Le mode REC garde la priorité : on enregistre sur le pad, quel que
+        # soit son comportement.
+        if (remplie and not self._mem_rec_mode
+                and self._mem_pad_mode(mem_col, row) in ("flash", "flash_solo")):
+            self._mem_flash_begin(mem_col, row, col_akai)
+            return
+        self._activate_memory_pad(btn, mem_col, row, col_akai=col_akai)
+
+    def _on_memory_pad_released(self, mem_col, row, col_akai=None):
+        """Relâché — seul un pad momentané a quelque chose à rendre."""
+        if self._mem_flash_holds(mem_col, row):
+            self._mem_flash_end()
+
     def _activate_memory_pad(self, btn, mem_col, row, col_akai=None):
         """Active un pad memoire - independant par colonne.
         Chaque colonne memoire est independante : activer un pad dans la colonne 2
@@ -8322,7 +8636,7 @@ class MainWindow(QMainWindow):
                     "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
                 )
                 self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
-            self._log_message(f"Rec MEM {mem_col + 1}.{row + 1} OK", "rec")
+            self._log_message(tr("mwx_010", a=mem_col + 1, a1=row + 1), "rec")
             self._blink_memory_pad(mem_col, row)
             return
 
@@ -8366,33 +8680,9 @@ class MainWindow(QMainWindow):
         _look_avant = self._etat_couleur_courant()
 
         # Desactiver le pad precedent DANS CETTE COLONNE SEULEMENT
-        prev_row = self.active_memory_pads.pop(col_akai, None)
+        prev_row = self.active_memory_pads.get(col_akai)
         if prev_row is not None:
-            prev_mem = self.memories[mem_col][prev_row]
-            if prev_mem:
-                self._mem_ensure_cues(prev_mem)
-                prev_eff_name = (prev_mem["cues"][0].get("effect") or {}).get("name") if prev_mem.get("cues") else None
-            else:
-                prev_eff_name = None
-            # Couper l'effet porté par la mémoire qu'on quitte — et le RESTITUER.
-            # `effect_saved_colors` était simplement VIDÉ ici : arrêter le timer
-            # sans rendre l'état d'avant laisse les projecteurs figés sur la
-            # dernière image de l'effet (un « passage au blanc » laissait la
-            # salle en blanc), et il fallait renvoyer les couleurs au pad AKAI
-            # pour s'en sortir. Vider la capture, c'est l'effet sans son annulation.
-            # Avant `_clear_memory_from_projectors` : la restitution rend l'état
-            # d'AVANT l'effet — mémoire allumée comprise — c'est donc au nettoyage
-            # de la mémoire de passer en dernier, sinon il est écrasé.
-            if prev_eff_name:
-                if hasattr(self, 'effect_timer'):
-                    self.effect_timer.stop()
-                self.active_effect = None
-                self.active_effect_config = {}
-                self._restore_effect_state()
-            self._clear_memory_from_projectors(mem_col, prev_row)
-            self._style_memory_pad(mem_col, prev_row, active=False)
-            self._update_memory_pad_led(mem_col, prev_row, active=False)
-            self._mem_cue_idx.pop((mem_col, prev_row), None)  # reset cue index
+            self._deactivate_memory_pad(mem_col, prev_row, col_akai)
 
         # Activer le nouveau pad (cue 0 par défaut)
         self._release_manual_grabs()   # action volontaire → on repeint
@@ -8421,7 +8711,7 @@ class MainWindow(QMainWindow):
         else:
             self._log_message(f"MEM {mem_col + 1}.{row + 1}", "mem")
         if fader_val == 0:
-            self._log_message(f"MEM {mem_col + 1} — fader à 0, rien n'est envoyé", "warn")
+            self._log_message(tr("mwx_012", a=mem_col + 1), "warn")
 
         # Démarrer le timer de durée si le cue actif en a une
         self._start_cue_duration(mem_col, row)
@@ -8436,7 +8726,12 @@ class MainWindow(QMainWindow):
         self.send_dmx_update()
 
     def trigger_memory(self, mem_col: int, row: int):
-        """Slot public — déclenche un pad mémoire depuis le Stream Deck ou un signal externe."""
+        """Slot public — déclenche un pad mémoire depuis le Stream Deck ou un signal externe.
+
+        Une impulsion sans relâché : un pad réglé en flash se pose donc ici comme
+        un interrupteur (et un flash solo comme un solo). Mieux vaut ça qu'un
+        momentané que personne ne viendra rendre — le pad resterait collé.
+        """
         if not (0 <= mem_col <= 7 and 0 <= row <= 7):
             return
         if self.memories[mem_col][row] is None:
@@ -8625,8 +8920,7 @@ class MainWindow(QMainWindow):
         # premier mouvement de fader. Mieux vaut le dire que le faire à moitié.
         col_akai = self._mem_col_to_fader(mc)
         if self.active_memory_pads.get(col_akai) != r:
-            self._log_message(f"MEM {mc+1}.{r+1} — posez d'abord la mémoire "
-                              f"pour jouer ses cues", "warn")
+            self._log_message(tr("mwx_014", a=mc+1, a1=r+1), "warn")
             return
         self._release_manual_grabs()   # clic sur un cue = action volontaire
         self._mem_cue_idx[(mc, r)] = cue_idx
@@ -8687,12 +8981,12 @@ class MainWindow(QMainWindow):
             cat_effs = [e for e in all_effects if e.get("category") == cat]
             if not cat_effs:
                 continue
-            hdr = menu.addAction(f"  {cat.upper()}")
+            hdr = menu.addAction(f"  {tr_name(cat).upper()}")
             hdr.setEnabled(False)
             for eff in cat_effs:
                 name_eff = eff.get("name", "")
                 emoji = eff.get("emoji", "⚡")
-                act = menu.addAction(f"  {emoji} {name_eff}")
+                act = menu.addAction(f"  {emoji} {tr_name(name_eff)}")
                 act.setCheckable(True)
                 act.setChecked(name_eff == current_eff)
                 act.triggered.connect(lambda checked=False, e=dict(eff): _set(e))
@@ -8831,8 +9125,7 @@ class MainWindow(QMainWindow):
             self._dur_progress_timer.stop()
             self._dur_paused_left = max(0.05, reste)
             self._auto_blink_stop()
-            self._log_message(f"MEM {mc+1}.{r+1} — enchaînement en pause "
-                              f"({self._dur_paused_left:.1f} s restantes)", "mem")
+            self._log_message(tr("mwx_015", a=mc+1, a1=r+1, dur_paused_left=self._dur_paused_left), "mem")
         # En pause sur ce pad → reprendre là où on s'était arrêté.
         elif (self._dur_paused_left is not None
               and (mc, r) == (self._dur_mem_col, self._dur_row)):
@@ -8842,22 +9135,20 @@ class MainWindow(QMainWindow):
             self._dur_timer.start(int(reste * 1000))
             self._dur_progress_timer.start()
             self._auto_blink_start(mc, r)
-            self._log_message(f"MEM {mc+1}.{r+1} — enchaînement repris", "mem")
+            self._log_message(tr("mwx_016", a=mc+1, a1=r+1), "mem")
         # Rien en cours → lancer l'enchaînement depuis le cue affiché, à
         # condition que le pad soit posé (sinon on jouerait une mémoire que
         # personne n'a appelée).
         else:
             col_akai = self._mem_col_to_fader(mc)
             if self.active_memory_pads.get(col_akai) != r:
-                self._log_message(f"MEM {mc+1}.{r+1} — posez d'abord la mémoire "
-                                  f"pour lancer l'enchaînement", "warn")
+                self._log_message(tr("mwx_018", a=mc+1, a1=r+1), "warn")
                 self._sync_cue_play_button()
                 return
             self._dur_paused_left = None
             self._start_cue_duration(mc, r)
             if not self._cue_chain_running():
-                self._log_message(f"MEM {mc+1}.{r+1} — ce cue n'a pas de durée, "
-                                  f"rien à enchaîner", "warn")
+                self._log_message(tr("mwx_019", a=mc+1, a1=r+1), "warn")
         self._sync_cue_play_button()
 
     def _update_cue_progress(self):
@@ -9068,7 +9359,8 @@ class MainWindow(QMainWindow):
             mem = self.memories[mem_col][row]
             if not mem:
                 continue
-            fv = self._flash_level(
+            fv = self._mem_flash_level(
+                fader_idx,
                 self.faders[fader_idx].value if fader_idx in self.faders else 0)
             if fv <= 0:
                 continue
@@ -9079,7 +9371,11 @@ class MainWindow(QMainWindow):
         # la page affichée : elles n'ont pas de fader à l'écran où lire un
         # niveau, il vient donc du pupitre (voir apply_memory_level). Les
         # colonnes visibles sont exclues — leur fader vient de les compter.
-        if self._mem_ext_levels:
+        # Un FLASH SOLO les met en silence comme les autres : elles n'ont pas de
+        # pad à éteindre (c'est le pupitre qui les tient), donc la seule façon de
+        # ne pas les entendre pendant l'appui est de ne pas les compter.
+        _flash_pad = getattr(self, "_mem_flash", None)
+        if self._mem_ext_levels and not (_flash_pad and _flash_pad.get("solo")):
             visibles = {s.get("mem_col") for s in self._fader_map
                         if s.get("type") == "memory"}
             for mem_col, niveau in list(self._mem_ext_levels.items()):
@@ -9536,6 +9832,16 @@ class MainWindow(QMainWindow):
             self._start_pan_tilt_transition(p, cible_pan, cible_tilt,
                                             int(fade_secs * 1000))
 
+    def _mem_pad_border_style(self, mem_col, row) -> str:
+        """Bordure du pad selon son comportement : pointillés = momentané.
+
+        Un pad de 28 px n'a pas la place d'un glyphe de plus (le « 2/5 » des
+        cues, le « ⚡ » de l'effet et la rampe du fondu s'y disputent déjà la
+        place) : le contour suffit à dire « celui-là ne reste pas », et
+        l'infobulle donne le nom du mode.
+        """
+        return "dashed" if self._mem_pad_mode(mem_col, row) in ("flash", "flash_solo") else "solid"
+
     def _style_memory_pad(self, mem_col, row, active):
         """Style visuel d'un pad mémoire — met à jour toutes les colonnes mappées sur ce MEM."""
         for col_akai in self._mem_col_to_faders(mem_col):
@@ -9598,7 +9904,7 @@ class MainWindow(QMainWindow):
             pad.setStyleSheet(f"""
                 QPushButton {{
                     background: {color.name()};
-                    border: 2px solid {color.lighter(130).name()};
+                    border: 2px {self._mem_pad_border_style(mem_col, row)} {color.lighter(130).name()};
                     border-radius: 4px;
                     color: {_txt};
                     font-size: 8px;
@@ -9610,7 +9916,7 @@ class MainWindow(QMainWindow):
             pad.setStyleSheet(f"""
                 QPushButton {{
                     background: {dim_color.name()};
-                    border: 1px solid #2a2a2a;
+                    border: 1px {self._mem_pad_border_style(mem_col, row)} #2a2a2a;
                     border-radius: 4px;
                     color: rgba(255,255,255,0.6);
                     font-size: 8px;
@@ -9700,6 +10006,12 @@ class MainWindow(QMainWindow):
             if _fade_c > 0:
                 lines.append(f"<span style='color:{self._MEM_FADE_COLOR}'>"
                              f"↗ {tr('mem_tt_fade', v=self._fmt_mem_fade(_fade_c))}</span>")
+            # Comportement : seulement s'il sort de l'ordinaire. Un pad qui se
+            # joue comme tous les autres n'a rien à annoncer.
+            _mode = self._mem_pad_mode(mem_col, row)
+            if _mode != "normal":
+                lines.append(f"<span style='color:#00d4ff'>⚡ "
+                             f"{tr('mem_tt_mode', v=tr(self._MEM_MODE_KEYS[_mode]))}</span>")
             return "<br>".join(lines)
         except Exception:
             # Le tooltip est reconstruit à chaque restyle de pad : une mémoire
@@ -10017,7 +10329,7 @@ class MainWindow(QMainWindow):
 
         def _record_and_feedback():
             self._record_memory(mem_col, row)
-            self._log_message(f"Rec MEM {mem_col + 1}.{row + 1} OK", "rec")
+            self._log_message(tr("mwx_010", a=mem_col + 1, a1=row + 1), "rec")
             self._blink_memory_pad(mem_col, row)
 
         if self.memories[mem_col][row] is None:
@@ -10059,11 +10371,30 @@ class MainWindow(QMainWindow):
             fade_action = menu.addAction(fade_lbl)
             fade_action.triggered.connect(lambda: self._edit_memory_fade(mem_col, row))
 
+            # Comportement du pad : c'est encore la question « qu'est-ce qui se
+            # passe quand j'appuie ? », donc sa place est ici, avec le contenu
+            # et le fondu — pas dans l'identité du pad.
+            _mode = self._mem_pad_mode(mem_col, row)
+            beh_menu = menu.addMenu(
+                tr("mw_mem_behaviour") if _mode == "normal"
+                else tr("mw_mem_behaviour_set", v=tr(self._MEM_MODE_KEYS[_mode])))
+            beh_menu.setStyleSheet(menu_style)
+            # Chaque mode s'explique en une phrase : les libellés seuls ne
+            # disent pas ce que devient la scène au relâché.
+            beh_menu.setToolTipsVisible(True)
+            for _m in self.MEM_PAD_MODES:
+                act_m = beh_menu.addAction(tr(self._MEM_MODE_KEYS[_m]))
+                act_m.setCheckable(True)
+                act_m.setChecked(_m == _mode)
+                act_m.setToolTip(tr(self._MEM_MODE_HINTS[_m]))
+                act_m.triggered.connect(
+                    lambda checked=False, m=_m: self._set_mem_pad_mode(mem_col, row, m))
+
             # Le sous-menu Effet est construit plus bas (il a besoin de la
             # bibliothèque d'effets) mais s'insère ICI : c'est du contenu.
             mem_data = self.memories[mem_col][row]
             current_effect = (mem_data or {}).get("effect", {}).get("name") if mem_data else None
-            eff_label = f"⚡  Effet : {current_effect}" if current_effect else "⚡  Ajouter un effet"
+            eff_label = tr("mwy_023", current_effect=current_effect) if current_effect else tr("mwy_024")
             effect_menu = menu.addMenu(eff_label)
             effect_menu.setStyleSheet(menu_style)
 
@@ -10090,11 +10421,11 @@ class MainWindow(QMainWindow):
                 cat_effs = [e for e in all_effects if e.get("category") == cat]
                 if not cat_effs:
                     continue
-                hdr = effect_menu.addAction(f"  {cat.upper()}")
+                hdr = effect_menu.addAction(f"  {tr_name(cat).upper()}")
                 hdr.setEnabled(False)
                 for eff in cat_effs:
                     name_eff = eff.get("name", "")
-                    act = effect_menu.addAction(f"  {name_eff}")
+                    act = effect_menu.addAction(f"  {tr_name(name_eff)}")
                     act.setCheckable(True)
                     act.setChecked(name_eff == current_effect)
                     act.triggered.connect(lambda checked=False, e=dict(eff): _apply_effect(e))
@@ -10121,7 +10452,7 @@ class MainWindow(QMainWindow):
             for name, col in pad_colors:
                 px = QPixmap(16, 16)
                 px.fill(col)
-                action = color_menu.addAction(QIcon(px), name)
+                action = color_menu.addAction(QIcon(px), tr_name(name))
                 action.triggered.connect(lambda _, c=col: self._set_memory_custom_color(mem_col, row, c))
 
             # ── 3. Remplacer / déplacer / échanger ──────────────────────────
@@ -10216,8 +10547,8 @@ class MainWindow(QMainWindow):
         form = QFormLayout()
         col_spin = QSpinBox(); col_spin.setRange(1, _MEM_COL_MAX); col_spin.setValue(mem_col + 1)
         row_spin = QSpinBox(); row_spin.setRange(1, 8); row_spin.setValue(row + 1)
-        form.addRow("Colonne MEM", col_spin)
-        form.addRow("Ligne (1–8)", row_spin)
+        form.addRow(tr("mwy_025"), col_spin)
+        form.addRow(tr("mwy_026"), row_spin)
         lay.addLayout(form)
         btn_row = QHBoxLayout(); btn_row.addStretch()
         cancel = QPushButton(tr("mw_cancel")); cancel.clicked.connect(dlg.reject)
@@ -10280,33 +10611,33 @@ class MainWindow(QMainWindow):
         }
         default = f"MEM_{mem_col + 1}_{row + 1}.mcue"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter le cue", default, "Cue MyStrow (*.mcue);;JSON (*.json)")
+            self, tr("mwy_027"), default, tr("mwy_028"))
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
-            self._log_message(f"Cue exporté : {os.path.basename(path)}", "go")
+            self._log_message(tr("mwx_022", a=os.path.basename(path)), "go")
         except Exception as e:
-            self._log_message(f"Échec export cue : {e}", "warn")
+            self._log_message(tr("mwx_024", e=e), "warn")
 
     def _import_memory(self, mem_col, row):
         """Importe un cue .mcue dans le pad mémoire (avec confirmation si occupé)."""
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importer un cue", "", "Cue MyStrow (*.mcue *.json);;Tous (*.*)")
+            self, tr("mwy_029"), "", tr("mwy_031"))
         if not path:
             return
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
-            self._log_message(f"Fichier illisible : {e}", "warn")
+            self._log_message(tr("mwx_026", e=e), "warn")
             return
         # Format enveloppe {"memory": {...}} ou dict mémoire brut
         mem = data.get("memory") if isinstance(data, dict) and "memory" in data else data
         if not isinstance(mem, dict) or "cues" not in mem:
-            self._log_message("Format de cue non reconnu", "warn")
+            self._log_message(tr("mwx_028"), "warn")
             return
         if self.memories[mem_col][row] is not None:
             if QMessageBox.question(
@@ -10322,7 +10653,7 @@ class MainWindow(QMainWindow):
         self._mem_cue_idx[(mem_col, row)] = 0
         self._refresh_memory_pad(mem_col, row)
         self._save_akai_config_auto()
-        self._log_message(f"Cue importé dans MEM {mem_col + 1}.{row + 1}", "go")
+        self._log_message(tr("mwx_030", a=mem_col + 1, a1=row + 1), "go")
 
     def set_proj_level(self, index, value):
         """Gere les faders - chaque fader est independant"""
@@ -10639,7 +10970,7 @@ class MainWindow(QMainWindow):
                 if not effect_name:
                     btn.active = False
                     btn.update_style()
-                    self._log_message(f"Bouton {effect_idx + 1} — aucun effet assigné (clic droit pour configurer)", "warn")
+                    self._log_message(tr("mwx_032", a=effect_idx + 1), "warn")
                     return
                 import time as _time
                 eff_state = {
@@ -10662,12 +10993,12 @@ class MainWindow(QMainWindow):
                 self._stacked_effects.append(eff_state)
                 self.active_effect = effect_name
                 self.active_effect_config = eff_state['config']
-                self._log_message(f"Effet ON : {effect_name}", "effect")
+                self._log_message(tr("mwx_034", effect_name=effect_name), "effect")
             else:
                 # Retirer cet effet de la pile
                 old_name = next((e['name'] for e in self._stacked_effects if e['idx'] == effect_idx), btn.current_effect or "")
                 self._stacked_effects = [e for e in self._stacked_effects if e['idx'] != effect_idx]
-                self._log_message(f"Effet OFF : {old_name}", "effect")
+                self._log_message(tr("mwx_036", old_name=old_name), "effect")
                 if not self._stacked_effects:
                     # Dernier effet : arrêter le timer et restaurer les couleurs
                     if hasattr(self, 'effect_timer'):
@@ -10694,7 +11025,7 @@ class MainWindow(QMainWindow):
             if not effect_name:
                 btn.active = False
                 btn.update_style()
-                self._log_message(f"Bouton {effect_idx + 1} — aucun effet assigné (clic droit pour configurer)", "warn")
+                self._log_message(tr("mwx_032", a=effect_idx + 1), "warn")
                 return
 
             # Sauvegarder l'état précédent — uniquement si l'effet vient d'un FX pad,
@@ -10713,7 +11044,7 @@ class MainWindow(QMainWindow):
             self.active_effect = effect_name
             self.active_effect_config = self._button_effect_configs.get(effect_idx, {})
             self.start_effect(effect_name)
-            self._log_message(f"Effet ON : {effect_name}", "effect")
+            self._log_message(tr("mwx_034", effect_name=effect_name), "effect")
             self._warn_effect_no_targets(self.active_effect_config)
             for j, other_btn in enumerate(self.effect_buttons):
                 if j != effect_idx and other_btn.active:
@@ -10723,7 +11054,7 @@ class MainWindow(QMainWindow):
                         self.midi_handler.set_pad_led(j, 8, 0)
         else:
             # Restaurer l'état précédent s'il existait
-            self._log_message(f"Effet OFF : {btn.current_effect}", "effect")
+            self._log_message(tr("mwx_042", current_effect=btn.current_effect), "effect")
             prev = getattr(self, '_prev_effect_state', None)
             self._prev_effect_state = None
             self.stop_effect()
@@ -10782,7 +11113,7 @@ class MainWindow(QMainWindow):
             return False
         cfg = next((e for e in tous if e.get("name") == effect_name), None)
         if cfg is None:
-            self._log_message(f"Effet introuvable : {effect_name}", "warn")
+            self._log_message(tr("mwx_044", effect_name=effect_name), "warn")
             return False
 
         # Déjà en cours : deuxième appui = extinction.
@@ -10790,7 +11121,7 @@ class MainWindow(QMainWindow):
             self.active_effect = None
             self.active_effect_config = {}
             self.stop_effect()
-            self._log_message(f"Effet OFF : {effect_name}", "effect")
+            self._log_message(tr("mwx_046", effect_name=effect_name), "effect")
             return True
 
         # Un seul effet à la fois, comme pour les pads FX : sans ça, le pad ou
@@ -10811,7 +11142,7 @@ class MainWindow(QMainWindow):
         self.active_effect = effect_name
         self.active_effect_config = cfg
         self.start_effect(effect_name)
-        self._log_message(f"Effet ON : {effect_name}", "effect")
+        self._log_message(tr("mwx_034", effect_name=effect_name), "effect")
         self._warn_effect_no_targets(cfg)
         return True
 
@@ -10923,7 +11254,7 @@ class MainWindow(QMainWindow):
         """Rappelle la position lyre associée à position_pads[pos_col][row]."""
         preset_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
         if preset_idx is None or preset_idx >= len(self.position_presets):
-            self._log_message(f"POS {pos_col + 1}-{row + 1} vide — clic droit pour configurer", "warn")
+            self._log_message(tr("mwx_050", a=pos_col + 1, a1=row + 1), "warn")
             return
 
         preset = self.position_presets[preset_idx]
@@ -10944,7 +11275,7 @@ class MainWindow(QMainWindow):
                 applied += 1
 
         if applied == 0:
-            self._log_message(f"POS {pos_col + 1}-{row + 1} — aucune lyre correspondante", "warn")
+            self._log_message(tr("mwx_052", a=pos_col + 1, a1=row + 1), "warn")
             return
 
         # Servir une partie des lyres seulement n'était signalé nulle part : une
@@ -10954,15 +11285,13 @@ class MainWindow(QMainWindow):
         if applied < len(lyres_cur):
             absentes = ", ".join(p.name for p in lyres_cur if not cibles.get(id(p)))
             self._log_message(
-                f"Position « {preset['name']} » : {applied}/{len(lyres_cur)} lyres — "
-                f"absente(s) du preset : {absentes}. Réenregistrez la position "
-                f"(REC Mémoire + pad POS) pour les inclure.", "warn")
+                tr("mwx_054", a=preset['name'], applied=applied, n=len(lyres_cur), absentes=absentes), "warn")
 
         self.active_position_pads[pos_col] = row
         for pr in range(8):
             self._style_position_akai_pad(pos_col, pr)
             self._update_pos_pad_led(pos_col, pr)
-        self._log_message(f"Position « {preset['name']} »", "go")
+        self._log_message(tr("mwx_056", a=preset['name']), "go")
 
     def _record_position_akai(self, pos_col, row):
         """Capture le pan/tilt de toutes les lyres et sauvegarde sur ce pad."""
@@ -10970,7 +11299,7 @@ class MainWindow(QMainWindow):
         lyres = [p for p in self.projectors
                  if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
         if not lyres:
-            self._log_message("Aucune lyre patchée — impossible d'enregistrer une position", "warn")
+            self._log_message(tr("mwx_059"), "warn")
             return
 
         cur_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
@@ -11004,7 +11333,7 @@ class MainWindow(QMainWindow):
         # qu'on venait d'enregistrer.
         self._update_pos_pad_led(pos_col, row)
         self._save_akai_config_auto()
-        self._log_message(f"Position « {name} » enregistrée", "success")
+        self._log_message(tr("mwx_061", name=name), "success")
 
     def _show_pos_context_menu(self, pos, pos_col, row, btn):
         """Menu clic droit sur un pad POS — assigner, REC, renommer, effacer."""
@@ -11166,7 +11495,7 @@ class MainWindow(QMainWindow):
         idx = len(self.position_presets) - 1
         self._assign_position_akai(pos_col, row, idx)
         self._save_akai_config_auto()
-        self._log_message(f"Preset « {akai['name']} » importé depuis Plan de Feu", "success")
+        self._log_message(tr("mwx_063", a=akai['name']), "success")
 
     def _assign_position_akai(self, pos_col, row, preset_idx):
         """Assigne un preset existant à position_pads[pos_col][row]."""
@@ -11241,7 +11570,7 @@ class MainWindow(QMainWindow):
                 )
                 self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
             self._update_non_mem_pad_tooltips()
-            self._show_error_toast("✖ Impossible d'enregistrer sur un FX — Pour ajouter un effet, cliquez droit sur le pad")
+            self._show_error_toast(tr("mwx_066"))
             return
         cfg = self.fx_pads[fx_col][row] if fx_col < _FX_COL_MAX else None
         if not cfg:
@@ -11500,13 +11829,13 @@ class MainWindow(QMainWindow):
         for cat in _CAT_KEYS:
             cat_effs = [e for e in all_effects if e.get("category") == cat]
             if not cat_effs: continue
-            hdr = menu.addAction(f"  {cat.upper()}")
+            hdr = menu.addAction(f"  {tr_name(cat).upper()}")
             hdr.setEnabled(False)
             eff_actions = []
             for eff in cat_effs:
                 name = eff.get("name", "")
                 selected = _is_checked(eff)
-                label = f"  {name}"
+                label = f"  {tr_name(name)}"
                 act = menu.addAction(label)
                 act.setCheckable(True)
                 act.setChecked(selected)
@@ -11521,7 +11850,7 @@ class MainWindow(QMainWindow):
             for eff in other:
                 name = eff.get("name", "")
                 selected = _is_checked(eff)
-                label = f"  {name}"
+                label = f"  {tr_name(name)}"
                 act = menu.addAction(label)
                 act.setCheckable(True)
                 act.setChecked(selected)
@@ -12423,14 +12752,14 @@ class MainWindow(QMainWindow):
                 print(f"[FX] arrêt de l'effet désassigné impossible : {e}")
             btn.active = False
             btn.current_effect = None
-            btn.setToolTip("Aucun effet")
+            btn.setToolTip(tr("mwy_032"))
             btn.update_style()
             if MIDI_AVAILABLE and self.midi_handler.midi_out and btn_idx < 8:
                 self.midi_handler.set_pad_led(btn_idx, 8, 0)
             return
 
         name = cfg.get("name", "")
-        btn.setToolTip(name or "Aucun effet")
+        btn.setToolTip(tr_name(name) or tr("mwy_032"))
         btn.current_effect = name or None
 
         # Si cet effet est actuellement actif, appliquer la nouvelle config immédiatement
@@ -12524,7 +12853,7 @@ class MainWindow(QMainWindow):
         }
         active_projs = [p for p in self.projectors if not fixture_is_fx_machine(p)]
         if not active_projs:
-            self._log_message("Aucun projecteur patché — l'effet ne produira rien", "warn")
+            self._log_message(tr("mwx_067"), "warn")
             return
 
         # Collecte tous les groupes ciblés dans les layers (ou au niveau config)
@@ -12545,7 +12874,7 @@ class MainWindow(QMainWindow):
                       "G": "G", "H": "H"}
             groups_str = ", ".join(labels.get(l, l) for l in sorted(target_letters))
             self._log_message(
-                f"Effet sans effet — aucun projecteur dans : {groups_str} (vérifiez votre patch)",
+                tr("mwx_069", groups_str=groups_str),
                 "warn"
             )
             return
@@ -12563,7 +12892,7 @@ class MainWindow(QMainWindow):
                 )
                 if all_black:
                     self._log_message(
-                        "Effet Dim/Strobe — aucune couleur sur les projecteurs ciblés, envoyez une couleur d'abord",
+                        tr("mwx_070"),
                         "warn"
                     )
 
@@ -13034,8 +13363,9 @@ class MainWindow(QMainWindow):
                 elif attr == "Zoom":
                     proj.zoom = int(max(0, min(255, scaled * 255)))
                 elif attr == "Gobo":
-                    n_gobos = 8
-                    proj.gobo = int(scaled * (n_gobos - 1)) * 32
+                    # Le niveau de la couche balaie toute la roue symbolique —
+                    # seize crans depuis qu'elle est passée de 8 à 16 motifs.
+                    proj.gobo = gobo_slot_dmx(int(scaled * (GOBO_SLOT_COUNT - 1)))
                 elif attr == "ColorWheel":
                     slots = getattr(proj, 'color_wheel_slots', [])
                     if slots:
@@ -13919,7 +14249,7 @@ class MainWindow(QMainWindow):
             if mc >= 0:
                 self._cue_panel.highlight_cue(0)
 
-        self._log_message("CLEAR — AKAI remis à zéro", "info")
+        self._log_message(tr("mwx_071"), "info")
 
     def _init_default_fx_speed(self):
         """Initialise le fader FX à 80% au démarrage."""
@@ -13995,7 +14325,7 @@ class MainWindow(QMainWindow):
         selected_color = [None]
 
         for i, (name, color) in enumerate(colors):
-            btn = QPushButton(name)
+            btn = QPushButton(tr_name(name))
             btn.setFixedSize(90, 50)
             text_color = "black" if color.lightness() > 128 else "white"
             btn.setStyleSheet(f"""
@@ -14749,7 +15079,7 @@ class MainWindow(QMainWindow):
             if panel.is_tile_active('strobe'):
                 bs['strobe_until'] = max(bs['strobe_until'], pos + 380)
             if panel.is_tile_active('gobo') or auto:
-                bs['gobo_idx'] = (bs['gobo_idx'] + 1) % 8
+                bs['gobo_idx'] = (bs['gobo_idx'] + 1) % GOBO_SLOT_COUNT
             # ── Strobe blanc drop — déclenché dès le premier kick du drop ─────────
             _section = getattr(self.live_engine, '_section_state', 'verse')
             import time as _t
@@ -15041,7 +15371,7 @@ class MainWindow(QMainWindow):
                 if slots and _gslot_a < len(slots):
                     p.gobo = slots[_gslot_a].get('dmx', 0)
                 else:
-                    p.gobo = _gslot_a * 32
+                    p.gobo = gobo_slot_dmx(_gslot_a)
                 if self.seq.live_panel.gobo_rotation:
                     p.gobo_rotation = max(1, int(self.seq.live_panel.gobo_rot_speed * 2.55))
                 else:
@@ -15794,7 +16124,7 @@ class MainWindow(QMainWindow):
             if self._fx_src.is_tile_active('strobe') and _eff_ok('strobe'):
                 bs['strobe_until'] = position + 450
             if self._fx_src.is_tile_active('gobo') and _eff_ok('gobo'):
-                bs['gobo_idx'] = (bs['gobo_idx'] + 1) % 8
+                bs['gobo_idx'] = (bs['gobo_idx'] + 1) % GOBO_SLOT_COUNT
 
         # Couleur du flash — suit la tuile couleur sélectionnée (None = AUTO = blanc)
         _fc1, _ = self._fx_src.get_color_data(self._fx_src.current_color_tile)
@@ -15987,7 +16317,7 @@ class MainWindow(QMainWindow):
                     self._live_auto_last_section = section
                     if hasattr(self, '_live_beat_state'):
                         self._live_beat_state['gobo_idx'] = (
-                            self._live_beat_state['gobo_idx'] + 1) % 8
+                            self._live_beat_state['gobo_idx'] + 1) % GOBO_SLOT_COUNT
 
             # Application pan/tilt — pattern depuis le panel Mouvements
             ph    = self._live_lyre_phase
@@ -16092,7 +16422,7 @@ class MainWindow(QMainWindow):
                     if slots:
                         p.gobo = slots[_beat_gobo_idx % len(slots)].get('dmx', 0)
                     else:
-                        p.gobo = (_beat_gobo_idx % 8) * 32
+                        p.gobo = gobo_slot_dmx(_beat_gobo_idx % GOBO_SLOT_COUNT)
                 elif hasattr(self._fx_src, 'current_gobo'):
                     # Gobo depuis l'onglet GOBO (pool + cycle)
                     _gobo_pool = self._fx_src.gobo_pool
@@ -16126,7 +16456,7 @@ class MainWindow(QMainWindow):
                     if slots and _gslot < len(slots):
                         p.gobo = slots[_gslot].get('dmx', 0)
                     else:
-                        p.gobo = _gslot * 32
+                        p.gobo = gobo_slot_dmx(_gslot)
                     # Rotation gobo
                     if self._fx_src.gobo_rotation:
                         _rot_spd = self._fx_src.gobo_rot_speed
@@ -16700,7 +17030,7 @@ class MainWindow(QMainWindow):
                     # Memory pads individuels
                     mem_col = slot["mem_col"]
                     if self._mem_rec_mode or self.memories[mem_col][row] is not None:
-                        self._activate_memory_pad(pad, mem_col, row, col_akai=col)
+                        self._on_memory_pad_pressed(pad, mem_col, row, col)
                         # Update LEDs de toute la colonne
                         for r in range(8):
                             is_active = self.active_memory_pads.get(col) == r
@@ -16714,9 +17044,18 @@ class MainWindow(QMainWindow):
                 velocity = 1 if self.effect_buttons[row].active else 0
                 self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
             return
-        # Grille 8x8 : seul un pad couleur pris en momentane (mode FLASH) a
-        # quelque chose a rendre — les autres colonnes ignorent le relache,
-        # exactement comme avant.
+        # Grille 8x8 : deux colonnes ont quelque chose à rendre au relâché —
+        # un pad couleur pris en momentané (bouton FLASH) et un pad mémoire
+        # réglé en flash / flash solo. Les autres l'ignorent, comme avant.
+        slot = self._fader_map[col] if col < len(self._fader_map) else {}
+        if slot.get("type") == "memory":
+            mem_col = slot.get("mem_col")
+            if mem_col is not None:
+                self._on_memory_pad_released(mem_col, row, col)
+                for r in range(8):
+                    self._update_memory_pad_led(
+                        mem_col, r, active=self.active_memory_pads.get(col) == r)
+            return
         self._on_color_pad_released(col)
 
     def new_show(self):
@@ -16804,7 +17143,7 @@ class MainWindow(QMainWindow):
             self.add_recent_file(path)
             self.setWindowTitle(f"{APP_NAME} - {os.path.basename(path)}")
             self.plan_de_feu.refresh()
-            self._log_message(f"Show enregistré : {os.path.basename(path)}", "success")
+            self._log_message(tr("mwx_073", a=os.path.basename(path)), "success")
             return True
         except Exception as e:
             QMessageBox.critical(self, tr("err_save_title"), tr("err_save_msg", e=e))
@@ -16870,7 +17209,7 @@ class MainWindow(QMainWindow):
         self._save_akai_config_auto()
         if n_pos or n_fx:
             self._log_message(
-                f"Show : {n_pos} position(s) et {n_fx} pad(s) FX restaurés", "info")
+                tr("mwx_075", n_pos=n_pos, n_fx=n_fx), "info")
 
     def _build_save_data(self) -> dict:
         """Sérialise l'état complet du show en dict JSON-compatible (thread principal)."""
@@ -17096,7 +17435,7 @@ class MainWindow(QMainWindow):
                                 pause_item.setData(Qt.UserRole, f"PAUSE:{pause_seconds}")
                                 minutes = pause_seconds // 60
                                 seconds = pause_seconds % 60
-                                pause_item.setText(f"Pause ({minutes}m {seconds}s)" if minutes > 0 else f"Pause ({pause_seconds}s)")
+                                pause_item.setText(tr("mwy_034", minutes=minutes, seconds=seconds) if minutes > 0 else tr("mwy_035", pause_seconds=pause_seconds))
                             dur_item = self.seq.table.item(row, 2)
                             if dur_item:
                                 minutes = pause_seconds // 60
@@ -17137,7 +17476,7 @@ class MainWindow(QMainWindow):
                         self.seq.add_files([item['p']])
                         if self.seq.table.rowCount() == avant:
                             self._log_message(
-                                f"Média ignoré au chargement : {item.get('p', '?')}",
+                                tr("mwx_077", a=item.get('p', '?')),
                                 "warning")
                             continue
                         row = self.seq.table.rowCount() - 1
@@ -19262,7 +19601,7 @@ class MainWindow(QMainWindow):
         root.addWidget(t)
 
         # Statut
-        s = QLabel("● ACTIF" if running else "● INACTIF")
+        s = QLabel(tr("mwy_036") if running else tr("mwy_037"))
         s.setAlignment(Qt.AlignCenter)
         s.setStyleSheet("font-size:11px;letter-spacing:2px;background:transparent;"
                         f"color:{'#00d4ff' if running else '#555'};")
@@ -19277,7 +19616,7 @@ class MainWindow(QMainWindow):
                 lbl_qr.setPixmap(qr_pixmap)
                 lbl_qr.setFixedSize(qr_pixmap.width() + 16, qr_pixmap.height() + 16)
             else:
-                lbl_qr.setText(f"QR indisponible\n{qr_error}" if qr_error else "QR indisponible")
+                lbl_qr.setText(tr("mwy_038", qr_error=qr_error) if qr_error else tr("mwy_039"))
                 lbl_qr.setWordWrap(True)
                 lbl_qr.setStyleSheet("color:#ff6644; background:#1a0a0a; padding:8px; font-size:9px;")
             h = QHBoxLayout()
@@ -19611,8 +19950,12 @@ class MainWindow(QMainWindow):
                 gobo_slots = [{"dmx": int(s.get('dmx', 0)),
                                "label": (s.get('name', '') or 'Gobo')[:8]} for s in _ofl]
             else:
-                gobo_slots = [{"dmx": i * 32, "label": ("Open" if i == 0 else f"G{i}")}
-                              for i in range(8)]
+                # Le nom du motif plutôt qu'un « G3 » : la tablette montre ainsi
+                # ce que les plans vont dessiner. Tronqué à 8 caractères comme
+                # les slots importés — les pastilles sont étroites.
+                gobo_slots = [{"dmx": gobo_slot_dmx(i),
+                               "label": tr_name(GOBO_SLOT_NAMES[i])[:8]}
+                              for i in range(GOBO_SLOT_COUNT)]
 
         wheel_slots = []
         if has_wheel:
@@ -19993,8 +20336,8 @@ class MainWindow(QMainWindow):
             )
             return lbl
 
-        api_pill  = _pill("● CONNECTÉ", server_running, "#00cc66", "#1a1a1a", "● HORS LIGNE")
-        plug_pill = _pill("● INSTALLÉ",  is_installed,  "#0099dd", "#1a1a1a", "● NON INSTALLÉ")
+        api_pill  = _pill(tr("mwy_040"), server_running, "#00cc66", "#1a1a1a", tr("mwy_043"))
+        plug_pill = _pill(tr("mwy_044"),  is_installed,  "#0099dd", "#1a1a1a", tr("mwy_047"))
         row.addWidget(api_pill)
         row.addWidget(plug_pill)
         root.addLayout(row)
@@ -20007,7 +20350,7 @@ class MainWindow(QMainWindow):
 
         # ── Bouton installer / réinstaller ────────────────────────────────────
         if src_available:
-            btn_label = ("↺  Réinstaller" if is_installed else "  Installer le plugin")
+            btn_label = (tr("mwy_048") if is_installed else tr("mwy_049"))
             btn_install = QPushButton(btn_label)
             btn_install.setFixedHeight(40)
             btn_install.setCursor(Qt.PointingHandCursor)
@@ -20041,17 +20384,11 @@ class MainWindow(QMainWindow):
         # ── Note de fonctionnement ────────────────────────────────────────────
         if is_installed:
             info_text = (
-                "Le plugin est installé.\n\n"
-                "Ouvrez le logiciel Elgato Stream Deck\n"
-                "et recherchez MyStrow dans la liste\n"
-                "de la colonne de droite."
+                tr("mwy_050")
             )
         else:
             info_text = (
-                "Il vous faudra le logiciel StreamDeck installé.\n\n"
-                "Installez le plugin, réouvrez StreamDeck,\n"
-                "puis recherchez MyStrow dans la liste\n"
-                "de la colonne de droite."
+                tr("mwy_051")
             )
         info = QLabel(info_text)
         info.setAlignment(Qt.AlignCenter)
@@ -20232,7 +20569,7 @@ class MainWindow(QMainWindow):
 
     def _on_banner_clicked(self):
         """Gere le clic sur le bouton de la banniere licence."""
-        start_purchase = self._license.action_label in ("Renouveler",)
+        start_purchase = self._license.action_label in ("Renouveler", tr("lic3_017"))
         dlg = ActivationDialog(self, license_result=self._license, start_purchase=start_purchase)
         dlg.activation_success.connect(self._on_activation_success)
         dlg.exec()
@@ -20840,67 +21177,67 @@ class MainWindow(QMainWindow):
 
         # Donnees : (groupe, [(touche, description), ...])
         shortcut_groups = [
-            ("LECTURE", [
-                ("Espace / Entree", "Play / Pause"),
-                ("Page Down", "Media suivant"),
-                ("Page Up", "Media precedent"),
-                ("F1", "Cartouche 1"),
-                ("F2", "Cartouche 2"),
-                ("F3", "Cartouche 3"),
-                ("F4", "Cartouche 4"),
+            (tr("mwy_052"), [
+                (tr("mwy_053"), "Play / Pause"),
+                ("Page Down", tr("mwy_056")),
+                ("Page Up", tr("mwy_058")),
+                ("F1", tr("mwy_060")),
+                ("F2", tr("mwy_062")),
+                ("F3", tr("mwy_064")),
+                ("F4", tr("mwy_066")),
             ]),
-            ("FICHIERS", [
-                ("Ctrl + N", "Nouveau show"),
-                ("Ctrl + O", "Ouvrir show"),
-                ("Ctrl + S", "Enregistrer show"),
-                ("Ctrl + Shift + S", "Enregistrer sous"),
+            (tr("mwy_067"), [
+                ("Ctrl + N", tr("mwy_069")),
+                ("Ctrl + O", tr("mwy_071")),
+                ("Ctrl + S", tr("mwy_073")),
+                ("Ctrl + Shift + S", tr("mwy_075")),
             ]),
-            ("COULEURS RAPIDES", [
-                ("W", "Blanc"),
-                ("R", "Rouge"),
-                ("O", "Orange"),
-                ("Y", "Jaune"),
-                ("G", "Vert"),
-                ("C", "Cyan"),
-                ("B", "Bleu"),
-                ("M", "Magenta"),
-                ("P", "Rose"),
-                ("K", "Noir (eteindre)"),
-                ("S", "Strobe on / off (selection)"),
+            (tr("mwy_076"), [
+                ("W", tr("mwy_078")),
+                ("R", tr("mwy_080")),
+                ("O", tr("mwy_082")),
+                ("Y", tr("mwy_084")),
+                ("G", tr("mwy_086")),
+                ("C", tr("mwy_088")),
+                ("B", tr("mwy_090")),
+                ("M", tr("mwy_092")),
+                ("P", tr("mwy_094")),
+                ("K", tr("mwy_096")),
+                ("S", tr("mwy_098")),
             ]),
-            ("EFFETS  (carres verts)", [
-                ("F5", "Effet 1 (carre vert, haut)"),
-                ("F6", "Effet 2"),
-                ("F7", "Effet 3"),
-                ("F8", "Effet 4"),
-                ("F9", "Effet 5"),
-                ("F10", "Effet 6"),
-                ("F11", "Effet 7"),
-                ("F12", "Effet 8 (bas)"),
+            (tr("mwy_099"), [
+                ("F5", tr("mwy_101")),
+                ("F6", tr("mwy_103")),
+                ("F7", tr("mwy_105")),
+                ("F8", tr("mwy_107")),
+                ("F9", tr("mwy_109")),
+                ("F10", tr("mwy_111")),
+                ("F11", tr("mwy_113")),
+                ("F12", tr("mwy_115")),
             ]),
-            ("PLAN DE FEU  -  Selection", [
-                ("Ctrl + A", "Tout selectionner"),
-                ("Escape", "Deselectionner tout"),
-                ("Escape x3", "Eteindre tous les projecteurs"),
-                ("F", "Selectionner les Faces"),
-                ("1", "Contre + Lat pairs"),
-                ("2", "Contre + Lat impairs"),
-                ("3", "Tous Contre + Lat"),
-                ("4", "Douche 1"),
-                ("5", "Douche 2"),
-                ("6", "Douche 3"),
+            (tr("mwy_116"), [
+                ("Ctrl + A", tr("mwy_118")),
+                (tr("mwy_119"), tr("mwy_120")),
+                (tr("mwy_121"), tr("mwy_122")),
+                ("F", tr("mwy_124")),
+                ("1", tr("mwy_126")),
+                ("2", tr("mwy_128")),
+                ("3", tr("mwy_130")),
+                ("4", tr("mwy_132")),
+                ("5", tr("mwy_134")),
+                ("6", tr("mwy_136")),
             ]),
-            ("EDITEUR TIMELINE", [
-                ("Espace", "Play / Pause"),
-                ("Ctrl + Z", "Annuler"),
-                ("Ctrl + Y", "Retablir"),
-                ("Suppr", "Supprimer les clips selectionnes"),
-                ("Ctrl + A", "Selectionner tous les clips"),
-                ("Ctrl + C", "Copier les clips"),
-                ("Ctrl + X", "Couper les clips"),
-                ("Ctrl + V", "Coller les clips"),
-                ("C", "Activer / desactiver mode CUT"),
-                ("Escape", "Quitter mode CUT / deselectionner"),
+            (tr("mwy_137"), [
+                (tr("mwy_138"), "Play / Pause"),
+                ("Ctrl + Z", tr("mwy_141")),
+                ("Ctrl + Y", tr("mwy_143")),
+                (tr("mwy_144"), tr("mwy_145")),
+                ("Ctrl + A", tr("mwy_147")),
+                ("Ctrl + C", tr("mwy_149")),
+                ("Ctrl + X", tr("mwy_151")),
+                ("Ctrl + V", tr("mwy_153")),
+                ("C", tr("mwy_155")),
+                (tr("mwy_119"), tr("mwy_157")),
             ]),
         ]
 
@@ -21201,7 +21538,7 @@ class MainWindow(QMainWindow):
     def _load_cartouche_file(self, index):
         """Charge un fichier dans une cartouche"""
         path, _ = QFileDialog.getOpenFileName(
-            self, f"Charger Cartouche {index + 1}", "",
+            self, tr("mwy_158", a=index + 1), "",
             f"{AV_EXTENSIONS_FILTER};;Tous (*.*)"
         )
         if not path:
@@ -21222,15 +21559,15 @@ class MainWindow(QMainWindow):
         ext = Path(path).suffix.lower()
         if ext in CartoucheButton.VIDEO_EXTS:
             cart.media_icon = "\U0001f3ac"
-            kind = "vidéo"
+            kind = tr("mwy_160")
         elif ext in CartoucheButton.AUDIO_EXTS:
             cart.media_icon = "\U0001f3b5"
             kind = "audio"
         else:
             cart.media_icon = ""
-            kind = "média"
+            kind = tr("mwy_161")
         cart.set_idle()
-        self._log_message(f"Cartouche {index + 1} — {kind} : {cart.media_title}", "info")
+        self._log_message(tr("mwx_080", a=index + 1, kind=kind, media_title=cart.media_title), "info")
 
     def _clear_cartouche(self, index):
         """Vide une cartouche"""
@@ -21244,7 +21581,7 @@ class MainWindow(QMainWindow):
         cart.media_title = None
         cart.media_icon = ""
         cart.set_idle()
-        self._log_message(f"Cartouche {index + 1} vidée", "info")
+        self._log_message(tr("mwx_082", a=index + 1), "info")
 
     # ==================== FIN CARTOUCHEUR ====================
 
@@ -21603,10 +21940,10 @@ class MainWindow(QMainWindow):
             )
             return b
 
-        btn_add = _tbar_btn("➕  Ajouter", "#55cc77")
+        btn_add = _tbar_btn(tr("mwy_162"), "#55cc77")
         btn_add.setAutoDefault(False)
         th.addWidget(btn_add)
-        btn_add_matrix = _tbar_btn("▦  Matrice / Barre px", "#cc77dd")
+        btn_add_matrix = _tbar_btn(tr("mwy_164"), "#cc77dd")
         btn_add_matrix.setAutoDefault(False)
         # ── Filet de secours, masqué ──────────────────────────────────────────
         # Le chemin normal est « ➕ Ajouter » : une barre/matrice de la
@@ -21719,9 +22056,9 @@ class MainWindow(QMainWindow):
         lbl_sort = QLabel(tr("mw_sort"))
         lbl_sort.setStyleSheet("color:#252525; font-size:10px; border:none;")
         sort_hl.addWidget(lbl_sort)
-        btn_sort_dmx  = _sort_btn("Adresse")
-        btn_sort_name = _sort_btn("Nom")
-        btn_sort_grp  = _sort_btn("Groupe")
+        btn_sort_dmx  = _sort_btn(tr("mwy_166"))
+        btn_sort_name = _sort_btn(tr("mwy_167"))
+        btn_sort_grp  = _sort_btn(tr("mwy_168"))
         btn_sort_dmx.setChecked(True)
         sort_hl.addWidget(btn_sort_dmx)
         sort_hl.addWidget(btn_sort_name)
@@ -21743,7 +22080,7 @@ class MainWindow(QMainWindow):
 
         from core import guide_banner
         lv.addWidget(guide_banner(
-            "Fixture introuvable ?",
+            tr("mwy_169"),
             "https://mystrow.fr/importer-fixture-dmx-mystrow"))
 
         bstrip = QWidget()
@@ -21924,7 +22261,7 @@ class MainWindow(QMainWindow):
             f.setStyleSheet("color:#181818; max-height:1px; margin:8px 0;")
             return f
 
-        fv.addWidget(_sec("Identité"))
+        fv.addWidget(_sec(tr("mwy_170")))
         det_name_e = QLineEdit()
         det_name_e.setPlaceholderText(tr("mw_fixture_name"))
         det_name_e.setFixedHeight(44)
@@ -21994,21 +22331,10 @@ class MainWindow(QMainWindow):
             return w
 
         _TIP_GROUPE = (
-            "Groupe logique — les fixtures du même groupe sont\n"
-            "contrôlées ensemble par le même fader AKAI.\n\n"
-            "  A = Face        B = LAT         C = Contre\n"
-            "  D = Douche 1    E = Douche 2    F = Douche 3\n\n"
-            "Exemple : tous les PAR du groupe A (Face) montent\n"
-            "et descendent ensemble quand vous bougez le fader A."
+            tr("mwy_171")
         )
         _TIP_UNIVERS = (
-            "Univers DMX — chaque univers dispose de 512 adresses.\n\n"
-            "💡 Conseil : si vous avez peu de projecteurs, gardez\n"
-            "tout sur U1. Inutile de changer d'univers tant que\n"
-            "vous ne dépassez pas l'adresse 512.\n\n"
-            "Exemple : 20 PAR en 5 canaux = 100 canaux → U1 suffit.\n"
-            "C'est seulement au-delà de 512 canaux occupés qu'on\n"
-            "passe à U2, puis U3, etc."
+            tr("mwy_172")
         )
 
         tg_lbl_row = QHBoxLayout()
@@ -22016,8 +22342,8 @@ class MainWindow(QMainWindow):
         lbl_type_title = QLabel(tr("mw_type"))
         lbl_type_title.setStyleSheet("color:#555; font-size:11px; border:none; background:transparent;")
         tg_lbl_row.addWidget(lbl_type_title, 1)
-        tg_lbl_row.addWidget(_col_header("Groupe",  _TIP_GROUPE,  _GRP_W))
-        tg_lbl_row.addWidget(_col_header("Univers", _TIP_UNIVERS, _UNI_W))
+        tg_lbl_row.addWidget(_col_header(tr("mwy_168"),  _TIP_GROUPE,  _GRP_W))
+        tg_lbl_row.addWidget(_col_header(tr("mwy_174"), _TIP_UNIVERS, _UNI_W))
         fv.addLayout(tg_lbl_row)
 
         tg_row = QHBoxLayout()
@@ -22025,7 +22351,7 @@ class MainWindow(QMainWindow):
         det_type_cb = ComboSansMolette()
         det_type_cb.setFixedHeight(38)
         for ft in FIXTURE_TYPES:
-            det_type_cb.addItem(ft)
+            det_type_cb.addItem(tr_name(ft), ft)
 
         btn_group = QPushButton("—")
         btn_group.setFixedSize(_GRP_W, 38)
@@ -22057,7 +22383,7 @@ class MainWindow(QMainWindow):
 
         uni_cb = uni_cb_top   # alias — l'univers est maintenant dans la ligne Groupe/Type
 
-        fv.addWidget(_sec("Patch DMX"))
+        fv.addWidget(_sec(tr("mwy_175")))
 
         addr_row = QHBoxLayout()
         addr_row.setSpacing(6)
@@ -22091,7 +22417,7 @@ class MainWindow(QMainWindow):
         fv.addWidget(_hdiv())
 
 
-        fv.addWidget(_sec("Profil DMX"))
+        fv.addWidget(_sec(tr("mwy_176")))
 
         fv.addSpacing(6)
 
@@ -22109,7 +22435,7 @@ class MainWindow(QMainWindow):
         pt_vl.setContentsMargins(0, 0, 0, 0)
         pt_vl.setSpacing(8)
         pt_vl.addWidget(_hdiv())
-        pt_vl.addWidget(_sec("Limites de mouvement"))
+        pt_vl.addWidget(_sec(tr("mwy_177")))
         pt_vl.addSpacing(4)
 
         pt_widget = PanTiltLimitWidget()
@@ -22225,7 +22551,7 @@ class MainWindow(QMainWindow):
         px_vl = QVBoxLayout(px_section)
         px_vl.setContentsMargins(0, 0, 0, 0)
         px_vl.setSpacing(6)
-        px_vl.addWidget(_sec("Disposition des pixels"))
+        px_vl.addWidget(_sec(tr("mwy_178")))
 
         _PX_BTN = ("QPushButton{background:#161622;color:#cc77dd;"
                    "border:1px solid #33334a;border-radius:5px;"
@@ -22429,7 +22755,7 @@ class MainWindow(QMainWindow):
                 _px_reassign(idx, order)
                 px_hint.setText(
                     tr("mw_snake_applied") if mode == "serpentine"
-                    else "Câblage par lignes appliqué.")
+                    else tr("mwy_179"))
 
         def _on_px_regrid():
             """Reconstruit la grille à intervalles réguliers, sans toucher au DMX."""
@@ -22478,7 +22804,7 @@ class MainWindow(QMainWindow):
                           int(getattr(projs[0], 'matrix_rot', 0) or 0))
             canvas.update()
             _mark_dirty()
-            px_hint.setText(f"Taille appliquée : {spin_pw.value()} cm"
+            px_hint.setText(tr("mwy_180", a=spin_pw.value())
                             + (f" × {spin_ph.value()} cm" if rows > 1 else ""))
 
         spin_pw.editingFinished.connect(_on_px_size)
@@ -23061,7 +23387,7 @@ class MainWindow(QMainWindow):
                 wl.setContentsMargins(12, 10, 12, 10)
                 wl.setSpacing(8)
 
-                title = _QL(f"Défaut  {ch_type}")
+                title = _QL(tr("mwy_181", ch_type=ch_type))
                 title.setStyleSheet(
                     f"color:{col}; font-size:10px; font-weight:bold;"
                     f" background:transparent; border:none; letter-spacing:1px;"
@@ -23341,7 +23667,7 @@ class MainWindow(QMainWindow):
                     wl.addWidget(_SEP2)
 
                     _is_cw = ch_type == "ColorWheel"
-                    _calib_lbl = "🎨  Calibrer la roue de couleurs" if _is_cw else "🎯  Calibrer la roue de gobos"
+                    _calib_lbl = tr("mwy_182") if _is_cw else tr("mwy_183")
                     calib_btn = QPushButton(_calib_lbl)
                     calib_btn.setFixedHeight(28)
                     calib_btn.setStyleSheet(
@@ -23379,9 +23705,9 @@ class MainWindow(QMainWindow):
                                       if getattr(p, 'fixture_type', '') == src_type]
                         if not other_all:
                             return
-                        _BTN_THIS  = "Cette lyre seulement"
-                        _BTN_TYPE  = f"Toutes les lyres « {src_type} »" if same_type else None
-                        _BTN_ALL   = f"Toutes les lyres ({len(other_all) + 1})"
+                        _BTN_THIS  = tr("mwy_184")
+                        _BTN_TYPE  = tr("mwy_185", src_type=src_type) if same_type else None
+                        _BTN_ALL   = tr("mwy_186", a=len(other_all) + 1)
                         msg = QMessageBox(self)
                         msg.setWindowTitle(tr("mw_apply_calib"))
                         msg.setText(tr("mw_calib_others"))
@@ -23457,11 +23783,11 @@ class MainWindow(QMainWindow):
                     f" border-radius:5px; font-size:10px; font-weight:bold;"
                 )
                 chip.setToolTip(
-                    f"Canal {ci + 1}: {ch}"
+                    tr("mwy_187", a=ci + 1, ch=ch)
                     + (f"\n{_lb}" if _lb else "")
                     + (f"  ({own_tag})" if own_tag else "")
-                    + (f"\nDéfaut : {pct_val}%" if pct_val > 0
-                       else "\nClic droit → régler valeur par défaut")
+                    + (tr("mwy_188", pct_val=pct_val) if pct_val > 0
+                       else tr("mwy_189"))
                 )
                 chip.setCursor(Qt.PointingHandCursor)
 
@@ -23696,9 +24022,9 @@ class MainWindow(QMainWindow):
                 n_chk = len(_checked)
                 _show = n_chk > 0
                 btn_del_multi.setVisible(_show)
-                btn_del_multi.setText(f"🗑  Supprimer ({n_chk})" if n_chk > 1 else "🗑  Supprimer")
+                btn_del_multi.setText(tr("mwy_190", n_chk=n_chk) if n_chk > 1 else tr("mwy_191"))
                 btn_rename_multi.setVisible(_show)
-                btn_rename_multi.setText(f"✏  Renommer ({n_chk})" if n_chk > 1 else "✏  Renommer")
+                btn_rename_multi.setText(tr("mwy_192", n_chk=n_chk) if n_chk > 1 else tr("mwy_193"))
                 btn_group_multi.setVisible(_show)
                 btn_desel_multi.setVisible(_show)
                 if i < len(_cards) and _cards[i] is not None:
@@ -23892,7 +24218,7 @@ class MainWindow(QMainWindow):
             fd   = fixture_data[idx]
             proj = self.projectors[idx]
             fd['name']          = det_name_e.text().strip() or fd['group']
-            fd['fixture_type']  = det_type_cb.currentText()
+            fd['fixture_type']  = det_type_cb.currentData() or det_type_cb.currentText()
             fd['group']         = _selected_group[0] or fd['group']
             fd['universe']      = uni_cb.currentData()
             fd['start_address'] = addr_sb.value()
@@ -24019,7 +24345,7 @@ class MainWindow(QMainWindow):
             else:
                 _update_chips(fixture_data[idx].get('profile', []))
             _commit()
-            is_mh = det_type_cb.currentText() == 'Moving Head'
+            is_mh = det_type_cb.currentData() == 'Moving Head'
             pt_section.setVisible(is_mh)
             px_section.setVisible(bool(_matrix_info_for(idx)))
             if is_mh and idx is not None and idx < len(self.projectors):
@@ -24624,8 +24950,8 @@ class MainWindow(QMainWindow):
                 )
                 return b
 
-            btn_wizard = _btn("🧙  Assistant", "Guidé étape par étape", "#00d4ff")
-            btn_empty  = _btn("📄  Patch vide", "Partir d'un patch vierge", "#888888")
+            btn_wizard = _btn(tr("mwy_194"), tr("mwy_195"), "#00d4ff")
+            btn_empty  = _btn(tr("mwy_197"), tr("mwy_198"), "#888888")
             btn_row.addWidget(btn_wizard)
             btn_row.addWidget(btn_empty)
             cl.addLayout(btn_row)
@@ -24639,7 +24965,7 @@ class MainWindow(QMainWindow):
 
             # ── Vérification si patch existant ────────────────────────────
             if self.projectors:
-                label = "l'assistant" if _choice[0] == "wizard" else "un patch vide"
+                label = tr("mwy_202") if _choice[0] == "wizard" else tr("mwy_203")
                 if QMessageBox.question(
                     dialog, tr("mw_new_patch_title"),
                     tr("mw_f_replace_fixtures", a0=len(self.projectors), label=label),
@@ -24785,16 +25111,15 @@ class MainWindow(QMainWindow):
                 if not isinstance(config, dict) or 'fixtures' not in config \
                         or not isinstance(config.get('fixtures'), list):
                     print(f"[ImportPatch] Format invalide (type={type(config).__name__})")
-                    box = QMessageBox(QMessageBox.Warning, "Format invalide",
-                        "Ce fichier ne contient pas de données de patch valides.",
+                    box = QMessageBox(QMessageBox.Warning, tr("mwy_205"),
+                        tr("mwy_206"),
                         QMessageBox.Ok, dialog)
                     box.raise_(); box.activateWindow(); box.exec()
                     return
                 n_fx = len(config['fixtures'])
                 print(f"[ImportPatch] {n_fx} fixture(s) détectée(s) — confirmation…")
-                confirm = QMessageBox(QMessageBox.Question, "Importer le patch",
-                    f"Charger ce patch ({n_fx} fixture{'s' if n_fx > 1 else ''}) ?\n"
-                    "Le patch actuel sera remplacé.",
+                confirm = QMessageBox(QMessageBox.Question, tr("mwy_209"),
+                    tr("mwy_210", n_fx=n_fx, a='s' if n_fx > 1 else ''),
                     QMessageBox.Yes | QMessageBox.No, dialog)
                 confirm.setDefaultButton(QMessageBox.Yes)
                 confirm.raise_(); confirm.activateWindow()
@@ -24816,16 +25141,16 @@ class MainWindow(QMainWindow):
                 det_stack.setCurrentIndex(0)
                 _mark_dirty()
                 print(f"[ImportPatch] Import réussi : {n_fx} fixture(s)")
-                box = QMessageBox(QMessageBox.Information, "Import réussi",
-                    f"{n_fx} fixture{'s' if n_fx > 1 else ''} importée{'s' if n_fx > 1 else ''}.",
+                box = QMessageBox(QMessageBox.Information, tr("mwy_218"),
+                    tr("mwy_219", n_fx=n_fx, a='s' if n_fx > 1 else ''),
                     QMessageBox.Ok, dialog)
                 box.raise_(); box.activateWindow(); box.exec()
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 print(f"[ImportPatch] ERREUR : {e}")
-                box = QMessageBox(QMessageBox.Critical, "Erreur d'import",
-                    f"Impossible de lire le fichier :\n{e}", QMessageBox.Ok, dialog)
+                box = QMessageBox(QMessageBox.Critical, tr("mwy_225"),
+                    tr("mwy_226", e=e), QMessageBox.Ok, dialog)
                 box.raise_(); box.activateWindow(); box.exec()
 
         # ── Suite de _import_patch : fichier venu d'un AUTRE logiciel ─────────
@@ -24882,8 +25207,8 @@ class MainWindow(QMainWindow):
         # ── Exporter le patch ─────────────────────────────────────────────────
         def _export_patch():
             path, _ = QFileDialog.getSaveFileName(
-                dialog, "Exporter le patch", "patch_dmx.msp",
-                "Patch MyStrow (*.msp);;JSON (*.json)"
+                dialog, tr("mwy_227"), "patch_dmx.msp",
+                tr("mwy_229")
             )
             if not path:
                 return
@@ -25398,13 +25723,13 @@ class MainWindow(QMainWindow):
 
         name_edit = QLineEdit()
         name_edit.setPlaceholderText(tr("mw_name_example"))
-        _row("Nom", name_edit)
+        _row(tr("mwy_167"), name_edit)
 
         preset_combo = ComboSansMolette()
         preset_combo.addItem(tr("mw_custom"), None)
         for sp in PIXEL_FIXTURE_PRESETS:
             preset_combo.addItem(sp.describe(), sp)
-        _row("Modèle", preset_combo)
+        _row(tr("mwy_231"), preset_combo)
 
         rows_spin = QSpinBox(); rows_spin.setRange(1, 32); rows_spin.setValue(3)
         cols_spin = QSpinBox(); cols_spin.setRange(1, 64); cols_spin.setValue(3)
@@ -25414,29 +25739,29 @@ class MainWindow(QMainWindow):
         rc.addWidget(QLabel(tr("mw_cols"))); rc.addWidget(cols_spin)
         rc.addStretch()
         _wrc = QWidget(); _wrc.setLayout(rc)
-        _row("Grille", _wrc)
+        _row(tr("mwy_232"), _wrc)
 
         chan_combo = ComboSansMolette()
         for label, _ in CHAN_TEMPLATES:
             chan_combo.addItem(label)
         chan_combo.setCurrentIndex(1)  # RGBW
-        _row("Canaux / pixel", chan_combo)
+        _row(tr("mwy_233"), chan_combo)
 
         dim_cb = QCheckBox(tr("mw_global_dim")); dim_cb.setChecked(True)
         strobe_cb = QCheckBox(tr("mw_global_strobe")); strobe_cb.setChecked(True)
         gc = QHBoxLayout(); gc.addWidget(dim_cb); gc.addWidget(strobe_cb); gc.addStretch()
         _wgc = QWidget(); _wgc.setLayout(gc)
-        _row("Canaux globaux", _wgc)
+        _row(tr("mwy_234"), _wgc)
 
         wiring_combo = ComboSansMolette()
         wiring_combo.addItem(tr("mw_row_by_row"), "row")
         wiring_combo.addItem(tr("mw_serpentine"), "serpentine")
-        _row("Câblage", wiring_combo)
+        _row(tr("mwy_237"), wiring_combo)
 
         orient_combo = ComboSansMolette()
         orient_combo.addItem(tr("mw_horizontal"), "H")
         orient_combo.addItem(tr("mw_vertical"), "V")
-        _row("Orientation", orient_combo)
+        _row(tr("mwy_240"), orient_combo)
 
         group_combo = ComboSansMolette()
         for gkey, gdisp in self.GROUP_DISPLAY.items():
@@ -25444,7 +25769,7 @@ class MainWindow(QMainWindow):
         _gi = group_combo.findData("barre")
         if _gi >= 0:
             group_combo.setCurrentIndex(_gi)
-        _row("Groupe", group_combo)
+        _row(tr("mwy_168"), group_combo)
 
         uni_spin = QSpinBox(); uni_spin.setRange(0, 3); uni_spin.setValue(0)
         addr_spin = QSpinBox(); addr_spin.setRange(1, 512); addr_spin.setValue(int(default_addr))
@@ -25483,8 +25808,8 @@ class MainWindow(QMainWindow):
             npx = rows_spin.value() * cols_spin.value()
             ok = end <= 512
             info.setText(
-                f"{npx} pixels · {total} canaux · CH {start}–{end}"
-                + ("" if ok else "  ⚠ dépasse 512 !"))
+                tr("mwy_248", npx=npx, total=total, start=start, end=end)
+                + ("" if ok else tr("mwy_250")))
             info.setStyleSheet(
                 "font-size:12px; font-weight:bold; color:"
                 + ("#cc99ee" if ok else "#ff6666"))
@@ -25530,8 +25855,8 @@ class MainWindow(QMainWindow):
             if _sp is not None:
                 name = _sp.name
             else:
-                name = (f"Barre {cols_v}px" if rows_v == 1
-                        else f"Matrice {rows_v}x{cols_v}")
+                name = (tr("mwy_256", cols_v=cols_v) if rows_v == 1
+                        else tr("mwy_257", rows_v=rows_v, cols_v=cols_v))
         group = group_combo.currentData()
         ftype = "Barre LED" if rows_v == 1 else "Matrice LED"
         spec = PixelFixtureSpec(
@@ -25804,7 +26129,7 @@ class MainWindow(QMainWindow):
                 my_list.addItem(_item)
         else:
             _empty_item = QListWidgetItem(
-                "Aucun projecteur enregistré — créez-en un dans l'éditeur de fixtures."
+                tr("mwy_260")
             )
             _empty_item.setFlags(_empty_item.flags() & ~Qt.ItemIsEnabled)
             my_list.addItem(_empty_item)
@@ -25842,7 +26167,7 @@ class MainWindow(QMainWindow):
                 return
             my_list.takeItem(row)
             if my_list.count() == 0:
-                _ei = QListWidgetItem("Aucun projecteur enregistré — créez-en un dans l'éditeur de fixtures.")
+                _ei = QListWidgetItem(tr("mwy_260"))
                 _ei.setFlags(_ei.flags() & ~Qt.ItemIsEnabled)
                 my_list.addItem(_ei)
 
@@ -25892,7 +26217,7 @@ class MainWindow(QMainWindow):
         result = [None]
 
         # ── Helpers ───────────────────────────────────────────────────────────
-        _ALL_MFR = "Tous les fabricants"
+        _ALL_MFR = tr("mwy_262")
 
         def _search_matches(q):
             # La marque CANONIQUE compte autant que celle écrite dans le
@@ -25923,18 +26248,17 @@ class MainWindow(QMainWindow):
                 except Exception:
                     _sizes = []
                 if len(_sizes) > 1:
-                    label = (f"{name}  ({len(_sizes)} modes, "
-                             f"{_sizes[0]}–{_sizes[-1]} canaux)")
+                    label = (tr("mwy_263", name=name, n=len(_sizes), a=_sizes[0], a1=_sizes[-1]))
                 else:
                     _n = _sizes[0] if _sizes else len(preset.get("profile", []))
-                    label = f"{name}  ({_n} canal)" if _n == 1 else f"{name}  ({_n} canaux)"
+                    label = tr("mwy_265", name=name, n=_n) if _n == 1 else tr("mwy_266", name=name, n=_n)
                 if show_mfr and mfr:
                     label += f"   — {mfr}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.UserRole, preset)
                 preset_list.addItem(item)
             n = preset_list.count()
-            word = "résultat" if searching else "fixture"
+            word = tr("mwy_268") if searching else "fixture"
             count_lbl.setText(
                 tr("mw_f_n_total", n=n, word=word, a0='s' if n > 1 else '', _TOTAL_FIXTURES=_TOTAL_FIXTURES))
             empty_hint.setVisible(n == 0)
@@ -26008,10 +26332,8 @@ class MainWindow(QMainWindow):
             from fixture_parser import parse_file as _parse_file
             from PySide6.QtWidgets import QInputDialog
             paths, _ = QFileDialog.getOpenFileNames(
-                dialog, "Importer des fixtures", str(Path.home()),
-                "Tous les formats supportés (*.mft *.json *.xml *.mystrow);;"
-                "Fixture MyStrow (*.mft *.json *.mystrow);;"
-                "XML GrandMA (*.xml)"
+                dialog, tr("mwy_270"), str(Path.home()),
+                tr("mwy_271")
             )
             if not paths:
                 return
@@ -26037,7 +26359,7 @@ class MainWindow(QMainWindow):
                         modes = [m for m in (ofl_fx.get("modes") or [])
                                  if isinstance(m, dict) and m.get("profile")]
                         if not modes:
-                            raise ValueError("Aucun canal DMX trouvé dans ce fichier XML.")
+                            raise ValueError(tr("mwz_016"))
                         ftype = ofl_fx.get("fixture_type", "PAR LED")
                         candidates = [{
                             "name":         ofl_fx.get("name", Path(path).stem)
@@ -26088,7 +26410,7 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     errors.append(f"• {Path(path).name} : {e}")
             if imported == 0:
-                msg = "Aucune fixture importée."
+                msg = tr("mwy_272")
                 if errors:
                     msg += "\n\n" + "\n".join(errors)
                 QMessageBox.warning(dialog, tr("mw_import_failed"), msg)
@@ -26126,9 +26448,9 @@ class MainWindow(QMainWindow):
                             preset_list.scrollToItem(_it)
                             break
 
-            msg = f"{imported} fixture{'s' if imported > 1 else ''} importée{'s' if imported > 1 else ''}."
+            msg = tr("mwy_273", imported=imported, a='s' if imported > 1 else '')
             if errors:
-                msg += f"\n\n{len(errors)} fichier(s) ignoré(s) :\n" + "\n".join(errors)
+                msg += tr("mwy_278", n=len(errors)) + "\n".join(errors)
                 QMessageBox.warning(dialog, tr("mw_import_partial"), msg)
             else:
                 QMessageBox.information(dialog, tr("mw_import_ok"), msg)
@@ -26548,8 +26870,8 @@ class MainWindow(QMainWindow):
             btn.setFixedSize(26, 18)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setToolTip(
-                f"Replier le détail" if _prof_expanded[0]
-                else f"Voir le détail des {n_total} canaux, pixel par pixel"
+                tr("mwy_280") if _prof_expanded[0]
+                else tr("mwy_281", n_total=n_total)
             )
             btn.setStyleSheet(
                 "QPushButton { background:#1a1a2a; color:#cc77dd; border:1px solid #33334a;"
@@ -26567,7 +26889,7 @@ class MainWindow(QMainWindow):
             return row
 
         def _update_profile_preview(keep_expand=False):
-            """Affiche le profil de la fixture sélectionnée, onglet courant."""
+            tr("mwy_283")
             try:
                 _do_update_profile_preview(keep_expand)
             except Exception as e:
@@ -26582,7 +26904,7 @@ class MainWindow(QMainWindow):
             if not preset:
                 prof_scroll.setFixedHeight(104)
                 prof_vl.addWidget(_prof_caption(
-                    "Sélectionne une fixture pour voir son profil DMX"))
+                    tr("mwy_285")))
                 prof_vl.addStretch()
                 return
 
@@ -26596,17 +26918,17 @@ class MainWindow(QMainWindow):
                 geo   = (f"{spec.cols} px" if spec.rows <= 1
                          else f"{spec.rows}×{spec.cols} px")
                 prof_vl.addWidget(_prof_caption(
-                    f"{len(profile)} {'canal' if len(profile) == 1 else 'canaux'}  ·  "
+                    f"{len(profile)} {tr("mwy_290") if len(profile) == 1 else tr("mwy_291")}  ·  "
                     f'<span style="color:#cc77dd; font-weight:bold">{geo}</span>'))
                 if spec.global_head:
                     prof_vl.addWidget(_prof_caption(
-                        f"Canaux globaux  ·  CH 1–{head}"))
+                        tr("mwy_292", head=head)))
                     prof_vl.addWidget(build_channel_chips(spec.global_head, 1))
 
                 if _prof_expanded[0]:
                     # Détail : une rangée par pixel, avec ses vraies adresses
                     prof_vl.addWidget(_prof_caption_row(
-                        f"Détail des {n_px} pixels", len(profile)))
+                        tr("mwy_293", n_px=n_px), len(profile)))
                     for i in range(n_px):
                         first = head + i * n_pch + 1
                         pos = (f"px {i + 1}" if spec.rows <= 1
@@ -26620,7 +26942,7 @@ class MainWindow(QMainWindow):
                             spec.pixel_channels, first))
                 else:
                     prof_vl.addWidget(_prof_caption_row(
-                        f"Motif répété sur chaque pixel  ·  ×{n_px}", len(profile)))
+                        tr("mwy_297", n_px=n_px), len(profile)))
                     chips = build_channel_chips(spec.pixel_channels, head + 1)
                     chips.setToolTip(
                         tr("mw_f_pixel_repeat", n_pch=n_pch, n_px=n_px, a0=head + 1, a1=head + n_px * n_pch)
@@ -26813,7 +27135,7 @@ class MainWindow(QMainWindow):
 
         def update_preview():
             items = [list_widget.item(r).text() for r in range(list_widget.count())]
-            preview_label.setText("  ".join(items) if items else "(vide)")
+            preview_label.setText("  ".join(items) if items else tr("mwy_298"))
 
         list_widget.model().rowsInserted.connect(update_preview)
         list_widget.model().rowsRemoved.connect(update_preview)
@@ -27225,11 +27547,9 @@ class MainWindow(QMainWindow):
         # nervosité. Le curseur global qui vivait ici n'était plus lu par le
         # moteur — mieux vaut pas de réglage qu'un réglage qui ment.
         nerv_sl = None
-        layout.addWidget(_section_title("⚡  Nervosité"))
+        layout.addWidget(_section_title(tr("mwy_300")))
         nerv_info = QLabel(
-            "La nervosité, les couleurs et les mouvements de lyres se règlent "
-            "média par média : cliquez sur le carré de couleur de la ligne dans "
-            "la playlist.")
+            tr("mwy_301"))
         nerv_info.setStyleSheet("color:#666; font-size:11px; padding-left:4px;")
         nerv_info.setWordWrap(True)
         layout.addWidget(nerv_info)
@@ -27237,15 +27557,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(_sep())
 
         # ── Effet DROP ────────────────────────────────────────────────────────
-        layout.addWidget(_section_title("💥  Effet DROP"))
+        layout.addWidget(_section_title(tr("mwy_303")))
 
         DROP_EFFECTS = {
-            'flash_blanc':       "Flash Blanc      — punch blanc immédiat + strobe lat/contre",
-            'color_explosion':   "Color Explosion  — chaque groupe explose dans une couleur, strobe total",
-            'blackout_punch':    "Blackout Punch   — 150ms noir total → BANG blanc + strobe",
-            'stroboscope':       "Stroboscope      — strobe blanc intégral sur tous les projecteurs",
-            'laser_scan':        "Laser Scan       — lyres en turbo, projecteurs flash + strobe lat",
-            'strobe_sync':       "Strobe Sync      — strobe tous projos, même couleur active",
+            'flash_blanc':       tr("mwy_305"),
+            'color_explosion':   tr("mwy_307"),
+            'blackout_punch':    tr("mwy_309"),
+            'stroboscope':       tr("mwy_311"),
+            'laser_scan':        tr("mwy_313"),
+            'strobe_sync':       tr("mwy_315"),
         }
         drop_combo = ComboSansMolette()
         drop_combo.setFixedHeight(34)
@@ -27261,7 +27581,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(_sep())
 
         # ── Niveaux max par groupe ────────────────────────────────────────────
-        layout.addWidget(_section_title("🎚  Niveaux maximum par groupe"))
+        layout.addWidget(_section_title(tr("mwy_318")))
         dim_info = QLabel(tr("mw_ia_dim_tip"))
         dim_info.setStyleSheet("color:#666; font-size:11px; padding-left:4px;")
         layout.addWidget(dim_info)
@@ -27413,17 +27733,17 @@ class MainWindow(QMainWindow):
         d'un port à un instant t — les vrais problèmes de liaison ont leur
         place dans le diagnostic (Connexions ▸ Sortie DMX), qui teste, lui."""
         if not self._license.dmx_allowed:
-            self._log_message("Sortie DMX : désactivée (licence)", "info")
+            self._log_message(tr("mwx_084"), "info")
         else:
             pf = getattr(self, 'plan_de_feu', None)
             dmx_on = pf.is_dmx_enabled() if pf is not None else False
             if dmx_on:
-                self._log_message("Sortie DMX : activée", "success")
+                self._log_message(tr("mwx_086"), "success")
             else:
-                self._log_message("Sortie DMX : désactivée", "info")
+                self._log_message(tr("mwx_088"), "info")
 
         # Sortie vidéo (toujours off au démarrage)
-        self._log_message("Sortie vidéo : désactivée", "info")
+        self._log_message(tr("mwx_090"), "info")
 
 
     def update_connection_indicators(self):
@@ -27670,7 +27990,7 @@ class MainWindow(QMainWindow):
                 lines.append("── Ports ENTREE (IN) ──────────────────")
                 if in_ports:
                     for i, name in enumerate(in_ports):
-                        marker = " ✅ AKAI detecte" if _is_akai(name) else ""
+                        marker = tr("mwy_319") if _is_akai(name) else ""
                         lines.append(f"  [{i}]  {name}{marker}")
                 else:
                     lines.append("  (aucun port detecte)")
@@ -27679,7 +27999,7 @@ class MainWindow(QMainWindow):
                 lines.append("── Ports SORTIE (OUT) ─────────────────")
                 if out_ports:
                     for i, name in enumerate(out_ports):
-                        marker = " ✅ AKAI detecte" if _is_akai(name) else ""
+                        marker = tr("mwy_319") if _is_akai(name) else ""
                         lines.append(f"  [{i}]  {name}{marker}")
                 else:
                     lines.append("  (aucun port detecte)")
@@ -28752,7 +29072,7 @@ class MainWindow(QMainWindow):
                 mirror_output=new_mirror,
             )
             dialog.accept()
-            mirror_info = f"\nMiroir sortie 2: univers {self.dmx.universe2}" if new_mirror else ""
+            mirror_info = tr("mwy_323", universe2=self.dmx.universe2) if new_mirror else ""
             QMessageBox.information(self, "NODE",
                 tr("mw_f_node_applied", a0=self.dmx.target_ip, a1=self.dmx.target_port, a2=self.dmx.universe, mirror_info=mirror_info))
 
@@ -28825,7 +29145,7 @@ class MainWindow(QMainWindow):
         screens = QApplication.screens()
         for i, screen in enumerate(screens):
             geo = screen.geometry()
-            label = f"Ecran {i + 1} ({screen.name()} - {geo.width()}x{geo.height()})"
+            label = tr("mwy_325", a=i + 1, a1=screen.name(), a2=geo.width(), a3=geo.height())
             action = self.video_screen_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(i == self.video_target_screen)
@@ -29031,7 +29351,8 @@ class MainWindow(QMainWindow):
             # modèle. Sans elle, le FLASH KILL avait beau noircir les
             # projecteurs dans `_recompute_memory_mix`, la frame suivante les
             # rallumait au niveau du fader — le momentané ne se voyait jamais.
-            fv = self._flash_level(
+            fv = self._mem_flash_level(
+                col_akai,
                 self.faders[col_akai].value if col_akai in self.faders else 0)
             active_row = self.active_memory_pads.get(col_akai)
             if fv > 0 and active_row is not None and self.memories[mem_col][active_row]:

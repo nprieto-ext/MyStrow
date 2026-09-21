@@ -1671,7 +1671,7 @@ class LightTimelineEditor(QDialog):
         # ── Décaler les blocs vers la gauche / droite ─────────────────────────
         # Icône façon Premiere : bord de bloc en pointillés + flèche pleine.
         # Cible = blocs sélectionnés s'il y en a, sinon tous. (clic = 100 ms, Ctrl = 1 s, Shift = 10 ms)
-        _shift_tip = "Décaler les blocs sélectionnés {dir}\n(ou TOUS si aucun bloc sélectionné)\nClic = 100 ms · Ctrl = 1 s · Shift = 10 ms"
+        _shift_tip = tr("tle3_043")
         shift_left_btn = QPushButton()
         shift_left_btn.setIcon(self._make_shift_icon('left'))
         shift_left_btn.setIconSize(QSize(24, 24))
@@ -1697,7 +1697,7 @@ class LightTimelineEditor(QDialog):
         # Zoom : pavé [−  100%  +] avec libellé « ZOOM » au-dessus
         zoom_col, self.zoom_label = self._make_labeled_stepper(
             "ZOOM", self.zoom_out, self.zoom_in, val_width=52,
-            tip="Niveau de zoom  —  Shift + Molette pour zoomer")
+            tip=tr("tle3_044"))
         self.zoom_label.setText("100%")
         header_layout.addWidget(zoom_col)
 
@@ -1734,7 +1734,7 @@ class LightTimelineEditor(QDialog):
             lambda: self._default_block_dur_spin.stepBy(-1),
             lambda: self._default_block_dur_spin.stepBy(1),
             val_width=48,
-            tip="Durée par défaut des blocs déposés / peints")
+            tip=tr("tle3_045"))
         header_layout.addWidget(bloc_col)
 
         # ── Bouton ● REC : capture le look 2D live en un bloc de séquence ──────
@@ -3186,8 +3186,8 @@ class LightTimelineEditor(QDialog):
         import json as _json
         default_name = (self.media_name or "rec_lumiere").replace(" ", "_") + ".lrec"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter le REC lumière", default_name,
-            "REC Lumière (*.lrec);;JSON (*.json)"
+            self, tr("tle3_046"), default_name,
+            tr("tle3_047")
         )
         if not path:
             return
@@ -4646,12 +4646,12 @@ class LightTimelineEditor(QDialog):
             return ""
         t = brush.get("type")
         if t == "mem":
-            return brush.get("label") or "Mémoire"
+            return brush.get("label") or tr("tle3_052")
         if t == "effect":
-            return (brush.get("eff") or {}).get("name") or "Effet"
+            return (brush.get("eff") or {}).get("name") or tr("tle3_054")
         if t == "bicolor":
-            return "Bicouleur"
-        return "Couleur"
+            return tr("tle3_057")
+        return tr("tle3_058")
 
     def _update_paint_hint(self):
         """Affiche/masque l'info-bulle de statut du mode « bloquer » (peinture)."""
@@ -4661,7 +4661,7 @@ class LightTimelineEditor(QDialog):
         if getattr(self, 'paint_mode', False) and brush:
             name = self._paint_brush_name(brush)
             fem = brush.get("type") in ("color", "bicolor")   # accord grammatical
-            bloq = "bloquée" if fem else "bloqué"
+            bloq = tr("tle3_059") if fem else tr("tle3_060")
             self._paint_hint.setText(
                 tr("tle_f_locked_track", name=name, bloq=bloq))
             self._paint_hint.setVisible(True)

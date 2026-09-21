@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal, QTimer
 
 from core import MIDI_AVAILABLE
 from controller_profile import find_profile_for_port, build_reverse_maps
+from i18n import tr
 
 # Sur Apple Silicon (M1/M2/M3/M4/M5), les messages 0x96 (Note On ch7 = LED bright)
 # ne sont pas transmis correctement par CoreMIDI/USB → LEDs toujours en mode dim (0x90).
@@ -379,7 +380,7 @@ class MIDIHandler(QObject):
             # Sonde jetée : la suivante repart sur un objet neuf.
             self._probe = None
             self._scan_fail_count += 1
-            self.last_error = f"Scan des ports MIDI impossible : {e}"
+            self.last_error = tr("mh3_082", e=e)
             if self._scan_fail_count in (1, 10, 100):
                 print(f"⚠️  {self.last_error} (échec n°{self._scan_fail_count})")
             return []
@@ -649,7 +650,7 @@ class MIDIHandler(QObject):
             # sur un autre contrôleur quand l'utilisateur en a épinglé un.
             device_present = self._target_present(ports)
         except Exception as e:
-            self.last_error = f"Détection impossible : {e}"
+            self.last_error = tr("mh3_083", e=e)
             return
 
         if not device_present:

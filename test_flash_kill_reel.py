@@ -84,6 +84,7 @@ class FauxWin:
     """MainWindow reduite aux couches HTP et au momentane."""
 
     _flash_level             = mw.MainWindow._flash_level
+    _mem_flash_level         = mw.MainWindow._mem_flash_level
     _flash_has_memories      = mw.MainWindow._flash_has_memories
     _flash_begin             = mw.MainWindow._flash_begin
     _flash_end               = mw.MainWindow._flash_end

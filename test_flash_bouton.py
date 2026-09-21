@@ -63,6 +63,7 @@ class FauxWin:
     """MainWindow reduite au bouton bas-droite et au mix des memoires."""
 
     _flash_level           = mw.MainWindow._flash_level
+    _mem_flash_level       = mw.MainWindow._mem_flash_level
     _flash_begin           = mw.MainWindow._flash_begin
     _flash_end             = mw.MainWindow._flash_end
     _tap_tempo             = mw.MainWindow._tap_tempo

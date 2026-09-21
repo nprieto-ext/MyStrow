@@ -7,10 +7,12 @@ import os
 import copy
 import time as _time
 from collections import Counter
-from i18n import tr
+from i18n import tr, tr_name
 from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
                   color_wheel_display_color, fixture_projects_gobo,
+                  GOBO_SLOT_NAMES, GOBO_SLOT_ICONS, GOBO_SLOT_COUNT,
+                  gobo_slot_index, gobo_slot_dmx,
                   emitted_brightness,
                   FX_MACHINE_TYPES, fixture_is_fx_machine, fixture_is_pyro,
                   strobe_speed_from_dmx, displayed_strobe_speed)
@@ -30,6 +32,212 @@ from PySide6.QtGui import (
 
 
 import math as _math_eff
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Motifs de gobo de la tache au sol
+# ─────────────────────────────────────────────────────────────────────────────
+def _draw_gobo_pattern(painter, slot, ox, oy, iw, ih, col):
+    """Dessine le motif du slot `slot` dans la tache au sol d'une lyre.
+
+    ⚠️ CES SEIZE MOTIFS SONT DESSINES DEUX FOIS. Ici au QPainter, et au canvas
+    dans `_createGoboTexture` (`plan_3d_web.html`). L'ordre vient de
+    `core.GOBO_SLOT_NAMES` et fait foi : les deux listes avaient DIVERGE, et le
+    meme show ne se lisait pas pareil selon le plan ouvert. Toucher a l'un
+    oblige a toucher a l'autre.
+
+    Sorti de `_draw_fixture` en meme temps que le passage de 8 a 16 motifs :
+    cent lignes de trace de plus au milieu du dessin d'une lyre rendaient la
+    methode illisible, et la fonction se rend maintenant au banc d'essai sans
+    instancier tout le plan.
+
+    ⚠️ La tache est vue de DESSUS, donc tres aplatie (`ih` vaut environ `iw/3`).
+    Tout se trace en coordonnees normalisees -1..1 via `_pt()`, mises a
+    l'echelle par `iw` en x et `ih` en y : un motif dessine rond sortirait de
+    l'ellipse. C'est aussi pourquoi les epaisseurs de trait se calculent sur
+    `iw` — a quinze pixels de large, un trait de plus d'`iw//5` boucherait tout.
+
+    `ox`/`oy` sont le centre de la tache dans le repere DEJA translate et pivote
+    par l'appelant (l'axe y descend le long du faisceau).
+    """
+    if slot <= 0:
+        return
+
+    def _pt(ux, uy):
+        """Point du motif en coordonnees normalisees (-1..1)."""
+        return QPoint(int(ox + ux * iw), int(oy + uy * ih))
+
+    def _set_pen(frac=1.0, cap=Qt.RoundCap):
+        pen = QPen(col, max(1, int(iw * frac / 6.0)))
+        pen.setCapStyle(cap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+    def _fill_blobs(table):
+        """Pastilles pleines : (x, y, rayon) en coordonnees normalisees."""
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(col))
+        for ux, uy, ur in table:
+            painter.drawEllipse(_pt(ux, uy),
+                                max(1, int(ur * iw)), max(1, int(ur * ih)))
+
+    center = QPoint(int(ox), int(oy))
+
+    # ⚠️ Decoupe a l'ellipse d'impact — l'equivalent du `destination-in` qui
+    # termine `_createGoboTexture` en 3D. Sans elle, la barre, l'etoile, le
+    # vitrail et les triangles (traces jusqu'au rayon 1,0) debordaient de la
+    # tache et bavaient sur le plateau : un gobo eclaire l'interieur du
+    # faisceau, jamais au-dela.
+    _clip = QPainterPath()
+    _clip.addEllipse(QPointF(ox, oy), float(iw), float(ih))
+    painter.save()
+    painter.setClipPath(_clip, Qt.IntersectClip)
+    _set_pen()
+
+    if slot == 1:        # Barre — une seule fente en travers du faisceau
+        # Le trait EST le motif : son epaisseur vaut 40 % de la hauteur de la
+        # tache, comme la fente du gobo 3D.
+        bar = QPen(col, max(2, int(ih * 0.8)))
+        bar.setCapStyle(Qt.FlatCap)
+        painter.setPen(bar)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(_pt(-0.92, 0.0), _pt(0.92, 0.0))
+
+    elif slot == 2:      # Anneau
+        painter.drawEllipse(center, iw * 3 // 4, max(1, ih * 3 // 4))
+
+    elif slot == 3:      # Logo MyStrow
+        # Anneau coupe en deux par l'encoche verticale, plus la hampe. Les
+        # angles viennent du releve sur `logo.png` : l'encoche occupe une
+        # quinzaine de degres de part et d'autre de la verticale, sur un anneau
+        # de rayon moyen 0,80.
+        _set_pen(1.2)
+        rect = QRect(int(ox - iw * 0.80), int(oy - ih * 0.80),
+                     int(iw * 1.60), int(ih * 1.60))
+        painter.drawArc(rect, -76 * 16, 152 * 16)    # moitie droite
+        painter.drawArc(rect, 104 * 16, 152 * 16)    # moitie gauche
+        painter.drawLine(_pt(0.0, -0.55), _pt(0.0, 0.02))
+
+    elif slot == 4:      # Etoile 4 branches
+        for a in (45, 135, 225, 315):
+            rad = math.radians(a)
+            painter.drawLine(center, _pt(math.cos(rad), math.sin(rad)))
+
+    elif slot == 5:      # Gouttes
+        _fill_blobs(_GOBO_DROPS)
+
+    elif slot == 6:      # Trois cercles
+        _rr = max(1, iw // 4)
+        for i in range(3):
+            rad = math.radians(90 + i * 120)
+            painter.drawEllipse(_pt(math.cos(rad) * 0.5, math.sin(rad) * 0.5),
+                                _rr, max(1, ih // 3))
+
+    elif slot == 7:      # Feuillage
+        # ⚠️ Polarite INVERSEE par rapport a la 3D, qui perce des ombres dans un
+        # disque plein. Ici la tache est deja peinte : on ne peut qu'ajouter du
+        # clair par-dessus. Meme compromis assume que le breakup (slot 10) —
+        # illisible de toute facon a quinze pixels de large.
+        for ux, uy, ang in _GOBO_LEAVES:
+            rad = math.radians(ang)
+            dx, dy = math.cos(rad) * 0.24, math.sin(rad) * 0.24
+            painter.drawLine(_pt(ux - dx, uy - dy), _pt(ux + dx, uy + dy))
+
+    elif slot == 8:      # Trois palmes (helice)
+        for i in range(3):
+            rad = math.radians(90 + i * 120)
+            painter.drawLine(center,
+                             _pt(math.cos(rad) * 0.85, math.sin(rad) * 0.85))
+            painter.drawLine(_pt(math.cos(rad) * 0.85, math.sin(rad) * 0.85),
+                             _pt(math.cos(rad + 0.9) * 0.55,
+                                 math.sin(rad + 0.9) * 0.55))
+
+    elif slot == 9:      # Vitrail
+        # Moins de facettes qu'en 3D (4/6/8 au lieu de 5/8/11) et un trait plus
+        # fin : la tache du plan fait une cinquantaine de pixels de large, et la
+        # decoupe complete s'y refermait en boule herissee.
+        _set_pen(0.6)
+        for rr in (0.40, 0.75):
+            painter.drawEllipse(center,
+                                max(1, int(iw * rr)), max(1, int(ih * rr)))
+        for r0, r1, n, off in ((0.0, 0.40, 4, 0.0),
+                               (0.40, 0.75, 6, 0.3),
+                               (0.75, 1.0, 8, 0.55)):
+            for i in range(n):
+                a = ((i + off) / n) * 2 * math.pi
+                painter.drawLine(_pt(math.cos(a) * r0, math.sin(a) * r0),
+                                 _pt(math.cos(a) * r1, math.sin(a) * r1))
+
+    elif slot == 10:     # Breakup (eclats disperses)
+        for a, d in ((20, 0.8), (95, 0.55), (165, 0.85), (240, 0.6), (310, 0.75)):
+            rad = math.radians(a)
+            painter.drawLine(_pt(math.cos(rad) * d * 0.45,
+                                 math.sin(rad) * d * 0.45),
+                             _pt(math.cos(rad) * d, math.sin(rad) * d))
+
+    elif slot == 11:     # Spirale
+        path = QPainterPath()
+        tmax = 2.4 * 2 * math.pi
+        for i in range(61):
+            t  = (i / 60.0) * tmax
+            rr = 0.10 + 0.82 * (t / tmax)
+            p  = _pt(math.cos(t) * rr, math.sin(t) * rr)
+            if i == 0:
+                path.moveTo(p)
+            else:
+                path.lineTo(p)
+        painter.drawPath(path)
+
+    elif slot == 12:     # Six rayons
+        for i in range(6):
+            rad = math.radians(i * 60)
+            painter.drawLine(center, _pt(math.cos(rad), math.sin(rad)))
+
+    elif slot == 13:     # Triangles
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(col))
+        for i in range(3):
+            base = i * 2 * math.pi / 3.0
+
+            def _rot(ux, uy, b=base):
+                return _pt(ux * math.cos(b) - uy * math.sin(b),
+                           ux * math.sin(b) + uy * math.cos(b))
+
+            painter.drawPolygon(QPolygon([_rot(0.0, -1.0),
+                                          _rot(0.38, -0.34),
+                                          _rot(-0.38, -0.34)]))
+
+    elif slot == 14:     # Bull's-eye
+        painter.drawEllipse(center, iw * 3 // 4, max(1, ih * 3 // 4))
+        painter.drawEllipse(center, max(1, iw // 3), max(1, ih // 3))
+
+    elif slot == 15:     # Nuages
+        _fill_blobs(_GOBO_CLOUDS)
+
+    painter.restore()
+
+
+# Tables de pastilles partagees avec `_createGoboTexture` (memes valeurs).
+# Figees, jamais tirees au sort : un motif aleatoire changerait d'une session a
+# l'autre et le meme show ne se rejouerait pas a l'identique.
+_GOBO_DROPS = (
+    (-0.45, -0.44, 0.21), (0.26, -0.55, 0.13), (0.56, -0.12, 0.23),
+    (-0.63, 0.16, 0.15), (0.04, 0.10, 0.29), (-0.17, 0.63, 0.19),
+    (0.49, 0.54, 0.14), (-0.72, -0.14, 0.09), (0.22, -0.18, 0.08),
+)
+
+# Feuilles : (x, y, angle du trait en degres).
+_GOBO_LEAVES = (
+    (-0.35, -0.46, 34), (0.41, -0.36, -29), (0.09, 0.04, 11),
+    (-0.51, 0.26, -46), (0.45, 0.41, 52), (-0.09, 0.63, -17),
+)
+
+_GOBO_CLOUDS = (
+    (-0.44, -0.34, 0.30), (-0.16, -0.46, 0.24), (-0.62, -0.16, 0.20),
+    (0.42, -0.40, 0.26), (0.66, -0.18, 0.19), (0.20, -0.30, 0.17),
+    (-0.06, 0.32, 0.32), (0.32, 0.46, 0.25), (-0.40, 0.48, 0.22),
+    (0.62, 0.30, 0.16),
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EFFETS AUTOMATIQUES MOVING HEAD
@@ -298,7 +506,7 @@ class PresetBar(QWidget):
             n_per = len(preset.get("per_proj", {}))
             tip = tr("pdf_tooltip_preset_btn", pan=preset['pan'], tilt=preset['tilt'])
             if n_per:
-                tip += f"  ·  {n_per} fixture(s) individuelles"
+                tip += tr("pdf3_001", n_per=n_per)
             btn.setToolTip(tip)
             btn.clicked.connect(
                 lambda _, p=preset: self.preset_selected.emit(p)
@@ -614,11 +822,11 @@ class EffectPanel(QWidget):
     effect_stopped = Signal()
 
     _EFFECTS = [
-        ("⭕", "cercle",     "Cercle"),
-        ("∞",  "figure8",   "Figure 8"),
-        ("↔",  "balayage_h","Balayage H"),
-        ("↕",  "balayage_v","Balayage V"),
-        ("✦",  "aleatoire", "Aléatoire"),
+        ("⭕", "cercle",     tr("pdf3_004")),
+        ("∞",  "figure8",   tr("pdf3_007")),
+        ("↔",  "balayage_h",tr("pdf3_010")),
+        ("↕",  "balayage_v",tr("pdf3_013")),
+        ("✦",  "aleatoire", tr("pdf3_016")),
     ]
 
     _BTN_ON  = "QPushButton { background:#005577; color:#00d4ff; border:1px solid #00d4ff; border-radius:4px; font-size:14px; font-weight:bold; min-width:32px; min-height:28px; }"
@@ -895,7 +1103,7 @@ class ColorPickerBlock(QFrame):
         layout.setSpacing(2)
 
         # ── Hue ──────────────────────────────────────────────────────────
-        self._hue_val_lbl = self._add_row(layout, "Couleur", "0°")
+        self._hue_val_lbl = self._add_row(layout, tr("pdf3_017"), "0°")
         self._hue_slider = _HSVSlider()
         self._hue_slider.set_stops(
             [(i / 6, QColor.fromHsvF(i / 6, 1.0, 1.0)) for i in range(7)]
@@ -909,7 +1117,7 @@ class ColorPickerBlock(QFrame):
         self._sat_slider.set_value(1.0)
 
         # ── Luminosité ───────────────────────────────────────────────────
-        self._bri_val_lbl = self._add_row(layout, "Luminosité", "100%")
+        self._bri_val_lbl = self._add_row(layout, tr("pdf3_019"), "100%")
         self._bri_slider = _HSVSlider()
         self._bri_slider.set_value(1.0)
         self._bri_slider.valueChanged.connect(self._on_bri)
@@ -2542,11 +2750,19 @@ class FixtureCanvas(QWidget):
         if htp and id(proj) in htp:
             level, color = htp[id(proj)][:2]
             if level > 0 and not proj.muted:
-                c = QColor(color)
-                r = int(c.red()   * level)
-                g = int(c.green() * level)
-                b = int(c.blue()  * level)
-                return QColor(r, g, b)
+                # ⚠️ `color` est DÉJÀ la couleur ÉMISE : `_compute_htp_overrides`
+                # la calcule en `base × niveau / 100`. La remultiplier par
+                # `level` — qui vaut 0-100, pas 0-1 — sortait de 0-255 et
+                # QColor rendait alors une couleur INVALIDE, c'est-à-dire NOIRE.
+                # Une seule mémoire levée sur des fixtures RVB suffisait à le
+                # déclencher : le mix additif reconstruit `proj.level` depuis les
+                # couleurs et y perd un point d'arrondi, donc à environ une
+                # position de fader sur cinq la mémoire dépasse le modèle d'un
+                # cran et pose un override. Monter un fader faisait clignoter le
+                # plan 2D, et s'arrêter sur une de ces positions (dont 100 %)
+                # éteignait les fixtures à l'écran — sorties DMX et 3D correctes,
+                # elles ne passent pas par ici.
+                return QColor(color)
             return QColor("#1a1a1a")
         if proj.muted:
             return QColor("#1a1a1a")
@@ -2660,14 +2876,14 @@ class FixtureCanvas(QWidget):
 
             # Cone de faisceau orienté — gradient lumineux à la source
             if is_lit:
-                # 0 = ouvert, 1-7 = motif. `fixture_projects_gobo` ferme la
+                # 0 = ouvert, 1-15 = motif. `fixture_projects_gobo` ferme la
                 # porte aux fixtures SANS optique de projection : sur un PAR LED
                 # dont le canal `Gobo1` sert en realite de canal de programme,
                 # la valeur ne doit ni dessiner de motif ni assombrir le cone
                 # (`haze_alpha`/`alpha_src` ci-dessous en dependent aussi).
                 # Meme porte qu'en 3D — cf. `core.fixture_projects_gobo`.
                 gobo_val = getattr(proj, 'gobo', 0)
-                gobo_idx = (int(gobo_val // 32)
+                gobo_idx = (gobo_slot_index(gobo_val)
                             if gobo_val > 0 and fixture_projects_gobo(proj) else 0)
 
                 painter.save()
@@ -2726,72 +2942,12 @@ class FixtureCanvas(QWidget):
                 painter.setBrush(QBrush(impact_col))
                 painter.drawEllipse(QPoint(0, beam_len), iw, ih)
 
-                # Motif gobo dans l'impact
-                #
-                # ⚠️ L'ordre des slots est celui de `core.GOBO_SLOT_NAMES`, et il
-                # est aussi dessiné par `_createGoboTexture` dans
-                # `plan_3d_web.html` : les deux listes étaient divergentes (slot 3
-                # = croix × ici, trois cercles en 3D), donc le même show ne se
-                # lisait pas pareil selon le plan ouvert. Modifier l'un = modifier
-                # l'autre.
-                #
-                # La tache est vue de dessus, donc très aplatie : les motifs sont
-                # tracés en coordonnées normalisées (× iw en x, × ih en y) pour
-                # suivre cet écrasement au lieu d'être dessinés ronds.
+                # Motif gobo dans l'impact — cf. `_draw_gobo_pattern`.
                 if gobo_idx > 0:
                     pat_col = QColor(fill_color)
                     pat_col.setAlpha(160)
-                    painter.setPen(QPen(pat_col, max(1, iw // 6)))
-                    painter.setBrush(Qt.NoBrush)
-                    import math as _gm
-
-                    def _pt(ux, uy):
-                        """Point du motif en coordonnées normalisées (-1..1)."""
-                        return QPoint(int(ux * iw), int(beam_len + uy * ih))
-
-                    if gobo_idx == 1:      # Anneau
-                        painter.drawEllipse(QPoint(0, beam_len),
-                                            iw * 3 // 4, max(1, ih * 3 // 4))
-                    elif gobo_idx == 2:    # Étoile 4 branches
-                        for a in (45, 135, 225, 315):
-                            rad = _gm.radians(a)
-                            painter.drawLine(QPoint(0, beam_len),
-                                             _pt(_gm.cos(rad), _gm.sin(rad)))
-                    elif gobo_idx == 3:    # Trois cercles
-                        _rr = max(1, iw // 4)
-                        for i in range(3):
-                            rad = _gm.radians(90 + i * 120)
-                            painter.drawEllipse(_pt(_gm.cos(rad) * 0.5,
-                                                    _gm.sin(rad) * 0.5),
-                                                _rr, max(1, ih // 3))
-                    elif gobo_idx == 4:    # Trois palmes (hélice)
-                        for i in range(3):
-                            rad = _gm.radians(90 + i * 120)
-                            painter.drawLine(QPoint(0, beam_len),
-                                             _pt(_gm.cos(rad) * 0.85,
-                                                 _gm.sin(rad) * 0.85))
-                            painter.drawLine(_pt(_gm.cos(rad) * 0.85,
-                                                 _gm.sin(rad) * 0.85),
-                                             _pt(_gm.cos(rad + 0.9) * 0.55,
-                                                 _gm.sin(rad + 0.9) * 0.55))
-                    elif gobo_idx == 5:    # Breakup (éclats dispersés)
-                        for a, d in ((20, 0.8), (95, 0.55), (165, 0.85),
-                                     (240, 0.6), (310, 0.75)):
-                            rad = _gm.radians(a)
-                            painter.drawLine(_pt(_gm.cos(rad) * d * 0.45,
-                                                 _gm.sin(rad) * d * 0.45),
-                                             _pt(_gm.cos(rad) * d,
-                                                 _gm.sin(rad) * d))
-                    elif gobo_idx == 6:    # Six rayons
-                        for i in range(6):
-                            rad = _gm.radians(i * 60)
-                            painter.drawLine(QPoint(0, beam_len),
-                                             _pt(_gm.cos(rad), _gm.sin(rad)))
-                    elif gobo_idx == 7:    # Bull's-eye
-                        painter.drawEllipse(QPoint(0, beam_len),
-                                            iw * 3 // 4, max(1, ih * 3 // 4))
-                        painter.drawEllipse(QPoint(0, beam_len),
-                                            max(1, iw // 3), max(1, ih // 3))
+                    _draw_gobo_pattern(painter, gobo_idx, 0, beam_len, iw, ih,
+                                       pat_col)
 
                 painter.restore()
             # ── Lyre / Moving Head ───────────────────────────────────────────────
@@ -3059,7 +3215,7 @@ class FixtureCanvas(QWidget):
         lines = [
             proj.name or proj.group,
             f"{ftype}  ·  {gd.get(proj.group, proj.group)}",
-            f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}  ·  Niveau {proj.level}%" + ("  (mute)" if proj.muted else ""),
+            tr("pdf3_021", a=getattr(proj,'universe',0)+1, start_address=proj.start_address, level=proj.level) + ("  (mute)" if proj.muted else ""),
         ]
         card_w, line_h = 178, 15
         card_h = len(lines) * line_h + 14
@@ -5514,7 +5670,7 @@ class PlanDeFeu(QFrame):
         present_groups = {p.group for p in self.projectors}
         for internal, label in self._GROUP_LABEL.items():
             if internal in present_groups:
-                menu.addAction(label, lambda g=internal: _selec_puis_regler(
+                menu.addAction(tr_name(label), lambda g=internal: _selec_puis_regler(
                     lambda: self._select_group(g)))
 
         # Groupes non répertoriés dans le mapping
@@ -6565,7 +6721,7 @@ class PlanDeFeu(QFrame):
         # plan de feu, pas sur la fixture : on travaille rarement en brut sur un
         # seul appareil, et rebasculer à chaque clic droit serait pénible.
         _raw_on = bool(getattr(self, '_raw_mode', False))
-        raw_btn = QPushButton("🎚  Curseurs")
+        raw_btn = QPushButton(tr("pdf3_028"))
         raw_btn.setCheckable(True)
         raw_btn.setChecked(_raw_on)
         raw_btn.setToolTip(tr("pdf2_raw_toggle_hint"))
@@ -6668,7 +6824,7 @@ class PlanDeFeu(QFrame):
         # réglages de couleur auxquels ils appartiennent.
         _EXTRA_CHANNELS = [
             ("UV",      "UV",           "#8844ff", "uv",           0,   255),
-            ("W",       "Blanc",        "#ffffff", "white_boost",  0,   255),
+            ("W",       tr("pdf3_030"),        "#ffffff", "white_boost",  0,   255),
             ("Ambre",   "Ambre",        "#ff9900", "amber_boost",  0,   255),
             ("Orange",  "Orange",       "#ff6600", "orange_boost", 0,   255),
             ("Effects", "Effects",      "#cc44ff", "effects",      0,   255),
@@ -6689,7 +6845,7 @@ class PlanDeFeu(QFrame):
         _ADV_DEDICATED = [
             ("Focus",   "Focus",        "#776622", "focus",        0,   255),
             ("Gobo2",   "Gobo 2",       "#888888", "gobo2",        0,   255),
-            ("Speed",   "Vitesse",      "#4488aa", "speed",        0,   255),
+            ("Speed",   tr("pdf3_034"),      "#4488aa", "speed",        0,   255),
             ("Mode",    "Mode",         "#aa4444", "mode_value",   0,   255),
         ]
 
@@ -6924,7 +7080,7 @@ class PlanDeFeu(QFrame):
                         )
                     _flush()
 
-                _cw_row = _slider_row("Roue couleur", cur_cw, 255, _on_cw)
+                _cw_row = _slider_row(tr("pdf3_037"), cur_cw, 255, _on_cw)
                 _cw_sli = _cw_row.findChild(QSlider)
                 _wa(_cw_row)
 
@@ -7083,14 +7239,17 @@ class PlanDeFeu(QFrame):
                         (s['dmx'], s['name'][:6], s['name']) for s in _ofl_gobo
                     ]
                 else:
-                    _GOBO_ICONS = ["○", "✦", "◈", "⊕", "⊗", "❋", "⌘", "✿"]
+                    # Roue non décrite : on propose la table symbolique, celle
+                    # que les plans 2D et 3D savent dessiner. Le pictogramme du
+                    # bouton évoque donc le motif qui va réellement apparaître.
                     _GOBO_SLOTS = [
-                        (i * 32, _GOBO_ICONS[i % len(_GOBO_ICONS)],
-                         "Open" if i == 0 else f"Gobo {i}")
-                        for i in range(8)
+                        (gobo_slot_dmx(i), GOBO_SLOT_ICONS[i],
+                         tr_name(GOBO_SLOT_NAMES[i]))
+                        for i in range(GOBO_SLOT_COUNT)
                     ]
-                gobo_w = QWidget(); gobo_h = QHBoxLayout(gobo_w)
-                gobo_h.setContentsMargins(10, 0, 10, 6); gobo_h.setSpacing(3)
+                gobo_w = QWidget(); gobo_g = QGridLayout(gobo_w)
+                gobo_g.setContentsMargins(10, 0, 10, 6)
+                gobo_g.setHorizontalSpacing(3); gobo_g.setVerticalSpacing(3)
 
                 # Un bouton POSE le curseur ; le curseur écrit la lyre, met à
                 # jour sa valeur affichée et rallume le bon bouton. Un seul
@@ -7108,15 +7267,20 @@ class PlanDeFeu(QFrame):
                         if bv is not None:
                             b.setStyleSheet(_SS_BTN_ON if bv == _act else _SS_BTN_OFF)
 
+                # ⚠️ Disposition en GRILLE, plus en ligne : seize boutons de
+                # 30 px côte à côte font 500 px et débordaient du menu
+                # contextuel. Une vraie roue importée peut en compter autant,
+                # donc la grille sert les deux cas.
+                _GOBO_COLS = 8
                 _gobo_act = _slot_actif(cur_gobo, [d for d, _i, _t in _GOBO_SLOTS])
-                for dmx_val, icon, tip in _GOBO_SLOTS:
+                for _gi, (dmx_val, icon, tip) in enumerate(_GOBO_SLOTS):
                     btn = QPushButton(icon)
                     btn.setFixedSize(30, 28); btn.setToolTip(tr("pdf_f_tip_dmx2", tip=tip, dmx_val=dmx_val))
                     btn.setProperty("gobo_val", dmx_val)
                     btn.setStyleSheet(_SS_BTN_ON if dmx_val == _gobo_act else _SS_BTN_OFF)
                     btn.clicked.connect(lambda chk, v=dmx_val: _set_gobo_btn(v))
-                    gobo_h.addWidget(btn)
-                gobo_h.addStretch()
+                    gobo_g.addWidget(btn, _gi // _GOBO_COLS, _gi % _GOBO_COLS)
+                gobo_g.setColumnStretch(_GOBO_COLS, 1)
 
                 # Le surlignage suit le CURSEUR, pas le clic : tirer le curseur
                 # allume le gobo réellement atteint.
@@ -7143,7 +7307,11 @@ class PlanDeFeu(QFrame):
                         # Rafraîchir les presets dans le menu (rouvrir)
                         self.refresh() if hasattr(self, 'refresh') else None
                 _edit_gobo_btn.clicked.connect(_open_gobo_editor)
-                gobo_h.addWidget(_edit_gobo_btn)
+                # Sur sa propre rangée, sous la grille : il suivait les boutons
+                # en fin de ligne, ce qui n'a plus de sens maintenant que les
+                # slots occupent plusieurs rangées.
+                gobo_g.addWidget(_edit_gobo_btn,
+                                 gobo_g.rowCount(), 0, 1, _GOBO_COLS + 1)
 
                 _wa(gobo_w)
 
@@ -7156,7 +7324,7 @@ class PlanDeFeu(QFrame):
                         p.gobo_rotation = v
                     _flush()
 
-                _wa(_slider_row("Rotation Gobo", cur_gobo_rot, 255, _on_gobo_rot))
+                _wa(_slider_row(tr("pdf3_038"), cur_gobo_rot, 255, _on_gobo_rot))
 
             # ── Prisme ──────────────────────────────────────────────────
             if has_profile and 'Prism' in proj_profile:
@@ -7221,7 +7389,7 @@ class PlanDeFeu(QFrame):
                         p.prism_rotation = v
                     _flush()
 
-                _wa(_slider_row("Rotation Prisme", cur_prism_rot, 255, _on_prism_rot))
+                _wa(_slider_row(tr("pdf3_039"), cur_prism_rot, 255, _on_prism_rot))
 
         # ── Couleurs ─────────────────────────────────────────────────────
         # Masquer pour : fumée/gradateurs, et Moving Head à roue de couleur SANS RGB
@@ -7245,7 +7413,7 @@ class PlanDeFeu(QFrame):
                     f"QPushButton{{background:{color.name()};border:2px solid {bc};"
                     f"border-radius:14px;}}QPushButton:hover{{border:2px solid #00d4ff;}}"
                 )
-                btn.setToolTip(label); btn.setCursor(Qt.PointingHandCursor)
+                btn.setToolTip(tr_name(label)); btn.setCursor(Qt.PointingHandCursor)
                 def _on_color_btn(checked, c=color, t=targets):
                     self._apply_color_to_targets(t, c)
                     v = t[0][0].level
@@ -7691,9 +7859,9 @@ class PlanDeFeu(QFrame):
                         _b.setStyleSheet(_QE_OFF)
 
                 for _icon, _key, _tip in [
-                    ("🌈", "rainbow",    "Rainbow — arc-en-ciel"),
+                    ("🌈", "rainbow",    tr("pdf3_042")),
                     ("⚡", "strobe",     "Strobe"),
-                    ("🔴", "rouge_blanc","Rouge → Blanc"),
+                    ("🔴", "rouge_blanc",tr("pdf3_045")),
                 ]:
                     _qb = QPushButton(_icon)
                     _qb.setToolTip(_tip)
@@ -7728,10 +7896,10 @@ class PlanDeFeu(QFrame):
 
                 # (icône, type moteur, vitesse, cycles visibles, infobulle)
                 _PX_FX = [
-                    ("🏃", "flash",   1.2, 1.0, "Chenillard — un point qui court le long de la barre"),
-                    ("🌊", "breath",  0.8, 1.0, "Onde — dégradé d'intensité qui se déplace"),
-                    ("🌈", "rainbow", 0.4, 1.0, "Arc-en-ciel défilant — une couleur par pixel"),
-                    ("✨", "flash",   2.0, 3.0, "Scintillement — trois points qui courent"),
+                    ("🏃", "flash",   1.2, 1.0, tr("pdf3_048")),
+                    ("🌊", "breath",  0.8, 1.0, tr("pdf3_051")),
+                    ("🌈", "rainbow", 0.4, 1.0, tr("pdf3_054")),
+                    ("✨", "flash",   2.0, 3.0, tr("pdf3_057")),
                 ]
 
                 # Direction de propagation, mémorisée entre deux ouvertures
@@ -7827,10 +7995,10 @@ class PlanDeFeu(QFrame):
                             _px_start(*_px_last["fx"])
 
                     for _dic, _dk, _dtip in [
-                        ("→", "h",      "Balayage horizontal (gauche → droite)"),
-                        ("↓", "v",      "Balayage vertical (haut → bas)"),
-                        ("↘", "diag",   "Diagonale"),
-                        ("⊙", "radial", "Expansion depuis le centre"),
+                        ("→", "h",      tr("pdf3_060")),
+                        ("↓", "v",      tr("pdf3_063")),
+                        ("↘", "diag",   tr("pdf3_066")),
+                        ("⊙", "radial", tr("pdf3_069")),
                     ]:
                         _db = QPushButton(_dic)
                         _db.setToolTip(_dtip)
@@ -7866,19 +8034,19 @@ class PlanDeFeu(QFrame):
                 _grille(h, lbl, sli, val)
                 _wa(w)
 
-            _add_qe_slider("VITESSE", self._qe_speed,
-                           "Vitesse des effets rapides (50 = naturelle)",
+            _add_qe_slider(tr("pdf3_070"), self._qe_speed,
+                           tr("pdf3_071"),
                            self.set_quick_effect_speed)
             if _is_mh:
-                _add_qe_slider("AMPLITUDE", self._qe_amplitude,
-                               "Amplitude du mouvement (50 = naturelle)",
+                _add_qe_slider(tr("pdf3_072"), self._qe_amplitude,
+                               tr("pdf3_073"),
                                self.set_quick_effect_amplitude)
             # Pas de DÉPHASAGE sur une barre : il réécrirait le décalage
             # pixel à pixel posé par start_pixel_effect, et le motif
             # s'effondrerait d'un coup en clignotement synchrone.
             if not _only_matrix:
-                _add_qe_slider("DÉPHASAGE", self._qe_phase,
-                               "Décalage entre fixtures (0 = synchrone, 100 = vague)",
+                _add_qe_slider(tr("pdf3_074"), self._qe_phase,
+                               tr("pdf3_075"),
                                self.set_quick_effect_phase)
 
         menu.exec(self._menu_pos(menu, global_pos))
@@ -8136,30 +8304,30 @@ class _FixtureFormWidget(QWidget):
 
         self.name_edit = QLineEdit(preset.get('name', '') if preset else '')
         self.name_edit.setPlaceholderText(tr("pdf_name_example"))
-        layout.addRow("Nom :", self.name_edit)
+        layout.addRow(tr("pdf3_076"), self.name_edit)
 
         self.type_combo = ComboSansMolette()
         for t in ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
                   "Machine a fumee", "Machine a brouillard",
                   "Machine a etincelles", "Lance-flamme", "Gradateur"]:
-            self.type_combo.addItem(t)
+            self.type_combo.addItem(tr_name(t), t)
         if preset:
-            idx = self.type_combo.findText(preset.get('fixture_type', 'PAR LED'))
+            idx = self.type_combo.findData(preset.get('fixture_type', 'PAR LED'))
             if idx >= 0:
                 self.type_combo.setCurrentIndex(idx)
-        layout.addRow("Type :", self.type_combo)
+        layout.addRow(tr("pdf3_077"), self.type_combo)
 
         self.uni_combo = ComboSansMolette()
         for i, lbl in enumerate(["U1", "U2", "U3", "U4"]):
             self.uni_combo.addItem(lbl, i)
         auto_uni, auto_addr = self._next_patch()
         self.uni_combo.setCurrentIndex(preset.get('universe', auto_uni) if preset else auto_uni)
-        layout.addRow("Univers :", self.uni_combo)
+        layout.addRow(tr("pdf3_078"), self.uni_combo)
 
         self.addr_spin = QSpinBox()
         self.addr_spin.setRange(1, 512)
         self.addr_spin.setValue(preset.get('start_address', auto_addr) if preset else auto_addr)
-        layout.addRow("Adresse DMX :", self.addr_spin)
+        layout.addRow(tr("pdf3_079"), self.addr_spin)
 
         self.group_combo = ComboSansMolette()
         _GROUPS = [
@@ -8182,17 +8350,18 @@ class _FixtureFormWidget(QWidget):
                 sel = i
                 break
         self.group_combo.setCurrentIndex(sel)
-        layout.addRow("Groupe :", self.group_combo)
+        layout.addRow(tr("pdf3_080"), self.group_combo)
 
         self.profile_combo = ComboSansMolette()
-        self._populate_profiles(self.type_combo.currentText())
+        self._populate_profiles(self.type_combo.currentData())
         if preset and 'profile' in preset:
             idx = self.profile_combo.findData(preset['profile'])
             if idx >= 0:
                 self.profile_combo.setCurrentIndex(idx)
-        layout.addRow("Profil DMX :", self.profile_combo)
+        layout.addRow(tr("pdf3_081"), self.profile_combo)
 
-        self.type_combo.currentTextChanged.connect(self._on_type_changed)
+        self.type_combo.currentIndexChanged.connect(
+            lambda _i: self._on_type_changed(self.type_combo.currentData()))
 
     def _next_patch(self):
         """Retourne (universe, addr) pour la prochaine fixture en autopatch intelligent."""
@@ -8251,7 +8420,7 @@ class _FixtureFormWidget(QWidget):
         profile = list(DMX_PROFILES.get(profile_key, DMX_PROFILES['RGBDS']))
         return {
             'name': self.name_edit.text().strip(),
-            'fixture_type': self.type_combo.currentText(),
+            'fixture_type': self.type_combo.currentData(),
             'universe': self.uni_combo.currentData(),
             'start_address': self.addr_spin.value(),
             'group': self.group_combo.currentData() or self.group_combo.currentText(),
@@ -8520,7 +8689,7 @@ class _FixturePreviewBar(QWidget):
         if n == 0:
             painter.setPen(QColor("#444"))
             painter.setFont(QFont("Segoe UI", 10))
-            painter.drawText(self.rect(), Qt.AlignCenter, "Aucune fixture")
+            painter.drawText(self.rect(), Qt.AlignCenter, tr("pdf3_082"))
             painter.end()
             return
 
@@ -8547,57 +8716,57 @@ class NewPlanWizard(QDialog):
 
     _STEPS = [
         dict(
-            group="face",   label="Groupe A — Face",
-            subtitle="Combien de projecteurs face au public ?\n(éclairage frontal de scène)",
-            ftype="PAR LED", profile="RGBDS", prefix="Face",
+            group="face",   label=tr("pdf3_084"),
+            subtitle=tr("pdf3_085"),
+            ftype="PAR LED", profile="RGBDS", prefix=tr("pdf3_088"),
             color="#ffaa33", default=4, max=20,
         ),
         dict(
-            group="face",   label="Groupe A — Contre-jour",
-            subtitle="Combien de contre-jour ?\n(lumières arrière, hautes, sur les perches)",
-            ftype="PAR LED", profile="RGBDS", prefix="Contre",
+            group="face",   label=tr("pdf3_091"),
+            subtitle=tr("pdf3_092"),
+            ftype="PAR LED", profile="RGBDS", prefix=tr("pdf3_095"),
             color="#4488ff", default=6, max=20,
         ),
         dict(
-            group="face",   label="Groupe A — Latéraux",
-            subtitle="Combien de projecteurs latéraux ?\n(éclairage de côté, jardin et cour)",
-            ftype="PAR LED", profile="RGBDS", prefix="Lat",
+            group="face",   label=tr("pdf3_098"),
+            subtitle=tr("pdf3_099"),
+            ftype="PAR LED", profile="RGBDS", prefix=tr("pdf3_102"),
             color="#88aaff", default=2, max=10,
         ),
         dict(
-            group="face",   label="Groupe A — Douches",
-            subtitle="Combien de projecteurs en douche ?\n(éclairage vertical depuis le plafond)",
-            ftype="PAR LED", profile="RGBDS", prefix="Douche",
+            group="face",   label=tr("pdf3_105"),
+            subtitle=tr("pdf3_106"),
+            ftype="PAR LED", profile="RGBDS", prefix=tr("pdf3_109"),
             color="#44ee88", default=3, max=20,
         ),
         dict(
-            group="face",   label="Groupe A — Lyres",
-            subtitle="Combien de lyres / moving heads ?\n(laisser à 0 si aucun)",
-            ftype="Moving Head", profile="MOVING_8CH", prefix="Lyre",
+            group="face",   label=tr("pdf3_112"),
+            subtitle=tr("pdf3_113"),
+            ftype="Moving Head", profile="MOVING_8CH", prefix=tr("pdf3_116"),
             color="#ee44ff", default=0, max=10,
         ),
         dict(
-            group="face",   label="Machine à fumée",
-            subtitle="Combien de machines à fumée / hazers ?\n(laisser à 0 si aucune)",
-            ftype="Machine a fumee", profile="2CH_FUMEE", prefix="Fumée",
+            group="face",   label=tr("pdf3_119"),
+            subtitle=tr("pdf3_120"),
+            ftype="Machine a fumee", profile="2CH_FUMEE", prefix=tr("pdf3_123"),
             color="#aaaaaa", default=0, max=4,
         ),
         dict(
-            group="face",   label="Machine à brouillard",
-            subtitle="Combien de hazers / machines à brume ?\n(laisser à 0 si aucune)",
-            ftype="Machine a brouillard", profile="2CH_BROUILLARD", prefix="Brouillard",
+            group="face",   label=tr("pdf3_126"),
+            subtitle=tr("pdf3_127"),
+            ftype="Machine a brouillard", profile="2CH_BROUILLARD", prefix=tr("pdf3_130"),
             color="#c8d8e8", default=0, max=4,
         ),
         dict(
-            group="face",   label="Machine à étincelles",
-            subtitle="Combien de machines à étincelles ?\n(laisser à 0 si aucune)",
-            ftype="Machine a etincelles", profile="1CH_ETINCELLE", prefix="Étincelles",
+            group="face",   label=tr("pdf3_133"),
+            subtitle=tr("pdf3_134"),
+            ftype="Machine a etincelles", profile="1CH_ETINCELLE", prefix=tr("pdf3_137"),
             color="#ffcc33", default=0, max=8,
         ),
         dict(
-            group="face",   label="Lance-flamme",
-            subtitle="Combien de lance-flammes ?\n(laisser à 0 si aucun)",
-            ftype="Lance-flamme", profile="1CH_FLAMME", prefix="Flamme",
+            group="face",   label=tr("pdf3_140"),
+            subtitle=tr("pdf3_141"),
+            ftype="Lance-flamme", profile="1CH_FLAMME", prefix=tr("pdf3_144"),
             color="#ff5511", default=0, max=8,
         ),
     ]
@@ -9026,7 +9195,7 @@ class _PatchCanvasProxy:
 
         menu.addSeparator()
         n = len(self.selected_lamps)
-        menu.addAction(f"🗑  Supprimer ({n})" if n > 1 else "🗑  Supprimer",
+        menu.addAction(tr("pdf3_146", n=n) if n > 1 else tr("mwy_191"),
                        self._delete_selected_fixtures)
 
         menu.exec(global_pos)
@@ -9127,7 +9296,7 @@ class _PatchCanvasProxy:
                     lambda checked, l=_letter: self._assign_group_to_selected(l)
                 )
             n = len(self.selected_lamps)
-            menu.addAction(f"🗑  Supprimer ({n})" if n > 1 else "🗑  Supprimer",
+            menu.addAction(tr("pdf3_146", n=n) if n > 1 else tr("mwy_191"),
                            self._delete_selected_fixtures)
 
         if self.selected_lamps and (self._align_row_cb or self._distribute_cb):

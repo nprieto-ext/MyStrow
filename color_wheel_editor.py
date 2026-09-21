@@ -197,7 +197,7 @@ class _SlotRow(QWidget):
 
     def _pick_color(self):
         initial = QColor(self._color)
-        c = QColorDialog.getColor(initial, self, "Choisir la couleur",
+        c = QColorDialog.getColor(initial, self, tr("cwe3_001"),
                                   QColorDialog.ShowAlphaChannel)
         if c.isValid():
             self._color = c.name()
@@ -308,7 +308,7 @@ class ColorWheelEditorDialog(QDialog):
         hdr = QHBoxLayout()
         hdr.setContentsMargins(0, 0, 0, 0)
         hdr.setSpacing(6)
-        for txt, w in [("Couleur", 30), ("Nom", 100), ("", 30), ("Valeur DMX (0-255)", 100)]:
+        for txt, w in [("Couleur", 30), ("Nom", 100), ("", 30), (tr("cwe3_005"), 100)]:
             l = QLabel(txt)
             l.setStyleSheet("color:#555;font-size:10px;")
             if w:
@@ -374,8 +374,8 @@ class ColorWheelEditorDialog(QDialog):
         ]
 
         self._chk_all = QCheckBox(
-            f"Appliquer à toutes les lyres ({len(_mh_others)} autres Moving Head)"
-            if _mh_others else "Aucune autre lyre dans le show"
+            tr("cwe3_006", n=len(_mh_others))
+            if _mh_others else tr("cwe3_007")
         )
         self._chk_all.setEnabled(bool(_mh_others))
         root.addWidget(self._chk_all)
@@ -508,15 +508,17 @@ class ColorWheelEditorDialog(QDialog):
 
 
 # ── Slots génériques gobo ─────────────────────────────────────────────────────
+# Construits sur la table symbolique de `core` plutôt que numérotés « Gobo 1,
+# 2, 3… » : ce sont exactement les motifs que les plans 2D et 3D dessinent, donc
+# le nom du slot annonce ce que l'utilisateur va voir à l'écran. La liste sert
+# aussi de repli à la piste Gobo de la timeline (`light_timeline`).
+from core import GOBO_SLOT_NAMES, GOBO_SLOT_COUNT, gobo_slot_dmx
+
 _GENERIC_GOBO_SLOTS = [
-    {"name": "Open",   "color": "#ffffff", "dmx": 0},
-    {"name": "Gobo 1", "color": "#aaaaaa", "dmx": 32},
-    {"name": "Gobo 2", "color": "#aaaaaa", "dmx": 64},
-    {"name": "Gobo 3", "color": "#aaaaaa", "dmx": 96},
-    {"name": "Gobo 4", "color": "#aaaaaa", "dmx": 128},
-    {"name": "Gobo 5", "color": "#aaaaaa", "dmx": 160},
-    {"name": "Gobo 6", "color": "#aaaaaa", "dmx": 192},
-    {"name": "Gobo 7", "color": "#aaaaaa", "dmx": 224},
+    {"name": GOBO_SLOT_NAMES[i],
+     "color": "#ffffff" if i == 0 else "#aaaaaa",
+     "dmx": gobo_slot_dmx(i)}
+    for i in range(GOBO_SLOT_COUNT)
 ]
 
 
@@ -612,7 +614,7 @@ class GoboWheelEditorDialog(QDialog):
         # ── Colonne headers ───────────────────────────────────────────────
         hdr = QHBoxLayout()
         hdr.setContentsMargins(0, 0, 0, 0); hdr.setSpacing(6)
-        for txt, w in [("Couleur", 30), ("Nom", 100), ("", 30), ("Valeur DMX (0-255)", 100)]:
+        for txt, w in [("Couleur", 30), ("Nom", 100), ("", 30), (tr("cwe3_005"), 100)]:
             l = QLabel(txt)
             l.setStyleSheet("color:#555;font-size:10px;")
             if w:
@@ -676,8 +678,8 @@ class GoboWheelEditorDialog(QDialog):
         ]
 
         self._chk_all = QCheckBox(
-            f"Appliquer à toutes les lyres ({len(_mh_others)} autres Moving Head)"
-            if _mh_others else "Aucune autre lyre dans le show"
+            tr("cwe3_006", n=len(_mh_others))
+            if _mh_others else tr("cwe3_007")
         )
         self._chk_all.setEnabled(bool(_mh_others))
         root.addWidget(self._chk_all)
@@ -801,14 +803,14 @@ class GoboWheelEditorDialog(QDialog):
 # couleur fausse en restitution. Elles sont donc décochées par défaut et ne
 # sont sauvegardées que si l'utilisateur les déclare présentes.
 _CALIB_STEPS = [
-    ("Open",    "#ffffff", "Blanc / Open", False),
-    ("Rouge",   "#ff2200", "Rouge",        False),
-    ("Orange",  "#ff8800", "Orange",       False),
-    ("Jaune",   "#ffff00", "Jaune",        False),
-    ("Vert",    "#00cc44", "Vert",         False),
-    ("Cyan",    "#00ccff", "Cyan",         False),
-    ("Bleu",    "#0044ff", "Bleu",         False),
-    ("Magenta", "#cc00ff", "Magenta",      False),
+    ("Open",    "#ffffff", tr("cwe3_016"), False),
+    (tr("nm_rouge"),   "#ff2200", "Rouge",        False),
+    (tr("nm_orange"),  "#ff8800", "Orange",       False),
+    (tr("nm_jaune"),   "#ffff00", "Jaune",        False),
+    (tr("nm_vert"),    "#00cc44", "Vert",         False),
+    (tr("nm_cyan"),    "#00ccff", "Cyan",         False),
+    (tr("nm_bleu"),    "#0044ff", "Bleu",         False),
+    (tr("nm_magenta"), "#cc00ff", "Magenta",      False),
     ("CTO",     "#ffcc66", "CTO",          True),
     ("CTB",     "#aaddff", "CTB",          True),
     ("UV",      "#7722dd", "UV",           True),
@@ -850,10 +852,10 @@ class ColorWheelCalibWizard(QDialog):
     # pas deviner où se trouve l'obturateur d'une lyre, alors on propose les
     # conventions rencontrées sur le terrain plutôt qu'une seule.
     _OPEN_MODES = [
-        (255, False, "Strobe à fond — obturateur intégré au canal Strobe"),
-        (32,  False, "Strobe à 32 — plage « ouvert » de certaines lyres"),
-        (0,   True,  "Shutter inversé — 0 = ouvert"),
-        (0,   False, "Aucune ouverture forcée"),
+        (255, False, tr("cwe3_038")),
+        (32,  False, tr("cwe3_039")),
+        (0,   True,  tr("cwe3_040")),
+        (0,   False, tr("cwe3_041")),
     ]
 
     def __init__(self, proj, all_projectors: list, main_window=None, parent=None):
@@ -1179,7 +1181,7 @@ class ColorWheelCalibWizard(QDialog):
     def _refresh_open_btn(self):
         _s, _i, lbl = self._OPEN_MODES[self._open_mode]
         if self._open_mode == 0 and not self._has_strobe:
-            lbl = "Aucune ouverture forcée"
+            lbl = tr("cwe3_041")
         self._btn_shutter_inv.setText(tr("cwe_not_lighting", lbl=lbl))
         _actif = self._OPEN_MODES[self._open_mode][0] > 0 or self._OPEN_MODES[self._open_mode][1]
         _col = "#ffaa00" if _actif else "#888"

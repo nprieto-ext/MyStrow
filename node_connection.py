@@ -90,7 +90,7 @@ def _resume_dernier_scan() -> str:
         if err:
             return err
         if cartes is None:
-            return "non consulté"
+            return tr("nc3_001")
         return ", ".join(cartes) if cartes else "aucune"
     txt = (f"ipconfig : {_fmt(_DERNIER_SCAN['ipconfig'], _DERNIER_SCAN['err_ipconfig'])}"
            f"  ·  pilote : {_fmt(_DERNIER_SCAN['pilote'], _DERNIER_SCAN['err_pilote'])}")
@@ -650,14 +650,14 @@ class _DiagWorker(QThread):
         if not adapters:
             # Pas « vérifiez le câble RJ45 » : sur un USB NODE DMX il n'y en a
             # pas, et c'est le câble USB qui porte la carte réseau.
-            eth_detail = "Aucune carte réseau détectée — vérifiez le câble entre le PC et le boîtier"
+            eth_detail = tr("nc3_002")
             eth_fix = "fix_cable"
         elif not eth_ok:
             eth_name = adapters[0][0]
-            eth_detail = f"Carte « {eth_name} » — IP incorrecte ({adapters[0][1] or 'non configurée'})"
+            eth_detail = tr("nc3_003", eth_name=eth_name, a=adapters[0][1] or tr("nc3_004"))
             eth_fix = "fix_ip"
         else:
-            eth_detail = f"Carte « {eth_name} » — IP 2.0.0.x ✓"
+            eth_detail = tr("nc3_005", eth_name=eth_name)
             eth_fix = None
 
         results.append(("ok" if eth_ok else "err", "Carte Ethernet", eth_detail, eth_fix))
@@ -673,7 +673,7 @@ class _DiagWorker(QThread):
             if not box_ok:
                 box_ok = _artpoll_probe(TARGET_IP, timeout=1.5)
             if box_ok:
-                box_detail = f"Boîtier {TARGET_IP} répond ✓"
+                box_detail = tr("nc3_006", TARGET_IP=TARGET_IP)
             else:
                 # Le boîtier n'est pas forcément absent : il peut simplement
                 # être resté à son adresse d'usine. Le dire vaut mieux que
@@ -681,14 +681,13 @@ class _DiagWorker(QThread):
                 trouves, _fiable = _artpoll_discover(timeout=1.5)
                 if trouves:
                     autre_ip = trouves[0]["ip"]
-                    nom = trouves[0]["long"] or trouves[0]["court"] or "boîtier"
-                    box_detail = (f"Boîtier trouvé en {autre_ip} ({nom}) — "
-                                  f"MyStrow cherche {TARGET_IP}")
+                    nom = trouves[0]["long"] or trouves[0]["court"] or tr("nc3_007")
+                    box_detail = (tr("nc3_010", autre_ip=autre_ip, nom=nom, TARGET_IP=TARGET_IP))
                 else:
-                    box_detail = f"Boîtier {TARGET_IP} ne répond pas — allumé ? câble branché ?"
+                    box_detail = tr("nc3_011", TARGET_IP=TARGET_IP)
         else:
             box_ok = False
-            box_detail = "En attente de la carte réseau"
+            box_detail = tr("nc3_012")
 
         results.append(("ok" if box_ok else "err", f"Boîtier {TARGET_IP}", box_detail,
                         None if box_ok else
@@ -697,7 +696,7 @@ class _DiagWorker(QThread):
 
         # ── 4. IP cible dans MyStrow ─────────────────────────────────────
         ip_ok = False
-        ip_detail = "Impossible de vérifier"
+        ip_detail = tr("nc3_013")
         ip_fix = None
         try:
             import sys
@@ -705,8 +704,8 @@ class _DiagWorker(QThread):
                 if hasattr(mod, '_dmx_instance'):
                     dmx = mod._dmx_instance
                     ip_ok = (dmx.target_ip == TARGET_IP)
-                    ip_detail = (f"IP cible : {dmx.target_ip} ✓" if ip_ok
-                                 else f"IP cible : {dmx.target_ip} → doit être {TARGET_IP}")
+                    ip_detail = (tr("nc3_014", target_ip=dmx.target_ip) if ip_ok
+                                 else tr("nc3_015", target_ip=dmx.target_ip, TARGET_IP=TARGET_IP))
                     ip_fix = None if ip_ok else "fix_target_ip"
                     break
         except Exception:
@@ -791,10 +790,10 @@ class NodeConnectionDialog(QDialog):
         checks_lay.setSpacing(14)
 
         labels = [
-            "Transport Art-Net",
-            "Carte Ethernet",
-            f"Boîtier {TARGET_IP}",
-            "IP cible MyStrow",
+            tr("nc3_016"),
+            tr("nc3_017"),
+            tr("nc3_018", TARGET_IP=TARGET_IP),
+            tr("nc3_019"),
         ]
         for i, label in enumerate(labels):
             row = QHBoxLayout()
@@ -1068,7 +1067,7 @@ QPushButton {
 }
 """
 
-_WIZARD_STEPS = ["Câbles", "Carte réseau", "Adresse IP", "Connexion"]
+_WIZARD_STEPS = [tr("nc3_020"), tr("nc3_021"), tr("nc3_022"), tr("nc3_023")]
 
 P_W_DETECTING = 0
 P_W_CONNECTED = 1
@@ -1766,18 +1765,18 @@ class NodeSetupWizard(QDialog):
         self._spin_lbl = QLabel("◐"); self._spin_lbl.setFont(QFont("Segoe UI", 48))
         self._spin_lbl.setStyleSheet("color: #00d4ff; background: transparent;")
         self._spin_lbl.setAlignment(Qt.AlignCenter); lay.addWidget(self._spin_lbl)
-        lay.addSpacing(12); lay.addWidget(self._sub_lbl("Recherche du boîtier DMX..."))
+        lay.addSpacing(12); lay.addWidget(self._sub_lbl(tr("nc3_024")))
         lay.addStretch(); return w
 
     def _pg_connected(self):
         w, lay = self._make_page(); lay.addStretch()
         lay.addWidget(self._big_icon("✅", "#4ade80")); lay.addSpacing(12)
-        lay.addWidget(self._title_lbl("Boîtier connecté !")); lay.addSpacing(8)
-        self._connected_ip_lbl = self._sub_lbl(f"Adresse IP : {TARGET_IP}")
+        lay.addWidget(self._title_lbl(tr("nc3_025"))); lay.addSpacing(8)
+        self._connected_ip_lbl = self._sub_lbl(tr("nc3_026", TARGET_IP=TARGET_IP))
         lay.addWidget(self._connected_ip_lbl); lay.addSpacing(24)
-        lay.addWidget(self._primary_btn("Super, fermer  ✓", self.accept))
+        lay.addWidget(self._primary_btn(tr("nc3_027"), self.accept))
         lay.addSpacing(8)
-        lay.addWidget(self._secondary_btn("↺  Relancer depuis le début", self._restart_wizard))
+        lay.addWidget(self._secondary_btn(tr("nc3_028"), self._restart_wizard))
         lay.addStretch(); return w
 
     def _pg_cables(self):
@@ -1792,7 +1791,7 @@ class NodeSetupWizard(QDialog):
         l'animation et le bouton suivent.
         """
         w, lay = self._make_page()
-        lay.addWidget(self._title_lbl("Branchons le boîtier"))
+        lay.addWidget(self._title_lbl(tr("nc3_029")))
         lay.addSpacing(14)
 
         # Choix du modèle
@@ -1805,15 +1804,15 @@ class NodeSetupWizard(QDialog):
         _police = QFont("Segoe UI", 8)
         _fm = QFontMetrics(_police)
         _haut = 0
-        for cle, titre in (("rj45", "Une prise réseau\n+ une prise USB"),
-                           ("usb",  "Une seule\nprise USB")):
+        for cle, titre in (("rj45", tr("nc3_031")),
+                           ("usb",  tr("nc3_033"))):
             _haut = max(_haut, _fm.boundingRect(
                 QRect(0, 0, 190, 400), Qt.TextWordWrap | Qt.AlignCenter, titre).height())
         _haut += 22   # les 6 px de padding haut et bas, plus une marge de sûreté
 
         for cle, titre in (
-            ("rj45", "Une prise réseau\n+ une prise USB"),
-            ("usb",  "Une seule\nprise USB"),
+            ("rj45", tr("nc3_031")),
+            ("usb",  tr("nc3_033")),
         ):
             b = QPushButton(titre)
             b.setCheckable(True); b.setFixedHeight(_haut)
@@ -1836,7 +1835,7 @@ class NodeSetupWizard(QDialog):
 
         lay.addStretch()
         lay.addWidget(self._step_indicator(0)); lay.addSpacing(12)
-        self._btn_cables_next = self._primary_btn("C'est branché  →", self._start_adapter_scan)
+        self._btn_cables_next = self._primary_btn(tr("nc3_038"), self._start_adapter_scan)
         lay.addWidget(self._btn_cables_next)
         self._set_cable_variant("rj45")
         return w
@@ -1854,18 +1853,18 @@ class NodeSetupWizard(QDialog):
                    else ("#1e1e1e", "#8a8a8a", "#2e2e2e"))
             )
         self._cables_anim.set_variant(cle)
-        self._btn_cables_next.setText("Le câble USB est branché  →" if cle == "usb"
-                                      else "Les 2 câbles sont branchés  →")
+        self._btn_cables_next.setText(tr("nc3_039") if cle == "usb"
+                                      else tr("nc3_041"))
 
     def _pg_adapters(self):
         w, lay = self._make_page()
         lay.addWidget(self._big_icon("🌐")); lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Quelle carte réseau ?")); lay.addSpacing(4)
+        lay.addWidget(self._title_lbl(tr("nc3_042"))); lay.addSpacing(4)
         # Le libellé dépend du boîtier : sur un USB NODE DMX, la carte à choisir
         # n'est reliée à rien — c'est le boîtier lui-même, qui se présente à
         # Windows comme une carte réseau (« Electroconcept USB Node »).
         self._adapters_hint = self._sub_lbl(
-            "Choisissez la carte réseau reliée au boîtier\n(pas la Wi-Fi)")
+            tr("nc3_043"))
         lay.addWidget(self._adapters_hint)
         lay.addSpacing(12)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -1889,7 +1888,7 @@ class NodeSetupWizard(QDialog):
     def _pg_ip_method(self):
         w, lay = self._make_page()
         lay.addWidget(self._big_icon("⚙️")); lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Configuration IP")); lay.addSpacing(12)
+        lay.addWidget(self._title_lbl(tr("nc3_044"))); lay.addSpacing(12)
         info = QFrame(); info.setStyleSheet(
             "QFrame { background: #222222; border: 1px solid #333333; border-radius: 8px; }")
         il = QVBoxLayout(info); il.setContentsMargins(16,12,16,12); il.setSpacing(4)
@@ -1898,7 +1897,7 @@ class NodeSetupWizard(QDialog):
         self._ip_method_adapter_lbl.setStyleSheet("color: #666666; background: transparent; border: none;")
         self._ip_method_adapter_lbl.setAlignment(Qt.AlignCenter)
         il.addWidget(self._ip_method_adapter_lbl)
-        ip_t = QLabel("IP cible :  2.0.0.1  /  255.0.0.0")
+        ip_t = QLabel(tr("nc3_045"))
         ip_t.setFont(QFont("Segoe UI", 11, QFont.Bold))
         ip_t.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
         ip_t.setAlignment(Qt.AlignCenter); il.addWidget(ip_t)
@@ -1908,9 +1907,9 @@ class NodeSetupWizard(QDialog):
         note.setStyleSheet("color: #444444; background: transparent;")
         note.setAlignment(Qt.AlignCenter); lay.addWidget(note)
         lay.addSpacing(16); lay.addWidget(self._step_indicator(2)); lay.addSpacing(14)
-        lay.addWidget(self._primary_btn("Configurer automatiquement  ✓", self._do_auto_config))
+        lay.addWidget(self._primary_btn(tr("nc3_046"), self._do_auto_config))
         lay.addSpacing(8)
-        lay.addWidget(self._secondary_btn("Je configure moi-même", self._show_manual_from_method))
+        lay.addWidget(self._secondary_btn(tr("nc3_047"), self._show_manual_from_method))
         return w
 
     def _pg_working(self):
@@ -1933,7 +1932,7 @@ class NodeSetupWizard(QDialog):
     def _pg_ip_manual(self):
         w, lay = self._make_page()
         lay.addWidget(self._big_icon("📋")); lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Configuration manuelle")); lay.addSpacing(6)
+        lay.addWidget(self._title_lbl(tr("nc3_048"))); lay.addSpacing(6)
         self._manual_ctx_lbl = self._sub_lbl(""); lay.addWidget(self._manual_ctx_lbl)
         lay.addSpacing(12)
         sf = QFrame(); sf.setStyleSheet(
@@ -1944,23 +1943,23 @@ class NodeSetupWizard(QDialog):
         self._manual_steps_lbl.setStyleSheet("color: #cccccc; background: transparent; border: none;")
         self._manual_steps_lbl.setWordWrap(True); sl.addWidget(self._manual_steps_lbl)
         lay.addWidget(sf); lay.addSpacing(8)
-        lay.addWidget(self._secondary_btn("📂  Ouvrir les connexions réseau", _open_network_connections))
+        lay.addWidget(self._secondary_btn(tr("nc3_049"), _open_network_connections))
         lay.addSpacing(4)
-        lay.addWidget(self._secondary_btn("🔑  Relancer en administrateur", self._restart_as_admin))
+        lay.addWidget(self._secondary_btn(tr("nc3_050"), self._restart_as_admin))
         lay.addSpacing(12); lay.addWidget(self._step_indicator(2)); lay.addSpacing(12)
-        lay.addWidget(self._primary_btn("J'ai configuré  →  Tester la connexion", self._start_final_search))
+        lay.addWidget(self._primary_btn(tr("nc3_051"), self._start_final_search))
         return w
 
     def _pg_success(self):
         w, lay = self._make_page(); lay.addStretch()
         lay.addWidget(self._big_icon("🎉", "#4ade80")); lay.addSpacing(12)
-        lay.addWidget(self._title_lbl("Connexion établie !")); lay.addSpacing(8)
+        lay.addWidget(self._title_lbl(tr("nc3_052"))); lay.addSpacing(8)
         # Gardé sous la main : quand le boîtier a été trouvé à une autre adresse
         # que celle attendue, la page doit dire laquelle a été retenue.
-        self._success_lbl = self._sub_lbl("Votre boîtier est prêt à recevoir les données DMX.")
+        self._success_lbl = self._sub_lbl(tr("nc3_053"))
         lay.addWidget(self._success_lbl)
         lay.addSpacing(20); lay.addWidget(self._step_indicator(3)); lay.addSpacing(20)
-        lay.addWidget(self._primary_btn("Super, fermer  ✓", self.accept))
+        lay.addWidget(self._primary_btn(tr("nc3_027"), self.accept))
         lay.addStretch(); return w
 
     # ── navigation ───────────────────────────────────────────
@@ -2030,17 +2029,15 @@ class NodeSetupWizard(QDialog):
             # Node » ou « UsbNcm Host Device » selon la source. On ne promet
             # donc pas un nom exact, on dit où regarder.
             self._adapters_hint.setText(
-                "Le boîtier EST la carte réseau : prenez celle\n"
-                "qui apparaît quand vous le branchez"
+                tr("nc3_055")
                 if self._cable_variant == "usb"
-                else "Choisissez la carte réseau reliée au boîtier\n(pas la Wi-Fi)")
+                else tr("nc3_043"))
         if retry and self._cable_variant == "usb":
             self._set_working(
-                "Attente du boîtier...",
-                f"Windows installe la carte réseau du boîtier "
-                f"({self._scan_tries}/{self._SCAN_ESSAIS})")
+                tr("nc3_057"),
+                tr("nc3_058", scan_tries=self._scan_tries, SCAN_ESSAIS=self._SCAN_ESSAIS))
         else:
-            self._set_working("Scan des cartes réseau...", "Recherche des adaptateurs Ethernet")
+            self._set_working(tr("nc3_059"), tr("nc3_060"))
         t = _AdapterScanner(); t.done.connect(self._on_adapters_scanned)
         self._threads.append(t); t.start()
 
@@ -2103,13 +2100,13 @@ class NodeSetupWizard(QDialog):
             for i, (name, ip, desc, connected) in enumerate(adapters):
                 already_ok = ip.startswith("2.0.0.")
                 if already_ok:
-                    state = "✓  IP Art-Net déjà configurée"
+                    state = tr("nc3_061")
                 elif connected and ip:
-                    state = f"🔌 Câble branché  —  IP : {ip}"
+                    state = tr("nc3_062", ip=ip)
                 elif connected:
-                    state = "🔌 Câble branché  —  IP non configurée"
+                    state = tr("nc3_063")
                 else:
-                    state = "⚠  Câble débranché"
+                    state = tr("nc3_064")
                 desc_line = f"\n  {desc}" if desc and desc.lower() != name.lower() else ""
                 txt = f"  {name}{desc_line}\n  {state}"
                 style = _BTN_ADAPTER_OK if already_ok else _BTN_ADAPTER
@@ -2148,10 +2145,10 @@ class NodeSetupWizard(QDialog):
     def _on_adapter_selected(self, adapter_name, current_ip):
         self._adapter_name = adapter_name
         if current_ip.startswith("2.0.0."):
-            self._set_working("IP déjà configurée ✓", f"Recherche du boîtier sur {TARGET_IP}...")
+            self._set_working(tr("nc3_065"), tr("nc3_066", TARGET_IP=TARGET_IP))
             self._start_final_search()
         else:
-            ip_display = current_ip if current_ip else "non configurée"
+            ip_display = current_ip if current_ip else tr("nc3_004")
             self._ip_method_adapter_lbl.setText(
                 tr("nc_f_adapter", adapter_name=adapter_name, ip_display=ip_display))
             self._net_came_from_method = False
@@ -2160,8 +2157,8 @@ class NodeSetupWizard(QDialog):
     # ── auto config ──────────────────────────────────────────
 
     def _do_auto_config(self):
-        self._set_working("Configuration en cours...",
-            f"Application de 2.0.0.1 sur « {self._adapter_name} »...")
+        self._set_working(tr("nc3_068"),
+            tr("nc3_069", adapter_name=self._adapter_name))
         t = _NetworkSetup(self._adapter_name); t.done.connect(self._on_network_done)
         self._threads.append(t); t.start()
 
@@ -2178,9 +2175,9 @@ class NodeSetupWizard(QDialog):
         self._show_net_manual(self._adapter_name, "manual")
 
     def _show_net_manual(self, adapter, status="manual"):
-        label = f"« {adapter} »" if adapter else "votre carte Ethernet"
-        ctx = (f"Droits insuffisants sur {label}.\nConfigurez manuellement ou relancez en administrateur."
-               if status == "manual" else f"Carte : {label}")
+        label = tr("nc3_070", adapter=adapter) if adapter else tr("nc3_071")
+        ctx = (tr("nc3_072", label=label)
+               if status == "manual" else tr("nc3_073", label=label))
         self._manual_ctx_lbl.setText(ctx)
         self._manual_steps_lbl.setText(
             tr("nc_f_ip_steps", label=label)
@@ -2190,7 +2187,7 @@ class NodeSetupWizard(QDialog):
     # ── node search ──────────────────────────────────────────
 
     def _start_final_search(self):
-        self._set_working("Recherche du boîtier DMX...", f"Envoi ArtPoll sur {TARGET_IP}...")
+        self._set_working(tr("nc3_024"), tr("nc3_076", TARGET_IP=TARGET_IP))
         t = _NodeSearcher(); t.finished.connect(self._on_search_done)
         self._threads.append(t); t.start()
 
@@ -2215,7 +2212,7 @@ class NodeSetupWizard(QDialog):
                 self._net_came_from_method = True
                 self._go_to(P_W_IP_MANUAL)
         else:
-            label = f"« {self._adapter_name} »" if self._adapter_name else "votre carte Ethernet"
+            label = tr("nc3_077", adapter_name=self._adapter_name) if self._adapter_name else tr("nc3_071")
             self._manual_ctx_lbl.setText(
                 tr("nc_f_no_answer", TARGET_IP=TARGET_IP))
             self._manual_steps_lbl.setText(
@@ -2728,7 +2725,7 @@ class DmxOutputDialog(QDialog):
             ("ENTTEC Open DMX USB",           TRANSPORT_ENTTEC),
             ("OPTO OPEN DMX (ElectroConcept)", TRANSPORT_ENTTEC),
             ("DMXKing UltraDMX Micro",        TRANSPORT_ENTTEC),
-            ("Autre interface USB-DMX",       TRANSPORT_ENTTEC),
+            (tr("nc3_079"),       TRANSPORT_ENTTEC),
         ]:
             self._proto_combo.addItem(_label, _tr)
         cur_transport = self._dmx.transport if self._dmx else TRANSPORT_ENTTEC
@@ -2854,7 +2851,7 @@ class DmxOutputDialog(QDialog):
         proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
         # Rien à dire sur les adaptateurs simples : le label est masqué pour ne
         # pas laisser une ligne vide sous le sélecteur d'interface.
-        texte = ("La LED de l'interface passe au vert quand la sortie DMX est active."
+        texte = (tr("nc3_080")
                  if proto == TRANSPORT_ENTTEC_PRO else "")
         self._proto_info.setText(texte)
         self._proto_info.setVisible(bool(texte))
@@ -2935,7 +2932,7 @@ class DmxOutputDialog(QDialog):
 
         for n, (_c, art) in enumerate(self._out_combos):
             if mapping[n] == OUTPUT_OFF:
-                art.setText("— noir —")
+                art.setText(tr("nc3_081"))
             elif mapping[n] == OUTPUT_INPUT:
                 art.setText(f"← Art-Net {base + n}")
             else:
@@ -3005,10 +3002,10 @@ class DmxOutputDialog(QDialog):
                 for n, u in enumerate(mapping)) if mapping else ""
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(
-                f"Sortie Node appliquée — {ip_node}:{TARGET_PORT}"
+                tr("nc3_084", ip_node=ip_node, TARGET_PORT=TARGET_PORT)
                 + (f"  •  {routage}" if routage else ""))
             self._journal(
-                f"Sortie DMX : Art-Net connecté — {ip_node}:{TARGET_PORT}"
+                tr("nc3_085", ip_node=ip_node, TARGET_PORT=TARGET_PORT)
                 + (f"  ({routage})" if routage else ""),
                 "success",
             )
@@ -3068,7 +3065,7 @@ class DmxOutputDialog(QDialog):
                         tr("nc_f_port_busy", com=com)
                     )
                     self._journal(
-                        f"Sortie DMX : échec de connexion sur {com} — port inaccessible",
+                        tr("nc3_086", com=com),
                         "error",
                     )
                     return
@@ -3077,15 +3074,14 @@ class DmxOutputDialog(QDialog):
             elif proto == TRANSPORT_ENTTEC_D2XX:
                 proto_label = "Open (D2XX)"
             else:
-                proto_label = "Open (série)"
+                proto_label = tr("nc3_087")
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(tr("nc_f_usb_applied", proto_label=proto_label, com=com))
             # Vaut aussi pour la branche « déjà ouvert » : l'utilisateur a cliqué
             # « Connecter », le journal doit confirmer l'état obtenu — pas
             # rester muet sous prétexte qu'aucun port n'a été rouvert.
             self._journal(
-                f"Sortie DMX : {'ENTTEC DMX USB Pro' if is_pro else 'ENTTEC Open DMX USB'} "
-                f"connecté — {com} ({proto_label})",
+                tr("nc3_088", a='ENTTEC DMX USB Pro' if is_pro else 'ENTTEC Open DMX USB', com=com, proto_label=proto_label),
                 "success",
             )
 

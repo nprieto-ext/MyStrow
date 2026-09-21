@@ -15,6 +15,7 @@ import base64
 from enum import Enum
 from pathlib import Path
 from datetime import datetime, timezone
+from i18n import tr
 
 # === Cryptographie (chiffrement local uniquement) ===
 try:
@@ -107,8 +108,8 @@ def _result_not_activated():
         state=LicenseState.NOT_ACTIVATED,
         dmx_allowed=False,
         watermark_required=True,
-        message="Connectez-vous a votre compte MyStrow",
-        action_label="Connexion"
+        message=tr("lic3_001"),
+        action_label=tr("lic3_002")
     )
 
 def _result_invalid(reason=""):
@@ -116,7 +117,7 @@ def _result_invalid(reason=""):
         state=LicenseState.INVALID,
         dmx_allowed=False,
         watermark_required=True,
-        message=reason if reason else "Compte invalide"
+        message=reason if reason else tr("lic3_003")
     )
 
 def _result_trial_active(days):
@@ -127,8 +128,8 @@ def _result_trial_active(days):
         watermark_required=False,
         show_warning=warn,
         days_remaining=days,
-        message=f"Essai - {days} jour{'s' if days > 1 else ''} restant{'s' if days > 1 else ''}",
-        action_label="Mon compte" if warn else "",
+        message=tr("lic3_004", days=days, a='s' if days > 1 else ''),
+        action_label=tr("btn_my_account") if warn else "",
         license_type="trial"
     )
 
@@ -137,8 +138,8 @@ def _result_trial_expired():
         state=LicenseState.TRIAL_EXPIRED,
         dmx_allowed=False,
         watermark_required=True,
-        message="Periode d'essai expiree",
-        action_label="Mon compte"
+        message=tr("lic3_011"),
+        action_label=tr("btn_my_account")
     )
 
 def _result_license_active(days, auto_renew=False):
@@ -153,8 +154,8 @@ def _result_license_active(days, auto_renew=False):
         watermark_required=False,
         show_warning=warn,
         days_remaining=days,
-        message=f"Licence expire dans {days} jour{'s' if days > 1 else ''}" if warn else "",
-        action_label="Renouveler" if warn else "",
+        message=tr("lic3_013", days=days, a='s' if days > 1 else '') if warn else "",
+        action_label=tr("lic3_017") if warn else "",
         license_type="license"
     )
 
@@ -163,8 +164,8 @@ def _result_license_expired():
         state=LicenseState.LICENSE_EXPIRED,
         dmx_allowed=False,
         watermark_required=True,
-        message="Licence expiree",
-        action_label="Renouveler"
+        message=tr("lic3_019"),
+        action_label=tr("lic3_017")
     )
 
 def _is_auto_renew(plan_type: str, stripe_subscription_id: str) -> bool:
@@ -179,7 +180,7 @@ def _result_offline(cached_plan, cached_expiry_utc, days_offline, auto_renew=Fal
     now = datetime.now(timezone.utc).timestamp()
     days_remaining = max(0, int((cached_expiry_utc - now) / 86400))
 
-    suffix = f" (hors-ligne, {days_offline}j)"
+    suffix = tr("lic3_021", days_offline=days_offline)
     if cached_plan == "license":
         if now >= cached_expiry_utc:
             return _result_license_expired()
@@ -190,7 +191,7 @@ def _result_offline(cached_plan, cached_expiry_utc, days_offline, auto_renew=Fal
             state=r.state, dmx_allowed=r.dmx_allowed,
             watermark_required=r.watermark_required,
             show_warning=r.show_warning, days_remaining=r.days_remaining,
-            message=(r.message or "Licence active") + suffix,
+            message=(r.message or tr("lic3_022")) + suffix,
             action_label=r.action_label, license_type=r.license_type
         )
     else:  # trial
@@ -201,7 +202,7 @@ def _result_offline(cached_plan, cached_expiry_utc, days_offline, auto_renew=Fal
             state=r.state, dmx_allowed=r.dmx_allowed,
             watermark_required=r.watermark_required,
             show_warning=r.show_warning, days_remaining=r.days_remaining,
-            message=(r.message or "Essai actif") + suffix,
+            message=(r.message or tr("lic3_023")) + suffix,
             action_label=r.action_label, license_type=r.license_type
         )
 
@@ -687,7 +688,10 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
         err_msg = str(e)
         print(f"Firebase injoignable ou erreur : {err_msg}")
 
-        if "2 appareils" in err_msg or "désactivé" in err_msg or "Session expirée" in err_msg:
+        # Messages de firebase_client, traduits par tr() : on compare aux deux.
+        _bloquants = ("2 appareils", "désactivé", "Session expirée",
+                      tr("fbc3_044"), tr("fbc3_039"), tr("fbc3_041"))
+        if any(s in err_msg for s in _bloquants):
             return _result_invalid(err_msg)
 
         return _offline_fallback(account)
@@ -776,7 +780,7 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
     try:
         machine_id = get_machine_id()
     except Exception as e:
-        return False, f"Erreur identification machine: {e}"
+        return False, tr("lic3_024", e=e)
 
     try:
         import firebase_client as fc
@@ -791,7 +795,7 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
         # Verifier que le document de licence existe
         doc = fc.get_license_doc(uid, id_token)
         if doc is None:
-            return False, "Aucun compte licence associe a cet email."
+            return False, tr("lic3_025")
 
         plan       = doc.get("plan", "trial")
         plan_type  = doc.get("plan_type", "")
@@ -834,7 +838,7 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
         print(f"[LOGIN] _pending_login_result={_pending_login_result}")
 
         plan_label = "licence" if plan == "license" else "essai"
-        return True, f"Connecte — {auth.get('email', email)} ({plan_label})"
+        return True, tr("lic3_026", a=auth.get('email', email), plan_label=plan_label)
 
     except Exception as e:
         print(f"[LOGIN] ERREUR: {e}")
@@ -849,7 +853,7 @@ def register_account(email: str, password: str) -> tuple[bool, str]:
     try:
         machine_id = get_machine_id()
     except Exception as e:
-        return False, f"Erreur identification machine: {e}"
+        return False, tr("lic3_024", e=e)
 
     try:
         import firebase_client as fc
@@ -878,7 +882,7 @@ def register_account(email: str, password: str) -> tuple[bool, str]:
         }
         _save_account(machine_id, account_data)
 
-        return True, f"Compte cree — essai gratuit 15 jours active !"
+        return True, tr("lic3_029")
 
     except Exception as e:
         return False, str(e)
@@ -899,7 +903,7 @@ def subscribe_newsletter(email: str) -> tuple[bool, str]:
             # Clé Brevo non configurée → rediriger vers le site
             import webbrowser
             webbrowser.open("https://mystrow.fr#newsletter")
-            return True, "Redirection vers le site pour l'inscription."
+            return True, tr("lic3_030")
 
         import brevo_client as bc
         bc.subscribe_contact(email, lang=lang)
@@ -918,7 +922,7 @@ def subscribe_newsletter(email: str) -> tuple[bool, str]:
         if uid and id_token:
             import firebase_client as fc
             fc.update_newsletter_consent(uid, id_token, True, lang=lang)
-        return True, "Abonnement confirmé !"
+        return True, tr("lic3_031")
     except Exception as e:
         return False, str(e)
 
@@ -943,7 +947,7 @@ def unsubscribe_newsletter(email: str) -> tuple[bool, str]:
         if uid and id_token:
             import firebase_client as fc
             fc.update_newsletter_consent(uid, id_token, False)
-        return True, "Désabonné avec succès."
+        return True, tr("lic3_032")
     except Exception as e:
         return False, str(e)
 
@@ -979,12 +983,12 @@ def deactivate_machine() -> tuple[bool, str]:
     try:
         machine_id = get_machine_id()
     except Exception as e:
-        return False, f"Erreur identification machine: {e}"
+        return False, tr("lic3_024", e=e)
 
     account = _load_account(machine_id)
     if account is None:
         _delete_account()
-        return True, "Deconnecte."
+        return True, tr("lic3_034")
 
     try:
         import firebase_client as fc
@@ -1004,7 +1008,7 @@ def deactivate_machine() -> tuple[bool, str]:
         pass
 
     _delete_account()
-    return True, "Machine deconnectee avec succes."
+    return True, tr("lic3_035")
 
 
 # ============================================================

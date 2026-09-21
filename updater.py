@@ -1446,7 +1446,7 @@ _GEAR_ARTNET_COMPAT = [
     ("DMXking eDMX2 PRO",        "~200€",  "gear_c_edmx2"),
     ("Node ArtNet 4 univers",    "129€",   "gear_c_node4"),
     ("Luminex Ethernet-DMX",     "~300€+", "gear_c_luminex"),
-    ("Node générique (Alibaba)", "20–60€", "gear_c_generique"),
+    (tr("upd3_051"), "20–60€", "gear_c_generique"),
     ("ESP32 DIY + lib ArtNet",   "~10€",   "gear_c_esp32"),
 ]
 
@@ -1808,9 +1808,9 @@ class GearDialog(QDialog):
         scroll_lay.setSpacing(12)
 
         for section_title, items, color, show_price in [
-            ("🎹  Contrôleurs compatibles", _GEAR_CONTROLLERS_COMPAT, "#E2CE16", False),
-            ("🔌  Nodes ArtNet / DMX",      _GEAR_ARTNET_COMPAT,      "#00d4ff", True),
-            ("🔌  Interfaces USB / DMX",    _GEAR_USB_COMPAT,         "#a064ff", False),
+            (tr("upd3_054"), _GEAR_CONTROLLERS_COMPAT, "#E2CE16", False),
+            (tr("upd3_056"),      _GEAR_ARTNET_COMPAT,      "#00d4ff", True),
+            (tr("upd3_058"),    _GEAR_USB_COMPAT,         "#a064ff", False),
         ]:
             section_col = QVBoxLayout()
             section_col.setSpacing(3)

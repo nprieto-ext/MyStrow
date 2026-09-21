@@ -15,6 +15,8 @@ import time
 import unicodedata
 from pathlib import Path
 
+from i18n import tr
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QFrame, QPushButton, QToolButton,
@@ -64,13 +66,13 @@ def _ext_filter(label, *groups):
 
 # === FILTRES FICHIERS ===
 MEDIA_EXTENSIONS_FILTER = _ext_filter(
-    "Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS)
+    tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS)
 # Cartouches et localisation de média : audio + vidéo, sans les images.
-AV_EXTENSIONS_FILTER = _ext_filter("Medias", AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
+AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTENSIONS)
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.98"
+VERSION = "3.1.99"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -224,7 +226,6 @@ except ImportError:
 # === MIDI SUPPORT ===
 # Détection via find_spec (sans importer le module — évite le scan MIDI au démarrage)
 import importlib.util as _iutil
-from i18n import tr
 MIDI_AVAILABLE = False
 midi_lib = None
 if _iutil.find_spec("rtmidi") is not None:
@@ -1267,31 +1268,88 @@ def emitted_brightness(proj) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Roue de gobos symbolique — 8 slots
+# Roue de gobos symbolique — 16 slots
 # ─────────────────────────────────────────────────────────────────────────────
 # Faute de connaître les motifs réels de chaque appareil, les deux plans
-# représentent le canal Gobo par 8 motifs conventionnels : le slot vaut
-# `gobo // 32` (soit `floor(gobo / 256 * 8)`, même découpage des deux côtés).
+# représentent le canal Gobo par des motifs conventionnels : le slot vaut
+# `gobo // GOBO_SLOT_STEP`, même découpage des deux côtés.
 #
 # ⚠️ CET ORDRE FAIT FOI. Il est dessiné DEUX fois, avec des moyens différents —
-# `plan_de_feu._draw_fixture` au QPainter dans la tache au sol, et
+# `plan_de_feu._draw_gobo_pattern` au QPainter dans la tache au sol, et
 # `_createGoboTexture` au canvas dans `plan_3d_web.html`. Les deux listes
 # étaient DIVERGENTES (le slot 3 montrait une croix × en 2D et trois cercles en
 # 3D) : le même show ne se lisait pas pareil selon le plan ouvert. Toute
 # modification ici doit être reportée dans les deux dessins.
 #
-# La couche « Gobo » de l'éditeur d'effets produit `int(niveau * 7) * 32`, donc
-# elle balaie exactement ces huit slots.
+# ⚠️ POURQUOI LES NOUVEAUX MOTIFS SONT EN POSITIONS IMPAIRES. La roue est passée
+# de 8 à 16 slots. Les 8 motifs d'origine occupaient les valeurs DMX 0, 32, 64…
+# 224 ; en les reposant simplement dans l'ordre, un show existant qui envoie 64
+# serait passé de « Étoile 4 branches » à « Trois palmes » — le même fichier ne
+# se serait plus affiché pareil. Les huit anciens gardent donc leur valeur DMX
+# (index pair = ancien index × 2) et les huit nouveaux se glissent entre eux.
+# L'ordre paraît décousu ; il est le prix de la compatibilité, et une vraie roue
+# d'appareil n'est de toute façon pas ordonnée logiquement.
+#
+# La couche « Gobo » de l'éditeur d'effets produit
+# `int(niveau * (GOBO_SLOT_COUNT - 1)) * GOBO_SLOT_STEP`, donc elle balaie
+# exactement ces seize slots.
 GOBO_SLOT_NAMES = (
-    "Ouvert",              # 0 — pas de motif
-    "Anneau",              # 1
-    "Étoile 4 branches",   # 2
-    "Trois cercles",       # 3
-    "Trois palmes",        # 4
-    "Breakup",             # 5
-    "Six rayons",          # 6
-    "Bull's-eye",          # 7
+    "Ouvert",              #  0 — pas de motif        (DMX   0)
+    "Barre",               #  1 — nouveau             (DMX  16)
+    "Anneau",              #  2 — ex-slot 1           (DMX  32)
+    "Logo MyStrow",        #  3 — nouveau             (DMX  48)
+    "Étoile 4 branches",   #  4 — ex-slot 2           (DMX  64)
+    "Gouttes",             #  5 — nouveau             (DMX  80)
+    "Trois cercles",       #  6 — ex-slot 3           (DMX  96)
+    "Feuillage",           #  7 — nouveau             (DMX 112)
+    "Trois palmes",        #  8 — ex-slot 4           (DMX 128)
+    "Vitrail",             #  9 — nouveau             (DMX 144)
+    "Breakup",             # 10 — ex-slot 5           (DMX 160)
+    "Spirale",             # 11 — nouveau             (DMX 176)
+    "Six rayons",          # 12 — ex-slot 6           (DMX 192)
+    "Triangles",           # 13 — nouveau             (DMX 208)
+    "Bull's-eye",          # 14 — ex-slot 7           (DMX 224)
+    "Nuages",              # 15 — nouveau             (DMX 240)
 )
+
+GOBO_SLOT_COUNT = len(GOBO_SLOT_NAMES)          # 16
+GOBO_SLOT_STEP  = 256 // GOBO_SLOT_COUNT        # 16 valeurs DMX par slot
+
+# Pictogrammes du sélecteur de gobo (menu contextuel du plan 2D). Un par slot,
+# dans le même ordre : le bouton doit évoquer ce que le plan va dessiner.
+GOBO_SLOT_ICONS = (
+    "○", "▬", "◎", "◑", "✦", "⁘", "⊙", "❦",
+    "❋", "◈", "⊛", "◠", "✳", "▲", "◉", "☁",
+)
+
+
+def gobo_slot_index(dmx) -> int:
+    """Slot de roue atteint par une valeur DMX (0 → `GOBO_SLOT_COUNT - 1`).
+
+    Point de passage unique : le plan 2D, le plan 3D et le sélecteur doivent
+    découper le canal EXACTEMENT pareil, sinon le même show ne se lit pas de la
+    même façon selon la fenêtre ouverte — c'est très précisément le bug qui
+    avait fait diverger les deux listes de motifs.
+    """
+    try:
+        v = int(dmx)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(GOBO_SLOT_COUNT - 1, v // GOBO_SLOT_STEP))
+
+
+def gobo_slot_dmx(idx) -> int:
+    """Valeur DMX à envoyer pour poser le slot `idx` (bas de la plage).
+
+    Utilisée partout où le logiciel CHOISIT un gobo sans connaître la vraie roue
+    de l'appareil (LIVE, IA, éditeur d'effets, roue générique) : le bas de plage
+    est la seule valeur dont on soit sûr qu'elle tombe dans le bon cran.
+    """
+    try:
+        i = int(idx)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(GOBO_SLOT_COUNT - 1, i)) * GOBO_SLOT_STEP
 
 
 def fixture_projects_gobo(proj) -> bool:
@@ -1922,10 +1980,7 @@ def guide_banner(texte: str, url: str) -> QLabel:
     ajoutées ici pour que la formulation reste homogène partout.
     """
     lbl = QLabel(
-        f'<a href="{url}"'
-        f' style="color:{GUIDE_BANNER_FG};text-decoration:none;'
-        f'font-size:{GUIDE_BANNER_SIZE};">'
-        f'{texte} → Consulter le guide</a>'
+        tr("core3_003", url=url, GUIDE_BANNER_FG=GUIDE_BANNER_FG, GUIDE_BANNER_SIZE=GUIDE_BANNER_SIZE, texte=texte)
     )
     lbl.setStyleSheet(
         f"background:{GUIDE_BANNER_BG}; padding:0 14px; "
@@ -1948,7 +2003,7 @@ GUIDE_ENCART_FG     = "#888"
 GUIDE_ENCART_LINK   = "#44cc88"
 
 
-def guide_banner_encart(texte: str, url: str, lien: str = "Consulter le guide →") -> QLabel:
+def guide_banner_encart(texte: str, url: str, lien: str = tr("core3_004")) -> QLabel:
     """Encart vert « 💡 <texte>  <lien> », centré, à placer en tête de fenêtre.
 
     `texte` est l'accroche seule ; l'ampoule et le libellé du lien sont ajoutés

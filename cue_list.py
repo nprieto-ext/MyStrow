@@ -417,7 +417,7 @@ class CueListPanel(QWidget):
 
         # Table
         self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["#", "Label", "Durée", "Fade", "Effet"])
+        self._table.setHorizontalHeaderLabels(["#", "Label", tr("cue3_063"), "Fade", tr("cue3_065")])
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
@@ -605,7 +605,7 @@ class CueListPanel(QWidget):
         if not (0 <= row < len(self.cues)):
             return
         if col in (2, 3):
-            key   = "Durée" if col == 2 else "Fade"
+            key   = tr("cue3_063") if col == 2 else "Fade"
             field = "duration" if col == 2 else "fade"
             cur   = float(self.cues[row].get(field, 0))
             rect  = self._table.visualItemRect(self._table.item(row, col))

@@ -4,7 +4,7 @@ DualColorButton, EffectButton, FaderButton, ApcFader
 """
 import json
 from pathlib import Path
-from i18n import tr
+from i18n import tr, tr_name
 from core import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
 from PySide6.QtWidgets import (
     QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
@@ -478,7 +478,7 @@ class EffectButton(QPushButton):
         else:
             self.current_effect = cfg_or_none.get("name", "")
             self.active = bool(self.current_effect)
-        self.setToolTip(self.current_effect or tr("uic_tooltip_no_effect"))
+        self.setToolTip(tr_name(self.current_effect or "") or tr("uic_tooltip_no_effect"))
         self.update_style()
         cfg = dict(cfg_or_none) if cfg_or_none else {}
         self.effect_config_selected.emit(self.index, cfg)

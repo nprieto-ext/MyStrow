@@ -16,7 +16,7 @@ from PySide6.QtGui import QFont, QColor
 from controller_profile import (list_profiles, save_profile, load_profile,
                                 export_profile, unique_profile_path)
 from core import MIDI_AVAILABLE, ComboSansMolette
-from i18n import tr
+from i18n import tr, tr_name
 
 # ─── Style cohérent avec le thème MyStrow ────────────────────────────────────
 _STYLE = """
@@ -574,14 +574,12 @@ class MidiMappingWizard(QDialog):
 
     def _build_mutes(self):
         return self._build_generic_map_page(
-            title="Boutons de tranche",
+            title=tr("cmw3_068"),
             subtitle=(
-                "Pour chaque tranche, appuyez sur son bouton de silence (mute / solo).\n"
-                "Si votre contrôleur n'a pas ces boutons, cliquez sur\n"
-                "\"Aucun bouton de tranche\" pour passer."
+                tr("cmw3_069")
             ),
             attr_prefix="mute",
-            skip_all_label="Aucun bouton de tranche — Continuer",
+            skip_all_label=tr("cmw3_070"),
         )
 
     def _build_faders(self):
@@ -623,10 +621,10 @@ class MidiMappingWizard(QDialog):
 
     def _build_effects(self):
         return self._build_generic_map_page(
-            title="Boutons Effet",
-            subtitle="Appuyez sur le bouton effet (colonne de droite) indiqué.",
+            title=tr("cmw3_071"),
+            subtitle=tr("cmw3_072"),
             attr_prefix="effect",
-            skip_all_label="Aucun bouton effet sur ce contrôleur",
+            skip_all_label=tr("cmw3_073"),
         )
 
     def _build_leds(self):
@@ -776,7 +774,7 @@ class MidiMappingWizard(QDialog):
         color_grid = QGridLayout(); color_grid.setSpacing(8)
         self._led_color_btns = {}
         for i, (name, hex_col, _vel) in enumerate(_COLOR_CHOICES):
-            btn = QPushButton(name)
+            btn = QPushButton(tr_name(name))
             btn.setFixedHeight(36)
             # Couleurs claires (blanc, jaune) : fond sombre sinon le texte est invisible
             r = int(hex_col[1:3], 16)
@@ -952,7 +950,7 @@ class MidiMappingWizard(QDialog):
         self._stop_capture()
         self._pulse_timer.stop()
         self._stack.setCurrentIndex(idx)
-        steps = ["Nom", "Dimensions", "Pads", "Mutes", "Faders", "Effets", "LEDs", "Sauvegarde"]
+        steps = [tr("cmw3_074"), tr("cmw3_075"), "Pads", "Mutes", "Faders", tr("cmw3_079"), "LEDs", tr("cmw3_081")]
         # Total lu sur la pile, jamais ecrit en dur : la phrase traduite annoncait
         # « /9 » dans les cinq langues alors que l'assistant n'a plus que 8 pages.
         self._step_label.setText(
@@ -1572,13 +1570,12 @@ class MidiMappingWizard(QDialog):
 
     def _populate_save_page(self):
         lines = [
-            f"Contrôleur : {self._profile_name}",
-            f"Grille pads : {self._grid_rows} lignes × {self._grid_cols} colonnes"
-                f"  →  {len(self._pad_map)} pad(s) testés",
-            f"Faders      : {len(self._fader_map)} / {self._fader_count} détectés",
-            f"Boutons mute: {len(self._mute_map)} / {self._fader_count} détectés",
-            f"Boutons effet: {len(self._effect_map)} / {self._effect_count} détectés",
-            f"LEDs        : {len(self._led_colors)} couleur(s) identifiée(s)",
+            tr("cmw3_084", profile_name=self._profile_name),
+            tr("cmw3_085", grid_rows=self._grid_rows, grid_cols=self._grid_cols, n=len(self._pad_map)),
+            tr("cmw3_086", n=len(self._fader_map), fader_count=self._fader_count),
+            tr("cmw3_087", n=len(self._mute_map), fader_count=self._fader_count),
+            tr("cmw3_088", n=len(self._effect_map), effect_count=self._effect_count),
+            tr("cmw3_089", n=len(self._led_colors)),
         ]
         self._save_summary.setPlainText("\n".join(lines))
 

@@ -26,7 +26,7 @@ from core import (fixture_is_fx_machine, effect_cycle_seconds,
                   effect_dim_base_color, position_preset_values,
                   find_position_preset, ComboSansMolette,
                   pan_angular_ratio)
-from i18n import tr
+from i18n import tr, tr_name
 
 
 # ─── Raccourci couche ──────────────────────────────────────────────────────────
@@ -470,13 +470,13 @@ FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Un par un",
 PAN_ANGULAR_RATIO = 0.5   # repli seulement (fixture inconnue)
 
 PAN_TILT_SHAPES = {
-    "cercle":    {"label": "○  Cercle",     "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",    25, 1.0)},
-    "huit":      {"label": "8  Huit",       "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",     0, 2.0)},
-    "infini":    {"label": "∞  Infini",     "pan": ("Sinus",    0,  2.0), "tilt": ("Sinus",     0, 1.0)},
-    "balancier": {"label": "↔  Balancier",  "pan": ("Sinus",    0,  1.0), "tilt": (None,        0, 1.0)},
-    "pendule":   {"label": "↕  Pendule",    "pan": (None,       0,  1.0), "tilt": ("Sinus",     0, 1.0)},
-    "carre":     {"label": "□  Carré",      "pan": ("Triangle", 0,  1.0), "tilt": ("Triangle", 25, 1.0)},
-    "libre":     {"label": "~  Libre",      "pan": (None,       0,  1.0), "tilt": (None,        0, 1.0)},
+    "cercle":    {"label": tr("ee3_shape_cercle"),     "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",    25, 1.0)},
+    "huit":      {"label": tr("ee3_shape_huit"),       "pan": ("Sinus",    0,  1.0), "tilt": ("Sinus",     0, 2.0)},
+    "infini":    {"label": tr("ee3_shape_infini"),     "pan": ("Sinus",    0,  2.0), "tilt": ("Sinus",     0, 1.0)},
+    "balancier": {"label": tr("ee3_shape_balancier"),  "pan": ("Sinus",    0,  1.0), "tilt": (None,        0, 1.0)},
+    "pendule":   {"label": tr("ee3_shape_pendule"),    "pan": (None,       0,  1.0), "tilt": ("Sinus",     0, 1.0)},
+    "carre":     {"label": tr("ee3_shape_carre"),      "pan": ("Triangle", 0,  1.0), "tilt": ("Triangle", 25, 1.0)},
+    "libre":     {"label": tr("ee3_shape_libre"),      "pan": (None,       0,  1.0), "tilt": (None,        0, 1.0)},
 }
 # « libre » reste défini dans PAN_TILT_SHAPES (compat des anciens effets) mais
 # n'est plus proposé dans le menu — le défaut est désormais « cercle ».
@@ -1197,66 +1197,36 @@ class TrajectoryCanvas(QWidget):
 # reste aligné, quelle que soit la largeur de la fenêtre.
 #   (clé, titre, largeur px, infobulle)
 LAYER_COLS = [
-    ("cible",  "CIBLE",        74,
-     "Quelles fixtures jouent cette couche.\n"
-     "Tous, une sur deux, ou des groupes précis."),
-    ("canal",  "CANAL",        76,
-     "Le paramètre animé : intensité, couleur, position…"),
-    ("forme",  "FORME",       166,
-     "La courbe que suit le canal.\n"
-     "Sur une couche Pan/Tilt : la trajectoire de la lyre."),
-    ("vit",    "VIT",          42,
-     "Vitesse du cycle.\n0 = très lent, 100 = très rapide.\n"
-     "Molette = réglage au dixième (29,8 ≈ 128 BPM).\n"
-     "Maj+molette = pas entier."),
-    ("amp",    "AMP",          42,
-     "Amplitude : intensité maximale atteinte par l'effet.\n"
-     "Sur Pan / Tilt c'est la largeur du mouvement, et la colonne monte\n"
-     "alors jusqu'à 400 : 100 ne balaie que 12,5 % de la course (l'échelle\n"
-     "de tous les shows existants), 400 donne le mouvement maximal."),
-    ("min",    "MIN",          42,
-     "Niveau plancher : l'effet ne descend jamais en dessous.\n"
-     "Au-dessus de 0, les projecteurs ne s'éteignent plus complètement."),
-    ("max",    "MAX",          42,
-     "Niveau plafond : l'effet ne monte jamais au-dessus."),
-    ("dec",    "DÉC",          46,
-     "Décalage entre fixtures — c'est lui qui crée le chenillard.\n"
-     "0 = toutes ensemble · 180 = réparties sur un cycle · "
-     "360 = deux motifs simultanés."),
-    ("group",  "GROUPER",      52,
-     "Nombre de fixtures qui partent ENSEMBLE, par paquets.\n"
-     "1 = une par une (chenillard classique).\n"
-     "5 sur 25 projecteurs = 5 paquets de 5 : la rangée entière s'allume\n"
-     "d'un coup, et c'est la rangée qui défile.\n"
-     "Les paquets suivent l'ordre de la CIBLE — donc l'ordre de sélection\n"
-     "sur le plan quand la cible est « Sélection »."),
-    ("fondu",  "FONDU",        46,
-     "Adoucit la forme.\n0 = transitions franches, 100 = fondu doux.\n"
-     "Combiné à la forme « Descente », c'est ce qui fait la traînée d'une comète."),
-    ("depart", "DÉPART",       50,
-     "Décale le démarrage de cette couche dans le cycle.\n"
-     "0 = en même temps que les autres, 33 = un tiers de cycle plus tard.\n"
-     "C'est ainsi qu'on décale R, V et B pour obtenir un arc-en-ciel."),
-    ("sens",   "SENS",        102,   # 3 boutons carrés : voir LAYER_BTN
-     "Sens de parcours des fixtures.\n"
-     "→ direct · ← inverse · ↔ aller-retour"),
-    ("coul",   "COUL.",        68,   # 2 pastilles carrées
-     "Couleur(s) de la couche — canaux RGB et Permut uniquement."),
-    ("pos",    "POSITION",     78,
-     "Point autour duquel tourne le mouvement — canaux Pan, Tilt et Pan/Tilt.\n"
-     "Sans position, la trajectoire est centrée au milieu de la course :\n"
-     "un cercle « au centre du plateau », pour toutes les lyres au même endroit.\n"
-     "Avec une position enregistrée, chaque lyre tourne autour de SON point\n"
-     "de visée — le même que celui du rappel de position."),
-    ("sym",    "SYM",          44,
-     "Symétrie — canaux Pan, Tilt et Pan/Tilt.\n"
-     "Les lyres situées à droite de l'axe partent en mouvement INVERSÉ, celles\n"
-     "de gauche en mouvement normal : les trajectoires se répondent en miroir.\n"
-     "C'est ce qui fait les ailes du « Lyre Papillon ».\n"
-     "Sur Pan/Tilt, un menu laisse choisir l'axe inversé :\n"
-     "⇄ Pan, ⇅ Tilt ou ⇄⇅ les deux.\n"
-     "Le partage suit la POSITION sur le plan de feu, pas l'ordre du patch —\n"
-     "même règle que le bouton SYM du plan 2D."),
+    ("cible", tr("ee3_col_cible"),        74,
+     tr("ee3_col_cible_tip")),
+    ("canal", tr("ee3_col_canal"),        76,
+     tr("ee3_col_canal_tip")),
+    ("forme", tr("ee3_col_forme"),       166,
+     tr("ee3_col_forme_tip")),
+    ("vit", tr("ee3_col_vit"),          42,
+     tr("ee3_col_vit_tip")),
+    ("amp", tr("ee3_col_amp"),          42,
+     tr("ee3_col_amp_tip")),
+    ("min", tr("ee3_col_min"),          42,
+     tr("ee3_col_min_tip")),
+    ("max", tr("ee3_col_max"),          42,
+     tr("ee3_col_max_tip")),
+    ("dec", tr("ee3_col_dec"),          46,
+     tr("ee3_col_dec_tip")),
+    ("group", tr("ee3_col_group"),      52,
+     tr("ee3_col_group_tip")),
+    ("fondu", tr("ee3_col_fondu"),        46,
+     tr("ee3_col_fondu_tip")),
+    ("depart", tr("ee3_col_depart"),       50,
+     tr("ee3_col_depart_tip")),
+    ("sens", tr("ee3_col_sens"),        102,   # 3 boutons carrés : voir LAYER_BTN
+     tr("ee3_col_sens_tip")),
+    ("coul", tr("ee3_col_coul"),        68,   # 2 pastilles carrées
+     tr("ee3_col_coul_tip")),
+    ("pos", tr("ee3_col_pos"),     78,
+     tr("ee3_col_pos_tip")),
+    ("sym", tr("ee3_col_sym"),          44,
+     tr("ee3_col_sym_tip")),
     ("del",    "",             32, ""),
 ]
 
@@ -1470,9 +1440,9 @@ class _ElasticScroll(QScrollArea):
         self.resized.emit(self.viewport().width())
 
 _SENS_TIPS = {
-    1:  "Sens direct — 1, 2, 3… jusqu'à la dernière fixture",
-    -1: "Sens inverse — de la dernière vers la première",
-    0:  "Aller-retour — 1→8 puis 8→1, en boucle",
+    1:  tr("ee3_dir_fwd"),
+    -1: tr("ee3_dir_rev"),
+    0:  tr("ee3_dir_bounce"),
 }
 
 
@@ -1779,7 +1749,7 @@ class _CiblePopup(QFrame):
         r1 = QHBoxLayout()
         r1.setSpacing(3)
         for label in ["Tous", "Pair", "Impair"]:
-            b = QPushButton(label)
+            b = QPushButton(tr_name(label))
             b.setFixedHeight(22)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, v=label: self._pick(v, preset=True))
@@ -1865,19 +1835,19 @@ class _CiblePopup(QFrame):
         hint = getattr(self, '_sel_hint', None)
         if hint is not None:
             n = len(getattr(ref, 'target_selection', None) or []) if ref else 0
-            hint.setText(f"{n} projecteur(s) figé(s), dans l'ordre 1→{n}" if is_sel
-                         else "clique les projos sur le plan (1, 2, 3…), puis ici")
+            hint.setText(tr("ee3_sel_frozen", n=n) if is_sel
+                         else tr("ee3_sel_hint"))
 
 
 def cible_text(layer) -> str:
     """Résumé court de la cible, tel qu'affiché dans la cellule CIBLE."""
     if (getattr(layer, 'target_preset', '') == "Selection"):
         n = len(getattr(layer, 'target_selection', None) or [])
-        return f"Sél. ({n})"
+        return tr("ee3_sel_short", n=n)
     groups = getattr(layer, 'target_groups', None) or []
     if groups:
         return ",".join(groups)
-    return getattr(layer, 'target_preset', '') or "Tous"
+    return tr_name(getattr(layer, 'target_preset', '') or "Tous")
 
 
 class LayerTableHeader(QWidget):
@@ -1917,9 +1887,7 @@ class LayerTableHeader(QWidget):
                 b.setCursor(Qt.PointingHandCursor)
                 b.setToolTip(
                     (tip + "\n\n" if tip else "")
-                    + "Clic sur ce titre : sélectionne la colonne.\n"
-                      "Un réglage dans une case s'applique alors à TOUTES les "
-                      "lignes. Re-cliquer libère la colonne.")
+                    + tr("ee3_col_click_tip"))
                 b.clicked.connect(lambda _=False, k=cle: self.column_clicked.emit(k))
             else:
                 # Colonne ✕ : sélectionner « supprimer » n'aurait aucun sens,
@@ -2217,7 +2185,8 @@ class LayerRow(QFrame):
 
     def _mk_canal(self):
         cb = ComboSansMolette()
-        cb.addItems(self._ATTRS)
+        for a in self._ATTRS:
+            cb.addItem(tr_name(a), a)
         # Canaux du PATCH à la suite (couche « Canal ») : prisme, gobo, canaux
         # d'un laser, débit d'une machine à étincelles… La liste vient des
         # appareils réellement patchés : un canal que personne n'a n'y figure
@@ -2271,7 +2240,7 @@ class LayerRow(QFrame):
                     idx = i
                     break
         else:
-            idx = cb.findText(self.layer.attribute)
+            idx = cb.findData(self.layer.attribute)
         if idx >= 0:
             cb.blockSignals(True)
             cb.setCurrentIndex(idx)
@@ -2286,7 +2255,7 @@ class LayerRow(QFrame):
             self.layer.channel_label = d.get("label") or ""
             self._on_attr("Canal")
         else:
-            self._on_attr(self._attr_cb.itemText(i))
+            self._on_attr(d if isinstance(d, str) else self._attr_cb.itemText(i))
 
     def _mk_forme(self):
         box = QWidget()
@@ -2300,12 +2269,14 @@ class LayerRow(QFrame):
         bh.addWidget(self._wave)
 
         self._forme_cb = ComboSansMolette()
-        self._forme_cb.addItems(self._FORMES)
-        self._forme_cb.setCurrentText(
-            self.layer.forme if self.layer.forme in self._FORMES else "Sinus")
+        for f in self._FORMES:
+            self._forme_cb.addItem(tr_name(f), f)
+        self._forme_cb.setCurrentIndex(self._forme_cb.findData(
+            self.layer.forme if self.layer.forme in self._FORMES else "Sinus"))
         self._forme_cb.setFixedSize(74, LAYER_CELL_H)
         self._forme_cb.setStyleSheet(_COMBO_STYLE_COMPACT)
-        self._forme_cb.currentTextChanged.connect(self._on_forme)
+        self._forme_cb.currentIndexChanged.connect(
+            lambda i: self._on_forme(self._forme_cb.itemData(i)))
         bh.addWidget(self._forme_cb)
 
         # Variante Pan/Tilt : la « forme » devient une trajectoire de lyre.
@@ -2393,10 +2364,8 @@ class LayerRow(QFrame):
         _sans_dec = not gele and not un_par_un and not getattr(self.layer, 'spread', 0)
         self._cells["group"].setEnabled(not gele)
 
-        tip = ("Sans effet sur une forme constante : ouvrez le FONDU pour "
-               "réanimer la couche.")
-        tip_upu = ("Sans objet sur « Un par un » : la position vient du rang "
-                   "de la fixture, pas d'une courbe déphasée.")
+        tip = tr("ee3_tip_const")
+        tip_upu = tr("ee3_tip_upu_dec")
         for w, key in ((self._cells["vit"],    "vit"),
                        (self._cells["depart"], "depart"),
                        (self._sens_box,        "sens")):
@@ -2404,14 +2373,11 @@ class LayerRow(QFrame):
         self._cells["dec"].setToolTip(
             tip if gele else tip_upu if un_par_un else self._tip["dec"])
         self._cells["fondu"].setToolTip(
-            ("Sans objet sur « Un par un » : adoucir la forme rallumerait les "
-             "voisins et il n'y aurait plus un seul projecteur allumé.")
+            tr("ee3_tip_upu_fade")
             if un_par_un else self._tip["fondu"])
         self._cells["group"].setToolTip(
             tip if gele else
-            "Paquets réglables, mais sans effet tant que DÉC vaut 0 : les "
-            "fixtures partent déjà toutes ensemble. Ouvrez DÉC pour que les "
-            "paquets se décalent." if _sans_dec else self._tip["group"])
+            tr("ee3_tip_group_nodec") if _sans_dec else self._tip["group"])
         self._cells["min"].setToolTip(tip if dead_level == "min" else self._tip["min"])
         self._cells["max"].setToolTip(tip if dead_level == "max" else self._tip["max"])
 
@@ -2443,13 +2409,7 @@ class LayerRow(QFrame):
         cell.set_value(getattr(self.layer, 'size', 0), emit=False)
         cell.blockSignals(False)
         cell.setToolTip(
-            "Amplitude : largeur du mouvement, pas une intensité.\n"
-            "100 = 12,5 % de la course seulement — l'échelle de tous les\n"
-            "shows déjà enregistrés, qu'on ne touche pas.\n"
-            "400 = mouvement maximal : course de tilt complète, et le pan\n"
-            "accordé dessus pour qu'un cercle reste rond.\n"
-            "L'angle que cela fait dépend de la lyre (fenêtre Patch,\n"
-            "« Débattement mécanique » — 270° sur une 540°/270°)."
+            tr("ee3_tip_amp_pt")
             if _pt else self._tip["amp"])
 
     def _mk_num(self, key, attr, maximum, minimum=0, decimals=0):
@@ -2508,7 +2468,7 @@ class LayerRow(QFrame):
         self._select_canal_item()
 
         forme = self.layer.forme if self.layer.forme in self._FORMES else "Sinus"
-        self._forme_cb.setCurrentText(forme)
+        self._forme_cb.setCurrentIndex(self._forme_cb.findData(forme))
 
         shape = getattr(self.layer, 'mouvement_shape', 'libre')
         self._shape_cb.setCurrentIndex(
@@ -2630,7 +2590,7 @@ class LayerRow(QFrame):
         default = '#ff0000' if which == 1 else '#0000ff'
         c = QColorDialog.getColor(
             QColor(getattr(self.layer, attr, default)), self,
-            f"Couleur {which}", QColorDialog.DontUseNativeDialog)
+            tr("ee3_color_n", n=which), QColorDialog.DontUseNativeDialog)
         if c.isValid():
             setattr(self.layer, attr, c.name())
             self._refresh_color_btns()
@@ -2702,10 +2662,10 @@ class LayerRow(QFrame):
             self._refresh_sym()   # le clic a basculé l'état coché, on le rétablit
             menu = QMenu(self)
             menu.setStyleSheet(_MENU_STYLE)
-            for nom, p, t in (("Aucune symétrie", False, False),
-                              ("⇄  Pan inversé", True, False),
-                              ("⇅  Tilt inversé", False, True),
-                              ("⇄⇅  Pan + Tilt inversés", True, True)):
+            for nom, p, t in ((tr("ee3_sym_none"), False, False),
+                              (tr("ee3_sym_pan"), True, False),
+                              (tr("ee3_sym_tilt"), False, True),
+                              (tr("ee3_sym_both"), True, True)):
                 cur = (pan, tilt) == (p, t)
                 a = menu.addAction(("✓ " if cur else "    ") + nom)
                 a.triggered.connect(lambda _=False, p=p, t=t: self._set_sym(p, t))
@@ -2795,7 +2755,7 @@ class LayerRow(QFrame):
         menu.setStyleSheet(_MENU_STYLE)
         cur = getattr(self.layer, 'pos_preset_idx', None)
 
-        act = menu.addAction(("✓ " if cur is None else "    ") + "Centre (par défaut)")
+        act = menu.addAction(("✓ " if cur is None else "    ") + tr("ee3_pos_center"))
         act.triggered.connect(lambda: self._set_pos(None, ""))
 
         if presets:
@@ -2872,7 +2832,7 @@ class LayerRow(QFrame):
             return
         vrai = trouve.get("name", nom) or nom
         btn.setText(vrai[:10])
-        btn.setToolTip(f"Centré sur la position « {vrai} ».\n\n" + self._tip["pos"])
+        btn.setToolTip(tr("ee3_pos_centered", nom=vrai) + self._tip["pos"])
 
     def _refresh_color_btns(self):
         attr = self.layer.attribute
@@ -2988,7 +2948,7 @@ class SimpleEffectPanel(QWidget):
         self._ll.setSpacing(0)
 
         # En-tête COUCHES + rappel de la colonne sélectionnée.
-        sep = self._mk_sep("COUCHES")
+        sep = self._mk_sep(tr("ee3_layers"))
         self._scope_lbl = QLabel("")
         self._scope_lbl.setStyleSheet(
             "color:#00d4ff;font-size:9px;font-weight:bold;letter-spacing:1px;"
@@ -3127,7 +3087,7 @@ class SimpleEffectPanel(QWidget):
         cv.addLayout(play_row)
         cv.addSpacing(10)
 
-        cv.addWidget(self._mk_sep("ASSIGNER"))
+        cv.addWidget(self._mk_sep(tr("ee3_assign")))
         cv.addSpacing(6)
 
         self._assign_btns = {}
@@ -3257,8 +3217,7 @@ class SimpleEffectPanel(QWidget):
 
         titre = next((c[1] for c in LAYER_COLS if c[0] == self._sel_col), "")
         self._scope_lbl.setText(
-            f"— COLONNE {titre} SÉLECTIONNÉE : UN RÉGLAGE S'APPLIQUE À TOUTES "
-            f"LES LIGNES" if self._sel_col else "")
+            tr("ee3_col_selected", titre=titre) if self._sel_col else "")
 
     def _on_cell_changed(self, row, cle):
         """Un réglage vient d'être fait dans une ligne.
@@ -3758,7 +3717,7 @@ class EffectEditorDialog(QDialog):
         def _insert_category(label, items, deletable=False):
             if not items:
                 return
-            ch = QLabel(label.upper())
+            ch = QLabel(tr_name(label).upper())
             ch.setFixedHeight(20)
             ch.setStyleSheet(
                 "color: #2a2a2a; font-size: 8px; font-weight: bold; "
@@ -3916,7 +3875,7 @@ class EffectEditorDialog(QDialog):
         # AKAI badge if assigned
         akai = self._get_assigned_btn_label(name)
 
-        name_lbl = QLabel(name)
+        name_lbl = QLabel(tr_name(name))
         name_lbl.setAlignment(Qt.AlignCenter)
         name_lbl.setWordWrap(True)
         name_lbl.setStyleSheet(
@@ -3972,11 +3931,11 @@ class EffectEditorDialog(QDialog):
 
         if not self._layers:
             # Aucun effet chargé : créer un effet vierge avec une couche par défaut
-            base = "Mon Effet"
+            base = tr("ee3_my_effect")
             i = 2
             while base in existing_names:
-                base = f"Mon Effet {i}"; i += 1
-            name, ok = _ask_name(self, "Nouvel effet", "Nom de l'effet :", base)
+                base = tr("ee3_my_effect_n", n=i); i += 1
+            name, ok = _ask_name(self, tr("ee3_new_effect"), tr("ee3_effect_name"), base)
             if not ok or not name.strip():
                 return
             name = name.strip()
@@ -3999,13 +3958,13 @@ class EffectEditorDialog(QDialog):
         # Effet chargé : proposer de le sauvegarder sous un nom
         # Exclure aussi les noms builtins pour éviter les conflits de déduplication
         all_existing = existing_names | {e.get("name", "") for e in BUILTIN_EFFECTS}
-        base = self._selected_card or "Mon Effet"
+        base = self._selected_card or tr("ee3_my_effect")
         i = 2
         candidate = base
         while candidate in all_existing:
             candidate = f"{base} {i}"; i += 1
         name, ok = _ask_name(
-            self, "Sauvegarder l'effet", "Nom de l'effet :", candidate
+            self, tr("ee3_save_effect"), tr("ee3_effect_name"), candidate
         )
         if not ok or not name.strip():
             return
@@ -4049,7 +4008,7 @@ class EffectEditorDialog(QDialog):
     def _duplicate_custom_effect(self, eff: dict):
         existing_names = {e.get("name", "") for e in self._custom_effects} | \
                          {e.get("name", "") for e in BUILTIN_EFFECTS}
-        base = f"Copie de {eff.get('name', 'Effet')}"
+        base = tr("ee3_copy_of", name=eff.get('name', 'Effet'))
         candidate = base
         i = 2
         while candidate in existing_names:
@@ -4114,9 +4073,9 @@ class EffectEditorDialog(QDialog):
         }
         safe = eff.get("name", "effet").replace("/", "_").replace("\\", "_")
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter l'effet",
+            self, tr("ee3_export_effect"),
             str(_pathlib.Path.home() / f"{safe}.mystrow_effect"),
-            "Effet MyStrow (*.mystrow_effect);;JSON (*.json)"
+            tr("ee3_filter_effect")
         )
         if not path:
             return
@@ -4131,9 +4090,9 @@ class EffectEditorDialog(QDialog):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         import json as _j
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importer un effet",
+            self, tr("ee2_add_import_t"),
             str(_pathlib.Path.home()),
-            "Effet MyStrow (*.mystrow_effect);;JSON (*.json);;Tous (*.*)"
+            tr("ee3_filter_effect_all")
         )
         if not path:
             return
@@ -4169,7 +4128,7 @@ class EffectEditorDialog(QDialog):
     def _rename_custom_effect(self, eff: dict):
         old_name = eff.get("name", "")
         existing = {e.get("name", "") for e in self._custom_effects}
-        new_name, ok = _ask_name(self, "Renommer l'effet", "Nouveau nom :", old_name)
+        new_name, ok = _ask_name(self, tr("ee3_rename_effect"), tr("lt_new_name"), old_name)
         if not ok or not new_name.strip() or new_name.strip() == old_name:
             return
         new_name = new_name.strip()
@@ -4632,7 +4591,7 @@ class EffectEditorDialog(QDialog):
     def _on_live_dmx_toggled(self, checked):
         """Active/coupe l'envoi DMX de l'aperçu."""
         btn = self._btn_live_dmx
-        btn.setText("  ⏺  Sortie live" if checked else "  Sortie live")
+        btn.setText(tr("ee3_live_out_on") if checked else tr("fx_live_out"))
         btn.setStyleSheet(self._live_dmx_on_ss if checked else self._live_dmx_off_ss)
         mw = self._main_window
         if mw is None:
