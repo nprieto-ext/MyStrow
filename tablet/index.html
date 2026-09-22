@@ -1549,7 +1549,7 @@ async function _checkAuthAfterError(){
   }catch(e){}
 }
 async function _bootConnection(){
-  if(window.MYSTROW_DEMO) return;   // mode démo de l'app : aucun PC, piloté par demo.js
+  if(window.MYSTROW_DEMO||window.MYSTROW_SOLO) return;   // app sans PC : démo (demo.js) ou mode autonome (standalone.js)
   const q=new URLSearchParams(location.search);
   const code=q.get('pair');
   if(code){

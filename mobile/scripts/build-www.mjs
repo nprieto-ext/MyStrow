@@ -18,6 +18,7 @@ cpSync(join(repo, "tablet", "fonts"), join(www, "fonts"), { recursive: true });
 copyFileSync(join(repo, "logo.png"), join(www, "icon.png"));
 copyFileSync(join(mobile, "src", "launcher.html"), join(www, "index.html"));
 copyFileSync(join(mobile, "src", "dmxtest.html"), join(www, "dmxtest.html"));
+copyFileSync(join(mobile, "src", "patch.html"), join(www, "patch.html"));
 
 let remote = readFileSync(join(repo, "tablet", "index.html"), "utf8");
 
@@ -30,11 +31,13 @@ function replaceOnce(text, anchor, replacement) {
 // Avant tout autre script : l'adresse du PC choisi dans l'écran de connexion.
 // Sans PC mémorisé, retour à cet écran.
 // ?demo=1 : mode démo (src/demo.js), aucun PC nécessaire.
+// ?solo=1 : mode autonome (src/standalone.js), la tablette pilote seule le DMX.
 const inject = `<meta charset="utf-8">
   <script>
     window.MYSTROW_APP = true;
     var demo = /[?&]demo=1(&|$)/.test(location.search);
     if (demo) window.MYSTROW_DEMO = true;
+    if (/[?&]solo=1(&|$)/.test(location.search)) { window.MYSTROW_SOLO = true; demo = true; }   // pas de PC à chercher
     try {
       var pc = JSON.parse(localStorage.getItem("mystrow.pc") || "null");
       if (pc && pc.base) window.MYSTROW_API_BASE = pc.base;
@@ -43,7 +46,10 @@ const inject = `<meta charset="utf-8">
   </script>`;
 remote = replaceOnce(remote, '<meta charset="utf-8">', inject);
 copyFileSync(join(mobile, "src", "demo.js"), join(www, "demo.js"));
-remote = replaceOnce(remote, "</body>", '<script src="demo.js"></script>\n</body>');
+copyFileSync(join(mobile, "src", "engine.js"), join(www, "engine.js"));
+copyFileSync(join(mobile, "src", "standalone.js"), join(www, "standalone.js"));
+remote = replaceOnce(remote, "</body>",
+  '<script src="demo.js"></script>\n<script src="engine.js"></script>\n<script src="standalone.js"></script>\n</body>');
 // PWA du navigateur uniquement : l'app n'a ni manifeste ni service worker.
 remote = replaceOnce(remote, '<link rel="manifest" href="/manifest.json">', "");
 

@@ -102,10 +102,14 @@
     <button class="btn btn-ghost" id="demo-btn" type="button">Essayer la démo</button>
   </section>
 
-  <!-- Mode autonome en préparation : test de la sortie Art-Net native, sans PC. -->
+  <!-- Mode autonome (en test) : la tablette pilote seule le DMX (standalone.js). -->
   <section class="panel">
     <div class="eyebrow">Sans PC (en test)</div>
-    <p class="hint">La tablette envoie le DMX elle-même au node Art-Net.</p>
+    <p class="hint">La tablette pilote elle-même vos projecteurs, par une interface USB-DMX ou un node Art-Net.</p>
+    <div class="field">
+      <button class="btn" id="solo-btn" type="button" style="flex:1">Jouer sans PC</button>
+      <button class="btn btn-ghost" id="patch-btn" type="button">Patch</button>
+    </div>
     <button class="btn btn-ghost" id="dmxtest-btn" type="button">Tester la sortie DMX</button>
   </section>
 </main>
@@ -180,6 +184,13 @@
   document.getElementById("manual-form").addEventListener("submit", e => { e.preventDefault(); connectTo(hostInput.value); });
   document.getElementById("demo-btn").addEventListener("click", () => { location.href = "remote.html?demo=1"; });
   document.getElementById("dmxtest-btn").addEventListener("click", () => { location.href = "dmxtest.html"; });
+  document.getElementById("patch-btn").addEventListener("click", () => { location.href = "patch.html"; });
+  // Sans patch, « Jouer » n'aurait rien à piloter : on passe d'abord par le patch.
+  document.getElementById("solo-btn").addEventListener("click", () => {
+    let show = null;
+    try { show = JSON.parse(localStorage.getItem("mystrow.solo.show") || "null"); } catch (e) {}
+    location.href = show && show.fixtures && show.fixtures.length ? "remote.html?solo=1" : "patch.html";
+  });
 
   // Découverte Bonjour : fournie par le module natif de l'app quand il est présent.
   function startDiscovery() {
