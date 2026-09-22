@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>MyStrow · Test sortie DMX</title>
+  <style>
+    @font-face { font-family: 'Bebas Neue'; font-weight: 400; font-display: swap; src: url('fonts/bebas-neue.woff2') format('woff2'); }
+    @font-face { font-family: 'Barlow Condensed'; font-weight: 700; font-display: swap; src: url('fonts/barlow-condensed-700.woff2') format('woff2'); }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg: #080807; --bg3: #141310; --accent: #E2CE16; --accent-border: rgba(226, 206, 22, 0.32);
+      --border: rgba(226, 206, 22, 0.14); --line2: rgba(255, 255, 255, 0.12); --text: #f4f1e8; --muted: #7a7570;
+      --green: #22c55e; --red: #f87171;
+      --f-title: 'Bebas Neue', Impact, sans-serif; --f-label: 'Barlow Condensed', 'Arial Narrow', sans-serif; }
+    html { background: var(--bg); }
+    body { color: var(--text); font: 400 15px/1.5 Roboto, sans-serif; padding: 24px; display: flex; justify-content: center; }
+    main { width: min(640px, 100%); display: flex; flex-direction: column; gap: 18px; }
+    h1 { font-family: var(--f-title); font-weight: 400; font-size: 34px; line-height: 1; }
+    h1 span { color: var(--accent); }
+    .panel { background: #0f0e0b; border: 1px solid var(--border); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .row > div { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 110px; }
+    label { font-family: var(--f-label); font-weight: 700; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
+    input, select { height: 46px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: #0c0b09;
+      color: var(--text); font: 700 18px/1 var(--f-label); }
+    .btn { height: 50px; padding: 0 18px; border: 1px solid var(--accent-border); border-radius: 12px; background: transparent; color: var(--accent);
+      font: 700 16px/1 var(--f-label); letter-spacing: 1.5px; text-transform: uppercase; flex: 1; }
+    .btn.on { background: var(--accent); color: #0c0b00; }
+    .btn.stop { color: var(--red); border-color: rgba(248, 113, 113, .4); }
+    input[type=range] { width: 100%; height: 40px; padding: 0; accent-color: var(--accent); background: none; border: none; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .stat { background: var(--bg3); border-radius: 10px; padding: 10px 12px; }
+    .stat b { display: block; font: 400 30px/1 var(--f-title); font-variant-numeric: tabular-nums; }
+    .stat small { color: var(--muted); font-size: 12px; }
+    #msg { min-height: 1.5em; color: #cfcabd; }
+    #msg.err { color: var(--red); }
+    a { color: var(--muted); font-size: 14px; }
+    .hint { color: #cfcabd; font-size: 14px; white-space: pre-line; }
+    .node { text-transform: none; letter-spacing: .3px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>TEST <span>SORTIE DMX</span></h1>
+  <p style="color:#cfcabd">La tablette envoie le DMX elle-même, sans PC : par une interface USB-DMX ou vers un node Art-Net. Sert à mesurer la régularité de l'envoi.</p>
+
+  <section class="panel">
+    <div class="row">
+      <button class="btn tr" data-tr="usb">Interface USB</button>
+      <button class="btn tr" data-tr="artnet">Node Art-Net</button>
+    </div>
+    <p id="usb-list" class="hint"></p>
+    <div id="artnet-box" class="row" style="flex-direction:column;align-items:stretch">
+      <p id="net-list" class="hint"></p>
+      <button class="btn" id="poll">Chercher le node</button>
+      <div id="node-list" class="row"></div>
+    </div>
+    <div class="row" id="artnet-row">
+      <div style="flex:2"><label for="host">Adresse du node</label><input id="host" inputmode="decimal" value="2.0.0.15"></div>
+      <div><label for="port">Port</label><input id="port" inputmode="numeric" value="6454"></div>
+    </div>
+    <div class="row">
+      <div style="flex:0 0 120px"><label for="fps">Trames / s</label>
+        <select id="fps"><option>25</option><option selected>30</option><option>36</option><option>40</option><option>44</option></select></div>
+      <div><label for="logpc">Journal vers le PC (IP, facultatif)</label><input id="logpc" inputmode="decimal" placeholder="192.168.1.242"></div>
+    </div>
+    <div class="row">
+      <button class="btn" id="start">Démarrer</button>
+      <button class="btn stop" id="stop">Arrêter</button>
+    </div>
+    <p id="msg" role="status"></p>
+  </section>
+
+  <section class="panel">
+    <label>Contenu envoyé</label>
+    <div class="row">
+      <button class="btn mode" data-mode="black">Noir</button>
+      <button class="btn mode" data-mode="full">Plein feu</button>
+      <button class="btn mode" data-mode="chase">Chenillard</button>
+    </div>
+    <label for="master">Master <span id="master-v">100</span> %</label>
+    <input type="range" id="master" min="0" max="100" value="100">
+  </section>
+
+  <section class="panel">
+    <label>Mesures côté tablette</label>
+    <div class="stats">
+      <div class="stat"><b id="s-fps">–</b><small>trames / s</small></div>
+      <div class="stat"><b id="s-avg">–</b><small>écart moyen (ms)</small></div>
+      <div class="stat"><b id="s-max">–</b><small>pire écart (ms)</small></div>
+      <div class="stat"><b id="s-late">–</b><small>trames en retard</small></div>
+      <div class="stat"><b id="s-err">–</b><small>erreurs d'envoi</small></div>
+      <div class="stat"><b id="s-sent">–</b><small>trames envoyées</small></div>
+    </div>
+  </section>
+
+  <a href="index.html?choose=1">‹ Retour</a>
+</main>
+
+<script>
+  "use strict";
+  const Dmx = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MystrowDmx;
+  const $ = (id) => document.getElementById(id);
+  const msg = (t, err) => { $("msg").textContent = t; $("msg").classList.toggle("err", !!err); };
+
+  // Test vers le moniteur PC (mobile/tools/artnet_monitor.py, port ≠ 6454) :
+  // canal 1 = compteur qui avance d'un cran à chaque mise à jour du JS, pour
+  // repérer les trames répétées ou sautées. Vers de vrais projecteurs, le
+  // canal 1 suit le contenu comme les autres.
+  let transport = "usb";
+  let mode = "black", counter = 0, anim = null, statsTimer = null, lastSent = 0, lastAt = 0;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem("mystrow.dmxtest") || "null");
+    if (saved) {
+      $("host").value = saved.host || $("host").value;
+      $("fps").value = saved.fps || 30; $("logpc").value = saved.logpc || ""; transport = saved.transport || "usb";
+    }
+  } catch (e) {}
+  // Journal : par défaut vers le PC choisi dans l'écran de connexion.
+  if (!$("logpc").value) {
+    try { const pc = JSON.parse(localStorage.getItem("mystrow.pc") || "null"); if (pc) $("logpc").value = new URL(pc.base).hostname; } catch (e) {}
+  }
+
+  function frame() {
+    const master = $("master").value / 100;
+    const values = new Array(512);
+    counter = (counter + 1) % 256;
+    const t = performance.now() / 1000;
+    for (let i = 0; i < 512; i++) {
+      let v = 0;
+      if (mode === "full") v = 255;
+      else if (mode === "chase") v = 127.5 + 127.5 * Math.sin(t * 4 - i * 0.35);
+      values[i] = Math.round(v * master);
+    }
+    // Hors port 6454 = vers le moniteur PC, pas vers de vrais projecteurs.
+    if (transport === "artnet" && +$("port").value !== 6454) values[0] = counter;
+    return values;
+  }
+
+  function push() { Dmx.setChannels({ start: 1, values: frame() }).catch(() => {}); }
+
+  async function start() {
+    if (!Dmx) { msg("Module DMX absent : cette page ne marche que dans l'app.", true); return; }
+    const opts = { transport, host: $("host").value.trim(), port: +$("port").value || 6454, fps: +$("fps").value, universe: 0 };
+    try { localStorage.setItem("mystrow.dmxtest", JSON.stringify({ ...opts, logpc: $("logpc").value.trim() })); } catch (e) {}
+    msg("Démarrage…");
+    try {
+      await Dmx.start(opts);
+    } catch (e) { msg(e.message || String(e), true); log({ event: "start-failed", error: e.message || String(e) }); return; }
+    const s = await Dmx.stats();
+    msg("Envoi vers " + s.output + " à " + opts.fps + " trames/s");
+    log({ event: "started", output: s.output, fps: opts.fps, mode });
+    clearInterval(anim);
+    anim = setInterval(push, 1000 / opts.fps);   // le JS suit la même cadence que la sortie native
+    push();
+    lastSent = 0; lastAt = performance.now();
+    clearInterval(statsTimer);
+    statsTimer = setInterval(refreshStats, 1000);
+  }
+
+  async function stop() {
+    clearInterval(anim); anim = null;
+    if (Dmx) await Dmx.stop().catch(() => {});
+    await refreshStats();
+    clearInterval(statsTimer);
+    msg("Envoi arrêté");
+  }
+
+  async function refreshStats() {
+    if (!Dmx) return;
+    const s = await Dmx.stats();
+    const now = performance.now();
+    const fps = (s.sent - lastSent) / ((now - lastAt) / 1000);
+    lastSent = s.sent; lastAt = now;
+    $("s-fps").textContent = s.running ? fps.toFixed(1) : "–";
+    $("s-avg").textContent = s.avgMs.toFixed(1);
+    $("s-max").textContent = s.maxMs.toFixed(0);
+    $("s-late").textContent = s.lateTicks;
+    $("s-err").textContent = s.errors;
+    $("s-sent").textContent = s.sent;
+    if (s.lastError) msg("Erreur : " + s.lastError, true);
+    if (s.running) log({ event: "stats", fps: +fps.toFixed(1), mode, ...s });
+  }
+
+  // Journal vers le PC (mobile/tools/log_receiver.py) : pendant le test USB, la
+  // tablette n'est plus reliée au PC par câble, le Wi-Fi reste le seul lien.
+  function log(obj) {
+    const ip = $("logpc").value.trim();
+    if (!ip) return;
+    fetch("http://" + ip + ":6456/log", { method: "POST", body: JSON.stringify({ t: new Date().toISOString(), ...obj }) })
+      .catch(() => {});
+  }
+
+  async function listUsb() {
+    if (!Dmx) return;
+    try {
+      const r = await Dmx.usbDevices();
+      const lines = r.devices.map((d) => (d.serial ? "✓ " : "· ") + d.name + (d.serial ? "  (" + d.driver + ")" : "  (non reconnu)"));
+      $("usb-list").textContent = (lines.length ? lines.join("\n") : "Aucun appareil USB branché.")
+        + (r.kernel && r.kernel.length ? "\n\nVu par le noyau :\n" + r.kernel.join("\n") : "");
+      log({ event: "usb", devices: r.devices, kernel: r.kernel });
+    } catch (e) { $("usb-list").textContent = "Liste USB impossible : " + (e.message || e); }
+  }
+
+  function setTransport(t) {
+    transport = t;
+    document.querySelectorAll(".tr").forEach((b) => b.classList.toggle("on", b.dataset.tr === t));
+    $("artnet-row").hidden = t !== "artnet";
+    $("artnet-box").hidden = t !== "artnet";
+    $("usb-list").hidden = t !== "usb";
+    if (t === "usb") listUsb();
+    else listNetworks();
+  }
+
+  async function listNetworks() {
+    if (!Dmx) return;
+    try {
+      const r = await Dmx.networks();
+      const names = { wifi: "Wi-Fi", ethernet: "Filaire / node USB", "4g": "4G" };
+      const lines = r.networks.map((n) => (names[n.transport] || n.transport) + " (" + n.iface + ") : " + (n.addresses.join(", ") || "pas d'adresse"));
+      // Interfaces que le système voit mais n'a pas configurées (node USB sans adresse…).
+      const known = r.networks.map((n) => n.iface);
+      const extra = (r.interfaces || []).filter((i) => !known.includes(i.name) && /^(eth|usb|rndis|enx)/.test(i.name))
+        .map((i) => "⚠ " + i.name + " (" + (i.up ? "active" : "inactive") + ") : " + (i.addresses.join(", ") || "pas d'adresse") + ", non gérée par Android");
+      $("net-list").textContent = "Réseaux de la tablette :\n" + (lines.concat(extra).join("\n") || "aucun");
+      log({ event: "networks", networks: r.networks, interfaces: r.interfaces });
+    } catch (e) { $("net-list").textContent = "Liste des réseaux impossible : " + (e.message || e); }
+  }
+
+  async function poll() {
+    if (!Dmx) return;
+    await stop();
+    $("poll").disabled = true;
+    $("node-list").textContent = "Recherche…";
+    await listNetworks();
+    try {
+      const r = await Dmx.artPoll({ timeoutMs: 2000 });
+      log({ event: "artpoll", nodes: r.nodes });
+      $("node-list").textContent = r.nodes.length ? "" : "Aucun node n'a répondu.";
+      r.nodes.forEach((n) => {
+        const b = document.createElement("button");
+        b.className = "btn node";
+        b.textContent = n.ip + " · " + (n.longName || n.shortName) + " (" + n.iface + ")";
+        b.addEventListener("click", () => { $("host").value = n.ip; $("port").value = 6454; msg("Node choisi : " + n.ip); });
+        $("node-list").appendChild(b);
+      });
+    } catch (e) { $("node-list").textContent = "Recherche impossible : " + (e.message || e); }
+    $("poll").disabled = false;
+  }
+
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll(".mode").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
+  }
+
+  $("start").addEventListener("click", start);
+  $("stop").addEventListener("click", stop);
+  document.querySelectorAll(".mode").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  $("master").addEventListener("input", () => { $("master-v").textContent = $("master").value; });
+  document.querySelectorAll(".tr").forEach((b) => b.addEventListener("click", () => setTransport(b.dataset.tr)));
+  $("logpc").addEventListener("change", () => (transport === "usb" ? listUsb() : listNetworks()));
+  $("poll").addEventListener("click", poll);
+  setMode("black");
+  setTransport(transport);
+</script>
+</body>
+</html>

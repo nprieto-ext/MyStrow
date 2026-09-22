@@ -17,6 +17,7 @@ mkdirSync(www, { recursive: true });
 cpSync(join(repo, "tablet", "fonts"), join(www, "fonts"), { recursive: true });
 copyFileSync(join(repo, "logo.png"), join(www, "icon.png"));
 copyFileSync(join(mobile, "src", "launcher.html"), join(www, "index.html"));
+copyFileSync(join(mobile, "src", "dmxtest.html"), join(www, "dmxtest.html"));
 
 let remote = readFileSync(join(repo, "tablet", "index.html"), "utf8");
 

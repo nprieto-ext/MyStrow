@@ -12,8 +12,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        // Module natif local : à enregistrer AVANT super.onCreate.
+        // Modules natifs locaux : à enregistrer AVANT super.onCreate.
         registerPlugin(MystrowDiscoveryPlugin.class);
+        registerPlugin(MystrowDmxPlugin.class);
         super.onCreate(savedInstanceState);
         enterImmersive();
     }

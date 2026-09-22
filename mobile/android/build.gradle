@@ -21,6 +21,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // usb-serial-for-android (sortie USB-DMX du mode autonome)
+        maven { url 'https://jitpack.io' }
     }
 }
 

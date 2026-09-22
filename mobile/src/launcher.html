@@ -101,6 +101,13 @@
     <p class="hint">Découvrez l'interface avec un show d'exemple : pads, faders, playlist et plan de feu réagissent, sans piloter aucune lumière.</p>
     <button class="btn btn-ghost" id="demo-btn" type="button">Essayer la démo</button>
   </section>
+
+  <!-- Mode autonome en préparation : test de la sortie Art-Net native, sans PC. -->
+  <section class="panel">
+    <div class="eyebrow">Sans PC (en test)</div>
+    <p class="hint">La tablette envoie le DMX elle-même au node Art-Net.</p>
+    <button class="btn btn-ghost" id="dmxtest-btn" type="button">Tester la sortie DMX</button>
+  </section>
 </main>
 
 <script>
@@ -172,6 +179,7 @@
 
   document.getElementById("manual-form").addEventListener("submit", e => { e.preventDefault(); connectTo(hostInput.value); });
   document.getElementById("demo-btn").addEventListener("click", () => { location.href = "remote.html?demo=1"; });
+  document.getElementById("dmxtest-btn").addEventListener("click", () => { location.href = "dmxtest.html"; });
 
   // Découverte Bonjour : fournie par le module natif de l'app quand il est présent.
   function startDiscovery() {
