@@ -9,7 +9,7 @@ mourait donc a chaque transition (« une legere coupure entre chaque media »).
 """
 import os, sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow")
+sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow\App")
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QColor

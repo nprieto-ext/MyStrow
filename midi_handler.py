@@ -340,6 +340,9 @@ class MIDIHandler(QObject):
         # Anti-doublon inter-ports (voir _midi_callback).
         self._last_msg   = None
         self._last_msg_t = 0.0
+        # Horloge MIDI reçue sur les ports du contrôleur — voir `_bind_input`.
+        # callable(event, port_name), posé par le moteur LIVE (live_audio).
+        self.clock_listener = None
 
         if MIDI_AVAILABLE and rtmidi:
             self.connect_controller()
@@ -419,13 +422,25 @@ class MIDIHandler(QObject):
             try:
                 port = rtmidi.MidiIn()
                 port.open_port(in_ports.index(name))
-                port.set_callback(self._midi_callback)
-                port.ignore_types(sysex=True, timing=True, active_sense=True)
+                self._bind_input(port, name)
                 self._extra_ins.append(port)
                 self._extra_in_names.append(name)
                 print(f"✅ Entrée secondaire ouverte : {name}")
             except Exception as e:
                 print(f"⚠️  Entrée secondaire ignorée ({name}) : {e}")
+
+    def _bind_input(self, port, name):
+        """Branche une entrée du contrôleur sur la file, horloge MIDI comprise.
+
+        Sous Windows un port MIDI n'a qu'UN client. Une table DJ (DJM-2000…)
+        n'expose qu'un port, qui porte à la fois ses pads/faders ET son horloge :
+        le moteur LIVE ne peut donc pas le rouvrir pour lire le tempo, la
+        seconde ouverture est refusée. On laisse passer les messages temps réel
+        (`timing=False`) et `_midi_callback` les aiguille vers `clock_listener`
+        sans jamais les mettre dans la file des pads.
+        """
+        port.set_callback(lambda event, data=None, n=name: self._midi_callback(event, n))
+        port.ignore_types(sysex=True, timing=False, active_sense=True)
 
     def open_input_names(self):
         """Noms des ports d'entrée réellement ouverts — pour l'affichage."""
@@ -551,8 +566,7 @@ class MIDIHandler(QObject):
                 self.midi_in.open_port(in_idx)
                 with self._midi_lock:
                     self._midi_queue.clear()
-                self.midi_in.set_callback(self._midi_callback)
-                self.midi_in.ignore_types(sysex=True, timing=True, active_sense=True)
+                self._bind_input(self.midi_in, custom_in_name)
                 self._in_name = custom_in_name
                 print(f"✅ {self.controller_name} connecté (profil custom): {custom_in_name}")
                 kws = [k.upper() for k in custom_profile.get('keywords', [])]
@@ -597,8 +611,7 @@ class MIDIHandler(QObject):
             self.midi_in.open_port(in_idx)
             with self._midi_lock:
                 self._midi_queue.clear()
-            self.midi_in.set_callback(self._midi_callback)
-            self.midi_in.ignore_types(sysex=True, timing=True, active_sense=True)
+            self._bind_input(self.midi_in, in_name)
             self._in_name = in_name
             print(f"✅ {ctrl['name']} connecté (input): {in_name}")
 
@@ -693,6 +706,16 @@ class MIDIHandler(QObject):
 
     def _midi_callback(self, event, data=None):
         msg, _dt = event
+        # Temps réel (Clock / Start / Continue / Stop) : pour le moteur LIVE,
+        # jamais pour les pads — ni la file, ni le compteur, ni l'assistant.
+        if msg and msg[0] in (0xF8, 0xFA, 0xFB, 0xFC):
+            listener = self.clock_listener
+            if listener is not None:
+                try:
+                    listener(event, data)
+                except Exception:
+                    pass
+            return
         msg = list(msg)
         with self._midi_lock:
             # Anti-doublon inter-ports. On écoute TOUTES les entrées du

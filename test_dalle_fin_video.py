@@ -1,7 +1,7 @@
 """Etat de la dalle 3D selon le media courant et l'etat du lecteur."""
 import os, sys
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-sys.path.insert(0, r'C:\Users\nikop\Desktop\MyStrow')
+sys.path.insert(0, r'C:\Users\nikop\Desktop\MyStrow\App')
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtMultimedia import QMediaPlayer

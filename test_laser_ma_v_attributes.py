@@ -11,7 +11,7 @@ Pire : le canal 1 (FixtureMode) sortait 0 = Blackout, donc le laser IGNORAIT ses
 treize autres canaux. La fixture s'importait sans erreur et ne faisait rien.
 """
 import sys
-sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow")
+sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow\App")
 import fixture_parser as fp
 
 XML = (r"C:\Users\nikop\Downloads\Laserworld@CS-12000_RGB_FX@14_ch"

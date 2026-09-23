@@ -89,6 +89,7 @@ class FauxWin:
     _flash_begin             = mw.MainWindow._flash_begin
     _flash_end               = mw.MainWindow._flash_end
     _recompute_memory_mix    = mw.MainWindow._recompute_memory_mix
+    _mem_drive_effect        = mw.MainWindow._mem_drive_effect
     _mem_ensure_cues         = mw.MainWindow._mem_ensure_cues
     _mem_active_cue          = mw.MainWindow._mem_active_cue
     _bank_memory_slots       = mw.MainWindow._bank_memory_slots
@@ -343,13 +344,24 @@ class MoteurDEffets(unittest.TestCase):
         self.assertEqual(w.active_effect, "Strobe Classique")
 
     def test_hors_flash_le_moteur_reprend_la_main(self):
-        """Sans momentane, la regle d'avant s'applique telle quelle."""
+        """Sans momentane, le mix coupe l'effet que les MEMOIRES avaient lance."""
         w = FauxWin()
         w.active_effect = "Strobe Classique"
+        w._mem_effect = "Strobe Classique"         # pose par une memoire
         w.active_memory_pads = {}                  # plus aucune memoire retenue
         w._recompute_memory_mix()
         self.assertEqual(w.effets_arretes, 1)
         self.assertIsNone(w.active_effect)
+
+    def test_hors_flash_un_effet_pad_fx_survit(self):
+        """Un effet que les memoires n'ont pas lance ne leur appartient pas
+        (retour client 23/09/2026 : poser une memoire coupait les effets)."""
+        w = FauxWin()
+        w.active_effect = "Strobe Classique"       # lance depuis un pad FX
+        w.active_memory_pads = {}
+        w._recompute_memory_mix()
+        self.assertEqual(w.effets_arretes, 0)
+        self.assertEqual(w.active_effect, "Strobe Classique")
 
 
 class AllerRetour(unittest.TestCase):

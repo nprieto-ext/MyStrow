@@ -8,7 +8,7 @@ Frame 2 : le bloc est fini   -> ils doivent etre retombes au repos.
 """
 import os, sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow")
+sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow\App")
 
 from PySide6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication([])

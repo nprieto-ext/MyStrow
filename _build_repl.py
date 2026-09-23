@@ -39,6 +39,6 @@ a("        tabs.currentChanged.connect(lambda _: _update_conflict_banner(_get_co
 a("")
 
 text = chr(10).join(L)
-with open(r"C:/Users/nikop/Desktop/MyStrow/_replacement.py", "w", encoding="utf-8") as f:
+with open(r"C:/Users/nikop/Desktop/MyStrow/App/_replacement.py", "w", encoding="utf-8") as f:
     f.write(text)
 print("partial written, lines:", len(L))

@@ -3200,6 +3200,13 @@ class SimpleEffectPanel(QWidget):
             row.set_col_widths(self._col_w, self._table_w)
             row.set_selected_column(self._sel_col)
             self._layers_vl.addWidget(row)
+            # La ligne naît SANS parent : dans son __init__, `_find_main_window`
+            # ne trouve rien, la liste des positions est vide et une POSITION
+            # pourtant valide s'affichait « ⚠ Centre » — à chaque changement
+            # d'effet ou réouverture. Seul l'affichage mentait (l'aperçu et le
+            # moteur résolvent la position eux-mêmes). Maintenant qu'elle est
+            # rattachée à l'éditeur, on relit.
+            row._refresh_pos_btn()
             self._layer_cards.append(row)
 
         # L'en-tête ne sert à rien sans ligne dessous.

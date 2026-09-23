@@ -11,7 +11,7 @@ pastille : l'interface affirmait un strobe que le fil ne portait pas.
 """
 import os, sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow")
+sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow\App")
 
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication

@@ -2,7 +2,7 @@
 from PIL import Image, ImageDraw, ImageFont
 import math, os
 
-OUT = r'C:\Users\nikop\Desktop\MyStrow\streamdeck_plugin\com.mystrow.streamdeck.sdPlugin\images'
+OUT = r'C:\Users\nikop\Desktop\MyStrow\App\streamdeck_plugin\com.mystrow.streamdeck.sdPlugin\images'
 
 F_BEBAS = r'C:\Windows\Fonts\BebasNeue-Regular.otf'
 F_INTER = r'C:\Windows\Fonts\Inter-Bold-slnt=0.ttf'

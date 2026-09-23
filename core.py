@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.1.99"
+VERSION = "3.2.1"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -1742,6 +1742,14 @@ def make_ssl_context():
 # ─── Téléchargement officiel ──────────────────────────────────────────────────
 
 SITE_URL = "https://mystrow.fr/"
+# Journal des mises a jour (pages du site, editees a la main), par langue.
+CHANGELOG_URLS = {
+    "fr": "https://mystrow.fr/nouveautes",
+    "en": "https://mystrow.fr/en/whats-new",
+    "es": "https://mystrow.fr/es/whats-new",
+    "de": "https://mystrow.fr/de/whats-new",
+    "pt": "https://mystrow.fr/pt/whats-new",
+}
 
 # Point d'entrée officiel du téléchargement : la Cloud Function du site, qui
 # redirige vers l'asset GitHub de la dernière version ET enregistre la

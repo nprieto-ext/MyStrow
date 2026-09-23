@@ -15,7 +15,7 @@ Trois volets :
 """
 import os, sys, tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow")
+sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow\App")
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QColor

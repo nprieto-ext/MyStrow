@@ -153,6 +153,35 @@ class TestSuppressionConfirmee(unittest.TestCase):
         self.assertIn("Papillon", texte)
 
 
+class TestPositionAuRechargement(unittest.TestCase):
+    """Revenir sur un effet affichait « ⚠ Centre » alors que la position
+    existait : la ligne cherchait la liste des positions avant d'etre
+    rattachee a l'editeur (signale par un client, 23/09/2026)."""
+
+    def test_position_valide_pas_de_triangle(self):
+        class MW:
+            position_presets = [{"name": "Face", "projectors": []},
+                                {"name": "Centre", "projectors": []}]
+            projectors = []
+        panel = fx.SimpleEffectPanel(main_window=MW())
+        couche = fx.EffectLayer()
+        couche.attribute = "Pan/Tilt"
+        couche.pos_preset_idx, couche.pos_preset_name = 1, "Centre"
+        panel.set_effect({"name": "Cercle", "layers": []}, [couche])
+        self.assertEqual(panel._layer_cards[0]._pos_btn.text(), "Centre")
+
+    def test_position_supprimee_garde_le_triangle(self):
+        class MW:
+            position_presets = []
+            projectors = []
+        panel = fx.SimpleEffectPanel(main_window=MW())
+        couche = fx.EffectLayer()
+        couche.attribute = "Pan/Tilt"
+        couche.pos_preset_idx, couche.pos_preset_name = 0, "Centre"
+        panel.set_effect({"name": "Cercle", "layers": []}, [couche])
+        self.assertTrue(panel._layer_cards[0]._pos_btn.text().startswith("⚠"))
+
+
 class TestTraductions(unittest.TestCase):
     """Les cles doivent exister dans les 5 langues, sinon tr() rend la cle."""
 

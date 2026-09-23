@@ -1190,8 +1190,18 @@ const MACHINE_PARAMS = {
   // passaient dans le bloom : deux ampoules géantes au milieu du plateau au
   // lieu de deux machines. Une volute réelle est presque transparente ; c'est
   // leur ACCUMULATION qui fait la matière, pas l'opacité de chacune.
-  fog:   { n:170, rate: 30, life:[2.6, 4.6],   spd:[0.9,1.8],   spread:0.80,
-           grav: 0.26, size:[14.0,30.0], drag:0.95, add:false, bounce:false },
+  //
+  // Fumée (23/09/26, « plus puissante, qui tape plus loin et plus haut,
+  // comme les étincelles ») : un JET, pas une bouffée. Sortie rapide et
+  // serrée (≈ v/drag : 3,5 à 5 m de colonne à 100 %), puis la matière
+  // ralentit, GONFLE (grow : taille ×(1+grow·u) sur la vie) et se met à
+  // tourbillonner (turb, m/s² aléatoires). Le gonflement tient l'opacité :
+  // petite et dense à la buse, large et diluée en haut — c'est lui qui évite
+  // la colonne de boules blanches, pas un alpha plus bas.
+  // Sans rapport avec le brouillard des faisceaux (setFog) : décision Niko.
+  fog:   { n:240, rate: 58, life:[2.6, 4.4],   spd:[5.6, 8.2],  spread:0.20,
+           grav: 0.30, size:[9.0,16.0], drag:1.55, add:false, bounce:false,
+           grow:4.5, turb:2.4 },
   haze:  { n:170, rate: 22, life:[4.0, 7.5],   spd:[0.30,0.75], spread:1.25,
            grav: 0.05, size:[20.0,44.0], drag:0.90, add:false, bounce:false },
 };
@@ -1316,7 +1326,13 @@ function _machShade(kind, u, out) {
   // Fumée / brume : gris légèrement bleuté, opacité en cloche — la bouffée
   // apparaît, s'épaissit, se dilue.
   out[0] = 0.55; out[1] = 0.58; out[2] = 0.65;
-  return (kind === 'haze' ? 0.028 : 0.055) * Math.sin(Math.PI * u);
+  if (kind === 'haze') return 0.028 * Math.sin(Math.PI * u);
+  // Fumée : pic d'opacité TÔT (dense à la sortie du jet), longue dilution.
+  // Teinte plus sombre que la brume : le panache du jet empile des centaines
+  // de bouffées au sommet, et en gris clair ce sommet passait le seuil du
+  // bloom (nuage blanc lumineux). Baisser l'alpha n'y changeait presque rien.
+  out[0] = 0.36; out[1] = 0.38; out[2] = 0.44;
+  return 0.055 * Math.sin(Math.PI * Math.sqrt(u)) * (1.0 - 0.70 * u);
 }
 
 // Prépare (ou reconfigure) l'état particulaire d'un slot pour un genre donné.
@@ -1340,6 +1356,7 @@ function _machEnsure(obj, kind) {
     vz:  new Float32Array(MACH_MAX),
     age: new Float32Array(MACH_MAX),
     ttl: new Float32Array(MACH_MAX),
+    bsz: new Float32Array(MACH_MAX),   // taille de naissance (P.grow)
   };
   // Toutes mortes au départ : age >= ttl.
   m.age.fill(1); m.ttl.fill(0);
@@ -1403,9 +1420,14 @@ function _tickMachines(dt) {
         m.age[k] = 0;
         m.ttl[k] = P.life[0] + Math.random() * (P.life[1] - P.life[0]);
         siz[k]   = P.size[0] + Math.random() * (P.size[1] - P.size[0]);
+        m.bsz[k] = siz[k];
       }
 
       // ── Intégration ──────────────────────────────────────────────────
+      if (P.turb) {
+        m.vx[k] += (Math.random() - 0.5) * 2 * P.turb * dt;
+        m.vz[k] += (Math.random() - 0.5) * 2 * P.turb * dt;
+      }
       m.vx[k] *= damp;
       m.vz[k] *= damp;
       m.vy[k]  = m.vy[k] * damp + P.grav * dt;
@@ -1431,6 +1453,7 @@ function _tickMachines(dt) {
       const u = m.age[k] / m.ttl[k];
       if (u >= 1) { alp[k] = 0; continue; }
       anyAlive = true;
+      if (P.grow) siz[k] = m.bsz[k] * (1 + P.grow * u);
       alp[k] = _machShade(m.kind, u, _machRGB);
       col[k3] = _machRGB[0]; col[k3 + 1] = _machRGB[1]; col[k3 + 2] = _machRGB[2];
     }

@@ -12,7 +12,7 @@ test_memoire_parametres_seuls.py) : plus d'alerte, juste une ligne au journal.
 """
 import os, sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow")
+sys.path.insert(0, r"C:\Users\nikop\Desktop\MyStrow\App")
 
 from PySide6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication([])

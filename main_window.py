@@ -604,6 +604,39 @@ def _apply_pantilt_meta(proj, src):
             setattr(proj, f, src[f])
 
 
+# Placement 3D (tableau 3D). Mêmes champs que `_fixture_to_config`.
+_SCENE3D_META_FIELDS = (
+    "pos_3d_x", "pos_3d_z", "fixture_height",
+    "body_rotation", "rot3d_x", "rot3d_z",
+    "beam_gain", "beam_angle", "fixture_scale",
+)
+
+
+def _scene3d_meta(proj):
+    """Placement 3D d'une fixture, pour les snapshots de l'éditeur de patch.
+
+    `_restore_snap` (Ctrl+Z, Ctrl+Y, « Ignorer » à la fermeture) recrée les
+    Projector de zéro : sans ces champs, H, RX/RY/RZ, X/Z, angle et taille
+    repartaient aux défauts (H = 7 m) — un client a dû ressaisir sa hauteur et
+    ses RY après avoir simplement fermé la fenêtre Patch sans enregistrer.
+    `_pos3d_src` a trois états (tuple / None / absent) : on garde l'absence."""
+    d = {f: getattr(proj, f, None) for f in _SCENE3D_META_FIELDS}
+    if hasattr(proj, '_pos3d_src'):
+        d['_pos3d_src'] = proj._pos3d_src
+    return d
+
+
+def _apply_scene3d_meta(proj, src):
+    """Réciproque de `_scene3d_meta`."""
+    if not src:
+        return
+    for f in _SCENE3D_META_FIELDS:
+        if src.get(f) is not None:
+            setattr(proj, f, src[f])
+    if '_pos3d_src' in src:
+        proj._pos3d_src = src['_pos3d_src']
+
+
 def _infer_pixel_matrix(profile):
     """Déduit la géométrie d'une barre/matrice depuis un profil DMX brut.
 
@@ -2198,7 +2231,7 @@ class AkaiLayoutEditorDialog(QDialog):
 
     def __init__(self, slots, last_fader_mode="FX", superposition=False, tap_button_mode="bpm",
                  active_brightness=100, inactive_brightness=20, parent=None,
-                 pages=None, page_idx=0):
+                 pages=None, page_idx=0, pad_bump_on_zero=False):
         super().__init__(parent)
         self.setWindowTitle(tr("akai_cfg_title"))
         self.setFixedSize(700, 440)
@@ -2362,6 +2395,10 @@ class AkaiLayoutEditorDialog(QDialog):
         self._superposition_check.setChecked(superposition)
         self._superposition_check.setToolTip(tr("fx_superposition_tip"))
         opts_lay.addWidget(self._superposition_check)
+        self._pad_bump_check = QCheckBox(tr("pad_bump_on_zero_lbl"))
+        self._pad_bump_check.setChecked(pad_bump_on_zero)
+        self._pad_bump_check.setToolTip(tr("pad_bump_on_zero_tip"))
+        opts_lay.addWidget(self._pad_bump_check)
         # Fonction du bouton bas-droite : TAP BPM / GO / FLASH / FLASH KILL
         tap_row = QWidget()
         tap_row.setStyleSheet("background:transparent; border:none;")
@@ -2585,6 +2622,9 @@ class AkaiLayoutEditorDialog(QDialog):
     # ── Résultat ─────────────────────────────────────────────────────────────
     def get_superposition(self):
         return self._superposition_check.isChecked()
+
+    def get_pad_bump_on_zero(self):
+        return self._pad_bump_check.isChecked()
 
     # ── Fonction du bouton bas-droite ─────────────────────────────────────────
     def _refresh_tap_mode_btn(self):
@@ -4868,6 +4908,7 @@ class MainWindow(QMainWindow):
         self.pads = {}
         self.effect_buttons = []
         self.active_effect = None
+        self._mem_effect = None             # dernier effet demandé par les mémoires (cf. _mem_drive_effect)
         self.effect_superposition = False   # True = plusieurs effets simultanés
         self._stacked_effects = []          # liste de dicts d'état par effet (mode superposition)
         # Fonction du bouton bas-droite du contrôleur : bpm | go | flash | flash_kill
@@ -4879,6 +4920,12 @@ class MainWindow(QMainWindow):
         # couleur (mode FLASH). Une entrée par colonne : deux doigts sur deux
         # colonnes différentes sont deux momentanés indépendants.
         self._pad_flash_snaps = {}
+        # Option « pad couleur sur fader à zéro = flash » (désactivée par
+        # défaut : elle interdit de préparer une couleur à l'aveugle).
+        self.pad_bump_on_zero = False
+        # {colonne: {"snap": état couleur, "levels": [(proj, niveau)]}} le temps
+        # qu'un pad couleur tenu flashe une colonne dont le fader est baissé.
+        self._pad_bump_cols = {}
         self._flash_had_memories = False    # une mémoire était-elle tenue à l'appui ?
         # {colonne: groupes} des pads couleur tenus sous FLASH KILL : tout ce
         # qui n'est pas dans l'union part au noir le temps de la frame.
@@ -5151,6 +5198,8 @@ class MainWindow(QMainWindow):
 
         # Moteur LIVE
         self.live_engine = LiveAudioEngine(self)
+        # Horloge MIDI lue aussi sur les ports du contrôleur (table DJ = 1 port)
+        self.live_engine.set_controller_midi(getattr(self, 'midi_handler', None))
         self.live_engine.state_ready.connect(self._apply_live_state)
         self.live_engine.energy_updated.connect(self.seq.live_panel.set_vu)
         self.live_engine.status_updated.connect(self.seq.live_panel.set_status)
@@ -5506,6 +5555,7 @@ class MainWindow(QMainWindow):
 
         # ── Bloc « Le logiciel » ──────────────────────────────────────
         about_menu.addAction(tr("menu_about_updates"), self.show_about)
+        about_menu.addAction(tr("menu_whats_new"), self._open_whats_new)
         if get_language() == "fr":
             about_menu.addAction(tr("mw_menu_tutorials"), self._show_tutorials_dialog)
         about_menu.addAction(tr("mw_menu_hardware"), self.show_gear)
@@ -7297,9 +7347,12 @@ class MainWindow(QMainWindow):
             parent=self,
             pages=self._bank_pages,
             page_idx=self._bank_page_idx,
+            pad_bump_on_zero=self.pad_bump_on_zero,
         )
         if dlg.exec() != QDialog.Accepted:
             return
+        self._pad_bump_end_all()   # le layout change : aucun flash de pad ne reste collé
+        self.pad_bump_on_zero = dlg.get_pad_bump_on_zero()
         # Récupérer les pages éditées + la page sélectionnée devient la page active
         self._bank_pages = dlg.get_pages()
         self._bank_page_idx = max(0, min(dlg.get_current_index(), len(self._bank_pages) - 1))
@@ -7374,6 +7427,8 @@ class MainWindow(QMainWindow):
         # maintenant, tant que les index veulent encore dire quelque chose.
         if getattr(self, "_mem_flash", None):
             self._mem_flash_end()
+        if getattr(self, "_pad_bump_cols", None):
+            self._pad_bump_end_all()
         idx = max(0, min(int(idx), len(pages) - 1))
         if idx == self._bank_page_idx and self._custom_bank_slots is pages[idx]:
             self._update_bank_page_indicator()
@@ -8092,8 +8147,63 @@ class MainWindow(QMainWindow):
         self._repaint_color_column(col_idx)
         self.send_dmx_update()
 
+    # Seuil sous lequel un fader compte comme « pas levé » : un fader physique
+    # reste souvent à 1 ou 2 % une fois redescendu.
+    _PAD_BUMP_THRESHOLD = 5
+
+    def _pad_bump_applies(self, col_idx) -> bool:
+        """Cet appui sur un pad couleur doit-il flasher sa colonne ?
+
+        Seulement si l'option est active, que la colonne est un groupe, que son
+        fader est baissé et NON muté (le mute est une sécurité, il reste muet).
+        Sous FLASH tenu, c'est le bouton qui s'en charge déjà (niveau lu à 100).
+        """
+        if not getattr(self, "pad_bump_on_zero", False):
+            return False
+        if self._pads_are_momentary():
+            return False
+        if col_idx in self._muted_faders or not self._column_groups(col_idx):
+            return False
+        value = self.faders[col_idx].value if col_idx in self.faders else 0
+        return value < self._PAD_BUMP_THRESHOLD
+
+    def _pad_bump_end(self, col_idx):
+        """Fin du flash d'une colonne : le fader reprend la main.
+
+        Fader toujours baissé → la colonne rend son état d'avant (pad latché,
+        couleurs, roue, niveaux). Fader levé pendant l'appui → la couleur
+        flashée reste posée et le groupe suit le fader, comme un latch normal.
+        """
+        bump = self._pad_bump_cols.pop(col_idx, None)
+        if bump is None:
+            return
+        value = self.faders[col_idx].value if col_idx in self.faders else 0
+        if value >= self._PAD_BUMP_THRESHOLD:
+            self.set_proj_level(col_idx, value)
+            return
+        for p, level in bump["levels"]:
+            p.level = level
+        self._restore_color_column(col_idx, bump["snap"])
+
+    def _pad_bump_end_all(self):
+        """Rend tous les flashs de pads tenus (bascule de page, layout modifié)."""
+        for col_idx in list(getattr(self, "_pad_bump_cols", {})):
+            self._pad_bump_end(col_idx)
+
     def _on_color_pad_pressed(self, btn, col_idx):
         """Appui sur un pad couleur (UI ou AKAI)."""
+        if getattr(self, "pad_bump_on_zero", False) and col_idx not in self._pad_bump_cols \
+                and self._pad_bump_applies(col_idx):
+            # Option « flash sur fader à zéro » : la colonne monte à 100 % tant
+            # qu'on tient, et le relâché rend l'état d'avant (`_pad_bump_end`).
+            groupes = set(self._column_groups(col_idx))
+            self._pad_bump_cols[col_idx] = {
+                "snap": self._snapshot_color_column(col_idx),
+                "levels": [(p, p.level) for p in self.projectors if p.group in groupes],
+            }
+            self.activate_pad(btn, col_idx)
+            self.set_proj_level(col_idx, 100)
+            return
         if self._pads_are_momentary():
             self._pad_flash_snaps[col_idx] = self._snapshot_color_column(col_idx)
             # FLASH KILL : c'est CET appui qui coupe, pas le bouton. Le groupe
@@ -8108,6 +8218,9 @@ class MainWindow(QMainWindow):
 
     def _on_color_pad_released(self, col_idx):
         """Relache d'un pad couleur : seul un appui momentane a quelque chose a rendre."""
+        if col_idx in getattr(self, "_pad_bump_cols", {}):
+            self._pad_bump_end(col_idx)
+            return
         self._kill_solo_cols.pop(col_idx, None)
         snap = self._pad_flash_snaps.pop(col_idx, None)
         if snap is not None:
@@ -8413,12 +8526,19 @@ class MainWindow(QMainWindow):
             # Couper l'effet porté par la mémoire qu'on quitte — et le RESTITUER.
             # Arrêter le timer sans rendre l'état d'avant laisse les projecteurs
             # figés sur la dernière image de l'effet.
-            if eff_name:
+            # Seulement si l'effet en cours est bien celui des mémoires : un
+            # effet lancé au bouton ou au pad FX n'a rien à voir avec ce pad.
+            mem_eff = getattr(self, '_mem_effect', None)
+            if eff_name and mem_eff and self.active_effect == mem_eff:
                 if hasattr(self, 'effect_timer'):
                     self.effect_timer.stop()
                 self.active_effect = None
                 self.active_effect_config = {}
                 self._restore_effect_state()
+            if eff_name:
+                # La demande repart de zéro : le mix qui suit relancera l'effet
+                # d'une autre mémoire levée, s'il y en a une.
+                self._mem_effect = None
         self._clear_memory_from_projectors(mem_col, row)
         self._style_memory_pad(mem_col, row, active=False)
         self._update_memory_pad_led(mem_col, row, active=False)
@@ -8612,18 +8732,20 @@ class MainWindow(QMainWindow):
                 and self._mem_pad_mode(mem_col, row) in ("flash", "flash_solo")):
             self._mem_flash_begin(mem_col, row, col_akai)
             return
-        self._activate_memory_pad(btn, mem_col, row, col_akai=col_akai)
+        self._activate_memory_pad(btn, mem_col, row, col_akai=col_akai, toggle_off=True)
 
     def _on_memory_pad_released(self, mem_col, row, col_akai=None):
         """Relâché — seul un pad momentané a quelque chose à rendre."""
         if self._mem_flash_holds(mem_col, row):
             self._mem_flash_end()
 
-    def _activate_memory_pad(self, btn, mem_col, row, col_akai=None):
+    def _activate_memory_pad(self, btn, mem_col, row, col_akai=None, toggle_off=False):
         """Active un pad memoire - independant par colonne.
         Chaque colonne memoire est independante : activer un pad dans la colonne 2
         ne desactive pas le pad actif dans la colonne 1.
-        Cliquer sur le pad deja actif ne fait rien."""
+        Reappuyer sur le pad deja actif : cue suivant si la memoire en a
+        plusieurs ; sinon il l'ETEINT quand `toggle_off` (appui direct a l'ecran
+        ou a l'AKAI), et ne fait rien pour les declencheurs externes."""
 
         # Mode REC : enregistrer l'etat courant sur ce pad
         if self._mem_rec_mode:
@@ -8669,6 +8791,17 @@ class MainWindow(QMainWindow):
                     # l'enchaînement auto ne démarrait qu'en posant le pad « à
                     # froid » ou avec le ▶ du panneau.
                     self._start_cue_duration(mem_col, row)
+                elif toggle_off:
+                    # Mémoire à un seul cue : le réappui n'avait rien à faire,
+                    # il l'éteint — le geste qu'attendent les utilisateurs
+                    # (retour client 23/09/2026). Réservé à l'appui direct :
+                    # Stream Deck, tally vMix/OBS, manette et GO redéclenchent
+                    # la même mémoire sans vouloir la couper.
+                    self._deactivate_memory_pad(mem_col, row, col_akai)
+                    self._recompute_memory_mix()
+                    self._log_message(tr("mw_mem_pad_off", a=mem_col + 1, a1=row + 1), "mem")
+                    self._save_akai_config_auto()
+                    self.send_dmx_update()
             return
 
         # Activation impossible si aucune memoire stockee
@@ -9313,16 +9446,50 @@ class MainWindow(QMainWindow):
             mem_raw = self.memories[mem_col][row] or {}
             eff_cfg = cue.get("effect") or mem_raw.get("effect") or {}
             new_eff = eff_cfg.get("name", "") if (eff_cfg.get("layers") and fader_value > 0) else ""
-            cur_eff = getattr(self, "active_effect", None) or ""
-            if new_eff != cur_eff:
-                if cur_eff:
-                    self.stop_effect()
-                    self.active_effect = None
-                    self.active_effect_config = {}
-                if new_eff:
-                    self.active_effect = new_eff
-                    self.active_effect_config = eff_cfg
-                    self.start_effect(new_eff)
+            self._mem_drive_effect(new_eff, eff_cfg)
+
+    def _mem_drive_effect(self, new_eff: str, eff_cfg: dict):
+        """Pose (ou retire) l'effet que DEMANDENT les mémoires — sans jamais
+        toucher à un effet qu'elles n'ont pas lancé.
+
+        `_mem_effect` retient le dernier effet demandé par les mémoires. Tant que
+        cette demande ne change pas, on laisse l'effet en cours tranquille : il
+        peut venir d'un bouton d'effet ou d'un pad FX. Avant, poser une mémoire
+        SANS effet — ou simplement bouger un fader mémoire — coupait l'effet du
+        bouton en laissant le bouton allumé ; en superposition, la pile restait
+        pleine sans minuterie et plus aucun effet ne repartait (retour client
+        23/09/2026 : « ça coupe tout, après les effets ne marchent plus »).
+
+        Une mémoire qui PORTE un effet garde la main quand sa demande change :
+        l'effet des boutons est alors rendu proprement (boutons éteints, pile
+        vidée) avant de lancer le sien.
+        """
+        voulu_avant = getattr(self, "_mem_effect", None) or ""
+        cur_eff = getattr(self, "active_effect", None) or ""
+        if new_eff == voulu_avant:
+            # Demande inchangée : on ne relance que si plus rien ne tourne
+            # (arrêté par CLEAR, pause, fin d'un effet bouton…).
+            if new_eff and not cur_eff:
+                self.active_effect = new_eff
+                self.active_effect_config = eff_cfg
+                self.start_effect(new_eff)
+            return
+        self._mem_effect = new_eff or None
+        if new_eff:
+            # Les boutons d'effet rendent la main (sinon allumés dans le vide).
+            if hasattr(self, "_stop_button_effects"):
+                self._stop_button_effects()
+            if getattr(self, "active_effect", None):
+                self.stop_effect()
+            self.active_effect = new_eff
+            self.active_effect_config = eff_cfg
+            self.start_effect(new_eff)
+        elif cur_eff and cur_eff == voulu_avant:
+            # Les mémoires ne demandent plus rien : on coupe l'effet qu'ELLES
+            # avaient lancé, et seulement celui-là.
+            self.stop_effect()
+            self.active_effect = None
+            self.active_effect_config = {}
 
     def _recompute_memory_mix(self, fade_secs: float = 0.0, fade_from=None):
         """Composite TOUTES les mémoires actives (faders > 0) sur les projecteurs.
@@ -9523,16 +9690,7 @@ class MainWindow(QMainWindow):
             new_eff = eff_cfg.get("name", "") if (eff_cfg.get("layers") and dom_bright > 0) else ""
         else:
             eff_cfg, new_eff = {}, ""
-        cur_eff = getattr(self, "active_effect", None) or ""
-        if new_eff != cur_eff:
-            if cur_eff:
-                self.stop_effect()
-                self.active_effect = None
-                self.active_effect_config = {}
-            if new_eff:
-                self.active_effect = new_eff
-                self.active_effect_config = eff_cfg
-                self.start_effect(new_eff)
+        self._mem_drive_effect(new_eff, eff_cfg)
 
     def _cue_fade_secs(self, mem_col: int, row: int) -> float:
         """Fondu (s) du cue ACTIF de cette mémoire — celui sur lequel on arrive.
@@ -10730,6 +10888,13 @@ class MainWindow(QMainWindow):
         groups = self._slot_groups(slot)
         if not groups:
             return
+
+        # Pad couleur tenu sur fader baissé : la colonne reste à 100 % tant
+        # qu'on tient, même si le fader bouge entre-temps. Comme `_flash_level`,
+        # le fader n'est jamais déplacé — on remplace la valeur LUE, ici (modèle,
+        # plan 2D) et dans `_apply_pad_overrides_htp` (fil DMX, par frame).
+        if index in getattr(self, "_pad_bump_cols", ()):
+            value = 100
 
         # Auto-activation pad blanc si aucun pad actif dans CETTE colonne
         if index not in self.active_pads and value > 0:
@@ -18000,6 +18165,7 @@ class MainWindow(QMainWindow):
             "vfx_pads": self.vfx_pads,
             "effect_superposition": self.effect_superposition,
             "tap_button_mode": self.tap_button_mode,
+            "pad_bump_on_zero": self.pad_bump_on_zero,
             "go_mode": self.go_mode,   # compat descendante (anciennes versions)
             "position_presets": self.position_presets,
             "position_pads": self.position_pads,
@@ -18144,6 +18310,9 @@ class MainWindow(QMainWindow):
             config.get("tap_button_mode", config.get("go_mode", False)))
         self._flash_kind = None
         self._update_tap_go_btn_style()
+
+        # Pad couleur sur fader à zéro = flash (option, désactivée par défaut)
+        self.pad_bump_on_zero = bool(config.get("pad_bump_on_zero", False))
 
         # active_memory_pads non restaure : toujours demarrer sans pad actif
         # (evite le pad du haut "toujours enclenche" au demarrage)
@@ -20421,6 +20590,12 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     # ── Fin contrôleur Stream Deck ────────────────────────────────────────────
+
+    def _open_whats_new(self):
+        """Journal des mises à jour, sur le site, dans la langue du logiciel."""
+        from core import CHANGELOG_URLS
+        url = CHANGELOG_URLS.get(get_language(), CHANGELOG_URLS["en"])
+        QDesktopServices.openUrl(QUrl(url))
 
     def show_about(self):
         """Ouvre le dialogue A propos / mises à jour"""
@@ -23225,6 +23400,7 @@ class MainWindow(QMainWindow):
                     # inversions : sans ça, un Ctrl+Z rendait à la lyre toute
                     # sa course, en pleine session.
                     entry.update(_pantilt_meta(p))
+                    entry['_3d'] = _scene3d_meta(p)
                 snap.append(entry)
             _history.append(snap)
             _redo_stack.clear()
@@ -23243,6 +23419,7 @@ class MainWindow(QMainWindow):
                     # inversions : sans ça, un Ctrl+Z rendait à la lyre toute
                     # sa course, en pleine session.
                     entry.update(_pantilt_meta(p))
+                    entry['_3d'] = _scene3d_meta(p)
                 snap.append(entry)
             return snap
 
@@ -23277,6 +23454,7 @@ class MainWindow(QMainWindow):
                     p.fan_speed = 0
                 _apply_pantilt_meta(p, fd_s)
                 _apply_matrix_meta(p, fd_s)
+                _apply_scene3d_meta(p, fd_s.get('_3d'))
                 self.projectors.append(p)
                 fixture_data.append({
                     'name':          fd_s['name'],
@@ -29544,6 +29722,8 @@ class MainWindow(QMainWindow):
             # on ne fait que remplacer la valeur LUE le temps de l'appui.
             fader_value = self._flash_level(
                 self.faders[col_idx].value if col_idx in self.faders else 0)
+            if col_idx in getattr(self, "_pad_bump_cols", ()):
+                fader_value = 100   # pad tenu sur fader baissé (cf. set_proj_level)
             if fader_value <= 0:
                 continue
             brightness = fader_value / 100.0

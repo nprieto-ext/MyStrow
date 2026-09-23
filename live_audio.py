@@ -344,6 +344,9 @@ class LiveAudioEngine(QObject):
         self._fallback_tmr   = None
         self._vdj_poll_tmr   = None
         self._midi_clock_in  = None
+        self._ctrl_midi      = None          # MIDIHandler du contrôleur (horloge partagée)
+        self._clock_src      = None
+        self._clock_port_name = ""
         self._source_key     = "loopback"
         self._nervosity      = 0.5
         self._sensitivity    = 0.7
@@ -447,13 +450,10 @@ class LiveAudioEngine(QObject):
         if self._vdj_poll_tmr:
             self._vdj_poll_tmr.stop()
             self._vdj_poll_tmr = None
-        if self._midi_clock_in:
-            try:
-                self._midi_clock_in.close_port()
-                del self._midi_clock_in
-            except Exception:
-                pass
-            self._midi_clock_in = None
+        self._close_clock_port()
+        h = getattr(self, '_ctrl_midi', None)
+        if h is not None and h.clock_listener == self._midi_clock_cb:
+            h.clock_listener = None
         if self._stream:
             try:
                 self._stream.stop()
@@ -942,97 +942,184 @@ class LiveAudioEngine(QObject):
 
     # ── Source MIDI Clock ──────────────────────────────────────────────────
 
+    def set_controller_midi(self, handler):
+        """MIDIHandler du contrôleur de scène : l'horloge se lit aussi sur SES ports.
+
+        Sous Windows un port MIDI n'accepte qu'un client. Une table DJ utilisée
+        comme contrôleur (DJM-2000…) n'a qu'un port, déjà ouvert par le
+        MIDIHandler : le rouvrir ici échouait, d'où « horloge OU contrôleur ».
+        Le MIDIHandler nous relaie donc les 0xF8 qu'il reçoit (`clock_listener`).
+        """
+        self._ctrl_midi = handler
+
+    def _ctrl_held_ports(self) -> set:
+        h = getattr(self, '_ctrl_midi', None)
+        try:
+            return set(h.open_input_names()) if h else set()
+        except Exception:
+            return set()
+
+    def _clock_candidates(self, ports, hint: str):
+        """Ports à essayer, du plus probable au moins probable.
+
+        Même priorité qu'avant (port « MyStrow », puis le logiciel détecté, puis
+        loopMIDI, puis n'importe quel port), mais en LISTE : si le premier reste
+        muet on passe au suivant, au lieu de rester collé au premier port que
+        Windows a énuméré. Les ports du contrôleur sont exclus — on les écoute
+        déjà par le MIDIHandler.
+        """
+        held = self._ctrl_held_ports()
+
+        def rank(name):
+            low, up = name.lower(), name.upper()
+            if 'mystrow' in low:
+                return 0
+            if hint and hint.lower() in low:
+                return 1
+            if 'loop' in low:
+                return 2
+            if any(ex in up for ex in _MIDI_EXCLUDE):
+                return 4
+            return 3
+        ranked = sorted((rank(n), i, n) for i, n in enumerate(ports) if n not in held)
+        return [(i, n) for _, i, n in ranked]
+
+    def _clock_list_ports(self):
+        """Ports d'entrée, sonde réutilisée (cf. MIDIHandler.scan_ports). None = échec."""
+        try:
+            if getattr(self, '_clock_probe', None) is None:
+                self._clock_probe = _rtmidi.MidiIn()
+            return list(self._clock_probe.get_ports())
+        except Exception:
+            self._clock_probe = None
+            return None
+
+    def _close_clock_port(self):
+        if self._midi_clock_in:
+            try:
+                self._midi_clock_in.close_port()
+                del self._midi_clock_in
+            except Exception:
+                pass
+        self._midi_clock_in = None
+        self._clock_port_name = ""
+
+    def _clock_label(self, name: str) -> str:
+        hint = getattr(self, '_clock_hint', '')
+        return f"{'Rekordbox' if hint else 'MIDI Clock'} : {name}"
+
+    def _clock_open_next(self, ports) -> bool:
+        """Ouvre le prochain port candidat pas encore essayé.
+
+        Rien d'ouvrable : on reste à l'écoute du contrôleur seul (s'il y en a
+        un) — c'est le cas d'une DJM branchée en contrôleur, parfaitement
+        valable.
+        """
+        self._close_clock_port()
+        for idx, name in self._clock_candidates(ports, self._clock_hint):
+            if name in self._clock_tried:
+                continue
+            self._clock_tried.add(name)
+            try:
+                port = _rtmidi.MidiIn()
+                port.open_port(idx)
+            except Exception as e:
+                # Tenu par un autre logiciel (rekordbox…) : on passe au suivant.
+                self._log_audio(f"MIDI Clock : « {name} » indisponible ({e})")
+                continue
+            port.ignore_types(sysex=True, timing=False, active_sense=True)
+            port.set_callback(lambda event, data=None, n=name: self._midi_clock_cb(event, n))
+            self._midi_clock_in = port
+            self._clock_port_name = name
+            self._clock_port_since = time.monotonic()
+            self._log_audio(f"MIDI Clock : écoute de « {name} » (en attente d'horloge…)")
+            held = sorted(self._ctrl_held_ports())
+            self.device_info.emit(self._clock_label(" + ".join([name] + held)))
+            return True
+        self._clock_exhausted = True
+        held = sorted(self._ctrl_held_ports())
+        if held:
+            self.device_info.emit(self._clock_label(" + ".join(held)))
+            self._log_audio(f"MIDI Clock : écoute du contrôleur seul ({held})")
+        elif not ports:
+            self.device_info.emit(tr("la3_041"))
+            self._log_audio("MIDI Clock : AUCUN port MIDI (IAC en ligne ?)")
+        else:
+            self.device_info.emit(tr("la3_042", target_name=", ".join(ports)))
+        return False
+
     def _open_midi_clock(self, hint: str = ""):
         if _rtmidi is None:
             self.device_info.emit(tr("la3_040"))
             self._start_beat_timer()
             return
         self._midi_clock_logged = False
+        self._midi_ever_beat    = False
+        self._clock_hint        = hint
+        self._clock_src         = None     # port d'où vient l'horloge, une fois trouvée
+        self._clock_tried       = set()
+        self._clock_exhausted   = False
+        self._clock_port_name   = ""
+        self._clock_port_since  = 0.0
+        self._clock_next_check  = time.monotonic() + 1.0
         try:
-            self._midi_clock_in = _rtmidi.MidiIn()
-            ports = self._midi_clock_in.get_ports()
+            h = getattr(self, '_ctrl_midi', None)
+            if h is not None:
+                h.clock_listener = self._midi_clock_cb
+            ports = self._clock_list_ports() or []
+            self._clock_ports_seen = ports
             self._log_audio(f"MIDI Clock : ports détectés = {ports}")
-
-            if not ports:
-                self.device_info.emit(tr("la3_041"))
-                self._log_audio("MIDI Clock : AUCUN port MIDI (IAC en ligne ?)")
-                self._start_beat_timer()
-                return
-
-            # Priorité 1 : port nommé "MyStrow" (loopMIDI dédié)
-            target_idx, target_name = None, None
-            for i, name in enumerate(ports):
-                if 'mystrow' in name.lower():
-                    target_idx, target_name = i, name
-                    break
-
-            # Priorité 2 : port correspondant au hint (ex: "Rekordbox")
-            if target_idx is None and hint:
-                for i, name in enumerate(ports):
-                    if hint.lower() in name.lower():
-                        target_idx, target_name = i, name
-                        break
-
-            # Priorité 3 : premier port loopMIDI (contient "loopmidi" ou "loop")
-            if target_idx is None:
-                for i, name in enumerate(ports):
-                    if 'loop' in name.lower():
-                        target_idx, target_name = i, name
-                        break
-
-            # Priorité 4 : premier port non-contrôleur
-            if target_idx is None:
-                for i, name in enumerate(ports):
-                    up = name.upper()
-                    if not any(ex in up for ex in _MIDI_EXCLUDE):
-                        target_idx, target_name = i, name
-                        break
-
-            # Fallback : premier port disponible
-            if target_idx is None:
-                target_idx, target_name = 0, ports[0]
-
-            # Retry x3 : le port loopMIDI peut prendre un instant à s'initialiser
-            last_err = None
-            for _attempt in range(3):
-                try:
-                    self._midi_clock_in.open_port(target_idx)
-                    last_err = None
-                    break
-                except Exception as e:
-                    last_err = e
-                    time.sleep(0.4)
-                    # Recréer l'objet MidiIn entre chaque tentative
-                    try:
-                        del self._midi_clock_in
-                    except Exception:
-                        pass
-                    self._midi_clock_in = _rtmidi.MidiIn()
-                    ports = self._midi_clock_in.get_ports()
-                    if target_idx >= len(ports):
-                        break
-            if last_err:
-                self.device_info.emit(
-                    tr("la3_042", target_name=target_name))
-                self._start_beat_timer()
-                return
-            # timing=False = recevoir les 0xF8 (MIDI Clock)
-            self._midi_clock_in.ignore_types(sysex=True, timing=False, active_sense=True)
-            self._midi_clock_in.set_callback(self._midi_clock_cb)
-
-            label = f"{'Rekordbox' if hint else 'MIDI Clock'} : {target_name}"
-            self.device_info.emit(label)
+            self._clock_open_next(ports)
             self.connection_status.emit('waiting')
-            self._midi_ever_beat = False
-            self._log_audio(f"MIDI Clock : port ouvert → « {target_name} » (en attente d'horloge…)")
-            print(f"LiveAudio: {label}")
-
         except Exception as e:
             self.device_info.emit(tr("la3_046", e=e))
             print(f"LiveAudio: MIDI Clock erreur ({e})")
 
         # Timer 50ms pour faire avancer le temps entre les beats MIDI
         self._start_beat_timer()
+
+    def _clock_hunt(self):
+        """Appelé chaque seconde (thread GUI) par `_midi_beat_tick`.
+
+        - un appareil branché APRÈS le lancement du LIVE est vu ici : avant, la
+          liste n'était lue qu'au démarrage et il fallait repasser LIVE → Séquence
+          → LIVE ;
+        - un port qui reste muet 3 s cède la place au candidat suivant ;
+        - une fois l'horloge trouvée ailleurs (sur le contrôleur), notre port ne
+          sert plus : on le ferme pour le rendre aux autres logiciels.
+        """
+        ports = self._clock_list_ports()
+        if ports is None:
+            return
+        src = self._clock_src
+        if src is not None:
+            if src not in ports:
+                self._log_audio(f"MIDI Clock : « {src} » débranché — nouvelle recherche")
+                self._clock_src = None
+                self._clock_tried = set()
+                self._clock_exhausted = False
+                self._clock_ports_seen = ports
+                self._clock_open_next(ports)
+            elif self._midi_clock_in and self._clock_port_name != src:
+                self._close_clock_port()
+            return
+        if ports != self._clock_ports_seen:
+            self._log_audio(f"MIDI Clock : ports modifiés = {ports}")
+            self._clock_ports_seen = ports
+            self._clock_tried = set()
+            self._clock_exhausted = False
+            self._clock_open_next(ports)
+            return
+        if self._clock_exhausted:
+            return
+        if time.monotonic() - self._clock_port_since >= 3.0:
+            if not self._clock_open_next(ports):
+                # Tout essayé, rien n'émet : on se repose sur le meilleur
+                # candidat (comportement d'avant) en attendant que l'émetteur
+                # démarre. Plus de rotation tant que les ports ne changent pas.
+                self._clock_tried = set()
+                self._clock_open_next(ports)
+                self._clock_exhausted = True
 
     def _start_beat_timer(self):
         """Timer 50ms pour avancer _elapsed_ms et le VU mètre (MIDI Clock / VDJ)."""
@@ -1049,6 +1136,16 @@ class LiveAudioEngine(QObject):
             return
 
         if msg[0] != 0xF8:
+            return
+
+        # Deux sources possibles (notre port + ceux du contrôleur) : on garde la
+        # première qui émet, sinon deux horloges mêlées donneraient un BPM faux.
+        src = data or ""
+        if self._clock_src is None:
+            self._clock_src = src
+            self.device_info.emit(self._clock_label(src))
+            self._log_audio(f"MIDI Clock : horloge trouvée sur « {src} »")
+        elif src != self._clock_src:
             return
 
         # Diagnostic : confirme (une fois) que l'horloge arrive bien du logiciel DJ
@@ -1094,11 +1191,20 @@ class LiveAudioEngine(QObject):
                 return
         self.midi_paused = False
 
+        if self._source_key in ('midi_clock', 'rekordbox') and _rtmidi is not None:
+            now = time.monotonic()
+            if now >= getattr(self, '_clock_next_check', 0.0):
+                self._clock_next_check = now + 1.0
+                try:
+                    self._clock_hunt()
+                except Exception as e:
+                    self._log_audio(f"MIDI Clock : recherche en échec ({e})")
+
         rms = self._pending_beat_energy
         self._pending_beat_energy = max(0.12, self._pending_beat_energy * 0.78)
 
         # Simulateur pur si pas de MIDI connecté (fallback)
-        if self._midi_clock_in is None and self._source_key in ('midi_clock', 'rekordbox'):
+        if _rtmidi is None and self._source_key in ('midi_clock', 'rekordbox'):
             t = time.monotonic()
             phase = (t % 0.5) / 0.5
             rms = 0.45 + 0.45 * max(0.0, math.sin(phase * 2 * math.pi))

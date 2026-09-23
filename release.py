@@ -13,7 +13,16 @@ from pathlib import Path
 # CONFIGURATION
 # ------------------------------------------------------------------
 
-BASE_DIR = Path(__file__).parent
+def _find_project_dir():
+    # Embarque dans l'exe AdminPanel, __file__ pointe dans dist\AdminPanel\_internal :
+    # on remonte depuis l'exe jusqu'au dossier projet (celui qui contient installer\maestro.iss).
+    if getattr(sys, "frozen", False):
+        for d in Path(sys.executable).resolve().parents:
+            if (d / "installer" / "maestro.iss").exists() and (d / "core.py").exists():
+                return d
+    return Path(__file__).resolve().parent
+
+BASE_DIR = _find_project_dir()
 CONFIG_FILE = BASE_DIR / "core.py"
 ISS_FILE = BASE_DIR / "installer" / "maestro.iss"
 DESKTOP = Path.home() / "Desktop"
@@ -35,9 +44,13 @@ def get_current_version():
     return match.group(1) if match else None
 
 def bump_version(current):
-    """Auto-increment patch version: 2.5.3 -> 2.5.4"""
+    """Auto-increment patch version: 2.5.3 -> 2.5.4, 3.1.99 -> 3.2.1"""
     parts = current.split(".")
-    parts[-1] = str(int(parts[-1]) + 1)
+    patch = int(parts[-1]) + 1
+    if patch > 99 and len(parts) >= 2:
+        parts[-2] = str(int(parts[-2]) + 1)
+        patch = 1
+    parts[-1] = str(patch)
     return ".".join(parts)
 
 def update_version(new_version):

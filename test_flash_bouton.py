@@ -69,6 +69,7 @@ class FauxWin:
     _tap_tempo             = mw.MainWindow._tap_tempo
     _tap_tempo_released    = mw.MainWindow._tap_tempo_released
     _recompute_memory_mix  = mw.MainWindow._recompute_memory_mix
+    _mem_drive_effect      = mw.MainWindow._mem_drive_effect
     _flash_has_memories    = mw.MainWindow._flash_has_memories
     _mem_ensure_cues       = mw.MainWindow._mem_ensure_cues
     _mem_active_cue        = mw.MainWindow._mem_active_cue

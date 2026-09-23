@@ -150,6 +150,7 @@ class MonteeDeFader(unittest.TestCase):
 
         class W:
             _recompute_memory_mix  = mw.MainWindow._recompute_memory_mix
+            _mem_drive_effect      = mw.MainWindow._mem_drive_effect
             _compute_htp_overrides = mw.MainWindow._compute_htp_overrides
             _mem_ensure_cues       = mw.MainWindow._mem_ensure_cues
             _mem_active_cue        = mw.MainWindow._mem_active_cue

@@ -102,6 +102,7 @@ class FauxWin:
     _activate_memory_pad   = mw.MainWindow._activate_memory_pad
 
     _recompute_memory_mix  = mw.MainWindow._recompute_memory_mix
+    _mem_drive_effect      = mw.MainWindow._mem_drive_effect
     _compute_htp_overrides = mw.MainWindow._compute_htp_overrides
     _clear_memory_from_projectors = mw.MainWindow._clear_memory_from_projectors
     _mem_ensure_cues       = mw.MainWindow._mem_ensure_cues
