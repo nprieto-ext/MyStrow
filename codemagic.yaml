@@ -1,0 +1,51 @@
+# Codemagic : build iOS de l'app tablette (mobile/, Capacitor) et envoi sur App Store Connect.
+# Lancement manuel depuis codemagic.io (pas de déclenchement automatique sur push).
+#
+# À configurer une fois dans Codemagic :
+# - Team settings > Integrations > Developer Portal : clé API App Store Connect nommée « MyStrow ASC »
+# - Environment variables, groupe « ios_signing » : CERTIFICATE_PRIVATE_KEY (clé RSA PEM, secrète)
+#   qui sert à créer / retrouver le certificat Apple Distribution.
+workflows:
+  ios-appstore:
+    name: iOS App Store (tablette)
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    working_directory: mobile
+    integrations:
+      app_store_connect: MyStrow ASC
+    environment:
+      groups:
+        - ios_signing
+      vars:
+        BUNDLE_ID: com.happlysas.mystrow
+        APP_STORE_APPLE_ID: 6760429882
+        XCODE_PROJECT: ios/App/App.xcodeproj
+        XCODE_SCHEME: App
+      node: 22
+      xcode: latest
+    scripts:
+      - name: Dépendances npm
+        script: npm ci
+      - name: Construire www + cap sync
+        script: npm run build && npx cap sync ios
+      - name: Signature (certificat + profil App Store)
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Numéro de build = dernier TestFlight + 1
+        script: |
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo 0)
+          NEXT=$((LATEST + 1))
+          echo "Build $NEXT"
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $NEXT;/" "$XCODE_PROJECT/project.pbxproj"
+      - name: Compiler l'IPA
+        script: xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
