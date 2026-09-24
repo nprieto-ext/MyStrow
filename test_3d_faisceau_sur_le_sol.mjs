@@ -148,18 +148,24 @@ verifie('longueur continue (pas de saut au franchissement)', pireSautY < 0.5,
 // _angF — qui ignorait `_zoomF` et prenait 1.6 là où le cône prend 1.9 pour un
 // wash. Mesuré sur le profil des deux shaders : tache 2,03× trop LARGE à zoom
 // mini, 0,29× (donc trop étroite) à zoom maxi. Dérivée de `base_r`, elle suit
-// le cône partout. Et elle est écrite DEUX fois (bloc `hitsFloor` et état
-// `_fx` des copies du prisme) : les deux doivent rester la même expression.
+// le cône partout.
+// Elle était écrite DEUX fois (bloc `hitsFloor` et état `_fx` des copies du
+// prisme), et ce test vérifiait que les deux copies restaient identiques.
+// Depuis le 24/09/2026 elle n'est plus calculée qu'UNE fois, puis partagée
+// par la tache, l'échelle du gobo et les copies du prisme : on vérifie donc
+// l'unicité de la formule et que chacun la reprend.
 const poolExprs = [...html.matchAll(/poolR[ :=]+\s*(base_r[^;,\r\n]*)/g)].map(m => m[1].trim());
-verifie('la tache est dérivée du rayon du cône', poolExprs.length >= 2,
-        `${poolExprs.length} expression(s) trouvée(s)`);
-verifie('les deux écritures de poolR sont identiques',
-        poolExprs.length >= 2 && poolExprs.every(e => e === poolExprs[0]),
-        poolExprs.join(' | ') || '—');
+verifie('la tache est dérivée du rayon du cône (une seule formule)', poolExprs.length === 1,
+        poolExprs.join(' | ') || 'introuvable');
+verifie('tache, gobo et prisme partagent le même poolR',
+        /poseFloorPool\(obj\.pool,[^)]*\bpoolR\)/.test(html)
+        && /goboScaleFor\(base_r, poolR\)/.test(html)
+        && /^\s*poolR,\s*$/m.test(html),
+        'poseFloorPool(obj.pool…poolR) · goboScaleFor(base_r, poolR) · _fx { poolR }');
 // Le halo est la pénombre autour de la tache, pas une nappe : à 2.8 un spot à
 // 7 m posait un disque de 14 m sur un plateau de 18 — c'est LUI qui faisait
 // « la tache est plus large que le faisceau ».
-const halo = html.match(/halo\.scale\.setScalar\(poolR \* ([\d.]+)\)/);
+const halo = html.match(/poseFloorPool\(obj\.halo,[^)]*poolR \* ([\d.]+)\)/);
 verifie('le halo au sol reste une pénombre', !!halo && parseFloat(halo[1]) <= 2.0,
         halo ? `poolR × ${halo[1]}` : 'introuvable');
 
