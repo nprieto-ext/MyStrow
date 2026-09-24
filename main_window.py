@@ -24862,6 +24862,22 @@ class MainWindow(QMainWindow):
                    "Machine a brouillard": 2, "Machine a etincelles": 1,
                    "Lance-flamme": 1}
             base_name = custom_name or preset.get('name', 'Fixture')
+            if qty > 1 and not custom_name and " · " in base_name:
+                # « Machine à étincelles · 1 canal » + numéro donnait
+                # « … 1 canal 8 » : on lisait « canal 8 ». Le descripteur
+                # du profil générique ne sert pas au nom de l'appareil.
+                base_name = base_name.split(" · ")[0].strip() or base_name
+
+            def _numbered(n):
+                if qty <= 1:
+                    return base_name
+                # Nom finissant par un chiffre ou par « canal/ch » (« Gradateur
+                # 1 canal ») : un numéro collé se confondrait avec le canal.
+                last = base_name.rsplit(" ", 1)[-1].lower()
+                if last[-1:].isdigit() or last in ("canal", "canaux", "ch",
+                                                   "channel", "channels"):
+                    return f"{base_name} #{n + 1}"
+                return f"{base_name} {n + 1}"
 
             # Calculer les positions canvas pour le batch
             if qty > 1:
@@ -24894,8 +24910,7 @@ class MainWindow(QMainWindow):
                 _grp = preset.get('group', 'face')
                 _uni = preset.get('universe', 0)
                 for n in range(qty):
-                    _spec_n = _dc_replace(_spec, name=(f"{base_name} {n + 1}"
-                                                       if qty > 1 else base_name))
+                    _spec_n = _dc_replace(_spec, name=_numbered(n))
                     projs = generate_matrix_projectors(
                         _spec_n, base_address=_next_free_address(),
                         universe=_uni, group=_grp, name=_spec_n.name)
@@ -24944,7 +24959,7 @@ class MainWindow(QMainWindow):
                     next_addr = last.start_address + len(last_profile)
                 else:
                     next_addr = 1
-                name = f"{base_name} {n + 1}" if qty > 1 else base_name
+                name = _numbered(n)
                 p = Projector(
                     preset.get('group', 'face'),
                     name=name,

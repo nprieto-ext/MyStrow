@@ -56,7 +56,7 @@ verifie('le maillage du plancher suit les constantes',
 // ── Balayage de toute la course pan/tilt, lyre et PAR ────────────────────────
 const EPS = 1e-6;
 let pireEcartRayon = 0, pireSautY = 0, horsSol = 0, tachesOrphelines = 0, cones = 0;
-let pirePan = 0, pireTilt = 0;
+let pirePan = 0, pireTilt = 0, horsSalle = 0, pireSautFade = 0;
 
 function cas(p) {
   const bf = beamFloor(p);
@@ -69,9 +69,17 @@ function cas(p) {
               : Math.hypot(dx - bf.bx * t, dy - bf.by * t, dz - bf.bz * t);
   if (ecart > pireEcartRayon) pireEcartRayon = ecart;
 
-  // B. dans l'emprise du plancher (tolérance : arrondis flottants)
-  if (bf.fx < FLOOR_X0 - 1e-6 || bf.fx > FLOOR_X1 + 1e-6 ||
-      bf.fz < FLOOR_Z0 - 1e-6 || bf.fz > FLOOR_Z1 + 1e-6) horsSol++;
+  // B. arrivée NETTE seulement sur le plancher dessiné ; ailleurs (faisceau
+  //    tourné vers la salle — FAISCEAUCOUPE.png, 24/09/2026) il continue
+  //    mais son extrémité s'éteint. Et jamais au-delà du fond de scène.
+  const surPlancher = bf.fy < 0.03 + 1e-6
+      && bf.fx >= FLOOR_X0 - 1e-6 && bf.fx <= FLOOR_X1 + 1e-6
+      && bf.fz >= FLOOR_Z0 - 1e-6 && bf.fz <= FLOOR_Z1 + 1e-6;
+  const dehors = Math.max(FLOOR_X0 - bf.fx, bf.fx - FLOOR_X1,
+                          FLOOR_Z0 - bf.fz, bf.fz - FLOOR_Z1, 0);
+  if (surPlancher && bf.endFade > 1e-6) horsSol++;
+  if ((dehors >= 1.5 || bf.fy >= 0.83) && bf.endFade < 1 - 1e-9) horsSol++;
+  if (bf.fz > FLOOR_Z1 + 1e-6) horsSalle++;
 
   // C. hitsFloor ⇔ le rayon rencontre le plancher dessiné, à portée
   const tf = bf.by < -EPS ? bf.lensY / -bf.by : Infinity;
@@ -114,6 +122,7 @@ for (const isMH of [true, false]) {
       if (prec) {
         const saut = Math.hypot(bf.fx - prec.fx, bf.fy - prec.fy, bf.fz - prec.fz);
         if (saut > pireSautY) { pireSautY = saut; pirePan = pan; pireTilt = tilt; }
+        pireSautFade = Math.max(pireSautFade, Math.abs(bf.endFade - prec.endFade));
       }
       prec = bf;
     }
@@ -122,8 +131,12 @@ for (const isMH of [true, false]) {
 
 verifie('le point d\'arrivée reste sur le rayon', pireEcartRayon < 1e-9,
         `écart max ${pireEcartRayon.toExponential(2)} m sur ${cones} cônes`);
-verifie('le point d\'arrivée reste sur le plancher', horsSol === 0,
-        `${horsSol} cas hors emprise`);
+verifie('bout net sur le plancher, fondu ailleurs', horsSol === 0,
+        `${horsSol} cas incohérents`);
+verifie('le faisceau ne traverse pas le fond de scène', horsSalle === 0,
+        `${horsSalle} cas au-delà de FLOOR_Z1`);
+verifie('le fondu d\'extrémité est continu', pireSautFade < 0.2,
+        `saut max ${pireSautFade.toFixed(3)} par pas de ${PAS}`);
 verifie('pas de tache au sol orpheline', tachesOrphelines === 0,
         `${tachesOrphelines} désaccords hitsFloor`);
 verifie('longueur continue (pas de saut au franchissement)', pireSautY < 0.5,

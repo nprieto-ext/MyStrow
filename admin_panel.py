@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSplitter, QListWidget, QListWidgetItem,
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QObject, QTimer
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QColor, QShortcut, QKeySequence
 
 import firebase_client as fc
 from core import FIREBASE_PROJECT_ID
@@ -4817,7 +4817,9 @@ class AdminPanel(QMainWindow):
         for _c in range(1, 8):
             mhdr.setSectionResizeMode(_c, QHeaderView.ResizeToContents)
         self._mod_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._mod_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        # Multi-sélection : Maj/Ctrl+clic pour approuver ou refuser un lot
+        # d'un coup (une confirmation, un motif, pour tout le lot).
+        self._mod_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._mod_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._mod_table.setAlternatingRowColors(True)
         self._mod_table.verticalHeader().setVisible(False)
@@ -4825,7 +4827,28 @@ class AdminPanel(QMainWindow):
         self._mod_table.selectionModel().selectionChanged.connect(
             self._on_mod_selection_changed)
         self._mod_table.cellDoubleClicked.connect(lambda *_: self._on_mod_inspect())
-        mod_lay.addWidget(self._mod_table)
+
+        # Fiche de la ligne sélectionnée, toujours visible : plus besoin
+        # d'ouvrir « Détail » pour chaque contribution.
+        self._mod_detail = QTextEdit()
+        self._mod_detail.setReadOnly(True)
+        self._mod_detail.setStyleSheet(
+            f"background:{BG_INPUT}; color:{TEXT}; border:none; border-left:1px solid #2a2a2a;"
+            " font-family: Consolas, monospace; font-size: 12px;")
+        self._mod_split = QSplitter(Qt.Horizontal)
+        self._mod_split.addWidget(self._mod_table)
+        self._mod_split.addWidget(self._mod_detail)
+        self._mod_split.setStretchFactor(0, 3)
+        self._mod_split.setStretchFactor(1, 2)
+        mod_lay.addWidget(self._mod_split)
+
+        # Raccourcis, actifs quand le tableau a le focus : ↑/↓ pour parcourir,
+        # A pour approuver, R pour refuser.
+        for key, slot in (("A", lambda: self._on_mod_approve()),
+                          ("R", lambda: self._on_mod_reject())):
+            sc = QShortcut(QKeySequence(key), self._mod_table)
+            sc.setContext(Qt.WidgetShortcut)
+            sc.activated.connect(slot)
 
         # Barre d'actions
         mod_action_bar = QFrame()
@@ -4835,8 +4858,8 @@ class AdminPanel(QMainWindow):
         ma_lay.setContentsMargins(16, 0, 16, 0)
         ma_lay.setSpacing(8)
 
-        hint = QLabel("Vérifiez la provenance déclarée avant d'approuver — "
-                      "l'approbation publie le profil pour tous les utilisateurs.")
+        hint = QLabel("↑/↓ parcourir · A approuver · R refuser · Maj/Ctrl+clic pour un lot — "
+                      "l'approbation publie pour tous les utilisateurs.")
         hint.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         ma_lay.addWidget(hint)
         ma_lay.addStretch()
@@ -4848,7 +4871,7 @@ class AdminPanel(QMainWindow):
         self._btn_mod_inspect.clicked.connect(self._on_mod_inspect)
         ma_lay.addWidget(self._btn_mod_inspect)
 
-        self._btn_mod_reject = QPushButton("✗  Refuser")
+        self._btn_mod_reject = QPushButton("✗  Refuser  (R)")
         self._btn_mod_reject.setStyleSheet(f"""
             QPushButton {{ background:transparent; color:{RED}; border:1px solid #6a2020;
                           border-radius:4px; font-size:11px; padding: 0 12px; }}
@@ -4860,7 +4883,7 @@ class AdminPanel(QMainWindow):
         self._btn_mod_reject.clicked.connect(self._on_mod_reject)
         ma_lay.addWidget(self._btn_mod_reject)
 
-        self._btn_mod_approve = QPushButton("✓  Approuver et publier")
+        self._btn_mod_approve = QPushButton("✓  Approuver et publier  (A)")
         self._btn_mod_approve.setStyleSheet(_BTN_PRIMARY)
         self._btn_mod_approve.setFixedHeight(32)
         self._btn_mod_approve.setEnabled(False)
@@ -4894,7 +4917,7 @@ class AdminPanel(QMainWindow):
     def _load_submissions(self):
         kind = self._mod_kind_now()
         self._mod_loading.show()
-        self._mod_table.hide()
+        self._mod_split.hide()
         query = (_query_controller_submissions if kind == "controller"
                  else _query_fixture_submissions)
         _run_async(
@@ -4908,7 +4931,7 @@ class AdminPanel(QMainWindow):
         kind = kind or self._mod_kind_now()
         self._submissions_by_kind[kind] = submissions or []
         self._mod_loading.hide()
-        self._mod_table.show()
+        self._mod_split.show()
         # Une réponse qui arrive après que l'utilisateur a changé de file ne
         # doit pas écraser le tableau affiché.
         if kind == self._mod_kind_now():
@@ -4943,7 +4966,7 @@ class AdminPanel(QMainWindow):
 
     def _on_submissions_error(self, msg: str):
         self._mod_loading.hide()
-        self._mod_table.show()
+        self._mod_split.show()
         if "401" in msg:
             # Ne peut plus arriver que si le refresh token lui-même est mort
             # (mot de passe changé, session révoquée) : le jeton d'accès, lui,
@@ -5052,21 +5075,72 @@ class AdminPanel(QMainWindow):
         self._mod_count.setText(f"{len(rows)} profil(s)")
         self._on_mod_selection_changed()
 
+    def _selected_submissions(self) -> list:
+        idxs = sorted(r.row() for r in self._mod_table.selectionModel().selectedRows())
+        return [self._filtered_submissions[i] for i in idxs
+                if 0 <= i < len(self._filtered_submissions)]
+
     def _selected_submission(self) -> dict | None:
-        rows = self._mod_table.selectionModel().selectedRows()
-        if not rows:
-            return None
-        idx = rows[0].row()
-        if 0 <= idx < len(self._filtered_submissions):
-            return self._filtered_submissions[idx]
-        return None
+        subs = self._selected_submissions()
+        return subs[0] if subs else None
+
+    def _selected_pending(self) -> list:
+        return [s for s in self._selected_submissions() if s.get("status") == "pending"]
 
     def _on_mod_selection_changed(self, *_):
-        sub = self._selected_submission()
-        pending = bool(sub) and sub.get("status") == "pending"
-        self._btn_mod_inspect.setEnabled(bool(sub))
-        self._btn_mod_approve.setEnabled(pending)
-        self._btn_mod_reject.setEnabled(pending)
+        subs = self._selected_submissions()
+        n_pending = len(self._selected_pending())
+        self._btn_mod_inspect.setEnabled(len(subs) == 1)
+        self._btn_mod_approve.setEnabled(n_pending > 0)
+        self._btn_mod_reject.setEnabled(n_pending > 0)
+        suffix = f" ({n_pending})" if n_pending > 1 else ""
+        self._btn_mod_approve.setText(f"✓  Approuver et publier{suffix}  (A)")
+        self._btn_mod_reject.setText(f"✗  Refuser{suffix}  (R)")
+
+        if len(subs) == 1:
+            lines = (self._controller_report(subs[0])
+                     if self._mod_kind_now() == "controller"
+                     else self._fixture_report(subs[0]))
+            self._mod_detail.setPlainText("\n".join(lines))
+        elif subs:
+            self._mod_detail.setPlainText(
+                f"{len(subs)} contributions sélectionnées, dont {n_pending} en attente :\n\n"
+                + "\n".join(f"  · {s.get('name', '')}  —  {s.get('manufacturer', '')}"
+                            f"  [{s.get('status', '')}]" for s in subs))
+        else:
+            self._mod_detail.clear()
+
+    def _mod_after_action(self, doc_ids: list, status: str, failed: list):
+        """Applique la décision localement, sans recharger toute la file.
+
+        Le rechargement complet (écran « Chargement… », sélection perdue) était
+        ce qui rendait la modération lente : on marque les lignes traitées, on
+        garde la position et on passe directement à la suivante en attente.
+        """
+        done = set(doc_ids)
+        first_row = min((r.row() for r in self._mod_table.selectionModel().selectedRows()),
+                        default=0)
+        for sub in self._all_submissions:
+            if sub.get("_doc_id") in done:
+                sub["status"] = status
+        self._refresh_mod_table()
+        self._update_mod_badge()
+
+        rows = self._filtered_submissions
+        order = list(range(first_row, len(rows))) + list(range(0, min(first_row, len(rows))))
+        nxt = next((i for i in order if rows[i].get("status") == "pending"), None)
+        self._mod_table.clearSelection()
+        if nxt is not None:
+            self._mod_table.selectRow(nxt)
+        self._mod_table.setFocus()
+
+        verb = "publiée(s)" if status == "approved" else "refusée(s)"
+        self._mod_count.setText(f"{len(rows)} contribution(s)  ·  ✓ {len(done)} {verb}")
+        if failed:
+            QMessageBox.warning(
+                self, "Modération",
+                f"{len(failed)} contribution(s) non traitée(s) :\n\n"
+                + "\n".join(f"· {name} : {err}" for name, err in failed))
 
     def _controller_report(self, sub: dict) -> list:
         """Fiche d'un profil de contrôleur : le mapping, lisiblement.
@@ -5210,26 +5284,78 @@ class AdminPanel(QMainWindow):
         return lines
 
     def _on_mod_approve(self):
-        """Publie la fixture dans gdtf_fixtures, licence et attribution incluses."""
-        sub = self._selected_submission()
-        if not sub or sub.get("status") != "pending":
+        """Publie la ou les contributions sélectionnées (une confirmation par lot)."""
+        subs = self._selected_pending()
+        if not subs:
             return
-        if self._mod_kind_now() == "controller":
-            self._approve_controller(sub)
-            return
-        name = sub.get("name", "")
-        if QMessageBox.question(
-            self, "Publier la contribution",
-            f"Publier « {name} » dans la bibliothèque commune ?\n\n"
-            f"Provenance déclarée : {sub.get('declared_source', '')}\n"
-            f"Licence : {sub.get('license', '')}\n"
-            f"Contributeur : {sub.get('contributed_by', '')}\n\n"
-            "Le profil deviendra visible par tous les utilisateurs.",
-        ) != QMessageBox.Yes:
+        is_ctrl = self._mod_kind_now() == "controller"
+        if len(subs) == 1:
+            sub = subs[0]
+            if is_ctrl:
+                detail = (f"Détection : {', '.join(sub.get('keywords') or []) or '—'}\n"
+                          f"Grille : {sub.get('grid_rows', 0)} × {sub.get('grid_cols', 0)}, "
+                          f"{sub.get('fader_count', 0)} faders\n"
+                          f"Contributeur : {sub.get('contributed_by', '')}\n\n"
+                          "Rappel : un mapping ne se vérifie pas sans l'appareil.")
+            else:
+                detail = (f"Provenance déclarée : {sub.get('declared_source', '')}\n"
+                          f"Licence : {sub.get('license', '')}\n"
+                          f"Contributeur : {sub.get('contributed_by', '')}")
+            question = f"Publier « {sub.get('name', '')} » ?\n\n{detail}"
+        else:
+            listing = "\n".join(f"  · {s.get('name', '')}" for s in subs[:15])
+            if len(subs) > 15:
+                listing += f"\n  … et {len(subs) - 15} autre(s)"
+            question = f"Publier ces {len(subs)} contributions ?\n\n{listing}"
+        question += "\n\nVisible par tous les utilisateurs."
+        # Entrée = Oui : « A » puis « Entrée » suffit à publier.
+        if QMessageBox.question(self, "Publier", question,
+                                QMessageBox.Yes | QMessageBox.No,
+                                QMessageBox.Yes) != QMessageBox.Yes:
             return
 
-        fixture_data = {
-            "name":            name,
+        reviewer = self._admin_email
+        if is_ctrl:
+            items = [dict(s) for s in subs]
+
+            def _publish_all(items, token):
+                done, failed = [], []
+                for s in items:
+                    try:
+                        _publish_controller_profile(s, token, reviewer)
+                        done.append(s.get("_doc_id", ""))
+                    except Exception as e:
+                        failed.append((s.get("name", ""), str(e)))
+                return "", done, failed
+
+            args = (items, self._token())
+        else:
+            items = [(self._fixture_payload(s), s.get("_doc_id", "")) for s in subs]
+
+            def _publish_all(items, token, refresh):
+                done, failed = [], []
+                for fx, doc in items:
+                    try:
+                        token = _do_upload_fixture_async(fx, token, refresh)
+                        _set_submission_status(doc, "approved", token, reviewer=reviewer)
+                        done.append(doc)
+                    except Exception as e:
+                        failed.append((fx.get("name", ""), str(e)))
+                return token, done, failed
+
+            args = (items, self._token(), self._refresh_token)
+
+        self._mod_set_busy(f"Publication de {len(subs)} contribution(s)…")
+        _run_async(
+            self, _publish_all, *args,
+            on_success=lambda res: self._on_mod_batch_done(res, "approved"),
+            on_error=self._on_mod_action_error,
+        )
+
+    @staticmethod
+    def _fixture_payload(sub: dict) -> dict:
+        return {
+            "name":            sub.get("name", ""),
             "manufacturer":    sub.get("manufacturer", ""),
             "fixture_type":    sub.get("fixture_type", "PAR LED"),
             "source":          "community",
@@ -5242,93 +5368,61 @@ class AdminPanel(QMainWindow):
             "contributor_uid": sub.get("contributor_uid", ""),
             "contributed_by":  sub.get("contributed_by", ""),
         }
-        doc_id = sub.get("_doc_id", "")
 
-        def _publish(fx, doc, token, refresh):
-            token = _do_upload_fixture_async(fx, token, refresh)
-            _set_submission_status(doc, "approved", token, reviewer=self._admin_email)
-            return token
-
-        self._btn_mod_approve.setEnabled(False)
-        _run_async(
-            self, _publish, fixture_data, doc_id, self._token(), self._refresh_token,
-            on_success=self._on_mod_approved,
-            on_error=self._on_mod_action_error,
-        )
-
-    def _approve_controller(self, sub: dict):
-        """Publie le profil de contrôleur dans controller_profiles."""
-        name = sub.get("name", "")
-        if QMessageBox.question(
-            self, "Publier le profil de contrôleur",
-            f"Publier « {name} » dans la bibliothèque commune ?\n\n"
-            f"Détection : {', '.join(sub.get('keywords') or []) or '—'}\n"
-            f"Grille : {sub.get('grid_rows', 0)} × {sub.get('grid_cols', 0)}, "
-            f"{sub.get('fader_count', 0)} faders\n"
-            f"Contributeur : {sub.get('contributed_by', '')}\n\n"
-            "Il sera proposé automatiquement à quiconque branche un contrôleur "
-            "dont le nom de port contient l'un de ces mots-clés.\n\n"
-            "Rappel : un mapping ne se vérifie pas sans l'appareil. Passez par "
-            "« Détail » pour au moins écarter un profil vide ou incohérent.",
-        ) != QMessageBox.Yes:
-            return
-
-        self._btn_mod_approve.setEnabled(False)
-        _run_async(
-            self, _publish_controller_profile, dict(sub), self._token(), self._admin_email,
-            on_success=lambda *_: self._on_mod_approved(""),
-            on_error=self._on_mod_action_error,
-        )
-
-    def _on_mod_approved(self, token: str):
-        if token:
-            self._id_token = token
-        QMessageBox.information(self, "Modération", "Contribution publiée.")
-        self._load_submissions()
+    # Motifs proposés d'office : le refus le plus courant se fait en deux
+    # touches (R, Entrée) au lieu de retaper la même phrase à chaque fois.
+    _REJECT_REASONS = {
+        "fixture": ["Doublon d'une fixture existante", "Profil incomplet",
+                    "Licence / provenance douteuse", "Nom ou fabricant incorrect"],
+        "controller": ["Profil incomplet", "Mots-clés trop larges",
+                       "Déjà supporté nativement", "Nom inapproprié"],
+    }
 
     def _on_mod_reject(self):
-        sub = self._selected_submission()
-        if not sub or sub.get("status") != "pending":
-            return
-        if self._mod_kind_now() == "controller":
-            self._reject_controller(sub)
+        subs = self._selected_pending()
+        if not subs:
             return
         from PySide6.QtWidgets import QInputDialog
-        reason, ok = QInputDialog.getText(
-            self, "Refuser la contribution",
-            f"Motif du refus pour « {sub.get('name', '')} » :\n"
-            "(licence douteuse, doublon, profil incomplet…)",
-        )
+        kind = self._mod_kind_now()
+        what = (f"« {subs[0].get('name', '')} »" if len(subs) == 1
+                else f"ces {len(subs)} contributions")
+        reason, ok = QInputDialog.getItem(
+            self, "Refuser", f"Motif du refus pour {what} :\n(choisissez ou tapez le vôtre)",
+            self._REJECT_REASONS.get(kind, []), 0, True)
         if not ok:
             return
-        self._btn_mod_reject.setEnabled(False)
+        setter = (_set_controller_submission_status if kind == "controller"
+                  else _set_submission_status)
+        docs = [(s.get("_doc_id", ""), s.get("name", "")) for s in subs]
+        reviewer = self._admin_email
+
+        def _reject_all(docs, token, reason):
+            done, failed = [], []
+            for doc, name in docs:
+                try:
+                    setter(doc, "rejected", token, reviewer, reason)
+                    done.append(doc)
+                except Exception as e:
+                    failed.append((name, str(e)))
+            return "", done, failed
+
+        self._mod_set_busy(f"Refus de {len(subs)} contribution(s)…")
         _run_async(
-            self, _set_submission_status, sub.get("_doc_id", ""), "rejected",
-            self._token(), self._admin_email, reason.strip(),
-            on_success=lambda *_: self._on_mod_rejected(),
+            self, _reject_all, docs, self._token(), reason.strip(),
+            on_success=lambda res: self._on_mod_batch_done(res, "rejected"),
             on_error=self._on_mod_action_error,
         )
 
-    def _reject_controller(self, sub: dict):
-        from PySide6.QtWidgets import QInputDialog
-        reason, ok = QInputDialog.getText(
-            self, "Refuser le profil",
-            f"Motif du refus pour « {sub.get('name', '')} » :\n"
-            "(profil incomplet, mots-clés trop larges, nom inapproprié…)",
-        )
-        if not ok:
-            return
+    def _mod_set_busy(self, text: str):
+        self._btn_mod_approve.setEnabled(False)
         self._btn_mod_reject.setEnabled(False)
-        _run_async(
-            self, _set_controller_submission_status, sub.get("_doc_id", ""), "rejected",
-            self._token(), self._admin_email, reason.strip(),
-            on_success=lambda *_: self._on_mod_rejected(),
-            on_error=self._on_mod_action_error,
-        )
+        self._mod_count.setText(text)
 
-    def _on_mod_rejected(self):
-        QMessageBox.information(self, "Modération", "Contribution refusée.")
-        self._load_submissions()
+    def _on_mod_batch_done(self, res, status: str):
+        token, done, failed = res
+        if token:
+            self._id_token = token
+        self._mod_after_action(done, status, failed)
 
     def _on_mod_action_error(self, msg: str):
         self._on_mod_selection_changed()

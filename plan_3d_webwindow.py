@@ -108,6 +108,22 @@ def _set_pos3d_auto(proj, cx, cy):
     proj._pos3d_src = (cx, cy)
 
 
+def _val_or(p, attr, dflt):
+    """Valeur d'un attribut, ou `dflt` s'il est ABSENT (None).
+
+    ⚠️ Pas de `getattr(p, attr, dflt) or dflt` : 0 est une valeur légitime —
+    une hauteur de 0 m, c'est un projecteur posé au sol, et `or` la faisait
+    retomber à 7 m.
+    """
+    v = getattr(p, attr, None)
+    return float(dflt if v is None else v)
+
+
+def _fixture_h(p):
+    """Hauteur d'accroche en mètres ; 7 m si elle n'a jamais été réglée."""
+    return _val_or(p, 'fixture_height', 7.0)
+
+
 def _sync_pos3d_with_canvas(proj, cx, cy):
     """Recale la position 3D si le projecteur a bougé sur le plan 2D depuis.
 
@@ -901,7 +917,7 @@ class ProjectorTableDialog(QDialog):
     _HDR  = ['☑', 'Projecteur', 'X (m)', 'Y haut.', 'Z (m)', 'Rot Y°', 'Rot X°', 'Rot Z°']
     _ATTR = [None, None, 'pos_3d_x', 'fixture_height', 'pos_3d_z',
              'body_rotation', 'rot3d_x', 'rot3d_z']
-    _LO   = [None, None, -12.0,  1.0, -8.0, -180.0, -90.0, -180.0]
+    _LO   = [None, None, -12.0,  0.0, -8.0, -180.0, -90.0, -180.0]
     _HI   = [None, None,  12.0, 15.0, 10.0,  180.0,  90.0,  180.0]
     _STEP = [None, None,   0.5,  0.5,  0.5,    1.0,   1.0,   1.0]
     _DEC  = [None, None,     1,    1,    1,       0,     0,     0]
@@ -2169,7 +2185,7 @@ class Plan3DWebWindow(QMainWindow):
             v = a + (b - a) * k / (n - 1)
             p = projs[r]
             if attr == 'fixture_height':
-                v = max(1.0, min(15.0, v))
+                v = max(0.0, min(15.0, v))
             setattr(p, attr, round(v, 3))
             if attr in ('pos_3d_x', 'pos_3d_z'):
                 self._sync_canvas_pos(p)
@@ -2308,7 +2324,7 @@ class Plan3DWebWindow(QMainWindow):
             vals  = [
                 (getattr(p, 'pos_3d_x',      0.0) or 0.0) * 100,
                 (getattr(p, 'pos_3d_z',      0.0) or 0.0) * 100,
-                (getattr(p, 'fixture_height', 7.0) or 7.0) * 100,
+                _fixture_h(p) * 100,
                 getattr(p, 'rot3d_x',       0.0) or 0.0,
                 getattr(p, 'body_rotation', 0.0) or 0.0,
                 getattr(p, 'rot3d_z',       0.0) or 0.0,
@@ -2317,7 +2333,7 @@ class Plan3DWebWindow(QMainWindow):
                 getattr(p, 'fixture_scale', 100.0) if getattr(p, 'fixture_scale', None) is not None else 100.0,
             ]
             specs = [
-                (-1200, 1200), (-800, 1000), (100, 1500),
+                (-1200, 1200), (-800, 1000), (0, 1500),
                 (-180, 180), (-180, 180), (-180, 180),
                 (0, 200),
                 # Minimum 10 et non 0 : à 0 le cône a un rayon nul, la géométrie
@@ -2418,7 +2434,7 @@ class Plan3DWebWindow(QMainWindow):
         _AXES = [
             ('pos_3d_x',      'X', '◄', '►', -12.0, 12.0,  -1,  0,  0),
             ('pos_3d_z',      'Z', '▲', '▼',  -8.0, 10.0,   0, -1,  0),
-            ('fixture_height', 'H', '−', '+',   1.0, 15.0,   0,  0, -1),
+            ('fixture_height', 'H', '−', '+',   0.0, 15.0,   0,  0, -1),
         ]
         for attr, lbl_txt, btn_m_txt, btn_p_txt, lo, hi, dx, dz, dh in _AXES:
             row_lay = QHBoxLayout()
@@ -2647,7 +2663,7 @@ class Plan3DWebWindow(QMainWindow):
             undo_steps.append({'idx': r, 'attrs': {
                 'pos_3d_x':      float(getattr(p, 'pos_3d_x',      0)   or 0),
                 'pos_3d_z':      float(getattr(p, 'pos_3d_z',      0)   or 0),
-                'fixture_height':float(getattr(p, 'fixture_height', 7.0) or 7.0),
+                'fixture_height':_fixture_h(p),
                 'canvas_x':      getattr(p, 'canvas_x', None),
                 'canvas_y':      getattr(p, 'canvas_y', None),
             }})
@@ -2661,8 +2677,8 @@ class Plan3DWebWindow(QMainWindow):
             if dz:
                 p.pos_3d_z = round(float(getattr(p, 'pos_3d_z', 0) or 0) + dz * step, 2)
             if dh:
-                cur = float(getattr(p, 'fixture_height', 7.0) or 7.0)
-                p.fixture_height = round(max(1.0, min(15.0, cur + dh * step)), 2)
+                cur = _fixture_h(p)
+                p.fixture_height = round(max(0.0, min(15.0, cur + dh * step)), 2)
             if dx or dz:
                 self._sync_canvas_pos(p)
             # Sync mini-table spinboxes
@@ -2678,7 +2694,7 @@ class Plan3DWebWindow(QMainWindow):
             for attr, sp in self._jog_spins.items():
                 sp.blockSignals(True)
                 dflt = _def.get(attr, 0.0)
-                sp.setValue(float(getattr(pp, attr, dflt) or dflt))
+                sp.setValue(_val_or(pp, attr, dflt))
                 sp.blockSignals(False)
         self.refresh(projs)
         self._save_patch()
@@ -2752,7 +2768,7 @@ class Plan3DWebWindow(QMainWindow):
             for attr, sp in self._jog_spins.items():
                 sp.blockSignals(True)
                 dflt = _def.get(attr, 0.0)
-                sp.setValue(float(getattr(pp, attr, dflt) or dflt))
+                sp.setValue(_val_or(pp, attr, dflt))
                 sp.blockSignals(False)
         self.refresh(projs)
         self._save_patch()
@@ -3003,7 +3019,7 @@ class Plan3DWebWindow(QMainWindow):
         for attr, sp in self._jog_spins.items():
             sp.blockSignals(True)
             dflt = _defaults.get(attr, 0.0)
-            sp.setValue(float(getattr(p, attr, dflt) or dflt))
+            sp.setValue(_val_or(p, attr, dflt))
             sp.blockSignals(False)
         self._sync_ry_state()
 
