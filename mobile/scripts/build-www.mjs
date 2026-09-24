@@ -47,9 +47,13 @@ const inject = `<meta charset="utf-8">
 remote = replaceOnce(remote, '<meta charset="utf-8">', inject);
 copyFileSync(join(mobile, "src", "demo.js"), join(www, "demo.js"));
 copyFileSync(join(mobile, "src", "engine.js"), join(www, "engine.js"));
+copyFileSync(join(mobile, "src", "effects.js"), join(www, "effects.js"));
+// Bibliothèque de fixtures (export_library.py) : chargée par la seule page de patch.
+copyFileSync(join(mobile, "src", "library.js"), join(www, "library.js"));
 copyFileSync(join(mobile, "src", "standalone.js"), join(www, "standalone.js"));
+copyFileSync(join(mobile, "src", "media.js"), join(www, "media.js"));
 remote = replaceOnce(remote, "</body>",
-  '<script src="demo.js"></script>\n<script src="engine.js"></script>\n<script src="standalone.js"></script>\n</body>');
+  '<script src="demo.js"></script>\n<script src="engine.js"></script>\n<script src="effects.js"></script>\n<script src="standalone.js"></script>\n<script src="media.js"></script>\n</body>');
 // PWA du navigateur uniquement : l'app n'a ni manifeste ni service worker.
 remote = replaceOnce(remote, '<link rel="manifest" href="/manifest.json">', "");
 

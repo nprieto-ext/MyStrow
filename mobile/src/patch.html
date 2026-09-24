@@ -42,6 +42,18 @@
     .fx .prof { color: var(--muted); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fx.clash .addr { color: var(--red); }
     #msg { min-height: 1.5em; color: #cfcabd; }
+    /* Bibliothèque de fixtures */
+    #results { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+    .res { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg3);
+      border: 1px solid transparent; cursor: pointer; text-align: left; color: var(--text); font: inherit; }
+    .res.on { border-color: var(--accent); background: rgba(226, 206, 22, .10); }
+    .res .mfr { font-family: var(--f-label); font-weight: 700; font-size: 14px; color: var(--muted); min-width: 110px; }
+    .res .model { font-family: var(--f-label); font-weight: 700; font-size: 18px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .res .tag { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    #chosen { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--accent-border); background: rgba(226, 206, 22, .06); }
+    #chosen b { font-family: var(--f-label); font-size: 20px; }
+    #chans { color: var(--muted); font-size: 13px; margin-top: 4px; word-break: break-word; }
+    #libstate { color: var(--muted); font-size: 13px; }
     #msg.err { color: var(--red); }
   </style>
 </head>
@@ -56,11 +68,21 @@
   <section class="panel">
     <div class="eyebrow">Ajouter des projecteurs</div>
     <div class="row">
-      <div style="flex:2;min-width:220px"><label for="profile">Type</label><select id="profile"></select></div>
-      <div><label for="group">Groupe (colonne)</label>
-        <select id="group"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option></select></div>
+      <div style="flex:1;min-width:220px"><label for="search">Rechercher un projecteur</label>
+        <input id="search" type="search" placeholder="Marque ou modèle : izy, cameo, par 64…" autocomplete="off"></div>
+    </div>
+    <div id="results"></div>
+    <p id="libstate"></p>
+    <div id="chosen" hidden>
+      <b id="chosen-name"></b>
+      <div class="row" style="margin-top:8px">
+        <div style="flex:2;min-width:220px"><label for="mode">Mode DMX</label><select id="mode"></select></div>
+      </div>
+      <div id="chans"></div>
     </div>
     <div class="row">
+      <div><label for="group">Groupe (colonne)</label>
+        <select id="group"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option></select></div>
       <div><label for="name">Nom</label><input id="name" value="PAR"></div>
       <div><label for="qty">Quantité</label><input id="qty" inputmode="numeric" value="1"></div>
       <div><label for="addr">1re adresse DMX</label><input id="addr" inputmode="numeric"></div>
@@ -95,6 +117,7 @@
 </main>
 
 <script src="engine.js"></script>
+<script src="library.js"></script>
 <script>
   "use strict";
   const Engine = window.MystrowEngine;
@@ -103,16 +126,131 @@
   const msg = (t, err) => { $("msg").textContent = t; $("msg").classList.toggle("err", !!err); };
   const GROUPS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
-  // Même clé que standalone.js : { fixtures: [{ name, group, profile, address }], output }
+  // Même clé que standalone.js : { fixtures: [{ name, group, address, profile,
+  // model, mode, fixture_type, color_wheel_slots, gobo_wheel_slots }], output }.
+  // `profile` = liste de canaux (bibliothèque) ou nom de profil intégré (patchs
+  // d'avant la bibliothèque, profils « Générique tablette »).
   let show;
   try { show = JSON.parse(localStorage.getItem("mystrow.solo.show") || "null"); } catch (e) {}
   show = show || { fixtures: [], output: { transport: "usb" } };
   show.output = show.output || { transport: "usb" };
   const save = () => { try { localStorage.setItem("mystrow.solo.show", JSON.stringify(show)); } catch (e) {} };
 
-  Engine.PROFILE_LABELS.forEach(([id, label]) => {
-    const o = document.createElement("option"); o.value = id; o.textContent = label; $("profile").appendChild(o);
-  });
+  // ── Bibliothèque de fixtures ───────────────────────────────────────────────
+  // Embarquée (library.js, générée depuis le PC) + fixtures de l'admin relues
+  // dans Firestore quand la tablette a Internet (cache pour le hors-ligne).
+  const Lib = window.MystrowLibrary || { fixtures: [], aliases: {}, mfr: {} };
+  const FS_URL = "https://firestore.googleapis.com/v1/projects/mystrow-907be/databases/(default)/documents/gdtf_fixtures";
+  const norm = (t) => String(t || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const mfrKey = (t) => norm(t).replace(/[^a-z0-9]/g, "");
+  const canonMfr = (t) => { t = String(t || "").trim(); return t ? (Lib.mfr[mfrKey(t)] || t) : "Générique"; };
+  const canonProfile = (p) => (p || []).map((c) => Lib.aliases[c] || c);
+
+  // Profils simples de la tablette, gardés pour les patchs existants.
+  const GENERIC = Engine.PROFILE_LABELS.map(([id, label]) => ({
+    n: label, m: "Générique tablette", t: id.startsWith("MOVING") || id.startsWith("MACMAH") ? "Moving Head" : "PAR LED",
+    s: "tablette", modes: [[Engine.channelCount(id) + " canaux", id]] }));
+
+  let library = [];
+  function buildLibrary(firestore) {
+    const base = firestore ? Lib.fixtures.filter((f) => f.s !== "firestore").concat(firestore) : Lib.fixtures;
+    library = GENERIC.concat(base).map((f) => ({ ...f, key: norm(f.m + " " + f.n) }));
+    $("libstate").textContent = library.length - GENERIC.length + " projecteurs dans la bibliothèque"
+      + (libDate ? " · fixtures MyStrow à jour du " + libDate : "");
+  }
+
+  // Firestore (lecture publique) → même forme que library.js.
+  function fsValue(v) {
+    if (!v) return null;
+    if ("stringValue" in v) return v.stringValue;
+    if ("integerValue" in v) return +v.integerValue;
+    if ("doubleValue" in v) return v.doubleValue;
+    if ("booleanValue" in v) return v.booleanValue;
+    if ("arrayValue" in v) return (v.arrayValue.values || []).map(fsValue);
+    if ("mapValue" in v) return Object.fromEntries(Object.entries(v.mapValue.fields || {}).map(([k, x]) => [k, fsValue(x)]));
+    return null;
+  }
+  function slimRemote(d) {
+    const modes = (d.modes || []).filter((m) => m && m.profile && m.profile.length)
+      .map((m) => [m.name || m.profile.length + " canaux", canonProfile(m.profile)]);
+    if (!modes.length && d.profile && d.profile.length) modes.push([d.profile.length + " canaux", canonProfile(d.profile)]);
+    if (!d.name || !modes.length) return null;
+    const o = { n: String(d.name).trim(), m: canonMfr(d.manufacturer), t: d.fixture_type || "PAR LED", s: "firestore", modes };
+    if (d.color_wheel_slots && d.color_wheel_slots.length) o.cw = d.color_wheel_slots.map((x) => ({ dmx: +x.dmx || 0, color: x.color || "#ffffff", name: x.name || "" }));
+    if (d.gobo_wheel_slots && d.gobo_wheel_slots.length) o.gb = d.gobo_wheel_slots.map((x) => ({ dmx: +x.dmx || 0, name: x.name || "" }));
+    return o;
+  }
+  let libDate = null;
+  async function refreshLibrary() {
+    try {
+      const out = [];
+      let page = "";
+      do {
+        const r = await fetch(FS_URL + "?pageSize=300" + (page ? "&pageToken=" + encodeURIComponent(page) : ""));
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        (j.documents || []).forEach((doc) => {
+          const d = Object.fromEntries(Object.entries(doc.fields || {}).map(([k, v]) => [k, fsValue(v)]));
+          const o = slimRemote(d);
+          if (o) out.push(o);
+        });
+        page = j.nextPageToken || "";
+      } while (page);
+      if (!out.length) return;
+      libDate = new Date().toLocaleDateString("fr-FR");
+      try { localStorage.setItem("mystrow.lib.firestore", JSON.stringify({ date: libDate, fixtures: out })); } catch (e) {}
+      buildLibrary(out);
+      search();
+    } catch (e) { /* hors ligne : on garde l'embarqué ou le cache */ }
+  }
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem("mystrow.lib.firestore") || "null"); } catch (e) {}
+  if (cached && cached.fixtures) libDate = cached.date;
+  buildLibrary(cached && cached.fixtures);
+
+  // ── Recherche ──────────────────────────────────────────────────────────────
+  let chosen = null;
+  function search() {
+    const words = norm($("search").value).split(/\s+/).filter(Boolean);
+    const box = $("results");
+    box.innerHTML = "";
+    if (!words.length) return;
+    const hits = library.filter((f) => words.every((w) => f.key.includes(w))).slice(0, 60);
+    if (!hits.length) { box.innerHTML = '<p class="hint">Aucun projecteur ne correspond.</p>'; return; }
+    hits.forEach((f) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "res" + (chosen === f ? " on" : "");
+      b.innerHTML = '<span class="mfr"></span><span class="model"></span><span class="tag"></span>';
+      b.querySelector(".mfr").textContent = f.m;
+      b.querySelector(".model").textContent = f.n;
+      b.querySelector(".tag").textContent = f.t + " · " + (f.modes.length > 1 ? f.modes.length + " modes" : (f.modes[0][0]));
+      b.addEventListener("click", () => choose(f));
+      box.appendChild(b);
+    });
+  }
+  function choose(f) {
+    chosen = f;
+    $("chosen").hidden = false;
+    $("chosen-name").textContent = f.m + " · " + f.n;
+    const sel = $("mode");
+    sel.innerHTML = "";
+    f.modes.forEach(([name, prof], i) => {
+      const o = document.createElement("option"); o.value = i;
+      o.textContent = name + " (" + Engine.channelCount(prof) + " canaux)";
+      sel.appendChild(o);
+    });
+    showChannels();
+    $("name").value = f.n.length > 18 ? f.n.slice(0, 18).trim() : f.n;
+    search();
+  }
+  function showChannels() {
+    if (!chosen) return;
+    const prof = chosen.modes[+$("mode").value][1];
+    const list = Array.isArray(prof) ? prof : Engine.PROFILES[prof] || [];
+    $("chans").textContent = list.map((c, i) => (i + 1) + " " + c).join(" · ");
+  }
+  $("search").addEventListener("input", search);
+  $("mode").addEventListener("change", showChannels);
 
   const end = (f) => f.address + Engine.channelCount(f.profile) - 1;
   // Prochaine adresse libre, alignée sur la grille 1, 11, 21… (écart choisi).
@@ -158,7 +296,8 @@
       list.appendChild(t);
       items.forEach(([f, i]) => {
         const row = document.createElement("div"); row.className = "fx" + (clash.has(i) ? " clash" : "");
-        const label = (Engine.PROFILE_LABELS.find(([id]) => id === f.profile) || [, f.profile])[1];
+        const label = f.model ? f.model + " · " + f.mode
+          : (Engine.PROFILE_LABELS.find(([id]) => id === f.profile) || [, f.profile])[1];
         row.innerHTML = '<b></b><span class="addr"></span><span class="prof"></span>';
         row.querySelector("b").textContent = f.name;
         row.querySelector(".addr").textContent = f.address + (end(f) > f.address ? "–" + end(f) : "");
@@ -177,13 +316,18 @@
   $("add").addEventListener("click", () => {
     const qty = Math.max(1, Math.min(48, +$("qty").value || 1));
     const step = Math.max(1, +$("step").value || 10);
-    const profile = $("profile").value;
+    if (!chosen) { msg("Choisissez d'abord un projecteur dans la bibliothèque.", true); return; }
+    const [modeName, profile] = chosen.modes[+$("mode").value];
+    // Ce que le moteur doit savoir de la fixture (cf. _projector_from_config du PC).
+    const model = chosen.s === "tablette" ? {} : {
+      model: chosen.m + " · " + chosen.n, mode: modeName, fixture_type: chosen.t,
+      color_wheel_slots: chosen.cw || [], gobo_wheel_slots: chosen.gb || [] };
     let addr = Math.max(1, +$("addr").value || nextAddress());
     const base = $("name").value.trim() || "PAR";
     const n0 = show.fixtures.filter((f) => f.name.startsWith(base)).length;
     for (let k = 0; k < qty; k++) {
       if (addr + Engine.channelCount(profile) - 1 > 512) { msg("Plus de place dans l'univers (512 canaux).", true); break; }
-      show.fixtures.push({ name: base + " " + (n0 + k + 1), group: $("group").value, profile, address: addr });
+      show.fixtures.push({ name: base + " " + (n0 + k + 1), group: $("group").value, profile, address: addr, ...model });
       addr += Math.max(step, Engine.channelCount(profile));
     }
     save();
@@ -191,6 +335,8 @@
     render();
     $("addr").value = nextAddress();
   });
+
+  refreshLibrary();
 
   $("wipe").addEventListener("click", () => {
     if (!show.fixtures.length) return;
@@ -204,8 +350,10 @@
     document.querySelectorAll(".tr").forEach((b) => b.classList.toggle("on", b.dataset.tr === t));
     $("artnet-row").hidden = t !== "artnet";
     $("out-hint").textContent = t === "usb"
-      ? "Branchez l'interface USB-DMX (type Open DMX, ex. Opto ElectroConcept) sur la tablette."
-      : "Node Art-Net sur le même réseau que la tablette. « Chercher » le trouve tout seul.";
+      ? "Branchez l'interface USB-DMX sur la tablette : Opto ElectroConcept, ENTTEC Pro, DMXKing ou boîtier MyStrow. Son type est reconnu tout seul."
+      : "Node Art-Net branché sur le même réseau que la tablette (box ou routeur, la tablette en Wi-Fi). "
+        + "S'il n'est pas dans la même plage d'adresses (node en 2.0.0.15 sur une box en 192.168.1.x), "
+        + "la tablette l'atteint quand même, en diffusion. Pour un show, préférez un routeur dédié réglé en 2.0.0.x.";
     if (outputOn) { Dmx.stop().catch(() => {}); outputOn = false; testing = null; render(); }
   }
   document.querySelectorAll(".tr").forEach((b) => b.addEventListener("click", () => setTransport(b.dataset.tr)));

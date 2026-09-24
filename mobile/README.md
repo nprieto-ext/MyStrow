@@ -25,6 +25,26 @@ Le mode démo passe par deux points d'entrée de `tablet/index.html`, inactifs d
 navigateur : `window.MYSTROW_SEND` (reçoit les actions à la place du PC) et
 `_handleMsg(msg)` (applique un message, comme le flux SSE).
 
+## Mode autonome (sans PC)
+
+`remote.html?solo=1` : la tablette calcule elle-même le DMX et le sort par le module
+natif `MystrowDmx` (USB-DMX ou Art-Net). Patch dans `src/patch.html`.
+
+| Fichier | Rôle |
+|---|---|
+| `src/engine.js` | Port du moteur du PC : rendu DMX (`artnet_dmx.py`) et effets à couches, lumière et mouvement (`main_window._update_effect_from_layers`) |
+| `src/effects.js` | **Généré** par `python mobile/tools/export_effects.py` depuis `effect_editor.BUILTIN_EFFECTS`. Ne pas l'éditer à la main |
+| `src/standalone.js` | État du jeu : onglets COULEURS (groupes A-H) / MÉMOIRES (REC puis pad), 8 boutons d'effet (appui long = choisir), visée des lyres (pad POSITION de SCÈNE) |
+| `src/library.js` | **Généré** par `python mobile/tools/export_library.py` : bibliothèque du PC (natives, OFL, Firestore `gdtf_fixtures`, QLC+), profils déjà résolus. Chargée par la seule page de patch, qui relit aussi Firestore en ligne (cache `mystrow.lib.firestore`) |
+| `src/media.js` | Playlist et cartouches : fichiers copiés dans la tablette (IndexedDB), « + AJOUTER », appui long = monter / descendre / retirer |
+
+Après toute modification de `engine.js`, `artnet_dmx.py`, du moteur d'effets ou de
+`BUILTIN_EFFECTS` : `python mobile/tools/export_effects.py` puis
+`python mobile/tools/test_engine_parity.py` (compare octet par octet avec le vrai code du PC),
+puis `python mobile/tools/test_library_parity.py` (chaque mode de toute la bibliothèque, ~186 000
+projecteurs). Avant chaque build : `python generate_custom_fixtures_bundle.py` puis
+`python mobile/tools/export_library.py`.
+
 ## Côté PC (tablet_server.py)
 
 - `GET /whoami` : `{"app": "MyStrow", "proto": 1, "name": …}`. L'app refuse un PC sans

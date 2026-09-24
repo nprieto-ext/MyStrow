@@ -25,6 +25,9 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.hoho.android.usbserial.driver.CdcAcmSerialDriver;
+import com.hoho.android.usbserial.driver.FtdiSerialDriver;
+import com.hoho.android.usbserial.driver.ProbeTable;
 import com.hoho.android.usbserial.driver.UsbSerialDriver;
 import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.driver.UsbSerialProber;
@@ -45,9 +48,15 @@ import java.util.List;
  * Sortie DMX de la tablette en mode autonome, sans PC. Deux transports :
  *   - « artnet » : ArtDMX (OpCode 0x5000) envoyé au node en UDP — y compris
  *                  le « USB NODE » ElectroConcept, qui se présente à la
- *                  tablette comme une carte réseau USB (2.0.0.x) ;
- *   - « usb »    : interface USB-DMX passive (type Open DMX : FTDI, CH340…),
- *                  la tablette génère elle-même break + trame à 250 kbauds.
+ *                  tablette comme une carte réseau USB (2.0.0.x). Node hors du
+ *                  réseau de la tablette (node en 2.0.0.15 sur la box, tablette
+ *                  en 192.168.1.x) : envoi en diffusion, seul moyen de l'atteindre ;
+ *   - « usb »    : deux familles d'interfaces, reconnues toutes seules :
+ *       · passive (Open DMX : Opto ElectroConcept, FTDI, CH340…) : la
+ *         tablette génère elle-même break + trame à 250 kbauds ;
+ *       · « intelligente » (protocole ENTTEC Pro : ENTTEC, DMXKing, et le
+ *         boîtier USB-DMX MyStrow) : le boîtier fait le break et le timing,
+ *         la tablette envoie juste les 512 canaux (paquet 7E 06 … E7).
  *
  * La cadence ne dépend PAS du JavaScript : un thread natif réémet la dernière
  * trame à fréquence fixe (comme le timer DMX du PC). Le JS ne fait que modifier
@@ -100,6 +109,16 @@ public class MystrowDmxPlugin extends Plugin {
             // vers 2.0.0.x ça part à la box et se perd, sans aucune erreur.
             Network net = networkFor(ctx, target);
             if (net != null) net.bindSocket(socket);
+            // Node dans AUCUN réseau de la tablette et pas de filaire : en unicast le
+            // paquet partirait à la passerelle de la box et se perdrait. En
+            // diffusion il atteint le node branché sur la box (validé 24/09/2026,
+            // node 2.0.0.15, tablette 192.168.1.x). Le node ne peut pas changer
+            // d'adresse depuis l'app (pas d'ArtIpProg chez ElectroConcept).
+            String how = "";
+            if (net == null && !isBroadcast(target) && subnetNetwork(ctx, target) == null) {
+                target = InetAddress.getByName("255.255.255.255");
+                how = " (diffusion : node hors du réseau de la tablette)";
+            }
             System.arraycopy("Art-Net\0".getBytes(), 0, packet, 0, 8);
             packet[8] = 0x00; packet[9] = 0x50;            // OpCode ArtDMX (little endian)
             packet[10] = 0x00; packet[11] = 0x0e;          // Protocole 14
@@ -107,7 +126,7 @@ public class MystrowDmxPlugin extends Plugin {
             packet[15] = (byte) ((universe >> 8) & 0x7F);  // Net
             packet[16] = 0x02; packet[17] = 0x00;          // Longueur 512
             dp = new DatagramPacket(packet, packet.length, target, port);
-            name = "Art-Net " + host + ":" + port + " via " + (net != null ? ifaceName(ctx, net) : "réseau par défaut");
+            name = "Art-Net " + host + ":" + port + how + " via " + (net != null ? ifaceName(ctx, net) : "réseau par défaut");
         }
 
         @Override public void send(byte[] dmx512) throws Exception {
@@ -125,15 +144,11 @@ public class MystrowDmxPlugin extends Plugin {
 
     private static final class UsbOutput implements Output {
         private final UsbSerialPort port;
-        private final UsbDeviceConnection conn;
         private final byte[] frame = new byte[513];        // start code 0x00 + 512 canaux
         private final String name;
 
-        UsbOutput(UsbManager usb, UsbSerialDriver driver) throws Exception {
-            conn = usb.openDevice(driver.getDevice());
-            if (conn == null) throw new Exception("Impossible d'ouvrir l'interface USB");
-            port = driver.getPorts().get(0);
-            port.open(conn);
+        UsbOutput(UsbSerialPort port, UsbSerialDriver driver) throws Exception {
+            this.port = port;
             port.setParameters(250000, 8, UsbSerialPort.STOPBITS_2, UsbSerialPort.PARITY_NONE);
             // RTS désassertée : sur l'ENTTEC Open DMX, RTS porte le Driver Enable
             // du RS485 ; assertée = sortie muette sans aucune erreur (cf. artnet_dmx.py).
@@ -158,10 +173,98 @@ public class MystrowDmxPlugin extends Plugin {
         @Override public String describe() { return name; }
     }
 
+    // ── USB-DMX « intelligent » (protocole ENTTEC Pro) ──────────────────────
+
+    private static final class ProOutput implements Output {
+        private final UsbSerialPort port;
+        // SOM + label 6 (Output Only Send DMX) + taille 513 (LSB, MSB) + start
+        // code, 512 canaux, EOM : même paquet que artnet_dmx._build_pro_packet.
+        private final byte[] packet = new byte[5 + 512 + 1];
+        private final String name;
+
+        ProOutput(UsbSerialPort port, UsbSerialDriver driver) {
+            this.port = port;
+            packet[0] = 0x7E; packet[1] = 6; packet[2] = 0x01; packet[3] = 0x02; packet[4] = 0x00;
+            packet[packet.length - 1] = (byte) 0xE7;
+            name = "USB ENTTEC Pro " + describeDevice(driver.getDevice());
+        }
+
+        @Override public void send(byte[] dmx512) throws Exception {
+            System.arraycopy(dmx512, 0, packet, 5, 512);
+            port.write(packet, 200);
+        }
+        // Le boîtier gère lui-même la ligne DMX : aucune attente côté tablette.
+        @Override public long busyNs() { return 0; }
+        @Override public void close() {
+            try { port.close(); } catch (Exception ignored) { }
+        }
+        @Override public String describe() { return name; }
+    }
+
+    /**
+     * Détecteur d'interfaces série : celui de la bibliothèque, plus le boîtier
+     * USB-DMX MyStrow (USB CDC).
+     * ⚠ VID/PID PROVISOIRES : 0x1A86/0x5740 est l'identifiant CDC de WCH
+     * (firmware du boîtier, usb_desc.c). À remplacer ICI par l'identifiant
+     * définitif avant la série, sinon les boîtiers vendus ne seront pas vus.
+     */
+    private static UsbSerialProber prober() {
+        ProbeTable table = UsbSerialProber.getDefaultProbeTable();
+        table.addProduct(0x1A86, 0x5740, CdcAcmSerialDriver.class);
+        return new UsbSerialProber(table);
+    }
+
+    /**
+     * Passive (Open DMX) ou ENTTEC Pro ? Un boîtier USB CDC n'a pas de break
+     * à piloter : c'est forcément un Pro. Sur une puce FTDI, les deux existent
+     * (l'Opto et l'ENTTEC Pro ont le même 0403:6001) : on demande son numéro de
+     * série au boîtier (label 10). Un Pro répond 7E 0A…, un passif ne répond
+     * rien. Les 5 octets sortent sans break sur la ligne : ignorés par les
+     * projecteurs.
+     */
+    private static boolean detectPro(UsbSerialPort port, UsbSerialDriver driver) {
+        if (driver instanceof CdcAcmSerialDriver) return true;
+        if (!(driver instanceof FtdiSerialDriver)) return false;
+        try {
+            port.setParameters(250000, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
+            port.write(new byte[] {0x7E, 0x0A, 0x00, 0x00, (byte) 0xE7}, 200);
+            byte[] buf = new byte[64];
+            boolean som = false;
+            long end = System.nanoTime() + 400_000_000L;
+            while (System.nanoTime() < end) {
+                int n = port.read(buf, 100);
+                for (int i = 0; i < n; i++) {
+                    if (som && buf[i] == 0x0A) return true;
+                    som = buf[i] == 0x7E;
+                }
+            }
+        } catch (Exception ignored) { }
+        return false;
+    }
+
     // ── Réseaux (Wi-Fi, Ethernet, node USB) ────────────────────────────────
 
     private static ConnectivityManager cm(Context ctx) {
         return (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+    }
+
+    private static boolean isBroadcast(InetAddress a) {
+        return a instanceof Inet4Address && (a.getAddress()[0] & 0xFF) == 255;
+    }
+
+    /** Réseau dont une adresse IPv4 est dans le même sous-réseau que la cible, sinon null. */
+    private static Network subnetNetwork(Context ctx, InetAddress target) {
+        ConnectivityManager cm = cm(ctx);
+        if (cm == null || !(target instanceof Inet4Address)) return null;
+        byte[] t = target.getAddress();
+        for (Network n : cm.getAllNetworks()) {
+            LinkProperties lp = cm.getLinkProperties(n);
+            if (lp == null) continue;
+            for (LinkAddress la : lp.getLinkAddresses())
+                if (la.getAddress() instanceof Inet4Address
+                        && samePrefix(la.getAddress().getAddress(), t, la.getPrefixLength())) return n;
+        }
+        return null;
     }
 
     /** Premier réseau dont une adresse IPv4 est dans le même sous-réseau que la cible. */
@@ -354,7 +457,7 @@ public class MystrowDmxPlugin extends Plugin {
         JSArray list = new JSArray();
         if (usb != null) {
             for (UsbDevice d : usb.getDeviceList().values()) {
-                UsbSerialDriver drv = UsbSerialProber.getDefaultProber().probeDevice(d);
+                UsbSerialDriver drv = prober().probeDevice(d);
                 JSObject o = new JSObject();
                 o.put("name", describeDevice(d));
                 o.put("serial", drv != null);
@@ -370,7 +473,8 @@ public class MystrowDmxPlugin extends Plugin {
     }
 
     /**
-     * { transport: "artnet" | "usb", fps, host, port, universe }
+     * { transport: "artnet" | "usb", fps, host, port, universe,
+     *   protocol: "auto" | "open" | "pro" (USB : type d'interface, auto par défaut) }
      * En USB, demande l'autorisation d'accès à l'interface si besoin.
      */
     @PluginMethod
@@ -397,7 +501,7 @@ public class MystrowDmxPlugin extends Plugin {
 
     private void startUsb(PluginCall call) {
         UsbManager usb = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
-        List<UsbSerialDriver> drivers = usb == null ? null : UsbSerialProber.getDefaultProber().findAllDrivers(usb);
+        List<UsbSerialDriver> drivers = usb == null ? null : prober().findAllDrivers(usb);
         if (drivers == null || drivers.isEmpty()) {
             call.reject("Aucune interface USB-DMX reconnue n'est branchée");
             return;
@@ -424,13 +528,22 @@ public class MystrowDmxPlugin extends Plugin {
     }
 
     private void openUsb(PluginCall call, UsbManager usb, UsbSerialDriver driver) {
+        UsbSerialPort port = null;
         try {
+            UsbDeviceConnection conn = usb.openDevice(driver.getDevice());
+            if (conn == null) throw new Exception("Impossible d'ouvrir l'interface USB");
+            port = driver.getPorts().get(0);
+            port.open(conn);
+            String proto = call.getString("protocol", "auto");
+            boolean pro = "pro".equals(proto) || ("auto".equals(proto) && detectPro(port, driver));
+            if (pro) launch(new ProOutput(port, driver), Math.min(fps(call, 40), 44));
             // Plafond ~36 tr/s : une trame occupe la ligne 26 ms + le break.
-            launch(new UsbOutput(usb, driver), Math.min(fps(call, 30), 36));
+            else launch(new UsbOutput(port, driver), Math.min(fps(call, 30), 36));
             JSObject r = new JSObject();
             r.put("output", outputName);
             call.resolve(r);
         } catch (Exception e) {
+            if (port != null) try { port.close(); } catch (Exception ignored) { }
             call.reject("Interface USB : " + e.getMessage(), e);
         }
     }
