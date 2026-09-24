@@ -353,7 +353,8 @@
       ? "Branchez l'interface USB-DMX sur la tablette : Opto ElectroConcept, ENTTEC Pro, DMXKing ou boîtier MyStrow. Son type est reconnu tout seul."
       : "Node Art-Net branché sur le même réseau que la tablette (box ou routeur, la tablette en Wi-Fi). "
         + "S'il n'est pas dans la même plage d'adresses (node en 2.0.0.15 sur une box en 192.168.1.x), "
-        + "la tablette l'atteint quand même, en diffusion. Pour un show, préférez un routeur dédié réglé en 2.0.0.x.";
+        + "la tablette l'atteint quand même, en diffusion. Pour un show, préférez un routeur dédié réglé en 2.0.0.x."
+        + (IOS ? " Sur iPhone / iPad, la diffusion demande une autorisation Apple : donnez plutôt au node une adresse du réseau." : "");
     if (outputOn) { Dmx.stop().catch(() => {}); outputOn = false; testing = null; render(); }
   }
   document.querySelectorAll(".tr").forEach((b) => b.addEventListener("click", () => setTransport(b.dataset.tr)));
@@ -382,6 +383,12 @@
     leave("remote.html?solo=1");
   });
 
+  // iPhone / iPad : pas d'USB-DMX (iOS n'ouvre pas les interfaces série), Art-Net seulement.
+  var IOS = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
+  if (IOS) {
+    document.querySelector('.tr[data-tr="usb"]').hidden = true;
+    if (show.output.transport !== "artnet") { show.output.transport = "artnet"; save(); }
+  }
   setTransport(show.output.transport || "usb");
   render();
   $("addr").value = nextAddress();

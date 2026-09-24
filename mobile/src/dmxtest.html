@@ -263,6 +263,11 @@
   $("logpc").addEventListener("change", () => (transport === "usb" ? listUsb() : listNetworks()));
   $("poll").addEventListener("click", poll);
   setMode("black");
+  // iPhone / iPad : pas d'USB-DMX, Art-Net seulement.
+  if (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios") {
+    document.querySelector('.tr[data-tr="usb"]').hidden = true;
+    transport = "artnet";
+  }
   setTransport(transport);
 </script>
 </body>

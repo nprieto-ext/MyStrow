@@ -6,6 +6,7 @@ import Capacitor
 class MainViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(MystrowDiscoveryPlugin())
+        bridge?.registerPluginInstance(MystrowDmxPlugin())      // sortie DMX du mode sans PC (Art-Net)
     }
 
     // Plein écran pendant le show : barre d'état et indicateur d'accueil discrets.
