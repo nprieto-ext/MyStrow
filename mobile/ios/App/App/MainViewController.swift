@@ -9,7 +9,8 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(MystrowDmxPlugin())      // sortie DMX du mode sans PC (Art-Net)
     }
 
-    // Plein écran pendant le show : barre d'état et indicateur d'accueil discrets.
+    // Plein écran pendant le show : pas de barre d'état.
+    // (L'indicateur d'accueil appartient au plugin SystemBars de Capacitor 8,
+    // qui surcharge prefersHomeIndicatorAutoHidden sans `open` : pas modifiable ici.)
     override var prefersStatusBarHidden: Bool { true }
-    override var prefersHomeIndicatorAutoHidden: Bool { true }
 }
