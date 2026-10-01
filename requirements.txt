@@ -1,4 +1,7 @@
-PySide6
+# macOS : 6.7.3 = dernière version compatible macOS 11 Big Sur (6.8+ exige 12, 6.10+ exige 13).
+# Ne pas monter sans relever LSMinimumSystemVersion (MyStrow.spec) et « macOS 11+ » sur le site.
+PySide6==6.7.3; sys_platform == "darwin"
+PySide6; sys_platform != "darwin"
 cryptography
 python-rtmidi
 miniaudio

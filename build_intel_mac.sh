@@ -55,12 +55,21 @@ ok()   { echo -e "${GRN}✓   $1${NC}"; }
 # ── 0) Vérifications préalables ───────────────────────────────────────────────
 step "Vérifications"
 
-command -v python3  >/dev/null 2>&1 || die "python3 introuvable. Installe Python 3.10+ : https://www.python.org/downloads/"
+# PySide6 6.7.3 (dernière compatible macOS 11, cf. requirements.txt) exige Python <= 3.12.
+# On prend le premier Python 3.10–3.12 trouvé ; python3 seul peut être un 3.13+.
+PY=""
+for cand in python3.12 python3.11 python3.10 python3; do
+  command -v "$cand" >/dev/null 2>&1 || continue
+  if "$cand" -c "import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,12) else 1)" 2>/dev/null; then
+    PY="$cand"; break
+  fi
+done
+[ -n "$PY" ] || die "Aucun Python 3.10–3.12 trouvé (PySide6 6.7.3 ne s'installe pas sur 3.13+). Installe Python 3.12 : https://www.python.org/downloads/macos/"
 command -v git      >/dev/null 2>&1 || die "git introuvable. Lance : xcode-select --install"
 command -v codesign >/dev/null 2>&1 || die "codesign introuvable. Lance : xcode-select --install"
 
-PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-ARCH=$(python3 -c "import platform; print(platform.machine())")
+PY_VER=$("$PY" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+ARCH=$("$PY" -c "import platform; print(platform.machine())")
 echo "Python $PY_VER  |  Arch : $ARCH"
 
 [ "$ARCH" = "x86_64" ] || warn "Architecture détectée : $ARCH (attendu x86_64 pour un Mac Intel)"
@@ -116,7 +125,7 @@ else
   ok "Synchronisé sur $BUILD_REF → $(git log -1 --pretty='%h — %s')"
 fi
 
-VERSION=$(python3 -c "
+VERSION=$("$PY" -c "
 import re
 m = re.search(r'VERSION\s*=\s*\"(.*?)\"', open('core.py').read())
 print(m.group(1) if m else '?')
@@ -133,18 +142,21 @@ else
   warn "Install Certificates.command introuvable (Python Homebrew ou déjà configuré)"
 fi
 
-python3 -m pip install certifi --quiet \
+"$PY" -m pip install certifi --quiet \
   --trusted-host pypi.org --trusted-host files.pythonhosted.org \
   --trusted-host pypi.python.org 2>/dev/null || true
 
-SSL_CERT_FILE=$(python3 -m certifi 2>/dev/null || true)
+SSL_CERT_FILE=$("$PY" -m certifi 2>/dev/null || true)
 [ -n "$SSL_CERT_FILE" ] && export SSL_CERT_FILE && export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE" && ok "CA bundle : $SSL_CERT_FILE"
 
 # ── 3) Dépendances Python ─────────────────────────────────────────────────────
 step "Installation / mise à jour des dépendances"
-python3 -m pip install --upgrade pip --quiet
-python3 -m pip install -r "$SCRIPT_DIR/requirements.txt" --quiet
-python3 -m pip install pyinstaller --upgrade --quiet
+"$PY" -m pip install --upgrade pip --quiet
+"$PY" -m pip install -r "$SCRIPT_DIR/requirements.txt" --quiet
+"$PY" -m pip install pyinstaller --upgrade --quiet
+QT_VER=$("$PY" -c "import PySide6; print(PySide6.__version__)" 2>/dev/null || echo "?")
+[ "$QT_VER" = "6.7.3" ] || die "PySide6 $QT_VER installé au lieu de 6.7.3 : le DMG ne tournerait pas sous macOS 11/12."
+ok "PySide6 $QT_VER (compatible macOS 11+)"
 ok "Dépendances prêtes"
 
 # ── 4) Icône ──────────────────────────────────────────────────────────────────
@@ -170,16 +182,16 @@ rm -rf "$DIST_DIR" "$SCRIPT_DIR/build"
 # Fixtures de la bibliothèque MyStrow (`gdtf_fixtures`, lecture publique).
 # Sans cette ligne, le .spec saute un fichier absent SANS RIEN DIRE : le DMG
 # Intel partait sans aucune des fixtures ajoutées depuis l'admin panel.
-python3 "$SCRIPT_DIR/generate_custom_fixtures_bundle.py" || warn "Bundle fixtures non généré"
+"$PY" "$SCRIPT_DIR/generate_custom_fixtures_bundle.py" || warn "Bundle fixtures non généré"
 
 # Profils de contrôleurs MIDI approuvés en modération (lecture publique aussi).
 # Échec = catalogue vide, jamais un build interrompu.
-python3 "$SCRIPT_DIR/generate_controllers_bundle.py" || warn "Catalogue de contrôleurs non généré"
+"$PY" "$SCRIPT_DIR/generate_controllers_bundle.py" || warn "Catalogue de contrôleurs non généré"
 
 # Utiliser le .spec si disponible (identique au CI), sinon fallback ligne de commande
 if [ -f "$SCRIPT_DIR/MyStrow.spec" ]; then
   echo "Utilisation de MyStrow.spec"
-  python3 -m PyInstaller --noconfirm "$SCRIPT_DIR/MyStrow.spec"
+  "$PY" -m PyInstaller --noconfirm "$SCRIPT_DIR/MyStrow.spec"
 else
   ARGS=(
     --onefile --windowed
@@ -201,7 +213,7 @@ else
     ARGS=("--add-data" "fixtures_bundle_custom.json.gz:." "${ARGS[@]}")
   [ -f "$SCRIPT_DIR/controllers_bundle.json.gz" ] && \
     ARGS=("--add-data" "controllers_bundle.json.gz:." "${ARGS[@]}")
-  python3 -m PyInstaller "${ARGS[@]}"
+  "$PY" -m PyInstaller "${ARGS[@]}"
 fi
 
 APP_PATH="$DIST_DIR/$APP_NAME.app"
@@ -295,12 +307,12 @@ if [ "$NOTARY_OK" = true ]; then
     --wait --output-format json)
   echo "$NOTARY_JSON" | sed 's/^/    /'
 
-  STATUS=$(echo "$NOTARY_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+  STATUS=$(echo "$NOTARY_JSON" | "$PY" -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
   if [ "$STATUS" = "Accepted" ]; then
     xcrun stapler staple "$DMG_OUT"
     ok "Notarisé et agrafé ✓"
   else
-    SUBMISSION_ID=$(echo "$NOTARY_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+    SUBMISSION_ID=$(echo "$NOTARY_JSON" | "$PY" -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
     [ -n "$SUBMISSION_ID" ] && \
       xcrun notarytool log "$SUBMISSION_ID" --keychain-profile "$NOTARY_PROFILE" 2>&1 | sed 's/^/    /'
     die "Notarisation refusée par Apple (status: $STATUS)"
@@ -311,7 +323,11 @@ fi
 step "Upload sur la GitHub Release (v$VERSION)"
 TAG="v$VERSION"
 UPLOAD_OK=false
-if [ "$VERSION" = "?" ]; then
+# MYSTROW_NO_UPLOAD=1 : build de TEST (ex. DMG envoyé à un seul client). Sans
+# ça, --clobber remplacerait le DMG Intel public de la release en cours.
+if [ "${MYSTROW_NO_UPLOAD:-0}" = "1" ]; then
+  warn "MYSTROW_NO_UPLOAD=1 — build de test, rien n'est envoyé sur GitHub."
+elif [ "$VERSION" = "?" ]; then
   warn "Version inconnue (core.py illisible) — upload ignoré, upload le DMG à la main."
 elif ! command -v gh >/dev/null 2>&1; then
   warn "GitHub CLI 'gh' introuvable — upload ignoré."
@@ -349,7 +365,11 @@ echo "  Taille   : $(du -sh "$DMG_OUT" | cut -f1)"
 echo "  Version  : $VERSION  |  Arch : $ARCH"
 [ -n "$IDENTITY" ]    && echo "  Signé    : ✓" || echo "  Signé    : ✗ (certificat manquant)"
 [ "$NOTARY_OK" = true ] && echo "  Notarisé : ✓" || echo "  Notarisé : ✗ (profil '$NOTARY_PROFILE' non configuré)"
-[ "$UPLOAD_OK" = true ] && echo "  Upload   : ✓ release $TAG" || echo "  Upload   : ✗ (à faire à la main)"
+if [ "${MYSTROW_NO_UPLOAD:-0}" = "1" ]; then
+  echo "  Upload   : — (build de test, volontairement non publié)"
+else
+  [ "$UPLOAD_OK" = true ] && echo "  Upload   : ✓ release $TAG" || echo "  Upload   : ✗ (à faire à la main)"
+fi
 echo ""
 
 # En mode automatique (veilleur launchd), personne n'est devant l'écran : ouvrir
