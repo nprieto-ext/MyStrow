@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import UIKit
 import Capacitor
 
 /// Sortie DMX du mode autonome (sans PC) sur iPhone / iPad : Art-Net en UDP.
@@ -22,6 +23,14 @@ import Capacitor
 ///
 /// La cadence ne dépend pas du JavaScript : un thread natif réémet la dernière
 /// trame à fréquence fixe, comme sur Android et sur le PC.
+///
+/// Arrière-plan : iOS ralentit puis GÈLE l'app quelques secondes après la
+/// bascule, et plus aucune trame ne part (le USB NODE coupe alors son DMX).
+/// On demande un délai d'arrière-plan (~30 s, accordé par iOS, accepté par
+/// l'App Store) : une bascule courte ne coupe rien. Au-delà, rien de légitime
+/// ne garde l'envoi en vie. Au retour, la socket est souvent inutilisable :
+/// elle est recréée d'office, et aussi après une seconde d'échecs d'envoi
+/// (carte USB rebranchée), sans qu'il faille refaire « Démarrer ».
 @objc(MystrowDmxPlugin)
 public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "MystrowDmxPlugin"
@@ -49,6 +58,40 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
     private var maxIntervalNs: UInt64 = 0, sumIntervalNs: UInt64 = 0
     private var lastError = ""
     private var outputName = ""
+    private var rebuildNow = false
+
+    /// Réglages du dernier start(), pour recréer la sortie sans le JavaScript.
+    struct Config { let host: String; let port: Int; let universe: Int; let fps: Int }
+
+    // Délai d'arrière-plan en cours (fil principal uniquement).
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
+
+    override public func load() {
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(didEnterBackground),
+                       name: UIApplication.didEnterBackgroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(willEnterForeground),
+                       name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+
+    @objc private func didEnterBackground() {
+        lock.lock(); let on = running; lock.unlock()
+        guard on, bgTask == .invalid else { return }
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "MyStrow DMX") { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+
+    @objc private func willEnterForeground() {
+        endBackgroundTask()
+        lock.lock(); rebuildNow = running; lock.unlock()
+    }
+
+    private func endBackgroundTask() {
+        guard bgTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bgTask)
+        bgTask = .invalid
+    }
 
     // MARK: - Réseaux
 
@@ -205,10 +248,12 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("L'USB-DMX n'est pas possible sur iPhone / iPad : utilisez un node Art-Net.")
             return
         }
+        let cfg = Config(host: call.getString("host") ?? "2.0.0.15",
+                         port: call.getInt("port") ?? 6454,
+                         universe: call.getInt("universe") ?? 0,
+                         fps: max(1, min(60, call.getInt("fps") ?? 40)))
         do {
-            let out = try ArtNetOutput(host: call.getString("host") ?? "2.0.0.15",
-                                       port: call.getInt("port") ?? 6454,
-                                       universe: call.getInt("universe") ?? 0)
+            let out = try ArtNetOutput(host: cfg.host, port: cfg.port, universe: cfg.universe)
             // Premier envoi tout de suite : une diffusion refusée par iOS se voit ici.
             lock.lock(); let first = dmx; lock.unlock()
             do { try out.send(first) } catch DmxError.message(let m) {
@@ -216,7 +261,7 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.reject("Sortie Art-Net : " + m)
                 return
             }
-            launch(out, fps: max(1, min(60, call.getInt("fps") ?? 40)))
+            launch(out, cfg: cfg)
             call.resolve(["output": outputName])
         } catch DmxError.message(let m) {
             call.reject(m)
@@ -225,16 +270,17 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func launch(_ out: ArtNetOutput, fps: Int) {
+    private func launch(_ out: ArtNetOutput, cfg: Config) {
         lock.lock()
         sent = 0; errors = 0; lateTicks = 0; intervals = 0
         maxIntervalNs = 0; sumIntervalNs = 0; lastError = ""
         outputName = out.name
         running = true
+        rebuildNow = false
         generation += 1
         let gen = generation
         lock.unlock()
-        let t = Thread { [weak self] in self?.runLoop(out, fps: fps, gen: gen) }
+        let t = Thread { [weak self] in self?.runLoop(out, cfg: cfg, gen: gen) }
         t.qualityOfService = .userInteractive
         t.name = "mystrow-dmx"
         t.start()
@@ -245,15 +291,32 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
         return running && generation == gen
     }
 
-    private func runLoop(_ out: ArtNetOutput, fps: Int, gen: Int) {
-        let period = UInt64(1_000_000_000 / fps)
+    private func runLoop(_ first: ArtNetOutput, cfg: Config, gen: Int) {
+        var out = first
+        let period = UInt64(1_000_000_000 / cfg.fps)
         var next = DispatchTime.now().uptimeNanoseconds
         var prev: UInt64 = 0
+        var failures = 0
         while stillRunning(gen) {
-            lock.lock(); let frame = dmx; lock.unlock()
+            lock.lock()
+            let frame = dmx
+            let rebuild = rebuildNow
+            rebuildNow = false
+            lock.unlock()
+            if rebuild || failures >= cfg.fps {
+                // Retour d'arrière-plan (socket tuée par la suspension) ou une seconde
+                // d'échecs (carte USB rebranchée) : nouvelle socket, interface recalculée.
+                if let fresh = try? ArtNetOutput(host: cfg.host, port: cfg.port, universe: cfg.universe) {
+                    out.close()
+                    out = fresh
+                    lock.lock(); outputName = fresh.name; lock.unlock()
+                }
+                failures = 0
+            }
             let now = DispatchTime.now().uptimeNanoseconds
             do {
                 try out.send(frame)
+                failures = 0
                 lock.lock()
                 sent += 1
                 if prev != 0 {
@@ -265,8 +328,10 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
                 lock.unlock()
             } catch DmxError.message(let m) {
+                failures += 1
                 lock.lock(); errors += 1; lastError = m; lock.unlock()
             } catch {
+                failures += 1
                 lock.lock(); errors += 1; lastError = error.localizedDescription; lock.unlock()
             }
             prev = now

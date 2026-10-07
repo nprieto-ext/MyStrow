@@ -406,7 +406,7 @@
     "@media (orientation:portrait){#akai-pagenav .solo-tab{flex:1;min-width:130px}}" +
     "#solo-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;background:#1b1a17;" +
     "border:1px solid rgba(226,206,22,.45);color:#E2CE16;padding:10px 18px;border-radius:10px;font-family:var(--f-label);" +
-    "font-weight:700;letter-spacing:1px;opacity:0;transition:opacity .2s;pointer-events:none}" +
+    "font-weight:700;letter-spacing:1px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:min(560px,calc(100vw - 32px));text-align:center}" +
     "#solo-toast.show{opacity:1}" +
     // Choix de l'effet d'un bouton
     "#fx-pick{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center}" +
@@ -459,9 +459,9 @@
   toastEl.id = "solo-toast";
   document.body.appendChild(toastEl);
   let toastTimer = null;
-  function toast(text) {
+  function toast(text, ms) {
     toastEl.textContent = text; toastEl.classList.add("show");
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1600);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove("show"), ms || 1600);
   }
 
   // Pages de la grille : deux onglets COULEURS | MÉMOIRES bien visibles, à la
@@ -726,4 +726,16 @@
   refresh(true);
   startOutput();
   window.addEventListener("pagehide", () => { if (Dmx) Dmx.stop().catch(() => {}); });
+
+  // iPad / iPhone : iOS gèle l'app ~30 s après la bascule en arrière-plan, et le
+  // DMX s'arrête (le natif reprend seul au retour). On le dit au retour.
+  const IOS = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
+  let hiddenAt = 0;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    lastSent = ""; output();   // renvoie la trame courante au natif
+    if (IOS && hiddenAt && Date.now() - hiddenAt > 25000)
+      toast("Sur iPad, le DMX s'arrête si MyStrow reste en arrière-plan. Gardez l'app au premier plan pendant le show (Accès guidé).", 7000);
+    hiddenAt = 0;
+  });
 })();

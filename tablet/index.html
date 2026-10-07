@@ -694,6 +694,25 @@ function setFaderUI(idx,value){
 }
 function refreshFaders(){ faderData.forEach(({value},i)=>setFaderUI(i,value)); }
 window.addEventListener('resize',()=>{ resizeCanvas(); refreshFaders(); });
+// iPad (WebKit) : au lancement et au retour d'arrière-plan, la largeur de la
+// grille (aspect-ratio + width:auto dans une colonne flex) est calculée AVANT
+// sa hauteur → pads écrasés en colonnes étroites, jusqu'à un changement
+// d'onglet. En paysage on impose donc largeur = hauteur mesurée ; en portrait
+// le CSS (--grid-side) s'en charge déjà.
+(function(){
+  const g=document.getElementById('grid');
+  if(!g||typeof ResizeObserver!=='function') return;
+  const portrait=window.matchMedia('(orientation: portrait)');
+  const fit=()=>{
+    if(portrait.matches){ if(g.style.width) g.style.width=''; return; }
+    const h=g.clientHeight;
+    if(h>0&&g.style.width!==h+'px') g.style.width=h+'px';
+  };
+  new ResizeObserver(fit).observe(g);
+  if(portrait.addEventListener) portrait.addEventListener('change',fit);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) requestAnimationFrame(fit); });
+  window.addEventListener('pageshow',fit);
+})();
 // Rotation : sur certains iPad/Android les dimensions ne sont à jour qu'après
 // l'évènement → second passage différé.
 window.addEventListener('orientationchange',()=>setTimeout(()=>{ resizeCanvas(); refreshFaders(); },300));

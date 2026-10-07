@@ -238,7 +238,9 @@
     try {
       const r = await Dmx.artPoll({ timeoutMs: 2000 });
       log({ event: "artpoll", nodes: r.nodes });
-      $("node-list").textContent = r.nodes.length ? "" : "Aucun node n'a répondu.";
+      $("node-list").textContent = r.nodes.length ? ""
+        : (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios") ? "La recherche automatique est bloquée par iPadOS (le USB NODE ne répond qu'à la diffusion). Saisissez l'adresse : 2.0.0.15 pour un node ElectroConcept, USB ou RJ45."
+        : "Aucun node n'a répondu." + (r.error ? " (" + r.error + ")" : "");
       r.nodes.forEach((n) => {
         const b = document.createElement("button");
         b.className = "btn node";

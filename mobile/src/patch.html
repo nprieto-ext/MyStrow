@@ -594,7 +594,8 @@
       if (r.nodes.length) {
         show.output.host = $("host").value = r.nodes[0].ip; save();
         $("out-hint").textContent = "Node trouvé : " + r.nodes.map((n) => n.ip + " (" + (n.longName || n.shortName) + ")").join(", ");
-      } else $("out-hint").textContent = "Aucun node n'a répondu.";
+      } else $("out-hint").textContent = IOS ? "La recherche automatique est bloquée par iPadOS (le USB NODE ne répond qu'à la diffusion). Saisissez l'adresse : 2.0.0.15 pour un node ElectroConcept, USB ou RJ45."
+        : "Aucun node n'a répondu." + (r.error ? " (" + r.error + ")" : "");
     } catch (e) { $("out-hint").textContent = "Recherche impossible : " + (e.message || e); }
   });
 
