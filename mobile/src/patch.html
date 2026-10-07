@@ -55,6 +55,17 @@
     #chans { color: var(--muted); font-size: 13px; margin-top: 4px; word-break: break-word; }
     #libstate { color: var(--muted); font-size: 13px; }
     #msg.err { color: var(--red); }
+    /* Éditeur de projecteur perso */
+    .res .tag.perso { color: var(--accent); }
+    #ed-chans, #ed-cw { display: flex; flex-direction: column; gap: 6px; }
+    .chrow { display: flex; align-items: center; gap: 8px; }
+    .chrow .num { font: 700 18px/1 var(--f-label); color: var(--accent); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+    .chrow select, .chrow input { flex: 1; min-width: 0; }
+    .chrow input.dmx { flex: 0 0 90px; }
+    .chrow input[type=color] { flex: 0 0 64px; padding: 4px; }
+    .chrow .btn.small { flex: 0 0 44px; padding: 0; }
+    #ed-msg { min-height: 1.5em; color: #cfcabd; }
+    #ed-msg.err { color: var(--red); }
   </style>
 </head>
 <body>
@@ -72,13 +83,20 @@
         <input id="search" type="search" placeholder="Marque ou modèle : izy, cameo, par 64…" autocomplete="off"></div>
     </div>
     <div id="results"></div>
-    <p id="libstate"></p>
+    <div class="row" style="align-items:center">
+      <p id="libstate" style="flex:1"></p>
+      <button class="btn small" id="create" type="button">＋ Créer un projecteur</button>
+    </div>
     <div id="chosen" hidden>
       <b id="chosen-name"></b>
       <div class="row" style="margin-top:8px">
         <div style="flex:2;min-width:220px"><label for="mode">Mode DMX</label><select id="mode"></select></div>
       </div>
       <div id="chans"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small" id="edit-chosen" type="button">Modifier</button>
+        <button class="btn small danger" id="del-chosen" type="button">Supprimer de ma bibliothèque</button>
+      </div>
     </div>
     <div class="row">
       <div><label for="group">Groupe (colonne)</label>
@@ -91,6 +109,33 @@
     <p class="hint">Chaque projecteur suivant démarre « écart » canaux plus loin (10 par défaut, comme dans MyStrow sur PC : 1, 11, 21…). Réglez vos projecteurs sur ces adresses.</p>
     <button class="btn primary" id="add" type="button">Ajouter</button>
     <p id="msg" role="status"></p>
+  </section>
+
+  <section class="panel" id="editor" hidden>
+    <div class="row" style="align-items:center">
+      <div class="eyebrow" style="flex:1" id="ed-title">Créer un projecteur</div>
+      <button class="btn small" id="ed-cancel" type="button">Annuler</button>
+    </div>
+    <div class="row">
+      <div style="flex:2;min-width:200px"><label for="ed-model">Modèle</label><input id="ed-model" placeholder="Ex. : Spot 60W" autocomplete="off"></div>
+      <div style="flex:1;min-width:150px"><label for="ed-mfr">Marque</label><input id="ed-mfr" placeholder="Facultatif" autocomplete="off"></div>
+      <div style="flex:1;min-width:150px"><label for="ed-type">Type</label><select id="ed-type"></select></div>
+    </div>
+    <div class="row">
+      <div style="flex:1;min-width:220px"><label for="ed-start">Partir d'un profil tout fait</label><select id="ed-start"></select></div>
+    </div>
+    <label>Canaux DMX, dans l'ordre de la notice</label>
+    <div id="ed-chans"></div>
+    <button class="btn small" id="ed-addch" type="button">＋ Ajouter un canal</button>
+    <div id="ed-cw-box" hidden style="display:flex;flex-direction:column;gap:8px">
+      <label>Roue de couleurs</label>
+      <p class="hint">Pour chaque couleur de la roue : la valeur DMX où elle commence (voir la notice) et sa teinte. Sans couleur, une roue standard est utilisée.</p>
+      <div id="ed-cw"></div>
+      <button class="btn small" id="ed-addcw" type="button">＋ Ajouter une couleur</button>
+    </div>
+    <button class="btn primary" id="ed-save" type="button">Enregistrer le projecteur</button>
+    <p id="ed-msg" role="status"></p>
+    <p class="hint">Le projecteur est gardé sur cette tablette, dans votre bibliothèque : cherchez-le ensuite par son nom pour l'ajouter au patch.</p>
   </section>
 
   <section class="panel">
@@ -151,11 +196,20 @@
     n: label, m: "Générique tablette", t: id.startsWith("MOVING") || id.startsWith("MACMAH") ? "Moving Head" : "PAR LED",
     s: "tablette", modes: [[Engine.channelCount(id) + " canaux", id]] }));
 
-  let library = [];
+  // Projecteurs créés sur la tablette (éditeur plus bas), même forme que
+  // library.js + `id` ; s = "perso".
+  const CUSTOM_KEY = "mystrow.lib.custom";
+  let custom = [];
+  try { custom = JSON.parse(localStorage.getItem(CUSTOM_KEY) || "[]") || []; } catch (e) {}
+  const saveCustom = () => { try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(custom)); } catch (e) {} };
+
+  let library = [], firestoreFixtures = null;
   function buildLibrary(firestore) {
-    const base = firestore ? Lib.fixtures.filter((f) => f.s !== "firestore").concat(firestore) : Lib.fixtures;
-    library = GENERIC.concat(base).map((f) => ({ ...f, key: norm(f.m + " " + f.n) }));
-    $("libstate").textContent = library.length - GENERIC.length + " projecteurs dans la bibliothèque"
+    if (firestore !== undefined) firestoreFixtures = firestore;
+    const base = firestoreFixtures ? Lib.fixtures.filter((f) => f.s !== "firestore").concat(firestoreFixtures) : Lib.fixtures;
+    library = custom.concat(GENERIC, base).map((f) => ({ ...f, key: norm(f.m + " " + f.n) }));
+    $("libstate").textContent = base.length + " projecteurs dans la bibliothèque"
+      + (custom.length ? " · " + custom.length + " créé(s) sur la tablette" : "")
       + (libDate ? " · fixtures MyStrow à jour du " + libDate : "");
   }
 
@@ -206,7 +260,7 @@
   let cached = null;
   try { cached = JSON.parse(localStorage.getItem("mystrow.lib.firestore") || "null"); } catch (e) {}
   if (cached && cached.fixtures) libDate = cached.date;
-  buildLibrary(cached && cached.fixtures);
+  buildLibrary((cached && cached.fixtures) || null);
 
   // ── Recherche ──────────────────────────────────────────────────────────────
   let chosen = null;
@@ -214,16 +268,20 @@
     const words = norm($("search").value).split(/\s+/).filter(Boolean);
     const box = $("results");
     box.innerHTML = "";
-    if (!words.length) return;
-    const hits = library.filter((f) => words.every((w) => f.key.includes(w))).slice(0, 60);
-    if (!hits.length) { box.innerHTML = '<p class="hint">Aucun projecteur ne correspond.</p>'; return; }
+    // Champ vide : les projecteurs créés sur la tablette, pour les retrouver sans chercher.
+    const hits = words.length ? library.filter((f) => words.every((w) => f.key.includes(w))).slice(0, 60)
+      : library.filter((f) => f.s === "perso");
+    if (!words.length && !hits.length) return;
+    if (!hits.length) { box.innerHTML = '<p class="hint">Aucun projecteur ne correspond. Introuvable ? Créez-le avec « ＋ Créer un projecteur ».</p>'; return; }
     hits.forEach((f) => {
       const b = document.createElement("button");
-      b.type = "button"; b.className = "res" + (chosen === f ? " on" : "");
+      b.type = "button"; b.className = "res" + (sameFixture(chosen, f) ? " on" : "");
       b.innerHTML = '<span class="mfr"></span><span class="model"></span><span class="tag"></span>';
       b.querySelector(".mfr").textContent = f.m;
       b.querySelector(".model").textContent = f.n;
-      b.querySelector(".tag").textContent = f.t + " · " + (f.modes.length > 1 ? f.modes.length + " modes" : (f.modes[0][0]));
+      b.querySelector(".tag").textContent = (f.s === "perso" ? "Perso · " : "") + typeLabel(f.t) + " · "
+        + (f.modes.length > 1 ? f.modes.length + " modes" : (f.modes[0][0]));
+      b.querySelector(".tag").classList.toggle("perso", f.s === "perso");
       b.addEventListener("click", () => choose(f));
       box.appendChild(b);
     });
@@ -241,7 +299,13 @@
     });
     showChannels();
     $("name").value = f.n.length > 18 ? f.n.slice(0, 18).trim() : f.n;
+    $("edit-chosen").textContent = f.s === "perso" ? "Modifier" : "Copier et modifier";
+    $("del-chosen").hidden = f.s !== "perso";
     search();
+  }
+  function sameFixture(a, b) {
+    if (!a || !b) return false;
+    return a === b || (a.id && a.id === b.id) || (!a.id && !b.id && a.key === b.key && a.s === b.s);
   }
   function showChannels() {
     if (!chosen) return;
@@ -322,6 +386,7 @@
     const model = chosen.s === "tablette" ? {} : {
       model: chosen.m + " · " + chosen.n, mode: modeName, fixture_type: chosen.t,
       color_wheel_slots: chosen.cw || [], gobo_wheel_slots: chosen.gb || [] };
+    if (chosen.s === "perso") model.custom_id = chosen.id;   // suit les modifications de l'éditeur
     let addr = Math.max(1, +$("addr").value || nextAddress());
     const base = $("name").value.trim() || "PAR";
     const n0 = show.fixtures.filter((f) => f.name.startsWith(base)).length;
@@ -337,6 +402,166 @@
   });
 
   refreshLibrary();
+
+  // ── Éditeur de projecteur ─────────────────────────────────────────────────
+  // Les noms de canaux sont ceux du moteur (engine.js, = core.py du PC) : un
+  // nom inconnu sortirait 0, d'où une liste fermée.
+  const CHANNELS = [
+    ["Dim", "Dimmer (intensité)"], ["Dim2", "Dimmer 2"],
+    ["R", "Rouge"], ["G", "Vert"], ["B", "Bleu"], ["W", "Blanc"], ["Ambre", "Ambre"], ["Orange", "Orange"],
+    ["UV", "UV"], ["Lime", "Lime"], ["C", "Cyan"], ["M", "Magenta"], ["Y", "Jaune"], ["CTO", "CTO"], ["CTB", "CTB"],
+    ["Strobe", "Strobe"], ["Shutter", "Shutter (obturateur)"],
+    ["Pan", "Pan"], ["PanFine", "Pan fin (16 bits)"], ["Tilt", "Tilt"], ["TiltFine", "Tilt fin (16 bits)"],
+    ["Speed", "Vitesse pan/tilt"], ["ColorWheel", "Roue de couleurs"],
+    ["Gobo1", "Roue de gobos"], ["Gobo1Rot", "Rotation gobo"], ["Gobo2", "Roue de gobos 2"],
+    ["Prism", "Prisme"], ["PrismRot", "Rotation prisme"], ["Focus", "Focus"], ["Zoom", "Zoom"], ["Iris", "Iris"],
+    ["Effects", "Effets / macros"], ["Mode", "Mode / programme"], ["Reset", "Reset"],
+    ["Smoke", "Fumée (débit)"], ["Fan", "Ventilateur"], ["Spark", "Étincelles"], ["Flame", "Flamme"],
+    ["Unused", "Inutilisé / autre"],
+  ];
+  const CH_LABEL = Object.fromEntries(CHANNELS);
+  // Valeur = fixture_type du PC (sans accents, comme la bibliothèque).
+  const TYPES = [
+    ["PAR LED", "PAR LED"], ["Moving Head", "Lyre"], ["Barre LED", "Barre LED"], ["Stroboscope", "Stroboscope"],
+    ["Gradateur", "Gradateur"], ["Effet", "Effet"], ["Laser", "Laser"], ["Matrice LED", "Matrice LED"],
+    ["Machine a fumee", "Machine à fumée"], ["Machine a brouillard", "Machine à brouillard"],
+    ["Machine a etincelles", "Machine à étincelles"], ["Lance-flamme", "Lance-flamme"],
+  ];
+  function typeLabel(t) { return (TYPES.find(([v]) => v === t) || [, t])[1]; }
+
+  const option = (value, text) => { const o = document.createElement("option"); o.value = value; o.textContent = text; return o; };
+  TYPES.forEach(([v, l]) => $("ed-type").appendChild(option(v, l)));
+  $("ed-start").appendChild(option("", "— Choisir —"));
+  Engine.PROFILE_LABELS.forEach(([id, label]) => $("ed-start").appendChild(option(id, label)));
+
+  let ed = null;   // { id, chans: [...], cw: [{dmx, color, name}] }
+  const edMsg = (t, err) => { $("ed-msg").textContent = t; $("ed-msg").classList.toggle("err", !!err); };
+
+  function openEditor(src, keepId) {
+    // src : projecteur de la bibliothèque (copié, ou modifié si perso) ou rien.
+    const prof = src ? src.modes[src === chosen ? +$("mode").value || 0 : 0][1] : ["R", "G", "B", "Dim", "Strobe"];
+    const list = (Array.isArray(prof) ? prof : Engine.PROFILES[prof] || []).map((c) => CH_LABEL[c] ? c : "Unused");
+    ed = { id: keepId && src ? src.id : null, chans: list,
+      cw: ((src && src.cw) || []).map((s) => ({ dmx: s.dmx, color: s.color, name: s.name || "" })) };
+    $("ed-title").textContent = ed.id ? "Modifier un projecteur" : "Créer un projecteur";
+    // Profils « Générique tablette » : le libellé porte la liste des canaux, on ne garde que le nom.
+    const srcName = src ? (src.s === "tablette" ? src.n.split(" · ")[0] : src.n) : "";
+    $("ed-model").value = src ? srcName + (ed.id ? "" : " (copie)") : "";
+    $("ed-mfr").value = src && src.m !== "Générique tablette" && src.m !== "Générique" ? src.m : "";
+    $("ed-type").value = src && TYPES.some(([v]) => v === src.t) ? src.t : "PAR LED";
+    $("ed-start").value = "";
+    edMsg("");
+    renderEditor();
+    $("editor").hidden = false;
+    $("editor").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!src) $("ed-model").focus();
+  }
+  function closeEditor() { ed = null; $("editor").hidden = true; }
+
+  function iconBtn(text, title, onClick, danger) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn small" + (danger ? " danger" : ""); b.textContent = text; b.title = title;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  function renderEditor() {
+    const box = $("ed-chans");
+    box.innerHTML = "";
+    if (!ed.chans.length) box.innerHTML = '<p class="hint">Aucun canal : ajoutez-en un.</p>';
+    ed.chans.forEach((c, i) => {
+      const row = document.createElement("div"); row.className = "chrow";
+      const num = document.createElement("span"); num.className = "num"; num.textContent = i + 1;
+      const sel = document.createElement("select");
+      CHANNELS.forEach(([v, l]) => sel.appendChild(option(v, l)));
+      sel.value = c;
+      sel.addEventListener("change", () => { ed.chans[i] = sel.value; renderEditor(); });
+      const move = (d) => { const j = i + d; if (j < 0 || j >= ed.chans.length) return;
+        [ed.chans[i], ed.chans[j]] = [ed.chans[j], ed.chans[i]]; renderEditor(); };
+      row.append(num, sel, iconBtn("▲", "Monter", () => move(-1)), iconBtn("▼", "Descendre", () => move(1)),
+        iconBtn("✕", "Retirer", () => { ed.chans.splice(i, 1); renderEditor(); }, true));
+      box.appendChild(row);
+    });
+    const hasWheel = ed.chans.includes("ColorWheel");
+    $("ed-cw-box").hidden = !hasWheel;
+    const cw = $("ed-cw");
+    cw.innerHTML = "";
+    if (hasWheel) ed.cw.forEach((s, i) => {
+      const row = document.createElement("div"); row.className = "chrow";
+      const dmx = document.createElement("input"); dmx.className = "dmx"; dmx.inputMode = "numeric"; dmx.value = s.dmx;
+      dmx.addEventListener("change", () => { s.dmx = Math.max(0, Math.min(255, +dmx.value || 0)); dmx.value = s.dmx; });
+      const col = document.createElement("input"); col.type = "color"; col.value = s.color || "#ffffff";
+      col.addEventListener("input", () => { s.color = col.value; });
+      const name = document.createElement("input"); name.placeholder = "Nom (facultatif)"; name.value = s.name;
+      name.addEventListener("change", () => { s.name = name.value.trim(); });
+      row.append(dmx, col, name, iconBtn("✕", "Retirer", () => { ed.cw.splice(i, 1); renderEditor(); }, true));
+      cw.appendChild(row);
+    });
+    $("ed-save").textContent = "Enregistrer le projecteur (" + ed.chans.length + (ed.chans.length > 1 ? " canaux" : " canal") + ")";
+  }
+
+  $("ed-addch").addEventListener("click", () => { ed.chans.push("Dim"); renderEditor(); });
+  $("ed-addcw").addEventListener("click", () => {
+    const last = ed.cw.length ? ed.cw[ed.cw.length - 1].dmx : -10;
+    ed.cw.push({ dmx: Math.min(255, last + 10), color: "#ffffff", name: "" }); renderEditor();
+  });
+  $("ed-start").addEventListener("change", () => {
+    const id = $("ed-start").value;
+    if (!id) return;
+    ed.chans = (Engine.PROFILES[id] || []).slice();
+    if (id.startsWith("MOVING") || id.startsWith("MACMAH")) $("ed-type").value = "Moving Head";
+    else if (id === "DIM") $("ed-type").value = "Gradateur";
+    else if (id === "STROBE_2CH") $("ed-type").value = "Stroboscope";
+    renderEditor();
+  });
+  $("ed-cancel").addEventListener("click", closeEditor);
+  $("create").addEventListener("click", () => openEditor(null));
+  $("edit-chosen").addEventListener("click", () => { if (chosen) openEditor(chosen, chosen.s === "perso"); });
+
+  $("ed-save").addEventListener("click", () => {
+    const n = $("ed-model").value.trim();
+    if (!n) { edMsg("Donnez un nom au modèle.", true); $("ed-model").focus(); return; }
+    if (!ed.chans.length) { edMsg("Ajoutez au moins un canal.", true); return; }
+    let t = $("ed-type").value;
+    // Le moteur ne fait bouger que les lyres : un Pan sur un « PAR » resterait figé.
+    if (ed.chans.includes("Pan") && t === "PAR LED") { t = "Moving Head"; $("ed-type").value = t; }
+    const m = $("ed-mfr").value.trim() || "Perso";
+    const profile = ed.chans.slice();
+    const cw = ed.chans.includes("ColorWheel")
+      ? ed.cw.slice().sort((a, b) => a.dmx - b.dmx).map((s) => ({ dmx: s.dmx, color: s.color, name: s.name })) : [];
+    const entry = { id: ed.id || "c" + Date.now().toString(36), n, m, t, s: "perso",
+      modes: [[profile.length + " canaux", profile]] };
+    if (cw.length) entry.cw = cw;
+    const i = custom.findIndex((f) => f.id === entry.id);
+    if (i >= 0) custom[i] = entry; else custom.unshift(entry);
+    saveCustom();
+    // Les projecteurs déjà patchés depuis ce modèle suivent la modification.
+    let updated = 0;
+    show.fixtures.forEach((f) => {
+      if (f.custom_id !== entry.id) return;
+      Object.assign(f, { profile, model: m + " · " + n, mode: entry.modes[0][0], fixture_type: t, color_wheel_slots: cw });
+      updated++;
+    });
+    if (updated) { save(); testing = null; render(); }
+    buildLibrary();
+    closeEditor();
+    $("search").value = n;
+    choose(library.find((f) => f.id === entry.id));
+    msg("« " + n + " » enregistré dans votre bibliothèque" + (updated ? " · " + updated + " projecteur(s) du patch mis à jour." : " : réglez groupe, quantité et adresse puis « Ajouter »."));
+    $("chosen").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+
+  $("del-chosen").addEventListener("click", () => {
+    if (!chosen || chosen.s !== "perso") return;
+    const id = chosen.id, used = show.fixtures.filter((f) => f.custom_id === id).length;
+    custom = custom.filter((f) => f.id !== id);
+    saveCustom();
+    buildLibrary();
+    chosen = null;
+    $("chosen").hidden = true;
+    search();
+    // Les projecteurs déjà patchés gardent leur copie des canaux et continuent de marcher.
+    msg("Supprimé de votre bibliothèque." + (used ? " Les " + used + " projecteur(s) déjà patchés restent dans le patch." : ""));
+  });
 
   $("wipe").addEventListener("click", () => {
     if (!show.fixtures.length) return;
@@ -377,7 +602,7 @@
     if (outputOn && Dmx) await Dmx.stop().catch(() => {});
     location.href = url;
   }
-  $("back").addEventListener("click", () => leave("index.html?choose=1"));
+  $("back").addEventListener("click", () => leave("index.html?view=solo"));
   $("play").addEventListener("click", () => {
     if (!show.fixtures.length) { msg("Ajoutez d'abord des projecteurs.", true); return; }
     leave("remote.html?solo=1");
@@ -392,6 +617,7 @@
   setTransport(show.output.transport || "usb");
   render();
   $("addr").value = nextAddress();
+  search();
 </script>
 </body>
 </html>

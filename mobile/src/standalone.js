@@ -451,7 +451,7 @@
   badge.title = "Mode autonome : la tablette pilote les projecteurs. Toucher pour revenir à l'accueil.";
   badge.addEventListener("click", () => {
     if (Dmx) Dmx.stop().catch(() => {});
-    location.href = "index.html?choose=1";
+    location.href = "index.html?view=solo";
   });
   document.getElementById("conn-status").before(badge);
 

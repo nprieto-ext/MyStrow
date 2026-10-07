@@ -28,7 +28,8 @@
       display: flex; align-items: center; justify-content: center;
       padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
     }
-    main { width: min(460px, 100%); display: flex; flex-direction: column; gap: 22px; }
+    main { width: min(520px, 100%); }
+    .view { display: flex; flex-direction: column; gap: 22px; }
 
     .brand { font-family: var(--f-title); font-size: 40px; line-height: 1; letter-spacing: 1px; }
     .brand span { color: var(--accent); }
@@ -47,7 +48,6 @@
     .pc b { display: block; font-family: var(--f-label); font-weight: 700; font-size: 19px; letter-spacing: 0.3px; line-height: 1.2; }
     .pc small { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
     .pc .go { margin-left: auto; font-family: var(--f-label); font-weight: 700; letter-spacing: 1.2px; color: var(--accent); }
-    .empty { color: var(--muted); font-size: 14px; }
 
     label { font-family: var(--f-label); font-weight: 700; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
     .field { display: flex; gap: 8px; }
@@ -60,58 +60,116 @@
     .btn:disabled { opacity: 0.5; }
     .btn-ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent-border); }
     .btn-ghost:active { background: var(--accent-dim); }
-    .hint { color: var(--muted); font-size: 13px; }
-    .hint b { color: #cfcabd; font-weight: 600; }
     #status { min-height: 1.5em; font-size: 14px; color: #cfcabd; }
     #status.err { color: var(--red); }
     button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* Accueil : trois grands choix, puis un écran par chemin. */
+    .choices { display: flex; flex-direction: column; gap: 12px; }
+    .choice { display: flex; align-items: center; gap: 16px; width: 100%; text-align: left; padding: 20px 18px; border-radius: 16px;
+      background: linear-gradient(180deg, #13120e, #0b0a08); border: 1px solid var(--accent-border); color: var(--text); cursor: pointer; font: inherit; }
+    .choice:active { background: var(--accent-dim); border-color: var(--accent); }
+    .choice.minor { border-color: var(--line2); padding: 14px 18px; }
+    .choice .ico { width: 54px; height: 54px; flex-shrink: 0; border-radius: 14px; display: grid; place-items: center; background: var(--accent-dim); color: var(--accent); }
+    .choice.minor .ico { width: 42px; height: 42px; background: var(--bg3); color: var(--muted); }
+    .choice .ico svg { width: 30px; height: 30px; }
+    .choice.minor .ico svg { width: 22px; height: 22px; }
+    .choice .txt { flex: 1; min-width: 0; }
+    .choice b { display: block; font-family: var(--f-label); font-weight: 700; font-size: 24px; letter-spacing: 0.3px; line-height: 1.15; }
+    .choice.minor b { font-size: 19px; }
+    .choice small { display: block; color: #cfcabd; font-size: 14px; line-height: 1.4; margin-top: 3px; }
+    .choice.minor small { color: var(--muted); font-size: 13px; }
+    .choice .chev { font: 700 32px/1 var(--f-label); color: var(--accent); }
+    .choice.minor .chev { color: var(--muted); font-size: 26px; }
+    .tag { display: inline-block; vertical-align: 3px; margin-left: 6px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--accent-border);
+      font: 700 11px/1.2 var(--f-label); letter-spacing: 1.2px; color: var(--accent); text-transform: uppercase; }
+    h1 .tag { vertical-align: 6px; }
+
+    .back { align-self: flex-start; height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line2); background: transparent;
+      color: #cfcabd; font: 700 15px/1 var(--f-label); letter-spacing: 1.2px; text-transform: uppercase; cursor: pointer; }
+    .steps { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+    .steps li { display: flex; gap: 10px; align-items: baseline; color: #cfcabd; font-size: 14px; }
+    .steps li > i { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+      background: var(--accent); color: #0c0b00; font: 700 13px/1 var(--f-label); font-style: normal; }
+    .steps b { color: var(--text); font-weight: 600; }
+    .btn-big { height: 64px; font-size: 20px; width: 100%; }
+    .solo-state { padding: 12px 14px; border-radius: 12px; background: var(--bg3); border: 1px solid var(--line2); color: #cfcabd; font-size: 14px; }
+    .solo-state b { display: block; font-family: var(--f-label); font-size: 20px; color: var(--text); }
+    .row2 { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row2 .btn { flex: 1; min-width: 180px; }
   </style>
 </head>
 <body>
 <main>
-  <header>
-    <div class="brand">MY<span>STROW</span></div>
-    <h1>Connexion au PC</h1>
-    <p class="lede">La tablette pilote MyStrow ouvert sur votre ordinateur, sur le même Wi-Fi.</p>
-  </header>
-
-  <section class="panel" id="found-panel" hidden>
-    <div class="eyebrow">PC trouvés sur le réseau</div>
-    <div class="pc-list" id="found-list"></div>
-  </section>
-
-  <section class="panel" id="last-panel" hidden>
-    <div class="eyebrow">Dernier PC utilisé</div>
-    <div class="pc-list" id="last-list"></div>
-  </section>
-
-  <form class="panel" id="manual-form" autocomplete="off">
-    <label for="host">Adresse du PC</label>
-    <div class="field">
-      <input id="host" type="text" inputmode="decimal" placeholder="192.168.1.20" autocapitalize="off" spellcheck="false">
-      <button class="btn" id="connect-btn" type="submit">Connecter</button>
+  <!-- ── Accueil : que voulez-vous faire ? ── -->
+  <div class="view" id="view-home" hidden>
+    <header>
+      <div class="brand">MY<span>STROW</span></div>
+      <h1>Que voulez-vous faire ?</h1>
+    </header>
+    <div class="choices">
+      <button class="choice" id="go-pc" type="button">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
+        <span class="txt"><b>Piloter MyStrow sur mon PC</b><small>La tablette devient la télécommande du logiciel ouvert sur votre ordinateur, sur le même Wi-Fi.</small></span>
+        <span class="chev">›</span>
+      </button>
+      <button class="choice" id="go-solo" type="button">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M11 18.5h2"/><path d="M12 6.5l1.5 3 3.3.5-2.4 2.3.6 3.3-3-1.6-3 1.6.6-3.3-2.4-2.3 3.3-.5z"/></svg></span>
+        <span class="txt"><b>Jouer sans PC <span class="tag">Bêta</span></b><small>La tablette pilote elle-même vos projecteurs, par une interface USB-DMX ou un node Art-Net.</small></span>
+        <span class="chev">›</span>
+      </button>
     </div>
-    <p class="hint">Dans MyStrow sur le PC : <b>Connexion › Entrée externe</b>, l'adresse s'affiche sous le QR code.</p>
-  </form>
+  </div>
 
-  <p id="status" role="status" aria-live="polite"></p>
+  <!-- ── Télécommande : connexion au PC ── -->
+  <div class="view" id="view-pc" hidden>
+    <button class="back" type="button" data-home>‹ Accueil</button>
+    <header>
+      <h1>Connexion au PC</h1>
+      <ol class="steps">
+        <li><i>1</i><span>Sur le PC, dans MyStrow : <b>Connexion › Entrée externe</b>.</span></li>
+        <li><i>2</i><span>La tablette et le PC sur <b>le même Wi-Fi</b>.</span></li>
+        <li><i>3</i><span>Touchez votre PC ci-dessous, ou tapez l'adresse affichée sous le QR code.</span></li>
+      </ol>
+    </header>
 
-  <section class="panel">
-    <div class="eyebrow">Pas de PC sous la main ?</div>
-    <p class="hint">Découvrez l'interface avec un show d'exemple : pads, faders, playlist et plan de feu réagissent, sans piloter aucune lumière.</p>
-    <button class="btn btn-ghost" id="demo-btn" type="button">Essayer la démo</button>
-  </section>
+    <section class="panel" id="found-panel" hidden>
+      <div class="eyebrow">PC trouvés sur le réseau</div>
+      <div class="pc-list" id="found-list"></div>
+    </section>
 
-  <!-- Mode autonome (en test) : la tablette pilote seule le DMX (standalone.js). -->
-  <section class="panel">
-    <div class="eyebrow">Sans PC (en test)</div>
-    <p class="hint">La tablette pilote elle-même vos projecteurs, par une interface USB-DMX ou un node Art-Net.</p>
-    <div class="field">
-      <button class="btn" id="solo-btn" type="button" style="flex:1">Jouer sans PC</button>
-      <button class="btn btn-ghost" id="patch-btn" type="button">Patch</button>
-    </div>
-    <button class="btn btn-ghost" id="dmxtest-btn" type="button">Tester la sortie DMX</button>
-  </section>
+    <section class="panel" id="last-panel" hidden>
+      <div class="eyebrow">Dernier PC utilisé</div>
+      <div class="pc-list" id="last-list"></div>
+    </section>
+
+    <form class="panel" id="manual-form" autocomplete="off">
+      <label for="host">Adresse du PC</label>
+      <div class="field">
+        <input id="host" type="text" inputmode="decimal" placeholder="192.168.1.20" autocapitalize="off" spellcheck="false">
+        <button class="btn" id="connect-btn" type="submit">Connecter</button>
+      </div>
+    </form>
+
+    <p id="status" role="status" aria-live="polite"></p>
+  </div>
+
+  <!-- ── Sans PC : patch puis jeu (standalone.js) ── -->
+  <div class="view" id="view-solo" hidden>
+    <button class="back" type="button" data-home>‹ Accueil</button>
+    <header>
+      <h1>Jouer sans PC <span class="tag">Bêta</span></h1>
+      <p class="lede">Branchez l'interface USB-DMX sur la tablette, ou mettez la tablette sur le même réseau que le node Art-Net.</p>
+    </header>
+    <section class="panel">
+      <div class="solo-state" id="solo-state"></div>
+      <button class="btn btn-big" id="solo-btn" type="button">Jouer</button>
+      <div class="row2">
+        <button class="btn btn-ghost" id="patch-btn" type="button">Mes projecteurs (patch)</button>
+        <button class="btn btn-ghost" id="dmxtest-btn" type="button">Tester la sortie DMX</button>
+      </div>
+    </section>
+  </div>
 </main>
 
 <script>
@@ -125,6 +183,9 @@
 
   function setStatus(msg, isErr) { statusEl.textContent = msg || ""; statusEl.className = isErr ? "err" : ""; }
   function loadLast() { try { return JSON.parse(localStorage.getItem("mystrow.pc") || "null"); } catch (e) { return null; } }
+  // Dernier chemin choisi (« pc » ou « solo ») : seul « pc » relance la reconnexion auto.
+  function setMode(m) { try { localStorage.setItem("mystrow.mode", m); } catch (e) {} }
+  function loadMode() { try { return localStorage.getItem("mystrow.mode"); } catch (e) { return null; } }
 
   async function whoami(base, timeoutMs) {
     const ctl = new AbortController();
@@ -156,6 +217,7 @@
     // Autre PC : l'appairage du précédent ne vaut rien ici.
     if (!last || last.base !== found.base) { try { localStorage.removeItem("mystrow.token"); } catch (e) {} }
     try { localStorage.setItem("mystrow.pc", JSON.stringify({ base: found.base, name: info.name || "", at: Date.now() })); } catch (e) {}
+    setMode("pc");
     location.href = "remote.html";
   }
 
@@ -181,15 +243,42 @@
     else setStatus("MyStrow ne répond pas à cette adresse. Vérifiez que l'Entrée externe est activée sur le PC et que la tablette est sur le même Wi-Fi.", true);
   }
 
+  // ── Écrans : accueil (3 choix) → écran du chemin choisi ─────────────────────
+  let discovering = false;
+  function show(view) {
+    ["home", "pc", "solo"].forEach(v => { document.getElementById("view-" + v).hidden = v !== view; });
+    if (view === "pc" && !discovering) { discovering = true; startDiscovery(); }
+    if (view === "solo") renderSolo();
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll("[data-home]").forEach(b => b.addEventListener("click", () => { setStatus(""); show("home"); }));
+  document.getElementById("go-pc").addEventListener("click", () => show("pc"));
+  document.getElementById("go-solo").addEventListener("click", () => { setMode("solo"); show("solo"); });
+
+  function soloShow() {
+    try { return JSON.parse(localStorage.getItem("mystrow.solo.show") || "null"); } catch (e) { return null; }
+  }
+  function renderSolo() {
+    const sh = soloShow(), n = sh && sh.fixtures ? sh.fixtures.length : 0;
+    const out = sh && sh.output && sh.output.transport === "artnet"
+      ? "node Art-Net " + (sh.output.host || "2.0.0.15") : "interface USB-DMX";
+    const st = document.getElementById("solo-state");
+    st.innerHTML = "";
+    const b = document.createElement("b");
+    b.textContent = n ? n + " projecteur" + (n > 1 ? "s patchés" : " patché") : "Aucun projecteur patché";
+    const line = document.createElement("div");
+    line.textContent = n ? "Sortie : " + out + "." : "Commencez par indiquer vos projecteurs et leurs adresses DMX.";
+    st.append(b, line);
+    // Sans patch, « Jouer » n'aurait rien à piloter : on passe d'abord par le patch.
+    document.getElementById("solo-btn").textContent = n ? "Jouer" : "Commencer : ajouter mes projecteurs";
+  }
+
   document.getElementById("manual-form").addEventListener("submit", e => { e.preventDefault(); connectTo(hostInput.value); });
-  document.getElementById("demo-btn").addEventListener("click", () => { location.href = "remote.html?demo=1"; });
   document.getElementById("dmxtest-btn").addEventListener("click", () => { location.href = "dmxtest.html"; });
   document.getElementById("patch-btn").addEventListener("click", () => { location.href = "patch.html"; });
-  // Sans patch, « Jouer » n'aurait rien à piloter : on passe d'abord par le patch.
   document.getElementById("solo-btn").addEventListener("click", () => {
-    let show = null;
-    try { show = JSON.parse(localStorage.getItem("mystrow.solo.show") || "null"); } catch (e) {}
-    location.href = show && show.fixtures && show.fixtures.length ? "remote.html?solo=1" : "patch.html";
+    const sh = soloShow();
+    location.href = sh && sh.fixtures && sh.fixtures.length ? "remote.html?solo=1" : "patch.html";
   });
 
   // Découverte Bonjour : fournie par le module natif de l'app quand il est présent.
@@ -213,22 +302,28 @@
   }
 
   (async function boot() {
-    const choose = new URLSearchParams(location.search).has("choose");
-    const last = loadLast();
+    const params = new URLSearchParams(location.search);
+    const last = loadLast(), mode = loadMode();
+    let lastBtn = null;
     if (last && last.base) {
       hostInput.value = last.base.replace(/^http:\/\//, "");
-      const panel = document.getElementById("last-panel"), list = document.getElementById("last-list");
-      const btn = pcButton(last.name, last.base, false);
-      btn.addEventListener("click", () => connectTo(last.base.replace(/^http:\/\//, "")));
-      list.append(btn); panel.hidden = false;
-      if (!choose) {
-        setStatus("Reconnexion à " + (last.name || last.base) + "…");
-        const info = await whoami(last.base, 2000);
-        if (info) { btn.querySelector(".led").classList.remove("off"); open({ base: last.base, info }); return; }
-        setStatus("Le dernier PC ne répond pas. Choisissez un PC ou saisissez son adresse.", true);
-      }
+      lastBtn = pcButton(last.name, last.base, false);
+      lastBtn.addEventListener("click", () => connectTo(last.base.replace(/^http:\/\//, "")));
+      document.getElementById("last-list").append(lastBtn);
+      document.getElementById("last-panel").hidden = false;
     }
-    startDiscovery();
+    // Retour du patch, du test DMX ou du jeu sans PC : écran « Sans PC ».
+    if (params.get("view") === "solo") { show("solo"); return; }
+    // Télécommande la dernière fois (ou app d'avant les écrans, sans mode) : reconnexion auto.
+    if (!params.has("choose") && lastBtn && mode !== "solo") {
+      show("pc");
+      setStatus("Reconnexion à " + (last.name || last.base) + "…");
+      const info = await whoami(last.base, 2000);
+      if (info) { lastBtn.querySelector(".led").classList.remove("off"); open({ base: last.base, info }); return; }
+      setStatus("Le dernier PC ne répond pas. Choisissez un PC ou saisissez son adresse.", true);
+      return;
+    }
+    show("home");
   })();
 </script>
 </body>
