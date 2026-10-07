@@ -68,6 +68,7 @@ class Stub:
     # --- ce que set_proj_level appelle, hors de notre sujet ---
     set_proj_level      = MainWindow.set_proj_level
     restore_manual_look = MainWindow.restore_manual_look
+    clear_engine_look   = MainWindow.clear_engine_look
 
     def send_dmx_update(self): self.dmx_sends += 1
     def _update_color_wheel(self, p, color): pass
@@ -145,5 +146,28 @@ print("apres transition_blackout :", s5.etat())
 assert s5.projectors[0].level == 60, "le look tenu a la main ne revient pas"
 assert s5.projectors[0].base_color == QColor("#ffaa00"), "couleur du REC restee collee"
 assert s5.projectors[2].level == 0, "le look du REC deborde sur un groupe non tenu"
+
+# ── 6. Etat ENVOYE depuis le plan 2D / la tablette (prise en main) ────────────
+# « Si j'ai envoye un etat avant sur mes projos, lancer un media les coupe. »
+s6 = Stub()
+s6.monter_look(0, "#ff0000", 80)             # colonne A tenue sur l'APC
+tenu = s6.projectors[0]                      # un "face" pris en main : bleu 50 %
+tenu.level, tenu.base_color, tenu.color = 50, QColor("#0000ff"), QColor("#000080")
+tenu._manual_color = True
+seul = s6.projectors[2]                      # un "lat" (groupe non tenu) : vert
+seul.level, seul.base_color, seul.color = 100, QColor("#00ff00"), QColor("#00ff00")
+seul._manual_color = True
+
+MainWindow.clear_engine_look(s6)             # lancement d'un media en Manuel
+MainWindow.restore_manual_look(s6)
+print("apres lancement, etat envoye :", s6.etat())
+assert seul.level == 100 and seul.base_color == QColor("#00ff00"), "etat envoye coupe"
+assert tenu.level == 50 and tenu.base_color == QColor("#0000ff"), \
+    "le repeint du groupe ecrase la fixture prise en main"
+assert s6.projectors[1].level == 80, "le reste du groupe A doit suivre l'APC"
+assert s6.projectors[3].level == 0, "rien de tenu ici : noir"
+
+MainWindow.dmx_blackout(s6)                  # ligne PAUSE
+assert seul.level == 100 and tenu.level == 50, "la ligne PAUSE coupe l'etat envoye"
 
 print("\nOK - l'eclairage tenu sur l'APC traverse lancement, PAUSE et fin de media.")

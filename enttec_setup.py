@@ -9,7 +9,7 @@ import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QListWidget, QListWidgetItem,
-    QApplication, QWidget, QFrame, QTextEdit, QMessageBox,
+    QApplication, QWidget, QFrame, QTextEdit, QMessageBox, QStackedWidget,
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
@@ -263,6 +263,9 @@ class DmxSetupDialog(QDialog):
         self._connect_timer = None
         self._connect_timed_out = False
         self._connect_name = ""
+        # Mis à True quand l'utilisateur désigne un USB NODE DMX : l'appelant
+        # ouvre alors la sortie Node (ce boîtier parle Art-Net, pas série).
+        self.goto_usb_node = False
         self.setWindowTitle(tr("ent_title"))
         self.setFixedSize(680, 560)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -311,7 +314,10 @@ class DmxSetupDialog(QDialog):
         sep.setFrameShape(QFrame.VLine)
         sep.setStyleSheet("border: none; border-left: 1px solid #1e1e1e;")
         body.addWidget(sep)
-        body.addWidget(self._make_right(), 1)
+        self._right_stack = QStackedWidget()
+        self._right_stack.addWidget(self._make_right())
+        self._right_stack.addWidget(self._make_usb_node_page())
+        body.addWidget(self._right_stack, 1)
         root.addLayout(body, 1)
 
     # ── Colonne gauche ───────────────────────────────────────────────────────
@@ -357,11 +363,18 @@ class DmxSetupDialog(QDialog):
             self._id_to_item[prod["id"]] = item
 
         _header(tr("ent3_027"))
+        from node_connection import USB_NODE_ID, USB_NODE_NAME
         for p in PRODUCTS:
             _item(p)
+            # Le USB NODE se range à côté de l'OPTO, son voisin de catalogue :
+            # c'est dans cette liste que son propriétaire le cherche.
+            if p["id"] == "electroconcept_opto":
+                _item({"id": USB_NODE_ID, "name": USB_NODE_NAME})
 
     def _restore_selection(self):
         pid = self._dmx.product_id
+        # Ids génériques écrits par d'anciennes versions de la sortie DMX.
+        pid = {"enttec": "enttec_open"}.get(pid, pid)
         item = self._id_to_item.get(pid)
         if item:
             self.product_list.setCurrentItem(item)
@@ -532,6 +545,62 @@ class DmxSetupDialog(QDialog):
 
         return w
 
+    def _make_usb_node_page(self):
+        """Page affichée quand le USB NODE DMX est choisi dans la liste.
+
+        Pas de port série, pas de diagnostic série : on explique et on renvoie
+        vers la sortie Node, où le boîtier est trouvé automatiquement.
+        """
+        from node_connection import USB_NODE_NAME
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(26, 18, 26, 16)
+        lay.setSpacing(0)
+
+        nom = QLabel(USB_NODE_NAME)
+        nom.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        nom.setStyleSheet("color: white;")
+        lay.addWidget(nom)
+        lay.addSpacing(14)
+
+        txt = QLabel(tr("nc_usb_node_card"))
+        txt.setWordWrap(True)
+        txt.setFont(QFont("Segoe UI", 10))
+        txt.setStyleSheet("color: #9fd3e6;")
+        lay.addWidget(txt)
+        lay.addSpacing(16)
+
+        btn = QPushButton(tr("nc_usb_node_btn"))
+        btn.setFixedHeight(34)
+        btn.setStyleSheet(
+            "QPushButton { background: #13303d; color: #00d4ff; border: 1px solid #1d5a70;"
+            " border-radius: 6px; font-size: 10px; font-weight: bold; padding: 0 16px; }"
+            "QPushButton:hover { background: #183c4c; color: #5ee6ff; }")
+        btn.clicked.connect(self._aller_usb_node)
+        row = QHBoxLayout()
+        row.addWidget(btn)
+        row.addStretch()
+        lay.addLayout(row)
+
+        lay.addStretch()
+        footer = QHBoxLayout()
+        footer.addStretch()
+        btn_close = QPushButton(tr("ent_close"))
+        btn_close.setFixedHeight(28)
+        btn_close.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #777; border: 1px solid #2a2a2a;"
+            " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
+            "QPushButton:hover { color: white; background: #252525; }"
+        )
+        btn_close.clicked.connect(self.accept)
+        footer.addWidget(btn_close)
+        lay.addLayout(footer)
+        return w
+
+    def _aller_usb_node(self):
+        self.goto_usb_node = True
+        self.accept()
+
     def _step_hdr(self, num, text):
         row = QHBoxLayout()
         badge = QLabel(num)
@@ -592,6 +661,8 @@ class DmxSetupDialog(QDialog):
         if not pid:
             return
         prod = product_by_id(pid)
+        # USB NODE : absent de PRODUCTS (pas une interface série) → page dédiée.
+        self._right_stack.setCurrentIndex(0 if prod else 1)
         if not prod:
             return
 

@@ -31,6 +31,18 @@ from i18n import tr
 TARGET_IP   = "2.0.0.15"
 TARGET_PORT = 6454
 
+# Le USB NODE DMX d'ElectroConcept se branche en USB mais parle Art-Net : il
+# figure dans la liste des interfaces USB (c'est là que son propriétaire le
+# cherche) et renvoie vers la sortie Node. Id mémorisé dans `dmx.product_id`.
+USB_NODE_ID   = "electroconcept_usb_node"
+USB_NODE_NAME = "USB NODE DMX (ElectroConcept)"
+
+
+def _est_usb_node(node: dict) -> bool:
+    """L'ArtPollReply annonce-t-il un USB NODE (« Electroconcept USB NODE ») ?"""
+    nom = f"{node.get('court', '')} {node.get('long', '')}".lower()
+    return "usb node" in nom
+
 CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
 
 _SKIP_ADAPTERS = [
@@ -927,7 +939,7 @@ class NodeConnectionDialog(QDialog):
             import artnet_dmx as _adm
             _adm._dmx_instance = self._main_win.dmx
 
-        self._worker = _DiagWorker()
+        self._worker = _retenir(_DiagWorker())
         self._worker.step.connect(self._on_step)
         self._worker.done.connect(self._on_done)
         self._worker.start()
@@ -1113,15 +1125,19 @@ def _ip_node_a_viser(dmx=None, timeout: float = 1.2) -> str:
         trouves, _fiable = _artpoll_discover(timeout)
     except Exception:
         trouves = []
-    if trouves:
-        return trouves[0]["ip"]
     actuelle = getattr(dmx, "target_ip", "") or ""
+    if trouves:
+        # Plusieurs appareils Art-Net : garder celui qu'on vise déjà s'il
+        # répond, plutôt que le plus rapide à répondre.
+        if any(n["ip"] == actuelle for n in trouves):
+            return actuelle
+        return trouves[0]["ip"]
     if actuelle.startswith("2.") and _ping(actuelle, timeout_ms=800):
         return actuelle
     return TARGET_IP
 
 
-def _pointer_mystrow_sur(ip: str, dmx=None) -> bool:
+def _pointer_mystrow_sur(ip: str, dmx=None, usb_node: bool = False) -> bool:
     """Fait émettre MyStrow vers `ip` en Art-Net.
 
     On règle l'ÉMETTEUR, jamais le boîtier : ce modèle n'expose aucun moyen
@@ -1143,9 +1159,15 @@ def _pointer_mystrow_sur(ip: str, dmx=None) -> bool:
                 break
     if dmx is None:
         return False
+    # Le boîtier reste le même : un USB NODE repointé reste un USB NODE (sinon
+    # la liste USB rouvrirait sur un autre modèle).
+    if usb_node or getattr(dmx, "product_id", "") == USB_NODE_ID:
+        pid, nom = USB_NODE_ID, USB_NODE_NAME
+    else:
+        pid, nom = "artnet", "Art-Net (réseau)"
     try:
-        dmx.connect(transport=TRANSPORT_ARTNET, product_id="artnet",
-                    product_name="Art-Net (réseau)",
+        dmx.connect(transport=TRANSPORT_ARTNET, product_id=pid,
+                    product_name=nom,
                     target_ip=ip, target_port=6454)
     except Exception:
         return False
@@ -1178,6 +1200,62 @@ class _NodeSearcher(QThread):
             self.finished.emit(False)
         except Exception:
             self.finished.emit(False)
+
+
+_FILS_VIVANTS = set()   # QThreads à garder en vie jusqu'à leur fin
+
+
+def _retenir(th):
+    """Garde une référence au QThread `th` jusqu'à la fin de son travail.
+
+    ⚠️ Un QThread détruit pendant qu'il tourne fait AVORTER le processus (Qt 6 :
+    qFatal « QThread: Destroyed while thread is still running »). Or nos fils
+    réseau vivaient sur la fenêtre qui les lançait : la fermer pendant une
+    détection — longue sur un Mac sans DNS, en lien direct avec le node —
+    faisait planter toute l'app (piste du client Alexander, 05/10/2026).
+    On purge à chaque appel ceux qui ont fini : pas besoin de signal de fin,
+    que plusieurs de ces classes masquent d'ailleurs (`finished = Signal(bool)`).
+    """
+    for t in list(_FILS_VIVANTS):
+        try:
+            if not t.isRunning():
+                _FILS_VIVANTS.discard(t)
+        except RuntimeError:          # objet C++ déjà détruit
+            _FILS_VIVANTS.discard(t)
+    _FILS_VIVANTS.add(th)
+    return th
+_RE_IPV4 = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
+
+
+def _ip_saisie(texte: str) -> str:
+    """L'IPv4 contenue dans `texte` (« 2.0.0.15 — Node 4 » → « 2.0.0.15 »),
+    ou "" si elle est absente ou invalide."""
+    m = _RE_IPV4.search(texte or "")
+    if not m:
+        return ""
+    ip = m.group(1)
+    try:
+        socket.inet_aton(ip)
+    except OSError:
+        return ""
+    if any(int(p) > 255 for p in ip.split(".")) or ip.startswith(("0.", "127.")):
+        return ""
+    return ip
+
+
+class _NodeLister(QThread):
+    """Liste TOUS les nodes Art-Net qui répondent — pour laisser l'utilisateur
+    choisir. Prendre « le premier qui répond » choisissait au hasard sur un
+    réseau à plusieurs appareils Art-Net (client Alexander, 05/10/2026)."""
+    done = Signal(list)
+
+    def run(self):
+        try:
+            trouves, _fiable = _artpoll_discover(timeout=2.0)
+        except Exception:
+            trouves = []
+        self.done.emit(sorted(trouves, key=lambda n: tuple(
+            int(p) for p in n["ip"].split(".") if p.isdigit())))
 
 
 class _QuickDetector(QThread):
@@ -1617,8 +1695,9 @@ class NodeWiringAnim(QWidget):
 class NodeSetupWizard(QDialog):
     """Wizard de configuration réseau pas à pas pour le Node DMX."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, variant="rj45"):
         super().__init__(parent)
+        self._variant_initial = variant if variant in ("rj45", "usb") else "rj45"
         # Gardé pour atteindre `parent.dmx` : sans lui, l'assistant ne pouvait
         # pas basculer la sortie et se contentait d'annoncer un succès.
         self._main_win = parent
@@ -1837,7 +1916,7 @@ class NodeSetupWizard(QDialog):
         lay.addWidget(self._step_indicator(0)); lay.addSpacing(12)
         self._btn_cables_next = self._primary_btn(tr("nc3_038"), self._start_adapter_scan)
         lay.addWidget(self._btn_cables_next)
-        self._set_cable_variant("rj45")
+        self._set_cable_variant(self._variant_initial)
         return w
 
     def _set_cable_variant(self, cle):
@@ -2003,7 +2082,7 @@ class NodeSetupWizard(QDialog):
         self._go_to(P_W_DETECTING); self._spin_timer.start(180)
         t = _QuickDetector(getattr(self._main_win, "dmx", None) if self._main_win else None)
         t.finished.connect(self._on_quick_done)
-        self._threads.append(t); t.start()
+        self._threads.append(_retenir(t)); t.start()
 
     def _on_quick_done(self, found):
         self._stop_spinner()
@@ -2039,7 +2118,7 @@ class NodeSetupWizard(QDialog):
         else:
             self._set_working(tr("nc3_059"), tr("nc3_060"))
         t = _AdapterScanner(); t.done.connect(self._on_adapters_scanned)
-        self._threads.append(t); t.start()
+        self._threads.append(_retenir(t)); t.start()
 
     def _on_adapters_scanned(self, adapters):
         if not adapters and getattr(self, "_scan_tries", 0) < self._SCAN_ESSAIS:
@@ -2160,7 +2239,7 @@ class NodeSetupWizard(QDialog):
         self._set_working(tr("nc3_068"),
             tr("nc3_069", adapter_name=self._adapter_name))
         t = _NetworkSetup(self._adapter_name); t.done.connect(self._on_network_done)
-        self._threads.append(t); t.start()
+        self._threads.append(_retenir(t)); t.start()
 
     def _on_network_done(self, status, adapter):
         self._adapter_name = adapter
@@ -2189,7 +2268,7 @@ class NodeSetupWizard(QDialog):
     def _start_final_search(self):
         self._set_working(tr("nc3_024"), tr("nc3_076", TARGET_IP=TARGET_IP))
         t = _NodeSearcher(); t.finished.connect(self._on_search_done)
-        self._threads.append(t); t.start()
+        self._threads.append(_retenir(t)); t.start()
 
     def _on_search_done(self, found):
         self._stop_spinner()
@@ -2203,7 +2282,7 @@ class NodeSetupWizard(QDialog):
             # un voyant DMX éteint. La bascule fait partie du succès.
             ip = getattr(self.sender(), "found_ip", "") or TARGET_IP
             dmx = getattr(self._main_win, "dmx", None) if self._main_win else None
-            if _pointer_mystrow_sur(ip, dmx):
+            if _pointer_mystrow_sur(ip, dmx, usb_node=(self._cable_variant == "usb")):
                 self._success_lbl.setText(tr("nc_use_found_ip_done").format(ip=ip))
                 self._go_to(P_W_SUCCESS)
             else:
@@ -2267,6 +2346,36 @@ except ImportError:
     TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"
     OUTPUT_OFF = -1
     OUTPUT_INPUT = -2
+
+# Interfaces de l'onglet USB : (id, libellé, transport). L'id est celui de
+# `enttec_setup.PRODUCTS`, mémorisé dans `dmx.product_id`. On retrouvait le
+# modèle à partir du TRANSPORT : OPTO, Open DMX, DMXKing et « Autre » partagent
+# `enttec`, donc la liste rouvrait toujours sur « ENTTEC Open DMX » (client Jan,
+# 07/10/2026 : « il garde l'ENTTEC et pas l'ElectroConcept »).
+# Transport None = USB NODE DMX, qui renvoie vers la sortie Node.
+_USB_IFACES = [
+    ("eurolite_usb",        "Eurolite USB-DMX512 PRO (MK2)",  TRANSPORT_ENTTEC_PRO),
+    ("enttec_pro",          "ENTTEC DMX USB Pro",             TRANSPORT_ENTTEC_PRO),
+    ("enttec_open",         "ENTTEC Open DMX USB",            TRANSPORT_ENTTEC),
+    ("electroconcept_opto", "OPTO OPEN DMX (ElectroConcept)", TRANSPORT_ENTTEC),
+    (USB_NODE_ID,           USB_NODE_NAME,                    None),
+    ("dmxking_micro",       "DMXKing UltraDMX Micro",         TRANSPORT_ENTTEC),
+    ("generic_usb",         None,                             TRANSPORT_ENTTEC),
+]
+_USB_IFACE_TRANSPORT = {i: t for i, _l, t in _USB_IFACES}
+# Anciens product_id génériques (écrits avant que le modèle soit mémorisé).
+_USB_IFACE_LEGACY = {"enttec": "enttec_open", "enttec_pro": "enttec_pro"}
+
+
+def _usb_iface_id(product_id, transport):
+    """Entrée de la liste USB à présélecter : le modèle mémorisé d'abord, le
+    transport seulement en repli (configs écrites par une ancienne version)."""
+    pid = _USB_IFACE_LEGACY.get(product_id, product_id)
+    if pid in _USB_IFACE_TRANSPORT:
+        return pid
+    if transport == TRANSPORT_ENTTEC_PRO:
+        return "enttec_pro"
+    return "enttec_open"
 
 _SS_DIALOG = """
     QDialog  { background: #131313; }
@@ -2334,9 +2443,14 @@ class DmxOutputDialog(QDialog):
 
     transport_changed = _Signal(str)   # "artnet" | "enttec"
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, usb_node=False):
         super().__init__(parent)
         self._main_win = parent
+        # True quand l'utilisateur a désigné un USB NODE DMX : la connexion
+        # Art-Net mémorise alors ce modèle, et l'assistant réseau s'ouvre sur
+        # la variante USB.
+        self._via_usb_node = False
+        self._nodes_vus = []
         self.setWindowTitle(tr("nc_setup_dmx_out"))
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet(_SS_DIALOG)
@@ -2349,6 +2463,8 @@ class DmxOutputDialog(QDialog):
         self._refresh_ports()
         self._set_transport(self._transport, save=False)
         self._fit_to_content()
+        if usb_node:
+            self._choisir_usb_node()
 
     def _fit_to_content(self):
         """Ouvre la fenêtre à la hauteur réellement demandée par la page.
@@ -2567,12 +2683,66 @@ class DmxOutputDialog(QDialog):
         cfg_btn.clicked.connect(self._open_node_wizard)
         card_lay.addWidget(cfg_btn)
 
+        # Choix du node. L'adresse était DÉCOUVERTE sans recours : le premier
+        # ArtPollReply gagnait, donc un réseau à plusieurs appareils Art-Net
+        # (consoles, autres nodes) donnait une cible au hasard, et rien ne
+        # permettait de la corriger. Liste des nodes trouvés + saisie libre.
+        self._node_combo = None
+        if self._dmx is not None:
+            card_lay.addWidget(_sep())
+            node_titre = QLabel(tr("nc_node_target"))
+            node_titre.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            node_titre.setStyleSheet("color: #888; background: transparent; border: none;")
+            card_lay.addWidget(node_titre)
+
+            node_row = QHBoxLayout()
+            node_row.setSpacing(8)
+            combo = ComboSansMolette()
+            combo.setEditable(True)
+            combo.setInsertPolicy(ComboSansMolette.NoInsert)
+            combo.setFont(QFont("Segoe UI", 9))
+            combo.setStyleSheet(
+                "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
+                " border-radius:4px; padding:3px 8px; }"
+                "QComboBox::drop-down { border: none; }"
+                "QComboBox QAbstractItemView { background:#2a2a2a; color:white; }")
+            actuelle = getattr(self._dmx, "target_ip", "") or ""
+            if actuelle:
+                combo.addItem(actuelle, userData=actuelle)
+            combo.setEditText(actuelle)
+            self._node_combo = combo
+            node_row.addWidget(combo, 1)
+
+            scan_btn = QPushButton("↻")
+            scan_btn.setFixedSize(32, 28)
+            scan_btn.setToolTip(tr("nc_node_scan"))
+            scan_btn.setStyleSheet(
+                "QPushButton { background:#2a2a2a; color:#00d4ff; border:1px solid #3a3a3a;"
+                " border-radius:4px; font-size:15px; font-weight:700; }"
+                "QPushButton:hover { border-color:#00d4ff; }"
+                "QPushButton:disabled { color:#555; }")
+            scan_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            scan_btn.clicked.connect(self._scan_nodes)
+            self._node_scan_btn = scan_btn
+            node_row.addWidget(scan_btn)
+            card_lay.addLayout(node_row)
+
+            self._node_list_hint = QLabel(tr("nc_node_hint"))
+            self._node_list_hint.setStyleSheet(
+                "color: #555; font-size: 9px; background: transparent; border: none;")
+            self._node_list_hint.setWordWrap(True)
+            card_lay.addWidget(self._node_list_hint)
+            # Le premier balayage part APRÈS `_QuickDetector` (cf.
+            # `_on_node_checked`) : deux ArtPoll simultanés se disputent le
+            # port 6454 et l'un des deux n'entend pas les réponses.
+
         # Aiguillage des 4 sorties du Node.
         # Remplace l'ancien sélecteur « DMX 2 / Miroir », qui n'avait AUCUN effet :
         # `mirror_output` était sauvegardé mais jamais lu par `_send_artnet`.
         # Ici, mettre deux sorties sur le même univers reproduit le miroir, et
         # permet en plus n'importe quelle autre combinaison.
         self._out_combos = []
+        self._out_ip_combos = []
         if self._dmx is not None:
             card_lay.addWidget(_sep())
 
@@ -2591,15 +2761,22 @@ class DmxOutputDialog(QDialog):
             grille.setHorizontalSpacing(10)
             grille.setVerticalSpacing(6)
 
+            # En-têtes : sans eux, la colonne « Node » passait pour un simple
+            # libellé et personne ne trouvait où ajouter un 2e boîtier.
+            for col, cle in ((0, "nc_col_output"), (2, "nc_col_universe"), (4, "nc_col_node")):
+                ent = QLabel(tr(cle))
+                ent.setStyleSheet("color: #666; font-size: 9px; background: transparent; border: none;")
+                grille.addWidget(ent, 0, col)
+
             for n in range(4):
                 sortie = QLabel(f"DMX {n + 1}")
                 sortie.setFont(QFont("Segoe UI", 9))
                 sortie.setStyleSheet("color: #999; background: transparent; border: none;")
-                grille.addWidget(sortie, n, 0)
+                grille.addWidget(sortie, n + 1, 0)
 
                 fleche = QLabel("←")
                 fleche.setStyleSheet("color: #444; background: transparent; border: none;")
-                grille.addWidget(fleche, n, 1)
+                grille.addWidget(fleche, n + 1, 1)
 
                 combo = ComboSansMolette()
                 for u in range(4):
@@ -2619,11 +2796,34 @@ class DmxOutputDialog(QDialog):
                     "QComboBox::drop-down { border: none; }"
                     "QComboBox QAbstractItemView { background:#2a2a2a; color:white; }")
                 combo.currentIndexChanged.connect(self._refresh_out_hint)
-                grille.addWidget(combo, n, 2)
+                grille.addWidget(combo, n + 1, 2)
 
                 art = QLabel("")
                 art.setStyleSheet("color: #444; font-size: 9px; background: transparent; border: none;")
-                grille.addWidget(art, n, 3)
+                grille.addWidget(art, n + 1, 3)
+
+                # Node destinataire de cette sortie. Plusieurs nodes 1 univers
+                # (ex. 2x Art-Net POE) : sans ce choix, tout partait vers le
+                # node principal et les autres restaient muets.
+                ip_combo = ComboSansMolette()
+                ip_combo.setEditable(True)
+                ip_combo.setInsertPolicy(ComboSansMolette.NoInsert)
+                ip_combo.setToolTip(tr("nc_out_ip_tip"))
+                ip_combo.setFont(QFont("Segoe UI", 9))
+                ip_combo.setMinimumWidth(150)
+                ip_combo.setStyleSheet(combo.styleSheet())
+                # Le champ éditable montrait la FIN du texte (« …POE 2 ») :
+                # c'est l'IP, au début, qui compte.
+                ip_combo.currentIndexChanged.connect(
+                    lambda _i, c=ip_combo: c.lineEdit().setCursorPosition(0))
+                ip_combo.addItem(tr("nc_out_ip_main"), userData="")
+                ip_actuelle = (self._dmx.output_ips[n]
+                               if n < len(getattr(self._dmx, 'output_ips', [])) else "")
+                if ip_actuelle:
+                    ip_combo.addItem(ip_actuelle, userData=ip_actuelle)
+                    ip_combo.setCurrentIndex(1)
+                grille.addWidget(ip_combo, n + 1, 4)
+                self._out_ip_combos.append(ip_combo)
 
                 self._out_combos.append((combo, art))
 
@@ -2647,14 +2847,89 @@ class DmxOutputDialog(QDialog):
     # ── détection Node asynchrone ────────────────────────────────────────
 
     def _check_node_status(self):
-        self._node_qt = _QuickDetector(self._dmx)
+        self._node_qt = _retenir(_QuickDetector(self._dmx))
         self._node_qt.finished.connect(self._on_node_checked)
-        self._node_scanner = _AdapterScanner()
+        self._node_scanner = _retenir(_AdapterScanner())
         self._node_scanner.done.connect(self._on_adapters_for_status)
         self._node_qt.start()
         self._node_scanner.start()
 
+    def _scan_nodes(self):
+        if self._node_combo is None or getattr(self, "_node_lister", None) is not None:
+            return
+        self._node_scan_btn.setEnabled(False)
+        self._node_list_hint.setText(tr("nc_node_scanning"))
+        # Sans parent, et retenu au niveau du module jusqu'à sa fin : fermer la
+        # fenêtre pendant le balayage détruirait sinon un QThread en marche —
+        # plantage net de l'app.
+        th = _retenir(_NodeLister())
+        th.done.connect(self._on_nodes_listed)
+        self._node_lister = th
+        th.start()
+
+    def _on_nodes_listed(self, nodes: list):
+        self._node_lister = None
+        self._nodes_vus = list(nodes)
+        self._maj_usb_node()
+        combo = self._node_combo
+        if combo is None:
+            return
+        saisie = combo.currentText()
+        actuelle = getattr(self._dmx, "target_ip", "") or ""
+        combo.blockSignals(True)
+        combo.clear()
+        ips = [n["ip"] for n in nodes]
+        for n in nodes:
+            nom = n.get("long") or n.get("court") or ""
+            combo.addItem(f"{n['ip']}  —  {nom}" if nom else n["ip"], userData=n["ip"])
+        # L'adresse en service reste proposée même muette : le node peut être
+        # éteint au moment du balayage, ce n'est pas une raison de l'oublier.
+        if actuelle and actuelle not in ips:
+            combo.addItem(tr("nc_node_current", ip=actuelle), userData=actuelle)
+        combo.blockSignals(False)
+        # Garder ce que l'utilisateur avait choisi ou tapé.
+        voulue = _ip_saisie(saisie) or actuelle
+        idx = combo.findData(voulue)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            combo.setEditText(saisie)
+        # Proposer aussi les nodes trouvés dans le choix « Boîtier » de chaque
+        # sortie, sans perdre ce qui y est sélectionné ou tapé.
+        for ip_combo in getattr(self, "_out_ip_combos", []):
+            texte = ip_combo.currentText()
+            garder_principal = (ip_combo.currentIndex() == 0
+                                and texte == ip_combo.itemText(0))
+            ip_combo.blockSignals(True)
+            while ip_combo.count() > 1:
+                ip_combo.removeItem(1)
+            for n in nodes:
+                nom = n.get("long") or n.get("court") or ""
+                ip_combo.addItem(f"{n['ip']}  —  {nom}" if nom else n["ip"],
+                                 userData=n["ip"])
+            ip_combo.blockSignals(False)
+            if garder_principal:
+                ip_combo.setCurrentIndex(0)
+            else:
+                idx = ip_combo.findData(_ip_saisie(texte)) if _ip_saisie(texte) else -1
+                if idx >= 0:
+                    ip_combo.setCurrentIndex(idx)
+                else:
+                    ip_combo.setEditText(texte)
+        self._node_scan_btn.setEnabled(True)
+        if self._via_usb_node:
+            self._viser_usb_node()
+        if not nodes:
+            self._node_list_hint.setText(tr("nc_node_none"))
+        elif len(nodes) > 1:
+            self._node_list_hint.setText(tr("nc_node_several", n=len(nodes)))
+        else:
+            self._node_list_hint.setText(tr("nc_node_hint"))
+
     def _on_node_checked(self, found: bool):
+        if self._node_combo is not None and not getattr(self, "_node_scan_lance", False):
+            self._node_scan_lance = True
+            QTimer.singleShot(0, self._scan_nodes)
         if found:
             self._node_status_dot.setStyleSheet(
                 "color: #4ade80; font-size: 20px; background: transparent; border: none;")
@@ -2701,7 +2976,8 @@ class DmxOutputDialog(QDialog):
     def _open_node_wizard(self):
         self.accept()
         if self._main_win:
-            dlg = NodeSetupWizard(self._main_win)
+            dlg = NodeSetupWizard(self._main_win,
+                                  variant="usb" if self._via_usb_node else "rj45")
             dlg.exec()
 
     def _page_usb(self):
@@ -2719,23 +2995,9 @@ class DmxOutputDialog(QDialog):
         proto_row.addWidget(proto_lbl)
         proto_row.addStretch()
         self._proto_combo = ComboSansMolette()
-        for _label, _tr in [
-            ("Eurolite USB-DMX512 PRO (MK2)", TRANSPORT_ENTTEC_PRO),
-            ("ENTTEC DMX USB Pro",            TRANSPORT_ENTTEC_PRO),
-            ("ENTTEC Open DMX USB",           TRANSPORT_ENTTEC),
-            ("OPTO OPEN DMX (ElectroConcept)", TRANSPORT_ENTTEC),
-            ("DMXKing UltraDMX Micro",        TRANSPORT_ENTTEC),
-            (tr("nc3_079"),       TRANSPORT_ENTTEC),
-        ]:
-            self._proto_combo.addItem(_label, _tr)
-        cur_transport = self._dmx.transport if self._dmx else TRANSPORT_ENTTEC
-        # enttec_d2xx est une variante d'Open DMX → pointer sur l'entrée Open DMX
-        if cur_transport == TRANSPORT_ENTTEC_D2XX:
-            cur_transport = TRANSPORT_ENTTEC
-        _idx = self._proto_combo.findData(cur_transport)
-        if _idx < 0:                                   # défaut sûr = Open DMX, pas Pro
-            _idx = self._proto_combo.findData(TRANSPORT_ENTTEC)
-        self._proto_combo.setCurrentIndex(max(0, _idx))
+        for _id, _label, _tr in _USB_IFACES:
+            self._proto_combo.addItem(_label or tr("nc3_079"), _id)
+        self._select_usb_iface()
         self._proto_combo.setFixedWidth(310)
         self._proto_combo.setFont(QFont("Segoe UI", 9))
         self._proto_combo.setStyleSheet(
@@ -2807,6 +3069,33 @@ class DmxOutputDialog(QDialog):
         card_lay.addLayout(status_row)
 
         lay.addWidget(card)
+        self._usb_port_card = card
+
+        # ── USB NODE DMX : choisi dans la liste, ou repéré sur le réseau ─────
+        # Même carte pour les deux cas, seul le texte change.
+        self._carte_usb_node = QFrame()
+        self._carte_usb_node.setStyleSheet(
+            "QFrame { background: #10202a; border: 1px solid #1d4a5e;"
+            " border-radius: 8px; }")
+        un_lay = QVBoxLayout(self._carte_usb_node)
+        un_lay.setContentsMargins(12, 10, 12, 10)
+        un_lay.setSpacing(8)
+        self._usb_node_txt = QLabel("")
+        self._usb_node_txt.setWordWrap(True)
+        self._usb_node_txt.setStyleSheet(
+            "color: #9fd3e6; font-size: 10px; background: transparent; border: none;")
+        un_lay.addWidget(self._usb_node_txt)
+        un_btn = QPushButton(tr("nc_usb_node_btn"))
+        un_btn.setFixedHeight(30)
+        un_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        un_btn.setStyleSheet(
+            "QPushButton { background: #13303d; color: #00d4ff; border: 1px solid #1d5a70;"
+            " border-radius: 6px; font-size: 10px; font-weight: bold; padding: 0 14px; }"
+            "QPushButton:hover { background: #183c4c; color: #5ee6ff; }")
+        un_btn.clicked.connect(self._choisir_usb_node)
+        un_lay.addWidget(un_btn, 0, Qt.AlignLeft)
+        self._carte_usb_node.setVisible(False)   # cf. _maj_usb_node
+        lay.addWidget(self._carte_usb_node)
 
         # ── Renvoi vers l'onglet Node (masqué tant qu'un port existe) ────────
         self._renvoi_node = QFrame()
@@ -2842,13 +3131,83 @@ class DmxOutputDialog(QDialog):
 
     # ── Actions ────────────────────────────────────────────────────────
 
+    def _select_usb_iface(self):
+        """Présélectionne le modèle mémorisé dans la liste USB."""
+        dmx = self._dmx
+        iid = _usb_iface_id(getattr(dmx, 'product_id', None),
+                            getattr(dmx, 'transport', TRANSPORT_ENTTEC))
+        idx = self._proto_combo.findData(iid)
+        self._proto_combo.setCurrentIndex(max(0, idx))
+
+    def _usb_proto(self):
+        """Transport de l'interface choisie (None = USB NODE DMX)."""
+        if not hasattr(self, '_proto_combo'):
+            return TRANSPORT_ENTTEC
+        return _USB_IFACE_TRANSPORT.get(self._proto_combo.currentData(), TRANSPORT_ENTTEC)
+
+    def _usb_node_choisi(self):
+        return (hasattr(self, '_proto_combo')
+                and self._proto_combo.currentData() == USB_NODE_ID)
+
     def _on_proto_changed(self, _idx):
         self._update_proto_info()
+        self._maj_usb_node()
+
+    def _maj_usb_node(self):
+        """Carte USB NODE de l'onglet USB.
+
+        Choisi dans la liste : pas de port COM à régler, on explique et on
+        propose la bascule. Sinon, un USB NODE qui a répondu à l'ArtPoll est
+        signalé — c'est exactement le client qui cherche son boîtier ici.
+        """
+        carte = getattr(self, '_carte_usb_node', None)
+        if carte is None:
+            return
+        choisi = self._usb_node_choisi()
+        vus = [n for n in self._nodes_vus if _est_usb_node(n)]
+        if choisi:
+            self._usb_node_txt.setText(tr("nc_usb_node_card"))
+        elif vus:
+            self._usb_node_txt.setText(tr("nc_usb_node_detected", ip=vus[0]["ip"]))
+        self._carte_usb_visible = choisi or bool(vus)
+        carte.setVisible(self._carte_usb_visible)
+        self._usb_port_card.setVisible(not choisi)
+        self._maj_renvoi_node(getattr(self, '_aucun_port', False))
+
+    def _choisir_usb_node(self):
+        """Bascule sur la sortie Node pour un USB NODE DMX."""
+        self._via_usb_node = True
+        if hasattr(self, '_proto_combo'):
+            self._proto_combo.blockSignals(True)
+            self._proto_combo.setCurrentIndex(self._proto_combo.findData(USB_NODE_ID))
+            self._proto_combo.blockSignals(False)
+            self._update_proto_info()
+            self._maj_usb_node()
+        self._set_transport(TRANSPORT_ARTNET)
+        self._viser_usb_node()
+        self._status_lbl.setStyleSheet("color: #00d4ff; font-size: 10px;")
+        self._status_lbl.setText(tr("nc_usb_node_switched"))
+        # Liste des nodes rafraîchie pour qu'un boîtier branché à l'instant
+        # apparaisse (le balayage d'ouverture a pu passer avant).
+        if getattr(self, '_node_scan_lance', False):
+            self._scan_nodes()
+
+    def _viser_usb_node(self):
+        """Sélectionne le USB NODE trouvé dans la liste des nodes."""
+        combo = self._node_combo
+        if combo is None:
+            return
+        for n in self._nodes_vus:
+            if _est_usb_node(n):
+                idx = combo.findData(n["ip"])
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                return
 
     def _update_proto_info(self):
         if not hasattr(self, '_proto_info'):
             return
-        proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
+        proto = self._usb_proto()
         # Rien à dire sur les adaptateurs simples : le label est masqué pour ne
         # pas laisser une ligne vide sous le sélecteur d'interface.
         texte = (tr("nc3_080")
@@ -2862,12 +3221,8 @@ class DmxOutputDialog(QDialog):
         self._btn_node.setStyleSheet(_BTN_TOGGLE_ON if is_node else _BTN_TOGGLE_OFF)
         self._btn_usb.setStyleSheet(_BTN_TOGGLE_OFF if is_node else _BTN_TOGGLE_ON)
         self._stack.setCurrentIndex(0 if is_node else 1)
-        # Synchroniser le combo interface si on bascule en mode USB
-        if not is_node and hasattr(self, '_proto_combo'):
-            lookup = TRANSPORT_ENTTEC if transport == TRANSPORT_ENTTEC_D2XX else transport
-            idx = self._proto_combo.findData(lookup)
-            if idx >= 0:
-                self._proto_combo.setCurrentIndex(idx)
+        # Le combo interface garde le modèle choisi : le resynchroniser sur le
+        # transport le ramenait sur la première entrée de la même famille.
         self._status_lbl.setText("")
 
     def _refresh_ports(self):
@@ -2890,7 +3245,8 @@ class DmxOutputDialog(QDialog):
         except ImportError:
             self._port_combo.addItem(tr("nc_no_serial"), None)
             aucun = True
-        self._maj_renvoi_node(aucun)
+        self._aucun_port = aucun
+        self._maj_usb_node()
 
     def _maj_renvoi_node(self, aucun_port: bool):
         """Affiche le renvoi vers l'onglet Node quand l'onglet USB est une impasse.
@@ -2904,7 +3260,8 @@ class DmxOutputDialog(QDialog):
         bloc = getattr(self, '_renvoi_node', None)
         if bloc is None:
             return
-        bloc.setVisible(aucun_port)
+        # La carte USB NODE dit déjà où aller : pas deux renvois empilés.
+        bloc.setVisible(aucun_port and not getattr(self, '_carte_usb_visible', False))
 
     def _open_usb_diagnostic(self):
         """Ouvre le diagnostic complet DMX USB (enttec_setup.py)."""
@@ -2918,6 +3275,8 @@ class DmxOutputDialog(QDialog):
                     dlg.port_combo.setCurrentIndex(i)
                     break
         dlg.exec()
+        if getattr(dlg, "goto_usb_node", False):
+            self._choisir_usb_node()
 
     def _out_map_from_ui(self):
         """Correspondance sortie -> univers lue dans les combos."""
@@ -2982,10 +3341,39 @@ class DmxOutputDialog(QDialog):
             actifs = [u for u in mapping if u not in (OUTPUT_OFF, OUTPUT_INPUT)]
             mirror_on = len(set(actifs)) < len(actifs)
             u2 = self._dmx.universe + 1
-            # L'IP du node est DECOUVERTE, jamais supposee : l'interface n'offre
-            # aucun champ pour la saisir, donc une constante fausse enfermait
-            # l'utilisateur sans recours.
-            ip_node = _ip_node_a_viser(self._dmx)
+            # L'IP choisie ou tapée dans la liste prime. Sans choix valable, on
+            # retombe sur la découverte (premier node qui répond).
+            combo = getattr(self, "_node_combo", None)
+            ip_node = ""
+            if combo is not None:
+                texte = combo.currentText().strip()
+                ip_node = combo.currentData() if combo.currentText() == combo.itemText(
+                    combo.currentIndex()) else ""
+                ip_node = ip_node or _ip_saisie(texte)
+                if texte and not ip_node:
+                    self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
+                    self._status_lbl.setText(tr("nc_node_ip_invalid"))
+                    return
+            if not ip_node:
+                ip_node = _ip_node_a_viser(self._dmx)
+            # Node destinataire de chaque sortie ("" = node principal).
+            ips_sorties = []
+            for ip_combo in getattr(self, "_out_ip_combos", []):
+                texte = ip_combo.currentText().strip()
+                if ip_combo.currentIndex() == 0 and texte == ip_combo.itemText(0):
+                    ips_sorties.append("")
+                    continue
+                ip = _ip_saisie(texte)
+                if texte and not ip:
+                    self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
+                    self._status_lbl.setText(tr("nc_node_ip_invalid"))
+                    return
+                ips_sorties.append("" if ip == ip_node else ip)
+            if ips_sorties:
+                self._dmx.set_output_ips(ips_sorties)
+            # USB NODE : désigné par l'utilisateur, ou c'est lui qu'on vise.
+            usb_node = self._via_usb_node or any(
+                n["ip"] == ip_node and _est_usb_node(n) for n in self._nodes_vus)
             self._dmx.connect(
                 transport=TRANSPORT_ARTNET,
                 target_ip=ip_node,
@@ -2993,8 +3381,8 @@ class DmxOutputDialog(QDialog):
                 universe=0,
                 universe2=u2,
                 mirror_output=mirror_on,
-                product_id="artnet",
-                product_name="Art-Net (réseau)",
+                product_id=USB_NODE_ID if usb_node else "artnet",
+                product_name=USB_NODE_NAME if usb_node else "Art-Net (réseau)",
             )
             # Résumé lisible de l'aiguillage : « DMX1←U1  DMX2←U1  DMX3←U3… »
             routage = "  ".join(
@@ -3009,6 +3397,11 @@ class DmxOutputDialog(QDialog):
                 + (f"  ({routage})" if routage else ""),
                 "success",
             )
+        elif self._usb_node_choisi():
+            # Rien à ouvrir côté USB : le USB NODE se connecte depuis la
+            # sortie Node, où l'on bascule (le clic suivant connecte).
+            self._choisir_usb_node()
+            return
         else:
             com = self._port_combo.currentData()
             if not com:
@@ -3016,8 +3409,11 @@ class DmxOutputDialog(QDialog):
                 self._status_lbl.setText(tr("nc_select_com_port"))
                 return
 
-            proto = self._proto_combo.currentData() if hasattr(self, '_proto_combo') else TRANSPORT_ENTTEC
+            proto = self._usb_proto()
             is_pro = (proto == TRANSPORT_ENTTEC_PRO)
+            # Modèle réellement choisi, mémorisé pour rouvrir la liste dessus.
+            iface_id = self._proto_combo.currentData() or ("enttec_pro" if is_pro else "enttec_open")
+            iface_nom = self._proto_combo.currentText()
 
             # Open DMX USB & assimilés (FTDI passif) : préférer le D2XX, fiable et
             # propre comme QLC+. Le port COM/VCP corrompt le timing du break DMX
@@ -3048,16 +3444,16 @@ class DmxOutputDialog(QDialog):
             if already_open:
                 self._dmx.transport    = proto
                 self._dmx.com_port     = com
-                self._dmx.product_id   = "enttec_pro" if is_pro else "enttec"
-                self._dmx.product_name = "ENTTEC DMX USB Pro" if is_pro else "ENTTEC Open DMX USB"
+                self._dmx.product_id   = iface_id
+                self._dmx.product_name = iface_nom
                 self._dmx._save_config()
             else:
                 ok = self._dmx.connect(
                     transport=proto,
                     com_port=com,
                     ftdi_serial=ftdi_serial,
-                    product_id="enttec_pro" if is_pro else "enttec",
-                    product_name="ENTTEC DMX USB Pro" if is_pro else "ENTTEC Open DMX USB",
+                    product_id=iface_id,
+                    product_name=iface_nom,
                 )
                 if not ok:
                     self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
@@ -3081,7 +3477,7 @@ class DmxOutputDialog(QDialog):
             # « Connecter », le journal doit confirmer l'état obtenu — pas
             # rester muet sous prétexte qu'aucun port n'a été rouvert.
             self._journal(
-                tr("nc3_088", a='ENTTEC DMX USB Pro' if is_pro else 'ENTTEC Open DMX USB', com=com, proto_label=proto_label),
+                tr("nc3_088", a=iface_nom, com=com, proto_label=proto_label),
                 "success",
             )
 

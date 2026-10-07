@@ -386,6 +386,11 @@ class ArtNetDMX:
         # rejouer indefiniment la derniere trame recue, donc des projecteurs
         # figes allumes en scene.
         self.output_map = [0, 1, 2, 3]
+        # output_ips[n] = IP du node qui recoit la sortie n ; "" = target_ip.
+        # Permet plusieurs nodes 1 univers (ex. 2x Art-Net POE Electroconcept) :
+        # sans ca, les 4 univers partaient tous vers UNE seule adresse et le
+        # second boitier restait muet.
+        self.output_ips = ["", "", "", ""]
         self._artnet_seq = 0
         self._socket = None
 
@@ -423,6 +428,7 @@ class ArtNetDMX:
                 self.universe2    = int(cfg.get("universe2", 1))
                 self.mirror_output = bool(cfg.get("mirror_output", True))
                 self.set_output_map(cfg.get("output_map"))
+                self.set_output_ips(cfg.get("output_ips"))
                 self.pro_baud      = int(cfg.get("pro_baud", 250000))
                 _lines = str(cfg.get("serial_lines", "clear"))
                 self.serial_lines = _lines if _lines in SERIAL_LINES_MODES else "clear"
@@ -459,6 +465,29 @@ class ArtNetDMX:
                 out.append(max(0, min(3, v)))
         self.output_map = out
 
+    def set_output_ips(self, ips):
+        """Fixe le node destinataire de chaque sortie ("" = node principal).
+
+        Tolerant comme set_output_map : une entree absente ou illisible retombe
+        sur "" — le node principal —, jamais sur une adresse inventee.
+        """
+        out = []
+        for n in range(4):
+            try:
+                ip = str(ips[n] or "").strip()
+                socket.inet_aton(ip)
+                if ip.count(".") != 3:
+                    raise ValueError
+            except Exception:
+                ip = ""
+            out.append(ip)
+        self.output_ips = out
+
+    def _artnet_dest(self, sortie):
+        """IP a laquelle envoyer la sortie `sortie` du Node."""
+        ips = getattr(self, "output_ips", None) or ()
+        return (ips[sortie] if sortie < len(ips) else "") or self.target_ip
+
     def input_universes(self):
         """Univers Art-Net des ports du Node bascules en ENTREE.
 
@@ -484,6 +513,7 @@ class ArtNetDMX:
                     "universe2":     self.universe2,
                     "mirror_output": self.mirror_output,
                     "output_map":    list(self.output_map),
+                    "output_ips":    list(getattr(self, "output_ips", ["", "", "", ""])),
                     "pro_baud":      getattr(self, "pro_baud", 250000),
                     "serial_lines":  getattr(self, "serial_lines", "clear"),
                 }, f, indent=2)
@@ -1192,7 +1222,7 @@ class ArtNetDMX:
                     continue
                 art_uni = self.universe + sortie
                 pkt = self._build_artnet_packet(art_uni, self._artnet_seq, data_universe=src)
-                self._socket.sendto(pkt, (self.target_ip, self.target_port))
+                self._socket.sendto(pkt, (self._artnet_dest(sortie), self.target_port))
             self._last_artnet_error = None
             return True
         except Exception as e:
@@ -1579,7 +1609,14 @@ class ArtNetDMX:
                     ch_val = 0
                 elif ch_type == "Strobe":
                     spd = getattr(proj, 'strobe_speed', 0)
-                    if spd > 0:
+                    # Valeur posée au curseur brut (vue Curseurs du plan de
+                    # feu) : émise telle quelle tant que la vitesse est encore
+                    # celle qu'elle a donnée — 255 doit sortir 255, pas 250.
+                    _raw = getattr(proj, 'strobe_dmx_raw', None)
+                    if (spd > 0 and _raw is not None and _raw >= 16
+                            and min(100, round((_raw - 16) / (250 - 16) * 100)) == spd):
+                        ch_val = int(_raw)
+                    elif spd > 0:
                         ch_val = int(16 + (spd / 100.0) * (250 - 16))
                     elif hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
                         ch_val = int(16 + (effect_speed / 100.0) * (250 - 16)) if effect_speed > 0 else 100

@@ -779,8 +779,25 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
         try:
             lic_ref = _get_db().collection("licenses").document(uid)
             snap = lic_ref.get()
+            lic_data = (snap.to_dict() or {}) if snap.exists else {}
+            # SIRET saisi dans l'espace compte (update_billing_info) : l'adresse
+            # vient alors de l'annuaire INSEE et fait foi — l'adresse de carte
+            # Stripe ne doit pas l'écraser à chaque renouvellement.
+            if lic_data.get("billing_siret"):
+                for k in ("address_street", "address_zip_code",
+                          "address_city", "address_country"):
+                    addr.pop(k, None)
+                addr["siret"] = lic_data["billing_siret"]
+                for src, dst in (("billing_street", "address_street"),
+                                 ("billing_zip",    "address_zip_code"),
+                                 ("billing_city",   "address_city")):
+                    if lic_data.get(src):
+                        addr[dst] = lic_data[src]
+                addr["address_country"] = "FR"
+                if lic_data.get("billing_company_name"):
+                    name = lic_data["billing_company_name"]
             if snap.exists:
-                cached = (snap.to_dict() or {}).get("axonaut_company_id")
+                cached = lic_data.get("axonaut_company_id")
                 if cached:
                     print(f"[Axonaut] Societe reutilisee (cache) : id={cached}")
                     _patch_addr(cached)
@@ -2905,6 +2922,228 @@ def revoke_machine_web(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
+# COMPTE CLIENT — update_billing_info (SIRET / TVA pour la facture électronique)
+# ===========================================================================
+#
+# Pourquoi un champ SIRET et pas seulement la collecte TVA de Stripe : les
+# micro-entrepreneurs en franchise (DJ, animateurs…) n'ont PAS de numéro de
+# TVA, seulement un SIRET — et Stripe ne sait demander qu'un numéro de TVA.
+# Or au 01/09/2027 le SIREN du client pro devient une mention obligatoire et
+# c'est lui qui route la facture électronique.
+
+_RECHERCHE_ENTREPRISES = "https://recherche-entreprises.api.gouv.fr/search"
+
+
+def _luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        n = int(ch)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
+
+
+def _siret_valid(siret: str) -> bool:
+    """SIRET (14 chiffres) : clé de Luhn. Exception La Poste (SIREN 356000000),
+    dont les établissements ont une somme des chiffres multiple de 5."""
+    if len(siret) != 14 or not siret.isdigit():
+        return False
+    if siret.startswith("356000000"):
+        return sum(int(c) for c in siret) % 5 == 0
+    return _luhn_ok(siret)
+
+
+def _lookup_entreprise(siret: str) -> dict | None:
+    """Interroge l'annuaire public (sans clé) et renvoie la raison sociale et
+    l'adresse de l'ÉTABLISSEMENT demandé — pas forcément le siège.
+    None si introuvable ou annuaire injoignable."""
+    url = f"{_RECHERCHE_ENTREPRISES}?q={siret}&page=1&per_page=1"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"[Billing] Annuaire injoignable : {e}")
+        return None
+    results = data.get("results") or []
+    if not results or results[0].get("siren") != siret[:9]:
+        return None
+    r = results[0]
+    etab = next((e for e in r.get("matching_etablissements") or []
+                 if e.get("siret") == siret), None)
+    if etab is None and (r.get("siege") or {}).get("siret") == siret:
+        etab = r["siege"]
+    if etab is None:
+        return None
+    cp, ville = etab.get("code_postal") or "", etab.get("libelle_commune") or ""
+    adresse = etab.get("adresse") or ""
+    # `adresse` = « RUE X 97180 SAINTE-ANNE » : la rue seule pour address_street
+    rue = adresse
+    suffix = f" {cp} {ville}".rstrip()
+    if cp and rue.endswith(suffix):
+        rue = rue[: -len(suffix)].strip()
+    return {
+        "siren":   r["siren"],
+        "siret":   siret,
+        "name":    r.get("nom_raison_sociale") or r.get("nom_complet") or "",
+        "active":  etab.get("etat_administratif") == "A",
+        "street":  rue,
+        "zip":     cp,
+        "city":    ville,
+        "address": adresse,
+    }
+
+
+def _vat_normalize(vat: str) -> str:
+    return "".join(ch for ch in (vat or "").upper() if ch.isalnum())
+
+
+def _vat_format_ok(vat: str) -> bool:
+    """Contrôle de forme minimal : 2 lettres pays + 2 à 13 caractères.
+    Pour la France, la clé est vérifiée (FR + clé + SIREN)."""
+    if len(vat) < 4 or not vat[:2].isalpha():
+        return False
+    if vat.startswith("FR"):
+        siren = _siren_from_vat(vat)
+        if not siren:
+            return False
+        key = vat[2:4]
+        return (not key.isdigit()) or int(key) == (12 + 3 * (int(siren) % 97)) % 97
+    return 2 <= len(vat) - 2 <= 13
+
+
+def _axonaut_apply_billing(company_id: int, info: dict, vat: str) -> bool:
+    """Pousse raison sociale, SIRET, adresse et TVA sur la fiche Axonaut, puis
+    RELIT la fiche : Axonaut répond 200 même quand il ignore un champ."""
+    payload: dict = {}
+    if info.get("siret"):
+        payload["siret"] = info["siret"]
+        if info.get("name"):
+            payload["name"] = info["name"]
+        if info.get("street"):
+            payload["address_street"] = info["street"]
+        if info.get("zip"):
+            payload["address_zip_code"] = info["zip"]
+        if info.get("city"):
+            payload["address_city"] = info["city"]
+        payload["address_country"] = "FR"
+    if vat:
+        payload[AXONAUT_VAT_FIELD] = vat
+    _axonaut("PATCH", f"/companies/{company_id}", payload)
+    fresh = _axonaut("GET", f"/companies/{company_id}")
+    if not isinstance(fresh, dict):
+        return False
+    ok = True
+    if info.get("siret") and str(fresh.get("siret") or "").replace(" ", "") != info["siret"]:
+        print(f"[Billing] ⚠️ SIRET non enregistré sur la société {company_id}")
+        ok = False
+    if vat and _vat_normalize(str(fresh.get(AXONAUT_VAT_FIELD) or "")) != vat:
+        print(f"[Billing] ⚠️ TVA non enregistrée sur la société {company_id}")
+        ok = False
+    return ok
+
+
+@https_fn.on_request()
+def update_billing_info(req: https_fn.Request) -> https_fn.Response:
+    """
+    Enregistre le SIRET et/ou le n° de TVA d'un client pro (espace compte).
+    POST — Authorization: Bearer <firebase_id_token>
+    Body JSON : {"siret": "...", "vat_number": "...", "dry_run": bool}
+
+    `dry_run` : vérifie le SIRET dans l'annuaire et renvoie la raison sociale
+    SANS rien écrire — la page l'affiche pour que le client confirme avant.
+    Sinon : Firestore (/licenses/{uid}) puis fiche Axonaut si elle existe déjà
+    (axonaut_company_id). Sans fiche, la prochaine facture la créera avec le
+    SIRET (_axonaut_get_or_create_company lit billing_siret).
+    """
+    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+
+    def _err(msg: str, status: int = 400):
+        return https_fn.Response(json.dumps({"ok": False, "error": msg}),
+                                 status=status, headers=_H)
+
+    uid = _verify_token(req)
+    if not uid:
+        return _err("Session expirée, reconnectez-vous.", 401)
+
+    body = req.get_json(silent=True) or {}
+    siret = "".join(ch for ch in str(body.get("siret") or "") if ch.isdigit())
+    vat = _vat_normalize(str(body.get("vat_number") or ""))
+    dry_run = bool(body.get("dry_run"))
+
+    if not siret and not vat:
+        return _err("Renseignez votre SIRET (ou votre numéro de TVA si vous "
+                    "êtes établi hors de France).")
+    if siret and not _siret_valid(siret):
+        return _err("Ce SIRET n'est pas valide : il doit compter 14 chiffres. "
+                    "Vérifiez-le sur votre avis de situation INSEE ou votre Kbis.")
+    if vat and not _vat_format_ok(vat):
+        return _err("Ce numéro de TVA n'est pas valide (ex. : FR12345678901).")
+    if siret and vat.startswith("FR") and _siren_from_vat(vat) != siret[:9]:
+        return _err("Le numéro de TVA ne correspond pas au SIRET saisi.")
+
+    info: dict = {}
+    if siret:
+        found = _lookup_entreprise(siret)
+        if found is None:
+            return _err("SIRET introuvable dans l'annuaire des entreprises. "
+                        "Vérifiez le numéro, ou écrivez à nicolas@mystrow.fr.", 404)
+        if not found["active"]:
+            return _err("Cet établissement est fermé selon l'annuaire INSEE. "
+                        "Indiquez le SIRET de votre établissement actuel.")
+        info = found
+    elif vat.startswith("FR"):
+        return _err("Pour une entreprise française, indiquez votre SIRET.")
+
+    if dry_run:
+        return https_fn.Response(json.dumps({"ok": True, "company": info}),
+                                 status=200, headers=_H)
+
+    try:
+        db = _get_db()
+        ref = db.collection("licenses").document(uid)
+        snap = ref.get()
+        if not snap.exists:
+            return _err("Licence introuvable", 404)
+        lic = snap.to_dict() or {}
+
+        update: dict = {"billing_updated_at": int(time.time())}
+        if info:
+            update.update({
+                "billing_siret":        info["siret"],
+                "siren":                info["siren"],
+                "billing_company_name": info["name"],
+                "billing_address":      info["address"],
+                "billing_street":       info["street"],
+                "billing_zip":          info["zip"],
+                "billing_city":         info["city"],
+            })
+        if vat:
+            update["vat_number"] = vat
+            if not info and _siren_from_vat(vat):
+                update["siren"] = _siren_from_vat(vat)
+        ref.set(update, merge=True)
+
+        company_id = lic.get("axonaut_company_id")
+        axonaut = "pending"          # pas encore de fiche : créée à la prochaine facture
+        if company_id:
+            axonaut = "ok" if _axonaut_apply_billing(int(company_id), info, vat) else "error"
+        print(f"[Billing] {uid} siret={info.get('siret', '')} vat={vat} axonaut={axonaut}")
+
+        return https_fn.Response(
+            json.dumps({"ok": True, "company": info, "axonaut": axonaut}),
+            status=200, headers=_H,
+        )
+    except Exception as exc:
+        print(f"[Billing] Erreur : {exc}")
+        return _err("Enregistrement impossible, réessayez plus tard.", 500)
+
+
+# ===========================================================================
 # CLOUD FUNCTION: subscribe_newsletter
 # ===========================================================================
 
@@ -3360,9 +3599,22 @@ def _act_code_wellformed(code: str) -> bool:
             and code[-1] == _act_check_char(code[:-1]))
 
 
+# Boîtier maison (MS-DMY-XXXX-XXXX) : numéro GRAVÉ sous le boîtier, sans carte
+# ni code. Le numéro seul active la licence, UNE fois (cf. activate_code) :
+# 8 caractères tirés au sort sur 33 symboles, la limite de débit rend le
+# balayage illusoire. Ni I, ni O, ni 0 (Numeros_de_Serie_MyStrow_DMY_30ex.xlsx).
+_DMY_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
 def _act_normalize_serial(raw: str) -> str:
-    """'0001 b9er', 'msdmx0001b9er', 'MS-DMX-0001-B9ER' -> 'MS-DMX-0001-B9ER'."""
+    """'0001 b9er', 'msdmx0001b9er', 'MS-DMX-0001-B9ER' -> 'MS-DMX-0001-B9ER'.
+    'msdmy9jqfy7zy' -> 'MS-DMY-9JQF-Y7ZY' (le préfixe est obligatoire)."""
     up = "".join(c for c in (raw or "").upper() if c.isalnum())
+    if up.startswith("MSDMY"):
+        up = up[5:]
+        if len(up) != 8 or not all(c in _DMY_ALPHABET for c in up):
+            return ""
+        return f"MS-DMY-{up[:4]}-{up[4:]}"
     if up.startswith("MSDMX"):
         up = up[5:]
     if len(up) != 8 or not up[:4].isdigit() or not up[4:].isalnum():
@@ -3546,10 +3798,17 @@ ce mail : nous réglerons la situation.</p>
 
 @https_fn.on_request(max_instances=5)
 def activate_code(req: https_fn.Request) -> https_fn.Response:
-    """Active la licence d'un code carte + un numéro de série.
+    """Active la licence d'un code carte + un numéro de série (MS-DMX), ou
+    d'un numéro de série seul (boîtier maison MS-DMY, gravé, sans carte).
 
     La durée est portée par le code (`months` : 12 pour le lot B1, 2 pour
-    l'offre Amazon à 99 €), jamais supposée ici."""
+    l'offre Amazon à 99 €) ou, pour un MS-DMY, par le document du boîtier
+    (posé par tools/push_boitier_serials.py --months) ; jamais supposée ici.
+
+    MS-DMY : une seule activation par boîtier, PAS de transfert automatique —
+    le numéro est lisible sur le boîtier, le premier venu ne doit pas pouvoir
+    reprendre la licence à son détenteur. Après un « Retour boîtier » à
+    l'admin (activated_uid vidé), le boîtier revendu s'active de nouveau."""
     _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
 
     if req.method == "OPTIONS":
@@ -3580,12 +3839,16 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
 
     if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
         return _ko("bad_email", "Cette adresse email n'est pas valide.")
-    if not _act_code_wellformed(code):
-        return _ko("bad_code", "Ce code d'activation est incorrect. "
-                               "Vérifiez la saisie sur votre carte.")
     if not serial:
         return _ko("bad_serial", "Ce numéro de série est incorrect. Il est "
-                                 "sous le boîtier, au format MS-DMX-0000-XXXX.")
+                                 "sous le boîtier et commence par MS-DMX "
+                                 "ou MS-DMY.")
+    is_dmy = serial.startswith("MS-DMY-")
+    if is_dmy:
+        code = ""       # boîtier maison : pas de carte, pas de code
+    elif not _act_code_wellformed(code):
+        return _ko("bad_code", "Ce code d'activation est incorrect. "
+                               "Vérifiez la saisie sur votre carte.")
 
     try:
         db = _get_db()
@@ -3596,25 +3859,40 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
             return _ko("unknown_serial",
                        "Ce numéro de série ne correspond à aucun boîtier "
                        "MyStrow.", 404)
+        ser_data = ser_snap.to_dict() or {}
         # Détenteur actuel du boîtier ("" après un retour saisi à l'admin).
-        holder = (ser_snap.to_dict() or {}).get("activated_uid") or ""
-
-        code_ref  = db.collection("activation_codes").document(code)
-        code_snap = code_ref.get()
-        if not code_snap.exists:
-            return _ko("unknown_code", "Ce code d'activation n'existe pas.", 404)
-        code_data = code_snap.to_dict() or {}
+        holder = ser_data.get("activated_uid") or ""
 
         try:
             known_uid = auth.get_user_by_email(email).uid
         except auth.UserNotFoundError:
             known_uid = None
 
+        code_ref, code_data = None, {}
+        transfer_from = ""
+        if is_dmy:
+            if holder:
+                if known_uid and holder == known_uid:
+                    return _ko("already_yours",
+                               "Ce boîtier est déjà activé sur ce compte : "
+                               "votre licence est en place, rien à refaire.", 409)
+                return _ko("serial_used",
+                           "Ce boîtier est déjà activé sur un autre compte. "
+                           "Contactez-nous avec son numéro de série : nous "
+                           "activerons votre licence.", 409)
+        else:
+            code_ref  = db.collection("activation_codes").document(code)
+            code_snap = code_ref.get()
+            if not code_snap.exists:
+                return _ko("unknown_code", "Ce code d'activation n'existe pas.", 404)
+            code_data = code_snap.to_dict() or {}
+
         # Code déjà utilisé AVEC CE BOÎTIER, par un autre compte : la boîte a
         # changé de mains (cf. _ACT_MAX_TRANSFERS), la licence la suit.
-        transfer_from = ""
-        prev_by       = code_data.get("used_by") or ""
-        if (code_data.get("status") == "used"
+        prev_by = code_data.get("used_by") or ""
+        if is_dmy:
+            pass
+        elif (code_data.get("status") == "used"
                 and code_data.get("used_serial") == serial and prev_by):
             if known_uid == prev_by:
                 return _ko("already_yours",
@@ -3644,18 +3922,35 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
 
         # Consommation atomique : deux envois simultanés du même code ne
         # peuvent pas donner deux licences.
-        months = int(code_data.get("months") or 12)
+        months = int((ser_data if is_dmy else code_data).get("months") or 12)
         now    = time.time()
 
         # Ce qu'il faut remettre si la suite échoue : le code neuf redevient
-        # neuf, le code transféré retrouve son ancien détenteur.
-        if transfer_from:
+        # neuf, le code transféré retrouve son ancien détenteur, le boîtier
+        # maison redevient libre.
+        if is_dmy:
+            rollback = {"activated_uid": "", "activated_email": "",
+                        "activated_utc": 0}
+        elif transfer_from:
             rollback = {k: code_data.get(k, "") for k in
                         ("used_email", "used_utc", "used_ip", "used_by")}
             rollback["transfers"] = int(code_data.get("transfers") or 0)
         else:
             rollback = {"status": "unused", "used_email": "", "used_serial": "",
                         "used_utc": 0, "used_ip": ""}
+
+        @firestore.transactional
+        def _claim_dmy(tx) -> bool:
+            # Réserve le boîtier maison : deux activations simultanées du même
+            # numéro ne peuvent pas donner deux licences. L'uid réel remplace
+            # la réservation une fois le compte créé.
+            cur = ser_ref.get(transaction=tx).to_dict() or {}
+            if cur.get("activated_uid"):
+                return False
+            tx.update(ser_ref, {"activated_uid":   "pending:" + email,
+                                "activated_email": email,
+                                "activated_utc":   now})
+            return True
 
         @firestore.transactional
         def _consume(tx) -> bool:
@@ -3685,7 +3980,10 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
             })
             return True
 
-        if not _consume(db.transaction()):
+        if is_dmy:
+            if not _claim_dmy(db.transaction()):
+                return _ko("serial_used", "Ce boîtier vient d'être activé.", 409)
+        elif not _consume(db.transaction()):
             return _ko("code_used", "Ce code vient d'être utilisé.", 409)
 
         try:
@@ -3721,14 +4019,15 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
                 "boitier_prev_plan_type":  lic_data.get("plan_type", ""),
             }, merge=True)
 
-            code_upd = {"used_by": uid}
-            if transfer_from:
-                code_upd["transfer_history"] = firestore.ArrayUnion([{
-                    "from_uid":   transfer_from,
-                    "from_email": code_data.get("used_email", ""),
-                    "utc":        now,
-                }])
-            code_ref.update(code_upd)
+            if code_ref is not None:
+                code_upd = {"used_by": uid}
+                if transfer_from:
+                    code_upd["transfer_history"] = firestore.ArrayUnion([{
+                        "from_uid":   transfer_from,
+                        "from_email": code_data.get("used_email", ""),
+                        "utc":        now,
+                    }])
+                code_ref.update(code_upd)
             ser_ref.set({
                 "activated_uid":   uid,
                 "activated_email": email,
@@ -3736,12 +4035,13 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
                 "activation_code": code,
             }, merge=True)
         except Exception:
-            # Le code est déjà marqué consommé : on le rend, sinon un incident
-            # côté Firebase brûle définitivement la carte d'un client.
+            # Le code (ou le boîtier maison) est déjà marqué consommé : on le
+            # rend, sinon un incident côté Firebase brûle définitivement la
+            # carte — ou le boîtier — d'un client.
             try:
-                code_ref.update(rollback)
+                (ser_ref if is_dmy else code_ref).update(rollback)
             except Exception:
-                print(f"[activate] IMPOSSIBLE de rendre le code {code}")
+                print(f"[activate] IMPOSSIBLE de rendre {code or serial}")
             raise
 
         # Le nouveau détenteur a sa licence : on la retire à l'ancien. Un
@@ -3771,7 +4071,7 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
         except Exception as e:
             print(f"[activate] Brevo : {e}")
 
-        print(f"[activate] {email} — {serial} — code {code} — "
+        print(f"[activate] {email} — {serial} — code {code or '(boîtier maison)'} — "
               f"expire {_fmt_date(expiry)}"
               + (f" — TRANSFERT depuis {code_data.get('used_email', '?')}"
                  if transfer_from else ""))

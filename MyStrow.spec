@@ -4,6 +4,9 @@ import os
 import re
 from PyInstaller.utils.hooks import collect_all
 
+import platform
+_MACOS_MIN = '11.0' if platform.machine() == 'x86_64' else '13.0'
+
 def _get_version():
     try:
         txt = open('core.py', encoding='utf-8').read()
@@ -187,8 +190,10 @@ if IS_MAC:
             'CFBundleInfoDictionaryVersion':        '6.0',
             'CFBundleShortVersionString':           _get_version(),
             'CFBundleVersion':                      _get_version(),
-            # macOS minimum — évite le rejet silencieux sur Big Sur
-            'LSMinimumSystemVersion':               '11.0',
+            # macOS minimum imposé par PySide6 (cf. requirements.txt) : Intel en
+            # 6.7.3 → Big Sur ; ARM en 6.10+ → Ventura. Un minimum trop bas =
+            # l'icône rebondit puis l'app se ferme sans message.
+            'LSMinimumSystemVersion':               _MACOS_MIN,
             # Classe principale Qt — requis par macOS 26 Tahoe
             'NSPrincipalClass':                     'NSApplication',
             # Rendu & affichage
@@ -197,6 +202,10 @@ if IS_MAC:
             'NSRequiresAquaSystemAppearance':       False,
             # Sécurité / état restaurable (macOS 12+)
             'NSApplicationSupportsSecureRestorableState': True,
+            # Pas d'App Nap : en arrière-plan, macOS étire les sleep() de la
+            # boucle USB-DMX (OPTO) et les projecteurs perdent le signal dès
+            # qu'on change de fenêtre. Doublé à l'exécution dans main.py.
+            'NSAppSleepDisabled':                   True,
             # Capture audio (mode LIVE / IA Lumière) — SANS cette clé, macOS bloque
             # silencieusement l'accès micro/ligne/BlackHole → aucun signal capté.
             'NSMicrophoneUsageDescription':

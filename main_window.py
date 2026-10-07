@@ -218,6 +218,7 @@ except ImportError:
 from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path,
+    WEB_PREFIX, is_web_entry, web_url,
     spread_rank, SPREAD_MODES, channel_label, clear_effect_channels,
     projector_selection_keys, layer_selection_ranks, block_index, chase_slot,
     projector_track_key,
@@ -4251,6 +4252,7 @@ class VideoOutputWindow(QWidget):
     PAGE_VIDEO = 0
     PAGE_BLACK = 1
     PAGE_IMAGE = 2
+    PAGE_WEB   = 3
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
@@ -4283,6 +4285,11 @@ class VideoOutputWindow(QWidget):
         self.image_label.setStyleSheet("background: black;")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.stack.addWidget(self.image_label)
+
+        # Page 3 : site internet (les vues web vivantes y sont empilées)
+        self.web_host = QStackedWidget()
+        self.web_host.setStyleSheet("background: black;")
+        self.stack.addWidget(self.web_host)
 
         self.stack.setCurrentIndex(self.PAGE_BLACK)
 
@@ -4405,6 +4412,13 @@ class VideoOutputWindow(QWidget):
         scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.image_label.setPixmap(scaled)
         self.stack.setCurrentIndex(self.PAGE_IMAGE)
+
+    def show_web(self, view):
+        """Affiche une page web vivante (la vue est ADOPTÉE si besoin)."""
+        if self.web_host.indexOf(view) < 0:
+            self.web_host.addWidget(view)
+        self.web_host.setCurrentWidget(view)
+        self.stack.setCurrentIndex(self.PAGE_WEB)
 
     def closeEvent(self, event):
         """Cacher au lieu de detruire"""
@@ -5183,9 +5197,16 @@ class MainWindow(QMainWindow):
         # playlist au lieu de la couper (et la playlist ne la coupe plus). Entre
         # slots, rien ne change : le dernier lancé prend la main.
         self.cart_superposer = False
+        # Option du show : ce que devient la lumière quand la playlist change de
+        # média. "clear" = le CLEAR du plan de feu 2D à chaque changement (l'APC
+        # n'est pas touché) ; "enchaine" = pas de noir entre deux REC Lumière.
+        # Cf. playlist_clear() et on_media_status_changed().
+        self.playlist_transition = "enchaine"
         # Vrai tant qu'une cartouche vidéo superposée a pris l'image : la
         # playlist continue en dessous mais ne doit pas reprendre l'aperçu.
         self._cart_video_lead = False
+        # Ligne du son dont l'image accrochée est affichée (None = aucune).
+        self._linked_image_row = None
 
         # Sequenceur
         self.seq = Sequencer(self)
@@ -5443,6 +5464,21 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction(tr("menu_ia_lumiere"), self.show_ia_lumiere_config)
         edit_menu.addAction(tr("mw_menu_sync"), self._open_light_sync_dialog)
+        trans_menu = edit_menu.addMenu(tr("mw_menu_transition"))
+        trans_group = QActionGroup(trans_menu)
+        trans_group.setExclusive(True)
+        trans_actions = {}
+        for mode, key in (("clear", "mw_transition_clear"),
+                          ("enchaine", "mw_transition_enchaine")):
+            act = trans_menu.addAction(tr(key))
+            act.setCheckable(True)
+            act.setData(mode)
+            trans_group.addAction(act)
+            trans_actions[mode] = act
+        # Recoché à chaque ouverture : l'option change avec le show chargé.
+        trans_menu.aboutToShow.connect(
+            lambda: trans_actions[self.playlist_transition].setChecked(True))
+        trans_group.triggered.connect(self._set_playlist_transition)
 
         # Connexion avant Affichage : c'est le menu qu'on ouvre en premier au
         # montage (contrôleur, sortie DMX, audio, vidéo).
@@ -5746,6 +5782,16 @@ class MainWindow(QMainWindow):
         self.image_label.setStyleSheet("background: #000;")
         self.video_stack.addWidget(self.image_label)
 
+        # Page 2 : site internet, quand la sortie vidéo est fermée (sinon la
+        # page vit dans la sortie et la page 1 en montre des captures).
+        from web_display import WebPagePool
+        self.web_pages = WebPagePool(self)
+        self.web_host_preview = QStackedWidget()
+        self.web_host_preview.setStyleSheet("background: #000;")
+        self.video_stack.addWidget(self.web_host_preview)
+        self._web_preview_timer = QTimer(self)
+        self._web_preview_timer.timeout.connect(self._web_preview_tick)
+
         self.video_stack.setCurrentIndex(0)
         vv.addWidget(self.video_stack)
 
@@ -5792,12 +5838,86 @@ class MainWindow(QMainWindow):
 
     def hide_image(self):
         """Revient a l'affichage video dans le preview integre"""
+        self._linked_image_row = None
         self.video_stack.setCurrentIndex(0)
+
+    # ── Ligne « site internet » ──────────────────────────────────────────────
+
+    def _output_visible(self):
+        return bool(self.video_output_window and self.video_output_window.isVisible())
+
+    def _current_web_url(self):
+        """URL de la ligne courante si c'est un site, sinon ""."""
+        row = self.seq.current_row
+        item = self.seq.table.item(row, 1) if row >= 0 else None
+        return web_url(item.data(Qt.UserRole)) if item else ""
+
+    def show_web(self, url):
+        """Affiche le site `url` : dans la sortie vidéo si elle est ouverte
+        (le préview en montre des captures), sinon dans le préview."""
+        if self._cart_video_lead or not url:
+            return
+        from web_display import block_input
+        view = self.web_pages.get(url)
+        self._linked_image_row = None
+        if self._output_visible():
+            self.video_output_window.show_web(view)
+            self._web_preview_tick()
+            self._web_preview_timer.start(500)
+        else:
+            self._web_preview_timer.stop()
+            if self.web_host_preview.indexOf(view) < 0:
+                self.web_host_preview.addWidget(view)
+            self.web_host_preview.setCurrentWidget(view)
+            self.video_stack.setCurrentIndex(2)
+        block_input(view)   # le changement de parent recrée le widget d'entrée
+
+    def _web_preview_tick(self):
+        """Préview d'un site affiché sur la sortie : une capture toutes les 500 ms."""
+        url = self._current_web_url()
+        if not url or not self._output_visible() or self._cart_video_lead:
+            self._web_preview_timer.stop()
+            return
+        view = self.web_pages.get(url)
+        pix = view.grab()
+        if pix.isNull():
+            return
+        target = self.video_stack.size()
+        if target.width() > 0 and target.height() > 0:
+            pix = pix.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.image_label.setPixmap(pix)
+        self.video_stack.setCurrentIndex(1)
+
+    def preload_web_rows(self):
+        """Charge dès maintenant les sites de la playlist (et libère les autres) :
+        la page est prête, et à jour, quand on arrive sur sa ligne."""
+        urls = []
+        for r in range(self.seq.table.rowCount()):
+            item = self.seq.table.item(r, 1)
+            u = web_url(item.data(Qt.UserRole)) if item else ""
+            if u and u not in urls:
+                urls.append(u)
+        self.web_pages.keep_only(urls)
+        for u in urls:
+            self.web_pages.get(u)
+
+    def _show_linked_image(self, row=None):
+        """Affiche l'image accrochée au son de `row` (ligne courante par défaut),
+        dans l'aperçu ET sur la sortie externe. False s'il n'y en a pas."""
+        row = self.seq.current_row if row is None else row
+        path = self.seq.linked_image_path(row)
+        if not path or self._cart_video_lead:
+            return False
+        self.show_image(path)
+        self._linked_image_row = row
+        self._update_video_output_state()
+        return True
 
     def show_black_preview(self):
         """Affiche le noir dans le preview (masque la 1re frame d'un media precharge)"""
         if self._cart_video_lead:
             return      # une cartouche vidéo superposée a l'image
+        self._linked_image_row = None
         self.image_label.clear()
         self.video_stack.setCurrentIndex(1)
         if self.video_output_window and self.video_output_window.isVisible():
@@ -5859,6 +5979,8 @@ class MainWindow(QMainWindow):
                     pass
             if self.video_output_window:
                 self.video_output_window.hide()
+            if self._current_web_url():
+                self.show_web(self._current_web_url())   # le site revient au préview
             self._log_message(tr("mwx_003"), "info")
 
     def _video_out(self):
@@ -6367,7 +6489,9 @@ class MainWindow(QMainWindow):
             return
 
         media_type = media_icon(path)
-        if media_type == "video":
+        if media_type == "web":
+            self.show_web(web_url(path))
+        elif media_type == "video":
             self.video_output_window.show_video()
         elif media_type == "image":
             pixmap = QPixmap(path)
@@ -6376,8 +6500,14 @@ class MainWindow(QMainWindow):
             else:
                 self.video_output_window.show_black()
         else:
-            # Audio ou autre -> ecran noir
-            self.video_output_window.show_black()
+            # Audio ou autre -> ecran noir, sauf image accrochée au son en cours
+            linked = (self.seq.linked_image_path(row)
+                      if getattr(self, '_linked_image_row', None) == row else None)
+            pixmap = QPixmap(linked) if linked else None
+            if pixmap is not None and not pixmap.isNull():
+                self.video_output_window.show_image(pixmap)
+            else:
+                self.video_output_window.show_black()
 
     def _create_main_layout(self):
         """Cree le layout principal"""
@@ -6414,6 +6544,13 @@ class MainWindow(QMainWindow):
         _undo_sc = _QShortcut(_QKS("Ctrl+Z"), self)
         _undo_sc.setContext(Qt.WindowShortcut)
         _undo_sc.activated.connect(self._undo_plan_2d)
+        # Barre d'espace = Play/Pause, même raison : par keyPressEvent elle
+        # n'arrivait jamais, la playlist (sélection de ligne) ou le dernier
+        # bouton cliqué (qui se re-cliquait !) la mangeaient. Les champs de
+        # saisie la gardent : un QLineEdit réclame l'espace avant le raccourci.
+        _play_sc = _QShortcut(_QKS(Qt.Key_Space), self)
+        _play_sc.setContext(Qt.WindowShortcut)
+        _play_sc.activated.connect(self.toggle_play)
         if not self._license.dmx_allowed:
             self.plan_de_feu.set_dmx_blocked()
         plan_scroll.setWidget(self.plan_de_feu)
@@ -7202,6 +7339,9 @@ class MainWindow(QMainWindow):
             elif action == "stop":
                 self.player.stop()
                 self._stop_all_cartouches()
+                if getattr(self, '_linked_image_row', None) is not None:
+                    self.hide_image()
+                    self._update_video_output_state()
             elif action.startswith("cart"):
                 self.on_cartouche_clicked(int(action[4:]))
         except Exception as e:
@@ -7745,7 +7885,14 @@ class MainWindow(QMainWindow):
             return
 
         # Lecture normale
-        if self.pause_mode:
+        # Le lecteur JOUE : on met en pause, point. Testé AVANT `pause_mode`,
+        # qui peut rester à True alors que le son tourne (média préchargé après
+        # une ligne PAUSE puis lancé par double-clic / suivant) : le 1er appui
+        # « reprenait » un son déjà en lecture et il en fallait un 2e.
+        if self.player.playbackState() == QMediaPlayer.PlayingState:
+            self.pause_mode = False
+            self.player.pause()
+        elif self.pause_mode:
             if self.blink_timer:
                 self.blink_timer.stop()
             self.pause_mode = False
@@ -7756,12 +7903,11 @@ class MainWindow(QMainWindow):
             # Repasser sur le widget video (peut être masqué si pause après PAUSE + precharge)
             self.hide_image()
             self.player.play()
+            self._show_linked_image()   # image accrochée au son qui reprend
             # Le REC Lumière de la ligne peut avoir été créé/rechargé pendant la
             # pause : c'est ici qu'on l'arme, `play_row()` n'étant pas repassé.
             self.seq.ensure_light_playback_armed()
             self._update_video_output_state()
-        elif self.player.playbackState() == QMediaPlayer.PlayingState:
-            self.player.pause()
         else:
             # Rien en lecture. Si la playlist n'a jamais démarré (aucun média
             # chargé), lancer directement le média sélectionné (ou le 1er) —
@@ -7868,7 +8014,8 @@ class MainWindow(QMainWindow):
                 return
 
             current_mode = self.seq.get_dmx_mode(self.seq.current_row)
-            next_row = self.seq.current_row + 1
+            # L'image accrochée à ce son fait partie de la même étape : sautée.
+            next_row = self.seq.next_step_row(self.seq.current_row)
 
             # IA Lumière : fade-out puis transition
             if current_mode == "IA Lumiere":
@@ -7896,7 +8043,16 @@ class MainWindow(QMainWindow):
                 # look du média qui se termine, mais on laisse vivre la couche
                 # HTP (faders + pads mémoire) qui porte l'éclairage d'ambiance.
                 # Sinon l'ambiance s'éteint à chaque changement de média.
-                if current_mode == "Play Lumiere":
+                # Enchaîné : d'un REC Lumière à un autre, pas de noir du tout —
+                # la timeline entrante repeint tout le rig à sa 1re image, le
+                # dernier look tient pendant le chargement. On coupe seulement
+                # l'effet du REC sortant (sinon un strobe bave sur le suivant).
+                if (current_mode == "Play Lumiere"
+                        and self.playlist_transition == "enchaine"
+                        and next_mode in ("Play Lumiere", "Programme")
+                        and next_row in self.seq.sequences):
+                    self.seq._stop_timeline_effect()
+                elif current_mode == "Play Lumiere":
                     self.transition_blackout()
                 elif current_mode == "Programme" and next_mode == "Manuel":
                     self.transition_blackout()
@@ -7914,6 +8070,8 @@ class MainWindow(QMainWindow):
                 if current_mode == "Play Lumiere":
                     self.transition_blackout()
                 print("Fin de la sequence")
+                if getattr(self, '_linked_image_row', None) is not None:
+                    self.hide_image()   # le son est fini, son image s'en va
                 self.update_play_icon(QMediaPlayer.StoppedState)
                 self._update_video_output_state()
 
@@ -7929,13 +8087,28 @@ class MainWindow(QMainWindow):
         rallumer. On ne touche plus qu'aux projecteurs, et on repose ensuite ce
         que l'APC tient (cf. `restore_manual_look`).
         """
+        self.clear_engine_look(strobe=True)
+        self.restore_manual_look()
+
+    def clear_engine_look(self, strobe=False):
+        """Noircit le look laissé par un MOTEUR — pas ce que l'utilisateur tient.
+
+        Une fixture prise en main (plan 2D, tablette, curseurs : `_manual_color`)
+        est un état ENVOYÉ volontairement. Les mémoires et les fondus la
+        respectaient déjà ; le lancement d'un média en Manuel et les lignes PAUSE
+        la remettaient au noir sans condition — « j'envoie un état sur mes projos,
+        je lance un média, ça les coupe ». Elle ne se libère que par CLEAR, une
+        action mémoire volontaire, ou un moteur qui reprend tout le rig
+        (`_release_manual_grabs`).
+        """
         for p in self.projectors:
+            if getattr(p, '_manual_color', False):
+                continue
             p.level = 0
             p.color = QColor("black")
             p.base_color = QColor("black")
-            p.strobe_speed = 0   # le strobe est de la lumière : il s'éteint au blackout
-
-        self.restore_manual_look()
+            if strobe:
+                p.strobe_speed = 0   # le strobe est de la lumière : il s'éteint au blackout
 
     def full_blackout(self):
         """Blackout complet"""
@@ -8024,6 +8197,30 @@ class MainWindow(QMainWindow):
 
         self.restore_manual_look()
 
+    def _set_playlist_transition(self, action):
+        mode = action.data()
+        if mode not in ("clear", "enchaine") or mode == self.playlist_transition:
+            return
+        self.playlist_transition = mode
+        self.seq.is_dirty = True
+        self._log_message(
+            "Entre deux médias : Clear" if mode == "clear"
+            else "Entre deux médias : Enchaîné", "info")
+
+    def playlist_clear(self):
+        """Option « Clear » : repart d'un rig propre à chaque changement de média.
+
+        Exactement le CLEAR du plan de feu 2D — une seule définition du repos,
+        pas une liste recopiée ici. L'APC n'est PAS touché : pads, faders et
+        mémoires restent, et on repose aussitôt ce qu'ils tiennent.
+        """
+        pdf = getattr(self, 'plan_de_feu', None)
+        if pdf is None or not hasattr(pdf, '_clear_all_projectors'):
+            return
+        pdf._clear_all_projectors()
+        self.restore_manual_look()
+        self.send_dmx_update()
+
     def restore_manual_look(self):
         """Repose sur les projecteurs le look que l'APC tient à la main.
 
@@ -8046,7 +8243,14 @@ class MainWindow(QMainWindow):
         tient reste noir — « Manuel = pas de lumière » vaut toujours pour lui.
         `set_proj_level` reste l'unique writer de ce chemin (couleur, niveau,
         roue de couleurs) : on ne recopie pas sa logique ici.
+
+        Une fixture prise en main (`_manual_color`) garde son état : c'est un
+        repeint passif, pas un geste sur le fader — il n'a pas à l'écraser avec
+        la couleur de son groupe.
         """
+        held = [(p, p.level, QColor(p.color), QColor(p.base_color),
+                 getattr(p, 'color_wheel', None))
+                for p in self.projectors if getattr(p, '_manual_color', False)]
         for col, slot in enumerate(self._fader_map):
             if col > 7 or slot.get("type") != "group":
                 continue
@@ -8055,6 +8259,12 @@ class MainWindow(QMainWindow):
             value = self.faders[col].value if col in self.faders else 0
             if value > 0:
                 self.set_proj_level(col, value)
+        for p, level, color, base, wheel in held:
+            p.level, p.color, p.base_color = level, color, base
+            if wheel is not None:
+                p.color_wheel = wheel
+        if held:
+            self.send_dmx_update()   # set_proj_level a déjà émis la couleur du groupe
 
     # ── Pads couleur momentanes (mode FLASH) ─────────────────────────────────
     def _pads_are_momentary(self) -> bool:
@@ -11741,7 +11951,9 @@ class MainWindow(QMainWindow):
         if not cfg:
             return
         key = (fx_col, row)
-        if self.active_fx_pads.get(key):
+        if self.effect_superposition:
+            self._toggle_fx_pad_stacked(key, cfg)
+        elif self.active_fx_pads.get(key):
             # Turn off
             self.active_fx_pads.pop(key, None)
             self.active_effect = None
@@ -11768,6 +11980,88 @@ class MainWindow(QMainWindow):
             for r in range(8):
                 self._style_fx_pad(fc, r)
                 self._update_fx_pad_led(fc, r)
+
+    def _toggle_fx_pad_stacked(self, key, cfg):
+        """Pad FX en mode superposition : même pile que les boutons d'effet.
+
+        Appui = l'effet s'ajoute par-dessus ceux qui tournent ; réappui = il
+        est retiré seul. Le dernier retiré restitue l'état d'avant-effet.
+        Les entrées de pile d'un pad portent `pad` (et `idx` à None) pour ne
+        jamais être confondues avec celles des boutons.
+        """
+        if self.active_fx_pads.get(key):
+            self._unstack_fx_pad(key)
+            return
+        eff_name = cfg.get("name", "")
+        if not eff_name:
+            return
+        if not self._stacked_effects and self.active_fx_pads:
+            # Pad lancé en mode exclusif avant de cocher la superposition : il
+            # n'est pas dans la pile, personne ne le couperait plus.
+            self.active_fx_pads.clear()
+            self.active_effect = None
+            self.active_effect_config = {}
+            self.stop_effect()
+        import time as _time
+        eff_state = {
+            'idx': None,
+            'pad': key,
+            'name': eff_name,
+            'config': cfg,
+            'state': 0, 'hue': 0, 'brightness': 0, 'direction': 1,
+            't0': _time.monotonic(),
+            'clock': 0.0, 'clock_ts': None,
+        }
+        if not self._stacked_effects:
+            self._snapshot_effect_state()
+            if not hasattr(self, 'effect_timer'):
+                self.effect_timer = make_precise_timer()
+                self.effect_timer.timeout.connect(self.update_effect)
+            self.effect_timer.start(40)
+        self._stacked_effects.append(eff_state)
+        self.active_fx_pads[key] = True
+        self.active_effect = eff_name
+        self.active_effect_config = cfg
+        self._log_message(tr("mwx_034", effect_name=eff_name), "effect")
+        self._warn_effect_no_targets(cfg)
+
+    def _unstack_fx_pad(self, key):
+        """Retire de la pile l'effet porté par un pad FX (mode superposition)."""
+        self.active_fx_pads.pop(key, None)
+        old_name = next((e['name'] for e in self._stacked_effects
+                         if e.get('pad') == key), "")
+        self._stacked_effects = [e for e in self._stacked_effects
+                                 if e.get('pad') != key]
+        if old_name:
+            self._log_message(tr("mwx_036", old_name=old_name), "effect")
+        if not self._stacked_effects:
+            if hasattr(self, 'effect_timer'):
+                self.effect_timer.stop()
+            aims = self._restore_effect_state()
+            self._return_lyres_after_effect(aims)
+            self.active_effect = None
+            self.active_effect_config = {}
+        else:
+            self.active_effect = self._stacked_effects[-1]['name']
+            self.active_effect_config = self._stacked_effects[-1]['config']
+        self._style_fx_pad(key[0], key[1])
+        self._update_fx_pad_led(key[0], key[1])
+
+    def _fx_col_amp(self):
+        """Amplitude (0..1) du fader de colonne FX qui pilote l'effet.
+
+        Exclusif : la colonne du pad actif. Superposition : la plus forte des
+        effets empilés (un bouton d'effet compte pour 1) — baisser le fader
+        d'une colonne ne doit pas rendre muets les effets des autres colonnes.
+        """
+        def _amp(fc):
+            return self.fx_amplitudes[fc] / 100.0 if 0 <= fc < _FX_COL_MAX else 1.0
+        if self.effect_superposition and self._stacked_effects:
+            return max(_amp(e['pad'][0]) if e.get('pad') else 1.0
+                       for e in self._stacked_effects)
+        if self.active_fx_pads:
+            return _amp(next(iter(self.active_fx_pads))[0])
+        return 1.0
 
     def _show_fx_context_menu(self, pos, fx_col, row, btn):
         """Menu clic droit sur un pad FX — identique aux petits carrés verts."""
@@ -11804,8 +12098,10 @@ class MainWindow(QMainWindow):
         def _select(cfg_or_none):
             if cfg_or_none is None:
                 self.fx_pads[fx_col][row] = None
+                if any(e.get('pad') == (fx_col, row) for e in self._stacked_effects):
+                    self._unstack_fx_pad((fx_col, row))
                 self.active_fx_pads.pop((fx_col, row), None)
-                if cur and self.active_effect == cur:
+                if cur and self.active_effect == cur and not self.effect_superposition:
                     self.active_effect = None
                     self.active_effect_config = {}
                     self.stop_effect()
@@ -12258,10 +12554,14 @@ class MainWindow(QMainWindow):
         self.active_effect_config = {}
         self.stop_effect()
 
-    def _finish_stacked_once(self, effect_idx):
+    def _finish_stacked_once(self, effect_idx, pad=None):
         """Fin d'un effet « Une fois » empilé (superposition) : retiré comme un
-        appui OFF sur son bouton — les autres effets continuent, et le dernier
-        retiré restitue l'état d'avant-effet."""
+        appui OFF sur son bouton (ou son pad FX si `pad`) — les autres effets
+        continuent, et le dernier retiré restitue l'état d'avant-effet."""
+        if pad is not None:
+            if any(e.get('pad') == pad for e in self._stacked_effects):
+                self._unstack_fx_pad(pad)
+            return
         if not any(e.get('idx') == effect_idx for e in self._stacked_effects):
             return
         btn = self.effect_buttons[effect_idx]
@@ -12326,14 +12626,19 @@ class MainWindow(QMainWindow):
         (`update_effect` ne lit la pile QUE si `effect_superposition`), donc
         sans ça les effets restaient armés — pads AKAI allumés, projecteurs
         figés sur la dernière image — sans plus personne pour les animer.
-        Les pads FX ne sont PAS touchés : ils ont leur propre mécanique et ne
-        dépendent pas de la superposition.
+        Les pads FX empilés (superposition) sont coupés avec eux ; un pad FX
+        lancé en mode exclusif n'est pas touché, il ne dépend pas de la pile.
         """
         actifs = bool(self._stacked_effects) or any(
             getattr(b, 'active', False) for b in getattr(self, 'effect_buttons', []))
         if not actifs:
             return
+        pads_empiles = [e['pad'] for e in self._stacked_effects if e.get('pad')]
         self._stacked_effects = []
+        for key in pads_empiles:
+            self.active_fx_pads.pop(key, None)
+            self._style_fx_pad(key[0], key[1])
+            self._update_fx_pad_led(key[0], key[1])
         self._prev_effect_state = None
         for i, btn in enumerate(getattr(self, 'effect_buttons', [])):
             if getattr(btn, 'active', False):
@@ -12450,10 +12755,7 @@ class MainWindow(QMainWindow):
         global_amp = self.effect_amplitude / 100.0
 
         # Amplitude de la colonne FX active (si un pad FX déclenche l'effet)
-        col_amp = 1.0
-        if self.active_fx_pads:
-            fx_col = next(iter(self.active_fx_pads))[0]
-            col_amp = self.fx_amplitudes[fx_col] / 100.0 if 0 <= fx_col < _FX_COL_MAX else 1.0
+        col_amp = self._fx_col_amp()
 
         amp = global_amp * col_amp
         if amp >= 1.0:
@@ -12489,10 +12791,7 @@ class MainWindow(QMainWindow):
         # Si amplitude totale = 0, ne pas toucher aux projecteurs pour laisser
         # les colonnes MEM (ou autres sources) agir librement.
         global_amp = self.effect_amplitude / 100.0
-        col_amp = 1.0
-        if self.active_fx_pads:
-            fx_col = next(iter(self.active_fx_pads))[0]
-            col_amp = self.fx_amplitudes[fx_col] / 100.0 if 0 <= fx_col < _FX_COL_MAX else 1.0
+        col_amp = self._fx_col_amp()
         if global_amp * col_amp == 0:
             return
 
@@ -12762,7 +13061,8 @@ class MainWindow(QMainWindow):
         finally:
             self._stacked_tick = None
         if eff_data.get('once_done'):
-            QTimer.singleShot(0, lambda idx=eff_data['idx']: self._finish_stacked_once(idx))
+            QTimer.singleShot(0, lambda idx=eff_data['idx'], pad=eff_data.get('pad'):
+                              self._finish_stacked_once(idx, pad))
 
         # ── Sauvegarder le nouvel état dans le dict ───────────────────────
         eff_data['state']     = self.effect_state
@@ -17384,7 +17684,19 @@ class MainWindow(QMainWindow):
             vol_item  = self.seq.table.item(r, 3)
             user_data = str(path_item.data(Qt.UserRole)) if path_item else ""
 
-            if user_data == "PAUSE":
+            if is_web_entry(user_data):
+                # `p` pour les versions antérieures : elles prennent la ligne
+                # pour un fichier inconnu, la refusent et passent à la suivante
+                # (sans `p`, leur chargeur plantait sur item['p']).
+                entry = {'type': 'web', 'url': web_url(user_data), 'p': user_data,
+                         'd': self.seq.get_dmx_mode(r)}
+                if r in self.seq.image_durations:
+                    entry['image_duration'] = self.seq.image_durations[r]
+                if r in self.seq.sequences and 'clips' in self.seq.sequences[r]:
+                    seq = self.seq.sequences[r]
+                    entry['sequence'] = {'clips': seq['clips'], 'duration': seq['duration']}
+                data.append(entry)
+            elif user_data == "PAUSE":
                 entry = {'type': 'pause', 'd': self.seq.get_dmx_mode(r)}
                 if r in self.seq.sequences and 'clips' in self.seq.sequences[r]:
                     seq = self.seq.sequences[r]
@@ -17408,6 +17720,10 @@ class MainWindow(QMainWindow):
                     }
                     if self.seq.is_row_loop(r):
                         row_data['loop'] = True
+                    # Drapeau brut (pas sa validité) : une image déplacée
+                    # ailleurs le garde, comme dans la playlist.
+                    if path_item.data(self.seq.LINK_ROLE):
+                        row_data['with_prev'] = True
                     # Fondus en ms. Écrits seulement s'ils existent : une version
                     # antérieure de MyStrow ignore les clés qu'elle ne connaît
                     # pas, le show reste donc lisible des deux côtés.
@@ -17475,6 +17791,8 @@ class MainWindow(QMainWindow):
             "cartouches": cart_data,
             # Absent d'un ancien show = False : les cartouches coupent la playlist.
             "cartouches_superposer": self.cart_superposer,
+            # Absent d'un ancien show = "enchaine".
+            "playlist_transition": self.playlist_transition,
             "memories": self.memories,
             "memory_custom_colors": custom_colors_serial,
             "active_memory_pads": active_pads_serial,
@@ -17564,6 +17882,7 @@ class MainWindow(QMainWindow):
                 data = raw
                 cart_data = []
                 self.cart_superposer = False
+                self.playlist_transition = "enchaine"
                 mem_data = None
                 custom_colors_data = None
                 active_pads_data = None
@@ -17571,6 +17890,8 @@ class MainWindow(QMainWindow):
                 data = raw.get("sequence", [])
                 cart_data = raw.get("cartouches", [])
                 self.cart_superposer = bool(raw.get("cartouches_superposer", False))
+                _trans = raw.get("playlist_transition")
+                self.playlist_transition = _trans if _trans in ("clear", "enchaine") else "enchaine"
                 mem_data = raw.get("memories")
                 custom_colors_data = raw.get("memory_custom_colors")
                 active_pads_data = raw.get("active_memory_pads")
@@ -17585,6 +17906,27 @@ class MainWindow(QMainWindow):
             try:
                 for item in data:
                     item_type = item.get('type')
+
+                    # Site internet (cf. la sauvegarde pour les anciennes versions).
+                    if item_type == 'web':
+                        if not item.get('url'):
+                            continue
+                        row = self.seq.add_web(item['url'])
+                        if 'image_duration' in item:
+                            self.seq.image_durations[row] = int(item['image_duration'])
+                        if 'd' in item:
+                            combo = self.seq._get_dmx_combo(row)
+                            if combo:
+                                if item['d'] == "Play Lumiere" and combo.findText("Play Lumiere") == -1:
+                                    combo.addItem("Play Lumiere")
+                                combo.setCurrentText(item['d'])
+                        seq_data = item.get('sequence') or {}
+                        if 'clips' in seq_data:
+                            self.seq.sequences[row] = {
+                                'clips': seq_data['clips'],
+                                'duration': seq_data.get('duration', 0)
+                            }
+                        continue
 
                     # PAUSE (indefinie ou temporisee) + retrocompat TEMPO
                     if item_type in ('pause', 'tempo'):
@@ -17683,6 +18025,8 @@ class MainWindow(QMainWindow):
                             self.seq.image_durations[row] = int(item['image_duration'])
                         if item.get('loop'):
                             self.seq.set_row_loop(row, True)
+                        if item.get('with_prev'):
+                            self.seq.set_row_linked(row, True)
                         if item.get('fade_in') or item.get('fade_out'):
                             self.seq.set_row_fades(row,
                                                    int(item.get('fade_in') or 0),
@@ -17798,7 +18142,8 @@ class MainWindow(QMainWindow):
             if not title_item:
                 continue
             path = title_item.data(Qt.UserRole)
-            if not path or str(path) == "PAUSE" or str(path).startswith("PAUSE:"):
+            if (not path or str(path) == "PAUSE" or str(path).startswith("PAUSE:")
+                    or is_web_entry(path)):
                 continue
             if not os.path.isfile(path):
                 missing.append((row, Path(path).name, path))
@@ -18874,8 +19219,13 @@ class MainWindow(QMainWindow):
             # Un pad FX actif tient un effet en cours : le couper AVANT de vider
             # la config, sinon l'effet continue de tourner sans pad pour l'éteindre.
             if self.active_fx_pads:
+                # Superposition : retirer les pads de la pile, sinon le
+                # prochain effet s'empilerait derrière des fantômes sans timer.
+                self._stacked_effects = [e for e in self._stacked_effects
+                                         if not e.get('pad')]
                 try:
-                    self.stop_effect()
+                    if not self._stacked_effects:   # sinon des boutons tournent encore
+                        self.stop_effect()
                 except Exception as e:
                     print(f"[CLEAR] arrêt de l'effet FX impossible : {e}")
             self.active_fx_pads.clear()
@@ -19152,8 +19502,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("rec_light_title"), tr("rec_light_need_dur"))
             return
 
-        # Bloquer si image sans duree definie
-        if media_icon(path) == "image":
+        # Bloquer si image (ou site) sans duree definie
+        if media_icon(path) in ("image", "web"):
             if current_row not in self.seq.image_durations:
                 QMessageBox.warning(self, tr("rec_light_title"), tr("rec_light_need_dur2"))
                 return
@@ -19211,7 +19561,7 @@ class MainWindow(QMainWindow):
         data = str(title_item.data(Qt.UserRole) or "")
         if data == "PAUSE" or data.startswith("PAUSE:"):
             self.seq.edit_pause_duration(row)
-        elif media_icon(data) == "image":
+        elif media_icon(data) in ("image", "web"):
             self.seq.edit_image_duration(row)
         else:
             QMessageBox.warning(self, tr("not_applicable_title"), tr("dur_not_applicable"))
@@ -20948,7 +21298,8 @@ class MainWindow(QMainWindow):
         """Gere les raccourcis clavier"""
         key = event.key()
 
-        if key in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+        # Espace : QShortcut de fenêtre (cf. _undo_sc), pas ici.
+        if key in (Qt.Key_Return, Qt.Key_Enter):
             self.toggle_play()
             event.accept()
         elif key == Qt.Key_PageDown and (event.modifiers() & Qt.ControlModifier):
@@ -21599,10 +21950,17 @@ class MainWindow(QMainWindow):
         item = self.seq.table.item(row, 1) if row >= 0 else None
         path = item.data(Qt.UserRole) if item else None
         kind = media_icon(path) if path else None
+        if kind == "web":
+            self.show_web(web_url(path))
+            return True
         if kind == "image":
             self.show_image(path)
         elif kind == "video" and not self.pause_mode:
             self.hide_image()
+        elif (kind == "audio"
+              and self.player.playbackState() != QMediaPlayer.StoppedState
+              and self._show_linked_image(row)):
+            return True
         else:
             self.show_black_preview()
             return True
@@ -23910,6 +24268,99 @@ class MainWindow(QMainWindow):
                     calib_btn.clicked.connect(_open_calib)
                     wl.addWidget(calib_btn, 0, Qt.AlignHCenter)
 
+                    # ── Copier la roue vers d'autres machines au choix ────────
+                    # Après calibration, on ne proposait que « ce modèle » ou
+                    # « toutes » ; ici on coche les machines une par une.
+                    _w_attr = 'color_wheel_slots' if _is_cw else 'gobo_wheel_slots'
+                    copy_btn = QPushButton(tr("mw_wheel_copy_to"))
+                    copy_btn.setFixedHeight(28)
+                    copy_btn.setStyleSheet(calib_btn.styleSheet())
+                    if not getattr(proj_w, _w_attr, None):
+                        copy_btn.setEnabled(False)
+                        copy_btn.setToolTip(tr("mw_wheel_copy_empty"))
+
+                    def _copy_wheel(checked=False, _p=proj_w, _is=_is_cw,
+                                    _si=snap_idx, _attr=_w_attr):
+                        import copy as _copy
+                        from PySide6.QtWidgets import QListWidget, QListWidgetItem, QDialogButtonBox
+                        m.close()
+
+                        def _has_wheel(proj):
+                            prf = getattr(proj, 'dmx_profile', None) or []
+                            return ('ColorWheel' in prf) if _is else any(g in prf for g in ('Gobo1', 'Gobo2'))
+
+                        cands = [(i, p) for i, p in enumerate(self.projectors)
+                                 if i != _si and _has_wheel(p)
+                                 and getattr(p, 'matrix_role', None) != 'pixel']
+                        if not cands:
+                            QMessageBox.information(dialog, tr("mw_wheel_copy_title"),
+                                                    tr("mw_wheel_copy_none"))
+                            return
+
+                        dlg = QDialog(dialog)
+                        dlg.setWindowTitle(tr("mw_wheel_copy_title"))
+                        dlg.setMinimumWidth(380)
+                        dl = QVBoxLayout(dlg)
+                        _src_name = _p.name or _p.group
+                        dl.addWidget(QLabel(tr("mw_wheel_copy_from", name=_src_name)))
+                        lst = QListWidget()
+                        lst.setStyleSheet(
+                            "QListWidget{background:#141414;border:1px solid #242424;border-radius:6px;}"
+                            "QListWidget::item{padding:5px 6px;color:#ddd;}"
+                        )
+                        for i, p in cands:
+                            it = QListWidgetItem(
+                                f"{p.name or p.group}   —   U{getattr(p, 'universe', 0) + 1}"
+                                f" · CH {p.start_address}"
+                            )
+                            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                            it.setCheckState(Qt.Unchecked)
+                            it.setData(Qt.UserRole, i)
+                            lst.addItem(it)
+                        dl.addWidget(lst, 1)
+
+                        row_sel = QHBoxLayout()
+                        b_same = QPushButton(tr("mw_wheel_copy_same_model"))
+                        b_all  = QPushButton(tr("mw_wheel_copy_all"))
+                        b_none = QPushButton(tr("mw_wheel_copy_none_btn"))
+                        for b in (b_same, b_all, b_none):
+                            b.setAutoDefault(False)
+                            row_sel.addWidget(b)
+                        dl.addLayout(row_sel)
+
+                        def _check(pred):
+                            for r in range(lst.count()):
+                                it = lst.item(r)
+                                p = self.projectors[it.data(Qt.UserRole)]
+                                it.setCheckState(Qt.Checked if pred(p) else Qt.Unchecked)
+                        # « Même modèle » = même profil DMX, plus fiable que le
+                        # nom (renommé librement) ou le type (toutes les lyres).
+                        _src_prof = list(getattr(_p, 'dmx_profile', None) or [])
+                        b_same.clicked.connect(lambda: _check(
+                            lambda p: list(getattr(p, 'dmx_profile', None) or []) == _src_prof))
+                        b_all.clicked.connect(lambda: _check(lambda p: True))
+                        b_none.clicked.connect(lambda: _check(lambda p: False))
+
+                        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                        bb.accepted.connect(dlg.accept)
+                        bb.rejected.connect(dlg.reject)
+                        dl.addWidget(bb)
+                        if dlg.exec() != QDialog.Accepted:
+                            return
+                        targets = [lst.item(r).data(Qt.UserRole) for r in range(lst.count())
+                                   if lst.item(r).checkState() == Qt.Checked]
+                        if not targets:
+                            return
+                        _push_history()
+                        slots = getattr(_p, _attr, []) or []
+                        for ti in targets:
+                            setattr(self.projectors[ti], _attr, _copy.deepcopy(list(slots)))
+                        _sync_wheels_to_fd()
+                        _mark_dirty()
+
+                    copy_btn.clicked.connect(_copy_wheel)
+                    wl.addWidget(copy_btn, 0, Qt.AlignHCenter)
+
                 wa.setDefaultWidget(w)
                 m.addAction(wa)
                 m.exec(chip_lbl.mapToGlobal(chip_lbl.rect().bottomLeft()))
@@ -24223,11 +24674,14 @@ class MainWindow(QMainWindow):
                     act_locate.setToolTip(tr("mw_select_in_plan"))
                     act_replace = m.addAction(tr("mw_replace_m"))
                     act_replace.setToolTip(tr("mw_replace_fixture"))
+                    act_dup = m.addAction(tr("mw_duplicate_m"))
                     m.addSeparator()
                     act_del = m.addAction(tr("mw_delete_m"))
                     _chosen = m.exec(e.globalPos())
                     if _chosen == act_del:
                         _del_selected()
+                    elif _chosen == act_dup:
+                        _duplicate_selected()
                     elif _chosen == act_locate:
                         _locate_selected()
                     elif _chosen == act_replace:
@@ -24647,6 +25101,103 @@ class MainWindow(QMainWindow):
             canvas.start_locate(proj.group, local_idx)
 
         btn_det_locate.clicked.connect(_locate_selected)
+
+        def _duplicate_selected():
+            """Clic droit → Dupliquer : N copies de la machine sélectionnée.
+
+            Chaque copie passe par `_fixture_to_config` / `_projector_from_config`,
+            le point unique de sauvegarde : elle hérite donc de TOUT le réglage
+            (profil, valeurs par défaut, roues calibrées, limites pan/tilt,
+            obturateur, inclinaison 3D…), et un champ ajouté plus tard suivra
+            sans qu'on ait à y penser ici.
+            """
+            import re as _re
+            import uuid as _uuid
+            from PySide6.QtWidgets import QInputDialog
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors):
+                return
+            src = self.projectors[idx]
+            _mxg = _matrix_info_for(idx)
+            src_name = _mxg["name"] if _mxg else (src.name or src.group)
+
+            qty, ok = QInputDialog.getInt(
+                dialog, tr("mw_duplicate_title"),
+                tr("mw_duplicate_qty", name=src_name), 1, 1, 64, 1)
+            if not ok:
+                return
+            _push_history()
+
+            members = (sorted(_mxg["members"], key=lambda j: self.projectors[j].start_address)
+                       if _mxg else [idx])
+            uni = getattr(src, 'universe', 0)
+
+            def _next_free(universe):
+                # Dans l'univers de la source : la copie d'une machine de U2
+                # ne doit pas atterrir derrière la dernière adresse de U1.
+                ends = [p.start_address + len(getattr(p, 'dmx_profile', None) or [])
+                        for p in self.projectors if getattr(p, 'universe', 0) == universe]
+                return max(ends) if ends else 1
+
+            # « Lyre 3 » → Lyre 4, Lyre 5… ; « Lyre » → Lyre 2, Lyre 3…
+            _mt = _re.match(r"^(.*?)(\s*#?)(\d+)$", src_name)
+            if _mt and _mt.group(1).strip():
+                base, sep, num = _mt.group(1), _mt.group(2) or " ", int(_mt.group(3))
+            else:
+                base, sep, num = src_name, " ", 1
+            if not sep.startswith(" "):
+                sep = " " + sep.lstrip()
+            used = {(p.name or "").split(" · ")[0] for p in self.projectors}
+
+            first_new = None
+            for k in range(qty):
+                num += 1
+                while f"{base}{sep}{num}" in used:
+                    num += 1
+                new_name = f"{base}{sep}{num}"
+                used.add(new_name)
+
+                offset = _next_free(uni) - self.projectors[members[0]].start_address
+                ref = self.projectors[members[0]]
+                dx = dy = 0.0
+                if ref.canvas_x is not None and ref.canvas_y is not None:
+                    nx, ny = _find_free_canvas_pos(self.projectors,
+                                                   ref.canvas_x + 0.07, ref.canvas_y)
+                    dx, dy = nx - ref.canvas_x, ny - ref.canvas_y
+                new_mid = _uuid.uuid4().hex[:12] if _mxg else None
+
+                for j in members:
+                    p_src = self.projectors[j]
+                    cfg = self._fixture_to_config(j, p_src)
+                    # Position 3D : laissée ABSENTE pour qu'elle se déduise de
+                    # la position 2D de la copie (sinon les copies seraient
+                    # empilées sur l'original dans le plan 3D).
+                    for _k in ('pos_3d_x', 'pos_3d_z', 'pos_3d_src'):
+                        cfg.pop(_k, None)
+                    cfg['start_address'] = p_src.start_address + offset
+                    if cfg.get('pos_x') is not None:
+                        cfg['pos_x'] = max(0.02, min(0.98, cfg['pos_x'] + dx))
+                    if cfg.get('pos_y') is not None:
+                        cfg['pos_y'] = max(0.02, min(0.98, cfg['pos_y'] + dy))
+                    if _mxg:
+                        cfg['matrix_id'] = new_mid
+                        _old = p_src.name or ""
+                        cfg['name'] = (new_name + _old[len(src_name):]
+                                       if _old.startswith(src_name) else new_name)
+                    else:
+                        cfg['name'] = new_name
+                    p_new = self._projector_from_config(cfg, len(self.projectors))
+                    self.projectors.append(p_new)
+                    if first_new is None:
+                        first_new = len(self.projectors) - 1
+                # Les copies suivantes doivent voir celles qu'on vient d'ajouter
+                self._rebuild_dmx_patch()
+
+            _rebuild_fd()
+            _build_cards(filter_bar.text())
+            if first_new is not None:
+                _select_card(first_new)
+            _mark_dirty()
 
         def _replace_selected():
             idx = _sel[0]
@@ -25501,6 +26052,10 @@ class MainWindow(QMainWindow):
             editor.exec()
             if editor.last_saved:
                 self._pending_fixture_select = editor.last_saved
+                # Enchaîner sur la bibliothèque, la machine créée déjà pointée
+                # et focalisée : sinon il fallait rouvrir « Ajouter » et la
+                # rechercher soi-même.
+                _add_fixture()
 
         def _open_fixture_editor_ia():
             import json as _json
@@ -25540,6 +26095,7 @@ class MainWindow(QMainWindow):
             editor.exec()
             if editor.last_saved:
                 self._pending_fixture_select = editor.last_saved
+                _add_fixture()
 
         act_new.triggered.connect(_open_wizard)
         act_save.triggered.connect(_do_save)
@@ -26397,12 +26953,26 @@ class MainWindow(QMainWindow):
         _pending = getattr(self, '_pending_fixture_select', None)
         if _pending:
             _pending_name = _pending.get("name", "") if isinstance(_pending, dict) else str(_pending)
+            # Nom EXACT d'abord : « Lyre » est contenu dans « Lyre Beam », et
+            # la recherche par sous-chaîne pointait parfois la mauvaise.
+            _hit = None
             for _i in range(my_list.count()):
                 _item = my_list.item(_i)
-                if _item and _pending_name in _item.text():
-                    my_list.setCurrentItem(_item)
-                    tab_widget.setCurrentIndex(1)
-                    break
+                _d = _item.data(Qt.UserRole) if _item else None
+                if isinstance(_d, dict) and _d.get("name") == _pending_name:
+                    _hit = _item
+            if _hit is None:
+                for _i in range(my_list.count()):
+                    _item = my_list.item(_i)
+                    if _item and _pending_name and _pending_name in _item.text():
+                        _hit = _item
+                        break
+            if _hit is not None:
+                tab_widget.setCurrentIndex(1)
+                my_list.setCurrentItem(_hit)
+                my_list.scrollToItem(_hit, QListWidget.PositionAtCenter)
+                # Le focus ne tient qu'une fois la fenêtre affichée.
+                QTimer.singleShot(0, my_list.setFocus)
             self._pending_fixture_select = None
 
         layout.addWidget(tab_widget, 1)
@@ -26678,7 +27248,19 @@ class MainWindow(QMainWindow):
             # Montrer tout de suite ce qui vient d'être créé.
             name = saved.get("name", "") if isinstance(saved, dict) else ""
             if name:
+                tab_widget.setCurrentIndex(0)
                 search_edit.setText(name)
+                # La recherche pointe la 1re ligne, pas forcément la bonne
+                # (« Lyre » trouve aussi « Lyre Beam ») : viser le nom exact,
+                # puis donner le focus à la liste pour valider par Entrée.
+                for _r in range(preset_list.count()):
+                    _it = preset_list.item(_r)
+                    _d = _it.data(Qt.UserRole) or {}
+                    if isinstance(_d, dict) and _d.get("name") == name:
+                        preset_list.setCurrentItem(_it)
+                        preset_list.scrollToItem(_it, QListWidget.PositionAtCenter)
+                        break
+                preset_list.setFocus()
 
         def _rebuild_library_ui(new_user_fixtures: list):
             """Reconstruit ALL_FIXTURES / FIXTURE_LIBRARY et rafraîchit cat_list."""
@@ -28371,8 +28953,11 @@ class MainWindow(QMainWindow):
         win.raise_()
         win.activateWindow()
 
-    def open_node_connection(self):
-        """Ouvre le dialogue de paramétrage de la sortie DMX (Node ou USB)."""
+    def open_node_connection(self, usb_node=False):
+        """Ouvre le dialogue de paramétrage de la sortie DMX (Node ou USB).
+
+        `usb_node` : ouvre directement sur la sortie Node réglée pour un USB
+        NODE DMX (renvoi depuis l'assistant USB)."""
         # Garde licence : impossible d'activer la sortie DMX si l'essai est terminé
         # ou le logiciel non activé. Le menu n'étant plus grisé, c'est ici que
         # l'utilisateur apprend pourquoi — avec un accès direct aux plans.
@@ -28380,7 +28965,7 @@ class MainWindow(QMainWindow):
             self._dmx_locked_notice()
             return
         from node_connection import DmxOutputDialog
-        dlg = DmxOutputDialog(self)
+        dlg = DmxOutputDialog(self, usb_node=usb_node)
         dlg.exec()
         self._refresh_dmx_menu_title()
 
@@ -28574,6 +29159,9 @@ class MainWindow(QMainWindow):
         dlg = DmxSetupDialog(self.dmx, parent=self)
         dlg.exec()
         self._refresh_dmx_menu_title()
+        # USB NODE DMX choisi dans l'assistant : il se règle côté Node.
+        if dlg.goto_usb_node:
+            self.open_node_connection(usb_node=True)
 
     @staticmethod
     def _firewall_port_status(port):
@@ -29050,8 +29638,14 @@ class MainWindow(QMainWindow):
                                 and sender_ip not in _local_ips):
                             node_ok = True
                             _node_via_artpoll = True
-                            found_ip = sender_ip
-                            break
+                            # Le node DÉJÀ visé l'emporte sur le premier venu :
+                            # s'arrêter à la première réponse faisait basculer
+                            # MyStrow sur n'importe quel appareil Art-Net du
+                            # réseau (client Alexander, 05/10/2026).
+                            if found_ip is None or sender_ip == self.dmx.target_ip:
+                                found_ip = sender_ip
+                            if sender_ip == self.dmx.target_ip:
+                                break
                     except _socket.timeout:
                         break
                     except Exception:
@@ -29499,7 +30093,10 @@ class MainWindow(QMainWindow):
 
     def _hide_test_logo(self):
         """Cache le logo de test"""
+        linked = getattr(self, '_linked_image_row', None)
         self.hide_image()
+        if linked is not None and self._show_linked_image(linked):
+            return
         if self.video_output_window and self.video_output_window.isVisible():
             self._update_video_output_state()
 

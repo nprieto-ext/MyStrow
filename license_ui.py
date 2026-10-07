@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QDialog, QLineEdit, QProgressBar, QApplication, QStackedWidget,
     QFrame
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFont, QCursor
+from PySide6.QtCore import Qt, Signal, QTimer, QRectF
+from PySide6.QtGui import QFont, QCursor, QIcon, QPixmap, QPainter, QPen, QColor, QAction
 
 from license_manager import (
     LicenseState, LicenseResult, TRIAL_DAYS,
@@ -34,6 +34,26 @@ STRIPE_LINKS = {
 
 # Page d'inscription à la newsletter (gérée côté site, comme le menu Communauté)
 NEWSLETTER_URL = "https://mystrow.fr/newsletter"
+
+# Espace client du site : liste des ordinateurs actifs, avec retrait d'un poste
+ACCOUNT_URL = "https://mystrow.fr/compte"
+
+
+def _eye_icon(barre: bool) -> QIcon:
+    """Oeil dessine (pas d'emoji : rendu inegal selon l'OS) ; barre = masque."""
+    pm = QPixmap(40, 40)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor("#00d4ff"), 3))
+    p.drawEllipse(QRectF(5, 11, 30, 18))
+    p.setBrush(QColor("#00d4ff"))
+    p.drawEllipse(QRectF(15, 15, 10, 10))
+    if barre:
+        p.setPen(QPen(QColor("#00d4ff"), 3.5))
+        p.drawLine(8, 34, 32, 6)
+    p.end()
+    return QIcon(pm)
 
 
 # ============================================================
@@ -479,6 +499,10 @@ class ActivationDialog(QDialog):
         self._pwd_edit.setEchoMode(QLineEdit.Password)
         self._pwd_edit.setFixedHeight(36)
         self._pwd_edit.returnPressed.connect(self._do_login)
+        # Oeil a droite du champ : afficher / masquer le mot de passe tape
+        self._pwd_eye = QAction(_eye_icon(False), tr("tip_show_password"), self._pwd_edit)
+        self._pwd_eye.triggered.connect(self._toggle_pwd_visible)
+        self._pwd_edit.addAction(self._pwd_eye, QLineEdit.TrailingPosition)
         layout.addWidget(self._pwd_edit)
 
         self._login_progress = QProgressBar()
@@ -511,6 +535,22 @@ class ActivationDialog(QDialog):
         self._btn_send_pwd.clicked.connect(self._do_forgot_password)
         self._btn_send_pwd.hide()
         layout.addWidget(self._btn_send_pwd)
+
+        # Limite de 2 appareils atteinte : lien direct vers l'espace client,
+        # ou l'on retire un ordinateur de la liste
+        self._btn_manage_devices = QPushButton(tr("btn_manage_devices"))
+        self._btn_manage_devices.setFixedHeight(32)
+        self._btn_manage_devices.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_manage_devices.setStyleSheet("""
+            QPushButton {
+                background: #00303a; color: #00d4ff;
+                border: 1px solid #00d4ff55; border-radius: 6px; font-size: 11px;
+            }
+            QPushButton:hover { background: #004452; color: #33e0ff; border-color: #00d4ff; }
+        """)
+        self._btn_manage_devices.clicked.connect(lambda: webbrowser.open(ACCOUNT_URL))
+        self._btn_manage_devices.hide()
+        layout.addWidget(self._btn_manage_devices)
 
         layout.addStretch()
 
@@ -1143,6 +1183,12 @@ class ActivationDialog(QDialog):
     # Logique login
     # ----------------------------------------------------------
 
+    def _toggle_pwd_visible(self):
+        visible = self._pwd_edit.echoMode() == QLineEdit.Password
+        self._pwd_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+        self._pwd_eye.setIcon(_eye_icon(visible))
+        self._pwd_eye.setText(tr("tip_hide_password" if visible else "tip_show_password"))
+
     def _do_forgot_password(self):
         prefill = self._email_edit.text().strip()
         dlg = ForgotPasswordDialog(prefill_email=prefill, parent=self)
@@ -1182,6 +1228,7 @@ class ActivationDialog(QDialog):
 
         if success:
             self._btn_send_pwd.hide()
+            self._btn_manage_devices.hide()
             self._success_label.setText(tr("welcome_msg", message=message))
             self._show_page(1)
             self.activation_success.emit()
@@ -1192,7 +1239,11 @@ class ActivationDialog(QDialog):
             # Afficher le bouton de réception par mail si mauvais mot de passe
             wrong_creds = any(w in message.lower() for w in
                               ("incorrect", "mot de passe", "invalid", "password"))
-            self._btn_send_pwd.setVisible(wrong_creds)
+            # Limite d'appareils (message de firebase_client.add_machine,
+            # traduit : on compare au texte de la langue courante)
+            trop_de_postes = tr("fbc3_044") in message or "2 appareils" in message
+            self._btn_send_pwd.setVisible(wrong_creds and not trop_de_postes)
+            self._btn_manage_devices.setVisible(trop_de_postes)
 
 
 # ============================================================

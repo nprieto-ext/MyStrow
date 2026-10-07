@@ -634,6 +634,28 @@ def verify_license() -> LicenseResult:
     return _result_not_activated()
 
 
+def verify_license_cached() -> LicenseResult:
+    """Même verdict que `verify_license`, sans aucun accès réseau.
+
+    Sert quand la vérification en ligne n'a pas rendu sa réponse à temps au
+    démarrage : sur un réseau sans Internet (lien direct vers le node, Wi-Fi
+    de salle), le test de connexion et le DNS peuvent dépasser le délai du
+    splash. Conclure alors « non activé » refusait l'app à un client licencié
+    hors-ligne (client Alexander, Mac, 05/10/2026) — le délai de grâce de
+    7 jours n'était jamais atteint.
+    """
+    try:
+        machine_id = get_machine_id()
+    except Exception:
+        return _result_not_activated()
+    account = _load_account(machine_id)
+    if account is not None:
+        return _offline_fallback(account)
+    if _load_trial_data(machine_id) is not None:
+        return _verify_local_trial(machine_id)
+    return _result_not_activated()
+
+
 def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
     """Verification en ligne via Firebase (appel Firestore)."""
     try:

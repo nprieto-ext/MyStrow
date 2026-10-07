@@ -4351,12 +4351,31 @@ class EffectEditorDialog(QDialog):
                         if eff_dict:
                             cfg["type"] = eff_dict.get("type", cfg.get("type", ""))
                         saved = True
+        # Les mémoires (et leurs cues) gardent une COPIE de l'effet posée au
+        # clic droit : sans ça, changer la cible dans l'éditeur ne changeait
+        # rien au pad (retour client 05/10/2026 : « l'effet est de nouveau sur
+        # tous »).
+        mem_updated = False
+        for mem_col in getattr(self._main_window, 'memories', None) or []:
+            for mem in mem_col or []:
+                if not isinstance(mem, dict):
+                    continue
+                cfgs = [mem.get("effect")] + [c.get("effect") for c in mem.get("cues") or []
+                                              if isinstance(c, dict)]
+                for cfg in cfgs:
+                    if isinstance(cfg, dict) and cfg.get("name") == cur_name:
+                        cfg["layers"]    = layers_data
+                        cfg["play_mode"] = self._play_mode
+                        cfg["duration"]  = cur_duration
+                        mem_updated = True
         if saved:
             if hasattr(self._main_window, '_save_effect_assignments'):
                 self._main_window._save_effect_assignments()  # also calls _refresh_active_effect_config
             if hasattr(self._main_window, '_save_akai_config_auto'):
                 self._main_window._save_akai_config_auto()
-        else:
+        elif mem_updated and hasattr(self._main_window, '_save_akai_config_auto'):
+            self._main_window._save_akai_config_auto()
+        if not saved:
             # Effet non assigné à un bouton ni FX pad → sauvegarder dans la bibliothèque d'effets
             lib = getattr(self._main_window, '_effect_library_configs', None)
             if lib is not None:

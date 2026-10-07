@@ -44,6 +44,7 @@ except ImportError:
         errorOccurred        = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
 
 from core import (fmt_time, media_icon, MIDI_AVAILABLE, rgb_to_akai_velocity,
+                  WEB_PREFIX, is_web_entry, web_url,
                   MEDIA_EXTENSIONS_FILTER, apply_special_block, ComboSansMolette,
                   MediaClock, make_precise_timer, TIMELINE_FRAME_MS,
                   GOBO_SLOT_NAMES, GOBO_SLOT_ICONS, GOBO_SLOT_COUNT)
@@ -3637,6 +3638,10 @@ class Sequencer(QFrame):
     # renommage. 0 = pas de fondu.
     FADE_IN_ROLE  = Qt.UserRole + 2
     FADE_OUT_ROLE = Qt.UserRole + 3
+    # Image « lancée avec le son précédent » : affichée pendant le son du
+    # dessus, les deux lignes ne font qu'une étape de la playlist. Même item,
+    # donc suit la ligne au déplacement.
+    LINK_ROLE     = Qt.UserRole + 4
 
     def __init__(self, player_ui):
         super().__init__()
@@ -3820,6 +3825,10 @@ class Sequencer(QFrame):
 
         # Table
         self.table = QTableWidget(0, 5)
+        # Une image accrochée n'est valide que sous un son : tout ajout ou
+        # retrait de ligne peut changer son voisin du dessus.
+        self.table.model().rowsInserted.connect(lambda *_: self._schedule_link_marks())
+        self.table.model().rowsRemoved.connect(lambda *_: self._schedule_link_marks())
         self.table.setHorizontalHeaderLabels(["", tr("seq_col_title"), tr("seq_col_duration"), tr("seq_col_vol"), "DMX"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -3909,6 +3918,7 @@ class Sequencer(QFrame):
         menu.setStyleSheet(_SEQ_MENU_SS)
         menu.addAction(tr("seq_menu_add_media"), self.add_files_dialog)
         menu.addAction(tr("seq_menu_add_pause"), self.add_pause)
+        menu.addAction(tr("seq_menu_add_web"), self.add_web_dialog)
         menu.exec(QCursor.pos())
 
     @staticmethod
@@ -3943,6 +3953,77 @@ class Sequencer(QFrame):
         self.table.setCellWidget(r, 4, self._create_dmx_cell_widget(r))
         self.table.selectRow(r)
         self.is_dirty = True
+
+    @staticmethod
+    def _normalize_url(text):
+        """« muramessages.flutterflow.app/ecran » → « https://… ». "" si vide."""
+        url = (text or "").strip()
+        if url and "://" not in url:
+            url = "https://" + url
+        return url
+
+    @staticmethod
+    def _web_title(url):
+        """Libellé de la ligne : l'adresse sans le « https:// »."""
+        t = url.split("://", 1)[-1].rstrip("/")
+        return t or url
+
+    def _ask_web_url(self, current=""):
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(
+            self, tr("seq_web_dlg_title"), tr("seq_web_dlg_label"), text=current)
+        return self._normalize_url(text) if ok else ""
+
+    def add_web_dialog(self):
+        url = self._ask_web_url()
+        if url:
+            self.add_web(url)
+
+    def add_web(self, url):
+        """Ajoute une ligne « site internet » (après la sélection, comme une
+        PAUSE ; en fin de liste pendant un chargement de show). Rend la ligne."""
+        if getattr(self, '_loading', False):
+            r = self.table.rowCount()
+        else:
+            current = self.table.currentRow()
+            r = current + 1 if current >= 0 else self.table.rowCount()
+        original_count = self.table.rowCount()
+        self.table.insertRow(r)
+        if r < original_count:
+            self._reindex_sequences_insert(r)
+        icon_item = QTableWidgetItem("🌐")
+        icon_item.setData(Qt.UserRole, "🌐")
+        self.table.setItem(r, 0, icon_item)
+        it = QTableWidgetItem(self._web_title(url))
+        it.setData(Qt.UserRole, WEB_PREFIX + url)
+        it.setToolTip(url)
+        self.table.setItem(r, 1, it)
+        self.table.setItem(r, 2, self._ci("--:--"))
+        self.table.setItem(r, 3, self._ci("--"))
+        self.table.setCellWidget(r, 4, self._create_dmx_cell_widget(r))
+        if not getattr(self, '_loading', False):
+            self.table.selectRow(r)
+        self.is_dirty = True
+        # Charger la page dès maintenant : prête quand on arrive sur la ligne.
+        if hasattr(self.player_ui, 'preload_web_rows'):
+            QTimer.singleShot(0, self.player_ui.preload_web_rows)
+        return r
+
+    def edit_web_url(self, row):
+        item = self.table.item(row, 1)
+        if not item or not is_web_entry(item.data(Qt.UserRole)):
+            return
+        url = self._ask_web_url(web_url(item.data(Qt.UserRole)))
+        if not url:
+            return
+        item.setData(Qt.UserRole, WEB_PREFIX + url)
+        item.setText(self._web_title(url))
+        item.setToolTip(url)
+        self.is_dirty = True
+        if hasattr(self.player_ui, 'preload_web_rows'):
+            self.player_ui.preload_web_rows()
+            if row == self.current_row:
+                self.player_ui.show_web(url)
 
     def edit_pause_duration(self, row):
         """Edite la duree d'une pause avec slider + spinboxes min/sec."""
@@ -4379,6 +4460,7 @@ class Sequencer(QFrame):
                 self.current_row = r2
             elif self.current_row == r2:
                 self.current_row = r1
+            self._schedule_link_marks()
         except Exception as e:
             print(f"Erreur swap_rows: {e}")
 
@@ -4690,7 +4772,7 @@ class Sequencer(QFrame):
         data = str(title_item.data(Qt.UserRole) or "")
         if data == "PAUSE" or data.startswith("PAUSE:"):
             self.edit_pause_duration(row)
-        elif media_icon(data) == "image":
+        elif media_icon(data) in ("image", "web"):
             self.edit_image_duration(row)
 
     def edit_image_duration(self, row):
@@ -5085,6 +5167,7 @@ class Sequencer(QFrame):
             "energy_map": list(self.player_ui.audio_ai.energy_map),
             "beats": list(self.player_ui.audio_ai.beats),
         }
+        self._ia_loaded_row = row   # audio_ai porte maintenant CETTE ligne
 
         loading.close()
         print(f"IA Lumiere: analyse pre-calculee pour ligne {row}")
@@ -5158,7 +5241,20 @@ class Sequencer(QFrame):
                     original = item.data(Qt.UserRole)
                     item.setText(original if original else "")
 
+    def _pause_screen_black(self):
+        """Noir à l'écran pour une ligne PAUSE : aperçu ET sortie vidéo externe."""
+        pu = self.player_ui
+        if hasattr(pu, 'show_black_preview'):
+            pu.show_black_preview()
+        elif hasattr(pu, 'hide_image'):
+            pu.hide_image()
+
     def play_row(self, row):
+        # Image accrochée au son du dessus : elle n'est pas une étape à elle
+        # seule. Depuis son son (Suivant) on la saute ; sinon (Précédent,
+        # double-clic, pad) on relance le son, qui la ré-affiche.
+        if self.is_row_linked(row):
+            row = row + 1 if self.current_row == row - 1 else row - 1
         if 0 <= row < self.table.rowCount():
             if self._fade_out_before(row):
                 return          # on repassera ici une fois le fondu terminé
@@ -5187,6 +5283,13 @@ class Sequencer(QFrame):
                 if self.tempo_timer and self.tempo_timer.isActive():
                     self.tempo_timer.stop()
 
+                # Option « Clear » : rig au repos à chaque changement de média
+                # (avance auto, saut manuel, PAUSE). Pas sur un média en boucle
+                # qui se rejoue : c'est le même morceau, pas un changement.
+                if (getattr(self.player_ui, 'playlist_transition', 'enchaine') == 'clear'
+                        and not (row == self.current_row and self.is_row_loop(row))):
+                    self.player_ui.playlist_clear()
+
                 item = self.table.item(row, 1)
                 data = item.data(Qt.UserRole) if item else None
 
@@ -5198,9 +5301,8 @@ class Sequencer(QFrame):
                     print(f"Pause temporisee: Attente de {seconds} secondes...")
 
                     self.player_ui.player.stop()
-                    # Cacher l'image si affichee
-                    if hasattr(self.player_ui, 'hide_image'):
-                        self.player_ui.hide_image()
+                    # Écran au noir (aperçu + sortie), quel que soit le média d'avant
+                    self._pause_screen_black()
                     self.tempo_elapsed = 0
                     self.tempo_duration = seconds * 1000
                     self.tempo_running = True
@@ -5227,9 +5329,11 @@ class Sequencer(QFrame):
                 if data == "PAUSE":
                     self.player_ui.player.stop()
                     self.player_ui.dmx_blackout()
-                    # Cacher l'image si affichee
-                    if hasattr(self.player_ui, 'hide_image'):
-                        self.player_ui.hide_image()
+                    # Écran au noir TOUJOURS. Avant, seul le préchargement du
+                    # média suivant le faisait : une PAUSE suivie d'une image,
+                    # d'un site, d'un TEMPO ou d'une autre PAUSE laissait la
+                    # dernière image de la vidéo à l'écran (et sur la sortie).
+                    self._pause_screen_black()
 
                     self.current_row = row
                     self.table.selectRow(row)
@@ -5260,13 +5364,17 @@ class Sequencer(QFrame):
                     return
 
                 # Lecture normale (media)
+                # Le média préchargé après une ligne PAUSE a mis le lecteur en
+                # « mode pause » ; le lancer ici (double-clic, suivant…) doit
+                # en sortir, sinon le prochain Play/Pause ne fait rien.
+                self.player_ui.pause_mode = False
                 self.current_row = row
                 vol_item = self.table.item(row, 3)
                 if item and vol_item:
                     path = item.data(Qt.UserRole)
 
-                    # Verifier que le fichier existe
-                    if path and not os.path.isfile(path):
+                    # Verifier que le fichier existe (un site n'est pas un fichier)
+                    if path and not is_web_entry(path) and not os.path.isfile(path):
                         msg = QMessageBox(self)
                         msg.setIcon(QMessageBox.Critical)
                         msg.setWindowTitle(tr("seq_file_not_found_title"))
@@ -5299,17 +5407,24 @@ class Sequencer(QFrame):
 
                     # IA Lumiere : utilise les donnees pre-analysees
                     if dmx_mode == "IA Lumiere":
+                        # L'IA reprend tout le rig : prises en main caduques (cf. play_sequence)
+                        self.player_ui._release_manual_grabs()
                         self.player_ui.audio_ai.reset()
                         color = self.ia_colors.get(row)
                         if color:
                             self.player_ui.audio_ai.set_dominant_color(color)
                         if row in self.ia_analysis:
                             self.player_ui.audio_ai.load_analysis(self.ia_analysis[row])
+                            self._ia_loaded_row = row
 
-                    # Gestion des images
-                    if media_icon(path) == "image":
+                    # Gestion des images — et des sites, qui s'affichent pareil
+                    # (durée optionnelle, mode DMX, REC Lumière)
+                    if media_icon(path) in ("image", "web"):
                         self.player_ui.player.stop()
-                        self.player_ui.show_image(path)
+                        if is_web_entry(path):
+                            self.player_ui.show_web(web_url(path))
+                        else:
+                            self.player_ui.show_image(path)
                         # Mettre a jour la sortie video externe
                         if hasattr(self.player_ui, '_update_video_output_state'):
                             self.player_ui._update_video_output_state()
@@ -5336,10 +5451,7 @@ class Sequencer(QFrame):
                             # Manuel = aucun MOTEUR de lumiere. On efface le look
                             # laisse par le media precedent, puis on repose ce que
                             # l'APC tient a la main (cf. restore_manual_look).
-                            for p in self.player_ui.projectors:
-                                p.level = 0
-                                p.color = QColor("black")
-                                p.base_color = QColor("black")
+                            self.player_ui.clear_engine_look()
                             self.player_ui.restore_manual_look()
                         elif dmx_mode in ["Programme", "Play Lumiere"] and row in self.sequences:
                             self.play_sequence(row)
@@ -5365,6 +5477,10 @@ class Sequencer(QFrame):
                     if fade_in > 0:
                         self.player_ui.start_audio_fade(vol / 100, fade_in)
 
+                    # Image accrochée : affichée pendant ce son (aperçu + sortie).
+                    if hasattr(self.player_ui, '_show_linked_image'):
+                        self.player_ui._show_linked_image(row)
+
                     # Mettre a jour la sortie video externe
                     if hasattr(self.player_ui, '_update_video_output_state'):
                         self.player_ui._update_video_output_state()
@@ -5375,10 +5491,7 @@ class Sequencer(QFrame):
                         # l'APC (pad couleur + fader) n'a aucune raison de s'eteindre
                         # parce qu'on lance une piste : c'est justement lui qui tient
                         # la salle entre deux morceaux. Voir restore_manual_look().
-                        for p in self.player_ui.projectors:
-                            p.level = 0
-                            p.color = QColor("black")
-                            p.base_color = QColor("black")
+                        self.player_ui.clear_engine_look()
                         self.player_ui.restore_manual_look()
                         self.player_ui.recording_waveform.hide()
                     elif dmx_mode in ["Programme", "Play Lumiere"]:
@@ -5465,7 +5578,7 @@ class Sequencer(QFrame):
             self.play_row(tempo_row)
             return
 
-        next_row = tempo_row + 1
+        next_row = self.next_step_row(tempo_row)
         if next_row < self.table.rowCount():
             self.play_row(next_row)
         else:
@@ -5588,7 +5701,12 @@ class Sequencer(QFrame):
         rattrape l'état des clips à la position courante dès le premier tick.
         """
         row = getattr(self, 'current_row', -1)
-        if row is None or row < 0 or row not in self.sequences:
+        if row is None or row < 0:
+            return
+        if self.get_dmx_mode(row) == "IA Lumiere":
+            self._ensure_ia_analysis_loaded(row)
+            return
+        if row not in self.sequences:
             return
         if self.get_dmx_mode(row) not in ("Programme", "Play Lumiere"):
             return
@@ -5606,12 +5724,44 @@ class Sequencer(QFrame):
         if not deja_arme:
             self.play_sequence(row)
 
+    def _ensure_ia_analysis_loaded(self, row):
+        """Recharge dans `audio_ai` la pré-analyse de la ligne IA `row`.
+
+        Même trou que pour le REC Lumière : seul `play_row()` la chargeait. Or
+        une ligne PAUSE précharge le média suivant SANS `play_row` (elle pose
+        juste `current_row`), et la fin d'un morceau IA fait `audio_ai.reset()`.
+        Lancer ce média par Play (bouton, espace…) jouait le son avec une IA
+        vide, donc sans lumière — il fallait double-cliquer (client danois,
+        02/10/26). `_ia_loaded_row` dit à quelle
+        ligne appartient l'analyse en mémoire : celle d'une autre ligne (passée
+        en IA entre-temps, ce qui l'analyse) ne doit pas piloter ce morceau.
+        """
+        ai = self.player_ui.audio_ai
+        if ai.analyzed and getattr(self, '_ia_loaded_row', None) == row:
+            return      # reprise après pause : rien à recharger
+        if row not in self.ia_analysis:
+            return
+        # Comme `play_row` : l'IA reprend tout le rig, prises en main caduques.
+        if hasattr(self.player_ui, '_release_manual_grabs'):
+            self.player_ui._release_manual_grabs()
+        color = self.ia_colors.get(row)
+        if color:
+            ai.set_dominant_color(color)
+        ai.load_analysis(self.ia_analysis[row])
+        self._ia_loaded_row = row
+
     def play_sequence(self, row):
         """Joue une sequence"""
         if row not in self.sequences:
             return
 
         sequence = self.sequences[row]
+
+        # La timeline repeint tout le rig sans regarder les prises en main du
+        # plan 2D : elle les rend caduques. Les garder ferait survivre sa
+        # dernière image au média Manuel suivant (cf. clear_engine_look).
+        if hasattr(self.player_ui, '_release_manual_grabs'):
+            self.player_ui._release_manual_grabs()
 
         if "clips" in sequence:
             self.play_timeline_sequence(row)
@@ -6531,6 +6681,71 @@ class Sequencer(QFrame):
         """Bascule l'état boucle depuis le menu contextuel."""
         self.set_row_loop(row, not self.is_row_loop(row))
 
+    # ── Image « lancée avec le son précédent » ────────────────────────────────
+
+    def _row_media_kind(self, row):
+        """'audio' / 'video' / 'image' / 'file', ou None (PAUSE, TEMPO, hors table)."""
+        if not 0 <= row < self.table.rowCount():
+            return None
+        item = self.table.item(row, 1)
+        path = item.data(Qt.UserRole) if item else None
+        if not path or str(path).startswith("PAUSE"):
+            return None
+        return media_icon(path)
+
+    def can_link_row(self, row) -> bool:
+        """Une image dont la ligne du dessus est un son peut s'y accrocher."""
+        return self._row_media_kind(row) == "image" and self._row_media_kind(row - 1) == "audio"
+
+    def is_row_linked(self, row) -> bool:
+        """True si l'image de cette ligne se lance avec le son du dessus.
+
+        Le drapeau seul ne suffit pas : déplacée sous une vidéo ou une PAUSE,
+        l'image redevient une ligne ordinaire (le drapeau reste posé et
+        reprendra effet si elle revient sous un son).
+        """
+        item = self.table.item(row, 1) if 0 <= row < self.table.rowCount() else None
+        return bool(item and item.data(self.LINK_ROLE)) and self.can_link_row(row)
+
+    def set_row_linked(self, row, enabled: bool):
+        item = self.table.item(row, 1)
+        if not item:
+            return
+        item.setData(self.LINK_ROLE, True if enabled else None)
+        self._refresh_row_marks(row)
+        self.is_dirty = True
+
+    def toggle_row_linked(self, row):
+        self.set_row_linked(row, not self.is_row_linked(row))
+
+    def _schedule_link_marks(self):
+        """Repose le maillon des images au prochain tour de boucle (une fois
+        les lignes entièrement remplies)."""
+        if getattr(self, '_link_marks_pending', False):
+            return
+        self._link_marks_pending = True
+
+        def _go():
+            self._link_marks_pending = False
+            for r in range(self.table.rowCount()):
+                item = self.table.item(r, 1)
+                if item and item.data(self.LINK_ROLE):
+                    self._refresh_row_marks(r)
+        QTimer.singleShot(0, _go)
+
+    def linked_image_path(self, row):
+        """Chemin de l'image accrochée au son de `row`, sinon None."""
+        if self._row_media_kind(row) != "audio" or not self.is_row_linked(row + 1):
+            return None
+        return self.table.item(row + 1, 1).data(Qt.UserRole)
+
+    def next_step_row(self, row):
+        """Ligne qui suit `row` dans le déroulé : saute l'image accrochée."""
+        nxt = row + 1
+        if self.is_row_linked(nxt):
+            nxt += 1
+        return nxt
+
     # ── Marqueurs visuels de la ligne (boucle + fondus) ───────────────────────
     # Boucle et fondus se signalent sur la MÊME case — l'item titre n'a qu'un
     # emplacement d'icône et une infobulle. D'où ce point unique : quand chacun
@@ -6547,18 +6762,19 @@ class Sequencer(QFrame):
     _MARK_SLOT = 32                       # rendu 2× pour rester net une fois réduit
     MARK_ICON_SIZE = (32, 16)             # taille d'affichage dans la table
 
-    def _row_marks_icon(self, loop: bool, fade_in: int, fade_out: int):
-        """Icône d'état de la ligne : rampe(s) de fondu + symbole de boucle."""
+    def _row_marks_icon(self, loop: bool, fade_in: int, fade_out: int, link: bool = False):
+        """Icône d'état de la ligne : rampe(s) de fondu (ou maillon d'une image
+        accrochée — une image n'a pas de fondu audio) + symbole de boucle."""
         from PySide6.QtGui import QIcon, QPixmap, QPainter
         from PySide6.QtSvg import QSvgRenderer
         from PySide6.QtCore import QByteArray, QRectF
-        cle = (loop, bool(fade_in), bool(fade_out))
+        cle = (loop, bool(fade_in), bool(fade_out), bool(link))
         cache = getattr(self, '_row_icon_cache', None)
         if cache is None:
             cache = self._row_icon_cache = {}
         if cle in cache:
             return cache[cle]
-        if cle == (False, False, False):
+        if cle == (False, False, False, False):
             cache[cle] = QIcon()
             return cache[cle]
 
@@ -6572,6 +6788,11 @@ class Sequencer(QFrame):
             fondu = f'<path fill="{f}" d="M3 21 L21 5 L21 21 Z"/>'
         elif fade_out:
             fondu = f'<path fill="{f}" d="M3 5 L21 21 L3 21 Z"/>'
+        elif link:
+            fondu = ('<path fill="#b388ff" d="M10.6 13.4a1 1 0 0 1 0-1.4l3.5-3.5a3 3 0 1 1 4.2 4.2'
+                     'l-2 2-1.4-1.4 2-2a1 1 0 1 0-1.4-1.4l-3.5 3.5a1 1 0 0 1-1.4 0zM13.4 10.6'
+                     'a1 1 0 0 1 0 1.4l-3.5 3.5a3 3 0 1 1-4.2-4.2l2-2 1.4 1.4-2 2a1 1 0 1 0 1.4 1.4'
+                     'l3.5-3.5a1 1 0 0 1 1.4 0z"/>')
         else:
             fondu = ""
         boucle = ('<path fill="#00d4ff" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3'
@@ -6625,12 +6846,15 @@ class Sequencer(QFrame):
             return
         loop = bool(item.data(self.LOOP_ROLE))
         fi, fo = self.get_row_fades(row)
-        item.setIcon(self._row_marks_icon(loop, fi, fo))
+        link = self.is_row_linked(row)
+        item.setIcon(self._row_marks_icon(loop, fi, fo, link))
         # Teinte cyan réservée à la boucle : c'est elle qui change ce que fait
         # la playlist (elle ne passe plus au suivant). Un fondu, lui, ne se
         # signale que par son icône ambre — sinon toute la liste serait colorée.
         item.setForeground(QBrush(QColor("#00d4ff") if loop else QColor("#e0e0e0")))
         bulles = []
+        if link:
+            bulles.append(tr("seq_link_tip"))
         if loop:
             bulles.append(tr("seq_menu_loop"))
         resume = self._fade_summary(fi, fo)
@@ -6874,9 +7098,18 @@ class Sequencer(QFrame):
         if media_type in ("audio", "video"):
             entrees_media.append((tr("seq_menu_volume"),
                                   lambda: self.edit_media_volume(row)))
+        if media_type == "web":
+            entrees_media.append((tr("seq_menu_edit_web"),
+                                  lambda: self.edit_web_url(row)))
+            entrees_media.append((tr("seq_menu_set_duration"),
+                                  lambda: self.edit_image_duration(row)))
         if media_type == "image":
             entrees_media.append((tr("seq_menu_set_duration"),
                                   lambda: self.edit_image_duration(row)))
+            if self.can_link_row(row):
+                entrees_media.append((
+                    tr("seq_menu_link_off") if self.is_row_linked(row) else tr("seq_menu_link"),
+                    lambda: self.toggle_row_linked(row)))
         if media_type in ("audio", "video"):
             # Valeurs en clair dans le libellé : le seul autre repère est
             # l'infobulle de la ligne, qu'il faut survoler pour voir.

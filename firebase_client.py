@@ -59,22 +59,41 @@ class CloudFunctionUnreachable(Exception):
 
 
 def has_internet(timeout: float = 3.0) -> bool:
-    """Test rapide de connectivité HTTPS vers les serveurs Firebase (port 443)."""
+    """Test rapide de connectivité HTTPS vers les serveurs Firebase (port 443).
+
+    ⚠️ Les hôtes sont essayés EN PARALLÈLE et `timeout` borne le tout : en
+    série, hors-ligne, c'était 3 × `timeout` — et `settimeout` ne couvre pas la
+    résolution DNS, qui peut traîner bien plus sur un Mac sans serveur DNS
+    (lien direct vers le node). Le démarrage dépassait son délai et l'app se
+    déclarait « non activée ». Un fil bloqué dans le DNS meurt avec l'app.
+    """
+    import threading
     hosts = [
         ("identitytoolkit.googleapis.com", 443),
         ("firestore.googleapis.com", 443),
         ("8.8.8.8", 53),  # fallback DNS si les domaines ne résolvent pas
     ]
-    for host, port in hosts:
+    ok = threading.Event()
+
+    def _essai(host, port):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(timeout)
             s.connect((host, port))
             s.close()
-            return True
+            ok.set()
         except Exception:
-            continue
-    return False
+            pass
+
+    fils = [threading.Thread(target=_essai, args=hp, daemon=True) for hp in hosts]
+    for f in fils:
+        f.start()
+    fin = time.time() + timeout
+    while not ok.is_set() and time.time() < fin:
+        if not any(f.is_alive() for f in fils):
+            break   # tous ont échoué : inutile d'attendre la fin du délai
+        ok.wait(0.05)
+    return ok.is_set()
 
 
 # ---------------------------------------------------------------

@@ -167,6 +167,14 @@ class LightTimelineEditor(QDialog):
             self.media_duration_override = 60000  # 60s par defaut pour editeur
             self.media_path = ""
             self.media_name = "Pause"
+        elif str(self.media_path or "").startswith("WEB:"):
+            # Site internet : pas de son, sa durée est celle posée sur la ligne
+            # (exigée avant d'ouvrir l'éditeur) — traité comme une pause timée.
+            self.is_tempo = True
+            web_secs = main_window.seq.image_durations.get(media_row, 60)
+            self.media_duration_override = int(web_secs) * 1000
+            self.media_name = self.media_name or "Site"
+            self.media_path = ""
         elif self.media_path and (str(self.media_path).startswith("PAUSE:") or str(self.media_path).startswith("TEMPO:")):
             self.is_tempo = True
             pause_seconds = int(str(self.media_path).split(":")[1])

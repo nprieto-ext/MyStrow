@@ -106,6 +106,56 @@ if sys.platform == "darwin" and getattr(sys, 'frozen', False):
 
 
 # ------------------------------------------------------------------
+# macOS : PAS D'APP NAP
+# Dès que MyStrow n'est plus au premier plan (autre fenêtre, autre app),
+# macOS le met en veille partielle : les time.sleep() de 1,5 ms de la boucle
+# USB (break par baud-rate trick, artnet_dmx._enttec_loop) durent des dizaines
+# de ms, la cadence s'effondre et les projecteurs perdent le signal (OPTO
+# passif : c'est le Mac qui fait le timing DMX). Doublé par NSAppSleepDisabled
+# dans MyStrow.spec ; ce bloc couvre aussi le lancement depuis les sources.
+# ------------------------------------------------------------------
+_APP_NAP_ACTIVITY = None   # gardé toute la vie du process : le relâcher = fin de l'activité
+
+def _disable_app_nap():
+    global _APP_NAP_ACTIVITY
+    import ctypes
+    import ctypes.util
+    objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+    ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation")
+    objc.objc_getClass.restype = ctypes.c_void_p
+    objc.objc_getClass.argtypes = [ctypes.c_char_p]
+    objc.sel_registerName.restype = ctypes.c_void_p
+    objc.sel_registerName.argtypes = [ctypes.c_char_p]
+    # objc_msgSend n'est pas variadique sur arm64 : un prototype exact par signature
+    _addr = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+    _vp = ctypes.c_void_p
+    send0 = ctypes.CFUNCTYPE(_vp, _vp, _vp)(_addr)
+    send_str = ctypes.CFUNCTYPE(_vp, _vp, _vp, ctypes.c_char_p)(_addr)
+    send_activity = ctypes.CFUNCTYPE(_vp, _vp, _vp, ctypes.c_uint64, _vp)(_addr)
+    sel = objc.sel_registerName
+
+    NSActivityUserInitiated = 0x00FFFFFF
+    NSActivityLatencyCritical = 0xFF00000000
+    info = send0(objc.objc_getClass(b"NSProcessInfo"), sel(b"processInfo"))
+    reason = send_str(objc.objc_getClass(b"NSString"), sel(b"stringWithUTF8String:"),
+                      "Sortie DMX temps réel".encode("utf-8"))
+    token = send_activity(info, sel(b"beginActivityWithOptions:reason:"),
+                          NSActivityUserInitiated | NSActivityLatencyCritical, reason)
+    if not token:
+        raise RuntimeError("beginActivityWithOptions a renvoyé nil")
+    # Le jeton est autoreleased : sans retain, la vidange du pool Cocoa le
+    # libérerait et macOS reprendrait la mise en veille.
+    _APP_NAP_ACTIVITY = send0(token, sel(b"retain"))
+
+if sys.platform == "darwin":
+    try:
+        _disable_app_nap()
+        print("[MyStrow] App Nap désactivé (activité latency-critical)", flush=True)
+    except Exception as _e:
+        print(f"[MyStrow] App Nap : désactivation impossible ({_e})", flush=True)
+
+
+# ------------------------------------------------------------------
 # CAPTURE DES CRASHS — Windows / Linux (macOS frozen a son propre bloc ci-dessus)
 # But : un crash NATIF (segfault Qt, plugin multimedia ffmpeg/WMF, driver audio,
 # décodage d'un .wav/.mp4 exotique…) ne laisse AUCUNE trace sur Windows sans
@@ -149,6 +199,48 @@ if not (sys.platform == "darwin" and getattr(sys, "frozen", False)):
         sys.excepthook = _log_excepthook
     except Exception:
         pass
+
+
+def _install_freeze_watchdog(app, delai_s=5):
+    """Fenêtre figée → piles d'appels de tous les threads dans le log de crash.
+
+    Un gel ne laisse AUCUNE trace : pas de crash, donc rien pour faulthandler,
+    et l'utilisateur finit par tuer le process. Ici un timer de la boucle Qt
+    réarme toutes les secondes `dump_traceback_later` ; s'il ne passe plus
+    pendant `delai_s`, c'est que la boucle est bloquée et le dump part.
+
+    Pourquoi `dump_traceback_later` et pas un thread Python qui surveille :
+    son minuteur est un thread C qui n'a PAS besoin du GIL. Un thread Python
+    resterait lui-même bloqué si le thread principal garde le GIL dans un
+    appel Qt, c'est-à-dire précisément dans le cas qu'on veut attraper.
+    Un seul dump par gel (repeat=False), puis une ligne « reprise » si
+    l'interface revient, avec la durée.
+    """
+    log = _CRASH_LOG_FILE or _MAC_LOG_FILE
+    if log is None:
+        return
+    import datetime as _dt
+    dernier = [time.monotonic()]
+
+    def _battement():
+        maintenant = time.monotonic()
+        gel = maintenant - dernier[0]
+        dernier[0] = maintenant
+        try:
+            if gel > delai_s:
+                print(f"[Gel] interface bloquée {gel:.1f} s, reprise à "
+                      f"{_dt.datetime.now():%H:%M:%S}", file=log, flush=True)
+            faulthandler.dump_traceback_later(delai_s, repeat=False,
+                                              file=log, exit=False)
+        except Exception:
+            pass
+
+    timer = QTimer(app)
+    timer.timeout.connect(_battement)
+    timer.start(1000)
+    app._freeze_watchdog = timer
+    app.aboutToQuit.connect(faulthandler.cancel_dump_traceback_later)
+    _battement()
 
 
 def _mac_fatal(title: str, msg: str):
@@ -579,7 +671,18 @@ def main():
     if not dmx_shown:
         splash.set_hw_status("node", _dmx_box[1], _dmx_box[0], detail=_dmx_box[2])
 
-    license_result = _license_box[0] or _result_not_activated()
+    # Vérification en ligne pas finie à temps (réseau sans Internet, DNS qui
+    # traîne) : on tranche sur le cache local, comme hors-ligne. « Non activé »
+    # ici refusait l'app à un client licencié (client Alexander, 05/10/2026).
+    license_result = _license_box[0]
+    if license_result is None:
+        try:
+            from license_manager import verify_license_cached
+            license_result = verify_license_cached()
+            print("Licence : vérification en ligne trop lente, verdict du cache local")
+        except Exception as e:
+            print(f"Licence : repli cache impossible : {e}")
+            license_result = _result_not_activated()
     print(f"Licence: {license_result}")
 
     # Afficher le statut licence sur le splash
@@ -638,6 +741,9 @@ def main():
     if _node_config_ip:
         QTimer.singleShot(800, lambda: window.open_node_wizard_at_ip_manual(_node_config_ip))
 
+    # Armé seulement une fois la fenêtre affichée : le chargement (splash,
+    # licence, MainWindow) bloque légitimement la boucle plusieurs secondes.
+    _install_freeze_watchdog(app)
     sys.exit(app.exec())
 
 # ------------------------------------------------------------------

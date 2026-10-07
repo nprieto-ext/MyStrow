@@ -1512,6 +1512,17 @@ class _PersistentMenu(QMenu):
     handlers individuels — pour intercepter les clics sur les zones QWidgetAction.
     """
 
+    def keyPressEvent(self, e):
+        # ← / → / ↑ : Préc. / Suiv. / Tous, quand le menu porte la barre de
+        # parcours (`_step_cb`). Sinon QMenu garde ses flèches habituelles.
+        cb = getattr(self, '_step_cb', None)
+        if cb is not None and not e.modifiers():
+            pas = {Qt.Key_Left: -1, Qt.Key_Right: +1, Qt.Key_Up: 0}.get(e.key())
+            if pas is not None:
+                cb(pas)
+                return
+        super().keyPressEvent(e)
+
     def event(self, e):
         t = e.type()
         if t == QEvent.Type.Wheel and self._faire_defiler(e):
@@ -1752,7 +1763,13 @@ def _ecrire_canal_modele(proj, ctype, valeur):
 
     if ctype == "Strobe":
         # Le moteur étale 0-100 % sur 16-250 ; en dessous de 16, strobe éteint.
+        # La valeur brute est gardée à côté : sans elle, 255 ressortait 250
+        # (plafond de l'étalement) et le suivi live ramenait le curseur à 250
+        # sous les doigts — « je le règle à 255, il redescend à 250 ». Le
+        # moteur ne l'émet que tant que `strobe_speed` est celle qu'elle a
+        # produite : un pad ou un effet qui change la vitesse reprend la main.
         proj.strobe_speed = strobe_speed_from_dmx(v)
+        proj.strobe_dmx_raw = v
         return True
 
     if ctype == "Shutter":
@@ -4596,6 +4613,14 @@ class FixtureCanvas(QWidget):
             self.pdf.selected_lamps.clear()
             self.update()
             self._notify_cpb()
+        elif (event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up)
+              and not self._editable and not event.modifiers()
+              and self.pdf.selected_lamps
+              and hasattr(self.pdf, 'step_selection')):
+            # Plan de feu principal (les flèches n'y déplacent rien) :
+            # ← / → = projecteur précédent / suivant du groupe, ↑ = tous.
+            self.pdf.step_selection({Qt.Key_Left: -1, Qt.Key_Right: +1,
+                                     Qt.Key_Up: 0}[event.key()])
         elif event.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
             if not self._editable or not self.pdf.selected_lamps:
                 super().keyPressEvent(event)
@@ -5532,6 +5557,60 @@ class PlanDeFeu(QFrame):
     def selection_rank_map(self):
         """{(groupe, index_local): rang 0-based} de la sélection ordonnée."""
         return {k: i for i, k in enumerate(self.selection_ordered())}
+
+    # ── Préc. / Tous / Suiv. : parcourir un groupe projecteur par projecteur ──
+
+    def _step_pool_courant(self):
+        """(pool, pos) du parcours en cours.
+
+        `pool` = la sélection de départ, dans l'ordre de sélection ; `pos` =
+        rang du projecteur visé, ou None quand on est sur « Tous ». Le parcours
+        n'est gardé que si la sélection est encore celle qu'il a posée : dès
+        qu'on sélectionne autre chose (clic, SELEC, Ctrl+A…), la nouvelle
+        sélection devient le pool.
+        """
+        sel  = set(self.selected_lamps)
+        pool = list(getattr(self, '_step_pool', None) or [])
+        pos  = getattr(self, '_step_pos', None)
+        valide = bool(pool) and (
+            (pos is None and sel == set(pool))
+            or (pos is not None and 0 <= pos < len(pool) and sel == {pool[pos]}))
+        if not valide:
+            pool, pos = self.selection_ordered(), None
+            self._step_pool, self._step_pos = pool, pos
+        return pool, pos
+
+    def step_selection(self, direction):
+        """+1 = suivant, -1 = précédent, 0 = tous. Boucle du dernier au 1er.
+
+        Ne touche à AUCUN réglage : le projecteur quitté garde ce qu'on lui a
+        fait, comme sur une console. Renvoie l'index global du projecteur qui
+        « porte » la nouvelle sélection (pour rouvrir le menu dessus), ou None
+        s'il n'y a rien à parcourir.
+        """
+        pool, pos = self._step_pool_courant()
+        if len(pool) < 2:
+            return None
+        if direction == 0:
+            pos = None
+            nouvelle = list(pool)
+        else:
+            if pos is None:
+                pos = 0 if direction > 0 else len(pool) - 1
+            else:
+                pos = (pos + direction) % len(pool)
+            nouvelle = [pool[pos]]
+        self._step_pos = pos
+        self.selected_lamps.clear()
+        self.selected_lamps.update(nouvelle)
+        self.selected_lamps_ordered = list(nouvelle)
+        self.refresh()
+        self.canvas._notify_cpb()
+        keys = projector_selection_keys(self.projectors)
+        try:
+            return keys.index(nouvelle[0])
+        except ValueError:
+            return None
 
     # ── Symétrie Pan (bouton ⇄ SYM) ──────────────────────────────────
 
@@ -6752,6 +6831,53 @@ class PlanDeFeu(QFrame):
         close_menu_btn.clicked.connect(menu.close)
         title_h.addWidget(close_menu_btn)
         _wa(title_w)
+
+        # ── ◀ Préc. · Tous · Suiv. ▶ ───────────────────────────────────────
+        # Régler un groupe projecteur par projecteur sans le perdre : chaque pas
+        # rouvre le menu sur le projecteur visé (même mécanique que la bascule
+        # Curseurs), « Tous » rend le groupe entier. Clavier : ← → et ↑.
+        _pool, _pos = self._step_pool_courant()
+        if len(_pool) > 1:
+            def _pas(direction):
+                nouvel_idx = self.step_selection(direction)
+                if nouvel_idx is None:
+                    return
+                menu.close()
+                QTimer.singleShot(0, lambda: self._show_fixture_context_menu(
+                    global_pos, nouvel_idx))
+
+            _STEP_SS = (
+                "QPushButton{background:#1a1a1a;color:#aaa;border:1px solid #333;border-radius:4px;"
+                "font-size:11px;font-weight:bold;padding:2px 10px;min-height:24px;}"
+                "QPushButton:hover{background:#0d1f2a;color:#00d4ff;border-color:#00566a;}"
+                "QPushButton:checked{background:#0d2a33;color:#00d4ff;border-color:#00d4ff;}"
+            )
+            step_w = QWidget(); step_h = QHBoxLayout(step_w)
+            step_h.setContentsMargins(10, 0, 10, 2); step_h.setSpacing(6)
+            b_prev = QPushButton(tr("pdf_step_prev"))
+            b_all  = QPushButton(tr("pdf_step_all", n=len(_pool)))
+            b_next = QPushButton(tr("pdf_step_next"))
+            b_all.setCheckable(True)
+            b_all.setChecked(_pos is None)
+            for b in (b_prev, b_all, b_next):
+                b.setStyleSheet(_STEP_SS)
+                b.setFocusPolicy(Qt.NoFocus)
+            b_prev.setToolTip(tr("pdf_step_tip"))
+            b_next.setToolTip(tr("pdf_step_tip"))
+            b_all.setToolTip(tr("pdf_step_tip"))
+            b_prev.clicked.connect(lambda: _pas(-1))
+            b_all.clicked.connect(lambda: _pas(0) if _pos is not None else b_all.setChecked(True))
+            b_next.clicked.connect(lambda: _pas(+1))
+            pos_lbl = QLabel(f"{_pos + 1} / {len(_pool)}" if _pos is not None else "")
+            pos_lbl.setStyleSheet("color:#00d4ff;font-size:11px;font-weight:bold;"
+                                  "border:none;background:transparent;")
+            step_h.addWidget(b_prev)
+            step_h.addWidget(b_all, 1)
+            step_h.addWidget(b_next)
+            step_h.addWidget(pos_lbl)
+            _wa(step_w)
+            menu._step_cb = _pas
+
         menu.addSeparator()
 
         # Vue brute : elle REMPLACE le panneau métier, elle ne s'y ajoute pas.

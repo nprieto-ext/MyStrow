@@ -123,14 +123,10 @@ class SplashScreen(QWidget):
     def __init__(self):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setFixedSize(420, 380)
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
-
-        self.setStyleSheet("""
-            SplashScreen {
-                background: #1a1a1a;
-                border: 2px solid #00d4ff;
-            }
-        """)
+        # Fenêtre transparente : le fond à coins arrondis est peint dans
+        # paintEvent. Un border-radius en feuille de style laisserait les coins
+        # carrés d'une fenêtre de premier niveau opaque.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 20, 30, 16)
@@ -208,6 +204,14 @@ class SplashScreen(QWidget):
         layout.addWidget(self.status_label)
 
         self._center_on_screen()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#1a1a1a"))
+        p.drawRoundedRect(self.rect(), 14, 14)
+        p.end()
 
     def _create_status_row(self, label_text, initial_value):
         """Cree une ligne de statut avec indicateur et texte"""

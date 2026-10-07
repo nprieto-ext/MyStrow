@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.1"
+VERSION = "3.2.2"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -351,8 +351,24 @@ def fmt_time(ms):
     return f"{s//60:02d}:{s%60:02d}"
 
 
+# Ligne « site internet » de la playlist : le chemin est « WEB:<url> ».
+WEB_PREFIX = "WEB:"
+
+
+def is_web_entry(data) -> bool:
+    return isinstance(data, str) and data.startswith(WEB_PREFIX)
+
+
+def web_url(data) -> str:
+    """URL d'une entrée « WEB:… » ; chaîne vide si ce n'en est pas une."""
+    return data[len(WEB_PREFIX):] if is_web_entry(data) else ""
+
+
 def media_icon(path):
     """Retourne un emoji selon le type de fichier media"""
+    # Avant l'extension : une URL qui finit en .mp4 ou .png reste un site.
+    if is_web_entry(path):
+        return "web"
     ext = Path(path).suffix.lower()
     if ext in AUDIO_EXTENSIONS:
         return "audio"
@@ -1790,7 +1806,14 @@ def message_erreur_reseau(exc) -> str:
     if dns:
         return tr("net_err_dns")
     if "ssl" in texte or "certificat" in texte or "handshake" in texte:
-        return tr("net_err_ssl")
+        # La cause technique suit la phrase : « SSL refusé » recouvre des pannes
+        # sans rapport (racine inconnue d'un antivirus, proxy qui parle HTTP,
+        # connexion coupée en plein handshake…) et, sans elle, la photo d'écran
+        # d'un client ne permet pas de trancher (Lindthout, 03/10/2026).
+        detail = str(getattr(cause, "reason", None) or cause).strip()
+        if len(detail) > 140:
+            detail = detail[:140] + "…"
+        return f"{tr('net_err_ssl')}\n({detail})" if detail else tr("net_err_ssl")
     if "timed out" in texte or "timeout" in texte:
         return tr("net_err_timeout")
     if "refused" in texte or "unreachable" in texte or "10061" in texte:

@@ -52,6 +52,7 @@ class FauxWin:
     _clear_akai_state    = mw.MainWindow._clear_akai_state
     update_effect        = mw.MainWindow.update_effect
     _run_effect_frame    = mw.MainWindow._run_effect_frame
+    _fx_col_amp          = mw.MainWindow._fx_col_amp
     _sync_effect_baseline = mw.MainWindow._sync_effect_baseline
     _record_effect_frame = mw.MainWindow._record_effect_frame
     _effect_state_tuple  = mw.MainWindow._effect_state_tuple
