@@ -197,7 +197,11 @@
     if (!Dmx) return;
     try {
       const r = await Dmx.usbDevices();
-      const lines = r.devices.map((d) => (d.serial ? "✓ " : "· ") + d.name + (d.serial ? "  (" + d.driver + ")" : "  (non reconnu)"));
+      const lines = r.devices.map((d) => (d.serial || d.net ? "✓ " : "· ") + d.name
+        + (d.serial ? "  (" + d.driver + ")"
+          : d.net ? "  (USB NODE, carte réseau " + d.net + " : choisir « Node Art-Net », adresse 2.0.0.15)"
+          : "  (non reconnu)")
+        + (d.interfaces ? "\n    " + d.interfaces : ""));
       $("usb-list").textContent = (lines.length ? lines.join("\n") : "Aucun appareil USB branché.")
         + (r.kernel && r.kernel.length ? "\n\nVu par le noyau :\n" + r.kernel.join("\n") : "");
       log({ event: "usb", devices: r.devices, kernel: r.kernel });

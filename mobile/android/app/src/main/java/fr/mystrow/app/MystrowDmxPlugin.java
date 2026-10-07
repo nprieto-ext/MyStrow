@@ -5,8 +5,11 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
+import android.hardware.usb.UsbEndpoint;
+import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
@@ -51,6 +54,9 @@ import java.util.List;
  *                  tablette comme une carte réseau USB (2.0.0.x). Node hors du
  *                  réseau de la tablette (node en 2.0.0.15 sur la box, tablette
  *                  en 192.168.1.x) : envoi en diffusion, seul moyen de l'atteindre ;
+ *                  USB NODE branché mais qu'Android n'a pas monté en réseau
+ *                  (« usb0 » ignoré, Huawei sans service Ethernet) : l'app le
+ *                  pilote elle-même en USB (UsbNetOutput, CDC-NCM ou ECM) ;
  *   - « usb »    : deux familles d'interfaces, reconnues toutes seules :
  *       · passive (Open DMX : Opto ElectroConcept, FTDI, CH340…) : la
  *         tablette génère elle-même break + trame à 250 kbauds ;
@@ -137,6 +143,230 @@ public class MystrowDmxPlugin extends Plugin {
         }
         @Override public long busyNs() { return 0; }
         @Override public void close() { socket.close(); }
+        @Override public String describe() { return name; }
+    }
+
+    // ── Node Art-Net USB piloté par l'app (CDC-NCM / ECM) ───────────────────
+    //
+    // Le USB NODE est une carte réseau USB. iPadOS, Windows et macOS la montent
+    // seuls ; Android souvent non (interface « usb0 » ignorée par le service
+    // Ethernet, qui ne prend que « eth* » ; Huawei : pas de service Ethernet du
+    // tout). L'API USB Host d'Android laisse en revanche l'app parler au
+    // boîtier : on fabrique nous-mêmes les trames Ethernet → IPv4 → UDP →
+    // ArtDMX, emballées en NTB16 (NCM) ou brutes (ECM). Lien direct
+    // tablette ↔ boîtier : pas de DHCP, on prend une adresse voisine du node.
+
+    /** Interfaces d'une carte réseau USB CDC (NCM ou ECM). */
+    private static final class UsbNetIfaces {
+        UsbInterface control, data;
+        UsbEndpoint out, in;
+        boolean ncm;
+    }
+
+    private static final int CDC_SUBCLASS_ECM = 0x06, CDC_SUBCLASS_NCM = 0x0D;
+
+    private static UsbNetIfaces findUsbNet(UsbDevice d) {
+        UsbNetIfaces r = new UsbNetIfaces();
+        for (int i = 0; i < d.getInterfaceCount() && r.control == null; i++) {
+            UsbInterface f = d.getInterface(i);
+            if (f.getInterfaceClass() == UsbConstants.USB_CLASS_COMM
+                    && (f.getInterfaceSubclass() == CDC_SUBCLASS_NCM || f.getInterfaceSubclass() == CDC_SUBCLASS_ECM)) {
+                r.control = f;
+                r.ncm = f.getInterfaceSubclass() == CDC_SUBCLASS_NCM;
+            }
+        }
+        if (r.control == null) return null;
+        // L'interface de données a deux réglages : 0 sans points d'accès (repos),
+        // 1 avec les deux points bulk (actif). Android les liste séparément.
+        for (int i = 0; i < d.getInterfaceCount(); i++) {
+            UsbInterface f = d.getInterface(i);
+            if (f.getInterfaceClass() != UsbConstants.USB_CLASS_CDC_DATA) continue;
+            UsbEndpoint o = null, in = null;
+            for (int e = 0; e < f.getEndpointCount(); e++) {
+                UsbEndpoint ep = f.getEndpoint(e);
+                if (ep.getType() != UsbConstants.USB_ENDPOINT_XFER_BULK) continue;
+                if (ep.getDirection() == UsbConstants.USB_DIR_OUT) o = ep; else in = ep;
+            }
+            if (o != null && in != null) { r.data = f; r.out = o; r.in = in; return r; }
+        }
+        return null;
+    }
+
+    private static UsbDevice findUsbNetDevice(UsbManager usb) {
+        if (usb == null) return null;
+        for (UsbDevice d : usb.getDeviceList().values()) if (findUsbNet(d) != null) return d;
+        return null;
+    }
+
+    private static void le16(byte[] b, int off, int v) { b[off] = (byte) v; b[off + 1] = (byte) (v >> 8); }
+    private static void be16(byte[] b, int off, int v) { b[off] = (byte) (v >> 8); b[off + 1] = (byte) v; }
+    private static int rd16(byte[] b, int off) { return (b[off] & 0xFF) | (b[off + 1] & 0xFF) << 8; }
+    private static int rd32(byte[] b, int off) { return rd16(b, off) | rd16(b, off + 2) << 16; }
+
+    private static final class UsbNetOutput implements Output {
+        private static final byte[] BCAST = {-1, -1, -1, -1, -1, -1};
+        private final UsbDeviceConnection conn;
+        private final UsbNetIfaces ifs;
+        // Adresse matérielle « locale » (bit 0x02) : 02 M S T R W.
+        private final byte[] srcMac = {0x02, 0x4D, 0x53, 0x54, 0x52, 0x57};
+        private byte[] dstMac = BCAST;
+        private final byte[] srcIp, dstIp;
+        private final int port;
+        private final byte[] artnet = new byte[18 + 512];
+        private final byte[] frame = new byte[14 + 20 + 8 + 18 + 512];
+        private final byte[] block = new byte[512 + 14 + 20 + 8 + 18 + 512];
+        private int seq, ntbSeq, ipId;
+        // Paramètres NTB (GET_NTB_PARAMETERS), valeurs par défaut de la norme sinon.
+        private int ndpAlign = 4, outDivisor = 4, outRemainder = 0, inMax = 2048;
+        private final String name;
+
+        UsbNetOutput(UsbDeviceConnection conn, UsbDevice dev, UsbNetIfaces ifs, String host, int port, int universe) throws Exception {
+            this.conn = conn;
+            this.ifs = ifs;
+            this.port = port;
+            InetAddress t = InetAddress.getByName(host);
+            if (!(t instanceof Inet4Address)) throw new Exception("adresse IPv4 attendue : " + host);
+            dstIp = t.getAddress();
+            srcIp = dstIp.clone();
+            srcIp[3] = (byte) ((dstIp[3] & 0xFF) == 2 ? 3 : 2);
+            // force = true : détache le pilote du noyau (cdc_ncm) s'il les tenait.
+            if (!conn.claimInterface(ifs.control, true)) throw new Exception("interface de contrôle occupée");
+            if (!conn.claimInterface(ifs.data, true)) throw new Exception("interface de données occupée");
+            if (!conn.setInterface(ifs.data)) throw new Exception("activation de l'interface de données refusée");
+            int ctl = ifs.control.getId();
+            if (ifs.ncm) {
+                byte[] p = new byte[28];
+                if (conn.controlTransfer(0xA1, 0x80, 0, ctl, p, p.length, 300) >= 28) {   // GET_NTB_PARAMETERS
+                    inMax = Math.max(2048, Math.min(16384, rd32(p, 4)));
+                    outDivisor = Math.max(1, Math.min(64, rd16(p, 20)));
+                    outRemainder = rd16(p, 22) % outDivisor;
+                    ndpAlign = Math.max(4, Math.min(64, rd16(p, 24)));
+                }
+            }
+            // SET_ETHERNET_PACKET_FILTER : directed + broadcast + all multicast (pour lire la réponse ARP).
+            conn.controlTransfer(0x21, 0x43, 0x0E, ctl, null, 0, 300);
+
+            System.arraycopy("Art-Net\0".getBytes(), 0, artnet, 0, 8);
+            artnet[8] = 0x00; artnet[9] = 0x50;            // OpCode ArtDMX
+            artnet[10] = 0x00; artnet[11] = 0x0e;          // Protocole 14
+            artnet[14] = (byte) (universe & 0xFF);
+            artnet[15] = (byte) ((universe >> 8) & 0x7F);
+            artnet[16] = 0x02; artnet[17] = 0x00;          // Longueur 512
+
+            boolean arpOk = resolveMac();
+            name = "USB NODE " + host + ":" + port + " (pilote MyStrow " + (ifs.ncm ? "NCM" : "ECM")
+                    + (arpOk ? "" : ", sans réponse ARP : diffusion Ethernet") + ") " + describeDevice(dev);
+        }
+
+        private int ethHeader(byte[] f, byte[] dst, int type) {
+            System.arraycopy(dst, 0, f, 0, 6);
+            System.arraycopy(srcMac, 0, f, 6, 6);
+            be16(f, 12, type);
+            return 14;
+        }
+
+        /** Emballe et envoie une trame Ethernet (complétée à 60 octets, le minimum Ethernet). */
+        private void transmit(byte[] f, int len) throws Exception {
+            if (len < 60) { java.util.Arrays.fill(f, len, 60, (byte) 0); len = 60; }
+            int total;
+            if (!ifs.ncm) {
+                System.arraycopy(f, 0, block, 0, len);
+                total = len;
+            } else {
+                // NTB16 : en-tête NTH16 (12) + NDP16 (16, une entrée + fin) + datagramme aligné.
+                int ndp = (12 + ndpAlign - 1) / ndpAlign * ndpAlign;
+                int dg = ndp + 16;
+                while (dg % outDivisor != outRemainder) dg++;
+                total = dg + len;
+                // Longueur multiple du paquet USB : il faudrait un paquet nul, qu'Android
+                // n'envoie pas → un octet de bourrage, compté dans le bloc.
+                if (total % ifs.out.getMaxPacketSize() == 0) total++;
+                java.util.Arrays.fill(block, 0, dg, (byte) 0);
+                block[0] = 'N'; block[1] = 'C'; block[2] = 'M'; block[3] = 'H';
+                le16(block, 4, 12);
+                le16(block, 6, ntbSeq++ & 0xFFFF);
+                le16(block, 8, total);
+                le16(block, 10, ndp);
+                block[ndp] = 'N'; block[ndp + 1] = 'C'; block[ndp + 2] = 'M'; block[ndp + 3] = '0';
+                le16(block, ndp + 4, 16);
+                le16(block, ndp + 6, 0);
+                le16(block, ndp + 8, dg);
+                le16(block, ndp + 10, len);
+                System.arraycopy(f, 0, block, dg, len);
+                if (total > dg + len) block[dg + len] = 0;
+            }
+            if (conn.bulkTransfer(ifs.out, block, total, 200) < 0)
+                throw new Exception("envoi USB refusé (USB NODE débranché ?)");
+        }
+
+        /** ARP : adresse matérielle du node. Sans réponse, diffusion Ethernet, que le node accepte aussi. */
+        private boolean resolveMac() {
+            byte[] f = new byte[60];
+            int o = ethHeader(f, BCAST, 0x0806);
+            be16(f, o, 1); be16(f, o + 2, 0x0800); f[o + 4] = 6; f[o + 5] = 4; be16(f, o + 6, 1);
+            System.arraycopy(srcMac, 0, f, o + 8, 6);
+            System.arraycopy(srcIp, 0, f, o + 14, 4);
+            System.arraycopy(dstIp, 0, f, o + 24, 4);
+            byte[] in = new byte[inMax];
+            for (int attempt = 0; attempt < 3; attempt++) {
+                try { transmit(f, 42); } catch (Exception e) { return false; }
+                long end = System.currentTimeMillis() + 300;
+                while (System.currentTimeMillis() < end) {
+                    int n = conn.bulkTransfer(ifs.in, in, in.length, 100);
+                    if (n <= 0) continue;
+                    if (!ifs.ncm) { if (arpReply(in, 0, n)) return true; continue; }
+                    if (n < 12 || in[0] != 'N' || in[1] != 'C' || in[2] != 'M' || in[3] != 'H') continue;
+                    int ndp = rd16(in, 10);
+                    if (ndp + 16 > n || in[ndp] != 'N' || in[ndp + 1] != 'C' || in[ndp + 2] != 'M') continue;
+                    for (int e = ndp + 8; e + 4 <= n; e += 4) {
+                        int off = rd16(in, e), len = rd16(in, e + 2);
+                        if (off == 0 || len == 0) break;
+                        if (off + len <= n && arpReply(in, off, len)) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private boolean arpReply(byte[] b, int off, int len) {
+            if (len < 42 || (b[off + 12] & 0xFF) != 0x08 || b[off + 13] != 0x06) return false;
+            int a = off + 14;
+            if (b[a + 6] != 0 || b[a + 7] != 2) return false;                         // réponse ARP
+            for (int i = 0; i < 4; i++) if (b[a + 14 + i] != dstIp[i]) return false;  // venant du node
+            dstMac = java.util.Arrays.copyOfRange(b, a + 8, a + 14);
+            return true;
+        }
+
+        @Override public void send(byte[] dmx512) throws Exception {
+            seq = seq % 255 + 1;
+            artnet[12] = (byte) seq;
+            System.arraycopy(dmx512, 0, artnet, 18, 512);
+            int o = ethHeader(frame, dstMac, 0x0800);
+            frame[o] = 0x45; frame[o + 1] = 0;
+            be16(frame, o + 2, 20 + 8 + artnet.length);
+            be16(frame, o + 4, ipId++ & 0xFFFF);
+            be16(frame, o + 6, 0);
+            frame[o + 8] = 64; frame[o + 9] = 17;                                       // TTL, UDP
+            be16(frame, o + 10, 0);
+            System.arraycopy(srcIp, 0, frame, o + 12, 4);
+            System.arraycopy(dstIp, 0, frame, o + 16, 4);
+            int sum = 0;
+            for (int i = 0; i < 20; i += 2) sum += ((frame[o + i] & 0xFF) << 8) | (frame[o + i + 1] & 0xFF);
+            while ((sum >> 16) != 0) sum = (sum & 0xFFFF) + (sum >> 16);
+            be16(frame, o + 10, ~sum & 0xFFFF);
+            int u = o + 20;
+            be16(frame, u, 6454);
+            be16(frame, u + 2, port);
+            be16(frame, u + 4, 8 + artnet.length);
+            be16(frame, u + 6, 0);                                                      // somme UDP facultative en IPv4
+            System.arraycopy(artnet, 0, frame, u + 8, artnet.length);
+            transmit(frame, u + 8 + artnet.length);
+        }
+        @Override public long busyNs() { return 0; }
+        @Override public void close() {
+            try { conn.releaseInterface(ifs.data); conn.releaseInterface(ifs.control); } catch (Exception ignored) { }
+            conn.close();
+        }
         @Override public String describe() { return name; }
     }
 
@@ -463,6 +693,22 @@ public class MystrowDmxPlugin extends Plugin {
                 o.put("serial", drv != null);
                 o.put("driver", drv != null ? drv.getClass().getSimpleName() : null);
                 o.put("permission", usb.hasPermission(d));
+                UsbNetIfaces net = findUsbNet(d);
+                o.put("net", net == null ? null : (net.ncm ? "NCM" : "ECM"));
+                // Interfaces (classe/sous-classe/protocole, points d'accès) : dit ce
+                // qu'est un boîtier inconnu.
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < d.getInterfaceCount(); i++) {
+                    UsbInterface f = d.getInterface(i);
+                    sb.append(String.format("if%d.%d %02x/%02x/%02x", f.getId(), f.getAlternateSetting(),
+                            f.getInterfaceClass(), f.getInterfaceSubclass(), f.getInterfaceProtocol()));
+                    for (int e = 0; e < f.getEndpointCount(); e++) {
+                        UsbEndpoint ep = f.getEndpoint(e);
+                        sb.append(String.format(" ep%02x/t%d/%d", ep.getAddress(), ep.getType(), ep.getMaxPacketSize()));
+                    }
+                    sb.append("; ");
+                }
+                o.put("interfaces", sb.toString());
                 list.put(o);
             }
         }
@@ -486,11 +732,30 @@ public class MystrowDmxPlugin extends Plugin {
     }
 
     private void startArtNet(PluginCall call) {
+        // USB NODE qu'Android n'a pas monté en réseau : aucune interface Android
+        // dans le sous-réseau du node, mais une carte réseau USB est branchée →
+        // l'app la pilote elle-même.
         try {
-            Output out = new ArtNetOutput(getContext(), call.getString("host", "2.0.0.15"),
-                    call.getInt("port", 6454), call.getInt("universe", 0));
+            String host = call.getString("host", "2.0.0.15");
+            InetAddress t = InetAddress.getByName(host);
+            UsbManager usb = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
+            UsbDevice dev = findUsbNetDevice(usb);
+            if (dev != null && !isBroadcast(t) && subnetNetwork(getContext(), t) == null) {
+                int port = call.getInt("port", 6454), universe = call.getInt("universe", 0);
+                // Hors du fil principal : la recherche ARP peut prendre ~1 s.
+                withUsbPermission(call, usb, dev, () -> new Thread(
+                        () -> openUsbNet(call, usb, dev, host, port, universe), "mystrow-usbnet").start());
+                return;
+            }
+        } catch (Exception ignored) { }
+        try {
+            Context ctx = getContext();
+            String host = call.getString("host", "2.0.0.15");
+            int port = call.getInt("port", 6454), universe = call.getInt("universe", 0);
+            Output out = new ArtNetOutput(ctx, host, port, universe);
             acquireWifiLock();
-            launch(out, fps(call, 40));
+            // Reprise : réseau changé ou revenu (socket rattachée au bon réseau).
+            launch(out, fps(call, 40), () -> new ArtNetOutput(ctx, host, port, universe));
             JSObject r = new JSObject();
             r.put("output", outputName);
             call.resolve(r);
@@ -507,16 +772,64 @@ public class MystrowDmxPlugin extends Plugin {
             return;
         }
         UsbSerialDriver driver = drivers.get(0);
-        if (usb.hasPermission(driver.getDevice())) {
-            openUsb(call, usb, driver);
-            return;
+        withUsbPermission(call, usb, driver.getDevice(), () -> openUsb(call, usb, driver));
+    }
+
+    private void openUsbNet(PluginCall call, UsbManager usb, UsbDevice dev, String host, int port, int universe) {
+        try {
+            launch(newUsbNet(usb, dev, host, port, universe), fps(call, 40), () -> {
+                // Reprise : le boîtier rebranché est un NOUVEL appareil pour Android.
+                UsbDevice d = findUsbNetDevice(usb);
+                if (d == null) throw new Exception("USB NODE débranché");
+                return newUsbNet(usb, d, host, port, universe);
+            });
+            JSObject r = new JSObject();
+            r.put("output", outputName);
+            call.resolve(r);
+        } catch (Exception e) {
+            call.reject("USB NODE : " + e.getMessage(), e);
         }
+    }
+
+    private Output newUsbNet(UsbManager usb, UsbDevice dev, String host, int port, int universe) throws Exception {
+        if (!usbAccess(usb, dev)) throw new Exception("autorisation USB demandée, touchez OK");
+        UsbDeviceConnection conn = usb.openDevice(dev);
+        if (conn == null) throw new Exception("impossible d'ouvrir le USB NODE");
+        try {
+            return new UsbNetOutput(conn, dev, findUsbNet(dev), host, port, universe);
+        } catch (Exception e) {
+            conn.close();
+            throw e;
+        }
+    }
+
+    /**
+     * Accès déjà donné ? Sinon, demande-le (fenêtre système) UNE fois par
+     * branchement, sans attendre : la reprise retentera chaque seconde.
+     * Android oublie l'autorisation quand on débranche le boîtier.
+     */
+    private String permissionAskedFor;
+    private boolean usbAccess(UsbManager usb, UsbDevice dev) {
+        if (usb.hasPermission(dev)) return true;
+        if (!dev.getDeviceName().equals(permissionAskedFor)) {
+            permissionAskedFor = dev.getDeviceName();
+            Context ctx = getContext();
+            int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0;
+            Intent intent = new Intent(ACTION_USB_PERMISSION).setPackage(ctx.getPackageName());
+            usb.requestPermission(dev, PendingIntent.getBroadcast(ctx, 0, intent, flags));
+        }
+        return false;
+    }
+
+    /** Lance onGranted tout de suite si l'accès est déjà donné, sinon après la fenêtre système. */
+    private void withUsbPermission(PluginCall call, UsbManager usb, UsbDevice dev, Runnable onGranted) {
+        if (usb.hasPermission(dev)) { onGranted.run(); return; }
         // Fenêtre système « Autoriser MyStrow à accéder à … ? », réponse par diffusion.
         Context ctx = getContext();
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent intent) {
                 try { ctx.unregisterReceiver(this); } catch (Exception ignored) { }
-                if (usb.hasPermission(driver.getDevice())) openUsb(call, usb, driver);
+                if (usb.hasPermission(dev)) onGranted.run();
                 else call.reject("Accès à l'interface USB refusé");
             }
         };
@@ -524,7 +837,7 @@ public class MystrowDmxPlugin extends Plugin {
                 ContextCompat.RECEIVER_NOT_EXPORTED);
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0;
         Intent intent = new Intent(ACTION_USB_PERMISSION).setPackage(ctx.getPackageName());
-        usb.requestPermission(driver.getDevice(), PendingIntent.getBroadcast(ctx, 0, intent, flags));
+        usb.requestPermission(dev, PendingIntent.getBroadcast(ctx, 0, intent, flags));
     }
 
     private void openUsb(PluginCall call, UsbManager usb, UsbSerialDriver driver) {
@@ -536,9 +849,11 @@ public class MystrowDmxPlugin extends Plugin {
             port.open(conn);
             String proto = call.getString("protocol", "auto");
             boolean pro = "pro".equals(proto) || ("auto".equals(proto) && detectPro(port, driver));
-            if (pro) launch(new ProOutput(port, driver), Math.min(fps(call, 40), 44));
+            // Reprise : même type d'interface, sur le boîtier rebranché.
+            Reopener reopen = () -> reopenSerial(usb, pro);
+            if (pro) launch(new ProOutput(port, driver), Math.min(fps(call, 40), 44), reopen);
             // Plafond ~36 tr/s : une trame occupe la ligne 26 ms + le break.
-            else launch(new UsbOutput(port, driver), Math.min(fps(call, 30), 36));
+            else launch(new UsbOutput(port, driver), Math.min(fps(call, 30), 36), reopen);
             JSObject r = new JSObject();
             r.put("output", outputName);
             call.resolve(r);
@@ -548,34 +863,72 @@ public class MystrowDmxPlugin extends Plugin {
         }
     }
 
+    private Output reopenSerial(UsbManager usb, boolean pro) throws Exception {
+        List<UsbSerialDriver> drivers = prober().findAllDrivers(usb);
+        if (drivers.isEmpty()) throw new Exception("interface USB débranchée");
+        UsbSerialDriver driver = drivers.get(0);
+        if (!usbAccess(usb, driver.getDevice())) throw new Exception("autorisation USB demandée, touchez OK");
+        UsbDeviceConnection conn = usb.openDevice(driver.getDevice());
+        if (conn == null) throw new Exception("impossible d'ouvrir l'interface USB");
+        UsbSerialPort port = driver.getPorts().get(0);
+        try {
+            port.open(conn);
+            return pro ? new ProOutput(port, driver) : new UsbOutput(port, driver);
+        } catch (Exception e) {
+            try { port.close(); } catch (Exception ignored) { }
+            throw e;
+        }
+    }
+
     private static int fps(PluginCall call, int def) {
         return Math.max(1, Math.min(60, call.getInt("fps", def)));
     }
 
-    private void launch(Output out, int fps) {
+    /** Recrée la sortie (boîtier rebranché, réseau revenu). Exception = pas encore possible. */
+    private interface Reopener {
+        Output open() throws Exception;
+    }
+
+    private void launch(Output out, int fps, Reopener reopen) {
         synchronized (lock) {
             sent = errors = lateTicks = maxIntervalNs = sumIntervalNs = intervals = 0;
             lastError = null;
             outputName = out.describe();
         }
         running = true;
-        Thread t = new Thread(() -> runLoop(out, fps), "mystrow-dmx");
+        Thread t = new Thread(() -> runLoop(out, fps, reopen), "mystrow-dmx");
         sender = t;
         t.start();
     }
 
-    private void runLoop(Output out, int fps) {
+    private void runLoop(Output first, int fps, Reopener reopen) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
         final long period = 1_000_000_000L / fps;
         final byte[] frame = new byte[512];
+        Output out = first;
         long next = System.nanoTime();
         long prev = 0;
+        int failures = 0;
         try {
             while (running) {
+                // Une seconde d'échecs (boîtier débranché…) : on retente d'ouvrir la
+                // sortie, une fois par seconde, sans qu'il faille refaire « Démarrer ».
+                if (failures >= fps && reopen != null) {
+                    failures = 0;
+                    try {
+                        Output fresh = reopen.open();
+                        out.close();
+                        out = fresh;
+                        synchronized (lock) { outputName = fresh.describe(); }
+                    } catch (Exception e) {
+                        synchronized (lock) { lastError = "En attente du boîtier : " + e.getMessage(); }
+                    }
+                }
                 synchronized (lock) { System.arraycopy(dmx, 0, frame, 0, 512); }
                 long now = System.nanoTime();
                 try {
                     out.send(frame);
+                    failures = 0;
                     synchronized (lock) {
                         sent++;
                         if (prev != 0) {
@@ -587,6 +940,7 @@ public class MystrowDmxPlugin extends Plugin {
                         }
                     }
                 } catch (Exception e) {
+                    failures++;
                     synchronized (lock) { errors++; lastError = e.getMessage(); }
                 }
                 prev = now;
