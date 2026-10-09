@@ -6,6 +6,7 @@
 import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 
 const mobile = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(mobile, "..");
@@ -32,8 +33,24 @@ function replaceOnce(text, anchor, replacement) {
 // Sans PC mémorisé, retour à cet écran.
 // ?demo=1 : mode démo (src/demo.js), aucun PC nécessaire.
 // ?solo=1 : mode autonome (src/standalone.js), la tablette pilote seule le DMX.
+// Version affichée dans Réglages : version du paquet + date de construction +
+// commit (« + modifs » si construit avec des changements non commités).
+const pkg = JSON.parse(readFileSync(join(mobile, "package.json"), "utf8"));
+let commit = "";
+try {
+  commit = execSync("git rev-parse --short HEAD", { cwd: repo }).toString().trim();
+  if (execSync("git status --porcelain -- mobile tablet", { cwd: repo }).toString().trim()) commit += " + modifs";
+} catch (e) { /* pas de git : version et date seulement */ }
+const d = new Date(), z = (n) => String(n).padStart(2, "0");
+const BUILD = {
+  version: pkg.version,
+  date: z(d.getDate()) + "/" + z(d.getMonth() + 1) + "/" + d.getFullYear() + " " + z(d.getHours()) + ":" + z(d.getMinutes()),
+  commit,
+};
+
 const inject = `<meta charset="utf-8">
   <script>
+    window.MYSTROW_BUILD = ${JSON.stringify(BUILD)};
     window.MYSTROW_APP = true;
     var demo = /[?&]demo=1(&|$)/.test(location.search);
     if (demo) window.MYSTROW_DEMO = true;
@@ -52,8 +69,9 @@ copyFileSync(join(mobile, "src", "effects.js"), join(www, "effects.js"));
 copyFileSync(join(mobile, "src", "library.js"), join(www, "library.js"));
 copyFileSync(join(mobile, "src", "standalone.js"), join(www, "standalone.js"));
 copyFileSync(join(mobile, "src", "media.js"), join(www, "media.js"));
+copyFileSync(join(mobile, "src", "live.js"), join(www, "live.js"));
 remote = replaceOnce(remote, "</body>",
-  '<script src="demo.js"></script>\n<script src="engine.js"></script>\n<script src="effects.js"></script>\n<script src="standalone.js"></script>\n<script src="media.js"></script>\n</body>');
+  '<script src="demo.js"></script>\n<script src="engine.js"></script>\n<script src="effects.js"></script>\n<script src="standalone.js"></script>\n<script src="media.js"></script>\n<script src="live.js"></script>\n</body>');
 // PWA du navigateur uniquement : l'app n'a ni manifeste ni service worker.
 remote = replaceOnce(remote, '<link rel="manifest" href="/manifest.json">', "");
 

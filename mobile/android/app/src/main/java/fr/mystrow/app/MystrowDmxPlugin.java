@@ -768,6 +768,16 @@ public class MystrowDmxPlugin extends Plugin {
         UsbManager usb = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
         List<UsbSerialDriver> drivers = usb == null ? null : prober().findAllDrivers(usb);
         if (drivers == null || drivers.isEmpty()) {
+            // Pas de boîtier série, mais un USB NODE : pour l'utilisateur c'est aussi
+            // « l'interface USB » (patch réglé sur USB par défaut).
+            UsbDevice dev = findUsbNetDevice(usb);
+            if (dev != null) {
+                String host = call.getString("host", "2.0.0.15");
+                int port = call.getInt("port", 6454), universe = call.getInt("universe", 0);
+                withUsbPermission(call, usb, dev, () -> new Thread(
+                        () -> openUsbNet(call, usb, dev, host, port, universe), "mystrow-usbnet").start());
+                return;
+            }
             call.reject("Aucune interface USB-DMX reconnue n'est branchée");
             return;
         }

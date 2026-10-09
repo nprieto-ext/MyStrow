@@ -35,12 +35,23 @@
     .btn.small { height: 40px; padding: 0 12px; font-size: 14px; }
     .btn.danger { color: var(--red); border-color: rgba(248, 113, 113, .4); }
     .hint { color: var(--muted); font-size: 14px; }
-    .group-title { font-family: var(--f-label); font-weight: 700; font-size: 16px; letter-spacing: 1px; color: var(--accent); margin-top: 6px; }
-    .fx { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--bg3); }
+    .group-title { font-family: var(--f-label); font-weight: 700; font-size: 16px; letter-spacing: 1px; color: var(--accent); margin-top: 6px; display: flex; align-items: center; gap: 10px; }
+    .group-title input.gname { width: 200px; height: 40px; font-size: 17px; color: var(--accent); }
+    .group-title span { color: var(--muted); font-size: 13px; font-weight: 600; }
+    .fx { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--bg3); }
     .fx b { font-family: var(--f-label); font-size: 18px; min-width: 90px; }
     .fx .addr { font: 700 16px/1 var(--f-label); color: var(--accent); min-width: 78px; font-variant-numeric: tabular-nums; }
     .fx .prof { color: var(--muted); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fx.clash .addr { color: var(--red); }
+    .fx select.grp { flex: 0 0 auto; width: auto; height: 40px; padding: 0 8px; font-size: 15px; }
+    .limits { display: flex; flex-direction: column; gap: 10px; padding: 12px; margin: -2px 0 4px; border-radius: 10px;
+      border: 1px solid var(--accent-border); background: rgba(226, 206, 22, .05); }
+    .lim-row { display: grid; grid-template-columns: 52px auto 1fr auto 1fr; gap: 8px 10px; align-items: center; }
+    .lim-row .lim-name { font: 700 16px/1 var(--f-label); color: var(--accent); }
+    .lim-row label { white-space: nowrap; }
+    .lim-row label b { color: var(--text); font-variant-numeric: tabular-nums; display: inline-block; min-width: 2.2ch; text-align: right; }
+    .lim-row input[type=range] { height: 36px; padding: 0; accent-color: var(--accent); background: transparent; border: 0; }
+    @media (max-width: 560px) { .lim-row { grid-template-columns: auto 1fr; } .lim-row .lim-name { grid-column: 1 / -1; } }
     #msg { min-height: 1.5em; color: #cfcabd; }
     /* Bibliothèque de fixtures */
     #results { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
@@ -73,11 +84,17 @@
   <header>
     <h1>PATCH <span>SANS PC</span></h1>
     <button class="btn small" id="back" type="button">‹ Accueil</button>
+    <button class="btn" id="add-open" type="button">＋ Ajouter</button>
     <button class="btn primary" id="play" type="button">Jouer</button>
   </header>
+  <p id="msg" role="status"></p>
 
-  <section class="panel">
-    <div class="eyebrow">Ajouter des projecteurs</div>
+  <!-- Ajout : caché tant qu'on ne touche pas « ＋ Ajouter » (la page montre d'abord le patch). -->
+  <section class="panel" id="add-section" hidden>
+    <div class="row" style="align-items:center">
+      <div class="eyebrow" style="flex:1">Ajouter des projecteurs</div>
+      <button class="btn small" id="add-close" type="button">Fermer</button>
+    </div>
     <div class="row">
       <div style="flex:1;min-width:220px"><label for="search">Rechercher un projecteur</label>
         <input id="search" type="search" placeholder="Marque ou modèle : izy, cameo, par 64…" autocomplete="off"></div>
@@ -108,7 +125,6 @@
     </div>
     <p class="hint">Chaque projecteur suivant démarre « écart » canaux plus loin (10 par défaut, comme dans MyStrow sur PC : 1, 11, 21…). Réglez vos projecteurs sur ces adresses.</p>
     <button class="btn primary" id="add" type="button">Ajouter</button>
-    <p id="msg" role="status"></p>
   </section>
 
   <section class="panel" id="editor" hidden>
@@ -138,16 +154,16 @@
     <p class="hint">Le projecteur est gardé sur cette tablette, dans votre bibliothèque : cherchez-le ensuite par son nom pour l'ajouter au patch.</p>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="list-section">
     <div class="row" style="align-items:center">
-      <div class="eyebrow" style="flex:1">Projecteurs</div>
+      <div class="eyebrow" style="flex:1">Mon patch</div>
       <button class="btn small danger" id="wipe" type="button">Tout effacer</button>
     </div>
     <div id="list"></div>
     <p class="hint">« Tester » allume le projecteur en blanc : vérifiez que c'est bien lui qui s'allume.</p>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="out-section">
     <div class="eyebrow">Sortie DMX</div>
     <div class="row">
       <button class="btn tr" data-tr="usb" type="button">Interface USB</button>
@@ -325,7 +341,7 @@
   }
 
   // ── Test d'un projecteur : blanc à fond sur lui seul ────────────────────────
-  let testing = null, outputOn = false;
+  let testing = null, outputOn = false, limitsFor = null;
   async function ensureOutput() {
     if (outputOn || !Dmx) return !!Dmx;
     const o = show.output;
@@ -343,10 +359,64 @@
     render();
   }
 
+  // ── Limites de mouvement d'une lyre ───────────────────────────────────────
+  // Mêmes champs que le PC (pan_min/max, tilt_min/max en 0-65535, inversions) :
+  // engine.js borne pan/tilt APRÈS les effets et la visée, donc rien ne sort
+  // de la zone. Pendant le réglage, la lyre s'allume en blanc et va se placer
+  // sur la borne qu'on déplace : on voit où elle s'arrêtera.
+  const moves = (f) => { const p = Array.isArray(f.profile) ? f.profile : Engine.PROFILES[f.profile] || [];
+    return p.includes("Pan") || p.includes("Tilt"); };
+  async function preview(i, pan, tilt) {
+    if (!(await ensureOutput())) return;
+    const fx = show.fixtures.map((f, j) => j === i
+      ? { ...f, color: "#ffffff", level: 100, pan, tilt, pan_min: 0, pan_max: 65535, tilt_min: 0, tilt_max: 65535 }
+      : { ...f, color: "#ffffff", level: 0 });
+    await Dmx.setChannels({ start: 1, values: Array.from(Engine.render(fx)) }).catch(() => {});
+  }
+  function limitsPanel(f, i) {
+    const box = document.createElement("div"); box.className = "limits";
+    const pct = (v) => Math.round((v / 65535) * 100);
+    const raw = (p) => Math.round((p / 100) * 65535);
+    const rows = [["PAN", "pan"], ["TILT", "tilt"]].map(([label, k]) => {
+      const r = document.createElement("div"); r.className = "lim-row";
+      r.innerHTML = '<span class="lim-name"></span><label>de <b class="vmin"></b> %</label><input type="range" min="0" max="100" class="rmin">'
+        + '<label>à <b class="vmax"></b> %</label><input type="range" min="0" max="100" class="rmax">';
+      r.querySelector(".lim-name").textContent = label;
+      const lo = r.querySelector(".rmin"), hi = r.querySelector(".rmax");
+      const paint = () => { r.querySelector(".vmin").textContent = lo.value; r.querySelector(".vmax").textContent = hi.value; };
+      lo.value = pct(f[k + "_min"] ?? 0); hi.value = pct(f[k + "_max"] ?? 65535); paint();
+      const onMove = (which) => {
+        if (+lo.value > +hi.value) { if (which === lo) hi.value = lo.value; else lo.value = hi.value; }
+        f[k + "_min"] = raw(+lo.value); f[k + "_max"] = raw(+hi.value);
+        paint(); save();
+        // La lyre va sur la borne déplacée, l'autre axe au milieu de sa zone.
+        const o = k === "pan" ? "tilt" : "pan";
+        const mid = ((f[o + "_min"] ?? 0) + (f[o + "_max"] ?? 65535)) / 2;
+        const v = raw(+which.value);
+        preview(i, k === "pan" ? v : mid, k === "tilt" ? v : mid);
+      };
+      lo.addEventListener("input", () => onMove(lo)); hi.addEventListener("input", () => onMove(hi));
+      return r;
+    });
+    const opts = document.createElement("div"); opts.className = "row";
+    [["pan_invert", "Inverser pan"], ["tilt_invert", "Inverser tilt"]].forEach(([k, t]) => {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn small" + (f[k] ? " on" : ""); b.textContent = t;
+      b.addEventListener("click", () => { f[k] = !f[k]; save(); b.classList.toggle("on", !!f[k]); });
+      opts.appendChild(b);
+    });
+    const reset = document.createElement("button"); reset.type = "button"; reset.className = "btn small"; reset.textContent = "Tout libérer";
+    reset.addEventListener("click", () => { ["pan_min", "pan_max", "tilt_min", "tilt_max"].forEach((k) => delete f[k]); save(); render(); });
+    opts.appendChild(reset);
+    const hint = document.createElement("p"); hint.className = "hint";
+    hint.textContent = "La lyre s'allume et suit la borne que vous déplacez. Effets et visée restent ensuite dans cette zone.";
+    box.append(...rows, opts, hint);
+    return box;
+  }
+
   function render() {
     const list = $("list");
     list.innerHTML = "";
-    if (!show.fixtures.length) { list.innerHTML = '<p class="hint">Aucun projecteur pour l\'instant.</p>'; }
+    if (!show.fixtures.length) { list.innerHTML = '<p class="hint">Aucun projecteur pour l\'instant : touchez « ＋ Ajouter » en haut.</p>'; }
     // Chevauchements d'adresses : deux projecteurs sur les mêmes canaux.
     const clash = new Set();
     show.fixtures.forEach((a, i) => show.fixtures.forEach((b, j) => {
@@ -356,7 +426,20 @@
       const items = show.fixtures.map((f, i) => [f, i]).filter(([f]) => f.group === g);
       if (!items.length) return;
       const t = document.createElement("div"); t.className = "group-title";
-      t.textContent = "Groupe " + g + " · colonne " + (GROUPS.indexOf(g) + 1) + " de l'AKAI";
+      // Nom de zone (page Live : « Scène », « Salle »…) ; vide = « Groupe A ».
+      const nm = document.createElement("input");
+      nm.className = "gname"; nm.maxLength = 18; nm.placeholder = "Groupe " + g;
+      nm.value = (show.groupNames && show.groupNames[g]) || "";
+      nm.setAttribute("aria-label", "Nom de la zone du groupe " + g);
+      nm.addEventListener("change", () => {
+        show.groupNames = show.groupNames || {};
+        const v = nm.value.trim();
+        if (v) show.groupNames[g] = v; else delete show.groupNames[g];
+        save();
+      });
+      const info = document.createElement("span");
+      info.textContent = "groupe " + g + " · colonne " + (GROUPS.indexOf(g) + 1) + " de l'AKAI";
+      t.append(nm, info);
       list.appendChild(t);
       items.forEach(([f, i]) => {
         const row = document.createElement("div"); row.className = "fx" + (clash.has(i) ? " clash" : "");
@@ -369,9 +452,26 @@
         const tb = document.createElement("button"); tb.className = "btn small" + (testing === i ? " on" : ""); tb.textContent = "Tester";
         tb.addEventListener("click", () => test(i));
         const db = document.createElement("button"); db.className = "btn small danger"; db.textContent = "✕";
-        db.addEventListener("click", () => { show.fixtures.splice(i, 1); testing = null; save(); render(); $("addr").value = nextAddress(); });
+        db.addEventListener("click", () => { show.fixtures.splice(i, 1); testing = null; limitsFor = null; save(); render(); $("addr").value = nextAddress(); });
+        // Groupe = colonne de l'AKAI : se change ici, le projecteur passe dans l'autre liste.
+        const gs = document.createElement("select"); gs.className = "grp"; gs.title = "Groupe (colonne de l'AKAI)";
+        GROUPS.forEach((g2) => { const o = document.createElement("option"); o.value = g2; o.textContent = "Gr. " + g2; gs.appendChild(o); });
+        gs.value = f.group;
+        gs.addEventListener("change", () => { f.group = gs.value; limitsFor = null; save(); render(); });
+        row.append(gs);
+        if (moves(f)) {
+          const lb = document.createElement("button"); lb.className = "btn small" + (limitsFor === i ? " on" : ""); lb.textContent = "Limites";
+          lb.title = "Bornes de pan et de tilt : la lyre ne sort jamais de cette zone";
+          lb.addEventListener("click", () => {
+            limitsFor = limitsFor === i ? null : i; render();
+            // Fermeture : on éteint la lyre allumée pour le réglage.
+            if (limitsFor === null && outputOn) Dmx.setChannels({ start: 1, values: Array.from(Engine.render(show.fixtures.map((x) => ({ ...x, level: 0 })))) }).catch(() => {});
+          });
+          row.append(lb);
+        }
         row.append(tb, db);
         list.appendChild(row);
+        if (limitsFor === i) list.appendChild(limitsPanel(f, i));
       });
     });
     if (clash.size) msg("⚠ Des projecteurs se chevauchent (adresses en rouge).", true);
@@ -397,6 +497,7 @@
     }
     save();
     msg(qty + " projecteur(s) ajouté(s).");
+    showAdd(false);
     render();
     $("addr").value = nextAddress();
   });
@@ -603,7 +704,27 @@
     if (outputOn && Dmx) await Dmx.stop().catch(() => {});
     location.href = url;
   }
-  $("back").addEventListener("click", () => leave("index.html?view=solo"));
+  // Venu du jeu (bouton Réglages) : le retour y ramène.
+  const FROM_PLAY = /[?&]from=play(&|$)/.test(location.search);
+  if (FROM_PLAY) $("back").textContent = "‹ Retour";
+  $("back").addEventListener("click", () => leave(FROM_PLAY ? "remote.html?solo=1" : "index.html?view=solo"));
+  // Ajout à la demande : le formulaire remplace la liste le temps d'ajouter.
+  function showAdd(on) {
+    $("add-section").hidden = !on;
+    $("list-section").hidden = on;
+    $("add-open").hidden = on;
+    if (!on) $("editor").hidden = true;
+    window.scrollTo(0, 0);
+  }
+  $("add-open").addEventListener("click", () => showAdd(true));
+  $("add-close").addEventListener("click", () => showAdd(false));
+
+  // Deux pages en une : le patch (projecteurs) OU la sortie DMX (« #sortie »).
+  const OUT_VIEW = location.hash === "#sortie";
+  document.querySelectorAll("main > section").forEach((sec) => {
+    if (OUT_VIEW ? sec.id !== "out-section" : sec.id === "out-section") sec.hidden = true;
+  });
+  if (OUT_VIEW) { document.querySelector("h1").innerHTML = "SORTIE <span>DMX</span>"; $("add-open").hidden = true; }
   $("play").addEventListener("click", () => {
     if (!show.fixtures.length) { msg("Ajoutez d'abord des projecteurs.", true); return; }
     leave("remote.html?solo=1");

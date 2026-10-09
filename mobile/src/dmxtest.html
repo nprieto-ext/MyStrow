@@ -95,10 +95,15 @@
     </div>
   </section>
 
-  <a href="index.html?view=solo">‹ Retour</a>
+  <a id="back-link" href="index.html?view=solo">‹ Retour</a>
 </main>
 
 <script>
+  // Venu du jeu (bouton Réglages) : le retour y ramène.
+  if (/[?&]from=play(&|$)/.test(location.search)) {
+    const b = document.getElementById("back-link");
+    b.href = "remote.html?solo=1"; b.textContent = "‹ Retour";
+  }
   "use strict";
   const Dmx = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MystrowDmx;
   const $ = (id) => document.getElementById(id);
@@ -199,7 +204,7 @@
       const r = await Dmx.usbDevices();
       const lines = r.devices.map((d) => (d.serial || d.net ? "✓ " : "· ") + d.name
         + (d.serial ? "  (" + d.driver + ")"
-          : d.net ? "  (USB NODE, carte réseau " + d.net + " : choisir « Node Art-Net », adresse 2.0.0.15)"
+          : d.net ? "  (USB NODE, carte réseau " + d.net + ", piloté par l'app en 2.0.0.15)"
           : "  (non reconnu)")
         + (d.interfaces ? "\n    " + d.interfaces : ""));
       $("usb-list").textContent = (lines.length ? lines.join("\n") : "Aucun appareil USB branché.")

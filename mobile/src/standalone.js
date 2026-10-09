@@ -48,9 +48,12 @@
     symPan: false,                                  // pad POSITION : miroir du pan
     symTilt: false,                                 // pad POSITION : miroir du tilt
     moveSize: 100,                                  // TAILLE des effets de mouvement, en %
+    qfx: {},                                        // n° de projecteur → effet rapide (SCÈNE)
+    qe: { speed: 50, amp: 50, phase: 0 },           // curseurs des effets rapides (50 = naturel)
   }, load("mystrow.solo.play", {}));
   delete play.strobe;                               // v1 : effet 1 = strobe matériel
   if (play.sym) { play.symPan = true; } delete play.sym;   // SYM unique d'avant le 24/09 (pan)
+  play.qfx = {};                                    // effets rapides : jamais relancés seuls au démarrage
   let recArmed = false;
   const savePlay = () => save("mystrow.solo.play", play);
 
@@ -131,12 +134,20 @@
     return scaledCache.fx;
   }
 
+  const hold = { flash: false, black: false };    // boutons maintenus de la page Live
   const frame = new Uint8Array(512);
   let lastSent = "";
   function output() {
     const states = projectors.map(fixtureState);
     const fx = play.effect && scaledEffect(effectByName[play.effect]);
     if (fx) { tickClock(); Engine.effectFrame(fx, states, clock.t, Library.shapes); }
+    applyQuick(states);
+    // FLASH / NOIR maintenus de la page Live : par-dessus tout le reste.
+    if (hold.black) states.forEach((s) => { s.level = 0; delete s.fx; });
+    else if (hold.flash) states.forEach((s) => {
+      s.color = "#ffffff"; s.level = 100; s.strobe = 0; delete s.fx;
+      Engine.updateColorWheel(s, [255, 255, 255]);
+    });
     Engine.render(states, frame);
     const key = frame.join(",");
     if (key !== lastSent && Dmx) {
@@ -252,14 +263,80 @@
     (idxs || []).forEach((i) => { const p = projectors[i]; if (p) { p.override = p.override || {}; fn(p.override); } });
   }
 
+  // ── Effets rapides (SCÈNE) ─────────────────────────────────────────────────
+  // Port du clic droit du plan de feu PC (plan_de_feu._EffectState et
+  // _tick_effects) : un effet PAR PROJECTEUR, qui passe par-dessus l'AKAI.
+  // Lyres : mouvement autour de la visée (pad POSITION). PAR : couleur.
+  // Curseurs : 50 = naturel, multiplicateur max(0,1 ; v/50) comme le PC ;
+  // déphasage = un cycle réparti sur les projecteurs du même effet.
+  const QE_LYRE = [["cercle", "⭕", "Cercle"], ["figure8", "∞", "Huit"],
+                   ["balayage_h", "↔", "Balayage pan"], ["balayage_v", "↕", "Balayage tilt"]];
+  const QE_LED = [["rainbow", "🌈", "Arc-en-ciel"], ["strobe", "⚡", "Strobe"], ["rouge_blanc", "R→B", "Rouge → blanc"]];
+  const QE_HZ = { cercle: 0.5, figure8: 0.5, balayage_h: 0.5, balayage_v: 0.5, rainbow: 0.3, strobe: 5.0, rouge_blanc: 0.5 };
+  const QE_AMP = 10000;                               // course naturelle des lyres (start_effect du PC)
+  const qeMult = (v) => Math.max(0.1, v / 50);
+  const qPhase = {};                                  // n° de projecteur → phase (radians), non sauvegardée
+  const qClock = { last: null };
+  function hsvHex(h) {
+    const c = 255, x = Math.round(c * (1 - Math.abs(((h / 60) % 2) - 1)));
+    const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+    return toHex([r, g, b]);
+  }
+  function applyQuick(states) {
+    const keys = Object.keys(play.qfx);
+    if (!keys.length) { qClock.last = null; return; }
+    const now = performance.now() / 1000;
+    const dt = qClock.last === null ? 0 : Math.min(0.25, now - qClock.last);
+    qClock.last = now;
+    const spread = (play.qe.phase / 100) * 2 * Math.PI;
+    const byKey = {};
+    keys.map(Number).sort((a, b) => a - b).forEach((i) => { (byKey[play.qfx[i]] = byKey[play.qfx[i]] || []).push(i); });
+    Object.entries(byKey).forEach(([key, idxs]) => idxs.forEach((i, rank) => {
+      const s = states[i];
+      if (!s) return;
+      qPhase[i] = (qPhase[i] || 0) + 2 * Math.PI * QE_HZ[key] * qeMult(play.qe.speed) * dt;
+      const ph = qPhase[i] + (rank / idxs.length) * spread;
+      if (QE_HZ[key] && QE_LYRE.some(([k]) => k === key)) {
+        // Lyre éteinte : allumée en blanc, comme le PC (sinon l'effet est invisible).
+        if (s.level < 5) { s.level = 100; if (s.color === "#000000") s.color = "#ffffff"; delete s.fx; }
+        const a = QE_AMP * qeMult(play.qe.amp);
+        const [cp, ct] = projectors[i].pos;
+        let pan = cp, tilt = ct;
+        if (key === "cercle") { pan = cp + a * Math.sin(ph); tilt = ct + a * Math.cos(ph); }
+        else if (key === "figure8") { pan = cp + a * Math.sin(ph); tilt = ct + (a / 2) * Math.sin(2 * ph); }
+        else if (key === "balayage_h") pan = cp + a * Math.sin(ph);
+        else if (key === "balayage_v") tilt = ct + a * Math.sin(ph);
+        s.pan = clamp16(pan); s.tilt = clamp16(tilt);
+        return;
+      }
+      const lvl = s.level > 0 ? Math.max(10, s.level) : 80;
+      let color = s.color, level = lvl;
+      if (key === "rainbow") color = hsvHex(Math.trunc(ph * 57.296) % 360);
+      else if (key === "strobe") { if (Math.sin(ph) >= 0) color = "#ffffff"; else { color = "#000000"; level = 0; } }
+      else if (key === "rouge_blanc") { const gb = Math.trunc(((Math.sin(ph) + 1) / 2) * 255); color = toHex([255, gb, gb]); }
+      s.color = color; s.level = level;
+      delete s.fx;                                    // l'effet rapide prime sur la couleur d'effet AKAI
+      Engine.updateColorWheel(s, Engine.hexToRgb(color));
+    }));
+  }
+  function setQuick(idxs, key) {
+    idxs.forEach((i) => { if (key) { play.qfx[i] = key; qPhase[i] = 0; } else { delete play.qfx[i]; delete qPhase[i]; } });
+    runTimer();
+  }
+
   // ── Effets ─────────────────────────────────────────────────────────────────
+  // Une seule boucle d'animation pour l'effet AKAI et les effets rapides.
   let fxTimer = null;
+  function runTimer() {
+    const need = !!play.effect || Object.keys(play.qfx).length > 0;
+    if (need && !fxTimer) fxTimer = setInterval(() => refresh(false), 25);
+    if (!need && fxTimer) { clearInterval(fxTimer); fxTimer = null; }
+  }
   function setEffect(name, row) {
     play.effect = name && effectByName[name] ? name : null;
     play.effectRow = row ?? -1;
     clock.t = 0; clock.last = null;
-    clearInterval(fxTimer); fxTimer = null;
-    if (play.effect) fxTimer = setInterval(() => refresh(false), 25);
+    runTimer();
     effectMsgs();
   }
 
@@ -273,6 +350,7 @@
       positions: projectors.map((p) => p.pos.slice()),
       gobos: projectors.map((p) => p.gobo || 0),
       moveSize: play.moveSize,
+      qfx: { ...play.qfx },
     };
   }
   function recall(m) {
@@ -282,12 +360,14 @@
     (m.positions || []).forEach((pos, i) => { if (projectors[i] && pos) setPos(projectors[i], i, pos); });
     (m.gobos || []).forEach((g, i) => { if (projectors[i]) { projectors[i].gobo = g; play.gobos[i] = g; } });
     if (m.moveSize) { play.moveSize = m.moveSize; paintMoveSize(); }
+    play.qfx = { ...(m.qfx || {}) };
     setEffect(m.effect);
   }
   function blackout() {
     play.active = {};
     projectors.forEach((p) => { p.override = null; });
     play.memActive = null;
+    play.qfx = {};
     setEffect(null);
   }
   function setRec(on) {
@@ -376,7 +456,10 @@
         break;
       case "scene_clear":
         projectors.forEach((p) => { p.override = null; });
+        setQuick(Object.keys(play.qfx).map(Number), null);
         break;
+      case "proj_qfx": setQuick((ev.idxs || []).filter((i) => projectors[i]), ev.key || null); break;
+      case "proj_qe": if (ev.param in play.qe) play.qe[ev.param] = Math.max(0, Math.min(100, +ev.value || 0)); break;
       default:
         if (window.MystrowSoloMedia) window.MystrowSoloMedia(ev);   // playlist, cartouches
         return;
@@ -444,16 +527,66 @@
     "#solo-menu button.danger{border-color:rgba(248,113,113,.5);color:#f87171}";
   document.head.appendChild(style);
 
+  // Bouton RÉGLAGES (remplace l'ancien badge « SANS PC ») : patch, sortie DMX,
+  // test de sortie, accueil. ⚠ quand la sortie DMX est en erreur.
   const badge = document.createElement("button");
   badge.id = "solo-badge";
   badge.type = "button";
-  badge.textContent = "SANS PC";
-  badge.title = "Mode autonome : la tablette pilote les projecteurs. Toucher pour revenir à l'accueil.";
-  badge.addEventListener("click", () => {
-    if (Dmx) Dmx.stop().catch(() => {});
-    location.href = "index.html?view=solo";
-  });
+  badge.textContent = "⚙ RÉGLAGES";
+  badge.title = "Réglages : projecteurs, sortie DMX, accueil";
+  badge.addEventListener("click", () => openSettings());
   document.getElementById("conn-status").before(badge);
+
+  // Quitter le jeu pour une page de réglages : on coupe la sortie (la page
+  // de réglage ouvre la sienne) ; « ?from=play » y ramène ici au retour.
+  function goTo(url) {
+    if (Dmx) Dmx.stop().catch(() => {});
+    location.href = url;
+  }
+  function openSettings() {
+    openMenu("Réglages", [
+      ["Projecteurs (patch)", () => goTo("patch.html?from=play")],
+      ["Sortie DMX (USB ou node)", () => goTo("patch.html?from=play#sortie")],
+      ["Tester la sortie DMX", () => goTo("dmxtest.html?from=play")],
+      ...(window.MystrowLive ? [[window.MystrowLive.visible() ? "Mode Expert (AKAI, scène)" : "Mode Live (simple)",
+        () => window.MystrowLive.toggle()]] : []),
+      ["Accueil", () => goTo("index.html?view=solo")],
+    ], versionText());
+  }
+  // Injectée par scripts/build-www.mjs : sert à savoir quelle construction tourne.
+  function versionText() {
+    const b = window.MYSTROW_BUILD;
+    if (!b) return "";
+    const os = window.Capacitor && window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : "web";
+    return "MyStrow tablette " + b.version + " (" + (os === "ios" ? "iPad" : os === "android" ? "Android" : os) + ")"
+      + "\nConstruite le " + b.date + (b.commit ? " · " + b.commit : "");
+  }
+
+  // Le voyant EN LIGNE / HORS LIGNE parle ici de la SORTIE DMX, pas d'un PC :
+  // on intercepte le toucher avant la fenêtre « connexion au PC » de la page.
+  document.body.classList.add("solo");
+  style.textContent += "body.solo #conn-status.ok::after{content:'DMX OK'}" +
+    "body.solo #conn-status.err::after{content:'DMX COUPÉ'}" +
+    "body.solo #conn-status:not(.ok):not(.err)::after{content:'DMX…'}";
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest || !e.target.closest("#conn-status")) return;
+    e.stopPropagation(); e.preventDefault();
+    openOutputPanel();
+  }, true);
+  async function openOutputPanel() {
+    let detail = badge.title || "";
+    try {
+      const s = Dmx ? await Dmx.stats() : null;
+      if (s) detail = (s.running ? "Sortie : " + s.output : badge.title || "Sortie arrêtée")
+        + "\n" + s.sent + " trames envoyées, " + s.errors + " erreurs"
+        + (s.lastError ? "\nDernière erreur : " + s.lastError : "");
+    } catch (e) {}
+    openMenu("Sortie DMX", [
+      ["Relancer la sortie", () => startOutput()],
+      ["Régler la sortie (USB ou node)", () => goTo("patch.html?from=play#sortie")],
+      ["Tester la sortie DMX", () => goTo("dmxtest.html?from=play")],
+    ], detail);
+  }
 
   const toastEl = document.createElement("div");
   toastEl.id = "solo-toast";
@@ -532,9 +665,7 @@
 
   // ── Sortie DMX ─────────────────────────────────────────────────────────────
   function setOutputState(ok, text) {
-    badge.classList.toggle("err", !ok);
-    badge.textContent = ok ? "SANS PC" : "SANS PC ⚠";
-    badge.title = text;
+    badge.title = text;   // l'état se lit sur le voyant DMX OK / DMX COUPÉ
     try { _conn.state = ok ? "ok" : "err"; } catch (e) {}
     statusEl.textContent = ok ? "✓" : "⚠";
     statusEl.className = ok ? "ok" : "err";
@@ -552,7 +683,7 @@
       const s = await Dmx.stats();
       setOutputState(true, "Sortie : " + s.output);
     } catch (e) {
-      setOutputState(false, "Sortie DMX : " + (e.message || e) + ". Toucher pour revenir à l'accueil.");
+      setOutputState(false, "Sortie DMX : " + (e.message || e) + ". Nouvel essai toutes les 3 s.");
       // Interface débranchée ou refusée : on réessaie toutes les 3 s.
       setTimeout(startOutput, 3000);
     }
@@ -665,11 +796,14 @@
   // Menu contextuel partagé (mémoires ici, playlist et cartouches dans media.js).
   const menu = document.createElement("div");
   menu.id = "solo-menu"; menu.hidden = true;
-  menu.innerHTML = '<div class="box"><h3></h3><div class="acts" style="display:flex;flex-direction:column;gap:8px"></div></div>';
+  menu.innerHTML = '<div class="box"><h3></h3><p class="info" hidden style="margin:0 0 4px;white-space:pre-line;' +
+    'color:#cfcabd;font-size:14px;line-height:1.4"></p><div class="acts" style="display:flex;flex-direction:column;gap:8px"></div></div>';
   menu.addEventListener("click", (e) => { if (e.target === menu) menu.hidden = true; });
   document.body.appendChild(menu);
-  function openMenu(title, actions) {
+  function openMenu(title, actions, info) {
     menu.querySelector("h3").textContent = title;
+    const p = menu.querySelector(".info");
+    p.textContent = info || ""; p.hidden = !info;
     const acts = menu.querySelector(".acts");
     acts.innerHTML = "";
     [...actions, ["Fermer", null]].forEach(([label, fn, cls]) => {
@@ -694,8 +828,78 @@
   });
   style.textContent += ".tab-btn[hidden]{display:none}";
 
+  // Effets rapides dans le panneau d'un projecteur (SCÈNE). Comme le PC :
+  // lyres = mouvements, PAR = couleurs ; sélection mêlant lyres et PAR ou
+  // machines à effet (fumée…) = pas d'effets rapides.
+  const qeRow = document.createElement("div");
+  qeRow.id = "solo-qe";
+  qeRow.innerHTML = '<div class="qe-lbl">EFFETS RAPIDES</div><div class="qe-btns"></div><div class="qe-sliders"></div>';
+  const panelBtns = document.getElementById("proj-panel-btns");
+  if (panelBtns) panelBtns.before(qeRow);
+  const QE_SLIDERS = [["speed", "VITESSE", false], ["amp", "AMPLITUDE", true], ["phase", "DÉPHASAGE", false]];
+  function buildQuickRow() {
+    let idxs = [];
+    try { idxs = _selIdxs().filter((i) => projectors[i]); } catch (e) {}
+    const sel = idxs.map((i) => projectors[i]);
+    const lyres = sel.filter((p) => Engine.isLyre(p)).length;
+    const machines = sel.filter((p) => Engine.isFxMachine(p)).length;
+    const leds = sel.length - lyres - machines;
+    const kind = machines || !sel.length || (lyres && leds) ? null : lyres ? "lyre" : "led";
+    qeRow.hidden = !kind;
+    if (!kind) return;
+    const active = play.qfx[idxs[idxs.length - 1]];
+    const btns = qeRow.querySelector(".qe-btns");
+    btns.innerHTML = "";
+    (kind === "lyre" ? QE_LYRE : QE_LED).forEach(([key, icon, label]) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = icon; b.title = label;
+      b.className = active === key ? "on" : "";
+      b.addEventListener("click", () => { window.MYSTROW_SEND({ type: "proj_qfx", idxs, key }); buildQuickRow(); });
+      btns.appendChild(b);
+    });
+    const stop = document.createElement("button");
+    stop.type = "button"; stop.textContent = "■"; stop.title = "Arrêter"; stop.className = "stop";
+    stop.addEventListener("click", () => { window.MYSTROW_SEND({ type: "proj_qfx", idxs, key: null }); buildQuickRow(); });
+    btns.appendChild(stop);
+    const sl = qeRow.querySelector(".qe-sliders");
+    sl.innerHTML = "";
+    QE_SLIDERS.forEach(([param, label, lyreOnly]) => {
+      if (lyreOnly && kind !== "lyre") return;
+      const r = document.createElement("label");
+      r.innerHTML = "<span></span><input type=\"range\" min=\"0\" max=\"100\"><b></b>";
+      r.querySelector("span").textContent = label;
+      const inp = r.querySelector("input"), val = r.querySelector("b");
+      inp.value = play.qe[param]; val.textContent = play.qe[param];
+      inp.addEventListener("input", () => { val.textContent = inp.value; window.MYSTROW_SEND({ type: "proj_qe", param, value: +inp.value }); });
+      // Double-tap = valeur naturelle (50), ou 0 pour le déphasage.
+      inp.addEventListener("dblclick", () => { inp.value = param === "phase" ? 0 : 50; inp.dispatchEvent(new Event("input")); });
+      sl.appendChild(r);
+    });
+  }
+  // Le panneau est ouvert par la page (openProjPanel) : on complète après elle.
+  if (typeof window.openProjPanel === "function") {
+    const openOrig = window.openProjPanel;
+    window.openProjPanel = function (idx) { openOrig(idx); buildQuickRow(); };
+  }
+  style.textContent += "#solo-qe{display:flex;flex-direction:column;gap:8px;padding-top:4px}#solo-qe[hidden]{display:none}" +
+    "#solo-qe .qe-lbl{font-family:var(--f-label);font-weight:700;font-size:12px;letter-spacing:1.5px;color:var(--muted)}" +
+    "#solo-qe .qe-btns{display:flex;gap:6px;flex-wrap:wrap}" +
+    "#solo-qe .qe-btns button{min-width:52px;height:44px;padding:0 10px;border-radius:10px;border:1px solid var(--line2);background:var(--bg3);" +
+    "color:var(--text);font-size:20px;font-weight:700;cursor:pointer;touch-action:manipulation}" +
+    "#solo-qe .qe-btns button.on{background:rgba(226,206,22,.16);border-color:#E2CE16;color:#E2CE16}" +
+    "#solo-qe .qe-btns button.stop{color:#f87171;border-color:rgba(248,113,113,.45);font-size:16px}" +
+    "#solo-qe .qe-sliders{display:flex;flex-direction:column;gap:4px}" +
+    "#solo-qe .qe-sliders label{display:grid;grid-template-columns:96px 1fr 34px;align-items:center;gap:8px}" +
+    "#solo-qe .qe-sliders span{font-family:var(--f-label);font-weight:700;font-size:12px;letter-spacing:1.2px;color:var(--muted)}" +
+    "#solo-qe .qe-sliders input{width:100%;accent-color:#E2CE16}" +
+    "#solo-qe .qe-sliders b{font-family:var(--f-label);font-size:14px;color:var(--text);text-align:right;font-variant-numeric:tabular-nums}";
+
   // Pour media.js (playlist, cartouches) : même canal de messages vers la page.
-  window.MystrowSolo = { emit, toast, openMenu, mediaEnabled: MEDIA_SOLO };
+  window.MystrowSolo = { emit, toast, openMenu, mediaEnabled: MEDIA_SOLO,
+    // Pour live.js : la page Live joue sur le MÊME état que l'AKAI.
+    core: { show, play, projectors, GROUPS, COLORS, SPEED, byGroup, usedGroups, effectByName, hold,
+            setEffect, refresh, savePlay, snapshot, recall, clearGroupOverrides, allPads, padMsgs,
+            openSettings, openOutputPanel, emit } };
 
   // ── État initial ───────────────────────────────────────────────────────────
   const states = projectors.map(fixtureState);
@@ -722,7 +926,7 @@
     },
   });
   pageMsgs();
-  setEffect(play.effect, play.effectRow);
+  setEffect(play.effect, play.effectRow);   // relance aussi la boucle des effets rapides sauvegardés
   refresh(true);
   startOutput();
   window.addEventListener("pagehide", () => { if (Dmx) Dmx.stop().catch(() => {}); });
@@ -732,7 +936,16 @@
   const IOS = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
   let hiddenAt = 0;
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      // FLASH / NOIR maintenus : le doigt ne sera jamais « relâché » si l'app part en arrière-plan.
+      if (hold.flash || hold.black) {
+        hold.flash = hold.black = false;
+        refresh(true);
+        if (window.MystrowLive) window.MystrowLive.render();
+      }
+      return;
+    }
     lastSent = ""; output();   // renvoie la trame courante au natif
     if (IOS && hiddenAt && Date.now() - hiddenAt > 25000)
       toast("Sur iPad, le DMX s'arrête si MyStrow reste en arrière-plan. Gardez l'app au premier plan pendant le show (Accès guidé).", 7000);

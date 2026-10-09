@@ -166,6 +166,7 @@
       <button class="btn btn-big" id="solo-btn" type="button">Jouer</button>
       <div class="row2">
         <button class="btn btn-ghost" id="patch-btn" type="button">Mes projecteurs (patch)</button>
+        <button class="btn btn-ghost" id="output-btn" type="button">Sortie DMX</button>
         <button class="btn btn-ghost" id="dmxtest-btn" type="button">Tester la sortie DMX</button>
       </div>
     </section>
@@ -276,6 +277,7 @@
   document.getElementById("manual-form").addEventListener("submit", e => { e.preventDefault(); connectTo(hostInput.value); });
   document.getElementById("dmxtest-btn").addEventListener("click", () => { location.href = "dmxtest.html"; });
   document.getElementById("patch-btn").addEventListener("click", () => { location.href = "patch.html"; });
+  document.getElementById("output-btn").addEventListener("click", () => { location.href = "patch.html#sortie"; });
   document.getElementById("solo-btn").addEventListener("click", () => {
     const sh = soloShow();
     location.href = sh && sh.fixtures && sh.fixtures.length ? "remote.html?solo=1" : "patch.html";
@@ -314,6 +316,12 @@
     }
     // Retour du patch, du test DMX ou du jeu sans PC : écran « Sans PC ».
     if (params.get("view") === "solo") { show("solo"); return; }
+    // Sans PC la dernière fois, patch prêt : on ouvre directement le jeu (l'accueil
+    // reste joignable par ⚙ Réglages → Accueil).
+    if (!params.has("choose") && mode === "solo") {
+      const sh = soloShow();
+      if (sh && sh.fixtures && sh.fixtures.length) { location.replace("remote.html?solo=1"); return; }
+    }
     // Télécommande la dernière fois (ou app d'avant les écrans, sans mode) : reconnexion auto.
     if (!params.has("choose") && lastBtn && mode !== "solo") {
       show("pc");
