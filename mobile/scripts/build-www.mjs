@@ -17,9 +17,14 @@ mkdirSync(www, { recursive: true });
 
 cpSync(join(repo, "tablet", "fonts"), join(www, "fonts"), { recursive: true });
 copyFileSync(join(repo, "logo.png"), join(www, "icon.png"));
-copyFileSync(join(mobile, "src", "launcher.html"), join(www, "index.html"));
-copyFileSync(join(mobile, "src", "dmxtest.html"), join(www, "dmxtest.html"));
-copyFileSync(join(mobile, "src", "patch.html"), join(www, "patch.html"));
+// Langue (src/i18n.js) : chargée en tête de chaque page, avant tout autre script.
+const I18N_TAG = '<meta charset="utf-8">\n  <script src="i18n.js"></script>';
+copyFileSync(join(mobile, "src", "i18n.js"), join(www, "i18n.js"));
+for (const [src, dst] of [["launcher.html", "index.html"], ["dmxtest.html", "dmxtest.html"], ["patch.html", "patch.html"]]) {
+  const page = readFileSync(join(mobile, "src", src), "utf8");
+  if (page.split('<meta charset="utf-8">').length !== 2) throw new Error(`build-www : <meta charset> introuvable ou double dans ${src}`);
+  writeFileSync(join(www, dst), page.replace('<meta charset="utf-8">', I18N_TAG));
+}
 
 let remote = readFileSync(join(repo, "tablet", "index.html"), "utf8");
 
@@ -49,6 +54,7 @@ const BUILD = {
 };
 
 const inject = `<meta charset="utf-8">
+  <script src="i18n.js"></script>
   <script>
     window.MYSTROW_BUILD = ${JSON.stringify(BUILD)};
     window.MYSTROW_APP = true;

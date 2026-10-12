@@ -1037,8 +1037,9 @@
   demoChip.addEventListener("click", () => {
     openMenu("Version démo", [["Se connecter", () => openAccount()], ...packAction()], demoText());
     const info = menu.querySelector(".info");
-    const t = setInterval(() => { if (menu.hidden || !demoChip.isConnected) clearInterval(t); else info.textContent = demoText(); }, 1000);
+    menuTick = setInterval(() => { if (menu.hidden) clearInterval(menuTick); else info.textContent = demoText(); }, 1000);
   });
+  let menuTick = null;                              // mise à jour d'une fenêtre ouverte (décompte démo)
   function demoText() {
     const left = Math.max(0, demoLeft());
     const m = Math.floor(left / 60000), sec = Math.floor((left % 60000) / 1000);
@@ -1177,7 +1178,8 @@
       '<button type="button" data-a="cols"><i>' + svg("grid") + '</i><b>Réglages de l\'AKAI</b><small>Dispositions toutes faites, superposition d\'effets</small></button>' +
       '<button type="button" data-a="fx"><i>' + svg("wand") + '</i><b>Éditeur d\'effets</b><small></small></button>' +
       '</div>' +
-      '<footer><button type="button" data-a="home"><i>' + svg("home") + '</i>Accueil</button><span></span></footer></div>';
+      '<footer><button type="button" data-a="home"><i>' + svg("home") + '</i>Accueil</button>' +
+      '<button type="button" data-a="lang">🌐 ' + (window.MYSTROW_LANG === "en" ? "Français" : "English") + '</button><span></span></footer></div>';
     const $s = (q) => setDlg.querySelector(q);
     $s(".acct b").textContent = acc.loggedIn ? acc.email : "Se connecter";
     $s(".acct small").textContent = acc.loggedIn ? (licensed ? "Licence active : DMX sans limite" : "Pas de licence payante : DMX limité à 10 min")
@@ -1191,6 +1193,7 @@
     $s("footer span").textContent = versionText().replace("\n", " · ");
     const ACT = {
       account: () => openAccount(), patch: () => goTo("patch.html?from=play"), output: () => goTo("patch.html?from=play#sortie"),
+      lang: () => { if (window.MystrowI18n) window.MystrowI18n.set(window.MYSTROW_LANG === "en" ? "fr" : "en"); },
       test: () => goTo("dmxtest.html?from=play"), cols: () => openColumns(), fx: () => openFxManager(), pack: () => openPack(),
       live: () => window.MystrowLive.toggle(), home: () => goTo("index.html?view=solo"),
     };
@@ -1713,6 +1716,7 @@
   menu.addEventListener("click", (e) => { if (e.target === menu) menu.hidden = true; });
   document.body.appendChild(menu);
   function openMenu(title, actions, info) {
+    clearInterval(menuTick);                        // le décompte démo n'écrit pas dans la fenêtre suivante
     menu.querySelector("h3").textContent = title;
     const p = menu.querySelector(".info");
     p.textContent = info || ""; p.hidden = !info;
