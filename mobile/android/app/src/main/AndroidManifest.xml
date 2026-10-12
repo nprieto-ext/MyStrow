@@ -46,4 +46,7 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Mode autonome : verrou Wi-Fi basse latence pendant l'envoi Art-Net (MystrowDmxPlugin). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Onglet LIVE : la lumière réagit à la musique captée par le micro -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 </manifest>

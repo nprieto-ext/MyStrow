@@ -470,7 +470,9 @@
       for (const ld of layers) {
         const preset = ld.target_preset || "Tous";
         const groups = ld.target_groups || [];
-        if (preset === "Selection") continue;       // pas de sélection sur la tablette
+        // Sélection : rangs du patch tablette, traduits par le PC (tablet_cloud.py)
+        // depuis target_selection. Sans cette liste, la couche ne vise personne.
+        if (preset === "Selection" && !(ld.target_idx || []).includes(allFixtures.indexOf(proj))) continue;
         if (preset === "Pair" && i % 2 !== 0) continue;
         if (preset === "Impair" && i % 2 !== 1) continue;
         if (/^[A-H]$/.test(preset) && proj.group !== preset) continue;

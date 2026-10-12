@@ -166,8 +166,13 @@
        → remplissage correct du 8" au 13". --faders-h est réutilisé plus bas. */
     :root { --faders-h: clamp(120px, 22vh, 240px); }
     #grid { aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); gap: var(--pad-gap); height: calc(100% - var(--faders-h) - 6px); width: auto; max-width: 100%; }
-    /* REC/CLEAR : empilés à droite, alignés en hauteur sur les 9 faders. */
-    #akai-ctrl { flex-shrink: 0; height: var(--faders-h); display: flex; flex-direction: column; gap: 6px; }
+    /* 9e fader : sous la colonne de droite (boutons scène), là où il est sur
+       l'APC mini — et non serré sous la grille, au-dessous de la 8e colonne de pads. */
+    #akai-ctrl { flex-shrink: 0; height: var(--faders-h); display: flex; }
+    #akai-ctrl .fader-col { flex: 1; }
+    /* REC / CLEAR : leur propre bloc, en bas à droite (la place du 9e fader est prise). */
+    #akai-tools { position: absolute; z-index: 2; right: clamp(8px, 1.2vmin, 14px); bottom: clamp(8px, 1.2vmin, 14px);
+      width: clamp(96px, 11vw, 132px); height: var(--faders-h); display: flex; flex-direction: column; gap: 6px; }
     .akai-btn { flex: 1; width: 100%; min-height: 0; border-radius: 8px; border: 1px solid var(--line2); background: var(--bg3);
       color: var(--text); font-size: clamp(11px, 1.5vw, 15px); font-weight: 700; letter-spacing: 1.2px; cursor: pointer;
       display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap;
@@ -202,7 +207,6 @@
        comme la maquette AKAI du site. Hauteur du curseur = THUMB_H (18 px) du JS. */
     #faders-area { flex-shrink: 0; height: var(--faders-h); display: flex; gap: 4px; }
     .fader-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
-    .fader-col.fx-speed { border-left: 1px solid var(--border); padding-left: 4px; }
     .fader-label { font-family: var(--f-label); font-weight: 700; font-size: clamp(10px, 1.3vw, 14px); color: var(--muted); letter-spacing: 1px; height: clamp(12px, 1.8vh, 17px); line-height: 1; user-select: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fader-col.fx-speed .fader-label { color: var(--violet); }
     .fader-track { flex: 1; position: relative; width: 100%; cursor: pointer; touch-action: none; border-radius: 8px;
@@ -360,7 +364,7 @@
                        - 2 * var(--ak-gap) - 1px - var(--right-w) - 4px);
         --grid-h: calc(var(--vh) - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))
                        - clamp(34px, 6vh, 52px) - 8px - 2px - 2 * var(--ak-pad)
-                       - var(--pgnav-h) - var(--faders-h) - 6px - 4px);
+                       - var(--pgnav-h) - var(--faders-h) - 6px - 4px - 56px);   /* 56 = rangée REC/CLEAR + gap */
         --grid-side: min(var(--grid-w), var(--grid-h));
       }
       #akai-page:has(#akai-pagenav:not(.show)) { --pgnav-h: 0px; }
@@ -373,6 +377,7 @@
       #grid-col { height: auto; }
       #grid { width: var(--grid-side); height: var(--grid-side); aspect-ratio: auto; max-width: none; }
       #akai-right { height: auto; width: var(--right-w); }
+      #akai-tools { position: static; flex-direction: row; width: auto; height: 48px; flex-shrink: 0; }
       #effects { flex: none; height: var(--grid-side); }
 
       #carts-area { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: clamp(56px, 7vh, 84px); height: auto; }
@@ -445,11 +450,13 @@
       <div class="vdiv"></div>
       <div id="akai-right">
         <div id="effects"></div>
-        <div id="akai-ctrl">
-          <button class="akai-btn" id="btn-akai-rec">🔴 REC</button>
-          <button class="akai-btn" id="btn-akai-clear">CLEAR</button>
-        </div>
+        <!-- 9e fader (vitesse des effets), sous la colonne de droite comme sur l'APC mini -->
+        <div id="akai-ctrl"></div>
       </div>
+    </div>
+    <div id="akai-tools">
+      <button class="akai-btn" id="btn-akai-rec">🔴 REC</button>
+      <button class="akai-btn" id="btn-akai-clear">CLEAR</button>
     </div>
   </div>
 
@@ -656,7 +663,7 @@ for(let i=0;i<N_FADERS;i++){
   track.appendChild(fill); track.appendChild(thumb);
   const valLbl=document.createElement('div'); valLbl.className='fader-val'; valLbl.textContent='50';
   col.appendChild(lbl); col.appendChild(track); col.appendChild(valLbl);
-  fadersEl.appendChild(col);
+  (isMaster?document.getElementById('akai-ctrl'):fadersEl).appendChild(col);
   faderData[i]={track,fill,thumb,valLbl,value:50};
 }
 

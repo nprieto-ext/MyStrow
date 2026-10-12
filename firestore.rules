@@ -167,5 +167,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Config du PC pour l'app tablette (tablet_cloud.py ecrit, mobile/src/
+    // account.js lit) : patch, pages AKAI, memoires, effets, en JSON dans
+    // `payload`. Chacun ne lit et n'ecrit QUE la sienne. Champs en liste
+    // blanche et taille bornee : ce n'est pas un stockage de fichiers libre.
+    // Pas de condition de licence ici : c'est la tablette qui exige une
+    // licence payante pour lever la limite de 10 minutes de DMX.
+    match /user_configs/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['payload', 'updated_utc', 'label', 'summary'])
+                    && request.resource.data.payload is string
+                    && request.resource.data.payload.size() < 950000;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
   }
 }

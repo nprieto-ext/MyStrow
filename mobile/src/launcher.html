@@ -168,11 +168,13 @@
         <button class="btn btn-ghost" id="patch-btn" type="button">Mes projecteurs (patch)</button>
         <button class="btn btn-ghost" id="output-btn" type="button">Sortie DMX</button>
         <button class="btn btn-ghost" id="dmxtest-btn" type="button">Tester la sortie DMX</button>
+        <button class="btn btn-ghost" id="account-btn" type="button">Mon compte</button>
       </div>
     </section>
   </div>
 </main>
 
+<script src="account.js"></script>
 <script>
   "use strict";
   // Version du protocole comprise par cette app (cf. PROTOCOL_VERSION de tablet_server.py).
@@ -277,6 +279,10 @@
   document.getElementById("manual-form").addEventListener("submit", e => { e.preventDefault(); connectTo(hostInput.value); });
   document.getElementById("dmxtest-btn").addEventListener("click", () => { location.href = "dmxtest.html"; });
   document.getElementById("patch-btn").addEventListener("click", () => { location.href = "patch.html"; });
+  // Compte : licence (DMX sans limite de 10 min) et config envoyée par le PC.
+  document.getElementById("account-btn").addEventListener("click", () => {
+    if (window.MystrowAccount) MystrowAccount.openPanel({ onImported: () => { renderSolo(); location.href = "remote.html?solo=1"; } });
+  });
   document.getElementById("output-btn").addEventListener("click", () => { location.href = "patch.html#sortie"; });
   document.getElementById("solo-btn").addEventListener("click", () => {
     const sh = soloShow();

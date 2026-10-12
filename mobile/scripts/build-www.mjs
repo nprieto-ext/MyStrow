@@ -70,8 +70,11 @@ copyFileSync(join(mobile, "src", "library.js"), join(www, "library.js"));
 copyFileSync(join(mobile, "src", "standalone.js"), join(www, "standalone.js"));
 copyFileSync(join(mobile, "src", "media.js"), join(www, "media.js"));
 copyFileSync(join(mobile, "src", "live.js"), join(www, "live.js"));
+copyFileSync(join(mobile, "src", "fxeditor.js"), join(www, "fxeditor.js"));
+// Compte MyStrow (licence, config du PC) : jeu sans PC ET accueil.
+copyFileSync(join(mobile, "src", "account.js"), join(www, "account.js"));
 remote = replaceOnce(remote, "</body>",
-  '<script src="demo.js"></script>\n<script src="engine.js"></script>\n<script src="effects.js"></script>\n<script src="standalone.js"></script>\n<script src="media.js"></script>\n<script src="live.js"></script>\n</body>');
+  '<script src="demo.js"></script>\n<script src="engine.js"></script>\n<script src="effects.js"></script>\n<script src="account.js"></script>\n<script src="standalone.js"></script>\n<script src="media.js"></script>\n<script src="live.js"></script>\n<script src="fxeditor.js"></script>\n</body>');
 // PWA du navigateur uniquement : l'app n'a ni manifeste ni service worker.
 remote = replaceOnce(remote, '<link rel="manifest" href="/manifest.json">', "");
 

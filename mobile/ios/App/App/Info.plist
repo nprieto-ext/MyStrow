@@ -71,6 +71,8 @@
 	<key>UIStatusBarHidden</key>
 	<true/>
 	<!-- Réseau local : trouver le PC MyStrow (Bonjour) et le joindre en HTTP. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MyStrow écoute la musique pour faire réagir la lumière (onglet LIVE).</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>MyStrow cherche l’ordinateur qui fait tourner MyStrow sur votre Wi-Fi pour piloter vos lumières.</string>
 	<key>NSBonjourServices</key>
