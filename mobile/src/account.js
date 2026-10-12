@@ -149,6 +149,12 @@
     if (s.plan === "license") return "Licence expirée : la sortie DMX reste limitée à 10 minutes.";
     return "Ce compte n'a pas de licence payante (essai) : la sortie DMX reste limitée à 10 minutes par lancement.";
   }
+  const isIos = () => !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
+  // Lien externe : en natif, Capacitor ouvre tout autre domaine hors de l'app.
+  function openExternal(url) {
+    if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) location.href = url;
+    else window.open(url, "_blank", "noopener");
+  }
   function openPanel(opts) {
     opts = opts || {};
     if (!panel) {
@@ -173,6 +179,8 @@
 #acct button.main{background:#E2CE16;border:0;color:#0c0b00}
 #acct button.danger{border-color:rgba(248,113,113,.5);color:#f87171}
 #acct button:disabled{opacity:.5}
+#acct .act{display:flex;flex-direction:column;gap:8px;margin-top:4px;padding:12px;border-radius:12px;border:1px solid rgba(226,206,22,.35);background:#1a1700}
+#acct .act b{font-size:18px;color:#E2CE16}
 #acct .who{font-size:20px;font-weight:700;color:#f4f1e8;word-break:break-all}`;
       document.head.appendChild(css);
     }
@@ -198,9 +206,19 @@
         try { await signIn(form.querySelector("#acct-mail").value, form.querySelector("#acct-pw").value); render(); }
         catch (err) { msg.className = "err"; msg.textContent = err.message; busy(go, false, "Se connecter"); }
       });
-      body.append(form, el("p", "small", "Mot de passe oublié : depuis le logiciel MyStrow sur le PC (Mon compte) ou sur mystrow.fr."),
-        btn("Fermer", "", () => { panel.hidden = true; }));
-      setTimeout(() => { const i = body.querySelector("#acct-mail"); if (i) i.focus(); }, 60);
+      body.append(form, el("p", "small", "Mot de passe oublié : depuis le logiciel MyStrow sur le PC (Mon compte) ou sur mystrow.fr."));
+      // Pas de compte : la carte d'activation du pack se saisit sur le site
+      // (mystrow.fr/activate crée le compte et envoie le mot de passe par
+      // email) — une seule logique d'activation, pas une copie dans l'app.
+      // Pas sur iPad : Apple refuse le déblocage par code hors App Store (3.1.1).
+      if (!isIos()) {
+        const box = el("div", "act");
+        box.append(el("b", "", "Pas encore de compte ?"),
+          el("p", "", "Vous avez une carte d'activation (pack MyStrow) : activez-la sur le site. Il crée votre compte et vous envoie le mot de passe par email ; revenez ensuite vous connecter ici."),
+          btn("Activer ma carte sur mystrow.fr ↗", "", () => openExternal("https://mystrow.fr/activate?lang=fr")));
+        body.append(box);
+      }
+      body.append(btn("Fermer", "", () => { panel.hidden = true; }));
     }
     function renderIn() {
       const s = status();
