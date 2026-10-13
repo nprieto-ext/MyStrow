@@ -3518,15 +3518,28 @@ function _uvCover(geo, aspect) {
   uv.needsUpdate = true;
 }
 
-// Pose (ou retire) les écrans. Appelée par le preset de décor : la position
-// n'est pas réglable à la main, chaque scène sait où ses écrans tombent.
+// Pose (ou retire) les écrans. Appelée par le preset de décor (chaque scène
+// sait où ses écrans tombent), puis par l'éditeur « Écrans vidéo » de l'onglet
+// Scène quand l'utilisateur a retouché ceux du décor — c'est le seul moyen
+// d'avoir un écran sur un décor importé, qui n'en déclare aucun.
 // `cfg` : un objet, ou une LISTE (festival : fond de scène + écrans des
 // ailes). Toutes les dalles partagent la même texture — une seule image
 // décodée par frame, quel que soit le nombre d'écrans.
-window.setVideoScreen = function(cfg) {
+let _screenSel = -1;   // dalle surlignée par l'éditeur, -1 = aucune
+function _disposeScreens() {
+  _screenGrp.traverse(o => {
+    if (!o.isMesh) return;
+    o.geometry.dispose();
+    // La texture vidéo est partagée et survit aux dalles : on ne libère que
+    // le matériau, jamais `_screenTex`.
+    o.material.dispose();
+  });
   _screenGrp.clear();
+}
+window.setVideoScreen = function(cfg) {
+  _disposeScreens();
   const cfgs = !cfg ? [] : (Array.isArray(cfg) ? cfg : [cfg]);
-  _screenCfg = cfgs.length ? cfgs : null;
+  _screenCfg = cfgs.length ? JSON.parse(JSON.stringify(cfgs)) : null;
   if (!cfgs.length) return;
 
   if (!_screenCanvas) {
@@ -3535,8 +3548,11 @@ window.setVideoScreen = function(cfg) {
     _screenCtx = _screenCanvas.getContext('2d');
     _screenTex = new THREE.CanvasTexture(_screenCanvas);
     _screenTex.colorSpace = THREE.SRGBColorSpace;
+    // Au noir à la CRÉATION seulement. Le faire à chaque appel effaçait
+    // l'image à chaque retouche de l'éditeur — et une photo fixe ne revenait
+    // jamais : le relais Python la croyait toujours affichée.
+    _screenBlack();
   }
-  _screenBlack();
 
   for (const c of cfgs) {
     const w = c.w ?? 6.0, h = c.h ?? 3.4;
@@ -3562,6 +3578,30 @@ window.setVideoScreen = function(cfg) {
   }
   _screenGrp.visible = _flags.screen;
   _appliquerRetourVideo();
+  _surlignerEcran();
+};
+
+// Écrans en cours, lus par l'éditeur Python (`runJavaScript` avec rappel) :
+// c'est d'ici qu'il part quand le décor n'a pas encore été retouché.
+window.getVideoScreens = function() { return JSON.stringify(_screenCfg || []); };
+// Écrans d'origine d'un décor — bouton « Par défaut » de l'éditeur.
+window.presetScreens = function(name) {
+  return ((typeof SCENE_PRESETS !== 'undefined' && SCENE_PRESETS[name]) || {}).screen || null;
+};
+
+// Cadre cyan autour de la dalle choisie dans l'éditeur : sans repère, on ne
+// sait pas lequel des cinq écrans de la discothèque on est en train de régler.
+function _surlignerEcran() {
+  _screenGrp.children.forEach((g, i) => {
+    const frame = g.children[0];
+    if (!frame || !frame.material || !frame.material.emissive) return;
+    frame.material.emissive.setHex(i === _screenSel ? 0x00d4ff : 0x000000);
+    frame.material.emissiveIntensity = i === _screenSel ? 1.6 : 1.0;
+  });
+}
+window.setVideoScreenHighlight = function(idx) {
+  _screenSel = (typeof idx === 'number') ? idx : -1;
+  _surlignerEcran();
 };
 
 // Une frame poussée par Python : data URL JPEG, ou '' pour éteindre la dalle.
@@ -4236,6 +4276,16 @@ const SCENE_PRESETS = {
     // partagent la même géométrie. On la couvre donc, en se plaçant assez en
     // avant (z = 3,85) pour passer devant son point le plus proche (3,93).
     screen: { x:0, y:0.15, z:3.85, w:14.6, h:8.6 },
+    trusses: [],
+    buildProps() {}
+  },
+  // Plateau 6 × 5 m (GLB `scene_6x5.glb`, à taille réelle via span 8,2).
+  // L'écran RECOUVRE celui du modèle : 4 × 3 m, bas à 1 m (dessus du plateau),
+  // face avant à z = 3,02 après centrage — la dalle se pose juste devant.
+  scene_6x5: {
+    screen: [ { x:0, y:0.98, z:2.98, w:4.04, h:3.04, fit:'cover' } ],
+    // Petite scène : caméras rapprochées, visée à hauteur d'écran.
+    cam: { zoom:0.55, cibleY:2.0, cibleZ:0.5 },
     trusses: [],
     buildProps() {}
   },

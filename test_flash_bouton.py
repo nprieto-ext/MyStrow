@@ -89,6 +89,7 @@ class FauxWin:
         self.faders = {i: FauxFader(0) for i in range(9)}
         self._muted_faders = set()
         self._mem_ext_levels = {}
+        self._mem_auto_on = set()
         self._mem_rows = {}
         self._mem_cue_idx = {}
         self.projectors = [FauxProjecteur() for _ in range(n_proj)]

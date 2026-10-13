@@ -4508,6 +4508,13 @@ class _StatusCornerWidget(QWidget):
         self._dot.setStyleSheet("color:#333; font-size:8pt;")
         lay.addWidget(self._dot, alignment=Qt.AlignVCenter)
 
+        # ── Synchro compte (cloud_sync) ──────────────────────
+        # Nuage discret, masqué tant qu'aucun compte n'est connecté. Jamais
+        # rouge : hors ligne n'est pas une erreur, l'envoi attend le réseau.
+        self._cloud = QLabel("☁")
+        self._cloud.setVisible(False)
+        lay.addWidget(self._cloud, alignment=Qt.AlignVCenter)
+
         # ── Horloge ──────────────────────────────────────────
         self._clock = QLabel("--:--:--")
         self._clock.setStyleSheet(_val)
@@ -4530,6 +4537,26 @@ class _StatusCornerWidget(QWidget):
 
     def _update_clock(self):
         self._clock.setText(_dt.datetime.now().strftime("%H:%M:%S"))
+
+    _CLOUD_LOOK = {
+        "ok":      ("☁ ✓", "#4a9a6a", "cloud_tip_ok"),
+        "sending": ("☁ ↑", "#5a8ab0", "cloud_tip_sending"),
+        "idle":    ("☁ ↑", "#5a8ab0", "cloud_tip_sending"),
+        "pending": ("☁ ↑", "#5a8ab0", "cloud_tip_sending"),
+        "offline": ("☁",   "#555555", "cloud_tip_offline"),
+    }
+
+    def set_cloud(self, status: str):
+        """État de la synchro du patch et des effets avec le compte."""
+        look = self._CLOUD_LOOK.get(status)
+        if look is None:          # "off" : pas de compte connecté
+            self._cloud.setVisible(False)
+            return
+        text, color, tip = look
+        self._cloud.setText(text)
+        self._cloud.setStyleSheet(f"color:{color}; font-size:10px; font-weight:bold;")
+        self._cloud.setToolTip(tr(tip))
+        self._cloud.setVisible(True)
 
 
 class PanTiltLimitWidget(QWidget):
@@ -4882,6 +4909,23 @@ class MissingMediaDialog(QDialog):
             btn.setEnabled(False)
 
 
+# Canaux de lumière d'une mémoire : comme le niveau, ils ne sortent que fader
+# levé. Le strobe en fait partie — on coupe un strobe en baissant son fader —
+# même si sa vitesse, elle, n'est pas dosée par le fader.
+_MEM_CANAUX_LUMIERE = frozenset(("uv", "amber_boost", "white_boost",
+                                 "orange_boost", "strobe_speed"))
+
+
+def _mem_lancer(win, mem_col):
+    """Note qu'une mémoire vient d'être lancée : elle passe devant (LTP, cf.
+    `_recompute_memory_mix`). Fonction de module et non méthode : les
+    fenêtres factices des tests empruntent les méthodes une à une."""
+    win._mem_seq_n = getattr(win, '_mem_seq_n', 0) + 1
+    if getattr(win, '_mem_seq', None) is None:
+        win._mem_seq = {}
+    win._mem_seq[mem_col] = win._mem_seq_n
+
+
 class MainWindow(QMainWindow):
     """Fenetre principale de l'application"""
 
@@ -5002,6 +5046,7 @@ class MainWindow(QMainWindow):
         # sont indexés par mem_col, donc indépendants de la page.
         self._mem_rows = {}           # {mem_col: row} pad actif, quelle que soit la page
         self._mem_ext_levels = {}     # {mem_col: 0-100} niveau venu du pupitre DMX
+        self._mem_auto_on = set()     # mem_col allumées par leur FADER (s'éteignent à 0)
 
         # Positions lyre (pan/tilt presets)
         self.position_presets = []                                          # [{"name": str, "projectors": [{group, pan, tilt}]}]
@@ -5493,6 +5538,8 @@ class MainWindow(QMainWindow):
 
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
         ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
+        # App tablette sans PC : elle retrouve patch, mémoires et effets dans le compte.
+        ctrl_menu.addAction(tr("mw_menu_send_tablet"), self._send_config_to_tablet)
 
         # Regie video : elle PILOTE MyStrow (source à l'antenne → lumiere), au
         # meme titre qu'un Stream Deck. D'ou sa place ici et non dans un menu
@@ -5680,6 +5727,21 @@ class MainWindow(QMainWindow):
         # ── Corner widget : Master meter / CPU / Horloge ──────────────────────
         self._status_corner = _StatusCornerWidget()
         bar.setCornerWidget(self._status_corner, Qt.TopRightCorner)
+
+        # ── Synchro patch + effets avec le compte (façon iCloud) ──────────────
+        # Toutes les 5 s, de simples `stat` sur 4 fichiers ; un changement part
+        # en arrière-plan (cloud_sync.Pusher). Rien de réseau sur ce thread :
+        # hors connexion, l'appli ne bloque ni ne mouline.
+        self._cloud_pusher = None
+        try:
+            import cloud_sync
+            self._cloud_pusher = cloud_sync.Pusher()
+            self._cloud_timer = QTimer(self)
+            self._cloud_timer.timeout.connect(self._cloud_tick)
+            self._cloud_timer.start(5000)
+            QTimer.singleShot(3000, self._cloud_tick)
+        except Exception as e:
+            print(f"[CloudSync] désactivée : {e}")
 
         # ── Logo MYSTROW centré dans la menubar ───────────────────────────────
         self._menubar_logo = QLabel(
@@ -8632,6 +8694,19 @@ class MainWindow(QMainWindow):
                 pad.setToolTip(tip)
                 pad.setToolTipDuration(800 if self._mem_rec_mode else -1)
 
+    def _cloud_tick(self):
+        """Minuteur de synchro : jamais d'exception ni d'attente réseau ici."""
+        if self._cloud_pusher is None:
+            return
+        try:
+            status = self._cloud_pusher.tick()
+        except Exception as e:
+            print(f"[CloudSync] {e}")
+            return
+        corner = getattr(self, '_status_corner', None)
+        if corner is not None:
+            corner.set_cloud(status)
+
     def _log_message(self, text: str, level: str = "info"):
         """Envoie un message dans le journal AKAI."""
         log = getattr(self, '_msg_log', None)
@@ -8845,6 +8920,7 @@ class MainWindow(QMainWindow):
         self._mem_cue_idx[(mem_col, row)] = 0
         self.active_memory_pads[col_akai] = row
         self._mem_rows[mem_col] = row
+        _mem_lancer(self, mem_col)
         self._style_memory_pad(mem_col, row, active=True)
         self._update_memory_pad_led(mem_col, row, active=True)
         # Momentané : pas de fondu (personne ne le verrait), pas de reprise des
@@ -8984,6 +9060,7 @@ class MainWindow(QMainWindow):
                     self._release_manual_grabs()   # action volontaire → on repeint
                     if not self._mem_advance_cue(mem_col, row):
                         return   # fin de liste sans boucle : rien ne bouge
+                    _mem_lancer(self, mem_col)   # nouveau cue = relancée (LTP)
                     fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
                     # Fondu du cue d'ARRIVÉE (donc après l'avance).
                     self._recompute_memory_mix(self._cue_fade_secs(mem_col, row))
@@ -9029,6 +9106,9 @@ class MainWindow(QMainWindow):
 
         # Activer le nouveau pad (cue 0 par défaut)
         self._release_manual_grabs()   # action volontaire → on repeint
+        # Lancée au pad : elle reste en scène fader à 0 (pas d'auto off).
+        self._mem_auto_on.discard(mem_col)
+        _mem_lancer(self, mem_col)
         self._mem_cue_idx[(mem_col, row)] = 0
         self.active_memory_pads[col_akai] = row
         # Registre indexe par mem_col : c'est lui qui survit au changement de
@@ -9054,7 +9134,9 @@ class MainWindow(QMainWindow):
         else:
             self._log_message(f"MEM {mem_col + 1}.{row + 1}", "mem")
         if fader_val == 0:
-            self._log_message(tr("mwx_012", a=mem_col + 1), "warn")
+            # Simple info depuis que fader à 0 = gobo/position sans lumière :
+            # plus un avertissement (pas de « ! » dans le journal).
+            self._log_message(tr("mwx_012", a=mem_col + 1), "mem")
 
         # Démarrer le timer de durée si le cue actif en a une
         self._start_cue_duration(mem_col, row)
@@ -9530,22 +9612,23 @@ class MainWindow(QMainWindow):
 
     def _clear_memory_from_projectors(self, mem_col, row):
         """Remet à zéro les projecteurs actifs du cue courant de cette mémoire."""
+        # On ne retire QUE ce que la mémoire portait. Avant, une mémoire « juste
+        # un gobo » (gobo > 0 sur tout le rig) éteignait aussi niveau, couleur,
+        # UV, zoom et strobe de chaque projecteur en partant : passer de la
+        # MEM 35.1 à la 35.2 faisait un black complet (13/10/2026).
         cue = self._mem_active_cue(mem_col, row)
         for i, proj_state in enumerate(cue.get("projectors", [])):
             if i >= len(self.projectors):
                 break
-            if proj_state["level"] > 0 or any(proj_state.get(k, 0) > 0 for k in ("uv", "amber_boost", "white_boost", "orange_boost", "gobo", "zoom", "strobe_speed")):
-                p = self.projectors[i]
+            p = self.projectors[i]
+            if (proj_state.get("level", 0) or 0) > 0:
                 p.level = 0
                 p.base_color = QColor("black")
                 p.color = QColor("black")
-                p.uv           = 0
-                p.amber_boost  = 0
-                p.white_boost  = 0
-                p.orange_boost = 0
-                p.gobo         = 0
-                p.zoom         = 0
-                p.strobe_speed = 0
+            for k in ("uv", "amber_boost", "white_boost", "orange_boost",
+                      "gobo", "zoom", "strobe_speed"):
+                if (proj_state.get(k, 0) or 0) > 0:
+                    setattr(p, k, 0)
 
     def _apply_memory_to_projectors(self, mem_col, row, fader_value=None, trigger_effect=True):
         """Applique le cue courant de la mémoire sur les projecteurs."""
@@ -9725,8 +9808,17 @@ class MainWindow(QMainWindow):
         # d'écrire, et le fader semblerait sans effet pendant toute la rampe.
         self._fade_timer.stop()
 
-        # 1. Collecter les mémoires actives (fader > 0, non mutée)
+        # 1. Collecter les mémoires actives (pad allumé, non mutée)
+        # Le PAD allume la mémoire, le FADER n'est que son maître d'intensité
+        # (comme un exécuteur grandMA) : fader à 0, la mémoire pose quand même
+        # gobo, position, zoom, prisme… mais aucune lumière — « préparer dans
+        # le noir ». Avant (jusqu'au 13/10/2026), fader à 0 = mémoire ignorée :
+        # une mémoire « juste un gobo » obligeait à monter le fader. Le mute
+        # reste la coupure totale. L'effet, lui, exige toujours fader > 0 (cf.
+        # étape 3) : un effet de couleur produit de la lumière.
         active = []   # (bright 0-1, cue, mem_raw)
+        lancee = {}   # id(mem_raw) → rang de lancement (cf. 1 ter)
+        _seq = getattr(self, '_mem_seq', None) or {}
         for fader_idx, row in list(self.active_memory_pads.items()):
             if fader_idx in self._muted_faders or row is None:
                 continue
@@ -9736,13 +9828,12 @@ class MainWindow(QMainWindow):
             mem = self.memories[mem_col][row]
             if not mem:
                 continue
-            fv = self._mem_flash_level(
+            fv = max(0, self._mem_flash_level(
                 fader_idx,
-                self.faders[fader_idx].value if fader_idx in self.faders else 0)
-            if fv <= 0:
-                continue
+                self.faders[fader_idx].value if fader_idx in self.faders else 0))
             self._mem_ensure_cues(mem)
             active.append((fv / 100.0, self._mem_active_cue(mem_col, row), mem))
+            lancee[id(mem)] = _seq.get(mem_col, 0)
 
         # 1 bis. Mémoires tenues par l'entrée DMX alors qu'elles ne sont PAS sur
         # la page affichée : elles n'ont pas de fader à l'écran où lire un
@@ -9768,8 +9859,14 @@ class MainWindow(QMainWindow):
                 self._mem_ensure_cues(mem)
                 active.append((niveau / 100.0,
                                self._mem_active_cue(mem_col, row), mem))
+                lancee[id(mem)] = _seq.get(mem_col, 0)
 
-        # 1 ter. Ordre de priorité des paramètres : fader le plus haut d'abord.
+        # 1 ter. Ordre de priorité des paramètres : la DERNIÈRE LANCÉE d'abord
+        # (LTP, comme grandMA), puis le fader le plus haut. Lancer une mémoire
+        # « juste un gobo », même fader à 0, change donc le gobo du look en
+        # place. La lumière, elle, reste un mélange HTP (étape 2). Mémoires sans
+        # rang connu (restaurées au démarrage) : départagées par le fader seul,
+        # le comportement d'avant le 13/10/2026.
         # Chaque mémoire n'impose que ce qu'elle a enregistré hors repos (cf.
         # `compose_memory_params`) : une mémoire « juste un strobe », « juste
         # un gobo » ou « juste une position » se lève par-dessus un look sans
@@ -9777,7 +9874,8 @@ class MainWindow(QMainWindow):
         # imposait TOUT son faisceau, valeurs au repos comprises : lever un
         # strobe recentrait les lyres, refermait le gobo, coupait l'UV.
         from light_timeline import compose_memory_params, mem_param_repos, MEM_PARAMS
-        par_prio = sorted(active, key=lambda t: t[0], reverse=True)
+        par_prio = sorted(active, key=lambda t: (lancee.get(id(t[2]), 0), t[0]),
+                          reverse=True)
 
         # 2. Compositer chaque projecteur
         for i, p in enumerate(self.projectors):
@@ -9811,20 +9909,47 @@ class MainWindow(QMainWindow):
                 g_acc += bc.green() * f
                 b_acc += bc.blue()  * f
 
-            if not touches:
-                # Aucune mémoire active ne touche ce projecteur → éteint
-                p.level = 0
-                p.base_color = QColor("black")
-                p.color = QColor("black")
-                continue
-
-            params, extras = compose_memory_params([st for _b, st in touches])
+            # Aucune mémoire active ne touche ce projecteur : même chemin que
+            # « aucune ne l'allume » — on ne retire que ce que les mémoires
+            # avaient posé (avant : noir d'office, même sur un look manuel).
+            # Une mémoire au fader baissé n'apporte aucune lumière : ses canaux
+            # de lumière (UV, ambre, blanc, orange, strobe) ne sont pas proposés
+            # — sinon, première en LTP, elle couperait ceux d'une mémoire levée.
+            params, extras = compose_memory_params(
+                [st if b > 0 else {k: v for k, v in st.items()
+                                   if k not in _MEM_CANAUX_LUMIERE}
+                 for b, st in touches])
 
             def _param(key, scaled=False):
+                """Valeur imposée par une mémoire levée, ou None si personne."""
                 if key not in params:
-                    return mem_param_repos(key)
+                    return None
                 v, rang = params[key]
                 return int(v * touches[rang][0]) if scaled else v
+
+            # Une mémoire ne CHANGE que ce qu'elle porte, et ne RETIRE que ce
+            # qu'elle a posé elle-même. Un paramètre que plus personne n'impose
+            # revient au repos seulement s'il vaut encore ce que le mix y avait
+            # écrit (la mémoire qui le portait vient de partir). Sinon c'est un
+            # état posé ailleurs — pads, plan 2D/3D, tablette — et on le laisse.
+            # Avant : tout paramètre non imposé était remis au repos ; lever une
+            # mémoire « juste un gobo » (MEM 35.1 / 35.2, 13/10/2026) refermait
+            # zoom, prisme, focus, roue de couleur et recentrait les lyres.
+            ecrits = getattr(p, '_mem_params_written', None)
+            if ecrits is None:
+                ecrits = {}
+                p._mem_params_written = ecrits
+
+            def _poser(key, val):
+                if val is not None:
+                    setattr(p, key, val)
+                    ecrits[key] = val
+                elif key in ecrits:
+                    if getattr(p, key, None) == ecrits.pop(key):
+                        repos = mem_param_repos(key)
+                        if key in ("pan", "tilt") and repos <= 255:
+                            repos *= 256
+                        setattr(p, key, repos)
 
             # Gobo/rotation/zoom/focus réglés à la main depuis le plan 2D → la
             # mémoire ne les réimpose plus. Cette fonction tourne à CHAQUE
@@ -9834,31 +9959,48 @@ class MainWindow(QMainWindow):
             if not getattr(p, '_manual_beam', False):
                 # Canaux de couleur dédiés : scalés par le fader de la mémoire
                 # qui les pose. Tout le reste (gobo, focus, vitesse, Mode…)
-                # n'est pas une grandeur lumineuse : valeur brute. Le shutter
-                # revient à 255 (ouvert) quand personne ne l'impose.
+                # n'est pas une grandeur lumineuse : valeur brute.
                 for _k in ("uv", "amber_boost", "white_boost", "orange_boost"):
-                    setattr(p, _k, _param(_k, scaled=True))
+                    _poser(_k, _param(_k, scaled=True))
                 for _k in MEM_PARAMS:
                     if _k in ("pan", "tilt", "uv", "amber_boost",
                               "white_boost", "orange_boost"):
                         continue
-                    setattr(p, _k, _param(_k))
-                p.channel_extras = extras
+                    _poser(_k, _param(_k))
+                # Canaux bruts : même règle, canal par canal.
+                ex_ecrits = getattr(p, '_mem_extras_written', None) or {}
+                cur = dict(getattr(p, 'channel_extras', None) or {})
+                for _ch, _v in ex_ecrits.items():
+                    if _ch not in extras and cur.get(_ch) == _v:
+                        cur.pop(_ch, None)
+                cur.update(extras)
+                p.channel_extras = cur
+                p._mem_extras_written = dict(extras)
             # Pan/tilt pris en main depuis le plan 2D → la mémoire n'y touche plus
             # (elle continue de piloter couleur/intensité). Libéré par CLEAR.
             # Par axe, comme le reste : une mémoire « juste un tilt » ne
             # recentre pas le pan d'une autre.
-            if any("pan" in st or "tilt" in st for _b, st in touches)                     and not getattr(p, '_manual_move', False):
-                np_ = _param("pan")
-                nt_ = _param("tilt")
-                p.pan  = np_ * 256 if np_ <= 255 else np_
-                p.tilt = nt_ * 256 if nt_ <= 255 else nt_
+            if not getattr(p, '_manual_move', False):
+                for _k in ("pan", "tilt"):
+                    _v = _param(_k)
+                    if _v is not None and _v <= 255:
+                        _v *= 256
+                    _poser(_k, _v)
 
             if best_state is None:
-                # Spécial actif mais aucune couleur (level 0 partout) → RGB éteint
-                p.level = 0
-                p.base_color = QColor("black")
-                p.color = QColor("black")
+                # Aucune mémoire levée n'allume ce projecteur (« juste un
+                # gobo », « juste un strobe »…). Une mémoire n'impose que ce
+                # qu'elle porte : la lumière en place, posée aux pads couleur
+                # ou au plan, reste. On n'éteint que la lumière qu'une mémoire
+                # avait elle-même posée et qui vient de partir (fader baissé).
+                # Avant : noir systématique — lever une mémoire gobo seule
+                # éteignait la salle (MEM 35.2, 13/10/2026).
+                if getattr(p, '_mem_written', None) == (p.level, p.base_color.name()):
+                    p.level = 0
+                    p.base_color = QColor("black")
+                    p.color = QColor("black")
+                p._mem_written = None
+                continue
             elif is_cwheel:
                 # Roue de couleur : pas de mélange additif → mémoire dominante
                 bc  = QColor(best_state.get("base_color", "#000000"))
@@ -9869,6 +10011,7 @@ class MainWindow(QMainWindow):
                                  int(bc.green() * lvl / 100.0),
                                  int(bc.blue() * lvl / 100.0))
                 self._update_color_wheel(p, bc)
+                p._mem_written = (p.level, p.base_color.name())
             else:
                 # RGB : mélange additif (clamp 255)
                 R = min(255, int(r_acc)); G = min(255, int(g_acc)); B = min(255, int(b_acc))
@@ -9881,6 +10024,7 @@ class MainWindow(QMainWindow):
                     p.level = int(max_c / 255.0 * 100)
                     p.color = QColor(R, G, B)
                     self._update_color_wheel(p, hue)
+                    p._mem_written = (p.level, p.base_color.name())
 
         # 3. Effet : piloté par la mémoire la plus haute qui en porte un
         # Pendant un momentané FLASH / FLASH KILL, on n'y touche pas : sous KILL
@@ -11064,6 +11208,16 @@ class MainWindow(QMainWindow):
                 self.active_memory_pads[index] = 0
                 self._mem_rows[mem_col] = 0
                 self._style_memory_pad(mem_col, 0, active=True)
+                self._mem_auto_on.add(mem_col)
+                _mem_lancer(self, mem_col)
+            # …et extinction quand ce même fader revient à 0 (« auto off »
+            # grandMA). Depuis que fader à 0 n'éteint plus une mémoire (le pad
+            # l'allume, le fader dose), une mémoire allumée par le fader seul
+            # resterait sinon en scène — gobo et position compris — fader en bas.
+            # Une mémoire lancée au PAD, elle, reste : c'est le pad qui l'éteint.
+            elif value <= 0 and mem_col in self._mem_auto_on and active_row is not None:
+                self._mem_auto_on.discard(mem_col)
+                self._deactivate_memory_pad(mem_col, active_row, index)
             # Mélange de TOUTES les mémoires actives (additif RGB ; dominante pour roue de couleur)
             self._recompute_memory_mix()
             self.send_dmx_update()
@@ -11177,6 +11331,16 @@ class MainWindow(QMainWindow):
             self._mem_rows[mem_col] = 0
             self._style_memory_pad(mem_col, 0, active=True)
             self._update_memory_pad_led(mem_col, 0, active=True)
+            self._mem_auto_on.add(mem_col)
+            _mem_lancer(self, mem_col)
+        # Auto off, comme le fader à l'écran (cf. set_proj_level) : allumée par
+        # la tranche du pupitre, elle s'éteint quand la tranche revient à 0.
+        elif (value <= 0 and mem_col in self._mem_auto_on
+                and self._mem_rows.get(mem_col) is not None):
+            self._mem_auto_on.discard(mem_col)
+            self._deactivate_memory_pad(mem_col, self._mem_rows[mem_col],
+                                        self._mem_col_to_fader(mem_col))
+            self._mem_rows.pop(mem_col, None)
         row = self._mem_rows.get(mem_col)
 
         # Colonnes de la page AFFICHÉE branchées sur cette mémoire : le fader et
@@ -20037,6 +20201,32 @@ class MainWindow(QMainWindow):
 
     # ── Contrôleur Tablette ───────────────────────────────────────────────────
 
+    def _send_config_to_tablet(self):
+        """Envoie patch, pages AKAI, mémoires, positions et effets dans le compte
+        MyStrow : l'app tablette (mode sans PC) les récupère par « Mon compte ».
+        Conversion et envoi : tablet_cloud.py."""
+        import socket
+        import tablet_cloud
+        # tablet_cloud lit les fichiers de config : on les met à jour avant.
+        try:
+            self.save_dmx_patch_config()
+            self._save_akai_config_auto()
+        except Exception as e:
+            print(f"[TABLETTE] sauvegarde avant envoi : {e}")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            res = tablet_cloud.upload(label=socket.gethostname())
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, tr("mw_send_tablet_title"), str(e))
+            return
+        QApplication.restoreOverrideCursor()
+        text = tr("mw_send_tablet_ok", fixtures=res["fixtures"], memories=res["memories"],
+                  effects=res["effects"], positions=res["positions"])
+        if res.get("warnings"):
+            text += "\n\n" + "\n".join("⚠ " + w for w in res["warnings"])
+        QMessageBox.information(self, tr("mw_send_tablet_title"), text)
+
     def _start_tablet_server(self):
         """Ouvre le dialog contrôleur tablette (on/off + QR code)."""
         import tablet_server as _ts
@@ -28063,6 +28253,10 @@ class MainWindow(QMainWindow):
             scene_3d['auto_quality'] = getattr(self._plan3d, '_auto_quality', True)
             scene_3d['ambience'] = getattr(self._plan3d, '_ambience', 160)
             scene_3d['video_return'] = bool(getattr(self._plan3d, '_video_retour', True))
+            # Écrans vidéo retouchés à la main, par décor (onglet Scène)
+            _ecr = getattr(self._plan3d, '_ecrans_perso', None)
+            if _ecr:
+                scene_3d['screens'] = {k: list(v) for k, v in _ecr.items()}
         config = {
             'fixtures': fixtures_list,
             'custom_profiles': getattr(self, '_saved_custom_profiles', {}),

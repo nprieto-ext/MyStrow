@@ -1430,6 +1430,16 @@ _GEAR = [
     },
 ]
 
+# Notre propre boîtier, vendu sur Amazon. Liens DIRECTS vers les ASIN, sans
+# tag affilié : c'est MyStrow le vendeur, et affilier son propre produit est
+# une zone grise du contrat Partenaires pour ~3 € de commission. Ici le prix
+# est écrit sans tilde : c'est NOTRE tarif, il ne bouge pas avec Amazon.
+_GEAR_PACK = {
+    "img_url": _GEAR_SHOP + "mystrow-pack-usb-dmx.webp",
+    "url_2m": "https://www.amazon.fr/dp/B0HK4YF5FS",
+    "url_1a": "https://www.amazon.fr/dp/B0HK5539BK",
+}
+
 # Contrôleurs recommandés — à choisir en mode "OU" (un seul suffit)
 _GEAR_CONTROLLERS = [
     _GEAR[0],
@@ -1508,7 +1518,10 @@ class GearDialog(QDialog):
         pm = QPixmap(str(chemin))
         if pm.isNull():
             return False
-        label.setPixmap(pm.scaledToHeight(96, Qt.SmoothTransformation))
+        # La carte du pack est plus grande que les autres : sa vignette porte
+        # sa propre hauteur, les cartes ordinaires gardent 96 px.
+        h = label.property("photo_h") or 96
+        label.setPixmap(pm.scaledToHeight(int(h), Qt.SmoothTransformation))
         return True
 
     def _lancer_telechargements(self):
@@ -1670,6 +1683,85 @@ class GearDialog(QDialog):
         card_lay.addWidget(btn)
         return card
 
+    def _carte_pack(self):
+        """Le Pack MyStrow, en tête de fenêtre : photo à gauche, deux offres.
+
+        Même ordre que /shop sur le site : notre boîtier passe AVANT les
+        interfaces des autres, qui restent proposées juste en dessous.
+        """
+        card = QFrame()
+        card.setStyleSheet(
+            "QFrame { background: #1a1700; border: 2px solid #E2CE16;"
+            " border-radius: 12px; }"
+        )
+        row = QHBoxLayout(card)
+        row.setContentsMargins(18, 14, 18, 14)
+        row.setSpacing(18)
+
+        # Photo : même chemin que les autres cartes (cache disque → réseau).
+        em = QLabel("📦")
+        em.setFont(QFont("Segoe UI", 28))
+        em.setAlignment(Qt.AlignCenter)
+        em.setStyleSheet("background: transparent; border: none;")
+        em.setProperty("photo_h", 130)
+        em.setFixedSize(170, 136)
+        _u = _GEAR_PACK["img_url"]
+        _cache = _gear_cache_path(_u)
+        if _cache.exists() and self._poser_photo(em, _cache):
+            em.setText("")
+            if _gear_cache_perime(_cache):
+                self._img_attente.setdefault(_u, []).append(em)
+        else:
+            self._img_attente.setdefault(_u, []).append(em)
+        row.addWidget(em)
+
+        col = QVBoxLayout()
+        col.setSpacing(6)
+        badge = QLabel(tr("up2_pack_badge").upper())
+        badge.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        badge.setStyleSheet(
+            "color: #000; background: #E2CE16; border: none;"
+            " border-radius: 8px; padding: 2px 8px; letter-spacing: 1px;"
+        )
+        col.addWidget(badge, alignment=Qt.AlignLeft)
+
+        titre = QLabel(tr("up2_pack_title"))
+        titre.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        titre.setStyleSheet("color: #f4f1e8; background: transparent; border: none;")
+        titre.setWordWrap(True)
+        col.addWidget(titre)
+
+        ds = QLabel(tr("up2_pack_desc"))
+        ds.setFont(QFont("Segoe UI", 8))
+        ds.setStyleSheet("color: #8a857c; background: transparent; border: none;")
+        ds.setWordWrap(True)
+        col.addWidget(ds)
+        col.addStretch()
+
+        btns = QHBoxLayout()
+        btns.setSpacing(10)
+        for cle, url, plein in (("up2_pack_2m", _GEAR_PACK["url_2m"], False),
+                                ("up2_pack_1a", _GEAR_PACK["url_1a"], True)):
+            b = QPushButton(tr(cle))
+            b.setFixedHeight(30)
+            b.setCursor(Qt.PointingHandCursor)
+            if plein:
+                b.setStyleSheet(
+                    "QPushButton { background: #E2CE16; color: #000; border: none;"
+                    " border-radius: 5px; font-size: 10px; font-weight: bold; padding: 0 12px; }"
+                    "QPushButton:hover { background: white; }")
+            else:
+                b.setStyleSheet(
+                    "QPushButton { background: transparent; color: #E2CE16;"
+                    " border: 1px solid rgba(226,206,22,0.55); border-radius: 5px;"
+                    " font-size: 10px; font-weight: bold; padding: 0 12px; }"
+                    "QPushButton:hover { background: rgba(226,206,22,0.12); }")
+            b.clicked.connect(lambda _, u=url: __import__('webbrowser').open(u))
+            btns.addWidget(b)
+        col.addLayout(btns)
+        row.addLayout(col, stretch=1)
+        return card
+
     def _chip_ou(self):
         """Le « OU » entre deux cartes qui s'excluent."""
         ou = QLabel(tr("upd_or"))
@@ -1745,6 +1837,10 @@ class GearDialog(QDialog):
         sub.setWordWrap(True)
         lay.addWidget(sub)
         lay.addSpacing(26)
+
+        # ── Pack MyStrow (notre boîtier), tout en haut ───────────────────────
+        lay.addWidget(self._carte_pack())
+        lay.addSpacing(22)
 
         # ── Ligne DMX, EN PREMIER ────────────────────────────────────────────
         # L'interface passe avant le contrôleur, et pas par goût de l'ordre :

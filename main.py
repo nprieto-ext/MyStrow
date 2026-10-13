@@ -639,6 +639,16 @@ def main():
     t_dmx     = threading.Thread(target=_bg_dmx,     daemon=True)
     t_license.start(); t_akai.start(); t_dmx.start()
 
+    # Patch et effets du compte (cloud_sync) : lus en arrière-plan pendant le
+    # splash, écrits sur le disque AVANT que MainWindow ne charge le patch.
+    # Hors connexion : abandon après PULL_DEADLINE_S, on démarre en local.
+    try:
+        import cloud_sync
+        _cloud = cloud_sync.StartupPull().start()
+    except Exception as e:
+        print(f"[CloudSync] démarrage ignoré : {e}")
+        _cloud = None
+
     # Effet visuel AKAI — démarré dès que la connexion est confirmée
     akai_effect = AkaiSplashEffect()
 
@@ -660,7 +670,9 @@ def main():
             app.processEvents()
             dmx_shown = True
 
-        if not t_license.is_alive() and akai_shown and dmx_shown:
+        _cloud_ok = (_cloud is None or _cloud.done()
+                     or time.time() - start_time > cloud_sync.PULL_DEADLINE_S)
+        if not t_license.is_alive() and akai_shown and dmx_shown and _cloud_ok:
             break
 
         time.sleep(0.05)
@@ -701,6 +713,31 @@ def main():
 
     # Arrêter l'effet AKAI avant de créer MainWindow (libère le port MIDI)
     akai_effect.stop()
+
+    # Patch / effets plus récents dans le compte → posés sur le disque ici,
+    # avant MainWindow. Résultat arrivé trop tard : ignoré (fichiers locaux).
+    if _cloud is not None:
+        def _cloud_ask(_conflits):
+            # Première connexion d'un PC qui a déjà SON patch : la seule
+            # question de la synchro, posée une fois. Le splash reste au
+            # premier plan (WindowStaysOnTop) : on le masque le temps de la
+            # réponse.
+            from PySide6.QtWidgets import QMessageBox
+            splash.hide()
+            box = QMessageBox()
+            box.setWindowTitle(tr("cloud_first_title"))
+            box.setText(tr("cloud_first_text"))
+            b_compte = box.addButton(tr("cloud_first_account"), QMessageBox.AcceptRole)
+            box.addButton(tr("cloud_first_local"), QMessageBox.RejectRole)
+            box.setDefaultButton(b_compte)
+            box.exec()
+            splash.show()
+            app.processEvents()
+            return box.clickedButton() is b_compte
+        try:
+            cloud_sync.finish_startup_pull(_cloud, ask_first_time=_cloud_ask)
+        except Exception as e:
+            print(f"[CloudSync] récupération ignorée : {e}")
 
     # Initialiser la fenetre principale avec le resultat de licence
     splash.set_status(tr("initializing"))

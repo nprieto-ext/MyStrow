@@ -3918,7 +3918,6 @@ class Sequencer(QFrame):
         menu.setStyleSheet(_SEQ_MENU_SS)
         menu.addAction(tr("seq_menu_add_media"), self.add_files_dialog)
         menu.addAction(tr("seq_menu_add_pause"), self.add_pause)
-        menu.addAction(tr("seq_menu_add_web"), self.add_web_dialog)
         menu.exec(QCursor.pos())
 
     @staticmethod

@@ -183,5 +183,17 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == uid;
     }
 
+    // Patch + effets synchronisés avec le compte, façon iCloud (cloud_sync.py,
+    // 13/10/2026). Même règle que user_configs : le propriétaire seul.
+    match /user_sync/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['payload', 'updated_utc'])
+                    && request.resource.data.payload is string
+                    && request.resource.data.payload.size() < 950000;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
   }
 }

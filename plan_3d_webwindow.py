@@ -195,6 +195,22 @@ _SCENE_PRESETS = {
         # après réduction) rentre dans les ±4,1/4,4 m atteignables en profondeur.
         'span': 16.2,
     },
+    # Plateau de 6 × 5 m sur 1 m de haut, cadre de truss carré à 4 m, écran
+    # de 4 × 3 m au fond, deux systèmes son sur pied et un escalier côté
+    # public. Modèle d'un utilisateur (Matt, 09/10/2026), matériaux ajoutés par
+    # nous : il n'en avait aucun et s'affichait gris métal uniforme.
+    'scene_6x5': {
+        'label': tr("p3w3_016"),
+        'trusses': [],
+        'glb': 'scene_6x5.glb',
+        # Déjà bâti public vers les Z négatifs (escalier à z < 0) : pas de yaw.
+        # `span` = sa plus grande dimension réelle (8,2 m, sonos comprises) :
+        # le modèle garde sa VRAIE taille, un plateau de 6 m reste de 6 m.
+        # ⚠️ L'écran de SCENE_PRESETS (html) est calé sur cette échelle.
+        'span': 8.2,
+        # Truss du cadre de 3,74 à 4,02 m : on accroche sous la membrure basse.
+        'rig_height': 3.7,
+    },
     'festival_plein_air': {
         'label': tr("p3w3_006"),
         # Décor dessiné par la page (`_makeFestivalStage`) : le gril du toit en
@@ -674,6 +690,25 @@ _STYLE_ROW_BTN = (
     "QPushButton:hover { background:#252525; color:#dddddd; }"
     "QPushButton:pressed { background:#222255; }"
 )
+
+
+class _SpinEcran(QDoubleSpinBox):
+    """Champ de l'éditeur d'écrans : la molette ne le règle qu'une fois cliqué.
+
+    L'onglet Scène défile ; sans ça, faire défiler la page au-dessus d'un champ
+    déplaçait l'écran au lieu de scroller (même piège que `ComboSansMolette`).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setKeyboardTracking(False)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
 
 
 class _WheelSpinBox(QDoubleSpinBox):
@@ -1490,6 +1525,8 @@ class Plan3DWebWindow(QMainWindow):
         self._fog_speed = 35
         # Retour vidéo sur les écrans du décor (case de l'onglet Scène)
         self._video_retour = True
+        # Écrans vidéo retouchés par décor ({code: [dalles]}), cf. éditeur
+        self._ecrans_perso = {}
 
         # Charger la scène sauvegardée depuis le patch, avant que la page HTML charge
         try:
@@ -1520,6 +1557,10 @@ class Plan3DWebWindow(QMainWindow):
                     self._ambience = max(0, min(4000, int(_s3d['ambience'])))
                 if isinstance(_s3d.get('video_return'), bool):
                     self._video_retour = _s3d['video_return']
+                if isinstance(_s3d.get('screens'), dict):
+                    self._ecrans_perso = {
+                        k: [e for e in v if isinstance(e, dict)]
+                        for k, v in _s3d['screens'].items() if isinstance(v, list)}
         except Exception:
             pass
 
@@ -3127,6 +3168,8 @@ class Plan3DWebWindow(QMainWindow):
         self._chk_video.setToolTip(tr("p3w_video_return_hint"))
         self._chk_video.toggled.connect(self._on_video_retour)
         lay.addWidget(self._chk_video)
+        lay.addSpacing(8)
+        self._build_ecrans_section(lay)
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         self._btn_trusses = QPushButton()  # kept for _apply_preset compat, not displayed
@@ -3164,6 +3207,225 @@ class Plan3DWebWindow(QMainWindow):
         )
         defil.setWidget(w)
         return defil
+
+    # ── Écrans vidéo (ajout / déplacement / taille) ──────────────────────────
+    # Chaque décor livré déclare ses dalles (`screen` de SCENE_PRESETS, côté
+    # JS). Un décor importé n'en a aucune : sans cet éditeur, le retour vidéo
+    # n'avait nulle part où s'afficher. Les retouches sont mémorisées PAR DÉCOR
+    # (`scene_3d.screens` du patch, {code: [dalles]}) ; un décor jamais retouché
+    # garde ses écrans d'origine, et « Par défaut » efface la retouche.
+    # Champs d'une dalle : x, y (bas de l'écran), z, w, h, rotY (180 = face au
+    # public), fit ('cover' = recadrée sans déformation), siVideo.
+
+    # (clé, libellé i18n, min, max, pas)
+    _ECRAN_CHAMPS = (
+        ('x', "p3w_scr_x", -30.0, 30.0, 0.1),
+        ('y', "p3w_scr_y", -5.0, 20.0, 0.1),
+        ('z', "p3w_scr_z", -30.0, 30.0, 0.1),
+        ('w', "p3w_scr_w", 0.2, 40.0, 0.1),
+        ('h', "p3w_scr_h", 0.2, 25.0, 0.1),
+        ('rot', "p3w_scr_rot", -180.0, 180.0, 5.0),
+    )
+
+    def _build_ecrans_section(self, lay):
+        lay.addWidget(self._titre_section(tr("p3w_scr_title")))
+
+        ligne = QHBoxLayout()
+        ligne.setSpacing(4)
+        self._cb_ecran = ComboSansMolette()
+        self._cb_ecran.setStyleSheet(self._PANEL_COMBO)
+        self._cb_ecran.currentIndexChanged.connect(self._on_ecran_choisi)
+        ligne.addWidget(self._cb_ecran, 1)
+        btn_add = QPushButton("+")
+        btn_add.setFixedWidth(28)
+        btn_add.setStyleSheet(self._PANEL_BTN)
+        btn_add.setToolTip(tr("p3w_scr_add"))
+        btn_add.clicked.connect(self._ajouter_ecran)
+        ligne.addWidget(btn_add)
+        self._btn_ecran_del = QPushButton("✕")
+        self._btn_ecran_del.setFixedWidth(28)
+        self._btn_ecran_del.setStyleSheet(self._PANEL_BTN)
+        self._btn_ecran_del.setToolTip(tr("p3w_scr_del"))
+        self._btn_ecran_del.clicked.connect(self._supprimer_ecran)
+        ligne.addWidget(self._btn_ecran_del)
+        lay.addLayout(ligne)
+
+        self._lbl_ecran_vide = QLabel(tr("p3w_scr_none"))
+        self._lbl_ecran_vide.setWordWrap(True)
+        self._lbl_ecran_vide.setStyleSheet("color:#666666;font-size:9px;border:none;")
+        lay.addWidget(self._lbl_ecran_vide)
+
+        grille = QGridLayout()
+        grille.setContentsMargins(0, 2, 0, 0)
+        grille.setHorizontalSpacing(6)
+        grille.setVerticalSpacing(3)
+        self._sp_ecran = {}
+        for i, (cle, lib, vmin, vmax, pas) in enumerate(self._ECRAN_CHAMPS):
+            lbl = QLabel(tr(lib))
+            lbl.setStyleSheet("color:#888888;font-size:9px;border:none;")
+            sp = _SpinEcran()
+            sp.setRange(vmin, vmax)
+            sp.setSingleStep(pas)
+            sp.setDecimals(0 if cle == 'rot' else 2)
+            sp.setSuffix("°" if cle == 'rot' else " m")
+            sp.setStyleSheet(
+                "QDoubleSpinBox{background:#151515;color:#dddddd;border:1px solid #252525;"
+                "border-radius:3px;padding:1px 3px;font-size:9px;}"
+                "QDoubleSpinBox:focus{border-color:#00d4ff;}"
+                "QDoubleSpinBox::up-button,QDoubleSpinBox::down-button"
+                "{background:#1e1e1e;border:none;width:11px;}")
+            sp.setToolTip(tr(lib + "_hint"))
+            sp.valueChanged.connect(lambda v, c=cle: self._on_ecran_valeur(c, v))
+            r, col = divmod(i, 3)
+            grille.addWidget(lbl, r * 2, col)
+            grille.addWidget(sp, r * 2 + 1, col)
+            self._sp_ecran[cle] = sp
+        self._grille_ecran = QWidget()
+        self._grille_ecran.setLayout(grille)
+        lay.addWidget(self._grille_ecran)
+
+        self._chk_ecran_cover = QCheckBox(tr("p3w_scr_cover"))
+        self._chk_ecran_cover.setStyleSheet(self._PANEL_CHK)
+        self._chk_ecran_cover.setToolTip(tr("p3w_scr_cover_hint"))
+        self._chk_ecran_cover.toggled.connect(
+            lambda on: self._on_ecran_valeur('fit', 'cover' if on else None))
+        lay.addWidget(self._chk_ecran_cover)
+
+        btn_def = QPushButton(tr("p3w_scr_reset"))
+        btn_def.setStyleSheet(self._PANEL_BTN)
+        btn_def.setToolTip(tr("p3w_scr_reset_hint"))
+        btn_def.clicked.connect(self._ecrans_par_defaut)
+        lay.addWidget(btn_def)
+
+        self._ecrans_ui = []          # dalles affichées dans l'éditeur
+        self._ecran_maj_ui = False    # vrai pendant qu'on remplit les champs
+        # Le patch est réécrit en entier à chaque sauvegarde : on attend la fin
+        # d'un glisser sur un champ plutôt que d'écrire le disque à chaque cran.
+        self._t_save_ecrans = QTimer(self)
+        self._t_save_ecrans.setSingleShot(True)
+        self._t_save_ecrans.setInterval(600)
+        self._t_save_ecrans.timeout.connect(self._save_patch)
+        self._remplir_editeur_ecrans([])
+
+    def _pousser_ecrans_perso(self):
+        """Applique la retouche du décor courant (après `setScenePreset`)."""
+        code = getattr(self, '_scene_preset_code', '')
+        perso = self._ecrans_perso.get(code)
+        if perso is not None:
+            self._js(f'window.setVideoScreen({json.dumps(perso)})')
+        self._relire_ecrans()
+
+    def _relire_ecrans(self):
+        """Recharge l'éditeur depuis les dalles réellement posées dans la page."""
+        if not hasattr(self, '_cb_ecran'):
+            return
+
+        def _recu(res):
+            try:
+                ecrans = json.loads(res) if isinstance(res, str) else []
+            except ValueError:
+                ecrans = []
+            self._remplir_editeur_ecrans(ecrans if isinstance(ecrans, list) else [])
+
+        self._view.page().runJavaScript(
+            'window.getVideoScreens ? window.getVideoScreens() : "[]"', 0, _recu)
+
+    def _remplir_editeur_ecrans(self, ecrans, sel=None):
+        self._ecrans_ui = [dict(e) for e in ecrans if isinstance(e, dict)]
+        self._ecran_maj_ui = True
+        try:
+            self._cb_ecran.clear()
+            for i in range(len(self._ecrans_ui)):
+                self._cb_ecran.addItem(tr("p3w_scr_item", a0=i + 1))
+            n = len(self._ecrans_ui)
+            if sel is None:
+                sel = 0
+            sel = min(max(sel, 0), n - 1) if n else -1
+            self._cb_ecran.setCurrentIndex(sel)
+        finally:
+            self._ecran_maj_ui = False
+        vide = not self._ecrans_ui
+        self._lbl_ecran_vide.setVisible(vide)
+        self._cb_ecran.setEnabled(not vide)
+        self._btn_ecran_del.setEnabled(not vide)
+        self._grille_ecran.setEnabled(not vide)
+        self._chk_ecran_cover.setEnabled(not vide)
+        self._on_ecran_choisi(self._cb_ecran.currentIndex())
+
+    def _on_ecran_choisi(self, idx: int):
+        if self._ecran_maj_ui:
+            return
+        self._js(f'window.setVideoScreenHighlight && window.setVideoScreenHighlight({idx})')
+        if not (0 <= idx < len(self._ecrans_ui)):
+            return
+        e = self._ecrans_ui[idx]
+        self._ecran_maj_ui = True
+        try:
+            for cle, sp in self._sp_ecran.items():
+                if cle == 'rot':
+                    # rotY 180 = face au public ; on affiche 0 pour « de face ».
+                    v = float(e.get('rotY', 180.0)) - 180.0
+                    v = (v + 180.0) % 360.0 - 180.0
+                else:
+                    v = float(e.get(cle, {'x': 0.0, 'y': 0.0, 'z': 5.0,
+                                          'w': 6.0, 'h': 3.4}[cle]))
+                sp.setValue(v)
+            self._chk_ecran_cover.setChecked(e.get('fit') == 'cover')
+        finally:
+            self._ecran_maj_ui = False
+
+    def _on_ecran_valeur(self, cle: str, v):
+        if self._ecran_maj_ui:
+            return
+        idx = self._cb_ecran.currentIndex()
+        if not (0 <= idx < len(self._ecrans_ui)):
+            return
+        e = self._ecrans_ui[idx]
+        if cle == 'rot':
+            e['rotY'] = round(float(v) + 180.0, 1)
+        elif cle == 'fit':
+            if v:
+                e['fit'] = v
+            else:
+                e.pop('fit', None)
+        else:
+            e[cle] = round(float(v), 3)
+        self._appliquer_ecrans_ui()
+
+    def _appliquer_ecrans_ui(self):
+        """Pousse la liste de l'éditeur dans la page et la retient pour ce décor."""
+        code = getattr(self, '_scene_preset_code', '')
+        self._ecrans_perso[code] = [dict(e) for e in self._ecrans_ui]
+        self._js(f'window.setVideoScreen({json.dumps(self._ecrans_ui)})')
+        self._js('window.setVideoScreenHighlight && '
+                 f'window.setVideoScreenHighlight({self._cb_ecran.currentIndex()})')
+        self._t_save_ecrans.start()
+
+    def _ajouter_ecran(self):
+        # Nouvel écran : 16:9 de 6,4 m, posé au sol au fond du plateau, face
+        # au public. Décalé de côté s'il y en a déjà un, sinon il se superpose
+        # au précédent et on croit que le bouton n'a rien fait.
+        n = len(self._ecrans_ui)
+        x = 0.0 if n == 0 else (n % 2 * 2 - 1) * 3.5 * ((n + 1) // 2)
+        self._ecrans_ui.append({'x': x, 'y': 0.5, 'z': 5.0, 'w': 6.4, 'h': 3.6,
+                                'rotY': 180.0, 'fit': 'cover'})
+        self._appliquer_ecrans_ui()
+        self._remplir_editeur_ecrans(self._ecrans_ui, sel=n)
+
+    def _supprimer_ecran(self):
+        idx = self._cb_ecran.currentIndex()
+        if not (0 <= idx < len(self._ecrans_ui)):
+            return
+        del self._ecrans_ui[idx]
+        self._appliquer_ecrans_ui()
+        self._remplir_editeur_ecrans(self._ecrans_ui, sel=idx - 1 if idx else 0)
+
+    def _ecrans_par_defaut(self):
+        code = getattr(self, '_scene_preset_code', '')
+        self._ecrans_perso.pop(code, None)
+        self._js(f"window.setVideoScreen(window.presetScreens('{code}'))")
+        self._relire_ecrans()
+        self._save_patch()
 
     def _on_video_retour(self, on: bool):
         self._video_retour = bool(on)
@@ -3271,6 +3533,7 @@ class Plan3DWebWindow(QMainWindow):
         self._js(f'if(window.setStageFloor)window.setStageFloor({str(code != "vide").lower()})')
         self._push_cyclorama(preset, code)
         self._push_scene_glb(preset)
+        self._pousser_ecrans_perso()
         for k, btn in getattr(self, '_scene_btns', {}).items():
             btn.setChecked(k == code)
         # Les vignettes des vues dessinent la scène courante
@@ -3356,6 +3619,9 @@ class Plan3DWebWindow(QMainWindow):
             _p = _SCENE_PRESETS.get(self._scene_preset_code)
             if _p:
                 self._push_cyclorama(_p, self._scene_preset_code)
+            # Écrans retouchés dans l'éditeur : ils remplacent ceux du preset
+            # que `setScenePreset` vient de poser.
+            self._pousser_ecrans_perso()
             # Puis appliquer les trusses réellement configurés (peuvent différer du preset)
             self._js(f'window.setTrusses({json.dumps(self._trusses)})')
             # Décor de la scène courante : page neuve = _sceneGrp vide, il faut

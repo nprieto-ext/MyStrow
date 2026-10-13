@@ -22,6 +22,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
 import light_timeline as lt
+import main_window as mw
 import test_flash_kill_reel as base
 
 _app = QApplication.instance() or QApplication(sys.argv)
@@ -111,13 +112,66 @@ class Live(unittest.TestCase):
         for p in self._mix(w, {0: 0, 2: 0}):
             self.assertEqual(p.uv, 100)
 
-    def test_baisser_la_surcouche_rend_le_look(self):
+    def test_baisser_la_surcouche_coupe_sa_lumiere_seulement(self):
+        """Le pad allume, le fader dose (13/10/2026, façon grandMA).
+
+        Fader baissé, la surcouche reste en scène : son gobo tient, mais son
+        strobe — de la lumière — s'arrête. Avant, le fader à 0 la retirait
+        entièrement et le look reprenait son gobo.
+        """
         w = Fenetre(strobe_speed=60, gobo=128)
+        mw._mem_lancer(w, 0)
+        mw._mem_lancer(w, 1)          # surcouche lancee apres le look
         self._mix(w, {0: 0, 2: 0})
         w.faders[2].value = 0
         for p in self._mix(w, {0: 0, 2: 0}):
             self.assertEqual(p.strobe_speed, 0)
+            self.assertEqual(p.gobo, 128)
+            self.assertGreater(p.level, 0, "le look reste allume")
+
+    def test_eteindre_la_surcouche_rend_le_look(self):
+        w = Fenetre(strobe_speed=60, gobo=128)
+        self._mix(w, {0: 0, 2: 0})
+        for p in self._mix(w, {0: 0}):
+            self.assertEqual(p.strobe_speed, 0)
             self.assertEqual(p.gobo, 64)
+
+    def test_fader_a_zero_pose_le_gobo_sans_lumiere(self):
+        """Mémoire « juste un gobo », pad allumé, fader en bas : le gobo part."""
+        w = Fenetre(gobo=128)
+        w.faders[2].value = 0
+        mw._mem_lancer(w, 0)
+        mw._mem_lancer(w, 1)
+        for p in self._mix(w, {0: 0, 2: 0}):
+            self.assertEqual(p.gobo, 128)
+            self.assertGreater(p.level, 0, "le look reste allume")
+
+    def test_la_derniere_lancee_gagne(self):
+        """LTP : relancer le look par-dessus reprend son gobo, quel que soit
+        le fader le plus haut."""
+        w = Fenetre(gobo=128)
+        mw._mem_lancer(w, 1)
+        mw._mem_lancer(w, 0)          # look relance en dernier (fader 80 < 100)
+        for p in self._mix(w, {0: 0, 2: 0}):
+            self.assertEqual(p.gobo, 64)
+
+    def test_strobe_fader_a_zero_lancee_en_dernier(self):
+        """Lancee en dernier mais fader en bas : son strobe ne sort pas, et
+        elle ne masque pas celui d'une memoire levee."""
+        w = Fenetre(strobe_speed=60)
+        w.memories[0][0]["cues"][0]["projectors"][0]["strobe_speed"] = 30
+        w.faders[2].value = 0
+        mw._mem_lancer(w, 0)
+        mw._mem_lancer(w, 1)
+        p0, p1 = self._mix(w, {0: 0, 2: 0})
+        self.assertEqual(p0.strobe_speed, 30)
+        self.assertEqual(p1.strobe_speed, 0)
+
+    def test_uv_fader_a_zero_ne_coupe_pas_celui_du_look(self):
+        w = Fenetre(uv=200)
+        w.faders[2].value = 0
+        for p in self._mix(w, {0: 0, 2: 0}):
+            self.assertEqual(p.uv, 0, "la surcouche n'ajoute pas d'UV")
 
     def test_seule_elle_n_allume_rien(self):
         w = Fenetre(strobe_speed=60)
