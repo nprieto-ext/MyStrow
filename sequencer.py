@@ -6211,18 +6211,32 @@ class Sequencer(QFrame):
 
         Pendant la lecture, ce nettoyage est fait à chaque image par
         `apply_timeline_to_dmx` ; il ne manquait qu'au moment de l'arrêt.
+
+        Mode hybride : tout ce que la timeline a posé est noté dans
+        `_hyb_tenus` avec la valeur manuelle d'avant. On rend donc exactement
+        ça — canaux bruts, gobo, strobe compris — au lieu de remettre TOUT le
+        parc au repos : l'éclairage tenu à la main hors des blocs n'a pas à
+        s'éteindre parce que la REC s'arrête. `blackout` ne change plus rien :
+        un projecteur que la timeline allumait retombe sur son état manuel,
+        c'est-à-dire noir si personne ne le tenait.
         """
         main_win = self.player_ui
         projs = getattr(main_win, 'projectors', None)
         if not projs:
             return
         try:
-            from light_timeline import reset_beam_channels
-            reset_beam_channels(projs, blackout=blackout)
-            if getattr(main_win, 'artnet', None):
-                main_win.artnet.update_from_projectors(projs)
+            from light_timeline import hyb_rendre
+            hyb_rendre(projs, getattr(self, '_hyb_tenus', {}))
+            if hasattr(main_win, 'send_dmx_update'):
+                main_win.send_dmx_update()
         except Exception as e:
             print(f"[TIMELINE] nettoyage de fin impossible : {e}")
+
+    def hyb_oublier(self):
+        """Le rig vient d'être remis à plat par ailleurs (noir de transition,
+        CLEAR, nouveau show) : les valeurs manuelles notées sont périmées, les
+        rendre plus tard ressusciterait un vieil état."""
+        self._hyb_tenus = {}
 
     def _stop_timeline_effect(self):
         """Arrête l'effet lancé par la timeline (si c'est bien lui qui tourne)."""
@@ -6317,7 +6331,12 @@ class Sequencer(QFrame):
         #
         # Sûr vis-à-vis des mémoires : `apply_seq_memories_htp` REPOSE ces mêmes
         # canaux à chaque frame depuis le snapshot tant que le bloc est actif.
-        from light_timeline import reset_beam_channels
+        #
+        # Mode hybride : cette page blanche n'est qu'un brouillon. En fin
+        # d'image, `hyb_merge` rend à la main tout ce qu'aucun bloc n'a posé
+        # (cf. light_timeline) — on photographie donc l'état d'avant.
+        from light_timeline import reset_beam_channels, hyb_snapshot
+        _avant = [hyb_snapshot(p) for p in self.player_ui.projectors]
         reset_beam_channels(self.player_ui.projectors, blackout=True)
 
         for track_name, clip_info in active_clips.items():
@@ -6531,6 +6550,41 @@ class Sequencer(QFrame):
         if getattr(main_win, 'active_effect', None) is not None:
             if hasattr(main_win, 'update_effect'):
                 main_win.update_effect()
+
+        # ── Mode hybride : rendre à la main ce qu'aucun bloc ne pilote ──────
+        # Pris d'office, même au repos : les projecteurs d'un bloc couleur (un
+        # bloc noir ou en fondu d'entrée doit noircir, pas laisser passer le
+        # manuel), ceux qu'allume une mémoire, et les verrous Position / Gobo.
+        from light_timeline import (hyb_merge, _HYB_LUMIERE,
+                                    resolve_memory_projectors)
+        _forces = {}
+        for _tn, _c in active_clips.items():
+            # Blocs couleur seulement : Position / Gobo ne prennent que leurs
+            # canaux (verrous ci-dessous), une mémoire que ce qu'elle allume.
+            # « Lyres » est aussi l'ancien nom de la piste Position.
+            if (_tn in ('Position', 'Gobo') or _c.get('memory_ref')
+                    or _c.get('position_preset_idx') is not None
+                    or _c.get('move_effect') or 'pan_start' in _c):
+                continue
+            for _i in track_to_indices.get(_tn, []):
+                _forces.setdefault(_i, set()).update(_HYB_LUMIERE)
+        for _e in _seq_entries:
+            _ps = resolve_memory_projectors(_e.get('memory_ref'),
+                                            _e.get('cue_index'),
+                                            getattr(main_win, 'memories', None))
+            for _i, _p in enumerate(_ps or []):
+                if _p.get('level', 0) > 0:
+                    _forces.setdefault(_i, set()).update(_HYB_LUMIERE)
+        for _i in _pos_locked_idxs:
+            _forces.setdefault(_i, set()).update(('pan', 'tilt'))
+        for _i in _gobo_locked_idxs:
+            _forces.setdefault(_i, set()).update(('gobo', 'gobo_rotation'))
+        _effet = getattr(main_win, 'active_effect', None) is not None
+        if not hasattr(self, '_hyb_tenus'):
+            self._hyb_tenus = {}
+        hyb_merge(main_win.projectors, _avant, self._hyb_tenus, _forces,
+                  collants=_effet,
+                  garder_position=bool(active_clips) or _effet)
 
         if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
             self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)

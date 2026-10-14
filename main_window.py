@@ -8257,6 +8257,9 @@ class MainWindow(QMainWindow):
             self.stop_effect()
             self.active_effect = None
 
+        # Rig remis à plat : ce que la REC tenait n'a plus à être « rendu ».
+        if hasattr(getattr(self, 'seq', None), 'hyb_oublier'):
+            self.seq.hyb_oublier()
         self.restore_manual_look()
 
     def _set_playlist_transition(self, action):
@@ -8280,6 +8283,8 @@ class MainWindow(QMainWindow):
         if pdf is None or not hasattr(pdf, '_clear_all_projectors'):
             return
         pdf._clear_all_projectors()
+        if hasattr(getattr(self, 'seq', None), 'hyb_oublier'):
+            self.seq.hyb_oublier()
         self.restore_manual_look()
         self.send_dmx_update()
 
@@ -17702,6 +17707,7 @@ class MainWindow(QMainWindow):
                 self.seq.tempo_timer.stop()
             if hasattr(self.seq, 'timeline_playback_timer') and self.seq.timeline_playback_timer and self.seq.timeline_playback_timer.isActive():
                 self.seq.timeline_playback_timer.stop()
+            self.seq.hyb_oublier()
         except Exception:
             pass
 
@@ -18034,6 +18040,7 @@ class MainWindow(QMainWindow):
                 self.seq.tempo_timer.stop()
             if hasattr(self.seq, 'timeline_playback_timer') and self.seq.timeline_playback_timer.isActive():
                 self.seq.timeline_playback_timer.stop()
+            self.seq.hyb_oublier()
         except Exception:
             pass
 

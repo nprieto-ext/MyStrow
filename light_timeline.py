@@ -67,6 +67,7 @@ _COLOR_KEYS = {
     "Blanc chaud":    "color_blanc_chaud",
     "Ambre":          "color_ambre",
     "Black Light":    "color_black_light",
+    "Noir":           "color_noir",
 }
 
 def _cn(name_fr: str) -> str:
@@ -1379,6 +1380,109 @@ def reset_beam_channels(projectors, blackout=False):
             p.color      = QColor("black")
 
 
+# ── Mode hybride : la restitution ne prend QUE ce que ses blocs pilotent ─────
+# `apply_timeline_to_dmx` repart d'un rig noir à chaque image : c'est ce qui
+# fait qu'un bloc s'éteint tout seul à sa fin. Appliqué à TOUT le parc, ça
+# effaçait aussi l'éclairage tenu à la main, même entre deux blocs : « je monte
+# au fader, ça s'allume une demi-seconde puis ça se coupe, la REC prend le
+# lead ». Sur le fil DMX, la couche pads + faders survivait (reposée avant
+# chaque envoi), mais le plan 2D, la 3D et la tablette tombaient au noir, et
+# tout réglage hors pads (clic sur le plan 2D, tablette, curseurs) disparaissait
+# pour de bon.
+#
+# On compare donc, attribut par attribut, le rig avant et après l'image : ce que
+# la timeline a réellement posé lui appartient, le reste est rendu tel quel. Ce
+# qu'elle prend est mémorisé (valeur manuelle d'avant) et rendu quand elle le
+# lâche — fin du bloc, pause, arrêt.
+_HYB_LUMIERE = ("level", "color", "base_color", "color_wheel",
+                "uv", "white_boost", "amber_boost", "orange_boost")
+_HYB_POSITION = ("pan", "tilt")
+_HYB_ATTRS = (_HYB_LUMIERE + _HYB_POSITION
+              + ("strobe_speed", "channel_extras")
+              + tuple(a for a in _REPOS_FAISCEAU if a != "color_wheel"))
+
+
+def _hyb_copie(v):
+    if isinstance(v, QColor):
+        return QColor(v)
+    if isinstance(v, dict):
+        return dict(v)
+    return v
+
+
+def hyb_snapshot(p):
+    """État de show d'un projecteur : les attributs que la restitution écrit."""
+    return {a: _hyb_copie(getattr(p, a)) for a in _HYB_ATTRS if hasattr(p, a)}
+
+
+def _hyb_au_repos(a, v):
+    if a in ("color", "base_color"):
+        return v is None or (v.red() == 0 and v.green() == 0 and v.blue() == 0)
+    if a == "channel_extras":
+        return not v
+    if a in _REPOS_FAISCEAU:
+        return v == _REPOS_FAISCEAU[a]
+    return not v   # level, strobe, UV, blanc, ambre, orange : repos = 0
+
+
+def hyb_merge(projectors, avant, tenus, forces=None, collants=False,
+              garder_position=False):
+    """Fusionne la sortie de la timeline avec l'état manuel d'avant l'image.
+
+    `avant`  : `hyb_snapshot` de chaque projecteur, pris AVANT la remise au noir.
+    `tenus`  : {idx: {attr: valeur manuelle}} — ce que la timeline tient.
+               Modifié en place, il persiste d'une image à l'autre.
+    `forces` : {idx: attrs} pris d'office même au repos (bloc couleur noir ou
+               en fondu, verrous Position / Gobo, projecteurs d'une mémoire).
+    `collants` : un effet tourne. Un chenillard passe par le noir : ce qu'il
+               tient, il le garde jusqu'à son arrêt, sinon le look manuel
+               réapparaîtrait une image sur deux.
+    `garder_position` : un bloc est actif. Le pan/tilt n'a pas de repos, on
+               le détecte au mouvement — une lyre arrivée sur sa position ne
+               bouge plus, elle ne doit pas pour autant repartir sur la
+               position manuelle tant que le bloc dure.
+    """
+    forces = forces or {}
+    for i, p in enumerate(projectors):
+        if i >= len(avant):
+            break
+        av = avant[i]
+        held = tenus.get(i, {})
+        pris = set(forces.get(i, ()))
+        for a in av:
+            v = getattr(p, a)
+            if a in _HYB_POSITION:
+                if v != av[a] or (garder_position and a in held):
+                    pris.add(a)
+            elif not _hyb_au_repos(a, v):
+                pris.add(a)
+            if collants and a in held:
+                pris.add(a)
+        # La lumière va d'un bloc : la couleur de la timeline sur le niveau
+        # manuel donnerait un mélange que personne n'a programmé.
+        if pris & set(_HYB_LUMIERE):
+            pris |= {a for a in _HYB_LUMIERE if a in av}
+        for a in av:
+            if a in pris:
+                if a not in held:
+                    held[a] = av[a]
+            else:
+                setattr(p, a, _hyb_copie(held.pop(a) if a in held else av[a]))
+        if held:
+            tenus[i] = held
+        else:
+            tenus.pop(i, None)
+
+
+def hyb_rendre(projectors, tenus):
+    """La timeline s'arrête : rendre à la main tout ce qu'elle tenait."""
+    for i, held in list(tenus.items()):
+        if i < len(projectors):
+            for a, val in held.items():
+                setattr(projectors[i], a, _hyb_copie(val))
+    tenus.clear()
+
+
 def apply_seq_memories_htp(entries, memories, projectors, main_win,
                            lock_pantilt_idxs=None, lock_gobo_idxs=None):
     """
@@ -1677,15 +1781,20 @@ class _ColorSwatch(QPushButton):
 
         # Bord intérieur
         p.setClipRect(self.rect())
+        _noir = self.c2 is None and self.c1 == QColor(0, 0, 0)
         if self._hovered:
             p.setPen(QPen(QColor(255, 255, 255, 220), 2))
+        elif _noir:
+            # Noir sur le fond #111 de la palette : sans contour, la pastille
+            # est invisible.
+            p.setPen(QPen(QColor(110, 110, 110), 1))
         else:
             p.setPen(QPen(QColor(0, 0, 0, 90), 1))
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(1, 1, S - 2, S - 2, r - 1, r - 1)
 
         # Glow hover (halo extérieur)
-        if self._hovered:
+        if self._hovered and not _noir:
             glow_c = QColor(self.c1)
             glow_c.setAlpha(120)
             p.setPen(QPen(glow_c, 3))
@@ -1726,6 +1835,10 @@ class ColorPalette(QWidget):
             (_cn("Blanc chaud"),   QColor(255, 220, 160)),
             (_cn("Ambre"),         QColor(255, 180,  30)),
             (_cn("Black Light"),   QColor(100,   0, 255)),
+            # Noir : en mode hybride, la REC ne touche pas à ce qu'aucun bloc
+            # ne pilote. Le noir n'est donc plus « le fond » d'une piste : il
+            # faut un bloc pour l'imposer (cf. light_timeline.hyb_merge).
+            (_cn("Noir"),          QColor(  0,   0,   0)),
         ]
 
         # ── Bicolores ────────────────────────────────────────────────
@@ -1766,6 +1879,8 @@ class ColorPalette(QWidget):
 
         for name, color in self.colors:
             btn = _ColorSwatch(color, label=name)
+            if color == QColor(0, 0, 0):
+                btn.setToolTip(tr("lt_noir_tip"))
             btn.setParent(self)
             btn.mousePressEvent = lambda e, c=color: self.start_drag(e, c)
             self._swatches.append(btn)

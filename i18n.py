@@ -1453,6 +1453,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "color_blanc_chaud":     {"en": "Warm white",  "fr": "Blanc chaud", "es": "Blanco cálido", "de": "Warmweiß", "pt": "Branco quente"},
     "color_ambre":           {"en": "Amber",       "fr": "Ambre",   "es": "Ámbar", "de": "Bernstein", "pt": "Âmbar"},
     "color_black_light":     {"en": "Black Light", "fr": "Black Light", "es": "Luz negra", "de": "Schwarzlicht", "pt": "Luz negra"},
+    "color_noir":            {"en": "Black",       "fr": "Noir",    "es": "Negro", "de": "Schwarz", "pt": "Preto"},
+    "lt_noir_tip":           {"en": "Black — turns off this track's fixtures for the length of the block.\n"
+                                   "Outside its blocks, MyStrow leaves you in control: your hand-set lighting stays on.\n"
+                                   "Drop a black block wherever you want to force darkness.",
+                              "fr": "Noir — éteint les projecteurs de la piste pendant toute la durée du bloc.\n"
+                                   "Hors de ses blocs, MyStrow te laisse la main : ton éclairage manuel reste allumé.\n"
+                                   "Pose un bloc noir là où tu veux forcer le noir.",
+                              "es": "Negro — apaga los focos de la pista durante todo el bloque.\n"
+                                   "Fuera de sus bloques, MyStrow te deja el control: tu iluminación manual sigue encendida.\n"
+                                   "Coloca un bloque negro donde quieras forzar la oscuridad.",
+                              "de": "Schwarz — schaltet die Scheinwerfer der Spur für die Dauer des Blocks aus.\n"
+                                   "Außerhalb seiner Blöcke lässt dir MyStrow die Kontrolle: dein manuelles Licht bleibt an.\n"
+                                   "Setze einen schwarzen Block, wo du Dunkelheit erzwingen willst.",
+                              "pt": "Preto — apaga os projetores da faixa durante todo o bloco.\n"
+                                   "Fora dos seus blocos, o MyStrow deixa-te o controlo: a tua iluminação manual fica acesa.\n"
+                                   "Coloca um bloco preto onde quiseres forçar o escuro."},
 
     # ------------------------------------------------------------------ update checker errors
     "err_no_version":        {"en": "No version found on the server.",
