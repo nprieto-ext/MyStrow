@@ -1472,6 +1472,11 @@ class Plan3DWebWindow(QMainWindow):
         s = self._view.settings()
         s.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
         s.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+        # Three.js est importé en module depuis ./vendor/three (file://). Qt
+        # 6.12 (Chromium 140) ne l'autorise plus par défaut : l'import échouait
+        # en silence et la 3D restait sur « Chargement Three.js… » (3.2.3 et
+        # 3.2.4, premières builds CI en PySide6 6.12.0). Explicite désormais.
+        s.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
 
         # QWebChannel — communication JS → Python (clic sur fixture)
         self._channel = QWebChannel()
