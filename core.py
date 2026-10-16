@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.5"
+VERSION = "3.2.6"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -449,9 +449,15 @@ def create_icon(icon_type, color="#ffffff"):
 PAN_RANGE_DEFAULT  = 540.0
 TILT_RANGE_DEFAULT = 270.0
 
-# Bornes de saisie : en dessous de 90° l'appareil n'est plus une lyre, au-delà
-# de 720° aucun constructeur ne va.
-PAN_TILT_RANGE_MIN = 90.0
+# LASER : pas de lyre qui tourne, des miroirs qui balaient une fenetre etroite,
+# et le MEME angle sur les deux axes. Garder 540/270 rendait
+# `pan_angular_ratio` = 0,5 : un « cercle » sortait en ovale deux fois plus
+# etroit, et la 3D faisait pivoter le boitier de 270° de chaque cote.
+LASER_SCAN_DEFAULT = 60.0
+
+# Bornes de saisie : 20° couvre l'angle de balayage d'un laser, au-delà de
+# 720° aucun constructeur ne va.
+PAN_TILT_RANGE_MIN = 20.0
 PAN_TILT_RANGE_MAX = 720.0
 
 
@@ -468,8 +474,140 @@ def pan_tilt_ranges(proj):
             return defaut
         return v if PAN_TILT_RANGE_MIN <= v <= PAN_TILT_RANGE_MAX else defaut
 
-    return (_lire('pan_range',  PAN_RANGE_DEFAULT),
-            _lire('tilt_range', TILT_RANGE_DEFAULT))
+    rng = (_lire('pan_range',  PAN_RANGE_DEFAULT),
+           _lire('tilt_range', TILT_RANGE_DEFAULT))
+    # Un laser resté sur le couple des LYRES n'a jamais été réglé (`Projector`
+    # pose 540/270 à tout le monde) : il prend l'angle de balayage d'un laser.
+    # Une valeur saisie à la main, elle, est respectée.
+    if (getattr(proj, 'fixture_type', None) == "Laser"
+            and rng == (PAN_RANGE_DEFAULT, TILT_RANGE_DEFAULT)):
+        return (LASER_SCAN_DEFAULT, LASER_SCAN_DEFAULT)
+    return rng
+
+
+# ── Plage utile par canal (« brider » un canal) ──────────────────────────────
+# Beaucoup d'appareils d'entree de gamme rangent un programme AUTOMATIQUE dans
+# le haut de la course d'un canal : laser 10 canaux dont Pan/Tilt valent
+# « position » sur 0-127 et « mouvement auto » au-dela, PAR « Dim 0-127,
+# 128+ strobe »… `channel_ranges` ({type: [min, max]}, DMX brut 0-255) borne
+# ce que le moteur envoie.
+#
+# Le moteur MET A L'ECHELLE (fader 0-100 % → min..max) plutot que de couper :
+# couper laisserait la moitie de la course morte et la console aurait l'air
+# bloquee. Les valeurs BRUTES (curseurs par numero, couche d'effet « Canal »,
+# `channel_defaults`) sont seulement BORNEES : ce sont des valeurs DMX que
+# l'utilisateur a choisies telles quelles, les etirer leur ferait mentir.
+#
+# Les canaux fins (PanFine/TiltFine) suivent la plage de leur canal principal :
+# le couple 16 bits est mis a l'echelle d'un bloc, sinon la position saute.
+#
+# ⚠️ Seuls les canaux CONTINUS sont mis a l'echelle. Roue de couleurs, gobos,
+# presets, strobe, shutter… sortent une valeur DMX EXACTE (un slot calibre, une
+# bande) : l'etirer ferait tomber le slot « Rouge » sur le jaune. Ceux-la sont
+# seulement bornes.
+RANGE_SCALED_TYPES = frozenset({
+    "Dim", "Dim2", "R", "G", "B", "W", "Ambre", "Orange", "UV", "Lime",
+    "C", "M", "Y", "Zoom", "Focus", "Iris", "Speed",
+    "Pan", "PanFine", "Tilt", "TiltFine",
+})
+
+def channel_range(ranges, ch_type):
+    """(min, max) valide du canal `ch_type`, ou None si non bride.
+
+    Tolere l'absence, les cles JSON, les bornes inversees ou hors 0-255. Une
+    plage 0-255 (aucune bride) rend None pour ne rien couter au moteur.
+    """
+    if not ranges:
+        return None
+    r = ranges.get(ch_type)
+    if not r or len(r) != 2:
+        return None
+    try:
+        lo, hi = int(r[0]), int(r[1])
+    except (TypeError, ValueError):
+        return None
+    lo, hi = max(0, min(255, lo)), max(0, min(255, hi))
+    if hi < lo:
+        lo, hi = hi, lo
+    if lo == 0 and hi == 255:
+        return None
+    return lo, hi
+
+
+def normalize_channel_ranges(ranges):
+    """Copie propre de `channel_ranges` (listes [min, max], brides seulement)."""
+    out = {}
+    for k in (ranges or {}):
+        r = channel_range(ranges, k)
+        if r is not None:
+            out[str(k)] = [r[0], r[1]]
+    return out
+
+
+def scale_to_range(val, rng):
+    """Valeur 0-255 du moteur mise a l'echelle dans la plage `rng`."""
+    if rng is None:
+        return max(0, min(255, int(val)))
+    lo, hi = rng
+    return lo + int(round(max(0, min(255, int(val))) * (hi - lo) / 255.0))
+
+
+def clamp_to_range(val, rng):
+    """Valeur DMX brute bornee a la plage `rng` (sans mise a l'echelle)."""
+    v = max(0, min(255, int(val)))
+    if rng is None:
+        return v
+    return max(rng[0], min(rng[1], v))
+
+
+def scale16_to_range(val16, rng):
+    """Couple 16 bits (Pan/Tilt + fin) mis a l'echelle dans la plage du canal
+    principal : min → min*256, max → max*256+255."""
+    v = max(0, min(65535, int(val16)))
+    if rng is None:
+        return v
+    lo16, hi16 = rng[0] << 8, (rng[1] << 8) | 0xFF
+    return lo16 + int(round(v * (hi16 - lo16) / 65535.0))
+
+
+# ── Panneau laser (menu du plan de feu) ──────────────────────────────────────
+# Un laser n'a pas de roue de gobos : son canal `Gobo1` choisit un DESSIN parmi
+# N, chacun occupant une bande egale de 0-255. Le menu le pilote donc en
+# « Motif 12 / 51 » plutot qu'en curseur brut.
+
+def laser_pattern_count(labels, profile):
+    """Nombre de motifs du laser, lu dans le nom du canal `Gobo1`.
+
+    Convention des fixtures integrees : « Choix du motif (51) ». Rend None si
+    le nom ne le dit pas — le menu retombe alors sur des pas de DMX bruts.
+    """
+    import re
+    if not labels or not profile or "Gobo1" not in profile:
+        return None
+    i = list(profile).index("Gobo1")
+    if i >= len(labels) or not labels[i]:
+        return None
+    m = re.search(r"\((\d+)\)", str(labels[i]))
+    n = int(m.group(1)) if m else 0
+    return n if 2 <= n <= 256 else None
+
+
+def laser_pattern_index(dmx, n):
+    """Motif (0..n-1) atteint pour une valeur DMX : bandes egales de 0-255."""
+    return min(n - 1, max(0, int(dmx)) * n // 256)
+
+
+def laser_pattern_dmx(i, n):
+    """Valeur DMX au MILIEU de la bande du motif i — loin des deux bords, la
+    ou un arrondi constructeur ne fait pas tomber sur le voisin."""
+    return min(255, int((int(i) % n + 0.5) * 256 / n))
+
+
+def short_channel_label(label):
+    """Nom de canal sans ses precisions entre parentheses, pour une etiquette
+    de menu : « Position X (0-127 ; 128+ = auto) » → « Position X »."""
+    import re
+    return re.sub(r"\s*\([^)]*\)", "", str(label or "")).strip()
 
 
 def pan_tilt_angles(proj, pan_dmx, tilt_dmx):
@@ -1384,6 +1522,7 @@ def fixture_projects_gobo(proj) -> bool:
     donc rendu aux seules fixtures qui en portent une :
 
     - `Moving Head` — le type de toutes les lyres spot / beam ;
+    - `Laser` — il dessine son motif par `Gobo1` ;
     - toute fixture dont le profil contient `Gobo1Rot` ou `Gobo2`. Ces canaux
       n'existent QUE sur un appareil a vraie roue de gobos, et ils rattrapent le
       projecteur de gobos FIXE (sans Pan/Tilt), que `_detect_fixture_type`
@@ -1397,7 +1536,7 @@ def fixture_projects_gobo(proj) -> bool:
     Les faire diverger, c'est rejouer « la 3D ne montre pas la meme chose que la
     2D ».
     """
-    if getattr(proj, 'fixture_type', '') == "Moving Head":
+    if getattr(proj, 'fixture_type', '') in ("Moving Head", "Laser"):
         return True
     prof = getattr(proj, 'dmx_profile', None) or []
     return 'Gobo1Rot' in prof or 'Gobo2' in prof
@@ -1485,6 +1624,78 @@ def fixture_output_channel(proj):
         if ch in prof:
             return ch
     return None
+
+
+# Canal de sortie attendu pour chaque type de machine.
+FX_MACHINE_OUTPUT_FOR_TYPE = {
+    "Machine a fumee":      "Smoke",
+    "Machine a brouillard": "Smoke",
+    "Machine a etincelles": "Spark",
+    "Lance-flamme":         "Flame",
+}
+
+# Lecture du NOM de canal d'une machine (bibliothèques QLC+, GDTF…). QLC+ n'a
+# pas de groupe « fumée » : le débit arrive en « Effect », « Intensity » ou
+# « Maintenance » selon l'auteur du profil. Sans cette lecture, les 57 machines
+# QLC+ arrivaient SANS canal Smoke — débit mort, curseur compris (Stairville
+# AFH-600, Discord 16/10/2026).
+_MACHINE_FAN_WORDS = ("fan", "blower", "ventil")
+_MACHINE_TIMING_WORDS = ("duration", "interval", "time", "delay", "sleep",
+                         "speed", "durée", "duree", "intervalle")
+_MACHINE_STRONG_WORDS = ("fog", "smoke", "haze", "faze", "pump", "fumee",
+                         "fumée", "brouillard", "spark", "flame", "fire")
+_MACHINE_OTHER_WORDS = ("red", "green", "blue", "amber", "white", "uv",
+                        "colour", "color", "chase", "program", "macro", "mode",
+                        "strobe", "shutter", "dimmer", "brightness", "led",
+                        "enable", "on-off")
+_MACHINE_WEAK_WORDS = ("volume", "output", "amount", "density", "intensity",
+                       "level", "débit", "debit")
+
+
+def _machine_label_role(label):
+    """'fan' | 'out' | None d'après le nom d'un canal de machine."""
+    n = (label or "").strip().lower()
+    if not n:
+        return None
+    if any(w in n for w in _MACHINE_FAN_WORDS):
+        return "fan"
+    if any(w in n for w in _MACHINE_TIMING_WORDS):
+        return None
+    if any(w in n for w in _MACHINE_STRONG_WORDS):
+        return "out"
+    if any(w in n for w in _MACHINE_OTHER_WORDS):
+        return None
+    if n == "effect" or any(w in n for w in _MACHINE_WEAK_WORDS):
+        return "out"
+    return None
+
+
+def fix_machine_profile(fixture_type, profile, labels=None):
+    """Profil d'une machine à effet, avec son canal de sortie retrouvé.
+
+    Une machine sans `Smoke`/`Spark`/`Flame` a un débit MORT : la sortie DMX
+    (`artnet_dmx`) ne pilote que ces canaux-là. On désigne donc le canal de
+    sortie — et le ventilateur s'il est nommé :
+      * avec les noms de canaux : le premier qui parle de fumée/débit ;
+      * sans noms : seulement si la machine n'a qu'UN canal, qui est alors
+        forcément le débit. Sur plusieurs canaux sans nom, on ne devine pas.
+    Tout autre profil revient inchangé (copie).
+    """
+    prof = list(profile or [])
+    out_ch = FX_MACHINE_OUTPUT_FOR_TYPE.get(fixture_type)
+    if not out_ch or not prof or any(c in prof for c in FX_MACHINE_OUTPUT_CHANNELS):
+        return prof
+    labels = list(labels or [])
+    if len(labels) == len(prof):
+        roles = [_machine_label_role(l) for l in labels]
+        if "out" in roles:
+            prof[roles.index("out")] = out_ch
+            if "fan" in roles and "Fan" not in prof:
+                prof[roles.index("fan")] = "Fan"
+            return prof
+    if len(prof) == 1:
+        prof[0] = out_ch
+    return prof
 
 
 def projector_selection_keys(projectors):

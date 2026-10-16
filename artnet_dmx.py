@@ -78,6 +78,13 @@ DMX_PROFILES = {
     "MOVING_8CH":  ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1", "Speed", "Mode"],
     "MOVING_RGB":  ["Pan", "Tilt", "R", "G", "B", "Dim", "Shutter", "Speed"],
     "MOVING_RGBW": ["Pan", "Tilt", "R", "G", "B", "W", "Dim", "Shutter", "Speed"],
+    # Laser : il DESSINE, il ne melange pas de couleur. Le motif est en `Gobo1`,
+    # la position en `Pan`/`Tilt` (memes outils que la lyre). Le canal 1 est en
+    # `Preset1` et non en `Dim` : sur la plupart des lasers il porte a la fois
+    # l'extinction et le mode (eteint / son / auto / DMX), un fader a mi-course
+    # le ferait partir en autonome. Repos = 0 = laser eteint.
+    "LASER_5CH":   ["Preset1", "Gobo1", "Pan", "Tilt", "Speed"],
+    "LASER_8CH":   ["Preset1", "Gobo1", "Gobo1Rot", "Pan", "Tilt", "Zoom", "ColorWheel", "Speed"],
     # Barre LED
     "LED_BAR_RGB": ["R", "G", "B", "Dim", "Strobe"],
     # Stroboscope
@@ -196,7 +203,8 @@ _RING_DRIVEN = frozenset({
 
 # Canaux de sortie des machines a effet — point unique dans `core`, partage
 # avec le plan 2D, la 3D et les exclusions d'effets.
-from core import FX_MACHINE_OUTPUT_CHANNELS
+from core import (FX_MACHINE_OUTPUT_CHANNELS, channel_range, scale_to_range,
+                  clamp_to_range, scale16_to_range, RANGE_SCALED_TYPES)
 from i18n import tr
 
 
@@ -1353,6 +1361,7 @@ class ArtNetDMX:
                 # — c'est-a-dire exactement ce qu'un mute doit empecher.
                 _ch_extras   = getattr(proj, 'channel_extras',   None) or {}
                 _ch_defaults = getattr(proj, 'channel_defaults', None) or {}
+                _ch_ranges   = getattr(proj, 'channel_ranges',   None) or {}
                 for idx, ch_type in enumerate(profile):
                     if idx >= len(channels) or idx in (out_idx, fan_idx):
                         continue
@@ -1368,7 +1377,8 @@ class ArtNetDMX:
                         _raw = _ch_extras.get(ch_type)
                     if _raw is None:
                         _raw = _ch_defaults.get(ch_type, 0)
-                    self.set_channel(ch, max(0, min(255, int(_raw))), universe)
+                    self.set_channel(ch, clamp_to_range(
+                        _raw, channel_range(_ch_ranges, ch_type)), universe)
                 continue
 
             # Mute
@@ -1441,6 +1451,10 @@ class ArtNetDMX:
             _ch_defaults = getattr(proj, 'channel_defaults', {})
             _ch_extras   = getattr(proj, 'channel_extras',   {})
             _fx_ch       = getattr(proj, 'effect_channels',  None) or {}
+            # Plage utile par canal (cf. `core.channel_range`) : les valeurs
+            # pilotees par le moteur sont mises a l'echelle, les valeurs brutes
+            # seulement bornees.
+            _ch_ranges   = getattr(proj, 'channel_ranges',   None) or {}
 
             # Pan/Tilt effectifs : LIMITES d'abord, puis swap et inversion.
             #
@@ -1464,6 +1478,11 @@ class ArtNetDMX:
                 _eff_pan  = 65535 - _eff_pan
             if getattr(proj, 'tilt_invert', False):
                 _eff_tilt = 65535 - _eff_tilt
+            # Plage utile APRES swap/inversion : elle decrit ce que l'APPAREIL
+            # accepte sur son canal physique, pas le repere de l'application.
+            # Le couple 16 bits est etire d'un bloc (Fine compris).
+            _eff_pan  = scale16_to_range(_eff_pan,  channel_range(_ch_ranges, "Pan"))
+            _eff_tilt = scale16_to_range(_eff_tilt, channel_range(_ch_ranges, "Tilt"))
 
             # Pour les fixtures RGBW : extraire W = min(R,G,B) et le soustraire
             # des canaux RGB pour éviter la contamination blanche (double envoi)
@@ -1529,8 +1548,9 @@ class ArtNetDMX:
                 # c'est l'utilisateur qui a choisi d'animer CE canal. Le mute
                 # passe avant (branche plus haut), et la table est vidée à
                 # l'arrêt de l'effet : le canal forcé reprend alors la main.
+                _rng = channel_range(_ch_ranges, ch_type)
                 if _fx_ch and (idx + 1) in _fx_ch:
-                    self.set_channel(ch, max(0, min(255, int(_fx_ch[idx + 1]))), universe)
+                    self.set_channel(ch, clamp_to_range(_fx_ch[idx + 1], _rng), universe)
                     continue
 
                 # Contrôle brut par NUMÉRO DE CANAL, prioritaire sur tout le
@@ -1553,12 +1573,12 @@ class ArtNetDMX:
                 if _raw is None:
                     _raw = _ch_extras.get(str(idx + 1))
                 if _raw is not None:
-                    self.set_channel(ch, max(0, min(255, int(_raw))), universe)
+                    self.set_channel(ch, clamp_to_range(_raw, _rng), universe)
                     continue
 
                 # Contrôle brut par TYPE (curseurs avancés du menu contextuel)
                 if ch_type in _ch_extras:
-                    self.set_channel(ch, _ch_extras[ch_type], universe)
+                    self.set_channel(ch, clamp_to_range(_ch_extras[ch_type], _rng), universe)
                     continue
 
                 if ch_type == "R":
@@ -1734,8 +1754,21 @@ class ArtNetDMX:
                 else:
                     ch_val = 0
 
-                # Valeur par défaut : appliquée quand le canal sortirait 0
-                if ch_val == 0 and ch_type in _ch_defaults:
+                # Valeur par défaut : appliquée quand le canal sortirait 0.
+                # Valeur DMX brute → bornée seulement. Les canaux continus sont
+                # mis à l'échelle de la plage utile (Pan/Tilt et leurs fins
+                # l'ont déjà été d'un bloc en 16 bits plus haut) ; roue, gobo,
+                # presets… sortent une valeur exacte et sont seulement bornés.
+                if _rng is not None:
+                    if ch_val == 0 and ch_type in _ch_defaults:
+                        ch_val = clamp_to_range(_ch_defaults[ch_type], _rng)
+                    elif ch_type in ("Pan", "PanFine", "Tilt", "TiltFine"):
+                        pass
+                    elif ch_type in RANGE_SCALED_TYPES:
+                        ch_val = scale_to_range(ch_val, _rng)
+                    else:
+                        ch_val = clamp_to_range(ch_val, _rng)
+                elif ch_val == 0 and ch_type in _ch_defaults:
                     ch_val = _ch_defaults[ch_type]
 
                 self.set_channel(ch, ch_val, universe)

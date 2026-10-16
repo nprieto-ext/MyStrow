@@ -15,7 +15,9 @@ from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
                   gobo_slot_index, gobo_slot_dmx,
                   emitted_brightness,
                   FX_MACHINE_TYPES, fixture_is_fx_machine, fixture_is_pyro,
-                  strobe_speed_from_dmx, displayed_strobe_speed)
+                  strobe_speed_from_dmx, displayed_strobe_speed,
+                  laser_pattern_count, laser_pattern_index, laser_pattern_dmx,
+                  short_channel_label)
 from artnet_dmx import PRESET_TYPES
 from PySide6.QtWidgets import (
     QFrame, QWidget, QVBoxLayout, QGridLayout, QHBoxLayout,
@@ -27,7 +29,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QSize, Signal, QRectF, QObject, QEvent
 from PySide6.QtGui import (
     QColor, QFont, QImage, QPainter, QPen, QBrush, QPainterPath, QPolygon,
-    QLinearGradient, QRadialGradient, QCursor, QMouseEvent,
+    QLinearGradient, QRadialGradient, QCursor, QMouseEvent, QPolygonF,
 )
 
 
@@ -1205,7 +1207,7 @@ class ColorPickerBlock(QFrame):
     def _is_cw_only(proj) -> bool:
         # « Lyre » : ancien libellé produit par l'import QLC+. Les fixtures déjà
         # patchées le portent encore — les rejeter obligerait à tout réimporter.
-        if getattr(proj, 'fixture_type', '') not in ('Moving Head', 'Lyre'):
+        if getattr(proj, 'fixture_type', '') not in ('Moving Head', 'Lyre', 'Laser'):
             return False
         profile = getattr(proj, 'dmx_profile', None) or []
         if not profile:
@@ -1335,6 +1337,10 @@ FIXTURE_LIBRARY = {
         {"name": "Moving Head 8CH", "fixture_type": "Moving Head", "group": "face", "profile": "MOVING_8CH"},
         {"name": "Moving Head RGB 9CH", "fixture_type": "Moving Head", "group": "face", "profile": "MOVING_RGB"},
         {"name": "Moving Head RGBW 9CH", "fixture_type": "Moving Head", "group": "face", "profile": "MOVING_RGBW"},
+    ],
+    "Laser": [
+        {"name": "Laser 8CH", "fixture_type": "Laser", "group": "face", "profile": "LASER_8CH"},
+        {"name": "Laser 5CH", "fixture_type": "Laser", "group": "face", "profile": "LASER_5CH"},
     ],
     "Barre LED": [
         {"name": "Barre LED RGB 5CH", "fixture_type": "Barre LED", "group": "face", "profile": "LED_BAR_RGB"},
@@ -2140,7 +2146,7 @@ class _PanTiltFloater(QFrame):
         group = proj.group
         return [
             p for p in self._canvas.pdf.projectors
-            if p.group == group and getattr(p, 'fixture_type', '') == 'Moving Head'
+            if p.group == group and getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')
         ] or [proj]
 
     def _ordered_lyre_targets(self):
@@ -2158,7 +2164,7 @@ class _PanTiltFloater(QFrame):
         for key in ordered:
             if key in pdf.selected_lamps and key not in seen:
                 p = proj_map.get(key)
-                if p and getattr(p, 'fixture_type', '') == 'Moving Head':
+                if p and getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser'):
                     result.append(p)
                     seen.add(key)
         return result
@@ -2445,7 +2451,7 @@ class FixtureCanvas(QWidget):
         r = 9 if self.compact else 13   # rayon icône (idem _draw_fixture)
 
         for i, proj in enumerate(self.pdf.projectors):
-            if getattr(proj, 'fixture_type', '') != 'Moving Head':
+            if getattr(proj, 'fixture_type', '') not in ('Moving Head', 'Laser'):
                 continue
             group, li = self._local_idx(i)
             if (group, li) not in self.pdf.selected_lamps:
@@ -2701,7 +2707,7 @@ class FixtureCanvas(QWidget):
         TOL = 12  # px de tolérance latérale pour faciliter la prise
         for i in range(len(self.pdf.projectors) - 1, -1, -1):
             proj = self.pdf.projectors[i]
-            if getattr(proj, 'fixture_type', '') != 'Moving Head':
+            if getattr(proj, 'fixture_type', '') not in ('Moving Head', 'Laser'):
                 continue
             cx, cy = self._get_canvas_pos(i)
             # Même géométrie que le dessin : sans ça on attrape le faisceau
@@ -2745,13 +2751,13 @@ class FixtureCanvas(QWidget):
             for _key in ordered:
                 if _key in self.pdf.selected_lamps and _key not in seen_keys:
                     _p = proj_map.get(_key)
-                    if _p and getattr(_p, 'fixture_type', '') == 'Moving Head':
+                    if _p and getattr(_p, 'fixture_type', '') in ('Moving Head', 'Laser'):
                         targets.append(_p)
                         seen_keys.add(_key)
             for j, _p in enumerate(self.pdf.projectors):
                 gj, lj = self._local_idx(j)
                 if (gj, lj) in self.pdf.selected_lamps and (gj, lj) not in seen_keys:
-                    if getattr(_p, 'fixture_type', '') == 'Moving Head':
+                    if getattr(_p, 'fixture_type', '') in ('Moving Head', 'Laser'):
                         targets.append(_p)
         else:
             targets = [proj]
@@ -2880,7 +2886,7 @@ class FixtureCanvas(QWidget):
         painter.setPen(pen)
         painter.setBrush(QBrush(fill_color))
 
-        if ftype == "Moving Head":
+        if ftype in ("Moving Head", "Laser"):
             pan_val  = _htp_e[2] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'pan',  32768)
             tilt_val = _htp_e[3] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'tilt', 32768)
             pan_angle, beam_len, beam_hw = beam_geometry(pan_val, tilt_val, r)
@@ -2891,8 +2897,39 @@ class FixtureCanvas(QWidget):
             # reste sous l'icône.
             _beam_y0   = min(r, max(1, beam_len // 2))
 
+            # ── Laser : rayons fins en éventail, pas un cône ─────────────
+            # Un laser ne fait pas de faisceau large et doux : il trace des
+            # TRAITS fins et nets qui finissent en points. C'est ce qui le
+            # distingue d'une lyre au premier coup d'œil sur le plan.
+            if is_lit and ftype == "Laser":
+                painter.save()
+                painter.translate(cx, cy)
+                painter.rotate(pan_angle)
+                fr, fg, fb = fill_color.red(), fill_color.green(), fill_color.blue()
+                hr, hg, hb = min(255, fr + 110), min(255, fg + 110), min(255, fb + 110)
+                _n_rays = 5
+                _spread = max(4, int(beam_hw * 1.9))
+                for _k in range(_n_rays):
+                    _t  = -1.0 + 2.0 * _k / (_n_rays - 1)
+                    _ex = int(_t * _spread)
+                    _ey = int(beam_len * (1.0 - 0.10 * abs(_t)))
+                    _g  = QLinearGradient(0.0, float(_beam_y0), float(_ex), float(_ey))
+                    _g.setColorAt(0.0, QColor(hr, hg, hb, 250))
+                    _g.setColorAt(1.0, QColor(fr, fg, fb, 70))
+                    _pen = QPen(QBrush(_g), 1.6)
+                    _pen.setCapStyle(Qt.RoundCap)
+                    painter.setPen(_pen)
+                    painter.drawLine(QPointF(0, _beam_y0), QPointF(_ex, _ey))
+                    # Point d'impact net au bout de chaque rayon
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(fr, fg, fb, 90))
+                    painter.drawEllipse(QPointF(_ex, _ey), 3.2, 3.2)
+                    painter.setBrush(QColor(hr, hg, hb, 235))
+                    painter.drawEllipse(QPointF(_ex, _ey), 1.6, 1.6)
+                painter.restore()
+
             # Cone de faisceau orienté — gradient lumineux à la source
-            if is_lit:
+            if is_lit and ftype != "Laser":
                 # 0 = ouvert, 1-15 = motif. `fixture_projects_gobo` ferme la
                 # porte aux fixtures SANS optique de projection : sur un PAR LED
                 # dont le canal `Gobo1` sert en realite de canal de programme,
@@ -2967,98 +3004,155 @@ class FixtureCanvas(QWidget):
                                        pat_col)
 
                 painter.restore()
-            # ── Lyre / Moving Head ───────────────────────────────────────────────
-            lr          = int(r * 1.4)
-            yoke_top_hw = int(lr * 0.88)
-            yoke_bot_hw = int(lr * 0.54)
-            bar_t       = max(3, int(lr * 0.26))
-            arm_t_top   = max(3, int(lr * 0.26))
-            arm_t_bot   = max(2, int(lr * 0.20))
-            arm_bot_y   = cy + int(lr * 0.08)
-            head_r      = int(lr * 0.46)
-            head_cy     = arm_bot_y
-            pivot_r     = max(2, int(lr * 0.17))
-            lens_ring_r = int(lr * 0.30)
-            lens_dot_r  = max(1, int(lr * 0.15))
+            if ftype == "Laser":
+                # ── Laser : boîtier sombre + pictogramme laser + ouverture ──
+                # L'ancien boîtier à ailettes, peint dans la couleur du groupe,
+                # se lisait comme « un PAR rectangulaire ». Deux signes que tout
+                # le monde reconnaît font le travail : le TRIANGLE JAUNE du
+                # danger laser, et une OUVERTURE RONDE qui prend la couleur de
+                # sortie. Le groupe reste lisible par le liseré.
+                lw = int(r * 1.35)
+                lh = int(r * 0.80)
+                body_g = QLinearGradient(cx, cy - lh, cx, cy + lh)
+                body_g.setColorAt(0.0, QColor("#3a3d44"))
+                body_g.setColorAt(1.0, QColor("#16181c"))
+                painter.setPen(pen if (is_selected or is_hover) else QPen(gc, 1.6))
+                painter.setBrush(QBrush(body_g))
+                painter.drawRoundedRect(QRectF(cx - lw, cy - lh, lw * 2, lh * 2), 4, 4)
 
-            # Barre de fixation (accroche truss)
-            bar_g = QLinearGradient(cx, cy - lr, cx, cy - lr + bar_t)
-            bar_g.setColorAt(0.0, gc.lighter(162))
-            bar_g.setColorAt(1.0, gc.darker(132))
-            painter.setBrush(QBrush(bar_g))
-            painter.setPen(pen)
-            painter.drawRoundedRect(cx - yoke_top_hw, cy - lr,
-                                    yoke_top_hw * 2, bar_t,
-                                    bar_t // 2, bar_t // 2)
+                # Triangle « danger laser » (jaune, liseré noir)
+                tri_cx = cx - lw * 0.42
+                tri_h  = lh * 1.25
+                tri_w  = tri_h * 1.12
+                tri = QPolygonF([
+                    QPointF(tri_cx,             cy - tri_h * 0.55),
+                    QPointF(tri_cx + tri_w / 2, cy + tri_h * 0.45),
+                    QPointF(tri_cx - tri_w / 2, cy + tri_h * 0.45),
+                ])
+                painter.setPen(QPen(QColor("#111111"), 1))
+                painter.setBrush(QColor("#ffd21f"))
+                painter.drawPolygon(tri)
+                # Étoile du pictogramme, réduite à un point et 4 traits
+                painter.setPen(QPen(QColor("#111111"), max(1.0, r * 0.07)))
+                _sy = cy + tri_h * 0.12
+                _sr = tri_h * 0.17
+                painter.drawLine(QPointF(tri_cx - _sr, _sy), QPointF(tri_cx + _sr, _sy))
+                painter.drawLine(QPointF(tri_cx, _sy - _sr), QPointF(tri_cx, _sy + _sr))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor("#111111"))
+                painter.drawEllipse(QPointF(tri_cx, _sy), _sr * 0.45, _sr * 0.45)
 
-            # Bras gauche (trapèze) avec gradient latéral métallique
-            arm_left = QPolygon([
-                QPoint(cx - yoke_top_hw,             cy - lr + bar_t),
-                QPoint(cx - yoke_top_hw + arm_t_top, cy - lr + bar_t),
-                QPoint(cx - yoke_bot_hw + arm_t_bot, arm_bot_y),
-                QPoint(cx - yoke_bot_hw,             arm_bot_y),
-            ])
-            arm_lg = QLinearGradient(cx - yoke_top_hw, 0,
-                                     cx - yoke_top_hw + arm_t_top * 2, 0)
-            arm_lg.setColorAt(0.0, gc.darker(138))
-            arm_lg.setColorAt(0.4, gc.lighter(128))
-            arm_lg.setColorAt(1.0, gc.darker(122))
-            painter.setBrush(QBrush(arm_lg))
-            painter.drawPolygon(arm_left)
+                # Ouverture de sortie : ronde, dans la couleur émise
+                ap_cx = cx + lw * 0.45
+                ap_r  = lh * 0.48
+                if is_lit:
+                    _glow = QRadialGradient(ap_cx, float(cy), ap_r * 2.6)
+                    _gc = QColor(fill_color); _gc.setAlpha(150)
+                    _glow.setColorAt(0.0, _gc)
+                    _gc0 = QColor(fill_color); _gc0.setAlpha(0)
+                    _glow.setColorAt(1.0, _gc0)
+                    painter.setBrush(QBrush(_glow))
+                    painter.drawEllipse(QPointF(ap_cx, cy), ap_r * 2.6, ap_r * 2.6)
+                painter.setPen(QPen(QColor("#0a0a0a"), 1.2))
+                painter.setBrush(QBrush(fill_color if is_lit else QColor("#22252b")))
+                painter.drawEllipse(QPointF(ap_cx, cy), ap_r, ap_r)
+                if is_lit:
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(255, 255, 255, 210))
+                    painter.drawEllipse(QPointF(ap_cx, cy), ap_r * 0.38, ap_r * 0.38)
+            else:
+                # ── Lyre / Moving Head ───────────────────────────────────────────────
+                lr          = int(r * 1.4)
+                yoke_top_hw = int(lr * 0.88)
+                yoke_bot_hw = int(lr * 0.54)
+                bar_t       = max(3, int(lr * 0.26))
+                arm_t_top   = max(3, int(lr * 0.26))
+                arm_t_bot   = max(2, int(lr * 0.20))
+                arm_bot_y   = cy + int(lr * 0.08)
+                head_r      = int(lr * 0.46)
+                head_cy     = arm_bot_y
+                pivot_r     = max(2, int(lr * 0.17))
+                lens_ring_r = int(lr * 0.30)
+                lens_dot_r  = max(1, int(lr * 0.15))
 
-            # Bras droit (trapèze) avec gradient latéral métallique
-            arm_right = QPolygon([
-                QPoint(cx + yoke_top_hw - arm_t_top, cy - lr + bar_t),
-                QPoint(cx + yoke_top_hw,             cy - lr + bar_t),
-                QPoint(cx + yoke_bot_hw,             arm_bot_y),
-                QPoint(cx + yoke_bot_hw - arm_t_bot, arm_bot_y),
-            ])
-            arm_rg = QLinearGradient(cx + yoke_top_hw - arm_t_top * 2, 0,
-                                     cx + yoke_top_hw, 0)
-            arm_rg.setColorAt(0.0, gc.darker(122))
-            arm_rg.setColorAt(0.6, gc.lighter(128))
-            arm_rg.setColorAt(1.0, gc.darker(138))
-            painter.setBrush(QBrush(arm_rg))
-            painter.drawPolygon(arm_right)
+                # Barre de fixation (accroche truss)
+                bar_g = QLinearGradient(cx, cy - lr, cx, cy - lr + bar_t)
+                bar_g.setColorAt(0.0, gc.lighter(162))
+                bar_g.setColorAt(1.0, gc.darker(132))
+                painter.setBrush(QBrush(bar_g))
+                painter.setPen(pen)
+                painter.drawRoundedRect(cx - yoke_top_hw, cy - lr,
+                                        yoke_top_hw * 2, bar_t,
+                                        bar_t // 2, bar_t // 2)
 
-            # Points pivot (vis de rotation)
-            painter.setPen(QPen(gc.darker(160), 1))
-            painter.setBrush(QBrush(gc.lighter(195)))
-            painter.drawEllipse(QPoint(cx - yoke_bot_hw + arm_t_bot // 2, head_cy),
-                                pivot_r, pivot_r)
-            painter.drawEllipse(QPoint(cx + yoke_bot_hw - arm_t_bot // 2, head_cy),
-                                pivot_r, pivot_r)
+                # Bras gauche (trapèze) avec gradient latéral métallique
+                arm_left = QPolygon([
+                    QPoint(cx - yoke_top_hw,             cy - lr + bar_t),
+                    QPoint(cx - yoke_top_hw + arm_t_top, cy - lr + bar_t),
+                    QPoint(cx - yoke_bot_hw + arm_t_bot, arm_bot_y),
+                    QPoint(cx - yoke_bot_hw,             arm_bot_y),
+                ])
+                arm_lg = QLinearGradient(cx - yoke_top_hw, 0,
+                                         cx - yoke_top_hw + arm_t_top * 2, 0)
+                arm_lg.setColorAt(0.0, gc.darker(138))
+                arm_lg.setColorAt(0.4, gc.lighter(128))
+                arm_lg.setColorAt(1.0, gc.darker(122))
+                painter.setBrush(QBrush(arm_lg))
+                painter.drawPolygon(arm_left)
 
-            # Tête (cercle — la tête de la lyre)
-            head_grad = QRadialGradient(
-                float(cx - head_r * 0.28), float(head_cy - head_r * 0.28),
-                float(head_r * 1.5))
-            head_grad.setColorAt(0.0, fill_color.lighter(165))
-            head_grad.setColorAt(0.55, fill_color)
-            head_grad.setColorAt(1.0, fill_color.darker(155))
-            painter.setPen(pen)
-            painter.setBrush(QBrush(head_grad))
-            painter.drawEllipse(QPoint(cx, head_cy), head_r, head_r)
+                # Bras droit (trapèze) avec gradient latéral métallique
+                arm_right = QPolygon([
+                    QPoint(cx + yoke_top_hw - arm_t_top, cy - lr + bar_t),
+                    QPoint(cx + yoke_top_hw,             cy - lr + bar_t),
+                    QPoint(cx + yoke_bot_hw,             arm_bot_y),
+                    QPoint(cx + yoke_bot_hw - arm_t_bot, arm_bot_y),
+                ])
+                arm_rg = QLinearGradient(cx + yoke_top_hw - arm_t_top * 2, 0,
+                                         cx + yoke_top_hw, 0)
+                arm_rg.setColorAt(0.0, gc.darker(122))
+                arm_rg.setColorAt(0.6, gc.lighter(128))
+                arm_rg.setColorAt(1.0, gc.darker(138))
+                painter.setBrush(QBrush(arm_rg))
+                painter.drawPolygon(arm_right)
 
-            # Anneau réflecteur
-            painter.setPen(QPen(fill_color.darker(180), max(1, int(lr * 0.09))))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(QPoint(cx, head_cy), lens_ring_r, lens_ring_r)
+                # Points pivot (vis de rotation)
+                painter.setPen(QPen(gc.darker(160), 1))
+                painter.setBrush(QBrush(gc.lighter(195)))
+                painter.drawEllipse(QPoint(cx - yoke_bot_hw + arm_t_bot // 2, head_cy),
+                                    pivot_r, pivot_r)
+                painter.drawEllipse(QPoint(cx + yoke_bot_hw - arm_t_bot // 2, head_cy),
+                                    pivot_r, pivot_r)
 
-            # Lentille sombre
-            lens_g = QRadialGradient(float(cx), float(head_cy), float(lens_dot_r * 2.5))
-            lens_g.setColorAt(0.0, fill_color.darker(100))
-            lens_g.setColorAt(1.0, fill_color.darker(200))
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QBrush(lens_g))
-            painter.drawEllipse(QPoint(cx, head_cy), lens_dot_r, lens_dot_r)
+                # Tête (cercle — la tête de la lyre)
+                head_grad = QRadialGradient(
+                    float(cx - head_r * 0.28), float(head_cy - head_r * 0.28),
+                    float(head_r * 1.5))
+                head_grad.setColorAt(0.0, fill_color.lighter(165))
+                head_grad.setColorAt(0.55, fill_color)
+                head_grad.setColorAt(1.0, fill_color.darker(155))
+                painter.setPen(pen)
+                painter.setBrush(QBrush(head_grad))
+                painter.drawEllipse(QPoint(cx, head_cy), head_r, head_r)
 
-            # Point brillant (reflet lentille)
-            painter.setBrush(QBrush(QColor(255, 255, 255, 210)))
-            hl_r = max(1, int(lens_dot_r * 0.45))
-            painter.drawEllipse(
-                QPoint(cx - int(lens_dot_r * 0.35), head_cy - int(lens_dot_r * 0.35)),
-                hl_r, hl_r)
+                # Anneau réflecteur
+                painter.setPen(QPen(fill_color.darker(180), max(1, int(lr * 0.09))))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(QPoint(cx, head_cy), lens_ring_r, lens_ring_r)
+
+                # Lentille sombre
+                lens_g = QRadialGradient(float(cx), float(head_cy), float(lens_dot_r * 2.5))
+                lens_g.setColorAt(0.0, fill_color.darker(100))
+                lens_g.setColorAt(1.0, fill_color.darker(200))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(lens_g))
+                painter.drawEllipse(QPoint(cx, head_cy), lens_dot_r, lens_dot_r)
+
+                # Point brillant (reflet lentille)
+                painter.setBrush(QBrush(QColor(255, 255, 255, 210)))
+                hl_r = max(1, int(lens_dot_r * 0.45))
+                painter.drawEllipse(
+                    QPoint(cx - int(lens_dot_r * 0.35), head_cy - int(lens_dot_r * 0.35)),
+                    hl_r, hl_r)
 
         elif ftype == "Barre LED":
             painter.drawRoundedRect(QRect(cx - barre_hw, cy - barre_hh, barre_hw * 2, barre_hh * 2), 3, 3)
@@ -3527,6 +3621,7 @@ class FixtureCanvas(QWidget):
         # le mute. Lire proj.color en direct affichait n'importe quoi en
         # restitution, où le niveau ne vient pas de proj.level.
         _htp = self.pdf._htp_overrides
+        _solo = getattr(self.pdf, '_kill_display', None)
         fills = []
         lit = []
         for proj, px, py, key in pixels:
@@ -4003,7 +4098,7 @@ class FixtureCanvas(QWidget):
                     if self._drag_starts and self._drag_index not in self._drag_starts:
                         self._drag_index = next(iter(self._drag_starts))
                 elif (BEAM_MOUSE_AIM
-                        and getattr(self.pdf.projectors[idx], 'fixture_type', '') == 'Moving Head'
+                        and getattr(self.pdf.projectors[idx], 'fixture_type', '') in ('Moving Head', 'Laser')
                         and not self._select_only):
                     # Clic sur le corps d'une Moving Head → drag pan/tilt (haut/bas=tilt, gauche/droite=pan)
                     if self._pt_floater is not None:
@@ -4931,7 +5026,7 @@ class PlanDeFeu(QFrame):
 
     def refresh_target_btn(self):
         """Affiche/cache le bouton 🎯 selon la présence de Moving Heads/Lyres dans le patch."""
-        has_mh = any(getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')
+        has_mh = any(getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')
                      for p in self.projectors)
         self.btn_target.setVisible(has_mh)
         if not has_mh and self.btn_target.isChecked():
@@ -4963,7 +5058,7 @@ class PlanDeFeu(QFrame):
 
         mh_groups = {}
         for proj in self.projectors:
-            if getattr(proj, 'fixture_type', '') == 'Moving Head':
+            if getattr(proj, 'fixture_type', '') in ('Moving Head', 'Laser'):
                 mh_groups.setdefault(proj.group, []).append(proj)
 
         if not mh_groups:
@@ -5043,7 +5138,7 @@ class PlanDeFeu(QFrame):
         for i, proj in enumerate(self.projectors):
             li = g_cnt.get(proj.group, 0)
             g_cnt[proj.group] = li + 1
-            if proj.group in selected_groups and getattr(proj, 'fixture_type', '') == 'Moving Head':
+            if proj.group in selected_groups and getattr(proj, 'fixture_type', '') in ('Moving Head', 'Laser'):
                 self.selected_lamps.add((proj.group, li))
 
         letters = [self._GROUP_LETTERS.get(g, g[0].upper()) for g in selected_groups]
@@ -5073,7 +5168,7 @@ class PlanDeFeu(QFrame):
             li = g_cnt.get(g, 0)
             g_cnt[g] = li + 1
             if ((g, li) in self.selected_lamps
-                    and getattr(p, 'fixture_type', '') == 'Moving Head'):
+                    and getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')):
                 n_lyres += 1
         show = n_lyres >= 2
         if self.btn_sym.isVisible() != show:
@@ -6597,6 +6692,59 @@ class PlanDeFeu(QFrame):
         # page, là en un seul.
         _SLI = _feuille_curseur(True, _TEINTE_DEFAUT)
 
+        # ── Laser : panneau orienté laser ────────────────────────────────
+        # Un laser est piloté comme une lyre par le moteur, mais il ne se
+        # RÈGLE pas comme une lyre : pas de dimmer, un canal qui l'allume ET
+        # choisit son mode, des dessins au lieu de gobos, et ses animations
+        # (rotations, bascules, taille) sont le cœur du réglage — elles
+        # dormaient repliées dans « Canaux avancés ». Seulement quand TOUTE la
+        # sélection est laser : une sélection mixte garde le menu commun.
+        _all_laser = all(getattr(p, 'fixture_type', '') == 'Laser'
+                         for p, _g, _i in targets)
+        _laser_prof = list(getattr(proj, 'dmx_profile', None) or [])
+        _laser_labels = list(getattr(proj, 'channel_labels', None) or [])
+        if len(_laser_labels) != len(_laser_prof):
+            _laser_labels = []
+        # Canal d'allumage = `Preset1` à blocs nommés (convention des lasers
+        # intégrés : Éteint / DMX / Auto / Son). Sans blocs, pas de rangée :
+        # des boutons inventés enverraient des valeurs de macro au hasard.
+        _laser_pow_slots = (
+            sorted((getattr(proj, 'preset_slots', None) or {}).get('Preset1', []),
+                   key=lambda s: int(s.get('dmx', 0)))
+            if _all_laser and 'Preset1' in _laser_prof else [])
+        _laser_dmx_val = next((int(s.get('dmx', 0)) for s in _laser_pow_slots
+                               if str(s.get('name', '')).strip().upper() == 'DMX'),
+                              None)
+        _laser_ui = {"refresh": None}
+
+        def _laser_label(ct, defaut):
+            """Nom constructeur du canal `ct`, sans ses précisions."""
+            if _laser_labels and ct in _laser_prof:
+                nom = short_channel_label(_laser_labels[_laser_prof.index(ct)])
+                if nom:
+                    return nom
+            return defaut
+
+        def _laser_wake(t):
+            """Passe en DMX un laser encore ÉTEINT dès qu'on règle quelque chose.
+
+            Tant que le canal de mode est sur « Éteint », l'appareil ignore
+            tous ses autres canaux : choisir un motif ou une couleur ne
+            faisait RIEN, et c'est la première chose qu'on essaie. Un mode
+            Auto ou Son choisi exprès, lui, n'est pas écrasé.
+            """
+            if _laser_dmx_val is None:
+                return
+            change = False
+            for p, _g, _i in t:
+                if int(getattr(p, 'preset1', 0) or 0) < _laser_dmx_val:
+                    p.preset1 = _laser_dmx_val
+                    if p.level == 0:
+                        p.level = 100      # affichage 2D/3D : le laser émet
+                    change = True
+            if change and _laser_ui["refresh"]:
+                _laser_ui["refresh"]()
+
         # ── Grille commune des lignes « étiquette + curseur + valeur » ────
         # Quatre sections construisaient chacune la sienne : Dim et Strobe avec
         # une étiquette LIBRE (qui récupérait tout l'espace en trop et poussait
@@ -6685,7 +6833,8 @@ class PlanDeFeu(QFrame):
             franchis = [d for d in valeurs if d <= v]
             return max(franchis) if franchis else None
 
-        def _mk_slider_row(label_text, cur_val, max_val, on_change, label_w=None):
+        def _mk_slider_row(label_text, cur_val, max_val, on_change, label_w=None,
+                           tip=None):
             """
             Ligne « label + slider + valeur » du menu contextuel.
 
@@ -6698,6 +6847,11 @@ class PlanDeFeu(QFrame):
             """
             row_w = QWidget(); row_h = QHBoxLayout(row_w)
             lbl = QLabel(label_text); lbl.setStyleSheet(_SS)
+            # Noms constructeurs (laser : « Rotation dans le plan ») : sur deux
+            # lignes plutôt que rognés dans la colonne d'étiquette.
+            lbl.setWordWrap(len(label_text) > 14)
+            if tip:
+                lbl.setToolTip(tip)
             sli = _CurseurCanal(Qt.Horizontal)
             sli.setRange(0, max_val); sli.setValue(cur_val)
             sli.setStyleSheet(_SLI)
@@ -6708,7 +6862,7 @@ class PlanDeFeu(QFrame):
             _grille(row_h, lbl, sli, val_lbl, formate=str)
             return row_w
 
-        def _flush(t=targets, grab=True):
+        def _flush(t=targets, grab=True, wake=True):
             # Toucher un réglage de ce panneau (gobo, rotation, zoom, focus,
             # prisme, canaux bruts…) = prise en main de la fixture. Sans ce
             # drapeau, `_recompute_memory_mix` réimpose les canaux spéciaux de
@@ -6719,6 +6873,11 @@ class PlanDeFeu(QFrame):
             if grab:
                 for p, g, i in t:
                     p._manual_beam = True
+                # Un réglage = une prise en main : un laser éteint passe en DMX.
+                # `wake=False` pour la rangée d'allumage elle-même, sinon
+                # cliquer « Éteint » le rallumerait aussitôt.
+                if wake and _all_laser:
+                    _laser_wake(t)
             if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
                 self.main_window.dmx.update_from_projectors(self.projectors)
             self.canvas.update()
@@ -6888,6 +7047,74 @@ class PlanDeFeu(QFrame):
             menu.exec(self._menu_pos(menu, global_pos))
             return
 
+        # ── Laser : rangée d'allumage (EN PREMIER) ───────────────────────
+        if _laser_pow_slots:
+            _pw_w = QWidget(); _pw_v = QVBoxLayout(_pw_w)
+            _pw_v.setContentsMargins(12, 4, 12, 4); _pw_v.setSpacing(5)
+            _pw_t = QLabel(tr("pdf_laser_power"))
+            _pw_t.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                "border:none;background:transparent;")
+            _pw_v.addWidget(_pw_t)
+            _pw_row = QHBoxLayout(); _pw_row.setSpacing(5)
+            _pw_v.addLayout(_pw_row)
+            _pw_off = int(_laser_pow_slots[0].get('dmx', 0))
+            _pw_btns = []
+
+            def _pw_style(dv, actif):
+                if not actif:
+                    return ("QPushButton{background:#1a1a1a;color:#888;border:1px solid #2e2e2e;"
+                            "border-radius:6px;font-size:12px;font-weight:bold;min-height:30px;}"
+                            "QPushButton:hover{color:#fff;border-color:#555;}")
+                if dv == _pw_off:
+                    bg, fg = "#3a3a3a", "#ffffff"         # éteint : neutre
+                elif dv == _laser_dmx_val:
+                    bg, fg = "#00cc66", "#000000"         # piloté par MyStrow
+                else:
+                    bg, fg = "#ff9900", "#000000"         # autonome : attention
+                return (f"QPushButton{{background:{bg};color:{fg};border:none;"
+                        "border-radius:6px;font-size:12px;font-weight:bold;min-height:30px;}")
+
+            def _pw_refresh():
+                v = int(getattr(targets[0][0], 'preset1', 0) or 0)
+                act = _slot_actif(v, [int(s.get('dmx', 0)) for s in _laser_pow_slots])
+                for b, dv in _pw_btns:
+                    b.setStyleSheet(_pw_style(dv, dv == act))
+
+            def _pw_set(dv, t=targets):
+                for p, _g, _i in t:
+                    p.preset1 = dv
+                    if dv == _pw_off:
+                        p.level = 0            # affichage : le laser n'émet plus
+                    elif p.level == 0:
+                        p.level = 100
+                _flush(wake=False)
+                _pw_refresh()
+
+            for _s in _laser_pow_slots:
+                _dv = int(_s.get('dmx', 0))
+                _b = QPushButton(str(_s.get('name', '') or _dv))
+                _b.setCursor(Qt.PointingHandCursor)
+                _b.setFocusPolicy(Qt.NoFocus)
+                _b.setToolTip(f"{_s.get('name', '')} — DMX {_dv}")
+                _b.clicked.connect(lambda _=False, v=_dv: _pw_set(v))
+                _pw_row.addWidget(_b, 1)
+                _pw_btns.append((_b, _dv))
+            _pw_refresh()
+            _laser_ui["refresh"] = _pw_refresh
+            if _laser_dmx_val is not None:
+                _pw_t.setToolTip(tr("pdf_laser_power_tip"))
+            _wa(_pw_w)
+            menu.addSeparator()
+
+        # Pas de dimmer ni de strobe sur un laser qui n'a pas ces canaux : le
+        # curseur ne pilotait rien, et on cherchait pourquoi. Le noir passe par
+        # « Éteint ». Le curseur est construit quand même (d'autres sections
+        # le poussent), il n'est simplement pas affiché.
+        _laser_no_dim = _all_laser and not ({'Dim', 'Dim2', 'R', 'G', 'B', 'W'}
+                                            & set(_laser_prof))
+        _laser_no_strobe = _all_laser and not ({'Strobe', 'Shutter'}
+                                               & set(_laser_prof))
+
         # ── Dimmer (EN PREMIER) ──────────────────────────────────────────
         # Si un effet est actif, afficher le niveau de base sauvegardé (pas la valeur
         # oscillée qui change 25x/s), comme on le fait pour le PanTiltPad.
@@ -6905,13 +7132,14 @@ class PlanDeFeu(QFrame):
         dim_sli.valueChanged.connect(lambda v, t=targets: self._set_dimmer_for_targets(t, v))
         dim_sli.valueChanged.connect(lambda v: dim_val.setText(f"{v}%"))
         _grille(dim_h, dim_lbl, dim_sli, dim_val, formate=lambda v: f"{v}%")
-        _wa(dim_w)
+        if not _laser_no_dim:
+            _wa(dim_w)
 
         # ── Strobe (tout sauf les machines à effet) ──────────────────────
         # Un curseur de strobe sur un lance-flamme ou une machine à étincelles
         # n'a aucun sens : ces appareils n'ont pas de shutter, et le curseur
         # écrirait sur un canal qui ne l'attend pas.
-        if not fixture_is_fx_machine(proj):
+        if not fixture_is_fx_machine(proj) and not _laser_no_strobe:
             menu.addSeparator()
             strobe_w = QWidget(); strobe_h = QHBoxLayout(strobe_w)
 
@@ -6942,7 +7170,7 @@ class PlanDeFeu(QFrame):
         _proj_profile = getattr(proj, 'dmx_profile', None) or []
         # Lyre RGB : a des canaux R, G, B dans son profil (mélange couleur, pas roue)
         _has_rgb_mh = (
-            proj.fixture_type == "Moving Head" and
+            proj.fixture_type in ("Moving Head", "Laser") and
             'R' in _proj_profile and 'G' in _proj_profile and 'B' in _proj_profile
         )
 
@@ -7070,8 +7298,55 @@ class PlanDeFeu(QFrame):
         # direct. Ne pas remettre ici un second jeu de curseurs bruts —
         # deux chemins pour le même réglage finissent par diverger.
 
+        def _build_laser_stepper(sli, cur, open_editor):
+            """Rangée « ◀ Motif 12 / 51 ▶ » qui pousse le curseur du motif."""
+            n = laser_pattern_count(_laser_labels, _laser_prof)
+            w = QWidget(); h = QHBoxLayout(w)
+            h.setContentsMargins(12, 0, 12, 6); h.setSpacing(6)
+            _ss = ("QPushButton{background:#1e1e1e;color:#ddd;border:1px solid #333;"
+                   "border-radius:6px;font-size:13px;font-weight:bold;"
+                   "min-width:38px;min-height:28px;}"
+                   "QPushButton:hover{border-color:#00d4ff;color:#00d4ff;}")
+            b_prev = QPushButton("◀"); b_next = QPushButton("▶")
+            for b in (b_prev, b_next):
+                b.setStyleSheet(_ss); b.setFocusPolicy(Qt.NoFocus)
+                b.setCursor(Qt.PointingHandCursor)
+            lbl = QLabel()
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("color:#ffffff;font-size:13px;font-weight:bold;"
+                              "border:none;background:transparent;")
+
+            def _texte(v):
+                lbl.setText(tr("pdf_laser_motif_n", n=laser_pattern_index(v, n) + 1, total=n)
+                            if n else f"DMX {v}")
+
+            def _pas(d):
+                v = sli.value()
+                if n:
+                    sli.setValue(laser_pattern_dmx(laser_pattern_index(v, n) + d, n))
+                else:
+                    sli.setValue(max(0, min(255, v + d * 8)))
+
+            b_prev.clicked.connect(lambda: _pas(-1))
+            b_next.clicked.connect(lambda: _pas(+1))
+            sli.valueChanged.connect(_texte)
+            _texte(cur)
+            if not n:
+                lbl.setToolTip(tr("pdf_laser_motif_count_tip"))
+            h.addWidget(b_prev); h.addWidget(lbl, 1); h.addWidget(b_next)
+            b_ed = QPushButton(tr("pdf2_edit"))
+            b_ed.setFixedHeight(22)
+            b_ed.setToolTip(tr("pdf2_edit_gobo"))
+            b_ed.setStyleSheet(
+                "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
+                "border-radius:4px;font-size:11px;padding:0 6px;}"
+                "QPushButton:hover{border-color:#ff9900;color:#ff9900;background:#2a1e00;}")
+            b_ed.clicked.connect(open_editor)
+            h.addWidget(b_ed)
+            return w
+
         # ── Moving Head : PanTilt + Presets + Roue Couleur + Gobo + Prisme ──
-        if proj.fixture_type == "Moving Head":
+        if proj.fixture_type in ("Moving Head", "Laser"):
             menu.addSeparator()
 
             # Conteneur horizontal : pad à gauche, presets à droite
@@ -7140,7 +7415,7 @@ class PlanDeFeu(QFrame):
                 get_targets=lambda: targets,
                 get_all_lyres=lambda: [
                     (p, p.group, 0) for p in self.projectors
-                    if getattr(p, 'fixture_type', '') == 'Moving Head'
+                    if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')
                 ],
             )
             def _on_preset(preset, pad=pt_pad, t=targets):
@@ -7206,7 +7481,9 @@ class PlanDeFeu(QFrame):
                         )
                     _flush()
 
-                _cw_row = _slider_row(tr("pdf3_037"), cur_cw, 255, _on_cw)
+                _cw_row = _slider_row(
+                    _laser_label("ColorWheel", tr("pdf3_037")) if _all_laser else tr("pdf3_037"),
+                    cur_cw, 255, _on_cw)
                 _cw_sli = _cw_row.findChild(QSlider)
                 _wa(_cw_row)
 
@@ -7354,7 +7631,9 @@ class PlanDeFeu(QFrame):
                 # non l'inverse. Cliquer un gobo laissait sinon le curseur là où
                 # il était — la lyre changeait de gobo, le menu montrait encore
                 # l'ancien.
-                _gobo_row = _slider_row("Gobo", cur_gobo, 255, _on_gobo)
+                _gobo_row = _slider_row(
+                    _laser_label("Gobo1", tr("pdf_laser_motif")) if _all_laser else "Gobo",
+                    cur_gobo, 255, _on_gobo)
                 _gobo_sli = _gobo_row.findChild(QSlider)
                 _wa(_gobo_row)
 
@@ -7439,7 +7718,13 @@ class PlanDeFeu(QFrame):
                 gobo_g.addWidget(_edit_gobo_btn,
                                  gobo_g.rowCount(), 0, 1, _GOBO_COLS + 1)
 
-                _wa(gobo_w)
+                if _all_laser and not _ofl_gobo and _gobo_sli is not None:
+                    # Laser : pas de roue de gobos, des DESSINS. La grille de
+                    # pictogrammes de lyre ne voulait rien dire ici — place à
+                    # « ◀ Motif 12 / 51 ▶ », qui se joue au clic en live.
+                    _wa(_build_laser_stepper(_gobo_sli, cur_gobo, _open_gobo_editor))
+                else:
+                    _wa(gobo_w)
 
             # ── Rotation Gobo ────────────────────────────────────────────
             if has_profile and 'Gobo1Rot' in proj_profile:
@@ -7450,7 +7735,13 @@ class PlanDeFeu(QFrame):
                         p.gobo_rotation = v
                     _flush()
 
-                _wa(_slider_row(tr("pdf3_038"), cur_gobo_rot, 255, _on_gobo_rot))
+                if _all_laser:
+                    _wa(_slider_row(_laser_label("Gobo1Rot", tr("pdf3_038")),
+                                    cur_gobo_rot, 255, _on_gobo_rot,
+                                    tip=(_laser_labels[_laser_prof.index("Gobo1Rot")]
+                                         if _laser_labels else None)))
+                else:
+                    _wa(_slider_row(tr("pdf3_038"), cur_gobo_rot, 255, _on_gobo_rot))
 
             # ── Prisme ──────────────────────────────────────────────────
             if has_profile and 'Prism' in proj_profile:
@@ -7521,7 +7812,7 @@ class PlanDeFeu(QFrame):
         # Masquer pour : fumée/gradateurs, et Moving Head à roue de couleur SANS RGB
         # (lyre RGB → sélecteur couleur LED ; lyre roue → section ColorWheel ci-dessus)
         _has_cw_in_profile = 'ColorWheel' in (_proj_profile or [])
-        _is_cw_mh = (proj.fixture_type == "Moving Head" and _has_cw_in_profile and not _has_rgb_mh)
+        _is_cw_mh = (proj.fixture_type in ("Moving Head", "Laser") and _has_cw_in_profile and not _has_rgb_mh)
         NO_COLOR_TYPES = FX_MACHINE_TYPES | {"Gradateur"}
         if proj.fixture_type not in NO_COLOR_TYPES and not _is_cw_mh:
             menu.addSeparator()
@@ -7553,13 +7844,15 @@ class PlanDeFeu(QFrame):
         # ── Presets (programmes internes de l'appareil) ───────────────────
         #
         # ⚠️ Rendue ICI, à l'indentation 8, et NON dans le bloc
-        # `if proj.fixture_type == "Moving Head":` qui porte la roue, le gobo et
+        # `if proj.fixture_type in ("Moving Head", "Laser"):` qui porte la roue, le gobo et
         # le prisme. C'est tout l'objet de la section : les canaux de programme
         # sont majoritairement sur des PAR LED, des barres et des machines à
         # effets. Les mettre avec les réglages de lyre les aurait rendus
         # invisibles précisément aux appareils qui en ont besoin — c'est déjà ce
         # qui arrive aux presets de roue de couleurs, inatteignables sur un PAR.
-        _preset_types = [t for t in PRESET_TYPES if t in (_proj_profile or [])]
+        _preset_types = [t for t in PRESET_TYPES if t in (_proj_profile or [])
+                         # Laser : déjà rendu en rangée d'allumage, en tête.
+                         and not (t == 'Preset1' and _laser_pow_slots)]
         if _preset_types:
             # Styles redéfinis ici : les `_SS_BTN_*` de la section roue/gobo sont
             # affectés DANS le bloc Moving Head. Python les laisserait visibles
@@ -7714,6 +8007,9 @@ class PlanDeFeu(QFrame):
             if _ct in _HANDLED_IN_MENU:
                 continue
             _nom = _labels_adv[_n - 1] if _n - 1 < len(_labels_adv) else ""
+            if _all_laser and _nom:
+                # Laser : la précision entre parenthèses part en infobulle.
+                _nom = short_channel_label(_nom) or _nom
             if _prof_counts[_ct] > 1:
                 # Numéro affiché : sans lui, neuf lignes « Generic » seraient
                 # indiscernables — et le nom constructeur manque parfois.
@@ -7758,7 +8054,10 @@ class PlanDeFeu(QFrame):
                 + sum(1 for _cle, _txt in _adv_channels if _val_adv(_cle) > 0)
             )
             _choix = getattr(self, '_adv_expanded', None)
-            _etat_adv = {"ouvert": _adv_actifs > 0 if _choix is None else _choix}
+            # Laser : ces canaux SONT le réglage (rotations, bascules, taille) —
+            # la section s'appelle « Animation » et s'ouvre toujours.
+            _etat_adv = {"ouvert": True if _all_laser else
+                         (_adv_actifs > 0 if _choix is None else _choix)}
 
             _adv_sec = QPushButton()
             _adv_sec.setFlat(True)
@@ -7778,7 +8077,8 @@ class PlanDeFeu(QFrame):
 
             def _texte_entete(ouvert):
                 fleche = "▾" if ouvert else "▸"
-                txt = f"{fleche}  {tr('pdf2_advanced_ch')}  ·  {_adv_total}"
+                _titre = tr('pdf_laser_anim') if _all_laser else tr('pdf2_advanced_ch')
+                txt = f"{fleche}  {_titre}  ·  {_adv_total}"
                 # Pastille du nombre de canaux réglés : le seul moyen de savoir,
                 # section repliée, qu'il y a quelque chose dedans.
                 return txt + (f"   ● {_adv_actifs}" if _adv_actifs else "")
@@ -7800,7 +8100,7 @@ class PlanDeFeu(QFrame):
                 for _a in _adv_rows:
                     _a.setVisible(ouvert)
                 _adv_sec.setText(_texte_entete(ouvert))
-                if memoriser:
+                if memoriser and not _all_laser:
                     self._adv_expanded = ouvert
                 if menu.isVisible():
                     # Le menu a changé de hauteur : le redimensionner ET le
@@ -7833,9 +8133,19 @@ class PlanDeFeu(QFrame):
 
             # Plus de largeur calculée sur la longueur des noms : ces lignes
             # suivent la grille commune du menu (`_grille`), comme les autres.
+            def _tip_adv(cle):
+                """Nom constructeur COMPLET (avec ses plages) en infobulle."""
+                if not _labels_adv:
+                    return None
+                n = cle if isinstance(cle, int) else (
+                    (_proj_profile or []).index(cle) + 1
+                    if cle in (_proj_profile or []) else 0)
+                return _labels_adv[n - 1] if 0 < n <= len(_labels_adv) else None
+
             for _cle, _txt in _adv_channels:
                 _adv_rows.append(_wa(_mk_slider_row(
-                    _txt, _val_adv(_cle), 255, _make_adv_cb(_cle))))
+                    _txt, _val_adv(_cle), 255, _make_adv_cb(_cle),
+                    tip=_tip_adv(_cle) if _all_laser else None)))
 
             # État initial : pas un choix de l'utilisateur, on ne le mémorise pas.
             _appliquer_pli(memoriser=False)
@@ -7844,14 +8154,14 @@ class PlanDeFeu(QFrame):
         menu.addSeparator()
 
         # ── Effets rapides (tout en bas) ─────────────────────────────────
-        _is_mh    = proj.fixture_type == "Moving Head"
+        _is_mh    = proj.fixture_type in ("Moving Head", "Laser")
         # Machine à effet (fumée, brume, étincelles, flamme) : aucun effet
         # rapide. Un chenillard sur un lance-flamme n'est pas un effet.
         _is_smoke = fixture_is_fx_machine(proj)
         # Types de tous les projecteurs sélectionnés
         _all_types = {p.fixture_type for p, _g, _i in targets}
-        _has_mh    = "Moving Head" in _all_types
-        _has_led   = bool(_all_types - {"Moving Head"} - FX_MACHINE_TYPES)
+        _has_mh    = bool(_all_types & {"Moving Head", "Laser"})
+        _has_led   = bool(_all_types - {"Moving Head", "Laser"} - FX_MACHINE_TYPES)
         _mixed     = _has_mh and _has_led  # sélection hétérogène → pas d'effets rapides
         # Sélection 100 % barre/matrice : seuls les effets pixel ont du sens.
         # Les effets LED classiques piloteraient les 8 pixels à l'identique
@@ -8433,7 +8743,7 @@ class _FixtureFormWidget(QWidget):
         layout.addRow(tr("pdf3_076"), self.name_edit)
 
         self.type_combo = ComboSansMolette()
-        for t in ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
+        for t in ["PAR LED", "Moving Head", "Laser", "Barre LED", "Stroboscope",
                   "Machine a fumee", "Machine a brouillard",
                   "Machine a etincelles", "Lance-flamme", "Gradateur"]:
             self.type_combo.addItem(tr_name(t), t)
@@ -8493,7 +8803,7 @@ class _FixtureFormWidget(QWidget):
         """Retourne (universe, addr) pour la prochaine fixture en autopatch intelligent."""
         if not self._projectors:
             return 0, 1
-        _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2,
+        _CH = {"PAR LED": 5, "Moving Head": 8, "Laser": 8, "Barre LED": 5, "Stroboscope": 2,
                    "Machine a fumee": 2, "Machine a brouillard": 2,
                    "Machine a etincelles": 1, "Lance-flamme": 1, "Gradateur": 1}
         max_uni = max(getattr(p, 'universe', 0) for p in self._projectors)
@@ -8518,6 +8828,7 @@ class _FixtureFormWidget(QWidget):
             "PAR LED":        ["DIM", "RGB", "RGBD", "RGBDS", "RGBSD", "DRGB", "DRGBS",
                                "RGBW", "RGBWD", "RGBWDS", "RGBWZ", "RGBWA", "RGBWAD", "RGBWOUV"],
             "Moving Head":    ["MOVING_5CH", "MOVING_8CH", "MOVING_RGB", "MOVING_RGBW"],
+            "Laser":          ["LASER_8CH", "LASER_5CH"],
             "Barre LED":      ["LED_BAR_RGB", "RGB", "RGBD", "RGBDS"],
             "Stroboscope":    ["STROBE_2CH"],
             "Machine a fumee": ["2CH_FUMEE", "1CH_FUMEE"],
@@ -8635,7 +8946,7 @@ class AddFixtureDialog(QDialog):
             item = self.preset_list.currentItem()
             if item:
                 self._result_data = item.data(Qt.UserRole)
-                _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5, "Stroboscope": 2,
+                _CH = {"PAR LED": 5, "Moving Head": 8, "Laser": 8, "Barre LED": 5, "Stroboscope": 2,
                    "Machine a fumee": 2, "Machine a brouillard": 2,
                    "Machine a etincelles": 1, "Lance-flamme": 1, "Gradateur": 1}
                 if self._projectors:

@@ -24,7 +24,12 @@ Ce qui est verrouille ici :
     seconde ;
   * le genre envoye a la 3D ('fog', 'haze', 'spark', 'flame') ;
   * la detection de type a l'import d'un patch ;
-  * les hazers de la bibliotheque ont quitte « Machine a fumee ».
+  * les hazers de la bibliotheque ont quitte « Machine a fumee » ;
+  * les machines QLC+ ont un canal de sortie : QLC+ n'a pas de groupe
+    « fumee », le debit arrivait en Effect/Intensity et AUCUNE des 57 machines
+    n'avait de canal Smoke — debit mort (Stairville AFH-600, Discord
+    16/10/2026). Un show deja patche est repris au patch ; une memoire pilote
+    le debit d'une machine meme notee noire.
 
     python test_machines_effet.py
 """
@@ -43,7 +48,8 @@ from projector import Projector
 from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES
 from core import (FX_MACHINE_TYPES, FX_MACHINE_PYRO_TYPES,
                   fixture_is_fx_machine, fixture_is_pyro,
-                  fixture_machine_kind, fixture_output_channel)
+                  fixture_machine_kind, fixture_output_channel,
+                  fix_machine_profile)
 import builtin_fixtures
 import patch_import
 
@@ -223,6 +229,106 @@ class ImportDePatch(unittest.TestCase):
                               ("flamme", "Lance-flamme"),
                               ("smoke", "Machine a fumee")):
             self.assertEqual(patch_import.normalize_type(brut), attendu, brut)
+
+
+class CanalDeSortieRetrouve(unittest.TestCase):
+    """Une machine sans Smoke/Spark/Flame a un debit mort : on le retrouve."""
+
+    def test_canal_unique_sans_nom(self):
+        self.assertEqual(fix_machine_profile("Machine a fumee", ["Effects"]),
+                         ["Smoke"])
+        self.assertEqual(fix_machine_profile("Machine a etincelles", ["Dim"]),
+                         ["Spark"])
+
+    def test_noms_de_canaux(self):
+        self.assertEqual(fix_machine_profile(
+            "Machine a brouillard", ["Effects", "Effects"],
+            ["Fan speed", "Volume control"]), ["Fan", "Smoke"])
+        # La LED d'une machine RGB garde son dimmer.
+        self.assertEqual(fix_machine_profile(
+            "Machine a fumee", ["Effects", "Dim", "R"], ["Fog", "Dimmer", "Red"]),
+            ["Smoke", "Dim", "R"])
+
+    def test_on_ne_devine_pas(self):
+        # Plusieurs canaux sans nom : ambigu.
+        self.assertEqual(fix_machine_profile("Machine a fumee",
+                                             ["Effects", "Effects"]),
+                         ["Effects", "Effects"])
+        # Machine a minuterie : duree + intervalle, pas de debit.
+        self.assertEqual(fix_machine_profile("Machine a fumee", ["Strobe", "Speed"],
+                                             ["Duration", "Interval"]),
+                         ["Strobe", "Speed"])
+        self.assertEqual(fix_machine_profile("PAR LED", ["Dim"]), ["Dim"])
+        self.assertEqual(fix_machine_profile("Machine a fumee", ["Smoke", "Fan"]),
+                         ["Smoke", "Fan"])
+
+    def test_bibliotheque_qlcplus(self):
+        import json
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "fixtures_qlcplus.json"), encoding="utf-8") as f:
+            lib = json.load(f)
+        sans = []
+        for fx in lib:
+            if fx["fixture_type"] not in FX_MACHINE_TYPES:
+                continue
+            for m in fx["modes"]:
+                if not any(c in m["channels"] for c in ("Smoke", "Spark", "Flame")):
+                    sans.append((fx["model"], m["name"]))
+                if fx["model"] == "AFH-600":
+                    self.assertEqual(m["channels"], ["Smoke"])
+        # Seules restent les machines a minuterie / sans debit identifiable.
+        self.assertLessEqual(len(sans), 3, sans)
+
+    def test_import_qlcplus(self):
+        from fixture_parser import parse_qlcplus_xml
+        xml = b"""<?xml version="1.0"?>
+<FixtureDefinition xmlns="http://www.qlcplus.org/FixtureDefinition">
+ <Manufacturer>Stairville</Manufacturer><Model>AFH-600</Model><Type>Smoke</Type>
+ <Channel Name="Haze Intensity"><Group Byte="0">Effect</Group></Channel>
+ <Mode Name="DMX"><Channel Number="0">Haze Intensity</Channel></Mode>
+</FixtureDefinition>"""
+        fx = parse_qlcplus_xml(xml)
+        self.assertEqual(fx["modes"][0]["profile"], ["Smoke"])
+
+    def test_debit_en_sortie(self):
+        p = _machine("Machine a fumee", ["Smoke"], level=60)
+        dmx = ArtNetDMX()
+        dmx.set_projector_patch("face_0", [1], 0, p.dmx_profile)
+        dmx.update_from_projectors([p])
+        self.assertEqual(dmx.get_channel(1), 153)
+
+    def test_show_deja_patche_repris(self):
+        import main_window as mw
+
+        class Faux:
+            _rebuild_dmx_patch = mw.MainWindow._rebuild_dmx_patch
+            def save_dmx_patch_config(self):
+                pass
+
+        w = Faux()
+        w.dmx = ArtNetDMX()
+        p = _machine("Machine a fumee", ["Effects"])
+        p.start_address = 1
+        w.projectors = [p]
+        w._rebuild_dmx_patch()
+        self.assertEqual(p.dmx_profile, ["Smoke"])
+        self.assertEqual(w.dmx.projector_profiles["face_0"], ["Smoke"])
+
+    def test_memoire_pilote_le_debit_meme_notee_noire(self):
+        import test_pad_memoire_comportement as t
+        w = t.FauxWin(n_proj=2)
+        m = w.projectors[0]
+        m.dmx_profile = ["Smoke"]
+        m.fixture_type = "Machine a fumee"
+        w.memories[0][0] = {"cues": [{"label": "c", "projectors": [
+            {"level": 80, "base_color": "#000000"},
+            {"level": 0, "base_color": "#000000"}],
+            "effect": {}, "duration": 0}], "loop": True}
+        w.active_memory_pads = {0: 0}
+        for fader, attendu in ((100, 80), (50, 40), (0, 0)):
+            w.faders[0].value = fader
+            w._recompute_memory_mix()
+            self.assertEqual(m.level, attendu, fader)
 
 
 if __name__ == "__main__":

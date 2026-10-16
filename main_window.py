@@ -35,7 +35,7 @@ except ImportError:
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
     QPalette, QPolygon, QPolygonF, QTransform, QAction, QActionGroup,
-    QDesktopServices, QFontMetrics, QCursor, QPainterPath
+    QDesktopServices, QFontMetrics, QCursor, QPainterPath, QLinearGradient
 )
 
 
@@ -225,13 +225,14 @@ from core import (
     layer_frequency, random_wave, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
-    cw_slot_for_color, pan_angular_ratio, pan_tilt_ranges,
+    cw_slot_for_color, pan_angular_ratio, pan_tilt_ranges, normalize_channel_ranges,
     PAN_TILT_RANGE_MIN, PAN_TILT_RANGE_MAX,
     copy_report, send_report_email, DMX_FRAME_MS, make_precise_timer,
     fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
     message_erreur_reseau,
     canonical_manufacturer, build_fixture_library,
     fixture_is_fx_machine, fixture_is_pyro, FX_MACHINE_TYPES,
+    fix_machine_profile,
     GOBO_SLOT_COUNT, GOBO_SLOT_NAMES, gobo_slot_dmx,
 )
 from i18n import get_language, set_language, tr, tr_name
@@ -254,7 +255,7 @@ from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog, Lo
 from dataclasses import replace as _dc_replace
 from pixel_fixture import (
     PixelFixtureSpec, generate_matrix_projectors, PIXEL_FIXTURE_PRESETS,
-    layout_pixels, matrix_children,
+    layout_pixels, matrix_children, pixel_positions,
 )
 from i18n import tr
 
@@ -372,8 +373,11 @@ class PixelStrip(QWidget):
 
     order_changed = Signal(list)   # nouvelle liste d'indices, ordre DMX
 
-    CELL = 30
-    GAP = 4
+    CELL = 30        # taille maximale d'une case ; réduite si la place manque
+    CELL_MIN = 14
+    GAP = 3
+    PAD = 10         # marge entre les cases et le cadre violet (comme le plan)
+    MARGIN = 14      # marge entre le cadre et le bord du panneau d'aperçu
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -383,7 +387,7 @@ class PixelStrip(QWidget):
         self._drag_from = None
         self._hover = None
         self.setMouseTracking(True)
-        self.setMinimumHeight(self.CELL + 18)
+        self.setMinimumHeight(self.CELL + 2 * (self.PAD + self.MARGIN))
 
     def set_pixels(self, cells, rows, cols):
         self._cells = list(cells)
@@ -391,15 +395,33 @@ class PixelStrip(QWidget):
         self._cols = max(1, cols)
         self._drag_from = None
         self._hover = None
-        self.setMinimumHeight(self._rows * (self.CELL + self.GAP) + 16)
+        # Hauteur prévue pour la case la plus grande : le bloc est centré, une
+        # case réduite (barre longue) laisse juste un peu d'air autour.
+        self.setMinimumHeight(self._rows * (self.CELL + self.GAP) - self.GAP
+                              + 2 * (self.PAD + self.MARGIN)
+                              + (14 if self._rows == 1 else 0))
         self.updateGeometry()
         self.update()
 
     # ── géométrie ────────────────────────────────────────────────────────
+    def _geom(self):
+        """(taille de case, x, y du coin de la grille) — bloc centré."""
+        avail = self.width() - 2 * (self.PAD + self.MARGIN)
+        cols = max(1, self._cols)
+        cell = (avail - (cols - 1) * self.GAP) // cols
+        cell = max(self.CELL_MIN, min(self.CELL, cell))
+        gw = cols * cell + (cols - 1) * self.GAP
+        gh = self._rows * cell + (self._rows - 1) * self.GAP
+        extra = 14 if self._rows == 1 else 0      # place des adresses
+        x0 = (self.width() - gw) // 2
+        y0 = (self.height() - gh - extra) // 2
+        return cell, x0, y0
+
     def _cell_rect(self, pos):
         r, c = divmod(pos, self._cols)
-        step = self.CELL + self.GAP
-        return QRect(int(c * step) + 1, int(r * step) + 1, self.CELL, self.CELL)
+        cell, x0, y0 = self._geom()
+        step = cell + self.GAP
+        return QRect(x0 + c * step, y0 + r * step, cell, cell)
 
     def _cell_at(self, pt):
         for k in range(len(self._cells)):
@@ -445,29 +467,52 @@ class PixelStrip(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+
+        # Panneau d'aperçu (fond du plan de feu)
+        panel = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QPen(QColor("#1e1e1e"), 1))
+        p.setBrush(QColor("#0a0a0a"))
+        p.drawRoundedRect(panel, 8, 8)
+        if not self._cells:
+            p.end()
+            return
+
+        # Cadre violet du bloc, identique à `_draw_matrix_block` du plan de feu
+        cell, x0, y0 = self._geom()
+        gw = self._cols * cell + (self._cols - 1) * self.GAP
+        gh = self._rows * cell + (self._rows - 1) * self.GAP
+        pad = self.PAD
+        frame = QRectF(x0 - pad, y0 - pad, gw + 2 * pad, gh + 2 * pad)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(155, 107, 214, 22))
+        p.drawRoundedRect(frame, 6, 6)
+        p.setPen(QPen(QColor("#9b6bd6"), 1.4))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(frame, 6, 6)
+
+        f = p.font()
         for k, (_idx, rank, addr, col) in enumerate(self._cells):
             rect = self._cell_rect(k)
             sel = (k == self._drag_from)
             hov = (k == self._hover)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(col))
-            p.drawRoundedRect(rect, 4, 4)
+            p.fillRect(rect, QColor(col))
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(QColor("#00d4ff") if (sel or hov) else QColor("#3a3a4a"),
                           2 if sel else 1))
-            p.drawRoundedRect(rect, 4, 4)
+            p.drawRect(rect)
 
             c = QColor(col)
             lum = c.red() * 0.299 + c.green() * 0.587 + c.blue() * 0.114
             p.setPen(QColor("#ffffff") if lum < 130 else QColor("#111111"))
-            f = p.font(); f.setPointSize(9); f.setBold(True); p.setFont(f)
+            f.setPointSize(9 if cell >= 22 else 7); f.setBold(True); p.setFont(f)
             p.drawText(rect, Qt.AlignCenter, str(rank))
 
-            # Adresse DMX sous la case (barres seulement : sinon illisible)
-            if self._rows == 1:
+            # Adresse DMX sous le cadre (barres seulement : sinon illisible)
+            if self._rows == 1 and cell >= 22:
                 f.setPointSize(7); f.setBold(False); p.setFont(f)
                 p.setPen(QColor("#555"))
-                p.drawText(QRect(rect.x(), rect.bottom() + 1, rect.width(), 12),
+                p.drawText(QRect(rect.x() - 4, int(frame.bottom()) + 2,
+                                 rect.width() + 8, 12),
                            Qt.AlignCenter, str(addr))
         p.end()
 
@@ -4585,6 +4630,7 @@ class PanTiltLimitWidget(QWidget):
         self._cur_pan  = 127
         self._cur_tilt = 127
         self._dragging = None   # 'pan_min'|'pan_max'|'tilt_min'|'tilt_max'|'dot'
+        self._laser    = False  # point vert pour un laser, jaune pour une lyre
 
     # ── Public API ───────────────────────────────────────────────────────────
     def set_limits(self, pan_min, pan_max, tilt_min, tilt_max):
@@ -4597,6 +4643,10 @@ class PanTiltLimitWidget(QWidget):
     def set_position(self, pan_coarse, tilt_coarse):
         self._cur_pan  = max(0, min(255, pan_coarse))
         self._cur_tilt = max(0, min(255, tilt_coarse))
+        self.update()
+
+    def set_laser(self, is_laser):
+        self._laser = bool(is_laser)
         self.update()
 
     def get_limits(self):
@@ -4665,20 +4715,28 @@ class PanTiltLimitWidget(QWidget):
         p.drawLine(cx_zone, ay, cx_zone, ay + ah)
         p.drawLine(ax, cy_zone, ax + aw, cy_zone)
 
-        # Position actuelle de la lyre (point jaune — draggable)
-        dot_x = int(ox + self._to_px(self._cur_pan,  w))
-        dot_y = int(oy + self._to_px(self._cur_tilt, h))
-        dot_active = (self._dragging == 'dot')
-        p.setPen(QPen(QColor("#b09000"), 1.5 if dot_active else 1))
-        p.setBrush(QColor("#ffe033") if dot_active else QColor("#E2CE16"))
-        p.drawEllipse(QPoint(dot_x, dot_y), self._DOT_R, self._DOT_R)
-
         # Poignées
         for name, (hx, hy) in self._handles().items():
             active = (name == self._dragging)
             p.setPen(QPen(QColor("#00d4ff"), 1.5 if active else 1))
             p.setBrush(QColor("#00aacc") if active else QColor("#0a2535"))
             p.drawEllipse(QPoint(int(hx), int(hy)), self._HANDLE_R, self._HANDLE_R)
+
+        # Position actuelle de la lyre (point jaune — draggable).
+        # ⚠️ Dessiné APRÈS les poignées : elles sont opaques et plus grosses que
+        # lui. Lyre au repos pan centre / tilt 0 (ou pan 0/255 / tilt centre) =
+        # point pile sous une poignée → il « disparaissait » du carré. Il est
+        # aussi prioritaire au clic (`_hit`), il doit donc être visible au-dessus.
+        dot_x = int(ox + self._to_px(self._cur_pan,  w))
+        dot_y = int(oy + self._to_px(self._cur_tilt, h))
+        dot_active = (self._dragging == 'dot')
+        if self._laser:
+            edge, fill, fill_on = "#0a8a2a", "#22dd55", "#55ff80"
+        else:
+            edge, fill, fill_on = "#b09000", "#E2CE16", "#ffe033"
+        p.setPen(QPen(QColor(edge), 1.5 if dot_active else 1))
+        p.setBrush(QColor(fill_on) if dot_active else QColor(fill))
+        p.drawEllipse(QPoint(dot_x, dot_y), self._DOT_R, self._DOT_R)
 
         # Labels axes
         p.setPen(QPen(QColor("#333333"), 1))
@@ -4734,6 +4792,204 @@ class PanTiltLimitWidget(QWidget):
         if e.button() == Qt.LeftButton:
             self._dragging = None
             self.setCursor(Qt.CrossCursor)
+
+
+class ChannelRangeBar(QWidget):
+    """Plage utile d'un canal (« brider ») : barre 0-255 à deux poignées.
+
+    La zone utile est remplie dans la couleur du canal, ce qui est bridé est
+    hachuré. On tire une poignée, ou le milieu pour décaler toute la plage ;
+    les flèches du clavier ajustent la dernière poignée touchée à l'unité
+    (Maj = ×10) ; double-clic = plage pleine. Émet `range_changed(min, max)`.
+    """
+    range_changed = Signal(int, int)
+
+    _PAD    = 14     # marge latérale (les poignées débordent de la piste)
+    _TRACK_Y = 30    # haut de la piste
+    _TRACK_H = 14
+    _GAP    = 1      # écart minimal entre min et max
+
+    def __init__(self, color="#00d4ff", parent=None):
+        super().__init__(parent)
+        self.setFixedSize(236, 66)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+        self._col  = QColor(color)
+        self._lo, self._hi = 0, 255
+        self._drag = None          # 'lo' | 'hi' | 'band'
+        self._last = 'hi'          # poignée pilotée au clavier
+        self._grab = 0             # décalage souris → min, pour 'band'
+        self._hover = None
+
+    # ── API ──────────────────────────────────────────────────────────────────
+    def set_range(self, lo, hi, emit=False):
+        lo, hi = max(0, min(255, int(lo))), max(0, min(255, int(hi)))
+        if hi < lo:
+            lo, hi = hi, lo
+        if (lo, hi) == (self._lo, self._hi):
+            return
+        self._lo, self._hi = lo, hi
+        self.update()
+        if emit:
+            self.range_changed.emit(lo, hi)
+
+    def get_range(self):
+        return self._lo, self._hi
+
+    # ── Géométrie ────────────────────────────────────────────────────────────
+    def _w(self):
+        return self.width() - 2 * self._PAD
+
+    def _x(self, v):
+        return self._PAD + v / 255.0 * self._w()
+
+    def _v(self, x):
+        return max(0, min(255, int(round((x - self._PAD) / self._w() * 255))))
+
+    def _hit(self, pos):
+        x, y = pos.x(), pos.y()
+        if y < self._TRACK_Y - 16 or y > self._TRACK_Y + self._TRACK_H + 10:
+            return None
+        dlo, dhi = abs(x - self._x(self._lo)), abs(x - self._x(self._hi))
+        if min(dlo, dhi) <= 9:
+            # Poignées superposées : choisir selon le côté où l'on tire.
+            if dlo == dhi:
+                return 'hi' if x >= self._x(self._hi) else 'lo'
+            return 'lo' if dlo < dhi else 'hi'
+        if self._x(self._lo) < x < self._x(self._hi):
+            return 'band'
+        return None
+
+    # ── Dessin ───────────────────────────────────────────────────────────────
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        col = self._col
+        ty, th = self._TRACK_Y, self._TRACK_H
+        x0, x1 = self._x(0), self._x(255)
+        xl, xh = self._x(self._lo), self._x(self._hi)
+        full = (self._lo, self._hi) == (0, 255)
+
+        # Piste complète (fond)
+        track = QRectF(x0, ty, x1 - x0, th)
+        p.setPen(QPen(QColor("#262626"), 1))
+        p.setBrush(QColor("#141414"))
+        p.drawRoundedRect(track, th / 2, th / 2)
+
+        # Zones bridées : hachures, clippées dans la piste arrondie
+        path = QPainterPath()
+        path.addRoundedRect(track, th / 2, th / 2)
+        p.save()
+        p.setClipPath(path)
+        hatch = QBrush(QColor(255, 90, 90, 115), Qt.BDiagPattern)
+        p.setPen(Qt.NoPen)
+        for a, b in ((x0, xl), (xh, x1)):
+            if b - a > 0.5:
+                p.fillRect(QRectF(a, ty, b - a, th), QColor(255, 70, 70, 18))
+                p.fillRect(QRectF(a, ty, b - a, th), hatch)
+        # Zone utile : dégradé dans la couleur du canal
+        g = QLinearGradient(xl, 0, xh, 0)
+        c0 = QColor(col); c0.setAlpha(110 if not full else 70)
+        c1 = QColor(col); c1.setAlpha(230 if not full else 120)
+        g.setColorAt(0, c0); g.setColorAt(1, c1)
+        p.fillRect(QRectF(xl, ty, max(1.0, xh - xl), th), g)
+        p.restore()
+
+        # Graduations 0 / 64 / 128 / 192 / 255
+        p.setFont(QFont("Segoe UI", 6))
+        for v in (0, 64, 128, 192, 255):
+            x = self._x(v)
+            p.setPen(QPen(QColor("#2e2e2e"), 1))
+            p.drawLine(QPointF(x, ty + th + 2), QPointF(x, ty + th + 5))
+            p.setPen(QColor("#4a4a4a"))
+            p.drawText(QRectF(x - 14, ty + th + 5, 28, 10), Qt.AlignCenter, str(v))
+
+        # Poignées : pastille + valeur au-dessus
+        for name, v in (('lo', self._lo), ('hi', self._hi)):
+            x = self._x(v)
+            active = name in (self._drag, self._hover) or (
+                self.hasFocus() and name == self._last and self._drag is None)
+            r = QRectF(x - 5, ty - 4, 10, th + 8)
+            p.setPen(QPen(QColor("#ffffff") if active else col, 1.5))
+            p.setBrush(QColor("#0e0e0e"))
+            p.drawRoundedRect(r, 4, 4)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#ffffff") if active else col)
+            p.drawRoundedRect(QRectF(x - 1.5, ty + 1, 3, th - 2), 1.5, 1.5)
+            # Bulle de valeur, recentrée pour ne pas sortir du widget et
+            # écartée de sa voisine quand les deux poignées se touchent.
+            bx = x
+            if name == 'lo' and self._hi - self._lo < 40:
+                bx = x - 13
+            elif name == 'hi' and self._hi - self._lo < 40:
+                bx = x + 13
+            bx = max(15, min(self.width() - 15, bx))
+            p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            p.setPen(QColor("#ffffff") if active else QColor("#cfcfcf"))
+            p.drawText(QRectF(bx - 15, 4, 30, 16), Qt.AlignCenter, str(v))
+
+    # ── Interaction ──────────────────────────────────────────────────────────
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return
+        hit = self._hit(e.position())
+        if hit is None:
+            # Clic sur la piste hors zone : la poignée la plus proche y saute.
+            v = self._v(e.position().x())
+            hit = 'lo' if abs(v - self._lo) < abs(v - self._hi) else 'hi'
+            self._move(hit, v)
+        self._drag = hit
+        if hit == 'band':
+            self._grab = self._v(e.position().x()) - self._lo
+            self.setCursor(Qt.ClosedHandCursor)
+        else:
+            self._last = hit
+        self.update()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is None:
+            h = self._hit(e.position())
+            if h != self._hover:
+                self._hover = h
+                self.update()
+            self.setCursor(Qt.OpenHandCursor if h == 'band' else
+                           Qt.SizeHorCursor if h else Qt.ArrowCursor)
+            return
+        v = self._v(e.position().x())
+        if self._drag == 'band':
+            span = self._hi - self._lo
+            lo = max(0, min(255 - span, v - self._grab))
+            self.set_range(lo, lo + span, emit=True)
+        else:
+            self._move(self._drag, v)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = None
+            self.setCursor(Qt.ArrowCursor)
+            self.update()
+
+    def mouseDoubleClickEvent(self, e):
+        self.set_range(0, 255, emit=True)
+
+    def leaveEvent(self, e):
+        self._hover = None
+        self.update()
+
+    def keyPressEvent(self, e):
+        step = 10 if e.modifiers() & Qt.ShiftModifier else 1
+        if e.key() in (Qt.Key_Left, Qt.Key_Down):
+            step = -step
+        elif e.key() not in (Qt.Key_Right, Qt.Key_Up):
+            return super().keyPressEvent(e)
+        cur = self._lo if self._last == 'lo' else self._hi
+        self._move(self._last, cur + step)
+
+    def _move(self, which, v):
+        if which == 'lo':
+            self.set_range(min(v, self._hi - self._GAP), self._hi, emit=True)
+        else:
+            self.set_range(self._lo, max(v, self._lo + self._GAP), emit=True)
 
 
 class MissingMediaDialog(QDialog):
@@ -5426,7 +5682,7 @@ class MainWindow(QMainWindow):
 
     # Canaux par type (pour adressage compact)
     _FIXTURE_CH = {
-        "PAR LED": 5, "Moving Head": 8, "Barre LED": 5,
+        "PAR LED": 5, "Moving Head": 8, "Laser": 8, "Barre LED": 5,
         "Stroboscope": 2, "Machine a fumee": 2,
         "Machine a brouillard": 2, "Machine a etincelles": 2,
         "Lance-flamme": 2,
@@ -9335,6 +9591,15 @@ class MainWindow(QMainWindow):
         mc, r = self._cue_panel.mem_col, self._cue_panel.row
         if mc >= 0:
             active = self.active_memory_pads.get(self._mem_col_to_fader(mc)) == r
+            # Cue courante supprimée en fin de liste : l'index pointait au-delà
+            # (pad « 4/3 » jusqu'au tour suivant). On recale sur la dernière.
+            mem = self.memories[mc][r]
+            n = len((mem or {}).get("cues", []))
+            if n and self._mem_cue_idx.get((mc, r), 0) >= n:
+                self._mem_cue_idx[(mc, r)] = n - 1
+                if active:
+                    self._recompute_memory_mix(self._cue_fade_secs(mc, r))
+                    self._cue_panel.highlight_cue(n - 1)
             self._style_memory_pad(mc, r, active)
         self._save_akai_config_auto()
 
@@ -9663,7 +9928,7 @@ class MainWindow(QMainWindow):
                 new_tilt = proj_state.get("tilt", getattr(p, 'tilt', 32768))
                 new_pan  = new_pan  * 256 if new_pan  <= 255 else new_pan
                 new_tilt = new_tilt * 256 if new_tilt <= 255 else new_tilt
-                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'):
+                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser'):
                     self._start_pan_tilt_transition(p, new_pan, new_tilt, 500)
                 else:
                     p.pan  = new_pan
@@ -9716,8 +9981,12 @@ class MainWindow(QMainWindow):
                 if not (('ColorWheel' in _pf_cw and 'R' not in _pf_cw)
                         and getattr(p, '_manual_color', False)):
                     p.color_wheel = int(proj_state.get("color_wheel",    0))
-                # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés par le fader
-                p.channel_extras = dict(proj_state.get("channel_extras", {}) or {})
+                # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés
+                # par le fader — sauf les canaux de lumière (Dim forcé…).
+                from light_timeline import compose_memory_params
+                _, p.channel_extras = compose_memory_params(
+                    [{"channel_extras": proj_state.get("channel_extras") or {}}],
+                    brights=[brightness], profile=getattr(p, 'dmx_profile', None))
             # Couleur prise en main depuis le plan 2D → le cue n'y touche pas
             # (même mécanisme que _compute_htp_overrides). Libéré par CLEAR.
             if getattr(p, '_manual_color', False):
@@ -9908,7 +10177,11 @@ class MainWindow(QMainWindow):
                     continue
                 if eff > best_eff:
                     best_eff, best_state = eff, st
-                bc = QColor(st.get("base_color", "#000000"))
+                # Une machine n'a pas de couleur : seul son niveau (le débit)
+                # compte. Lue sur la couleur, une machine notée noire perdait
+                # tout débit au mélange.
+                bc = (QColor("white") if fixture_is_fx_machine(p)
+                      else QColor(st.get("base_color", "#000000")))
                 f  = eff / 100.0
                 r_acc += bc.red()   * f
                 g_acc += bc.green() * f
@@ -9923,7 +10196,9 @@ class MainWindow(QMainWindow):
             params, extras = compose_memory_params(
                 [st if b > 0 else {k: v for k, v in st.items()
                                    if k not in _MEM_CANAUX_LUMIERE}
-                 for b, st in touches])
+                 for b, st in touches],
+                brights=[b for b, _st in touches],
+                profile=getattr(p, 'dmx_profile', None))
 
             def _param(key, scaled=False):
                 """Valeur imposée par une mémoire levée, ou None si personne."""
@@ -10342,7 +10617,7 @@ class MainWindow(QMainWindow):
         for i, p in enumerate(self.projectors):
             if getattr(p, '_manual_move', False):
                 continue
-            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre'):
+            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre', 'Laser'):
                 continue    # sans moteur, rien à animer : la valeur du mix reste
             cible_pan, cible_tilt = getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)
             p.pan, p.tilt = avant_pt[i]
@@ -11725,7 +12000,7 @@ class MainWindow(QMainWindow):
 
         applied = 0
         for p in self.projectors:
-            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre'):
+            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre', 'Laser'):
                 continue
             if internal is not None and getattr(p, 'group', None) != internal:
                 continue
@@ -11803,7 +12078,7 @@ class MainWindow(QMainWindow):
 
         preset = self.position_presets[preset_idx]
         lyres_cur = [p for p in self.projectors
-                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
 
         # Appariement preset ↔ lyres : adresse DMX, puis nom, puis rang. Partagé
         # avec le centre des effets Pan/Tilt (colonne POSITION de l'éditeur) —
@@ -11841,7 +12116,7 @@ class MainWindow(QMainWindow):
         """Capture le pan/tilt de toutes les lyres et sauvegarde sur ce pad."""
         from PySide6.QtWidgets import QInputDialog
         lyres = [p for p in self.projectors
-                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
         if not lyres:
             self._log_message(tr("mwx_059"), "warn")
             return
@@ -12008,7 +12283,7 @@ class MainWindow(QMainWindow):
     def _pdf_preset_to_akai(self, pdf_preset):
         """Convertit un preset Plan de Feu → format AKAI position (multi-lyre)."""
         lyres = [p for p in self.projectors
-                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
         per_proj = pdf_preset.get("per_proj", {})
         snap = []
         for p in lyres:
@@ -12845,7 +13120,7 @@ class MainWindow(QMainWindow):
         centers = getattr(self, '_timeline_pos_centers', None) or {}
         aims = aims or {}
         for p in self.projectors:
-            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre'):
+            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre', 'Laser'):
                 continue
             if id(p) in getattr(self, '_pan_tilt_transitions', {}):
                 continue
@@ -13641,7 +13916,7 @@ class MainWindow(QMainWindow):
         # non l'ordre du patch — c'est ce qui permet de diriger un chenillard.
         _layer_sel = {id(ld): layer_selection_ranks(ld) for ld in layers_dicts}
 
-        _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+        _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
         _mh_idx   = {id(p): j for j, p in enumerate(_mh_projs)}
         _mh_n     = max(len(_mh_projs), 1)
 
@@ -13683,7 +13958,7 @@ class MainWindow(QMainWindow):
         # preset a été enregistré sur l'ensemble du rig, et son appariement de
         # secours se fait par rang — filtrer décalerait les correspondances.
         _all_lyres = [p for p in self.projectors
-                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
         _pos_centers = {}
         for _ld in layers_dicts:
             if _ld.get("attribute") not in ("Pan", "Tilt", "Pan/Tilt"):
@@ -14997,7 +15272,7 @@ class MainWindow(QMainWindow):
         """Retourne [(pan 0-255, tilt 0-255)] pour chaque lyre (Moving Head)."""
         return [(p.pan // 257, p.tilt // 257)
                 for p in self.projectors
-                if getattr(p, 'fixture_type', '') == "Moving Head"]
+                if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")]
 
     def _get_live_sequences(self):
         """Mémoires enregistrées sur les pads, pour l'onglet SÉQUENCE du LIVE.
@@ -15872,7 +16147,7 @@ class MainWindow(QMainWindow):
                 p.color = QColor("black")
 
             # Mouvement lyres uniquement
-            if getattr(p, 'fixture_type', '') != "Moving Head":
+            if getattr(p, 'fixture_type', '') not in ("Moving Head", "Laser"):
                 continue
 
             _offset = _lyre_idx * (_math.pi * 0.6)   # déphasage entre lyres
@@ -15999,7 +16274,7 @@ class MainWindow(QMainWindow):
             # Appliquer le gobo actif sur les lyres
             _gslot_a = self.seq.live_panel.current_gobo
             for p in self.projectors:
-                if getattr(p, 'fixture_type', '') != "Moving Head":
+                if getattr(p, 'fixture_type', '') not in ("Moving Head", "Laser"):
                     continue
                 slots = getattr(p, 'gobo_wheel_slots', [])
                 if slots and _gslot_a < len(slots):
@@ -16258,7 +16533,7 @@ class MainWindow(QMainWindow):
                     continue
                 p.level = 0
                 p.color = QColor(0, 0, 0)
-                if getattr(p, 'fixture_type', '') == "Moving Head":
+                if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser"):
                     _cur_pan  = getattr(p, 'pan',  32768)
                     _cur_tilt = getattr(p, 'tilt', 32768)
                     # Centre de la ZONE autorisée, pas le milieu de course : une
@@ -16663,7 +16938,7 @@ class MainWindow(QMainWindow):
                     punch = 1.0 - drop_p / 0.20
                     for p in self.projectors:
                         if (fixture_is_fx_machine(p)
-                                or getattr(p, 'fixture_type', '') == "Moving Head"): continue
+                                or getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")): continue
                         _set_proj(p, white, int(100 * punch))
                 strobe_on = (int(position / strobe_ms_slow) % 2) == 0
                 for p in self.projectors:
@@ -16815,7 +17090,7 @@ class MainWindow(QMainWindow):
 
         # ── Lyres — rotation continue dont la vitesse suit le rythme ────────
         moving_heads = [p for p in self.projectors
-                        if getattr(p, 'fixture_type', '') == "Moving Head"]
+                        if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")]
         if moving_heads:
             n_lyres = len(moving_heads)
 
@@ -18688,7 +18963,7 @@ class MainWindow(QMainWindow):
             "lyre_positions": {
                 p.name: {"pan": p.pan, "tilt": p.tilt}
                 for p in self.projectors
-                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')
+                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')
             },
             "apc_bright_mode": getattr(self.midi_handler, '_apc_bright_mode', True),
             "akai_active_brightness": self.akai_active_brightness,
@@ -18862,7 +19137,7 @@ class MainWindow(QMainWindow):
         lyre_positions = config.get("lyre_positions", {})
         if lyre_positions and hasattr(self, 'projectors'):
             lyre_by_name = {p.name: p for p in self.projectors
-                            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
+                            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')}
             for name, pt in lyre_positions.items():
                 p = lyre_by_name.get(name)
                 if p:
@@ -20637,7 +20912,7 @@ class MainWindow(QMainWindow):
                 # Type + pan/tilt : permettent à la tablette de distinguer une lyre
                 # (dessin dédié + pad Pan/Tilt au clic) d'un PAR classique.
                 "ftype":      getattr(p, 'fixture_type', ''),
-                "is_lyre":    getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre'),
+                "is_lyre":    getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser'),
                 "pan":        getattr(p, 'pan',  32768),
                 "tilt":       getattr(p, 'tilt', 32768),
                 # Gobo + roue de couleurs : la tablette n'affiche ces contrôles que
@@ -22459,6 +22734,8 @@ class MainWindow(QMainWindow):
                 profile = list(DMX_PROFILES["2CH_BROUILLARD"])
             elif proj.group == "fumee" or proj.fixture_type == "Machine a fumee":
                 profile = list(DMX_PROFILES["2CH_FUMEE"])
+            elif proj.fixture_type == "Laser":
+                profile = list(DMX_PROFILES["LASER_8CH"])
             elif proj.fixture_type == "Moving Head":
                 profile = list(DMX_PROFILES["MOVING_8CH"])
             elif proj.fixture_type == "Barre LED":
@@ -22565,6 +22842,8 @@ class MainWindow(QMainWindow):
             QLabel { color:#e0e0e0; }
             QFrame[frameShape="4"] { color:#1e1e1e; }
             QFrame[frameShape="5"] { color:#1e1e1e; }
+            QToolTip { color:#ffffff; background-color:#1e1e1e;
+                border:1px solid #3a3a3a; padding:4px 8px; font-size:11px; }
         """
         dialog.setStyleSheet(_SS)
 
@@ -22587,7 +22866,7 @@ class MainWindow(QMainWindow):
         # deplie les blocs de puissance). Un appareil de ce type selectionne
         # laissait le combo sur le type de l'appareil PRECEDENT — donc un type
         # faux, reecrit sur la fixture au premier changement de valeur.
-        FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
+        FIXTURE_TYPES = ["PAR LED", "Moving Head", "Laser", "Barre LED", "Stroboscope",
                          "Machine a fumee", "Machine a brouillard",
                          "Machine a etincelles", "Lance-flamme", "Gradateur"]
         # Palette partagée avec la bibliothèque de fixtures (niveau module)
@@ -23019,6 +23298,7 @@ class MainWindow(QMainWindow):
             "PAR LED":          ["DIM", "RGB", "RGBD", "RGBDS", "RGBSD", "DRGB", "DRGBS",
                                   "RGBW", "RGBWD", "RGBWDS", "RGBWZ", "RGBWA", "RGBWAD", "RGBWOUV"],
             "Moving Head":      ["MOVING_5CH", "MOVING_8CH", "MOVING_RGB", "MOVING_RGBW"],
+            "Laser":            ["LASER_8CH", "LASER_5CH"],
             "Barre LED":        ["LED_BAR_RGB", "RGB", "RGBD", "RGBDS"],
             "Stroboscope":      ["STROBE_2CH"],
             "Machine a fumee":  ["2CH_FUMEE", "1CH_FUMEE"],
@@ -23210,6 +23490,11 @@ class MainWindow(QMainWindow):
         )
         pt_vl.addWidget(pt_hint)
 
+        def _sync_pt_laser(is_laser):
+            """Point vert pour un laser, jaune pour une lyre — et l'aide suit."""
+            pt_widget.set_laser(is_laser)
+            pt_hint.setText(tr("mw_drag_green" if is_laser else "mw_drag_yellow"))
+
         # ── Débattement mécanique ───────────────────────────────────────
         # Ce que l'appareil SAIT faire, en degrés — à ne pas confondre avec la
         # zone de mouvement ci-dessus, qui est ce qu'on l'AUTORISE à faire.
@@ -23280,50 +23565,65 @@ class MainWindow(QMainWindow):
         px_section.setStyleSheet("background:transparent;")
         px_vl = QVBoxLayout(px_section)
         px_vl.setContentsMargins(0, 0, 0, 0)
-        px_vl.setSpacing(6)
+        px_vl.setSpacing(8)
         px_vl.addWidget(_sec(tr("mwy_178")))
+
+        # Mise en page : réglages en grille (libellés alignés), puis l'aperçu
+        # dessiné comme sur le plan de feu, puis les actions sous l'aperçu.
+        _PX_LBL = "color:#777;font-size:11px;border:none;background:transparent;"
+        px_form = QGridLayout()
+        px_form.setHorizontalSpacing(10)
+        px_form.setVerticalSpacing(6)
+        px_form.setColumnMinimumWidth(0, 92)
+        px_form.setColumnStretch(1, 1)
 
         _PX_BTN = ("QPushButton{background:#161622;color:#cc77dd;"
                    "border:1px solid #33334a;border-radius:5px;"
                    "font-size:11px;padding:5px 12px;}"
                    "QPushButton:hover{background:#22223a;border-color:#cc77dd;}")
 
-        px_row1 = QHBoxLayout()
-        px_row1.setSpacing(6)
         btn_px_rev = QPushButton(tr("mw_pix_reverse"))
         btn_px_rev.setStyleSheet(_PX_BTN)
         btn_px_rev.setToolTip(
             tr("mw_pix_reverse_hint"))
-        px_row1.addWidget(btn_px_rev)
 
         btn_px_grid = QPushButton(tr("mw_spread_even"))
         btn_px_grid.setStyleSheet(_PX_BTN)
         btn_px_grid.setToolTip(
             tr("mw_pix_rebuild_hint"))
-        px_row1.addWidget(btn_px_grid)
-        px_row1.addStretch()
-        px_vl.addLayout(px_row1)
 
-        px_row2 = QHBoxLayout()
-        px_row2.setSpacing(6)
-        lbl_wiring = QLabel(tr("mw_wiring"))
-        lbl_wiring.setStyleSheet("color:#777;font-size:11px;border:none;background:transparent;")
-        px_row2.addWidget(lbl_wiring)
-        cb_wiring = ComboSansMolette()
-        cb_wiring.addItem(tr("mw_pix_rows"), "row")
-        cb_wiring.addItem(tr("mw_pix_serpentine"), "serpentine")
-        cb_wiring.setFixedHeight(26)
-        cb_wiring.setToolTip(
-            tr("mw_pix_wiring_hint"))
-        cb_wiring.setStyleSheet(
+        _PX_COMBO = (
             "QComboBox{background:#1e1e1e;color:#ddd;border:1px solid #333;"
             "border-radius:5px;padding:2px 8px;font-size:11px;}"
             "QComboBox::drop-down{border:none;width:18px;}"
             "QComboBox QAbstractItemView{background:#1e1e1e;color:#ddd;"
             "selection-background-color:#00d4ff;selection-color:#000;"
             "border:1px solid #333;}")
-        px_row2.addWidget(cb_wiring, 1)
-        px_vl.addLayout(px_row2)
+
+        # ── Disposition : lignes × colonnes ──────────────────────────────
+        # La forme vient de la fiche du fabricant (1×8 pour une barre), mais
+        # l'utilisateur peut monter ses LED autrement : 2 lignes de 4, etc.
+        # Seuls les découpages exacts du nombre de pixels sont proposés.
+        lbl_layout = QLabel(tr("mw_pix_layout"))
+        lbl_layout.setStyleSheet(_PX_LBL)
+        cb_layout = ComboSansMolette()
+        cb_layout.setFixedHeight(26)
+        cb_layout.setToolTip(tr("mw_pix_layout_hint"))
+        cb_layout.setStyleSheet(_PX_COMBO)
+        px_form.addWidget(lbl_layout, 0, 0)
+        px_form.addWidget(cb_layout, 0, 1)
+
+        lbl_wiring = QLabel(tr("mw_wiring"))
+        lbl_wiring.setStyleSheet(_PX_LBL)
+        cb_wiring = ComboSansMolette()
+        cb_wiring.addItem(tr("mw_pix_rows"), "row")
+        cb_wiring.addItem(tr("mw_pix_serpentine"), "serpentine")
+        cb_wiring.setFixedHeight(26)
+        cb_wiring.setToolTip(
+            tr("mw_pix_wiring_hint"))
+        cb_wiring.setStyleSheet(_PX_COMBO)
+        px_form.addWidget(lbl_wiring, 1, 0)
+        px_form.addWidget(cb_wiring, 1, 1)
 
         # ── Taille réelle de l'appareil ──────────────────────────────────
         # Sans cette information, une barre est dessinée d'après son NOMBRE de
@@ -23332,9 +23632,9 @@ class MainWindow(QMainWindow):
         # dimension, donc c'est ici que l'utilisateur la donne — une fois.
         px_row3 = QHBoxLayout()
         px_row3.setSpacing(6)
+        px_row3.setContentsMargins(0, 0, 0, 0)
         lbl_size = QLabel(tr("mw_real_size"))
-        lbl_size.setStyleSheet("color:#777;font-size:11px;border:none;background:transparent;")
-        px_row3.addWidget(lbl_size)
+        lbl_size.setStyleSheet(_PX_LBL)
 
         _PX_SPIN = ("QSpinBox{background:#1e1e1e;color:#ddd;border:1px solid #333;"
                     "border-radius:5px;padding:2px 6px;font-size:11px;}"
@@ -23360,15 +23660,26 @@ class MainWindow(QMainWindow):
         spin_ph.setToolTip(tr("mw_real_height"))
         px_row3.addWidget(spin_ph)
         px_row3.addStretch()
-        px_vl.addLayout(px_row3)
+        px_form.addWidget(lbl_size, 2, 0)
+        px_form.addLayout(px_row3, 2, 1)
+        px_vl.addLayout(px_form)
 
+        # Aperçu : le bloc tel que le plan de feu le dessine, numéroté dans
+        # l'ordre DMX. Il suit en direct le choix survolé dans « Disposition ».
         px_strip = PixelStrip()
         px_strip.setToolTip(
             tr("mw_pix_order_hint"))
         px_vl.addWidget(px_strip)
 
+        px_actions = QHBoxLayout()
+        px_actions.setSpacing(6)
+        px_actions.addWidget(btn_px_rev)
+        px_actions.addWidget(btn_px_grid)
+        px_actions.addStretch()
+        px_vl.addLayout(px_actions)
+
         px_hint = QLabel("")
-        px_hint.setStyleSheet("color:#333;font-size:10px;border:none;background:transparent;")
+        px_hint.setStyleSheet("color:#666;font-size:10px;border:none;background:transparent;")
         px_vl.addWidget(px_hint)
 
         fv.addWidget(px_section)
@@ -23487,6 +23798,27 @@ class MainWindow(QMainWindow):
                     tr("mw_snake_applied") if mode == "serpentine"
                     else tr("mwy_179"))
 
+        def _px_pitch(rows, cols, w_mm, h_mm):
+            """
+            Écart (x, y) entre deux LED voisines, en coordonnées du plan.
+
+            L'écart vertical part de l'écart horizontal, corrigé du rapport
+            hauteur/largeur d'UNE case (h/lignes ÷ l/colonnes). L'ancien calcul
+            répartissait une hauteur ≈ largeur sur les lignes : une barre de 8
+            pliée en 2 lignes de 4 avait ses lignes trois fois trop écartées.
+            ×1.6 : le plan est plus large que haut (coordonnées normalisées).
+            """
+            span = _matrix_span(cols, w_mm)
+            sx = span / cols
+            cell_ratio = 1.0
+            if w_mm and h_mm and rows > 1:
+                cell_ratio = (h_mm / rows) / (w_mm / cols)
+                # Hors de cette plage, la dimension est périmée (taille de la
+                # barre d'origine après un changement de disposition) : cases carrées.
+                if not 0.4 <= cell_ratio <= 2.5:
+                    cell_ratio = 1.0
+            return sx, sx * cell_ratio * 1.6
+
         def _on_px_regrid():
             """Reconstruit la grille à intervalles réguliers, sans toucher au DMX."""
             idx = _sel[0]
@@ -23500,8 +23832,10 @@ class MainWindow(QMainWindow):
             cy = sum(p.canvas_y or 0.5 for p in projs) / len(projs)
             cols = max(1, int(g.get("cols") or 1))
             rows = max(1, int(g.get("rows") or 1))
-            span = _matrix_span(cols, getattr(projs[0], 'matrix_phys_w', None))
-            layout_pixels(projs, cx, cy, span / cols, span * 1.6 / rows,
+            sx, sy = _px_pitch(rows, cols,
+                               getattr(projs[0], 'matrix_phys_w', None),
+                               getattr(projs[0], 'matrix_phys_h', None))
+            layout_pixels(projs, cx, cy, sx, sy,
                           int(getattr(projs[0], 'matrix_rot', 0) or 0))
             canvas.update()
             _mark_dirty()
@@ -23527,10 +23861,8 @@ class MainWindow(QMainWindow):
             cy = sum(p.canvas_y or 0.5 for p in projs) / len(projs)
             cols = max(1, int(g.get("cols") or 1))
             rows = max(1, int(g.get("rows") or 1))
-            span = _matrix_span(cols, w_mm)
-            ratio = min(2.5, h_mm / w_mm) if w_mm else 1.0
-            layout_pixels(projs, cx, cy, span / cols,
-                          span * ratio * 1.6 / rows,
+            sx, sy = _px_pitch(rows, cols, w_mm, h_mm)
+            layout_pixels(projs, cx, cy, sx, sy,
                           int(getattr(projs[0], 'matrix_rot', 0) or 0))
             canvas.update()
             _mark_dirty()
@@ -23539,6 +23871,118 @@ class MainWindow(QMainWindow):
 
         spin_pw.editingFinished.connect(_on_px_size)
         spin_ph.editingFinished.connect(_on_px_size)
+
+        def _fill_px_layout(g):
+            """Propose chaque découpage exact du nombre de pixels (8 → 1×8, 2×4…)."""
+            n = int(g.get("pixels") or 0)
+            cur = (max(1, int(g.get("rows") or 1)), max(1, int(g.get("cols") or 1)))
+            opts = [(r, n // r) for r in range(1, n + 1) if n % r == 0]
+            if cur not in opts:
+                opts.append(cur)
+            cb_layout.blockSignals(True)
+            cb_layout.clear()
+            for r, c in opts:
+                cb_layout.addItem(
+                    tr("mw_pix_layout_one", c=c) if r == 1
+                    else tr("mw_pix_layout_n", r=r, c=c), (r, c))
+            cb_layout.setCurrentIndex(opts.index(cur))
+            cb_layout.blockSignals(False)
+            _vis = n > 1
+            lbl_layout.setVisible(_vis)
+            cb_layout.setVisible(_vis)
+
+        def _layout_plan(px, rows, cols):
+            """
+            [(index pixel, rang DMX 0-based, (ligne, colonne))] pour une forme.
+            L'ordre DMX ne bouge pas : la LED n°k de la chaîne prend la k-ième
+            place du câblage choisi. Partagé par l'aperçu et l'application, pour
+            que ce qu'on survole soit exactement ce qu'on obtient.
+            """
+            wiring = cb_wiring.currentData() or "row"
+            pos = pixel_positions(rows, cols, wiring)
+            by_addr = sorted(px, key=lambda i: fixture_data[i]["start_address"])
+            return [(i, k, pos[k]) for k, i in enumerate(by_addr)]
+
+        def _on_px_layout_preview(row):
+            """Survol d'un choix de la liste : la bande montre la forme, en direct."""
+            idx = _sel[0]
+            g, px = _px_members(idx) if idx is not None else (None, [])
+            data = cb_layout.itemData(row)
+            if not g or not px or not data:
+                return
+            rows, cols = data
+            if rows * cols != len(px):
+                return
+            spatial = {}
+            for i, k, rc in _layout_plan(px, rows, cols):
+                proj = self.projectors[i] if i < len(self.projectors) else None
+                col = QColor(proj.color) if proj is not None else QColor("#222")
+                if col.lightness() < 24:
+                    col = QColor("#242430")
+                spatial[rc] = (i, k + 1, fixture_data[i]["start_address"], col)
+            # PixelStrip attend les cases en ordre spatial (ligne puis colonne)
+            px_strip.set_pixels([spatial[(r, c)] for r in range(rows)
+                                 for c in range(cols)], rows, cols)
+
+        cb_layout.highlighted.connect(_on_px_layout_preview)
+
+        _cb_layout_hide = cb_layout.hidePopup
+
+        def _cb_layout_hide_popup():
+            # Liste refermée sans choisir : la bande revient à la forme réelle
+            _cb_layout_hide()
+            if _sel[0] is not None:
+                _refresh_px_strip(_sel[0])
+        cb_layout.hidePopup = _cb_layout_hide_popup
+
+        def _on_px_layout(_i=0):
+            """
+            Change la forme de la grille, puis redessine le bloc à la nouvelle
+            forme sur le plan de feu. Les adresses DMX ne changent pas.
+            """
+            idx = _sel[0]
+            g, px = _px_members(idx) if idx is not None else (None, [])
+            data = cb_layout.currentData()
+            if not g or not px or not data:
+                return
+            rows, cols = data
+            if rows * cols != len(px):
+                return
+            for i, k, (r, c) in _layout_plan(px, rows, cols):
+                vals = {"pixel_row": r, "pixel_col": c, "pixel_index": k}
+                fixture_data[i].update(vals)
+                if i < len(self.projectors):
+                    for f, v in vals.items():
+                        setattr(self.projectors[i], f, v)
+            # Taille réelle : on garde l'écart entre LED, c'est le contour qui
+            # change (barre de 106 cm en 8 → 2 lignes de 4 ≈ 53 × 28 cm). Sur une
+            # barre d'une ligne, la hauteur EST celle d'une case.
+            _rep = self.projectors[g["repr"]]
+            old_r = max(1, int(g.get("rows") or 1))
+            old_c = max(1, int(g.get("cols") or 1))
+            w_mm = getattr(_rep, 'matrix_phys_w', None)
+            h_mm = getattr(_rep, 'matrix_phys_h', None)
+            new_w = new_h = None
+            if w_mm:
+                pitch_x = float(w_mm) / old_c
+                pitch_y = (float(h_mm) / old_r) if h_mm else pitch_x
+                new_w, new_h = pitch_x * cols, pitch_y * rows
+            # Le master porte aussi la forme : c'est lui qu'on relit au
+            # rechargement, et la 3D l'interroge.
+            for i in g["members"]:
+                vals = {"matrix_rows": rows, "matrix_cols": cols}
+                if new_w:
+                    vals.update(matrix_phys_w=new_w, matrix_phys_h=new_h)
+                fixture_data[i].update(vals)
+                if i < len(self.projectors):
+                    for f, v in vals.items():
+                        setattr(self.projectors[i], f, v)
+            _on_px_regrid()
+            # Réaffiche la section : câblage et hauteur n'apparaissent qu'en 2D
+            _select_card(idx)
+            px_hint.setText(tr("mw_pix_layout_applied", r=rows, c=cols))
+
+        cb_layout.currentIndexChanged.connect(_on_px_layout)
 
         btn_px_rev.clicked.connect(_on_px_reverse)
         btn_px_grid.clicked.connect(_on_px_regrid)
@@ -23590,7 +24034,7 @@ class MainWindow(QMainWindow):
             ref_name = src.name if same_name_only else None
             for i, p in enumerate(self.projectors):
                 if i == idx: continue
-                if p.fixture_type != 'Moving Head': continue
+                if p.fixture_type not in ('Moving Head', 'Laser'): continue
                 if same_name_only and p.name != ref_name: continue
                 p.pan_min  = src.pan_min;  p.pan_max  = src.pan_max
                 p.tilt_min = src.tilt_min; p.tilt_max = src.tilt_max
@@ -23802,6 +24246,7 @@ class MainWindow(QMainWindow):
                     'start_address': proj.start_address,
                     'profile':       list(self.dmx._get_profile(f"{proj.group}_{i}")),
                     'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
+                    'channel_ranges':     normalize_channel_ranges(getattr(proj, 'channel_ranges', None)),
                     'color_wheel_slots':  list(getattr(proj, 'color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(getattr(proj, 'gobo_wheel_slots', [])),
                     'preset_slots':       dict(getattr(proj, 'preset_slots', {}) or {}),
@@ -23929,6 +24374,7 @@ class MainWindow(QMainWindow):
                 if isinstance(profile, list) and profile:
                     proj.dmx_profile = list(profile)
                 proj.channel_defaults  = dict(fd.get('channel_defaults', {}))
+                proj.channel_ranges    = normalize_channel_ranges(fd.get('channel_ranges'))
                 proj.shutter_inverted  = bool(fd.get('shutter_inverted', False))
                 proj.shutter_strobe_min = int(fd.get('shutter_strobe_min', 64))
                 proj.shutter_strobe_max = int(fd.get('shutter_strobe_max', 95))
@@ -23997,6 +24443,7 @@ class MainWindow(QMainWindow):
                 if isinstance(_prof, list) and _prof:
                     p.dmx_profile = list(_prof)
                 p.channel_defaults  = dict(fd_s.get('channel_defaults', {}))
+                p.channel_ranges    = normalize_channel_ranges(fd_s.get('channel_ranges'))
                 p.color_wheel_slots = list(fd_s.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(fd_s.get('gobo_wheel_slots', []))
                 p.preset_slots      = dict(fd_s.get('preset_slots', {}) or {})
@@ -24019,6 +24466,7 @@ class MainWindow(QMainWindow):
                     'start_address': fd_s['start_address'],
                     'profile':       list(_prof) if (isinstance(_prof, list) and _prof) else [],
                     'channel_defaults':   dict(fd_s.get('channel_defaults', {})),
+                    'channel_ranges':     normalize_channel_ranges(fd_s.get('channel_ranges')),
                     'color_wheel_slots':  list(fd_s.get('color_wheel_slots', [])),
                     'gobo_wheel_slots':   list(fd_s.get('gobo_wheel_slots', [])),
                     'preset_slots':       dict(fd_s.get('preset_slots', {}) or {}),
@@ -24191,6 +24639,101 @@ class MainWindow(QMainWindow):
 
                 sli.valueChanged.connect(_on_slide)
                 wl.addWidget(sli, 0, Qt.AlignHCenter)
+
+                # ── Plage utile : brider le canal ────────────────────────────
+                # Le haut de course de beaucoup d'appareils lance un programme
+                # auto (laser : Pan/Tilt > 127 = mouvement auto). Le moteur met
+                # alors le fader à l'échelle de cette plage (cf.
+                # `core.channel_range`). Pas sur les canaux fins : ils suivent
+                # la plage de leur canal principal.
+                if (ch_type not in ("PanFine", "TiltFine")
+                        and snap_idx is not None
+                        and snap_idx < len(fixture_data)):
+                    _SEPRG = QFrame(); _SEPRG.setFrameShape(QFrame.HLine)
+                    _SEPRG.setStyleSheet("QFrame{color:#1e1e1e;margin:4px 0;}")
+                    wl.addWidget(_SEPRG)
+
+                    _rg_title = QLabel(tr("mw_channel_range"))
+                    _rg_title.setAlignment(Qt.AlignCenter)
+                    _rg_title.setStyleSheet(
+                        f"color:{col}; font-size:10px; font-weight:bold;"
+                        f" background:transparent; border:none; letter-spacing:1px;"
+                    )
+                    wl.addWidget(_rg_title)
+
+                    _rg_cur = (fixture_data[snap_idx].get('channel_ranges') or {}).get(ch_type) \
+                        or [0, 255]
+                    rg_bar = ChannelRangeBar(col)
+                    rg_bar.set_range(int(_rg_cur[0]), int(_rg_cur[1]))
+                    rg_bar.setToolTip(tr("mw_channel_range_bar_tip"))
+                    wl.addWidget(rg_bar, 0, Qt.AlignHCenter)
+
+                    # Ce que fait le fader, en clair — la seule façon de voir
+                    # d'un coup d'œil qu'un canal est bridé.
+                    rg_state = QLabel()
+                    rg_state.setAlignment(Qt.AlignCenter)
+                    rg_state.setStyleSheet(
+                        "font-size:10px; background:transparent; border:none;")
+                    wl.addWidget(rg_state)
+
+                    def _rg_state_text(lo, hi):
+                        if (lo, hi) == (0, 255):
+                            rg_state.setText(tr("mw_channel_range_free"))
+                            rg_state.setStyleSheet(
+                                "color:#5e5e5e; font-size:10px;"
+                                " background:transparent; border:none;")
+                        else:
+                            rg_state.setText(tr("mw_channel_range_capped", lo=lo, hi=hi))
+                            rg_state.setStyleSheet(
+                                f"color:{col}; font-size:10px; font-weight:bold;"
+                                f" background:transparent; border:none;")
+
+                    def _set_range(lo, hi, _ct=ch_type, _si=snap_idx):
+                        _rgs = dict(fixture_data[_si].get('channel_ranges') or {})
+                        if lo == 0 and hi == 255:
+                            _rgs.pop(_ct, None)
+                        else:
+                            _rgs[_ct] = [lo, hi]
+                        fixture_data[_si]['channel_ranges'] = normalize_channel_ranges(_rgs)
+                        if _si < len(self.projectors):
+                            self.projectors[_si].channel_ranges = dict(
+                                fixture_data[_si]['channel_ranges'])
+                        _rg_state_text(lo, hi)
+                        self.send_dmx_update()
+                        _mark_dirty()
+
+                    rg_bar.range_changed.connect(_set_range)
+                    _rg_state_text(*rg_bar.get_range())
+
+                    # Raccourcis : les découpes qu'on rencontre dans les notices.
+                    _RG_CHIP_SS = (
+                        "QPushButton{background:#161616;color:#8a8a8a;"
+                        "border:1px solid #262626;border-radius:9px;"
+                        "padding:2px 9px;font-size:9px;}"
+                        f"QPushButton:hover{{border-color:{col};color:#ffffff;}}"
+                    )
+                    rg_chips = QHBoxLayout()
+                    rg_chips.setSpacing(5)
+                    rg_chips.addStretch()
+                    for _lbl, _lo, _hi in ((tr("mw_channel_range_all"), 0, 255),
+                                           ("0 – 127", 0, 127),
+                                           ("0 – 63", 0, 63)):
+                        _b = QPushButton(_lbl)
+                        _b.setCursor(Qt.PointingHandCursor)
+                        _b.setFocusPolicy(Qt.NoFocus)
+                        _b.setStyleSheet(_RG_CHIP_SS)
+                        _b.clicked.connect(
+                            lambda _=False, a=_lo, b=_hi: rg_bar.set_range(a, b, emit=True))
+                        rg_chips.addWidget(_b)
+                    rg_chips.addStretch()
+                    wl.addLayout(rg_chips)
+
+                    _rg_hint = QLabel(tr("mw_channel_range_tip"))
+                    _rg_hint.setWordWrap(True)
+                    _rg_hint.setFixedWidth(200)
+                    _rg_hint.setAlignment(Qt.AlignCenter)
+                    _rg_hint.setStyleSheet("color:#5e5e5e;font-size:9px;")
+                    wl.addWidget(_rg_hint, 0, Qt.AlignHCenter)
 
                 # ── Toggles Pan/Tilt inversion (canaux Pan/Tilt uniquement) ──
                 _PT_CHANNELS = {"Pan", "PanFine", "Tilt", "TiltFine"}
@@ -24756,6 +25299,7 @@ class MainWindow(QMainWindow):
 
             from PySide6.QtWidgets import QCheckBox
             card = QFrame()
+            card.setObjectName("fxCard")
             card.setFixedHeight(60)
             card.setCursor(Qt.PointingHandCursor)
             card.setFocusPolicy(Qt.ClickFocus)
@@ -24764,8 +25308,10 @@ class MainWindow(QMainWindow):
                 _gc = card._gc
                 checked = idx in _checked
                 bg = "#10102a" if selected else ("#0f0f18" if checked else "#0b0b0b")
+                # Sélecteur limité à la carte : un « QFrame { … } » nu touchait
+                # aussi les infobulles (QLabel ⊂ QFrame) → texte noir sur fond noir.
                 card.setStyleSheet(
-                    f"QFrame {{ background:{bg}; border-left:4px solid {_gc};"
+                    f"QFrame#fxCard {{ background:{bg}; border-left:4px solid {_gc};"
                     f" border-top:1px solid {'#1e1e3a' if selected else '#141414'};"
                     f" border-bottom:1px solid #141414; border-right:none; border-radius:0; }}"
                 )
@@ -24813,12 +25359,15 @@ class MainWindow(QMainWindow):
             # Fabricant en tête : « Chauvet DJ · Barre LED · 16 px · Groupe … »
             _mfr = (fd.get('manufacturer') or '').strip()
             _pre = f"{_mfr}  ·  " if _mfr else ""
+            # Tronquée elle aussi : « American DJ · Barre LED · 8 px · Groupe A »
+            # élargissait la carte au-delà de la colonne, qui défilait alors de
+            # côté (case à cocher coupée à gauche, adresse collée à droite).
             if _mxi:
                 _geo = (f"{_mxi['pixels']} px" if _mxi["rows"] <= 1
                         else f"{_mxi['rows']}×{_mxi['cols']} px")
-                sub = QLabel(tr("mw_f_fx_geo_group", _pre=_pre, a0=fd['fixture_type'], _geo=_geo, gname=gname))
+                sub = ElidedLabel(tr("mw_f_fx_geo_group", _pre=_pre, a0=fd['fixture_type'], _geo=_geo, gname=gname))
             else:
-                sub = QLabel(tr("mw_f_fx_group", _pre=_pre, a0=fd['fixture_type'], gname=gname))
+                sub = ElidedLabel(tr("mw_f_fx_group", _pre=_pre, a0=fd['fixture_type'], gname=gname))
             _sub_col = "#{:02x}{:02x}{:02x}".format(
                 (int(gc[1:3], 16) + 0x44) // 2,
                 (int(gc[3:5], 16) + 0x44) // 2,
@@ -24828,8 +25377,9 @@ class MainWindow(QMainWindow):
             card._sublbl_color = _sub_col
             card._sublbl = sub
             tv.addWidget(nm); tv.addWidget(sub)
-            hl.addLayout(tv)
-            hl.addStretch()
+            # Le texte prend la place libre : nom et sous-titre étant tronquables
+            # (largeur minimale nulle), un addStretch() les écrasait à 0 px.
+            hl.addLayout(tv, 1)
 
             _uni_n = fd.get('universe', 0) + 1
             chl = QLabel(f'<span style="color:#2a6670">U{_uni_n}</span>'
@@ -25005,7 +25555,7 @@ class MainWindow(QMainWindow):
                 scroll.ensureWidgetVisible(_cards[idx])
 
             # Pan/tilt limits section — visible only for Moving Head
-            is_mh = fd.get('fixture_type', '') == 'Moving Head'
+            is_mh = fd.get('fixture_type', '') in ('Moving Head', 'Laser')
             pt_section.setVisible(is_mh)
 
             # Disposition des pixels — seulement sur la carte d'une barre/matrice
@@ -25028,6 +25578,7 @@ class MainWindow(QMainWindow):
                     _sp.setValue(int(round(float(_mm) / 10)) if _mm else _def)
                     _sp.blockSignals(False)
                 px_hint.setText("")
+                _fill_px_layout(_gpx)
                 _refresh_px_strip(idx)
             if is_mh:
                 proj = self.projectors[idx]
@@ -25036,6 +25587,7 @@ class MainWindow(QMainWindow):
                     proj.tilt_min >> 8, proj.tilt_max >> 8
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
+                _sync_pt_laser(getattr(proj, 'fixture_type', '') == 'Laser')
                 _load_pt_ranges(proj)
                 _ref = fd.get('name') or fd.get('group', '')
                 btn_pt_apply_model.setText(f"« {_ref} »")
@@ -25174,7 +25726,7 @@ class MainWindow(QMainWindow):
             else:
                 _update_chips(fixture_data[idx].get('profile', []))
             _commit()
-            is_mh = det_type_cb.currentData() == 'Moving Head'
+            is_mh = det_type_cb.currentData() in ('Moving Head', 'Laser')
             pt_section.setVisible(is_mh)
             px_section.setVisible(bool(_matrix_info_for(idx)))
             if is_mh and idx is not None and idx < len(self.projectors):
@@ -25184,6 +25736,7 @@ class MainWindow(QMainWindow):
                     proj.tilt_min >> 8, proj.tilt_max >> 8
                 )
                 pt_widget.set_position(proj.pan >> 8, proj.tilt >> 8)
+                _sync_pt_laser(det_type_cb.currentData() == 'Laser')
                 _load_pt_ranges(proj)
                 _ref = fixture_data[idx].get('name') or fixture_data[idx].get('group', '')
                 btn_pt_apply_model.setText(f"« {_ref} »")
@@ -25543,6 +26096,9 @@ class MainWindow(QMainWindow):
                     or (new_fx.get("modes") or [{}])[0].get("labels") or [])
             fd['channel_labels'] = (list(_nlb) if len(_nlb) == len(fd['profile'])
                                     else [])
+            # Plage utile du NOUVEAU modèle : c'est par ce remplacement qu'un
+            # appareil déjà patché récupère une fixture bridée après coup.
+            fd['channel_ranges'] = normalize_channel_ranges(new_fx.get("channel_ranges"))
             # start_address et group sont conservés
 
             proj.name           = fd['name']
@@ -25605,7 +26161,7 @@ class MainWindow(QMainWindow):
             if not res: return
             preset, qty, custom_name = res
             _push_history()
-            _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5,
+            _CH = {"PAR LED": 5, "Moving Head": 8, "Laser": 8, "Barre LED": 5,
                    "Stroboscope": 2, "Machine a fumee": 2,
                    "Machine a brouillard": 2, "Machine a etincelles": 1,
                    "Lance-flamme": 1}
@@ -25725,6 +26281,10 @@ class MainWindow(QMainWindow):
                 p.color_wheel_slots = list(preset.get('color_wheel_slots', []))
                 p.gobo_wheel_slots  = list(preset.get('gobo_wheel_slots', []))
                 p.preset_slots      = dict(preset.get('preset_slots', {}) or {})
+                # Plage utile : la fixture sait quels hauts de course lancent
+                # un programme auto, le projecteur ajouté doit être bridé
+                # d'office, sans réglage de l'utilisateur.
+                p.channel_ranges    = normalize_channel_ranges(preset.get('channel_ranges'))
                 # …et les noms de canaux, sinon la fixture ajoutée depuis la
                 # bibliothèque arrive avec une rangée de « Unused » anonymes
                 # alors que son fichier d'origine les nommait.
@@ -25738,7 +26298,7 @@ class MainWindow(QMainWindow):
                 # Roue déjà décrite par le fichier de fixture (OFL, GrandMA, et
                 # désormais QLC+) → rien à calibrer : proposer l'assistant
                 # reviendrait à demander de ressaisir ce qu'on vient de lire.
-                if p.fixture_type == "Moving Head" \
+                if p.fixture_type in ("Moving Head", "Laser") \
                         and isinstance(_prof, list) and "ColorWheel" in _prof \
                         and not p.color_wheel_slots:
                     p._needs_cw_calib = True
@@ -27167,9 +27727,16 @@ class MainWindow(QMainWindow):
             if _hit is not None:
                 tab_widget.setCurrentIndex(1)
                 my_list.setCurrentItem(_hit)
-                my_list.scrollToItem(_hit, QListWidget.PositionAtCenter)
-                # Le focus ne tient qu'une fois la fenêtre affichée.
-                QTimer.singleShot(0, my_list.setFocus)
+
+                # Défilement ET focus une fois la fenêtre affichée : appelé ici,
+                # avant exec(), scrollToItem agissait sur une liste sans hauteur
+                # et ne faisait rien — la machine était sélectionnée mais hors
+                # de vue, il fallait descendre l'ascenseur pour la trouver.
+                def _reveal(it=_hit):
+                    my_list.scrollToItem(it, QListWidget.PositionAtCenter)
+                    my_list.setFocus()
+                QTimer.singleShot(0, _reveal)
+                QTimer.singleShot(150, _reveal)   # après la mise en page finale
             self._pending_fixture_select = None
 
         layout.addWidget(tab_widget, 1)
@@ -28163,7 +28730,7 @@ class MainWindow(QMainWindow):
         _saved_pt = {
             p.name: (p.pan, p.tilt)
             for p in self.projectors
-            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')
+            if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')
         }
 
         # Reconstruire self.projectors depuis fixture_data
@@ -28174,7 +28741,7 @@ class MainWindow(QMainWindow):
             if fd['fixture_type'] in FX_MACHINE_TYPES:
                 p.fan_speed = 0
             # Restaurer la position si la lyre existait déjà (même nom)
-            if p.fixture_type in ('Moving Head', 'Lyre') and p.name in _saved_pt:
+            if p.fixture_type in ('Moving Head', 'Lyre', 'Laser') and p.name in _saved_pt:
                 p.pan, p.tilt = _saved_pt[p.name]
             self.projectors.append(p)
 
@@ -28200,6 +28767,15 @@ class MainWindow(QMainWindow):
             # Respecter le profil explicite si défini sur le projecteur
             explicit = getattr(proj, 'dmx_profile', None)
             if isinstance(explicit, list) and explicit:
+                # Machine patchée depuis l'ancienne bibliothèque QLC+ : aucun
+                # canal Smoke, débit mort. On le retrouve (nom de canal, ou
+                # canal unique) — sans ça, seul un re-patch la réparait.
+                fixed = fix_machine_profile(
+                    getattr(proj, 'fixture_type', ''), explicit,
+                    getattr(proj, 'channel_labels', None))
+                if fixed != explicit:
+                    proj.dmx_profile = fixed
+                    explicit = proj.dmx_profile
                 profile = explicit
             else:
                 ftype = getattr(proj, 'fixture_type', 'PAR LED')
@@ -28211,6 +28787,8 @@ class MainWindow(QMainWindow):
                     profile = list(DMX_PROFILES["2CH_BROUILLARD"])
                 elif ftype == "Machine a fumee" or proj.group == "fumee":
                     profile = list(DMX_PROFILES["2CH_FUMEE"])
+                elif ftype == "Laser":
+                    profile = list(DMX_PROFILES["LASER_8CH"])
                 elif ftype == "Moving Head":
                     profile = list(DMX_PROFILES["MOVING_8CH"])
                 elif ftype == "Barre LED":
@@ -28324,6 +28902,7 @@ class MainWindow(QMainWindow):
             'beam_angle':      getattr(proj, 'beam_angle',  100.0),
             'fixture_scale':   getattr(proj, 'fixture_scale', 100.0),
             'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
+            'channel_ranges':     normalize_channel_ranges(getattr(proj, 'channel_ranges', None)),
             # Convention d'obturateur inversée (0 = ouvert). Réglée par
             # « Ma lyre ne s'allume pas » dans la calibration de roue —
             # elle n'était PAS sauvegardée : le réglage était perdu au
@@ -28397,6 +28976,7 @@ class MainWindow(QMainWindow):
         if isinstance(profile, list) and profile:
             p.dmx_profile = list(profile)
         p.channel_defaults  = dict(fd.get('channel_defaults', {}))
+        p.channel_ranges    = normalize_channel_ranges(fd.get('channel_ranges'))
         p.shutter_inverted  = bool(fd.get('shutter_inverted', False))
         # Patch anterieur au strobe sur canal Shutter : cles
         # absentes => bande standard des lyres (64-95).

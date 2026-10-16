@@ -443,6 +443,33 @@ def _extract_wheel_slots(obj: dict, available: dict) -> dict:
 # API publique
 # ---------------------------------------------------------------------------
 
+def _machine_output(raw_modes, modes, available, ftype):
+    """Désigne le canal Smoke (et Fan) de chaque mode d'une machine OFL.
+
+    Priorité au canal dont une capacité est `FogOutput` — OFL le dit
+    explicitement, mais souvent APRÈS une plage « NoFunction », que
+    `_get_channel_type` (première capacité seule) ne dépasse pas. Sinon,
+    lecture des noms de canaux (`core.fix_machine_profile`).
+    """
+    from core import fix_machine_profile, _machine_label_role
+    for raw, entry in zip(raw_modes, modes):
+        profile = entry["profile"]
+        names = raw.get("channels", [])
+        if len(names) != len(profile) or not all(isinstance(n, str) for n in names):
+            names = None
+        if names and "Smoke" not in profile:
+            for i, n in enumerate(names):
+                ch = available.get(n) or {}
+                caps = ch.get("capabilities") or [ch.get("capability") or {}]
+                if any(c.get("type") == "FogOutput" for c in caps):
+                    profile[i] = "Smoke"
+                    roles = [_machine_label_role(x) for x in names]
+                    if "fan" in roles and "Fan" not in profile:
+                        profile[roles.index("fan")] = "Fan"
+                    break
+        entry["profile"] = fix_machine_profile(ftype, profile, names)
+
+
 def parse_ofl_json(
     data: bytes,
     manufacturer_key: str = "",
@@ -509,6 +536,19 @@ def parse_ofl_json(
     # premier mode est le 3 canaux "Master".
     _mx_any = next((m.get("matrix") for m in modes if m.get("matrix")), None)
     ftype = _detect_fixture_type(first_profile, _mx_any)
+    # OFL range ses lasers dans la categorie « Laser » : le profil seul les
+    # aurait classes en lyre (Pan/Tilt) ou en PAR.
+    if "Laser" in (obj.get("categories") or []):
+        ftype = "Laser"
+    # Machines : OFL les range en « Smoke » / « Hazer ». Sans ça elles
+    # arrivaient en PAR LED, débit en « Mode » — mortes côté sortie DMX.
+    _cats = obj.get("categories") or []
+    if "Hazer" in _cats:
+        ftype = "Machine a brouillard"
+    elif "Smoke" in _cats:
+        ftype = "Machine a fumee"
+    if ftype in ("Machine a brouillard", "Machine a fumee"):
+        _machine_output(raw_modes, modes, available, ftype)
 
     wheel_slots = _extract_wheel_slots(obj, available)
 

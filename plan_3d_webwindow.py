@@ -3093,7 +3093,7 @@ class Plan3DWebWindow(QMainWindow):
 
         if p is None:
             inerte, court, long_ = False, "", ""
-        elif getattr(p, 'fixture_type', '') == 'Moving Head':
+        elif getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser'):
             inerte = False
             court  = ""
             long_  = (tr("p3w3_050"))
@@ -3164,9 +3164,9 @@ class Plan3DWebWindow(QMainWindow):
         lay.addSpacing(10)
 
         # ── Retour vidéo ──────────────────────────────────────────────────
-        # Décoché : plus aucune image n'est encodée ni envoyée à la page, les
-        # dalles du décor passent au noir, et celles qui n'existent QUE pour la
-        # vidéo (écran de la cabine DJ mobile) rendent la place au décor d'origine.
+        # Décoché : plus aucune image n'est encodée ni envoyée à la page, toutes
+        # les dalles disparaissent du décor, et ce qu'elles remplaçaient (néon de
+        # la cabine DJ mobile) revient à sa place.
         self._chk_video = QCheckBox(tr("p3w_video_return"))
         self._chk_video.setChecked(self._video_retour)
         self._chk_video.setStyleSheet(self._PANEL_CHK)

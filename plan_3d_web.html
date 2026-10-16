@@ -1770,6 +1770,71 @@ function _getObj(i) {
   mhGrp.visible = false;
   _fixtureGrp.add(mhGrp);
 
+  // ── Laser — boîtier fixe, rayons fins ────────────────────────────────
+  // Un laser n'a NI yoke NI cône : un boîtier accroché par un étrier, une
+  // petite ouverture, et des TRAITS fins qui balaient par miroirs. Le
+  // représenter en lyre (corps doré qui pivote, cône volumétrique large) le
+  // rendait méconnaissable — cf. `_updateLaser()`.
+  const lzGrp = new THREE.Group();
+  lzGrp.rotation.order = 'YXZ';                 // même accroche qu'un PAR
+  const _lzMetal = new THREE.MeshStandardMaterial({ color:0x8a8f99, roughness:0.35, metalness:0.85 });
+  const lzBody = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.15, 0.26),
+    new THREE.MeshStandardMaterial({ color:0x24262c, roughness:0.45, metalness:0.55 }));
+  lzBody.position.y = -0.12;
+  lzBody.userData.projoIndex = i;
+  lzGrp.add(lzBody);
+  // Étrier (barre + deux joues) — accroché au truss par le haut
+  const lzTop = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.016, 0.05), _lzMetal);
+  lzTop.position.y = 0.02; lzGrp.add(lzTop);
+  for (const sx of [-0.20, 0.20]) {
+    const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.17, 0.05), _lzMetal);
+    cheek.position.set(sx, -0.06, 0); lzGrp.add(cheek);
+  }
+  // Ailettes de refroidissement sur le dessus
+  for (let k = -3; k <= 3; k++) {
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.02, 0.22), _lzMetal);
+    fin.position.set(k * 0.042, -0.035, 0); lzGrp.add(fin);
+  }
+  // Étiquette jaune « danger laser » sur la face avant
+  const lzSticker = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.085, 0.075),
+    new THREE.MeshBasicMaterial({ color:0xffd21f }));
+  lzSticker.position.set(-0.09, -0.12, 0.1305);
+  lzGrp.add(lzSticker);
+  // Ouverture de sortie, sous le boîtier (axe d'émission = -Y local)
+  const lzAperture = new THREE.Mesh(
+    new THREE.CircleGeometry(0.028, 20),
+    new THREE.MeshStandardMaterial({ color:0x050508, emissive:new THREE.Color(0,0,0),
+                                     emissiveIntensity:0, roughness:0.05, metalness:0.2 }));
+  lzAperture.rotation.x = Math.PI / 2;
+  lzAperture.position.set(0.0, -0.1965, 0.07);
+  lzAperture.userData.projoIndex = i;
+  lzGrp.add(lzAperture);
+  lzGrp.visible = false;
+  _fixtureGrp.add(lzGrp);
+
+  // Rayons : segments additifs (lentille → impact), une couleur par sommet
+  // pour qu'ils pâlissent vers le bout. `toneMapped:false` : le bloom de la
+  // scène les fait briller comme de vrais traits laser.
+  const _lzRayGeo = new THREE.BufferGeometry();
+  _lzRayGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(LASER_MAX_RAYS * 6), 3));
+  _lzRayGeo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(LASER_MAX_RAYS * 6), 3));
+  const lzRays = new THREE.LineSegments(_lzRayGeo, new THREE.LineBasicMaterial({
+    vertexColors:true, transparent:true, blending:THREE.AdditiveBlending,
+    depthWrite:false, toneMapped:false }));
+  lzRays.frustumCulled = false; lzRays.renderOrder = 3; lzRays.visible = false;
+  _beamGrp.add(lzRays);
+  // Points d'impact au sol, au bout de chaque rayon
+  const _lzDotGeo = new THREE.BufferGeometry();
+  _lzDotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(LASER_MAX_RAYS * 3), 3));
+  _lzDotGeo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(LASER_MAX_RAYS * 3), 3));
+  const lzDots = new THREE.Points(_lzDotGeo, new THREE.PointsMaterial({
+    size:0.11, vertexColors:true, transparent:true, blending:THREE.AdditiveBlending,
+    depthWrite:false, toneMapped:false, sizeAttenuation:true }));
+  lzDots.frustumCulled = false; lzDots.renderOrder = 3; lzDots.visible = false;
+  _beamGrp.add(lzDots);
+
   // Point light au sol (éclaire le sol et les silhouettes)
   const ptLight = new THREE.PointLight(0xffffff, 0, 14, 1.8);
   _lightGrp.add(ptLight);
@@ -1819,7 +1884,8 @@ function _getObj(i) {
                 prismBeams, prismPools,
                 pxCell, pxGlow, pxHalo, pxHousing, _fx: null,
                 machGrp, machBody: null, machKind: null,
-                machPts: null, _mach: null };
+                machPts: null, _mach: null,
+                lzGrp, lzAperture, lzRays, lzDots };
   _objs.push(obj);
   return obj;
 }
@@ -2001,6 +2067,7 @@ function ptAngles(p) {
 }
 function beamFloor(p) {
   const hy  = p.fixture_height ?? 7.0;
+  // Le laser a son propre rendu (`_updateLaser`) et ne passe plus par ici.
   const isMH = p.fixture_type === 'Moving Head';
   // Taille du corps (colonne « Taille » de l'onglet Plan). Le groupe de la
   // fixture est mis à l'échelle dans updateScene(), donc TOUS les décalages
@@ -2184,6 +2251,198 @@ const _colBuf = new THREE.Color();
 const _briBuf = new THREE.Color();
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Laser
+// ─────────────────────────────────────────────────────────────────────────────
+// Le boîtier est FIXE (accroche RX/RY/RZ, comme un PAR) ; Pan/Tilt dévient les
+// rayons par les miroirs, dans l'angle de balayage du laser (`pan_range` /
+// `tilt_range`, 60° par défaut côté Python — cf. core.pan_tilt_ranges).
+//
+// Le motif n'est pas un gobo : on ne connaît pas les 51 dessins d'un laser
+// chinois. On en propose 8 FAMILLES lisibles (éventail, cercle, croix,
+// grille…), choisies par le canal Motif : changer de motif change bien ce
+// qu'on voit, sans prétendre reproduire le dessin exact.
+const LASER_MAX_RAYS = 24;
+const _lzE  = new THREE.Euler(0, 0, 0, 'YXZ');
+const _lzD  = new THREE.Vector3();
+const _lzU  = new THREE.Vector3();
+const _lzV  = new THREE.Vector3();
+const _lzR  = new THREE.Vector3();
+const _lzA  = new THREE.Vector3();
+const _lzY  = new THREE.Vector3(0, 1, 0);
+
+// Points du motif dans le disque unité (repère de l'ouverture).
+function _laserPattern(idx) {
+  const pts = [];
+  const line = (n, f) => { for (let k = 0; k < n; k++) f(-1 + 2 * k / (n - 1)); };
+  const ring = (n, r) => { for (let k = 0; k < n; k++) {
+    const a = k / n * Math.PI * 2; pts.push([r * Math.cos(a), r * Math.sin(a)]); } };
+  switch (idx % 8) {
+    case 0: line(9, t => pts.push([t, 0])); break;                          // éventail
+    case 1: ring(16, 1.0); break;                                           // cône
+    case 2: line(5, t => pts.push([t, 0])); line(5, t => { if (t) pts.push([0, t]); }); break; // croix
+    case 3: line(7, t => pts.push([t, 0.55])); line(7, t => pts.push([t, -0.55])); break; // double éventail
+    case 4: for (const a of [-0.8, 0, 0.8]) for (const b of [-0.8, 0, 0.8]) pts.push([a, b]); break; // grille
+    case 5: ring(8, 1.0); pts.push([0, 0]); break;                          // étoile
+    case 6: ring(24, 0.6); break;                                           // tunnel
+    default: line(9, t => pts.push([0, t]));                                // rideau
+  }
+  return pts.slice(0, LASER_MAX_RAYS);
+}
+
+// Rotation continue des lasers, à la cadence d'AFFICHAGE (cf. _updateLaser).
+function _tickLasers(dt) {
+  if (dt <= 0) return;
+  for (let i = 0; i < _objs.length; i++) {
+    const o = _objs[i];
+    if (!o._lzSpin || !o._lzState || !o.lzRays || !o.lzRays.visible) continue;
+    o._lzAng = ((o._lzAng || 0) + o._lzSpin * dt) % (Math.PI * 2);
+    const st = o._lzState;
+    _colBuf.setRGB(st.r, st.g, st.b);
+    _updateLaser(o, st.p, st.lvl);
+  }
+}
+
+function _hideLaser(o) {
+  if (!o.lzGrp) return;
+  o._lzSpin = 0;
+  o.lzGrp.visible = false;
+  o.lzRays.visible = false;
+  o.lzDots.visible = false;
+}
+
+function _updateLaser(obj, p, lvl) {
+  // Rien du modèle lyre / PAR sur ce slot
+  obj.parGrp.visible = obj.mhGrp.visible = false;
+  obj.cVol.visible = obj.pool.visible = obj.halo.visible = false;
+  for (let k = 0; k < obj.prismBeams.length; k++) {
+    obj.prismBeams[k].visible = false;
+    obj.prismPools[k].visible = false;
+  }
+  obj._fx = null;
+
+  const hy = p.fixture_height ?? 7.0;
+  const fs = p.fixture_scale ?? 1.0;
+  obj.lzGrp.position.set(p.x, hy, p.z);
+  obj.lzGrp.scale.setScalar(fs);
+  obj.lzGrp.rotation.x = (p.rot3d_x ?? 0) * Math.PI / 180;
+  obj.lzGrp.rotation.y = (p.rot3d_y ?? 0) * Math.PI / 180;
+  obj.lzGrp.rotation.z = (p.rot3d_z ?? 0) * Math.PI / 180;
+  obj.lzGrp.visible = _flags.fixtures;
+
+  // Ouverture en repère monde
+  _lzE.set(obj.lzGrp.rotation.x, obj.lzGrp.rotation.y, obj.lzGrp.rotation.z, 'YXZ');
+  _lzA.set(0.0, -0.1965, 0.07).multiplyScalar(fs).applyEuler(_lzE);
+  const ax = p.x + _lzA.x, ay = hy + _lzA.y, az = p.z + _lzA.z;
+
+  if (lvl > 0) {
+    _briBuf.copy(_colBuf).multiplyScalar(1.0 + lvl * 1.5);
+    obj.lzAperture.material.emissive.copy(_briBuf);
+    obj.lzAperture.material.emissiveIntensity = 1.0 + lvl * 3.0;
+  } else {
+    obj.lzAperture.material.emissive.set(0, 0, 0);
+    obj.lzAperture.material.emissiveIntensity = 0;
+  }
+
+  if (lvl <= 0.03) {
+    obj._lzSpin = 0;
+    obj.lzRays.visible = obj.lzDots.visible = false;
+    obj.lensGlow.visible = false;
+    obj.ptLight.visible = false;
+    return;
+  }
+
+  // Axe central : Pan dévie en X, Tilt en Z, puis l'accroche du boîtier.
+  const _pt = ptAngles(p);
+  _lzD.set(Math.sin(_pt.pan) * Math.cos(_pt.tilt),
+           -Math.cos(_pt.pan) * Math.cos(_pt.tilt),
+           Math.sin(_pt.tilt)).normalize().applyEuler(_lzE);
+  // Repère de l'ouverture : U horizontal, V complète le trièdre
+  _lzU.crossVectors(_lzD, _lzY);
+  if (_lzU.lengthSq() < 1e-6) _lzU.set(1, 0, 0);
+  _lzU.normalize();
+  _lzV.crossVectors(_lzU, _lzD).normalize();
+
+  // Ouverture du motif : le canal Zoom (taille) s'il existe, sinon ~14°,
+  // pondérée par la colonne « Angle » du tableau.
+  const _angF  = Math.max(0.1, p.beam_angle === undefined ? 1.0 : p.beam_angle);
+  const halfDeg = (p.has_zoom ? (3 + (p.zoom / 255) * 22) : 14) * _angF;
+  const spread = Math.tan(Math.min(80, halfDeg) * Math.PI / 180);
+  const motif  = Math.floor(((p.gobo || 0) / 256) * 8);
+  // Rotation, convention des lasers 10 canaux (notice du châssis) :
+  //   0-127   angle FIXE (0 → 360°)
+  //   128-191 rotation CONTINUE dans un sens, de plus en plus vite
+  //   192-255 rotation continue dans l'autre sens
+  // La partie continue avance image par image dans `_tickLasers()` : posée
+  // seulement à chaque trame Python, elle restait figée.
+  const rv = p.gobo_rotation || 0;
+  let rot;
+  if (rv < 128) {
+    obj._lzSpin = 0;
+    rot = (rv / 128) * Math.PI * 2;
+    obj._lzAng = rot;              // repart de l'angle affiché si on relance
+  } else {
+    const k = rv < 192 ? (rv - 127) / 64 : -(rv - 191) / 64;
+    obj._lzSpin = k * 3.0;         // rad/s, ~½ tour/s à fond
+    rot = obj._lzAng || 0;
+  }
+  obj._lzState = { p, lvl, r: _colBuf.r, g: _colBuf.g, b: _colBuf.b };
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  const pts = _laserPattern(motif);
+
+  const posR = obj.lzRays.geometry.attributes.position.array;
+  const colR = obj.lzRays.geometry.attributes.color.array;
+  const posD = obj.lzDots.geometry.attributes.position.array;
+  const colD = obj.lzDots.geometry.attributes.color.array;
+  const gain = window.beamGain * (p.beam_gain ?? 1.0);
+  const c0 = 1.8 * lvl * gain, c1 = 0.35 * lvl * gain;
+  let nDots = 0;
+  let sx = 0, sz = 0, nHit = 0;
+  for (let k = 0; k < pts.length; k++) {
+    const u = pts[k][0] * cr - pts[k][1] * sr;
+    const v = pts[k][0] * sr + pts[k][1] * cr;
+    _lzR.copy(_lzD).addScaledVector(_lzU, u * spread).addScaledVector(_lzV, v * spread).normalize();
+    // Jusqu'au sol s'il descend, sinon 15 m dans l'air.
+    let t = 15.0, hit = false;
+    if (_lzR.y < -0.02) { t = Math.min(25.0, (ay - 0.02) / -_lzR.y); hit = true; }
+    const ex = ax + _lzR.x * t, ey = ay + _lzR.y * t, ez = az + _lzR.z * t;
+    const k6 = k * 6;
+    posR[k6] = ax; posR[k6 + 1] = ay; posR[k6 + 2] = az;
+    posR[k6 + 3] = ex; posR[k6 + 4] = ey; posR[k6 + 5] = ez;
+    colR[k6]     = _colBuf.r * c0; colR[k6 + 1] = _colBuf.g * c0; colR[k6 + 2] = _colBuf.b * c0;
+    colR[k6 + 3] = _colBuf.r * c1; colR[k6 + 4] = _colBuf.g * c1; colR[k6 + 5] = _colBuf.b * c1;
+    if (hit) {
+      const d3 = nDots * 3;
+      posD[d3] = ex; posD[d3 + 1] = 0.03; posD[d3 + 2] = ez;
+      colD[d3] = _colBuf.r * 2.2 * lvl; colD[d3 + 1] = _colBuf.g * 2.2 * lvl; colD[d3 + 2] = _colBuf.b * 2.2 * lvl;
+      nDots++; sx += ex; sz += ez; nHit++;
+    }
+  }
+  obj.lzRays.geometry.setDrawRange(0, pts.length * 2);
+  obj.lzRays.geometry.attributes.position.needsUpdate = true;
+  obj.lzRays.geometry.attributes.color.needsUpdate = true;
+  obj.lzRays.visible = true;
+  obj.lzDots.geometry.setDrawRange(0, nDots);
+  obj.lzDots.geometry.attributes.position.needsUpdate = true;
+  obj.lzDots.geometry.attributes.color.needsUpdate = true;
+  obj.lzDots.visible = nDots > 0;
+
+  // Petite lueur à l'ouverture, pas le gros halo d'une lyre
+  obj.lensGlow.visible = true;
+  obj.lensGlow.position.set(ax, ay, az);
+  obj.lensGlow.scale.setScalar((0.10 + 0.18 * lvl) * window.beamScale);
+  obj.lensGlow.material.color.copy(_colBuf);
+  obj.lensGlow.material.opacity = Math.min(1.0, 0.9 * lvl * window.glowGain);
+
+  // Un laser éclaire très peu : une lueur discrète au centre des impacts
+  obj.ptLight.visible = nHit > 0;
+  if (nHit > 0) {
+    obj.ptLight.color.copy(_colBuf);
+    obj.ptLight.intensity = lvl * 1.2;
+    obj.ptLight.position.set(sx / nHit, 0.4, sz / nHit);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Inertie pan/tilt
 // ─────────────────────────────────────────────────────────────────────────────
 // Python ne pousse une trame que toutes les ~50 ms (le débounce de
@@ -2245,6 +2504,7 @@ window.updateScene = function(projectors, _anim) {
     if (p.is_pixel || p.is_master) {
       // Masquer les formes « fixture classique » de ce slot
       obj.parGrp.visible = obj.mhGrp.visible = false;
+      _hideLaser(obj);
       obj.cVol.visible = obj.lensGlow.visible = false;
       obj.pool.visible  = obj.halo.visible  = false;
       obj.ptLight.visible = false;
@@ -2312,6 +2572,7 @@ window.updateScene = function(projectors, _anim) {
     // vocabulaire des types de fixtures.
     if (p.machine) {
       obj.parGrp.visible = obj.mhGrp.visible = false;
+      _hideLaser(obj);
       obj.cVol.visible   = obj.lensGlow.visible = false;
       obj.pool.visible   = obj.halo.visible = false;
       for (let k = 0; k < obj.prismBeams.length; k++) {
@@ -2396,6 +2657,8 @@ window.updateScene = function(projectors, _anim) {
           g = _isSel ? 1.0 : p.g/255,
           b = _isSel ? 1.0 : p.b/255;
     _colBuf.setRGB(r, g, b);
+    if (p.fixture_type === 'Laser') { _updateLaser(obj, p, lvl); continue; }
+    _hideLaser(obj);
     const hy  = p.fixture_height ?? 7.0;
     const bf  = beamFloor(p);
     const { fx, fy, fz, lensX, lensY, lensZ, isMH, goingUp, hitsFloor } = bf;
@@ -2694,6 +2957,7 @@ window.updateScene = function(projectors, _anim) {
     o.pxGlow.visible = false;
     o.pxHalo.visible = false;
     o.pxHousing.visible = false;
+    _hideLaser(o);
     o._fx = null;
     // Sans ça, retirer une machine du patch laissait sa gerbe tourner dans le
     // vide : les particules ne vivent pas dans le groupe des corps, masquer
@@ -3349,6 +3613,7 @@ renderer.info.autoReset = false;
   // Particules des machines à effet : à la cadence d'AFFICHAGE, pas à celle
   // des trames Python. Une gerbe d'étincelles simulée à 25 Hz saccade.
   _tickMachines(_ptDt);
+  _tickLasers(_ptDt);
   for (let i = 0; i < _objs.length; i++) _orientPrism(_objs[i], _t);
   _selBlink(_t);
   if (_flags.bloom) {
@@ -3464,13 +3729,13 @@ function _makeLEDScreen(x, z, w, h) {
 const _screenGrp = new THREE.Group();
 scene.add(_screenGrp);
 
-// Retour vidéo coupé (case de l'onglet Scène) : les dalles du décor passent au
-// noir, celles qui n'existent QUE pour la vidéo (`siVideo` dans le preset)
-// disparaissent, et ce qu'elles remplaçaient (`userData.siPasVideo` sur un
-// accessoire — le néon de la cabine DJ mobile) revient à sa place.
+// Retour vidéo coupé (case de l'onglet Scène) : TOUTES les dalles disparaissent
+// du décor — un écran éteint n'a rien à faire dans l'aperçu, l'utilisateur ne
+// veut plus le voir. Ce que certaines remplaçaient (`userData.siPasVideo` sur
+// un accessoire — le néon de la cabine DJ mobile) revient à sa place.
 let _videoRetour = true;
 function _appliquerRetourVideo() {
-  _screenGrp.children.forEach(gr => { if (gr.userData.siVideo) gr.visible = _videoRetour; });
+  _screenGrp.children.forEach(gr => { gr.visible = _videoRetour; });
   _propsGrp.traverse(o => { if (o.userData.siPasVideo) o.visible = !_videoRetour; });
 }
 window.setVideoReturn = function (on) {

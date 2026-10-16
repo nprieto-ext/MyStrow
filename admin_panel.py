@@ -427,6 +427,30 @@ def _query_all_licenses(id_token: str) -> list:
     return results
 
 
+def _count_collection(collection: str, id_token: str) -> int:
+    """
+    Nombre de documents d'une collection, compté CÔTÉ SERVEUR
+    (runAggregationQuery) : une seule requête, sans rapatrier les documents —
+    la bibliothèque de fixtures en compte plusieurs centaines.
+    """
+    body = {"structuredAggregationQuery": {
+        "structuredQuery": {"from": [{"collectionId": collection}]},
+        "aggregations": [{"alias": "n", "count": {}}],
+    }}
+    req = urllib.request.Request(
+        _FS_BASE + ":runAggregationQuery", data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {id_token}",
+                 "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        rows = json.loads(resp.read().decode())
+    for row in rows:
+        n = (row.get("result", {}).get("aggregateFields", {})
+             .get("n", {}).get("integerValue"))
+        if n is not None:
+            return int(n)
+    return 0
+
+
 def _query_all_fixtures(id_token: str) -> list:
     """Charge tous les documents de la collection 'fixtures' dans Firestore."""
     results = []
@@ -490,6 +514,59 @@ def _query_fixture_submissions(id_token: str, status: str = "") -> list:
             break
     results.sort(key=lambda d: d.get("created_at", 0), reverse=True)
     return results
+
+
+# ── Profils « trop génériques » ──────────────────────────────────────────────
+# « lyre (amazon) | amazon », « colonne 2 », « Wash | Chinoise » : rien ne permet
+# à un autre utilisateur de reconnaître son appareil, ces profils ne peuvent pas
+# entrer dans la bibliothèque commune. Vocabulaire réglé sur la vraie file de
+# modération (oct. 2026) : il décrit un TYPE d'appareil, jamais un modèle.
+_GENERIC_WORDS = frozenset("""
+lyre lyres wash washs beam beams spot spots par pars parled led leds barre barres
+bar bars colonne colonnes projecteur projecteurs projo moving head heads light
+lights lumiere lumieres lampe lamp mini maxi new pro rgb rgbw rgba rgbwa rgbaw
+rgbwauv uv cob w ch dmx multipoints multipoint et and avec with fixe ambiance
+forme ronde stop boule panneau strobe stroboscope laser lasers fog brouillard
+lumineux fumee smoke machine zoom effet effets effect effects scan spider
+amazon china chine chinese chinois chinoise generic generique inconnu unknown
+moi brol test coucou fixture fixtures my mon ma mes the le la les de du des
+""".split())
+
+
+def _generic_tokens(s: str) -> list:
+    import unicodedata
+    s = unicodedata.normalize("NFD", s or "").encode("ascii", "ignore").decode().lower()
+    return [t for t in __import__("re").split(r"[^a-z0-9]+", s) if t]
+
+
+def _generic_token(t: str) -> bool:
+    import re
+    if t in _GENERIC_WORDS or len(t) == 1:
+        return True
+    # Caractéristiques, pas des modèles : 36w, 8ch, 8c, 18x, 8x15, 18x5000, (2)
+    return bool(re.fullmatch(r"\d+[a-z]{0,3}|\d+x\d*[a-z]{0,3}|x\d+[a-z]{0,3}", t))
+
+
+def _generic_fixture_reason(name: str, manufacturer: str) -> str | None:
+    """
+    Motif si le profil est trop générique pour être identifié, sinon None.
+
+    - fabricant générique (vide, « amazon », « colonne 2 », « PAR LED 36W ») ;
+    - ou nom générique (« Lyre Beam », « Wash ») sans numéro de modèle : un
+      vrai fabricant + « Maxi Spot 60 » reste identifiable, « ADJ » + « Lyre
+      Beam » ne l'est pas.
+    """
+    import re
+    nt, mt = _generic_tokens(name), _generic_tokens(manufacturer)
+    name_gen = all(_generic_token(t) for t in nt)
+    mfr_gen = (not mt) or all(_generic_token(t) for t in mt)
+    if mfr_gen and name_gen:
+        return "nom et fabricant génériques"
+    if mfr_gen:
+        return "fabricant générique"
+    if name_gen and not any(re.fullmatch(r"\d{2,}", t) for t in nt):
+        return "nom générique"
+    return None
 
 
 def _set_submission_status(doc_id: str, status: str, id_token: str,
@@ -3114,6 +3191,28 @@ class _FixtureEditDialog(QDialog):
 # SparklineWidget — graphique courbe custom
 # ---------------------------------------------------------------
 
+STATS_WINDOW_DAYS = 90
+
+
+def _daily_window(daily: dict, days: int = STATS_WINDOW_DAYS) -> list:
+    """
+    [(date_iso, n)] pour les `days` derniers jours UTC, aujourd'hui compris,
+    jours vides à 0.
+
+    Fenêtre COMMUNE aux trois courbes de la page Stats (visites, téléchargements,
+    abonnements) : chacune comblait auparavant à sa façon — abonnements sur 90 j,
+    visites depuis le premier jour non nul renvoyé par GA4, téléchargements sur
+    tout l'historique — si bien qu'un même jour ne tombait pas à la même
+    abscisse d'une courbe à l'autre.
+    """
+    import datetime as _dt
+    today = datetime.now(timezone.utc).date()
+    start = today - _dt.timedelta(days=days - 1)
+    return [((start + _dt.timedelta(days=i)).isoformat(),
+             daily.get((start + _dt.timedelta(days=i)).isoformat(), 0))
+            for i in range(days)]
+
+
 class _SparklineWidget(QWidget):
     """Affiche une courbe d'activité journalière avec area fill (QPainter)."""
 
@@ -3248,6 +3347,240 @@ class _SparklineWidget(QWidget):
     def leaveEvent(self, e):
         from PySide6.QtWidgets import QToolTip
         QToolTip.hideText()
+
+
+_MOIS_COURTS = ("janv.", "févr.", "mars", "avr.", "mai", "juin",
+                "juil.", "août", "sept.", "oct.", "nov.", "déc.")
+_JOURS_COURTS = ("lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim.")
+
+
+def _fmt_int(n) -> str:
+    """1234 → « 1 234 » (espace fine insécable)."""
+    return f"{int(n):,}".replace(",", " ")
+
+
+class _ActivityChart(QWidget):
+    """
+    Visites, téléchargements et abonnements sur UN graphique, même axe des dates.
+
+    Les ordres de grandeur n'ont rien à voir (des dizaines de visites par jour,
+    quelques abonnements par mois) : sur une échelle commune les abonnements
+    seraient une ligne plate. Chaque série a donc sa PROPRE échelle verticale —
+    on compare des tendances, et les valeurs exactes sont dans l'infobulle.
+    Trois tracés distincts pour qu'on ne les confonde pas : zone (visites),
+    ligne (téléchargements), pics (abonnements, événements ponctuels).
+
+    Visites et téléchargements sont lissés sur 7 jours (moyenne glissante) :
+    au jour le jour la ligne zigzague et masque la tendance. L'infobulle donne
+    toujours la valeur BRUTE du jour.
+    """
+
+    SMOOTH_DAYS = 7
+    STEM_MAX = 0.40     # hauteur max des pics d'abonnements (fraction du graphe)
+
+    # clé, libellé, couleur, style de tracé
+    SERIES = (
+        ("visits", "Visites", "#2ecc71", "area"),
+        ("dl", "Téléchargements", "#3498db", "line"),
+        ("subs", "Abonnements", "#f5b041", "stem"),
+    )
+
+    totals_changed = Signal(str, int)   # clé, total sur la fenêtre
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = {k: [] for k, *_ in self.SERIES}
+        self._hidden = set()
+        self._hover = None          # index du jour survolé
+        self._geom = None           # (pad_l, draw_w, n) du dernier rendu
+        self.setMinimumHeight(250)
+        self.setMouseTracking(True)
+
+    # ── données ──────────────────────────────────────────────────────────
+    def set_series(self, key, data):
+        self._data[key] = list(data or [])
+        self.totals_changed.emit(key, sum(v for _, v in self._data[key]))
+        self.update()
+
+    def set_series_visible(self, key, visible):
+        (self._hidden.discard if visible else self._hidden.add)(key)
+        self.update()
+
+    def _dates(self):
+        # Toutes les séries partagent la même fenêtre (_daily_window) ; une
+        # série encore en chargement est vide, on prend la plus longue.
+        return max((d for d in self._data.values()), key=len, default=[])
+
+    # ── rendu ────────────────────────────────────────────────────────────
+    def paintEvent(self, event):
+        from PySide6.QtGui import (QPainter, QPainterPath, QLinearGradient,
+                                   QPen, QColor as QC)
+        from PySide6.QtCore import QRectF, QPointF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        W, H = self.width(), self.height()
+        pad_l, pad_r, pad_t, pad_b = 14, 14, 16, 28
+        draw_w, draw_h = W - pad_l - pad_r, H - pad_t - pad_b
+        base_y = pad_t + draw_h
+
+        days = self._dates()
+        n = len(days)
+        if not n:
+            self._geom = None
+            p.setPen(QC(TEXT_DIM))
+            p.drawText(self.rect(), Qt.AlignCenter, "Chargement des données…")
+            p.end()
+            return
+        self._geom = (pad_l, draw_w, n)
+
+        def x_of(i):
+            return pad_l + (i / max(n - 1, 1)) * draw_w
+
+        # Grille : 4 lignes discrètes, sans graduation (échelles propres)
+        p.setPen(QPen(QC("#1d1d1d"), 1))
+        for frac in (0.25, 0.5, 0.75, 1.0):
+            y = int(base_y - frac * draw_h * 0.9)
+            p.drawLine(pad_l, y, W - pad_r, y)
+        p.setPen(QPen(QC("#2a2a2a"), 1))
+        p.drawLine(pad_l, int(base_y), W - pad_r, int(base_y))
+
+        # Dates : le 1er et le 15 de chaque mois, repères stables d'un jour à l'autre
+        f = QFont("Segoe UI", 8)
+        p.setFont(f)
+        for i, (d, _v) in enumerate(days):
+            if d[8:10] in ("01", "15"):
+                x = x_of(i)
+                p.setPen(QPen(QC("#1a1a1a"), 1, Qt.DashLine))
+                p.drawLine(int(x), pad_t, int(x), int(base_y))
+                p.setPen(QC("#777777"))
+                lbl = f"{int(d[8:10])} {_MOIS_COURTS[int(d[5:7]) - 1]}"
+                p.drawText(QRectF(x - 30, base_y + 6, 60, 16), Qt.AlignCenter, lbl)
+
+        ys = {}   # clé -> [y par jour], pour le survol
+        for key, _lbl, color, style in self.SERIES:
+            vals = [v for _, v in self._data[key]]
+            if key in self._hidden or len(vals) != n:
+                continue
+            if style != "stem":
+                k = self.SMOOTH_DAYS
+                vals = [sum(vals[max(0, i - k + 1):i + 1]) / (i - max(0, i - k + 1) + 1)
+                        for i in range(n)]
+            vmax = max(vals) or 1
+            top = self.STEM_MAX if style == "stem" else 0.9
+            y_of = [base_y - (v / vmax) * draw_h * top for v in vals]
+            ys[key] = y_of
+            col = QC(color)
+            if style == "stem":
+                p.setPen(QPen(col, 1.6, Qt.SolidLine, Qt.RoundCap))
+                for i, v in enumerate(vals):
+                    if v > 0:
+                        p.drawLine(QPointF(x_of(i), base_y), QPointF(x_of(i), y_of[i]))
+                p.setPen(Qt.NoPen)
+                p.setBrush(col)
+                for i, v in enumerate(vals):
+                    if v > 0:
+                        p.drawEllipse(QPointF(x_of(i), y_of[i]), 3.2, 3.2)
+                continue
+            line = QPainterPath()
+            line.moveTo(x_of(0), y_of[0])
+            for i in range(1, n):
+                line.lineTo(x_of(i), y_of[i])
+            if style == "area":
+                area = QPainterPath(line)
+                area.lineTo(x_of(n - 1), base_y)
+                area.lineTo(x_of(0), base_y)
+                area.closeSubpath()
+                g = QLinearGradient(0, pad_t, 0, base_y)
+                c0 = QC(color); c0.setAlpha(80)
+                c1 = QC(color); c1.setAlpha(0)
+                g.setColorAt(0.0, c0)
+                g.setColorAt(1.0, c1)
+                p.fillPath(area, g)
+            p.setPen(QPen(col, 2 if style == "line" else 1.6,
+                          Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(line)
+
+        # ── Survol : repère vertical + infobulle avec les 3 valeurs ─────
+        h = self._hover
+        if h is not None and 0 <= h < n:
+            x = x_of(h)
+            p.setPen(QPen(QC("#555555"), 1))
+            p.drawLine(QPointF(x, pad_t), QPointF(x, base_y))
+            for key, _lbl, color, _s in self.SERIES:
+                if key in ys:
+                    p.setPen(QPen(QC(BG_PANEL), 2))
+                    p.setBrush(QC(color))
+                    p.drawEllipse(QPointF(x, ys[key][h]), 4.5, 4.5)
+
+            import datetime as _dt
+            d = _dt.date.fromisoformat(days[h][0])
+            rows = [(f"{_JOURS_COURTS[d.weekday()]} {d.day} "
+                     f"{_MOIS_COURTS[d.month - 1]} {d.year}", None, None)]
+            for key, lbl, color, _s in self.SERIES:
+                if key in self._hidden:
+                    continue
+                serie = self._data[key]
+                val = _fmt_int(serie[h][1]) if len(serie) == n else "—"
+                rows.append((lbl, val, color))
+            fb = QFont("Segoe UI", 9, QFont.Bold)
+            fn = QFont("Segoe UI", 9)
+            bw, lh = 196, 20
+            bh = 12 + lh * len(rows)
+            bx = x + 14 if x + 14 + bw < W - 4 else x - 14 - bw
+            by = pad_t + 4
+            box = QRectF(bx, by, bw, bh)
+            p.setPen(QPen(QC("#333333"), 1))
+            p.setBrush(QC("#1b1b1b"))
+            p.drawRoundedRect(box, 7, 7)
+            for k, (lbl, val, color) in enumerate(rows):
+                ty = by + 6 + k * lh
+                if color is None:
+                    p.setFont(fb)
+                    p.setPen(QC(TEXT))
+                    p.drawText(QRectF(bx + 12, ty, bw - 24, lh), Qt.AlignVCenter, lbl)
+                    continue
+                p.setPen(Qt.NoPen)
+                p.setBrush(QC(color))
+                p.drawEllipse(QPointF(bx + 16, ty + lh / 2), 4, 4)
+                p.setFont(fn)
+                p.setPen(QC(TEXT_DIM))
+                p.drawText(QRectF(bx + 28, ty, bw - 40, lh), Qt.AlignVCenter, lbl)
+                p.setFont(fb)
+                p.setPen(QC(TEXT))
+                p.drawText(QRectF(bx + 28, ty, bw - 40, lh),
+                           Qt.AlignVCenter | Qt.AlignRight, val)
+        p.end()
+
+    # ── survol ───────────────────────────────────────────────────────────
+    def mouseMoveEvent(self, e):
+        if not self._geom:
+            return
+        pad_l, draw_w, n = self._geom
+        x = e.position().x()
+        i = round((x - pad_l) / max(draw_w, 1) * max(n - 1, 1))
+        i = max(0, min(n - 1, i))
+        if i != self._hover:
+            self._hover = i
+            self.update()
+
+    def leaveEvent(self, e):
+        self._hover = None
+        self.update()
+
+
+class _SeriesFeed:
+    """
+    Relais `set_data()` vers une série du graphique combiné : les chargeurs
+    (GA4, Firestore, licences) écrivent toujours dans `_visits_sparkline`,
+    `_dl_sparkline` et `_sparkline` sans savoir qu'il n'y a plus qu'un dessin.
+    """
+
+    def __init__(self, chart, key):
+        self._chart, self._key = chart, key
+
+    def set_data(self, data):
+        self._chart.set_series(self._key, data)
 
 
 # ---------------------------------------------------------------
@@ -3442,6 +3775,7 @@ class AdminPanel(QMainWindow):
         self._load_github_downloads()
         self._load_firestore_downloads()
         self._load_ga4_visits()
+        self._load_fixture_count()
 
         # Rafraîchissement automatique du token toutes les 50 min (expire à 60 min)
         self._token_timer = QTimer(self)
@@ -3853,7 +4187,7 @@ class AdminPanel(QMainWindow):
         btn_ref = QPushButton("↺  Actualiser")
         btn_ref.setFixedHeight(28)
         btn_ref.setStyleSheet(_BTN_SECONDARY)
-        btn_ref.clicked.connect(lambda: (self._load_clients(), self._load_github_downloads(), self._load_firestore_downloads(), self._load_ga4_visits()))
+        btn_ref.clicked.connect(lambda: (self._load_clients(), self._load_github_downloads(), self._load_firestore_downloads(), self._load_ga4_visits(), self._load_fixture_count()))
         hdr_lay.addWidget(btn_ref)
         root.addWidget(hdr)
 
@@ -3870,25 +4204,87 @@ class AdminPanel(QMainWindow):
         root.addWidget(scroll, 1)
 
         # ── EN HAUT : courbes jour après jour (téléchargements + abonnements) ──
-        def _curve_card(title, widget):
-            c = QFrame()
-            c.setStyleSheet(f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
-            cl = QVBoxLayout(c)
-            cl.setContentsMargins(16, 14, 16, 14)
-            cl.setSpacing(8)
-            tt = QLabel(title)
-            tt.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            tt.setStyleSheet(f"color:{TEXT}; background:transparent;")
-            cl.addWidget(tt)
-            cl.addWidget(widget, 1)
-            return c
+        # Une seule carte pour les 3 séries : même axe des dates, légende
+        # cliquable (masquer / afficher une série) qui porte le total.
+        self._activity_chart = _ActivityChart()
+        act_card = QFrame()
+        act_card.setObjectName("actCard")
+        act_card.setStyleSheet(
+            f"QFrame#actCard {{ background:{BG_PANEL}; border-radius:10px;"
+            f" border:1px solid #222; }}")
+        acl = QVBoxLayout(act_card)
+        acl.setContentsMargins(18, 14, 18, 12)
+        acl.setSpacing(10)
 
-        self._visits_sparkline = _SparklineWidget(color="#2ecc71")
-        inner_lay.addWidget(_curve_card("Visites du site par jour", self._visits_sparkline))
-        self._dl_sparkline = _SparklineWidget(color="#3498db")
-        inner_lay.addWidget(_curve_card("Téléchargements par jour", self._dl_sparkline))
-        self._sparkline = _SparklineWidget(color=ACCENT)
-        inner_lay.addWidget(_curve_card("Abonnements par jour", self._sparkline))
+        act_hdr = QHBoxLayout()
+        act_hdr.setSpacing(8)
+        act_tt = QVBoxLayout()
+        act_tt.setSpacing(0)
+        _t = QLabel("Activité")
+        _t.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        _t.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        _st = QLabel(f"{STATS_WINDOW_DAYS} derniers jours · courbes lissées sur 7 jours,"
+                     " chacune à sa propre échelle")
+        _st.setStyleSheet("color:#666; font-size:11px; background:transparent;")
+        act_tt.addWidget(_t)
+        act_tt.addWidget(_st)
+        act_hdr.addLayout(act_tt)
+        act_hdr.addStretch()
+
+        self._act_chips = {}
+        for key, lbl, color, _style in _ActivityChart.SERIES:
+            chip = QPushButton()
+            chip.setCheckable(True)
+            chip.setChecked(True)
+            chip.setCursor(Qt.PointingHandCursor)
+            chip.setFixedHeight(30)
+            chip.setToolTip("Cliquer pour masquer / afficher la courbe")
+            # rgba() et non « #RRGGBBAA » : Qt lit les 8 chiffres en #AARRGGBB
+            _r, _g, _b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+            chip.setStyleSheet(
+                "QPushButton { background:#181818; color:#555; border:1px solid #262626;"
+                " border-radius:15px; padding:0 14px; font-size:12px; text-align:left; }"
+                f"QPushButton:checked {{ color:{TEXT}; border-color:rgba({_r},{_g},{_b},90);"
+                f" background:rgba({_r},{_g},{_b},22); }}"
+                "QPushButton:hover { border-color:#444; }")
+            chip._lbl, chip._color = lbl, color
+
+            def _dot(col):
+                from PySide6.QtGui import QPixmap, QPainter, QIcon
+                pm = QPixmap(10, 10)
+                pm.fill(Qt.transparent)
+                pt = QPainter(pm)
+                pt.setRenderHint(QPainter.Antialiasing)
+                pt.setPen(Qt.NoPen)
+                pt.setBrush(QColor(col))
+                pt.drawEllipse(1, 1, 8, 8)
+                pt.end()
+                return QIcon(pm)
+            chip._ic_on, chip._ic_off = _dot(color), _dot("#3a3a3a")
+
+            def _chip_text(c=chip, total=None):
+                c.setIcon(c._ic_on if c.isChecked() else c._ic_off)
+                c.setText(f" {c._lbl}" + (f"   {_fmt_int(total)}" if total is not None else ""))
+                c._total = total
+            chip._render = _chip_text
+            _chip_text()
+            chip.toggled.connect(lambda on, k=key, c=chip: (
+                self._activity_chart.set_series_visible(k, on), c._render(c, c._total)))
+            act_hdr.addWidget(chip)
+            self._act_chips[key] = chip
+        acl.addLayout(act_hdr)
+        acl.addWidget(self._activity_chart, 1)
+
+        def _on_total(key, total):
+            c = self._act_chips.get(key)
+            if c is not None:
+                c._render(c, total)
+        self._activity_chart.totals_changed.connect(_on_total)
+        inner_lay.addWidget(act_card)
+
+        self._visits_sparkline = _SeriesFeed(self._activity_chart, "visits")
+        self._dl_sparkline = _SeriesFeed(self._activity_chart, "dl")
+        self._sparkline = _SeriesFeed(self._activity_chart, "subs")
 
         # ── Ligne 1 : KPI cards ───────────────────────────────────────────────
         kpi_row = QHBoxLayout()
@@ -3952,13 +4348,11 @@ class AdminPanel(QMainWindow):
         kpi_row2.setSpacing(12)
         card, self._stat_new_month  = _kpi("★",  "Nouveaux ce mois",     "#3498db")
         kpi_row2.addWidget(card)
-        card, self._stat_growth     = _kpi("↑",  "Croissance MoM",       "#2ecc71")
+        card, self._stat_fixtures   = _kpi("◈",  "Fixtures (bibliothèque)", "#9b6bd6")
         kpi_row2.addWidget(card)
         card, self._stat_avg_mach   = _kpi("∅",  "Moy. machines/lic",    TEXT_DIM)
         kpi_row2.addWidget(card)
         card, self._stat_paid       = _kpi("$",  "Licences payées",      "#635bff")
-        kpi_row2.addWidget(card)
-        card, self._stat_newsletter = _kpi("✉",  "Newsletter",           "#2ecc71")
         kpi_row2.addWidget(card)
         card, self._stat_releases_month = _kpi("⬆", "Releases ce mois",    "#e67e22")
         kpi_row2.addWidget(card)
@@ -4089,18 +4483,13 @@ class AdminPanel(QMainWindow):
         active = expiring = expired = machines = 0
         active_subs = 0          # abonnements récurrents en cours (hors manuel / à vie)
         subs_monthly = subs_annual = subs_lifetime = 0   # répartition affichée sous le KPI
-        stripe_count = newsletter_count = 0
+        stripe_count = 0
         plan_counts: dict = {"lifetime": 0, "annual": 0, "monthly": 0,
                              "stripe": 0, "manuel": 0}
         daily_30: dict = defaultdict(int)   # date_str -> nb inscriptions (30j)
         daily_90: dict = defaultdict(int)   # date_str -> nb inscriptions (90j)
         new_this_month = 0
-        new_last_month = 0
         first_of_month = today.replace(day=1)
-        import calendar
-        prev_month_end   = first_of_month
-        prev_month_start = (prev_month_end.replace(day=1) -
-                            __import__('datetime').timedelta(days=1)).replace(day=1)
 
         clients_with_date = []
 
@@ -4140,8 +4529,6 @@ class AdminPanel(QMainWindow):
                 stripe_count += 1
             else:
                 plan_counts["manuel"] += 1
-            if c.get("newsletter_consent"):
-                newsletter_count += 1
             created = c.get("created_utc")
             if created:
                 try:
@@ -4153,8 +4540,6 @@ class AdminPanel(QMainWindow):
                         daily_90[d.isoformat()] += 1
                     if d >= first_of_month:
                         new_this_month += 1
-                    elif prev_month_start <= d < prev_month_end:
-                        new_last_month += 1
                     clients_with_date.append((d, c))
                 except Exception:
                     pass
@@ -4195,21 +4580,10 @@ class AdminPanel(QMainWindow):
         # ── KPI ligne 2 ──────────────────────────────────────────────────────
         self._stat_new_month.setText(str(new_this_month))
 
-        if new_last_month > 0:
-            growth = int((new_this_month - new_last_month) / new_last_month * 100)
-            sign = "+" if growth >= 0 else ""
-            color = "#2ecc71" if growth >= 0 else "#e74c3c"
-            self._stat_growth.setText(f"{sign}{growth}%")
-            self._stat_growth.setStyleSheet(
-                f"color:{color}; background:transparent; font-size:22px; font-weight:bold;")
-        else:
-            self._stat_growth.setText("—")
-
         avg_mach = f"{machines / total:.1f}" if total else "—"
         self._stat_avg_mach.setText(avg_mach)
 
         self._stat_paid.setText(str(stripe_count))
-        self._stat_newsletter.setText(str(newsletter_count))
 
         # ── Barres plans ─────────────────────────────────────────────────────
         max_plan = max(plan_counts.values(), default=1) or 1
@@ -4263,14 +4637,7 @@ class AdminPanel(QMainWindow):
 
         # ── Sparkline 90j ────────────────────────────────────────────────────
         if daily_90:
-            import datetime as _dt
-            start_90 = today - _dt.timedelta(days=89)
-            all_days = []
-            cur = start_90
-            while cur <= today:
-                all_days.append((cur.isoformat(), daily_90.get(cur.isoformat(), 0)))
-                cur += _dt.timedelta(days=1)
-            self._sparkline.set_data(all_days)
+            self._sparkline.set_data(_daily_window(daily_90))
         else:
             self._sparkline.set_data([])
 
@@ -4344,6 +4711,22 @@ class AdminPanel(QMainWindow):
         _run_async(self, _fetch, on_success=_on_releases,
                    on_error=lambda _: self._stat_downloads.setText("—"))
 
+    def _load_fixture_count(self):
+        """Tuile « Fixtures (bibliothèque) » : taille de gdtf_fixtures, comptée
+        côté serveur (pas besoin d'ouvrir la page Fixtures)."""
+        if not hasattr(self, "_stat_fixtures"):
+            return
+
+        def _ok(n):
+            self._stat_fixtures.setText(f"{int(n):,}".replace(",", " "))
+
+        def _err(msg):
+            print(f"[stats] comptage des fixtures impossible : {msg}")
+            self._stat_fixtures.setText("—")
+
+        _run_async(self, _count_collection, "gdtf_fixtures", self._token(),
+                   on_success=_ok, on_error=_err)
+
     def _load_ga4_visits(self):
         """Charge les visites du site par jour (GA4 via la Cloud Function) → courbe Stats."""
         if not hasattr(self, "_visits_sparkline"):
@@ -4365,25 +4748,8 @@ class AdminPanel(QMainWindow):
             if not raw:
                 self._visits_sparkline.set_data([])
                 return
-            # GA4 omet les jours à 0 → on comble pour un axe temps régulier
-            series = sorted(raw.items())
-            try:
-                import datetime as _dt
-                d0   = _dt.date.fromisoformat(series[0][0])
-                d1   = datetime.now(timezone.utc).date()
-                last = _dt.date.fromisoformat(series[-1][0])
-                if last > d1:
-                    d1 = last
-                filled, cur = [], d0
-                while cur <= d1:
-                    k = cur.isoformat()
-                    filled.append((k, raw.get(k, 0)))
-                    cur += _dt.timedelta(days=1)
-                if filled:
-                    series = filled
-            except Exception:
-                pass
-            self._visits_sparkline.set_data(series)
+            # GA4 omet les jours à 0 → fenêtre commune aux 3 courbes
+            self._visits_sparkline.set_data(_daily_window(raw))
 
         def _on_err(msg):
             print(f"[ga4_visits] {msg}")
@@ -4496,32 +4862,11 @@ class AdminPanel(QMainWindow):
                 daily[d] += 1
             self._dl_daily_bars.set_data(sorted(daily.items()))
 
-            # Courbe « Téléchargements par jour » de la page Stats.
-            # Base = EXACTEMENT les mêmes données que l'histogramme (sorted(daily.items())).
-            # On tente de combler les jours vides (axe temps régulier), mais en cas de
-            # moindre souci on retombe sur les données brutes → la courbe n'est JAMAIS
-            # vide alors que l'histogramme, lui, contient des données.
+            # Courbe « Téléchargements par jour » de la page Stats : même
+            # fenêtre que les visites et les abonnements (l'histogramme
+            # ci-dessus, lui, garde tout l'historique).
             if hasattr(self, "_dl_sparkline"):
-                items = sorted(daily.items())
-                series = items
-                try:
-                    import datetime as _dt
-                    d0 = _dt.date.fromisoformat(items[0][0])
-                    d1 = datetime.now(timezone.utc).date()
-                    last = _dt.date.fromisoformat(items[-1][0])
-                    if last > d1:
-                        d1 = last
-                    filled = []
-                    cur = d0
-                    while cur <= d1:
-                        k = cur.isoformat()
-                        filled.append((k, daily.get(k, 0)))
-                        cur += _dt.timedelta(days=1)
-                    if filled:
-                        series = filled
-                except Exception:
-                    series = items
-                self._dl_sparkline.set_data(series)
+                self._dl_sparkline.set_data(_daily_window(daily))
 
         def _on_error(msg: str):
             self._dl_stats_lbl.setText(f"Erreur : {msg[:120]}")
@@ -4792,6 +5137,18 @@ class AdminPanel(QMainWindow):
 
         mt_lay.addStretch()
 
+        # Nettoyage en un clic des profils impossibles à identifier
+        # (« lyre (amazon) », « colonne 2 », « Wash ») — fixtures seulement.
+        self._btn_mod_generic = QPushButton("🧹  Profils trop génériques…")
+        self._btn_mod_generic.setStyleSheet(_BTN_SECONDARY)
+        self._btn_mod_generic.setFixedHeight(30)
+        self._btn_mod_generic.setToolTip(
+            "Repère les contributions en attente dont le nom ou le fabricant ne\n"
+            "permet pas d'identifier l'appareil, et les refuse en lot après\n"
+            "confirmation (la liste est cochable).")
+        self._btn_mod_generic.clicked.connect(self._on_mod_reject_generic)
+        mt_lay.addWidget(self._btn_mod_generic)
+
         btn_mod_refresh = QPushButton("↻  Actualiser")
         btn_mod_refresh.setStyleSheet(_BTN_SECONDARY)
         btn_mod_refresh.setFixedHeight(30)
@@ -4907,6 +5264,7 @@ class AdminPanel(QMainWindow):
 
     def _on_mod_kind_changed(self):
         kind = self._mod_kind_now()
+        self._btn_mod_generic.setVisible(kind == "fixture")
         cached = self._submissions_by_kind.get(kind)
         if cached is None:
             self._load_submissions()
@@ -5391,6 +5749,10 @@ class AdminPanel(QMainWindow):
             self._REJECT_REASONS.get(kind, []), 0, True)
         if not ok:
             return
+        self._mod_reject_docs(subs, reason.strip(), kind)
+
+    def _mod_reject_docs(self, subs: list, reason: str, kind: str):
+        """Refuse un lot de contributions (statut « rejected » + motif)."""
         setter = (_set_controller_submission_status if kind == "controller"
                   else _set_submission_status)
         docs = [(s.get("_doc_id", ""), s.get("name", "")) for s in subs]
@@ -5408,10 +5770,109 @@ class AdminPanel(QMainWindow):
 
         self._mod_set_busy(f"Refus de {len(subs)} contribution(s)…")
         _run_async(
-            self, _reject_all, docs, self._token(), reason.strip(),
+            self, _reject_all, docs, self._token(), reason,
             on_success=lambda res: self._on_mod_batch_done(res, "rejected"),
             on_error=self._on_mod_action_error,
         )
+
+    def _on_mod_reject_generic(self):
+        """
+        Liste les contributions en attente trop génériques pour être
+        identifiées, toutes cochées, et les refuse en un clic. Rien ne part
+        sans cette confirmation : la règle se trompe parfois (une vraie marque
+        avec un nom vague), d'où la liste à décocher.
+        """
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        if "fixture" not in self._submissions_by_kind:
+            QMessageBox.information(self, "Profils trop génériques",
+                                    "La file n'est pas encore chargée : réessayez "
+                                    "dans un instant.")
+            return
+        cands = []
+        for s in (self._submissions_by_kind.get("fixture") or []):
+            if s.get("status") != "pending":
+                continue
+            why = _generic_fixture_reason(s.get("name", ""), s.get("manufacturer", ""))
+            if why:
+                cands.append((s, why))
+        if not cands:
+            QMessageBox.information(self, "Profils trop génériques",
+                                    "Aucune contribution en attente n'est trop générique.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Profils trop génériques")
+        dlg.resize(640, 560)
+        dlg.setStyleSheet(f"QDialog {{ background:{BG_MAIN}; }}"
+                          f" QLabel {{ color:{TEXT}; }}")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(10)
+        intro = QLabel(
+            f"<b>{len(cands)} contribution(s)</b> en attente ne permettent pas "
+            "d'identifier l'appareil. Décochez celles à garder, puis refusez les "
+            "autres en une fois.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        lst = QListWidget()
+        lst.setStyleSheet(
+            f"QListWidget {{ background:{BG_INPUT}; color:{TEXT}; border:1px solid #2a2a2a;"
+            " border-radius:6px; font-size:12px; }"
+            " QListWidget::item { padding:5px 6px; border-bottom:1px solid #1e1e1e; }")
+        for s, why in cands:
+            mfr = s.get("manufacturer") or "—"
+            it = QListWidgetItem(f"{s.get('name', '')}   ·   {mfr}      ({why})")
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked)
+            it.setData(Qt.UserRole, s)
+            lst.addItem(it)
+        lay.addWidget(lst, 1)
+
+        row = QHBoxLayout()
+        btn_all = QPushButton("Tout cocher")
+        btn_none = QPushButton("Tout décocher")
+        for b, state in ((btn_all, Qt.Checked), (btn_none, Qt.Unchecked)):
+            b.setStyleSheet(_BTN_SECONDARY)
+            b.setFixedHeight(30)
+            b.clicked.connect(lambda _=False, st=state: [
+                lst.item(i).setCheckState(st) for i in range(lst.count())])
+            row.addWidget(b)
+        row.addStretch()
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setStyleSheet(_BTN_SECONDARY)
+        btn_cancel.setFixedHeight(32)
+        btn_cancel.clicked.connect(dlg.reject)
+        row.addWidget(btn_cancel)
+        btn_go = QPushButton()
+        btn_go.setFixedHeight(32)
+        btn_go.setStyleSheet(f"""
+            QPushButton {{ background:{RED}; color:white; border:none; border-radius:4px;
+                          font-size:12px; font-weight:bold; padding:0 16px; }}
+            QPushButton:disabled {{ background:#3a2020; color:#777; }}
+        """)
+        btn_go.clicked.connect(dlg.accept)
+        row.addWidget(btn_go)
+        lay.addLayout(row)
+
+        def _checked():
+            return [lst.item(i).data(Qt.UserRole) for i in range(lst.count())
+                    if lst.item(i).checkState() == Qt.Checked]
+
+        def _update_go(*_):
+            n = len(_checked())
+            btn_go.setText(f"✗  Refuser {n} profil(s)")
+            btn_go.setEnabled(n > 0)
+        lst.itemChanged.connect(_update_go)
+        _update_go()
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        subs = _checked()
+        if subs:
+            self._mod_reject_docs(
+                subs, "Trop générique : nom ou fabricant ne permettant pas "
+                      "d'identifier l'appareil", "fixture")
 
     def _mod_set_busy(self, text: str):
         self._btn_mod_approve.setEnabled(False)

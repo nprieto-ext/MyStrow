@@ -35,7 +35,7 @@ _LETTERS = "ABCDEFGH"
 # port de _update_from_projectors_locked).
 _FIXTURE_KEYS = (
     "fixture_type", "manufacturer", "color_wheel_slots", "gobo_wheel_slots",
-    "channel_defaults", "shutter_inverted", "shutter_strobe_min",
+    "channel_defaults", "channel_ranges", "shutter_inverted", "shutter_strobe_min",
     "shutter_strobe_max", "ring_follow", "preset_slots",
     "pan_min", "pan_max", "tilt_min", "tilt_max", "pan_invert", "tilt_invert",
     "pan_tilt_swap", "pan_range", "tilt_range",
@@ -62,7 +62,7 @@ def _letter(group) -> str:
 
 
 def _is_lyre(fx: dict) -> bool:
-    return fx.get("fixture_type") in ("Moving Head", "Lyre") or "Pan" in (fx.get("profile") or [])
+    return fx.get("fixture_type") in ("Moving Head", "Lyre", "Laser") or "Pan" in (fx.get("profile") or [])
 
 
 def _read_json(path: Path, default):
@@ -104,6 +104,12 @@ def convert(patch: dict, akai: dict, custom_fx: list, library_fx: dict, assign_f
                 t[k] = f[k]
         if t.get("fixture_type") is None and "Pan" in profile:
             t["fixture_type"] = "Moving Head"
+        # Débattement RÉSOLU (défaut par type : un laser n'est pas une lyre
+        # 540/270) — la tablette n'a pas à refaire la règle.
+        from types import SimpleNamespace
+        from core import pan_tilt_ranges
+        t["pan_range"], t["tilt_range"] = pan_tilt_ranges(SimpleNamespace(**{
+            k: t.get(k) for k in ("fixture_type", "pan_range", "tilt_range")}))
         pc_to_tab[i] = len(fixtures)
         fixtures.append(t)
 

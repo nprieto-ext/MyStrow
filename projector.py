@@ -63,6 +63,10 @@ class Projector:
         # seul, ces plages declenchent reset, extinction de lampe, calibrations.
         self.mode_value       = 0
         self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
+        # Plage utile par canal, {ch_type: [min, max]} en DMX brut : brider un
+        # canal dont le haut de course lance un programme auto (cf.
+        # `core.channel_range`). Vide = aucun canal bridé.
+        self.channel_ranges   = {}
         # Contrôle brut prioritaire, à DEUX formes de clé :
         #   - str non numérique : un TYPE de canal ("Mode", "Reset"…). Tous les
         #     canaux de ce type reçoivent la valeur — c'est la forme historique.

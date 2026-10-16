@@ -911,7 +911,7 @@ function drawStage(projectors){
       stageCtx.fillStyle=grad; stageCtx.beginPath(); stageCtx.arc(px,py,R*3,0,Math.PI*2); stageCtx.fill();
     }
     const _ft=p.ftype||'';
-    if(p.is_lyre||_ft==='Moving Head'||_ft==='Lyre'){
+    if(p.is_lyre||_ft==='Moving Head'||_ft==='Lyre'||_ft==='Laser'){
       drawLyre(px,py,R,color,isLit,gcolor,p);
     }else if(_ft==='Barre LED'){
       drawBarre(px,py,R,color,isLit,gcolor);

@@ -2521,6 +2521,12 @@ class DmxOutputDialog(QDialog):
             return transport
         return transport if self._usb_port_available(dmx) else TRANSPORT_ARTNET
 
+    def _ouvrir_materiel(self, _lien=None):
+        # Import tardif : updater importe déjà beaucoup, inutile de le charger
+        # pour une fenêtre que la plupart n'ouvriront jamais d'ici.
+        from updater import GearDialog
+        GearDialog(self).exec()
+
     # ── Construction UI ────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -2566,6 +2572,20 @@ class DmxOutputDialog(QDialog):
             " border-radius:5px; padding:5px 10px;"
         )
         content.addWidget(hint)
+
+        # Pas encore d'interface : c'est ICI qu'on le découvre, donc ici qu'on
+        # propose la nôtre. Ouvre la fenêtre Matériel (Pack en tête, interfaces
+        # tierces en dessous) plutôt qu'un lien Amazon nu.
+        pack = QLabel(tr("nc_pack_hint"))
+        pack.setAlignment(Qt.AlignCenter)
+        pack.setWordWrap(True)
+        pack.setCursor(QCursor(Qt.PointingHandCursor))
+        pack.setStyleSheet(
+            "color:#E2CE16; font-size:11px; background:#1a1700;"
+            " border:1px solid rgba(226,206,22,0.35); border-radius:5px; padding:5px 10px;"
+        )
+        pack.linkActivated.connect(self._ouvrir_materiel)
+        content.addWidget(pack)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)

@@ -366,7 +366,7 @@ class ColorWheelEditorDialog(QDialog):
         # Compter les autres Moving Head du même type
         _mh_others = [
             p for p in all_projectors
-            if p is not proj and getattr(p, 'fixture_type', '') == "Moving Head"
+            if p is not proj and getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
         ]
         _same_name = [
             p for p in _mh_others
@@ -482,7 +482,7 @@ class ColorWheelEditorDialog(QDialog):
         if self._chk_all.isChecked():
             targets += [
                 p for p in self._all_projectors
-                if p is not self._proj and getattr(p, 'fixture_type', '') == "Moving Head"
+                if p is not self._proj and getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
             ]
         elif self._chk_same and self._chk_same.isChecked():
             base = (self._proj.name or self._proj.group).rsplit(" ", 1)[0]
@@ -490,7 +490,7 @@ class ColorWheelEditorDialog(QDialog):
                 p for p in self._all_projectors
                 if p is not self._proj
                 and (p.name or "").rsplit(" ", 1)[0] == base
-                and getattr(p, 'fixture_type', '') == "Moving Head"
+                and getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
             ]
 
         for p in targets:
@@ -670,7 +670,7 @@ class GoboWheelEditorDialog(QDialog):
 
         _mh_others = [
             p for p in all_projectors
-            if p is not proj and getattr(p, 'fixture_type', '') == "Moving Head"
+            if p is not proj and getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
         ]
         _same_name = [
             p for p in _mh_others
@@ -772,7 +772,7 @@ class GoboWheelEditorDialog(QDialog):
         if self._chk_all.isChecked():
             targets += [
                 p for p in self._all_projectors
-                if p is not self._proj and getattr(p, 'fixture_type', '') == "Moving Head"
+                if p is not self._proj and getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
             ]
         elif self._chk_same and self._chk_same.isChecked():
             base = (self._proj.name or self._proj.group).rsplit(" ", 1)[0]
@@ -780,7 +780,7 @@ class GoboWheelEditorDialog(QDialog):
                 p for p in self._all_projectors
                 if p is not self._proj
                 and (p.name or "").rsplit(" ", 1)[0] == base
-                and getattr(p, 'fixture_type', '') == "Moving Head"
+                and getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
             ]
 
         for p in targets:
@@ -1232,7 +1232,7 @@ class ColorWheelCalibWizard(QDialog):
         targets = [
             p for p in self._all_projectors
             if (p.name or "").rsplit(" ", 1)[0] == base
-            and getattr(p, 'fixture_type', '') == "Moving Head"
+            and getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
         ]
         if not targets:
             targets = [self._proj]

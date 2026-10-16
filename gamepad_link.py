@@ -67,7 +67,7 @@ CIBLE_TOUTES    = "toutes"
 # les deux valeurs ci-dessus si un jour quelqu'un nomme un groupe « toutes ».
 CIBLE_GROUPE    = "group:"
 
-_TYPES_LYRE = ("Moving Head", "Lyre")
+_TYPES_LYRE = ("Moving Head", "Lyre", "Laser")
 
 
 # ---------------------------------------------------------------------------

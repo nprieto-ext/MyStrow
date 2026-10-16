@@ -2893,7 +2893,7 @@ class LiveModePanel(QWidget):
 
     def adapt_to_fixtures(self, projectors):
         """Adapte les onglets et couleurs selon les fixtures patchées."""
-        has_moving = any(getattr(p, 'fixture_type', '') == 'Moving Head'    for p in projectors)
+        has_moving = any(getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')    for p in projectors)
         has_led    = any(getattr(p, 'fixture_type', '') in (
             'PAR LED', 'Barre LED', 'Gradateur', 'Stroboscope') for p in projectors)
 
@@ -2931,7 +2931,7 @@ class LiveModePanel(QWidget):
             }
             wheel_keys = {'auto'}
             for p in projectors:
-                if getattr(p, 'fixture_type', '') == 'Moving Head':
+                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser'):
                     for slot in getattr(p, 'color_wheel_slots', []):
                         name = slot.get('name', '').lower().strip()
                         key = _NAME_MAP.get(name)
@@ -6449,7 +6449,7 @@ class Sequencer(QFrame):
             if not lyres_indices and hasattr(main_win, 'projectors'):
                 lyres_indices = [
                     i for i, p in enumerate(main_win.projectors)
-                    if getattr(p, 'fixture_type', '') == 'Moving Head'
+                    if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')
                 ]
             # Ces lyres sont sous contrôle Position → les séquences ne doivent pas
             # écraser leur pan/tilt (la piste Position prime).

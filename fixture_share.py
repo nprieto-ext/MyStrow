@@ -162,12 +162,15 @@ def _today() -> str:
 def load_share_state() -> dict:
     """
     {"day": "YYYY-MM-DD", "count": int, "sent": {fingerprint: timestamp},
-     "declined": {fingerprint: timestamp}}
+     "declined": {fingerprint: timestamp}, "ask_pref": "always"|"never"}
     Le compteur est remis à zéro dès que le jour change.
 
     `declined` retient les envois automatiques que l'utilisateur a annulés au
     bandeau : sans lui, le prochain enregistrement de la même fixture
     reproposerait exactement ce qu'il vient de refuser.
+
+    `ask_pref` retient la réponse donnée avec « Ne plus me demander » dans la
+    question posée à l'enregistrement d'un projecteur créé dans l'éditeur.
     """
     state = {"day": _today(), "count": 0, "sent": {}, "declined": {}}
     try:
@@ -175,7 +178,8 @@ def load_share_state() -> dict:
             loaded = json.loads(SHARE_STATE_FILE.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 state.update({k: loaded[k]
-                              for k in ("day", "count", "sent", "declined")
+                              for k in ("day", "count", "sent", "declined",
+                                        "ask_pref")
                               if k in loaded})
     except Exception:
         pass
@@ -264,6 +268,9 @@ def fixture_fingerprint(fixture: dict) -> str:
 _PAYLOAD_FIELDS = (
     "name", "manufacturer", "fixture_type", "group",
     "color_wheel_slots", "gobo_wheel_slots", "channel_defaults",
+    # Plage utile par canal : la partie « dangereuse » de l'appareil (haut de
+    # course qui lance un programme auto) doit voyager avec lui.
+    "channel_ranges",
     # Blocs de preset : c'est la CALIBRATION du partageur — les valeurs de macro
     # qu'il a relevées sur l'appareil, notice en main. Sans elles, celui qui
     # reçoit la fixture retrouve un canal de programme nu et doit tout refaire.
@@ -733,6 +740,13 @@ class ShareToast(QWidget):
         self.move(max(20, p.width() - w - 20), max(20, p.height() - self.height() - 20))
         self.raise_()
 
+    def start_now(self):
+        """Envoi immédiat, sans compte à rebours : l'utilisateur vient de
+        répondre « Partager » à la question, il n'y a rien à annuler."""
+        self._reposition()
+        self.show()
+        self._send()
+
     def start(self):
         self._lbl.setText(tr("fs_auto_pending", name=self._name(), s=self._left))
         self._reposition()
@@ -852,4 +866,107 @@ def auto_share(parent, fixtures: list, source_key: str = "perso"):
         return toast
     except Exception as e:
         print(f"[fixture_share] envoi automatique ignoré : {e}")
+        return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Question posée à l'enregistrement d'un projecteur créé dans l'éditeur
+# ──────────────────────────────────────────────────────────────────────────────
+
+_ASK_SS = """
+QDialog { background:#151515; }
+QLabel { color:#bbb; font-size:12px; background:transparent; }
+QCheckBox { color:#888; font-size:11px; spacing:8px; }
+QCheckBox::indicator { width:14px; height:14px; border:1px solid #555;
+    border-radius:3px; background:#1e1e1e; }
+QCheckBox::indicator:hover { border-color:#888; }
+QCheckBox::indicator:checked { background:#00d4ff; border-color:#00d4ff; }
+QPushButton { background:#1e1e1e; color:#bbb; border:1px solid #333;
+    border-radius:6px; font-size:12px; padding:7px 16px; }
+QPushButton:hover { border-color:#555; color:#fff; }
+QPushButton#shareYes { background:#0d2a33; color:#00d4ff; border-color:#00d4ff66;
+    font-weight:bold; }
+QPushButton#shareYes:hover { background:#123a46; border-color:#00d4ff; }
+"""
+
+
+def _share_parent(widget):
+    """Fenêtre qui a ouvert l'éditeur (Patch DMX, fenêtre principale…) : le
+    bandeau d'envoi doit survivre à la fermeture de l'éditeur, qui détruirait
+    sinon le thread d'envoi en plein vol. Pas la fenêtre racine : cachée
+    derrière le Patch, le bandeau y passerait inaperçu."""
+    return (widget.parentWidget() if widget is not None else None) or widget
+
+
+def ask_share(parent, fixtures: list, source_key: str = "perso"):
+    """
+    Demande s'il faut verser à la bibliothèque commune un projecteur créé dans
+    l'éditeur, avec « Ne plus me demander ». Remplace l'envoi automatique avec
+    compte à rebours : on ne partage plus rien sans un « oui » explicite (ou
+    un « oui » mémorisé).
+
+    Mêmes filtres que `auto_share` (provenance, déjà proposé ou refusé, quota,
+    compte connecté). Rend le bandeau d'envoi, ou None. Ne lève jamais.
+    """
+    try:
+        candidates = [f for f in (fixtures or [])
+                      if isinstance(f, dict) and f.get("name") and f.get("profile")]
+        if not candidates or not is_shareable(source_key):
+            return None
+        state = load_share_state()
+        seen  = set(state.get("sent", {})) | set(state.get("declined", {}))
+        candidates = [f for f in candidates if fixture_fingerprint(f) not in seen]
+        if not candidates or len(candidates) > remaining_quota():
+            return None
+        from license_manager import get_machine_id, _load_account
+        if not _load_account(get_machine_id()):
+            return None
+
+        pref = state.get("ask_pref")
+        if pref == "never":
+            return None
+        if pref != "always":
+            name = candidates[0].get("name", "")
+            dlg = QDialog(parent)
+            dlg.setWindowTitle(tr("fs_title"))
+            dlg.setStyleSheet(_ASK_SS)
+            dlg.setMinimumWidth(440)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(20, 18, 20, 16)
+            lay.setSpacing(12)
+            head = QLabel(tr("fs_ask_headline", name=name))
+            head.setWordWrap(True)
+            head.setStyleSheet("color:#fff; font-size:14px; font-weight:bold;")
+            lay.addWidget(head)
+            body = QLabel(tr("fs_ask_body"))
+            body.setWordWrap(True)
+            lay.addWidget(body)
+            chk = QCheckBox(tr("fs_ask_dont_ask"))
+            lay.addWidget(chk)
+            row = QHBoxLayout()
+            row.addStretch(1)
+            btn_no = QPushButton(tr("fs_keep_local"))
+            btn_no.clicked.connect(dlg.reject)
+            row.addWidget(btn_no)
+            btn_yes = QPushButton(tr("fs_ask_share"))
+            btn_yes.setObjectName("shareYes")
+            btn_yes.setDefault(True)
+            btn_yes.clicked.connect(dlg.accept)
+            row.addWidget(btn_yes)
+            lay.addLayout(row)
+
+            yes = dlg.exec() == QDialog.Accepted
+            if chk.isChecked():
+                state = load_share_state()
+                state["ask_pref"] = "always" if yes else "never"
+                save_share_state(state)
+            if not yes:
+                _record_declined([fixture_fingerprint(f) for f in candidates])
+                return None
+
+        toast = ShareToast(candidates, source_key, _share_parent(parent))
+        toast.start_now()
+        return toast
+    except Exception as e:
+        print(f"[fixture_share] proposition de partage ignorée : {e}")
         return None

@@ -4795,7 +4795,7 @@ class EffectEditorDialog(QDialog):
         # TOUTES les lyres (pas la liste filtrée) — même règle que le moteur live,
         # dont l'appariement de secours se fait par rang.
         _all_lyres = [p for p in _all_proj
-                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
         _presets = getattr(self._main_window, 'position_presets', []) or []
         _pos_centers = {}
         for _l in self._layers:
@@ -4817,7 +4817,7 @@ class EffectEditorDialog(QDialog):
                for _l in self._layers):
             from plan_de_feu import sym_mirror_ids as _sym_mirror_ids
             _lyres_fx = [p for p in projectors
-                         if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                         if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
             _mir = _sym_mirror_ids(_lyres_fx, _all_proj)
             for _l in self._layers:
                 if getattr(_l, 'sym_pan', False) or getattr(_l, 'sym_tilt', False):

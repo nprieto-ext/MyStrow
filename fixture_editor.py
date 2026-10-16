@@ -76,7 +76,7 @@ def _load_ofl_bundle() -> list:
 
 FIXTURE_FILE = Path.home() / ".mystrow_fixtures.json"
 
-FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
+FIXTURE_TYPES = ["PAR LED", "Moving Head", "Laser", "Barre LED", "Stroboscope",
                  "Machine a fumee", "Machine a brouillard",
                  "Machine a etincelles", "Lance-flamme", "Gradateur"]
 
@@ -207,6 +207,12 @@ _PRESETS_BY_TYPE = {
         ("Spot 8ch",  ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1", "Speed", "Mode"]),
         ("Spot 12ch", ["Pan", "PanFine", "Tilt", "TiltFine", "Speed", "ColorWheel", "Gobo1", "Gobo1Rot", "Prism", "PrismRot", "Shutter", "Dim"]),
         ("Beam 7ch",  ["Pan", "Tilt", "ColorWheel", "Gobo1", "Shutter", "Dim", "Speed"]),
+    ],
+    # Laser : le motif en `Gobo1`, la position en `Pan`/`Tilt`, le canal 1
+    # (extinction + mode) en `Preset1` — cf. artnet_dmx.DMX_PROFILES.
+    "Laser": [
+        ("Laser 5ch", ["Preset1", "Gobo1", "Pan", "Tilt", "Speed"]),
+        ("Laser 8ch", ["Preset1", "Gobo1", "Gobo1Rot", "Pan", "Tilt", "Zoom", "ColorWheel", "Speed"]),
     ],
     "Barre LED": [
         ("RGB",       ["R", "G", "B"]),
@@ -1780,8 +1786,6 @@ class FixtureEditorDialog(QDialog):
         if is_new:
             self.fixture_added.emit(data)
 
-        self._offer_auto_share(data)
-
         orig = self._btn_save.text()
         self._btn_save.setText(tr("fe2_saved"))
         self._btn_save.setEnabled(False)
@@ -1790,31 +1794,26 @@ class FixtureEditorDialog(QDialog):
             self._btn_save.setEnabled(True),
         ))
 
-    def _offer_auto_share(self, data: dict):
+        # Après le retour visuel « Enregistré » : la question vient par-dessus
+        # un enregistrement déjà acquis, jamais avant.
+        if is_new:
+            QTimer.singleShot(0, lambda d=dict(data): self._offer_share(d))
+
+    def _offer_share(self, data: dict):
         """
-        Verse une fixture fabriquée ici à la bibliothèque commune, sans rien
-        demander : le contributeur atteste de son propre travail, l'attestation
-        n'a donc rien à valider. Un bandeau non bloquant le prévient et lui
-        laisse 8 secondes pour annuler — le dialogue complet reste réservé aux
-        fichiers importés, dont la provenance est déclarative.
+        Propose de verser à la bibliothèque commune un projecteur créé ici
+        (question + « Ne plus me demander »). Seulement à la CRÉATION : poser la
+        question à chaque retouche d'une fixture existante serait du harcèlement.
 
         Rien n'est publié pour autant : la soumission attend la modération.
         """
         if data.get("origin_source") != "perso":
             return
         try:
-            from fixture_share import auto_share
-            # Un bandeau déjà en attente porte la version d'avant : l'utilisateur
-            # qui enregistre trois fois de suite en peaufinant ne doit pas
-            # envoyer les états intermédiaires, seulement le dernier.
-            if self._share_toast is not None:
-                try:
-                    self._share_toast.close()
-                except Exception:
-                    pass
-            self._share_toast = auto_share(self, [data])
+            from fixture_share import ask_share
+            self._share_toast = ask_share(self, [data])
         except Exception as e:
-            print(f"[fixture_editor] partage automatique ignoré : {e}")
+            print(f"[fixture_editor] proposition de partage ignorée : {e}")
 
     def _delete_fixture(self):
         self._delete_at(self._current_idx)

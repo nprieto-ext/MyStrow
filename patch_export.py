@@ -475,7 +475,17 @@ def _draw_picto(painter, cx, cy, r, ftype, color):
     painter.setPen(line)
     painter.setBrush(fill)
 
-    if ftype == "Moving Head":
+    if ftype == "Laser":
+        # Boîtier plat + fenêtre de sortie : pas d'étrier sur un laser.
+        hw, hh = r * 1.25, r * 0.78
+        painter.drawRoundedRect(QRectF(cx - hw, cy - hh, hw * 2, hh * 2),
+                                r * 0.14, r * 0.14)
+        painter.setBrush(QColor(color))
+        ww, wh = hw * 0.9, max(2.0, hh * 0.5)
+        painter.drawRoundedRect(QRectF(cx - ww / 2, cy + hh - wh - r * 0.12, ww, wh),
+                                wh * 0.3, wh * 0.3)
+
+    elif ftype == "Moving Head":
         lr = r * 1.35
         yoke_top_hw = lr * 0.88
         yoke_bot_hw = lr * 0.54

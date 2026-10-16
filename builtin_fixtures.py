@@ -5,7 +5,7 @@ Organisées par fabricant pour un accès rapide sans requête réseau.
 Format de chaque entrée :
     name          : str   — nom affiché
     manufacturer  : str   — marque / fabricant
-    fixture_type  : str   — "PAR LED" | "Moving Head" | "Barre LED"
+    fixture_type  : str   — "PAR LED" | "Moving Head" | "Laser" | "Barre LED"
                             | "Stroboscope" | "Gradateur"
                             | "Machine a fumee" | "Machine a brouillard"
                             | "Machine a etincelles" | "Lance-flamme"
@@ -462,11 +462,54 @@ BUILTIN_FIXTURES = [
      "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Générique (laser blanc « LASER SHOW SYSTEM », sans marque ni modele)
+    # ──────────────────────────────────────────────────────────────────────────
+    # LASER 10 canaux, 500 mW RGB, 51 motifs (vendu GOTSTAGE sur AliExpress,
+    # 15/10/2026) — meme recette que le CS-1000 ci-dessous. Tableau DMX repris
+    # de la notice du meme chassis chinois (« Full Color Scan Laser Light »,
+    # 10 canaux / 51 motifs) : la description du vendeur concorde canal par canal.
+    # Canal 1 en `Preset1` (extinction + mode) et non `Dim`, pour la meme raison
+    # que le CS-1000 : 0-63 eteint, 64-127 DMX (« manual »), 128-191 auto,
+    # 192-255 son. Rotations : Z = rotation dans le plan (`Gobo1Rot`), X et Y
+    # sur des types manuels distincts pour ne pas les ganger.
+    # ⚠️ Canaux 3 a 7 : 0-127 = POSITION, 128-255 = MOUVEMENT AUTO. Sur Pan/Tilt
+    # la deuxieme moitie de course ferait partir le laser tout seul : d'ou la
+    # plage utile `channel_ranges` (cf. `core.channel_range`), qui met toute la
+    # course du fader a l'echelle de 0-127. Meme bride sur le zoom (> 63 = zoom
+    # auto) et la couleur (> 191 = defilement auto). Rotations et bascules
+    # (canaux 3-5) restent libres : leur haut de course est une rotation
+    # continue, un effet qu'on peut vouloir.
+    # Couleurs non enumerees par la notice : pas de `color_wheel_slots`,
+    # l'assistant de calibration s'ouvre. Canal 10 (effet pointille) laisse
+    # `Unused` NOMME, joignable par son numero.
+    {"name": "Laser Show System · Laser 10ch", "manufacturer": "Générique", "fixture_type": "Laser", "group": "face",
+     "profile": ["Preset1", "Gobo1", "Gobo1Rot", "AnimRot", "Anim", "Pan", "Tilt",
+                 "Zoom", "ColorWheel", "Unused"],
+     "channel_labels": ["Mode de fonctionnement", "Choix du motif (51)",
+                        "Rotation dans le plan (0-127 angle, 128+ rotation)",
+                        "Bascule horizontale (0-127 angle, 128+ vitesse)",
+                        "Bascule verticale (0-127 angle, 128+ vitesse)",
+                        "Position X",
+                        "Position Y",
+                        "Taille du motif",
+                        "Couleur",
+                        "Effet pointillé (0-127 / 128-255)"],
+     "channel_ranges": {"Pan": [0, 127], "Tilt": [0, 127],
+                        "Zoom": [0, 63], "ColorWheel": [0, 191]},
+     "preset_slots": {
+         "Preset1": [{"name": "Éteint", "color": "#888888", "dmx": 0},
+                     {"name": "DMX", "color": "#00cc99", "dmx": 100},
+                     {"name": "Auto", "color": "#00b389", "dmx": 160},
+                     {"name": "Son", "color": "#00b389", "dmx": 220}],
+     },
+     "builtin": _B},
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Laserworld
     # ──────────────────────────────────────────────────────────────────────────
-    # LASER — meme recette que le MAC 1000 RGB : `fixture_type` « Moving Head »
-    # (seul type que `core.fixture_projects_gobo` autorise a projeter un motif),
-    # le dessin sur `Gobo1`, la position sur `Pan`/`Tilt`. Presets de position,
+    # LASER — meme recette que le MAC 1000 RGB : `fixture_type` « Laser », que
+    # le moteur traite partout comme une lyre (`core.fixture_projects_gobo`
+    # l'autorise a projeter un motif), le dessin sur `Gobo1`, la position sur `Pan`/`Tilt`. Presets de position,
     # piste Position, effets pan/tilt et stick de la manette marchent d'emblee.
     #
     # ⚠️ Le canal 1 porte a la fois l'EXTINCTION et le choix du mode
@@ -488,7 +531,7 @@ BUILTIN_FIXTURES = [
     # La notice FRANCAISE inverse les canaux 6 et 7 (les deux disent « mouvement
     # vers le bas ») : l'anglaise et l'allemande concordent, 6 = horizontal,
     # 7 = vertical. C'est cette lecture qui est retenue.
-    {"name": "CS-1000RGB MKII · Laser 11ch", "manufacturer": "Laserworld", "fixture_type": "Moving Head", "group": "face",
+    {"name": "CS-1000RGB MKII · Laser 11ch", "manufacturer": "Laserworld", "fixture_type": "Laser", "group": "face",
      "profile": ["Preset1", "Gobo1", "Gobo1Rot", "Anim", "AnimRot", "Pan", "Tilt",
                  "Zoom", "Preset2", "Strobe", "ColorWheel"],
      "channel_labels": ["Mode de fonctionnement", "Choix du motif",
@@ -528,8 +571,8 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # LASER — un laser ne se decrit PAS comme un projecteur : il ne melange pas
     # de couleur, il DESSINE. Le motif est rendu par `Gobo1` (d'ou le
-    # `fixture_type` « Moving Head », seul type que `core.fixture_projects_gobo`
-    # autorise a projeter un motif) et se deplace par `Pan`/`Tilt` — ce qui
+    # `fixture_type` « Laser », traite comme une lyre : `core.fixture_projects_gobo`
+    # l'autorise a projeter un motif) et se deplace par `Pan`/`Tilt` — ce qui
     # branche d'un coup les presets de position, la piste Position, les effets
     # pan/tilt et le stick de la manette sur l'appareil, sans une ligne de code
     # specifique. Choix opinione, cf. le Laserworld CS-12000.
@@ -541,7 +584,7 @@ BUILTIN_FIXTURES = [
     # cet appareil, et se poussent au curseur des « canaux avances ».
     # Les canaux restants sont `Unused` mais NOMMES : ils restent joignables par
     # leur NUMERO dans la vue Curseurs.
-    {"name": "MAC 1000 RGB · Laser 16ch", "manufacturer": "Mac Mah", "fixture_type": "Moving Head", "group": "face",
+    {"name": "MAC 1000 RGB · Laser 16ch", "manufacturer": "Mac Mah", "fixture_type": "Laser", "group": "face",
      "profile": ["Dim", "Speed", "Preset1", "Gobo1", "ColorWheel", "Preset2", "Preset3", "Zoom",
                  "Gobo1Rot", "Anim", "AnimRot", "Pan", "Tilt", "Iris", "Preset4", "Frost"],
      "channel_labels": ["Intensité", "Vitesse auto / sensibilité micro", "Bibliothèque de motifs",
@@ -575,7 +618,7 @@ BUILTIN_FIXTURES = [
     # sont a 128 = milieu : c'est ce que dit la notice, et 0 fait sortir le
     # dessin du cadre. A monter a 50 % dans les canaux bruts avant de s'etonner
     # que B reste noir.
-    {"name": "MAC 1000 RGB · Laser 36ch (motifs A+B)", "manufacturer": "Mac Mah", "fixture_type": "Moving Head", "group": "face",
+    {"name": "MAC 1000 RGB · Laser 36ch (motifs A+B)", "manufacturer": "Mac Mah", "fixture_type": "Laser", "group": "face",
      "profile": ["Dim", "Speed", "Preset1", "Gobo1", "Zoom", "Pan", "Tilt", "ColorWheel", "Preset2",
                  "Preset3", "Strobe", "Gobo1Rot", "Anim", "AnimRot", "Unused", "Unused", "Iris",
                  "Preset4", "Frost",

@@ -54,6 +54,21 @@ def _make_ssl_context():
         except Exception:
             return ssl._create_unverified_context()
 
+
+def _ssl_message(detail):
+    """« Erreur SSL » + la cause technique entre parenthèses.
+
+    Le message seul recouvre des pannes sans rapport : horloge de la machine
+    fausse (certificat « pas encore valide » ou « expiré »), racine d'un
+    antivirus à scan HTTPS inconnue, proxy, fichier de certificats absent…
+    Sans la cause, la capture d'écran d'un client ne permet pas de trancher
+    (remontée du 14/10/2026). Même présentation que core.message_erreur_reseau.
+    """
+    detail = str(detail or "").strip()
+    if len(detail) > 140:
+        detail = detail[:140] + "…"
+    return f"{tr('err_ssl')}\n({detail})" if detail else tr("err_ssl")
+
 # === CONSTANTES ===
 _GITHUB_REPO       = "nprieto-ext/MAESTRO"
 _UPDATE_API_URL    = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
@@ -486,13 +501,13 @@ class UpdateChecker(QThread):
         except urllib.error.URLError as e:
             reason = str(e.reason)
             if "AppData" in reason or "cacert" in reason.lower() or "SSL" in reason.upper():
-                self.check_error.emit(tr("err_ssl"))
+                self.check_error.emit(_ssl_message(reason))
             else:
                 self.check_error.emit(tr("err_network", reason=e.reason))
         except Exception as e:
             msg = str(e)
             if "AppData" in msg or "cacert" in msg.lower():
-                self.check_error.emit(tr("err_ssl"))
+                self.check_error.emit(_ssl_message(msg))
             else:
                 self.check_error.emit(msg)
 
@@ -1408,18 +1423,9 @@ _GEAR = [
         # capacité), donc de rien de comparable.
         "bandeau": "gear_b_1univ", "prix": "~59 €",
     },
-    {
-        "emoji": "🔌", "nom": "USB Node ArtNet",
-        # « Vrai node ArtNet en USB, sans carte réseau » ne voulait rien dire, et
-        # était même faux : branché, ce boîtier SE PRÉSENTE à Windows comme une
-        # carte réseau — c'est tout l'objet de la branche USB de l'assistant de
-        # connexion. Ce qu'il faut dire, c'est ce qu'il remplace.
-        "desc": "gear_d_usbnode",
-        "url": "https://amzn.to/4w3sY4A",
-        "couleur": "#a064ff", "fond": "#1a1a1a",
-        "img_url": _GEAR_IMG + "ec-usb-node.webp",
-        "bandeau": "gear_b_1univ", "prix": "~59 €",
-    },
+    # L'USB Node Electroconcept n'a plus de carte : c'est le même boîtier que
+    # le Pack MyStrow, l'afficher à 59 € juste en dessous cannibalisait l'offre.
+    # Il reste dans la liste des interfaces USB compatibles (`_GEAR_USB_COMPAT`).
     {
         "emoji": "🔌", "nom": "Node ArtNet 4 univers",
         "desc": "gear_d_node4",
@@ -1469,6 +1475,7 @@ _GEAR_USB_COMPAT = [
     ("DMXking ultraDMX Micro",  "gear_c_ultradmx"),
     ("Eurolite USB-DMX512 PRO", "gear_c_eurolite"),
     ("ENTTEC Open DMX USB",     "gear_c_opendmx"),
+    ("Electroconcept USB Node", "gear_c_usbnode"),
 ]
 
 _GEAR_CONTROLLERS_COMPAT = [

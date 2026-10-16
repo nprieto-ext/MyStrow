@@ -330,7 +330,22 @@ MEM_PARAMS = (("pan", "tilt")
               + tuple(k for k, _l in _MEM_MISC_CH))
 
 
-def compose_memory_params(states):
+# Canaux bruts qui sont de la LUMIÈRE : forcés au curseur dans une mémoire, ils
+# suivent le fader de cette mémoire comme le niveau. Les autres canaux bruts
+# (Mode, gobo, CTO…) restent des réglages, posés tels quels.
+_EXTRAS_LUMIERE = frozenset(("Dim", "Dim2", "W", "UV", "Ambre", "Orange", "Lime"))
+
+
+def _extra_est_lumiere(ch, profile):
+    """Clé de `channel_extras` (type, ou numéro de canal éventuellement en
+    chaîne après un aller-retour JSON) désignant un canal de lumière ?"""
+    if isinstance(ch, int) or (isinstance(ch, str) and ch.isdigit()):
+        n = int(ch)
+        return bool(profile) and 1 <= n <= len(profile) and profile[n - 1] in _EXTRAS_LUMIERE
+    return ch in _EXTRAS_LUMIERE
+
+
+def compose_memory_params(states, brights=None, profile=None):
     """Ce que plusieurs mémoires levées imposent ensemble à UN projecteur.
 
     Une mémoire n'impose que ce qu'elle a enregistré HORS REPOS : juste un
@@ -346,6 +361,12 @@ def compose_memory_params(states):
     Un paramètre absent de `params` n'est imposé par personne : repos.
     Contrepartie assumée : une mémoire ne peut pas imposer une valeur de
     REPOS par-dessus une autre (lyre pile au centre, gobo ouvert).
+
+    `brights` (fader 0-1 de chaque état, même ordre) + `profile` : les canaux
+    bruts de LUMIÈRE (`_EXTRAS_LUMIERE`) sont scalés par le fader de la mémoire
+    qui les pose, et une mémoire au fader à 0 ne les pose pas du tout. Sans ça,
+    un PC blanc chaud/froid réglé aux curseurs (deux canaux Dim, remonté
+    client le 16/10/2026) restait allumé fader baissé, jusqu'au CLEAR.
     """
     params, extras = {}, {}
     for rang, ps in enumerate(states):
@@ -357,8 +378,15 @@ def compose_memory_params(states):
             v = int(ps[k])
             if v != mem_param_repos(k):
                 params[k] = (v, rang)
+        b = brights[rang] if brights is not None else None
         for ch, v in (ps.get("channel_extras") or {}).items():
-            extras.setdefault(ch, v)
+            if ch in extras:
+                continue
+            if b is not None and _extra_est_lumiere(ch, profile):
+                if b <= 0:
+                    continue
+                v = int(int(v) * min(1.0, b))
+            extras[ch] = v
     return params, extras
 
 
@@ -663,6 +691,30 @@ class SequenceInfoDialog(QDialog):
         self._chk_all.setToolTip(tr("lt_seq_info_all_rig_tip"))
         self._chk_all.toggled.connect(lambda _: self._rebuild())
         bar.addWidget(self._chk_all)
+        bar.addSpacing(16)
+        # Navigation entre cues d'une mémoire multi-cue : regarder le cue
+        # voisin sans fermer/rouvrir la fenêtre. Masquée s'il n'y a qu'un cue.
+        nav_css = ("QPushButton { background:#1e1e1e; color:#00d4ff; border:1px solid #333;"
+                   "              border-radius:3px; padding:3px 8px; }"
+                   "QPushButton:disabled { color:#444; border-color:#282828; }")
+        self._btn_cue_prev = QPushButton("◀")
+        self._btn_cue_prev.setStyleSheet(nav_css)
+        self._btn_cue_prev.setToolTip("Alt+←")
+        self._btn_cue_prev.clicked.connect(lambda: self._step_cue(-1))
+        self._cmb_cue = QComboBox()
+        self._cmb_cue.setMinimumWidth(160)
+        self._cmb_cue.setStyleSheet(
+            "QComboBox { background:#1e1e1e; color:#e0e0e0; border:1px solid #333;"
+            "            border-radius:3px; padding:2px 8px; }"
+            "QComboBox QAbstractItemView { background:#1e1e1e; color:#e0e0e0;"
+            "            selection-background-color:#1a3a4a; }")
+        self._cmb_cue.currentIndexChanged.connect(self._on_cue_combo)
+        self._btn_cue_next = QPushButton("▶")
+        self._btn_cue_next.setStyleSheet(nav_css)
+        self._btn_cue_next.setToolTip("Alt+→")
+        self._btn_cue_next.clicked.connect(lambda: self._step_cue(1))
+        for w in (self._btn_cue_prev, self._cmb_cue, self._btn_cue_next):
+            bar.addWidget(w)
         bar.addStretch()
         self._btn_undo = QPushButton(tr("lt_seq_info_undo"))
         self._btn_undo.setStyleSheet(
@@ -678,6 +730,8 @@ class SequenceInfoDialog(QDialog):
         # l'éditeur de texte qui garde son propre Ctrl+Z (ShortcutOverride).
         from PySide6.QtGui import QShortcut, QKeySequence
         QShortcut(QKeySequence.Undo, self, activated=self._undo_last)
+        QShortcut(QKeySequence("Alt+Left"), self, activated=lambda: self._step_cue(-1))
+        QShortcut(QKeySequence("Alt+Right"), self, activated=lambda: self._step_cue(1))
         self._btn_del = QPushButton(tr("lt_seq_info_clear_sel"))
         self._btn_del.setToolTip(tr("lt_seq_info_sheet_hint"))
         self._btn_del.setStyleSheet(
@@ -719,7 +773,64 @@ class SequenceInfoDialog(QDialog):
         btns.accepted.connect(self.accept)
         lay.addWidget(btns)
 
+        self._fill_cue_combo()
         self._rebuild()
+
+    # ── Navigation entre cues ─────────────────────────────────────────────
+
+    def _cue_labels(self):
+        mems = self._memories()
+        if not self._ref or not mems:
+            return []
+        col, row = self._ref[0], self._ref[1]
+        if col >= len(mems) or row >= len(mems[col]) or not mems[col][row]:
+            return []
+        return [c.get("label") or f"Cue {i + 1}"
+                for i, c in enumerate(mems[col][row].get("cues", []))]
+
+    def _fill_cue_combo(self):
+        labels = self._cue_labels()
+        if labels:
+            self._cue = max(0, min(self._cue, len(labels) - 1))
+        self._cmb_cue.blockSignals(True)
+        self._cmb_cue.clear()
+        for i, lbl in enumerate(labels):
+            txt = f"{i + 1} / {len(labels)}"
+            if lbl != f"Cue {i + 1}":
+                txt += f"  ·  {lbl}"
+            self._cmb_cue.addItem(f"Cue {txt}")
+        if labels:
+            self._cmb_cue.setCurrentIndex(self._cue)
+        self._cmb_cue.blockSignals(False)
+        multi = len(labels) > 1
+        for w in (self._btn_cue_prev, self._cmb_cue, self._btn_cue_next):
+            w.setVisible(multi)
+        self._sync_cue_nav()
+
+    def _sync_cue_nav(self):
+        n = self._cmb_cue.count()
+        self._btn_cue_prev.setEnabled(self._cue > 0)
+        self._btn_cue_next.setEnabled(self._cue < n - 1)
+
+    def _set_cue(self, i):
+        n = self._cmb_cue.count()
+        if n <= 1 or not (0 <= i < n) or i == self._cue:
+            return
+        # Une saisie en cours s'applique au cue qu'on quitte, pas au suivant.
+        if self._table.state() == self._table.State.EditingState:
+            self._table.setFocus()
+        self._cue = i
+        self._cmb_cue.blockSignals(True)
+        self._cmb_cue.setCurrentIndex(i)
+        self._cmb_cue.blockSignals(False)
+        self._sync_cue_nav()
+        self._rebuild()
+
+    def _step_cue(self, delta):
+        self._set_cue(self._cue + delta)
+
+    def _on_cue_combo(self, i):
+        self._set_cue(i)
 
     def eventFilter(self, obj, ev):
         from PySide6.QtCore import QEvent
@@ -1013,13 +1124,18 @@ class SequenceInfoDialog(QDialog):
         self._chips_lay.addStretch()
 
     def _push_undo(self):
-        self._undo.append([copy.deepcopy(ps) for ps in self._states()])
+        # Chaque instantané retient SON cue : annuler après avoir changé de cue
+        # doit restaurer le cue modifié (et y revenir), pas écraser celui affiché.
+        self._undo.append((self._cue, [copy.deepcopy(ps) for ps in self._states()]))
         self._btn_undo.setEnabled(True)
 
     def _undo_last(self):
         if not self._undo:
             return
-        snap = self._undo.pop()
+        cue, snap = self._undo.pop()
+        if cue != self._cue:
+            self._cue = cue
+            self._fill_cue_combo()
         # Restauration EN PLACE : les dicts sont des références vives sur la
         # mémoire (clips, pad AKAI) — les remplacer couperait le lien.
         for ps, old in zip(self._states(), snap):
@@ -1547,7 +1663,9 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win,
         # Deux verrous explicites priment : un clip de la piste Position actif
         # (pan/tilt), un clip de la piste Gobo actif (gobo + rotation).
         ordre = sorted(couches.get(i, []), key=lambda t: (t[0], t[1]), reverse=True)
-        params, extras = compose_memory_params([c[2] for c in ordre])
+        params, extras = compose_memory_params(
+            [c[2] for c in ordre], brights=[c[1] for c in ordre],
+            profile=getattr(proj, 'dmx_profile', None))
         _pt_verrou = bool(lock_pantilt_idxs and i in lock_pantilt_idxs)
         _gobo_verrou = bool(lock_gobo_idxs and i in lock_gobo_idxs)
         for _attr, (_v, _rang) in params.items():
@@ -3927,7 +4045,7 @@ class LightTrack(QWidget):
         try:
             mw = self.parent_editor.main_window
             idxs = mw.get_track_to_indices().get(self.name, [])
-            return any(getattr(mw.projectors[i], 'fixture_type', '') == 'Moving Head'
+            return any(getattr(mw.projectors[i], 'fixture_type', '') in ('Moving Head', 'Laser')
                        for i in idxs if i < len(mw.projectors))
         except Exception:
             return self.name == "Lyres"

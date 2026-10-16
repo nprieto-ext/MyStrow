@@ -8,6 +8,9 @@ Usage:
 import os, sys, json, re, argparse
 import xml.etree.ElementTree as ET
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from core import fix_machine_profile
+
 # ── Mapping QLC+ → MyStrow ────────────────────────────────────────────────────
 
 _PRESET_MAP = {
@@ -171,10 +174,14 @@ def parse_qxf(path: str) -> dict | None:
         modes = []
         for mode_el in root.findall("q:Mode", ns):
             mode_name = mode_el.get("Name", "")
-            channels = []
+            channels, names = [], []
             for c_el in mode_el.findall("q:Channel", ns):
                 cname = c_el.text.strip() if c_el.text else ""
                 channels.append(ch_map.get(cname, "Mode"))
+                names.append(cname)
+            # Machines : QLC+ n'a pas de groupe « fumée », le débit arrive en
+            # Effect/Intensity. Sans canal Smoke, MyStrow ne le pilote pas.
+            channels = fix_machine_profile(fixture_type, channels, names)
             if channels:
                 modes.append({
                     "name":         mode_name,

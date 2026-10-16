@@ -51,15 +51,15 @@ GROUPS = ["face", "lat", "contre", "douche1", "douche2", "douche3",
           "groupe_g", "groupe_h"]
 
 # Types acceptes par le dialogue Patch DMX. Les categories propres a QLC+
-# (« Effet », « Laser », « Color Changer »...) n'y existent pas : elles sont
+# (« Effet », « Color Changer »...) n'y existent pas : elles sont
 # rabattues, sinon le combo du dialogue les remettrait a « PAR LED » au premier
 # clic, en silence.
-FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope",
+FIXTURE_TYPES = ["PAR LED", "Moving Head", "Laser", "Barre LED", "Stroboscope",
                  "Machine a fumee", "Machine a brouillard",
                  "Machine a etincelles", "Lance-flamme", "Gradateur"]
 
 _TYPE_ALIASES = {
-    "effet": "PAR LED", "effect": "PAR LED", "laser": "PAR LED",
+    "effet": "PAR LED", "effect": "PAR LED", "laser": "Laser",
     "colorchanger": "PAR LED",
     "dimmer": "Gradateur", "gradateur": "Gradateur",
     "movinghead": "Moving Head", "scanner": "Moving Head", "lyre": "Moving Head",
@@ -376,7 +376,7 @@ def generic_profile(channels, fixture_type=None) -> list:
     """Profil de repli quand la fixture est introuvable : le patch reste juste
     (bon nombre de canaux, bonne adresse suivante), seul le detail est a revoir."""
     n = max(1, int(channels or 1))
-    if fixture_type == "Moving Head":
+    if fixture_type in ("Moving Head", "Laser"):
         base = list(_GENERIC_MOVING)
     elif n in _GENERIC:
         return list(_GENERIC[n])

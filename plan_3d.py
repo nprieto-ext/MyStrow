@@ -430,7 +430,7 @@ class _Canvas3D(QWidget):
         for i, p in enumerate(self._projectors):
             hy = p.get('fixture_height', TRUSS_Y)
             ftype = p.get('fixture_type', '')
-            if ftype == 'Moving Head':
+            if ftype in ('Moving Head', 'Laser'):
                 check_y = hy - 0.35
             else:
                 check_y = hy - 0.52   # lentille PAR / wash
@@ -711,7 +711,7 @@ class _Canvas3D(QWidget):
             return (p['x']-_ex)**2 + (py-_ey)**2 + (p['z']-_ez)**2
         sorted_prjs = sorted(prjs, key=_cam_dist_sq, reverse=True)
         mh_geos    = {id(p): _mh_geometry(p)
-                      for p in prjs if p.get('fixture_type','') == 'Moving Head'}
+                      for p in prjs if p.get('fixture_type','') in ('Moving Head', 'Laser')}
         sel_set  = self._sel
         proj_idx = {id(p): i for i, p in enumerate(prjs)}
 
@@ -730,7 +730,7 @@ class _Canvas3D(QWidget):
 
         def _src(p):
             """(src_y, src_x, src_z, (floor_x, floor_z))"""
-            if p.get('fixture_type','') == 'Moving Head':
+            if p.get('fixture_type','') in ('Moving Head', 'Laser'):
                 g = mh_geos.get(id(p))
                 if g: return g['lens_y'], g['lens_x'], g['lens_z'], g['floor']
             hy = p.get('fixture_height', TRUSS_Y)
@@ -741,7 +741,7 @@ class _Canvas3D(QWidget):
 
         def _beam_perp(p, fx, fz, sx2, sz):
             """Vecteur perpendiculaire au faisceau dans le plan XZ (pour étaler la base du cone)."""
-            if p.get('fixture_type', '') == 'Moving Head':
+            if p.get('fixture_type', '') in ('Moving Head', 'Laser'):
                 bdx = fx - sx2
                 bdz = fz - sz
                 dist_f = math.sqrt(bdx * bdx + bdz * bdz)
@@ -864,7 +864,7 @@ class _Canvas3D(QWidget):
             x, z = p['x'], p['z']
             lvl  = max(0.0, min(1.0, p['level']/100.0))
             r,g,b = _strobe_rgb(p)
-            is_mh  = p.get('fixture_type','') == 'Moving Head'
+            is_mh  = p.get('fixture_type','') in ('Moving Head', 'Laser')
             hang_y = p.get('fixture_height', TRUSS_Y)
             is_sel = proj_idx.get(id(p), -1) in sel_set
 
@@ -1729,7 +1729,7 @@ class Plan3DWindow(QMainWindow):
         if not mw or proj_idx >= len(getattr(mw, 'projectors', [])):
             return
         proj = mw.projectors[proj_idx]
-        if getattr(proj, 'fixture_type', '') != 'Moving Head':
+        if getattr(proj, 'fixture_type', '') not in ('Moving Head', 'Laser'):
             return
 
         data   = self._canvas._projectors[proj_idx]

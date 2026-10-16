@@ -612,7 +612,7 @@ class LightTimelineEditor(QDialog):
         tracks_layout.addWidget(seq_track)
 
         # ── Piste Position Lyre (si au moins une lyre dans le patch) ──────────
-        has_lyres = any(getattr(p, 'fixture_type', '') == 'Moving Head' for p in projectors)
+        has_lyres = any(getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser') for p in projectors)
         if has_lyres:
             pos_track = LightTrack("Position", self.media_duration, self, "#2255ee")
             pos_track.is_position_track = True
@@ -2117,7 +2117,7 @@ class LightTimelineEditor(QDialog):
             if not preset:
                 return {}
             lyres = [p for p in self.main_window.projectors
-                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')]
+                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
             return position_preset_values(preset, lyres)
         except Exception as e:
             print(f"[REC] centre de position indisponible : {e}")
@@ -2783,7 +2783,7 @@ class LightTimelineEditor(QDialog):
                 # existe, sinon toutes les têtes mobiles du parc.
                 _lyre_idx = track_to_indices.get('Lyres', []) or [
                     i for i, p in enumerate(projectors)
-                    if getattr(p, 'fixture_type', '') == 'Moving Head']
+                    if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')]
                 for _i in _lyre_idx:
                     if _i < len(projectors):
                         projectors[_i].pan  = _pan_v
@@ -2937,7 +2937,7 @@ class LightTimelineEditor(QDialog):
             _pos_locked_idxs = set()
             if new_pos_clip is not None:
                 _pos_locked_idxs = {i for i, p in enumerate(projectors)
-                                    if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre')}
+                                    if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')}
             apply_seq_memories_htp(
                 _seq_entries, getattr(self.main_window, 'memories', None),
                 projectors, self.main_window, lock_pantilt_idxs=_pos_locked_idxs,

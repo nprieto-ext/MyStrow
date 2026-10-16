@@ -73,6 +73,46 @@
   // ── Tables du PC (artnet_dmx.py, core.py) ─────────────────────────────────
   const FX_MACHINE_TYPES = new Set(["Machine a fumee", "Machine a brouillard", "Machine a etincelles", "Lance-flamme"]);
   const FX_MACHINE_OUTPUT_CHANNELS = ["Smoke", "Spark", "Flame"];
+
+  // ── Plage utile par canal (port de core.channel_range & co) ───────────────
+  // Canaux continus : mis à l'échelle. Les autres (roue, gobo, presets…) sortent
+  // une valeur exacte : seulement bornés.
+  const RANGE_SCALED_TYPES = new Set([
+    "Dim", "Dim2", "R", "G", "B", "W", "Ambre", "Orange", "UV", "Lime",
+    "C", "M", "Y", "Zoom", "Focus", "Iris", "Speed",
+    "Pan", "PanFine", "Tilt", "TiltFine",
+  ]);
+  // round() de Python (arrondi au pair) : même octet que le PC.
+  function pyRound(x) {
+    const fl = Math.floor(x), d = x - fl;
+    if (d > 0.5) return fl + 1;
+    if (d < 0.5) return fl;
+    return fl % 2 === 0 ? fl : fl + 1;
+  }
+  function channelRange(ranges, type) {
+    const r = ranges && ranges[type];
+    if (!Array.isArray(r) || r.length !== 2) return null;
+    let lo = trunc(Number(r[0])), hi = trunc(Number(r[1]));
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+    lo = Math.max(0, Math.min(255, lo)); hi = Math.max(0, Math.min(255, hi));
+    if (hi < lo) [lo, hi] = [hi, lo];
+    if (lo === 0 && hi === 255) return null;
+    return [lo, hi];
+  }
+  const clampRange = (v, rg) => {
+    v = Math.max(0, Math.min(255, trunc(v)));
+    return rg ? Math.max(rg[0], Math.min(rg[1], v)) : v;
+  };
+  const scaleRange = (v, rg) => {
+    v = Math.max(0, Math.min(255, trunc(v)));
+    return rg ? rg[0] + pyRound(v * (rg[1] - rg[0]) / 255) : v;
+  };
+  const scale16Range = (v, rg) => {
+    v = Math.max(0, Math.min(65535, trunc(v)));
+    if (!rg) return v;
+    const lo16 = rg[0] << 8, hi16 = (rg[1] << 8) | 0xFF;
+    return lo16 + pyRound(v * (hi16 - lo16) / 65535);
+  };
   const RING_DRIVEN = ["RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe"];
   const PRESET_ATTR = { Preset1: "preset1", Preset2: "preset2", Preset3: "preset3", Preset4: "preset4" };
   // core.CW_DEFAULT_SLOTS : roue non calibrée (= MainWindow._GENERIC_WHEEL_SLOTS).
@@ -91,7 +131,7 @@
   // Lyre : type de fixture comme sur le PC ; à défaut (patch d'avant la
   // bibliothèque), présence d'un canal Pan.
   function isLyre(f) {
-    if (f.fixture_type) return f.fixture_type === "Moving Head" || f.fixture_type === "Lyre";
+    if (f.fixture_type) return f.fixture_type === "Moving Head" || f.fixture_type === "Lyre" || f.fixture_type === "Laser";
     return (profileOf(f) || []).includes("Pan");
   }
 
@@ -165,6 +205,7 @@
       const attr = (k, d = 0) => (f[k] ?? d);
       const muted = !!f.muted;
       const extras = f.channel_extras || {}, defaults = f.channel_defaults || {};
+      const ranges = f.channel_ranges || {};
 
       // ── Machines à effet : un canal de sortie piloté par le niveau ─────────
       const outCh = FX_MACHINE_OUTPUT_CHANNELS.find((c) => profile.includes(c));
@@ -177,7 +218,8 @@
         if (fanIdx >= 0) set(fanIdx, fxCh[fanIdx + 1] ?? (muted ? 0 : attr("fan_speed")));
         profile.forEach((type, idx) => {
           if (idx === outIdx || idx === fanIdx) return;
-          set(idx, fxCh[idx + 1] ?? extras[idx + 1] ?? extras[String(idx + 1)] ?? extras[type] ?? defaults[type] ?? 0);
+          set(idx, clampRange(fxCh[idx + 1] ?? extras[idx + 1] ?? extras[String(idx + 1)] ?? extras[type] ?? defaults[type] ?? 0,
+                              channelRange(ranges, type)));
         });
         continue;
       }
@@ -225,6 +267,9 @@
       if (f.pan_tilt_swap) [pan, tilt] = [tilt, pan];
       if (f.pan_invert) pan = 65535 - pan;
       if (f.tilt_invert) tilt = 65535 - tilt;
+      // Plage utile APRÈS swap/inversion (canal physique), couple 16 bits d'un bloc.
+      pan = scale16Range(pan, channelRange(ranges, "Pan"));
+      tilt = scale16Range(tilt, channelRange(ranges, "Tilt"));
 
       const hasRgb = profile.includes("R") && profile.includes("G") && profile.includes("B");
       const wExtract = hasRgb && profile.includes("W") ? Math.min(r, g, b) : 0;
@@ -255,10 +300,11 @@
 
       profile.forEach((type, idx) => {
         // Couche d'effet « Canal », puis contrôle brut par numéro, puis par type.
-        if (fxCh[idx + 1] !== undefined) { set(idx, fxCh[idx + 1]); return; }
+        const rg = channelRange(ranges, type);
+        if (fxCh[idx + 1] !== undefined) { set(idx, clampRange(fxCh[idx + 1], rg)); return; }
         const raw = extras[idx + 1] ?? extras[String(idx + 1)];
-        if (raw !== undefined) { set(idx, raw); return; }
-        if (extras[type] !== undefined) { set(idx, extras[type]); return; }
+        if (raw !== undefined) { set(idx, clampRange(raw, rg)); return; }
+        if (extras[type] !== undefined) { set(idx, clampRange(extras[type], rg)); return; }
 
         let v = 0;
         switch (type) {
@@ -320,8 +366,13 @@
             else if (ringVals[type] !== undefined) v = Math.max(0, Math.min(255, trunc(ringVals[type])));
             else v = 0;                            // canaux manuels (Frost, Anim…) et inconnus : repos
         }
-        // Valeur par défaut : appliquée quand le canal sortirait 0
-        if (v === 0 && defaults[type] !== undefined) v = defaults[type];
+        // Valeur par défaut (brute → bornée), puis plage utile (cf. artnet_dmx).
+        if (rg) {
+          if (v === 0 && defaults[type] !== undefined) v = clampRange(defaults[type], rg);
+          else if (type === "Pan" || type === "PanFine" || type === "Tilt" || type === "TiltFine") { /* déjà étirés en 16 bits */ }
+          else if (RANGE_SCALED_TYPES.has(type)) v = scaleRange(v, rg);
+          else v = clampRange(v, rg);
+        } else if (v === 0 && defaults[type] !== undefined) v = defaults[type];
         set(idx, v);
       });
     }

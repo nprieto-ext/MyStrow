@@ -384,8 +384,14 @@ _FINE_MAP = {
 _VALID_FINE_TYPES = {"PanFine", "TiltFine"}
 
 
-def _detect_fixture_type(profile: list) -> str:
-    """Deduit le type de fixture depuis son profil de canaux."""
+def _detect_fixture_type(profile: list, name: str = "") -> str:
+    """Deduit le type de fixture depuis son profil de canaux.
+
+    GDTF et MA n'ont pas de categorie fiable : un laser ne se reconnait qu'a
+    son nom. Sans ce test il passait en lyre (Pan/Tilt) ou en PAR LED.
+    """
+    if "laser" in (name or "").lower():
+        return "Laser"
     if "Pan" in profile or "Tilt" in profile:
         return "Moving Head"
     return "PAR LED"
@@ -468,7 +474,7 @@ def _try_generic_xml(root) -> dict | None:
         return None
 
     first_profile = modes[0]["profile"]
-    ftype = _detect_fixture_type(first_profile)
+    ftype = _detect_fixture_type(first_profile, name)
     return {
         "name":              name or "Fixture importée",
         "manufacturer":      manufacturer,
@@ -700,7 +706,7 @@ def parse_ma_xml(data: bytes) -> dict:
         modes = [{"name": "Mode 1", "channelCount": 0, "profile": []}]
 
     first_profile = modes[0]["profile"] if modes else []
-    ftype = _detect_fixture_type(first_profile)
+    ftype = _detect_fixture_type(first_profile, name)
 
     # Extraction des roues couleur et gobo
     wheels = _extract_ma3_wheels(fixture_el)
@@ -1263,6 +1269,7 @@ def parse_qlcplus_xml(data: bytes) -> dict:
     _TYPE_MAP = {
         "Moving Head":    "Moving Head",
         "Scanner":        "Moving Head",
+        "Laser":          "Laser",
         "Dimmer":         "Dimmer",
         "Smoke":          "Machine a fumee",
         "Hazer":          "Machine a brouillard",
@@ -1345,6 +1352,12 @@ def parse_qlcplus_xml(data: bytes) -> dict:
 
     first_profile = modes[0]["profile"]
     ftype = _detect_fixture_type(first_profile) if fixture_type == "PAR LED" else fixture_type
+
+    # QLC+ n'a pas de groupe « fumée » : le débit d'une machine arrive en
+    # Effect/Intensity → Mode/Dim, et la machine n'aurait aucun canal Smoke.
+    from core import fix_machine_profile
+    for m in modes:
+        m["profile"] = fix_machine_profile(ftype, m["profile"], m.get("labels"))
 
     return {
         "name":              model,
