@@ -86,11 +86,13 @@ class FauxWin(QObject):
     _show_is_running              = MainWindow._show_is_running
     _schedule_fire                = MainWindow._schedule_fire
     _apply_show_schedule          = MainWindow._apply_show_schedule
+    _schedule_next_departure      = MainWindow._schedule_next_departure
 
     def __init__(self, lignes=3, etat_player=QMediaPlayer.StoppedState):
         super().__init__()
         self.schedule_enabled = True
         self.schedule_time    = "20:00"
+        self.schedule_autostart = True
         self._schedule_timer      = None
         self._schedule_fired_date = None
         self.seq    = FauxSeq(lignes)
@@ -218,8 +220,8 @@ check("reglage manuel d'une heure passee : pas de depart surprise",
 w = FauxWin()
 w.schedule_time = "19:45"
 etat = w._schedule_state()
-check("l'etat serialise ne porte que l'activation et l'heure",
-      etat == {"enabled": True, "time": "19:45"})
+check("l'etat serialise porte l'activation, l'heure et le lancement auto",
+      etat == {"enabled": True, "time": "19:45", "autostart": True})
 
 w2 = FauxWin()
 w2._apply_show_schedule({"version": 8, "schedule": etat})
@@ -234,6 +236,35 @@ w2b._apply_show_schedule({"version": 8, "schedule": {
     "enabled": True, "time": "18:15", "daily": False, "catchup": True}})
 check("clefs d'un ancien .tui v8 ignorees sans casse",
       w2b.schedule_time == "18:15" and w2b.schedule_enabled is True)
+check("ancien .tui v8 sans `autostart` : il lance toujours",
+      w2b.schedule_autostart is True)
+
+# ── 12b. Decompte seul : l'heure arrive, rien ne part ──────────────────────
+w = FauxWin()
+w.schedule_autostart = False
+w.schedule_time = heure_decalee(0)
+w._do_schedule_tick()
+check("decompte seul : aucun lancement a l'heure", w.lancements == [])
+check("decompte seul : l'occurrence est consommee", w._schedule_fired_date is not None)
+check("decompte seul : la fin est signalee", w.niveaux() == ["go"])
+wr = FauxWin()
+wr._apply_show_schedule({"version": 8, "schedule": {
+    "enabled": True, "time": "18:15", "autostart": False}})
+check("relecture : le decompte seul revient", wr.schedule_autostart is False)
+
+# ── 12c. Prochain depart affiche dans la barre ─────────────────────────────
+from PySide6.QtCore import QDateTime
+w = FauxWin()
+w.schedule_time = heure_decalee(+2)
+nxt = w._schedule_next_departure()
+check("decompte : depart a venir aujourd'hui",
+      nxt is not None and 0 < QDateTime.currentDateTime().secsTo(nxt) <= 120)
+w.schedule_time = heure_decalee(-3)
+nxt = w._schedule_next_departure()
+check("decompte : heure passee -> demain",
+      nxt is not None and QDateTime.currentDateTime().secsTo(nxt) > 23 * 3600)
+w.schedule_enabled = False
+check("decompte : rien de programme -> horloge", w._schedule_next_departure() is None)
 
 # ── 13. Un .tui d'avant la v8 desarme, il n'herite pas du show precedent ──
 w3 = FauxWin()

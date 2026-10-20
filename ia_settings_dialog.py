@@ -390,17 +390,25 @@ class IASettingsDialog(QDialog):
         grille = QGridLayout(); grille.setSpacing(4)
         for i, (cle, glyphe, lib) in enumerate(self._FIGURES):
             t = _Figure(cle, glyphe, lib, self._clic_figure, self)
-            t.set_etat(cle in self._s._movement_patterns)
             self._figures[cle] = t
             grille.addWidget(t, i // 3, i % 3)
         boite.addLayout(grille)
+        self._maj_figures()
         boite.addSpacing(10)
         self._curseur(boite, tr("iad_speed"), '_movement_speed', tr("iad_slow"), tr("iad_fast"))
         self._curseur(boite, tr("iad_amplitude"), '_movement_size', tr("iad_tight"), tr("iad_wide"))
 
     def _clic_figure(self, cle):
         pool = self._s._movement_patterns
-        if cle in pool:
+        # AUTO est exclusif : le cocher vide la réserve, cocher une figure le retire.
+        if cle == 'auto':
+            pool.clear()
+            pool.add('auto')
+        elif 'auto' in pool:
+            pool.clear()
+            pool.add(cle)
+            self._s._current_movement = cle
+        elif cle in pool:
             if len(pool) <= 1:
                 return          # jamais zéro figure : les lyres se figeraient
             pool.discard(cle)
@@ -410,6 +418,10 @@ class IASettingsDialog(QDialog):
         else:
             pool.add(cle)
             self._s._current_movement = cle
+        self._maj_figures()
+
+    def _maj_figures(self):
+        pool = self._s._movement_patterns
         for k, t in self._figures.items():
             t.set_etat(k in pool)
 

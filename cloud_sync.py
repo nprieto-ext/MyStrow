@@ -180,6 +180,27 @@ def load_cache(uid: str):
     return None
 
 
+def summary() -> dict:
+    """Pour la fiche du nuage (thread principal, sans réseau) :
+    {"email": compte connecté, "last_utc": dernière sauvegarde connue du compte}."""
+    out = {"email": None, "last_utc": None}
+    try:
+        import license_manager as lm
+        acc = lm._load_account(lm.get_machine_id()) or {}
+        out["email"] = acc.get("email")
+        uid = acc.get("uid")
+    except Exception:
+        uid = None
+    if uid:
+        try:
+            c = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+            if c.get("uid") == uid:
+                out["last_utc"] = float(c["utc"]) or None
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return out
+
+
 def save_cache(uid: str, utc: float, files: dict):
     """Thread principal uniquement (les threads réseau ne font que lire)."""
     try:

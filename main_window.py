@@ -4525,6 +4525,124 @@ class _MasterMeter(QWidget):
             p.fillRect(x, 0, seg_w, h, c)
 
 
+class _HoverCard(QFrame):
+    """Fiche au survol d'un élément de la barre (horloge, nuage de synchro).
+
+    Une QToolTip se ferme dès que la souris la quitte : le « cliquer pour
+    modifier » qu'elle affichait était inatteignable. Cette fiche s'ouvre
+    après un court arrêt sur l'élément et reste ouverte tant que la souris
+    est sur l'élément OU sur elle (délai de grâce pour franchir l'espace) ;
+    elle peut porter un vrai bouton.
+
+    `content()` rend (html, texte du bouton ou None, couleur d'accent).
+    """
+
+    def __init__(self, anchor, content, on_click=None):
+        super().__init__(anchor, Qt.ToolTip | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setObjectName("hoverCard")
+        self.setStyleSheet(
+            "#hoverCard { background:#161616; border:1px solid #2c2c2c; }"
+            # Police explicite : sinon la fiche hérite du gras de la barre de menu
+            "QLabel { color:#ddd; background:transparent;"
+            " font-weight:normal; font-size:12px; }")
+        self._anchor = anchor
+        self._content = content
+        self._on_click = on_click
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(10)
+        self._body = QLabel()
+        self._body.setTextFormat(Qt.RichText)
+        lay.addWidget(self._body)
+        self._btn = QPushButton()
+        self._btn.setCursor(Qt.PointingHandCursor)
+        self._btn.clicked.connect(self._clicked)
+        lay.addWidget(self._btn, alignment=Qt.AlignLeft)
+
+        self._show_t = QTimer(self)
+        self._show_t.setSingleShot(True)
+        self._show_t.setInterval(350)
+        self._show_t.timeout.connect(self._open)
+        self._hide_t = QTimer(self)
+        self._hide_t.setSingleShot(True)
+        self._hide_t.setInterval(300)
+        self._hide_t.timeout.connect(self._maybe_close)
+        anchor.installEventFilter(self)
+        self.installEventFilter(self)
+
+    def close_now(self):
+        self._show_t.stop()
+        self._hide_t.stop()
+        self.hide()
+
+    def _clicked(self):
+        self.close_now()
+        if self._on_click is not None:
+            self._on_click()
+
+    def eventFilter(self, obj, ev):
+        if obj is self._anchor or obj is self:
+            if ev.type() == QEvent.Enter:
+                self._hide_t.stop()
+                if obj is self._anchor and not self.isVisible():
+                    self._show_t.start()
+            elif ev.type() == QEvent.Leave:
+                self._show_t.stop()
+                if self.isVisible():
+                    self._hide_t.start()
+            elif ev.type() == QEvent.Hide and obj is self._anchor:
+                self.close_now()
+        return super().eventFilter(obj, ev)
+
+    def _maybe_close(self):
+        pos = QCursor.pos()
+        a = self._anchor
+        on_anchor = QRect(a.mapToGlobal(QPoint(0, 0)), a.size()).contains(pos)
+        if on_anchor or self.frameGeometry().contains(pos):
+            self._hide_t.start()        # encore dessus : on repasse plus tard
+        else:
+            self.hide()
+
+    def _place(self):
+        """Sous l'élément, aligné sur son bord droit, gardé dans l'écran."""
+        a = self._anchor
+        corner = a.mapToGlobal(QPoint(a.width(), a.height()))
+        x = corner.x() - self.width()
+        y = corner.y() + 4
+        screen = a.screen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            x = max(area.left(), min(x, area.right() - self.width()))
+            y = min(y, area.bottom() - self.height())
+        self.move(x, y)
+
+    def refresh(self):
+        """À appeler quand le contenu change : sans effet si la fiche est fermée."""
+        if self.isVisible():
+            self._fill()
+
+    def _fill(self):
+        html, button, accent = self._content()
+        if self._body.text() != html:
+            self._body.setText(html)
+        self._btn.setVisible(button is not None)
+        if button is not None:
+            self._btn.setText(button)
+            self._btn.setStyleSheet(
+                f"QPushButton {{ background:#202020; color:{accent};"
+                f" border:1px solid {accent}; border-radius:5px;"
+                f" padding:5px 16px; font-weight:bold; }}"
+                "QPushButton:hover { background:#2c2c2c; }")
+        self.adjustSize()
+        self._place()
+
+    def _open(self):
+        self._fill()
+        self.show()
+        self.raise_()
+
+
 class _StatusCornerWidget(QWidget):
     """Widget coin de la menubar : audio meter · CPU · Horloge."""
 
@@ -4538,7 +4656,6 @@ class _StatusCornerWidget(QWidget):
 
         _lbl = "color:#777; font-size:9px; font-weight:bold;"
         _sep = "color:#333; font-size:9px; font-weight:bold;"
-        _val = "color:#ccc; font-size:9px; font-weight:bold;"
 
         # ── MASTER ───────────────────────────────────────────
         lbl_m = QLabel("MASTER")
@@ -4553,18 +4670,34 @@ class _StatusCornerWidget(QWidget):
         self._dot.setStyleSheet("color:#333; font-size:8pt;")
         lay.addWidget(self._dot, alignment=Qt.AlignVCenter)
 
+        # ── Horloge / décompte du départ programmé ───────────
+        # Un clic ouvre la fenêtre du départ programmé. Dès qu'un départ est
+        # armé, le décompte remplace l'heure (l'heure reste dans l'infobulle).
+        self._countdown_source = None     # callable -> QDateTime | None
+        self._clock = QLabel("--:--:--")
+        self._clock.setStyleSheet(self._CLOCK_STYLE)
+        self._clock.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._clock.setCursor(Qt.PointingHandCursor)
+        self._clock.mousePressEvent = self._on_clock_pressed
+        # Largeur calée sur le libellé le plus long : passer de l'heure au
+        # décompte ne fait pas bouger la barre.
+        self._clock.ensurePolished()
+        self._clock.setFixedWidth(
+            self._clock.fontMetrics().horizontalAdvance("⏰ 00:00:00") + 8)
+        lay.addWidget(self._clock, alignment=Qt.AlignVCenter)
+
+        self._tip = ("", None, "#00d4ff")
+        self._clock_card = _HoverCard(self._clock, lambda: self._tip,
+                                      self._on_clock_activated)
+
         # ── Synchro compte (cloud_sync) ──────────────────────
         # Nuage discret, masqué tant qu'aucun compte n'est connecté. Jamais
         # rouge : hors ligne n'est pas une erreur, l'envoi attend le réseau.
+        self._cloud_status = "off"
         self._cloud = QLabel("☁")
         self._cloud.setVisible(False)
         lay.addWidget(self._cloud, alignment=Qt.AlignVCenter)
-
-        # ── Horloge ──────────────────────────────────────────
-        self._clock = QLabel("--:--:--")
-        self._clock.setStyleSheet(_val)
-        self._clock.setFixedWidth(54)
-        lay.addWidget(self._clock, alignment=Qt.AlignVCenter)
+        self._cloud_card = _HoverCard(self._cloud, self._cloud_card_content)
 
         # Timer horloge
         self._tick_clock = QTimer(self)
@@ -4580,15 +4713,115 @@ class _StatusCornerWidget(QWidget):
             else "color:#333; font-size:8pt;"
         )
 
-    def _update_clock(self):
-        self._clock.setText(_dt.datetime.now().strftime("%H:%M:%S"))
+    _CLOCK_STYLE     = "color:#ddd; font-size:12px; font-weight:bold;"
+    _COUNTDOWN_STYLE = "color:#00d4ff; font-size:12px; font-weight:bold;"
+    _COUNTDOWN_SOON  = "color:#ff9a2a; font-size:12px; font-weight:bold;"
 
+    clock_clicked = Signal()
+
+    def _on_clock_pressed(self, event):
+        if event.button() == Qt.LeftButton:
+            self._on_clock_activated()
+
+    def _on_clock_activated(self):
+        self._clock_card.close_now()
+        self.clock_clicked.emit()
+
+    def set_countdown_source(self, source):
+        """`source()` rend None (rien de programmé) ou un dict :
+        target (QDateTime du prochain départ), autostart, show, items."""
+        self._countdown_source = source
+        self._update_clock()
+
+    def _update_clock(self):
+        now = _dt.datetime.now().strftime("%H:%M:%S")
+        info = None
+        if self._countdown_source is not None:
+            try:
+                info = self._countdown_source()
+            except Exception:
+                info = None
+        if info is None:
+            self._clock.setText(now)
+            self._set_clock_style(self._CLOCK_STYLE)
+            self._set_clock_tip(self._tip_clock(now), tr("clock_tt_btn_set"), "#00d4ff")
+            return
+        from PySide6.QtCore import QDateTime
+        secs = max(0, QDateTime.currentDateTime().secsTo(info["target"]))
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        left = f"{h:02d}:{m:02d}:{s:02d}"
+        self._clock.setText(f"⏰ {left}")
+        # Dernière minute en orange : on voit venir le départ de loin
+        self._set_clock_style(self._COUNTDOWN_SOON if secs <= 60
+                              else self._COUNTDOWN_STYLE)
+        soon = secs <= 60
+        self._set_clock_tip(self._tip_countdown(info, left, now, soon),
+                            tr("clock_tt_btn_edit"), "#ff9a2a" if soon else "#00d4ff")
+
+    def _set_clock_style(self, qss):
+        # Réécrire la feuille de style chaque seconde ferait repolir le label
+        if self._clock.styleSheet() != qss:
+            self._clock.setStyleSheet(qss)
+
+    def _set_clock_tip(self, html, button, accent):
+        self._tip = (html, button, accent)
+        # Fiche ouverte : la rafraîchir sur place, le décompte y défile
+        self._clock_card.refresh()
+
+    @staticmethod
+    def _tip_row(label, value):
+        return (f"<tr><td style='color:#888; padding-right:14px;'>{label}</td>"
+                f"<td style='color:#eee;'>{value}</td></tr>")
+
+    def _tip_clock(self, now):
+        from PySide6.QtCore import QDate, QLocale
+        from i18n import get_language
+        day = QLocale(get_language()).toString(QDate.currentDate(), QLocale.LongFormat)
+        return ("<div style='white-space:nowrap;'>"
+                f"<div style='font-size:20px; font-weight:bold; color:#fff;'>{now}</div>"
+                f"<div style='color:#aaa;'>{day}</div>"
+                f"<div style='color:#777; margin-top:6px;'>{tr('clock_tt_none')}</div>"
+                "</div>")
+
+    def _tip_countdown(self, info, left, now, soon):
+        from PySide6.QtCore import QDate
+        from html import escape
+        target = info["target"]
+        when = tr("clock_tt_today") if target.date() == QDate.currentDate() \
+            else tr("clock_tt_tomorrow")
+        accent = "#ff9a2a" if soon else "#00d4ff"
+        mode = tr("clock_tt_auto") if info["autostart"] else tr("clock_tt_only")
+        show = escape(info["show"]) if info["show"] else \
+            f"<i style='color:#888;'>{tr('clock_tt_unsaved')}</i>"
+        rows = [
+            self._tip_row(tr("clock_tt_at"), f"<b>{target.toString('HH:mm')}</b> · {when}"),
+            self._tip_row(tr("clock_tt_now"), now),
+            self._tip_row(tr("clock_tt_mode"), mode),
+            self._tip_row(tr("clock_tt_show"), show),
+        ]
+        if info["autostart"]:
+            rows.append(self._tip_row(tr("clock_tt_items"),
+                                      tr("clock_tt_n_items", n=info["items"])))
+        warn = ""
+        if info["autostart"] and info["items"] == 0:
+            warn = f"<div style='color:#ff9a2a; margin-top:6px;'>{tr('clock_tt_empty')}</div>"
+        return ("<div style='white-space:nowrap;'>"
+                f"<div style='color:{accent}; font-weight:bold;'>⏰ {tr('clock_tt_title')}</div>"
+                f"<div style='color:#888; margin-top:4px;'>{tr('clock_tt_in')}</div>"
+                f"<div style='font-size:24px; font-weight:bold; color:{accent};'>{left}</div>"
+                f"<table style='margin-top:6px;' cellspacing='0' cellpadding='2'>{''.join(rows)}</table>"
+                f"{warn}"
+                f"<div style='color:#666; margin-top:6px;'>{tr('clock_tt_daily')}</div>"
+                "</div>")
+
+    # état → (texte du nuage, couleur, titre de la fiche, explication)
     _CLOUD_LOOK = {
-        "ok":      ("☁ ✓", "#4a9a6a", "cloud_tip_ok"),
-        "sending": ("☁ ↑", "#5a8ab0", "cloud_tip_sending"),
-        "idle":    ("☁ ↑", "#5a8ab0", "cloud_tip_sending"),
-        "pending": ("☁ ↑", "#5a8ab0", "cloud_tip_sending"),
-        "offline": ("☁",   "#555555", "cloud_tip_offline"),
+        "ok":      ("☁",   "#4a9a6a", "cloud_tt_state_ok",      "cloud_tt_foot_ok"),
+        "sending": ("☁ ↑", "#5a8ab0", "cloud_tt_state_sending", "cloud_tt_foot_pending"),
+        "idle":    ("☁ ↑", "#5a8ab0", "cloud_tt_state_sending", "cloud_tt_foot_pending"),
+        "pending": ("☁ ↑", "#5a8ab0", "cloud_tt_state_pending", "cloud_tt_foot_pending"),
+        "offline": ("☁",   "#555555", "cloud_tt_state_offline", "cloud_tt_foot_offline"),
     }
 
     def set_cloud(self, status: str):
@@ -4597,11 +4830,52 @@ class _StatusCornerWidget(QWidget):
         if look is None:          # "off" : pas de compte connecté
             self._cloud.setVisible(False)
             return
-        text, color, tip = look
+        text, color = look[0], look[1]
         self._cloud.setText(text)
         self._cloud.setStyleSheet(f"color:{color}; font-size:10px; font-weight:bold;")
-        self._cloud.setToolTip(tr(tip))
         self._cloud.setVisible(True)
+        if status != self._cloud_status:
+            self._cloud_status = status
+            self._cloud_card.refresh()
+
+    def _cloud_card_content(self):
+        """Fiche du nuage, construite à l'ouverture seulement (lit deux
+        petits fichiers locaux, jamais le réseau)."""
+        from html import escape
+        _txt, color, title, foot = self._CLOUD_LOOK.get(
+            self._cloud_status, self._CLOUD_LOOK["offline"])
+        # Le gris « hors ligne » du nuage est trop éteint pour un titre
+        accent = "#999999" if self._cloud_status == "offline" else color
+        try:
+            import cloud_sync
+            info = cloud_sync.summary()
+        except Exception:
+            info = {}
+        email = escape(info.get("email") or "—")
+        utc = info.get("last_utc")
+        if utc:
+            when = _dt.datetime.fromtimestamp(utc)
+            if when.date() == _dt.date.today():
+                last = f"{tr('clock_tt_today')} · {when:%H:%M}"
+            else:
+                last = when.strftime("%d/%m/%Y · %H:%M")
+        else:
+            last = f"<i style='color:#888;'>{tr('cloud_tt_never')}</i>"
+        rows = "".join([
+            self._tip_row(tr("cloud_tt_account"), email),
+            self._tip_row(tr("cloud_tt_last"), last),
+            self._tip_row(tr("cloud_tt_synced"), tr("cloud_tt_synced_val")),
+            self._tip_row(tr("cloud_tt_not_synced"),
+                          f"<span style='color:#888;'>{tr('cloud_tt_not_synced_val')}</span>"),
+        ])
+        html = ("<div style='white-space:nowrap;'>"
+                f"<div style='color:#888;'>☁ {tr('cloud_tt_title')}</div>"
+                f"<div style='font-size:18px; font-weight:bold; color:{accent};"
+                f" margin-top:2px;'>{tr(title)}</div>"
+                f"<table style='margin-top:6px;' cellspacing='0' cellpadding='2'>{rows}</table>"
+                "</div>"
+                f"<div style='color:#777; margin-top:6px;'>{tr(foot)}</div>")
+        return html, None, accent
 
 
 class PanTiltLimitWidget(QWidget):
@@ -5459,6 +5733,7 @@ class MainWindow(QMainWindow):
         # libelle de l'action.
         self.schedule_enabled  = False
         self.schedule_time     = "20:00"   # "HH:MM", heure locale — chaque jour
+        self.schedule_autostart = True     # False : décompte seul, rien ne part
         self._schedule_timer      = None
         self._schedule_fired_date = None   # "YYYY-MM-DD" de la derniere salve
 
@@ -5962,27 +6237,33 @@ class MainWindow(QMainWindow):
         act_es = lang_menu.addAction(tr("menu_lang_es"))
         act_de = lang_menu.addAction(tr("menu_lang_de"))
         act_pt = lang_menu.addAction(tr("menu_lang_pt"))
+        act_ja = lang_menu.addAction(tr("menu_lang_ja"))
         act_fr.setCheckable(True)
         act_en.setCheckable(True)
         act_es.setCheckable(True)
         act_de.setCheckable(True)
         act_pt.setCheckable(True)
+        act_ja.setCheckable(True)
         act_fr.setChecked(get_language() == "fr")
         act_en.setChecked(get_language() == "en")
         act_es.setChecked(get_language() == "es")
         act_de.setChecked(get_language() == "de")
         act_pt.setChecked(get_language() == "pt")
+        act_ja.setChecked(get_language() == "ja")
         act_fr.triggered.connect(lambda: self._change_language("fr"))
         act_en.triggered.connect(lambda: self._change_language("en"))
         act_es.triggered.connect(lambda: self._change_language("es"))
         act_de.triggered.connect(lambda: self._change_language("de"))
         act_pt.triggered.connect(lambda: self._change_language("pt"))
+        act_ja.triggered.connect(lambda: self._change_language("ja"))
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_restart"), self.restart_application)
 
         # ── Corner widget : Master meter / CPU / Horloge ──────────────────────
         self._status_corner = _StatusCornerWidget()
         bar.setCornerWidget(self._status_corner, Qt.TopRightCorner)
+        self._status_corner.clock_clicked.connect(self._open_schedule_dialog)
+        self._status_corner.set_countdown_source(self._clock_schedule_info)
 
         # ── Synchro patch + effets avec le compte (façon iCloud) ──────────────
         # Toutes les 5 s, de simples `stat` sur 4 fichiers ; un changement part
@@ -13782,6 +14063,19 @@ class MainWindow(QMainWindow):
                       "D": "Douche 1", "E": "Douche 2", "F": "Douche 3",
                       "G": "G", "H": "H"}
             groups_str = ", ".join(labels.get(l, l) for l in sorted(target_letters))
+            # Groupes peuplés de machines à effet seulement (lance-flammes en H) :
+            # « aucun projecteur, vérifiez le patch » envoyait chercher une erreur
+            # de patch qui n'existe pas. Les couches Dimmer/couleur n'atteignent
+            # JAMAIS une machine (sécurité pyro) ; seule une couche « Canal » sur
+            # son canal de sortie (Flame, Spark, Smoke) la déclenche.
+            has_canal = any(ld.get("attribute") == "Canal" for ld in layers)
+            machines = [p for p in self.projectors if fixture_is_fx_machine(p)
+                        and (not allowed or p.group in allowed)]
+            if machines and not has_canal:
+                self._log_message(tr("mwx_069_machines", groups_str=groups_str), "warn")
+                return
+            if machines:
+                return
             self._log_message(
                 tr("mwx_069", groups_str=groups_str),
                 "warn"
@@ -17092,6 +17386,8 @@ class MainWindow(QMainWindow):
         moving_heads = [p for p in self.projectors
                         if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")]
         if moving_heads:
+            import random as _random
+            import live_mouvements as _lm
             n_lyres = len(moving_heads)
 
             if not hasattr(self, '_live_lyre_e'):
@@ -17112,19 +17408,39 @@ class MainWindow(QMainWindow):
             dt = max(0.0, min(0.12, (position - self._live_lyre_last_pos) / 1000.0))
             self._live_lyre_last_pos = position
 
+            # Tempo : BPM tiré des beats de l'analyse — même source en LIVE
+            # (`live_engine.audio_ai`, au fil de l'eau) et en playlist
+            # (pré-analyse), positions dans la même base de temps que `position`.
+            # Cf. `live_mouvements` pour le pourquoi.
+            _lyr_beats = getattr(self._ia_audio_ai, 'beats', None) or []
+            _lyr_bidx  = state.get('_ia_beat_idx',
+                                   getattr(self._ia_audio_ai, '_last_beat_idx', -1))
+            _lyr_bpm   = _lm.bpm_depuis_beats(_lyr_beats, _lyr_bidx)
+            _lyr_mult  = _lm.multiplicateur_vitesse(self._fx_src.movement_speed)
+            _lyr_new_beat = _lyr_bidx >= 0 and _lyr_bidx != self._live_lyre_beat_idx
+            _lyr_frac = 1.0
+            if _lyr_bpm > 0 and 0 <= _lyr_bidx < len(_lyr_beats):
+                _lyr_frac = max(0.0, min(1.0, (position - _lyr_beats[_lyr_bidx])
+                                         / (60000.0 / _lyr_bpm)))
+
             # Vitesse cible (rot/s) — slider VITESSE + section + énergie
             _mspd_raw = self._fx_src.movement_speed / 100.0
-            _tgt_speed_section = {
-                'quiet': 0.04 + e * 0.02,
-                'verse': 0.12 + e * 0.08,
-                'build': 0.22 + e * 0.10,
-                'high':  0.30 + e * 0.12,
-                'drop':  0.50 + e * 0.22,
-            }.get(section, 0.12 + e * 0.08)
-            _tgt_speed_manual = _mspd_raw * 0.60
-            # À 0% → arrêt total ; courbe quadratique pour progressivité
-            _speed_factor = _mspd_raw ** 2
-            _tgt_speed = (_tgt_speed_section * (1.0 - _mspd_raw * 0.7) + _tgt_speed_manual) * _speed_factor
+            if _lyr_bpm > 0:
+                # Calée sur le tempo : un cycle = N temps selon la section.
+                _tgt_speed = _lm.vitesse_tours_s(_lyr_bpm, section, _lyr_mult)
+            else:
+                # Pas de tempo détecté : ancienne cadence au temps.
+                _tgt_speed_section = {
+                    'quiet': 0.04 + e * 0.02,
+                    'verse': 0.12 + e * 0.08,
+                    'build': 0.22 + e * 0.10,
+                    'high':  0.30 + e * 0.12,
+                    'drop':  0.50 + e * 0.22,
+                }.get(section, 0.12 + e * 0.08)
+                _tgt_speed_manual = _mspd_raw * 0.60
+                # À 0% → arrêt total ; courbe quadratique pour progressivité
+                _speed_factor = _mspd_raw ** 2
+                _tgt_speed = (_tgt_speed_section * (1.0 - _mspd_raw * 0.7) + _tgt_speed_manual) * _speed_factor
 
             spd_alpha = 0.07 if section != 'quiet' else 0.02
             if _mspd_raw < 0.02:
@@ -17136,6 +17452,10 @@ class MainWindow(QMainWindow):
             self._live_lyre_phase = (
                 self._live_lyre_phase + dt * self._live_lyre_speed * 2.0 * _math.pi
             ) % (2.0 * _math.pi)
+            # Sur chaque beat, ramener la phase vers la grille des temps
+            if _lyr_new_beat and _lyr_bpm > 0 and self._live_lyre_speed > 0:
+                self._live_lyre_phase = _lm.recaler_phase(
+                    self._live_lyre_phase, section, _lyr_mult)
 
             # Amplitude de balayage cible
             _tgt_pan, _tgt_tilt = {
@@ -17235,36 +17555,69 @@ class MainWindow(QMainWindow):
             _mdur = self._fx_src.movement_duration / 100.0  # 0–1
 
             # ── Cycle multi-mouvements ────────────────────────────────────────
+            # Le motif change sur une phrase entière (curseur DURÉE → 8 à 64
+            # temps) ou sur un changement de section, toujours SUR un beat, avec
+            # un fondu d'un temps. Tuile AUTO : le moteur choisit selon la section.
             _mov_pool = self._fx_src.movement_patterns  # liste ordonnée
             _mov      = self._fx_src.movement_pattern   # courant
 
-            if len(_mov_pool) > 1:
-                if not hasattr(self, '_live_lyre_switch'):
-                    _bpm0 = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n0   = max(2, int(2 + (self._fx_src.movement_duration / 100.0) * 30))
-                    self._live_lyre_switch = {
-                        'switch_at': position + int(_n0 * 60000.0 / _bpm0),
-                        'pool_snap': list(_mov_pool),
-                    }
-                _sw = self._live_lyre_switch
+            _sw = getattr(self, '_live_lyre_switch', None)
+            if _sw is None:
+                _sw = self._live_lyre_switch = {
+                    'temps':       0,         # temps écoulés depuis le dernier changement
+                    'section':     section,   # section au dernier changement
+                    'switch_at':   None,      # repli au chronomètre sans tempo
+                    'from':        None,      # motif quitté (fondu)
+                    'xfade_start': 0,
+                    'xfade_ms':    1,
+                    'rnd':         _random.Random(),
+                }
+            if _mov not in _lm.MOTIFS:
+                # 'auto' ou clé inconnue : il faut un motif concret à jouer
+                _mov = _lm.motif_suivant(_mov_pool, '', section, _sw['rnd'])
+                self._fx_src.set_current_movement(_mov)
 
-                if position >= _sw['switch_at']:
-                    _sw['pool_snap'] = list(_mov_pool)
-                    try:
-                        _cur_idx = _sw['pool_snap'].index(_mov)
-                    except ValueError:
-                        _cur_idx = -1
-                    _next_idx = (_cur_idx + 1) % len(_sw['pool_snap'])
-                    _next_key = _sw['pool_snap'][_next_idx]
+            if _lm.AUTO in _mov_pool or len(_mov_pool) > 1:
+                _phrase  = _lm.temps_par_phrase(self._fx_src.movement_duration)
+                _changer = False
+                if _lyr_bpm > 0:
+                    _sw['switch_at'] = None
+                    if _lyr_new_beat:
+                        _sw['temps'] += 1
+                        _changer = _lm.doit_changer(
+                            _sw['temps'], section, _sw['section'], _phrase)
+                else:
+                    # Pas de tempo : on compte la phrase à 120 BPM
+                    if _sw['switch_at'] is None:
+                        _sw['switch_at'] = position + _phrase * 500
+                    _changer = position >= _sw['switch_at']
+                if _changer:
+                    _next_key = _lm.motif_suivant(_mov_pool, _mov, section, _sw['rnd'])
+                    if _next_key != _mov:
+                        _sw['from']        = _mov
+                        _sw['xfade_start'] = position
+                        _sw['xfade_ms']    = 60000.0 / _lyr_bpm if _lyr_bpm > 0 else 500.0
                     self._fx_src.set_current_movement(_next_key)
                     _mov = _next_key
-                    _bpm_now = max(60.0, getattr(self.live_engine, '_bpm', 120.0))
-                    _n_beats = max(2, int(2 + (self._fx_src.movement_duration / 100.0) * 30))
-                    _sw['switch_at'] = position + int(_n_beats * 60000.0 / _bpm_now)
+                    _sw['temps']     = 0
+                    _sw['section']   = section
+                    _sw['switch_at'] = None
             else:
-                # Pool d'un seul élément → pas de cycle
-                if hasattr(self, '_live_lyre_switch'):
-                    del self._live_lyre_switch
+                # Pool d'un seul motif → pas de cycle
+                _sw['temps']   = 0
+                _sw['section'] = section
+                _sw['from']    = None
+
+            # Avancement du fondu entre l'ancien et le nouveau motif
+            _xk = 1.0
+            if _sw['from']:
+                _xk = (position - _sw['xfade_start']) / max(1.0, _sw['xfade_ms'])
+                if _xk >= 1.0 or _xk < 0.0:
+                    _sw['from'] = None
+                    _xk = 1.0
+                else:
+                    _xk = _xk * _xk * (3.0 - 2.0 * _xk)   # smoothstep
+            _lyr_temps = _lyr_bidx if _lyr_bpm > 0 else -1
 
             # Amplitude directe en unités DMX selon slider TAILLE
             _amp_pan  = int(2000 + _msz * 22000)   # 2000 → 24000 (3% → 37% du range)
@@ -17273,38 +17626,11 @@ class MainWindow(QMainWindow):
             for i, p in enumerate(moving_heads):
                 offset = i * (2.0 * _math.pi / max(n_lyres, 1))
                 ph_i   = ph + offset
-                if _mov == 'cercle' or _mov == 'circle':
-                    pan_v  = _math.cos(ph_i)
-                    tilt_v = _math.sin(ph_i)
-                elif _mov in ('huit', 'eight'):
-                    pan_v  = _math.sin(ph_i)
-                    tilt_v = _math.sin(2.0 * ph_i) * 0.5
-                elif _mov == 'vague':
-                    pan_v  = _math.sin(ph_i)
-                    tilt_v = 0.0
-                elif _mov == 'diagonale':
-                    t      = _math.sin(ph_i)
-                    pan_v  = t
-                    tilt_v = t
-                elif _mov == 'bounce':
-                    t      = abs(_math.sin(ph_i * 0.5))
-                    pan_v  = t * 2.0 - 1.0
-                    tilt_v = 0.0
-                elif _mov == 'spirale':
-                    r      = (ph_i % (2 * _math.pi)) / (2 * _math.pi)
-                    pan_v  = r * _math.cos(ph_i * 3.0)
-                    tilt_v = r * _math.sin(ph_i * 3.0)
-                elif _mov == 'random':
-                    seed   = int(ph_i / (0.5 * _math.pi))
-                    pan_v  = (((seed * 1664525 + 1013904223) & 0xFFFF) / 32767.5) - 1.0
-                    tilt_v = (((seed * 22695477 + 1) & 0xFFFF) / 32767.5) - 1.0
-                elif _mov == 'pixel':
-                    seed   = int(ph_i / (0.15 * _math.pi))
-                    pan_v  = (((seed * 69069 + 1) & 0xFFFF) / 32767.5) - 1.0
-                    tilt_v = (((seed * 1664525 + 1) & 0xFFFF) / 32767.5) - 1.0
-                else:                                         # Lissajous (défaut)
-                    pan_v  = _math.cos(ph_i)
-                    tilt_v = _math.sin(ph_i * 1.618)
+                pan_v, tilt_v = _lm.motif_xy(_mov, ph_i, _lyr_temps, _lyr_frac, i)
+                if _sw['from']:
+                    _p0, _t0 = _lm.motif_xy(_sw['from'], ph_i, _lyr_temps, _lyr_frac, i)
+                    pan_v  = _p0 + (pan_v  - _p0) * _xk
+                    tilt_v = _t0 + (tilt_v - _t0) * _xk
 
                 # Motif recentré/borné sur la zone du profil de la lyre (voir
                 # `_pantilt_in_limits`) au lieu du milieu de course.
@@ -18014,6 +18340,7 @@ class MainWindow(QMainWindow):
         self.current_show_path = None
         # Un show neuf ne part pas tout seul à l'heure du show précédent.
         self.schedule_enabled = False
+        self.schedule_autostart = True
         self._schedule_fired_date = None
         self._arm_schedule()
         self.setWindowTitle(APP_NAME)
@@ -18666,8 +18993,38 @@ class MainWindow(QMainWindow):
     def _schedule_state(self):
         """État sérialisable (ce qui part dans le .tui)."""
         return {
-            "enabled": bool(self.schedule_enabled),
-            "time":    str(self.schedule_time or "20:00"),
+            "enabled":   bool(self.schedule_enabled),
+            "time":      str(self.schedule_time or "20:00"),
+            "autostart": bool(self.schedule_autostart),
+        }
+
+    def _schedule_next_departure(self):
+        """QDateTime du prochain départ (décompte de la barre), ou None si
+        rien n'est programmé. L'occurrence du jour une fois passée ou
+        consommée, le prochain départ est demain à la même heure."""
+        if not self.schedule_enabled:
+            return None
+        target = self._schedule_target_today()
+        if target is None:
+            return None
+        from PySide6.QtCore import QDate, QDateTime
+        if (self._schedule_fired_date == QDate.currentDate().toString("yyyy-MM-dd")
+                or target.secsTo(QDateTime.currentDateTime()) > 0):
+            return target.addDays(1)
+        return target
+
+    def _clock_schedule_info(self):
+        """Ce que l'horloge de la barre affiche (décompte + infobulle)."""
+        target = self._schedule_next_departure()
+        if target is None:
+            return None
+        seq = getattr(self, 'seq', None)
+        return {
+            "target":    target,
+            "autostart": bool(self.schedule_autostart),
+            "show":      os.path.basename(self.current_show_path)
+                         if self.current_show_path else None,
+            "items":     seq.table.rowCount() if seq is not None else 0,
         }
 
     def _arm_schedule(self, consume_today: bool = False):
@@ -18736,6 +19093,11 @@ class MainWindow(QMainWindow):
         # Consommer l'occurrence dans TOUS les cas : trop tard pour aujourd'hui
         # ne doit pas se traduire par un départ surprise demain à 00:00.
         self._schedule_fired_date = today
+        if not self.schedule_autostart:
+            # Décompte seul : l'heure est arrivée, on le signale, rien ne part.
+            if late <= self._SCHEDULE_WINDOW_S:
+                self._log_message(tr("sched_log_countdown_done", t=self.schedule_time), "go")
+            return
         if late > self._SCHEDULE_WINDOW_S:
             self._log_message(tr("sched_log_too_late", t=self.schedule_time), "warn")
             return
@@ -18771,6 +19133,8 @@ class MainWindow(QMainWindow):
         if isinstance(sc, dict):
             self.schedule_enabled = bool(sc.get("enabled", False))
             self.schedule_time    = str(sc.get("time", "20:00"))
+            # Absent = show v8 d'avant le décompte seul : il lançait toujours.
+            self.schedule_autostart = bool(sc.get("autostart", True))
         else:
             # Un .tui antérieur à la v8 n'a pas la clé. Désarmer : garder
             # l'heure du show précédent la ferait partir sur un show qui ne la
@@ -18813,7 +19177,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(20, 18, 20, 16)
         lay.setSpacing(12)
 
-        cb_on = QCheckBox(tr("sched_enable"))
+        cb_on = QCheckBox(tr("sched_enable_timer"))
         cb_on.setChecked(bool(self.schedule_enabled))
         lay.addWidget(cb_on)
 
@@ -18826,6 +19190,14 @@ class MainWindow(QMainWindow):
         row.addWidget(te)
         row.addStretch(1)
         lay.addLayout(row)
+
+        # Lancer ou non : décochée, l'heure ne sert qu'au décompte de la barre.
+        cb_auto = QCheckBox(tr("sched_enable"))
+        cb_auto.setChecked(bool(self.schedule_autostart))
+        lay.addWidget(cb_auto)
+        # Toujours active (même leçon que le champ d'heure) : la cocher arme
+        # le départ, ce qui est forcément ce qu'on veut en la cochant.
+        cb_auto.toggled.connect(lambda on: on and cb_on.setChecked(True))
 
         hint = QLabel(tr("sched_help"))
         hint.setWordWrap(True)
@@ -18854,11 +19226,13 @@ class MainWindow(QMainWindow):
             return
         self.schedule_enabled = cb_on.isChecked()
         self.schedule_time    = te.time().toString("HH:mm")
+        self.schedule_autostart = cb_auto.isChecked()
         self._schedule_fired_date = None
         self._arm_schedule(consume_today=True)
         self.seq.is_dirty = True
         if self.schedule_enabled:
-            self._log_message(tr("sched_log_armed", t=self.schedule_time), "success")
+            key = "sched_log_armed" if self.schedule_autostart else "sched_log_countdown_armed"
+            self._log_message(tr(key, t=self.schedule_time), "success")
         else:
             self._log_message(tr("sched_log_off"), "info")
 
@@ -21462,7 +21836,7 @@ class MainWindow(QMainWindow):
     def _change_language(self, lang: str):
         set_language(lang)
         label = {"fr": "Français", "en": "English", "es": "Español",
-                 "de": "Deutsch", "pt": "Português"}.get(lang, lang)
+                 "de": "Deutsch", "pt": "Português", "ja": "日本語"}.get(lang, lang)
         QMessageBox.information(self, tr("lang_changed_title"), tr("lang_changed_msg", label=label))
 
     def on_update_available(self, version, exe_url, hash_url, sig_url=""):
@@ -26817,8 +27191,10 @@ class MainWindow(QMainWindow):
         def _open_fixture_editor_ia():
             import json as _json
             from fixture_editor import FixtureEditorDialog, FIXTURE_FILE
-            from admin_pack_editor import _FootprintImportDialog
-            ia_dlg = _FootprintImportDialog(dialog)
+            # Prompt à coller dans l'IA de l'utilisateur, réponse recollée ici :
+            # MyStrow n'appelle plus aucune IA lui-même (cf. fixture_ai_prompt).
+            from fixture_ai_prompt import AIFixtureDialog
+            ia_dlg = AIFixtureDialog(dialog)
             if ia_dlg.exec() != QDialog.Accepted:
                 return
             fx = ia_dlg.result_fixture()
@@ -27040,15 +27416,30 @@ class MainWindow(QMainWindow):
         canvas_timer.timeout.connect(_timer_tick)
         canvas_timer.start(80)
 
-        # Ctrl+Z sur le dialog
-        def _dialog_key(event):
-            if event.key() == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
-                _undo()
-            elif event.key() == Qt.Key_Y and (event.modifiers() & Qt.ControlModifier):
-                _redo()
+        # Ctrl+Z / Ctrl+Y / Ctrl+A : des QShortcut de FENÊTRE, pas keyPressEvent.
+        # L'ancien `dialog.keyPressEvent` était écrasé plus bas par celui
+        # d'Échap (`_patch_key`) → Ctrl+Z mort ; et une carte ou un bouton
+        # focalisé mangeait la touche de toute façon. Les champs texte
+        # (filtre, nom, adresse) gardent leur propre Ctrl+Z / Ctrl+A : un
+        # QLineEdit réclame ces touches standard (ShortcutOverride).
+        def _select_all_cards():
+            for i, c in enumerate(_cards):
+                if c is not None and not c._chk.isChecked():
+                    c._chk.setChecked(True)
+
+        def _select_all_current_tab():
+            if tabs.currentIndex() == 1:
+                _select_all_canvas()
             else:
-                type(dialog).keyPressEvent(dialog, event)
-        dialog.keyPressEvent = _dialog_key
+                _select_all_cards()
+
+        from PySide6.QtGui import QShortcut as _QShortcut, QKeySequence as _QKS
+        for _seq, _fn in (("Ctrl+Z", _undo), ("Ctrl+Y", _redo),
+                          ("Ctrl+Shift+Z", _redo),
+                          ("Ctrl+A", _select_all_current_tab)):
+            _sc = _QShortcut(_QKS(_seq), dialog)
+            _sc.setContext(Qt.WindowShortcut)
+            _sc.activated.connect(_fn)
 
         def _on_close_event(event):
             if _dirty[0]:
@@ -29698,15 +30089,44 @@ class MainWindow(QMainWindow):
         """Ouvre l'outil de diagnostic DMX canal par canal."""
         from dmx_tester import DmxTesterDialog
         self.dmx_send_timer.stop()
+        # Pendant le test, le contrôleur appartient au testeur : ses faders
+        # pilotent les canaux 1-9 et ses pads ne doivent plus toucher au show
+        # (niveaux de groupe, couleurs, mémoires modifiés en douce).
+        mh = getattr(self, 'midi_handler', None)
+        show_slots = ((mh.fader_changed, self.on_midi_fader),
+                      (mh.pad_pressed, self.on_midi_pad),
+                      (mh.pad_released, self.on_midi_pad_released)) if mh else ()
+        for sig, slot in show_slots:
+            sig.disconnect(slot)
         try:
-            dlg = DmxTesterDialog(self.dmx, self)
+            dlg = DmxTesterDialog(self.dmx, self, midi=mh)
             dlg.exec()
         finally:
+            for sig, slot in show_slots:
+                sig.connect(slot)
+            if mh:
+                self._restore_akai_leds_after_tester()
             # Reprendre la cadence NOMINALE. Ce `start()` réarmait le timer à
             # 40 ms au lieu des 25 ms d'origine : un simple passage par le
             # testeur faisait tomber tout le parc de 40 à 25 fps jusqu'à la
             # fermeture du logiciel — d'où « le DMX rame, un redémarrage règle ».
             self.dmx_send_timer.start(DMX_FRAME_MS)
+
+    def _restore_akai_leds_after_tester(self):
+        """Redessine toute la grille du contrôleur après le motif du DMX Tester."""
+        pad_rows = {id(pad): row for (row, _c), pad in self.pads.items()}
+        group_rows = {col: pad_rows[id(pad)] for col, pad in self.active_pads.items()
+                      if id(pad) in pad_rows}
+        self.activate_default_white_pads(group_rows)
+        self._refresh_play_leds()
+        self._refresh_vfx_leds()
+        self._refresh_video_leds()
+        for row, btn in enumerate(self.effect_buttons[:8]):
+            self.midi_handler.set_pad_led(row, 8, 1 if btn.active else 0)
+        # Rangée MUTE (APC mini) : le testeur s'en sert pour changer de page
+        if self.midi_handler.controller_type == 'apc_mini' and self.midi_handler.midi_out:
+            for i, btn in enumerate(self.fader_buttons[:8]):
+                self.midi_handler.midi_out.send_message([0x90, 100 + i, 3 if btn.active else 0])
 
     def open_dmx_monitor(self):
         """Ouvre le moniteur DMX : une fenetre de LECTURE des valeurs emises.

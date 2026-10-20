@@ -1758,6 +1758,14 @@ class FixtureEditorDialog(QDialog):
 
         is_new = self._current_idx < 0
         if not is_new and 0 <= self._current_idx < len(self._fixtures):
+            # Champs que le formulaire n'affiche pas : sans les reporter, retoucher
+            # un seul canal d'une fixture importée (XML, IA) effaçait ses roues,
+            # ses presets et ses plages utiles.
+            old = self._fixtures[self._current_idx]
+            for k in ("color_wheel_slots", "gobo_wheel_slots", "preset_slots",
+                      "channel_ranges", "channel_defaults"):
+                if k not in data and old.get(k):
+                    data[k] = copy.deepcopy(old[k])
             self._fixtures[self._current_idx] = data
         else:
             existing = {f["name"] for f in self._fixtures}

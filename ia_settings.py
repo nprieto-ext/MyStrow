@@ -66,7 +66,7 @@ COLOR_TILE_DATA = {
     'bi_bv':      ('#0055ff', '#00ff55'),
 }
 
-MOVEMENT_ORDER = ['vague', 'cercle', 'diagonale', 'spirale', 'bounce', 'huit']
+MOVEMENT_ORDER = ['auto', 'vague', 'cercle', 'diagonale', 'spirale', 'bounce', 'huit']
 
 
 class IASettings:
@@ -76,7 +76,8 @@ class IASettings:
         self._ia_mode           = 'musical'
 
         # Mouvements de lyres
-        self._movement_patterns = {'cercle'}
+        # AUTO = le moteur choisit le motif (cf. `live_mouvements`)
+        self._movement_patterns = {'auto'}
         self._current_movement  = 'cercle'
         self._movement_speed    = 50
         self._movement_size     = 70
@@ -146,8 +147,11 @@ class IASettings:
         return self._movement_duration
 
     def set_current_movement(self, key: str):
-        """Appelé par le moteur quand il enchaîne sur le mouvement suivant."""
-        if key in self._movement_patterns:
+        """Appelé par le moteur quand il enchaîne sur le mouvement suivant.
+        En AUTO, tout motif concret est accepté : c'est le moteur qui choisit."""
+        if key == 'auto':
+            return
+        if key in self._movement_patterns or 'auto' in self._movement_patterns:
             self._current_movement = key
 
     # ── Couleurs ─────────────────────────────────────────────────────────────
@@ -300,6 +304,7 @@ class IASettings:
         return {
             'ia_mode':          self._ia_mode,
             'mov_pool':         sorted(self._movement_patterns),
+            'mov_v':            2,   # 2 = la tuile AUTO existe (cf. from_dict)
             'mov_current':      self._current_movement,
             'mov_speed':        self._movement_speed,
             'mov_size':         self._movement_size,
@@ -336,7 +341,12 @@ class IASettings:
         # Chaque clé retombe sur le défaut si elle manque : un show enregistré
         # par une version antérieure doit rester jouable après ajout d'un réglage.
         s._ia_mode           = d.get('ia_mode', s._ia_mode)
-        s._movement_patterns = set(d.get('mov_pool', s._movement_patterns)) or {'cercle'}
+        s._movement_patterns = set(d.get('mov_pool', s._movement_patterns)) or {'auto'}
+        # Migration (20/10/2026) : {'cercle'} seul était le défaut d'avant la
+        # tuile AUTO. Décision : tous les shows passent en AUTO. `mov_v` évite
+        # de re-migrer un « cercle » recoché exprès après coup.
+        if int(d.get('mov_v', 1)) < 2 and s._movement_patterns == {'cercle'}:
+            s._movement_patterns = {'auto'}
         s._current_movement  = d.get('mov_current', s._current_movement)
         s._movement_speed    = int(d.get('mov_speed', s._movement_speed))
         s._movement_size     = int(d.get('mov_size', s._movement_size))
@@ -371,7 +381,10 @@ class IASettings:
         s._allowed_effects   = set(d.get('allowed_effects', s._allowed_effects))
         # Le mouvement/la couleur « en cours » doivent appartenir à leur pool,
         # sinon le moteur démarre sur une valeur qu'il n'enchaînera jamais.
-        if s._current_movement not in s._movement_patterns:
+        if s._current_movement == 'auto':
+            s._current_movement = 'cercle'
+        if (s._current_movement not in s._movement_patterns
+                and 'auto' not in s._movement_patterns):
             s._current_movement = s.movement_patterns[0] if s.movement_patterns else 'cercle'
         if s._current_color not in s._color_tile_pool:
             s._current_color = s.color_tile_pool[0] if s.color_tile_pool else 'rouge'
@@ -441,7 +454,7 @@ class IASettings:
             return s
         try:
             s._ia_mode           = panel.ia_mode
-            s._movement_patterns = set(panel.movement_patterns) or {'cercle'}
+            s._movement_patterns = set(panel.movement_patterns) or {'auto'}
             s._current_movement  = panel.movement_pattern
             s._movement_speed    = panel.movement_speed
             s._movement_size     = panel.movement_size

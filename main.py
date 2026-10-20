@@ -616,13 +616,13 @@ def main():
                 ip = cfg.get("target_ip", "")
                 if ip:
                     try:
-                        import socket as _sock
-                        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-                        s.settimeout(0.8)
-                        r = s.connect_ex((ip, 80))
-                        s.close()
-                        # r==0 : connexion OK  /  10061 (Windows) ou 111 (Linux) : refusée = hôte en ligne
-                        _dmx_box[0] = True if r in (0, 111, 10061) else False
+                        # Ping puis ArtPoll, et non plus une connexion TCP sur
+                        # le port 80 : un node sans page web (ou qui ignore les
+                        # SYN) laissait expirer la connexion → voyant rouge
+                        # alors qu'il répondait au ping et recevait le DMX.
+                        import node_connection as _nc
+                        _dmx_box[0] = (_nc._ping(ip, timeout_ms=800)
+                                       or _nc._artpoll_probe(ip, timeout=1.2))
                     except Exception:
                         _dmx_box[0] = None  # orange = inconnu
                     _dmx_box[1] = (f"Art-Net · {ip}" if _dmx_box[0] is not False

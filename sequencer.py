@@ -1149,8 +1149,11 @@ class LiveModePanel(QWidget):
         self._sync_tap_times: list = []   # timestamps des taps SYNC
         self._sync_reset_timer = None     # QTimer reset après inactivité
         self._ia_mode            = 'musical'
-        self._movement_patterns  = {'cercle'}   # set des mouvements sélectionnés
-        self._current_movement   = 'cercle'     # mouvement en cours d'exécution
+        # AUTO par défaut : le moteur choisit le motif selon la section
+        # (cf. `live_mouvements`). L'ancien défaut {'cercle'} faisait tourner le
+        # même cercle tout le show chez qui ne touchait à rien.
+        self._movement_patterns  = {'auto'}     # set des mouvements sélectionnés
+        self._current_movement   = 'cercle'     # motif concret en cours d'exécution
         self._movement_speed     = 50
         self._movement_size      = 70
         self._movement_duration  = 40         # durée en % (0-100)
@@ -1348,6 +1351,7 @@ class LiveModePanel(QWidget):
                 'color_duration':   self._color_duration,
                 'color_max':        self._color_max,
                 'mov_patterns':     list(self._movement_patterns),
+                'mov_v':            2,   # 2 = la tuile AUTO existe (cf. chargement)
                 'current_mov':      self._current_movement,
                 'mov_speed':        self._movement_speed,
                 'mov_size':         self._movement_size,
@@ -1393,6 +1397,16 @@ class LiveModePanel(QWidget):
             self._color_max         = int(cfg.get('color_max', self._color_max))
             self._movement_patterns = set(cfg.get('mov_patterns', list(self._movement_patterns)))
             self._current_movement  = cfg.get('current_mov', self._current_movement)
+            # Migration (20/10/2026) : avant la tuile AUTO, {'cercle'} seul était
+            # le défaut que presque personne ne changeait. Décision : tout le
+            # monde passe en AUTO. `mov_v` empêche de re-migrer celui qui
+            # recoche « cercle » seul ensuite.
+            if int(cfg.get('mov_v', 1)) < 2 and self._movement_patterns == {'cercle'}:
+                self._movement_patterns = {'auto'}
+            if not self._movement_patterns:
+                self._movement_patterns = {'auto'}
+            if self._current_movement == 'auto':
+                self._current_movement = 'cercle'
             self._movement_speed    = int(cfg.get('mov_speed', self._movement_speed))
             self._movement_size     = int(cfg.get('mov_size', self._movement_size))
             self._movement_duration = int(cfg.get('mov_duration', self._movement_duration))
@@ -2011,6 +2025,7 @@ class LiveModePanel(QWidget):
                         "strob", "special", "sequence")
 
     _MOVEMENTS = [
+        ('auto',      '✦',  tr("lv_mov_auto")),
         ('vague',     '〜', tr("lv_mov_vague")),
         ('cercle',    '○',  tr("lv_mov_cercle")),
         ('diagonale', '╱',  tr("lv_mov_diagonale")),
@@ -2442,10 +2457,7 @@ class LiveModePanel(QWidget):
                 key, icon, label = self._MOVEMENTS[i]
                 tile = _MovTile(key, icon, label, w)
                 tile.clicked.connect(self._on_movement_selected)
-                tile.set_state(
-                    selected=key in self._movement_patterns,
-                    playing=key == self._current_movement,
-                )
+                tile.set_state(*self._mov_tile_state(key))
                 self._mov_tiles[key] = tile
                 row_layout.addWidget(tile)
             vbox.addLayout(row_layout)
@@ -3136,8 +3148,18 @@ class LiveModePanel(QWidget):
             )
 
     def _on_movement_selected(self, key: str):
-        """Toggle un mouvement dans/hors du pool de mouvements."""
-        if key in self._movement_patterns:
+        """Toggle un mouvement dans/hors du pool de mouvements.
+
+        AUTO est exclusif : le cocher vide la réserve, cocher un motif le retire.
+        """
+        if key == 'auto':
+            if 'auto' in self._movement_patterns:
+                return          # déjà seul : jamais zéro mouvement
+            self._movement_patterns = {'auto'}
+        elif 'auto' in self._movement_patterns:
+            self._movement_patterns = {key}
+            self._current_movement  = key
+        elif key in self._movement_patterns:
             # Déselectionner : interdit si c'est le dernier
             if len(self._movement_patterns) <= 1:
                 return
@@ -3158,19 +3180,28 @@ class LiveModePanel(QWidget):
         self._request_save()
 
     def set_current_movement(self, key: str):
-        """Appelé par le moteur quand il bascule vers le prochain mouvement du pool."""
-        if key not in self._movement_patterns or key == self._current_movement:
+        """Appelé par le moteur quand il bascule vers le prochain mouvement du pool.
+
+        En AUTO, tout motif concret est accepté : c'est le moteur qui choisit.
+        """
+        if key == self._current_movement or key == 'auto':
+            return
+        if key not in self._movement_patterns and 'auto' not in self._movement_patterns:
             return
         self._current_movement = key
         self._refresh_mov_tiles()
 
+    def _mov_tile_state(self, k: str):
+        """(selected, playing) d'une tuile. En AUTO, la tuile AUTO est « en
+        cours » et le motif choisi par le moteur s'allume en « sélectionné »."""
+        if 'auto' in self._movement_patterns:
+            return (k == self._current_movement, k == 'auto')
+        return (k in self._movement_patterns, k == self._current_movement)
+
     def _refresh_mov_tiles(self):
         """Met à jour l'état visuel de toutes les tuiles de mouvement."""
         for k, tile in self._mov_tiles.items():
-            tile.set_state(
-                selected=k in self._movement_patterns,
-                playing=k == self._current_movement,
-            )
+            tile.set_state(*self._mov_tile_state(k))
 
     # ── Sélecteur de mode IA ──────────────────────────────────────────────────
 

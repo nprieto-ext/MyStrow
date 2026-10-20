@@ -240,6 +240,8 @@ def build_local_installer(version):
         # qu'a la demande, dans le corps de _import_foreign.
         f"--hidden-import=patch_import "
         f"--hidden-import=patch_import_ui "
+        # « Créer votre fixture via IA » : importé dans le corps du handler.
+        f"--hidden-import=fixture_ai_prompt "
         f"--hidden-import=artnet_dmx "
         f"--hidden-import=firebase_config "
         f"--collect-all certifi "

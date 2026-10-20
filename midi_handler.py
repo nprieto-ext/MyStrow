@@ -292,6 +292,12 @@ class MIDIHandler(QObject):
         self.running  = False
         self.connection_check_timer = None
         self.owner_window = None
+        # Callable qui détourne le bouton bas-droite (TAP/Shift) tant qu'un
+        # outil le réclame (ex. testeur DMX : changement de page des faders).
+        self.tap_override = None
+        # Idem pour les boutons MUTE : callable(fader_idx). Tant qu'il est posé,
+        # ils ne coupent plus les groupes du show.
+        self.mute_override = None
         self.debug_mode   = False
         self._midi_queue  = []
         self._midi_lock   = threading.Lock()
@@ -871,9 +877,13 @@ class MIDIHandler(QObject):
         autres modes (TAP BPM, GO), simple clignotement comme avant.
         """
         ow = self.owner_window
-        hold = ow is not None and getattr(ow, 'tap_button_mode', 'bpm') in ('flash', 'flash_kill')
-        if ow is not None:
-            ow._tap_tempo()
+        if self.tap_override is not None:
+            hold = False
+            self.tap_override()
+        else:
+            hold = ow is not None and getattr(ow, 'tap_button_mode', 'bpm') in ('flash', 'flash_kill')
+            if ow is not None:
+                ow._tap_tempo()
         if not self.midi_out:
             return
         try:
@@ -884,9 +894,16 @@ class MIDIHandler(QObject):
         except Exception:
             pass
 
+    def _mute_button_pressed(self, fader_idx):
+        """Bouton MUTE d'un fader — détourné si un outil le réclame."""
+        if self.mute_override is not None:
+            self.mute_override(fader_idx)
+        elif self.owner_window:
+            self.owner_window.toggle_fader_mute_from_midi(fader_idx)
+
     def _tap_button_released(self, note):
         """Relâchement du bouton bas-droite — termine un flash en cours."""
-        if self.owner_window is not None:
+        if self.tap_override is None and self.owner_window is not None:
             self.owner_window._tap_tempo_released()
         if self.midi_out:
             try:
@@ -932,8 +949,7 @@ class MIDIHandler(QObject):
 
         elif 100 <= note <= 107:
             # Carrés MUTE au-dessus des faders
-            if self.owner_window:
-                self.owner_window.toggle_fader_mute_from_midi(note - 100)
+            self._mute_button_pressed(note - 100)
 
         elif note == 122:
             # Bouton bas-droite : TAP BPM / GO / FLASH selon la configuration.
@@ -1011,8 +1027,7 @@ class MIDIHandler(QObject):
 
         # Activator (Mute piste)
         elif note == _APC40_ACTIVATOR_NOTE and 0 <= channel <= 7:
-            if self.owner_window:
-                self.owner_window.toggle_fader_mute_from_midi(channel)
+            self._mute_button_pressed(channel)
 
         # Bouton bas-droite : TAP BPM / GO / FLASH selon la configuration
         elif channel == 0 and note == _APC40_TAP_TEMPO_NOTE:
@@ -1081,8 +1096,7 @@ class MIDIHandler(QObject):
 
         # REC ARM : rangee du bas, collee aux faders → mute de la piste
         elif note == _APC20_MUTE_NOTE and 0 <= channel <= 7:
-            if self.owner_window:
-                self.owner_window.toggle_fader_mute_from_midi(channel)
+            self._mute_button_pressed(channel)
 
         elif channel == 0 and note == _APC20_TAP_TEMPO_NOTE:
             self._tap_button_pressed(_APC20_TAP_TEMPO_NOTE, 2)
@@ -1107,8 +1121,8 @@ class MIDIHandler(QObject):
 
         # Top row (boutons Automap/Live) : CC 104-111 → mute
         if status == 0xB0 and 104 <= data1 <= 111:
-            if data2 > 0 and self.owner_window:
-                self.owner_window.toggle_fader_mute_from_midi(data1 - 104)
+            if data2 > 0:
+                self._mute_button_pressed(data1 - 104)
             return
 
         if status not in (0x90, 0x80):
@@ -1203,8 +1217,8 @@ class MIDIHandler(QObject):
 
         # Top row CC 104-111 → mute
         if status == 0xB0 and 104 <= data1 <= 111:
-            if data2 > 0 and self.owner_window:
-                self.owner_window.toggle_fader_mute_from_midi(data1 - 104)
+            if data2 > 0:
+                self._mute_button_pressed(data1 - 104)
             return
 
         if status not in (0x90, 0x80):
@@ -1248,8 +1262,7 @@ class MIDIHandler(QObject):
         if status == 0x90 and data2 > 0:
             if data1 in _MIDIMIX_MUTE_NOTE:
                 ch_idx = _MIDIMIX_MUTE_NOTE[data1]
-                if self.owner_window:
-                    self.owner_window.toggle_fader_mute_from_midi(ch_idx)
+                self._mute_button_pressed(ch_idx)
                 # Feedback LED via bouton REC ARM correspondant
                 rec_note = ch_idx * 3  # notes 0, 3, 6, 9...
                 if self.midi_out:
@@ -1284,8 +1297,7 @@ class MIDIHandler(QObject):
                 row, col = self._rev_pad[k]
                 self.pad_pressed.emit(row, col)
             elif k in self._rev_mute:
-                if self.owner_window:
-                    self.owner_window.toggle_fader_mute_from_midi(self._rev_mute[k])
+                self._mute_button_pressed(self._rev_mute[k])
             elif k in self._rev_effect:
                 self.pad_pressed.emit(self._rev_effect[k], 8)
 

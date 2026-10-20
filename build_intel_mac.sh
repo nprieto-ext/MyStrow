@@ -204,7 +204,7 @@ else
     --hidden-import=rtmidi --hidden-import=rtmidi._rtmidi --collect-all rtmidi
     --hidden-import=node_connection --hidden-import=brad_diagnostic
     --hidden-import=streamdeck_api --hidden-import=artnet_dmx --hidden-import=firebase_config
-    --hidden-import=patch_import --hidden-import=patch_import_ui
+    --hidden-import=patch_import --hidden-import=patch_import_ui --hidden-import=fixture_ai_prompt
     --collect-all certifi --collect-all cryptography --collect-all serial
     --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py
   )
