@@ -1849,6 +1849,123 @@ def _run_mcf_suivi() -> int:
     return n
 
 
+# --- Estimation de livraison + stock, affichés en direct sur /shop ----------
+
+# Cache par instance : l'API preview d'Amazon est limitée (~2 requêtes/s) et
+# la page est publique. Les délais dépendent de la région, pas de la rue :
+# une clé par département et par heure suffit (≤ 100 appels/heure au pire).
+_ESTIM_CACHE: dict = {}
+_ESTIM_H = {"Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Content-Type": "application/json"}
+
+
+def _estim_cached(key, ttl: float, fn):
+    hit = _ESTIM_CACHE.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    val = fn()
+    _ESTIM_CACHE[key] = (time.time(), val)
+    return val
+
+
+@https_fn.on_request(max_instances=3)
+def livraison_estimation(req: https_fn.Request) -> https_fn.Response:
+    """GET ?cp=75001 → fourchette de livraison Standard + stock des 2 packs.
+
+    Les DOM-TOM (97x/98x) sont refusés : le Payment Link ne livre qu'en
+    France métropolitaine (pas de conformité DEEE outre-mer, cf. CGV).
+    """
+    if req.method == "OPTIONS":
+        return https_fn.Response("", status=204, headers=_ESTIM_H)
+    cp = (req.args.get("cp") or "75001").strip()
+    if len(cp) != 5 or not cp.isdigit():
+        return https_fn.Response(json.dumps({"ok": False, "raison": "cp"}),
+                                 status=400, headers=_ESTIM_H)
+    if cp.startswith(("97", "98")):
+        return https_fn.Response(json.dumps({"ok": False, "raison": "outre-mer"}),
+                                 headers=_ESTIM_H)
+    try:
+        heure = time.strftime("%Y%m%d%H", time.gmtime())
+        est = _estim_cached(("cp", cp[:2], heure), 3600, lambda: amazon_mcf.preview(cp))
+        stock = _estim_cached(("stock",), 600,
+                              lambda: amazon_mcf.get_inventory(list(_PACKS.values())))
+    except Exception as e:
+        print(f"[Estimation] {cp} : {e}")
+        return https_fn.Response(json.dumps({"ok": False, "raison": "api"}),
+                                 status=502, headers=_ESTIM_H)
+    return https_fn.Response(json.dumps({
+        "ok":       est["fulfillable"],
+        "earliest": est["earliest"][:10],
+        "latest":   est["latest"][:10],
+        "stock":    {plan: int(stock.get(sku, 0)) for plan, sku in _PACKS.items()},
+    }), headers={**_ESTIM_H, "Cache-Control": "public, max-age=600"})
+
+
+# --- Alerte « vente Amazon » ------------------------------------------------
+
+def _run_ventes_amazon() -> int:
+    """Prévient l'admin de chaque nouvelle commande Amazon.fr des packs.
+
+    Le curseur (`meta/ventes_amazon.depuis`) part de « maintenant » au premier
+    passage : pas de rafale de mails pour l'historique. Chaque commande est
+    réservée par `create()` dans `ventes_amazon/{id}`, comme les événements
+    Stripe : deux passages qui se chevauchent n'envoient pas deux mails.
+    Les commandes MCF du site ont un canal « Non-Amazon » : ignorées ici, elles
+    ont déjà leur propre mail.
+    """
+    if not amazon_mcf.configured():
+        return 0
+    db = _get_db()
+    meta = db.collection("meta").document("ventes_amazon")
+    maintenant = time.time()
+    depuis = float((meta.get().to_dict() or {}).get("depuis") or 0)
+    if not depuis:
+        meta.set({"depuis": maintenant})
+        return 0
+    # 10 min de recouvrement : une commande créée pendant le passage précédent
+    # n'est pas perdue, et le verrou par commande évite le doublon.
+    apres = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(depuis - 600))
+    commandes = amazon_mcf.get_orders(apres)
+    n = 0
+    stock = None
+    for cmd in commandes:
+        if not str(cmd.get("SalesChannel", "")).startswith("Amazon"):
+            continue
+        oid = cmd.get("AmazonOrderId", "")
+        try:
+            db.collection("ventes_amazon").document(oid).create({
+                "date":   cmd.get("PurchaseDate", ""),
+                "statut": cmd.get("OrderStatus", ""),
+                "vu_utc": maintenant,
+            })
+        except Conflict:
+            continue
+        try:
+            items = amazon_mcf.get_order_items(oid)
+        except Exception as e:
+            print(f"[Ventes Amazon] Lignes de {oid} illisibles : {e}")
+            items = []
+        if stock is None:
+            try:
+                stock = amazon_mcf.get_inventory(list(_PACKS.values()))
+            except Exception:
+                stock = {}
+        lignes = "<br>".join(
+            f"{it.get('QuantityOrdered', 1)} × <b>{it.get('SellerSKU', '?')}</b>"
+            f" — {(it.get('ItemPrice') or {}).get('Amount', '?')} €"
+            for it in items) or "(détail indisponible, commande en attente)"
+        reste = " · ".join(f"{sku} : {q}" for sku, q in sorted((stock or {}).items()))
+        _alert_admin(f"🛒 MyStrow — Vente Amazon ({oid})", f"""
+<h2>Nouvelle vente sur Amazon</h2>
+<div class="box">{lignes}<br>Commande <b>{oid}</b> — {cmd.get('OrderStatus', '')}
+({cmd.get('FulfillmentChannel', '')})</div>
+<p>Stock FBA restant : {reste or '?'}</p>""")
+        n += 1
+    meta.set({"depuis": maintenant})
+    return n
+
+
 def _id_of(value) -> str:
     """Un champ Stripe peut arriver en identifiant nu ou en objet étendu."""
     if isinstance(value, dict):
@@ -4523,3 +4640,9 @@ def boitier_relances(event: scheduler_fn.ScheduledEvent) -> None:
 @scheduler_fn.on_schedule(schedule="0 */2 * * *", max_instances=1)
 def mcf_suivi(event: scheduler_fn.ScheduledEvent) -> None:
     print(f"[MCF suivi] {_run_mcf_suivi()} pack(s) expédié(s) notifié(s)")
+
+
+# Toutes les 30 min : un mail à l'admin pour chaque vente Amazon.fr.
+@scheduler_fn.on_schedule(schedule="*/30 * * * *", max_instances=1)
+def ventes_amazon(event: scheduler_fn.ScheduledEvent) -> None:
+    print(f"[Ventes Amazon] {_run_ventes_amazon()} nouvelle(s) vente(s)")

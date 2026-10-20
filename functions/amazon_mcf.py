@@ -156,6 +156,47 @@ def get_order(order_id: str) -> dict:
     return {"status": status, "packages": packages}
 
 
+def preview(postal_code: str, sku: str = "MS-DMX-2M") -> dict:
+    """Fourchette de livraison Standard vers un code postal français.
+
+    Amazon n'a besoin que du code postal pour estimer : la ville et la rue
+    sont des bouche-trous (vérifié le 20/10/2026, Marseille / Brest / Ajaccio
+    / Strasbourg). Retourne {"fulfillable", "earliest", "latest"} (dates ISO).
+    """
+    rep = _call("POST", f"{_OUTBOUND}/fulfillmentOrders/preview", {
+        "marketplaceId": MARKETPLACE_FR,
+        "address": {"name": "Client", "addressLine1": "-", "city": "-",
+                    "stateOrRegion": "-", "postalCode": postal_code,
+                    "countryCode": "FR"},
+        "shippingSpeedCategories": ["Standard"],
+        "items": [{"sellerSku": sku, "sellerFulfillmentOrderItemId": "1", "quantity": 1}],
+    })
+    for p in (rep.get("payload") or {}).get("fulfillmentPreviews") or []:
+        ship = (p.get("fulfillmentPreviewShipments") or [{}])[0]
+        return {"fulfillable": bool(p.get("isFulfillable")),
+                "earliest": ship.get("earliestArrivalDate", ""),
+                "latest": ship.get("latestArrivalDate", "")}
+    return {"fulfillable": False, "earliest": "", "latest": ""}
+
+
+def get_orders(created_after: str) -> list[dict]:
+    """Commandes Amazon.fr créées après `created_after` (ISO, UTC).
+
+    Rôle « Suivi des stocks et des commandes » : pas de données personnelles
+    (ni nom ni adresse), ce qui suffit pour une alerte de vente. Amazon exige
+    que `created_after` soit au moins 2 minutes dans le passé.
+    """
+    q = urllib.parse.urlencode({"MarketplaceIds": MARKETPLACE_FR,
+                                "CreatedAfter": created_after})
+    rep = _call("GET", f"/orders/v0/orders?{q}")
+    return (rep.get("payload") or {}).get("Orders") or []
+
+
+def get_order_items(amazon_order_id: str) -> list[dict]:
+    rep = _call("GET", f"/orders/v0/orders/{urllib.parse.quote(amazon_order_id)}/orderItems")
+    return (rep.get("payload") or {}).get("OrderItems") or []
+
+
 def get_inventory(skus: list[str]) -> dict:
     """Stock FBA vendable par SKU (lecture seule — sert de test de connexion)."""
     q = urllib.parse.urlencode({
