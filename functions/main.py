@@ -8,6 +8,7 @@ Gère :
   - customer.subscription.updated → révoque si statut 'unpaid'/'canceled' (filet)
   - invoice.payment_failed        → email d'avertissement + grâce de 7 jours
   - charge.refunded               → avoir Axonaut du montant remboursé
+  - checkout.session.completed (pack boîtier) → commande Amazon MCF + facture
 
 Déploiement :
   firebase deploy --only functions
@@ -20,6 +21,8 @@ Variables d'environnement à configurer (firebase functions:secrets:set ou .env.
   STRIPE_PRICE_LIFETIME   – price_...
   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD / SMTP_FROM
   AXONAUT_API_KEY
+  STRIPE_PRICE_PACK_2M / STRIPE_PRICE_PACK_1A  – price_… du pack boîtier
+  AMZ_LWA_CLIENT_ID / AMZ_LWA_CLIENT_SECRET / AMZ_REFRESH_TOKEN (cf. amazon_mcf.py)
 """
 
 import hashlib
@@ -51,6 +54,8 @@ from firebase_functions import https_fn, scheduler_fn
 # google-api-core est une dépendance déclarée dans requirements.txt.
 from google.api_core.exceptions import Conflict
 
+import amazon_mcf
+
 _db = None
 
 
@@ -77,6 +82,8 @@ def _stripe_webhook_secret() -> str: return _cfg("STRIPE_WEBHOOK_SECRET")
 def _stripe_price_monthly()  -> str: return _cfg("STRIPE_PRICE_MONTHLY")
 def _stripe_price_annual()   -> str: return _cfg("STRIPE_PRICE_ANNUAL")
 def _stripe_price_lifetime() -> str: return _cfg("STRIPE_PRICE_LIFETIME")
+def _stripe_price_pack_2m()  -> str: return _cfg("STRIPE_PRICE_PACK_2M")
+def _stripe_price_pack_1a()  -> str: return _cfg("STRIPE_PRICE_PACK_1A")
 def _smtp_host()     -> str: return _cfg("SMTP_HOST")
 def _smtp_port()     -> int: return int(_cfg("SMTP_PORT", "465"))
 def _smtp_user()     -> str: return _cfg("SMTP_USER")
@@ -325,6 +332,8 @@ def _get_plan_price_ttc(plan_type: str) -> float:
         "monthly":  _stripe_price_monthly,
         "annual":   _stripe_price_annual,
         "lifetime": _stripe_price_lifetime,
+        "pack_2m":  _stripe_price_pack_2m,
+        "pack_1a":  _stripe_price_pack_1a,
     }
     fn = _map.get(plan_type)
     if not fn:
@@ -344,11 +353,15 @@ def _plan_label(plan_type: str, lang: str = "fr") -> str:
             "monthly":  "Licence MyStrow — Mensuel",
             "annual":   "Licence MyStrow — Annuel",
             "lifetime": "Licence MyStrow — À vie",
+            "pack_2m":  "Pack MyStrow — Interface USB-DMX + licence 2 mois",
+            "pack_1a":  "Pack MyStrow — Interface USB-DMX + licence 1 an",
         },
         "en": {
             "monthly":  "MyStrow License — Monthly",
             "annual":   "MyStrow License — Annual",
             "lifetime": "MyStrow License — Lifetime",
+            "pack_2m":  "MyStrow Pack — USB-DMX interface + 2-month license",
+            "pack_1a":  "MyStrow Pack — USB-DMX interface + 1-year license",
         },
     }
     table   = labels.get(lang, labels["fr"])
@@ -1560,6 +1573,16 @@ def _on_checkout_completed(session: dict) -> None:
         country=cust_address.get("country"),
     )
 
+    # Pack boîtier : AUCUNE licence à créer ici (le code est sur la carte
+    # dans la boîte, cf. activate_code). Sans ce détour, un paiement unique
+    # sans abonnement retombait sur « lifetime » et offrait une licence à vie.
+    if not sub_id:
+        pack = _pack_from_session(session)
+        if pack:
+            _on_pack_checkout(session, pack, email, lang, amount_ttc,
+                              tax_rate, stripe_tax, vat_number)
+            return
+
     # Détermine le plan depuis l'abonnement Stripe
     plan_type = "lifetime"
     if sub_id:
@@ -1615,6 +1638,215 @@ def _on_checkout_completed(session: dict) -> None:
                             uid=uid, tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
 
     print(f"[checkout.completed] {email} — {plan_type} — expire {_fmt_date(expiry_ts)}")
+
+
+# ===========================================================================
+# PACK BOÎTIER — expédition Amazon MCF depuis le stock FBA
+# ===========================================================================
+
+_PACKS = {"pack_2m": "MS-DMX-2M", "pack_1a": "MS-DMX-1A"}
+
+
+def _pack_from_session(session: dict) -> dict | None:
+    """{"plan", "sku", "quantity"} si la session achète un pack, sinon None.
+
+    Les SKU sont ceux des fiches Amazon : le stock FBA est unique, partagé
+    entre Amazon et le site. Reconnaissance, dans l'ordre :
+      1. le Payment Link (`STRIPE_PAYMENTLINK_PACK_2M/1A`, plink_…) — porté
+         par la session elle-même, aucun appel Stripe ;
+      2. le prix des lignes (`STRIPE_PRICE_PACK_2M/1A`) — exige la
+         permission « Checkout Sessions Read » sur la clé restreinte, qu'elle
+         n'a PAS au 20/10/2026 (403) ;
+      3. garde-fou : une adresse de livraison sans pack reconnu = pack
+         inconnu ({"sku": ""}), traité à la main. Jamais une licence à vie :
+         c'est ce que donnerait le repli « pas d'abonnement → lifetime ».
+    """
+    link = session.get("payment_link") or ""
+    for plan in _PACKS:
+        if link and link == _cfg(f"STRIPE_PAYMENTLINK_{plan.upper()}").strip():
+            return {"plan": plan, "sku": _PACKS[plan], "quantity": 1}
+
+    prices = {_cfg(f"STRIPE_PRICE_{plan.upper()}").strip(): plan for plan in _PACKS}
+    prices.pop("", None)
+    if prices and session.get("id"):
+        try:
+            lines = _stripe_get(f"/checkout/sessions/{session['id']}/line_items?limit=10")
+            for line in lines.get("data") or []:
+                plan = prices.get((line.get("price") or {}).get("id", ""))
+                if plan:
+                    return {"plan": plan, "sku": _PACKS[plan],
+                            "quantity": int(line.get("quantity") or 1)}
+        except Exception as e:
+            print(f"[Pack] Lecture des lignes impossible : {e}")
+
+    if _shipping_of(session).get("line1"):
+        print(f"[Pack] Adresse de livraison sans pack reconnu — session {session.get('id')}")
+        return {"plan": "", "sku": "", "quantity": 1}
+    return None
+
+
+def _shipping_of(session: dict) -> dict:
+    """Adresse de livraison au format Stripe (name, line1, …, phone).
+
+    Selon la version d'API Stripe, elle est à la racine (`shipping_details`)
+    ou sous `collected_information` (depuis 2025-03).
+    """
+    ship = (session.get("shipping_details")
+            or (session.get("collected_information") or {}).get("shipping_details")
+            or {})
+    cust = session.get("customer_details") or {}
+    addr = dict(ship.get("address") or {})
+    addr["name"] = ship.get("name") or cust.get("name") or ""
+    addr["phone"] = cust.get("phone") or ""
+    return addr
+
+
+def _alert_admin(subject: str, content: str) -> None:
+    for admin in sorted(_admin_emails()):
+        _send_email(admin, subject, content)
+
+
+def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
+                      amount_ttc: float | None, tax_rate, stripe_tax: bool,
+                      vat_number: str) -> None:
+    stripe_ref = session.get("payment_intent") or session.get("id", "")
+    order_id   = amazon_mcf.order_id_for(session.get("id", ""))
+    address    = _shipping_of(session)
+    ref_client = order_id.replace("MS-", "")[:8]   # court, lisible au téléphone
+
+    order_ref = _get_db().collection("boitier_commandes").document(order_id)
+    order_ref.set({
+        "email":          email,
+        "lang":           lang,
+        "plan":           pack["plan"],
+        "sku":            pack["sku"],
+        "quantity":       pack["quantity"],
+        "address":        address,
+        "amount_ttc":     amount_ttc,
+        "stripe_session": session.get("id", ""),
+        "stripe_ref":     stripe_ref,
+        "status":         "paid",
+        "created_utc":    time.time(),
+    }, merge=True)
+
+    # 1. Expédition — c'est ce que le client a payé, on la tente en premier.
+    try:
+        if not pack["sku"]:
+            raise Exception("pack non identifié (Payment Link inconnu) — "
+                            "vérifier STRIPE_PAYMENTLINK_PACK_* dans functions/.env")
+        if not amazon_mcf.configured():
+            raise Exception("identifiants SP-API absents de functions/.env")
+        amazon_mcf.create_order(order_id, pack["sku"], pack["quantity"], address,
+                                email, displayable_id=f"MYSTROW-{ref_client}")
+        order_ref.update({"status": "mcf_created", "mcf_created_utc": time.time()})
+        print(f"[Pack] Commande MCF {order_id} créée — {pack['sku']} → {email}")
+        _alert_admin(f"MyStrow — Pack vendu sur le site ({pack['sku']})", f"""
+<h2>Nouvelle commande pack</h2>
+<div class="box">{email}<br>{pack['sku']} × {pack['quantity']}<br>
+MCF : <b>{order_id}</b><br>{address.get('postal_code', '')} {address.get('city', '')}</div>
+<p>Expédition Amazon créée automatiquement, rien à faire.</p>""")
+    except Exception as e:
+        # Le client a payé : pas de remboursement automatique. On prévient
+        # l'admin, qui crée la commande à la main dans Seller Central (même
+        # réf. MCF) ou rembourse.
+        print(f"[Pack] ÉCHEC création MCF {order_id} : {e}")
+        order_ref.update({"status": "mcf_error", "mcf_error": str(e)[:500]})
+        _alert_admin("⚠️ MyStrow — Pack payé mais NON expédié", f"""
+<h2>La commande Amazon MCF a échoué</h2>
+<div class="box">{email}<br>{pack['sku']} × {pack['quantity']}<br>
+Réf. MCF prévue : <b>{order_id}</b><br>Erreur : {str(e)[:400]}</div>
+<p>Adresse : {address.get('name', '')}, {address.get('line1', '')} {address.get('line2') or ''},
+{address.get('postal_code', '')} {address.get('city', '')} {address.get('country', '')}
+— tél. {address.get('phone', '')}</p>
+<p>À créer à la main dans Seller Central (MCF) avec la même réf., ou rembourser.
+Firestore : boitier_commandes/{order_id}</p>""")
+
+    # 2. Confirmation client, même si l'expédition doit être reprise à la
+    #    main : son paiement est bien reçu.
+    _email_pack_confirmation(email, pack["plan"], ref_client, lang)
+
+    if not pack["plan"]:
+        print("[Pack] Pack inconnu : facture Axonaut à émettre à la main")
+        return
+
+    # 3. Facture Axonaut. Pas d'uid : l'acheteur d'un pack n'a pas encore de
+    #    compte (il le crée en activant le code de la boîte).
+    company_id = _axonaut_get_or_create_company(email, address.get("name", ""),
+                                                address=address, vat_number=vat_number)
+    _axonaut_create_invoice(company_id, pack["plan"], amount_ttc, stripe_ref=stripe_ref,
+                            tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
+
+
+def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr") -> None:
+    label = _plan_label(plan, lang) if plan else ("MyStrow Pack" if lang == "en" else "Pack MyStrow")
+    if lang == "en":
+        subject = f"MyStrow — Order confirmed ({ref})"
+        content = f"""
+<h2>Thank you for your order!</h2>
+<div class="box">📦 &nbsp;<b>{label}</b><br>Order reference: <b>{ref}</b></div>
+<p>Your pack is being prepared. You will receive a second email with the
+tracking number as soon as it ships (usually within 1 to 2 business days).</p>
+<p>Your license code is printed on the card inside the box: activate it on
+<a href="https://mystrow.fr/activate">mystrow.fr/activate</a>.</p>
+"""
+    else:
+        subject = f"MyStrow — Commande confirmée ({ref})"
+        content = f"""
+<h2>Merci pour votre commande !</h2>
+<div class="box">📦 &nbsp;<b>{label}</b><br>Référence de commande : <b>{ref}</b></div>
+<p>Votre pack est en préparation. Vous recevrez un second email avec le numéro
+de suivi dès son expédition (en général sous 1 à 2 jours ouvrés).</p>
+<p>Votre code de licence est imprimé sur la carte glissée dans la boîte :
+activez-le sur <a href="https://mystrow.fr/activate">mystrow.fr/activate</a>.</p>
+"""
+    _send_email(email, subject, content, lang=lang)
+
+
+def _email_pack_expedie(email: str, packages: list, ref: str, lang: str = "fr") -> None:
+    lignes = "<br>".join(f"{p['carrier']} : <b>{p['tracking']}</b>" for p in packages)
+    if lang == "en":
+        subject = f"MyStrow — Your pack has shipped ({ref})"
+        content = f"""
+<h2>Your pack is on its way</h2>
+<div class="box">🚚 &nbsp;{lignes}</div>
+<p>Enter this number on the carrier's website to follow your parcel.</p>
+"""
+    else:
+        subject = f"MyStrow — Votre pack est expédié ({ref})"
+        content = f"""
+<h2>Votre pack est en route</h2>
+<div class="box">🚚 &nbsp;{lignes}</div>
+<p>Saisissez ce numéro sur le site du transporteur pour suivre votre colis.</p>
+"""
+    _send_email(email, subject, content, lang=lang)
+
+
+def _run_mcf_suivi() -> int:
+    """Relit chez Amazon les commandes pas encore expédiées ; envoie le suivi."""
+    if not amazon_mcf.configured():
+        return 0
+    n = 0
+    for doc in (_get_db().collection("boitier_commandes")
+                .where("status", "==", "mcf_created").stream()):
+        cmd = doc.to_dict() or {}
+        try:
+            info = amazon_mcf.get_order(doc.id)
+        except Exception as e:
+            print(f"[MCF suivi] {doc.id} : {e}")
+            continue
+        maj = {"mcf_status": info["status"], "mcf_checked_utc": time.time()}
+        if info["packages"]:
+            _email_pack_expedie(cmd.get("email", ""), info["packages"],
+                                doc.id.replace("MS-", "")[:8], cmd.get("lang") or "fr")
+            maj.update({"status": "shipped", "packages": info["packages"],
+                        "shipped_utc": time.time()})
+            n += 1
+        elif info["status"] in ("CANCELLED", "UNFULFILLABLE", "INVALID"):
+            maj["status"] = "mcf_error"
+            _alert_admin(f"⚠️ MyStrow — Commande MCF {info['status']}",
+                         f"<p>{doc.id} — {cmd.get('email', '')} — {cmd.get('sku', '')}</p>")
+        doc.reference.update(maj)
+    return n
 
 
 def _id_of(value) -> str:
@@ -4285,3 +4517,9 @@ def _run_boitier_relances(now: float | None = None, dry_run: bool = False) -> li
 def boitier_relances(event: scheduler_fn.ScheduledEvent) -> None:
     faits = _run_boitier_relances()
     print(f"[relance] {len(faits)} relance(s) traitée(s)")
+
+
+# Toutes les 2 h : récupère le numéro de suivi des packs expédiés par Amazon.
+@scheduler_fn.on_schedule(schedule="0 */2 * * *", max_instances=1)
+def mcf_suivi(event: scheduler_fn.ScheduledEvent) -> None:
+    print(f"[MCF suivi] {_run_mcf_suivi()} pack(s) expédié(s) notifié(s)")
