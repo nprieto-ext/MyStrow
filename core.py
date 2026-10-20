@@ -1978,6 +1978,16 @@ CHANGELOG_URLS = {
     "pt": "https://mystrow.fr/pt/whats-new",
 }
 
+# Page Shop du site (Pack MyStrow + matériel compatible). Remplace la fenêtre
+# « Matériel recommandé » depuis le 20/10/2026 : une seule vitrine à tenir à jour.
+SHOP_URLS = {
+    "fr": "https://mystrow.fr/shop",
+    "en": "https://mystrow.fr/en/shop",
+    "es": "https://mystrow.fr/es/shop",
+    "de": "https://mystrow.fr/de/shop",
+    "pt": "https://mystrow.fr/pt/shop",
+}
+
 # Point d'entrée officiel du téléchargement : la Cloud Function du site, qui
 # redirige vers l'asset GitHub de la dernière version ET enregistre la
 # statistique de téléchargement. On ne code donc PAS l'URL GitHub en dur — le

@@ -2522,10 +2522,12 @@ class DmxOutputDialog(QDialog):
         return transport if self._usb_port_available(dmx) else TRANSPORT_ARTNET
 
     def _ouvrir_materiel(self, _lien=None):
-        # Import tardif : updater importe déjà beaucoup, inutile de le charger
-        # pour une fenêtre que la plupart n'ouvriront jamais d'ici.
-        from updater import GearDialog
-        GearDialog(self).exec()
+        # Le Shop du site remplace la fenêtre « Matériel recommandé ».
+        from core import SHOP_URLS
+        from i18n import get_language
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(SHOP_URLS.get(get_language(), SHOP_URLS["en"])))
 
     # ── Construction UI ────────────────────────────────────────────────
 

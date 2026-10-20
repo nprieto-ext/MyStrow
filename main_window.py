@@ -249,7 +249,7 @@ from plan_3d_webwindow import Plan3DWebWindow as Plan3DWindow, repartir_canvas
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
-from updater import UpdateBar, UpdateChecker, download_update, AboutDialog, GearDialog
+from updater import UpdateBar, UpdateChecker, download_update, AboutDialog
 from license_manager import LicenseState, LicenseResult, verify_license
 from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog, LoginSuccessDialog
 from dataclasses import replace as _dc_replace
@@ -21798,8 +21798,10 @@ class MainWindow(QMainWindow):
         AboutDialog(self).exec()
 
     def show_gear(self):
-        """Ouvre la fenêtre Matériel recommandé"""
-        GearDialog(self).exec()
+        """Ouvre le Shop du site, dans la langue du logiciel."""
+        from core import SHOP_URLS
+        url = SHOP_URLS.get(get_language(), SHOP_URLS["en"])
+        QDesktopServices.openUrl(QUrl(url))
 
     def open_logs_folder(self):
         """Ouvre l'explorateur sur le dossier des logs (diagnostic de crash).

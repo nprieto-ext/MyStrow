@@ -2468,7 +2468,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "mw_menu_ctrl_settings": {"en": "⚙️  Controller settings", "fr": "⚙️  Paramètres contrôleur", "es": "⚙️  Ajustes del controlador", "de": "⚙️  Controller-Einstellungen", "pt": "⚙️  Configurações do controlador", "ja": "⚙️  コントローラー設定"},
     "mw_menu_diag": {"en": "🩺  Diagnostics", "fr": "🩺  Diagnostic", "es": "🩺  Diagnóstico", "de": "🩺  Diagnose", "pt": "🩺  Diagnóstico", "ja": "🩺  診断"},
     "mw_menu_diag_full": {"en": "🩺  Full diagnostic (BRAD)", "fr": "🩺  Diagnostic complet (BRAD)", "es": "🩺  Diagnóstico completo (BRAD)", "de": "🩺  Vollständige Diagnose (BRAD)", "pt": "🩺  Diagnóstico completo (BRAD)", "ja": "🩺  詳細診断（BRAD）"},
-    "mw_menu_hardware": {"en": "🎹  Recommended hardware", "fr": "🎹  Matériel recommandé", "es": "🎹  Material recomendado", "de": "🎹  Empfohlene Hardware", "pt": "🎹  Equipamento recomendado", "ja": "🎹  推奨ハードウェア"},
+    "mw_menu_hardware": {"en": "🛒  Shop · MyStrow Pack", "fr": "🛒  Shop · Pack MyStrow", "es": "🛒  Tienda · Pack MyStrow", "de": "🛒  Shop · MyStrow Pack", "pt": "🛒  Loja · Pack MyStrow", "ja": "🛒  ショップ · MyStrow パック"},
     "mw_menu_newsletter": {"en": "✉️  Newsletter", "fr": "✉️  Newsletter", "es": "✉️  Boletín", "de": "✉️  Newsletter", "pt": "✉️  Newsletter", "ja": "✉️  ニュースレター"},
     "mw_menu_shortcuts": {"en": "⌨️  Keyboard shortcuts", "fr": "⌨️  Raccourci Clavier", "es": "⌨️  Atajos de teclado", "de": "⌨️  Tastenkürzel", "pt": "⌨️  Atalhos de teclado", "ja": "⌨️  キーボードショートカット"},
     "mw_menu_social": {"en": "🌐  Follow us on social media", "fr": "🌐  Suivez-nous sur les réseaux", "es": "🌐  Síguenos en redes", "de": "🌐  Folgen Sie uns in den sozialen Netzwerken", "pt": "🌐  Siga-nos nas redes sociais", "ja": "🌐  SNS でフォロー"},
