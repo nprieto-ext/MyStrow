@@ -96,6 +96,10 @@
     "Connexion expirée : réessayez.": "Sign-in expired: try again.",
     "Connexion non terminée : réessayez.": "Sign-in not completed: try again.",
     "Impossible d'ouvrir la fenêtre de connexion.": "Could not open the sign-in window.",
+    "Mot de passe oublié ? Le recevoir par e-mail": "Forgot password? Get it by email",
+    "Entrez votre e-mail ci-dessus.": "Enter your email above.", "Envoi…": "Sending…",
+    "Identifiants envoyés ✓ Pensez à regarder dans vos spams.": "Credentials sent ✓ Check your spam folder.",
+    "Envoi impossible.": "Could not send.", "Pas de connexion Internet.": "No Internet connection.",
     "Connectez-vous avec le compte de votre licence MyStrow : la sortie DMX n'est plus coupée au bout de 10 minutes, et vous récupérez la config de votre PC (patch, mémoires, effets).":
       "Sign in with your MyStrow license account: the DMX output no longer stops after 10 minutes, and you can get your PC config (patch, memories, effects).",
     "Mot de passe oublié : depuis le logiciel MyStrow sur le PC (Mon compte) ou sur mystrow.fr.": "Forgot your password? Use the MyStrow software on your PC (My account) or mystrow.fr.",

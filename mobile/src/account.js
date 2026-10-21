@@ -290,7 +290,25 @@
         try { await signIn(form.querySelector("#acct-mail").value, form.querySelector("#acct-pw").value); render(); }
         catch (err) { msg.className = "err"; msg.textContent = err.message; busy(go, false, "Se connecter"); }
       });
-      body.append(form, el("p", "small", "Mot de passe oublié : depuis le logiciel MyStrow sur le PC (Mon compte) ou sur mystrow.fr."));
+      // Même Cloud Function que le site et le PC : renvoie e-mail + mot de
+      // passe à l'adresse du compte (réponse identique si l'adresse est inconnue).
+      const forgot = btn("Mot de passe oublié ? Le recevoir par e-mail", "", async () => {
+        const mail = form.querySelector("#acct-mail").value.trim();
+        msg.className = "";
+        if (!mail || mail.indexOf("@") < 0) { msg.className = "err"; msg.textContent = "Entrez votre e-mail ci-dessus."; return; }
+        busy(forgot, true, "Envoi…");
+        try {
+          const r = await fetch("https://us-central1-mystrow-907be.cloudfunctions.net/send_reset_email", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: mail }) });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok || !d.ok) throw new Error(d.error || "Envoi impossible.");
+          msg.className = "ok"; msg.textContent = "Identifiants envoyés ✓ Pensez à regarder dans vos spams.";
+        } catch (err) {
+          msg.className = "err"; msg.textContent = err.message === "Failed to fetch" ? "Pas de connexion Internet." : err.message;
+        }
+        busy(forgot, false, "Mot de passe oublié ? Le recevoir par e-mail");
+      });
+      body.append(form, forgot);
       // Google / Apple : mêmes boutons, même taille (App Store 4.8 : Apple
       // doit être proposé à égalité dès qu'une connexion tierce l'est).
       const sep = el("p", "small", "ou");

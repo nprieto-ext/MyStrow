@@ -2288,13 +2288,13 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
     tombait sur le 405 « Method not allowed » et l'appel n'atteignait jamais la
     fonction — c'est pour ça que le site est resté sur le lien Firebase natif.
     """
-    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+    _C = _cors_app(req)
+    _H = {**_C, "Content-Type": "application/json"}
 
     if req.method == "OPTIONS":
-        return _cors_preflight()
+        return https_fn.Response("", status=204, headers=_C)
     if req.method != "POST":
-        return https_fn.Response("Method not allowed", status=405,
-                                 headers=_CORS_HEADERS)
+        return https_fn.Response("Method not allowed", status=405, headers=_C)
 
     try:
         body  = json.loads(req.get_data() or b"{}")
@@ -2551,16 +2551,16 @@ def oauth_login(req: https_fn.Request) -> https_fn.Response:
                l'identité Google/Apple au compte connecté (adresse différente).
     - unlink : Authorization: Bearer requis, pas d'id_token. Supprime le lien.
     """
-    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+    _C = _cors_app(req)
+    _H = {**_C, "Content-Type": "application/json"}
 
     def _resp(payload: dict, status: int = 200) -> https_fn.Response:
         return https_fn.Response(json.dumps(payload), status=status, headers=_H)
 
     if req.method == "OPTIONS":
-        return _cors_preflight()
+        return https_fn.Response("", status=204, headers=_C)
     if req.method != "POST":
-        return https_fn.Response("Method not allowed", status=405,
-                                 headers=_CORS_HEADERS)
+        return https_fn.Response("Method not allowed", status=405, headers=_C)
 
     try:
         body = json.loads(req.get_data() or b"{}")
@@ -3402,6 +3402,20 @@ _CORS_HEADERS = {
 
 def _cors_preflight() -> https_fn.Response:
     return https_fn.Response("", status=204, headers=_CORS_HEADERS)
+
+
+# Origines de l'app tablette (WebView Capacitor) : Android sert les pages en
+# http://localhost (androidScheme « http »), iOS en capacitor://localhost.
+# Seuls les endpoints que la tablette appelle les acceptent (oauth_login,
+# send_reset_email) ; sans ça le navigateur de l'app bloquait la réponse.
+_APP_ORIGINS = {"https://mystrow.fr", "http://localhost", "https://localhost",
+                "capacitor://localhost"}
+
+
+def _cors_app(req: https_fn.Request) -> dict:
+    origin = req.headers.get("Origin", "")
+    allow = origin if origin in _APP_ORIGINS else "https://mystrow.fr"
+    return {**_CORS_HEADERS, "Access-Control-Allow-Origin": allow, "Vary": "Origin"}
 
 
 def _verify_token(req: https_fn.Request) -> str | None:
