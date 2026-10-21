@@ -91,6 +91,11 @@
       "On iPad, DMX stops if MyStrow stays in the background. Keep the app in the foreground during the show (Guided Access).",
     // ── Mon compte ──
     "Mon compte MyStrow": "My MyStrow account", "Mon compte": "My account", "E-mail": "Email", "Mot de passe": "Password",
+    "ou": "or", "Continuer avec Google": "Continue with Google", "Continuer avec Apple": "Continue with Apple",
+    "Terminez la connexion dans la fenêtre qui s'est ouverte…": "Finish signing in in the window that opened…",
+    "Connexion expirée : réessayez.": "Sign-in expired: try again.",
+    "Connexion non terminée : réessayez.": "Sign-in not completed: try again.",
+    "Impossible d'ouvrir la fenêtre de connexion.": "Could not open the sign-in window.",
     "Connectez-vous avec le compte de votre licence MyStrow : la sortie DMX n'est plus coupée au bout de 10 minutes, et vous récupérez la config de votre PC (patch, mémoires, effets).":
       "Sign in with your MyStrow license account: the DMX output no longer stops after 10 minutes, and you can get your PC config (patch, memories, effects).",
     "Mot de passe oublié : depuis le logiciel MyStrow sur le PC (Mon compte) ou sur mystrow.fr.": "Forgot your password? Use the MyStrow software on your PC (My account) or mystrow.fr.",

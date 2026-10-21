@@ -58,6 +58,87 @@
     await refreshLicense();
     return status();
   }
+  // ── Connexion Google / Apple ────────────────────────────────────────────────
+  // Navigateur intégré (@capacitor/browser : SFSafariViewController sur iPad,
+  // Custom Tab sur Android) ouvert sur mystrow.fr/connexion-app?mode=app. La
+  // page y dépose la session sous un `state` aléatoire connu de la seule app ;
+  // l'app la relève auprès de oauth_login (handoff_take). Le lien mystrow://
+  // qui ramène l'app (Android) ne porte aucun jeton.
+  const OAUTH_URL = "https://us-central1-mystrow-907be.cloudfunctions.net/oauth_login";
+  const RELAY_URL = "https://mystrow.fr/connexion-app";
+  const OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
+  let oauthRun = null;
+
+  function randomState() {
+    const b = new Uint8Array(32);
+    crypto.getRandomValues(b);
+    return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  // Session Firebase obtenue dans le navigateur → même stockage que signIn.
+  async function adopt(refresh, email) {
+    const d = await call("https://securetoken.googleapis.com/v1/token?key=" + API_KEY, {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "grant_type=refresh_token&refresh_token=" + encodeURIComponent(refresh),
+    });
+    token = d.id_token; tokenExp = Date.now() + (+d.expires_in || 3600) * 1000 - 60000;
+    if (!email) {
+      try { email = JSON.parse(atob(d.id_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).email || ""; } catch (e) {}
+    }
+    save(KEY, { email, uid: d.user_id, refresh: d.refresh_token || refresh });
+    await refreshLicense();
+    return status();
+  }
+  // Résout avec status() une fois connecté ; rejette avec Error("CANCELLED")
+  // si la fenêtre est fermée sans connexion ou si cancelProvider() est appelé.
+  function signInWithProvider(provider) {
+    if (oauthRun) oauthRun.cancel();
+    const state = randomState();
+    const cap = window.Capacitor;
+    const Browser = cap && cap.Plugins && cap.Plugins.Browser;
+    const platform = (cap && cap.getPlatform && cap.getPlatform()) || "web";
+    const url = RELAY_URL + "?" + new URLSearchParams({ mode: "app", state, provider, platform,
+      lang: window.MYSTROW_LANG || "fr" }).toString();
+    return new Promise((resolve, reject) => {
+      const deadline = Date.now() + OAUTH_TIMEOUT_MS;
+      let stopped = false, timer = null, finishedAt = 0, listener = null;
+      const stop = () => {
+        stopped = true; clearTimeout(timer); oauthRun = null;
+        if (listener && listener.remove) listener.remove();
+      };
+      const fail = (msg) => { stop(); reject(new Error(msg)); };
+      async function poll() {
+        if (stopped) return;
+        try {
+          const r = await fetch(OAUTH_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "handoff_take", state }) });
+          const d = await r.json().catch(() => ({}));
+          if (stopped) return;
+          if (d.ok) {
+            stop();
+            if (Browser && platform === "ios") Browser.close().catch(() => {});
+            try { resolve(await adopt(d.refresh_token, d.email)); } catch (e) { reject(e); }
+            return;
+          }
+          if (d.code === "EXPIRED") return fail("Connexion expirée : réessayez.");
+        } catch (e) { /* réseau : on réessaie au tour suivant */ }
+        // Fenêtre fermée : on laisse un dernier relevé passer, puis abandon.
+        if (finishedAt && Date.now() - finishedAt > 4000) return fail("CANCELLED");
+        if (Date.now() > deadline) return fail("Connexion non terminée : réessayez.");
+        timer = setTimeout(poll, 2000);
+      }
+      oauthRun = { cancel: () => { if (Browser) Browser.close().catch(() => {}); fail("CANCELLED"); } };
+      if (Browser) {
+        Promise.resolve(Browser.addListener("browserFinished", () => { finishedAt = Date.now(); }))
+          .then((h) => { if (stopped) h.remove(); else listener = h; }).catch(() => {});
+        Browser.open({ url }).catch((e) => fail("Impossible d'ouvrir la fenêtre de connexion."));
+      } else {
+        window.open(url, "_blank");
+      }
+      timer = setTimeout(poll, 2000);
+    });
+  }
+  const cancelProvider = () => { if (oauthRun) oauthRun.cancel(); };
+
   async function idToken() {
     const a = load(KEY, null);
     if (!a) throw new Error("Pas connecté.");
@@ -178,6 +259,9 @@
 #acct button{min-height:50px;border-radius:12px;border:1px solid #3a3830;background:#13120e;color:#f4f1e8;font-family:inherit;font-weight:700;font-size:17px;letter-spacing:1px;cursor:pointer;touch-action:manipulation}
 #acct button.main{background:#E2CE16;border:0;color:#0c0b00}
 #acct button.danger{border-color:rgba(248,113,113,.5);color:#f87171}
+#acct button.oauth{font-family:-apple-system,'Inter',system-ui,sans-serif;font-weight:600;letter-spacing:0;font-size:17px}
+#acct button.google{background:#fff;color:#1f1f1f;border-color:#fff}
+#acct button.apple{background:#000;color:#fff;border-color:#555}
 #acct button:disabled{opacity:.5}
 #acct .act{display:flex;flex-direction:column;gap:8px;margin-top:4px;padding:12px;border-radius:12px;border:1px solid rgba(226,206,22,.35);background:#1a1700}
 #acct .act b{font-size:18px;color:#E2CE16}
@@ -207,6 +291,30 @@
         catch (err) { msg.className = "err"; msg.textContent = err.message; busy(go, false, "Se connecter"); }
       });
       body.append(form, el("p", "small", "Mot de passe oublié : depuis le logiciel MyStrow sur le PC (Mon compte) ou sur mystrow.fr."));
+      // Google / Apple : mêmes boutons, même taille (App Store 4.8 : Apple
+      // doit être proposé à égalité dès qu'une connexion tierce l'est).
+      const sep = el("p", "small", "ou");
+      sep.style.textAlign = "center";
+      const oauthMsg = el("p", "", "");
+      const oauthBtns = [];
+      const cancel = btn("Annuler", "", () => cancelProvider());
+      cancel.hidden = true;
+      const runOauth = async (provider) => {
+        oauthMsg.className = ""; oauthMsg.textContent = "Terminez la connexion dans la fenêtre qui s'est ouverte…";
+        oauthBtns.forEach((b) => { b.disabled = true; });
+        cancel.hidden = false;
+        try { await signInWithProvider(provider); render(); }
+        catch (err) {
+          oauthBtns.forEach((b) => { b.disabled = false; });
+          cancel.hidden = true;
+          if (err.message === "CANCELLED") { oauthMsg.textContent = ""; return; }
+          oauthMsg.className = "err"; oauthMsg.textContent = err.message;
+        }
+      };
+      const g = btn("Continuer avec Google", "oauth google", () => runOauth("google"));
+      const a = btn("Continuer avec Apple", "oauth apple", () => runOauth("apple"));
+      oauthBtns.push(g, a);
+      body.append(sep, g, a, cancel, oauthMsg);
       // Pas de compte : la carte d'activation du pack se saisit sur le site
       // (mystrow.fr/activate crée le compte et envoie le mot de passe par
       // email) — une seule logique d'activation, pas une copie dans l'app.
@@ -263,6 +371,6 @@
     panel.hidden = false;
   }
 
-  root.MystrowAccount = { signIn, signOut, status, refreshLicense, fetchPcConfig, applyPcConfig, restoreBackup, openPanel,
+  root.MystrowAccount = { signIn, signInWithProvider, cancelProvider, signOut, status, refreshLicense, fetchPcConfig, applyPcConfig, restoreBackup, openPanel,
     onChange: (fn) => listeners.push(fn) };
 })(window);

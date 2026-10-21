@@ -23,6 +23,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Retour de la connexion Google / Apple (mystrow.fr/connexion-app) :
+                 ramène l'app au premier plan. Le lien ne porte aucun jeton, la
+                 session est relevée auprès de la Cloud Function oauth_login. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mystrow" android:host="oauth" />
+            </intent-filter>
+
         </activity>
 
         <provider

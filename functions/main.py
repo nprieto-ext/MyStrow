@@ -2501,6 +2501,43 @@ def _oauth_save_link(provider: str, ident: dict, uid: str) -> None:
     }, merge=True)
 
 
+# Boîte aux lettres pour l'app tablette : la page connexion-app (navigateur
+# intégré) y dépose la session sous le `state` aléatoire choisi par l'app, que
+# l'app relève ensuite. Le lien mystrow:// qui ramène l'app ne porte donc
+# AUCUN jeton : une autre app qui intercepterait ce schéma n'obtient rien.
+# Seul le hash du state sert de clé ; dépôt unique (create), retrait unique.
+_HANDOFF_TTL_S = 600
+
+
+def _oauth_handoff(db, action: str, body: dict, _resp):
+    state = (body.get("state") or "").strip()
+    if not (32 <= len(state) <= 128) or not all(c.isalnum() or c in "-_" for c in state):
+        return _resp({"ok": False, "code": "BAD_REQUEST"}, 400)
+    ref = db.collection("oauth_handoff").document(hashlib.sha256(state.encode()).hexdigest())
+
+    if action == "handoff_put":
+        refresh = (body.get("refresh_token") or "").strip()
+        if not refresh or len(refresh) > 4096:
+            return _resp({"ok": False, "code": "BAD_REQUEST"}, 400)
+        try:
+            ref.create({"refresh_token": refresh,
+                        "email": (body.get("email") or "").strip()[:320],
+                        "created": time.time()})
+        except Conflict:
+            return _resp({"ok": False, "code": "ALREADY_USED"}, 409)
+        return _resp({"ok": True})
+
+    snap = ref.get()
+    if not snap.exists:
+        return _resp({"ok": False, "code": "PENDING"}, 200)
+    data = snap.to_dict() or {}
+    ref.delete()
+    if time.time() - float(data.get("created", 0)) > _HANDOFF_TTL_S:
+        return _resp({"ok": False, "code": "EXPIRED"}, 410)
+    return _resp({"ok": True, "refresh_token": data.get("refresh_token", ""),
+                  "email": data.get("email", "")})
+
+
 @https_fn.on_request(max_instances=10)
 def oauth_login(req: https_fn.Request) -> https_fn.Response:
     """
@@ -2532,11 +2569,15 @@ def oauth_login(req: https_fn.Request) -> https_fn.Response:
     provider = (body.get("provider") or "").strip().lower()
     action   = (body.get("action") or "login").strip().lower()
     token    = (body.get("id_token") or "").strip()
-    if provider not in _OAUTH_PROVIDERS or action not in ("login", "link", "unlink"):
-        return _resp({"ok": False, "code": "BAD_REQUEST"}, 400)
 
     _ensure_init()
     db = _get_db()
+
+    if action in ("handoff_put", "handoff_take"):
+        return _oauth_handoff(db, action, body, _resp)
+
+    if provider not in _OAUTH_PROVIDERS or action not in ("login", "link", "unlink"):
+        return _resp({"ok": False, "code": "BAD_REQUEST"}, 400)
 
     if action == "unlink":
         uid = _verify_token(req)
