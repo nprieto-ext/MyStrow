@@ -101,9 +101,19 @@
     return new Promise((resolve, reject) => {
       const deadline = Date.now() + OAUTH_TIMEOUT_MS;
       let stopped = false, timer = null, finishedAt = 0, listener = null;
+      // Fenêtre fermée : tous les Android n'envoient pas browserFinished
+      // (Huawei CMR-W09 : jamais). L'app cachée pendant que la fenêtre est
+      // ouverte, puis de nouveau visible ⇒ la fenêtre est fermée.
+      let hidden = false;
+      const onVis = () => {
+        if (document.visibilityState === "hidden") hidden = true;
+        else if (hidden && !finishedAt) { finishedAt = Date.now(); console.log("[OAuth] retour dans l'app"); }
+      };
+      document.addEventListener("visibilitychange", onVis);
       const stop = () => {
         stopped = true; clearTimeout(timer); oauthRun = null;
         if (listener && listener.remove) listener.remove();
+        document.removeEventListener("visibilitychange", onVis);
       };
       const fail = (msg) => { stop(); reject(new Error(msg)); };
       async function poll() {
@@ -122,13 +132,13 @@
           if (d.code === "EXPIRED") return fail("Connexion expirée : réessayez.");
         } catch (e) { /* réseau : on réessaie au tour suivant */ }
         // Fenêtre fermée : on laisse un dernier relevé passer, puis abandon.
-        if (finishedAt && Date.now() - finishedAt > 4000) return fail("CANCELLED");
+        if (finishedAt && Date.now() - finishedAt > 6000) return fail("CANCELLED");
         if (Date.now() > deadline) return fail("Connexion non terminée : réessayez.");
         timer = setTimeout(poll, 2000);
       }
       oauthRun = { cancel: () => { if (Browser) Browser.close().catch(() => {}); fail("CANCELLED"); } };
       if (Browser) {
-        Promise.resolve(Browser.addListener("browserFinished", () => { finishedAt = Date.now(); }))
+        Promise.resolve(Browser.addListener("browserFinished", () => { finishedAt = finishedAt || Date.now(); }))
           .then((h) => { if (stopped) h.remove(); else listener = h; }).catch(() => {});
         Browser.open({ url }).catch((e) => fail("Impossible d'ouvrir la fenêtre de connexion."));
       } else {

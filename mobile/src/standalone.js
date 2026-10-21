@@ -1154,6 +1154,7 @@
     live: '<circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4M3.5 3.5a12 12 0 0 0 0 17M20.5 3.5a12 12 0 0 1 0 17"/>',
     home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
     box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+    pc: '<rect x="2.5" y="4" width="19" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
   };
   const svg = (k) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + ICONS[k] + "</svg>";
   const setDlg = document.createElement("div");
@@ -1170,6 +1171,10 @@
       '<button type="button" class="acct" data-a="account"><i>' + svg("user") + '</i><span><b></b><small></small></span><em></em></button>' +
       (PACK_OK ? '<button type="button" class="pack" data-a="pack"><i>' + svg("box") + '</i><span><b>Pack MyStrow</b>' +
       '<small>Interface USB-DMX + licence · disponible sur Amazon</small></span><em>›</em></button>' : '') +
+      // Passer en télécommande du PC : avant, il fallait Accueil › ‹ Accueil ›
+      // « Piloter MyStrow sur mon PC », introuvable une fois le jeu ouvert direct.
+      '<button type="button" class="pack pcrow" data-a="pc"><i>' + svg("pc") + '</i><span><b>Piloter MyStrow sur mon PC</b>' +
+      '<small>La tablette devient la télécommande du logiciel, sur le même Wi-Fi</small></span><em>›</em></button>' +
       '<div class="ttl">MON MATÉRIEL</div><div class="tiles">' +
       '<button type="button" data-a="patch"><i>' + svg("spot") + '</i><b>Projecteurs</b><small></small></button>' +
       '<button type="button" data-a="output"><i>' + svg("plug") + '</i><b>Sortie DMX</b><small></small></button>' +
@@ -1195,7 +1200,8 @@
       account: () => openAccount(), patch: () => goTo("patch.html?from=play"), output: () => goTo("patch.html?from=play#sortie"),
       lang: () => { if (window.MystrowI18n) window.MystrowI18n.set(window.MYSTROW_LANG === "en" ? "fr" : "en"); },
       test: () => goTo("dmxtest.html?from=play"), cols: () => openColumns(), fx: () => openFxManager(), pack: () => openPack(),
-      live: () => window.MystrowLive.toggle(), home: () => goTo("index.html?view=solo"),
+      live: () => window.MystrowLive.toggle(), home: () => goTo("index.html?choose=1"),
+      pc: () => goTo("index.html?view=pc"),
     };
     setDlg.querySelectorAll("[data-a]").forEach((b) => b.addEventListener("click", () => { setDlg.hidden = true; ACT[b.dataset.a](); }));
     $s(".x").addEventListener("click", () => { setDlg.hidden = true; });
@@ -1228,6 +1234,8 @@
     "#solo-set .pack i{width:40px;height:40px;flex-shrink:0;color:#E2CE16}#solo-set .pack i svg{width:100%;height:100%}" +
     "#solo-set .pack span{flex:1;display:flex;flex-direction:column}#solo-set .pack b{font-size:19px;color:#E2CE16}" +
     "#solo-set .pack small{font-size:14px;color:#cfcabd}#solo-set .pack em{font-style:normal;font-size:26px;color:#E2CE16}" +
+    "#solo-set .pcrow{border-color:var(--line2);background:transparent}" +
+    "#solo-set .pcrow i,#solo-set .pcrow b,#solo-set .pcrow em{color:var(--text)}" +
     "#solo-set .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}" +
     "#solo-set .tiles button{min-height:118px;padding:14px;border-radius:14px;border:1px solid var(--line2);background:#15140f;" +
     "display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;gap:4px;text-align:left}" +

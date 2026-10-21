@@ -130,6 +130,7 @@
         <li><i>1</i><span>Sur le PC, dans MyStrow : <b>Connexion › Entrée externe</b>.</span></li>
         <li><i>2</i><span>La tablette et le PC sur <b>le même Wi-Fi</b>.</span></li>
         <li><i>3</i><span>Touchez votre PC ci-dessous, ou tapez l'adresse affichée sous le QR code.</span></li>
+        <li><i>4</i><span>La première fois, tapez le <b>code à 6 chiffres</b> affiché sur le PC sous le QR code.</span></li>
       </ol>
     </header>
 
@@ -322,6 +323,8 @@
     }
     // Retour du patch, du test DMX ou du jeu sans PC : écran « Sans PC ».
     if (params.get("view") === "solo") { show("solo"); return; }
+    // ⚙ Réglages › « Piloter MyStrow sur mon PC » : droit à la connexion au PC.
+    if (params.get("view") === "pc") { show("pc"); return; }
     // Sans PC la dernière fois, patch prêt : on ouvre directement le jeu (l'accueil
     // reste joignable par ⚙ Réglages → Accueil).
     if (!params.has("choose") && mode === "solo") {
