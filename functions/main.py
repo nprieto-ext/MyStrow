@@ -84,6 +84,7 @@ def _stripe_price_annual()   -> str: return _cfg("STRIPE_PRICE_ANNUAL")
 def _stripe_price_lifetime() -> str: return _cfg("STRIPE_PRICE_LIFETIME")
 def _stripe_price_pack_2m()  -> str: return _cfg("STRIPE_PRICE_PACK_2M")
 def _stripe_price_pack_1a()  -> str: return _cfg("STRIPE_PRICE_PACK_1A")
+def _stripe_price_pack_vie() -> str: return _cfg("STRIPE_PRICE_PACK_VIE")
 def _smtp_host()     -> str: return _cfg("SMTP_HOST")
 def _smtp_port()     -> int: return int(_cfg("SMTP_PORT", "465"))
 def _smtp_user()     -> str: return _cfg("SMTP_USER")
@@ -334,6 +335,7 @@ def _get_plan_price_ttc(plan_type: str) -> float:
         "lifetime": _stripe_price_lifetime,
         "pack_2m":  _stripe_price_pack_2m,
         "pack_1a":  _stripe_price_pack_1a,
+        "pack_vie": _stripe_price_pack_vie,
     }
     fn = _map.get(plan_type)
     if not fn:
@@ -355,6 +357,7 @@ def _plan_label(plan_type: str, lang: str = "fr") -> str:
             "lifetime": "Licence MyStrow — À vie",
             "pack_2m":  "Pack MyStrow — Interface USB-DMX + licence 2 mois",
             "pack_1a":  "Pack MyStrow — Interface USB-DMX + licence 1 an",
+            "pack_vie": "Pack MyStrow — Interface USB-DMX + licence à vie",
         },
         "en": {
             "monthly":  "MyStrow License — Monthly",
@@ -362,6 +365,7 @@ def _plan_label(plan_type: str, lang: str = "fr") -> str:
             "lifetime": "MyStrow License — Lifetime",
             "pack_2m":  "MyStrow Pack — USB-DMX interface + 2-month license",
             "pack_1a":  "MyStrow Pack — USB-DMX interface + 1-year license",
+            "pack_vie": "MyStrow Pack — USB-DMX interface + lifetime license",
         },
     }
     table   = labels.get(lang, labels["fr"])
@@ -1644,7 +1648,8 @@ def _on_checkout_completed(session: dict) -> None:
 # PACK BOÎTIER — expédition Amazon MCF depuis le stock FBA
 # ===========================================================================
 
-_PACKS = {"pack_2m": "MS-DMX-2M", "pack_1a": "MS-DMX-1A"}
+# pack_vie : boîte 1 an expédiée + licence à vie posée au paiement (cf. _pack_lifetime).
+_PACKS = {"pack_2m": "MS-DMX-2M", "pack_1a": "MS-DMX-1A", "pack_vie": "MS-DMX-1A"}
 
 
 def _pack_from_session(session: dict) -> dict | None:
@@ -1740,7 +1745,7 @@ def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
                                 email, displayable_id=f"MYSTROW-{ref_client}")
         order_ref.update({"status": "mcf_created", "mcf_created_utc": time.time()})
         print(f"[Pack] Commande MCF {order_id} créée — {pack['sku']} → {email}")
-        _alert_admin(f"MyStrow — Pack vendu sur le site ({pack['sku']})", f"""
+        _alert_admin(f"MyStrow — Pack vendu sur le site ({pack['sku']}{' · À VIE' if pack['plan'] == 'pack_vie' else ''})", f"""
 <h2>Nouvelle commande pack</h2>
 <div class="box">{email}<br>{pack['sku']} × {pack['quantity']}<br>
 MCF : <b>{order_id}</b><br>{address.get('postal_code', '')} {address.get('city', '')}</div>
@@ -1765,6 +1770,17 @@ Firestore : boitier_commandes/{order_id}</p>""")
     #    main : son paiement est bien reçu.
     _email_pack_confirmation(email, pack["plan"], ref_client, lang)
 
+    # 2 bis. Pack à vie : licence posée maintenant, sur l'adresse du paiement.
+    if pack["plan"] == "pack_vie":
+        try:
+            uid = _pack_lifetime(email, lang)
+            order_ref.update({"lifetime_uid": uid})
+        except Exception as e:
+            print(f"[Pack] ÉCHEC licence à vie {email} : {e}")
+            _alert_admin("⚠️ MyStrow — Pack à vie payé, licence NON créée",
+                         f"<p>{email} — {order_id}<br>Erreur : {str(e)[:400]}</p>"
+                         "<p>Poser la licence lifetime à la main (admin_panel).</p>")
+
     if not pack["plan"]:
         print("[Pack] Pack inconnu : facture Axonaut à émettre à la main")
         return
@@ -1777,8 +1793,68 @@ Firestore : boitier_commandes/{order_id}</p>""")
                             tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
 
 
+def _pack_lifetime(email: str, lang: str) -> str:
+    """Licence à vie du pack : même résultat qu'un achat Lifetime sur le site.
+
+    Un abonné Stripe déjà en cours n'est PAS résilié automatiquement (on ne
+    coupe pas un prélèvement sans le dire au client) : l'admin est prévenu.
+    """
+    temp_pwd    = _generate_password()
+    uid, is_new = _get_or_create_user(email, temp_pwd)
+    ref = _get_db().collection("licenses").document(uid)
+    avant = (ref.get().to_dict() or {}) if not is_new else {}
+    expiry = _compute_expiry("lifetime")
+    _set_license(uid, email, "lifetime", expiry, lang=lang)
+    if is_new:
+        ref.set({"password": temp_pwd}, merge=True)
+        _email_welcome(email, temp_pwd, expiry, "lifetime", lang)
+    else:
+        _email_pack_lifetime_active(email, lang)
+    sub_id = avant.get("stripe_subscription_id", "")
+    if sub_id and avant.get("plan_type") != "lifetime":
+        _alert_admin("MyStrow — Pack à vie : abonnement à résilier",
+                     f"<p>{email} vient d'acheter le Pack à vie mais a un abonnement Stripe "
+                     f"actif (<b>{sub_id}</b>). À résilier (et rembourser au prorata si besoin).</p>")
+    try:
+        _brevo_sync_client(email, uid, "lifetime", expiry, lang, "")
+    except Exception as e:
+        print(f"[Pack] Brevo {email} : {e}")
+    print(f"[Pack] Licence à vie posée pour {email} (uid={uid}, nouveau={is_new})")
+    return uid
+
+
+def _email_pack_lifetime_active(email: str, lang: str = "fr") -> None:
+    if lang == "en":
+        subject = "MyStrow — Your lifetime license is active"
+        content = """
+<h2>Your lifetime license is active</h2>
+<p>Thank you for choosing the MyStrow Pack with lifetime license. It is already
+active on your account: just sign in to MyStrow with your usual credentials.</p>
+<p>No subscription, updates included for life.</p>
+"""
+    else:
+        subject = "MyStrow — Votre licence à vie est active"
+        content = """
+<h2>Votre licence à vie est active</h2>
+<p>Merci d'avoir choisi le Pack MyStrow avec licence à vie. Elle est déjà active
+sur votre compte : connectez-vous simplement à MyStrow avec vos identifiants habituels.</p>
+<p>Sans abonnement, mises à jour incluses à vie.</p>
+"""
+    _send_email(email, subject, content, lang=lang)
+
+
 def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr") -> None:
     label = _plan_label(plan, lang) if plan else ("MyStrow Pack" if lang == "en" else "Pack MyStrow")
+    if plan == "pack_vie":
+        licence = ("<p>Your <b>lifetime license</b> is activated on your account right now (separate email). "
+                   "The card in the box carries a 1-year code: you don't need it.</p>" if lang == "en" else
+                   "<p>Votre <b>licence à vie</b> est activée dès maintenant sur votre compte (email séparé). "
+                   "La carte glissée dans la boîte porte un code 1 an : vous n'en avez pas besoin.</p>")
+    else:
+        licence = ("<p>Your license code is printed on the card inside the box: activate it on "
+                   "<a href=\"https://mystrow.fr/activate\">mystrow.fr/activate</a>.</p>" if lang == "en" else
+                   "<p>Votre code de licence est imprimé sur la carte glissée dans la boîte : activez-le sur "
+                   "<a href=\"https://mystrow.fr/activate\">mystrow.fr/activate</a>.</p>")
     if lang == "en":
         subject = f"MyStrow — Order confirmed ({ref})"
         content = f"""
@@ -1786,8 +1862,7 @@ def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr") 
 <div class="box">📦 &nbsp;<b>{label}</b><br>Order reference: <b>{ref}</b></div>
 <p>Your pack is being prepared. You will receive a second email with the
 tracking number as soon as it ships (usually within 1 to 2 business days).</p>
-<p>Your license code is printed on the card inside the box: activate it on
-<a href="https://mystrow.fr/activate">mystrow.fr/activate</a>.</p>
+{licence}
 """
     else:
         subject = f"MyStrow — Commande confirmée ({ref})"
@@ -1796,8 +1871,7 @@ tracking number as soon as it ships (usually within 1 to 2 business days).</p>
 <div class="box">📦 &nbsp;<b>{label}</b><br>Référence de commande : <b>{ref}</b></div>
 <p>Votre pack est en préparation. Vous recevrez un second email avec le numéro
 de suivi dès son expédition (en général sous 1 à 2 jours ouvrés).</p>
-<p>Votre code de licence est imprimé sur la carte glissée dans la boîte :
-activez-le sur <a href="https://mystrow.fr/activate">mystrow.fr/activate</a>.</p>
+{licence}
 """
     _send_email(email, subject, content, lang=lang)
 
