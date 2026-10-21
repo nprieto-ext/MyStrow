@@ -809,61 +809,197 @@ def login_account(email: str, password: str) -> tuple[bool, str]:
 
         print(f"[LOGIN] sign_in {email} ...")
         auth = fc.sign_in(email.strip(), password)
-        uid = auth["uid"]
-        id_token = auth["id_token"]
-        refresh_token = auth["refresh_token"]
-        print(f"[LOGIN] sign_in OK — uid={uid}")
-
-        # Verifier que le document de licence existe
-        doc = fc.get_license_doc(uid, id_token)
-        if doc is None:
-            return False, tr("lic3_025")
-
-        plan       = doc.get("plan", "trial")
-        plan_type  = doc.get("plan_type", "")
-        expiry_utc = doc.get("expiry_utc", 0.0)
-        auto_renew = _is_auto_renew(plan_type, doc.get("stripe_subscription_id", ""))
-        print(f"[LOGIN] plan={plan}  plan_type={plan_type}  auto_renew={auto_renew}  expiry_utc={expiry_utc}  doc={doc}")
-
-        # Ajouter la machine
-        fc.add_machine(uid, id_token, machine_id, label=platform.node()[:32])
-
-        # Sauvegarder le compte local
-        now = datetime.now(timezone.utc).timestamp()
-        account_data = {
-            "refresh_token": refresh_token,
-            "uid": uid,
-            "email": auth.get("email", email),
-            "last_verified_utc": now,
-            "cached_plan": plan,
-            "cached_auto_renew": auto_renew,
-            "cached_expiry_utc": expiry_utc,
-        }
-        saved = _save_account(machine_id, account_data)
-        print(f"[LOGIN] _save_account → {saved}  (CRYPTO_AVAILABLE={CRYPTO_AVAILABLE})")
-        print(f"[LOGIN] ACCOUNT_FILE={ACCOUNT_FILE}")
-        print(f"[LOGIN] fichier existe={os.path.exists(ACCOUNT_FILE)}")
-        print(f"[LOGIN] fichier plain existe={os.path.exists(_ACCOUNT_FILE_PLAIN)}")
-
-        # Construire et stocker le LicenseResult directement depuis Firestore
-        machines_list = doc.get("machines", [])
-        machines_used = len([m for m in machines_list if isinstance(m, dict)])
-        machines_max  = int(doc.get("max_machines", 2))
-        _pending_login_result = _build_result(
-            plan, expiry_utc,
-            updates_until_utc=doc.get("updates_until_utc", 0.0),
-            machines_used=machines_used,
-            machines_max=machines_max,
-            machines_list=[m for m in machines_list if isinstance(m, dict)],
-            auto_renew=auto_renew,
-        )
-        print(f"[LOGIN] _pending_login_result={_pending_login_result}")
-
-        plan_label = "licence" if plan == "license" else "essai"
-        return True, tr("lic3_026", a=auth.get('email', email), plan_label=plan_label)
+        return _finish_login(auth, email, machine_id)
 
     except Exception as e:
         print(f"[LOGIN] ERREUR: {e}")
+        return False, str(e)
+
+
+def _finish_login(auth: dict, email: str, machine_id: str) -> tuple[bool, str]:
+    """Suite commune aux connexions mot de passe et Google/Apple : licence,
+    machine, compte local. `auth` = {"uid", "id_token", "refresh_token"[, "email"]}.
+    Lève une Exception (message lisible) en cas d'échec réseau/Firebase."""
+    global _pending_login_result
+    import firebase_client as fc
+
+    uid = auth["uid"]
+    id_token = auth["id_token"]
+    refresh_token = auth["refresh_token"]
+    print(f"[LOGIN] sign_in OK — uid={uid}")
+
+    # Verifier que le document de licence existe
+    doc = fc.get_license_doc(uid, id_token)
+    if doc is None:
+        return False, tr("lic3_025")
+
+    plan       = doc.get("plan", "trial")
+    plan_type  = doc.get("plan_type", "")
+    expiry_utc = doc.get("expiry_utc", 0.0)
+    auto_renew = _is_auto_renew(plan_type, doc.get("stripe_subscription_id", ""))
+    print(f"[LOGIN] plan={plan}  plan_type={plan_type}  auto_renew={auto_renew}  expiry_utc={expiry_utc}  doc={doc}")
+
+    # Ajouter la machine
+    fc.add_machine(uid, id_token, machine_id, label=platform.node()[:32])
+
+    # Sauvegarder le compte local
+    now = datetime.now(timezone.utc).timestamp()
+    account_data = {
+        "refresh_token": refresh_token,
+        "uid": uid,
+        "email": auth.get("email", email),
+        "last_verified_utc": now,
+        "cached_plan": plan,
+        "cached_auto_renew": auto_renew,
+        "cached_expiry_utc": expiry_utc,
+    }
+    saved = _save_account(machine_id, account_data)
+    print(f"[LOGIN] _save_account → {saved}  (CRYPTO_AVAILABLE={CRYPTO_AVAILABLE})")
+    print(f"[LOGIN] ACCOUNT_FILE={ACCOUNT_FILE}")
+    print(f"[LOGIN] fichier existe={os.path.exists(ACCOUNT_FILE)}")
+    print(f"[LOGIN] fichier plain existe={os.path.exists(_ACCOUNT_FILE_PLAIN)}")
+
+    # Construire et stocker le LicenseResult directement depuis Firestore
+    machines_list = doc.get("machines", [])
+    machines_used = len([m for m in machines_list if isinstance(m, dict)])
+    machines_max  = int(doc.get("max_machines", 2))
+    _pending_login_result = _build_result(
+        plan, expiry_utc,
+        updates_until_utc=doc.get("updates_until_utc", 0.0),
+        machines_used=machines_used,
+        machines_max=machines_max,
+        machines_list=[m for m in machines_list if isinstance(m, dict)],
+        auto_renew=auto_renew,
+    )
+    print(f"[LOGIN] _pending_login_result={_pending_login_result}")
+
+    plan_label = "licence" if plan == "license" else "essai"
+    return True, tr("lic3_026", a=auth.get('email', email), plan_label=plan_label)
+
+
+# ---------------------------------------------------------------
+# Connexion Google / Apple
+# ---------------------------------------------------------------
+# Le navigateur fait tout le travail sur mystrow.fr/connexion-app (même
+# oauth.js que l'espace client), puis renvoie le refresh token Firebase à
+# l'app par un POST de formulaire vers 127.0.0.1:<port>/oauth. Une simple
+# navigation de premier niveau : pas de CORS ni de « Local Network Access »,
+# et le jeton ne passe pas par l'URL (historique du navigateur).
+
+OAUTH_RELAY_URL = "https://mystrow.fr/connexion-app"
+
+
+class OAuthLoginSession:
+    """Écoute locale à usage unique. `start()` ouvre le navigateur ; l'UI
+    interroge `result` (dict {"refresh_token", "email"}) ou `error`
+    jusqu'à l'un des deux, puis appelle `close()`."""
+
+    def __init__(self, provider: str = ""):
+        self.provider = provider
+        self.result = None
+        self.error = None
+        self._state = base64.urlsafe_b64encode(os.urandom(24)).decode().rstrip("=")
+        self._server = None
+
+    def start(self) -> None:
+        import threading
+        import webbrowser
+        import urllib.parse
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+
+        session = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                if self.path != "/oauth":
+                    self.send_error(404)
+                    return
+                n = int(self.headers.get("Content-Length") or 0)
+                form = urllib.parse.parse_qs(self.rfile.read(min(n, 65536)).decode("utf-8", "replace"))
+                get = lambda k: (form.get(k) or [""])[0]
+                import hmac
+                if not hmac.compare_digest(get("state"), session._state) or not get("refresh_token"):
+                    self.send_error(400)
+                    return
+                session.result = {"refresh_token": get("refresh_token"), "email": get("email")}
+                page = (
+                    "<!doctype html><meta charset='utf-8'><title>MyStrow</title>"
+                    "<body style='background:#0d0d0d;color:#eee;font-family:Segoe UI,sans-serif;"
+                    "display:flex;align-items:center;justify-content:center;height:90vh;text-align:center'>"
+                    f"<div><h2 style='color:#00d4ff'>{tr('oauth_browser_done_title')}</h2>"
+                    f"<p>{tr('oauth_browser_done_text')}</p></div>"
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(page)))
+                self.end_headers()
+                self.wfile.write(page)
+
+            def log_message(self, *args):
+                pass
+
+        self._server = HTTPServer(("127.0.0.1", 0), _Handler)
+        port = self._server.server_address[1]
+
+        def _serve():
+            # Une requête à la fois jusqu'au résultat ou à close()
+            while self._server is not None and self.result is None:
+                try:
+                    self._server.handle_request()
+                except Exception as e:
+                    print(f"[OAUTH] serveur local : {e}")
+                    break
+
+        self._server.timeout = 0.5
+        threading.Thread(target=_serve, daemon=True).start()
+
+        url = f"{OAUTH_RELAY_URL}?" + urllib.parse.urlencode({
+            "port": port, "state": self._state,
+            "provider": self.provider, "lang": _ui_lang(),
+        })
+        print(f"[OAUTH] attente sur 127.0.0.1:{port}")
+        if not webbrowser.open(url):
+            self.error = tr("oauth_no_browser")
+
+    def close(self) -> None:
+        srv, self._server = self._server, None
+        if srv is not None:
+            try:
+                srv.server_close()
+            except Exception:
+                pass
+
+
+def _ui_lang() -> str:
+    try:
+        from i18n import get_language
+        return get_language()
+    except Exception:
+        return "fr"
+
+
+def login_with_refresh_token(refresh_token: str, email: str = "") -> tuple[bool, str]:
+    """Termine une connexion Google/Apple : le navigateur a obtenu une session
+    Firebase, on la reprend par son refresh token. Même suite que login_account."""
+    global _pending_login_result
+    _pending_login_result = None
+    try:
+        machine_id = get_machine_id()
+    except Exception as e:
+        return False, tr("lic3_024", e=e)
+    try:
+        import firebase_client as fc
+        auth = fc.refresh_id_token(refresh_token)
+        if not email:
+            # Repli : l'e-mail est dans le jeton d'identité Firebase
+            payload = auth["id_token"].split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            email = json.loads(base64.urlsafe_b64decode(payload)).get("email", "")
+        auth["email"] = email
+        print(f"[LOGIN] OAuth {email} ...")
+        return _finish_login(auth, email, machine_id)
+    except Exception as e:
+        print(f"[LOGIN] ERREUR OAuth: {e}")
         return False, str(e)
 
 

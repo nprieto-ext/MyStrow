@@ -2421,6 +2421,187 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
+# CONNEXION GOOGLE / APPLE
+# ===========================================================================
+#
+# On n'active PAS les fournisseurs Google/Apple dans Firebase Auth : les
+# comptes sont créés par le webhook Stripe avec l'e-mail payé, et Firebase
+# soit supprimait le mot de passe (Gmail non vérifié), soit refusait la
+# connexion (autre domaine, « needConfirmation »), soit créait un compte
+# vide sans licence (Apple « Masquer mon e-mail »).
+#
+# À la place : le client obtient un jeton d'identité Google/Apple, cette
+# fonction le vérifie, retrouve le compte MyStrow EXISTANT et renvoie un
+# custom token Firebase (→ accounts:signInWithCustomToken côté client).
+# Jamais de création de compte ici : pas de compte ⇒ NO_ACCOUNT.
+#
+# Rattachement mémorisé dans /oauth_links/{provider}:{sub} (lecture/écriture
+# interdites aux clients par défaut) + copie d'affichage dans
+# licenses/{uid}.oauth_links pour l'Espace compte.
+#
+# ⚠ create_custom_token exige que le compte de service de la fonction ait le
+# rôle « Créateur de jetons du compte de service » (iam.serviceAccounts.signBlob).
+#
+# Config (.env) : GOOGLE_OAUTH_CLIENT_IDS / APPLE_OAUTH_CLIENT_IDS, listes
+# séparées par des virgules (client ID web Google ; Services ID Apple).
+
+_OAUTH_PROVIDERS = ("google", "apple")
+_apple_jwks = None
+
+
+def _oauth_client_ids(provider: str) -> set:
+    key = "GOOGLE_OAUTH_CLIENT_IDS" if provider == "google" else "APPLE_OAUTH_CLIENT_IDS"
+    return {c.strip() for c in _cfg(key).split(",") if c.strip()}
+
+
+def _verify_oauth_identity(provider: str, token: str) -> dict:
+    """Vérifie un jeton d'identité Google/Apple.
+    Retourne {"sub", "email", "email_verified"} ou lève ValueError."""
+    audiences = _oauth_client_ids(provider)
+    if not audiences:
+        raise ValueError(f"{provider} non configuré")
+
+    if provider == "google":
+        from google.auth.transport import requests as g_requests
+        from google.oauth2 import id_token as g_id_token
+        claims = g_id_token.verify_oauth2_token(token, g_requests.Request())
+        if claims.get("aud") not in audiences:
+            raise ValueError("audience Google inattendue")
+    else:
+        import jwt
+        global _apple_jwks
+        if _apple_jwks is None:
+            _apple_jwks = jwt.PyJWKClient("https://appleid.apple.com/auth/keys")
+        key = _apple_jwks.get_signing_key_from_jwt(token).key
+        claims = jwt.decode(token, key, algorithms=["RS256"],
+                            audience=list(audiences),
+                            issuer="https://appleid.apple.com")
+
+    # Apple renvoie email_verified en chaîne "true" ; Google en booléen.
+    verified = str(claims.get("email_verified", "")).lower() == "true"
+    return {
+        "sub": str(claims["sub"]),
+        "email": (claims.get("email") or "").strip().lower(),
+        "email_verified": verified,
+    }
+
+
+def _oauth_link_ref(provider: str, sub: str):
+    return _get_db().collection("oauth_links").document(f"{provider}:{sub}")
+
+
+def _oauth_save_link(provider: str, ident: dict, uid: str) -> None:
+    now = time.time()
+    _oauth_link_ref(provider, ident["sub"]).set({
+        "uid": uid, "provider": provider, "sub": ident["sub"],
+        "email": ident["email"], "linked_utc": now,
+    })
+    _get_db().collection("licenses").document(uid).set({
+        "oauth_links": {provider: {"email": ident["email"], "linked_utc": now}},
+    }, merge=True)
+
+
+@https_fn.on_request(max_instances=10)
+def oauth_login(req: https_fn.Request) -> https_fn.Response:
+    """
+    Endpoint HTTPS : POST /oauth_login
+    Body : {"provider": "google"|"apple", "id_token": "...", "action": "login"|"link"|"unlink"}
+
+    - login  : retrouve le compte (lien mémorisé, sinon même e-mail vérifié)
+               → {"ok": true, "custom_token": "...", "email": "..."}
+               → 404 {"ok": false, "code": "NO_ACCOUNT", "email": "..."}
+    - link   : Authorization: Bearer <id_token Firebase> requis. Rattache
+               l'identité Google/Apple au compte connecté (adresse différente).
+    - unlink : Authorization: Bearer requis, pas d'id_token. Supprime le lien.
+    """
+    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+
+    def _resp(payload: dict, status: int = 200) -> https_fn.Response:
+        return https_fn.Response(json.dumps(payload), status=status, headers=_H)
+
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+    if req.method != "POST":
+        return https_fn.Response("Method not allowed", status=405,
+                                 headers=_CORS_HEADERS)
+
+    try:
+        body = json.loads(req.get_data() or b"{}")
+    except Exception:
+        return _resp({"ok": False, "code": "BAD_REQUEST"}, 400)
+    provider = (body.get("provider") or "").strip().lower()
+    action   = (body.get("action") or "login").strip().lower()
+    token    = (body.get("id_token") or "").strip()
+    if provider not in _OAUTH_PROVIDERS or action not in ("login", "link", "unlink"):
+        return _resp({"ok": False, "code": "BAD_REQUEST"}, 400)
+
+    _ensure_init()
+    db = _get_db()
+
+    if action == "unlink":
+        uid = _verify_token(req)
+        if not uid:
+            return _resp({"ok": False, "code": "UNAUTHORIZED"}, 401)
+        for snap in (db.collection("oauth_links")
+                     .where("uid", "==", uid).where("provider", "==", provider)
+                     .stream()):
+            snap.reference.delete()
+        db.collection("licenses").document(uid).set(
+            {"oauth_links": {provider: firestore.DELETE_FIELD}}, merge=True)
+        print(f"[oauth_login] unlink {provider} uid={uid}")
+        return _resp({"ok": True})
+
+    if not token:
+        return _resp({"ok": False, "code": "BAD_REQUEST"}, 400)
+    try:
+        ident = _verify_oauth_identity(provider, token)
+    except Exception as e:
+        print(f"[oauth_login] jeton {provider} refusé : {e}")
+        return _resp({"ok": False, "code": "INVALID_TOKEN"}, 401)
+
+    link_ref = _oauth_link_ref(provider, ident["sub"])
+    link = link_ref.get()
+    linked_uid = (link.to_dict() or {}).get("uid") if link.exists else None
+
+    if action == "link":
+        uid = _verify_token(req)
+        if not uid:
+            return _resp({"ok": False, "code": "UNAUTHORIZED"}, 401)
+        if linked_uid and linked_uid != uid:
+            return _resp({"ok": False, "code": "ALREADY_LINKED"}, 409)
+        _oauth_save_link(provider, ident, uid)
+        print(f"[oauth_login] link {provider} {ident['email']} → uid={uid}")
+        return _resp({"ok": True, "email": ident["email"]})
+
+    # ── login ────────────────────────────────────────────────────────────
+    uid = None
+    if linked_uid:
+        try:
+            auth.get_user(linked_uid)
+            uid = linked_uid
+        except auth.UserNotFoundError:
+            link_ref.delete()   # compte supprimé depuis : lien orphelin
+    if uid is None and ident["email"] and ident["email_verified"]:
+        try:
+            uid = auth.get_user_by_email(ident["email"]).uid
+            _oauth_save_link(provider, ident, uid)
+        except auth.UserNotFoundError:
+            pass
+    if uid is None:
+        print(f"[oauth_login] aucun compte pour {provider} {ident['email']}")
+        return _resp({"ok": False, "code": "NO_ACCOUNT", "email": ident["email"]}, 404)
+
+    user = auth.get_user(uid)
+    if user.disabled:
+        return _resp({"ok": False, "code": "USER_DISABLED"}, 403)
+    custom = auth.create_custom_token(uid)
+    if isinstance(custom, bytes):
+        custom = custom.decode()
+    print(f"[oauth_login] login {provider} {ident['email']} → uid={uid}")
+    return _resp({"ok": True, "custom_token": custom, "email": user.email or ident["email"]})
+
+
+# ===========================================================================
 # CLOUD FUNCTION ENTRY POINT
 # ===========================================================================
 

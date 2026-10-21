@@ -3,6 +3,7 @@ Interface utilisateur pour le systeme de licence MyStrow (Firebase)
 Widgets Qt : banniere, dialogue login/register, avertissement
 """
 
+import time
 import webbrowser
 
 from i18n import tr
@@ -18,6 +19,7 @@ from license_manager import (
     LicenseState, LicenseResult, TRIAL_DAYS,
     login_account, verify_license,
     deactivate_machine, get_license_info,
+    OAuthLoginSession, login_with_refresh_token,
 )
 
 
@@ -420,7 +422,7 @@ class ActivationDialog(QDialog):
     # de bien plus de place que le formulaire de connexion. Sans ca, ouvrir le
     # dialogue directement sur cette page laissait la fenetre a 420x380 et
     # ecrasait les cartes.
-    _PAGE_SIZES = {0: (420, 380), 1: (420, 380), 2: (420, 380), 3: (940, 566)}
+    _PAGE_SIZES = {0: (420, 460), 1: (420, 380), 2: (420, 380), 3: (940, 566)}
     _PAGE_TITLES = {
         0: "dlg_login_title",
         1: "dlg_login_title",
@@ -551,6 +553,46 @@ class ActivationDialog(QDialog):
         self._btn_manage_devices.clicked.connect(lambda: webbrowser.open(ACCOUNT_URL))
         self._btn_manage_devices.hide()
         layout.addWidget(self._btn_manage_devices)
+
+        # Connexion Google / Apple : la connexion se fait dans le navigateur
+        # (mystrow.fr/connexion-app), qui renvoie la session à l'app
+        # (license_manager.OAuthLoginSession).
+        oauth_row = QHBoxLayout()
+        oauth_row.setSpacing(10)
+        self._btn_google = QPushButton(tr("btn_oauth_google"))
+        self._btn_google.setStyleSheet("""
+            QPushButton { background: #ffffff; color: #1f1f1f; border: none;
+                          border-radius: 8px; font-size: 11px; font-weight: 600; }
+            QPushButton:hover { background: #e8e8e8; }
+            QPushButton:disabled { background: #555; color: #999; }
+        """)
+        self._btn_apple = QPushButton(tr("btn_oauth_apple"))
+        self._btn_apple.setStyleSheet("""
+            QPushButton { background: #000000; color: #ffffff; border: 1px solid #444;
+                          border-radius: 8px; font-size: 11px; font-weight: 600; }
+            QPushButton:hover { border-color: #aaa; }
+            QPushButton:disabled { color: #777; border-color: #333; }
+        """)
+        for btn, provider in ((self._btn_google, "google"), (self._btn_apple, "apple")):
+            btn.setFixedHeight(38)
+            btn.setCursor(QCursor(Qt.PointingHandCursor))
+            btn.clicked.connect(lambda _=False, p=provider: self._do_oauth(p))
+            oauth_row.addWidget(btn)
+        layout.addLayout(oauth_row)
+
+        self._btn_oauth_cancel = QPushButton(tr("oauth_cancel"))
+        self._btn_oauth_cancel.setFixedHeight(30)
+        self._btn_oauth_cancel.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_oauth_cancel.setStyleSheet(_BTN_SECONDARY)
+        self._btn_oauth_cancel.clicked.connect(self._end_oauth)
+        self._btn_oauth_cancel.hide()
+        layout.addSpacing(6)
+        layout.addWidget(self._btn_oauth_cancel)
+
+        self._oauth = None
+        self._oauth_timer = QTimer(self)
+        self._oauth_timer.setInterval(300)
+        self._oauth_timer.timeout.connect(self._poll_oauth)
 
         layout.addStretch()
 
@@ -1225,7 +1267,77 @@ class ActivationDialog(QDialog):
 
         self._login_progress.hide()
         self._btn_login.setEnabled(True)
+        self._login_done(success, message)
 
+    # Délai laissé pour se connecter dans le navigateur (choix du compte,
+    # double authentification Apple…)
+    _OAUTH_TIMEOUT_S = 300
+
+    def _do_oauth(self, provider: str):
+        if self._oauth is not None:
+            return
+        self._login_status.setStyleSheet("color: #aaa;")
+        self._login_status.setText(tr("oauth_waiting"))
+        self._btn_send_pwd.hide()
+        self._btn_manage_devices.hide()
+        self._oauth = OAuthLoginSession(provider)
+        try:
+            self._oauth.start()
+        except Exception as e:
+            self._end_oauth()
+            self._login_status.setStyleSheet("color: #ff5555;")
+            self._login_status.setText(str(e))
+            return
+        self._oauth_deadline = time.monotonic() + self._OAUTH_TIMEOUT_S
+        self._set_oauth_busy(True)
+        self._oauth_timer.start()
+
+    def _set_oauth_busy(self, busy: bool):
+        for w in (self._btn_login, self._btn_google, self._btn_apple,
+                  self._email_edit, self._pwd_edit):
+            w.setEnabled(not busy)
+        self._btn_oauth_cancel.setVisible(busy)
+        self._login_progress.setVisible(busy)
+
+    def _end_oauth(self):
+        self._oauth_timer.stop()
+        if self._oauth is not None:
+            self._oauth.close()
+            self._oauth = None
+        self._set_oauth_busy(False)
+        if self._login_status.text() == tr("oauth_waiting"):
+            self._login_status.setText("")
+
+    def _poll_oauth(self):
+        s = self._oauth
+        if s is None:
+            return
+        if s.result:
+            result = s.result
+            self._end_oauth()
+            # Le navigateur est passé devant : on ramène MyStrow
+            self.raise_()
+            self.activateWindow()
+            self._login_progress.show()
+            self._login_status.setStyleSheet("color: #aaa;")
+            self._login_status.setText(tr("logging_in"))
+            QApplication.processEvents()
+            success, message = login_with_refresh_token(result["refresh_token"], result["email"])
+            self._login_progress.hide()
+            self._login_done(success, message)
+        elif s.error or time.monotonic() > self._oauth_deadline:
+            message = s.error or tr("oauth_timeout")
+            self._end_oauth()
+            self._login_status.setStyleSheet("color: #ff5555;")
+            self._login_status.setText(message)
+
+    def done(self, r):
+        # Fermeture pendant l'attente : libérer le port local
+        if getattr(self, "_oauth", None) is not None:
+            self._end_oauth()
+        super().done(r)
+
+    def _login_done(self, success: bool, message: str):
         if success:
             self._btn_send_pwd.hide()
             self._btn_manage_devices.hide()
