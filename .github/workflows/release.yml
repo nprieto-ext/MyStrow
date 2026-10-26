@@ -315,7 +315,15 @@ jobs:
           SUBMISSION_ID=$(echo "$NOTARY_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
           STATUS=$(echo "$NOTARY_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
           if [ "$STATUS" = "Accepted" ]; then
-            xcrun stapler staple dist/MyStrow.app
+            # Le staple interroge CloudKit (Apple) : une coupure reseau (-1005,
+            # erreur 68) a fait sortir la v3.2.7 sans DMG arm64. Notarisation
+            # deja acceptee, il suffit de reessayer.
+            for i in 1 2 3 4 5; do
+              xcrun stapler staple dist/MyStrow.app && break
+              [ "$i" = 5 ] && exit 1
+              echo "::warning::stapler staple a echoue (tentative $i/5), nouvel essai dans $((i * 20)) s"
+              sleep $((i * 20))
+            done
           else
             xcrun notarytool log "$SUBMISSION_ID" \
               --apple-id "$NOTARIZATION_APPLE_ID" \
@@ -446,3 +454,13 @@ jobs:
                 echo "Suppression de la release $tag..."
                 gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag
               done
+
+      # En dernier, pour ne pas bloquer Windows : la release est publiee, mais le
+      # run passe en rouge (mail GitHub) au lieu de laisser un 404 Mac silencieux.
+      # Correctif : gh run rerun <id> --failed
+      - name: Verifier la presence du DMG arm64
+        run: |
+          if [ ! -f "mac-dmg/MyStrow_arm64.dmg" ]; then
+            echo "::error::MyStrow_arm64.dmg absent de la release (build-mac : ${{ needs.build-mac.result }}) — le telechargement Mac Apple Silicon renvoie 404. Relancer : gh run rerun ${{ github.run_id }} --failed"
+            exit 1
+          fi

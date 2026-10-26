@@ -78,6 +78,7 @@ class FauxWin:
     _effect_state_key     = staticmethod(mw.MainWindow._effect_state_key)
     _snapshot_effect_state = mw.MainWindow._snapshot_effect_state
     _restore_effect_state = mw.MainWindow._restore_effect_state
+    _apply_effect_capture = mw.MainWindow._apply_effect_capture
     _record_effect_frame  = mw.MainWindow._record_effect_frame
     _sync_effect_baseline = mw.MainWindow._sync_effect_baseline
     update_effect         = mw.MainWindow.update_effect

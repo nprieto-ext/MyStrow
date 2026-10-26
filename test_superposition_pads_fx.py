@@ -68,6 +68,7 @@ class FauxWin:
     _finish_stacked_once     = mw.MainWindow._finish_stacked_once
     _stop_button_effects     = mw.MainWindow._stop_button_effects
     _restore_effect_state    = mw.MainWindow._restore_effect_state
+    _apply_effect_capture    = mw.MainWindow._apply_effect_capture
     _return_lyres_after_effect = mw.MainWindow._return_lyres_after_effect
 
     def __init__(self):
@@ -174,6 +175,20 @@ class PadsFxSuperposes(unittest.TestCase):
         self.assertEqual(p.base_color.name(), QColor("blue").name())
         self.assertEqual(p.level, 40)
         self.assertIsNone(win.active_effect)
+
+    def test_retrait_partiel_efface_les_traces_de_l_effet(self):
+        # Rainbow coupé sous un effet de mouvement : sa dernière image (couleur,
+        # niveau forcé) ne doit pas rester figée sur les projecteurs.
+        win = FauxWin()
+        p = win.projectors[0]
+        win._toggle_fx_pad(1, 0)
+        win._toggle_fx_pad(0, 1)
+        p.color, p.level = QColor("magenta"), 100
+        win._toggle_fx_pad(0, 1)
+        self.assertEqual(noms(win), ["Wave"])
+        self.assertEqual(p.color.name(), QColor("blue").name())
+        self.assertEqual(p.level, 40)
+        self.assertTrue(win.effect_saved_colors, "la capture sert encore à Wave")
 
     def test_une_fois_termine_retire_le_pad(self):
         win = FauxWin()

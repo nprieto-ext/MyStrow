@@ -26,10 +26,12 @@ Variables d'environnement à configurer (firebase functions:secrets:set ou .env.
 """
 
 import hashlib
+from html import escape as html_escape
 import hmac
 import json
 import os
 import random
+import re
 import smtplib
 import ssl
 import string
@@ -336,6 +338,7 @@ def _get_plan_price_ttc(plan_type: str) -> float:
         "pack_2m":  _stripe_price_pack_2m,
         "pack_1a":  _stripe_price_pack_1a,
         "pack_vie": _stripe_price_pack_vie,
+        "boitier":  lambda: _cfg("STRIPE_PRICE_BOITIER"),
     }
     fn = _map.get(plan_type)
     if not fn:
@@ -358,6 +361,7 @@ def _plan_label(plan_type: str, lang: str = "fr") -> str:
             "pack_2m":  "Pack MyStrow — Interface USB-DMX + licence 2 mois",
             "pack_1a":  "Pack MyStrow — Interface USB-DMX + licence 1 an",
             "pack_vie": "Pack MyStrow — Interface USB-DMX + licence à vie",
+            "boitier":  "Interface USB-DMX MyStrow (sans licence)",
         },
         "en": {
             "monthly":  "MyStrow License — Monthly",
@@ -366,6 +370,7 @@ def _plan_label(plan_type: str, lang: str = "fr") -> str:
             "pack_2m":  "MyStrow Pack — USB-DMX interface + 2-month license",
             "pack_1a":  "MyStrow Pack — USB-DMX interface + 1-year license",
             "pack_vie": "MyStrow Pack — USB-DMX interface + lifetime license",
+            "boitier":  "MyStrow USB-DMX interface (no license)",
         },
     }
     table   = labels.get(lang, labels["fr"])
@@ -1321,7 +1326,7 @@ _EMAIL_FOOTER = {
 
 
 def _send_email_brevo_api(to: str, subject: str, html: str,
-                          raise_on_error: bool = False) -> None:
+                          raise_on_error: bool = False, bcc: str = "") -> None:
     """Envoi par l'API HTTP de Brevo (`POST /v3/smtp/email`).
 
     C'est la voie a privilegier depuis une Cloud Function. Le relais SMTP de
@@ -1335,12 +1340,15 @@ def _send_email_brevo_api(to: str, subject: str, html: str,
     rendu le cas gg@ouiensemble.eu indiagnosticable.
     """
     nom, adresse = parseaddr(_smtp_from())
-    payload = json.dumps({
+    corps = {
         "sender":      {"email": adresse, "name": nom or "MyStrow"},
         "to":          [{"email": to}],
         "subject":     subject,
         "htmlContent": html,
-    }).encode("utf-8")
+    }
+    if bcc:
+        corps["bcc"] = [{"email": bcc}]
+    payload = json.dumps(corps).encode("utf-8")
     req = urllib.request.Request("https://api.brevo.com/v3/smtp/email",
                                  data=payload, method="POST")
     req.add_header("api-key", _brevo_key())
@@ -1366,7 +1374,7 @@ def _send_email_brevo_api(to: str, subject: str, html: str,
 
 
 def _send_email(to: str, subject: str, content: str,
-                lang: str = "fr", raise_on_error: bool = False) -> None:
+                lang: str = "fr", raise_on_error: bool = False, bcc: str = "") -> None:
     html = _EMAIL_BASE.format(
         lang=lang,
         content=content,
@@ -1377,7 +1385,7 @@ def _send_email(to: str, subject: str, content: str,
     # sur l'API, tout le reste (defaut) garde le SMTP. Une variable a changer
     # pour revenir en arriere, sans redeploiement de code.
     if _cfg("MAIL_TRANSPORT", "smtp").strip().lower() == "brevo_api":
-        _send_email_brevo_api(to, subject, html, raise_on_error)
+        _send_email_brevo_api(to, subject, html, raise_on_error, bcc)
         return
 
     host = _smtp_host()
@@ -1413,7 +1421,8 @@ def _send_email(to: str, subject: str, content: str,
             if port != 465:
                 smtp.starttls(context=ctx)
             smtp.login(user, _smtp_password())
-            smtp.sendmail(envelope, to, msg.as_string())
+            # Copie cachée : destinataire d'enveloppe seulement, jamais d'en-tête.
+            smtp.sendmail(envelope, [to] + ([bcc] if bcc else []), msg.as_string())
         print(f"[Email] Envoyé → {to} ({subject})")
     except Exception as e:
         print(f"[Email] Erreur envoi → {to} : {e}")
@@ -1651,6 +1660,12 @@ def _on_checkout_completed(session: dict) -> None:
 # pack_vie : boîte 1 an expédiée + licence à vie posée au paiement (cf. _pack_lifetime).
 _PACKS = {"pack_2m": "MS-DMX-2M", "pack_1a": "MS-DMX-1A", "pack_vie": "MS-DMX-1A"}
 
+# Interface seule (USB Node Electroconcept nu, sans licence) : PAS de stock
+# FBA. Expédiée par Fanny depuis chez elle, qui reçoit la commande par mail
+# et saisit le n° de suivi via `boitier_expedie`. Stock : meta/stock_fanny.
+_PAYMENTLINK_BOITIER = "plink_1UTsof1gGkNcl6caYrEYn3oY"   # buy.stripe.com/bJe7sD34F8Ji8p28AQ08g0d
+_STOCK_FANNY = ("meta", "stock_fanny")
+
 
 def _pack_from_session(session: dict) -> dict | None:
     """{"plan", "sku", "quantity"} si la session achète un pack, sinon None.
@@ -1667,6 +1682,8 @@ def _pack_from_session(session: dict) -> dict | None:
          c'est ce que donnerait le repli « pas d'abonnement → lifetime ».
     """
     link = session.get("payment_link") or ""
+    if link and link == _cfg("STRIPE_PAYMENTLINK_BOITIER", _PAYMENTLINK_BOITIER).strip():
+        return {"plan": "boitier", "sku": "", "quantity": 1}
     for plan in _PACKS:
         if link and link == _cfg(f"STRIPE_PAYMENTLINK_{plan.upper()}").strip():
             return {"plan": plan, "sku": _PACKS[plan], "quantity": 1}
@@ -1707,34 +1724,15 @@ def _shipping_of(session: dict) -> dict:
 
 
 def _alert_admin(subject: str, content: str) -> None:
-    for admin in sorted(_admin_emails()):
+    # Destinataires des alertes (ventes, échecs d'expédition…) — distincts
+    # d'ADMIN_EMAILS, qui sert à l'accès admin (compte Gmail).
+    raw = os.environ.get("ALERT_EMAILS", "nicolas@mystrow.fr")
+    for admin in sorted({e.strip().lower() for e in raw.split(",") if e.strip()}):
         _send_email(admin, subject, content)
 
 
-def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
-                      amount_ttc: float | None, tax_rate, stripe_tax: bool,
-                      vat_number: str) -> None:
-    stripe_ref = session.get("payment_intent") or session.get("id", "")
-    order_id   = amazon_mcf.order_id_for(session.get("id", ""))
-    address    = _shipping_of(session)
-    ref_client = order_id.replace("MS-", "")[:8]   # court, lisible au téléphone
-
-    order_ref = _get_db().collection("boitier_commandes").document(order_id)
-    order_ref.set({
-        "email":          email,
-        "lang":           lang,
-        "plan":           pack["plan"],
-        "sku":            pack["sku"],
-        "quantity":       pack["quantity"],
-        "address":        address,
-        "amount_ttc":     amount_ttc,
-        "stripe_session": session.get("id", ""),
-        "stripe_ref":     stripe_ref,
-        "status":         "paid",
-        "created_utc":    time.time(),
-    }, merge=True)
-
-    # 1. Expédition — c'est ce que le client a payé, on la tente en premier.
+def _expedition_mcf(order_ref, order_id: str, ref_client: str, email: str,
+                    address: dict, pack: dict) -> None:
     try:
         if not pack["sku"]:
             raise Exception("pack non identifié (Payment Link inconnu) — "
@@ -1765,6 +1763,97 @@ Réf. MCF prévue : <b>{order_id}</b><br>Erreur : {str(e)[:400]}</div>
 — tél. {address.get('phone', '')}</p>
 <p>À créer à la main dans Seller Central (MCF) avec la même réf., ou rembourser.
 Firestore : boitier_commandes/{order_id}</p>""")
+
+
+def _jeton_expedition(order_id: str) -> str:
+    """Jeton du lien « J'ai expédié » envoyé à Fanny : sans lui, n'importe qui
+    connaissant une réf. de commande pourrait y saisir un faux suivi."""
+    return hmac.new(_stripe_webhook_secret().encode(), order_id.encode(),
+                    hashlib.sha256).hexdigest()[:24]
+
+
+def _expedition_fanny(order_ref, order_id: str, ref_client: str, email: str,
+                      address: dict, quantity: int, amount_ttc: float | None) -> None:
+    """Interface seule : la commande part par mail chez Fanny, qui expédie."""
+    lien = (f"https://us-central1-mystrow-907be.cloudfunctions.net/boitier_expedie"
+            f"?id={urllib.parse.quote(order_id)}&k={_jeton_expedition(order_id)}")
+    e = lambda k: html_escape(str(address.get(k) or ""))
+    etiquette = "<br>".join(x for x in (
+        e("name"), e("line1"), e("line2"), f"{e('postal_code')} {e('city')}",
+        e("country") if address.get("country") != "FR" else "",
+        f"Tél. {e('phone')}" if address.get("phone") else "") if x.strip())
+    contenu = f"""
+<h2>📦 Une interface à expédier</h2>
+<div class="box"><b>{quantity} × Interface USB-DMX</b> (boîtier nu + câble USB)<br>
+Réf. commande : <b>{ref_client}</b></div>
+<p><b>Adresse à mettre sur l'étiquette :</b></p>
+<div class="box">{etiquette}</div>
+<p>Écris la réf. <b>{ref_client}</b> sur le colis ou le bordereau.</p>
+<p>Une fois le colis déposé, clique ici pour envoyer le n° de suivi au client :</p>
+<p><a href="{lien}" style="display:inline-block;background:#e2ce16;color:#111;padding:12px 22px;border-radius:8px;font-weight:700;text-decoration:none">J'ai expédié → saisir le n° de suivi</a></p>
+"""
+    erreurs = []
+    for dest in sorted({x.strip().lower() for x in
+                        _cfg("EXPEDITION_EMAILS", "fanny@jofagist.fr").split(",") if x.strip()}):
+        try:
+            _send_email(dest, f"MyStrow — Interface à expédier ({ref_client})", contenu,
+                        raise_on_error=True)
+        except Exception as ex:
+            erreurs.append(f"{dest} : {ex}")
+    order_ref.update({"status": "a_expedier", "expediteur": "fanny"})
+
+    reste = None
+    try:
+        stock_ref = _get_db().collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1])
+        if stock_ref.get().exists:
+            stock_ref.update({"boitier": firestore.Increment(-quantity)})
+            reste = int((stock_ref.get().to_dict() or {}).get("boitier", 0))
+    except Exception as ex:
+        print(f"[Boîtier] Stock Fanny non décompté : {ex}")
+
+    alerte = ("<p>⚠️ Le mail à Fanny n'est PAS parti : " + html_escape("; ".join(erreurs))
+              + "<br>Lui transmettre cette commande à la main.</p>") if erreurs else \
+             "<p>Commande transmise à Fanny par mail.</p>"
+    _alert_admin(f"MyStrow — Interface seule vendue ({ref_client})"
+                 f"{' — ⚠️ MAIL FANNY KO' if erreurs else ''}", f"""
+<h2>Interface seule vendue sur le site</h2>
+<div class="box">{html_escape(email)} — {quantity} × interface — {amount_ttc} € TTC<br>
+Réf. <b>{ref_client}</b> · Firestore boitier_commandes/{order_id}</div>
+<div class="box">{etiquette}</div>
+{alerte}
+<p>Stock restant chez Fanny : <b>{reste if reste is not None else '?'}</b>{' — ⚠️ à réapprovisionner' if reste is not None and reste <= 5 else ''}</p>""")
+    print(f"[Boîtier] {order_id} transmis à Fanny — {email} (stock {reste})")
+
+
+def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
+                      amount_ttc: float | None, tax_rate, stripe_tax: bool,
+                      vat_number: str) -> None:
+    stripe_ref = session.get("payment_intent") or session.get("id", "")
+    order_id   = amazon_mcf.order_id_for(session.get("id", ""))
+    address    = _shipping_of(session)
+    ref_client = order_id.replace("MS-", "")[:8]   # court, lisible au téléphone
+
+    order_ref = _get_db().collection("boitier_commandes").document(order_id)
+    order_ref.set({
+        "email":          email,
+        "lang":           lang,
+        "plan":           pack["plan"],
+        "sku":            pack["sku"],
+        "quantity":       pack["quantity"],
+        "address":        address,
+        "amount_ttc":     amount_ttc,
+        "stripe_session": session.get("id", ""),
+        "stripe_ref":     stripe_ref,
+        "status":         "paid",
+        "created_utc":    time.time(),
+    }, merge=True)
+
+    # 1. Expédition — c'est ce que le client a payé, on la tente en premier.
+    if pack["plan"] == "boitier":
+        _expedition_fanny(order_ref, order_id, ref_client, email, address,
+                          pack["quantity"], amount_ttc)
+    else:
+        _expedition_mcf(order_ref, order_id, ref_client, email, address, pack)
 
     # 2. Confirmation client, même si l'expédition doit être reprise à la
     #    main : son paiement est bien reçu.
@@ -1845,7 +1934,14 @@ sur votre compte : connectez-vous simplement à MyStrow avec vos identifiants ha
 
 def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr") -> None:
     label = _plan_label(plan, lang) if plan else ("MyStrow Pack" if lang == "en" else "Pack MyStrow")
-    if plan == "pack_vie":
+    if plan == "boitier":
+        licence = ("<p>To use it with MyStrow, start with the free trial, then pick a license on "
+                   "<a href=\"https://mystrow.fr/shop#formules\">mystrow.fr/shop</a>. It also works with any "
+                   "Art-Net software (QLC+ for example).</p>" if lang == "en" else
+                   "<p>Pour l'utiliser avec MyStrow, commencez par l'essai gratuit, puis choisissez une licence sur "
+                   "<a href=\"https://mystrow.fr/shop#formules\">mystrow.fr/shop</a>. L'interface marche aussi avec "
+                   "tout logiciel Art-Net (QLC+ par exemple).</p>")
+    elif plan == "pack_vie":
         licence = ("<p>Your <b>lifetime license</b> is activated on your account right now (separate email). "
                    "The card in the box carries a 1-year code: you don't need it.</p>" if lang == "en" else
                    "<p>Votre <b>licence à vie</b> est activée dès maintenant sur votre compte (email séparé). "
@@ -1855,12 +1951,13 @@ def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr") 
                    "<a href=\"https://mystrow.fr/activate\">mystrow.fr/activate</a>.</p>" if lang == "en" else
                    "<p>Votre code de licence est imprimé sur la carte glissée dans la boîte : activez-le sur "
                    "<a href=\"https://mystrow.fr/activate\">mystrow.fr/activate</a>.</p>")
+    objet = "interface" if plan == "boitier" else "pack"
     if lang == "en":
         subject = f"MyStrow — Order confirmed ({ref})"
         content = f"""
 <h2>Thank you for your order!</h2>
 <div class="box">📦 &nbsp;<b>{label}</b><br>Order reference: <b>{ref}</b></div>
-<p>Your pack is being prepared. You will receive a second email with the
+<p>Your {objet} is being prepared. You will receive a second email with the
 tracking number as soon as it ships (usually within 1 to 2 business days).</p>
 {licence}
 """
@@ -1869,26 +1966,34 @@ tracking number as soon as it ships (usually within 1 to 2 business days).</p>
         content = f"""
 <h2>Merci pour votre commande !</h2>
 <div class="box">📦 &nbsp;<b>{label}</b><br>Référence de commande : <b>{ref}</b></div>
-<p>Votre pack est en préparation. Vous recevrez un second email avec le numéro
+<p>Votre {objet} est en préparation. Vous recevrez un second email avec le numéro
 de suivi dès son expédition (en général sous 1 à 2 jours ouvrés).</p>
 {licence}
 """
-    _send_email(email, subject, content, lang=lang)
+    # Trustpilot en copie cachée (« Quick set-up ») : Trustpilot invite le client
+    # à laisser un avis 7 jours après l'achat. Vide = pas d'invitation.
+    _send_email(email, subject, content, lang=lang, bcc=_cfg("TRUSTPILOT_BCC", "").strip())
 
 
-def _email_pack_expedie(email: str, packages: list, ref: str, lang: str = "fr") -> None:
-    lignes = "<br>".join(f"{p['carrier']} : <b>{p['tracking']}</b>" for p in packages)
+def _email_pack_expedie(email: str, packages: list, ref: str, lang: str = "fr",
+                        objet: str = "pack") -> None:
+    def ligne(p):
+        t = html_escape(p["tracking"])
+        if p.get("url"):
+            t = f'<a href="{html_escape(p["url"])}">{t}</a>'
+        return f"{html_escape(p['carrier'])} : <b>{t}</b>"
+    lignes = "<br>".join(ligne(p) for p in packages)
     if lang == "en":
-        subject = f"MyStrow — Your pack has shipped ({ref})"
+        subject = f"MyStrow — Your {objet} has shipped ({ref})"
         content = f"""
-<h2>Your pack is on its way</h2>
+<h2>Your {objet} is on its way</h2>
 <div class="box">🚚 &nbsp;{lignes}</div>
 <p>Enter this number on the carrier's website to follow your parcel.</p>
 """
     else:
-        subject = f"MyStrow — Votre pack est expédié ({ref})"
+        subject = f"MyStrow — Votre {objet} est expédié{'e' if objet == 'interface' else ''} ({ref})"
         content = f"""
-<h2>Votre pack est en route</h2>
+<h2>Votre {objet} est en route</h2>
 <div class="box">🚚 &nbsp;{lignes}</div>
 <p>Saisissez ce numéro sur le site du transporteur pour suivre votre colis.</p>
 """
@@ -1943,25 +2048,48 @@ def _estim_cached(key, ttl: float, fn):
     return val
 
 
+# Pays ouverts sur les Payment Links des packs (à garder alignés avec Stripe
+# et les CGV) → format du code postal, déjà normalisé (majuscules, sans « L- »).
+_PAYS_LIVRAISON = {
+    "FR": r"\d{5}", "BE": r"\d{4}", "LU": r"\d{4}", "NL": r"\d{4} ?[A-Z]{2}",
+    "IT": r"\d{5}", "ES": r"\d{5}", "PT": r"\d{4}-?\d{3}",
+}
+# Hors zone malgré le pays : DOM-TOM (pas de conformité DEEE outre-mer, cf.
+# CGV), Canaries, Ceuta et Melilla (hors territoire TVA de l'UE, douane).
+_HORS_ZONE = {"FR": ("97", "98"), "ES": ("35", "38", "51", "52")}
+
+
+def _stock_fanny_affiche() -> dict:
+    """{"boitier": n} si le stock chez Fanny est tenu (meta/stock_fanny), sinon {}."""
+    def lire():
+        d = _get_db().collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1]).get()
+        return {"boitier": max(0, int((d.to_dict() or {}).get("boitier", 0)))} if d.exists else {}
+    try:
+        return _estim_cached(("stock_fanny",), 300, lire)
+    except Exception as e:
+        print(f"[Estimation] stock Fanny : {e}")
+        return {}
+
+
 @https_fn.on_request(max_instances=3)
 def livraison_estimation(req: https_fn.Request) -> https_fn.Response:
-    """GET ?cp=75001 → fourchette de livraison Standard + stock des 2 packs.
-
-    Les DOM-TOM (97x/98x) sont refusés : le Payment Link ne livre qu'en
-    France métropolitaine (pas de conformité DEEE outre-mer, cf. CGV).
-    """
+    """GET ?cp=75001[&pays=IT] → fourchette de livraison Standard + stock des packs."""
     if req.method == "OPTIONS":
         return https_fn.Response("", status=204, headers=_ESTIM_H)
-    cp = (req.args.get("cp") or "75001").strip()
-    if len(cp) != 5 or not cp.isdigit():
+    pays = (req.args.get("pays") or "FR").strip().upper()
+    cp = (req.args.get("cp") or "75001").strip().upper()
+    if pays == "LU" and cp.startswith("L-"):
+        cp = cp[2:]
+    if pays not in _PAYS_LIVRAISON or not re.fullmatch(_PAYS_LIVRAISON[pays], cp):
         return https_fn.Response(json.dumps({"ok": False, "raison": "cp"}),
                                  status=400, headers=_ESTIM_H)
-    if cp.startswith(("97", "98")):
+    if cp.startswith(_HORS_ZONE.get(pays, ())):
         return https_fn.Response(json.dumps({"ok": False, "raison": "outre-mer"}),
                                  headers=_ESTIM_H)
     try:
         heure = time.strftime("%Y%m%d%H", time.gmtime())
-        est = _estim_cached(("cp", cp[:2], heure), 3600, lambda: amazon_mcf.preview(cp))
+        est = _estim_cached(("cp", pays, cp[:2], heure), 3600,
+                            lambda: amazon_mcf.preview(cp, country=pays))
         stock = _estim_cached(("stock",), 600,
                               lambda: amazon_mcf.get_inventory(list(_PACKS.values())))
     except Exception as e:
@@ -1972,8 +2100,81 @@ def livraison_estimation(req: https_fn.Request) -> https_fn.Response:
         "ok":       est["fulfillable"],
         "earliest": est["earliest"][:10],
         "latest":   est["latest"][:10],
-        "stock":    {plan: int(stock.get(sku, 0)) for plan, sku in _PACKS.items()},
+        "stock":    {**{plan: int(stock.get(sku, 0)) for plan, sku in _PACKS.items()},
+                     **_stock_fanny_affiche()},
     }), headers={**_ESTIM_H, "Cache-Control": "public, max-age=600"})
+
+
+# --- Interface seule : Fanny saisit le n° de suivi -------------------------
+
+_TRANSPORTEURS = {
+    "colissimo":     ("Colissimo", "https://www.laposte.fr/outils/suivre-vos-envois?code={}"),
+    "lettre_suivie": ("La Poste — Lettre suivie", "https://www.laposte.fr/outils/suivre-vos-envois?code={}"),
+    "mondial_relay": ("Mondial Relay", "https://www.mondialrelay.fr/suivi-de-colis/"),
+    "chronopost":    ("Chronopost", "https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT={}"),
+}
+
+
+def _page_expedition(titre: str, corps: str, status: int = 200) -> https_fn.Response:
+    page = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>MyStrow — {titre}</title><style>
+body{{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:24px 16px}}
+main{{max-width:460px;margin:auto}} h1{{font-size:22px}} .box{{background:#1c1c1c;border-radius:10px;padding:14px;margin:14px 0;line-height:1.5}}
+label{{display:block;margin:14px 0 6px;font-weight:600}} select,input{{width:100%;box-sizing:border-box;padding:12px;font-size:17px;border-radius:8px;border:1px solid #444;background:#222;color:#eee}}
+button{{margin-top:20px;width:100%;padding:14px;font-size:17px;font-weight:700;border:0;border-radius:8px;background:#e2ce16;color:#111}}
+.ok{{color:#7ddc8a}} .err{{color:#ff8a8a}}</style></head><body><main>{corps}</main></body></html>"""
+    return https_fn.Response(page, status=status, headers={"Content-Type": "text/html; charset=utf-8"})
+
+
+@https_fn.on_request(max_instances=3)
+def boitier_expedie(req: https_fn.Request) -> https_fn.Response:
+    """Lien du mail de Fanny : GET = formulaire, POST = suivi envoyé au client."""
+    order_id = (req.args.get("id") or req.form.get("id") or "").strip()
+    jeton = (req.args.get("k") or req.form.get("k") or "").strip()
+    if not order_id or not hmac.compare_digest(jeton, _jeton_expedition(order_id)):
+        return _page_expedition("Lien invalide", "<h1 class='err'>Lien invalide</h1>"
+                                "<p>Reprends le bouton du mail de commande.</p>", 403)
+    ref = _get_db().collection("boitier_commandes").document(order_id)
+    cmd = ref.get().to_dict() or {}
+    if cmd.get("plan") != "boitier":
+        return _page_expedition("Commande inconnue", "<h1 class='err'>Commande introuvable</h1>", 404)
+    ref_client = order_id.replace("MS-", "")[:8]
+    a = cmd.get("address") or {}
+    dest = html_escape(f"{a.get('name', '')} — {a.get('postal_code', '')} {a.get('city', '')}")
+
+    if cmd.get("status") == "shipped":
+        p = (cmd.get("packages") or [{}])[0]
+        return _page_expedition("Déjà expédiée", f"<h1 class='ok'>✓ Déjà expédiée</h1><div class='box'>"
+                                f"Réf. {ref_client} → {dest}<br>{html_escape(p.get('carrier', ''))} : "
+                                f"<b>{html_escape(p.get('tracking', ''))}</b></div>"
+                                "<p>Le client a reçu son n° de suivi. Erreur de numéro ? Préviens Nicolas.</p>")
+
+    erreur = ""
+    if req.method == "POST":
+        code = re.sub(r"\s+", "", req.form.get("suivi") or "").upper()
+        transp = req.form.get("transporteur") or ""
+        if transp in _TRANSPORTEURS and re.fullmatch(r"[A-Z0-9]{6,40}", code):
+            nom, url = _TRANSPORTEURS[transp]
+            colis = [{"carrier": nom, "tracking": code, "url": url.format(code)}]
+            ref.update({"status": "shipped", "packages": colis, "shipped_utc": time.time()})
+            _email_pack_expedie(cmd.get("email", ""), colis, ref_client,
+                                cmd.get("lang") or "fr", objet="interface")
+            _alert_admin(f"MyStrow — Interface expédiée par Fanny ({ref_client})",
+                         f"<p>{html_escape(cmd.get('email', ''))} → {dest}<br>{nom} : <b>{code}</b></p>")
+            return _page_expedition("Merci", f"<h1 class='ok'>✓ C'est envoyé !</h1><div class='box'>"
+                                    f"Réf. {ref_client} → {dest}<br>{nom} : <b>{code}</b></div>"
+                                    "<p>Le client vient de recevoir son n° de suivi. Merci Fanny 🙏</p>")
+        erreur = "<p class='err'>Choisis le transporteur et vérifie le numéro (lettres et chiffres).</p>"
+
+    options = "".join(f"<option value='{k}'>{v[0]}</option>" for k, v in _TRANSPORTEURS.items())
+    return _page_expedition("Expédition", f"""<h1>📦 Expédition {ref_client}</h1>
+<div class="box">{int(cmd.get('quantity') or 1)} × interface USB-DMX<br>→ {dest}</div>{erreur}
+<form method="post"><input type="hidden" name="id" value="{html_escape(order_id)}">
+<input type="hidden" name="k" value="{html_escape(jeton)}">
+<label for="t">Transporteur</label><select id="t" name="transporteur">{options}</select>
+<label for="s">N° de suivi</label><input id="s" name="suivi" autocomplete="off" autocapitalize="characters" required>
+<button type="submit">Envoyer le suivi au client</button></form>""")
 
 
 # --- Alerte « vente Amazon » ------------------------------------------------
@@ -4772,7 +4973,7 @@ _BOITIER_RELANCES_COURTE = (10, 2)     # licence de 2 mois
 _BOITIER_RELANCES_LONGUE = (30, 7)     # licence de 12 mois
 
 _TARIFS_URL = {
-    "fr": "https://mystrow.fr/tarifs",
+    "fr": "https://mystrow.fr/shop#formules",
     "en": "https://mystrow.fr/en/#pricing",
 }
 
@@ -4956,3 +5157,30 @@ def mcf_suivi(event: scheduler_fn.ScheduledEvent) -> None:
 @scheduler_fn.on_schedule(schedule="*/30 * * * *", max_instances=1)
 def ventes_amazon(event: scheduler_fn.ScheduledEvent) -> None:
     print(f"[Ventes Amazon] {_run_ventes_amazon()} nouvelle(s) vente(s)")
+
+
+def _run_purge_downloads(mois: int = 13) -> int:
+    """Efface le journal `downloads` (IP + géoloc) au-delà de `mois` mois.
+
+    La politique de confidentialité annonce « 13 mois au plus » : sans cette
+    purge, l'IP de chaque téléchargement était gardée indéfiniment.
+    """
+    from datetime import timedelta
+    db     = _get_db()
+    limite = datetime.now(timezone.utc) - timedelta(days=round(mois * 30.44))
+    total  = 0
+    while True:
+        docs = list(db.collection("downloads").where("ts", "<", limite).limit(400).stream())
+        if not docs:
+            return total
+        batch = db.batch()
+        for d in docs:
+            batch.delete(d.reference)
+        batch.commit()
+        total += len(docs)
+
+
+# Tous les jours à 3 h UTC : purge du journal des téléchargements (RGPD).
+@scheduler_fn.on_schedule(schedule="0 3 * * *", max_instances=1)
+def purge_journaux(event: scheduler_fn.ScheduledEvent) -> None:
+    print(f"[Purge] {_run_purge_downloads()} téléchargement(s) de plus de 13 mois effacé(s)")

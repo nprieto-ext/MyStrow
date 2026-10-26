@@ -364,12 +364,12 @@ class DmxSetupDialog(QDialog):
 
         _header(tr("ent3_027"))
         from node_connection import USB_NODE_ID, USB_NODE_NAME
+        # Le USB NODE (boîtier du Pack MyStrow) en tête : c'est l'interface
+        # vendue par MyStrow, et c'est dans cette liste que son propriétaire
+        # la cherche.
+        _item({"id": USB_NODE_ID, "name": USB_NODE_NAME})
         for p in PRODUCTS:
             _item(p)
-            # Le USB NODE se range à côté de l'OPTO, son voisin de catalogue :
-            # c'est dans cette liste que son propriétaire le cherche.
-            if p["id"] == "electroconcept_opto":
-                _item({"id": USB_NODE_ID, "name": USB_NODE_NAME})
 
     def _restore_selection(self):
         pid = self._dmx.product_id

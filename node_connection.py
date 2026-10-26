@@ -35,7 +35,10 @@ TARGET_PORT = 6454
 # figure dans la liste des interfaces USB (c'est là que son propriétaire le
 # cherche) et renvoie vers la sortie Node. Id mémorisé dans `dmx.product_id`.
 USB_NODE_ID   = "electroconcept_usb_node"
-USB_NODE_NAME = "USB NODE DMX (ElectroConcept)"
+# Le boîtier du Pack MyStrow EST ce USB NODE : on le nomme comme le client le
+# connaît (étiquette de la boîte), en gardant la référence ElectroConcept pour
+# ceux qui l'ont acheté nu.
+USB_NODE_NAME = "MyStrow USB-DMX (USB NODE ElectroConcept)"
 
 
 def _est_usb_node(node: dict) -> bool:
@@ -2352,13 +2355,14 @@ except ImportError:
 # modèle à partir du TRANSPORT : OPTO, Open DMX, DMXKing et « Autre » partagent
 # `enttec`, donc la liste rouvrait toujours sur « ENTTEC Open DMX » (client Jan,
 # 07/10/2026 : « il garde l'ENTTEC et pas l'ElectroConcept »).
-# Transport None = USB NODE DMX, qui renvoie vers la sortie Node.
+# Transport None = USB NODE DMX (boîtier du Pack MyStrow), qui renvoie vers la
+# sortie Node. Il est en tête : c'est l'interface que MyStrow vend.
 _USB_IFACES = [
+    (USB_NODE_ID,           USB_NODE_NAME,                    None),
     ("eurolite_usb",        "Eurolite USB-DMX512 PRO (MK2)",  TRANSPORT_ENTTEC_PRO),
     ("enttec_pro",          "ENTTEC DMX USB Pro",             TRANSPORT_ENTTEC_PRO),
     ("enttec_open",         "ENTTEC Open DMX USB",            TRANSPORT_ENTTEC),
     ("electroconcept_opto", "OPTO OPEN DMX (ElectroConcept)", TRANSPORT_ENTTEC),
-    (USB_NODE_ID,           USB_NODE_NAME,                    None),
     ("dmxking_micro",       "DMXKing UltraDMX Micro",         TRANSPORT_ENTTEC),
     ("generic_usb",         None,                             TRANSPORT_ENTTEC),
 ]

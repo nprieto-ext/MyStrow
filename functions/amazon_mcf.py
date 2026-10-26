@@ -156,18 +156,24 @@ def get_order(order_id: str) -> dict:
     return {"status": status, "packages": packages}
 
 
-def preview(postal_code: str, sku: str = "MS-DMX-2M") -> dict:
-    """Fourchette de livraison Standard vers un code postal français.
+def preview(postal_code: str, sku: str = "MS-DMX-2M", country: str = "FR") -> dict:
+    """Fourchette de livraison Standard vers un code postal.
 
     Amazon n'a besoin que du code postal pour estimer : la ville et la rue
     sont des bouche-trous (vérifié le 20/10/2026, Marseille / Brest / Ajaccio
-    / Strasbourg). Retourne {"fulfillable", "earliest", "latest"} (dates ISO).
+    / Strasbourg ; le 21/10 pour BE, LU, IT, ES, PT). Sauf aux Pays-Bas, où la
+    rue et ville doivent correspondre au code postal : on estime alors sur Amsterdam,
+    les délais y sont les mêmes partout (J+2 vérifié le 21/10/2026).
+    Retourne {"fulfillable", "earliest", "latest"} (dates ISO).
     """
+    line1, city = "-", "-"
+    if country == "NL":
+        postal_code, line1, city = "1012 AB", "Damrak 1", "Amsterdam"
     rep = _call("POST", f"{_OUTBOUND}/fulfillmentOrders/preview", {
         "marketplaceId": MARKETPLACE_FR,
-        "address": {"name": "Client", "addressLine1": "-", "city": "-",
+        "address": {"name": "Client", "addressLine1": line1, "city": city,
                     "stateOrRegion": "-", "postalCode": postal_code,
-                    "countryCode": "FR"},
+                    "countryCode": country},
         "shippingSpeedCategories": ["Standard"],
         "items": [{"sellerSku": sku, "sellerFulfillmentOrderItemId": "1", "quantity": 1}],
     })

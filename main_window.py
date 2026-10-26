@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QUrl, QSize, QPoint, QRect, QRectF, QSizeF, QPointF,
-    QDateTime, QEvent, Signal, QThread
+    QDateTime, QEvent, Signal, QThread, QKeyCombination
 )
 import datetime as _dt
 try:
@@ -35,7 +35,8 @@ except ImportError:
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
     QPalette, QPolygon, QPolygonF, QTransform, QAction, QActionGroup,
-    QDesktopServices, QFontMetrics, QCursor, QPainterPath, QLinearGradient
+    QDesktopServices, QFontMetrics, QCursor, QPainterPath, QLinearGradient,
+    QKeySequence
 )
 
 
@@ -5068,6 +5069,70 @@ class PanTiltLimitWidget(QWidget):
             self.setCursor(Qt.CrossCursor)
 
 
+class DipSwitchWidget(QWidget):
+    """Rangée de 10 dipswitch : l'adresse DMX telle qu'on la règle au dos d'un
+    projecteur sans afficheur.
+
+    Les switches 1 à 9 valent 1, 2, 4… 256 ; l'adresse est la somme de ceux
+    sur ON. Le 10 ne compte pas : selon la marque il choisit le mode (DMX,
+    son, maître/esclave), on le dessine donc éteint.
+    Lecture seule : l'adresse se règle au-dessus, le widget ne fait que la
+    traduire en switches à recopier.
+    """
+    _N       = 10
+    _SLOT_W  = 26
+    _GAP     = 6
+    _SLOT_H  = 46
+    _TOP     = 18    # valeurs au-dessus
+    _BOTTOM  = 18    # numéros en dessous
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        w = self._N * self._SLOT_W + (self._N - 1) * self._GAP + 16
+        self.setFixedSize(w, self._TOP + self._SLOT_H + self._BOTTOM + 8)
+        self._address = 1
+
+    def set_address(self, address):
+        self._address = int(address)
+        self.update()
+
+    def _slot_rect(self, i):
+        x = 8 + i * (self._SLOT_W + self._GAP)
+        return QRectF(x, self._TOP + 4, self._SLOT_W, self._SLOT_H)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        # Le boîtier rouge des vrais dipswitch, en sourdine.
+        body = QRectF(2, self._TOP, self.width() - 4, self._SLOT_H + 8)
+        p.setPen(QPen(QColor("#3a1414"), 1))
+        p.setBrush(QColor("#1c0c0c"))
+        p.drawRoundedRect(body, 5, 5)
+        p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        for i in range(self._N):
+            r = self._slot_rect(i)
+            on = bool(self._address >> i & 1)
+            # Seule l'adresse 512 a besoin du 10e switch ; sinon c'est le mode.
+            is_mode = i == self._N - 1 and not on
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#0a0a0a"))
+            p.drawRoundedRect(r, 3, 3)
+            # Manette : en haut = ON, en bas = OFF.
+            kh = r.height() / 2 - 3
+            ky = r.top() + 3 if on else r.bottom() - 3 - kh
+            knob = QRectF(r.left() + 3, ky, r.width() - 6, kh)
+            p.setBrush(QColor("#ffd600") if on else QColor("#3a3a3a" if is_mode else "#d8d8d8"))
+            p.drawRoundedRect(knob, 2, 2)
+            p.setPen(QColor("#ffd600") if on else QColor("#555"))
+            val = tr("mw_dip_mode") if is_mode else str(1 << i)
+            p.drawText(QRectF(r.left() - 4, 0, r.width() + 8, self._TOP - 2),
+                       Qt.AlignHCenter | Qt.AlignBottom, val)
+            p.setPen(QColor("#888") if not is_mode else QColor("#444"))
+            p.drawText(QRectF(r.left(), body.bottom() + 2, r.width(), self._BOTTOM),
+                       Qt.AlignHCenter | Qt.AlignTop, str(i + 1))
+        p.end()
+
+
 class ChannelRangeBar(QWidget):
     """Plage utile d'un canal (« brider ») : barre 0-255 à deux poignées.
 
@@ -6006,15 +6071,15 @@ class MainWindow(QMainWindow):
         bar = self.menuBar()
 
         file_menu = bar.addMenu(tr("menu_file"))
+        # Touches posées par _apply_shortcuts (raccourcis personnalisables).
         new_action = file_menu.addAction(tr("menu_new_show"), self.new_show)
-        new_action.setShortcut("Ctrl+N")
         file_menu.addSeparator()
         open_action = file_menu.addAction(tr("menu_open_show"), self.load_show)
-        open_action.setShortcut("Ctrl+O")
         save_action = file_menu.addAction(tr("menu_save_show"), self.save_show)
-        save_action.setShortcut("Ctrl+S")
         save_as_action = file_menu.addAction(tr("menu_save_as"), self.save_show_as)
-        save_as_action.setShortcut("Ctrl+Shift+S")
+        self._sc_menu_actions = {"new_show": new_action, "open_show": open_action,
+                                 "save_show": save_action, "save_show_as": save_as_action}
+        self._apply_shortcuts()
         file_menu.addSeparator()
         self.act_schedule = file_menu.addAction(tr("menu_schedule"), self._open_schedule_dialog)
         self._update_schedule_action_label()   # pose l'emoji et l'heure armée
@@ -7140,16 +7205,17 @@ class MainWindow(QMainWindow):
         # widget focalisé, mais reste sans effet dans les dialogues modaux
         # (Patch DMX, REC Lumière) qui ont leur propre Ctrl+Z.
         from PySide6.QtGui import QShortcut as _QShortcut, QKeySequence as _QKS
-        _undo_sc = _QShortcut(_QKS("Ctrl+Z"), self)
-        _undo_sc.setContext(Qt.WindowShortcut)
-        _undo_sc.activated.connect(self._undo_plan_2d)
+        self._undo_sc = _QShortcut(_QKS("Ctrl+Z"), self)
+        self._undo_sc.setContext(Qt.WindowShortcut)
+        self._undo_sc.activated.connect(self._undo_plan_2d)
         # Barre d'espace = Play/Pause, même raison : par keyPressEvent elle
         # n'arrivait jamais, la playlist (sélection de ligne) ou le dernier
         # bouton cliqué (qui se re-cliquait !) la mangeaient. Les champs de
         # saisie la gardent : un QLineEdit réclame l'espace avant le raccourci.
-        _play_sc = _QShortcut(_QKS(Qt.Key_Space), self)
-        _play_sc.setContext(Qt.WindowShortcut)
-        _play_sc.activated.connect(self.toggle_play)
+        self._play_sc = _QShortcut(_QKS(Qt.Key_Space), self)
+        self._play_sc.setContext(Qt.WindowShortcut)
+        self._play_sc.activated.connect(self.toggle_play)
+        self._apply_shortcuts()   # touches personnalisées (~/.mystrow_shortcuts.json)
         if not self._license.dmx_allowed:
             self.plan_de_feu.set_dmx_blocked()
         plan_scroll.setWidget(self.plan_de_feu)
@@ -12110,6 +12176,9 @@ class MainWindow(QMainWindow):
                     self.active_effect = None
                     self.active_effect_config = {}
                 else:
+                    # Effacer les traces de l'effet retiré ; les autres
+                    # réécrivent les leurs à la frame suivante.
+                    self._apply_effect_capture()
                     self.active_effect = self._stacked_effects[-1]['name']
                     self.active_effect_config = self._stacked_effects[-1]['config']
             btn.update_style()
@@ -12163,7 +12232,7 @@ class MainWindow(QMainWindow):
             if prev:
                 # Restaurer les pads FX actifs
                 for (fc, fr) in prev.get("fx_pads", {}).keys():
-                    cfg = self.fx_pads[fc][fr] if fc < 4 else None
+                    cfg = self.fx_pads[fc][fr] if fc < _FX_COL_MAX else None
                     if cfg:
                         self.active_fx_pads[(fc, fr)] = True
                         self._style_fx_pad(fc, fr)
@@ -12767,6 +12836,7 @@ class MainWindow(QMainWindow):
             self.active_effect = None
             self.active_effect_config = {}
         else:
+            self._apply_effect_capture()   # cf. toggle_effect
             self.active_effect = self._stacked_effects[-1]['name']
             self.active_effect_config = self._stacked_effects[-1]['config']
         self._style_fx_pad(key[0], key[1])
@@ -13176,6 +13246,22 @@ class MainWindow(QMainWindow):
         lyre — surtout pas le centre de la zone.
         """
         clear_effect_channels(self.projectors)
+        aims = self._apply_effect_capture()
+        self.effect_saved_colors = {}
+        self._effect_engine_frame = None
+        return aims
+
+    def _apply_effect_capture(self):
+        """Repose l'état d'avant-effet sur les projecteurs SANS vider la capture.
+
+        Sert aussi quand on retire UN effet de la pile alors que d'autres
+        tournent encore (superposition). Sans ça, ce que l'effet retiré écrivait
+        restait figé sur sa dernière image : couper un Rainbow sous une Lyre
+        Cercle laissait la couleur, le niveau forcé à 100 et la roue sur la
+        dernière teinte — souvent une teinte sombre, et le faisceau qui tourne
+        devenait invisible en 3D (« je perds le mouvement »). Les effets restants
+        réécrivent leurs attributs à la frame suivante, avant l'envoi DMX.
+        """
         aims = {}
         for p in self.projectors:
             saved = self.effect_saved_colors.get(id(p))
@@ -13193,8 +13279,6 @@ class MainWindow(QMainWindow):
                 p.color_wheel = saved[8]
             if len(saved) > 10:
                 p.gobo, p.zoom = saved[9], saved[10]
-        self.effect_saved_colors = {}
-        self._effect_engine_frame = None
         return aims
 
     def start_effect(self, effect_name):
@@ -22113,7 +22197,9 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    # Mapping raccourcis clavier -> couleurs
+    # Mapping raccourcis clavier -> couleurs (touches PAR DÉFAUT). L'instance
+    # le remplace dans _apply_shortcuts par les touches choisies par
+    # l'utilisateur ; l'éditeur timeline le lit pour poser ses blocs couleur.
     COLOR_SHORTCUTS = {
         Qt.Key_R: QColor(255, 0, 0),
         Qt.Key_G: QColor(0, 255, 0),
@@ -22127,98 +22213,139 @@ class MainWindow(QMainWindow):
         Qt.Key_P: QColor(255, 105, 180),
     }
 
-    # En mode LIVE, les mêmes touches couleur pilotent les "modes de couleurs"
-    # du panel live (tuiles couleur) au lieu d'appliquer aux lampes sélectionnées
-    # (comportement 2D). Valeur = clé de tuile dans LivePanel._COLOR_TILES.
-    LIVE_COLOR_KEYS = {
-        Qt.Key_R: 'rouge',
-        Qt.Key_G: 'vert',
-        Qt.Key_B: 'bleu',
-        Qt.Key_C: 'cyan',
-        Qt.Key_Y: 'jaune',
-        Qt.Key_O: 'orange',
-        Qt.Key_M: 'violet',
-        Qt.Key_P: 'rose',
-        Qt.Key_W: 'blanc',
+    # Action couleur → (couleur 2D, tuile du mode LIVE). En LIVE, la touche
+    # couleur sélectionne le "mode de couleur" du panel (clé de
+    # LivePanel._COLOR_TILES) au lieu d'agir sur les lampes sélectionnées.
+    # Le noir n'a pas de tuile : sans effet en LIVE.
+    _COLOR_ACTIONS = {
+        "color_white":   (QColor(255, 255, 255), 'blanc'),
+        "color_red":     (QColor(255, 0, 0), 'rouge'),
+        "color_orange":  (QColor(255, 128, 0), 'orange'),
+        "color_yellow":  (QColor(255, 255, 0), 'jaune'),
+        "color_green":   (QColor(0, 255, 0), 'vert'),
+        "color_cyan":    (QColor(0, 255, 255), 'cyan'),
+        "color_blue":    (QColor(0, 0, 255), 'bleu'),
+        "color_magenta": (QColor(255, 0, 255), 'violet'),
+        "color_pink":    (QColor(255, 105, 180), 'rose'),
+        "color_black":   (QColor(0, 0, 0), None),
     }
 
-    def keyPressEvent(self, event):
-        """Gere les raccourcis clavier"""
-        key = event.key()
+    # Actions portées par un QAction / QShortcut de fenêtre, pas par keyPressEvent.
+    _SC_QT_HANDLED = ("play_pause", "undo_plan", "new_show", "open_show",
+                      "save_show", "save_show_as")
 
-        # Espace : QShortcut de fenêtre (cf. _undo_sc), pas ici.
-        if key in (Qt.Key_Return, Qt.Key_Enter):
-            self.toggle_play()
-            event.accept()
-        elif key == Qt.Key_PageDown and (event.modifiers() & Qt.ControlModifier):
-            self._next_bank_page()       # Ctrl+PageDown = page de layout suivante
-            event.accept()
-        elif key == Qt.Key_PageUp and (event.modifiers() & Qt.ControlModifier):
-            self._prev_bank_page()       # Ctrl+PageUp = page de layout précédente
-            event.accept()
-        elif key == Qt.Key_PageDown:
-            self.next_media()
-            event.accept()
-        elif key == Qt.Key_PageUp:
-            self.previous_media()
-            event.accept()
-        elif key == Qt.Key_Right and self.go_mode:
-            self._go_advance()
-            event.accept()
-        elif key == Qt.Key_Left and self.go_mode:
-            self._go_back()
-            event.accept()
-        elif key in (Qt.Key_F1, Qt.Key_F2, Qt.Key_F3, Qt.Key_F4):
-            cart_index = key - Qt.Key_F1  # F1=0, F2=1, F3=2, F4=3
-            if cart_index < len(self.cartouches):
-                self.on_cartouche_clicked(cart_index)
-            event.accept()
-        elif key in (Qt.Key_F5, Qt.Key_F6, Qt.Key_F7, Qt.Key_F8,
-                     Qt.Key_F9, Qt.Key_F10, Qt.Key_F11, Qt.Key_F12):
-            # F5-F12 = les 8 boutons d'effet (carrés verts) 0 à 7, haut → bas.
-            # Respecte le mode du bouton (toggle / flash / timer) comme un vrai appui.
-            if not event.isAutoRepeat():
-                fx_index = key - Qt.Key_F5  # F5=0 … F12=7
-                if fx_index < len(self.effect_buttons):
-                    self._on_effect_press(fx_index)
-            event.accept()
-        elif key == Qt.Key_F and not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)):
-            # F tenue = bouton FLASH tenu. Meme momentane, meme sortie : les
-            # memoires montent (ou tombent en KILL) et les pads couleur presses
-            # pendant ce temps sont rendus au relache. Marche quelle que soit la
-            # fonction du bouton bas-droite — c'est un raccourci a part entiere.
-            if not event.isAutoRepeat():
-                self._flash_begin()
-            event.accept()
-        elif key == Qt.Key_S and not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)):
-            self._apply_strobe_shortcut()
-            event.accept()
-        elif key in self.COLOR_SHORTCUTS:
-            if getattr(self.seq, 'live_mode_active', False):
-                # LIVE : la touche couleur sélectionne le mode de couleur live
-                # (comme un clic sur la tuile du panel) au lieu d'agir sur la 2D.
-                tile = self.LIVE_COLOR_KEYS.get(key)
-                panel = getattr(self.seq, 'live_panel', None)
-                if tile and panel is not None and hasattr(panel, '_on_color_tile_selected'):
-                    panel._on_color_tile_selected(tile)
-            else:
-                self._apply_color_shortcut(self.COLOR_SHORTCUTS[key])
+    def _apply_shortcuts(self):
+        """Pose les touches choisies (shortcuts.load) sur les menus, les
+        QShortcut de fenêtre et la table lue par keyPressEvent. Rappelé après
+        chaque « Enregistrer » du dialogue Raccourcis clavier."""
+        import shortcuts as _sc
+        if not hasattr(self, '_shortcut_keys'):
+            self._shortcut_keys = _sc.load()
+        keys = self._shortcut_keys
+        for aid, act in getattr(self, '_sc_menu_actions', {}).items():
+            act.setShortcut(QKeySequence(keys.get(aid, ""), QKeySequence.PortableText))
+        for aid, attr in (("play_pause", "_play_sc"), ("undo_plan", "_undo_sc")):
+            sc = getattr(self, attr, None)
+            if sc is not None:
+                sc.setKey(QKeySequence(keys.get(aid, ""), QKeySequence.PortableText))
+        self._key_lookup = {seq: aid for aid, seq in keys.items()
+                            if seq and aid not in self._SC_QT_HANDLED}
+        # Couleurs à touche simple (sans modificateur) : pour l'éditeur timeline.
+        couleurs = {}
+        for aid, (color, _tile) in self._COLOR_ACTIONS.items():
+            ks = QKeySequence(keys.get(aid, ""), QKeySequence.PortableText)
+            if ks.count() == 1 and ks[0].keyboardModifiers() == Qt.NoModifier:
+                couleurs[ks[0].key()] = color
+        self.COLOR_SHORTCUTS = couleurs
+        self._held_shortcuts = {}
+
+    @staticmethod
+    def _event_key_seq(event) -> str:
+        """Touche + modificateurs d'un événement, au format des raccourcis."""
+        key = event.key()
+        if key in (0, Qt.Key_unknown, Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt,
+                   Qt.Key_Meta, Qt.Key_AltGr):
+            return ""
+        if key == Qt.Key_Enter:
+            key = Qt.Key_Return              # Entrée du pavé = Entrée
+        mods = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier
+                                    | Qt.AltModifier | Qt.MetaModifier)
+        return QKeySequence(QKeyCombination(mods, Qt.Key(key))).toString(QKeySequence.PortableText)
+
+    def keyPressEvent(self, event):
+        """Raccourcis clavier personnalisables (cf. shortcuts.ACTIONS)."""
+        if not hasattr(self, '_key_lookup'):
+            self._apply_shortcuts()
+        aid = self._key_lookup.get(self._event_key_seq(event))
+        if aid and self._on_shortcut_press(aid, event):
             event.accept()
         else:
             super().keyPressEvent(event)
 
+    def _on_shortcut_press(self, aid, event) -> bool:
+        """Exécute l'action ; False = touche rendue au widget (ex. flèches hors mode GO)."""
+        if aid == "play_pause_alt":
+            self.toggle_play()
+        elif aid == "next_media":
+            self.next_media()
+        elif aid == "prev_media":
+            self.previous_media()
+        elif aid == "next_page":
+            self._next_bank_page()
+        elif aid == "prev_page":
+            self._prev_bank_page()
+        elif aid in ("go_next", "go_prev"):
+            if not self.go_mode:
+                return False
+            self._go_advance() if aid == "go_next" else self._go_back()
+        elif aid.startswith("cart_"):
+            i = int(aid[5:]) - 1
+            if i < len(self.cartouches):
+                self.on_cartouche_clicked(i)
+        elif aid.startswith("fx_"):
+            # Les 8 boutons d'effet (carrés verts), haut → bas. Respecte le mode
+            # du bouton (toggle / flash / timer) comme un vrai appui.
+            if not event.isAutoRepeat():
+                i = int(aid[3:]) - 1
+                if i < len(self.effect_buttons):
+                    self._on_effect_press(i)
+                    self._held_shortcuts[event.key()] = aid
+        elif aid == "flash":
+            # Touche tenue = bouton FLASH tenu. Même momentané, même sortie : les
+            # mémoires montent (ou tombent en KILL) et les pads couleur pressés
+            # pendant ce temps sont rendus au relâché. Marche quelle que soit la
+            # fonction du bouton bas-droite — c'est un raccourci à part entière.
+            if not event.isAutoRepeat():
+                self._flash_begin()
+                self._held_shortcuts[event.key()] = aid
+        elif aid == "strobe":
+            self._apply_strobe_shortcut()
+        elif aid in self._COLOR_ACTIONS:
+            color, tile = self._COLOR_ACTIONS[aid]
+            if getattr(self.seq, 'live_mode_active', False):
+                panel = getattr(self.seq, 'live_panel', None)
+                if tile and panel is not None and hasattr(panel, '_on_color_tile_selected'):
+                    panel._on_color_tile_selected(tile)
+            else:
+                self._apply_color_shortcut(color)
+        else:
+            return False
+        return True
+
     def keyReleaseEvent(self, event):
-        """Relâchement F5-F12 : coupe les effets en mode 'flash' (maintien)."""
-        key = event.key()
-        if key == Qt.Key_F and not event.isAutoRepeat():
-            self._flash_end()          # relacher F sort du mode flash
+        """Relâchement d'une touche tenue : fin du FLASH, ou effet en mode 'flash'.
+
+        On retrouve l'action par la touche seule : un modificateur relâché
+        avant elle ne doit pas laisser le flash collé."""
+        aid = None if event.isAutoRepeat() else \
+            getattr(self, '_held_shortcuts', {}).pop(event.key(), None)
+        if aid == "flash":
+            self._flash_end()
             event.accept()
-            return
-        if key in (Qt.Key_F5, Qt.Key_F6, Qt.Key_F7, Qt.Key_F8,
-                   Qt.Key_F9, Qt.Key_F10, Qt.Key_F11, Qt.Key_F12) and not event.isAutoRepeat():
-            fx_index = key - Qt.Key_F5
-            if fx_index < len(self.effect_buttons):
-                self._on_effect_release(fx_index)
+        elif aid:
+            i = int(aid[3:]) - 1
+            if i < len(self.effect_buttons):
+                self._on_effect_release(i)
             event.accept()
         else:
             super().keyReleaseEvent(event)
@@ -22521,154 +22648,16 @@ class MainWindow(QMainWindow):
         self.plan_de_feu.refresh()
 
     def show_shortcuts_dialog(self):
-        """Affiche le dialog listant tous les raccourcis clavier"""
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("mw_shortcuts"))
-        dlg.setMinimumSize(700, 620)
-        dlg.setStyleSheet("""
-            QDialog { background: #1a1a1a; color: #e0e0e0; }
-            QLabel { color: #e0e0e0; }
-            QScrollArea { border: none; background: #1a1a1a; }
-            QWidget#shortcut_content { background: #1a1a1a; }
-        """)
-
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        title = QLabel(tr("mw_shortcuts"))
-        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #ffffff; padding-bottom: 4px;")
-        layout.addWidget(title)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_content = QWidget()
-        scroll_content.setObjectName("shortcut_content")
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(4)
-
-        # Donnees : (groupe, [(touche, description), ...])
-        shortcut_groups = [
-            (tr("mwy_052"), [
-                (tr("mwy_053"), "Play / Pause"),
-                ("Page Down", tr("mwy_056")),
-                ("Page Up", tr("mwy_058")),
-                ("F1", tr("mwy_060")),
-                ("F2", tr("mwy_062")),
-                ("F3", tr("mwy_064")),
-                ("F4", tr("mwy_066")),
-            ]),
-            (tr("mwy_067"), [
-                ("Ctrl + N", tr("mwy_069")),
-                ("Ctrl + O", tr("mwy_071")),
-                ("Ctrl + S", tr("mwy_073")),
-                ("Ctrl + Shift + S", tr("mwy_075")),
-            ]),
-            (tr("mwy_076"), [
-                ("W", tr("mwy_078")),
-                ("R", tr("mwy_080")),
-                ("O", tr("mwy_082")),
-                ("Y", tr("mwy_084")),
-                ("G", tr("mwy_086")),
-                ("C", tr("mwy_088")),
-                ("B", tr("mwy_090")),
-                ("M", tr("mwy_092")),
-                ("P", tr("mwy_094")),
-                ("K", tr("mwy_096")),
-                ("S", tr("mwy_098")),
-            ]),
-            (tr("mwy_099"), [
-                ("F5", tr("mwy_101")),
-                ("F6", tr("mwy_103")),
-                ("F7", tr("mwy_105")),
-                ("F8", tr("mwy_107")),
-                ("F9", tr("mwy_109")),
-                ("F10", tr("mwy_111")),
-                ("F11", tr("mwy_113")),
-                ("F12", tr("mwy_115")),
-            ]),
-            (tr("mwy_116"), [
-                ("Ctrl + A", tr("mwy_118")),
-                (tr("mwy_119"), tr("mwy_120")),
-                (tr("mwy_121"), tr("mwy_122")),
-                ("F", tr("mwy_124")),
-                ("1", tr("mwy_126")),
-                ("2", tr("mwy_128")),
-                ("3", tr("mwy_130")),
-                ("4", tr("mwy_132")),
-                ("5", tr("mwy_134")),
-                ("6", tr("mwy_136")),
-            ]),
-            (tr("mwy_137"), [
-                (tr("mwy_138"), "Play / Pause"),
-                ("Ctrl + Z", tr("mwy_141")),
-                ("Ctrl + Y", tr("mwy_143")),
-                (tr("mwy_144"), tr("mwy_145")),
-                ("Ctrl + A", tr("mwy_147")),
-                ("Ctrl + C", tr("mwy_149")),
-                ("Ctrl + X", tr("mwy_151")),
-                ("Ctrl + V", tr("mwy_153")),
-                ("C", tr("mwy_155")),
-                (tr("mwy_119"), tr("mwy_157")),
-            ]),
-        ]
-
-        for group_name, shortcuts in shortcut_groups:
-            # En-tete de groupe
-            group_label = QLabel(f"  {group_name}")
-            group_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
-            group_label.setStyleSheet("color: #00d4ff; padding: 8px 0 2px 0;")
-            scroll_layout.addWidget(group_label)
-
-            for key, desc in shortcuts:
-                row_frame = QFrame()
-                row_frame.setStyleSheet("""
-                    QFrame {
-                        background: #222222; border-radius: 6px;
-                        padding: 6px 12px; margin: 1px 0;
-                    }
-                    QFrame:hover { background: #2a2a2a; }
-                """)
-                row_layout = QHBoxLayout(row_frame)
-                row_layout.setContentsMargins(8, 4, 8, 4)
-
-                # Touche avec style "keycap"
-                key_label = QLabel(key)
-                key_label.setMinimumWidth(180)
-                key_label.setStyleSheet("""
-                    color: #ffffff; font-weight: bold; font-size: 13px;
-                    font-family: 'Consolas';
-                """)
-                row_layout.addWidget(key_label)
-
-                row_layout.addStretch()
-
-                desc_label = QLabel(desc)
-                desc_label.setMinimumWidth(300)
-                desc_label.setStyleSheet("color: #aaaaaa; font-size: 13px;")
-                row_layout.addWidget(desc_label)
-
-                scroll_layout.addWidget(row_frame)
-
-        scroll_layout.addStretch()
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
-
-        close_btn = QPushButton(tr("mw_close"))
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #333333; color: #aaaaaa;
-                padding: 10px 30px; border-radius: 6px; font-size: 13px;
-                border: 1px solid #4a4a4a;
-            }
-            QPushButton:hover { background: #3a3a3a; color: #ffffff; }
-        """)
-        close_btn.clicked.connect(dlg.accept)
-        layout.addWidget(close_btn, alignment=Qt.AlignCenter)
-
-        dlg.exec()
+        """Raccourcis clavier : modifiables, presets, retour aux défauts."""
+        import shortcuts as _sc
+        from shortcuts_dialog import ShortcutsDialog
+        if not hasattr(self, '_shortcut_keys'):
+            self._shortcut_keys = _sc.load()
+        dlg = ShortcutsDialog(self, self._shortcut_keys)
+        if dlg.exec() == QDialog.Accepted:
+            self._shortcut_keys = dlg.keys()
+            _sc.save(self._shortcut_keys)
+            self._apply_shortcuts()
 
     def next_media(self):
         """Passe au media suivant"""
@@ -23876,8 +23865,14 @@ class MainWindow(QMainWindow):
         # zone de mouvement ci-dessus, qui est ce qu'on l'AUTORISE à faire.
         # Sert à convertir DMX → angle : sans lui, la 3D supposait 360° de pan
         # pour tout le monde et une lyre 540° n'y tournait qu'à moitié.
-        pt_vl.addSpacing(6)
-        pt_vl.addWidget(_sec(tr("mw_pt_range_title")))
+        # Rangé dans « Canaux avancés », en bas : on le règle une fois par
+        # modèle, il n'a pas à occuper la place des limites.
+        rng_box = QWidget()
+        rng_box.setStyleSheet("background:transparent;")
+        rng_vl = QVBoxLayout(rng_box)
+        rng_vl.setContentsMargins(0, 0, 0, 0)
+        rng_vl.setSpacing(8)
+        rng_vl.addWidget(_sec(tr("mw_pt_range_title")))
 
         _RANGE_SPIN_SS = (
             "QSpinBox { background:#141414; color:#bbb; border:1px solid #262626;"
@@ -23902,13 +23897,14 @@ class MainWindow(QMainWindow):
             rng_row.addWidget(_sp)
             _rng_spins[_attr] = _sp
         rng_row.addStretch()
-        pt_vl.addLayout(rng_row)
+        rng_vl.addLayout(rng_row)
 
         rng_hint = QLabel(tr("mw_pt_range_hint"))
         rng_hint.setStyleSheet(
             "color:#333; font-size:10px; border:none; background:transparent;")
         rng_hint.setWordWrap(True)
-        pt_vl.addWidget(rng_hint)
+        rng_vl.addWidget(rng_hint)
+        rng_box.setVisible(False)
 
         def _load_pt_ranges(proj):
             """Recharge les deux champs depuis la fixture, sans émettre."""
@@ -24424,6 +24420,53 @@ class MainWindow(QMainWindow):
         btn_pt_reset.clicked.connect(_pt_reset)
         btn_pt_apply_model.clicked.connect(lambda: _pt_apply(True))
         btn_pt_apply_all.clicked.connect(lambda: _pt_apply(False))
+
+        # ── Canaux avancés (repliable, tout en bas) ─────────────────────
+        # Ce qu'on règle une fois et qu'on oublie : le dipswitch à recopier
+        # au dos des projecteurs sans afficheur, le débattement des lyres.
+        adv_section = QWidget()
+        adv_section.setStyleSheet("background:transparent;")
+        adv_vl = QVBoxLayout(adv_section)
+        adv_vl.setContentsMargins(0, 0, 0, 0)
+        adv_vl.setSpacing(6)
+        adv_vl.addWidget(_hdiv())
+
+        btn_adv = QPushButton()
+        btn_adv.setCheckable(True)
+        btn_adv.setCursor(Qt.PointingHandCursor)
+        btn_adv.setToolTip(tr("pdf2_adv_fold_tip"))
+        btn_adv.setStyleSheet(
+            "QPushButton { color:#555; font-size:10px; font-weight:bold; letter-spacing:2px;"
+            " text-align:left; padding:6px 0; border:none; background:transparent; }"
+            "QPushButton:hover { color:#00d4ff; }"
+        )
+        adv_vl.addWidget(btn_adv)
+
+        adv_body = QWidget()
+        adv_body.setStyleSheet("background:transparent;")
+        adv_body_vl = QVBoxLayout(adv_body)
+        adv_body_vl.setContentsMargins(0, 0, 0, 0)
+        adv_body_vl.setSpacing(8)
+        adv_vl.addWidget(adv_body)
+
+        adv_body_vl.addWidget(_sec(tr("mw_dip_title")))
+        dip_widget = DipSwitchWidget()
+        adv_body_vl.addWidget(dip_widget)
+
+        adv_body_vl.addSpacing(6)
+        adv_body_vl.addWidget(rng_box)
+
+        def _sync_dip(address):
+            dip_widget.set_address(address)
+
+        def _on_adv_toggled(opened):
+            btn_adv.setText(("▾  " if opened else "▸  ") + tr("mw_adv_title").upper())
+            adv_body.setVisible(opened)
+
+        btn_adv.toggled.connect(_on_adv_toggled)
+        _on_adv_toggled(False)
+
+        fv.addWidget(adv_section)
 
         fv.addStretch()
 
@@ -25658,6 +25701,7 @@ class MainWindow(QMainWindow):
             end = addr_sb.value() + n - 1
             lbl_addr_range.setText(tr("mw_f_ch_end", end=end, n=n, a0='x' if n > 1 else ''))
             lbl_addr_range.setStyleSheet("color:#2a2a2a; font-size:12px; padding-left:6px; border:none;")
+            _sync_dip(addr_sb.value())
         def _make_card(idx):
             fd    = fixture_data[idx]
             group = fd['group']
@@ -25933,6 +25977,7 @@ class MainWindow(QMainWindow):
             # Pan/tilt limits section — visible only for Moving Head
             is_mh = fd.get('fixture_type', '') in ('Moving Head', 'Laser')
             pt_section.setVisible(is_mh)
+            rng_box.setVisible(is_mh)
 
             # Disposition des pixels — seulement sur la carte d'une barre/matrice
             _gpx = _matrix_info_for(idx)
@@ -26104,6 +26149,7 @@ class MainWindow(QMainWindow):
             _commit()
             is_mh = det_type_cb.currentData() in ('Moving Head', 'Laser')
             pt_section.setVisible(is_mh)
+            rng_box.setVisible(is_mh)
             px_section.setVisible(bool(_matrix_info_for(idx)))
             if is_mh and idx is not None and idx < len(self.projectors):
                 proj = self.projectors[idx]

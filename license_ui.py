@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QLineEdit, QProgressBar, QApplication, QStackedWidget,
     QFrame
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QRectF
+from PySide6.QtCore import Qt, Signal, QTimer, QRectF, QPointF
 from PySide6.QtGui import QFont, QCursor, QIcon, QPixmap, QPainter, QPen, QColor, QAction
 
 from license_manager import (
@@ -27,7 +27,7 @@ from license_manager import (
 # LIENS STRIPE
 # ============================================================
 
-# Doivent rester alignés avec mystrow.fr/tarifs (mêmes produits, mêmes prix).
+# Doivent rester alignés avec mystrow.fr/shop (section Formules) (mêmes produits, mêmes prix).
 STRIPE_LINKS = {
     "monthly":  "https://buy.stripe.com/5kQcMXeNn7FeaxabN208g03",
     "lifetime": "https://buy.stripe.com/9B6dR19t38JieNqaIY08g09",
@@ -56,6 +56,28 @@ def _eye_icon(barre: bool) -> QIcon:
         p.drawLine(8, 34, 32, 6)
     p.end()
     return QIcon(pm)
+
+
+def _mail_pixmap(size: int = 36) -> QPixmap:
+    """Enveloppe dessinee dans une pastille (meme raison que l'oeil : pas d'emoji)."""
+    scale = 2
+    pm = QPixmap(size * scale, size * scale)
+    pm.setDevicePixelRatio(scale)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(0, 212, 255, 40))
+    p.drawEllipse(QRectF(0, 0, size, size))
+    w, h = size * 0.5, size * 0.36
+    x, y = (size - w) / 2, (size - h) / 2
+    p.setPen(QPen(QColor("#00d4ff"), 1.8))
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(QRectF(x, y, w, h), 2, 2)
+    p.drawPolyline([QPointF(x + 1, y + 1), QPointF(x + w / 2, y + h * 0.58),
+                    QPointF(x + w - 1, y + 1)])
+    p.end()
+    return pm
 
 
 # ============================================================
@@ -422,7 +444,7 @@ class ActivationDialog(QDialog):
     # de bien plus de place que le formulaire de connexion. Sans ca, ouvrir le
     # dialogue directement sur cette page laissait la fenetre a 420x380 et
     # ecrasait les cartes.
-    _PAGE_SIZES = {0: (420, 460), 1: (420, 380), 2: (420, 380), 3: (940, 566)}
+    _PAGE_SIZES = {0: (440, 650), 1: (420, 380), 2: (420, 380), 3: (940, 604)}
     _PAGE_TITLES = {
         0: "dlg_login_title",
         1: "dlg_login_title",
@@ -443,6 +465,12 @@ class ActivationDialog(QDialog):
         # que le redimensionnement soit applique fait rater la nouvelle taille.
         if was_visible:
             QTimer.singleShot(0, self._recenter)
+
+    def hasHeightForWidth(self):
+        # Le QStackedLayout mesure TOUTES les pages : les 3 cartes de la page
+        # achat, repliees a 440 px de large, etiraient le login a ~760 px de
+        # haut. La taille est fixee page par page dans _show_page.
+        return False
 
     def _recenter(self):
         """Recentre le dialogue sur sa fenetre parente (ou sur l'ecran)."""
@@ -485,27 +513,142 @@ class ActivationDialog(QDialog):
         return page, layout
 
     def _build_page_login(self):
-        page, layout = self._page_frame(
-            tr("page_login_heading"),
-            tr("page_login_subtitle")
-        )
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(34, 26, 34, 20)
+        layout.setSpacing(0)
 
+        # -- En-tete : logo + titre ------------------------------------
+        try:
+            from core import resource_path
+            logo = QPixmap(resource_path("logo.png"))
+        except Exception:
+            logo = QPixmap()
+        if not logo.isNull():
+            logo_lbl = QLabel()
+            logo_lbl.setPixmap(logo.scaledToHeight(46, Qt.SmoothTransformation))
+            logo_lbl.setAlignment(Qt.AlignCenter)
+            layout.addWidget(logo_lbl)
+            layout.addSpacing(10)
+
+        title = QLabel(tr("page_login_heading"))
+        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        title.setStyleSheet("color: #ffffff;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        layout.addSpacing(4)
+
+        sub = QLabel(tr("page_login_subtitle"))
+        sub.setFont(QFont("Segoe UI", 10))
+        sub.setStyleSheet("color: #777;")
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+        layout.addSpacing(18)
+
+        # -- Encart « Vous venez de payer ? » ---------------------------
+        # Le compte est cree par le paiement : sans ce rappel, des clients
+        # deja payes cherchent a "creer un compte" et tombent sur l'achat
+        paid_card = QFrame()
+        paid_card.setObjectName("paidCard")
+        paid_card.setStyleSheet("""
+            QFrame#paidCard {
+                background: #0d1d22;
+                border: 1px solid rgba(0, 212, 255, 0.2);
+                border-left: 3px solid #00d4ff;
+                border-radius: 8px;
+            }
+        """)
+        card_lay = QHBoxLayout(paid_card)
+        card_lay.setContentsMargins(12, 11, 14, 11)
+        card_lay.setSpacing(12)
+
+        mail_icon = QLabel()
+        mail_icon.setPixmap(_mail_pixmap(34))
+        mail_icon.setFixedSize(34, 34)
+        card_lay.addWidget(mail_icon, 0, Qt.AlignTop)
+
+        card_txt = QVBoxLayout()
+        card_txt.setSpacing(3)
+        paid_title = QLabel(tr("login_paid_title"))
+        paid_title.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        paid_title.setStyleSheet("color: #ffffff;")
+        card_txt.addWidget(paid_title)
+        paid_body = QLabel(tr("login_paid_body"))
+        paid_body.setFont(QFont("Segoe UI", 9))
+        paid_body.setStyleSheet("color: #9fb3b8;")
+        paid_body.setWordWrap(True)
+        # Sans largeur mini, le QLabel replie calcule sa hauteur mini sur une
+        # colonne etroite et force la fenetre a ~790 px de haut
+        paid_body.setMinimumWidth(290)
+        # La fenetre ne suit pas heightForWidth (cf. hasHeightForWidth) : on
+        # reserve la hauteur du texte replie, sinon un message d'erreur
+        # sous le bouton ecrase l'encart
+        paid_body.setMinimumHeight(paid_body.fontMetrics().boundingRect(
+            0, 0, 290, 1000, Qt.TextWordWrap, paid_body.text()).height())
+        card_txt.addWidget(paid_body)
+        card_lay.addLayout(card_txt, 1)
+        layout.addWidget(paid_card)
+        layout.addSpacing(20)
+
+        # -- Identifiants ----------------------------------------------
+        field_style = """
+            QLineEdit {
+                background: #1b1b1b; color: #ffffff; border: 1px solid #2e2e2e;
+                border-radius: 8px; padding: 0 14px; font-size: 13px;
+            }
+            QLineEdit:hover { border-color: #444; }
+            QLineEdit:focus { border-color: #00d4ff; background: #1e1e1e; }
+            QLineEdit:disabled { color: #666; }
+        """
         self._email_edit = QLineEdit()
         self._email_edit.setPlaceholderText(tr("placeholder_email"))
-        self._email_edit.setFixedHeight(36)
+        self._email_edit.setFixedHeight(42)
+        self._email_edit.setStyleSheet(field_style)
         self._email_edit.returnPressed.connect(self._do_login)
         layout.addWidget(self._email_edit)
+        layout.addSpacing(10)
 
         self._pwd_edit = QLineEdit()
         self._pwd_edit.setPlaceholderText(tr("placeholder_password"))
         self._pwd_edit.setEchoMode(QLineEdit.Password)
-        self._pwd_edit.setFixedHeight(36)
+        self._pwd_edit.setFixedHeight(42)
+        self._pwd_edit.setStyleSheet(field_style)
         self._pwd_edit.returnPressed.connect(self._do_login)
         # Oeil a droite du champ : afficher / masquer le mot de passe tape
         self._pwd_eye = QAction(_eye_icon(False), tr("tip_show_password"), self._pwd_edit)
         self._pwd_eye.triggered.connect(self._toggle_pwd_visible)
         self._pwd_edit.addAction(self._pwd_eye, QLineEdit.TrailingPosition)
         layout.addWidget(self._pwd_edit)
+        layout.addSpacing(4)
+
+        btn_forgot = QPushButton(tr("link_forgot_password"))
+        btn_forgot.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_forgot.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: rgba(0, 212, 255, 0.7);
+                border: none; font-size: 11px; padding: 4px 0;
+            }
+            QPushButton:hover { color: #33e0ff; text-decoration: underline; }
+        """)
+        btn_forgot.clicked.connect(self._do_forgot_password)
+        layout.addWidget(btn_forgot, alignment=Qt.AlignRight)
+        layout.addSpacing(8)
+
+        self._btn_login = QPushButton(tr("btn_login"))
+        self._btn_login.setFixedHeight(42)
+        self._btn_login.setCursor(QCursor(Qt.PointingHandCursor))
+        self._btn_login.setStyleSheet("""
+            QPushButton {
+                background: #00d4ff; color: #000; border: none;
+                border-radius: 8px; font-weight: bold; font-size: 13px;
+            }
+            QPushButton:hover { background: #33e0ff; }
+            QPushButton:pressed { background: #00b8dd; }
+            QPushButton:disabled { background: #2a3a3e; color: #6a7f84; }
+        """)
+        self._btn_login.clicked.connect(self._do_login)
+        layout.addWidget(self._btn_login)
 
         self._login_progress = QProgressBar()
         self._login_progress.setRange(0, 0)
@@ -516,6 +659,7 @@ class ActivationDialog(QDialog):
             "QProgressBar::chunk{background:#00d4ff;border-radius:1px;}"
         )
         self._login_progress.hide()
+        layout.addSpacing(6)
         layout.addWidget(self._login_progress)
 
         self._login_status = QLabel()
@@ -525,12 +669,12 @@ class ActivationDialog(QDialog):
         layout.addWidget(self._login_status)
 
         self._btn_send_pwd = QPushButton(tr("btn_recv_password"))
-        self._btn_send_pwd.setFixedHeight(32)
+        self._btn_send_pwd.setFixedHeight(34)
         self._btn_send_pwd.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_send_pwd.setStyleSheet("""
             QPushButton {
                 background: #3a1a00; color: #ff9800;
-                border: 1px solid #ff980055; border-radius: 6px; font-size: 11px;
+                border: 1px solid rgba(255, 152, 0, 0.35); border-radius: 8px; font-size: 11px;
             }
             QPushButton:hover { background: #4a2500; color: #ffb74d; border-color: #ff9800; }
         """)
@@ -541,18 +685,34 @@ class ActivationDialog(QDialog):
         # Limite de 2 appareils atteinte : lien direct vers l'espace client,
         # ou l'on retire un ordinateur de la liste
         self._btn_manage_devices = QPushButton(tr("btn_manage_devices"))
-        self._btn_manage_devices.setFixedHeight(32)
+        self._btn_manage_devices.setFixedHeight(34)
         self._btn_manage_devices.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_manage_devices.setStyleSheet("""
             QPushButton {
                 background: #00303a; color: #00d4ff;
-                border: 1px solid #00d4ff55; border-radius: 6px; font-size: 11px;
+                border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 8px; font-size: 11px;
             }
             QPushButton:hover { background: #004452; color: #33e0ff; border-color: #00d4ff; }
         """)
         self._btn_manage_devices.clicked.connect(lambda: webbrowser.open(ACCOUNT_URL))
         self._btn_manage_devices.hide()
         layout.addWidget(self._btn_manage_devices)
+        layout.addSpacing(10)
+
+        # -- Separateur « ou » -----------------------------------------
+        or_row = QHBoxLayout()
+        or_row.setSpacing(12)
+        for _ in range(2):
+            line = QFrame()
+            line.setFrameShape(QFrame.HLine)
+            line.setStyleSheet("background: #2a2a2a; border: none; max-height: 1px;")
+            or_row.addWidget(line, 1)
+            if _ == 0:
+                or_lbl = QLabel(tr("oauth_or"))
+                or_lbl.setStyleSheet("color: #666; font-size: 11px;")
+                or_row.addWidget(or_lbl)
+        layout.addLayout(or_row)
+        layout.addSpacing(12)
 
         # Connexion Google / Apple : la connexion se fait dans le navigateur
         # (mystrow.fr/connexion-app), qui renvoie la session à l'app
@@ -596,56 +756,25 @@ class ActivationDialog(QDialog):
 
         layout.addStretch()
 
-        btn_forgot = QPushButton(tr("btn_forgot_password"))
-        btn_forgot.setFixedHeight(32)
-        btn_forgot.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_forgot.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: rgba(0, 212, 255, 0.5);
-                border: 1px solid rgba(0, 212, 255, 0.15);
-                border-radius: 6px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background: rgba(0, 212, 255, 0.08);
-                color: #00d4ff;
-                border-color: rgba(0, 212, 255, 0.45);
-            }
-        """)
-        btn_forgot.clicked.connect(self._do_forgot_password)
-        layout.addWidget(btn_forgot)
+        # -- Pied : achat ----------------------------------------------
+        foot_sep = QFrame()
+        foot_sep.setFrameShape(QFrame.HLine)
+        foot_sep.setStyleSheet("background: #222; border: none; max-height: 1px;")
+        layout.addWidget(foot_sep)
+        layout.addSpacing(8)
 
         btn_buy = QPushButton(tr("btn_no_account"))
-        btn_buy.setFixedHeight(30)
+        btn_buy.setFixedHeight(28)
         btn_buy.setCursor(QCursor(Qt.PointingHandCursor))
         btn_buy.setStyleSheet("""
             QPushButton {
-                background: transparent; color: #00d4ff;
-                border: none; font-size: 10px;
+                background: transparent; color: #8a8a8a;
+                border: none; font-size: 11px;
             }
-            QPushButton:hover { color: #33e0ff; text-decoration: underline; }
+            QPushButton:hover { color: #00d4ff; }
         """)
         btn_buy.clicked.connect(lambda: self._go_to_purchase())
         layout.addWidget(btn_buy, alignment=Qt.AlignCenter)
-
-        btn_row = QHBoxLayout()
-
-        btn_close = QPushButton(tr("btn_close"))
-        btn_close.setFixedHeight(36)
-        btn_close.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_close.setStyleSheet(_BTN_SECONDARY)
-        btn_close.clicked.connect(self.reject)
-        btn_row.addWidget(btn_close)
-
-        self._btn_login = QPushButton(tr("btn_login"))
-        self._btn_login.setFixedHeight(36)
-        self._btn_login.setCursor(QCursor(Qt.PointingHandCursor))
-        self._btn_login.setStyleSheet(_BTN_PRIMARY)
-        self._btn_login.clicked.connect(self._do_login)
-        btn_row.addWidget(self._btn_login)
-
-        layout.addLayout(btn_row)
 
         return page
 
@@ -1077,7 +1206,22 @@ class ActivationDialog(QDialog):
         stripe_lbl.setWordWrap(True)
         root.addWidget(stripe_lbl)
 
-        root.addSpacing(16)
+        root.addSpacing(8)
+
+        btn_paid = QPushButton(tr("btn_already_paid"))
+        btn_paid.setFixedHeight(26)
+        btn_paid.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_paid.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #4CAF50;
+                border: none; font-size: 11px;
+            }
+            QPushButton:hover { color: #81c784; text-decoration: underline; }
+        """)
+        btn_paid.clicked.connect(lambda: self._show_page(0))
+        root.addWidget(btn_paid, alignment=Qt.AlignCenter)
+
+        root.addSpacing(8)
 
         # -- Boutons bas ----------------------------------------------------
         _BTN_PAGE = """

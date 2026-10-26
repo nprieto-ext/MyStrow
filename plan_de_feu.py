@@ -268,10 +268,12 @@ class _EffectState:
         self._r_steps = 1
         self._r_step  = 0
 
-    def tick(self):
-        """Avance la phase et retourne (pan, tilt) clampé 0-65535."""
+    def tick(self, dt=DT):
+        """Avance la phase de `dt` secondes RÉELLES et retourne (pan, tilt)
+        clampé 0-65535. Un DT fixe faisait varier la vitesse avec la cadence du
+        timer (100 ms, 40 ms dès qu'un strobe tourne, plus la gigue de Qt)."""
         import random
-        self.phase += 2 * _math_eff.pi * self.speed * self.DT
+        self.phase += 2 * _math_eff.pi * self.speed * dt
         a = self.amplitude
         ph = self.phase + self.phase_offset   # déphasage par fixture
 
@@ -295,7 +297,7 @@ class _EffectState:
             if self._r_step >= self._r_steps:
                 self._r_tpan   = self.center_pan  + random.uniform(-a, a)
                 self._r_ttilt  = self.center_tilt + random.uniform(-a, a)
-                self._r_steps  = max(1, int(random.uniform(0.3, 1.5) / (self.speed * self.DT)))
+                self._r_steps  = max(1, int(random.uniform(0.3, 1.5) / (self.speed * max(dt, 1e-3))))
                 self._r_step   = 0
             t = self._r_step / self._r_steps
             self._r_pan  += (self._r_tpan  - self._r_pan)  * 0.15
@@ -5149,7 +5151,10 @@ class PlanDeFeu(QFrame):
 
     def _timer_tick(self):
         has_strobe = any(displayed_strobe_speed(p) > 0 for p in self.projectors)
-        interval = 40 if has_strobe else 100
+        # Effet rapide en cours : 25 positions/s au lieu de 10. À 10 Hz une lyre
+        # reçoit un escalier de consignes, freine/réaccélère à chaque marche et
+        # ne suit plus dès qu'on monte la vitesse.
+        interval = 40 if (has_strobe or self._effects or self._led_effects) else 100
         if self.timer.interval() != interval:
             self.timer.setInterval(interval)
         self._dirty = True
@@ -5224,7 +5229,15 @@ class PlanDeFeu(QFrame):
     def _tick_effects(self):
         """Applique les effets automatiques Pan/Tilt + LED à 10 fps."""
         if not self._effects and not self._led_effects:
+            self._fx_last_tick = None
             return
+
+        # Temps réel écoulé depuis le tick précédent, borné : un gel de l'UI ne
+        # doit pas faire sauter l'effet d'un demi-tour.
+        _now = _time.monotonic()
+        _last = getattr(self, '_fx_last_tick', None)
+        dt = _EffectState.DT if _last is None else min(0.25, max(0.0, _now - _last))
+        self._fx_last_tick = _now
 
         # Effets Pan/Tilt (Moving Head)
         dead = []
@@ -5233,7 +5246,7 @@ class PlanDeFeu(QFrame):
             if proj is None:
                 dead.append(proj_id)
                 continue
-            pan, tilt = state.tick()
+            pan, tilt = state.tick(dt)
             proj.pan  = pan
             proj.tilt = tilt
         for proj_id in dead:
@@ -5246,7 +5259,7 @@ class PlanDeFeu(QFrame):
             if proj is None:
                 dead_led.append(proj_id)
                 continue
-            eff["phase"] += 2 * _math_eff.pi * eff["speed"] * _EffectState.DT
+            eff["phase"] += 2 * _math_eff.pi * eff["speed"] * dt
             _ph = eff["phase"] + eff.get("phase_offset", 0.0)   # déphasage par fixture
             if eff["type"] == "color_pulse":
                 factor = (_math_eff.sin(_ph) + 1) / 2
@@ -8220,6 +8233,10 @@ class PlanDeFeu(QFrame):
                                 p.base_color = QColor(255, 255, 255)
                                 p.color = QColor(255, 255, 255)
                             turned_on = True
+                    # Une mémoire levée réécrivait le pan/tilt à chaque
+                    # recalcul et à chaque fondu : deux écrivains, la lyre
+                    # tiraillée entre la mémoire et l'effet. Libéré par CLEAR.
+                    _grab_move(projs)
                     self.start_effect(projs, key, 0.5, 10000)
                     self.set_quick_effect_speed(projs, self._qe_speed)
                     self.set_quick_effect_amplitude(projs, self._qe_amplitude)

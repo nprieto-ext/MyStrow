@@ -66,6 +66,7 @@ class FauxWin:
     toggle_effect         = mw.MainWindow.toggle_effect
     stop_effect           = mw.MainWindow.stop_effect
     _restore_effect_state = mw.MainWindow._restore_effect_state
+    _apply_effect_capture = mw.MainWindow._apply_effect_capture
     _stop_button_effects  = mw.MainWindow._stop_button_effects
     _return_lyres_after_effect = mw.MainWindow._return_lyres_after_effect
 
