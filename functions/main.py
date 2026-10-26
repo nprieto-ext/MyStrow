@@ -4324,6 +4324,72 @@ def ga4_visits(req: https_fn.Request) -> https_fn.Response:
             status=500, headers={"Content-Type": "application/json", **_GA4_CORS})
 
 
+# Liens de paiement Stripe → offre. Même table que STRIPE_OFFRES dans
+# mystrow_site/cookie-consent.js : à compléter des deux côtés à chaque nouveau lien.
+_STRIPE_OFFRES = {
+    "08g03": "pro_mensuel", "08g05": "pro_annuel", "08g09": "lifetime",
+    "08g0a": "pack_2m", "08g0b": "pack_1a", "08g0c": "pack_vie", "08g0d": "boitier",
+}
+
+
+def _stripe_offre(url: str) -> str:
+    m = re.search(r"buy\.stripe\.com/[A-Za-z0-9]*?(08g[0-9a-z]{2})(?:[?#]|$)", url or "")
+    return _STRIPE_OFFRES.get(m.group(1), "autre") if m else "autre"
+
+
+def _ga4_shop_report(run) -> dict:
+    """Bloc « Shop » de ga4_insights : audience des pages boutique (toutes langues),
+    interactions sur ces pages, clics de paiement par offre, clics Amazon.
+    Les clics de paiement sont reclassés depuis link_url, donc valables aussi pour
+    l'historique (avant le 26/10/2026 le paramètre `plan` disait « pro » à tort)."""
+    from google.analytics.data_v1beta.types import Filter, FilterExpression
+
+    def _f(field, value, match="EXACT"):
+        return FilterExpression(filter=Filter(field_name=field, string_filter=Filter.StringFilter(
+            value=value, match_type=getattr(Filter.StringFilter.MatchType, match))))
+
+    shop_pages = _f("pagePath", "shop", "CONTAINS")
+
+    audience = {"visiteurs": 0, "vues": 0}
+    r = run([], ["activeUsers", "screenPageViews"], dimension_filter=shop_pages)
+    if r.rows:
+        audience["visiteurs"] = int(r.rows[0].metric_values[0].value or 0)
+        audience["vues"]      = int(r.rows[0].metric_values[1].value or 0)
+
+    # Événements déclenchés sur les pages boutique (select_item, gallery_open, faq_open…)
+    events = {}
+    for row in run(["eventName"], ["eventCount", "totalUsers"], dimension_filter=shop_pages).rows:
+        events[row.dimension_values[0].value] = {
+            "nb": int(row.metric_values[0].value or 0),
+            "visiteurs": int(row.metric_values[1].value or 0),
+        }
+
+    # Clics de paiement par offre (tout le site, reclassés depuis l'URL du lien)
+    checkout = {}
+    for row in run(["linkUrl"], ["eventCount"],
+                   dimension_filter=_f("eventName", "begin_checkout")).rows:
+        offre = _stripe_offre(row.dimension_values[0].value)
+        checkout[offre] = checkout.get(offre, 0) + int(row.metric_values[0].value or 0)
+
+    # Offres choisies dans le sélecteur du Pack (select_item, depuis le 26/10/2026)
+    selection = {}
+    try:
+        for row in run(["itemId"], ["itemListClickEvents"]).rows:
+            n = int(row.metric_values[0].value or 0)
+            if n:
+                selection[row.dimension_values[0].value] = n
+    except Exception as e:
+        print(f"[ga4_insights] sélection : {e}")
+
+    amazon = {}
+    for row in run(["linkUrl"], ["eventCount"], order="eventCount", limit=20,
+                   dimension_filter=_f("eventName", "amazon_click")).rows:
+        amazon[row.dimension_values[0].value] = int(row.metric_values[0].value or 0)
+
+    return {"audience": audience, "events": events, "checkout_par_offre": checkout,
+            "selection": selection, "amazon": amazon}
+
+
 @https_fn.on_request(max_instances=3)
 def ga4_insights(req: https_fn.Request) -> https_fn.Response:
     """Comportement des visiteurs (GA4) : pages les plus vues, sources de trafic,
@@ -4351,12 +4417,14 @@ def ga4_insights(req: https_fn.Request) -> https_fn.Response:
         dr   = DateRange(start_date=f"{days}daysAgo", end_date="today")
         prop = f"properties/{_GA4_PROPERTY_ID}"
 
-        def _run(dims, mets, order=None, limit=None):
+        def _run(dims, mets, order=None, limit=None, dimension_filter=None):
             kw = dict(
                 property=prop, date_ranges=[dr],
                 dimensions=[Dimension(name=d) for d in dims],
                 metrics=[Metric(name=m) for m in mets],
             )
+            if dimension_filter is not None:
+                kw["dimension_filter"] = dimension_filter
             if order:
                 kw["order_bys"] = [OrderBy(
                     metric=OrderBy.MetricOrderBy(metric_name=order), desc=True)]
@@ -4403,8 +4471,15 @@ def ga4_insights(req: https_fn.Request) -> https_fn.Response:
             "contact_click":  events.get("contact_click", 0),
         }
 
+        try:
+            shop = _ga4_shop_report(_run)
+        except Exception as e:
+            print(f"[ga4_insights] bloc shop : {e}")
+            shop = {"error": str(e)}
+
         return https_fn.Response(
-            json.dumps({"top_pages": top_pages, "sources": sources, "funnel": funnel}),
+            json.dumps({"top_pages": top_pages, "sources": sources, "funnel": funnel,
+                        "shop": shop}),
             status=200, headers={"Content-Type": "application/json", **_GA4_CORS})
     except Exception as e:
         print(f"[ga4_insights] erreur : {e}")
