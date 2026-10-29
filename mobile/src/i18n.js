@@ -87,6 +87,24 @@
     "Connectez-vous avec un compte MyStrow sous licence pour jouer sans limite, ou relancez l'app pour 10 nouvelles minutes.":
       "Sign in with a licensed MyStrow account to play without limit, or restart the app for 10 more minutes.",
     "Connectez-vous avec un compte MyStrow sous licence pour jouer sans limite.": "Sign in with a licensed MyStrow account to play without limit.",
+    // ── Achat intégré iOS « MyStrow Tablette » ──
+    "Débloquez MyStrow Tablette (achat unique) ou connectez-vous avec un compte MyStrow sous licence pour jouer sans limite.":
+      "Unlock MyStrow Tablet (one-time purchase) or sign in with a licensed MyStrow account to play without limit.",
+    "Débloquez MyStrow Tablette (achat unique) ou connectez-vous avec un compte MyStrow sous licence pour jouer sans limite, ou relancez l'app pour 10 nouvelles minutes.":
+      "Unlock MyStrow Tablet (one-time purchase) or sign in with a licensed MyStrow account to play without limit, or restart the app for 10 more minutes.",
+    "Débloquer MyStrow Tablette": "Unlock MyStrow Tablet", "MyStrow Tablette": "MyStrow Tablet",
+    "MyStrow Tablette débloquée ✓": "MyStrow Tablet unlocked ✓",
+    "MyStrow Tablette débloquée : DMX sans limite": "MyStrow Tablet unlocked: unlimited DMX",
+    "DMX limité à 10 min · débloquer ou récupérer la config du PC": "DMX limited to 10 min · unlock or get your PC config",
+    "Sortie DMX sans limite de temps sur cette tablette.": "Unlimited DMX output time on this tablet.",
+    "Débloquez la sortie DMX sans limite de temps sur cette tablette, par un achat unique. Aucun compte nécessaire.":
+      "Unlock unlimited DMX output time on this tablet with a one-time purchase. No account needed.",
+    "Achat en cours…": "Purchasing…", "Restaurer les achats": "Restore purchases",
+    "Achat en attente d'autorisation : la sortie DMX sera débloquée dès qu'il sera accepté.":
+      "Purchase awaiting approval: DMX output will be unlocked as soon as it is approved.",
+    "Aucun achat de MyStrow Tablette trouvé pour cet identifiant Apple.": "No MyStrow Tablet purchase found for this Apple ID.",
+    "Achat indisponible sur cet appareil.": "Purchase not available on this device.",
+    "Achat non vérifié par l'App Store": "Purchase not verified by the App Store", "Produit introuvable": "Product not found",
     "Sur iPad, le DMX s'arrête si MyStrow reste en arrière-plan. Gardez l'app au premier plan pendant le show (Accès guidé).":
       "On iPad, DMX stops if MyStrow stays in the background. Keep the app in the foreground during the show (Guided Access).",
     // ── Mon compte ──
@@ -344,6 +362,7 @@
   // Textes construits avec des nombres, des dates ou des noms.
   const RULES = [
     [/^(\d+) min (\d+) s$/, "$1 min $2 s"],
+    [/^(.+) · achat unique$/, "$1 · one-time purchase"],
     [/^Il reste (\d+) min (\d+) s avant que la sortie DMX se coupe\.\n?/, "$1 min $2 s left before the DMX output stops.\n"],
     [/^Fader (\d+) · page (\d+)$/, "Fader $1 · page $2"],
     [/^COUCHE (\d+) \/ (\d+)$/, "LAYER $1 / $2"],

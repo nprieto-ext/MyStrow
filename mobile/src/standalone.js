@@ -1035,7 +1035,7 @@
   demoChip.id = "solo-demo"; demoChip.type = "button";
   // Le décompte n'est plus affiché en permanence : il se lit au toucher.
   demoChip.addEventListener("click", () => {
-    openMenu("Version démo", [["Se connecter", () => openAccount()], ...packAction()], demoText());
+    openMenu("Version démo", [...unlockAction(), ["Se connecter", () => openAccount()], ...packAction()], demoText());
     const info = menu.querySelector(".info");
     menuTick = setInterval(() => { if (menu.hidden) clearInterval(menuTick); else info.textContent = demoText(); }, 1000);
   });
@@ -1043,9 +1043,15 @@
   function demoText() {
     const left = Math.max(0, demoLeft());
     const m = Math.floor(left / 60000), sec = Math.floor((left % 60000) / 1000);
-    return "Il reste " + m + " min " + String(sec).padStart(2, "0") + " s avant que la sortie DMX se coupe.\n" +
-      "Connectez-vous avec un compte MyStrow sous licence pour jouer sans limite.";
+    return "Il reste " + m + " min " + String(sec).padStart(2, "0") + " s avant que la sortie DMX se coupe.\n" + unlockText();
   }
+  // iPad / iPhone : achat intégré « MyStrow Tablette » (account.js), qui se
+  // fait dans la fenêtre Mon compte ; ailleurs, la licence du compte seule.
+  const IAP_OK = !!(Account && Account.storeAvailable && Account.storeAvailable());
+  const unlockAction = () => (IAP_OK ? [["Débloquer MyStrow Tablette", () => openAccount()]] : []);
+  const unlockText = () => (IAP_OK
+    ? "Débloquez MyStrow Tablette (achat unique) ou connectez-vous avec un compte MyStrow sous licence pour jouer sans limite."
+    : "Connectez-vous avec un compte MyStrow sous licence pour jouer sans limite.");
   badge.before(demoChip);
   let demoWarned = false;
   function paintDemo() {
@@ -1127,7 +1133,10 @@
     Account.onChange((st) => {
       const was = licensed;
       licensed = !!st.paid;
-      if (licensed !== was) { lastSent = ""; refresh(true); if (licensed) toast("Licence reconnue : DMX sans limite"); }
+      if (licensed !== was) {
+        lastSent = ""; refresh(true);
+        if (licensed) toast(st.licensed ? "Licence reconnue : DMX sans limite" : "MyStrow Tablette débloquée : DMX sans limite");
+      }
       paintDemo();
     });
     if (Account.status().loggedIn) Account.refreshLicense().catch(() => {});
@@ -1187,7 +1196,10 @@
       '<button type="button" data-a="lang">🌐 ' + (window.MYSTROW_LANG === "en" ? "Français" : "English") + '</button><span></span></footer></div>';
     const $s = (q) => setDlg.querySelector(q);
     $s(".acct b").textContent = acc.loggedIn ? acc.email : "Se connecter";
-    $s(".acct small").textContent = acc.loggedIn ? (licensed ? "Licence active : DMX sans limite" : "Pas de licence payante : DMX limité à 10 min")
+    $s(".acct small").textContent = acc.licensed ? "Licence active : DMX sans limite"
+      : acc.iap ? "MyStrow Tablette débloquée : DMX sans limite"
+      : acc.loggedIn ? "Pas de licence payante : DMX limité à 10 min"
+      : IAP_OK ? "DMX limité à 10 min · débloquer ou récupérer la config du PC"
       : "DMX limité à 10 min sans compte · récupérer la config du PC";
     $s(".acct em").textContent = licensed ? "✓" : "›";
     $s(".acct").classList.toggle("ok", licensed);
@@ -1275,8 +1287,10 @@
   }, true);
   async function openOutputPanel() {
     if (demoOver()) {
-      openMenu("DMX coupé", [["Se connecter", () => openAccount()], ...packAction()],
-        "Sans licence, la sortie DMX s'arrête au bout de 10 minutes.\nConnectez-vous avec un compte MyStrow sous licence pour jouer sans limite, ou relancez l'app pour 10 nouvelles minutes.");
+      openMenu("DMX coupé", [...unlockAction(), ["Se connecter", () => openAccount()], ...packAction()],
+        "Sans licence, la sortie DMX s'arrête au bout de 10 minutes.\n" + (IAP_OK
+          ? "Débloquez MyStrow Tablette (achat unique) ou connectez-vous avec un compte MyStrow sous licence pour jouer sans limite, ou relancez l'app pour 10 nouvelles minutes."
+          : "Connectez-vous avec un compte MyStrow sous licence pour jouer sans limite, ou relancez l'app pour 10 nouvelles minutes."));
       return;
     }
     let detail = badge.title || "";

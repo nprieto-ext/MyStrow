@@ -181,13 +181,58 @@
     changed();
     return status();
   }
+  // `paid` = DMX sans limite : licence MyStrow active OU achat intégré iOS.
+  // `licensed` = la licence du compte seule (textes de « Mon compte »).
   function status() {
     const a = load(KEY, null);
-    if (!a) return { loggedIn: false, paid: false };
+    if (!a) return { loggedIn: false, paid: iapOwned, licensed: false, iap: iapOwned };
     const fresh = a.checked && Date.now() - a.checked < OFFLINE_MS;
     const active = a.plan === "license" && a.expiry * 1000 > Date.now();
     return { loggedIn: true, email: a.email, plan: a.plan, expiry: a.expiry, checked: a.checked,
-             paid: !!(fresh && active), stale: !fresh };
+             paid: !!(fresh && active) || iapOwned, licensed: !!(fresh && active), iap: iapOwned, stale: !fresh };
+  }
+
+  // ── Achat intégré iOS « MyStrow Tablette » ──────────────────────────────────
+  // Achat unique (App Store Connect, 149,99 €) qui lève la limite de 10 min
+  // sur cet identifiant Apple, sans compte MyStrow. Module natif
+  // MystrowStorePlugin.swift (StoreKit 2, vérifié et lisible hors ligne).
+  // Apple refuse tout autre moyen de payer dans l'app iOS (3.1.1) ; la licence
+  // MyStrow achetée ailleurs reste acceptée à la connexion (3.1.3(b)).
+  const IAP_ID = "com.happlysas.mystrow.tablette";
+  const IAP_KEY = "mystrow.iap.tablette";            // dernier état connu, pour l'affichage immédiat
+  const Store = () => {
+    const c = window.Capacitor;
+    return (c && c.getPlatform && c.getPlatform() === "ios" && c.Plugins && c.Plugins.MystrowStore) || null;
+  };
+  let iapOwned = !!(Store() && load(IAP_KEY, false));
+  function setOwned(v) {
+    v = !!v;
+    if (v === iapOwned) return;
+    iapOwned = v; save(IAP_KEY, v); changed();
+  }
+  const storeAvailable = () => !!Store();
+  let productCache = null;
+  async function storeProduct() {
+    if (!Store()) return null;
+    if (!productCache) productCache = Store().product({ id: IAP_ID }).catch(() => { productCache = null; return null; });
+    return productCache;
+  }
+  // Résout { owned, cancelled, pending } ; rejette si l'App Store refuse.
+  async function buyTablet() {
+    if (!Store()) throw new Error("Achat indisponible sur cet appareil.");
+    const r = await Store().buy({ id: IAP_ID });
+    if (r.owned) setOwned(true);
+    return r;
+  }
+  async function restoreTablet() {
+    if (!Store()) return false;
+    const r = await Store().restore({ id: IAP_ID });
+    setOwned(r.owned);
+    return !!r.owned;
+  }
+  if (Store()) {
+    Store().owned({ id: IAP_ID }).then((r) => setOwned(r.owned)).catch(() => {});
+    Promise.resolve(Store().addListener("changed", (d) => { if (d && d.id === IAP_ID) setOwned(d.owned); })).catch(() => {});
   }
   function signOut() { localStorage.removeItem(KEY); token = null; changed(); }
 
@@ -235,7 +280,7 @@
     return z(d.getDate()) + "/" + z(d.getMonth() + 1) + "/" + d.getFullYear() + " " + z(d.getHours()) + ":" + z(d.getMinutes()); };
   function licenceText(s) {
     if (!s.loggedIn) return "";
-    if (s.paid) return "Licence active jusqu'au " + fmtDate(s.expiry).slice(0, 10) + " : DMX sans limite.";
+    if (s.licensed) return "Licence active jusqu'au " + fmtDate(s.expiry).slice(0, 10) + " : DMX sans limite.";
     if (s.stale) return "Licence non vérifiée depuis plus de 7 jours : connectez la tablette à Internet.";
     if (s.plan === "license") return "Licence expirée : la sortie DMX reste limitée à 10 minutes.";
     return "Ce compte n'a pas de licence payante (essai) : la sortie DMX reste limitée à 10 minutes par lancement.";
@@ -359,12 +404,13 @@
           btn("Activer ma carte sur mystrow.fr ↗", "", () => openExternal("https://mystrow.fr/activate?lang=fr")));
         body.append(box);
       }
+      if (storeAvailable()) body.append(iapBox());
       body.append(btn("Fermer", "", () => { panel.hidden = true; }));
     }
     function renderIn() {
       const s = status();
       body.innerHTML = "";
-      body.append(el("div", "who", s.email), el("p", s.paid ? "ok" : "err", licenceText(s)));
+      body.append(el("div", "who", s.email), el("p", s.licensed ? "ok" : "err", licenceText(s)));
       const get = btn("Récupérer la config du PC", "main", async () => {
         msg.className = ""; msg.textContent = "";
         busy(get, true, "Recherche…");
@@ -382,9 +428,44 @@
       if (backup()) body.append(btn("Revenir à la config d'avant l'import", "", () => {
         if (restoreBackup()) { if (opts.onImported) opts.onImported(); else location.reload(); }
       }));
+      if (storeAvailable() && !s.licensed) body.append(iapBox());
       body.append(btn("Se déconnecter", "danger", () => { signOut(); render(); }), btn("Fermer", "", () => { panel.hidden = true; }));
       // Licence relue en arrière-plan (achat fait depuis l'ouverture de l'app…).
-      refreshLicense().then((n) => { const p = body.querySelector("p.ok,p.err"); if (p && n.loggedIn) { p.className = n.paid ? "ok" : "err"; p.textContent = licenceText(n); } }).catch(() => {});
+      refreshLicense().then((n) => { const p = body.querySelector("p.ok,p.err"); if (p && n.loggedIn) { p.className = n.licensed ? "ok" : "err"; p.textContent = licenceText(n); } }).catch(() => {});
+    }
+    // Achat intégré iOS : sans compte, ou compte sans licence.
+    function iapBox() {
+      const box = el("div", "act");
+      if (iapOwned) {
+        box.append(el("b", "", "MyStrow Tablette débloquée ✓"), el("p", "", "Sortie DMX sans limite de temps sur cette tablette."));
+        return box;
+      }
+      const price = el("p", "small", "");
+      const m = el("p", "", "");
+      storeProduct().then((p) => { if (p && p.price) price.textContent = p.price + " · achat unique"; });
+      const buy = btn("Débloquer MyStrow Tablette", "main", async () => {
+        m.className = ""; m.textContent = "";
+        busy(buy, true, "Achat en cours…");
+        try {
+          const r = await buyTablet();
+          if (r.owned) { render(); return; }
+          if (r.pending) m.textContent = "Achat en attente d'autorisation : la sortie DMX sera débloquée dès qu'il sera accepté.";
+        } catch (err) { m.className = "err"; m.textContent = err.message; }
+        busy(buy, false, "Débloquer MyStrow Tablette");
+      });
+      const restore = btn("Restaurer les achats", "", async () => {
+        m.className = ""; m.textContent = "";
+        busy(restore, true, "Recherche…");
+        try {
+          if (await restoreTablet()) { render(); return; }
+          m.textContent = "Aucun achat de MyStrow Tablette trouvé pour cet identifiant Apple.";
+        } catch (err) { m.className = "err"; m.textContent = err.message; }
+        busy(restore, false, "Restaurer les achats");
+      });
+      box.append(el("b", "", "MyStrow Tablette"),
+        el("p", "", "Débloquez la sortie DMX sans limite de temps sur cette tablette, par un achat unique. Aucun compte nécessaire."),
+        price, buy, restore, m);
+      return box;
     }
     function renderImport(cfg) {
       const sm = cfg.summary || {}, p = cfg.payload;
@@ -405,5 +486,6 @@
   }
 
   root.MystrowAccount = { signIn, signInWithProvider, cancelProvider, signOut, status, refreshLicense, fetchPcConfig, applyPcConfig, restoreBackup, openPanel,
+    storeAvailable, storeProduct, buyTablet, restoreTablet,
     onChange: (fn) => listeners.push(fn) };
 })(window);

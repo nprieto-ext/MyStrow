@@ -7,6 +7,7 @@ class MainViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(MystrowDiscoveryPlugin())
         bridge?.registerPluginInstance(MystrowDmxPlugin())      // sortie DMX du mode sans PC (Art-Net)
+        bridge?.registerPluginInstance(MystrowStorePlugin())    // achat intégré « MyStrow Tablette »
     }
 
     // Plein écran pendant le show : pas de barre d'état.
