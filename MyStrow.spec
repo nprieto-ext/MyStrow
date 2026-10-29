@@ -108,7 +108,7 @@ except Exception:
 # demande). Ses bibliothèques natives sont chargées par ctypes depuis llama_cpp/lib,
 # invisibles pour PyInstaller sans aide. Les copies .dylib à numéro de version
 # complet (libllama.0.5.0.dylib…) ne sont référencées par personne : on les saute.
-# Absent sur Mac Intel (pas de roue) : rien d'embarqué, le bandeau reste masqué.
+# Absent sur Mac (cf. requirements.txt) : rien d'embarqué, le bandeau reste masqué.
 try:
     import re as _re
     from PyInstaller.utils.hooks import collect_dynamic_libs

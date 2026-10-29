@@ -6280,8 +6280,11 @@ class AdminPanel(QMainWindow):
         self._cmd_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._cmd_table.setAlternatingRowColors(True)
         self._cmd_table.verticalHeader().setVisible(False)
-        self._cmd_table.setToolTip("Double-clic : copier l'adresse de livraison")
+        self._cmd_table.setToolTip("Double-clic : copier l'adresse de livraison\n"
+                                   "Clic droit : saisir / corriger le n° de suivi")
         self._cmd_table.cellDoubleClicked.connect(self._on_commande_double_click)
+        self._cmd_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._cmd_table.customContextMenuRequested.connect(self._on_commande_menu)
         root.addWidget(self._cmd_table, 1)
 
         self._cmd_rows = []
@@ -6351,6 +6354,114 @@ class AdminPanel(QMainWindow):
                   a.get("phone", "")]
         QApplication.clipboard().setText("\n".join(x for x in lignes if x))
         self._cmd_stats_lbl.setText(f"Adresse {r.get('_id', '').replace('MS-', '')[:8]} copiée")
+
+    # Clés = celles de _TRANSPORTEURS dans functions/main.py
+    _CMD_TRANSPORTEURS = [
+        ("colissimo", "Colissimo"),
+        ("lettre_suivie", "La Poste — Lettre suivie"),
+        ("mondial_relay", "Mondial Relay"),
+        ("chronopost", "Chronopost"),
+    ]
+
+    def _on_commande_menu(self, pos):
+        item = self._cmd_table.itemAt(pos)
+        if item is None:
+            return
+        r = self._cmd_table.item(item.row(), 0).data(Qt.UserRole) or {}
+        if r.get("plan") != "boitier":
+            return  # packs MCF : le suivi vient d'Amazon tout seul
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        deja = r.get("status") == "shipped"
+        act = menu.addAction("✏  Corriger le n° de suivi…" if deja else "📦  Saisir le n° de suivi…")
+        if menu.exec(self._cmd_table.viewport().mapToGlobal(pos)) == act:
+            self._saisir_suivi_commande(r)
+
+    def _saisir_suivi_commande(self, r: dict):
+        """Pose le suivi d'une interface seule : le client reçoit le mail, comme
+        quand Fanny passe par le bouton de son mail."""
+        ref = r.get("_id", "").replace("MS-", "")[:8]
+        a = r.get("address") or {}
+        deja = r.get("status") == "shipped"
+        colis = (r.get("packages") or [{}])[0]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Suivi — commande {ref}")
+        dlg.setMinimumWidth(380)
+        lay = QVBoxLayout(dlg)
+        info = QLabel(f"<b>{a.get('name', '')}</b> — {a.get('postal_code', '')} {a.get('city', '')}"
+                      f"<br>{r.get('email', '')}")
+        lay.addWidget(info)
+        if deja:
+            warn = QLabel(f"⚠ Déjà envoyé : {colis.get('carrier', '')} {colis.get('tracking', '')}<br>"
+                          "Le client recevra le nouveau numéro, signalé comme une correction.")
+            warn.setStyleSheet("color:#f39c12;")
+            lay.addWidget(warn)
+        cb = QComboBox()
+        for _k, nom in self._CMD_TRANSPORTEURS:
+            cb.addItem(nom)
+        if colis.get("carrier"):
+            idx = cb.findText(colis["carrier"])
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+        lay.addWidget(QLabel("Transporteur"))
+        lay.addWidget(cb)
+        ed = QLineEdit()
+        ed.setPlaceholderText("ex. 6A12345678901")
+        lay.addWidget(QLabel("N° de suivi"))
+        lay.addWidget(ed)
+        btns = QHBoxLayout()
+        btns.addStretch()
+        b_annul = QPushButton("Annuler")
+        b_annul.setStyleSheet(_BTN_SECONDARY)
+        b_annul.clicked.connect(dlg.reject)
+        b_ok = QPushButton("Envoyer au client")
+        b_ok.setDefault(True)
+        b_ok.clicked.connect(dlg.accept)
+        btns.addWidget(b_annul)
+        btns.addWidget(b_ok)
+        lay.addLayout(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        code = "".join(ed.text().split()).upper()
+        transp = self._CMD_TRANSPORTEURS[cb.currentIndex()][0]
+        if not code:
+            return
+        if QMessageBox.question(
+                self, "Confirmer",
+                f"Envoyer {cb.currentText()} {code}\nà {r.get('email', '')} ?",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+
+        def _post():
+            import urllib.error
+            url = "https://us-central1-mystrow-907be.cloudfunctions.net/admin_boitier_suivi"
+            req = urllib.request.Request(
+                url, method="POST",
+                data=json.dumps({"order_id": r.get("_id", ""), "transporteur": transp,
+                                 "suivi": code}).encode(),
+                headers={"Authorization": f"Bearer {self._token()}",
+                         "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    return json.loads(resp.read().decode())
+            except urllib.error.HTTPError as e:
+                try:
+                    msg = json.loads(e.read().decode()).get("error", str(e))
+                except Exception:
+                    msg = str(e)
+                raise RuntimeError(f"{e.code} — {msg}")
+
+        def _ok(_res):
+            self._cmd_stats_lbl.setText(f"Suivi {code} envoyé ({ref})")
+            self._load_commandes()
+
+        def _err(e):
+            QMessageBox.critical(self, "Suivi non envoyé", str(e))
+
+        self._cmd_stats_lbl.setText(f"Envoi du suivi {ref}…")
+        _run_async(self, _post, on_success=_ok, on_error=_err)
 
     def _build_analytics_panel(self):
         """Page 5 : Liens rapides GA4 + Search Console."""

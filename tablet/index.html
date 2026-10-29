@@ -303,6 +303,8 @@
     #btn-scene-select { background: var(--accent-dim); color: var(--accent); border-color: var(--accent-border); }
     .scene-spacer { flex: 1; }
     #btn-scene-names { color: var(--muted); }
+    #btn-scene-move { color: var(--muted); }
+    #btn-scene-move[aria-pressed="true"],
     #btn-scene-names[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); border-color: var(--accent-border); }
     #scene-zoom { display: flex; height: clamp(34px, 5.6vh, 50px); background: var(--bg3); border: 1px solid var(--line2); border-radius: 10px; overflow: hidden; }
     #scene-zoom .scene-btn { height: 100%; border: none; border-radius: 0; background: transparent; padding: 0 clamp(14px, 2vw, 22px); }
@@ -487,6 +489,7 @@
       <button class="scene-btn" id="btn-scene-clear">CLEAR</button>
       <button class="scene-btn" id="btn-scene-select">SELECT ALL</button>
       <div class="scene-spacer"></div>
+      <button class="scene-btn" id="btn-scene-move" type="button" aria-pressed="false">DÉPLACER</button>
       <button class="scene-btn" id="btn-scene-names" type="button" aria-pressed="true">NOMS</button>
       <div id="scene-zoom" role="group" aria-label="Zoom du plan">
         <button class="scene-btn zoom-btn" id="btn-zoom-out" type="button" aria-label="Dézoomer">−</button>
@@ -1090,7 +1093,17 @@ function applyProjColors(data){
 
 // ── Scène — CLEAR / SELECT ALL ───────────────────────────────────────────────
 document.getElementById('btn-scene-clear').addEventListener('click',()=>sendEvent({type:'scene_clear'}));
-document.getElementById('btn-scene-select').addEventListener('click',()=>sendEvent({type:'scene_select_all'}));
+// SELECT ALL remplit AUSSI la sélection locale : seul le plan du PC suivait,
+// si bien que le tap suivant repartait d'une sélection vide (= un seul projo),
+// et en mode sans PC personne ne traite scene_select_all — le bouton ne
+// faisait rien du tout.
+document.getElementById('btn-scene-select').addEventListener('click',()=>{
+  _selection=_projectors.map((_,i)=>i);
+  _selectedProjIdx=_selection.length ? _selection[_selection.length-1] : -1;
+  drawStage(_projectors);
+  if(_selection.length) openProjPanel(_selectedProjIdx);
+  sendEvent({type:'scene_select_all'});
+});
 
 // ── Scène — zoom + noms ──────────────────────────────────────────────────────
 const zoomValEl=document.getElementById('scene-zoom-val');
@@ -1132,18 +1145,58 @@ function projAtPoint(cx,cy){
 //  • TAP sur un projecteur (peu de mouvement) = ajoute/retire de la sélection.
 //  • GLISSER un rectangle (lasso) = sélectionne tous les projos à l'intérieur.
 //  • TAP dans le vide = tout désélectionner.
+//  • Mode DÉPLACER : glisser un projecteur le déplace — toute la sélection
+//    s'il en fait partie. Un mode et non un geste : sans lui, glisser depuis
+//    un projo trace déjà le lasso, et le doigt qui rate sa cible déplacerait
+//    le plan en plein show.
 let _tapStartX=0, _tapStartY=0, _tapStartT=0, _tapActive=false;
 let _rbActive=false, _rbX=0, _rbY=0;   // rubber-band (rectangle de sélection)
+let _moveMode=false, _moveDrag=null;   // {idxs, starts:[[x,y]…], moved}
+const moveBtn=document.getElementById('btn-scene-move');
+moveBtn.addEventListener('click',()=>{
+  _moveMode=!_moveMode; moveBtn.setAttribute('aria-pressed',String(_moveMode));
+});
 function _localXY(clientX, clientY){
   const rect=stageCanvas.getBoundingClientRect();
   return [clientX-rect.left, clientY-rect.top];
 }
 function tapStart(clientX, clientY){
   [_tapStartX,_tapStartY]=_localXY(clientX,clientY);
-  _tapStartT=Date.now(); _tapActive=true; _rbActive=false;
+  _tapStartT=Date.now(); _tapActive=true; _rbActive=false; _moveDrag=null;
+  if(_moveMode){
+    const idx=projAtPoint(_tapStartX,_tapStartY);
+    if(idx>=0){
+      const idxs=_selection.indexOf(idx)>=0 ? _selection.slice() : [idx];
+      _moveDrag={idxs, starts:idxs.map(i=>[_projectors[i].x??0.5,_projectors[i].y??0.5]), moved:false};
+    }
+  }
+}
+function _moveDragTo(x,y){
+  const {W,H}=_stageWorld();
+  const [ax,ay]=_toWorld(_tapStartX,_tapStartY), [bx,by]=_toWorld(x,y);
+  const dx=(bx-ax)/W, dy=(by-ay)/H;
+  _moveDrag.idxs.forEach((i,k)=>{
+    const p=_projectors[i]; if(!p) return;
+    p.x=Math.max(0.03,Math.min(0.97,_moveDrag.starts[k][0]+dx));
+    p.y=Math.max(0.04,Math.min(0.96,_moveDrag.starts[k][1]+dy));
+  });
+  drawStage(_projectors);
+}
+// Glisser interrompu (2e doigt, appel système) : les projos reviennent où ils
+// étaient — rien n'a encore été envoyé.
+function _cancelMoveDrag(){
+  if(_moveDrag && _moveDrag.moved) _moveDrag.idxs.forEach((i,k)=>{
+    const p=_projectors[i]; if(p){ p.x=_moveDrag.starts[k][0]; p.y=_moveDrag.starts[k][1]; } });
+  _moveDrag=null;
 }
 function tapMove(clientX, clientY){
   if(!_tapActive) return;
+  if(_moveDrag){
+    const [x,y]=_localXY(clientX,clientY);
+    if(!_moveDrag.moved && Math.hypot(x-_tapStartX,y-_tapStartY)<=6) return;
+    _moveDrag.moved=true; _moveDragTo(x,y);
+    return;
+  }
   [_rbX,_rbY]=_localXY(clientX,clientY);
   const moved=Math.hypot(_rbX-_tapStartX,_rbY-_tapStartY);
   if(moved>14) _rbActive=true;   // au-delà du seuil → mode rectangle
@@ -1160,6 +1213,15 @@ function tapMove(clientX, clientY){
 }
 function tapEnd(clientX, clientY){
   if(!_tapActive) return; _tapActive=false;
+  if(_moveDrag){
+    const d=_moveDrag; _moveDrag=null;
+    if(d.moved){
+      sendEvent({type:'proj_move', idxs:d.idxs,
+                 pos:d.idxs.map(i=>[_projectors[i].x,_projectors[i].y])});
+      return;
+    }
+    // Simple tap en mode DÉPLACER : sélection habituelle, ci-dessous.
+  }
   if(_rbActive){
     // Fin du lasso : ajoute (union) tous les projos dans le rectangle.
     _rbActive=false;
@@ -1200,7 +1262,7 @@ function tapEnd(clientX, clientY){
 let _pinch=null;
 function _touchDist(t){ return Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY)||1; }
 stageCanvas.addEventListener('touchstart',e=>{e.preventDefault();
-  if(e.touches.length>=2){ _pinch={d0:_touchDist(e.touches),z0:_stageZoom}; _tapActive=false; _rbActive=false; drawStage(_projectors); return; }
+  if(e.touches.length>=2){ _cancelMoveDrag(); _pinch={d0:_touchDist(e.touches),z0:_stageZoom}; _tapActive=false; _rbActive=false; drawStage(_projectors); return; }
   if(_pinch) return;
   const t=e.touches[0];tapStart(t.clientX,t.clientY);},{passive:false});
 stageCanvas.addEventListener('touchmove',e=>{e.preventDefault();
@@ -1209,7 +1271,7 @@ stageCanvas.addEventListener('touchmove',e=>{e.preventDefault();
 stageCanvas.addEventListener('touchend',e=>{e.preventDefault();
   if(_pinch){ if(e.touches.length===0) _pinch=null; return; }
   const t=(e.changedTouches&&e.changedTouches[0])||{};tapEnd(t.clientX,t.clientY);},{passive:false});
-stageCanvas.addEventListener('touchcancel',()=>{_tapActive=false;_rbActive=false;_pinch=null;});
+stageCanvas.addEventListener('touchcancel',()=>{_cancelMoveDrag();_tapActive=false;_rbActive=false;_pinch=null;drawStage(_projectors);});
 stageCanvas.addEventListener('mousedown',e=>tapStart(e.clientX,e.clientY));
 stageCanvas.addEventListener('mousemove',e=>{ if(_tapActive) tapMove(e.clientX,e.clientY); });
 stageCanvas.addEventListener('mouseup',e=>tapEnd(e.clientX,e.clientY));

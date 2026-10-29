@@ -95,6 +95,10 @@
     .btn-big { height: 64px; font-size: 20px; width: 100%; }
     .solo-state { padding: 12px 14px; border-radius: 12px; background: var(--bg3); border: 1px solid var(--line2); color: #cfcabd; font-size: 14px; }
     .solo-state b { display: block; font-family: var(--f-label); font-size: 20px; color: var(--text); }
+    .conn { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line2); }
+    .conn .led { width: 10px; height: 10px; border-radius: 50%; background: var(--muted2); flex-shrink: 0; }
+    .conn.ok .led { background: var(--green); box-shadow: 0 0 8px rgba(34, 197, 94, 0.8); }
+    .conn.ok { color: var(--text); }
     .row2 { display: flex; gap: 10px; flex-wrap: wrap; }
     .row2 .btn { flex: 1; min-width: 180px; }
   </style>
@@ -168,7 +172,6 @@
       <div class="row2">
         <button class="btn btn-ghost" id="patch-btn" type="button">Mes projecteurs (patch)</button>
         <button class="btn btn-ghost" id="output-btn" type="button">Sortie DMX</button>
-        <button class="btn btn-ghost" id="dmxtest-btn" type="button">Tester la sortie DMX</button>
         <button class="btn btn-ghost" id="account-btn" type="button">Mon compte</button>
       </div>
     </section>
@@ -272,13 +275,61 @@
     b.textContent = n ? n + " projecteur" + (n > 1 ? "s patchés" : " patché") : "Aucun projecteur patché";
     const line = document.createElement("div");
     line.textContent = n ? "Sortie : " + out + "." : "Commencez par indiquer vos projecteurs et leurs adresses DMX.";
-    st.append(b, line);
+    const conn = document.createElement("div");
+    conn.className = "conn"; conn.id = "solo-conn";
+    conn.innerHTML = '<span class="led"></span><span class="txt">Recherche du boîtier…</span>';
+    st.append(b, line, conn);
     // Sans patch, « Jouer » n'aurait rien à piloter : on passe d'abord par le patch.
     document.getElementById("solo-btn").textContent = n ? "Jouer" : "Commencer : ajouter mes projecteurs";
+    checkBox();
+  }
+
+  // ── Boîtier : détecté tout seul, sans bouton « Tester » ─────────────────────
+  // Interface USB branchée → sortie USB ; sinon un node Art-Net qui répond →
+  // sortie Art-Net à son adresse. Le choix manuel reste dans « Sortie DMX »,
+  // mais n'est plus un passage obligé.
+  const Dmx = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MystrowDmx;
+  let boxTimer = null, boxBusy = false;
+  async function detectBox(sh) {
+    if (!Dmx) return null;
+    const ios = window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios";
+    if (!ios) {
+      const r = await Dmx.usbDevices().catch(() => null);
+      const d = r && (r.devices || []).find((x) => x.serial || x.net);
+      if (d) return { transport: "usb", label: "Interface USB connectée ✓ (" + d.name + ")" };
+    }
+    const p = await Dmx.artPoll({ timeoutMs: 900 }).catch(() => null);
+    const node = p && p.nodes && p.nodes[0];
+    if (node) return { transport: "artnet", host: node.ip, label: "Node Art-Net connecté ✓ (" + node.ip + ")" };
+    return null;
+  }
+  async function checkBox() {
+    if (boxBusy) return; boxBusy = true;
+    try {
+      const sh = soloShow() || { fixtures: [], output: { transport: "usb" } };
+      sh.output = sh.output || { transport: "usb" };
+      const found = await detectBox(sh);
+      const el = document.getElementById("solo-conn");
+      if (!el) return;
+      if (found) {
+        // Le boîtier vu ici devient la sortie : plus rien à régler à la main.
+        if (sh.output.transport !== found.transport || (found.host && sh.output.host !== found.host)) {
+          sh.output.transport = found.transport;
+          if (found.host) sh.output.host = found.host;
+          try { localStorage.setItem("mystrow.solo.show", JSON.stringify(sh)); } catch (e) {}
+        }
+        el.className = "conn ok"; el.querySelector(".txt").textContent = found.label;
+      } else {
+        el.className = "conn";
+        el.querySelector(".txt").textContent = Dmx ? "Aucun boîtier détecté — branchez l'interface USB-DMX ou le node." : "Boîtier : vérifié au lancement du jeu.";
+      }
+    } finally { boxBusy = false; }
+    // Tant que l'écran est affiché : on suit le branchement / débranchement.
+    clearTimeout(boxTimer);
+    if (!document.getElementById("view-solo").hidden) boxTimer = setTimeout(checkBox, 3000);
   }
 
   document.getElementById("manual-form").addEventListener("submit", e => { e.preventDefault(); connectTo(hostInput.value); });
-  document.getElementById("dmxtest-btn").addEventListener("click", () => { location.href = "dmxtest.html"; });
   document.getElementById("patch-btn").addEventListener("click", () => { location.href = "patch.html"; });
   // Compte : licence (DMX sans limite de 10 min) et config envoyée par le PC.
   document.getElementById("account-btn").addEventListener("click", () => {

@@ -247,11 +247,12 @@ class _SlotRow(QWidget):
         from core import GOBO_SLOT_NAMES
         menu = QMenu(self)
         menu.setStyleSheet(
-            "QMenu{background:#1e1e1e;color:#ddd;border:1px solid #333;}"
+            # QMenu n'a pas de setIconSize() : la taille des vignettes passe
+            # par la feuille de style, sinon l'appel lève et le menu ne s'ouvre pas.
+            "QMenu{background:#1e1e1e;color:#ddd;border:1px solid #333;icon-size:26px;}"
             "QMenu::item{padding:5px 18px 5px 8px;}"
             "QMenu::item:selected{background:#ff990033;color:#fff;}"
         )
-        menu.setIconSize(QSize(26, 26))
         for i, name in enumerate(GOBO_SLOT_NAMES):
             act = menu.addAction(_gobo_shape_icon(i), name)
             act.setCheckable(True)

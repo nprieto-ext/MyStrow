@@ -3581,8 +3581,9 @@ class LightTimelineEditor(QDialog):
                         or getattr(t, 'is_projector_track', False)
                         or not self._editable(t))]
 
-    def generate_ai_sequence(self):
-        """Genere une sequence avec IA"""
+    def generate_ai_sequence(self, preset=None):
+        """Genere une sequence avec IA. `preset` : code couleur présélectionné
+        (« #ff0000 », « rainbow »…), passé par l'assistant."""
         dialog = QDialog(self)
         dialog.setWindowTitle(tr("te_ai_title"))
         dialog.setFixedSize(550, 450)
@@ -3623,6 +3624,9 @@ class LightTimelineEditor(QDialog):
 
         for name, _ in colors:
             color_combo.addItem(name)
+        _codes = [c for _, c in colors]
+        if preset in _codes:
+            color_combo.setCurrentIndex(_codes.index(preset))
 
         layout.addWidget(color_combo)
 

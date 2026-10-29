@@ -168,6 +168,63 @@ def test_traduction_modele():
     assert tr([{"do": "effect", "style": "fast"}], "effet rapide")[0]["speed"] == 85
 
 
+def test_mouvements_themes_patch_rec():
+    """v5 : lyres en mouvement, ambiances à thème, strobe un sur deux, patch, REC sur la musique."""
+    check("fais tourner les lyres", {"do": "effect", "name": "Lyre Cercle"})
+    check("un balancier sur les lyres", {"do": "effect", "name": "Lyre Balancier"})
+    check("strobe un sur deux", {"do": "effect", "name": "Strobe Alternance"})
+    _, a = first("une ambiance halloween sur la face")
+    assert a["do"] == "pattern" and [s["color"] for s in a["slots"]] == ["orange", "purple"], a
+    assert a["target"] == {"group": "A"}, a
+    check("ajoute 4 PAR Betopper LM70", {"do": "patch_add", "query": "betopper lm70 par", "qty": 4})
+    check("tu peux me patcher ma lyre sheilds ?", {"do": "patch_add", "query": "sheilds"})
+    check("add two moving heads", {"do": "patch_add", "query": "moving head", "qty": 2})
+    check("ouvre le patch", {"do": "open", "window": "patch"})          # « le patch » = la fenêtre
+    check("ajoute du rouge", {"do": "color", "color": "red"})            # une couleur ne se patche pas
+    check("turn the moving heads red", {"do": "color", "color": "red"})  # « moving » n'est pas un mouvement
+    check("programme les lumières sur cette musique", {"do": "rec_generate", "color": None})
+    check("fais un light show multicolore sur ce morceau", {"do": "rec_generate", "color": "rainbow"})
+    check("program the lights to this song in blue", {"do": "rec_generate", "color": "blue"})
+    check("tu peux me faire du chaud ?", {"do": "color", "color": "warm"})
+    from assistant_llm import to_nlu
+    a = to_nlu([{"do": "patch_add", "query": "Betopper LM70", "value": 4}], "x", EFFECTS)[0]
+    assert a == {"do": "patch_add", "query": "betopper lm70", "qty": 4}, a
+    a = to_nlu([{"do": "effect", "effect_kind": "movement"}], "fais tourner les lyres", EFFECTS)[0]
+    assert a["name"] == "Lyre Cercle", a
+    a = to_nlu([{"do": "rec_generate", "colors": ["red", "blue"]}], "programme cette chanson en rouge et bleu", EFFECTS)[0]
+    assert a == {"do": "rec_generate", "color": "rainbow"}, a
+    # « chanson d'après » ne programme rien : le REC ne s'ouvre pas.
+    assert to_nlu([{"do": "rec_generate"}], "chanson d'après", EFFECTS)[0]["do"] == "unknown"
+
+
+def test_suite_de_conversation():
+    """Phrases qui dépendent de la précédente (essai réel du 29/10)."""
+    from assistant_nlu import followup
+    faders = {"kind": "fader", "faders": [1, 2, 3, 4, 5, 6, 7, 8], "effect": "Chase Blanc"}
+    acts, _ = followup("parfait baisse les, mais doucement", faders)
+    assert acts == [{"do": "fader_rel", "faders": faders["faders"], "delta": -20, "fade": 4.0}], acts
+    acts, _ = followup("baisse-les à 20", faders)
+    assert acts[0]["do"] == "fader" and acts[0]["level"] == 20, acts
+    acts, _ = followup("coupe-les", {"kind": "target", "target": {"group": "A"}})
+    assert acts == [{"do": "level", "target": {"group": "A"}, "level": 0}], acts
+    effect = {"kind": "effect", "effect": "Chase Blanc"}
+    acts, _ = followup("QUE ça prenne sur tous les projos", effect)
+    assert acts == [{"do": "effect", "name": "Chase Blanc", "all": True}], acts
+    # « non » n'est jamais un stop : précision, ou relance de l'effet.
+    assert followup("non, je parlais de l'effet !", effect)[0] == [{"do": "clarify", "about": "effect"}]
+    acts, _ = followup("mais non, remet les effets mais sur tous les groupes", faders)
+    assert acts == [{"do": "effect", "name": "Chase Blanc", "all": True}], acts
+    acts, txt = followup("non, en bleu", {})
+    assert acts is None and parse(txt, EFFECTS).actions[0]["color"] == "blue", txt
+    # Couleur refusée : retirée, même redite autrement (« chaude »).
+    acts, txt = followup("non pas blanc chaud, je veux une ambiance un peu type chaude rouge et blanc tu me suis ?", {})
+    a = parse(txt, EFFECTS).actions[0]
+    assert a["do"] == "pattern" and [s["color"] for s in a["slots"]] == ["red", "white"], (txt, a)
+    assert followup("allume la face en rouge", faders)[0] is None          # phrase autonome : rien à reprendre
+    _, a = first("lance un effet")
+    assert "strobe" not in normalize(a["name"]), a                         # un effet sans précision n'est pas un strobe
+
+
 def test_incompris():
     p, a = first("raconte-moi une blague")
     assert a["do"] == "unknown" and not p.understood

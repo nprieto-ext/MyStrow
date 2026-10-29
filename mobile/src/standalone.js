@@ -131,6 +131,9 @@
       p.y = usedGroups.length === 1 ? 0.5 : 0.15 + (0.7 * gi) / (usedGroups.length - 1);
     });
   });
+  // Place choisie au doigt (mode DÉPLACER du plan) : gardée DANS la fixture,
+  // pour suivre l'appareil si le patch est réordonné.
+  projectors.forEach((p) => { if (p.plan_x != null && p.plan_y != null) { p.x = p.plan_x; p.y = p.plan_y; } });
   const hasLyres = projectors.some(Engine.isLyre);
 
   // ── Pages de colonnes (AKAI_BANK_PRESETS du PC) ─────────────────────────────
@@ -869,6 +872,15 @@
         // changements de couleur : elle n'est pas dans `override`.
         panTilt((ev.idxs || []).filter((i) => projectors[i]), ev);
         setTimeout(redrawPad, 0);             // après le dessin de la page
+        break;
+      case "proj_move":
+        (ev.idxs || []).forEach((i, k) => {
+          const xy = (ev.pos || [])[k], p = projectors[i], f = show.fixtures[i];
+          if (!xy || !p || !f) return;
+          p.x = f.plan_x = Math.max(0.03, Math.min(0.97, +xy[0]));
+          p.y = f.plan_y = Math.max(0.04, Math.min(0.96, +xy[1]));
+        });
+        save("mystrow.solo.show", show);
         break;
       case "scene_clear":
         projectors.forEach((p) => { p.override = null; });

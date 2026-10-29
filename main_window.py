@@ -20428,8 +20428,10 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, tr("err_save_title"), tr("midi_err_msg", e=e))
 
-    def open_light_editor(self, row=None):
-        """Ouvre l'editeur de sequence lumiere"""
+    def open_light_editor(self, row=None, ai_color=None):
+        """Ouvre l'editeur de sequence lumiere. `ai_color` (assistant : « programme
+        les lumières sur cette musique ») ouvre ensuite la génération IA avec cette
+        couleur présélectionnée ; l'utilisateur garde la main sur « Générer »."""
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
 
@@ -20461,6 +20463,8 @@ class MainWindow(QMainWindow):
 
         editor = LightTimelineEditor(self, current_row)
         editor.showMaximized()
+        if ai_color:
+            QTimer.singleShot(400, lambda: editor.generate_ai_sequence(preset=ai_color))
         if sys.platform == 'win32':
             try:
                 import ctypes as _ct
@@ -21660,6 +21664,17 @@ class MainWindow(QMainWindow):
         elif etype == "scene_select_all":
             if hasattr(self, 'plan_de_feu'):
                 self.plan_de_feu._select_all()
+        elif etype == "proj_move":
+            # Mode DÉPLACER de la tablette : mêmes coordonnées 0-1 que le plan
+            # de feu (canvas_x/canvas_y), enregistrées comme un glisser au PC.
+            for i, (x, y) in zip(ev.get("idxs", []), ev.get("pos", [])):
+                if 0 <= i < len(self.projectors):
+                    p = self.projectors[i]
+                    p.canvas_x = max(0.03, min(0.97, float(x)))
+                    p.canvas_y = max(0.04, min(0.96, float(y)))
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu.update()
+            self.save_dmx_patch_config()
         elif etype == "clear":
             self._clear_akai_state()
         elif etype == "rec_toggle":
@@ -23218,8 +23233,12 @@ class MainWindow(QMainWindow):
             if hasattr(self, '_ext_btn'):
                 self._ext_btn.setChecked(True)
 
-    def show_dmx_patch_config(self, select_idx=None):
-        """Interface de configuration DMX — master-detail + Plan de feu"""
+    def show_dmx_patch_config(self, select_idx=None, add_search=None, add_qty=1):
+        """Interface de configuration DMX — master-detail + Plan de feu.
+
+        `add_search` : l'assistant (« ajoute une lyre Shields ») ouvre le patch
+        puis la bibliothèque déjà filtrée ; l'utilisateur choisit et valide lui-même.
+        """
         from plan_de_feu import FixtureCanvas, NewPlanWizard
 
         # ── Dialog ────────────────────────────────────────────────────────
@@ -26596,8 +26615,8 @@ class MainWindow(QMainWindow):
                 card._dot.setStyleSheet(
                     f"color:{col}; font-size:13px; border:none; background:transparent;"
                 )
-        def _add_fixture(norm_x=0.5, norm_y=0.5):
-            res = self._show_fixture_library_dialog()
+        def _add_fixture(norm_x=0.5, norm_y=0.5, search="", qty=1):
+            res = self._show_fixture_library_dialog(initial_search=search, initial_qty=qty)
             if not res: return
             preset, qty, custom_name = res
             _push_history()
@@ -27616,6 +27635,8 @@ class MainWindow(QMainWindow):
         _avail = self.screen().availableGeometry()
         dialog.setGeometry(_avail)
         dialog.setWindowState(dialog.windowState() | Qt.WindowMaximized)
+        if add_search is not None:
+            QTimer.singleShot(150, lambda: _add_fixture(search=add_search, qty=add_qty))
         dialog.exec()
         canvas_timer.stop()
 
@@ -27816,7 +27837,7 @@ class MainWindow(QMainWindow):
         return (addr_spin.value(), uni_spin.value(), group, name, spec,
                 orient_combo.currentData())
 
-    def _show_fixture_library_dialog(self, replace_n=0):
+    def _show_fixture_library_dialog(self, replace_n=0, initial_search="", initial_qty=1):
         """Dialog bibliotheque de fixtures. Retourne (preset, qty, custom_name) ou None.
 
         `replace_n` > 0 : même fenêtre, ouverte pour remplacer `replace_n`
@@ -28196,13 +28217,16 @@ class MainWindow(QMainWindow):
             # La marque CANONIQUE compte autant que celle écrite dans le
             # fichier : la rubrique affiche « Mac Mah », taper ces deux mots ne
             # devait pas rater les 56 fixtures qui disent « MacMah ».
-            return [
-                fx for fx in ALL_FIXTURES
-                if q in fx.get("name", "").lower()
-                or q in fx.get("manufacturer", "").lower()
-                or q in canonical_manufacturer(fx.get("manufacturer")).lower()
-                or q in fx.get("fixture_type", "").lower()
-            ]
+            # Chaque mot peut tomber sur un champ différent : « betopper lm70 »
+            # = la marque + le nom (avant, la phrase entière devait tenir dans un
+            # seul champ et ne trouvait rien).
+            words = q.split()
+
+            def _hay(fx):
+                return " ".join((fx.get("name", ""), fx.get("manufacturer", ""),
+                                 canonical_manufacturer(fx.get("manufacturer")),
+                                 fx.get("fixture_type", ""))).lower()
+            return [fx for fx in ALL_FIXTURES if all(wd in _hay(fx) for wd in words)]
 
         def _fill_preset_list(fixtures, show_mfr=True, searching=False):
             preset_list.clear()
@@ -28676,6 +28700,8 @@ class MainWindow(QMainWindow):
 
         if FIXTURE_LIBRARY:
             cat_list.setCurrentRow(0)
+        if initial_search:
+            search_edit.setText(initial_search)
 
         # ── Accept ────────────────────────────────────────────────────────────
         def accept():
@@ -28991,6 +29017,8 @@ class MainWindow(QMainWindow):
         qty_row.addWidget(lbl_qty)
         qty_row.addWidget(qty_spin)
         layout.addLayout(qty_row)
+        if 1 < initial_qty <= qty_spin.count():
+            qty_spin.setCurrentIndex(initial_qty - 1)
         if replace_n:
             # Le nombre d'appareils est celui qu'on remplace
             lbl_qty.setVisible(False)

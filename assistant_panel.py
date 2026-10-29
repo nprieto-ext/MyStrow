@@ -15,10 +15,12 @@ gardées dans ~/.mystrow_assistant.json pour enrichir le vocabulaire.
 import html
 import json
 import time
+import traceback
+from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal, QThread, QEvent
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QTimer, Signal, QThread, QEvent, QRectF
+from PySide6.QtGui import QKeySequence, QShortcut, QPainter, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QTextBrowser,
     QLineEdit, QLabel, QLayout,
@@ -156,6 +158,12 @@ R = {
               "de": "Ja: USB-DMX-Box (oder Art-Net-Node im Netzwerk) anschließen, dann „verbinde“ sagen. Interface wählen: „öffne DMX Ausgang“.",
               "pt": "Sim: ligue a interface USB-DMX (ou um node Art-Net na rede) e diga «conecta». Para escolher a interface: «abre a saída DMX».",
               "ja": "はい。USB-DMXボックス（またはネットワーク上のArt-Netノード）をつないで「接続」と言ってください。インターフェースの選択は「DMX出力を開いて」。"},
+    "q_live": {"fr": "Oui : c'est le mode LIVE. Les lumières suivent le son de ta carte son ou du micro (source à choisir dans le panneau LIVE).",
+               "en": "Yes: that's LIVE mode. The lights follow the sound of your sound card or mic (pick the source in the LIVE panel).",
+               "es": "Sí: es el modo LIVE. Las luces siguen el sonido de tu tarjeta de sonido o del micro (fuente en el panel LIVE).",
+               "de": "Ja: das ist der LIVE-Modus. Das Licht folgt dem Ton deiner Soundkarte oder des Mikros (Quelle im LIVE-Panel wählen).",
+               "pt": "Sim: é o modo LIVE. As luzes seguem o som da placa de som ou do micro (escolha a fonte no painel LIVE).",
+               "ja": "はい、LIVEモードです。サウンドカードやマイクの音に照明が反応します（ソースはLIVEパネルで選択）。"},
     "q_generic": {"fr": "Je ne sais pas encore répondre à ce genre de question (je suis en bêta) : je garde ta phrase pour progresser. Par contre je peux agir : « allume la face en rouge », « effet rapide », « ouvre le patch »…",
                   "en": "I can't answer that kind of question yet (beta): I'm keeping your sentence to improve. But I can act: “front lights red”, “fast effect”, “open the patch”…",
                   "es": "Aún no sé responder a ese tipo de pregunta (beta): guardo tu frase para mejorar. Pero puedo actuar: «frontal en rojo», «efecto rápido», «abre el patch»…",
@@ -185,6 +193,27 @@ R = {
                 "de": "✓ Effekt „{e}“ gestartet", "pt": "✓ Efeito «{e}» iniciado", "ja": "✓ エフェクト「{e}」開始"},
     "effect_speed": {"fr": ", vitesse {v}", "en": ", speed {v}", "es": ", velocidad {v}", "de": ", Tempo {v}",
                      "pt": ", velocidade {v}", "ja": "（速度 {v}）"},
+    "clarify_effect": {"fr": "D'accord, l'effet. Dis-moi quoi en faire : « relance l'effet », « sur tous les projecteurs », « plus vite », « stop »…",
+                       "en": "Got it, the effect. Tell me what to do: “restart the effect”, “on all lights”, “faster”, “stop”…",
+                       "es": "Vale, el efecto. Dime qué hacer: «relanza el efecto», «en todos los focos», «más rápido», «stop»…",
+                       "de": "Ok, der Effekt. Sag mir was: „Effekt neu starten“, „auf allen Scheinwerfern“, „schneller“, „stop“…",
+                       "pt": "Certo, o efeito. Diga-me o que fazer: «relança o efeito», «em todos os projetores», «mais rápido», «stop»…",
+                       "ja": "エフェクトですね。「エフェクトを再開」「全部のライトで」「速く」「ストップ」などと言ってください。"},
+    "clarify": {"fr": "D'accord. Redis-moi ce que tu veux en une phrase, par ex. « la face en rouge et blanc », « baisse les faders doucement ».",
+                "en": "Ok. Tell me again in one sentence, e.g. “front red and white”, “lower the faders slowly”.",
+                "es": "Vale. Dímelo en una frase, p. ej. «el frente en rojo y blanco», «baja los faders despacio».",
+                "de": "Ok. Sag es mir in einem Satz, z. B. „Front rot und weiß“, „Fader langsam runter“.",
+                "pt": "Certo. Diga-me numa frase, p. ex. «a frente em vermelho e branco», «baixa os faders devagar».",
+                "ja": "わかりました。「フロントを赤と白に」「フェーダーをゆっくり下げて」のように一文で言ってください。"},
+    "w_patch": {"fr": "le patch", "en": "the patch", "es": "el patch", "de": "den Patch", "pt": "o patch", "ja": "パッチ"},
+    "w_effects": {"fr": "l'éditeur d'effets", "en": "the effect editor", "es": "el editor de efectos", "de": "den Effekteditor",
+                  "pt": "o editor de efeitos", "ja": "エフェクトエディター"},
+    "w_rec": {"fr": "le REC Lumière", "en": "REC Light", "es": "REC Luz", "de": "REC Licht", "pt": "o REC Luz", "ja": "RECライト"},
+    "w_3d": {"fr": "le plan 3D", "en": "the 3D view", "es": "la vista 3D", "de": "die 3D-Ansicht", "pt": "a vista 3D", "ja": "3Dビュー"},
+    "w_other": {"fr": "cette fenêtre", "en": "this window", "es": "esta ventana", "de": "dieses Fenster", "pt": "esta janela",
+                "ja": "このウィンドウ"},
+    "effect_all": {"fr": " sur tous les projecteurs", "en": " on all fixtures", "es": " en todos los focos",
+                   "de": " auf allen Scheinwerfern", "pt": " em todos os projetores", "ja": "（全部のライト）"},
     "no_effect": {"fr": "Je ne trouve pas d'effet qui corresponde.", "en": "I can't find a matching effect.",
                   "es": "No encuentro un efecto que corresponda.", "de": "Kein passender Effekt gefunden.",
                   "pt": "Não encontro um efeito correspondente.", "ja": "該当するエフェクトがありません"},
@@ -197,6 +226,73 @@ R = {
     "memory_empty": {"fr": "La mémoire {m} est vide.", "en": "Memory {m} is empty.", "es": "La memoria {m} está vacía.",
                      "de": "Speicher {m} ist leer.", "pt": "A memória {m} está vazia.", "ja": "メモリ {m} は空です"},
     "playback": {"fr": "✓ OK", "en": "✓ OK", "es": "✓ OK", "de": "✓ OK", "pt": "✓ OK", "ja": "✓ OK"},
+    "chat": {"fr": "👍", "en": "👍", "es": "👍", "de": "👍", "pt": "👍", "ja": "👍"},
+    "gradient": {"fr": "✓ {n} projecteur(s) en dégradé : {c}", "en": "✓ {n} fixture(s) in a gradient: {c}",
+                 "es": "✓ {n} foco(s) en degradado: {c}", "de": "✓ {n} Scheinwerfer im Verlauf: {c}",
+                 "pt": "✓ {n} projetor(es) em degradê: {c}", "ja": "✓ {n} 台をグラデーションに：{c}"},
+    "gobo_next": {"fr": "✓ Gobo suivant sur {n} appareil(s)", "en": "✓ Next gobo on {n} fixture(s)",
+                  "es": "✓ Gobo siguiente en {n} aparato(s)", "de": "✓ Nächstes Gobo auf {n} Gerät(en)",
+                  "pt": "✓ Gobo seguinte em {n} aparelho(s)", "ja": "✓ {n} 台のゴボを次へ"},
+    "gobo_open": {"fr": "✓ Gobo ouvert sur {n} appareil(s)", "en": "✓ Open gobo on {n} fixture(s)",
+                  "es": "✓ Gobo abierto en {n} aparato(s)", "de": "✓ Offenes Gobo auf {n} Gerät(en)",
+                  "pt": "✓ Gobo aberto em {n} aparelho(s)", "ja": "✓ {n} 台のゴボをオープンに"},
+    "gobo_none": {"fr": "Aucun de ces appareils n'a de roue de gobos.", "en": "None of these fixtures has a gobo wheel.",
+                  "es": "Ninguno de estos aparatos tiene rueda de gobos.", "de": "Keines dieser Geräte hat ein Goborad.",
+                  "pt": "Nenhum destes aparelhos tem roda de gobos.", "ja": "これらの機材にはゴボホイールがありません。"},
+    "live_on": {"fr": "✓ Mode LIVE activé : les lumières suivent le son.", "en": "✓ LIVE mode on: the lights follow the sound.",
+                "es": "✓ Modo LIVE activado: las luces siguen el sonido.", "de": "✓ LIVE-Modus an: das Licht folgt dem Ton.",
+                "pt": "✓ Modo LIVE ativado: as luzes seguem o som.", "ja": "✓ LIVEモード開始：照明が音に反応します。"},
+    "live_off": {"fr": "✓ Mode LIVE arrêté.", "en": "✓ LIVE mode off.", "es": "✓ Modo LIVE desactivado.",
+                 "de": "✓ LIVE-Modus aus.", "pt": "✓ Modo LIVE desativado.", "ja": "✓ LIVEモード終了。"},
+    "confirm": {"fr": "{q}", "en": "{q}", "es": "{q}", "de": "{q}", "pt": "{q}", "ja": "{q}"},
+    "ask_open": {"fr": "J'ouvre {w} ?", "en": "Shall I open {w}?", "es": "¿Abro {w}?", "de": "Soll ich {w} öffnen?",
+                 "pt": "Abro {w}?", "ja": "{w}を開きますか？"},
+    "ask_patch": {"fr": "J'ouvre le patch et je cherche « {q} » dans la bibliothèque ?",
+                  "en": "Shall I open the patch and search the library for “{q}”?",
+                  "es": "¿Abro el patch y busco «{q}» en la biblioteca?", "de": "Patch öffnen und „{q}“ in der Bibliothek suchen?",
+                  "pt": "Abro o patch e procuro «{q}» na biblioteca?", "ja": "パッチを開いてライブラリで「{q}」を探しますか？"},
+    "ask_library": {"fr": "J'ouvre la bibliothèque de fixtures ?", "en": "Shall I open the fixture library?",
+                    "es": "¿Abro la biblioteca de fixtures?", "de": "Fixture-Bibliothek öffnen?",
+                    "pt": "Abro a biblioteca de fixtures?", "ja": "フィクスチャライブラリを開きますか？"},
+    "ask_rec": {"fr": "J'ouvre le REC Lumière sur le morceau sélectionné et je prépare la génération ?",
+                "en": "Shall I open REC Light on the selected track and prepare the generation?",
+                "es": "¿Abro REC Luz en el tema seleccionado y preparo la generación?",
+                "de": "REC Licht für den gewählten Titel öffnen und die Generierung vorbereiten?",
+                "pt": "Abro o REC Luz na faixa selecionada e preparo a geração?", "ja": "選択した曲でRECライトを開いて自動生成を準備しますか？"},
+    "ask_fixture": {"fr": "J'ouvre la création de fixture ?", "en": "Shall I open fixture creation?",
+                    "es": "¿Abro la creación de fixture?", "de": "Fixture-Erstellung öffnen?",
+                    "pt": "Abro a criação de fixture?", "ja": "フィクスチャ作成を開きますか？"},
+    "ask_live": {"fr": "J'active le mode LIVE (les lumières suivent le son) ?", "en": "Shall I turn on LIVE mode (lights follow the sound)?",
+                 "es": "¿Activo el modo LIVE (las luces siguen el sonido)?", "de": "LIVE-Modus einschalten (Licht folgt dem Ton)?",
+                 "pt": "Ativo o modo LIVE (as luzes seguem o som)?", "ja": "LIVEモード（音に反応）を開始しますか？"},
+    "btn_yes": {"fr": "Oui", "en": "Yes", "es": "Sí", "de": "Ja", "pt": "Sim", "ja": "はい"},
+    "btn_no": {"fr": "Non", "en": "No", "es": "No", "de": "Nein", "pt": "Não", "ja": "いいえ"},
+    "cancelled": {"fr": "D'accord, je ne fais rien.", "en": "Ok, I won't do anything.", "es": "Vale, no hago nada.",
+                  "de": "Ok, ich mache nichts.", "pt": "Certo, não faço nada.", "ja": "わかりました、何もしません。"},
+    "patch_search": {"fr": "🔎 J'ouvre le patch et je cherche « {q} » dans la bibliothèque : choisis le bon modèle, puis valide.",
+                     "en": "🔎 Opening the patch and searching the library for “{q}”: pick the right model, then confirm.",
+                     "es": "🔎 Abro el patch y busco «{q}» en la biblioteca: elige el modelo correcto y confirma.",
+                     "de": "🔎 Ich öffne den Patch und suche „{q}“ in der Bibliothek: wähle das richtige Modell und bestätige.",
+                     "pt": "🔎 Abro o patch e procuro «{q}» na biblioteca: escolha o modelo certo e confirme.",
+                     "ja": "🔎 パッチを開き、ライブラリで「{q}」を検索します。正しい機種を選んで確定してください。"},
+    "patch_library": {"fr": "🔎 J'ouvre la bibliothèque de fixtures : choisis ton appareil, puis valide.",
+                      "en": "🔎 Opening the fixture library: pick your device, then confirm.",
+                      "es": "🔎 Abro la biblioteca de fixtures: elige tu aparato y confirma.",
+                      "de": "🔎 Ich öffne die Fixture-Bibliothek: wähle dein Gerät und bestätige.",
+                      "pt": "🔎 Abro a biblioteca de fixtures: escolha o seu aparelho e confirme.",
+                      "ja": "🔎 フィクスチャライブラリを開きます。機材を選んで確定してください。"},
+    "rec_generate": {"fr": "🎵 J'ouvre le REC Lumière sur le morceau sélectionné et je prépare la génération : vérifie les pistes, puis « Générer ».",
+                     "en": "🎵 Opening REC Light on the selected track and preparing the generation: check the tracks, then “Generate”.",
+                     "es": "🎵 Abro REC Luz en el tema seleccionado y preparo la generación: revisa las pistas y pulsa «Generar».",
+                     "de": "🎵 Ich öffne REC Licht für den gewählten Titel und bereite die Generierung vor: Spuren prüfen, dann „Generieren“.",
+                     "pt": "🎵 Abro o REC Luz na faixa selecionada e preparo a geração: verifique as pistas e clique em «Gerar».",
+                     "ja": "🎵 選択した曲でREC ライトを開き、自動生成を準備します。トラックを確認して「生成」を押してください。"},
+    "rec_no_media": {"fr": "Sélectionne d'abord un morceau dans la playlist, puis redemande-moi.",
+                     "en": "Select a track in the playlist first, then ask me again.",
+                     "es": "Selecciona primero un tema en la playlist y vuelve a pedírmelo.",
+                     "de": "Wähle zuerst einen Titel in der Playlist und frag mich dann nochmal.",
+                     "pt": "Selecione primeiro uma faixa na playlist e peça-me de novo.",
+                     "ja": "まずプレイリストで曲を選んでから、もう一度頼んでください。"},
     "open":    {"fr": "✓ Je l'ouvre.", "en": "✓ Opening it.", "es": "✓ Lo abro.", "de": "✓ Wird geöffnet.",
                 "pt": "✓ A abrir.", "ja": "✓ 開きます"},
     "save":    {"fr": "✓ J'enregistre le show.", "en": "✓ Saving the show.", "es": "✓ Guardo el show.",
@@ -289,6 +385,26 @@ _WINDOWS = {
 }
 
 
+# Actions qui ouvrent une fenêtre ou changent de mode : l'assistant demande d'abord.
+_CONFIRM = {"open", "patch_add", "rec_generate", "fixture", "live"}
+
+
+def confirm_question(a, lang) -> str:
+    do = a["do"]
+    if do == "open":
+        key = "w_" + a["window"] if "w_" + a["window"] in R else "w_other"
+        return _r("ask_open", lang, w=_r(key, lang))
+    if do == "patch_add":
+        return _r("ask_patch", lang, q=a["query"]) if a.get("query") else _r("ask_library", lang)
+    return _r({"rec_generate": "ask_rec", "fixture": "ask_fixture", "live": "ask_live"}[do], lang)
+
+
+# Couleur dite → choix de la génération IA du REC Lumière (timeline_editor.generate_ai_sequence).
+_REC_COLOR = {"red": "#ff0000", "green": "#00ff00", "blue": "#0000ff", "yellow": "#c8c800", "magenta": "#ff00ff",
+              "pink": "#ff00ff", "cyan": "#00ffff", "orange": "#ff8800", "amber": "#ff8800", "warm": "#ff8800",
+              "purple": "#8800ff", "white": "#ffffff", "cold": "#ffffff", "rainbow": "rainbow"}
+
+
 # ── Exécution ────────────────────────────────────────────────────────────────
 
 class AssistantExecutor:
@@ -323,6 +439,16 @@ class AssistantExecutor:
             return False
         return True
 
+    def _remember(self, a):
+        """Dernière action exécutée, pour « baisse-les », « remets l'effet »… (nlu.followup)."""
+        do = a.get("do")
+        if do in ("fader", "fader_rel"):
+            self.last.update(kind="fader", faders=a["faders"])
+        elif do in ("color", "level", "level_rel", "pattern"):
+            self.last.update(kind="target", target=a["target"])
+        elif do == "effect":
+            self.last.update(kind="effect", effect=a["name"])
+
     def run(self, text: str, parsed, model_actions=None) -> list:
         """Exécute les actions des règles, ou celles du modèle si on les a.
         La langue de la réponse vient toujours des règles (vote sur les mots)."""
@@ -332,6 +458,7 @@ class AssistantExecutor:
         for act in actions:
             try:
                 out.append(self._do(act, lang, text))
+                self._remember(act)
             except Exception as exc:
                 print(f"[Assistant] {act} : {exc}")
                 out.append(f"✖ {exc}")
@@ -388,9 +515,21 @@ class AssistantExecutor:
                 return _r("level", lang, n=len(idxs), l=la.adjust_level(w, idxs, a["delta"]))
             if do == "pattern":
                 return self._pattern(a, lang) + tail
+            if do == "gradient":
+                idxs = self._targets(a["target"], lang)
+                level = 100 if a.get("level") is None else a["level"]
+                la.gradient(w, idxs, [nlu.COLOR_HEX[c] for c in a["colors"]], level)
+                return _r("gradient", lang, n=len(idxs), c=" → ".join(_color_name(c, lang) for c in a["colors"]))
+            if do == "gobo":
+                n = la.change_gobo(w, self._targets(a["target"], lang), open_=a.get("open", False))
+                return _r("gobo_open" if a.get("open") else "gobo_next", lang, n=n) if n else _r("gobo_none", lang)
             if do == "fader":
                 la.set_faders(w, [n - 1 for n in a["faders"]], a["level"], fade or 0)
                 return _r("fader", lang, f=", ".join(map(str, a["faders"])), l=a["level"]) + tail
+            if do == "fader_rel":       # « baisse-les » après « tous les faders à 50 »
+                goal = max(0, min(100, la.fader_value(w, a["faders"][0] - 1) + a["delta"]))
+                la.set_faders(w, [n - 1 for n in a["faders"]], goal, fade or 0)
+                return _r("fader", lang, f=", ".join(map(str, a["faders"])), l=goal) + tail
         except _Reply as r:
             return str(r)
 
@@ -403,10 +542,21 @@ class AssistantExecutor:
         if do == "blackout":
             la.blackout(w)
             return _r("blackout", lang)
+        if do in _CONFIRM and not a.get("confirmed") and not (do == "live" and not a.get("on", True)):
+            self.pending.append(dict(a, confirmed=True))
+            return None                     # la question (avec Oui / Non) est posée par le panneau
+        if do == "chat":
+            return _r("chat", lang)
+        if do == "live":
+            if not la.set_live(w, a.get("on", True)):
+                return _r("unknown", lang, t=text)
+            return _r("live_on" if a.get("on", True) else "live_off", lang)
+        if do == "clarify":
+            return _r("clarify_effect" if a.get("about") == "effect" else "clarify", lang)
         if do == "effect":
-            if not la.fire_effect(w, a["name"]):
+            if not la.fire_effect(w, a["name"], everywhere=a.get("all", False)):
                 return _r("no_effect", lang)
-            msg = _r("effect", lang, e=a["name"])
+            msg = _r("effect", lang, e=a["name"]) + (_r("effect_all", lang) if a.get("all") else "")
             if "speed" in a:
                 msg += _r("effect_speed", lang, v=la.set_speed(w, a["speed"]))
             return msg
@@ -434,6 +584,20 @@ class AssistantExecutor:
                 return _r("unknown", lang, t=text)
             QTimer.singleShot(0, meth)        # fenêtres modales : après la réponse
             return _r("open", lang)
+        if do == "patch_add":
+            q, qty = (a.get("query") or "").strip(), max(1, min(20, int(a.get("qty") or 1)))
+            QTimer.singleShot(0, lambda: w.show_dmx_patch_config(add_search=q, add_qty=qty))
+            return _r("patch_search", lang, q=q) if q else _r("patch_library", lang)
+        if do == "rec_generate":
+            try:
+                row = w.seq.table.currentRow()
+            except Exception:
+                row = -1
+            if row < 0:
+                return _r("rec_no_media", lang)
+            code = _REC_COLOR.get(a.get("color"), "auto")
+            QTimer.singleShot(0, lambda: w.open_light_editor(row, ai_color=code))
+            return _r("rec_generate", lang)
         if do == "save":
             QTimer.singleShot(0, w.save_show)
             return _r("save", lang)
@@ -601,6 +765,8 @@ class AssistantPanel(QWidget):
         super().__init__(parent)
         self.store = store
         self.exec = AssistantExecutor(window, store, self._say_assistant)
+        self.exec.last, self.exec.pending = {}, []
+        self._pending = None            # (texte, langue, actions) en attente d'un « oui »
         self._history, self._hist_pos = [], 0
         self._recorder, self._worker = None, None
         try:
@@ -621,6 +787,8 @@ class AssistantPanel(QWidget):
 
         self._chat = QTextBrowser()
         self._chat.setOpenExternalLinks(False)
+        self._chat.setOpenLinks(False)          # liens « Oui / Non » des confirmations
+        self._chat.anchorClicked.connect(self._on_anchor)
         self._chat.setMinimumHeight(60)
         self._chat.setStyleSheet(_CHAT_SS)
         lay.addWidget(self._chat, 1)
@@ -640,6 +808,11 @@ class AssistantPanel(QWidget):
         self._input.returnPressed.connect(self._send)
         self._input.installEventFilter(self)
         row.addWidget(self._input, 1)
+        self._wave = _Waveform()            # remplace le champ pendant qu'on parle
+        self._wave.hide()
+        self._wave.send.connect(lambda: self._recorder is not None and self._stop_recording())
+        self._wave.cancel.connect(self._cancel_recording)
+        row.addWidget(self._wave, 1)
 
         self._mic = QPushButton("🎤")
         self._mic.setFixedSize(30, 26)
@@ -652,6 +825,7 @@ class AssistantPanel(QWidget):
         self._mic.setVisible(why != "faster-whisper")
         if why == "faster-whisper":
             self._input.setPlaceholderText(tr("asst_placeholder_text"))
+        self._mic.setFocusPolicy(Qt.NoFocus)    # le clic ne vole pas le focus à la forme d'onde
         self._mic.pressed.connect(self._mic_pressed)
         self._mic.released.connect(self._mic_released)
         row.addWidget(self._mic)
@@ -683,19 +857,82 @@ class AssistantPanel(QWidget):
         self._bubble(text, mine=False)
 
     def submit(self, text: str):
+        try:
+            self._submit(text)
+        except Exception as exc:
+            self._fail(exc)
+
+    def _fail(self, exc):
+        """Erreur interne : dite dans la discussion et écrite dans ~/.mystrow_assistant_errors.log."""
+        self._thinking = None
+        self._show_status("")
+        self._say_assistant(f"✖ {exc}")
+        try:
+            with open(STORE_FILE.with_name(".mystrow_assistant_errors.log"), "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + traceback.format_exc() + "\n")
+        except Exception:
+            pass
+
+    def _submit(self, text: str):
         text = (text or "").strip()
         if not text:
             return
         self._bubble(text, mine=True)
         self._history.append(text)
         self._hist_pos = len(self._history)
+        if self._pending:
+            reply = nlu.yes_no(text)
+            if reply is not None:
+                self._answer_pending(reply)
+                return
+            self._pending = None            # autre demande : la question tombe
+        # « baisse-les », « non, je parlais de l'effet », « pas blanc chaud » : lus avec
+        # la dernière action. « non, » et la couleur refusée ne vont jamais au modèle.
+        acts, text = nlu.followup(text, self.exec.last)
+        if acts:
+            parsed = self.exec.rules(text)
+            self._run(text, nlu.Parsed(parsed.lang, acts))
+            return
+        if not text:
+            return
         parsed = self.exec.rules(text)
         if self._model_ok and self.exec.needs_model(text, parsed):
             self._queue.append((text, parsed))
             self._next_model()
             return
-        for reply in self.exec.run(text, parsed):
+        self._run(text, parsed)
+
+    def _run(self, text, parsed, actions=None):
+        """Exécute, puis pose la question Oui / Non pour ce qui ouvre une fenêtre."""
+        self.exec.pending = []
+        for reply in self.exec.run(text, parsed, actions):
             self._say_assistant(reply)
+        if self.exec.pending:
+            self._pending = (text, parsed.lang, self.exec.pending)
+            q = " ".join(confirm_question(a, parsed.lang) for a in self.exec.pending)
+            self._chat.append(
+                f'<table align="left" cellpadding="6" bgcolor="#181818" style="margin:3px 30px 3px 0;"><tr>'
+                f'<td style="color:#cccccc;">{html.escape(q)}&nbsp;&nbsp;'
+                f'<a href="asst:yes" style="color:#00d4ff;">{html.escape(_r("btn_yes", parsed.lang))}</a>'
+                f'&nbsp;·&nbsp;<a href="asst:no" style="color:#888;">{html.escape(_r("btn_no", parsed.lang))}</a>'
+                f'</td></tr></table>')
+            sb = self._chat.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+    def _answer_pending(self, yes: bool):
+        if not self._pending:
+            return
+        text, lang, acts = self._pending
+        self._pending = None
+        if yes:
+            for reply in self.exec.run(text, nlu.Parsed(lang, acts)):
+                self._say_assistant(reply)
+        else:
+            self._say_assistant(_r("cancelled", lang))
+
+    def _on_anchor(self, url):
+        if url.toString() in ("asst:yes", "asst:no"):
+            self._answer_pending(url.toString() == "asst:yes")
 
     # ── modèle local : téléchargement et mises à jour ──
     def _build_model_banner(self, lay):
@@ -829,14 +1066,21 @@ class AssistantPanel(QWidget):
         w.start()
 
     def _on_model_done(self, raw):
+        try:
+            self._model_done(raw)
+        except Exception as exc:
+            self._fail(exc)
+        self._next_model()
+
+    def _model_done(self, raw):
         import assistant_llm
         _w, text, parsed = self._thinking
         self._thinking = None
         self._show_status("")
         actions = assistant_llm.to_nlu(raw, text, la.all_effects())
-        for reply in self.exec.run(text, parsed, actions):
-            self._say_assistant(reply)
-        self._next_model()
+        if all(a["do"] == "unknown" for a in actions) and parsed.understood:
+            actions = None          # le modèle n'a rien su faire de valable : les règles, si elles ont compris
+        self._run(text, parsed, actions)
 
     def _on_model_failed(self, msg):
         # Modèle illisible ou absent : les règles prennent le relais, sans bruit.
@@ -845,8 +1089,7 @@ class AssistantPanel(QWidget):
         self._thinking = None
         self._model_ok = False
         self._show_status("")
-        for reply in self.exec.run(text, parsed):
-            self._say_assistant(reply)
+        self._run(text, parsed)
         self._next_model()
 
     def _send(self):
@@ -888,6 +1131,8 @@ class AssistantPanel(QWidget):
             return
         self._rec_t0 = time.monotonic()
         self._mic.setStyleSheet(_MIC_REC_SS)
+        self._input.hide()
+        self._wave.start(self._recorder)
         self._show_status(tr("asst_listening"))
         QTimer.singleShot(15000, self._auto_stop)
 
@@ -900,12 +1145,29 @@ class AssistantPanel(QWidget):
         if self._recorder is not None and time.monotonic() - self._rec_t0 >= 14.5:
             self._stop_recording()
 
+    def _cancel_recording(self):
+        rec, self._recorder = self._recorder, None
+        self._mic.setStyleSheet(_BTN_SS)
+        self._wave.stop()
+        self._input.show()
+        self._input.setFocus()
+        self._show_status("")
+        if rec is not None:
+            rec.stop()
+
     def _stop_recording(self):
         rec, self._recorder = self._recorder, None
         self._mic.setStyleSheet(_BTN_SS)
+        self._wave.stop()
+        self._input.show()
+        self._input.setFocus()
         audio = rec.stop()
         if len(audio) < 4000:                   # moins d'un quart de seconde
             self._show_status("")
+            return
+        if rec.peak < 0.01:                     # micro muet ou mauvais micro : Whisper ne rendrait rien
+            self._show_status("")
+            self._say_assistant(tr("asst_mic_silent"))
             return
         from assistant_voice import TranscribeWorker, model_ready
         self._show_status(tr("asst_transcribing") if model_ready() else tr("asst_downloading"))
@@ -918,8 +1180,10 @@ class AssistantPanel(QWidget):
 
     def _on_transcribed(self, text, _lang):
         self._show_status("")
-        if text:
-            self.submit(text)
+        if text.strip():
+            self.submit(text.strip())
+        else:                                   # avant : rien ne se passait, sans un mot
+            self._say_assistant(tr("asst_heard_nothing"))
 
     def _on_transcribe_failed(self, msg):
         self._show_status("")
@@ -929,6 +1193,71 @@ class AssistantPanel(QWidget):
         self._worker.deleteLater()
         self._worker = None
         self._mic.setEnabled(True)
+
+
+class _Waveform(QWidget):
+    """Forme d'onde qui défile pendant la dictée (comme les assistants vocaux) : on
+    voit tout de suite si le micro entend quelque chose."""
+
+    BARS, BAR_W, GAP = 90, 3, 2
+    send = Signal()         # Entrée : on arrête et on envoie
+    cancel = Signal()       # Échap : on jette l'enregistrement
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(26)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self._levels = deque([0.0] * self.BARS, maxlen=self.BARS)
+        self._src, self._t0 = None, 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._tick)
+
+    def start(self, recorder):
+        self._src, self._t0 = recorder, time.monotonic()
+        self._levels.extend([0.0] * self.BARS)
+        self.show()
+        self._timer.start()
+        QTimer.singleShot(0, self.setFocus)     # Entrée / Échap arrivent ici pendant la dictée
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self.send.emit()
+        elif ev.key() == Qt.Key_Escape:
+            self.cancel.emit()
+        else:
+            super().keyPressEvent(ev)
+
+    def stop(self):
+        self._timer.stop()
+        self._src = None
+        self.hide()
+
+    def _tick(self):
+        lv = getattr(self._src, "level", 0.0) or 0.0
+        self._levels.append(min(1.0, (lv * 14) ** 0.6))     # voix posée ≈ 0,03-0,1 RMS
+        self.update()
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#111"))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        secs = int(time.monotonic() - self._t0)
+        p.setPen(QColor("#ff5577"))
+        p.drawText(QRectF(6, 0, 40, self.height()), Qt.AlignVCenter | Qt.AlignLeft, f"● {secs // 60}:{secs % 60:02d}")
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#00d4ff"))
+        mid, h = self.height() / 2, self.height() - 8
+        x = self.width() - 6 - self.BAR_W
+        for v in reversed(self._levels):         # le plus récent à droite, défile vers la gauche
+            if x < 50:
+                break
+            bh = max(2.0, v * h)
+            p.drawRoundedRect(QRectF(x, mid - bh / 2, self.BAR_W, bh), 1.5, 1.5)
+            x -= self.BAR_W + self.GAP
+        p.end()
 
 
 # Bêta cachée : 3 clics sur le titre « JOURNAL » (ou ce raccourci) montrent ou
@@ -1024,6 +1353,7 @@ class AssistantDock(QWidget):
         self.store.data["unlocked"] = on
         self.store.save()
         self._bar.setVisible(on)
+        self._fill_height()
         self.show_tab("assistant" if on else "log")
 
     def show_tab(self, name, remember=True):
@@ -1042,6 +1372,13 @@ class AssistantDock(QWidget):
     def set_root(self, root_layout: QLayout, zone: QWidget):
         """`root_layout` : la colonne de gauche ; `zone` : son enfant qui contient ce dock."""
         self._root_layout, self._zone = root_layout, zone
+        self._fill_height()
+
+    def _fill_height(self):
+        """Assistant visible : le cadre descend jusqu'en bas de la fenêtre. Caché (bêta
+        verrouillée), la colonne reste exactement comme avant."""
+        if self._root_layout is not None and not self._expanded:
+            self._root_layout.setStretchFactor(self._zone, 1 if self.unlocked() else 0)
 
     def _hide_siblings(self, layout: QLayout):
         for i in range(layout.count()):
@@ -1073,7 +1410,7 @@ class AssistantDock(QWidget):
             for wdg in self._hidden:
                 wdg.show()
             self._hidden = []
-            self._root_layout.setStretchFactor(self._zone, 0)
             self._root_layout.setAlignment(self._zone, Qt.AlignHCenter)
+            self._fill_height()
         self._btn_expand.setText("⤡" if on else "⤢")
         self.expanded_changed.emit(on)

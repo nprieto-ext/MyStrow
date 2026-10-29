@@ -1976,7 +1976,7 @@ de suivi dès son expédition (en général sous 1 à 2 jours ouvrés).</p>
 
 
 def _email_pack_expedie(email: str, packages: list, ref: str, lang: str = "fr",
-                        objet: str = "pack") -> None:
+                        objet: str = "pack", correction: bool = False) -> None:
     def ligne(p):
         t = html_escape(p["tracking"])
         if p.get("url"):
@@ -1990,6 +1990,9 @@ def _email_pack_expedie(email: str, packages: list, ref: str, lang: str = "fr",
 <div class="box">🚚 &nbsp;{lignes}</div>
 <p>Enter this number on the carrier's website to follow your parcel.</p>
 """
+        if correction:
+            subject = f"MyStrow — Corrected tracking number ({ref})"
+            content += "<p>⚠ This number replaces the one sent previously.</p>"
     else:
         subject = f"MyStrow — Votre {objet} est expédié{'e' if objet == 'interface' else ''} ({ref})"
         content = f"""
@@ -1997,6 +2000,9 @@ def _email_pack_expedie(email: str, packages: list, ref: str, lang: str = "fr",
 <div class="box">🚚 &nbsp;{lignes}</div>
 <p>Saisissez ce numéro sur le site du transporteur pour suivre votre colis.</p>
 """
+        if correction:
+            subject = f"MyStrow — N° de suivi corrigé ({ref})"
+            content += "<p>⚠ Ce numéro remplace celui envoyé précédemment.</p>"
     _send_email(email, subject, content, lang=lang)
 
 
@@ -2115,6 +2121,38 @@ _TRANSPORTEURS = {
 }
 
 
+def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
+                       par: str) -> dict | None:
+    """Pose le suivi d'une interface seule et prévient le client.
+
+    Commun à la page de Fanny et à l'admin panel. Une commande déjà expédiée
+    est une correction : le client reçoit le nouveau numéro, signalé comme tel.
+    Retourne le colis enregistré, ou None si transporteur / numéro invalides.
+    """
+    code = re.sub(r"\s+", "", suivi or "").upper()
+    if transp not in _TRANSPORTEURS or not re.fullmatch(r"[A-Z0-9]{6,40}", code):
+        return None
+    nom, url = _TRANSPORTEURS[transp]
+    colis = {"carrier": nom, "tracking": code, "url": url.format(code)}
+    correction = cmd.get("status") == "shipped"
+    maj = {"status": "shipped", "packages": [colis], "shipped_by": par}
+    if correction:
+        maj["previous_packages"] = cmd.get("packages") or []
+        maj["corrected_utc"] = time.time()
+    else:
+        maj["shipped_utc"] = time.time()
+    ref.update(maj)
+    ref_client = order_id.replace("MS-", "")[:8]
+    _email_pack_expedie(cmd.get("email", ""), [colis], ref_client,
+                        cmd.get("lang") or "fr", objet="interface", correction=correction)
+    a = cmd.get("address") or {}
+    dest = html_escape(f"{a.get('name', '')} — {a.get('postal_code', '')} {a.get('city', '')}")
+    quoi = "Suivi corrigé" if correction else "Interface expédiée"
+    _alert_admin(f"MyStrow — {quoi} ({ref_client}, par {par})",
+                 f"<p>{html_escape(cmd.get('email', ''))} → {dest}<br>{nom} : <b>{code}</b></p>")
+    return colis
+
+
 def _page_expedition(titre: str, corps: str, status: int = 200) -> https_fn.Response:
     page = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
@@ -2152,18 +2190,12 @@ def boitier_expedie(req: https_fn.Request) -> https_fn.Response:
 
     erreur = ""
     if req.method == "POST":
-        code = re.sub(r"\s+", "", req.form.get("suivi") or "").upper()
-        transp = req.form.get("transporteur") or ""
-        if transp in _TRANSPORTEURS and re.fullmatch(r"[A-Z0-9]{6,40}", code):
-            nom, url = _TRANSPORTEURS[transp]
-            colis = [{"carrier": nom, "tracking": code, "url": url.format(code)}]
-            ref.update({"status": "shipped", "packages": colis, "shipped_utc": time.time()})
-            _email_pack_expedie(cmd.get("email", ""), colis, ref_client,
-                                cmd.get("lang") or "fr", objet="interface")
-            _alert_admin(f"MyStrow — Interface expédiée par Fanny ({ref_client})",
-                         f"<p>{html_escape(cmd.get('email', ''))} → {dest}<br>{nom} : <b>{code}</b></p>")
+        colis = _enregistrer_suivi(ref, cmd, order_id, req.form.get("transporteur") or "",
+                                   req.form.get("suivi") or "", "Fanny")
+        if colis:
             return _page_expedition("Merci", f"<h1 class='ok'>✓ C'est envoyé !</h1><div class='box'>"
-                                    f"Réf. {ref_client} → {dest}<br>{nom} : <b>{code}</b></div>"
+                                    f"Réf. {ref_client} → {dest}<br>{colis['carrier']} : "
+                                    f"<b>{html_escape(colis['tracking'])}</b></div>"
                                     "<p>Le client vient de recevoir son n° de suivi. Merci Fanny 🙏</p>")
         erreur = "<p class='err'>Choisis le transporteur et vérifie le numéro (lettres et chiffres).</p>"
 
@@ -2175,6 +2207,38 @@ def boitier_expedie(req: https_fn.Request) -> https_fn.Response:
 <label for="t">Transporteur</label><select id="t" name="transporteur">{options}</select>
 <label for="s">N° de suivi</label><input id="s" name="suivi" autocomplete="off" autocapitalize="characters" required>
 <button type="submit">Envoyer le suivi au client</button></form>""")
+
+
+@https_fn.on_request(max_instances=3)
+def admin_boitier_suivi(req: https_fn.Request) -> https_fn.Response:
+    """Saisie / correction du suivi d'une interface seule depuis l'admin panel.
+    POST — Authorization: Bearer <firebase_id_token> (ADMIN_EMAILS)
+    Body : {"order_id": "MS-…", "transporteur": "colissimo", "suivi": "6A…"}"""
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+    admin = _verify_admin(req)
+    h = {**_CORS_HEADERS, "Content-Type": "application/json"}
+    if not admin:
+        return https_fn.Response(json.dumps({"error": "Accès réservé aux administrateurs"}),
+                                 status=403, headers=h)
+    try:
+        body = json.loads(req.data or b"{}")
+    except Exception:
+        body = {}
+    order_id = str(body.get("order_id") or "").strip()
+    if not order_id:
+        return https_fn.Response(json.dumps({"error": "order_id manquant"}), status=400, headers=h)
+    ref = _get_db().collection("boitier_commandes").document(order_id)
+    cmd = ref.get().to_dict() or {}
+    if cmd.get("plan") != "boitier":
+        return https_fn.Response(json.dumps({"error": "Commande d'interface seule introuvable"}),
+                                 status=404, headers=h)
+    colis = _enregistrer_suivi(ref, cmd, order_id, str(body.get("transporteur") or ""),
+                               str(body.get("suivi") or ""), admin)
+    if not colis:
+        return https_fn.Response(json.dumps({"error": "Transporteur ou n° de suivi invalide"}),
+                                 status=400, headers=h)
+    return https_fn.Response(json.dumps({"ok": True, "package": colis}), status=200, headers=h)
 
 
 # --- Alerte « vente Amazon » ------------------------------------------------

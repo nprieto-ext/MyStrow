@@ -177,7 +177,7 @@
     "La lyre s'allume et suit la borne que vous déplacez. Effets et visée restent ensuite dans cette zone.": "The moving head lights up and follows the limit you drag. Effects and aim then stay inside this area.",
     "Revenir à 100 %": "Back to 100%",
     // ── SCÈNE ──
-    "SELECT ALL": "SELECT ALL", "NOMS": "NAMES", "Zoom du plan": "Plot zoom", "Zoomer": "Zoom in", "Dézoomer": "Zoom out",
+    "SELECT ALL": "SELECT ALL", "NOMS": "NAMES", "DÉPLACER": "MOVE", "Zoom du plan": "Plot zoom", "Zoomer": "Zoom in", "Dézoomer": "Zoom out",
     "POSITION": "POSITION", "Position": "Position", "SYM PAN": "SYM PAN", "SYM TILT": "SYM TILT", "CENTRER": "CENTER",
     "gauche ↔ droite": "left ↔ right", "haut ↕ bas": "up ↕ down", "EFFETS RAPIDES": "QUICK EFFECTS", "Arrêter": "Stop",
     "VITESSE": "SPEED", "AMPLITUDE": "AMPLITUDE", "DÉPHASAGE": "PHASE", "Cercle": "Circle", "Huit": "Figure 8",

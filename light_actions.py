@@ -31,6 +31,7 @@ _KINDS = {
     "laser":  lambda p: "laser" in _ftype(p),
     "douche": lambda p: p.group.startswith("douche"),
     "fumee":  lambda p: not is_light(p),
+    "etincelle": lambda p: any(k in _ftype(p) for k in ("etincel", "étincel", "spark", "flamme", "confetti")),
 }
 
 
@@ -197,6 +198,60 @@ def set_faders(w, nums: list, value: int, seconds: float = 0):
     _ensure_fade_timer(w)
 
 
+def gradient(w, idxs: list, hexes: list, level: int = 100):
+    """Dégradé de la 1re à la dernière couleur, de gauche à droite de la scène
+    (position sur le plan de feu, sinon ordre du patch)."""
+    from PySide6.QtGui import QColor
+    _cancel_fades(idxs)
+    order = sorted(idxs, key=lambda i: (getattr(w.projectors[i], "canvas_x", None) is None,
+                                        getattr(w.projectors[i], "canvas_x", None) or 0, i))
+    stops = [QColor(h) for h in hexes]
+    n = len(order)
+    for k, i in enumerate(order):
+        pos = k / (n - 1) if n > 1 else 0.0
+        seg = min(len(stops) - 2, int(pos * (len(stops) - 1))) if len(stops) > 1 else 0
+        a, b = stops[seg], stops[min(seg + 1, len(stops) - 1)]
+        f = pos * (len(stops) - 1) - seg if len(stops) > 1 else 0.0
+        c = QColor(round(a.red() + (b.red() - a.red()) * f), round(a.green() + (b.green() - a.green()) * f),
+                   round(a.blue() + (b.blue() - a.blue()) * f))
+        w._apply_tablet_event({"type": "proj_color", "idxs": [i], "color": c.name()})
+    w._apply_tablet_event({"type": "proj_level", "idxs": order, "value": int(level)})
+
+
+def change_gobo(w, idxs: list, open_: bool = False) -> int:
+    """Gobo suivant sur les appareils qui en ont (« change les gobos »), ou gobo
+    ouvert. Rend le nombre d'appareils touchés."""
+    from core import fixture_projects_gobo, gobo_slot_index, gobo_slot_dmx, GOBO_SLOT_COUNT
+    done = 0
+    for i in idxs:
+        p = w.projectors[i]
+        if not fixture_projects_gobo(p):
+            continue
+        if open_:
+            val = 0
+        else:
+            slots = sorted(int(s["dmx"]) for s in (getattr(p, "gobo_wheel_slots", None) or [])
+                           if isinstance(s, dict) and str(s.get("dmx", "")).isdigit())
+            cur = int(getattr(p, "gobo", 0) or 0)
+            if slots:       # vraie roue calibrée : cran suivant, en boucle
+                val = next((d for d in slots if d > cur), slots[0])
+            else:
+                val = gobo_slot_dmx((gobo_slot_index(cur) + 1) % GOBO_SLOT_COUNT)
+        w._apply_tablet_event({"type": "proj_gobo", "idxs": [i], "value": val})
+        done += 1
+    return done
+
+
+def set_live(w, on: bool) -> bool:
+    """Mode LIVE (les lumières suivent le son de la carte son / du micro)."""
+    btn = getattr(getattr(w, "seq", None), "live_btn", None)
+    if btn is None:
+        return False
+    if btn.isChecked() != on:
+        btn.setChecked(on)
+    return True
+
+
 def blackout(w):
     _cancel_fades()
     w.full_blackout()
@@ -207,10 +262,18 @@ def all_effects() -> list:
     return list(BUILTIN_EFFECTS) + _load_custom_effects()
 
 
-def fire_effect(w, name: str) -> bool:
+def fire_effect(w, name: str, everywhere: bool = False) -> bool:
+    """`everywhere` : toutes les couches visent tous les projecteurs (« que ça prenne
+    sur tous les projos »), sur une copie : l'effet enregistré ne change pas."""
     cfg = next((e for e in all_effects() if e.get("name") == name), None)
     if cfg is None:
         return False
+    if everywhere:
+        import copy
+        cfg = copy.deepcopy(cfg)
+        for layer in cfg.get("layers") or []:
+            if isinstance(layer, dict):
+                layer["target_preset"] = "Tous"
     w.active_effect = name
     w.active_effect_config = cfg
     w.start_effect(name)

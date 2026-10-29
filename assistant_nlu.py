@@ -168,8 +168,17 @@ TARGETS = {
     "k:barre": {"fr": ["barre", "barres", "barre led"], "en": ["bar", "bars", "led bar", "led bars"],
                 "es": ["barra", "barras"], "de": ["leiste", "leisten", "led leiste"],
                 "pt": ["barra", "barras"], "ja": ["バー"]},
-    "k:laser": {"fr": ["laser", "lasers"], "en": ["laser", "lasers"], "es": ["laser", "laseres"],
+    "k:laser": {"fr": ["laser", "lasers", "l aserre", "laserre"], "en": ["laser", "lasers"], "es": ["laser", "laseres"],
                 "de": ["laser"], "pt": ["laser", "lasers"], "ja": ["レーザー"]},
+    # « états-celles », « et tes celles » : ce que la dictée fait d'« étincelles ».
+    "k:etincelle": {"fr": ["etincelles", "etincelle", "machine a etincelles", "machines a etincelles", "etats celles",
+                           "etat celles", "etat celle", "sparkular", "jets d etincelles"],
+                    "en": ["sparks", "spark machine", "spark machines", "sparkular", "cold spark", "cold sparks"],
+                    "es": ["chispas", "maquina de chispas"], "de": ["funken", "funkenmaschine"],
+                    "pt": ["faiscas", "maquina de faiscas"], "ja": ["スパーク"]},
+    "k:fumee": {"fr": ["fumee", "machine a fumee", "brouillard", "machine a brouillard"],
+                "en": ["smoke", "fog", "haze", "smoke machine", "fog machine"], "es": ["humo", "maquina de humo"],
+                "de": ["nebel", "nebelmaschine"], "pt": ["fumo", "maquina de fumo"], "ja": ["スモーク"]},
 }
 
 # « les lumières », « mes projecteurs » : toutes les lumières (sans numéro derrière).
@@ -326,7 +335,7 @@ STYLE = {
 }
 # Familles d'effets → mot cherché dans les noms intégrés (français).
 EFFECT_TYPES = {
-    "strobe":  {"fr": ["strobe", "stroboscope", "stroboscopique"], "en": ["strobe", "strobes"],
+    "strobe":  {"fr": ["strobe", "stroboscope", "stroboscopique", "strober", "strobo", "strobes"], "en": ["strobe", "strobes"],
                 "es": ["estrobo", "estroboscopio", "strobe"], "de": ["stroboskop", "strobe"],
                 "pt": ["estrobo", "estroboscopio", "strobe"], "ja": ["ストロボ"]},
     "chase":   {"fr": ["chenillard", "chase", "poursuite"], "en": ["chase", "chaser"], "es": ["persecucion", "chase"],
@@ -342,9 +351,109 @@ EFFECT_TYPES = {
                 "pt": ["flash"], "ja": ["フラッシュ"]},
     "fire":    {"fr": ["effet feu", "flammes"], "en": ["fire"], "es": ["fuego"], "de": ["feuer"], "pt": ["fogo"],
                 "ja": ["炎", "ファイヤー"]},
+    # Mouvement de lyres (« fais tourner les lyres ») → effets de la catégorie Lyre.
+    "movement": {"fr": ["tourner", "tourne", "tournent", "bouger", "bouge", "bougent", "mouvement", "mouvements",
+                        "cercle", "cercles", "balancier", "pendule", "figure 8", "figure de 8", "en huit", "infini",
+                        "spirale", "balayage", "balaye", "balayer"],
+                 "en": ["move", "movement", "spin", "rotate", "circle", "circles", "swing", "pendulum",
+                        "figure 8", "figure eight", "infinity", "spiral", "sweep"],
+                 "es": ["mover", "muevan", "movimiento", "girar", "giren", "circulo", "circulos", "pendulo", "espiral",
+                        "barrido"],
+                 "de": ["bewegen", "bewegung", "drehen", "kreis", "kreise", "pendel", "spirale"],
+                 "pt": ["mexer", "movimento", "girar", "circulo", "circulos", "pendulo", "espiral", "varrer"],
+                 "ja": ["動かして", "回して", "円", "ムーブ"]},
 }
 _EFFECT_TYPE_TOKEN = {"strobe": "strobe", "chase": "chase", "rainbow": "rainbow", "pulse": "pulse",
-                      "wave": "vague", "flash": "flash", "fire": "feu"}
+                      "wave": "vague", "flash": "flash", "fire": "feu", "movement": "lyre"}
+# Forme du mouvement → mot du nom de l'effet Lyre (« Lyre Cercle »…). Sans forme dite, un cercle.
+MOVE_SHAPES = {
+    "figure": ["figure 8", "figure de 8", "en huit", "figure eight"],
+    "infini": ["infini", "infinity"],
+    "balancier": ["balancier", "swing"],
+    "pendule": ["pendule", "pendulum", "pendulo", "pendel"],
+    "spiral": ["spirale", "spiral", "espiral"],
+    "sweep": ["balayage", "balaye", "balayer", "sweep", "barrido", "varrer"],
+    "carre": ["carre", "square"],
+    "cercle": ["cercle", "cercles", "circle", "circles", "circulo", "circulos", "kreis", "kreise", "円"],
+}
+
+# Ambiances à thème → couleurs posées en alternance.
+THEMES = {
+    "halloween": {"fr": ["halloween", "citrouille"], "en": ["halloween", "spooky"], "es": ["halloween"],
+                  "de": ["halloween"], "pt": ["halloween", "dia das bruxas"], "ja": ["ハロウィン"]},
+    "christmas": {"fr": ["noel", "sapin"], "en": ["christmas", "xmas"], "es": ["navidad", "navideno"],
+                  "de": ["weihnachten", "weihnachtlich"], "pt": ["natal", "natalino"], "ja": ["クリスマス"]},
+    "romantic":  {"fr": ["romantique", "saint valentin", "amoureux"], "en": ["romantic", "valentine"],
+                  "es": ["romantico", "romantica", "san valentin"], "de": ["romantisch", "valentinstag"],
+                  "pt": ["romantico", "romantica", "dia dos namorados"], "ja": ["ロマンチック", "バレンタイン"]},
+    "ocean":     {"fr": ["ocean", "sous marin", "sous marine", "aquatique", "plage", "marin", "marine"], "en": ["ocean", "underwater", "beach"],
+                  "es": ["oceano", "submarino", "playa"], "de": ["ozean", "meer", "unterwasser", "strand"],
+                  "pt": ["oceano", "submarino", "praia"], "ja": ["海", "オーシャン"]},
+    "forest":    {"fr": ["foret", "nature", "jungle"], "en": ["forest", "nature", "jungle"],
+                  "es": ["bosque", "naturaleza", "selva"], "de": ["wald", "natur", "dschungel"],
+                  "pt": ["floresta", "natureza", "selva"], "ja": ["森", "ジャングル"]},
+    "hell":      {"fr": ["enfer", "infernal", "volcan"], "en": ["hell", "hellish", "volcano"],
+                  "es": ["infierno", "infernal", "volcan"], "de": ["holle", "hollisch", "vulkan"],
+                  "pt": ["inferno", "infernal", "vulcao"], "ja": ["地獄", "火山"]},
+    "ice":       {"fr": ["glace", "hiver", "neige", "polaire", "banquise"], "en": ["ice", "winter", "snow", "frozen"],
+                  "es": ["hielo", "invierno", "nieve"], "de": ["eis", "winter", "schnee"],
+                  "pt": ["gelo", "inverno", "neve"], "ja": ["氷", "冬", "雪"]},
+    "sunset":    {"fr": ["coucher de soleil", "soleil couchant", "crepuscule"], "en": ["sunset", "dusk"],
+                  "es": ["atardecer", "puesta de sol"], "de": ["sonnenuntergang", "abendrot"],
+                  "pt": ["por do sol", "entardecer"], "ja": ["夕焼け", "サンセット"]},
+    "club":      {"fr": ["club", "boite de nuit", "discotheque", "soiree dansante"], "en": ["club", "nightclub", "dance party"],
+                  "es": ["discoteca"], "de": ["club", "disco"], "pt": ["discoteca", "balada"],
+                  "ja": ["クラブ"]},
+    "france":    {"fr": ["bleu blanc rouge", "tricolore", "14 juillet"], "en": ["french flag"],
+                  "es": ["bandera francesa"], "de": ["franzosische flagge"], "pt": ["bandeira francesa"], "ja": ["フランス国旗"]},
+}
+THEME_COLORS = {"halloween": ["orange", "purple"], "christmas": ["red", "green"], "romantic": ["pink", "red"],
+                "ocean": ["blue", "cyan"], "forest": ["green", "yellow"], "hell": ["red", "orange"],
+                "ice": ["cyan", "white"], "sunset": ["orange", "pink"], "club": ["magenta", "cyan", "purple"],
+                "france": ["blue", "white", "red"]}
+
+# Ajouter au patch : « ajoute une lyre Shields », « patche-moi 4 PAR Betopper ».
+_PATCH_RE = re.compile(r"(?<![a-z])(?:patche|patcher|patch|patches|ajoute|ajouter|ajoutes|rajoute|rajouter|"
+                       r"installe|add|anade|agrega|anadir|agregar|fuge|hinzufugen|adiciona|adicionar)(?![a-z])|追加")
+# Appareil → recherche générique quand aucune marque ni modèle n'est dit (clé vide : rien à chercher).
+GEAR = {
+    "moving head": ["lyre", "lyres", "moving head", "moving heads", "cabeza movil", "cabezas moviles",
+                    "cabeca movel", "ムービング"],
+    "par": ["par", "pars", "par led", "par leds"],
+    "barre": ["barre", "barres", "barre led", "led bar", "barra", "barras", "leiste"],
+    "strob": ["stroboscope", "stroboscopes", "strobe", "strobes", "estrobo"],
+    "laser": ["laser", "lasers"],
+    "wash": ["wash"], "beam": ["beam", "beams"],
+    "fumee": ["machine a fumee", "machine a brouillard", "fumee", "brouillard", "smoke machine", "fog machine",
+              "hazer", "humo", "nebelmaschine", "fumo"],
+    "": ["projecteur", "projecteurs", "projo", "projos", "appareil", "appareils", "light", "lights", "fixture",
+         "fixtures", "foco", "focos", "proyector", "proyectores", "scheinwerfer", "projetor", "projetores"],
+}
+# Marques courantes : « add a Chauvet Intimidator » se comprend sans « lyre » ni « patch ».
+BRANDS = ["chauvet", "american dj", "adj", "eurolite", "stairville", "showtec", "cameo", "martin", "pro lights",
+          "prolights", "robe", "clay paky", "varytec", "futurelight", "beamz", "briteq", "glp", "uking", "u king",
+          "elation", "shehds", "jb systems", "lightmaxx", "blizzard", "starway", "equinox", "contest", "involight",
+          "betopper", "ayra", "laserworld", "ghost", "mac mah", "algam", "power lighting", "boomtone", "ibiza",
+          "fun generation", "high end", "vari lite", "ayrton", "sgm", "astera", "jade dragon", "nicols", "kam",
+          "acme", "infinity", "lumiere", "eliminator", "stage right", "lixada", "u king", "ehaho"]
+_BRAND_RE = re.compile(r"(?<![a-z])(?:" + "|".join(re.escape(b) for b in BRANDS if b != "lumiere") + r")(?![a-z])")
+# Mots qui ne disent ni la marque ni le modèle.
+_PATCH_FILLER = set("""moi me m ma mon mes une un des de du d le la les l au aux en dans sur pour stp svp merci
+tu peux peux pourrais vous pouvez est ce que nouveau nouvelle nouvel nouveaux nouvelles please the a an
+my new to in into of can you could i want je veux voudrais aimerais j patch dmx plan feu el los las mi mis una
+nuevo nueva por favor den die das ein eine einen meine neue neuen bitte o os as meu minha meus novo nova e
+modele marque model brand s il te plait bibliotheque librairie library biblioteca bibliothek
+biblioteque""".split())
+
+# REC Lumière : « programme-moi les lumières sur cette musique ».
+_MUSIC_RE = re.compile(r"(?<![a-z])(?:musique|chanson|morceau|titre|zik|song|music|track|tune|cancion|musica|"
+                       r"tema|lied|musik|titel|cancao|faixa)(?![a-z])|曲|音楽")
+_PROG_RE = re.compile(r"(?<![a-z])(?:programme|programmer|programmes|programmez|program|programa|programar|"
+                      r"programmiere|programmieren|light ?show|show lumiere|show de lumiere|sequence lumiere|"
+                      r"lichtshow|genere|generer|generate|genera|generar|erstelle|gera|gerar|show|shows|"
+                      r"sequence|secuencia|sequencia|espectaculo)(?![a-z])|プログラム|ライトショー")
+_RAINBOW_RE = re.compile(r"(?<![a-z])(?:multicolore|toutes les couleurs|arc en ciel|rainbow|colorful|colourful|"
+                         r"arcoiris|regenbogen|arco iris|bunt)(?![a-z])")
 
 STOP = {"fr": ["stop", "arrete", "arreter", "arretes", "coupe l effet", "coupe les effets", "coupe l animation",
                "arrete l animation", "plus d effet", "stoppe"],
@@ -372,8 +481,10 @@ PLAYBACK = {
                    "pt": ["proximo", "proxima", "seguinte"], "ja": ["次", "次の曲"]},
     "prev":       {"fr": ["precedent", "precedente"], "en": ["previous", "previous song"], "es": ["anterior"],
                    "de": ["vorherige", "vorheriger", "zuruck"], "pt": ["anterior"], "ja": ["前の曲"]},
-    "play_pause": {"fr": ["play", "pause", "lecture", "joue", "reprends", "lance la musique", "mets la musique"],
-                   "en": ["play", "pause", "resume", "play music"], "es": ["play", "pausa", "reproduce", "reproducir"],
+    "play_pause": {"fr": ["play", "pause", "lecture", "joue", "reprends", "lance la musique", "mets la musique",
+                          "lancer la musique", "lance la playlist", "lancer la playlist", "lance le morceau",
+                          "lancer le morceau", "mets la playlist"],
+                   "en": ["play", "pause", "resume", "play music", "play the music", "start the playlist"], "es": ["play", "pausa", "reproduce", "reproducir"],
                    "de": ["play", "pause", "abspielen", "wiedergabe"], "pt": ["play", "pausa", "toca", "tocar"],
                    "ja": ["再生", "一時停止"]},
     "go_back":    {"fr": ["go moins", "go retour", "go arriere"], "en": ["go back", "go minus"],
@@ -457,11 +568,13 @@ _FORGET_RE = re.compile(r"^\s*(?:oublie|forget|olvida|vergiss|esquece|忘れて)
 # « et » entre deux nombres (« projecteurs 1 et 3 ») ne coupe pas la phrase.
 _SPLIT_RE = re.compile(r"(?<!\d)\s+(?:et|puis|and|then|y|luego|und|dann|e|depois)\s+"
                        r"|\s+(?:et|puis|and|then|y|luego|und|dann|e|depois)\s+(?!\d)"
-                       r"|、|そして|それから|;|(?<!\d),|,(?!\s*\d)")
+                       r"|、|そして|それから|;|(?<!\d),|,(?!\s*\d)"
+                       r"|[.!?。！？](?=\s)")      # fin de phrase (dictée : « c'est le MyStrow. Est-ce que tu peux… »)
 
 _V = {name: Vocab(tbl) for name, tbl in {
     "color": COLORS, "target": TARGETS, "verb": VERBS, "playback": PLAYBACK, "window": WINDOWS,
-    "style": STYLE, "etype": EFFECT_TYPES, "parity": PARITY, "topic": TOPICS,
+    "style": STYLE, "etype": EFFECT_TYPES, "parity": PARITY, "topic": TOPICS, "theme": THEMES,
+    "gear": {k or "generic": {"fr": v} for k, v in GEAR.items()},
 }.items()}
 _W = {name: Vocab({name: tbl}) for name, tbl in {
     "blackout": BLACKOUT, "full": LEVEL_FULL, "half": LEVEL_HALF, "brighter": BRIGHTER, "dimmer": DIMMER,
@@ -592,8 +705,13 @@ def _level(t, votes):
     return None
 
 
-def _pick_effect(effects, t, style, etype, color, lyre):
-    """Nom de l'effet le plus adapté, ou None."""
+def _pick_effect(effects, t, style, etype, color, lyre, alt=False):
+    """Nom de l'effet le plus adapté, ou None. `alt` : « un sur deux » (strobe en alternance)."""
+    shape = None
+    if etype == "movement":
+        lyre, etype = True, None
+        shape = next((tok for tok, words in MOVE_SHAPES.items()
+                      if any(_pattern(x).search(t) for x in words)), "cercle")
     def speed(e):
         layers = e.get("layers")
         if isinstance(layers, list) and layers:
@@ -617,6 +735,10 @@ def _pick_effect(effects, t, style, etype, color, lyre):
     pool = [e for e in effects if e.get("name")]
     if lyre:
         pool = [e for e in pool if e.get("category") == "Lyre"] or pool
+        if shape:
+            pool = [e for e in pool if shape in normalize(e.get("name", ""))] or pool
+            if not style:       # « Lyre Cercle » plutôt que ses variantes (« Lyre Cercle Haché »)
+                return min(pool, key=lambda e: len(e.get("name", "")))["name"]
     else:
         pool = [e for e in pool if e.get("category") not in ("Lyre", "Spécial")
                 and "custom" not in normalize(e.get("name", ""))] or pool
@@ -624,6 +746,8 @@ def _pick_effect(effects, t, style, etype, color, lyre):
         tok = _EFFECT_TYPE_TOKEN[etype]
         pool = [e for e in pool if tok in normalize(e.get("name", ""))
                 or tok == normalize(e.get("type", ""))] or pool
+    if alt:
+        pool = [e for e in pool if "alternance" in normalize(e.get("name", ""))] or pool
     if color and color in COLOR_IN_EFFECT_NAMES:
         word = COLOR_IN_EFFECT_NAMES[color]
         pool = [e for e in pool if word in normalize(e.get("name", "")).split()] or pool
@@ -642,10 +766,62 @@ def _pick_effect(effects, t, style, etype, color, lyre):
         if not etype:     # « doux » : jamais un strobe, sauf s'il est demandé
             pool = [e for e in pool if e.get("type") not in ("Strobe", "Flash")] or pool
         return min(pool, key=speed)["name"]
+    if not etype:
+        pool = [e for e in pool if e.get("type") not in ("Strobe", "Flash")] or pool
     classic = [e for e in pool if "classique" in normalize(e.get("name", ""))]
     if classic:
         return classic[0]["name"]
     return min(pool, key=lambda e: abs(speed(e) - 50))["name"]
+
+
+def _rec_generate(t, votes):
+    """« programme les lumières sur cette musique » → génération IA du REC Lumière
+    (couleur dite, « multicolore », sinon celle par défaut de la fenêtre)."""
+    if not (_MUSIC_RE.search(t) and _PROG_RE.search(t)):
+        return None
+    if _W["effect"].find(t) or _W["memory"].find(t):
+        return None
+    colors = []
+    for key, langs in _V["color"].find_all(t):
+        votes.add((key, langs, None))
+        if key not in colors:
+            colors.append(key)
+    if _RAINBOW_RE.search(t) or len(colors) >= 2:
+        color = "rainbow"
+    else:
+        color = colors[0] if colors else None
+    return {"do": "rec_generate", "color": color}
+
+
+def _patch_add(t, votes):
+    """« ajoute une lyre Shields », « patche-moi 4 PAR Betopper » → bibliothèque de
+    fixtures ouverte sur cette recherche. Pas une couleur ni un effet à ajouter."""
+    m = _PATCH_RE.search(t)
+    etype = _V["etype"].find(t)
+    if not m or _W["effect"].find(t) or (etype and etype[0] != "movement") or _V["color"].find(t):
+        return None
+    if re.search(r"(?<![a-z])(?:cree|creer|fabrique|profil|create)(?![a-z])", t):
+        return None
+    rest = t[m.end():]
+    gear = _V["gear"].find(rest)
+    patch_verb = m.group(0) in ("patche", "patcher", "patches")      # « le patch » est la fenêtre
+    if not gear and not patch_verb and not _BRAND_RE.search(rest):
+        return None
+    if gear:
+        votes.add(gear)
+        rest = rest[:gear[2].start()] + " " + rest[gear[2].end():]
+    qty = 1
+    q = re.search(_NUM, rest)
+    if q:
+        n = int(q.group(1)) if q.group(1).isdigit() else _NUM_WORDS.get(q.group(1), 1)
+        if 1 <= n <= 20 and not re.search(r"\d", rest[q.end():q.end() + 1] or ""):
+            qty = n
+            rest = rest[:q.start()] + " " + rest[q.end():]
+    words = [x for x in re.split(r"[\s'’-]+", rest) if x and x not in _PATCH_FILLER and x not in _NUM_WORDS]
+    if words and gear and gear[0] in ("par", "laser", "wash", "beam"):
+        words.append(gear[0])       # « betopper par » : le type figure dans la fiche, il affine
+    query = " ".join(words) or (gear[0] if gear and gear[0] != "generic" else "")
+    return {"do": "patch_add", "query": query, "qty": qty}
 
 
 def _topic(t, votes):
@@ -702,9 +878,38 @@ def _parse_clause(raw: str, t: str, effects, votes, question=False) -> list:
                 acts.append({"do": "open", "window": "tablet"})
             return acts
 
+    rec = _rec_generate(t, votes)
+    if rec:
+        return [rec]
+    if _CHAT_RE.match(t.strip()):
+        return [{"do": "chat"}]
+    if _STATE_RE.search(t) and not _V["verb"].find(t) and not _W["open"].find(t):
+        return [{"do": "chat"}]
+    if _LIVE_RE.search(t):
+        if question:
+            return [{"do": "answer", "topic": "live"}, {"do": "live", "on": True}]
+        return [{"do": "live", "on": not _LIVE_OFF_RE.search(t)}]
+    if _GOBO_RE.search(t):
+        tgt = _target(t, votes)
+        return [{"do": "gobo", "open": bool(_GOBO_OPEN_RE.search(t)), "target": tgt or {"all": True}}]
+    if _GRADIENT_RE.search(t):
+        cols = []
+        for key, langs in _V["color"].find_all(t):
+            votes.add((key, langs, None))
+            if key not in cols:
+                cols.append(key)
+        if _RAINBOW_RE.search(t) or len(cols) < 2 and re.search(r"toutes les couleurs|all colou?rs|todos los colores", t):
+            cols = cols[:1] + [c for c in RAINBOW_COLORS if c not in cols[:1]] if len(cols) == 1 else RAINBOW_COLORS
+        if len(cols) >= 2:
+            return [{"do": "gradient", "colors": cols, "target": _target(t, votes) or {"all": True},
+                     "level": _level(t, votes)}]
+    patch = _patch_add(t, votes)
+    if patch:
+        return [patch]
+
     if _hit("help", t, votes):
         return [{"do": "help"}]
-    if _hit("status", t, votes):
+    if _hit("status", t, votes) and not _V["target"].find(t):     # « état-celles » = étincelles
         return [{"do": "status"}]
     if _hit("fixture", t, votes) and (_hit("create", t, votes) or len(t.split()) <= 2):
         return [{"do": "fixture"}]
@@ -773,6 +978,13 @@ def _parse_clause(raw: str, t: str, effects, votes, question=False) -> list:
         if fade:
             act["fade"] = fade
         return [act]
+    theme = None if (effect_word or etype_hit) else votes.add(_V["theme"].find(t))
+    if theme:
+        act = {"do": "pattern", "slots": [{"hex": COLOR_HEX[c], "color": c} for c in THEME_COLORS[theme[0]]],
+               "target": target or {"all": True}, "level": _level(t, votes)}
+        if fade:
+            act["fade"] = fade
+        return [act]
     if fade and not (effect_word or etype_hit):
         # « doucement », « langsam » disent ici le fondu, pas un effet lent.
         style_hit = None
@@ -800,7 +1012,8 @@ def _parse_clause(raw: str, t: str, effects, votes, question=False) -> list:
     if effect_word or etype_hit or (style_hit and not color_hit and not target):
         style = style_hit[0] if style_hit else None
         lyre = bool(target and target.get("kind") == "lyre")
-        name = _pick_effect(effects, t, style, etype_hit[0] if etype_hit else None, color, lyre)
+        alt = bool(_ONE_IN_N_RE.search(t) or _W["alternate"].find(t) or _V["parity"].find(t))
+        name = _pick_effect(effects, t, style, etype_hit[0] if etype_hit else None, color, lyre, alt)
         if name:
             act = {"do": "effect", "name": name}
             if style == "fast":
@@ -897,8 +1110,176 @@ def _merge_alternation(parts: list) -> list:
     return out
 
 
+_GRADIENT_RE = re.compile(r"(?<![a-z])(?:degrade|degrades|degrader|gradient|gradation|degradado|farbverlauf|"
+                          r"verlauf)(?![a-z])")
+_GOBO_RE = re.compile(r"(?<![a-z])gobos?(?![a-z])")
+_GOBO_OPEN_RE = re.compile(r"(?<![a-z])(?:enleve|enlever|retire|retirer|sans|ouvert|open|no|quita|sin|ohne|tira|sem)(?![a-z])")
+# Mode LIVE : les lumières suivent le son (carte son, micro).
+_LIVE_RE = re.compile(r"(?<![a-z])(?:mode live|le live|live mode|modo live|live modus|modo ao vivo|reagi\w* au son|reagi\w* a la musique|suis la musique|suivre la musique|"
+                      r"au rythme de la musique|au son de|carte son|sound to light|follow the music|react\w* to (?:the )?(?:music|sound)|"
+                      r"al ritmo de la musica|carta de sonido|tarjeta de sonido|auf die musik|soundkarte|"
+                      r"ao ritmo da musica|placa de som)(?![a-z])")
+_LIVE_OFF_RE = re.compile(r"(?<![a-z])(?:arrete|quitte|sors|coupe|stop|desactive|exit|leave|turn off|para|sal|beende|sai)(?![a-z])")
+# Discussion sans demande (« ouais pas mal », « parfait », « merci ») : rien à faire.
+_CHAT_WORDS = ("ouais oui ok okay d accord parfait super genial top cool pas mal trop bien merci nickel bien tres "
+               "excellent c est bon ah oh bah euh hum voila ca marche ca roule nice great thanks thank you perfect "
+               "good awesome gracias perfecto genial vale danke prima perfekt obrigado perfeito otimo bom "
+               "c est parti let s go allez yes yeah wow bravo impeccable magnifique").split()
+_CHAT_RE = re.compile(r"^(?:(?:" + "|".join(sorted(set(_CHAT_WORDS), key=len, reverse=True)) + r")(?![a-z])[\s,!.]*)+$")
+# « ils sont encore en blanc », « c'est tout rouge » : on décrit, on ne demande rien.
+_STATE_RE = re.compile(r"(?<![a-z])(?:ils|elles|il|elle|ca|c|ce|tout|they|it|its|it s|ellos|sie|es|eles)\s+"
+                       r"(?:sont|est|restent|reste|etaient|etait|are|is|were|was|estan|esta|sind|ist|sao|estao)(?![a-z])")
+RAINBOW_COLORS = ["red", "orange", "yellow", "green", "cyan", "blue", "purple"]
+
+# Ambiance tamisée / feutrée / cosy : lumière basse, blanc chaud sauf couleur dite.
+_DIM_RE = re.compile(r"(?<![a-z])(?:tamise|tamisee|tamisees|tamises|feutre|feutree|cosy|cozy|cocooning|intime|"
+                     r"dimmed|subdued|acogedor|acogedora|gedimmt|gemutlich|aconchegante|intimo|intima)(?![a-z])")
+DIM_LEVEL = 40
+_MOOD_RE = re.compile(r"(?<![a-z])(?:ambiance|ambiances|atmosphere|mood|vibe|ambiente|stimmung|clima)(?![a-z])")
+# « une ambiance chaude » : alternance orange / ambre / rouge ; « blanc chaud » dit reste du blanc chaud.
+WARM_MOOD = ["orange", "amber", "red"]
+_WARM_WORD_RE = re.compile(r"(?<![a-z])(?:chaleureuse|chaleureux|chaleureuses|chaleureux|calurosa|caluroso|"
+                           r"acolhedora|acolhedor)(?![a-z])")
+_WARM_WHITE_RE = re.compile(r"(?<![a-z])(?:blanc chaud|blancs chauds|warm white|blanco calido|warmweiss|branco quente)(?![a-z])")
+
+
+def warm_mood(t: str) -> bool:
+    """Ambiance chaude demandée sans autre couleur ni blanc chaud explicite (t normalisé)."""
+    if _DIM_RE.search(t) or _WARM_WHITE_RE.search(t) or _V["theme"].find(t):
+        return False
+    cols = {k for k, _ in _V["color"].find_all(t)}
+    if _WARM_WORD_RE.search(t):
+        return not cols - {"warm"}
+    return cols == {"warm"} and bool(_MOOD_RE.search(t))
+
+
+# ── Suite de conversation ────────────────────────────────────────────────────
+# « non, … » : correction de la demande précédente. Jamais un ordre en soi : le
+# modèle lisait « non » comme « stop » et coupait les effets.
+_CORRECTION_RE = re.compile(r"^\s*(?:(?:mais|ah|oh|euh)\s+)?(?:non|nan|no|nope|nein|nao)(?![a-z])[\s,!.]*")
+# « je parlais de l'effet » : précision sans ordre.
+_MEANT_RE = re.compile(r"^(?:je parlais|je parle|je voulais dire|je veux dire|i meant|i mean|i was talking|"
+                       r"me referia|hablaba|ich meinte|eu queria dizer|falava)(?![a-z])")
+# « pas blanc chaud » : couleur refusée, retirée avant d'analyser la phrase.
+_NEG_RE = re.compile(r"(?<![a-z])(?:pas|sans|not|sin|nicht|kein|sem)\s+(?:de |du |en |le |la |un |une |the |a )?"
+                     r"([a-z]+(?: [a-z]+)?)")
+# Pronom qui reprend ce qu'on vient de faire : « baisse-les », « remets-le », « coupe ça ».
+_PRONOUN_RE = re.compile(
+    r"(?<![a-z])(baisse|baisser|descends|redescends|monte|remonte|pousse|remets|remet|mets|met|coupe|eteins|"
+    r"eteint|rallume|allume|lower|raise|dim|bring)[\s-]+(les|le|la|ca|them|it|those)(?![a-z])"
+    # Pronom seulement s'il n'est pas suivi d'un nom (« mets les étincelles à fond » n'en est pas un).
+    r"(?=\s*(?:$|[,.!?]|a |au |en |doucement|progressivement|lentement|tranquillement|mais|plus|moins|un peu|"
+    r"\d|tout de suite|stp|s il|down|up|slowly|again|please))")
+_RELAUNCH_RE = re.compile(r"(?<![a-z])(?:remets|remet|relance|relancer|rallume|reprends|remettre|restart|relaunch|"
+                          r"again)(?![a-z])")
+_ALL_SCOPE_RE = re.compile(r"(?<![a-z])(?:tous les (?:projos|projecteurs|groupes|appareils)|toutes les lumieres|"
+                           r"sur tout|partout|all (?:the )?(?:lights|fixtures|groups)|everywhere|todos los|alle)(?![a-z])")
+_UP_RE = re.compile(r"(?<![a-z])(?:monte|remonte|pousse|rallume|allume|remets|remet|raise|bring)(?![a-z])")
+_OFF_RE = re.compile(r"(?<![a-z])(?:coupe|eteins|eteint)(?![a-z])")
+
+
+_YES_RE = re.compile(r"^(?:oui|ouais|ok|okay|vas y|go|d accord|yes|yep|sure|si|vale|claro|ja|klar|sim|pode|はい|お願い)"
+                     r"(?![a-z])[\s,!.]*(?:vas y|go|ouvre|ouvre le|oui|stp|merci|please|bitte)?[\s,!.]*$")
+_NO_RE = re.compile(r"^(?:non|nan|no|nope|nein|nao|いいえ|laisse tomber|annule|cancel|pas maintenant)(?![a-z])[\s,!.]*"
+                    r"(?:merci|thanks|danke|obrigado|gracias)?[\s,!.]*$")
+
+
+def yes_no(text: str):
+    """Réponse à une question Oui / Non de l'assistant : True, False, ou None (autre chose)."""
+    t = _WAKE_RE.sub("", normalize(text)).strip()
+    if _YES_RE.match(t):
+        return True
+    if _NO_RE.match(t):
+        return False
+    return None
+
+
+def followup(text: str, last: dict):
+    """Lit une phrase qui dépend de la précédente. `last` : dernière action exécutée,
+    {"kind": "fader"|"target"|"effect", …} (cf. AssistantExecutor). Rend
+    (actions, texte) : des actions déjà résolues, ou None et le texte nettoyé (sans
+    « non, », sans la couleur refusée) à analyser normalement."""
+    raw = text or ""
+    t = normalize(raw)
+    m = _CORRECTION_RE.match(t)
+    correction = bool(m)
+    if m:
+        t = t[m.end():]
+        raw = re.sub(r"^\s*(?:(?:mais|ah|oh|euh)\s+)?(?:non|nan|no|nope|nein|não|nao)\b[\s,!.]*", "", raw,
+                     flags=re.IGNORECASE)
+    last = last or {}
+    votes = _Votes()
+
+    if _MEANT_RE.match(t) or (correction and not t.strip()):
+        about = "effect" if _W["effect"].find(t) else last.get("kind") or "generic"
+        return [{"do": "clarify", "about": about}], raw
+
+    # « remets les effets », « relance l'effet (sur tous les groupes) » : le dernier effet lancé.
+    if last.get("effect") and _RELAUNCH_RE.search(t) and (_W["effect"].find(t) or _PRONOUN_RE.search(t)):
+        return [{"do": "effect", "name": last["effect"], "all": bool(_ALL_SCOPE_RE.search(t))}], raw
+    # « que ça prenne sur tous les projos » juste après un effet.
+    if (last.get("kind") == "effect" and _ALL_SCOPE_RE.search(t) and not _V["color"].find(t)
+            and re.search(r"(?<![a-z])(?:ca|le|l effet|it|that)(?![a-z])", t)):
+        return [{"do": "effect", "name": last["effect"], "all": True}], raw
+
+    pm = _PRONOUN_RE.search(t)
+    if pm and last.get("kind") in ("fader", "target"):
+        fade = _fade(t, votes)
+        color = votes.add(_V["color"].find(t))
+        if color:       # « mets-les en rouge » : une couleur ne va qu'à des projecteurs
+            if last["kind"] != "target":
+                return None, raw
+            act = {"do": "color", "hex": COLOR_HEX[color[0]], "color": color[0], "target": last["target"],
+                   "level": _level(t, votes) or 100}
+            if fade:
+                act["fade"] = fade
+            return [act], raw
+        level = _level(_DURATION_RE.sub(" ", t), votes)
+        if _OFF_RE.search(pm.group(1)):
+            level = 0
+        elif level is None and last["kind"] == "target" and pm.group(1) in ("allume", "rallume"):
+            level = 100
+        if level is None and pm.group(1) in ("mets", "met"):
+            return None, raw            # « mets-les » sans niveau ni couleur : rien de sûr
+        delta = None if level is not None else (20 if _UP_RE.search(pm.group(1)) else -20)
+        if last["kind"] == "fader":
+            act = ({"do": "fader", "faders": last["faders"], "level": level} if delta is None
+                   else {"do": "fader_rel", "faders": last["faders"], "delta": delta})
+        else:
+            act = ({"do": "level", "target": last["target"], "level": level} if delta is None
+                   else {"do": "level_rel", "target": last["target"], "delta": delta})
+        if fade:
+            act["fade"] = fade
+        return [act], raw
+
+    # Couleurs refusées (« pas blanc chaud ») : la négation et tous les mots de cette
+    # couleur (« … type chaude rouge et blanc ») sont retirés de la phrase.
+    refused = set()
+    for nm in list(_NEG_RE.finditer(t)):
+        hit = _V["color"].find(nm.group(1))
+        if hit:
+            refused.add(hit[0])
+            t = t.replace(nm.group(0), " ")
+    if not refused:
+        return None, raw.strip(" ,")
+    for key, _langs, word, pat in _V["color"].entries:
+        if key in refused:
+            t = pat.sub(" ", t)
+    return None, re.sub(r"\s+", " ", t).strip(" ,")
+
+
+# « Ok MyStrow, … » : l'appel n'est pas une demande (découpé à la virgule, il
+# répondait « je n'ai pas compris « Ok MyStrow » »).
+_WAKE_RE = re.compile(r"^\s*(?:(?:ok|okay|hey|he|hé|eh|dis|salut|bonjour|hola|hallo|ola|olá)[\s,!.]*)?"
+                      r"my\s?strow\b[\s,!.:]*", re.IGNORECASE)
+
+
 def parse(text: str, effects=(), default_lang: str = "fr", aliases: dict = None) -> Parsed:
     """Analyse une demande. `aliases` : {phrase normalisée: commande} appris."""
+    stripped = _WAKE_RE.sub("", text or "")
+    if stripped != (text or "") and not stripped.strip():
+        return Parsed(default_lang, [{"do": "help"}])        # « Ok MyStrow » seul : ce que je sais faire
+    text = stripped
     aliases = aliases or {}
     votes = _Votes()
     t_all = normalize(text)
@@ -914,6 +1295,35 @@ def parse(text: str, effects=(), default_lang: str = "fr", aliases: dict = None)
     if _W["trouble"].find(t_all) and (_W["connect"].find(t_all) or re.search(r"(?<![a-z])(?:relance|redemarre)", t_all)):
         votes.add(_W["trouble"].find(t_all))
         return Parsed(votes.lang(default_lang), [{"do": "connect"}])
+
+    if _GRADIENT_RE.search(t_all):
+        acts = _parse_clause(text, t_all, effects, votes)
+        if acts and acts[0]["do"] == "gradient":
+            return Parsed(votes.lang(default_lang), acts)
+    # « une ambiance rouge et blanc » : plusieurs couleurs pour une seule ambiance → alternance.
+    if _MOOD_RE.search(t_all) and not _V["theme"].find(t_all):
+        cols = []
+        for key, langs in _V["color"].find_all(t_all):
+            votes.add((key, langs, None))
+            if key not in cols:
+                cols.append(key)
+        if len(cols) >= 2:
+            return Parsed(votes.lang(default_lang), [{"do": "pattern", "target": _target(t_all, votes) or {"all": True},
+                                                      "level": None,
+                                                      "slots": [{"hex": COLOR_HEX[c], "color": c} for c in cols]}])
+
+    if warm_mood(t_all) and not _is_question(text):
+        return Parsed(votes.lang(default_lang), [{"do": "pattern", "target": _target(t_all, votes) or {"all": True},
+                                                  "level": None,
+                                                  "slots": [{"hex": COLOR_HEX[c], "color": c} for c in WARM_MOOD]}])
+
+    # « une ambiance tamisée » : pas un effet, une lumière basse et chaude.
+    if _DIM_RE.search(t_all) and not _V["theme"].find(t_all) and not _is_question(text):
+        hit = votes.add(_V["color"].find(t_all))
+        color = hit[0] if hit else "warm"
+        return Parsed(votes.lang(default_lang), [{"do": "color", "hex": COLOR_HEX[color], "color": color,
+                                                  "target": _target(t_all, votes) or {"all": True},
+                                                  "level": DIM_LEVEL}])
 
     question = _is_question(text)
     if question:
@@ -931,6 +1341,10 @@ def parse(text: str, effects=(), default_lang: str = "fr", aliases: dict = None)
             actions.extend(parse(aliases[t], effects, default_lang, None).actions)
             continue
         actions.extend(_parse_clause(raw, t, effects, votes))
+    if any(a["do"] not in ("chat", "unknown") for a in actions):
+        # « Ok, escu, mets les étincelles à fond » : les bouts de bavardage autour d'une
+        # vraie demande ne valent ni réponse ni « je n'ai pas compris ». Plus largement, en dictée, le reste n'est que de la conversation autour de l'ordre.
+        actions = [a for a in actions if a["do"] not in ("chat", "unknown")]
     if question and (not actions or any(a["do"] == "unknown" for a in actions) or _HOW_RE.match(t_all)):
         # « c'est quoi un gobo ? » : pas de réponse toute faite, on le dit simplement.
         return Parsed(votes.lang(default_lang), [{"do": "answer", "topic": "generic", "text": text}])

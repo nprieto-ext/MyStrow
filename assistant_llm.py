@@ -11,6 +11,7 @@ et l'assistant reste sur ses règles (assistant_nlu).
 
 import atexit
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -21,7 +22,8 @@ MODEL_FILE = "mystrow-assistant-q4_k_m.gguf"
 SYSTEM = "MyStrow : traduis la demande en commandes JSON."
 
 _COLORS = ["red", "blue", "green", "yellow", "white", "warm", "cold", "orange", "purple", "pink", "cyan", "magenta", "amber"]
-_WHO = ["all", "front", "side", "back", "top", "moving_heads", "pars", "bars", "strobes", "lasers", "numbers", "odd", "even"]
+_WHO = ["all", "front", "side", "back", "top", "moving_heads", "pars", "bars", "strobes", "lasers", "numbers", "odd", "even",
+        "sparks", "smoke"]
 _WINDOWS = ["patch", "effects", "3d", "rec", "output", "tester", "monitor", "tablet", "ia", "controller",
             "shortcuts", "obs", "vmix", "gamepad", "tutorials"]
 # Même schéma qu'à l'entraînement : le modèle ne peut rien écrire d'autre.
@@ -31,7 +33,8 @@ SCHEMA = {
         "type": "object",
         "properties": {
             "do": {"enum": ["light", "fader", "blackout", "effect", "stop_effects", "speed", "memory", "playback", "open",
-                            "connect_dmx", "create_fixture", "help", "status", "question", "diagnose"]},
+                            "connect_dmx", "create_fixture", "help", "status", "question", "diagnose",
+                            "patch_add", "rec_generate", "chat", "gradient", "gobo", "live"]},
             "who": {"enum": _WHO},
             "numbers": {"type": "array", "items": {"type": "integer"}},
             "except_numbers": {"type": "array", "items": {"type": "integer"}},
@@ -41,13 +44,16 @@ SCHEMA = {
             "change": {"enum": ["none", "up", "down"]},
             "faders": {"type": "array", "items": {"type": "integer"}},
             "style": {"enum": ["any", "fast", "slow"]},
-            "effect_kind": {"enum": ["any", "strobe", "chase", "rainbow", "pulse", "wave", "flash", "fire"]},
+            "effect_kind": {"enum": ["any", "strobe", "chase", "rainbow", "pulse", "wave", "flash", "fire", "movement"]},
             "value": {"type": "integer"},
             "memory": {"type": "string"},
+            "query": {"type": "string"},           # patch_add : marque / modèle recherchés
             "playback": {"enum": ["none", "play_pause", "next", "previous", "go", "go_back"]},
             "window": {"enum": _WINDOWS},
-            "topic": {"enum": ["tablet", "controller", "dmx", "other"]},
+            "topic": {"enum": ["tablet", "controller", "dmx", "live", "other"]},
             "fade_seconds": {"type": "number"},
+            "switch": {"enum": ["on", "off"]},            # live
+            "gobo": {"enum": ["next", "open"]},
         },
         "required": ["do"],
     }}},
@@ -57,7 +63,8 @@ SCHEMA = {
 # Cible du modèle → cible d'assistant_nlu (groupes A/B/C, familles d'appareils).
 _TARGET = {"all": {"all": True}, "front": {"group": "A"}, "side": {"group": "B"}, "back": {"group": "C"},
            "top": {"kind": "douche"}, "moving_heads": {"kind": "lyre"}, "pars": {"kind": "par"},
-           "bars": {"kind": "barre"}, "strobes": {"kind": "strobe"}, "lasers": {"kind": "laser"}}
+           "bars": {"kind": "barre"}, "strobes": {"kind": "strobe"}, "lasers": {"kind": "laser"},
+           "sparks": {"kind": "etincelle"}, "smoke": {"kind": "fumee"}}
 
 _llm = None
 _grammar = None
@@ -123,6 +130,11 @@ def _target(a) -> dict:
     return tgt
 
 
+# Types d'appareil sans marque ni modèle : une recherche réduite à ça ne vaut pas la marque dite.
+_GENERIC_GEAR = set("""moving head heads lyre lyres par pars wash beam spot barre barres led bar bars laser lasers
+strobe strobes projecteur projecteurs fixture light lights""".split())
+
+
 def to_nlu(actions: list, text: str, effects) -> list:
     """Actions du modèle → actions d'assistant_nlu (exécutées par assistant_panel)."""
     out = []
@@ -152,7 +164,10 @@ def to_nlu(actions: list, text: str, effects) -> list:
         elif do == "effect":
             style = a.get("style") if a.get("style") in ("fast", "slow") else None
             kind = a.get("effect_kind") if a.get("effect_kind") not in (None, "any") else None
-            name = nlu._pick_effect(effects, t, style, kind, None, False) if effects else None
+            # « strobe un sur deux » : l'alternance se lit dans la phrase, comme pour les règles.
+            alt = bool(nlu._ONE_IN_N_RE.search(t) or nlu._W["alternate"].find(t) or nlu._V["parity"].find(t))
+            lyre = a.get("who") == "moving_heads"
+            name = nlu._pick_effect(effects, t, style, kind, None, lyre, alt) if effects else None
             act = {"do": "effect", "name": name} if name else {"do": "no_effect"}
             if name and style:
                 act["speed"] = 85 if style == "fast" else 25
@@ -175,7 +190,35 @@ def to_nlu(actions: list, text: str, effects) -> list:
             act = {"do": "connect"}
         elif do == "create_fixture":
             act = {"do": "fixture"}
-        elif do == "diagnose":
+        elif do == "patch_add":
+            act = {"do": "patch_add", "query": nlu.normalize(a.get("query") or ""),
+                   "qty": max(1, min(20, int(a.get("value") or 1)))}
+            # « ma lyre sheilds » → le modèle répond « moving head » : la marque dite l'emporte.
+            ruled = nlu._patch_add(nlu.normalize(t), nlu._Votes())
+            if ruled and ruled["query"] and set(act["query"].split()) <= _GENERIC_GEAR                     and not set(ruled["query"].split()) <= _GENERIC_GEAR:
+                act["query"] = ruled["query"]
+        elif do == "rec_generate" and nlu._PROG_RE.search(t):
+            # Garde-fou : « chanson d'après » parle d'une chanson sans rien programmer.
+            colors = [c for c in a.get("colors") or [] if c in nlu.COLOR_HEX]
+            if len(colors) >= 2 or nlu._RAINBOW_RE.search(t) or a.get("effect_kind") == "rainbow":
+                color = "rainbow"
+            else:
+                color = colors[0] if colors else None
+            act = {"do": "rec_generate", "color": color}
+        elif do == "chat":
+            act = {"do": "chat"}
+        elif do == "gradient":
+            colors = [c for c in a.get("colors") or [] if c in nlu.COLOR_HEX]
+            if len(colors) < 2 or nlu._RAINBOW_RE.search(t):
+                colors = colors[:1] + [c for c in nlu.RAINBOW_COLORS if c not in colors[:1]]
+            act = {"do": "gradient", "colors": colors, "target": _target(a), "level": a.get("level")}
+        elif do == "gobo":
+            act = {"do": "gobo", "open": a.get("gobo") == "open", "target": _target(a)}
+        elif do == "live" and nlu._LIVE_RE.search(t):
+            # Garde-fou : « morceau suivant » parle de musique sans demander le mode LIVE.
+            act = {"do": "live", "on": a.get("switch") != "off"}
+        elif do == "diagnose" and (nlu._W["trouble"].find(t) or nlu._HOW_RE.match(t)):
+            # Garde-fou : « … tu me suis ? » n'est pas une panne.
             act = {"do": "diagnose"}
         elif do in ("help", "status"):
             act = {"do": do}
@@ -185,9 +228,28 @@ def to_nlu(actions: list, text: str, effects) -> list:
             if topic == "tablet":
                 out.append(act)
                 act = {"do": "open", "window": "tablet"}
+            elif topic == "live":           # « … au son de ma carte son ? » : réponse, puis « je l'active ? »
+                out.append(act)
+                act = {"do": "live", "on": True}
         if act is None:
             continue
         if fade and act["do"] in ("color", "level", "level_rel", "pattern", "fader"):
             act["fade"] = float(fade)
         out.append(act)
+    if _dim_mood(t) or nlu.warm_mood(t):
+        # « ambiance tamisée » : le modèle sortait un magenta à 60 % → la règle dédiée l'emporte.
+        return nlu.parse(text, effects).actions
+    # « baisse un peu, c'est trop fort » : « fort » ajoutait un niveau à 100 % après la baisse.
+    rel = [a["target"] for a in out if a.get("do") == "level_rel"]
+    if rel and not re.search(r"\d", t):
+        out = [a for a in out if not (a.get("do") == "level" and a.get("level") == 100 and a.get("target") in rel)]
+    said = {k for k, _ in nlu._V["color"].find_all(t)}
+    for act in out:
+        # « ambiance froide » : le modèle répond bleu franc, la phrase dit blanc froid.
+        if act.get("do") == "color" and act.get("color") == "blue" and "cold" in said and "blue" not in said:
+            act.update(color="cold", hex=nlu.COLOR_HEX["cold"])
     return out or [{"do": "unknown", "text": text}]
+
+
+def _dim_mood(t):
+    return bool(nlu._DIM_RE.search(t)) and not nlu._V["theme"].find(t)
