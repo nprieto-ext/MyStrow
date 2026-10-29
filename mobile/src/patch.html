@@ -678,7 +678,8 @@
     document.querySelectorAll(".tr").forEach((b) => b.classList.toggle("on", b.dataset.tr === t));
     $("artnet-row").hidden = t !== "artnet";
     $("out-hint").textContent = t === "usb"
-      ? "Branchez l'interface USB-DMX sur la tablette : Opto ElectroConcept, ENTTEC Pro, DMXKing ou boîtier MyStrow. Son type est reconnu tout seul."
+      ? (IOS ? "Branchez le boîtier MyStrow sur la prise USB-C (firmware 1.1 minimum). Les autres interfaces USB-DMX (Opto, ENTTEC…) ne marchent pas sur iPhone / iPad."
+        : "Branchez l'interface USB-DMX sur la tablette : Opto ElectroConcept, ENTTEC Pro, DMXKing ou boîtier MyStrow. Son type est reconnu tout seul.")
       : "Node Art-Net branché sur le même réseau que la tablette (box ou routeur, la tablette en Wi-Fi). "
         + "S'il n'est pas dans la même plage d'adresses (node en 2.0.0.15 sur une box en 192.168.1.x), "
         + "la tablette l'atteint quand même, en diffusion. Pour un show, préférez un routeur dédié réglé en 2.0.0.x."
@@ -732,12 +733,8 @@
     leave("remote.html?solo=1");
   });
 
-  // iPhone / iPad : pas d'USB-DMX (iOS n'ouvre pas les interfaces série), Art-Net seulement.
+  // iPhone / iPad : en USB, seul le boîtier MyStrow (vu en MIDI USB, iOS n'ouvre pas les interfaces série).
   var IOS = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
-  if (IOS) {
-    document.querySelector('.tr[data-tr="usb"]').hidden = true;
-    if (show.output.transport !== "artnet") { show.output.transport = "artnet"; save(); }
-  }
   setTransport(show.output.transport || "usb");
   render();
   $("addr").value = nextAddress();

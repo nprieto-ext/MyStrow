@@ -274,11 +274,7 @@
   $("logpc").addEventListener("change", () => (transport === "usb" ? listUsb() : listNetworks()));
   $("poll").addEventListener("click", poll);
   setMode("black");
-  // iPhone / iPad : pas d'USB-DMX, Art-Net seulement.
-  if (window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios") {
-    document.querySelector('.tr[data-tr="usb"]').hidden = true;
-    transport = "artnet";
-  }
+  // iPhone / iPad : l'USB ne voit que le boîtier MyStrow (MIDI USB), la liste le dit.
   setTransport(transport);
 </script>
 </body>

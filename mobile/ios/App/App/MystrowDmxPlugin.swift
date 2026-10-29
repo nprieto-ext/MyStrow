@@ -1,15 +1,26 @@
 import Foundation
 import Darwin
 import UIKit
+import CoreMIDI
 import Capacitor
 
-/// Sortie DMX du mode autonome (sans PC) sur iPhone / iPad : Art-Net en UDP.
+/// Une sortie DMX : Art-Net (UDP) ou boîtier MyStrow (MIDI USB).
+protocol DmxOutput: AnyObject {
+    var name: String { get }
+    func send(_ frame: [UInt8]) throws
+    func close()
+}
+
+/// Sortie DMX du mode autonome (sans PC) sur iPhone / iPad : Art-Net en UDP,
+/// ou boîtier USB-DMX MyStrow par MIDI USB.
 /// Équivalent iOS de MystrowDmxPlugin.java, mêmes méthodes et mêmes réponses,
 /// pour que standalone.js, patch.html et dmxtest.html n'aient rien à savoir de
 /// la plateforme.
 ///
-/// - Pas d'USB-DMX : iOS n'ouvre pas les interfaces série USB (Opto, ENTTEC,
-///   boîtier MyStrow). `start({ transport: "usb" })` est refusé avec un message.
+/// - USB : iOS n'ouvre pas les interfaces série USB (Opto, ENTTEC). Le boîtier
+///   MyStrow (firmware 1.1+) se présente AUSSI en MIDI USB class-compliant, que
+///   iOS reconnaît sans pilote ni autorisation Apple : `start({ transport: "usb" })`
+///   lui envoie le flux ENTTEC Pro emballé dans des SysEx (voir MidiOutput).
 /// - Un node dans le réseau de l'appareil (Wi-Fi, ou carte réseau USB comme le
 ///   « USB NODE » ElectroConcept sur iPad) reçoit ses trames en direct : la
 ///   socket est liée à CETTE interface (IP_BOUND_IF), sinon iOS enverrait tout
@@ -60,8 +71,6 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
     private var outputName = ""
     private var rebuildNow = false
 
-    /// Réglages du dernier start(), pour recréer la sortie sans le JavaScript.
-    struct Config { let host: String; let port: Int; let universe: Int; let fps: Int }
 
     // Délai d'arrière-plan en cours (fil principal uniquement).
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
@@ -175,7 +184,7 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
 
     enum DmxError: Error { case message(String) }
 
-    final class ArtNetOutput {
+    final class ArtNetOutput: DmxOutput {
         let fd: Int32
         let dest: sockaddr_in
         let broadcast: Bool
@@ -239,38 +248,141 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
         func close() { Darwin.close(fd) }
     }
 
+    // MARK: - Sortie boîtier MyStrow (MIDI USB)
+
+    /// Boîtier USB-DMX MyStrow vu comme appareil MIDI. On lui envoie le MÊME
+    /// paquet ENTTEC Pro que le PC (artnet_dmx._build_pro_packet), emballé dans
+    /// un SysEx : F0 7D 4D 53 <données 8-pour-7> F7. Décodé par midi_sysex.c
+    /// du firmware ; test croisé : Medias/Boitier/firmware/midi_sysex_test.py.
+    /// 518 octets ENTTEC → 597 octets MIDI, environ 32 Ko/s à 40 trames/s.
+    final class MidiOutput: DmxOutput {
+        private static let setupLock = NSLock()
+        private static var client = MIDIClientRef()
+        private static var port = MIDIPortRef()
+
+        let dest: MIDIEndpointRef
+        let name: String
+        private let listSize = 1024
+        private let listMem: UnsafeMutableRawPointer
+        private var msg = [UInt8](repeating: 0, count: 4 + 592 + 1)
+        private var raw = [UInt8](repeating: 0, count: 518)
+
+        static func stringProp(_ obj: MIDIObjectRef, _ key: CFString) -> String? {
+            var v: Unmanaged<CFString>?
+            guard MIDIObjectGetStringProperty(obj, key, &v) == noErr, let s = v else { return nil }
+            return s.takeRetainedValue() as String
+        }
+
+        /// Destinations MIDI de l'appareil : (point, nom, boîtier MyStrow ?).
+        static func destinations() -> [(MIDIEndpointRef, String, Bool)] {
+            var list: [(MIDIEndpointRef, String, Bool)] = []
+            for i in 0..<MIDIGetNumberOfDestinations() {
+                let ep = MIDIGetDestination(i)
+                let n = stringProp(ep, kMIDIPropertyDisplayName) ?? stringProp(ep, kMIDIPropertyName) ?? "?"
+                let m = stringProp(ep, kMIDIPropertyManufacturer) ?? ""
+                list.append((ep, n, (n + " " + m).lowercased().contains("mystrow")))
+            }
+            return list
+        }
+
+        /// Client et port MIDI de l'app, créés une fois.
+        static func setup() throws {
+            setupLock.lock()
+            defer { setupLock.unlock() }
+            if client != 0 { return }
+            var c = MIDIClientRef()
+            let st = MIDIClientCreateWithBlock("MyStrow" as CFString, &c, nil)
+            guard st == noErr else { throw DmxError.message("MIDI indisponible (erreur \(st)).") }
+            var p = MIDIPortRef()
+            let st2 = MIDIOutputPortCreate(c, "MyStrow DMX" as CFString, &p)
+            guard st2 == noErr else { throw DmxError.message("Port MIDI impossible (erreur \(st2)).") }
+            client = c
+            port = p
+        }
+
+        init() throws {
+            try MidiOutput.setup()
+            let all = MidiOutput.destinations()
+            guard let box = all.first(where: { $0.2 }) else {
+                let seen = all.map { $0.1 }.joined(separator: ", ")
+                throw DmxError.message("Boîtier MyStrow introuvable. Branchez-le sur la prise USB-C "
+                    + "(firmware 1.1 minimum ; les autres interfaces USB-DMX ne marchent pas sur iPhone / iPad)."
+                    + (seen.isEmpty ? "" : " Appareils MIDI vus : " + seen + "."))
+            }
+            dest = box.0
+            name = "Boîtier MyStrow (MIDI USB) : " + box.1
+            listMem = UnsafeMutableRawPointer.allocate(byteCount: listSize,
+                                                       alignment: MemoryLayout<MIDIPacketList>.alignment)
+            // En-tête ENTTEC Pro label 6, 513 octets (start code 0 + 512 canaux).
+            raw[0] = 0x7E; raw[1] = 0x06; raw[2] = 0x01; raw[3] = 0x02; raw[4] = 0x00
+            raw[517] = 0xE7
+            msg[0] = 0xF0; msg[1] = 0x7D; msg[2] = 0x4D; msg[3] = 0x53
+            msg[msg.count - 1] = 0xF7
+        }
+
+        deinit { listMem.deallocate() }
+
+        func send(_ frame: [UInt8]) throws {
+            raw.replaceSubrange(5..<517, with: frame)
+            // 8-pour-7 : octet des bits de poids fort (bit k = bit 7 du k-ième
+            // octet du groupe), puis les 7 octets sans leur bit 7.
+            var o = 4
+            var i = 0
+            while i < raw.count {
+                let n = min(7, raw.count - i)
+                var msb: UInt8 = 0
+                for k in 0..<n { msb |= (raw[i + k] >> 7) << UInt8(k) }
+                msg[o] = msb; o += 1
+                for k in 0..<n { msg[o] = raw[i + k] & 0x7F; o += 1 }
+                i += n
+            }
+            let list = listMem.bindMemory(to: MIDIPacketList.self, capacity: 1)
+            let pkt = MIDIPacketListInit(list)
+            let size = listSize
+            _ = msg.withUnsafeBufferPointer { MIDIPacketListAdd(list, size, pkt, 0, $0.count, $0.baseAddress!) }
+            let st = MIDISend(MidiOutput.port, dest, list)
+            if st != noErr {
+                throw DmxError.message("Envoi MIDI refusé (erreur \(st)) : boîtier débranché ?")
+            }
+        }
+
+        func close() { }
+    }
+
     // MARK: - API JavaScript
 
     /// { transport: "artnet" | "usb", fps, host, port, universe }
     @objc func start(_ call: CAPPluginCall) {
         stopSender()
-        if (call.getString("transport") ?? "artnet") == "usb" {
-            call.reject("L'USB-DMX n'est pas possible sur iPhone / iPad : utilisez un node Art-Net.")
-            return
-        }
-        let cfg = Config(host: call.getString("host") ?? "2.0.0.15",
-                         port: call.getInt("port") ?? 6454,
-                         universe: call.getInt("universe") ?? 0,
-                         fps: max(1, min(60, call.getInt("fps") ?? 40)))
+        let usb = (call.getString("transport") ?? "artnet") == "usb"
+        let fps = max(1, min(usb ? 44 : 60, call.getInt("fps") ?? 40))
+        let host = call.getString("host") ?? "2.0.0.15"
+        let port = call.getInt("port") ?? 6454
+        let universe = call.getInt("universe") ?? 0
+        // Recréation de la sortie par la boucle d'envoi, sans le JavaScript.
+        let make: () throws -> DmxOutput = usb
+            ? { try MidiOutput() }
+            : { try ArtNetOutput(host: host, port: port, universe: universe) }
+        let label = usb ? "Boîtier USB : " : "Sortie Art-Net : "
         do {
-            let out = try ArtNetOutput(host: cfg.host, port: cfg.port, universe: cfg.universe)
+            let out = try make()
             // Premier envoi tout de suite : une diffusion refusée par iOS se voit ici.
             lock.lock(); let first = dmx; lock.unlock()
             do { try out.send(first) } catch DmxError.message(let m) {
                 out.close()
-                call.reject("Sortie Art-Net : " + m)
+                call.reject(label + m)
                 return
             }
-            launch(out, cfg: cfg)
+            launch(out, fps: fps, make: make)
             call.resolve(["output": outputName])
         } catch DmxError.message(let m) {
             call.reject(m)
         } catch {
-            call.reject("Sortie Art-Net : " + error.localizedDescription)
+            call.reject(label + error.localizedDescription)
         }
     }
 
-    private func launch(_ out: ArtNetOutput, cfg: Config) {
+    private func launch(_ out: DmxOutput, fps: Int, make: @escaping () throws -> DmxOutput) {
         lock.lock()
         sent = 0; errors = 0; lateTicks = 0; intervals = 0
         maxIntervalNs = 0; sumIntervalNs = 0; lastError = ""
@@ -280,7 +392,7 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
         generation += 1
         let gen = generation
         lock.unlock()
-        let t = Thread { [weak self] in self?.runLoop(out, cfg: cfg, gen: gen) }
+        let t = Thread { [weak self] in self?.runLoop(out, fps: fps, make: make, gen: gen) }
         t.qualityOfService = .userInteractive
         t.name = "mystrow-dmx"
         t.start()
@@ -291,9 +403,9 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
         return running && generation == gen
     }
 
-    private func runLoop(_ first: ArtNetOutput, cfg: Config, gen: Int) {
+    private func runLoop(_ first: DmxOutput, fps: Int, make: () throws -> DmxOutput, gen: Int) {
         var out = first
-        let period = UInt64(1_000_000_000 / cfg.fps)
+        let period = UInt64(1_000_000_000 / fps)
         var next = DispatchTime.now().uptimeNanoseconds
         var prev: UInt64 = 0
         var failures = 0
@@ -303,10 +415,10 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
             let rebuild = rebuildNow
             rebuildNow = false
             lock.unlock()
-            if rebuild || failures >= cfg.fps {
+            if rebuild || failures >= fps {
                 // Retour d'arrière-plan (socket tuée par la suspension) ou une seconde
-                // d'échecs (carte USB rebranchée) : nouvelle socket, interface recalculée.
-                if let fresh = try? ArtNetOutput(host: cfg.host, port: cfg.port, universe: cfg.universe) {
+                // d'échecs (carte USB ou boîtier rebranché) : sortie recréée.
+                if let fresh = try? make() {
                     out.close()
                     out = fresh
                     lock.lock(); outputName = fresh.name; lock.unlock()
@@ -468,8 +580,14 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Pas d'USB-DMX sur iOS : liste vide, avec l'explication.
+    /// Appareils MIDI vus par iOS ; seul le boîtier MyStrow est utilisable
+    /// (les interfaces série USB-DMX sont invisibles pour une app iOS).
     @objc func usbDevices(_ call: CAPPluginCall) {
-        call.resolve(["devices": [[String: Any]](), "kernel": ["L'USB-DMX n'est pas possible sur iPhone / iPad."]])
+        try? MidiOutput.setup()
+        let devices: [[String: Any]] = MidiOutput.destinations().map { d in
+            d.2 ? ["name": d.1, "serial": true, "driver": "boîtier MyStrow, MIDI USB"] : ["name": d.1]
+        }
+        call.resolve(["devices": devices,
+                      "kernel": ["Sur iPhone / iPad, seul le boîtier MyStrow (firmware 1.1+) est reconnu."]])
     }
 }
