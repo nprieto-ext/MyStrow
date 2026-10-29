@@ -345,6 +345,22 @@
     .proj-swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.14); cursor: pointer; flex-shrink: 0; transition: transform 0.1s, border-color 0.1s, box-shadow 0.1s; }
     .proj-swatch:active { transform: scale(0.88); }
     .proj-swatch.active { border-color: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 12px rgba(226, 206, 22, 0.5); }
+    /* Une lyre à 20 canaux allonge le panneau : il défile au lieu de sortir de l'écran. */
+    #proj-panel { max-height: 88vh; overflow-y: auto; overscroll-behavior: contain; }
+    #proj-adv-row { display: none; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    #proj-adv-row.show { display: flex; }
+    #proj-adv-head { display: flex; align-items: center; gap: 10px; }
+    #btn-proj-adv { flex: 1; height: 38px; text-align: left; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--bg3);
+      color: var(--muted); font-family: var(--f-label); font-size: 12px; font-weight: 700; letter-spacing: 1.5px; cursor: pointer; }
+    #btn-proj-adv.active-ch { color: var(--accent); border-color: var(--accent-border); }
+    #btn-proj-adv-reset { height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--bg3); color: var(--muted);
+      font-size: 12px; font-weight: 700; letter-spacing: 1px; cursor: pointer; }
+    #proj-adv-list { display: none; flex-direction: column; gap: 6px; }
+    #proj-adv-row.open #proj-adv-list { display: flex; }
+    .adv-ch { display: flex; align-items: center; gap: 10px; }
+    .adv-ch span { font-size: 12px; color: var(--muted); width: clamp(90px, 22vw, 170px); flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .adv-ch input { flex: 1; accent-color: var(--accent); }
+    .adv-ch b { font-family: var(--f-label); font-size: 14px; color: var(--accent); width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
     #proj-panel-btns { display: flex; gap: 10px; }
     #btn-proj-mute { flex: 1; height: 44px; border-radius: 10px; border: 1px solid var(--line2); background: var(--bg3); color: var(--text); font-size: 14px; font-weight: 700; letter-spacing: 1.5px; cursor: pointer; }
     #btn-proj-mute.muted { background: rgba(239, 68, 68, 0.12); color: #f87171; border-color: rgba(239, 68, 68, 0.45); }
@@ -532,6 +548,13 @@
   <div id="proj-gobo-row">
     <span class="proj-row-lbl">GOBO</span>
     <div id="proj-gobo-slots"></div>
+  </div>
+  <div id="proj-adv-row">
+    <div id="proj-adv-head">
+      <button id="btn-proj-adv" type="button">▸  CANAUX AVANCÉS</button>
+      <button id="btn-proj-adv-reset" type="button" title="Remettre ces canaux à 0">RÀZ</button>
+    </div>
+    <div id="proj-adv-list"></div>
   </div>
   <div id="proj-panel-btns">
     <button id="btn-proj-mute">MUTE</button>
@@ -1303,9 +1326,68 @@ function openProjPanel(idx){
   const ptRow=document.getElementById('proj-pantilt-row');
   ptRow.classList.toggle('show', anyLyre);
   if(anyLyre) drawPanTiltPad(p);
-  buildWheelRow(); buildGoboRow();
+  buildWheelRow(); buildGoboRow(); buildAdvRow();
   projOverlay.classList.add('open'); projPanel.classList.add('open');
 }
+
+// ── Canaux avancés (Focus, Zoom, Prisme, Mode, canaux bruts…) ─────────────────
+// Même section que le menu du plan de feu au PC. La liste (`adv`) vient du
+// moteur — PC ou standalone — : [{k, label, v}], k = type ou n° de canal.
+// Repliée par défaut, ouverte d'office si un canal porte déjà une valeur :
+// un Zoom coincé qu'on ne voit plus, c'est une soirée de recherche.
+let _advOpen=null;   // choix de l'utilisateur, retenu d'un projecteur à l'autre
+// Cibles d'un canal : les projos sélectionnés qui ont CE canal (même clé et
+// même nom) — un n° de canal ne désigne pas la même chose d'un modèle à l'autre.
+function _advTargets(c){
+  return _selIdxs().filter(i=>{ const q=_projectors[i];
+    return q && (q.adv||[]).some(a=>a.k===c.k && a.label===c.label); });
+}
+function _advSet(c,v){
+  const idxs=_advTargets(c);
+  idxs.forEach(i=>{ const a=_projectors[i].adv.find(a=>a.k===c.k && a.label===c.label); if(a) a.v=v; });
+  if(idxs.length) sendEvent({type:'proj_channel',idxs,k:c.k,value:v});
+}
+function buildAdvRow(){
+  const row=document.getElementById('proj-adv-row');
+  const list=document.getElementById('proj-adv-list');
+  const ref=_projectors[_selectedProjIdx];
+  const chans=(ref&&ref.adv)||[];
+  if(!chans.length){ row.classList.remove('show'); return; }
+  row.classList.add('show'); list.innerHTML='';
+  row.classList.toggle('open',_advOpen===null ? chans.some(c=>c.v>0) : _advOpen);
+  buildAdvHead();
+  chans.forEach(c=>{
+    const r=document.createElement('div'); r.className='adv-ch';
+    const l=document.createElement('span'); l.textContent=c.label; l.title=c.label;
+    const s=document.createElement('input'); s.type='range'; s.min=0; s.max=255; s.value=c.v||0;
+    const b=document.createElement('b'); b.textContent=c.v||0;
+    let t=0;
+    s.addEventListener('input',()=>{
+      const v=+s.value; b.textContent=v;
+      // ~30 envois/s au plus : un glisser n'inonde pas le PC.
+      const now=Date.now(); if(now-t>33){ t=now; _advSet(c,v); }
+    });
+    s.addEventListener('change',()=>{ _advSet(c,+s.value); buildAdvHead(); });
+    r.append(l,s,b); list.appendChild(r);
+  });
+}
+function buildAdvHead(){
+  const ref=_projectors[_selectedProjIdx], chans=(ref&&ref.adv)||[];
+  const head=document.getElementById('btn-proj-adv');
+  const open=document.getElementById('proj-adv-row').classList.contains('open');
+  const actifs=chans.filter(c=>c.v>0).length;
+  head.textContent=(open?'▾':'▸')+'  CANAUX AVANCÉS · '+chans.length+(actifs?'   ● '+actifs:'');
+  head.classList.toggle('active-ch',actifs>0);
+}
+document.getElementById('btn-proj-adv').addEventListener('click',()=>{
+  const row=document.getElementById('proj-adv-row');
+  _advOpen=!row.classList.contains('open'); row.classList.toggle('open',_advOpen); buildAdvHead();
+});
+document.getElementById('btn-proj-adv-reset').addEventListener('click',()=>{
+  const ref=_projectors[_selectedProjIdx];
+  ((ref&&ref.adv)||[]).forEach(c=>{ if(c.v>0) _advSet(c,0); });
+  buildAdvRow();
+});
 
 // ── Roue de couleurs & Gobo (lyres qui en ont) ────────────────────────────────
 function _closestSlotDmx(slots,val){

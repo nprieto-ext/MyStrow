@@ -177,7 +177,12 @@
     "La lyre s'allume et suit la borne que vous déplacez. Effets et visée restent ensuite dans cette zone.": "The moving head lights up and follows the limit you drag. Effects and aim then stay inside this area.",
     "Revenir à 100 %": "Back to 100%",
     // ── SCÈNE ──
-    "SELECT ALL": "SELECT ALL", "NOMS": "NAMES", "DÉPLACER": "MOVE", "Zoom du plan": "Plot zoom", "Zoomer": "Zoom in", "Dézoomer": "Zoom out",
+    "SELECT ALL": "SELECT ALL", "NOMS": "NAMES", "DÉPLACER": "MOVE",
+    "RÀZ": "RESET", "Remettre ces canaux à 0": "Reset these channels to 0",
+    "Recherche du boîtier…": "Looking for the box…",
+    "Aucun boîtier détecté — branchez l'interface USB-DMX ou le node.": "No box detected — plug in the USB-DMX interface or the node.",
+    "Boîtier : vérifié au lancement du jeu.": "Box: checked when the show starts.",
+    "Diagnostic avancé de la sortie DMX ›": "Advanced DMX output diagnostics ›", "Zoom du plan": "Plot zoom", "Zoomer": "Zoom in", "Dézoomer": "Zoom out",
     "POSITION": "POSITION", "Position": "Position", "SYM PAN": "SYM PAN", "SYM TILT": "SYM TILT", "CENTRER": "CENTER",
     "gauche ↔ droite": "left ↔ right", "haut ↕ bas": "up ↕ down", "EFFETS RAPIDES": "QUICK EFFECTS", "Arrêter": "Stop",
     "VITESSE": "SPEED", "AMPLITUDE": "AMPLITUDE", "DÉPHASAGE": "PHASE", "Cercle": "Circle", "Huit": "Figure 8",
@@ -263,8 +268,8 @@
     "Que voulez-vous faire ?": "What do you want to do?", "Perso": "Custom", "Générique": "Generic", "Générique tablette": "Generic tablet",
     "Le projecteur est gardé sur cette tablette, dans votre bibliothèque : cherchez-le ensuite par son nom pour l'ajouter au patch.":
       "The fixture is kept on this tablet, in your library: then search for it by name to add it to the patch.",
-    "Chaque projecteur suivant démarre « écart » canaux plus loin (10 par défaut, comme dans MyStrow sur PC : 1, 11, 21…). Réglez vos projecteurs sur ces adresses.":
-      "Each following fixture starts “gap” channels further on (10 by default, as in MyStrow on PC: 1, 11, 21…). Set your fixtures to these addresses.",
+    "Les projecteurs suivants prennent les adresses 1, 11, 21… comme dans MyStrow sur PC (plus de 10 canaux : dizaine suivante, 1, 21, 41…). Réglez vos projecteurs sur ces adresses.":
+      "The following fixtures take addresses 1, 11, 21… as in MyStrow on PC (over 10 channels: next ten, 1, 21, 41…). Set your fixtures to these addresses.",
     "SORTIE": "OUTPUT", "Node Art-Net": "Art-Net node", "node Art-Net": "Art-Net node", "Filaire / node USB": "Wired / USB node", "Adresse du node": "Node address",
     "Chercher le node": "Find the node", "Chercher": "Search", "Aucun node n'a répondu.": "No node answered.", "Port": "Port",
     "Branchez l'interface USB-DMX sur la tablette : Opto ElectroConcept, ENTTEC Pro, DMXKing ou boîtier MyStrow. Son type est reconnu tout seul.":
@@ -383,6 +388,8 @@
 
   // Morceaux connus à l'intérieur d'un texte plus long (le plus long d'abord).
   const FRAG = [
+    ["CANAUX AVANCÉS", "ADVANCED CHANNELS"],
+    ["Interface USB connectée ✓", "USB interface connected ✓"], ["Node Art-Net connecté ✓", "Art-Net node connected ✓"],
     ["Licence active jusqu'au", "License active until"], ["Construite le", "Built on"], ["MyStrow tablette", "MyStrow tablet"],
     ["Interface USB · OK", "USB interface · OK"], ["Interface USB · coupée", "USB interface · off"], [" · coupée", " · off"],
     ["Node Art-Net", "Art-Net node"], ["interface USB-DMX", "USB-DMX interface"], ["node Art-Net", "Art-Net node"], ["Sortie DMX :", "DMX output:"], ["Sortie :", "Output:"], ["Dernière erreur :", "Last error:"],

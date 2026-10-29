@@ -120,6 +120,25 @@
         ? p.gobo_wheel_slots.map((g) => ({ dmx: g.dmx, label: g.name || "DMX " + g.dmx })) : GENERIC_GOBOS) : [],
     };
   }
+  // « Canaux avancés » du panneau SCÈNE (MainWindow._proj_adv_channels au PC) :
+  // tout ce que les commandes de la tablette ne pilotent pas déjà. Clé = n° de
+  // canal : c'est celle que le moteur fait passer avant toutes les autres.
+  const TABLET_HANDLED = new Set(["R", "G", "B", "Dim", "Dim2", "Strobe", "Shutter",
+    "Pan", "PanFine", "Tilt", "TiltFine", "ColorWheel", "Gobo1"]);
+  function advMeta(p) {
+    const prof = Engine.profileOf(p) || [];
+    const counts = {};
+    prof.forEach((t) => { counts[t] = (counts[t] || 0) + 1; });
+    const labels = p.channel_labels || [], ex = p.channel_extras || {};
+    const adv = [];
+    prof.forEach((t, j) => {
+      if (TABLET_HANDLED.has(t)) return;
+      const n = j + 1, nom = labels[j] || t;
+      adv.push({ k: n, label: counts[t] > 1 ? String(n).padStart(2, "0") + " · " + nom : nom,
+                 v: +(ex[n] ?? ex[String(n)] ?? ex[t] ?? 0) });
+    });
+    return { adv };
+  }
   const isWheelOnly = (p) => { const prof = Engine.profileOf(p) || []; return prof.includes("ColorWheel") && !prof.includes("R"); };
   const byGroup = {};
   projectors.forEach((p) => { (byGroup[p.group] = byGroup[p.group] || []).push(p); });
@@ -280,6 +299,7 @@
       muted: !!o.muted,
       strobe: o.strobe ?? (base === mem && mem ? mem.strobe : 0),
       pan: p.pos[0], tilt: p.pos[1], x: p.x,
+      channel_extras: p.channel_extras,            // canaux avancés (panneau SCÈNE)
     };
   }
 
@@ -882,6 +902,21 @@
         });
         save("mystrow.solo.show", show);
         break;
+      case "proj_channel": {
+        // « Canaux avancés » : forçage brut par n° de canal, gardé DANS la
+        // fixture (comme channel_extras au PC). 0 = rendu au moteur.
+        const n = Math.trunc(+ev.k), v = Math.max(0, Math.min(255, Math.trunc(+ev.value || 0)));
+        if (!(n > 0)) break;
+        (ev.idxs || []).forEach((i) => {
+          const p = projectors[i], f = show.fixtures[i];
+          if (!p || !f) return;
+          const ex = f.channel_extras = f.channel_extras || {};
+          if (v) ex[n] = v; else { delete ex[n]; delete ex[String(n)]; }
+          p.channel_extras = ex;
+        });
+        save("mystrow.solo.show", show);
+        break;
+      }
       case "scene_clear":
         projectors.forEach((p) => { p.override = null; });
         setQuick(Object.keys(play.qfx).map(Number), null);
@@ -1897,6 +1932,7 @@
         ...projColors([states[i]])[0],
         is_lyre: Engine.isLyre(p), ftype: p.fixture_type || "",
         ...wheelMeta(p),
+        ...advMeta(p),
       })),
       bank_pages: { count: N_PAGES, index: play.pageIdx },
       rec_active: false,

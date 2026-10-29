@@ -121,9 +121,8 @@
       <div><label for="name">Nom</label><input id="name" value="PAR"></div>
       <div><label for="qty">Quantité</label><input id="qty" inputmode="numeric" value="1"></div>
       <div><label for="addr">1re adresse DMX</label><input id="addr" inputmode="numeric"></div>
-      <div><label for="step">Écart</label><input id="step" inputmode="numeric" value="10"></div>
     </div>
-    <p class="hint">Chaque projecteur suivant démarre « écart » canaux plus loin (10 par défaut, comme dans MyStrow sur PC : 1, 11, 21…). Réglez vos projecteurs sur ces adresses.</p>
+    <p class="hint">Les projecteurs suivants prennent les adresses 1, 11, 21… comme dans MyStrow sur PC (plus de 10 canaux : dizaine suivante, 1, 21, 41…). Réglez vos projecteurs sur ces adresses.</p>
     <button class="btn primary" id="add" type="button">Ajouter</button>
   </section>
 
@@ -335,11 +334,14 @@
   $("mode").addEventListener("change", showChannels);
 
   const end = (f) => f.address + Engine.channelCount(f.profile) - 1;
-  // Prochaine adresse libre, alignée sur la grille 1, 11, 21… (écart choisi).
+  // Écart entre deux projecteurs : 10 canaux (grille 1, 11, 21… du PC), ou la
+  // dizaine au-dessus pour un appareil plus gros — une lyre de 16 canaux part
+  // en 1, 21, 41 et ne chevauche jamais la suivante. Plus de champ à régler.
+  const stepFor = (profile) => Math.max(10, Math.ceil(Engine.channelCount(profile) / 10) * 10);
+  // Prochaine adresse libre, alignée sur la grille 1, 11, 21…
   function nextAddress() {
-    const step = Math.max(1, +$("step").value || 10);
     const last = show.fixtures.reduce((m, f) => Math.max(m, end(f)), 0);
-    return last === 0 ? 1 : Math.ceil(last / step) * step + 1;
+    return last === 0 ? 1 : Math.ceil(last / 10) * 10 + 1;
   }
 
   // ── Test d'un projecteur : blanc à fond sur lui seul ────────────────────────
@@ -481,7 +483,6 @@
 
   $("add").addEventListener("click", () => {
     const qty = Math.max(1, Math.min(48, +$("qty").value || 1));
-    const step = Math.max(1, +$("step").value || 10);
     if (!chosen) { msg("Choisissez d'abord un projecteur dans la bibliothèque.", true); return; }
     const [modeName, profile] = chosen.modes[+$("mode").value];
     // Ce que le moteur doit savoir de la fixture (cf. _projector_from_config du PC).
@@ -495,7 +496,7 @@
     for (let k = 0; k < qty; k++) {
       if (addr + Engine.channelCount(profile) - 1 > 512) { msg("Plus de place dans l'univers (512 canaux).", true); break; }
       show.fixtures.push({ name: base + " " + (n0 + k + 1), group: $("group").value, profile, address: addr, ...model });
-      addr += Math.max(step, Engine.channelCount(profile));
+      addr += stepFor(profile);
     }
     save();
     msg(qty + " projecteur(s) ajouté(s).");
