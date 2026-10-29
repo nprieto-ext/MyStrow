@@ -339,10 +339,15 @@
           oauthMsg.className = "err"; oauthMsg.textContent = err.message;
         }
       };
-      const g = btn("Continuer avec Google", "oauth google", () => runOauth("google"));
-      const a = btn("Continuer avec Apple", "oauth apple", () => runOauth("apple"));
-      oauthBtns.push(g, a);
-      body.append(sep, g, a, cancel, oauthMsg);
+      // Pas sur iPad : sans compte rattaché, l'identité Apple oblige à passer
+      // par e-mail + mot de passe, refusé par Apple (4, revue du 29/10/2026).
+      // Sans connexion tierce, 4.8 n'exige plus « Continuer avec Apple ».
+      if (!isIos()) {
+        const g = btn("Continuer avec Google", "oauth google", () => runOauth("google"));
+        const a = btn("Continuer avec Apple", "oauth apple", () => runOauth("apple"));
+        oauthBtns.push(g, a);
+        body.append(sep, g, a, cancel, oauthMsg);
+      }
       // Pas de compte : la carte d'activation du pack se saisit sur le site
       // (mystrow.fr/activate crée le compte et envoie le mot de passe par
       // email) — une seule logique d'activation, pas une copie dans l'app.
