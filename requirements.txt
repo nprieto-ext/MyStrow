@@ -21,3 +21,11 @@ numpy
 sounddevice
 PyAudioWPatch; sys_platform == "win32"
 pygame
+# Moteur du modèle de l'assistant (assistant_llm.py ; le modèle se télécharge à part
+# depuis l'onglet Assistant). Roues précompilées de l'auteur (CPU) : Windows et Mac ARM.
+# Aucune pour Mac Intel → exclu là-bas (le bandeau de téléchargement reste masqué).
+# --only-binary : jamais de compilation silencieuse en CI si la roue disparaît.
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+--only-binary llama-cpp-python
+llama-cpp-python==0.3.36; sys_platform == "win32" or (sys_platform == "darwin" and platform_machine == "arm64")
+# faster-whisper>=1.2.1  # dictée vocale de l'assistant : hors installeur pour l'instant (+80 Mo), cf. MyStrow.spec

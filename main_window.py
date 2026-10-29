@@ -890,6 +890,7 @@ class MessageLogWidget(QWidget):
             "background:transparent; border:none;"
         )
         hdr.addWidget(title)
+        self._title = title     # 3 clics : assistant caché (assistant_panel.AssistantDock)
 
         self._count_lbl = QLabel("")
         self._count_lbl.setStyleSheet(
@@ -5737,6 +5738,10 @@ class MainWindow(QMainWindow):
         self.rec_view_row_scale = 0.75
         self.rec_view_projectors = True
         self.rec_view_hidden_rows = []
+        # Les 4 cartouches du panneau AKAI (menu Affichage) : masquées par
+        # défaut, la plupart des shows n'en ont pas l'usage. Le choix est
+        # mémorisé dans la config AKAI : qui les a affichées les retrouve.
+        self.view_cartouches = False
         # Dernier mode DMX choisi par fixture (clé = uuid ou fabricant/nom)
         self._fixture_mode_prefs = {}
         # Sortie live de l'éditeur d'effets : {id(proj): (level, color, pan, tilt)}
@@ -6226,6 +6231,11 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _c, s=slot: s())
             ext_menu.addAction(act)
             self._view_ext_actions[key] = act
+
+        self._view_cart_action = QAction(f"🎵  {tr('menu_view_carts')}", self, checkable=True)
+        self._view_cart_action.setChecked(bool(self.view_cartouches))
+        self._view_cart_action.toggled.connect(self.set_cartouches_visible)
+        view_menu.addAction(self._view_cart_action)
 
         # NB : pas de connexion à self.seq ici — _create_menu() tourne avant que
         # le séquenceur existe. Le branchement se fait après sa création.
@@ -7689,7 +7699,12 @@ class MainWindow(QMainWindow):
             )
             cart_grid.addWidget(cart, i // 2, i % 2)
             self.cartouches.append(cart)
-        akai_zone_layout.addLayout(cart_grid)
+        # Conteneur dédié : c'est lui que le menu Affichage montre/masque. Les
+        # pads cart0..3 du contrôleur continuent de jouer les slots masqués.
+        self._cart_box = QWidget()
+        self._cart_box.setLayout(cart_grid)
+        self._cart_box.setVisible(bool(self.view_cartouches))
+        akai_zone_layout.addWidget(self._cart_box)
 
         # ── Journal des actions ───────────────────────────────────────────────
         self._msg_log = MessageLogWidget()
@@ -7701,7 +7716,17 @@ class MainWindow(QMainWindow):
             }
         """)
         akai_zone_layout.addSpacing(4)
-        akai_zone_layout.addWidget(self._msg_log, 1)
+        # Journal et assistant (texte + voix) dans le même cadre, avec bascule ;
+        # l'assistant peut s'agrandir sur toute la colonne.
+        try:
+            from assistant_panel import AssistantDock
+            self._assistant_dock = AssistantDock(self, self._msg_log)
+            self._assistant_dock.set_root(layout, akai_zone)
+            akai_zone_layout.addWidget(self._assistant_dock, 1)
+        except Exception as _e:
+            print(f"[Assistant] indisponible : {_e}")
+            self._assistant_dock = None
+            akai_zone_layout.addWidget(self._msg_log, 1)
 
         # Emplacement reserve pour la barre de mise a jour (ajoutee apres init)
         self._akai_layout = layout
@@ -16091,6 +16116,23 @@ class MainWindow(QMainWindow):
         if act:
             act.setChecked(True)
 
+    def set_cartouches_visible(self, on, save=True):
+        """Affiche ou masque les 4 cartouches (menu Affichage), mémorisé."""
+        self.view_cartouches = bool(on)
+        box = getattr(self, '_cart_box', None)
+        if box is not None:
+            box.setVisible(self.view_cartouches)
+        act = getattr(self, '_view_cart_action', None)
+        if act is not None and act.isChecked() != self.view_cartouches:
+            act.blockSignals(True)
+            act.setChecked(self.view_cartouches)
+            act.blockSignals(False)
+        if save:
+            try:
+                self._save_akai_config_auto()
+            except Exception as e:
+                print(f"[CART] preference d'affichage non enregistree : {e}")
+
     def _restore_center_view(self, key):
         """
         Réapplique la vue centrale sauvegardée, au démarrage.
@@ -19433,6 +19475,8 @@ class MainWindow(QMainWindow):
             "rec_view_projectors": bool(getattr(self, 'rec_view_projectors', True)),
             "rec_view_hidden_rows": list(getattr(self, 'rec_view_hidden_rows', []) or []),
             "pinned_controller": getattr(self.midi_handler, 'pinned_id', None),
+            # Cartouches visibles (menu Affichage)
+            "view_cartouches": bool(getattr(self, 'view_cartouches', False)),
             # Colonne centrale (menu Affichage) : media / live / pads / none
             "center_view": getattr(self, '_center_view_key', 'media'),
             # Dernier mode DMX retenu par fixture (bibliothèque)
@@ -19623,6 +19667,9 @@ class MainWindow(QMainWindow):
                 self.rec_view_row_scale = float(config.get("rec_view_row_scale", 0.75) or 0.75)
             except (TypeError, ValueError):
                 self.rec_view_row_scale = 0.75
+
+        if "view_cartouches" in config:
+            self.set_cartouches_visible(bool(config.get("view_cartouches")), save=False)
 
         # Colonne centrale (menu Affichage) : retrouver la vue quittée.
         # Différé : _set_center_view touche le séquenceur et la surface Pads,
@@ -21469,12 +21516,10 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def _drain_tablet_events(self):
-        """Appelé toutes les 50 ms — traite les events envoyés par la tablette."""
-        import tablet_server as _ts
-        if not _ts.is_running():
-            return
-
+    def _apply_tablet_event(self, ev):
+        """Applique une action venue de la tablette, ou de l'API locale
+        (Stream Deck, assistant IA via MCP) qui parle le même format :
+        même effet sur les projecteurs quel que soit le pupitre distant."""
         def _ev_idxs(ev):
             """Indices projecteurs ciblés : nouveau format `idxs` (multi-sélection
             tablette) ou ancien `idx` (compat)."""
@@ -21483,147 +21528,155 @@ class MainWindow(QMainWindow):
             i = ev.get("idx", -1)
             return [int(i)] if i is not None else []
 
+        etype = ev["type"]
+        if etype == "pad":
+            self.on_midi_pad(ev["row"], ev["col"])
+        elif etype == "fader":
+            # La tablette envoie 0-100, on_midi_fader attend 0-127
+            raw = int(ev["value"] / 100.0 * 127)
+            self.on_midi_fader(ev["idx"], raw)
+        elif etype == "effect":
+            # Col 8 = boutons effets
+            self.on_midi_pad(ev["row"], 8)
+        elif etype == "transport":
+            action = ev.get("action", "")
+            if action == "play_pause":
+                self.toggle_play()
+            elif action == "next":
+                self.seq.play_row(self.seq.current_row + 1)
+            elif action == "prev":
+                self.seq.play_row(self.seq.current_row - 1)
+        elif etype == "bankpage":
+            action = ev.get("action", "")
+            if action == "next":
+                self._next_bank_page()
+            elif action == "prev":
+                self._prev_bank_page()
+            elif action == "set":
+                self._set_bank_page(int(ev.get("idx", 0)))
+        elif etype == "cartouche":
+            idx = ev.get("idx", -1)
+            if 0 <= idx < len(self.cartouches):
+                self.on_cartouche_clicked(idx)
+        elif etype == "seq_row":
+            row = ev.get("row", -1)
+            if row >= 0:
+                self.seq.play_row(row)
+        elif etype == "proj_level":
+            val = int(ev.get("value", 0))
+            for idx in _ev_idxs(ev):
+                if 0 <= idx < len(self.projectors) and hasattr(self, 'plan_de_feu'):
+                    self.plan_de_feu.set_projector_dimmer(self.projectors[idx], val)
+                elif 0 <= idx < len(self.projectors):
+                    self.projectors[idx].set_level(val)
+            self.send_dmx_update()
+        elif etype == "proj_color":
+            hex_color = ev.get("color", "#ffffff")
+            idxs = [i for i in _ev_idxs(ev) if 0 <= i < len(self.projectors)]
+            if idxs and hasattr(self, 'plan_de_feu'):
+                from plan_de_feu import _DEFAULT_POSITIONS
+                group_lists: dict = {}
+                for j, q in enumerate(self.projectors):
+                    group_lists.setdefault(q.group, []).append(j)
+                targets = []
+                for idx in idxs:
+                    proj = self.projectors[idx]
+                    li = group_lists[proj.group].index(idx)
+                    targets.append((proj, proj.group, li))
+                self.plan_de_feu._apply_color_to_targets(targets, QColor(hex_color))
+                # Lyres à roue de couleurs (sans RGB) : faire suivre la roue
+                # sur le slot le plus proche — sinon poser une couleur ne fait
+                # rien sur ces fixtures. No-op pour les fixtures RGB.
+                for proj, _g, _i in targets:
+                    self._update_color_wheel(proj, QColor(hex_color))
+                self.send_dmx_update()
+                self.plan_de_feu.mark_dirty()
+        elif etype == "proj_gobo":
+            val = max(0, min(255, int(ev.get("value", 0))))
+            for idx in _ev_idxs(ev):
+                if 0 <= idx < len(self.projectors):
+                    self.projectors[idx].gobo = val
+            self.send_dmx_update()
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu.mark_dirty()
+        elif etype == "proj_colorwheel":
+            val = max(0, min(255, int(ev.get("value", 0))))
+            for idx in _ev_idxs(ev):
+                if 0 <= idx < len(self.projectors):
+                    self._apply_color_wheel_dmx(self.projectors[idx], val)
+            self.send_dmx_update()
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu.mark_dirty()
+        elif etype == "proj_strobe":
+            val = int(ev.get("value", 0))
+            for idx in _ev_idxs(ev):
+                if 0 <= idx < len(self.projectors):
+                    self.projectors[idx].strobe_speed = val
+            self.send_dmx_update()
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu.mark_dirty()
+        elif etype == "proj_pantilt":
+            # pan/tilt normalisés 0..1 depuis le pad tactile → 0..65535.
+            for idx in _ev_idxs(ev):
+                if 0 <= idx < len(self.projectors):
+                    p = self.projectors[idx]
+                    if "pan" in ev:
+                        p.pan  = max(0, min(65535, int(float(ev["pan"])  * 65535)))
+                    if "tilt" in ev:
+                        p.tilt = max(0, min(65535, int(float(ev["tilt"]) * 65535)))
+                    p._manual_move = True   # ne pas écraser par la restitution
+            self.send_dmx_update()
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu.mark_dirty()
+        elif etype == "proj_mute":
+            muted = ev.get("muted", False)
+            for idx in _ev_idxs(ev):
+                if 0 <= idx < len(self.projectors):
+                    self.projectors[idx].muted = muted
+            self.send_dmx_update()
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu.mark_dirty()
+        elif etype == "ext_action":
+            # Tap sur un bloc de la surface → dispatch réel (réutilise la
+            # logique de la fenêtre EXT). block=None : pas de latch visuel Qt.
+            action = ev.get("action", {}) or {}
+            try:
+                win = self._ensure_ext_window()
+                win._dispatch_action(action, None)
+                self._push_surface_to_tablet()   # reflète latchs éventuels
+            except Exception as _e:
+                print(f"[Tablet] ext_action échec: {_e}")
+        elif etype == "ext_fader":
+            action = ev.get("action", {}) or {}
+            val = int(ev.get("value", 0))
+            try:
+                win = self._ensure_ext_window()
+                win._dispatch_fader(action, val)
+            except Exception as _e:
+                print(f"[Tablet] ext_fader échec: {_e}")
+        elif etype == "scene_clear":
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu._clear_plan_de_feu()
+        elif etype == "scene_select_all":
+            if hasattr(self, 'plan_de_feu'):
+                self.plan_de_feu._select_all()
+        elif etype == "clear":
+            self._clear_akai_state()
+        elif etype == "rec_toggle":
+            self._toggle_mem_rec_mode()
+        elif etype == "open_params":
+            self._open_akai_layout_editor()
+
+    def _drain_tablet_events(self):
+        """Appelé toutes les 50 ms — traite les events envoyés par la tablette."""
+        import tablet_server as _ts
+        if not _ts.is_running():
+            return
+
         try:
             while True:
                 ev = _ts.event_queue.get_nowait()
-                etype = ev["type"]
-                if etype == "pad":
-                    self.on_midi_pad(ev["row"], ev["col"])
-                elif etype == "fader":
-                    # La tablette envoie 0-100, on_midi_fader attend 0-127
-                    raw = int(ev["value"] / 100.0 * 127)
-                    self.on_midi_fader(ev["idx"], raw)
-                elif etype == "effect":
-                    # Col 8 = boutons effets
-                    self.on_midi_pad(ev["row"], 8)
-                elif etype == "transport":
-                    action = ev.get("action", "")
-                    if action == "play_pause":
-                        self.toggle_play()
-                    elif action == "next":
-                        self.seq.play_row(self.seq.current_row + 1)
-                    elif action == "prev":
-                        self.seq.play_row(self.seq.current_row - 1)
-                elif etype == "bankpage":
-                    action = ev.get("action", "")
-                    if action == "next":
-                        self._next_bank_page()
-                    elif action == "prev":
-                        self._prev_bank_page()
-                    elif action == "set":
-                        self._set_bank_page(int(ev.get("idx", 0)))
-                elif etype == "cartouche":
-                    idx = ev.get("idx", -1)
-                    if 0 <= idx < len(self.cartouches):
-                        self.on_cartouche_clicked(idx)
-                elif etype == "seq_row":
-                    row = ev.get("row", -1)
-                    if row >= 0:
-                        self.seq.play_row(row)
-                elif etype == "proj_level":
-                    val = int(ev.get("value", 0))
-                    for idx in _ev_idxs(ev):
-                        if 0 <= idx < len(self.projectors) and hasattr(self, 'plan_de_feu'):
-                            self.plan_de_feu.set_projector_dimmer(self.projectors[idx], val)
-                        elif 0 <= idx < len(self.projectors):
-                            self.projectors[idx].set_level(val)
-                    self.send_dmx_update()
-                elif etype == "proj_color":
-                    hex_color = ev.get("color", "#ffffff")
-                    idxs = [i for i in _ev_idxs(ev) if 0 <= i < len(self.projectors)]
-                    if idxs and hasattr(self, 'plan_de_feu'):
-                        from plan_de_feu import _DEFAULT_POSITIONS
-                        group_lists: dict = {}
-                        for j, q in enumerate(self.projectors):
-                            group_lists.setdefault(q.group, []).append(j)
-                        targets = []
-                        for idx in idxs:
-                            proj = self.projectors[idx]
-                            li = group_lists[proj.group].index(idx)
-                            targets.append((proj, proj.group, li))
-                        self.plan_de_feu._apply_color_to_targets(targets, QColor(hex_color))
-                        # Lyres à roue de couleurs (sans RGB) : faire suivre la roue
-                        # sur le slot le plus proche — sinon poser une couleur ne fait
-                        # rien sur ces fixtures. No-op pour les fixtures RGB.
-                        for proj, _g, _i in targets:
-                            self._update_color_wheel(proj, QColor(hex_color))
-                        self.send_dmx_update()
-                        self.plan_de_feu.mark_dirty()
-                elif etype == "proj_gobo":
-                    val = max(0, min(255, int(ev.get("value", 0))))
-                    for idx in _ev_idxs(ev):
-                        if 0 <= idx < len(self.projectors):
-                            self.projectors[idx].gobo = val
-                    self.send_dmx_update()
-                    if hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu.mark_dirty()
-                elif etype == "proj_colorwheel":
-                    val = max(0, min(255, int(ev.get("value", 0))))
-                    for idx in _ev_idxs(ev):
-                        if 0 <= idx < len(self.projectors):
-                            self._apply_color_wheel_dmx(self.projectors[idx], val)
-                    self.send_dmx_update()
-                    if hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu.mark_dirty()
-                elif etype == "proj_strobe":
-                    val = int(ev.get("value", 0))
-                    for idx in _ev_idxs(ev):
-                        if 0 <= idx < len(self.projectors):
-                            self.projectors[idx].strobe_speed = val
-                    self.send_dmx_update()
-                    if hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu.mark_dirty()
-                elif etype == "proj_pantilt":
-                    # pan/tilt normalisés 0..1 depuis le pad tactile → 0..65535.
-                    for idx in _ev_idxs(ev):
-                        if 0 <= idx < len(self.projectors):
-                            p = self.projectors[idx]
-                            if "pan" in ev:
-                                p.pan  = max(0, min(65535, int(float(ev["pan"])  * 65535)))
-                            if "tilt" in ev:
-                                p.tilt = max(0, min(65535, int(float(ev["tilt"]) * 65535)))
-                            p._manual_move = True   # ne pas écraser par la restitution
-                    self.send_dmx_update()
-                    if hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu.mark_dirty()
-                elif etype == "proj_mute":
-                    muted = ev.get("muted", False)
-                    for idx in _ev_idxs(ev):
-                        if 0 <= idx < len(self.projectors):
-                            self.projectors[idx].muted = muted
-                    self.send_dmx_update()
-                    if hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu.mark_dirty()
-                elif etype == "ext_action":
-                    # Tap sur un bloc de la surface → dispatch réel (réutilise la
-                    # logique de la fenêtre EXT). block=None : pas de latch visuel Qt.
-                    action = ev.get("action", {}) or {}
-                    try:
-                        win = self._ensure_ext_window()
-                        win._dispatch_action(action, None)
-                        self._push_surface_to_tablet()   # reflète latchs éventuels
-                    except Exception as _e:
-                        print(f"[Tablet] ext_action échec: {_e}")
-                elif etype == "ext_fader":
-                    action = ev.get("action", {}) or {}
-                    val = int(ev.get("value", 0))
-                    try:
-                        win = self._ensure_ext_window()
-                        win._dispatch_fader(action, val)
-                    except Exception as _e:
-                        print(f"[Tablet] ext_fader échec: {_e}")
-                elif etype == "scene_clear":
-                    if hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu._clear_plan_de_feu()
-                elif etype == "scene_select_all":
-                    if hasattr(self, 'plan_de_feu'):
-                        self.plan_de_feu._select_all()
-                elif etype == "clear":
-                    self._clear_akai_state()
-                elif etype == "rec_toggle":
-                    self._toggle_mem_rec_mode()
-                elif etype == "open_params":
-                    self._open_akai_layout_editor()
+                self._apply_tablet_event(ev)
         except Exception:
             pass
 
@@ -23452,22 +23505,29 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_w)
         lv.addWidget(scroll, 1)
 
-        from core import guide_banner
-        lv.addWidget(guide_banner(
-            tr("mwy_169"),
-            "https://mystrow.fr/importer-fixture-dmx-mystrow"))
-
+        # Compteur + ✕ sur une ligne, actions de lot en grille 2×2 dessous :
+        # alignés sur une seule ligne dans une colonne de 240-320 px, les
+        # boutons étaient écrasés (« enommer », « Groupe », « Supprime »).
         bstrip = QWidget()
-        bstrip.setFixedHeight(40)
+        bstrip.setMinimumHeight(40)
         bstrip.setStyleSheet("background:#060606; border-top:1px solid #141414;")
-        bsv = QHBoxLayout(bstrip)
-        bsv.setContentsMargins(8, 0, 8, 0)
-        bsv.setSpacing(4)
+        bs_outer = QVBoxLayout(bstrip)
+        bs_outer.setContentsMargins(8, 7, 8, 7)
+        bs_outer.setSpacing(5)
+        bs_top = QHBoxLayout()
+        bs_top.setContentsMargins(0, 0, 0, 0)
+        bs_top.setSpacing(4)
+        bs_outer.addLayout(bs_top)
+        bs_grid = QGridLayout()
+        bs_grid.setContentsMargins(0, 0, 0, 0)
+        bs_grid.setHorizontalSpacing(4)
+        bs_grid.setVerticalSpacing(4)
+        bs_outer.addLayout(bs_grid)
 
         lbl_cnt = QLabel("")
         lbl_cnt.setStyleSheet("color:#333333; font-size:10px; padding-left:8px;")
-        bsv.addWidget(lbl_cnt)
-        bsv.addStretch()
+        bs_top.addWidget(lbl_cnt)
+        bs_top.addStretch()
 
         btn_rename_multi = QPushButton(tr("mw_rename_m"))
         btn_rename_multi.setFixedHeight(26)
@@ -23477,7 +23537,7 @@ class MainWindow(QMainWindow):
             " border-radius:5px; font-size:11px; padding:0 12px; }"
             "QPushButton:hover { background:#132535; color:#66aadd; border-color:#2a5070; }"
         )
-        bsv.addWidget(btn_rename_multi)
+        bs_grid.addWidget(btn_rename_multi, 0, 0)
 
         btn_group_multi = QPushButton(tr("mw_group_m"))
         btn_group_multi.setFixedHeight(26)
@@ -23487,7 +23547,7 @@ class MainWindow(QMainWindow):
             " border-radius:5px; font-size:11px; padding:0 12px; }"
             "QPushButton:hover { background:#132513; color:#66cc66; border-color:#2a502a; }"
         )
-        bsv.addWidget(btn_group_multi)
+        bs_grid.addWidget(btn_group_multi, 0, 1)
 
         btn_del_multi = QPushButton(tr("mw_delete_m"))
         btn_del_multi.setFixedHeight(26)
@@ -23497,18 +23557,48 @@ class MainWindow(QMainWindow):
             " border-radius:5px; font-size:11px; padding:0 12px; }"
             "QPushButton:hover { background:#2a0e0e; color:#ee6666; border-color:#662222; }"
         )
-        bsv.addWidget(btn_del_multi)
+        bs_grid.addWidget(btn_del_multi, 1, 1)
 
-        btn_desel_multi = QPushButton("✕")
+        btn_replace_multi = QPushButton(tr("mw_replace_m"))
+        btn_replace_multi.setFixedHeight(26)
+        btn_replace_multi.setVisible(False)
+        btn_replace_multi.setToolTip(tr("mw_replace_fixture"))
+        btn_replace_multi.setStyleSheet(
+            "QPushButton { background:#0d1a1e; color:#33b8d8; border:1px solid #163540;"
+            " border-radius:5px; font-size:11px; padding:0 12px; }"
+            "QPushButton:hover { background:#112630; color:#55d0ee; border-color:#22566a; }"
+        )
+        bs_grid.addWidget(btn_replace_multi, 1, 0)
+
+        # Croix dessinée : le glyphe « ✕ » de la police sortait en pâté
+        # flou à cette taille.
+        def _cross_icon(col):
+            _dpr = 2
+            _pm = QPixmap(10 * _dpr, 10 * _dpr)
+            _pm.setDevicePixelRatio(_dpr)
+            _pm.fill(Qt.transparent)
+            _qp = QPainter(_pm)
+            _qp.setRenderHint(QPainter.Antialiasing)
+            _qp.setPen(QPen(QColor(col), 1.6, Qt.SolidLine, Qt.RoundCap))
+            _qp.drawLine(QPointF(1.5, 1.5), QPointF(8.5, 8.5))
+            _qp.drawLine(QPointF(8.5, 1.5), QPointF(1.5, 8.5))
+            _qp.end()
+            return QIcon(_pm)
+
+        btn_desel_multi = QPushButton()
+        _ic_x, _ic_x_hov = _cross_icon("#8a8a8a"), _cross_icon("#dddddd")
+        btn_desel_multi.setIcon(_ic_x)
+        btn_desel_multi.setIconSize(QSize(10, 10))
         btn_desel_multi.setFixedSize(26, 26)
         btn_desel_multi.setVisible(False)
         btn_desel_multi.setToolTip(tr("mw_deselect_all"))
         btn_desel_multi.setStyleSheet(
-            "QPushButton { background:#1a1a1a; color:#666; border:1px solid #333;"
-            " border-radius:5px; font-size:12px; font-weight:bold; }"
-            "QPushButton:hover { background:#2a2a2a; color:#aaa; border-color:#555; }"
+            "QPushButton { background:#1a1a1a; border:1px solid #333; border-radius:5px; }"
+            "QPushButton:hover { background:#2a2a2a; border-color:#555; }"
         )
-        bsv.addWidget(btn_desel_multi)
+        btn_desel_multi.enterEvent = lambda _e: btn_desel_multi.setIcon(_ic_x_hov)
+        btn_desel_multi.leaveEvent = lambda _e: btn_desel_multi.setIcon(_ic_x)
+        bs_top.addWidget(btn_desel_multi)
         lv.addWidget(bstrip)
         spl.addWidget(left_w)
 
@@ -25822,6 +25912,9 @@ class MainWindow(QMainWindow):
                 btn_rename_multi.setVisible(_show)
                 btn_rename_multi.setText(tr("mwy_192", n_chk=n_chk) if n_chk > 1 else tr("mwy_193"))
                 btn_group_multi.setVisible(_show)
+                btn_replace_multi.setVisible(_show)
+                btn_replace_multi.setText(tr("mw_replace_n_m", n=n_chk) if n_chk > 1
+                                          else tr("mw_replace_m"))
                 btn_desel_multi.setVisible(_show)
                 if i < len(_cards) and _cards[i] is not None:
                     _cards[i]._upd(i == _sel[0], i in _get_conflicts())
@@ -25839,7 +25932,9 @@ class MainWindow(QMainWindow):
                     )
                     act_locate  = m.addAction(tr("mw_locate_m"))
                     act_locate.setToolTip(tr("mw_select_in_plan"))
-                    act_replace = m.addAction(tr("mw_replace_m"))
+                    _n_rep = len(_replace_targets())
+                    act_replace = m.addAction(tr("mw_replace_n_m", n=_n_rep) if _n_rep > 1
+                                              else tr("mw_replace_m"))
                     act_replace.setToolTip(tr("mw_replace_fixture"))
                     act_dup = m.addAction(tr("mw_duplicate_m"))
                     m.addSeparator()
@@ -26371,162 +26466,81 @@ class MainWindow(QMainWindow):
                 _select_card(first_new)
             _mark_dirty()
 
-        def _replace_selected():
-            idx = _sel[0]
-            if idx is None or idx >= len(fixture_data):
+        def _replace_targets():
+            # Cases cochées : c'est le lot qu'on remplace (6 PAR d'un théâtre
+            # par ceux du suivant se faisaient sinon un par un). Un clic droit
+            # sur une carte HORS du lot ne vise qu'elle.
+            _chk = sorted(i for i in _checked if i < len(fixture_data))
+            _cur = _sel[0]
+            if _cur is not None and _cur < len(fixture_data) and _cur not in _checked:
+                return [_cur]
+            return _chk
+
+        def _replace_selected(targets=None):
+            if targets is None:
+                targets = _replace_targets()
+            targets = [i for i in targets if i < len(fixture_data)]
+            if not targets:
                 return
-            import json as _json
-            from builtin_fixtures import BUILTIN_FIXTURES as _BF
+            idx = _sel[0] if _sel[0] in targets else targets[0]
 
-            # Charger toutes les fixtures disponibles
-            _user_fx = []
-            try:
-                _fx_file = Path.home() / ".mystrow_fixtures.json"
-                if _fx_file.exists():
-                    _raw = _json.loads(_fx_file.read_text(encoding="utf-8"))
-                    if isinstance(_raw, list):
-                        for _f in _raw:
-                            if not isinstance(_f, dict) or _f.get("builtin"):
-                                continue
-                            if not _f.get("profile") and _f.get("modes"):
-                                _f["profile"] = _f["modes"][0].get("profile", [])
-                            _user_fx.append(_f)
-            except Exception:
-                pass
-            _custom_fx = []
-            try:
-                from fixture_editor import _load_custom_bundle as _lcb2
-                _seen2 = {(f["name"], f.get("manufacturer", "")) for f in list(_BF) + _user_fx}
-                for _cf in _lcb2():
-                    if not isinstance(_cf, dict) or not _cf.get("name"):
-                        continue
-                    _k = (_cf["name"], _cf.get("manufacturer", ""))
-                    if _k in _seen2:
-                        continue
-                    if not _cf.get("profile") and _cf.get("modes"):
-                        _cf = dict(_cf)
-                        _cf["profile"] = _cf["modes"][0].get("profile", [])
-                    _custom_fx.append(_cf)
-                    _seen2.add(_k)
-            except Exception:
-                pass
-            _all = list(_BF) + _user_fx + _custom_fx
-
-            # ── Picker ───────────────────────────────────────────────────────
-            from PySide6.QtWidgets import QListWidget as _QListWidget, QListWidgetItem as _QLWI
-            _SS2 = (
-                "QDialog{background:#141414;color:#e0e0e0;}"
-                "QListWidget{background:#1e1e1e;color:#e0e0e0;border:1px solid #333;"
-                "border-radius:6px;font-size:12px;outline:none;}"
-                "QListWidget::item{padding:6px 12px;}"
-                "QListWidget::item:selected{background:#00d4ff;color:#000;font-weight:bold;}"
-                "QListWidget::item:hover:!selected{background:#2a2a2a;}"
-                "QLineEdit{background:#1e1e1e;color:#fff;border:1px solid #444;"
-                "border-radius:6px;padding:6px 12px;font-size:13px;}"
-                "QLineEdit:focus{border-color:#00d4ff88;}"
-                "QPushButton{background:#2a2a2a;color:#ccc;border:1px solid #444;"
-                "border-radius:6px;padding:6px 16px;font-size:12px;}"
-                "QPushButton:hover{border-color:#00d4ff;color:#fff;}"
-            )
-            pick = QDialog(dialog)
-            pick.setWindowTitle(tr("mw_replace_with"))
-            pick.resize(600, 480)
-            pick.setStyleSheet(_SS2)
-            pv = QVBoxLayout(pick)
-            pv.setContentsMargins(16, 14, 16, 14)
-            pv.setSpacing(10)
-
-            srch = QLineEdit()
-            srch.setPlaceholderText(tr("mw_search_m"))
-            srch.setFixedHeight(36)
-            pv.addWidget(srch)
-
-            plst = _QListWidget()
-            pv.addWidget(plst, 1)
-
-            pbr = QHBoxLayout()
-            pok = QPushButton(tr("mw_replace"))
-            pok.setFixedHeight(36)
-            pok.setStyleSheet(
-                "QPushButton{background:#00d4ff;color:#000;font-weight:bold;"
-                "border:none;border-radius:6px;padding:6px 24px;font-size:13px;}"
-                "QPushButton:hover{background:#33ddff;}"
-            )
-            pcancel = QPushButton(tr("mw_cancel"))
-            pcancel.setFixedHeight(36)
-            pcancel.clicked.connect(pick.reject)
-            pbr.addStretch()
-            pbr.addWidget(pcancel)
-            pbr.addWidget(pok)
-            pv.addLayout(pbr)
-
-            def _pfill(q=""):
-                plst.clear()
-                q = q.strip().lower()
-                for _fx in _all:
-                    if q and q not in _fx.get("name", "").lower() \
-                           and q not in _fx.get("fixture_type", "").lower() \
-                           and q not in _fx.get("manufacturer", "").lower():
-                        continue
-                    _n   = _fx.get("name", "?")
-                    _mfr = _fx.get("manufacturer", "")
-                    _nch = len(_fx.get("profile", []))
-                    _lbl = f"{_n}  ({_nch}ch)"
-                    if _mfr:
-                        _lbl += f"   — {_mfr}"
-                    _item = _QLWI(_lbl)
-                    _item.setData(Qt.UserRole, _fx)
-                    plst.addItem(_item)
-                if plst.count():
-                    plst.setCurrentRow(0)
-
-            srch.textChanged.connect(_pfill)
-            _pfill()
-            srch.setFocus()
-
-            _pick_result = [None]
-
-            def _paccept():
-                _it = plst.currentItem()
-                if not _it:
-                    return
-                _pick_result[0] = _it.data(Qt.UserRole)
-                pick.accept()
-
-            pok.clicked.connect(_paccept)
-            plst.itemDoubleClicked.connect(lambda _: _paccept())
-
-            pick.exec()
-            new_fx = _pick_result[0]
-            if not new_fx:
+            # La fenêtre « Ajouter un projecteur » : mêmes onglets, recherche,
+            # modes DMX et aperçu des canaux qu'à l'ajout.
+            res = self._show_fixture_library_dialog(replace_n=len(targets))
+            if not res:
+                return
+            new_fx, _qty, _custom_name = res
+            if _preset_pixel_spec(new_fx) is not None:
+                # Une barre/matrice s'éclate en N projecteurs-pixels : ça ne se
+                # glisse pas à la place d'un appareil existant.
+                QMessageBox.information(dialog, tr("mw_replace"), tr("mw_replace_no_matrix"))
                 return
 
             # ── Appliquer le remplacement ─────────────────────────────────
             _push_history()
-            fd  = fixture_data[idx]
-            proj = self.projectors[idx]
+            _base = _custom_name or new_fx.get("name")
+            _last = (_base or "").rsplit(" ", 1)[-1].lower()
+            # Même règle qu'à l'ajout : « Gradateur 1 canal » + 2 se lirait canal 2
+            _sep = " #" if (_last[-1:].isdigit() or _last in (
+                "canal", "canaux", "ch", "channel", "channels")) else " "
+            for _k, _ti in enumerate(targets):
+                if _ti >= len(self.projectors):
+                    continue
+                fd  = fixture_data[_ti]
+                proj = self.projectors[_ti]
 
-            fd['name']         = new_fx.get("name", fd['name'])
-            fd['fixture_type'] = new_fx.get("fixture_type", fd['fixture_type'])
-            fd['profile']      = list(new_fx.get("profile", fd['profile']))
-            # Les noms de canaux appartiennent au NOUVEAU profil. Sans cette
-            # ligne, remplacer une fixture par sa version corrigée gardait les
-            # libellés de l'ancienne — donc des noms décalés, ou aucun, juste
-            # là où on vient de les rétablir. La racine décrit le premier mode ;
-            # une fixture venue de la bibliothèque ne les porte que dans `modes`.
-            _nlb = (new_fx.get("labels") or new_fx.get("channel_labels")
-                    or (new_fx.get("modes") or [{}])[0].get("labels") or [])
-            fd['channel_labels'] = (list(_nlb) if len(_nlb) == len(fd['profile'])
-                                    else [])
-            # Plage utile du NOUVEAU modèle : c'est par ce remplacement qu'un
-            # appareil déjà patché récupère une fixture bridée après coup.
-            fd['channel_ranges'] = normalize_channel_ranges(new_fx.get("channel_ranges"))
-            # start_address et group sont conservés
+                if _base:
+                    fd['name'] = (f"{_base}{_sep}{_k + 1}" if len(targets) > 1
+                                  else _base)
+                fd['fixture_type'] = new_fx.get("fixture_type", fd['fixture_type'])
+                fd['profile']      = list(new_fx.get("profile", fd['profile']))
+                # Les noms de canaux appartiennent au NOUVEAU profil. Sans cette
+                # ligne, remplacer une fixture par sa version corrigée gardait les
+                # libellés de l'ancienne — donc des noms décalés, ou aucun, juste
+                # là où on vient de les rétablir. La racine décrit le premier mode ;
+                # une fixture venue de la bibliothèque ne les porte que dans `modes`.
+                _nlb = (new_fx.get("labels") or new_fx.get("channel_labels")
+                        or (new_fx.get("modes") or [{}])[0].get("labels") or [])
+                fd['channel_labels'] = (list(_nlb) if len(_nlb) == len(fd['profile'])
+                                        else [])
+                # Plage utile du NOUVEAU modèle : c'est par ce remplacement qu'un
+                # appareil déjà patché récupère une fixture bridée après coup.
+                fd['channel_ranges'] = normalize_channel_ranges(new_fx.get("channel_ranges"))
+                # Roues, presets et valeurs par défaut décrivaient l'ANCIEN
+                # appareil (indexés sur ses canaux) : un PAR remplacé par une
+                # lyre gardait sinon une roue couleur qui n'existe pas.
+                fd['manufacturer']      = new_fx.get("manufacturer", "")
+                fd['color_wheel_slots'] = list(new_fx.get("color_wheel_slots", []))
+                fd['gobo_wheel_slots']  = list(new_fx.get("gobo_wheel_slots", []))
+                fd['preset_slots']      = dict(new_fx.get("preset_slots", {}) or {})
+                fd['channel_defaults']  = {}
+                # start_address et group sont conservés
 
-            proj.name           = fd['name']
-            proj.fixture_type   = fd['fixture_type']
-            proj.dmx_profile    = fd['profile']
-            proj.channel_labels = list(fd['channel_labels'])
+                proj.name           = fd['name']
+                proj.manufacturer   = fd['manufacturer']
+                proj.fixture_type   = fd['fixture_type']
+                proj.dmx_profile    = fd['profile']
+                proj.channel_labels = list(fd['channel_labels'])
 
             _apply_fd_to_dmx()
             _mark_dirty()
@@ -26536,7 +26550,8 @@ class MainWindow(QMainWindow):
             _build_cards(filter_bar.text())
             _select_card(idx)
 
-        btn_det_replace.clicked.connect(_replace_selected)
+        # `clicked` passe un booléen : ne pas le prendre pour une liste de cibles
+        btn_det_replace.clicked.connect(lambda *_: _replace_selected())
 
         def _del_checked():
             if not _checked: return
@@ -26558,6 +26573,7 @@ class MainWindow(QMainWindow):
             btn_del_multi.setVisible(False)
             btn_rename_multi.setVisible(False)
             btn_group_multi.setVisible(False)
+            btn_replace_multi.setVisible(False)
             btn_desel_multi.setVisible(False)
             self._rebuild_dmx_patch()
             _rebuild_fd()
@@ -26566,6 +26582,8 @@ class MainWindow(QMainWindow):
             _mark_dirty()
 
         btn_del_multi.clicked.connect(_del_checked)
+        btn_replace_multi.clicked.connect(
+            lambda *_: _replace_selected(sorted(_checked)))
 
         def _update_dots():
             for i, card in enumerate(_cards):
@@ -26965,6 +26983,7 @@ class MainWindow(QMainWindow):
             btn_del_multi.setVisible(False)
             btn_rename_multi.setVisible(False)
             btn_group_multi.setVisible(False)
+            btn_replace_multi.setVisible(False)
             btn_desel_multi.setVisible(False)
             self._rebuild_dmx_patch()
             _rebuild_fd()
@@ -27004,6 +27023,7 @@ class MainWindow(QMainWindow):
             btn_del_multi.setVisible(False)
             btn_rename_multi.setVisible(False)
             btn_group_multi.setVisible(False)
+            btn_replace_multi.setVisible(False)
             btn_desel_multi.setVisible(False)
             self._rebuild_dmx_patch()
             _rebuild_fd()
@@ -27237,35 +27257,18 @@ class MainWindow(QMainWindow):
                 _add_fixture()
 
         def _open_fixture_editor_ia():
-            import json as _json
-            from fixture_editor import FixtureEditorDialog, FIXTURE_FILE
+            from fixture_editor import FixtureEditorDialog
             # Prompt à coller dans l'IA de l'utilisateur, réponse recollée ici :
             # MyStrow n'appelle plus aucune IA lui-même (cf. fixture_ai_prompt).
-            from fixture_ai_prompt import AIFixtureDialog
+            from fixture_ai_prompt import AIFixtureDialog, save_to_library
             ia_dlg = AIFixtureDialog(dialog)
             if ia_dlg.exec() != QDialog.Accepted:
                 return
             fx = ia_dlg.result_fixture()
             if not fx.get("profile"):
                 return
-            fx["source"] = "user"
             try:
-                existing = []
-                if FIXTURE_FILE.exists():
-                    data = _json.loads(FIXTURE_FILE.read_text(encoding="utf-8"))
-                    if isinstance(data, list):
-                        existing = data
-                existing_names = {f["name"] for f in existing}
-                name = fx["name"]
-                if name in existing_names:
-                    c = 2
-                    while f"{name} ({c})" in existing_names:
-                        c += 1
-                    fx["name"] = f"{name} ({c})"
-                existing.append(fx)
-                FIXTURE_FILE.write_text(
-                    _json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
+                save_to_library(fx)
             except Exception:
                 pass
             editor = FixtureEditorDialog(dialog)
@@ -27594,6 +27597,7 @@ class MainWindow(QMainWindow):
                 btn_del_multi.setVisible(False)
                 btn_rename_multi.setVisible(False)
                 btn_group_multi.setVisible(False)
+                btn_replace_multi.setVisible(False)
                 btn_desel_multi.setVisible(False)
                 _build_cards(filter_bar.text())
                 det_stack.setCurrentIndex(0)
@@ -27812,8 +27816,11 @@ class MainWindow(QMainWindow):
         return (addr_spin.value(), uni_spin.value(), group, name, spec,
                 orient_combo.currentData())
 
-    def _show_fixture_library_dialog(self):
-        """Dialog bibliotheque de fixtures. Retourne (preset, qty, custom_name) ou None."""
+    def _show_fixture_library_dialog(self, replace_n=0):
+        """Dialog bibliotheque de fixtures. Retourne (preset, qty, custom_name) ou None.
+
+        `replace_n` > 0 : même fenêtre, ouverte pour remplacer `replace_n`
+        fixtures du patch — sans quantité, bouton « Remplacer »."""
         from PySide6.QtWidgets import QListWidget, QSplitter, QListWidgetItem
         from builtin_fixtures import BUILTIN_FIXTURES
         import json as _json
@@ -28984,9 +28991,15 @@ class MainWindow(QMainWindow):
         qty_row.addWidget(lbl_qty)
         qty_row.addWidget(qty_spin)
         layout.addLayout(qty_row)
+        if replace_n:
+            # Le nombre d'appareils est celui qu'on remplace
+            lbl_qty.setVisible(False)
+            qty_spin.setVisible(False)
+            dialog.setWindowTitle(tr("mw_replace_with_n", n=replace_n) if replace_n > 1
+                                  else tr("mw_replace_with"))
 
         btn_row = QHBoxLayout()
-        ok_btn = QPushButton(tr("mw_add"))
+        ok_btn = QPushButton(tr("mw_replace") if replace_n else tr("mw_add"))
         ok_btn.setFixedHeight(36)
         ok_btn.setStyleSheet(
             "QPushButton { background:#00d4ff; color:#000; font-weight:bold;"

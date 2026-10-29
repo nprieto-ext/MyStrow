@@ -2816,9 +2816,12 @@ window.updateScene = function(projectors, _anim) {
       // de canal de PROGRAMME (seul `Gobo1` ouvre un éditeur de presets, d'où
       // le détournement). Le drapeau vient de `core.fixture_projects_gobo`,
       // partagé avec le plan 2D.
+      // `gobo_slot` vient de `core.gobo_display_slot` (forme calibrée) ;
+      // repli sur le découpage DMX pour une donnée sans ce champ.
       const goboSlot  = p.has_gobo
-        ? Math.min(GOBO_SLOT_COUNT - 1,
-                   Math.floor(((p.gobo || 0) / 256) * GOBO_SLOT_COUNT))
+        ? Math.max(0, Math.min(GOBO_SLOT_COUNT - 1,
+                   p.gobo_slot !== undefined ? p.gobo_slot
+                   : Math.floor(((p.gobo || 0) / 256) * GOBO_SLOT_COUNT)))
         : 0;
       const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
       // Même porte sur la rotation : sans motif, faire tourner le faisceau

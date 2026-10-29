@@ -21,12 +21,22 @@ Endpoints:
   POST /api/cartouche/{idx}          → declencher cartouche 0-3
   POST /api/go                       → GO+ : avance à la mémoire suivante (mode GO)
   POST /api/goback                   → GO- : recule à la mémoire précédente (mode GO)
+
+Ajouts pour l'assistant IA (serveur MCP, dossier mcp/) :
+  POST /api/projectors               → {"events": [...]} au format tablette :
+                                       proj_color / proj_level / proj_strobe / proj_mute
+  POST /api/blackout                 → noir complet (faders, effets, strobe)
+  POST /api/stop_effects             → coupe tous les effets en cours
+  POST /api/speed/{0-100}            → vitesse des effets (fader Vit. FX)
+  GET  /api/fixtures?q=texte         → recherche dans la bibliothèque locale
+  GET  /api/fixture_format           → format JSON d'une fixture (prompt IA)
+  POST /api/fixture_import           → {"fixture": {...}} : valide + enregistre
 """
 
 import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, parse_qs
 
 from PySide6.QtCore import QObject, Signal
 
@@ -54,6 +64,72 @@ class _StreamDeckBridge(QObject):
     cartouche_requested  = Signal(int)        # cartouche idx 0-3
     go_advance_requested = Signal()           # GO+ : mémoire suivante
     go_back_requested    = Signal()           # GO- : mémoire précédente
+    remote_event_requested = Signal(object)   # dict au format des events tablette
+    blackout_requested   = Signal()
+    stop_effects_requested = Signal()
+    speed_requested      = Signal(int)        # vitesse effets 0-100
+    fixture_save_requested = Signal(object)   # _FixtureJob (attendu par le thread HTTP)
+
+
+class _FixtureJob:
+    """Enregistrement d'une fixture fait dans le thread Qt (l'éditeur de
+    fixtures écrit le même fichier) ; le thread HTTP attend le résultat."""
+
+    def __init__(self, fx: dict):
+        self.fx     = fx
+        self.done   = threading.Event()
+        self.name   = ""
+        self.error  = ""
+
+
+# Types d'events tablette acceptés depuis l'API (liste blanche : pas de
+# « clear », « rec_toggle »… qui touchent à l'état de l'AKAI ou du REC).
+_PROJECTOR_EVENTS = {"proj_color", "proj_level", "proj_strobe", "proj_mute"}
+
+_NO_BROWSER_ACTIONS = {"projectors", "blackout", "stop_effects", "speed", "fixture_import"}
+
+
+def _all_effects() -> list:
+    from light_actions import all_effects
+    return all_effects()
+
+
+def _search_fixtures(query: str, limit: int = 30) -> list:
+    """Recherche par mots dans la bibliothèque locale (intégrées + utilisateur,
+    packs téléchargés compris : ils sont fusionnés dans le fichier utilisateur)."""
+    from builtin_fixtures import BUILTIN_FIXTURES
+    from fixture_editor import FIXTURE_FILE
+    user = []
+    try:
+        if FIXTURE_FILE.exists():
+            data = json.loads(FIXTURE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                user = data
+    except Exception:
+        pass
+    words = [w for w in (query or "").lower().split() if w]
+    out = []
+    for origin, lib in (("user", user), ("builtin", BUILTIN_FIXTURES)):
+        for fx in lib:
+            if not isinstance(fx, dict):
+                continue
+            hay = f'{fx.get("manufacturer", "")} {fx.get("name", "")} {fx.get("fixture_type", "")}'.lower()
+            if words and not all(w in hay for w in words):
+                continue
+            modes = fx.get("modes") or [{"name": fx.get("mode_name", ""),
+                                         "channelCount": len(fx.get("profile") or [])}]
+            out.append({
+                "name":         fx.get("name", ""),
+                "manufacturer": fx.get("manufacturer", ""),
+                "fixture_type": fx.get("fixture_type", ""),
+                "modes":        [{"name": m.get("name", ""),
+                                  "channels": m.get("channelCount") or len(m.get("profile") or [])}
+                                 for m in modes if isinstance(m, dict)],
+                "library":      origin,
+            })
+            if len(out) >= limit:
+                return out
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +157,15 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
 
         def _send_error(self, msg, status=400):
             self._send_json({"error": msg}, status)
+
+        def _read_json(self) -> dict:
+            n = int(self.headers.get("Content-Length") or 0)
+            if n <= 0:
+                return {}
+            data = json.loads(self.rfile.read(n).decode("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("corps JSON attendu : un objet")
+            return data
 
         def _parts(self):
             """Retourne les segments du path, URL-decodés."""
@@ -111,6 +196,18 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                 self._handle_memories()
             elif parts == ["api", "effects"]:
                 self._handle_effects()
+            elif parts == ["api", "fixtures"]:
+                q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                try:
+                    self._send_json({"fixtures": _search_fixtures(q)})
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, 500)
+            elif parts == ["api", "fixture_format"]:
+                try:
+                    from fixture_ai_prompt import build_prompt
+                    self._send_json({"format": build_prompt()})
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, 500)
             else:
                 self._send_error("Not found", 404)
 
@@ -146,9 +243,8 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
         def _handle_effects(self):
             """Liste de tous les effets disponibles (builtin + custom)."""
             try:
-                from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
-                custom = _load_custom_effects()
-                all_effects = list(BUILTIN_EFFECTS) + custom
+                from effect_editor import BUILTIN_EFFECTS
+                all_effects = _all_effects()
                 items = [
                     {
                         "name":     e.get("name", ""),
@@ -272,13 +368,15 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                 # Projecteurs
                 projectors = [
                     {
+                        "index":  i,
                         "name":   p.name,
                         "group":  p.group,
+                        "type":   getattr(p, "fixture_type", ""),
                         "level":  p.level,
                         "color":  p.color.name(),
                         "muted":  p.muted,
                     }
-                    for p in w.projectors
+                    for i, p in enumerate(w.projectors)
                 ]
 
                 # Memoires — liste plate
@@ -343,6 +441,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     "fader_levels":       fader_levels,
                     "active_effects":     active_effects,
                     "active_effect_name": active_effect_name,
+                    "effect_speed":       getattr(w, "effect_speed", 0),
                     "projectors":         projectors,
                     "memories":           memories,
                     "scenes":             scenes,
@@ -362,6 +461,14 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                 return
 
             action = parts[1]
+
+            # Les commandes ajoutées pour l'assistant IA ne sont pas faites pour
+            # un navigateur : avec le CORS ouvert, n'importe quelle page web
+            # pourrait sinon envoyer un noir en plein show. Un client local
+            # (serveur MCP, curl) n'envoie pas d'en-tête Origin.
+            if action in _NO_BROWSER_ACTIONS and self.headers.get("Origin"):
+                self._send_error("Commande refusée depuis un navigateur", 403)
+                return
 
             if action == "play":
                 bridge.play_requested.emit()
@@ -410,13 +517,25 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     bridge.effect_requested.emit(idx)
                     self._send_json({"ok": True})
                 except ValueError:
-                    # Pas un entier → traiter comme un nom d'effet
+                    # Pas un entier → traiter comme un nom d'effet. Résolu ici,
+                    # sans tenir compte de la casse : un nom inconnu doit revenir
+                    # en erreur, sinon l'appelant (une IA) croit avoir réussi.
                     name = raw.strip()
                     if not name:
                         self._send_error("Nom d'effet vide")
                         return
-                    bridge.effect_name_requested.emit(name)
-                    self._send_json({"ok": True})
+                    try:
+                        names = [e.get("name", "") for e in _all_effects()]
+                    except Exception as exc:
+                        self._send_json({"error": str(exc)}, 500)
+                        return
+                    match = next((n for n in names if n == name), None) or \
+                        next((n for n in names if n.lower() == name.lower()), None)
+                    if match is None:
+                        self._send_error(f"Effet inconnu : {name} (voir GET /api/effects)", 404)
+                        return
+                    bridge.effect_name_requested.emit(match)
+                    self._send_json({"ok": True, "effect": match})
 
             elif action == "mute":
                 # POST /api/mute/{fader_idx 0-7}/{0|1}
@@ -490,6 +609,73 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                 bridge.go_back_requested.emit()
                 self._send_json({"ok": True})
 
+            elif action == "projectors":
+                # POST /api/projectors  {"events": [{"type": "proj_color", "idxs": [0, 1], "color": "#ff0000"}, ...]}
+                try:
+                    events = self._read_json().get("events")
+                    if not isinstance(events, list) or not events:
+                        raise ValueError('"events" doit être une liste non vide')
+                    for ev in events:
+                        if not isinstance(ev, dict) or ev.get("type") not in _PROJECTOR_EVENTS:
+                            raise ValueError(f"type d'event refusé : {ev!r}")
+                        if not isinstance(ev.get("idxs"), list):
+                            raise ValueError('"idxs" (liste d\'indices de projecteurs) manquant')
+                        ev["idxs"] = [int(i) for i in ev["idxs"]]
+                    for ev in events:
+                        bridge.remote_event_requested.emit(ev)
+                    self._send_json({"ok": True})
+                except (ValueError, TypeError) as exc:
+                    self._send_error(str(exc))
+
+            elif action == "blackout":
+                bridge.blackout_requested.emit()
+                self._send_json({"ok": True})
+
+            elif action == "stop_effects":
+                bridge.stop_effects_requested.emit()
+                self._send_json({"ok": True})
+
+            elif action == "speed":
+                # POST /api/speed/{0-100}
+                try:
+                    val = int(parts[2])
+                    if not (0 <= val <= 100):
+                        raise ValueError("valeur hors plage 0-100")
+                    bridge.speed_requested.emit(val)
+                    self._send_json({"ok": True})
+                except (IndexError, ValueError) as exc:
+                    self._send_error(f"Usage: /api/speed/{{0-100}} — {exc}")
+
+            elif action == "fixture_import":
+                # POST /api/fixture_import  {"fixture": {...format mystrow-fixture...}}
+                # Même lecture que « Créer votre fixture via IA » : mêmes
+                # corrections (doublons de canaux, machines à effet…).
+                try:
+                    raw = self._read_json().get("fixture")
+                    if raw is None:
+                        raise ValueError('"fixture" manquant')
+                    from fixture_ai_prompt import parse_ai_response
+                    fx = parse_ai_response(raw if isinstance(raw, str) else json.dumps(raw))
+                except (ValueError, TypeError) as exc:
+                    self._send_error(str(exc))
+                    return
+                job = _FixtureJob(fx)
+                bridge.fixture_save_requested.emit(job)
+                if not job.done.wait(10):
+                    self._send_json({"error": "MyStrow occupé, réessayer"}, 503)
+                    return
+                if job.error:
+                    self._send_json({"error": job.error}, 500)
+                    return
+                self._send_json({
+                    "ok":       True,
+                    "name":     job.name,
+                    "fixture_type": fx.get("fixture_type", ""),
+                    "modes":    [{"name": m["name"], "channels": m["channelCount"],
+                                  "profile": m["profile"]} for m in fx.get("modes", [])],
+                    "unused_channels": fx.get("profile", []).count("Unused"),
+                })
+
             else:
                 self._send_error(f"Action inconnue : {action}", 404)
 
@@ -537,6 +723,44 @@ class StreamDeckAPIServer:
         b.cartouche_requested.connect(window.on_cartouche_clicked)
         b.go_advance_requested.connect(window._go_advance)
         b.go_back_requested.connect(window._go_back)
+        b.remote_event_requested.connect(self._on_remote_event)
+        b.blackout_requested.connect(window.full_blackout)
+        b.stop_effects_requested.connect(self._on_stop_effects)
+        b.speed_requested.connect(self._on_speed)
+        b.fixture_save_requested.connect(self._on_fixture_save)
+
+    def _on_remote_event(self, ev: dict):
+        w = self._window_ref[0]
+        if w is None:
+            return
+        try:
+            w._apply_tablet_event(ev)
+        except Exception as exc:
+            print(f"[StreamDeck API] event {ev.get('type')} échec : {exc}")
+
+    def _on_stop_effects(self):
+        w = self._window_ref[0]
+        if w is not None:
+            import light_actions
+            light_actions.stop_effects(w)
+
+    def _on_speed(self, value: int):
+        w = self._window_ref[0]
+        if w is not None:
+            import light_actions
+            light_actions.set_speed(w, value)
+
+    def _on_fixture_save(self, job):
+        try:
+            from fixture_ai_prompt import save_to_library
+            job.name = save_to_library(job.fx)
+            w = self._window_ref[0]
+            if w is not None:
+                w._log_message(f"Fixture « {job.name} » ajoutée à la bibliothèque par l'assistant IA")
+        except Exception as exc:
+            job.error = str(exc)
+        finally:
+            job.done.set()
 
     def _on_play(self):
         """Play/pause depuis StreamDeck.
@@ -601,14 +825,8 @@ class StreamDeckAPIServer:
         if w is None:
             return
         try:
-            from effect_editor import BUILTIN_EFFECTS, _load_custom_effects
-            all_effects = list(BUILTIN_EFFECTS) + _load_custom_effects()
-            cfg = next((e for e in all_effects if e.get("name") == name), None)
-            if cfg is None:
-                return  # nom inconnu — ignorer silencieusement
-            w.active_effect        = name
-            w.active_effect_config = cfg
-            w.start_effect(name)
+            import light_actions
+            light_actions.fire_effect(w, name)
         except Exception:
             pass
 

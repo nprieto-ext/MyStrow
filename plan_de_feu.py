@@ -12,7 +12,7 @@ from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
                   color_wheel_display_color, fixture_projects_gobo,
                   GOBO_SLOT_NAMES, GOBO_SLOT_ICONS, GOBO_SLOT_COUNT,
-                  gobo_slot_index, gobo_slot_dmx,
+                  gobo_slot_index, gobo_slot_dmx, gobo_display_slot,
                   emitted_brightness,
                   FX_MACHINE_TYPES, fixture_is_fx_machine, fixture_is_pyro,
                   strobe_speed_from_dmx, displayed_strobe_speed,
@@ -2939,8 +2939,10 @@ class FixtureCanvas(QWidget):
                 # (`haze_alpha`/`alpha_src` ci-dessous en dependent aussi).
                 # Meme porte qu'en 3D — cf. `core.fixture_projects_gobo`.
                 gobo_val = getattr(proj, 'gobo', 0)
-                gobo_idx = (gobo_slot_index(gobo_val)
-                            if gobo_val > 0 and fixture_projects_gobo(proj) else 0)
+                # Forme choisie dans la calibration de la roue si elle existe,
+                # sinon découpage symbolique — cf. `core.gobo_display_slot`.
+                gobo_idx = (gobo_display_slot(proj, gobo_val)
+                            if fixture_projects_gobo(proj) else 0)
 
                 painter.save()
                 painter.translate(cx, cy)

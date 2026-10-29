@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.8"
+VERSION = "3.2.9"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -1504,6 +1504,48 @@ def gobo_slot_dmx(idx) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, min(GOBO_SLOT_COUNT - 1, i)) * GOBO_SLOT_STEP
+
+
+def gobo_display_slot(proj, dmx) -> int:
+    """Motif à DESSINER (0 → `GOBO_SLOT_COUNT - 1`) pour la valeur Gobo `dmx`.
+
+    Sans calibration, c'est le découpage symbolique `gobo_slot_index`. Mais la
+    vraie roue d'une lyre n'a aucune raison de suivre cet ordre : son étoile
+    peut être à DMX 40, là où le plan dessinait « Anneau ». L'éditeur de roue
+    de gobos laisse donc choisir une forme par slot (`"shape"` dans
+    `gobo_wheel_slots`), et c'est elle qui l'emporte : on prend le slot calibré
+    le plus PROCHE de la valeur — les slots importés (OFL, QLC+) notent le
+    milieu de leur plage, ceux du logiciel le bas, le plus proche couvre les
+    deux conventions.
+
+    Un slot sans `"shape"` (import, ancien patch) retombe sur le découpage
+    symbolique : un show existant s'affiche exactement comme avant tant que
+    l'utilisateur n'a rien choisi.
+
+    ⚠️ Point UNIQUE pour le plan 2D (`PlanDeFeuCanvas`) et la 3D
+    (`Plan3DWebWindow._to_data`, champ `gobo_slot`).
+    """
+    try:
+        v = int(dmx)
+    except (TypeError, ValueError):
+        v = 0
+    slots = getattr(proj, 'gobo_wheel_slots', None) or []
+    best = None
+    for s in slots:
+        if not isinstance(s, dict) or 'dmx' not in s:
+            continue
+        try:
+            d = abs(int(s['dmx']) - v)
+        except (TypeError, ValueError):
+            continue
+        if best is None or d < best[0]:
+            best = (d, s)
+    if best is not None and best[1].get('shape') is not None:
+        try:
+            return max(0, min(GOBO_SLOT_COUNT - 1, int(best[1]['shape'])))
+        except (TypeError, ValueError):
+            pass
+    return gobo_slot_index(v)
 
 
 def fixture_projects_gobo(proj) -> bool:

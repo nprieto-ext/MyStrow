@@ -89,6 +89,11 @@ for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'zerocon
         datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
     except Exception:
         pass
+# Dictée vocale de l'assistant (assistant_voice.py) : PAS embarquée pour
+# l'instant (faster-whisper + ctranslate2 ≈ +80 Mo). Exclue explicitement : sinon
+# PyInstaller suit l'import de assistant_voice et en embarque une partie, et le
+# micro s'afficherait sans pouvoir marcher. Sans elle, le bouton micro est masqué.
+_VOICE_EXCLUDES = ['faster_whisper', 'ctranslate2', 'av', 'tokenizers']
 # pygame : utilisé UNIQUEMENT comme pilote de manette (gamepad_client.py), pour
 # le pan/tilt des lyres au stick. collect_all est nécessaire pour embarquer les
 # binaires SDL2, sans lesquels l'import de pygame._sdl2.controller échoue dans
@@ -97,6 +102,19 @@ try:
     _r = collect_all('pygame')
     datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
     hiddenimports += ['pygame._sdl2', 'pygame._sdl2.controller']
+except Exception:
+    pass
+# llama_cpp : moteur du modèle de l'assistant (assistant_llm.py, importé à la
+# demande). Ses bibliothèques natives sont chargées par ctypes depuis llama_cpp/lib,
+# invisibles pour PyInstaller sans aide. Les copies .dylib à numéro de version
+# complet (libllama.0.5.0.dylib…) ne sont référencées par personne : on les saute.
+# Absent sur Mac Intel (pas de roue) : rien d'embarqué, le bandeau reste masqué.
+try:
+    import re as _re
+    from PyInstaller.utils.hooks import collect_dynamic_libs
+    binaries += [(_s, _d) for _s, _d in collect_dynamic_libs('llama_cpp')
+                 if not _re.search(r'\.\d+\.\d+\.\d+\.dylib$', _s)]
+    hiddenimports += ['llama_cpp', 'llama_cpp.llama_cpp', 'llama_cpp.llama_grammar']
 except Exception:
     pass
 
@@ -144,7 +162,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=_VOICE_EXCLUDES,
     noarchive=False,
     optimize=0,
 )

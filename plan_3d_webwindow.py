@@ -3,7 +3,7 @@ Plan de feu 3D — rendu Three.js via QWebEngineView.
 Remplace Plan3DWindow avec une API identique : init_scene(), refresh().
 """
 import base64
-from core import effect_channel_value, fixture_output_channel, displayed_strobe_speed
+from core import effect_channel_value, fixture_output_channel, displayed_strobe_speed, gobo_display_slot
 import datetime
 import json
 import math
@@ -3832,6 +3832,9 @@ class Plan3DWebWindow(QMainWindow):
                 'name':           getattr(p, 'name', ''),
                 'group':          getattr(p, 'group', ''),
                 'gobo':           int(effect_channel_value(p, 'Gobo1', getattr(p, 'gobo', 0)) or 0),
+                # Motif à dessiner, résolu côté Python : la forme choisie dans
+                # la calibration de la roue l'emporte sur le découpage DMX.
+                'gobo_slot':      gobo_display_slot(p, effect_channel_value(p, 'Gobo1', getattr(p, 'gobo', 0)) or 0),
                 'gobo_rotation':  int(effect_channel_value(p, 'Gobo1Rot', getattr(p, 'gobo_rotation', 0)) or 0),
                 # Optique de projection : sans elle, pas de motif. Même logique
                 # que `has_zoom`/`has_focus` — la valeur du canal ne suffit pas

@@ -121,8 +121,11 @@ class TestLesDeuxDessins(unittest.TestCase):
         """
         with open(_HTML, encoding="utf-8") as f:
             html = f.read()
-        m = re.search(r"Math\.min\((\w+) - 1,\s*"
-                      r"Math\.floor\(\(\(p\.gobo \|\| 0\) / 256\) \* (\w+)\)\)", html)
+        # Le slot vient d'abord de `gobo_slot` (calculé par
+        # `core.gobo_display_slot`) ; la formule DMX reste le repli.
+        self.assertRegex(html, r"p\.gobo_slot !== undefined \? p\.gobo_slot")
+        m = re.search(r"Math\.min\((\w+) - 1,[^;]*?"
+                      r"Math\.floor\(\(\(p\.gobo \|\| 0\) / 256\) \* (\w+)\)\)", html, re.S)
         self.assertIsNotNone(m, "formule de slot 3D introuvable ou reecrite")
         self.assertEqual(m.group(1), "GOBO_SLOT_COUNT")
         self.assertEqual(m.group(2), "GOBO_SLOT_COUNT")
@@ -132,6 +135,24 @@ class TestLesDeuxDessins(unittest.TestCase):
         for v in range(256):
             js = min(n - 1, int((v / 256) * n))
             self.assertEqual(js, gobo_slot_index(v), f"DMX {v}")
+
+    def test_forme_calibree_prioritaire(self):
+        """La forme choisie dans l'éditeur de roue l'emporte sur le découpage
+        DMX ; sans forme choisie, rien ne change pour les shows existants."""
+        from types import SimpleNamespace
+        from core import gobo_display_slot
+        nue = SimpleNamespace(gobo_wheel_slots=[])
+        for v in range(256):
+            self.assertEqual(gobo_display_slot(nue, v), gobo_slot_index(v))
+        lyre = SimpleNamespace(gobo_wheel_slots=[
+            {"name": "Open", "dmx": 0},
+            {"name": "Étoile", "dmx": 40, "shape": 4},
+            {"name": "Import", "dmx": 80},
+        ])
+        self.assertEqual(gobo_display_slot(lyre, 40), 4)
+        self.assertEqual(gobo_display_slot(lyre, 50), 4)    # plus proche
+        self.assertEqual(gobo_display_slot(lyre, 80), gobo_slot_index(80))
+        self.assertEqual(gobo_display_slot(lyre, 0), 0)
 
     def test_le_2d_dessine_quelque_chose_pour_chaque_slot(self):
         from PySide6.QtWidgets import QApplication

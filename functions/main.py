@@ -1785,10 +1785,10 @@ def _expedition_fanny(order_ref, order_id: str, ref_client: str, email: str,
     contenu = f"""
 <h2>📦 Une interface à expédier</h2>
 <div class="box"><b>{quantity} × Interface USB-DMX</b> (boîtier nu + câble USB)<br>
-Réf. commande : <b>{ref_client}</b></div>
+Réf. commande : <b>{ref_client}</b><br>
+Acheteur : <a href="mailto:{html_escape(email)}">{html_escape(email)}</a></div>
 <p><b>Adresse à mettre sur l'étiquette :</b></p>
 <div class="box">{etiquette}</div>
-<p>Écris la réf. <b>{ref_client}</b> sur le colis ou le bordereau.</p>
 <p>Une fois le colis déposé, clique ici pour envoyer le n° de suivi au client :</p>
 <p><a href="{lien}" style="display:inline-block;background:#e2ce16;color:#111;padding:12px 22px;border-radius:8px;font-weight:700;text-decoration:none">J'ai expédié → saisir le n° de suivi</a></p>
 """
@@ -2231,8 +2231,14 @@ def _run_ventes_amazon() -> int:
             f" — {(it.get('ItemPrice') or {}).get('Amount', '?')} €"
             for it in items) or "(détail indisponible, commande en attente)"
         reste = " · ".join(f"{sku} : {q}" for sku, q in sorted((stock or {}).items()))
-        _alert_admin(f"🛒 MyStrow — Vente Amazon ({oid})", f"""
-<h2>Nouvelle vente sur Amazon</h2>
+        # Une commande déjà annulée au premier passage n'est pas une vente :
+        # Amazon la renvoie avec 0 article et sans prix.
+        if cmd.get("OrderStatus") == "Canceled":
+            sujet, titre = f"❌ MyStrow — Commande Amazon annulée ({oid})", "Commande annulée sur Amazon"
+        else:
+            sujet, titre = f"🛒 MyStrow — Vente Amazon ({oid})", "Nouvelle vente sur Amazon"
+        _alert_admin(sujet, f"""
+<h2>{titre}</h2>
 <div class="box">{lignes}<br>Commande <b>{oid}</b> — {cmd.get('OrderStatus', '')}
 ({cmd.get('FulfillmentChannel', '')})</div>
 <p>Stock FBA restant : {reste or '?'}</p>""")

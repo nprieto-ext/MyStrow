@@ -381,6 +381,31 @@ def parse_ai_response(text: str) -> dict:
     return fx
 
 
+def save_to_library(fx: dict) -> str:
+    """Ajoute la fixture à la bibliothèque locale, renommée « Nom (2) » si le
+    nom est déjà pris. Rend le nom final. Partagé par le menu « Créer votre
+    fixture via IA » et l'API locale (assistant IA via MCP)."""
+    from fixture_editor import FIXTURE_FILE
+    fx["source"] = "user"
+    existing = []
+    if FIXTURE_FILE.exists():
+        data = json.loads(FIXTURE_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            existing = data
+    existing_names = {f.get("name") for f in existing}
+    name = fx["name"]
+    if name in existing_names:
+        c = 2
+        while f"{name} ({c})" in existing_names:
+            c += 1
+        fx["name"] = f"{name} ({c})"
+    existing.append(fx)
+    FIXTURE_FILE.write_text(
+        json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return fx["name"]
+
+
 # ── Fenêtre ──────────────────────────────────────────────────────────────────
 
 class _FlowAnimation(QWidget):

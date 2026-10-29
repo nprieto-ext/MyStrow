@@ -243,6 +243,51 @@ def _install_freeze_watchdog(app, delai_s=5):
     _battement()
 
 
+_TOOLTIP_SS = ("color:#e8e8e8; background-color:#1e1e1e; border:1px solid #3a3a3a;"
+               " border-radius:4px; padding:4px 7px;")
+
+
+def _install_tooltip_style(app):
+    """Un seul style de tooltip, lisible partout : fond sombre, texte clair.
+
+    Une bulle hérite des règles du widget survolé ET de ses parents : un
+    « background:#111 » sans `color` la passait en noir sur noir (texte de la
+    palette Fusion), un « color:#444 » de conteneur en gris sur jaune… ~160
+    feuilles de style dans l'app. Le style posé sur la bulle elle-même passe
+    avant tout héritage. Il faut le poser au Show : au Polish, Qt le défait.
+    Sans sélecteur : « QLabel{…} » ne prend pas sur le QTipLabel.
+    """
+    from PySide6.QtCore import QObject, QEvent
+
+    class _TooltipStyle(QObject):
+        def eventFilter(self, obj, ev):
+            if (ev.type() == QEvent.Show
+                    and obj.metaObject().className() == "QTipLabel"
+                    and obj.styleSheet() != _TOOLTIP_SS):
+                obj.setStyleSheet(_TOOLTIP_SS)
+                # Qt a déjà dimensionné la bulle sur l'ancien style : sans
+                # recalcul, marge et bordure rognaient le texte haut et bas.
+                obj.adjustSize()
+            return False
+
+    app._tooltip_style = _TooltipStyle(app)
+    app.installEventFilter(app._tooltip_style)
+
+    # Fondu d'apparition (Windows) : Qt anime une CAPTURE de la bulle prise
+    # avant son Show, donc avant le style ci-dessus — elle apparaissait jaune
+    # (palette Fusion) puis virait au noir, ou restait jaune selon le moment.
+    from PySide6.QtCore import Qt
+    app.setEffectEnabled(Qt.UI_FadeTooltip, False)
+    app.setEffectEnabled(Qt.UI_AnimateTooltip, False)
+    # Et si une bulle échappe malgré tout au filtre, sa palette est déjà sombre
+    from PySide6.QtWidgets import QToolTip
+    from PySide6.QtGui import QPalette, QColor
+    _tp = QToolTip.palette()
+    _tp.setColor(QPalette.ToolTipBase, QColor("#1e1e1e"))
+    _tp.setColor(QPalette.ToolTipText, QColor("#e8e8e8"))
+    QToolTip.setPalette(_tp)
+
+
 def _mac_fatal(title: str, msg: str):
     """Affiche une alerte macOS native sans Qt (osascript) et écrit dans le log."""
     if _MAC_LOG_FILE:
@@ -426,6 +471,7 @@ def main():
     app.aboutToQuit.connect(restore_timer_resolution)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
+    _install_tooltip_style(app)
     icon_path = resource_path("mystrow.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))

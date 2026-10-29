@@ -6,10 +6,10 @@ d'une roue de couleur fixture par fixture.
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QLineEdit, QSpinBox, QFrame,
-    QSizePolicy, QCheckBox, QApplication, QColorDialog, QSlider,
+    QSizePolicy, QCheckBox, QApplication, QColorDialog, QSlider, QMenu,
 )
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QColor, QFont, QCursor
+from PySide6.QtGui import QColor, QFont, QCursor, QPixmap, QPainter, QIcon
 from i18n import tr
 
 # ── Profil générique de départ (si aucun profil OFL disponible) ───────────────
@@ -79,6 +79,25 @@ _BTN_MOVE = (
 )
 
 
+def _gobo_shape_icon(shape: int, size: int = 26) -> QIcon:
+    """Vignette d'un motif de gobo, tracée par le MÊME code que la tache au sol
+    du plan 2D (`plan_de_feu._draw_gobo_pattern`) : ce qu'on choisit dans la
+    liste est exactement ce que les plans dessineront."""
+    from plan_de_feu import _draw_gobo_pattern
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    r = size / 2 - 1
+    p.setPen(QColor("#555"))
+    p.setBrush(QColor("#2a2a2a"))
+    p.drawEllipse(1, 1, size - 2, size - 2)
+    _draw_gobo_pattern(p, int(shape), size / 2, size / 2, r - 1, r - 1,
+                       QColor("#ffcc66"))
+    p.end()
+    return QIcon(pm)
+
+
 def _luminance(hex_c: str) -> bool:
     """True si la couleur est claire (→ texte noir)."""
     c = hex_c.lstrip("#")
@@ -97,9 +116,14 @@ class _SlotRow(QWidget):
     même forme de dictionnaire quel que soit l'éditeur qui l'utilise.
     """
 
-    def __init__(self, slot: dict, parent=None, show_color: bool = True):
+    def __init__(self, slot: dict, parent=None, show_color: bool = True,
+                 show_shape: bool = False):
         super().__init__(parent)
         self._color = slot.get("color", "#ffffff")
+        # Forme de gobo dessinée par les plans (`core.gobo_display_slot`).
+        # None = jamais choisie : le plan garde le découpage DMX symbolique.
+        self._shape = slot.get("shape")
+        self._show_shape = show_shape
         self._changed_cb = None  # appelé à chaque modif
         self._show_color = show_color
 
@@ -124,6 +148,20 @@ class _SlotRow(QWidget):
         else:
             self._color_btn.hide()
 
+        # ── Forme (roue de gobos) ─────────────────────────────────────────
+        self._shape_btn = None
+        if show_shape:
+            self._shape_btn = QPushButton()
+            self._shape_btn.setFixedSize(30, 30)
+            self._shape_btn.setIconSize(QSize(26, 26))
+            self._shape_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            self._shape_btn.setStyleSheet(
+                "QPushButton{background:transparent;border:1px solid #333;border-radius:15px;}"
+                "QPushButton:hover{border-color:#ff9900;}"
+            )
+            self._shape_btn.clicked.connect(self._pick_shape)
+            row.addWidget(self._shape_btn)
+
         # ── Nom ───────────────────────────────────────────────────────────
         self._name = QLineEdit(slot.get("name", ""))
         self._name.setPlaceholderText(tr("cwe_name"))
@@ -141,6 +179,10 @@ class _SlotRow(QWidget):
         self._dmx.setValue(slot.get("dmx", 0))
         self._dmx.setFixedWidth(58)
         self._dmx.valueChanged.connect(self._notify)
+        if self._shape_btn is not None:
+            self._dmx.valueChanged.connect(
+                lambda _v: self._shape is None and self._apply_shape_icon())
+            self._apply_shape_icon()
         row.addWidget(self._dmx)
 
         # ── Boutons +/− ───────────────────────────────────────────────────
@@ -182,8 +224,50 @@ class _SlotRow(QWidget):
     # ── Getters ──────────────────────────────────────────────────────────────
 
     def get_slot(self) -> dict:
-        return {"name": self._name.text().strip(), "color": self._color,
+        slot = {"name": self._name.text().strip(), "color": self._color,
                 "dmx": self._dmx.value()}
+        if self._show_shape and self._shape is not None:
+            slot["shape"] = int(self._shape)
+        return slot
+
+    # ── Forme de gobo ────────────────────────────────────────────────────────
+
+    def _apply_shape_icon(self):
+        from core import GOBO_SLOT_NAMES, gobo_slot_index
+        # Sans choix explicite, on montre ce que le plan dessine DÉJÀ pour ce
+        # DMX — le bouton ne doit pas annoncer un motif qui n'est pas affiché.
+        shown = self._shape if self._shape is not None else gobo_slot_index(self._dmx.value())
+        self._shape_btn.setIcon(_gobo_shape_icon(shown))
+        tip = GOBO_SLOT_NAMES[shown]
+        if self._shape is None:
+            tip += " " + tr("cwe_shape_auto")
+        self._shape_btn.setToolTip(tr("cwe_shape_tip", a0=tip))
+
+    def _pick_shape(self):
+        from core import GOBO_SLOT_NAMES
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu{background:#1e1e1e;color:#ddd;border:1px solid #333;}"
+            "QMenu::item{padding:5px 18px 5px 8px;}"
+            "QMenu::item:selected{background:#ff990033;color:#fff;}"
+        )
+        menu.setIconSize(QSize(26, 26))
+        for i, name in enumerate(GOBO_SLOT_NAMES):
+            act = menu.addAction(_gobo_shape_icon(i), name)
+            act.setCheckable(True)
+            act.setChecked(self._shape == i)
+            act.setData(i)
+        chosen = menu.exec(self._shape_btn.mapToGlobal(self._shape_btn.rect().bottomLeft()))
+        if chosen is None:
+            return
+        self._shape = int(chosen.data())
+        # Le nom suit la forme tant qu'il est vide ou qu'il reste un nom de
+        # motif générique ; un nom tapé par l'utilisateur n'est jamais écrasé.
+        cur = self._name.text().strip()
+        if not cur or cur in GOBO_SLOT_NAMES:
+            self._name.setText(GOBO_SLOT_NAMES[self._shape])
+        self._apply_shape_icon()
+        self._notify()
 
     # ── Callbacks internes ────────────────────────────────────────────────────
 
@@ -614,7 +698,8 @@ class GoboWheelEditorDialog(QDialog):
         # ── Colonne headers ───────────────────────────────────────────────
         hdr = QHBoxLayout()
         hdr.setContentsMargins(0, 0, 0, 0); hdr.setSpacing(6)
-        for txt, w in [("Couleur", 30), ("Nom", 100), ("", 30), (tr("cwe3_005"), 100)]:
+        # Pas de colonne « Couleur » : un gobo est un motif, pas une teinte.
+        for txt, w in [(tr("cwe_shape"), 30), ("Nom", 100), ("", 30), (tr("cwe3_005"), 100)]:
             l = QLabel(txt)
             l.setStyleSheet("color:#555;font-size:10px;")
             if w:
@@ -721,7 +806,8 @@ class GoboWheelEditorDialog(QDialog):
         root.addLayout(btn_row)
 
     def _add_slot(self, slot: dict):
-        row_widget = _SlotRow(slot, self._slots_container)
+        row_widget = _SlotRow(slot, self._slots_container, show_color=False,
+                              show_shape=True)
         row_widget._btn_del.clicked.connect(lambda: self._remove_slot(row_widget))
         row_widget._btn_up.clicked.connect(lambda: self._move_slot(row_widget, -1))
         row_widget._btn_down.clicked.connect(lambda: self._move_slot(row_widget, +1))

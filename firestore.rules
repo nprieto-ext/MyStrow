@@ -167,6 +167,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Commandes physiques (interfaces Fanny, packs MCF) et stock chez Fanny :
+    // ecrits par stripe_webhook / boitier_expedie (SDK Admin), lus par
+    // l'onglet Interfaces de l'admin panel. Adresses clients : admin seul.
+    match /boitier_commandes/{orderId} {
+      allow read: if request.auth != null
+                  && request.auth.token.email == "nicop421@gmail.com";
+      allow write: if false;
+    }
+    match /meta/stock_fanny {
+      allow read: if request.auth != null
+                  && request.auth.token.email == "nicop421@gmail.com";
+      allow write: if false;
+    }
+
     // Config du PC pour l'app tablette (tablet_cloud.py ecrit, mobile/src/
     // account.js lit) : patch, pages AKAI, memoires, effets, en JSON dans
     // `payload`. Chacun ne lit et n'ecrit QUE la sienne. Champs en liste

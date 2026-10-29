@@ -738,6 +738,47 @@ def _query_downloads(id_token: str) -> list:
     return rows
 
 
+def _query_boitier_commandes(id_token: str) -> list:
+    """
+    Commandes physiques (collection 'boitier_commandes', écrite par le webhook
+    Stripe) : interfaces seules expédiées par Fanny et packs MCF. Collection
+    petite → tout est rapatrié, le tri se fait côté panel (pas d'index requis).
+    """
+    rows = []
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/boitier_commandes?pageSize=300"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        for doc in data.get("documents", []):
+            fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+            fields["_id"] = doc["name"].split("/")[-1]
+            rows.append(fields)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    rows.sort(key=lambda r: r.get("created_utc") or 0, reverse=True)
+    return rows
+
+
+def _fetch_stock_fanny(id_token: str):
+    """Stock d'interfaces nues chez Fanny (meta/stock_fanny.boitier), None si non suivi."""
+    req = urllib.request.Request(f"{_FS_BASE}/meta/stock_fanny",
+                                 headers={"Authorization": f"Bearer {id_token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            doc = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 404):
+            return None
+        raise
+    v = doc.get("fields", {}).get("boitier")
+    return fc._from_firestore(v) if v else None
+
+
 def _fetch_license_doc(uid: str, id_token: str) -> dict:
     url = f"{_FS_BASE}/licenses/{uid}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
@@ -3953,6 +3994,13 @@ class AdminPanel(QMainWindow):
         self._btn_nav_mod.clicked.connect(lambda: self._switch_view(6))
         nav_lay.addWidget(self._btn_nav_mod)
 
+        # Commandes physiques : interfaces seules (Fanny) et packs (MCF).
+        self._btn_nav_cmd = QPushButton("Interfaces")
+        self._btn_nav_cmd.setFixedHeight(38)
+        self._btn_nav_cmd.setStyleSheet(_nav_idle)
+        self._btn_nav_cmd.clicked.connect(lambda: self._switch_view(7))
+        nav_lay.addWidget(self._btn_nav_cmd)
+
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
 
@@ -4159,6 +4207,9 @@ class AdminPanel(QMainWindow):
 
         # ── Page 6 : Modération des contributions ─────────────────────────────
         self._build_moderation_panel()
+
+        # ── Page 7 : Commandes d'interfaces ───────────────────────────────────
+        self._build_commandes_panel()
 
     # ------------------------------------------------------------------
 
@@ -4910,6 +4961,7 @@ class AdminPanel(QMainWindow):
         self._btn_nav_dl.setStyleSheet(_active if idx == 4 else _idle)
         self._btn_nav_analytics.setStyleSheet(_active if idx == 5 else _idle)
         self._btn_nav_mod.setStyleSheet(_active if idx == 6 else _idle)
+        self._btn_nav_cmd.setStyleSheet(_active if idx == 7 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -4923,6 +4975,9 @@ class AdminPanel(QMainWindow):
             self._load_ga4_insights()
         if idx == 6 and not getattr(self, "_submissions_loaded", False):
             self._load_submissions()
+        if idx == 7:
+            # Relu à chaque ouverture : Fanny peut avoir expédié entre-temps.
+            self._load_commandes()
 
     def _build_fixtures_panel(self):
         fix_page = QWidget()
@@ -6170,6 +6225,132 @@ class AdminPanel(QMainWindow):
         self._releases_table.setColumnCount(4)
 
         self._content_stack.addWidget(page)
+
+    # Statuts écrits par le webhook (functions/main.py) → libellé, couleur
+    _CMD_STATUTS = {
+        "paid":        ("Payée",        TEXT_DIM),
+        "a_expedier":  ("À expédier",   "#f39c12"),
+        "mcf_created": ("Chez Amazon",  "#3498db"),
+        "shipped":     ("Expédiée",     "#2ecc71"),
+        "mcf_error":   ("Erreur MCF",   "#e74c3c"),
+    }
+
+    def _build_commandes_panel(self):
+        """Page 7 : commandes d'interfaces (seules via Fanny, packs via MCF)."""
+        page = QWidget()
+        page.setStyleSheet(f"background: {BG_MAIN};")
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        hdr = QFrame()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet(f"background:{BG_PANEL}; border-bottom:1px solid #1e1e1e;")
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(20, 0, 20, 0)
+        hdr_lay.setSpacing(10)
+        lbl_title = QLabel("Commandes d'interfaces")
+        lbl_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lbl_title.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        hdr_lay.addWidget(lbl_title)
+        self._cmd_filter = QComboBox()
+        self._cmd_filter.addItems(["Interfaces seules (Fanny)", "Toutes (avec packs MCF)"])
+        self._cmd_filter.setFixedHeight(28)
+        self._cmd_filter.currentIndexChanged.connect(lambda _: self._fill_commandes())
+        hdr_lay.addWidget(self._cmd_filter)
+        hdr_lay.addStretch()
+        self._cmd_stats_lbl = QLabel("…")
+        self._cmd_stats_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+        hdr_lay.addWidget(self._cmd_stats_lbl)
+        btn_ref = QPushButton("↺  Actualiser")
+        btn_ref.setFixedHeight(28)
+        btn_ref.setStyleSheet(_BTN_SECONDARY)
+        btn_ref.clicked.connect(self._load_commandes)
+        hdr_lay.addWidget(btn_ref)
+        root.addWidget(hdr)
+
+        self._cmd_table = QTableWidget(0, 8)
+        self._cmd_table.setHorizontalHeaderLabels(
+            ["Date", "Réf.", "Statut", "Client", "Email", "Livraison", "Qté · TTC", "Suivi"])
+        hh = self._cmd_table.horizontalHeader()
+        for c in range(8):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(5, QHeaderView.Stretch)
+        self._cmd_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._cmd_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._cmd_table.setAlternatingRowColors(True)
+        self._cmd_table.verticalHeader().setVisible(False)
+        self._cmd_table.setToolTip("Double-clic : copier l'adresse de livraison")
+        self._cmd_table.cellDoubleClicked.connect(self._on_commande_double_click)
+        root.addWidget(self._cmd_table, 1)
+
+        self._cmd_rows = []
+        self._content_stack.addWidget(page)
+
+    def _load_commandes(self):
+        self._cmd_stats_lbl.setText("Chargement…")
+
+        def _fetch():
+            tok = self._token()
+            return _query_boitier_commandes(tok), _fetch_stock_fanny(tok)
+
+        def _on_data(res):
+            self._cmd_rows, self._cmd_stock = res
+            self._fill_commandes()
+
+        def _on_err(e):
+            msg = str(e)
+            if "403" in msg:
+                msg = "accès refusé — règle Firestore boitier_commandes à déployer"
+            self._cmd_stats_lbl.setText(f"⚠ {msg}")
+
+        _run_async(self, _fetch, on_success=_on_data, on_error=_on_err)
+
+    def _fill_commandes(self):
+        seules = self._cmd_filter.currentIndex() == 0
+        rows = [r for r in self._cmd_rows if not seules or r.get("plan") == "boitier"]
+        self._cmd_table.setRowCount(0)
+        for r in rows:
+            i = self._cmd_table.rowCount()
+            self._cmd_table.insertRow(i)
+            a = r.get("address") or {}
+            label, color = self._CMD_STATUTS.get(r.get("status", ""), (r.get("status", "?"), TEXT_DIM))
+            colis = (r.get("packages") or [{}])[0]
+            suivi = " ".join(x for x in (colis.get("carrier", ""), colis.get("tracking", "")) if x)
+            ttc = r.get("amount_ttc")
+            cells = [
+                _fmt_date(r["created_utc"]) if r.get("created_utc") else "",
+                r["_id"].replace("MS-", "")[:8],
+                label,
+                a.get("name", ""),
+                r.get("email", ""),
+                f"{a.get('postal_code', '')} {a.get('city', '')}".strip(),
+                f"{int(r.get('quantity') or 1)} · {ttc:.2f} €" if isinstance(ttc, (int, float))
+                else str(int(r.get("quantity") or 1)),
+                suivi or "—",
+            ]
+            for c, txt in enumerate(cells):
+                item = QTableWidgetItem(txt)
+                if c == 2:
+                    item.setForeground(QColor(color))
+                self._cmd_table.setItem(i, c, item)
+            self._cmd_table.item(i, 0).setData(Qt.UserRole, r)
+
+        n_exp = sum(1 for r in rows if r.get("status") == "a_expedier")
+        total = sum(r.get("amount_ttc") or 0 for r in rows)
+        stock = getattr(self, "_cmd_stock", None)
+        self._cmd_stats_lbl.setText(
+            f"{len(rows)} commande(s)  |  {total:.2f} € TTC  |  à expédier : {n_exp}"
+            f"  |  stock Fanny : {stock if stock is not None else '?'}")
+
+    def _on_commande_double_click(self, row: int, _col: int):
+        r = self._cmd_table.item(row, 0).data(Qt.UserRole) or {}
+        a = r.get("address") or {}
+        lignes = [a.get("name", ""), a.get("line1", ""), a.get("line2", ""),
+                  f"{a.get('postal_code', '')} {a.get('city', '')}".strip(),
+                  a.get("phone", "")]
+        QApplication.clipboard().setText("\n".join(x for x in lignes if x))
+        self._cmd_stats_lbl.setText(f"Adresse {r.get('_id', '').replace('MS-', '')[:8]} copiée")
 
     def _build_analytics_panel(self):
         """Page 5 : Liens rapides GA4 + Search Console."""
