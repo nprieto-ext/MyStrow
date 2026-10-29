@@ -1,63 +1,11 @@
-# Codemagic : builds de l'app tablette (mobile/, Capacitor) et envoi sur les stores.
+# Codemagic : build iOS de l'app tablette (mobile/, Capacitor) et envoi sur App Store Connect.
 # Lancement manuel depuis codemagic.io (pas de déclenchement automatique sur push).
 #
 # À configurer une fois dans Codemagic :
 # - Team settings > Integrations > Developer Portal : clé API App Store Connect nommée « MyStrow ASC »
 # - Environment variables, groupe « ios_signing » : CERTIFICATE_PRIVATE_KEY (clé RSA PEM, secrète)
 #   qui sert à créer / retrouver le certificat Apple Distribution.
-# - Android (workflow android-play) :
-#   · Team settings > Code signing identities > Android keystores : mystrow-upload.jks
-#     (%USERPROFILE%\.mystrow-android), nom de référence « mystrow_upload ».
-#   · Environment variables, groupe « google_play » : GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
-#     (JSON du compte de service Google Cloud invité dans la Play Console, secret).
 workflows:
-  android-play:
-    name: Android Google Play (tablette)
-    instance_type: mac_mini_m2
-    max_build_duration: 45
-    working_directory: mobile
-    environment:
-      android_signing:
-        - mystrow_upload
-      groups:
-        - google_play
-      vars:
-        PACKAGE_NAME: fr.mystrow.app
-      node: 22
-      java: 21
-    scripts:
-      - name: Dépendances npm
-        script: npm ci
-      - name: Construire www + cap sync
-        script: npm run build && npx cap sync android
-      - name: Clé d'envoi (même fichier qu'en local, lu par app/build.gradle)
-        script: |
-          mkdir -p "$HOME/.mystrow-android"
-          cat > "$HOME/.mystrow-android/keystore.properties" <<EOF
-          storeFile=$CM_KEYSTORE_PATH
-          storePassword=$CM_KEYSTORE_PASSWORD
-          keyAlias=$CM_KEY_ALIAS
-          keyPassword=$CM_KEY_PASSWORD
-          EOF
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
-      - name: versionCode = dernier envoyé sur Google Play + 1
-        script: |
-          LATEST=$(google-play get-latest-build-number --package-name "$PACKAGE_NAME" 2>/dev/null || echo 0)
-          NEXT=$((LATEST + 1))
-          echo "versionCode $NEXT"
-          sed -i '' "s/versionCode [0-9]*/versionCode $NEXT/" android/app/build.gradle
-      - name: Compiler l'AAB
-        script: cd android && ./gradlew bundleRelease
-    artifacts:
-      - android/app/build/outputs/bundle/release/*.aab
-    publishing:
-      google_play:
-        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
-        track: production
-        # Brouillon : la release arrive dans la Play Console, on y ajoute les
-        # notes de version et on clique « Publier » soi-même.
-        submit_as_draft: true
-
   ios-appstore:
     name: iOS App Store (tablette)
     instance_type: mac_mini_m2
