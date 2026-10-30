@@ -669,6 +669,8 @@
 
   $("wipe").addEventListener("click", () => {
     if (!show.fixtures.length) return;
+    const ask = "Voulez-vous vraiment tout effacer ? Les projecteurs du patch seront supprimés.";
+    if (!confirm(window.T ? window.T(ask) : ask)) return;
     show.fixtures = []; testing = null; save(); render(); $("addr").value = nextAddress();
     msg("Patch effacé.");
   });

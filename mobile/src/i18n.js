@@ -177,7 +177,9 @@
     "La lyre s'allume et suit la borne que vous déplacez. Effets et visée restent ensuite dans cette zone.": "The moving head lights up and follows the limit you drag. Effects and aim then stay inside this area.",
     "Revenir à 100 %": "Back to 100%",
     // ── SCÈNE ──
-    "SELECT ALL": "SELECT ALL", "NOMS": "NAMES", "DÉPLACER": "MOVE",
+    "SELECT ALL": "SELECT ALL", "NOMS": "NAMES", "DÉPLACER": "MOVE", "ALIGNER": "ALIGN", "RÉPARTIR": "SPREAD", "2 PROJOS MIN.": "2 FIXTURES MIN.",
+    "Mettre les projecteurs sélectionnés à la même hauteur": "Put the selected fixtures at the same height",
+    "Espacer régulièrement les projecteurs sélectionnés": "Space the selected fixtures evenly",
     "RÀZ": "RESET", "Remettre ces canaux à 0": "Reset these channels to 0",
     "Recherche du boîtier…": "Looking for the box…",
     "Aucun boîtier détecté — branchez l'interface USB-DMX ou le node.": "No box detected — plug in the USB-DMX interface or the node.",
@@ -264,7 +266,8 @@
     "Plus de place dans l'univers (512 canaux).": "No more room in the universe (512 channels).",
     "⚠ Des projecteurs se chevauchent (adresses en rouge).": "⚠ Some fixtures overlap (addresses in red).",
     "« Tester » allume le projecteur en blanc : vérifiez que c'est bien lui qui s'allume.": "“Test” lights the fixture in white: check that it's the right one.",
-    "Tester": "Test", "Retirer": "Remove", "Tout effacer": "Clear all", "Patch effacé.": "Patch cleared.", "Tout libérer": "Release all",
+    "Tester": "Test", "Retirer": "Remove", "Tout effacer": "Clear all", "Patch effacé.": "Patch cleared.",
+    "Voulez-vous vraiment tout effacer ? Les projecteurs du patch seront supprimés.": "Do you really want to clear everything? The fixtures in the patch will be removed.", "Tout libérer": "Release all",
     "Que voulez-vous faire ?": "What do you want to do?", "Perso": "Custom", "Générique": "Generic", "Générique tablette": "Generic tablet",
     "Le projecteur est gardé sur cette tablette, dans votre bibliothèque : cherchez-le ensuite par son nom pour l'ajouter au patch.":
       "The fixture is kept on this tablet, in your library: then search for it by name to add it to the patch.",

@@ -304,6 +304,8 @@
     .scene-spacer { flex: 1; }
     #btn-scene-names { color: var(--muted); }
     #btn-scene-move { color: var(--muted); }
+    .move-tool { white-space: nowrap; }
+    .move-tool[hidden] { display: none; }
     #btn-scene-move[aria-pressed="true"],
     #btn-scene-names[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); border-color: var(--accent-border); }
     #scene-zoom { display: flex; height: clamp(34px, 5.6vh, 50px); background: var(--bg3); border: 1px solid var(--line2); border-radius: 10px; overflow: hidden; }
@@ -506,6 +508,8 @@
       <button class="scene-btn" id="btn-scene-select">SELECT ALL</button>
       <div class="scene-spacer"></div>
       <button class="scene-btn" id="btn-scene-move" type="button" aria-pressed="false">DÉPLACER</button>
+      <button class="scene-btn move-tool" id="btn-scene-align" type="button" hidden title="Mettre les projecteurs sélectionnés à la même hauteur">ALIGNER</button>
+      <button class="scene-btn move-tool" id="btn-scene-spread" type="button" hidden title="Espacer régulièrement les projecteurs sélectionnés">RÉPARTIR</button>
       <button class="scene-btn" id="btn-scene-names" type="button" aria-pressed="true">NOMS</button>
       <div id="scene-zoom" role="group" aria-label="Zoom du plan">
         <button class="scene-btn zoom-btn" id="btn-zoom-out" type="button" aria-label="Dézoomer">−</button>
@@ -1176,9 +1180,42 @@ let _tapStartX=0, _tapStartY=0, _tapStartT=0, _tapActive=false;
 let _rbActive=false, _rbX=0, _rbY=0;   // rubber-band (rectangle de sélection)
 let _moveMode=false, _moveDrag=null;   // {idxs, starts:[[x,y]…], moved}
 const moveBtn=document.getElementById('btn-scene-move');
+const alignBtn=document.getElementById('btn-scene-align');
+const spreadBtn=document.getElementById('btn-scene-spread');
 moveBtn.addEventListener('click',()=>{
   _moveMode=!_moveMode; moveBtn.setAttribute('aria-pressed',String(_moveMode));
+  // ALIGNER / RÉPARTIR n'existent qu'en mode DÉPLACER : hors de ce mode, le
+  // plan ne doit pas pouvoir bouger en plein show.
+  alignBtn.hidden=spreadBtn.hidden=!_moveMode;
 });
+// ALIGNER / RÉPARTIR : mêmes calculs que le clic droit du plan de feu au PC
+// (_align_row / _distribute de main_window), puis le même proj_move qu'un
+// glisser — le PC comme le mode sans PC l'enregistrent déjà.
+function _layoutSelection(btn, fn){
+  const idxs=_selection.filter(i=>_projectors[i]);
+  if(idxs.length<2){
+    const label=btn.dataset.label||(btn.dataset.label=btn.textContent);   // 2e appui pendant le message
+    btn.textContent=window.T ? window.T('2 PROJOS MIN.') : '2 PROJOS MIN.';
+    setTimeout(()=>{ btn.textContent=label; },1500);
+    return;
+  }
+  fn(idxs.map(i=>_projectors[i]));
+  drawStage(_projectors);
+  sendEvent({type:'proj_move', idxs, pos:idxs.map(i=>[_projectors[i].x,_projectors[i].y])});
+}
+alignBtn.addEventListener('click',()=>_layoutSelection(alignBtn,(ps)=>{
+  // Même ligne horizontale, à la hauteur moyenne de la sélection.
+  const y=ps.reduce((a,p)=>a+(p.y??0.5),0)/ps.length;
+  ps.forEach(p=>{ p.y=y; });
+}));
+spreadBtn.addEventListener('click',()=>_layoutSelection(spreadBtn,(ps)=>{
+  // Espacement égal de gauche à droite, centré (15 % de marge de chaque côté),
+  // dans l'ordre où ils sont déjà.
+  const mg=0.15, n=ps.length;
+  ps.slice().sort((a,b)=>(a.x??0.5)-(b.x??0.5)).forEach((p,i)=>{
+    p.x=Math.max(0.07,Math.min(0.93,mg+i*(1-2*mg)/(n-1)));
+  });
+}));
 function _localXY(clientX, clientY){
   const rect=stageCanvas.getBoundingClientRect();
   return [clientX-rect.left, clientY-rect.top];
