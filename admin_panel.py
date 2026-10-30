@@ -13,6 +13,7 @@ import urllib.request
 from datetime import datetime, timezone, date
 import subprocess
 import shutil
+import threading
 import time
 import zipfile
 import webbrowser
@@ -25,7 +26,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QDialog, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QAbstractItemView, QFrame, QMessageBox, QTextEdit,
     QProgressBar, QFileDialog, QSizePolicy, QStackedWidget,
-    QScrollArea, QSplitter, QListWidget, QListWidgetItem,
+    QScrollArea, QSplitter, QListWidget, QListWidgetItem, QCheckBox,
+    QPlainTextEdit,
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QObject, QTimer
 from PySide6.QtGui import QFont, QColor, QShortcut, QKeySequence
@@ -873,6 +875,14 @@ class _Invoker(QObject):
     def invoke(self, arg):
         if self._cb:
             self._cb(arg)
+
+
+class _BoitierBridge(QObject):
+    """Relais du thread d'initialisation des boîtiers vers l'onglet Boîtiers :
+    les signaux émis depuis le thread de travail sont livrés dans le thread GUI."""
+    line  = Signal(str)
+    saved = Signal(str)
+    done  = Signal()
 
 
 class _Worker(QObject):
@@ -4001,6 +4011,13 @@ class AdminPanel(QMainWindow):
         self._btn_nav_cmd.clicked.connect(lambda: self._switch_view(7))
         nav_lay.addWidget(self._btn_nav_cmd)
 
+        # Boîtiers maison : initialisation à la chaîne (flash + offre + suivi).
+        self._btn_nav_bx = QPushButton("Boîtiers")
+        self._btn_nav_bx.setFixedHeight(38)
+        self._btn_nav_bx.setStyleSheet(_nav_idle)
+        self._btn_nav_bx.clicked.connect(lambda: self._switch_view(8))
+        nav_lay.addWidget(self._btn_nav_bx)
+
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
 
@@ -4210,6 +4227,9 @@ class AdminPanel(QMainWindow):
 
         # ── Page 7 : Commandes d'interfaces ───────────────────────────────────
         self._build_commandes_panel()
+
+        # ── Page 8 : Boîtiers maison (initialisation + suivi) ─────────────────
+        self._build_boitiers_panel()
 
     # ------------------------------------------------------------------
 
@@ -4962,6 +4982,7 @@ class AdminPanel(QMainWindow):
         self._btn_nav_analytics.setStyleSheet(_active if idx == 5 else _idle)
         self._btn_nav_mod.setStyleSheet(_active if idx == 6 else _idle)
         self._btn_nav_cmd.setStyleSheet(_active if idx == 7 else _idle)
+        self._btn_nav_bx.setStyleSheet(_active if idx == 8 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -4978,6 +4999,9 @@ class AdminPanel(QMainWindow):
         if idx == 7:
             # Relu à chaque ouverture : Fanny peut avoir expédié entre-temps.
             self._load_commandes()
+        if idx == 8:
+            # Relu à chaque ouverture : un client a pu activer entre-temps.
+            self._load_boitiers()
 
     def _build_fixtures_panel(self):
         fix_page = QWidget()
@@ -6289,6 +6313,225 @@ class AdminPanel(QMainWindow):
 
         self._cmd_rows = []
         self._content_stack.addWidget(page)
+
+    # ── Page Boîtiers maison ──────────────────────────────────────────────────
+
+    def _build_boitiers_panel(self):
+        """Page 8 : initialisation des boîtiers maison et leur suivi.
+
+        Le moteur est boitier_init.py (partagé avec tools/initialiser_boitier.py) :
+        flash, test ENTTEC, numéro créé, offre et historique dans /boitiers.
+        """
+        page = QWidget()
+        page.setStyleSheet(f"background: {BG_MAIN};")
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        hdr = QFrame()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet(f"background:{BG_PANEL}; border-bottom:1px solid #1e1e1e;")
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(20, 0, 20, 0)
+        hdr_lay.setSpacing(10)
+        lbl_title = QLabel("Boîtiers maison")
+        lbl_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lbl_title.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        hdr_lay.addWidget(lbl_title)
+
+        lbl_offre = QLabel("Offre :")
+        lbl_offre.setStyleSheet(f"color:{TEXT_DIM}; background:transparent;")
+        hdr_lay.addWidget(lbl_offre)
+        self._bx_offre = QComboBox()
+        self._bx_offre.addItems(["2 mois", "1 an"])
+        self._bx_offre.setFixedHeight(28)
+        hdr_lay.addWidget(self._bx_offre)
+        self._bx_flash = QCheckBox("Flasher le firmware")
+        self._bx_flash.setChecked(True)
+        self._bx_flash.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        hdr_lay.addWidget(self._bx_flash)
+
+        self._bx_btn_run = QPushButton("▶  Initialiser à la suite")
+        self._bx_btn_run.setFixedHeight(28)
+        self._bx_btn_run.setStyleSheet(_BTN_GREEN)
+        self._bx_btn_run.clicked.connect(self._on_boitiers_run)
+        hdr_lay.addWidget(self._bx_btn_run)
+
+        hdr_lay.addStretch()
+        self._bx_stats_lbl = QLabel("…")
+        self._bx_stats_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+        hdr_lay.addWidget(self._bx_stats_lbl)
+        btn_ref = QPushButton("↺  Actualiser")
+        btn_ref.setFixedHeight(28)
+        btn_ref.setStyleSheet(_BTN_SECONDARY)
+        btn_ref.clicked.connect(self._load_boitiers)
+        hdr_lay.addWidget(btn_ref)
+        root.addWidget(hdr)
+
+        split = QSplitter(Qt.Vertical)
+        self._bx_table = QTableWidget(0, 7)
+        self._bx_table.setHorizontalHeaderLabels(
+            ["N° série", "Offre", "Carte USB", "Firmware", "Flashé le",
+             "Initialisé le", "Statut"])
+        hh = self._bx_table.horizontalHeader()
+        for c in range(7):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(6, QHeaderView.Stretch)
+        self._bx_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._bx_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._bx_table.setAlternatingRowColors(True)
+        self._bx_table.verticalHeader().setVisible(False)
+        self._bx_table.setSortingEnabled(True)
+        self._bx_table.setToolTip("Double-clic : historique du boîtier")
+        self._bx_table.cellDoubleClicked.connect(self._on_boitier_history)
+        split.addWidget(self._bx_table)
+
+        self._bx_log = QPlainTextEdit()
+        self._bx_log.setReadOnly(True)
+        self._bx_log.setPlaceholderText(
+            "Choisir l'offre, cliquer « Initialiser à la suite », puis brancher "
+            "les boîtiers un par un. Tout se fait seul : flash, test, numéro, "
+            "enregistrement. Journal Excel : Medias/Boitier/suivi_boitiers.csv")
+        self._bx_log.setStyleSheet(
+            f"QPlainTextEdit {{ background:{BG_PANEL}; color:{TEXT};"
+            f" font-family: Consolas, monospace; font-size: 12px; border: none; }}")
+        split.addWidget(self._bx_log)
+        split.setSizes([400, 220])
+        root.addWidget(split, 1)
+
+        self._bx_rows = []
+        self._bx_init = None
+        self._content_stack.addWidget(page)
+
+    def _bx_db(self):
+        if not _init_firebase_admin():
+            raise Exception(_fa_init_error or "firebase_admin indisponible")
+        from firebase_admin import firestore
+        return firestore.client()
+
+    def _load_boitiers(self):
+        self._bx_stats_lbl.setText("Chargement…")
+
+        def _fetch():
+            db = self._bx_db()
+            return [{**(d.to_dict() or {}), "_id": d.id}
+                    for d in db.collection("boitiers").stream()
+                    if d.id.startswith("MS-DMY-")]
+
+        def _on_data(rows):
+            self._bx_rows = [r for r in rows if not r.get("retired")]
+            self._fill_boitiers(len(rows) - len(self._bx_rows))
+
+        def _on_err(msg):
+            self._bx_stats_lbl.setText(f"⚠ {msg[:80]}")
+
+        _run_async(self, _fetch, on_success=_on_data, on_error=_on_err)
+
+    def _fill_boitiers(self, n_retired: int = 0):
+        from boitier_init import heure, libelle_offre
+        rows = sorted(self._bx_rows, key=lambda r: -float(r.get("initialized_utc") or 0))
+        t = self._bx_table
+        t.setSortingEnabled(False)
+        t.setRowCount(len(rows))
+        n_act = 0
+        for i, r in enumerate(rows):
+            holder = r.get("activated_uid") or ""
+            if holder:
+                n_act += 1
+                statut = f"activé — {r.get('activated_email', '?')}"
+                if r.get("activated_utc"):
+                    statut += f" le {heure(float(r['activated_utc']))}"
+                coul = "#4caf50"
+            else:
+                statut, coul = "libre (en stock)", TEXT_DIM
+            vals = [r["_id"], libelle_offre(int(r.get("months") or 0)),
+                    r.get("usb_id", "—"), r.get("firmware", "—"),
+                    heure(float(r["flashed_utc"])) if r.get("flashed_utc") else "—",
+                    heure(float(r["initialized_utc"])) if r.get("initialized_utc") else "—",
+                    statut]
+            for c, v in enumerate(vals):
+                it = QTableWidgetItem(str(v))
+                if c == 6:
+                    it.setForeground(QColor(coul))
+                if c == 0:
+                    it.setData(Qt.UserRole, r["_id"])
+                t.setItem(i, c, it)
+        t.setSortingEnabled(True)
+        self._bx_stats_lbl.setText(
+            f"{len(rows)} boîtier(s) · {n_act} activé(s) · {len(rows) - n_act} en stock"
+            + (f" · {n_retired} n° gravé(s) retiré(s)" if n_retired else ""))
+
+    def _on_boitier_history(self, row, _col):
+        from boitier_init import heure
+        it = self._bx_table.item(row, 0)
+        serial = it.data(Qt.UserRole) if it else ""
+        r = next((x for x in self._bx_rows if x["_id"] == serial), None)
+        if not r:
+            return
+        lignes = [f"{heure(float(e.get('utc') or 0))}  —  {e.get('evt', '?')}"
+                  f"  (fw {e.get('firmware') or '?'}, {e.get('poste', '')})"
+                  for e in (r.get("history") or [])]
+        if r.get("activated_utc"):
+            lignes.append(f"{heure(float(r['activated_utc']))}  —  activé par "
+                          f"{r.get('activated_email', '?')}")
+        QMessageBox.information(
+            self, f"Boîtier {serial}",
+            f"Carte USB : {r.get('usb_id', '—')}\n\n"
+            + ("\n".join(lignes) or "Aucun historique."))
+
+    def _on_boitiers_run(self):
+        if self._bx_init is not None:
+            self._bx_init.arreter()
+            self._bx_btn_run.setEnabled(False)
+            self._bx_btn_run.setText("Arrêt en cours…")
+            return
+        from boitier_init import OFFRES, Initialiseur
+        nom = self._bx_offre.currentText()
+        if QMessageBox.question(
+                self, "Initialiser des boîtiers",
+                f"Chaque boîtier branché sera "
+                f"{'flashé, ' if self._bx_flash.isChecked() else ''}testé et "
+                f"enregistré avec une licence de {nom}.\n\n"
+                "Fermer MyStrow avant (il occupe le port du boîtier).\n\nOn y va ?"
+                ) != QMessageBox.Yes:
+            return
+        try:
+            db = self._bx_db()
+        except Exception as e:
+            QMessageBox.warning(self, "Boîtiers", str(e))
+            return
+
+        bridge = _BoitierBridge(self)
+        bridge.line.connect(self._bx_log.appendPlainText)
+        bridge.saved.connect(lambda _s: self._load_boitiers())
+        bridge.done.connect(self._on_boitiers_done)
+        self._bx_bridge = bridge
+        self._bx_init = Initialiseur(
+            db, OFFRES[nom], push=True, flash=self._bx_flash.isChecked(),
+            log=bridge.line.emit, on_boitier=bridge.saved.emit)
+
+        def _run():
+            try:
+                self._bx_init.run()
+            except Exception as e:
+                bridge.line.emit(f"⚠ ERREUR : {e}")
+            finally:
+                bridge.done.emit()
+
+        self._bx_offre.setEnabled(False)
+        self._bx_flash.setEnabled(False)
+        self._bx_btn_run.setText("■  Arrêter")
+        self._bx_btn_run.setStyleSheet(_BTN_RED)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_boitiers_done(self):
+        self._bx_init = None
+        self._bx_offre.setEnabled(True)
+        self._bx_flash.setEnabled(True)
+        self._bx_btn_run.setEnabled(True)
+        self._bx_btn_run.setText("▶  Initialiser à la suite")
+        self._bx_btn_run.setStyleSheet(_BTN_GREEN)
+        self._load_boitiers()
 
     def _load_commandes(self):
         self._cmd_stats_lbl.setText("Chargement…")
