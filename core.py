@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.10"
+VERSION = "3.2.11"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -2128,10 +2128,31 @@ class ComboSansMolette(QComboBox):
     À utiliser pour TOUTE nouvelle liste déroulante — le seul cas où un
     QComboBox nu se justifie est une liste hors de toute zone défilante, et ça
     ne coûte rien de prendre celle-ci quand même.
+
+    `fleche=True` dessine un chevron à droite : nos feuilles de style
+    (`::drop-down { border: none }`) masquent la flèche native, et sans elle
+    rien ne dit que la liste se déroule. Réserver ~24 px à droite dans la QSS.
     """
+
+    def __init__(self, *args, fleche=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._fleche = fleche
 
     def wheelEvent(self, event):
         event.ignore()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._fleche:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        couleur = "#00d4ff" if (self.underMouse() or self.view().isVisible()) else "#bbbbbb"
+        p.setPen(QPen(QColor(couleur), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        cx, cy = self.width() - 14, self.height() / 2
+        p.drawPolyline([QPoint(int(cx - 4), int(cy - 2)), QPoint(int(cx), int(cy + 2)),
+                        QPoint(int(cx + 4), int(cy - 2))])
+        p.end()
 
 
 # ─── Blocs « canal dédié » (UV / Ambre) ───────────────────────────────────────

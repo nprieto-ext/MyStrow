@@ -4865,6 +4865,18 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
                        "Ce numéro de série ne correspond à aucun boîtier "
                        "MyStrow.", 404)
         ser_data = ser_snap.to_dict() or {}
+        # Numéro gravé du lot DMY1, retiré le 29/10/2026 : ces boîtiers sont
+        # réinitialisés avec un numéro créé par tools/initialiser_boitier.py et
+        # s'activent seuls dans l'app (boitier_detect). Laisser le numéro gravé
+        # actif donnerait deux licences par boîtier.
+        if ser_data.get("retired"):
+            return _ko("serial_auto",
+                       "Ce boîtier s'active automatiquement : branchez-le et "
+                       "ouvrez MyStrow, l'application vous proposera "
+                       "d'activer votre licence." if lang == "fr" else
+                       "This interface activates automatically: plug it in "
+                       "and open MyStrow, the app will offer to activate "
+                       "your license.", 409)
         # Détenteur actuel du boîtier ("" après un retour saisi à l'admin).
         holder = ser_data.get("activated_uid") or ""
 
@@ -5094,6 +5106,102 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
         print(f"[activate] erreur : {e}")
         return _ko("server", "Une erreur est survenue. Votre code n'a pas été "
                              "consommé, réessayez dans un instant.", 500)
+
+
+# Identifiant USB d'un boîtier maison : les 12 chiffres hexadécimaux que le
+# firmware publie comme numéro de série USB (usb_desc.c, dérivé de l'UID de la
+# puce, gravé en usine). Associé au numéro gravé par tools/initialiser_boitier.py.
+_USB_ID_RE = re.compile(r"^[0-9A-F]{12}$")
+
+
+@https_fn.on_request(max_instances=5)
+def boitier_detect(req: https_fn.Request) -> https_fn.Response:
+    """L'app a vu un boîtier MyStrow branché : à qui est-il, que contient-il ?
+
+    POST — Body : {"usb_id": "E3FC85C0BDF0"}
+           Authorization: Bearer <id_token> FACULTATIF (sans lui, le statut
+           ne peut pas distinguer « à vous » de « à un autre »).
+
+    Réponse : {"ok": true, "known": false} pour un identifiant inconnu (puce
+    WCH d'un autre fabricant, boîtier pas encore appairé), sinon
+    {"ok": true, "known": true, "status": ..., "months": N[, "serial": ...]}
+    avec status :
+      - "free"     : jamais activé — l'app propose l'activation ;
+      - "yours"    : déjà activé sur le compte du jeton ;
+      - "other"    : activé ailleurs — le numéro n'est PAS renvoyé ;
+      - "lifetime" : libre, mais le compte du jeton est à vie : rien à offrir.
+
+    Seule l'IDENTITÉ vient du boîtier ; l'offre (durée) est lue ici, dans
+    /boitiers. Un périphérique USB peut déclarer n'importe quoi : l'app ne
+    doit jamais croire un boîtier sur parole.
+
+    L'activation elle-même passe par `activate_code` avec le numéro renvoyé :
+    même chemin, mêmes garde-fous que la page /activate.
+    """
+    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+    if req.method != "POST":
+        return https_fn.Response("Method not allowed", status=405,
+                                 headers=_CORS_HEADERS)
+
+    def _rep(payload: dict, status: int = 200) -> https_fn.Response:
+        return https_fn.Response(json.dumps(payload), status=status, headers=_H)
+
+    try:
+        body = json.loads(req.get_data() or b"{}")
+    except Exception:
+        return _rep({"ok": False, "error": "bad_json"}, 400)
+    usb_id = "".join(c for c in str(body.get("usb_id") or "").upper()
+                     if c.isalnum())
+    if not _USB_ID_RE.match(usb_id):
+        return _rep({"ok": False, "error": "bad_usb_id"}, 400)
+
+    # Même limite que /activate : 48 bits ne se balaient pas à 8 essais par
+    # quart d'heure.
+    ip = (req.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+    if not _act_throttle_ok(ip):
+        return _rep({"ok": False, "error": "throttled"}, 429)
+
+    uid = ""
+    ah = req.headers.get("Authorization", "")
+    if ah.startswith("Bearer "):
+        try:
+            uid = auth.verify_id_token(ah[7:])["uid"]
+        except Exception:
+            uid = ""        # jeton périmé : on répond quand même, sans compte
+
+    try:
+        db = _get_db()
+        found = (db.collection("boitiers")
+                 .where("usb_id", "==", usb_id).limit(1).get())
+        if not found:
+            return _rep({"ok": True, "known": False})
+        data   = found[0].to_dict() or {}
+        serial = data.get("serial") or found[0].id
+        months = int(data.get("months") or 0)
+        holder = data.get("activated_uid") or ""
+
+        if holder:
+            status = "yours" if uid and holder == uid else "other"
+        else:
+            status = "free"
+            if uid:
+                lic = db.collection("licenses").document(uid).get()
+                if lic.exists and (lic.to_dict() or {}).get("plan_type") == "lifetime":
+                    status = "lifetime"
+
+        out = {"ok": True, "known": True, "status": status, "months": months}
+        if status != "other":
+            out["serial"] = serial
+        print(f"[boitier_detect] {usb_id} → {serial} {status}"
+              + (f" (uid {uid[:8]})" if uid else ""))
+        return _rep(out)
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[boitier_detect] erreur : {e}")
+        return _rep({"ok": False, "error": "server"}, 500)
 
 
 # ===========================================================================

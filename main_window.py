@@ -913,7 +913,11 @@ class MessageLogWidget(QWidget):
         # ── Zone texte ──────────────────────────────────────────────────────
         self._text = QTextEdit()
         self._text.setReadOnly(True)
-        self._text.setLineWrapMode(QTextEdit.NoWrap)
+        # Retour à la ligne plutôt qu'un ascenseur horizontal : le panneau est
+        # étroit, et une ligne longue (« ENTTEC DMX USB Pro connecté sur… »)
+        # obligeait à faire défiler de côté pour lire la fin.
+        self._text.setLineWrapMode(QTextEdit.WidgetWidth)
+        self._text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._text.setMinimumHeight(60)
         self._text.setStyleSheet(
             "QTextEdit { background:#0c0c0c; color:#555; "
@@ -1093,7 +1097,8 @@ class AkaiDiagnosticDialog(QDialog):
         ctrl_name = getattr(midi_handler, 'controller_name', '') or tr("mwz_001")
         self.setWindowTitle(tr("mw_f_midi_ctrl", ctrl_name=ctrl_name))
         _is_apc_mini = getattr(midi_handler, 'controller_type', '') == 'apc_mini'
-        self.setFixedSize(500, 760 if _is_apc_mini else 720)
+        self.setMinimumSize(760, 600 if _is_apc_mini else 560)
+        self.resize(800, 640 if _is_apc_mini else 600)
         self.setModal(True)
         self._midi = midi_handler
         self._activity_count = 0
@@ -1102,6 +1107,7 @@ class AkaiDiagnosticDialog(QDialog):
             QDialog  { background: #111; color: #ddd; }
             QLabel   { background: transparent; border: none; color: #ddd; }
             QFrame   { border: none; }
+            QFrame#akaiCard { background: #161616; border: 1px solid #232323; border-radius: 8px; }
             QPushButton {
                 background: #1e1e1e; color: #ccc;
                 border: 1px solid #333; border-radius: 6px;
@@ -1110,30 +1116,64 @@ class AkaiDiagnosticDialog(QDialog):
             QPushButton:hover { background: #2a2a2a; color: #fff; border-color: #555; }
         """)
 
+        def _card():
+            """Carte à fond légèrement relevé : remplace les filets de séparation."""
+            f = QFrame()
+            f.setObjectName("akaiCard")
+            lay = QVBoxLayout(f)
+            lay.setContentsMargins(14, 12, 14, 12)
+            lay.setSpacing(8)
+            return f, lay
+
+        def _section(text):
+            lbl = QLabel(text.upper())
+            lbl.setStyleSheet("color:#777; font-size:9px; font-weight:bold; letter-spacing:1px;")
+            return lbl
+
+        def _btn(text, bg, fg, border, bg_h, fg_h, border_h):
+            b = QPushButton(text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(
+                f"QPushButton {{ background:{bg}; color:{fg}; border:1px solid {border}; "
+                f"border-radius:6px; font-size:10px; font-weight:bold; padding:7px 14px; "
+                f"text-align:left; }} "
+                f"QPushButton:hover {{ background:{bg_h}; color:{fg_h}; border-color:{border_h}; }}"
+            )
+            return b
+
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 22, 24, 20)
+        root.setContentsMargins(22, 18, 22, 18)
         root.setSpacing(14)
 
         # ── Titre ──────────────────────────────────────────────────────────
         title = QLabel(f"🎹  {ctrl_name}")
-        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
         title.setStyleSheet("color:#fff;")
         root.addWidget(title)
 
-        # ── Liste visuelle des contrôleurs compatibles ─────────────────────
-        list_hdr = QLabel(tr("mw_ctrl_compat"))
-        list_hdr.setStyleSheet("color:#aaa; font-size:10px; font-weight:bold;")
-        root.addWidget(list_hdr)
+        # Deux colonnes : à gauche CHOISIR un contrôleur (liste + tout ce qui
+        # ajoute un profil), à droite VÉRIFIER qu'il répond (ports, trafic).
+        # L'ancienne fenêtre empilait tout sur 500 px de large et devait
+        # répartir ses boutons sur quatre rangées pour qu'ils tiennent.
+        cols = QHBoxLayout()
+        cols.setSpacing(14)
+        root.addLayout(cols, 1)
+
+        # ── Colonne gauche : contrôleurs ───────────────────────────────────
+        left, left_l = _card()
+        cols.addWidget(left, 11)
+        left_l.addWidget(_section(tr("mw_ctrl_compat")))
 
         _scroll = QScrollArea()
         _scroll.setWidgetResizable(True)
-        _scroll.setFixedHeight(212)
+        _scroll.setMinimumHeight(220)
         _scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         _scroll.setStyleSheet(
             "QScrollArea { border:1px solid #222; border-radius:6px; background:#0d0d0d; }"
             "QScrollBar:vertical { background:#0d0d0d; width:8px; margin:2px; }"
             "QScrollBar::handle:vertical { background:#2a2a2a; border-radius:4px; min-height:20px; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:none; }"
         )
         _rows_host = QWidget()
         _rows_host.setStyleSheet("background:transparent;")
@@ -1141,37 +1181,58 @@ class AkaiDiagnosticDialog(QDialog):
         self._ctrl_rows_layout.setContentsMargins(6, 6, 6, 6)
         self._ctrl_rows_layout.setSpacing(4)
         _scroll.setWidget(_rows_host)
-        root.addWidget(_scroll)
+        left_l.addWidget(_scroll, 1)
 
         self._ctrl_row_widgets = {}   # cid -> (frame, name_lbl, status_lbl)
         self._populate_controller_rows()
 
         hint = QLabel(tr("mw_ctrl_force"))
-        hint.setStyleSheet("color:#555; font-size:8px;")
+        hint.setStyleSheet("color:#666; font-size:9px;")
         hint.setWordWrap(True)
-        root.addWidget(hint)
+        left_l.addWidget(hint)
 
         # Rafraîchit l'état détecté/connecté en direct (branchement à chaud)
         self._ctrl_refresh_timer = QTimer(self)
         self._ctrl_refresh_timer.timeout.connect(self._refresh_controller_rows)
         self._ctrl_refresh_timer.start(2000)
 
-        sep_sel = QFrame(); sep_sel.setFrameShape(QFrame.HLine)
-        sep_sel.setStyleSheet("background:#222; max-height:1px;")
-        root.addWidget(sep_sel)
+        # Les trois façons d'obtenir un profil, une par ligne et pleine largeur :
+        # les libellés allemands/portugais dépassent 200 px, deux côte à côte
+        # seraient tronqués.
+        add_btn = _btn(tr("mw_add_ctrl"), "#1a2a1a", "#88cc88", "#2a442a",
+                       "#223322", "#aaeaaa", "#44aa44")
+        add_btn.clicked.connect(self._open_add_controller)
+        left_l.addWidget(add_btn)
 
-        # ── Statut ports ───────────────────────────────────────────────────
-        def _port_row(label, ok):
+        lib_btn = _btn(tr("mw_ctrl_community"), "#0d2530", "#66c6dd", "#1e4655",
+                       "#123240", "#9fe4f5", "#3399bb")
+        lib_btn.setToolTip(tr("mw_ctrl_community_hint"))
+        lib_btn.clicked.connect(self._open_community_controllers)
+        left_l.addWidget(lib_btn)
+
+        import_btn = _btn("📥  " + tr("mw_ctrl_import"), "#1a1a2a", "#8899cc", "#2a2a44",
+                          "#222233", "#aabbee", "#4444aa")
+        import_btn.setToolTip(tr("mw_ctrl_import_hint"))
+        import_btn.clicked.connect(self._import_profile)
+        left_l.addWidget(import_btn)
+
+        # ── Colonne droite : diagnostic ────────────────────────────────────
+        right, right_l = _card()
+        cols.addWidget(right, 9)
+        right_l.addWidget(_section(tr("mw_diagnostic")))
+
+        def _port_row(label):
             """Retourne (layout, dot, status) — les voyants sont rafraîchis en direct."""
             row = QHBoxLayout()
+            row.setSpacing(6)
             dot = QLabel("●")
-            row.addWidget(dot)
+            row.addWidget(dot, 0, Qt.AlignTop)
             lbl = QLabel(label)
             lbl.setStyleSheet("color:#ccc; font-size:10px;")
-            row.addWidget(lbl)
-            row.addStretch()
+            lbl.setWordWrap(True)
+            row.addWidget(lbl, 1)
             status = QLabel("")
-            row.addWidget(status)
+            row.addWidget(status, 0, Qt.AlignTop)
             return row, dot, status
 
         # Le nom du port ouvert compte autant que le voyant : un contrôleur à
@@ -1184,19 +1245,19 @@ class AkaiDiagnosticDialog(QDialog):
         self._out_lbl.setStyleSheet("color:#888; font-size:9px;")
         self._out_lbl.setWordWrap(True)
 
-        _row, self._in_dot, self._in_status = _port_row(tr("mwz_004"), False)
-        root.addLayout(_row)
-        root.addWidget(self._in_lbl)
-        _row, self._out_dot, self._out_status = _port_row(tr("mwz_005"), False)
-        root.addLayout(_row)
-        root.addWidget(self._out_lbl)
+        _row, self._in_dot, self._in_status = _port_row(tr("mwz_004"))
+        right_l.addLayout(_row)
+        right_l.addWidget(self._in_lbl)
+        _row, self._out_dot, self._out_status = _port_row(tr("mwz_005"))
+        right_l.addLayout(_row)
+        right_l.addWidget(self._out_lbl)
 
         # Erreur de scan (sonde MIDI en échec) — sinon la détection meurt en silence.
         self._scan_err_lbl = QLabel("")
         self._scan_err_lbl.setStyleSheet("color:#f44336; font-size:9px;")
         self._scan_err_lbl.setWordWrap(True)
         self._scan_err_lbl.setVisible(False)
-        root.addWidget(self._scan_err_lbl)
+        right_l.addWidget(self._scan_err_lbl)
 
         # ── Ports disponibles ──────────────────────────────────────────────
         try:
@@ -1213,16 +1274,14 @@ class AkaiDiagnosticDialog(QDialog):
         ports_lbl = QLabel(tr("mwz_006") + (", ".join(ports) if ports else tr("mwz_007")))
         ports_lbl.setStyleSheet("color:#555; font-size:9px;")
         ports_lbl.setWordWrap(True)
-        root.addWidget(ports_lbl)
+        right_l.addWidget(ports_lbl)
 
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet("background:#222; max-height:1px;")
-        root.addWidget(sep2)
+        right_l.addSpacing(6)
 
         # ── Activité MIDI en direct ────────────────────────────────────────
         act_row = QHBoxLayout()
         act_lbl = QLabel(tr("mw_midi_activity"))
-        act_lbl.setStyleSheet("color:#777; font-size:10px;")
+        act_lbl.setStyleSheet("color:#aaa; font-size:10px;")
         act_row.addWidget(act_lbl)
         self._act_dot = QLabel("●")
         self._act_dot.setStyleSheet("color:#333; font-size:14px;")
@@ -1231,7 +1290,7 @@ class AkaiDiagnosticDialog(QDialog):
         self._act_info.setStyleSheet("color:#555; font-size:9px;")
         act_row.addWidget(self._act_info)
         act_row.addStretch()
-        root.addLayout(act_row)
+        right_l.addLayout(act_row)
 
         # Trafic BRUT : compté dès l'arrivée, avant tout décodage. Un compteur qui
         # grimpe pendant que le témoin ci-dessus reste éteint signifie que le
@@ -1240,7 +1299,7 @@ class AkaiDiagnosticDialog(QDialog):
         self._raw_lbl = QLabel(tr("mw_midi_raw"))
         self._raw_lbl.setStyleSheet("color:#555; font-size:9px;")
         self._raw_lbl.setWordWrap(True)
-        root.addWidget(self._raw_lbl)
+        right_l.addWidget(self._raw_lbl)
 
         # Timer pour faire clignoter le dot (on_midi_pad/fader notifie via signal)
         self._blink_timer = QTimer(self)
@@ -1259,95 +1318,53 @@ class AkaiDiagnosticDialog(QDialog):
         midi_handler.pad_pressed.connect(self._on_midi_activity)
         midi_handler.fader_changed.connect(self._on_midi_activity)
 
-        root.addStretch()
+        right_l.addStretch()
 
         # ── Luminosité APC Mini (affiché seulement pour l'APC Mini) ───────
-        if getattr(midi_handler, 'controller_type', '') == 'apc_mini':
+        if _is_apc_mini:
             from midi_handler import _APPLE_SILICON
+            # Case sans texte + libellé à part : un QCheckBox ne passe pas à la
+            # ligne, et ce libellé fait ~450 px dans une colonne de ~300.
             bright_row = QHBoxLayout()
-            self._bright_chk = QCheckBox(tr("mw_led_full"))
-            self._bright_chk.setStyleSheet("color:#999; font-size:9px;")
+            bright_row.setSpacing(6)
+            self._bright_chk = QCheckBox()
             self._bright_chk.setChecked(getattr(midi_handler, '_apc_bright_mode', True))
             self._bright_chk.toggled.connect(self._toggle_bright_mode)
-            bright_row.addWidget(self._bright_chk)
-            bright_row.addStretch()
-            root.addLayout(bright_row)
+            bright_row.addWidget(self._bright_chk, 0, Qt.AlignTop)
+            bright_lbl = QLabel(tr("mw_led_full"))
+            bright_lbl.setStyleSheet("color:#999; font-size:9px;")
+            bright_lbl.setWordWrap(True)
+            bright_lbl.setCursor(Qt.PointingHandCursor)
+            bright_lbl.mousePressEvent = lambda e: self._bright_chk.toggle()
+            bright_row.addWidget(bright_lbl, 1)
+            right_l.addLayout(bright_row)
             if _APPLE_SILICON:
                 warn_lbl = QLabel(tr("mw_apple_dim"))
                 warn_lbl.setStyleSheet("color:#e6a817; font-size:9px;")
-                root.addWidget(warn_lbl)
+                warn_lbl.setWordWrap(True)
+                right_l.addWidget(warn_lbl)
         else:
             self._bright_chk = None
 
-        # ── Boutons ────────────────────────────────────────────────────────
-        btn_row = QHBoxLayout()
-
-        add_btn = QPushButton(tr("mw_add_ctrl"))
-        add_btn.setStyleSheet(
-            "QPushButton { background:#1a2a1a; color:#88cc88; border:1px solid #2a442a; "
-            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 14px; } "
-            "QPushButton:hover { background:#223322; color:#aaeaaa; border-color:#44aa44; }"
-        )
-        add_btn.clicked.connect(self._open_add_controller)
-        btn_row.addWidget(add_btn)
-
-        # Rangée à part : la mesure du 20/08/2026 donne déjà 400 px pour le seul
-        # « Ajouter » en allemand, contre ~430 px disponibles. Un second bouton
-        # sur cette ligne serait tronqué dans toutes les langues.
-        lib_row = QHBoxLayout()
-        lib_btn = QPushButton(tr("mw_ctrl_community"))
-        lib_btn.setToolTip(tr("mw_ctrl_community_hint"))
-        lib_btn.setStyleSheet(
-            "QPushButton { background:#0d2530; color:#66c6dd; border:1px solid #1e4655; "
-            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 14px; } "
-            "QPushButton:hover { background:#123240; color:#9fe4f5; border-color:#3399bb; }"
-        )
-        lib_btn.clicked.connect(self._open_community_controllers)
-        lib_row.addWidget(lib_btn)
-        lib_row.addStretch()
-
-        import_btn = QPushButton(tr("mw_ctrl_import"))
-        import_btn.setToolTip(tr("mw_ctrl_import_hint"))
-        import_btn.setStyleSheet(
-            "QPushButton { background:#1a1a2a; color:#8899cc; border:1px solid #2a2a44; "
-            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 14px; } "
-            "QPushButton:hover { background:#222233; color:#aabbee; border-color:#4444aa; }"
-        )
-        import_btn.clicked.connect(self._import_profile)
-
-        # Rangee 2 : les deux boutons secondaires.
-        #
-        # Trois rangees et non une seule : mesure faite le 20/08/2026, les
-        # quatre boutons reclament 794 px en francais et 904 px en allemand
-        # pour ~430 px disponibles dans cette fenetre a largeur fixe. Trois
-        # boutons sur quatre etaient tronques dans toutes les langues.
-        # « Ajouter » occupe donc sa propre rangee (400 px au pire, en
-        # allemand), « Importer » et « Rescanner » partagent la deuxieme
-        # (434 px au pire, en portugais), « Fermer » ferme la marche.
-        root.addLayout(btn_row)
-        root.addLayout(lib_row)
-
-        btn_row2 = QHBoxLayout()
-        btn_row2.addWidget(import_btn)
-        btn_row2.addStretch()
-
         rescan_btn = QPushButton(tr("mw_rescan"))
         rescan_btn.setToolTip(tr("mw_rescan_hint"))
+        rescan_btn.setCursor(Qt.PointingHandCursor)
         rescan_btn.setStyleSheet(
             "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #333; "
-            "border-radius:6px; font-size:10px; font-weight:bold; padding:6px 16px; } "
+            "border-radius:6px; font-size:10px; font-weight:bold; padding:7px 16px; } "
             "QPushButton:hover { background:#252525; color:#eee; border-color:#555; }"
         )
         rescan_btn.clicked.connect(self._do_rescan)
-        btn_row2.addWidget(rescan_btn)
-        root.addLayout(btn_row2)
+        right_l.addWidget(rescan_btn)
 
-        btn_row3 = QHBoxLayout()
-        btn_row3.addStretch()
+        # ── Pied ───────────────────────────────────────────────────────────
+        foot = QHBoxLayout()
+        foot.addStretch()
         close_btn = QPushButton(tr("mw_close"))
+        close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.clicked.connect(self.accept)
-        btn_row3.addWidget(close_btn)
-        root.addLayout(btn_row3)
+        foot.addWidget(close_btn)
+        root.addLayout(foot)
 
     def _toggle_bright_mode(self, checked):
         self._midi.set_apc_bright_mode(checked)
@@ -1533,6 +1550,9 @@ class AkaiDiagnosticDialog(QDialog):
         self._ctrl_row_widgets = {}
         for cid, name in self._controller_order_now():
             frame = QFrame()
+            # Sélecteur par nom : un `QFrame { border… }` s'appliquerait aussi
+            # aux QLabel de la ligne (QLabel hérite de QFrame) et les encadrerait.
+            frame.setObjectName("ctrlRow")
             frame.setCursor(Qt.PointingHandCursor)
             hl = QHBoxLayout(frame)
             hl.setContentsMargins(10, 7, 10, 7)
@@ -1606,11 +1626,11 @@ class AkaiDiagnosticDialog(QDialog):
             status.setStyleSheet(f"background:transparent; font-size:9px; font-weight:bold; color:{_c};")
             if selected and (is_active or present):
                 border = "#4CAF50" if (is_active or (cid is None and active is None)) else "#00d4ff"
-                frame.setStyleSheet(f"QFrame {{ background:#152015; border:1px solid {border}; border-radius:6px; }}")
+                frame.setStyleSheet(f"QFrame#ctrlRow {{ background:#152015; border:1px solid {border}; border-radius:6px; }}")
             elif selected:
-                frame.setStyleSheet("QFrame { background:#1a1a1a; border:1px solid #555; border-radius:6px; }")
+                frame.setStyleSheet("QFrame#ctrlRow { background:#1a1a1a; border:1px solid #555; border-radius:6px; }")
             else:
-                frame.setStyleSheet("QFrame { background:#141414; border:1px solid #1e1e1e; border-radius:6px; }")
+                frame.setStyleSheet("QFrame#ctrlRow { background:#141414; border:1px solid #1e1e1e; border-radius:6px; }")
             _strong = is_active or selected
             name_lbl.setStyleSheet(
                 "background:transparent; font-size:10px; color:%s; font-weight:%s;" % (
@@ -4715,9 +4735,11 @@ class _StatusCornerWidget(QWidget):
             else "color:#333; font-size:8pt;"
         )
 
-    _CLOCK_STYLE     = "color:#ddd; font-size:12px; font-weight:bold;"
-    _COUNTDOWN_STYLE = "color:#00d4ff; font-size:12px; font-weight:bold;"
-    _COUNTDOWN_SOON  = "color:#ff9a2a; font-size:12px; font-weight:bold;"
+    # Même police que « MASTER » juste à côté ; le décompte garde sa couleur
+    # (cyan, puis orange à moins d'une minute) pour rester repérable.
+    _CLOCK_STYLE     = "color:#777; font-size:9px; font-weight:bold;"
+    _COUNTDOWN_STYLE = "color:#00d4ff; font-size:9px; font-weight:bold;"
+    _COUNTDOWN_SOON  = "color:#ff9a2a; font-size:9px; font-weight:bold;"
 
     clock_clicked = Signal()
 
@@ -5747,6 +5769,7 @@ class MainWindow(QMainWindow):
         # Sortie live de l'éditeur d'effets : {id(proj): (level, color, pan, tilt)}
         # Alimenté par l'éditeur quand « Sortie live » est armé, None sinon.
         self._editor_live_overrides = None
+        self._fx_level_ids = set()   # cf. update_effect / _apply_pad_overrides_htp
         self._editor_live_channels  = None   # couches « Canal » de la sortie live
         self.blackout_active = False
         self._last_fader_mode = "FX"   # "FX" ou "MASTER" pour le fader 9
@@ -5942,6 +5965,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(650, self._startup_faders_down)
         QTimer.singleShot(1000, self.test_dmx_on_startup)
         QTimer.singleShot(1500, self._log_startup_status)
+
+        # Boîtier MyStrow maison branché → proposer d'activer sa licence incluse
+        from boitier_detect import BoitierDetector
+        self._boitier_detector = BoitierDetector(self)
+        self._boitier_detector.start()
 
     def _prevent_sleep(self):
         """Empeche Windows de se mettre en veille tant que l'application tourne"""
@@ -13271,6 +13299,7 @@ class MainWindow(QMainWindow):
         lyre — surtout pas le centre de la zone.
         """
         clear_effect_channels(self.projectors)
+        self._fx_level_ids = set()
         aims = self._apply_effect_capture()
         self.effect_saved_colors = {}
         self._effect_engine_frame = None
@@ -13611,6 +13640,9 @@ class MainWindow(QMainWindow):
         périmé, et tout l'état passerait pour une écriture étrangère.
         """
         self._sync_effect_baseline()
+        # Projecteurs dont l'effet pilote le NIVEAU cette frame : remplie par
+        # `_update_effect_from_layers`, lue par `_apply_pad_overrides_htp`.
+        self._fx_level_ids = set()
         # Couches « Canal » : repartir d'une table vide à chaque frame, les
         # effets (empilés compris) la remplissent en HTP. Sans ça, un canal
         # qu'aucune couche ne vise plus garderait sa dernière valeur.
@@ -14729,6 +14761,11 @@ class MainWindow(QMainWindow):
                 # Utiliser base_color (couleur stable) et non proj.color (déjà modifié
                 # par le frame précédent) pour éviter la boucle de feedback vers le noir.
                 proj.level = int(bv * 100)
+                # Niveau posé par l'effet : la couche HTP des pads ne doit pas
+                # le remonter au fader avant l'envoi (cf. _apply_pad_overrides_htp).
+                _fx_ids = getattr(self, '_fx_level_ids', None)
+                if _fx_ids is not None:
+                    _fx_ids.add(id(proj))
                 _stable = effect_dim_base_color(
                     proj, getattr(proj, 'base_color', None) or _base_color)
                 proj.color = QColor(
@@ -21428,8 +21465,92 @@ class MainWindow(QMainWindow):
                 # si la fixture possède le canal (has_gobo / has_wheel), et propose
                 # les vrais slots (OFL) sinon des slots génériques.
                 **self._proj_gobo_wheel_meta(p),
+                "adv":        self._proj_adv_channels(p),
             })
         return out
+
+    # Canaux que la tablette pilote déjà par ses propres commandes (couleurs,
+    # niveau, strobe, pad pan/tilt, roue, gobo) : pas de curseur en double.
+    _TABLET_HANDLED_CH = {"R", "G", "B", "Dim", "Dim2", "Strobe", "Shutter",
+                          "Pan", "PanFine", "Tilt", "TiltFine", "ColorWheel", "Gobo1"}
+    # Canaux à état dédié : écrits dans leur attribut, comme le menu du plan de
+    # feu — via `channel_extras`, ils masqueraient ce curseur-là au PC.
+    _TABLET_CH_ATTR = {"UV": "uv", "W": "white_boost", "Ambre": "amber_boost",
+                       "Orange": "orange_boost", "Effects": "effects", "Focus": "focus",
+                       "Gobo2": "gobo2", "Speed": "speed", "Mode": "mode_value",
+                       "Prism": "prism", "PrismRot": "prism_rotation",
+                       "Gobo1Rot": "gobo_rotation",
+                       **{t: f"preset{i}" for i, t in
+                          enumerate(("Preset1", "Preset2", "Preset3", "Preset4"), start=1)}}
+    _TABLET_BOOST_ATTRS = ('uv', 'amber_boost', 'white_boost', 'orange_boost')
+
+    @classmethod
+    def _proj_adv_channels(cls, p) -> list:
+        """« Canaux avancés » d'un projecteur pour la tablette : [{k, label, v}].
+
+        Même clé que le menu du plan de feu : le TYPE s'il est unique dans le
+        profil, le NUMÉRO de canal sinon (seule clé qui désigne UN canal)."""
+        from collections import Counter
+        prof = list(getattr(p, 'dmx_profile', []) or [])
+        if getattr(p, 'matrix_id', None) is not None:
+            return []
+        counts = Counter(prof)
+        labels = getattr(p, 'channel_labels', None) or []
+        extras = getattr(p, 'channel_extras', {}) or {}
+        out, seen_attr = [], set()
+        for n, ct in enumerate(prof, start=1):
+            if ct in cls._TABLET_HANDLED_CH:
+                continue
+            nom = labels[n - 1] if n - 1 < len(labels) else ""
+            attr = cls._TABLET_CH_ATTR.get(ct)
+            if attr:
+                if attr in seen_attr:
+                    continue        # un attribut pilote tous les canaux du type
+                seen_attr.add(attr)
+                out.append({"k": ct, "label": nom or ct,
+                            "v": int(getattr(p, attr, 0) or 0)})
+                continue
+            k = n if counts[ct] > 1 else ct
+            v = extras.get(k)
+            if v is None and isinstance(k, int):
+                v = extras.get(str(k))
+            out.append({"k": k,
+                        "label": f"{n:02d} · {nom or ct}" if counts[ct] > 1 else (nom or ct),
+                        "v": int(v or 0)})
+        return out
+
+    def _apply_tablet_channel(self, p, k, v):
+        """Curseur « Canaux avancés » de la tablette — même écriture que le
+        menu du plan de feu (`_build_special_row` / `_make_adv_cb`)."""
+        v = max(0, min(255, int(v)))
+        attr = self._TABLET_CH_ATTR.get(k) if isinstance(k, str) else None
+        if attr:
+            setattr(p, attr, v)
+            if attr in self._TABLET_BOOST_ATTRS:
+                # LED dédiée derrière le dimmer : ouvrir le master, RVB à zéro
+                # (cf. plan_de_feu._apply_special_master).
+                on = any(int(getattr(p, a, 0) or 0) > 0 for a in self._TABLET_BOOST_ATTRS)
+                if on and p.level == 0:
+                    p._special_master = True
+                    p.level = 100
+                    p.base_color = QColor(0, 0, 0)
+                    p.color = QColor(0, 0, 0)
+                elif not on and getattr(p, '_special_master', False):
+                    p._special_master = False
+                    if not (p.base_color.red() or p.base_color.green() or p.base_color.blue()):
+                        p.level = 0
+                        p.color = QColor(0, 0, 0)
+            return
+        if not hasattr(p, 'channel_extras') or p.channel_extras is None:
+            p.channel_extras = {}
+        if v == 0:
+            # Les deux formes de clé, comme au PC : sinon un forçage venu d'un
+            # show rechargé survivrait au retour à zéro.
+            p.channel_extras.pop(k, None)
+            if isinstance(k, int):
+                p.channel_extras.pop(str(k), None)
+        else:
+            p.channel_extras[k] = v
 
     @staticmethod
     def _proj_gobo_wheel_meta(p) -> dict:
@@ -21619,6 +21740,19 @@ class MainWindow(QMainWindow):
             self.send_dmx_update()
             if hasattr(self, 'plan_de_feu'):
                 self.plan_de_feu.mark_dirty()
+        elif etype == "proj_channel":
+            # « Canaux avancés » de la tablette (Focus, Zoom, Prisme, canaux
+            # bruts…). `k` = type ou n° de canal, cf. _proj_adv_channels.
+            k = ev.get("k")
+            if isinstance(k, (str, int)) and not isinstance(k, bool):
+                for idx in _ev_idxs(ev):
+                    if 0 <= idx < len(self.projectors):
+                        p = self.projectors[idx]
+                        self._apply_tablet_channel(p, k, ev.get("value", 0))
+                        p._manual_beam = True   # prise en main, comme au PC (_flush)
+                self.send_dmx_update()
+                if hasattr(self, 'plan_de_feu'):
+                    self.plan_de_feu.mark_dirty()
         elif etype == "proj_pantilt":
             # pan/tilt normalisés 0..1 depuis le pad tactile → 0..65535.
             for idx in _ev_idxs(ev):
@@ -22138,8 +22272,11 @@ class MainWindow(QMainWindow):
         if box.clickedButton() is btn_plan:
             self._open_purchase_dialog()
 
-    def _on_activation_success(self):
-        """Appele apres une activation reussie - re-verifie et applique"""
+    def _on_activation_success(self, silent=False):
+        """Appele apres une activation reussie - re-verifie et applique.
+
+        silent : l'appelant a déjà dit « licence activée » (boîtier détecté au
+        branchement, cf. boitier_detect.py) — pas de « Connecté ! » par-dessus."""
         from license_manager import pop_login_result
         new_result = pop_login_result()
         if new_result is None:
@@ -22152,7 +22289,10 @@ class MainWindow(QMainWindow):
         self._apply_license_banner()
 
         # Activer/desactiver DMX
-        if self._license.dmx_allowed:
+        if self._license.dmx_allowed and silent:
+            if not self.dmx.connected:
+                self.test_dmx_on_startup()
+        elif self._license.dmx_allowed:
             if not self.dmx.connected:
                 dlg = LoginSuccessDialog(dmx_allowed=True, parent=self)
                 if dlg.exec() == LoginSuccessDialog.ACTIVATE_DMX:
@@ -31640,7 +31780,15 @@ class MainWindow(QMainWindow):
                 target_groups = self._slot_groups(slot)
             else:
                 target_groups = []
+            # Un effet à couche Dimmer baisse `proj.level` à chaque frame : le
+            # comparer au fader faisait gagner le pad dès que l'effet passait
+            # sous le fader — fader à fond, Pulse Doux ou Chase Retour restaient
+            # fixes sur les lampes pendant que le plan 2D, lui, les animait.
+            # L'effet a déjà pris la couleur du pad (`base_color`) : on le laisse.
+            fx_ids = getattr(self, '_fx_level_ids', ())
             for i, proj in enumerate(self.projectors):
+                if id(proj) in fx_ids:
+                    continue
                 if proj.group in target_groups and fader_value > proj.level:
                     saved.append((i, proj.level, proj.color, proj.base_color))
                     proj.level = fader_value
@@ -31737,7 +31885,10 @@ class MainWindow(QMainWindow):
             if overrides:
                 for i, proj in enumerate(self.projectors):
                     proj.level, proj.color, proj.base_color = saved_htp[i]
-        elif self.dmx.connected and getattr(self.dmx, 'transport', '') in ('enttec', 'enttec_pro'):
+        # Valable pour CETTE frame seulement : sans effet à la suivante, les
+        # pads doivent retrouver la main.
+        self._fx_level_ids = set()
+        if not self.plan_de_feu.is_dmx_enabled() and self.dmx.connected and getattr(self.dmx, 'transport', '') in ('enttec', 'enttec_pro'):
             # ENTTEC : envoyer des frames nulles pour garder le lien actif (évite le timeout)
             self.dmx.send_dmx()
 

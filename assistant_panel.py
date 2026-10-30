@@ -14,6 +14,7 @@ gardées dans ~/.mystrow_assistant.json pour enrichir le vocabulaire.
 
 import html
 import json
+import re
 import time
 import traceback
 from collections import deque
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from i18n import tr, get_language
 import assistant_nlu as nlu
+import assistant_support
 import light_actions as la
 
 STORE_FILE = Path.home() / ".mystrow_assistant.json"
@@ -239,6 +241,21 @@ R = {
     "gobo_none": {"fr": "Aucun de ces appareils n'a de roue de gobos.", "en": "None of these fixtures has a gobo wheel.",
                   "es": "Ninguno de estos aparatos tiene rueda de gobos.", "de": "Keines dieser Geräte hat ein Goborad.",
                   "pt": "Nenhum destes aparelhos tem roda de gobos.", "ja": "これらの機材にはゴボホイールがありません。"},
+    "aim_up": {"fr": "en l'air", "en": "up in the air", "es": "hacia arriba", "de": "nach oben", "pt": "para cima",
+               "ja": "上向き"},
+    "aim_down": {"fr": "au sol", "en": "to the floor", "es": "al suelo", "de": "auf den Boden", "pt": "para o chão",
+                 "ja": "床向き"},
+    "aim_public": {"fr": "vers le public", "en": "at the audience", "es": "hacia el público", "de": "aufs Publikum",
+                   "pt": "para o público", "ja": "客席向き"},
+    "aim_center": {"fr": "au centre", "en": "to the center", "es": "al centro", "de": "in die Mitte", "pt": "ao centro",
+                   "ja": "中央"},
+    "position": {"fr": "✓ {n} lyre(s) {d}", "en": "✓ {n} moving head(s) {d}", "es": "✓ {n} cabeza(s) móvil(es) {d}",
+                 "de": "✓ {n} Moving Head(s) {d}", "pt": "✓ {n} cabeça(s) móvel(is) {d}", "ja": "✓ ムービング {n} 台を{d}に"},
+    "position_preset": {"fr": " (ta position « {p} »)", "en": " (your “{p}” position)", "es": " (tu posición «{p}»)",
+                        "de": " (deine Position „{p}“)", "pt": " (a tua posição «{p}»)", "ja": "（ポジション「{p}」）"},
+    "position_none": {"fr": "Aucune lyre parmi ces projecteurs.", "en": "None of these fixtures is a moving head.",
+                      "es": "Ninguno de estos focos es una cabeza móvil.", "de": "Keiner dieser Scheinwerfer ist ein Moving Head.",
+                      "pt": "Nenhum destes projetores é uma cabeça móvel.", "ja": "ムービングライトがありません。"},
     "live_on": {"fr": "✓ Mode LIVE activé : les lumières suivent le son.", "en": "✓ LIVE mode on: the lights follow the sound.",
                 "es": "✓ Modo LIVE activado: las luces siguen el sonido.", "de": "✓ LIVE-Modus an: das Licht folgt dem Ton.",
                 "pt": "✓ Modo LIVE ativado: as luzes seguem o som.", "ja": "✓ LIVEモード開始：照明が音に反応します。"},
@@ -349,18 +366,18 @@ R = {
                 "ja": "「{t}」が分かりませんでした。教えるには: 覚えて {t} = メモリ 1.1"},
     "help":    {"fr": "Exemples : « allume tout en rouge », « la face en bleu à 50 % », « effet rapide », « plus vite », "
                       "« stop », « noir », « monte les 4 faders », « un projecteur sur deux en rouge », « allume progressivement », « mémoire 2.3 », « suivant », « ouvre le patch », « connecte le boîtier », "
-                      "« crée ma fixture », « apprends ambiance club = mémoire 2.1 ».",
+                      "« les lyres au sol », « crée ma fixture », « apprends ambiance club = mémoire 2.1 ».",
                 "en": "Examples: “all lights red”, “front blue at 50 %”, “fast effect”, “faster”, “stop”, “blackout”, "
-                      "“memory 2.3”, “next”, “open the patch”, “connect the interface”, “create a fixture”, "
+                      "“memory 2.3”, “next”, “open the patch”, “connect the interface”, “moving heads to the floor”, “create a fixture”, "
                       "“learn club vibe = memory 2.1”.",
                 "es": "Ejemplos: «todo en rojo», «frontal en azul al 50 %», «efecto rápido», «más rápido», «parar», "
-                      "«apagón», «memoria 2.3», «siguiente», «abre el patch», «conecta la interfaz», «crea un fixture».",
+                      "«apagón», «memoria 2.3», «siguiente», «abre el patch», «conecta la interfaz», «cabezas móviles al suelo», «crea un fixture».",
                 "de": "Beispiele: „alles rot“, „Front blau auf 50 %“, „schneller Effekt“, „schneller“, „stopp“, "
-                      "„Blackout“, „Speicher 2.3“, „nächster“, „öffne den Patch“, „verbinde die Box“, „neue Fixture“.",
+                      "„Blackout“, „Speicher 2.3“, „nächster“, „öffne den Patch“, „verbinde die Box“, „Moving Heads nach unten“, „neue Fixture“.",
                 "pt": "Exemplos: «tudo em vermelho», «frente em azul a 50 %», «efeito rápido», «mais rápido», «parar», "
-                      "«blackout», «memória 2.3», «seguinte», «abre o patch», «conecta a interface», «cria uma fixture».",
+                      "«blackout», «memória 2.3», «seguinte», «abre o patch», «conecta a interface», «cabeças móveis para o chão», «cria uma fixture».",
                 "ja": "例:「全部赤にして」「フロントを青 50%」「速いエフェクト」「速く」「止めて」「暗転」「メモリ 2.3」"
-                      "「次」「パッチを開いて」「接続」「フィクスチャを作成」"},
+                      "「次」「パッチを開いて」「接続」「ムービングを床に向けて」「フィクスチャを作成」"},
 }
 
 
@@ -435,6 +452,8 @@ class AssistantExecutor:
             return False
         if kinds == {"blackout"}:      # un noir reconnu ne se discute pas (le modèle a déjà lu « noir » en bleu)
             return False
+        if "position" in kinds:        # « les lyres en l'air » : le modèle v6 ne connaît pas la visée
+            return False
         if kinds == {"diagnose"}:      # « ça bug » : le diagnostic lit l'état réel, pas besoin du modèle
             return False
         return True
@@ -444,7 +463,7 @@ class AssistantExecutor:
         do = a.get("do")
         if do in ("fader", "fader_rel"):
             self.last.update(kind="fader", faders=a["faders"])
-        elif do in ("color", "level", "level_rel", "pattern"):
+        elif do in ("color", "level", "level_rel", "pattern", "position"):
             self.last.update(kind="target", target=a["target"])
         elif do == "effect":
             self.last.update(kind="effect", effect=a["name"])
@@ -538,6 +557,8 @@ class AssistantExecutor:
         if do == "answer":
             if a["topic"] == "generic":
                 self.store.note_unknown(a.get("text") or text)
+            if a["topic"].startswith("s_"):
+                return assistant_support.answer(a["topic"][2:], lang)
             return _r("q_" + a["topic"], lang)
         if do == "blackout":
             la.blackout(w)
@@ -547,6 +568,12 @@ class AssistantExecutor:
             return None                     # la question (avec Oui / Non) est posée par le panneau
         if do == "chat":
             return _r("chat", lang)
+        if do == "position":
+            n, preset = la.aim(w, self._targets(a["target"], lang), a["where"])
+            if not n:
+                return _r("position_none", lang)
+            tail = _r("position_preset", lang, p=preset) if preset else ""
+            return _r("position", lang, n=n, d=_r("aim_" + a["where"], lang)) + tail
         if do == "live":
             if not la.set_live(w, a.get("on", True)):
                 return _r("unknown", lang, t=text)
@@ -843,6 +870,8 @@ class AssistantPanel(QWidget):
     # ── messages ──
     def _bubble(self, text, mine):
         body = html.escape(text).replace("\n", "<br>")
+        if not mine:      # liens des fiches de dépannage (tutos YouTube) : cliquables
+            body = re.sub(r"https://[^\s<]+", lambda m: f'<a href="{m.group(0)}" style="color:#E2CE16;">{m.group(0)}</a>', body)
         if mine:
             cell = (f'<table align="right" cellpadding="6" bgcolor="#0d2a33" style="margin:3px 0 3px 30px;">'
                     f'<tr><td style="color:#00d4ff;">{body}</td></tr></table>')
@@ -933,6 +962,9 @@ class AssistantPanel(QWidget):
     def _on_anchor(self, url):
         if url.toString() in ("asst:yes", "asst:no"):
             self._answer_pending(url.toString() == "asst:yes")
+        elif url.scheme() == "https":
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(url)
 
     # ── modèle local : téléchargement et mises à jour ──
     def _build_model_banner(self, lay):

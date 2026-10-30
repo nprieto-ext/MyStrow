@@ -19,6 +19,8 @@ les phrases que l'assistant n'a pas comprises sont gardées par le panneau
 
 import re
 import unicodedata
+
+import assistant_support
 from dataclasses import dataclass, field
 
 LANGS = ("fr", "en", "es", "de", "pt", "ja")
@@ -619,6 +621,38 @@ def _hit(name, t, votes):
     return votes.add(_W[name].find(t))
 
 
+# Petits mots fréquents : la langue d'une phrase de dépannage (« mi antivirus bloquea… »),
+# qui contient rarement le vocabulaire des commandes.
+_STOPWORDS = {
+    "fr": "je j mon ma mes le la les un une est pas ne n que qui avec pour sur dans et ou il elle ca c tout toutes a au du des de en".split(),
+    "en": "i my the a an is it not doesn don t won with for on in and or this that all".split(),
+    "es": "yo mi el los las un una es no que con para y se esta todo todos funciona".split(),
+    "de": "ich mein meine der die das ein eine ist nicht mit fur auf und oder es geht alle".split(),
+    "pt": "eu meu minha o os as um uma e nao com para no na em se esta todos funciona".split(),
+}
+
+
+# Ordre de reconnexion (« … reconnecte ») : on agit, pas de fiche de dépannage.
+_RECONNECT_RE = re.compile(r"(?<![a-z])(?:reconnecte|reconnectez|reconnecter|relance|relancez|redemarre|redemarrez|"
+                           r"reconnect|restart|reconecta|reconectar|reinicia|verbinde neu|neu verbinden|starte neu|"
+                           r"reconecte|reinicie)(?![a-z])")
+
+
+def _lang_guess(t, votes, default):
+    """Langue d'une phrase hors vocabulaire de commande : vocabulaire + petits mots."""
+    for voc in list(_V.values()) + list(_W.values()):
+        for key, langs in voc.find_all(t):
+            votes.add((key, langs, None))
+    words = t.split()
+    for lang, sw in _STOPWORDS.items():
+        n = sum(w in sw for w in words)
+        if n:
+            votes.n[lang] = votes.n.get(lang, 0) + n
+    if re.search(r"[぀-ヿ一-鿿]", t):
+        return "ja"
+    return votes.lang(default)
+
+
 def _nums(s: str) -> list:
     """« 1 et 3 », « 2, 4 », « 1 à 4 » → [1, 3] / [2, 4] / [1, 2, 3, 4] (numéros affichés, base 1)."""
     out = []
@@ -885,6 +919,16 @@ def _parse_clause(raw: str, t: str, effects, votes, question=False) -> list:
         return [{"do": "chat"}]
     if _STATE_RE.search(t) and not _V["verb"].find(t) and not _W["open"].find(t):
         return [{"do": "chat"}]
+    aimed = None if question and _HOW_RE.match(t) else _aim(t, votes)
+    if aimed:
+        # Le reste de la phrase peut aussi demander une couleur, un niveau, un gobo :
+        # « mets les lyres au sol en rouge ». « mets » seul n'allume pas en blanc.
+        act, rest = aimed
+        # « baisse les lyres vers le sol » : « baisse » dit le mouvement, pas le niveau.
+        more = [a for a in _parse_clause(raw, rest, effects, votes) if a["do"] not in ("unknown", "chat", "level_rel")]
+        if not _V["color"].find(rest) and not _ON_STRICT_RE.search(rest):
+            more = [a for a in more if a["do"] != "color"]
+        return [act] + more
     if _LIVE_RE.search(t):
         if question:
             return [{"do": "answer", "topic": "live"}, {"do": "live", "on": True}]
@@ -1110,6 +1154,102 @@ def _merge_alternation(parts: list) -> list:
     return out
 
 
+# Position des lyres : « en l'air », « au sol », « vers le public », « recentre ».
+AIM = {
+    "up": {"fr": ["en l air", "au plafond", "vers le plafond", "vers le ciel", "au ciel", "vers le haut", "en haut",
+                  "dans les airs", "en hauteur"],
+           "en": ["up in the air", "in the air", "to the ceiling", "at the ceiling", "to the sky", "at the sky",
+                  "upwards", "point up", "pointing up", "straight up", "aim up", "facing up"],
+           "es": ["al techo", "hacia el techo", "hacia arriba", "al cielo", "arriba", "en el aire"],
+           "de": ["an die decke", "zur decke", "nach oben", "in die luft", "zum himmel"],
+           "pt": ["para o teto", "pro teto", "no teto", "para cima", "pra cima", "para o ceu", "no ar"],
+           "ja": ["天井", "上に向け", "上向き", "空に向け"]},
+    "down": {"fr": ["au sol", "par terre", "vers le sol", "sur le sol", "vers le bas", "en bas", "vers le plancher"],
+             "en": ["to the floor", "at the floor", "on the floor", "on the ground", "at the ground", "downwards",
+                    "point down", "pointing down", "straight down", "aim down", "facing down"],
+             "es": ["al suelo", "hacia el suelo", "al piso", "hacia abajo", "abajo"],
+             "de": ["auf den boden", "zum boden", "nach unten", "richtung boden"],
+             "pt": ["para o chao", "pro chao", "no chao", "para baixo", "pra baixo"],
+             "ja": ["床", "下に向け", "下向き"]},
+    "public": {"fr": ["vers le public", "sur le public", "dans le public", "face au public", "vers la salle",
+                      "sur la salle", "dans la salle"],
+               "en": ["at the audience", "towards the audience", "toward the audience", "to the audience",
+                      "on the audience", "at the crowd", "on the crowd", "towards the crowd"],
+               "es": ["al publico", "hacia el publico", "sobre el publico"],
+               "de": ["aufs publikum", "auf das publikum", "zum publikum", "ins publikum"],
+               "pt": ["para o publico", "pro publico", "no publico", "para a plateia"],
+               "ja": ["客席", "観客に向け"]},
+    "center": {"fr": ["au centre", "recentre", "recentrer", "recentres", "recentrez", "position de repos",
+                      "en position neutre", "au milieu"],
+               "en": ["to the center", "to the centre", "recenter", "recentre", "center them", "home position",
+                      "back to center", "back to centre"],
+               "es": ["al centro", "centra", "centrar", "posicion de reposo"],
+               "de": ["zur mitte", "in die mitte", "zentrieren", "zentriere", "mittelstellung"],
+               "pt": ["ao centro", "no centro", "centraliza", "centralizar"],
+               "ja": ["中央", "センターに"]},
+}
+_AIM_V = Vocab(AIM)
+# Verbes de visée : sans eux, seuls « lyres » / « faisceaux » rendent la phrase sûre.
+_AIM_VERB_RE = re.compile(r"(?<![a-z])(?:pointe|pointer|pointes|pointez|vise|viser|vises|oriente|orienter|orientes|"
+                          r"dirige|diriger|braque|braquer|place|placer|places|placez|positionne|positionner|tourne|"
+                          r"point|aim|direct|turn|tilt|apunta|apuntar|orienta|dirige|richte|richten|zeige|aponta|"
+                          r"apontar|direciona)(?![a-z])")
+_BEAM_RE = re.compile(r"(?<![a-z])(?:faisceau|faisceaux|rayon|rayons|beam|beams|haz|haces|strahl|strahlen|feixe|"
+                      r"feixes)(?![a-z])|ビーム")
+# « lève les lyres » (sans « vers le haut ») = en l'air ; « baisse les lyres », lui, reste le niveau.
+_RAISE_RE = re.compile(r"(?<![a-z])(?:leve|lever|leves|levez|releve|relever|soulevez|souleve|raise|levanta|"
+                       r"hebe|heb|levanta)(?![a-z])")
+
+
+_ON_STRICT_RE = re.compile(r"(?<![a-z])(?:allume|allumer|allumes|allumez|turn on|switch on|light up|enciende|encender|"
+                           r"einschalten|schalte ein|acende|acender|liga|ligar)(?![a-z])|つけて|点けて|点灯")
+
+
+def aim_phrase(t: str):
+    """Visée dite dans la phrase normalisée : (where, match) ou None."""
+    hit = _AIM_V.find(t)
+    if hit:
+        return hit[0], hit[2]
+    m = _RAISE_RE.search(t)
+    return ("up", m) if m else None
+
+
+def _aim_same_fixtures(t, prev, votes):
+    """« les lyres impaires en l'air, les paires au sol » : le 2e morceau ne redit
+    pas « lyres » ; il vise les mêmes appareils que la visée d'avant."""
+    hit = aim_phrase(t)
+    if not (prev and hit):
+        return None
+    sub = _target((t[:hit[1].start()] + " " + t[hit[1].end():]).strip(), votes) or {}
+    votes.add(_AIM_V.find(t))
+    base = {k: v for k, v in prev.items() if k in ("kind", "group")}
+    return {"do": "position", "where": hit[0], "target": {**base, **{k: v for k, v in sub.items() if k != "all"}}}
+
+
+def _aim(t, votes):
+    """Action « position » si la phrase oriente des lyres ; sinon None. La phrase
+    doit parler de lyres, de faisceaux, ou viser une cible (« pointe la face au
+    sol ») : « mets la face au centre » sans verbe de visée n'est pas un ordre de
+    position."""
+    hit = aim_phrase(t)
+    if not hit:
+        return None
+    where, m = hit
+    rest = (t[:m.start()] + " " + t[m.end():]).strip()
+    # La visée retirée avant la cible : « vers le public » n'est pas le groupe Public.
+    tgt = _target(rest, _Votes())
+    lyre = bool(tgt and tgt.get("kind") == "lyre")
+    beam = bool(_BEAM_RE.search(t))
+    if not (lyre or beam or (tgt and _AIM_VERB_RE.search(t))):
+        return None
+    votes.add(_AIM_V.find(t))
+    _target(rest, votes)
+    if not tgt or tgt.get("all"):
+        # « les faisceaux en l'air », « pointe tout au sol », « les paires au sol »
+        tgt = {"kind": "lyre", **{k: v for k, v in (tgt or {}).items() if k != "all"}}
+    return {"do": "position", "where": where, "target": tgt}, rest
+
+
 _GRADIENT_RE = re.compile(r"(?<![a-z])(?:degrade|degrades|degrader|gradient|gradation|degradado|farbverlauf|"
                           r"verlauf)(?![a-z])")
 _GOBO_RE = re.compile(r"(?<![a-z])gobos?(?![a-z])")
@@ -1296,6 +1436,15 @@ def parse(text: str, effects=(), default_lang: str = "fr", aliases: dict = None)
         votes.add(_W["trouble"].find(t_all))
         return Parsed(votes.lang(default_lang), [{"do": "connect"}])
 
+    # Problème connu des clients (« mes lyres bougent toutes seules », « l'antivirus bloque MyStrow ») :
+    # la réponse de dépannage écrite à la main, avant tout découpage de la phrase.
+    support = None if _RECONNECT_RE.search(t_all) else assistant_support.topic(t_all)
+    if support:
+        acts = [{"do": "answer", "topic": "s_" + support}]
+        if support in ("usb_dmx", "artnet"):
+            acts.insert(0, {"do": "diagnose"})          # l'état réel de MyStrow d'abord, puis les conseils
+        return Parsed(_lang_guess(t_all, votes, default_lang), acts)
+
     if _GRADIENT_RE.search(t_all):
         acts = _parse_clause(text, t_all, effects, votes)
         if acts and acts[0]["do"] == "gradient":
@@ -1340,7 +1489,11 @@ def parse(text: str, effects=(), default_lang: str = "fr", aliases: dict = None)
         if t in aliases:
             actions.extend(parse(aliases[t], effects, default_lang, None).actions)
             continue
-        actions.extend(_parse_clause(raw, t, effects, votes))
+        acts = _parse_clause(raw, t, effects, votes)
+        prev = next((a["target"] for a in reversed(actions) if a["do"] == "position"), None)
+        if prev and [a["do"] for a in acts] == ["unknown"]:
+            acts = [_aim_same_fixtures(t, prev, votes) or acts[0]]
+        actions.extend(acts)
     if any(a["do"] not in ("chat", "unknown") for a in actions):
         # « Ok, escu, mets les étincelles à fond » : les bouts de bavardage autour d'une
         # vraie demande ne valent ni réponse ni « je n'ai pas compris ». Plus largement, en dictée, le reste n'est que de la conversation autour de l'ordre.

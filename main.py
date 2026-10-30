@@ -471,7 +471,11 @@ def main():
     app.aboutToQuit.connect(restore_timer_resolution)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
-    _install_tooltip_style(app)
+    # Pas sur Mac : 3.2.10 y plantait au premier survol (SIGSEGV natif dans
+    # la boucle Qt, clients Julien et Mathieu du 30/10/2026) — restyler et
+    # redimensionner la bulle pendant son Show casse la fenêtre native.
+    if sys.platform != "darwin":
+        _install_tooltip_style(app)
     icon_path = resource_path("mystrow.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))

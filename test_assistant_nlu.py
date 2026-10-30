@@ -126,9 +126,11 @@ def test_noir_sur_une_cible():
 
 
 def test_panne_diagnostic():
-    for t in ("pourquoi ça bug ?", "mes projecteurs s'allument pas", "rien ne se passe", "mon interface usb ne répond plus",
-              "it does not work", "no se encienden las luces", "funktioniert nicht"):
+    for t in ("pourquoi ça bug ?", "mes projecteurs s'allument pas", "rien ne se passe", "it does not work", "no se encienden las luces", "funktioniert nicht"):
         check(t, {"do": "diagnose"})
+    # Boîtier : l'état réel de MyStrow d'abord, puis la fiche de dépannage.
+    acts = parse("mon interface usb ne répond plus").actions
+    assert [a["do"] for a in acts] == ["diagnose", "answer"] and acts[1]["topic"] == "s_usb_dmx", acts
     check("le boîtier ne marche plus, relance-le", {"do": "connect"})     # panne + « relance » = reconnecter
     check("allume la face en rouge", {"do": "color"})
 
@@ -223,6 +225,97 @@ def test_suite_de_conversation():
     assert followup("allume la face en rouge", faders)[0] is None          # phrase autonome : rien à reprendre
     _, a = first("lance un effet")
     assert "strobe" not in normalize(a["name"]), a                         # un effet sans précision n'est pas un strobe
+
+
+def test_depannage_clients():
+    import assistant_support
+    for t, key, lang in (("mes lyres bougent toutes seules", "fixture_mode", "fr"),
+                         ("trend micro a mis MyStrow en quarantaine", "antivirus", "fr"),
+                         ("I never received my license email", "licence_mail", "en"),
+                         ("los focos se mueven solos", "fixture_mode", "es"),
+                         ("o strobe não funciona", "strobe", "pt")):
+        p = parse(t)
+        assert p.actions[-1] == {"do": "answer", "topic": "s_" + key}, (t, p.actions)
+        assert p.lang == lang, (t, p.lang)
+    for t in ("mets un strobe mais pas trop vite", "met la face en orange au lieu du rouge", "connecte le boîtier",
+              "y a plus rien qui sort en DMX, reconnecte", "est-ce qu'on peut brancher une tablette ?"):
+        assert not any(str(a.get("topic", "")).startswith("s_") for a in parse(t).actions), t
+    # Chaque sujet a sa réponse dans les 6 langues, avec l'adresse du support.
+    for key, *_ in assistant_support.TOPICS:
+        for lang in ("fr", "en", "es", "de", "pt", "ja"):
+            assert lang in assistant_support.ANSWERS[key], (key, lang)
+        assert assistant_support.SUPPORT_EMAIL in assistant_support.answer(key, "fr")
+
+
+def test_position_lyres():
+    check("place mes lyres en l'air", {"do": "position", "where": "up", "target": {"kind": "lyre"}}, "fr")
+    check("place mes lyres au sol", {"do": "position", "where": "down", "target": {"kind": "lyre"}})
+    check("lève les lyres", {"do": "position", "where": "up"})
+    check("mets les lyres vers le public", {"do": "position", "where": "public", "target": {"kind": "lyre"}})
+    check("recentre les lyres", {"do": "position", "where": "center"})
+    check("les faisceaux vers le ciel", {"do": "position", "where": "up", "target": {"kind": "lyre"}})
+    check("pointe la face au sol", {"do": "position", "where": "down", "target": {"group": "A"}})
+    check("point the moving heads at the ceiling", {"do": "position", "where": "up"}, "en")
+    check("pon las cabezas moviles hacia arriba", {"do": "position", "where": "up"}, "es")
+    check("richte die moving heads nach oben", {"do": "position", "where": "up"}, "de")
+    check("coloca as cabeças móveis para o chão", {"do": "position", "where": "down"}, "pt")
+    check("ムービングを天井に向けて", {"do": "position", "where": "up"}, "ja")
+    # « mets » seul n'allume pas en blanc ; une couleur ou un niveau dits, si.
+    assert [a["do"] for a in parse("mets les lyres en l'air", EFFECTS).actions] == ["position"]
+    acts = parse("mets les lyres au sol en rouge", EFFECTS).actions
+    assert [a["do"] for a in acts] == ["position", "color"] and acts[1]["color"] == "red", acts
+    acts = parse("envoie les lyres sur le public à 50 %", EFFECTS).actions
+    assert [a["do"] for a in acts] == ["position", "level"] and acts[1]["level"] == 50, acts
+    # « baisse » dit le mouvement quand il y a une visée, le niveau sinon.
+    assert [a["do"] for a in parse("baisse les lyres vers le sol", EFFECTS).actions] == ["position"]
+    check("baisse les lyres", {"do": "level_rel", "delta": -20})
+    acts = parse("les lyres impaires en l'air, les paires au sol", EFFECTS).actions
+    assert [(a["where"], a["target"].get("parity")) for a in acts] == [("up", "odd"), ("down", "even")], acts
+    # Pas de visée : la face au centre, un constat, une question « comment ».
+    check("mets la face au centre", {"do": "color"})
+    check("ils sont encore au sol", {"do": "chat"})
+    check("comment je mets mes lyres en l'air ?", {"do": "answer"})
+    import assistant_llm
+    tr = assistant_llm.to_nlu([{"do": "effect", "effect_kind": "movement"}], "place mes lyres en l'air", EFFECTS)
+    assert tr[0]["do"] == "position", tr          # le modèle v6 ne connaît pas la visée : les règles l'emportent
+
+
+def test_visee_geometrie():
+    import types
+    import light_actions as la
+
+    def lyre(**kw):
+        p = types.SimpleNamespace(group="lyre", fixture_type="Moving Head", pan=32768, tilt=32768, name="L",
+                                  start_address=1, pan_min=0, pan_max=65535, tilt_min=0, tilt_max=65535,
+                                  pan_range=540.0, tilt_range=270.0, rot3d_x=0.0, rot3d_z=0.0, body_rotation=0.0)
+        p.__dict__.update(kw)
+        return p
+
+    def aims(p, where):
+        return la.beam_dir(p, *la.aim_values(p, where))
+
+    hung, floor = lyre(), lyre(rot3d_x=180.0)
+    assert la.aim_values(hung, "down") == (32768, 32768)       # accrochée : droit en bas au centre
+    assert la.aim_values(floor, "up") == (32768, 32768)        # posée : droit en haut au centre
+    d = aims(hung, "up")
+    assert d[1] > 0.7 and d[2] > 0, d                          # monte, côté scène (pas dans les yeux du public)
+    d = aims(hung, "public")
+    assert d[2] < -0.9 and d[1] < 0, d                         # vers la salle (Z négatifs), un peu plongeant
+    assert aims(floor, "down")[1] < -0.7
+    bride = lyre(tilt_min=20000, tilt_max=45000)
+    pan, tilt = la.aim_values(bride, "public")
+    assert 20000 <= tilt <= 45000 and pan == 32768, (pan, tilt)  # limites respectées, pas de demi-tour de pan
+
+    # Une position enregistrée « Sol » passe avant le calcul.
+    moved = []
+    w = types.SimpleNamespace(projectors=[hung, lyre(fixture_type="PAR LED", group="face")],
+                              position_presets=[{"name": "Sol", "projectors": [{"start_address": 1, "pan": 1000,
+                                                                                 "tilt": 2000}]}],
+                              _start_pan_tilt_transition=lambda p, pan, tilt, ms: moved.append((pan, tilt)))
+    assert la.aim(w, [0, 1], "down") == (1, "Sol") and moved == [(1000, 2000)], moved
+    assert hung._manual_move
+    moved.clear()
+    assert la.aim(w, [0], "up") == (1, None) and moved == [la.aim_values(hung, "up")]
 
 
 def test_incompris():

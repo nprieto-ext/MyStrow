@@ -16,6 +16,7 @@ import threading
 from pathlib import Path
 
 import assistant_nlu as nlu
+import assistant_support
 
 MODEL_DIR = Path.home() / ".mystrow_llm"
 MODEL_FILE = "mystrow-assistant-q4_k_m.gguf"
@@ -27,6 +28,9 @@ _WHO = ["all", "front", "side", "back", "top", "moving_heads", "pars", "bars", "
 _WINDOWS = ["patch", "effects", "3d", "rec", "output", "tester", "monitor", "tablet", "ia", "controller",
             "shortcuts", "obs", "vmix", "gamepad", "tutorials"]
 # Même schéma qu'à l'entraînement : le modèle ne peut rien écrire d'autre.
+# Sujets de dépannage (assistant_support) que le modèle peut reconnaître.
+SUPPORT_TOPICS = list(dict.fromkeys(k for k, *_ in assistant_support.TOPICS))
+
 SCHEMA = {
     "type": "object",
     "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 4, "items": {
@@ -50,7 +54,7 @@ SCHEMA = {
             "query": {"type": "string"},           # patch_add : marque / modèle recherchés
             "playback": {"enum": ["none", "play_pause", "next", "previous", "go", "go_back"]},
             "window": {"enum": _WINDOWS},
-            "topic": {"enum": ["tablet", "controller", "dmx", "live", "other"]},
+            "topic": {"enum": ["tablet", "controller", "dmx", "live", "other"] + SUPPORT_TOPICS},
             "fade_seconds": {"type": "number"},
             "switch": {"enum": ["on", "off"]},            # live
             "gobo": {"enum": ["next", "open"]},
@@ -137,8 +141,14 @@ strobe strobes projecteur projecteurs fixture light lights""".split())
 
 def to_nlu(actions: list, text: str, effects) -> list:
     """Actions du modèle → actions d'assistant_nlu (exécutées par assistant_panel)."""
-    out = []
     t = nlu.normalize(text)
+    if assistant_support.topic(t):
+        # Problème connu des clients : la réponse de dépannage écrite à la main, quoi que dise le modèle.
+        return nlu.parse(text, effects).actions
+    if any(a["do"] == "position" for a in nlu.parse(text, effects).actions):
+        # Visée des lyres (« en l'air », « au sol ») : action absente du schéma du modèle v6.
+        return nlu.parse(text, effects).actions
+    out = []
     for a in actions:
         do = a.get("do")
         fade = a.get("fade_seconds") or None
@@ -224,6 +234,12 @@ def to_nlu(actions: list, text: str, effects) -> list:
             act = {"do": do}
         elif do == "question":
             topic = a.get("topic") or "other"
+            if topic in SUPPORT_TOPICS:
+                # Problème connu (dépannage) : la fiche écrite à la main, l'état réel d'abord pour le DMX.
+                if topic in ("usb_dmx", "artnet"):
+                    out.append({"do": "diagnose"})
+                out.append({"do": "answer", "topic": "s_" + topic})
+                continue
             act = {"do": "answer", "topic": "generic" if topic == "other" else topic, "text": text}
             if topic == "tablet":
                 out.append(act)

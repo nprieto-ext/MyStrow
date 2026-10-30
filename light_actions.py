@@ -242,6 +242,108 @@ def change_gobo(w, idxs: list, open_: bool = False) -> int:
     return done
 
 
+# ── Position des lyres (« les lyres en l'air », « au sol », « vers le public ») ─
+# Directions dans le repère du plan 3D : Y vers le haut, public du côté des Z
+# NÉGATIFS (la caméra de salle regarde vers les Z croissants).
+AIM_DIRS = {"up": (0.0, 1.0, 0.0), "down": (0.0, -1.0, 0.0), "public": (0.0, -0.25, -1.0)}
+
+# Mots d'un nom de position enregistrée (REC position) qui disent la même chose :
+# la position calée par l'utilisateur sur ses vraies lyres passe avant le calcul.
+_AIM_PRESET_WORDS = {
+    "up": "plafond ciel air haut up ceiling sky techo cielo arriba decke himmel oben luft teto ceu cima",
+    "down": "sol terre bas floor ground down suelo piso abajo boden unten chao baixo",
+    "public": "public salle audience crowd publico publikum plateia face front",
+    "center": "centre center repos neutre home centro mitte neutral",
+}
+
+
+def is_movable(p) -> bool:
+    return _KINDS["lyre"](p)
+
+
+def beam_dir(p, pan: int, tilt: int):
+    """Direction du faisceau (x, y, z) pour ces pan/tilt : même chaîne que
+    `beamFloor()` du plan 3D (débattement, accroche RX/RY/RZ), pour que la lyre
+    vise là où la 3D la montre."""
+    import math
+    from core import pan_tilt_ranges
+    pan_deg, tilt_deg = pan_tilt_ranges(p)
+    a_pan = -(pan - 32768) / 32768.0 * math.radians(pan_deg / 2.0)
+    theta = (32768 - tilt) / 32768.0 * math.radians(tilt_deg / 2.0)
+    rx = math.radians(float(getattr(p, "rot3d_x", 0.0) or 0.0))
+    ry = math.radians(float(getattr(p, "body_rotation", 0.0) or 0.0))
+    rz = math.radians(float(getattr(p, "rot3d_z", 0.0) or 0.0))
+    x, y, z = 0.0, -math.cos(theta), math.sin(theta)
+    x1, z1 = x * math.cos(a_pan) + z * math.sin(a_pan), -x * math.sin(a_pan) + z * math.cos(a_pan)
+    x2, y2 = x1 * math.cos(rz) - y * math.sin(rz), x1 * math.sin(rz) + y * math.cos(rz)
+    x3, z3 = x2 * math.cos(ry) + z1 * math.sin(ry), -x2 * math.sin(ry) + z1 * math.cos(ry)
+    return x3, y2 * math.cos(rx) - z3 * math.sin(rx), y2 * math.sin(rx) + z3 * math.cos(rx)
+
+
+def aim_values(p, where: str):
+    """(pan, tilt) qui pointent la lyre `where` (up/down/public/center), dans ses
+    limites. Centre = milieu de course ; sinon recherche sur une grille, le pan
+    le plus près du centre à visée égale (pas de demi-tour inutile)."""
+    pmin, pmax = int(getattr(p, "pan_min", 0)), int(getattr(p, "pan_max", 65535))
+    tmin, tmax = int(getattr(p, "tilt_min", 0)), int(getattr(p, "tilt_max", 65535))
+    if where == "center":
+        return max(pmin, min(pmax, 32768)), max(tmin, min(tmax, 32768))
+    gx, gy, gz = AIM_DIRS[where]
+    norm = (gx * gx + gy * gy + gz * gz) ** 0.5
+    gx, gy, gz = gx / norm, gy / norm, gz / norm
+    pans = sorted(set([max(pmin, min(pmax, 32768))] + list(range(pmin, pmax + 1, 2048)) + [pmax]))
+    tilts = sorted(set([max(tmin, min(tmax, 32768))] + list(range(tmin, tmax + 1, 512)) + [tmax]))
+    best, best_key = None, None
+    for pan in pans:
+        pan_cost = 0.05 * abs(pan - 32768) / 32768.0      # un demi-tour de pan pour presque rien : non
+        for tilt in tilts:
+            dx, dy, dz = beam_dir(p, pan, tilt)
+            # Visée d'abord ; à visée égale, le moins de mouvement ; puis, entre les
+            # deux butées d'une lyre accrochée qui monte, le côté scène (+Z) plutôt
+            # que dans les yeux du public.
+            key = (round(pan_cost - (dx * gx + dy * gy + dz * gz), 3), round(abs(tilt - 32767.5)), round(-dz, 3))
+            if best_key is None or key < best_key:
+                best, best_key = (pan, tilt), key
+    return best
+
+
+def _aim_preset(w, where: str):
+    """Position enregistrée dont le nom dit `where` (« Sol », « Plafond »…), ou None."""
+    import re
+    words = set(_AIM_PRESET_WORDS[where].split())
+    for preset in getattr(w, "position_presets", None) or []:
+        name = re.sub(r"[^a-z]+", " ", _strip_accents(str(preset.get("name", "")).lower())).split()
+        if words & set(name):
+            return preset
+    return None
+
+
+def _strip_accents(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
+def aim(w, idxs: list, where: str, ms: int = 800):
+    """Oriente les lyres parmi `idxs`. Rend (nombre de lyres, nom de la position
+    enregistrée utilisée ou None). Pris en main comme depuis la tablette : la
+    restitution d'une mémoire ne les ramène pas ailleurs jusqu'au CLEAR."""
+    from core import position_preset_values
+    lyres = [w.projectors[i] for i in idxs if is_movable(w.projectors[i])]
+    preset = _aim_preset(w, where)
+    cibles = {}
+    if preset:
+        tout = [p for p in w.projectors if getattr(p, "fixture_type", "") in ("Moving Head", "Lyre", "Laser")]
+        cibles = position_preset_values(preset, tout)
+    used = False
+    for p in lyres:
+        pt = cibles.get(id(p))
+        used = used or bool(pt)
+        pan, tilt = pt if pt else aim_values(p, where)
+        p._manual_move = True
+        w._start_pan_tilt_transition(p, int(pan), int(tilt), ms)
+    return len(lyres), (preset.get("name") if preset and used else None)
+
+
 def set_live(w, on: bool) -> bool:
     """Mode LIVE (les lumières suivent le son de la carte son / du micro)."""
     btn = getattr(getattr(w, "seq", None), "live_btn", None)

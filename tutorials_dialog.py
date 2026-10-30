@@ -2,6 +2,8 @@
 TutorialsDialog — playlist YouTube MyStrow chargée en live via flux RSS.
 Pas d'API key requise. Vignettes chargées de façon asynchrone.
 """
+import json
+import re
 import ssl
 import webbrowser
 import urllib.request
@@ -40,31 +42,74 @@ _YT  = "http://www.youtube.com/xml/schemas/2015"
 # Workers
 # ---------------------------------------------------------------------------
 
+def _video(vid_id, title, pub=""):
+    return {"id": vid_id, "title": title or tr("tut3_024"), "date": pub,
+            "link": f"https://www.youtube.com/watch?v={vid_id}",
+            "thumb": f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg"}
+
+
+def _videos_from_page() -> list:
+    """Secours quand le flux RSS de YouTube répond 404 (vu le 29/10/2026 pour toutes les
+    playlists) : la liste est lue dans la page de la playlist (ytInitialData)."""
+    req = urllib.request.Request(PLAYLIST_LINK, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept-Language": "fr-FR,fr;q=0.9",
+        "Cookie": "SOCS=CAI"})                               # sans lui, page de consentement (UE)
+    with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx()) as r:
+        page = r.read().decode("utf-8", "replace")
+    m = re.search(r"var ytInitialData\s*=\s*(\{.*?\});\s*</script>", page, re.S)
+    if not m:
+        raise ValueError("playlist illisible")
+    videos, seen = [], set()
+
+    def walk(o):
+        if isinstance(o, dict):
+            lv = o.get("lockupViewModel")
+            if isinstance(lv, dict) and lv.get("contentId"):
+                title = (((lv.get("metadata") or {}).get("lockupMetadataViewModel") or {})
+                         .get("title") or {}).get("content", "")
+                if lv["contentId"] not in seen:
+                    seen.add(lv["contentId"])
+                    videos.append(_video(lv["contentId"], title))
+            pv = o.get("playlistVideoRenderer")
+            if isinstance(pv, dict) and pv.get("videoId") and pv["videoId"] not in seen:
+                seen.add(pv["videoId"])
+                videos.append(_video(pv["videoId"], "".join(r.get("text", "") for r in pv.get("title", {}).get("runs", []))))
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(json.loads(m.group(1)))
+    if not videos:
+        raise ValueError("playlist vide")
+    return videos
+
+
 class _RSSFetcher(QThread):
     done  = Signal(list)
     error = Signal(str)
 
     def run(self):
         try:
-            req = urllib.request.Request(RSS_URL, headers={"User-Agent": "MyStrow/3.0"})
-            with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx()) as r:
-                data = r.read()
-            root = ET.fromstring(data)
-            videos = []
-            for entry in root.findall(f"{{{_A}}}entry"):
-                vid_id = entry.findtext(f"{{{_YT}}}videoId") or ""
-                title  = entry.findtext(f"{{{_A}}}title") or tr("tut3_024")
-                pub    = (entry.findtext(f"{{{_A}}}published") or "")[:10]
-                videos.append({
-                    "id":    vid_id,
-                    "title": title,
-                    "date":  pub,
-                    "link":  f"https://www.youtube.com/watch?v={vid_id}",
-                    "thumb": f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg",
-                })
-            self.done.emit(videos)
+            self.done.emit(self._from_rss())
         except Exception as exc:
-            self.error.emit(str(exc))
+            try:                                     # flux RSS en panne : page de la playlist
+                self.done.emit(_videos_from_page())
+            except Exception as exc2:
+                self.error.emit(f"{exc} / {exc2}")
+
+    def _from_rss(self):
+        req = urllib.request.Request(RSS_URL, headers={"User-Agent": "MyStrow/3.0"})
+        with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx()) as r:
+            data = r.read()
+        root = ET.fromstring(data)
+        videos = []
+        for entry in root.findall(f"{{{_A}}}entry"):
+            vid_id = entry.findtext(f"{{{_YT}}}videoId") or ""
+            videos.append(_video(vid_id, entry.findtext(f"{{{_A}}}title"),
+                                 (entry.findtext(f"{{{_A}}}published") or "")[:10]))
+        return videos
 
 
 class _ThumbFetcher(QThread):

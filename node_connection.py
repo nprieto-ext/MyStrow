@@ -2435,11 +2435,6 @@ _BTN_DIAG = (
     "border-radius: 6px; padding: 0 16px; font-size: 11px; } "
     "QPushButton:hover { background: #1a2a2a; border-color: #00d4ff99; }"
 )
-_BTN_TEST = (
-    "QPushButton { background: #1a1a1a; color: #aaa; border: 1px solid #333; "
-    "border-radius: 6px; padding: 0 14px; font-size: 10px; } "
-    "QPushButton:hover { color: #fff; border-color: #555; }"
-)
 
 
 class DmxOutputDialog(QDialog):
@@ -2723,7 +2718,7 @@ class DmxOutputDialog(QDialog):
 
             node_row = QHBoxLayout()
             node_row.setSpacing(8)
-            combo = ComboSansMolette()
+            combo = ComboSansMolette(fleche=True)
             combo.setEditable(True)
             combo.setInsertPolicy(ComboSansMolette.NoInsert)
             combo.setFont(QFont("Segoe UI", 9))
@@ -2772,15 +2767,48 @@ class DmxOutputDialog(QDialog):
         if self._dmx is not None:
             card_lay.addWidget(_sep())
 
+            # Replié par défaut : un Node 1 sortie n'en a pas besoin, et ces
+            # 8 listes noyaient le réglage essentiel (adresse du node). Ouvert
+            # d'office si l'aiguillage n'est plus celui d'usine, pour ne pas
+            # cacher un réglage que l'utilisateur a fait lui-même.
+            carte_actuelle = list(getattr(self._dmx, 'output_map', [0, 1, 2, 3]))[:4]
+            ips_actuelles = list(getattr(self._dmx, 'output_ips', []))
+            modifie = carte_actuelle != [0, 1, 2, 3][:len(carte_actuelle)] or any(ips_actuelles)
+
+            avance_btn = QPushButton()
+            avance_btn.setCheckable(True)
+            avance_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            avance_btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; color: #888;"
+                " font-size: 11px; font-weight: 600; text-align: left; padding: 2px 0; }"
+                "QPushButton:hover { color: #00d4ff; }")
+            card_lay.addWidget(avance_btn)
+
+            avance_box = QWidget()
+            avance_box.setStyleSheet("background: transparent;")
+            av_lay = QVBoxLayout(avance_box)
+            av_lay.setContentsMargins(0, 0, 0, 0)
+            av_lay.setSpacing(card_lay.spacing())
+            card_lay.addWidget(avance_box)
+
+            def _basculer(ouvert):
+                avance_btn.setText(("▾  " if ouvert else "▸  ") + tr("nc_options_avancees"))
+                avance_box.setVisible(ouvert)
+                if hasattr(self, '_stack'):
+                    QTimer.singleShot(0, self._fit_to_content)
+            avance_btn.toggled.connect(_basculer)
+            avance_btn.setChecked(modifie)
+            _basculer(modifie)
+
             titre = QLabel(tr("nc_output_routing"))
             titre.setFont(QFont("Segoe UI", 9, QFont.Bold))
             titre.setStyleSheet("color: #888; background: transparent; border: none;")
-            card_lay.addWidget(titre)
+            av_lay.addWidget(titre)
 
             aide = QLabel(tr("nc_routing_hint"))
             aide.setStyleSheet("color: #555; font-size: 9px; background: transparent; border: none;")
             aide.setWordWrap(True)
-            card_lay.addWidget(aide)
+            av_lay.addWidget(aide)
 
             grille = QGridLayout()
             grille.setContentsMargins(0, 6, 0, 0)
@@ -2804,7 +2832,7 @@ class DmxOutputDialog(QDialog):
                 fleche.setStyleSheet("color: #444; background: transparent; border: none;")
                 grille.addWidget(fleche, n + 1, 1)
 
-                combo = ComboSansMolette()
+                combo = ComboSansMolette(fleche=True)
                 for u in range(4):
                     combo.addItem(tr("nc_f_universe", a0=u + 1), userData=u)
                 combo.addItem(tr("nc_disabled"), userData=OUTPUT_OFF)
@@ -2831,7 +2859,7 @@ class DmxOutputDialog(QDialog):
                 # Node destinataire de cette sortie. Plusieurs nodes 1 univers
                 # (ex. 2x Art-Net POE) : sans ce choix, tout partait vers le
                 # node principal et les autres restaient muets.
-                ip_combo = ComboSansMolette()
+                ip_combo = ComboSansMolette(fleche=True)
                 ip_combo.setEditable(True)
                 ip_combo.setInsertPolicy(ComboSansMolette.NoInsert)
                 ip_combo.setToolTip(tr("nc_out_ip_tip"))
@@ -2854,12 +2882,12 @@ class DmxOutputDialog(QDialog):
                 self._out_combos.append((combo, art))
 
             grille.setColumnStretch(2, 1)
-            card_lay.addLayout(grille)
+            av_lay.addLayout(grille)
 
             self._out_hint = QLabel("")
             self._out_hint.setStyleSheet("color: #e6a817; font-size: 9px; background: transparent; border: none;")
             self._out_hint.setWordWrap(True)
-            card_lay.addWidget(self._out_hint)
+            av_lay.addWidget(self._out_hint)
             self._refresh_out_hint()
 
         lay.addWidget(card)
@@ -3020,7 +3048,7 @@ class DmxOutputDialog(QDialog):
         proto_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
         proto_row.addWidget(proto_lbl)
         proto_row.addStretch()
-        self._proto_combo = ComboSansMolette()
+        self._proto_combo = ComboSansMolette(fleche=True)
         for _id, _label, _tr in _USB_IFACES:
             self._proto_combo.addItem(_label or tr("nc3_079"), _id)
         self._select_usb_iface()
@@ -3029,8 +3057,11 @@ class DmxOutputDialog(QDialog):
         self._proto_combo.setStyleSheet(
             "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
             " border-radius:4px; padding:3px 8px; }"
-            "QComboBox::drop-down { border: none; }"
+            "QComboBox:hover { border-color:#00d4ff; }"
+            "QComboBox::drop-down { border:none; width:24px; }"
             "QComboBox QAbstractItemView { background:#2a2a2a; color:white; }")
+        self._proto_combo.setCursor(Qt.PointingHandCursor)
+        self._proto_combo.setToolTip(tr("nc_interface_choisir"))
         self._proto_combo.currentIndexChanged.connect(self._on_proto_changed)
         proto_row.addWidget(self._proto_combo)
         lay.addLayout(proto_row)
@@ -3041,8 +3072,11 @@ class DmxOutputDialog(QDialog):
         self._update_proto_info()
 
         card = QFrame()
+        # Sélecteur par nom : un QLabel EST un QFrame, un simple « QFrame { } »
+        # encadrait chaque étiquette de la carte (Port COM, point d'état…).
+        card.setObjectName("carteUsbPort")
         card.setStyleSheet(
-            "QFrame { background: #1a1a1a; border: 1px solid #252525; border-radius: 10px; }"
+            "QFrame#carteUsbPort { background: #1a1a1a; border: 1px solid #252525; border-radius: 10px; }"
         )
         card_lay = QVBoxLayout(card)
         card_lay.setContentsMargins(18, 14, 18, 14)
@@ -3050,14 +3084,17 @@ class DmxOutputDialog(QDialog):
 
         # Port COM
         port_row = QHBoxLayout()
+        port_row.setSpacing(10)
         port_lbl = QLabel(tr("nc_com_port"))
         port_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
         port_row.addWidget(port_lbl)
-        port_row.addStretch()
 
-        self._port_combo = ComboSansMolette()
-        self._port_combo.setFixedWidth(200)
-        port_row.addWidget(self._port_combo)
+        # La liste prend toute la largeur libre : à 200 px fixes, le nom du
+        # périphérique (« COM13 — Périphérique série USB ») était coupé.
+        self._port_combo = ComboSansMolette(fleche=True)
+        self._port_combo.setMinimumWidth(200)
+        self._port_combo.setCursor(Qt.PointingHandCursor)
+        port_row.addWidget(self._port_combo, 1)
 
         refresh_btn = QPushButton("↺")
         refresh_btn.setFixedSize(32, 32)
@@ -3085,13 +3122,9 @@ class DmxOutputDialog(QDialog):
         self._usb_status_lbl = QLabel(tr("nc_select_port"))
         self._usb_status_lbl.setStyleSheet("color: #666; font-size: 10px;")
         status_row.addWidget(self._usb_status_lbl, 1)
-
-        test_btn = QPushButton(tr("nc_diagnostic"))
-        test_btn.setFixedHeight(30)
-        test_btn.setStyleSheet(_BTN_TEST)
-        test_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        test_btn.clicked.connect(self._open_usb_diagnostic)
-        status_row.addWidget(test_btn)
+        # Pas de bouton Diagnostic ici : le même assistant est dans
+        # Connexion → Diagnostic → Test USB, et il encombrait un écran où le
+        # point d'état (et le voyant du boîtier) disent déjà si ça marche.
         card_lay.addLayout(status_row)
 
         lay.addWidget(card)
@@ -3288,21 +3321,6 @@ class DmxOutputDialog(QDialog):
             return
         # La carte USB NODE dit déjà où aller : pas deux renvois empilés.
         bloc.setVisible(aucun_port and not getattr(self, '_carte_usb_visible', False))
-
-    def _open_usb_diagnostic(self):
-        """Ouvre le diagnostic complet DMX USB (enttec_setup.py)."""
-        from enttec_setup import DmxSetupDialog
-        dlg = DmxSetupDialog(self._dmx, parent=self._main_win or self)
-        # Présélectionner le port COM actuellement choisi dans ce dialogue
-        com = self._port_combo.currentData()
-        if com and hasattr(dlg, 'port_combo'):
-            for i in range(dlg.port_combo.count()):
-                if dlg.port_combo.itemData(i) == com:
-                    dlg.port_combo.setCurrentIndex(i)
-                    break
-        dlg.exec()
-        if getattr(dlg, "goto_usb_node", False):
-            self._choisir_usb_node()
 
     def _out_map_from_ui(self):
         """Correspondance sortie -> univers lue dans les combos."""
