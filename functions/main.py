@@ -57,6 +57,7 @@ from firebase_functions import https_fn, scheduler_fn
 from google.api_core.exceptions import Conflict
 
 import amazon_mcf
+import declaration
 
 _db = None
 
@@ -217,6 +218,24 @@ AXONAUT_BASE = "https://axonaut.com/api/v2"
 # Allemagne, 0 % en autoliquidation B2B intra-UE ou hors UE. Appliquer 20 %
 # en dur à ces cas produirait des factures Axonaut fausses.
 TVA_RATE = 20
+
+# Produits Axonaut FIXES (créés le 02/11/2026) : chaque ligne de facture pointe
+# vers l'un des deux. Avant, chaque facture créait un produit à la volée,
+# toujours typé « Marchandise », licences comprises : impossible de séparer
+# l'achat-revente des prestations dans la compta.
+#   - Interface : type Marchandise (achat-revente, compte 707)
+#   - Licence   : type Service     (prestation, compte 706)
+# Le type se pose par `product_type` (706 = Service), PAS par `type`, ignoré
+# en silence par l'API.
+AXONAUT_PRODUCT_INTERFACE = 40429018
+AXONAUT_PRODUCT_LICENCE   = 40429022
+
+# Ventilation d'un pack : la part « interface » vaut le prix de l'interface
+# vendue seule (69 € TTC), rapportée au prix catalogue du pack. On l'applique
+# en PROPORTION du montant réellement encaissé : avec un code promo, la remise
+# se répartit sur les deux lignes au lieu de tomber toute sur la licence.
+INTERFACE_PRIX_TTC = 69.0
+_PACK_PRIX_TTC = {"pack_2m": 99.0, "pack_1a": 199.0, "pack_vie": 399.0}
 
 # Nom du champ « numéro de TVA intracommunautaire » sur une société Axonaut.
 # ⚠️ Axonaut ignore SILENCIEUSEMENT les champs qu'il ne connaît pas — c'est ce
@@ -917,6 +936,60 @@ def _axonaut_invoice_exists(uid: str, stripe_ref: str) -> bool:
         return False
 
 
+def _invoice_lines(plan_type: str, price_ht: float, tax_rate: float,
+                   sign: int = 1, quantity: int = 1) -> list[dict]:
+    """Lignes Axonaut d'une vente : marchandise et service séparés.
+
+    `price_ht` est le HT TOTAL de la vente. Pour un pack, il est coupé en deux
+    lignes dont la somme retombe EXACTEMENT sur ce total (la licence prend le
+    reste) : le TTC recalculé par Axonaut reste égal à l'encaissement Stripe.
+    `sign = -1` pour un avoir (quantité négative, comme dans l'interface).
+    """
+    interface = {"id": AXONAUT_PRODUCT_INTERFACE, "tax_rate": tax_rate}
+    licence   = {"id": AXONAUT_PRODUCT_LICENCE,   "tax_rate": tax_rate}
+
+    if plan_type == "boitier":
+        q = max(1, int(quantity or 1))
+        name = _plan_label("boitier")
+        if q > 1 and round(round(price_ht / q, 2) * q, 2) != round(price_ht, 2):
+            q, name = 1, f"{name} × {quantity}"   # évite un écart d'arrondi
+        return [{**interface, "name": name, "quantity": sign * q,
+                 "price": round(price_ht / q, 2)}]
+
+    if plan_type in _PACK_PRIX_TTC:
+        part = INTERFACE_PRIX_TTC / _PACK_PRIX_TTC[plan_type]
+        ht_interface = round(price_ht * part, 2)
+        ht_licence   = round(price_ht - ht_interface, 2)
+        duree = {"pack_2m": "2 mois", "pack_1a": "1 an", "pack_vie": "à vie"}[plan_type]
+        return [
+            {**interface, "name": "Interface USB-DMX MyStrow (Pack MyStrow)",
+             "quantity": sign, "price": ht_interface},
+            {**licence, "name": f"Licence MyStrow — {duree} (Pack MyStrow)",
+             "quantity": sign, "price": ht_licence},
+        ]
+
+    return [{**licence, "name": _plan_label(plan_type),
+             "quantity": sign, "price": round(price_ht, 2)}]
+
+
+def _axonaut_check_lines(invoice_id: int, lines: list[dict]) -> None:
+    """Relit la facture : chaque ligne doit pointer vers le produit fixe voulu.
+
+    Axonaut répond 200 même quand il ignore un champ : si `id` n'était pas
+    pris en compte, il recréerait un produit « Marchandise » par facture et la
+    séparation marchandise/service serait perdue sans aucun message.
+    """
+    try:
+        data = _axonaut("GET", f"/invoices/{invoice_id}") or {}
+        got = [l.get("product_id") for l in data.get("invoice_lines") or []]
+        want = [l["id"] for l in lines]
+        if got != want:
+            print(f"[Axonaut] ⚠️ Facture {invoice_id} : produits {got} au lieu de "
+                  f"{want} — ventilation marchandise/service à reprendre à la main")
+    except Exception as e:
+        print(f"[Axonaut] Relecture facture {invoice_id} impossible : {e}")
+
+
 def _axonaut_create_invoice(
     company_id: int,
     plan_type: str,
@@ -925,6 +998,7 @@ def _axonaut_create_invoice(
     uid: str = "",
     tax_rate_stripe: float | None = None,
     stripe_tax: bool = False,
+    quantity: int = 1,
 ) -> None:
     """Crée une facture dans Axonaut et stocke le lien dans Firestore.
 
@@ -979,26 +1053,24 @@ def _axonaut_create_invoice(
               f"{rebuilt_ttc} € vs encaisse {round(amount_ttc, 2)} €")
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    lines = _invoice_lines(plan_type, price_ht, tax_rate, quantity=quantity)
     print(f"[Axonaut] Création facture — plan={plan_type} "
           f"{price_ht} € HT + {tax_rate} % TVA ({tax_origin}) "
-          f"= {round(amount_ttc, 2)} € TTC company_id={company_id}")
+          f"= {round(amount_ttc, 2)} € TTC company_id={company_id} "
+          f"lignes={[(l['name'], l['price']) for l in lines]}")
     result = _axonaut("POST", "/invoices", {
         "company_id":     company_id,
         "reference":      (stripe_ref or "")[:30],
         "reference_date": today,
         "theme_id":       339036,   # MYSTROW
-        "products": [{
-            "name":     _plan_label(plan_type),
-            "quantity": 1,
-            "price":    price_ht,
-            "tax_rate": tax_rate,
-        }],
+        "products":       lines,
     })
     if not result:
         print("[Axonaut] Facture non creee (voir erreur ci-dessus)")
         return
 
     invoice_id = result.get("id")
+    _axonaut_check_lines(invoice_id, lines)
     invoice_url = (result.get("pdf_url")
                    or result.get("public_link")
                    or result.get("link")
@@ -1114,14 +1186,11 @@ def _axonaut_create_credit_note(
         "reference_date":     today,
         "theme_id":           339036,   # MYSTROW
         "mandatory_mentions": mention,
-        "products": [{
-            "name":     _plan_label(plan_type),
-            # La quantite est negative, PAS le prix : c'est la forme qu'ont les
-            # avoirs deja au dossier, et celle que l'export compta attend.
-            "quantity": -1,
-            "price":    price_ht,
-            "tax_rate": tax_rate,
-        }],
+        # La quantite est negative, PAS le prix : c'est la forme qu'ont les
+        # avoirs deja au dossier, et celle que l'export compta attend. Memes
+        # produits fixes que la facture : l'avoir d'une licence diminue les
+        # prestations, celui d'une interface les ventes de marchandises.
+        "products": _invoice_lines(plan_type, price_ht, tax_rate, sign=-1),
     })
     if not result or not result.get("id"):
         print("[Avoir] Echec creation (voir erreur ci-dessus)")
@@ -1879,7 +1948,8 @@ def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
     company_id = _axonaut_get_or_create_company(email, address.get("name", ""),
                                                 address=address, vat_number=vat_number)
     _axonaut_create_invoice(company_id, pack["plan"], amount_ttc, stripe_ref=stripe_ref,
-                            tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
+                            tax_rate_stripe=tax_rate, stripe_tax=stripe_tax,
+                            quantity=pack.get("quantity") or 1)
 
 
 def _pack_lifetime(email: str, lang: str) -> str:
@@ -5434,6 +5504,99 @@ def _run_purge_downloads(mois: int = 13) -> int:
 
 
 # Tous les jours à 3 h UTC : purge du journal des téléchargements (RGPD).
+# ── Déclaration URSSAF mensuelle ──────────────────────────────────────────
+
+# Google Sheet « URSSAF - Déclarations mensuelles (auto) » (Drive de Nicolas),
+# partagé en écriture avec le compte de service des fonctions
+# (880317301045-compute@developer.gserviceaccount.com). API Sheets activée
+# sur mystrow-907be le 02/11/2026.
+DECLARATION_SHEET_ID = "1fIqF3_FZeZlAZ_nFVv_35D1_0AACvWtUBUj7P8dEltM"
+
+
+def _axonaut_get_page(path: str, page: int):
+    """GET Axonaut avec l'en-tête `page` (que `_axonaut` n'envoie pas)."""
+    req = urllib.request.Request(f"{AXONAUT_BASE}{path}", headers={
+        "userApiKey": _axonaut_key(), "page": str(page)})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _run_declaration(now: datetime | None = None, force: bool = False) -> dict:
+    """Recalcule tous les mois écoulés de l'année, met à jour Firestore et le
+    Sheet, envoie le mail du mois précédent (`force` = le renvoyer même s'il
+    est déjà parti). Retourne le résultat du mois précédent.
+
+    Idempotent : un mois déjà envoyé (`declarations/{AAAA-MM}.mail_envoye`)
+    n'est pas renvoyé si la tâche est relancée.
+    """
+    now = now or datetime.now(timezone.utc)
+    # Mois à déclarer = mois précédent. En janvier : décembre de l'an passé.
+    y, m = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
+    db  = _get_db()
+    col = db.collection("declarations")
+    known = {d.id: d.to_dict() or {} for d in db.get_all(
+        [col.document(f"{y:04d}-{mm:02d}") for mm in range(1, 13)]) if d.exists}
+
+    # Toute l'année est recalculée à chaque passage (une seule lecture
+    # Axonaut) : un avoir ou un paiement saisi après coup est pris en compte,
+    # et chaque onglet mensuel du Sheet est réécrit.
+    todo = [(y, mm) for mm in range(1, m + 1)]
+
+    computed = []
+    stamp = now.strftime("%Y-%m-%d %H:%M UTC")
+    # Une seule lecture Axonaut pour tous les mois à calculer : factures émises
+    # depuis 12 mois avant le plus ancien, jusqu'à la fin du mois déclaré.
+    inv = (declaration.fetch_month_invoices(
+        _axonaut_get_page, y, m, lookback_months=12 + m - min(mm for _, mm in todo))
+        if todo else [])
+    for yy, mm in todo:
+        res = declaration.compute_month(
+            inv, yy, mm, AXONAUT_PRODUCT_INTERFACE, INTERFACE_PRIX_TTC, _PACK_PRIX_TTC)
+        res["calcule_le"] = stamp
+        computed.append(res)
+        doc = {k: v for k, v in res.items() if k != "rows"}
+        col.document(res["mois"]).set(doc, merge=True)
+        known[res["mois"]] = {**known.get(res["mois"], {}), **doc}
+        print(f"[Déclaration] {res['mois']} : service {res['service_ht']} € HT, "
+              f"achat-revente {res['revente_ht']} € HT ({res['nb_factures']} factures)")
+
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{DECLARATION_SHEET_ID}/edit"
+    try:
+        # Tous les mois connus pour le récap ; seuls ceux calculés à l'instant
+        # portent leurs lignes de détail (les autres onglets restent tels quels).
+        fresh = {c["mois"]: c for c in computed}
+        declaration.write_sheet(declaration.Sheet(DECLARATION_SHEET_ID),
+                                [fresh.get(k, known[k]) for k in sorted(known)])
+    except Exception as e:
+        print(f"[Déclaration] ⚠️ Écriture du Sheet impossible : {e}")
+        _alert_admin("⚠️ Déclaration URSSAF — tableau non mis à jour",
+                     f"<p>Le Google Sheet n'a pas pu être écrit :</p><pre>{html_escape(str(e)[:800])}</pre>"
+                     "<p>Les montants du mail restent justes (Firestore).</p>")
+
+    key = f"{y:04d}-{m:02d}"
+    cur = known.get(key, {})
+    if cur.get("mail_envoye") and not force:
+        print(f"[Déclaration] {key} déjà envoyée — pas de second mail")
+        return cur
+    year_docs = [v for k, v in known.items() if k.startswith(f"{y:04d}-")]
+    cumul_s = round(sum(float(v.get("service_ht") or 0) for v in year_docs), 2)
+    cumul_r = round(sum(float(v.get("revente_ht") or 0) for v in year_docs), 2)
+    _alert_admin(
+        f"📋 URSSAF {declaration.mois_label(y, m)} — service "
+        f"{declaration._eur(cur.get('service_ht', 0))} · achat-revente "
+        f"{declaration._eur(cur.get('revente_ht', 0))}",
+        declaration.mail_html(cur, cumul_s, cumul_r, sheet_url))
+    col.document(key).set({"mail_envoye": stamp}, merge=True)
+    return cur
+
+
+@scheduler_fn.on_schedule(schedule="0 8 1 * *", timezone="America/Guadeloupe",  # chaîne : ZoneInfo plante sous Windows (pas de tzdata) au déploiement
+                          max_instances=1, timeout_sec=300)
+def declaration_mensuelle(event: scheduler_fn.ScheduledEvent) -> None:
+    res = _run_declaration()
+    print(f"[Déclaration] terminé : {res.get('mois')} {res.get('total_ht')} € HT")
+
+
 @scheduler_fn.on_schedule(schedule="0 3 * * *", max_instances=1)
 def purge_journaux(event: scheduler_fn.ScheduledEvent) -> None:
     print(f"[Purge] {_run_purge_downloads()} téléchargement(s) de plus de 13 mois effacé(s)")
